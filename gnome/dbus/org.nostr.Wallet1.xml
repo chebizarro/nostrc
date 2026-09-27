@@ -26,6 +26,8 @@
     RelayError      no relay accepted the request event
     Unsupported     request not supported (e.g. on-chain, LNURL)
     RateLimited     too many outstanding approval prompts for this caller
+    InteractionRequired  a *NonInteractive call would need the user's approval
+                    (no read grant for the caller); nothing was shown
     Keyring         the Secret Service refused to store/read the pairing
     Failed          anything else
 -->
@@ -46,6 +48,23 @@
 
     <!-- GetBalance: @balance_msat: spendable wallet balance. -->
     <method name="GetBalance">
+      <arg name="balance_msat" type="t" direction="out"/>
+    </method>
+
+    <!--
+      Non-interactive reads, for panels and status indicators that must
+      never cause a dialog (GNOME Shell extension, Settings): same results
+      as GetInfo / GetBalance, but where the plain method would ask the user
+      (the caller has no read grant, or is unidentified) they fail with
+      InteractionRequired instead, and nothing is shown. The caller's grant
+      is looked up exactly as for the plain method, so a client never has to
+      reimplement the agent's caller identification. Unpaired, both behave
+      like the plain method (GetInfo: {paired: false}; GetBalance: NotPaired).
+    -->
+    <method name="GetInfoNonInteractive">
+      <arg name="info" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetBalanceNonInteractive">
       <arg name="balance_msat" type="t" direction="out"/>
     </method>
 

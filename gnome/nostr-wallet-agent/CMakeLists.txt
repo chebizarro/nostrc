@@ -168,6 +168,20 @@ if (BUILD_TESTING)
   target_link_libraries(nwa-fixture-wallet PRIVATE nostr-wallet-agent-core
                         PkgConfig::NWA_SOUP PkgConfig::NWA_GIOUNIX_T)
   target_compile_options(nwa-fixture-wallet PRIVATE ${NWA_WARNING_FLAGS})
+
+  # The real agent binary on a private bus, paired with the fixture wallet
+  # (callers are identified through /proc: Linux only).
+  if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV)
+    add_executable(test-nostr-wallet-agent-dbus tests/test_dbus.c)
+    target_link_libraries(test-nostr-wallet-agent-dbus PRIVATE nostr-wallet-agent-core)
+    target_compile_options(test-nostr-wallet-agent-dbus PRIVATE ${NWA_WARNING_FLAGS})
+    target_compile_definitions(test-nostr-wallet-agent-dbus PRIVATE
+      "NWA_AGENT_PATH=\"$<TARGET_FILE:nostr-wallet-agent>\""
+      "NWA_FIXTURE_PATH=\"$<TARGET_FILE:nwa-fixture-wallet>\"")
+    add_dependencies(test-nostr-wallet-agent-dbus nostr-wallet-agent nwa-fixture-wallet)
+    add_test(NAME nostr-wallet-agent-dbus COMMAND test-nostr-wallet-agent-dbus)
+    set_tests_properties(nostr-wallet-agent-dbus PROPERTIES TIMEOUT 180)
+  endif()
   find_program(NWA_DESKTOP_VALIDATE desktop-file-validate)
   if (NWA_DESKTOP_VALIDATE)
     add_test(NAME nostr-wallet-agent-desktop-file

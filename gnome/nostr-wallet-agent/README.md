@@ -31,6 +31,7 @@ Amounts are millisatoshis.
 |---|---|---|
 | `GetInfo()` | `→ a{sv}` | read (returns `{paired: false}` to anyone when unpaired) |
 | `GetBalance()` | `→ t balance_msat` | read |
+| `GetInfoNonInteractive()` / `GetBalanceNonInteractive()` | as the plain method | read, but **never prompts**: where the plain method would ask the user they fail with `InteractionRequired` (for panels/status indicators) |
 | `MakeInvoice(u amount_msat, s description, u expiry)` | `→ s bolt11, s payment_hash` | receive |
 | `PayInvoice(s bolt11, u amount_msat_or_0)` | `→ s preimage, t fees_paid_msat` | pay |
 | `LookupInvoice(s payment_hash_or_bolt11)` | `→ a{sv}` | read |
@@ -46,7 +47,7 @@ Amounts are millisatoshis.
 Properties: `Paired b`, `WalletPubkey s`, `Lud16 s`, `Relays as`.
 Errors are `org.nostr.Wallet1.Error.{InvalidArgs, NotPaired, Denied,
 BudgetExceeded, Timeout, WalletError, RelayError, Unsupported, RateLimited,
-Keyring, Failed}`; `WalletError` messages start with the NIP-47 code, e.g.
+Keyring, InteractionRequired, Failed}`; `WalletError` messages start with the NIP-47 code, e.g.
 `[INSUFFICIENT_BALANCE] …`. `Timeout` means **outcome unknown** — a payment
 may still have happened.
 
@@ -113,7 +114,11 @@ GSettings `org.nostr.Wallet` holds only preferences: `request-timeout` (60 s),
 ## Approval matrix
 
 Evaluated by `nwa_policy_decide()`; every row is a case in `tests/test_policy.c`.
-"Prompt" becomes **Deny** when no display is available.
+"Prompt" becomes **Deny** when no display is available. For the
+`*NonInteractive` reads, both become `InteractionRequired` (the agent does
+not even initialise GTK for them), so a status indicator can ask "may I
+read?" without reimplementing caller identification or peeking at
+`budgets.json`.
 
 | Request | Condition | Decision |
 |---|---|---|

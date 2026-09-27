@@ -153,6 +153,7 @@ typedef struct {
   gchar                 *prompt_key;
 
   gboolean               via_link; /* OpenUri / --open: always prompt */
+  gboolean               non_interactive; /* *NonInteractive: never prompt */
   gchar                 *origin;   /* *For methods: web origin to act for */
 
   /* PayInvoice */
@@ -887,7 +888,8 @@ run_policy(Call *c)
     .caller_trusted = is_trusted(s, c->caller),
     .is_self = c->caller->kind == NWA_CALLER_SELF || c->via_link,
     .paired = s->client != NULL,
-    .ui_available = nwa_ui_available(),
+    /* *NonInteractive never shows anything: do not even initialise GTK. */
+    .ui_available = !c->non_interactive && nwa_ui_available(),
     .always_confirm = setting_bool(s, "always-confirm-payments", FALSE),
     .allow_read = bi.allow_read,
     .amount_msat = c->charge_msat,
@@ -896,6 +898,13 @@ run_policy(Call *c)
     .max_auto_pay_msat = setting_u64(s, "max-auto-pay-msat", 0),
   };
   NwaDecision d = nwa_policy_decide(&in);
+
+  if (c->non_interactive && nwa_policy_needs_user(d)) {
+    CALL_FAIL(c, NWA_ERROR_INTERACTION_REQUIRED,
+              "reading the wallet needs the user's approval: allow it in Nostr Settings "
+              "(Wallet) or call %s", c->method);
+    return;
+  }
 
   if (c->op == NWA_OP_PAY && d.over_budget) {
     g_dbus_connection_emit_signal(s->bus, NULL, NWA_OBJECT_PATH, NWA_INTERFACE, "BudgetExceeded",
@@ -1088,6 +1097,11 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
   if (!unwrap_origin_call(c, &err)) {
     call_error(c, err);
     return;
+  }
+  if (g_str_equal(c->method, "GetInfoNonInteractive") ||
+      g_str_equal(c->method, "GetBalanceNonInteractive")) {
+    c->non_interactive = TRUE;
+    c->method[strlen(c->method) - strlen("NonInteractive")] = '\0';
   }
   method = c->method;
   params = c->params;

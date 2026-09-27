@@ -87,6 +87,13 @@ nwa_policy_decide(const NwaPolicyInput *in)
   return decision(NWA_DECISION_DENY, NWA_DENY_INVALID);
 }
 
+gboolean
+nwa_policy_needs_user(NwaDecision d)
+{
+  return d.kind == NWA_DECISION_PROMPT ||
+         (d.kind == NWA_DECISION_DENY && d.reason == NWA_DENY_NO_UI);
+}
+
 const gchar *
 nwa_policy_deny_reason_to_string(NwaDenyReason reason)
 {

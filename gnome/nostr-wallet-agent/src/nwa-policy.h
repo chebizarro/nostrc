@@ -63,6 +63,10 @@ typedef struct {
 } NwaDecision;
 
 NwaDecision  nwa_policy_decide(const NwaPolicyInput *in);
+/* TRUE when @d means "only the user could allow this": PROMPT, or DENY
+ * because there is no display to prompt on. *NonInteractive calls answer
+ * these with InteractionRequired instead. */
+gboolean     nwa_policy_needs_user(NwaDecision d);
 const gchar *nwa_policy_deny_reason_to_string(NwaDenyReason reason);
 
 G_END_DECLS

@@ -189,6 +189,34 @@ test_budget_ops(void)
   check(&r);
 }
 
+/* *NonInteractive reads fail with InteractionRequired exactly when the
+ * decision would involve the user (prompt, or deny for lack of a display),
+ * and never turn an allow or a hard deny into that error. */
+static void
+test_needs_user(void)
+{
+  NwaPolicyInput in = base(NWA_OP_READ);
+  g_assert_true(nwa_policy_needs_user(nwa_policy_decide(&in)));      /* no grant: prompt */
+  in.ui_available = FALSE;
+  g_assert_true(nwa_policy_needs_user(nwa_policy_decide(&in)));      /* no grant, headless */
+  in.caller_identified = FALSE;
+  in.ui_available = TRUE;
+  in.allow_read = TRUE;
+  g_assert_true(nwa_policy_needs_user(nwa_policy_decide(&in)));      /* unidentified */
+  in = base(NWA_OP_READ);
+  in.allow_read = TRUE;
+  g_assert_false(nwa_policy_needs_user(nwa_policy_decide(&in)));     /* granted: answer */
+  in = base(NWA_OP_READ);
+  in.caller_trusted = TRUE;
+  g_assert_false(nwa_policy_needs_user(nwa_policy_decide(&in)));
+  in = base(NWA_OP_READ);
+  in.paired = FALSE;
+  g_assert_false(nwa_policy_needs_user(nwa_policy_decide(&in)));     /* NotPaired stays */
+  in = base(NWA_OP_READ);
+  in.same_uid = FALSE;
+  g_assert_false(nwa_policy_needs_user(nwa_policy_decide(&in)));     /* Denied stays */
+}
+
 int
 main(int argc, char **argv)
 {
@@ -197,5 +225,6 @@ main(int argc, char **argv)
   g_test_add_func("/policy/read-receive", test_read_receive);
   g_test_add_func("/policy/pairing", test_pairing);
   g_test_add_func("/policy/budget-ops", test_budget_ops);
+  g_test_add_func("/policy/needs-user", test_needs_user);
   return g_test_run();
 }
