@@ -58,7 +58,7 @@ NsConfig *
 ns_config_load(GError **error)
 {
   NsConfig *cfg = g_new0(NsConfig, 1);
-  cfg->upstream         = NS_UPSTREAM_SESSION_RELAY_AND_DIRECT;
+  cfg->upstream         = NS_UPSTREAM_SESSION_RELAY_OR_DIRECT;   /* nostrc-t24q */
   cfg->max_upload_bytes = (guint64)NS_DEFAULT_MAX_UPLOAD_MIB * 1024u * 1024u;
   cfg->ok_wait_sec      = NS_DEFAULT_OK_WAIT_SEC;
   cfg->query_timeout_ms = NS_DEFAULT_QUERY_TIMEOUT_MS;

@@ -11,7 +11,9 @@
  * share happens on the command line.
  *
  * Exit status: 0 ok, 1 usage, 2 bad input / metadata refusal,
- *              3 no signer, 4 upload / publish / nostr-dav failure.
+ *              3 no signer, 4 upload / publish / nostr-dav failure,
+ *              5 queued in the session relay, upstream delivery not
+ *                confirmed yet (it keeps delivering; do not re-share).
  */
 #include "ns-share.h"
 #ifdef NS_HAVE_UI
@@ -39,6 +41,7 @@ exit_code_for(const GError *e)
   case NS_ERROR_UPLOAD:
   case NS_ERROR_PUBLISH:
   case NS_ERROR_DAV:        return 4;
+  case NS_ERROR_QUEUED:     return 5;
   }
   return 1;
 }
@@ -156,10 +159,13 @@ run_cli(NsShare *share)
   print_summary(share);
   gboolean changed = FALSE;
   if (!ns_share_upload(share, &changed, print_progress, NULL, &err) ||
-      !ns_share_build(share, &err) ||
-      !ns_share_publish(share, print_progress, NULL, &err)) {
+      !ns_share_build(share, &err))
     return fail(err);
-  }
+  gboolean published = ns_share_publish(share, print_progress, NULL, &err);
+  /* Queued posts were signed and handed off: print them like published
+   * ones, then exit 5 with the explanation. */
+  if (!published && !g_error_matches(err, NS_ERROR, NS_ERROR_QUEUED))
+    return fail(err);
   for (guint i = 0; i < share->posts->len; i++) {
     NsPost *p = g_ptr_array_index(share->posts, i);
     if (p->signed_json != NULL)
@@ -167,7 +173,7 @@ run_cli(NsShare *share)
     if (p->result != NULL)
       g_printerr("%s\n", p->result);
   }
-  return 0;
+  return published ? 0 : fail(err);
 }
 
 static gboolean

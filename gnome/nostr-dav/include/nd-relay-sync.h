@@ -75,7 +75,9 @@ void nd_relay_sync_free(NdRelaySync *self);
  *   it is NULL (sync held); SESSION_RELAY_OR_DIRECT -> @session_relay_url
  *   when known, else @home_relays.
  * @session_relay_url: (nullable): ND_SESSION_RELAY_URL when the session
- *   relay socket exists, else NULL.
+ *   relay is to be used (nd-application: its socket exists and, under
+ *   SESSION_RELAY_OR_DIRECT, it forwards upstream — nostrc-t24q), else
+ *   NULL.
  *
  * May be called before or after nd_relay_sync_start(); reconfiguration
  * CLOSEs and drops endpoints no longer in the target set, connects new

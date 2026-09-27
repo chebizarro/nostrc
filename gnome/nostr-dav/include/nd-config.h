@@ -43,10 +43,12 @@ typedef enum {
  * (nd_relay_sync_configure()) through
  * nostr_publish_policy_select_targets() (nostrc-862u).
  *
- * The session relay does not forward to upstream relays yet (nostrc-7d96):
- * in the session-relay modes, events nostr-dav publishes stay in the local
- * session relay and inbound sync only sees what that relay already holds.
- * They are not lost — the daemon logs this at start-up.
+ * The session relay counts as "the session relay" for publishing only
+ * while it forwards upstream (org.nostr.SessionRelay1 FederationState
+ * active / waiting-for-account, nostrc-7d96 / nostrc-t24q): otherwise
+ * SESSION_RELAY_ONLY holds publishing and SESSION_RELAY_OR_DIRECT goes to
+ * the home relays. Inbound sync under SESSION_RELAY_ONLY reads the session
+ * relay's local store regardless.
  */
 typedef enum {
   ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,

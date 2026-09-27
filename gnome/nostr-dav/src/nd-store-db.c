@@ -141,6 +141,17 @@ static const char SCHEMA_V4[] =
   "CREATE INDEX tombstones_publish_queue"
   "  ON tombstones(publish_state, publish_next_ts);";
 
+/* Schema v5 — upstream delivery through the session relay (nostrc-t24q).
+ * A row the session relay acknowledged stays publish_state='pending' with
+ * the event id it holds in upstream_event_id until the relay reports the
+ * upstream verdict (forwarded / partial -> published; failed / skipped ->
+ * failed_permanent). NULL for every other row. */
+static const char SCHEMA_V5[] =
+  "ALTER TABLE events     ADD COLUMN upstream_event_id TEXT;"
+  "ALTER TABLE contacts   ADD COLUMN upstream_event_id TEXT;"
+  "ALTER TABLE files      ADD COLUMN upstream_event_id TEXT;"
+  "ALTER TABLE tombstones ADD COLUMN upstream_event_id TEXT;";
+
 static const gchar *
 collection_name(NdStoreCollection collection)
 {
@@ -341,6 +352,7 @@ migrate(NdStoreDb *db, GError **error)
       (version < 2 && !db_exec(db, SCHEMA_V2, error)) ||
       (version < 3 && !db_exec(db, SCHEMA_V3, error)) ||
       (version < 4 && !db_exec(db, SCHEMA_V4, error)) ||
+      (version < 5 && !db_exec(db, SCHEMA_V5, error)) ||
       !db_exec(db, set_version, error)) {
     nd_store_db_rollback(db);
     return FALSE;

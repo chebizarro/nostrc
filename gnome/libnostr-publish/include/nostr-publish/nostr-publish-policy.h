@@ -47,8 +47,9 @@ typedef enum {
  * Consumed by nostr_publish_policy_select_targets() only; the publisher
  * engine publishes to whatever relay set it is given. nostr-share and
  * nostr-dav (its publisher and relay-sync, nostrc-862u) route through it.
- * Note the session relay does not forward upstream yet (nostrc-7d96), so
- * session-relay routing keeps events local for now.
+ * The session relay forwards upstream only while its FederationState is
+ * `active` or `waiting-for-account` (nostrc-7d96): callers pass a session
+ * relay URL here only then (nostr-publish-session-relay.h, nostrc-t24q).
  */
 typedef enum {
   NOSTR_PUBLISH_UPSTREAM_SESSION_RELAY_OR_DIRECT = 0,

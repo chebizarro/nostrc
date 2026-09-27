@@ -80,13 +80,30 @@ install(FILES data/nostr-share.conf.example README.md
 if (BUILD_TESTING)
   foreach(_ns_test IN ITEMS kind event strip share)
     add_executable(test-nostr-share-${_ns_test} tests/test_${_ns_test}.c)
-    target_link_libraries(test-nostr-share-${_ns_test} PRIVATE nostr-share-core)
+    target_link_libraries(test-nostr-share-${_ns_test} PRIVATE nostr-share-core
+      nostr-publish-fake-session-relay)
     target_compile_options(test-nostr-share-${_ns_test} PRIVATE ${NS_WARNING_FLAGS})
     add_test(NAME nostr-share-${_ns_test} COMMAND test-nostr-share-${_ns_test})
     set_tests_properties(nostr-share-${_ns_test} PROPERTIES
       TIMEOUT 60 LABELS "nostr-share;unit"
       ENVIRONMENT "NOSTR_SHARE_SESSION_RELAY_SOCKET=/nonexistent;NOSTR_SHARE_CONFIG=/nonexistent")
   endforeach()
+  # Against the real nostr-session-relayd (nostrc-t24q): its binary, a fake
+  # signer and a fake upstream relay on a private bus. Linux (SO_PEERCRED)
+  # and only when the relay is built; exit 77 = skipped.
+  if (TARGET nostr-session-relayd AND UNIX AND NOT APPLE)
+    add_executable(test-nostr-share-e2e tests/test_share_e2e.c tests/ns-fake-signer.c)
+    target_include_directories(test-nostr-share-e2e PRIVATE
+      ${CMAKE_SOURCE_DIR}/apps/relayd/tests ${CMAKE_SOURCE_DIR}/libnostr/include)
+    target_link_libraries(test-nostr-share-e2e PRIVATE nostr-share-core nostr_json)
+    # fake_remote_relay.h is header-only: not every helper is used here.
+    target_compile_options(test-nostr-share-e2e PRIVATE ${NS_WARNING_FLAGS}
+      -Wno-unused-function)
+    add_test(NAME nostr-share-e2e COMMAND test-nostr-share-e2e)
+    set_tests_properties(nostr-share-e2e PROPERTIES
+      TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "nostr-share;integration"
+      ENVIRONMENT "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>")
+  endif()
   find_program(_ns_dfv desktop-file-validate)
   if (_ns_dfv)
     add_test(NAME nostr-share-desktop-file

@@ -13,16 +13,19 @@
 
 G_BEGIN_DECLS
 
+/* "Forwards" below means the session relay's FederationState is active or
+ * waiting-for-account (org.nostr.SessionRelay1, nostrc-7d96/t24q); a
+ * disabled, unavailable, older or stopped relay does not forward. */
 typedef enum {
-  /* Default. Publish to the NIP-65 write relays; when the session relay
-   * socket exists it also receives a copy so local apps see the event
-   * immediately. Success is judged on the direct relays only, because
-   * the session relay does not federate upstream yet. */
+  /* Publish to the NIP-65 write relays; when the session relay socket
+   * exists it also receives a local copy. Success is judged on the
+   * direct relays only. */
   NS_UPSTREAM_SESSION_RELAY_AND_DIRECT = 0,
-  /* Session relay when present, else direct. Only meaningful once the
-   * session relay federates writes upstream. */
+  /* Default. Only the session relay when it forwards (success = it
+   * delivered the event upstream), else the write relays directly. */
   NS_UPSTREAM_SESSION_RELAY_OR_DIRECT,
-  /* Session relay only; never contact home relays from this process. */
+  /* Only the session relay, and only while it forwards; never contact
+   * the write relays from this process (fails closed otherwise). */
   NS_UPSTREAM_SESSION_RELAY_ONLY,
   /* Never use the session relay. */
   NS_UPSTREAM_DIRECT_ONLY,

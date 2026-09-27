@@ -46,8 +46,11 @@ nostr-share [--kind N] [--to npub|host'group] [--title T]
 | `--keep-metadata` | allow uploading media whose metadata could not be stripped |
 
 Exit status: `0` ok, `1` usage, `2` bad input / metadata refusal,
-`3` no signer, `4` upload / publish / nostr-dav failure. The signed
-events go to stdout, one JSON object per line; progress goes to stderr.
+`3` no signer, `4` upload / publish / nostr-dav failure, `5` queued in
+the session relay but no upstream relay confirmed it within
+`ok_wait_sec` (it keeps delivering in the background — do not share
+again). The signed events go to stdout, one JSON object per line;
+progress goes to stderr.
 
 ```sh
 nostr-share --dry-run -t "hello"                 # prints a signed kind-1 event
@@ -118,22 +121,37 @@ Notes:
 
 ### Where events go
 
-nostr-share asks your signer for your pubkey, then:
+nostr-share asks your signer for your pubkey, then (default
+`upstream_mode=session_relay_or_direct`, bead nostrc-t24q):
 
-1. **Write relays**: your NIP-65 kind-10002 relay list (write/unmarked
-   entries), fetched from the session relay and `home_relays`; events
-   whose id or signature do not verify are ignored. Without a kind 10002
-   it uses `home_relays` from the config.
-2. **Session relay**: when `$XDG_RUNTIME_DIR/nostr/relay.sock` exists it
-   also gets a copy (WebSocket over the Unix socket), so local apps see
-   the event immediately.
-3. **Success** means at least one *write relay* accepted the event. The
-   session relay's ACK alone does not count: it does not federate writes
-   upstream yet, so an event only it holds never leaves this machine.
-   `upstream_mode` in the config changes this (`session_relay_or_direct`,
-   `session_relay_only`, `direct_only`); `session_relay_only` warns that
-   nothing leaves the machine.
-4. **NIP-29 groups** (`--to host'group`) go to the group relay only — never
+1. **Session relay**: when `$XDG_RUNTIME_DIR/nostr/relay.sock` exists and
+   the relay *forwards upstream* — `FederationState` on
+   `org.nostr.SessionRelay1` is `active` or `waiting-for-account`
+   (`apps/relayd/README.md`, "Upstream federation") — the event goes to
+   the session relay only (WebSocket over the Unix socket), which stores
+   it, shows it to local apps and delivers it to your kind-10002 write
+   relays itself. A socket whose relay is not running yet is started by
+   connecting to it (socket activation) before asking.
+2. **Success** through the session relay is *upstream delivery*, not its
+   local `OK`: nostr-share follows `UpstreamStatusChanged` /
+   `GetEventUpstream` for the event id. `forwarded` / `partial` succeed
+   (the per-relay results are listed); `failed`, `skipped`,
+   `superseded`, `cancelled` or `unknown` fail (exit 4); still `pending`
+   / `unroutable` after `ok_wait_sec` is exit 5 — the event is queued and
+   will still go out, so sharing it again would post it twice.
+3. **Write relays** otherwise — no socket, or a relay that is `disabled`,
+   `unavailable`, not answering or too old to report `FederationState`:
+   your NIP-65 kind-10002 relay list (write/unmarked entries), fetched
+   from the session relay and `home_relays`; events whose id or signature
+   do not verify are ignored. Without a kind 10002 it uses `home_relays`
+   from the config. Success means at least one write relay accepted the
+   event.
+4. Other `upstream_mode`s: `session_relay_only` never contacts your
+   relays and **refuses** to publish when the session relay does not
+   forward (it would never leave the machine); `session_relay_and_direct`
+   publishes to the write relays and gives the session relay a local copy
+   (success = a write relay); `direct_only` never uses the session relay.
+5. **NIP-29 groups** (`--to host'group`) go to the group relay only — never
    to your public write relays or the session relay.
 5. **Blossom servers**: your BUD-03 kind-10063 list, else
    `blossom_servers` from the config; `https://` only. Uploads are
@@ -208,6 +226,9 @@ the signer is an in-process libnostr key):
 - `test_event` — URL → `r` extraction, `imeta` / 1063 / 30023 tags, `--to`
 - `test_strip` — JPEG/PNG/WebP/GIF metadata removal and dimensions
 - `test_share` — end to end: publish through fixtures, verified kind
-  10002 lookup (forged events ignored), session-relay success rule,
-  group isolation, media `imeta`/1063, metadata refusal, article,
-  nostr-dav hand-off, NIP-34 from a real `git init`.
+  10002 lookup (forged events ignored), session-relay routing gated on
+  `FederationState` and upstream-delivery verdicts (a fake
+  `org.nostr.SessionRelay1` on a private `GTestDBus` bus; skipped with a
+  reason when `dbus-daemon` is missing), group isolation, media
+  `imeta`/1063, metadata refusal, article, nostr-dav hand-off, NIP-34
+  from a real `git init`.

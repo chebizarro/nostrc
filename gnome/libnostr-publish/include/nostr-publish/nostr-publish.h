@@ -4,13 +4,15 @@
  *
  * Shared relay-side publish core for GNOME Nostr daemons (nostr-dav,
  * nostr-share, nostr-wallet-agent): signer proxy, NIP-01 WebSocket
- * transport, NIP-65 target resolution, and multi-relay OK aggregation.
+ * transport, NIP-65 target resolution, multi-relay OK aggregation, and
+ * the session relay's upstream-federation status.
  */
 #ifndef NOSTR_PUBLISH_H
 #define NOSTR_PUBLISH_H
 
 #include "nostr-publish-macros.h"
 #include "nostr-publish-policy.h"
+#include "nostr-publish-session-relay.h"
 #include "nostr-publish-signer.h"
 #include "nostr-publish-transport.h"
 #include "nostr-publisher.h"

@@ -549,13 +549,22 @@ ns_share_connect(NsShare *share, GError **error)
   return share->signer != NULL;
 }
 
+static gboolean
+has_git_post(const NsShare *share)
+{
+  for (guint i = 0; i < share->posts->len; i++)
+    if (((const NsPost *)g_ptr_array_index(share->posts, i))->action == NS_ACTION_GIT_REPO)
+      return TRUE;
+  return FALSE;
+}
+
 gboolean
 ns_share_resolve(NsShare *share, GError **error)
 {
   ns_targets_clear(&share->targets);
   if (ns_share_needs_relays(share) &&
       !ns_resolve_targets(share->cfg, &share->net, share->pubkey_hex, &share->to,
-                          &share->targets, error))
+                          has_git_post(share), &share->targets, error))
     return FALSE;
   if (ns_share_needs_upload(share) && share->servers == NULL) {
     g_clear_pointer(&share->servers_source, g_free);
@@ -663,7 +672,9 @@ build_post(NsShare *share, NsPost *post, GError **error)
 
   case NS_ACTION_GIT_REPO: {
     json_array_unref(g_steal_pointer(&tags));
-    const gchar *const *relays = (const gchar *const *)share->targets.direct;
+    /* The user's relays, also when the event itself goes out through the
+     * session relay. */
+    const gchar *const *relays = (const gchar *const *)share->targets.write;
     if (!ns_git_announcement(post->git_dir, relays, &tags, &content, NULL, error))
       return FALSE;
     break;
@@ -837,6 +848,9 @@ gboolean
 ns_share_publish(NsShare *share, NsProgressFunc progress, gpointer user_data,
                  GError **error)
 {
+  /* A post the session relay still holds (NS_ERROR_QUEUED) does not stop
+   * the others; it is reported once everything else went out. */
+  GError *queued = NULL;
   gboolean any_relay = ns_share_needs_relays(share);
   if (any_relay) {
     if (!ns_share_connect(share, error))
@@ -875,21 +889,45 @@ ns_share_publish(NsShare *share, NsProgressFunc progress, gpointer user_data,
     }
 
     say(progress, user_data, "Publishing kind %d…", post_kind(share, p));
+    if (share->targets.session_upstream)
+      say(progress, user_data, "Waiting for the session relay to deliver it…");
     NsPublishReport rep;
+    GError *local = NULL;
     gboolean ok = ns_net_publish(&share->net, share->cfg, p->signed_json,
-                                 &share->targets, &rep, error);
+                                 &share->targets, &rep, &local);
     GString *r = g_string_new(NULL);
-    g_string_append_printf(r, "kind %d: %u/%u relays accepted",
-                           post_kind(share, p), rep.n_accepted, rep.n_targets);
+    if (rep.upstream)
+      g_string_append_printf(r, "kind %d: %s by the session relay: %u/%u relays accepted",
+                             post_kind(share, p),
+                             nostr_publish_forward_state_to_string(rep.upstream_state),
+                             rep.n_accepted, rep.n_targets);
+    else
+      g_string_append_printf(r, "kind %d: %u/%u relays accepted",
+                             post_kind(share, p), rep.n_accepted, rep.n_targets);
     for (guint k = 0; rep.lines && k < rep.lines->len; k++) {
       say(progress, user_data, "  %s", (const gchar *)g_ptr_array_index(rep.lines, k));
       g_string_append_printf(r, "\n  %s", (const gchar *)g_ptr_array_index(rep.lines, k));
     }
     p->result = g_string_free(r, FALSE);
     ns_publish_report_clear(&rep);
-    if (!ok)
+    if (!ok && g_error_matches(local, NS_ERROR, NS_ERROR_QUEUED)) {
+      say(progress, user_data, "  %s", local->message);
+      if (queued == NULL)
+        queued = local;
+      else
+        g_error_free(local);
+      continue;
+    }
+    if (!ok) {
+      g_propagate_error(error, local);
+      g_clear_error(&queued);
       return FALSE;
+    }
     mark_sources(share, p);
+  }
+  if (queued != NULL) {
+    g_propagate_error(error, queued);
+    return FALSE;
   }
   return TRUE;
 }
@@ -903,7 +941,8 @@ ns_share_describe_targets(const NsShare *share)
     return g_strdup("not resolved yet");
   GString *s = g_string_new(NULL);
   if (share->targets.session_included)
-    g_string_append(s, "session relay (relay.sock)");
+    g_string_append(s, share->targets.session_upstream
+                         ? "session relay (relay.sock)" : "session relay (a local copy)");
   guint n = share->targets.direct ? g_strv_length(share->targets.direct) : 0;
   if (n > 0) {
     if (s->len) g_string_append(s, " + ");
@@ -911,10 +950,9 @@ ns_share_describe_targets(const NsShare *share)
                            share->targets.write_source);
     for (guint i = 0; i < n; i++)
       g_string_append_printf(s, "%s%s", i ? ", " : "", share->targets.direct[i]);
-  } else if (share->targets.session_included) {
-    g_string_append(s, " only — the session relay does not federate upstream "
-                       "yet, so this stays on this machine");
   }
+  if (share->targets.session_note != NULL)
+    g_string_append_printf(s, "%s%s", s->len ? "; " : "", share->targets.session_note);
   return g_string_free(s, FALSE);
 }
 

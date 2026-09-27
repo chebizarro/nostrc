@@ -58,6 +58,7 @@ typedef struct {
   NdStoreCollection  collection;  /* meaningful only for ND_OUTBOX_COLLECTION */
   gchar             *row_id;      /* uid for collections, decimal id for tombstones */
   gchar             *key;         /* "<outbox>:<collection>:<row_id>" */
+  gboolean           via_session; /* sole target: the forwarding session relay */
 } NdInFlight;
 
 struct _NdPublisher {
@@ -78,6 +79,20 @@ struct _NdPublisher {
 
   NdPublisherNotifyCallback notify_cb;
   gpointer                  notify_data;
+
+  NdPublisherUpstreamQueryFunc upstream_query;
+  gpointer                     upstream_query_data;
+};
+
+/* Every outbox table, for the upstream bookkeeping that spans them all. */
+static const struct {
+  NdOutboxKind      outbox;
+  NdStoreCollection col;
+} ALL_OUTBOXES[] = {
+  { ND_OUTBOX_COLLECTION, ND_STORE_COLLECTION_EVENTS },
+  { ND_OUTBOX_COLLECTION, ND_STORE_COLLECTION_CONTACTS },
+  { ND_OUTBOX_COLLECTION, ND_STORE_COLLECTION_FILES },
+  { ND_OUTBOX_TOMBSTONE,  ND_STORE_COLLECTION_EVENTS },
 };
 
 /* ---- Small helpers ---- */
@@ -187,7 +202,7 @@ stage_row(NdPublisher       *self,
   g_autofree gchar *sql = g_strdup_printf(
     "UPDATE %s SET publish_state = 'pending', "
     "  publish_attempts = 0, publish_next_ts = ?1, "
-    "  publish_targets = ?2 "
+    "  publish_targets = ?2, upstream_event_id = NULL "
     "WHERE %s = ?3",
     collection_table(col), collection_key(col));
 
@@ -299,6 +314,49 @@ mark_published(NdPublisher *self, NdOutboxKind outbox,
   gboolean ok = (sqlite3_step(stmt) == SQLITE_DONE);
   if (!ok)
     nd_store_db_set_sql_error(self->db, error, "mark published");
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
+/* The session relay holds the signed event (its OK): wait for its
+ * upstream verdict instead of calling the row published (nostrc-t24q). */
+static gboolean
+mark_awaiting_upstream(NdPublisher *self, NdOutboxKind outbox,
+                       NdStoreCollection col, const gchar *row_id,
+                       const gchar *event_id, GError **error)
+{
+  sqlite3 *h = nd_store_db_get_handle(self->db);
+  g_autofree gchar *sql = g_strdup_printf(
+    "UPDATE %s SET upstream_event_id = ?1 WHERE %s = ?2",
+    outbox_table(outbox, col), outbox_key(outbox, col));
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
+    return nd_store_db_set_sql_error(self->db, error, "prepare mark awaiting upstream");
+  sqlite3_bind_text(stmt, 1, event_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, row_id, -1, SQLITE_TRANSIENT);
+  gboolean ok = (sqlite3_step(stmt) == SQLITE_DONE);
+  if (!ok)
+    nd_store_db_set_sql_error(self->db, error, "mark awaiting upstream");
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
+static gboolean
+set_publish_state(NdPublisher *self, NdOutboxKind outbox, NdStoreCollection col,
+                  const gchar *row_id, const gchar *state, GError **error)
+{
+  sqlite3 *h = nd_store_db_get_handle(self->db);
+  g_autofree gchar *sql = g_strdup_printf(
+    "UPDATE %s SET publish_state = ?1 WHERE %s = ?2",
+    outbox_table(outbox, col), outbox_key(outbox, col));
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
+    return nd_store_db_set_sql_error(self->db, error, "prepare set publish state");
+  sqlite3_bind_text(stmt, 1, state, -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, row_id, -1, SQLITE_TRANSIENT);
+  gboolean ok = (sqlite3_step(stmt) == SQLITE_DONE);
+  if (!ok)
+    nd_store_db_set_sql_error(self->db, error, "set publish state");
   sqlite3_finalize(stmt);
   return ok;
 }
@@ -593,7 +651,18 @@ on_publish_done(NostrPublisher           *engine,
 
   switch (nostr_publish_result_get_verdict(result)) {
   case NOSTR_PUBLISH_VERDICT_PUBLISHED:
-    ok = mark_published(self, ifl->outbox, ifl->collection, ifl->row_id, &err);
+    if (ifl->via_session) {
+      /* Queued upstream, not published yet: the session relay's report
+       * decides. Ask once now — a fast transition may already have been
+       * signalled before this OK was processed. */
+      const gchar *event_id = nostr_publish_result_get_event_id(result);
+      ok = mark_awaiting_upstream(self, ifl->outbox, ifl->collection, ifl->row_id,
+                                  event_id, &err);
+      if (ok && self->upstream_query != NULL)
+        self->upstream_query(self, event_id, self->upstream_query_data);
+    } else {
+      ok = mark_published(self, ifl->outbox, ifl->collection, ifl->row_id, &err);
+    }
     break;
 
   case NOSTR_PUBLISH_VERDICT_FAILED_PERMANENT: {
@@ -709,9 +778,13 @@ dispatch_row(NdPublisher         *self,
   }
 
   g_auto(GStrv) targets = targets_from_json(ctx->targets_json);
-  if (self->upstream_mode == ND_UPSTREAM_MODE_SESSION_RELAY_ONLY) {
+  if (self->upstream_mode == ND_UPSTREAM_MODE_SESSION_RELAY_ONLY ||
+      (targets != NULL && self->session_relay_url == NULL &&
+       g_strv_contains((const gchar *const *)targets, ND_SESSION_RELAY_URL))) {
     /* nostrc-862u: a row staged under a wider mode (or before the mode
-     * was changed) must not leak to home relays now. */
+     * was changed) must not leak to home relays now. nostrc-t24q: nor
+     * may a row staged for the session relay go to it once it no longer
+     * forwards upstream. Both use the current target set. */
     g_strfreev(targets);
     targets = NULL;
   }
@@ -739,6 +812,8 @@ dispatch_row(NdPublisher         *self,
   ifl->collection = col;
   ifl->row_id     = g_strdup(row_id);
   ifl->key        = in_flight_key(outbox, col, row_id);
+  ifl->via_session = self->session_relay_url != NULL && targets[1] == NULL &&
+                     g_strcmp0(targets[0], self->session_relay_url) == 0;
   g_autofree gchar *key = g_strdup(ifl->key);
   g_hash_table_insert(self->in_flight, ifl->key, ifl);
 
@@ -1000,7 +1075,7 @@ load_pending(NdPublisher *self, NdStoreCollection col, gint64 now_ts)
   g_autofree gchar *sql = g_strdup_printf(
     "SELECT %s, signed_event_json, publish_targets, publish_attempts "
     "FROM %s "
-    "WHERE publish_state = 'pending' "
+    "WHERE publish_state = 'pending' AND upstream_event_id IS NULL "
     "  AND (publish_next_ts IS NULL OR publish_next_ts <= ?1) "
     "ORDER BY publish_next_ts ASC", key, table);
 
@@ -1038,7 +1113,7 @@ load_pending_tombstones(NdPublisher *self, gint64 now_ts)
         "SELECT id, signed_event_json, publish_targets, publish_attempts,"
         "       target_kind, target_pubkey, target_uid "
         "FROM tombstones "
-        "WHERE publish_state = 'pending' "
+        "WHERE publish_state = 'pending' AND upstream_event_id IS NULL "
         "  AND (publish_next_ts IS NULL OR publish_next_ts <= ?1) "
         "ORDER BY publish_next_ts ASC",
         -1, &stmt, NULL) != SQLITE_OK)
@@ -1159,4 +1234,155 @@ nd_publisher_record_ok(NdPublisher *self,
   g_return_if_fail(relay_url != NULL);
   (void)nostr_publisher_record_ok(self->engine, relay_url, event_id, ok,
                                   reason);
+}
+
+/* ---- Upstream delivery through the session relay (nostrc-t24q) ---- */
+
+void
+nd_publisher_set_upstream_query_func(NdPublisher                 *self,
+                                     NdPublisherUpstreamQueryFunc func,
+                                     gpointer                     user_data)
+{
+  g_return_if_fail(self != NULL);
+  self->upstream_query = func;
+  self->upstream_query_data = user_data;
+}
+
+/* Row ids (or, with @want_event_ids, their upstream event ids) of the rows
+ * in one outbox table awaiting an upstream verdict; @event_id narrows it
+ * to the rows awaiting that event. */
+static GPtrArray *
+awaiting_rows(NdPublisher *self, NdOutboxKind outbox, NdStoreCollection col,
+              const gchar *event_id, gboolean want_event_ids)
+{
+  sqlite3 *h = nd_store_db_get_handle(self->db);
+  g_autofree gchar *sql = g_strdup_printf(
+    "SELECT %s, upstream_event_id FROM %s "
+    "WHERE publish_state = 'pending' AND upstream_event_id IS NOT NULL"
+    "%s",
+    outbox_key(outbox, col), outbox_table(outbox, col),
+    event_id != NULL ? " AND upstream_event_id = ?1" : "");
+  GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
+    return out;
+  if (event_id != NULL)
+    sqlite3_bind_text(stmt, 1, event_id, -1, SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW)
+    g_ptr_array_add(out, g_strdup((const gchar *)sqlite3_column_text(stmt,
+                                                                     want_event_ids ? 1 : 0)));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+static void
+settle_upstream(NdPublisher *self, NdOutboxKind outbox, NdStoreCollection col,
+                const gchar *row_id, const NostrPublishForwardUpdate *u)
+{
+  GError *err = NULL;
+  gboolean ok = TRUE;
+
+  /* Per-relay progress is for the operator's publish_log. */
+  if (u->relay_url != NULL && u->relay_state != NULL) {
+    if (g_str_equal(u->relay_state, "acked"))
+      log_attempt(self, outbox, col, row_id, u->relay_url, 200, "via session relay");
+    else if (g_str_equal(u->relay_state, "failed"))
+      log_attempt(self, outbox, col, row_id, u->relay_url, 400, u->relay_reason);
+  }
+
+  const gchar *state_word = nostr_publish_forward_state_to_string(u->state);
+  switch (u->state) {
+  case NOSTR_PUBLISH_FORWARD_FORWARDED:
+  case NOSTR_PUBLISH_FORWARD_PARTIAL:
+    ok = mark_published(self, outbox, col, row_id, &err);
+    break;
+
+  case NOSTR_PUBLISH_FORWARD_FAILED:
+  case NOSTR_PUBLISH_FORWARD_SKIPPED:
+  case NOSTR_PUBLISH_FORWARD_UNKNOWN: {
+    /* skipped: the relay does not count this author as a local account;
+     * unknown: it never queued the event (local-only by its rules) or
+     * pruned it. Either way it will not go out from there. */
+    g_autofree gchar *reason =
+      g_strdup_printf("session relay did not deliver it upstream: %s%s%s", state_word,
+                      u->detail && *u->detail ? ": " : "", u->detail ? u->detail : "");
+    log_attempt(self, outbox, col, row_id, NULL, 0, reason);
+    ok = mark_failed_permanent(self, outbox, col, row_id, &err);
+    if (ok)
+      notify_failed_permanent(self, outbox, col, row_id, reason);
+    break;
+  }
+
+  case NOSTR_PUBLISH_FORWARD_SUPERSEDED:
+  case NOSTR_PUBLISH_FORWARD_CANCELLED:
+    /* A newer version of the address, or a kind 5 for it, replaced the
+     * event before it went out: nothing left to deliver. */
+    ok = set_publish_state(self, outbox, col, row_id,
+                           outbox == ND_OUTBOX_TOMBSTONE ? "published" : "superseded",
+                           &err);
+    break;
+
+  case NOSTR_PUBLISH_FORWARD_UNROUTABLE:
+    g_message("nostr-dav: %s waits in the session relay: unroutable%s%s", row_id,
+              u->detail && *u->detail ? ": " : "", u->detail ? u->detail : "");
+    break;
+
+  case NOSTR_PUBLISH_FORWARD_NEW:
+  case NOSTR_PUBLISH_FORWARD_PENDING:
+    break;
+  }
+  if (!ok) {
+    g_warning("nostr-dav publisher: %s", err ? err->message : "upstream settle failed");
+    g_clear_error(&err);
+  }
+}
+
+void
+nd_publisher_record_upstream(NdPublisher                     *self,
+                             const NostrPublishForwardUpdate *update)
+{
+  g_return_if_fail(self != NULL);
+  g_return_if_fail(update != NULL && update->event_id != NULL);
+  for (gsize t = 0; t < G_N_ELEMENTS(ALL_OUTBOXES); t++) {
+    g_autoptr(GPtrArray) rows = awaiting_rows(self, ALL_OUTBOXES[t].outbox,
+                                              ALL_OUTBOXES[t].col, update->event_id,
+                                              FALSE);
+    for (guint i = 0; i < rows->len; i++)
+      settle_upstream(self, ALL_OUTBOXES[t].outbox, ALL_OUTBOXES[t].col,
+                      g_ptr_array_index(rows, i), update);
+  }
+}
+
+void
+nd_publisher_resync_upstream(NdPublisher *self)
+{
+  g_return_if_fail(self != NULL);
+  if (self->upstream_query == NULL)
+    return;
+  for (gsize t = 0; t < G_N_ELEMENTS(ALL_OUTBOXES); t++) {
+    g_autoptr(GPtrArray) ids = awaiting_rows(self, ALL_OUTBOXES[t].outbox,
+                                             ALL_OUTBOXES[t].col, NULL, TRUE);
+    for (guint i = 0; i < ids->len; i++)
+      self->upstream_query(self, g_ptr_array_index(ids, i), self->upstream_query_data);
+  }
+}
+
+guint
+nd_publisher_release_upstream(NdPublisher *self)
+{
+  g_return_val_if_fail(self != NULL, 0);
+  sqlite3 *h = nd_store_db_get_handle(self->db);
+  guint released = 0;
+  for (gsize t = 0; t < G_N_ELEMENTS(ALL_OUTBOXES); t++) {
+    g_autofree gchar *sql = g_strdup_printf(
+      "UPDATE %s SET upstream_event_id = NULL, publish_next_ts = NULL "
+      "WHERE publish_state = 'pending' AND upstream_event_id IS NOT NULL",
+      outbox_table(ALL_OUTBOXES[t].outbox, ALL_OUTBOXES[t].col));
+    if (sqlite3_exec(h, sql, NULL, NULL, NULL) == SQLITE_OK)
+      released += (guint)sqlite3_changes(h);
+  }
+  if (released > 0)
+    g_message("nostr-dav: the session relay stopped forwarding upstream; %u "
+              "event(s) it held go to the home relays directly", released);
+  return released;
 }

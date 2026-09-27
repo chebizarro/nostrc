@@ -34,6 +34,9 @@ typedef enum {
   NS_ERROR_PUBLISH,
   NS_ERROR_DAV,
   NS_ERROR_GIT,
+  /* Held by the session relay, upstream delivery not confirmed yet
+   * (nostrc-t24q): it is still being delivered; sharing again duplicates. */
+  NS_ERROR_QUEUED,
 } NsError;
 
 typedef enum {

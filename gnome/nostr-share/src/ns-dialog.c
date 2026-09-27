@@ -240,7 +240,7 @@ on_to_apply(AdwEntryRow *row, gpointer user_data)
     d->share->resolved = FALSE;
     if (r.type == NS_RECIPIENT_GROUP)
       (void)ns_resolve_targets(d->share->cfg, &d->share->net, d->share->pubkey_hex,
-                               &d->share->to, &d->share->targets, NULL);
+                               &d->share->to, FALSE, &d->share->targets, NULL);
   }
   refresh(d);
 }
@@ -357,6 +357,19 @@ publish_done(GObject *src, GAsyncResult *res, gpointer data)
   Dialog *d = data;
   GError *err = NULL;
   gssize outcome = g_task_propagate_int(G_TASK(res), &err);
+  if (g_error_matches(err, NS_ERROR, NS_ERROR_QUEUED)) {
+    /* Held by the session relay, still being delivered: not a failure to
+     * retry (that would post it twice), not a confirmed publish either. */
+    d->state = STATE_DONE;
+    d->exit_code = 5;
+    set_busy(d, FALSE);
+    set_status(d, err->message, FALSE);
+    g_clear_error(&err);
+    gtk_button_set_label(d->publish, "Done");
+    gtk_widget_remove_css_class(GTK_WIDGET(d->publish), "suggested-action");
+    update_publish_sensitivity(d);
+    return;
+  }
   if (err != NULL) {
     d->state = STATE_READY;
     set_busy(d, FALSE);

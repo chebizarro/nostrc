@@ -11,6 +11,8 @@
 #include "ns-git.h"
 #include "ns-share.h"
 
+#include "np-fake-session-relay.h"
+
 #include "nostr-event.h"
 #include "nostr-keys.h"
 
@@ -304,40 +306,182 @@ test_nip65_verified(void)
   g_assert_nonnull(strstr(s->targets.write_source, "10002"));
 }
 
+/* ---- session relay routing (nostrc-t24q) ---- */
+
+static GTestDBus *s_bus;   /* private bus for the fake SessionRelay1 */
+
+static NsShare *
+session_share(NsUpstreamMode mode, guint ok_wait_sec)
+{
+  relays_reset();
+  NsConfig *cfg = config("wss://w1.test", NULL);
+  cfg->upstream = mode;
+  cfg->ok_wait_sec = ok_wait_sec;
+  const gchar *texts[] = { "hi", NULL };
+  GError *err = NULL;
+  NsShare *s = share_new(cfg, texts, NULL, NULL, 0, &err);
+  g_assert_no_error(err);
+  g_free(s->net.session_socket);
+  s->net.session_socket = g_strdup("/run/fake/relay.sock");   /* not a real socket */
+  return s;
+}
+
+static guint
+published_to(const gchar *url_prefix)
+{
+  guint n = 0;
+  for (guint i = 0; i < R.published->len; i++)
+    if (g_str_has_prefix(g_ptr_array_index(R.published, i), url_prefix))
+      n++;
+  return n;
+}
+
+/* Without a forwarding session relay (none on the bus here), the modes
+ * degrade exactly as documented; no D-Bus daemon needed. */
 static void
 test_session_relay_rules(void)
 {
-  relays_reset();
-  const gchar *texts[] = { "hi", NULL };
   GError *err = NULL;
-  g_autoptr(NsShare) s = share_new(config("wss://w1.test", NULL), texts, NULL,
-                                   NULL, 0, &err);
-  s->net.session_socket = g_strdup("/run/fake/relay.sock");
+
+  /* session_relay_and_direct: a local copy, the write relays decide. */
+  g_autoptr(NsShare) s = session_share(NS_UPSTREAM_SESSION_RELAY_AND_DIRECT, 5);
   g_assert_true(ns_share_resolve(s, &err));
-  /* default mode: session relay gets a copy, write relays are authoritative */
   g_assert_true(s->targets.session_included);
+  g_assert_false(s->targets.session_upstream);
   g_assert_cmpuint(g_strv_length(s->targets.targets), ==, 2);
   g_assert_cmpstr(s->targets.targets[0], ==, NS_SESSION_RELAY_URL);
   g_assert_true(ns_share_build(s, NULL));
-
   g_hash_table_insert(R.reject, g_strdup("wss://w1.test"), g_strdup("blocked: test"));
   g_assert_false(ns_share_publish(s, NULL, NULL, &err));
   g_assert_error(err, NS_ERROR, NS_ERROR_PUBLISH);   /* session ACK alone ≠ success */
   g_clear_error(&err);
 
-  /* session_relay_only: session ACK is the success criterion. */
-  relays_reset();
-  NsConfig *cfg = config("wss://w1.test", NULL);
-  cfg->upstream = NS_UPSTREAM_SESSION_RELAY_ONLY;
-  g_autoptr(NsShare) s2 = share_new(cfg, texts, NULL, NULL, 0, &err);
-  s2->net.session_socket = g_strdup("/run/fake/relay.sock");
+  /* session_relay_or_direct (the default) with a relay that is not on
+   * the bus: straight to the write relays, the relay is left alone. */
+  g_autoptr(NsShare) d = session_share(NS_UPSTREAM_SESSION_RELAY_OR_DIRECT, 5);
+  g_assert_cmpint(d->cfg->upstream, ==, NS_UPSTREAM_SESSION_RELAY_OR_DIRECT);
+  g_assert_true(ns_share_resolve(d, &err));
+  g_assert_no_error(err);
+  g_assert_false(d->targets.session_included);
+  g_assert_cmpuint(g_strv_length(d->targets.targets), ==, 1);
+  g_assert_cmpstr(d->targets.targets[0], ==, "wss://w1.test");
+  g_autofree gchar *desc = ns_share_describe_targets(d);
+  g_assert_nonnull(strstr(desc, "session relay not used"));
+  g_assert_true(ns_share_build(d, NULL));
+  g_assert_true(ns_share_publish(d, NULL, NULL, &err));
+  g_assert_cmpuint(published_to(NS_SESSION_RELAY_URL), ==, 0);
+  g_assert_cmpuint(published_to("wss://w1.test"), ==, 1);
+
+  /* session_relay_only fails closed: nothing is published anywhere. */
+  g_autoptr(NsShare) o = session_share(NS_UPSTREAM_SESSION_RELAY_ONLY, 5);
+  g_assert_false(ns_share_resolve(o, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_NO_RELAYS);
+  g_assert_nonnull(strstr(err->message, "FederationState"));
+  g_clear_error(&err);
+  g_assert_cmpuint(R.published->len, ==, 0);
+  g_assert_cmpuint(R.reqs->len, ==, 0);   /* no relay contacted at all */
+}
+
+/* Relays that exist on the bus but do not forward: disabled, and a daemon
+ * from before FederationState existed. */
+static void
+test_session_relay_not_forwarding(void)
+{
+  if (s_bus == NULL) {
+    g_test_skip("dbus-daemon not installed: no private bus for the fake session relay");
+    return;
+  }
+  const gchar *states[] = { "disabled", "unavailable", NULL /* old daemon */ };
+  for (gsize i = 0; i < G_N_ELEMENTS(states); i++) {
+    NpFakeSessionRelay *fake = np_fake_session_relay_start(states[i]);
+    GError *err = NULL;
+    g_autoptr(NsShare) d = session_share(NS_UPSTREAM_SESSION_RELAY_OR_DIRECT, 5);
+    g_assert_true(ns_share_resolve(d, &err));
+    g_assert_false(d->targets.session_included);
+    g_assert_cmpstr(d->targets.targets[0], ==, "wss://w1.test");
+    g_autoptr(NsShare) o = session_share(NS_UPSTREAM_SESSION_RELAY_ONLY, 5);
+    g_assert_false(ns_share_resolve(o, &err));
+    g_assert_error(err, NS_ERROR, NS_ERROR_NO_RELAYS);
+    g_assert_nonnull(strstr(err->message,
+                            states[i] ? states[i] : "unsupported"));
+    g_clear_error(&err);
+    np_fake_session_relay_stop(fake);
+  }
+}
+
+/* A forwarding relay: the only target, and its upstream report — not its
+ * OK — is the verdict. */
+static void
+test_session_relay_upstream_verdicts(void)
+{
+  if (s_bus == NULL) {
+    g_test_skip("dbus-daemon not installed: no private bus for the fake session relay");
+    return;
+  }
+  GError *err = NULL;
+  NpFakeSessionRelay *fake = np_fake_session_relay_start("active");
+
+  /* forwarded straight away */
+  const gchar *both[] = { "wss://a.test acked", "wss://b.test acked", NULL };
+  np_fake_session_relay_set_reply(fake, "forwarded", "", both);
+  g_autoptr(NsShare) s = session_share(NS_UPSTREAM_SESSION_RELAY_OR_DIRECT, 5);
+  g_assert_true(ns_share_resolve(s, &err));
+  g_assert_true(s->targets.session_upstream);
+  g_assert_cmpuint(g_strv_length(s->targets.targets), ==, 1);
+  g_assert_cmpstr(s->targets.targets[0], ==, NS_SESSION_RELAY_URL);
+  g_assert_cmpuint(R.reqs->len, ==, 0);   /* no 10002 lookup needed */
+  g_autofree gchar *desc = ns_share_describe_targets(s);
+  g_assert_nonnull(strstr(desc, "forwards to your relays (active)"));
+  g_assert_true(ns_share_build(s, NULL));
+  g_assert_true(ns_share_publish(s, NULL, NULL, &err));
+  g_assert_no_error(err);
+  NsPost *p = g_ptr_array_index(s->posts, 0);
+  g_assert_nonnull(strstr(p->result, "forwarded by the session relay: 2/2 relays accepted"));
+  g_assert_nonnull(strstr(p->result, "wss://b.test: accepted via the session relay"));
+  g_autofree gchar *id = ns_event_id_from_signed_json(p->signed_json);
+  g_autofree gchar *asked = np_fake_session_relay_last_query(fake);
+  g_assert_cmpstr(asked, ==, id);
+  g_assert_cmpuint(published_to(NS_SESSION_RELAY_URL), ==, 1);
+  g_assert_cmpuint(R.published->len, ==, 1);   /* never the write relays */
+
+  /* pending, then a signal settles it as partial: still published */
+  const gchar *pend[] = { "wss://a.test pending", "wss://b.test pending", NULL };
+  np_fake_session_relay_set_reply(fake, "pending", "", pend);
+  np_fake_session_relay_set_followup(fake, "wss://b.test", "failed", "blocked: nope",
+                                     "partial");
+  g_autoptr(NsShare) s2 = session_share(NS_UPSTREAM_SESSION_RELAY_ONLY, 5);
   g_assert_true(ns_share_resolve(s2, &err));
-  g_assert_cmpuint(g_strv_length(s2->targets.targets), ==, 1);
   g_assert_true(ns_share_build(s2, NULL));
   g_assert_true(ns_share_publish(s2, NULL, NULL, &err));
   g_assert_no_error(err);
-  g_assert_cmpuint(R.published->len, ==, 1);
-  g_assert_true(g_str_has_prefix(g_ptr_array_index(R.published, 0), NS_SESSION_RELAY_URL));
+  p = g_ptr_array_index(s2->posts, 0);
+  g_assert_nonnull(strstr(p->result, "partial by the session relay: 0/2"));
+  g_assert_nonnull(strstr(p->result, "wss://b.test: rejected via the session relay (blocked: nope)"));
+
+  /* final without delivery: skipped (not a local account) */
+  np_fake_session_relay_set_followup(fake, NULL, NULL, NULL, NULL);
+  np_fake_session_relay_set_reply(fake, "skipped", "author is not a local account", NULL);
+  g_autoptr(NsShare) s3 = session_share(NS_UPSTREAM_SESSION_RELAY_OR_DIRECT, 5);
+  g_assert_true(ns_share_resolve(s3, &err));
+  g_assert_true(ns_share_build(s3, NULL));
+  g_assert_false(ns_share_publish(s3, NULL, NULL, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_PUBLISH);
+  g_assert_nonnull(strstr(err->message, "skipped: author is not a local account"));
+  g_clear_error(&err);
+
+  /* still unroutable when ok_wait_sec runs out: queued, not failed */
+  np_fake_session_relay_set_reply(fake, "unroutable", "no relay list for the author", NULL);
+  g_autoptr(NsShare) s4 = session_share(NS_UPSTREAM_SESSION_RELAY_OR_DIRECT, 1);
+  g_assert_true(ns_share_resolve(s4, &err));
+  g_assert_true(ns_share_build(s4, NULL));
+  g_assert_false(ns_share_publish(s4, NULL, NULL, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_QUEUED);
+  g_assert_nonnull(strstr(err->message, "unroutable: no relay list for the author"));
+  g_assert_nonnull(strstr(err->message, "sharing again would post it twice"));
+  g_clear_error(&err);
+  g_assert_cmpuint(R.published->len, ==, 1);   /* handed to the session relay once */
+
+  np_fake_session_relay_stop(fake);
 }
 
 static void
@@ -719,11 +863,28 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  /* Never the caller's session bus: a private one for the fake
+   * org.nostr.SessionRelay1, or none at all. */
+  GDBusConnection *session = NULL;
+  if (np_fake_session_relay_bus_available()) {
+    s_bus = g_test_dbus_new(G_TEST_DBUS_NONE);
+    g_test_dbus_up(s_bus);
+    /* Held for the whole run, like a real process holds its bus: GLib's
+     * shared connection is not torn down and rebuilt per share. */
+    session = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+    g_assert_nonnull(session);
+  } else {
+    g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/ns-test-bus", TRUE);
+  }
   K.sk = nostr_key_generate_private();
   K.pk = nostr_key_get_public(K.sk);
   g_test_add_func("/nostr-share/share/url-note-publish", test_url_note_publish);
   g_test_add_func("/nostr-share/share/nip65-verified", test_nip65_verified);
   g_test_add_func("/nostr-share/share/session-relay-rules", test_session_relay_rules);
+  g_test_add_func("/nostr-share/share/session-relay-not-forwarding",
+                  test_session_relay_not_forwarding);
+  g_test_add_func("/nostr-share/share/session-relay-upstream-verdicts",
+                  test_session_relay_upstream_verdicts);
   g_test_add_func("/nostr-share/share/group-only-group-relay", test_group_only_group_relay);
   g_test_add_func("/nostr-share/share/mention", test_mention);
   g_test_add_func("/nostr-share/share/media-imeta-1063", test_media_imeta_and_1063);
@@ -737,5 +898,10 @@ main(int argc, char **argv)
   relays_reset();
   free(K.sk);
   free(K.pk);
+  g_clear_object(&session);
+  if (s_bus != NULL) {
+    g_test_dbus_down(s_bus);
+    g_object_unref(s_bus);
+  }
   return rc;
 }

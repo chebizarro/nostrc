@@ -716,10 +716,250 @@ test_ok_wait_timeout(void)
   fx_teardown(&fx);
 }
 
+/* ---- Scenario: through a forwarding session relay the upstream report,
+ *      not the relay's OK, settles the row (nostrc-t24q) ---- */
+
+#define SESSION_URL "ws://localhost/"
+
+typedef struct {
+  GPtrArray *asked;   /* event ids passed to the upstream query function */
+} QueryRec;
+
+static void
+record_query(NdPublisher *publisher, const gchar *event_id, gpointer user_data)
+{
+  (void)publisher;
+  QueryRec *q = user_data;
+  g_ptr_array_add(q->asked, g_strdup(event_id));
+}
+
+static gchar *
+get_upstream_id(NdStoreDb *db, const gchar *uid)
+{
+  sqlite3_stmt *stmt = NULL;
+  g_assert_true(sqlite3_prepare_v2(nd_store_db_get_handle(db),
+                  "SELECT upstream_event_id FROM events WHERE uid = ?1",
+                  -1, &stmt, NULL) == SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, uid, -1, SQLITE_TRANSIENT);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  const unsigned char *v = sqlite3_column_text(stmt, 0);
+  gchar *out = v ? g_strdup((const gchar *)v) : NULL;
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+static gchar *
+last_log_error_for(NdStoreDb *db, const gchar *uid, const gchar *relay_url)
+{
+  sqlite3_stmt *stmt = NULL;
+  g_assert_true(sqlite3_prepare_v2(nd_store_db_get_handle(db),
+                  "SELECT error FROM publish_log WHERE target_uid = ?1 AND "
+                  "relay_url = ?2 ORDER BY id DESC LIMIT 1",
+                  -1, &stmt, NULL) == SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, uid, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, relay_url, -1, SQLITE_TRANSIENT);
+  gchar *out = NULL;
+  if (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_text(stmt, 0) != NULL)
+    out = g_strdup((const gchar *)sqlite3_column_text(stmt, 0));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+/* Stage @uid, publish it to the (forwarding) session relay and have the
+ * relay OK it: the row is left awaiting the upstream report. */
+static NdRelayTransport *
+publish_via_session(Fx *fx, QueryRec *q, NdUpstreamMode mode, const gchar *uid,
+                    const gchar *event_id)
+{
+  NdRelayTransport *session = nd_relay_transport_new_fixture(SESSION_URL);
+  nd_relay_transport_connect_async(session);
+  nd_publisher_bind_transport(fx->publisher, SESSION_URL, session);
+  nd_publisher_set_upstream_query_func(fx->publisher, record_query, q);
+  nd_publisher_set_upstream(fx->publisher, mode, SESSION_URL);
+
+  insert_calendar_row(fx, uid, "Upstream");
+  GError *err = NULL;
+  g_assert_true(nd_publisher_stage_calendar_put(fx->publisher, uid, &err));
+  g_assert_no_error(err);
+  g_assert_true(nd_publisher_tick(fx->publisher, 2000000000));
+  g_assert_cmpuint(sent_count(session), ==, 1);
+  g_assert_cmpuint(sent_count(fx->r1) + sent_count(fx->r2) + sent_count(fx->r3), ==, 0);
+
+  nd_publisher_record_ok(fx->publisher, SESSION_URL, event_id, TRUE, "");
+  g_autofree gchar *state = get_publish_state(fx->db, uid);
+  g_assert_cmpstr(state, ==, "pending");           /* OK true ≠ published */
+  g_autofree gchar *awaiting = get_upstream_id(fx->db, uid);
+  g_assert_cmpstr(awaiting, ==, event_id);
+  g_assert_cmpuint(q->asked->len, ==, 1);           /* snapshot asked for */
+  g_assert_cmpstr(g_ptr_array_index(q->asked, 0), ==, event_id);
+
+  /* Awaiting rows are not dispatched again. */
+  nd_publisher_tick(fx->publisher, 2000000000 + 3600);
+  g_assert_cmpuint(sent_count(session), ==, 0);
+  return session;
+}
+
+static void
+upstream(NdPublisher *p, const gchar *id, NostrPublishForwardState state,
+         const gchar *detail, const gchar *relay, const gchar *relay_state,
+         const gchar *reason)
+{
+  NostrPublishForwardUpdate u = {
+    .event_id = id, .state = state, .detail = detail ? detail : "",
+    .relay_url = relay, .relay_state = relay_state, .relay_reason = reason,
+  };
+  nd_publisher_record_upstream(p, &u);
+}
+
+static void
+test_upstream_verdicts(void)
+{
+  static const struct {
+    const gchar             *id;
+    NostrPublishForwardState state;
+    const gchar             *want;
+    guint                    notifications;
+  } cases[] = {
+    { "1010101010101010101010101010101010101010101010101010101010101010",
+      NOSTR_PUBLISH_FORWARD_FORWARDED, "published", 0 },
+    { "2020202020202020202020202020202020202020202020202020202020202020",
+      NOSTR_PUBLISH_FORWARD_FAILED, "failed_permanent", 1 },
+    { "3030303030303030303030303030303030303030303030303030303030303030",
+      NOSTR_PUBLISH_FORWARD_SKIPPED, "failed_permanent", 1 },
+    { "4040404040404040404040404040404040404040404040404040404040404040",
+      NOSTR_PUBLISH_FORWARD_UNKNOWN, "failed_permanent", 1 },
+    { "5050505050505050505050505050505050505050505050505050505050505050",
+      NOSTR_PUBLISH_FORWARD_SUPERSEDED, "superseded", 0 },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(cases); i++) {
+    Fx fx = {0};
+    fx_setup(&fx, cases[i].id);
+    QueryRec q = { g_ptr_array_new_with_free_func(g_free) };
+    NdRelayTransport *session = publish_via_session(&fx, &q,
+                                                    ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,
+                                                    "evt-up", cases[i].id);
+    /* In-progress reports and other ids change nothing. */
+    upstream(fx.publisher, cases[i].id, NOSTR_PUBLISH_FORWARD_PENDING, NULL, NULL, NULL, NULL);
+    upstream(fx.publisher, cases[i].id, NOSTR_PUBLISH_FORWARD_UNROUTABLE,
+             "no relay list yet", NULL, NULL, NULL);
+    upstream(fx.publisher, "ffff", NOSTR_PUBLISH_FORWARD_FORWARDED, NULL, NULL, NULL, NULL);
+    g_autofree gchar *mid = get_publish_state(fx.db, "evt-up");
+    g_assert_cmpstr(mid, ==, "pending");
+
+    upstream(fx.publisher, cases[i].id, cases[i].state, "because", NULL, NULL, NULL);
+    g_autofree gchar *end = get_publish_state(fx.db, "evt-up");
+    g_assert_cmpstr(end, ==, cases[i].want);
+    g_assert_cmpuint(fx.notify.count, ==, cases[i].notifications);
+    if (cases[i].notifications)
+      g_assert_nonnull(strstr(fx.notify.last_reason, "because"));
+    /* Settled: a repeated report is a no-op (one notification only). */
+    upstream(fx.publisher, cases[i].id, cases[i].state, "again", NULL, NULL, NULL);
+    g_assert_cmpuint(fx.notify.count, ==, cases[i].notifications);
+
+    nd_relay_transport_unref(session);
+    g_ptr_array_unref(q.asked);
+    fx_teardown(&fx);
+  }
+}
+
+static void
+test_upstream_partial_logs_relays(void)
+{
+  const gchar *id = "6060606060606060606060606060606060606060606060606060606060606060";
+  Fx fx = {0};
+  fx_setup(&fx, id);
+  QueryRec q = { g_ptr_array_new_with_free_func(g_free) };
+  NdRelayTransport *session = publish_via_session(&fx, &q,
+                                                  ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT,
+                                                  "evt-partial", id);
+  upstream(fx.publisher, id, NOSTR_PUBLISH_FORWARD_PENDING, NULL,
+           "wss://up1.test", "acked", "");
+  upstream(fx.publisher, id, NOSTR_PUBLISH_FORWARD_PARTIAL, NULL,
+           "wss://up2.test", "failed", "blocked: not on the allow list");
+  g_autofree gchar *state = get_publish_state(fx.db, "evt-partial");
+  g_assert_cmpstr(state, ==, "published");
+  g_autofree gchar *why = last_log_error_for(fx.db, "evt-partial", "wss://up2.test");
+  g_assert_cmpstr(why, ==, "blocked: not on the allow list");
+  nd_relay_transport_unref(session);
+  g_ptr_array_unref(q.asked);
+  fx_teardown(&fx);
+}
+
+static void
+test_upstream_release_and_hold(void)
+{
+  const gchar *id = "7070707070707070707070707070707070707070707070707070707070707070";
+  Fx fx = {0};
+  fx_setup(&fx, id);
+  QueryRec q = { g_ptr_array_new_with_free_func(g_free) };
+  NdRelayTransport *session = publish_via_session(&fx, &q,
+                                                  ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,
+                                                  "evt-held", id);
+
+  /* session_relay_only, relay stops forwarding: held; the row keeps
+   * waiting and is re-queried when forwarding resumes. */
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_ONLY, NULL);
+  g_assert_true(nd_publisher_is_held(fx.publisher));
+  nd_publisher_tick(fx.publisher, 2000000000 + 7200);
+  g_assert_cmpuint(sent_count(fx.r1) + sent_count(fx.r2) + sent_count(fx.r3) +
+                   sent_count(session), ==, 0);
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_ONLY, SESSION_URL);
+  nd_publisher_resync_upstream(fx.publisher);
+  g_assert_cmpuint(q.asked->len, ==, 2);
+  g_assert_cmpstr(g_ptr_array_index(q.asked, 1), ==, id);
+
+  /* session_relay_or_direct, relay stops forwarding: released to the
+   * home relays with the same signed event. */
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT, NULL);
+  g_assert_cmpuint(nd_publisher_release_upstream(fx.publisher), ==, 1);
+  g_autofree gchar *awaiting = get_upstream_id(fx.db, "evt-held");
+  g_assert_null(awaiting);
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000 + 7200));
+  g_assert_cmpuint(sent_count(session), ==, 0);
+  g_autofree gchar *sent1 = sent_event_id(fx.r1);
+  g_assert_cmpstr(sent1, ==, id);
+  g_assert_cmpuint(sent_count(fx.r2), ==, 1);
+  g_assert_cmpuint(sent_count(fx.r3), ==, 1);
+
+  nd_relay_transport_unref(session);
+  g_ptr_array_unref(q.asked);
+  fx_teardown(&fx);
+}
+
+/* A row staged while the session relay forwarded is not sent to it after
+ * it stopped: it goes to the current (home) targets. */
+static void
+test_upstream_stale_session_target(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx, "8080808080808080808080808080808080808080808080808080808080808080");
+  NdRelayTransport *session = nd_relay_transport_new_fixture(SESSION_URL);
+  nd_relay_transport_connect_async(session);
+  nd_publisher_bind_transport(fx.publisher, SESSION_URL, session);
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT,
+                            SESSION_URL);
+  insert_calendar_row(&fx, "evt-stale", "Staged for the session relay");
+  GError *err = NULL;
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-stale", &err));
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT, NULL);
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000));
+  g_assert_cmpuint(sent_count(session), ==, 0);
+  g_assert_cmpuint(sent_count(fx.r1), ==, 1);
+  nd_relay_transport_unref(session);
+  fx_teardown(&fx);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/nostr-dav/publish/upstream-verdicts", test_upstream_verdicts);
+  g_test_add_func("/nostr-dav/publish/upstream-partial-logs-relays",
+                  test_upstream_partial_logs_relays);
+  g_test_add_func("/nostr-dav/publish/upstream-release-and-hold",
+                  test_upstream_release_and_hold);
+  g_test_add_func("/nostr-dav/publish/upstream-stale-session-target",
+                  test_upstream_stale_session_target);
   g_test_add_func("/nostr-dav/publish/upstream-session-only",
                   test_upstream_session_only);
   g_test_add_func("/nostr-dav/publish/upstream-direct-only-ignores-session",
