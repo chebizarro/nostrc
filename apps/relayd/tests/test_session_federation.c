@@ -678,18 +678,12 @@ static void test_account_probe_does_not_stall(void) {
   g_assert_cmpstr(fs.state, ==, "active");
   nsr_federation_status_clear(&fs);
 
-  /* nostrc-elgy: now that the signer answered, another author's event
-   * signed before that answer is cached without an outbox row; a fresh one
-   * by an unknown key (maybe an account just added) is still queued. */
-  char *old_foreign = offer(fed, mk(&rcpt, 1, "[]", "cached, signed long ago"));
-  g_assert_cmpint(nsr_outbox_event_status(ob, old_foreign, NULL, NULL, NULL), ==, -1);
-  gint64 saved = s_clock;
-  s_clock = (gint64)time(NULL) + 5;
-  char *fresh_foreign = offer(fed, mk(&rcpt, 1, "[]", "signed just now by an unknown key"));
-  s_clock = saved;
-  g_assert_cmpint(nsr_outbox_event_status(ob, fresh_foreign, NULL, NULL, NULL), ==, 0);
-  free(old_foreign);
-  free(fresh_foreign);
+  /* nostrc-elgy: with signer-learned accounts an unknown key's event is
+   * still queued (it may be an account the signer reports later); only an
+   * authoritative federation_accounts skips the row (see /federation/engine). */
+  char *foreign = offer(fed, mk(&rcpt, 1, "[]", "cached, signed long ago"));
+  g_assert_cmpint(nsr_outbox_event_status(ob, foreign, NULL, NULL, NULL), ==, 0);
+  free(foreign);
 
   nsr_federation_free(fed);
   nsr_outbox_close(ob);

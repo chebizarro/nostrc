@@ -85,8 +85,7 @@ struct NsrFederation {
    * when first parked. An answer only decides the events parked before
    * that call started (a newer key may have signed a later event). */
   GHashTable *parked;
-  gint64 last_probe_ok;      /* start (wall s) of the last successful call;
-                              * written under lock (the relay thread reads it) */
+  gint64 last_probe_ok;      /* start (wall s) of the last successful call */
   gint64 next_probe;
   guint probe_failures;
 
@@ -1141,23 +1140,16 @@ void nsr_federation_free(NsrFederation *f) {
 }
 
 /* Relay thread (nostrc-elgy): TRUE when @ev certainly is not a local
- * account's, so caching it costs no outbox row (and no fsync). Either the
- * account list is authoritative (federation_accounts), or the author is
- * not a key org.nostr.Signer ever reported and the event was signed before
- * the signer's last answer -- "the local account is whatever the signer
- * reports". Anything else (no answer yet, a fresh event by an unknown key:
- * maybe an account the user just added) is queued and decided by the
- * engine. Gift wraps are signed by throw-away keys: never decided here. */
-static gboolean provably_foreign(NsrFederation *f, int kind, const char *pk, gint64 created_at) {
-  if (kind == 1059 || !pk) return FALSE;
-  if (f->cfg.n_accounts > 0) return !nsr_fed_config_has_account(&f->cfg, pk);
-  gboolean known = FALSE;
-  g_mutex_lock(&f->lock);
-  for (guint i = 0; i < f->accounts->len && !known; i++)
-    known = g_ascii_strcasecmp(g_ptr_array_index(f->accounts, i), pk) == 0;
-  gint64 answered = f->last_probe_ok;
-  g_mutex_unlock(&f->lock);
-  return !known && answered > 0 && created_at < answered;
+ * account's, so caching it costs no outbox row (and no fsync). Only an
+ * authoritative federation_accounts decides that up front. With accounts
+ * learned from org.nostr.Signer an unknown key may be an account the
+ * signer will report later (the user switches back to it and republishes
+ * old events): those stay queued and the engine decides, as the user's own
+ * events must never be dropped silently. Gift wraps are signed by
+ * throw-away keys: never decided here. */
+static gboolean provably_foreign(NsrFederation *f, int kind, const char *pk) {
+  if (kind == 1059 || !pk || f->cfg.n_accounts == 0) return FALSE;
+  return !nsr_fed_config_has_account(&f->cfg, pk);
 }
 
 int nsr_federation_offer(NsrFederation *f, NostrEvent *ev) {
@@ -1167,7 +1159,7 @@ int nsr_federation_offer(NsrFederation *f, NostrEvent *ev) {
   gboolean hint = kind == 10002 || kind == 10050 || kind == 10009;
   gboolean enqueue = nsr_fed_static_verdict(&f->cfg, kind, tags) == NSR_FED_FORWARD;
   const char *pk = nostr_event_get_pubkey(ev);
-  if (enqueue && provably_foreign(f, kind, pk, nostr_event_get_created_at(ev))) enqueue = FALSE;
+  if (enqueue && provably_foreign(f, kind, pk)) enqueue = FALSE;
   if (!hint && !enqueue) return 0;
   char *id = nostr_event_get_id(ev);
   char *json = nostr_event_serialize(ev);

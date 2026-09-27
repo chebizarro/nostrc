@@ -47,12 +47,11 @@ still reach the network.
    - kinds listed in `federation_local_only_kinds` (relay-side policy);
    - events not authored by a **local account** — caching another
      author's event in the session relay never rebroadcasts it (it is
-     stored and answered `OK true`). When its author is certainly not
-     local — `federation_accounts` is set, or the event was signed before
-     `org.nostr.Signer` last answered and by a key it never reported — it
-     is not queued at all (`unknown`; no outbox write, so bulk cache writes
-     cost no fsync); otherwise it is queued and settles `skipped` once the
-     signer answers. Relay lists (10002 / 10050 / 10009) of anyone are
+     stored and answered `OK true`). With `federation_accounts` set it is
+     not queued at all (`unknown`; no outbox write, so bulk cache writes
+     cost no fsync); with accounts learned from `org.nostr.Signer` it is
+     queued and settles `skipped` once the signer has answered (an unknown
+     key may still turn out to be an account the signer reports later). Relay lists (10002 / 10050 / 10009) of anyone are
      always remembered for routing (without an fsync: they are read back
      from the store if lost). When `federation_accounts`
      is set it is the complete, authoritative list. When it is empty, the
