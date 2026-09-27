@@ -395,6 +395,44 @@ test_sources_and_reachability(void)
   recorder_clear(&rec);
 }
 
+/* A relay CLOSED REQ is terminal for that source, before or after EOSE. */
+static void
+test_closed_is_terminal(void)
+{
+  const gchar *sources[] = { SOURCE_A, SOURCE_B, NULL };
+  g_autoptr(GSettings) settings = fresh_settings(npub_one, sources);
+  GhAccountController *controller = listed_controller(settings);
+  Recorder rec;
+  recorder_init(&rec);
+  GhAccountRelays *relays =
+    gh_account_relays_new(controller, settings, &recorder_transport, &rec);
+  GhRelayScope *scope = scope_at(&rec, 0);
+
+  /* Closed before answering: discovery must not wait on it forever. */
+  gh_relay_scope_eose(scope, SOURCE_A);
+  gh_relay_scope_notice(scope, SOURCE_B, GH_RELAY_NOTICE_CLOSED, NULL, FALSE,
+                        "blocked: not allowed");
+  g_assert_cmpint(gh_account_relays_get_state(relays), ==, GH_ACCOUNT_RELAYS_COMPLETE);
+
+  /* Closed after answering: the admitted list stays, but no source is live. */
+  g_autofree gchar *list = signed_list(SECRET_ONE, 10002, 100, "r",
+                                       "wss://one.test.invalid", NULL, NULL);
+  gh_relay_scope_event(scope, SOURCE_A, list);
+  gh_relay_scope_notice(scope, SOURCE_A, GH_RELAY_NOTICE_CLOSED, NULL, FALSE,
+                        "error: shutting down");
+  g_assert_cmpint(gh_account_relays_get_state(relays), ==, GH_ACCOUNT_RELAYS_UNREACHABLE);
+  assert_strv(gh_account_relays_get_read_relays(relays), "wss://one.test.invalid", NULL);
+
+  /* A reconnect re-issues the REQ; its EOSE makes the source live again. */
+  gh_relay_scope_notice(scope, SOURCE_A, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  gh_relay_scope_eose(scope, SOURCE_A);
+  g_assert_cmpint(gh_account_relays_get_state(relays), ==, GH_ACCOUNT_RELAYS_COMPLETE);
+
+  release(relays);
+  release(controller);
+  recorder_clear(&rec);
+}
+
 static void
 test_newest_wins(void)
 {
@@ -605,6 +643,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-relays/switch-teardown", test_switch_teardown);
   g_test_add_func("/groundhog/account-relays/sources-and-reachability",
                   test_sources_and_reachability);
+  g_test_add_func("/groundhog/account-relays/closed-is-terminal", test_closed_is_terminal);
   g_test_add_func("/groundhog/account-relays/newest-wins", test_newest_wins);
   g_test_add_func("/groundhog/account-relays/dispose-closes", test_dispose_closes);
 #ifdef GROUNDHOG_TEST_WIRE

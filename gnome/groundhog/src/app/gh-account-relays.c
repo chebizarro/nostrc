@@ -171,6 +171,11 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     if (status == SOURCE_PENDING)
       status = SOURCE_FAILED;
     break;
+  case GH_RELAY_NOTICE_CLOSED:
+    /* The relay ended the REQ: no answer or live update will follow unless a
+     * reconnect re-issues it, whose EOSE restores the source. */
+    status = SOURCE_FAILED;
+    break;
   default:
     return;
   }

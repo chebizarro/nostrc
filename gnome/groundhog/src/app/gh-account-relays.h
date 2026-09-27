@@ -10,8 +10,10 @@ typedef enum {
   GH_ACCOUNT_RELAYS_INACTIVE,    /* no active Groundhog account */
   GH_ACCOUNT_RELAYS_NO_SOURCES,  /* discovery-relays has no usable ws(s) URL */
   GH_ACCOUNT_RELAYS_DISCOVERING, /* a source has neither sent EOSE nor failed */
-  GH_ACCOUNT_RELAYS_COMPLETE,    /* every source settled and at least one sent EOSE */
-  GH_ACCOUNT_RELAYS_UNREACHABLE  /* every source failed before EOSE (still retrying) */
+  GH_ACCOUNT_RELAYS_COMPLETE,    /* every source settled; one answered and its REQ is open */
+  GH_ACCOUNT_RELAYS_UNREACHABLE  /* no source has an open, answered REQ: each failed
+                                  * before EOSE or the relay CLOSED it. Admitted
+                                  * lists are kept; a re-issued REQ can recover. */
 } GhAccountRelaysState;
 
 #define GH_TYPE_ACCOUNT_RELAYS (gh_account_relays_get_type())
