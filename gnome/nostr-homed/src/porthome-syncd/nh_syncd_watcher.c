@@ -547,6 +547,9 @@ int nh_syncd_watcher_rescan_unwatched(struct nh_syncd_watcher *w) {
         rc = nh_syncd_rescan_diff_roots(w->state, w->home,
                                         (const char *const *)roots, k,
                                         w->ignore, w->batcher, &st);
+    else
+        fprintf(stderr, "syncd/watcher: fallback rescan: no state baseline "
+                        "— %zu unwatched subtrees not diffed\n", k);
 
     /* Re-promote after the diff so changes made while unwatched were
      * already captured; prune roots that no longer exist. */
