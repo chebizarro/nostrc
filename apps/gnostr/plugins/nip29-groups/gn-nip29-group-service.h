@@ -12,6 +12,15 @@
 
 G_BEGIN_DECLS
 
+#define GN_NIP29_GROUP_SERVICE_ERROR (gn_nip29_group_service_error_quark())
+GQuark gn_nip29_group_service_error_quark(void);
+
+typedef enum {
+  /* nostrc-4gf4: the relay created the group (kind:9007 accepted; it is
+   * tracked) but did not apply the follow-up kind:9002 metadata. */
+  GN_NIP29_GROUP_SERVICE_ERROR_METADATA_NOT_APPLIED,
+} GnNip29GroupServiceError;
+
 #define GN_TYPE_NIP29_GROUP_SERVICE (gn_nip29_group_service_get_type())
 G_DECLARE_FINAL_TYPE(GnNip29GroupService, gn_nip29_group_service, GN, NIP29_GROUP_SERVICE, GObject)
 
@@ -37,6 +46,12 @@ gboolean     gn_nip29_group_service_track_group_reference(GnNip29GroupService *s
                                                           GError             **error);
 void         gn_nip29_group_service_refresh_all       (GnNip29GroupService *self);
 
+/* nostrc-4gf4: signs and publishes kind:9007 (only the `h` tag) to
+ * @relay_url and waits for the relay's OK; the group is then tracked. When
+ * any metadata is given, a kind:9002 edit-metadata with it (and @parent_id
+ * for a subgroup) follows, again waiting for OK. Errors: the 9007 failing
+ * (nothing created), or GN_NIP29_GROUP_SERVICE_ERROR_METADATA_NOT_APPLIED
+ * (created and tracked, metadata missing). */
 void         gn_nip29_group_service_create_group_async (GnNip29GroupService *self,
                                                         const char          *relay_url,
                                                         const char          *group_id,
@@ -44,6 +59,7 @@ void         gn_nip29_group_service_create_group_async (GnNip29GroupService *sel
                                                         const char          *about,
                                                         const char          *picture,
                                                         const char          *banner,
+                                                        const char          *parent_id,
                                                         gboolean             is_private,
                                                         gboolean             is_restricted,
                                                         gboolean             is_hidden,

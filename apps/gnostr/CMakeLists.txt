@@ -1014,6 +1014,29 @@ if (BUILD_TESTING)
     target_link_options(gnostr-test-plugin-raw-relay-api PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
   endif()
   _gnostr_apply_sanitizers(gnostr-test-plugin-raw-relay-api)
+
+  # Plugin publish that completes on the relay's OK (nostrc-4gf4), against
+  # the libwebsockets mock relay from testing/.
+  if (TARGET nostr_testing)
+    add_executable(gnostr-test-plugin-publish-ack
+      tests/test_plugin_publish_ack.c
+      src/gnostr-plugin-api.c)
+    target_compile_features(gnostr-test-plugin-publish-ack PRIVATE c_std_11)
+    target_include_directories(gnostr-test-plugin-publish-ack PRIVATE
+      $<TARGET_PROPERTY:gnostr-test-plugin-raw-relay-api,INCLUDE_DIRECTORIES>)
+    target_link_libraries(gnostr-test-plugin-publish-ack PRIVATE
+      $<TARGET_PROPERTY:gnostr-test-plugin-raw-relay-api,LINK_LIBRARIES> nostr_testing)
+    if (APPLE)
+      target_link_options(gnostr-test-plugin-publish-ack PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
+      target_link_options(gnostr-test-plugin-publish-ack PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+    endif()
+    _gnostr_apply_sanitizers(gnostr-test-plugin-publish-ack)
+    add_test(NAME gnostr-test-plugin-publish-ack COMMAND gnostr-test-plugin-publish-ack)
+    set_tests_properties(gnostr-test-plugin-publish-ack PROPERTIES
+      TIMEOUT 60
+      LABELS "plugin;relay;nip29;gnostr")
+  endif()
   add_test(NAME gnostr-test-plugin-raw-relay-api COMMAND gnostr-test-plugin-raw-relay-api)
   set_tests_properties(gnostr-test-plugin-raw-relay-api PROPERTIES
     TIMEOUT 30

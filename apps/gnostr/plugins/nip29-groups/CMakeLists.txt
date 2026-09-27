@@ -9,6 +9,7 @@ set(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
 set(PLUGIN_SOURCES
     nip29-groups-plugin.c
     gn-nip29-group-service.c
+    gn-nip29-events.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gnostr-plugin-api.c
 
     # GObject models
@@ -85,3 +86,19 @@ install(TARGETS ${PLUGIN_NAME}
 install(FILES ${PLUGIN_NAME}.plugin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/gnostr/plugins/${PLUGIN_NAME}
 )
+
+# nostrc-4gf4: the moderation events the plugin builds (create-group has
+# only `h`; metadata goes in edit-metadata; update-pin-list).
+if(BUILD_TESTING)
+    add_executable(gnostr-test-nip29-events
+        tests/test_nip29_events.c
+        gn-nip29-events.c)
+    target_include_directories(gnostr-test-nip29-events PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_ROOT}/libnostr/include)
+    target_link_libraries(gnostr-test-nip29-events PRIVATE PkgConfig::GLIB PkgConfig::JSON_GLIB)
+    add_test(NAME gnostr-test-nip29-events COMMAND gnostr-test-nip29-events)
+    set_tests_properties(gnostr-test-nip29-events PROPERTIES
+        TIMEOUT 30
+        LABELS "nip29;plugin;unit;gnostr")
+endif()

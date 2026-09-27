@@ -14,6 +14,9 @@ struct _GnNip29AddGroupDialog
   GCancellable        *cancellable;
   gboolean             create_mode;
   gboolean             submitting;
+  /* nostrc-4gf4: the group exists (kind:9007 accepted) but its metadata
+   * was not applied: the button now only closes the dialog. */
+  gboolean             created;
 
   GtkEntry       *relay_entry;
   GtkEntry       *group_id_entry;
@@ -21,6 +24,7 @@ struct _GnNip29AddGroupDialog
   GtkEntry       *about_entry;
   GtkEntry       *picture_entry;
   GtkEntry       *banner_entry;
+  GtkEntry       *parent_entry;
   GtkCheckButton *private_check;
   GtkCheckButton *restricted_check;
   GtkCheckButton *hidden_check;
@@ -103,6 +107,15 @@ on_create_group_done(GObject      *source,
     {
       adw_dialog_close(ADW_DIALOG(self));
     }
+  else if (g_error_matches(error, GN_NIP29_GROUP_SERVICE_ERROR,
+                           GN_NIP29_GROUP_SERVICE_ERROR_METADATA_NOT_APPLIED))
+    {
+      /* Creating again would fail (the id is taken); say what happened. */
+      self->created = TRUE;
+      set_status(self, error->message, TRUE);
+      gtk_button_set_label(self->add_button, "Close");
+      gtk_widget_set_sensitive(GTK_WIDGET(self->add_button), TRUE);
+    }
   else
     {
       set_status(self, error ? error->message : "Failed to create group", TRUE);
@@ -119,6 +132,12 @@ on_add_clicked(GtkButton *button, gpointer user_data)
   (void)button;
   GnNip29AddGroupDialog *self = GN_NIP29_ADD_GROUP_DIALOG(user_data);
 
+  if (self->created)
+    {
+      adw_dialog_close(ADW_DIALOG(self));
+      return;
+    }
+
   const char *relay = gtk_editable_get_text(GTK_EDITABLE(self->relay_entry));
   const char *gid = gtk_editable_get_text(GTK_EDITABLE(self->group_id_entry));
   const char *alias = entry_text_or_null(self->alias_entry);
@@ -130,7 +149,7 @@ on_add_clicked(GtkButton *button, gpointer user_data)
       self->cancellable = g_cancellable_new();
       gtk_button_set_label(self->add_button, "Creating…");
       update_add_sensitivity(self);
-      set_status(self, "Signing and publishing create-group…", FALSE);
+      set_status(self, "Creating the group, then setting its name and settings…", FALSE);
 
       gn_nip29_group_service_create_group_async(
         self->service,
@@ -140,6 +159,7 @@ on_add_clicked(GtkButton *button, gpointer user_data)
         entry_text_or_null(self->about_entry),
         entry_text_or_null(self->picture_entry),
         entry_text_or_null(self->banner_entry),
+        entry_text_or_null(self->parent_entry),
         gtk_check_button_get_active(self->private_check),
         gtk_check_button_get_active(self->restricted_check),
         gtk_check_button_get_active(self->hidden_check),
@@ -246,6 +266,12 @@ gn_nip29_add_group_dialog_init(GnNip29AddGroupDialog *self)
   gtk_entry_set_placeholder_text(self->banner_entry, "Optional banner image URL");
   gtk_box_append(GTK_BOX(self->metadata_section), label_new_heading("Banner"));
   gtk_box_append(GTK_BOX(self->metadata_section), GTK_WIDGET(self->banner_entry));
+
+  self->parent_entry = GTK_ENTRY(gtk_entry_new());
+  gtk_entry_set_placeholder_text(self->parent_entry,
+                                 "Optional: id of the parent group on this relay");
+  gtk_box_append(GTK_BOX(self->metadata_section), label_new_heading("Parent group"));
+  gtk_box_append(GTK_BOX(self->metadata_section), GTK_WIDGET(self->parent_entry));
 
   self->private_check = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("Private (members only can read)"));
   self->restricted_check = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("Restricted (members only can write)"));

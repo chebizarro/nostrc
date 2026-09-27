@@ -3,6 +3,7 @@
  */
 
 #include "gn-nip29-group-service.h"
+#include "gn-nip29-events.h"
 
 #include <json-glib/json-glib.h>
 #include <nip29.h>
@@ -113,6 +114,7 @@ typedef struct
   gchar     *about;
   gchar     *picture;
   gchar     *banner;
+  gchar     *parent;
   gchar     *invite_code;
   gchar     *reason;
   gchar     *content;
@@ -150,6 +152,7 @@ enum
 static guint signals[N_SIGNALS];
 
 G_DEFINE_TYPE(GnNip29GroupService, gn_nip29_group_service, G_TYPE_OBJECT)
+G_DEFINE_QUARK(gn-nip29-group-service-error-quark, gn_nip29_group_service_error)
 
 static void group_state_refresh(GroupState *state, GnNip29GroupService *self);
 static gchar *make_group_key(const char *relay_url, const char *group_id);
@@ -255,6 +258,7 @@ action_data_free(ActionData *data)
   g_free(data->about);
   g_free(data->picture);
   g_free(data->banner);
+  g_free(data->parent);
   g_free(data->invite_code);
   g_free(data->reason);
   g_free(data->content);
@@ -713,15 +717,6 @@ parse_event_json(const char *event_json)
 }
 
 static void
-json_add_tag1(JsonBuilder *builder,
-              const char  *name)
-{
-  json_builder_begin_array(builder);
-  json_builder_add_string_value(builder, name);
-  json_builder_end_array(builder);
-}
-
-static void
 json_add_tag2(JsonBuilder *builder,
               const char  *name,
               const char  *value)
@@ -778,9 +773,6 @@ build_action_event_json(GnNip29GroupService *self,
 
   switch (data->kind)
     {
-    case ACTION_CREATE_GROUP:
-      event_kind = NOSTR_KIND_SIMPLE_GROUP_CREATE_GROUP;
-      break;
     case ACTION_JOIN_GROUP:
       event_kind = NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST;
       content = data->reason ? data->reason : "";
@@ -814,32 +806,10 @@ build_action_event_json(GnNip29GroupService *self,
 
   json_add_tag2(builder, "h", data->group_id);
 
-  if (data->kind == ACTION_CREATE_GROUP)
-    {
-      if (data->name != NULL && data->name[0] != '\0')
-        json_add_tag2(builder, "name", data->name);
-      if (data->about != NULL && data->about[0] != '\0')
-        json_add_tag2(builder, "about", data->about);
-      if (data->picture != NULL && data->picture[0] != '\0')
-        json_add_tag2(builder, "picture", data->picture);
-      if (data->banner != NULL && data->banner[0] != '\0')
-        json_add_tag2(builder, "banner", data->banner);
-      if (data->is_private)
-        json_add_tag1(builder, "private");
-      if (data->is_restricted)
-        json_add_tag1(builder, "restricted");
-      if (data->is_hidden)
-        json_add_tag1(builder, "hidden");
-      if (data->is_closed)
-        json_add_tag1(builder, "closed");
-    }
-  else
-    {
-      append_previous_tag(builder, state, self->current_pubkey);
-      if (data->kind == ACTION_JOIN_GROUP &&
-          data->invite_code != NULL && data->invite_code[0] != '\0')
-        json_add_tag2(builder, "code", data->invite_code);
-    }
+  append_previous_tag(builder, state, self->current_pubkey);
+  if (data->kind == ACTION_JOIN_GROUP &&
+      data->invite_code != NULL && data->invite_code[0] != '\0')
+    json_add_tag2(builder, "code", data->invite_code);
 
   json_builder_end_array(builder);
   json_builder_end_object(builder);
@@ -1468,27 +1438,7 @@ on_action_published(GObject      *source,
       return;
     }
 
-  if (data->kind == ACTION_CREATE_GROUP)
-    {
-      const char *alias = (data->name != NULL && data->name[0] != '\0')
-                            ? data->name
-                            : NULL;
-      if (!gn_nip29_group_service_track_group(self,
-                                              data->relay_url,
-                                              data->group_id,
-                                              alias,
-                                              &error))
-        {
-          if (error != NULL)
-            g_task_return_error(task, g_steal_pointer(&error));
-          else
-            g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                                    "Group was created but could not be saved locally");
-          g_object_unref(task);
-          return;
-        }
-    }
-  else if (data->group_key != NULL)
+  if (data->group_key != NULL)
     {
       GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
       if (state != NULL)
@@ -1568,6 +1518,153 @@ start_signed_publish_action(GnNip29GroupService *self,
                                            task);
 }
 
+/* ---- nostrc-4gf4: create-group (kind:9007), then edit-metadata (9002) ----
+ *
+ * NIP-29's moderation table gives kind:9007 no tags besides `h`; name,
+ * about, picture, banner, the access flags and a subgroup's parent are
+ * group-metadata, set with kind:9002. A 9002 for a group the relay has not
+ * created yet is refused, so it is only signed and sent once the relay has
+ * answered OK to the 9007 (gnostr_plugin_context_publish_event_to_relay_ack). */
+
+static GnNip29Metadata
+action_metadata(const ActionData *data)
+{
+  return (GnNip29Metadata){
+    .name = data->name, .about = data->about, .picture = data->picture,
+    .banner = data->banner, .parent = data->parent,
+    .is_private = data->is_private, .is_restricted = data->is_restricted,
+    .is_hidden = data->is_hidden, .is_closed = data->is_closed,
+  };
+}
+
+static void
+create_group_fail(GTask *task, GError *error, const char *fallback)
+{
+  if (error != NULL)
+    g_task_return_error(task, error);
+  else
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", fallback);
+  g_object_unref(task);
+}
+
+/* The metadata step failed after the group was created and tracked. */
+static void
+create_group_metadata_failed(GTask *task, GError *error)
+{
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      create_group_fail(task, error, NULL);
+      return;
+    }
+  g_task_return_new_error(task, GN_NIP29_GROUP_SERVICE_ERROR,
+                          GN_NIP29_GROUP_SERVICE_ERROR_METADATA_NOT_APPLIED,
+                          "The group was created, but its name and settings were not "
+                          "applied: %s",
+                          error != NULL ? error->message : "unknown error");
+  g_clear_error(&error);
+  g_object_unref(task);
+}
+
+static void
+on_create_metadata_acked(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!gnostr_plugin_context_publish_event_to_relay_ack_finish(self->context, result, &error))
+    {
+      create_group_metadata_failed(task, error);
+      return;
+    }
+  GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
+  if (state != NULL)
+    group_state_refresh(state, self);
+  g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void
+on_create_metadata_signed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(self->context, result, &error);
+  if (signed_json == NULL)
+    {
+      create_group_metadata_failed(task, error);
+      return;
+    }
+  gnostr_plugin_context_publish_event_to_relay_ack_async(self->context, signed_json,
+                                                         data->relay_url,
+                                                         g_task_get_cancellable(task),
+                                                         on_create_metadata_acked, task);
+}
+
+static void
+on_create_group_acked(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!gnostr_plugin_context_publish_event_to_relay_ack_finish(self->context, result, &error))
+    {
+      create_group_fail(task, error, "The relay did not create the group");
+      return;
+    }
+
+  /* The group exists now: keep it even if the metadata step fails. */
+  const char *alias = (data->name != NULL && data->name[0] != '\0') ? data->name : NULL;
+  if (!gn_nip29_group_service_track_group(self, data->relay_url, data->group_id, alias, &error))
+    {
+      create_group_fail(task, error, "Group was created but could not be saved locally");
+      return;
+    }
+  data->group_key = make_group_key(data->relay_url, data->group_id);
+
+  GnNip29Metadata md = action_metadata(data);
+  if (gn_nip29_metadata_is_empty(&md))
+    {
+      g_task_return_boolean(task, TRUE);
+      g_object_unref(task);
+      return;
+    }
+  g_autofree gchar *unsigned_json =
+    gn_nip29_build_edit_metadata_json(data->group_id, &md,
+                                      (gint64)(g_get_real_time() / G_USEC_PER_SEC));
+  gnostr_plugin_context_request_sign_event(self->context, unsigned_json,
+                                           g_task_get_cancellable(task),
+                                           on_create_metadata_signed, task);
+}
+
+static void
+on_create_group_signed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(self->context, result, &error);
+  if (signed_json == NULL)
+    {
+      create_group_fail(task, error, "Failed to sign the create-group event");
+      return;
+    }
+  gnostr_plugin_context_publish_event_to_relay_ack_async(self->context, signed_json,
+                                                         data->relay_url,
+                                                         g_task_get_cancellable(task),
+                                                         on_create_group_acked, task);
+}
+
 void
 gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
                                           const char          *relay_url,
@@ -1576,6 +1673,7 @@ gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
                                           const char          *about,
                                           const char          *picture,
                                           const char          *banner,
+                                          const char          *parent_id,
                                           gboolean             is_private,
                                           gboolean             is_restricted,
                                           gboolean             is_hidden,
@@ -1594,22 +1692,35 @@ gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
   data->about = g_strdup(about);
   data->picture = g_strdup(picture);
   data->banner = g_strdup(banner);
+  data->parent = g_strdup(parent_id);
   data->is_private = is_private;
   data->is_restricted = is_restricted;
   data->is_hidden = is_hidden;
   data->is_closed = is_closed;
 
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gn_nip29_group_service_create_group_async);
+  g_task_set_task_data(task, data, (GDestroyNotify)action_data_free);
+
   g_autoptr(GError) error = NULL;
   if (!validate_group_address(relay_url, group_id, &error))
     {
-      GTask *task = g_task_new(self, cancellable, callback, user_data);
-      g_task_set_task_data(task, data, (GDestroyNotify)action_data_free);
       g_task_return_error(task, g_steal_pointer(&error));
       g_object_unref(task);
       return;
     }
+  if (self->context == NULL || self->shutting_down)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CLOSED,
+                              "NIP-29 group service is not available");
+      g_object_unref(task);
+      return;
+    }
 
-  start_signed_publish_action(self, data, NULL, cancellable, callback, user_data);
+  g_autofree gchar *unsigned_json =
+    gn_nip29_build_create_group_json(group_id, (gint64)(g_get_real_time() / G_USEC_PER_SEC));
+  gnostr_plugin_context_request_sign_event(self->context, unsigned_json, cancellable,
+                                           on_create_group_signed, task);
 }
 
 gboolean
