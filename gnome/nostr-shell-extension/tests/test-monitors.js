@@ -43,6 +43,7 @@ function ok(cond, what, extra = '') {
     }
 }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const skip = (what, reason) => print(`ok ${++count} - ${what} # SKIP ${reason}`);
 
 function waitFor(pred, what, ms = 5000) {
     const ctx = GLib.MainContext.default();

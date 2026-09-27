@@ -65,6 +65,9 @@ typedef struct
   gchar        *group_id;
   gchar        *alias;
   gint64        last_opened;
+  /* NIP-29 "?invite=<code>" from the reference the group was tracked with;
+   * sent as the kind:9021 `code` tag. Memory only: never persisted. */
+  gchar        *invite_code;
 
   nostr_group_t *group;
 
@@ -109,6 +112,7 @@ typedef struct
   gchar     *name;
   gchar     *about;
   gchar     *picture;
+  gchar     *banner;
   gchar     *invite_code;
   gchar     *reason;
   gchar     *content;
@@ -189,6 +193,7 @@ group_state_free(GroupState *state)
   g_free(state->relay_url);
   g_free(state->group_id);
   g_free(state->alias);
+  g_free(state->invite_code);
   if (state->group != NULL)
     nostr_free_group(state->group);
   g_clear_pointer(&state->messages, g_ptr_array_unref);
@@ -249,6 +254,7 @@ action_data_free(ActionData *data)
   g_free(data->name);
   g_free(data->about);
   g_free(data->picture);
+  g_free(data->banner);
   g_free(data->invite_code);
   g_free(data->reason);
   g_free(data->content);
@@ -816,6 +822,8 @@ build_action_event_json(GnNip29GroupService *self,
         json_add_tag2(builder, "about", data->about);
       if (data->picture != NULL && data->picture[0] != '\0')
         json_add_tag2(builder, "picture", data->picture);
+      if (data->banner != NULL && data->banner[0] != '\0')
+        json_add_tag2(builder, "banner", data->banner);
       if (data->is_private)
         json_add_tag1(builder, "private");
       if (data->is_restricted)
@@ -885,6 +893,8 @@ merge_snapshot_event(GroupState *state,
       return nostr_group_merge_in_members_event(state->group, event);
     case NOSTR_KIND_SIMPLE_GROUP_ROLES:
       return nostr_group_merge_in_roles_event(state->group, event);
+    case NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS:
+      return nostr_group_merge_in_pins_event(state->group, event);
     default:
       return FALSE;
     }
@@ -1150,6 +1160,7 @@ group_state_refresh(GroupState *state,
     NOSTR_KIND_SIMPLE_GROUP_ADMINS,
     NOSTR_KIND_SIMPLE_GROUP_MEMBERS,
     NOSTR_KIND_SIMPLE_GROUP_ROLES,
+    NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS,
   };
   const int message_kinds[] = {
     NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE,
@@ -1396,6 +1407,42 @@ gn_nip29_group_service_track_group(GnNip29GroupService *self,
   return TRUE;
 }
 
+gboolean
+gn_nip29_group_service_track_group_reference(GnNip29GroupService *self,
+                                             const char          *reference,
+                                             const char          *alias,
+                                             GError             **error)
+{
+  g_return_val_if_fail(GN_IS_NIP29_GROUP_SERVICE(self), FALSE);
+
+  g_autofree gchar *trimmed = g_strstrip(g_strdup(reference ? reference : ""));
+  nostr_group_address_t address = {0};
+  char *invite_code = NULL;
+  if (!nostr_group_reference_parse(trimmed, &address, &invite_code))
+    {
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                  "Not a NIP-29 group reference (expected naddr1… of a kind 39000 "
+                  "with a relay hint, or relay'group-id): %s", trimmed);
+      return FALSE;
+    }
+
+  gboolean ok = gn_nip29_group_service_track_group(self, address.relay, address.id,
+                                                   alias, error);
+  if (ok && invite_code != NULL)
+    {
+      g_autofree gchar *key = make_group_key(address.relay, address.id);
+      GroupState *state = g_hash_table_lookup(self->groups, key);
+      if (state != NULL)
+        {
+          g_free(state->invite_code);
+          state->invite_code = g_strdup(invite_code);
+        }
+    }
+  nostr_group_address_clear(&address);
+  free(invite_code);
+  return ok;
+}
+
 static void
 on_action_published(GObject      *source,
                     GAsyncResult *result,
@@ -1528,6 +1575,7 @@ gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
                                           const char          *name,
                                           const char          *about,
                                           const char          *picture,
+                                          const char          *banner,
                                           gboolean             is_private,
                                           gboolean             is_restricted,
                                           gboolean             is_hidden,
@@ -1545,6 +1593,7 @@ gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
   data->name = g_strdup(name);
   data->about = g_strdup(about);
   data->picture = g_strdup(picture);
+  data->banner = g_strdup(banner);
   data->is_private = is_private;
   data->is_restricted = is_restricted;
   data->is_hidden = is_hidden;
@@ -1612,7 +1661,10 @@ start_group_key_action(GnNip29GroupService *self,
   data->relay_url = g_strdup(state->relay_url);
   data->group_id = g_strdup(state->group_id);
   data->group_key = g_strdup(state->key);
-  data->invite_code = g_strdup(invite_code);
+  /* An explicit code wins; otherwise use the one from the ?invite= suffix. */
+  data->invite_code = g_strdup((invite_code != NULL && invite_code[0] != '\0')
+                                 ? invite_code
+                                 : (action_kind == ACTION_JOIN_GROUP ? state->invite_code : NULL));
   data->reason = g_strdup(reason);
   data->content = g_strdup(content);
 

@@ -64,7 +64,9 @@ snapshot_group_item(GnNip29GroupService *service, const char *key)
     key, relay_url, group_id, alias,
     nip29 ? nip29->name : NULL,
     nip29 ? nip29->picture : NULL,
+    nip29 ? nip29->banner : NULL,
     nip29 ? nip29->about : NULL,
+    nip29 ? nip29->parent : NULL,
     nip29 ? nip29->is_private : FALSE,
     nip29 ? nip29->is_restricted : FALSE,
     nip29 ? nip29->is_hidden : FALSE,
@@ -75,6 +77,7 @@ snapshot_group_item(GnNip29GroupService *service, const char *key)
     nip29 ? nip29->roles_loaded : FALSE,
     nip29 ? (guint)nip29->admins_len : 0,
     nip29 ? (guint)nip29->members_len : 0,
+    nip29 ? (guint)nip29->pins_len : 0,
     msg_count);
 }
 

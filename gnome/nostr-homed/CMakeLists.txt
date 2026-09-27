@@ -1294,27 +1294,18 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
       LABELS "nostr-homed;smb" TIMEOUT 30
       ENVIRONMENT "SMB_RECONCILE_PROBE=$<TARGET_FILE:smb_reconcile_probe>")
 
-    # `testparm -s` the shipped standalone smb.conf sample.  Skipped
-    # (exit 77) when the samba-common package is missing so a plain
-    # dev workstation without Samba installed doesn't red-line the
-    # test suite; the aarch64 lab (`scripts/vm-linux-ci.sh`) installs
-    # `samba-common` explicitly and turns this into a hard gate.
+    # `testparm -s` the shipped standalone smb.conf sample (nostrc-bvka):
+    # hermetic temp copy always, pristine packaged paths too when they
+    # are installed and visible. Skips (exit 77) without testparm; the
+    # aarch64 lab (`scripts/vm-linux-ci.sh`) installs samba-common-bin
+    # and turns this into a hard gate.
     find_program(TESTPARM_EXECUTABLE testparm)
-    if(TESTPARM_EXECUTABLE)
-      add_test(NAME homed_smb_conf_standalone_testparm
-        COMMAND ${TESTPARM_EXECUTABLE} -s
-                ${CMAKE_CURRENT_SOURCE_DIR}/config/smb.conf.standalone.sample)
-      set_tests_properties(homed_smb_conf_standalone_testparm PROPERTIES
-        LABELS "nostr-homed;smb" TIMEOUT 15)
-    else()
-      # Emit a SKIP-shaped test so `ctest -L smb` records the gap.
-      add_test(NAME homed_smb_conf_standalone_testparm
-        COMMAND ${CMAKE_COMMAND} -E echo
-          "SKIP: testparm not on PATH; install samba-common to enable")
-      set_tests_properties(homed_smb_conf_standalone_testparm PROPERTIES
-        LABELS "nostr-homed;smb" TIMEOUT 5
-        SKIP_REGULAR_EXPRESSION "^SKIP: ")
-    endif()
+    add_test(NAME homed_smb_conf_standalone_testparm
+      COMMAND bash
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_smb_conf_standalone_testparm.sh)
+    set_tests_properties(homed_smb_conf_standalone_testparm PROPERTIES
+      LABELS "nostr-homed;smb" TIMEOUT 15 SKIP_RETURN_CODE 77
+      ENVIRONMENT "TESTPARM=$<$<BOOL:${TESTPARM_EXECUTABLE}>:${TESTPARM_EXECUTABLE}>")
   endif()
 endif()
 

@@ -165,7 +165,9 @@ gboolean nostr_nwc_uri_build_g(const gchar *wallet_pubkey_hex,
  * @methods_count: Number of methods
  * @encryptions: (array length=enc_count): Supported encryption schemes
  * @enc_count: Number of encryption schemes
- * @notifications: Whether notifications are supported
+ * @notification_types: (array length=notif_count) (nullable): Notification
+ *   types sent (e.g. "payment_received"), or %NULL
+ * @notif_count: Number of notification types
  * @out_event_json: (out): Location for the Info event JSON
  * @error: Return location for error or %NULL
  *
@@ -179,7 +181,8 @@ gboolean nostr_nwc_info_build_g(const gchar *pubkey,
                                 gsize methods_count,
                                 const gchar *const *encryptions,
                                 gsize enc_count,
-                                gboolean notifications,
+                                const gchar *const *notification_types,
+                                gsize notif_count,
                                 gchar **out_event_json,
                                 GError **error);
 
@@ -190,7 +193,9 @@ gboolean nostr_nwc_info_build_g(const gchar *pubkey,
  * @out_methods_count: (out) (optional): Number of methods
  * @out_encryptions: (out) (optional) (array zero-terminated=1): Encryptions
  * @out_enc_count: (out) (optional): Number of encryptions
- * @out_notifications: (out) (optional): Notifications support flag
+ * @out_notification_types: (out) (optional) (array zero-terminated=1):
+ *   Notification types
+ * @out_notif_count: (out) (optional): Number of notification types
  * @error: Return location for error or %NULL
  *
  * Parses a NIP-47 Info event (kind 13194).
@@ -202,7 +207,8 @@ gboolean nostr_nwc_info_parse_g(const gchar *event_json,
                                 gsize *out_methods_count,
                                 gchar ***out_encryptions,
                                 gsize *out_enc_count,
-                                gboolean *out_notifications,
+                                gchar ***out_notification_types,
+                                gsize *out_notif_count,
                                 GError **error);
 
 /* Request/Response Parsing */

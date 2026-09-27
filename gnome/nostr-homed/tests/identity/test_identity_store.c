@@ -37,6 +37,45 @@ static void sql_expect_failure(const char *path, const char *sql) {
   sqlite3_close(db);
 }
 
+static void sql_exec_ok(const char *path, const char *sql) {
+  sqlite3 *db = NULL;
+  NH_CHECK(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
+  NH_CHECK(sqlite3_exec(db, sql, NULL, NULL, NULL) == SQLITE_OK);
+  sqlite3_close(db);
+}
+
+static int providers_has_column(const char *path, const char *column) {
+  sqlite3 *db = NULL;
+  sqlite3_stmt *stmt = NULL;
+  int count = -1;
+  NH_CHECK(sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK);
+  NH_CHECK(sqlite3_prepare_v2(db,
+    "SELECT count(*) FROM pragma_table_info('providers') WHERE name=?1",
+    -1, &stmt, NULL) == SQLITE_OK);
+  NH_CHECK(sqlite3_bind_text(stmt, 1, column, -1, SQLITE_STATIC) == SQLITE_OK);
+  NH_CHECK(sqlite3_step(stmt) == SQLITE_ROW);
+  count = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  sqlite3_close(db);
+  return count;
+}
+
+/* Reopen an existing authority and require it to come up at the current
+ * schema version with the enrolled account intact. */
+static void expect_upgraded(nh_identity_store_options *options, const char *db_path) {
+  nh_identity_store *store = NULL;
+  nh_identity_store_info info;
+  nh_identity_account account;
+  NH_CHECK(nh_identity_store_open(options, &store) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_store_get_info(store, &info) == NH_IDENTITY_OK);
+  NH_CHECK(info.schema_version == NH_IDENTITY_AUTHORITY_SCHEMA_VERSION);
+  NH_CHECK(nh_identity_store_lookup_by_name(store, "n_bob", &account) == NH_IDENTITY_OK);
+  nh_identity_store_close(store);
+  NH_CHECK(providers_has_column(db_path, "wrapped_home_key") == 1);
+  NH_CHECK(providers_has_column(db_path, "wrap_key_ok_last_outcome") == 1);
+  NH_CHECK(providers_has_column(db_path, "wrap_key_ok_ts") == 1);
+}
+
 static void remove_tree(const char *dir, const char *db, const char *lock) {
   char sidecar[512];
   unlink(db); unlink(lock);
@@ -91,8 +130,10 @@ int main(void) {
   NH_CHECK(nh_identity_store_open(&options, &store) == NH_IDENTITY_OK);
   NH_CHECK(stat(db_path, &st) == 0 && (st.st_mode & 0777) == 0600);
   NH_CHECK(nh_identity_store_get_info(store, &initial_info) == NH_IDENTITY_OK);
-  /* Schema v2 (bead nostrc-pvha) added providers.wrapped_home_key. */
-  NH_CHECK(initial_info.schema_version == 2 && initial_info.authority_generation == 1);
+  /* A fresh authority is created at the current schema (v2 nostrc-pvha
+   * wrapped_home_key, v3 nostrc-2mri wrap-key skip cache). */
+  NH_CHECK(initial_info.schema_version == NH_IDENTITY_AUTHORITY_SCHEMA_VERSION &&
+           initial_info.authority_generation == 1);
   NH_CHECK(nh_identity_store_open(&options, &second) == NH_IDENTITY_BUSY);
   NH_CHECK(second == NULL);
 
@@ -291,21 +332,42 @@ int main(void) {
   sql_expect_failure(db_path, "UPDATE accounts SET home='/tmp/takeover' WHERE username='n_bob'");
   sql_expect_failure(db_path, "DELETE FROM accounts WHERE username='n_bob'");
 
+  options.flags = 0;
+  /* In-place migrations. Rewind the file to a real v1 layout (drop the
+   * columns v2 and v3 added) and to a real v2 layout, and require each to
+   * upgrade to the current version on open. Then rewind only user_version
+   * with the columns still present, covering the "column already there"
+   * branches that make a partially-applied upgrade recoverable. */
+  sql_exec_ok(db_path,
+    "ALTER TABLE providers DROP COLUMN wrap_key_ok_ts;"
+    "ALTER TABLE providers DROP COLUMN wrap_key_ok_last_outcome;"
+    "ALTER TABLE providers DROP COLUMN wrapped_home_key;"
+    "PRAGMA user_version=1;");
+  NH_CHECK(providers_has_column(db_path, "wrapped_home_key") == 0);
+  expect_upgraded(&options, db_path);
+  sql_exec_ok(db_path,
+    "ALTER TABLE providers DROP COLUMN wrap_key_ok_ts;"
+    "ALTER TABLE providers DROP COLUMN wrap_key_ok_last_outcome;"
+    "PRAGMA user_version=2;");
+  NH_CHECK(providers_has_column(db_path, "wrap_key_ok_ts") == 0);
+  expect_upgraded(&options, db_path);
+  sql_exec_ok(db_path, "PRAGMA user_version=2");
+  expect_upgraded(&options, db_path);
+  sql_exec_ok(db_path, "PRAGMA user_version=1");
+  expect_upgraded(&options, db_path);
+
   {
-    /* Bumped to v3 (bead nostrc-pvha): v2 is the current schema, so a
-     * future/unknown version must still be refused. */
-    sqlite3 *db = NULL;
-    NH_CHECK(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
-    NH_CHECK(sqlite3_exec(db, "PRAGMA user_version=3", NULL, NULL, NULL) == SQLITE_OK);
-    sqlite3_close(db);
-    options.flags = 0;
+    /* A version newer than this build knows must be refused, not opened. */
+    char future[64];
+    snprintf(future, sizeof(future), "PRAGMA user_version=%u",
+             NH_IDENTITY_AUTHORITY_SCHEMA_VERSION + 1u);
+    sql_exec_ok(db_path, future);
     NH_CHECK(nh_identity_store_open(&options, &store) == NH_IDENTITY_SCHEMA_UNSUPPORTED);
     NH_CHECK(store == NULL);
-    /* v1 with an intact metadata row now MIGRATES to v2 on open (bead
-     * nostrc-pvha); we probe that in the sibling v1-to-v2 test above.
-     * The residual assertion here is that a v1 DB with a broken
-     * metadata table (authority_id row missing) still fails cleanly
-     * during the post-migration get_info step. */
+    /* A v1 DB still migrates on open (above); one with a broken metadata
+     * table (authority_id row missing) must fail cleanly during the
+     * post-migration get_info step. */
+    sqlite3 *db = NULL;
     NH_CHECK(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
     NH_CHECK(sqlite3_exec(db, "PRAGMA user_version=1;DELETE FROM metadata WHERE key='authority_id'",
                         NULL, NULL, NULL) == SQLITE_OK);

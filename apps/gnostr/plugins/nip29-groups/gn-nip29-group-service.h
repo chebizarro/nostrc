@@ -29,6 +29,12 @@ gboolean     gn_nip29_group_service_track_group       (GnNip29GroupService *self
                                                        const char          *group_id,
                                                        const char          *alias,
                                                        GError             **error);
+/* Track from a pasted naddr1…[?invite=code] or relay'id[?invite=code]; the
+ * invite code is used by the next join request that doesn't supply one. */
+gboolean     gn_nip29_group_service_track_group_reference(GnNip29GroupService *self,
+                                                          const char          *reference,
+                                                          const char          *alias,
+                                                          GError             **error);
 void         gn_nip29_group_service_refresh_all       (GnNip29GroupService *self);
 
 void         gn_nip29_group_service_create_group_async (GnNip29GroupService *self,
@@ -37,6 +43,7 @@ void         gn_nip29_group_service_create_group_async (GnNip29GroupService *sel
                                                         const char          *name,
                                                         const char          *about,
                                                         const char          *picture,
+                                                        const char          *banner,
                                                         gboolean             is_private,
                                                         gboolean             is_restricted,
                                                         gboolean             is_hidden,

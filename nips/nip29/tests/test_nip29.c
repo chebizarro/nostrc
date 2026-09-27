@@ -9,6 +9,7 @@
 
 #include "nip29.h"
 #include "nostr-kinds.h"
+#include "nostr/nip19/nip19.h"
 
 static void add_tag(NostrEvent *event, NostrTag *tag) {
     NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
@@ -111,6 +112,7 @@ static void test_permission_conversions(void) {
     assert(nostr_permission_from_string("create-group") == NOSTR_PERMISSION_CREATE_GROUP);
     assert(nostr_permission_from_string("delete-group") == NOSTR_PERMISSION_DELETE_GROUP);
     assert(nostr_permission_from_string("create-invite") == NOSTR_PERMISSION_CREATE_INVITE);
+    assert(nostr_permission_from_string("update-pin-list") == NOSTR_PERMISSION_UPDATE_PIN_LIST);
     assert(nostr_permission_from_string("add-permission") == NOSTR_PERMISSION_UNKNOWN);
     assert(nostr_permission_from_string("remove-permission") == NOSTR_PERMISSION_UNKNOWN);
     assert(nostr_permission_from_string("edit-group-status") == NOSTR_PERMISSION_UNKNOWN);
@@ -118,6 +120,7 @@ static void test_permission_conversions(void) {
 
     assert(strcmp(nostr_permission_to_string(NOSTR_PERMISSION_PUT_USER), "put-user") == 0);
     assert(strcmp(nostr_permission_to_string(NOSTR_PERMISSION_CREATE_INVITE), "create-invite") == 0);
+    assert(strcmp(nostr_permission_to_string(NOSTR_PERMISSION_UPDATE_PIN_LIST), "update-pin-list") == 0);
     assert(nostr_permission_to_string(NOSTR_PERMISSION_UNKNOWN) == NULL);
 }
 
@@ -351,6 +354,227 @@ static void test_wrong_kind_rejected(void) {
     nostr_free_group(group);
 }
 
+#define HEX_A "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+#define HEX_B "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+#define HEX_C "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+static size_t count_tags(const NostrEvent *event, const char *key) {
+    size_t n = 0;
+    const NostrTags *tags = (const NostrTags *)nostr_event_get_tags(event);
+    for (size_t i = 0; tags && i < nostr_tags_size(tags); ++i) {
+        const char *tag_key = nostr_tag_get_key(nostr_tags_get(tags, i));
+        if (tag_key && strcmp(tag_key, key) == 0) n++;
+    }
+    return n;
+}
+
+/* da1629e: `banner` on kind:39000. */
+static void test_metadata_banner_round_trip(void) {
+    nostr_group_t *group = nostr_new_group("wss://relay.example.com'pizza");
+    NostrEvent *event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_METADATA, 10, "pizza");
+    add_tag(event, nostr_tag_new("picture", "https://pizza.com/pizza.png", NULL));
+    add_tag(event, nostr_tag_new("banner", "https://pizza.com/banner.png", NULL));
+    assert(nostr_group_merge_in_metadata_event(group, event));
+    nostr_event_free(event);
+    assert(strcmp(group->banner, "https://pizza.com/banner.png") == 0);
+    assert(strcmp(group->picture, "https://pizza.com/pizza.png") == 0);
+
+    NostrEvent *out = nostr_group_to_metadata_event(group);
+    NostrTag *banner = first_tag(out, "banner");
+    assert(banner && strcmp(nostr_tag_get(banner, 1), "https://pizza.com/banner.png") == 0);
+    nostr_event_free(out);
+
+    /* A later snapshot without banner clears it (snapshot, not patch). */
+    event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_METADATA, 20, "pizza");
+    assert(nostr_group_merge_in_metadata_event(group, event));
+    nostr_event_free(event);
+    assert(group->banner == NULL);
+    out = nostr_group_to_metadata_event(group);
+    assert(!event_has_tag_key(out, "banner"));
+    nostr_event_free(out);
+    nostr_free_group(group);
+}
+
+/* 223ddb3: subgroups — `parent` / ordered `child` tags on kind:39000. */
+static void test_metadata_subgroups(void) {
+    nostr_group_t *group = nostr_new_group("wss://relay.example.com'nostr");
+    assert(nostr_group_is_root(group));
+
+    NostrEvent *event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_METADATA, 10, "nostr");
+    add_tag(event, nostr_tag_new("parent", "tech", NULL));
+    add_tag(event, nostr_tag_new("parent", "social", NULL));   /* only one allowed: first wins */
+    add_tag(event, nostr_tag_new("child", "nip29", NULL));
+    add_tag(event, nostr_tag_new("child", "nostr", NULL));     /* self-reference dropped */
+    add_tag(event, nostr_tag_new("child", "Bad Id", NULL));    /* invalid id dropped */
+    add_tag(event, nostr_tag_new("child", "blossom", NULL));
+    add_tag(event, nostr_tag_new("child", "nip29", NULL));     /* duplicate dropped */
+    add_tag(event, nostr_tag_new("child", "", NULL));
+    assert(nostr_group_merge_in_metadata_event(group, event));
+    nostr_event_free(event);
+
+    assert(!nostr_group_is_root(group));
+    assert(strcmp(group->parent, "tech") == 0);
+    assert(group->children_len == 2);
+    assert(strcmp(group->children[0], "nip29") == 0);
+    assert(strcmp(group->children[1], "blossom") == 0);
+
+    NostrEvent *out = nostr_group_to_metadata_event(group);
+    assert(count_tags(out, "parent") == 1);
+    assert(count_tags(out, "child") == 2);
+    /* Order is the display order and must survive serialization. */
+    const NostrTags *tags = (const NostrTags *)nostr_event_get_tags(out);
+    const char *seen[2] = {NULL, NULL};
+    size_t k = 0;
+    for (size_t i = 0; i < nostr_tags_size(tags); ++i) {
+        const NostrTag *tag = nostr_tags_get(tags, i);
+        if (strcmp(nostr_tag_get_key(tag), "child") == 0) seen[k++] = nostr_tag_get(tag, 1);
+    }
+    assert(strcmp(seen[0], "nip29") == 0 && strcmp(seen[1], "blossom") == 0);
+    nostr_event_free(out);
+
+    /* Self-parent is a cycle: treated as no parent (root). Promotion to root
+     * is a snapshot without `parent`. */
+    event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_METADATA, 20, "nostr");
+    add_tag(event, nostr_tag_new("parent", "nostr", NULL));
+    assert(nostr_group_merge_in_metadata_event(group, event));
+    nostr_event_free(event);
+    assert(nostr_group_is_root(group));
+    assert(group->children_len == 0 && group->children == NULL);
+    nostr_free_group(group);
+}
+
+/* f19d0e3 + bdfa7e6: kind:39005 pinned events with `e` and `a` tags. */
+static void test_pins_merge_and_output(void) {
+    nostr_group_t *group = nostr_new_group("wss://relay.example.com'pizza");
+    assert(!group->pins_loaded && group->pins_len == 0);
+
+    NostrEvent *event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS, 10, "pizza");
+    add_tag(event, nostr_tag_new("e", HEX_A, NULL));
+    add_tag(event, nostr_tag_new("a", "30023:" HEX_B ":my-article", NULL));
+    add_tag(event, nostr_tag_new("e", HEX_C, NULL));
+    add_tag(event, nostr_tag_new("a", "31922:" HEX_B ":", NULL));          /* empty d is legal */
+    add_tag(event, nostr_tag_new("a", "30023:" HEX_B ":a:b", NULL));      /* d may contain ':' */
+    add_tag(event, nostr_tag_new("e", HEX_A, NULL));                      /* duplicate */
+    add_tag(event, nostr_tag_new("e", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", NULL));
+    add_tag(event, nostr_tag_new("e", "abc", NULL));
+    add_tag(event, nostr_tag_new("a", "x:" HEX_B ":d", NULL));
+    add_tag(event, nostr_tag_new("a", "30023:" HEX_B, NULL));             /* missing d separator */
+    add_tag(event, nostr_tag_new("a", "999999:" HEX_B ":d", NULL));
+    add_tag(event, nostr_tag_new("p", HEX_A, NULL));                      /* not a pin */
+    assert(nostr_group_merge_in_pins_event(group, event));
+    nostr_event_free(event);
+
+    assert(group->pins_loaded);
+    assert(group->pins_len == 5);
+    assert(group->pins[0].type == NOSTR_GROUP_PIN_EVENT && strcmp(group->pins[0].value, HEX_A) == 0);
+    assert(group->pins[1].type == NOSTR_GROUP_PIN_ADDRESS &&
+           strcmp(group->pins[1].value, "30023:" HEX_B ":my-article") == 0);
+    assert(group->pins[2].type == NOSTR_GROUP_PIN_EVENT && strcmp(group->pins[2].value, HEX_C) == 0);
+    assert(group->pins[3].type == NOSTR_GROUP_PIN_ADDRESS);
+    assert(group->pins[4].type == NOSTR_GROUP_PIN_ADDRESS);
+
+    NostrEvent *out = nostr_group_to_pins_event(group);
+    assert(nostr_event_get_kind(out) == NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS);
+    assert(strcmp(nostr_tag_get(first_tag(out, "d"), 1), "pizza") == 0);
+    assert(count_tags(out, "e") == 2 && count_tags(out, "a") == 3);
+    const NostrTags *tags = (const NostrTags *)nostr_event_get_tags(out);
+    assert(strcmp(nostr_tag_get_key(nostr_tags_get(tags, 1)), "e") == 0);
+    assert(strcmp(nostr_tag_get_key(nostr_tags_get(tags, 2)), "a") == 0);
+    assert(strcmp(nostr_tag_get_key(nostr_tags_get(tags, 3)), "e") == 0);
+    nostr_event_free(out);
+
+    /* Stale and foreign-group snapshots are rejected; an empty newer list
+     * clears the pins (unpinning everything is a new, empty list). */
+    event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS, 5, "pizza");
+    assert(!nostr_group_merge_in_pins_event(group, event));
+    nostr_event_free(event);
+    event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS, 50, "other");
+    assert(!nostr_group_merge_in_pins_event(group, event));
+    nostr_event_free(event);
+    event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_METADATA, 50, "pizza");
+    assert(!nostr_group_merge_in_pins_event(group, event));
+    nostr_event_free(event);
+    assert(group->pins_len == 5);
+    event = snapshot_event(NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS, 60, "pizza");
+    assert(nostr_group_merge_in_pins_event(group, event));
+    nostr_event_free(event);
+    assert(group->pins_loaded && group->pins_len == 0 && group->pins == NULL);
+
+    assert(nostr_group_add_pin(group, NOSTR_GROUP_PIN_EVENT, HEX_B) != NULL);
+    assert(nostr_group_add_pin(group, NOSTR_GROUP_PIN_EVENT, HEX_B) == &group->pins[0]);
+    assert(nostr_group_add_pin(group, NOSTR_GROUP_PIN_ADDRESS, HEX_B) == NULL);
+    assert(group->pins_len == 1);
+    nostr_free_group(group);
+}
+
+/* 6834e8b: `naddr1...?invite=<code>` group references. */
+static char *make_group_naddr(int kind, const char *d, const char *relay) {
+    char *relays[1] = {(char *)relay};
+    NostrEntityPointer ptr = {
+        .public_key = HEX_A,
+        .kind = kind,
+        .identifier = (char *)d,
+        .relays = relay ? relays : NULL,
+        .relays_count = relay ? 1 : 0,
+    };
+    char *bech = NULL;
+    assert(nostr_nip19_encode_naddr(&ptr, &bech) == 0 && bech);
+    return bech;
+}
+
+static void test_reference_parse(void) {
+    nostr_group_address_t addr;
+    char *code = (char *)"sentinel";
+
+    assert(nostr_group_reference_parse("wss://relay.example.com'pizza", &addr, &code));
+    assert(strcmp(addr.relay, "wss://relay.example.com") == 0 && strcmp(addr.id, "pizza") == 0);
+    assert(code == NULL);
+    nostr_group_address_clear(&addr);
+
+    /* The relay URL's own query string is not mistaken for the suffix. */
+    assert(nostr_group_reference_parse("wss://relay.example.com/?x=1'pizza?invite=a%2Fb%20c&utm=x",
+                                       &addr, &code));
+    assert(strcmp(addr.relay, "wss://relay.example.com/?x=1") == 0);
+    assert(strcmp(addr.id, "pizza") == 0);
+    assert(code && strcmp(code, "a/b c") == 0);
+    free(code);
+    nostr_group_address_clear(&addr);
+
+    char *naddr = make_group_naddr(NOSTR_KIND_SIMPLE_GROUP_METADATA, "pizza", "wss://groups.example.com");
+    char buf[1024];
+    snprintf(buf, sizeof buf, "nostr:%s?invite=Xy7-Q", naddr);
+    assert(nostr_group_reference_parse(buf, &addr, &code));
+    assert(strcmp(addr.relay, "wss://groups.example.com") == 0 && strcmp(addr.id, "pizza") == 0);
+    assert(code && strcmp(code, "Xy7-Q") == 0);
+    free(code);
+    nostr_group_address_clear(&addr);
+
+    /* Clients that ignore the suffix still see a valid identifier; a NULL
+     * out-pointer is how such callers opt out. */
+    assert(nostr_group_reference_parse(naddr, &addr, NULL));
+    nostr_group_address_clear(&addr);
+    snprintf(buf, sizeof buf, "%s?invite=", naddr);
+    assert(nostr_group_reference_parse(buf, &addr, &code) && code == NULL);
+    nostr_group_address_clear(&addr);
+    snprintf(buf, sizeof buf, "%s?invite=%%zz", naddr);
+    assert(!nostr_group_reference_parse(buf, &addr, &code));
+    assert(addr.relay == NULL && addr.id == NULL && code == NULL);
+    snprintf(buf, sizeof buf, "%s?invite=%%00x", naddr);
+    assert(!nostr_group_reference_parse(buf, &addr, &code));
+    free(naddr);
+
+    naddr = make_group_naddr(30023, "pizza", "wss://groups.example.com");     /* not a group */
+    assert(!nostr_group_reference_parse(naddr, &addr, &code));
+    free(naddr);
+    naddr = make_group_naddr(NOSTR_KIND_SIMPLE_GROUP_METADATA, "pizza", NULL); /* no relay hint */
+    assert(!nostr_group_reference_parse(naddr, &addr, &code));
+    free(naddr);
+
+    assert(!nostr_group_reference_parse("pizza?invite=x", &addr, &code));
+    assert(!nostr_group_reference_parse("naddr1invalid", &addr, &code));
+    assert(!nostr_group_reference_parse(NULL, &addr, &code));
+}
+
 int main(void) {
     test_new_group_valid();
     test_new_group_invalid_addresses();
@@ -363,6 +587,10 @@ int main(void) {
     test_roles_merge_snapshot_and_output();
     test_mutators_mark_snapshots_loaded_and_preserve_null_role_description();
     test_wrong_kind_rejected();
+    test_metadata_banner_round_trip();
+    test_metadata_subgroups();
+    test_pins_merge_and_output();
+    test_reference_parse();
 
     printf("nip29 ok\n");
     return 0;

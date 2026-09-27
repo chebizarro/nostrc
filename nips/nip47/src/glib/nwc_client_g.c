@@ -177,7 +177,8 @@ gboolean nostr_nwc_info_build_g(const gchar *pubkey,
                                 gsize methods_count,
                                 const gchar *const *encryptions,
                                 gsize enc_count,
-                                gboolean notifications,
+                                const gchar *const *notification_types,
+                                gsize notif_count,
                                 gchar **out_event_json,
                                 GError **error) {
   if (!methods || methods_count == 0 || !out_event_json) {
@@ -188,7 +189,8 @@ gboolean nostr_nwc_info_build_g(const gchar *pubkey,
   if (nostr_nwc_info_build(pubkey, (long long)created_at,
                            (const char **)methods, (size_t)methods_count,
                            (const char **)encryptions, (size_t)enc_count,
-                           notifications ? 1 : 0, &json) != 0) {
+                           (const char **)notification_types, (size_t)notif_count,
+                           &json) != 0) {
     g_set_error(error, NOSTR_NWC_ERROR_QUARK, 14, "failed to build Info event");
     return FALSE;
   }
@@ -203,7 +205,8 @@ gboolean nostr_nwc_info_parse_g(const gchar *event_json,
                                 gsize *out_methods_count,
                                 gchar ***out_encryptions,
                                 gsize *out_enc_count,
-                                gboolean *out_notifications,
+                                gchar ***out_notification_types,
+                                gsize *out_notif_count,
                                 GError **error) {
   if (!event_json) {
     g_set_error(error, NOSTR_NWC_ERROR_QUARK, 15, "event_json is NULL");
@@ -213,8 +216,10 @@ gboolean nostr_nwc_info_parse_g(const gchar *event_json,
   size_t methods_n = 0;
   char **encryptions = NULL;
   size_t enc_n = 0;
-  int notifications = 0;
-  if (nostr_nwc_info_parse(event_json, &methods, &methods_n, &encryptions, &enc_n, &notifications) != 0) {
+  char **notifs = NULL;
+  size_t notif_n = 0;
+  if (nostr_nwc_info_parse(event_json, &methods, &methods_n, &encryptions, &enc_n,
+                           &notifs, &notif_n) != 0) {
     g_set_error(error, NOSTR_NWC_ERROR_QUARK, 16, "failed to parse Info event");
     return FALSE;
   }
@@ -248,7 +253,15 @@ gboolean nostr_nwc_info_parse_g(const gchar *event_json,
     free(encryptions);
   }
   if (out_enc_count) *out_enc_count = enc_n;
-  if (out_notifications) *out_notifications = notifications ? TRUE : FALSE;
+
+  if (out_notification_types) {
+    gchar **glib_notifs = g_new0(gchar *, notif_n + 1);
+    for (gsize i = 0; i < notif_n; i++) glib_notifs[i] = g_strdup(notifs[i]);
+    *out_notification_types = glib_notifs;
+  }
+  for (gsize i = 0; i < notif_n; i++) free(notifs[i]);
+  free(notifs);
+  if (out_notif_count) *out_notif_count = notif_n;
   return TRUE;
 }
 
