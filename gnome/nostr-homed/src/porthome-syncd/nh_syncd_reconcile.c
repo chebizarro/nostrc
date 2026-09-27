@@ -49,6 +49,7 @@
 #include "nh_porthome_notify.h"
 
 #include <jansson.h>
+#include <openssl/evp.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -273,33 +274,49 @@ static void hex_of(const uint8_t *b, size_t n, char *out) {
     out[n * 2] = '\0';
 }
 
+/* nostrc-ixra: SHA-256 of an open fd's content (from the current
+ * offset to EOF) through a fixed buffer. Same digest the old slurp +
+ * nh_porthome_sha256 produced, without holding the file in memory — a
+ * 2 GB file used to cost 2 GB of RSS. */
+#define NH_SYNCD_HASH_BUF (1u << 20)
+static int fd_sha256_hex(int fd, char out[65]) {
+    uint8_t *buf = malloc(NH_SYNCD_HASH_BUF);
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    int rc = NH_SYNCD_ERR_CRYPTO;
+    if (!buf || !ctx) { rc = NH_SYNCD_ERR_OOM; goto done; }
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) goto done;
+    for (;;) {
+        ssize_t r = read(fd, buf, NH_SYNCD_HASH_BUF);
+        if (r < 0) { if (errno == EINTR) continue; rc = NH_SYNCD_ERR_IO; goto done; }
+        if (r == 0) break;
+        if (EVP_DigestUpdate(ctx, buf, (size_t)r) != 1) goto done;
+    }
+    uint8_t h[32];
+    unsigned int hl = 0;
+    if (EVP_DigestFinal_ex(ctx, h, &hl) != 1 || hl != 32) goto done;
+    hex_of(h, 32, out);
+    rc = 0;
+done:
+    if (ctx) EVP_MD_CTX_free(ctx);
+    free(buf);
+    return rc;
+}
+
 static int file_content_hash_hex(const char *abs, char out[65], uint64_t *out_size) {
     int fd = open(abs, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return NH_SYNCD_ERR_IO;
     struct stat st;
     if (fstat(fd, &st) < 0) { close(fd); return NH_SYNCD_ERR_IO; }
     if (out_size) *out_size = (uint64_t)st.st_size;
-    /* Slurp — bounded by manifest cap (files this big are rejected by
-     * the pusher too). */
+    /* Bounded by the manifest cap (files this big are rejected by the
+     * pusher too). */
     if ((uint64_t)st.st_size >
         (uint64_t)NH_SYNCD_CHUNK_SIZE * NH_PORTHOME_MAX_CHUNKS_PER_ENTRY) {
         close(fd); return NH_SYNCD_ERR_PATH;
     }
-    uint8_t *buf = malloc((size_t)st.st_size ? (size_t)st.st_size : 1);
-    if (!buf) { close(fd); return NH_SYNCD_ERR_OOM; }
-    size_t off = 0;
-    while (off < (size_t)st.st_size) {
-        ssize_t r = read(fd, buf + off, (size_t)st.st_size - off);
-        if (r < 0) { if (errno == EINTR) continue; free(buf); close(fd); return NH_SYNCD_ERR_IO; }
-        if (r == 0) break;
-        off += (size_t)r;
-    }
+    int rc = fd_sha256_hex(fd, out);
     close(fd);
-    uint8_t h[32];
-    if (nh_porthome_sha256(buf, off, h) != 0) { free(buf); return NH_SYNCD_ERR_CRYPTO; }
-    free(buf);
-    hex_of(h, 32, out);
-    return 0;
+    return rc;
 }
 
 /* ───────────────── path safety (openat rooted) ───────────────────── */
@@ -1224,24 +1241,13 @@ static int rescan_walk(int home_fd, const char *rel_prefix,
             int ffd = openat(home_fd, rel, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
             char chash[65] = {0};
             if (ffd >= 0) {
-                /* Slurp for hash — bounded. */
+                /* Streamed hash (nostrc-ixra) — bounded by the manifest
+                 * cap; on a read error the hash stays "" as before. */
                 struct stat s2;
                 if (fstat(ffd, &s2) == 0 && (uint64_t)s2.st_size <=
-                    (uint64_t)NH_SYNCD_CHUNK_SIZE * NH_PORTHOME_MAX_CHUNKS_PER_ENTRY) {
-                    uint8_t *buf = malloc((size_t)s2.st_size ? (size_t)s2.st_size : 1);
-                    if (buf) {
-                        size_t off = 0;
-                        while (off < (size_t)s2.st_size) {
-                            ssize_t r = read(ffd, buf + off, (size_t)s2.st_size - off);
-                            if (r < 0) { if (errno == EINTR) continue; break; }
-                            if (r == 0) break;
-                            off += (size_t)r;
-                        }
-                        uint8_t hh[32];
-                        if (nh_porthome_sha256(buf, off, hh) == 0) hex_of(hh, 32, chash);
-                        free(buf);
-                    }
-                }
+                    (uint64_t)NH_SYNCD_CHUNK_SIZE * NH_PORTHOME_MAX_CHUNKS_PER_ENTRY &&
+                    fd_sha256_hex(ffd, chash) != 0)
+                    chash[0] = '\0';
                 close(ffd);
             }
             (void)nh_syncd_state_upsert_file_(state, rel, mode, uid, gid, mt,
