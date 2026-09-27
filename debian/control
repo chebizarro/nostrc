@@ -232,7 +232,7 @@ Section: admin
 Architecture: any
 Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, glib-networking
 Suggests: nostr-notify (>= ${source:Version})
 Description: Per-user session-scoped local Nostr relay (Wave 4 / plan §3.2)
  nostrc-session-relay ships the socket-activated per-user relay

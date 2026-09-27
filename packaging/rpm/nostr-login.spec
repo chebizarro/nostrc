@@ -413,6 +413,7 @@ at build time; the wire format and mount policy may change.
 %package -n nostrc-session-relay
 Summary:        Per-user session-scoped local Nostr relay (Wave 4)
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       glib-networking
 Suggests:       nostr-notify%{?_isa} = %{version}-%{release}
 %{?systemd_requires}
 
