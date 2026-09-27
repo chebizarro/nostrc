@@ -1,5 +1,6 @@
 #include "gnostr-timeline-view-app-factory.h"
 #include "gnostr-avatar-cache.h"
+#include "gnostr-publish-gate.h"
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
 #include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
 /* nostrc-hqtn: gnostr-main-window.h moved to gnostr-timeline-action-relay.c */
@@ -1477,9 +1478,11 @@ bind_row_common(NostrGtkTimelineView *self,
       nostr_gtk_note_card_row_set_is_own_note(
         NOSTR_GTK_NOTE_CARD_ROW(row),
         gnostr_timeline_item_view_model_get_action_is_own_note(snapshot_vm));
+      /* nostrc-46h7: read-only mode greys the actions out as well. */
       nostr_gtk_note_card_row_set_logged_in(
         NOSTR_GTK_NOTE_CARD_ROW(row),
-        gnostr_timeline_item_view_model_get_action_logged_in(snapshot_vm));
+        gnostr_publish_gate_effective_logged_in(
+          gnostr_timeline_item_view_model_get_action_logged_in(snapshot_vm)));
       const char *zap_target = gnostr_timeline_item_view_model_get_action_zap_target(snapshot_vm);
       if (looks_like_lud16_or_lnurl(zap_target))
         nostr_gtk_note_card_row_set_author_lud16(NOSTR_GTK_NOTE_CARD_ROW(row), zap_target);
@@ -1502,7 +1505,8 @@ bind_row_common(NostrGtkTimelineView *self,
       /* Also set login state for authentication-required buttons */
       user_pubkey = gnostr_timeline_embed_get_current_user_pubkey_hex();
       gboolean is_logged_in = (user_pubkey != NULL);
-      nostr_gtk_note_card_row_set_logged_in(NOSTR_GTK_NOTE_CARD_ROW(row), is_logged_in);
+      nostr_gtk_note_card_row_set_logged_in(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                            gnostr_publish_gate_effective_logged_in(is_logged_in));
       if (pubkey && strlen(pubkey) == 64 && user_pubkey) {
         gboolean is_own = (g_ascii_strcasecmp(pubkey, user_pubkey) == 0);
         nostr_gtk_note_card_row_set_is_own_note(NOSTR_GTK_NOTE_CARD_ROW(row), is_own);

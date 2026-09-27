@@ -8,16 +8,10 @@
 #define DBUS_PATH "/org/freedesktop/DBus"
 #define DBUS_IFACE "org.freedesktop.DBus"
 
-/* Plain D-Bus daemon calls: they never auto-start the signer (unlike a
- * method call on a proxy for org.nostr.Signer). */
-static GnostrSignerPresence query_presence(GCancellable *cancellable) {
-  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, cancellable, NULL);
-  if (!bus) return GNOSTR_SIGNER_PRESENCE_NO_BUS;
-
-  GnostrSignerPresence presence = GNOSTR_SIGNER_PRESENCE_NOT_INSTALLED;
+static gboolean name_has_owner(GDBusConnection *bus, const char *name,
+                               GCancellable *cancellable) {
   GVariant *r = g_dbus_connection_call_sync(bus, DBUS_NAME, DBUS_PATH, DBUS_IFACE,
-                                            "NameHasOwner",
-                                            g_variant_new("(s)", GNOSTR_SIGNER_BUS_NAME),
+                                            "NameHasOwner", g_variant_new("(s)", name),
                                             G_VARIANT_TYPE("(b)"),
                                             G_DBUS_CALL_FLAGS_NONE, 5000,
                                             cancellable, NULL);
@@ -26,7 +20,21 @@ static GnostrSignerPresence query_presence(GCancellable *cancellable) {
     g_variant_get(r, "(b)", &owned);
     g_variant_unref(r);
   }
-  if (owned) {
+  return owned;
+}
+
+/* Plain D-Bus daemon calls: they never auto-start the signer (unlike a
+ * method call on a proxy for org.nostr.Signer). */
+static GnostrSignerPresence query_presence(GCancellable *cancellable,
+                                           gboolean *out_approver) {
+  *out_approver = FALSE;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, cancellable, NULL);
+  if (!bus) return GNOSTR_SIGNER_PRESENCE_NO_BUS;
+
+  GnostrSignerPresence presence = GNOSTR_SIGNER_PRESENCE_NOT_INSTALLED;
+  GVariant *r = NULL;
+  *out_approver = name_has_owner(bus, GNOSTR_SIGNER_APPROVER_BUS_NAME, cancellable);
+  if (name_has_owner(bus, GNOSTR_SIGNER_BUS_NAME, cancellable)) {
     presence = GNOSTR_SIGNER_PRESENCE_RUNNING;
   } else {
     r = g_dbus_connection_call_sync(bus, DBUS_NAME, DBUS_PATH, DBUS_IFACE,
@@ -54,12 +62,23 @@ static void status_query_thread(GTask *task, gpointer source, gpointer data,
   (void)source;
   (void)data;
   GnostrSignerStatus *st = g_new0(GnostrSignerStatus, 1);
-  st->presence = query_presence(cancellable);
+  st->presence = query_presence(cancellable, &st->approver_running);
   /* Attribute-only: never unlocks the keyring or loads a secret. */
   GList *legacy = gnostr_keystore_list_legacy_keys(NULL);
   st->legacy_keys = g_list_length(legacy);
   g_list_free_full(legacy, (GDestroyNotify)gnostr_key_info_free);
   st->legacy_auto_migrates = gnostr_keystore_legacy_migrates_automatically();
+  /* nostrc-jppi: how many identities the signer holds, from the same
+   * attribute-only view - asking the signer itself could raise a prompt. */
+  st->signer_keys = -1;
+  if (gnostr_keystore_available()) {
+    GError *kerr = NULL;
+    GList *keys = gnostr_keystore_list_keys(&kerr);
+    if (!kerr)
+      st->signer_keys = (gint)g_list_length(keys);
+    g_list_free_full(keys, (GDestroyNotify)gnostr_key_info_free);
+    g_clear_error(&kerr);
+  }
   g_task_return_pointer(task, st, g_free);
 }
 
@@ -127,16 +146,38 @@ gboolean gnostr_signer_start_finish(GAsyncResult *result, GError **error) {
   return g_task_propagate_boolean(G_TASK(result), error);
 }
 
+gboolean gnostr_signer_open_app(GError **error) {
+  g_autofree char *program = g_find_program_in_path("gnostr-signer");
+  if (!program) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                        _("GNostr Signer is not installed"));
+    return FALSE;
+  }
+  char *argv[] = { program, NULL };
+  return g_spawn_async(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, NULL, error);
+}
+
 /* ---- Copy ---- */
 
 gboolean gnostr_signer_status_can_start(const GnostrSignerStatus *status) {
   return status && status->presence == GNOSTR_SIGNER_PRESENCE_ACTIVATABLE;
 }
 
+gboolean gnostr_signer_status_can_open(const GnostrSignerStatus *status) {
+  return status && status->presence == GNOSTR_SIGNER_PRESENCE_RUNNING &&
+         !status->approver_running;
+}
+
 char *gnostr_signer_status_login_text(const GnostrSignerStatus *status) {
   g_return_val_if_fail(status != NULL, NULL);
   switch (status->presence) {
     case GNOSTR_SIGNER_PRESENCE_RUNNING:
+      if (status->signer_keys == 0)
+        return g_strdup(_("GNostr Signer is running but holds no key yet. Create or "
+                          "import one in GNostr Signer."));
+      if (!status->approver_running)
+        return g_strdup(_("GNostr Signer is running, but its window is closed. Signing "
+                          "in asks for your approval there: open GNostr Signer first."));
       return NULL;
     case GNOSTR_SIGNER_PRESENCE_ACTIVATABLE:
       return g_strdup(_("GNostr Signer is installed but not running. Start it to "
@@ -164,6 +205,20 @@ char *gnostr_signer_status_legacy_text(const GnostrSignerStatus *status) {
   if (!status->legacy_auto_migrates)
     tail = _("Import them in GNostr Signer, then delete the old “org.gnostr.Client” "
              "items from your keychain.");
+#ifdef __APPLE__
+  /* nostrc-de9h: the daemon reads each old item once; the Keychain may ask
+   * to allow that, and a dismissed prompt only postpones the item. */
+  else if (status->presence == GNOSTR_SIGNER_PRESENCE_RUNNING)
+    tail = _("GNostr Signer moves them into its own Keychain items when it starts; if "
+             "they are still listed, restart GNostr Signer and allow its Keychain "
+             "access.");
+  else if (status->presence == GNOSTR_SIGNER_PRESENCE_ACTIVATABLE)
+    tail = _("Start GNostr Signer to move them into its own Keychain items (the "
+             "Keychain may ask to allow this).");
+  else
+    tail = _("Install GNostr Signer; it moves them into its own Keychain items when it "
+             "first starts.");
+#else
   else if (status->presence == GNOSTR_SIGNER_PRESENCE_RUNNING)
     tail = _("GNostr Signer moves them into its keyring when it starts; if they are "
              "still listed, unlock your keyring and restart GNostr Signer.");
@@ -172,6 +227,7 @@ char *gnostr_signer_status_legacy_text(const GnostrSignerStatus *status) {
              "to be unlocked).");
   else
     tail = _("Install GNostr Signer; it moves them into its keyring when it first starts.");
+#endif
   g_autofree char *first = g_strdup_printf(head, status->legacy_keys);
   return g_strdup_printf("%s %s", first, tail);
 }
@@ -208,9 +264,29 @@ char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
   if (status->legacy_keys > 0 && status->legacy_auto_migrates) {
     return g_strdup(status->presence == GNOSTR_SIGNER_PRESENCE_ACTIVATABLE
         ? _("Keys saved by an older GNostr are waiting for GNostr Signer. Start it to "
-            "move them into its keyring.")
+            "move them into its key store.")
         : _("Keys saved by an older GNostr are waiting for GNostr Signer. Install it to "
-            "move them into its keyring."));
+            "move them into its key store."));
   }
   return NULL;
+}
+
+char *gnostr_signer_status_approval_text(const GnostrSignerStatus *status,
+                                         GnostrSignerApproval approval) {
+  g_return_val_if_fail(status != NULL, NULL);
+  if (status->presence != GNOSTR_SIGNER_PRESENCE_RUNNING)
+    return NULL;
+  switch (approval) {
+    case GNOSTR_SIGNER_APPROVAL_NO_APPROVER:
+      if (status->approver_running)
+        return NULL;
+      return g_strdup(_("GNostr Signer needs your approval for a request from GNostr, "
+                        "but its window is closed. Open GNostr Signer to answer it."));
+    case GNOSTR_SIGNER_APPROVAL_REFUSED:
+      return g_strdup(_("GNostr Signer is set to refuse some of GNostr’s requests. "
+                        "Change that in GNostr Signer to use them again."));
+    case GNOSTR_SIGNER_APPROVAL_OK:
+    default:
+      return NULL;
+  }
 }

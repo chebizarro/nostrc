@@ -3,6 +3,8 @@
  */
 
 #include "gn-nip29-group-service.h"
+#include "gn-nip29-events.h"
+#include "gn-nip29-migration.h"
 
 #include <json-glib/json-glib.h>
 #include <nip29.h>
@@ -46,6 +48,9 @@ typedef struct
   gchar  *group_id;
   gchar  *alias;
   gint64   last_opened;
+  /* nostrc-7n4t: the group's admins (kind:39001) as last seen, so their
+   * kind:10009 can be read while the group relay is down. */
+  GPtrArray *admins;               /* (element-type utf8) 64-hex, nullable */
 } SavedGroup;
 
 typedef struct
@@ -77,6 +82,17 @@ typedef struct
   guint64       snapshot_subscription_id;
   guint64       message_subscription_id;
   guint64       refresh_generation;
+
+  /* nostrc-7n4t: migration / fork detection. */
+  gboolean      relay_unreachable;       /* TCP probe of the relay failed */
+  gboolean      relay_probing;
+  gboolean      relocation_checking;
+  gboolean      relocation_checked;
+  gint64        relocation_checked_at;   /* monotonic µs */
+  gchar        *relocated_relay;         /* another relay trusted lists name */
+  guint         relocated_authors;
+  guint         staying_authors;         /* of those, still listing this relay */
+  guint         empty_snapshots;         /* consecutive empty/failed snapshot queries */
 } GroupState;
 
 typedef struct
@@ -113,6 +129,7 @@ typedef struct
   gchar     *about;
   gchar     *picture;
   gchar     *banner;
+  gchar     *parent;
   gchar     *invite_code;
   gchar     *reason;
   gchar     *content;
@@ -150,9 +167,14 @@ enum
 static guint signals[N_SIGNALS];
 
 G_DEFINE_TYPE(GnNip29GroupService, gn_nip29_group_service, G_TYPE_OBJECT)
+G_DEFINE_QUARK(gn-nip29-group-service-error-quark, gn_nip29_group_service_error)
 
 static void group_state_refresh(GroupState *state, GnNip29GroupService *self);
 static gchar *make_group_key(const char *relay_url, const char *group_id);
+static void cache_group_admins(GnNip29GroupService *self, GroupState *state);
+static void maybe_check_relocation(GnNip29GroupService *self, GroupState *state,
+                                   gboolean must);
+static void probe_group_relay(GnNip29GroupService *self, GroupState *state);
 
 static void
 saved_group_free(SavedGroup *saved)
@@ -162,6 +184,7 @@ saved_group_free(SavedGroup *saved)
   g_free(saved->relay_url);
   g_free(saved->group_id);
   g_free(saved->alias);
+  g_clear_pointer(&saved->admins, g_ptr_array_unref);
   g_free(saved);
 }
 
@@ -194,6 +217,7 @@ group_state_free(GroupState *state)
   g_free(state->group_id);
   g_free(state->alias);
   g_free(state->invite_code);
+  g_free(state->relocated_relay);
   if (state->group != NULL)
     nostr_free_group(state->group);
   g_clear_pointer(&state->messages, g_ptr_array_unref);
@@ -255,6 +279,7 @@ action_data_free(ActionData *data)
   g_free(data->about);
   g_free(data->picture);
   g_free(data->banner);
+  g_free(data->parent);
   g_free(data->invite_code);
   g_free(data->reason);
   g_free(data->content);
@@ -471,6 +496,19 @@ saved_group_from_json(JsonObject *object)
   saved->group_id = g_steal_pointer(&group_id);
   saved->alias = g_steal_pointer(&alias);
   saved->last_opened = last_opened;
+
+  JsonArray *admins = json_object_has_member(object, "admins")
+                        ? json_object_get_array_member(object, "admins") : NULL;
+  for (guint i = 0; admins != NULL && i < json_array_get_length(admins); i++)
+    {
+      JsonNode *node = json_array_get_element(admins, i);
+      const char *pk = JSON_NODE_HOLDS_VALUE(node) ? json_node_get_string(node) : NULL;
+      if (pk == NULL || strlen(pk) != 64)
+        continue;
+      if (saved->admins == NULL)
+        saved->admins = g_ptr_array_new_with_free_func(g_free);
+      g_ptr_array_add(saved->admins, g_ascii_strdown(pk, -1));
+    }
   return saved;
 }
 
@@ -603,6 +641,14 @@ save_saved_groups(GnNip29GroupService *self,
             }
           json_builder_set_member_name(builder, "last_opened");
           json_builder_add_int_value(builder, saved->last_opened);
+          if (saved->admins != NULL && saved->admins->len > 0)
+            {
+              json_builder_set_member_name(builder, "admins");
+              json_builder_begin_array(builder);
+              for (guint a = 0; a < saved->admins->len; a++)
+                json_builder_add_string_value(builder, g_ptr_array_index(saved->admins, a));
+              json_builder_end_array(builder);
+            }
 
           json_builder_end_object(builder);
         }
@@ -713,15 +759,6 @@ parse_event_json(const char *event_json)
 }
 
 static void
-json_add_tag1(JsonBuilder *builder,
-              const char  *name)
-{
-  json_builder_begin_array(builder);
-  json_builder_add_string_value(builder, name);
-  json_builder_end_array(builder);
-}
-
-static void
 json_add_tag2(JsonBuilder *builder,
               const char  *name,
               const char  *value)
@@ -778,9 +815,6 @@ build_action_event_json(GnNip29GroupService *self,
 
   switch (data->kind)
     {
-    case ACTION_CREATE_GROUP:
-      event_kind = NOSTR_KIND_SIMPLE_GROUP_CREATE_GROUP;
-      break;
     case ACTION_JOIN_GROUP:
       event_kind = NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST;
       content = data->reason ? data->reason : "";
@@ -814,32 +848,10 @@ build_action_event_json(GnNip29GroupService *self,
 
   json_add_tag2(builder, "h", data->group_id);
 
-  if (data->kind == ACTION_CREATE_GROUP)
-    {
-      if (data->name != NULL && data->name[0] != '\0')
-        json_add_tag2(builder, "name", data->name);
-      if (data->about != NULL && data->about[0] != '\0')
-        json_add_tag2(builder, "about", data->about);
-      if (data->picture != NULL && data->picture[0] != '\0')
-        json_add_tag2(builder, "picture", data->picture);
-      if (data->banner != NULL && data->banner[0] != '\0')
-        json_add_tag2(builder, "banner", data->banner);
-      if (data->is_private)
-        json_add_tag1(builder, "private");
-      if (data->is_restricted)
-        json_add_tag1(builder, "restricted");
-      if (data->is_hidden)
-        json_add_tag1(builder, "hidden");
-      if (data->is_closed)
-        json_add_tag1(builder, "closed");
-    }
-  else
-    {
-      append_previous_tag(builder, state, self->current_pubkey);
-      if (data->kind == ACTION_JOIN_GROUP &&
-          data->invite_code != NULL && data->invite_code[0] != '\0')
-        json_add_tag2(builder, "code", data->invite_code);
-    }
+  append_previous_tag(builder, state, self->current_pubkey);
+  if (data->kind == ACTION_JOIN_GROUP &&
+      data->invite_code != NULL && data->invite_code[0] != '\0')
+    json_add_tag2(builder, "code", data->invite_code);
 
   json_builder_end_array(builder);
   json_builder_end_object(builder);
@@ -919,8 +931,18 @@ process_snapshot_json(GnNip29GroupService *self,
       return;
     }
 
+  gboolean admins = nostr_event_get_kind(event) == NOSTR_KIND_SIMPLE_GROUP_ADMINS;
   if (merge_snapshot_event(state, event))
-    g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+    {
+      if (admins)
+        {
+          /* nostrc-7n4t: keep the admins for when the relay is down, and
+           * look at their kind:10009 now and then (SHOULD). */
+          cache_group_admins(self, state);
+          maybe_check_relocation(self, state, FALSE);
+        }
+      g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+    }
 
   nostr_event_free(event);
 }
@@ -986,21 +1008,48 @@ on_query_relays_done(GObject      *source,
   GPtrArray *events = gnostr_plugin_context_query_relays_finish(self->context,
                                                                 result,
                                                                 &error);
+  GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
+  gboolean current = state != NULL && state->refresh_generation == data->generation;
   if (error != NULL)
     {
       if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        emit_error(self, error->message);
+        {
+          emit_error(self, error->message);
+          /* nostrc-7n4t: is the group relay reachable at all? */
+          if (current && data->snapshots)
+            {
+              state->empty_snapshots++;
+              probe_group_relay(self, state);
+            }
+        }
       query_data_free(data);
       return;
     }
 
-  GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
-  if (state == NULL || state->refresh_generation != data->generation)
+  if (!current)
     {
       if (events != NULL)
         g_ptr_array_unref(events);
       query_data_free(data);
       return;
+    }
+  if (data->snapshots)
+    {
+      if (events == NULL || events->len == 0)
+        {
+          /* nostrc-7n4t: nothing about the group - down, or gone? */
+          state->empty_snapshots++;
+          probe_group_relay(self, state);
+        }
+      else
+        {
+          state->empty_snapshots = 0;
+          if (state->relay_unreachable)
+            {
+              state->relay_unreachable = FALSE;
+              g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+            }
+        }
     }
 
   for (guint i = 0; events != NULL && i < events->len; i++)
@@ -1178,6 +1227,410 @@ group_state_refresh(GroupState *state,
                            "#d", TRUE);
   start_group_subscription(self, state, message_kinds, G_N_ELEMENTS(message_kinds),
                            "#h", FALSE);
+}
+
+/* ---- nostrc-7n4t: migration / fork detection ----
+ *
+ * NIP-29: clients SHOULD periodically - and MUST when the group relay is
+ * offline or unreachable - read the kind:10009 of the group's admins (and
+ * of trusted friends); an entry for the group on another relay means it
+ * may have moved or been forked. The admins are cached per saved group
+ * (saved-groups.json "admins") so this works while the relay is down.
+ * Trusted authors: the cached and current admins. The user's own list is
+ * not evidence (it names a relay because the user tracked it there). The
+ * lists are read from the user's relays; gn_nip29_find_relocations()
+ * verifies them. */
+
+#define RELOCATION_CHECK_INTERVAL_US (6 * G_TIME_SPAN_HOUR)
+/* Even while the relay is down, re-ask at most this often. */
+#define RELOCATION_MUST_FLOOR_US (10 * G_TIME_SPAN_MINUTE)
+#define RELOCATION_QUERY_TIMEOUT_S 60
+/* A relay that accepts TCP but keeps returning nothing for the group
+ * (WebSocket/TLS broken behind a proxy, say) counts as unreachable for the
+ * check after this many snapshot queries in a row. */
+#define RELOCATION_EMPTY_SNAPSHOTS_MUST 2
+#define RELOCATION_LIST_LIMIT 200
+
+typedef struct
+{
+  GnNip29GroupService *service;
+  gchar               *group_key;
+  gchar              **authors;
+  GCancellable        *cancellable;
+  guint                timeout_id;
+  gboolean             timed_out;
+} RelocationCheck;
+
+static void
+relocation_check_free(RelocationCheck *check)
+{
+  if (check == NULL)
+    return;
+  g_clear_handle_id(&check->timeout_id, g_source_remove);
+  if (check->cancellable != NULL && check->service != NULL &&
+      check->service->cancellables != NULL)
+    g_ptr_array_remove(check->service->cancellables, check->cancellable);
+  g_clear_object(&check->cancellable);
+  g_clear_object(&check->service);
+  g_free(check->group_key);
+  g_strfreev(check->authors);
+  g_free(check);
+}
+
+static SavedGroup *
+saved_group_for_state(GnNip29GroupService *self,
+                      GroupState          *state)
+{
+  GPtrArray *bucket = g_hash_table_lookup(self->saved_accounts, current_account_key(self));
+  return saved_bucket_find(bucket, state->relay_url, state->group_id);
+}
+
+static gboolean
+strv_ptr_array_contains(GPtrArray *array, const char *value)
+{
+  for (guint i = 0; array != NULL && i < array->len; i++)
+    if (g_ascii_strcasecmp(g_ptr_array_index(array, i), value) == 0)
+      return TRUE;
+  return FALSE;
+}
+
+/* Remember the group's current admins (kind:39001) for when its relay is
+ * unreachable. Saved only when the set changed. */
+static void
+cache_group_admins(GnNip29GroupService *self,
+                   GroupState          *state)
+{
+  SavedGroup *saved = saved_group_for_state(self, state);
+  if (saved == NULL || state->group == NULL || !state->group->admins_loaded)
+    return;
+
+  GPtrArray *admins = g_ptr_array_new_with_free_func(g_free);
+  for (size_t i = 0; i < state->group->admins_len; i++)
+    {
+      const char *pk = state->group->admins[i].pubkey;
+      if (pk != NULL && strlen(pk) == 64 && !strv_ptr_array_contains(admins, pk))
+        g_ptr_array_add(admins, g_ascii_strdown(pk, -1));
+    }
+
+  gboolean same = saved->admins != NULL && saved->admins->len == admins->len;
+  for (guint i = 0; same && i < admins->len; i++)
+    same = strv_ptr_array_contains(saved->admins, g_ptr_array_index(admins, i));
+  if (same)
+    {
+      g_ptr_array_unref(admins);
+      return;
+    }
+  g_clear_pointer(&saved->admins, g_ptr_array_unref);
+  saved->admins = admins;
+  g_autoptr(GError) error = NULL;
+  if (!save_saved_groups(self, &error))
+    g_debug("NIP-29: could not cache the admins of %s: %s", state->key,
+            error ? error->message : "unknown error");
+}
+
+static gchar *
+build_lists_filter_json(char **authors)
+{
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_object(builder);
+  json_builder_set_member_name(builder, "kinds");
+  json_builder_begin_array(builder);
+  json_builder_add_int_value(builder, NOSTR_KIND_SIMPLE_GROUP_LIST);
+  json_builder_end_array(builder);
+  json_builder_set_member_name(builder, "authors");
+  json_builder_begin_array(builder);
+  for (gsize i = 0; authors[i] != NULL; i++)
+    json_builder_add_string_value(builder, authors[i]);
+  json_builder_end_array(builder);
+  json_builder_set_member_name(builder, "limit");
+  json_builder_add_int_value(builder, RELOCATION_LIST_LIMIT);
+  json_builder_end_object(builder);
+
+  JsonNode *root = json_builder_get_root(builder);
+  g_autoptr(JsonGenerator) generator = json_generator_new();
+  json_generator_set_root(generator, root);
+  gchar *json = json_generator_to_data(generator, NULL);
+  json_node_unref(root);
+  return json;
+}
+
+static void
+relocation_check_done(GnNip29GroupService *self,
+                      GroupState          *state,
+                      GPtrArray           *relocations,
+                      guint                staying)
+{
+  state->relocation_checking = FALSE;
+  state->relocation_checked = TRUE;
+  state->relocation_checked_at = g_get_monotonic_time();
+  g_clear_pointer(&state->relocated_relay, g_free);
+  state->relocated_authors = 0;
+  state->staying_authors = staying;
+  if (relocations != NULL && relocations->len > 0)
+    {
+      GnNip29Relocation *best = g_ptr_array_index(relocations, 0);
+      state->relocated_relay = g_strdup(best->relay_url);
+      state->relocated_authors = best->pubkeys->len;
+      g_message("NIP-29: %s is listed on %s by %u trusted author%s (moved or forked?)",
+                state->key, best->relay_url, best->pubkeys->len,
+                best->pubkeys->len == 1 ? "" : "s");
+    }
+  g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+}
+
+static void
+on_relocation_query_done(GObject      *source,
+                         GAsyncResult *result,
+                         gpointer      user_data)
+{
+  (void)source;
+  RelocationCheck *check = user_data;
+  GnNip29GroupService *self = check->service;
+
+  g_autoptr(GError) error = NULL;
+  GPtrArray *events = self->context != NULL
+    ? gnostr_plugin_context_query_relays_finish(self->context, result, &error)
+    : NULL;
+  GroupState *state = g_hash_table_lookup(self->groups, check->group_key);
+  if (state != NULL && !self->shutting_down && check->timed_out &&
+      (events == NULL || events->len == 0))
+    {
+      /* Relays that never finish must not leave the check "running";
+       * lists that did arrive before the deadline are used below. */
+      g_debug("NIP-29: kind:10009 lists for %s: no answer within %d s",
+              state->key, RELOCATION_QUERY_TIMEOUT_S);
+      if (events != NULL)
+        g_ptr_array_unref(events);
+      relocation_check_done(self, state, NULL, 0);
+      relocation_check_free(check);
+      return;
+    }
+  if (state == NULL || self->shutting_down ||
+      g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      if (state != NULL)
+        state->relocation_checking = FALSE;
+      if (events != NULL)
+        g_ptr_array_unref(events);
+      relocation_check_free(check);
+      return;
+    }
+  if (error != NULL)
+    g_debug("NIP-29: reading kind:10009 lists for %s failed: %s", state->key, error->message);
+
+  GPtrArray *jsons = g_ptr_array_new();
+  for (guint i = 0; events != NULL && i < events->len; i++)
+    {
+      GnostrPluginRelayEvent *ev = g_ptr_array_index(events, i);
+      if (ev != NULL && ev->event_json != NULL)
+        g_ptr_array_add(jsons, ev->event_json);
+    }
+  guint staying = 0;
+  g_autoptr(GPtrArray) relocations =
+    gn_nip29_find_relocations(state->group_id, state->relay_url,
+                              (const char * const *)check->authors, jsons, &staying);
+  g_ptr_array_unref(jsons);
+  if (events != NULL)
+    g_ptr_array_unref(events);
+
+  relocation_check_done(self, state, relocations, staying);
+  relocation_check_free(check);
+}
+
+static gboolean
+on_relocation_query_timeout(gpointer user_data)
+{
+  RelocationCheck *check = user_data;
+  check->timeout_id = 0;
+  check->timed_out = TRUE;
+  g_cancellable_cancel(check->cancellable);
+  return G_SOURCE_REMOVE;
+}
+
+/* @must: the group relay is unreachable (checked now, whatever the
+ * interval); otherwise at most once per RELOCATION_CHECK_INTERVAL_US. */
+static void
+maybe_check_relocation(GnNip29GroupService *self,
+                       GroupState          *state,
+                       gboolean             must)
+{
+  if (self->context == NULL || self->shutting_down || state->relocation_checking)
+    return;
+  gint64 since = g_get_monotonic_time() - state->relocation_checked_at;
+  if (state->relocation_checked &&
+      since < (must ? RELOCATION_MUST_FLOOR_US : RELOCATION_CHECK_INTERVAL_US))
+    return;
+
+  GPtrArray *authors = g_ptr_array_new_with_free_func(g_free);
+  SavedGroup *saved = saved_group_for_state(self, state);
+  for (guint i = 0; saved != NULL && saved->admins != NULL && i < saved->admins->len; i++)
+    if (!strv_ptr_array_contains(authors, g_ptr_array_index(saved->admins, i)))
+      g_ptr_array_add(authors, g_strdup(g_ptr_array_index(saved->admins, i)));
+  for (size_t i = 0; state->group != NULL && i < state->group->admins_len; i++)
+    {
+      const char *pk = state->group->admins[i].pubkey;
+      if (pk != NULL && strlen(pk) == 64 && !strv_ptr_array_contains(authors, pk))
+        g_ptr_array_add(authors, g_ascii_strdown(pk, -1));
+    }
+  gsize n_relays = 0;
+  g_auto(GStrv) relays = gnostr_plugin_context_get_relay_urls(self->context, &n_relays);
+  if (authors->len == 0 || relays == NULL || n_relays == 0)
+    {
+      /* Nobody to ask, or nowhere to ask: report "checked, nothing found". */
+      g_ptr_array_unref(authors);
+      relocation_check_done(self, state, NULL, 0);
+      return;
+    }
+  g_ptr_array_add(authors, NULL);
+
+  RelocationCheck *check = g_new0(RelocationCheck, 1);
+  check->service = g_object_ref(self);
+  check->group_key = g_strdup(state->key);
+  check->authors = (gchar **)g_ptr_array_free(authors, FALSE);
+
+  g_autofree gchar *filter_json = build_lists_filter_json(check->authors);
+  GnostrPluginRelayQuery query = {
+    .relay_urls = (const char * const *)relays,
+    .n_relay_urls = n_relays,
+    .filter_json = filter_json,
+  };
+  state->relocation_checking = TRUE;
+  check->cancellable = g_cancellable_new();
+  g_ptr_array_add(self->cancellables, g_object_ref(check->cancellable));
+  check->timeout_id = g_timeout_add_seconds(RELOCATION_QUERY_TIMEOUT_S,
+                                            on_relocation_query_timeout, check);
+  gnostr_plugin_context_query_relays_async(self->context, &query, check->cancellable,
+                                           on_relocation_query_done, check);
+}
+
+/* The relay query API reports a relay that cannot be reached as "no
+ * events" (no error), so an empty or failed snapshot query is followed by a
+ * plain TCP connect to the relay's host: a failure there is "offline or
+ * unreachable" (NIP-29 MUST look for the group elsewhere); a relay that is
+ * up but says nothing about the group gets the periodic check (SHOULD). */
+#define RELAY_PROBE_TIMEOUT_S 10
+
+typedef struct
+{
+  GnNip29GroupService *service;
+  gchar               *group_key;
+  guint64              generation;
+  GCancellable        *cancellable;
+} RelayProbe;
+
+static void
+relay_probe_free(RelayProbe *probe)
+{
+  if (probe->cancellable != NULL && probe->service->cancellables != NULL)
+    g_ptr_array_remove(probe->service->cancellables, probe->cancellable);
+  g_clear_object(&probe->cancellable);
+  g_clear_object(&probe->service);
+  g_free(probe->group_key);
+  g_free(probe);
+}
+
+static void
+on_relay_probe_done(GObject      *source,
+                    GAsyncResult *result,
+                    gpointer      user_data)
+{
+  RelayProbe *probe = user_data;
+  GnNip29GroupService *self = probe->service;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GSocketConnection) conn =
+    g_socket_client_connect_to_uri_finish(G_SOCKET_CLIENT(source), result, &error);
+  if (conn != NULL)
+    g_io_stream_close(G_IO_STREAM(conn), NULL, NULL);
+
+  GroupState *state = g_hash_table_lookup(self->groups, probe->group_key);
+  if (state != NULL && !self->shutting_down &&
+      !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+      state->refresh_generation == probe->generation)
+    {
+      state->relay_probing = FALSE;
+      gboolean unreachable = conn == NULL;
+      if (unreachable)
+        g_message("NIP-29: relay of %s unreachable: %s", state->key,
+                  error ? error->message : "no connection");
+      if (unreachable != state->relay_unreachable)
+        {
+          state->relay_unreachable = unreachable;
+          g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+        }
+      maybe_check_relocation(self, state,
+                             unreachable ||
+                             state->empty_snapshots >= RELOCATION_EMPTY_SNAPSHOTS_MUST);
+    }
+  else if (state != NULL)
+    state->relay_probing = FALSE;
+  relay_probe_free(probe);
+}
+
+static void
+probe_group_relay(GnNip29GroupService *self,
+                  GroupState          *state)
+{
+  if (self->shutting_down || state->relay_probing)
+    return;
+  guint16 port = g_str_has_prefix(state->relay_url, "wss://") ? 443 : 80;
+  g_autoptr(GSocketClient) client = g_socket_client_new();
+  g_socket_client_set_timeout(client, RELAY_PROBE_TIMEOUT_S);
+
+  RelayProbe *probe = g_new0(RelayProbe, 1);
+  probe->service = g_object_ref(self);
+  probe->group_key = g_strdup(state->key);
+  probe->generation = state->refresh_generation;
+  probe->cancellable = g_cancellable_new();
+  g_ptr_array_add(self->cancellables, g_object_ref(probe->cancellable));
+  state->relay_probing = TRUE;
+  g_socket_client_connect_to_uri_async(client, state->relay_url, port, probe->cancellable,
+                                       on_relay_probe_done, probe);
+}
+
+void
+gn_nip29_group_service_dismiss_relocation(GnNip29GroupService *self,
+                                          const char          *group_key)
+{
+  g_return_if_fail(GN_IS_NIP29_GROUP_SERVICE(self));
+  GroupState *state = group_key ? g_hash_table_lookup(self->groups, group_key) : NULL;
+  if (state == NULL || state->relocated_relay == NULL)
+    return;
+  g_clear_pointer(&state->relocated_relay, g_free);
+  state->relocated_authors = state->staying_authors = 0;
+  g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+}
+
+GnNip29RelocationState
+gn_nip29_group_service_get_relocation(GnNip29GroupService *self,
+                                      const char          *group_key,
+                                      const char         **out_relay_url,
+                                      guint               *out_n_authors,
+                                      guint               *out_n_staying)
+{
+  g_return_val_if_fail(GN_IS_NIP29_GROUP_SERVICE(self), GN_NIP29_RELOCATION_NONE);
+  if (out_relay_url != NULL)
+    *out_relay_url = NULL;
+  if (out_n_authors != NULL)
+    *out_n_authors = 0;
+  if (out_n_staying != NULL)
+    *out_n_staying = 0;
+  GroupState *state = group_key ? g_hash_table_lookup(self->groups, group_key) : NULL;
+  if (state == NULL)
+    return GN_NIP29_RELOCATION_NONE;
+  if (state->relocated_relay != NULL)
+    {
+      if (out_relay_url != NULL)
+        *out_relay_url = state->relocated_relay;
+      if (out_n_authors != NULL)
+        *out_n_authors = state->relocated_authors;
+      if (out_n_staying != NULL)
+        *out_n_staying = state->staying_authors;
+      return GN_NIP29_RELOCATION_FOUND;
+    }
+  if (state->relay_unreachable)
+    return state->relocation_checking ? GN_NIP29_RELOCATION_CHECKING
+                                      : GN_NIP29_RELOCATION_UNREACHABLE;
+  return GN_NIP29_RELOCATION_NONE;
 }
 
 static void
@@ -1468,27 +1921,7 @@ on_action_published(GObject      *source,
       return;
     }
 
-  if (data->kind == ACTION_CREATE_GROUP)
-    {
-      const char *alias = (data->name != NULL && data->name[0] != '\0')
-                            ? data->name
-                            : NULL;
-      if (!gn_nip29_group_service_track_group(self,
-                                              data->relay_url,
-                                              data->group_id,
-                                              alias,
-                                              &error))
-        {
-          if (error != NULL)
-            g_task_return_error(task, g_steal_pointer(&error));
-          else
-            g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                                    "Group was created but could not be saved locally");
-          g_object_unref(task);
-          return;
-        }
-    }
-  else if (data->group_key != NULL)
+  if (data->group_key != NULL)
     {
       GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
       if (state != NULL)
@@ -1568,6 +2001,153 @@ start_signed_publish_action(GnNip29GroupService *self,
                                            task);
 }
 
+/* ---- nostrc-4gf4: create-group (kind:9007), then edit-metadata (9002) ----
+ *
+ * NIP-29's moderation table gives kind:9007 no tags besides `h`; name,
+ * about, picture, banner, the access flags and a subgroup's parent are
+ * group-metadata, set with kind:9002. A 9002 for a group the relay has not
+ * created yet is refused, so it is only signed and sent once the relay has
+ * answered OK to the 9007 (gnostr_plugin_context_publish_event_to_relay_ack). */
+
+static GnNip29Metadata
+action_metadata(const ActionData *data)
+{
+  return (GnNip29Metadata){
+    .name = data->name, .about = data->about, .picture = data->picture,
+    .banner = data->banner, .parent = data->parent,
+    .is_private = data->is_private, .is_restricted = data->is_restricted,
+    .is_hidden = data->is_hidden, .is_closed = data->is_closed,
+  };
+}
+
+static void
+create_group_fail(GTask *task, GError *error, const char *fallback)
+{
+  if (error != NULL)
+    g_task_return_error(task, error);
+  else
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", fallback);
+  g_object_unref(task);
+}
+
+/* The metadata step failed after the group was created and tracked. */
+static void
+create_group_metadata_failed(GTask *task, GError *error)
+{
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      create_group_fail(task, error, NULL);
+      return;
+    }
+  g_task_return_new_error(task, GN_NIP29_GROUP_SERVICE_ERROR,
+                          GN_NIP29_GROUP_SERVICE_ERROR_METADATA_NOT_APPLIED,
+                          "The group was created, but its name and settings were not "
+                          "applied: %s",
+                          error != NULL ? error->message : "unknown error");
+  g_clear_error(&error);
+  g_object_unref(task);
+}
+
+static void
+on_create_metadata_acked(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!gnostr_plugin_context_publish_event_to_relay_ack_finish(self->context, result, &error))
+    {
+      create_group_metadata_failed(task, error);
+      return;
+    }
+  GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
+  if (state != NULL)
+    group_state_refresh(state, self);
+  g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void
+on_create_metadata_signed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(self->context, result, &error);
+  if (signed_json == NULL)
+    {
+      create_group_metadata_failed(task, error);
+      return;
+    }
+  gnostr_plugin_context_publish_event_to_relay_ack_async(self->context, signed_json,
+                                                         data->relay_url,
+                                                         g_task_get_cancellable(task),
+                                                         on_create_metadata_acked, task);
+}
+
+static void
+on_create_group_acked(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!gnostr_plugin_context_publish_event_to_relay_ack_finish(self->context, result, &error))
+    {
+      create_group_fail(task, error, "The relay did not create the group");
+      return;
+    }
+
+  /* The group exists now: keep it even if the metadata step fails. */
+  const char *alias = (data->name != NULL && data->name[0] != '\0') ? data->name : NULL;
+  if (!gn_nip29_group_service_track_group(self, data->relay_url, data->group_id, alias, &error))
+    {
+      create_group_fail(task, error, "Group was created but could not be saved locally");
+      return;
+    }
+  data->group_key = make_group_key(data->relay_url, data->group_id);
+
+  GnNip29Metadata md = action_metadata(data);
+  if (gn_nip29_metadata_is_empty(&md))
+    {
+      g_task_return_boolean(task, TRUE);
+      g_object_unref(task);
+      return;
+    }
+  g_autofree gchar *unsigned_json =
+    gn_nip29_build_edit_metadata_json(data->group_id, &md,
+                                      (gint64)(g_get_real_time() / G_USEC_PER_SEC));
+  gnostr_plugin_context_request_sign_event(self->context, unsigned_json,
+                                           g_task_get_cancellable(task),
+                                           on_create_metadata_signed, task);
+}
+
+static void
+on_create_group_signed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  ActionData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(self->context, result, &error);
+  if (signed_json == NULL)
+    {
+      create_group_fail(task, error, "Failed to sign the create-group event");
+      return;
+    }
+  gnostr_plugin_context_publish_event_to_relay_ack_async(self->context, signed_json,
+                                                         data->relay_url,
+                                                         g_task_get_cancellable(task),
+                                                         on_create_group_acked, task);
+}
+
 void
 gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
                                           const char          *relay_url,
@@ -1576,6 +2156,7 @@ gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
                                           const char          *about,
                                           const char          *picture,
                                           const char          *banner,
+                                          const char          *parent_id,
                                           gboolean             is_private,
                                           gboolean             is_restricted,
                                           gboolean             is_hidden,
@@ -1594,28 +2175,148 @@ gn_nip29_group_service_create_group_async(GnNip29GroupService *self,
   data->about = g_strdup(about);
   data->picture = g_strdup(picture);
   data->banner = g_strdup(banner);
+  data->parent = g_strdup(parent_id);
   data->is_private = is_private;
   data->is_restricted = is_restricted;
   data->is_hidden = is_hidden;
   data->is_closed = is_closed;
 
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gn_nip29_group_service_create_group_async);
+  g_task_set_task_data(task, data, (GDestroyNotify)action_data_free);
+
   g_autoptr(GError) error = NULL;
   if (!validate_group_address(relay_url, group_id, &error))
     {
-      GTask *task = g_task_new(self, cancellable, callback, user_data);
-      g_task_set_task_data(task, data, (GDestroyNotify)action_data_free);
       g_task_return_error(task, g_steal_pointer(&error));
       g_object_unref(task);
       return;
     }
+  if (self->context == NULL || self->shutting_down)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CLOSED,
+                              "NIP-29 group service is not available");
+      g_object_unref(task);
+      return;
+    }
 
-  start_signed_publish_action(self, data, NULL, cancellable, callback, user_data);
+  g_autofree gchar *unsigned_json =
+    gn_nip29_build_create_group_json(group_id, (gint64)(g_get_real_time() / G_USEC_PER_SEC));
+  gnostr_plugin_context_request_sign_event(self->context, unsigned_json, cancellable,
+                                           on_create_group_signed, task);
 }
 
 gboolean
 gn_nip29_group_service_create_group_finish(GnNip29GroupService *self,
                                            GAsyncResult        *result,
                                            GError             **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+/* ---- nostrc-prjb: admin pin list (kind:9010 update-pin-list) ----
+ * The event carries the full ordered list; the relay rewrites kind:39005
+ * from it. Sent to the group relay and confirmed by its OK, then the group
+ * is refreshed so the new pins show. */
+
+typedef struct
+{
+  gchar  *group_key;
+  gchar  *relay_url;
+  gchar **refs;
+} PinsData;
+
+static void
+pins_data_free(PinsData *data)
+{
+  g_free(data->group_key);
+  g_free(data->relay_url);
+  g_strfreev(data->refs);
+  g_free(data);
+}
+
+static void
+on_pins_acked(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  PinsData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!gnostr_plugin_context_publish_event_to_relay_ack_finish(self->context, result, &error))
+    {
+      g_task_return_error(task, error);
+      g_object_unref(task);
+      return;
+    }
+  GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
+  if (state != NULL)
+    group_state_refresh(state, self);
+  g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void
+on_pins_signed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  PinsData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(self->context, result, &error);
+  if (signed_json == NULL)
+    {
+      g_task_return_error(task, error ? error
+                          : g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                                "Failed to sign the pin list"));
+      g_object_unref(task);
+      return;
+    }
+  gnostr_plugin_context_publish_event_to_relay_ack_async(self->context, signed_json,
+                                                         data->relay_url,
+                                                         g_task_get_cancellable(task),
+                                                         on_pins_acked, task);
+}
+
+void
+gn_nip29_group_service_set_pins_async(GnNip29GroupService *self,
+                                      const char          *group_key,
+                                      const char * const  *refs,
+                                      GCancellable        *cancellable,
+                                      GAsyncReadyCallback  callback,
+                                      gpointer             user_data)
+{
+  g_return_if_fail(GN_IS_NIP29_GROUP_SERVICE(self));
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gn_nip29_group_service_set_pins_async);
+  GroupState *state = group_key ? g_hash_table_lookup(self->groups, group_key) : NULL;
+  if (state == NULL || self->context == NULL || self->shutting_down)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                              "NIP-29 group is not tracked");
+      g_object_unref(task);
+      return;
+    }
+  PinsData *data = g_new0(PinsData, 1);
+  data->group_key = g_strdup(group_key);
+  data->relay_url = g_strdup(state->relay_url);
+  data->refs = g_strdupv((gchar **)refs);
+  g_task_set_task_data(task, data, (GDestroyNotify)pins_data_free);
+
+  g_autofree gchar *unsigned_json =
+    gn_nip29_build_update_pin_list_json(state->group_id, (const char * const *)data->refs,
+                                        (gint64)(g_get_real_time() / G_USEC_PER_SEC));
+  gnostr_plugin_context_request_sign_event(self->context, unsigned_json, cancellable,
+                                           on_pins_signed, task);
+}
+
+gboolean
+gn_nip29_group_service_set_pins_finish(GnNip29GroupService *self,
+                                       GAsyncResult        *result,
+                                       GError             **error)
 {
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
   return g_task_propagate_boolean(G_TASK(result), error);

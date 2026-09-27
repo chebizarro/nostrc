@@ -816,6 +816,37 @@ void gnostr_plugin_context_publish_event_to_relays_async(GnostrPluginContext *co
                                                           gpointer             user_data);
 
 /**
+ * gnostr_plugin_context_publish_event_to_relay_ack_async:
+ * @context: A #GnostrPluginContext
+ * @event_json: The event as a JSON string (must be signed)
+ * @relay_url: the one relay to publish to
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when the relay answered (or did not)
+ * @user_data: User data for callback
+ *
+ * Publish a signed event to one relay and complete on that relay's NIP-01
+ * `OK` for it: %TRUE when accepted; %GNOSTR_PLUGIN_ERROR_RELAY_REJECTED
+ * (with the relay's reason) when refused; %GNOSTR_PLUGIN_ERROR_NETWORK when
+ * the relay cannot be reached, disconnects, or sends no OK within 15 s.
+ * Use it when a follow-up event only makes sense once the relay has
+ * applied this one (e.g. NIP-29 edit-metadata after create-group).
+ * The other publish functions complete once the event is sent.
+ * Main context only.
+ *
+ * Since: nostrc-4gf4
+ */
+void gnostr_plugin_context_publish_event_to_relay_ack_async(GnostrPluginContext *context,
+                                                            const char          *event_json,
+                                                            const char          *relay_url,
+                                                            GCancellable        *cancellable,
+                                                            GAsyncReadyCallback  callback,
+                                                            gpointer             user_data);
+
+gboolean gnostr_plugin_context_publish_event_to_relay_ack_finish(GnostrPluginContext *context,
+                                                                 GAsyncResult        *result,
+                                                                 GError             **error);
+
+/**
  * gnostr_plugin_context_request_relay_events_async:
  * @context: A #GnostrPluginContext
  * @kinds: Array of event kinds to request
@@ -1676,6 +1707,8 @@ GQuark gnostr_plugin_error_quark(void);
  * @GNOSTR_PLUGIN_ERROR_STORAGE: Storage error
  * @GNOSTR_PLUGIN_ERROR_INVALID_DATA: Invalid data provided
  * @GNOSTR_PLUGIN_ERROR_SCHEMA_NOT_FOUND: GSettings schema not found
+ * @GNOSTR_PLUGIN_ERROR_RELAY_REJECTED: the relay answered OK false
+ *   (message = the relay's reason)
  *
  * Error codes for plugin operations.
  */
@@ -1688,6 +1721,7 @@ typedef enum
   GNOSTR_PLUGIN_ERROR_STORAGE,
   GNOSTR_PLUGIN_ERROR_INVALID_DATA,
   GNOSTR_PLUGIN_ERROR_SCHEMA_NOT_FOUND,
+  GNOSTR_PLUGIN_ERROR_RELAY_REJECTED,
 } GnostrPluginError;
 
 /* ============================================================================

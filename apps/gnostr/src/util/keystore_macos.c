@@ -8,8 +8,10 @@
  *   (nips/nip55l/src/core/signer_ops.c, Keychain branch): service
  *   "Gnostr Identity Key", account = key_id selector, comment = npub.
  * - Legacy client keys: items GNostr itself stored before nostrc-e5nz:
- *   service "org.gnostr.Client", account = npub. The macOS daemon does not
- *   import these, so the UI asks the user to import them in GNostr Signer.
+ *   service "org.gnostr.Client", account = npub. The nip55l daemon imports
+ *   these into its own items once, when it starts (nostrc-de9h:
+ *   nostr_nip55l_migrate_legacy_keys), so the UI says to start GNostr
+ *   Signer rather than to import them by hand (nostrc-jppi).
  */
 
 #ifdef HAVE_MACOS_KEYCHAIN
@@ -45,7 +47,7 @@ gboolean gnostr_keystore_available(void) {
 }
 
 gboolean gnostr_keystore_legacy_migrates_automatically(void) {
-  return FALSE;
+  return TRUE;
 }
 
 static char *cfstring_dup(CFTypeRef value) {

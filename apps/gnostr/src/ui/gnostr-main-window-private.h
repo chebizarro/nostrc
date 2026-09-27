@@ -76,6 +76,13 @@ struct _GnostrMainWindow {
   GCancellable *signer_status_cancellable;
   GCancellable *signer_start_cancellable;
   gboolean signer_starting;
+  /* nostrc-jppi: GNostr Signer's window (org.gnostr.Signer, the approval
+   * UI): watched so approval problems clear and a stalled restore retries
+   * when it opens; the banner button then opens it instead of starting the
+   * daemon. */
+  guint signer_approver_watch_id;
+  gulong signer_approval_handler;
+  gboolean signer_banner_opens_app;
   /* nostrc-vuwu: in-flight NIP-55L session restore */
   GCancellable *nip55l_restore_cancellable;
   /* nostrc-lwzv: why publishing is off (read-only: signer not running), or NULL */
@@ -442,6 +449,10 @@ void gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
                                                       GCallback scroll_cb,
                                                       GCallback tab_filter_cb);
 void gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self);
+/* gnostr-main-window-links.c (nostrc-46h7): route every note card's
+ * "open-nostr-target" through gnostr_main_window_open_nostr_uri(). Once per
+ * process (class init). */
+void gnostr_main_window_links_install_note_hook_internal(void);
 /* gnostr-main-window-signer-banner.c (nostrc-e5nz) */
 void gnostr_main_window_signer_banner_start_internal(GnostrMainWindow *self);
 void gnostr_main_window_signer_banner_refresh_internal(GnostrMainWindow *self);

@@ -20,6 +20,8 @@
 #include "error.h"
 #include "secure_buf.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-gobject-1.0/gnostr-identity.h>
+#include <glib/gi18n.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
@@ -55,11 +57,15 @@ struct _GnostrSignerService {
   /* nostrc-vuwu: bumped by every sign-in / sign-out (main context only), so
    * an in-flight NIP-55L restore never resurrects a session the user left. */
   guint auth_generation;
+
+  /* nostrc-jppi: main context only. */
+  GnostrSignerApproval approval;
 };
 
 /* Signal IDs */
 enum {
   SIGNAL_STATE_CHANGED,
+  SIGNAL_APPROVAL_CHANGED,
   N_SIGNALS
 };
 
@@ -138,6 +144,19 @@ gnostr_signer_service_class_init(GnostrSignerServiceClass *klass)
       G_TYPE_UINT, /* old_state */
       G_TYPE_UINT  /* new_state */
   );
+
+  /**
+   * GnostrSignerService::approval-changed:
+   * @self: The signer service
+   *
+   * nostrc-jppi: gnostr_signer_service_get_approval() changed.
+   */
+  signals[SIGNAL_APPROVAL_CHANGED] = g_signal_new(
+      "approval-changed",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0, NULL, NULL, NULL,
+      G_TYPE_NONE, 0);
 }
 
 static void
@@ -180,6 +199,146 @@ set_state(GnostrSignerService *self, GnostrSignerState new_state)
   g_signal_emit(self, signals[SIGNAL_STATE_CHANGED], 0, old_state, new_state);
 }
 
+/* ---- nostrc-jppi: nip55l 0.4.0 approval gating ---- */
+
+G_DEFINE_QUARK(gnostr-signer-error-quark, gnostr_signer_error)
+
+#define NIP55L_DBUS_ERROR_PREFIX "org.nostr.Signer.Error."
+
+GError *
+gnostr_signer_error_from_dbus(const GError *error)
+{
+  if (!error)
+    return NULL;
+  if (error->domain == GNOSTR_SIGNER_ERROR ||
+      g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    return g_error_copy(error);
+
+  g_autofree char *remote = g_dbus_error_is_remote_error(error)
+                              ? g_dbus_error_get_remote_error(error) : NULL;
+  g_autoptr(GError) stripped = g_error_copy(error);
+  g_dbus_error_strip_remote_error(stripped);
+  const char *why = stripped->message ? stripped->message : "";
+  const char *name = remote && g_str_has_prefix(remote, NIP55L_DBUS_ERROR_PREFIX)
+                       ? remote + strlen(NIP55L_DBUS_ERROR_PREFIX) : NULL;
+
+  if (g_strcmp0(name, "ApprovalDenied") == 0) {
+    /* The daemon's reasons, nips/nip55l/src/glib/signer_service_g.c. The
+     * test /signer/nip55l/error-map-contract reads that file and fails if
+     * these phrases disappear from it. */
+    if (strstr(why, "no approval agent"))
+      return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER,
+          _("GNostr Signer needs your approval for this, but its window is closed. "
+            "Open GNostr Signer and try again."));
+    if (strstr(why, "timed out"))
+      return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT,
+          _("Nobody answered GNostr Signer’s approval request in time."));
+    if (strstr(why, "denied by policy"))
+      return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED_BY_RULE,
+          _("GNostr Signer is set to refuse this request from GNostr. You can change "
+            "that in GNostr Signer."));
+    return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED,
+        _("GNostr Signer: the request was denied."));
+  }
+  if (g_strcmp0(name, "RateLimited") == 0)
+    return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_RATE_LIMITED,
+        _("GNostr Signer is still waiting for your answer to earlier requests. "
+          "Answer those, then try again."));
+  if (g_strcmp0(name, "NoKeyConfigured") == 0)
+    return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_KEY,
+        _("GNostr Signer holds no key for this account."));
+  if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
+      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER) ||
+      g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+    return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NOT_RUNNING,
+        _("GNostr Signer is not running."));
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT) ||
+      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NO_REPLY) ||
+      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_TIMEOUT) ||
+      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_TIMED_OUT))
+    return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT,
+        _("GNostr Signer did not answer in time."));
+  return g_error_new(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_FAILED,
+                     _("GNostr Signer: %s"), *why ? why : _("unknown error"));
+}
+
+static void
+set_approval(GnostrSignerService *self, GnostrSignerApproval approval)
+{
+  if (self->approval == approval)
+    return;
+  self->approval = approval;
+  g_signal_emit(self, signals[SIGNAL_APPROVAL_CHANGED], 0);
+}
+
+typedef struct {
+  GnostrSignerService *self;
+  GnostrSignerApproval approval;
+  guint generation;           /* self->auth_generation of the failed call */
+} ApprovalUpdate;
+
+static gboolean
+approval_update_invoke(gpointer data)
+{
+  ApprovalUpdate *u = data;
+  /* A sign-in/out since the call reset the state: this is about the old
+   * session. */
+  if (u->generation == u->self->auth_generation)
+    set_approval(u->self, u->approval);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+approval_update_free(gpointer data)
+{
+  ApprovalUpdate *u = data;
+  g_object_unref(u->self);
+  g_free(u);
+}
+
+/* Map a failed NIP-55L method call (takes @error) and record what it says
+ * about approval. Only problems are recorded: an answer that needed no
+ * prompt says nothing about kinds that still do. */
+static GError *
+nip55l_call_failed(GnostrSignerService *self, GError *error)
+{
+  GError *mapped = gnostr_signer_error_from_dbus(error);
+  g_clear_error(&error);
+  if (!mapped)
+    return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_FAILED,
+                               _("GNostr Signer: unknown error"));
+  GnostrSignerApproval approval = GNOSTR_SIGNER_APPROVAL_OK;
+  if (g_error_matches(mapped, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER))
+    approval = GNOSTR_SIGNER_APPROVAL_NO_APPROVER;
+  else if (g_error_matches(mapped, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED_BY_RULE))
+    approval = GNOSTR_SIGNER_APPROVAL_REFUSED;
+  if (self && approval != GNOSTR_SIGNER_APPROVAL_OK) {
+    g_message("[SIGNER_SERVICE] %s", mapped->message);
+    ApprovalUpdate *u = g_new0(ApprovalUpdate, 1);
+    u->self = g_object_ref(self);
+    u->approval = approval;
+    u->generation = self->auth_generation;
+    /* Completions normally run on the main context already. */
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, approval_update_invoke, u,
+                               approval_update_free);
+  }
+  return mapped;
+}
+
+GnostrSignerApproval
+gnostr_signer_service_get_approval(GnostrSignerService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_SIGNER_SERVICE(self), GNOSTR_SIGNER_APPROVAL_OK);
+  return self->approval;
+}
+
+void
+gnostr_signer_service_reset_approval(GnostrSignerService *self)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+  set_approval(self, GNOSTR_SIGNER_APPROVAL_OK);
+}
+
 GnostrSignerState
 gnostr_signer_service_get_state(GnostrSignerService *self)
 {
@@ -211,6 +370,7 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
   }
   g_mutex_unlock(&self->session_mutex);
   self->auth_generation++;
+  set_approval(self, GNOSTR_SIGNER_APPROVAL_OK);
 
   if (old_session) {
     g_message("[SIGNER_SERVICE] Replacing NIP-46 session %p with %p",
@@ -305,6 +465,7 @@ gnostr_signer_service_clear(GnostrSignerService *self)
   self->nip55l_proxy = NULL;
   self->method = GNOSTR_SIGNER_METHOD_NONE;
   self->auth_generation++;
+  set_approval(self, GNOSTR_SIGNER_APPROVAL_OK);
 
   set_state(self, GNOSTR_SIGNER_STATE_DISCONNECTED);
 
@@ -333,7 +494,9 @@ gnostr_signer_service_logout(GnostrSignerService *self)
  * identity, "" selects the daemon's DEFAULT one. GNostr always passes the
  * npub of the account it is signed in as, so it never signs or decrypts as
  * a different identity when the daemon's default differs. Never pass a
- * hex key: the daemon's resolver accepts 64-hex as a raw secret key. */
+ * hex key: before nip55l 0.4.0 the daemon's resolver read 64-hex as a raw
+ * secret key; since 0.4.0 (nostrc-a4w5) it reads it as a pubkey that must
+ * name a known identity and refuses nsec. The npub means the same to both. */
 static char *
 nip55l_current_user(GnostrSignerService *self, char **out_pubkey_hex, GError **error)
 {
@@ -433,6 +596,8 @@ on_nip55l_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
 
   gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(
       proxy, &signed_event_json, res, &error);
+  if (!ok)
+    error = nip55l_call_failed(ctx->service, error);
 
   if (ok && !nip55l_check_signed_event(signed_event_json, ctx->expected_pubkey,
                                        ctx->expected_kind, &error)) {
@@ -1082,29 +1247,12 @@ pubkey_hex_from_npub_or_hex(const char *s)
   return NULL;
 }
 
+/* The signer is confirmed to hold the saved account: resume the session. */
 static void
-on_restore_pubkey(GObject *source, GAsyncResult *res, gpointer user_data)
+restore_commit(GTask *task)
 {
-  GTask *task = G_TASK(user_data);
   GnostrSignerService *self = g_task_get_source_object(task);
   Nip55lRestore *r = g_task_get_task_data(task);
-  GError *error = NULL;
-  g_autofree char *npub = NULL;
-
-  if (!nostr_org_nostr_signer_call_get_public_key_finish(NOSTR_ORG_NOSTR_SIGNER(source),
-                                                         &npub, res, &error)) {
-    g_task_return_error(task, error);
-    g_object_unref(task);
-    return;
-  }
-  g_autofree char *active_hex = pubkey_hex_from_npub_or_hex(npub);
-  if (!active_hex || g_strcmp0(active_hex, r->pubkey_hex) != 0) {
-    /* Groundhog rule: never silently continue as a different pubkey. */
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
-                            "GNostr Signer is using a different account");
-    g_object_unref(task);
-    return;
-  }
   if (self->method != GNOSTR_SIGNER_METHOD_NONE || self->auth_generation != r->generation) {
     /* A sign-in or sign-out happened meanwhile; it wins. */
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
@@ -1120,6 +1268,71 @@ on_restore_pubkey(GObject *source, GAsyncResult *res, gpointer user_data)
   g_message("[SIGNER_SERVICE] NIP-55L session restored for %.16s...", r->pubkey_hex);
   g_task_return_boolean(task, TRUE);
   g_object_unref(task);
+}
+
+static void
+on_restore_pubkey(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  GTask *task = G_TASK(user_data);
+  GnostrSignerService *self = g_task_get_source_object(task);
+  Nip55lRestore *r = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree char *npub = NULL;
+
+  if (!nostr_org_nostr_signer_call_get_public_key_finish(NOSTR_ORG_NOSTR_SIGNER(source),
+                                                         &npub, res, &error)) {
+    /* nostrc-jppi: GetPublicKey is approval-gated; say why it failed. */
+    g_task_return_error(task, nip55l_call_failed(self, error));
+    g_object_unref(task);
+    return;
+  }
+  g_autofree char *active_hex = pubkey_hex_from_npub_or_hex(npub);
+  if (!active_hex || g_strcmp0(active_hex, r->pubkey_hex) != 0) {
+    /* Groundhog rule: never silently continue as a different pubkey. */
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                            "GNostr Signer is using a different account");
+    g_object_unref(task);
+    return;
+  }
+  restore_commit(task);
+}
+
+/* nostrc-jppi: does the signer's key store list the saved account? Read from
+ * item attributes through the app's keystore bridge - no D-Bus call, so no
+ * approval prompt at startup. FALSE also when the store cannot be read. */
+static void
+restore_holds_key_thread(GTask *probe, gpointer source, gpointer task_data,
+                         GCancellable *cancellable)
+{
+  (void)source;
+  (void)cancellable;
+  g_task_return_boolean(probe, gnostr_identity_signer_holds_key(task_data));
+}
+
+static void
+on_restore_holds_key(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  Nip55lRestore *r = g_task_get_task_data(task);
+  GError *error = NULL;
+  gboolean holds = g_task_propagate_boolean(G_TASK(res), &error);
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  g_clear_error(&error);
+  if (holds) {
+    /* Every NIP-55L call names this account as current_user and checks the
+     * pubkey of what comes back, so no call can act as another identity. */
+    restore_commit(task);
+    return;
+  }
+  /* Not listed (or the store is unreadable): ask the signer, which may
+   * prompt once for get_public_key or fail fast without its window. */
+  nostr_org_nostr_signer_call_get_public_key(r->proxy, g_task_get_cancellable(task),
+                                             on_restore_pubkey, task);
 }
 
 static void
@@ -1155,8 +1368,12 @@ on_restore_has_owner(GObject *source, GAsyncResult *res, gpointer user_data)
     g_object_unref(task);
     return;
   }
-  nostr_org_nostr_signer_call_get_public_key(r->proxy, g_task_get_cancellable(task),
-                                             on_restore_pubkey, task);
+  g_autoptr(GNostrNip19) n19 = gnostr_nip19_encode_npub(r->pubkey_hex, NULL);
+  const char *npub = n19 ? gnostr_nip19_get_bech32(n19) : NULL;
+  GTask *probe = g_task_new(NULL, g_task_get_cancellable(task), on_restore_holds_key, task);
+  g_task_set_task_data(probe, g_strdup(npub ? npub : ""), g_free);
+  g_task_run_in_thread(probe, restore_holds_key_thread);
+  g_object_unref(probe);
 }
 
 static void
@@ -1266,9 +1483,7 @@ on_nip55l_nip44_encrypt_complete(GObject *source, GAsyncResult *res, gpointer us
       proxy, &ciphertext, res, &error);
 
   if (!ok) {
-    if (!error) {
-      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 encryption failed");
-    }
+    error = nip55l_call_failed(ctx->service, error);
     ctx->callback(ctx->service, NULL, error, ctx->user_data);
     g_error_free(error);
   } else {
@@ -1293,9 +1508,7 @@ on_nip55l_nip44_decrypt_complete(GObject *source, GAsyncResult *res, gpointer us
       proxy, &plaintext, res, &error);
 
   if (!ok) {
-    if (!error) {
-      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 decryption failed");
-    }
+    error = nip55l_call_failed(ctx->service, error);
     ctx->callback(ctx->service, NULL, error, ctx->user_data);
     g_error_free(error);
   } else {
@@ -1741,8 +1954,7 @@ on_nip55l_nip44_encrypt_b64_complete(GObject *source, GAsyncResult *res, gpointe
       proxy, &ciphertext, res, &error);
 
   if (!ok) {
-    if (!error)
-      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 binary encryption failed");
+    error = nip55l_call_failed(ctx->service, error);
     ctx->encrypt_callback(ctx->service, NULL, error, ctx->user_data);
     g_error_free(error);
   } else {
@@ -1764,8 +1976,7 @@ on_nip55l_nip44_decrypt_b64_complete(GObject *source, GAsyncResult *res, gpointe
       proxy, &plaintext_b64, res, &error);
 
   if (!ok) {
-    if (!error)
-      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 binary decryption failed");
+    error = nip55l_call_failed(ctx->service, error);
     ctx->decrypt_callback(ctx->service, NULL, error, ctx->user_data);
     g_error_free(error);
     nip44_bytes_context_free(ctx);

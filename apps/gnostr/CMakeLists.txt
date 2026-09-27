@@ -869,6 +869,21 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "profile;validation;unit;gnostr")
 
+  # Read-only mode greys out per-note actions (nostrc-46h7). Real note
+  # cards: Xvfb on Linux, native on macOS.
+  include(${PROJECT_ROOT}/cmake/GnTest.cmake)
+  gn_add_gtest_xvfb(gnostr-test-publish-gate
+    SOURCES tests/test_publish_gate.c
+            src/ui/gnostr-publish-gate.c
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
+    ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}" "GSETTINGS_BACKEND=memory"
+    TIMEOUT 60)
+  target_include_directories(gnostr-test-publish-gate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gtk/include)
+  set_tests_properties(gnostr-test-publish-gate PROPERTIES
+    LABELS "gtk;widget;unit;gnostr")
+
   # GNostr Signer (NIP-55L) session restore + identity selection
   # (nostrc-vuwu). Headless: fake org.nostr.Signer on a private GTestDBus.
   add_executable(gnostr-test-signer-nip55l-identity
@@ -884,7 +899,8 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nips/nip46/include
     ${_NOSTR_CONFIG_DIR})
   target_compile_definitions(gnostr-test-signer-nip55l-identity PRIVATE
-    SIGNER_DBUS_XML="${PROJECT_ROOT}/nips/nip55l/dbus/org.nostr.Signer.xml")
+    SIGNER_DBUS_XML="${PROJECT_ROOT}/nips/nip55l/dbus/org.nostr.Signer.xml"
+    NIP55L_SIGNER_SERVICE_SRC="${PROJECT_ROOT}/nips/nip55l/src/glib/signer_service_g.c")
   target_link_libraries(gnostr-test-signer-nip55l-identity PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_gobject nostr libgo)
   if (TARGET nostr_nip46_core)
@@ -999,6 +1015,29 @@ if (BUILD_TESTING)
     target_link_options(gnostr-test-plugin-raw-relay-api PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
   endif()
   _gnostr_apply_sanitizers(gnostr-test-plugin-raw-relay-api)
+
+  # Plugin publish that completes on the relay's OK (nostrc-4gf4), against
+  # the libwebsockets mock relay from testing/.
+  if (TARGET nostr_testing)
+    add_executable(gnostr-test-plugin-publish-ack
+      tests/test_plugin_publish_ack.c
+      src/gnostr-plugin-api.c)
+    target_compile_features(gnostr-test-plugin-publish-ack PRIVATE c_std_11)
+    target_include_directories(gnostr-test-plugin-publish-ack PRIVATE
+      $<TARGET_PROPERTY:gnostr-test-plugin-raw-relay-api,INCLUDE_DIRECTORIES>)
+    target_link_libraries(gnostr-test-plugin-publish-ack PRIVATE
+      $<TARGET_PROPERTY:gnostr-test-plugin-raw-relay-api,LINK_LIBRARIES> nostr_testing)
+    if (APPLE)
+      target_link_options(gnostr-test-plugin-publish-ack PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
+      target_link_options(gnostr-test-plugin-publish-ack PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+    endif()
+    _gnostr_apply_sanitizers(gnostr-test-plugin-publish-ack)
+    add_test(NAME gnostr-test-plugin-publish-ack COMMAND gnostr-test-plugin-publish-ack)
+    set_tests_properties(gnostr-test-plugin-publish-ack PROPERTIES
+      TIMEOUT 60
+      LABELS "plugin;relay;nip29;gnostr")
+  endif()
   add_test(NAME gnostr-test-plugin-raw-relay-api COMMAND gnostr-test-plugin-raw-relay-api)
   set_tests_properties(gnostr-test-plugin-raw-relay-api PROPERTIES
     TIMEOUT 30

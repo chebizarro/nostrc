@@ -15,8 +15,45 @@
 #include <glib-object.h>
 #include <gio/gio.h>
 #include "nostr/nip46/nip46_client.h"
+#include "gnostr-signer-availability.h"
 
 G_BEGIN_DECLS
+
+/**
+ * GNOSTR_SIGNER_ERROR:
+ *
+ * nostrc-jppi: errors from GNostr Signer (NIP-55L) calls, mapped from the
+ * nip55l 0.4.0 D-Bus errors. Their messages are user-facing. Every NIP-55L
+ * completion (sign, NIP-44, session restore) reports these instead of raw
+ * "GDBus.Error:org.nostr.Signer.Error.…" text; cancellation stays
+ * G_IO_ERROR_CANCELLED.
+ */
+#define GNOSTR_SIGNER_ERROR (gnostr_signer_error_quark())
+GQuark gnostr_signer_error_quark(void);
+
+typedef enum {
+  GNOSTR_SIGNER_ERROR_NO_APPROVER,    /* needs a prompt; GNostr Signer's window is closed */
+  GNOSTR_SIGNER_ERROR_DENIED,         /* the user denied this request */
+  GNOSTR_SIGNER_ERROR_DENIED_BY_RULE, /* a saved "deny" rule refused it */
+  GNOSTR_SIGNER_ERROR_TIMED_OUT,      /* nobody answered the prompt / no reply */
+  GNOSTR_SIGNER_ERROR_RATE_LIMITED,   /* too many requests awaiting approval */
+  GNOSTR_SIGNER_ERROR_NO_KEY,         /* the signer holds no key for the account */
+  GNOSTR_SIGNER_ERROR_NOT_RUNNING,    /* org.nostr.Signer is not on the bus */
+  GNOSTR_SIGNER_ERROR_FAILED,         /* anything else the signer reported */
+} GnostrSignerErrorCode;
+
+/**
+ * gnostr_signer_error_from_dbus:
+ * @error: (nullable): an error from an org.nostr.Signer method call
+ *
+ * Pure mapping (unit-tested): Error.ApprovalDenied is split by the daemon's
+ * reason into NO_APPROVER ("no approval agent is running"), TIMED_OUT
+ * ("approval timed out"), DENIED_BY_RULE ("denied by policy") and DENIED.
+ * G_IO_ERROR_CANCELLED and errors already in GNOSTR_SIGNER_ERROR are copied.
+ *
+ * Returns: (transfer full) (nullable): the mapped error, %NULL for %NULL
+ */
+GError *gnostr_signer_error_from_dbus(const GError *error);
 
 #define GNOSTR_TYPE_SIGNER_SERVICE (gnostr_signer_service_get_type())
 
@@ -150,6 +187,27 @@ void gnostr_signer_service_login_async(GnostrSignerService *self,
 gboolean gnostr_signer_service_login_finish(GnostrSignerService *self,
                                              GAsyncResult *result,
                                              GError **error);
+
+/**
+ * gnostr_signer_service_get_approval:
+ * @self: The signer service
+ *
+ * nostrc-jppi: what recent GNostr Signer answers say about GNostr's
+ * standing (no approval window open, or a saved "deny" rule). Changes emit
+ * "approval-changed" on the main context. A NIP-55L answer that needed no
+ * prompt clears NO_APPROVER; sign-in/sign-out and
+ * gnostr_signer_service_reset_approval() clear both.
+ */
+GnostrSignerApproval gnostr_signer_service_get_approval(GnostrSignerService *self);
+
+/**
+ * gnostr_signer_service_reset_approval:
+ * @self: The signer service
+ *
+ * Forget the approval state, e.g. once GNostr Signer's window opens (the
+ * user can now answer prompts or change a rule).
+ */
+void gnostr_signer_service_reset_approval(GnostrSignerService *self);
 
 /**
  * gnostr_signer_service_logout:

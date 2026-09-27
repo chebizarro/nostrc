@@ -77,7 +77,8 @@ GList *gnostr_keystore_list_legacy_keys(GError **error);
  * gnostr_keystore_legacy_migrates_automatically:
  *
  * Returns: %TRUE if the signer daemon imports legacy client keys by itself
- *   when it starts (Linux: org.gnostr.NostrKey is on its migration list);
+ *   when it starts (Linux: org.gnostr.NostrKey is on its migration list;
+ *   macOS: the "org.gnostr.Client" Keychain items, nostrc-de9h);
  *   %FALSE if the user must import them in GNostr Signer by hand.
  */
 gboolean gnostr_keystore_legacy_migrates_automatically(void);

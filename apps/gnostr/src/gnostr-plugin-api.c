@@ -763,6 +763,210 @@ publish_to_relays_thread_func(GTask        *task,
   }
 }
 
+/* ---- nostrc-4gf4: publish to one relay and wait for its OK ---- */
+
+/* Same bound as the main window's publish path (PUBLISH_ACK_TIMEOUT_SECONDS). */
+#define PLUGIN_PUBLISH_ACK_TIMEOUT_S 15
+
+typedef struct
+{
+  GNostrRelay  *relay;
+  NostrEvent   *event;
+  char         *event_id;   /* the event's declared id: what relays echo in OK */
+  char         *relay_url;
+  gulong        ok_handler;
+  gulong        state_handler;
+  gulong        cancel_handler;
+  guint         timeout_id;
+  gboolean      sent;
+  gboolean      done;
+} PublishAckData;
+
+static void
+publish_ack_data_free(PublishAckData *a)
+{
+  if (!a) return;
+  /* gnostr_relay_new() hands out the registry-shared relay the pool also
+   * uses: never disconnect it, only drop our reference (see nostrc-pub1 in
+   * ui/gnostr-main-window-publish.c). */
+  if (a->relay)
+    g_object_unref(a->relay);
+  if (a->event) nostr_event_free(a->event);
+  g_free(a->event_id);
+  g_free(a->relay_url);
+  g_free(a);
+}
+
+/* Complete once (takes @error; NULL = accepted) and drop the task's own
+ * reference. Main context only. */
+static void
+publish_ack_settle(GTask *task, GError *error)
+{
+  PublishAckData *a = g_task_get_task_data(task);
+  if (a->done) {
+    g_clear_error(&error);
+    return;
+  }
+  a->done = TRUE;
+  g_clear_handle_id(&a->timeout_id, g_source_remove);
+  if (a->ok_handler) g_signal_handler_disconnect(a->relay, a->ok_handler);
+  if (a->state_handler) g_signal_handler_disconnect(a->relay, a->state_handler);
+  a->ok_handler = a->state_handler = 0;
+  if (a->cancel_handler)
+    g_cancellable_disconnect(g_task_get_cancellable(task), a->cancel_handler);
+  a->cancel_handler = 0;
+  if (error)
+    g_task_return_error(task, error);
+  else
+    g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void
+on_publish_ack_ok(GNostrRelay *relay, const char *event_id, gboolean accepted,
+                  const char *message, gpointer user_data)
+{
+  (void)relay;
+  GTask *task = user_data;
+  PublishAckData *a = g_task_get_task_data(task);
+  if (a->done || g_strcmp0(event_id, a->event_id) != 0)
+    return;
+  if (accepted) {
+    publish_ack_settle(task, NULL);
+    return;
+  }
+  publish_ack_settle(task, g_error_new(GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_RELAY_REJECTED,
+                                       "%s rejected the event: %s", a->relay_url,
+                                       message && *message ? message : "no reason given"));
+}
+
+static void
+on_publish_ack_state(GNostrRelay *relay, GNostrRelayState old_state,
+                     GNostrRelayState new_state, gpointer user_data)
+{
+  (void)relay;
+  (void)old_state;
+  GTask *task = user_data;
+  PublishAckData *a = g_task_get_task_data(task);
+  if (!a->done && a->sent &&
+      (new_state == GNOSTR_RELAY_STATE_DISCONNECTED || new_state == GNOSTR_RELAY_STATE_ERROR))
+    publish_ack_settle(task, g_error_new(GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_NETWORK,
+                                         "%s disconnected before answering", a->relay_url));
+}
+
+static gboolean
+on_publish_ack_timeout(gpointer user_data)
+{
+  GTask *task = user_data;
+  PublishAckData *a = g_task_get_task_data(task);
+  a->timeout_id = 0;
+  publish_ack_settle(task, g_error_new(GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_NETWORK,
+                                       "%s did not answer (no OK within %d s)",
+                                       a->relay_url, PLUGIN_PUBLISH_ACK_TIMEOUT_S));
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+publish_ack_cancelled_idle(gpointer user_data)
+{
+  publish_ack_settle(G_TASK(user_data),
+                     g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled"));
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_publish_ack_cancelled(GCancellable *cancellable, gpointer user_data)
+{
+  (void)cancellable;
+  /* Not from inside the emission: settling disconnects this handler. */
+  g_idle_add_full(G_PRIORITY_DEFAULT, publish_ack_cancelled_idle,
+                  g_object_ref(user_data), g_object_unref);
+}
+
+static void
+on_publish_ack_connected(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  GTask *task = user_data; /* ref held by this call */
+  PublishAckData *a = g_task_get_task_data(task);
+  GError *error = NULL;
+  gboolean connected = gnostr_relay_connect_finish(GNOSTR_RELAY(source), res, &error);
+  if (a->done) {
+    g_clear_error(&error);
+  } else if (!connected) {
+    publish_ack_settle(task, g_error_new(GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_NETWORK,
+                                         "Could not connect to %s: %s", a->relay_url,
+                                         error ? error->message : "unknown error"));
+    g_clear_error(&error);
+  } else if (!gnostr_relay_publish(a->relay, a->event, &error)) {
+    publish_ack_settle(task, error);
+  } else {
+    a->sent = TRUE;
+    a->timeout_id = g_timeout_add_seconds(PLUGIN_PUBLISH_ACK_TIMEOUT_S,
+                                          on_publish_ack_timeout, task);
+  }
+  g_object_unref(task);
+}
+
+void
+gnostr_plugin_context_publish_event_to_relay_ack_async(GnostrPluginContext *context,
+                                                       const char          *event_json,
+                                                       const char          *relay_url,
+                                                       GCancellable        *cancellable,
+                                                       GAsyncReadyCallback  callback,
+                                                       gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(event_json != NULL);
+
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gnostr_plugin_context_publish_event_to_relay_ack_async);
+  PublishAckData *a = g_new0(PublishAckData, 1);
+  g_task_set_task_data(task, a, (GDestroyNotify)publish_ack_data_free);
+  a->relay_url = g_strdup(relay_url);
+
+  a->event = nostr_event_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
+  JsonNode *root = json_parser_load_from_data(parser, event_json, -1, NULL)
+                     ? json_parser_get_root(parser) : NULL;
+  JsonObject *obj = root && JSON_NODE_HOLDS_OBJECT(root) ? json_node_get_object(root) : NULL;
+  const char *declared_id = obj && json_object_has_member(obj, "id")
+                              ? json_object_get_string_member(obj, "id") : NULL;
+  if (declared_id && *declared_id)
+    a->event_id = g_ascii_strdown(declared_id, -1);
+  if (!a->event_id || nostr_event_deserialize_compact(a->event, event_json, NULL) != 1) {
+    publish_ack_settle(task, g_error_new_literal(GNOSTR_PLUGIN_ERROR,
+                                                 GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                                                 "Not a signed event"));
+    return;
+  }
+  if (!relay_url || !*relay_url || !(a->relay = gnostr_relay_new(relay_url))) {
+    publish_ack_settle(task, g_error_new(GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                                         "Not a relay URL: %s", relay_url ? relay_url : "(none)"));
+    return;
+  }
+  a->ok_handler = g_signal_connect(a->relay, "ok", G_CALLBACK(on_publish_ack_ok), task);
+  a->state_handler = g_signal_connect(a->relay, "state-changed",
+                                      G_CALLBACK(on_publish_ack_state), task);
+  if (cancellable) {
+    /* Already cancelled: the handler ran at once and the idle settles. */
+    a->cancel_handler = g_cancellable_connect(cancellable, G_CALLBACK(on_publish_ack_cancelled),
+                                              task, NULL);
+    if (g_cancellable_is_cancelled(cancellable))
+      return;
+  }
+  gnostr_relay_connect_async(a->relay, NULL, on_publish_ack_connected, g_object_ref(task));
+}
+
+gboolean
+gnostr_plugin_context_publish_event_to_relay_ack_finish(GnostrPluginContext *context,
+                                                        GAsyncResult        *result,
+                                                        GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(g_task_is_valid(result, NULL), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
 static void
 publish_async_thread_func(GTask        *task,
                           gpointer      source_object,

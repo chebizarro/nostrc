@@ -30,9 +30,11 @@ struct _GnNip29MessageRow
   GtkLabel *content_label;
   GtkLabel *time_label;
   GtkLabel *kind_badge;
+  GtkButton *pin_button;             /* nostrc-prjb: admins only */
 
   GnNip29MessageItem *item;
   gboolean            is_own;
+  gboolean            pinned;
 };
 
 G_DEFINE_TYPE(GnNip29MessageRow, gn_nip29_message_row, GTK_TYPE_BOX)
@@ -42,6 +44,7 @@ G_DEFINE_TYPE(GnNip29MessageRow, gn_nip29_message_row, GTK_TYPE_BOX)
 enum {
   SIGNAL_PROFILE_ACTIVATED,
   SIGNAL_THREAD_ACTIVATED,
+  SIGNAL_PIN_TOGGLED,
   N_SIGNALS,
 };
 
@@ -73,6 +76,24 @@ gn_nip29_message_row_class_init(GnNip29MessageRowClass *klass)
                  G_SIGNAL_RUN_LAST,
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  /* nostrc-prjb: (event id, pin) - an admin asked to pin / unpin it. */
+  signals[SIGNAL_PIN_TOGGLED] =
+    g_signal_new("pin-toggled",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_BOOLEAN);
+}
+
+static void
+on_pin_clicked(GtkButton *button, gpointer user_data)
+{
+  (void)button;
+  GnNip29MessageRow *self = GN_NIP29_MESSAGE_ROW(user_data);
+  const char *id = self->item ? gn_nip29_message_item_get_id(self->item) : NULL;
+  if (id != NULL && *id != '\0')
+    g_signal_emit(self, signals[SIGNAL_PIN_TOGGLED], 0, id, !self->pinned);
 }
 
 static void
@@ -107,6 +128,13 @@ gn_nip29_message_row_init(GnNip29MessageRow *self)
   gtk_widget_add_css_class(GTK_WIDGET(self->time_label), "dim-label");
   gtk_widget_add_css_class(GTK_WIDGET(self->time_label), "caption");
   gtk_box_append(GTK_BOX(header), GTK_WIDGET(self->time_label));
+
+  self->pin_button = GTK_BUTTON(gtk_button_new_from_icon_name("view-pin-symbolic"));
+  gtk_widget_add_css_class(GTK_WIDGET(self->pin_button), "flat");
+  gtk_widget_add_css_class(GTK_WIDGET(self->pin_button), "circular");
+  gtk_widget_set_visible(GTK_WIDGET(self->pin_button), FALSE);
+  g_signal_connect(self->pin_button, "clicked", G_CALLBACK(on_pin_clicked), self);
+  gtk_box_append(GTK_BOX(header), GTK_WIDGET(self->pin_button));
 
   gtk_box_append(GTK_BOX(self), header);
 
@@ -293,4 +321,20 @@ gn_nip29_message_row_unbind(GnNip29MessageRow *self)
   gtk_widget_set_halign(GTK_WIDGET(self), GTK_ALIGN_FILL);
   gtk_widget_remove_css_class(GTK_WIDGET(self), "nip29-own-message");
   self->is_own = FALSE;
+}
+
+void
+gn_nip29_message_row_set_pin_state(GnNip29MessageRow *self,
+                                   gboolean           can_pin,
+                                   gboolean           pinned)
+{
+  g_return_if_fail(GN_IS_NIP29_MESSAGE_ROW(self));
+  self->pinned = pinned;
+  gtk_widget_set_visible(GTK_WIDGET(self->pin_button), can_pin);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->pin_button),
+                              pinned ? "Unpin from the group" : "Pin to the group");
+  if (pinned)
+    gtk_widget_remove_css_class(GTK_WIDGET(self->pin_button), "dim-label");
+  else
+    gtk_widget_add_css_class(GTK_WIDGET(self->pin_button), "dim-label");
 }

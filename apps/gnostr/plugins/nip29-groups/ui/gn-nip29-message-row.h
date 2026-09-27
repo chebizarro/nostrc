@@ -28,6 +28,12 @@ void gn_nip29_message_row_bind  (GnNip29MessageRow   *self,
                                   GnostrPluginContext *plugin_context);
 void gn_nip29_message_row_unbind(GnNip29MessageRow *self);
 
+/* nostrc-prjb: show the pin toggle (group admins) and whether the message
+ * is in the group's pinned list. Emits "pin-toggled" (id, pin). */
+void gn_nip29_message_row_set_pin_state(GnNip29MessageRow *self,
+                                        gboolean           can_pin,
+                                        gboolean           pinned);
+
 G_END_DECLS
 
 #endif /* GN_NIP29_MESSAGE_ROW_H */
