@@ -350,7 +350,11 @@ int mls_group_self_update(MlsGroup *group,
  * Process an incoming Commit message.
  *
  * Validates the commit, applies proposals, decrypts the UpdatePath
- * (if present), and advances the group to the new epoch.
+ * (if present), and advances the group to the new epoch.  A Commit without an
+ * UpdatePath is rejected with MARMOT_ERR_MLS_PROCESS_MESSAGE when it covers no
+ * proposals or any Update, Remove or GroupContextExtensions proposal (RFC 9420
+ * §12.4; ExternalInit, which also requires a path, is rejected earlier as
+ * unsupported).  A rejected Commit leaves the group unchanged.
  *
  * @param group        The group state (modified on success)
  * @param commit_data  Serialized Commit message

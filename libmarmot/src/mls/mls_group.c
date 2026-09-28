@@ -1911,6 +1911,36 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
  * Process incoming Commit
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * RFC 9420 §12.4: a Commit's path field MUST be populated if it covers no
+ * proposals, or any proposal whose type is registered "Path Required" (§17.4:
+ * Update, Remove, ExternalInit, GroupContextExtensions).  Add, PreSharedKey
+ * and ReInit may be committed without a path, as may AppDataUpdate
+ * (draft-ietf-mls-extensions registers it Path Required: N; libmarmot still
+ * never applies it).  Any other type fails closed as path-required.
+ *
+ * Without this rule a pathless Remove advances with an all-zero
+ * commit_secret from the parent-epoch init_secret, which the removed member
+ * holds: removal would not exclude them from the next epoch.
+ */
+static bool
+commit_path_required(const MlsProposal *proposals, size_t count)
+{
+    if (count == 0) return true;
+    for (size_t i = 0; i < count; i++) {
+        switch (proposals[i].type) {
+        case MLS_PROPOSAL_ADD:
+        case MLS_PROPOSAL_PSK:
+        case MLS_PROPOSAL_REINIT:
+        case MLS_PROPOSAL_APP_DATA_UPDATE:
+            break;
+        default:
+            return true;
+        }
+    }
+    return false;
+}
+
 /** Validate that all proposals have types this processor understands. */
 static int
 validate_proposal_ordering(const MlsProposal *proposals, size_t count)
@@ -2431,6 +2461,15 @@ process_commit_impl(MlsGroup *group,
             staged_rc = MARMOT_ERR_UNSUPPORTED;
             goto staged_fail;
         }
+    }
+
+    /* Once references are resolved every proposal type is known: enforce the
+     * UpdatePath requirement before anything is applied (RFC 9420 §12.4). */
+    if (!commit.has_path &&
+        commit_path_required(commit.proposals, commit.proposal_count)) {
+        mls_commit_clear(&commit);
+        staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        goto staged_fail;
     }
 
     /* Validate proposal ordering per RFC 9420 */
@@ -3499,6 +3538,11 @@ int
 mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf)
 {
     if (!commit || !buf) return -1;
+    /* Every libmarmot-produced Commit is encoded here: never emit one that a
+     * conformant receiver must reject for a missing UpdatePath (§12.4). */
+    if (!commit->has_path &&
+        commit_path_required(commit->proposals, commit->proposal_count))
+        return -1;
 
     /* proposals: Proposal<V> */
     MlsTlsBuf proposals_buf;

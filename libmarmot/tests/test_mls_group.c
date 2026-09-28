@@ -458,31 +458,47 @@ TEST(test_commit_serialize_roundtrip)
 
 TEST(test_commit_remove_serialize)
 {
-    MlsProposal prop;
-    memset(&prop, 0, sizeof(prop));
-    prop.type = MLS_PROPOSAL_REMOVE;
-    prop.remove.removed_leaf = 42;
+    /* A Remove requires an UpdatePath (RFC 9420 §12.4): round-trip the
+     * path-bearing Commit libmarmot's remove producer emits. */
+    MlsGroup alice_group;
+    uint8_t alice_sk[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&alice_group, alice_sk) == 0);
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    assert(mls_key_package_create(&bob_kp, &bob_priv, BOB_ID, 32, NULL, 0) == 0);
+    MlsAddResult add_result;
+    assert(mls_group_add_member(&alice_group, &bob_kp, &add_result) == 0);
+    MlsCommitResult removal;
+    assert(mls_group_remove_member(&alice_group, 1, &removal) == 0);
 
-    MlsCommit commit;
-    memset(&commit, 0, sizeof(commit));
-    commit.proposals = &prop;
-    commit.proposal_count = 1;
-    commit.has_path = false;
-
-    MlsTlsBuf buf;
-    assert(mls_tls_buf_init(&buf, 256) == 0);
-    assert(mls_commit_serialize(&commit, &buf) == 0);
-
-    MlsCommit commit2;
+    MlsMLSMessage msg;
     MlsTlsReader reader;
-    mls_tls_reader_init(&reader, buf.data, buf.len);
+    mls_tls_reader_init(&reader, removal.commit_data, removal.commit_len);
+    assert(mls_message_deserialize(&reader, &msg) == 0);
+    const MlsFramedContent *fc = &msg.public_message.content;
+    MlsCommit commit2;
+    mls_tls_reader_init(&reader, fc->content, fc->content_len);
     assert(mls_commit_deserialize(&reader, &commit2) == 0);
+    assert(mls_tls_reader_done(&reader));
     assert(commit2.proposal_count == 1);
     assert(commit2.proposals[0].type == MLS_PROPOSAL_REMOVE);
-    assert(commit2.proposals[0].remove.removed_leaf == 42);
+    assert(commit2.proposals[0].remove.removed_leaf == 1);
+    assert(commit2.has_path);
+
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, fc->content_len) == 0);
+    assert(mls_commit_serialize(&commit2, &buf) == 0);
+    assert(buf.len == fc->content_len &&
+           memcmp(buf.data, fc->content, buf.len) == 0);
 
     mls_tls_buf_free(&buf);
     mls_commit_clear(&commit2);
+    mls_message_clear(&msg);
+    mls_commit_result_clear(&removal);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
 }
 
 /* ── GroupInfo tests ───────────────────────────────────────────────────── */
@@ -735,66 +751,108 @@ proposal_ref_for_test(const uint8_t *msg_data, size_t msg_len,
     return rc;
 }
 
-/* Build a pathless Commit from `committer` whose proposals are exactly
- * `refs` (ProposalOrRef type 2), assuming those references resolve to Adds of
- * `added` (in order), and derive the next epoch the receiver must reach. */
 static int
-build_add_ref_commit_for_test(const MlsGroup *committer,
-                              const uint8_t (*refs)[MLS_HASH_LEN], size_t ref_count,
-                              const MlsKeyPackage *const *added, size_t added_count,
-                              uint8_t **out, size_t *out_len,
-                              ExpectedEpochForTest *expected)
+tree_clone_for_test(const MlsRatchetTree *src, MlsRatchetTree *dst)
+{
+    uint8_t *data = NULL;
+    size_t len = 0;
+    memset(dst, 0, sizeof(*dst));
+    int rc = (mls_ratchet_tree_serialize(src, &data, &len) == 0 &&
+              mls_ratchet_tree_deserialize(data, len, dst) == 0) ? 0 : -1;
+    free(data);
+    return rc;
+}
+
+/* GroupContext tree_hash: libmarmot hashes the canonical (serialized) view,
+ * which omits a blank right edge, while keeping the live leaf-index space. */
+static int
+canonical_tree_hash_for_test(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN])
+{
+    MlsRatchetTree canonical;
+    int rc = tree_clone_for_test(tree, &canonical) == 0 &&
+             mls_tree_root_hash(&canonical, out) == 0 ? 0 : -1;
+    mls_tree_free(&canonical);
+    return rc;
+}
+
+/* Add: fill the leftmost blank leaf (extending the tree when full) and join
+ * the unmerged_leaves of every non-blank parent on its direct path (RFC 9420
+ * §12.1.1). */
+static int
+add_leaf_for_test(MlsRatchetTree *tree, const MlsKeyPackage *kp)
+{
+    uint32_t node_idx;
+    if (mls_tree_add_leaf(tree, &node_idx) != 0) return -1;
+    tree->nodes[node_idx].type = MLS_NODE_LEAF;
+    if (mls_leaf_node_clone(&tree->nodes[node_idx].leaf, &kp->leaf_node) != 0)
+        return -1;
+    uint32_t dp[64], dp_len = 0;
+    if (mls_tree_direct_path(node_idx, tree->n_leaves, dp, 64, &dp_len) != 0)
+        return -1;
+    for (uint32_t j = 0; j < dp_len; j++) {
+        MlsParentNode *parent = &tree->nodes[dp[j]].parent;
+        if (tree->nodes[dp[j]].type != MLS_NODE_PARENT) continue;
+        uint32_t *grown = realloc(parent->unmerged_leaves,
+            (parent->unmerged_leaf_count + 1) * sizeof(*grown));
+        if (!grown) return -1;
+        parent->unmerged_leaves = grown;
+        parent->unmerged_leaves[parent->unmerged_leaf_count++] =
+            mls_tree_node_to_leaf(node_idx);
+    }
+    return 0;
+}
+
+/* Remove / Update: optionally install `leaf_node` at `leaf` (Update), else
+ * blank it (Remove), then blank its direct path (RFC 9420 §12.1.2-3). */
+static int
+replace_leaf_for_test(MlsRatchetTree *tree, uint32_t leaf,
+                      const MlsLeafNode *leaf_node)
+{
+    uint32_t node = mls_tree_leaf_to_node(leaf);
+    mls_tree_blank_node(&tree->nodes[node]);
+    if (leaf_node) {
+        tree->nodes[node].type = MLS_NODE_LEAF;
+        if (mls_leaf_node_clone(&tree->nodes[node].leaf, leaf_node) != 0)
+            return -1;
+    }
+    uint32_t dp[64], dp_len = 0;
+    if (mls_tree_direct_path(node, tree->n_leaves, dp, 64, &dp_len) != 0)
+        return -1;
+    for (uint32_t j = 0; j < dp_len; j++)
+        mls_tree_blank_node(&tree->nodes[dp[j]]);
+    return 0;
+}
+
+/* Build a Commit from `committer` with no UpdatePath whose ProposalOrRef
+ * vector is the pre-encoded `proposals`, and derive the epoch a receiver
+ * reaches if it accepts it: `next_tree` is the tree after the proposals,
+ * `next_ext` the resulting GroupContext extensions, `psk_secret` the combined
+ * PSK secret (NULL: no PSKs).  Without a path commit_secret is all-zero. */
+static int
+build_pathless_commit_for_test(const MlsGroup *committer,
+                               const uint8_t *proposals, size_t proposals_len,
+                               const MlsRatchetTree *next_tree,
+                               const uint8_t *next_ext, size_t next_ext_len,
+                               const uint8_t *psk_secret,
+                               uint8_t **out, size_t *out_len,
+                               ExpectedEpochForTest *expected)
 {
     int rc = -1;
-    uint8_t *gc = NULL, *next_gc = NULL, *tree_data = NULL;
-    size_t gc_len = 0, next_gc_len = 0, tree_len = 0;
-    MlsTlsBuf refs_buf = {0}, body = {0}, ac = {0}, hash_in = {0}, wire = {0};
-    MlsRatchetTree tree;
+    uint8_t *gc = NULL, *next_gc = NULL;
+    size_t gc_len = 0, next_gc_len = 0;
+    MlsTlsBuf body = {0}, ac = {0}, hash_in = {0}, wire = {0};
     MlsMLSMessage msg;
-    memset(&tree, 0, sizeof(tree));
     memset(&msg, 0, sizeof(msg));
     memset(expected, 0, sizeof(*expected));
 
     /* Commit { ProposalOrRef proposals<V>; optional<UpdatePath> path; } */
-    if (mls_tls_buf_init(&refs_buf, 64) != 0 ||
-        mls_tls_buf_init(&body, 64) != 0) goto done;
-    for (size_t i = 0; i < ref_count; i++) {
-        if (mls_tls_write_u8(&refs_buf, 2) != 0 ||
-            mls_tls_write_opaque16(&refs_buf, refs[i], MLS_HASH_LEN) != 0)
-            goto done;
-    }
-    if (mls_tls_write_opaque32(&body, refs_buf.data, refs_buf.len) != 0 ||
+    if (mls_tls_buf_init(&body, proposals_len + 16) != 0 ||
+        mls_tls_write_opaque32(&body, proposals, proposals_len) != 0 ||
         mls_tls_write_u8(&body, 0) != 0)
         goto done;
 
-    /* Resulting tree: each Add fills the leftmost blank leaf (extending the
-     * tree when full) and joins the unmerged_leaves of every non-blank parent
-     * on its direct path (RFC 9420 §12.1.1). */
-    if (mls_ratchet_tree_serialize(&committer->tree, &tree_data, &tree_len) != 0 ||
-        mls_ratchet_tree_deserialize(tree_data, tree_len, &tree) != 0)
-        goto done;
-    for (size_t i = 0; i < added_count; i++) {
-        uint32_t node_idx;
-        if (mls_tree_add_leaf(&tree, &node_idx) != 0) goto done;
-        tree.nodes[node_idx].type = MLS_NODE_LEAF;
-        if (mls_leaf_node_clone(&tree.nodes[node_idx].leaf,
-                                &added[i]->leaf_node) != 0) goto done;
-        uint32_t dp[64], dp_len = 0;
-        if (mls_tree_direct_path(node_idx, tree.n_leaves, dp, 64, &dp_len) != 0)
-            goto done;
-        for (uint32_t j = 0; j < dp_len; j++) {
-            MlsParentNode *parent = &tree.nodes[dp[j]].parent;
-            if (tree.nodes[dp[j]].type != MLS_NODE_PARENT) continue;
-            uint32_t *grown = realloc(parent->unmerged_leaves,
-                (parent->unmerged_leaf_count + 1) * sizeof(*grown));
-            if (!grown) goto done;
-            parent->unmerged_leaves = grown;
-            parent->unmerged_leaves[parent->unmerged_leaf_count++] =
-                mls_tree_node_to_leaf(node_idx);
-        }
-    }
-    if (mls_tree_root_hash(&tree, expected->tree_hash) != 0) goto done;
-    expected->n_leaves = tree.n_leaves;
+    if (canonical_tree_hash_for_test(next_tree, expected->tree_hash) != 0) goto done;
+    expected->n_leaves = next_tree->n_leaves;
     expected->epoch = committer->epoch + 1;
 
     /* Frame and sign against the parent-epoch GroupContext. */
@@ -827,17 +885,16 @@ build_add_ref_commit_for_test(const MlsGroup *committer,
                         hash_in.data, hash_in.len) != 0)
         goto done;
 
-    /* Next epoch: no path, so commit_secret is all-zero; no PSKs. */
+    /* Next epoch: no path, so commit_secret is all-zero. */
     uint8_t zero_commit_secret[MLS_HASH_LEN] = {0};
     if (mls_group_context_serialize(committer->group_id, committer->group_id_len,
                                     expected->epoch, expected->tree_hash,
                                     expected->confirmed_transcript_hash,
-                                    committer->extensions_data,
-                                    committer->extensions_len,
+                                    next_ext, next_ext_len,
                                     &next_gc, &next_gc_len) != 0 ||
         mls_key_schedule_derive(committer->epoch_secrets.init_secret,
-                                zero_commit_secret, next_gc, next_gc_len, NULL,
-                                &expected->epoch_secrets) != 0 ||
+                                zero_commit_secret, next_gc, next_gc_len,
+                                psk_secret, &expected->epoch_secrets) != 0 ||
         mls_compute_confirmation_tag(expected->epoch_secrets.confirmation_key,
                                      expected->confirmed_transcript_hash,
                                      pm->auth.confirmation_tag) != 0)
@@ -870,12 +927,43 @@ done:
     mls_tls_buf_free(&hash_in);
     mls_tls_buf_free(&ac);
     mls_tls_buf_free(&body);
-    mls_tls_buf_free(&refs_buf);
     mls_message_clear(&msg);
-    mls_tree_free(&tree);
-    free(tree_data);
     free(next_gc);
     free(gc);
+    return rc;
+}
+
+/* Build a pathless Commit from `committer` whose proposals are exactly
+ * `refs` (ProposalOrRef type 2), assuming those references resolve to Adds of
+ * `added` (in order), and derive the next epoch the receiver must reach. */
+static int
+build_add_ref_commit_for_test(const MlsGroup *committer,
+                              const uint8_t (*refs)[MLS_HASH_LEN], size_t ref_count,
+                              const MlsKeyPackage *const *added, size_t added_count,
+                              uint8_t **out, size_t *out_len,
+                              ExpectedEpochForTest *expected)
+{
+    int rc = -1;
+    MlsTlsBuf refs_buf = {0};
+    MlsRatchetTree tree;
+    memset(&tree, 0, sizeof(tree));
+    if (mls_tls_buf_init(&refs_buf, 64) != 0) goto done;
+    for (size_t i = 0; i < ref_count; i++) {
+        if (mls_tls_write_u8(&refs_buf, 2) != 0 ||
+            mls_tls_write_opaque16(&refs_buf, refs[i], MLS_HASH_LEN) != 0)
+            goto done;
+    }
+    if (tree_clone_for_test(&committer->tree, &tree) != 0) goto done;
+    for (size_t i = 0; i < added_count; i++) {
+        if (add_leaf_for_test(&tree, added[i]) != 0) goto done;
+    }
+    rc = build_pathless_commit_for_test(committer, refs_buf.data, refs_buf.len,
+                                        &tree, committer->extensions_data,
+                                        committer->extensions_len, NULL,
+                                        out, out_len, expected);
+done:
+    mls_tls_buf_free(&refs_buf);
+    mls_tree_free(&tree);
     return rc;
 }
 
@@ -1558,6 +1646,511 @@ TEST(test_live_commit_rejects_unauthenticated_proposal_refs)
     proposal_ref_fixture_clear(&f);
 }
 
+/* ── UpdatePath requirement (RFC 9420 §12.4) ─────────────────────────────
+ *
+ * A Commit MUST carry an UpdatePath when it covers no proposals or any
+ * Update, Remove, ExternalInit or GroupContextExtensions proposal.  Alice
+ * (leaf 0), Bob (leaf 1) and Charlie (leaf 2) share a normal, non-adopted
+ * group built by libmarmot's own producers; Alice commits, Bob receives. */
+
+static const uint8_t DAVE_ID[32] = {
+    0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
+    0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
+    0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
+    0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
+};
+
+typedef struct {
+    MlsGroup             alice, bob, charlie;
+    MlsKeyPackage        bob_kp, charlie_kp, dave_kp;
+    MlsKeyPackagePrivate bob_priv, charlie_priv, dave_priv;
+    MlsAddResult         add_bob, add_charlie;
+} ThreeMemberFixture;
+
+static void
+three_member_fixture_init(ThreeMemberFixture *f)
+{
+    memset(f, 0, sizeof(*f));
+    assert(setup_two_member_groups(&f->alice, &f->bob, &f->bob_kp,
+                                   &f->bob_priv, &f->add_bob) == 0);
+    assert(mls_key_package_create(&f->charlie_kp, &f->charlie_priv,
+                                  CHARLIE_ID, 32, NULL, 0) == 0);
+    assert(mls_key_package_create(&f->dave_kp, &f->dave_priv,
+                                  DAVE_ID, 32, NULL, 0) == 0);
+    assert(mls_group_add_member(&f->alice, &f->charlie_kp, &f->add_charlie) == 0);
+    assert(mls_group_process_commit(&f->bob, f->add_charlie.commit_data,
+                                    f->add_charlie.commit_len, 0) == 0);
+    assert(mls_welcome_process(f->add_charlie.welcome_data,
+                               f->add_charlie.welcome_len, &f->charlie_kp,
+                               &f->charlie_priv, NULL, 0, &f->charlie) == 0);
+    assert(f->charlie.own_leaf_index == 2);
+    assert(f->bob.epoch == f->alice.epoch && f->charlie.epoch == f->alice.epoch);
+    assert(sodium_memcmp(&f->bob.epoch_secrets, &f->alice.epoch_secrets,
+                         sizeof(f->bob.epoch_secrets)) == 0);
+    assert(sodium_memcmp(&f->charlie.epoch_secrets, &f->alice.epoch_secrets,
+                         sizeof(f->charlie.epoch_secrets)) == 0);
+}
+
+static void
+three_member_fixture_clear(ThreeMemberFixture *f)
+{
+    mls_add_result_clear(&f->add_bob);
+    mls_add_result_clear(&f->add_charlie);
+    mls_key_package_clear(&f->bob_kp);
+    mls_key_package_clear(&f->charlie_kp);
+    mls_key_package_clear(&f->dave_kp);
+    mls_key_package_private_clear(&f->bob_priv);
+    mls_key_package_private_clear(&f->charlie_priv);
+    mls_key_package_private_clear(&f->dave_priv);
+    mls_group_free(&f->alice);
+    mls_group_free(&f->bob);
+    mls_group_free(&f->charlie);
+}
+
+/* Inline ProposalOrRef encodings: proposal(1) || Proposal. */
+static int
+inline_remove_for_test(MlsTlsBuf *v, uint32_t leaf)
+{
+    return (mls_tls_write_u8(v, 1) == 0 &&
+            mls_tls_write_u16(v, MLS_PROPOSAL_REMOVE) == 0 &&
+            mls_tls_write_u32(v, leaf) == 0) ? 0 : -1;
+}
+
+static int
+inline_add_for_test(MlsTlsBuf *v, const MlsKeyPackage *kp)
+{
+    MlsTlsBuf body;
+    if (add_proposal_body_for_test(kp, &body) != 0) return -1;
+    int rc = (mls_tls_write_u8(v, 1) == 0 &&
+              mls_tls_buf_append(v, body.data, body.len) == 0) ? 0 : -1;
+    mls_tls_buf_free(&body);
+    return rc;
+}
+
+/* What any holder of the parent epoch's secrets computes from the public
+ * Commit alone, assuming an all-zero commit_secret: the confirmed transcript
+ * from the wire, the next GroupContext from the (public) resulting tree, then
+ * the key schedule from the parent init_secret.  *tag_matches reports whether
+ * that derivation reproduces the Commit's confirmation tag, i.e. whether the
+ * holder has recovered the committer's actual next-epoch secrets. */
+static int
+derive_zero_commit_secret_epoch_for_test(const MlsGroup *holder,
+                                         const uint8_t *wire, size_t wire_len,
+                                         const MlsRatchetTree *next_tree,
+                                         uint8_t confirmed[MLS_HASH_LEN],
+                                         MlsEpochSecrets *out, bool *tag_matches)
+{
+    int rc = -1;
+    MlsMLSMessage msg;
+    MlsTlsReader r;
+    MlsTlsBuf ac = {0}, hash_in = {0};
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    uint8_t tree_hash[MLS_HASH_LEN], tag[MLS_HASH_LEN];
+    uint8_t zero_commit_secret[MLS_HASH_LEN] = {0};
+    mls_tls_reader_init(&r, wire, wire_len);
+    if (mls_message_deserialize(&r, &msg) != 0) return -1;
+    if (authenticated_content_for_test(&msg.public_message, &ac) != 0 ||
+        mls_tls_buf_init(&hash_in, MLS_HASH_LEN + ac.len) != 0 ||
+        mls_tls_buf_append(&hash_in, holder->interim_transcript_hash,
+                           MLS_HASH_LEN) != 0 ||
+        mls_tls_buf_append(&hash_in, ac.data, ac.len) != 0 ||
+        mls_crypto_hash(confirmed, hash_in.data, hash_in.len) != 0 ||
+        canonical_tree_hash_for_test(next_tree, tree_hash) != 0 ||
+        mls_group_context_serialize(holder->group_id, holder->group_id_len,
+                                    holder->epoch + 1, tree_hash, confirmed,
+                                    holder->extensions_data,
+                                    holder->extensions_len, &gc, &gc_len) != 0 ||
+        mls_key_schedule_derive(holder->epoch_secrets.init_secret,
+                                zero_commit_secret, gc, gc_len, NULL, out) != 0 ||
+        mls_compute_confirmation_tag(out->confirmation_key, confirmed, tag) != 0)
+        goto done;
+    *tag_matches = sodium_memcmp(tag, msg.public_message.auth.confirmation_tag,
+                                 MLS_HASH_LEN) == 0;
+    rc = 0;
+done:
+    free(gc);
+    mls_tls_buf_free(&hash_in);
+    mls_tls_buf_free(&ac);
+    mls_message_clear(&msg);
+    return rc;
+}
+
+enum {
+    PATHLESS_REMOVE,
+    PATHLESS_UPDATE_REF,
+    PATHLESS_EMPTY,
+    PATHLESS_GCE,
+    PATHLESS_ADD_AND_REMOVE,
+    PATHLESS_CASE_COUNT
+};
+
+static const char *const pathless_case_names[PATHLESS_CASE_COUNT] = {
+    "Remove", "Update-by-ref", "empty", "GroupContextExtensions", "Add+Remove",
+};
+
+TEST(test_pathless_commit_requiring_path_rejected)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+
+    /* Charlie's standalone Update proposal (committed by reference): his
+     * current leaf with a fresh HPKE encryption key. */
+    MlsLeafNode upd_leaf;
+    uint8_t upd_sk[MLS_KEM_SK_LEN];
+    assert(mls_leaf_node_clone(&upd_leaf,
+        &f.charlie.tree.nodes[mls_tree_leaf_to_node(2)].leaf) == 0);
+    assert(mls_crypto_kem_keygen(upd_sk, upd_leaf.encryption_key) == 0);
+    MlsTlsBuf upd_body;
+    assert(mls_tls_buf_init(&upd_body, 512) == 0);
+    assert(mls_tls_write_u16(&upd_body, MLS_PROPOSAL_UPDATE) == 0);
+    assert(mls_leaf_node_serialize(&upd_leaf, &upd_body) == 0);
+    uint8_t *upd_msg = NULL;
+    size_t upd_len = 0;
+    assert(build_proposal_message_with_body_for_test(&f.charlie,
+        upd_body.data, upd_body.len, f.charlie.epoch, 2, 0,
+        f.charlie.own_signature_key, f.charlie.epoch_secrets.membership_key,
+        &upd_msg, &upd_len) == 0);
+    uint8_t upd_ref[MLS_HASH_LEN];
+    assert(proposal_ref_for_test(upd_msg, upd_len, upd_ref) == 0);
+
+    GroupSnapshotForTest parent;
+    snapshot_group_for_test(&f.bob, &parent);
+    int accepted = 0;
+
+    for (int c = 0; c < PATHLESS_CASE_COUNT; c++) {
+        MlsTlsBuf v;
+        MlsRatchetTree next;
+        assert(mls_tls_buf_init(&v, 512) == 0);
+        assert(tree_clone_for_test(&f.alice.tree, &next) == 0);
+        switch (c) {
+        case PATHLESS_REMOVE:
+            assert(inline_remove_for_test(&v, 2) == 0);
+            assert(replace_leaf_for_test(&next, 2, NULL) == 0);
+            break;
+        case PATHLESS_UPDATE_REF:
+            assert(mls_tls_write_u8(&v, 2) == 0);
+            assert(mls_tls_write_opaque16(&v, upd_ref, MLS_HASH_LEN) == 0);
+            assert(replace_leaf_for_test(&next, 2, &upd_leaf) == 0);
+            break;
+        case PATHLESS_EMPTY:
+            break;
+        case PATHLESS_GCE:
+            /* Restates the current (supported) GroupContext extensions. */
+            assert(mls_tls_write_u8(&v, 1) == 0);
+            assert(mls_tls_write_u16(&v, MLS_PROPOSAL_GROUP_CONTEXT_EXT) == 0);
+            assert(mls_tls_write_opaque32(&v, f.alice.extensions_data,
+                                          f.alice.extensions_len) == 0);
+            break;
+        case PATHLESS_ADD_AND_REMOVE:
+            /* Removes apply before Adds, so Dave refills Charlie's leaf. */
+            assert(inline_add_for_test(&v, &f.dave_kp) == 0);
+            assert(inline_remove_for_test(&v, 2) == 0);
+            assert(replace_leaf_for_test(&next, 2, NULL) == 0);
+            assert(add_leaf_for_test(&next, &f.dave_kp) == 0);
+            break;
+        }
+        ExpectedEpochForTest expected;
+        uint8_t *commit = NULL;
+        size_t commit_len = 0;
+        assert(build_pathless_commit_for_test(&f.alice, v.data, v.len, &next,
+            f.alice.extensions_data, f.alice.extensions_len, NULL,
+            &commit, &commit_len, &expected) == 0);
+
+        const uint8_t *store[] = {upd_msg};
+        int rc = mls_group_process_commit_ex(&f.bob, commit, commit_len,
+                                             f.alice.own_leaf_index, store,
+                                             &upd_len, 1);
+        if (rc == 0) {
+            /* Only reachable without the §12.4 rule: the Commit is otherwise
+             * valid and Bob installed exactly the zero-commit_secret epoch.
+             * Record it and roll back so every case is exercised. */
+            assert_group_reached_for_test(&f.bob, &expected);
+            fprintf(stderr, "\n    pathless %s Commit ACCEPTED (epoch %llu)",
+                    pathless_case_names[c], (unsigned long long)f.bob.epoch);
+            accepted++;
+            mls_group_free(&f.bob);
+            assert(mls_group_deserialize(parent.blob, parent.blob_len,
+                                         &f.bob) == 0);
+        } else {
+            assert(rc == MARMOT_ERR_MLS_PROCESS_MESSAGE);
+            assert_group_matches_snapshot_for_test(&f.bob, &parent);
+        }
+        free(commit);
+        mls_tree_free(&next);
+        mls_tls_buf_free(&v);
+    }
+    assert(accepted == 0);
+
+    /* The untouched group still follows Alice's genuine, path-bearing
+     * self-update and reaches her epoch. */
+    MlsCommitResult update;
+    assert(mls_group_self_update(&f.alice, &update) == 0);
+    assert(mls_group_process_commit(&f.bob, update.commit_data,
+                                    update.commit_len, 0) == 0);
+    assert(f.bob.epoch == parent.epoch + 1 && f.bob.epoch == f.alice.epoch);
+    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
+                         sizeof(f.bob.epoch_secrets)) == 0);
+
+    mls_commit_result_clear(&update);
+    sodium_memzero(upd_sk, sizeof(upd_sk));
+    mls_leaf_node_clear(&upd_leaf);
+    mls_tls_buf_free(&upd_body);
+    free(upd_msg);
+    free(parent.blob);
+    three_member_fixture_clear(&f);
+}
+
+/* Security impact: a pathless Remove advances from the parent init_secret
+ * with an all-zero commit_secret, both of which the removed member holds.
+ * Alice removes Bob (leaf 1); Charlie receives. */
+TEST(test_pathless_remove_does_not_exclude_removed_member)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    GroupSnapshotForTest parent;
+    snapshot_group_for_test(&f.charlie, &parent);
+
+    MlsTlsBuf v;
+    MlsRatchetTree next;
+    assert(mls_tls_buf_init(&v, 16) == 0);
+    assert(inline_remove_for_test(&v, 1) == 0);
+    assert(tree_clone_for_test(&f.alice.tree, &next) == 0);
+    assert(replace_leaf_for_test(&next, 1, NULL) == 0);
+    ExpectedEpochForTest expected;
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    assert(build_pathless_commit_for_test(&f.alice, v.data, v.len, &next,
+        f.alice.extensions_data, f.alice.extensions_len, NULL,
+        &commit, &commit_len, &expected) == 0);
+
+    /* Bob, from only his own parent-epoch state and the public Commit,
+     * recovers the committer's next-epoch secrets (his derivation reproduces
+     * the confirmation tag) -- exactly the epoch a receiver without the path
+     * rule installs. */
+    MlsRatchetTree removed_view;
+    assert(tree_clone_for_test(&f.bob.tree, &removed_view) == 0);
+    assert(replace_leaf_for_test(&removed_view, 1, NULL) == 0);
+    MlsEpochSecrets leaked;
+    uint8_t confirmed[MLS_HASH_LEN];
+    bool tag_matches = false;
+    assert(derive_zero_commit_secret_epoch_for_test(&f.bob, commit, commit_len,
+        &removed_view, confirmed, &leaked, &tag_matches) == 0);
+    assert(tag_matches);
+    assert(sodium_memcmp(&leaked, &expected.epoch_secrets, sizeof(leaked)) == 0);
+
+    int rc = mls_group_process_commit(&f.charlie, commit, commit_len, 0);
+    if (rc == 0) {
+        /* Pre-fix behaviour: Charlie "removed" Bob yet entered an epoch whose
+         * every secret Bob already holds. */
+        assert_group_reached_for_test(&f.charlie, &expected);
+        assert(sodium_memcmp(&f.charlie.epoch_secrets, &leaked,
+                             sizeof(leaked)) == 0);
+        assert(f.charlie.tree.nodes[mls_tree_leaf_to_node(1)].type ==
+               MLS_NODE_BLANK);
+        fprintf(stderr, "\n    pathless Remove ACCEPTED: removed member holds "
+                        "the receiver's epoch-%llu secrets",
+                (unsigned long long)f.charlie.epoch);
+    }
+    assert(rc == MARMOT_ERR_MLS_PROCESS_MESSAGE);
+    assert_group_matches_snapshot_for_test(&f.charlie, &parent);
+
+    /* Contrast: libmarmot's own Remove carries an UpdatePath.  Bob can
+     * rebuild every public input (tree incl. the new path keys, transcript)
+     * but not the fresh commit_secret, so he no longer reaches the epoch. */
+    MlsCommitResult removal;
+    assert(mls_group_remove_member(&f.alice, 1, &removal) == 0);
+    MlsMLSMessage msg;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, removal.commit_data, removal.commit_len);
+    assert(mls_message_deserialize(&r, &msg) == 0);
+    MlsCommit produced;
+    mls_tls_reader_init(&r, msg.public_message.content.content,
+                        msg.public_message.content.content_len);
+    assert(mls_commit_deserialize(&r, &produced) == 0);
+    assert(produced.has_path);
+    assert(produced.proposal_count == 1 &&
+           produced.proposals[0].type == MLS_PROPOSAL_REMOVE &&
+           produced.proposals[0].remove.removed_leaf == 1);
+
+    assert(mls_group_process_commit(&f.charlie, removal.commit_data,
+                                    removal.commit_len, 0) == 0);
+    assert(f.charlie.epoch == parent.epoch + 1 &&
+           f.charlie.epoch == f.alice.epoch);
+    assert(sodium_memcmp(&f.charlie.epoch_secrets, &f.alice.epoch_secrets,
+                         sizeof(f.charlie.epoch_secrets)) == 0);
+
+    mls_tree_free(&removed_view);
+    assert(tree_clone_for_test(&f.bob.tree, &removed_view) == 0);
+    assert(replace_leaf_for_test(&removed_view, 1, NULL) == 0);
+    assert(mls_treekem_apply_update_path(&removed_view, 0, &produced.path) == 0);
+    uint8_t view_hash[MLS_HASH_LEN], receiver_hash[MLS_HASH_LEN];
+    assert(canonical_tree_hash_for_test(&removed_view, view_hash) == 0);
+    assert(mls_group_tree_hash(&f.charlie, receiver_hash) == 0);
+    assert(memcmp(view_hash, receiver_hash, MLS_HASH_LEN) == 0);
+    assert(derive_zero_commit_secret_epoch_for_test(&f.bob,
+        removal.commit_data, removal.commit_len, &removed_view, confirmed,
+        &leaked, &tag_matches) == 0);
+    assert(memcmp(confirmed, f.charlie.confirmed_transcript_hash,
+                  MLS_HASH_LEN) == 0);
+    assert(!tag_matches);
+    assert(sodium_memcmp(leaked.encryption_secret,
+                         f.charlie.epoch_secrets.encryption_secret,
+                         MLS_HASH_LEN) != 0);
+    assert(sodium_memcmp(leaked.exporter_secret,
+                         f.charlie.epoch_secrets.exporter_secret,
+                         MLS_HASH_LEN) != 0);
+
+    sodium_memzero(&leaked, sizeof(leaked));
+    mls_commit_clear(&produced);
+    mls_message_clear(&msg);
+    mls_commit_result_clear(&removal);
+    mls_tree_free(&removed_view);
+    mls_tree_free(&next);
+    mls_tls_buf_free(&v);
+    free(commit);
+    free(parent.blob);
+    three_member_fixture_clear(&f);
+}
+
+/* Add, PreSharedKey (and ReInit) proposals do not require a path. */
+TEST(test_pathless_add_and_psk_commits_accepted)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+
+    /* Inline Add(Dave), received by Bob. */
+    MlsTlsBuf v;
+    MlsRatchetTree next;
+    assert(mls_tls_buf_init(&v, 512) == 0);
+    assert(inline_add_for_test(&v, &f.dave_kp) == 0);
+    assert(tree_clone_for_test(&f.alice.tree, &next) == 0);
+    assert(add_leaf_for_test(&next, &f.dave_kp) == 0);
+    ExpectedEpochForTest expected;
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    assert(build_pathless_commit_for_test(&f.alice, v.data, v.len, &next,
+        f.alice.extensions_data, f.alice.extensions_len, NULL,
+        &commit, &commit_len, &expected) == 0);
+    assert(mls_group_process_commit(&f.bob, commit, commit_len, 0) == 0);
+    assert_group_reached_for_test(&f.bob, &expected);
+    const MlsNode *dave = &f.bob.tree.nodes[mls_tree_leaf_to_node(3)];
+    assert(dave->type == MLS_NODE_LEAF &&
+           memcmp(dave->leaf.signature_key, f.dave_kp.leaf_node.signature_key,
+                  MLS_SIG_PK_LEN) == 0);
+    free(commit);
+    mls_tree_free(&next);
+    mls_tls_buf_free(&v);
+
+    /* Inline resumption PSK of the current epoch, received by Charlie. */
+    uint8_t nonce[MLS_HASH_LEN];
+    randombytes_buf(nonce, sizeof(nonce));
+    assert(mls_tls_buf_init(&v, 128) == 0);
+    assert(mls_tls_write_u8(&v, 1) == 0);
+    assert(mls_tls_write_u16(&v, MLS_PROPOSAL_PSK) == 0);
+    assert(mls_tls_write_u8(&v, 2) == 0);   /* psktype = resumption */
+    assert(mls_tls_write_u8(&v, 1) == 0);   /* usage = application */
+    assert(mls_tls_write_opaque32(&v, f.alice.group_id, f.alice.group_id_len) == 0);
+    assert(mls_tls_write_u64(&v, f.alice.epoch) == 0);
+    assert(mls_tls_write_opaque32(&v, nonce, sizeof(nonce)) == 0);
+    MlsPskInput psk = {0};
+    psk.psk_type = 2;
+    psk.resumption_usage = 1;
+    psk.resumption_group_id = f.alice.group_id;
+    psk.resumption_group_id_len = f.alice.group_id_len;
+    psk.resumption_epoch = f.alice.epoch;
+    psk.psk = f.alice.epoch_secrets.resumption_psk;
+    psk.psk_len = MLS_HASH_LEN;
+    psk.psk_nonce = nonce;
+    psk.psk_nonce_len = sizeof(nonce);
+    uint8_t psk_secret[MLS_HASH_LEN];
+    assert(mls_psk_secret_compute(&psk, 1, psk_secret) == 0);
+    assert(build_pathless_commit_for_test(&f.alice, v.data, v.len, &f.alice.tree,
+        f.alice.extensions_data, f.alice.extensions_len, psk_secret,
+        &commit, &commit_len, &expected) == 0);
+    assert(mls_group_process_commit(&f.charlie, commit, commit_len, 0) == 0);
+    assert_group_reached_for_test(&f.charlie, &expected);
+    free(commit);
+    mls_tls_buf_free(&v);
+    sodium_memzero(psk_secret, sizeof(psk_secret));
+
+    three_member_fixture_clear(&f);
+}
+
+/* Creation side: every libmarmot producer emits the path, and the single
+ * Commit encoder refuses a pathless Commit that requires one. */
+TEST(test_commit_serialize_requires_path)
+{
+    MlsProposal props[2];
+    memset(props, 0, sizeof(props));
+    MlsCommit commit;
+    memset(&commit, 0, sizeof(commit));
+    commit.proposals = props;
+    commit.has_path = false;
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 256) == 0);
+
+    /* No proposals at all. */
+    commit.proposal_count = 0;
+    assert(mls_commit_serialize(&commit, &buf) == -1);
+
+    /* Remove, alone or beside a path-optional proposal type. */
+    props[0].type = MLS_PROPOSAL_REMOVE;
+    props[0].remove.removed_leaf = 1;
+    commit.proposal_count = 1;
+    buf.len = 0;
+    assert(mls_commit_serialize(&commit, &buf) == -1);
+    props[1] = props[0];
+    props[0].type = MLS_PROPOSAL_APP_DATA_UPDATE;
+    commit.proposal_count = 2;
+    buf.len = 0;
+    assert(mls_commit_serialize(&commit, &buf) == -1);
+
+    /* Update and GroupContextExtensions. */
+    props[0].type = MLS_PROPOSAL_UPDATE;
+    commit.proposal_count = 1;
+    buf.len = 0;
+    assert(mls_commit_serialize(&commit, &buf) == -1);
+    props[0].type = MLS_PROPOSAL_GROUP_CONTEXT_EXT;
+    buf.len = 0;
+    assert(mls_commit_serialize(&commit, &buf) == -1);
+    mls_tls_buf_free(&buf);
+
+    /* Every producer-built Commit carries its UpdatePath (Alice adds Dave,
+     * removes Bob, then self-updates; Charlie follows). */
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MlsCommitResult produced[3];
+    MlsAddResult add_dave;
+    assert(mls_group_add_member(&f.alice, &f.dave_kp, &add_dave) == 0);
+    produced[0].commit_data = add_dave.commit_data;
+    produced[0].commit_len = add_dave.commit_len;
+    assert(mls_group_remove_member(&f.alice, 1, &produced[1]) == 0);
+    assert(mls_group_self_update(&f.alice, &produced[2]) == 0);
+    for (int i = 0; i < 3; i++) {
+        MlsMLSMessage msg;
+        MlsTlsReader r;
+        mls_tls_reader_init(&r, produced[i].commit_data, produced[i].commit_len);
+        assert(mls_message_deserialize(&r, &msg) == 0);
+        MlsCommit c;
+        mls_tls_reader_init(&r, msg.public_message.content.content,
+                            msg.public_message.content.content_len);
+        assert(mls_commit_deserialize(&r, &c) == 0);
+        assert(c.has_path);
+        assert(mls_group_process_commit(&f.charlie, produced[i].commit_data,
+                                        produced[i].commit_len, 0) == 0);
+        assert(f.charlie.epoch == f.alice.epoch - (uint64_t)(2 - i));
+        mls_commit_clear(&c);
+        mls_message_clear(&msg);
+    }
+    assert(sodium_memcmp(&f.charlie.epoch_secrets, &f.alice.epoch_secrets,
+                         sizeof(f.charlie.epoch_secrets)) == 0);
+    mls_commit_result_clear(&produced[1]);
+    mls_commit_result_clear(&produced[2]);
+    mls_add_result_clear(&add_dave);
+    three_member_fixture_clear(&f);
+}
+
 TEST(test_bad_committer_signature_rejected)
 {
     MlsGroup alice_group, bob_group;
@@ -2108,6 +2701,10 @@ int main(void)
     RUN(test_referenced_proposal_store_requires_parent_authentication);
     RUN(test_live_commit_consumes_parent_epoch_proposal_ref);
     RUN(test_live_commit_rejects_unauthenticated_proposal_refs);
+    RUN(test_pathless_commit_requiring_path_rejected);
+    RUN(test_pathless_remove_does_not_exclude_removed_member);
+    RUN(test_pathless_add_and_psk_commits_accepted);
+    RUN(test_commit_serialize_requires_path);
     RUN(test_bad_committer_signature_rejected);
     RUN(test_wrong_confirmation_tag_rejected);
     RUN(test_unknown_proposal_type_rejected);
