@@ -862,6 +862,13 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
      * it used to go to stderr unconditionally and polluted CLI output. */
     nostr_rl_log(NLOG_DEBUG, "sub", "sending: %s", sub_msg);
 
+    /* Mark the subscription live BEFORE the REQ is queued: the relay's
+     * message_loop may dispatch the first EVENT as soon as the frame is on
+     * the wire, and dispatch drops events for a subscription that is not yet
+     * live (seen as a lost stored event on a fast local relay, nostrc CI
+     * macOS run 36434000568). Restored if the write fails immediately. */
+    bool was_live = atomic_exchange(&subscription->priv->live, true);
+
     // Send the subscription request via the relay
     GoChannel *write_channel = nostr_relay_write(subscription->relay, sub_msg);
     for (size_t i = 0; i < count; ++i) free(filter_strs[i]);
@@ -885,6 +892,7 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
         if (result.selected_case >= 0 && write_err) {
             fprintf(stderr, "[nostr_subscription_fire] write failed: %s\n",
                     write_err->message ? write_err->message : "unknown");
+            atomic_store(&subscription->priv->live, was_live);
             if (err) *err = write_err;
             /* hq-e3ach: close + unref to drop our reference. */
             go_channel_close(write_channel);
@@ -897,8 +905,6 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
         go_channel_unref(write_channel);
     }
 
-    // Mark the subscription as live
-    atomic_store(&subscription->priv->live, true);
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
         fprintf(stderr, "[sub %s] fire: live=1\n", subscription->priv->id);
     }
