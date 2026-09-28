@@ -1,14 +1,17 @@
-/* Headless check that gh-account-ui.c's keyboard-focus and screen-reader
- * announcement behavior (added for narrow/adaptive + accessibility work)
- * only reacts to a real account-state transition, not to every incidental
- * "changed"/network-monitor notification. It builds real GTK/libadwaita
- * widgets (no compiled GResource or signer needed) but never maps or
- * presents a window, so it proves construction and focus bookkeeping only;
- * a real screen reader announcement still needs a manual GNOME check.
+/* Check that gh-account-ui.c attaches the account pages and menu compiled
+ * from data/ui/gh-account-ui.blp to a real GhWindow template, and that its
+ * keyboard-focus and screen-reader announcement behavior (added for
+ * narrow/adaptive + accessibility work) only reacts to a real account-state
+ * transition, not to every incidental "changed"/network-monitor
+ * notification. It registers the compiled GResource and uses a fake identity
+ * store instead of the signer, but never maps or presents a window, so it
+ * proves construction and focus bookkeeping only; a real screen reader
+ * announcement still needs a manual GNOME check.
  */
 #include "gh-account-ui.h"
 #include "gh-identity.h"
-#include "gh-shell.h"
+
+void groundhog_register_resource(void);
 
 typedef struct {
   GMutex lock;
@@ -66,6 +69,100 @@ is_null(gpointer data)
 }
 
 static void
+assert_menu_item(GMenuModel *model, int index, const char *label, const char *action,
+                 const char *target)
+{
+  g_autofree char *item_label = NULL;
+  g_autofree char *item_action = NULL;
+  g_autofree char *item_target = NULL;
+  g_assert_true(g_menu_model_get_item_attribute(model, index, G_MENU_ATTRIBUTE_LABEL, "s",
+                                                &item_label));
+  g_assert_cmpstr(item_label, ==, label);
+  g_assert_true(g_menu_model_get_item_attribute(model, index, G_MENU_ATTRIBUTE_ACTION, "s",
+                                                &item_action));
+  g_assert_cmpstr(item_action, ==, action);
+  if (target) {
+    g_assert_true(g_menu_model_get_item_attribute(model, index, G_MENU_ATTRIBUTE_TARGET, "s",
+                                                  &item_target));
+    g_assert_cmpstr(item_target, ==, target);
+  } else {
+    g_assert_false(g_menu_model_get_item_attribute(model, index, G_MENU_ATTRIBUTE_TARGET, "s",
+                                                   &item_target));
+  }
+}
+
+static GtkMenuButton *
+find_menu_button(GtkWidget *widget)
+{
+  if (GTK_IS_MENU_BUTTON(widget))
+    return GTK_MENU_BUTTON(widget);
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkMenuButton *found = find_menu_button(c);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+/* The account pages and header menu come from gh-account-ui.blp, under the
+ * stack names page_for_state() selects. */
+static void
+assert_account_widgets(GhWindow *window)
+{
+  static const struct {
+    const char *name;
+    const char *action_label;
+  } pages[] = {
+    { "account-discovering", NULL },
+    { "account-store-unavailable", "_Try Again" },
+    { "account-none", "_Refresh" },
+    { "account-unselected", NULL },
+    { "account-missing", "_Refresh" },
+  };
+  GhSidebarPage *sidebar = gh_window_get_sidebar(window);
+  GtkStack *stack = gh_sidebar_page_get_stack(sidebar);
+
+  for (guint i = 0; i < G_N_ELEMENTS(pages); i++) {
+    GtkWidget *page = gtk_stack_get_child_by_name(stack, pages[i].name);
+    g_assert_true(ADW_IS_STATUS_PAGE(page));
+    g_assert_true(gtk_widget_has_css_class(page, "groundhog-shell-status"));
+    GtkWidget *button = adw_status_page_get_child(ADW_STATUS_PAGE(page));
+    if (!pages[i].action_label) {
+      g_assert_null(button);
+      continue;
+    }
+    g_assert_true(GTK_IS_BUTTON(button));
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(button)), ==, pages[i].action_label);
+    g_assert_true(gtk_button_get_use_underline(GTK_BUTTON(button)));
+    g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(button)), ==,
+                    "account.refresh");
+    g_assert_true(gtk_widget_has_css_class(button, "pill"));
+  }
+  /* Standalone onboarding is only for builds without account support. */
+  g_assert_null(gtk_stack_get_child_by_name(stack, "onboarding"));
+
+  /* AdwHeaderBar nests packed children inside its own boxes. */
+  GtkMenuButton *button = find_menu_button(GTK_WIDGET(gh_sidebar_page_get_header(sidebar)));
+  g_assert_nonnull(button);
+  g_assert_cmpstr(gtk_menu_button_get_icon_name(button), ==, "avatar-default-symbolic");
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(button)), ==, "Account");
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                      "Account");
+
+  GMenuModel *menu = gtk_menu_button_get_menu_model(button);
+  g_assert_cmpint(g_menu_model_get_n_items(menu), ==, 2);
+  GMenuModel *identities = g_menu_model_get_item_link(menu, 0, G_MENU_LINK_SECTION);
+  GMenuModel *other = g_menu_model_get_item_link(menu, 1, G_MENU_LINK_SECTION);
+  g_assert_nonnull(identities);
+  g_assert_nonnull(other);
+  g_assert_cmpint(g_menu_model_get_n_items(other), ==, 2);
+  assert_menu_item(other, 0, "No Account (Read-Only)", "account.select", "");
+  assert_menu_item(other, 1, "_Refresh Accounts", "account.refresh", NULL);
+  g_object_unref(identities);
+  g_object_unref(other);
+}
+
+static void
 test_focus_and_announce_only_on_transition(void)
 {
   FakeStore store = { 0 };
@@ -74,32 +171,26 @@ test_focus_and_announce_only_on_transition(void)
   GhAccountController *controller =
     gh_account_controller_new_full(settings, NULL, fake_list, &store);
 
-  GtkWidget *header, *title, *stack, *banner;
-  AdwNavigationPage *sidebar = gh_shell_sidebar_page(&header, &title, &stack);
-  AdwNavigationPage *content = gh_shell_content_page(&banner);
-  GtkWidget *toasts = adw_toast_overlay_new();
-  GtkWidget *window = adw_application_window_new(NULL);
-  /* Real widget hierarchy, as main.c builds it: gtk_widget_grab_focus() only
-   * moves a window's focus for a widget rooted under that same window. */
-  GtkWidget *split = adw_navigation_split_view_new();
-  adw_navigation_split_view_set_sidebar(ADW_NAVIGATION_SPLIT_VIEW(split), sidebar);
-  adw_navigation_split_view_set_content(ADW_NAVIGATION_SPLIT_VIEW(split), content);
-  adw_toast_overlay_set_child(ADW_TOAST_OVERLAY(toasts), split);
-  adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), toasts);
+  /* The real window template, as main.c creates it: gtk_widget_grab_focus()
+   * only moves a window's focus for a widget rooted under that same window. */
+  GhWindow *window = gh_window_new(NULL);
+  GtkStack *stack = gh_sidebar_page_get_stack(gh_window_get_sidebar(window));
 
-  gh_account_ui_attach(window, controller, settings, ADW_HEADER_BAR(header),
-                       ADW_WINDOW_TITLE(title), GTK_STACK(stack), ADW_BANNER(banner),
-                       ADW_TOAST_OVERLAY(toasts));
+  gh_account_ui_attach(window, controller, settings);
+  assert_account_widgets(window);
 
   spin_until(is_no_identities, controller);
-  g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(stack)), ==, "account-none");
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "account-none");
+  g_assert_cmpstr(adw_window_title_get_subtitle(
+                    gh_sidebar_page_get_window_title(gh_window_get_sidebar(window))), ==,
+                  "No account");
 
-  GtkWidget *visible = gtk_stack_get_child_by_name(GTK_STACK(stack), "account-none");
-  gpointer action = g_object_get_data(G_OBJECT(visible), "gh-state-action");
-  g_assert_nonnull(action);
+  GtkWidget *visible = gtk_stack_get_child_by_name(stack, "account-none");
+  GtkWidget *action = adw_status_page_get_child(ADW_STATUS_PAGE(visible));
+  g_assert_true(GTK_IS_BUTTON(action));
   /* Reaching an actionable empty state must hand keyboard/screen-reader
    * focus straight to its one button. */
-  g_assert_true(gtk_window_get_focus(GTK_WINDOW(window)) == GTK_WIDGET(action));
+  g_assert_true(gtk_window_get_focus(GTK_WINDOW(window)) == action);
 
   /* Simulate the user having since moved focus elsewhere (or nowhere). */
   gtk_window_set_focus(GTK_WINDOW(window), NULL);
@@ -128,6 +219,7 @@ main(int argc, char **argv)
     return 77;
   }
   adw_init();
+  groundhog_register_resource();
 
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/account-ui/focus-and-announce-only-on-transition",

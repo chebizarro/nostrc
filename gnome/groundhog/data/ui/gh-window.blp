@@ -1,0 +1,30 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The main window: toast overlay around the adaptive split view. Account and
+// relay behaviour is attached from C (gh-account-ui.c); nothing here fetches
+// or fabricates conversations.
+template $GhWindow: Adw.ApplicationWindow {
+  title: "Groundhog";
+  icon-name: "org.nostr.Groundhog";
+  default-width: 900;
+  default-height: 600;
+
+  content: Adw.ToastOverlay toasts {
+    child: Adw.NavigationSplitView split {
+      show-content: false;
+      sidebar: $GhSidebarPage sidebar {};
+      content: $GhContentPage content {};
+    };
+  };
+
+  // Compact drill-down below 600sp; show-content and the built-in back
+  // action handle navigation once collapsed.
+  Adw.Breakpoint {
+    condition ("max-width: 600sp")
+
+    setters {
+      split.collapsed: true;
+    }
+  }
+}

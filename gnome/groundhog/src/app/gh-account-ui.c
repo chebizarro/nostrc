@@ -7,7 +7,8 @@ typedef struct {
   GhAccountController *controller;
   GSettings *settings;
   /* Not owned: the window outlives ui, since ui is destroyed as the
-   * window's own object data (see gh_account_ui_attach). */
+   * window's own object data (see gh_account_ui_attach). The widgets below
+   * are template children of that window. */
   GtkWidget *window;
   AdwWindowTitle *title;
   GtkStack *stack;
@@ -33,29 +34,6 @@ account_ui_free(gpointer data)
   g_free(ui);
 }
 
-static GtkWidget *
-state_page(const char *icon, const char *title, const char *description,
-           const char *button_label)
-{
-  GtkWidget *page = adw_status_page_new();
-  adw_status_page_set_icon_name(ADW_STATUS_PAGE(page), icon);
-  adw_status_page_set_title(ADW_STATUS_PAGE(page), title);
-  adw_status_page_set_description(ADW_STATUS_PAGE(page), description);
-  gtk_widget_add_css_class(page, "groundhog-shell-status");
-  if (button_label) {
-    GtkWidget *button = gtk_button_new_with_mnemonic(button_label);
-    gtk_widget_set_halign(button, GTK_ALIGN_CENTER);
-    gtk_widget_add_css_class(button, "pill");
-    gtk_actionable_set_action_name(GTK_ACTIONABLE(button), "account.refresh");
-    adw_status_page_set_child(ADW_STATUS_PAGE(page), button);
-    /* Let update() move keyboard/screen-reader focus straight to the one
-     * actionable control when this page becomes visible, instead of leaving
-     * focus wherever it was (often the header bar, several tabs away). */
-    g_object_set_data(G_OBJECT(page), "gh-state-action", button);
-  }
-  return page;
-}
-
 static gchar *
 identity_title(const GhIdentityInfo *info)
 {
@@ -65,6 +43,19 @@ identity_title(const GhIdentityInfo *info)
   return len > 16 ? g_strdup_printf("%.10s…%s", info->npub, info->npub + len - 6)
                   : g_strdup(info->npub);
 }
+
+/* Builder ids in data/ui/gh-account-ui.blp and the sidebar stack name each
+ * page is added under; page_for_state() selects by stack name. */
+static const struct {
+  const gchar *id;
+  const gchar *name;
+} account_pages[] = {
+  { "account_discovering", "account-discovering" },
+  { "account_store_unavailable", "account-store-unavailable" },
+  { "account_none", "account-none" },
+  { "account_unselected", "account-unselected" },
+  { "account_missing", "account-missing" },
+};
 
 static const gchar *
 page_for_state(GhAccountState state)
@@ -114,8 +105,13 @@ update(GhAccountUi *ui)
       gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), limits,
                               GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
 
+    /* Move keyboard/screen-reader focus straight to the page's one
+     * actionable control (an AdwStatusPage child, see gh-account-ui.blp)
+     * instead of leaving it wherever it was, often the header bar several
+     * tabs away. Pages without an action leave focus alone. */
     GtkWidget *visible = gtk_stack_get_child_by_name(ui->stack, page_name);
-    GtkWidget *action = visible ? g_object_get_data(G_OBJECT(visible), "gh-state-action") : NULL;
+    GtkWidget *action = ADW_IS_STATUS_PAGE(visible)
+                          ? adw_status_page_get_child(ADW_STATUS_PAGE(visible)) : NULL;
     if (action)
       gtk_widget_grab_focus(action);
   }
@@ -165,64 +161,29 @@ on_refresh(GSimpleAction *action, GVariant *value, gpointer data)
 }
 
 void
-gh_account_ui_attach(GtkWidget *window, GhAccountController *controller,
-                     GSettings *settings, AdwHeaderBar *sidebar_header,
-                     AdwWindowTitle *title, GtkStack *sidebar_stack,
-                     AdwBanner *banner, AdwToastOverlay *toasts)
+gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSettings *settings)
 {
+  GhSidebarPage *sidebar = gh_window_get_sidebar(window);
+  g_autoptr(GtkBuilder) builder =
+    gtk_builder_new_from_resource("/org/nostr/Groundhog/ui/gh-account-ui.ui");
   GhAccountUi *ui = g_new0(GhAccountUi, 1);
   ui->controller = g_object_ref(controller);
   ui->settings = g_object_ref(settings);
-  ui->window = window;
-  ui->title = title;
-  ui->stack = sidebar_stack;
-  ui->banner = banner;
-  ui->toasts = toasts;
+  ui->window = GTK_WIDGET(window);
+  ui->title = gh_sidebar_page_get_window_title(sidebar);
+  ui->stack = gh_sidebar_page_get_stack(sidebar);
+  ui->banner = gh_content_page_get_banner(gh_window_get_content(window));
+  ui->toasts = gh_window_get_toasts(window);
   g_object_set_data_full(G_OBJECT(window), "groundhog-account-ui", ui, account_ui_free);
 
-  gtk_stack_add_named(sidebar_stack,
-                      state_page("content-loading-symbolic", "Looking for Accounts",
-                                 "Reading public identity names from the Nostr signer's "
-                                 "store. Private keys are never read.", NULL),
-                      "account-discovering");
-  gtk_stack_add_named(sidebar_stack,
-                      state_page("dialog-warning-symbolic", "Account Store Unavailable",
-                                 "Groundhog could not read the signer's identity list. "
-                                 "Unlock the keyring or start the Nostr signer, then try "
-                                 "again.", "_Try Again"),
-                      "account-store-unavailable");
-  gtk_stack_add_named(sidebar_stack,
-                      state_page("avatar-default-symbolic", "No Nostr Identities",
-                                 "Add or import a key with the Nostr signer, then refresh. "
-                                 "Groundhog never stores or reads private keys.", "_Refresh"),
-                      "account-none");
-  gtk_stack_add_named(sidebar_stack,
-                      state_page("avatar-default-symbolic", "Choose an Account",
-                                 "Pick an identity from the account menu. This choice is "
-                                 "Groundhog's own and does not change Gnostr.", NULL),
-                      "account-unselected");
-  gtk_stack_add_named(sidebar_stack,
-                      state_page("dialog-warning-symbolic", "Account Unavailable",
-                                 "The selected identity is no longer in the signer's store. "
-                                 "Choose another account or refresh.", "_Refresh"),
-                      "account-missing");
-
-  ui->identities_menu = g_menu_new();
-  g_autoptr(GMenu) menu = g_menu_new();
-  g_autoptr(GMenu) other = g_menu_new();
-  g_autoptr(GMenuItem) none = g_menu_item_new("No Account (Read-Only)", NULL);
-  g_menu_item_set_action_and_target_value(none, "account.select", g_variant_new_string(""));
-  g_menu_append_item(other, none);
-  g_menu_append(other, "_Refresh Accounts", "account.refresh");
-  g_menu_append_section(menu, NULL, G_MENU_MODEL(ui->identities_menu));
-  g_menu_append_section(menu, NULL, G_MENU_MODEL(other));
-  GtkWidget *button = gtk_menu_button_new();
-  gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(button), "avatar-default-symbolic");
-  gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(button), G_MENU_MODEL(menu));
-  gtk_widget_set_tooltip_text(button, "Account");
-  gtk_accessible_update_property(GTK_ACCESSIBLE(button),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Account", -1);
-  adw_header_bar_pack_start(sidebar_header, button);
+  for (guint i = 0; i < G_N_ELEMENTS(account_pages); i++)
+    gtk_stack_add_named(ui->stack,
+                        GTK_WIDGET(gtk_builder_get_object(builder, account_pages[i].id)),
+                        account_pages[i].name);
+  adw_header_bar_pack_start(gh_sidebar_page_get_header(sidebar),
+                            GTK_WIDGET(gtk_builder_get_object(builder, "account_button")));
+  /* The identity rows are the one dynamic part of the menu. */
+  ui->identities_menu = G_MENU(g_object_ref(gtk_builder_get_object(builder, "identities")));
 
   g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new();
   ui->select = g_simple_action_new_stateful("select", G_VARIANT_TYPE_STRING,
@@ -232,7 +193,7 @@ gh_account_ui_attach(GtkWidget *window, GhAccountController *controller,
   g_autoptr(GSimpleAction) refresh = g_simple_action_new("refresh", NULL);
   g_signal_connect(refresh, "activate", G_CALLBACK(on_refresh), ui);
   g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(refresh));
-  gtk_widget_insert_action_group(window, "account", G_ACTION_GROUP(group));
+  gtk_widget_insert_action_group(GTK_WIDGET(window), "account", G_ACTION_GROUP(group));
 
   g_signal_connect_object(controller, "changed", G_CALLBACK(on_window_state_source),
                           window, G_CONNECT_SWAPPED);

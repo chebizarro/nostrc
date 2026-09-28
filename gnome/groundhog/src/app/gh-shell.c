@@ -1,83 +1,108 @@
 #include "gh-shell.h"
 
-GtkWidget *
-gh_shell_status_page(const char *icon, const char *title, const char *description)
+struct _GhSidebarPage {
+  AdwNavigationPage parent_instance;
+  AdwHeaderBar *header;
+  AdwWindowTitle *window_title;
+  GtkStack *stack;
+};
+
+G_DEFINE_FINAL_TYPE(GhSidebarPage, gh_sidebar_page, ADW_TYPE_NAVIGATION_PAGE)
+
+static void
+gh_sidebar_page_dispose(GObject *object)
 {
-  GtkWidget *page = adw_status_page_new();
-  adw_status_page_set_icon_name(ADW_STATUS_PAGE(page), icon);
-  adw_status_page_set_title(ADW_STATUS_PAGE(page), title);
-  adw_status_page_set_description(ADW_STATUS_PAGE(page), description);
-  gtk_widget_add_css_class(page, "groundhog-shell-status");
-  gtk_widget_set_hexpand(page, TRUE);
-  gtk_widget_set_vexpand(page, TRUE);
-  return page;
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_SIDEBAR_PAGE);
+  G_OBJECT_CLASS(gh_sidebar_page_parent_class)->dispose(object);
 }
 
-AdwNavigationPage *
-gh_shell_sidebar_page(GtkWidget **header_out, GtkWidget **title_out, GtkWidget **stack_out)
+static void
+gh_sidebar_page_class_init(GhSidebarPageClass *klass)
 {
-  GtkWidget *toolbar = adw_toolbar_view_new();
-  GtkWidget *header = adw_header_bar_new();
-  GtkWidget *title = adw_window_title_new("Groundhog", "");
-  GtkWidget *stack = gtk_stack_new();
-  GtkWidget *list = gtk_list_box_new();
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 
-  /* The list stays empty until a real conversation backend exists (see
-   * main.c); without a name a screen reader would only ever report an
-   * unlabelled, childless list here. */
-  gtk_accessible_update_property(GTK_ACCESSIBLE(list), GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                 "Conversations", -1);
-  /* The stack itself is the region whose visible child changes as account
-   * state changes (discovering, empty, error, onboarding); name it so that
-   * region has an announced purpose distinct from the list it contains. */
-  gtk_accessible_update_property(GTK_ACCESSIBLE(stack), GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                 "Conversation list status", -1);
+  G_OBJECT_CLASS(klass)->dispose = gh_sidebar_page_dispose;
+  gtk_widget_class_set_template_from_resource(widget_class,
+                                              "/org/nostr/Groundhog/ui/gh-sidebar-page.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, header);
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, window_title);
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, stack);
+}
 
-  adw_header_bar_set_title_widget(ADW_HEADER_BAR(header), title);
-  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
+static void
+gh_sidebar_page_init(GhSidebarPage *self)
+{
+  gtk_widget_init_template(GTK_WIDGET(self));
+}
 
-  /* Keep the list as the real empty model host; never fabricate conversations. */
-  gtk_stack_add_named(GTK_STACK(stack), list, "conversations");
-  gtk_stack_add_named(GTK_STACK(stack),
-                      gh_shell_status_page("mail-unread-symbolic", "No conversations yet",
-                                           "Messaging services are not implemented in this build, "
-                                           "so no conversations can be loaded."),
-                      "empty");
-  gtk_stack_add_named(GTK_STACK(stack),
-                      gh_shell_status_page("dialog-warning-symbolic", "Conversations unavailable",
-                                           "A conversation could not be loaded. Nothing was sent; "
-                                           "try again after the service is available."),
-                      "error");
-#if !GROUNDHOG_HAVE_ACCOUNTS
-  gtk_stack_add_named(GTK_STACK(stack),
-                      gh_shell_status_page("mail-unread-symbolic", "Welcome to Groundhog",
-                                           "Account support is not included in this build."),
+AdwHeaderBar *
+gh_sidebar_page_get_header(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), NULL);
+  return self->header;
+}
+
+AdwWindowTitle *
+gh_sidebar_page_get_window_title(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), NULL);
+  return self->window_title;
+}
+
+GtkStack *
+gh_sidebar_page_get_stack(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), NULL);
+  return self->stack;
+}
+
+void
+gh_sidebar_page_show_onboarding(GhSidebarPage *self)
+{
+  g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
+  g_return_if_fail(gtk_stack_get_child_by_name(self->stack, "onboarding") == NULL);
+
+  g_autoptr(GtkBuilder) builder =
+    gtk_builder_new_from_resource("/org/nostr/Groundhog/ui/gh-onboarding-page.ui");
+  gtk_stack_add_named(self->stack, GTK_WIDGET(gtk_builder_get_object(builder, "onboarding")),
                       "onboarding");
-  gtk_stack_set_visible_child_name(GTK_STACK(stack), "onboarding");
-#endif
-  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), stack);
-  *header_out = header;
-  *title_out = title;
-  *stack_out = stack;
-  return adw_navigation_page_new(toolbar, "Conversations");
+  gtk_stack_set_visible_child_name(self->stack, "onboarding");
 }
 
-AdwNavigationPage *
-gh_shell_content_page(GtkWidget **banner_out)
-{
-  GtkWidget *toolbar = adw_toolbar_view_new();
-  GtkWidget *header = adw_header_bar_new();
-  GtkWidget *banner = adw_banner_new("Read-only shell: sending and receiving are not available");
-  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+struct _GhContentPage {
+  AdwNavigationPage parent_instance;
+  AdwBanner *banner;
+};
 
-  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
-  adw_banner_set_revealed(ADW_BANNER(banner), TRUE);
-  gtk_box_append(GTK_BOX(box), banner);
-  gtk_box_append(GTK_BOX(box),
-                 gh_shell_status_page("mail-read-symbolic", "No conversation selected",
-                                      "Messages will appear here when conversation services "
-                                      "are implemented."));
-  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), box);
-  *banner_out = banner;
-  return adw_navigation_page_new(toolbar, "Messages");
+G_DEFINE_FINAL_TYPE(GhContentPage, gh_content_page, ADW_TYPE_NAVIGATION_PAGE)
+
+static void
+gh_content_page_dispose(GObject *object)
+{
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_CONTENT_PAGE);
+  G_OBJECT_CLASS(gh_content_page_parent_class)->dispose(object);
+}
+
+static void
+gh_content_page_class_init(GhContentPageClass *klass)
+{
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+
+  G_OBJECT_CLASS(klass)->dispose = gh_content_page_dispose;
+  gtk_widget_class_set_template_from_resource(widget_class,
+                                              "/org/nostr/Groundhog/ui/gh-content-page.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, banner);
+}
+
+static void
+gh_content_page_init(GhContentPage *self)
+{
+  gtk_widget_init_template(GTK_WIDGET(self));
+}
+
+AdwBanner *
+gh_content_page_get_banner(GhContentPage *self)
+{
+  g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
+  return self->banner;
 }

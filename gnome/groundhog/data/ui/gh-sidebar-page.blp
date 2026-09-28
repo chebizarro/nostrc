@@ -1,0 +1,73 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Sidebar navigation page: header with the window title, and the stack that
+// hosts the (currently always-empty) conversation list plus its empty/error
+// states. Account-state pages (gh-account-ui.blp) or the standalone
+// onboarding page (gh-onboarding-page.blp) are added to this stack from C.
+template $GhSidebarPage: Adw.NavigationPage {
+  title: _("Conversations");
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar header {
+      title-widget: Adw.WindowTitle window_title {
+        title: "Groundhog";
+      };
+    }
+
+    // The stack is the region whose visible child changes with account state
+    // (discovering, empty, error, onboarding); name it so the region has an
+    // announced purpose distinct from the list it contains.
+    content: Stack stack {
+      accessibility {
+        label: _("Conversation list status");
+      }
+
+      // The real (empty) model host; never fabricate conversations. Without
+      // a name a screen reader would only report an unlabelled, childless
+      // list here.
+      StackPage {
+        name: "conversations";
+
+        child: ListBox list {
+          accessibility {
+            label: _("Conversations");
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "mail-unread-symbolic";
+          title: _("No conversations yet");
+          description: _("Messaging services are not implemented in this build, so no conversations can be loaded.");
+          hexpand: true;
+          vexpand: true;
+
+          styles [
+            "groundhog-shell-status",
+          ]
+        };
+      }
+
+      StackPage {
+        name: "error";
+
+        child: Adw.StatusPage {
+          icon-name: "dialog-warning-symbolic";
+          title: _("Conversations unavailable");
+          description: _("A conversation could not be loaded. Nothing was sent; try again after the service is available.");
+          hexpand: true;
+          vexpand: true;
+
+          styles [
+            "groundhog-shell-status",
+          ]
+        };
+      }
+    };
+  };
+}

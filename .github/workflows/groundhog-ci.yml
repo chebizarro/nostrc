@@ -28,7 +28,11 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev \
             libgit2-dev libsqlite3-dev libnsync-dev \
-            desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core
+            desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core \
+            blueprint-compiler
+          # Ubuntu 24.04 ships blueprint-compiler 0.12, Groundhog's minimum;
+          # groundhog-blueprint compares its output with the committed .ui.
+          blueprint-compiler --version
 
       - name: Configure Groundhog and in-tree adapters
         run: |
@@ -61,6 +65,7 @@ jobs:
               'groundhog-relay-publish', 'groundhog-relay-publish-wire', 'groundhog-nip29',
               'groundhog-version', 'groundhog-launch', 'groundhog-schema',
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
+              'groundhog-blueprint',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -81,6 +86,12 @@ jobs:
             echo 'Groundhog test unexpectedly skipped or did not run' >&2
             exit 1
           fi
+
+      - name: Require the build to leave committed UI untouched
+        run: |
+          # data/ui/*.ui are committed Blueprint output; builds compile into
+          # build/ and must never rewrite tracked files.
+          git diff --exit-code
 
       - name: Upload focused test evidence
         if: always()

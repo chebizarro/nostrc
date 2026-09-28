@@ -50,4 +50,12 @@ files = {node.text for node in resources.iter("file")}
 assert "style.css" in files
 assert f"icons/{app_id}.svg" in files
 assert ET.parse(data / "icons" / f"{app_id}.svg").getroot().tag.endswith("svg")
-print("Groundhog app ID, desktop, service, metadata, schema, and resources agree")
+# All UI is Blueprint: every .blp has its committed compiled .ui fallback, no
+# .ui lacks a .blp source, and each is bundled.
+blueprints = {path.stem for path in (data / "ui").glob("*.blp")}
+compiled = {path.stem for path in (data / "ui").glob("*.ui")}
+assert blueprints, "no Blueprint sources in data/ui"
+assert blueprints == compiled, f"data/ui .blp/.ui mismatch: {sorted(blueprints ^ compiled)}"
+assert {f"ui/{name}.ui" for name in blueprints} <= files
+assert {name for name in files if name.startswith("ui/")} == {f"ui/{n}.ui" for n in blueprints}
+print("Groundhog app ID, desktop, service, metadata, schema, resources and UI agree")

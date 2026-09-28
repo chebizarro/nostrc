@@ -1,0 +1,119 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Account-state pages and the account menu, attached to the sidebar by
+// gh_account_ui_attach() in builds with account support. Each page's stack
+// name is assigned in gh-account-ui.c next to the state that selects it.
+// A page's one actionable child receives keyboard/screen-reader focus when
+// the page becomes visible.
+Adw.StatusPage account_discovering {
+  icon-name: "content-loading-symbolic";
+  title: _("Looking for Accounts");
+  description: _("Reading public identity names from the Nostr signer's store. Private keys are never read.");
+
+  styles [
+    "groundhog-shell-status",
+  ]
+}
+
+Adw.StatusPage account_store_unavailable {
+  icon-name: "dialog-warning-symbolic";
+  title: _("Account Store Unavailable");
+  description: _("Groundhog could not read the signer's identity list. Unlock the keyring or start the Nostr signer, then try again.");
+
+  styles [
+    "groundhog-shell-status",
+  ]
+
+  child: Button {
+    label: _("_Try Again");
+    use-underline: true;
+    halign: center;
+    action-name: "account.refresh";
+
+    styles [
+      "pill",
+    ]
+  };
+}
+
+Adw.StatusPage account_none {
+  icon-name: "avatar-default-symbolic";
+  title: _("No Nostr Identities");
+  description: _("Add or import a key with the Nostr signer, then refresh. Groundhog never stores or reads private keys.");
+
+  styles [
+    "groundhog-shell-status",
+  ]
+
+  child: Button {
+    label: _("_Refresh");
+    use-underline: true;
+    halign: center;
+    action-name: "account.refresh";
+
+    styles [
+      "pill",
+    ]
+  };
+}
+
+Adw.StatusPage account_unselected {
+  icon-name: "avatar-default-symbolic";
+  title: _("Choose an Account");
+  description: _("Pick an identity from the account menu. This choice is Groundhog's own and does not change Gnostr.");
+
+  styles [
+    "groundhog-shell-status",
+  ]
+}
+
+Adw.StatusPage account_missing {
+  icon-name: "dialog-warning-symbolic";
+  title: _("Account Unavailable");
+  description: _("The selected identity is no longer in the signer's store. Choose another account or refresh.");
+
+  styles [
+    "groundhog-shell-status",
+  ]
+
+  child: Button {
+    label: _("_Refresh");
+    use-underline: true;
+    halign: center;
+    action-name: "account.refresh";
+
+    styles [
+      "pill",
+    ]
+  };
+}
+
+// Packed at the start of the sidebar header.
+MenuButton account_button {
+  icon-name: "avatar-default-symbolic";
+  menu-model: account_menu;
+  tooltip-text: _("Account");
+
+  accessibility {
+    label: _("Account");
+  }
+}
+
+menu account_menu {
+  // Filled from the signer's identity list by gh-account-ui.c.
+  section identities {}
+
+  section {
+    item {
+      label: _("No Account (Read-Only)");
+      action: "account.select";
+      target: "";
+    }
+
+    item {
+      label: _("_Refresh Accounts");
+      action: "account.refresh";
+    }
+  }
+}

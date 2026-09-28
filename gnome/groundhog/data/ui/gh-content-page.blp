@@ -1,0 +1,35 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Content navigation page: header, the always-revealed read-only banner
+// (its title is kept current by gh-account-ui.c in account builds), and the
+// "no conversation selected" status page.
+template $GhContentPage: Adw.NavigationPage {
+  title: _("Messages");
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Box {
+      orientation: vertical;
+
+      Adw.Banner banner {
+        title: _("Read-only shell: sending and receiving are not available");
+        revealed: true;
+      }
+
+      Adw.StatusPage {
+        icon-name: "mail-read-symbolic";
+        title: _("No conversation selected");
+        description: _("Messages will appear here when conversation services are implemented.");
+        hexpand: true;
+        vexpand: true;
+
+        styles [
+          "groundhog-shell-status",
+        ]
+      }
+    };
+  };
+}

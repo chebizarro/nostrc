@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.5.2 LANGUAGES C)
+project(groundhog VERSION 0.5.3 LANGUAGES C)
 
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -14,46 +14,112 @@ if (NOT GLIB_COMPILE_RESOURCES OR NOT GLIB_COMPILE_SCHEMAS)
 endif()
 
 set(GROUNDHOG_DATA ${CMAKE_CURRENT_SOURCE_DIR}/data)
+
+# All Groundhog UI is Blueprint, following the repository convention
+# (apps/gnostr/CMakeLists.txt, nostr-gtk): data/ui/*.blp are the source of
+# truth and the compiled data/ui/*.ui are committed beside them, so a build
+# without blueprint-compiler still bundles a complete UI. When a compiler of at
+# least GROUNDHOG_BLUEPRINT_MIN_VERSION is found, the .blp files are compiled
+# into the build tree and glib-compile-resources prefers those over the
+# committed copies (first --sourcedir wins). Unlike gnostr, a normal build never
+# rewrites tracked files: CI (0.12, Ubuntu 24.04) and developer hosts (e.g.
+# 0.20) emit trivially different XML. The groundhog-blueprint test instead
+# fails when the committed .ui no longer matches the .blp, and the
+# groundhog-update-ui target regenerates them on request.
+set(GROUNDHOG_BLUEPRINTS
+  gh-window gh-sidebar-page gh-content-page gh-onboarding-page gh-account-ui)
+set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
+set(GROUNDHOG_BLUEPRINT_COMPILER "")
+if (BLUEPRINT_COMPILER)
+  execute_process(COMMAND ${BLUEPRINT_COMPILER} --version
+    OUTPUT_VARIABLE GROUNDHOG_BLUEPRINT_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE GROUNDHOG_BLUEPRINT_VERSION_RESULT ERROR_QUIET)
+  if (GROUNDHOG_BLUEPRINT_VERSION_RESULT EQUAL 0 AND
+      GROUNDHOG_BLUEPRINT_VERSION VERSION_GREATER_EQUAL GROUNDHOG_BLUEPRINT_MIN_VERSION)
+    set(GROUNDHOG_BLUEPRINT_COMPILER ${BLUEPRINT_COMPILER})
+    message(STATUS "Groundhog UI: compiling Blueprint with blueprint-compiler ${GROUNDHOG_BLUEPRINT_VERSION}")
+  else()
+    message(WARNING "Groundhog UI: blueprint-compiler '${GROUNDHOG_BLUEPRINT_VERSION}' is older than "
+                    "${GROUNDHOG_BLUEPRINT_MIN_VERSION}; using the committed data/ui/*.ui")
+  endif()
+else()
+  message(STATUS "Groundhog UI: blueprint-compiler not found; using the committed data/ui/*.ui")
+endif()
+
+set(GROUNDHOG_BLUEPRINT_SOURCES)
+set(GROUNDHOG_COMMITTED_UI)
+foreach (name IN LISTS GROUNDHOG_BLUEPRINTS)
+  list(APPEND GROUNDHOG_BLUEPRINT_SOURCES ${GROUNDHOG_DATA}/ui/${name}.blp)
+  list(APPEND GROUNDHOG_COMMITTED_UI ${GROUNDHOG_DATA}/ui/${name}.ui)
+endforeach()
+if (GROUNDHOG_BLUEPRINT_COMPILER)
+  # Writes ${CMAKE_CURRENT_BINARY_DIR}/blueprint/data/ui/<name>.ui.
+  blueprint_compile(
+    OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/blueprint
+    SOURCES ${GROUNDHOG_BLUEPRINT_SOURCES}
+    OUTPUT_FILES_VAR GROUNDHOG_UI_FILES)
+  set(GROUNDHOG_UI_SOURCEDIR --sourcedir ${CMAKE_CURRENT_BINARY_DIR}/blueprint/data)
+  set(GROUNDHOG_UPDATE_UI_COMMANDS)
+  foreach (name IN LISTS GROUNDHOG_BLUEPRINTS)
+    list(APPEND GROUNDHOG_UPDATE_UI_COMMANDS
+      COMMAND ${GROUNDHOG_BLUEPRINT_COMPILER} compile
+              --output ${GROUNDHOG_DATA}/ui/${name}.ui ${GROUNDHOG_DATA}/ui/${name}.blp)
+  endforeach()
+  # Explicit, never part of ALL: refreshes the committed fallback .ui files.
+  add_custom_target(groundhog-update-ui ${GROUNDHOG_UPDATE_UI_COMMANDS}
+    COMMENT "Regenerating committed Groundhog data/ui/*.ui from Blueprint" VERBATIM)
+else()
+  set(GROUNDHOG_UI_FILES ${GROUNDHOG_COMMITTED_UI})
+  set(GROUNDHOG_UI_SOURCEDIR)
+endif()
+
 set(GROUNDHOG_RESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/groundhog-resources.c)
 add_custom_command(
   OUTPUT ${GROUNDHOG_RESOURCE_C}
   COMMAND ${GLIB_COMPILE_RESOURCES} --generate-source --manual-register --c-name groundhog
-          --sourcedir ${GROUNDHOG_DATA} --target ${GROUNDHOG_RESOURCE_C}
+          ${GROUNDHOG_UI_SOURCEDIR} --sourcedir ${GROUNDHOG_DATA}
+          --target ${GROUNDHOG_RESOURCE_C}
           ${GROUNDHOG_DATA}/groundhog.gresource.xml
   DEPENDS ${GROUNDHOG_DATA}/groundhog.gresource.xml
           ${GROUNDHOG_DATA}/style.css
           ${GROUNDHOG_DATA}/icons/org.nostr.Groundhog.svg
+          ${GROUNDHOG_UI_FILES}
   VERBATIM)
 
-add_executable(groundhog src/main.c src/app/gh-shell.c ${GROUNDHOG_RESOURCE_C})
-target_include_directories(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
-target_compile_definitions(groundhog PRIVATE
-  GROUNDHOG_VERSION="${PROJECT_VERSION}"
+# The window and page templates plus the resource bundle that holds their
+# compiled UI, shared by the application and the GUI tests so every test
+# instantiates exactly the tree the application ships.
+add_library(groundhog-ui STATIC src/app/gh-shell.c src/app/gh-window.c ${GROUNDHOG_RESOURCE_C})
+target_include_directories(groundhog-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+target_compile_definitions(groundhog-ui PUBLIC
   ADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5
   ADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5
   GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14
   GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14)
+target_compile_options(groundhog-ui PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(groundhog-ui PUBLIC PkgConfig::GROUNDHOG_DEPS)
+
+add_executable(groundhog src/main.c)
+target_compile_definitions(groundhog PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
 target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(groundhog PRIVATE PkgConfig::GROUNDHOG_DEPS)
+target_link_libraries(groundhog PRIVATE groundhog-ui)
 
 if (BUILD_TESTING)
-  add_executable(test-groundhog-resource tests/app/test_resource.c ${GROUNDHOG_RESOURCE_C})
-  target_link_libraries(test-groundhog-resource PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  add_executable(test-groundhog-resource tests/app/test_resource.c)
+  target_link_libraries(test-groundhog-resource PRIVATE groundhog-ui)
   target_compile_options(test-groundhog-resource PRIVATE -Wall -Wextra -Werror)
   add_test(NAME groundhog-resource COMMAND test-groundhog-resource)
   set_tests_properties(groundhog-resource PROPERTIES TIMEOUT 10
     ENVIRONMENT "G_DEBUG=fatal-criticals")
 
-  # Headless adaptive-layout/accessibility check for the shell chrome in
-  # src/app/gh-shell.c. It never touches GResource, GSettings, or the signer,
-  # so it needs no compiled resource bundle or installed schema; it only
-  # needs a GTK display connection, which is why it still self-skips (77)
-  # when one is unavailable, matching groundhog-launch below.
-  add_executable(test-groundhog-shell tests/app/test_shell_layout.c src/app/gh-shell.c)
-  target_include_directories(test-groundhog-shell PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
-  target_compile_definitions(test-groundhog-shell PRIVATE GROUNDHOG_HAVE_ACCOUNTS=0)
+  # Layout/accessibility check for the shell templates: instantiates the
+  # compiled GhWindow/GhSidebarPage/GhContentPage from the GResource (no
+  # GSettings or signer). It needs a GTK display connection, so it self-skips
+  # (77) when one is unavailable, matching groundhog-launch below.
+  add_executable(test-groundhog-shell tests/app/test_shell_layout.c)
   target_compile_options(test-groundhog-shell PRIVATE -Wall -Wextra -Werror)
-  target_link_libraries(test-groundhog-shell PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  target_link_libraries(test-groundhog-shell PRIVATE groundhog-ui)
   add_test(NAME groundhog-shell COMMAND test-groundhog-shell)
   set_tests_properties(groundhog-shell PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20
     ENVIRONMENT "G_DEBUG=fatal-criticals")
@@ -236,17 +302,16 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
 
-  # Headless check that gh-account-ui.c's focus/announcement bookkeeping
-  # (added for accessibility) only reacts to a real state transition. Needs
+  # Check that gh-account-ui.c attaches the gh-account-ui.blp pages/menu to a
+  # real GhWindow and that its focus/announcement bookkeeping (added for
+  # accessibility) only reacts to a real state transition. Needs
   # a GTK display, unlike the GTK-free tests above, so it self-skips (77);
   # -fatal-warnings is intentionally omitted here (unlike groundhog-account
   # above) because initializing libadwaita's bundled CSS can log
   # non-fatal theme-parser warnings on some GTK builds.
   add_executable(test-groundhog-account-ui tests/app/test_account_ui.c
-    src/app/gh-account-ui.c src/app/gh-shell.c)
-  target_include_directories(test-groundhog-account-ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
-  target_compile_definitions(test-groundhog-account-ui PRIVATE GROUNDHOG_HAVE_ACCOUNTS=1)
-  target_link_libraries(test-groundhog-account-ui PRIVATE groundhog-account PkgConfig::GROUNDHOG_DEPS)
+    src/app/gh-account-ui.c)
+  target_link_libraries(test-groundhog-account-ui PRIVATE groundhog-account groundhog-ui)
   target_compile_options(test-groundhog-account-ui PRIVATE -Wall -Wextra -Werror)
   add_dependencies(test-groundhog-account-ui groundhog-test-schemas)
   add_test(NAME groundhog-account-ui COMMAND test-groundhog-account-ui)
@@ -299,6 +364,15 @@ if (BUILD_TESTING)
     add_test(NAME groundhog-data
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_data.py
               ${CMAKE_CURRENT_BINARY_DIR} ${GROUNDHOG_DATA})
+    # The committed data/ui/*.ui fallback must match fresh Blueprint output
+    # (compared as canonical XML, so 0.12 and newer compilers agree). Fix a
+    # failure by building the groundhog-update-ui target and committing.
+    if (GROUNDHOG_BLUEPRINT_COMPILER)
+      add_test(NAME groundhog-blueprint
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_blueprint.py
+                ${GROUNDHOG_BLUEPRINT_COMPILER} ${GROUNDHOG_DATA}/ui)
+      set_tests_properties(groundhog-blueprint PROPERTIES TIMEOUT 60)
+    endif()
   endif()
   find_program(DESKTOP_FILE_VALIDATE desktop-file-validate)
   if (DESKTOP_FILE_VALIDATE)

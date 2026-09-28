@@ -3,5 +3,11 @@
   <gresource prefix="/org/nostr/Groundhog">
     <file>style.css</file>
     <file>icons/org.nostr.Groundhog.svg</file>
+    <!-- Compiled from data/ui/*.blp; see CMakeLists.txt. -->
+    <file>ui/gh-window.ui</file>
+    <file>ui/gh-sidebar-page.ui</file>
+    <file>ui/gh-content-page.ui</file>
+    <file>ui/gh-onboarding-page.ui</file>
+    <file>ui/gh-account-ui.ui</file>
   </gresource>
 </gresources>

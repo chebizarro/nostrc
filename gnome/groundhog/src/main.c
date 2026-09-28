@@ -1,6 +1,6 @@
 #include <adwaita.h>
 
-#include "gh-shell.h"
+#include "gh-window.h"
 
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-account-controller.h"
@@ -27,48 +27,19 @@ static GhAccountController *app_accounts;
 static GhAccountRelays *app_relays;
 #endif
 
+/* The widget tree is the GhWindow template (data/ui/gh-window.blp and the
+ * page templates it names); only behaviour is attached here. */
 static GtkWidget *
 create_window(AdwApplication *app)
 {
-  GtkWidget *window = adw_application_window_new(GTK_APPLICATION(app));
-  GtkWidget *split = adw_navigation_split_view_new();
-  GtkWidget *toasts = adw_toast_overlay_new();
-  GtkWidget *header, *title, *stack, *banner;
-  AdwBreakpointCondition *condition;
-  AdwBreakpoint *breakpoint;
-  GValue collapsed = G_VALUE_INIT;
+  GhWindow *window = gh_window_new(GTK_APPLICATION(app));
 
-  gtk_window_set_title(GTK_WINDOW(window), "Groundhog");
-  gtk_window_set_icon_name(GTK_WINDOW(window), GROUNDHOG_APP_ID);
-  gtk_window_set_default_size(GTK_WINDOW(window), 900, 600);
-  adw_navigation_split_view_set_sidebar(ADW_NAVIGATION_SPLIT_VIEW(split),
-                                        gh_shell_sidebar_page(&header, &title, &stack));
-  adw_navigation_split_view_set_content(ADW_NAVIGATION_SPLIT_VIEW(split),
-                                        gh_shell_content_page(&banner));
-  adw_navigation_split_view_set_show_content(ADW_NAVIGATION_SPLIT_VIEW(split), FALSE);
-  adw_toast_overlay_set_child(ADW_TOAST_OVERLAY(toasts), split);
-  adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), toasts);
 #if GROUNDHOG_HAVE_ACCOUNTS
-  gh_account_ui_attach(window, app_accounts, app_settings, ADW_HEADER_BAR(header),
-                       ADW_WINDOW_TITLE(title), GTK_STACK(stack), ADW_BANNER(banner),
-                       ADW_TOAST_OVERLAY(toasts));
+  gh_account_ui_attach(window, app_accounts, app_settings);
 #else
-  (void)header;
-  (void)title;
-  (void)stack;
+  gh_sidebar_page_show_onboarding(gh_window_get_sidebar(window));
 #endif
-
-  condition = adw_breakpoint_condition_parse("max-width: 600sp");
-  breakpoint = adw_breakpoint_new(condition);
-  g_value_init(&collapsed, G_TYPE_BOOLEAN);
-  g_value_set_boolean(&collapsed, TRUE);
-  adw_breakpoint_add_setter(breakpoint, G_OBJECT(split), "collapsed", &collapsed);
-  g_value_unset(&collapsed);
-  adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
-
-  g_object_set_data(G_OBJECT(window), "groundhog-split", split);
-  g_object_set_data(G_OBJECT(window), "groundhog-sidebar-stack", stack);
-  return window;
+  return GTK_WIDGET(window);
 }
 
 static gboolean
@@ -76,23 +47,29 @@ smoke_check(gpointer user_data)
 {
   GApplication *app = G_APPLICATION(user_data);
   GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(app));
-  GtkWidget *split = window ? g_object_get_data(G_OBJECT(window), "groundhog-split") : NULL;
+  /* Proves the compiled template resource instantiated the whole tree. */
+  AdwNavigationSplitView *split = GH_IS_WINDOW(window) ? gh_window_get_split(GH_WINDOW(window))
+                                                       : NULL;
 
   if (!ADW_IS_NAVIGATION_SPLIT_VIEW(split) ||
-      !adw_navigation_split_view_get_sidebar(ADW_NAVIGATION_SPLIT_VIEW(split)) ||
-      !adw_navigation_split_view_get_content(ADW_NAVIGATION_SPLIT_VIEW(split)))
+      !GH_IS_SIDEBAR_PAGE(adw_navigation_split_view_get_sidebar(split)) ||
+      !GH_IS_CONTENT_PAGE(adw_navigation_split_view_get_content(split)))
     smoke_status = 1;
   else {
+    GtkStack *stack = gh_sidebar_page_get_stack(gh_window_get_sidebar(GH_WINDOW(window)));
+
     /* The compact drill-down API must remain usable with an empty model. */
-    adw_navigation_split_view_set_collapsed(ADW_NAVIGATION_SPLIT_VIEW(split), TRUE);
-    adw_navigation_split_view_set_show_content(ADW_NAVIGATION_SPLIT_VIEW(split), TRUE);
-    if (!adw_navigation_split_view_get_show_content(ADW_NAVIGATION_SPLIT_VIEW(split)))
+    adw_navigation_split_view_set_collapsed(split, TRUE);
+    adw_navigation_split_view_set_show_content(split, TRUE);
+    if (!adw_navigation_split_view_get_show_content(split))
       smoke_status = 1;
 #if GROUNDHOG_HAVE_ACCOUNTS
     /* The sidebar always reflects an account state; never a blank stack. */
-    GtkStack *stack = g_object_get_data(G_OBJECT(window), "groundhog-sidebar-stack");
     if (!gtk_stack_get_visible_child_name(stack) ||
         !gtk_widget_activate_action(GTK_WIDGET(window), "account.refresh", NULL))
+      smoke_status = 1;
+#else
+    if (g_strcmp0(gtk_stack_get_visible_child_name(stack), "onboarding") != 0)
       smoke_status = 1;
 #endif
   }

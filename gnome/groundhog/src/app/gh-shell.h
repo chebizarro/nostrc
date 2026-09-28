@@ -6,27 +6,34 @@
 G_BEGIN_DECLS
 
 /* Read-only shell chrome shared between the application (main.c) and the
- * headless layout/accessibility test (tests/app/test_shell_layout.c). This
- * unit never touches GResource, GSettings, or the signer, so it can be
- * exercised without a compiled resource bundle or a display session that
- * supports mapping a window. */
+ * layout/accessibility test (tests/app/test_shell_layout.c). The widget trees
+ * are Blueprint composite templates (data/ui/gh-sidebar-page.blp and
+ * data/ui/gh-content-page.blp) bundled in the Groundhog GResource, so
+ * groundhog_register_resource() must run before either type is first used.
+ * This unit never touches GSettings or the signer. */
 
-/* An AdwStatusPage with the "groundhog-shell-status" CSS class. Every empty,
- * error, and onboarding state in the shell uses this so a screen reader
- * always hears a title and description instead of a blank pane. */
-GtkWidget *gh_shell_status_page(const char *icon, const char *title, const char *description);
+/* The sidebar navigation page: header, window title, and the stack that
+ * hosts the (currently always-empty) conversations list plus its empty and
+ * error states. The list and the stack both carry an accessible label so
+ * their purpose is announced even though no rows exist until a real
+ * conversation backend lands. */
+#define GH_TYPE_SIDEBAR_PAGE (gh_sidebar_page_get_type())
+G_DECLARE_FINAL_TYPE(GhSidebarPage, gh_sidebar_page, GH, SIDEBAR_PAGE, AdwNavigationPage)
 
-/* Builds the sidebar navigation page: header, window title, and the stack
- * that hosts the (currently always-empty) conversations list plus its
- * empty/error/onboarding states. The list and the stack both carry an
- * accessible label so their purpose is announced even though no rows exist
- * until a real conversation backend lands. */
-AdwNavigationPage *gh_shell_sidebar_page(GtkWidget **header_out, GtkWidget **title_out,
-                                         GtkWidget **stack_out);
+AdwHeaderBar *gh_sidebar_page_get_header(GhSidebarPage *self);
+AdwWindowTitle *gh_sidebar_page_get_window_title(GhSidebarPage *self);
+GtkStack *gh_sidebar_page_get_stack(GhSidebarPage *self);
 
-/* Builds the content navigation page: header, the always-revealed read-only
- * banner, and the "no conversation selected" status page. */
-AdwNavigationPage *gh_shell_content_page(GtkWidget **banner_out);
+/* For builds without account support: adds the "onboarding" page
+ * (data/ui/gh-onboarding-page.blp) to the stack and shows it. */
+void gh_sidebar_page_show_onboarding(GhSidebarPage *self);
+
+/* The content navigation page: header, the always-revealed read-only banner,
+ * and the "no conversation selected" status page. */
+#define GH_TYPE_CONTENT_PAGE (gh_content_page_get_type())
+G_DECLARE_FINAL_TYPE(GhContentPage, gh_content_page, GH, CONTENT_PAGE, AdwNavigationPage)
+
+AdwBanner *gh_content_page_get_banner(GhContentPage *self);
 
 G_END_DECLS
 #endif
