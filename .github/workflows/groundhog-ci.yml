@@ -27,12 +27,16 @@ jobs:
             libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev \
-            libgit2-dev libsqlite3-dev libnsync-dev \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
             desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core \
             blueprint-compiler gnome-keyring
           # Ubuntu 24.04 ships blueprint-compiler 0.12, Groundhog's minimum;
           # groundhog-blueprint compares its output with the committed .ui.
           blueprint-compiler --version
+          # libsqlcipher-dev (4.5.6) backs the encrypted store; groundhog-store-sqlite
+          # (ST-4) proves every sqlite3_* binding in groundhog resolves to it, ahead
+          # of the libsqlite3 that libsoup links.
+          pkg-config --modversion sqlcipher
 
       - name: Configure Groundhog and in-tree adapters
         run: |
@@ -48,7 +52,7 @@ jobs:
             test-groundhog-account test-groundhog-account-relays test-groundhog-dm-send \
             test-groundhog-account-ui test-groundhog-relay test-groundhog-relay-wire \
             test-groundhog-relay-publish test-groundhog-relay-publish-wire \
-            test-groundhog-nip29 test-groundhog-conversations test-groundhog-dm-inbox test-groundhog-store-key test-groundhog-store-key-keyring
+            test-groundhog-nip29 test-groundhog-conversations test-groundhog-dm-inbox test-groundhog-store-key test-groundhog-store-key-keyring test-groundhog-store test-groundhog-store-sqlite
 
       - name: Require complete Groundhog test registration
         run: |
@@ -66,7 +70,7 @@ jobs:
               'groundhog-conversations', 'groundhog-dm-inbox',
               'groundhog-version', 'groundhog-launch', 'groundhog-schema',
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
-              'groundhog-blueprint', 'groundhog-privacy-static', 'groundhog-store-key', 'groundhog-store-key-keyring',
+              'groundhog-blueprint', 'groundhog-privacy-static', 'groundhog-store-key', 'groundhog-store-key-keyring', 'groundhog-store', 'groundhog-store-sqlite',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))

@@ -515,3 +515,88 @@ else()
   message(STATUS "Groundhog store key unavailable: libsecret-1 and libsodium are required")
 endif()
 # --- end G03 store key ---
+
+# --- G02 store ---
+# Encrypted per-account store (privacy charter §3, decision D1: SQLCipher 4
+# keyed with a raw 256-bit key). Optional at configure time: without SQLCipher
+# or libsodium the store is disabled; there is never a plaintext fallback.
+pkg_check_modules(GROUNDHOG_SQLCIPHER QUIET IMPORTED_TARGET sqlcipher)
+pkg_check_modules(GROUNDHOG_STORE_DEPS QUIET IMPORTED_TARGET gio-2.0>=2.66 libsodium>=1.0.18)
+if (TARGET PkgConfig::GROUNDHOG_SQLCIPHER AND TARGET PkgConfig::GROUNDHOG_STORE_DEPS)
+  # Homebrew's sqlcipher.pc reports the SQLite base version, Debian's the
+  # SQLCipher one; the cipher itself is verified at runtime (ST-4 guard).
+  message(STATUS "Groundhog store: enabled (pkg-config sqlcipher "
+                 "${GROUNDHOG_SQLCIPHER_VERSION})")
+  set(GROUNDHOG_STORE_SOURCES
+    src/store/gh-store.c src/store/gh-store-schema.c src/store/gh-clock.c)
+
+  # ST-4: one SQLite implementation, SQLCipher, per process. The linked
+  # target records libsqlcipher as its first DT_NEEDED entry (kept even under
+  # --as-needed), so it precedes any libsqlite3 that libsoup, libmarmot or a
+  # later dependency pulls in, and ELF global lookup binds every sqlite3_* to
+  # SQLCipher. Mach-O binds each image to the library it linked (two-level
+  # namespace); the order is kept there only for symmetry. The runtime guard
+  # (gh_store_check_sqlite) refuses to open a store if this ever breaks.
+  function(groundhog_store_link_sqlcipher_first target)
+    foreach (lib IN LISTS GROUNDHOG_SQLCIPHER_LINK_LIBRARIES)
+      if (APPLE)
+        target_link_options(${target} BEFORE PRIVATE "${lib}")
+      else()
+        target_link_options(${target} BEFORE PRIVATE
+          "SHELL:-Wl,--push-state,--no-as-needed ${lib} -Wl,--pop-state")
+      endif()
+    endforeach()
+  endfunction()
+
+  function(groundhog_store_library name)
+    add_library(${name} STATIC ${GROUNDHOG_STORE_SOURCES})
+    target_include_directories(${name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+    # sqlite3_key_v2 is declared by SQLCipher's sqlite3.h only with this set.
+    target_compile_definitions(${name} PUBLIC SQLITE_HAS_CODEC=1)
+    target_link_libraries(${name} PUBLIC PkgConfig::GROUNDHOG_SQLCIPHER
+      PkgConfig::GROUNDHOG_STORE_DEPS ${CMAKE_DL_LIBS})
+    target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
+  endfunction()
+
+  groundhog_store_library(groundhog-store)
+  groundhog_store_link_sqlcipher_first(groundhog)
+  target_link_libraries(groundhog PRIVATE groundhog-store)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_STORE=1)
+
+  if (BUILD_TESTING)
+    # The same sources with the H8 crash cut points and the ownership hook;
+    # never linked into the application.
+    groundhog_store_library(groundhog-store-testhooks)
+    target_compile_definitions(groundhog-store-testhooks PUBLIC GH_STORE_TEST_HOOKS=1)
+    add_executable(test-groundhog-store tests/store/test_store.c tests/store/crash-harness.c)
+    target_include_directories(test-groundhog-store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/store)
+    target_link_libraries(test-groundhog-store PRIVATE groundhog-store-testhooks)
+    target_compile_options(test-groundhog-store PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-store)
+    add_test(NAME groundhog-store COMMAND test-groundhog-store)
+    set_tests_properties(groundhog-store PROPERTIES TIMEOUT 120
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+
+    # ST-4 against what ships: the production library linked the way the
+    # groundhog executable is, plus the real groundhog binary's loader scope
+    # and bindings (glibc) and a preload mutation that the guard must refuse.
+    add_executable(test-groundhog-store-sqlite tests/store/test_store.c)
+    target_compile_definitions(test-groundhog-store-sqlite PRIVATE GH_STORE_TEST_LINK_SET=1
+      "GROUNDHOG_EXECUTABLE=\"$<TARGET_FILE:groundhog>\"")
+    target_link_libraries(test-groundhog-store-sqlite PRIVATE groundhog-store
+      $<TARGET_PROPERTY:groundhog,LINK_LIBRARIES>)
+    target_compile_options(test-groundhog-store-sqlite PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-store-sqlite)
+    add_dependencies(test-groundhog-store-sqlite groundhog)
+    add_test(NAME groundhog-store-sqlite COMMAND test-groundhog-store-sqlite)
+    set_tests_properties(groundhog-store-sqlite PROPERTIES TIMEOUT 60
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog store: disabled. It needs the pkg-config modules "
+                 "'sqlcipher' and 'libsodium' (Debian/Ubuntu: libsqlcipher-dev "
+                 "libsodium-dev; Homebrew: sqlcipher libsodium). There is no "
+                 "plaintext fallback, so nothing is stored without them.")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_STORE=0)
+endif()
+# --- end G02 store ---
