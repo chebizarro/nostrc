@@ -601,14 +601,14 @@ fail:
 }
 
 static int
-build_proposal_public_message_for_test(const MlsGroup *sender,
-                                       uint64_t epoch, uint32_t claimed_sender,
-                                       uint8_t group_id_xor,
-                                       const uint8_t signing_key[MLS_SIG_SK_LEN],
-                                       const uint8_t membership_key[MLS_HASH_LEN],
-                                       uint8_t **out, size_t *out_len)
+build_proposal_message_with_body_for_test(const MlsGroup *sender,
+                                          const uint8_t *body, size_t body_len,
+                                          uint64_t epoch, uint32_t claimed_sender,
+                                          uint8_t group_id_xor,
+                                          const uint8_t signing_key[MLS_SIG_SK_LEN],
+                                          const uint8_t membership_key[MLS_HASH_LEN],
+                                          uint8_t **out, size_t *out_len)
 {
-    static const uint8_t remove_body[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x01};
     uint8_t *gc = NULL;
     size_t gc_len = 0;
     if (mls_group_context_build(sender, &gc, &gc_len) != 0) return -1;
@@ -618,7 +618,7 @@ build_proposal_public_message_for_test(const MlsGroup *sender,
     msg.cipher_suite = MARMOT_CIPHERSUITE;
     MlsPublicMessage *pm = &msg.public_message;
     pm->content.group_id = malloc(sender->group_id_len);
-    pm->content.content = malloc(sizeof(remove_body));
+    pm->content.content = malloc(body_len);
     if (!pm->content.group_id || !pm->content.content) goto fail;
     memcpy(pm->content.group_id, sender->group_id, sender->group_id_len);
     pm->content.group_id[0] ^= group_id_xor;
@@ -627,8 +627,8 @@ build_proposal_public_message_for_test(const MlsGroup *sender,
     pm->content.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
     pm->content.sender.leaf_index = claimed_sender;
     pm->content.content_type = MLS_CONTENT_TYPE_PROPOSAL;
-    memcpy(pm->content.content, remove_body, sizeof(remove_body));
-    pm->content.content_len = sizeof(remove_body);
+    memcpy(pm->content.content, body, body_len);
+    pm->content.content_len = body_len;
     if (mls_framed_content_sign(&pm->content, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
                                 gc, gc_len, signing_key, &pm->auth) != 0 ||
         mls_public_message_compute_membership_tag(pm, membership_key,
@@ -649,6 +649,285 @@ fail:
     free(gc);
     mls_message_clear(&msg);
     return -1;
+}
+
+static int
+build_proposal_public_message_for_test(const MlsGroup *sender,
+                                       uint64_t epoch, uint32_t claimed_sender,
+                                       uint8_t group_id_xor,
+                                       const uint8_t signing_key[MLS_SIG_SK_LEN],
+                                       const uint8_t membership_key[MLS_HASH_LEN],
+                                       uint8_t **out, size_t *out_len)
+{
+    static const uint8_t remove_body[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x01};
+    return build_proposal_message_with_body_for_test(sender, remove_body,
+        sizeof(remove_body), epoch, claimed_sender, group_id_xor, signing_key,
+        membership_key, out, out_len);
+}
+
+/* ── Referenced-proposal Commit fixtures (RFC 9420 §12.4) ────────────────
+ *
+ * libmarmot has no by-reference Commit producer, so these helpers build a
+ * spec-valid one from exported MLS primitives.  A Commit that covers only Add
+ * proposals needs no UpdatePath (§12.4), so the committer frames and signs the
+ * Commit, advances the transcript and key schedule with an all-zero
+ * commit_secret, and attaches the confirmation and membership tags.  The
+ * receiver-side proof is always the live mls_group_process_commit_ex(). */
+
+typedef struct {
+    uint64_t        epoch;
+    uint32_t        n_leaves;
+    uint8_t         tree_hash[MLS_HASH_LEN];
+    uint8_t         confirmed_transcript_hash[MLS_HASH_LEN];
+    uint8_t         interim_transcript_hash[MLS_HASH_LEN];
+    MlsEpochSecrets epoch_secrets;
+} ExpectedEpochForTest;
+
+/* Proposal { ProposalType add(1); KeyPackage key_package; } */
+static int
+add_proposal_body_for_test(const MlsKeyPackage *kp, MlsTlsBuf *body)
+{
+    if (mls_tls_buf_init(body, 512) != 0) return -1;
+    if (mls_tls_write_u16(body, MLS_PROPOSAL_ADD) != 0 ||
+        mls_key_package_serialize(kp, body) != 0) {
+        mls_tls_buf_free(body);
+        return -1;
+    }
+    return 0;
+}
+
+/* wire_format || FramedContent || signature<V>: the AuthenticatedContent
+ * prefix hashed into ProposalRefs and the confirmed transcript. */
+static int
+authenticated_content_for_test(const MlsPublicMessage *pm, MlsTlsBuf *out)
+{
+    const uint8_t *sig = pm->auth.signature_data ? pm->auth.signature_data
+                                                 : pm->auth.signature;
+    size_t sig_len = pm->auth.signature_len ? pm->auth.signature_len : MLS_SIG_LEN;
+    if (mls_tls_buf_init(out, pm->content.content_len + 256) != 0) return -1;
+    if (mls_tls_write_u16(out, MLS_WIRE_FORMAT_PUBLIC_MESSAGE) != 0 ||
+        mls_framed_content_serialize(&pm->content, out) != 0 ||
+        mls_tls_write_opaque16(out, sig, sig_len) != 0) {
+        mls_tls_buf_free(out);
+        return -1;
+    }
+    return 0;
+}
+
+/* ProposalRef = RefHash("MLS 1.0 Proposal Reference", AuthenticatedContent) */
+static int
+proposal_ref_for_test(const uint8_t *msg_data, size_t msg_len,
+                      uint8_t ref[MLS_HASH_LEN])
+{
+    MlsMLSMessage msg;
+    MlsTlsReader r;
+    MlsTlsBuf ac;
+    mls_tls_reader_init(&r, msg_data, msg_len);
+    if (mls_message_deserialize(&r, &msg) != 0) return -1;
+    int rc = -1;
+    if (msg.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE &&
+        authenticated_content_for_test(&msg.public_message, &ac) == 0) {
+        rc = mls_crypto_ref_hash(ref, "MLS 1.0 Proposal Reference",
+                                 ac.data, ac.len);
+        mls_tls_buf_free(&ac);
+    }
+    mls_message_clear(&msg);
+    return rc;
+}
+
+/* Build a pathless Commit from `committer` whose proposals are exactly
+ * `refs` (ProposalOrRef type 2), assuming those references resolve to Adds of
+ * `added` (in order), and derive the next epoch the receiver must reach. */
+static int
+build_add_ref_commit_for_test(const MlsGroup *committer,
+                              const uint8_t (*refs)[MLS_HASH_LEN], size_t ref_count,
+                              const MlsKeyPackage *const *added, size_t added_count,
+                              uint8_t **out, size_t *out_len,
+                              ExpectedEpochForTest *expected)
+{
+    int rc = -1;
+    uint8_t *gc = NULL, *next_gc = NULL, *tree_data = NULL;
+    size_t gc_len = 0, next_gc_len = 0, tree_len = 0;
+    MlsTlsBuf refs_buf = {0}, body = {0}, ac = {0}, hash_in = {0}, wire = {0};
+    MlsRatchetTree tree;
+    MlsMLSMessage msg;
+    memset(&tree, 0, sizeof(tree));
+    memset(&msg, 0, sizeof(msg));
+    memset(expected, 0, sizeof(*expected));
+
+    /* Commit { ProposalOrRef proposals<V>; optional<UpdatePath> path; } */
+    if (mls_tls_buf_init(&refs_buf, 64) != 0 ||
+        mls_tls_buf_init(&body, 64) != 0) goto done;
+    for (size_t i = 0; i < ref_count; i++) {
+        if (mls_tls_write_u8(&refs_buf, 2) != 0 ||
+            mls_tls_write_opaque16(&refs_buf, refs[i], MLS_HASH_LEN) != 0)
+            goto done;
+    }
+    if (mls_tls_write_opaque32(&body, refs_buf.data, refs_buf.len) != 0 ||
+        mls_tls_write_u8(&body, 0) != 0)
+        goto done;
+
+    /* Resulting tree: each Add fills the leftmost blank leaf (extending the
+     * tree when full) and joins the unmerged_leaves of every non-blank parent
+     * on its direct path (RFC 9420 §12.1.1). */
+    if (mls_ratchet_tree_serialize(&committer->tree, &tree_data, &tree_len) != 0 ||
+        mls_ratchet_tree_deserialize(tree_data, tree_len, &tree) != 0)
+        goto done;
+    for (size_t i = 0; i < added_count; i++) {
+        uint32_t node_idx;
+        if (mls_tree_add_leaf(&tree, &node_idx) != 0) goto done;
+        tree.nodes[node_idx].type = MLS_NODE_LEAF;
+        if (mls_leaf_node_clone(&tree.nodes[node_idx].leaf,
+                                &added[i]->leaf_node) != 0) goto done;
+        uint32_t dp[64], dp_len = 0;
+        if (mls_tree_direct_path(node_idx, tree.n_leaves, dp, 64, &dp_len) != 0)
+            goto done;
+        for (uint32_t j = 0; j < dp_len; j++) {
+            MlsParentNode *parent = &tree.nodes[dp[j]].parent;
+            if (tree.nodes[dp[j]].type != MLS_NODE_PARENT) continue;
+            uint32_t *grown = realloc(parent->unmerged_leaves,
+                (parent->unmerged_leaf_count + 1) * sizeof(*grown));
+            if (!grown) goto done;
+            parent->unmerged_leaves = grown;
+            parent->unmerged_leaves[parent->unmerged_leaf_count++] =
+                mls_tree_node_to_leaf(node_idx);
+        }
+    }
+    if (mls_tree_root_hash(&tree, expected->tree_hash) != 0) goto done;
+    expected->n_leaves = tree.n_leaves;
+    expected->epoch = committer->epoch + 1;
+
+    /* Frame and sign against the parent-epoch GroupContext. */
+    if (mls_group_context_build(committer, &gc, &gc_len) != 0) goto done;
+    msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    msg.cipher_suite = MARMOT_CIPHERSUITE;
+    MlsPublicMessage *pm = &msg.public_message;
+    pm->content.group_id = malloc(committer->group_id_len);
+    pm->content.content = malloc(body.len);
+    if (!pm->content.group_id || !pm->content.content) goto done;
+    memcpy(pm->content.group_id, committer->group_id, committer->group_id_len);
+    pm->content.group_id_len = committer->group_id_len;
+    pm->content.epoch = committer->epoch;
+    pm->content.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    pm->content.sender.leaf_index = committer->own_leaf_index;
+    pm->content.content_type = MLS_CONTENT_TYPE_COMMIT;
+    memcpy(pm->content.content, body.data, body.len);
+    pm->content.content_len = body.len;
+    if (mls_framed_content_sign(&pm->content, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                gc, gc_len, committer->own_signature_key,
+                                &pm->auth) != 0) goto done;
+
+    /* confirmed' = Hash(interim || AuthenticatedContent) */
+    if (authenticated_content_for_test(pm, &ac) != 0 ||
+        mls_tls_buf_init(&hash_in, MLS_HASH_LEN + ac.len) != 0 ||
+        mls_tls_buf_append(&hash_in, committer->interim_transcript_hash,
+                           MLS_HASH_LEN) != 0 ||
+        mls_tls_buf_append(&hash_in, ac.data, ac.len) != 0 ||
+        mls_crypto_hash(expected->confirmed_transcript_hash,
+                        hash_in.data, hash_in.len) != 0)
+        goto done;
+
+    /* Next epoch: no path, so commit_secret is all-zero; no PSKs. */
+    uint8_t zero_commit_secret[MLS_HASH_LEN] = {0};
+    if (mls_group_context_serialize(committer->group_id, committer->group_id_len,
+                                    expected->epoch, expected->tree_hash,
+                                    expected->confirmed_transcript_hash,
+                                    committer->extensions_data,
+                                    committer->extensions_len,
+                                    &next_gc, &next_gc_len) != 0 ||
+        mls_key_schedule_derive(committer->epoch_secrets.init_secret,
+                                zero_commit_secret, next_gc, next_gc_len, NULL,
+                                &expected->epoch_secrets) != 0 ||
+        mls_compute_confirmation_tag(expected->epoch_secrets.confirmation_key,
+                                     expected->confirmed_transcript_hash,
+                                     pm->auth.confirmation_tag) != 0)
+        goto done;
+    pm->auth.confirmation_tag_len = MLS_HASH_LEN;
+    pm->auth.has_confirmation_tag = true;
+
+    /* interim' = Hash(confirmed' || confirmation_tag<V>) */
+    mls_tls_buf_free(&hash_in);
+    if (mls_tls_buf_init(&hash_in, MLS_HASH_LEN * 2 + 2) != 0 ||
+        mls_tls_buf_append(&hash_in, expected->confirmed_transcript_hash,
+                           MLS_HASH_LEN) != 0 ||
+        mls_tls_write_opaque32(&hash_in, pm->auth.confirmation_tag,
+                               MLS_HASH_LEN) != 0 ||
+        mls_crypto_hash(expected->interim_transcript_hash,
+                        hash_in.data, hash_in.len) != 0)
+        goto done;
+
+    if (mls_public_message_compute_membership_tag(pm,
+            committer->epoch_secrets.membership_key, gc, gc_len) != 0 ||
+        mls_tls_buf_init(&wire, body.len + 512) != 0 ||
+        mls_message_serialize(&msg, &wire) != 0)
+        goto done;
+    *out = wire.data;
+    *out_len = wire.len;
+    wire.data = NULL;
+    rc = 0;
+done:
+    mls_tls_buf_free(&wire);
+    mls_tls_buf_free(&hash_in);
+    mls_tls_buf_free(&ac);
+    mls_tls_buf_free(&body);
+    mls_tls_buf_free(&refs_buf);
+    mls_message_clear(&msg);
+    mls_tree_free(&tree);
+    free(tree_data);
+    free(next_gc);
+    free(gc);
+    return rc;
+}
+
+/* The full persisted state (tree, epoch, transcript hashes, epoch and
+ * secret-tree secrets, own keys) plus the fields the ProposalRef regression
+ * names explicitly; a rejected Commit must leave all of it untouched. */
+typedef struct {
+    uint64_t        epoch;
+    uint8_t         tree_hash[MLS_HASH_LEN];
+    MlsEpochSecrets epoch_secrets;
+    uint8_t        *blob;
+    size_t          blob_len;
+} GroupSnapshotForTest;
+
+static void
+snapshot_group_for_test(const MlsGroup *g, GroupSnapshotForTest *s)
+{
+    memset(s, 0, sizeof(*s));
+    s->epoch = g->epoch;
+    assert(mls_group_tree_hash(g, s->tree_hash) == 0);
+    memcpy(&s->epoch_secrets, &g->epoch_secrets, sizeof(s->epoch_secrets));
+    assert(mls_group_serialize(g, &s->blob, &s->blob_len) == 0);
+}
+
+static void
+assert_group_matches_snapshot_for_test(const MlsGroup *g, const GroupSnapshotForTest *s)
+{
+    GroupSnapshotForTest now;
+    snapshot_group_for_test(g, &now);
+    assert(now.epoch == s->epoch);
+    assert(memcmp(now.tree_hash, s->tree_hash, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(&now.epoch_secrets, &s->epoch_secrets,
+                         sizeof(now.epoch_secrets)) == 0);
+    assert(now.blob_len == s->blob_len &&
+           memcmp(now.blob, s->blob, s->blob_len) == 0);
+    free(now.blob);
+}
+
+static void
+assert_group_reached_for_test(const MlsGroup *g, const ExpectedEpochForTest *e)
+{
+    uint8_t tree_hash[MLS_HASH_LEN];
+    assert(g->epoch == e->epoch);
+    assert(g->tree.n_leaves == e->n_leaves);
+    assert(mls_group_tree_hash(g, tree_hash) == 0);
+    assert(memcmp(tree_hash, e->tree_hash, MLS_HASH_LEN) == 0);
+    assert(memcmp(g->confirmed_transcript_hash, e->confirmed_transcript_hash,
+                  MLS_HASH_LEN) == 0);
+    assert(memcmp(g->interim_transcript_hash, e->interim_transcript_hash,
+                  MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(&g->epoch_secrets, &e->epoch_secrets,
+                         sizeof(g->epoch_secrets)) == 0);
 }
 
 static int
@@ -1048,6 +1327,233 @@ TEST(test_referenced_proposal_store_requires_parent_authentication)
     mls_key_package_private_clear(&bob_priv);
     mls_group_free(&alice_group);
     mls_group_free(&bob_group);
+}
+
+/* Alice (leaf 0) and Bob (leaf 1) share a normal, non-adopted group at the
+ * parent epoch.  Every proposal below proposes Add(Charlie) from Alice's leaf;
+ * only VALID is a genuine, current-epoch member proposal. */
+enum {
+    REF_VALID,
+    REF_WRONG_GROUP,
+    REF_PREVIOUS_EPOCH,
+    REF_NON_MEMBER,
+    REF_BAD_SIGNATURE,
+    REF_BAD_MEMBERSHIP_TAG,
+    REF_VARIANT_COUNT
+};
+
+typedef struct {
+    MlsGroup             alice, bob;
+    MlsKeyPackage        bob_kp, charlie_kp;
+    MlsKeyPackagePrivate bob_priv, charlie_priv;
+    MlsAddResult         add_result;
+    MlsCommitResult      update;
+    uint8_t             *prop[REF_VARIANT_COUNT];
+    size_t               prop_len[REF_VARIANT_COUNT];
+} ProposalRefFixture;
+
+static void
+proposal_ref_fixture_init(ProposalRefFixture *f)
+{
+    memset(f, 0, sizeof(*f));
+    assert(setup_two_member_groups(&f->alice, &f->bob, &f->bob_kp,
+                                   &f->bob_priv, &f->add_result) == 0);
+    assert(mls_key_package_create(&f->charlie_kp, &f->charlie_priv,
+                                  CHARLIE_ID, 32, NULL, 0) == 0);
+    MlsTlsBuf add_body;
+    assert(add_proposal_body_for_test(&f->charlie_kp, &add_body) == 0);
+
+    /* A genuine Alice proposal from the epoch before the parent epoch: both
+     * members then advance, so referencing it is a cross-epoch replay. */
+    assert(build_proposal_message_with_body_for_test(&f->alice,
+        add_body.data, add_body.len, f->alice.epoch, f->alice.own_leaf_index,
+        0, f->alice.own_signature_key, f->alice.epoch_secrets.membership_key,
+        &f->prop[REF_PREVIOUS_EPOCH], &f->prop_len[REF_PREVIOUS_EPOCH]) == 0);
+    assert(mls_group_self_update(&f->alice, &f->update) == 0);
+    assert(mls_group_process_commit(&f->bob, f->update.commit_data,
+                                    f->update.commit_len, 0) == 0);
+    assert(f->bob.epoch == f->alice.epoch);
+
+    uint8_t bad_membership_key[MLS_HASH_LEN];
+    memcpy(bad_membership_key, f->alice.epoch_secrets.membership_key,
+           MLS_HASH_LEN);
+    bad_membership_key[0] ^= 0x01;
+    for (int v = 0; v < REF_VARIANT_COUNT; v++) {
+        if (v == REF_PREVIOUS_EPOCH) continue;
+        assert(build_proposal_message_with_body_for_test(&f->alice,
+            add_body.data, add_body.len, f->alice.epoch,
+            v == REF_NON_MEMBER ? f->alice.tree.n_leaves : f->alice.own_leaf_index,
+            v == REF_WRONG_GROUP ? 0x01 : 0x00,
+            v == REF_BAD_SIGNATURE ? f->charlie_priv.signature_key_private
+                                   : f->alice.own_signature_key,
+            v == REF_BAD_MEMBERSHIP_TAG ? bad_membership_key
+                                        : f->alice.epoch_secrets.membership_key,
+            &f->prop[v], &f->prop_len[v]) == 0);
+    }
+    mls_tls_buf_free(&add_body);
+}
+
+static void
+proposal_ref_fixture_clear(ProposalRefFixture *f)
+{
+    for (int v = 0; v < REF_VARIANT_COUNT; v++) free(f->prop[v]);
+    mls_commit_result_clear(&f->update);
+    mls_add_result_clear(&f->add_result);
+    mls_key_package_clear(&f->bob_kp);
+    mls_key_package_clear(&f->charlie_kp);
+    mls_key_package_private_clear(&f->bob_priv);
+    mls_key_package_private_clear(&f->charlie_priv);
+    mls_group_free(&f->alice);
+    mls_group_free(&f->bob);
+}
+
+TEST(test_live_commit_consumes_parent_epoch_proposal_ref)
+{
+    ProposalRefFixture f;
+    proposal_ref_fixture_init(&f);
+    GroupSnapshotForTest parent;
+    snapshot_group_for_test(&f.bob, &parent);
+
+    uint8_t ref[1][MLS_HASH_LEN];
+    assert(proposal_ref_for_test(f.prop[REF_VALID], f.prop_len[REF_VALID],
+                                 ref[0]) == 0);
+    const MlsKeyPackage *added[] = {&f.charlie_kp};
+    ExpectedEpochForTest expected;
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    assert(build_add_ref_commit_for_test(&f.alice, ref, 1, added, 1,
+                                         &commit, &commit_len, &expected) == 0);
+    const uint8_t *store[] = {f.prop[REF_VALID]};
+
+    /* Load the persisted parent-epoch state before the live group moves. */
+    MlsGroup loaded;
+    assert(mls_group_deserialize(parent.blob, parent.blob_len, &loaded) == 0);
+
+    assert(mls_group_process_commit_ex(&f.bob, commit, commit_len,
+                                       f.alice.own_leaf_index, store,
+                                       &f.prop_len[REF_VALID], 1) == 0);
+    assert(expected.epoch == parent.epoch + 1);
+    assert_group_reached_for_test(&f.bob, &expected);
+    assert(sodium_memcmp(&expected.epoch_secrets, &parent.epoch_secrets,
+                         sizeof(expected.epoch_secrets)) != 0);
+    /* Charlie now occupies the leftmost free leaf with his KeyPackage leaf. */
+    const MlsNode *charlie = &f.bob.tree.nodes[mls_tree_leaf_to_node(2)];
+    assert(charlie->type == MLS_NODE_LEAF);
+    assert(charlie->leaf.credential_identity_len == sizeof(CHARLIE_ID) &&
+           memcmp(charlie->leaf.credential_identity, CHARLIE_ID,
+                  sizeof(CHARLIE_ID)) == 0);
+    assert(memcmp(charlie->leaf.signature_key,
+                  f.charlie_kp.leaf_node.signature_key, MLS_SIG_PK_LEN) == 0);
+
+    /* Persist/load: the persisted parent state converges byte-for-byte, and
+     * the advanced state reloads to the same epoch. */
+    assert(mls_group_process_commit_ex(&loaded, commit, commit_len,
+                                       f.alice.own_leaf_index, store,
+                                       &f.prop_len[REF_VALID], 1) == 0);
+    GroupSnapshotForTest advanced;
+    snapshot_group_for_test(&f.bob, &advanced);
+    assert_group_matches_snapshot_for_test(&loaded, &advanced);
+    MlsGroup reloaded;
+    assert(mls_group_deserialize(advanced.blob, advanced.blob_len,
+                                 &reloaded) == 0);
+    assert_group_reached_for_test(&reloaded, &expected);
+
+    /* The consumed parent-epoch reference cannot be replayed. */
+    assert(mls_group_process_commit_ex(&reloaded, commit, commit_len,
+                                       f.alice.own_leaf_index, store,
+                                       &f.prop_len[REF_VALID], 1) ==
+           MARMOT_ERR_MLS_PROCESS_MESSAGE);
+    assert_group_matches_snapshot_for_test(&reloaded, &advanced);
+
+    free(commit);
+    free(parent.blob);
+    free(advanced.blob);
+    mls_group_free(&loaded);
+    mls_group_free(&reloaded);
+    proposal_ref_fixture_clear(&f);
+}
+
+TEST(test_live_commit_rejects_unauthenticated_proposal_refs)
+{
+    ProposalRefFixture f;
+    proposal_ref_fixture_init(&f);
+    GroupSnapshotForTest parent;
+    snapshot_group_for_test(&f.bob, &parent);
+    const MlsKeyPackage *added[] = {&f.charlie_kp, &f.charlie_kp};
+    ExpectedEpochForTest ignored;
+
+    /* Each Commit is otherwise valid and references exactly the stored
+     * proposal it is paired with, so only proposal authentication stands
+     * between it and an applied Add. */
+    for (int v = REF_VALID + 1; v < REF_VARIANT_COUNT; v++) {
+        uint8_t ref[1][MLS_HASH_LEN];
+        assert(proposal_ref_for_test(f.prop[v], f.prop_len[v], ref[0]) == 0);
+        uint8_t *commit = NULL;
+        size_t commit_len = 0;
+        assert(build_add_ref_commit_for_test(&f.alice, ref, 1, added, 1,
+                                             &commit, &commit_len, &ignored) == 0);
+        const uint8_t *store[] = {f.prop[v]};
+        assert(mls_group_process_commit_ex(&f.bob, commit, commit_len,
+                                           f.alice.own_leaf_index, store,
+                                           &f.prop_len[v], 1) ==
+               MARMOT_ERR_MLS_PROCESS_MESSAGE);
+        assert_group_matches_snapshot_for_test(&f.bob, &parent);
+        free(commit);
+    }
+
+    uint8_t valid_ref[2][MLS_HASH_LEN];
+    assert(proposal_ref_for_test(f.prop[REF_VALID], f.prop_len[REF_VALID],
+                                 valid_ref[0]) == 0);
+    memcpy(valid_ref[1], valid_ref[0], MLS_HASH_LEN);
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    assert(build_add_ref_commit_for_test(&f.alice, valid_ref, 1, added, 1,
+                                         &commit, &commit_len, &ignored) == 0);
+
+    /* Unknown reference: the store holds only a different, authentic
+     * proposal (Alice's Remove of Bob). */
+    uint8_t *other = NULL;
+    size_t other_len = 0;
+    assert(build_proposal_public_message_for_test(&f.alice, f.alice.epoch,
+        f.alice.own_leaf_index, 0, f.alice.own_signature_key,
+        f.alice.epoch_secrets.membership_key, &other, &other_len) == 0);
+    const uint8_t *other_store[] = {other};
+    assert(mls_group_process_commit_ex(&f.bob, commit, commit_len,
+                                       f.alice.own_leaf_index, other_store,
+                                       &other_len, 1) ==
+           MARMOT_ERR_MLS_PROCESS_MESSAGE);
+    assert_group_matches_snapshot_for_test(&f.bob, &parent);
+
+    /* No proposal store at all. */
+    assert(mls_group_process_commit(&f.bob, commit, commit_len,
+                                    f.alice.own_leaf_index) ==
+           MARMOT_ERR_UNSUPPORTED);
+    assert_group_matches_snapshot_for_test(&f.bob, &parent);
+
+    /* One stored proposal cannot satisfy two references to it. */
+    uint8_t *twice = NULL;
+    size_t twice_len = 0;
+    assert(build_add_ref_commit_for_test(&f.alice, valid_ref, 2, added, 2,
+                                         &twice, &twice_len, &ignored) == 0);
+    const uint8_t *valid_store[] = {f.prop[REF_VALID]};
+    assert(mls_group_process_commit_ex(&f.bob, twice, twice_len,
+                                       f.alice.own_leaf_index, valid_store,
+                                       &f.prop_len[REF_VALID], 1) ==
+           MARMOT_ERR_MLS_PROCESS_MESSAGE);
+    assert_group_matches_snapshot_for_test(&f.bob, &parent);
+
+    /* After every rejection the untouched group still consumes the genuine
+     * reference. */
+    assert(mls_group_process_commit_ex(&f.bob, commit, commit_len,
+                                       f.alice.own_leaf_index, valid_store,
+                                       &f.prop_len[REF_VALID], 1) == 0);
+    assert(f.bob.epoch == parent.epoch + 1);
+
+    free(twice);
+    free(other);
+    free(commit);
+    free(parent.blob);
+    proposal_ref_fixture_clear(&f);
 }
 
 TEST(test_bad_committer_signature_rejected)
@@ -1598,6 +2104,8 @@ int main(void)
     RUN(test_welcome_epoch_secrets_match);
     RUN(test_process_valid_self_update_commit_roundtrip);
     RUN(test_referenced_proposal_store_requires_parent_authentication);
+    RUN(test_live_commit_consumes_parent_epoch_proposal_ref);
+    RUN(test_live_commit_rejects_unauthenticated_proposal_refs);
     RUN(test_bad_committer_signature_rejected);
     RUN(test_wrong_confirmation_tag_rejected);
     RUN(test_unknown_proposal_type_rejected);

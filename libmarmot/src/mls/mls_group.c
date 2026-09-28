@@ -2410,6 +2410,7 @@ process_commit_impl(MlsGroup *group,
     free(group_snapshot);
     MlsGroup *live_group = group;
     group = &staged;
+    int staged_rc = MARMOT_ERR_INTERNAL;
 
     /* Resolve referenced proposals (ProposalOrRef type 2) against the store,
      * and reject commits carrying proposal types we still do not apply. */
@@ -2420,20 +2421,23 @@ process_commit_impl(MlsGroup *group,
                 mls_commit_clear(&commit);
                 /* Without a proposal store we cannot resolve references;
                  * with one, a missing referent is a genuine framing error. */
-                return store ? MARMOT_ERR_MLS_PROCESS_MESSAGE
-                             : MARMOT_ERR_UNSUPPORTED;
+                staged_rc = store ? MARMOT_ERR_MLS_PROCESS_MESSAGE
+                                  : MARMOT_ERR_UNSUPPORTED;
+                goto staged_fail;
             }
         }
         if (!proposal_type_apply_supported(p)) {
             mls_commit_clear(&commit);
-            return MARMOT_ERR_UNSUPPORTED;
+            staged_rc = MARMOT_ERR_UNSUPPORTED;
+            goto staged_fail;
         }
     }
 
     /* Validate proposal ordering per RFC 9420 */
     if (validate_proposal_ordering(commit.proposals, commit.proposal_count) != 0) {
         mls_commit_clear(&commit);
-        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        goto staged_fail;
     }
 
     uint8_t psk_secret[MLS_HASH_LEN];
@@ -2443,7 +2447,8 @@ process_commit_impl(MlsGroup *group,
                                            psk_secret);
     if (psk_rc != 0) {
         mls_commit_clear(&commit);
-        return psk_rc;
+        staged_rc = psk_rc;
+        goto staged_fail;
     }
 
     sort_proposals_for_application(commit.proposals, commit.proposal_count);
@@ -2459,27 +2464,31 @@ process_commit_impl(MlsGroup *group,
             if (mls_key_package_validate(&p->add.key_package) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+                staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+                goto staged_fail;
             }
             uint32_t new_leaf_idx;
             if (mls_tree_add_leaf(&group->tree, &new_leaf_idx) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             MlsNode *n = &group->tree.nodes[new_leaf_idx];
             n->type = MLS_NODE_LEAF;
             if (mls_leaf_node_clone(&n->leaf, &p->add.key_package.leaf_node) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             if (added_leaf_count < sizeof(added_leaves) / sizeof(added_leaves[0]))
                 added_leaves[added_leaf_count++] = mls_tree_node_to_leaf(new_leaf_idx);
             else {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             uint32_t new_leaf = mls_tree_node_to_leaf(new_leaf_idx);
             uint32_t add_dp[64];
@@ -2488,7 +2497,8 @@ process_commit_impl(MlsGroup *group,
                                      add_dp, 64, &add_dp_len) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             for (uint32_t j = 0; j < add_dp_len; j++) {
                 MlsNode *parent = &group->tree.nodes[add_dp[j]];
@@ -2498,7 +2508,8 @@ process_commit_impl(MlsGroup *group,
                 if (!leaves) {
                     mls_commit_clear(&commit);
                     sodium_memzero(psk_secret, sizeof(psk_secret));
-                    return MARMOT_ERR_INTERNAL;
+                    staged_rc = MARMOT_ERR_INTERNAL;
+                    goto staged_fail;
                 }
                 parent->parent.unmerged_leaves = leaves;
                 parent->parent.unmerged_leaves[parent->parent.unmerged_leaf_count++] = new_leaf;
@@ -2510,7 +2521,8 @@ process_commit_impl(MlsGroup *group,
             if (p->remove.removed_leaf >= group->tree.n_leaves) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INVALID_ARG;
+                staged_rc = MARMOT_ERR_INVALID_ARG;
+                goto staged_fail;
             }
             uint32_t rm_node = mls_tree_leaf_to_node(p->remove.removed_leaf);
             mls_tree_blank_node(&group->tree.nodes[rm_node]);
@@ -2520,7 +2532,8 @@ process_commit_impl(MlsGroup *group,
             if (mls_tree_direct_path(rm_node, group->tree.n_leaves, dp, 64, &dp_len) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             
             for (uint32_t j = 0; j < dp_len; j++)
@@ -2535,7 +2548,8 @@ process_commit_impl(MlsGroup *group,
             if (upd_leaf >= group->tree.n_leaves) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INVALID_ARG;
+                staged_rc = MARMOT_ERR_INVALID_ARG;
+                goto staged_fail;
             }
             uint32_t upd_node = mls_tree_leaf_to_node(upd_leaf);
             mls_leaf_node_clear(&group->tree.nodes[upd_node].leaf);
@@ -2543,7 +2557,8 @@ process_commit_impl(MlsGroup *group,
                                      &p->update.leaf_node) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             /* Applying an Update blanks the updated leaf's direct path to the
              * root (RFC 9420 §12.1.2); the stale path secrets are invalidated. */
@@ -2553,7 +2568,8 @@ process_commit_impl(MlsGroup *group,
                                      upd_dp, 64, &upd_dp_len) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             for (uint32_t j = 0; j < upd_dp_len; j++)
                 mls_tree_blank_node(&group->tree.nodes[upd_dp[j]]);
@@ -2569,13 +2585,15 @@ process_commit_impl(MlsGroup *group,
                     p->group_context_extensions.extensions_len) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             break;
         default:
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
-            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
         }
     }
 
@@ -2590,7 +2608,8 @@ process_commit_impl(MlsGroup *group,
                                  &commit.path.leaf_node) != 0) {
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
-            return MARMOT_ERR_INTERNAL;
+            staged_rc = MARMOT_ERR_INTERNAL;
+            goto staged_fail;
         }
 
         /* Find our position relative to the sender's direct path */
@@ -2600,7 +2619,8 @@ process_commit_impl(MlsGroup *group,
                                            fdp, 64, &fdp_len) != 0) {
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
-            return MARMOT_ERR_INTERNAL;
+            staged_rc = MARMOT_ERR_INTERNAL;
+            goto staged_fail;
         }
 
         /* Find which copath node we're under */
@@ -2613,7 +2633,8 @@ process_commit_impl(MlsGroup *group,
                                       fdp[i], &child_below) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             uint32_t copath_sibling = mls_tree_sibling(child_below, group->tree.n_leaves);
             /* Check if we're in the resolution of this copath sibling */
@@ -2641,7 +2662,8 @@ process_commit_impl(MlsGroup *group,
         if (our_path_idx < 0) {
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
-            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
         }
 
         /* Decrypt our path secret */
@@ -2650,7 +2672,8 @@ process_commit_impl(MlsGroup *group,
                                   fdp[our_path_idx], &child_below) != 0) {
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
-            return MARMOT_ERR_INTERNAL;
+            staged_rc = MARMOT_ERR_INTERNAL;
+            goto staged_fail;
         }
         uint32_t copath_sibling = mls_tree_sibling(child_below,
                                                     group->tree.n_leaves);
@@ -2686,7 +2709,8 @@ process_commit_impl(MlsGroup *group,
             free(tree_snapshot);
             mls_tree_free(&context_tree);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            staged_rc = MARMOT_ERR_INTERNAL;
+            goto staged_fail;
         }
         free(tree_snapshot);
         mls_tree_free(&context_tree);
@@ -2702,7 +2726,8 @@ process_commit_impl(MlsGroup *group,
             free(path_context);
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
-            return MARMOT_ERR_CRYPTO;
+            staged_rc = MARMOT_ERR_CRYPTO;
+            goto staged_fail;
         }
         free(path_context);
 
@@ -2719,7 +2744,8 @@ process_commit_impl(MlsGroup *group,
                 mls_commit_clear(&commit);
                 sodium_memzero(node_sk, sizeof(node_sk));
                 sodium_memzero(node_pk, sizeof(node_pk));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             if (memcmp(node_pk, commit.path.nodes[i].encryption_key,
                        MLS_KEM_PK_LEN) == 0 &&
@@ -2730,14 +2756,16 @@ process_commit_impl(MlsGroup *group,
                 sodium_memzero(psk_secret, sizeof(psk_secret));
                 sodium_memzero(our_path_secret, sizeof(our_path_secret));
                 sodium_memzero(current_secret, sizeof(current_secret));
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
             sodium_memzero(node_sk, sizeof(node_sk));
             sodium_memzero(node_pk, sizeof(node_pk));
             if (i + 1 < fdp_len &&
                 mls_crypto_derive_secret(current_secret, current_secret, "path") != 0) {
                 mls_commit_clear(&commit);
-                return MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_INTERNAL;
+                goto staged_fail;
             }
         }
         memcpy(root_path_secret, current_secret, MLS_HASH_LEN);
@@ -2747,7 +2775,8 @@ process_commit_impl(MlsGroup *group,
             sodium_memzero(psk_secret, sizeof(psk_secret));
             sodium_memzero(our_path_secret, sizeof(our_path_secret));
             sodium_memzero(current_secret, sizeof(current_secret));
-            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
         }
 
         uint8_t final_tree_hash[MLS_HASH_LEN];
@@ -2762,7 +2791,8 @@ process_commit_impl(MlsGroup *group,
             sodium_memzero(psk_secret, sizeof(psk_secret));
             sodium_memzero(our_path_secret, sizeof(our_path_secret));
             sodium_memzero(current_secret, sizeof(current_secret));
-            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
         }
         if (sodium_memcmp(final_tree_hash, provisional_tree_hash,
                           MLS_HASH_LEN) != 0) {
@@ -2770,7 +2800,8 @@ process_commit_impl(MlsGroup *group,
             sodium_memzero(psk_secret, sizeof(psk_secret));
             sodium_memzero(our_path_secret, sizeof(our_path_secret));
             sodium_memzero(current_secret, sizeof(current_secret));
-            return MARMOT_ERR_INTERNAL;
+            staged_rc = MARMOT_ERR_INTERNAL;
+            goto staged_fail;
         }
 
         sodium_memzero(our_path_secret, sizeof(our_path_secret));
@@ -2792,14 +2823,16 @@ process_commit_impl(MlsGroup *group,
     if (transcript_rc != 0) {
         mls_commit_clear(&commit);
         sodium_memzero(psk_secret, sizeof(psk_secret));
-        return MARMOT_ERR_MEMORY;
+        staged_rc = MARMOT_ERR_MEMORY;
+        goto staged_fail;
     }
     MlsTlsBuf conf_buf;
     if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + confirmed_input_len) != 0) {
         free(confirmed_input);
         mls_commit_clear(&commit);
         sodium_memzero(psk_secret, sizeof(psk_secret));
-        return MARMOT_ERR_MEMORY;
+        staged_rc = MARMOT_ERR_MEMORY;
+        goto staged_fail;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
     mls_tls_buf_append(&conf_buf, confirmed_input, confirmed_input_len);
@@ -2818,7 +2851,8 @@ process_commit_impl(MlsGroup *group,
     if (group_derive_epoch(group, prev_init, commit_secret, psk_secret) != 0) {
         mls_commit_clear(&commit);
         sodium_memzero(psk_secret, sizeof(psk_secret));
-        return MARMOT_ERR_INTERNAL;
+        staged_rc = MARMOT_ERR_INTERNAL;
+        goto staged_fail;
     }
 
     /* Compute and verify confirmation tag */
@@ -2831,7 +2865,8 @@ process_commit_impl(MlsGroup *group,
         sodium_memzero(psk_secret, sizeof(psk_secret));
         sodium_memzero(root_path_secret, sizeof(root_path_secret));
         sodium_memzero(commit_secret, sizeof(commit_secret));
-        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        goto staged_fail;
     }
 
     /* Update interim transcript hash */
@@ -2839,7 +2874,8 @@ process_commit_impl(MlsGroup *group,
     if (mls_tls_buf_init(&int_buf, MLS_HASH_LEN * 2) != 0) {
         mls_commit_clear(&commit);
         sodium_memzero(psk_secret, sizeof(psk_secret));
-        return MARMOT_ERR_MEMORY;
+        staged_rc = MARMOT_ERR_MEMORY;
+        goto staged_fail;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
     mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
@@ -2859,6 +2895,14 @@ process_commit_impl(MlsGroup *group,
     mls_message_clear(&wire_msg);
 
     return 0;
+
+staged_fail:
+    /* A rejected Commit never touched the live group; release the staged
+     * clone (zeroizing its key material) and the parsed message. */
+    mls_group_free(&staged);
+    free(pre_gc);
+    mls_message_clear(&wire_msg);
+    return staged_rc;
 }
 
 int
