@@ -156,6 +156,36 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_RELAYS=0)
 endif()
 
+# GTK-free NIP-29 relay-group core: (relay URL, group id) identity, admission
+# of relay-signed 39000-39003 snapshots, role checks and unsigned event
+# templates. No transport, subscription or UI is linked here. nips/nip29 is
+# only added by ENABLE_NIP29=ON, so pull it in here otherwise (as the identity
+# block does for gnostr-secret); that also registers its test_nip29 CTest.
+if (TARGET nostr AND TARGET nip19)
+  if (NOT TARGET nip29)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip29
+                     ${CMAKE_CURRENT_BINARY_DIR}/nip29)
+  endif()
+  get_target_property(GROUNDHOG_NIP29_SOURCE_DIR nip29 SOURCE_DIR)
+  pkg_check_modules(GROUNDHOG_NIP29_GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.66)
+  add_library(groundhog-nip29 STATIC
+    src/nip29/gh-nip29-group.c src/nip29/gh-nip29-template.c)
+  target_include_directories(groundhog-nip29 PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${GROUNDHOG_NIP29_SOURCE_DIR}/include)
+  target_link_libraries(groundhog-nip29 PUBLIC nip29 nostr PkgConfig::GROUNDHOG_NIP29_GLIB)
+  target_compile_options(groundhog-nip29 PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-nip29 tests/nip29/test_nip29_group.c)
+    target_link_libraries(test-groundhog-nip29 PRIVATE groundhog-nip29)
+    target_compile_options(test-groundhog-nip29 PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-nip29 COMMAND test-groundhog-nip29)
+    set_tests_properties(groundhog-nip29 PROPERTIES TIMEOUT 20
+      ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+  endif()
+else()
+  message(STATUS "Groundhog NIP-29 core unavailable: in-tree nostr and nip19 targets required")
+endif()
+
 # The account test compiles Gnostr's schema beside Groundhog's (read-only) to
 # prove a Groundhog switch never writes Gnostr's current identity.
 set(GROUNDHOG_GNOSTR_SCHEMA ${CMAKE_CURRENT_SOURCE_DIR}/../../apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml)
