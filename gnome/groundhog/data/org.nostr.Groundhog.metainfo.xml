@@ -6,7 +6,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <description>
-    <p>Groundhog is a GTK4 and libadwaita shell for Nostr messaging. This preview has no account connection and cannot send, receive, or decrypt messages.</p>
+    <p>Groundhog is a GTK4 and libadwaita app for private Nostr messaging. This preview receives NIP-17 private messages on your own message relays and unlocks them through Nostr Signer; it cannot send messages yet, and messages are not kept after it closes.</p>
   </description>
   <launchable type="desktop-id">org.nostr.Groundhog.desktop</launchable>
   <url type="homepage">https://github.com/chebizarro/nostrc</url>

@@ -1,25 +1,32 @@
 using Gtk 4.0;
 using Adw 1;
 
-// The main window: toast overlay around the adaptive split view. Account and
-// relay behaviour is attached from C (gh-account-ui.c); nothing here fetches
-// or fabricates conversations.
+// The main window (charter §7.3): toast overlay around the adaptive split
+// view. The size request is the GNOME HIG minimum, 360×294, at which every
+// primary state is laid out collapsed (charter §7.12, UX-1); below 600sp the
+// split view collapses. icon-name is the application id, org.nostr.Groundhog.
+// Behaviour (account state, conversations, actions) is attached from C.
 template $GhWindow: Adw.ApplicationWindow {
   title: "Groundhog";
   icon-name: "org.nostr.Groundhog";
   default-width: 900;
   default-height: 600;
+  width-request: 360;
+  height-request: 294;
 
   content: Adw.ToastOverlay toasts {
     child: Adw.NavigationSplitView split {
+      min-sidebar-width: 280;
+      max-sidebar-width: 380;
+      sidebar-width-fraction: 0.32;
       show-content: false;
       sidebar: $GhSidebarPage sidebar {};
       content: $GhContentPage content {};
     };
   };
 
-  // Compact drill-down below 600sp; show-content and the built-in back
-  // action handle navigation once collapsed.
+  // Compact drill-down below 600sp; show-content follows the selected
+  // conversation and the built-in back action returns to the list.
   Adw.Breakpoint {
     condition ("max-width: 600sp")
 

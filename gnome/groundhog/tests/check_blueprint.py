@@ -7,8 +7,11 @@ Each UI_DIR/*.blp is compiled afresh and compared with the committed .ui as
 canonical GtkBuilder XML: the generated header comment and whitespace-only text
 are ignored, and boolean spellings of `translatable` are unified, because
 blueprint-compiler 0.12 (Ubuntu 24.04) writes translatable="true" where newer
-releases write "yes". Any element, attribute, property value or string change
-still fails. Regenerate with the groundhog-update-ui build target.
+releases write "yes". Likewise an expression lookup's object is a <constant>
+child in 0.12 output and plain text (<lookup ...>GtkListItem</lookup>) in
+newer releases; GtkBuilder reads both as the same object reference. Any
+element, attribute, property value or string change still fails. Regenerate
+with the groundhog-update-ui build target.
 """
 
 import difflib
@@ -20,6 +23,16 @@ import xml.etree.ElementTree as ET
 
 BOOLEAN_ATTRIBUTES = {"translatable"}
 TRUE_SPELLINGS = {"true", "yes", "1", "t", "y"}
+
+
+def lookup_object_as_constant(element):
+    """<lookup>NAME</lookup> -> <lookup><constant>NAME</constant></lookup>."""
+    for child in element:
+        lookup_object_as_constant(child)
+    if element.tag == "lookup" and len(element) == 0 and (element.text or "").strip():
+        constant = ET.SubElement(element, "constant")
+        constant.text = element.text.strip()
+        element.text = None
 
 
 def canonical(element, depth=0):
@@ -52,8 +65,11 @@ def main():
             if not committed.exists():
                 stale.append(f"{committed.name}: missing (compiled from {blp.name})")
                 continue
-            want = canonical(ET.parse(fresh).getroot())
-            have = canonical(ET.parse(committed).getroot())
+            fresh_root, committed_root = ET.parse(fresh).getroot(), ET.parse(committed).getroot()
+            lookup_object_as_constant(fresh_root)
+            lookup_object_as_constant(committed_root)
+            want = canonical(fresh_root)
+            have = canonical(committed_root)
             if want != have:
                 diff = "\n".join(difflib.unified_diff(have, want, f"{committed.name} (committed)",
                                                       f"{committed.name} (from {blp.name})",

@@ -9,6 +9,11 @@
 #if GROUNDHOG_HAVE_RELAYS
 #include "gh-account-relays.h"
 #endif
+#if GROUNDHOG_HAVE_INBOX
+#include "gh-conversation-list.h"
+#include "gh-dm-inbox.h"
+#include "gh-inbox-status.h"
+#endif
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
@@ -26,6 +31,14 @@ static GhAccountController *app_accounts;
  * before the next account's are opened. */
 static GhAccountRelays *app_relays;
 #endif
+#if GROUNDHOG_HAVE_INBOX
+/* The active account's NIP-17 conversations and the receive pipeline that
+ * fills them from its own inbox (10050) relays. Process-owned beside the
+ * account and relay lists until an app services container (charter G04)
+ * takes them over. */
+static GhConversationStore *app_store;
+static GhDmInbox *app_inbox;
+#endif
 
 /* The widget tree is the GhWindow template (data/ui/gh-window.blp and the
  * page templates it names); only behaviour is attached here. */
@@ -38,6 +51,10 @@ create_window(AdwApplication *app)
   gh_account_ui_attach(window, app_accounts, app_settings);
 #else
   gh_sidebar_page_show_onboarding(gh_window_get_sidebar(window));
+#endif
+#if GROUNDHOG_HAVE_INBOX
+  gh_conversation_list_attach(window, app_store, app_settings);
+  gh_inbox_status_attach(gh_window_get_status(window), app_inbox, app_relays);
 #endif
   return GTK_WIDGET(window);
 }
@@ -68,6 +85,11 @@ smoke_check(gpointer user_data)
     if (!gtk_stack_get_visible_child_name(stack) ||
         !gtk_widget_activate_action(GTK_WIDGET(window), "account.refresh", NULL))
       smoke_status = 1;
+#if GROUNDHOG_HAVE_INBOX
+    /* The conversation list is bound to the process store. */
+    if (!gtk_list_view_get_factory(gh_sidebar_page_get_list(gh_window_get_sidebar(GH_WINDOW(window)))))
+      smoke_status = 1;
+#endif
 #else
     if (g_strcmp0(gtk_stack_get_visible_child_name(stack), "onboarding") != 0)
       smoke_status = 1;
@@ -79,11 +101,12 @@ smoke_check(gpointer user_data)
   return G_SOURCE_REMOVE;
 }
 
-#if GROUNDHOG_HAVE_ACCOUNTS
 static void
 app_startup(GApplication *app, gpointer user_data)
 {
   (void)user_data;
+  gh_window_setup_application(GTK_APPLICATION(app));
+#if GROUNDHOG_HAVE_ACCOUNTS
   app_settings = g_settings_new(GROUNDHOG_APP_ID);
   /* Without a session bus the signer is reported unreachable, not faked. */
   app_accounts = gh_account_controller_new(app_settings,
@@ -91,13 +114,29 @@ app_startup(GApplication *app, gpointer user_data)
 #if GROUNDHOG_HAVE_RELAYS
   app_relays = gh_account_relays_new(app_accounts, app_settings, NULL, NULL);
 #endif
+#if GROUNDHOG_HAVE_INBOX
+  app_store = gh_conversation_store_new();
+  /* Contacts nothing until an account is active and its own inbox list is
+   * known; the seen-set lives under $XDG_STATE_HOME/groundhog/nip17. */
+  app_inbox = gh_dm_inbox_new(app_accounts, app_relays, app_store, NULL, NULL, NULL);
+#endif
+#endif
 }
 
+#if GROUNDHOG_HAVE_ACCOUNTS
 static void
 app_shutdown(GApplication *app, gpointer user_data)
 {
   (void)app;
   (void)user_data;
+#if GROUNDHOG_HAVE_INBOX
+  /* First the inbox: its REQ and pending signer unwraps are cancelled while
+   * the relay lists and the account generation they belong to still exist. */
+  if (app_inbox)
+    g_object_run_dispose(G_OBJECT(app_inbox));
+  g_clear_object(&app_inbox);
+  g_clear_object(&app_store);
+#endif
 #if GROUNDHOG_HAVE_RELAYS
   /* Closes the account's relay subscriptions before the account is revoked. */
   if (app_relays)
@@ -173,8 +212,8 @@ main(int argc, char **argv)
 
   groundhog_register_resource();
   app = adw_application_new(GROUNDHOG_APP_ID, flags);
-#if GROUNDHOG_HAVE_ACCOUNTS
   g_signal_connect(app, "startup", G_CALLBACK(app_startup), NULL);
+#if GROUNDHOG_HAVE_ACCOUNTS
   g_signal_connect(app, "shutdown", G_CALLBACK(app_shutdown), NULL);
 #endif
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);

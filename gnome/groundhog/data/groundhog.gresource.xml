@@ -9,5 +9,8 @@
     <file>ui/gh-content-page.ui</file>
     <file>ui/gh-onboarding-page.ui</file>
     <file>ui/gh-account-ui.ui</file>
+    <file>ui/gh-conversation-row.ui</file>
+    <file>ui/gh-message-item.ui</file>
+    <file>ui/gh-shortcuts-window.ui</file>
   </gresource>
 </gresources>

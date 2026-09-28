@@ -3,9 +3,9 @@ using Adw 1;
 
 // Account-state pages and the account menu, attached to the sidebar by
 // gh_account_ui_attach() in builds with account support. Each page's stack
-// name is assigned in gh-account-ui.c next to the state that selects it.
-// A page's one actionable child receives keyboard/screen-reader focus when
-// the page becomes visible.
+// name and its explicit focus target (the id of the one control that
+// receives keyboard/screen-reader focus when the page becomes visible, or
+// none) are assigned in gh-account-ui.c next to the state that selects it.
 Adw.StatusPage account_discovering {
   icon-name: "content-loading-symbolic";
   title: _("Looking for Accounts");
@@ -25,7 +25,7 @@ Adw.StatusPage account_store_unavailable {
     "groundhog-shell-status",
   ]
 
-  child: Button {
+  child: Button account_store_unavailable_retry {
     label: _("_Try Again");
     use-underline: true;
     halign: center;
@@ -46,7 +46,7 @@ Adw.StatusPage account_none {
     "groundhog-shell-status",
   ]
 
-  child: Button {
+  child: Button account_none_refresh {
     label: _("_Refresh");
     use-underline: true;
     halign: center;
@@ -61,6 +61,7 @@ Adw.StatusPage account_none {
 Adw.StatusPage account_unselected {
   icon-name: "avatar-default-symbolic";
   title: _("Choose an Account");
+  // Focus target: the header's account_button, whose menu is the action.
   description: _("Pick an identity from the account menu. This choice is Groundhog's own and does not change Gnostr.");
 
   styles [
@@ -77,7 +78,7 @@ Adw.StatusPage account_missing {
     "groundhog-shell-status",
   ]
 
-  child: Button {
+  child: Button account_missing_refresh {
     label: _("_Refresh");
     use-underline: true;
     halign: center;

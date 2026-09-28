@@ -1,0 +1,62 @@
+using Gtk 4.0;
+
+// Keyboard shortcuts (charter §7.13), shown by win.show-help-overlay.
+// GtkShortcutsWindow is deprecated from GTK 4.18 but is the shortcuts surface
+// of the 4.14 floor; move to AdwShortcutsDialog when the floor reaches
+// libadwaita 1.8. Every accelerator here must be the one that
+// gh_window_setup_application() binds (tests/app/test_shell_layout.c).
+ShortcutsWindow help_overlay {
+  modal: true;
+
+  ShortcutsSection {
+    section-name: "shortcuts";
+
+    ShortcutsGroup {
+      title: C_("shortcut window", "General");
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Show Shortcuts");
+        accelerator: "<Control>question";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Main Menu");
+        accelerator: "F10";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Close Window");
+        accelerator: "<Control>w";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Quit");
+        accelerator: "<Control>q";
+      }
+    }
+
+    ShortcutsGroup {
+      title: C_("shortcut window", "Conversations");
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Search Conversations");
+        accelerator: "<Control>f";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Previous Conversation");
+        accelerator: "<Alt>Up <Control>Page_Up";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Next Conversation");
+        accelerator: "<Alt>Down <Control>Page_Down";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "New Message (not available in this version yet)");
+        accelerator: "<Control>n";
+      }
+    }
+  }
+}

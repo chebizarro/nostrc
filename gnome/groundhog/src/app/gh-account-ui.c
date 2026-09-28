@@ -3,22 +3,45 @@
 
 #include <string.h>
 
+/* Builder ids in data/ui/gh-account-ui.blp, the sidebar stack name each page
+ * is added under (page_for_state() selects by name), and the id of the page's
+ * explicit focus target: the one control that receives keyboard and
+ * screen-reader focus when the page appears, or NULL for none (charter §7.14,
+ * never whatever child a status page happens to have). */
+static const struct {
+  const gchar *id;
+  const gchar *name;
+  const gchar *focus_id;
+} account_pages[] = {
+  { "account_discovering", "account-discovering", NULL },
+  { "account_store_unavailable", "account-store-unavailable",
+    "account_store_unavailable_retry" },
+  { "account_none", "account-none", "account_none_refresh" },
+  /* Its action is the account menu in the header. */
+  { "account_unselected", "account-unselected", "account_button" },
+  { "account_missing", "account-missing", "account_missing_refresh" },
+};
+
 typedef struct {
   GhAccountController *controller;
   GSettings *settings;
   /* Not owned: the window outlives ui, since ui is destroyed as the
    * window's own object data (see gh_account_ui_attach). The widgets below
-   * are template children of that window. */
+   * are template children of that window or were added to them. */
   GtkWidget *window;
+  GhSidebarPage *sidebar;
+  GhContentPage *content;
+  GhStatus *status;
   AdwWindowTitle *title;
   GtkStack *stack;
-  AdwBanner *banner;
   AdwToastOverlay *toasts;
+  GtkWidget *focus_targets[G_N_ELEMENTS(account_pages)];
   GMenu *identities_menu;
   GSimpleAction *select;
-  /* The previously visible stack page name, so update() only moves keyboard
-   * focus and announces a status change on an actual state transition, not
-   * on every redundant "changed"/network-monitor notification. */
+  /* The previously shown account page ("" for the conversation pages), so
+   * update() only moves keyboard focus and announces a status change on an
+   * actual state transition, not on every redundant "changed" or
+   * network-monitor notification. */
   gchar *last_page;
 } GhAccountUi;
 
@@ -44,19 +67,8 @@ identity_title(const GhIdentityInfo *info)
                   : g_strdup(info->npub);
 }
 
-/* Builder ids in data/ui/gh-account-ui.blp and the sidebar stack name each
- * page is added under; page_for_state() selects by stack name. */
-static const struct {
-  const gchar *id;
-  const gchar *name;
-} account_pages[] = {
-  { "account_discovering", "account-discovering" },
-  { "account_store_unavailable", "account-store-unavailable" },
-  { "account_none", "account-none" },
-  { "account_unselected", "account-unselected" },
-  { "account_missing", "account-missing" },
-};
-
+/* The account page for state; NULL when the account is active and the
+ * sidebar shows its conversation pages. */
 static const gchar *
 page_for_state(GhAccountState state)
 {
@@ -68,8 +80,33 @@ page_for_state(GhAccountState state)
   case GH_ACCOUNT_STATE_SELECTED_MISSING: return "account-missing";
   case GH_ACCOUNT_STATE_ACTIVE:
   default:
-    /* No conversation backend exists yet; never fabricate rows. */
-    return "empty";
+    return NULL;
+  }
+}
+
+static GtkWidget *
+focus_target(GhAccountUi *ui, const gchar *page_name)
+{
+  if (!page_name)
+    return gh_sidebar_page_get_focus_target(ui->sidebar);
+  for (guint i = 0; i < G_N_ELEMENTS(account_pages); i++)
+    if (g_str_equal(account_pages[i].name, page_name))
+      return ui->focus_targets[i];
+  return NULL;
+}
+
+static GhStatusSigner
+status_signer(GhSignerAvailability availability)
+{
+  switch (availability) {
+  /* An activatable signer is started by the bus on the first call. */
+  case GH_SIGNER_AVAILABILITY_RUNNING:
+  case GH_SIGNER_AVAILABILITY_ACTIVATABLE: return GH_STATUS_SIGNER_AVAILABLE;
+  case GH_SIGNER_AVAILABILITY_ABSENT: return GH_STATUS_SIGNER_UNAVAILABLE;
+  case GH_SIGNER_AVAILABILITY_NO_BUS: return GH_STATUS_SIGNER_NO_BUS;
+  case GH_SIGNER_AVAILABILITY_UNKNOWN:
+  default:
+    return GH_STATUS_SIGNER_UNKNOWN;
   }
 }
 
@@ -82,38 +119,38 @@ update(GhAccountUi *ui)
   g_autofree gchar *current = g_settings_get_string(ui->settings, "current-npub");
   g_autofree gchar *method = g_settings_get_string(ui->settings, "signer-method");
   gboolean online = g_network_monitor_get_network_available(g_network_monitor_get_default());
-  g_autofree gchar *limits =
-    gh_account_describe_limits(state,
-                               gh_account_controller_get_signer_availability(ui->controller),
-                               method, online);
+  GhSignerAvailability availability =
+    gh_account_controller_get_signer_availability(ui->controller);
+  g_autofree gchar *limits = gh_account_describe_limits(state, availability, method, online);
   g_autofree gchar *subtitle = NULL;
   const gchar *page_name = page_for_state(state);
 
-  gtk_stack_set_visible_child_name(ui->stack, page_name);
-  adw_banner_set_title(ui->banner, limits);
-  adw_banner_set_revealed(ui->banner, TRUE);
+  gh_sidebar_page_set_account_page(ui->sidebar, page_name);
+  gh_content_page_set_read_only_reason(ui->content, limits);
+  g_object_freeze_notify(G_OBJECT(ui->status));
+  gh_status_set_account_active(ui->status, state == GH_ACCOUNT_STATE_ACTIVE);
+  gh_status_set_network_available(ui->status, online);
+  gh_status_set_signer(ui->status, status_signer(availability));
+  g_object_thaw_notify(G_OBJECT(ui->status));
 
   /* Only react to an actual state transition: a keyboard/screen-reader user
    * mid-interaction should not be interrupted by a redundant re-announce or
    * have focus stolen every time the network monitor merely re-confirms the
    * connection it already reported. */
-  if (g_strcmp0(ui->last_page, page_name) != 0) {
+  if (g_strcmp0(ui->last_page, page_name ? page_name : "") != 0) {
     g_free(ui->last_page);
-    ui->last_page = g_strdup(page_name);
+    ui->last_page = g_strdup(page_name ? page_name : "");
 
     if (GTK_IS_ACCESSIBLE(ui->window))
       gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), limits,
                               GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
 
-    /* Move keyboard/screen-reader focus straight to the page's one
-     * actionable control (an AdwStatusPage child, see gh-account-ui.blp)
-     * instead of leaving it wherever it was, often the header bar several
-     * tabs away. Pages without an action leave focus alone. */
-    GtkWidget *visible = gtk_stack_get_child_by_name(ui->stack, page_name);
-    GtkWidget *action = ADW_IS_STATUS_PAGE(visible)
-                          ? adw_status_page_get_child(ADW_STATUS_PAGE(visible)) : NULL;
-    if (action)
-      gtk_widget_grab_focus(action);
+    /* Move keyboard/screen-reader focus straight to the page's named focus
+     * target instead of leaving it wherever it was, often the header bar
+     * several tabs away. Pages without one leave focus alone. */
+    GtkWidget *target = focus_target(ui, page_name);
+    if (target)
+      gtk_widget_grab_focus(target);
   }
 
   g_menu_remove_all(ui->identities_menu);
@@ -170,16 +207,22 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
   ui->controller = g_object_ref(controller);
   ui->settings = g_object_ref(settings);
   ui->window = GTK_WIDGET(window);
+  ui->sidebar = sidebar;
+  ui->content = gh_window_get_content(window);
+  ui->status = gh_window_get_status(window);
   ui->title = gh_sidebar_page_get_window_title(sidebar);
   ui->stack = gh_sidebar_page_get_stack(sidebar);
-  ui->banner = gh_content_page_get_banner(gh_window_get_content(window));
   ui->toasts = gh_window_get_toasts(window);
   g_object_set_data_full(G_OBJECT(window), "groundhog-account-ui", ui, account_ui_free);
 
-  for (guint i = 0; i < G_N_ELEMENTS(account_pages); i++)
+  for (guint i = 0; i < G_N_ELEMENTS(account_pages); i++) {
     gtk_stack_add_named(ui->stack,
                         GTK_WIDGET(gtk_builder_get_object(builder, account_pages[i].id)),
                         account_pages[i].name);
+    if (account_pages[i].focus_id)
+      ui->focus_targets[i] = GTK_WIDGET(gtk_builder_get_object(builder,
+                                                               account_pages[i].focus_id));
+  }
   adw_header_bar_pack_start(gh_sidebar_page_get_header(sidebar),
                             GTK_WIDGET(gtk_builder_get_object(builder, "account_button")));
   /* The identity rows are the one dynamic part of the menu. */

@@ -63,6 +63,12 @@ is_no_identities(gpointer data)
 }
 
 static gboolean
+is_unselected(gpointer data)
+{
+  return gh_account_controller_get_state(data) == GH_ACCOUNT_STATE_UNSELECTED;
+}
+
+static gboolean
 is_null(gpointer data)
 {
   return *(gpointer *)data == NULL;
@@ -189,8 +195,12 @@ test_focus_and_announce_only_on_transition(void)
   GtkWidget *action = adw_status_page_get_child(ADW_STATUS_PAGE(visible));
   g_assert_true(GTK_IS_BUTTON(action));
   /* Reaching an actionable empty state must hand keyboard/screen-reader
-   * focus straight to its one button. */
+   * focus straight to its named focus target, its Refresh button. */
   g_assert_true(gtk_window_get_focus(GTK_WINDOW(window)) == action);
+  /* The window's status has no account, so no sidebar banner competes with
+   * the page; the reason sending is unavailable waits for a conversation. */
+  g_assert_false(gh_status_get_banner(gh_window_get_status(window)) != GH_STATUS_BANNER_NONE);
+  g_assert_cmpstr(gh_content_page_get_read_only_reason(gh_window_get_content(window)), !=, "");
 
   /* Simulate the user having since moved focus elsewhere (or nowhere). */
   gtk_window_set_focus(GTK_WINDOW(window), NULL);
@@ -200,6 +210,24 @@ test_focus_and_announce_only_on_transition(void)
   g_object_notify(G_OBJECT(g_network_monitor_get_default()), "network-available");
   g_main_context_iteration(NULL, FALSE);
   g_assert_null(gtk_window_get_focus(GTK_WINDOW(window)));
+
+  /* An identity appears but none is chosen: the focus target is named
+   * explicitly as the header's account menu, which is not a child of the
+   * "Choose an Account" page at all (charter §7.14, qp24.8.6). */
+  g_mutex_lock(&store.lock);
+  store.empty = FALSE;
+  g_mutex_unlock(&store.lock);
+  gh_account_controller_refresh(controller);
+  spin_until(is_unselected, controller);
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "account-unselected");
+  GtkWidget *unselected = gtk_stack_get_child_by_name(stack, "account-unselected");
+  g_assert_null(adw_status_page_get_child(ADW_STATUS_PAGE(unselected)));
+  GtkMenuButton *account_button =
+    find_menu_button(GTK_WIDGET(gh_sidebar_page_get_header(gh_window_get_sidebar(window))));
+  GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window));
+  g_assert_nonnull(focus);
+  g_assert_true(focus == GTK_WIDGET(account_button) ||
+                gtk_widget_is_ancestor(focus, GTK_WIDGET(account_button)));
 
   /* Destroying the window drops gh-account-ui's own controller reference
    * (see account_ui_free); only after that do we drop ours and wait for

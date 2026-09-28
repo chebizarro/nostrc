@@ -12,11 +12,74 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar" id="header">
+            <child type="start">
+              <object class="GtkButton" id="back_button">
+                <property name="visible">false</property>
+                <property name="icon-name">go-previous-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Back to Conversations</property>
+                <property name="action-name">sidebar.show-requests</property>
+                <property name="action-target">false</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Back to Conversations</property>
+                </accessibility>
+              </object>
+            </child>
+            <child type="start">
+              <object class="GtkToggleButton" id="search_button">
+                <property name="icon-name">system-search-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Search Conversations</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Search Conversations</property>
+                </accessibility>
+              </object>
+            </child>
             <property name="title-widget">
               <object class="AdwWindowTitle" id="window_title">
                 <property name="title">Groundhog</property>
               </object>
             </property>
+            <child type="end">
+              <object class="GtkMenuButton" id="primary_button">
+                <property name="primary">true</property>
+                <property name="icon-name">open-menu-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Main Menu</property>
+                <property name="menu-model">primary_menu</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Main Menu</property>
+                </accessibility>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="new_button">
+                <property name="icon-name">list-add-symbolic</property>
+                <property name="action-name">win.new-message</property>
+                <property name="tooltip-text" translatable="yes">New Message — not available in this version yet</property>
+                <accessibility>
+                  <property name="label" translatable="yes">New Message</property>
+                  <property name="description" translatable="yes">Not available in this version yet</property>
+                </accessibility>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child type="top">
+          <object class="GtkSearchBar" id="search_bar">
+            <property name="search-mode-enabled" bind-source="search_button" bind-property="active" bind-flags="sync-create|bidirectional"/>
+            <property name="child">
+              <object class="GtkSearchEntry" id="search_entry">
+                <property name="placeholder-text" translatable="yes">Search conversations</property>
+                <property name="hexpand">true</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Search conversations</property>
+                </accessibility>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child type="top">
+          <object class="AdwBanner" id="status_banner">
+            <property name="revealed">false</property>
+            <property name="use-markup">false</property>
           </object>
         </child>
         <property name="content">
@@ -28,10 +91,68 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkStackPage">
                 <property name="name">conversations</property>
                 <property name="child">
-                  <object class="GtkListBox" id="list">
-                    <accessibility>
-                      <property name="label" translatable="yes">Conversations</property>
-                    </accessibility>
+                  <object class="GtkBox">
+                    <property name="orientation">1</property>
+                    <child>
+                      <object class="GtkButton" id="requests_button">
+                        <property name="visible">false</property>
+                        <property name="action-name">sidebar.show-requests</property>
+                        <property name="action-target">true</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="groundhog-requests-button"/>
+                        </style>
+                        <property name="child">
+                          <object class="GtkBox">
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">mail-unread-symbolic</property>
+                                <property name="accessible-role">43</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Message Requests</property>
+                                <property name="xalign">0</property>
+                                <property name="hexpand">true</property>
+                                <property name="ellipsize">3</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="requests_count">
+                                <style>
+                                  <class name="dim-label"/>
+                                  <class name="numeric"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">go-next-symbolic</property>
+                                <property name="accessible-role">43</property>
+                              </object>
+                            </child>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="vexpand">true</property>
+                        <property name="hscrollbar-policy">2</property>
+                        <property name="child">
+                          <object class="GtkListView" id="list">
+                            <style>
+                              <class name="navigation-sidebar"/>
+                            </style>
+                            <accessibility>
+                              <property name="label" translatable="yes">Conversations</property>
+                            </accessibility>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
                   </object>
                 </property>
               </object>
@@ -40,10 +161,27 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkStackPage">
                 <property name="name">empty</property>
                 <property name="child">
-                  <object class="AdwStatusPage">
+                  <object class="AdwStatusPage" id="empty_page">
                     <property name="icon-name">mail-unread-symbolic</property>
-                    <property name="title" translatable="yes">No conversations yet</property>
-                    <property name="description" translatable="yes">Messaging services are not implemented in this build, so no conversations can be loaded.</property>
+                    <property name="title" translatable="yes">No Conversations</property>
+                    <property name="description" translatable="yes">Private messages people send you will appear here. Starting a new conversation isn't available in this version yet.</property>
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
+                    <style>
+                      <class name="groundhog-shell-status"/>
+                    </style>
+                  </object>
+                </property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">no-results</property>
+                <property name="child">
+                  <object class="AdwStatusPage" id="no_results_page">
+                    <property name="icon-name">system-search-symbolic</property>
+                    <property name="title" translatable="yes">No Results</property>
+                    <property name="description" translatable="yes">No conversation matches your search.</property>
                     <property name="hexpand">true</property>
                     <property name="vexpand">true</property>
                     <style>
@@ -57,10 +195,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkStackPage">
                 <property name="name">error</property>
                 <property name="child">
-                  <object class="AdwStatusPage">
+                  <object class="AdwStatusPage" id="error_page">
                     <property name="icon-name">dialog-warning-symbolic</property>
-                    <property name="title" translatable="yes">Conversations unavailable</property>
-                    <property name="description" translatable="yes">A conversation could not be loaded. Nothing was sent; try again after the service is available.</property>
+                    <property name="title" translatable="yes">Conversations Unavailable</property>
+                    <property name="description" translatable="yes">Groundhog can't receive messages on this device right now.</property>
                     <property name="hexpand">true</property>
                     <property name="vexpand">true</property>
                     <style>
@@ -75,4 +213,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </property>
   </template>
+  <menu id="primary_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Keyboard Shortcuts</attribute>
+        <attribute name="action">win.show-help-overlay</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Quit</attribute>
+        <attribute name="action">app.quit</attribute>
+      </item>
+    </section>
+  </menu>
 </interface>

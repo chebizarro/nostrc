@@ -1,0 +1,93 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One conversation in the sidebar list (charter §7.4, §7.5), bound to a
+// GhConversation by gh-conversation-row.c, which also composes the list
+// item's accessible label. The avatar only ever shows initials: no picture
+// is loaded (charter PD-2), and a request never triggers a profile fetch.
+template $GhConversationRow: Widget {
+  layout-manager: BoxLayout {
+    spacing: 12;
+  };
+
+  styles [
+    "groundhog-conversation-row",
+  ]
+
+  Adw.Avatar avatar {
+    size: 40;
+    show-initials: true;
+    valign: center;
+    accessible-role: presentation;
+  }
+
+  Box {
+    orientation: vertical;
+    valign: center;
+    hexpand: true;
+    spacing: 2;
+
+    Box {
+      spacing: 6;
+
+      Label title_label {
+        xalign: 0;
+        hexpand: true;
+        ellipsize: end;
+        single-line-mode: true;
+
+        styles [
+          "groundhog-conversation-title",
+        ]
+      }
+
+      Label time_label {
+        valign: baseline;
+
+        styles [
+          "caption",
+          "numeric",
+          "dim-label",
+        ]
+      }
+    }
+
+    Box {
+      spacing: 6;
+
+      // Empty unless message previews are shown (see GhSidebarPage
+      // show-previews); keeps its line so rows stay one height.
+      Label preview_label {
+        xalign: 0;
+        hexpand: true;
+        ellipsize: end;
+        single-line-mode: true;
+
+        styles [
+          "dim-label",
+        ]
+      }
+
+      Label request_label {
+        label: _("Request");
+        visible: false;
+        valign: center;
+
+        styles [
+          "caption",
+          "groundhog-request-tag",
+        ]
+      }
+
+      Label unread_badge {
+        visible: false;
+        valign: center;
+
+        styles [
+          "groundhog-unread-badge",
+          "numeric",
+        ]
+      }
+    }
+  }
+}

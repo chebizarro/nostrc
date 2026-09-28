@@ -1,34 +1,80 @@
 using Gtk 4.0;
 using Adw 1;
 
-// Content navigation page: header, the always-revealed read-only banner
-// (its title is kept current by gh-account-ui.c in account builds), and the
-// "no conversation selected" status page.
+// Content navigation page: the selected conversation's messages as a plain,
+// read-only list, or "No Conversation Selected". This is the interim view
+// until the conversation view (charter G12) replaces the list with bubbles
+// and the reason line below it with the composer (G13). The reason line says
+// why sending is unavailable (kept current by gh-account-ui.c); it sits in a
+// plain box, not a toolbar bottom bar, so a wrapped reason gets the height of
+// every line on libadwaita 1.5 too. The message rows come from
+// gh-message-item.blp through gh-conversation-list.c.
 template $GhContentPage: Adw.NavigationPage {
   title: _("Messages");
 
   child: Adw.ToolbarView {
     [top]
-    Adw.HeaderBar {}
+    Adw.HeaderBar {
+      title-widget: Adw.WindowTitle window_title {
+        title: _("Messages");
+      };
+    }
 
-    content: Box {
-      orientation: vertical;
+    content: Stack content_stack {
+      StackPage {
+        name: "none";
 
-      Adw.Banner banner {
-        title: _("Read-only shell: sending and receiving are not available");
-        revealed: true;
+        child: Adw.StatusPage none_page {
+          icon-name: "mail-read-symbolic";
+          title: _("No Conversation Selected");
+          description: _("Choose a conversation to read its messages.");
+          hexpand: true;
+          vexpand: true;
+
+          styles [
+            "groundhog-shell-status",
+          ]
+        };
       }
 
-      Adw.StatusPage {
-        icon-name: "mail-read-symbolic";
-        title: _("No conversation selected");
-        description: _("Messages will appear here when conversation services are implemented.");
-        hexpand: true;
-        vexpand: true;
+      StackPage {
+        name: "conversation";
 
-        styles [
-          "groundhog-shell-status",
-        ]
+        child: Box {
+          orientation: vertical;
+
+          ScrolledWindow {
+            hscrollbar-policy: never;
+            vexpand: true;
+
+            child: Adw.ClampScrollable {
+              maximum-size: 760;
+              tightening-threshold: 560;
+
+              child: ListView message_list {
+                styles [
+                  "groundhog-message-list",
+                ]
+
+                accessibility {
+                  label: _("Messages");
+                }
+              };
+            };
+          }
+
+          Label read_only_reason {
+            visible: false;
+            wrap: true;
+            wrap-mode: word_char;
+            justify: center;
+
+            styles [
+              "dim-label",
+              "groundhog-read-only-reason",
+            ]
+          }
+        };
       }
     };
   };

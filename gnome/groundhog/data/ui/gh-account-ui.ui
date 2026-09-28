@@ -22,7 +22,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <class name="groundhog-shell-status"/>
     </style>
     <property name="child">
-      <object class="GtkButton">
+      <object class="GtkButton" id="account_store_unavailable_retry">
         <property name="label" translatable="yes">_Try Again</property>
         <property name="use-underline">true</property>
         <property name="halign">3</property>
@@ -41,7 +41,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <class name="groundhog-shell-status"/>
     </style>
     <property name="child">
-      <object class="GtkButton">
+      <object class="GtkButton" id="account_none_refresh">
         <property name="label" translatable="yes">_Refresh</property>
         <property name="use-underline">true</property>
         <property name="halign">3</property>
@@ -68,7 +68,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <class name="groundhog-shell-status"/>
     </style>
     <property name="child">
-      <object class="GtkButton">
+      <object class="GtkButton" id="account_missing_refresh">
         <property name="label" translatable="yes">_Refresh</property>
         <property name="use-underline">true</property>
         <property name="halign">3</property>

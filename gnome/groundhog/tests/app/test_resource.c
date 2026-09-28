@@ -24,6 +24,9 @@ test_resource_registration(void)
     "/org/nostr/Groundhog/ui/gh-content-page.ui",
     "/org/nostr/Groundhog/ui/gh-onboarding-page.ui",
     "/org/nostr/Groundhog/ui/gh-account-ui.ui",
+    "/org/nostr/Groundhog/ui/gh-conversation-row.ui",
+    "/org/nostr/Groundhog/ui/gh-message-item.ui",
+    "/org/nostr/Groundhog/ui/gh-shortcuts-window.ui",
   };
 
   g_assert_null(groundhog_get_resource());

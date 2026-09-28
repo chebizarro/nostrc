@@ -27,7 +27,8 @@ set(GROUNDHOG_DATA ${CMAKE_CURRENT_SOURCE_DIR}/data)
 # fails when the committed .ui no longer matches the .blp, and the
 # groundhog-update-ui target regenerates them on request.
 set(GROUNDHOG_BLUEPRINTS
-  gh-window gh-sidebar-page gh-content-page gh-onboarding-page gh-account-ui)
+  gh-window gh-sidebar-page gh-content-page gh-onboarding-page gh-account-ui
+  gh-conversation-row gh-message-item gh-shortcuts-window)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -89,9 +90,12 @@ add_custom_command(
 
 # The window and page templates plus the resource bundle that holds their
 # compiled UI, shared by the application and the GUI tests so every test
-# instantiates exactly the tree the application ships.
-add_library(groundhog-ui STATIC src/app/gh-shell.c src/app/gh-window.c ${GROUNDHOG_RESOURCE_C})
-target_include_directories(groundhog-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+# instantiates exactly the tree the application ships. GTK-only: the typed
+# conversation UI (groundhog-conversation-ui below) binds its models.
+add_library(groundhog-ui STATIC src/app/gh-shell.c src/app/gh-window.c src/ui/gh-status.c
+            ${GROUNDHOG_RESOURCE_C})
+target_include_directories(groundhog-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_compile_definitions(groundhog-ui PUBLIC
   ADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5
   ADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5
@@ -151,11 +155,12 @@ if (TARGET nostr AND TARGET nip19)
   target_sources(groundhog PRIVATE src/app/gh-account-ui.c)
   target_link_libraries(groundhog PRIVATE groundhog-account)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNTS=1)
-  # The outbound codec and the inbound unwrap/seen-set are part of the
-  # production executable, not test-only helpers. No relay lookup, inbox REQ
-  # or publish path is linked here.
+  # The outbound codec is part of the production executable, not a test-only
+  # helper. The inbound unwrap/seen-set (gh-nip17-inbox.c) comes with the
+  # groundhog-dm-inbox library the G11 block links; no publish path is
+  # linked here.
   if (TARGET nostr_nip17_core AND TARGET nostr_nip59_core)
-    target_sources(groundhog PRIVATE src/app/gh-nip17-envelope.c src/app/gh-nip17-inbox.c)
+    target_sources(groundhog PRIVATE src/app/gh-nip17-envelope.c)
     target_link_libraries(groundhog PRIVATE nostr_nip17_core nostr_nip59_core)
   endif()
   if (BUILD_TESTING)
@@ -249,10 +254,8 @@ endif()
 # GTK-free NIP-17 receive pipeline: the active account's kind-1059 REQs on its
 # own 10050 relays (paged backwards with until, NIP-42 AUTH as the account on
 # those relays only, through GhAccountAuth), seen-set pre-filter, bounded
-# signer unwraps, store admission. It carries its own copy of the unwrap
-# (gh-nip17-inbox.c) so it links standalone; it is not yet linked into the
-# executable, which compiles that file directly. Replace that target_sources
-# entry with this library when the inbox is wired into the application.
+# signer unwraps, store admission. It carries the unwrap (gh-nip17-inbox.c);
+# the executable links it through groundhog-conversation-ui (G11 block below).
 if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
   add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c
     src/app/gh-account-auth.c)
@@ -270,6 +273,25 @@ if (TARGET groundhog-account-relays AND TARGET nostr_nip17_core AND TARGET nostr
     src/app/gh-dm-send.c)
   target_sources(groundhog PRIVATE ${GROUNDHOG_DM_SEND_SOURCES})
 endif()
+
+# --- G11 Shell IA: conversation list, inbox status, NIP-17 inbox wiring ---
+# The typed half of the shell: GhConversationRow, the conversation-list binder
+# (accepted/request filters, search, selection -> read-only messages) and the
+# inbox banner adapter. Built with the NIP-17 receive pipeline, which the
+# executable then runs: one GhConversationStore and GhDmInbox per process
+# (src/main.c, nostrc-qp24.10.9).
+if (TARGET groundhog-dm-inbox)
+  add_library(groundhog-conversation-ui STATIC
+    src/ui/gh-conversation-row.c src/ui/gh-conversation-list.c src/ui/gh-inbox-status.c)
+  target_include_directories(groundhog-conversation-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-ui groundhog-dm-inbox)
+  target_compile_options(groundhog-conversation-ui PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-conversation-ui)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_INBOX=1)
+else()
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_INBOX=0)
+endif()
+# --- end G11 ---
 
 # GTK-free NIP-29 relay-group core: (relay URL, group id) identity, admission
 # of relay-signed 39000-39003 snapshots, role checks and unsigned event
@@ -396,6 +418,23 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_test(NAME groundhog-account-ui COMMAND test-groundhog-account-ui)
   set_tests_properties(groundhog-account-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+
+  # --- G11 Shell IA: conversation list test ---
+  # A real GhConversationStore fed through its admission API with fixture
+  # rumors (no relay, no signer): order, badges, requests, search, selection,
+  # banners, accessibility and the 360x294 collapsed layout, plus the inbox
+  # status wiring on a real account/relay/inbox stack with no relay set up.
+  # Needs a display, so it self-skips (77) like the other GUI tests.
+  if (TARGET groundhog-conversation-ui)
+    add_executable(test-groundhog-conversation-list tests/ui/test_conversation_list.c)
+    target_link_libraries(test-groundhog-conversation-list PRIVATE groundhog-conversation-ui)
+    target_compile_options(test-groundhog-conversation-list PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-conversation-list groundhog-test-schemas)
+    add_test(NAME groundhog-conversation-list COMMAND test-groundhog-conversation-list)
+    set_tests_properties(groundhog-conversation-list PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+  # --- end G11 ---
 endif()
 
 set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
@@ -434,8 +473,10 @@ if (BUILD_TESTING)
   add_test(NAME groundhog-version COMMAND groundhog --version)
   set_tests_properties(groundhog-version PROPERTIES PASS_REGULAR_EXPRESSION "Groundhog ${PROJECT_VERSION}")
   add_test(NAME groundhog-launch COMMAND groundhog --smoke)
+  # Memory settings: the smoke never reads a real account, so it contacts no
+  # relay and writes no inbox state.
   set_tests_properties(groundhog-launch PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 15
-    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
   add_test(NAME groundhog-schema
     COMMAND ${GLIB_COMPILE_SCHEMAS} --strict --dry-run ${CMAKE_CURRENT_BINARY_DIR})
   find_package(Python3 QUIET COMPONENTS Interpreter)

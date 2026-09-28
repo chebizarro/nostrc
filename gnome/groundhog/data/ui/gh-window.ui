@@ -11,10 +11,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="icon-name">org.nostr.Groundhog</property>
     <property name="default-width">900</property>
     <property name="default-height">600</property>
+    <property name="width-request">360</property>
+    <property name="height-request">294</property>
     <property name="content">
       <object class="AdwToastOverlay" id="toasts">
         <property name="child">
           <object class="AdwNavigationSplitView" id="split">
+            <property name="min-sidebar-width">280</property>
+            <property name="max-sidebar-width">380</property>
+            <property name="sidebar-width-fraction">0.32</property>
             <property name="show-content">false</property>
             <property name="sidebar">
               <object class="GhSidebarPage" id="sidebar"></object>

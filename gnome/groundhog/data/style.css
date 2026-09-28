@@ -2,4 +2,38 @@
  * status pages carrying ".groundhog-shell-status" are this build's primary
  * content (empty/error/onboarding states), not secondary chrome, so nothing
  * here dims their opacity: that would fight the system high-contrast theme
- * for no offsetting benefit. */
+ * for no offsetting benefit. Sections are owned by charter items (§8.4). */
+
+/* == shell (G11) == */
+
+/* Unread conversations: a bold title and an accent pill with the count. */
+.groundhog-conversation-title.groundhog-unread {
+  font-weight: bold;
+}
+
+.groundhog-unread-badge {
+  min-width: 1.5em;
+  padding: 0 0.4em;
+  border-radius: 999px;
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
+  font-size: 0.8em;
+  font-weight: bold;
+}
+
+.groundhog-request-tag {
+  padding: 0 0.5em;
+  border-radius: 999px;
+  border: 1px solid alpha(currentColor, 0.3);
+}
+
+.groundhog-requests-button {
+  margin: 6px;
+  padding: 6px 12px;
+}
+
+/* The interim content page's "why you can't send" line (until G13). */
+.groundhog-read-only-reason {
+  padding: 9px 12px;
+  border-top: 1px solid alpha(currentColor, 0.15);
+}
