@@ -771,7 +771,9 @@ int nostr_event_sign(NostrEvent *event, const char *private_key) {
         return -1;
     }
 
-    // Convert the signature to a hex string and store it in the event
+    // Convert the signature to a hex string and store it in the event.
+    // Re-signing replaces (and must release) any previous signature.
+    if (event->sig) { free(event->sig); event->sig = NULL; }
     event->sig = nostr_bin2hex(sig_bin, 64);
     if (!event->sig) { secp256k1_context_destroy(ctx); return -1; }
 

@@ -19,6 +19,12 @@
 
 static atomic_int g_subs_created = 0;
 static atomic_int g_subs_freed = 0;
+/* Caller-owned filters must outlive every subscription that references them.
+ * nostr_subscription_free_async() with an abandoned handle may leave the
+ * subscription registered (and re-firable on reconnect) after this goroutine
+ * returns, so filters are released only after the pool tears relays down. */
+static GPtrArray *g_filters;
+static GMutex g_filters_lock;
 
 typedef struct {
     NostrSubscription *sub;
@@ -88,7 +94,9 @@ static void *fetch_goroutine(void *arg) {
         }
     }
     
-    nostr_filters_free(fs);
+    g_mutex_lock(&g_filters_lock);
+    g_ptr_array_add(g_filters, fs);
+    g_mutex_unlock(&g_filters_lock);
     atomic_store(ctx->done, 1);
     return NULL;
 }
@@ -97,6 +105,7 @@ int main(void) {
     printf("=== Profile Fetch Stress Test ===\n");
     setenv("NOSTR_TEST_MODE", "1", 1);
     
+    g_filters = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_filters_free);
     NostrSimplePool *pool = nostr_simple_pool_new();
     const char *urls[] = {"wss://t1.invalid", "wss://t2.invalid", "wss://t3.invalid", "wss://t4.invalid"};
     
@@ -149,6 +158,7 @@ int main(void) {
     int final_threads = get_thread_count();
     
     nostr_simple_pool_free(pool);
+    g_ptr_array_unref(g_filters);
     
     printf("\n=== Results ===\n");
     printf("Threads: initial=%d final=%d delta=%+d\n", 

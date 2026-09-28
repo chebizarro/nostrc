@@ -374,6 +374,8 @@ test_ok_prefix_classification(void)
   Fixture dup;
   fixture_init(&dup);
   publish = new_publish(&dup, json);
+  /* The first publish (and the id buffer it owned) is gone. */
+  id = gh_relay_publish_get_event_id(publish);
   g_assert_true(gh_relay_publish_add_url(publish, "wss://nos.lol", NULL));
   g_assert_true(gh_relay_publish_start(publish, NULL));
   gh_relay_publish_ok(publish, "wss://nos.lol", id, TRUE,
@@ -426,6 +428,7 @@ test_cancel_discards_late_ok(void)
   fixture_init(&inner);
   inner.cancel_in_update = TRUE;
   publish = new_publish(&inner, json);
+  id = gh_relay_publish_get_event_id(publish); /* the previous owner is gone */
   g_assert_true(gh_relay_publish_add_url(publish, "wss://nos.lol", NULL));
   g_assert_true(gh_relay_publish_start(publish, NULL));
   gh_relay_publish_ok(publish, "wss://nos.lol", id, TRUE, "");
