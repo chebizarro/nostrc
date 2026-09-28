@@ -17,6 +17,7 @@
 #endif
 
 #include <glib/gstdio.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1692,6 +1693,106 @@ test_nip17_seen_restart(void)
   g_unlink(path);
   g_rmdir(dir);
 }
+
+/* A crash can leave a torn final append. The next record must not glue a new
+ * entry onto it; with room to spare it would otherwise append, not compact. */
+static void
+test_nip17_seen_torn_tail(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *dir = g_dir_make_tmp("groundhog-seen-XXXXXX", &error);
+  g_assert_no_error(error);
+  g_autofree gchar *path = g_build_filename(dir, "seen", NULL);
+  g_autofree gchar *account = test_pub(2);
+
+  g_autoptr(GhNip17Seen) seen = gh_nip17_seen_open(path, account, 16, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhNip17Message) old = fake_message(account, 'a', 'b');
+  g_assert_true(gh_nip17_seen_record(seen, old, &error));
+  g_assert_no_error(error);
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  g_autofree gchar *contents = NULL;
+  g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
+  g_autofree gchar *torn = g_strconcat(contents, "w 12", NULL);
+  g_assert_true(g_file_set_contents(path, torn, -1, NULL));
+
+  seen = gh_nip17_seen_open(path, account, 16, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhNip17Message) fresh = fake_message(account, 'c', 'd');
+  g_assert_true(gh_nip17_seen_record(seen, fresh, &error));
+  g_assert_no_error(error);
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  seen = gh_nip17_seen_open(path, account, 16, &error);
+  g_assert_no_error(error);
+  g_assert_true(gh_nip17_seen_has_wrap(seen, old->wrap_id));
+  g_assert_true(gh_nip17_seen_has_rumor(seen, old->rumor_id));
+  g_assert_true(gh_nip17_seen_has_wrap(seen, fresh->wrap_id));
+  g_assert_true(gh_nip17_seen_has_rumor(seen, fresh->rumor_id));
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  g_unlink(path);
+  g_rmdir(dir);
+}
+
+#ifdef G_OS_UNIX
+static void
+assert_private_mode(const gchar *path)
+{
+  GStatBuf st;
+  g_assert_cmpint(g_stat(path, &st), ==, 0);
+  g_assert_cmpint(st.st_mode & 0777, ==, 0600);
+}
+
+/* The seen-set reveals per-account message metadata: owner-only, whether it
+ * was created by an append or by a compacting rewrite. */
+static void
+test_nip17_seen_file_mode(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *dir = g_dir_make_tmp("groundhog-seen-XXXXXX", &error);
+  g_assert_no_error(error);
+  g_autofree gchar *path = g_build_filename(dir, "seen", NULL);
+  g_autofree gchar *account = test_pub(2);
+  mode_t old_umask = umask(0022);
+
+  /* First record creates the file. */
+  g_autoptr(GhNip17Seen) seen = gh_nip17_seen_open(path, account, 2, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhNip17Message) first = fake_message(account, 'a', 'b');
+  g_assert_true(gh_nip17_seen_record(seen, first, &error));
+  assert_private_mode(path);
+
+  /* An append to an existing file keeps it private. */
+  g_assert_cmpint(g_chmod(path, 0644), ==, 0);
+  g_autoptr(GhNip17Message) second = fake_message(account, 'c', 'd');
+  g_assert_true(gh_nip17_seen_record(seen, second, &error));
+  g_assert_no_error(error);
+  assert_private_mode(path);
+
+  /* A compacting rewrite (capacity 2, now past 2x) is private too. */
+  g_autoptr(GhNip17Message) third = fake_message(account, 'e', 'f');
+  g_assert_true(gh_nip17_seen_record(seen, third, &error));
+  g_assert_no_error(error);
+  assert_private_mode(path);
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  /* Recreating a file deleted underneath is private too. */
+  g_unlink(path);
+  seen = gh_nip17_seen_open(path, account, 2, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhNip17Message) fourth = fake_message(account, '1', '2');
+  g_assert_true(gh_nip17_seen_record(seen, fourth, &error));
+  g_assert_no_error(error);
+  assert_private_mode(path);
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  umask(old_umask);
+  g_unlink(path);
+  g_rmdir(dir);
+}
+#endif
 #endif
 
 int
@@ -1725,6 +1826,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip17/unwrap-cancel-switch", test_nip17_unwrap_cancel_and_switch);
   g_test_add_func("/groundhog/nip17/unwrap-stale-callback", test_nip17_unwrap_stale_callback);
   g_test_add_func("/groundhog/nip17/seen-restart", test_nip17_seen_restart);
+  g_test_add_func("/groundhog/nip17/seen-torn-tail", test_nip17_seen_torn_tail);
+#ifdef G_OS_UNIX
+  g_test_add_func("/groundhog/nip17/seen-file-mode", test_nip17_seen_file_mode);
+#endif
 #endif
   int status = g_test_run();
   g_free(npub_one);

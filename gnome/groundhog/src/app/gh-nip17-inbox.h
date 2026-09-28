@@ -75,7 +75,8 @@ GhNip17Message *gh_nip17_unwrap_finish(GAsyncResult *result, GError **error);
  * The file is bound to the account pubkey and holds at most capacity entries
  * (oldest evicted); reopen it with the same or a larger capacity. A foreign,
  * oversized or malformed file is refused rather than partly trusted; a torn
- * final append is ignored. This is not conversation storage. */
+ * final append is ignored and dropped by the next record's rewrite. The file
+ * is created and kept owner-only (0600). This is not conversation storage. */
 typedef struct _GhNip17Seen GhNip17Seen;
 
 GhNip17Seen *gh_nip17_seen_open(const gchar *path, const gchar *account_pubkey_hex,

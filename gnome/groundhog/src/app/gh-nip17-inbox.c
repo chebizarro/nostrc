@@ -5,10 +5,12 @@
 #include "nostr-tag.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <glib/gstdio.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 G_DEFINE_QUARK(gh-nip17-inbox-error-quark, gh_nip17_inbox_error)
@@ -349,6 +351,7 @@ struct _GhNip17Seen {
   GHashTable *keys; /* "w<id>" / "r<id>" -> same string in order */
   GQueue order;     /* oldest first; owns the key strings */
   guint file_lines; /* entry lines currently in the file */
+  gboolean needs_rewrite; /* a torn tail must never be appended to */
 };
 
 void
@@ -420,7 +423,12 @@ gh_nip17_seen_open(const gchar *path, const gchar *account_pubkey_hex, guint cap
   const gchar *end = contents + length;
   while (line < end) {
     const gchar *newline = memchr(line, '\n', end - line);
-    if (!newline) break; /* a torn final append is ignored */
+    if (!newline) {
+      /* A torn final append is ignored, and the next record compacts the
+       * file so that no entry is ever glued onto the fragment. */
+      seen->needs_rewrite = TRUE;
+      break;
+    }
     g_autofree gchar *id = g_strndup(line + 2, MAX(newline - line - 2, 0));
     if (newline - line != SEEN_LINE - 1 || (line[0] != 'w' && line[0] != 'r') ||
         line[1] != ' ' || !lower_hex64(id)) {
@@ -467,19 +475,30 @@ seen_rewrite(GhNip17Seen *seen, GError **error)
     const gchar *key = l->data;
     g_string_append_printf(out, "%c %s\n", key[0], key + 1);
   }
-  gboolean ok = g_file_set_contents(seen->path, out->str, out->len, error);
+  gboolean ok = g_file_set_contents_full(seen->path, out->str, out->len,
+                                         G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
   g_string_free(out, TRUE);
-  if (ok) seen->file_lines = seen->order.length;
+  if (ok) {
+    seen->file_lines = seen->order.length;
+    seen->needs_rewrite = FALSE;
+  }
   return ok;
 }
 
 static gboolean
 seen_append(GhNip17Seen *seen, const gchar *lines, guint count, GError **error)
 {
-  FILE *file = g_fopen(seen->path, "ab");
+  /* Owner-only: the seen-set reveals per-account message metadata. fchmod
+   * also narrows a file that an older build created with the umask mode. */
+  int fd = open(seen->path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+  FILE *file = NULL;
+  if (fd >= 0 && fchmod(fd, 0600) == 0)
+    file = fdopen(fd, "ab");
+  int saved = errno;
+  if (!file && fd >= 0) close(fd);
   gboolean ok = file && fwrite(lines, 1, strlen(lines), file) == strlen(lines) &&
                 fflush(file) == 0 && fsync(fileno(file)) == 0;
-  int saved = errno;
+  if (file) saved = errno;
   if (file && fclose(file) != 0 && ok) { ok = FALSE; saved = errno; }
   if (!ok) {
     g_set_error(error, G_IO_ERROR, g_io_error_from_errno(saved),
@@ -515,7 +534,7 @@ gh_nip17_seen_record(GhNip17Seen *seen, const GhNip17Message *message, GError **
     gboolean exists = g_file_test(seen->path, G_FILE_TEST_EXISTS);
     seen_insert(seen, 'w', message->wrap_id);
     seen_insert(seen, 'r', message->rumor_id);
-    if (!exists || seen->file_lines + count > seen->capacity * 2)
+    if (!exists || seen->needs_rewrite || seen->file_lines + count > seen->capacity * 2)
       ok = seen_rewrite(seen, error);
     else
       ok = seen_append(seen, lines->str, count, error);
