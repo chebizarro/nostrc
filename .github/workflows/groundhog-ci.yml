@@ -90,8 +90,13 @@ jobs:
       - name: Require the build to leave committed UI untouched
         run: |
           # data/ui/*.ui are committed Blueprint output; builds compile into
-          # build/ and must never rewrite tracked files.
+          # build/ and must never rewrite or add files in the source tree.
           git diff --exit-code
+          if [ -n "$(git status --porcelain --untracked-files=all -- . ':!build')" ]; then
+            git status --porcelain --untracked-files=all -- . ':!build'
+            echo 'Build modified the source tree' >&2
+            exit 1
+          fi
 
       - name: Upload focused test evidence
         if: always()

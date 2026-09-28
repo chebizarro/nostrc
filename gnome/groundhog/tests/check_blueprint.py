@@ -27,7 +27,11 @@ def canonical(element, depth=0):
     for name in BOOLEAN_ATTRIBUTES & attrib.keys():
         attrib[name] = "true" if attrib[name].lower() in TRUE_SPELLINGS else "false"
     attrs = "".join(f' {k}="{v}"' for k, v in sorted(attrib.items()))
-    text = (element.text or "").strip()
+    # Whitespace-only text is formatting; any other text (e.g. a label value)
+    # is compared exactly, including leading/trailing spaces.
+    text = element.text or ""
+    if not text.strip():
+        text = ""
     lines = ["  " * depth + f"<{element.tag}{attrs}>" + (repr(text) if text else "")]
     for child in element:
         lines.extend(canonical(child, depth + 1))
