@@ -292,7 +292,8 @@ CREATE INDEX messages_by_time ON messages (conversation_id, created_at, backend_
 CREATE INDEX messages_by_expiry ON messages (expires_at) WHERE expires_at IS NOT NULL;
 
 CREATE TABLE seen (ns INTEGER NOT NULL, id TEXT NOT NULL, first_seen INTEGER NOT NULL,
-                   PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg
+                   PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg,
+                                                          -- 5 rejected wrap id (final NIP-17 verdict after a signer call)
 
 CREATE TABLE outbox (
   id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -536,7 +537,7 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 - **R3.** The AUTH event binds `relay` to the exact normalized URL and `challenge` to the received value. `created_at` is now (not randomized; NIP-42 requires recency).
 - **R4.** Account AUTH requires the current generation. A stale challenge callback sends nothing. The Relay Status UI shows "Signed in as you" on those relays.
 - **R5.** One AUTH per challenge. A second `auth-required` for the same attempt is terminal.
-- **R6.** Account AUTH goes through the signer at most once per relay per session. A pending account AUTH appears as "Waiting for approval" on the affected action.
+- **R6.** Account AUTH goes through the signer at most once per relay per session. A pending account AUTH appears as "Waiting for approval" on the affected action. Groundhog cannot tell whether the signer prompts for every signature, so `GhAccountAuth` keeps one signer request per relay open at a time. After an approval, a later challenge on that relay (a reconnect, an older-page REQ) is signed again. After a denial, the relay is not asked again for the rest of the account generation.
 - **R7.** If a recipient relay refuses ephemeral AUTH (`restricted:`), the target is terminal with "This relay only accepts messages from signed-in users". Groundhog never escalates to account AUTH automatically. A per-relay manual override is a later owner decision.
 
 ### 4.5 Connection scheduling (anti-correlation)
@@ -1078,7 +1079,7 @@ UX-1 and UX-2 (§9) test these layouts.
 **G05 — Persist conversations and messages with seen-set in one transaction** · P1 · M
 
 - **Depends:** G04, `qp24.10.5` merged.
-- **Owns:** `src/store/gh-store-conversations.{c,h}` (persistence delegate for `GhConversationStore`, including `.seen` file import), `tests/store/test_store_conversations.c`.
+- **Owns:** `src/store/gh-store-conversations.{c,h}` (persistence delegate for `GhConversationStore`, including `.seen` file import of its `w`, `r` and `x` (rejected wrap, `seen` ns 5) lines), `tests/store/test_store_conversations.c`.
 - **Accept:** ST-6 (admit cut points), ST-7, ST-9, ST-12, EX-6; restart restores list order, unread counts and drafts.
 - **Beads:** new. **Supersedes `qp24.10.3`** together with `qp24.10.5`. Makes W10 non-blocking #1 (seen append after failure) moot in store mode.
 

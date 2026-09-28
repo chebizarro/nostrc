@@ -1,9 +1,11 @@
 #include "gh-dm-inbox.h"
+#include "gh-account-auth.h"
 #include "gh-identity.h"
 #include "gh-nip17-inbox.h"
 
 #include <errno.h>
 #include <glib/gstdio.h>
+#include <nostr-event.h>
 #include <nostr-filter.h>
 #include <string.h>
 
@@ -15,10 +17,36 @@
 #define MAX_SCOPE_URLS 16
 
 enum { ENDPOINT_PENDING, ENDPOINT_EOSE, ENDPOINT_FAILED };
+/* Whether everything the relay holds in [since, now] has been fetched. */
+enum { BACKFILL_UNKNOWN, BACKFILL_PAGING, BACKFILL_COMPLETE, BACKFILL_INCOMPLETE };
 
 typedef struct {
-  guint status;
-  gboolean answered; /* sent EOSE or a backfill event */
+  GhDmInbox *inbox;       /* owner; an endpoint dies with its session */
+  gchar *url;
+  /* The live REQ {since, limit} on its own scope, so that what it delivers
+   * is this relay's alone (a shared scope dedups across relays). */
+  GhRelayScope *live;
+  guint status;           /* ENDPOINT_* of the live REQ */
+  gboolean answered;      /* sent EOSE or a backfill event */
+  gchar *detail;          /* the relay's reason once FAILED */
+  gboolean auth_required; /* FAILED with "auth-required:" */
+  guint live_events;      /* distinct events the live REQ delivered */
+  guint round_events;     /* its backfill events on the current connection */
+  gint64 round_oldest;    /* their oldest created_at */
+  gboolean check_pending; /* EOSE seen, completeness not judged yet */
+  guint backfill;         /* BACKFILL_* */
+  gboolean rerun;         /* judged again while paging: page again after */
+  gint64 rerun_until;
+  /* The older-page REQ {since, until, limit} in flight, on a fresh scope. */
+  GhRelayScope *page;
+  gint64 page_until;
+  guint page_events;
+  gint64 page_oldest;
+  gboolean page_ended;    /* EOSE or failure seen; settled by the idle */
+  gboolean page_failed;
+  guint run_pages;        /* pages of the current paging run */
+  gboolean run_skipped;   /* the run stepped over an unpageable second */
+  GSource *settle;        /* low-priority idle that judges EOSEs */
 } Endpoint;
 
 typedef struct {
@@ -33,6 +61,13 @@ typedef struct {
   Job *job;
 } UnwrapCall;
 
+/* The account's seen-set, shared by the store (as its delegate) and the
+ * inbox (its rejected namespace). */
+typedef struct {
+  guint refs;
+  GhNip17Seen *seen;
+} SeenRef;
+
 struct _GhDmInbox {
   GObject parent_instance;
   GhAccountController *accounts; /* NULL once disposed */
@@ -40,9 +75,13 @@ struct _GhDmInbox {
   GhConversationStore *store;
   gchar *state_dir;
   GhRelayTransport transport;
+  GhRelayAuthTransport auth_transport;
   gpointer transport_data;
   gboolean custom_transport;
+  gboolean custom_auth;
   guint max_in_flight;
+  guint req_limit;
+  guint max_pages;
 
   /* Account binding: one per account generation. */
   guint64 generation;
@@ -52,16 +91,20 @@ struct _GhDmInbox {
   gint64 checkpoint_written; /* last value written this generation */
   gchar *error;
   GhDmInboxCounters counters;
+  SeenRef *seen;
+  GhAccountAuth *auth;       /* NULL: no account AUTH this generation */
+  gulong auth_handler;
 
-  /* Session: one scope over one relay set. Bumped on every teardown. */
+  /* Session: one live REQ per relay of one relay set. Bumped on teardown. */
   guint64 session;
   GStrv urls;
   gint64 since;
-  GhRelayScope *scope;
-  GHashTable *endpoints;   /* url -> Endpoint */
+  guint limit;               /* the REQ limit of this session */
+  GHashTable *endpoints;     /* url -> Endpoint */
   GCancellable *cancellable;
-  GQueue queue;            /* Job, oldest first */
-  GHashTable *pending_ids; /* wrap ids queued or in flight */
+  GQueue queue;              /* Job, oldest first */
+  GHashTable *pending_ids;   /* wrap ids queued or in flight */
+  GHashTable *deferred_ids;  /* wrap ids a signer error deferred this session */
   gboolean hold_checkpoint;
 
   GhDmInboxState state;
@@ -112,6 +155,23 @@ unwrap_call_free(UnwrapCall *call)
   g_free(call);
 }
 
+static SeenRef *
+seen_ref(SeenRef *ref)
+{
+  ref->refs++;
+  return ref;
+}
+
+static void
+seen_unref(gpointer data)
+{
+  SeenRef *ref = data;
+  if (--ref->refs)
+    return;
+  gh_nip17_seen_free(ref->seen);
+  g_free(ref);
+}
+
 static gint64
 now_seconds(void)
 {
@@ -124,13 +184,13 @@ emit_changed(GhDmInbox *self)
   g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
 }
 
-/* ---- state ----------------------------------------------------------------- */
-
-static const gchar *
-all_failed_message(void)
+static gboolean
+current(GhDmInbox *self)
 {
-  return "No inbox relay accepted the DM subscription";
+  return self->accounts && gh_account_controller_is_current(self->accounts, self->generation);
 }
+
+/* ---- state ----------------------------------------------------------------- */
 
 static GhDmInboxState
 compute_state(GhDmInbox *self)
@@ -139,7 +199,7 @@ compute_state(GhDmInbox *self)
     return GH_DM_INBOX_INACTIVE;
   if (self->error)
     return GH_DM_INBOX_ERROR;
-  if (!self->scope)
+  if (!self->urls)
     return GH_DM_INBOX_NO_INBOX_RELAYS;
   gboolean pending = FALSE, answered = FALSE, eose = FALSE;
   GHashTableIter iter;
@@ -147,7 +207,8 @@ compute_state(GhDmInbox *self)
   g_hash_table_iter_init(&iter, self->endpoints);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Endpoint *endpoint = value;
-    pending |= endpoint->status == ENDPOINT_PENDING;
+    pending |= endpoint->status == ENDPOINT_PENDING || endpoint->check_pending ||
+               endpoint->backfill == BACKFILL_PAGING;
     eose |= endpoint->status == ENDPOINT_EOSE;
     answered |= endpoint->answered;
   }
@@ -201,9 +262,9 @@ checkpoint_write(GhDmInbox *self)
   self->checkpoint_written = self->checkpoint;
 }
 
-/* Advances the checkpoint only once everything any inbox relay delivered has
- * been settled: every endpoint at EOSE, nothing queued or in flight, and no
- * wrap deferred during this session. */
+/* Advances the checkpoint only once everything any inbox relay holds has
+ * been fetched and settled: every endpoint at EOSE and fully paged, nothing
+ * queued or in flight, and no wrap deferred during this session. */
 static void
 maybe_advance_checkpoint(GhDmInbox *self)
 {
@@ -213,15 +274,26 @@ maybe_advance_checkpoint(GhDmInbox *self)
   GHashTableIter iter;
   gpointer value;
   g_hash_table_iter_init(&iter, self->endpoints);
-  while (g_hash_table_iter_next(&iter, NULL, &value))
-    if (((Endpoint *)value)->status != ENDPOINT_EOSE)
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Endpoint *endpoint = value;
+    if (endpoint->status != ENDPOINT_EOSE || endpoint->check_pending ||
+        endpoint->backfill != BACKFILL_COMPLETE)
       return;
+  }
   gint64 now = now_seconds();
   if (now <= self->checkpoint)
     return;
   self->checkpoint = now;
   if (self->checkpoint - self->checkpoint_written >= CHECKPOINT_WRITE_INTERVAL)
     checkpoint_write(self);
+}
+
+static void
+refresh(GhDmInbox *self)
+{
+  update_state(self);
+  maybe_advance_checkpoint(self);
+  emit_changed(self);
 }
 
 /* ---- unwrap queue ---------------------------------------------------------- */
@@ -245,17 +317,18 @@ pump(GhDmInbox *self)
 
 /* Today's persistence delegate: messages live in the store's memory only and
  * the per-account GhNip17Seen file holds the seen keys. The encrypted store
- * (G05) replaces this table with its T-admit transaction. */
+ * (G05) replaces this table with its T-admit transaction (and must keep the
+ * rejected namespace, see gh_nip17_seen_record_rejected()). */
 static gboolean
 seen_has_wrap(gpointer data, const gchar *wrap_id)
 {
-  return gh_nip17_seen_has_wrap(data, wrap_id);
+  return gh_nip17_seen_has_wrap(((SeenRef *)data)->seen, wrap_id);
 }
 
 static gboolean
 seen_has_rumor(gpointer data, const gchar *rumor_id)
 {
-  return gh_nip17_seen_has_rumor(data, rumor_id);
+  return gh_nip17_seen_has_rumor(((SeenRef *)data)->seen, rumor_id);
 }
 
 static gboolean
@@ -273,7 +346,7 @@ seen_admit(gpointer data, GhMessage *message, const gchar *wrap_id, GError **err
   /* The message itself is only in memory, so a failed append must not hide
    * it: GhNip17Seen keeps the keys for this process, and a restart (which
    * loses the in-memory message anyway) fetches the wrap again. */
-  if (!gh_nip17_seen_record(data, &record, &local))
+  if (!gh_nip17_seen_record(((SeenRef *)data)->seen, &record, &local))
     g_warning("Groundhog could not record NIP-17 wrap %s as seen: %s", wrap_id,
               local->message);
   return TRUE;
@@ -282,6 +355,17 @@ seen_admit(gpointer data, GhMessage *message, const gchar *wrap_id, GError **err
 static const GhConversationDelegate seen_delegate = {
   seen_has_wrap, seen_has_rumor, seen_admit
 };
+
+/* A final verdict reached after a signer call: no later session asks the
+ * signer about this wrap again. */
+static void
+record_rejected(GhDmInbox *self, const gchar *wrap_id)
+{
+  g_autoptr(GError) error = NULL;
+  if (self->seen && !gh_nip17_seen_record_rejected(self->seen->seen, wrap_id, &error))
+    g_warning("Groundhog could not record rejected NIP-17 wrap %s: %s", wrap_id,
+              error->message);
+}
 
 /* One admission call: the store commits through its delegate (message and
  * seen keys together) before its model changes. */
@@ -304,7 +388,7 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
     self->counters.duplicates++; /* another relay copy or a re-wrap */
     break;
   case GH_CONVERSATION_ADD_FAILED:
-    /* Not committed, so not seen: a later REQ retries it. */
+    /* Not committed, so not seen: a later session retries it. */
     g_message("Groundhog could not store NIP-17 message %s: %s", message->rumor_id,
               error->message);
     self->counters.deferred++;
@@ -312,10 +396,12 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
     break;
   case GH_CONVERSATION_ADD_REJECTED:
   default:
-    /* The unwrap already validated it; this only guards the invariant. */
+    /* The unwrap already validated it; this only guards the invariant. The
+     * verdict still followed signer calls, so it is recorded like one. */
     g_warning("Groundhog refused NIP-17 message %s: %s", message->rumor_id,
               error ? error->message : "unknown error");
     self->counters.rejected++;
+    record_rejected(self, message->wrap_id);
     break;
   }
 }
@@ -343,12 +429,19 @@ unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
     admit(self, message, call->job->relay_url);
   } else if (error->domain == GH_NIP17_INBOX_ERROR) {
     self->counters.rejected++;
+    /* Rejected before any signer call, it costs nothing to reject again; a
+     * verdict that cost an approval is recorded (the id is the verified
+     * hash of the wrap the unwrap checked). */
+    if (gh_nip17_unwrap_get_signer_calls(result) > 0)
+      record_rejected(self, call->job->wrap_id);
   } else {
-    /* Signer denial or failure: not seen, so a later REQ (reopen or
-     * restart) offers it again; hold the checkpoint so that REQ covers it. */
+    /* Signer denial or failure: not recorded, so a later session offers it
+     * again from a checkpoint held before it. Not asked again this session,
+     * whichever relay or page delivers it next. */
     g_debug("Groundhog deferred NIP-17 wrap %s: %s", call->job->wrap_id, error->message);
     self->counters.deferred++;
     self->hold_checkpoint = TRUE;
+    g_hash_table_add(self->deferred_ids, g_strdup(call->job->wrap_id));
   }
   gh_nip17_message_free(message);
   unwrap_call_free(call);
@@ -364,7 +457,9 @@ handle_wrap(GhDmInbox *self, const GhRelayUpdate *update)
   self->counters.received++;
   /* The id is the scope's verified one. Skip before any signer call. */
   if (gh_conversation_store_has_wrap(self->store, update->event_id) ||
-      g_hash_table_contains(self->pending_ids, update->event_id)) {
+      (self->seen && gh_nip17_seen_has_rejected(self->seen->seen, update->event_id)) ||
+      g_hash_table_contains(self->pending_ids, update->event_id) ||
+      g_hash_table_contains(self->deferred_ids, update->event_id)) {
     self->counters.skipped++;
     return;
   }
@@ -383,53 +478,10 @@ handle_wrap(GhDmInbox *self, const GhRelayUpdate *update)
   pump(self);
 }
 
-/* ---- relay scope ----------------------------------------------------------- */
-
-static void
-on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
-{
-  GhDmInbox *self = data;
-  /* The controller revokes a generation before its "changed" reaches us;
-   * anything delivered in that window belongs to the previous account. */
-  if (scope != self->scope || !self->accounts ||
-      !gh_account_controller_is_current(self->accounts, self->generation))
-    return;
-  Endpoint *endpoint = g_hash_table_lookup(self->endpoints, update->url);
-  if (!endpoint)
-    return;
-  switch (update->notice) {
-  case GH_RELAY_NOTICE_EVENT:
-    if (update->backfill)
-      endpoint->answered = TRUE;
-    handle_wrap(self, update);
-    break;
-  case GH_RELAY_NOTICE_EOSE:
-    endpoint->status = ENDPOINT_EOSE;
-    endpoint->answered = TRUE;
-    break;
-  case GH_RELAY_NOTICE_ERROR:
-    /* A relay that already answered stays answered while it redials. */
-    if (endpoint->status == ENDPOINT_PENDING)
-      endpoint->status = ENDPOINT_FAILED;
-    break;
-  case GH_RELAY_NOTICE_CLOSED:
-    endpoint->status = ENDPOINT_FAILED;
-    break;
-  case GH_RELAY_NOTICE_DISCONNECTED:
-    /* The REQ is re-issued on reconnect and must reach EOSE again. */
-    endpoint->status = ENDPOINT_PENDING;
-    endpoint->answered = FALSE;
-    break;
-  default:
-    return;
-  }
-  update_state(self);
-  maybe_advance_checkpoint(self);
-  emit_changed(self);
-}
+/* ---- relay scopes ---------------------------------------------------------- */
 
 static NostrFilters *
-inbox_filters(const gchar *pubkey_hex, gint64 since)
+inbox_filters(const gchar *pubkey_hex, gint64 since, gint64 until, guint limit)
 {
   NostrFilters *filters = nostr_filters_new();
   NostrFilter *filter = nostr_filter_new();
@@ -444,7 +496,9 @@ inbox_filters(const gchar *pubkey_hex, gint64 since)
   nostr_filter_set_kinds(filter, kinds, G_N_ELEMENTS(kinds));
   nostr_filter_tags_append(filter, "p", pubkey_hex, NULL);
   nostr_filter_set_since_i64(filter, since);
-  nostr_filter_set_limit(filter, GH_DM_INBOX_REQ_LIMIT);
+  if (until)
+    nostr_filter_set_until_i64(filter, until);
+  nostr_filter_set_limit(filter, (int)limit);
   gboolean added = nostr_filters_add(filters, filter);
   nostr_filter_free(filter); /* contents moved into the vector */
   if (!added) {
@@ -452,6 +506,320 @@ inbox_filters(const gchar *pubkey_hex, gint64 since)
     return NULL;
   }
   return filters;
+}
+
+/* A scope for exactly endpoint's URL, not started. It authenticates, on
+ * challenge, as the account and only on that URL: an own inbox relay
+ * (charter §4.3). */
+static GhRelayScope *
+new_scope(GhDmInbox *self, Endpoint *endpoint, gint64 until, GhRelayScopeFunc callback)
+{
+  NostrFilters *filters = inbox_filters(self->pubkey_hex, self->since, until, self->limit);
+  if (!filters)
+    return NULL;
+  GhRelayScope *scope = self->custom_transport
+    ? gh_relay_scope_new_with_transport(self->generation, filters, &self->transport,
+                                        self->transport_data, callback, endpoint)
+    : gh_relay_scope_new(self->generation, filters, callback, endpoint);
+  if (self->custom_transport && self->custom_auth)
+    gh_relay_scope_set_auth_transport(scope, &self->auth_transport);
+  g_autoptr(GError) error = NULL;
+  if (!gh_relay_scope_add_url(scope, endpoint->url, &error)) {
+    g_message("Groundhog ignores DM inbox relay \"%s\": %s", endpoint->url, error->message);
+    gh_relay_scope_unref(scope);
+    return NULL;
+  }
+  if (self->auth &&
+      (!gh_relay_scope_set_account_signer(scope, gh_account_auth_get_signer(self->auth), &error) ||
+       !gh_relay_scope_set_url_auth(scope, endpoint->url, GH_RELAY_AUTH_ACCOUNT, &error)))
+    g_message("Groundhog will not sign in to DM inbox relay \"%s\": %s", endpoint->url,
+              error->message);
+  return scope;
+}
+
+static void
+scope_close(GhRelayScope **scope)
+{
+  if (!*scope)
+    return;
+  gh_relay_scope_cancel(*scope);
+  g_clear_pointer(scope, gh_relay_scope_unref);
+}
+
+static gint64
+event_created_at(const gchar *event_json)
+{
+  NostrEvent *event = nostr_event_new();
+  gint64 created_at = G_MAXINT64;
+  if (event && nostr_event_deserialize_compact(event, event_json, NULL) == 1)
+    created_at = nostr_event_get_created_at(event);
+  if (event)
+    nostr_event_free(event);
+  return created_at;
+}
+
+static gboolean settle_now(gpointer data);
+
+/* EOSEs are judged from a low-priority idle: the gnostr transport dispatches
+ * EOSE at default priority but stored EVENTs from a default-idle queue, so an
+ * EOSE can overtake events received before it. Those are counted first; a
+ * cross-thread window remains until the transport orders them
+ * (nostrc-qp24.10.6). */
+static void
+schedule_settle(Endpoint *endpoint)
+{
+  if (endpoint->settle)
+    return;
+  endpoint->settle = g_idle_source_new();
+  g_source_set_priority(endpoint->settle, G_PRIORITY_LOW);
+  g_source_set_callback(endpoint->settle, settle_now, endpoint, NULL);
+  g_source_attach(endpoint->settle, g_main_context_get_thread_default());
+}
+
+static void
+set_failed(Endpoint *endpoint, const gchar *detail, gboolean auth_required)
+{
+  endpoint->status = ENDPOINT_FAILED;
+  g_free(endpoint->detail);
+  endpoint->detail = g_strdup(detail);
+  endpoint->auth_required = auth_required;
+}
+
+static void start_page(GhDmInbox *self, Endpoint *endpoint, gint64 until);
+
+static void
+start_run(GhDmInbox *self, Endpoint *endpoint, gint64 until)
+{
+  endpoint->backfill = BACKFILL_PAGING;
+  endpoint->rerun = FALSE;
+  endpoint->run_pages = 0;
+  endpoint->run_skipped = FALSE;
+  start_page(self, endpoint, until);
+}
+
+static void
+end_run(GhDmInbox *self, Endpoint *endpoint, gboolean complete)
+{
+  if (endpoint->rerun) {
+    start_run(self, endpoint, endpoint->rerun_until);
+    return;
+  }
+  complete = complete && !endpoint->run_skipped;
+  endpoint->backfill = complete ? BACKFILL_COMPLETE : BACKFILL_INCOMPLETE;
+  if (!complete) {
+    self->counters.backfill_incomplete++;
+    g_message("Groundhog could not fetch every older DM from %s; the inbox checkpoint "
+              "stays where it was", endpoint->url);
+  }
+}
+
+static void on_page_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data);
+
+static void
+start_page(GhDmInbox *self, Endpoint *endpoint, gint64 until)
+{
+  if (endpoint->run_pages >= self->max_pages) {
+    end_run(self, endpoint, FALSE);
+    return;
+  }
+  GhRelayScope *scope = new_scope(self, endpoint, until, on_page_update);
+  if (!scope) {
+    end_run(self, endpoint, FALSE);
+    return;
+  }
+  endpoint->run_pages++;
+  self->counters.pages++;
+  endpoint->page_until = until;
+  endpoint->page_events = 0;
+  endpoint->page_oldest = G_MAXINT64;
+  endpoint->page_ended = FALSE;
+  endpoint->page_failed = FALSE;
+  endpoint->page = scope;
+  gh_relay_scope_start(scope);
+}
+
+static void
+finish_page(GhDmInbox *self, Endpoint *endpoint)
+{
+  gboolean failed = endpoint->page_failed;
+  guint events = endpoint->page_events;
+  gint64 oldest = endpoint->page_oldest;
+  gint64 until = endpoint->page_until;
+  scope_close(&endpoint->page);
+  if (failed) {
+    end_run(self, endpoint, FALSE);
+    return;
+  }
+  if (events < self->limit) {
+    end_run(self, endpoint, TRUE); /* nothing older remains */
+    return;
+  }
+  /* A full page: older wraps may remain. until is inclusive, so the next page
+   * repeats the boundary second and its repeats are skipped by id. A full
+   * page that got no older holds more than a page in that one second: step
+   * over it, and the relay stays incomplete. */
+  gint64 next = oldest;
+  if (oldest >= until) {
+    endpoint->run_skipped = TRUE;
+    next = until - 1;
+  }
+  if (next < self->since) {
+    end_run(self, endpoint, TRUE);
+    return;
+  }
+  start_page(self, endpoint, next);
+}
+
+/* The live REQ reached EOSE: the relay answered with its newest limit wraps
+ * in [since, now]. If it has delivered fewer distinct wraps than that during
+ * this whole session, it holds fewer, and its window is complete. Otherwise
+ * older ones may be cut off; every backfill event of this connection is among
+ * the newest, so paging from the oldest of them misses nothing. */
+static void
+judge_live(GhDmInbox *self, Endpoint *endpoint)
+{
+  if (endpoint->live_events < self->limit) {
+    endpoint->backfill = BACKFILL_COMPLETE;
+    return;
+  }
+  gint64 until = endpoint->round_events ? endpoint->round_oldest : now_seconds();
+  if (endpoint->backfill == BACKFILL_PAGING) {
+    endpoint->rerun = TRUE;
+    endpoint->rerun_until = until;
+    return;
+  }
+  start_run(self, endpoint, until);
+}
+
+static gboolean
+settle_now(gpointer data)
+{
+  Endpoint *endpoint = data;
+  GhDmInbox *self = endpoint->inbox;
+  g_clear_pointer(&endpoint->settle, g_source_unref);
+  if (!current(self))
+    return G_SOURCE_REMOVE;
+  if (endpoint->page && endpoint->page_ended)
+    finish_page(self, endpoint);
+  if (endpoint->check_pending && endpoint->status == ENDPOINT_EOSE) {
+    endpoint->check_pending = FALSE;
+    judge_live(self, endpoint);
+  }
+  refresh(self);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_live_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
+{
+  Endpoint *endpoint = data;
+  GhDmInbox *self = endpoint->inbox;
+  /* The controller revokes a generation before its "changed" reaches us;
+   * anything delivered in that window belongs to the previous account. */
+  if (scope != endpoint->live || !current(self))
+    return;
+  switch (update->notice) {
+  case GH_RELAY_NOTICE_EVENT:
+    endpoint->live_events++;
+    if (update->backfill) {
+      endpoint->answered = TRUE;
+      endpoint->round_events++;
+      endpoint->round_oldest = MIN(endpoint->round_oldest, event_created_at(update->event_json));
+    }
+    handle_wrap(self, update);
+    break;
+  case GH_RELAY_NOTICE_EOSE:
+    endpoint->status = ENDPOINT_EOSE;
+    endpoint->answered = TRUE;
+    g_clear_pointer(&endpoint->detail, g_free);
+    endpoint->auth_required = FALSE;
+    endpoint->check_pending = TRUE;
+    schedule_settle(endpoint);
+    break;
+  case GH_RELAY_NOTICE_ERROR:
+    /* A relay that already answered stays answered while it redials. */
+    if (endpoint->status == ENDPOINT_PENDING)
+      set_failed(endpoint, update->detail, FALSE);
+    break;
+  case GH_RELAY_NOTICE_CLOSED:
+    /* With AUTH, the scope reports an "auth-required:" CLOSED only once
+     * signing in was refused, failed, or the relay refused the retry. */
+    set_failed(endpoint, update->detail, gh_relay_auth_is_required(update->detail));
+    break;
+  case GH_RELAY_NOTICE_DISCONNECTED:
+    /* The REQ is re-issued on reconnect and must reach EOSE again. */
+    endpoint->status = ENDPOINT_PENDING;
+    endpoint->answered = FALSE;
+    g_clear_pointer(&endpoint->detail, g_free);
+    endpoint->auth_required = FALSE;
+    endpoint->round_events = 0;
+    endpoint->round_oldest = G_MAXINT64;
+    endpoint->check_pending = FALSE;
+    break;
+  default:
+    return;
+  }
+  refresh(self);
+}
+
+static void
+on_page_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
+{
+  Endpoint *endpoint = data;
+  GhDmInbox *self = endpoint->inbox;
+  if (scope != endpoint->page || endpoint->page_failed || !current(self))
+    return;
+  switch (update->notice) {
+  case GH_RELAY_NOTICE_EVENT:
+    /* Counted even after EOSE: the idle has not settled the page yet. */
+    endpoint->page_events++;
+    endpoint->page_oldest = MIN(endpoint->page_oldest, event_created_at(update->event_json));
+    handle_wrap(self, update);
+    break;
+  case GH_RELAY_NOTICE_EOSE:
+    endpoint->page_ended = TRUE;
+    schedule_settle(endpoint);
+    break;
+  case GH_RELAY_NOTICE_ERROR:
+  case GH_RELAY_NOTICE_CLOSED:
+  case GH_RELAY_NOTICE_DISCONNECTED:
+    if (endpoint->page_ended)
+      return;
+    g_message("Groundhog could not fetch older DMs from %s: %s", endpoint->url,
+              update->detail ? update->detail : "connection lost");
+    endpoint->page_ended = TRUE;
+    endpoint->page_failed = TRUE;
+    schedule_settle(endpoint);
+    break;
+  default:
+    return;
+  }
+  refresh(self);
+}
+
+static Endpoint *
+endpoint_new(GhDmInbox *self, const gchar *url)
+{
+  Endpoint *endpoint = g_new0(Endpoint, 1);
+  endpoint->inbox = self;
+  endpoint->url = g_strdup(url);
+  endpoint->round_oldest = G_MAXINT64;
+  return endpoint;
+}
+
+static void
+endpoint_free(gpointer data)
+{
+  Endpoint *endpoint = data;
+  if (endpoint->settle) {
+    g_source_destroy(endpoint->settle);
+    g_clear_pointer(&endpoint->settle, g_source_unref);
+  }
+  scope_close(&endpoint->page);
+  scope_close(&endpoint->live);
+  g_free(endpoint->detail);
+  g_free(endpoint->url);
+  g_free(endpoint);
 }
 
 static gint64
@@ -463,24 +831,22 @@ session_since(GhDmInbox *self)
   return now - GH_DM_INBOX_INITIAL_BACKFILL;
 }
 
-/* Cancel first: the scope revokes its generation and closes every transport,
- * and the cancellable revokes pending signer approvals, before anything for
- * the next session exists. Late unwrap callbacks see a newer session. */
+/* Cancel first: the scopes revoke their generation and close every
+ * transport, and the cancellable revokes pending signer approvals, before
+ * anything for the next session exists. Late unwrap callbacks see a newer
+ * session. */
 static void
 teardown_session(GhDmInbox *self)
 {
   self->session++;
-  if (self->scope) {
-    gh_relay_scope_cancel(self->scope);
-    g_clear_pointer(&self->scope, gh_relay_scope_unref);
-  }
+  g_hash_table_remove_all(self->endpoints);
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
   }
   g_queue_clear_full(&self->queue, job_free);
   g_hash_table_remove_all(self->pending_ids);
-  g_hash_table_remove_all(self->endpoints);
+  g_hash_table_remove_all(self->deferred_ids);
   self->counters.pending = 0;
   self->counters.in_flight = 0;
   self->hold_checkpoint = FALSE;
@@ -493,24 +859,23 @@ start_session(GhDmInbox *self, GStrv urls)
 {
   self->urls = urls;
   self->since = session_since(self);
-  NostrFilters *filters = inbox_filters(self->pubkey_hex, self->since);
-  if (!filters) {
-    self->error = g_strdup("Could not build the DM inbox subscription");
-    return;
-  }
+  self->limit = self->req_limit;
   self->cancellable = g_cancellable_new();
-  self->scope = self->custom_transport
-    ? gh_relay_scope_new_with_transport(self->generation, filters, &self->transport,
-                                        self->transport_data, on_scope_update, self)
-    : gh_relay_scope_new(self->generation, filters, on_scope_update, self);
+  /* Every endpoint and its scope exist before any scope starts, so a
+   * synchronous open failure lands on its own endpoint. */
   for (guint i = 0; urls[i]; i++) {
-    g_autoptr(GError) error = NULL;
-    if (gh_relay_scope_add_url(self->scope, urls[i], &error))
-      g_hash_table_insert(self->endpoints, g_strdup(urls[i]), g_new0(Endpoint, 1));
+    Endpoint *endpoint = endpoint_new(self, urls[i]);
+    endpoint->live = new_scope(self, endpoint, 0, on_live_update);
+    if (endpoint->live)
+      g_hash_table_insert(self->endpoints, endpoint->url, endpoint);
     else
-      g_message("Groundhog ignores DM inbox relay \"%s\": %s", urls[i], error->message);
+      endpoint_free(endpoint);
   }
-  gh_relay_scope_start(self->scope);
+  for (guint i = 0; urls[i]; i++) {
+    Endpoint *endpoint = g_hash_table_lookup(self->endpoints, urls[i]);
+    if (endpoint && endpoint->live)
+      gh_relay_scope_start(endpoint->live);
+  }
 }
 
 static gint
@@ -555,9 +920,22 @@ wanted_urls(GhDmInbox *self)
 /* ---- account binding ------------------------------------------------------- */
 
 static void
+on_auth_changed(GhDmInbox *self, const gchar *url)
+{
+  if (g_hash_table_contains(self->endpoints, url))
+    emit_changed(self); /* a relay state (waiting for approval, declined) */
+}
+
+static void
 teardown_account(GhDmInbox *self)
 {
   teardown_session(self);
+  if (self->auth) {
+    g_clear_signal_handler(&self->auth_handler, self->auth);
+    gh_account_auth_revoke(self->auth);
+    g_clear_object(&self->auth);
+  }
+  g_clear_pointer(&self->seen, seen_unref);
   g_clear_pointer(&self->pubkey_hex, g_free);
   g_clear_pointer(&self->checkpoint_path, g_free);
   g_clear_pointer(&self->error, g_free);
@@ -589,18 +967,26 @@ bind_account(GhDmInbox *self, guint64 generation, const gchar *npub)
       self->error = g_strdup_printf("The DM seen-set is unusable: %s", error->message);
   }
   /* The store drops the previous account's rooms before this one's appear
-   * and owns the seen-set from here on. */
-  if (seen)
-    gh_conversation_store_set_account(self->store, self->pubkey_hex, &seen_delegate, seen,
-                                      (GDestroyNotify)gh_nip17_seen_free);
-  else
+   * and holds the seen-set from here on, as does the inbox. */
+  if (seen) {
+    self->seen = g_new0(SeenRef, 1);
+    self->seen->refs = 1;
+    self->seen->seen = seen;
+    gh_conversation_store_set_account(self->store, self->pubkey_hex, &seen_delegate,
+                                      seen_ref(self->seen), seen_unref);
+  } else {
     gh_conversation_store_set_account(self->store, self->pubkey_hex, NULL, NULL, NULL);
-  if (!seen)
     return;
+  }
   g_autofree gchar *checkpoint_name = g_strconcat(self->pubkey_hex, ".checkpoint", NULL);
   self->checkpoint_path = g_build_filename(self->state_dir, checkpoint_name, NULL);
   self->checkpoint = checkpoint_load(self->checkpoint_path, self->pubkey_hex);
   self->checkpoint_written = self->checkpoint;
+  /* Own inbox relays may ask for AUTH as the account (charter §4.3). */
+  self->auth = gh_account_auth_new(self->accounts);
+  if (self->auth)
+    self->auth_handler = g_signal_connect_swapped(self->auth, "relay-changed",
+                                                  G_CALLBACK(on_auth_changed), self);
 }
 
 static gboolean
@@ -654,12 +1040,15 @@ sync_binding(GhDmInbox *self)
 GhDmInbox *
 gh_dm_inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
                 GhConversationStore *store, const gchar *state_dir,
-                const GhRelayTransport *transport, gpointer transport_data)
+                const GhRelayTransport *transport, const GhRelayAuthTransport *auth_transport,
+                gpointer transport_data)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts), NULL);
   g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(relays), NULL);
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(store), NULL);
   g_return_val_if_fail(!transport || (transport->open && transport->close), NULL);
+  g_return_val_if_fail(!auth_transport || (transport && auth_transport->send_auth &&
+                                           auth_transport->resubscribe), NULL);
   GhDmInbox *self = g_object_new(GH_TYPE_DM_INBOX, NULL);
   self->accounts = g_object_ref(accounts);
   self->relays = g_object_ref(relays);
@@ -671,6 +1060,10 @@ gh_dm_inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
     self->transport = *transport;
     self->transport_data = transport_data;
     self->custom_transport = TRUE;
+  }
+  if (auth_transport) {
+    self->auth_transport = *auth_transport;
+    self->custom_auth = TRUE;
   }
   g_signal_connect_object(accounts, "changed", G_CALLBACK(sync_binding), self,
                           G_CONNECT_SWAPPED);
@@ -689,6 +1082,14 @@ gh_dm_inbox_set_max_in_flight(GhDmInbox *self, guint max_in_flight)
     pump(self);
 }
 
+void
+gh_dm_inbox_set_backfill_limits(GhDmInbox *self, guint req_limit, guint max_pages)
+{
+  g_return_if_fail(GH_IS_DM_INBOX(self));
+  self->req_limit = CLAMP(req_limit, 1, GH_DM_INBOX_REQ_LIMIT);
+  self->max_pages = CLAMP(max_pages, 1, GH_DM_INBOX_MAX_PAGES);
+}
+
 GhDmInboxState
 gh_dm_inbox_get_state(GhDmInbox *self)
 {
@@ -702,7 +1103,16 @@ gh_dm_inbox_get_error(GhDmInbox *self)
   g_return_val_if_fail(GH_IS_DM_INBOX(self), NULL);
   if (self->state != GH_DM_INBOX_ERROR)
     return NULL;
-  return self->error ? self->error : all_failed_message();
+  if (self->error)
+    return self->error;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->endpoints);
+  while (g_hash_table_iter_next(&iter, NULL, &value))
+    if (((Endpoint *)value)->auth_required)
+      return "Your inbox relays deliver messages only after you sign in, and signing in "
+             "was declined or failed";
+  return "No inbox relay accepted the DM subscription";
 }
 
 guint64
@@ -717,6 +1127,41 @@ gh_dm_inbox_get_relays(GhDmInbox *self)
 {
   g_return_val_if_fail(GH_IS_DM_INBOX(self), NULL);
   return (const gchar *const *)self->urls;
+}
+
+GhDmInboxRelayState
+gh_dm_inbox_get_relay_state(GhDmInbox *self, const gchar *url, const gchar **detail)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), GH_DM_INBOX_RELAY_NONE);
+  if (detail)
+    *detail = NULL;
+  Endpoint *endpoint = url ? g_hash_table_lookup(self->endpoints, url) : NULL;
+  if (!endpoint)
+    return GH_DM_INBOX_RELAY_NONE;
+  GhAccountAuthRelayState auth = self->auth ? gh_account_auth_get_relay_state(self->auth, url)
+                                            : GH_ACCOUNT_AUTH_RELAY_NONE;
+  if (endpoint->status == ENDPOINT_FAILED) {
+    if (detail)
+      *detail = endpoint->auth_required && auth == GH_ACCOUNT_AUTH_RELAY_DECLINED
+        ? "This relay delivers your messages only after you sign in, and signing in "
+          "was declined for this session"
+        : endpoint->detail;
+    return endpoint->auth_required ? GH_DM_INBOX_RELAY_AUTH_REQUIRED
+                                   : GH_DM_INBOX_RELAY_FAILED;
+  }
+  if (auth == GH_ACCOUNT_AUTH_RELAY_WAITING &&
+      (endpoint->status == ENDPOINT_PENDING || endpoint->backfill == BACKFILL_PAGING))
+    return GH_DM_INBOX_RELAY_WAITING_FOR_APPROVAL;
+  if (endpoint->status == ENDPOINT_PENDING)
+    return endpoint->answered ? GH_DM_INBOX_RELAY_BACKFILLING : GH_DM_INBOX_RELAY_CONNECTING;
+  if (endpoint->check_pending || endpoint->backfill == BACKFILL_PAGING)
+    return GH_DM_INBOX_RELAY_BACKFILLING;
+  if (endpoint->backfill == BACKFILL_INCOMPLETE) {
+    if (detail)
+      *detail = "Some older messages on this relay could not be fetched this session";
+    return GH_DM_INBOX_RELAY_INCOMPLETE;
+  }
+  return GH_DM_INBOX_RELAY_LIVE;
 }
 
 gint64
@@ -769,6 +1214,7 @@ gh_dm_inbox_finalize(GObject *object)
   GhDmInbox *self = GH_DM_INBOX(object);
   g_hash_table_unref(self->endpoints);
   g_hash_table_unref(self->pending_ids);
+  g_hash_table_unref(self->deferred_ids);
   g_free(self->state_dir);
   G_OBJECT_CLASS(gh_dm_inbox_parent_class)->finalize(object);
 }
@@ -792,8 +1238,12 @@ static void
 gh_dm_inbox_init(GhDmInbox *self)
 {
   self->max_in_flight = 1;
+  self->req_limit = GH_DM_INBOX_REQ_LIMIT;
+  self->max_pages = GH_DM_INBOX_MAX_PAGES;
   self->state = GH_DM_INBOX_INACTIVE;
-  self->endpoints = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  /* Keys are the endpoints' own URLs. */
+  self->endpoints = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, endpoint_free);
   self->pending_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->deferred_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   g_queue_init(&self->queue);
 }

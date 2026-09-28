@@ -81,13 +81,23 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhNip17Message, gh_nip17_message_free)
  * after every signer call and again in _finish. Work for a switched or
  * disposed account completes with G_IO_ERROR_CANCELLED and yields nothing;
  * cancelling revokes a pending signer approval. Signer errors (e.g. denial)
- * are returned unchanged. No state is stored by this call. */
+ * are returned unchanged. No state is stored by this call.
+ *
+ * A GH_NIP17_INBOX_ERROR is a final verdict on the wrap's content: the same
+ * wrap is rejected the same way every time. Every other error (signer
+ * denial, timeout or outage, cancellation) is transient. */
 void gh_nip17_unwrap_async(GhAccountController *accounts,
                            const gchar *wrap_json,
                            GCancellable *cancellable,
                            GAsyncReadyCallback callback,
                            gpointer user_data);
 GhNip17Message *gh_nip17_unwrap_finish(GAsyncResult *result, GError **error);
+/* The signer calls (NIP-44 decrypts) the unwrap behind @result started: 0
+ * when it was rejected by the wrap checks of step 1, else 1 or 2. Readable
+ * from the callback, before or after _finish. A final rejection with a
+ * nonzero count cost the user a signer approval; record it with
+ * gh_nip17_seen_record_rejected() so no later session asks again. */
+guint gh_nip17_unwrap_get_signer_calls(GAsyncResult *result);
 
 /* Restart-safe seen-set for one account. Keys:
  *   - wrap id: one relay copy of one delivery. Check it before unwrapping to
@@ -96,6 +106,16 @@ GhNip17Message *gh_nip17_unwrap_finish(GAsyncResult *result, GError **error);
  *     claims a recorded id would have failed validation anyway.
  *   - rumor id: the message itself, which a sender may re-wrap. The canonical
  *     id commits to the verified sender, so it cannot be claimed by another.
+ *   - rejected wrap id: a wrap whose outer event verified but which was finally
+ *     rejected (a GH_NIP17_INBOX_ERROR) after a signer call. It is skipped
+ *     before any signer call, like a seen wrap, but is never a seen message.
+ *     Its id is the verified hash of the event, so no other event can claim
+ *     it; transient failures (denial, outage, cancellation) are never recorded.
+ * File format: a header line, then one "w <id>", "r <id>" or "x <id>" line
+ * per key ("x" is rejected). Files written before "x" existed load unchanged;
+ * a build without "x" refuses a file holding one (fail closed). The three
+ * namespaces share the capacity. The encrypted store (G05) must carry the
+ * rejected namespace into its seen table.
  * Record a message only after it is durably stored; the store must still be
  * idempotent on rumor id because a crash can fall between the two.
  * The file is bound to the account pubkey and holds at most capacity entries
@@ -115,6 +135,10 @@ gboolean gh_nip17_seen_has_rumor(GhNip17Seen *seen, const gchar *rumor_id);
  * an I/O error the keys stay seen in memory for this process only. */
 gboolean gh_nip17_seen_record(GhNip17Seen *seen, const GhNip17Message *message,
                               GError **error);
+gboolean gh_nip17_seen_has_rejected(GhNip17Seen *seen, const gchar *wrap_id);
+/* Records a finally rejected wrap id (lowercase hex), durably like _record. */
+gboolean gh_nip17_seen_record_rejected(GhNip17Seen *seen, const gchar *wrap_id,
+                                       GError **error);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhNip17Seen, gh_nip17_seen_free)
 
 G_END_DECLS

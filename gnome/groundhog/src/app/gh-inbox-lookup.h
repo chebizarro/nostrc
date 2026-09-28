@@ -1,8 +1,9 @@
 #ifndef GH_INBOX_LOOKUP_H
 #define GH_INBOX_LOOKUP_H
 
-#include "gh-account-relays.h"
+#include "gh-account-controller.h"
 #include "gh-inbox-resolver.h"
+#include "gh-relay-scope.h"
 
 G_BEGIN_DECLS
 
@@ -11,10 +12,12 @@ G_BEGIN_DECLS
  * NIP-17 kind-10050 DM inbox relay list with a URL-scoped REQ. It does not
  * authenticate (no NIP-42 AUTH as the account on others' relays).
  *
- * Sources: the Groundhog discovery-relays setting plus the active account's
- * own NIP-65 read and write relays (GhAccountRelays), deduplicated and bounded
- * to 16 URLs. A lookup first waits (signal-driven) until the account's own
- * relay-list discovery has settled, so its read/write relays can be sources.
+ * Sources (privacy charter §4.3 "Contact directory", PD-12): the Groundhog
+ * discovery-relays setting only, deduplicated and bounded to 16 URLs. The
+ * account's own relays (its NIP-65 read/write and 10050 relays) are never
+ * sources: they would learn whom the account is about to message. The
+ * contact's own kind-10002 write relays are the other source the charter
+ * allows; they need the contact directory (G10) and are not consulted here.
  *
  * One URL-scoped REQ {kinds:[10050], authors:[recipient]} goes to exactly those
  * sources. The lookup completes when every source has sent EOSE or failed
@@ -39,7 +42,6 @@ G_DECLARE_FINAL_TYPE(GhInboxLookup, gh_inbox_lookup, GH, INBOX_LOOKUP, GObject)
 
 /* transport NULL uses the gnostr relay transport. */
 GhInboxLookup *gh_inbox_lookup_new(GhAccountController *accounts,
-                                   GhAccountRelays *account_relays,
                                    GSettings *settings,
                                    const GhRelayTransport *transport,
                                    gpointer transport_data);

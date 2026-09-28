@@ -25,7 +25,6 @@ typedef struct {
 struct _GhInboxLookup {
   GObject parent_instance;
   GhAccountController *accounts; /* NULL once disposed */
-  GhAccountRelays *account_relays;
   GSettings *settings;
   GhRelayTransport transport;
   gpointer transport_data;
@@ -47,7 +46,6 @@ typedef struct {
   GMainContext *context;
   guint64 generation;
   gchar *recipient;
-  gulong relays_handler;
   GSource *caller_cancel;
   GSource *generation_cancel;
   GSource *deadline;
@@ -107,10 +105,6 @@ lookup_free(gpointer data)
 static void
 lookup_detach(Lookup *lookup)
 {
-  if (lookup->relays_handler) {
-    g_signal_handler_disconnect(lookup->owner->account_relays, lookup->relays_handler);
-    lookup->relays_handler = 0;
-  }
   destroy_source(&lookup->caller_cancel);
   destroy_source(&lookup->generation_cancel);
   destroy_source(&lookup->deadline);
@@ -414,6 +408,8 @@ inbox_filters(const gchar *pubkey_hex)
   return filters;
 }
 
+/* Only discovery-relays: never the account's own relays, which would learn
+ * whom it is about to message (charter §4.3). */
 static void
 start_req(Lookup *lookup)
 {
@@ -421,8 +417,6 @@ start_req(Lookup *lookup)
   g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
   g_auto(GStrv) discovery = g_settings_get_strv(self->settings, "discovery-relays");
   add_sources(urls, (const gchar *const *)discovery);
-  add_sources(urls, gh_account_relays_get_read_relays(self->account_relays));
-  add_sources(urls, gh_account_relays_get_write_relays(self->account_relays));
   lookup->sources = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   NostrFilters *filters = urls->len ? inbox_filters(lookup->recipient) : NULL;
   if (!filters) {
@@ -444,55 +438,6 @@ start_req(Lookup *lookup)
   gh_relay_scope_start(lookup->scope);
   if (lookup->scope && all_settled(lookup))
     schedule_completion(lookup);
-}
-
-/* The account's own read/write relays are sources, so wait until its own
- * relay-list discovery for this generation has settled. */
-static gboolean
-own_relays_settled(Lookup *lookup)
-{
-  GhAccountRelays *relays = lookup->owner->account_relays;
-  return gh_account_relays_get_generation(relays) == lookup->generation &&
-         gh_account_relays_get_state(relays) != GH_ACCOUNT_RELAYS_DISCOVERING &&
-         gh_account_relays_get_state(relays) != GH_ACCOUNT_RELAYS_INACTIVE;
-}
-
-static void
-on_account_relays_changed(GhAccountRelays *relays, gpointer data);
-
-/* Low priority for the same reason as completion: the own lists' EVENTs may
- * still be queued behind the EOSE that settled them. */
-static gboolean
-own_relays_ready(gpointer data)
-{
-  Lookup *lookup = data;
-  g_clear_pointer(&lookup->completion, g_source_unref);
-  if (!lookup->task || lookup->scope)
-    return G_SOURCE_REMOVE;
-  if (!own_relays_settled(lookup)) {
-    lookup->relays_handler = g_signal_connect(lookup->owner->account_relays, "changed",
-                                              G_CALLBACK(on_account_relays_changed),
-                                              lookup);
-    return G_SOURCE_REMOVE;
-  }
-  start_req(lookup);
-  return G_SOURCE_REMOVE;
-}
-
-static void
-on_account_relays_changed(GhAccountRelays *relays, gpointer data)
-{
-  Lookup *lookup = data;
-  (void)relays;
-  if (!lookup->task || lookup->scope || lookup->completion ||
-      !own_relays_settled(lookup) || !lookup_current(lookup))
-    return;
-  g_signal_handler_disconnect(lookup->owner->account_relays, lookup->relays_handler);
-  lookup->relays_handler = 0;
-  lookup->completion = g_idle_source_new();
-  g_source_set_priority(lookup->completion, G_PRIORITY_LOW);
-  g_source_set_callback(lookup->completion, own_relays_ready, lookup, NULL);
-  g_source_attach(lookup->completion, lookup->context);
 }
 
 static void
@@ -549,13 +494,7 @@ lookup_resolve_async(GhInboxResolver *resolver, const gchar *pubkey_hex,
   if (cancellable)
     lookup->caller_cancel = watch_cancellable(lookup, cancellable);
   lookup->generation_cancel = watch_cancellable(lookup, generation_cancel);
-  if (own_relays_settled(lookup)) {
-    start_req(lookup);
-    return;
-  }
-  lookup->relays_handler = g_signal_connect(self->account_relays, "changed",
-                                            G_CALLBACK(on_account_relays_changed),
-                                            lookup);
+  start_req(lookup);
 }
 
 static GhInboxResult *
@@ -608,17 +547,14 @@ on_accounts_changed(GhInboxLookup *self)
 }
 
 GhInboxLookup *
-gh_inbox_lookup_new(GhAccountController *accounts, GhAccountRelays *account_relays,
-                    GSettings *settings, const GhRelayTransport *transport,
-                    gpointer transport_data)
+gh_inbox_lookup_new(GhAccountController *accounts, GSettings *settings,
+                    const GhRelayTransport *transport, gpointer transport_data)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts), NULL);
-  g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(account_relays), NULL);
   g_return_val_if_fail(G_IS_SETTINGS(settings), NULL);
   g_return_val_if_fail(!transport || (transport->open && transport->close), NULL);
   GhInboxLookup *self = g_object_new(GH_TYPE_INBOX_LOOKUP, NULL);
   self->accounts = g_object_ref(accounts);
-  self->account_relays = g_object_ref(account_relays);
   self->settings = g_object_ref(settings);
   if (transport) {
     self->transport = *transport;
@@ -641,7 +577,6 @@ gh_inbox_lookup_dispose(GObject *object)
     g_signal_handlers_disconnect_by_data(self->accounts, self);
   g_hash_table_remove_all(self->cache);
   g_clear_object(&self->accounts);
-  g_clear_object(&self->account_relays);
   g_clear_object(&self->settings);
   G_OBJECT_CLASS(gh_inbox_lookup_parent_class)->dispose(object);
 }

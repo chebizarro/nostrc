@@ -243,14 +243,16 @@ if (TARGET nostr AND TARGET nip19)
   endif()
 endif()
 
-# GTK-free NIP-17 receive pipeline: the active account's kind-1059 REQ on its
-# own 10050 relays, seen-set pre-filter, bounded signer unwraps, store
-# admission. It carries its own copy of the unwrap (gh-nip17-inbox.c) so it
-# links standalone; it is not yet linked into the executable, which compiles
-# that file directly. Replace that target_sources entry with this library when
-# the inbox is wired into the application.
+# GTK-free NIP-17 receive pipeline: the active account's kind-1059 REQs on its
+# own 10050 relays (paged backwards with until, NIP-42 AUTH as the account on
+# those relays only, through GhAccountAuth), seen-set pre-filter, bounded
+# signer unwraps, store admission. It carries its own copy of the unwrap
+# (gh-nip17-inbox.c) so it links standalone; it is not yet linked into the
+# executable, which compiles that file directly. Replace that target_sources
+# entry with this library when the inbox is wired into the application.
 if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
-  add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c)
+  add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c
+    src/app/gh-account-auth.c)
   target_link_libraries(groundhog-dm-inbox PUBLIC groundhog-account-relays
                         groundhog-conversations)
   target_compile_options(groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)

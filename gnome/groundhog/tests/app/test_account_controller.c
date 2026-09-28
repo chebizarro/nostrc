@@ -1243,13 +1243,18 @@ typedef struct {
   gboolean done;
   GhNip17Message *message;
   GError *error;
+  guint signer_calls;
 } UnwrapWait;
+
+/* Signer calls of the last unwrap_now(), as the unwrap itself reports them. */
+static guint last_signer_calls;
 
 static void
 unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
 {
   UnwrapWait *wait = data;
   (void)source;
+  wait->signer_calls = gh_nip17_unwrap_get_signer_calls(result);
   wait->message = gh_nip17_unwrap_finish(result, &wait->error);
   wait->done = TRUE;
 }
@@ -1266,6 +1271,7 @@ unwrap_now(GhAccountController *accounts, const gchar *wrap_json, GError **error
   UnwrapWait wait = { 0 };
   gh_nip17_unwrap_async(accounts, wrap_json, NULL, unwrap_done, &wait);
   spin_until(unwrap_finished, &wait);
+  last_signer_calls = wait.signer_calls;
   g_assert_true((wait.message == NULL) != (wait.error == NULL));
   if (wait.error) g_propagate_error(error, wait.error);
   return wait.message;
@@ -1388,6 +1394,7 @@ test_nip17_unwrap_roundtrip(void)
   g_assert_cmpstr(self_copy->recipients[0], ==, recipient);
   g_assert_cmpint(self_copy->created_at, >, 0);
   g_assert_cmpuint(fixture.mock.calls, ==, calls + 2);
+  g_assert_cmpuint(last_signer_calls, ==, 2);
   g_assert_cmpstr(mock_last(&fixture), ==, npub_one);
 
   /* The recipient's copy is not addressed to the sender: no signer call. */
@@ -1488,6 +1495,8 @@ test_nip17_unwrap_rejects(void)
     g_assert_null(unwrap_now(fixture.accounts, input, &error));
     g_assert_error(error, GH_NIP17_INBOX_ERROR, cases[i].code);
     g_assert_cmpuint(fixture.mock.calls - before, ==, cases[i].calls);
+    /* What the inbox uses to decide whether to record the wrap as rejected. */
+    g_assert_cmpuint(last_signer_calls, ==, cases[i].calls);
   }
   /* Bounds and garbage are rejected before any parse or signer call. */
   g_autofree gchar *huge = g_strnfill(GH_NIP17_MAX_WRAP_JSON + 1, 'x');
@@ -1690,6 +1699,53 @@ test_nip17_seen_restart(void)
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
   g_clear_error(&error);
 
+  g_unlink(path);
+  g_rmdir(dir);
+}
+
+/* The rejected namespace ("x" lines): a seen-set written before it existed
+ * still loads, a rejected id is not a seen wrap, and it survives a restart. */
+static void
+test_nip17_seen_rejected(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *dir = g_dir_make_tmp("groundhog-seen-XXXXXX", &error);
+  g_assert_no_error(error);
+  g_autofree gchar *path = g_build_filename(dir, "seen", NULL);
+  g_autofree gchar *account = test_pub(2);
+  g_autofree gchar *wrap = g_strnfill(64, 'a');
+  g_autofree gchar *rumor = g_strnfill(64, 'b');
+  g_autofree gchar *bad = g_strnfill(64, 'c');
+  g_autofree gchar *old = g_strdup_printf("groundhog-nip17-seen 1 %s\nw %s\nr %s\n", account,
+                                          wrap, rumor);
+  g_assert_true(g_file_set_contents(path, old, -1, NULL));
+
+  g_autoptr(GhNip17Seen) seen = gh_nip17_seen_open(path, account, 8, &error);
+  g_assert_no_error(error);
+  g_assert_true(gh_nip17_seen_has_wrap(seen, wrap));
+  g_assert_true(gh_nip17_seen_has_rumor(seen, rumor));
+  g_assert_false(gh_nip17_seen_has_rejected(seen, wrap));
+  g_assert_true(gh_nip17_seen_record_rejected(seen, bad, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_nip17_seen_has_rejected(seen, bad));
+  g_assert_false(gh_nip17_seen_has_wrap(seen, bad));
+  g_assert_true(gh_nip17_seen_record_rejected(seen, bad, &error)); /* idempotent */
+  g_autofree gchar *upper = g_strnfill(64, 'C');
+  g_assert_false(gh_nip17_seen_record_rejected(seen, upper, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  g_autofree gchar *contents = NULL;
+  g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
+  g_autofree gchar *expected = g_strdup_printf("%sx %s\n", old, bad);
+  g_assert_cmpstr(contents, ==, expected); /* appended once, old lines kept */
+  seen = gh_nip17_seen_open(path, account, 8, &error);
+  g_assert_no_error(error);
+  g_assert_true(gh_nip17_seen_has_rejected(seen, bad));
+  g_assert_true(gh_nip17_seen_has_wrap(seen, wrap));
+  g_assert_false(gh_nip17_seen_has_rejected(seen, rumor));
+  g_clear_pointer(&seen, gh_nip17_seen_free);
   g_unlink(path);
   g_rmdir(dir);
 }
@@ -2066,6 +2122,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip17/unwrap-stale-callback", test_nip17_unwrap_stale_callback);
   g_test_add_func("/groundhog/nip17/seen-restart", test_nip17_seen_restart);
   g_test_add_func("/groundhog/nip17/seen-torn-tail", test_nip17_seen_torn_tail);
+  g_test_add_func("/groundhog/nip17/seen-rejected", test_nip17_seen_rejected);
 #ifdef G_OS_UNIX
   g_test_add_func("/groundhog/nip17/seen-file-mode", test_nip17_seen_file_mode);
 #endif

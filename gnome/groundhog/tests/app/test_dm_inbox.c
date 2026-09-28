@@ -1,7 +1,9 @@
-/* GhDmInbox against recording relay transports and a mock signer on a
- * private bus. Every relay frame is injected through the scopes the inbox
- * opened; nothing sleeps. */
+/* GhDmInbox against recording relay transports (with their NIP-42 half) and
+ * a mock signer on a private bus. Every relay frame is injected through the
+ * scopes the inbox opened; nothing sleeps. */
+#include "gh-account-auth.h"
 #include "gh-dm-inbox.h"
+#include "gh-signer.h"
 #include "gh-test-signer.h"
 
 #include "nostr-tag.h"
@@ -10,22 +12,28 @@
 #include <glib/gstdio.h>
 
 #define DISCOVERY "wss://discovery.test.invalid"
+#define HOME "wss://home.test.invalid"
 #define INBOX_A "wss://inbox-a.test.invalid"
 #define INBOX_B "wss://inbox-b.test.invalid"
 #define INBOX_C "wss://inbox-c.test.invalid"
+#define HOUR 3600
 
 static gchar *npub[GH_TEST_KEYS];
 static gchar *hex[GH_TEST_KEYS];
 
 /* ---- recording transport --------------------------------------------------- */
 
+/* One REQ connection: the live REQ (until 0) or an older page (until > 0). */
 typedef struct {
   GhRelayScope *scope;
   gchar *url;
   gchar *p;
   gint64 since;
+  gint64 until;
   int limit;
   gboolean closed;
+  GPtrArray *auth;    /* signed AUTH events sent on this connection */
+  guint resubscribes; /* REQs re-issued after an accepted AUTH */
 } Req;
 
 typedef struct {
@@ -40,13 +48,14 @@ req_free(gpointer data)
 {
   Req *req = data;
   gh_relay_scope_unref(req->scope);
+  g_ptr_array_unref(req->auth);
   g_free(req->url);
   g_free(req->p);
   g_free(req);
 }
 
-/* Asserts the exact DM inbox filter: kinds [1059], one #p, since, limit, and
- * nothing else. */
+/* Asserts the exact DM inbox filter: kinds [1059], one #p, since, limit, an
+ * until only on older pages, and nothing else. */
 static gpointer
 recorder_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
               gpointer data, GError **error)
@@ -67,7 +76,6 @@ recorder_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters
   g_assert_cmpuint(nostr_filter_tags_len(filter), ==, 1);
   g_assert_cmpuint(nostr_filter_tag_len(filter, 0), ==, 2);
   g_assert_cmpstr(nostr_filter_tag_get(filter, 0, 0), ==, "p");
-  g_assert_cmpint(nostr_filter_get_until_i64(filter), ==, 0);
   g_assert_null(nostr_filter_get_search(filter));
   char *json = nostr_filter_serialize_compact(filter);
   g_autofree gchar *wire_p = g_strdup_printf("\"#p\":[\"%s\"]",
@@ -80,7 +88,9 @@ recorder_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters
   req->url = g_strdup(url);
   req->p = g_strdup(nostr_filter_tag_get(filter, 0, 1));
   req->since = nostr_filter_get_since_i64(filter);
+  req->until = nostr_filter_get_until_i64(filter);
   req->limit = nostr_filter_get_limit(filter);
+  req->auth = g_ptr_array_new_with_free_func(g_free);
   g_ptr_array_add(rec->reqs, req);
   return req;
 }
@@ -95,6 +105,31 @@ recorder_close(gpointer handle, gpointer data)
 
 static const GhRelayTransport recorder_transport = { recorder_open, recorder_close };
 
+/* The NIP-42 half. Only DM inbox REQs (own 10050 relays) ever authenticate:
+ * the discovery scope has no AUTH transport, and nothing else is opened. */
+static gboolean
+recorder_send_auth(gpointer handle, const gchar *signed_event_json, gpointer data,
+                   GError **error)
+{
+  (void)data;
+  (void)error;
+  g_assert_true(handle != &discovery_handle);
+  Req *req = handle;
+  g_assert_false(req->closed);
+  g_ptr_array_add(req->auth, g_strdup(signed_event_json));
+  return TRUE;
+}
+
+static void
+recorder_resubscribe(gpointer handle, gpointer data)
+{
+  (void)data;
+  ((Req *)handle)->resubscribes++;
+}
+
+static const GhRelayAuthTransport recorder_auth = { recorder_send_auth,
+                                                    recorder_resubscribe };
+
 /* Open inbox REQs, sorted by URL. */
 static GPtrArray *
 open_reqs(Recorder *rec)
@@ -108,19 +143,46 @@ open_reqs(Recorder *rec)
   return open;
 }
 
+/* The open live REQ (page FALSE) or older page (page TRUE) on url, if any. */
 static Req *
-open_req(Recorder *rec, const gchar *url)
+find_req(Recorder *rec, const gchar *url, gboolean page)
 {
   Req *found = NULL;
   for (guint i = 0; i < rec->reqs->len; i++) {
     Req *req = g_ptr_array_index(rec->reqs, i);
-    if (!req->closed && g_str_equal(req->url, url)) {
+    if (!req->closed && g_str_equal(req->url, url) && (req->until != 0) == page) {
       g_assert_null(found);
       found = req;
     }
   }
+  return found;
+}
+
+static Req *
+open_req(Recorder *rec, const gchar *url)
+{
+  Req *found = find_req(rec, url, FALSE);
   g_assert_nonnull(found);
   return found;
+}
+
+static Req *
+open_page(Recorder *rec, const gchar *url)
+{
+  Req *found = find_req(rec, url, TRUE);
+  g_assert_nonnull(found);
+  return found;
+}
+
+static guint
+count_pages(Recorder *rec, const gchar *url)
+{
+  guint count = 0;
+  for (guint i = 0; i < rec->reqs->len; i++) {
+    Req *req = g_ptr_array_index(rec->reqs, i);
+    count += req->until != 0 && g_str_equal(req->url, url);
+  }
+  return count;
 }
 
 /* ---- fixtures ---------------------------------------------------------------- */
@@ -163,7 +225,7 @@ static GhDmInbox *
 new_inbox(Fixture *f)
 {
   GhDmInbox *inbox = gh_dm_inbox_new(f->accounts, f->relays, f->store, f->state_dir,
-                                     &recorder_transport, &f->rec);
+                                     &recorder_transport, &recorder_auth, &f->rec);
   g_assert_nonnull(inbox);
   return inbox;
 }
@@ -278,6 +340,76 @@ settled(gpointer data)
   return counters(data).pending == 0;
 }
 
+static gboolean
+is_live(gpointer data)
+{
+  return gh_dm_inbox_get_state(data) == GH_DM_INBOX_LIVE;
+}
+
+static gboolean
+live_and_settled(gpointer data)
+{
+  return is_live(data) && settled(data);
+}
+
+/* Runs everything already dispatchable (EOSE judgments run at low priority). */
+static void
+drain(void)
+{
+  while (g_main_context_iteration(NULL, FALSE))
+    ;
+}
+
+typedef struct {
+  Recorder *rec;
+  const gchar *url;
+  guint count;
+} PageWait;
+
+static gboolean
+pages_opened(gpointer data)
+{
+  PageWait *wait = data;
+  return count_pages(wait->rec, wait->url) >= wait->count;
+}
+
+/* Waits for the count-th older page on url (the earlier ones are closed by
+ * then) and returns it. */
+static Req *
+wait_page(Recorder *rec, const gchar *url, guint count)
+{
+  PageWait wait = { rec, url, count };
+  gh_test_spin_until(pages_opened, &wait);
+  g_assert_cmpuint(count_pages(rec, url), ==, count);
+  return open_page(rec, url);
+}
+
+static GhDmInboxRelayState
+relay_state(GhDmInbox *inbox, const gchar *url, const gchar **detail)
+{
+  return gh_dm_inbox_get_relay_state(inbox, url, detail);
+}
+
+typedef struct {
+  GhDmInbox *inbox;
+  const gchar *url;
+  GhDmInboxRelayState state;
+} RelayWait;
+
+static gboolean
+relay_reached(gpointer data)
+{
+  RelayWait *wait = data;
+  return relay_state(wait->inbox, wait->url, NULL) == wait->state;
+}
+
+static gboolean
+auth_sent(gpointer data)
+{
+  Req *req = data;
+  return req->auth->len > 0;
+}
+
 typedef struct {
   GhTestSigner *signer;
   guint held;
@@ -302,6 +434,8 @@ typedef struct {
   gint64 created_at;
   const gchar *content;
   const gchar *subject;
+  int kind;          /* rumor kind; 0: 14 */
+  gint64 wrap_created_at; /* 0: as NIP-59 randomized it */
 } Craft;
 
 static gchar *
@@ -309,7 +443,7 @@ craft_wrap(const Craft *c, gchar **rumor_id)
 {
   guint signer = c->seal_signer ? c->seal_signer : c->author;
   NostrEvent *rumor = nostr_event_new();
-  nostr_event_set_kind(rumor, 14);
+  nostr_event_set_kind(rumor, c->kind ? c->kind : 14);
   nostr_event_set_pubkey(rumor, hex[c->author]);
   nostr_event_set_created_at(rumor, c->created_at);
   nostr_event_set_content(rumor, c->content);
@@ -346,8 +480,32 @@ craft_wrap(const Craft *c, gchar **rumor_id)
   NostrEvent *wrap = nostr_nip59_wrap_with_key(seal, hex[c->to], ephemeral);
   nostr_event_free(seal);
   g_assert_nonnull(wrap);
+  if (c->wrap_created_at) {
+    /* What relays filter since/until on; re-signed with the wrap key. */
+    nostr_event_set_created_at(wrap, c->wrap_created_at);
+    g_assert_cmpint(nostr_event_sign(wrap, gh_test_secret[4]), ==, 0);
+  }
   char *json = nostr_event_serialize_compact(wrap);
   nostr_event_free(wrap);
+  gchar *out = g_strdup(json);
+  free(json);
+  return out;
+}
+
+/* A signed kind 1059 addressed to key 1, not the account: every inbox
+ * rejects it before any signer call. Cheap filler for paging tests. */
+static gchar *
+junk_wrap(gint64 created_at, guint salt)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 1059);
+  nostr_event_set_created_at(event, created_at);
+  g_autofree gchar *content = g_strdup_printf("junk-%u", salt);
+  nostr_event_set_content(event, content);
+  nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("p", hex[1], NULL)));
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[4]), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
   gchar *out = g_strdup(json);
   free(json);
   return out;
@@ -378,16 +536,44 @@ go_live(Fixture *f)
   publish_list(f, 2, 10050, INBOX_A, INBOX_B, NULL);
   eose(f, INBOX_A);
   eose(f, INBOX_B);
-  g_assert_cmpint(gh_dm_inbox_get_state(f->inbox), ==, GH_DM_INBOX_LIVE);
+  gh_test_spin_until(is_live, f->inbox);
 }
 
 /* ---- tests -------------------------------------------------------------------- */
 
+static gchar *
+state_file(Fixture *f, guint key, const gchar *suffix)
+{
+  g_autofree gchar *name = g_strconcat(hex[key], suffix, NULL);
+  return g_build_filename(f->state_dir, name, NULL);
+}
+
+static gboolean
+has_checkpoint(Fixture *f, guint key)
+{
+  g_autofree gchar *path = state_file(f, key, ".checkpoint");
+  return g_file_test(path, G_FILE_TEST_EXISTS);
+}
+
+/* Seen-set lines of one kind: "w ", "r " or "x " (rejected). */
+static guint
+seen_lines(Fixture *f, guint key, const gchar *prefix)
+{
+  g_autofree gchar *path = state_file(f, key, ".seen");
+  g_autofree gchar *contents = NULL;
+  if (!g_file_get_contents(path, &contents, NULL, NULL))
+    return 0;
+  g_auto(GStrv) lines = g_strsplit(contents, "\n", -1);
+  guint count = 0;
+  for (guint i = 1; lines[i]; i++)
+    count += g_str_has_prefix(lines[i], prefix);
+  return count;
+}
+
 static gint64
 read_checkpoint(Fixture *f, guint key)
 {
-  g_autofree gchar *name = g_strconcat(hex[key], ".checkpoint", NULL);
-  g_autofree gchar *path = g_build_filename(f->state_dir, name, NULL);
+  g_autofree gchar *path = state_file(f, key, ".checkpoint");
   g_autofree gchar *contents = NULL;
   g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
   g_auto(GStrv) fields = g_strsplit(g_strstrip(contents), " ", -1);
@@ -439,10 +625,18 @@ test_req_exact(void)
     g_assert_cmpint(req->since, ==, gh_dm_inbox_get_since(f.inbox));
   }
   g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_CONNECTING);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_CONNECTING);
+  g_assert_cmpint(relay_state(f.inbox, HOME, NULL), ==, GH_DM_INBOX_RELAY_NONE);
   eose(&f, INBOX_A);
   g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_BACKFILLING);
   eose(&f, INBOX_B);
-  g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_LIVE);
+  /* Each EOSE is judged (fewer than a page: nothing older) before LIVE. */
+  g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_BACKFILLING);
+  gh_test_spin_until(is_live, f.inbox);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_B, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 2); /* no older page was needed */
+  g_assert_cmpuint(counters(f.inbox).pages, ==, 0);
 
   /* Settled and live: the checkpoint is recorded, and the next session asks
    * for since = checkpoint - two days (plus slack) to cover randomized
@@ -461,13 +655,19 @@ test_req_exact(void)
     g_assert_cmpint(((Req *)g_ptr_array_index(reopened, i))->since, ==,
                     checkpoint - GH_DM_INBOX_WRAP_SKEW);
 
-  /* All inbox relays failing is an error state, not "live". */
+  /* All inbox relays failing is an error state, not "live". An auth-required
+   * CLOSED before any challenge has nothing to answer: reported at once. */
   gh_relay_scope_notice(open_req(&f.rec, INBOX_A)->scope, INBOX_A,
                         GH_RELAY_NOTICE_CLOSED, NULL, FALSE, "auth-required: test");
   gh_relay_scope_notice(open_req(&f.rec, INBOX_B)->scope, INBOX_B,
                         GH_RELAY_NOTICE_ERROR, NULL, FALSE, "refused");
   g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_ERROR);
-  g_assert_nonnull(gh_dm_inbox_get_error(f.inbox));
+  g_assert_nonnull(strstr(gh_dm_inbox_get_error(f.inbox), "sign in"));
+  const gchar *detail = NULL;
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, &detail), ==, GH_DM_INBOX_RELAY_AUTH_REQUIRED);
+  g_assert_cmpstr(detail, ==, "auth-required: test");
+  g_assert_cmpint(relay_state(f.inbox, INBOX_B, &detail), ==, GH_DM_INBOX_RELAY_FAILED);
+  g_assert_cmpstr(detail, ==, "refused");
   g_assert_cmpuint(f.signer.calls, ==, 0);
   fixture_down(&f);
 }
@@ -479,7 +679,7 @@ test_rooms_and_dedup(void)
   fixture_up(&f);
   go_live(&f);
 
-  /* 1 -> 2, delivered by both inbox relays: one scope event, one unwrap. */
+  /* 1 -> 2, delivered by both inbox relays: two copies, one unwrap. */
   g_autofree gchar *first_id = NULL;
   Craft first = { .author = 1, .to = 2, .p = { 2 }, .created_at = 1000, .content = "hi" };
   g_autofree gchar *first_wrap = craft_wrap(&first, &first_id);
@@ -487,7 +687,8 @@ test_rooms_and_dedup(void)
   deliver(&f, INBOX_B, first_wrap);
   gh_test_spin_until(settled, f.inbox);
   g_assert_cmpuint(counters(f.inbox).admitted, ==, 1);
-  g_assert_cmpuint(counters(f.inbox).received, ==, 1);
+  g_assert_cmpuint(counters(f.inbox).received, ==, 2);
+  g_assert_cmpuint(counters(f.inbox).skipped, ==, 1);
   g_assert_cmpuint(f.signer.calls, ==, 2);
 
   /* The sender re-wrapped the same rumor: unwrapped, but stored once; the
@@ -540,8 +741,13 @@ test_rooms_and_dedup(void)
   g_assert_cmpuint(c.rejected, ==, 2);
   g_assert_cmpuint(c.duplicates, ==, 1);
   g_assert_cmpuint(c.deferred, ==, 0);
-  g_assert_cmpuint(c.skipped, ==, 0);
-  g_assert_cmpuint(c.received, ==, 7);
+  g_assert_cmpuint(c.skipped, ==, 1);
+  g_assert_cmpuint(c.received, ==, 8);
+  /* The forgery cost two signer calls, so it was recorded as rejected: the
+   * other relay's copy is skipped without a third. */
+  deliver(&f, INBOX_B, forged_wrap);
+  g_assert_cmpuint(counters(f.inbox).skipped, ==, 2);
+  g_assert_cmpuint(f.signer.calls, ==, calls + 8);
 
   /* Two rooms, newest activity first. */
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 2);
@@ -798,8 +1004,16 @@ test_signer_denied_defers(void)
   g_assert_cmpuint(c.deferred, ==, 1);
   g_assert_cmpuint(c.rejected, ==, 0);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 0);
-  /* A denied wrap is not seen: a later session offers it again, from a
-   * checkpoint that did not move past it. */
+  g_assert_cmpuint(f.signer.calls, ==, 1);
+  /* Not asked again this session, whichever relay delivers it next. */
+  deliver(&f, INBOX_B, wrap);
+  g_assert_cmpuint(counters(f.inbox).skipped, ==, 1);
+  drain();
+  g_assert_cmpuint(f.signer.calls, ==, 1);
+  /* A denial is transient, never recorded as rejected: a later session
+   * offers the wrap again (a new signer prompt), from a checkpoint that did
+   * not move past it. */
+  g_assert_cmpuint(seen_lines(&f, 2, "x "), ==, 0);
   f.signer.deny = FALSE;
   gh_test_release(f.inbox);
   f.inbox = new_inbox(&f);
@@ -807,6 +1021,508 @@ test_signer_denied_defers(void)
   deliver(&f, INBOX_A, wrap);
   gh_test_spin_until(settled, f.inbox);
   g_assert_cmpuint(counters(f.inbox).admitted, ==, 1);
+  g_assert_cmpuint(f.signer.calls, ==, 3);
+  fixture_down(&f);
+}
+
+/* ---- backfill paging (nostrc-qp24.10.10) ------------------------------------- */
+
+static void
+deliver_page(Fixture *f, const gchar *url, const gchar *wrap)
+{
+  Req *req = open_page(&f->rec, url);
+  gh_relay_scope_event(req->scope, url, wrap);
+}
+
+/* A relay that fills the REQ limit is paged backwards with until = the
+ * oldest created_at seen, repeats skipped by id, until a page comes back
+ * short; only then may the checkpoint move. */
+static void
+test_backfill_paging(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  gh_dm_inbox_set_backfill_limits(f.inbox, 3, GH_DM_INBOX_MAX_PAGES);
+  publish_list(&f, 2, 10050, INBOX_A, INBOX_B, NULL);
+  g_assert_cmpint(open_req(&f.rec, INBOX_A)->limit, ==, 3);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  gchar *wraps[6];
+  for (guint i = 0; i < G_N_ELEMENTS(wraps); i++) {
+    g_autofree gchar *text = g_strdup_printf("message %u", i);
+    Craft craft = { .author = 1, .to = 2, .p = { 2 }, .created_at = 1000 + i,
+                    .content = text, .wrap_created_at = now - (gint64)(i + 1) * 10 * HOUR };
+    wraps[i] = craft_wrap(&craft, NULL);
+  }
+
+  /* The live REQ is full: the newest three, then EOSE. */
+  for (guint i = 0; i < 3; i++)
+    deliver(&f, INBOX_A, wraps[i]);
+  eose(&f, INBOX_A);
+  eose(&f, INBOX_B);
+  Req *page = wait_page(&f.rec, INBOX_A, 1);
+  g_assert_cmpint(page->until, ==, now - 30 * HOUR);
+  g_assert_cmpint(page->since, ==, gh_dm_inbox_get_since(f.inbox));
+  g_assert_cmpint(page->limit, ==, 3);
+  g_assert_cmpstr(page->p, ==, hex[2]);
+  g_assert_null(find_req(&f.rec, INBOX_B, TRUE)); /* B held fewer than a page */
+  g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_BACKFILLING);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_BACKFILLING);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_B, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
+  gh_test_spin_until(settled, f.inbox);
+  g_assert_false(has_checkpoint(&f, 2)); /* older wraps may be unfetched */
+
+  /* until is inclusive: the boundary wrap comes again and is skipped. The
+   * page is full, so the next one starts at its oldest. */
+  deliver_page(&f, INBOX_A, wraps[2]);
+  deliver_page(&f, INBOX_A, wraps[3]);
+  deliver_page(&f, INBOX_A, wraps[4]);
+  gh_relay_scope_eose(page->scope, INBOX_A);
+  Req *next = wait_page(&f.rec, INBOX_A, 2);
+  g_assert_true(page->closed);
+  g_assert_cmpint(next->until, ==, now - 50 * HOUR);
+  g_assert_cmpint(next->since, ==, gh_dm_inbox_get_since(f.inbox));
+  gh_test_spin_until(settled, f.inbox);
+  g_assert_false(has_checkpoint(&f, 2));
+
+  /* A short page: the relay is fully fetched and the checkpoint moves. */
+  deliver_page(&f, INBOX_A, wraps[4]);
+  deliver_page(&f, INBOX_A, wraps[5]);
+  gh_relay_scope_eose(next->scope, INBOX_A);
+  gh_test_spin_until(live_and_settled, f.inbox);
+  g_assert_true(next->closed);
+  g_assert_cmpuint(count_pages(&f.rec, INBOX_A), ==, 2);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
+  GhDmInboxCounters c = counters(f.inbox);
+  g_assert_cmpuint(c.admitted, ==, 6);
+  g_assert_cmpuint(c.skipped, ==, 2);
+  g_assert_cmpuint(c.pages, ==, 2);
+  g_assert_cmpuint(c.backfill_incomplete, ==, 0);
+  g_assert_cmpuint(f.signer.calls, ==, 12);
+  g_assert_true(has_checkpoint(&f, 2));
+  for (guint i = 0; i < G_N_ELEMENTS(wraps); i++)
+    g_free(wraps[i]);
+  fixture_down(&f);
+}
+
+/* At most max_pages pages per run: a relay that still returns full pages is
+ * INCOMPLETE and holds the checkpoint. Its next EOSE (after a reconnect)
+ * pages it again; a failed page is incomplete too. */
+static void
+test_backfill_page_bound(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  gh_dm_inbox_set_backfill_limits(f.inbox, 2, 2);
+  publish_list(&f, 2, 10050, INBOX_A, NULL);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  guint salt = 0;
+  for (guint i = 1; i <= 2; i++) {
+    g_autofree gchar *junk = junk_wrap(now - i * HOUR, salt++);
+    deliver(&f, INBOX_A, junk);
+  }
+  eose(&f, INBOX_A);
+  for (guint n = 1; n <= 2; n++) {
+    Req *page = wait_page(&f.rec, INBOX_A, n);
+    g_assert_cmpint(page->until, ==, now - (gint64)(2 * n) * HOUR);
+    for (guint i = 1; i <= 2; i++) {
+      g_autofree gchar *junk = junk_wrap(now - (gint64)(2 * n + i) * HOUR, salt++);
+      gh_relay_scope_event(page->scope, INBOX_A, junk);
+    }
+    gh_relay_scope_eose(page->scope, INBOX_A);
+  }
+  gh_test_spin_until(live_and_settled, f.inbox);
+  const gchar *detail = NULL;
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, &detail), ==, GH_DM_INBOX_RELAY_INCOMPLETE);
+  g_assert_nonnull(detail);
+  g_assert_null(find_req(&f.rec, INBOX_A, TRUE)); /* no third page */
+  GhDmInboxCounters c = counters(f.inbox);
+  g_assert_cmpuint(c.pages, ==, 2);
+  g_assert_cmpuint(c.backfill_incomplete, ==, 1);
+  g_assert_cmpuint(c.rejected, ==, 6);
+  g_assert_cmpuint(f.signer.calls, ==, 0);
+  g_assert_false(has_checkpoint(&f, 2));
+
+  /* A reconnect: the relay has delivered a page's worth, so its EOSE pages
+   * it again, from now (nothing new was delivered on this connection). This
+   * page fails: still incomplete. */
+  Req *live = open_req(&f.rec, INBOX_A);
+  gh_relay_scope_notice(live->scope, INBOX_A, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_CONNECTING);
+  gint64 before = g_get_real_time() / G_USEC_PER_SEC;
+  gh_relay_scope_eose(live->scope, INBOX_A);
+  Req *page = wait_page(&f.rec, INBOX_A, 3);
+  g_assert_cmpint(page->until, >=, before);
+  gh_relay_scope_notice(page->scope, INBOX_A, GH_RELAY_NOTICE_CLOSED, NULL, FALSE,
+                        "error: shutting down");
+  RelayWait incomplete = { f.inbox, INBOX_A, GH_DM_INBOX_RELAY_INCOMPLETE };
+  gh_test_spin_until(relay_reached, &incomplete);
+  g_assert_cmpuint(counters(f.inbox).backfill_incomplete, ==, 2);
+  g_assert_false(has_checkpoint(&f, 2));
+
+  /* The next reconnect's page comes back short: complete at last. */
+  gh_relay_scope_notice(live->scope, INBOX_A, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  gh_relay_scope_eose(live->scope, INBOX_A);
+  page = wait_page(&f.rec, INBOX_A, 4);
+  gh_relay_scope_eose(page->scope, INBOX_A);
+  RelayWait live_again = { f.inbox, INBOX_A, GH_DM_INBOX_RELAY_LIVE };
+  gh_test_spin_until(relay_reached, &live_again);
+  g_assert_true(has_checkpoint(&f, 2));
+  fixture_down(&f);
+}
+
+/* More than a page in one second cannot be paged with until: the run steps
+ * over that second and the relay stays incomplete. */
+static void
+test_backfill_tied_second(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  gh_dm_inbox_set_backfill_limits(f.inbox, 2, GH_DM_INBOX_MAX_PAGES);
+  publish_list(&f, 2, 10050, INBOX_A, NULL);
+  gint64 tied = g_get_real_time() / G_USEC_PER_SEC - 5 * HOUR;
+  g_autofree gchar *one = junk_wrap(tied, 1);
+  g_autofree gchar *two = junk_wrap(tied, 2);
+  deliver(&f, INBOX_A, one);
+  deliver(&f, INBOX_A, two);
+  eose(&f, INBOX_A);
+  Req *page = wait_page(&f.rec, INBOX_A, 1);
+  g_assert_cmpint(page->until, ==, tied);
+  gh_relay_scope_event(page->scope, INBOX_A, one);
+  gh_relay_scope_event(page->scope, INBOX_A, two);
+  gh_relay_scope_eose(page->scope, INBOX_A);
+  Req *next = wait_page(&f.rec, INBOX_A, 2);
+  g_assert_true(page->closed);
+  g_assert_cmpint(next->until, ==, tied - 1);
+  gh_relay_scope_eose(next->scope, INBOX_A);
+  RelayWait incomplete = { f.inbox, INBOX_A, GH_DM_INBOX_RELAY_INCOMPLETE };
+  gh_test_spin_until(relay_reached, &incomplete);
+  g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_LIVE);
+  g_assert_cmpuint(counters(f.inbox).backfill_incomplete, ==, 1);
+  gh_test_spin_until(settled, f.inbox);
+  g_assert_false(has_checkpoint(&f, 2));
+  fixture_down(&f);
+}
+
+/* ---- rejected wraps (nostrc-qp24.10.11) -------------------------------------- */
+
+/* A wrap finally rejected after a signer call is recorded, so a restart
+ * skips it before any signer call; one rejected before any signer call is
+ * not recorded (rejecting it again is free). */
+static void
+test_rejected_not_reprompted(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  go_live(&f);
+  Craft forged = { .author = 1, .seal_signer = 3, .to = 2, .p = { 2 }, .created_at = 10,
+                   .content = "impostor" };
+  Craft kind15 = { .author = 1, .to = 2, .p = { 2 }, .created_at = 11, .content = "file",
+                   .kind = 15 };
+  Craft outsider = { .author = 3, .to = 2, .p = { 1 }, .created_at = 12, .content = "cc" };
+  Craft wrong_p = { .author = 3, .to = 1, .p = { 1 }, .created_at = 13, .content = "x" };
+  g_autofree gchar *forged_wrap = craft_wrap(&forged, NULL);
+  g_autofree gchar *kind15_wrap = craft_wrap(&kind15, NULL);
+  g_autofree gchar *outsider_wrap = craft_wrap(&outsider, NULL);
+  g_autofree gchar *wrong_p_wrap = craft_wrap(&wrong_p, NULL);
+  const gchar *all[] = { forged_wrap, kind15_wrap, outsider_wrap, wrong_p_wrap };
+  for (guint i = 0; i < G_N_ELEMENTS(all); i++)
+    deliver(&f, INBOX_A, all[i]);
+  gh_test_spin_until(settled, f.inbox);
+  /* Sender mismatch, kind 15 and a rumor not addressed to the account each
+   * cost two signer calls; the wrong outer p none. */
+  g_assert_cmpuint(counters(f.inbox).rejected, ==, 4);
+  g_assert_cmpuint(f.signer.calls, ==, 6);
+  g_assert_cmpuint(seen_lines(&f, 2, "x "), ==, 3);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 0);
+
+  /* Restart: the rejected wraps are skipped before any signer call. */
+  gh_test_release(f.inbox);
+  g_object_unref(f.store);
+  f.store = gh_conversation_store_new();
+  f.inbox = new_inbox(&f);
+  for (guint i = 0; i < G_N_ELEMENTS(all); i++)
+    deliver(&f, INBOX_B, all[i]);
+  gh_test_spin_until(settled, f.inbox);
+  GhDmInboxCounters c = counters(f.inbox);
+  g_assert_cmpuint(c.skipped, ==, 3);
+  g_assert_cmpuint(c.rejected, ==, 1);
+  g_assert_cmpuint(c.admitted, ==, 0);
+  g_assert_cmpuint(f.signer.calls, ==, 6);
+  fixture_down(&f);
+}
+
+/* ---- NIP-42 AUTH on own inbox relays (nostrc-qp24.10.12) ---------------------- */
+
+static gchar *
+verified_auth_id(Req *req, guint index, const gchar *url, const gchar *challenge)
+{
+  g_assert_cmpuint(index, <, req->auth->len);
+  gchar id[65] = { 0 };
+  g_autoptr(GError) error = NULL;
+  /* Signed as the account itself, for exactly this relay and challenge. */
+  g_assert_true(gh_relay_auth_verify_signed(g_ptr_array_index(req->auth, index), url,
+                                            challenge, hex[2],
+                                            g_get_real_time() / G_USEC_PER_SEC, id,
+                                            &error));
+  g_assert_no_error(error);
+  return g_strdup(id);
+}
+
+static void
+require_auth(Req *req, const gchar *challenge)
+{
+  gh_relay_scope_auth_challenge(req->scope, req->url, challenge);
+  gh_relay_scope_notice(req->scope, req->url, GH_RELAY_NOTICE_CLOSED, NULL, FALSE,
+                        "auth-required: sign in to read your messages");
+}
+
+typedef struct {
+  Req *req;
+  guint count;
+} AuthWait;
+
+static gboolean
+auths_sent(gpointer data)
+{
+  AuthWait *wait = data;
+  return wait->req->auth->len >= wait->count;
+}
+
+/* An own inbox relay that serves kind 1059 only to its signed-in owner gets
+ * one AUTH signed by the account and serves the re-issued REQ; a declined
+ * sign-in is explained per relay and not asked again this session. */
+static void
+test_auth_own_inbox(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  publish_list(&f, 2, 10002, HOME, NULL);
+  publish_list(&f, 2, 10050, INBOX_A, INBOX_B, NULL);
+  Req *a = open_req(&f.rec, INBOX_A);
+  Req *b = open_req(&f.rec, INBOX_B);
+
+  /* A challenges and refuses the REQ; the user is asked once. */
+  f.signer.hold = TRUE;
+  require_auth(a, "challenge-a");
+  HeldWait one = { &f.signer, 1 };
+  gh_test_spin_until(held_reached, &one);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==,
+                  GH_DM_INBOX_RELAY_WAITING_FOR_APPROVAL);
+  g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_CONNECTING);
+  gh_test_signer_release_one(&f.signer);
+  f.signer.hold = FALSE;
+  gh_test_spin_until(auth_sent, a);
+  g_autofree gchar *id = verified_auth_id(a, 0, INBOX_A, "challenge-a");
+  g_assert_cmpuint(a->resubscribes, ==, 0);
+  gh_relay_scope_notice(a->scope, INBOX_A, GH_RELAY_NOTICE_OK, id, TRUE, "");
+  g_assert_cmpuint(a->resubscribes, ==, 1);
+
+  /* The re-issued REQ is served. */
+  Craft craft = { .author = 1, .to = 2, .p = { 2 }, .created_at = 1000, .content = "behind auth" };
+  g_autofree gchar *wrap = craft_wrap(&craft, NULL);
+  deliver(&f, INBOX_A, wrap);
+  eose(&f, INBOX_A);
+  eose(&f, INBOX_B);
+  gh_test_spin_until(live_and_settled, f.inbox);
+  g_assert_cmpuint(counters(f.inbox).admitted, ==, 1);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
+  g_assert_cmpuint(f.signer.calls, ==, 3); /* one AUTH, two decrypts */
+
+  /* B, after a reconnect, wants AUTH too; the user declines. */
+  gh_relay_scope_notice(b->scope, INBOX_B, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  f.signer.deny = TRUE;
+  require_auth(b, "challenge-b");
+  RelayWait refused = { f.inbox, INBOX_B, GH_DM_INBOX_RELAY_AUTH_REQUIRED };
+  gh_test_spin_until(relay_reached, &refused);
+  const gchar *detail = NULL;
+  relay_state(f.inbox, INBOX_B, &detail);
+  g_assert_nonnull(strstr(detail, "declined"));
+  g_assert_cmpuint(b->auth->len, ==, 0);
+  g_assert_cmpuint(f.signer.calls, ==, 4);
+  g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_LIVE);
+
+  /* Declined is remembered for the session: the next challenge on B fails
+   * without asking the signer. */
+  f.signer.deny = FALSE;
+  gh_relay_scope_notice(b->scope, INBOX_B, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  require_auth(b, "challenge-b2");
+  gh_test_spin_until(relay_reached, &refused);
+  drain();
+  g_assert_cmpuint(f.signer.calls, ==, 4);
+  g_assert_cmpuint(b->auth->len, ==, 0);
+
+  /* A, approved before, may sign again after its reconnect. */
+  gh_relay_scope_notice(a->scope, INBOX_A, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  require_auth(a, "challenge-a2");
+  AuthWait second = { a, 2 };
+  gh_test_spin_until(auths_sent, &second);
+  g_autofree gchar *id2 = verified_auth_id(a, 1, INBOX_A, "challenge-a2");
+  g_assert_cmpuint(f.signer.calls, ==, 5);
+
+  /* Nothing but the account's own 10050 relays was ever asked for DMs or
+   * sent an AUTH (the recorder refuses AUTH anywhere else). */
+  for (guint i = 0; i < f.rec.reqs->len; i++) {
+    Req *req = g_ptr_array_index(f.rec.reqs, i);
+    g_assert_true(g_str_equal(req->url, INBOX_A) || g_str_equal(req->url, INBOX_B));
+  }
+  fixture_down(&f);
+}
+
+typedef struct {
+  gboolean done;
+  gchar *signed_json;
+  GError *error;
+} AttemptResult;
+
+static void
+on_attempt(gpointer owner, const gchar *signed_json, const gchar *event_id,
+           const GError *error)
+{
+  AttemptResult *result = owner;
+  (void)event_id;
+  result->done = TRUE;
+  result->signed_json = g_strdup(signed_json);
+  result->error = error ? g_error_copy(error) : NULL;
+}
+
+static gboolean
+attempt_done(gpointer data)
+{
+  return ((AttemptResult *)data)->done;
+}
+
+static void
+attempt_clear(AttemptResult *result)
+{
+  g_free(result->signed_json);
+  g_clear_error(&result->error);
+}
+
+/* Approves the parked AUTH signature for challenge: each signer call opens
+ * its own connection, so parked calls of different relays arrive in any
+ * order. */
+static void
+release_challenge(GhTestSigner *mock, const gchar *challenge)
+{
+  for (guint i = 0; i < mock->held->len; i++) {
+    GDBusMethodInvocation *invocation = g_ptr_array_index(mock->held, i);
+    const gchar *event = NULL;
+    g_variant_get(g_dbus_method_invocation_get_parameters(invocation), "(&sss)", &event,
+                  NULL, NULL);
+    if (!strstr(event, challenge))
+      continue;
+    g_object_ref(invocation);
+    g_ptr_array_remove_index(mock->held, i);
+    gh_test_signer_answer(mock, invocation);
+    g_object_unref(invocation);
+    return;
+  }
+  g_assert_not_reached();
+}
+
+static GhRelayAuthAttempt *
+start_attempt(GhAccountAuth *auth, const gchar *url, const gchar *challenge,
+              AttemptResult *result)
+{
+  g_autoptr(GError) error = NULL;
+  GhRelayAuthAttempt *attempt = gh_relay_auth_attempt_start(
+    GH_RELAY_AUTH_ACCOUNT, gh_account_auth_get_signer(auth), gh_account_auth_get_generation(auth),
+    url, challenge, on_attempt, result, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(attempt);
+  return attempt;
+}
+
+/* R6: one signer request per relay at a time; a denial fails the requests
+ * waiting behind it and every later one without a signer call; relays are
+ * independent; an account switch revokes the adapter. */
+static void
+test_auth_one_prompt_per_relay(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  g_autoptr(GhAccountAuth) auth = gh_account_auth_new(f.accounts);
+  g_assert_nonnull(auth);
+  AttemptResult a1 = { 0 }, a2 = { 0 }, b1 = { 0 }, a3 = { 0 };
+  f.signer.hold = TRUE;
+  start_attempt(auth, INBOX_A, "challenge-a1", &a1);
+  start_attempt(auth, INBOX_A, "challenge-a2", &a2); /* another connection to A */
+  start_attempt(auth, INBOX_B, "challenge-b1", &b1);
+  HeldWait both = { &f.signer, 2 };
+  gh_test_spin_until(held_reached, &both);
+  drain();
+  g_assert_cmpuint(f.signer.calls, ==, 2); /* A once, B once: A's second waits */
+  g_assert_cmpint(gh_account_auth_get_relay_state(auth, INBOX_A), ==,
+                  GH_ACCOUNT_AUTH_RELAY_WAITING);
+  g_assert_cmpint(gh_account_auth_get_relay_state(auth, INBOX_C), ==,
+                  GH_ACCOUNT_AUTH_RELAY_NONE);
+
+  /* Approving A's first lets A's second ask. */
+  release_challenge(&f.signer, "challenge-a1");
+  gh_test_spin_until(attempt_done, &a1);
+  g_assert_no_error(a1.error);
+  g_assert_nonnull(a1.signed_json);
+  HeldWait again = { &f.signer, 2 };
+  gh_test_spin_until(held_reached, &again);
+  g_assert_cmpuint(f.signer.calls, ==, 3);
+
+  /* Both denied: A becomes DECLINED although it was approved before, and a
+   * later challenge fails without a signer call. */
+  f.signer.deny = TRUE;
+  gh_test_signer_release_all(&f.signer);
+  gh_test_spin_until(attempt_done, &a2);
+  gh_test_spin_until(attempt_done, &b1);
+  g_assert_error(a2.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_assert_error(b1.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_assert_cmpint(gh_account_auth_get_relay_state(auth, INBOX_A), ==,
+                  GH_ACCOUNT_AUTH_RELAY_DECLINED);
+  f.signer.deny = FALSE;
+  start_attempt(auth, INBOX_A, "challenge-a3", &a3);
+  gh_test_spin_until(attempt_done, &a3);
+  g_assert_error(a3.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_assert_cmpuint(f.signer.calls, ==, 3);
+
+  /* Requests waiting behind a denial share it. */
+  AttemptResult c1 = { 0 }, c2 = { 0 };
+  f.signer.hold = TRUE;
+  start_attempt(auth, INBOX_C, "challenge-c1", &c1);
+  start_attempt(auth, INBOX_C, "challenge-c2", &c2);
+  HeldWait c_held = { &f.signer, 1 };
+  gh_test_spin_until(held_reached, &c_held);
+  drain();
+  f.signer.deny = TRUE;
+  gh_test_signer_release_all(&f.signer);
+  gh_test_spin_until(attempt_done, &c1);
+  gh_test_spin_until(attempt_done, &c2);
+  g_assert_error(c1.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_assert_error(c2.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_assert_cmpuint(f.signer.calls, ==, 4); /* c2 never asked */
+  f.signer.deny = FALSE;
+
+  /* An account switch revokes the adapter: a pending request fails, and the
+   * signer of the old generation signs nothing more. */
+  AttemptResult d1 = { 0 };
+  start_attempt(auth, "wss://inbox-d.test.invalid", "challenge-d1", &d1);
+  HeldWait d_held = { &f.signer, 1 };
+  gh_test_spin_until(held_reached, &d_held);
+  g_assert_true(gh_account_controller_select(f.accounts, npub[1], NULL));
+  gh_test_spin_until(attempt_done, &d1);
+  g_assert_nonnull(d1.error);
+  g_assert_null(d1.signed_json);
+  g_assert_true(gh_relay_auth_signer_is_revoked(gh_account_auth_get_signer(auth)));
+  g_autoptr(GError) error = NULL;
+  g_assert_null(gh_relay_auth_attempt_start(GH_RELAY_AUTH_ACCOUNT,
+    gh_account_auth_get_signer(auth), gh_account_auth_get_generation(auth), INBOX_A, "late",
+    on_attempt, &d1, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  f.signer.hold = FALSE;
+  gh_test_signer_release_all(&f.signer);
+  drain();
+  g_assert_cmpuint(f.signer.calls, ==, 5);
+  AttemptResult *all[] = { &a1, &a2, &b1, &a3, &c1, &c2, &d1 };
+  for (guint i = 0; i < G_N_ELEMENTS(all); i++)
+    attempt_clear(all[i]);
+  g_clear_object(&auth);
   fixture_down(&f);
 }
 
@@ -844,6 +1560,13 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/dm-inbox/relay-change-reopens", test_relay_change_reopens);
   g_test_add_func("/groundhog/dm-inbox/signer-denied-defers", test_signer_denied_defers);
   g_test_add_func("/groundhog/dm-inbox/unusable-seen-set", test_unusable_seen_set);
+  g_test_add_func("/groundhog/dm-inbox/backfill-paging", test_backfill_paging);
+  g_test_add_func("/groundhog/dm-inbox/backfill-page-bound", test_backfill_page_bound);
+  g_test_add_func("/groundhog/dm-inbox/backfill-tied-second", test_backfill_tied_second);
+  g_test_add_func("/groundhog/dm-inbox/rejected-not-reprompted", test_rejected_not_reprompted);
+  g_test_add_func("/groundhog/dm-inbox/auth-own-inbox", test_auth_own_inbox);
+  g_test_add_func("/groundhog/dm-inbox/auth-one-prompt-per-relay",
+                  test_auth_one_prompt_per_relay);
   int status = g_test_run();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {
     g_free(npub[key]);

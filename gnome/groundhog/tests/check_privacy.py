@@ -32,6 +32,14 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
                         gh_account_relays_get_write_relays. (PD-4)
   nip17-no-10002        The same sources never name kind 10002 or NIP-65.
                         (PD-4)
+  lookup-sources        Recipient lookup sources (gh-inbox-lookup*, later
+                        gh-contact-directory*) never reference the account's
+                        own relays: gh_account_relays_get_read_relays,
+                        _write_relays or _inbox_relays. (§4.3, PD-12)
+  account-auth-purpose  NIP-42 AUTH as the account (GH_RELAY_AUTH_ACCOUNT,
+                        gh_relay_{scope,publish}_set_account_signer,
+                        GhAccountAuth) appears only in ACCOUNT_AUTH_FILES,
+                        each listed with its §4.3 purpose. (§4.4 R1)
   message-status        GhMessageStatus has no DELIVERED, READ or SEEN value.
                         (PD-1, PT-1)
   app-id                GROUNDHOG_APP_ID in src/, the schema id and path, and
@@ -44,9 +52,12 @@ and pick their targets: gh-dm-send*, gh-nip17-*, gh-inbox-resolver* (the
 recipient-target seam) and gh-outbox* (G06). Charter PD-4 says a wrap goes only
 to the recipient's kind-10050 relays and the self-copy only to the account's
 own 10050 relays, with no kind-10002 fallback. The recipient inbox lookup
-(gh-inbox-lookup*, later G10's gh-contact-directory*) is deliberately exempt:
-it is a discovery connection (§4.3) that may ask NIP-65 relays for the
-recipient's kind 10050, and only the 10050 it finds can become a target.
+(gh-inbox-lookup*, later G10's gh-contact-directory*) is deliberately exempt
+from those two rules: it is a contact-directory connection (§4.3) that may
+later ask the contact's own kind-10002 write relays for their kind 10050, and
+only the 10050 it finds can become a target. Its sources are discovery-relays
+and those contact relays, never the account's own relays, which would learn
+whom the account is about to message (lookup-sources).
 
 Exceptions: a finding from any rule except gsettings-allowlist, app-id and
 message-status (which have their own pinned specifications) can be allowed by
@@ -75,7 +86,7 @@ SCHEMA_FILE = f"data/{APP_ID}.gschema.xml"
 RULES = (
     "url-literal", "gsettings-allowlist", "blueprint-denylist", "libsoup-boundary",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
-    "message-status", "app-id", "exceptions",
+    "lookup-sources", "account-auth-purpose", "message-status", "app-id", "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "exceptions"}
@@ -143,6 +154,16 @@ BLUEPRINT_DENYLIST = {
 
 LIBSOUP_DIRS = ("src/net/", "src/media/")
 NIP17_PUBLICATION = re.compile(r"^(?:gh-dm-send|gh-nip17-|gh-inbox-resolver|gh-outbox)")
+LOOKUP_SOURCES = re.compile(r"^(?:gh-inbox-lookup|gh-contact-directory)")
+# The only files that may authenticate as the account (charter §4.4 R1), by
+# path prefix, each with its §4.3 purpose. A new caller needs a purpose the
+# charter allows (own inbox, own list publish, own self-copy publish, NIP-29
+# group relays) and an entry here.
+ACCOUNT_AUTH_FILES = {
+    "src/relay/": "the NIP-42 mechanism; callers choose the identity per URL",
+    "src/app/gh-account-auth.": "GhAccountAuth, the account's generation-bound AUTH signer",
+    "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
+}
 FORBIDDEN_STATUS_WORDS = {"DELIVERED", "READ", "SEEN"}
 
 URL_RE = re.compile(r"\b(?:wss?|https?)://[^\s\"'\\<>]+", re.I)
@@ -156,6 +177,10 @@ TMP_API_RE = re.compile(
     r"|mkstemps?|mkostemps?|mkdtemp|tmpfile|tmpnam|tempnam)\b")
 TMP_ENV_RE = re.compile(r"\"(?:TMPDIR|TMP|TEMP|TEMPDIR|XDG_CACHE_HOME|XDG_RUNTIME_DIR)\"")
 ACCOUNT_RELAY_GETTER_RE = re.compile(r"\bgh_account_relays_get_(?:read|write)_relays\b")
+OWN_RELAY_GETTER_RE = re.compile(r"\bgh_account_relays_get_(?:read|write|inbox)_relays\b")
+ACCOUNT_AUTH_RE = re.compile(
+    r"\bGH_RELAY_AUTH_ACCOUNT\b|\bgh_relay_(?:scope|publish)_set_account_signer\b"
+    r"|\bgh_account_auth_\w+|\bGhAccountAuth\w*")
 KIND_10002_RE = re.compile(r"\b10002\b|\b\w*KIND_RELAY_LIST\w*|(?i:\b\w*nip_?65\w*)")
 APP_ID_DEFINE_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+GROUNDHOG_APP_ID[ \t]+\"([^\"]*)\"", re.M)
 XML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
@@ -388,6 +413,16 @@ def check_sources(tree):
             found += find_all("nip17-no-10002", rel, keep, KIND_10002_RE,
                               lambda s: f"{s!r} in a NIP-17 publication source: kind 10002 is "
                                         "never a DM target and there is no fallback (PD-4)")
+        if LOOKUP_SOURCES.match(Path(rel).name):
+            found += find_all("lookup-sources", rel, keep, OWN_RELAY_GETTER_RE,
+                              lambda s: f"{s} in a recipient lookup: its sources are "
+                                        "discovery-relays and the contact's own 10002 write "
+                                        "relays, never the account's own relays (§4.3, PD-12)")
+        if not rel.startswith(tuple(ACCOUNT_AUTH_FILES)):
+            found += find_all("account-auth-purpose", rel, code, ACCOUNT_AUTH_RE,
+                              lambda s: f"{s}: AUTH as the account only for a purpose §4.4 R1 "
+                                        "allows; add the file to ACCOUNT_AUTH_FILES with its "
+                                        "§4.3 purpose")
     return found
 
 
@@ -564,12 +599,28 @@ def clean_tree():
             "#include \"gh-nip17-envelope.h\"\n"
             "static const int kinds[] = { 13, 1059, 10050 };\n"),
         "src/app/gh-inbox-resolver.c": "#include \"gh-inbox-resolver.h\"\n",
-        # The lookup is a discovery connection: own NIP-65 relays may be REQ sources.
+        # The lookup is a contact-directory connection: discovery-relays only.
+        # Comments and strings naming what it must not use are near misses.
         "src/app/gh-inbox-lookup.c": (
             "#include \"gh-inbox-lookup.h\"\n"
-            "static void sources(GPtrArray *urls, GhAccountRelays *relays) {\n"
-            "  add(urls, gh_account_relays_get_read_relays(relays));\n"
-            "  add(urls, gh_account_relays_get_write_relays(relays));\n"
+            "/* Never gh_account_relays_get_read_relays(), and no GH_RELAY_AUTH_ACCOUNT. */\n"
+            "static gchar **sources(GSettings *s) {\n"
+            "  return g_settings_get_strv(s, \"discovery-relays\");\n"
+            "}\n"
+            "static const int mode = GH_RELAY_AUTH_NONE;\n"
+            "static const char *const why = \"no GH_RELAY_AUTH_ACCOUNT on others' relays\";\n"),
+        # Account AUTH where §4.3 allows it: the mechanism, its adapter, own inbox.
+        "src/relay/gh-relay-auth.h": (
+            "typedef enum { GH_RELAY_AUTH_NONE, GH_RELAY_AUTH_EPHEMERAL,\n"
+            "               GH_RELAY_AUTH_ACCOUNT } GhRelayAuthMode;\n"),
+        "src/app/gh-account-auth.c": (
+            "#include \"gh-account-auth.h\"\n"
+            "G_DEFINE_FINAL_TYPE(GhAccountAuth, gh_account_auth, G_TYPE_OBJECT)\n"),
+        "src/app/gh-dm-inbox.c": (
+            "#include \"gh-account-auth.h\"\n"
+            "static int own(GhRelayScope *s, GhAccountAuth *a, const char *u) {\n"
+            "  return gh_relay_scope_set_account_signer(s, gh_account_auth_get_signer(a), NULL) &&\n"
+            "         gh_relay_scope_set_url_auth(s, u, GH_RELAY_AUTH_ACCOUNT, NULL);\n"
             "}\n"),
         "src/app/gh-message-status.h": (
             "/* Honest status: there is deliberately no DELIVERED or READ value. */\n"
@@ -709,6 +760,19 @@ MUTATIONS = [
       [append("src/app/gh-dm-send.c", "#include <nostr/nip65/nip65.h>\n")]),
     M("nip17-resolver-kind-constant", {"nip17-no-10002"},
       [append("src/app/gh-inbox-resolver.c", "static const int k = NOSTR_KIND_RELAY_LIST_METADATA;\n")]),
+    M("lookup-own-read-relays", {"lookup-sources"},
+      [append("src/app/gh-inbox-lookup.c",
+              "static const gchar *const *r(GhAccountRelays *a) { return gh_account_relays_get_read_relays(a); }\n")]),
+    M("directory-own-inbox-relays", {"lookup-sources"},
+      [append("src/app/gh-contact-directory.c",
+              "static void *getter = (void *)gh_account_relays_get_inbox_relays;\n")]),
+    M("account-auth-lookup", {"account-auth-purpose"},
+      [append("src/app/gh-inbox-lookup.c", "static const int account = GH_RELAY_AUTH_ACCOUNT;\n")]),
+    M("account-auth-send-signer", {"account-auth-purpose"},
+      [append("src/app/gh-dm-send.c",
+              "static void *s(GhAccountAuth *a) { return gh_account_auth_get_signer(a); }\n")]),
+    M("account-auth-publish-signer", {"account-auth-purpose"},
+      [append("src/app/gh-outbox.c", "static void *f = (void *)gh_relay_publish_set_account_signer;\n")]),
     M("status-delivered", {"message-status"},
       [replace("src/app/gh-message-status.h", "  GH_MESSAGE_STATUS_SENDING,\n",
                "  GH_MESSAGE_STATUS_SENDING,\n  GH_MESSAGE_STATUS_DELIVERED,\n")]),

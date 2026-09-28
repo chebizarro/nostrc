@@ -23,6 +23,7 @@ typedef struct {
   gchar *seal_pubkey;
   gint64 wrap_expiration;
   gint64 seal_expiration;
+  guint signer_calls;
 } Unwrap;
 
 static void
@@ -231,6 +232,7 @@ gh_nip17_unwrap_async(GhAccountController *accounts, const gchar *wrap_json,
     return;
   }
   unwrap->wrap_id = g_strdup(wrap_id);
+  unwrap->signer_calls++;
   gh_account_controller_nip44_decrypt_with_cancellable_async(
     accounts, nostr_event_get_content(wrap), nostr_event_get_pubkey(wrap),
     cancellable, wrap_decrypted, task);
@@ -260,6 +262,7 @@ wrap_decrypted(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   unwrap->seal_pubkey = g_strdup(nostr_event_get_pubkey(seal));
+  unwrap->signer_calls++;
   gh_account_controller_nip44_decrypt_with_cancellable_async(
     g_task_get_source_object(task), nostr_event_get_content(seal), unwrap->seal_pubkey,
     g_task_get_cancellable(task), seal_decrypted, task);
@@ -398,16 +401,25 @@ gh_nip17_unwrap_finish(GAsyncResult *result, GError **error)
   return message;
 }
 
+guint
+gh_nip17_unwrap_get_signer_calls(GAsyncResult *result)
+{
+  g_return_val_if_fail(G_IS_TASK(result), 0);
+  g_return_val_if_fail(g_task_get_source_tag(G_TASK(result)) == gh_nip17_unwrap_async, 0);
+  Unwrap *unwrap = g_task_get_task_data(G_TASK(result));
+  return unwrap ? unwrap->signer_calls : 0;
+}
+
 /* ---- restart-safe seen-set ------------------------------------------------ */
 
 #define SEEN_MAGIC "groundhog-nip17-seen 1 "
-#define SEEN_LINE 67 /* "w " or "r " + 64 hex + "\n" */
+#define SEEN_LINE 67 /* "w ", "r " or "x " + 64 hex + "\n" */
 
 struct _GhNip17Seen {
   gchar *path;
   gchar *account;
   guint capacity;
-  GHashTable *keys; /* "w<id>" / "r<id>" -> same string in order */
+  GHashTable *keys; /* "w<id>" / "r<id>" / "x<id>" -> same string in order */
   GQueue order;     /* oldest first; owns the key strings */
   guint file_lines; /* entry lines currently in the file */
   gboolean needs_rewrite; /* a torn tail must never be appended to */
@@ -489,7 +501,8 @@ gh_nip17_seen_open(const gchar *path, const gchar *account_pubkey_hex, guint cap
       break;
     }
     g_autofree gchar *id = g_strndup(line + 2, MAX(newline - line - 2, 0));
-    if (newline - line != SEEN_LINE - 1 || (line[0] != 'w' && line[0] != 'r') ||
+    if (newline - line != SEEN_LINE - 1 ||
+        (line[0] != 'w' && line[0] != 'r' && line[0] != 'x') ||
         line[1] != ' ' || !lower_hex64(id)) {
       g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                   "%s contains a malformed entry", path);
@@ -523,6 +536,12 @@ gboolean
 gh_nip17_seen_has_rumor(GhNip17Seen *seen, const gchar *rumor_id)
 {
   return seen_has(seen, 'r', rumor_id);
+}
+
+gboolean
+gh_nip17_seen_has_rejected(GhNip17Seen *seen, const gchar *wrap_id)
+{
+  return seen_has(seen, 'x', wrap_id);
 }
 
 static gboolean
@@ -571,6 +590,34 @@ seen_append(GhNip17Seen *seen, const gchar *lines, guint count, GError **error)
   return TRUE;
 }
 
+/* Inserts the keys (each "<type><id>") that are new, then persists them by
+ * appending, or by an atomic rewrite when the log is new, torn or due for
+ * compaction. */
+static gboolean
+seen_commit(GhNip17Seen *seen, const gchar *const *keys, GError **error)
+{
+  GString *lines = g_string_new(NULL);
+  guint count = 0;
+  for (guint i = 0; keys[i]; i++) {
+    if (seen_has(seen, keys[i][0], keys[i] + 1))
+      continue;
+    g_string_append_printf(lines, "%c %s\n", keys[i][0], keys[i] + 1);
+    count++;
+  }
+  gboolean ok = TRUE;
+  if (count) {
+    gboolean exists = g_file_test(seen->path, G_FILE_TEST_EXISTS);
+    for (guint i = 0; keys[i]; i++)
+      seen_insert(seen, keys[i][0], keys[i] + 1);
+    if (!exists || seen->needs_rewrite || seen->file_lines + count > seen->capacity * 2)
+      ok = seen_rewrite(seen, error);
+    else
+      ok = seen_append(seen, lines->str, count, error);
+  }
+  g_string_free(lines, TRUE);
+  return ok;
+}
+
 gboolean
 gh_nip17_seen_record(GhNip17Seen *seen, const GhNip17Message *message, GError **error)
 {
@@ -581,26 +628,22 @@ gh_nip17_seen_record(GhNip17Seen *seen, const GhNip17Message *message, GError **
                         "Message does not belong to this account's seen-set");
     return FALSE;
   }
-  GString *lines = g_string_new(NULL);
-  guint count = 0;
-  if (!gh_nip17_seen_has_wrap(seen, message->wrap_id)) {
-    g_string_append_printf(lines, "w %s\n", message->wrap_id);
-    count++;
+  g_autofree gchar *wrap_key = g_strconcat("w", message->wrap_id, NULL);
+  g_autofree gchar *rumor_key = g_strconcat("r", message->rumor_id, NULL);
+  const gchar *const keys[] = { wrap_key, rumor_key, NULL };
+  return seen_commit(seen, keys, error);
+}
+
+gboolean
+gh_nip17_seen_record_rejected(GhNip17Seen *seen, const gchar *wrap_id, GError **error)
+{
+  g_return_val_if_fail(seen != NULL, FALSE);
+  if (!lower_hex64(wrap_id)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A lowercase hex wrap id is required");
+    return FALSE;
   }
-  if (!gh_nip17_seen_has_rumor(seen, message->rumor_id)) {
-    g_string_append_printf(lines, "r %s\n", message->rumor_id);
-    count++;
-  }
-  gboolean ok = TRUE;
-  if (count) {
-    gboolean exists = g_file_test(seen->path, G_FILE_TEST_EXISTS);
-    seen_insert(seen, 'w', message->wrap_id);
-    seen_insert(seen, 'r', message->rumor_id);
-    if (!exists || seen->needs_rewrite || seen->file_lines + count > seen->capacity * 2)
-      ok = seen_rewrite(seen, error);
-    else
-      ok = seen_append(seen, lines->str, count, error);
-  }
-  g_string_free(lines, TRUE);
-  return ok;
+  g_autofree gchar *key = g_strconcat("x", wrap_id, NULL);
+  const gchar *const keys[] = { key, NULL };
+  return seen_commit(seen, keys, error);
 }

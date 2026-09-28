@@ -30,6 +30,7 @@
 #define SECRET_BOB   "0000000000000000000000000000000000000000000000000000000000000002"
 #define SECRET_CAROL "0000000000000000000000000000000000000000000000000000000000000003"
 #define DISC        "wss://discovery.test.invalid"
+#define DISC2       "wss://discovery-2.test.invalid"
 #define OWN_READ    "wss://alice-read.test.invalid"
 #define OWN_WRITE   "wss://alice-write.test.invalid"
 #define ALICE_INBOX "wss://alice-inbox.test.invalid"
@@ -500,7 +501,7 @@ fixture_up(Fixture *f)
 {
   bus_up(&f->bus, &f->mock);
   f->settings = g_settings_new("org.nostr.Groundhog");
-  const gchar *sources[] = { DISC, NULL };
+  const gchar *sources[] = { DISC, DISC2, NULL };
   g_settings_set_strv(f->settings, "discovery-relays", sources);
   g_settings_set_string(f->settings, "signer-method", "auto");
   g_settings_set_string(f->settings, "current-npub", npub_alice);
@@ -510,8 +511,7 @@ fixture_up(Fixture *f)
   f->scopes = g_ptr_array_new_with_free_func(scope_open_free);
   f->pubs = g_ptr_array_new_with_free_func(pub_open_free);
   f->relays = gh_account_relays_new(f->accounts, f->settings, &scope_transport, f->scopes);
-  f->lookup = gh_inbox_lookup_new(f->accounts, f->relays, f->settings, &scope_transport,
-                                  f->scopes);
+  f->lookup = gh_inbox_lookup_new(f->accounts, f->settings, &scope_transport, f->scopes);
   f->sender = gh_dm_sender_new(f->accounts, f->relays, GH_INBOX_RESOLVER(f->lookup), &pub_transport, f->pubs);
 }
 
@@ -546,12 +546,13 @@ own_open(Fixture *f, const gchar *author)
   g_assert_not_reached();
 }
 
-/* The account's own relay-list discovery answers on its only source. */
+/* The account's own relay-list discovery answers on its discovery sources.
+ * Its NIP-65 read/write relays are never recipient-lookup sources. */
 static void
 settle_own(Fixture *f, gboolean with_inbox)
 {
   ScopeOpen *open = own_open(f, hex_alice);
-  g_assert_cmpstr(open->url, ==, DISC);
+  g_assert_true(g_str_equal(open->url, DISC) || g_str_equal(open->url, DISC2));
   g_autofree gchar *nip65 = nip65_list(SECRET_ALICE, 100, OWN_READ, OWN_WRITE);
   gh_relay_scope_event(open->scope, DISC, nip65);
   if (with_inbox) {
@@ -559,6 +560,7 @@ settle_own(Fixture *f, gboolean with_inbox)
     gh_relay_scope_event(open->scope, DISC, inbox);
   }
   gh_relay_scope_eose(open->scope, DISC);
+  gh_relay_scope_eose(open->scope, DISC2);
   g_assert_cmpint(gh_account_relays_get_state(f->relays), ==, GH_ACCOUNT_RELAYS_COMPLETE);
 }
 
@@ -583,13 +585,15 @@ lookup_started(gpointer data)
   return FALSE;
 }
 
-/* The open lookup REQs: exactly discovery + own read + own write (in any
- * order), each for bob, all on one scope. */
+/* The open lookup REQs: exactly the discovery-relays (in any order), each
+ * for bob, all on one scope. Never the account's own NIP-65 read/write or
+ * 10050 relays, which would learn whom it is about to message (charter
+ * §4.3, PD-12). */
 static GhRelayScope *
 lookup_scope(Fixture *f)
 {
   GhRelayScope *scope = NULL;
-  const gchar *want[] = { DISC, OWN_READ, OWN_WRITE };
+  const gchar *want[] = { DISC, DISC2 };
   guint seen = 0, n = 0;
   for (guint i = 0; i < f->scopes->len; i++) {
     ScopeOpen *open = g_ptr_array_index(f->scopes, i);
@@ -614,8 +618,7 @@ static void
 eose_all(GhRelayScope *scope)
 {
   gh_relay_scope_eose(scope, DISC);
-  gh_relay_scope_eose(scope, OWN_READ);
-  gh_relay_scope_eose(scope, OWN_WRITE);
+  gh_relay_scope_eose(scope, DISC2);
 }
 
 /* Serves an optional list from the discovery relay, then every source EOSEs. */
@@ -765,14 +768,13 @@ test_happy_path(void)
   g_signal_connect(send, "changed", G_CALLBACK(record_phase), phases);
   const GhDmSendStatus *status = gh_dm_send_get_status(send);
 
-  /* The lookup waits for the account's own lists, since its read/write
-   * relays are lookup sources. */
+  /* The send waits for the account's own lists (its self-copy targets). */
   drain();
   g_assert_cmpint(status->phase, ==, GH_DM_SEND_PHASE_RESOLVING);
   g_assert_cmpuint(lookup_opens(&f), ==, 0);
   settle_own(&f, TRUE);
   spin_until(lookup_started, &f);
-  g_assert_cmpuint(lookup_opens(&f), ==, 3);
+  g_assert_cmpuint(lookup_opens(&f), ==, 2);
 
   /* Bob's list: invalid and duplicate entries are dropped. */
   g_autofree gchar *list_id = NULL;
@@ -842,7 +844,7 @@ test_happy_path(void)
   /* A second message reuses this generation's cached inbox: no new REQ. */
   GhDmSend *again = gh_dm_sender_send(f.sender, hex_bob, "again", NULL);
   spin_until(send_publishing, again);
-  g_assert_cmpuint(lookup_opens(&f), ==, 3);
+  g_assert_cmpuint(lookup_opens(&f), ==, 2);
   assert_pub_urls(&f, hex_bob, BOB_A, BOB_B, NULL);
   relay_ok(&f, hex_bob, BOB_A, TRUE, "");
   relay_ok(&f, hex_bob, BOB_B, TRUE, "");
@@ -910,8 +912,8 @@ test_forged_inbox_ignored(void)
   gint64 future = g_get_real_time() / G_USEC_PER_SEC + 24 * 3600;
   g_autofree gchar *pinned = inbox_list(SECRET_BOB, future, UNRELATED, NULL);
 
-  GhDmSend *send = send_after_lookup(&f, TRUE, "hello", carol, DISC, tampered, OWN_READ,
-                                     wrong_kind, OWN_WRITE, pinned, DISC, NULL);
+  GhDmSend *send = send_after_lookup(&f, TRUE, "hello", carol, DISC, tampered, DISC2,
+                                     wrong_kind, DISC2, pinned, DISC, NULL);
   spin_until(send_done, send);
   g_assert_cmpint(gh_dm_send_get_status(send)->result, ==,
                   GH_DM_SEND_RESULT_NO_RECIPIENT_INBOX);
@@ -923,8 +925,8 @@ test_forged_inbox_ignored(void)
   spin_until(lookup_started, &f);
   GhRelayScope *scope = lookup_scope(&f);
   gh_relay_scope_event(scope, DISC, carol);
-  gh_relay_scope_event(scope, OWN_READ, genuine);
-  gh_relay_scope_event(scope, OWN_WRITE, pinned);
+  gh_relay_scope_event(scope, DISC2, genuine);
+  gh_relay_scope_event(scope, DISC2, pinned);
   gh_relay_scope_event(scope, DISC, wrong_kind);
   eose_all(scope);
   spin_until(send_publishing, second);
@@ -943,7 +945,7 @@ test_newest_wins(void)
   fixture_up(&f);
   g_autofree gchar *newer = inbox_list(SECRET_BOB, 200, BOB_B, NULL);
   g_autofree gchar *older = inbox_list(SECRET_BOB, 100, BOB_A, NULL);
-  GhDmSend *send = send_after_lookup(&f, TRUE, "hello", newer, OWN_READ, older, DISC, NULL);
+  GhDmSend *send = send_after_lookup(&f, TRUE, "hello", newer, DISC2, older, DISC, NULL);
   spin_until(send_publishing, send);
   assert_pub_urls(&f, hex_bob, BOB_B, NULL);
   gh_dm_send_cancel(send);
@@ -958,7 +960,7 @@ test_newest_wins(void)
   spin_until(lookup_started, &f);
   GhRelayScope *scope = lookup_scope(&f);
   gh_relay_scope_event(scope, DISC, newer);
-  gh_relay_scope_event(scope, OWN_WRITE, withdrawn);
+  gh_relay_scope_event(scope, DISC2, withdrawn);
   eose_all(scope);
   spin_until(send_done, second);
   g_assert_cmpint(gh_dm_send_get_status(second)->result, ==,
@@ -1064,11 +1066,15 @@ test_lookup_unreachable(void)
   GhDmSend *send = gh_dm_sender_send(f.sender, hex_bob, "hello", NULL);
   spin_until(lookup_started, &f);
   GhRelayScope *scope = lookup_scope(&f);
+  /* A discovery relay that wants AUTH gets none and fails as a source: the
+   * lookup's URLs keep the default NONE identity (and check_privacy.py keeps
+   * account AUTH out of the lookup), so nothing is signed. */
+  gh_relay_scope_auth_challenge(scope, DISC, "lookup-challenge");
   gh_relay_scope_notice(scope, DISC, GH_RELAY_NOTICE_CLOSED, NULL, FALSE,
                         "auth-required: authenticate to read");
-  gh_relay_scope_notice(scope, OWN_READ, GH_RELAY_NOTICE_ERROR, NULL, FALSE, "refused");
+  drain();
   g_assert_false(gh_dm_send_is_done(send));
-  gh_relay_scope_notice(scope, OWN_WRITE, GH_RELAY_NOTICE_ERROR, NULL, FALSE, "refused");
+  gh_relay_scope_notice(scope, DISC2, GH_RELAY_NOTICE_ERROR, NULL, FALSE, "refused");
   spin_until(send_done, send);
   const GhDmSendStatus *status = gh_dm_send_get_status(send);
   g_assert_cmpint(status->result, ==, GH_DM_SEND_RESULT_INBOX_UNKNOWN);
@@ -1510,7 +1516,7 @@ test_wire_publish(void)
   Fixture f = { 0 };
   bus_up(&f.bus, &f.mock);
   f.settings = g_settings_new("org.nostr.Groundhog");
-  const gchar *sources[] = { DISC, NULL };
+  const gchar *sources[] = { DISC, DISC2, NULL };
   g_settings_set_strv(f.settings, "discovery-relays", sources);
   g_settings_set_string(f.settings, "signer-method", "auto");
   g_settings_set_string(f.settings, "current-npub", npub_alice);
@@ -1519,7 +1525,7 @@ test_wire_publish(void)
   f.scopes = g_ptr_array_new_with_free_func(scope_open_free);
   f.pubs = g_ptr_array_new_with_free_func(pub_open_free);
   f.relays = gh_account_relays_new(f.accounts, f.settings, &scope_transport, f.scopes);
-  f.lookup = gh_inbox_lookup_new(f.accounts, f.relays, f.settings, &scope_transport, f.scopes);
+  f.lookup = gh_inbox_lookup_new(f.accounts, f.settings, &scope_transport, f.scopes);
   f.sender = gh_dm_sender_new(f.accounts, f.relays, GH_INBOX_RESOLVER(f.lookup), NULL, NULL);
 
   ScopeOpen *own = own_open(&f, hex_alice);
@@ -1528,6 +1534,7 @@ test_wire_publish(void)
   gh_relay_scope_event(own->scope, DISC, nip65);
   gh_relay_scope_event(own->scope, DISC, own_inbox);
   gh_relay_scope_eose(own->scope, DISC);
+  gh_relay_scope_eose(own->scope, DISC2);
   GhDmSend *send = gh_dm_sender_send(f.sender, hex_bob, "hello over the wire", NULL);
   g_autofree gchar *bob_list = inbox_list(SECRET_BOB, 100, bob_relay.url, NULL);
   answer_lookup(&f, bob_list);
