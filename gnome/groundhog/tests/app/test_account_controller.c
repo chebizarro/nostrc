@@ -4,6 +4,13 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr/nip19/nip19.h"
+#ifdef GROUNDHOG_TEST_NIP17
+#include "gh-nip17-envelope.h"
+#include "nostr/nip17/nip17.h"
+#include "nostr/nip44/nip44.h"
+#include "nostr/nip59/nip59.h"
+#include "nostr-utils.h"
+#endif
 #ifdef GROUNDHOG_TEST_RELAY
 #include "gh-relay-scope.h"
 #endif
@@ -554,6 +561,13 @@ typedef struct {
   guint calls;
   gchar *last_npub;
   gboolean hold;
+  guint hold_call;
+  guint deny_call;
+  guint bad_sign_call;
+  guint wrong_key_call;
+  gboolean real_crypto;
+  GPtrArray *encrypt_plaintexts;
+  GPtrArray *encrypt_peers;
 } MockSigner;
 
 static void
@@ -576,12 +590,27 @@ mock_signer_call(GDBusConnection *connection, const gchar *sender, const gchar *
   mock->last_npub = g_strdup(g_str_equal(method, "SignEvent") ? peer : npub);
   mock->calls++;
   g_ptr_array_add(mock->senders, g_strdup(sender));
-  if (mock->hold) {
+#ifdef GROUNDHOG_TEST_NIP17
+  if (g_str_equal(method, "NIP44Encrypt") && mock->real_crypto) {
+    g_ptr_array_add(mock->encrypt_plaintexts, g_strdup(input));
+    g_ptr_array_add(mock->encrypt_peers, g_strdup(peer));
+  }
+#endif
+  if (mock->hold || mock->hold_call == mock->calls) {
     g_ptr_array_add(mock->held, g_object_ref(invocation));
     return;
   }
+  if (mock->deny_call == mock->calls) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Signer.Error.ApprovalDenied", "test denial");
+    return;
+  }
+  if (mock->bad_sign_call == mock->calls) {
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", "{}"));
+    return;
+  }
   if (g_str_equal(method, "SignEvent")) {
-    const gchar *secret = g_str_equal(peer, npub_one) ?
+    const gchar *secret = g_str_equal(peer, npub_one) && mock->wrong_key_call != mock->calls ?
       "0000000000000000000000000000000000000000000000000000000000000001" :
       "0000000000000000000000000000000000000000000000000000000000000002";
     NostrEvent *event = nostr_event_new();
@@ -592,6 +621,23 @@ mock_signer_call(GDBusConnection *connection, const gchar *sender, const gchar *
     free(signed_json);
     nostr_event_free(event);
   } else if (g_str_equal(method, "NIP44Encrypt")) {
+#ifdef GROUNDHOG_TEST_NIP17
+    if (mock->real_crypto) {
+      const gchar *secret = g_str_equal(npub, npub_one) ?
+        "0000000000000000000000000000000000000000000000000000000000000001" :
+        "0000000000000000000000000000000000000000000000000000000000000002";
+      guint8 sk[32], pk[32];
+      g_assert_true(nostr_hex2bin(sk, secret, sizeof sk));
+      g_assert_true(nostr_hex2bin(pk, peer, sizeof pk));
+      char *ciphertext = NULL;
+      g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk, (const guint8 *)input,
+                                              strlen(input), &ciphertext), ==, 0);
+      g_assert_nonnull(ciphertext);
+      g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", ciphertext));
+      free(ciphertext);
+      return;
+    }
+#endif
     guint8 payload[99] = { 2 };
     g_autofree gchar *ciphertext = g_base64_encode(payload, sizeof payload);
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", ciphertext));
@@ -607,6 +653,8 @@ mock_signer_up(BusFixture *fixture, MockSigner *mock)
 {
   g_autoptr(GError) error = NULL;
   mock->held = g_ptr_array_new_with_free_func(g_object_unref);
+  mock->encrypt_plaintexts = g_ptr_array_new_with_free_func(g_free);
+  mock->encrypt_peers = g_ptr_array_new_with_free_func(g_free);
   mock->senders = g_ptr_array_new_with_free_func(g_free);
   mock->node = g_dbus_node_info_new_for_xml(
     "<node><interface name='org.nostr.Signer'>"
@@ -642,6 +690,8 @@ mock_signer_down(BusFixture *fixture, MockSigner *mock)
   g_dbus_connection_unregister_object(fixture->owner, mock->registration);
   g_ptr_array_unref(mock->held);
   g_ptr_array_unref(mock->senders);
+  g_ptr_array_unref(mock->encrypt_plaintexts);
+  g_ptr_array_unref(mock->encrypt_peers);
   g_dbus_node_info_unref(mock->node);
   g_free(mock->last_npub);
 }
@@ -890,6 +940,259 @@ test_limits(void)
                 "Signer available", "not implemented");
 }
 
+#ifdef GROUNDHOG_TEST_NIP17
+typedef struct {
+  BusFixture bus;
+  MockSigner mock;
+  FakeStore store;
+  GSettings *settings;
+  GhAccountController *accounts;
+} EnvelopeFixture;
+
+typedef struct {
+  gboolean done;
+  GhNip17Envelope *envelope;
+  GError *error;
+} EnvelopeWait;
+
+static void
+envelope_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  EnvelopeWait *wait = data;
+  (void)source;
+  wait->envelope = gh_nip17_envelope_build_finish(result, &wait->error);
+  wait->done = TRUE;
+}
+
+static gboolean
+envelope_finished(gpointer data)
+{
+  return ((EnvelopeWait *)data)->done;
+}
+
+static void
+envelope_fixture_up(EnvelopeFixture *fixture)
+{
+  bus_up(&fixture->bus, FALSE);
+  fixture->mock.real_crypto = TRUE;
+  mock_signer_up(&fixture->bus, &fixture->mock);
+  fixture->settings = fresh_settings(npub_one);
+  fixture->accounts = gh_account_controller_new_full(
+    fixture->settings, fixture->bus.client, fake_list, &fixture->store);
+  spin_until(listed, fixture->accounts);
+}
+
+static void
+envelope_fixture_down(EnvelopeFixture *fixture)
+{
+  release_controller(fixture->accounts);
+  MockSenders check = { &fixture->bus, &fixture->mock };
+  spin_until(mock_senders_closed, &check);
+  mock_signer_down(&fixture->bus, &fixture->mock);
+  g_object_unref(fixture->settings);
+  bus_down(&fixture->bus);
+}
+
+static NostrEvent *
+parse_event(const gchar *json)
+{
+  NostrEvent *event = nostr_event_new();
+  g_assert_nonnull(event);
+  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
+  return event;
+}
+
+static void
+assert_wrap_contains_rumor(const gchar *wrap_json, const gchar *recipient,
+                           const gchar *recipient_secret, const gchar *sender,
+                           NostrEvent *rumor, const gchar *rumor_json)
+{
+  NostrEvent *wrap = parse_event(wrap_json);
+  g_assert_true(nostr_nip59_validate_gift_wrap(wrap));
+  g_autofree gchar *wrap_recipient = nostr_nip59_get_recipient(wrap);
+  g_assert_cmpstr(wrap_recipient, ==, recipient);
+  g_assert_cmpstr(nostr_event_get_pubkey(wrap), !=, sender);
+  NostrEvent *seal = nostr_nip59_unwrap(wrap, recipient_secret);
+  g_assert_nonnull(seal);
+  g_assert_true(nostr_nip17_validate_seal(seal, rumor));
+  g_assert_cmpint(nostr_event_get_kind(seal), ==, 13);
+  g_assert_cmpstr(nostr_event_get_pubkey(seal), ==, sender);
+  guint8 sk[32], pk[32];
+  g_assert_true(nostr_hex2bin(sk, recipient_secret, sizeof sk));
+  g_assert_true(nostr_hex2bin(pk, sender, sizeof pk));
+  guint8 *plaintext = NULL;
+  size_t plaintext_len = 0;
+  g_assert_cmpint(nostr_nip44_decrypt_v2(sk, pk, nostr_event_get_content(seal),
+                                         &plaintext, &plaintext_len), ==, 0);
+  g_assert_cmpuint(plaintext_len, ==, strlen(rumor_json));
+  g_assert_cmpmem(plaintext, plaintext_len, rumor_json, strlen(rumor_json));
+  free(plaintext);
+  nostr_event_free(seal);
+  nostr_event_free(wrap);
+}
+
+static void
+test_nip17_envelope_roundtrip(void)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_autofree gchar *sender = gh_identity_pubkey_hex(npub_one);
+  g_autofree gchar *recipient = gh_identity_pubkey_hex(npub_two);
+  EnvelopeWait wait = { 0 };
+  gh_nip17_envelope_build_async(fixture.accounts, recipient, "hello envelope",
+                                NULL, envelope_done, &wait);
+  spin_until(envelope_finished, &wait);
+  g_assert_no_error(wait.error);
+  g_assert_nonnull(wait.envelope);
+  g_assert_cmpuint(fixture.mock.calls, ==, 4);
+  g_assert_cmpuint(fixture.mock.encrypt_plaintexts->len, ==, 2);
+  g_assert_cmpstr(g_ptr_array_index(fixture.mock.encrypt_peers, 0), ==, recipient);
+  g_assert_cmpstr(g_ptr_array_index(fixture.mock.encrypt_peers, 1), ==, sender);
+  for (guint i = 0; i < 2; i++)
+    g_assert_cmpstr(g_ptr_array_index(fixture.mock.encrypt_plaintexts, i), ==,
+                    wait.envelope->rumor_json);
+  NostrEvent *rumor = parse_event(wait.envelope->rumor_json);
+  g_assert_cmpint(nostr_event_get_kind(rumor), ==, 14);
+  g_assert_cmpstr(nostr_event_get_pubkey(rumor), ==, sender);
+  g_assert_cmpstr(nostr_event_get_content(rumor), ==, "hello envelope");
+  g_assert_null(nostr_event_get_sig(rumor));
+  g_assert_cmpint(nostr_event_validate_id(rumor, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+  const gchar *recipient_secret =
+    "0000000000000000000000000000000000000000000000000000000000000002";
+  const gchar *sender_secret =
+    "0000000000000000000000000000000000000000000000000000000000000001";
+  assert_wrap_contains_rumor(wait.envelope->recipient_wrap_json, recipient,
+                             recipient_secret, sender, rumor, wait.envelope->rumor_json);
+  assert_wrap_contains_rumor(wait.envelope->sender_wrap_json, sender,
+                             sender_secret, sender, rumor, wait.envelope->rumor_json);
+  NostrEvent *recipient_wrap = parse_event(wait.envelope->recipient_wrap_json);
+  NostrEvent *sender_wrap = parse_event(wait.envelope->sender_wrap_json);
+  g_assert_cmpstr(nostr_event_get_pubkey(recipient_wrap), !=,
+                  nostr_event_get_pubkey(sender_wrap));
+  nostr_event_free(recipient_wrap);
+  nostr_event_free(sender_wrap);
+  nostr_event_free(rumor);
+  gh_nip17_envelope_free(wait.envelope);
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_envelope_rejects_bad_inputs(void)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_autofree gchar *sender = gh_identity_pubkey_hex(npub_one);
+  EnvelopeWait bad_peer = { 0 };
+  gh_nip17_envelope_build_async(fixture.accounts, "not-a-pubkey", "hello",
+                                NULL, envelope_done, &bad_peer);
+  spin_until(envelope_finished, &bad_peer);
+  g_assert_null(bad_peer.envelope);
+  g_assert_error(bad_peer.error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&bad_peer.error);
+  EnvelopeWait self_peer = { 0 };
+  gh_nip17_envelope_build_async(fixture.accounts, sender, "hello",
+                                NULL, envelope_done, &self_peer);
+  spin_until(envelope_finished, &self_peer);
+  g_assert_null(self_peer.envelope);
+  g_assert_error(self_peer.error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&self_peer.error);
+  g_assert_cmpuint(fixture.mock.calls, ==, 0);
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_envelope_signer_failures(void)
+{
+  for (guint failure = 0; failure < 8; failure++) {
+    EnvelopeFixture fixture = { 0 };
+    envelope_fixture_up(&fixture);
+    guint stage = failure < 4 ? failure + 1 : (failure % 2 ? 4 : 2);
+    if (failure < 4) fixture.mock.deny_call = stage;
+    else if (failure < 6) fixture.mock.bad_sign_call = stage;
+    else fixture.mock.wrong_key_call = stage;
+    g_autofree gchar *recipient = gh_identity_pubkey_hex(npub_two);
+    EnvelopeWait wait = { 0 };
+    gh_nip17_envelope_build_async(fixture.accounts, recipient, "hello", NULL,
+                                  envelope_done, &wait);
+    spin_until(envelope_finished, &wait);
+    g_assert_null(wait.envelope);
+    if (failure < 4)
+      g_assert_error(wait.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+    else
+      g_assert_true(g_error_matches(wait.error, GH_SIGNER_ERROR,
+                         GH_SIGNER_ERROR_INVALID_RESULT) ||
+                    g_error_matches(wait.error, GH_SIGNER_ERROR,
+                         GH_SIGNER_ERROR_KEY_MISMATCH));
+    g_clear_error(&wait.error);
+    g_assert_cmpuint(fixture.mock.calls, ==, stage);
+    envelope_fixture_down(&fixture);
+  }
+}
+
+static void
+run_interrupted_stage(guint stage, gboolean switch_account)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  fixture.mock.hold_call = stage;
+  g_autofree gchar *recipient = gh_identity_pubkey_hex(npub_two);
+  g_autoptr(GCancellable) cancel = g_cancellable_new();
+  EnvelopeWait wait = { 0 };
+  gh_nip17_envelope_build_async(fixture.accounts, recipient, "hello", cancel,
+                                envelope_done, &wait);
+  MockCount count = { &fixture.mock, stage };
+  spin_until(mock_count_reached, &count);
+  if (switch_account)
+    g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  else
+    g_cancellable_cancel(cancel);
+  spin_until(envelope_finished, &wait);
+  g_assert_null(wait.envelope);
+  g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_cmpuint(fixture.mock.calls, ==, stage);
+  MockSenders check = { &fixture.bus, &fixture.mock };
+  spin_until(mock_senders_closed, &check);
+  envelope_fixture_down(&fixture);
+}
+
+static void
+envelope_switch_before_finish(GObject *source, GAsyncResult *result, gpointer data)
+{
+  EnvelopeWait *wait = data;
+  g_assert_true(gh_account_controller_select(GH_ACCOUNT_CONTROLLER(source),
+                                              npub_two, NULL));
+  wait->envelope = gh_nip17_envelope_build_finish(result, &wait->error);
+  wait->done = TRUE;
+}
+
+static void
+test_nip17_envelope_switch_before_finish(void)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_autofree gchar *recipient = gh_identity_pubkey_hex(npub_two);
+  EnvelopeWait wait = { 0 };
+  gh_nip17_envelope_build_async(fixture.accounts, recipient, "hello", NULL,
+                                envelope_switch_before_finish, &wait);
+  spin_until(envelope_finished, &wait);
+  g_assert_null(wait.envelope);
+  g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_cmpuint(fixture.mock.calls, ==, 4);
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_envelope_cancel_and_switch(void)
+{
+  for (guint stage = 1; stage <= 4; stage++) {
+    run_interrupted_stage(stage, FALSE);
+    run_interrupted_stage(stage, TRUE);
+  }
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
@@ -908,6 +1211,13 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account/signer-invocation", test_account_signer_invocation);
   g_test_add_func("/groundhog/account/signer-switch-dispose", test_account_signer_switch_dispose);
   g_test_add_func("/groundhog/account/signer-fail-closed", test_account_signer_fail_closed);
+#ifdef GROUNDHOG_TEST_NIP17
+  g_test_add_func("/groundhog/nip17/envelope-roundtrip", test_nip17_envelope_roundtrip);
+  g_test_add_func("/groundhog/nip17/envelope-bad-input", test_nip17_envelope_rejects_bad_inputs);
+  g_test_add_func("/groundhog/nip17/envelope-signer-failures", test_nip17_envelope_signer_failures);
+  g_test_add_func("/groundhog/nip17/envelope-cancel-switch", test_nip17_envelope_cancel_and_switch);
+  g_test_add_func("/groundhog/nip17/envelope-switch-before-finish", test_nip17_envelope_switch_before_finish);
+#endif
   int status = g_test_run();
   g_free(npub_one);
   g_free(npub_two);

@@ -68,10 +68,21 @@ gboolean gh_account_controller_is_current(GhAccountController *self,
 void gh_account_controller_sign_async(GhAccountController *self,
                                       const gchar *unsigned_event,
                                       GAsyncReadyCallback callback, gpointer user_data);
+/* As above, but caller cancellation revokes this operation's pending approval. */
+void gh_account_controller_sign_with_cancellable_async(GhAccountController *self,
+                                      const gchar *unsigned_event,
+                                      GCancellable *cancellable,
+                                      GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_account_controller_sign_finish(GAsyncResult *result, GError **error);
 void gh_account_controller_nip44_encrypt_async(GhAccountController *self,
                                                 const gchar *plaintext,
                                                 const gchar *peer_pubkey_hex,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
+void gh_account_controller_nip44_encrypt_with_cancellable_async(GhAccountController *self,
+                                                const gchar *plaintext,
+                                                const gchar *peer_pubkey_hex,
+                                                GCancellable *cancellable,
                                                 GAsyncReadyCallback callback,
                                                 gpointer user_data);
 void gh_account_controller_nip44_decrypt_async(GhAccountController *self,
