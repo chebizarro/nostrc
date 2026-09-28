@@ -21,6 +21,8 @@ typedef struct {
   gchar *account;     /* lowercase hex */
   gchar *wrap_id;
   gchar *seal_pubkey;
+  gint64 wrap_expiration;
+  gint64 seal_expiration;
 } Unwrap;
 
 static void
@@ -118,6 +120,49 @@ p_tags(const NostrEvent *event, const gchar **first)
   return count;
 }
 
+/* Parses a NIP-40 value: canonical decimal unix seconds in
+ * [1, GH_NIP17_MAX_EXPIRATION], i.e. digits only, no sign or leading zero. */
+static gboolean
+parse_expiration(const gchar *text, gint64 *out)
+{
+  if (!text || *text < '1' || *text > '9') return FALSE;
+  gint64 value = 0;
+  for (const gchar *p = text; *p; p++) {
+    if (!g_ascii_isdigit(*p)) return FALSE;
+    value = value * 10 + (*p - '0');
+    if (value > GH_NIP17_MAX_EXPIRATION) return FALSE;
+  }
+  *out = value;
+  return TRUE;
+}
+
+/* Reads the event's expiration into *out (0 when absent). Fails if there is
+ * more than one expiration tag or one is not exactly ["expiration", value]
+ * with a valid value. With only_expiration, any other tag also fails: this
+ * is the seal rule, where NIP-59's empty-tags requirement admits only the
+ * expiration that NIP-17 asks senders to copy onto the seal. */
+static gboolean
+expiration_tag(const NostrEvent *event, gboolean only_expiration, gint64 *out)
+{
+  NostrTags *tags = nostr_event_get_tags(event);
+  gboolean found = FALSE;
+  *out = 0;
+  for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    const gchar *key = tag && nostr_tag_size(tag) >= 1 ? nostr_tag_get(tag, 0) : NULL;
+    if (g_strcmp0(key, "expiration") != 0) {
+      if (only_expiration) return FALSE;
+      continue;
+    }
+    if (found || nostr_tag_size(tag) != 2 || !parse_expiration(nostr_tag_get(tag, 1), out)) {
+      *out = 0;
+      return FALSE;
+    }
+    found = TRUE;
+  }
+  return TRUE;
+}
+
 static NostrEvent *
 parse_signed(const gchar *json, int kind, gchar canonical_id[65])
 {
@@ -179,6 +224,12 @@ gh_nip17_unwrap_async(GhAccountController *accounts, const gchar *wrap_json,
            "NIP-17 gift wrap is not addressed to the active account");
     return;
   }
+  if (!expiration_tag(wrap, FALSE, &unwrap->wrap_expiration)) {
+    nostr_event_free(wrap);
+    reject(task, GH_NIP17_INBOX_ERROR_INVALID_WRAP,
+           "NIP-17 gift wrap has a malformed or repeated expiration tag");
+    return;
+  }
   unwrap->wrap_id = g_strdup(wrap_id);
   gh_account_controller_nip44_decrypt_with_cancellable_async(
     accounts, nostr_event_get_content(wrap), nostr_event_get_pubkey(wrap),
@@ -201,11 +252,11 @@ wrap_decrypted(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   NostrEvent *seal = parse_signed(seal_json, 13, NULL);
-  NostrTags *tags = seal ? nostr_event_get_tags(seal) : NULL;
-  if (!seal || (tags && nostr_tags_size(tags) != 0)) {
+  if (!seal || !expiration_tag(seal, TRUE, &unwrap->seal_expiration)) {
     if (seal) nostr_event_free(seal);
     reject(task, GH_NIP17_INBOX_ERROR_INVALID_SEAL,
-           "NIP-17 seal is malformed, tagged, or its id or signature is invalid");
+           "NIP-17 seal is malformed, has a tag other than one valid expiration, "
+           "or its id or signature is invalid");
     return;
   }
   unwrap->seal_pubkey = g_strdup(nostr_event_get_pubkey(seal));
@@ -280,10 +331,12 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
     nostr_event_validate_id(rumor, rumor_id) : nostr_event_compute_id(rumor, rumor_id);
   gchar **recipients = id_status == NOSTR_EVENT_VALIDATION_OK ?
     rumor_recipients(rumor) : NULL;
-  if (!recipients) {
+  gint64 rumor_expiration = 0;
+  if (!recipients || !expiration_tag(rumor, FALSE, &rumor_expiration)) {
+    g_strfreev(recipients);
     nostr_event_free(rumor);
     reject(task, GH_NIP17_INBOX_ERROR_INVALID_RUMOR,
-           "NIP-17 rumor id or recipient tags are invalid");
+           "NIP-17 rumor id, recipient or expiration tags are invalid");
     return;
   }
   gboolean self_copy = g_str_equal(unwrap->seal_pubkey, unwrap->account);
@@ -319,6 +372,12 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
   message->recipients = recipients;
   message->created_at = created_at;
   message->self_copy = self_copy;
+  message->rumor_expiration = rumor_expiration;
+  message->seal_expiration = unwrap->seal_expiration;
+  message->wrap_expiration = unwrap->wrap_expiration;
+  message->expires_at = rumor_expiration ? rumor_expiration :
+                        unwrap->seal_expiration ? unwrap->seal_expiration :
+                        unwrap->wrap_expiration;
   free(canonical);
   g_task_return_pointer(task, message, (GDestroyNotify)gh_nip17_message_free);
   g_object_unref(task);

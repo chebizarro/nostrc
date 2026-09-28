@@ -10,13 +10,17 @@ G_BEGIN_DECLS
 #define GH_NIP17_MAX_WRAP_JSON   (128 * 1024)
 #define GH_NIP17_MAX_PLAINTEXT   65535
 #define GH_NIP17_MAX_RECIPIENTS  128
+/* Largest NIP-40 `expiration` accepted: 9999-12-31T23:59:59Z. A value must be
+ * canonical decimal unix seconds in [1, this]: digits only, no sign, no
+ * leading zero. */
+#define GH_NIP17_MAX_EXPIRATION  G_GINT64_CONSTANT(253402300799)
 
 typedef enum {
   GH_NIP17_INBOX_ERROR_TOO_LARGE = 1,
-  GH_NIP17_INBOX_ERROR_INVALID_WRAP,     /* parse, kind, id or signature */
+  GH_NIP17_INBOX_ERROR_INVALID_WRAP,     /* parse, kind, id, signature or expiration */
   GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT,  /* p tag is not the active account */
   GH_NIP17_INBOX_ERROR_INVALID_SEAL,     /* parse, kind, id, signature or tags */
-  GH_NIP17_INBOX_ERROR_INVALID_RUMOR,    /* parse, signed, id or p tags */
+  GH_NIP17_INBOX_ERROR_INVALID_RUMOR,    /* parse, signed, id, p or expiration tags */
   GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND, /* rumor is not kind 14 */
   GH_NIP17_INBOX_ERROR_SENDER_MISMATCH   /* rumor.pubkey != seal.pubkey */
 } GhNip17InboxError;
@@ -34,6 +38,20 @@ typedef struct {
   gchar **recipients;    /* hex, lowercase, unique, in p-tag order */
   gint64 created_at;     /* rumor created_at (the seal/wrap ones are random) */
   gboolean self_copy;    /* sender_pubkey == account_pubkey */
+  /* NIP-40 `expiration` of each layer in unix seconds, 0 when absent. NIP-17
+   * puts it on each wrap and says the seal SHOULD carry it too; a rumor may
+   * carry it as an ordinary tag. The rumor and seal values are authenticated
+   * by the seal signature. The wrap value is signed only by a throwaway key,
+   * so anyone who obtains the seal can rewrap it with any wrap expiration;
+   * it may also be deliberately later than the real one (jittered). */
+  gint64 rumor_expiration;
+  gint64 seal_expiration;
+  gint64 wrap_expiration;
+  /* rumor, else seal, else wrap expiration (most to least authenticated);
+   * 0 means the message does not expire. It may already be in the past:
+   * the unwrap does not drop expired messages, so the caller can still
+   * record them as seen without storing them. */
+  gint64 expires_at;
 } GhNip17Message;
 
 void gh_nip17_message_free(GhNip17Message *message);
@@ -43,13 +61,21 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhNip17Message, gh_nip17_message_free)
  * the account's external signer; the app never holds a secret key.
  *
  *   1. wrap: bounded, strictly parsed, kind 1059, id and signature verified,
- *      exactly one p tag and it equals the active account pubkey;
+ *      exactly one p tag and it equals the active account pubkey, at most one
+ *      well-formed expiration tag;
  *   2. signer NIP-44 decrypt(wrap.content, wrap.pubkey) -> seal;
- *   3. seal: bounded, kind 13, id and signature verified, no tags;
+ *   3. seal: bounded, kind 13, id and signature verified, and no tags except
+ *      at most one well-formed expiration tag (NIP-17 disappearing messages;
+ *      any other seal tag or a second expiration is INVALID_SEAL, and it is
+ *      rejected before the second signer call);
  *   4. signer NIP-44 decrypt(seal.content, seal.pubkey) -> rumor;
  *   5. rumor: bounded, unsigned, kind 14 only (15 and others are rejected),
  *      rumor.pubkey == seal.pubkey, canonical id (a declared id must match),
- *      lowercase hex p tags, and the account is the sender or a recipient.
+ *      lowercase hex p tags, the account is the sender or a recipient, and
+ *      at most one well-formed expiration tag.
+ *
+ * A well-formed expiration tag is exactly ["expiration", "<seconds>"] with
+ * the value bounded as described at GH_NIP17_MAX_EXPIRATION.
  *
  * The account generation and the caller's cancellable are checked before and
  * after every signer call and again in _finish. Work for a switched or

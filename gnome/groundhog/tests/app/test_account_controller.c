@@ -1795,6 +1795,245 @@ test_nip17_seen_file_mode(void)
 #endif
 #endif
 
+#ifdef GROUNDHOG_TEST_NIP17
+/* ---- disappearing messages: expiration on seal, wrap and rumor (G07a) ---- */
+
+/* NIP-17: "Clients MAY offer disappearing messages by setting an `expiration`
+ * tag in the gift wrap of each receiver ... This tag SHOULD be included on the
+ * `kind:13` seal as well, in case it leaks." NIP-59 otherwise requires empty
+ * seal tags, so the seal admits exactly one well-formed expiration and
+ * nothing else. The peer (key 3) sends to the active account (key 2). */
+#define EXP_TAGS 3
+typedef struct {
+  const gchar *name;
+  const gchar *rumor[EXP_TAGS][4]; /* extra rumor tags after its p tag */
+  const gchar *seal[EXP_TAGS][4];  /* all seal tags */
+  const gchar *wrap[EXP_TAGS][4];  /* extra wrap tags after its p tag */
+} ExpCraft;
+
+static guint
+exp_add_tags(NostrTags *tags, const gchar *const specs[][4])
+{
+  guint added = 0;
+  for (guint i = 0; i < EXP_TAGS && specs[i][0]; i++, added++) {
+    NostrTag *tag = nostr_tag_new(specs[i][0], NULL);
+    for (guint j = 1; j < 4 && specs[i][j]; j++)
+      nostr_tag_append(tag, specs[i][j]);
+    nostr_tags_append(tags, tag);
+  }
+  return added;
+}
+
+static gchar *
+craft_expiring_wrap(const ExpCraft *c)
+{
+  g_autofree gchar *sender = test_pub(3);
+  g_autofree gchar *recipient = test_pub(2);
+  NostrEvent *rumor = nostr_nip17_create_rumor(sender, recipient, "expiring", 0);
+  g_assert_nonnull(rumor);
+  exp_add_tags(nostr_event_get_tags(rumor), c->rumor);
+  rumor->id = nostr_event_get_id(rumor);
+  char *rumor_json = nostr_event_serialize_compact(rumor);
+  nostr_event_free(rumor);
+
+  guint8 sk[32], pk[32];
+  g_assert_true(nostr_hex2bin(sk, test_secret[3], sizeof sk));
+  g_assert_true(nostr_hex2bin(pk, recipient, sizeof pk));
+  char *ciphertext = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk, (const guint8 *)rumor_json,
+                                          strlen(rumor_json), &ciphertext), ==, 0);
+  free(rumor_json);
+  NostrEvent *seal = nostr_event_new();
+  nostr_event_set_kind(seal, 13);
+  nostr_event_set_pubkey(seal, sender);
+  nostr_event_set_content(seal, ciphertext);
+  nostr_event_set_created_at(seal, 1700000000);
+  NostrTags *seal_tags = nostr_tags_new(0);
+  exp_add_tags(seal_tags, c->seal);
+  nostr_event_set_tags(seal, seal_tags);
+  free(ciphertext);
+  g_assert_cmpint(nostr_event_sign(seal, test_secret[3]), ==, 0);
+
+  guint8 ephemeral[32];
+  g_assert_true(nostr_hex2bin(ephemeral, test_secret[4], sizeof ephemeral));
+  NostrEvent *wrap = nostr_nip59_wrap_with_key(seal, recipient, ephemeral);
+  nostr_event_free(seal);
+  g_assert_nonnull(wrap);
+  if (exp_add_tags(nostr_event_get_tags(wrap), c->wrap) > 0)
+    g_assert_cmpint(nostr_event_sign(wrap, test_secret[4]), ==, 0);
+  char *json = nostr_event_serialize_compact(wrap);
+  nostr_event_free(wrap);
+  gchar *out = g_strdup(json);
+  free(json);
+  return out;
+}
+
+/* Returns the number of occurrences of `needle` in `haystack`. */
+static guint
+exp_count(const gchar *haystack, const gchar *needle)
+{
+  guint n = 0;
+  for (const gchar *at = strstr(haystack, needle); at; at = strstr(at + 1, needle)) n++;
+  return n;
+}
+
+static void
+test_nip17_seal_expiration_admit(void)
+{
+  struct {
+    ExpCraft craft;
+    gint64 rumor, seal, wrap, expires_at;
+  } cases[] = {
+    /* The interop case: NIP-17 wrap and seal both carry the expiration. */
+    { { .name = "seal and wrap",
+        .seal = { { "expiration", "1700086400" } },
+        .wrap = { { "expiration", "1700089200" } } },
+      0, 1700086400, 1700089200, 1700086400 },
+    { { .name = "seal only", .seal = { { "expiration", "1700086400" } } },
+      0, 1700086400, 0, 1700086400 },
+    { { .name = "wrap only", .wrap = { { "expiration", "1700089200" } } },
+      0, 0, 1700089200, 1700089200 },
+    { { .name = "all layers",
+        .rumor = { { "expiration", "1700086399" } },
+        .seal = { { "expiration", "1700086400" } },
+        .wrap = { { "expiration", "1700089200" } } },
+      1700086399, 1700086400, 1700089200, 1700086399 },
+    { { .name = "rumor only", .rumor = { { "expiration", "1700086399" } } },
+      1700086399, 0, 0, 1700086399 },
+    { { .name = "none" }, 0, 0, 0, 0 },
+    /* Already expired is admitted and surfaced; dropping it is the caller's
+     * policy (seen-only, not stored), so it can still be recorded. */
+    { { .name = "already expired", .seal = { { "expiration", "1" } } }, 0, 1, 0, 1 },
+    { { .name = "upper bound", .seal = { { "expiration", "253402300799" } } },
+      0, GH_NIP17_MAX_EXPIRATION, 0, GH_NIP17_MAX_EXPIRATION },
+  };
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  g_autofree gchar *peer = test_pub(3);
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_test_message("admit case: %s", cases[i].craft.name);
+    g_autofree gchar *wrap = craft_expiring_wrap(&cases[i].craft);
+    guint before = fixture.mock.calls;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GhNip17Message) message = unwrap_now(fixture.accounts, wrap, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(fixture.mock.calls - before, ==, 2);
+    g_assert_cmpstr(message->sender_pubkey, ==, peer);
+    g_assert_false(message->self_copy);
+    g_assert_cmpint(message->rumor_expiration, ==, cases[i].rumor);
+    g_assert_cmpint(message->seal_expiration, ==, cases[i].seal);
+    g_assert_cmpint(message->wrap_expiration, ==, cases[i].wrap);
+    g_assert_cmpint(message->expires_at, ==, cases[i].expires_at);
+    /* The rumor expiration stays in the canonical rumor; the seal and wrap
+     * ones never leak into it. */
+    g_assert_cmpuint(exp_count(message->rumor_json, "\"expiration\""), ==,
+                     cases[i].rumor ? 1 : 0);
+  }
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_seal_expiration_rejects(void)
+{
+  const ExpCraft cases[] = {
+    { .name = "two expirations",
+      .seal = { { "expiration", "1700086400" }, { "expiration", "1700086400" } } },
+    { .name = "two different expirations",
+      .seal = { { "expiration", "1700086400" }, { "expiration", "1800000000" } } },
+    { .name = "expiration and p",
+      .seal = { { "expiration", "1700086400" }, { "p", "00" } } },
+    { .name = "p before expiration",
+      .seal = { { "p", "00" }, { "expiration", "1700086400" } } },
+    { .name = "other tag", .seal = { { "alt", "hello" } } },
+    { .name = "no value", .seal = { { "expiration" } } },
+    { .name = "extra element", .seal = { { "expiration", "1700086400", "x" } } },
+    { .name = "empty", .seal = { { "expiration", "" } } },
+    { .name = "zero", .seal = { { "expiration", "0" } } },
+    { .name = "leading zero", .seal = { { "expiration", "01700086400" } } },
+    { .name = "negative", .seal = { { "expiration", "-1700086400" } } },
+    { .name = "plus sign", .seal = { { "expiration", "+1700086400" } } },
+    { .name = "space", .seal = { { "expiration", " 1700086400" } } },
+    { .name = "trailing junk", .seal = { { "expiration", "1700086400s" } } },
+    { .name = "fraction", .seal = { { "expiration", "1700086400.5" } } },
+    { .name = "exponent", .seal = { { "expiration", "17e8" } } },
+    { .name = "hex", .seal = { { "expiration", "0x6553f100" } } },
+    { .name = "milliseconds past bound", .seal = { { "expiration", "1700086400000" } } },
+    { .name = "bound plus one", .seal = { { "expiration", "253402300800" } } },
+    { .name = "int64 overflow", .seal = { { "expiration", "99999999999999999999999" } } },
+    { .name = "wrong case", .seal = { { "Expiration", "1700086400" } } },
+  };
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_test_message("seal reject case: %s", cases[i].name);
+    g_autofree gchar *wrap = craft_expiring_wrap(&cases[i]);
+    guint before = fixture.mock.calls;
+    g_autoptr(GError) error = NULL;
+    g_assert_null(unwrap_now(fixture.accounts, wrap, &error));
+    g_assert_error(error, GH_NIP17_INBOX_ERROR, GH_NIP17_INBOX_ERROR_INVALID_SEAL);
+    /* Only the wrap decrypt ran: the seal is rejected before its decrypt. */
+    g_assert_cmpuint(fixture.mock.calls - before, ==, 1);
+  }
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_seal_expiration_other_layers(void)
+{
+  struct {
+    ExpCraft craft;
+    gint code;
+    guint calls;
+  } cases[] = {
+    { { .name = "wrap two expirations",
+        .wrap = { { "expiration", "1700089200" }, { "expiration", "1700089200" } } },
+      GH_NIP17_INBOX_ERROR_INVALID_WRAP, 0 },
+    { { .name = "wrap malformed", .wrap = { { "expiration", "soon" } } },
+      GH_NIP17_INBOX_ERROR_INVALID_WRAP, 0 },
+    { { .name = "wrap no value", .wrap = { { "expiration" } } },
+      GH_NIP17_INBOX_ERROR_INVALID_WRAP, 0 },
+    { { .name = "rumor two expirations",
+        .rumor = { { "expiration", "1700086399" }, { "expiration", "1700086300" } } },
+      GH_NIP17_INBOX_ERROR_INVALID_RUMOR, 2 },
+    { { .name = "rumor malformed", .rumor = { { "expiration", "-1" } } },
+      GH_NIP17_INBOX_ERROR_INVALID_RUMOR, 2 },
+    /* A valid seal expiration does not excuse a bad wrap expiration. */
+    { { .name = "valid seal, bad wrap",
+        .seal = { { "expiration", "1700086400" } },
+        .wrap = { { "expiration", "1700089200.0" } } },
+      GH_NIP17_INBOX_ERROR_INVALID_WRAP, 0 },
+  };
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_test_message("layer reject case: %s", cases[i].craft.name);
+    g_autofree gchar *wrap = craft_expiring_wrap(&cases[i].craft);
+    guint before = fixture.mock.calls;
+    g_autoptr(GError) error = NULL;
+    g_assert_null(unwrap_now(fixture.accounts, wrap, &error));
+    g_assert_error(error, GH_NIP17_INBOX_ERROR, cases[i].code);
+    g_assert_cmpuint(fixture.mock.calls - before, ==, cases[i].calls);
+  }
+  /* Other wrap and rumor tags remain allowed next to an expiration. */
+  const ExpCraft tolerated = {
+    .name = "other tags",
+    .rumor = { { "subject", "hi" }, { "expiration", "1700086399" } },
+    .seal = { { "expiration", "1700086400" } },
+    .wrap = { { "alt", "x" }, { "expiration", "1700089200" } },
+  };
+  g_autofree gchar *wrap = craft_expiring_wrap(&tolerated);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip17Message) message = unwrap_now(fixture.accounts, wrap, &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(message->expires_at, ==, 1700086399);
+  g_assert_cmpint(message->wrap_expiration, ==, 1700089200);
+  envelope_fixture_down(&fixture);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
@@ -1830,6 +2069,12 @@ main(int argc, char **argv)
 #ifdef G_OS_UNIX
   g_test_add_func("/groundhog/nip17/seen-file-mode", test_nip17_seen_file_mode);
 #endif
+#endif
+#ifdef GROUNDHOG_TEST_NIP17
+  g_test_add_func("/groundhog/nip17/seal-expiration-admit", test_nip17_seal_expiration_admit);
+  g_test_add_func("/groundhog/nip17/seal-expiration-rejects", test_nip17_seal_expiration_rejects);
+  g_test_add_func("/groundhog/nip17/seal-expiration-other-layers",
+                  test_nip17_seal_expiration_other_layers);
 #endif
   int status = g_test_run();
   g_free(npub_one);
