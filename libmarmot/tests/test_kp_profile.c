@@ -56,6 +56,26 @@ static void test_proof_spec_vector(void) {
           "signer_pubkey != credential identity rejected");
     CHECK(marmot_account_proof_verify(proof, 103, pk, 0x0001, 0x0807, key, 32) != MARMOT_OK,
           "short proof rejected");
+    CHECK(marmot_account_proof_verify(proof, 104, pk, 0x0001, 0x0807, key, 31) != MARMOT_OK,
+          "non-Ed25519 leaf key length rejected");
+    CHECK(marmot_account_proof_verify(proof, 104, pk, 0x0001, 0x0804, key, 32) != MARMOT_OK,
+          "unsupported MLS signature scheme rejected");
+    uint8_t sk[32] = {0}, old_proof[104];
+    sk[31] = 3; /* account key from the primary spec vector */
+    CHECK(marmot_account_proof_create(pk, sk, NULL, NULL, 0x0001, 0x0807,
+                                      key, 32, 1, old_proof) == MARMOT_OK &&
+          marmot_account_proof_verify(old_proof, sizeof(old_proof), pk,
+                                      0x0001, 0x0807, key, 32) == MARMOT_OK,
+          "valid old proof does not expire by receiver clock");
+    CHECK(marmot_account_proof_create(pk, sk, NULL, NULL, 0x0001, 0x0807,
+                                      key, 32, 0, old_proof) == MARMOT_ERR_VALIDATION,
+          "zero signing timestamp rejected");
+    CHECK(marmot_account_proof_create(pk, sk, NULL, NULL, 0x0001, 0x0807,
+                                      key, 32, 9007199254740992ULL, old_proof) == MARMOT_ERR_VALIDATION,
+          "timestamp outside exact JSON integer range rejected");
+    CHECK(marmot_account_proof_create(pk, sk, NULL, NULL, 0x0001, 0x0807,
+                                      key, 31, 1, old_proof) == MARMOT_ERR_VALIDATION,
+          "producer rejects non-Ed25519 leaf key length");
 }
 
 typedef struct {
@@ -190,6 +210,14 @@ static void test_create_and_validate(void) {
     CHECK(marmot_validate_key_package_event_json(r.event_json, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
                                                  0, NULL, NULL) != MARMOT_OK,
           "MDK 0.8 profile rejects it");
+    /* Valid adopted KeyPackages cannot enter the legacy group engine: it
+     * cannot emit or process the required adopted GroupContext components. */
+    MarmotGroupConfig config = {0};
+    MarmotCreateGroupResult group_result;
+    CHECK(marmot_create_group(m, pk, (const char *[]){r.event_json}, 1,
+                              &config, &group_result) != MARMOT_OK && !group_result.group,
+          "group creation fails closed on adopted KeyPackage");
+    marmot_create_group_result_free(&group_result);
 
     /* Lifetime bounds */
     int64_t now = (int64_t)time(NULL);

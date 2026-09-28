@@ -198,10 +198,26 @@ marmot_mls_message_unframe_key_package(const uint8_t *data, size_t len, MlsKeyPa
  * marmot.member.account-identity-proof.v2
  * ──────────────────────────────────────────────────────────────────────── */
 
+/* Only the ciphersuite and Ed25519 leaf-key encoding implemented by this
+ * MLS engine can be used to authorize a leaf. The timestamp bounds are the
+ * common MarmotAuthorizationProof envelope bounds, not an expiry rule. */
+static bool
+proof_context_supported(uint64_t created_at, uint16_t ciphersuite,
+                        uint16_t signature_scheme, size_t sig_key_len)
+{
+    return created_at >= 1 && created_at <= 9007199254740991ULL &&
+           ciphersuite == MARMOT_CIPHERSUITE &&
+           signature_scheme == MARMOT_SIGNATURE_SCHEME_ED25519 &&
+           sig_key_len == MLS_SIG_PK_LEN;
+}
+
 static NostrEvent *
 proof_template(const uint8_t account_pk[32], uint64_t created_at, uint16_t ciphersuite,
                uint16_t signature_scheme, const uint8_t *sig_key, size_t sig_key_len)
 {
+    if (!account_pk || !sig_key ||
+        !proof_context_supported(created_at, ciphersuite, signature_scheme, sig_key_len))
+        return NULL;
     char *pk_hex = marmot_hex_encode(account_pk, 32);
     char *key_hex = marmot_hex_encode(sig_key, sig_key_len);
     char cs[7], scheme[7];
@@ -269,7 +285,10 @@ marmot_account_proof_create(const uint8_t account_pk[32], const uint8_t *account
                             const uint8_t *sig_key, size_t sig_key_len, uint64_t created_at,
                             uint8_t out[MARMOT_ACCOUNT_PROOF_LEN])
 {
-    if (!account_pk || !sig_key || (!account_sk && !sign_fn)) return MARMOT_ERR_INVALID_ARG;
+    if (!account_pk || !sig_key || !out || (!account_sk && !sign_fn))
+        return MARMOT_ERR_INVALID_ARG;
+    if (!proof_context_supported(created_at, ciphersuite, signature_scheme, sig_key_len))
+        return MARMOT_ERR_VALIDATION;
     NostrEvent *tmpl = proof_template(account_pk, created_at, ciphersuite, signature_scheme,
                                       sig_key, sig_key_len);
     if (!tmpl) return MARMOT_ERR_MEMORY;
@@ -350,6 +369,8 @@ marmot_account_proof_verify(const uint8_t *proof, size_t proof_len, const uint8_
     if (memcmp(proof, identity, 32) != 0) return MARMOT_ERR_VALIDATION;
     uint64_t at = 0;
     for (int i = 0; i < 8; i++) at = (at << 8) | proof[32 + i];
+    if (!proof_context_supported(at, ciphersuite, signature_scheme, sig_key_len))
+        return MARMOT_ERR_VALIDATION;
     NostrEvent *ev = proof_template(identity, at, ciphersuite, signature_scheme, sig_key,
                                     sig_key_len);
     if (!ev) return MARMOT_ERR_MEMORY;
