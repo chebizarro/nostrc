@@ -7,7 +7,8 @@ G_BEGIN_DECLS
 
 typedef struct {
   gchar *rumor_json;          /* one canonical unsigned kind-14 rumor */
-  gchar *recipient_wrap_json; /* signed kind-1059 event, not published */
+  gchar *recipient_wrap_json; /* signed kind-1059 event, not published;
+                               * NULL for a note to self */
   gchar *sender_wrap_json;    /* signed kind-1059 self-copy, not published */
 } GhNip17Envelope;
 
@@ -20,6 +21,16 @@ void gh_nip17_envelope_build_async(GhAccountController *accounts,
                                     GCancellable *cancellable,
                                     GAsyncReadyCallback callback,
                                     gpointer user_data);
+/* A note to self: one rumor p-tagged to the active account and exactly one
+ * wrap to the account itself (sender_wrap_json; recipient_wrap_json is NULL).
+ * A second wrap would carry the same rumor to the same inbox. Two signer
+ * operations (NIP-44 encrypt to self, seal signature) instead of four. */
+void gh_nip17_envelope_build_self_async(GhAccountController *accounts,
+                                         const gchar *content,
+                                         GCancellable *cancellable,
+                                         GAsyncReadyCallback callback,
+                                         gpointer user_data);
+/* Finishes either build. */
 GhNip17Envelope *gh_nip17_envelope_build_finish(GAsyncResult *result,
                                                   GError **error);
 void gh_nip17_envelope_free(GhNip17Envelope *envelope);

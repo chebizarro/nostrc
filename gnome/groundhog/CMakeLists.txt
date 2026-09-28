@@ -255,6 +255,16 @@ if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
   target_compile_options(groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
 endif()
 
+# NIP-17 send pipeline: recipient kind-10050 lookup (URL-scoped REQ, no
+# kind-10002 fallback) and per-relay publication of the recipient wrap and the
+# sender self-copy. Part of the executable like the envelope codec it drives;
+# no UI or durable outbox uses it yet.
+if (TARGET groundhog-account-relays AND TARGET nostr_nip17_core AND TARGET nostr_nip59_core)
+  set(GROUNDHOG_DM_SEND_SOURCES src/app/gh-inbox-resolver.c src/app/gh-inbox-lookup.c
+    src/app/gh-dm-send.c)
+  target_sources(groundhog PRIVATE ${GROUNDHOG_DM_SEND_SOURCES})
+endif()
+
 # GTK-free NIP-29 relay-group core: (relay URL, group id) identity, admission
 # of relay-signed 39000-39003 snapshots, role checks and unsigned event
 # templates. No transport, subscription or UI is linked here. nips/nip29 is
@@ -345,6 +355,24 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
     add_test(NAME groundhog-dm-inbox COMMAND test-groundhog-dm-inbox)
     set_tests_properties(groundhog-dm-inbox PROPERTIES TIMEOUT 60
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+  endif()
+
+  # Send pipeline against recording scope/publish transports and the mock
+  # signer bus and, when libsoup is present, real local WebSocket relays.
+  if (GROUNDHOG_DM_SEND_SOURCES)
+    add_executable(test-groundhog-dm-send tests/app/test_dm_send.c
+      ${GROUNDHOG_DM_SEND_SOURCES} src/app/gh-nip17-envelope.c)
+    target_link_libraries(test-groundhog-dm-send PRIVATE groundhog-account-relays
+      nostr_nip17_core nostr_nip59_core)
+    if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_link_libraries(test-groundhog-dm-send PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_definitions(test-groundhog-dm-send PRIVATE GROUNDHOG_TEST_WIRE=1)
+    endif()
+    target_compile_options(test-groundhog-dm-send PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-dm-send groundhog-test-schemas)
+    add_test(NAME groundhog-dm-send COMMAND test-groundhog-dm-send)
+    set_tests_properties(groundhog-dm-send PROPERTIES TIMEOUT 90
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
 
   # Check that gh-account-ui.c attaches the gh-account-ui.blp pages/menu to a

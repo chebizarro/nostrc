@@ -211,20 +211,18 @@ sign_done(GObject *source, GAsyncResult *result, gpointer data)
   g_object_unref(task);
 }
 
-void
-gh_nip17_envelope_build_async(GhAccountController *accounts,
-                                    const gchar *recipient_pubkey_hex,
-                                    const gchar *content,
-                                    GCancellable *cancellable,
-                                    GAsyncReadyCallback callback,
-                                    gpointer user_data)
+static void
+build_start(GhAccountController *accounts, const gchar *recipient_pubkey_hex,
+            gboolean self_only, const gchar *content, GCancellable *cancellable,
+            GAsyncReadyCallback callback, gpointer user_data)
 {
-  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   GTask *task = g_task_new(accounts, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_nip17_envelope_build_async);
   if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
   const gchar *npub = gh_account_controller_get_active_npub(accounts);
   g_autofree gchar *sender = npub ? gh_identity_pubkey_hex(npub) : NULL;
+  if (self_only && sender)
+    recipient_pubkey_hex = sender;
   if (!sender || !hex64(recipient_pubkey_hex) || !content || !*content ||
       !g_utf8_validate(content, -1, NULL)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -233,7 +231,7 @@ gh_nip17_envelope_build_async(GhAccountController *accounts,
     return;
   }
   g_autofree gchar *recipient = g_ascii_strdown(recipient_pubkey_hex, -1);
-  if (g_strcmp0(sender, recipient) == 0) {
+  if (!self_only && g_strcmp0(sender, recipient) == 0) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                             "Recipient must differ from the selected sender");
     g_object_unref(task);
@@ -244,6 +242,8 @@ gh_nip17_envelope_build_async(GhAccountController *accounts,
   build->sender = g_strdup(sender);
   build->sender_npub = g_strdup(npub);
   build->recipient = g_strdup(recipient);
+  /* A note to self skips straight to the single self wrap. */
+  build->destination = self_only ? 1 : 0;
   g_task_set_task_data(task, build, build_free);
   NostrEvent *rumor = nostr_nip17_create_rumor(sender, recipient, content, 0);
   if (!rumor) { fail_local(task, "Could not create NIP-17 rumor"); return; }
@@ -260,6 +260,30 @@ gh_nip17_envelope_build_async(GhAccountController *accounts,
   build->rumor_json = g_strdup(json);
   free(json);
   begin_encrypt(task);
+}
+
+void
+gh_nip17_envelope_build_async(GhAccountController *accounts,
+                                    const gchar *recipient_pubkey_hex,
+                                    const gchar *content,
+                                    GCancellable *cancellable,
+                                    GAsyncReadyCallback callback,
+                                    gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
+  build_start(accounts, recipient_pubkey_hex, FALSE, content, cancellable,
+              callback, user_data);
+}
+
+void
+gh_nip17_envelope_build_self_async(GhAccountController *accounts,
+                                   const gchar *content,
+                                   GCancellable *cancellable,
+                                   GAsyncReadyCallback callback,
+                                   gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
+  build_start(accounts, NULL, TRUE, content, cancellable, callback, user_data);
 }
 
 GhNip17Envelope *
