@@ -602,3 +602,39 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_STORE=0)
 endif()
 # --- end G02 store ---
+
+# --- G23 store marmot ---
+# libmarmot's MarmotStorage over the encrypted per-account GhStore (privacy
+# charter §3.9, decision D5 = vtable): MLS state, its snapshots and the outbox
+# share one SQLCipher transaction (T-mls). Needs the GhStore (G02) and the
+# in-tree libmarmot target; skipped cleanly without either. Nothing in the
+# application uses it yet (qp24.7 and qp24.13 will link it), so the
+# executable's link set is unchanged.
+if (TARGET groundhog-store AND TARGET marmot)
+  message(STATUS "Groundhog store marmot: enabled")
+  add_library(groundhog-store-marmot STATIC src/store/gh-store-marmot.c)
+  target_include_directories(groundhog-store-marmot PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-store-marmot PUBLIC groundhog-store marmot)
+  target_compile_options(groundhog-store-marmot PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    # The adapter compiled against the test-hooks store (H8 crash cut points):
+    # libmarmot's storage contract cases, snapshots, T-mls under the crash
+    # harness and an end-to-end libmarmot group across store reopens. libmarmot
+    # links libsqlite3, so SQLCipher goes first here as in the application
+    # (ST-4); every store open re-checks that at runtime.
+    add_executable(test-groundhog-store-marmot tests/store/test_store_marmot.c
+      tests/store/crash-harness.c src/store/gh-store-marmot.c)
+    target_include_directories(test-groundhog-store-marmot PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store)
+    target_link_libraries(test-groundhog-store-marmot PRIVATE groundhog-store-testhooks marmot)
+    target_compile_options(test-groundhog-store-marmot PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-store-marmot)
+    add_test(NAME groundhog-store-marmot COMMAND test-groundhog-store-marmot)
+    set_tests_properties(groundhog-store-marmot PROPERTIES TIMEOUT 180
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog store marmot: disabled (needs the GhStore and the in-tree "
+                 "libmarmot target)")
+endif()
+# --- end G23 store marmot ---

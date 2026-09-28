@@ -157,8 +157,119 @@ static const gchar schema_v1[] =
   "  data       BLOB NOT NULL,"
   "  PRIMARY KEY (group_id, name)) WITHOUT ROWID;";
 
+/* Schema v2 (G23, charter §3.9, D5 = vtable): the rest of libmarmot's
+ * MarmotStorage, beside v1's mls_kv (mls_store/load/delete) and mls_snapshots
+ * (one header row per snapshot). gh-store-marmot.c is the only writer; value
+ * encodings are documented in gh-store-marmot.h. v1's mls_groups remains the
+ * caller's conversation link and is not written by GhStoreMarmot.
+ *
+ * - Natural keys are the libmarmot ids (MLS group id, event ids, KeyPackageRef).
+ *   Tables whose rows can be large (text, JSON, relay lists) keep a rowid.
+ * - admin_pubkeys columns hold n x 32 bytes; relay lists in welcomes and key
+ *   packages are length-prefixed blobs, so any URL round-trips exactly.
+ * - mls_snapshot_rows holds a snapshot's exact row copies (tbl says which
+ *   table). c0..c12 are declared without a type (BLOB affinity), so SQLite
+ *   stores every copied value unchanged: storage class and bytes. Deleting the
+ *   header in mls_snapshots deletes its rows. */
+static const gchar schema_v2[] =
+  "CREATE TABLE mls_group_info ("
+  "  mls_group_id              BLOB NOT NULL PRIMARY KEY,"
+  "  nostr_group_id            BLOB NOT NULL,"
+  "  name                      TEXT,"
+  "  description               TEXT,"
+  "  image_hash                BLOB,"
+  "  image_key                 BLOB,"
+  "  image_nonce               BLOB,"
+  "  admin_pubkeys             BLOB,"
+  "  last_message_id           TEXT,"
+  "  last_message_at           INTEGER NOT NULL,"
+  "  last_message_processed_at INTEGER NOT NULL,"
+  "  epoch                     INTEGER NOT NULL,"
+  "  state                     INTEGER NOT NULL);"
+  "CREATE INDEX mls_group_info_by_nostr_id ON mls_group_info (nostr_group_id);"
+
+  "CREATE TABLE mls_group_relays ("
+  "  mls_group_id BLOB NOT NULL,"
+  "  relay_url    TEXT NOT NULL,"
+  "  position     INTEGER NOT NULL,"
+  "  PRIMARY KEY (mls_group_id, relay_url)) WITHOUT ROWID;"
+
+  "CREATE TABLE mls_exporter_secrets ("
+  "  mls_group_id BLOB NOT NULL,"
+  "  epoch        INTEGER NOT NULL,"
+  "  secret       BLOB NOT NULL,"
+  "  PRIMARY KEY (mls_group_id, epoch)) WITHOUT ROWID;"
+
+  "CREATE TABLE mls_messages ("
+  "  id               BLOB NOT NULL UNIQUE,"
+  "  mls_group_id     BLOB NOT NULL,"
+  "  pubkey           BLOB NOT NULL,"
+  "  kind             INTEGER NOT NULL,"
+  "  created_at       INTEGER NOT NULL,"
+  "  processed_at     INTEGER NOT NULL,"
+  "  content          TEXT,"
+  "  tags_json        TEXT,"
+  "  event_json       TEXT,"
+  "  wrapper_event_id BLOB NOT NULL,"
+  "  epoch            INTEGER NOT NULL,"
+  "  state            INTEGER NOT NULL);"
+  "CREATE INDEX mls_messages_by_created ON mls_messages "
+  "  (mls_group_id, created_at, processed_at, id);"
+  "CREATE INDEX mls_messages_by_processed ON mls_messages "
+  "  (mls_group_id, processed_at, created_at, id);"
+
+  "CREATE TABLE mls_processed_messages ("
+  "  wrapper_event_id BLOB NOT NULL PRIMARY KEY,"
+  "  message_event_id BLOB,"
+  "  processed_at     INTEGER NOT NULL,"
+  "  epoch            INTEGER NOT NULL,"
+  "  mls_group_id     BLOB,"
+  "  state            INTEGER NOT NULL,"
+  "  failure_reason   TEXT) WITHOUT ROWID;"
+
+  "CREATE TABLE mls_welcomes ("
+  "  id                  BLOB NOT NULL UNIQUE,"
+  "  wrapper_event_id    BLOB NOT NULL UNIQUE,"
+  "  event_json          TEXT,"
+  "  mls_group_id        BLOB,"
+  "  nostr_group_id      BLOB NOT NULL,"
+  "  group_name          TEXT,"
+  "  group_description   TEXT,"
+  "  group_image_hash    BLOB,"
+  "  group_admin_pubkeys BLOB,"
+  "  group_relays        BLOB,"
+  "  welcomer            BLOB NOT NULL,"
+  "  member_count        INTEGER NOT NULL,"
+  "  state               INTEGER NOT NULL);"
+  "CREATE INDEX mls_welcomes_by_state ON mls_welcomes (state);"
+
+  "CREATE TABLE mls_processed_welcomes ("
+  "  wrapper_event_id BLOB NOT NULL PRIMARY KEY,"
+  "  welcome_event_id BLOB,"
+  "  processed_at     INTEGER NOT NULL,"
+  "  state            INTEGER NOT NULL,"
+  "  failure_reason   TEXT) WITHOUT ROWID;"
+
+  "CREATE TABLE mls_key_packages ("
+  "  ref          BLOB NOT NULL PRIMARY KEY,"
+  "  owner_pubkey BLOB NOT NULL,"
+  "  relay_urls   BLOB,"
+  "  created_at   INTEGER NOT NULL,"
+  "  active       INTEGER NOT NULL);"
+  "CREATE INDEX mls_key_packages_by_owner ON mls_key_packages (owner_pubkey);"
+
+  "CREATE TABLE mls_snapshot_rows ("
+  "  group_id BLOB NOT NULL,"
+  "  name     TEXT NOT NULL,"
+  "  tbl      INTEGER NOT NULL,"
+  "  c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12,"
+  "  FOREIGN KEY (group_id, name) REFERENCES mls_snapshots (group_id, name) "
+  "    ON DELETE CASCADE);"
+  "CREATE INDEX mls_snapshot_rows_by_snapshot ON mls_snapshot_rows (group_id, name, tbl);";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
+  { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

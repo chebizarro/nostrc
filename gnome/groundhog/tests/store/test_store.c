@@ -1133,7 +1133,8 @@ test_st6_crash_create(void)
     g_autofree gchar *meta_account = sql_text(store, "SELECT value FROM meta WHERE key = 'account_pubkey'");
     g_autofree gchar *meta_id = sql_text(store, "SELECT value FROM meta WHERE key = 'store_id'");
     g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, GH_STORE_SCHEMA_VERSION);
-    g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, 1);
+    g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==,
+                    GH_STORE_SCHEMA_VERSION);
     g_assert_cmpstr(meta_account, ==, account);
     g_assert_cmpstr(meta_id, ==, item->store_id);
     g_assert_cmpstr(gh_store_get_store_id(store), ==, item->store_id);
@@ -1609,8 +1610,10 @@ test_st11_schema_version(void)
   const gchar *objects_sql =
     "SELECT group_concat(name, ',') FROM (SELECT name FROM sqlite_master ORDER BY name)";
   g_autofree gchar *objects = sql_text(store, "%s", objects_sql);
-  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 1);
+  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, GH_STORE_SCHEMA_VERSION);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 1"), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==,
+                  GH_STORE_SCHEMA_VERSION);
   for (guint i = 0; i < G_N_ELEMENTS(tables); i++)
     g_assert_cmpint(sql_int(store, "SELECT count(*) FROM sqlite_master WHERE type = 'table' "
                                    "AND name = '%s'", tables[i]), ==, 1);
@@ -1620,8 +1623,11 @@ test_st11_schema_version(void)
   store = open_ok(keys, ACCOUNT_A, NULL, GH_STORE_OPEN_CREATE);
   g_autofree gchar *objects_again = sql_text(store, "%s", objects_sql);
   g_assert_cmpstr(objects_again, ==, objects);
-  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, 1);
-  g_assert_true(gh_store_exec(store, "PRAGMA user_version = 2", &error));
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==,
+                  GH_STORE_SCHEMA_VERSION);
+  g_autofree gchar *newer_version =
+    g_strdup_printf("PRAGMA user_version = %d", GH_STORE_SCHEMA_VERSION + 1);
+  g_assert_true(gh_store_exec(store, newer_version, &error));
   g_assert_no_error(error);
   g_autofree gchar *path = g_strdup(gh_store_get_path(store));
   gh_store_close(store);
