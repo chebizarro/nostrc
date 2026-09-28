@@ -10,6 +10,10 @@
 #include <time.h>
 #include <unistd.h>
 #include <libwebsockets.h>
+/* libwebsockets < 4.3 (e.g. Debian bookworm) lacks this terminator macro. */
+#ifndef LWS_PROTOCOL_LIST_TERM
+#define LWS_PROTOCOL_LIST_TERM { .name = NULL, .callback = NULL }
+#endif
 
 #include "error.h"
 #include "json.h"
