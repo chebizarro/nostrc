@@ -477,3 +477,41 @@ if (BUILD_TESTING)
   endif()
 endif()
 # --- end G01 privacy static ---
+
+# --- G03 store key ---
+# Custody of the per-account store key (charter §3.4, D2): 32 random bytes in
+# a Groundhog-owned Secret Service item (org.nostr.Groundhog.StoreKey), held
+# only in libsodium guarded memory, with explicit LOCKED/NOT_FOUND/UNAVAILABLE
+# states and no plaintext fallback. GTK-free; G04 links it into the app.
+pkg_check_modules(GROUNDHOG_STORE_KEY_DEPS QUIET IMPORTED_TARGET
+  glib-2.0>=2.66 gio-2.0 libsecret-1 libsodium)
+if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
+  add_library(groundhog-store-key STATIC src/store/gh-store-key.c)
+  target_include_directories(groundhog-store-key PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-store-key PUBLIC PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
+  target_compile_options(groundhog-store-key PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    # KC-1..KC-5 against the in-process FakeSecret backend, plus the libsecret
+    # backend on a private bus with no Secret Service (KC-4).
+    add_executable(test-groundhog-store-key
+      tests/store/test_store_key.c tests/store/fake-secret.c)
+    target_link_libraries(test-groundhog-store-key PRIVATE groundhog-store-key)
+    target_compile_options(test-groundhog-store-key PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-store-key COMMAND test-groundhog-store-key)
+    set_tests_properties(groundhog-store-key PROPERTIES TIMEOUT 30
+      ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+    # KC-6: a real gnome-keyring on a private bus (or, with
+    # GH_STORE_KEY_TEST_SESSION_KEYRING=1, the session's). Skips (77) only
+    # when gnome-keyring-daemon or dbus-daemon is not installed.
+    add_executable(test-groundhog-store-key-keyring
+      tests/store/test_store_key_keyring.c tests/store/fake-secret.c)
+    target_link_libraries(test-groundhog-store-key-keyring PRIVATE groundhog-store-key)
+    target_compile_options(test-groundhog-store-key-keyring PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-store-key-keyring COMMAND test-groundhog-store-key-keyring)
+    set_tests_properties(groundhog-store-key-keyring PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog store key unavailable: libsecret-1 and libsodium are required")
+endif()
+# --- end G03 store key ---

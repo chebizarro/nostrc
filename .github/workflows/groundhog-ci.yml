@@ -29,7 +29,7 @@ jobs:
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev \
             libgit2-dev libsqlite3-dev libnsync-dev \
             desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core \
-            blueprint-compiler
+            blueprint-compiler gnome-keyring
           # Ubuntu 24.04 ships blueprint-compiler 0.12, Groundhog's minimum;
           # groundhog-blueprint compares its output with the committed .ui.
           blueprint-compiler --version
@@ -48,7 +48,7 @@ jobs:
             test-groundhog-account test-groundhog-account-relays test-groundhog-dm-send \
             test-groundhog-account-ui test-groundhog-relay test-groundhog-relay-wire \
             test-groundhog-relay-publish test-groundhog-relay-publish-wire \
-            test-groundhog-nip29 test-groundhog-conversations test-groundhog-dm-inbox
+            test-groundhog-nip29 test-groundhog-conversations test-groundhog-dm-inbox test-groundhog-store-key test-groundhog-store-key-keyring
 
       - name: Require complete Groundhog test registration
         run: |
@@ -66,7 +66,7 @@ jobs:
               'groundhog-conversations', 'groundhog-dm-inbox',
               'groundhog-version', 'groundhog-launch', 'groundhog-schema',
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
-              'groundhog-blueprint', 'groundhog-privacy-static',
+              'groundhog-blueprint', 'groundhog-privacy-static', 'groundhog-store-key', 'groundhog-store-key-keyring',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -88,6 +88,23 @@ jobs:
             exit 1
           fi
 
+      - name: KC-6 store key against the session's unlocked gnome-keyring
+        run: |
+          set -euo pipefail
+          # The run above already exercised KC-6 against a private keyring the
+          # test starts itself (a skip fails that step). This repeats it the
+          # way a desktop session looks: gnome-keyring-daemon unlocks the login
+          # keyring on the session bus, as PAM does at login, and the test must
+          # find that service (it fails, never skips, in this mode).
+          export XDG_DATA_HOME="$RUNNER_TEMP/kc6-data" XDG_RUNTIME_DIR="$RUNNER_TEMP/kc6-run"
+          mkdir -p "$XDG_DATA_HOME"
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+          dbus-run-session -- bash -euo pipefail -c '
+            printf %s ci-keyring | gnome-keyring-daemon --unlock --components=secrets --daemonize >/dev/null
+            GH_STORE_KEY_TEST_SESSION_KEYRING=1 ctest --test-dir build --output-on-failure \
+              --no-tests=error -R "^groundhog-store-key-keyring$" | tee build/groundhog-kc6-session.log
+          '
+
       - name: Require the build to leave committed UI untouched
         run: |
           # data/ui/*.ui are committed Blueprint output; builds compile into
@@ -107,5 +124,6 @@ jobs:
           path: |
             build/groundhog-ctest.log
             build/groundhog-ctest.xml
+            build/groundhog-kc6-session.log
             build/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
