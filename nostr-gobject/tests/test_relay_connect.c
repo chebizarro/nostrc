@@ -5,10 +5,14 @@
  *    (quickly), not report success and leave publish waiting for an OK.
  *  - nostrc-jc2o: disconnect + unref must not close fd 0 behind our back,
  *    and a fresh connect afterwards must work.
+ *  - nostrc-qp24.4.5: every core-driven state transition reaches
+ *    "state-changed" on the main context, in order, including a lone
+ *    CONNECTED -> DISCONNECTED when the relay goes away.
  *
  * SPDX-License-Identifier: MIT
  */
 #include <nostr-gobject-1.0/nostr_relay.h>
+#include <nostr-relay.h>
 #include "nostr/testing/mock_relay_server.h"
 
 #include <arpa/inet.h>
@@ -110,6 +114,121 @@ test_refused_port_fails(void)
   g_test_message("refused connect failed after %" G_GINT64_FORMAT " ms", elapsed / 1000);
 }
 
+typedef struct {
+  GArray *pairs;          /* old, new, old, new, ... */
+  GThread *main_thread;
+  guint off_thread;
+  guint connected_notifies;
+  gboolean timed_out;
+} StateLog;
+
+static void
+on_state_changed(GNostrRelay *relay G_GNUC_UNUSED, GNostrRelayState old_state,
+                 GNostrRelayState new_state, gpointer user_data)
+{
+  StateLog *log = user_data;
+  if (g_thread_self() != log->main_thread)
+    log->off_thread++;
+  gint pair[2] = { old_state, new_state };
+  g_array_append_vals(log->pairs, pair, 2);
+}
+
+static void
+on_connected_notify(GObject *object G_GNUC_UNUSED, GParamSpec *pspec G_GNUC_UNUSED,
+                    gpointer user_data)
+{
+  ((StateLog *)user_data)->connected_notifies++;
+}
+
+static gboolean
+state_log_expire(gpointer user_data)
+{
+  ((StateLog *)user_data)->timed_out = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+/* Index of the first emission at or after @from whose new state is @a or
+ * @b, or -1. */
+static gint
+find_emission(StateLog *log, guint from, GNostrRelayState a, GNostrRelayState b)
+{
+  for (guint i = from; i < log->pairs->len / 2; i++) {
+    gint new_state = g_array_index(log->pairs, gint, 2 * i + 1);
+    if (new_state == (gint)a || new_state == (gint)b)
+      return (gint)i;
+  }
+  return -1;
+}
+
+/* Blocks on the main context until an emission appears; the timeout is a
+ * failure bound only, progress is driven by the relay's signals. */
+static gint
+wait_for_emission(StateLog *log, guint from, GNostrRelayState a, GNostrRelayState b)
+{
+  log->timed_out = FALSE;
+  guint bound = g_timeout_add_seconds(10, state_log_expire, log);
+  gint index;
+  while ((index = find_emission(log, from, a, b)) < 0 && !log->timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!log->timed_out)
+    g_source_remove(bound);
+  return index;
+}
+
+static void
+test_state_changed_every_transition(void)
+{
+  NostrMockRelayServerConfig cfg = nostr_mock_server_config_default();
+  NostrMockRelayServer *server = nostr_mock_server_new(&cfg);
+  g_assert_nonnull(server);
+  g_assert_cmpint(nostr_mock_server_start(server), ==, 0);
+
+  /* A private relay (not the URL registry) with a single connection, so the
+   * lost connection is one CONNECTED -> DISCONNECTED transition that the
+   * former implementation swallowed. */
+  GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url",
+                                    nostr_mock_server_get_url(server), NULL);
+  nostr_relay_set_auto_reconnect(gnostr_relay_get_core_relay(relay), false);
+  StateLog log = { .pairs = g_array_new(FALSE, FALSE, sizeof(gint)),
+                   .main_thread = g_thread_self() };
+  g_signal_connect(relay, "state-changed", G_CALLBACK(on_state_changed), &log);
+  g_signal_connect(relay, "notify::connected", G_CALLBACK(on_connected_notify), &log);
+
+  g_autoptr(GError) error = NULL;
+  gint64 elapsed = 0;
+  g_assert_true(connect_bounded(relay, &error, &elapsed));
+  g_assert_no_error(error);
+  gint up = wait_for_emission(&log, 0, GNOSTR_RELAY_STATE_CONNECTED,
+                              GNOSTR_RELAY_STATE_CONNECTED);
+  g_assert_cmpint(up, >=, 0);
+
+  nostr_mock_server_stop(server); /* drops the client's socket */
+  gint down = wait_for_emission(&log, (guint)up + 1, GNOSTR_RELAY_STATE_DISCONNECTED,
+                                GNOSTR_RELAY_STATE_ERROR);
+  g_assert_cmpint(down, >, up);
+  g_assert_false(gnostr_relay_get_connected(relay));
+
+  /* One chain: starts from DISCONNECTED, each old state is the previous
+   * emission's new state, no no-op emissions, all on this thread. */
+  guint n = log.pairs->len / 2;
+  g_assert_cmpuint(n, >=, 2);
+  g_assert_cmpint(g_array_index(log.pairs, gint, 0), ==, GNOSTR_RELAY_STATE_DISCONNECTED);
+  for (guint i = 0; i < n; i++) {
+    gint old_state = g_array_index(log.pairs, gint, 2 * i);
+    gint new_state = g_array_index(log.pairs, gint, 2 * i + 1);
+    g_assert_cmpint(old_state, !=, new_state);
+    if (i > 0)
+      g_assert_cmpint(old_state, ==, g_array_index(log.pairs, gint, 2 * i - 1));
+  }
+  g_assert_cmpuint(log.off_thread, ==, 0);
+  g_assert_cmpuint(log.connected_notifies, >=, 2); /* up, then down */
+
+  g_signal_handlers_disconnect_by_data(relay, &log);
+  g_object_unref(relay);
+  g_array_unref(log.pairs);
+  nostr_mock_server_free(server);
+}
+
 static void
 test_teardown_keeps_fd0(void)
 {
@@ -150,5 +269,7 @@ main(int argc, char **argv)
   }
   g_test_add_func("/relay/connect/refused-port-fails", test_refused_port_fails);
   g_test_add_func("/relay/connect/teardown-keeps-fd0", test_teardown_keeps_fd0);
+  g_test_add_func("/relay/state/every-transition-emitted",
+                  test_state_changed_every_transition);
   return g_test_run();
 }

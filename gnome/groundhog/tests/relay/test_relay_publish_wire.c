@@ -1,4 +1,5 @@
 #include "gh-relay-publish.h"
+#include "fake-auth-signer.h"
 #include "wire-relay.h"
 
 #include <nostr-gobject-1.0/nostr_relay.h>
@@ -22,6 +23,7 @@ typedef struct {
   GhRelayPublishSummary summary;
   GHashTable *outcomes; /* url -> GINT_TO_POINTER(outcome) */
   GHashTable *prefixes; /* url -> GINT_TO_POINTER(prefix) */
+  GHashTable *messages; /* url -> message copy */
   GThread *expected_thread;
   guint wrong_thread;
 } Outcomes;
@@ -77,6 +79,7 @@ outcomes_init(Outcomes *outcomes)
   memset(outcomes, 0, sizeof *outcomes);
   outcomes->outcomes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   outcomes->prefixes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  outcomes->messages = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 }
 
 static void
@@ -84,6 +87,7 @@ outcomes_clear(Outcomes *outcomes)
 {
   g_hash_table_unref(outcomes->outcomes);
   g_hash_table_unref(outcomes->prefixes);
+  g_hash_table_unref(outcomes->messages);
 }
 
 static GhRelayPublishOutcome
@@ -109,6 +113,8 @@ on_update(GhRelayPublish *publish, const GhRelayPublishResult *result,
                       GINT_TO_POINTER(result->outcome));
   g_hash_table_insert(outcomes->prefixes, g_strdup(result->url),
                       GINT_TO_POINTER(result->prefix));
+  g_hash_table_insert(outcomes->messages, g_strdup(result->url),
+                      g_strdup(result->message ? result->message : ""));
 }
 
 static void
@@ -398,10 +404,204 @@ test_wire_callbacks_on_owner_context(void)
   outcomes_clear(&run.outcomes);
 }
 
+/* ---- qp24.4.8: a lost connection is reported promptly ---- */
+
+/* The relay drops the socket when the EVENT arrives (before any OK), or
+ * right after the WebSocket upgrade. Either way the URL is
+ * CONNECTION_FAILED from the transport's own signal, long before the 30 s
+ * failure deadline (the wait's bound is 18 s, and the message is not the
+ * deadline's). */
+static void
+test_wire_connection_lost_before_ok(void)
+{
+  for (guint variant = 0; variant < 2; variant++) {
+    WireRelay relay = { .close_on_event = variant == 0,
+                        .close_on_connect = variant == 1 };
+    relay_init(&relay);
+    Outcomes outcomes;
+    outcomes_init(&outcomes);
+    g_autofree gchar *json = signed_json("wire lost");
+    GhRelayPublish *publish = gh_relay_publish_new(5, json, on_update, on_done,
+                                                   &outcomes, NULL);
+    g_assert_true(gh_relay_publish_add_url(publish, relay.url, NULL));
+    g_assert_true(gh_relay_publish_start(publish, NULL));
+    wait_for_count(&outcomes.done, 1);
+    g_assert_cmpint(outcome_for(&outcomes, relay.url), ==,
+                    GH_RELAY_PUBLISH_CONNECTION_FAILED);
+    const gchar *message = g_hash_table_lookup(outcomes.messages, relay.url);
+    g_test_message("lost-connection outcome: %s", message);
+    g_assert_null(strstr(message, "failure bound"));
+    if (variant == 0)
+      g_assert_cmpuint(relay.events, ==, 1);
+    gh_relay_publish_unref(publish);
+    relay_clear(&relay);
+    outcomes_clear(&outcomes);
+  }
+}
+
+/* ---- NIP-42 against a real relay that requires AUTH for EVENT ---- */
+
+static GhRelayPublish *
+auth_publish(WireRelay *relays, gsize n_relays, Outcomes *outcomes,
+             FakeSigner *fake, GhRelayAuthMode mode, const gchar *content)
+{
+  g_autofree gchar *json = signed_json(content);
+  g_autoptr(GError) error = NULL;
+  GhRelayPublish *publish = gh_relay_publish_new(12, json, on_update, on_done,
+                                                 outcomes, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhRelayAuthSigner) signer = fake_signer_new(fake, 12, NULL);
+  g_assert_true(gh_relay_publish_set_account_signer(publish, signer, &error));
+  for (gsize i = 0; i < n_relays; i++) {
+    g_assert_true(gh_relay_publish_add_url(publish, relays[i].url, NULL));
+    g_assert_true(gh_relay_publish_set_url_auth(publish, relays[i].url, mode, &error));
+  }
+  g_assert_no_error(error);
+  g_assert_true(gh_relay_publish_start(publish, &error));
+  return publish;
+}
+
+/* One event to two recipient-style relays in EPHEMERAL mode: each accepts
+ * it after an AUTH, and the two AUTHs carry two different keys, neither
+ * the account's. */
+static void
+test_wire_auth_ephemeral_two_relays(void)
+{
+  Script script = { .accepted = TRUE, .message = "" };
+  WireRelay relays[2] = { { .require_auth = TRUE }, { .require_auth = TRUE } };
+  for (guint i = 0; i < 2; i++)
+    scripted_relay(&relays[i], &script);
+  Outcomes outcomes;
+  outcomes_init(&outcomes);
+  FakeSigner fake = { .mode = FAKE_SIGN_OK };
+  GhRelayPublish *publish = auth_publish(relays, 2, &outcomes, &fake,
+                                         GH_RELAY_AUTH_EPHEMERAL, "wire ephemeral");
+  wait_for_count(&outcomes.done, 1);
+  g_autofree gchar *account = fake_account_pubkey();
+  for (guint i = 0; i < 2; i++) {
+    g_assert_cmpint(outcome_for(&outcomes, relays[i].url), ==, GH_RELAY_PUBLISH_ACCEPTED);
+    g_assert_cmpuint(relays[i].refused_events, ==, 1);
+    g_assert_cmpuint(relays[i].events, ==, 1);
+    g_assert_cmpuint(relays[i].auth_ok, ==, 1);
+    g_assert_cmpuint(relays[i].connections->len, ==, 1);
+    g_assert_cmpstr(g_ptr_array_index(relays[i].auth_pubkeys, 0), !=, account);
+  }
+  g_assert_cmpstr(g_ptr_array_index(relays[0].auth_pubkeys, 0), !=,
+                  g_ptr_array_index(relays[1].auth_pubkeys, 0));
+  g_assert_cmpuint(fake.calls, ==, 0);
+  gh_relay_publish_unref(publish);
+  for (guint i = 0; i < 2; i++)
+    relay_clear(&relays[i]);
+  outcomes_clear(&outcomes);
+  fake_signer_clear(&fake);
+}
+
+/* ACCOUNT on the account's own relay: accepted after an AUTH as the
+ * account. */
+static void
+test_wire_auth_account_own_relay(void)
+{
+  Script script = { .accepted = TRUE, .message = "" };
+  WireRelay relay = { .require_auth = TRUE };
+  scripted_relay(&relay, &script);
+  Outcomes outcomes;
+  outcomes_init(&outcomes);
+  FakeSigner fake = { .mode = FAKE_SIGN_OK };
+  GhRelayPublish *publish = auth_publish(&relay, 1, &outcomes, &fake,
+                                         GH_RELAY_AUTH_ACCOUNT, "wire account");
+  wait_for_count(&outcomes.done, 1);
+  g_assert_cmpint(outcome_for(&outcomes, relay.url), ==, GH_RELAY_PUBLISH_ACCEPTED);
+  g_autofree gchar *account = fake_account_pubkey();
+  g_assert_cmpuint(relay.auth_pubkeys->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(relay.auth_pubkeys, 0), ==, account);
+  g_assert_cmpuint(fake.calls, ==, 1);
+  gh_relay_publish_unref(publish);
+  relay_clear(&relay);
+  outcomes_clear(&outcomes);
+  fake_signer_clear(&fake);
+}
+
+/* NONE (the default, with an account signer present), a refused account
+ * signature, and the relay refusing an ephemeral AUTH each end as
+ * AUTH_REQUIRED; nothing unverified reaches the relay, and a refused
+ * ephemeral AUTH is never retried as the account. */
+static void
+test_wire_auth_failures(void)
+{
+  static const struct {
+    GhRelayAuthMode mode;
+    FakeSignMode sign;
+    gboolean refuse_auth;
+    guint auth_frames;
+    guint sign_calls;
+  } cases[] = {
+    { GH_RELAY_AUTH_NONE, FAKE_SIGN_OK, FALSE, 0, 0 },
+    { GH_RELAY_AUTH_ACCOUNT, FAKE_SIGN_DENY, FALSE, 0, 1 },
+    { GH_RELAY_AUTH_ACCOUNT, FAKE_SIGN_BAD_SIG, FALSE, 0, 1 },
+    { GH_RELAY_AUTH_EPHEMERAL, FAKE_SIGN_OK, TRUE, 1, 0 },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(cases); i++) {
+    Script script = { .accepted = TRUE, .message = "" };
+    WireRelay relay = { .require_auth = TRUE, .refuse_auth = cases[i].refuse_auth };
+    scripted_relay(&relay, &script);
+    Outcomes outcomes;
+    outcomes_init(&outcomes);
+    FakeSigner fake = { .mode = cases[i].sign };
+    GhRelayPublish *publish = auth_publish(&relay, 1, &outcomes, &fake,
+                                           cases[i].mode, "wire auth failure");
+    wait_for_count(&outcomes.done, 1);
+    g_assert_cmpint(outcome_for(&outcomes, relay.url), ==, GH_RELAY_PUBLISH_AUTH_REQUIRED);
+    g_assert_cmpint(GPOINTER_TO_INT(g_hash_table_lookup(outcomes.prefixes, relay.url)),
+                    ==, GH_RELAY_OK_PREFIX_AUTH_REQUIRED);
+    g_assert_cmpuint(relay.auth_frames, ==, cases[i].auth_frames);
+    g_assert_cmpuint(relay.refused_events, ==, 1);
+    g_assert_cmpuint(relay.events, ==, 0);
+    g_assert_cmpuint(fake.calls, ==, cases[i].sign_calls);
+    gh_relay_publish_unref(publish);
+    relay_clear(&relay);
+    outcomes_clear(&outcomes);
+    fake_signer_clear(&fake);
+  }
+}
+
+/* Cancelled while the account signer is still working: no callback, and
+ * nothing reaches the relay. */
+static void
+test_wire_auth_cancel_while_signing(void)
+{
+  Script script = { .accepted = TRUE, .message = "" };
+  WireRelay relay = { .require_auth = TRUE };
+  scripted_relay(&relay, &script);
+  Outcomes outcomes;
+  outcomes_init(&outcomes);
+  FakeSigner fake = { .mode = FAKE_SIGN_HOLD };
+  GhRelayPublish *publish = auth_publish(&relay, 1, &outcomes, &fake,
+                                         GH_RELAY_AUTH_ACCOUNT, "wire auth cancel");
+  wait_for_count(&fake.calls, 1);
+  gh_relay_publish_cancel(publish);
+  g_assert_true(fake_signer_release(&fake));
+  wait_for_close(&relay, 1);
+  drain_default_context();
+  g_assert_cmpuint(outcomes.updates, ==, 0);
+  g_assert_cmpuint(outcomes.done, ==, 0);
+  g_assert_cmpuint(relay.auth_frames, ==, 0);
+  g_assert_cmpint(gh_relay_publish_get_outcome(publish, relay.url), ==,
+                  GH_RELAY_PUBLISH_CANCELLED);
+  gh_relay_publish_unref(publish);
+  relay_clear(&relay);
+  outcomes_clear(&outcomes);
+  fake_signer_clear(&fake);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/groundhog/relay-publish-wire/connection-lost-before-ok", test_wire_connection_lost_before_ok);
+  g_test_add_func("/groundhog/relay-publish-wire/auth/ephemeral-two-relays", test_wire_auth_ephemeral_two_relays);
+  g_test_add_func("/groundhog/relay-publish-wire/auth/account-own-relay", test_wire_auth_account_own_relay);
+  g_test_add_func("/groundhog/relay-publish-wire/auth/failures", test_wire_auth_failures);
+  g_test_add_func("/groundhog/relay-publish-wire/auth/cancel-while-signing", test_wire_auth_cancel_while_signing);
   g_test_add_func("/groundhog/relay-publish-wire/partial-success", test_wire_partial_success);
   g_test_add_func("/groundhog/relay-publish-wire/relay-down", test_wire_relay_down);
   g_test_add_func("/groundhog/relay-publish-wire/cancel-discards-late-ok", test_wire_cancel_discards_late_ok);

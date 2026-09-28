@@ -93,7 +93,17 @@ struct _GNostrRelay {
     GObject parent_instance;
     NostrRelay *relay;           /* Core libnostr relay */
     gchar *url;                  /* Cached URL (construct-only) */
-    GNostrRelayState state;       /* Current connection state (GObject enum) */
+    /* nostrc-qp24.4.5: two views of the connection state. `state` is the
+     * latest core state, stored atomically by the worker thread so readers
+     * (get_state, publish, connect fast paths) see it immediately.
+     * `emitted_state` is the last state announced by state-changed and is
+     * only touched where signals are emitted; comparing against it (never
+     * against `state`) is what lets every queued transition be emitted. */
+    GNostrRelayState state;
+    GNostrRelayState emitted_state;
+    guint64 state_serial;        /* atomic: serial of the last queued core transition */
+    guint64 state_barrier;       /* atomic: transitions queued at or before this
+                                  * serial predate an explicit disconnect */
     RelayCallbackData *cb_data;  /* Weak-ref wrapper for worker-thread callbacks */
 #ifdef ENABLE_NIP11
     RelayInformationDocument *nip11_info;  /* Cached NIP-11 info (owned) */
@@ -142,18 +152,19 @@ gnostr_relay_state_nick(GNostrRelayState state)
     }
 }
 
-/* Internal state change helper */
+/* Announces a transition from the last emitted state. Runs where signals
+ * may be emitted (the default main context for core-driven transitions). */
 static void
-gnostr_relay_set_state_internal(GNostrRelay *self, GNostrRelayState new_state)
+gnostr_relay_emit_state(GNostrRelay *self, GNostrRelayState new_state)
 {
-    if (self->state == new_state)
+    if (self->emitted_state == new_state)
         return;
 
-    GNostrRelayState old_state = self->state;
+    GNostrRelayState old_state = self->emitted_state;
     gboolean was_connected = (old_state == GNOSTR_RELAY_STATE_CONNECTED);
     gboolean is_connected = (new_state == GNOSTR_RELAY_STATE_CONNECTED);
 
-    self->state = new_state;
+    self->emitted_state = new_state;
 
     /* nostrc-8mb8.1: Structured relay state logging */
     g_debug("[RELAY] state=%s→%s url=%s",
@@ -193,10 +204,13 @@ gnostr_relay_set_state_internal(GNostrRelay *self, GNostrRelayState new_state)
     }
 }
 
-/* Data for idle callback */
+/* One queued core transition. Idles of equal priority on one context are
+ * dispatched in the order they were attached, so transitions are announced
+ * in the order the core reported them. */
 typedef struct {
     RelayCallbackData *cb_data;
     GNostrRelayState new_state;
+    guint64 serial;
 } StateChangeData;
 
 static gboolean
@@ -205,7 +219,11 @@ set_state_on_main_thread(gpointer user_data)
     StateChangeData *data = user_data;
     GNostrRelay *self = g_weak_ref_get(&data->cb_data->weak_relay);
     if (self) {
-        gnostr_relay_set_state_internal(self, data->new_state);
+        /* A transition queued before an explicit disconnect is stale: the
+         * disconnect already announced DISCONNECTED and must not be followed
+         * by, say, an old CONNECTED. */
+        if (data->serial > __atomic_load_n(&self->state_barrier, __ATOMIC_SEQ_CST))
+            gnostr_relay_emit_state(self, data->new_state);
         g_object_unref(self);
     }
     relay_callback_data_unref(data->cb_data);
@@ -227,14 +245,17 @@ on_core_state_changed(NostrRelay *relay G_GNUC_UNUSED,
 
     GNostrRelayState g_new_state = core_state_to_gobject(new_state);
 
-    /* Store state directly for immediate access (thread-safe) */
+    /* Store state directly for immediate access (thread-safe). The emission
+     * compares against emitted_state, so this store no longer hides the
+     * transition from the queued idle (nostrc-qp24.4.5). */
     __atomic_store_n(&self->state, g_new_state, __ATOMIC_SEQ_CST);
-    g_object_unref(self);
 
-    /* Schedule state update on main thread */
+    /* Signals are emitted on the main context, never from this thread. */
     StateChangeData *data = g_new(StateChangeData, 1);
     data->cb_data = relay_callback_data_ref(cb_data);
     data->new_state = g_new_state;
+    data->serial = __atomic_add_fetch(&self->state_serial, 1, __ATOMIC_SEQ_CST);
+    g_object_unref(self);
 
     g_idle_add_full(G_PRIORITY_DEFAULT, set_state_on_main_thread, data, NULL);
 }
@@ -586,7 +607,14 @@ gnostr_relay_class_init(GNostrRelayClass *klass)
      * @old_state: the previous #GNostrRelayState
      * @new_state: the new #GNostrRelayState
      *
-     * Emitted when the connection state changes.
+     * Emitted when the connection state changes. Core-driven transitions
+     * are emitted on the global default main context, never on a relay
+     * worker thread, one emission per transition in the order the core
+     * reported them; @old_state is always the previous emission's
+     * @new_state (initially %GNOSTR_RELAY_STATE_DISCONNECTED). The
+     * #GNostrRelay:state property may already be ahead of @new_state when
+     * further transitions are still queued. gnostr_relay_disconnect()
+     * emits synchronously and supersedes transitions queued before it.
      */
     gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_STATE_CHANGED] =
         g_signal_new("state-changed",
@@ -749,6 +777,9 @@ gnostr_relay_init(GNostrRelay *self)
     self->relay = NULL;
     self->url = NULL;
     self->state = GNOSTR_RELAY_STATE_DISCONNECTED;
+    self->emitted_state = GNOSTR_RELAY_STATE_DISCONNECTED;
+    self->state_serial = 0;
+    self->state_barrier = 0;
 #ifdef ENABLE_NIP11
     self->nip11_info = NULL;
     self->nip11_cancellable = NULL;
@@ -808,9 +839,9 @@ gnostr_relay_connect(GNostrRelay *self, GError **error)
         return TRUE;
     }
 
-    /* nostrc-blk2: Do NOT call gnostr_relay_set_state_internal() here.
+    /* nostrc-blk2: Do NOT call gnostr_relay_emit_state() here.
      * This function is called from worker threads (via connect_async_thread).
-     * gnostr_relay_set_state_internal() emits GObject signals (g_signal_emit,
+     * gnostr_relay_emit_state() emits GObject signals (g_signal_emit,
      * g_object_notify_by_pspec) which are NOT thread-safe — they freeze the
      * app when signal handlers try to update GTK widgets from a worker thread.
      *
@@ -851,7 +882,13 @@ gnostr_relay_disconnect(GNostrRelay *self)
         nostr_relay_disconnect(self->relay);
     }
 
-    gnostr_relay_set_state_internal(self, GNOSTR_RELAY_STATE_DISCONNECTED);
+    /* Everything the core queued up to now is superseded by this explicit
+     * DISCONNECTED; later transitions (a new connect) are still announced. */
+    __atomic_store_n(&self->state, GNOSTR_RELAY_STATE_DISCONNECTED, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&self->state_barrier,
+                     __atomic_load_n(&self->state_serial, __ATOMIC_SEQ_CST),
+                     __ATOMIC_SEQ_CST);
+    gnostr_relay_emit_state(self, GNOSTR_RELAY_STATE_DISCONNECTED);
 }
 
 /* Async connect implementation */
@@ -880,7 +917,7 @@ connect_async_thread(GTask        *task,
 
     /* Check for cancellation */
     if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        /* nostrc-blk2: Do NOT call gnostr_relay_set_state_internal from worker
+        /* nostrc-blk2: Do NOT call gnostr_relay_emit_state from worker
          * thread — it emits GObject signals that freeze GTK. State hasn't
          * changed since we haven't called connect yet. */
         g_task_return_error(task, g_steal_pointer(&error));

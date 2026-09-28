@@ -174,7 +174,8 @@ endif()
 if (TARGET nostr_gobject AND TARGET nostr)
   add_library(groundhog-relay STATIC
     src/relay/gh-relay-scope.c src/relay/gh-relay-gnostr.c
-    src/relay/gh-relay-publish.c src/relay/gh-relay-publish-gnostr.c)
+    src/relay/gh-relay-publish.c src/relay/gh-relay-publish-gnostr.c
+    src/relay/gh-relay-auth.c src/relay/gh-relay-gnostr-write.c)
   target_include_directories(groundhog-relay PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
   target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr)

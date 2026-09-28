@@ -1,4 +1,5 @@
 #include "gh-relay-scope.h"
+#include "gh-relay-gnostr-write.h"
 
 #include <gio/gio.h>
 #include <nostr-gobject-1.0/nostr_relay.h>
@@ -81,16 +82,16 @@ on_ok(GNostrRelay *relay, const gchar *event_id, gboolean accepted,
                            GH_RELAY_NOTICE_OK, event_id, accepted, message);
 }
 
+/* GNostrRelay's own auto-auth (gnostr_relay_set_auth_handler) is never
+ * installed: it signs synchronously and sends the 22242 event in an EVENT
+ * envelope. The scope decides whether to authenticate; see send_auth. */
 static void
 on_auth(GNostrRelay *relay, const gchar *challenge, gpointer data)
 {
   (void)relay;
-  (void)challenge;
   GhGnostrHandle *handle = data;
   if (!handle->closed)
-    gh_relay_scope_notice(handle->scope, handle->url,
-                           GH_RELAY_NOTICE_AUTH, NULL, FALSE,
-                           "relay authentication requested");
+    gh_relay_scope_auth_challenge(handle->scope, handle->url, challenge);
 }
 
 static void
@@ -297,6 +298,49 @@ open_relay(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
 }
 
 static void
+on_auth_written(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  GhGnostrHandle *handle = data;
+  g_autoptr(GError) error = NULL;
+  if (!gh_relay_gnostr_write_finish(result, &error) && !handle->closed) {
+    g_autofree gchar *detail = g_strdup_printf("AUTH write failed: %s",
+                                               error->message);
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
+                           NULL, FALSE, detail);
+  }
+  handle_unref(handle);
+}
+
+static gboolean
+send_auth(gpointer data, const gchar *signed_event_json, gpointer user_data,
+          GError **error)
+{
+  (void)user_data;
+  GhGnostrHandle *handle = data;
+  g_autofree gchar *frame = gh_relay_gnostr_event_frame("AUTH", signed_event_json);
+  if (handle->closed || !frame) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "AUTH frame not sendable");
+    return FALSE;
+  }
+  g_atomic_int_inc(&handle->refs); /* held by the write */
+  gh_relay_gnostr_write_async(handle->relay, frame, handle->cancellable,
+                              on_auth_written, handle);
+  return TRUE;
+}
+
+/* The relay CLOSED the REQ; issue a fresh one on the same connection. */
+static void
+resubscribe(gpointer data, gpointer user_data)
+{
+  (void)user_data;
+  GhGnostrHandle *handle = data;
+  reset_subscription(handle);
+  ensure_subscription(handle);
+}
+
+static void
 close_relay(gpointer data, gpointer user_data)
 {
   (void)user_data;
@@ -316,4 +360,9 @@ close_relay(gpointer data, gpointer user_data)
 const GhRelayTransport gh_relay_gnostr_transport = {
   .open = open_relay,
   .close = close_relay,
+};
+
+const GhRelayAuthTransport gh_relay_gnostr_auth_transport = {
+  .send_auth = send_auth,
+  .resubscribe = resubscribe,
 };

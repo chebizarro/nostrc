@@ -1,4 +1,5 @@
 #include "gh-relay-publish.h"
+#include "fake-auth-signer.h"
 
 #include <gio/gio.h>
 #include <nostr-event.h>
@@ -507,10 +508,463 @@ test_deadline_is_failure_only(void)
   fixture_clear(&fixture);
 }
 
+/* ---- NIP-42 against a recording transport ---- */
+
+#define AUTH_URL "wss://auth.example"
+#define OTHER_URL "wss://other.example"
+
+typedef struct {
+  Fixture base;            /* first: fake_open/fake_close see a Fixture */
+  GPtrArray *sent_auth;    /* signed AUTH event JSON, in order */
+  GPtrArray *sent_urls;    /* the handle (URL) each was sent on */
+  guint resends;
+  gboolean resend_fails;
+  FakeSigner signer;
+} AuthFixture;
+
+static gboolean
+record_send_auth(gpointer handle, const gchar *signed_event_json, gpointer data,
+                 GError **error)
+{
+  (void)error;
+  AuthFixture *fixture = data;
+  g_ptr_array_add(fixture->sent_auth, g_strdup(signed_event_json));
+  g_ptr_array_add(fixture->sent_urls, g_strdup(handle));
+  return TRUE;
+}
+
+static gboolean
+record_resend(gpointer handle, gpointer data, GError **error)
+{
+  (void)handle;
+  AuthFixture *fixture = data;
+  fixture->resends++;
+  if (fixture->resend_fails) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "gone");
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static const GhRelayPublishAuthTransport record_auth_transport = {
+  .send_auth = record_send_auth,
+  .resend = record_resend,
+};
+
+/* Every publish here HAS an account signer, so tests show it is used only
+ * where the caller chose ACCOUNT for that URL. */
+static GhRelayPublish *
+auth_publish_prepare(AuthFixture *fixture, const gchar *json, FakeSignMode sign_mode)
+{
+  memset(fixture, 0, sizeof *fixture);
+  fixture->base.opened = g_ptr_array_new_with_free_func(g_free);
+  fixture->base.closed = g_ptr_array_new_with_free_func(g_free);
+  fixture->base.results = g_ptr_array_new_with_free_func(result_copy_free);
+  fixture->sent_auth = g_ptr_array_new_with_free_func(g_free);
+  fixture->sent_urls = g_ptr_array_new_with_free_func(g_free);
+  fixture->signer.mode = sign_mode;
+  g_autoptr(GError) error = NULL;
+  GhRelayPublish *publish = gh_relay_publish_new_with_transport(9, json,
+    &fake_transport, fixture, on_update, on_done, &fixture->base, &error);
+  g_assert_no_error(error);
+  gh_relay_publish_set_auth_transport(publish, &record_auth_transport);
+  g_autoptr(GhRelayAuthSigner) signer = fake_signer_new(&fixture->signer, 9, NULL);
+  g_assert_true(gh_relay_publish_set_account_signer(publish, signer, &error));
+  g_assert_no_error(error);
+  return publish;
+}
+
+static GhRelayPublish *
+auth_publish_new(AuthFixture *fixture, const gchar *json, FakeSignMode sign_mode,
+                 GhRelayAuthMode mode)
+{
+  GhRelayPublish *publish = auth_publish_prepare(fixture, json, sign_mode);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_relay_publish_add_url(publish, AUTH_URL, NULL));
+  g_assert_true(gh_relay_publish_set_url_auth(publish, AUTH_URL, mode, &error));
+  g_assert_true(gh_relay_publish_start(publish, &error));
+  g_assert_no_error(error);
+  return publish;
+}
+
+static void
+auth_fixture_clear(AuthFixture *fixture)
+{
+  g_ptr_array_unref(fixture->sent_auth);
+  g_ptr_array_unref(fixture->sent_urls);
+  fake_signer_clear(&fixture->signer);
+  fixture_clear(&fixture->base);
+}
+
+static gchar *
+auth_id_at(AuthFixture *fixture, guint index, const gchar *challenge)
+{
+  g_assert_cmpuint(index, <, fixture->sent_auth->len);
+  gchar id[65] = {0};
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_relay_auth_verify_signed(g_ptr_array_index(fixture->sent_auth, index),
+                                            g_ptr_array_index(fixture->sent_urls, index),
+                                            challenge, NULL,
+                                            g_get_real_time() / G_USEC_PER_SEC,
+                                            id, &error));
+  g_assert_no_error(error);
+  return g_strdup(id);
+}
+
+static gchar *
+last_auth_id(AuthFixture *fixture, const gchar *challenge)
+{
+  return auth_id_at(fixture, fixture->sent_auth->len - 1, challenge);
+}
+
+static void
+ok_auth_required_on(GhRelayPublish *publish, const gchar *url)
+{
+  gh_relay_publish_ok(publish, url, gh_relay_publish_get_event_id(publish),
+                      FALSE, "auth-required: members only");
+}
+
+static void
+ok_auth_required(GhRelayPublish *publish)
+{
+  ok_auth_required_on(publish, AUTH_URL);
+}
+
+/* The refused EVENT is not terminal: one AUTH as the account for the
+ * challenge (in either order), then one re-send after the relay's OK for
+ * the AUTH event; the re-sent EVENT's OK is the outcome. */
+static void
+test_auth_resends_event_once(void)
+{
+  g_autofree gchar *json = signed_json("auth resend");
+  g_autofree gchar *account = fake_account_pubkey();
+  for (guint challenge_first = 0; challenge_first < 2; challenge_first++) {
+    AuthFixture fixture;
+    GhRelayPublish *publish = auth_publish_new(&fixture, json, FAKE_SIGN_OK,
+                                               GH_RELAY_AUTH_ACCOUNT);
+    if (challenge_first) {
+      gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge-1");
+      drain_pending();
+      g_assert_cmpuint(fixture.signer.calls, ==, 0); /* lazy */
+    }
+    ok_auth_required(publish);
+    if (!challenge_first)
+      gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge-1");
+    g_assert_cmpuint(fixture.base.results->len, ==, 0);
+    iterate_until(&fixture.sent_auth->len, 1);
+    g_autofree gchar *id = last_auth_id(&fixture, "challenge-1");
+    g_autofree gchar *signed_as = auth_event_pubkey(g_ptr_array_index(fixture.sent_auth, 0));
+    g_assert_cmpstr(signed_as, ==, account);
+    g_assert_cmpuint(fixture.resends, ==, 0);
+    gh_relay_publish_ok(publish, AUTH_URL, id, TRUE, "");
+    g_assert_cmpuint(fixture.resends, ==, 1);
+    g_assert_cmpuint(fixture.base.results->len, ==, 0);
+    gh_relay_publish_ok(publish, AUTH_URL, gh_relay_publish_get_event_id(publish),
+                        TRUE, "");
+    g_assert_cmpuint(fixture.base.results->len, ==, 1);
+    g_assert_cmpint(result_at(&fixture.base, 0)->outcome, ==, GH_RELAY_PUBLISH_ACCEPTED);
+    g_assert_cmpuint(fixture.base.done, ==, 1);
+    g_assert_cmpuint(fixture.signer.calls, ==, 1);
+    gh_relay_publish_unref(publish);
+    auth_fixture_clear(&fixture);
+  }
+}
+
+static void
+assert_auth_required_at(AuthFixture *fixture, guint index)
+{
+  ResultCopy *result = result_at(&fixture->base, index);
+  g_assert_cmpint(result->outcome, ==, GH_RELAY_PUBLISH_AUTH_REQUIRED);
+  g_assert_cmpint(result->prefix, ==, GH_RELAY_OK_PREFIX_AUTH_REQUIRED);
+  g_assert_true(g_str_has_prefix(result->message, "auth-required: members only"));
+}
+
+static void
+assert_auth_required(AuthFixture *fixture)
+{
+  g_assert_cmpuint(fixture->base.results->len, ==, 1);
+  assert_auth_required_at(fixture, 0);
+  g_assert_cmpuint(fixture->base.summary.auth_required, ==, 1);
+}
+
+/* Refused signing and every locally rejected signed event end as
+ * AUTH_REQUIRED without anything being sent; so do the relay's OK false for
+ * the AUTH event (also for EPHEMERAL, never escalated to the account) and
+ * a re-sent EVENT refused again. */
+static void
+test_auth_failures_are_auth_required(void)
+{
+  g_autofree gchar *json = signed_json("auth failures");
+  const FakeSignMode local[] = { FAKE_SIGN_DENY, FAKE_SIGN_WRONG_CHALLENGE,
+                                 FAKE_SIGN_WRONG_RELAY, FAKE_SIGN_BAD_SIG };
+  for (gsize i = 0; i < G_N_ELEMENTS(local); i++) {
+    AuthFixture fixture;
+    GhRelayPublish *publish = auth_publish_new(&fixture, json, local[i],
+                                               GH_RELAY_AUTH_ACCOUNT);
+    gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge");
+    ok_auth_required(publish);
+    iterate_until(&fixture.base.results->len, 1);
+    assert_auth_required(&fixture);
+    g_assert_cmpuint(fixture.sent_auth->len, ==, 0);
+    g_assert_cmpuint(fixture.resends, ==, 0);
+    gh_relay_publish_unref(publish);
+    auth_fixture_clear(&fixture);
+  }
+
+  const GhRelayAuthMode refused_modes[] = { GH_RELAY_AUTH_ACCOUNT, GH_RELAY_AUTH_EPHEMERAL };
+  for (gsize i = 0; i < G_N_ELEMENTS(refused_modes); i++) {
+    AuthFixture refused;
+    GhRelayPublish *publish = auth_publish_new(&refused, json, FAKE_SIGN_OK,
+                                               refused_modes[i]);
+    gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge");
+    ok_auth_required(publish);
+    iterate_until(&refused.sent_auth->len, 1);
+    g_autofree gchar *id = last_auth_id(&refused, "challenge");
+    gh_relay_publish_ok(publish, AUTH_URL, id, FALSE, "restricted: not a member");
+    assert_auth_required(&refused);
+    g_assert_nonnull(strstr(result_at(&refused.base, 0)->message, "restricted: not a member"));
+    g_assert_cmpuint(refused.resends, ==, 0);
+    drain_pending();
+    g_assert_cmpuint(refused.sent_auth->len, ==, 1);
+    g_assert_cmpuint(refused.signer.calls, ==,
+                     refused_modes[i] == GH_RELAY_AUTH_ACCOUNT ? 1 : 0);
+    gh_relay_publish_unref(publish);
+    auth_fixture_clear(&refused);
+  }
+
+  AuthFixture again;
+  GhRelayPublish *publish = auth_publish_new(&again, json, FAKE_SIGN_OK,
+                                             GH_RELAY_AUTH_ACCOUNT);
+  gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge");
+  ok_auth_required(publish);
+  iterate_until(&again.sent_auth->len, 1);
+  g_autofree gchar *again_id = last_auth_id(&again, "challenge");
+  gh_relay_publish_ok(publish, AUTH_URL, again_id, TRUE, "");
+  g_assert_cmpuint(again.resends, ==, 1);
+  gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge-2");
+  ok_auth_required(publish); /* only one re-send, whatever the challenge */
+  assert_auth_required(&again);
+  drain_pending();
+  g_assert_cmpuint(again.signer.calls, ==, 1);
+  g_assert_cmpuint(again.sent_auth->len, ==, 1);
+  g_assert_cmpuint(again.resends, ==, 1);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&again);
+
+  AuthFixture lost;
+  publish = auth_publish_new(&lost, json, FAKE_SIGN_OK, GH_RELAY_AUTH_ACCOUNT);
+  lost.resend_fails = TRUE;
+  gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge");
+  ok_auth_required(publish);
+  iterate_until(&lost.sent_auth->len, 1);
+  g_autofree gchar *lost_id = last_auth_id(&lost, "challenge");
+  gh_relay_publish_ok(publish, AUTH_URL, lost_id, TRUE, "");
+  g_assert_cmpint(result_at(&lost.base, 0)->outcome, ==,
+                  GH_RELAY_PUBLISH_CONNECTION_FAILED);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&lost);
+}
+
+/* NONE, the default even with an account signer present: the refused
+ * EVENT is terminal at once, as before, and nothing is signed. */
+static void
+test_auth_none_is_unchanged(void)
+{
+  g_autofree gchar *json = signed_json("auth off");
+  AuthFixture fixture;
+  GhRelayPublish *publish = auth_publish_prepare(&fixture, json, FAKE_SIGN_OK);
+  g_assert_true(gh_relay_publish_add_url(publish, AUTH_URL, NULL)); /* no set_url_auth */
+  g_assert_true(gh_relay_publish_start(publish, NULL));
+  gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge");
+  ok_auth_required(publish);
+  assert_auth_required(&fixture);
+  g_assert_cmpstr(result_at(&fixture.base, 0)->message, ==, "auth-required: members only");
+  drain_pending();
+  g_assert_cmpuint(fixture.signer.calls, ==, 0);
+  g_assert_cmpuint(fixture.sent_auth->len, ==, 0);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&fixture);
+}
+
+/* One event to two relays: an ACCOUNT URL and a default URL. The account
+ * key signs only for the URL it was enabled for. */
+static void
+test_auth_account_only_where_enabled(void)
+{
+  g_autofree gchar *json = signed_json("auth account per url");
+  AuthFixture fixture;
+  GhRelayPublish *publish = auth_publish_prepare(&fixture, json, FAKE_SIGN_OK);
+  g_assert_true(gh_relay_publish_add_url(publish, AUTH_URL, NULL));
+  g_assert_true(gh_relay_publish_add_url(publish, OTHER_URL, NULL));
+  g_assert_true(gh_relay_publish_set_url_auth(publish, AUTH_URL, GH_RELAY_AUTH_ACCOUNT, NULL));
+  g_assert_true(gh_relay_publish_start(publish, NULL));
+  g_autoptr(GError) error = NULL;
+  g_assert_false(gh_relay_publish_set_url_auth(publish, OTHER_URL,
+                                               GH_RELAY_AUTH_EPHEMERAL, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_BUSY); /* fixed once started */
+  const gchar *urls[] = { AUTH_URL, OTHER_URL };
+  for (gsize i = 0; i < G_N_ELEMENTS(urls); i++) {
+    gh_relay_publish_auth_challenge(publish, urls[i], "challenge");
+    ok_auth_required_on(publish, urls[i]);
+  }
+  g_assert_cmpuint(fixture.base.results->len, ==, 1);
+  g_assert_cmpstr(result_at(&fixture.base, 0)->url, ==, OTHER_URL);
+  assert_auth_required_at(&fixture, 0);
+  iterate_until(&fixture.sent_auth->len, 1);
+  drain_pending();
+  g_assert_cmpuint(fixture.sent_auth->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(fixture.sent_urls, 0), ==, AUTH_URL);
+  g_assert_cmpuint(fixture.signer.calls, ==, 1);
+  g_autofree gchar *account = fake_account_pubkey();
+  g_autofree gchar *signed_as = auth_event_pubkey(g_ptr_array_index(fixture.sent_auth, 0));
+  g_assert_cmpstr(signed_as, ==, account);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&fixture);
+}
+
+/* One event to two relays in EPHEMERAL mode (e.g. a gift wrap to someone
+ * else's inbox relays): two AUTHs with two unrelated keys, neither the
+ * account's; the account signer is never asked. */
+static void
+test_auth_ephemeral_two_relays(void)
+{
+  g_autofree gchar *json = signed_json("auth ephemeral");
+  AuthFixture fixture;
+  GhRelayPublish *publish = auth_publish_prepare(&fixture, json, FAKE_SIGN_OK);
+  const gchar *urls[] = { AUTH_URL, OTHER_URL };
+  for (gsize i = 0; i < G_N_ELEMENTS(urls); i++) {
+    g_assert_true(gh_relay_publish_add_url(publish, urls[i], NULL));
+    g_assert_true(gh_relay_publish_set_url_auth(publish, urls[i],
+                                                GH_RELAY_AUTH_EPHEMERAL, NULL));
+  }
+  g_assert_true(gh_relay_publish_start(publish, NULL));
+  for (gsize i = 0; i < G_N_ELEMENTS(urls); i++) {
+    gh_relay_publish_auth_challenge(publish, urls[i], "same-challenge");
+    ok_auth_required_on(publish, urls[i]);
+  }
+  iterate_until(&fixture.sent_auth->len, 2);
+  for (guint i = 0; i < 2; i++) {
+    g_autofree gchar *id = auth_id_at(&fixture, i, "same-challenge");
+    gh_relay_publish_ok(publish, g_ptr_array_index(fixture.sent_urls, i), id, TRUE, "");
+  }
+  g_assert_cmpuint(fixture.resends, ==, 2);
+  for (gsize i = 0; i < G_N_ELEMENTS(urls); i++)
+    gh_relay_publish_ok(publish, urls[i], gh_relay_publish_get_event_id(publish), TRUE, "");
+  g_assert_cmpuint(fixture.base.done, ==, 1);
+  g_assert_cmpuint(fixture.base.summary.accepted, ==, 2);
+  g_autofree gchar *account = fake_account_pubkey();
+  g_autofree gchar *first = auth_event_pubkey(g_ptr_array_index(fixture.sent_auth, 0));
+  g_autofree gchar *second = auth_event_pubkey(g_ptr_array_index(fixture.sent_auth, 1));
+  g_assert_cmpstr(first, !=, second);
+  g_assert_cmpstr(first, !=, account);
+  g_assert_cmpstr(second, !=, account);
+  g_assert_cmpuint(fixture.signer.calls, ==, 0);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&fixture);
+}
+
+/* Cancelling while the signer works drops the AUTH: no callback, nothing
+ * sent, the operation's cancellable is cancelled. */
+static void
+test_auth_cancel_while_signing(void)
+{
+  g_autofree gchar *json = signed_json("auth cancel");
+  AuthFixture fixture;
+  GhRelayPublish *publish = auth_publish_new(&fixture, json, FAKE_SIGN_HOLD,
+                                             GH_RELAY_AUTH_ACCOUNT);
+  gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge");
+  ok_auth_required(publish);
+  iterate_until(&fixture.signer.calls, 1);
+  gh_relay_publish_cancel(publish);
+  g_assert_true(fake_signer_release(&fixture.signer));
+  drain_pending();
+  g_assert_cmpuint(fixture.sent_auth->len, ==, 0);
+  g_assert_cmpuint(fixture.base.results->len, ==, 0);
+  g_assert_cmpuint(fixture.base.done, ==, 0);
+  g_assert_cmpint(gh_relay_publish_get_outcome(publish, AUTH_URL), ==,
+                  GH_RELAY_PUBLISH_CANCELLED);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&fixture);
+}
+
+/* A relay that refuses the EVENT but never sends a challenge: the failure
+ * bound ends it as AUTH_REQUIRED, not as a connection failure. */
+static void
+test_auth_no_challenge_until_deadline(void)
+{
+  g_autofree gchar *json = signed_json("auth no challenge");
+  AuthFixture fixture;
+  GhRelayPublish *publish = auth_publish_prepare(&fixture, json, FAKE_SIGN_OK);
+  gh_relay_publish_set_deadline(publish, 1);
+  g_assert_true(gh_relay_publish_add_url(publish, AUTH_URL, NULL));
+  g_assert_true(gh_relay_publish_set_url_auth(publish, AUTH_URL, GH_RELAY_AUTH_EPHEMERAL, NULL));
+  g_assert_true(gh_relay_publish_start(publish, NULL));
+  ok_auth_required(publish);
+  gboolean timed_out = FALSE;
+  guint guard = g_timeout_add_seconds(10, deadline_test_expired, &timed_out);
+  while (!fixture.base.done && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_false(timed_out);
+  g_source_remove(guard);
+  assert_auth_required(&fixture);
+  g_assert_nonnull(strstr(result_at(&fixture.base, 0)->message, "no AUTH completed"));
+  g_assert_cmpuint(fixture.sent_auth->len, ==, 0);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&fixture);
+}
+
+/* Only a live signer of the publish's own generation is accepted, and
+ * ACCOUNT cannot be chosen without it. */
+static void
+test_auth_generation_bound(void)
+{
+  g_autofree gchar *json = signed_json("auth generation");
+  Fixture fixture;
+  fixture_init(&fixture);
+  GhRelayPublish *publish = new_publish(&fixture, json); /* generation 9 */
+  g_assert_true(gh_relay_publish_add_url(publish, AUTH_URL, NULL));
+  g_autoptr(GError) error = NULL;
+  g_assert_false(gh_relay_publish_set_url_auth(publish, AUTH_URL,
+                                               GH_RELAY_AUTH_ACCOUNT, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_clear_error(&error);
+  g_assert_false(gh_relay_publish_set_url_auth(publish, "wss://absent.example",
+                                               GH_RELAY_AUTH_EPHEMERAL, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+  FakeSigner fake = { .mode = FAKE_SIGN_OK };
+  g_autoptr(GhRelayAuthSigner) stale = fake_signer_new(&fake, 8, NULL);
+  g_assert_false(gh_relay_publish_set_account_signer(publish, stale, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_clear_error(&error);
+  g_autoptr(GhRelayAuthSigner) revoked = fake_signer_new(&fake, 9, NULL);
+  gh_relay_auth_signer_revoke(revoked);
+  g_assert_false(gh_relay_publish_set_account_signer(publish, revoked, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_clear_error(&error);
+  g_autoptr(GhRelayAuthSigner) live = fake_signer_new(&fake, 9, NULL);
+  g_assert_true(gh_relay_publish_set_account_signer(publish, live, NULL));
+  g_assert_true(gh_relay_publish_set_url_auth(publish, AUTH_URL, GH_RELAY_AUTH_ACCOUNT, NULL));
+  /* The account signer cannot be removed while a URL relies on it. */
+  g_assert_false(gh_relay_publish_set_account_signer(publish, NULL, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_BUSY);
+  gh_relay_publish_unref(publish);
+  fixture_clear(&fixture);
+  fake_signer_clear(&fake);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/groundhog/relay-publish/auth/resends-event-once", test_auth_resends_event_once);
+  g_test_add_func("/groundhog/relay-publish/auth/failures", test_auth_failures_are_auth_required);
+  g_test_add_func("/groundhog/relay-publish/auth/none-is-unchanged", test_auth_none_is_unchanged);
+  g_test_add_func("/groundhog/relay-publish/auth/account-only-where-enabled", test_auth_account_only_where_enabled);
+  g_test_add_func("/groundhog/relay-publish/auth/ephemeral-two-relays", test_auth_ephemeral_two_relays);
+  g_test_add_func("/groundhog/relay-publish/auth/cancel-while-signing", test_auth_cancel_while_signing);
+  g_test_add_func("/groundhog/relay-publish/auth/no-challenge-until-deadline", test_auth_no_challenge_until_deadline);
+  g_test_add_func("/groundhog/relay-publish/auth/generation-bound", test_auth_generation_bound);
   g_test_add_func("/groundhog/relay-publish/requires-signed-event", test_requires_signed_event);
   g_test_add_func("/groundhog/relay-publish/url-set", test_url_set_is_explicit_and_bounded);
   g_test_add_func("/groundhog/relay-publish/per-url-outcomes", test_per_url_outcomes_and_partial_success);

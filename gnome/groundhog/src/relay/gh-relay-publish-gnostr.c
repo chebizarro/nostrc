@@ -1,4 +1,5 @@
 #include "gh-relay-publish.h"
+#include "gh-relay-gnostr-write.h"
 
 #include <gio/gio.h>
 #include <nostr-event.h>
@@ -10,13 +11,18 @@
  * Each URL gets a PRIVATE GNostrRelay (never the URL-shared registry), so
  * closing one publish can never cut another publish's or scope's socket.
  *
- * Threading: nostr-gobject emits "ok" and "state-changed" from g_idle_add()
- * on the global default main context, i.e. on whichever thread iterates it;
- * that is not necessarily the publish's owning context. The signal handlers
- * therefore only copy their arguments and queue them onto the owning context,
- * where the handle's closed flag is checked before the publish is touched.
- * The core relay's EVENT write blocks until the socket write is confirmed, so
- * it runs on a GTask worker thread. */
+ * Threading: nostr-gobject emits "ok", "auth-challenge" and "state-changed"
+ * from g_idle_add() on the global default main context, i.e. on whichever
+ * thread iterates it; that is not necessarily the publish's owning context.
+ * The signal handlers therefore only copy their arguments and queue them
+ * onto the owning context, where the handle's closed flag is checked before
+ * the publish is touched. Frame writes (EVENT, AUTH, the re-sent EVENT)
+ * block until the socket write is confirmed, so they run on a GTask worker
+ * thread and report a failure back on the owning context.
+ *
+ * GNostrRelay's own auto-auth (gnostr_relay_set_auth_handler) is never
+ * installed: it signs synchronously and sends the 22242 event in an EVENT
+ * envelope. The publish drives NIP-42 through send_auth/resend. */
 
 typedef struct {
   gint refs;
@@ -25,13 +31,13 @@ typedef struct {
                             * while !closed (the publish closes us first) */
   GMainContext *context;   /* owning context */
   gchar *url;
-  NostrEvent *event;       /* moved to the publish job once connected */
+  gchar *event_frame;      /* ["EVENT",<event>] */
   GNostrRelay *relay;
   GCancellable *cancellable;
   gboolean established;    /* owning context only */
 } PublishHandle;
 
-typedef enum { DELIVER_OK, DELIVER_LOST } DeliveryKind;
+typedef enum { DELIVER_OK, DELIVER_LOST, DELIVER_CHALLENGE } DeliveryKind;
 
 typedef struct {
   PublishHandle *handle;
@@ -40,11 +46,6 @@ typedef struct {
   gboolean accepted;
   gchar *message;
 } Delivery;
-
-typedef struct {
-  GNostrRelay *relay;
-  NostrEvent *event;
-} PublishJob;
 
 static PublishHandle *
 handle_ref(PublishHandle *handle)
@@ -61,8 +62,7 @@ handle_unref(gpointer data)
     return;
   g_clear_object(&handle->relay);
   g_clear_object(&handle->cancellable);
-  if (handle->event)
-    nostr_event_free(handle->event);
+  g_free(handle->event_frame);
   g_main_context_unref(handle->context);
   g_free(handle->url);
   g_free(handle);
@@ -92,12 +92,24 @@ deliver(gpointer data)
   PublishHandle *handle = delivery->handle;
   if (g_atomic_int_get(&handle->closed))
     return G_SOURCE_REMOVE;
-  if (delivery->kind == DELIVER_OK)
+  switch (delivery->kind) {
+  case DELIVER_OK:
     gh_relay_publish_ok(handle->publish, handle->url, delivery->event_id,
                         delivery->accepted, delivery->message);
-  else if (handle->established)
+    break;
+  case DELIVER_CHALLENGE:
+    gh_relay_publish_auth_challenge(handle->publish, handle->url,
+                                    delivery->message);
+    break;
+  case DELIVER_LOST:
+    /* Before or after the handshake, a lost connection means no OK will
+     * come: report it now rather than at the failure deadline. */
     gh_relay_publish_failed(handle->publish, handle->url,
-                            "relay connection lost before OK");
+                            handle->established
+                              ? "relay connection lost before OK"
+                              : "relay connection lost before the WebSocket handshake");
+    break;
+  }
   return G_SOURCE_REMOVE;
 }
 
@@ -131,6 +143,19 @@ on_ok(GNostrRelay *relay, const gchar *event_id, gboolean accepted,
 }
 
 static void
+on_auth_challenge(GNostrRelay *relay, const gchar *challenge, gpointer data)
+{
+  (void)relay;
+  PublishHandle *handle = data;
+  if (g_atomic_int_get(&handle->closed) || !challenge)
+    return;
+  Delivery *delivery = g_new0(Delivery, 1);
+  delivery->kind = DELIVER_CHALLENGE;
+  delivery->message = g_strdup(challenge);
+  queue_delivery(handle, delivery);
+}
+
+static void
 on_state(GNostrRelay *relay, GNostrRelayState old_state,
          GNostrRelayState new_state, gpointer data)
 {
@@ -146,26 +171,37 @@ on_state(GNostrRelay *relay, GNostrRelayState old_state,
   queue_delivery(handle, delivery);
 }
 
+typedef struct {
+  PublishHandle *handle;
+  const gchar *what;       /* static: "EVENT" or "AUTH" */
+} WriteOp;
+
+/* Runs on the owning context (the GTask was created there). */
 static void
-publish_job_free(gpointer data)
+on_written(GObject *source, GAsyncResult *result, gpointer data)
 {
-  PublishJob *job = data;
-  g_clear_object(&job->relay);
-  if (job->event)
-    nostr_event_free(job->event);
-  g_free(job);
+  (void)source;
+  WriteOp *op = data;
+  PublishHandle *handle = op->handle;
+  g_autoptr(GError) error = NULL;
+  if (!gh_relay_gnostr_write_finish(result, &error) &&
+      !g_atomic_int_get(&handle->closed)) {
+    g_autofree gchar *detail = g_strdup_printf("%s write failed: %s", op->what,
+                                               error->message);
+    gh_relay_publish_failed(handle->publish, handle->url, detail);
+  }
+  handle_unref(handle);
+  g_free(op);
 }
 
 static void
-publish_thread(GTask *task, gpointer source, gpointer task_data,
-               GCancellable *cancellable)
+write_frame(PublishHandle *handle, const gchar *frame, const gchar *what)
 {
-  (void)source;
-  PublishJob *job = task_data;
-  NostrRelay *core = gnostr_relay_get_core_relay(job->relay);
-  if (core && !g_cancellable_is_cancelled(cancellable))
-    nostr_relay_publish(core, job->event); /* the OK arrives via "ok" */
-  g_task_return_boolean(task, TRUE);
+  WriteOp *op = g_new0(WriteOp, 1);
+  op->handle = handle_ref(handle);
+  op->what = what;
+  gh_relay_gnostr_write_async(handle->relay, frame, handle->cancellable,
+                              on_written, op);
 }
 
 static void
@@ -182,13 +218,7 @@ on_connected(GObject *source, GAsyncResult *result, gpointer data)
                               error ? error->message : "relay connection failed");
     } else {
       handle->established = TRUE;
-      PublishJob *job = g_new0(PublishJob, 1);
-      job->relay = g_object_ref(handle->relay);
-      job->event = g_steal_pointer(&handle->event);
-      GTask *task = g_task_new(NULL, handle->cancellable, NULL, NULL);
-      g_task_set_task_data(task, job, publish_job_free);
-      g_task_run_in_thread(task, publish_thread);
-      g_object_unref(task);
+      write_frame(handle, handle->event_frame, "EVENT"); /* OK via "ok" */
     }
   }
   handle_unref(handle); /* the pending connect's reference */
@@ -199,11 +229,8 @@ open_publish(GhRelayPublish *publish, const gchar *url, const gchar *event_json,
              gpointer transport_data, GError **error)
 {
   (void)transport_data;
-  NostrEvent *event = nostr_event_new();
-  if (!event || nostr_event_deserialize_signed(event, event_json, NULL) !=
-                  NOSTR_EVENT_VALIDATION_OK) {
-    if (event)
-      nostr_event_free(event);
+  gchar *event_frame = gh_relay_gnostr_event_frame("EVENT", event_json);
+  if (!event_frame) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                         "event parse failed");
     return NULL;
@@ -212,7 +239,7 @@ open_publish(GhRelayPublish *publish, const gchar *url, const gchar *event_json,
   NostrRelay *core = relay ? gnostr_relay_get_core_relay(relay) : NULL;
   if (!core) {
     g_clear_object(&relay);
-    nostr_event_free(event);
+    g_free(event_frame);
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                         "relay allocation failed");
     return NULL;
@@ -226,16 +253,48 @@ open_publish(GhRelayPublish *publish, const gchar *url, const gchar *event_json,
   handle->publish = publish;
   handle->context = g_main_context_ref_thread_default();
   handle->url = g_strdup(url);
-  handle->event = event;
+  handle->event_frame = event_frame;
   handle->relay = relay;
   handle->cancellable = g_cancellable_new();
   g_signal_connect_data(relay, "ok", G_CALLBACK(on_ok), handle_ref(handle),
                         handle_closure_notify, 0);
+  g_signal_connect_data(relay, "auth-challenge", G_CALLBACK(on_auth_challenge),
+                        handle_ref(handle), handle_closure_notify, 0);
   g_signal_connect_data(relay, "state-changed", G_CALLBACK(on_state),
                         handle_ref(handle), handle_closure_notify, 0);
   gnostr_relay_connect_async(relay, handle->cancellable, on_connected,
                              handle_ref(handle));
   return handle;
+}
+
+static gboolean
+send_auth(gpointer data, const gchar *signed_event_json, gpointer transport_data,
+          GError **error)
+{
+  (void)transport_data;
+  PublishHandle *handle = data;
+  g_autofree gchar *frame = gh_relay_gnostr_event_frame("AUTH", signed_event_json);
+  if (!frame || !handle->established) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "AUTH frame not sendable");
+    return FALSE;
+  }
+  write_frame(handle, frame, "AUTH");
+  return TRUE;
+}
+
+static gboolean
+resend(gpointer data, gpointer transport_data, GError **error)
+{
+  (void)transport_data;
+  PublishHandle *handle = data;
+  if (!handle->established) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        "relay connection not established");
+    return FALSE;
+  }
+  write_frame(handle, handle->event_frame, "EVENT");
+  return TRUE;
 }
 
 static void
@@ -253,4 +312,9 @@ close_publish(gpointer data, gpointer transport_data)
 const GhRelayPublishTransport gh_relay_publish_gnostr_transport = {
   .open = open_publish,
   .close = close_publish,
+};
+
+const GhRelayPublishAuthTransport gh_relay_publish_gnostr_auth_transport = {
+  .send_auth = send_auth,
+  .resend = resend,
 };
