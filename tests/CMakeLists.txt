@@ -259,6 +259,18 @@ if(ENABLE_FUZZING)
   endif()
 endif()
 
+add_executable(test_fuzz_filter_parse test_fuzz_filter_parse.c fuzz_filter_parse.c)
+target_link_libraries(test_fuzz_filter_parse PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_include_directories(test_fuzz_filter_parse PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_link_directories(test_fuzz_filter_parse PRIVATE ${SECP256K1_LIBRARY_DIRS})
+apply_sanitizers(test_fuzz_filter_parse)
+add_test(NAME test_fuzz_filter_parse COMMAND test_fuzz_filter_parse
+  ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/good_minimal.json
+  ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_duplicate_explicit_tag.json
+  ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/good_tags.json
+  ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_duplicate_hash_tag.json
+  ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_partial_search.json)
+
 # Verify wrapper fuzz harness
 if(ENABLE_FUZZING)
   if(ENABLE_FUZZING_RUNTIME)

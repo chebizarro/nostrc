@@ -18,6 +18,27 @@ static int tags_count_value(const NostrTags *tags, const char *name, const char 
     return c;
 }
 
+static void test_empty_tag_prefix(void) {
+    NostrTags *tags = nostr_tags_new(0);
+    NostrTag *existing = nostr_tag_new("e", "same", NULL);
+    NostrTag *empty = nostr_tag_new(NULL);
+    NostrTag *prefix = nostr_tag_new("e", "sa", NULL);
+    NostrTag *duplicate = nostr_tag_new("e", "same", NULL);
+    assert(tags && existing && empty && prefix && duplicate);
+    assert(nostr_tags_append_unique(tags, existing) == tags);
+
+    assert(nostr_tags_get_first(tags, empty) == NULL);
+    assert(nostr_tags_append_unique(tags, empty) == tags);
+    assert(nostr_tags_size(tags) == 2);
+    assert(nostr_tags_get_first(tags, prefix) == existing);
+    assert(nostr_tags_append_unique(tags, duplicate) == tags);
+    assert(nostr_tags_size(tags) == 2);
+
+    nostr_tag_free(duplicate);
+    nostr_tag_free(prefix);
+    nostr_tags_free(tags);
+}
+
 static void test_tags_serialize_to_hash_keys(void) {
     nostr_set_json_interface(jansson_impl);
     NostrFilter *f = nostr_filter_new();
@@ -125,6 +146,7 @@ static void test_duplicate_tag_before_malformed_tail(void) {
 
 int main(void) {
     nostr_json_init();
+    test_empty_tag_prefix();
     test_tags_serialize_to_hash_keys();
     test_tags_roundtrip_from_hash_keys();
     test_jansson_duplicate_tags();

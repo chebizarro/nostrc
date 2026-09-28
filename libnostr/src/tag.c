@@ -54,7 +54,7 @@ bool nostr_tag_starts_with(NostrTag *tag, NostrTag *prefix) {
         return false;
 
     size_t prefix_len = nostr_tag_size(prefix);
-    if (prefix_len > nostr_tag_size(tag)) {
+    if (prefix_len == 0 || prefix_len > nostr_tag_size(tag)) {
         return false;
     }
 

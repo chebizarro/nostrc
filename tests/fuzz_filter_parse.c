@@ -3,10 +3,17 @@
 #include <string.h>
 #include "json.h"
 #include "nostr-filter.h"
+#include "nostr_jansson.h"
 
 // Fuzz harness for filter parser/validator
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   if (!data || size == 0) return 0;
+  static int backend_installed = 0;
+  if (!backend_installed) {
+    nostr_set_json_interface(jansson_impl);
+    nostr_json_force_fallback(false);
+    backend_installed = 1;
+  }
   // NUL-terminate input
   char *buf = (char*)malloc(size + 1);
   if (!buf) return 0;
