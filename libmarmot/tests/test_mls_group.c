@@ -1458,7 +1458,9 @@ TEST(test_live_commit_consumes_parent_epoch_proposal_ref)
                                  &reloaded) == 0);
     assert_group_reached_for_test(&reloaded, &expected);
 
-    /* The consumed parent-epoch reference cannot be replayed. */
+    /* Replaying the parent-epoch Commit on the advanced state is rejected
+     * (by the epoch check; consumption itself is proven by the duplicate-ref
+     * case) and leaves the state unchanged. */
     assert(mls_group_process_commit_ex(&reloaded, commit, commit_len,
                                        f.alice.own_leaf_index, store,
                                        &f.prop_len[REF_VALID], 1) ==

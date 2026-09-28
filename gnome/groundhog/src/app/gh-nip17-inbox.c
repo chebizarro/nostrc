@@ -501,6 +501,9 @@ seen_append(GhNip17Seen *seen, const gchar *lines, guint count, GError **error)
   if (file) saved = errno;
   if (file && fclose(file) != 0 && ok) { ok = FALSE; saved = errno; }
   if (!ok) {
+    /* A failed write (ENOSPC, EIO) may leave a partial line; the next record
+     * must rewrite from memory rather than append onto it. */
+    seen->needs_rewrite = TRUE;
     g_set_error(error, G_IO_ERROR, g_io_error_from_errno(saved),
                 "Could not record NIP-17 seen-set entry: %s", g_strerror(saved));
     return FALSE;
