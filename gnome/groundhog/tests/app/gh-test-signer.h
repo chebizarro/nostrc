@@ -1,0 +1,305 @@
+/* Shared Groundhog app-test helpers: a private test D-Bus, a mock
+ * org.nostr.Signer that performs real NIP-44 and event signing for the fixed
+ * test keys, and bounded main-loop waits. The app under test never holds a
+ * key; only this stand-in signer does. Waits iterate the default main
+ * context; their deadline is a failure bound, never a source of progress.
+ * Header-only: include it once per test executable. */
+#ifndef GH_TEST_SIGNER_H
+#define GH_TEST_SIGNER_H
+
+#include "gh-account-controller.h"
+#include "gh-identity.h"
+#include "nostr-event.h"
+#include "nostr-keys.h"
+#include "nostr-utils.h"
+#include "nostr/nip19/nip19.h"
+#include "nostr/nip44/nip44.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Key 4 is reserved for gift-wrap ephemeral keys in crafted fixtures. */
+#define GH_TEST_KEYS 5
+static const gchar *const gh_test_secret[GH_TEST_KEYS] = {
+  NULL,
+  "0000000000000000000000000000000000000000000000000000000000000001",
+  "0000000000000000000000000000000000000000000000000000000000000002",
+  "0000000000000000000000000000000000000000000000000000000000000003",
+  "0000000000000000000000000000000000000000000000000000000000000004",
+};
+
+static G_GNUC_UNUSED gchar *
+gh_test_pub(guint key)
+{
+  g_assert_true(key > 0 && key < GH_TEST_KEYS);
+  char *hex = nostr_key_get_public(gh_test_secret[key]);
+  g_assert_nonnull(hex);
+  gchar *copy = g_strdup(hex);
+  free(hex);
+  return copy;
+}
+
+static G_GNUC_UNUSED gchar *
+gh_test_npub(guint key)
+{
+  g_autofree gchar *hex = gh_test_pub(key);
+  guint8 bytes[32];
+  g_assert_true(nostr_hex2bin(bytes, hex, sizeof bytes));
+  gchar *npub = NULL;
+  g_assert_cmpint(nostr_nip19_encode_npub(bytes, &npub), ==, 0);
+  return npub;
+}
+
+static G_GNUC_UNUSED gboolean
+gh_test_deadline_hit(gpointer data)
+{
+  *(gboolean *)data = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+static G_GNUC_UNUSED void
+gh_test_spin_until_at(gboolean (*pred)(gpointer), gpointer data, int line)
+{
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(10, gh_test_deadline_hit, &expired);
+  while (!pred(data) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  if (expired)
+    g_error("condition waited for at line %d did not hold within 10s", line);
+  g_source_remove(timer);
+}
+#define gh_test_spin_until(pred, data) gh_test_spin_until_at((pred), (data), __LINE__)
+
+static G_GNUC_UNUSED gboolean
+gh_test_is_null(gpointer data)
+{
+  return *(gpointer *)data == NULL;
+}
+
+/* Disposes object and waits until in-flight callbacks drop their refs. */
+static G_GNUC_UNUSED void
+gh_test_release(gpointer object)
+{
+  gpointer weak = object;
+  g_object_add_weak_pointer(G_OBJECT(object), &weak);
+  g_object_run_dispose(G_OBJECT(object));
+  g_object_unref(object);
+  gh_test_spin_until(gh_test_is_null, &weak);
+}
+
+typedef struct {
+  GTestDBus *bus;
+  GDBusConnection *client;
+  GDBusConnection *owner;
+} GhTestBus;
+
+static G_GNUC_UNUSED void
+gh_test_bus_up(GhTestBus *fixture)
+{
+  GError *error = NULL;
+  fixture->bus = g_test_dbus_new(G_TEST_DBUS_NONE);
+  g_test_dbus_up(fixture->bus);
+  const gchar *address = g_test_dbus_get_bus_address(fixture->bus);
+  GDBusConnectionFlags flags = G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+                               G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION;
+  fixture->client = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
+  g_assert_no_error(error);
+  fixture->owner = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
+  g_assert_no_error(error);
+}
+
+static G_GNUC_UNUSED void
+gh_test_bus_down(GhTestBus *fixture)
+{
+  g_dbus_connection_close_sync(fixture->owner, NULL, NULL);
+  g_dbus_connection_close_sync(fixture->client, NULL, NULL);
+  g_clear_object(&fixture->owner);
+  g_clear_object(&fixture->client);
+  g_test_dbus_down(fixture->bus);
+  g_clear_object(&fixture->bus);
+}
+
+/* Answers with the secret of the npub the request names. hold parks every
+ * call (an approval the user has not answered yet) until released. */
+typedef struct {
+  GDBusNodeInfo *node;
+  guint registration;
+  GPtrArray *held;    /* GDBusMethodInvocation, oldest first */
+  GPtrArray *senders; /* unique name of every caller */
+  gchar *npubs[GH_TEST_KEYS];
+  guint calls;
+  guint max_held;
+  gboolean hold;
+  gboolean deny;      /* answer every call with ApprovalDenied */
+} GhTestSigner;
+
+static G_GNUC_UNUSED const gchar *
+gh_test_signer_secret(GhTestSigner *mock, const gchar *npub)
+{
+  for (guint key = 1; key < GH_TEST_KEYS; key++)
+    if (g_strcmp0(mock->npubs[key], npub) == 0)
+      return gh_test_secret[key];
+  return NULL;
+}
+
+static G_GNUC_UNUSED void
+gh_test_signer_answer(GhTestSigner *mock, GDBusMethodInvocation *invocation)
+{
+  const gchar *method = g_dbus_method_invocation_get_method_name(invocation);
+  const gchar *input, *peer, *npub;
+  g_variant_get(g_dbus_method_invocation_get_parameters(invocation), "(&s&s&s)",
+                &input, &peer, &npub);
+  /* SignEvent(event, npub, app) names the account second. */
+  const gchar *secret = gh_test_signer_secret(mock, g_str_equal(method, "SignEvent") ? peer : npub);
+  if (mock->deny || !secret) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Signer.Error.ApprovalDenied", "test denial");
+    return;
+  }
+  if (g_str_equal(method, "SignEvent")) {
+    NostrEvent *event = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_compact(event, input, NULL), ==, 1);
+    g_assert_cmpint(nostr_event_sign(event, secret), ==, 0);
+    char *json = nostr_event_serialize_compact(event);
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", json));
+    free(json);
+    nostr_event_free(event);
+    return;
+  }
+  guint8 sk[32], pk[32];
+  g_assert_true(nostr_hex2bin(sk, secret, sizeof sk));
+  g_assert_true(nostr_hex2bin(pk, peer, sizeof pk));
+  if (g_str_equal(method, "NIP44Encrypt")) {
+    char *ciphertext = NULL;
+    g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk, (const guint8 *)input, strlen(input),
+                                            &ciphertext), ==, 0);
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", ciphertext));
+    free(ciphertext);
+    return;
+  }
+  guint8 *plaintext = NULL;
+  size_t length = 0;
+  if (nostr_nip44_decrypt_v2(sk, pk, input, &plaintext, &length) != 0) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Signer.Error.Failed", "test decrypt failure");
+    return;
+  }
+  g_autofree gchar *text = g_strndup((const gchar *)plaintext, length);
+  free(plaintext);
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", text));
+}
+
+static G_GNUC_UNUSED void
+gh_test_signer_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
+                    const gchar *interface, const gchar *method, GVariant *parameters,
+                    GDBusMethodInvocation *invocation, gpointer user_data)
+{
+  GhTestSigner *mock = user_data;
+  (void)connection; (void)path; (void)interface; (void)parameters;
+  if (g_str_equal(method, "EnableTypedApprovalErrors")) {
+    g_dbus_method_invocation_return_value(invocation, NULL);
+    return;
+  }
+  mock->calls++;
+  g_ptr_array_add(mock->senders, g_strdup(sender));
+  if (mock->hold) {
+    g_ptr_array_add(mock->held, g_object_ref(invocation));
+    mock->max_held = MAX(mock->max_held, mock->held->len);
+    return;
+  }
+  gh_test_signer_answer(mock, invocation);
+}
+
+static const GDBusInterfaceVTable gh_test_signer_vtable = {
+  gh_test_signer_call, NULL, NULL, { 0 }
+};
+
+static G_GNUC_UNUSED void
+gh_test_signer_up(GhTestBus *fixture, GhTestSigner *mock)
+{
+  g_autoptr(GError) error = NULL;
+  mock->held = g_ptr_array_new_with_free_func(g_object_unref);
+  mock->senders = g_ptr_array_new_with_free_func(g_free);
+  for (guint key = 1; key < GH_TEST_KEYS; key++)
+    mock->npubs[key] = gh_test_npub(key);
+  mock->node = g_dbus_node_info_new_for_xml(
+    "<node><interface name='org.nostr.Signer'>"
+    "<method name='EnableTypedApprovalErrors'/>"
+    "<method name='SignEvent'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+    "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "<method name='NIP44Encrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+    "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "<method name='NIP44Decrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+    "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "</interface></node>", &error);
+  g_assert_no_error(error);
+  mock->registration = g_dbus_connection_register_object(fixture->owner,
+    "/org/nostr/signer", mock->node->interfaces[0], &gh_test_signer_vtable, mock, NULL,
+    &error);
+  g_assert_no_error(error);
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(fixture->owner,
+    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+    "RequestName", g_variant_new("(su)", "org.nostr.Signer", 4u),
+    G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+  g_assert_no_error(error);
+}
+
+/* Answers the oldest parked call as if the user approved it now. */
+static G_GNUC_UNUSED void
+gh_test_signer_release_one(GhTestSigner *mock)
+{
+  g_assert_cmpuint(mock->held->len, >, 0);
+  GDBusMethodInvocation *invocation = g_object_ref(g_ptr_array_index(mock->held, 0));
+  g_ptr_array_remove_index(mock->held, 0);
+  gh_test_signer_answer(mock, invocation);
+  g_object_unref(invocation);
+}
+
+static G_GNUC_UNUSED void
+gh_test_signer_release_all(GhTestSigner *mock)
+{
+  while (mock->held->len)
+    gh_test_signer_release_one(mock);
+}
+
+typedef struct {
+  GhTestBus *bus;
+  GhTestSigner *mock;
+} GhTestSenders;
+
+/* Every private sender connection that called the signer has closed, which
+ * is how GhSigner revokes a pending approval. */
+static G_GNUC_UNUSED gboolean
+gh_test_signer_senders_closed(gpointer data)
+{
+  GhTestSenders *check = data;
+  for (guint i = 0; i < check->mock->senders->len; i++) {
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(check->bus->client,
+      "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+      "NameHasOwner", g_variant_new("(s)", g_ptr_array_index(check->mock->senders, i)),
+      G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+    g_assert_no_error(error);
+    gboolean has_owner;
+    g_variant_get(reply, "(b)", &has_owner);
+    if (has_owner)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+static G_GNUC_UNUSED void
+gh_test_signer_down(GhTestBus *fixture, GhTestSigner *mock)
+{
+  mock->deny = TRUE;
+  gh_test_signer_release_all(mock);
+  g_dbus_connection_unregister_object(fixture->owner, mock->registration);
+  g_ptr_array_unref(mock->held);
+  g_ptr_array_unref(mock->senders);
+  for (guint key = 1; key < GH_TEST_KEYS; key++)
+    g_free(mock->npubs[key]);
+  g_dbus_node_info_unref(mock->node);
+}
+
+#endif

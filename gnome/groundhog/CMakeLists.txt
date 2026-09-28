@@ -223,6 +223,38 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_RELAYS=0)
 endif()
 
+# GTK-free NIP-17 conversation model: messages, rooms keyed by participant set
+# and the per-account store (in-memory backend; see gh-conversation-store.h).
+if (TARGET nostr AND TARGET nip19)
+  pkg_check_modules(GROUNDHOG_GIO REQUIRED IMPORTED_TARGET gio-2.0>=2.72)
+  add_library(groundhog-conversations STATIC
+    src/app/gh-message.c src/app/gh-conversation.c src/app/gh-conversation-store.c)
+  target_include_directories(groundhog-conversations PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-conversations PUBLIC nostr nip19 PkgConfig::GROUNDHOG_GIO)
+  target_compile_options(groundhog-conversations PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-conversations tests/app/test_conversation_store.c)
+    target_link_libraries(test-groundhog-conversations PRIVATE groundhog-conversations)
+    target_compile_options(test-groundhog-conversations PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-conversations COMMAND test-groundhog-conversations)
+    set_tests_properties(groundhog-conversations PROPERTIES TIMEOUT 20
+      ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+  endif()
+endif()
+
+# GTK-free NIP-17 receive pipeline: the active account's kind-1059 REQ on its
+# own 10050 relays, seen-set pre-filter, bounded signer unwraps, store
+# admission. It carries its own copy of the unwrap (gh-nip17-inbox.c) so it
+# links standalone; it is not yet linked into the executable, which compiles
+# that file directly. Replace that target_sources entry with this library when
+# the inbox is wired into the application.
+if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
+  add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c)
+  target_link_libraries(groundhog-dm-inbox PUBLIC groundhog-account-relays
+                        groundhog-conversations)
+  target_compile_options(groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
+endif()
+
 # GTK-free NIP-29 relay-group core: (relay URL, group id) identity, admission
 # of relay-signed 39000-39003 snapshots, role checks and unsigned event
 # templates. No transport, subscription or UI is linked here. nips/nip29 is
@@ -300,6 +332,19 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
     add_test(NAME groundhog-account-relays COMMAND test-groundhog-account-relays)
     set_tests_properties(groundhog-account-relays PROPERTIES TIMEOUT 40
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+
+  # The NIP-17 receive pipeline against recording transports and a mock
+  # signer on a private bus (crafted peer wraps need the NIP-59/44 cores).
+  if (TARGET groundhog-dm-inbox AND TARGET nostr_nip59_core)
+    add_executable(test-groundhog-dm-inbox tests/app/test_dm_inbox.c)
+    target_link_libraries(test-groundhog-dm-inbox PRIVATE groundhog-dm-inbox
+                          nostr_nip17_core nostr_nip59_core)
+    target_compile_options(test-groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-dm-inbox groundhog-test-schemas)
+    add_test(NAME groundhog-dm-inbox COMMAND test-groundhog-dm-inbox)
+    set_tests_properties(groundhog-dm-inbox PROPERTIES TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
   endif()
 
   # Check that gh-account-ui.c attaches the gh-account-ui.blp pages/menu to a
