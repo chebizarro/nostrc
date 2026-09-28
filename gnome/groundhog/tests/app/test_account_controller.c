@@ -6,6 +6,7 @@
 #include "nostr/nip19/nip19.h"
 #ifdef GROUNDHOG_TEST_NIP17
 #include "gh-nip17-envelope.h"
+#include "gh-nip17-inbox.h"
 #include "nostr/nip17/nip17.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr/nip59/nip59.h"
@@ -642,6 +643,27 @@ mock_signer_call(GDBusConnection *connection, const gchar *sender, const gchar *
     g_autofree gchar *ciphertext = g_base64_encode(payload, sizeof payload);
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", ciphertext));
   } else {
+#ifdef GROUNDHOG_TEST_NIP17
+    if (mock->real_crypto) {
+      const gchar *secret = g_str_equal(npub, npub_one) ?
+        "0000000000000000000000000000000000000000000000000000000000000001" :
+        "0000000000000000000000000000000000000000000000000000000000000002";
+      guint8 sk[32], pk[32];
+      g_assert_true(nostr_hex2bin(sk, secret, sizeof sk));
+      g_assert_true(nostr_hex2bin(pk, peer, sizeof pk));
+      guint8 *plaintext = NULL;
+      size_t plaintext_len = 0;
+      if (nostr_nip44_decrypt_v2(sk, pk, input, &plaintext, &plaintext_len) != 0) {
+        g_dbus_method_invocation_return_dbus_error(invocation,
+          "org.nostr.Signer.Error.Failed", "test decrypt failure");
+        return;
+      }
+      g_autofree gchar *text = g_strndup((const gchar *)plaintext, plaintext_len);
+      free(plaintext);
+      g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", text));
+      return;
+    }
+#endif
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", "plaintext"));
   }
 }
@@ -993,6 +1015,12 @@ envelope_fixture_down(EnvelopeFixture *fixture)
   bus_down(&fixture->bus);
 }
 
+static const gchar *
+mock_last(EnvelopeFixture *fixture)
+{
+  return fixture->mock.last_npub;
+}
+
 static NostrEvent *
 parse_event(const gchar *json)
 {
@@ -1191,6 +1219,479 @@ test_nip17_envelope_cancel_and_switch(void)
     run_interrupted_stage(stage, TRUE);
   }
 }
+
+/* ---- inbound unwrap ------------------------------------------------------ */
+
+static const gchar *const test_secret[] = {
+  NULL,
+  "0000000000000000000000000000000000000000000000000000000000000001",
+  "0000000000000000000000000000000000000000000000000000000000000002",
+  "0000000000000000000000000000000000000000000000000000000000000003",
+  "0000000000000000000000000000000000000000000000000000000000000004", /* wrap key */
+};
+
+static gchar *
+test_pub(guint key)
+{
+  gchar *pub = nostr_key_get_public(test_secret[key]);
+  g_assert_nonnull(pub);
+  return pub;
+}
+
+typedef struct {
+  gboolean done;
+  GhNip17Message *message;
+  GError *error;
+} UnwrapWait;
+
+static void
+unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  UnwrapWait *wait = data;
+  (void)source;
+  wait->message = gh_nip17_unwrap_finish(result, &wait->error);
+  wait->done = TRUE;
+}
+
+static gboolean
+unwrap_finished(gpointer data)
+{
+  return ((UnwrapWait *)data)->done;
+}
+
+static GhNip17Message *
+unwrap_now(GhAccountController *accounts, const gchar *wrap_json, GError **error)
+{
+  UnwrapWait wait = { 0 };
+  gh_nip17_unwrap_async(accounts, wrap_json, NULL, unwrap_done, &wait);
+  spin_until(unwrap_finished, &wait);
+  g_assert_true((wait.message == NULL) != (wait.error == NULL));
+  if (wait.error) g_propagate_error(error, wait.error);
+  return wait.message;
+}
+
+/* Test-only local keys stand in for a remote peer. The app under test holds
+ * no key: its decrypts go through the mock org.nostr.Signer. */
+typedef struct {
+  guint sender;       /* seal signer */
+  guint rumor_author; /* 0: sender */
+  guint recipient;    /* wrap p tag and NIP-44 peer */
+  guint rumor_p;      /* 0: recipient */
+  int rumor_kind;     /* 0: 14 */
+  gboolean rumor_no_id, rumor_bad_id, rumor_signed;
+  int seal_kind;      /* 0: 13 */
+  gboolean seal_tagged, seal_bad_sig;
+  guint extra_wrap_p; /* adds a second p tag to the (re-signed) wrap */
+} Craft;
+
+static gchar *
+craft_wrap(const Craft *c)
+{
+  guint author_key = c->rumor_author ? c->rumor_author : c->sender;
+  g_autofree gchar *sender = test_pub(c->sender);
+  g_autofree gchar *author = test_pub(author_key);
+  g_autofree gchar *recipient = test_pub(c->recipient);
+  g_autofree gchar *rumor_p = test_pub(c->rumor_p ? c->rumor_p : c->recipient);
+  NostrEvent *rumor = nostr_nip17_create_rumor(author, rumor_p, "crafted", 0);
+  g_assert_nonnull(rumor);
+  if (c->rumor_kind) nostr_event_set_kind(rumor, c->rumor_kind);
+  if (c->rumor_signed)
+    g_assert_cmpint(nostr_event_sign(rumor, test_secret[author_key]), ==, 0);
+  else if (c->rumor_bad_id)
+    rumor->id = strdup("00000000000000000000000000000000000000000000000000000000000000ab");
+  else if (!c->rumor_no_id)
+    rumor->id = nostr_event_get_id(rumor);
+  char *rumor_json = nostr_event_serialize_compact(rumor);
+  nostr_event_free(rumor);
+
+  guint8 sk[32], pk[32];
+  g_assert_true(nostr_hex2bin(sk, test_secret[c->sender], sizeof sk));
+  g_assert_true(nostr_hex2bin(pk, recipient, sizeof pk));
+  char *ciphertext = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk, (const guint8 *)rumor_json,
+                                          strlen(rumor_json), &ciphertext), ==, 0);
+  free(rumor_json);
+  NostrEvent *seal = nostr_event_new();
+  nostr_event_set_kind(seal, c->seal_kind ? c->seal_kind : 13);
+  nostr_event_set_pubkey(seal, sender);
+  nostr_event_set_content(seal, ciphertext);
+  nostr_event_set_created_at(seal, 1700000000);
+  nostr_event_set_tags(seal, c->seal_tagged ?
+                       nostr_tags_new(1, nostr_tag_new("p", recipient, NULL)) :
+                       nostr_tags_new(0));
+  free(ciphertext);
+  g_assert_cmpint(nostr_event_sign(seal, test_secret[c->sender]), ==, 0);
+  if (c->seal_bad_sig)
+    seal->sig[10] = seal->sig[10] == '0' ? '1' : '0';
+
+  guint8 ephemeral[32];
+  g_assert_true(nostr_hex2bin(ephemeral, test_secret[4], sizeof ephemeral));
+  NostrEvent *wrap = nostr_nip59_wrap_with_key(seal, recipient, ephemeral);
+  nostr_event_free(seal);
+  g_assert_nonnull(wrap);
+  if (c->extra_wrap_p) {
+    g_autofree gchar *extra = test_pub(c->extra_wrap_p);
+    nostr_tags_append(nostr_event_get_tags(wrap), nostr_tag_new("p", extra, NULL));
+    g_assert_cmpint(nostr_event_sign(wrap, test_secret[4]), ==, 0);
+  }
+  char *json = nostr_event_serialize_compact(wrap);
+  nostr_event_free(wrap);
+  gchar *out = g_strdup(json);
+  free(json);
+  return out;
+}
+
+static gchar *
+tamper(const gchar *json, const gchar *field)
+{
+  gchar *copy = g_strdup(json);
+  g_autofree gchar *needle = g_strdup_printf("\"%s\":\"", field);
+  gchar *at = strstr(copy, needle);
+  g_assert_nonnull(at);
+  at += strlen(needle) + 5;
+  *at = *at == '0' ? '1' : '0';
+  return copy;
+}
+
+static void
+test_nip17_unwrap_roundtrip(void)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_autofree gchar *sender = gh_identity_pubkey_hex(npub_one);
+  g_autofree gchar *recipient = gh_identity_pubkey_hex(npub_two);
+  EnvelopeWait built = { 0 };
+  gh_nip17_envelope_build_async(fixture.accounts, recipient, "hello inbox", NULL,
+                                envelope_done, &built);
+  spin_until(envelope_finished, &built);
+  g_assert_no_error(built.error);
+  NostrEvent *rumor = parse_event(built.envelope->rumor_json);
+  g_autofree gchar *rumor_id = g_strdup(rumor->id);
+  nostr_event_free(rumor);
+  NostrEvent *sender_wrap = parse_event(built.envelope->sender_wrap_json);
+  NostrEvent *recipient_wrap = parse_event(built.envelope->recipient_wrap_json);
+  guint calls = fixture.mock.calls;
+
+  /* Sender self-copy, unwrapped by the sender's own account. */
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip17Message) self_copy =
+    unwrap_now(fixture.accounts, built.envelope->sender_wrap_json, &error);
+  g_assert_no_error(error);
+  g_assert_true(self_copy->self_copy);
+  g_assert_cmpstr(self_copy->account_pubkey, ==, sender);
+  g_assert_cmpstr(self_copy->sender_pubkey, ==, sender);
+  g_assert_cmpstr(self_copy->rumor_id, ==, rumor_id);
+  g_assert_cmpstr(self_copy->wrap_id, ==, sender_wrap->id);
+  g_assert_cmpstr(self_copy->rumor_json, ==, built.envelope->rumor_json);
+  g_assert_cmpuint(g_strv_length(self_copy->recipients), ==, 1);
+  g_assert_cmpstr(self_copy->recipients[0], ==, recipient);
+  g_assert_cmpint(self_copy->created_at, >, 0);
+  g_assert_cmpuint(fixture.mock.calls, ==, calls + 2);
+  g_assert_cmpstr(mock_last(&fixture), ==, npub_one);
+
+  /* The recipient's copy is not addressed to the sender: no signer call. */
+  g_assert_null(unwrap_now(fixture.accounts, built.envelope->recipient_wrap_json, &error));
+  g_assert_error(error, GH_NIP17_INBOX_ERROR, GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT);
+  g_clear_error(&error);
+  g_assert_cmpuint(fixture.mock.calls, ==, calls + 2);
+
+  /* The recipient account receives the same canonical rumor. */
+  g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  g_autoptr(GhNip17Message) received =
+    unwrap_now(fixture.accounts, built.envelope->recipient_wrap_json, &error);
+  g_assert_no_error(error);
+  g_assert_false(received->self_copy);
+  g_assert_cmpstr(received->account_pubkey, ==, recipient);
+  g_assert_cmpstr(received->sender_pubkey, ==, sender);
+  g_assert_cmpstr(received->rumor_id, ==, rumor_id);
+  g_assert_cmpstr(received->wrap_id, ==, recipient_wrap->id);
+  g_assert_cmpstr(received->rumor_json, ==, built.envelope->rumor_json);
+  g_assert_cmpstr(received->recipients[0], ==, recipient);
+  g_assert_null(received->recipients[1]);
+  g_assert_cmpint(received->created_at, ==, self_copy->created_at);
+  g_assert_cmpstr(mock_last(&fixture), ==, npub_two);
+  g_assert_null(unwrap_now(fixture.accounts, built.envelope->sender_wrap_json, &error));
+  g_assert_error(error, GH_NIP17_INBOX_ERROR, GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT);
+  g_clear_error(&error);
+
+  /* A crafted peer rumor without a declared id gets its canonical id. */
+  Craft plain = { .sender = 3, .recipient = 2, .rumor_no_id = TRUE };
+  g_autofree gchar *crafted = craft_wrap(&plain);
+  g_autoptr(GhNip17Message) peer = unwrap_now(fixture.accounts, crafted, &error);
+  g_assert_no_error(error);
+  g_autofree gchar *third = test_pub(3);
+  g_assert_cmpstr(peer->sender_pubkey, ==, third);
+  NostrEvent *canonical = parse_event(peer->rumor_json);
+  g_assert_cmpstr(canonical->id, ==, peer->rumor_id);
+  g_assert_cmpint(nostr_event_validate_id(canonical, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+  nostr_event_free(canonical);
+
+  nostr_event_free(sender_wrap);
+  nostr_event_free(recipient_wrap);
+  gh_nip17_envelope_free(built.envelope);
+  envelope_fixture_down(&fixture);
+}
+
+typedef struct {
+  const gchar *name;
+  Craft craft;
+  const gchar *tamper; /* outer field to corrupt after crafting */
+  gint code;
+  guint calls;         /* signer calls made before rejection */
+} RejectCase;
+
+static void
+test_nip17_unwrap_rejects(void)
+{
+  const RejectCase cases[] = {
+    { "wrong p", { .sender = 3, .recipient = 1 }, NULL,
+      GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT, 0 },
+    { "second p", { .sender = 3, .recipient = 2, .extra_wrap_p = 1 }, NULL,
+      GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT, 0 },
+    { "outer id", { .sender = 3, .recipient = 2 }, "id",
+      GH_NIP17_INBOX_ERROR_INVALID_WRAP, 0 },
+    { "outer sig", { .sender = 3, .recipient = 2 }, "sig",
+      GH_NIP17_INBOX_ERROR_INVALID_WRAP, 0 },
+    { "outer content", { .sender = 3, .recipient = 2 }, "content",
+      GH_NIP17_INBOX_ERROR_INVALID_WRAP, 0 },
+    { "seal sig", { .sender = 3, .recipient = 2, .seal_bad_sig = TRUE }, NULL,
+      GH_NIP17_INBOX_ERROR_INVALID_SEAL, 1 },
+    { "seal kind", { .sender = 3, .recipient = 2, .seal_kind = 1 }, NULL,
+      GH_NIP17_INBOX_ERROR_INVALID_SEAL, 1 },
+    { "seal tags", { .sender = 3, .recipient = 2, .seal_tagged = TRUE }, NULL,
+      GH_NIP17_INBOX_ERROR_INVALID_SEAL, 1 },
+    { "sender mismatch", { .sender = 3, .rumor_author = 1, .recipient = 2 }, NULL,
+      GH_NIP17_INBOX_ERROR_SENDER_MISMATCH, 2 },
+    { "kind 15", { .sender = 3, .recipient = 2, .rumor_kind = 15 }, NULL,
+      GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND, 2 },
+    { "kind 1", { .sender = 3, .recipient = 2, .rumor_kind = 1 }, NULL,
+      GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND, 2 },
+    { "signed rumor", { .sender = 3, .recipient = 2, .rumor_signed = TRUE }, NULL,
+      GH_NIP17_INBOX_ERROR_INVALID_RUMOR, 2 },
+    { "rumor id", { .sender = 3, .recipient = 2, .rumor_bad_id = TRUE }, NULL,
+      GH_NIP17_INBOX_ERROR_INVALID_RUMOR, 2 },
+    { "not a participant", { .sender = 3, .recipient = 2, .rumor_p = 1 }, NULL,
+      GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT, 2 },
+  };
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  guint expected_calls = 0;
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    expected_calls += cases[i].calls;
+    g_test_message("reject case: %s", cases[i].name);
+    g_autofree gchar *wrap = craft_wrap(&cases[i].craft);
+    g_autofree gchar *input = cases[i].tamper ? tamper(wrap, cases[i].tamper) : g_strdup(wrap);
+    guint before = fixture.mock.calls;
+    g_autoptr(GError) error = NULL;
+    g_assert_null(unwrap_now(fixture.accounts, input, &error));
+    g_assert_error(error, GH_NIP17_INBOX_ERROR, cases[i].code);
+    g_assert_cmpuint(fixture.mock.calls - before, ==, cases[i].calls);
+  }
+  /* Bounds and garbage are rejected before any parse or signer call. */
+  g_autofree gchar *huge = g_strnfill(GH_NIP17_MAX_WRAP_JSON + 1, 'x');
+  g_autoptr(GError) error = NULL;
+  g_assert_null(unwrap_now(fixture.accounts, huge, &error));
+  g_assert_error(error, GH_NIP17_INBOX_ERROR, GH_NIP17_INBOX_ERROR_TOO_LARGE);
+  g_clear_error(&error);
+  g_assert_null(unwrap_now(fixture.accounts, "{\"kind\":1059}", &error));
+  g_assert_error(error, GH_NIP17_INBOX_ERROR, GH_NIP17_INBOX_ERROR_INVALID_WRAP);
+  g_clear_error(&error);
+  g_assert_cmpuint(fixture.mock.calls, ==, expected_calls);
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_unwrap_no_account(void)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  Craft craft = { .sender = 3, .recipient = 1 };
+  g_autofree gchar *wrap = craft_wrap(&craft);
+  g_assert_true(gh_account_controller_select(fixture.accounts, "", NULL));
+  g_autoptr(GError) error = NULL;
+  g_assert_null(unwrap_now(fixture.accounts, wrap, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED);
+  g_assert_cmpuint(fixture.mock.calls, ==, 0);
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_unwrap_signer_denied(void)
+{
+  for (guint stage = 1; stage <= 2; stage++) {
+    EnvelopeFixture fixture = { 0 };
+    envelope_fixture_up(&fixture);
+    fixture.mock.deny_call = stage;
+    Craft craft = { .sender = 3, .recipient = 1 };
+    g_autofree gchar *wrap = craft_wrap(&craft);
+    g_autoptr(GError) error = NULL;
+    g_assert_null(unwrap_now(fixture.accounts, wrap, &error));
+    g_assert_error(error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+    g_assert_cmpuint(fixture.mock.calls, ==, stage);
+    envelope_fixture_down(&fixture);
+  }
+}
+
+static void
+run_interrupted_unwrap(guint stage, gboolean switch_account)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  fixture.mock.hold_call = stage;
+  Craft craft = { .sender = 3, .recipient = 1 };
+  g_autofree gchar *wrap = craft_wrap(&craft);
+  g_autoptr(GCancellable) cancel = g_cancellable_new();
+  UnwrapWait wait = { 0 };
+  gh_nip17_unwrap_async(fixture.accounts, wrap, cancel, unwrap_done, &wait);
+  MockCount count = { &fixture.mock, stage };
+  spin_until(mock_count_reached, &count);
+  if (switch_account)
+    g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  else
+    g_cancellable_cancel(cancel);
+  spin_until(unwrap_finished, &wait);
+  g_assert_null(wait.message);
+  g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_cmpuint(fixture.mock.calls, ==, stage);
+  /* The held approval's private sender was closed, revoking it. */
+  MockSenders check = { &fixture.bus, &fixture.mock };
+  spin_until(mock_senders_closed, &check);
+  envelope_fixture_down(&fixture);
+}
+
+static void
+test_nip17_unwrap_cancel_and_switch(void)
+{
+  for (guint stage = 1; stage <= 2; stage++) {
+    run_interrupted_unwrap(stage, FALSE);
+    run_interrupted_unwrap(stage, TRUE);
+  }
+  /* Already cancelled: nothing reaches the signer. */
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  Craft craft = { .sender = 3, .recipient = 1 };
+  g_autofree gchar *wrap = craft_wrap(&craft);
+  g_autoptr(GCancellable) cancel = g_cancellable_new();
+  g_cancellable_cancel(cancel);
+  UnwrapWait wait = { 0 };
+  gh_nip17_unwrap_async(fixture.accounts, wrap, cancel, unwrap_done, &wait);
+  spin_until(unwrap_finished, &wait);
+  g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_cmpuint(fixture.mock.calls, ==, 0);
+  envelope_fixture_down(&fixture);
+}
+
+/* A reply that lands after the account switched away (and back) is stale:
+ * the generation moved on even though the npub matches again. */
+static void
+unwrap_switch_before_finish(GObject *source, GAsyncResult *result, gpointer data)
+{
+  UnwrapWait *wait = data;
+  GhAccountController *accounts = GH_ACCOUNT_CONTROLLER(source);
+  g_assert_true(gh_account_controller_select(accounts, npub_two, NULL));
+  g_assert_true(gh_account_controller_select(accounts, npub_one, NULL));
+  wait->message = gh_nip17_unwrap_finish(result, &wait->error);
+  wait->done = TRUE;
+}
+
+static void
+test_nip17_unwrap_stale_callback(void)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  Craft craft = { .sender = 3, .recipient = 1 };
+  g_autofree gchar *wrap = craft_wrap(&craft);
+  UnwrapWait wait = { 0 };
+  gh_nip17_unwrap_async(fixture.accounts, wrap, NULL, unwrap_switch_before_finish, &wait);
+  spin_until(unwrap_finished, &wait);
+  g_assert_null(wait.message);
+  g_assert_error(wait.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_cmpuint(fixture.mock.calls, ==, 2);
+  envelope_fixture_down(&fixture);
+}
+
+static GhNip17Message *
+fake_message(const gchar *account, gchar wrap_digit, gchar rumor_digit)
+{
+  GhNip17Message *message = g_new0(GhNip17Message, 1);
+  message->account_pubkey = g_strdup(account);
+  message->wrap_id = g_strnfill(64, wrap_digit);
+  message->rumor_id = g_strnfill(64, rumor_digit);
+  return message;
+}
+
+static void
+test_nip17_seen_restart(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *dir = g_dir_make_tmp("groundhog-seen-XXXXXX", &error);
+  g_assert_no_error(error);
+  g_autofree gchar *path = g_build_filename(dir, "seen", NULL);
+  g_autofree gchar *account = test_pub(2);
+  g_autofree gchar *other = test_pub(1);
+
+  g_autoptr(GhNip17Seen) seen = gh_nip17_seen_open(path, account, 3, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhNip17Message) first = fake_message(account, 'a', 'b');
+  g_assert_false(gh_nip17_seen_has_wrap(seen, first->wrap_id));
+  g_assert_true(gh_nip17_seen_record(seen, first, &error));
+  g_assert_no_error(error);
+  /* The same rumor re-wrapped: a new wrap id, a known rumor id. */
+  g_autoptr(GhNip17Message) rewrap = fake_message(account, 'c', 'b');
+  g_assert_false(gh_nip17_seen_has_wrap(seen, rewrap->wrap_id));
+  g_assert_true(gh_nip17_seen_has_rumor(seen, rewrap->rumor_id));
+  g_assert_true(gh_nip17_seen_record(seen, rewrap, &error));
+  g_autoptr(GhNip17Message) foreign = fake_message(other, 'd', 'e');
+  g_assert_false(gh_nip17_seen_record(seen, foreign, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  /* Restart: the seen keys survive, including a torn final append. */
+  g_autofree gchar *contents = NULL;
+  g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
+  g_autofree gchar *torn = g_strconcat(contents, "w 12", NULL);
+  g_assert_true(g_file_set_contents(path, torn, -1, NULL));
+  seen = gh_nip17_seen_open(path, account, 3, &error);
+  g_assert_no_error(error);
+  g_assert_true(gh_nip17_seen_has_wrap(seen, first->wrap_id));
+  g_assert_true(gh_nip17_seen_has_wrap(seen, rewrap->wrap_id));
+  g_assert_true(gh_nip17_seen_has_rumor(seen, first->rumor_id));
+  g_assert_false(gh_nip17_seen_has_rumor(seen, first->wrap_id));
+
+  /* Bounded: the oldest key is evicted and the log is compacted. */
+  g_autoptr(GhNip17Message) later = fake_message(account, 'f', '0');
+  g_assert_true(gh_nip17_seen_record(seen, later, &error));
+  g_autoptr(GhNip17Message) latest = fake_message(account, '1', '2');
+  g_assert_true(gh_nip17_seen_record(seen, latest, &error));
+  g_assert_no_error(error);
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+  seen = gh_nip17_seen_open(path, account, 3, &error);
+  g_assert_no_error(error);
+  g_assert_false(gh_nip17_seen_has_wrap(seen, first->wrap_id));
+  g_assert_true(gh_nip17_seen_has_wrap(seen, latest->wrap_id));
+  g_assert_true(gh_nip17_seen_has_rumor(seen, latest->rumor_id));
+  g_clear_pointer(&seen, gh_nip17_seen_free);
+
+  /* The file is bound to its account and parsed strictly. */
+  g_assert_null(gh_nip17_seen_open(path, other, 3, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error(&error);
+  g_clear_pointer(&contents, g_free);
+  g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
+  g_autofree gchar *corrupt = g_strconcat(contents, "x nothex\n", NULL);
+  g_assert_true(g_file_set_contents(path, corrupt, -1, NULL));
+  g_assert_null(gh_nip17_seen_open(path, account, 3, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error(&error);
+
+  g_unlink(path);
+  g_rmdir(dir);
+}
 #endif
 
 int
@@ -1217,6 +1718,13 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip17/envelope-signer-failures", test_nip17_envelope_signer_failures);
   g_test_add_func("/groundhog/nip17/envelope-cancel-switch", test_nip17_envelope_cancel_and_switch);
   g_test_add_func("/groundhog/nip17/envelope-switch-before-finish", test_nip17_envelope_switch_before_finish);
+  g_test_add_func("/groundhog/nip17/unwrap-roundtrip", test_nip17_unwrap_roundtrip);
+  g_test_add_func("/groundhog/nip17/unwrap-rejects", test_nip17_unwrap_rejects);
+  g_test_add_func("/groundhog/nip17/unwrap-no-account", test_nip17_unwrap_no_account);
+  g_test_add_func("/groundhog/nip17/unwrap-signer-denied", test_nip17_unwrap_signer_denied);
+  g_test_add_func("/groundhog/nip17/unwrap-cancel-switch", test_nip17_unwrap_cancel_and_switch);
+  g_test_add_func("/groundhog/nip17/unwrap-stale-callback", test_nip17_unwrap_stale_callback);
+  g_test_add_func("/groundhog/nip17/seen-restart", test_nip17_seen_restart);
 #endif
   int status = g_test_run();
   g_free(npub_one);

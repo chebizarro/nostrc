@@ -495,16 +495,26 @@ gh_account_controller_nip44_encrypt_async(GhAccountController *self,
 }
 
 void
-gh_account_controller_nip44_decrypt_async(GhAccountController *self,
+gh_account_controller_nip44_decrypt_with_cancellable_async(GhAccountController *self,
                                           const gchar *ciphertext, const gchar *peer,
+                                          GCancellable *cancellable,
                                           GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
   SignerCall *call = new_signer_call(self, gh_account_controller_nip44_decrypt_async,
-                                    NULL, callback, user_data);
+                                    cancellable, callback, user_data);
   if (!call) return;
   gh_signer_nip44_decrypt_async(self->signer, ciphertext, peer, call->cancel,
                                  signer_call_done, call);
+}
+
+void
+gh_account_controller_nip44_decrypt_async(GhAccountController *self,
+                                          const gchar *ciphertext, const gchar *peer,
+                                          GAsyncReadyCallback callback, gpointer user_data)
+{
+  gh_account_controller_nip44_decrypt_with_cancellable_async(self, ciphertext, peer,
+                                                              NULL, callback, user_data);
 }
 
 gchar *

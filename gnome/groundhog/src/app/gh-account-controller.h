@@ -90,6 +90,12 @@ void gh_account_controller_nip44_decrypt_async(GhAccountController *self,
                                                 const gchar *peer_pubkey_hex,
                                                 GAsyncReadyCallback callback,
                                                 gpointer user_data);
+void gh_account_controller_nip44_decrypt_with_cancellable_async(GhAccountController *self,
+                                                const gchar *ciphertext,
+                                                const gchar *peer_pubkey_hex,
+                                                GCancellable *cancellable,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
 gchar *gh_account_controller_nip44_finish(GAsyncResult *result, GError **error);
 
 /* Why sending is unavailable, for the always-shown banner. No send path

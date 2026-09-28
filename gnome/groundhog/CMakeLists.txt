@@ -82,10 +82,11 @@ if (TARGET nostr AND TARGET nip19)
   target_sources(groundhog PRIVATE src/app/gh-account-ui.c)
   target_link_libraries(groundhog PRIVATE groundhog-account)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNTS=1)
-  # The outbound codec is part of the production executable, not a test-only
-  # helper. No relay lookup or publish path is linked here.
+  # The outbound codec and the inbound unwrap/seen-set are part of the
+  # production executable, not test-only helpers. No relay lookup, inbox REQ
+  # or publish path is linked here.
   if (TARGET nostr_nip17_core AND TARGET nostr_nip59_core)
-    target_sources(groundhog PRIVATE src/app/gh-nip17-envelope.c)
+    target_sources(groundhog PRIVATE src/app/gh-nip17-envelope.c src/app/gh-nip17-inbox.c)
     target_link_libraries(groundhog PRIVATE nostr_nip17_core nostr_nip59_core)
   endif()
   if (BUILD_TESTING)
@@ -203,7 +204,8 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_executable(test-groundhog-account tests/app/test_account_controller.c)
   target_link_libraries(test-groundhog-account PRIVATE groundhog-account)
   if (TARGET nostr_nip17_core AND TARGET nostr_nip59_core)
-    target_sources(test-groundhog-account PRIVATE src/app/gh-nip17-envelope.c)
+    target_sources(test-groundhog-account PRIVATE src/app/gh-nip17-envelope.c
+                   src/app/gh-nip17-inbox.c)
     target_link_libraries(test-groundhog-account PRIVATE nostr_nip17_core nostr_nip59_core)
     target_compile_definitions(test-groundhog-account PRIVATE GROUNDHOG_TEST_NIP17=1)
   endif()
