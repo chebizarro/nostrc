@@ -459,3 +459,21 @@ if (BUILD_TESTING)
       COMMAND ${APPSTREAMCLI} validate --no-net ${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml)
   endif()
 endif()
+
+# --- G01 privacy static ---
+# Static privacy guards from the privacy charter (§8.2 G01): no URL literals,
+# the GSettings allowlist pinned to name/type/default, the Blueprint class
+# denylist, libsoup/gdk-pixbuf/tmp boundaries, NIP-17 publication relay
+# sources, GhMessageStatus values and the app ID. --self-test also proves each
+# rule fails on a synthetic violating tree. Needs only python3.
+if (BUILD_TESTING)
+  find_package(Python3 QUIET COMPONENTS Interpreter)
+  if (Python3_Interpreter_FOUND)
+    add_test(NAME groundhog-privacy-static
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_privacy.py
+              --self-test ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(groundhog-privacy-static PROPERTIES TIMEOUT 60
+      ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+  endif()
+endif()
+# --- end G01 privacy static ---

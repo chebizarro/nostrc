@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Groundhog keeps only app-global preferences and the selected identity in
+  GSettings. dconf is plaintext and readable by any process running as the
+  user, so per-conversation and per-contact state (mutes, pins, drafts,
+  petnames, blocks, read state) belongs in the encrypted store instead.
+  tests/check_privacy.py (the groundhog-privacy-static test) pins every key's
+  name, type and default; a new key needs an entry in its allowlist.
+-->
 <schemalist>
   <schema id="org.nostr.Groundhog" path="/org/nostr/Groundhog/">
     <key name="current-npub" type="s">
@@ -6,16 +14,13 @@
       <summary>Groundhog's selected identity</summary>
       <description>The selected public identity; independent of Gnostr's active identity.</description>
     </key>
-    <key name="signer-method" type="s">
-      <default>'auto'</default>
-      <summary>Requested signer method</summary>
-      <description>One of auto, local, nip46, or nip55l. For auto, local and nip55l, account-bound signing and NIP-44 use org.nostr.Signer; nip46 and message sending remain unsupported.</description>
-    </key>
-    <key name="discovery-relays" type="as">
-      <default>[]</default>
-      <summary>Relays that locate the active account's relay lists</summary>
-      <description>ws:// or wss:// relays asked for the selected account's own signed NIP-65 (kind 10002) and NIP-17 inbox (kind 10050) relay lists. Empty by default: Groundhog contacts no relay until one is configured.</description>
-    </key>
+
+    <!-- === Preferences (privacy charter §7.11; G01) ===
+         One block, ordered by Preferences page and group. Every default is
+         the privacy-preserving one. Keys described as reserved are not read
+         by this version yet. -->
+
+    <!-- Privacy / Notifications -->
     <key name="notifications-enabled" type="b">
       <default>false</default>
       <summary>Show messaging notifications</summary>
@@ -31,6 +36,97 @@
       <summary>Play a notification sound</summary>
       <description>Reserved for a future notification service.</description>
     </key>
+
+    <!-- Privacy / Web Content -->
+    <key name="load-remote-images" type="b">
+      <default>false</default>
+      <summary>Load images in messages</summary>
+      <description>Whether images linked from messages may be loaded without asking first. Off: nothing is fetched unless you load an image yourself, because loading it shows your IP address to its host unless you use Tor. Reserved; not used yet.</description>
+    </key>
+    <key name="link-previews" type="b">
+      <default>false</default>
+      <summary>Link previews</summary>
+      <description>Whether a link preview may be fetched without asking first. Off: nothing is fetched unless you ask for a preview of a message and confirm. Reserved; not used yet.</description>
+    </key>
+    <key name="load-profile-pictures" type="b">
+      <default>false</default>
+      <summary>Load profile pictures</summary>
+      <description>Whether profile pictures are downloaded. Off, because fetching a picture shows your IP address to its host. Reserved; not used yet.</description>
+    </key>
+
+    <!-- Privacy / Conversations -->
+    <key name="filter-unknown-senders" type="b">
+      <default>true</default>
+      <summary>Filter unknown senders</summary>
+      <description>Messages from people you have not accepted go to Message Requests, with no profile lookup and hidden notifications, until you accept them. Reserved; not used yet.</description>
+    </key>
+    <key name="show-message-previews" type="b">
+      <default>true</default>
+      <summary>Show message previews in the conversation list</summary>
+      <description>Show the latest message text under each conversation in the list. Reserved; not used yet.</description>
+    </key>
+
+    <!-- Network / Connection -->
+    <key name="network-mode" type="s">
+      <choices>
+        <choice value="system"/>
+        <choice value="none"/>
+        <choice value="tor"/>
+      </choices>
+      <default>'system'</default>
+      <summary>How Groundhog connects</summary>
+      <description>system uses the desktop proxy settings, none connects directly, and tor uses the Tor SOCKS proxy at tor-socks-address and never falls back to a direct connection. Reserved: relay connections do not honour this setting or the desktop proxy settings yet.</description>
+    </key>
+    <key name="tor-socks-address" type="s">
+      <default>'127.0.0.1:9050'</default>
+      <summary>Tor SOCKS proxy address</summary>
+      <description>host:port of the local Tor SOCKS5 proxy used when network-mode is tor. Reserved; not used yet.</description>
+    </key>
+
+    <!-- Network / Relays -->
+    <key name="discovery-relays" type="as">
+      <default>[]</default>
+      <summary>Relays that locate the active account's relay lists</summary>
+      <description>ws:// or wss:// relays asked for the selected account's own signed NIP-65 (kind 10002) and NIP-17 inbox (kind 10050) relay lists. Empty by default: Groundhog contacts no relay until one is configured.</description>
+    </key>
+
+    <!-- Account & Storage / Account -->
+    <key name="signer-method" type="s">
+      <default>'auto'</default>
+      <summary>Requested signer method</summary>
+      <description>One of auto, local, nip46, or nip55l. For auto, local and nip55l, account-bound signing and NIP-44 use org.nostr.Signer; nip46 and message sending remain unsupported.</description>
+    </key>
+
+    <!-- Account & Storage / Background -->
+    <key name="run-in-background" type="b">
+      <default>true</default>
+      <summary>Receive messages when closed</summary>
+      <description>Keep receiving messages after the window is closed. Setup asks for this choice explicitly. Reserved; not used yet.</description>
+    </key>
+
+    <!-- Account & Storage / Messages -->
+    <key name="retention-days" type="i">
+      <default>0</default>
+      <summary>Keep messages</summary>
+      <description>Delete messages from this device after this many days; 0 keeps them. Reserved; not used yet.</description>
+    </key>
+    <key name="default-disappearing-seconds" type="i">
+      <default>0</default>
+      <summary>Default disappearing message timer</summary>
+      <description>Expiration, in seconds, requested for messages in new conversations; 0 turns disappearing messages off. Reserved; not used yet.</description>
+    </key>
+    <key name="enter-sends" type="b">
+      <default>true</default>
+      <summary>Send with Enter</summary>
+      <description>Enter sends and Shift+Enter starts a new line; when off, Ctrl+Enter sends. Reserved; not used yet.</description>
+    </key>
+    <key name="blossom-servers" type="as">
+      <default>[]</default>
+      <summary>Attachment servers</summary>
+      <description>Blossom servers that store encrypted attachments. Empty by default: attachments stay disabled until you choose a server. Reserved; not used yet.</description>
+    </key>
+    <!-- === end Preferences (§7.11) === -->
+
     <key name="window-width" type="i"><default>900</default><summary>Window width</summary></key>
     <key name="window-height" type="i"><default>600</default><summary>Window height</summary></key>
     <key name="window-maximized" type="b"><default>false</default><summary>Window maximized</summary></key>

@@ -34,7 +34,9 @@ assert meta.find("launchable").attrib["type"] == "desktop-id"
 schema = ET.parse(data / f"{app_id}.gschema.xml").getroot().find("schema")
 assert schema.attrib == {"id": app_id, "path": "/org/nostr/Groundhog/"}
 keys = {key.attrib["name"]: key for key in schema.findall("key")}
-assert set(keys) == {
+# check_privacy.py (groundhog-privacy-static) pins the complete key set with
+# types and defaults; this only requires the identity-contract keys.
+assert set(keys) >= {
     "current-npub", "signer-method", "notifications-enabled",
     "notification-privacy", "sound-enabled", "window-width",
     "window-height", "window-maximized", "discovery-relays",

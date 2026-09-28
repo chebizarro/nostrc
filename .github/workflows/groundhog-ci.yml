@@ -66,7 +66,7 @@ jobs:
               'groundhog-conversations', 'groundhog-dm-inbox',
               'groundhog-version', 'groundhog-launch', 'groundhog-schema',
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
-              'groundhog-blueprint',
+              'groundhog-blueprint', 'groundhog-privacy-static',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
