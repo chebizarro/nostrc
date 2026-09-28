@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.3.3',
+  version: '0.3.4',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -24,6 +24,8 @@ marmot_version_h = configure_file(
   install_dir: get_option('includedir') / 'marmot',
 )
 
+cc = meson.get_compiler('c')
+
 # Dependencies
 openssl_dep = dependency('openssl', required: true)
 sodium_dep = dependency('libsodium', required: true)
@@ -35,9 +37,53 @@ sqlite3_dep = dependency('sqlite3', required: false)
 # Optional: LMDB for nostrdb storage backend
 lmdb_dep = dependency('lmdb', required: false)
 
-# Sibling libraries (available when built as part of nostrc)
-nostr_dep = dependency('nostr', required: false)
-nip44_dep = dependency('nip44', required: false)
+# Sibling nostrc libraries. These are hard requirements, exactly as in
+# CMakeLists.txt (which links `nostr` and `nostr_nip44_core` unconditionally):
+# credentials.c, groups.c, kp_profile.c, welcome.c and messages.c include
+# <nostr-event.h>/<nostr-tag.h>, and messages.c includes <nostr/nip44/nip44.h>.
+# libnostr's public <nostr-tag.h> in turn includes libnostrgo's
+# "string_array.h", and libnostr's tag code links libnostrgo's string_array.
+# libmarmot's link closure needs no nsync, libwebsockets or GLib symbols.
+nostrc_build_dir = get_option('nostrc_build_dir')
+if nostrc_build_dir == ''
+  # Installed siblings (pkg-config). nips/nip44 installs no .pc, so its
+  # static core library is looked up next to libnostr.
+  nostr_dep = dependency('nostr', required: true)
+  nostrgo_dep = dependency('libnostrgo', required: true)
+  nip44_lib = cc.find_library('nostr_nip44_core',
+    dirs: [nostr_dep.get_variable(pkgconfig: 'libdir')],
+    has_headers: ['nostr/nip44/nip44.h'],
+    header_dependencies: [nostrgo_dep],
+    required: false,
+  )
+  if not nip44_lib.found()
+    error('libmarmot requires the NIP-44 core library (libnostr_nip44_core) ' +
+      'and <nostr/nip44/nip44.h> next to the installed libnostr (' +
+      nostr_dep.get_variable(pkgconfig: 'libdir') + '). nips/nip44 currently ' +
+      'installs only its headers; either install the library there or ' +
+      'configure with -Dnostrc_build_dir=<built nostrc CMake tree>.')
+  endif
+  nip44_dep = declare_dependency(dependencies: nip44_lib)
+else
+  # Siblings from an already-built nostrc CMake tree (headers from this
+  # checkout), the same fallback marmot-gobject uses for libmarmot.
+  nostrc_src_dir = meson.current_source_dir() / '..'
+  nostr_dep = declare_dependency(
+    dependencies: cc.find_library('nostr',
+      dirs: [nostrc_build_dir / 'libnostr'], required: true),
+    compile_args: ['-I' + nostrc_src_dir / 'libnostr' / 'include'],
+  )
+  nostrgo_dep = declare_dependency(
+    dependencies: cc.find_library('nostrgo',
+      dirs: [nostrc_build_dir / 'libgo'], required: true),
+    compile_args: ['-I' + nostrc_src_dir / 'libgo' / 'include'],
+  )
+  nip44_dep = declare_dependency(
+    dependencies: cc.find_library('nostr_nip44_core',
+      dirs: [nostrc_build_dir / 'nips' / 'nip44'], required: true),
+    compile_args: ['-I' + nostrc_src_dir / 'nips' / 'nip44' / 'include'],
+  )
+endif
 
 # Sources
 marmot_sources = files(
@@ -68,14 +114,16 @@ marmot_sources = files(
 # Conditionally add SQLite backend
 if sqlite3_dep.found()
   marmot_sources += files('src/storage_sqlite.c')
-endif()
+endif
 
 # Public include directories
 marmot_inc = include_directories('include')
 marmot_src_inc = include_directories('src')
 
-# Gather optional dependencies
-marmot_deps = [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep]
+# Gather dependencies. Users precede providers (NIP-44, libnostr, libnostrgo,
+# then crypto) for single-pass static linkers.
+marmot_deps = [nip44_dep, nostr_dep, nostrgo_dep, openssl_dep, sodium_dep,
+  secp256k1_dep]
 marmot_c_args = []
 if sqlite3_dep.found()
   marmot_deps += sqlite3_dep
@@ -123,153 +171,49 @@ pkg.generate(libmarmot,
   requires: ['libsodium', 'openssl', 'libsecp256k1'],
 )
 
-# Tests
+# Tests: the same executables and test names as CMakeLists.txt.
 if get_option('tests')
-  test_mls_tls = executable('test_mls_tls',
-    'tests/test_mls_tls.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_tls_codec', test_mls_tls)
+  marmot_test_names = [
+    'test_mls_tls',
+    'test_mls_crypto',
+    'test_extension',
+    'test_storage',
+    'test_types',
+    'test_mls_tree',
+    'test_mls_key_schedule',
+    'test_mls_key_schedule_vectors',
+    'test_mls_framing',
+    'test_mls_key_package',
+    'test_mls_group',
+    'test_app_data_update',
+    'test_mls_welcome',
+    'test_protocol',
+    'test_kp_profile',
+    'test_storage_contract',
+    'test_media',
+    'test_mls_tree_vectors',
+    'test_rfc9420_vectors',
+  ]
+  foreach name : marmot_test_names
+    test('marmot_' + name, executable(name, 'tests' / (name + '.c'),
+      include_directories: [marmot_inc, marmot_src_inc],
+      link_with: libmarmot,
+      dependencies: marmot_deps,
+    ))
+  endforeach
 
-  test_mls_crypto = executable('test_mls_crypto',
-    'tests/test_mls_crypto.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
+  # MDK interoperability. The suite locates tests/vectors/mdk relative to its
+  # working directory; pin it so out-of-tree builds do not silently skip the
+  # MDK vectors.
+  test('marmot_test_interop', executable('test_marmot_interop',
+      'tests/test_interop.c',
+      'tests/mdk_vector_loader.c',
+      'tests/mdk_vector_stubs.c',
+      include_directories: [marmot_inc, marmot_src_inc,
+        include_directories('tests')],
+      link_with: libmarmot,
+      dependencies: marmot_deps,
+    ),
+    workdir: meson.current_source_dir(),
   )
-  test('marmot_mls_crypto', test_mls_crypto)
-
-  test_extension = executable('test_extension',
-    'tests/test_extension.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_extension', test_extension)
-
-  test_storage = executable('test_storage',
-    'tests/test_storage.c',
-    include_directories: [marmot_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_storage', test_storage)
-
-  test_types = executable('test_types',
-    'tests/test_types.c',
-    include_directories: [marmot_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_types', test_types)
-
-  test_mls_tree = executable('test_mls_tree',
-    'tests/test_mls_tree.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_mls_tree', test_mls_tree)
-
-  test_mls_key_schedule = executable('test_mls_key_schedule',
-    'tests/test_mls_key_schedule.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_mls_key_schedule', test_mls_key_schedule)
-
-  test_mls_framing = executable('test_mls_framing',
-    'tests/test_mls_framing.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_mls_framing', test_mls_framing)
-
-  test_mls_key_package = executable('test_mls_key_package',
-    'tests/test_mls_key_package.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_mls_key_package', test_mls_key_package)
-
-  test_mls_group = executable('test_mls_group',
-    'tests/test_mls_group.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_mls_group', test_mls_group)
-
-  test_app_data_update = executable('test_app_data_update',
-    'tests/test_app_data_update.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_app_data_update', test_app_data_update)
-
-  test_mls_welcome = executable('test_mls_welcome',
-    'tests/test_mls_welcome.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_mls_welcome', test_mls_welcome)
-
-  test_protocol = executable('test_protocol',
-    'tests/test_protocol.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep],
-  )
-  test('marmot_protocol', test_protocol)
-
-  test_kp_profile = executable('test_kp_profile',
-    'tests/test_kp_profile.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep],
-  )
-  test('marmot_kp_profile', test_kp_profile)
-
-  # Storage contract tests (all backends)
-  test_storage_contract = executable('test_storage_contract',
-    'tests/test_storage_contract.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: marmot_deps,
-  )
-  test('marmot_storage_contract', test_storage_contract)
-
-  # MIP-04 media encryption tests
-  test_media = executable('test_media',
-    'tests/test_media.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_media', test_media)
-
-  # RFC 9420 test vectors & crypto validation
-  test_rfc9420 = executable('test_rfc9420_vectors',
-    'tests/test_rfc9420_vectors.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep],
-  )
-  test('marmot_rfc9420_vectors', test_rfc9420)
-
-  # MDK interoperability tests
-  test_interop = executable('test_interop',
-    'tests/test_interop.c',
-    include_directories: [marmot_inc, marmot_src_inc],
-    link_with: libmarmot,
-    dependencies: [openssl_dep, sodium_dep, secp256k1_dep],
-  )
-  test('marmot_interop', test_interop)
 endif

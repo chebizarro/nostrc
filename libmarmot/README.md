@@ -49,8 +49,10 @@ libmarmot implements the Marmot Improvement Proposals (MIPs) for encrypted group
 |---------|---------|----------|
 | **libsodium** | Ed25519 signing, X25519 DH, ChaCha20-Poly1305, CSPRNG | ✅ |
 | **OpenSSL** | AES-128-GCM, HKDF-SHA256, SHA-256 | ✅ |
-| **libnostr** | Nostr event creation, signing, secp256k1 | Optional (for MIP-00─03) |
-| **NIP-44** | Content encryption for group messages | Optional (for MIP-03) |
+| **libsecp256k1** | Schnorr/x-only keys for Nostr events | ✅ |
+| **libnostr** | Nostr event creation, signing | ✅ |
+| **libnostrgo** | `string_array` used by libnostr's public tag API | ✅ |
+| **NIP-44** (`nostr_nip44_core`) | Content encryption for group messages | ✅ |
 | **NIP-59** | Gift wrapping for welcome events | Optional (for MIP-02) |
 | **SQLite3** | Persistent storage backend | Optional |
 | **LMDB** | nostrdb storage backend | Optional |
@@ -77,12 +79,20 @@ ctest --test-dir build --output-on-failure
 
 ### Meson (standalone)
 
+libnostr, libnostrgo and NIP-44 are required. By default they come from
+installed copies via pkg-config (`nostr`, `libnostrgo`) with
+`libnostr_nip44_core` next to libnostr; `nips/nip44` does not install that
+library yet, so configure then stops with an explicit error. Alternatively,
+take them from an already-built nostrc CMake tree:
+
 ```bash
-cd nostrc/libmarmot
-meson setup build -Dtests=true
-ninja -C build
-ninja -C build test
+cd nostrc
+cmake -B /tmp/nostrc-build && cmake --build /tmp/nostrc-build --target nostr nostrgo nostr_nip44_core
+meson setup /tmp/marmot-meson libmarmot -Dnostrc_build_dir=/tmp/nostrc-build
+meson test -C /tmp/marmot-meson
 ```
+
+libmarmot's own link closure needs no nsync, libwebsockets or GLib.
 
 ## API Overview
 

@@ -1,3 +1,5 @@
 option('tests', type: 'boolean', value: true, description: 'Build test executables')
 option('adopted_key_package_producer', type: 'boolean', value: false,
        description: 'Allow producing ADOPTED-profile KeyPackages (experimental; nostrc-prqu.9)')
+option('nostrc_build_dir', type: 'string', value: '',
+       description: 'Absolute path of a built nostrc CMake tree to take libnostr, libnostrgo and NIP-44 from (default: installed copies via pkg-config)')
