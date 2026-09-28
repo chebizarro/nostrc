@@ -374,11 +374,25 @@ gh_test_store_result(GObject *source, GAsyncResult *result, gpointer user_data)
   *slot = g_object_ref(result);
 }
 
+static gboolean
+on_wait_deadline(gpointer user_data)
+{
+  *(gboolean *)user_data = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
 GAsyncResult *
 gh_test_wait(GAsyncResult **slot)
 {
-  while (!*slot)
+  gboolean expired = FALSE;
+  guint deadline = g_timeout_add_seconds(GH_TEST_WAIT_SECONDS, on_wait_deadline, &expired);
+  while (!*slot && !expired)
     g_main_context_iteration(NULL, TRUE);
+  if (!*slot)
+    g_error("no result after %d s: an asynchronous operation never completed",
+            GH_TEST_WAIT_SECONDS);
+  if (!expired)
+    g_source_remove(deadline);
   return *slot;
 }
 

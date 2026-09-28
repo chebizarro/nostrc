@@ -86,7 +86,10 @@ GhTestKeyResult gh_test_lookup_or_create(GhStoreKey *store_key, const gchar *acc
                                          GhStoreKeyFlags flags, GCancellable *cancellable);
 gboolean gh_test_destroy(GhStoreKey *store_key, const gchar *account, GhStoreKeyFlags flags,
                          GError **error);
-/* Wait until *slot is set by gh_test_store_result(). */
+/* Wait until *slot is set by gh_test_store_result(). A result that has not
+ * arrived after GH_TEST_WAIT_SECONDS is a hang: fail with a message then,
+ * well inside the CTest timeout, instead of waiting to be killed. */
+#define GH_TEST_WAIT_SECONDS 20
 GAsyncResult *gh_test_wait(GAsyncResult **slot);
 /* GAsyncReadyCallback storing a reference to the result in user_data
  * (a GAsyncResult **). */

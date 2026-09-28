@@ -1,13 +1,16 @@
 /* KC-6 (charter §9.2): GhStoreKey's production backend against a real
  * gnome-keyring: store, lookup and delete round-trip, the item's schema,
  * attributes, label and secret as another Secret Service client sees them,
- * per-account isolation, and the locked keyring in background mode.
+ * per-account isolation, and the locked keyring in background mode. Before
+ * the keyring starts, it also checks KC-4 on a live bus that has no Secret
+ * Service.
  *
- * By default the test is hermetic: it starts a private session bus
- * (GTestDBus) and its own `gnome-keyring-daemon --unlock` with a throwaway
- * HOME/XDG tree, so it never touches the developer's keyring. It exits 77
- * only when no Secret Service can be started (gnome-keyring-daemon or
- * dbus-daemon is not installed).
+ * By default the test is hermetic: it starts a private session bus and its
+ * own `gnome-keyring-daemon --unlock` with a throwaway HOME/XDG tree, so it
+ * never touches the developer's keyring. Both daemons are bound to this
+ * process's lifetime (see "Private daemons" below). Without dbus-daemon it
+ * exits 77 at once; without gnome-keyring-daemon it runs the bus-only check
+ * and then exits 77, since KC-6 itself could not run.
  *
  * With GH_STORE_KEY_TEST_SESSION_KEYRING=1 it instead uses the ambient
  * session bus, which must already have an unlocked Secret Service (CI runs
@@ -17,9 +20,13 @@
  * item there (and a failing run may leave more). */
 #include "fake-secret.h"
 
+#include <fcntl.h>
+#include <gio/gunixinputstream.h>
 #include <glib/gstdio.h>
+#include <glib-unix.h>
 #include <libsecret/secret.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Written out independently of gh-store-key.c: a drift tripwire. */
 static const SecretSchema expected_schema = {
@@ -33,9 +40,16 @@ static const SecretSchema expected_schema = {
   },
 };
 
-static GTestDBus *private_bus;
-static GSubprocess *keyring;
+/* The session bus, referenced for the whole run (see main()). */
+static GDBusConnection *session_bus;
+/* Hermetic mode only. */
 static gchar *tmp_root;
+static gint lifeline = -1;      /* write end; only this process holds it */
+static gint lifeline_read = -1; /* handed to each supervisor as its fd 3 */
+static GSubprocess *bus_supervisor, *keyring_supervisor;
+static gchar *keyring_program; /* NULL: gnome-keyring-daemon is not installed */
+
+static void ensure_keyring(void);
 
 static gchar *
 random_account(void)
@@ -118,6 +132,7 @@ assert_error(const GhTestKeyResult *result, gint code)
 static void
 test_round_trip(void)
 {
+  ensure_keyring();
   GhStoreKey *store_key = gh_store_key_new(NULL);
   gchar *a = random_account(), *b = random_account();
 
@@ -208,6 +223,7 @@ test_round_trip(void)
 static void
 test_locked_background(void)
 {
+  ensure_keyring();
   GhStoreKey *store_key = gh_store_key_new(NULL);
   gchar *c = random_account(), *d = random_account();
   GhTestKeyResult created = gh_test_lookup_or_create(store_key, c, GH_STORE_KEY_FLAGS_NONE, NULL);
@@ -279,9 +295,9 @@ static gboolean
 wait_for_secret_service(guint seconds)
 {
   gboolean appeared = FALSE, expired = FALSE;
-  guint watch = g_bus_watch_name(G_BUS_TYPE_SESSION, "org.freedesktop.secrets",
-                                 G_BUS_NAME_WATCHER_FLAGS_NONE, on_name_appeared, NULL,
-                                 &appeared, NULL);
+  guint watch = g_bus_watch_name_on_connection(session_bus, "org.freedesktop.secrets",
+                                               G_BUS_NAME_WATCHER_FLAGS_NONE, on_name_appeared,
+                                               NULL, &appeared, NULL);
   guint deadline = g_timeout_add_seconds(seconds, on_deadline, &expired);
   while (!appeared && !expired)
     g_main_context_iteration(NULL, TRUE);
@@ -291,8 +307,76 @@ wait_for_secret_service(guint seconds)
   return appeared;
 }
 
+/* ---- Private daemons -------------------------------------------------------
+ *
+ * Every daemon runs under this sh "lifeline" supervisor. Its fd 3 is the read
+ * end of a pipe whose only write end this process holds (close-on-exec, so no
+ * other child inherits it). However this process ends (teardown closes the
+ * pipe; an abort or SIGKILL makes the kernel close it) the read returns EOF
+ * and the supervisor terminates its daemon, which therefore cannot outlive
+ * the test. GTestDBus is not used: on macOS its crash watcher never notices
+ * the test dying, orphaning a dbus-daemon that keeps ctest's output pipe
+ * open until the test times out. Daemon output goes to a log file in the
+ * throwaway tree, never to our stdout or stderr, so nothing that could
+ * outlive us holds ctest's pipes either.
+ *
+ * $1 is the daemon's stdin; fd 4, if open, belongs to the daemon alone. */
+static const gchar LIFELINE_SH[] =
+  "in=$1; shift\n"
+  "\"$@\" <\"$in\" 3<&- &\n"
+  "child=$!\n"
+  "exec 4>&-\n"
+  "read -r _ <&3\n"
+  "kill -TERM \"$child\" 2>/dev/null\n"
+  "wait \"$child\"\n";
+
+static GSubprocess *
+spawn_supervised(const gchar *log_name, const gchar *stdin_path, gint daemon_fd,
+                 const gchar * const *daemon_argv)
+{
+  GError *error = NULL;
+  GSubprocessLauncher *launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDERR_MERGE);
+  gchar *log = g_build_filename(tmp_root, log_name, NULL);
+  g_subprocess_launcher_set_stdin_file_path(launcher, "/dev/null");
+  g_subprocess_launcher_set_stdout_file_path(launcher, log);
+  /* The supervisor's end of the lifeline (the launcher owns the copy). */
+  gint lifeline_copy = fcntl(lifeline_read, F_DUPFD_CLOEXEC, 3);
+  g_assert_cmpint(lifeline_copy, >=, 0);
+  g_subprocess_launcher_take_fd(launcher, lifeline_copy, 3);
+  if (daemon_fd >= 0)
+    g_subprocess_launcher_take_fd(launcher, daemon_fd, 4);
+  GPtrArray *argv = g_ptr_array_new();
+  g_ptr_array_add(argv, (gpointer)"/bin/sh");
+  g_ptr_array_add(argv, (gpointer)"-c");
+  g_ptr_array_add(argv, (gpointer)LIFELINE_SH);
+  g_ptr_array_add(argv, (gpointer)"gh-kc6-lifeline");
+  g_ptr_array_add(argv, (gpointer)stdin_path);
+  for (guint i = 0; daemon_argv[i]; i++)
+    g_ptr_array_add(argv, (gpointer)daemon_argv[i]);
+  g_ptr_array_add(argv, NULL);
+  GSubprocess *supervisor = g_subprocess_launcher_spawnv(launcher,
+                                                         (const gchar * const *)argv->pdata,
+                                                         &error);
+  g_assert_no_error(error);
+  g_ptr_array_unref(argv);
+  g_object_unref(launcher); /* closes our copies of the fds handed over */
+  g_free(log);
+  return supervisor;
+}
+
 static void
-start_private_keyring(const gchar *daemon)
+dump_log(const gchar *log_name)
+{
+  gchar *path = g_build_filename(tmp_root, log_name, NULL);
+  gchar *contents = NULL;
+  if (g_file_get_contents(path, &contents, NULL, NULL) && *contents)
+    g_printerr("--- %s ---\n%s\n", log_name, contents);
+  g_free(contents);
+  g_free(path);
+}
+
+static void
+start_private_bus(const gchar *dbus_daemon)
 {
   GError *error = NULL;
   tmp_root = g_dir_make_tmp("gh-store-key-keyring-XXXXXX", &error);
@@ -305,40 +389,116 @@ start_private_keyring(const gchar *daemon)
     g_setenv(vars[i], dir, TRUE);
     g_free(dir);
   }
-  private_bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(private_bus); /* exports DBUS_SESSION_BUS_ADDRESS */
+  gint fds[2];
+  g_assert_true(g_unix_open_pipe(fds, FD_CLOEXEC, &error));
+  lifeline_read = fds[0];
+  lifeline = fds[1];
 
-  /* The launcher inherits the private bus and the throwaway XDG tree. The
-   * login keyring is created (or unlocked) with the password on stdin. */
-  GSubprocessLauncher *launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDIN_PIPE |
-                                                            G_SUBPROCESS_FLAGS_STDOUT_SILENCE);
-  keyring = g_subprocess_launcher_spawn(launcher, &error, daemon, "--foreground", "--unlock",
-                                        "--components=secrets", NULL);
-  g_object_unref(launcher);
+  /* A session bus with nothing to activate, listening inside tmp_root. */
+  gchar *config = g_build_filename(tmp_root, "bus.conf", NULL);
+  gchar *contents = g_strdup_printf("<busconfig>\n"
+                                    "  <type>session</type>\n"
+                                    "  <listen>unix:tmpdir=%s</listen>\n"
+                                    "  <policy context=\"default\">\n"
+                                    "    <allow send_destination=\"*\" eavesdrop=\"true\"/>\n"
+                                    "    <allow eavesdrop=\"true\"/>\n"
+                                    "    <allow own=\"*\"/>\n"
+                                    "  </policy>\n"
+                                    "</busconfig>\n",
+                                    tmp_root);
+  g_assert_true(g_file_set_contents(config, contents, -1, &error));
+  gchar *config_arg = g_strconcat("--config-file=", config, NULL);
+  gint address_pipe[2];
+  g_assert_true(g_unix_open_pipe(address_pipe, FD_CLOEXEC, &error));
+  const gchar *argv[] = { dbus_daemon, "--nofork", "--nopidfile", "--print-address=4",
+                          config_arg, NULL };
+  bus_supervisor = spawn_supervised("dbus-daemon.log", "/dev/null", address_pipe[1], argv);
+
+  /* The daemon writes one line, its address; EOF means it exited first. */
+  GInputStream *raw = g_unix_input_stream_new(address_pipe[0], TRUE);
+  GDataInputStream *lines = g_data_input_stream_new(raw);
+  gchar *address = g_data_input_stream_read_line(lines, NULL, NULL, &error);
   g_assert_no_error(error);
-  GOutputStream *stdin_pipe = g_subprocess_get_stdin_pipe(keyring);
-  g_assert_true(g_output_stream_write_all(stdin_pipe, "kc6-test", 8, NULL, NULL, &error));
-  g_assert_true(g_output_stream_close(stdin_pipe, NULL, &error));
-  g_assert_no_error(error);
+  if (!address) {
+    dump_log("dbus-daemon.log");
+    g_error("dbus-daemon exited before printing its address");
+  }
+  g_setenv("DBUS_SESSION_BUS_ADDRESS", address, TRUE);
+  g_free(address);
+  g_object_unref(lines);
+  g_object_unref(raw);
+  g_free(config_arg);
+  g_free(contents);
+  g_free(config);
+}
+
+/* Hermetic mode: start gnome-keyring on the private bus the first time a
+ * KC-6 case needs it. Its login keyring is created with the password on its
+ * stdin. A no-op in session mode. */
+static void
+ensure_keyring(void)
+{
+  if (!tmp_root || keyring_supervisor)
+    return;
+  g_assert_nonnull(keyring_program);
+  GError *error = NULL;
+  gchar *password = g_build_filename(tmp_root, "keyring-password", NULL);
+  g_assert_true(g_file_set_contents_full(password, "kc6-test", 8, G_FILE_SET_CONTENTS_NONE, 0600,
+                                         &error));
+  const gchar *argv[] = { keyring_program, "--foreground", "--unlock", "--components=secrets",
+                          NULL };
+  keyring_supervisor = spawn_supervised("gnome-keyring.log", password, -1, argv);
+  g_free(password);
+  if (!wait_for_secret_service(30)) {
+    dump_log("gnome-keyring.log");
+    g_error("org.freedesktop.secrets did not appear on the private session bus");
+  }
 }
 
 static void
-stop_private_keyring(void)
+stop_private_daemons(void)
 {
-  /* libsecret's service singleton keeps the bus connection referenced, so
-   * stop the bus without GTestDBus's connection-leak check. */
+  /* Quiesce D-Bus first: once libsecret's proxies are gone and our queue is
+   * flushed, the daemons disappearing only marks our connection closed. */
   secret_service_disconnect();
-  GDBusConnection *singleton = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-  if (singleton) {
-    g_dbus_connection_set_exit_on_close(singleton, FALSE);
-    g_object_unref(singleton);
-  }
-  g_subprocess_force_exit(keyring);
-  (void)g_subprocess_wait(keyring, NULL, NULL);
-  g_clear_object(&keyring);
-  g_test_dbus_stop(private_bus);
+  gh_test_run_until_idle();
+  g_dbus_connection_flush_sync(session_bus, NULL, NULL);
+  close(lifeline); /* the supervisors read EOF and stop their daemons */
+  lifeline = -1;
+  if (keyring_supervisor)
+    g_assert_true(g_subprocess_wait(keyring_supervisor, NULL, NULL));
+  g_assert_true(g_subprocess_wait(bus_supervisor, NULL, NULL));
+  g_clear_object(&keyring_supervisor);
+  g_clear_object(&bus_supervisor);
+  close(lifeline_read);
+  lifeline_read = -1;
   gh_test_remove_tree(tmp_root);
-  g_free(tmp_root);
+  g_clear_pointer(&tmp_root, g_free);
+}
+
+/* KC-4 on a live bus: nothing owns org.freedesktop.secrets (the keyring is
+ * not started yet), so every operation is UNAVAILABLE, interactive or not. */
+static void
+test_bus_without_secret_service(void)
+{
+  g_assert_null(keyring_supervisor);
+  GhStoreKey *store_key = gh_store_key_new(NULL);
+  gchar *account = random_account();
+  for (guint interactive = 0; interactive < 2; interactive++) {
+    GhStoreKeyFlags flags = interactive ? GH_STORE_KEY_FLAGS_INTERACTIVE : GH_STORE_KEY_FLAGS_NONE;
+    GhTestKeyResult open = gh_test_lookup_or_create(store_key, account, flags, NULL);
+    assert_error(&open, GH_STORE_KEY_ERROR_UNAVAILABLE);
+    GhTestKeyResult lookup = gh_test_lookup(store_key, account, flags, NULL);
+    assert_error(&lookup, GH_STORE_KEY_ERROR_UNAVAILABLE);
+    GError *error = NULL;
+    g_assert_false(gh_test_destroy(store_key, account, flags, &error));
+    g_assert_error(error, GH_STORE_KEY_ERROR, GH_STORE_KEY_ERROR_UNAVAILABLE);
+    g_clear_error(&error);
+    gh_test_key_result_clear(&open);
+    gh_test_key_result_clear(&lookup);
+  }
+  g_free(account);
+  g_object_unref(store_key);
 }
 
 int
@@ -347,33 +507,47 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   gboolean session = g_strcmp0(g_getenv("GH_STORE_KEY_TEST_SESSION_KEYRING"), "1") == 0;
   if (!session) {
-    gchar *daemon = g_find_program_in_path("gnome-keyring-daemon");
     gchar *dbus_daemon = g_find_program_in_path("dbus-daemon");
-    if (!daemon || !dbus_daemon) {
-      g_print("SKIP: no Secret Service available (%s is not installed)\n",
-              daemon ? "dbus-daemon" : "gnome-keyring-daemon");
-      g_free(daemon);
-      g_free(dbus_daemon);
+    if (!dbus_daemon) {
+      g_print("SKIP: no Secret Service available (dbus-daemon is not installed)\n");
       return 77;
     }
-    start_private_keyring(daemon);
-    g_free(daemon);
+    keyring_program = g_find_program_in_path("gnome-keyring-daemon");
+    start_private_bus(dbus_daemon);
     g_free(dbus_daemon);
   }
-  if (!wait_for_secret_service(30)) {
-    g_printerr("FAIL: org.freedesktop.secrets did not appear on the %s session bus\n",
-               session ? "ambient" : "private");
-    if (!session)
-      stop_private_keyring();
+  /* One session-bus connection for the whole run, which libsecret shares
+   * (it is the GLib singleton) and which is never closed or finalized before
+   * exit. GDBus closing a connection can close its socket while the socket's
+   * read source is still polled; on macOS that select() fails with EBADF and
+   * the warning aborts the test. A peer that goes away only marks it closed. */
+  GError *error = NULL;
+  session_bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+  g_assert_no_error(error);
+  g_dbus_connection_set_exit_on_close(session_bus, FALSE);
+  if (session && !wait_for_secret_service(30)) {
+    g_printerr("FAIL: org.freedesktop.secrets did not appear on the ambient session bus\n");
     return 1;
   }
 
-  g_test_add_func("/store-key/kc6/round-trip", test_round_trip);
-  g_test_add_func("/store-key/kc6/locked-background", test_locked_background);
+  gboolean kc6 = session || keyring_program != NULL;
+  if (!session)
+    g_test_add_func("/store-key/kc4/bus-without-secret-service", test_bus_without_secret_service);
+  if (kc6) {
+    g_test_add_func("/store-key/kc6/round-trip", test_round_trip);
+    g_test_add_func("/store-key/kc6/locked-background", test_locked_background);
+  }
   int status = g_test_run();
-  if (session)
+  if (session) {
     secret_service_disconnect();
-  else
-    stop_private_keyring();
+    g_dbus_connection_flush_sync(session_bus, NULL, NULL);
+  } else {
+    stop_private_daemons();
+  }
+  g_free(keyring_program);
+  if (status == 0 && !kc6) {
+    g_print("SKIP: KC-6 needs gnome-keyring-daemon (the bus-only check passed)\n");
+    return 77;
+  }
   return status;
 }

@@ -1,11 +1,15 @@
 /* GhStoreKey unit tests (charter §9.2 KC-1…KC-5 at the key-custody layer)
  * against the in-process FakeSecret backend, plus the production libsecret
- * backend on a private bus that has no Secret Service (KC-4). KC-6 (a real
- * gnome-keyring) is test_store_key_keyring.c. */
+ * backend with no session bus at all (KC-4).
+ *
+ * Hermetic by construction: this binary starts no process and never
+ * establishes a D-Bus connection, so it cannot leave a daemon behind or race
+ * GDBus's connection teardown (which, on macOS, fails the next select() with
+ * EBADF and aborts a test). The "bus present, no Secret Service" case and KC-6 (a
+ * real gnome-keyring) live in test_store_key_keyring.c. */
 #include "fake-secret.h"
 
 #include <glib/gstdio.h>
-#include <libsecret/secret.h>
 #include <string.h>
 
 #define ACCOUNT_A "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
@@ -19,8 +23,6 @@ static const guint8 KEY_BYTES[GH_STORE_KEY_SIZE] = {
 };
 
 static gchar *xdg_root; /* every XDG dir of this process points below it */
-/* Stopped but never finalized: see test_real_backend_unavailable. */
-static GTestDBus *private_bus;
 
 static void
 assert_key_error(const GhTestKeyResult *result, gint code)
@@ -698,22 +700,13 @@ test_sqlcipher_key(void)
   g_bytes_unref(short_key);
 }
 
-/* KC-4 with the production backend: a session bus that has no Secret
- * Service. Runs last: libsecret's service singleton keeps the private bus
- * connection alive, so the bus is stopped without the leak check. The
- * no-files check therefore also covers every fake-backed case before it. */
+/* KC-4 with the production backend: no session bus is reachable (main()
+ * points DBUS_SESSION_BUS_ADDRESS at a socket that does not exist), so
+ * libsecret cannot reach any Secret Service. Runs last, so the no-files
+ * check also covers every fake-backed case before it. */
 static void
-test_real_backend_unavailable(void)
+test_real_backend_no_bus(void)
 {
-  gchar *dbus_daemon = g_find_program_in_path("dbus-daemon");
-  if (!dbus_daemon) {
-    g_test_skip("dbus-daemon is not installed");
-    return;
-  }
-  g_free(dbus_daemon);
-  private_bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(private_bus);
-
   GhStoreKey *store_key = gh_store_key_new(NULL);
   for (guint interactive = 0; interactive < 2; interactive++) {
     GhStoreKeyFlags flags = interactive ? GH_STORE_KEY_FLAGS_INTERACTIVE : GH_STORE_KEY_FLAGS_NONE;
@@ -732,14 +725,6 @@ test_real_backend_unavailable(void)
 
   /* Never a fallback: nothing was written under any XDG directory. */
   g_assert_cmpuint(gh_test_count_files(xdg_root), ==, 0);
-
-  secret_service_disconnect();
-  GDBusConnection *singleton = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-  if (singleton) {
-    g_dbus_connection_set_exit_on_close(singleton, FALSE);
-    g_object_unref(singleton);
-  }
-  g_test_dbus_stop(private_bus);
 }
 
 int
@@ -757,7 +742,11 @@ main(int argc, char **argv)
     g_setenv(vars[i], dir, TRUE);
     g_free(dir);
   }
-  g_unsetenv("DBUS_SESSION_BUS_ADDRESS");
+  /* An address nothing listens on: connecting fails at once, with no
+   * daemon to start, wait for or clean up. */
+  gchar *no_bus = g_strdup_printf("unix:path=%s/no-session-bus", xdg_root);
+  g_setenv("DBUS_SESSION_BUS_ADDRESS", no_bus, TRUE);
+  g_free(no_bus);
 
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/store-key/schema-contract", test_schema_contract);
@@ -778,7 +767,7 @@ main(int argc, char **argv)
   g_test_add_func("/store-key/secret-bytes", test_secret_bytes);
   g_test_add_func("/store-key/sqlcipher-key", test_sqlcipher_key);
   /* Its own root path so GTest runs it after every /store-key case. */
-  g_test_add_func("/store-key-libsecret/kc4-unavailable", test_real_backend_unavailable);
+  g_test_add_func("/store-key-libsecret/kc4-no-session-bus", test_real_backend_no_bus);
   int status = g_test_run();
   gh_test_remove_tree(xdg_root);
   g_free(xdg_root);
