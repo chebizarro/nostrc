@@ -191,9 +191,12 @@ test_url_bound(void)
   GhRelayScope *scope = gh_relay_scope_new_with_transport(1,
     nostr_filters_new(), &fake_transport, &fixture, on_update, &fixture);
   g_autoptr(GError) error = NULL;
-  g_assert_false(gh_relay_scope_add_url(scope, "https://nos.lol", &error));
-  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
-  g_clear_error(&error);
+  const gchar *invalid[] = { "https://nos.lol", "ws://", "wss://user@nos.lol" };
+  for (gsize i = 0; i < G_N_ELEMENTS(invalid); i++) {
+    g_assert_false(gh_relay_scope_add_url(scope, invalid[i], &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    g_clear_error(&error);
+  }
   for (guint i = 0; i < 16; i++) {
     g_autofree gchar *url = g_strdup_printf("wss://relay%u.example", i);
     g_assert_true(gh_relay_scope_add_url(scope, url, &error));

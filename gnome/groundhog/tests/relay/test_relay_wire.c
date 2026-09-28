@@ -1,18 +1,5 @@
 #include "gh-relay-scope.h"
-
-#include <gio/gio.h>
-#include <libsoup/soup.h>
-#include <nostr-event.h>
-#include <stdlib.h>
-#include <string.h>
-
-typedef struct {
-  SoupServer *server;
-  GPtrArray *connections;
-  gchar *url;
-  guint reqs;
-  guint closed_sockets;
-} WireRelay;
+#include "wire-relay.h"
 
 typedef struct {
   guint errors;
@@ -20,129 +7,6 @@ typedef struct {
   guint events;
   gchar *eose_url;
 } WireUpdates;
-
-typedef struct {
-  gboolean timed_out;
-} WaitState;
-
-static void
-on_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
-           GBytes *message, gpointer data)
-{
-  (void)connection;
-  WireRelay *relay = data;
-  gsize length;
-  const gchar *bytes = g_bytes_get_data(message, &length);
-  if (type == SOUP_WEBSOCKET_DATA_TEXT && length >= 6 &&
-      memcmp(bytes, "[\"REQ\"", 6) == 0) {
-    relay->reqs++;
-    g_autofree gchar *text = g_strndup(bytes, length);
-    const gchar *comma = strchr(text, ',');
-    const gchar *start = comma ? strchr(comma, '"') : NULL;
-    const gchar *end = start ? strchr(start + 1, '"') : NULL;
-    g_assert_nonnull(end);
-    gchar *sub_id = g_strndup(start + 1, end - start - 1);
-    g_object_set_data_full(G_OBJECT(connection), "sub-id", sub_id, g_free);
-    g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
-    soup_websocket_connection_send_text(connection, eose);
-  }
-}
-
-static void
-on_socket_closed(SoupWebsocketConnection *connection, gpointer data)
-{
-  (void)connection;
-  WireRelay *relay = data;
-  relay->closed_sockets++;
-}
-
-static void
-on_websocket(SoupServer *server, SoupServerMessage *message,
-             const char *path, SoupWebsocketConnection *connection,
-             gpointer data)
-{
-  (void)server;
-  (void)message;
-  (void)path;
-  WireRelay *relay = data;
-  g_ptr_array_add(relay->connections, g_object_ref(connection));
-  g_signal_connect(connection, "message", G_CALLBACK(on_message), relay);
-  g_signal_connect(connection, "closed", G_CALLBACK(on_socket_closed), relay);
-}
-
-static void
-relay_init_port(WireRelay *relay, guint16 port)
-{
-  relay->server = soup_server_new(NULL, NULL);
-  relay->connections = g_ptr_array_new_with_free_func(g_object_unref);
-  soup_server_add_websocket_handler(relay->server, "/relay", NULL, NULL,
-                                    on_websocket, relay, NULL);
-  g_autoptr(GError) error = NULL;
-  g_assert_true(soup_server_listen_local(relay->server, port,
-                                         SOUP_SERVER_LISTEN_IPV4_ONLY, &error));
-  GSList *uris = soup_server_get_uris(relay->server);
-  g_assert_nonnull(uris);
-  g_free(relay->url);
-  relay->url = g_strdup_printf("ws://127.0.0.1:%d/relay",
-                                g_uri_get_port(uris->data));
-  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
-}
-
-static void
-relay_init(WireRelay *relay)
-{
-  relay_init_port(relay, 0);
-}
-
-static void
-relay_clear(WireRelay *relay)
-{
-  for (guint i = 0; i < relay->connections->len; i++)
-    soup_websocket_connection_close(g_ptr_array_index(relay->connections, i),
-                                     SOUP_WEBSOCKET_CLOSE_NORMAL, NULL);
-  g_ptr_array_unref(relay->connections);
-  soup_server_disconnect(relay->server);
-  g_object_unref(relay->server);
-  g_free(relay->url);
-}
-
-static gboolean
-expire(gpointer data)
-{
-  WaitState *wait = data;
-  wait->timed_out = TRUE;
-  return G_SOURCE_REMOVE;
-}
-
-static void
-wait_for_count(const guint *counter, guint count)
-{
-  WaitState wait = {0};
-  guint timeout_source = g_timeout_add_seconds(18, expire, &wait);
-  while (*counter < count && !wait.timed_out)
-    g_main_context_iteration(NULL, TRUE);
-  if (!wait.timed_out)
-    g_source_remove(timeout_source);
-  g_assert_cmpuint(*counter, ==, count);
-}
-
-static void
-wait_for_reqs(WireRelay *relay, guint count)
-{
-  wait_for_count(&relay->reqs, count);
-}
-
-static void
-wait_for_close(WireRelay *relay, guint count)
-{
-  WaitState wait = {0};
-  guint timeout_source = g_timeout_add(3000, expire, &wait);
-  while (relay->closed_sockets < count && !wait.timed_out)
-    g_main_context_iteration(NULL, TRUE);
-  if (!wait.timed_out)
-    g_source_remove(timeout_source);
-  g_assert_cmpuint(relay->closed_sockets, ==, count);
-}
 
 static void
 on_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
@@ -200,14 +64,8 @@ test_wire_destinations(void)
 static void
 test_offline_at_start_reconnect(void)
 {
-  g_autoptr(GSocketListener) reservation = g_socket_listener_new();
-  g_autoptr(GError) error = NULL;
-  guint16 port = g_socket_listener_add_any_inet_port(reservation, NULL, &error);
-  g_assert_no_error(error);
-  g_assert_cmpuint(port, >, 0);
-  g_socket_listener_close(reservation);
-
-  WireRelay relay = { .url = g_strdup_printf("ws://127.0.0.1:%u/relay", port) };
+  guint16 port = 0;
+  WireRelay relay = { .url = unused_relay_url(&port) };
   WireUpdates updates = {0};
   NostrFilters *filters = nostr_filters_new();
   NostrFilter *filter = nostr_filter_new();

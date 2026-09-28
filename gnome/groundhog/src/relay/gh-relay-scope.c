@@ -151,6 +151,22 @@ open_endpoint(GhRelayScope *scope, GhEndpoint *endpoint)
 }
 
 gboolean
+gh_relay_url_validate(const gchar *url, GError **error)
+{
+  g_autoptr(GUri) uri = url ? g_uri_parse(url, G_URI_FLAGS_NONE, NULL) : NULL;
+  const gchar *scheme = uri ? g_uri_get_scheme(uri) : NULL;
+  const gchar *host = uri ? g_uri_get_host(uri) : NULL;
+  if (!host || !*host ||
+      (g_strcmp0(scheme, "ws") != 0 && g_strcmp0(scheme, "wss") != 0) ||
+      g_uri_get_userinfo(uri) != NULL) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "relay URL must be ws(s) with a host and no credentials");
+    return FALSE;
+  }
+  return TRUE;
+}
+
+gboolean
 gh_relay_scope_add_url(GhRelayScope *scope, const gchar *url, GError **error)
 {
   g_return_val_if_fail(scope != NULL, FALSE);
@@ -159,15 +175,8 @@ gh_relay_scope_add_url(GhRelayScope *scope, const gchar *url, GError **error)
                         "relay scope cancelled");
     return FALSE;
   }
-  g_autoptr(GUri) uri = url ? g_uri_parse(url, G_URI_FLAGS_NONE, NULL) : NULL;
-  const gchar *scheme = uri ? g_uri_get_scheme(uri) : NULL;
-  if (!uri || !g_uri_get_host(uri) ||
-      (g_strcmp0(scheme, "ws") != 0 && g_strcmp0(scheme, "wss") != 0) ||
-      g_uri_get_userinfo(uri) != NULL) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                        "relay URL must be ws(s) without credentials");
+  if (!gh_relay_url_validate(url, error))
     return FALSE;
-  }
   if (g_hash_table_contains(scope->endpoints, url))
     return TRUE;
   if (g_hash_table_size(scope->endpoints) >= GH_MAX_RELAYS) {

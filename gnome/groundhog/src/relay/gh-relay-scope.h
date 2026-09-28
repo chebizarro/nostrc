@@ -53,6 +53,9 @@ GhRelayScope *gh_relay_scope_new_with_transport(guint64 account_generation,
                                                 gpointer user_data);
 GhRelayScope *gh_relay_scope_ref(GhRelayScope *scope);
 void gh_relay_scope_unref(GhRelayScope *scope);
+/* The relay URL rule shared by scopes and publishes: ws or wss, a non-empty
+ * host, no userinfo. Sets G_IO_ERROR_INVALID_ARGUMENT otherwise. */
+gboolean gh_relay_url_validate(const gchar *url, GError **error);
 /* At most 16 distinct ws(s) URLs. A URL added after start receives its own
  * live REQ and independent EOSE boundary. */
 gboolean gh_relay_scope_add_url(GhRelayScope *scope, const gchar *url,

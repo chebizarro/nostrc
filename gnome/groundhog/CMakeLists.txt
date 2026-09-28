@@ -101,11 +101,13 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNTS=0)
 endif()
 
-# Groundhog-owned URL-scoped live REQ coordinator. The standalone shell build
-# remains usable without the in-tree relay libraries.
+# Groundhog-owned URL-scoped live REQ coordinator and per-relay signed-event
+# publisher. The standalone shell build remains usable without the in-tree
+# relay libraries.
 if (TARGET nostr_gobject AND TARGET nostr)
   add_library(groundhog-relay STATIC
-    src/relay/gh-relay-scope.c src/relay/gh-relay-gnostr.c)
+    src/relay/gh-relay-scope.c src/relay/gh-relay-gnostr.c
+    src/relay/gh-relay-publish.c src/relay/gh-relay-publish-gnostr.c)
   target_include_directories(groundhog-relay PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
   target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr)
@@ -116,6 +118,11 @@ if (TARGET nostr_gobject AND TARGET nostr)
     target_compile_options(test-groundhog-relay PRIVATE -Wall -Wextra -Werror)
     add_test(NAME groundhog-relay COMMAND test-groundhog-relay)
     set_tests_properties(groundhog-relay PROPERTIES TIMEOUT 20)
+    add_executable(test-groundhog-relay-publish tests/relay/test_relay_publish.c)
+    target_link_libraries(test-groundhog-relay-publish PRIVATE groundhog-relay)
+    target_compile_options(test-groundhog-relay-publish PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-relay-publish COMMAND test-groundhog-relay-publish)
+    set_tests_properties(groundhog-relay-publish PROPERTIES TIMEOUT 20)
     pkg_check_modules(GROUNDHOG_RELAY_WIRE_TEST QUIET IMPORTED_TARGET libsoup-3.0)
     if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       add_executable(test-groundhog-relay-wire tests/relay/test_relay_wire.c)
@@ -124,6 +131,15 @@ if (TARGET nostr_gobject AND TARGET nostr)
       target_compile_options(test-groundhog-relay-wire PRIVATE -Wall -Wextra -Werror)
       add_test(NAME groundhog-relay-wire COMMAND test-groundhog-relay-wire)
       set_tests_properties(groundhog-relay-wire PROPERTIES TIMEOUT 20)
+      add_executable(test-groundhog-relay-publish-wire
+        tests/relay/test_relay_publish_wire.c)
+      target_link_libraries(test-groundhog-relay-publish-wire PRIVATE
+        groundhog-relay PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_options(test-groundhog-relay-publish-wire PRIVATE
+        -Wall -Wextra -Werror)
+      add_test(NAME groundhog-relay-publish-wire
+        COMMAND test-groundhog-relay-publish-wire)
+      set_tests_properties(groundhog-relay-publish-wire PROPERTIES TIMEOUT 40)
     endif()
   endif()
 endif()
