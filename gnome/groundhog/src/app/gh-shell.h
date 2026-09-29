@@ -100,7 +100,9 @@ AdwWindowTitle *gh_content_page_get_window_title(GhContentPage *self);
 /* The conversation page's view; set once. */
 void gh_content_page_set_view(GhContentPage *self, GtkWidget *view);
 GtkWidget *gh_content_page_get_view(GhContentPage *self);
-/* Shows the conversation page (TRUE) or "No Conversation Selected". */
+/* Shows the conversation page (TRUE), with the header's Conversation Info
+ * button (win.conversation-info, gh-conversation-info-dialog.h), or "No
+ * Conversation Selected". */
 void gh_content_page_set_conversation_shown(GhContentPage *self, gboolean shown);
 gboolean gh_content_page_get_conversation_shown(GhContentPage *self);
 /* Moves keyboard focus into the shown conversation: the composer's entry

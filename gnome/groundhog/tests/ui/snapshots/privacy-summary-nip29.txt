@@ -1,0 +1,19 @@
+backend: NIP-29
+end-to-end: no
+icon: dialog-warning-symbolic
+subtitle: Relay group · not end-to-end encrypted
+heading: Not end-to-end encrypted
+encrypted: Messages are kept on groups.example without end-to-end encryption. Its operators can read every message.
+what others can see:
+- The operators of groups.example can read every message and see the member list, roles and when people post.
+- groups.example sees your public key and IP address when you connect.
+- Group members see what you write and your public key.
+- Discovery relays can see which groups you look up.
+what Groundhog can't protect:
+- Message content: the relay's operators can read it.
+- Membership: the relay knows everyone in the group.
+- What members do with your messages: they can copy, forward or screenshot them.
+- Timing: someone watching many relays at once may link when messages are sent and received.
+- That you use Nostr, and which relays you use: they are visible to your network.
+- Apps running as you on this computer outside a sandbox can read what Groundhog shows.
+storage: Groundhog keeps a copy encrypted on this device. The relay keeps its own copy, which its operators can read.

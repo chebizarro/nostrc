@@ -31,7 +31,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-row gh-shortcuts-window
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details gh-preferences-dialog gh-composer
-  gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip)
+  gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
+  gh-conversation-info-dialog gh-conversation-info-person)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1385,6 +1386,75 @@ if (BUILD_TESTING AND TARGET groundhog-new-message AND TARGET groundhog-store-co
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
 endif()
 # --- end G18 New message, lookup consent, Message Requests ---
+# --- G19 conversation info ---
+# Conversation Info for private conversations (privacy charter §7.4, §2.2,
+# §3.7, §3.8, §5.2; §8.2 G19): GhConversationInfoDialog (people, Verify Key
+# with the safety code, the privacy summary, mute, the disappearing timer,
+# Block and Forget on This Device), opened by the content page's info button
+# (win.conversation-info). gh-privacy-summary.c is the GTK-free strings table
+# behind it and behind the conversation header's subtitle;
+# gh-conversation-actions.c changes the store and withdraws notifications for
+# mute, block and forget; gh-store-contacts.c keeps local verification marks
+# (schema v3).
+add_library(groundhog-privacy-summary STATIC src/ui/gh-privacy-summary.c)
+target_include_directories(groundhog-privacy-summary PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+target_link_libraries(groundhog-privacy-summary PUBLIC PkgConfig::GROUNDHOG_LINK_POLICY_DEPS)
+target_compile_options(groundhog-privacy-summary PRIVATE -Wall -Wextra -Werror)
+if (TARGET groundhog-conversation-ui)
+  target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-privacy-summary)
+endif()
+if (BUILD_TESTING)
+  # Snapshot per backend (NIP-17, NIP-29, MLS) against tests/ui/snapshots,
+  # the honesty rules of the copy, and the safety code. No display needed.
+  add_executable(test-groundhog-privacy-summary tests/ui/test_privacy_summary.c)
+  target_link_libraries(test-groundhog-privacy-summary PRIVATE groundhog-privacy-summary)
+  target_compile_definitions(test-groundhog-privacy-summary PRIVATE
+    GROUNDHOG_TEST_SNAPSHOTS="${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/snapshots")
+  target_compile_options(test-groundhog-privacy-summary PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-privacy-summary COMMAND test-groundhog-privacy-summary)
+  set_tests_properties(groundhog-privacy-summary PROPERTIES TIMEOUT 20
+    ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+endif()
+set(GROUNDHOG_CONVERSATION_INFO_SOURCES src/ui/gh-conversation-info-dialog.c
+  src/app/gh-conversation-actions.c src/store/gh-store-contacts.c)
+if (TARGET groundhog-account-store AND TARGET groundhog-notifier AND GROUNDHOG_EXPIRY_SOURCES AND
+    GROUNDHOG_OUTBOX_SOURCES)
+  message(STATUS "Groundhog conversation info: enabled")
+  target_sources(groundhog PRIVATE ${GROUNDHOG_CONVERSATION_INFO_SOURCES})
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_CONVERSATION_INFO=1)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # Default mode: mute, block and forget through GhConversationActions with
+    # the real notifier on the shared private bus and the fake
+    # org.gtk.Notifications (H4), block and verification marks over real
+    # SQLCipher stores across restarts. --gui: the dialog itself (ST-9 via
+    # the UI, mute in the database surviving a restart (NO-7), block with
+    # Undo, Verify Key, the timer, the header button); it self-skips (77)
+    # without a display. With GROUNDHOG_TEST_SCREENSHOTS=<dir> the GUI run
+    # also renders the dialog to PNGs.
+    add_executable(test-groundhog-conversation-info tests/ui/test_conversation_info.c
+      tests/app/fake-gtk-notifications.c ${GROUNDHOG_CONVERSATION_INFO_SOURCES}
+      ${GROUNDHOG_EXPIRY_SOURCES})
+    target_include_directories(test-groundhog-conversation-info PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+    target_link_libraries(test-groundhog-conversation-info PRIVATE groundhog-notifier
+      groundhog-store-conversations groundhog-conversation-ui nostrc-test-bus)
+    target_compile_options(test-groundhog-conversation-info PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-conversation-info)
+    add_dependencies(test-groundhog-conversation-info groundhog-test-schemas)
+    add_test(NAME groundhog-conversation-info COMMAND test-groundhog-conversation-info)
+    set_tests_properties(groundhog-conversation-info PROPERTIES TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    add_test(NAME groundhog-conversation-info-gui COMMAND test-groundhog-conversation-info --gui)
+    set_tests_properties(groundhog-conversation-info-gui PROPERTIES SKIP_RETURN_CODE 77
+      TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog conversation info: disabled (needs the account store, the "
+                 "notifier, expiry and the outbox)")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_CONVERSATION_INFO=0)
+endif()
+# --- end G19 conversation info ---
 
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from

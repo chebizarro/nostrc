@@ -579,6 +579,7 @@ gh_sidebar_page_get_focus_target(GhSidebarPage *self)
 struct _GhContentPage {
   AdwNavigationPage parent_instance;
   AdwWindowTitle *window_title;
+  GtkButton *info_button;
   GtkStack *content_stack;
   AdwBin *conversation_slot;
   GhComposer *composer;
@@ -612,6 +613,7 @@ gh_content_page_class_init(GhContentPageClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-content-page.ui");
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, window_title);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, info_button);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, content_stack);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, conversation_slot);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, composer);
@@ -661,6 +663,7 @@ gh_content_page_set_conversation_shown(GhContentPage *self, gboolean shown)
 {
   g_return_if_fail(GH_IS_CONTENT_PAGE(self));
   gtk_stack_set_visible_child_name(self->content_stack, shown ? "conversation" : "none");
+  gtk_widget_set_visible(GTK_WIDGET(self->info_button), shown);
 }
 
 gboolean

@@ -26,6 +26,8 @@
     <file>ui/gh-new-message-dialog.ui</file>
     <file>ui/gh-new-message-row.ui</file>
     <file>ui/gh-recipient-chip.ui</file>
+    <file>ui/gh-conversation-info-dialog.ui</file>
+    <file>ui/gh-conversation-info-person.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
   </gresource>

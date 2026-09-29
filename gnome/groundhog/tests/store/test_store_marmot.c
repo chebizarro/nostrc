@@ -2110,7 +2110,9 @@ make_v1_store(const TestAccount *account)
     g_autofree gchar *sql = g_strdup_printf("DROP TABLE %s", v2_tables[i]);
     sql_exec(store, sql);
   }
-  sql_exec(store, "DELETE FROM schema_migrations WHERE version = 2");
+  /* Later migrations are undone too: v3 (G19) added contacts.verified_at. */
+  sql_exec(store, "ALTER TABLE contacts DROP COLUMN verified_at");
+  sql_exec(store, "DELETE FROM schema_migrations WHERE version >= 2");
   sql_exec(store, "PRAGMA user_version = 1");
   gh_store_close(store);
 }
@@ -2147,7 +2149,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 2);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 3);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */

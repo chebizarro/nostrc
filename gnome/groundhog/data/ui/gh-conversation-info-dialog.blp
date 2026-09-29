@@ -1,0 +1,642 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Conversation Info for a private conversation (charter §7.4, §2.2 surface
+// 2, §3.7, §3.8, §5.2; item G19), driven by gh-conversation-info-dialog.c.
+// Main page: who the conversation is with (one gh-conversation-info-person
+// row per other person, added from C), the privacy summary
+// (gh-privacy-summary.h: what is encrypted, what others can see, what
+// Groundhog can't protect, where messages are kept), mute (kept in the
+// encrypted store, never in GSettings: NO-7), the disappearing timer (G07),
+// Block and Forget on This Device (ST-9), each behind a confirmation.
+// "verify" page: one person's full npub, the safety code both sides can
+// compare, your own npub, and the local "you marked this verified" record.
+// A row that can't act (no message store open) says why in place.
+template $GhConversationInfoDialog: Adw.Dialog {
+  title: _("Conversation Info");
+  content-width: 460;
+  content-height: 700;
+
+  child: Adw.ToastOverlay toasts {
+    child: Adw.NavigationView navigation {
+      Adw.NavigationPage main_page {
+        tag: "main";
+        title: _("Conversation Info");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            Adw.PreferencesGroup {
+              Box {
+                orientation: vertical;
+                spacing: 6;
+                margin-bottom: 6;
+
+                Adw.Avatar avatar {
+                  size: 72;
+                  show-initials: true;
+                  halign: center;
+                }
+
+                Label title_label {
+                  wrap: true;
+                  wrap-mode: word_char;
+                  justify: center;
+
+                  styles [
+                    "title-2",
+                  ]
+                }
+
+                Label subtitle_label {
+                  wrap: true;
+                  justify: center;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+              }
+            }
+
+            // One $GhConversationInfoPerson row per other person (from C).
+            Adw.PreferencesGroup people_group {
+              title: _("People");
+            }
+
+            Adw.PreferencesGroup privacy_group {
+              title: _("Privacy");
+
+              // Text may name a person: plain text, never markup.
+              Adw.ActionRow privacy_row {
+                use-markup: false;
+
+                [prefix]
+                Image privacy_icon {
+                  accessible-role: presentation;
+                }
+              }
+
+              // Rows: gh_privacy_summary_new() "visible" (from C).
+              Adw.ExpanderRow visible_row {
+                title: _("What Others Can See");
+                use-markup: false;
+              }
+
+              // Rows: gh_privacy_summary_new() "unprotected" (from C).
+              Adw.ExpanderRow unprotected_row {
+                title: _("What Groundhog Can’t Protect");
+                use-markup: false;
+              }
+
+              Adw.ActionRow storage_row {
+                title: _("Stored on This Device");
+                use-markup: false;
+              }
+            }
+
+            Adw.PreferencesGroup notifications_group {
+              title: _("Notifications");
+              description: _("Muting stays on this device. Nobody is told.");
+
+              Adw.ActionRow mute_row {
+                title: _("Mute");
+                use-markup: false;
+                activatable-widget: mute_button;
+
+                [suffix]
+                MenuButton mute_button {
+                  valign: center;
+                  label: _("Mute");
+                  menu-model: mute_menu;
+                  tooltip-text: _("Mute Notifications");
+                }
+              }
+            }
+
+            Adw.PreferencesGroup disappearing_group {
+              title: _("Disappearing Messages");
+              description: _("Messages are deleted from this device when they expire, and relays are asked to delete them. Relays and other people's apps may not honour this.");
+
+              Adw.ComboRow timer_row {
+                title: _("Messages You Send");
+
+                model: StringList {
+                  strings [
+                    _("Off"),
+                    _("Disappear After 1 Day"),
+                    _("Disappear After 1 Week"),
+                    _("Disappear After 4 Weeks"),
+                  ]
+                };
+              }
+            }
+
+            Adw.PreferencesGroup actions_group {
+              Adw.ActionRow block_row {
+                title: _("Block");
+                use-markup: false;
+                subtitle: _("Hide this conversation and stop its notifications");
+                activatable-widget: block_button;
+
+                [suffix]
+                Button block_button {
+                  label: _("_Block…");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "info.block";
+                }
+              }
+
+              Adw.ActionRow forget_row {
+                title: _("Forget on This Device");
+                subtitle: _("Delete this conversation's messages here");
+                activatable-widget: forget_button;
+
+                [suffix]
+                Button forget_button {
+                  label: _("_Forget…");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "info.forget";
+
+                  styles [
+                    "destructive-action",
+                  ]
+                }
+              }
+            }
+          };
+        };
+      }
+
+      Adw.NavigationPage verify_page {
+        tag: "verify";
+        title: _("Verify Key");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            Adw.PreferencesGroup their_group {
+              description: _("Check that this key really belongs to them: compare it in person or on a call you trust, not in this conversation.");
+
+              Adw.ActionRow their_key_row {
+                title-selectable: true;
+                use-markup: false;
+
+                styles [
+                  "monospace",
+                ]
+
+                [suffix]
+                Button their_copy_button {
+                  icon-name: "edit-copy-symbolic";
+                  valign: center;
+                  tooltip-text: _("Copy npub");
+                  action-name: "info.copy-key";
+                  // The npub, set from C.
+                  action-target: "''";
+
+                  styles [
+                    "flat",
+                  ]
+                }
+              }
+            }
+
+            Adw.PreferencesGroup code_group {
+              title: _("Safety Code");
+              description: _("If they use Groundhog too, their Conversation Info shows the same code. Matching codes mean you both have each other's real keys.");
+
+              // Filled from C: an emoji and its name per cell; the names are
+              // what a screen reader reads.
+              Grid code_grid {
+                column-homogeneous: true;
+                row-spacing: 12;
+                column-spacing: 6;
+                margin-top: 6;
+                margin-bottom: 6;
+
+                styles [
+                  "card",
+                  "groundhog-safety-code",
+                ]
+
+                accessibility {
+                  label: _("Safety code");
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 0;
+                    row: 0;
+                  }
+
+                  Label code_emoji_0 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_0 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 1;
+                    row: 0;
+                  }
+
+                  Label code_emoji_1 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_1 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 2;
+                    row: 0;
+                  }
+
+                  Label code_emoji_2 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_2 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 3;
+                    row: 0;
+                  }
+
+                  Label code_emoji_3 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_3 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 4;
+                    row: 0;
+                  }
+
+                  Label code_emoji_4 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_4 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 0;
+                    row: 1;
+                  }
+
+                  Label code_emoji_5 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_5 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 1;
+                    row: 1;
+                  }
+
+                  Label code_emoji_6 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_6 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 2;
+                    row: 1;
+                  }
+
+                  Label code_emoji_7 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_7 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 3;
+                    row: 1;
+                  }
+
+                  Label code_emoji_8 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_8 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 2;
+
+                  layout {
+                    column: 4;
+                    row: 1;
+                  }
+
+                  Label code_emoji_9 {
+                    accessible-role: presentation;
+
+                    styles [
+                      "title-1",
+                    ]
+                  }
+
+                  Label code_name_9 {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    justify: center;
+
+                    styles [
+                      "caption",
+                    ]
+                  }
+                }
+              }
+            }
+
+            Adw.PreferencesGroup your_group {
+              title: _("Your Key");
+              description: _("They can check your key the same way.");
+
+              Adw.ActionRow your_key_row {
+                title-selectable: true;
+                use-markup: false;
+
+                styles [
+                  "monospace",
+                ]
+
+                [suffix]
+                Button your_copy_button {
+                  icon-name: "edit-copy-symbolic";
+                  valign: center;
+                  tooltip-text: _("Copy npub");
+                  action-name: "info.copy-key";
+                  // The npub, set from C.
+                  action-target: "''";
+
+                  styles [
+                    "flat",
+                  ]
+                }
+              }
+            }
+
+            Adw.PreferencesGroup verified_group {
+              description: _("Groundhog doesn't check keys with anyone. Marking a key verified only records your own check, on this device.");
+
+              Adw.ActionRow verified_row {
+                title: _("You marked this key verified");
+                use-markup: false;
+                visible: false;
+
+                [prefix]
+                Image {
+                  icon-name: "emblem-ok-symbolic";
+                  accessible-role: presentation;
+                }
+
+                [suffix]
+                Button unverify_button {
+                  label: _("_Unmark");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "info.clear-verified";
+                }
+              }
+
+              Button verify_button {
+                label: _("_Mark as Verified");
+                use-underline: true;
+                halign: center;
+                margin-top: 12;
+                action-name: "info.mark-verified";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            }
+          };
+        };
+      }
+    };
+  };
+}
+
+menu mute_menu {
+  section {
+    item {
+      label: _("For 1 _Hour");
+      action: "info.mute";
+      target: "3600";
+    }
+
+    item {
+      label: _("For _8 Hours");
+      action: "info.mute";
+      target: "28800";
+    }
+
+    item {
+      label: _("For 1 _Week");
+      action: "info.mute";
+      target: "604800";
+    }
+
+    item {
+      label: _("_Until I Turn It Back On");
+      action: "info.mute";
+      target: "always";
+    }
+  }
+
+  section {
+    item {
+      label: _("_Unmute");
+      action: "info.unmute";
+    }
+  }
+}
+
+// Response ids are unique across the file: blueprint-compiler 0.12 treats
+// them as object ids. The bodies are completed from C with the person's name.
+Adw.AlertDialog block_dialog {
+  default-response: "block-cancel";
+  close-response: "block-cancel";
+
+  responses [
+    block-cancel: _("_Cancel"),
+    block-confirm: _("_Block") destructive,
+  ]
+}
+
+Adw.AlertDialog forget_dialog {
+  heading: _("Forget This Conversation?");
+  default-response: "forget-cancel";
+  close-response: "forget-cancel";
+
+  responses [
+    forget-cancel: _("_Cancel"),
+    forget-confirm: _("_Forget") destructive,
+  ]
+}

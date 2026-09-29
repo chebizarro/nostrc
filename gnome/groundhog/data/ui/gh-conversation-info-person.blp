@@ -1,0 +1,50 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One other person of a conversation in Conversation Info
+// (gh-conversation-info-dialog.blp, charter G19): the name Groundhog shows
+// for them (a cached display name or their short npub; nothing is fetched
+// for it), their short npub and any NIP-05 address they claim (never
+// checked, and said so), whether you marked their key verified, and Copy
+// npub. Activating the row opens Verify Key. Filled from
+// gh-conversation-info-dialog.c.
+template $GhConversationInfoPerson: Adw.ActionRow {
+  activatable: true;
+  // A name from someone's profile: plain text, never markup.
+  use-markup: false;
+  tooltip-text: _("Verify Key");
+
+  [prefix]
+  Adw.Avatar avatar {
+    size: 40;
+    show-initials: true;
+  }
+
+  [suffix]
+  Image verified_icon {
+    visible: false;
+    icon-name: "emblem-ok-symbolic";
+    tooltip-text: _("You marked this key verified");
+    accessible-role: presentation;
+  }
+
+  [suffix]
+  Button copy_button {
+    icon-name: "edit-copy-symbolic";
+    valign: center;
+    tooltip-text: _("Copy npub");
+    action-name: "info.copy-key";
+    // The npub, set from C.
+    action-target: "''";
+
+    styles [
+      "flat",
+    ]
+  }
+
+  [suffix]
+  Image {
+    icon-name: "go-next-symbolic";
+    accessible-role: presentation;
+  }
+}

@@ -267,9 +267,17 @@ static const gchar schema_v2[] =
   "    ON DELETE CASCADE);"
   "CREATE INDEX mls_snapshot_rows_by_snapshot ON mls_snapshot_rows (group_id, name, tbl);";
 
+/* Schema v3 (G19, charter §3.3 `contacts`, P8): when the account marked a
+ * contact's key verified after comparing it out of band (unix seconds; 0 =
+ * not marked). Local only: never published, never shared. gh-store-contacts.c
+ * is the only writer. */
+static const gchar schema_v3[] =
+  "ALTER TABLE contacts ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
+  { 3, "Local verification marks on contacts (charter §3.3, G19)", schema_v3 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

@@ -248,3 +248,8 @@ flowbox.groundhog-recipient-chips > flowboxchild {
   font-family: monospace;
 }
 
+/* == conversation info (G19) == */
+/* The safety code's cells (gh-conversation-info-dialog.blp). */
+.groundhog-safety-code {
+  padding: 12px 6px;
+}

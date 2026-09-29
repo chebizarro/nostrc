@@ -17,6 +17,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="title" translatable="yes">Messages</property>
               </object>
             </property>
+            <child type="end">
+              <object class="GtkButton" id="info_button">
+                <property name="visible">false</property>
+                <property name="icon-name">help-about-symbolic</property>
+                <property name="tooltip-text" translatable="true">Conversation Info</property>
+                <property name="action-name">win.conversation-info</property>
+                <accessibility>
+                  <property name="label" translatable="true">Conversation Info</property>
+                </accessibility>
+              </object>
+            </child>
           </object>
         </child>
         <property name="content">

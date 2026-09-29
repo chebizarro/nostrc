@@ -17,6 +17,9 @@
 #include "gh-store-key.h"
 #include "gh-store-status.h"
 #endif
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+#include "gh-conversation-info-dialog.h"
+#endif
 #if GROUNDHOG_HAVE_OUTBOX
 #include "gh-app-outbox.h"
 #include "gh-send-ui.h"
@@ -485,6 +488,40 @@ notifier_teardown(GhAppServices *self)
 }
 #endif
 
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+/* ---- Conversation Info (G19) ---------------------------------------------------
+ * The dialog acts on the active account's open store; names come from the
+ * contact directory's cache (display only, nothing is fetched). */
+
+static void
+conversation_info_profile(const gchar *pubkey, GhConversationInfoProfile *profile,
+                          gpointer data)
+{
+  GhAppServices *self = data;
+  GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
+  if (!directory)
+    return;
+  profile->name = gh_contact_directory_get_display_name(directory, pubkey);
+  profile->nip05 = gh_contact_directory_get_nip05(directory, pubkey);
+}
+
+static gboolean
+conversation_info_services(GhConversationInfoServices *services, gpointer data)
+{
+  GhAppServices *self = data;
+  GhStoreConversations *conversations = gh_account_store_get_conversations(self->account_store);
+  GhStore *store = gh_account_store_get_store(self->account_store);
+  services->model = self->conversations;
+  services->conversations = store ? conversations : NULL;
+  services->store = conversations ? store : NULL;
+  services->expiry = self->expiry;
+  services->notifier = self->notifier;
+  services->profile = conversation_info_profile;
+  services->profile_data = self;
+  return TRUE;
+}
+#endif
+
 #if GROUNDHOG_HAVE_BACKGROUND
 /* Background delivery (charter §5.3, G15): holds the application while
  * run-in-background is on, so the services above outlive the window, and
@@ -820,6 +857,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
   gh_composer_set_disabled_reason(
     gh_content_page_get_composer(gh_window_get_content(window)),
     _("Sending needs the encrypted message store, which this build doesn't have."));
+#endif
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+  gh_conversation_info_attach(window, conversation_info_services, self, NULL);
 #endif
 }
 

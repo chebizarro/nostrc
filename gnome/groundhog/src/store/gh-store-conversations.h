@@ -28,8 +28,9 @@ G_BEGIN_DECLS
  * expired on arrival (its expires_at, from gh_message_get_expires_at(), is not
  * in the future by the store's GhClock) and one older than a forgotten room's
  * tombstone are recorded in `seen` only and reported hidden: the model never
- * shows them (charter §3.7, EX-4, ST-9). The rejected-wrap namespace is
- * `seen` ns GH_STORE_SEEN_REJECTED_WRAP.
+ * shows them (charter §3.7, EX-4, ST-9). A message of a blocked room is
+ * stored but reported hidden too, so it shows only if the room is unblocked.
+ * The rejected-wrap namespace is `seen` ns GH_STORE_SEEN_REJECTED_WRAP.
  *
  * Read state. conversations.last_read_msg is the last read message and
  * unread_count the messages from others after it, kept equal by every write
@@ -38,7 +39,7 @@ G_BEGIN_DECLS
  *
  * Restore. gh_store_conversations_attach() binds a GhConversationStore to the
  * store's account with this delegate and lists every NIP-17 room that has a
- * stored message: its newest page of messages (each rumor verified again
+ * stored message and is not blocked: its newest page of messages (each rumor verified again
  * from the stored JSON; expired ones skipped), request state, read marker,
  * unread count (including older, unloaded messages) and stored name, in store
  * order. Older messages load on request, a page at a time.
@@ -155,6 +156,16 @@ gboolean gh_store_conversations_get_notify_state(GhStoreConversations *self,
 gboolean gh_store_conversations_set_muted_until(GhStoreConversations *self,
                                                 const gchar *room_id, gint64 muted_until,
                                                 GError **error);
+/* Blocks a stored room (charter §7.9 "Block", NO-2; G19): request_state
+ * BLOCKED, and the room leaves the attached model. It stays out of every
+ * later restore, and what arrives in it is stored unlisted and never
+ * notified. Unblocking (FALSE) lists its newest page again, as a message
+ * request unless the account has written in it: unblocking is not
+ * accepting (PT-8). Nothing is published: the other side is not told (P8).
+ * Mute, timer and draft are kept. NOT_FOUND when the room is not stored. */
+gboolean gh_store_conversations_set_blocked(GhStoreConversations *self,
+                                            const gchar *room_id, gboolean blocked,
+                                            GError **error);
 
 /* ---- Legacy seen file (charter §3.2, ST-12) -----------------------------------
  * Before the encrypted store, GhDmInbox kept the account's seen keys in a

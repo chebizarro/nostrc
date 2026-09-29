@@ -1,6 +1,7 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
+#include "gh-privacy-summary.h"
 #include "gh-requests-view.h"
 
 #include <glib/gi18n.h>
@@ -159,14 +160,14 @@ update_title(GhConversationList *list)
     return;
   }
   /* A request is titled by its sender's npub; the subject the sender chose
-   * is only part of the subtitle (charter §7.9). */
-  const gchar *subject = gh_conversation_get_is_request(list->shown)
-                           ? gh_conversation_get_subject(list->shown) : NULL;
-  g_autofree gchar *subtitle =
-    subject ? g_strdup_printf(_("“%s” · Message request · end-to-end encrypted"), subject)
-    : g_strdup(gh_conversation_get_is_request(list->shown)
-                 ? _("Message request · end-to-end encrypted")
-                 : _("Private · end-to-end encrypted"));
+   * is only part of the subtitle (charter §7.9), which says what the
+   * conversation protects (charter §2.2 surface 1). */
+  GhPrivacyContext context = {
+    .backend = (GhPrivacyBackend)gh_conversation_get_backend(list->shown),
+    .is_request = gh_conversation_get_is_request(list->shown),
+    .subject = gh_conversation_get_subject(list->shown),
+  };
+  g_autofree gchar *subtitle = gh_privacy_summary_dup_subtitle(&context);
   gh_content_page_set_title(list->content, gh_conversation_get_title(list->shown), subtitle);
 }
 

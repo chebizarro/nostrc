@@ -1,0 +1,19 @@
+backend: NIP-17
+end-to-end: yes
+icon: channel-secure-symbolic
+subtitle: Private · end-to-end encrypted
+heading: End-to-end encrypted
+encrypted: Only you and Alice can read these messages. Relays can't see what you write or who sent it.
+what others can see:
+- Your message relays can see that you receive messages and roughly when, but not who sends them or what they say.
+- Alice's message relays can see when messages arrive for them, but not who sent them or what they say.
+- Relays you connect to can see your IP address.
+- Anyone can see that you accept private messages, and which relays receive them.
+- Alice sees what you write, your public key and the time you say you sent it. Groundhog never tells anyone when you read or type.
+what Groundhog can't protect:
+- What Alice does with your messages: they can copy, forward or screenshot them.
+- Deleting everywhere: disappearing messages are deleted from this device, but relays and other people's apps may keep copies.
+- Timing: someone watching many relays at once may link when messages are sent and received.
+- That you use Nostr, and which relays you use: they are visible to your network.
+- Apps running as you on this computer outside a sandbox can read what Groundhog shows.
+storage: Groundhog keeps these messages encrypted on this device only. Private messages can be downloaded again from your relays with your key.

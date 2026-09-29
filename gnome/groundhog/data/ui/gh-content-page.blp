@@ -21,6 +21,20 @@ template $GhContentPage: Adw.NavigationPage {
       title-widget: Adw.WindowTitle window_title {
         title: _("Messages");
       };
+
+      // Conversation Info (charter §7.4, G19): shown with a conversation;
+      // win.conversation-info comes from gh-conversation-info-dialog.c.
+      [end]
+      Button info_button {
+        visible: false;
+        icon-name: "help-about-symbolic";
+        tooltip-text: _("Conversation Info");
+        action-name: "win.conversation-info";
+
+        accessibility {
+          label: _("Conversation Info");
+        }
+      }
     }
 
     content: Stack content_stack {

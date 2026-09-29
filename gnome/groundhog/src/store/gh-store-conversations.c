@@ -159,6 +159,28 @@ fail:
   return FALSE;
 }
 
+/* Whether the stored room is blocked (request_state BLOCKED); FALSE when it
+ * is not stored. */
+static gboolean
+room_blocked(GhStore *store, const gchar *room_id, gboolean *blocked, GError **error)
+{
+  *blocked = FALSE;
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT request_state FROM conversations WHERE backend = 1 AND backend_key = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(bind_text(stmt, 1, room_id));
+  gboolean found = FALSE;
+  gboolean ok = step_row(store, stmt, &found, "Reading a conversation's block", error);
+  if (ok && found)
+    *blocked = sqlite3_column_int64(stmt, 0) == GH_STORE_REQUEST_BLOCKED;
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
 /* A stored message's place in the message order. */
 typedef struct {
   gboolean has;
@@ -499,6 +521,12 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
   if (message_row > 0) {
     if (!admit_read_state(store, room_id, message_row, message, &commit->unread, error))
       goto fail;
+    /* A blocked room keeps what arrives, unlisted: none of it shows or is
+     * notified unless the room is unblocked. */
+    gboolean blocked = FALSE;
+    if (!room_blocked(store, room_id, &blocked, error))
+      goto fail;
+    commit->hidden = blocked;
   } else {
     commit->hidden = TRUE; /* seen only: expired, forgotten room, purged */
   }
@@ -765,7 +793,7 @@ gh_store_conversations_attach(GhStoreConversations *self, GhConversationStore *m
   g_autoptr(GArray) ids = g_array_new(FALSE, FALSE, sizeof(gint64));
   g_autoptr(GPtrArray) rooms = g_ptr_array_new_with_free_func(g_free);
   sqlite3_stmt *stmt = prepare(store,
-    "SELECT id, backend_key FROM conversations c WHERE backend = 1 AND "
+    "SELECT id, backend_key FROM conversations c WHERE backend = 1 AND request_state != 2 AND "
     "EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id) "
     "ORDER BY last_activity DESC, backend_key", error);
   if (!stmt)
@@ -1291,6 +1319,60 @@ gh_store_conversations_set_muted_until(GhStoreConversations *self, const gchar *
 fail:
   sqlite3_finalize(stmt);
   return FALSE;
+}
+
+/* Blocked, or back from blocked: a request again unless the account wrote
+ * in the room (unblocking is not accepting, charter PT-8). */
+static gboolean
+update_block(GhStore *store, gint64 id, gboolean blocked, GError **error)
+{
+  sqlite3_stmt *stmt = prepare(store,
+    "UPDATE conversations SET request_state = CASE WHEN ?2 THEN 2 "
+    "  WHEN EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND direction = 1) "
+    "  THEN 0 ELSE 1 END WHERE id = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, id));
+  BIND(sqlite3_bind_int(stmt, 2, blocked));
+  gboolean ok = step_done(store, stmt, blocked ? "Blocking a conversation"
+                                                : "Unblocking a conversation", error);
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+gboolean
+gh_store_conversations_set_blocked(GhStoreConversations *self, const gchar *room_id,
+                                   gboolean blocked, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  if (!check_open(self, error) || !check_room(self, room_id, error))
+    return FALSE;
+  gboolean found = FALSE;
+  gint64 id = 0;
+  if (!lookup_room(self->store, room_id, &found, &id, error))
+    return FALSE;
+  if (!found) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND,
+                        "The conversation is not stored");
+    return FALSE;
+  }
+  if (!update_block(self->store, id, !!blocked, error))
+    return FALSE;
+
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  if (!model || g_strcmp0(gh_conversation_store_get_account(model), self->account) != 0)
+    return TRUE;
+  if (blocked) {
+    gh_conversation_store_remove(model, room_id);
+    return TRUE;
+  }
+  /* Unblocked: listed again with its newest page. */
+  guint listed = 0;
+  return restore_room(self, model, id, room_id, NULL, GH_STORE_CONVERSATIONS_PAGE_SIZE, &listed,
+                      error);
 }
 
 /* ---- Legacy seen file ------------------------------------------------------------------ */
