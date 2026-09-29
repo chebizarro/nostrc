@@ -282,7 +282,9 @@ void mls_add_result_clear(MlsAddResult *r);
  * KeyPackage, generates an UpdatePath, derives a new epoch, and
  * produces a Welcome for the new member.
  *
- * On success, the group state is advanced to the new epoch.
+ * On success, the group state is advanced to the new epoch and the
+ * committer keeps the private keys of the path nodes it installed.  The Commit
+ * is built on a staged copy: on failure the group is unchanged.
  *
  * @param group     The group state (modified on success)
  * @param kp        KeyPackage of the member to add
@@ -314,7 +316,8 @@ void mls_commit_result_clear(MlsCommitResult *r);
  * Remove a member from the group.
  *
  * Creates a Commit containing a Remove proposal. On success, the group
- * state is advanced to the new epoch with the member's leaf blanked.
+ * state is advanced to the new epoch with the member's leaf blanked; on
+ * failure it is unchanged.
  *
  * @param group       The group state (modified on success)
  * @param leaf_index  Leaf index of the member to remove
@@ -332,8 +335,9 @@ int mls_group_remove_member(MlsGroup *group,
 /**
  * Perform a self-update of the committer's leaf node.
  *
- * Creates a Commit with an Update proposal containing a new leaf node
- * (fresh encryption key). Advances the group to a new epoch.
+ * Creates an empty Commit whose UpdatePath carries a new leaf node (fresh
+ * encryption key) and new path keys, which the committer retains.  Advances
+ * the group to a new epoch on success; on failure the group is unchanged.
  *
  * @param group   The group state (modified on success)
  * @param result  Output serialized commit

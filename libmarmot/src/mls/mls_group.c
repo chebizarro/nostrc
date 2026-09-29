@@ -72,6 +72,8 @@ static int
 remember_own_path_key(MlsGroup *group, uint32_t node,
                       const uint8_t sk[MLS_KEM_SK_LEN],
                       const uint8_t pk[MLS_KEM_PK_LEN]);
+static void
+prune_own_path_keys(MlsGroup *group);
 
 static int
 child_below_path_node(uint32_t sender_leaf, uint32_t n_leaves,
@@ -233,6 +235,14 @@ generate_update_path(MlsGroup *group,
 
         memcpy(path_out->nodes[i].encryption_key, node_pk, MLS_KEM_PK_LEN);
 
+        /* The committer keeps every private key it installs on its path
+         * (RFC 9420 §7.4): a later Commit may encrypt to this node rather
+         * than to our leaf (nostrc-va60). */
+        if (remember_own_path_key(group, node_idx, node_sk, node_pk) != 0) {
+            sodium_memzero(node_sk, sizeof(node_sk));
+            goto fail;
+        }
+
         /* Update the tree node */
         if (group->tree.nodes[node_idx].type != MLS_NODE_BLANK) {
             if (group->tree.nodes[node_idx].type == MLS_NODE_PARENT)
@@ -291,6 +301,8 @@ generate_update_path(MlsGroup *group,
 
     /* Update our stored encryption private key */
     memcpy(group->own_encryption_key, new_enc_sk, MLS_KEM_SK_LEN);
+    /* Keys of path nodes this UpdatePath replaced are now stale. */
+    prune_own_path_keys(group);
 
     /* UpdatePathNode HPKE binds the provisional GroupContext (RFC 9420 §7.6):
      * next epoch, the tree hash after applying this UpdatePath, and the
@@ -924,6 +936,39 @@ fail:
     return -1;
 }
 
+/**
+ * Stage a Commit on a deep copy of the group (via its persisted form, which
+ * carries every field an epoch transition reads).  Commit producers and
+ * process_commit_impl mutate only the stage and install it with
+ * group_install_staged() once the whole Commit succeeded, so any failure --
+ * including one inside generate_update_path after the proposals and the new
+ * path are applied -- leaves the live group untouched.
+ */
+static int
+group_stage_clone(const MlsGroup *group, MlsGroup *staged)
+{
+    uint8_t *blob = NULL;
+    size_t blob_len = 0;
+    memset(staged, 0, sizeof(*staged));
+    int rc = (mls_group_serialize(group, &blob, &blob_len) == 0 &&
+              mls_group_deserialize(blob, blob_len, staged) == 0) ? 0 : -1;
+    if (blob) {
+        sodium_memzero(blob, blob_len);
+        free(blob);
+    }
+    return rc;
+}
+
+/* Replace the live group with a completed stage (zeroizing the old state). */
+static void
+group_install_staged(MlsGroup *live, MlsGroup *staged)
+{
+    MlsGroup old = *live;
+    *live = *staged;
+    memset(staged, 0, sizeof(*staged));
+    mls_group_free(&old);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Lifecycle
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1130,15 +1175,11 @@ fail:
  * Add member
  * ══════════════════════════════════════════════════════════════════════════ */
 
-int
-mls_group_add_member(MlsGroup *group,
-                     const MlsKeyPackage *kp,
-                     MlsAddResult *result)
+static int
+add_member_staged(MlsGroup *group,
+                  const MlsKeyPackage *kp,
+                  MlsAddResult *result)
 {
-    if (!group || !kp || !result)
-        return MARMOT_ERR_INVALID_ARG;
-    memset(result, 0, sizeof(*result));
-
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
     uint64_t pre_epoch = group->epoch;
@@ -1519,16 +1560,11 @@ fail_wire_msg:
  * Remove member
  * ══════════════════════════════════════════════════════════════════════════ */
 
-int
-mls_group_remove_member(MlsGroup *group,
-                        uint32_t leaf_index,
-                        MlsCommitResult *result)
+static int
+remove_member_staged(MlsGroup *group,
+                     uint32_t leaf_index,
+                     MlsCommitResult *result)
 {
-    if (!group || !result) return MARMOT_ERR_INVALID_ARG;
-    if (leaf_index == group->own_leaf_index) return MARMOT_ERR_INVALID_ARG;
-    if (leaf_index >= group->tree.n_leaves) return MARMOT_ERR_INVALID_ARG;
-    memset(result, 0, sizeof(*result));
-
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
     uint64_t pre_epoch = group->epoch;
@@ -1698,12 +1734,9 @@ mls_group_remove_member(MlsGroup *group,
  * Self-update
  * ══════════════════════════════════════════════════════════════════════════ */
 
-int
-mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
+static int
+self_update_staged(MlsGroup *group, MlsCommitResult *result)
 {
-    if (!group || !result) return MARMOT_ERR_INVALID_ARG;
-    memset(result, 0, sizeof(*result));
-
     /* Capture pre-commit context/keys for PublicMessage authentication. */
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
@@ -1839,6 +1872,56 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
     sodium_memzero(commit_secret, sizeof(commit_secret));
 
     return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Commit producers: staged, installed only on success
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+int
+mls_group_add_member(MlsGroup *group,
+                     const MlsKeyPackage *kp,
+                     MlsAddResult *result)
+{
+    if (!group || !kp || !result)
+        return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    int rc = add_member_staged(&staged, kp, result);
+    if (rc == 0) group_install_staged(group, &staged);
+    else mls_group_free(&staged);
+    return rc;
+}
+
+int
+mls_group_remove_member(MlsGroup *group,
+                        uint32_t leaf_index,
+                        MlsCommitResult *result)
+{
+    if (!group || !result) return MARMOT_ERR_INVALID_ARG;
+    if (leaf_index == group->own_leaf_index) return MARMOT_ERR_INVALID_ARG;
+    if (leaf_index >= group->tree.n_leaves) return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    int rc = remove_member_staged(&staged, leaf_index, result);
+    if (rc == 0) group_install_staged(group, &staged);
+    else mls_group_free(&staged);
+    return rc;
+}
+
+int
+mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
+{
+    if (!group || !result) return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    int rc = self_update_staged(&staged, result);
+    if (rc == 0) group_install_staged(group, &staged);
+    else mls_group_free(&staged);
+    return rc;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2293,6 +2376,44 @@ remember_own_path_key(MlsGroup *group, uint32_t node,
     return 0;
 }
 
+/* A member only ever learns private keys of nodes on its own direct path
+ * (RFC 9420 §4.2), one per level, so a pruned cache holds at most the tree
+ * depth: 31 levels for the uint32 node index space. */
+_Static_assert(MLS_OWN_PATH_KEY_CACHE_SIZE >= 32,
+               "own path-key cache must hold one key per tree level");
+
+/**
+ * Drop cached path keys that no longer match the tree: the node left our
+ * direct path's non-blank parents (blanked by a Remove/Update, truncated) or
+ * a later UpdatePath replaced its key.  Called once the tree is final for the
+ * epoch being entered, by committers and receivers, so the cache holds exactly
+ * the keys of our current path and cannot fill up with stale entries.
+ */
+static void
+prune_own_path_keys(MlsGroup *group)
+{
+    if (!group) return;
+    uint32_t dp[64];
+    uint32_t dp_len = 0;
+    uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
+    if (own_node >= group->tree.n_nodes ||
+        mls_tree_direct_path(own_node, group->tree.n_leaves, dp, 64, &dp_len) != 0)
+        dp_len = 0;
+    for (size_t i = 0; i < MLS_OWN_PATH_KEY_CACHE_SIZE; i++) {
+        MlsOwnPathKeyCacheEntry *entry = &group->own_path_keys[i];
+        if (!entry->valid) continue;
+        bool keep = false;
+        for (uint32_t j = 0; j < dp_len && !keep; j++) {
+            if (dp[j] != entry->node) continue;
+            const MlsNode *n = &group->tree.nodes[entry->node];
+            keep = n->type == MLS_NODE_PARENT &&
+                   memcmp(n->parent.encryption_key, entry->pk, MLS_KEM_PK_LEN) == 0;
+        }
+        if (!keep)
+            sodium_memzero(entry, sizeof(*entry));
+    }
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * LeafNode validation (RFC 9420 §7.3)
  *
@@ -2669,17 +2790,12 @@ process_commit_impl(MlsGroup *group,
 
 
     MlsGroup staged;
-    uint8_t *group_snapshot = NULL;
-    size_t group_snapshot_len = 0;
-    if (mls_group_serialize(group, &group_snapshot, &group_snapshot_len) != 0 ||
-        mls_group_deserialize(group_snapshot, group_snapshot_len, &staged) != 0) {
-        free(group_snapshot);
+    if (group_stage_clone(group, &staged) != 0) {
         free(pre_gc);
         mls_commit_clear(&commit);
         mls_message_clear(&wire_msg);
         return MARMOT_ERR_INTERNAL;
     }
-    free(group_snapshot);
     MlsGroup *live_group = group;
     group = &staged;
     int staged_rc = MARMOT_ERR_INTERNAL;
@@ -3224,10 +3340,11 @@ process_commit_impl(MlsGroup *group,
     sodium_memzero(root_path_secret, sizeof(root_path_secret));
     sodium_memzero(commit_secret, sizeof(commit_secret));
 
-    MlsGroup old_group = *live_group;
-    *live_group = staged;
-    memset(&staged, 0, sizeof(staged));
-    mls_group_free(&old_group);
+    /* Removes, Updates and the UpdatePath may have blanked or re-keyed nodes
+     * on our path: forget their old private keys. */
+    prune_own_path_keys(group);
+
+    group_install_staged(live_group, &staged);
     free(pre_gc);
     mls_message_clear(&wire_msg);
 

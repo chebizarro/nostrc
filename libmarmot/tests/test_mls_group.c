@@ -2340,6 +2340,225 @@ TEST(test_remove_filters_root_from_committer_path)
     three_member_fixture_clear(&f);
 }
 
+/* ── Multi-member convergence (nostrc-va60, nostrc-5q55, nostrc-8u1k) ────────
+ *
+ * Every member processes every other member's Commits and must end in the
+ * same epoch: epoch number, all epoch secrets, tree hash, the serialized
+ * GroupContext (confirmed transcript hash, extensions) and interim transcript
+ * hash. */
+
+static void
+assert_converged_for_test(MlsGroup *const *members, size_t n)
+{
+    uint8_t *gc0 = NULL, th0[MLS_HASH_LEN];
+    size_t gc0_len = 0;
+    assert(mls_group_context_build(members[0], &gc0, &gc0_len) == 0);
+    assert(mls_group_tree_hash(members[0], th0) == 0);
+    for (size_t i = 1; i < n; i++) {
+        uint8_t *gc = NULL, th[MLS_HASH_LEN];
+        size_t gc_len = 0;
+        assert(members[i]->epoch == members[0]->epoch);
+        assert(mls_group_tree_hash(members[i], th) == 0);
+        assert(memcmp(th, th0, MLS_HASH_LEN) == 0);
+        assert(mls_group_context_build(members[i], &gc, &gc_len) == 0);
+        assert(gc_len == gc0_len && memcmp(gc, gc0, gc_len) == 0);
+        assert(memcmp(members[i]->interim_transcript_hash,
+                      members[0]->interim_transcript_hash, MLS_HASH_LEN) == 0);
+        assert(sodium_memcmp(&members[i]->epoch_secrets, &members[0]->epoch_secrets,
+                             sizeof(members[0]->epoch_secrets)) == 0);
+        free(gc);
+    }
+    free(gc0);
+}
+
+/* `committer`'s Commit, processed by every other listed member. */
+static void
+deliver_commit_for_test(MlsGroup *const *members, size_t n, const MlsGroup *committer,
+                        const uint8_t *commit, size_t commit_len, const char *what)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (members[i] == committer) continue;
+        int rc = mls_group_process_commit(members[i], commit, commit_len,
+                                          committer->own_leaf_index);
+        if (rc != 0)
+            fprintf(stderr, "\n    %s: leaf %u rejected leaf %u's Commit, rc=%d",
+                    what, members[i]->own_leaf_index, committer->own_leaf_index, rc);
+        assert(rc == 0);
+    }
+}
+
+/* Persist and reload, as storage does between operations. */
+static void
+reload_group_for_test(MlsGroup *g)
+{
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    assert(mls_group_serialize(g, &blob, &len) == 0);
+    mls_group_free(g);
+    assert(mls_group_deserialize(blob, len, g) == 0);
+    sodium_memzero(blob, len);
+    free(blob);
+}
+
+/* The member's path-key cache holds only current keys: each entry is for a
+ * parent node on its own direct path, matches that node's public key and is a
+ * valid key pair -- nothing for blanked, re-keyed or foreign nodes
+ * (nostrc-va60).  Returns the number of entries. */
+static size_t
+assert_path_keys_current_for_test(const MlsGroup *g)
+{
+    uint32_t dp[64], dp_len = 0;
+    assert(mls_tree_direct_path(mls_tree_leaf_to_node(g->own_leaf_index),
+                                g->tree.n_leaves, dp, 64, &dp_len) == 0);
+    size_t cached = 0;
+    for (size_t i = 0; i < MLS_OWN_PATH_KEY_CACHE_SIZE; i++) {
+        const MlsOwnPathKeyCacheEntry *e = &g->own_path_keys[i];
+        if (!e->valid) continue;
+        cached++;
+        bool on_path = false;
+        for (uint32_t j = 0; j < dp_len; j++) on_path |= dp[j] == e->node;
+        assert(on_path);
+        const MlsNode *n = &g->tree.nodes[e->node];
+        assert(n->type == MLS_NODE_PARENT &&
+               memcmp(n->parent.encryption_key, e->pk, MLS_KEM_PK_LEN) == 0);
+        uint8_t pk[MLS_KEM_PK_LEN];
+        assert(crypto_scalarmult_curve25519_base(pk, e->sk) == 0);
+        assert(memcmp(pk, e->pk, MLS_KEM_PK_LEN) == 0);
+    }
+    return cached;
+}
+
+/* Right after its own Commit every non-blank node on the committer's direct
+ * path is one it just installed: it must hold all of their private keys. */
+static void
+assert_committer_holds_path_keys_for_test(const MlsGroup *g)
+{
+    uint32_t dp[64], dp_len = 0;
+    assert(mls_tree_direct_path(mls_tree_leaf_to_node(g->own_leaf_index),
+                                g->tree.n_leaves, dp, 64, &dp_len) == 0);
+    size_t installed = 0;
+    for (uint32_t j = 0; j < dp_len; j++) {
+        if (g->tree.nodes[dp[j]].type != MLS_NODE_PARENT) continue;
+        installed++;
+        bool held = false;
+        for (size_t i = 0; i < MLS_OWN_PATH_KEY_CACHE_SIZE; i++)
+            held |= g->own_path_keys[i].valid && g->own_path_keys[i].node == dp[j];
+        if (!held)
+            fprintf(stderr, "\n    committer leaf %u lacks the private key of node %u",
+                    g->own_leaf_index, dp[j]);
+        assert(held);
+    }
+    assert(assert_path_keys_current_for_test(g) == installed);
+}
+
+/* nostrc-va60: after merging its own Commit the committer holds the private
+ * keys of the path nodes it installed (RFC 9420 §7.4, §12.4.2).  In the
+ * fixture Alice's Add(Charlie) installed node 1 (copath: Bob) and the root.
+ * Charlie's self-update encrypts the root's path secret to resolution(node 1)
+ * = [node 1], which Bob holds as a receiver of that Add -- and Alice must hold
+ * as its committer, or she cannot follow (was rc -116). */
+TEST(test_committer_keeps_own_path_keys)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MlsGroup *all[] = {&f.alice, &f.bob, &f.charlie};
+    uint32_t res[8], res_len = 0;
+    assert(mls_tree_resolution(&f.alice.tree, 1, res, 8, &res_len) == 0);
+    assert(res_len == 1 && res[0] == 1);
+
+    /* Alice committed last; the keys come from persisted state, as between
+     * real operations. */
+    for (size_t i = 0; i < 3; i++) reload_group_for_test(all[i]);
+    assert_committer_holds_path_keys_for_test(&f.alice);
+
+    MlsCommitResult upd;
+    assert(mls_group_self_update(&f.charlie, &upd) == 0);
+    deliver_commit_for_test(all, 3, &f.charlie, upd.commit_data, upd.commit_len,
+                            "Charlie self-update");
+    assert_converged_for_test(all, 3);
+    mls_commit_result_clear(&upd);
+
+    /* Everyone commits in turn, with a Remove and a re-Add in between; the
+     * cache always holds exactly the current keys of the member's own path. */
+    MlsGroup dave;
+    memset(&dave, 0, sizeof(dave));
+    for (int round = 0; round < 3; round++) {
+        for (size_t c = 0; c < 3; c++) {
+            MlsCommitResult r;
+            assert(mls_group_self_update(all[c], &r) == 0);
+            assert_committer_holds_path_keys_for_test(all[c]);
+            deliver_commit_for_test(all, 3, all[c], r.commit_data, r.commit_len,
+                                    "self-update round");
+            assert_converged_for_test(all, 3);
+            for (size_t i = 0; i < 3; i++) {
+                reload_group_for_test(all[i]);
+                assert(assert_path_keys_current_for_test(all[i]) <= 2);
+            }
+            mls_commit_result_clear(&r);
+        }
+    }
+
+    /* Bob removes Charlie; Charlie's slot is refilled by Dave via Bob. */
+    MlsCommitResult rm;
+    assert(mls_group_remove_member(&f.bob, 2, &rm) == 0);
+    assert_committer_holds_path_keys_for_test(&f.bob);
+    MlsGroup *remaining[] = {&f.alice, &f.bob};
+    deliver_commit_for_test(remaining, 2, &f.bob, rm.commit_data, rm.commit_len,
+                            "Bob removes Charlie");
+    assert_converged_for_test(remaining, 2);
+    mls_commit_result_clear(&rm);
+    MlsAddResult add;
+    assert(mls_group_add_member(&f.bob, &f.dave_kp, &add) == 0);
+    assert_committer_holds_path_keys_for_test(&f.bob);
+    deliver_commit_for_test(remaining, 2, &f.bob, add.commit_data, add.commit_len,
+                            "Bob adds Dave");
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &f.dave_kp,
+                               &f.dave_priv, NULL, 0, &dave) == 0);
+    mls_add_result_clear(&add);
+    MlsGroup *now[] = {&f.alice, &f.bob, &dave};
+    assert_converged_for_test(now, 3);
+    for (size_t c = 0; c < 3; c++) {
+        MlsCommitResult r;
+        assert(mls_group_self_update(now[c], &r) == 0);
+        assert_committer_holds_path_keys_for_test(now[c]);
+        deliver_commit_for_test(now, 3, now[c], r.commit_data, r.commit_len,
+                                "after re-Add");
+        assert_converged_for_test(now, 3);
+        for (size_t i = 0; i < 3; i++) assert_path_keys_current_for_test(now[i]);
+        mls_commit_result_clear(&r);
+    }
+
+    mls_group_free(&dave);
+    three_member_fixture_clear(&f);
+}
+
+/* Commit producers merge a staged clone: a producer that fails part-way
+ * leaves the live group byte-for-byte unchanged (fail closed). */
+TEST(test_commit_producers_fail_closed)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    /* Bob's leaf in Alice's tree carries a low-order X25519 key: HPKE to it
+     * fails inside the UpdatePath, after the producer has applied its
+     * proposal and installed its new path nodes and leaf. */
+    memset(f.alice.tree.nodes[mls_tree_leaf_to_node(1)].leaf.encryption_key, 0,
+           MLS_KEM_PK_LEN);
+    GroupSnapshotForTest before;
+    snapshot_group_for_test(&f.alice, &before);
+
+    MlsAddResult add;
+    MlsCommitResult res;
+    assert(mls_group_add_member(&f.alice, &f.dave_kp, &add) != 0);
+    assert_group_matches_snapshot_for_test(&f.alice, &before);
+    assert(mls_group_remove_member(&f.alice, 2, &res) != 0);
+    assert_group_matches_snapshot_for_test(&f.alice, &before);
+    assert(mls_group_self_update(&f.alice, &res) != 0);
+    assert_group_matches_snapshot_for_test(&f.alice, &before);
+
+    free(before.blob);
+    three_member_fixture_clear(&f);
+}
+
 /* ── LeafNode validation (nostrc-2io4, RFC 9420 §7.3) ───────────────────────────
  *
  * libmarmot has no producer for Commits that carry referenced Updates or a
@@ -3319,6 +3538,8 @@ int main(void)
     RUN(test_pathless_add_and_psk_commits_accepted);
     RUN(test_commit_serialize_requires_path);
     RUN(test_remove_filters_root_from_committer_path);
+    RUN(test_committer_keeps_own_path_keys);
+    RUN(test_commit_producers_fail_closed);
     RUN(test_group_creator_leaf_signature_bound_to_group);
     RUN(test_update_by_ref_leaf_validation);
     RUN(test_update_path_leaf_validation);
