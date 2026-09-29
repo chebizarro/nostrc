@@ -213,25 +213,14 @@ generate_update_path(MlsGroup *group,
     size_t path_context_len = 0;
     memset(path_out, 0, sizeof(*path_out));
 
-    /* Compute filtered direct path */
+    /* Compute the filtered direct path (RFC 9420 §4.1.2).  The UpdatePath
+     * carries exactly one node per filtered node; it is empty when every
+     * copath subtree is blank (the committer is the only member left). */
     uint32_t fdp[64];
     uint32_t fdp_len = 0;
     if (mls_tree_filtered_direct_path(&group->tree, group->own_leaf_index,
                                        fdp, 64, &fdp_len) != 0)
         return -1;
-
-    /* A remove can blank every copath resolution member on the committer's
-     * filtered direct path (notably the two-member remove case).  There are
-     * then no recipients for encrypted path secrets, but the committer still
-     * has a non-leaf parent chain that must be regenerated so parent_hash and
-     * the new commit leaf signature validate. */
-    uint32_t own_node_for_path = mls_tree_leaf_to_node(group->own_leaf_index);
-    uint32_t root_for_path = mls_tree_root(n_leaves);
-    if (fdp_len == 0 && own_node_for_path != root_for_path) {
-        if (mls_tree_direct_path(own_node_for_path, n_leaves,
-                                 fdp, 64, &fdp_len) != 0)
-            return -1;
-    }
 
     /* Generate new leaf encryption key */
     uint8_t new_enc_sk[MLS_KEM_SK_LEN];
@@ -316,17 +305,17 @@ generate_update_path(MlsGroup *group,
         sodium_memzero(node_sk, sizeof(node_sk));
     }
 
-    /* Populate parent_hash fields for the generated direct path.  The
-     * parent_hash chain is computed from the root downward because each
-     * child's expected value includes its parent's parent_hash. */
-    uint32_t root = mls_tree_root(n_leaves);
-    for (uint32_t rev = fdp_len; rev > 0; rev--) {
-        uint32_t node_idx = fdp[rev - 1];
-        if (node_idx == root) continue;
+    /* Populate parent_hash along the FILTERED direct path (RFC 9420 §7.9),
+     * top-down because each value covers the parent_hash of the node above.
+     * The topmost filtered node -- the root, or a lower node when the root's
+     * copath is blank -- carries an empty parent_hash (installed zeroed
+     * above).  Every other node's parent_hash is ParentHash of the next node
+     * up the filtered path, taken over that node's child subtree which does
+     * not contain the committer; skipped (filtered) levels are not links. */
+    for (uint32_t pos = fdp_len; pos-- > 1;) {
+        uint32_t parent = fdp[pos];
+        uint32_t node_idx = fdp[pos - 1];
         if (group->tree.nodes[node_idx].type != MLS_NODE_PARENT) goto fail;
-        uint32_t path_pos = rev - 1;
-        if (path_pos + 1 >= fdp_len) goto fail;
-        uint32_t parent = fdp[path_pos + 1];
         uint8_t ph[MLS_HASH_LEN];
         if (mls_tree_parent_hash(&group->tree, parent, node_idx, ph) != 0)
             goto fail;
@@ -336,13 +325,12 @@ generate_update_path(MlsGroup *group,
             goto fail;
     }
 
-    /* Update our own leaf in the tree. */
+    /* The new leaf links to the bottom filtered node; with an empty filtered
+     * path it has no parent link and its parent_hash stays empty. */
     uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
-    if (own_node != root) {
-        if (fdp_len == 0) goto fail;
-        uint32_t parent = fdp[0];
+    if (fdp_len > 0) {
         uint8_t ph[MLS_HASH_LEN];
-        if (mls_tree_parent_hash(&group->tree, parent, own_node, ph) != 0)
+        if (mls_tree_parent_hash(&group->tree, fdp[0], own_node, ph) != 0)
             goto fail;
         if (replace_parent_hash(&path_out->leaf_node.parent_hash,
                                 &path_out->leaf_node.parent_hash_len,
@@ -363,10 +351,13 @@ generate_update_path(MlsGroup *group,
     /* UpdatePathNode HPKE binds the provisional GroupContext (RFC 9420 §7.6):
      * next epoch, the tree hash after applying this UpdatePath, and the
      * current confirmed transcript hash.  This mirrors the context receivers
-     * rebuild in process_commit_impl before decrypt_path_secret(). */
+     * rebuild in process_commit_impl before decrypt_path_secret(), so it uses
+     * the same canonical tree hash as the GroupContext: after a Remove blanks
+     * the right edge, the live tree keeps its width but the hashed tree does
+     * not (RFC 9420 §12.1.3 truncation). */
     if (fdp_len > 0) {
         uint8_t provisional_tree_hash[MLS_HASH_LEN];
-        if (mls_tree_root_hash(&group->tree, provisional_tree_hash) != 0)
+        if (mls_group_tree_hash(group, provisional_tree_hash) != 0)
             goto fail;
         if (mls_group_context_serialize(group->group_id, group->group_id_len,
                                         group->epoch + 1, provisional_tree_hash,
@@ -646,23 +637,6 @@ mls_treekem_update_path_decrypt_secret(const MlsRatchetTree *tree,
     return 0;
 }
 
-static int
-mls_treekem_update_path_nodes(const MlsRatchetTree *tree, uint32_t sender_leaf,
-                              uint32_t *out, uint32_t max_len, uint32_t *out_len)
-{
-    if (!tree || !out || !out_len || sender_leaf >= tree->n_leaves)
-        return -1;
-    if (mls_tree_filtered_direct_path(tree, sender_leaf, out, max_len, out_len) != 0)
-        return -1;
-    uint32_t sender_node = mls_tree_leaf_to_node(sender_leaf);
-    uint32_t root = mls_tree_root(tree->n_leaves);
-    if (*out_len == 0 && sender_node != root) {
-        if (mls_tree_direct_path(sender_node, tree->n_leaves, out, max_len, out_len) != 0)
-            return -1;
-    }
-    return 0;
-}
-
 int
 mls_treekem_apply_update_path(MlsRatchetTree *tree,
                               uint32_t sender_leaf,
@@ -674,9 +648,10 @@ mls_treekem_apply_update_path(MlsRatchetTree *tree,
     if (sender_node >= tree->n_nodes || tree->nodes[sender_node].type == MLS_NODE_BLANK)
         return -1;
 
+    /* One UpdatePathNode per filtered direct path node (RFC 9420 §7.6). */
     uint32_t fdp[128];
     uint32_t fdp_len = 0;
-    if (mls_treekem_update_path_nodes(tree, sender_leaf, fdp, 128, &fdp_len) != 0)
+    if (mls_tree_filtered_direct_path(tree, sender_leaf, fdp, 128, &fdp_len) != 0)
         return -1;
     if (path->node_count != fdp_len)
         return -1;
@@ -703,23 +678,37 @@ mls_treekem_apply_update_path(MlsRatchetTree *tree,
     if (mls_leaf_node_clone(&tree->nodes[sender_node].leaf, &path->leaf_node) != 0)
         return -1;
 
-    uint32_t root = mls_tree_root(tree->n_leaves);
-    for (uint32_t rev = fdp_len; rev > 0; rev--) {
-        uint32_t node_idx = fdp[rev - 1];
-        if (node_idx == root || rev == fdp_len) continue;
-        if (tree->nodes[node_idx].type != MLS_NODE_PARENT)
-            return -1;
-        uint32_t path_pos = rev - 1;
-        if (path_pos + 1 >= fdp_len)
-            return -1;
-        uint32_t parent = fdp[path_pos + 1];
-        if (parent >= tree->n_nodes || tree->nodes[parent].type != MLS_NODE_PARENT)
+    /* Rebuild the parent_hash chain exactly as the committer must have
+     * (RFC 9420 §7.9, see generate_update_path): the topmost filtered node
+     * keeps an empty parent_hash, each lower filtered node links to the next
+     * filtered node up. */
+    for (uint32_t pos = fdp_len; pos-- > 1;) {
+        uint32_t parent = fdp[pos];
+        uint32_t node_idx = fdp[pos - 1];
+        if (tree->nodes[node_idx].type != MLS_NODE_PARENT ||
+            tree->nodes[parent].type != MLS_NODE_PARENT)
             return -1;
         uint8_t ph[MLS_HASH_LEN];
         if (mls_tree_parent_hash(tree, parent, node_idx, ph) != 0 ||
             replace_parent_hash(&tree->nodes[node_idx].parent.parent_hash,
                                 &tree->nodes[node_idx].parent.parent_hash_len,
                                 ph) != 0)
+            return -1;
+    }
+
+    /* RFC 9420 §7.9.2: the committer's new leaf must carry the parent hash
+     * of the bottom filtered node -- empty when the filtered path is empty. */
+    const MlsLeafNode *leaf = &tree->nodes[sender_node].leaf;
+    if (leaf->leaf_node_source != 3)
+        return -1;
+    if (fdp_len == 0) {
+        if (leaf->parent_hash_len != 0)
+            return -1;
+    } else {
+        uint8_t expected[MLS_HASH_LEN];
+        if (leaf->parent_hash_len != MLS_HASH_LEN || !leaf->parent_hash ||
+            mls_tree_parent_hash(tree, fdp[0], sender_node, expected) != 0 ||
+            sodium_memcmp(expected, leaf->parent_hash, MLS_HASH_LEN) != 0)
             return -1;
     }
 

@@ -2151,6 +2151,127 @@ TEST(test_commit_serialize_requires_path)
     three_member_fixture_clear(&f);
 }
 
+static void
+parse_commit_for_test(const uint8_t *wire, size_t wire_len, MlsCommit *out)
+{
+    MlsMLSMessage msg;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, wire, wire_len);
+    assert(mls_message_deserialize(&r, &msg) == 0);
+    mls_tls_reader_init(&r, msg.public_message.content.content,
+                        msg.public_message.content.content_len);
+    assert(mls_commit_deserialize(&r, out) == 0 && mls_tls_reader_done(&r));
+    mls_message_clear(&msg);
+}
+
+/* nostrc-lz4f: Alice (leaf 0) removes Charlie (leaf 2) from the 4-leaf tree
+ * whose leaf 3 is blank.  Copath node 5 then has an empty resolution, so
+ * Alice's filtered direct path is [1] and stops below the root (3).  RFC 9420
+ * §7.9: the topmost filtered node carries an empty parent_hash and the leaf's
+ * parent_hash is relative to it.  The old producer treated a non-root top as
+ * an error and returned MARMOT_ERR_INTERNAL. */
+TEST(test_remove_filters_root_from_committer_path)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+
+    MlsRatchetTree after;
+    uint32_t fdp[8], fdp_len = 0;
+    assert(tree_clone_for_test(&f.alice.tree, &after) == 0);
+    assert(after.n_leaves == 4);
+    assert(replace_leaf_for_test(&after, 2, NULL) == 0);
+    assert(mls_tree_filtered_direct_path(&after, 0, fdp, 8, &fdp_len) == 0);
+    assert(fdp_len == 1 && fdp[0] == 1 && mls_tree_root(after.n_leaves) == 3);
+    mls_tree_free(&after);
+
+    GroupSnapshotForTest charlie_parent;
+    snapshot_group_for_test(&f.charlie, &charlie_parent);
+
+    MlsCommitResult removal;
+    memset(&removal, 0, sizeof(removal));
+    int rc = mls_group_remove_member(&f.alice, 2, &removal);
+    if (rc != 0)
+        fprintf(stderr, "\n    remove(leaf 2) rc=%d", rc);
+    assert(rc == 0);
+
+    MlsCommit produced;
+    parse_commit_for_test(removal.commit_data, removal.commit_len, &produced);
+    assert(produced.has_path);
+    assert(produced.proposal_count == 1 &&
+           produced.proposals[0].type == MLS_PROPOSAL_REMOVE &&
+           produced.proposals[0].remove.removed_leaf == 2);
+    assert(produced.path.node_count == 1);
+    assert(produced.path.nodes[0].secret_count == 1); /* Bob only */
+
+    /* Committer's tree: node 1 is the top of the filtered path (empty
+     * parent_hash) and the new leaf's parent_hash is ParentHash(node 1). */
+    const MlsNode *n1 = &f.alice.tree.nodes[1];
+    assert(n1->type == MLS_NODE_PARENT && n1->parent.parent_hash_len == 0);
+    assert(memcmp(n1->parent.encryption_key, produced.path.nodes[0].encryption_key,
+                  MLS_KEM_PK_LEN) == 0);
+    uint8_t expected_ph[MLS_HASH_LEN];
+    assert(mls_tree_parent_hash(&f.alice.tree, 1, 0, expected_ph) == 0);
+    assert(produced.path.leaf_node.parent_hash_len == MLS_HASH_LEN &&
+           memcmp(produced.path.leaf_node.parent_hash, expected_ph,
+                  MLS_HASH_LEN) == 0);
+    assert(f.alice.tree.nodes[3].type == MLS_NODE_BLANK);
+    assert(mls_tree_verify_parent_hashes(&f.alice.tree) == 0);
+
+    /* Bob processes the Commit and reaches Alice's epoch exactly. */
+    assert(mls_group_process_commit(&f.bob, removal.commit_data,
+                                    removal.commit_len, 0) == 0);
+    assert(f.bob.epoch == f.alice.epoch);
+    assert(f.bob.tree.nodes[mls_tree_leaf_to_node(2)].type == MLS_NODE_BLANK);
+    uint8_t alice_hash[MLS_HASH_LEN], bob_hash[MLS_HASH_LEN];
+    assert(mls_group_tree_hash(&f.alice, alice_hash) == 0);
+    assert(mls_group_tree_hash(&f.bob, bob_hash) == 0);
+    assert(memcmp(alice_hash, bob_hash, MLS_HASH_LEN) == 0);
+    assert(memcmp(f.bob.confirmed_transcript_hash, f.alice.confirmed_transcript_hash,
+                  MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
+                         sizeof(f.bob.epoch_secrets)) == 0);
+
+    /* The removed member is not a recipient of the path and cannot follow. */
+    assert(mls_group_process_commit(&f.charlie, removal.commit_data,
+                                    removal.commit_len, 0) != 0);
+    assert_group_matches_snapshot_for_test(&f.charlie, &charlie_parent);
+
+    /* Both remaining members keep working in the new epoch. */
+    uint8_t *ct = NULL, *pt = NULL;
+    size_t ct_len = 0, pt_len = 0;
+    uint32_t sender = UINT32_MAX;
+    static const uint8_t hello[] = "after lz4f removal";
+    assert(mls_group_encrypt(&f.alice, hello, sizeof(hello), &ct, &ct_len) == 0);
+    assert(mls_group_decrypt(&f.bob, ct, ct_len, &pt, &pt_len, &sender) == 0);
+    assert(sender == 0 && pt_len == sizeof(hello) && memcmp(pt, hello, pt_len) == 0);
+    free(ct);
+    free(pt);
+    MlsCommitResult bob_update;
+    assert(mls_group_self_update(&f.bob, &bob_update) == 0);
+    assert(mls_group_process_commit(&f.alice, bob_update.commit_data,
+                                    bob_update.commit_len, 1) == 0);
+    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
+                         sizeof(f.bob.epoch_secrets)) == 0);
+    mls_commit_result_clear(&bob_update);
+
+    /* Removing the last other member leaves an empty filtered direct path:
+     * the UpdatePath carries no nodes and the leaf parent_hash is empty. */
+    MlsCommitResult last;
+    assert(mls_group_remove_member(&f.alice, 1, &last) == 0);
+    MlsCommit alone;
+    parse_commit_for_test(last.commit_data, last.commit_len, &alone);
+    assert(alone.has_path && alone.path.node_count == 0);
+    assert(alone.path.leaf_node.parent_hash_len == 0);
+    assert(mls_tree_verify_parent_hashes(&f.alice.tree) == 0);
+    mls_commit_clear(&alone);
+    mls_commit_result_clear(&last);
+
+    mls_commit_clear(&produced);
+    mls_commit_result_clear(&removal);
+    free(charlie_parent.blob);
+    three_member_fixture_clear(&f);
+}
+
 TEST(test_bad_committer_signature_rejected)
 {
     MlsGroup alice_group, bob_group;
@@ -2705,6 +2826,7 @@ int main(void)
     RUN(test_pathless_remove_does_not_exclude_removed_member);
     RUN(test_pathless_add_and_psk_commits_accepted);
     RUN(test_commit_serialize_requires_path);
+    RUN(test_remove_filters_root_from_committer_path);
     RUN(test_bad_committer_signature_rejected);
     RUN(test_wrong_confirmation_tag_rejected);
     RUN(test_unknown_proposal_type_rejected);

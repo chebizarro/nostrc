@@ -505,6 +505,11 @@ int mls_treekem_update_path_decrypt_secret(const MlsRatchetTree *tree,
 
 /**
  * Apply an UpdatePath to a ratchet tree and reconstruct parent hashes.
+ * The path must carry exactly one node per filtered direct path node of
+ * sender_leaf (RFC 9420 §7.6); parent_hash links follow the filtered path,
+ * the topmost filtered node has an empty parent_hash, and the new leaf's
+ * parent_hash must equal the parent hash of the bottom filtered node (empty
+ * when the filtered path is empty) (RFC 9420 §7.9).
  * The tree is mutated in place and may be partially updated if validation
  * fails; callers that need rollback should apply to a staged copy.
  */

@@ -2069,20 +2069,14 @@ mdk_treekem_node_contains_leaf(uint32_t node_idx, uint32_t leaf_idx,
            mdk_treekem_node_contains_leaf(mls_tree_right(node_idx), leaf_idx, n_leaves);
 }
 
+/* RFC 9420 §7.6: an UpdatePath has one node per filtered direct path node
+ * (none when every copath subtree is blank). */
 static int
 mdk_treekem_update_path_nodes(const MlsRatchetTree *tree, uint32_t sender_leaf,
                               uint32_t *out, uint32_t max_len, uint32_t *out_len)
 {
     if (!tree || !out || !out_len || sender_leaf >= tree->n_leaves) return -1;
-    if (mls_tree_filtered_direct_path(tree, sender_leaf, out, max_len, out_len) != 0)
-        return -1;
-    uint32_t sender_node = mls_tree_leaf_to_node(sender_leaf);
-    uint32_t root = mls_tree_root(tree->n_leaves);
-    if (*out_len == 0 && sender_node != root) {
-        if (mls_tree_direct_path(sender_node, tree->n_leaves, out, max_len, out_len) != 0)
-            return -1;
-    }
-    return 0;
+    return mls_tree_filtered_direct_path(tree, sender_leaf, out, max_len, out_len);
 }
 
 static int
