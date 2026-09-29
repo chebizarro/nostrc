@@ -1245,9 +1245,9 @@ test_card_cancel_and_errors(void)
   g_assert_no_error(error);
 
   /* Damaged on the server: said, no Try Again. */
-  gsize size = 0;
-  guint8 *tampered = g_memdup2(g_bytes_get_data(blossom_fixture_get_blob(f.blossom, file->x),
-                                                &size), size);
+  GBytes *stored = blossom_fixture_get_blob(f.blossom, file->x);
+  gsize size = g_bytes_get_size(stored);
+  guint8 *tampered = g_memdup2(g_bytes_get_data(stored, NULL), size);
   tampered[size - 20] ^= 0x10;
   g_autoptr(GBytes) bad = g_bytes_new_take(tampered, size);
   blossom_fixture_put_blob(f.blossom, file->x, bad);

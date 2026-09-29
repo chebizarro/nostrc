@@ -709,8 +709,8 @@ test_download_errors(void)
 
   /* Damaged: the server's copy has one flipped bit. */
   g_autoptr(GBytes) blob = g_bytes_ref(blossom_fixture_get_blob(f.blossom, u.file->x));
-  gsize size = 0;
-  guint8 *tampered = g_memdup2(g_bytes_get_data(blob, &size), size);
+  gsize size = g_bytes_get_size(blob);
+  guint8 *tampered = g_memdup2(g_bytes_get_data(blob, NULL), size);
   tampered[size / 2] ^= 0x01;
   g_autoptr(GBytes) bad = g_bytes_new_take(tampered, size);
   blossom_fixture_put_blob(f.blossom, u.file->x, bad);
