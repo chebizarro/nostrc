@@ -157,7 +157,7 @@ rc = marmot_accept_welcome(m, &preview);
 // Send
 MarmotOutgoingMessage out;
 int rc = marmot_create_message(m, group_id, inner_event, &out);
-// out.event → kind:445 event to publish
+// out.event_json → kind:445 event, signed by a fresh ephemeral key: publish as is
 
 // Receive (application messages and Commits share kind:445)
 MarmotMessageResult result;
@@ -168,9 +168,14 @@ if (result.type == MARMOT_RESULT_APPLICATION_MESSAGE) {
     // the group moved to a new epoch; result.commit.updated_group
 }
 
-// Group changes return the Commit to publish (sign with an ephemeral key)
+// Group changes return a pending Commit (signed kind:445): publish it, then
+// merge once a relay answered OK, or clear it if none did.
 char *commit_json = NULL;
 rc = marmot_update_group_metadata(m, group_id, &config, &commit_json);
+if (publish_until_relay_ok(commit_json))          /* the application's relay code */
+    rc = marmot_merge_pending_commit(m, group_id);  /* MARMOT_ERR_WRONG_EPOCH: lost a race */
+else
+    rc = marmot_clear_pending_commit(m, group_id);
 ```
 
 ### MIP-04: Encrypted Media
@@ -219,58 +224,148 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ### 0.5.0 (unreleased): Commits are published and processed (nostrc-9ata)
 
-**Breaking API change** (MINOR for 0.x): `marmot_update_group_metadata()`
-gains a required `char **out_commit_json` parameter. The metadata Commit used
-to be discarded, so only the committer moved to the new epoch.
+**Breaking API and behaviour change** (MINOR for 0.x). Members now apply each
+other's Commits. A Commit is applied only once a relay has accepted it. Every
+kind:445 event comes back signed.
 
-- **Migration.** Pass `&commit_json`, sign it with a fresh ephemeral key and
-  publish it to the group relays like any kind:445 event; free it with
-  `free()`. `NULL` is `MARMOT_ERR_INVALID_ARG`.
-- **Commit events (wire change).** The kind:445 event returned by
-  `marmot_create_group()`, `marmot_add_members()`, `marmot_remove_members()`
-  and `marmot_update_group_metadata()` is now NIP-44-encrypted with the
-  exporter secret of the epoch the Commit was made in, exactly like
-  application messages (MIP-03), and carries only the `h` tag. Before, the
-  content was the plaintext base64 MLSMessage with an `encoding` tag, which
-  exposed the group's public MLS state on relays; no libmarmot release ever
-  processed those events, so none are accepted now.
-- **Commit ingestion.** `marmot_process_message()` recognises a kind:445
-  whose content is a PublicMessage Commit and applies it through
-  `mls_group_process_commit()` on a private copy of the stored state, then
-  checks the result against MIP-01 before storing anything: a Commit that
-  adds or removes members or changes the GroupContext extensions is
-  privileged and needs a committer who is an admin of the pre-Commit
-  GroupData (`MARMOT_ERR_COMMIT_FROM_NON_ADMIN`, same rule as the producers,
-  including legacy groups without admins); the GroupData must remain present
-  and well formed and keep its `nostr_group_id`
-  (`MARMOT_ERR_PROTOCOL_GROUP_MISMATCH`); the committer keeps its account
-  (`MARMOT_ERR_IDENTITY_CHANGE`). On success the new MLS state, its exporter
-  secret and the group record (epoch, name, description, admins) are stored
-  and the result is `MARMOT_RESULT_COMMIT` with `commit.updated_group`.
-  Producers run the same check on their own Commits before publishing.
-- **Epoch ordering.** A Commit for the current epoch advances the group. The
-  parent state of the last applied Commit and that Commit's ordering key are
-  retained (new `mls_kv` label `mls_group_parent`, keyed by the MLS group id)
-  so a Commit for the previous epoch is judged against it: the same bytes
-  again are `MARMOT_RESULT_OWN_MESSAGE` (relay echo, duplicate); a competing
-  Commit replaces the applied one only if it wins the Marmot same-epoch
-  ordering (protocol-core/convergence.md, "Same-epoch races": privileged
-  before ordinary, then the lower committer account key, then the lower
-  SHA-256 of the Commit MLSMessage; transport timestamps and event ids never
-  count), else it is `MARMOT_ERR_WRONG_EPOCH`, as is any older Commit. A
-  Commit from a future epoch cannot be decrypted yet (`MARMOT_ERR_NIP44`) and
-  applies once the missing Commits have been processed. Every rejection
-  leaves storage untouched. This is a bounded subset of Marmot convergence:
-  one-Commit branches from the parent epoch, no witness scoring, no bounded
-  collection passes, no invalidation of messages already delivered on a
-  losing branch (follow-up beads).
-- **Persistence.** Each epoch transition writes the exporter secret, the
-  retained parent, the MLS state and the group record in that order and
-  restores the earlier records if a later write fails (the backends have no
-  transactions yet, nostrc-qp24.7). `MarmotStorage` implementations that
-  snapshot a group's MLS state must include the `mls_group_parent` label
-  (GhStoreMarmot does).
-- Standalone Proposal messages return `MARMOT_ERR_UNSUPPORTED` (not queued).
+#### Migration
+
+- **Metadata updates return the Commit.** `marmot_update_group_metadata()`
+  gains a required `char **out_commit_json` (`NULL` is
+  `MARMOT_ERR_INVALID_ARG`). Before 0.5.0 the metadata Commit was discarded,
+  so only the committer moved to the new epoch.
+- **Commits are pending until a relay accepts them** (legacy MIP-03: do not
+  apply a Commit before a relay confirms it). `marmot_add_members()`,
+  `marmot_remove_members()` and `marmot_update_group_metadata()` no longer
+  change the group; they store a *pending* Commit and return its event.
+  - Publish the event to the group relays.
+  - When one relay answers NIP-01 `OK`, call `marmot_merge_pending_commit()`.
+    Send an Add's Welcomes only after that.
+  - When no relay accepts it, call `marmot_clear_pending_commit()` (new).
+  - Until then, the next Commit is `MARMOT_ERR_OWN_COMMIT_PENDING`.
+  - If a competing member's Commit wins while ours is pending, the merge
+    returns `MARMOT_ERR_WRONG_EPOCH`, ours is discarded and the group follows
+    the winner. Do not send that Add's Welcomes.
+  - `marmot_create_group()` still applies immediately: only its joiners see
+    its Commit.
+- **Every kind:445 is signed** with a fresh ephemeral key (MIP-03), never the
+  account key and never reused. This covers `marmot_create_message()` and all
+  Commit events. Callers that signed the event themselves must stop; it can be
+  published as is.
+- **Many members, one Commit** (nostrc-wc6v). `marmot_create_group()`,
+  `marmot_add_members()` and `marmot_remove_members()` put all their Adds or
+  Removes in one Commit with one Welcome. Each joiner's `EncryptedGroupSecrets`
+  carries its own path secret. Before, each entry was a separate Commit and
+  only the last was published, so every other member and every earlier
+  invitee was left behind. Removing the same member twice is
+  `MARMOT_ERR_INVALID_ARG`.
+
+#### Wire changes
+
+- **Commit events.** The kind:445 content is the Commit `MLSMessage`,
+  NIP-44-encrypted with the exporter secret of the epoch the Commit was made
+  in, like application messages. The only tag is `h`.
+- **What changed.** Before, the content was the plaintext base64 MLSMessage
+  with an `encoding` tag, which exposed the group's MLS state on relays. No
+  libmarmot release processed those events, so none are accepted now.
+
+#### Commit ingestion
+
+`marmot_process_message()` applies a received Commit through
+`mls_group_process_commit()` on a private copy of the stored state. It then
+checks the result against MIP-01 before storing anything:
+- A Commit that adds or removes members, or changes the GroupContext
+  extensions, is privileged. Its committer must be an admin of the pre-Commit
+  GroupData (`MARMOT_ERR_COMMIT_FROM_NON_ADMIN`). This is the producers' own
+  rule, including legacy groups without admins.
+- The GroupData must stay present and well formed, and keep its
+  `nostr_group_id` (`MARMOT_ERR_PROTOCOL_GROUP_MISMATCH`).
+- The committer keeps its account (`MARMOT_ERR_IDENTITY_CHANGE`).
+
+On success the new MLS state, its exporter secret and the group record are
+stored, and the result is `MARMOT_RESULT_COMMIT` with `commit.updated_group`.
+
+#### Epoch rules
+
+| The Commit is for… | Result |
+|---|---|
+| the current epoch, nothing pending | applied |
+| the current epoch, our own Commit pending | competes with ours now (see ordering below); a loser is kept and `MARMOT_ERR_OWN_COMMIT_PENDING` returned, and `marmot_clear_pending_commit()` processes it again |
+| the previous epoch, same bytes as the one applied | `MARMOT_RESULT_OWN_MESSAGE` |
+| the previous epoch, a different Commit | replaces the applied one only if it wins the ordering, else `MARMOT_ERR_WRONG_EPOCH` |
+| any older epoch | `MARMOT_ERR_WRONG_EPOCH` |
+| a future epoch | cannot be decrypted yet (`MARMOT_ERR_NIP44`); retry after the missing Commits |
+
+Every rejection leaves storage untouched.
+
+**How competing Commits are ordered.** The applied Commit's parent state and
+ordering key are retained under a new `mls_kv` label, `mls_group_parent`. The
+ordering is the adopted spec's `CommitOrderingSuffix`
+(`protocol-core/convergence.md`, "Same-epoch races"):
+1. privileged before ordinary;
+2. then the lower committer account key (x-only, bytewise);
+3. then the lower SHA-256 of the Commit `MLSMessage`.
+
+Transport timestamps and event ids never count.
+
+#### Known limitations: groups can split permanently (nostrc-w1m0, P1)
+
+libmarmot implements only the last three steps of the spec's branch selection
+(the ordering above), for one-Commit branches from one retained parent. It
+does not implement branch depth, witness scoring, bounded collection passes,
+a rewind horizon beyond one epoch, or invalidation. **Concurrent Commits can
+therefore split a group permanently, including isolating an admin.** There is
+no in-band repair: the stranded members must be removed and re-added.
+
+- **Depth-2 race.**
+  1. Alice (an admin) renames while Bob self-updates.
+  2. Charlie applies Bob's Commit first and commits on top of it.
+  3. Alice's privileged Commit then wins at depth 1 for Alice, but Bob and
+     Charlie are on a depth-2 branch. The spec would select that branch;
+     libmarmot never switches Alice to it. Alice cannot decrypt Charlie's
+     Commit (`MARMOT_ERR_NIP44`), and Bob and Charlie reject Alice's
+     (`MARMOT_ERR_WRONG_EPOCH`).
+- **Relay stored a Commit we cleared.** A relay stores a Commit whose `OK`
+  never reached the committer, so the committer clears it. Members that
+  received it apply it; the committer does not.
+- **Joiners on a losing branch.** A joiner admitted by a Commit that later
+  loses the ordering stays on the losing branch.
+- **Messages across a branch switch.**
+  - Application messages decrypted on a losing branch stay delivered; the
+    spec requires withdrawing them.
+  - Messages sent on the winning branch that arrived before the switch failed
+    to decrypt and are not retained. They are lost unless a relay sends them
+    again.
+
+**Mixed-implementation groups.** The legacy MIP-03 that this wire profile
+(0xF2EE group data, NIP-44 envelopes) follows orders competing Commits by
+earliest outer `created_at`, then the smallest event id. libmarmot uses the
+adopted spec's `CommitOrderingSuffix` instead, because the adopted spec
+forbids transport metadata in branch selection. In a group that also has a
+member following the legacy rule (for example MDK), concurrent Commits can
+select different winners on different members, and the group splits as
+described above.
+
+#### Robustness
+
+- **Rollback of failed writes.** An epoch transition writes, in order, the
+  exporter secret, the retained parent, the MLS state and the group record. A
+  failed write restores the earlier ones and returns its own error. A failed
+  restore returns `MARMOT_ERR_STORAGE`, because storage may then be
+  inconsistent. A read error on a record about to be replaced aborts before
+  anything is written; only `MARMOT_ERR_STORAGE_NOT_FOUND` counts as "absent".
+- **Crash recovery.** A crash between the MLS state and the group record
+  leaves the record an epoch behind. The next message, media or Commit
+  operation brings it up to the MLS state (`marmot_group_reconcile()`), which
+  is authoritative. Real transactions are nostrc-qp24.7.
+- **Storage labels.** `MarmotStorage` implementations that snapshot a group's
+  MLS state must include the new labels `mls_group_parent` and
+  `mls_group_pending` (GhStoreMarmot does).
+- **Memory backend.** The in-memory backend no longer lists processed-event
+  markers as messages.
+- **Proposals and signatures.** Standalone Proposal messages return
+  `MARMOT_ERR_UNSUPPORTED` (not queued). Receivers do not yet verify the
+  outer kind:445 signature (follow-up).
 
 ### 0.4.1 (unreleased): Welcome path secrets
 

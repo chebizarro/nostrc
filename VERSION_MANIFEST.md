@@ -49,6 +49,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.2.0 | MINOR bump: new `marmot_gobject_client_update_group_metadata_async/_finish` and `MarmotGobjectClient::group-updated` signal (backward compatible). |
 | same | gnostr | 0.1.0 | No bump: 0.1.0 is unreleased. The mls-groups plugin gains an admin-only group rename that publishes its Commit to the group relays, and refreshes views from the client's `group-updated` (the router's post-Commit lookup used the nostr_group_id as an MLS group id and never found the group). |
 | same | groundhog | 0.10.0 | No bump beyond 0.10.0 (unreleased). GhStoreMarmot snapshots now also cover the `mls_group_parent` label; test callers follow the new signature. |
+| libmarmot 0.5.0 review fixes (W17 review B1, B2, N2, N3, N5; still unreleased 0.5.0) | libmarmot | 0.5.0 | No further bump: folded into the unreleased 0.5.0 MINOR. Adds `marmot_clear_pending_commit()`; producers now leave a pending Commit that `marmot_merge_pending_commit()` applies after a relay OK; every kind:445 (`marmot_create_message()` too) is signed by a fresh ephemeral key; multi-member add/remove/create are one Commit (nostrc-wc6v); new `mls_kv` label `mls_group_pending`. Migration notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.2.0 | No further bump: folded into unreleased 1.2.0 (adds `merge_pending_commit_async/_finish`, `clear_pending_commit_async/_finish`; `update_group_metadata` no longer emits ::group-updated before the merge). |
+| same | gnostr | 0.1.0 | No bump (unreleased): add-member and rename Commits are merged only after a group relay's OK and cleared otherwise, with the outcome shown in the view. |
+| same | groundhog | 0.10.0 | No bump (unreleased): GhStoreMarmot snapshots also cover `mls_group_pending`; tests merge their Commits. |
 
 ## Maintenance
 
