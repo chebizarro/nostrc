@@ -941,7 +941,8 @@ marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre, const MlsGroup *post
     /* pending_store() only reads these: shallow views are enough. */
     p.post = *post;
     p.event_json = (char *)event_json;
-    memcpy(p.welcomes, welcomes, welcome_count * sizeof(*welcomes));
+    if (welcome_count > 0) /* welcomes may be NULL when there are none (UBSAN) */
+        memcpy(p.welcomes, welcomes, welcome_count * sizeof(*welcomes));
     p.welcome_count = welcome_count;
     err = pending_store(m, post->group_id, post->group_id_len, &p);
     sodium_memzero(&p, sizeof(p));
