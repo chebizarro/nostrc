@@ -226,6 +226,22 @@ typedef struct {
 /** Free all internal resources of an MlsGroup (but not the struct itself). */
 void mls_group_free(MlsGroup *g);
 
+/**
+ * Reduce `g` to what reading the rest of its epoch's application messages
+ * needs (nostrc-yuj2; Marmot protocol-core/retained-history.md, "Retained
+ * cryptographic material": the app-payload row without the candidate-
+ * advancement row).  Kept: the group id, epoch, public tree, GroupContext
+ * (transcript hashes, extensions), own leaf index, sender-data secret and
+ * secret tree (only its unconsumed ratchets), forward distance.  Wiped: the
+ * init secret, membership, confirmation, exporter, external, resumption and
+ * epoch-authenticator secrets, the own signature and encryption private
+ * keys, the path-key and resumption-PSK caches.  Such a state can no longer
+ * process a Commit -- nor, with the Commit it produced, derive the next
+ * epoch again -- or send.  mls_group_decrypt() still works; the state
+ * serializes as before, with those fields zero.
+ */
+void mls_group_strip_to_reader(MlsGroup *g);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Group creation (RFC 9420 §11)
  *

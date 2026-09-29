@@ -89,6 +89,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.4.0 | MINOR bump: new `marmot_gobject_client_get_account_proof_template()`, `_set_account_proof()` and `_has_account_proof()` (backward compatible). `create_key_package_unsigned_async` now fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY` until the client is enrolled. |
 | same | gnostr | 0.1.0 | No bump (unreleased): the mls-groups KeyPackage manager enrolls the account proof (one kind:450 signing request through the signer, never published) before its first KeyPackage. Welcome rumors from libmarmot now carry the pubkey that Gnostr's NIP-59 unwrap requires. |
 | same | groundhog | 0.11.0 | No bump: rebuild only, no source change. Groundhog's tests create groups without an account proof and admit members only through the creator, whose leaf the Welcome's sender rule accepts. |
+| libmarmot 0.10.0: the retained parent retires once no competing Commit can win (nostrc-yuj2, security; still unreleased 0.10.0) | libmarmot | 0.10.0 | No further bump: folded into the unreleased 0.10.0 MINOR. The `mls_group_parent` record keeps version 1 and gains a trailer (tier, pending leaves); records without it load, and 0.9.0 cannot read records with it (a state-format change, covered by the MINOR). No public API change. Policy and exposure notes in `libmarmot/README.md`. |
+| same | marmot-gobject, gnostr, groundhog | 1.4.0, 0.1.0, 0.11.0 | No bump: rebuild only, no source change. GhStoreMarmot stores the record opaquely; Groundhog's tests read only its unchanged version and epoch prefix. |
 
 ## Maintenance
 

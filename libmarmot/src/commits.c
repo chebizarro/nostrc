@@ -18,6 +18,8 @@
  *     bytes are a duplicate, otherwise the lower CommitOrderingSuffix
  *     (privileged < ordinary, then committer, then SHA-256 digest) wins and
  *     replaces the applied Commit.  Transport metadata never takes part.
+ *     The parent is kept in full only while a competing Commit could still
+ *     win (nostrc-yuj2): see "Retained parent record" below.
  *   - anything older, or a competitor that loses: MARMOT_ERR_WRONG_EPOCH.
  *   - future epochs cannot be recovered from the NIP-44 layer (no exporter
  *     secret yet) and are rejected the same way if they ever reach here.
@@ -192,6 +194,7 @@ marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
         !committer->credential_identity)
         return MARMOT_ERR_FROM_NON_MEMBER;
     memcpy(key->committer, committer->credential_identity, 32);
+    key->committer_leaf = committer_leaf;
 
     /* Membership: an added or removed leaf, or a slot that now holds another
      * account (Remove + Add reusing it), makes the Commit privileged.  The
@@ -240,34 +243,144 @@ marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- * Retained parent record
+ * Retained parent record (nostrc-yuj2)
  *
  *   u8  version (1)
  *   u64 parent_epoch
  *   u8  privileged
  *   [32] committer, [32] digest      -- ordering key of the applied Commit
  *   opaque parent_state<V>           -- mls_group_serialize(parent)
+ *   since 0.10.0:
+ *   u8  tier                         -- 0 convergence, 1 reader
+ *   u32 pending_count, then u32 leaf -- (convergence) parent leaves that could
+ *                                       still publish a winning competitor
+ *                                       and were not yet seen in the new
+ *                                       epoch; ascending
  *
- * It holds the parent epoch's secrets for one extra epoch (the rollback
- * horizon libmarmot implements); buffers are wiped after use.
+ * The trailer extends version 1 without changing its prefix, which
+ * applications may read (Groundhog's store tests check version and epoch).
+ * The parent serves two purposes (Marmot protocol-core/retained-history.md,
+ * "Retained cryptographic material"): judging and applying a competing
+ * Commit, which needs its init secret, membership key and private path
+ * keys; and reading late application messages of its epoch, which needs only
+ * its secret tree.  The first also re-derives the current epoch from the
+ * relay-visible Commit, every key of it included (libmarmot-w19 review B1).
+ * So that part is kept only while a competitor could still matter:
+ *
+ * - CONVERGENCE: the full state.  `pending` holds the parent leaves whose
+ *   account could still publish a Commit from the parent that beats the
+ *   applied one (CommitOrderingSuffix: an admin, for a privileged Commit
+ *   with a key not above the committer's; an admin or a key not above the
+ *   committer's otherwise), other than our own leaf and the committer's.
+ *   A leaf leaves `pending` once an application message from it decrypts in
+ *   the new epoch (marmot_commit_note_witness()): that member applied the
+ *   Commit, and any Commit of its own from the parent lost to it.
+ * - READER: once `pending` is empty -- at once when nobody could win --
+ *   mls_group_strip_to_reader() keeps only what reads late messages.  A
+ *   competitor then fails with MARMOT_ERR_WRONG_EPOCH.
+ *
+ * The next Commit replaces the record either way.  No wall-clock bound:
+ * Marmot convergence never depends on local time, and members that retired
+ * at different moments would disagree about a late winning competitor.
+ *
+ * A record without the trailer (libmarmot 0.5.0-0.9.0) loads as CONVERGENCE
+ * with every parent leaf that could win pending (the committer's leaf
+ * unknown).  Libmarmot 0.9.0 and older cannot read a record with the
+ * trailer: after a downgrade, late messages and competitors of that epoch
+ * fail (closed) until the next Commit.
  * ──────────────────────────────────────────────────────────────────────── */
 
+#define PARENT_TIER_CONVERGENCE 0
+#define PARENT_TIER_READER      1
+
+typedef struct {
+    uint64_t        parent_epoch;
+    MarmotCommitKey key;
+    uint8_t         tier;
+    uint32_t       *pending;
+    size_t          n_pending;
+    MlsGroup        parent;
+} RetainedParent;
+
+static void
+retained_clear(RetainedParent *rp)
+{
+    mls_group_free(&rp->parent);
+    free(rp->pending);
+    memset(rp, 0, sizeof(*rp));
+}
+
+/* Could the account `id` publish a Commit from `parent` that beats `key`? */
+static bool
+could_win(const MarmotGroupDataExtension *gde, const uint8_t id[32],
+          const MarmotCommitKey *key)
+{
+    int cmp = memcmp(id, key->committer, 32);
+    bool admin = gde_is_admin(gde, id);
+    return key->privileged ? (admin && cmp <= 0) : (admin || cmp <= 0);
+}
+
+/* The CONVERGENCE `pending` list for `parent` and the applied Commit `key`
+ * (`committer_leaf` UINT32_MAX when unknown). */
 static int
-retained_encode(const MlsGroup *parent, const MarmotCommitKey *key,
-                uint8_t **out, size_t *out_len)
+retained_pending_compute(const MlsGroup *parent, const MarmotCommitKey *key,
+                         uint32_t committer_leaf, uint32_t **out, size_t *n_out)
+{
+    *out = NULL;
+    *n_out = 0;
+    MarmotGroupDataExtension *gde = NULL;
+    /* An unreadable GroupData: count every member as a possible winner. */
+    bool gde_ok = group_data_of(parent, &gde) == MARMOT_OK;
+    uint32_t *list = parent->tree.n_leaves ? calloc(parent->tree.n_leaves, sizeof(*list)) : NULL;
+    if (parent->tree.n_leaves && !list) {
+        marmot_group_data_extension_free(gde);
+        return -1;
+    }
+    size_t n = 0;
+    for (uint32_t i = 0; i < parent->tree.n_leaves; i++) {
+        const MlsLeafNode *leaf = leaf_at(parent, i);
+        if (!leaf || i == parent->own_leaf_index || i == committer_leaf ||
+            leaf->credential_identity_len != 32 || !leaf->credential_identity)
+            continue;   /* blank, us, the committer, or no account to commit */
+        if (!gde_ok || could_win(gde, leaf->credential_identity, key))
+            list[n++] = i;
+    }
+    marmot_group_data_extension_free(gde);
+    *out = list;
+    *n_out = n;
+    return 0;
+}
+
+/* CONVERGENCE with nothing pending becomes READER. */
+static void
+retained_settle(RetainedParent *rp)
+{
+    if (rp->tier == PARENT_TIER_CONVERGENCE && rp->n_pending == 0) {
+        mls_group_strip_to_reader(&rp->parent);
+        rp->tier = PARENT_TIER_READER;
+    }
+}
+
+static int
+retained_encode(const RetainedParent *rp, uint8_t **out, size_t *out_len)
 {
     uint8_t *blob = NULL;
     size_t blob_len = 0;
-    if (mls_group_serialize(parent, &blob, &blob_len) != 0) return -1;
+    if (mls_group_serialize(&rp->parent, &blob, &blob_len) != 0) return -1;
     MlsTlsBuf buf;
     int rc = -1;
-    if (mls_tls_buf_init(&buf, blob_len + 96) == 0) {
-        if (mls_tls_write_u8(&buf, PARENT_VERSION) == 0 &&
-            mls_tls_write_u64(&buf, parent->epoch) == 0 &&
-            mls_tls_write_u8(&buf, key->privileged ? 1 : 0) == 0 &&
-            mls_tls_buf_append(&buf, key->committer, 32) == 0 &&
-            mls_tls_buf_append(&buf, key->digest, 32) == 0 &&
-            mls_tls_write_opaque32(&buf, blob, blob_len) == 0) {
+    if (mls_tls_buf_init(&buf, blob_len + 128 + 4 * rp->n_pending) == 0) {
+        bool ok = mls_tls_write_u8(&buf, PARENT_VERSION) == 0 &&
+                  mls_tls_write_u64(&buf, rp->parent_epoch) == 0 &&
+                  mls_tls_write_u8(&buf, rp->key.privileged ? 1 : 0) == 0 &&
+                  mls_tls_buf_append(&buf, rp->key.committer, 32) == 0 &&
+                  mls_tls_buf_append(&buf, rp->key.digest, 32) == 0 &&
+                  mls_tls_write_opaque32(&buf, blob, blob_len) == 0 &&
+                  mls_tls_write_u8(&buf, rp->tier) == 0 &&
+                  mls_tls_write_u32(&buf, (uint32_t)rp->n_pending) == 0;
+        for (size_t i = 0; ok && i < rp->n_pending; i++)
+            ok = mls_tls_write_u32(&buf, rp->pending[i]) == 0;
+        if (ok) {
             *out = buf.data;
             *out_len = buf.len;
             rc = 0;
@@ -280,11 +393,57 @@ retained_encode(const MlsGroup *parent, const MarmotCommitKey *key,
     return rc;
 }
 
-typedef struct {
-    uint64_t        parent_epoch;
-    MarmotCommitKey key;
-    MlsGroup        parent;
-} RetainedParent;
+static int
+retained_decode(const uint8_t *data, size_t len, RetainedParent *out)
+{
+    memset(out, 0, sizeof(*out));
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, data, len);
+    uint8_t version = 0, privileged = 0;
+    uint8_t *blob = NULL;
+    size_t blob_len = 0;
+    bool ok = mls_tls_read_u8(&r, &version) == 0 && version == PARENT_VERSION &&
+              mls_tls_read_u64(&r, &out->parent_epoch) == 0 &&
+              mls_tls_read_u8(&r, &privileged) == 0 && privileged <= 1 &&
+              mls_tls_read_fixed(&r, out->key.committer, 32) == 0 &&
+              mls_tls_read_fixed(&r, out->key.digest, 32) == 0 &&
+              mls_tls_read_opaque32(&r, &blob, &blob_len) == 0;
+    out->key.privileged = privileged == 1;
+    out->key.committer_leaf = UINT32_MAX;
+    bool legacy = ok && mls_tls_reader_done(&r);   /* no trailer: 0.9.0 or older */
+    uint32_t n = 0;
+    if (ok && !legacy) {
+        ok = mls_tls_read_u8(&r, &out->tier) == 0 && out->tier <= PARENT_TIER_READER &&
+             mls_tls_read_u32(&r, &n) == 0 && n <= mls_tls_reader_remaining(&r) / 4 &&
+             (out->tier == PARENT_TIER_CONVERGENCE || n == 0);
+        if (ok && n > 0) {
+            out->pending = calloc(n, sizeof(*out->pending));
+            ok = out->pending != NULL;
+            for (uint32_t i = 0; ok && i < n; i++)
+                ok = mls_tls_read_u32(&r, &out->pending[i]) == 0 &&
+                     (i == 0 || out->pending[i] > out->pending[i - 1]);
+            out->n_pending = n;
+        }
+        ok = ok && mls_tls_reader_done(&r);
+    }
+    ok = ok && mls_group_deserialize(blob, blob_len, &out->parent) == 0;
+    free_secret(blob, blob_len);
+    if (ok) {
+        ok = out->parent.epoch == out->parent_epoch;
+        for (size_t i = 0; ok && i < out->n_pending; i++)
+            ok = out->pending[i] < out->parent.tree.n_leaves;
+    }
+    if (ok && legacy) {
+        out->tier = PARENT_TIER_CONVERGENCE;
+        ok = retained_pending_compute(&out->parent, &out->key, UINT32_MAX, &out->pending,
+                                      &out->n_pending) == 0;
+    }
+    if (!ok) {
+        retained_clear(out);
+        return -1;
+    }
+    return 0;
+}
 
 static int
 retained_load(Marmot *m, const uint8_t *gid, size_t gid_len, RetainedParent *out)
@@ -295,27 +454,86 @@ retained_load(Marmot *m, const uint8_t *gid, size_t gid_len, RetainedParent *out
     if (m->storage->mls_load(m->storage->ctx, PARENT_LABEL, gid, gid_len,
                              &data, &len) != MARMOT_OK || !data)
         return -1;
-    MlsTlsReader r;
-    mls_tls_reader_init(&r, data, len);
-    uint8_t version = 0, privileged = 0;
-    uint8_t *blob = NULL;
-    size_t blob_len = 0;
-    int rc = -1;
-    if (mls_tls_read_u8(&r, &version) == 0 && version == PARENT_VERSION &&
-        mls_tls_read_u64(&r, &out->parent_epoch) == 0 &&
-        mls_tls_read_u8(&r, &privileged) == 0 && privileged <= 1 &&
-        mls_tls_read_fixed(&r, out->key.committer, 32) == 0 &&
-        mls_tls_read_fixed(&r, out->key.digest, 32) == 0 &&
-        mls_tls_read_opaque32(&r, &blob, &blob_len) == 0 &&
-        mls_tls_reader_done(&r) &&
-        mls_group_deserialize(blob, blob_len, &out->parent) == 0) {
-        out->key.privileged = privileged == 1;
-        rc = out->parent.epoch == out->parent_epoch ? 0 : -1;
-        if (rc != 0) mls_group_free(&out->parent);
-    }
-    free_secret(blob, blob_len);
+    int rc = retained_decode(data, len, out);
     free_secret(data, len);
     return rc;
+}
+
+/* The record for `parent`, the state the Commit with `key` was applied to. */
+static int
+retained_new_encoded(const MlsGroup *parent, const MarmotCommitKey *key,
+                     uint8_t **out, size_t *out_len)
+{
+    RetainedParent rp;
+    memset(&rp, 0, sizeof(rp));
+    rp.parent_epoch = parent->epoch;
+    rp.key = *key;
+    rp.tier = PARENT_TIER_CONVERGENCE;
+    int rc = mls_clone(parent, &rp.parent) == 0 &&
+             retained_pending_compute(parent, key, key->committer_leaf, &rp.pending,
+                                      &rp.n_pending) == 0
+                 ? 0 : -1;
+    if (rc == 0) {
+        retained_settle(&rp);
+        rc = retained_encode(&rp, out, out_len);
+    }
+    retained_clear(&rp);
+    return rc;
+}
+
+MarmotError
+marmot_commit_note_witness(Marmot *m, const MlsGroup *cur, uint32_t sender_leaf,
+                           uint8_t **out_replaced, size_t *out_replaced_len)
+{
+    if (!m || !cur || !out_replaced || !out_replaced_len) return MARMOT_ERR_INVALID_ARG;
+    *out_replaced = NULL;
+    *out_replaced_len = 0;
+    MarmotStorage *s = m->storage;
+    if (!s || !s->mls_load || !s->mls_store) return MARMOT_ERR_STORAGE;
+    uint8_t *probe = NULL;
+    size_t probe_len = 0;
+    MarmotError err = s->mls_load(s->ctx, PARENT_LABEL, cur->group_id, cur->group_id_len,
+                                  &probe, &probe_len);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND || (err == MARMOT_OK && !probe)) {
+        free_secret(probe, probe_len);
+        return MARMOT_OK;
+    }
+    if (err != MARMOT_OK) return err;
+    RetainedParent rp;
+    if (retained_decode(probe, probe_len, &rp) != 0) {
+        /* Unreadable: there is nothing to judge a competitor with anyway. */
+        free_secret(probe, probe_len);
+        return MARMOT_OK;
+    }
+    size_t at = rp.n_pending;
+    for (size_t i = 0; i < rp.n_pending; i++)
+        if (rp.pending[i] == sender_leaf) at = i;
+    const MlsLeafNode *before = leaf_at(&rp.parent, sender_leaf);
+    const MlsLeafNode *now = leaf_at(cur, sender_leaf);
+    /* The same member (account and leaf key) the parent listed. */
+    if (rp.tier == PARENT_TIER_CONVERGENCE && rp.parent_epoch + 1 == cur->epoch &&
+        at < rp.n_pending && before && now && same_identity(before, now) &&
+        memcmp(before->signature_key, now->signature_key, MLS_SIG_PK_LEN) == 0) {
+        memmove(&rp.pending[at], &rp.pending[at + 1],
+                (rp.n_pending - at - 1) * sizeof(*rp.pending));
+        rp.n_pending--;
+        retained_settle(&rp);
+        uint8_t *blob = NULL;
+        size_t blob_len = 0;
+        err = retained_encode(&rp, &blob, &blob_len) == 0
+                  ? s->mls_store(s->ctx, PARENT_LABEL, cur->group_id, cur->group_id_len,
+                                 blob, blob_len)
+                  : MARMOT_ERR_SERIALIZATION;
+        free_secret(blob, blob_len);
+        if (err == MARMOT_OK) {
+            *out_replaced = probe;
+            *out_replaced_len = probe_len;
+            probe = NULL;
+        }
+    }
+    free_secret(probe, probe_len);
+    retained_clear(&rp);
+    return err;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -350,13 +568,13 @@ marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
     }
 
     RetainedParent rp;
-    if (retained_load(m, gid->data, gid->len, &rp) != 0) {
+    if (retained_decode(probe, probe_len, &rp) != 0) {
         free_secret(probe, probe_len);
         return MARMOT_ERR_DESERIALIZATION;
     }
     if (rp.parent_epoch != epoch) {
         free_secret(probe, probe_len);
-        mls_group_free(&rp.parent);
+        retained_clear(&rp);
         return MARMOT_ERR_STORAGE_NOT_FOUND;   /* not the epoch we retain */
     }
     int rc = mls_group_decrypt(&rp.parent, msg, msg_len, out_plaintext, out_len, out_sender);
@@ -370,10 +588,10 @@ marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
     }
     if (rc == 0) {
         /* The parent's ratchet moved on (no key is ever used twice): store it
-         * in the same transaction as the message. */
+         * in the same transaction as the message, in either tier. */
         uint8_t *blob = NULL;
         size_t blob_len = 0;
-        err = retained_encode(&rp.parent, &rp.key, &blob, &blob_len) == 0
+        err = retained_encode(&rp, &blob, &blob_len) == 0
                   ? s->mls_store(s->ctx, PARENT_LABEL, gid->data, gid->len, blob, blob_len)
                   : MARMOT_ERR_SERIALIZATION;
         free_secret(blob, blob_len);
@@ -391,7 +609,7 @@ marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
                   ? (MarmotError)rc : MARMOT_ERR_MLS;
     }
     free_secret(probe, probe_len);
-    mls_group_free(&rp.parent);
+    retained_clear(&rp);
     return err;
 }
 
@@ -471,7 +689,7 @@ marmot_commit_persist(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
         goto out;
     }
 
-    if (retained_encode(pre, key, &new_parent, &new_parent_len) != 0 ||
+    if (retained_new_encoded(pre, key, &new_parent, &new_parent_len) != 0 ||
         mls_group_serialize(post, &new_state, &new_state_len) != 0) {
         err = MARMOT_ERR_SERIALIZATION;
         goto out;
@@ -1367,12 +1585,16 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                 err = MARMOT_ERR_WRONG_EPOCH;
             } else if (memcmp(digest, rp.key.digest, 32) == 0) {
                 /* The Commit we applied (e.g. our own, echoed by a relay). */
-                mls_group_free(&rp.parent);
+                retained_clear(&rp);
                 mls_group_free(&cur);
                 result->type = MARMOT_RESULT_OWN_MESSAGE;
                 return MARMOT_OK;
             } else if (sender == rp.parent.own_leaf_index) {
                 err = MARMOT_ERR_WRONG_EPOCH;   /* not the Commit we made */
+            } else if (rp.tier == PARENT_TIER_READER) {
+                /* Retired (nostrc-yuj2): every member that could publish a
+                 * winning competitor was seen at the new epoch. */
+                err = MARMOT_ERR_WRONG_EPOCH;
             } else {
                 err = stage_inbound(m, &rp.parent, msg, msg_len, sender, &post,
                                     &key, &gde);
@@ -1388,7 +1610,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                         err = MARMOT_ERR_WRONG_EPOCH;   /* the applied Commit wins */
                 }
             }
-            mls_group_free(&rp.parent);
+            retained_clear(&rp);
         }
     } else {
         err = MARMOT_ERR_WRONG_EPOCH;   /* stale, or from an epoch we lack */

@@ -876,7 +876,11 @@ MarmotError marmot_save_created_message(Marmot *m,
  *   replaces it only if it wins the Marmot same-epoch ordering (privileged
  *   before ordinary, then lower committer key, then lower SHA-256 of the
  *   Commit bytes; transport timestamps and ids never count), otherwise, like
- *   any older Commit, it is MARMOT_ERR_WRONG_EPOCH.  A Commit for a future
+ *   any older Commit, it is MARMOT_ERR_WRONG_EPOCH.  Since 0.10.0 that
+ *   judgement is possible only until every member that could publish a
+ *   winning competitor was seen sending at the new epoch (nostrc-yuj2);
+ *   later, a different Commit for the previous epoch is
+ *   MARMOT_ERR_WRONG_EPOCH too.  A Commit for a future
  *   epoch cannot be decrypted yet (MARMOT_ERR_NIP44); retry it after the
  *   missing Commits.  Every rejection leaves the group unchanged.
  * - Standalone proposals: MARMOT_ERR_UNSUPPORTED (not queued)
@@ -884,7 +888,10 @@ MarmotError marmot_save_created_message(Marmot *m,
  * Late messages (since 0.7.0): an application message of the previous
  * epoch that arrives after the next Commit was applied is read with the
  * retained parent state (the state that Commit was built on, kept for one
- * epoch).  Older ones fail with MARMOT_ERR_MLS.
+ * epoch).  Older ones fail with MARMOT_ERR_MLS.  Since 0.10.0 the retained
+ * parent keeps its full state only while a competing Commit could still win;
+ * then it keeps only what reads these late messages (nostrc-yuj2; see the
+ * libmarmot README).
  *
  * Replays and reordering (since 0.8.0, nostrc-ai04): each sender's ratchet
  * is stored with the group state, so a generation decrypts once -- a message

@@ -938,6 +938,8 @@ process_group_event(Marmot *m, const char *group_event_json,
     bool used_mls = false;
     bool late = false;   /* decrypted with the retained previous-epoch state */
     StateUndo undo = { 0 };   /* the ratchet record this message replaced */
+    StateUndo parent_undo = { 0 };   /* the retained parent, if a witness settled it */
+    uint32_t live_sender = UINT32_MAX;   /* sender leaf of a current-epoch message */
     uint8_t sender_identity[32] = { 0 };   /* the MLS sender's account */
     bool have_identity = false;
     uint8_t inner_id[32] = { 0 };          /* canonical id of the inner event */
@@ -954,6 +956,7 @@ process_group_event(Marmot *m, const char *group_event_json,
                                         &sender_leaf);
         if (mls_rc == 0) {
             used_mls = true;
+            live_sender = sender_leaf;
             have_identity = marmot_mls_sender_identity(&mls_group, sender_leaf,
                                                        sender_identity) == 0;
         } else if (mls_rc == MARMOT_ERR_OWN_MESSAGE) {
@@ -1083,6 +1086,21 @@ process_group_event(Marmot *m, const char *group_event_json,
         parsed_group_event_clear(&parsed);
         return MARMOT_ERR_STORAGE;
     }
+    /* nostrc-yuj2: the sender is now known to be at this epoch; the retained
+     * parent may no longer need its full state (see commits.c). */
+    if (used_mls && !late && !duplicate) {
+        MarmotError werr = marmot_commit_note_witness(m, &mls_group, live_sender,
+                                                      &parent_undo.blob, &parent_undo.len);
+        if (werr != MARMOT_OK) {
+            state_undo_apply(m, &group->mls_group_id, &undo);
+            mls_group_free(&mls_group);
+            free(inner_json);
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return werr;
+        }
+        if (parent_undo.blob) parent_undo.label = MARMOT_MLS_PARENT_LABEL;
+    }
     if (mls_loaded) {
         mls_group_free(&mls_group);
     }
@@ -1189,6 +1207,7 @@ process_group_event(Marmot *m, const char *group_event_json,
                                                      MARMOT_MSG_STATE_PROCESSED, NULL);
         marmot_message_free(msg);
         if (err != MARMOT_OK) {
+            state_undo_apply(m, &group->mls_group_id, &parent_undo);
             state_undo_apply(m, &group->mls_group_id, &undo);
             marmot_message_result_free(result);
             marmot_group_free(group);
@@ -1206,6 +1225,7 @@ process_group_event(Marmot *m, const char *group_event_json,
     }
     err = m->storage->save_group(m->storage->ctx, group);
     if (err != MARMOT_OK) {
+        state_undo_apply(m, &group->mls_group_id, &parent_undo);
         state_undo_apply(m, &group->mls_group_id, &undo);
         marmot_message_result_free(result);
         marmot_group_free(group);
@@ -1213,6 +1233,7 @@ process_group_event(Marmot *m, const char *group_event_json,
         return err;
     }
 
+    state_undo_clear(&parent_undo);
     state_undo_clear(&undo);
     marmot_group_free(group);
     parsed_group_event_clear(&parsed);

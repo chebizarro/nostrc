@@ -3177,6 +3177,334 @@ test_unproven_creator_admits_through_itself(void)
     marmot_free(charlie.m);
 }
 
+/* ── Retiring the retained parent (nostrc-yuj2) ────────────────────────── */
+
+/* The retained parent record as stored: its parent state, and the tier from
+ * the 0.10.0 trailer (-1 without one). */
+static int
+stored_parent(Member *x, const MarmotGroupId *gid, MlsGroup *parent_out)
+{
+    MarmotStorage *st = x->m->storage;
+    uint8_t *data = NULL;
+    size_t len = 0;
+    OK(st->mls_load(st->ctx, "mls_group_parent", gid->data, gid->len, &data, &len));
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, data, len);
+    uint8_t version = 0, privileged = 0, key[64];
+    uint64_t epoch = 0;
+    uint8_t *blob = NULL;
+    size_t blob_len = 0;
+    CHECK(mls_tls_read_u8(&r, &version) == 0 && version == 1 &&
+          mls_tls_read_u64(&r, &epoch) == 0 && mls_tls_read_u8(&r, &privileged) == 0 &&
+          mls_tls_read_fixed(&r, key, sizeof(key)) == 0 &&
+          mls_tls_read_opaque32(&r, &blob, &blob_len) == 0, "parent record prefix");
+    int tier = -1;
+    if (!mls_tls_reader_done(&r)) {
+        uint8_t t8 = 0;
+        CHECK(mls_tls_read_u8(&r, &t8) == 0, "tier");
+        tier = t8;
+    }
+    if (parent_out)
+        CHECK(mls_group_deserialize(blob, blob_len, parent_out) == 0 &&
+              parent_out->epoch == epoch, "parent state");
+    sodium_memzero(blob, blob_len);
+    free(blob);
+    sodium_memzero(data, len);
+    free(data);
+    return tier;
+}
+
+#define TIER_CONVERGENCE 0
+#define TIER_READER      1
+
+/* Review B1's attack, with everything the stored state holds: the retained
+ * parent re-processes the relay-visible `commit` from `committer_leaf`, and
+ * the re-derived epoch decrypts `consumed` (an application message this
+ * member already read).  True when the plaintext comes back. */
+static bool
+store_attack(Member *x, const MarmotGroupId *gid, const char *commit, uint32_t committer_leaf,
+             const char *consumed)
+{
+    MlsGroup parent;
+    stored_parent(x, gid, &parent);
+    MarmotStorage *st = x->m->storage;
+    uint8_t exporter[32];
+    OK(st->get_exporter_secret(st->ctx, gid, parent.epoch, exporter));
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, commit, NULL), "Commit event");
+    uint8_t *msg = NULL;
+    size_t msg_len = 0;
+    CHECK(marmot_group_event_decrypt(exporter, ev->content, &msg, &msg_len) == 0,
+          "the Commit, from the relay and the stored exporter secret");
+    nostr_event_free(ev);
+    bool recovered = false;
+    if (mls_group_process_commit(&parent, msg, msg_len, committer_leaf) == 0) {
+        NostrEvent *m = nostr_event_new();
+        CHECK(m && nostr_event_deserialize_compact(m, consumed, NULL), "message event");
+        uint8_t *ct = NULL, *pt = NULL;
+        size_t ct_len = 0, pt_len = 0;
+        uint32_t sender = 0;
+        if (marmot_group_event_decrypt(parent.epoch_secrets.exporter_secret, m->content, &ct,
+                                       &ct_len) == 0 &&
+            mls_group_decrypt(&parent, ct, ct_len, &pt, &pt_len, &sender) == 0)
+            recovered = true;
+        free(ct);
+        if (pt) sodium_memzero(pt, pt_len);
+        free(pt);
+        nostr_event_free(m);
+    }
+    free(msg);
+    sodium_memzero(exporter, sizeof(exporter));
+    mls_group_free(&parent);
+    return recovered;
+}
+
+static void
+expect_app(Member *x, const char *event_json, const char *what)
+{
+    MarmotError err;
+    CHECK(deliver(x, event_json, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "%s: %s got %d", what, x->name, err);
+}
+
+/* A privileged rename `x` makes from `state` (its own view of an epoch). */
+static char *
+rename_from(MlsGroup *state, const uint8_t nostr_gid[32], const char *name)
+{
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, state->extensions_data, state->extensions_len);
+    uint16_t type = 0;
+    uint8_t *ext = NULL;
+    size_t ext_len = 0;
+    CHECK(mls_tls_read_u16(&r, &type) == 0 && type == MARMOT_EXTENSION_TYPE &&
+          mls_tls_read_opaque16(&r, &ext, &ext_len) == 0, "GroupData");
+    MarmotGroupDataExtension *gde = marmot_group_data_extension_deserialize(ext, ext_len);
+    free(ext);
+    CHECK(gde, "GroupData parse");
+    free(gde->name);
+    gde->name = strdup(name);
+    uint8_t *bytes = NULL;
+    size_t len = 0;
+    CHECK(marmot_group_data_extension_serialize(gde, &bytes, &len) == 0, "serialize");
+    marmot_group_data_extension_free(gde);
+    MlsTlsBuf list;
+    CHECK(mls_tls_buf_init(&list, len + 8) == 0 &&
+          mls_tls_write_u16(&list, MARMOT_EXTENSION_TYPE) == 0 &&
+          mls_tls_write_opaque16(&list, bytes, len) == 0, "extension list");
+    free(bytes);
+    uint8_t exporter[32];
+    memcpy(exporter, state->epoch_secrets.exporter_secret, 32);
+    MlsCommitResult res;
+    memset(&res, 0, sizeof(res));
+    CHECK(mls_group_commit_extensions(state, list.data, list.len, &res) == 0, "rename Commit");
+    char *json = event_for_commit(&res, exporter, nostr_gid);
+    mls_commit_result_clear(&res);
+    mls_tls_buf_free(&list);
+    sodium_memzero(exporter, sizeof(exporter));
+    return json;
+}
+
+/* The exposure of review B1 ends once no competitor can matter.  Alice
+ * (admin) renames; Charlie keeps the full parent while Bob (an admin whose
+ * key sorts below Alice's) could still publish a winning rename from it, and
+ * retires it when Bob speaks at the new epoch.  After that the stored state
+ * and the public Commit no longer re-derive the epoch; late messages still
+ * read; a competitor is WRONG_EPOCH and changes nothing. */
+static void
+test_retained_parent_retires_once_settled(void)
+{
+    Trio t;
+    trio_init(&t);
+    uint32_t alice_leaf = 0;
+    char *late = app_message(&t.bob, &t.gid, "sent at E, read at E+1");
+    MlsGroup bob_at_e;
+    load_mls(&t.bob, &t.gid, &bob_at_e);
+    char *commit = rename_group(&t.alice, &t.gid, "Settled");
+    expect_commit(&t.charlie, commit, "Charlie applies Alice's rename");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE,
+          "Bob could still win: the full parent is kept");
+
+    /* Alice (the committer) speaks: that proves nothing about Bob. */
+    char *m1 = app_message(&t.alice, &t.gid, "Alice at E+1");
+    expect_app(&t.charlie, m1, "Alice's first E+1 message");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE, "still waiting for Bob");
+    /* The window: stored state + Commit re-derive E+1, m1 included. */
+    CHECK(store_attack(&t.charlie, &t.gid, commit, alice_leaf, m1),
+          "inside the window the attack still works (review B1)");
+
+    /* Bob applies the rename and speaks at E+1: nobody can win any more. */
+    expect_commit(&t.bob, commit, "Bob follows");
+    char *m2 = app_message(&t.bob, &t.gid, "Bob at E+1");
+    expect_app(&t.charlie, m2, "Bob's first E+1 message");
+    MlsGroup parent;
+    CHECK(stored_parent(&t.charlie, &t.gid, &parent) == TIER_READER, "retired");
+    static const uint8_t zero[MLS_HASH_LEN];
+    CHECK(memcmp(parent.epoch_secrets.init_secret, zero, MLS_HASH_LEN) == 0 &&
+          memcmp(parent.epoch_secrets.membership_key, zero, MLS_HASH_LEN) == 0 &&
+          sodium_is_zero(parent.own_encryption_key, sizeof(parent.own_encryption_key)) &&
+          sodium_is_zero(parent.own_signature_key, sizeof(parent.own_signature_key)),
+          "no init secret, membership key or private key left");
+    mls_group_free(&parent);
+    CHECK(!store_attack(&t.charlie, &t.gid, commit, alice_leaf, m1) &&
+          !store_attack(&t.charlie, &t.gid, commit, alice_leaf, m2),
+          "retired: the stored state and the Commit no longer decrypt consumed messages");
+
+    /* Late messages of E still read, once. */
+    expect_app(&t.charlie, late, "late message after retirement");
+    char *late_again = republish(late);
+    expect_rejected(&t.charlie, &t.gid, late_again, MARMOT_ERR_MLS, "late replay");
+    free(late_again);
+    /* The applied Commit again is ours; a competitor is refused, unchanged. */
+    MarmotError err;
+    CHECK(deliver(&t.charlie, commit, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE && err == MARMOT_OK,
+          "the applied Commit again");
+    char *rival = rename_from(&bob_at_e, t.nostr_gid, "Bob's rival");
+    char *rival_env = republish(rival);
+    expect_rejected(&t.charlie, &t.gid, rival_env, MARMOT_ERR_WRONG_EPOCH,
+                    "a competitor after retirement");
+    expect_converged(t.all, 3, &t.gid, "Settled", t.epoch + 1);
+    expect_messages_flow(t.all, 3, &t.gid);
+
+    /* The next Commit replaces the record (with a full parent again: a
+     * rename by Bob leaves nobody who could beat it). */
+    char *next = rename_group(&t.bob, &t.gid, "Next");
+    expect_commit(&t.charlie, next, "Charlie applies Bob's rename");
+    expect_commit(&t.alice, next, "Alice applies Bob's rename");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_READER,
+          "no admin sorts below Bob: retired at once");
+
+    free(next);
+    free(rival_env);
+    free(rival);
+    mls_group_free(&bob_at_e);
+    free(m2);
+    free(m1);
+    free(commit);
+    free(late);
+    trio_clear(&t);
+}
+
+/* Inside the window a winning competitor still replaces the applied Commit,
+ * as before (Marmot convergence, "Same-epoch races"). */
+static void
+test_competitor_within_window_still_wins(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup bob_at_e;
+    load_mls(&t.bob, &t.gid, &bob_at_e);
+    char *commit = rename_group(&t.alice, &t.gid, "Alice's");
+    expect_commit(&t.charlie, commit, "Charlie applies Alice's rename");
+    char *m1 = app_message(&t.alice, &t.gid, "Alice at E+1");
+    expect_app(&t.charlie, m1, "Alice's E+1 message");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE, "window open");
+    char *rival = rename_from(&bob_at_e, t.nostr_gid, "Bob's");
+    expect_commit(&t.charlie, rival, "Bob's lower-key rename wins inside the window");
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(t.charlie.m, &t.gid, &g));
+    CHECK(g->name && strcmp(g->name, "Bob's") == 0 && g->epoch == t.epoch + 1, "switched");
+    marmot_group_free(g);
+    free(rival);
+    free(m1);
+    free(commit);
+    mls_group_free(&bob_at_e);
+    trio_clear(&t);
+}
+
+/* Nobody could publish a winning competitor: the parent is reduced when the
+ * Commit is applied.  Bob (admin) applies Alice's privileged rename: Alice
+ * committed, Charlie is no admin.  Late messages still read. */
+static void
+test_retained_parent_retired_at_once(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *late = app_message(&t.charlie, &t.gid, "Charlie at E");
+    char *commit = rename_group(&t.alice, &t.gid, "At once");
+    char *m1 = app_message(&t.alice, &t.gid, "Alice at E+1");
+    expect_commit(&t.bob, commit, "Bob applies");
+    CHECK(stored_parent(&t.bob, &t.gid, NULL) == TIER_READER, "nobody can win: retired at once");
+    expect_app(&t.bob, m1, "Alice's E+1 message");
+    CHECK(!store_attack(&t.bob, &t.gid, commit, 0, m1), "no re-derivation");
+    expect_app(&t.bob, late, "Charlie's late E message");
+    free(m1);
+    free(commit);
+    free(late);
+    trio_clear(&t);
+}
+
+/* A record written by 0.9.0 (no trailer) loads as the full parent, with
+ * every member that could win pending -- the committer too, whose leaf the
+ * old record does not name -- and retires the same way. */
+static void
+test_retained_parent_without_trailer_migrates(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *late = app_message(&t.bob, &t.gid, "late");
+    char *commit = rename_group(&t.alice, &t.gid, "Old record");
+    expect_commit(&t.charlie, commit, "Charlie applies");
+    MarmotStorage *st = t.charlie.m->storage;
+    uint8_t *data = NULL;
+    size_t len = 0;
+    OK(st->mls_load(st->ctx, "mls_group_parent", t.gid.data, t.gid.len, &data, &len));
+    /* Cut the trailer: tier, count, one pending leaf (Bob). */
+    CHECK(len > 9 && data[len - 9] == TIER_CONVERGENCE, "trailer with one pending leaf");
+    OK(st->mls_store(st->ctx, "mls_group_parent", t.gid.data, t.gid.len, data, len - 9));
+    sodium_memzero(data, len);
+    free(data);
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == -1, "a 0.9.0 record");
+    expect_app(&t.charlie, late, "late message through the old record");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE, "rewritten, still full");
+    expect_commit(&t.bob, commit, "Bob follows");
+    char *m2 = app_message(&t.bob, &t.gid, "Bob at E+1");
+    expect_app(&t.charlie, m2, "Bob speaks");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE,
+          "the committer's leaf is unknown: Alice still pending");
+    char *m3 = app_message(&t.alice, &t.gid, "Alice at E+1");
+    expect_app(&t.charlie, m3, "Alice speaks");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_READER, "retired");
+    free(m3);
+    free(m2);
+    free(commit);
+    free(late);
+    trio_clear(&t);
+}
+
+/* Settling the parent is part of the message's writes: when it, or a later
+ * write, fails, the message is not delivered and nothing changes (storage
+ * without transactions: the records are written back). */
+static void
+test_settling_write_failure_keeps_everything(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *commit = rename_group(&t.alice, &t.gid, "Moved");
+    expect_commit(&t.charlie, commit, "Charlie applies");
+    expect_commit(&t.bob, commit, "Bob follows");
+    char *m2 = app_message(&t.bob, &t.gid, "Bob at E+1");
+    MarmotError err;
+    for (int round = 0; round < 2; round++) {
+        Snapshot before;
+        snapshot(&t.charlie, &t.gid, &before);
+        faults_arm(&t.charlie);
+        if (round == 0) g_faults.fail_at = 2;              /* the parent write */
+        else g_faults.fail_save_message = true;            /* after it */
+        deliver(&t.charlie, m2, &err, NULL);
+        faults_disarm(&t.charlie);
+        CHECK(err != MARMOT_OK, "round %d: delivered despite the failure", round);
+        expect_unchanged(&t.charlie, &t.gid, &before, "settling failed");
+        snapshot_clear(&before);
+        CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE,
+              "round %d: still the full parent", round);
+    }
+    expect_app(&t.charlie, m2, "delivered once storage works");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_READER, "retired");
+    free(m2);
+    free(commit);
+    trio_clear(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -3215,6 +3543,11 @@ main(int argc, char **argv)
     RUN(test_welcome_with_forged_member_rejected);
     RUN(test_account_proof_enrollment);
     RUN(test_unproven_creator_admits_through_itself);
+    RUN(test_retained_parent_retires_once_settled);
+    RUN(test_competitor_within_window_still_wins);
+    RUN(test_retained_parent_retired_at_once);
+    RUN(test_retained_parent_without_trailer_migrates);
+    RUN(test_settling_write_failure_keeps_everything);
     printf("All commit tests passed\n");
     return 0;
 }

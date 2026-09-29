@@ -266,8 +266,9 @@ void mls_secret_tree_sender_discard(MlsSenderSnapshot *snap);
  * sender whose ratchets started, every ratchet secret below the next
  * generation and every used key are gone, and cannot be derived from this
  * tree.  The encryption_secret and internal node secrets are never stored.
- * (The group's retained parent state plus the public Commit can derive the
- * whole epoch again; see the format notes in mls_group.c, nostrc-yuj2.)
+ * (While the group's retained parent is kept in full, it and the public
+ * Commit can derive the whole next epoch again; since 0.10.0 only until the
+ * parent is retired.  See the format notes in mls_group.c, nostrc-yuj2.)
  */
 int mls_secret_tree_serialize(const MlsSecretTree *st, MlsTlsBuf *buf);
 

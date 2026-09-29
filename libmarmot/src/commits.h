@@ -35,6 +35,7 @@ typedef struct {
     bool    privileged;       /**< committer had to be an admin (Add, Remove, GroupData change) */
     uint8_t committer[32];    /**< committer's Nostr account key (leaf credential) */
     uint8_t digest[32];       /**< SHA-256 of the Commit MLSMessage bytes */
+    uint32_t committer_leaf;  /**< its leaf in the parent (marmot_commit_authorize()) */
 } MarmotCommitKey;
 
 /**
@@ -64,8 +65,9 @@ MarmotError marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
  * Persist an applied epoch transition: the exporter secret of post->epoch,
  * the retained parent (`pre` plus the Commit's ordering key, used to judge a
  * competing Commit for the same epoch and to read late application messages
- * of `pre`'s epoch), the new MLS state, and `group` (updated from `post_gde`
- * and post->epoch).  It runs inside the operation's storage transaction
+ * of `pre`'s epoch; reduced to the late-message part at once when no member
+ * could publish a winning competitor, nostrc-yuj2), the new MLS state, and
+ * `group` (updated from `post_gde` and post->epoch).  It runs inside the operation's storage transaction
  * (nostrc-qp24.7), which makes the four writes atomic; for backends without
  * transactions a failed write also restores every record already written,
  * so on error the stored state is as it was.
@@ -98,6 +100,19 @@ MarmotError marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid,
                                        uint8_t **out_plaintext, size_t *out_len,
                                        uint32_t *out_sender,
                                        uint8_t out_sender_identity[32],
+                                       uint8_t **out_replaced, size_t *out_replaced_len);
+
+/**
+ * nostrc-yuj2: an application message from `sender_leaf` decrypted and
+ * authenticated in `cur`'s epoch.  If the retained parent still keeps its
+ * full state waiting for that member (it could have published a winning
+ * competing Commit), it is off the list now; when nobody is left, the parent
+ * is reduced to what reads late messages (mls_group_strip_to_reader()).  On
+ * a change *out_replaced holds the record as it was (caller wipes and frees
+ * it, and writes it back if a later write of the operation fails).  A
+ * storage error fails the operation; an unreadable record is left alone.
+ */
+MarmotError marmot_commit_note_witness(Marmot *m, const MlsGroup *cur, uint32_t sender_leaf,
                                        uint8_t **out_replaced, size_t *out_replaced_len);
 
 /**

@@ -225,7 +225,7 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ## Changelog
 
-### 0.10.0 (unreleased): member leaves are bound to their accounts (nostrc-7vyi, security)
+### 0.10.0 (unreleased): member leaves are bound to their accounts; the retained parent retires (nostrc-7vyi, nostrc-yuj2, security)
 
 **Security fix, wire change and new API** (MINOR for 0.x).
 
@@ -357,8 +357,90 @@ groups. There is no adopted peer to test against either.
   - Internal: `marmot_commit_authorize()` takes the legacy flag; new
     `mls_group_create_with_leaf_extensions()`,
     `mls_welcome_process_parsed_signer()` and `marmot_leaf_proof_status()`.
-- **State.** Unchanged. The proof lives in the leaf and is stored with the
-  tree.
+- **State.** Unchanged by the binding: the proof lives in the leaf and is
+  stored with the tree. (The retained-parent record changes; see below.)
+
+#### The retained parent retires once no competing Commit can win (nostrc-yuj2, security)
+
+**What was exposed.** Before 0.10.0, after every Commit the store kept the
+previous epoch's full state as the retained parent. Together with the
+relay-visible Commit it derives the current epoch again, so whoever obtained
+the store could decrypt every message of the current epoch, including
+messages already read, until the next Commit (review B1; see the 0.8.0
+advisory). 0.10.0 keeps that state only while it can still matter.
+
+- **The parent's two jobs.** Marmot `protocol-core/retained-history.md`
+  ("Retained cryptographic material") separates them.
+  - Judging and applying a competing Commit from the parent needs its init
+    secret, membership key, and the private keys that open an UpdatePath.
+    That is exactly what derives the current epoch again.
+  - Reading the parent epoch's late application messages needs only its
+    sender-data secret and secret tree (the unconsumed ratchets). Neither
+    derives anything of the current epoch.
+- **Policy.** The full parent is kept while some member could still publish
+  a Commit from the parent that beats the applied one (`CommitOrderingSuffix`).
+  - **Who could win.** For a privileged Commit: an admin of the parent's
+    GroupData whose account key does not sort above the committer's. For an
+    ordinary Commit: any admin, or any member whose key does not sort above
+    the committer's. The committer and we do not count.
+  - **When a member stops counting.** Once one of its application messages
+    decrypts and authenticates at the new epoch, on our branch. That member
+    applied the Commit, so any Commit it had made from the parent lost to it.
+  - **Retirement.** When nobody is left, the parent keeps only its
+    late-message part, written in the same storage transaction as that
+    message. This happens at once when nobody could win, for example in a
+    two-member group, or when the committer is the only admin whose key sorts
+    that low.
+  - **At the latest,** the next Commit replaces the parent, as before.
+- **After retirement.**
+  - The parent no longer holds the init, membership, confirmation, exporter,
+    external, resumption and authenticator secrets, the own leaf and path
+    private keys, or the PSK cache (`mls_group_strip_to_reader()`).
+  - The stored state and the public Commit therefore no longer derive the
+    current epoch.
+  - Late messages of the parent epoch still decrypt, once each.
+  - The applied Commit, delivered again, is still `MARMOT_RESULT_OWN_MESSAGE`.
+  - A different Commit for the parent epoch fails with
+    `MARMOT_ERR_WRONG_EPOCH`. Only a member already seen at the new epoch
+    could have sent it, or one that cannot win. An honest member's rival
+    Commit lost to the applied one on its own client, so honest members agree
+    on the outcome.
+- **What a stolen store still exposes.**
+  - While the full parent is kept: every message of the current epoch, as
+    before.
+  - At all times: the unconsumed keys of the current epoch (the live state)
+    and of the parent epoch (the late-message part), until the next Commit.
+  - After retirement: no consumed key of the current epoch.
+  - The exporter secrets of earlier epochs stay in the exporter-secret table,
+    as before. They open old kind:445 envelopes (Commits, and ciphertexts
+    whose keys are gone), not message keys.
+- **Alternatives considered.**
+  - *Wall-clock bound: rejected.* Marmot convergence never depends on local
+    time (`protocol-core/convergence.md`: deferred Commits expire by epoch).
+    Members that retired at different moments would disagree about a late
+    winning competitor, and the group would split.
+  - *Message count: rejected.* A count of messages says nothing about who
+    applied the Commit.
+  - *Acknowledgment of our own message: not possible.* libmarmot never learns
+    of relay acknowledgments.
+- **Limitations.**
+  - A group in which a member who could still win stays silent keeps the
+    full parent until that member speaks or the next Commit: the 0.9.0
+    exposure, no worse.
+  - A malicious member already seen at the new epoch can still publish a
+    competing Commit. It then wins where the parent is still full and loses
+    where it has retired. Malicious members could already split groups
+    (nostrc-w1m0).
+- **State format.** The `mls_group_parent` record keeps version 1 and its
+  layout, and gains a trailer: the tier and the parent leaves still pending.
+  - A record without the trailer (0.9.0 and older) loads with the full parent
+    and every member that could win pending. The committer is pending too,
+    because the old record does not name its leaf.
+  - libmarmot 0.9.0 cannot read a record with the trailer. After a downgrade,
+    that epoch's late messages fail and its competitors are refused until the
+    next Commit.
+- **API/ABI.** No public change. Internal: `mls_group_strip_to_reader()`,
+  `marmot_commit_note_witness()`, `MarmotCommitKey.committer_leaf`.
 
 ### 0.9.0 (unreleased): application messages are signed and bound to their author (nostrc-we6g, security)
 
@@ -482,19 +564,20 @@ upgrade. Only a new epoch ends that. Messages sent before the upgrade may
 have shared a key: treat their confidentiality against members and holders
 of the exporter secret as weakened.
 
-**What 0.8.0 does not protect (review B1).** After every Commit, libmarmot
-keeps the previous epoch's full state as the retained parent
+**What 0.8.0 and 0.9.0 do not protect (review B1).** After every Commit,
+libmarmot keeps the previous epoch's full state as the retained parent
 (`mls_group_parent`), to judge a competing Commit and read late messages.
 That state holds the parent's init secret and the private keys that open
 the Commit's UpdatePath, and relays carry the Commit. Whoever obtains the
 whole store can therefore process the Commit again, derive the current
 epoch from scratch, and decrypt every message of the current epoch,
 including messages already read, plus the parent epoch's unconsumed ones.
-This lasts until the next epoch transition replaces the parent.
-Forward secrecy against a stolen store therefore covers only messages older
-than the previous epoch. Shortening this exposure (retiring the parent once
-the epoch settles) is nostrc-yuj2. A new epoch is also what ends it for
-the current epoch.
+In 0.8.0 and 0.9.0 this lasts until the next epoch transition replaces the
+parent. Forward secrecy against a stolen store holds for messages of
+earlier epochs and for the parent epoch's consumed messages (the parent
+holds only unconsumed values), not for the current epoch. Since 0.10.0 the
+exposure ends as soon as no competing Commit can win, when the parent is
+reduced to what reads late messages (nostrc-yuj2, see 0.10.0).
 
 #### What changed
 
@@ -536,7 +619,8 @@ the current epoch.
   never stores them. Tests check that no used key, ratchet secret, leaf
   secret or epoch root appears in the stored bytes. That covers the live
   state only: through the retained parent and the public Commit the epoch
-  can be derived again (see "What 0.8.0 does not protect").
+  can be derived again while that parent is kept in full (see "What 0.8.0
+  and 0.9.0 do not protect"; since 0.10.0 only until it retires).
 
 #### State format and migration
 
@@ -770,7 +854,7 @@ stored, and the result is `MARMOT_RESULT_COMMIT` with `commit.updated_group`.
 | the current epoch, nothing pending | applied |
 | the current epoch, our own Commit pending | competes with ours now (see ordering below); a loser is kept and `MARMOT_ERR_OWN_COMMIT_PENDING` returned, and `marmot_clear_pending_commit()` processes it again |
 | the previous epoch, same bytes as the one applied | `MARMOT_RESULT_OWN_MESSAGE` |
-| the previous epoch, a different Commit | replaces the applied one only if it wins the ordering, else `MARMOT_ERR_WRONG_EPOCH` |
+| the previous epoch, a different Commit | replaces the applied one only if it wins the ordering, else `MARMOT_ERR_WRONG_EPOCH` (since 0.10.0 also `MARMOT_ERR_WRONG_EPOCH` once the retained parent has retired, nostrc-yuj2) |
 | any older epoch | `MARMOT_ERR_WRONG_EPOCH` |
 | a future epoch | cannot be decrypted yet (`MARMOT_ERR_NIP44`); retry after the missing Commits |
 

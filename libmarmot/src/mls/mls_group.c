@@ -1091,6 +1091,21 @@ mls_group_free(MlsGroup *g)
 }
 
 void
+mls_group_strip_to_reader(MlsGroup *g)
+{
+    if (!g) return;
+    uint8_t sender_data[MLS_HASH_LEN];
+    memcpy(sender_data, g->epoch_secrets.sender_data_secret, MLS_HASH_LEN);
+    sodium_memzero(&g->epoch_secrets, sizeof(g->epoch_secrets));
+    memcpy(g->epoch_secrets.sender_data_secret, sender_data, MLS_HASH_LEN);
+    sodium_memzero(sender_data, sizeof(sender_data));
+    sodium_memzero(g->own_signature_key, sizeof(g->own_signature_key));
+    sodium_memzero(g->own_encryption_key, sizeof(g->own_encryption_key));
+    sodium_memzero(g->own_path_keys, sizeof(g->own_path_keys));
+    sodium_memzero(g->resumption_psk_cache, sizeof(g->resumption_psk_cache));
+}
+
+void
 mls_proposal_clear(MlsProposal *p)
 {
     if (!p) return;
@@ -4355,14 +4370,19 @@ fail:
  * version 3 omits them: this state alone cannot re-derive a used message
  * key of its epoch.
  *
- * NOT covered (review B1, nostrc-yuj2): after a Commit, libmarmot also keeps
- * the previous epoch's full state as the retained parent
- * ("mls_group_parent", to judge a competing Commit and read late messages).
- * With it -- its init secret and the private keys that open the Commit's
- * UpdatePath -- and the Commit, which relays carry, the current epoch can be
- * derived again from scratch: every message of the current epoch (and the
+ * NOT covered by this alone (review B1): after a Commit, libmarmot also keeps
+ * the previous epoch's state as the retained parent ("mls_group_parent", to
+ * judge a competing Commit and read late messages).  While it is kept in
+ * full -- its init secret and the private keys that open the Commit's
+ * UpdatePath -- it and the Commit, which relays carry, derive the current
+ * epoch again from scratch: every message of the current epoch (and the
  * parent epoch's unconsumed keys) is exposed to whoever obtains the whole
- * store, until the next epoch transition replaces the parent.
+ * store.  Since 0.10.0 (nostrc-yuj2) that lasts only until every member
+ * that could publish a winning competing Commit was seen at the new epoch
+ * (at once when there is none; at the latest the next Commit): the parent
+ * is then reduced by mls_group_strip_to_reader() to its sender-data secret
+ * and secret tree, which read the parent epoch's late messages but cannot
+ * process a Commit (commits.c, "Retained parent record").
  *
  * Versions 1 and 2 stored those three secrets and no ratchet (every load
  * restarted each sender at generation 0: key reuse, nostrc-ai04).  They are
