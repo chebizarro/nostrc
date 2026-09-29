@@ -100,12 +100,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
 
 # Copy shared libraries built by the monorepo
 COPY --from=builder /src/build-docker/libnostr/libnostr.so* /usr/local/lib/
-COPY --from=builder /src/build-docker/libjson/libnostr_json.so* /usr/local/lib/
+# libjson's CMake target is named nostr_json, but its installed/runtime SONAME
+# is deliberately hyphenated (libnostr-json.so.1).  Copy the real artifact,
+# not the obsolete underscore compatibility spelling generated only by the
+# install target.
+COPY --from=builder /src/build-docker/libjson/libnostr-json.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip04/libnip04.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip19/libnip19.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip44/libnip44.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip46/libnip46.so* /usr/local/lib/
-RUN ldconfig
+RUN ldconfig \
+  && ! ldd /usr/local/bin/signetd | grep -q 'not found'
 
 # Data directory for SQLCipher database
 RUN mkdir -p /data && chown signet:signet /data
