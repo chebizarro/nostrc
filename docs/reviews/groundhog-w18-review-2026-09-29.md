@@ -234,3 +234,82 @@ Each mutant was built, tested and reverted, and the tree was rebuilt clean after
   - the sheet's server and consent copy (#4);
   - full-size main-thread decoding (#5, `nostrc-nzek`). It should not block: the decode guard bounds it, and nothing decodes without Download.
 - **Approved as is.** `403ec197` (read marker and schema v4, N1, timer rows, pins, S4, `no_inbox`, copy), `e6c859d1`, and all of `88c6d278` apart from B1: consent storage, AT-7, the public-address download path, Save As, Preferences, gating and metainfo.
+
+---
+
+## Addendum: B1 fix confirmation (`06228cbf` on local `master`)
+
+**Scope.** `06228cbf` fix(groundhog): refuse non-local files dropped or pasted as attachments (W18 review B1). My branch was rebased onto `master` (`9ccf293d`, which carries this review). File:line references are to that commit. I changed no code or beads.
+
+### The fix
+
+- **The check.** `gh_attachment_ui_offer_file` (`gh-attachment-ui.c:517-525`) now refuses `!g_file_is_native(file)` before any I/O, with the toast "Only files on this device can be sent". Nothing is queried or read, and no sheet opens.
+- **Every reading path goes through it.**
+  - drops of a `GdkFileList` or a `GFile` (`gh-composer.c:347-371` → `attach-file`);
+  - a pasted file list (`gh-composer.c:396-411` → `attach-file`);
+  - the Attach dialog (`on_file_chosen` → `gh_attachment_ui_offer_file`).
+  The only other attach input, a pasted or dropped texture, is bytes and never a `GFile`. A grep of the G22 sources finds no other `g_file_query_info`/`g_file_load_*` call.
+- **The committed test.** `drop-and-paste` offers `https://127.0.0.1:9/photo.jpg` and asserts the toast and that no sheet opens.
+  - **Mutation check.** With the check disabled (`if (0 && …)`), `/groundhog/attachment-ui/drop-and-paste` fails at `test_attachment_ui.c:1129` (toast NULL). Without GVfs the pre-fix path ends in a different toast, so the test catches a regression on macOS and CI too.
+
+### The GVfs repro against the new code
+
+- **Setup.** The CI image plus `gvfs gvfs-backends gvfs-daemons`, under `dbus-run-session -- xvfb-run`. A local `python3 -m http.server` serves the photo.
+- **The scratch case.** It was added to a *copy* of the tree only (`/tmp/w18scratch/probe_case.c`, registered in `test-groundhog-attachment-ui`) and drives the real composer:
+  1. **Drop.** GTK's own `text/uri-list` deserializer turns `http://127.0.0.1:<port>/photo.png?drop` into a `GdkFileList`, which is emitted on the composer's `groundhog-composer-drop` target.
+  2. **Paste.** The clipboard holds only `text/uri-list` (`…/photo.png?paste`), so the composer takes its "copied files" branch. Then `paste-clipboard` is emitted.
+- **Control.** The same case with `gh-attachment-ui.c` from `e6c859d1` (before the fix).
+
+```
+=== HEAD (with the B1 fix)
+# drop GFile: http://127.0.0.1:8765/photo.png?drop (GDaemonFile, native=0)
+# after drop: toast=Only files on this device can be sent sheet=0
+# paste formats: GdkFileList GFile text/uri-list can_attach=1
+# after paste: toast=Only files on this device can be sent sheet=0
+--- requests the web server received: 0
+=== CONTROL: pre-fix gh-attachment-ui.c (e6c859d1)
+# after drop: toast=(null) sheet=1
+# after paste: toast=(null) sheet=1
+"HEAD /photo.png?drop HTTP/1.1" 200 -
+"GET /photo.png?drop HTTP/1.1" 200 -
+"HEAD /photo.png?paste HTTP/1.1" 200 -
+"GET /photo.png?paste HTTP/1.1" 200 -
+--- requests the web server received: 4
+```
+
+- **Result.** With the fix the web server receives **zero requests for drop and for paste**. The control receives HEAD and GET for each, so the harness does see GVfs traffic.
+- **Setup notes.**
+  - The fixture moves the XDG dirs, so GVfs warns that it "falls back to the session bus". The scratch case makes that warning non-fatal.
+  - The committed tests were rebuilt from the real sources afterwards.
+
+### Other GFile paths in G22
+
+1. **The Attach dialog (GtkFileDialog open).**
+   - Under the portal it returns document-store paths (`/run/user/…/doc/…`), which are native and accepted.
+   - Outside a sandbox, GTK's own chooser can return a GVfs location (`smb://`, `sftp://`, a network place), and that is now refused with the same toast.
+   - **Verdict: correct.** GTK 4 has no local-only chooser option, so refusing after the choice is the only lever. D6's "nothing larger than the limit is even read" relies on a trustworthy size before reading, which a GVfs backend need not give. In Tor mode, reading from a network mount would be Groundhog-triggered traffic outside the mode.
+   - **The cost.** Attaching straight from a mounted share needs a local copy first.
+   - **Suggestion (nit).** The toast could say so: "Copy it to this device first".
+2. **A pasted file list.** It goes through the same check (shown above).
+   - **Nit, functional rather than privacy.** For a clipboard that also offers text, `on_paste_clipboard` (`gh-composer.c:415-431`) pastes the text instead. GTK adds `gchararray` to the formats of a local `GdkFileList` provider (observed: `GdkFileList GFile gchararray GtkTextBuffer text/uri-list text/plain;charset=utf-8`), and file managers usually offer `text/plain` too. So "paste copied files" mostly pastes their paths or URIs as text. Nothing is fetched either way.
+3. **The Save As target** (`card_save` → `gtk_file_dialog_save` → `g_file_replace_contents_async`, `gh-attachment-ui.c:677-727`). There is no nativeness check, and a non-portal chooser can return `smb://`, `sftp://` or `davs://`. **It should stay allowed.**
+   - **The address is the user's own.** B1 was about an address chosen by a third party (a web page or link) making Groundhog connect and reveal the user's IP. A Save As destination always comes from the user's own dialog, on a location the user mounted and signed in to.
+   - **It reveals nothing new to anyone.** The connection is the user's existing GVfs mount, not a new contact with a party linked to a message.
+   - **Save As is meant to leave Groundhog's protection** (charter §6 step 6), and the toast already says "Saved files aren't protected by Groundhog". Saving to a NAS or home share is a legitimate use that a nativeness check would break.
+   - **No web writes.** GVfs's HTTP backend is read-only, so Save As cannot be turned into a request to a web server.
+   - Under the portal the target is a native document path anyway.
+   - **The asymmetry holds.** Reading refuses non-local files because a read's `GFile` can come from a third party (drop or paste). A write's target can only come from the user.
+
+### Verification
+
+- **macOS.** Incremental build at `9ccf293d`; `groundhog-attachment-ui`, `-attachments` and `-composer` pass. The mutation check is above. `gnostr-profile-edit.ui` was restored after the build.
+- **Linux container.** `BUILD_VOLUME=w18rev-linux scripts/groundhog-linux-ci.sh`, run from this worktree after the scratch run: **70/70 passed**.
+- **Scratch.** `/tmp/w18scratch/probe_case.c` and `run_b1.sh` (the tree copy in `/tmp/w18src`).
+
+**APPROVED**
+
+- **B1 is closed.** A dropped or pasted non-local file is refused before any I/O. The GVfs repro now records zero requests for drop and paste, against four before the fix. The committed test fails if the check is removed.
+- **The other GFile paths are right as they stand.**
+  - The Attach dialog's non-local results are refused, which is correct.
+  - Save As to a user-chosen GVfs location should stay allowed.
+- **Non-blocking items.** #1–#11 of the review stand as non-blocking follow-ups, together with the two addendum nits (the toast wording; file-list paste falling back to text).
