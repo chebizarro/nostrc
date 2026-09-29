@@ -33,6 +33,8 @@
 #ifndef GH_TEST_WIRE_RELAY_H
 #define GH_TEST_WIRE_RELAY_H
 
+#include "../gh-test-port.h"
+
 #include <gio/gio.h>
 #include <libsoup/soup.h>
 #include <nostr-envelope.h>
@@ -75,6 +77,7 @@ struct _WireRelay {
   GPtrArray *stored;         /* WireStored, in arrival order */
   GPtrArray *frames;         /* WireFrame, in order */
   guint served;              /* EVENT frames sent to subscriptions */
+  GhTestHeldPort *held;      /* relay_init_held(): the port it serves on */
 };
 
 /* One text frame on one of the relay's connections. */
@@ -546,7 +549,7 @@ wire_on_websocket(SoupServer *server, SoupServerMessage *message,
 }
 
 static G_GNUC_UNUSED void
-relay_init_port(WireRelay *relay, guint16 port)
+relay_setup(WireRelay *relay)
 {
   relay->server = soup_server_new(NULL, NULL);
   relay->connections = g_ptr_array_new_with_free_func(g_object_unref);
@@ -556,9 +559,16 @@ relay_init_port(WireRelay *relay, guint16 port)
   relay->frames = g_ptr_array_new_with_free_func(wire_frame_free);
   soup_server_add_websocket_handler(relay->server, "/relay", NULL, NULL,
                                     wire_on_websocket, relay, NULL);
+}
+
+static G_GNUC_UNUSED void
+relay_init(WireRelay *relay)
+{
+  relay_setup(relay);
   g_autoptr(GError) error = NULL;
-  g_assert_true(soup_server_listen_local(relay->server, port,
-                                         SOUP_SERVER_LISTEN_IPV4_ONLY, &error));
+  g_assert_true(soup_server_listen_local(relay->server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY,
+                                         &error));
+  g_assert_no_error(error);
   GSList *uris = soup_server_get_uris(relay->server);
   g_assert_nonnull(uris);
   g_free(relay->url);
@@ -568,14 +578,35 @@ relay_init_port(WireRelay *relay, guint16 port)
 }
 
 static G_GNUC_UNUSED void
-relay_init(WireRelay *relay)
+wire_serve_held(GSocketConnection *connection, gpointer data)
 {
-  relay_init_port(relay, 0);
+  WireRelay *relay = data;
+  g_autoptr(GSocketAddress) local = g_socket_connection_get_local_address(connection, NULL);
+  /* NULL when the client is gone already; libsoup then just loses it. */
+  g_autoptr(GSocketAddress) remote = g_socket_connection_get_remote_address(connection, NULL);
+  g_autoptr(GError) error = NULL;
+  if (!soup_server_accept_iostream(relay->server, G_IO_STREAM(connection), local, remote,
+                                   &error))
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+}
+
+/* The relay that was down on held's port (held_relay_url()) comes up there,
+ * same URL. relay_clear() releases the port. */
+static G_GNUC_UNUSED void
+relay_init_held(WireRelay *relay, GhTestHeldPort *held)
+{
+  relay_setup(relay);
+  relay->held = held;
+  g_free(relay->url);
+  relay->url = g_strdup_printf("ws://127.0.0.1:%u/relay", held->port);
+  gh_test_held_port_serve(held, wire_serve_held, relay);
 }
 
 static G_GNUC_UNUSED void
 relay_clear(WireRelay *relay)
 {
+  if (relay->held) /* no new connection reaches the relay being freed */
+    gh_test_held_port_clear(g_steal_pointer(&relay->held));
   for (guint i = 0; i < relay->connections->len; i++) {
     SoupWebsocketConnection *connection = g_ptr_array_index(relay->connections, i);
     /* The connection can outlive this (stack) relay during libsoup's close
@@ -594,19 +625,19 @@ relay_clear(WireRelay *relay)
   g_free(relay->url);
 }
 
-/* A ws:// URL on a port that was free a moment ago and has no listener. */
+/* A ws:// URL where nothing ever listens: every dial is refused. */
 static G_GNUC_UNUSED gchar *
-unused_relay_url(guint16 *port_out)
+refused_relay_url(void)
 {
-  g_autoptr(GSocketListener) reservation = g_socket_listener_new();
-  g_autoptr(GError) error = NULL;
-  guint16 port = g_socket_listener_add_any_inet_port(reservation, NULL, &error);
-  g_assert_no_error(error);
-  g_assert_cmpuint(port, >, 0);
-  g_socket_listener_close(reservation);
-  if (port_out)
-    *port_out = port;
-  return g_strdup_printf("ws://127.0.0.1:%u/relay", port);
+  return g_strdup_printf("ws://127.0.0.1:%u/relay", gh_test_refused_port());
+}
+
+/* A ws:// URL on held's port: every dial fails until relay_init_held(). */
+static G_GNUC_UNUSED gchar *
+held_relay_url(GhTestHeldPort *held)
+{
+  gh_test_held_port_init(held);
+  return g_strdup_printf("ws://127.0.0.1:%u/relay", held->port);
 }
 
 static G_GNUC_UNUSED gboolean

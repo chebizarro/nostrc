@@ -16,6 +16,7 @@
 #include "gh-store-blossom.h"
 #include "gh-store-media.h"
 #include "blossom-fixture.h"
+#include "../gh-test-port.h"
 
 #include <errno.h>
 #include <glib/gstdio.h>
@@ -738,11 +739,8 @@ test_download_errors(void)
   g_assert_false(gh_attachment_transfer_get_can_retry(transfer));
 
   /* Unreachable: nothing listens there. */
-  g_autoptr(GSocketListener) probe = g_socket_listener_new();
-  guint16 port = g_socket_listener_add_any_inet_port(probe, NULL, NULL);
-  g_socket_listener_close(probe);
   g_free(gone->url);
-  gone->url = g_strdup_printf("http://127.0.0.1:%u/%s", port, u.file->x);
+  gone->url = g_strdup_printf("http://127.0.0.1:%u/%s", gh_test_refused_port(), u.file->x);
   memcpy(gone->x, u.file->x, sizeof gone->x);
   gone->nonce[0] ^= 1; /* another file identity than the damaged one */
   g_autoptr(GhMessage) unreachable = admit_file(store, bob.account, alice, bob.account, gone);

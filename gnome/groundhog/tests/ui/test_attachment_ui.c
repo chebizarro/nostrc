@@ -30,6 +30,7 @@
 #include "gh-preferences-dialog.h"
 #include "gh-store-blossom.h"
 #include "gh-store-media.h"
+#include "../gh-test-port.h"
 
 #include <string.h>
 
@@ -1260,11 +1261,8 @@ test_card_cancel_and_errors(void)
 
   /* The server gone: said, with Try Again. */
   g_autoptr(GhNip17File) gone = gh_nip17_file_copy(file);
-  g_autoptr(GSocketListener) probe = g_socket_listener_new();
-  guint16 port = g_socket_listener_add_any_inet_port(probe, NULL, NULL);
-  g_socket_listener_close(probe);
   g_free(gone->url);
-  gone->url = g_strdup_printf("http://127.0.0.1:%u/%s", port, gone->x);
+  gone->url = g_strdup_printf("http://127.0.0.1:%u/%s", gh_test_refused_port(), gone->x);
   gone->nonce[0] ^= 1;
   GhMessage *unreachable = receive_file(&f, bob, gone);
   GhAttachmentCard *second = card_of(&f, unreachable);

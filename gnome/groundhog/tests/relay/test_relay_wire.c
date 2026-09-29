@@ -76,8 +76,8 @@ test_wire_destinations(void)
 static void
 test_offline_at_start_reconnect(void)
 {
-  guint16 port = 0;
-  WireRelay relay = { .url = unused_relay_url(&port) };
+  GhTestHeldPort held = { 0 };
+  WireRelay relay = { .url = held_relay_url(&held) };
   WireUpdates updates = {0};
   NostrFilters *filters = nostr_filters_new();
   NostrFilter *filter = nostr_filter_new();
@@ -88,7 +88,7 @@ test_offline_at_start_reconnect(void)
   gh_relay_scope_start(scope);
   /* The first dial must fail before the server is made available. */
   wait_for_count(&updates.errors, 1);
-  relay_init_port(&relay, port);
+  relay_init_held(&relay, &held);
   wait_for_reqs(&relay, 1);
   wait_for_count(&updates.eoses, 1);
   g_assert_cmpstr(updates.eose_url, ==, relay.url);

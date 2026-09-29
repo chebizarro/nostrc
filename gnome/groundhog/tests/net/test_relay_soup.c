@@ -213,9 +213,7 @@ have_tls(void)
 static gchar *
 closed_address(void)
 {
-  guint16 port = 0;
-  g_autofree gchar *url = unused_relay_url(&port);
-  return g_strdup_printf("127.0.0.1:%u", port);
+  return g_strdup_printf("127.0.0.1:%u", gh_test_refused_port());
 }
 
 static gchar *

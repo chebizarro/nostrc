@@ -18,6 +18,7 @@
 #include "gh-store-nip29.h"
 #include "gh-test-signer.h"
 #include "nip29-relay.h"
+#include "../gh-test-port.h"
 
 #include <glib/gstdio.h>
 
@@ -523,10 +524,7 @@ test_nip11(void)
   /* Tor mode with no Tor listening: an error, never a direct connection
    * (G09; the Tor path itself is tested in tests/net). */
   guint gets = relay.nip11_gets;
-  g_autoptr(GSocketListener) reservation = g_socket_listener_new();
-  guint16 closed_port = g_socket_listener_add_any_inet_port(reservation, NULL, NULL);
-  g_socket_listener_close(reservation);
-  g_autofree gchar *nowhere = g_strdup_printf("127.0.0.1:%u", closed_port);
+  g_autofree gchar *nowhere = g_strdup_printf("127.0.0.1:%u", gh_test_refused_port());
   g_settings_set_string(settings, "tor-socks-address", nowhere);
   g_settings_set_string(settings, "network-mode", "tor");
   fetch_key(http, relay.url, &fetch);

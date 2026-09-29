@@ -171,7 +171,7 @@ test_wire_partial_success(void)
   scripted_relay(&reject, &reject_script);
   scripted_relay(&auth, &auth_script);
   scripted_relay(&bystander, &bystander_script);
-  g_autofree gchar *down_url = unused_relay_url(NULL);
+  g_autofree gchar *down_url = refused_relay_url();
 
   Outcomes outcomes;
   outcomes_init(&outcomes);
@@ -232,7 +232,7 @@ test_wire_partial_success(void)
 static void
 test_wire_relay_down(void)
 {
-  g_autofree gchar *down_url = unused_relay_url(NULL);
+  g_autofree gchar *down_url = refused_relay_url();
   Outcomes outcomes;
   outcomes_init(&outcomes);
   g_autofree gchar *json = signed_json("wire down");

@@ -9,6 +9,7 @@
  * Waits iterate the main context against a deadline; they never sleep. */
 #include "gh-nip05.h"
 #include "gh-recipient.h"
+#include "../gh-test-port.h"
 
 #include <libsoup/soup.h>
 #include <nostr-keys.h>
@@ -508,10 +509,7 @@ test_net_http(void)
    * connection (G09; the Tor path itself is tests/net). A .onion host only
    * in Tor mode. */
   guint hits = server.hits_doc;
-  g_autoptr(GSocketListener) reservation = g_socket_listener_new();
-  guint16 closed_port = g_socket_listener_add_any_inet_port(reservation, NULL, NULL);
-  g_socket_listener_close(reservation);
-  g_autofree gchar *nowhere = g_strdup_printf("127.0.0.1:%u", closed_port);
+  g_autofree gchar *nowhere = g_strdup_printf("127.0.0.1:%u", gh_test_refused_port());
   g_settings_set_string(settings, "tor-socks-address", nowhere);
   g_settings_set_string(settings, "network-mode", "tor");
   get(http, doc, GH_NIP05_MAX_DOCUMENT, &got);

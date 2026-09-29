@@ -1138,8 +1138,8 @@ test_wire_partial_retry(void)
   WireRelay bob_only = { 0 }, carol_later = { 0 }, own = { 0 };
   store_relay(&bob_only);
   store_relay(&own);
-  guint16 port = 0;
-  g_autofree gchar *carol_url = unused_relay_url(&port);
+  GhTestHeldPort carol_held = { 0 };
+  g_autofree gchar *carol_url = held_relay_url(&carol_held);
 
   Fixture f;
   fixture_up(&f);
@@ -1169,7 +1169,7 @@ test_wire_partial_retry(void)
   f.outbox = NULL;
   carol_later.url = g_strdup(carol_url);
   carol_later.serve = TRUE;
-  relay_init_port(&carol_later, port);
+  relay_init_held(&carol_later, &carol_held);
   fixture_outbox(&f);
   g_autoptr(GhOutboxItem) resumed = gh_outbox_lookup(f.outbox, outbox_id);
   g_assert_nonnull(resumed);
@@ -1484,10 +1484,10 @@ test_wire_spacing(void)
 static void
 test_wire_retry_spacing(void)
 {
-  guint16 ports[3] = { 0 };
-  g_autofree gchar *bob_url = unused_relay_url(&ports[0]);
-  g_autofree gchar *carol_url = unused_relay_url(&ports[1]);
-  g_autofree gchar *dave_url = unused_relay_url(&ports[2]);
+  GhTestHeldPort held[3] = { 0 };
+  g_autofree gchar *bob_url = held_relay_url(&held[0]);
+  g_autofree gchar *carol_url = held_relay_url(&held[1]);
+  g_autofree gchar *dave_url = held_relay_url(&held[2]);
   WireRelay bob_back = { 0 }, carol_back = { 0 }, dave_back = { 0 }, own = { 0 };
   store_relay(&own);
 
@@ -1512,7 +1512,7 @@ test_wire_retry_spacing(void)
   for (guint i = 0; i < G_N_ELEMENTS(back); i++) {
     back[i]->url = g_strdup(urls[i]);
     back[i]->serve = TRUE;
-    relay_init_port(back[i], ports[i]);
+    relay_init_held(back[i], &held[i]);
   }
   /* The retry round's draws: the shuffle of Bob, Carol, Dave (Fisher-Yates
    * from the end: j = 1, then 0: Dave, Bob, Carol) and two gaps. */
