@@ -260,8 +260,8 @@ test_strip_damaged(void)
   g_clear_error(&error);
 
   g_autoptr(GBytes) png = make_png(8, 8);
-  gsize png_size = 0;
-  guint8 *bad = g_memdup2(g_bytes_get_data(png, &png_size), png_size);
+  gsize png_size = g_bytes_get_size(png);
+  guint8 *bad = g_memdup2(g_bytes_get_data(png, NULL), png_size);
   bad[8 + 4 + 4 + 13 + 4 + 3] = 0xff; /* tEXt's length points past the end */
   g_autoptr(GBytes) bad_png = g_bytes_new_take(bad, png_size);
   g_assert_null(gh_metadata_strip(bad_png, NULL, NULL, &error));
@@ -328,8 +328,8 @@ test_strip_mutations(void)
   guint accepted = 0, refused = 0;
   for (guint i = 0; i < 4000; i++) {
     GBytes *source = sources[i % G_N_ELEMENTS(sources)];
-    gsize size = 0;
-    guint8 *data = g_memdup2(g_bytes_get_data(source, &size), size);
+    gsize size = g_bytes_get_size(source);
+    guint8 *data = g_memdup2(g_bytes_get_data(source, NULL), size);
     guint edits = 1 + g_rand_int_range(rand, 0, 4);
     for (guint e = 0; e < edits && size > 3; e++) {
       gsize at = (gsize)g_rand_int_range(rand, 2, (gint32)size);
@@ -474,8 +474,8 @@ static void
 test_tampering(void)
 {
   g_autoptr(GhAttachmentSealed) sealed = seal_jpeg(NULL);
-  gsize size = 0;
-  guint8 *flipped = g_memdup2(g_bytes_get_data(sealed->ciphertext, &size), size);
+  gsize size = g_bytes_get_size(sealed->ciphertext);
+  guint8 *flipped = g_memdup2(g_bytes_get_data(sealed->ciphertext, NULL), size);
   flipped[size / 3] ^= 0x01;
   g_autoptr(GBytes) tampered = g_bytes_new_take(flipped, size);
   g_autoptr(GError) error = NULL;

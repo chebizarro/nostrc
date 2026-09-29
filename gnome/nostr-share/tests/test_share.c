@@ -1203,8 +1203,8 @@ test_private_file(void)
   g_autoptr(GBytes) back = ns_private_decrypt_file(f->sealed, &f->file_key, &err);
   g_assert_no_error(err);
   g_assert_true(g_bytes_equal(back, f->bytes));
-  gsize n = 0;
-  guint8 *tampered = g_memdup2(g_bytes_get_data(f->sealed, &n), n);
+  gsize n = g_bytes_get_size(f->sealed);
+  guint8 *tampered = g_memdup2(g_bytes_get_data(f->sealed, NULL), n);
   tampered[3] ^= 1;
   g_autoptr(GBytes) bad = g_bytes_new_take(tampered, n);
   g_assert_null(ns_private_decrypt_file(bad, &f->file_key, &err));

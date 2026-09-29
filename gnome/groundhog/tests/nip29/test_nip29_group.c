@@ -647,9 +647,9 @@ test_previous_selection(void)
 }
 
 static void
-assert_json(gchar *json, GError *error, const gchar *expected)
+assert_json(gchar *json, GError **error, const gchar *expected)
 {
-  g_assert_no_error(error);
+  g_assert_no_error(*error);
   g_assert_cmpstr(json, ==, expected);
   g_free(json);
 }
@@ -666,28 +666,28 @@ test_templates_exact(void)
   const GhNip29TemplateContext ctx = { AUTHOR, 1760000000, recent, G_N_ELEMENTS(recent) };
   const GhNip29TemplateContext quiet = { AUTHOR, 1760000000, NULL, 0 };
 
-  assert_json(gh_nip29_template_chat(key, &ctx, "Hello, \"pizza\" lovers\n", &error), error,
+  assert_json(gh_nip29_template_chat(key, &ctx, "Hello, \"pizza\" lovers\n", &error), &error,
               HEAD("9") PREVIOUS "],\"content\":\"Hello, \\\"pizza\\\" lovers\\n\"}");
-  assert_json(gh_nip29_template_join_request(key, &ctx, "let me in", "INVITE-1", &error), error,
+  assert_json(gh_nip29_template_join_request(key, &ctx, "let me in", "INVITE-1", &error), &error,
               HEAD("9021") "[\"code\",\"INVITE-1\"]," PREVIOUS "],\"content\":\"let me in\"}");
-  assert_json(gh_nip29_template_join_request(key, &ctx, NULL, "", &error), error,
+  assert_json(gh_nip29_template_join_request(key, &ctx, NULL, "", &error), &error,
               HEAD("9021") PREVIOUS "],\"content\":\"\"}");
-  assert_json(gh_nip29_template_join_request(key, &quiet, NULL, NULL, &error), error,
+  assert_json(gh_nip29_template_join_request(key, &quiet, NULL, NULL, &error), &error,
               "{\"pubkey\":\"" AUTHOR "\",\"created_at\":1760000000,\"kind\":9021,"
               "\"tags\":[[\"h\",\"pizza\"]],\"content\":\"\"}");
-  assert_json(gh_nip29_template_leave_request(key, &ctx, "bye", &error), error,
+  assert_json(gh_nip29_template_leave_request(key, &ctx, "bye", &error), &error,
               HEAD("9022") PREVIOUS "],\"content\":\"bye\"}");
   const gchar *const roles[] = { "moderator", "gardener", "moderator", NULL };
-  assert_json(gh_nip29_template_put_user(key, &ctx, TARGET, roles, NULL, &error), error,
+  assert_json(gh_nip29_template_put_user(key, &ctx, TARGET, roles, NULL, &error), &error,
               HEAD("9000") "[\"p\",\"" TARGET "\",\"moderator\",\"gardener\"]," PREVIOUS
               "],\"content\":\"\"}");
-  assert_json(gh_nip29_template_put_user(key, &ctx, TARGET, NULL, "welcome", &error), error,
+  assert_json(gh_nip29_template_put_user(key, &ctx, TARGET, NULL, "welcome", &error), &error,
               HEAD("9000") "[\"p\",\"" TARGET "\"]," PREVIOUS "],\"content\":\"welcome\"}");
-  assert_json(gh_nip29_template_remove_user(key, &ctx, TARGET, "spam", &error), error,
+  assert_json(gh_nip29_template_remove_user(key, &ctx, TARGET, "spam", &error), &error,
               HEAD("9001") "[\"p\",\"" TARGET "\"]," PREVIOUS "],\"content\":\"spam\"}");
-  assert_json(gh_nip29_template_delete_event(key, &ctx, EV4, NULL, &error), error,
+  assert_json(gh_nip29_template_delete_event(key, &ctx, EV4, NULL, &error), &error,
               HEAD("9005") "[\"e\",\"" EV4 "\"]," PREVIOUS "],\"content\":\"\"}");
-  assert_json(gh_nip29_template_create_invite(key, &ctx, "INVITE-2", NULL, &error), error,
+  assert_json(gh_nip29_template_create_invite(key, &ctx, "INVITE-2", NULL, &error), &error,
               HEAD("9009") "[\"code\",\"INVITE-2\"]," PREVIOUS "],\"content\":\"\"}");
 
   /* edit-metadata replaces the whole state: editing a copy of the admitted
@@ -698,7 +698,7 @@ test_templates_exact(void)
   g_free(edit->name);
   edit->name = g_strdup("Pizza Fans");
   edit->is_hidden = FALSE;
-  assert_json(gh_nip29_template_edit_metadata(key, &ctx, edit, "rename", &error), error,
+  assert_json(gh_nip29_template_edit_metadata(key, &ctx, edit, "rename", &error), &error,
               HEAD("9002")
               "[\"name\",\"Pizza Fans\"],"
               "[\"picture\",\"https://pizza.example/pizza.png\"],"
@@ -711,7 +711,7 @@ test_templates_exact(void)
   g_autoptr(GhNip29Metadata) minimal = gh_nip29_metadata_new();
   minimal->name = g_strdup("Pizza");
   minimal->has_supported_kinds = TRUE; /* AV-only: an empty supported_kinds tag */
-  assert_json(gh_nip29_template_edit_metadata(key, &quiet, minimal, NULL, &error), error,
+  assert_json(gh_nip29_template_edit_metadata(key, &quiet, minimal, NULL, &error), &error,
               "{\"pubkey\":\"" AUTHOR "\",\"created_at\":1760000000,\"kind\":9002,"
               "\"tags\":[[\"h\",\"pizza\"],[\"name\",\"Pizza\"],[\"supported_kinds\"]],"
               "\"content\":\"\"}");
@@ -837,7 +837,7 @@ test_edit_keeps_unknown_tags(void)
   const GhNip29TemplateContext quiet = { AUTHOR, 1760000000, NULL, 0 };
   g_free(copy->name);
   copy->name = g_strdup("Pizza Fans");
-  assert_json(gh_nip29_template_edit_metadata(key, &quiet, copy, NULL, &error), error,
+  assert_json(gh_nip29_template_edit_metadata(key, &quiet, copy, NULL, &error), &error,
               "{\"pubkey\":\"" AUTHOR "\",\"created_at\":1760000000,\"kind\":9002,"
               "\"tags\":[[\"h\",\"pizza\"],[\"name\",\"Pizza Fans\"],[\"t\",\"food\"],"
               "[\"x-relay-policy\",\"slow\",\"30\"],[\"public\"]],\"content\":\"\"}");

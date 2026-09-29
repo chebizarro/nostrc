@@ -448,9 +448,9 @@ test_at2_tampered_download(void)
   upload(&f, jpeg, &r, NULL);
   g_assert_no_error(r.error);
   g_autoptr(GhNip17File) file = g_steal_pointer(&r.file);
-  gsize size = 0;
-  guint8 *flipped = g_memdup2(g_bytes_get_data(blossom_fixture_get_blob(f.blossom, file->x),
-                                               &size), size);
+  GBytes *stored = blossom_fixture_get_blob(f.blossom, file->x);
+  gsize size = g_bytes_get_size(stored);
+  guint8 *flipped = g_memdup2(g_bytes_get_data(stored, NULL), size);
   flipped[size / 2] ^= 0x04;
   g_autoptr(GBytes) tampered = g_bytes_new_take(flipped, size);
   blossom_fixture_put_blob(f.blossom, file->x, tampered);
