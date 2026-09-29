@@ -269,3 +269,70 @@ Repro: Alice adds Dave and merges; Dave's Welcome is not yet marked sent (offlin
 **REQUEST CHANGES** for **C1** (serialize per client, plus a TSAN regression) and **C2** (append-only outbox with per-entry confirmation; Gnostr marks each entry only after its send is confirmed).
 
 R1 and R2 are properly fixed and pinned. N1–N3 can follow, but N1 should land together with the C2 resend change.
+
+---
+
+## Addendum 2: final pass on `330da3e9`, `47483248` (2026-09-29)
+
+Branch `marmot/w17-welcome-commits` at `47483248`. No code or beads were changed. Repros ran in throwaway worktrees (`/tmp/rr17f`, `/tmp/rr17g`), which were removed afterwards.
+
+**Final verdict: REQUEST CHANGES.** One blocking finding: **D1**, a deadlock introduced by the new client lock. C1, C2 and N1–N3 are otherwise resolved.
+
+### C1: resolved, except for D1
+
+- **The lock.** A `GMutex` per `MarmotGobjectClient` is held for the whole body of every `*_thread` function and every sync accessor.
+- **Direct users.** `marmot_gobject_client_lock()` / `unlock()` cover every direct libmarmot use in Gnostr. I found exactly four sites: `marmot_encrypt_media` and `marmot_decrypt_media` in `gn-mls-media-manager.c`, and `marmot_add_members` and `marmot_leave_group` in `gn-group-settings-view.c`. Each holds the lock only around the libmarmot call and calls no client function inside it. Groundhog has no direct libmarmot calls.
+- **Tests.** TSAN on the gobject suite passes 71/71 with 0 warnings. With the lock stubbed out, `/marmot-gobject/client/serializes-merge-and-process` produces **7** TSAN reports, as claimed. The test passes functionally without the lock, so it only catches a regression when CI runs it under TSAN.
+- **Ordering.** Lock ordering is trivial: one non-recursive lock and no nesting. `g_task_return_*` runs under the lock, but its callbacks dispatch to the task's context, so that is at most a short main-thread stall.
+
+### D1 (Medium-High, blocking): `::group-updated` and the other client signals can be emitted inline under the lock, and handlers that call the client deadlock
+
+**Where**
+- `queue_client_signal()` (`marmot-gobject-client.c:328-338`) is called from `process_welcome_thread`, `accept_welcome_thread`, `process_message_thread` and `pending_commit_thread` while `self->lock` is held (`:816`, `:890`, `:1051`, `:1059`, `:1232`).
+- It uses `g_main_context_invoke(NULL, …)`. When no thread owns the global default context, a worker thread acquires it and runs `emit_queued_signal` inline. That happens before a loop runs, after it quits (application shutdown), or in a consumer whose loop runs on a thread-default context.
+- The signal is then emitted on the worker, under the lock.
+
+**Consequences**
+- Any handler that calls a client function blocks forever on the non-recursive lock. This contradicts the header's own rule not to call client functions while the lock is held.
+- GTK handlers run on a worker thread.
+- Gnostr's new N3 handler does exactly this: `::group-updated` → `send_unsent_welcomes` → `marmot_gobject_client_get_unsent_welcomes`.
+
+**Verified.** A gobject-test repro (not committed) connects a `::group-updated` handler that calls `marmot_gobject_client_get_group`. It starts `merge_pending_commit_async` with no loop running. Result: `handler entered=1 returned=0`. The worker deadlocks holding the client lock, so every later client call would also block. If the main thread calls into the client during shutdown, the application hangs on quit.
+
+**Fix (small)**
+- Never emit inline. Capture the context at construction (`g_main_context_ref_thread_default()`) and attach a `g_idle_source_new()` to it for every queued signal, or use `g_main_context_invoke` only after the locker is released and never from a worker.
+- Add the repro above as a regression: a handler that re-enters the client must return.
+
+### C2: resolved (limit tracked in nostrc-ba81)
+
+- **Append-only outbox.** Merges append; entries are de-duplicated by id; `mark_welcomes_sent(ids)` removes only the named entries.
+- **Serialized.** Append and mark both run under the client lock.
+- **Verified.** My repro now yields `outbox after two merged Adds: 2: Dave Eve`, and after marking Dave's only Eve's remains.
+- **Gnostr marks per entry.** It marks each id only after `gn_mls_event_router_send_welcome_finish` succeeds, and a per-id in-flight set prevents duplicate concurrent sends.
+- **Remaining limit (nostrc-ba81).** Gift-wrap "success" means dispatched, not relay OK, and default rather than inbox relays are used. A Welcome no relay stored is still marked sent.
+
+**Welcome id collisions.** The id is `SHA-256(recipient ‖ rumor)` (`commits.c`, `welcome_id`). The recipient is a fixed 32 bytes, so the hash input is unambiguous. Distinct Welcomes differ in their ciphertext, so their ids differ; identical copies merge, which is intended. The only collision path is allocation failure: `welcome_id` then writes an all-zero id. Two such entries would de-duplicate one Welcome away on append, and a mark would remove both (Low). Append should fail with `MARMOT_ERR_MEMORY` instead.
+
+### N1–N3: resolved
+
+- **N1 (duplicate Welcome).** `already_member_of()` (`welcome.c`) treats a Welcome as a copy when stored state for the group is at or after the Welcome's epoch *and* our stored leaf's signature key is in the Welcome's tree. It then returns `MARMOT_ERR_WELCOME_ALREADY_ACCEPTED` and retires the copy without touching state. A re-invite after a removal (stored epoch behind the new Welcome) still joins.
+- **N2 (resolver lifecycle).**
+  - One resolution per group; later callers wait on it.
+  - Exponential backoff from 5 s, capped at 300 s, with ≤ 25 % jitter and at most 12 retries.
+  - Deactivation removes the timers and does not reschedule on `G_IO_ERROR_CANCELLED`.
+- **N3 (flush after echo merge).** `::group-updated` flushes the outbox (but see D1).
+- **Minor:** a failed Welcome send is retried only at the next flush trigger (a merge, `::group-updated`, a resolver run or the next start), with no timer of its own (Low).
+
+### Verification
+
+- Build with `BUILD_GROUNDHOG=ON`: ok.
+- `ctest -R 'marmot|mls|gnostr' -j6`: **81/81 passed**.
+- TSAN (`-DSANITIZE=thread`) on `test_marmot_gobject`: **71/71 ok, 0 warnings**. With the lock removed, the concurrency test produces 7 warnings.
+- ASAN+UBSAN: `test_commits`, `test_mls_welcome`, `test_mls_group`, `test_protocol`, `test_marmot_interop` and `test_marmot_gobject` all pass with no reports.
+- `leaks --atExit`: `test_commits`, `test_mls_group` and `test_protocol` each report **0 leaks**. `test_marmot_gobject` reports one 48-byte leak, a pre-existing test bug unrelated to this round: `test_client_finalize_releases_storage` takes an extra `g_object_ref` it never drops.
+
+### Final recommendation
+
+**REQUEST CHANGES** for **D1**: never emit client signals inline or under the lock, and add a re-entrant-handler regression test.
+
+Everything else from W17 and W17b (R1, R2, C1's lock coverage, C2, N1–N3) is verified and pinned. The zero-id OOM case, the Welcome-send retry trigger and nostrc-ba81 can follow separately.
