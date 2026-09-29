@@ -117,6 +117,47 @@ record_welcome_failure(Marmot *m, const uint8_t wrapper_event_id[32],
     }
 }
 
+/*
+ * W17b addendum N1: TRUE when this Welcome is a copy of one we already
+ * joined through: we hold MLS state for the group at the Welcome's epoch or
+ * later, and our stored own leaf (by its signature key, which an UpdatePath
+ * keeps) is a member of the tree the Welcome describes.  Such a copy
+ * (another gift wrap, or one resent from the Welcome outbox) must not
+ * replace the member's newer state.  A re-invite after a removal usually
+ * brings a new KeyPackage (a new leaf signature key); when it reuses the old
+ * one (e.g. a last-resort KeyPackage) it is still for a later epoch than the
+ * removed member's stored state, so re-joining works either way.
+ */
+static bool
+already_member_of(Marmot *m, const MlsGroup *joined)
+{
+    if (!m->storage->mls_load) return false;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    if (m->storage->mls_load(m->storage->ctx, "mls_group", joined->group_id,
+                             joined->group_id_len, &blob, &len) != MARMOT_OK || !blob)
+        return false;
+    MlsGroup stored;
+    int rc = mls_group_deserialize(blob, len, &stored);
+    sodium_memzero(blob, len);
+    free(blob);
+    if (rc != 0) return false;
+    bool member = false;
+    uint32_t own = mls_tree_leaf_to_node(stored.own_leaf_index);
+    if (stored.epoch >= joined->epoch &&
+        stored.own_leaf_index < stored.tree.n_leaves &&
+        stored.tree.nodes[own].type == MLS_NODE_LEAF) {
+        const uint8_t *sig = stored.tree.nodes[own].leaf.signature_key;
+        for (uint32_t i = 0; i < joined->tree.n_leaves && !member; i++) {
+            const MlsNode *n = &joined->tree.nodes[mls_tree_leaf_to_node(i)];
+            member = n->type == MLS_NODE_LEAF &&
+                     memcmp(n->leaf.signature_key, sig, MLS_SIG_PK_LEN) == 0;
+        }
+    }
+    mls_group_free(&stored);
+    return member;
+}
+
 static MarmotError
 error_for_processed_welcome_state(int state)
 {
@@ -446,6 +487,21 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     if (rc != 0) {
         record_welcome_failure(m, welcome->wrapper_event_id, "MLS Welcome processing failed");
         return MARMOT_ERR_MLS;
+    }
+
+    /* A duplicate Welcome for a group we already joined: keep our state
+     * (it may be epochs ahead) and retire this copy as accepted. */
+    if (already_member_of(m, &mls_group)) {
+        mls_group_free(&mls_group);
+        MarmotWelcome retired = *welcome;
+        retired.state = MARMOT_WELCOME_STATE_ACCEPTED;
+        (void)m->storage->save_welcome(m->storage->ctx, &retired);
+        (void)m->storage->save_processed_welcome(m->storage->ctx,
+                                                 welcome->wrapper_event_id, welcome->id,
+                                                 marmot_now(),
+                                                 MARMOT_WELCOME_STATE_ACCEPTED,
+                                                 "already a member");
+        return MARMOT_ERR_WELCOME_ALREADY_ACCEPTED;
     }
 
     /* Extract GroupData extension from the group's extensions */

@@ -68,6 +68,14 @@ void   gn_mls_publish_until_ack_async(GnMlsAckPublishFunc  publish,
 gchar *gn_mls_publish_until_ack_finish(GAsyncResult  *result,
                                        GError       **error);
 
+/*
+ * Delay before the @attempt-th retry (0-based) of an uncertain publish:
+ * exponential from @base_s, capped at @max_s, plus up to 25 % jitter taken
+ * from @jitter (any 32-bit random value).
+ */
+guint  gn_mls_retry_delay_seconds(guint attempt, guint base_s, guint max_s,
+                                  guint32 jitter);
+
 G_END_DECLS
 
 #endif /* GN_MLS_COMMIT_PUBLISH_H */

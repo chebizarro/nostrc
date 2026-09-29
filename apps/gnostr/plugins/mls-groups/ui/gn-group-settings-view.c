@@ -429,10 +429,13 @@ add_member_with_key_package(GnGroupSettingsView *self, const gchar *pk, const gc
   size_t welcome_count = 0;
   char *commit_json = NULL;
 
+  /* A Marmot is not thread-safe: hold the client's lock (W17b C1). */
+  marmot_gobject_client_lock(client);
   MarmotError err = marmot_add_members(m, &mls_gid,
                                         kp_array, 1,
                                         &welcome_jsons, &welcome_count,
                                         &commit_json);
+  marmot_gobject_client_unlock(client);
   marmot_group_id_free(&mls_gid);
 
   if (err != MARMOT_OK)
@@ -591,7 +594,9 @@ on_leave_clicked(GtkButton *button, gpointer user_data)
             }
 
           MarmotGroupId mls_gid = marmot_group_id_new(gid_bytes, gid_len);
+          marmot_gobject_client_lock(client);
           MarmotError err = marmot_leave_group(m, &mls_gid);
+          marmot_gobject_client_unlock(client);
           marmot_group_id_free(&mls_gid);
 
           if (err != MARMOT_OK)

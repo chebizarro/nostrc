@@ -517,7 +517,7 @@ marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
  * ──────────────────────────────────────────────────────────────────────── */
 
 #define OUTBOX_LABEL   "mls_group_welcomes"
-#define OUTBOX_VERSION 1
+#define OUTBOX_VERSION 2
 #define PENDING_MAX_WELCOMES 64
 
 typedef struct {
@@ -722,53 +722,29 @@ load_current(Marmot *m, const MarmotGroupId *gid, MlsGroup *cur)
     return err;
 }
 
-/* ── Unsent Welcome outbox ─────────────────────────────────────────────── */
+/* ── Unsent Welcome outbox ─────────────────────────────────────────────── *
+ *
+ *   u8  version (2), u32 count, then per Welcome: [32] recipient, opaque rumor<V>
+ *
+ * Append-only (W17b addendum C2): each merge adds its Welcomes; an entry
+ * leaves only when the application confirms its send by id, so a Welcome is
+ * never lost to a later merge or to a mark covering entries it never read.
+ * The id is SHA-256(recipient || rumor): stable, and equal copies merge.
+ */
 
-static MarmotError
-outbox_store(Marmot *m, const MarmotGroupId *gid, const MarmotUnsentWelcome *w,
-             size_t count)
+static void
+welcome_id(const uint8_t recipient[32], const char *rumor, uint8_t out[32])
 {
-    MlsTlsBuf buf;
-    if (mls_tls_buf_init(&buf, 256) != 0) return MARMOT_ERR_MEMORY;
-    MarmotError err = MARMOT_ERR_MEMORY;
-    if (mls_tls_write_u8(&buf, OUTBOX_VERSION) == 0 && write_welcomes(&buf, w, count) == 0)
-        err = m->storage->mls_store(m->storage->ctx, OUTBOX_LABEL, gid->data, gid->len,
-                                    buf.data, buf.len);
-    mls_tls_buf_free(&buf);
-    return err;
-}
-
-MarmotError
-marmot_commit_get_unsent_welcomes(Marmot *m, const MarmotGroupId *gid,
-                                  MarmotUnsentWelcome **out, size_t *out_count)
-{
-    *out = NULL;
-    *out_count = 0;
-    uint8_t *data = NULL;
-    size_t len = 0;
-    MarmotError err = m->storage->mls_load(m->storage->ctx, OUTBOX_LABEL, gid->data,
-                                           gid->len, &data, &len);
-    if (err == MARMOT_ERR_STORAGE_NOT_FOUND || (err == MARMOT_OK && !data)) return MARMOT_OK;
-    if (err != MARMOT_OK) return err;
-    MarmotUnsentWelcome *w = calloc(PENDING_MAX_WELCOMES, sizeof(*w));
-    size_t count = 0;
-    MlsTlsReader r;
-    mls_tls_reader_init(&r, data, len);
-    uint8_t version = 0;
-    err = MARMOT_ERR_DESERIALIZATION;
-    if (!w) err = MARMOT_ERR_MEMORY;
-    else if (mls_tls_read_u8(&r, &version) == 0 && version == OUTBOX_VERSION &&
-             read_welcomes(&r, w, PENDING_MAX_WELCOMES, &count) == 0 &&
-             mls_tls_reader_done(&r))
-        err = MARMOT_OK;
-    free(data);
-    if (err != MARMOT_OK || count == 0) {
-        marmot_unsent_welcomes_free(w, count);
-        return err;
+    size_t len = rumor ? strlen(rumor) : 0;
+    uint8_t *buf = malloc(32 + len);
+    if (!buf) {
+        memset(out, 0, 32);
+        return;
     }
-    *out = w;
-    *out_count = count;
-    return MARMOT_OK;
+    memcpy(buf, recipient, 32);
+    if (len) memcpy(buf + 32, rumor, len);
+    if (mls_crypto_hash(out, buf, 32 + len) != 0) memset(out, 0, 32);
+    free(buf);
 }
 
 void
@@ -779,12 +755,142 @@ marmot_unsent_welcomes_free(MarmotUnsentWelcome *welcomes, size_t count)
     free(welcomes);
 }
 
-MarmotError
-marmot_commit_mark_welcomes_sent(Marmot *m, const MarmotGroupId *gid)
+/* MARMOT_OK with *out NULL when the outbox is empty. */
+static MarmotError
+outbox_load(Marmot *m, const MarmotGroupId *gid, MarmotUnsentWelcome **out,
+            size_t *out_count)
 {
-    MarmotError err = m->storage->mls_delete(m->storage->ctx, OUTBOX_LABEL, gid->data,
-                                             gid->len);
-    return err == MARMOT_ERR_STORAGE_NOT_FOUND ? MARMOT_OK : err;
+    *out = NULL;
+    *out_count = 0;
+    uint8_t *data = NULL;
+    size_t len = 0;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, OUTBOX_LABEL, gid->data,
+                                           gid->len, &data, &len);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND || (err == MARMOT_OK && !data)) return MARMOT_OK;
+    if (err != MARMOT_OK) return err;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, data, len);
+    uint8_t version = 0;
+    uint32_t count = 0;
+    MarmotUnsentWelcome *w = NULL;
+    size_t filled = 0;
+    err = MARMOT_ERR_DESERIALIZATION;
+    if (mls_tls_read_u8(&r, &version) == 0 && version == OUTBOX_VERSION &&
+        mls_tls_read_u32(&r, &count) == 0 && count <= len &&
+        (count == 0 || (w = calloc(count, sizeof(*w))) != NULL)) {
+        bool ok = true;
+        for (uint32_t i = 0; ok && i < count; i++) {
+            uint8_t *rumor = NULL;
+            size_t rumor_len = 0;
+            ok = mls_tls_read_fixed(&r, w[i].recipient, 32) == 0 &&
+                 mls_tls_read_opaque32(&r, &rumor, &rumor_len) == 0 &&
+                 (w[i].rumor_json = calloc(1, rumor_len + 1)) != NULL;
+            if (ok) {
+                if (rumor_len) memcpy(w[i].rumor_json, rumor, rumor_len);
+                welcome_id(w[i].recipient, w[i].rumor_json, w[i].id);
+                filled = i + 1;
+            }
+            free(rumor);
+        }
+        if (ok && mls_tls_reader_done(&r)) err = MARMOT_OK;
+    }
+    free(data);
+    if (err != MARMOT_OK || filled == 0) {
+        marmot_unsent_welcomes_free(w, filled);
+        return err;
+    }
+    *out = w;
+    *out_count = filled;
+    return MARMOT_OK;
+}
+
+/* Replace the outbox with `w` (deleted when empty). */
+static MarmotError
+outbox_store(Marmot *m, const MarmotGroupId *gid, const MarmotUnsentWelcome *w,
+             size_t count)
+{
+    if (count == 0) {
+        MarmotError err = m->storage->mls_delete(m->storage->ctx, OUTBOX_LABEL,
+                                                 gid->data, gid->len);
+        return err == MARMOT_ERR_STORAGE_NOT_FOUND ? MARMOT_OK : err;
+    }
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, 256) != 0) return MARMOT_ERR_MEMORY;
+    bool ok = mls_tls_write_u8(&buf, OUTBOX_VERSION) == 0 &&
+              mls_tls_write_u32(&buf, (uint32_t)count) == 0;
+    for (size_t i = 0; ok && i < count; i++) {
+        const char *r = w[i].rumor_json ? w[i].rumor_json : "";
+        ok = mls_tls_buf_append(&buf, w[i].recipient, 32) == 0 &&
+             mls_tls_write_opaque32(&buf, (const uint8_t *)r, strlen(r)) == 0;
+    }
+    MarmotError err = ok ? m->storage->mls_store(m->storage->ctx, OUTBOX_LABEL,
+                                                 gid->data, gid->len, buf.data, buf.len)
+                         : MARMOT_ERR_MEMORY;
+    mls_tls_buf_free(&buf);
+    return err;
+}
+
+/* Append `add` to the outbox, skipping Welcomes already in it. */
+static MarmotError
+outbox_append(Marmot *m, const MarmotGroupId *gid, const MarmotUnsentWelcome *add,
+              size_t add_count)
+{
+    MarmotUnsentWelcome *cur = NULL;
+    size_t cur_count = 0;
+    MarmotError err = outbox_load(m, gid, &cur, &cur_count);
+    if (err != MARMOT_OK) return err;
+    MarmotUnsentWelcome *all = calloc(cur_count + add_count, sizeof(*all));
+    if (!all) {
+        marmot_unsent_welcomes_free(cur, cur_count);
+        return MARMOT_ERR_MEMORY;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < cur_count; i++) all[n++] = cur[i];   /* borrowed */
+    for (size_t i = 0; i < add_count; i++) {
+        MarmotUnsentWelcome e = add[i];
+        welcome_id(e.recipient, e.rumor_json, e.id);
+        bool dup = false;
+        for (size_t j = 0; j < n && !dup; j++) dup = memcmp(all[j].id, e.id, 32) == 0;
+        if (!dup) all[n++] = e;
+    }
+    err = outbox_store(m, gid, all, n);
+    free(all);
+    marmot_unsent_welcomes_free(cur, cur_count);
+    return err;
+}
+
+MarmotError
+marmot_commit_get_unsent_welcomes(Marmot *m, const MarmotGroupId *gid,
+                                  MarmotUnsentWelcome **out, size_t *out_count)
+{
+    return outbox_load(m, gid, out, out_count);
+}
+
+MarmotError
+marmot_commit_mark_welcomes_sent(Marmot *m, const MarmotGroupId *gid,
+                                 const uint8_t (*ids)[32], size_t id_count)
+{
+    if (id_count > 0 && !ids) return MARMOT_ERR_INVALID_ARG;
+    MarmotUnsentWelcome *cur = NULL;
+    size_t cur_count = 0;
+    MarmotError err = outbox_load(m, gid, &cur, &cur_count);
+    if (err != MARMOT_OK || cur_count == 0) return err;
+    MarmotUnsentWelcome *keep = calloc(cur_count, sizeof(*keep));
+    if (!keep) {
+        marmot_unsent_welcomes_free(cur, cur_count);
+        return MARMOT_ERR_MEMORY;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < cur_count; i++) {
+        bool sent = false;
+        for (size_t j = 0; j < id_count && !sent; j++)
+            sent = memcmp(cur[i].id, ids[j], 32) == 0;
+        if (!sent) keep[n++] = cur[i];   /* borrowed */
+    }
+    err = n == cur_count ? MARMOT_OK : outbox_store(m, gid, keep, n);
+    free(keep);
+    marmot_unsent_welcomes_free(cur, cur_count);
+    return err;
 }
 
 /* The pending Commit is applied: hand its Welcomes to the outbox, then drop
@@ -794,7 +900,7 @@ static MarmotError
 pending_finish_merged(Marmot *m, const MarmotGroupId *gid, const PendingCommit *p)
 {
     if (p->welcome_count > 0) {
-        MarmotError err = outbox_store(m, gid, p->welcomes, p->welcome_count);
+        MarmotError err = outbox_append(m, gid, p->welcomes, p->welcome_count);
         if (err != MARMOT_OK) return err;
     }
     (void)pending_delete(m, gid->data, gid->len);

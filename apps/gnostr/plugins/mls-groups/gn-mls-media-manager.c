@@ -370,6 +370,8 @@ on_file_read(GObject      *source,
 
   /* Call libmarmot encryption */
   MarmotEncryptedMedia enc_result = {0};
+  /* A Marmot is not thread-safe: hold the client's lock (W17b C1). */
+  marmot_gobject_client_lock(client);
   MarmotError err = marmot_encrypt_media(
     marmot,
     &mls_group_id,
@@ -377,6 +379,7 @@ on_file_read(GObject      *source,
     data->content_type,
     data->filename,
     &enc_result);
+  marmot_gobject_client_unlock(client);
 
   marmot_group_id_free(&mls_group_id);
 
@@ -503,12 +506,14 @@ on_blossom_download_done(GObject      *source,
   uint8_t *plaintext_out = NULL;
   size_t plaintext_len = 0;
 
+  marmot_gobject_client_lock(client);   /* W17b C1 */
   MarmotError err = marmot_decrypt_media(
     marmot,
     &mls_group_id,
     cipher_data, cipher_len,
     &imeta,
     &plaintext_out, &plaintext_len);
+  marmot_gobject_client_unlock(client);
 
   marmot_group_id_free(&mls_group_id);
 

@@ -288,7 +288,7 @@ mls_groups_plugin_activate(GnostrPlugin       *plugin,
 
   /* Resolve Commits left pending by a crash or a lost relay answer, and
    * send Welcomes of Adds merged meanwhile (review R2). */
-  gn_mls_resolve_all_pending_commits(self->event_router);
+  gn_mls_pending_commits_start(self->event_router);
 
   /* Ensure key package is published */
   if (user_pubkey != NULL)
@@ -321,6 +321,12 @@ mls_groups_plugin_deactivate(GnostrPlugin       *plugin,
       gnostr_plugin_context_unsubscribe_events(context, self->group_msg_subscription);
       self->group_msg_subscription = 0;
     }
+
+  /* Stop pending-Commit retries and detach the router from the context
+   * before anything that still holds it could use the context. */
+  gn_mls_pending_commits_stop();
+  if (self->event_router != NULL)
+    gn_mls_event_router_detach(self->event_router);
 
   /* Destroy sub-components */
   g_clear_object(&self->kp_manager);

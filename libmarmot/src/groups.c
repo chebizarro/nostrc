@@ -846,11 +846,12 @@ marmot_get_unsent_welcomes(Marmot *m, const MarmotGroupId *mls_group_id,
 }
 
 MarmotError
-marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id)
+marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id,
+                          const uint8_t (*ids)[32], size_t count)
 {
-    if (!m || !mls_group_id) return MARMOT_ERR_INVALID_ARG;
+    if (!m || !mls_group_id || (count > 0 && !ids)) return MARMOT_ERR_INVALID_ARG;
     if (!storage_can_commit(m->storage)) return MARMOT_ERR_STORAGE;
-    return marmot_commit_mark_welcomes_sent(m, mls_group_id);
+    return marmot_commit_mark_welcomes_sent(m, mls_group_id, ids, count);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

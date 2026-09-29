@@ -51,6 +51,10 @@ struct _MarmotGobjectClient {
     GObject parent_instance;
     Marmot *marmot;
     MarmotGobjectStorage *storage;  /* strong ref */
+    /* libmarmot and its storage backends have no locks, and every async
+     * call runs on the shared GTask thread pool: this serializes all
+     * libmarmot calls of the client, async and sync (W17b addendum C1). */
+    GMutex lock;
 };
 
 G_DEFINE_TYPE(MarmotGobjectClient, marmot_gobject_client, G_TYPE_OBJECT)
@@ -66,6 +70,7 @@ marmot_gobject_client_finalize(GObject *object)
     }
     g_clear_object(&self->storage);
 
+    g_mutex_clear(&self->lock);
     G_OBJECT_CLASS(marmot_gobject_client_parent_class)->finalize(object);
 }
 
@@ -144,7 +149,7 @@ marmot_gobject_client_class_init(MarmotGobjectClientClass *klass)
 static void
 marmot_gobject_client_init(MarmotGobjectClient *self)
 {
-    (void)self;
+    g_mutex_init(&self->lock);
 }
 
 MarmotGobjectClient *
@@ -397,6 +402,8 @@ create_key_package_thread(GTask *task, gpointer source_object,
                            gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     CreateKeyPackageData *d = task_data;
     (void)cancellable;
 
@@ -484,6 +491,8 @@ create_key_package_unsigned_thread(GTask *task, gpointer source_object,
                                     gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     CreateKeyPackageUnsignedData *d = task_data;
     (void)cancellable;
 
@@ -616,6 +625,8 @@ create_group_thread(GTask *task, gpointer source_object,
                      gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     CreateGroupData *d = task_data;
     (void)cancellable;
 
@@ -776,6 +787,8 @@ process_welcome_thread(GTask *task, gpointer source_object,
                         gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     ProcessWelcomeData *d = task_data;
     (void)cancellable;
 
@@ -840,6 +853,8 @@ accept_welcome_thread(GTask *task, gpointer source_object,
                        gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     MarmotGobjectWelcome *gobj = MARMOT_GOBJECT_WELCOME(task_data);
     (void)cancellable;
 
@@ -926,6 +941,8 @@ send_message_thread(GTask *task, gpointer source_object,
                      gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     SendMessageData *d = task_data;
     (void)cancellable;
 
@@ -1008,6 +1025,8 @@ process_message_thread(GTask *task, gpointer source_object,
                         gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     ProcessMessageData *d = task_data;
     (void)cancellable;
 
@@ -1105,6 +1124,8 @@ update_metadata_thread(GTask *task, gpointer source_object,
                         gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     UpdateMetadataData *d = task_data;
     (void)cancellable;
 
@@ -1182,6 +1203,8 @@ pending_commit_thread(GTask *task, gpointer source_object,
                       gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     const gchar *gid_hex = task_data;
     gboolean merge = g_task_get_source_tag(task) == (gpointer)&merge_pending_tag;
     (void)cancellable;
@@ -1304,6 +1327,8 @@ encrypt_media_thread(GTask *task, gpointer source_object,
                       gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     EncryptMediaData *d = task_data;
     (void)cancellable;
 
@@ -1416,6 +1441,8 @@ decrypt_media_thread(GTask *task, gpointer source_object,
                       gpointer task_data, GCancellable *cancellable)
 {
     MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     DecryptMediaData *d = task_data;
     (void)cancellable;
 
@@ -1512,6 +1539,8 @@ marmot_gobject_client_get_group(MarmotGobjectClient *self,
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
     g_return_val_if_fail(mls_group_id_hex != NULL, NULL);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
 
     size_t hex_len = strlen(mls_group_id_hex);
     size_t byte_len = hex_len / 2;
@@ -1546,6 +1575,8 @@ GPtrArray *
 marmot_gobject_client_get_all_groups(MarmotGobjectClient *self, GError **error)
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
 
     MarmotGroup **groups = NULL;
     size_t count = 0;
@@ -1572,6 +1603,8 @@ marmot_gobject_client_get_messages(MarmotGobjectClient *self,
                                      GError **error)
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
 
     size_t hex_len = strlen(mls_group_id_hex);
     size_t byte_len = hex_len / 2;
@@ -1614,6 +1647,8 @@ GPtrArray *
 marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self, GError **error)
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
 
     MarmotWelcome **welcomes = NULL;
     size_t count = 0;
@@ -1637,6 +1672,20 @@ marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self, GError **e
  * Internal access
  * ══════════════════════════════════════════════════════════════════════════ */
 
+void
+marmot_gobject_client_lock(MarmotGobjectClient *self)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_mutex_lock(&self->lock);
+}
+
+void
+marmot_gobject_client_unlock(MarmotGobjectClient *self)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_mutex_unlock(&self->lock);
+}
+
 Marmot *
 marmot_gobject_client_get_marmot(MarmotGobjectClient *self)
 {
@@ -1651,6 +1700,8 @@ marmot_gobject_client_get_group_relay_urls(MarmotGobjectClient *self,
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
     g_return_val_if_fail(mls_group_id_hex != NULL, NULL);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
 
     if (out_count) *out_count = 0;
 
@@ -1722,6 +1773,8 @@ marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
     g_return_val_if_fail(mls_group_id_hex != NULL, NULL);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     if (out_superseded) *out_superseded = FALSE;
     MarmotGroupId gid;
     if (!parse_group_id_hex(mls_group_id_hex, &gid, error)) return NULL;
@@ -1742,12 +1795,17 @@ marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
 gboolean
 marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
                                           const gchar *mls_group_id_hex,
+                                          gchar ***out_ids_hex,
                                           gchar ***out_rumors,
                                           gchar ***out_recipients_hex,
                                           GError **error)
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), FALSE);
-    g_return_val_if_fail(mls_group_id_hex && out_rumors && out_recipients_hex, FALSE);
+    g_return_val_if_fail(mls_group_id_hex && out_ids_hex && out_rumors &&
+                         out_recipients_hex, FALSE);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
+    *out_ids_hex = NULL;
     *out_rumors = NULL;
     *out_recipients_hex = NULL;
     MarmotGroupId gid;
@@ -1760,13 +1818,16 @@ marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
         g_set_error(error, MARMOT_GOBJECT_ERROR, (gint)err, "%s", marmot_error_string(err));
         return FALSE;
     }
+    gchar **ids = g_new0(gchar *, n + 1);
     gchar **rumors = g_new0(gchar *, n + 1);
     gchar **recipients = g_new0(gchar *, n + 1);
     for (size_t i = 0; i < n; i++) {
+        ids[i] = bytes_to_hex(w[i].id, 32);
         rumors[i] = g_strdup(w[i].rumor_json);
         recipients[i] = bytes_to_hex(w[i].recipient, 32);
     }
     marmot_unsent_welcomes_free(w, n);
+    *out_ids_hex = ids;
     *out_rumors = rumors;
     *out_recipients_hex = recipients;
     return TRUE;
@@ -1775,13 +1836,29 @@ marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
 gboolean
 marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
                                          const gchar *mls_group_id_hex,
+                                         const gchar * const *ids_hex,
                                          GError **error)
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), FALSE);
     g_return_val_if_fail(mls_group_id_hex != NULL, FALSE);
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
     MarmotGroupId gid;
     if (!parse_group_id_hex(mls_group_id_hex, &gid, error)) return FALSE;
-    MarmotError err = marmot_mark_welcomes_sent(self->marmot, &gid);
+    guint n = ids_hex ? g_strv_length((gchar **) ids_hex) : 0;
+    uint8_t (*ids)[32] = n ? g_malloc(n * 32) : NULL;
+    for (guint i = 0; i < n; i++) {
+        if (strlen(ids_hex[i]) != 64 || !hex_to_bytes(ids_hex[i], ids[i], 32)) {
+            g_free(ids);
+            marmot_group_id_free(&gid);
+            g_set_error(error, MARMOT_GOBJECT_ERROR, MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                        "Invalid Welcome id hex");
+            return FALSE;
+        }
+    }
+    MarmotError err = marmot_mark_welcomes_sent(self->marmot, &gid,
+                                                (const uint8_t (*)[32]) ids, n);
+    g_free(ids);
     marmot_group_id_free(&gid);
     if (err != MARMOT_OK) {
         g_set_error(error, MARMOT_GOBJECT_ERROR, (gint)err, "%s", marmot_error_string(err));

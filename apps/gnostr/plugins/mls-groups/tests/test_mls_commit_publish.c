@@ -128,6 +128,28 @@ test_no_relays(void)
     }
 }
 
+/* W17b addendum N2: retries back off exponentially, capped, with jitter. */
+static void
+test_retry_backoff(void)
+{
+  guint prev = 0;
+  for (guint n = 0; n < 12; n++)
+    {
+      guint base = gn_mls_retry_delay_seconds(n, 5, 300, 0);
+      guint expect = MIN(5u << MIN(n, 10u), 300u);
+      g_assert_cmpuint(base, ==, expect);
+      g_assert_cmpuint(base, >=, prev);
+      prev = base;
+      for (guint32 j = 0; j < 1000; j += 37)
+        {
+          guint d = gn_mls_retry_delay_seconds(n, 5, 300, g_random_int());
+          g_assert_cmpuint(d, >=, expect);
+          g_assert_cmpuint(d, <=, expect + expect / 4);
+        }
+    }
+  g_assert_cmpuint(gn_mls_retry_delay_seconds(0, 5, 300, 1), ==, 6);   /* jitter applies */
+}
+
 int
 main(int argc, char **argv)
 {
@@ -136,5 +158,6 @@ main(int argc, char **argv)
   g_test_add_func("/mls-groups/commit-publish/all-refused", test_all_refused_is_rejected);
   g_test_add_func("/mls-groups/commit-publish/lost-ok-is-uncertain", test_lost_ok_is_uncertain);
   g_test_add_func("/mls-groups/commit-publish/no-relays", test_no_relays);
+  g_test_add_func("/mls-groups/commit-publish/retry-backoff", test_retry_backoff);
   return g_test_run();
 }

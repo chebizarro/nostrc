@@ -967,14 +967,17 @@ test_client_update_metadata_commit_reaches_member(void)
     g_assert_true(inviter_sd.fired);
     g_assert_null(marmot_gobject_client_get_pending_commit(inviter, gid, NULL, &error));
     g_assert_no_error(error);
-    gchar **rumors = NULL, **recipients = NULL;
-    g_assert_true(marmot_gobject_client_get_unsent_welcomes(inviter, gid, &rumors,
+    gchar **ids = NULL, **rumors = NULL, **recipients = NULL;
+    g_assert_true(marmot_gobject_client_get_unsent_welcomes(inviter, gid, &ids, &rumors,
                                                             &recipients, &error));
     g_assert_no_error(error);
     g_assert_cmpuint(g_strv_length(rumors), ==, 0);   /* a rename has no Welcomes */
+    g_assert_true(marmot_gobject_client_mark_welcomes_sent(inviter, gid,
+                                                           (const gchar * const *) ids,
+                                                           &error));
+    g_strfreev(ids);
     g_strfreev(rumors);
     g_strfreev(recipients);
-    g_assert_true(marmot_gobject_client_mark_welcomes_sent(inviter, gid, &error));
     g_assert_cmpstr(marmot_gobject_group_get_name(MARMOT_GOBJECT_GROUP(inviter_sd.received_object)),
                     ==, "Renamed");
     guint64 epoch = marmot_gobject_group_get_epoch(MARMOT_GOBJECT_GROUP(inviter_sd.received_object));
@@ -1029,6 +1032,131 @@ test_client_update_metadata_commit_reaches_member(void)
     g_free(commit);
     g_clear_object(&inviter_sd.received_object);
     g_clear_object(&member_sd.received_object);
+    g_object_unref(welcome);
+    g_object_unref(created);
+    g_strfreev(welcomes);
+    g_object_unref(inviter);
+    g_object_unref(member);
+    g_object_unref(inviter_store);
+    g_object_unref(member_store);
+}
+
+/* ── W17b addendum C1: concurrent calls on one client are serialized ── */
+
+typedef struct {
+    GMainLoop *loop;
+    gint       pending;
+    GError    *merge_error;
+    MarmotGobjectMessageResultType process_type;
+    GError    *process_error;
+} RaceFixture;
+
+static void
+race_merged(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    RaceFixture *f = user_data;
+    marmot_gobject_client_merge_pending_commit_finish(MARMOT_GOBJECT_CLIENT(source), result,
+                                                      &f->merge_error);
+    if (--f->pending == 0) g_main_loop_quit(f->loop);
+}
+
+static void
+race_processed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    RaceFixture *f = user_data;
+    g_free(marmot_gobject_client_process_message_finish(MARMOT_GOBJECT_CLIENT(source), result,
+                                                        &f->process_type, &f->process_error));
+    if (--f->pending == 0) g_main_loop_quit(f->loop);
+}
+
+static gchar *
+rename_sync(MarmotGobjectClient *client, const gchar *gid, const gchar *name)
+{
+    AsyncFixture *f = async_fixture_new();
+    marmot_gobject_client_update_group_metadata_async(client, gid, name, NULL, NULL,
+                                                      async_callback, f);
+    g_main_loop_run(f->loop);
+    GError *error = NULL;
+    gchar *commit = marmot_gobject_client_update_group_metadata_finish(client, f->result,
+                                                                      &error);
+    g_assert_no_error(error);
+    async_fixture_free(f);
+    return commit;
+}
+
+static void
+merge_sync(MarmotGobjectClient *client, const gchar *gid)
+{
+    AsyncFixture *f = async_fixture_new();
+    marmot_gobject_client_merge_pending_commit_async(client, gid, NULL, async_callback, f);
+    g_main_loop_run(f->loop);
+    GError *error = NULL;
+    g_assert_true(marmot_gobject_client_merge_pending_commit_finish(client, f->result, &error));
+    g_assert_no_error(error);
+    async_fixture_free(f);
+}
+
+static void
+process_sync(MarmotGobjectClient *client, const gchar *event_json)
+{
+    AsyncFixture *f = async_fixture_new();
+    marmot_gobject_client_process_message_async(client, event_json, NULL, async_callback, f);
+    g_main_loop_run(f->loop);
+    MarmotGobjectMessageResultType type = MARMOT_GOBJECT_MESSAGE_RESULT_UNPROCESSABLE;
+    GError *error = NULL;
+    g_free(marmot_gobject_client_process_message_finish(client, f->result, &type, &error));
+    g_clear_error(&error);   /* the losing Commit of a race is rejected */
+    async_fixture_free(f);
+}
+
+/* The inviter's merge of its pending rename and its processing of the
+ * member's competing rename run at the same time on the thread pool: the
+ * client must run them one after the other (run under TSAN in CI), and both
+ * members must end on the same branch. */
+static void
+test_client_serializes_merge_and_process(void)
+{
+    MarmotGobjectClient *inviter = NULL, *member = NULL;
+    MarmotGobjectMemoryStorage *inviter_store = NULL, *member_store = NULL;
+    MarmotGobjectGroup *created = NULL;
+    gchar **welcomes = NULL;
+    MarmotGobjectWelcome *welcome = setup_real_welcome_flow(
+        &inviter, &inviter_store, &member, &member_store, &created, &welcomes);
+    g_assert_true(accept_welcome_sync(member, welcome));
+    const gchar *gid = marmot_gobject_group_get_mls_group_id(created);
+    guint64 epoch = marmot_gobject_group_get_epoch(created);
+
+    for (int round = 0; round < 8; round++) {
+        g_autofree gchar *mine = g_strdup_printf("inviter %d", round);
+        g_autofree gchar *theirs = g_strdup_printf("member %d", round);
+        g_autofree gchar *c_member = rename_sync(member, gid, theirs);
+        merge_sync(member, gid);
+        g_autofree gchar *c_inviter = rename_sync(inviter, gid, mine);
+
+        RaceFixture f = { g_main_loop_new(NULL, FALSE), 2, NULL, 0, NULL };
+        marmot_gobject_client_merge_pending_commit_async(inviter, gid, NULL, race_merged, &f);
+        marmot_gobject_client_process_message_async(inviter, c_member, NULL, race_processed, &f);
+        g_main_loop_run(f.loop);
+        g_main_loop_unref(f.loop);
+        g_clear_error(&f.merge_error);     /* WRONG_EPOCH when the member's won */
+        g_clear_error(&f.process_error);   /* deferred/stale when ours won */
+
+        /* The member sees the inviter's rename (applied, or rejected as the
+         * loser); if the inviter's merge came second it re-merges nothing. */
+        process_sync(member, c_inviter);
+        GError *error = NULL;
+        MarmotGobjectGroup *a = marmot_gobject_client_get_group(inviter, gid, &error);
+        g_assert_no_error(error);
+        MarmotGobjectGroup *b = marmot_gobject_client_get_group(member, gid, &error);
+        g_assert_no_error(error);
+        g_assert_cmpuint(marmot_gobject_group_get_epoch(a), ==, epoch + 1);
+        g_assert_cmpuint(marmot_gobject_group_get_epoch(b), ==, epoch + 1);
+        g_assert_cmpstr(marmot_gobject_group_get_name(a), ==, marmot_gobject_group_get_name(b));
+        g_object_unref(a);
+        g_object_unref(b);
+        epoch++;
+    }
+
     g_object_unref(welcome);
     g_object_unref(created);
     g_strfreev(welcomes);
@@ -2105,6 +2233,8 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/client/signal-welcome-received", test_client_signal_welcome_received);
     g_test_add_func("/marmot-gobject/client/update-metadata-commit-reaches-member",
                     test_client_update_metadata_commit_reaches_member);
+    g_test_add_func("/marmot-gobject/client/serializes-merge-and-process",
+                    test_client_serializes_merge_and_process);
     g_test_add_func("/marmot-gobject/client/group-fields-and-media-metadata", test_client_create_group_fields_and_media_metadata);
 
     /* 8. Synchronous queries */

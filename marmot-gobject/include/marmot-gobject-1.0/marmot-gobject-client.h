@@ -493,14 +493,16 @@ gchar *marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
  * marmot_gobject_client_get_unsent_welcomes:
  * @self: a #MarmotGobjectClient
  * @mls_group_id_hex: hex-encoded MLS group ID
+ * @out_ids_hex: (out) (transfer full) (array zero-terminated=1): stable id of
+ *   each Welcome, for marmot_gobject_client_mark_welcomes_sent()
  * @out_rumors: (out) (transfer full) (array zero-terminated=1): kind:444
  *   Welcome rumors of merged Adds not yet sent
  * @out_recipients_hex: (out) (transfer full) (array zero-terminated=1): the
  *   matching recipient account keys (hex)
  * @error: (nullable): return location for a #GError
  *
- * Gift-wrap and send each rumor to its recipient, then call
- * marmot_gobject_client_mark_welcomes_sent().
+ * Gift-wrap and send each rumor to its recipient; once a send is confirmed,
+ * mark that Welcome's id with marmot_gobject_client_mark_welcomes_sent().
  *
  * Returns: %TRUE on success (the arrays may be empty)
  *
@@ -508,6 +510,7 @@ gchar *marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
  */
 gboolean marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
                                                    const gchar *mls_group_id_hex,
+                                                   gchar ***out_ids_hex,
                                                    gchar ***out_rumors,
                                                    gchar ***out_recipients_hex,
                                                    GError **error);
@@ -516,9 +519,11 @@ gboolean marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
  * marmot_gobject_client_mark_welcomes_sent:
  * @self: a #MarmotGobjectClient
  * @mls_group_id_hex: hex-encoded MLS group ID
+ * @ids_hex: (array zero-terminated=1) (nullable): ids of the Welcomes whose
+ *   send was confirmed
  * @error: (nullable): return location for a #GError
  *
- * Empties the group's unsent-Welcome outbox.
+ * Removes exactly those Welcomes from the group's unsent-Welcome outbox.
  *
  * Returns: %TRUE on success
  *
@@ -526,6 +531,7 @@ gboolean marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
  */
 gboolean marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
                                                   const gchar *mls_group_id_hex,
+                                                  const gchar * const *ids_hex,
                                                   GError **error);
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -686,9 +692,37 @@ GPtrArray *marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self,
  *
  * The returned pointer is owned by the client and must not be freed.
  *
+ * A Marmot instance is not thread-safe, and the client runs its calls on
+ * worker threads: hold marmot_gobject_client_lock() around every direct
+ * libmarmot call, and do not call other client functions while holding it
+ * (they take the same lock).
+ *
  * Returns: (transfer none) (nullable): the underlying Marmot instance
  */
 struct Marmot *marmot_gobject_client_get_marmot(MarmotGobjectClient *self);
+
+/**
+ * marmot_gobject_client_lock:
+ * @self: a #MarmotGobjectClient
+ *
+ * Takes the client's lock, which serializes every libmarmot call the client
+ * makes (async and sync).  For direct libmarmot calls through
+ * marmot_gobject_client_get_marmot(); release it with
+ * marmot_gobject_client_unlock().  Not recursive.
+ *
+ * Since: 1.2
+ */
+void marmot_gobject_client_lock(MarmotGobjectClient *self);
+
+/**
+ * marmot_gobject_client_unlock:
+ * @self: a #MarmotGobjectClient
+ *
+ * Releases the lock taken by marmot_gobject_client_lock().
+ *
+ * Since: 1.2
+ */
+void marmot_gobject_client_unlock(MarmotGobjectClient *self);
 
 /**
  * marmot_gobject_client_get_group_relay_urls:

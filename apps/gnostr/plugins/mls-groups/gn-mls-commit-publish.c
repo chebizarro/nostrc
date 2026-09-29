@@ -101,6 +101,17 @@ gn_mls_publish_until_ack_async(GnMlsAckPublishFunc  publish,
   try_next_relay(task);   /* the task holds its own reference until done */
 }
 
+guint
+gn_mls_retry_delay_seconds(guint attempt, guint base_s, guint max_s, guint32 jitter)
+{
+  guint delay = base_s;
+  for (guint i = 0; i < attempt && delay < max_s; i++)
+    delay *= 2;
+  if (delay > max_s)
+    delay = max_s;
+  return delay + (jitter % (delay / 4 + 1));
+}
+
 gchar *
 gn_mls_publish_until_ack_finish(GAsyncResult *result, GError **error)
 {

@@ -65,6 +65,13 @@ MarmotError marmot_decrypt_media(Marmot *m,
  * Create a new Marmot instance with default configuration.
  * The storage is owned by the Marmot instance and freed on marmot_free().
  *
+ * Thread safety: a Marmot instance, and the storage it owns, is NOT
+ * thread-safe.  Calls on one instance must be serialized by the caller
+ * (e.g. one mutex around every call, as marmot-gobject does per client):
+ * Commit processing, merges and message handling are multi-step
+ * read-modify-write transitions of the same group records.  Separate
+ * instances with separate storage are independent.
+ *
  * Returns: (transfer full) (nullable): new Marmot instance, or NULL on error
  */
 Marmot *marmot_new(MarmotStorage *storage);
@@ -434,12 +441,14 @@ MarmotError marmot_get_pending_commit(Marmot *m,
 
 /**
  * MarmotUnsentWelcome:
+ * @id: stable identifier of this Welcome (for marmot_mark_welcomes_sent())
  * @recipient: the invitee's Nostr account key (gift-wrap recipient)
  * @rumor_json: the unsigned kind:444 Welcome rumor to gift-wrap (NIP-59)
  *
  * A Welcome of a merged Add that has not been confirmed as sent.
  */
 typedef struct {
+    uint8_t id[32];          /* SHA-256(recipient || rumor_json): stable */
     uint8_t recipient[32];
     char   *rumor_json;
 } MarmotUnsentWelcome;
@@ -456,8 +465,10 @@ void marmot_unsent_welcomes_free(MarmotUnsentWelcome *welcomes, size_t count);
  * @out_count: (out): number of Welcomes
  *
  * When a pending Add Commit is merged -- by marmot_merge_pending_commit(),
- * by its relay echo, or after a restart -- its Welcomes move here.  Gift-wrap
- * and send each to its recipient, then call marmot_mark_welcomes_sent().
+ * by its relay echo, or after a restart -- its Welcomes are appended here
+ * (Welcomes of earlier Adds stay until marked sent).  Gift-wrap and send
+ * each to its recipient, and once that send is confirmed mark that entry
+ * with marmot_mark_welcomes_sent().
  * (The rumors marmot_add_members() returns are the same Welcomes; send one
  * copy only.)
  *
@@ -472,12 +483,16 @@ MarmotError marmot_get_unsent_welcomes(Marmot *m,
  * marmot_mark_welcomes_sent:
  * @m: Marmot instance
  * @mls_group_id: the group
+ * @ids: (array length=count): ids of Welcomes whose send was confirmed
+ * @count: number of ids
  *
- * Empty the group's unsent-Welcome outbox.
+ * Remove exactly those Welcomes from the group's outbox; others -- including
+ * Welcomes appended after they were read -- stay.  Unknown ids are ignored.
  *
  * Returns: MARMOT_OK on success
  */
-MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id);
+MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id,
+                                       const uint8_t (*ids)[32], size_t count);
 
 /**
  * marmot_add_members:

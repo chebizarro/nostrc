@@ -144,11 +144,13 @@ MarmotError marmot_commit_merge_pending(Marmot *m, MarmotGroup *group);
  */
 MarmotError marmot_commit_clear_pending(Marmot *m, MarmotGroup *group);
 
-/** The unsent-Welcome outbox (Welcomes of merged Adds). */
+/** The unsent-Welcome outbox (Welcomes of merged Adds; append-only,
+ *  entries removed by id once sent). */
 MarmotError marmot_commit_get_unsent_welcomes(Marmot *m, const MarmotGroupId *gid,
                                               MarmotUnsentWelcome **out,
                                               size_t *out_count);
-MarmotError marmot_commit_mark_welcomes_sent(Marmot *m, const MarmotGroupId *gid);
+MarmotError marmot_commit_mark_welcomes_sent(Marmot *m, const MarmotGroupId *gid,
+                                             const uint8_t (*ids)[32], size_t id_count);
 
 /**
  * Apply a received Commit (`msg`, an MLSMessage PublicMessage already

@@ -479,6 +479,13 @@ gn_mls_event_router_new(GnMarmotService     *service,
   return self;
 }
 
+void
+gn_mls_event_router_detach(GnMlsEventRouter *self)
+{
+  g_return_if_fail(GN_IS_MLS_EVENT_ROUTER(self));
+  self->context = NULL;
+}
+
 GnMarmotService *
 gn_mls_event_router_get_service(GnMlsEventRouter *self)
 {

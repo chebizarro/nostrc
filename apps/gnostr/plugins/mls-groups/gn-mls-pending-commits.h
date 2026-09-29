@@ -37,9 +37,10 @@ typedef enum {
 /*
  * Publish the group's pending Commit (the signed event libmarmot kept) to
  * the group relays until one accepts it, then merge it and send the Welcomes
- * of an Add; clear it only when certainly unpublished.  Idempotent: safe to
- * call again for the same group (restart, retry).  An UNCERTAIN outcome
- * schedules retries.
+ * of an Add (each marked sent once its own send succeeded); clear it only
+ * when certainly unpublished.  Concurrent calls for one group share one
+ * resolution.  An UNCERTAIN outcome schedules retries with exponential
+ * backoff (until gn_mls_pending_commits_stop()).
  */
 void               gn_mls_resolve_pending_commit_async(GnMlsEventRouter    *router,
                                                        const gchar         *mls_group_id_hex,
@@ -48,9 +49,15 @@ void               gn_mls_resolve_pending_commit_async(GnMlsEventRouter    *rout
 GnMlsCommitOutcome gn_mls_resolve_pending_commit_finish(GAsyncResult  *result,
                                                         GError       **error);
 
-/* Startup: resolve every group's leftover pending Commit and unsent
- * Welcomes (a crash or a lost relay answer must not wedge the group). */
-void               gn_mls_resolve_all_pending_commits(GnMlsEventRouter *router);
+/*
+ * Plugin activation: resolve every group's leftover pending Commit and
+ * unsent Welcomes (a crash or a lost relay answer must not wedge a group),
+ * and flush a group's Welcome outbox whenever it changes epoch (e.g. our
+ * pending Add merged by its relay echo).  gn_mls_pending_commits_stop() on
+ * deactivation cancels every retry timer.
+ */
+void               gn_mls_pending_commits_start(GnMlsEventRouter *router);
+void               gn_mls_pending_commits_stop(void);
 
 G_END_DECLS
 

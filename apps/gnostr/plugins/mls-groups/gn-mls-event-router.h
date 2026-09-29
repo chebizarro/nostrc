@@ -104,6 +104,11 @@ gboolean gn_mls_event_router_send_message_finish(GnMlsEventRouter *self,
  *
  * Gift-wrap and send a welcome message to a recipient.
  */
+/* The plugin is going away: drop the borrowed context now, so work still
+ * holding the router (e.g. a pending-Commit resolution) sees NULL instead of
+ * a dangling pointer. */
+void gn_mls_event_router_detach(GnMlsEventRouter *self);
+
 /* The router's service and plugin context (NULL once the plugin is
  * deactivated); borrowed. */
 GnMarmotService     *gn_mls_event_router_get_service(GnMlsEventRouter *self);

@@ -101,6 +101,18 @@ join(Member *x, const char *welcome_rumor)
     marmot_welcome_free(w);
 }
 
+/* The application confirmed every Welcome in the outbox as sent. */
+static void
+mark_all_welcomes_sent(Member *x, const MarmotGroupId *gid)
+{
+    MarmotUnsentWelcome *w = NULL;
+    size_t n = 0;
+    OK(marmot_get_unsent_welcomes(x->m, gid, &w, &n));
+    for (size_t i = 0; i < n; i++)
+        OK(marmot_mark_welcomes_sent(x->m, gid, (const uint8_t (*)[32]) w[i].id, 1));
+    marmot_unsent_welcomes_free(w, n);
+}
+
 /* The relay accepted our Commit (MIP-03: merge only then). */
 static void
 merge(Member *x, const MarmotGroupId *gid)
@@ -368,6 +380,7 @@ trio_init(Trio *t)
     merge(&t->alice, &t->gid);
     expect_commit(&t->bob, commit, "Alice adds Charlie");
     join(&t->charlie, welcomes[0]);
+    mark_all_welcomes_sent(&t->alice, &t->gid);
     free(welcomes[0]);
     free(welcomes);
     free(commit);
@@ -1412,8 +1425,8 @@ test_merge_idempotent_after_crash(void)
     OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &out, &out_n));
     CHECK(out_n == 1 && memcmp(out[0].recipient, dave.pk, 32) == 0 &&
           strcmp(out[0].rumor_json, welcomes[0]) == 0, "the Add's Welcome is in the outbox");
+    OK(marmot_mark_welcomes_sent(t.alice.m, &t.gid, (const uint8_t (*)[32]) out[0].id, 1));
     marmot_unsent_welcomes_free(out, out_n);
-    OK(marmot_mark_welcomes_sent(t.alice.m, &t.gid));
     OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &out, &out_n));
     CHECK(out == NULL && out_n == 0, "outbox emptied");
     expect_commit(&t.bob, commit, "Bob");
@@ -1479,6 +1492,164 @@ test_failed_merge_stays_clearable(void)
     trio_clear(&t);
 }
 
+
+/* W17b addendum C2: the outbox is append-only; an entry leaves only when
+ * its own send is confirmed.  Two merged Adds before the first Welcome is
+ * sent keep both; a mark covers only the ids it names. */
+static void
+test_outbox_keeps_every_welcome_until_marked(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member dave, eve, frank;
+    member_init(&dave, "Dave");
+    member_init(&eve, "Eve");
+    member_init(&frank, "Frank");
+    Member *joiner[3] = { &dave, &eve, &frank };
+    char *commits[3];
+    char *rumors[3];
+    for (int i = 0; i < 2; i++) {
+        char *kp = key_package(joiner[i]);
+        const char *kps[] = { kp };
+        char **w = NULL;
+        size_t n = 0;
+        OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &w, &n, &commits[i]));
+        merge(&t.alice, &t.gid);
+        rumors[i] = w[0];
+        free(w);
+        free(kp);
+    }
+    MarmotUnsentWelcome *out = NULL;
+    size_t n = 0;
+    OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &out, &n));
+    CHECK(n == 2 && memcmp(out[0].recipient, dave.pk, 32) == 0 &&
+          memcmp(out[1].recipient, eve.pk, 32) == 0, "both Adds' Welcomes kept: %zu", n);
+    /* Dave's send is confirmed; Eve's is not. */
+    uint8_t dave_id[32], eve_id[32];
+    memcpy(dave_id, out[0].id, 32);
+    memcpy(eve_id, out[1].id, 32);
+    marmot_unsent_welcomes_free(out, n);
+    OK(marmot_mark_welcomes_sent(t.alice.m, &t.gid, (const uint8_t (*)[32]) dave_id, 1));
+    /* Frank's Add merges between a read and a mark: the mark (Eve's id)
+     * must not take Frank's Welcome with it. */
+    {
+        char *kp = key_package(&frank);
+        const char *kps[] = { kp };
+        char **w = NULL;
+        size_t wn = 0;
+        OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &w, &wn, &commits[2]));
+        merge(&t.alice, &t.gid);
+        rumors[2] = w[0];
+        free(w);
+        free(kp);
+    }
+    OK(marmot_mark_welcomes_sent(t.alice.m, &t.gid, (const uint8_t (*)[32]) eve_id, 1));
+    OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &out, &n));
+    CHECK(n == 1 && memcmp(out[0].recipient, frank.pk, 32) == 0 &&
+          strcmp(out[0].rumor_json, rumors[2]) == 0, "only Frank's Welcome remains");
+    /* An unknown id changes nothing; Frank's own id empties the outbox. */
+    OK(marmot_mark_welcomes_sent(t.alice.m, &t.gid, (const uint8_t (*)[32]) dave_id, 1));
+    size_t n2 = 0;
+    MarmotUnsentWelcome *again = NULL;
+    OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &again, &n2));
+    CHECK(n2 == 1, "unknown id ignored");
+    marmot_unsent_welcomes_free(again, n2);
+    OK(marmot_mark_welcomes_sent(t.alice.m, &t.gid, (const uint8_t (*)[32]) out[0].id, 1));
+    marmot_unsent_welcomes_free(out, n);
+    OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &out, &n));
+    CHECK(out == NULL && n == 0, "outbox empty");
+
+    /* Every Welcome still joins, and everyone converges. */
+    for (int i = 0; i < 3; i++) {
+        expect_commit(&t.bob, commits[i], "Bob follows the Adds");
+        expect_commit(&t.charlie, commits[i], "Charlie follows the Adds");
+    }
+    join(&dave, rumors[0]);
+    expect_commit(&dave, commits[1], "Dave follows Eve's Add");
+    expect_commit(&dave, commits[2], "Dave follows Frank's Add");
+    join(&eve, rumors[1]);
+    expect_commit(&eve, commits[2], "Eve follows Frank's Add");
+    join(&frank, rumors[2]);
+    Member *six[] = { &t.alice, &t.bob, &t.charlie, &dave, &eve, &frank };
+    expect_converged(six, 6, &t.gid, "Before", t.epoch + 3);
+    expect_messages_flow(six, 6, &t.gid);
+    for (int i = 0; i < 3; i++) {
+        free(commits[i]);
+        free(rumors[i]);
+        marmot_free(joiner[i]->m);
+    }
+    trio_clear(&t);
+}
+
+/* W17b addendum N1: a second copy of a Welcome (another gift wrap, or a
+ * resend) must not roll a joined member back; a re-invite after removal
+ * still joins. */
+static void
+test_duplicate_welcome_does_not_roll_back(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member dave;
+    member_init(&dave, "Dave");
+    char *kp = key_package(&dave);
+    const char *kps[] = { kp };
+    char **w = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &w, &n, &add));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, add, "Bob");
+    expect_commit(&t.charlie, add, "Charlie");
+    join(&dave, w[0]);
+    char *r = rename_group(&t.alice, &t.gid, "Moved on");
+    Member *four[] = { &t.alice, &t.bob, &t.charlie, &dave };
+    for (int i = 1; i < 4; i++) expect_commit(four[i], r, "rename");
+    expect_converged(four, 4, &t.gid, "Moved on", t.epoch + 2);
+
+    Snapshot before;
+    snapshot(&dave, &t.gid, &before);
+    uint8_t wrapper[32];
+    randombytes_buf(wrapper, sizeof(wrapper));
+    MarmotWelcome *copy = NULL;
+    MarmotError err = marmot_process_welcome(dave.m, wrapper, w[0], &copy);
+    if (err == MARMOT_OK) {
+        err = marmot_accept_welcome(dave.m, copy);
+        marmot_welcome_free(copy);
+    }
+    CHECK(err == MARMOT_ERR_WELCOME_ALREADY_ACCEPTED,
+          "a duplicate Welcome must be refused: %d", err);
+    expect_unchanged(&dave, &t.gid, &before, "duplicate Welcome");
+    snapshot_clear(&before);
+    expect_converged(four, 4, &t.gid, "Moved on", t.epoch + 2);
+    expect_messages_flow(four, 4, &t.gid);
+
+    /* Removed (Dave cannot follow his own removal yet, nostrc-yo95) and
+     * invited again -- with the same KeyPackage, so the new Welcome carries
+     * his old leaf signature key: being for a later epoch, it joins. */
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) dave.pk, 1, &rm));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, rm, "Bob");
+    expect_commit(&t.charlie, rm, "Charlie");
+    char *kp2 = strdup(kp);
+    const char *kps2[] = { kp2 };
+    char **w2 = NULL;
+    size_t n2 = 0;
+    char *readd = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps2, 1, &w2, &n2, &readd));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, readd, "Bob");
+    expect_commit(&t.charlie, readd, "Charlie");
+    join(&dave, w2[0]);
+    expect_converged(four, 4, &t.gid, "Moved on", t.epoch + 4);
+    expect_messages_flow(four, 4, &t.gid);
+
+    free(w[0]); free(w); free(w2[0]); free(w2);
+    free(kp); free(kp2); free(add); free(r); free(rm); free(readd);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
 int
 main(void)
 {
@@ -1500,6 +1671,8 @@ main(void)
     RUN(test_pending_commit_recovered_by_echo);
     RUN(test_merge_idempotent_after_crash);
     RUN(test_failed_merge_stays_clearable);
+    RUN(test_outbox_keeps_every_welcome_until_marked);
+    RUN(test_duplicate_welcome_does_not_roll_back);
     printf("All commit tests passed\n");
     return 0;
 }
