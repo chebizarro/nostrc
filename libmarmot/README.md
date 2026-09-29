@@ -318,6 +318,12 @@ do not trust, as unauthenticated.
     validation rejects a proof that does not verify.
 - **Welcome rumors carry their sender's pubkey**, as NIP-59 requires.
   Gnostr's unwrap already rejected rumors whose pubkey is not the seal's.
+- **The sender, stated by the caller.** `marmot_process_welcome_from()` takes
+  the NIP-59 seal's author, which the caller verified. The join's sender
+  exemption then rests on that argument rather than on the rumor, and a
+  rumor naming another author fails with `MARMOT_ERR_AUTHOR_MISMATCH`.
+  `marmot_process_welcome()` still trusts the rumor's `pubkey`, so feed it
+  only rumors whose seal was checked. Gnostr uses the new call.
 - **Legacy mode.** `MarmotConfig.allow_unproven_members` (default `false`)
   accepts leaves that carry no proof: KeyPackages and members from MDK 0.8
   or libmarmot 0.9.0 and older. A proof that does not verify is rejected
@@ -371,7 +377,8 @@ groups. There is no adopted peer to test against either.
     `marmot_config_default()`.
   - New `marmot_account_proof_template()`, `marmot_set_account_proof()`,
     `marmot_has_account_proof()`, and `marmot_group_account_proof_template()`
-    with `marmot_self_update()` (also the public self-update of nostrc-yd0q).
+    with `marmot_self_update()` (also the public self-update of nostrc-yd0q),
+    and `marmot_process_welcome_from()`.
   - `marmot_create_group()` fails without an enrollment, outside legacy mode.
   - `marmot_create_key_package_unsigned()` fails without an enrollment, as
     above.

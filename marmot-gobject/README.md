@@ -129,6 +129,10 @@ When built with Meson and `introspection=true`:
   it creates then carry the account-identity proof that other members require.
 - `marmot_gobject_client_create_key_package_unsigned_async()` fails with
   `MARMOT_ERR_KEY_PACKAGE_IDENTITY` until the client is enrolled.
+- Added `marmot_gobject_client_process_welcome_from_async()`, which takes the
+  NIP-59 seal's author as the Welcome's sender (libmarmot
+  `marmot_process_welcome_from()`). Finish it with
+  `marmot_gobject_client_process_welcome_finish()`.
 
 ### 1.3.0 (unreleased)
 

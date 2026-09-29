@@ -239,6 +239,7 @@ static MarmotError
 process_welcome_impl(Marmot *m,
                         const uint8_t wrapper_event_id[32],
                         const char *rumor_event_json,
+                        const uint8_t *sender_pubkey,
                         MarmotWelcome **out_welcome)
 {
     if (!m || !wrapper_event_id || !rumor_event_json || !out_welcome)
@@ -273,6 +274,19 @@ process_welcome_impl(Marmot *m,
     if (!nostr_event_deserialize_compact(&rumor, rumor_event_json, NULL)) {
         record_welcome_failure(m, wrapper_event_id, "deserialization failed", true);
         return MARMOT_ERR_DESERIALIZATION;
+    }
+
+    /* The caller's seal-authenticated sender (review W20 N1): a rumor that
+     * names another author is forged. */
+    if (sender_pubkey && rumor.pubkey) {
+        uint8_t named[32];
+        if (!is_hex_len(rumor.pubkey, 64) || marmot_hex_decode(rumor.pubkey, named, 32) != 0 ||
+            memcmp(named, sender_pubkey, 32) != 0) {
+            free(rumor.id); free(rumor.pubkey); free(rumor.content);
+            free(rumor.sig); nostr_tags_free(rumor.tags);
+            record_welcome_failure(m, wrapper_event_id, "rumor author is not the seal's", true);
+            return MARMOT_ERR_AUTHOR_MISMATCH;
+        }
     }
 
     /* Verify kind */
@@ -380,7 +394,9 @@ process_welcome_impl(Marmot *m,
         marmot_hex_decode(rumor.id, welcome->id, 32);
     else
         memcpy(welcome->id, wrapper_event_id, 32);
-    if (rumor.pubkey && is_hex_len(rumor.pubkey, 64))
+    if (sender_pubkey)
+        memcpy(welcome->welcomer, sender_pubkey, 32);
+    else if (rumor.pubkey && is_hex_len(rumor.pubkey, 64))
         marmot_hex_decode(rumor.pubkey, welcome->welcomer, 32);
     welcome->event_json = strdup(rumor_event_json);
     welcome->state = MARMOT_WELCOME_STATE_PENDING;
@@ -875,7 +891,27 @@ marmot_process_welcome(Marmot *m,
 {
     MarmotError err = marmot_txn_begin(m);
     if (err != MARMOT_OK) return err;
-    err = process_welcome_impl(m, wrapper_event_id, rumor_event_json, out_welcome);
+    err = process_welcome_impl(m, wrapper_event_id, rumor_event_json, NULL, out_welcome);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        marmot_welcome_free(*out_welcome);
+        *out_welcome = NULL;
+    }
+    return end;
+}
+
+MarmotError
+marmot_process_welcome_from(Marmot *m,
+                            const uint8_t wrapper_event_id[32],
+                            const char *rumor_event_json,
+                            const uint8_t sender_pubkey[32],
+                            MarmotWelcome **out_welcome)
+{
+    if (!sender_pubkey) return MARMOT_ERR_INVALID_ARG;
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = process_welcome_impl(m, wrapper_event_id, rumor_event_json, sender_pubkey,
+                               out_welcome);
     MarmotError end = marmot_txn_end(m, err);
     if (err == MARMOT_OK && end != MARMOT_OK) {
         marmot_welcome_free(*out_welcome);

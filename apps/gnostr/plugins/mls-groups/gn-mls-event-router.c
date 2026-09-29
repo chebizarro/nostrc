@@ -301,11 +301,15 @@ on_gift_wrap_unwrapped(GnostrUnwrapResult *unwrap_result, gpointer user_data)
     {
       /* Welcome message — route to marmot for MLS state initialization */
       g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
-      if (rumor_json != NULL)
+      if (rumor_json != NULL && unwrap_result->sender_pubkey != NULL)
         {
-          marmot_gobject_client_process_welcome_async(
+          /* The seal's author, verified by gnostr_nip59_unwrap_async(), is
+           * the Welcome's sender (libmarmot 0.10.0: the join exempts only
+           * that sender's own leaf from the account proof). */
+          marmot_gobject_client_process_welcome_from_async(
             client,
             data->gift_wrap_event_id,
+            unwrap_result->sender_pubkey,
             rumor_json,
             NULL,
             on_welcome_processed,

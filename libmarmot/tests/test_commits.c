@@ -3031,6 +3031,63 @@ test_welcome_with_forged_member_rejected(void)
     marmot_free(bob.m);
 }
 
+/* Review W20 N1: marmot_process_welcome_from() takes the NIP-59 seal's
+ * author explicitly.  The join's sender exemption then rests on it, not on
+ * the rumor: a rumor naming another author is refused, and a rumor without
+ * a pubkey still gets its sender. */
+static void
+test_welcome_sender_from_seal(void)
+{
+    Member mallory, alice, bob;
+    member_init(&mallory, "Mallory");
+    member_init(&alice, "Alice");
+    member_init(&bob, "Bob");
+    MlsKeyPackage bob_kp, other;
+    MlsKeyPackagePrivate other_priv;
+    own_key_package(&bob, &bob_kp);
+    leaf_key_package(alice.pk, alice.sk, &mallory, LEAF_GENUINE, &other, &other_priv);
+
+    /* Mallory's unproven leaf signs; her seal says Mallory. */
+    char *rumor = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    uint8_t wrapper[32];
+    MarmotWelcome *w = NULL;
+    randombytes_buf(wrapper, sizeof(wrapper));
+    CHECK(marmot_process_welcome_from(bob.m, wrapper, rumor, alice.pk, &w) ==
+              MARMOT_ERR_AUTHOR_MISMATCH && !w, "rumor says Mallory, seal says Alice");
+    randombytes_buf(wrapper, sizeof(wrapper));
+    OK(marmot_process_welcome_from(bob.m, wrapper, rumor, mallory.pk, &w));
+    CHECK(memcmp(w->welcomer, mallory.pk, 32) == 0, "sender recorded");
+    OK(marmot_accept_welcome(bob.m, w));
+    marmot_welcome_free(w);
+
+    /* A rumor without a pubkey: the seal's author is the sender. */
+    char *bare = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    char *at = strstr(bare, "\"pubkey\":\"");
+    CHECK(at, "pubkey field");
+    memmove(at, at + 76, strlen(at + 76) + 1);   /* drop "pubkey":"<64 hex>", */
+    CHECK(!strstr(bare, "pubkey") && strncmp(bare, "{\"created_at\":", 14) == 0,
+          "no pubkey left, JSON intact");
+    randombytes_buf(wrapper, sizeof(wrapper));
+    OK(marmot_process_welcome_from(bob.m, wrapper, bare, mallory.pk, &w));
+    OK(marmot_accept_welcome(bob.m, w));
+    marmot_welcome_free(w);
+    /* ... while the rumor-trusting call has no sender for it: refused. */
+    char *bare2 = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    at = strstr(bare2, "\"pubkey\":\"");
+    memmove(at, at + 76, strlen(at + 76) + 1);
+    expect_join(&bob, bare2, MARMOT_ERR_KEY_PACKAGE_IDENTITY, "no sender at all");
+
+    free(bare2);
+    free(bare);
+    free(rumor);
+    mls_key_package_clear(&other);
+    mls_key_package_private_clear(&other_priv);
+    mls_key_package_clear(&bob_kp);
+    marmot_free(mallory.m);
+    marmot_free(alice.m);
+    marmot_free(bob.m);
+}
+
 /* marmot_account_proof_template() + marmot_set_account_proof(): what a
  * signer-only client (Gnostr) does to prove its leaves; the created group's
  * creator leaf then admits members added by another admin. */
@@ -3769,6 +3826,7 @@ main(int argc, char **argv)
     RUN(test_send_stores_step_before_event);
     RUN(test_forged_member_identity_rejected);
     RUN(test_welcome_with_forged_member_rejected);
+    RUN(test_welcome_sender_from_seal);
     RUN(test_account_proof_enrollment);
     RUN(test_add_refused_when_joiners_would_reject);
     RUN(test_create_group_needs_enrollment);

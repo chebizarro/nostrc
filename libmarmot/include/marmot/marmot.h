@@ -743,7 +743,8 @@ MarmotError marmot_update_group_metadata(Marmot *m,
  * the caller verified, with the rumor's `pubkey` equal to the seal's (as
  * NIP-59 requires). Since 0.10.0 that pubkey is the Welcome's author, whose
  * own leaf the join accepts without an account proof (see
- * marmot_accept_welcome()).
+ * marmot_accept_welcome()). Prefer marmot_process_welcome_from(), which
+ * takes the seal's author explicitly instead of trusting the rumor.
  *
  * Returns: MARMOT_OK on success
  */
@@ -751,6 +752,28 @@ MarmotError marmot_process_welcome(Marmot *m,
                                     const uint8_t wrapper_event_id[32],
                                     const char *rumor_event_json,
                                     MarmotWelcome **out_welcome);
+
+/**
+ * marmot_process_welcome_from:
+ * @m: Marmot instance
+ * @wrapper_event_id: (array fixed-size=32): the gift-wrap event ID
+ * @rumor_event_json: JSON of the unwrapped kind:444 rumor event
+ * @sender_pubkey: (array fixed-size=32): the author of the NIP-59 seal,
+ *   whose signature the caller verified
+ * @out_welcome: (out) (transfer full): the stored welcome record
+ *
+ * marmot_process_welcome() with the Welcome's authenticated sender given by
+ * the caller (review W20 N1): the join's exemption for the sender's own
+ * leaf rests on @sender_pubkey, not on the rumor.  A rumor naming another
+ * `pubkey` is refused with MARMOT_ERR_AUTHOR_MISMATCH (recorded as failed).
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_process_welcome_from(Marmot *m,
+                                        const uint8_t wrapper_event_id[32],
+                                        const char *rumor_event_json,
+                                        const uint8_t sender_pubkey[32],
+                                        MarmotWelcome **out_welcome);
 
 /**
  * marmot_accept_welcome:

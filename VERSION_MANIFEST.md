@@ -95,6 +95,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.4.0 | No further bump: no source change (its tests enroll the creator). |
 | same | gnostr | 0.1.0 | No bump (unreleased): `GnMarmotService` enrolls once through the signer, shared by the KeyPackage manager, DM creation, the create-group dialog and invites, which wait for it and say so. |
 | same | groundhog | 0.11.0 | No bump: test-only change (the store tests' actors enroll their account proof, as the reviewer suggested). |
+| libmarmot 0.10.0 review fix W20 N1 (`marmot_process_welcome_from()`: the Welcome's sender is the caller-verified NIP-59 seal author; still unreleased 0.10.0) | libmarmot, marmot-gobject | 0.10.0, 1.4.0 | No further bump: additive API folded into the unreleased MINORs (marmot-gobject adds `process_welcome_from_async`). Gnostr (unreleased 0.1.0) passes the seal author from its unwrap. |
 
 ## Maintenance
 

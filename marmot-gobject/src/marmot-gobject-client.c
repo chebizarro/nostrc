@@ -853,6 +853,7 @@ marmot_gobject_client_create_group_finish(MarmotGobjectClient *self,
 typedef struct {
     gchar *wrapper_event_id_hex;
     gchar *rumor_event_json;
+    gchar *sender_pubkey_hex;   /* NULL: trust the rumor's pubkey */
 } ProcessWelcomeData;
 
 static void
@@ -861,6 +862,7 @@ process_welcome_data_free(gpointer data)
     ProcessWelcomeData *d = data;
     g_free(d->wrapper_event_id_hex);
     g_free(d->rumor_event_json);
+    g_free(d->sender_pubkey_hex);
     g_free(d);
 }
 
@@ -882,9 +884,19 @@ process_welcome_thread(GTask *task, gpointer source_object,
         return;
     }
 
+    uint8_t sender[32];
+    if (d->sender_pubkey_hex && !hex_to_bytes(d->sender_pubkey_hex, sender, 32)) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                                "Invalid sender pubkey hex");
+        return;
+    }
+
     MarmotWelcome *welcome = NULL;
-    MarmotError err = marmot_process_welcome(
-        self->marmot, wrapper_id, d->rumor_event_json, &welcome);
+    MarmotError err = d->sender_pubkey_hex
+        ? marmot_process_welcome_from(self->marmot, wrapper_id, d->rumor_event_json,
+                                      sender, &welcome)
+        : marmot_process_welcome(self->marmot, wrapper_id, d->rumor_event_json, &welcome);
 
     if (err != MARMOT_OK) {
         g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
@@ -914,6 +926,29 @@ marmot_gobject_client_process_welcome_async(MarmotGobjectClient *self,
     ProcessWelcomeData *d = g_new0(ProcessWelcomeData, 1);
     d->wrapper_event_id_hex = g_strdup(wrapper_event_id_hex);
     d->rumor_event_json     = g_strdup(rumor_event_json);
+    g_task_set_task_data(task, d, process_welcome_data_free);
+    g_task_run_in_thread(task, process_welcome_thread);
+    g_object_unref(task);
+}
+
+void
+marmot_gobject_client_process_welcome_from_async(MarmotGobjectClient *self,
+                                                 const gchar *wrapper_event_id_hex,
+                                                 const gchar *sender_pubkey_hex,
+                                                 const gchar *rumor_event_json,
+                                                 GCancellable *cancellable,
+                                                 GAsyncReadyCallback callback,
+                                                 gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(wrapper_event_id_hex != NULL);
+    g_return_if_fail(sender_pubkey_hex != NULL);
+    g_return_if_fail(rumor_event_json != NULL);
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    ProcessWelcomeData *d = g_new0(ProcessWelcomeData, 1);
+    d->wrapper_event_id_hex = g_strdup(wrapper_event_id_hex);
+    d->rumor_event_json     = g_strdup(rumor_event_json);
+    d->sender_pubkey_hex    = g_strdup(sender_pubkey_hex);
     g_task_set_task_data(task, d, process_welcome_data_free);
     g_task_run_in_thread(task, process_welcome_thread);
     g_object_unref(task);

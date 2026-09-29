@@ -314,6 +314,32 @@ void marmot_gobject_client_process_welcome_async(MarmotGobjectClient *self,
                                                   gpointer user_data);
 
 /**
+ * marmot_gobject_client_process_welcome_from_async:
+ * @self: a #MarmotGobjectClient
+ * @wrapper_event_id_hex: the gift-wrap event ID as hex
+ * @sender_pubkey_hex: the NIP-59 seal's author (hex), whose signature the
+ *   caller verified
+ * @rumor_event_json: JSON of the unwrapped kind:444 event
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback
+ * @user_data: data for @callback
+ *
+ * marmot_gobject_client_process_welcome_async() with the Welcome's
+ * authenticated sender (libmarmot marmot_process_welcome_from()): a rumor
+ * naming another author fails with MARMOT_ERR_AUTHOR_MISMATCH. Finish with
+ * marmot_gobject_client_process_welcome_finish().
+ *
+ * Since: 1.4
+ */
+void marmot_gobject_client_process_welcome_from_async(MarmotGobjectClient *self,
+                                                      const gchar *wrapper_event_id_hex,
+                                                      const gchar *sender_pubkey_hex,
+                                                      const gchar *rumor_event_json,
+                                                      GCancellable *cancellable,
+                                                      GAsyncReadyCallback callback,
+                                                      gpointer user_data);
+
+/**
  * marmot_gobject_client_process_welcome_finish:
  * @self: a #MarmotGobjectClient
  * @result: a #GAsyncResult

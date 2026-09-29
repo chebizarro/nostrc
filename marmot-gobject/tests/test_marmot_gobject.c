@@ -791,6 +791,59 @@ setup_real_welcome_flow(MarmotGobjectClient **out_inviter,
     return welcome;
 }
 
+/* libmarmot 0.10.0 (review W20 N1): the Welcome's sender comes from the
+ * NIP-59 seal, and a rumor naming another author is refused. */
+static void
+test_process_welcome_from_seal_sender(void)
+{
+    MarmotGobjectMemoryStorage *inviter_store = NULL, *member_store = NULL;
+    MarmotGobjectClient *inviter = new_memory_client(&inviter_store);
+    MarmotGobjectClient *member = new_memory_client(&member_store);
+    gchar *member_pubkey = NULL;
+    gchar *kp_json = create_signed_key_package_sync(member, TEST_MEMBER_SK_HEX, NULL,
+                                                     &member_pubkey);
+    const gchar *kps[] = { kp_json, NULL };
+    gchar **welcomes = NULL;
+    MarmotGobjectGroup *created = create_group_sync(inviter, TEST_HEX_32, kps, "Sealed", NULL,
+                                                    NULL, NULL, &welcomes);
+
+    const gchar *ids[] = {
+        "abababababababababababababababababababababababababababababababab",
+        "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    };
+    const gchar *senders[] = { member_pubkey, TEST_HEX_32 };
+    for (guint i = 0; i < 2; i++) {
+        AsyncFixture *f = async_fixture_new();
+        marmot_gobject_client_process_welcome_from_async(member, ids[i], senders[i], welcomes[0],
+                                                         NULL, async_callback, f);
+        g_main_loop_run(f->loop);
+        GError *error = NULL;
+        MarmotGobjectWelcome *w =
+            marmot_gobject_client_process_welcome_finish(member, f->result, &error);
+        if (i == 0) {
+            g_assert_null(w);
+            g_assert_nonnull(error);
+            g_assert_cmpint(error->code, ==, MARMOT_ERR_AUTHOR_MISMATCH);
+            g_clear_error(&error);
+        } else {
+            g_assert_no_error(error);
+            g_assert_cmpstr(marmot_gobject_welcome_get_welcomer(w), ==, TEST_HEX_32);
+            g_object_unref(w);
+        }
+        async_fixture_free(f);
+        drain_main_context();
+    }
+
+    g_strfreev(welcomes);
+    g_object_unref(created);
+    g_free(kp_json);
+    g_free(member_pubkey);
+    g_object_unref(member);
+    g_object_unref(inviter);
+    g_object_unref(member_store);
+    g_object_unref(inviter_store);
+}
+
 static void
 on_group_joined(MarmotGobjectClient *client, MarmotGobjectGroup *group, gpointer data)
 {
@@ -2621,6 +2674,8 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/cancel/key-package-cancel", test_cancellable_key_package);
     g_test_add_func("/marmot-gobject/async/unsigned-key-package", test_unsigned_key_package_async);
     g_test_add_func("/marmot-gobject/async/account-proof-enrollment", test_account_proof_enrollment);
+    g_test_add_func("/marmot-gobject/async/process-welcome-from-seal-sender",
+                    test_process_welcome_from_seal_sender);
     g_test_add_func("/marmot-gobject/lifecycle/weak-ref-finalization", test_weak_ref_finalization);
     g_test_add_func("/marmot-gobject/lifecycle/multiple-client-instances", test_multiple_client_instances);
 
