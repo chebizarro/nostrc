@@ -526,12 +526,19 @@ file_size(const gchar *path)
   return g_stat(path, &st) == 0 ? (goffset)st.st_size : -1;
 }
 
+/* GDBus's timeout for a method call still waiting for its reply (the name
+ * gdbusconnection.c gives it, GLib 2.58 on): the call is in flight, not an
+ * idle timer. GDBus destroys it (from its worker thread) when the reply
+ * lands. */
+#define DBUS_REPLY_TIMEOUT "[gio] send_message_with_reply_unlocked"
+
 /* NO-12: no timer on the main context fires within the next minute. GLib
  * source ids grow from 1 per context, so every live source is visited; a
  * timeout's ready time is its next expiry. Returns the first short one
- * (skipping `own`), or 0. */
+ * (skipping own[]), or 0; *in_flight counts short D-Bus reply timeouts,
+ * which are not returned. */
 static guint
-first_short_timer(guint own, gint64 *due_ms)
+first_short_timer(const guint *own, guint n_own, gint64 *due_ms, guint *in_flight)
 {
   GMainContext *context = g_main_context_default();
   GSource *probe = g_idle_source_new();
@@ -539,38 +546,64 @@ first_short_timer(guint own, gint64 *due_ms)
   g_source_destroy(probe);
   g_source_unref(probe);
   gint64 now = g_get_monotonic_time();
+  *in_flight = 0;
   for (guint id = 1; id < last; id++) {
-    GSource *source = id == own ? NULL : g_main_context_find_source_by_id(context, id);
+    gboolean mine = FALSE;
+    for (guint i = 0; i < n_own; i++)
+      mine = mine || own[i] == id;
+    GSource *source = mine ? NULL : g_main_context_find_source_by_id(context, id);
     if (!source || g_source_is_destroyed(source))
       continue;
     gint64 ready = g_source_get_ready_time(source);
-    if (ready >= 0 && ready - now < 59 * G_USEC_PER_SEC) {
-      *due_ms = (ready - now) / 1000;
-      return id;
+    if (ready < 0 || ready - now >= 59 * G_USEC_PER_SEC)
+      continue;
+    if (g_strcmp0(g_source_get_name(source), DBUS_REPLY_TIMEOUT) == 0) {
+      (*in_flight)++;
+      continue;
     }
+    *due_ms = (ready - now) / 1000;
+    return id;
   }
   return 0;
 }
 
-/* Settles briefly first: a D-Bus reply already on its way (its call's
- * timeout is a source until it lands) is not an idle timer. The window is
- * far shorter than any timer it could hide (the service's 10 s exit timer
- * included), which then fails, named. */
+/* Checked after every main-loop turn until it holds: a short timer that is
+ * not a call in flight fails at once, named; calls in flight are waited out
+ * (their replies may arm timers, so their callbacks run and it is checked
+ * again). No time window decides anything: under load a reply can take
+ * longer than any window, and a window long enough for that would hide a
+ * one-shot timer firing inside it (nostrc-yzlp: the old two-second window
+ * also removed its own deadline after it had fired, when the last reply
+ * landed in the turn the deadline expired). The deadline only bounds a
+ * reply that never comes. */
 static void
 assert_no_short_timers(void)
 {
   gboolean expired = FALSE;
-  guint deadline = g_timeout_add(2000, gh_test_deadline_hit, &expired);
-  gint64 due = 0;
-  guint id;
-  while ((id = first_short_timer(deadline, &due)) != 0 && !expired)
+  guint own[] = { g_timeout_add_seconds(10, gh_test_deadline_hit, &expired),
+                  g_timeout_add(10, gh_test_tick, NULL) };
+  for (;;) {
+    gint64 due = 0;
+    guint in_flight = 0;
+    guint id = first_short_timer(own, G_N_ELEMENTS(own), &due, &in_flight);
+    if (id) {
+      GSource *source = g_main_context_find_source_by_id(NULL, id);
+      g_error("source %u (%s) fires in %" G_GINT64_FORMAT " ms while idle", id,
+              source && g_source_get_name(source) ? g_source_get_name(source) : "unnamed", due);
+    }
+    if (in_flight == 0) {
+      /* Replies' callbacks, and whatever they start, before the verdict. */
+      if (!g_main_context_iteration(NULL, FALSE))
+        break;
+      continue;
+    }
+    if (expired)
+      g_error("%u D-Bus call(s) still waiting for a reply after 10 s", in_flight);
     g_main_context_iteration(NULL, TRUE);
-  if (id) {
-    GSource *source = g_main_context_find_source_by_id(NULL, id);
-    g_error("source %u (%s) fires in %" G_GINT64_FORMAT " ms while idle", id,
-            source && g_source_get_name(source) ? g_source_get_name(source) : "unnamed", due);
   }
-  g_source_remove(deadline);
+  g_source_remove(own[1]);
+  if (!expired) /* a fired deadline removed itself (G_SOURCE_REMOVE) */
+    g_source_remove(own[0]);
 }
 
 /* ---- in-process application runs ----------------------------------------------------- */
