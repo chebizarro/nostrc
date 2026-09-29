@@ -286,6 +286,15 @@ do not trust, as unauthenticated.
   - The instance key is generated per `Marmot` and not stored, so enroll after
     every `marmot_new()`. `marmot_create_key_package()` with the account key
     also enrolls.
+  - **One leaf key per instance run (review W20 N3).** Every signer-only
+    KeyPackage, and every group the instance creates in that run, uses the
+    enrolled signature key; the spec allows reusing the proof for the same
+    binding. RFC 9420 section 7.3 wants signature keys unique within a
+    group, so a second such KeyPackage cannot join a group that already
+    holds that key. `marmot_add_members()` refuses it and changes nothing,
+    and receivers would reject it too. A leak of that one key affects all of
+    these leaves. KeyPackages made with the account key or `account_sign` get
+    a fresh key each, with their own proof.
   - marmot-gobject 1.4.0 wraps these calls. Gnostr enrolls through its
     signer before its first KeyPackage and before it creates a group or
     invites anyone, and says so while it waits.
@@ -328,6 +337,31 @@ do not trust, as unauthenticated.
   accepts leaves that carry no proof: KeyPackages and members from MDK 0.8
   or libmarmot 0.9.0 and older. A proof that does not verify is rejected
   in either mode.
+
+#### MDK 0.8 interoperability: a deliberate default (review W20 N2)
+
+MDK 0.8 (and White Noise built on it) publishes KeyPackages without the
+proof, so its leaves carry none. By default libmarmot 0.10.0 therefore:
+- refuses to add an MDK 0.8 KeyPackage;
+- rejects a Commit that adds such a leaf;
+- rejects a Welcome whose tree holds an MDK 0.8 leaf other than the
+  sender's. A two-member group from an MDK 0.8 user still joins, because the
+  sender rule covers it.
+
+This is the security trade-off of this release, not an accident. Without
+the proof nobody but the inviter can tell whether such a leaf belongs to the
+account it names, which is exactly the impersonation 0.10.0 closes. Gnostr
+keeps the default, so it cannot invite MDK 0.8 users or join their larger
+groups.
+
+`MarmotConfig.allow_unproven_members` restores that interoperability per
+instance, without the guarantee (a bad proof is still refused). MDK master
+emits the proof in its adopted profile, which libmarmot's group engine does
+not support yet (nostrc-qp24.5.1).
+
+Untested: whether MDK 0.8 parses a 0.10.0 KeyPackage's leaf dictionary and
+adds it to its groups. Its `mls_extensions` check accepts the tag, per
+source. Tracked as nostrc-77pa.
 
 #### Why a proof in the leaf, and what stays separate
 

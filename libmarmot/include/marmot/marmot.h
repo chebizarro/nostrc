@@ -162,7 +162,11 @@ MarmotError marmot_create_key_package(Marmot *m,
  * The LeafNode needs an account-identity proof (nostrc-7vyi), which this
  * call cannot sign: enroll the instance first (marmot_account_proof_template(),
  * sign, marmot_set_account_proof()). The KeyPackage then uses the enrolled
- * MLS signature key and its proof.
+ * MLS signature key and its proof -- the same key for every such KeyPackage
+ * of this instance, and for the groups it creates.  Signature keys must be
+ * unique within a group (RFC 9420 section 7.3): a second such KeyPackage
+ * cannot join a group that already holds the key (marmot_add_members()
+ * refuses it).
  *
  * Returns: MARMOT_OK on success; MARMOT_ERR_KEY_PACKAGE_IDENTITY when the
  *   instance holds no account proof for @nostr_pubkey (unless

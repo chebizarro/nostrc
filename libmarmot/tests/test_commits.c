@@ -2988,6 +2988,16 @@ test_welcome_with_forged_member_rejected(void)
         mls_key_package_private_clear(&other_priv);
     }
 
+    /* Only the GroupInfo signer's leaf is exempt (review W20 N7): a second,
+     * unproven leaf naming the sender's own account is not. */
+    leaf_key_package(mallory.pk, NULL, &mallory, LEAF_NO_PROOF, &other, &other_priv);
+    char *second_device = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    expect_join(&bob, second_device, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                "a second unproven leaf of the sender");
+    free(second_device);
+    mls_key_package_clear(&other);
+    mls_key_package_private_clear(&other_priv);
+
     /* The GroupInfo signer is unproven, so it must be the Welcome's sender. */
     leaf_key_package(alice.pk, alice.sk, &mallory, LEAF_GENUINE, &other, &other_priv);
     char *claims_alice = mallory_welcome(alice.pk, &other, &bob_kp, mallory.pk);
@@ -3756,6 +3766,110 @@ test_retained_parent_without_trailer_migrates(void)
     trio_clear(&t);
 }
 
+/* A witness must be the very member the parent listed (review W20 N7): the
+ * same account and the same leaf signature key at that index.  A slot
+ * re-filled by another account, or by another key of the same account, says
+ * nothing about whether the listed member applied the Commit. */
+static void
+test_witness_must_be_the_listed_member(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *commit = rename_group(&t.alice, &t.gid, "Witnessed");
+    expect_commit(&t.charlie, commit, "Charlie applies");
+    CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE, "Bob pending");
+    MlsGroup cur;
+    load_mls(&t.charlie, &t.gid, &cur);
+    uint32_t bob_leaf = UINT32_MAX;
+    uint8_t id[32];
+    for (uint32_t i = 0; i < cur.tree.n_leaves; i++)
+        if (marmot_mls_sender_identity(&cur, i, id) == 0 && memcmp(id, t.bob.pk, 32) == 0)
+            bob_leaf = i;
+    CHECK(bob_leaf != UINT32_MAX, "Bob's leaf");
+    MlsLeafNode *leaf = &cur.tree.nodes[mls_tree_leaf_to_node(bob_leaf)].leaf;
+    uint8_t *undo = NULL;
+    size_t undo_len = 0;
+
+    leaf->signature_key[0] ^= 1;   /* another key at Bob's index */
+    OK(marmot_commit_note_witness(t.charlie.m, &cur, bob_leaf, &undo, &undo_len));
+    CHECK(!undo && stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE,
+          "another leaf key does not witness for Bob");
+    leaf->signature_key[0] ^= 1;
+    leaf->credential_identity[0] ^= 1;   /* another account at Bob's index */
+    OK(marmot_commit_note_witness(t.charlie.m, &cur, bob_leaf, &undo, &undo_len));
+    CHECK(!undo && stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE,
+          "another account does not witness for Bob");
+    leaf->credential_identity[0] ^= 1;
+    OK(marmot_commit_note_witness(t.charlie.m, &cur, bob_leaf, &undo, &undo_len));
+    CHECK(undo && stored_parent(&t.charlie, &t.gid, NULL) == TIER_READER, "Bob himself does");
+    sodium_memzero(undo, undo_len);
+    free(undo);
+    mls_group_free(&cur);
+    free(commit);
+    trio_clear(&t);
+}
+
+/* Review W20 N3: KeyPackages made without the account key use the enrolled
+ * instance key, so every such KeyPackage of one instance run has the same
+ * leaf signature key.  RFC 9420 section 7.3 wants it unique in a group:
+ * a second one in the same group is refused and nothing changes. */
+static void
+test_signer_only_key_packages_share_one_leaf_key(void)
+{
+    Member alice, bob;
+    member_init_unenrolled(&alice, "Alice");
+    member_init(&bob, "Bob");
+    OK(test_enroll(alice.m, alice.pk, alice.sk));
+    char *jsons[2];
+    MlsKeyPackage kps[2];
+    for (int i = 0; i < 2; i++) {
+        MarmotKeyPackageResult r;
+        memset(&r, 0, sizeof(r));
+        OK(marmot_create_key_package_unsigned(alice.m, alice.pk, NULL, 0, &r));
+        NostrEvent *ev = nostr_event_new();
+        char *sk_hex = marmot_hex_encode(alice.sk, 32);
+        CHECK(ev && sk_hex && nostr_event_deserialize_compact(ev, r.event_json, NULL) &&
+              nostr_event_sign(ev, sk_hex) == 0, "sign");
+        jsons[i] = nostr_event_serialize_compact(ev);
+        OK(marmot_parse_key_package_event(jsons[i], &kps[i], NULL));
+        free(sk_hex);
+        nostr_event_free(ev);
+        marmot_key_package_result_free(&r);
+    }
+    CHECK(memcmp(kps[0].leaf_node.signature_key, kps[1].leaf_node.signature_key,
+                 MLS_SIG_PK_LEN) == 0, "one leaf key per instance run");
+
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "One key";
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    const char *first[] = { jsons[0] };
+    OK(marmot_create_group(bob.m, bob.pk, first, 1, &cfg, &cg));
+    join(&alice, cg.welcome_rumor_jsons[0]);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+
+    Snapshot before;
+    snapshot(&bob, &gid, &before);
+    const char *second[] = { jsons[1] };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    CHECK(marmot_add_members(bob.m, &gid, second, 1, &welcomes, &n, &add) != MARMOT_OK &&
+              !add, "Alice's second signer-only KeyPackage in the same group");
+    expect_unchanged(&bob, &gid, &before, "refused duplicate leaf key");
+    snapshot_clear(&before);
+
+    for (int i = 0; i < 2; i++) {
+        free(jsons[i]);
+        mls_key_package_clear(&kps[i]);
+    }
+    marmot_group_id_free(&gid);
+    marmot_free(alice.m);
+    marmot_free(bob.m);
+}
+
 /* Settling the parent is part of the message's writes: when it, or a later
  * write, fails, the message is not delivered and nothing changes (storage
  * without transactions: the records are written back). */
@@ -3836,6 +3950,8 @@ main(int argc, char **argv)
     RUN(test_retained_parent_retired_at_once);
     RUN(test_retained_parent_without_trailer_migrates);
     RUN(test_settling_write_failure_keeps_everything);
+    RUN(test_witness_must_be_the_listed_member);
+    RUN(test_signer_only_key_packages_share_one_leaf_key);
     printf("All commit tests passed\n");
     return 0;
 }
