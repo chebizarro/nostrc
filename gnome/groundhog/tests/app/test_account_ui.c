@@ -168,7 +168,15 @@ assert_account_widgets(GhWindow *window)
                                                                     GH_TYPE_SIDEBAR_PAGE,
                                                                     "primary_button"));
   GMenuModel *primary = gtk_menu_button_get_menu_model(button);
-  g_assert_cmpint(g_menu_model_get_n_items(primary), ==, 3);
+  /* Account, then relay groups (G20b), Preferences and Shortcuts, Quit. */
+  g_assert_cmpint(g_menu_model_get_n_items(primary), ==, 4);
+  g_autoptr(GMenuModel) groups_section = g_menu_model_get_item_link(primary, 1,
+                                                                    G_MENU_LINK_SECTION);
+  g_assert_nonnull(groups_section);
+  g_autofree char *join_action = NULL;
+  g_assert_true(g_menu_model_get_item_attribute(groups_section, 0, G_MENU_ATTRIBUTE_ACTION, "s",
+                                                &join_action));
+  g_assert_cmpstr(join_action, ==, "win.join-group");
   g_autoptr(GMenuModel) account_section = g_menu_model_get_item_link(primary, 0,
                                                                      G_MENU_LINK_SECTION);
   g_assert_nonnull(account_section);
