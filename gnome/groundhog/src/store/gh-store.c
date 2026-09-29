@@ -3,6 +3,7 @@
 #endif
 
 #include "gh-store.h"
+#include "gh-store-media.h"
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -3228,6 +3229,18 @@ fail:
   return FALSE;
 }
 
+/* nostrc-5x5b: the decrypted attachment cache (gh-store-media.h) goes with
+ * the messages that named it. Run in the transaction that deletes messages,
+ * before they go: deletes every media row that a doomed kind-15 message d
+ * names and no surviving kind-15 message k does (a forwarded copy keeps it).
+ * doomed and survivor are SQL conditions on d and k. secure_delete zeroes
+ * the freed pages; each caller then checkpoints the WAL as it already does
+ * for the messages. */
+#define MEDIA_FORGET(doomed, survivor) \
+  "DELETE FROM media WHERE sha256 IN (SELECT " GH_STORE_MEDIA_X_OF("d") " FROM messages d " \
+  "WHERE (" doomed ") AND " GH_STORE_MEDIA_FILE("d") ") AND NOT EXISTS (SELECT 1 FROM " \
+  "messages k WHERE (" survivor ") AND " GH_STORE_MEDIA_NAMED_BY("k") ")"
+
 gboolean
 gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error)
 {
@@ -3237,6 +3250,8 @@ gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error)
   if (!store_begin(store, "outbox", error))
     return FALSE;
   if (!outbox_state_locked(store, outbox_id, &state, &sealed, error) ||
+      !store_exec_id(store, MEDIA_FORGET("d.outbox_id = ?1", "k.outbox_id IS NOT ?1"), outbox_id,
+                     0, error) ||
       !store_exec_id(store, "DELETE FROM messages WHERE outbox_id = ?1", outbox_id, 0, error) ||
       !store_exec_id(store, "DELETE FROM outbox WHERE id = ?1", outbox_id, 0, error)) {
     store_rollback(store);
@@ -3390,6 +3405,11 @@ gh_store_purge_full(GhStore *store, gint64 retention_cutoff, GPtrArray **out_pur
   if ((purged && !purge_collect(store, now, retention_cutoff, purged, error)) ||
       !purge_read_state(store, now, retention_cutoff, error))
     goto fail;
+  /* A downloaded file's plaintext goes with its message (nostrc-5x5b). */
+  if (!purge_exec(store, MEDIA_FORGET(PURGE_DOOMED("d"), "NOT " PURGE_DOOMED("k")), now,
+                  retention_cutoff, error))
+    goto fail;
+  stats.n_media = (guint) sqlite3_changes(store->db);
   /* An outgoing message's text is also in its outbox row (rumor_json) and
    * its signed wraps: those go first, with the message. */
   if (!store_delete_count(store,
@@ -3505,7 +3525,10 @@ gh_store_forget_conversation(GhStore *store, gint64 conversation_id, GError **er
                      conversation_id, 0, error))
     goto fail;
   STORE_CUT("forget", "outbox");
-  if (!store_exec_id(store, "DELETE FROM messages WHERE conversation_id = ?1",
+  /* Its downloaded files' plaintext goes too (nostrc-5x5b). */
+  if (!store_exec_id(store, MEDIA_FORGET("d.conversation_id = ?1", "k.conversation_id <> ?1"),
+                     conversation_id, 0, error) ||
+      !store_exec_id(store, "DELETE FROM messages WHERE conversation_id = ?1",
                      conversation_id, 0, error) ||
       !store_exec_id(store, "DELETE FROM participants WHERE conversation_id = ?1",
                      conversation_id, 0, error))

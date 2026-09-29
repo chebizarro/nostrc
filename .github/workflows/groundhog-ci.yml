@@ -66,7 +66,7 @@ jobs:
             test-groundhog-group-ui \
             test-groundhog-conversation-menu \
             test-groundhog-multi-send \
-            test-groundhog-media test-groundhog-blossom
+            test-groundhog-media test-groundhog-blossom test-groundhog-media-purge
 
       - name: Require complete Groundhog test registration
         run: |
@@ -98,7 +98,7 @@ jobs:
               'groundhog-group-ui', 'groundhog-group-ui-gui',
               'groundhog-conversation-menu', 'groundhog-conversation-menu-gui',
               'groundhog-multi-send',
-              'groundhog-media', 'groundhog-blossom',
+              'groundhog-media', 'groundhog-blossom', 'groundhog-media-purge',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -182,7 +182,7 @@ jobs:
         groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service
         groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-conversation-menu
         groundhog-multi-send
-        groundhog-media groundhog-blossom
+        groundhog-media groundhog-blossom groundhog-media-purge
         nostrc-test-bus-selftest
     steps:
       - name: Checkout with submodules

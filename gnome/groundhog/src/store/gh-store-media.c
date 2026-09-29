@@ -110,6 +110,25 @@ put_in_transaction(GhStore *store, gpointer data, GError **error)
   GBytes *bytes = args[2];
   gsize size = 0;
   gconstpointer raw = g_bytes_get_data(bytes, &size);
+  /* Only for a file a stored message names: plaintext never outlives its
+   * message (a download that finishes after the message expired or was
+   * forgotten keeps nothing). */
+  sqlite3_stmt *named = prepare(store, "SELECT EXISTS (SELECT 1 FROM messages m WHERE "
+                                       GH_STORE_MEDIA_FILE("m") " AND "
+                                       GH_STORE_MEDIA_X_OF("m") " = ?1)", error);
+  if (!named)
+    return FALSE;
+  sqlite3_bind_text(named, 1, sha256, -1, SQLITE_STATIC);
+  int rc = sqlite3_step(named);
+  gboolean exists = rc == SQLITE_ROW && sqlite3_column_int(named, 0) != 0;
+  sqlite3_finalize(named);
+  if (rc != SQLITE_ROW)
+    return gh_store_set_sqlite_error(store, rc, "Looking up the file's message", error);
+  if (!exists) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND,
+                        "Media cache: no stored message names this file");
+    return FALSE;
+  }
   sqlite3_stmt *stmt = prepare(store, "INSERT OR REPLACE INTO media (sha256, mime, bytes, "
                                       "last_used) VALUES (?1, ?2, ?3, ?4)", error);
   if (!stmt)

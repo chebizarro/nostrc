@@ -345,7 +345,8 @@ gboolean gh_store_set_draft(GhStore *store, gint64 conversation_id,
 gboolean gh_store_get_draft(GhStore *store, gint64 conversation_id,
                             gchar **out_draft, GError **error);
 /* §3.8 forget conversation (ST-9): deletes its outbox rows (cancelling
- * unsettled sends), messages and participants, clears title, draft, unread,
+ * unsettled sends), messages (with the decrypted attachments only they
+ * named, gh-store-media.h) and participants, clears title, draft, unread,
  * read and pin state, and sets forgotten_before = now so relay backfill of
  * older messages cannot resurrect it; a newer message starts it fresh. The
  * row stays as that tombstone and keeps request_state (blocks survive),
@@ -583,7 +584,8 @@ typedef struct {
 gboolean gh_store_outbox_update(GhStore *store, gint64 outbox_id,
                                 const GhStoreOutboxUpdate *update, GError **error);
 /* The user deleted a message before it settled: deletes the entry (its events
- * and targets cascade) and its outgoing message in one transaction, then
+ * and targets cascade) and its outgoing message (with a decrypted attachment
+ * only it named, gh-store-media.h) in one transaction, then
  * truncates the WAL. The seen keys stay, so a self-copy that comes back from
  * a relay is not admitted again. NOT_FOUND if absent. */
 gboolean gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error);
@@ -594,6 +596,7 @@ typedef struct {
   guint n_expired;           /* messages whose expires_at passed */
   guint n_retention;         /* messages received before the cutoff */
   guint n_outbox;            /* their outbox entries (rumor and signed events) */
+  guint n_media;             /* decrypted attachments only they named (nostrc-5x5b) */
   gint64 next_expires_at;    /* earliest remaining expires_at; 0 = none */
   gboolean checkpointed;     /* the WAL was truncated */
   gboolean checkpoint_deferred; /* rate-limited: purge again within a minute */
@@ -601,7 +604,8 @@ typedef struct {
 
 /* T-purge (§3.7): deletes messages with expires_at <= now and, if
  * retention_cutoff > 0, those received before it, together with the outbox
- * entries of outgoing ones (their rumor text and signed events), in one
+ * entries of outgoing ones (their rumor text and signed events) and the
+ * decrypted attachments (gh-store-media.h) only they named, in one
  * transaction (seen keys are kept so they cannot return). The read state
  * stays exact: a read marker on a deleted message moves back to the newest
  * remaining one at or before it (or none), and each touched conversation's

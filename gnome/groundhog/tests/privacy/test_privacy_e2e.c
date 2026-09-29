@@ -62,6 +62,7 @@
 #if GROUNDHOG_TEST_ATTACHMENTS
 #include "blossom-fixture.h"
 #include "gh-attachment.h"
+#include "gh-store-media.h"
 #endif
 
 #include "nostr/nip19/nip19.h"
@@ -2113,6 +2114,17 @@ test_at5_attachments(void)
   g_assert_true(gh_attachment_check_preview(t.bytes, &format, NULL, NULL, &error));
   g_assert_cmpint(format, ==, GH_MEDIA_FORMAT_JPEG);
   g_clear_pointer(&t.bytes, g_bytes_unref);
+  /* Kept in Bob's encrypted cache, bound to the message his inbox stored,
+   * and gone with it when he forgets the conversation (nostrc-5x5b). */
+  g_autoptr(GBytes) kept = gh_store_media_get(bob_store, received->x, NULL, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(kept);
+  g_clear_pointer(&kept, g_bytes_unref);
+  g_autofree gchar *room = room_of(ALICE, BOB);
+  g_assert_true(gh_store_conversations_forget(app_conversations(&w.bob), room, &error));
+  g_assert_no_error(error);
+  g_assert_null(gh_store_media_get(bob_store, received->x, NULL, &error));
+  g_assert_no_error(error);
   g_assert_true(gh_store_checkpoint(bob_store, NULL));
 
   g_clear_object(&alice_media);

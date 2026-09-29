@@ -1865,6 +1865,22 @@ if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-convers
     target_link_libraries(test-groundhog-multi-send PRIVATE groundhog-net OpenSSL::Crypto)
     target_compile_definitions(test-groundhog-multi-send PRIVATE GROUNDHOG_TEST_ATTACHMENTS=1)
   endif()
+  # nostrc-5x5b: a cached file's plaintext goes with its message (expiry and
+  # retention purge, forget, block and forget, outbox delete), checked in
+  # the rows, the WAL, the raw store files and every decrypted page (H7).
+  if (BUILD_TESTING AND TARGET groundhog-store-conversations)
+    add_executable(test-groundhog-media-purge tests/media/test_media_purge.c
+      tests/privacy/canary-scan.c)
+    target_include_directories(test-groundhog-media-purge PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy)
+    target_link_libraries(test-groundhog-media-purge PRIVATE groundhog-media
+      groundhog-store-conversations)
+    target_compile_options(test-groundhog-media-purge PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-media-purge)
+    add_test(NAME groundhog-media-purge COMMAND test-groundhog-media-purge)
+    set_tests_properties(groundhog-media-purge PROPERTIES TIMEOUT 60
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+  endif()
   # G24's AT-5 with attachments and PT-2 with an admitted kind 15: the
   # privacy harness sends, receives and downloads a file end to end.
   if (TARGET test-groundhog-privacy-e2e)

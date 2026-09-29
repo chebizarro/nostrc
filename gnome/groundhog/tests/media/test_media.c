@@ -740,6 +740,35 @@ hex_of(guint n)
   return g_compute_checksum_for_string(G_CHECKSUM_SHA256, seed, -1);
 }
 
+/* A kind-15 message from bob naming x, admitted as the inbox would: the
+ * cache keeps only files a stored message names (nostrc-5x5b). */
+static void
+admit_naming(GhStore *store, const gchar *x, gint64 created_at)
+{
+  GhNip17File file = { 0 };
+  file.url = g_strdup_printf("https://blossom.example.com/%s", x);
+  file.file_type = (gchar *)"image/jpeg";
+  file.nonce_size = GH_NIP17_FILE_NONCE_SIZE;
+  g_strlcpy(file.x, x, sizeof file.x);
+  g_autofree gchar *id = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *rumor = gh_nip17_file_rumor_new(bob, alice, &file, created_at, 0, &id, &error);
+  g_assert_no_error(error);
+  g_autofree gchar *room = strcmp(alice, bob) < 0 ? g_strconcat(alice, ",", bob, NULL)
+                                                  : g_strconcat(bob, ",", alice, NULL);
+  g_autofree gchar *wrap = g_compute_checksum_for_string(G_CHECKSUM_SHA256, id, -1);
+  const gchar *participants[] = { alice, bob, NULL };
+  GhStoreMessage message = {
+    .backend = GH_STORE_BACKEND_NIP17, .backend_key = room, .backend_msg_id = id,
+    .wrap_id = wrap, .sender_pubkey = bob, .kind = GH_NIP17_FILE_KIND,
+    .created_at = created_at, .direction = GH_STORE_DIRECTION_IN, .body = file.url,
+    .raw_json = rumor, .participants = participants,
+  };
+  g_assert_true(gh_store_admit(store, &message, NULL, NULL, &error));
+  g_assert_no_error(error);
+  g_free(file.url);
+}
+
 static void
 test_media_cache(void)
 {
@@ -761,6 +790,13 @@ test_media_cache(void)
   g_autoptr(GBytes) photo = g_bytes_new_static(canary, sizeof canary - 1);
   g_assert_null(gh_store_media_get(store, a, NULL, &error));
   g_assert_no_error(error);
+  /* Only a file a stored message names is kept. */
+  g_assert_false(gh_store_media_put(store, a, "image/jpeg", photo, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+  admit_naming(store, a, 1699999000);
+  admit_naming(store, b, 1699999001);
+  admit_naming(store, c, 1699999002);
   g_assert_true(gh_store_media_put(store, a, "image/jpeg", photo, &error));
   g_autoptr(GBytes) big = g_bytes_new_take(g_malloc0(1000), 1000);
   gh_clock_fake_advance(clock, G_USEC_PER_SEC);

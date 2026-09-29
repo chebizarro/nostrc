@@ -385,7 +385,24 @@ test_at1_round_trip(void)
   drain();
   g_assert_cmpuint(blossom_fixture_count(f.blossom, "GET"), ==, 0);
 
-  /* Download (the user's consent): x, decrypt, ox; into the encrypted cache. */
+  /* Bob's inbox stores the message (the cache keeps only files a stored
+   * message names), then Download (the user's consent): x, decrypt, ox;
+   * into the encrypted cache. */
+  g_autofree gchar *id = NULL;
+  g_autofree gchar *stored = gh_nip17_file_rumor_new(alice, bob, sent, 1700000000, 0, &id, &error);
+  g_assert_no_error(error);
+  g_autofree gchar *room = strcmp(alice, bob) < 0 ? g_strconcat(alice, ",", bob, NULL)
+                                                  : g_strconcat(bob, ",", alice, NULL);
+  g_autofree gchar *wrap = g_compute_checksum_for_string(G_CHECKSUM_SHA256, id, -1);
+  const gchar *participants[] = { alice, bob, NULL };
+  GhStoreMessage admitted = {
+    .backend = GH_STORE_BACKEND_NIP17, .backend_key = room, .backend_msg_id = id,
+    .wrap_id = wrap, .sender_pubkey = alice, .kind = GH_NIP17_FILE_KIND,
+    .created_at = 1700000000, .direction = GH_STORE_DIRECTION_IN, .body = sent->url,
+    .raw_json = stored, .participants = participants,
+  };
+  g_assert_true(gh_store_admit(fixture_store(&f), &admitted, NULL, NULL, &error));
+  g_assert_no_error(error);
   download(&f, fixture_store(&f), received, &r, NULL);
   g_assert_no_error(r.error);
   g_assert_false(r.cached);
