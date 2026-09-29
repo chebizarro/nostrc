@@ -208,7 +208,8 @@ sent_sender_data(Member *x, const MarmotGroupId *gid, const char *event_json)
     CHECK(pm->epoch == g.epoch, "the sender's state is at the message's epoch");
     size_t sample = pm->ciphertext_len < MLS_HASH_LEN ? pm->ciphertext_len : MLS_HASH_LEN;
     MlsSenderData sd;
-    CHECK(mls_sender_data_decrypt(g.epoch_secrets.sender_data_secret, pm->ciphertext,
+    const MlsSenderDataAAD sd_aad = { pm->group_id, pm->group_id_len, pm->epoch, pm->content_type };
+    CHECK(mls_sender_data_decrypt(g.epoch_secrets.sender_data_secret, &sd_aad, pm->ciphertext,
                                   sample, pm->encrypted_sender_data,
                                   pm->encrypted_sender_data_len, &sd) == 0,
           "sender data");
@@ -343,11 +344,14 @@ expect_converged(Member *const *ms, size_t n, const MarmotGroupId *gid,
 static void
 expect_messages_flow(Member *const *ms, size_t n, const MarmotGroupId *gid)
 {
+    /* A new inner event each time: the same one again is a duplicate. */
+    static unsigned round;
+    round++;
     for (size_t s = 0; s < n; s++) {
         char inner[160];
         snprintf(inner, sizeof(inner),
-                 "{\"kind\":9,\"content\":\"hello from %s\",\"created_at\":1700000000,\"tags\":[]}",
-                 ms[s]->name);
+                 "{\"kind\":9,\"content\":\"hello from %s (%u)\",\"created_at\":1700000000,\"tags\":[]}",
+                 ms[s]->name, round);
         MarmotOutgoingMessage out;
         memset(&out, 0, sizeof(out));
         OK(marmot_create_message(ms[s]->m, gid, inner, &out));
@@ -2283,6 +2287,188 @@ test_late_messages_use_retained_parent(void)
 
 /* ── Secret-tree ratchet persistence (nostrc-ai04) ────────────────────── */
 
+/* ── Sender authentication (nostrc-we6g) ──────────────────────────────────────── */
+
+/* A kind:445 carrying `inner`, built from the MLS state `g` the way a
+ * malicious member's own client would (libmarmot's API refuses to): MLS
+ * PrivateMessage, NIP-44 under the epoch's exporter secret, `h` tag, fresh
+ * ephemeral signature. */
+static char *
+forge_app_event(MlsGroup *g, const uint8_t nostr_gid[32], const char *inner)
+{
+    uint8_t *ct = NULL;
+    size_t len = 0;
+    CHECK(mls_group_encrypt(g, (const uint8_t *)inner, strlen(inner), &ct, &len) == 0,
+          "MLS layer");
+    char *content = NULL;
+    CHECK(marmot_group_event_encrypt(g->epoch_secrets.exporter_secret, ct, len,
+                                     &content) == 0, "NIP-44 layer");
+    free(ct);
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev, "event");
+    nostr_event_set_kind(ev, MARMOT_KIND_GROUP_MESSAGE);
+    nostr_event_set_content(ev, content);
+    nostr_event_set_created_at(ev, 1700000000);
+    free(content);
+    char *gid_hex = marmot_hex_encode(nostr_gid, 32);
+    NostrTags *tags = nostr_tags_new(0);
+    CHECK(gid_hex && tags, "tags");
+    nostr_tags_append(tags, nostr_tag_new("h", gid_hex, NULL));
+    free(gid_hex);
+    nostr_event_set_tags(ev, tags);
+    CHECK(marmot_sign_ephemeral(ev) == 0, "sign");
+    char *json = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    CHECK(json, "serialize");
+    return json;
+}
+
+static void
+expect_rumor_rejected(Member *x, const MarmotGroupId *gid, const char *event_json,
+                      MarmotError want, const char *what)
+{
+    char *rumor = tampered(event_json, TAMPER_UNSIGNED);
+    Snapshot before;
+    snapshot(x, gid, &before);
+    MarmotError err;
+    deliver_rumor(x, rumor, &err);
+    CHECK(err == want, "%s (rumor path): %s got %d (%s), want %d", what, x->name, err,
+          marmot_error_string(err), want);
+    expect_unchanged(x, gid, &before, what);
+    snapshot_clear(&before);
+    free(rumor);
+}
+
+/* The reviewer's repro (libmarmot-w19-review C1): Bob posts an inner event
+ * with Alice's pubkey.  The API refuses to build it; a message a modified
+ * client builds anyway is dropped by every receiver, on the relay and the
+ * rumor path, live and through the retained parent, and changes nothing.
+ * Bob using Alice's leaf (he can derive its keys: the secret tree is shared
+ * by the group) fails on the PrivateMessageContent signature. */
+static void
+test_member_cannot_post_as_another(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *alice_hex = marmot_hex_encode(t.alice.pk, 32);
+    char *bob_hex = marmot_hex_encode(t.bob.pk, 32);
+    CHECK(alice_hex && bob_hex, "hex");
+    char as_alice[256], no_author[160];
+    snprintf(as_alice, sizeof(as_alice),
+             "{\"pubkey\":\"%s\",\"kind\":9,\"content\":\"I am Alice\","
+             "\"created_at\":1700000000,\"tags\":[]}", alice_hex);
+    snprintf(no_author, sizeof(no_author),
+             "{\"kind\":9,\"content\":\"nobody\",\"created_at\":1700000000,\"tags\":[]}");
+
+    /* 1. The API does not sign for another account. */
+    MarmotOutgoingMessage out;
+    memset(&out, 0, sizeof(out));
+    MarmotError err = marmot_create_message(t.bob.m, &t.gid, as_alice, &out);
+    CHECK(err == MARMOT_ERR_AUTHOR_MISMATCH && out.event_json == NULL,
+          "create_message as Alice: %d", err);
+
+    /* 2. A modified client: Bob's leaf, Alice's pubkey. */
+    MlsGroup bob;
+    load_mls(&t.bob, &t.gid, &bob);
+    char *forged = forge_app_event(&bob, t.nostr_gid, as_alice);
+    expect_rejected(&t.charlie, &t.gid, forged, MARMOT_ERR_AUTHOR_MISMATCH, "Alice's pubkey");
+    expect_rumor_rejected(&t.charlie, &t.gid, forged, MARMOT_ERR_AUTHOR_MISMATCH,
+                          "Alice's pubkey");
+    expect_rejected(&t.alice, &t.gid, forged, MARMOT_ERR_AUTHOR_MISMATCH,
+                    "Alice's pubkey, to Alice");
+    mls_group_free(&bob);
+
+    /* 3. No author at all. */
+    load_mls(&t.bob, &t.gid, &bob);
+    char *anonymous = forge_app_event(&bob, t.nostr_gid, no_author);
+    expect_rejected(&t.charlie, &t.gid, anonymous, MARMOT_ERR_AUTHOR_MISMATCH, "no pubkey");
+    expect_rumor_rejected(&t.charlie, &t.gid, anonymous, MARMOT_ERR_AUTHOR_MISMATCH,
+                          "no pubkey");
+    mls_group_free(&bob);
+
+    /* 4. Alice's leaf and pubkey, Bob's signature key. */
+    MlsGroup as_leaf;
+    load_mls(&t.bob, &t.gid, &as_leaf);
+    MlsGroup alice_state;
+    load_mls(&t.alice, &t.gid, &alice_state);
+    as_leaf.own_leaf_index = alice_state.own_leaf_index;
+    mls_group_free(&alice_state);
+    char *leaf_forged = forge_app_event(&as_leaf, t.nostr_gid, as_alice);
+    expect_rejected(&t.charlie, &t.gid, leaf_forged, MARMOT_ERR_MLS, "Alice's leaf");
+    expect_rumor_rejected(&t.charlie, &t.gid, leaf_forged, MARMOT_ERR_MLS, "Alice's leaf");
+    mls_group_free(&as_leaf);
+
+    /* The genuine messages still flow, each under its own author. */
+    char *from_bob = app_message(&t.bob, &t.gid, "really Bob");
+    MarmotMessageResult r;
+    memset(&r, 0, sizeof(r));
+    OK(marmot_process_message(t.charlie.m, from_bob, &r));
+    CHECK(r.type == MARMOT_RESULT_APPLICATION_MESSAGE && r.app_msg.sender_pubkey_hex &&
+          strcmp(r.app_msg.sender_pubkey_hex, bob_hex) == 0, "Bob's message is Bob's");
+    marmot_message_result_free(&r);
+    char *from_alice = app_message(&t.alice, &t.gid, "really Alice");
+    memset(&r, 0, sizeof(r));
+    OK(marmot_process_message(t.charlie.m, from_alice, &r));
+    CHECK(r.type == MARMOT_RESULT_APPLICATION_MESSAGE && r.app_msg.sender_pubkey_hex &&
+          strcmp(r.app_msg.sender_pubkey_hex, alice_hex) == 0, "Alice's message is Alice's");
+    marmot_message_result_free(&r);
+
+    /* 5. Through the retained parent: a forgery of epoch E read at E+1. */
+    load_mls(&t.bob, &t.gid, &bob);
+    char *late_forged = forge_app_event(&bob, t.nostr_gid, as_alice);
+    mls_group_free(&bob);
+    char *commit = rename_group(&t.alice, &t.gid, "Moved");
+    expect_commit(&t.charlie, commit, "Charlie moves on");
+    expect_rejected(&t.charlie, &t.gid, late_forged, MARMOT_ERR_AUTHOR_MISMATCH,
+                    "late, Alice's pubkey");
+    expect_rumor_rejected(&t.charlie, &t.gid, late_forged, MARMOT_ERR_AUTHOR_MISMATCH,
+                          "late, Alice's pubkey");
+    expect_commit(&t.bob, commit, "Bob follows");
+
+    free(commit);
+    free(late_forged);
+    free(from_alice);
+    free(from_bob);
+    free(leaf_forged);
+    free(anonymous);
+    free(forged);
+    free(alice_hex);
+    free(bob_hex);
+    trio_clear(&t);
+}
+
+/* An inner event delivered once is not delivered again in another
+ * envelope, even when the MLS layer would read it (a sender's re-send, or
+ * a replay a state migration let through): it is a duplicate by its NIP-01
+ * id (review N3). */
+static void
+test_inner_event_delivered_once(void)
+{
+    Trio t;
+    trio_init(&t);
+    const char *inner =
+        "{\"kind\":9,\"content\":\"only once\",\"created_at\":1700000000,\"tags\":[]}";
+    MarmotOutgoingMessage a, b;
+    memset(&a, 0, sizeof(a));
+    memset(&b, 0, sizeof(b));
+    OK(marmot_create_message(t.bob.m, &t.gid, inner, &a));
+    OK(marmot_create_message(t.bob.m, &t.gid, inner, &b));
+    CHECK(sent_sender_data(&t.bob, &t.gid, a.event_json).generation !=
+          sent_sender_data(&t.bob, &t.gid, b.event_json).generation, "two generations");
+    MarmotError err;
+    CHECK(deliver(&t.charlie, a.event_json, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "first: %d", err);
+    CHECK(deliver(&t.charlie, b.event_json, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
+          err == MARMOT_OK, "the same inner event again: %d", err);
+    /* Its generation is used up: a replay of that envelope is refused. */
+    char *again = republish(b.event_json);
+    expect_rejected(&t.charlie, &t.gid, again, MARMOT_ERR_MLS, "replay of the duplicate");
+    free(again);
+    marmot_outgoing_message_free(&a);
+    marmot_outgoing_message_free(&b);
+    trio_clear(&t);
+}
+
 /* On a storage without transaction hooks (the memory backend), a received
  * message that cannot be stored does not keep its ratchet step: the step is
  * written back, so the same event is read again later instead of being lost
@@ -2407,6 +2593,8 @@ main(int argc, char **argv)
     RUN(test_sends_use_distinct_generations);
     RUN(test_live_replay_in_new_envelope_rejected);
     RUN(test_failed_receive_keeps_the_message);
+    RUN(test_member_cannot_post_as_another);
+    RUN(test_inner_event_delivered_once);
     RUN(test_rename_reaches_every_member);
     RUN(test_events_signed_by_fresh_ephemeral_keys);
     RUN(test_commit_pending_until_merged);

@@ -142,7 +142,8 @@ sender_of(const MlsGroup *g, const uint8_t *ct, size_t len)
     const MlsPrivateMessage *pm = &wire.private_message;
     size_t sample = pm->ciphertext_len < MLS_HASH_LEN ? pm->ciphertext_len : MLS_HASH_LEN;
     MlsSenderData sd;
-    CHECK(mls_sender_data_decrypt(g->epoch_secrets.sender_data_secret, pm->ciphertext,
+    const MlsSenderDataAAD sd_aad = { pm->group_id, pm->group_id_len, pm->epoch, pm->content_type };
+    CHECK(mls_sender_data_decrypt(g->epoch_secrets.sender_data_secret, &sd_aad, pm->ciphertext,
                                   sample, pm->encrypted_sender_data,
                                   pm->encrypted_sender_data_len, &sd) == 0, "sender data");
     mls_message_clear(&wire);
@@ -376,6 +377,85 @@ test_failed_decryption_consumes_nothing(void)
     free(m0);
     free(m1);
     free(m5);
+    pair_clear(&p);
+}
+
+/* `ct` with the last byte of its content ciphertext (the AEAD tag) flipped,
+ * re-serialized.  The ciphertext is longer than the sender-data sample
+ * (KDF.Nh bytes), so the sender data still decrypts: the receiver derives
+ * the key of the message's generation before the AEAD fails. */
+static uint8_t *
+tamper_content_tag(const uint8_t *ct, size_t len, size_t *out_len)
+{
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, ct, len);
+    MlsMLSMessage wire;
+    CHECK(mls_message_deserialize(&r, &wire) == 0 &&
+          wire.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE, "PrivateMessage");
+    MlsPrivateMessage *pm = &wire.private_message;
+    CHECK(pm->ciphertext_len > MLS_HASH_LEN, "content longer than the sample");
+    pm->ciphertext[pm->ciphertext_len - 1] ^= 0x01;
+    MlsTlsBuf buf;
+    CHECK(mls_tls_buf_init(&buf, len) == 0 && mls_message_serialize(&wire, &buf) == 0,
+          "serialize");
+    mls_message_clear(&wire);
+    *out_len = buf.len;
+    return buf.data;
+}
+
+/* Review N2: a message whose sender data is intact but whose content tag
+ * is broken makes the receiver derive the keys up to its generation, then
+ * fails; the sender's ratchet is put back exactly (nothing cached, nothing
+ * skipped), so the genuine message and the ones before it still decrypt.
+ * Also for a message that decrypts but whose PrivateMessageContent
+ * signature is not the sender leaf's (nostrc-we6g). */
+static void
+test_failed_message_restores_ratchet(void)
+{
+    Pair p;
+    pair_init(&p);
+    size_t l0, l1, l5;
+    uint8_t *m0 = send_msg(&p.alice, "restore m0", &l0);
+    uint8_t *m1 = send_msg(&p.alice, "restore m1", &l1);
+    CHECK(mls_secret_tree_skip(&p.alice.secret_tree, 0, 3) == 0, "skip");
+    /* A copy of Alice's state at generation 5 signing with another key. */
+    MlsGroup forger;
+    {
+        size_t n = 0;
+        uint8_t *blob = save(&p.alice, &n);
+        CHECK(mls_group_deserialize(blob, n, &forger) == 0, "clone");
+        free_secret(blob, n);
+        uint8_t pk[crypto_sign_PUBLICKEYBYTES];
+        crypto_sign_keypair(pk, forger.own_signature_key);
+    }
+    uint8_t *m5 = send_msg(&p.alice, "restore m5", &l5);
+    size_t lf = 0;
+    uint8_t *forged5 = send_msg(&forger, "restore m5", &lf);
+    CHECK(recv_msg(&p.bob, m0, l0, "restore m0") == 0, "m0");
+    reload(&p.bob);
+
+    size_t lb = 0;
+    uint8_t *bad = tamper_content_tag(m5, l5, &lb);
+    CHECK(sender_of(&p.bob, bad, lb).generation == 5, "the sender data still decrypts");
+    const MlsSenderRatchet *r = &p.bob.secret_tree.senders[0];
+    expect_rejected_unchanged(&p.bob, bad, lb, "content tag broken");
+    CHECK(r->application_generation == 1 && cached_keys(&p.bob, 0) == 0,
+          "ratchet as before: next %u, %u cached", r->application_generation,
+          cached_keys(&p.bob, 0));
+
+    CHECK(sender_of(&p.bob, forged5, lf).generation == 5, "forgery at generation 5");
+    expect_rejected_unchanged(&p.bob, forged5, lf, "signed by another key");
+    CHECK(r->application_generation == 1 && cached_keys(&p.bob, 0) == 0,
+          "ratchet as before the forgery");
+
+    CHECK(recv_msg(&p.bob, m5, l5, "restore m5") == 0, "the genuine generation 5");
+    CHECK(recv_msg(&p.bob, m1, l1, "restore m1") == 0, "generation 1 from the cache");
+    free(bad);
+    free(m0);
+    free(m1);
+    free(m5);
+    free(forged5);
+    mls_group_free(&forger);
     pair_clear(&p);
 }
 
@@ -769,6 +849,7 @@ main(void)
     RUN(test_replay_rejected_across_reloads);
     RUN(test_out_of_order_window);
     RUN(test_failed_decryption_consumes_nothing);
+    RUN(test_failed_message_restores_ratchet);
     RUN(test_consumed_secrets_not_stored);
     RUN(test_exhausted_chain_never_wraps);
     RUN(test_legacy_state_migration);

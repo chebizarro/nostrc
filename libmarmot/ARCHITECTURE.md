@@ -105,6 +105,10 @@ The ratchets are part of the stored group state (serial format 3 in `mls_group.c
 
 A failed decryption restores the sender's ratchet. States of formats 1 and 2 still load, with the own sender moved 512 generations forward.
 
+This covers the live state only. The retained parent state (`mls_group_parent`, kept after every Commit to judge a competitor and read late messages) plus the Commit, which relays carry, can derive the current epoch again. Whoever obtains the whole store can therefore read the current epoch until the next transition replaces the parent (nostrc-yuj2).
+
+Application messages (since 0.9.0, nostrc-we6g) carry an RFC 9420 §6.3.1 `PrivateMessageContent`: the data plus a signature by the sender leaf's key over the FramedContent and GroupContext. Their sender data is sealed with `SenderDataAAD` (§6.3.2). The receiver verifies the signature and then requires the inner event's `pubkey` to be the sender leaf's credential identity. The secret-tree keys are shared by the group, so only these two checks tell members apart.
+
 ### Group State Machine (`mls_group.c`)
 
 Groups progress through epochs via commits. Each commit:

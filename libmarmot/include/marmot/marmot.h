@@ -700,6 +700,14 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
  * durable only once that outer transaction commits -- commit it before
  * publishing result->event_json, never roll it back afterwards.
  *
+ * Author (since 0.9.0, nostrc-we6g): the inner event is authored by our
+ * account, the identity of our leaf's credential.  An inner event without
+ * a pubkey gets it (a declared id is recomputed; result->message->content
+ * holds the event as sent); one with another account's pubkey is refused
+ * with MARMOT_ERR_AUTHOR_MISMATCH, and inner JSON that is not an event with
+ * MARMOT_ERR_EVENT.  The PrivateMessage carries an RFC 9420 section 6.3.1
+ * signature by our leaf's key over the content.
+ *
  * Returns: MARMOT_OK on success
  */
 MarmotError marmot_create_message(Marmot *m,
@@ -783,6 +791,17 @@ MarmotError marmot_save_created_message(Marmot *m,
  * max_forward_distance (1000) above it; outside that window it fails with
  * MARMOT_ERR_MLS.  A message that fails to decrypt, or whose storage fails
  * later in the operation, consumes nothing.
+ *
+ * Sender authentication (since 0.9.0, nostrc-we6g): an application message
+ * must carry the RFC 9420 section 6.3.1 signature of its MLS sender leaf
+ * (else MARMOT_ERR_MLS), and its inner event's pubkey must be the account
+ * identity of that leaf's credential (else MARMOT_ERR_AUTHOR_MISMATCH; no
+ * pubkey, or inner JSON that is no event, too).  Either rejection delivers
+ * and stores nothing.  result->app_msg.sender_pubkey_hex is therefore the
+ * authenticated author.  Messages of libmarmot 0.8.0 and earlier (no
+ * signature, empty sender-data AAD) are rejected.  An inner event already
+ * delivered (the same NIP-01 id, in another envelope) is
+ * MARMOT_RESULT_OWN_MESSAGE: a duplicate, not stored again.
  *
  * MIP-03 messages require MLS PrivateMessage framing by default. The legacy
  * raw-JSON NIP-44 fallback is accepted only when

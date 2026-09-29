@@ -107,6 +107,15 @@ leaf_at(const MlsGroup *g, uint32_t leaf)
     return n->type == MLS_NODE_LEAF ? &n->leaf : NULL;
 }
 
+int
+marmot_mls_sender_identity(const MlsGroup *g, uint32_t leaf, uint8_t out[32])
+{
+    const MlsLeafNode *n = g ? leaf_at(g, leaf) : NULL;
+    if (!n || n->credential_identity_len != 32 || !n->credential_identity) return -1;
+    memcpy(out, n->credential_identity, 32);
+    return 0;
+}
+
 static bool
 same_identity(const MlsLeafNode *a, const MlsLeafNode *b)
 {
@@ -275,10 +284,11 @@ marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
                            const uint8_t *msg, size_t msg_len,
                            uint8_t **out_plaintext, size_t *out_len,
                            uint32_t *out_sender,
+                           uint8_t out_sender_identity[32],
                            uint8_t **out_replaced, size_t *out_replaced_len)
 {
     if (!m || !gid || !msg || !out_plaintext || !out_len || !out_sender ||
-        !out_replaced || !out_replaced_len)
+        !out_sender_identity || !out_replaced || !out_replaced_len)
         return MARMOT_ERR_INVALID_ARG;
     *out_plaintext = NULL;
     *out_len = 0;
@@ -307,6 +317,14 @@ marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
         return MARMOT_ERR_STORAGE_NOT_FOUND;   /* not the epoch we retain */
     }
     int rc = mls_group_decrypt(&rp.parent, msg, msg_len, out_plaintext, out_len, out_sender);
+    if (rc == 0 &&
+        marmot_mls_sender_identity(&rp.parent, *out_sender, out_sender_identity) != 0) {
+        /* A leaf without an account identity cannot author anything. */
+        free_secret(*out_plaintext, *out_len);
+        *out_plaintext = NULL;
+        *out_len = 0;
+        rc = MARMOT_ERR_AUTHOR_MISMATCH;
+    }
     if (rc == 0) {
         /* The parent's ratchet moved on (no key is ever used twice): store it
          * in the same transaction as the message. */
@@ -326,7 +344,8 @@ marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
             probe = NULL;
         }
     } else {
-        err = rc == MARMOT_ERR_OWN_MESSAGE ? MARMOT_ERR_OWN_MESSAGE : MARMOT_ERR_MLS;
+        err = (rc == MARMOT_ERR_OWN_MESSAGE || rc == MARMOT_ERR_AUTHOR_MISMATCH)
+                  ? (MarmotError)rc : MARMOT_ERR_MLS;
     }
     free_secret(probe, probe_len);
     mls_group_free(&rp.parent);

@@ -15,7 +15,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.8.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.9.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.3.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.11.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
@@ -81,6 +81,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.3.0 | No bump: no source, API or ABI change (audit: every send and receive goes through `marmot_create_message()`/`marmot_process_message()` under the client lock). A new test covers distinct generations and refused replays through the client; a rebuild picks up the fix. |
 | same | gnostr | 0.1.0 | No bump (unreleased): rebuild only. Audit: the mls-groups plugin sends through the client and holds the client lock for its direct libmarmot calls; MIP-04 media uses random nonces, not a reloaded counter. |
 | same | groundhog | 0.11.0 | No bump: test-only change (a GhStoreMarmot crash case cutting `marmot_create_message()` at every write and commit). GhStoreMarmot stores the state opaquely; the format migrates inside libmarmot. |
+| libmarmot 0.8.0 -> 0.9.0 (MINOR, security: application messages carry an RFC 9420 s6.3.1 signed PrivateMessageContent and s6.3.2 SenderDataAAD; the inner event's pubkey must be the MLS sender leaf's identity; duplicates by inner event id; nostrc-we6g. Also the 0.8.0 advisory corrected, review B1) | libmarmot | 0.9.0 | MINOR bump: 0.x incompatible wire change of application messages (0.9.0 and <= 0.8.0 cannot read each other's) and a security fix (members could impersonate each other). No public API change. Advisory and compatibility notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.3.0 | No bump: no source, API or ABI change. It links libmarmot statically: its next release embeds 0.9.0 and must carry the wire note (upgrade whole groups together). `send_message_async` now fails with `MARMOT_ERR_AUTHOR_MISMATCH` for an inner event authored by another key, and `process_message_async` for a forged author. |
+| same | gnostr | 0.1.0 | No bump (unreleased): rebuild only. The mls-groups plugin already sets the inner pubkey to the account its KeyPackages and groups use. |
+| same | groundhog | 0.11.0 | No bump: documentation in `gh-store-marmot.h`/`gh-mls-commits.h` (review N1: publish only after the outer transaction commits); the application does not send libmarmot messages yet (qp24.13). |
 
 ## Maintenance
 

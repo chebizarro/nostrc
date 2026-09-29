@@ -1780,6 +1780,86 @@ test_mdk_welcome_vectors(const char *vector_dir)
     printf("PASS (%zu ciphersuite-1 cases asserted)\n", count);
 }
 
+/* RFC 9420 message-protection: unprotect application_priv as a receiver
+ * does (sender data, secret tree of a two-member group, AEAD) and verify its
+ * PrivateMessageContent signature with signature_pub; the application data
+ * must be `application`.  Then sign the same content ourselves with
+ * signature_priv: Ed25519 is deterministic, so the PrivateMessageContent we
+ * produce must be the one the vector encrypted (nostrc-we6g). */
+static void
+assert_application_priv_unprotects(const MdkMessageProtectionVector *v)
+{
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, v->application_priv, v->application_priv_len);
+    MlsMLSMessage wire;
+    assert(mls_message_deserialize(&r, &wire) == 0 &&
+           wire.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE);
+    const MlsPrivateMessage *pm = &wire.private_message;
+    assert(pm->content_type == MLS_CONTENT_TYPE_APPLICATION);
+
+    size_t sample = pm->ciphertext_len < MLS_HASH_LEN ? pm->ciphertext_len : MLS_HASH_LEN;
+    MlsSenderData sd;
+    const MlsSenderDataAAD sd_aad = { pm->group_id, pm->group_id_len, pm->epoch, pm->content_type };
+    assert(mls_sender_data_decrypt(v->sender_data_secret, &sd_aad, pm->ciphertext, sample,
+                                   pm->encrypted_sender_data,
+                                   pm->encrypted_sender_data_len, &sd) == 0);
+    MlsSecretTree st;
+    assert(mls_secret_tree_init(&st, v->encryption_secret, 2) == 0);
+    uint8_t *content = NULL;
+    size_t content_len = 0;
+    assert(mls_private_message_decrypt_with_sender_data(pm, &sd, &st, 1000, &content,
+                                                         &content_len, &sd) == 0);
+    mls_secret_tree_free(&st);
+
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(v->group_id, v->group_id_len, v->epoch, v->tree_hash,
+                                       v->confirmed_transcript_hash, NULL, 0,
+                                       &gc, &gc_len) == 0);
+    assert(v->signature_pub_len == MLS_SIG_PK_LEN && v->signature_priv_len == 32);
+    uint8_t *app = NULL;
+    size_t app_len = 0;
+    assert(mls_application_content_decode(pm->group_id, pm->group_id_len, pm->epoch,
+                                          sd.leaf_index, pm->authenticated_data,
+                                          pm->authenticated_data_len, content, content_len,
+                                          gc, gc_len, v->signature_pub, &app, &app_len) == 0);
+    assert_bytes_eq("message-protection.application", app, v->application, v->application_len);
+    assert(app_len == v->application_len);
+
+    /* A wrong key does not verify. */
+    uint8_t other[MLS_SIG_PK_LEN];
+    memcpy(other, v->signature_pub, sizeof(other));
+    other[0] ^= 0x01;
+    uint8_t *bad = NULL;
+    size_t bad_len = 0;
+    assert(mls_application_content_decode(pm->group_id, pm->group_id_len, pm->epoch,
+                                          sd.leaf_index, pm->authenticated_data,
+                                          pm->authenticated_data_len, content, content_len,
+                                          gc, gc_len, other, &bad, &bad_len) != 0);
+
+    /* Our encoder produces the same content (padding aside). */
+    uint8_t pk[crypto_sign_PUBLICKEYBYTES], sk[crypto_sign_SECRETKEYBYTES];
+    assert(crypto_sign_seed_keypair(pk, sk, v->signature_priv) == 0);
+    assert(memcmp(pk, v->signature_pub, sizeof(pk)) == 0);
+    uint8_t *ours = NULL;
+    size_t ours_len = 0;
+    assert(mls_application_content_encode(pm->group_id, pm->group_id_len, pm->epoch,
+                                          sd.leaf_index, pm->authenticated_data,
+                                          pm->authenticated_data_len, v->application,
+                                          v->application_len, gc, gc_len, sk,
+                                          &ours, &ours_len) == 0);
+    assert(ours_len <= content_len);
+    assert_bytes_eq("message-protection.PrivateMessageContent", ours, content, ours_len);
+    for (size_t i = ours_len; i < content_len; i++) assert(content[i] == 0);   /* padding */
+
+    sodium_memzero(sk, sizeof(sk));
+    free(ours);
+    free(app);
+    free(gc);
+    free(content);
+    mls_message_clear(&wire);
+}
+
 static void
 test_mdk_message_protection_vectors(const char *vector_dir)
 {
@@ -1793,8 +1873,10 @@ test_mdk_message_protection_vectors(const char *vector_dir)
         assert_mls_message_roundtrip("message-protection.proposal_pub", vectors[i].proposal_pub, vectors[i].proposal_pub_len);
         assert_mls_message_roundtrip("message-protection.proposal_priv", vectors[i].proposal_priv, vectors[i].proposal_priv_len);
         assert_mls_message_roundtrip("message-protection.application_priv", vectors[i].application_priv, vectors[i].application_priv_len);
+        assert_application_priv_unprotects(&vectors[i]);
     }
-    printf("PASS (%zu ciphersuite-1 protection cases asserted)\n", count);
+    printf("PASS (%zu ciphersuite-1 protection cases asserted, application_priv "
+           "unprotected and its signature verified)\n", count);
 }
 
 static void

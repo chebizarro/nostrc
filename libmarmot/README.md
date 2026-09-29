@@ -225,6 +225,83 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ## Changelog
 
+### 0.9.0 (unreleased): application messages are signed and bound to their author (nostrc-we6g, security)
+
+**Security fix and wire-format change** (MINOR for 0.x: 0.9.0 and 0.8.0 or
+older cannot read each other's application messages).
+
+#### Security advisory
+
+Before 0.9.0 **any member could post as any other member**. The inner
+(rumor) event's `pubkey` was never checked against the MLS sender, and
+`marmot_process_message()` reported and stored whatever author the inner
+event named. Application PrivateMessages also carried no MLS signature
+(RFC 9420 section 6.3.1). The secret-tree keys are shared by the whole
+group, so the MLS layer did not tell members apart either: a member could
+even encrypt under another member's leaf. Treat the author of every message
+received before the upgrade as unauthenticated among members. Outsiders
+were never able to post: that needs the epoch's secrets.
+
+#### What changed
+
+- **Signed content (RFC 9420 section 6.3.1).** An application message's
+  PrivateMessage now encrypts a `PrivateMessageContent`:
+  `application_data<V>`, then `FramedContentAuthData` (the signature
+  `SignWithLabel(leaf key, "FramedContentTBS", FramedContentTBS)` over the
+  FramedContent and the GroupContext), then zero padding (none is sent).
+  The receiver verifies the signature with the sender leaf's signature key
+  before anything is delivered; a bad signature fails with
+  `MARMOT_ERR_MLS`, and the ratchet is put back.
+- **Sender-data AAD (RFC 9420 section 6.3.2).** The sender data is sealed
+  with `SenderDataAAD` (group id, epoch, content type). Before 0.9.0 it
+  used an empty AAD, which OpenMLS and MDK reject. The RFC 9420
+  `message-protection` vector now decrypts end to end in `tests/interop`,
+  its signature verifies, and the content libmarmot signs is byte for byte
+  the vector's.
+- **Author binding (Marmot `foundation/application-messages.md`, legacy
+  MIP-03).**
+  - The receiver requires the inner event's `pubkey` to be the account
+    identity (32-byte credential identity) of the MLS sender leaf, in the
+    state that decrypted it: live, or the retained parent for a late
+    message. Otherwise it fails with `MARMOT_ERR_AUTHOR_MISMATCH` (also for
+    a missing pubkey, or inner JSON that is no event).
+  - Nothing is stored, and the ratchet step is not kept.
+  - `result->app_msg.sender_pubkey_hex` is now the authenticated author.
+  - `marmot_create_message()` fills a missing inner `pubkey` with our
+    account (recomputing a declared id), and refuses another account's with
+    `MARMOT_ERR_AUTHOR_MISMATCH`.
+- **Duplicates.** An inner event already delivered (the same NIP-01 id) in
+  another envelope is `MARMOT_RESULT_OWN_MESSAGE` and is not stored again.
+  Processed markers are now also kept under the inner event's id. Sending
+  the same inner event twice (same author, `created_at`, kind, tags and
+  content) delivers it once.
+- **Handshake PrivateMessages.** Marmot sends Commits and proposals as
+  PublicMessages. A PrivateMessage with a handshake content type is now
+  refused (`MARMOT_ERR_UNSUPPORTED`) instead of being handed over as an
+  application message.
+- **Nested transactions (review N1).** When the storage's transactions are
+  savepoints of an application transaction (Groundhog's GhStoreMarmot), a
+  send's ratchet step is durable only when that outer transaction commits.
+  Commit it before publishing; see `marmot_create_message()` and the hook
+  contract in `marmot-storage.h`.
+
+#### Compatibility
+
+- **Wire.** 0.9.0 rejects application messages from 0.8.0 and older
+  senders (unsigned, empty sender-data AAD), and 0.8.0 or older cannot read
+  0.9.0's. Upgrade every member of a group together. Commits, Welcomes and
+  KeyPackages are unchanged.
+- **Apps.** Callers that already put the account's own pubkey in the inner
+  event (Gnostr) are unaffected. Callers that leave it out get it filled in.
+  A caller that sends inner events authored by another key now gets
+  `MARMOT_ERR_AUTHOR_MISMATCH`.
+- **State.** Unchanged (format 3).
+- **API/ABI.** No public API change.
+  - Internal changes: `mls_sender_data_encrypt`/`_decrypt` take an
+    `MlsSenderDataAAD`; new `mls_application_content_encode`/`_decode` and
+    `marmot_mls_sender_identity`.
+  - `mls_group_decrypt` returns application data only.
+
 ### 0.8.0 (unreleased): the MLS sender ratchets are stored (nostrc-ai04, security)
 
 **Security fix and state-format change** (MINOR for 0.x: a 0.8.0 state

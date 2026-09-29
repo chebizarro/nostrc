@@ -131,13 +131,29 @@ derive_sender_data_keys(const uint8_t sender_data_secret[MLS_HASH_LEN],
     return 0;
 }
 
+/* SenderDataAAD (RFC 9420 §6.3.2). */
+static int
+sender_data_aad_serialize(const MlsSenderDataAAD *aad, MlsTlsBuf *buf)
+{
+    if (!aad || (!aad->group_id && aad->group_id_len)) return -1;
+    if (mls_tls_buf_init(buf, 16 + aad->group_id_len) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, aad->group_id, aad->group_id_len) != 0 ||
+        mls_tls_write_u64(buf, aad->epoch) != 0 ||
+        mls_tls_write_u8(buf, aad->content_type) != 0) {
+        mls_tls_buf_free(buf);
+        return -1;
+    }
+    return 0;
+}
+
 int
 mls_sender_data_encrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
+                         const MlsSenderDataAAD *aad,
                          const uint8_t *ciphertext_sample, size_t sample_len,
                          const MlsSenderData *sender_data,
                          uint8_t *out, size_t *out_len)
 {
-    if (!sender_data_secret || !sender_data || !out || !out_len) return -1;
+    if (!sender_data_secret || !aad || !sender_data || !out || !out_len) return -1;
 
     uint8_t key[MLS_AEAD_KEY_LEN], nonce[MLS_AEAD_NONCE_LEN];
     if (derive_sender_data_keys(sender_data_secret, ciphertext_sample,
@@ -148,9 +164,13 @@ mls_sender_data_encrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
     uint8_t sd_plain[12];
     sender_data_serialize(sender_data, sd_plain);
 
-    /* Encrypt with empty AAD */
-    int rc = mls_crypto_aead_encrypt(out, out_len, key, nonce,
-                                      sd_plain, 12, NULL, 0);
+    MlsTlsBuf sd_aad;
+    int rc = -1;
+    if (sender_data_aad_serialize(aad, &sd_aad) == 0) {
+        rc = mls_crypto_aead_encrypt(out, out_len, key, nonce,
+                                     sd_plain, 12, sd_aad.data, sd_aad.len);
+        mls_tls_buf_free(&sd_aad);
+    }
 
     sodium_memzero(key, sizeof(key));
     sodium_memzero(nonce, sizeof(nonce));
@@ -160,11 +180,12 @@ mls_sender_data_encrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
 
 int
 mls_sender_data_decrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
+                         const MlsSenderDataAAD *aad,
                          const uint8_t *ciphertext_sample, size_t sample_len,
                          const uint8_t *encrypted, size_t encrypted_len,
                          MlsSenderData *out)
 {
-    if (!sender_data_secret || !encrypted || !out) return -1;
+    if (!sender_data_secret || !aad || !encrypted || !out) return -1;
     /* Validate minimum ciphertext length */
     if (encrypted_len < MLS_AEAD_TAG_LEN) return -1;
 
@@ -175,8 +196,13 @@ mls_sender_data_decrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
 
     uint8_t sd_plain[12];
     size_t pt_len = 0;
-    int rc = mls_crypto_aead_decrypt(sd_plain, &pt_len, key, nonce,
-                                      encrypted, encrypted_len, NULL, 0);
+    MlsTlsBuf sd_aad;
+    int rc = -1;
+    if (sender_data_aad_serialize(aad, &sd_aad) == 0) {
+        rc = mls_crypto_aead_decrypt(sd_plain, &pt_len, key, nonce,
+                                     encrypted, encrypted_len, sd_aad.data, sd_aad.len);
+        mls_tls_buf_free(&sd_aad);
+    }
     sodium_memzero(key, sizeof(key));
     sodium_memzero(nonce, sizeof(nonce));
 
@@ -274,7 +300,8 @@ mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
     if (!esd) { free(ciphertext); return -1; }
 
     size_t esd_len = 0;
-    rc = mls_sender_data_encrypt(sender_data_secret, ciphertext, sample_len,
+    const MlsSenderDataAAD sd_aad = { group_id, group_id_len, epoch, content_type };
+    rc = mls_sender_data_encrypt(sender_data_secret, &sd_aad, ciphertext, sample_len,
                                   &sd, esd, &esd_len);
     if (rc != 0) {
         free(ciphertext);
@@ -421,7 +448,9 @@ mls_private_message_decrypt(const MlsPrivateMessage *msg,
                          ? msg->ciphertext_len : MLS_HASH_LEN;
 
     MlsSenderData sd;
-    int rc = mls_sender_data_decrypt(sender_data_secret,
+    const MlsSenderDataAAD sd_aad = { msg->group_id, msg->group_id_len, msg->epoch,
+                                      msg->content_type };
+    int rc = mls_sender_data_decrypt(sender_data_secret, &sd_aad,
                                       msg->ciphertext, sample_len,
                                       msg->encrypted_sender_data,
                                       msg->encrypted_sender_data_len,
@@ -1255,4 +1284,123 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
     default:
         return -1;
     }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * PrivateMessageContent of an application message (RFC 9420 §6.3.1)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* The FramedContent a member's application PrivateMessage carries (a view:
+ * nothing is copied or freed). */
+static void
+application_framed_content(MlsFramedContent *fc,
+                           const uint8_t *group_id, size_t group_id_len,
+                           uint64_t epoch, uint32_t sender_leaf,
+                           const uint8_t *aad, size_t aad_len,
+                           const uint8_t *app, size_t app_len)
+{
+    memset(fc, 0, sizeof(*fc));
+    fc->group_id = (uint8_t *)group_id;
+    fc->group_id_len = group_id_len;
+    fc->epoch = epoch;
+    fc->sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    fc->sender.leaf_index = sender_leaf;
+    fc->authenticated_data = (uint8_t *)aad;
+    fc->authenticated_data_len = aad_len;
+    fc->content_type = MLS_CONTENT_TYPE_APPLICATION;
+    fc->content = (uint8_t *)app;
+    fc->content_len = app_len;
+}
+
+int
+mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
+                                uint64_t epoch, uint32_t sender_leaf,
+                                const uint8_t *authenticated_data, size_t aad_len,
+                                const uint8_t *application_data, size_t app_len,
+                                const uint8_t *group_context, size_t group_context_len,
+                                const uint8_t signature_key[MLS_SIG_SK_LEN],
+                                uint8_t **out, size_t *out_len)
+{
+    if (!group_id || (!application_data && app_len) || !group_context ||
+        !signature_key || !out || !out_len)
+        return -1;
+    *out = NULL;
+    *out_len = 0;
+    MlsFramedContent fc;
+    application_framed_content(&fc, group_id, group_id_len, epoch, sender_leaf,
+                               authenticated_data, aad_len, application_data, app_len);
+    MlsFramedContentAuthData auth;
+    if (mls_framed_content_sign(&fc, MLS_WIRE_FORMAT_PRIVATE_MESSAGE,
+                                group_context, group_context_len,
+                                signature_key, &auth) != 0)
+        return -1;
+
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, app_len + MLS_SIG_LEN + 16) != 0) return -1;
+    /* No padding: the NIP-44 layer pads the whole kind:445 content. */
+    if (mls_tls_write_opaque32(&buf, application_data, app_len) != 0 ||
+        mls_tls_write_opaque32(&buf, auth.signature, MLS_SIG_LEN) != 0) {
+        if (buf.data) sodium_memzero(buf.data, buf.len);
+        mls_tls_buf_free(&buf);
+        return -1;
+    }
+    *out = buf.data;
+    *out_len = buf.len;
+    return 0;
+}
+
+int
+mls_application_content_decode(const uint8_t *group_id, size_t group_id_len,
+                               uint64_t epoch, uint32_t sender_leaf,
+                               const uint8_t *authenticated_data, size_t aad_len,
+                               const uint8_t *content, size_t content_len,
+                               const uint8_t *group_context, size_t group_context_len,
+                               const uint8_t verification_key[MLS_SIG_PK_LEN],
+                               uint8_t **out_app, size_t *out_app_len)
+{
+    if (!group_id || !content || !group_context || !verification_key ||
+        !out_app || !out_app_len)
+        return -1;
+    *out_app = NULL;
+    *out_app_len = 0;
+
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, content, content_len);
+    uint8_t *app = NULL, *sig = NULL;
+    size_t app_len = 0, sig_len = 0;
+    int rc = -1;
+    if (mls_tls_read_opaque32(&r, &app, &app_len) != 0 ||
+        mls_tls_read_opaque32(&r, &sig, &sig_len) != 0 || sig_len != MLS_SIG_LEN)
+        goto done;
+    /* Padding: zero bytes only (RFC 9420 §6.3.1). */
+    uint8_t nonzero = 0;
+    while (mls_tls_reader_remaining(&r) > 0) {
+        uint8_t b = 0;
+        if (mls_tls_read_u8(&r, &b) != 0) goto done;
+        nonzero |= b;
+    }
+    if (nonzero) goto done;
+
+    MlsFramedContent fc;
+    application_framed_content(&fc, group_id, group_id_len, epoch, sender_leaf,
+                               authenticated_data, aad_len, app, app_len);
+    MlsFramedContentAuthData auth;
+    memset(&auth, 0, sizeof(auth));
+    memcpy(auth.signature, sig, MLS_SIG_LEN);
+    auth.signature_len = MLS_SIG_LEN;
+    if (mls_framed_content_verify(&fc, &auth, MLS_WIRE_FORMAT_PRIVATE_MESSAGE,
+                                  group_context, group_context_len,
+                                  verification_key) != 0)
+        goto done;
+    *out_app = app ? app : malloc(1);
+    *out_app_len = app_len;
+    app = NULL;
+    rc = *out_app ? 0 : -1;
+done:
+    if (app) {
+        sodium_memzero(app, app_len);
+        free(app);
+    }
+    free(sig);
+    return rc;
 }

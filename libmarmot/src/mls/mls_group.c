@@ -3556,11 +3556,29 @@ mls_group_encrypt(MlsGroup *group,
     if (!group || !plaintext || !out_data || !out_len)
         return MARMOT_ERR_INVALID_ARG;
 
+    /* PrivateMessageContent (RFC 9420 §6.3.1): the application data signed
+     * with our leaf's signature key (since 0.9.0, nostrc-we6g). */
+    uint8_t *gc = NULL, *content = NULL;
+    size_t gc_len = 0, content_len = 0;
+    int content_rc = mls_group_context_build(group, &gc, &gc_len) == 0
+        ? mls_application_content_encode(group->group_id, group->group_id_len,
+                                         group->epoch, group->own_leaf_index,
+                                         NULL, 0, plaintext, plaintext_len,
+                                         gc, gc_len, group->own_signature_key,
+                                         &content, &content_len)
+        : -1;
+    free(gc);
+    if (content_rc != 0)
+        return MARMOT_ERR_MLS_CREATE_MESSAGE;
+
     /* Derive message keys for our leaf */
     MlsMessageKeys keys;
     if (mls_secret_tree_derive_keys(&group->secret_tree, group->own_leaf_index,
-                                     false /* application */, &keys) != 0)
+                                     false /* application */, &keys) != 0) {
+        sodium_memzero(content, content_len);
+        free(content);
         return MARMOT_ERR_INTERNAL;
+    }
 
     /* Generate reuse guard */
     uint8_t reuse_guard[4];
@@ -3573,11 +3591,13 @@ mls_group_encrypt(MlsGroup *group,
             group->epoch,
             MLS_CONTENT_TYPE_APPLICATION,
             NULL, 0, /* no AAD */
-            plaintext, plaintext_len,
+            content, content_len,
             group->epoch_secrets.sender_data_secret,
             &keys, group->own_leaf_index,
             reuse_guard, &msg);
     sodium_memzero(&keys, sizeof(keys));
+    sodium_memzero(content, content_len);
+    free(content);
     if (enc_rc != 0)
         return MARMOT_ERR_MLS_CREATE_MESSAGE;
 
@@ -3644,7 +3664,9 @@ mls_group_decrypt(MlsGroup *group,
     size_t sample_len = msg->ciphertext_len < MLS_HASH_LEN
                          ? msg->ciphertext_len : MLS_HASH_LEN;
     MlsSenderData sender_data;
-    if (mls_sender_data_decrypt(group->epoch_secrets.sender_data_secret,
+    const MlsSenderDataAAD sd_aad = { msg->group_id, msg->group_id_len, msg->epoch,
+                                      msg->content_type };
+    if (mls_sender_data_decrypt(group->epoch_secrets.sender_data_secret, &sd_aad,
                                  msg->ciphertext, sample_len,
                                  msg->encrypted_sender_data,
                                  msg->encrypted_sender_data_len,
@@ -3674,21 +3696,68 @@ mls_group_decrypt(MlsGroup *group,
         return MARMOT_ERR_OWN_MESSAGE;
     }
 
+    /* Marmot sends handshake messages as PublicMessages: a PrivateMessage
+     * here is an application message, nothing else is delivered. */
+    if (msg->content_type != MLS_CONTENT_TYPE_APPLICATION) {
+        mls_message_clear(&wire_msg);
+        return MARMOT_ERR_UNSUPPORTED;
+    }
+    /* The sender is a member: its leaf holds the key that must have signed. */
+    const MlsNode *sender_node =
+        &group->tree.nodes[mls_tree_leaf_to_node(sender_data.leaf_index)];
+    if (sender_node->type != MLS_NODE_LEAF) {
+        mls_message_clear(&wire_msg);
+        return MARMOT_ERR_FROM_NON_MEMBER;
+    }
+
+    /* Only an authentic message consumes a key: keep the sender's ratchet as
+     * it is to put it back if the signature fails (nostrc-we6g). */
+    MlsSenderSnapshot before;
+    if (mls_secret_tree_sender_save(&group->secret_tree, sender_data.leaf_index,
+                                    &before) != 0) {
+        mls_message_clear(&wire_msg);
+        return MARMOT_ERR_INTERNAL;
+    }
+
     /* Step 2: Full decrypt (content keys + AEAD) using sender data already parsed above. */
+    uint8_t *content = NULL;
+    size_t content_len = 0;
     int rc = mls_private_message_decrypt_with_sender_data(msg,
                                                            &sender_data,
                                                            &group->secret_tree,
                                                            group->max_forward_distance,
-                                                           out_plaintext,
-                                                           out_pt_len,
+                                                           &content,
+                                                           &content_len,
                                                            &sender_data);
     if (rc != 0) {
+        mls_secret_tree_sender_discard(&before);   /* restored there already */
         mls_message_clear(&wire_msg);
         return rc;
     }
 
+    /* Step 3: PrivateMessageContent (RFC 9420 §6.3.1): verify the sender
+     * leaf's signature over the FramedContent before delivering anything. */
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    rc = mls_group_context_build(group, &gc, &gc_len) == 0 &&
+         mls_application_content_decode(msg->group_id, msg->group_id_len, msg->epoch,
+                                        sender_data.leaf_index,
+                                        msg->authenticated_data,
+                                        msg->authenticated_data_len,
+                                        content, content_len, gc, gc_len,
+                                        sender_node->leaf.signature_key,
+                                        out_plaintext, out_pt_len) == 0
+             ? 0 : MARMOT_ERR_CRYPTO;
+    free(gc);
+    sodium_memzero(content, content_len);
+    free(content);
+    if (rc != 0)
+        mls_secret_tree_sender_restore(&group->secret_tree, &before);
+    else
+        mls_secret_tree_sender_discard(&before);
+
     mls_message_clear(&wire_msg);
-    return 0;
+    return rc;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

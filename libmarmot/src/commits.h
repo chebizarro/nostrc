@@ -82,14 +82,23 @@ MarmotError marmot_commit_persist(Marmot *m, const MlsGroup *pre,
  * before (caller wipes and frees it): the caller writes it back under
  * MARMOT_MLS_PARENT_LABEL if a later write of the same operation fails, so
  * on a storage without transactions the ratchet step does not outlive a
- * message that was never stored (nostrc-ai04).
+ * message that was never stored (nostrc-ai04).  *out_sender_identity is the
+ * sender leaf's account identity in that state (nostrc-we6g).
  */
 MarmotError marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid,
                                        uint64_t epoch,
                                        const uint8_t *msg, size_t msg_len,
                                        uint8_t **out_plaintext, size_t *out_len,
                                        uint32_t *out_sender,
+                                       uint8_t out_sender_identity[32],
                                        uint8_t **out_replaced, size_t *out_replaced_len);
+
+/**
+ * The Marmot account identity (32-byte Nostr public key) the credential of
+ * `g`'s leaf `leaf` binds, into `out`.  -1 for a blank leaf or a credential
+ * that is not a 32-byte identity (nostrc-we6g).
+ */
+int marmot_mls_sender_identity(const MlsGroup *g, uint32_t leaf, uint8_t out[32]);
 
 /** Mirror the committed GroupData (name, description, admins) into `group`. */
 MarmotError marmot_group_apply_group_data(MarmotGroup *group,

@@ -435,6 +435,82 @@ parse_group_event(const char *event_json, GroupEventOrigin origin,
     return MARMOT_OK;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Internal: the inner event's author is the MLS sender (nostrc-we6g)
+ *
+ * Marmot binds the inner (rumor) event to the member that sent it: its
+ * pubkey MUST be the account identity of the MLS sender leaf's credential
+ * (foundation/application-messages.md; legacy MIP-03).  The PrivateMessage
+ * signature authenticates the leaf; these checks tie the event to it.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* Sender side: `inner_json` with pubkey = `identity`.  A missing pubkey is
+ * filled in (*out_json, caller frees; a declared id is recomputed); a pubkey
+ * of another account is MARMOT_ERR_AUTHOR_MISMATCH; a present, matching one
+ * leaves *out_json NULL (use `inner_json` as is). */
+static MarmotError
+bind_inner_author(const char *inner_json, const uint8_t identity[32], char **out_json)
+{
+    *out_json = NULL;
+    NostrEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    if (!nostr_event_deserialize_compact(&ev, inner_json, NULL))
+        return MARMOT_ERR_EVENT;
+    MarmotError err = MARMOT_OK;
+    if (ev.pubkey && *ev.pubkey) {
+        uint8_t pk[32];
+        if (strlen(ev.pubkey) != 64 || marmot_hex_decode(ev.pubkey, pk, 32) != 0 ||
+            memcmp(pk, identity, 32) != 0)
+            err = MARMOT_ERR_AUTHOR_MISMATCH;
+    } else {
+        char *pk_hex = marmot_hex_encode(identity, 32);
+        if (!pk_hex) {
+            err = MARMOT_ERR_MEMORY;
+        } else {
+            free(ev.pubkey);
+            ev.pubkey = pk_hex;
+            char id[65];
+            if (ev.id) {
+                if (nostr_event_compute_id(&ev, id) != NOSTR_EVENT_VALIDATION_OK) {
+                    err = MARMOT_ERR_EVENT;
+                } else {
+                    free(ev.id);
+                    ev.id = strdup(id);
+                    if (!ev.id) err = MARMOT_ERR_MEMORY;
+                }
+            }
+            if (err == MARMOT_OK) {
+                *out_json = nostr_event_serialize_compact(&ev);
+                if (!*out_json) err = MARMOT_ERR_EVENT_BUILD;
+            }
+        }
+    }
+    free_stack_event(&ev);
+    return err;
+}
+
+/* Receiver side: `inner_json` must be an event whose pubkey is the MLS
+ * sender's `identity` (else MARMOT_ERR_AUTHOR_MISMATCH, or MARMOT_ERR_EVENT
+ * when it is no event); its canonical NIP-01 id goes to `inner_id`. */
+static MarmotError
+check_inner_author(const char *inner_json, const uint8_t identity[32], uint8_t inner_id[32])
+{
+    NostrEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    if (!nostr_event_deserialize_compact(&ev, inner_json, NULL))
+        return MARMOT_ERR_EVENT;
+    MarmotError err = MARMOT_ERR_AUTHOR_MISMATCH;
+    uint8_t pk[32];
+    char id[65];
+    if (ev.pubkey && strlen(ev.pubkey) == 64 && marmot_hex_decode(ev.pubkey, pk, 32) == 0 &&
+        memcmp(pk, identity, 32) == 0) {
+        err = (nostr_event_compute_id(&ev, id) == NOSTR_EVENT_VALIDATION_OK &&
+               marmot_hex_decode(id, inner_id, 32) == 0) ? MARMOT_OK : MARMOT_ERR_EVENT;
+    }
+    free_stack_event(&ev);
+    return err;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Public API: marmot_create_message
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -506,9 +582,28 @@ create_message_impl(Marmot *m,
     uint8_t *mls_ciphertext = NULL;
     size_t mls_ciphertext_len = 0;
 
+    /* The inner event is authored by our account: receivers drop it
+     * otherwise (MIP-03, nostrc-we6g).  A missing pubkey is filled in. */
+    char *bound_json = NULL;
     if (mls_loaded) {
+        uint8_t me[32];
+        MarmotError berr =
+            marmot_mls_sender_identity(&mls_group, mls_group.own_leaf_index, me) == 0
+                ? bind_inner_author(inner_event_json, me, &bound_json)
+                : MARMOT_ERR_AUTHOR_MISMATCH;
+        if (berr != MARMOT_OK) {
+            mls_group_free(&mls_group);
+            sodium_memzero(exporter_secret, sizeof(exporter_secret));
+            marmot_group_free(group);
+            return berr;
+        }
+        if (bound_json) {
+            plaintext = (const uint8_t *)bound_json;
+            plaintext_len = strlen(bound_json);
+        }
         if (mls_group_encrypt(&mls_group, plaintext, plaintext_len,
                               &mls_ciphertext, &mls_ciphertext_len) != 0) {
+            free(bound_json);
             mls_group_free(&mls_group);
             sodium_memzero(exporter_secret, sizeof(exporter_secret));
             marmot_group_free(group);
@@ -518,6 +613,7 @@ create_message_impl(Marmot *m,
         nip44_plaintext_len = mls_ciphertext_len;
     } else if (!m->config.allow_legacy_raw_messages) {
         sodium_memzero(exporter_secret, sizeof(exporter_secret));
+        free(bound_json);
         marmot_group_free(group);
         return MARMOT_ERR_MLS;
     }
@@ -529,6 +625,7 @@ create_message_impl(Marmot *m,
         free(mls_ciphertext);
         if (mls_loaded) mls_group_free(&mls_group);
         sodium_memzero(exporter_secret, sizeof(exporter_secret));
+        free(bound_json);
         marmot_group_free(group);
         return MARMOT_ERR_NIP44;
     }
@@ -540,6 +637,7 @@ create_message_impl(Marmot *m,
         if (msg_save_mls_group(m, &mls_group) != 0) {
             free(nip44_ciphertext);
             mls_group_free(&mls_group);
+            free(bound_json);
             marmot_group_free(group);
             return MARMOT_ERR_STORAGE;
         }
@@ -553,6 +651,7 @@ create_message_impl(Marmot *m,
     NostrEvent *event = nostr_event_new();
     if (!event) {
         free(nip44_ciphertext);
+        free(bound_json);
         marmot_group_free(group);
         return MARMOT_ERR_MEMORY;
     }
@@ -566,6 +665,7 @@ create_message_impl(Marmot *m,
     NostrTags *tags = nostr_tags_new(0);
     if (!tags) {
         nostr_event_free(event);
+        free(bound_json);
         marmot_group_free(group);
         return MARMOT_ERR_MEMORY;
     }
@@ -581,6 +681,7 @@ create_message_impl(Marmot *m,
 
     if (marmot_sign_ephemeral(event) != 0) {
         nostr_event_free(event);
+        free(bound_json);
         marmot_group_free(group);
         return MARMOT_ERR_EVENT_BUILD;
     }
@@ -588,6 +689,7 @@ create_message_impl(Marmot *m,
     nostr_event_free(event);
 
     if (!result->event_json) {
+        free(bound_json);
         marmot_group_free(group);
         return MARMOT_ERR_EVENT_BUILD;
     }
@@ -595,6 +697,7 @@ create_message_impl(Marmot *m,
     /* ── 5. Return an unsaved local message view ──────────────────────── */
     result->message = marmot_message_new();
     if (!result->message) {
+        free(bound_json);
         marmot_group_free(group);
         marmot_outgoing_message_free(result);
         return MARMOT_ERR_MEMORY;
@@ -604,7 +707,8 @@ create_message_impl(Marmot *m,
     result->message->processed_at = 0;
     result->message->mls_group_id = marmot_group_id_new(
         mls_group_id->data, mls_group_id->len);
-    result->message->content = strdup(inner_event_json);
+    result->message->content = bound_json ? bound_json : strdup(inner_event_json);
+    bound_json = NULL;
     result->message->event_json = strdup(result->event_json);
     result->message->epoch = group->epoch;
     result->message->state = MARMOT_MSG_STATE_CREATED;
@@ -834,6 +938,10 @@ process_group_event(Marmot *m, const char *group_event_json,
     bool used_mls = false;
     bool late = false;   /* decrypted with the retained previous-epoch state */
     StateUndo undo = { 0 };   /* the ratchet record this message replaced */
+    uint8_t sender_identity[32] = { 0 };   /* the MLS sender's account */
+    bool have_identity = false;
+    uint8_t inner_id[32] = { 0 };          /* canonical id of the inner event */
+    bool duplicate = false;
 
     /* Only attempt MLS decrypt when the stored MLS epoch matches the epoch
      * whose exporter_secret successfully decrypted the NIP-44 layer. If
@@ -846,6 +954,8 @@ process_group_event(Marmot *m, const char *group_event_json,
                                         &sender_leaf);
         if (mls_rc == 0) {
             used_mls = true;
+            have_identity = marmot_mls_sender_identity(&mls_group, sender_leaf,
+                                                       sender_identity) == 0;
         } else if (mls_rc == MARMOT_ERR_OWN_MESSAGE) {
             /* MLS identified this as our own message echoed back from the
              * relay. The plaintext was already stored locally at send time
@@ -866,10 +976,12 @@ process_group_event(Marmot *m, const char *group_event_json,
                                                       decrypted, decrypted_len,
                                                       &inner_plaintext,
                                                       &inner_plaintext_len, &sender_leaf,
+                                                      sender_identity,
                                                       &undo.blob, &undo.len);
         if (lerr == MARMOT_OK) {
             used_mls = true;
             late = true;
+            have_identity = true;
             undo.label = MARMOT_MLS_PARENT_LABEL;
         } else if (lerr == MARMOT_ERR_OWN_MESSAGE ||
                    (lerr != MARMOT_ERR_MLS && lerr != MARMOT_ERR_STORAGE_NOT_FOUND)) {
@@ -908,6 +1020,30 @@ process_group_event(Marmot *m, const char *group_event_json,
         inner_json[inner_plaintext_len] = '\0';
         free(inner_plaintext);
         free(decrypted);
+
+        /* The author is the sender (nostrc-we6g): the inner event's pubkey
+         * must be the account the MLS sender leaf's credential binds (whose
+         * signature the PrivateMessage carries).  Otherwise it is dropped,
+         * and nothing -- not even the ratchet step -- is kept. */
+        MarmotError aerr = have_identity
+            ? check_inner_author(inner_json, sender_identity, inner_id)
+            : MARMOT_ERR_AUTHOR_MISMATCH;
+        /* The same inner event already delivered under another envelope
+         * (a replay, or a sender's re-send) is a duplicate. */
+        if (aerr == MARMOT_OK && m->storage->is_message_processed) {
+            bool seen = false;
+            if (m->storage->is_message_processed(m->storage->ctx, inner_id, &seen) ==
+                    MARMOT_OK && seen)
+                duplicate = true;
+        }
+        if (aerr != MARMOT_OK) {
+            free(inner_json);
+            mls_group_free(&mls_group);
+            state_undo_apply(m, &group->mls_group_id, &undo);   /* a late step */
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return aerr;
+        }
     } else {
         /* Explicit legacy mode: accept raw inner-event JSON directly from the
          * NIP-44 layer. Non-JSON payloads are not silently accepted. */
@@ -949,6 +1085,28 @@ process_group_event(Marmot *m, const char *group_event_json,
     }
     if (mls_loaded) {
         mls_group_free(&mls_group);
+    }
+
+    if (duplicate) {
+        /* Its key is used up (stored above); mark this envelope too. */
+        MarmotError derr = MARMOT_OK;
+        uint8_t outer_id[32];
+        if (parsed.event_id && m->storage->save_processed_message &&
+            marmot_hex_decode(parsed.event_id, outer_id, 32) == 0)
+            derr = m->storage->save_processed_message(m->storage->ctx, outer_id, outer_id,
+                                                      marmot_now(), used_epoch,
+                                                      &group->mls_group_id,
+                                                      MARMOT_MSG_STATE_PROCESSED, NULL);
+        if (derr != MARMOT_OK)
+            state_undo_apply(m, &group->mls_group_id, &undo);
+        else
+            state_undo_clear(&undo);
+        free(inner_json);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        if (derr != MARMOT_OK) return derr;
+        result->type = MARMOT_RESULT_OWN_MESSAGE;
+        return MARMOT_OK;
     }
 
     /* ── 7. Populate result ───────────────────────────────────────────── */
@@ -1023,6 +1181,12 @@ process_group_event(Marmot *m, const char *group_event_json,
                                                      MARMOT_MSG_STATE_PROCESSED,
                                                      NULL);
         }
+        /* ... and under its inner event's id (duplicates, since 0.9.0). */
+        if (err == MARMOT_OK && used_mls && m->storage->save_processed_message)
+            err = m->storage->save_processed_message(m->storage->ctx, inner_id, inner_id,
+                                                     msg->processed_at, used_epoch,
+                                                     &msg->mls_group_id,
+                                                     MARMOT_MSG_STATE_PROCESSED, NULL);
         marmot_message_free(msg);
         if (err != MARMOT_OK) {
             state_undo_apply(m, &group->mls_group_id, &undo);

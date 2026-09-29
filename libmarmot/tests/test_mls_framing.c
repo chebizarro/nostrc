@@ -179,6 +179,12 @@ static void test_content_aad_deterministic(void)
  * Sender data encryption tests
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/* SenderDataAAD of the sender-data tests (RFC 9420 §6.3.2). */
+static const uint8_t TEST_SD_GROUP[] = "sd-group";
+static const MlsSenderDataAAD TEST_SD_AAD = {
+    TEST_SD_GROUP, sizeof(TEST_SD_GROUP) - 1, 7, MLS_CONTENT_TYPE_APPLICATION
+};
+
 static void test_sender_data_roundtrip(void)
 {
     uint8_t sds[MLS_HASH_LEN];
@@ -196,18 +202,50 @@ static void test_sender_data_roundtrip(void)
     /* Encrypt */
     uint8_t encrypted[12 + MLS_AEAD_TAG_LEN + 4]; /* some headroom */
     size_t enc_len = 0;
-    assert(mls_sender_data_encrypt(sds, ciphertext_sample, sizeof(ciphertext_sample),
+    assert(mls_sender_data_encrypt(sds, &TEST_SD_AAD, ciphertext_sample, sizeof(ciphertext_sample),
                                     &sd_in, encrypted, &enc_len) == 0);
     assert(enc_len == 12 + MLS_AEAD_TAG_LEN);
 
     /* Decrypt */
     MlsSenderData sd_out;
-    assert(mls_sender_data_decrypt(sds, ciphertext_sample, sizeof(ciphertext_sample),
+    assert(mls_sender_data_decrypt(sds, &TEST_SD_AAD, ciphertext_sample, sizeof(ciphertext_sample),
                                     encrypted, enc_len, &sd_out) == 0);
 
     assert(sd_out.leaf_index == 42);
     assert(sd_out.generation == 17);
     assert(memcmp(sd_out.reuse_guard, sd_in.reuse_guard, 4) == 0);
+}
+
+/* RFC 9420 section 6.3.2: the sender data is bound to the PrivateMessage's
+ * group, epoch and content type (SenderDataAAD, nostrc-we6g). */
+static void test_sender_data_aad_bound(void)
+{
+    uint8_t sds[MLS_HASH_LEN];
+    memset(sds, 0xEE, sizeof(sds));
+    uint8_t sample[MLS_HASH_LEN];
+    memset(sample, 0x33, sizeof(sample));
+    MlsSenderData sd = { .leaf_index = 3, .generation = 9 };
+    uint8_t encrypted[28 + 4];
+    size_t enc_len = 0;
+    assert(mls_sender_data_encrypt(sds, &TEST_SD_AAD, sample, sizeof(sample),
+                                    &sd, encrypted, &enc_len) == 0);
+    MlsSenderData out;
+    MlsSenderDataAAD other = TEST_SD_AAD;
+    other.epoch++;
+    assert(mls_sender_data_decrypt(sds, &other, sample, sizeof(sample),
+                                    encrypted, enc_len, &out) != 0);
+    other = TEST_SD_AAD;
+    other.content_type = MLS_CONTENT_TYPE_COMMIT;
+    assert(mls_sender_data_decrypt(sds, &other, sample, sizeof(sample),
+                                    encrypted, enc_len, &out) != 0);
+    static const uint8_t other_group[] = "sd-grouq";
+    other = TEST_SD_AAD;
+    other.group_id = other_group;
+    assert(mls_sender_data_decrypt(sds, &other, sample, sizeof(sample),
+                                    encrypted, enc_len, &out) != 0);
+    assert(mls_sender_data_decrypt(sds, &TEST_SD_AAD, sample, sizeof(sample),
+                                    encrypted, enc_len, &out) == 0 &&
+           out.leaf_index == 3 && out.generation == 9);
 }
 
 static void test_sender_data_wrong_secret(void)
@@ -221,12 +259,12 @@ static void test_sender_data_wrong_secret(void)
 
     uint8_t encrypted[28 + 4];
     size_t enc_len = 0;
-    assert(mls_sender_data_encrypt(sds1, sample, sizeof(sample),
+    assert(mls_sender_data_encrypt(sds1, &TEST_SD_AAD, sample, sizeof(sample),
                                     &sd, encrypted, &enc_len) == 0);
 
     /* Decrypt with wrong secret should fail */
     MlsSenderData sd_out;
-    assert(mls_sender_data_decrypt(sds2, sample, sizeof(sample),
+    assert(mls_sender_data_decrypt(sds2, &TEST_SD_AAD, sample, sizeof(sample),
                                     encrypted, enc_len, &sd_out) != 0);
 }
 
@@ -243,12 +281,12 @@ static void test_sender_data_wrong_sample(void)
 
     uint8_t encrypted[28 + 4];
     size_t enc_len = 0;
-    assert(mls_sender_data_encrypt(sds, sample1, sizeof(sample1),
+    assert(mls_sender_data_encrypt(sds, &TEST_SD_AAD, sample1, sizeof(sample1),
                                     &sd, encrypted, &enc_len) == 0);
 
     /* Decrypt with wrong ciphertext sample should fail */
     MlsSenderData sd_out;
-    assert(mls_sender_data_decrypt(sds, sample2, sizeof(sample2),
+    assert(mls_sender_data_decrypt(sds, &TEST_SD_AAD, sample2, sizeof(sample2),
                                     encrypted, enc_len, &sd_out) != 0);
 }
 
@@ -1446,6 +1484,7 @@ int main(void)
     printf("\n  --- Sender data encryption ---\n");
     TEST(test_sender_data_roundtrip);
     TEST(test_sender_data_wrong_secret);
+    TEST(test_sender_data_aad_bound);
     TEST(test_sender_data_wrong_sample);
 
     printf("\n  --- PrivateMessage encrypt/decrypt ---\n");

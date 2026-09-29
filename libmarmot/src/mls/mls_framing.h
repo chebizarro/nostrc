@@ -58,13 +58,34 @@ typedef struct {
 } MlsSenderData;
 
 /**
+ * SenderDataAAD (RFC 9420 §6.3.2): the associated data of the sender-data
+ * AEAD, binding it to the PrivateMessage's group, epoch and content type.
+ *
+ * struct {
+ *   opaque group_id<V>;
+ *   uint64 epoch;
+ *   ContentType content_type;
+ * } SenderDataAAD;
+ *
+ * (libmarmot before 0.9.0 used an empty AAD, which OpenMLS/MDK reject;
+ * nostrc-we6g.)
+ */
+typedef struct {
+    const uint8_t *group_id;
+    size_t         group_id_len;
+    uint64_t       epoch;
+    uint8_t        content_type;
+} MlsSenderDataAAD;
+
+/**
  * Encrypt sender data.
  *
  * sender_data_key = ExpandWithLabel(sender_data_secret, "key", ciphertext_sample, key_len)
  * sender_data_nonce = ExpandWithLabel(sender_data_secret, "nonce", ciphertext_sample, nonce_len)
- * encrypted_sender_data = AEAD.Seal(key, nonce, "", sender_data)
+ * encrypted_sender_data = AEAD.Seal(key, nonce, SenderDataAAD, sender_data)
  *
  * @param sender_data_secret  From epoch secrets
+ * @param aad                 The PrivateMessage's group, epoch and content type
  * @param ciphertext_sample   First KDF.Nh bytes of ciphertext, or all if shorter
  * @param sender_data         Plaintext sender data to encrypt
  * @param out                 Output buffer (at least 12 + AEAD_TAG_LEN bytes)
@@ -72,14 +93,16 @@ typedef struct {
  * @return 0 on success
  */
 int mls_sender_data_encrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
+                             const MlsSenderDataAAD *aad,
                              const uint8_t *ciphertext_sample, size_t sample_len,
                              const MlsSenderData *sender_data,
                              uint8_t *out, size_t *out_len);
 
 /**
- * Decrypt sender data.
+ * Decrypt sender data (see mls_sender_data_encrypt()).
  */
 int mls_sender_data_decrypt(const uint8_t sender_data_secret[MLS_HASH_LEN],
+                             const MlsSenderDataAAD *aad,
                              const uint8_t *ciphertext_sample, size_t sample_len,
                              const uint8_t *encrypted, size_t encrypted_len,
                              MlsSenderData *out);
@@ -355,6 +378,50 @@ int mls_framed_content_verify(const MlsFramedContent *fc,
                                uint16_t wire_format,
                                const uint8_t *group_context, size_t group_context_len,
                                const uint8_t verification_key[MLS_SIG_PK_LEN]);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * PrivateMessageContent of an application message (RFC 9420 §6.3.1)
+ *
+ * struct {
+ *   opaque application_data<V>;
+ *   FramedContentAuthData auth;        -- signature<V> (no confirmation tag)
+ *   opaque padding[length_of_padding]; -- all zero
+ * } PrivateMessageContent;
+ *
+ * The signature is SignWithLabel(sender leaf signature key,
+ * "FramedContentTBS", FramedContentTBS) over the FramedContent the
+ * PrivateMessage carries (wire_format mls_private_message, sender =
+ * member(sender_leaf), content_type application) and the GroupContext.
+ * It authenticates the sender inside the group: the secret-tree keys are
+ * shared by every member (since libmarmot 0.9.0, nostrc-we6g).
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Encode and sign the PrivateMessageContent of an application message.
+ * *out (caller wipes and frees) is the plaintext for the PrivateMessage AEAD.
+ */
+int mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
+                                   uint64_t epoch, uint32_t sender_leaf,
+                                   const uint8_t *authenticated_data, size_t aad_len,
+                                   const uint8_t *application_data, size_t app_len,
+                                   const uint8_t *group_context, size_t group_context_len,
+                                   const uint8_t signature_key[MLS_SIG_SK_LEN],
+                                   uint8_t **out, size_t *out_len);
+
+/**
+ * Parse a decrypted application PrivateMessageContent and verify its
+ * signature with the sender leaf's `verification_key`.  Fails closed on a
+ * malformed body, a signature of the wrong size or that does not verify,
+ * or non-zero padding.  On success *out_app (caller frees) is the
+ * application data.
+ */
+int mls_application_content_decode(const uint8_t *group_id, size_t group_id_len,
+                                   uint64_t epoch, uint32_t sender_leaf,
+                                   const uint8_t *authenticated_data, size_t aad_len,
+                                   const uint8_t *content, size_t content_len,
+                                   const uint8_t *group_context, size_t group_context_len,
+                                   const uint8_t verification_key[MLS_SIG_PK_LEN],
+                                   uint8_t **out_app, size_t *out_app_len);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * PublicMessage (RFC 9420 §6.2)
