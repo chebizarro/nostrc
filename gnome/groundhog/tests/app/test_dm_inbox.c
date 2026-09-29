@@ -1354,8 +1354,9 @@ test_rejected_not_reprompted(void)
   for (guint i = 0; i < G_N_ELEMENTS(all); i++)
     deliver(&f, INBOX_A, all[i]);
   gh_test_spin_until(settled, f.inbox);
-  /* Sender mismatch, kind 15 and a rumor not addressed to the account each
-   * cost two signer calls; the wrong outer p none. */
+  /* Sender mismatch, a kind 15 without file tags (G21) and a rumor not
+   * addressed to the account each cost two signer calls; the wrong outer p
+   * none. */
   g_assert_cmpuint(counters(f.inbox).rejected, ==, 4);
   g_assert_cmpuint(f.signer.calls, ==, 6);
   /* Kept on disk under the pseudonymous name, and nothing else is. */

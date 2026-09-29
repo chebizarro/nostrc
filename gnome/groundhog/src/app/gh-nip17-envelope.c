@@ -367,19 +367,35 @@ sign_done(GObject *source, GAsyncResult *result, gpointer data)
   envelope_return(task);
 }
 
-/* A canonical rumor with its id, one "p" tag per recipient (lowercase,
- * validated); created_at 0 means now, expires_at 0 never. */
+/* G21: a kind-15 file message (gh-nip17-file.h) is built, sealed and sent
+ * exactly like a kind-14 chat message, to one person or a room. */
+static gboolean
+dm_kind(gint kind)
+{
+  return kind == 14 || kind == GH_NIP17_FILE_KIND;
+}
+
+/* A canonical rumor of kind (14 or 15) with its id, one "p" tag per
+ * recipient (lowercase, validated), then extra (nullable: (key, value)
+ * GStrv pairs, e.g. a file's tags), then the expiration; created_at 0 means
+ * now, expires_at 0 never. */
 static gchar *
-rumor_new(const gchar *sender, const gchar *const *recipients, const gchar *content,
-          gint64 created_at, gint64 expires_at, gchar **out_id, GError **error)
+rumor_new_kind(const gchar *sender, const gchar *const *recipients, gint kind,
+               const gchar *content, GPtrArray *extra, gint64 created_at, gint64 expires_at,
+               gchar **out_id, GError **error)
 {
   NostrEvent *rumor = nostr_nip17_create_rumor(sender, recipients[0], content, created_at);
   if (!rumor) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Could not create NIP-17 rumor");
     return NULL;
   }
+  nostr_event_set_kind(rumor, kind);
   for (guint i = 1; recipients[i]; i++)
     nostr_tags_append(nostr_event_get_tags(rumor), nostr_tag_new("p", recipients[i], NULL));
+  for (guint i = 0; extra && i < extra->len; i++) {
+    const gchar *const *pair = g_ptr_array_index(extra, i);
+    nostr_tags_append(nostr_event_get_tags(rumor), nostr_tag_new(pair[0], pair[1], NULL));
+  }
   if (expires_at)
     nostr_tags_append(nostr_event_get_tags(rumor), expiration_tag_new(expires_at));
   rumor->id = nostr_event_get_id(rumor);
@@ -401,6 +417,15 @@ rumor_new(const gchar *sender, const gchar *const *recipients, const gchar *cont
   gchar *copy = g_strdup(json);
   free(json);
   return copy;
+}
+
+/* A canonical kind-14 rumor (see rumor_new_kind()). */
+static gchar *
+rumor_new(const gchar *sender, const gchar *const *recipients, const gchar *content,
+          gint64 created_at, gint64 expires_at, gchar **out_id, GError **error)
+{
+  return rumor_new_kind(sender, recipients, 14, content, NULL, created_at, expires_at, out_id,
+                        error);
 }
 
 /* The recipients of a room as rumor "p" tags: 1 to the limit of distinct
@@ -452,10 +477,13 @@ gh_nip17_rumor_new_expiring(const gchar *sender_pubkey_hex, const gchar *recipie
                                  content, created_at, expires_at, out_rumor_id, error);
 }
 
-gchar *
-gh_nip17_rumor_new_room(const gchar *sender_pubkey_hex, const gchar *const *recipients,
-                        const gchar *content, gint64 created_at, gint64 expires_at,
-                        gchar **out_rumor_id, GError **error)
+/* The checks every room rumor passes, kind 14 or 15: a sender, 1 to the
+ * limit of recipients (room_recipients()), UTF-8 content, a time and an
+ * expiration after it. The lowercase sender and recipients, or NULL. */
+static GStrv
+room_rumor_check(const gchar *sender_pubkey_hex, const gchar *const *recipients,
+                 const gchar *content, gint64 created_at, gint64 expires_at,
+                 gchar **out_sender, GError **error)
 {
   if (!hex64(sender_pubkey_hex) || !recipients || !recipients[0] || !content || !*content ||
       !g_utf8_validate(content, -1, NULL) || created_at <= 0) {
@@ -470,13 +498,48 @@ gh_nip17_rumor_new_room(const gchar *sender_pubkey_hex, const gchar *const *reci
   }
   g_autofree gchar *sender = g_ascii_strdown(sender_pubkey_hex, -1);
   const gchar *reason = NULL;
-  g_auto(GStrv) room = room_recipients(sender, recipients, &reason);
+  GStrv room = room_recipients(sender, recipients, &reason);
   if (!room) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, reason);
     return NULL;
   }
+  *out_sender = g_steal_pointer(&sender);
+  return room;
+}
+
+gchar *
+gh_nip17_rumor_new_room(const gchar *sender_pubkey_hex, const gchar *const *recipients,
+                        const gchar *content, gint64 created_at, gint64 expires_at,
+                        gchar **out_rumor_id, GError **error)
+{
+  g_autofree gchar *sender = NULL;
+  g_auto(GStrv) room = room_rumor_check(sender_pubkey_hex, recipients, content, created_at,
+                                        expires_at, &sender, error);
+  if (!room)
+    return NULL;
   return rumor_new(sender, (const gchar *const *)room, content, created_at, expires_at,
                    out_rumor_id, error);
+}
+
+gchar *
+gh_nip17_rumor_new_file_room(const gchar *sender_pubkey_hex, const gchar *const *recipients,
+                             const GhNip17File *file, gint64 created_at, gint64 expires_at,
+                             gchar **out_rumor_id, GError **error)
+{
+  g_autoptr(GPtrArray) tags = file ? gh_nip17_file_dup_tags(file, error) : NULL;
+  if (!tags) {
+    if (!file)
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                          "A file message needs a complete encrypted file");
+    return NULL;
+  }
+  g_autofree gchar *sender = NULL;
+  g_auto(GStrv) room = room_rumor_check(sender_pubkey_hex, recipients, file->url, created_at,
+                                        expires_at, &sender, error);
+  if (!room)
+    return NULL;
+  return rumor_new_kind(sender, (const gchar *const *)room, GH_NIP17_FILE_KIND, file->url, tags,
+                        created_at, expires_at, out_rumor_id, error);
 }
 
 gboolean
@@ -488,7 +551,7 @@ gh_nip17_rumor_get_expiration(const gchar *rumor_json, gint64 *out_created_at,
   NostrEvent *rumor = nostr_event_new();
   gint64 expires_at = 0;
   gboolean ok = rumor && nostr_event_deserialize_compact(rumor, rumor_json, NULL) == 1 &&
-                nostr_event_get_kind(rumor) == 14 && !rumor->sig && rumor->id &&
+                dm_kind(nostr_event_get_kind(rumor)) && !rumor->sig && rumor->id &&
                 nostr_event_validate_id(rumor, NULL) == NOSTR_EVENT_VALIDATION_OK &&
                 nostr_event_get_created_at(rumor) > 0 &&
                 event_expiration(rumor, FALSE, &expires_at);
@@ -613,7 +676,7 @@ gh_nip17_rumor_dup_recipients(const gchar *rumor_json, const gchar *sender)
   g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
   g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   gboolean ok = rumor && nostr_event_deserialize_compact(rumor, rumor_json, NULL) == 1 &&
-                nostr_event_get_kind(rumor) == 14 && !rumor->sig && rumor->id &&
+                dm_kind(nostr_event_get_kind(rumor)) && !rumor->sig && rumor->id &&
                 nostr_event_validate_id(rumor, NULL) == NOSTR_EVENT_VALIDATION_OK &&
                 g_strcmp0(nostr_event_get_pubkey(rumor), sender) == 0;
   gboolean has_sender = FALSE;

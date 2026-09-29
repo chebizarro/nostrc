@@ -106,13 +106,31 @@ append_sentence(GString *out, const gchar *sentence)
     g_string_append_c(out, '.');
 }
 
+/* G21 hook until G22's attachment card: a kind-15 file message is shown as
+ * what it is, in plain text, never as its URL. The URL names encrypted bytes
+ * on a Blossom server: as a link it could open in a browser outside the
+ * network mode (Tor) and would be a preview candidate. NULL for any other
+ * message. */
+static gchar *
+file_text(GhMessage *message)
+{
+  g_autoptr(GhNip17File) file = gh_message_dup_file(message);
+  if (!file)
+    return NULL;
+  /* TRANSLATORS: a received or sent encrypted file, before it is opened. */
+  return g_strdup(gh_nip17_file_is_image(file) ? _("Photo") : _("File"));
+}
+
 static gchar *
 compose_summary(GhMessage *message, GDateTime *now, gboolean undecryptable)
 {
   g_autofree gchar *sender = gh_message_row_sender_name(message);
   g_autofree gchar *time =
     gh_conversation_row_format_message_time(gh_message_get_created_at(message), now);
-  const gchar *body = undecryptable ? _("Unable to decrypt yet") : gh_message_get_content(message);
+  g_autofree gchar *file = undecryptable ? NULL : file_text(message);
+  const gchar *body = undecryptable ? _("Unable to decrypt yet")
+                      : file        ? file
+                                    : gh_message_get_content(message);
   /* TRANSLATORS: a message's accessible label: sender, time, text. */
   GString *out = g_string_new(NULL);
   g_string_printf(out, _("%s, %s: %s"), sender, time, body);
@@ -298,8 +316,11 @@ update_all(GhMessageRow *self)
     gtk_label_set_text(self->sender_label, "");
     gtk_label_set_text(self->time_label, "");
   } else {
+    g_autofree gchar *file = self->undecryptable ? NULL : file_text(message);
     if (self->undecryptable) {
       gtk_label_set_text(self->body_label, _("Unable to decrypt yet"));
+    } else if (file) {
+      gtk_label_set_text(self->body_label, file);
     } else {
       g_autofree gchar *markup = gh_link_policy_to_markup(gh_message_get_content(message));
       gtk_label_set_markup(self->body_label, markup);

@@ -1773,6 +1773,112 @@ else()
 endif()
 # --- end W17 NIP-17 multi-recipient send ---
 
+# --- G21 encrypted attachments core ---
+# NIP-17 kind-15 file messages (privacy charter §6, §0.1 item 9, D6, §8.2
+# G21; AT-1..AT-9; the UI is G22):
+#  - gh-nip17-file.c (in groundhog-conversations): the kind-15 tags, parsed
+#    strictly and built canonically; the unwrap (gh-nip17-inbox.c), GhMessage
+#    and the envelope admit kind 15 with valid tags; the envelope builds and
+#    seals it like a text, to one person or a W17 room
+#    (gh_nip17_rumor_new_file_room), and the outbox sends it
+#    (gh_outbox_send_file, gh_outbox_send_file_room);
+#  - groundhog-media: src/media/gh-metadata-strip.c (JPEG/PNG metadata out,
+#    no re-encoding), gh-attachment.c (AES-256-GCM through OpenSSL EVP, x
+#    before decrypting, the decode guard, the upload and the user's
+#    Download) and gh-blossom-client.c (BUD-01/02 over GhNetHttp only, so
+#    network mode, Tor and no TLS resumption hold; kind-24242 upload auth
+#    with a throwaway key unless the user consented per server), and
+#    src/store/gh-store-media.c (the decrypted cache inside the encrypted
+#    store, a 200 MiB LRU; never a file).
+# Nothing in the application calls groundhog-media yet (G22 adds the attach
+# button and the card), so the executable's link set is unchanged and
+# GH_FEATURE_ATTACHMENTS stays 0.
+if (TARGET groundhog-conversations)
+  target_sources(groundhog-conversations PRIVATE src/app/gh-nip17-file.c)
+endif()
+# Executables that compile the unwrap, envelope or outbox sources themselves
+# (instead of linking the libraries that carry them) get the kind-15 codec
+# beside them; linked through groundhog-conversations too, its object is then
+# simply not pulled from the archive.
+get_property(GROUNDHOG_G21_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach (target IN LISTS GROUNDHOG_G21_TARGETS)
+  get_target_property(type ${target} TYPE)
+  get_target_property(sources ${target} SOURCES)
+  if (type STREQUAL "EXECUTABLE" AND sources MATCHES "gh-nip17-(inbox|envelope)\\.c|gh-outbox\\.c")
+    target_sources(${target} PRIVATE src/app/gh-nip17-file.c)
+  endif()
+endforeach()
+if (NOT TARGET OpenSSL::Crypto)
+  find_package(OpenSSL QUIET)
+endif()
+if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-conversations AND
+    TARGET OpenSSL::Crypto)
+  message(STATUS "Groundhog encrypted attachments core: enabled")
+  add_library(groundhog-media STATIC src/media/gh-attachment.c src/media/gh-blossom-client.c
+    src/media/gh-metadata-strip.c src/store/gh-store-media.c)
+  target_include_directories(groundhog-media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-media PUBLIC groundhog-net groundhog-store
+    groundhog-conversations OpenSSL::Crypto)
+  target_compile_options(groundhog-media PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # Offline: metadata stripping (AT-1's APP1, PNG chunks, damaged files),
+    # the decode guard (AT-4), AES-GCM with x before decryption and the GCM
+    # tag (AT-2), an independent Amethyst/0xchat vector, the kind-15 tags,
+    # and the encrypted media cache.
+    add_executable(test-groundhog-media tests/media/test_media.c)
+    target_link_libraries(test-groundhog-media PRIVATE groundhog-media)
+    target_compile_options(test-groundhog-media PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-media)
+    add_test(NAME groundhog-media COMMAND test-groundhog-media)
+    set_tests_properties(groundhog-media PROPERTIES TIMEOUT 60
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+    # A local Blossom server on SoupServer (tests/media/blossom-fixture.c:
+    # BUD-02 upload with kind-24242 checks, BUD-01 GET, scripted refusals,
+    # stalls and oversize answers) and the SOCKS5 fixture (H3): AT-1 round
+    # trip, AT-2, AT-3, AT-6, AT-7, AT-8, AT-9, no server, and no file.
+    add_executable(test-groundhog-blossom tests/media/test_blossom.c
+      tests/media/blossom-fixture.c tests/net/socks5-fixture.c)
+    target_include_directories(test-groundhog-blossom PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/tests/net
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy)
+    target_sources(test-groundhog-blossom PRIVATE tests/privacy/canary-scan.c)
+    target_link_libraries(test-groundhog-blossom PRIVATE groundhog-media)
+    target_compile_options(test-groundhog-blossom PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-blossom)
+    add_dependencies(test-groundhog-blossom groundhog-test-schemas)
+    add_test(NAME groundhog-blossom COMMAND test-groundhog-blossom)
+    set_tests_properties(groundhog-blossom PROPERTIES TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+  # W17 rooms (nostrc-qp24.78) with files: a kind-15 message to Bob and
+  # Carol through gh_outbox_send_file_room(), each downloading and
+  # decrypting it. That test links the test-hooks store, so the media
+  # sources are compiled in rather than linking groundhog-media, which
+  # brings the production store.
+  if (TARGET test-groundhog-multi-send)
+    target_sources(test-groundhog-multi-send PRIVATE src/media/gh-attachment.c
+      src/media/gh-blossom-client.c src/media/gh-metadata-strip.c src/store/gh-store-media.c
+      tests/media/blossom-fixture.c)
+    target_include_directories(test-groundhog-multi-send PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/media ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
+    target_link_libraries(test-groundhog-multi-send PRIVATE groundhog-net OpenSSL::Crypto)
+    target_compile_definitions(test-groundhog-multi-send PRIVATE GROUNDHOG_TEST_ATTACHMENTS=1)
+  endif()
+  # G24's AT-5 with attachments and PT-2 with an admitted kind 15: the
+  # privacy harness sends, receives and downloads a file end to end.
+  if (TARGET test-groundhog-privacy-e2e)
+    target_sources(test-groundhog-privacy-e2e PRIVATE tests/media/blossom-fixture.c)
+    target_include_directories(test-groundhog-privacy-e2e PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
+    target_link_libraries(test-groundhog-privacy-e2e PRIVATE groundhog-media)
+    target_compile_definitions(test-groundhog-privacy-e2e PRIVATE GROUNDHOG_TEST_ATTACHMENTS=1)
+  endif()
+else()
+  message(STATUS "Groundhog encrypted attachments core: disabled (needs groundhog-net, the "
+                 "GhStore, the conversation model and OpenSSL)")
+endif()
+# --- end G21 encrypted attachments core ---
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from
 # src/app/gh-features.h, whose features follow the executable's

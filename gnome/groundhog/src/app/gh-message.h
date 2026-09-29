@@ -4,6 +4,7 @@
 #include <gio/gio.h>
 
 #include "gh-message-status.h"
+#include "gh-nip17-file.h"
 
 G_BEGIN_DECLS
 
@@ -21,10 +22,11 @@ G_BEGIN_DECLS
 #define GH_TYPE_MESSAGE (gh_message_get_type())
 G_DECLARE_FINAL_TYPE(GhMessage, gh_message, GH, MESSAGE, GObject)
 
-/* One NIP-17 kind-14 chat message as seen by one account. Built only from a
+/* One NIP-17 kind-14 chat message (or kind-15 file message with valid file
+ * tags, G21) as seen by one account. Built only from a
  * canonical unsigned rumor (the inbox's verified unwrap result, or the
  * sender's own rumor for a local echo), so every field is derived from checked
- * data: kind 14, no signature, lowercase hex author and p tags, a positive
+ * data: kind 14 or 15, no signature, lowercase hex author and p tags, a positive
  * created_at, and an id that is recomputed (a declared id must match).
  * account_pubkey (lowercase hex) must be the author or a p-tagged recipient;
  * otherwise G_IO_ERROR_INVALID_DATA. Everything but the relay provenance is
@@ -52,8 +54,14 @@ gboolean gh_message_is_self(GhMessage *self);
  * subject that clears the room's name). */
 const gchar *gh_message_get_subject(GhMessage *self);
 
-/* NIP-17 rumor kind; 14 (kind-15 files are not accepted yet). */
+/* NIP-17 rumor kind: 14 (chat) or 15 (an encrypted file, G21); a NIP-29
+ * message's own kind. */
 gint gh_message_get_kind(GhMessage *self);
+/* G21: the file a kind-15 message carries (gh-nip17-file.h; free with
+ * gh_nip17_file_free()), or NULL for any other message. Its content is the
+ * file's URL; nothing is fetched: downloading is the user's explicit action
+ * (charter PD-2, AT-7; src/media/gh-attachment.h). */
+GhNip17File *gh_message_dup_file(GhMessage *self);
 /* The verified rumor JSON the message was built from, which the durable store
  * keeps (and verifies again when it restores the message). */
 const gchar *gh_message_get_rumor_json(GhMessage *self);

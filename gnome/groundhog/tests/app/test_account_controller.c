@@ -1484,8 +1484,9 @@ test_nip17_unwrap_rejects(void)
       GH_NIP17_INBOX_ERROR_INVALID_SEAL, 1 },
     { "sender mismatch", { .sender = 3, .rumor_author = 1, .recipient = 2 }, NULL,
       GH_NIP17_INBOX_ERROR_SENDER_MISMATCH, 2 },
-    { "kind 15", { .sender = 3, .recipient = 2, .rumor_kind = 15 }, NULL,
-      GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND, 2 },
+    /* G21 admits kind 15 only with valid file tags (gh-nip17-file.h). */
+    { "kind 15 without file tags", { .sender = 3, .recipient = 2, .rumor_kind = 15 }, NULL,
+      GH_NIP17_INBOX_ERROR_INVALID_RUMOR, 2 },
     { "kind 1", { .sender = 3, .recipient = 2, .rumor_kind = 1 }, NULL,
       GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND, 2 },
     { "signed rumor", { .sender = 3, .recipient = 2, .rumor_signed = TRUE }, NULL,

@@ -3,6 +3,7 @@
 #include "gh-expiry.h"
 #include "gh-identity.h"
 #include "gh-nip17-envelope.h"
+#include "gh-nip17-file.h"
 #include "nostr-event.h"
 
 #include <stdlib.h>
@@ -1747,9 +1748,26 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
   return gh_outbox_send_room(self, recipient_pubkey_hex ? recipients : NULL, content, error);
 }
 
-GhOutboxItem *
-gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar *content,
-                    GError **error)
+/* The rumor of a room message: a kind-14 text (content) or, for G21, a
+ * kind-15 file (file). The same room rule, "p" tags and expiration either
+ * way (gh-nip17-envelope.h). */
+static gchar *
+room_rumor_new(GhOutbox *self, const gchar *const *recipients, const gchar *content,
+               const GhNip17File *file, gint64 created_at, gint64 expires_at,
+               gchar **out_rumor_id, GError **error)
+{
+  return file ? gh_nip17_rumor_new_file_room(self->account, recipients, file, created_at,
+                                             expires_at, out_rumor_id, error)
+              : gh_nip17_rumor_new_room(self->account, recipients, content, created_at,
+                                        expires_at, out_rumor_id, error);
+}
+
+/* T-enqueue of one room message, text or file (see room_rumor_new()); the
+ * seal, publish, retry and per-recipient state that follow depend only on
+ * the stored rumor, so they are the same for both. */
+static GhOutboxItem *
+send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *content,
+                  const GhNip17File *file, GError **error)
 {
   g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
   if (!self->generation) {
@@ -1758,11 +1776,12 @@ gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar 
     return NULL;
   }
   /* Validates the recipient keys (1 to 10, distinct) and the text
-   * (non-empty UTF-8): one rumor, whatever the number of recipients. */
+   * (non-empty UTF-8) or the file: one rumor, whatever the number of
+   * recipients. */
   g_autofree gchar *rumor_id = NULL;
   const gint64 created_at = now_unix(self);
-  g_autofree gchar *rumor = gh_nip17_rumor_new_room(self->account, recipients, content,
-                                                    created_at, 0, &rumor_id, error);
+  g_autofree gchar *rumor = room_rumor_new(self, recipients, content, file, created_at, 0,
+                                           &rumor_id, error);
   if (!rumor)
     return NULL;
   if (strlen(rumor) > MAX_RUMOR_JSON) {
@@ -1788,8 +1807,8 @@ gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar 
   if (expires_at) {
     g_clear_pointer(&rumor_id, g_free);
     g_free(rumor);
-    rumor = gh_nip17_rumor_new_room(self->account, recipients, content, created_at,
-                                    expires_at, &rumor_id, error);
+    rumor = room_rumor_new(self, recipients, content, file, created_at, expires_at, &rumor_id,
+                           error);
     if (rumor && strlen(rumor) > MAX_RUMOR_JSON) {
       g_clear_pointer(&rumor, g_free);
       g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -1805,9 +1824,9 @@ gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar 
     .op_id = op_id,
     .backend_msg_id = rumor_id,
     .sender_pubkey = self->account,
-    .kind = 14,
+    .kind = file ? GH_NIP17_FILE_KIND : 14,
     .created_at = created_at,
-    .body = content,
+    .body = file ? file->url : content, /* a file message's content is its URL */
     .rumor_json = rumor,
     .expires_at = expires_at,
   };
@@ -1836,6 +1855,33 @@ gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar 
     msg_queue_eval(msg);
   msg_unref(msg);
   return item;
+}
+
+GhOutboxItem *
+gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar *content,
+                    GError **error)
+{
+  return send_room_message(self, recipients, content, NULL, error);
+}
+
+GhOutboxItem *
+gh_outbox_send_file(GhOutbox *self, const gchar *recipient_pubkey_hex, const GhNip17File *file,
+                    GError **error)
+{
+  const gchar *const recipients[] = { recipient_pubkey_hex, NULL };
+  return gh_outbox_send_file_room(self, recipient_pubkey_hex ? recipients : NULL, file, error);
+}
+
+GhOutboxItem *
+gh_outbox_send_file_room(GhOutbox *self, const gchar *const *recipients,
+                         const GhNip17File *file, GError **error)
+{
+  if (!file) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A file message needs a complete encrypted file");
+    return NULL;
+  }
+  return send_room_message(self, recipients, NULL, file, error);
 }
 
 GhOutboxItem *

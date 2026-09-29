@@ -2,6 +2,7 @@
 #define GH_NIP17_ENVELOPE_H
 
 #include "gh-account-controller.h"
+#include "gh-nip17-file.h"
 
 G_BEGIN_DECLS
 
@@ -84,12 +85,12 @@ gchar *gh_nip17_rumor_new_expiring(const gchar *sender_pubkey_hex,
                                    gint64 expires_at, gchar **out_rumor_id,
                                    GError **error);
 /* The created_at and expiration (0: none) of a canonical unsigned kind-14
- * rumor; FALSE for anything else, including a malformed or repeated
+ * (or kind-15 file, G21) rumor; FALSE for anything else, including a malformed or repeated
  * expiration tag. Either out pointer may be NULL. */
 gboolean gh_nip17_rumor_get_expiration(const gchar *rumor_json, gint64 *out_created_at,
                                        gint64 *out_expires_at);
 /* The recipient (lowercase hex; the sender itself for a note to self) of a
- * canonical unsigned kind-14 rumor authored by @sender_pubkey_hex with
+ * canonical unsigned kind-14 or kind-15 rumor authored by @sender_pubkey_hex with
  * exactly one "p" tag, or NULL for anything else. */
 gchar *gh_nip17_rumor_get_recipient(const gchar *rumor_json,
                                     const gchar *sender_pubkey_hex);
@@ -105,14 +106,25 @@ gchar *gh_nip17_rumor_new_room(const gchar *sender_pubkey_hex,
                                const gchar *content, gint64 created_at,
                                gint64 expires_at, gchar **out_rumor_id,
                                GError **error);
-/* Every recipient of a canonical unsigned kind-14 rumor authored by
- * @sender_pubkey_hex (lowercase hex, "p" order): its "p" tags, which must be
+/* G21: the rumor of a kind-15 file message (gh-nip17-file.h: encrypted,
+ * uploaded, URL set) to a NIP-17 room, built exactly as
+ * gh_nip17_rumor_new_room() builds a text's (the same recipient rule, "p"
+ * tags and expiration) with kind 15, the file's URL as content and the file
+ * tags after the "p" tags. One recipient gives gh_nip17_file_rumor_new()'s
+ * rumor. G_IO_ERROR_INVALID_ARGUMENT for an incomplete file too. */
+gchar *gh_nip17_rumor_new_file_room(const gchar *sender_pubkey_hex,
+                                    const gchar *const *recipients,
+                                    const GhNip17File *file, gint64 created_at,
+                                    gint64 expires_at, gchar **out_rumor_id,
+                                    GError **error);
+/* Every recipient of a canonical unsigned kind-14 (or kind-15 file) rumor
+ * authored by @sender_pubkey_hex (lowercase hex, "p" order): its "p" tags, which must be
  * 1 to GH_NIP17_MAX_SEND_RECIPIENTS distinct valid pubkeys, the sender only
  * alone (a note to self). NULL for anything else. */
 GStrv gh_nip17_rumor_dup_recipients(const gchar *rumor_json,
                                     const gchar *sender_pubkey_hex);
 /* Seals an existing rumor of the active account: a canonical unsigned
- * kind 14 it authored, with exactly one "p" tag. A "p" naming the account is
+ * kind 14 (or kind-15 file, G21) it authored, with exactly one "p" tag. A "p" naming the account is
  * a note to self (one wrap, like build_self); any other names the recipient
  * (a recipient wrap and a self-copy, like build). The rumor text is encrypted
  * byte-for-byte, so every wrap carries exactly the stored rumor id.
@@ -138,8 +150,9 @@ void gh_nip17_envelope_seal_expiring_async(GhAccountController *accounts,
                                            GCancellable *cancellable,
                                            GAsyncReadyCallback callback,
                                            gpointer user_data);
-/* Seals an existing rumor of the active account to every recipient it
- * names (gh_nip17_rumor_dup_recipients()): one seal and one gift wrap per
+/* Seals an existing rumor (kind 14, or a kind-15 file: G21) of the active
+ * account to every recipient it names (gh_nip17_rumor_dup_recipients()): one
+ * seal and one gift wrap per
  * recipient, then the self-copy, each with its own signer approvals (NIP-44
  * encryption, seal signature), its own fresh ephemeral key and its own
  * randomized seal and wrap created_at (NIP-59), none shared with another

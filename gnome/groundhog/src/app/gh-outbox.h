@@ -5,6 +5,7 @@
 #include "gh-dm-send.h"
 #include "gh-inbox-resolver.h"
 #include "gh-message-status.h"
+#include "gh-nip17-file.h"
 #include "gh-relay-publish.h"
 #include "gh-store.h"
 
@@ -192,6 +193,21 @@ GhOutboxItem *gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex,
  * G_IO_ERROR_INVALID_ARGUMENT also for too many or repeated recipients. */
 GhOutboxItem *gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients,
                                   const gchar *content, GError **error);
+/* G21: gh_outbox_send() for a kind-15 file message: file (gh-nip17-file.h)
+ * is already encrypted and uploaded, its URL set (src/media/gh-attachment.h
+ * makes it). The rumor's content and the stored message's body are the
+ * file's URL. Sealing, wraps, relays, AUTH identities, retries, status and
+ * the disappearing timer are exactly a text's. Errors as there, and
+ * G_IO_ERROR_INVALID_ARGUMENT for an incomplete file. */
+GhOutboxItem *gh_outbox_send_file(GhOutbox *self, const gchar *recipient_pubkey_hex,
+                                  const GhNip17File *file, GError **error);
+/* gh_outbox_send_file() to a NIP-17 room, as gh_outbox_send_room() is to
+ * gh_outbox_send(): one kind-15 rumor with a "p" tag per recipient, sealed
+ * and wrapped for each recipient and the self-copy, with the same
+ * per-recipient targets, retries and "Sent" / "Sent to some people" state.
+ * One recipient is exactly gh_outbox_send_file(). */
+GhOutboxItem *gh_outbox_send_file_room(GhOutbox *self, const gchar *const *recipients,
+                                       const GhNip17File *file, GError **error);
 /* Whether @content is short enough for one gift wrap to @recipient_pubkey_hex:
  * gh_outbox_send() refuses a text whose rumor is too long (about 40 KB,
  * less for text that JSON must escape). Measures exactly the rumor it would

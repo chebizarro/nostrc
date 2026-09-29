@@ -317,11 +317,26 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
     reject(task, GH_NIP17_INBOX_ERROR_INVALID_RUMOR, "NIP-17 rumor is malformed or signed");
     return;
   }
-  if (nostr_event_get_kind(rumor) != 14) {
+  if (nostr_event_get_kind(rumor) != 14 && nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND) {
     nostr_event_free(rumor);
     reject(task, GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND,
-           "Only kind-14 NIP-17 chat messages are accepted");
+           "Only kind-14 chat and kind-15 file NIP-17 messages are accepted");
     return;
+  }
+  /* G21: a kind-15 file message is admitted only with complete, well-formed
+   * file tags and AES-GCM (gh-nip17-file.h). Reading them fetches nothing. */
+  if (nostr_event_get_kind(rumor) == GH_NIP17_FILE_KIND) {
+    g_autoptr(GError) file_error = NULL;
+    g_autoptr(GhNip17File) file = gh_nip17_file_from_rumor(rumor_json, &file_error);
+    if (!file) {
+      nostr_event_free(rumor);
+      gboolean unsupported = g_error_matches(file_error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+      reject(task, unsupported ? GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND
+                               : GH_NIP17_INBOX_ERROR_INVALID_RUMOR,
+             unsupported ? "NIP-17 file message uses an unsupported encryption"
+                         : "NIP-17 file message tags are invalid");
+      return;
+    }
   }
   if (g_strcmp0(nostr_event_get_pubkey(rumor), unwrap->seal_pubkey) != 0) {
     nostr_event_free(rumor);

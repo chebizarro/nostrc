@@ -821,6 +821,47 @@ test_delivery_indicator(Fixture *f, gconstpointer data)
   spin_until(popover_unmapped, details);
 }
 
+/* ---- G21: a kind-15 file message (PT-2/AT-7 render side) ------------------------------ */
+
+/* Until G22's card, a file message reads "Photo" or "File": its Blossom URL is
+ * neither shown as a link nor a preview candidate, and nothing is fetched or
+ * decoded, even with link previews on. */
+static void
+test_file_message(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gh_conversation_view_set_link_preview_fetcher(f->view, fake_fetch, fake_finish, f, NULL);
+  g_settings_set_boolean(f->settings, "link-previews", TRUE);
+  GhNip17File file = { 0 };
+  file.url = (gchar *)"https://blossom.example.com/7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730";
+  file.file_type = (gchar *)"image/jpeg";
+  file.nonce_size = GH_NIP17_FILE_NONCE_SIZE;
+  g_strlcpy(file.x, "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
+            sizeof file.x);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *json = gh_nip17_file_rumor_new(hex[2], hex[1], &file, noon_today(), 0, NULL,
+                                                   &error);
+  g_assert_no_error(error);
+  g_autoptr(GhMessage) m = gh_message_new_from_rumor(hex[1], json, &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_conversation_store_add_message(f->store, m, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  GhConversation *conversation = room_of(f->store, m);
+  gh_conversation_mark_read(conversation);
+  show(f, conversation, 700, 600);
+  GhMessageRow *row = row_for(f->view, m);
+  GtkLabel *body = row_child(row, "body_label");
+  g_assert_cmpstr(gtk_label_get_text(body), ==, "Photo");
+  g_assert_null(strstr(gtk_label_get_label(body), "href"));
+  g_assert_null(strstr(gtk_label_get_label(body), "blossom.example.com"));
+  g_assert_false(shown(row_child(row, "preview_box")));
+  g_assert_cmpuint(f->fetches, ==, 0);
+  g_autoptr(GPtrArray) pictures = g_ptr_array_new();
+  collect(GTK_WIDGET(f->view), GTK_TYPE_PICTURE, pictures);
+  g_assert_cmpuint(pictures->len, ==, 0);
+  g_settings_reset(f->settings, "link-previews");
+}
+
 /* ---- links and previews (PT-2 render side, PT-3, D13) ---------------------------------- */
 
 /* On screen: libadwaita 1.5 ignores a close before the dialog is mapped. */
@@ -1796,6 +1837,7 @@ main(int argc, char **argv)
   ADD("delivery-indicator", test_delivery_indicator);
   ADD("links", test_links);
   ADD("link-previews", test_link_previews);
+  ADD("file-message", test_file_message);
   ADD("expiry", test_expiry);
   ADD("scrolling", test_scrolling);
   ADD("opens-at-first-unread", test_opens_at_first_unread);

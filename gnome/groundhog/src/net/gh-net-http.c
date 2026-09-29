@@ -28,6 +28,8 @@ typedef struct {
   GInputStream *stream;
   guint8 *buffer;
   gsize max_bytes;
+  gboolean any_success;   /* G21 send: any 2xx is success, and HTTP errors are
+                           * told apart (gh_net_http_send_async) */
 } Request;
 
 static void
@@ -193,6 +195,37 @@ on_read(GObject *source, GAsyncResult *result, gpointer data)
                         (GDestroyNotify)g_bytes_unref);
 }
 
+/* G21: the server's own short reason (Blossom's X-Reason, BUD-01), kept only
+ * when it is plain printable ASCII, and cut. */
+static gchar *
+server_reason(SoupMessage *message)
+{
+  const gchar *reason = soup_message_headers_get_one(
+    soup_message_get_response_headers(message), "X-Reason");
+  if (!reason || !*reason)
+    return NULL;
+  GString *out = g_string_new(NULL);
+  for (const gchar *p = reason; *p && out->len < 160; p++)
+    if (*p >= 0x20 && *p < 0x7f)
+      g_string_append_c(out, *p);
+  return g_string_free(out, out->len == 0);
+}
+
+G_DEFINE_QUARK(gh-net-http-error-quark, gh_net_http_error)
+
+/* A send's HTTP failure: GH_NET_HTTP_ERROR with the status as its code, so a
+ * caller tells "the server refused" apart from Groundhog's own refusals
+ * (e.g. a .onion outside Tor, G_IO_ERROR_PERMISSION_DENIED). */
+static GError *
+status_error(SoupMessage *message, guint status)
+{
+  g_autofree gchar *reason = server_reason(message);
+  return reason ? g_error_new(GH_NET_HTTP_ERROR, (gint)status,
+                              "The server answered HTTP %u: %s", status, reason)
+                : g_error_new(GH_NET_HTTP_ERROR, (gint)status, "The server answered HTTP %u",
+                              status);
+}
+
 static void
 on_sent(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -214,7 +247,12 @@ on_sent(GObject *source, GAsyncResult *result, gpointer data)
                             status);
     return;
   }
-  if (status != SOUP_STATUS_OK) {
+  if (request->any_success) {
+    if (!SOUP_STATUS_IS_SUCCESSFUL(status)) {
+      g_task_return_error(task, status_error(request->message, status));
+      return;
+    }
+  } else if (status != SOUP_STATUS_OK) {
     g_task_return_new_error(task, G_IO_ERROR,
                             status == SOUP_STATUS_NOT_FOUND ? G_IO_ERROR_NOT_FOUND
                                                             : G_IO_ERROR_FAILED,
@@ -243,14 +281,13 @@ gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
   gh_net_http_get_accept_async(self, uri, NULL, max_bytes, cancellable, callback, user_data);
 }
 
-void
-gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
-                             gsize max_bytes, GCancellable *cancellable,
-                             GAsyncReadyCallback callback, gpointer user_data)
+/* One request: a GET (gh_net_http_get_accept_async) or, for G21, any
+ * gh_net_http_send_async() one (send set). */
+static void
+request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
+              const gchar *accept, gsize max_bytes, GCancellable *cancellable,
+              GAsyncReadyCallback callback, gpointer user_data)
 {
-  g_return_if_fail(GH_IS_NET_HTTP(self));
-  g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
-  g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
   g_autoptr(GTask) task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_net_http_get_async);
   g_autoptr(GUri) parsed = g_uri_parse(uri, G_URI_FLAGS_ENCODED, NULL);
@@ -272,7 +309,9 @@ gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *acc
   request->mode = mode;
   request->max_bytes = max_bytes;
   request->session = g_object_ref(session);
-  request->message = soup_message_new_from_uri(SOUP_METHOD_GET, parsed);
+  request->message = soup_message_new_from_uri(send && send->method ? send->method
+                                                                   : SOUP_METHOD_GET, parsed);
+  request->any_success = send != NULL;
   request->cancellable = g_cancellable_new();
   g_task_set_task_data(task, request, request_free);
   g_ptr_array_add(self->requests, request);
@@ -286,8 +325,55 @@ gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *acc
   soup_message_add_flags(request->message, SOUP_MESSAGE_NO_REDIRECT);
   SoupMessageHeaders *headers = soup_message_get_request_headers(request->message);
   soup_message_headers_replace(headers, "Accept", accept ? accept : "application/json");
+  if (send && send->authorization)
+    soup_message_headers_replace(headers, "Authorization", send->authorization);
+  if (send && send->body)
+    soup_message_set_request_body_from_bytes(request->message,
+                                             send->content_type ? send->content_type
+                                                                : "application/octet-stream",
+                                             send->body);
   soup_session_send_async(session, request->message, G_PRIORITY_DEFAULT, request->cancellable,
                           on_sent, g_steal_pointer(&task));
+}
+
+void
+gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                             gsize max_bytes, GCancellable *cancellable,
+                             GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_NET_HTTP(self));
+  g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
+  g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
+  request_start(self, NULL, uri, accept, max_bytes, cancellable, callback, user_data);
+}
+
+static gboolean
+header_value_ok(const gchar *value)
+{
+  return !value || (*value && !strpbrk(value, "\r\n"));
+}
+
+void
+gh_net_http_send_async(GhNetHttp *self, const GhNetHttpRequest *request,
+                       GCancellable *cancellable, GAsyncReadyCallback callback,
+                       gpointer user_data)
+{
+  g_return_if_fail(GH_IS_NET_HTTP(self));
+  g_return_if_fail(request != NULL && request->uri != NULL);
+  g_return_if_fail(request->max_bytes > 0 && request->max_bytes < G_MAXSIZE);
+  g_return_if_fail(!request->method || g_str_equal(request->method, SOUP_METHOD_GET) ||
+                   g_str_equal(request->method, SOUP_METHOD_PUT) ||
+                   g_str_equal(request->method, SOUP_METHOD_HEAD));
+  g_return_if_fail(header_value_ok(request->accept) && header_value_ok(request->authorization) &&
+                   header_value_ok(request->content_type));
+  request_start(self, request, request->uri, request->accept, request->max_bytes, cancellable,
+                callback, user_data);
+}
+
+GBytes *
+gh_net_http_send_finish(GhNetHttp *self, GAsyncResult *result, GError **error)
+{
+  return gh_net_http_get_finish(self, result, error);
 }
 
 GBytes *

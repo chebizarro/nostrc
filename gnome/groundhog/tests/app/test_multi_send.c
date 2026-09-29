@@ -33,6 +33,10 @@
 #ifdef GROUNDHOG_TEST_WIRE
 #include "../relay/wire-relay.h"
 #endif
+#if GROUNDHOG_TEST_ATTACHMENTS && defined(GROUNDHOG_TEST_WIRE)
+#include "blossom-fixture.h"
+#include "gh-attachment.h"
+#endif
 
 #define DISC        "wss://discovery.test.invalid"
 #define STORE_ID    "7c1e2a9b-3d4f-4a5b-8c6d-9e0f1a2b3c4d"
@@ -689,6 +693,98 @@ test_room_rumor(void)
   g_assert_no_error(error);
   g_auto(GStrv) ten_p = rumor_p_tags(ten);
   g_assert_cmpuint(g_strv_length(ten_p), ==, GH_NIP17_MAX_SEND_RECIPIENTS);
+}
+
+/* G21: a kind-15 file message to a room is built by the same room rumor
+ * builder (the same "p" tags, limits and expiration), reads back through
+ * the same recipient and expiration parsing the seal and the outbox use,
+ * and is each receiver's message; one recipient is exactly the one-to-one
+ * file rumor. */
+static GhNip17File *
+room_file(void)
+{
+  GhNip17File *file = g_new0(GhNip17File, 1);
+  file->url = g_strdup("https://blossom.test.invalid/"
+                       "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730");
+  file->file_type = g_strdup("image/jpeg");
+  file->nonce_size = GH_NIP17_FILE_NONCE_SIZE;
+  for (guint i = 0; i < sizeof file->key; i++)
+    file->key[i] = (guint8) (i * 7 + 1);
+  g_strlcpy(file->x, "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
+            sizeof file->x);
+  file->size = 4096;
+  file->width = 640;
+  file->height = 480;
+  return file;
+}
+
+static void
+test_room_file_rumor(void)
+{
+  g_autoptr(GhNip17File) file = room_file();
+  const gchar *const room[] = { hex[KEY_BOB], hex[KEY_CAROL], NULL };
+  g_autofree gchar *id = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *rumor = gh_nip17_rumor_new_file_room(hex[KEY_ALICE], room, file, T0, T0 + 60,
+                                                         &id, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(strstr(rumor, "\"kind\":15"));
+  g_auto(GStrv) p = rumor_p_tags(rumor);
+  g_assert_cmpstrv(p, room);
+  g_auto(GStrv) recipients = gh_nip17_rumor_dup_recipients(rumor, hex[KEY_ALICE]);
+  g_assert_cmpstrv(recipients, room);
+  gint64 created_at = 0, expires_at = 0;
+  g_assert_true(gh_nip17_rumor_get_expiration(rumor, &created_at, &expires_at));
+  g_assert_cmpint(created_at, ==, T0);
+  g_assert_cmpint(expires_at, ==, T0 + 60);
+  g_autoptr(GhNip17File) back = gh_nip17_file_from_rumor(rumor, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(back->x, ==, file->x);
+  g_assert_cmpmem(back->key, sizeof back->key, file->key, sizeof file->key);
+  /* Each receiver's message: kind 15, the room of all three, the file. */
+  const guint receivers[] = { KEY_BOB, KEY_CAROL };
+  for (guint i = 0; i < G_N_ELEMENTS(receivers); i++) {
+    g_autoptr(GhMessage) message = gh_message_new_from_rumor(hex[receivers[i]], rumor, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(gh_message_get_kind(message), ==, 15);
+    g_assert_cmpuint(g_strv_length((gchar **) gh_message_get_participants(message)), ==, 3);
+    g_autoptr(GhNip17File) theirs = gh_message_dup_file(message);
+    g_assert_nonnull(theirs);
+    g_assert_cmpstr(theirs->url, ==, file->url);
+  }
+
+  /* One recipient: the one-to-one file rumor, byte for byte. */
+  const gchar *const one[] = { hex[KEY_BOB], NULL };
+  g_autofree gchar *as_room = gh_nip17_rumor_new_file_room(hex[KEY_ALICE], one, file, T0, 0, NULL,
+                                                           &error);
+  g_assert_no_error(error);
+  g_autofree gchar *direct = gh_nip17_file_rumor_new(hex[KEY_ALICE], hex[KEY_BOB], file, T0, 0,
+                                                     NULL, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(as_room, ==, direct);
+  g_autofree gchar *single = gh_nip17_rumor_get_recipient(as_room, hex[KEY_ALICE]);
+  g_assert_cmpstr(single, ==, hex[KEY_BOB]);
+
+  /* The room rules, and an incomplete file, refuse before anything else. */
+  g_autoptr(GPtrArray) eleven = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i <= GH_NIP17_MAX_SEND_RECIPIENTS; i++)
+    g_ptr_array_add(eleven, numbered_key("file", i));
+  g_ptr_array_add(eleven, NULL);
+  const gchar *const repeat[] = { hex[KEY_BOB], hex[KEY_BOB], NULL };
+  const gchar *const with_self[] = { hex[KEY_BOB], hex[KEY_ALICE], NULL };
+  const gchar *const *refused[] = { (const gchar *const *) eleven->pdata, repeat, with_self };
+  for (guint i = 0; i < G_N_ELEMENTS(refused); i++) {
+    g_autoptr(GError) refusal = NULL;
+    g_assert_null(gh_nip17_rumor_new_file_room(hex[KEY_ALICE], refused[i], file, T0, 0, NULL,
+                                               &refusal));
+    g_assert_error(refusal, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  }
+  g_autoptr(GhNip17File) incomplete = gh_nip17_file_copy(file);
+  incomplete->x[0] = 'z';
+  g_autoptr(GError) refusal = NULL;
+  g_assert_null(gh_nip17_rumor_new_file_room(hex[KEY_ALICE], room, incomplete, T0, 0, NULL,
+                                             &refusal));
+  g_assert_error(refusal, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
 }
 
 /* ---- the outbox without relays: limits, the conversation, a block ------------ */
@@ -1397,6 +1493,167 @@ test_wire_dm_sender(void)
   relay_clear(&bob_only);
   relay_clear(&own);
 }
+
+#if GROUNDHOG_TEST_ATTACHMENTS
+/* A small JPEG whose APP1 carries a GPS canary (stripped before sending)
+ * and whose image data carries a marker that survives. */
+static GBytes *
+room_jpeg(void)
+{
+  GByteArray *out = g_byte_array_new();
+  static const guint8 head[] = { 0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x18, 'E', 'x', 'i', 'f', 0, 0,
+                                 'G', 'P', 'S', '-', 'R', 'O', 'O', 'M', '-', 'C', 'A', 'N',
+                                 'A', 'R', 'Y', '!' };
+  g_byte_array_append(out, head, sizeof head);
+  static const guint8 sof[] = { 0xFF, 0xC0, 0x00, 0x0B, 8, 0x00, 0x10, 0x00, 0x10, 1, 1, 0x11,
+                                0 };
+  g_byte_array_append(out, sof, sizeof sof);
+  static const guint8 sos[] = { 0xFF, 0xDA, 0x00, 0x08, 1, 1, 0, 0, 63, 0 };
+  g_byte_array_append(out, sos, sizeof sos);
+  for (guint i = 0; i < 64; i++)
+    g_byte_array_append(out, (const guint8 *) "ROOM-FILE-PIXELS", 16);
+  static const guint8 eoi[] = { 0xFF, 0xD9 };
+  g_byte_array_append(out, eoi, sizeof eoi);
+  return g_byte_array_free_to_bytes(out);
+}
+
+typedef struct {
+  gboolean done;
+  GhNip17File *file;
+  GBytes *bytes;
+  GError *error;
+} Transfer;
+
+static gboolean
+transfer_done(gpointer data)
+{
+  return ((Transfer *) data)->done;
+}
+
+static void
+on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void) source;
+  Transfer *t = data;
+  t->file = gh_attachment_upload_finish(result, &t->error);
+  t->done = TRUE;
+}
+
+static void
+on_downloaded(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void) source;
+  Transfer *t = data;
+  t->bytes = gh_attachment_download_finish(result, NULL, &t->error);
+  t->done = TRUE;
+}
+
+/* G21 in a room: Alice uploads one encrypted file to a local Blossom server
+ * and sends it to Bob and Carol with gh_outbox_send_file_room(). It is sealed
+ * and wrapped per recipient exactly like a text (one kind-15 rumor, one wrap
+ * each on that recipient's relays only, the self-copy, per-recipient state
+ * and "Sent"); nothing downloads it on the way. Each receiver opens only
+ * their own wrap, reads the file message as the inbox would (GhMessage) and,
+ * on their own Download, fetches, verifies and decrypts the same stripped
+ * file with their own client. */
+static void
+test_wire_room_file(void)
+{
+  WireRelay bob_only = { 0 }, carol_only = { 0 }, own = { 0 };
+  store_relay(&bob_only);
+  store_relay(&carol_only);
+  store_relay(&own);
+  BlossomFixture *blossom = blossom_fixture_new();
+
+  Fixture f;
+  fixture_up(&f);
+  fake_resolver_set(f.resolver, hex[KEY_BOB], GH_INBOX_FOUND, bob_only.url, NULL);
+  fake_resolver_set(f.resolver, hex[KEY_CAROL], GH_INBOX_FOUND, carol_only.url, NULL);
+  settle_own(&f, own.url, NULL);
+  fixture_outbox(&f);
+  g_settings_set_string(f.settings, "network-mode", "none"); /* the loopback server, directly */
+  GhNetHttp *http = gh_net_http_new(f.settings);
+  GhBlossomClient *alice_media = gh_blossom_client_new(NULL, http);
+  const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
+  gh_blossom_client_set_servers(alice_media, servers);
+
+  g_autoptr(GBytes) jpeg = room_jpeg();
+  g_autoptr(GhAttachmentPrepared) stripped = gh_attachment_prepare(jpeg, NULL, 1 << 20, NULL);
+  g_assert_nonnull(stripped);
+  Transfer t = { 0 };
+  gh_attachment_upload_async(alice_media, jpeg, NULL, NULL, on_uploaded, &t);
+  gh_test_spin_until(transfer_done, &t);
+  g_assert_no_error(t.error);
+  g_autoptr(GhNip17File) sent = g_steal_pointer(&t.file);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 1);
+
+  const gchar *const room[] = { hex[KEY_BOB], hex[KEY_CAROL], NULL };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhOutboxItem) item = gh_outbox_send_file_room(f.outbox, room, sent, &error);
+  g_assert_no_error(error);
+  wait_until(&f, item, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_SETTLED);
+  g_assert_cmpint(state_of(item, KEY_BOB), ==, GH_OUTBOX_RECIPIENT_SENT);
+  g_assert_cmpint(state_of(item, KEY_CAROL), ==, GH_OUTBOX_RECIPIENT_SENT);
+  g_assert_false(gh_outbox_item_get_self_copy_missing(item));
+
+  /* One kind-15 rumor for the room; the stored message is the file's. */
+  const gchar *rumor = gh_outbox_item_get_rumor_json(item);
+  g_assert_nonnull(strstr(rumor, "\"kind\":15"));
+  g_auto(GStrv) p = rumor_p_tags(rumor);
+  g_assert_cmpstrv(p, room);
+  g_autoptr(GhStoreOutboxEntry) entry = load_entry(&f, item);
+  g_assert_cmpuint(entry->events->len, ==, 3); /* Bob's, Carol's, the self-copy */
+  g_assert_cmpstr(entry_wrap_for(entry, hex[KEY_BOB], GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP)
+                    ->event_id, ==, only_wrap(&bob_only, hex[KEY_BOB])->id);
+  g_assert_cmpstr(entry_wrap_for(entry, hex[KEY_CAROL], GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP)
+                    ->event_id, ==, only_wrap(&carol_only, hex[KEY_CAROL])->id);
+  g_assert_cmpuint(bob_only.stored->len, ==, 1);
+  g_assert_cmpuint(carol_only.stored->len, ==, 1);
+  NostrEvent *self_seal = assert_only_opens(only_wrap(&own, hex[KEY_ALICE])->event, KEY_ALICE,
+                                            rumor);
+  nostr_event_free(self_seal);
+  /* Sending (and relaying) fetched nothing. */
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 0);
+
+  /* Bob and Carol: only their own wrap, then their own Download. */
+  struct { guint key; WireRelay *relay; } receivers[] = {
+    { KEY_BOB, &bob_only }, { KEY_CAROL, &carol_only },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(receivers); i++) {
+    guint key = receivers[i].key;
+    NostrEvent *wrap = only_wrap(receivers[i].relay, hex[key])->event;
+    NostrEvent *seal = assert_only_opens(wrap, key, rumor);
+    nostr_event_free(seal);
+    g_autofree gchar *opened = open_wrap(wrap, key, NULL);
+    g_autoptr(GhMessage) message = gh_message_new_from_rumor(hex[key], opened, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(gh_message_get_kind(message), ==, 15);
+    g_autoptr(GhNip17File) file = gh_message_dup_file(message);
+    g_assert_nonnull(file);
+    GhBlossomClient *media = gh_blossom_client_new(NULL, http);
+    memset(&t, 0, sizeof t);
+    gh_attachment_download_async(media, NULL, file, NULL, on_downloaded, &t);
+    gh_test_spin_until(transfer_done, &t);
+    g_assert_no_error(t.error);
+    g_assert_true(g_bytes_equal(t.bytes, stripped->plaintext));
+    g_assert_null(g_strstr_len(g_bytes_get_data(t.bytes, NULL), (gssize) g_bytes_get_size(t.bytes),
+                               "GPS-ROOM-CANARY"));
+    g_clear_pointer(&t.bytes, g_bytes_unref);
+    g_object_unref(media);
+    g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, i + 1);
+  }
+
+  g_object_unref(alice_media);
+  g_object_unref(http);
+  g_settings_reset(f.settings, "network-mode");
+  fixture_down(&f);
+  blossom_fixture_free(blossom);
+  WireRelay *relays[] = { &bob_only, &carol_only, &own };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
+    relay_clear(relays[i]);
+}
+#endif
 #endif
 
 int
@@ -1409,6 +1666,7 @@ main(int argc, char **argv)
   gh_test_bus_up(&shared_bus);
 
   g_test_add_func("/groundhog/multi-send/rumor", test_room_rumor);
+  g_test_add_func("/groundhog/multi-send/file-rumor", test_room_file_rumor);
   g_test_add_func("/groundhog/multi-send/limits", test_limits);
   g_test_add_func("/groundhog/multi-send/block", test_room_block);
 #ifdef GROUNDHOG_TEST_WIRE
@@ -1419,6 +1677,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/multi-send/wire/disappearing", test_wire_disappearing);
   g_test_add_func("/groundhog/multi-send/wire/spacing", test_wire_spacing);
   g_test_add_func("/groundhog/multi-send/wire/dm-sender", test_wire_dm_sender);
+#if GROUNDHOG_TEST_ATTACHMENTS
+  g_test_add_func("/groundhog/multi-send/wire/room-file", test_wire_room_file);
+#endif
 #endif
   int result = g_test_run();
   gh_test_bus_down(&shared_bus);

@@ -8,7 +8,8 @@ G_BEGIN_DECLS
 /*
  * GhNetHttp: Groundhog's HTTP client (privacy charter §2.1, §4.2). libsoup is
  * used here and in src/media/ only (the check_privacy libsoup boundary).
- * Every request is one GET the user asked for, made in the configured
+ * Every request is one the user asked for (a GET; for G21 attachments also a
+ * Blossom PUT, gh_net_http_send_async()), made in the configured
  * network mode (gh-net-session.h):
  *   - "system": the desktop proxy settings (GLib's default proxy resolver);
  *   - "none":   a direct connection;
@@ -61,6 +62,31 @@ void gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar
                                   gsize max_bytes, GCancellable *cancellable,
                                   GAsyncReadyCallback callback, gpointer user_data);
 GBytes *gh_net_http_get_finish(GhNetHttp *self, GAsyncResult *result, GError **error);
+
+/* G21 (Blossom, charter §6): one request with a method, headers and a body,
+ * made exactly like a GET above (network mode, Tor isolation, URL policy, no
+ * redirect, cookie, cache or TLS resumption, max_bytes on the answer's body).
+ * Any 2xx answer succeeds (its body, possibly empty); any other status fails
+ * with GH_NET_HTTP_ERROR whose code is the HTTP status (so it is never
+ * mistaken for Groundhog's own refusals, which stay G_IO_ERROR_*), the
+ * server's X-Reason (printable ASCII, cut) in the message. Nothing of the
+ * request is logged. */
+#define GH_NET_HTTP_ERROR gh_net_http_error_quark()
+GQuark gh_net_http_error_quark(void);
+typedef struct {
+  const gchar *method;        /* "GET", "PUT" or "HEAD"; NULL: GET */
+  const gchar *uri;
+  const gchar *accept;        /* NULL: "application/json" */
+  const gchar *authorization; /* the Authorization header value, or NULL */
+  const gchar *content_type;  /* of body; NULL: application/octet-stream */
+  GBytes *body;               /* the request body, or NULL */
+  gsize max_bytes;            /* the answer's body cap (> 0) */
+} GhNetHttpRequest;
+
+void gh_net_http_send_async(GhNetHttp *self, const GhNetHttpRequest *request,
+                            GCancellable *cancellable, GAsyncReadyCallback callback,
+                            gpointer user_data);
+GBytes *gh_net_http_send_finish(GhNetHttp *self, GAsyncResult *result, GError **error);
 
 /* The GhHttpTransport over a GhNetHttp passed as its data. */
 const GhHttpTransport *gh_net_http_transport(void);

@@ -1,6 +1,8 @@
 /* G24 privacy acceptance harness (privacy charter §8.2 G24; a release gate).
  *
- * PT-1, PT-2, PT-4, PT-10, AT-5 and NO-1 of charter §9.2, and PT-8's "a
+ * PT-1, PT-2, PT-4, PT-10, AT-5 (with attachments too: G21, whose Blossom
+ * server is a local SoupServer, tests/media/blossom-fixture.c) and NO-1 of
+ * charter §9.2, and PT-8's "a
  * message request triggers no lookup", run end to end: two Groundhog
  * accounts, Alice and Bob, each composed as gh-app-services.c composes one
  * Groundhog process (account controller, relay lists, the cached contact
@@ -57,6 +59,10 @@
 #include "gh-store-conversations.h"
 #include "gh-test-signer.h"
 #include "wire-relay.h"
+#if GROUNDHOG_TEST_ATTACHMENTS
+#include "blossom-fixture.h"
+#include "gh-attachment.h"
+#endif
 
 #include "nostr/nip19/nip19.h"
 #include "nostr/nip59/nip59.h"
@@ -193,7 +199,7 @@ seed_list(WireRelay *discovery, guint key, gint kind, const gchar *const *urls)
 
 /* A NIP-17 rumor of kind 14 or 15 from key `from` to key `to`, sealed and
  * gift-wrapped (NIP-59) the way another client would: what Carol sends, and
- * the kind-15 file message no Groundhog can send yet. */
+ * a kind-15 file message as another client writes it. */
 static gchar *
 craft_wrap(guint from, guint to, gint kind, const gchar *content, NostrTags *extra_tags)
 {
@@ -1609,7 +1615,8 @@ test_pt1_no_receipts(void)
  * plain http URL and a stranger's nprofile, and a kind-15 attachment, with
  * default settings. Nothing is fetched (M: zero connection attempts), the
  * stranger is never looked up (no REQ names him, F is never contacted) and
- * no profile at all is asked for. Rendering those messages is the
+ * no profile at all is asked for. The kind-15 message is admitted (G21) and
+ * its file is not fetched. Rendering those messages is the
  * conversation view's half (G12, test-groundhog-conversation-view). */
 static void
 test_pt2_no_remote_fetch(void)
@@ -1662,10 +1669,17 @@ test_pt2_no_remote_fetch(void)
   }
   spin_until(inbox_idle, &w.bob, "Bob's inbox going idle");
   gh_dm_inbox_get_counters(w.bob.inbox, &after);
-  if (after.admitted != before.admitted)
-    g_error("the inbox now admits kind-15 files: replace test_at5_attachments' skip with "
-            "AT-5's attachment half (nostrc-qp24.11, charter G21/G22)");
-  g_assert_cmpuint(after.rejected, ==, before.rejected + 1);
+  /* G21: the inbox admits the file message (charter §6 receive step 1), and
+   * admitting it fetches nothing: the file is only metadata until the user
+   * chooses Download (PD-2, AT-7; the download itself is AT-5 below). */
+  g_assert_cmpuint(after.admitted, ==, before.admitted + 1);
+  g_assert_cmpuint(after.rejected, ==, before.rejected);
+  GhMessage *file_message = find_content(w.bob.model, file_url);
+  g_assert_nonnull(file_message);
+  g_assert_cmpint(gh_message_get_kind(file_message), ==, 15);
+  g_autoptr(GhNip17File) file = gh_message_dup_file(file_message);
+  g_assert_nonnull(file);
+  g_assert_cmpstr(file->url, ==, file_url);
 
   /* Nothing fetched, nobody looked up. */
   g_assert_cmpuint(net->m.attempts, ==, 0);
@@ -1906,24 +1920,12 @@ collect_files(const gchar *path, GPtrArray *out)
   g_dir_close(dir);
 }
 
-/* Charter AT-5 for text messages: after sending, receiving and notifying,
- * XDG_CACHE_HOME and XDG_RUNTIME_DIR are still empty, TMPDIR holds only the
- * test bus's own directory, nothing is in XDG_STATE_HOME or XDG_CONFIG_HOME,
- * XDG_DATA_HOME holds the two encrypted stores and nothing else, and H7 is
- * clean everywhere. */
+/* AT-5's file layout: XDG_CACHE_HOME, XDG_RUNTIME_DIR, XDG_STATE_HOME and
+ * XDG_CONFIG_HOME are empty, TMPDIR holds only the test bus's own directory
+ * and XDG_DATA_HOME the two encrypted stores and nothing else. */
 static void
-test_at5_no_plaintext_on_disk(void)
+assert_at5_layout(World *w)
 {
-  World w;
-  world_up(&w);
-  g_autoptr(GhOutboxItem) out = send_and_deliver(&w.alice, &w.bob,
-                                                 world_canary(&w, "at5-out", FALSE));
-  g_autoptr(GhOutboxItem) back = send_and_deliver(&w.bob, &w.alice,
-                                                  world_canary(&w, "at5-back", FALSE));
-  notify_settle(&w.alice);
-  notify_settle(&w.bob);
-  g_assert_cmpuint(count_added(&w.bob), >, 0);
-
   static const gchar *const empty[] = { "cache", "runtime", "state", "config" };
   for (guint i = 0; i < G_N_ELEMENTS(empty); i++) {
     g_autofree gchar *dir = root_dir(empty[i]);
@@ -1942,7 +1944,7 @@ test_at5_no_plaintext_on_disk(void)
   g_autofree gchar *data = root_dir("data");
   g_autoptr(GPtrArray) data_files = g_ptr_array_new_with_free_func(g_free);
   collect_files(data, data_files);
-  App *apps[] = { &w.alice, &w.bob };
+  App *apps[] = { &w->alice, &w->bob };
   for (guint i = 0; i < data_files->len; i++) {
     const gchar *path = g_ptr_array_index(data_files, i);
     gboolean store_file = FALSE;
@@ -1956,18 +1958,184 @@ test_at5_no_plaintext_on_disk(void)
     if (!store_file)
       g_error("AT-5: a file outside the encrypted stores: %s", path);
   }
+}
+
+/* Charter AT-5 for text messages: after sending, receiving and notifying,
+ * XDG_CACHE_HOME and XDG_RUNTIME_DIR are still empty, TMPDIR holds only the
+ * test bus's own directory, nothing is in XDG_STATE_HOME or XDG_CONFIG_HOME,
+ * XDG_DATA_HOME holds the two encrypted stores and nothing else, and H7 is
+ * clean everywhere. */
+static void
+test_at5_no_plaintext_on_disk(void)
+{
+  World w;
+  world_up(&w);
+  g_autoptr(GhOutboxItem) out = send_and_deliver(&w.alice, &w.bob,
+                                                 world_canary(&w, "at5-out", FALSE));
+  g_autoptr(GhOutboxItem) back = send_and_deliver(&w.bob, &w.alice,
+                                                  world_canary(&w, "at5-back", FALSE));
+  notify_settle(&w.alice);
+  notify_settle(&w.bob);
+  g_assert_cmpuint(count_added(&w.bob), >, 0);
+  assert_at5_layout(&w);
   world_scan(&w, "AT-5");
   world_down(&w);
 }
 
+#if GROUNDHOG_TEST_ATTACHMENTS
+/* A JPEG carrying canary in its image data (which survives stripping) and
+ * gps in an APP1 EXIF segment (which must not). */
+static GBytes *
+canary_jpeg(const gchar *canary, const gchar *gps)
+{
+  GByteArray *out = g_byte_array_new();
+  static const guint8 head[] = { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x07, 'J', 'F', 'I', 'F', 0x00 };
+  g_byte_array_append(out, head, sizeof head);
+  gsize exif_size = 6 + strlen(gps);
+  guint8 app1[10] = { 0xFF, 0xE1, (guint8)((exif_size + 2) >> 8), (guint8)(exif_size + 2),
+                      'E', 'x', 'i', 'f', 0, 0 };
+  g_byte_array_append(out, app1, sizeof app1);
+  g_byte_array_append(out, (const guint8 *)gps, (guint)strlen(gps));
+  static const guint8 sof[] = { 0xFF, 0xC0, 0x00, 0x0B, 8, 0x01, 0x00, 0x01, 0x00, 1, 1, 0x11,
+                                0 };
+  g_byte_array_append(out, sof, sizeof sof);
+  static const guint8 sos[] = { 0xFF, 0xDA, 0x00, 0x08, 1, 1, 0, 0, 63, 0 };
+  g_byte_array_append(out, sos, sizeof sos);
+  for (guint i = 0; i < 64; i++) {
+    g_byte_array_append(out, (const guint8 *)canary, (guint)strlen(canary));
+    guint8 filler[1024];
+    for (guint j = 0; j < sizeof filler; j++)
+      filler[j] = (guint8)((i * 31 + j * 7) % 0xFE);
+    g_byte_array_append(out, filler, sizeof filler);
+  }
+  static const guint8 eoi[] = { 0xFF, 0xD9 };
+  g_byte_array_append(out, eoi, sizeof eoi);
+  return g_byte_array_free_to_bytes(out);
+}
+
+typedef struct {
+  gboolean done;
+  GhNip17File *file;
+  GBytes *bytes;
+  GError *error;
+} Transfer;
+
+static gboolean
+transfer_done(gpointer data)
+{
+  return ((Transfer *)data)->done;
+}
+
+static void
+on_attachment_uploaded(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  Transfer *t = data;
+  t->file = gh_attachment_upload_finish(result, &t->error);
+  t->done = TRUE;
+}
+
+static void
+on_attachment_downloaded(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  Transfer *t = data;
+  t->bytes = gh_attachment_download_finish(result, NULL, &t->error);
+  t->done = TRUE;
+}
+
+/* Charter AT-5 with attachments, and AT-1 end to end (G21): Alice sends a
+ * JPEG with EXIF GPS through a local Blossom server (loopback) and the real
+ * outbox, relays and inbox; Bob receives the kind-15 message without any
+ * download (AT-7), then downloads it on his explicit request, verified,
+ * decrypted and kept only in his encrypted store; the preview guard accepts
+ * it. Afterwards the transient directories are empty, the data directory
+ * holds the two encrypted stores only, and H7 finds neither the file's
+ * plaintext nor its GPS canary in any file, relay frame, setting or log. */
 static void
 test_at5_attachments(void)
 {
-  g_test_skip("AT-5 with attachments (kind-15 send, receive and preview leave TMPDIR, "
-              "XDG_CACHE_HOME and XDG_RUNTIME_DIR empty) needs encrypted attachments, which "
-              "Groundhog does not have yet: nostrc-qp24.11 (charter G21/G22). PT-2 fails as "
-              "soon as the inbox admits kind 15, so this skip cannot outlive that change.");
+  World w;
+  world_up(&w);
+  BlossomFixture *blossom = blossom_fixture_new();
+  const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
+  g_settings_set_strv(w.alice.settings, "blossom-servers", servers);
+  App *apps[] = { &w.alice, &w.bob };
+  for (guint i = 0; i < G_N_ELEMENTS(apps); i++)
+    g_settings_set_string(apps[i]->settings, "network-mode", "none"); /* loopback, direct */
+  GhNetHttp *alice_http = gh_net_http_new(w.alice.settings);
+  GhNetHttp *bob_http = gh_net_http_new(w.bob.settings);
+  GhBlossomClient *alice_media = gh_blossom_client_new(w.alice.settings, alice_http);
+  GhBlossomClient *bob_media = gh_blossom_client_new(w.bob.settings, bob_http);
+
+  const gchar *canary = world_canary(&w, "at5-file", FALSE);
+  const gchar *gps = world_canary(&w, "at5-gps", FALSE);
+  g_autoptr(GBytes) jpeg = canary_jpeg(canary, gps);
+  g_autoptr(GhAttachmentPrepared) stripped = gh_attachment_prepare(jpeg, NULL, 1 << 20, NULL);
+  g_assert_nonnull(stripped);
+
+  /* Send: strip, encrypt, upload; then the outbox's kind-15 message. */
+  Transfer t = { 0 };
+  gh_attachment_upload_async(alice_media, jpeg, NULL, NULL, on_attachment_uploaded, &t);
+  spin_until(transfer_done, &t, "the attachment upload");
+  g_assert_no_error(t.error);
+  g_autoptr(GhNip17File) sent = g_steal_pointer(&t.file);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhOutboxItem) item = gh_outbox_send_file(app_outbox(&w.alice), hex[BOB], sent, &error);
+  g_assert_no_error(error);
+  spin_until(item_settled, item, "the outbox settling the file message");
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+
+  /* Receive: a kind-15 message, and not one request for its file. */
+  wait_received(&w.bob, sent->url);
+  spin_until(inbox_idle, &w.bob, "Bob's inbox going idle");
+  spin_until(inbox_idle, &w.alice, "Alice's inbox taking her self-copy");
+  notify_settle(&w.bob);
+  GhMessage *message = find_content(w.bob.model, sent->url);
+  g_assert_cmpint(gh_message_get_kind(message), ==, 15);
+  g_autoptr(GhNip17File) received = gh_message_dup_file(message);
+  g_assert_nonnull(received);
+  g_assert_cmpstr(received->x, ==, sent->x);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 0);
+
+  /* Download (Bob's explicit request) into his encrypted store, and the
+   * preview's decode guard. */
+  GhStore *bob_store = gh_account_store_get_store(w.bob.store);
+  g_assert_nonnull(bob_store);
+  memset(&t, 0, sizeof t);
+  gh_attachment_download_async(bob_media, bob_store, received, NULL, on_attachment_downloaded,
+                               &t);
+  spin_until(transfer_done, &t, "the attachment download");
+  g_assert_no_error(t.error);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
+  g_assert_true(g_bytes_equal(t.bytes, stripped->plaintext));
+  GhMediaFormat format = GH_MEDIA_FORMAT_OTHER;
+  g_assert_true(gh_attachment_check_preview(t.bytes, &format, NULL, NULL, &error));
+  g_assert_cmpint(format, ==, GH_MEDIA_FORMAT_JPEG);
+  g_clear_pointer(&t.bytes, g_bytes_unref);
+  g_assert_true(gh_store_checkpoint(bob_store, NULL));
+
+  g_clear_object(&alice_media);
+  g_clear_object(&bob_media);
+  g_clear_object(&alice_http);
+  g_clear_object(&bob_http);
+  blossom_fixture_free(blossom);
+  assert_at5_layout(&w);
+  world_scan(&w, "AT-5 attachments");
+  for (guint i = 0; i < G_N_ELEMENTS(apps); i++) {
+    g_settings_reset(apps[i]->settings, "network-mode");
+    g_settings_reset(apps[i]->settings, "blossom-servers");
+  }
+  world_down(&w);
 }
+#else
+static void
+test_at5_attachments(void)
+{
+  g_test_skip("AT-5 with attachments needs Groundhog's attachments core (groundhog-media: "
+              "libsoup, the GhStore and OpenSSL), which this build does not have");
+}
+#endif
 
 /* ---- main ------------------------------------------------------------------------------ */
 

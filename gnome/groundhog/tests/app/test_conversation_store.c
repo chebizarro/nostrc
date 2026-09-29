@@ -172,7 +172,8 @@ test_message_fields(void)
   /* Not a chat message this account may hold. */
   struct { const gchar *name; Rumor r; guint account; } bad[] = {
     { "signed", { .author = 1, .p = { 2 }, .created_at = 1, .signed_ = TRUE }, 2 },
-    { "kind 15", { .author = 1, .p = { 2 }, .created_at = 1, .kind = 15 }, 2 },
+    { "kind 15 without file tags", { .author = 1, .p = { 2 }, .created_at = 1, .kind = 15 }, 2 },
+    { "kind 1", { .author = 1, .p = { 2 }, .created_at = 1, .kind = 1 }, 2 },
     { "bad id", { .author = 1, .p = { 2 }, .created_at = 1, .bad_id = TRUE }, 2 },
     { "no p", { .author = 1, .created_at = 1 }, 1 },
     { "upper p", { .author = 1, .p = { 2 }, .created_at = 1,

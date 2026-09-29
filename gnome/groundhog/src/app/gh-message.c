@@ -150,8 +150,9 @@ gh_message_new_from_rumor(const gchar *account_pubkey, const gchar *rumor_json,
     reason = "malformed";
   else if (rumor->sig)
     reason = "a rumor must not be signed";
-  else if (nostr_event_get_kind(rumor) != 14)
-    reason = "not kind 14";
+  else if (nostr_event_get_kind(rumor) != 14 &&
+           nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND)
+    reason = "not kind 14 or 15";
   else if (nostr_event_get_created_at(rumor) <= 0)
     reason = "no created_at";
   else if (!lower_hex64(nostr_event_get_pubkey(rumor)))
@@ -166,8 +167,19 @@ gh_message_new_from_rumor(const gchar *account_pubkey, const gchar *rumor_json,
     invalid(error, reason);
     return NULL;
   }
+  /* G21: a kind-15 file message only with complete, well-formed file tags
+   * (gh-nip17-file.h); reading them fetches nothing. */
+  if (nostr_event_get_kind(rumor) == GH_NIP17_FILE_KIND) {
+    g_autoptr(GhNip17File) file = gh_nip17_file_from_rumor(rumor_json, NULL);
+    if (!file) {
+      nostr_event_free(rumor);
+      invalid(error, "a kind-15 file message without valid file tags");
+      return NULL;
+    }
+  }
 
   GhMessage *self = g_object_new(GH_TYPE_MESSAGE, NULL);
+  self->kind = nostr_event_get_kind(rumor);
   self->account = g_strdup(account_pubkey);
   self->rumor_id = g_strdup(id);
   self->rumor_json = g_strdup(rumor_json);
@@ -259,7 +271,16 @@ gint
 gh_message_get_kind(GhMessage *self)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
-  return self->nip29 ? self->kind : 14;
+  return self->kind;
+}
+
+GhNip17File *
+gh_message_dup_file(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
+  if (self->nip29 || self->kind != GH_NIP17_FILE_KIND)
+    return NULL;
+  return gh_nip17_file_from_rumor(self->rumor_json, NULL);
 }
 
 const gchar *
@@ -600,6 +621,7 @@ static void
 gh_message_init(GhMessage *self)
 {
   self->status = GH_MESSAGE_STATUS_NONE;
+  self->kind = 14;
   self->relays = g_ptr_array_new_with_free_func(g_free);
   g_ptr_array_add(self->relays, NULL);
 }

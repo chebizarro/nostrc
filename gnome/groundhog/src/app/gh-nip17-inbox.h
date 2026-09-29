@@ -2,6 +2,7 @@
 #define GH_NIP17_INBOX_H
 
 #include "gh-account-controller.h"
+#include "gh-nip17-file.h"
 
 G_BEGIN_DECLS
 
@@ -21,18 +22,19 @@ typedef enum {
   GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT,  /* p tag is not the active account */
   GH_NIP17_INBOX_ERROR_INVALID_SEAL,     /* parse, kind, id, signature or tags */
   GH_NIP17_INBOX_ERROR_INVALID_RUMOR,    /* parse, signed, id, p or expiration tags */
-  GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND, /* rumor is not kind 14 */
+  GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND, /* rumor is not kind 14 or 15, or a kind 15
+                                          * not encrypted with aes-gcm */
   GH_NIP17_INBOX_ERROR_SENDER_MISMATCH   /* rumor.pubkey != seal.pubkey */
 } GhNip17InboxError;
 #define GH_NIP17_INBOX_ERROR gh_nip17_inbox_error_quark()
 GQuark gh_nip17_inbox_error_quark(void);
 
-/* A fully validated inbound kind-14 message. Every field was derived from
+/* A fully validated inbound kind-14 (or kind-15 file, G21) message. Every field was derived from
  * checked data; nothing here was taken from an unverified id field. */
 typedef struct {
   gchar *account_pubkey; /* hex; the account this wrap was addressed to */
   gchar *wrap_id;        /* verified kind-1059 id (per-copy dedup key) */
-  gchar *rumor_id;       /* canonical kind-14 id (per-message dedup key) */
+  gchar *rumor_id;       /* canonical rumor id (per-message dedup key) */
   gchar *rumor_json;     /* canonical re-serialization, id included, no sig */
   gchar *sender_pubkey;  /* hex; seal signer == rumor author */
   gchar **recipients;    /* hex, lowercase, unique, in p-tag order */
@@ -69,7 +71,8 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhNip17Message, gh_nip17_message_free)
  *      any other seal tag or a second expiration is INVALID_SEAL, and it is
  *      rejected before the second signer call);
  *   4. signer NIP-44 decrypt(seal.content, seal.pubkey) -> rumor;
- *   5. rumor: bounded, unsigned, kind 14 only (15 and others are rejected),
+ *   5. rumor: bounded, unsigned, kind 14, or kind 15 with valid file tags
+ *      (gh-nip17-file.h; G21: INVALID_RUMOR otherwise), other kinds rejected,
  *      rumor.pubkey == seal.pubkey, canonical id (a declared id must match),
  *      lowercase hex p tags, the account is the sender or a recipient, and
  *      at most one well-formed expiration tag.
