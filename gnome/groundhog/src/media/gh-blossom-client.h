@@ -36,7 +36,16 @@ G_BEGIN_DECLS
  * Download (charter §6 "Download"). Only ever the user's explicit action
  * (PD-2, AT-7): nothing here runs on its own. The answer is read into
  * memory, capped at min(size, cap + 16) + 1 KiB (AT-3), and never written to
- * disk. No authorization is sent.
+ * disk. No authorization is sent. The address comes from the sender, so it
+ * must be a Blossom blob on the public network (W17 review #3): its last
+ * path segment is the file's x (BUD-01 GET /<sha256>, an extension
+ * allowed), with no query or fragment, and its host is a public name or
+ * address or a .onion; loopback, private, link-local, shared (CGNAT),
+ * multicast and unspecified addresses, single-label names and localhost,
+ * .local, .lan, .internal, .home.arpa and .localdomain names are refused
+ * before any request (G_IO_ERROR_PERMISSION_DENIED), so a message cannot aim
+ * Download at a service on the user's own machine or network. (A public
+ * name that resolves to a private address is not caught here.)
  *
  * Main context only. One client per account generation: the account signer
  * and the consents belong to it.
@@ -93,6 +102,10 @@ void gh_blossom_client_set_account_consent(GhBlossomClient *self, const gchar *s
                                            gboolean consent);
 gboolean gh_blossom_client_get_account_consent(GhBlossomClient *self, const gchar *server);
 
+/* Tests only: lets downloads reach loopback and other non-public hosts (the
+ * local Blossom fixtures). Nothing in the application calls it. */
+void gh_blossom_client_set_allow_private_hosts(GhBlossomClient *self, gboolean allow);
+
 /* The largest file (plaintext) accepted; GH_BLOSSOM_MAX_FILE_SIZE by default.
  * Lowering it is for tests (AT-3 without 25 MiB transfers). */
 void gh_blossom_client_set_max_file_size(GhBlossomClient *self, gsize max_file_size);
@@ -108,12 +121,15 @@ void gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext,
 gchar *gh_blossom_client_upload_finish(GhBlossomClient *self, GAsyncResult *result,
                                        gchar **out_server, GError **error);
 
-/* Downloads the ciphertext at url (the kind-15 content) into memory. size is
- * the message's size tag (0: none). A size over the cap fails with
- * GH_BLOSSOM_ERROR_TOO_LARGE before any request; a longer answer is cut off
- * at min(size, cap + 16) + GH_BLOSSOM_DOWNLOAD_SLACK bytes
+/* Downloads the ciphertext at url (the kind-15 content), whose SHA-256 is
+ * sha256_hex (the message's x), into memory. size is the message's size tag
+ * (0: none). An address that is not a public Blossom blob of that x (see
+ * above) fails with G_IO_ERROR_PERMISSION_DENIED, and a size over the cap
+ * with GH_BLOSSOM_ERROR_TOO_LARGE, both before any request; a longer answer
+ * is cut off at min(size, cap + 16) + GH_BLOSSOM_DOWNLOAD_SLACK bytes
  * (G_IO_ERROR_MESSAGE_TOO_LARGE). Only for the user's explicit Download. */
-void gh_blossom_client_download_async(GhBlossomClient *self, const gchar *url, guint64 size,
+void gh_blossom_client_download_async(GhBlossomClient *self, const gchar *url,
+                                      const gchar *sha256_hex, guint64 size,
                                       GCancellable *cancellable, GAsyncReadyCallback callback,
                                       gpointer user_data);
 GBytes *gh_blossom_client_download_finish(GhBlossomClient *self, GAsyncResult *result,

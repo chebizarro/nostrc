@@ -3,6 +3,7 @@
  * an independent AES-GCM vector, the kind-15 tags, GhMessage's kind 15 and
  * the encrypted media cache. Nothing here touches the network. */
 #include "gh-attachment.h"
+#include "gh-attachment-private.h"
 #include "gh-message.h"
 #include "gh-store-media.h"
 
@@ -482,21 +483,29 @@ test_tampering(void)
   g_assert_error(error, GH_ATTACHMENT_ERROR, GH_ATTACHMENT_ERROR_DAMAGED);
   g_assert_cmpstr(error->message, ==, "This file was changed or damaged.");
   g_clear_error(&error);
-  /* x is checked before the cipher runs: with the key destroyed too, the
-   * answer is the same x failure, not a cipher one. */
+  /* x is checked before the cipher runs (W17 review #4): an x mismatch
+   * never reaches AES-GCM, so a reordering that decrypts first fails here. */
+  guint runs = gh_attachment_test_get_decrypt_runs();
+  g_assert_null(gh_attachment_decrypt(sealed->file, tampered, &error));
+  g_assert_error(error, GH_ATTACHMENT_ERROR, GH_ATTACHMENT_ERROR_DAMAGED);
+  g_clear_error(&error);
+  g_assert_cmpuint(gh_attachment_test_get_decrypt_runs(), ==, runs);
   g_autoptr(GhNip17File) no_key = gh_nip17_file_copy(sealed->file);
   memset(no_key->key, 0, sizeof no_key->key);
   g_assert_null(gh_attachment_decrypt(no_key, tampered, &error));
   g_assert_error(error, GH_ATTACHMENT_ERROR, GH_ATTACHMENT_ERROR_DAMAGED);
   g_clear_error(&error);
+  g_assert_cmpuint(gh_attachment_test_get_decrypt_runs(), ==, runs);
 
-  /* The sender names the tampered bytes' x: the GCM tag still refuses. */
+  /* The sender names the tampered bytes' x: the GCM tag still refuses, and
+   * the cipher did run this time (the counter's positive control). */
   g_autoptr(GhNip17File) consistent = gh_nip17_file_copy(sealed->file);
   g_autofree gchar *x = sha256_hex(tampered);
   g_strlcpy(consistent->x, x, sizeof consistent->x);
   g_assert_null(gh_attachment_decrypt(consistent, tampered, &error));
   g_assert_error(error, GH_ATTACHMENT_ERROR, GH_ATTACHMENT_ERROR_DAMAGED);
   g_clear_error(&error);
+  g_assert_cmpuint(gh_attachment_test_get_decrypt_runs(), ==, runs + 1);
 
   /* A tag-only flip (last byte), sender-consistent x. */
   guint8 *tag_flip = g_memdup2(g_bytes_get_data(sealed->ciphertext, NULL), size);
@@ -733,26 +742,31 @@ remove_tree(const gchar *path)
   g_rmdir(path);
 }
 
-static gchar *
-hex_of(guint n)
+/* A file (its x, key and nonce) numbered n: what a message carries and the
+ * cache is keyed by. key_n lets two files share an x with different keys. */
+static GhNip17File *
+file_numbered(guint n, guint key_n)
 {
+  GhNip17File *file = g_new0(GhNip17File, 1);
   g_autofree gchar *seed = g_strdup_printf("media-%u", n);
-  return g_compute_checksum_for_string(G_CHECKSUM_SHA256, seed, -1);
+  g_autofree gchar *x = g_compute_checksum_for_string(G_CHECKSUM_SHA256, seed, -1);
+  g_strlcpy(file->x, x, sizeof file->x);
+  file->url = g_strdup_printf("https://blossom.example.com/%s", x);
+  file->file_type = g_strdup("image/jpeg");
+  file->nonce_size = GH_NIP17_FILE_NONCE_SIZE;
+  for (guint i = 0; i < sizeof file->key; i++)
+    file->key[i] = (guint8)(key_n * 31 + i);
+  return file;
 }
 
-/* A kind-15 message from bob naming x, admitted as the inbox would: the
- * cache keeps only files a stored message names (nostrc-5x5b). */
+/* A kind-15 message from bob carrying file, admitted as the inbox would:
+ * the cache keeps only files a stored message carries (nostrc-5x5b). */
 static void
-admit_naming(GhStore *store, const gchar *x, gint64 created_at)
+admit_carrying(GhStore *store, const GhNip17File *file, gint64 created_at)
 {
-  GhNip17File file = { 0 };
-  file.url = g_strdup_printf("https://blossom.example.com/%s", x);
-  file.file_type = (gchar *)"image/jpeg";
-  file.nonce_size = GH_NIP17_FILE_NONCE_SIZE;
-  g_strlcpy(file.x, x, sizeof file.x);
   g_autofree gchar *id = NULL;
   g_autoptr(GError) error = NULL;
-  g_autofree gchar *rumor = gh_nip17_file_rumor_new(bob, alice, &file, created_at, 0, &id, &error);
+  g_autofree gchar *rumor = gh_nip17_file_rumor_new(bob, alice, file, created_at, 0, &id, &error);
   g_assert_no_error(error);
   g_autofree gchar *room = strcmp(alice, bob) < 0 ? g_strconcat(alice, ",", bob, NULL)
                                                   : g_strconcat(bob, ",", alice, NULL);
@@ -761,12 +775,11 @@ admit_naming(GhStore *store, const gchar *x, gint64 created_at)
   GhStoreMessage message = {
     .backend = GH_STORE_BACKEND_NIP17, .backend_key = room, .backend_msg_id = id,
     .wrap_id = wrap, .sender_pubkey = bob, .kind = GH_NIP17_FILE_KIND,
-    .created_at = created_at, .direction = GH_STORE_DIRECTION_IN, .body = file.url,
+    .created_at = created_at, .direction = GH_STORE_DIRECTION_IN, .body = file->url,
     .raw_json = rumor, .participants = participants,
   };
   g_assert_true(gh_store_admit(store, &message, NULL, NULL, &error));
   g_assert_no_error(error);
-  g_free(file.url);
 }
 
 static void
@@ -786,17 +799,19 @@ test_media_cache(void)
   g_assert_no_error(error);
 
   static const gchar canary[] = "MEDIA-CACHE-PLAINTEXT-CANARY-5c1e";
-  g_autofree gchar *a = hex_of(1), *b = hex_of(2), *c = hex_of(3);
+  g_autoptr(GhNip17File) a = file_numbered(1, 1);
+  g_autoptr(GhNip17File) b = file_numbered(2, 2);
+  g_autoptr(GhNip17File) c = file_numbered(3, 3);
   g_autoptr(GBytes) photo = g_bytes_new_static(canary, sizeof canary - 1);
   g_assert_null(gh_store_media_get(store, a, NULL, &error));
   g_assert_no_error(error);
-  /* Only a file a stored message names is kept. */
+  /* Only a file a stored message carries is kept. */
   g_assert_false(gh_store_media_put(store, a, "image/jpeg", photo, &error));
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
   g_clear_error(&error);
-  admit_naming(store, a, 1699999000);
-  admit_naming(store, b, 1699999001);
-  admit_naming(store, c, 1699999002);
+  admit_carrying(store, a, 1699999000);
+  admit_carrying(store, b, 1699999001);
+  admit_carrying(store, c, 1699999002);
   g_assert_true(gh_store_media_put(store, a, "image/jpeg", photo, &error));
   g_autoptr(GBytes) big = g_bytes_new_take(g_malloc0(1000), 1000);
   gh_clock_fake_advance(clock, G_USEC_PER_SEC);
@@ -809,6 +824,32 @@ test_media_cache(void)
   g_autoptr(GBytes) back = gh_store_media_get(store, a, &mime, &error);
   g_assert_true(g_bytes_equal(back, photo));
   g_assert_cmpstr(mime, ==, "image/jpeg");
+
+  /* W17 review B1: the same x with another key, or another nonce, is
+   * another file. It is not served a's plaintext, and cannot be kept
+   * unless a stored message carries exactly it. */
+  g_autoptr(GhNip17File) other_key = file_numbered(1, 99);
+  g_autoptr(GhNip17File) other_nonce = file_numbered(1, 1);
+  other_nonce->nonce[0] = 0x5a;
+  g_assert_cmpstr(other_key->x, ==, a->x);
+  g_assert_null(gh_store_media_get(store, other_key, NULL, &error));
+  g_assert_null(gh_store_media_get(store, other_nonce, NULL, &error));
+  g_assert_no_error(error);
+  g_autoptr(GBytes) forged = g_bytes_new_static("forged", 6);
+  g_assert_false(gh_store_media_put(store, other_key, NULL, forged, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+  /* The row is not x: an identity for (x, key, nonce) only. */
+  g_autofree gchar *id = gh_store_media_file_id(a->x, a->key, sizeof a->key, a->nonce,
+                                                a->nonce_size);
+  g_autofree gchar *id_other = gh_store_media_file_id(a->x, other_key->key, sizeof a->key,
+                                                      a->nonce, a->nonce_size);
+  g_assert_cmpuint(strlen(id), ==, 64);
+  g_assert_cmpstr(id, !=, a->x);
+  g_assert_cmpstr(id, !=, id_other);
+  g_assert_null(gh_store_media_file_id("not-hex", a->key, sizeof a->key, a->nonce, 12));
+  g_assert_null(gh_store_media_file_id(a->x, a->key, sizeof a->key, a->nonce, 13));
+
   gint64 total = 0;
   g_assert_true(gh_store_media_get_total(store, &total, &error));
   g_assert_cmpint(total, ==, 2000 + (gint64)g_bytes_get_size(photo));
@@ -825,7 +866,9 @@ test_media_cache(void)
   g_assert_cmpint(total, ==, 0);
 
   /* Bad input. */
-  g_assert_false(gh_store_media_put(store, "not-hex", NULL, photo, &error));
+  g_autoptr(GhNip17File) broken = file_numbered(4, 4);
+  broken->nonce_size = 7;
+  g_assert_false(gh_store_media_put(store, broken, NULL, photo, &error));
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
   g_clear_error(&error);
 

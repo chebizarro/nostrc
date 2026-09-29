@@ -630,6 +630,18 @@ gboolean gh_store_purge_full(GhStore *store, gint64 retention_cutoff,
                              GPtrArray **out_purged, GhStorePurgeStats *out_stats,
                              GError **error);
 
+/* ---- The media cache's file identity (G21; W17 review B1) --------------------------------
+ * What a decrypted attachment in the media cache (gh-store-media.h) is kept
+ * under: lowercase hex SHA-256 of a domain tag, the file's x (64 hex, the
+ * ciphertext's SHA-256), its AES-256 key (32 bytes) and its GCM nonce (12 or
+ * 16 bytes). Never x alone: x is public (the Blossom address), so anyone
+ * could name it, while only a message that carries the key and nonce can
+ * decrypt the file. The store's SQL function gh_media_file_id(raw_json)
+ * computes the same value from a stored kind-15 rumor, for the cache's put
+ * guard and for every deletion of messages. NULL for malformed input. */
+gchar *gh_store_media_file_id(const gchar *x_hex, const guint8 *key, gsize key_size,
+                              const guint8 *nonce, gsize nonce_size);
+
 /* ---- Maintenance --------------------------------------------------------------------- */
 
 /* PRAGMA integrity_check (full) or quick_check; CORRUPT with the first

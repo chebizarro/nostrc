@@ -282,6 +282,52 @@ test_order_and_dedup(void)
   g_signal_handlers_disconnect_by_data(room, &changed);
 }
 
+/* W17 review #2: a kind-15 file message previews as "Photo" or "File" (the
+ * sidebar, Requests, notifications and the row share
+ * gh_message_dup_display_text()), never as its Blossom URL. */
+static GhMessage *
+file_message(guint author, guint account, const gchar *type, gint64 created_at)
+{
+  GhNip17File file = { 0 };
+  file.url = (gchar *)"https://blossom.example.com/"
+                      "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730";
+  file.file_type = (gchar *)type;
+  file.nonce_size = GH_NIP17_FILE_NONCE_SIZE;
+  g_strlcpy(file.x, "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
+            sizeof file.x);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *json = gh_nip17_file_rumor_new(hex[author], hex[account], &file, created_at,
+                                                   0, NULL, &error);
+  g_assert_no_error(error);
+  GhMessage *message = gh_message_new_from_rumor(hex[account], json, &error);
+  g_assert_no_error(error);
+  return message;
+}
+
+static void
+test_file_preview(void)
+{
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, hex[1], NULL, NULL, NULL);
+  g_autoptr(GhMessage) photo = file_message(2, 1, "image/jpeg", 10);
+  g_autofree gchar *photo_text = gh_message_dup_display_text(photo);
+  g_assert_cmpstr(photo_text, ==, "Photo");
+  g_assert_cmpint(gh_conversation_store_add_message(store, photo, NULL), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_autofree gchar *pair = room_id(1, 2, 0);
+  GhConversation *room = gh_conversation_store_lookup(store, pair);
+  g_assert_cmpstr(gh_conversation_get_preview(room), ==, "Photo");
+  g_assert_null(strstr(gh_conversation_get_preview(room), "blossom"));
+  g_autoptr(GhMessage) pdf = file_message(2, 1, "application/pdf", 20);
+  g_assert_cmpint(gh_conversation_store_add_message(store, pdf, NULL), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpstr(gh_conversation_get_preview(room), ==, "File");
+  /* A text still previews as itself. */
+  Rumor text = { .author = 2, .p = { 1 }, .created_at = 30, .content = "after the file" };
+  g_assert_cmpint(add(store, 1, &text), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpstr(gh_conversation_get_preview(room), ==, "after the file");
+}
+
 static void
 test_subject(void)
 {
@@ -981,6 +1027,7 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   init_keys();
   g_test_add_func("/groundhog/conversations/message-fields", test_message_fields);
+  g_test_add_func("/groundhog/conversations/file-preview", test_file_preview);
   g_test_add_func("/groundhog/conversations/room-canonicalization", test_room_canonicalization);
   g_test_add_func("/groundhog/conversations/order-and-dedup", test_order_and_dedup);
   g_test_add_func("/groundhog/conversations/subject", test_subject);

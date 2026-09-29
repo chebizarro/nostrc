@@ -107,18 +107,15 @@ append_sentence(GString *out, const gchar *sentence)
 }
 
 /* G21 hook until G22's attachment card: a kind-15 file message is shown as
- * what it is, in plain text, never as its URL. The URL names encrypted bytes
- * on a Blossom server: as a link it could open in a browser outside the
- * network mode (Tor) and would be a preview candidate. NULL for any other
- * message. */
+ * what it is, in plain text (gh_message_dup_display_text()), never as its
+ * URL. The URL names encrypted bytes on a Blossom server: as a link it could
+ * open in a browser outside the network mode (Tor) and would be a preview
+ * candidate. NULL for any other message. */
 static gchar *
 file_text(GhMessage *message)
 {
-  g_autoptr(GhNip17File) file = gh_message_dup_file(message);
-  if (!file)
-    return NULL;
-  /* TRANSLATORS: a received or sent encrypted file, before it is opened. */
-  return g_strdup(gh_nip17_file_is_image(file) ? _("Photo") : _("File"));
+  return gh_message_get_kind(message) == GH_NIP17_FILE_KIND
+           ? gh_message_dup_display_text(message) : NULL;
 }
 
 static gchar *

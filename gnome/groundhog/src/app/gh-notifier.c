@@ -441,9 +441,8 @@ static gchar *
 preview_of(Room *room)
 {
   GhMessage *message = room_newest(room);
-  g_autofree gchar *text = gh_message_get_kind(message) == 15
-                             ? g_strdup(_("File"))
-                             : collapse_lines(gh_message_get_content(message));
+  g_autofree gchar *shown = gh_message_dup_display_text(message);
+  g_autofree gchar *text = collapse_lines(shown);
   if (!*text) {
     g_free(text);
     text = g_strdup(_("New message"));

@@ -188,6 +188,8 @@ fixture_up(Fixture *f, const gchar *mode)
   g_settings_set_strv(f->settings, "blossom-servers", servers);
   f->http = gh_net_http_new(f->settings);
   f->client = gh_blossom_client_new(f->settings, f->http);
+  /* The fixture is on loopback, which real downloads may not reach. */
+  gh_blossom_client_set_allow_private_hosts(f->client, TRUE);
 }
 
 static GhStore *
@@ -456,7 +458,7 @@ test_at2_tampered_download(void)
   g_assert_error(r.error, GH_ATTACHMENT_ERROR, GH_ATTACHMENT_ERROR_DAMAGED);
   g_assert_null(r.bytes);
   g_autoptr(GError) error = NULL;
-  g_assert_null(gh_store_media_get(f.store, file->x, NULL, &error));
+  g_assert_null(gh_store_media_get(f.store, file, NULL, &error));
   g_assert_no_error(error);
   result_clear(&r);
   fixture_down(&f);
@@ -666,7 +668,7 @@ test_at8_cancel(void)
   g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
   g_assert_null(r.bytes);
   g_autoptr(GError) error = NULL;
-  g_assert_null(gh_store_media_get(f.store, file->x, NULL, &error));
+  g_assert_null(gh_store_media_get(f.store, file, NULL, &error));
   blossom_fixture_release_held(f.blossom);
   blossom_fixture_set_stall(f.blossom, FALSE);
   drain();
@@ -683,6 +685,8 @@ test_at9_tor(void)
 {
   Fixture f;
   fixture_up(&f, "tor");
+  /* A .onion is a public address to the download policy: no test seam. */
+  gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
   Socks5Fixture *socks = socks5_fixture_new();
   socks5_fixture_set_domain_port(socks, blossom_fixture_port(f.blossom));
   g_settings_set_string(f.settings, "tor-socks-address", socks5_fixture_address(socks));
@@ -732,6 +736,69 @@ test_at9_tor(void)
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 2);
   result_clear(&r);
   socks5_fixture_free(socks);
+  fixture_down(&f);
+}
+
+/* W17 review #3: a sender's URL cannot aim Download at the user's own
+ * machine or network, nor at anything but the file's Blossom address; all
+ * refused before any request. The fixture itself is on loopback, so without
+ * the test seam even it is refused, and it sees nothing. */
+static void
+test_download_address_policy(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
+  g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024);
+  gh_blossom_client_set_allow_private_hosts(f.client, TRUE);
+  Result r = { 0 };
+  upload(&f, jpeg, &r, NULL);
+  g_assert_no_error(r.error);
+  g_autoptr(GhNip17File) file = g_steal_pointer(&r.file);
+  gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
+  const guint before = blossom_fixture_count(f.blossom, NULL);
+
+  const gchar *const hosts[] = {
+    "http://127.0.0.1:%u", "https://127.0.0.1", "https://10.1.2.3", "https://172.16.0.1",
+    "https://192.168.1.1", "https://169.254.169.254", "https://100.64.0.1", "https://0.0.0.0",
+    "https://[::1]", "https://[fe80::1]", "https://[fd00::1]", "https://[::ffff:192.168.1.1]",
+    "https://localhost", "https://printer.local", "https://router.lan", "https://nas.home.arpa",
+    "https://router", "https://127.1", "https://2130706433", "https://0x7f.0.0.1",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
+    g_autofree gchar *origin = g_strdup_printf(hosts[i], blossom_fixture_port(f.blossom));
+    g_autoptr(GhNip17File) aimed = gh_nip17_file_copy(file);
+    g_free(aimed->url);
+    aimed->url = g_strdup_printf("%s/%s", origin, file->x);
+    download(&f, NULL, aimed, &r, NULL);
+    g_test_message("refused: %s", aimed->url);
+    g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  }
+  /* Not the file's Blossom address: another path, a query, a fragment, a
+   * bad extension. */
+  const gchar *const paths[] = { "https://blossom.example.com/admin", "https://blossom.example.com/%s?x=1",
+                                 "https://blossom.example.com/%s#top",
+                                 "https://blossom.example.com/%s.j-p-g",
+                                 "https://blossom.example.com/%s/extra" };
+  for (guint i = 0; i < G_N_ELEMENTS(paths); i++) {
+    g_autoptr(GhNip17File) aimed = gh_nip17_file_copy(file);
+    g_free(aimed->url);
+    aimed->url = g_strdup_printf(paths[i], file->x);
+    download(&f, NULL, aimed, &r, NULL);
+    g_test_message("refused: %s", aimed->url);
+    g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  }
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, before);
+
+  /* With the seam, the fixture's own address (and an extension) downloads. */
+  gh_blossom_client_set_allow_private_hosts(f.client, TRUE);
+  g_autoptr(GhNip17File) with_ext = gh_nip17_file_copy(file);
+  g_free(with_ext->url);
+  with_ext->url = g_strdup_printf("%s/%s.jpg", blossom_fixture_url(f.blossom), file->x);
+  download(&f, NULL, with_ext, &r, NULL);
+  g_assert_no_error(r.error);
+  g_assert_nonnull(r.bytes);
+  result_clear(&r);
   fixture_down(&f);
 }
 
@@ -787,6 +854,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/at6-upload-auth-key", test_at6_upload_auth_key);
   g_test_add_func("/groundhog/blossom/at8-cancel", test_at8_cancel);
   g_test_add_func("/groundhog/blossom/at9-tor", test_at9_tor);
+  g_test_add_func("/groundhog/blossom/download-address-policy", test_download_address_policy);
   int status = g_test_run();
   canary_log_capture_uninstall();
   remove_tree(root);

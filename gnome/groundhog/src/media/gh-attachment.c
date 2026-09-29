@@ -1,4 +1,5 @@
 #include "gh-attachment.h"
+#include "gh-attachment-private.h"
 #include "gh-store-media.h"
 
 #include <openssl/crypto.h>
@@ -115,11 +116,21 @@ crypto_failed(GError **error)
   return FALSE;
 }
 
+static guint decrypt_runs; /* gh-attachment-private.h */
+
+guint
+gh_attachment_test_get_decrypt_runs(void)
+{
+  return g_atomic_int_get(&decrypt_runs);
+}
+
 /* out receives in_size bytes; tag is written (encrypt) or checked (decrypt). */
 static gboolean
 aes_gcm(gboolean encrypt, const guint8 *key, const guint8 *nonce, gsize nonce_size,
         const guint8 *in, gsize in_size, guint8 *out, guint8 tag[GH_NIP17_FILE_TAG_SIZE])
 {
+  if (!encrypt)
+    g_atomic_int_inc(&decrypt_runs);
   if (in_size > G_MAXINT)
     return FALSE;
   EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
@@ -351,7 +362,7 @@ on_downloaded(GObject *source, GAsyncResult *result, gpointer data)
   }
   if (download->cache) {
     g_autoptr(GError) cache_error = NULL;
-    if (!gh_store_media_put(download->cache, download->file->x, download->file->file_type,
+    if (!gh_store_media_put(download->cache, download->file, download->file->file_type,
                             plaintext, &cache_error))
       g_debug("Attachment: not kept in the encrypted cache: %s", cache_error->message);
   }
@@ -377,9 +388,23 @@ gh_attachment_download_async(GhBlossomClient *client, GhStore *cache, const GhNi
     return;
   }
   if (cache) {
+    /* Only this file (its x, key and nonce) is looked up: a message that
+     * names another file's x misses, and is downloaded and verified like
+     * any other (W17 review B1). */
     g_autoptr(GError) cache_error = NULL;
-    GBytes *kept = gh_store_media_get(cache, download->file->x, NULL, &cache_error);
+    GBytes *kept = gh_store_media_get(cache, download->file, NULL, &cache_error);
     if (kept) {
+      /* The cached bytes are this key's decryption of this x; ox, when the
+       * message gives one, still has to match, as after a download. */
+      gchar ox[65];
+      sha256_hex(kept, ox);
+      if (download->file->ox[0] && g_ascii_strcasecmp(ox, download->file->ox) != 0) {
+        g_bytes_unref(kept);
+        g_task_return_new_error(task, GH_ATTACHMENT_ERROR, GH_ATTACHMENT_ERROR_DAMAGED,
+                                DAMAGED_MESSAGE);
+        g_object_unref(task);
+        return;
+      }
       download->cached = TRUE;
       g_task_return_pointer(task, kept, (GDestroyNotify)g_bytes_unref);
       g_object_unref(task);
@@ -388,8 +413,8 @@ gh_attachment_download_async(GhBlossomClient *client, GhStore *cache, const GhNi
     if (cache_error)
       g_debug("Attachment: the encrypted cache could not be read: %s", cache_error->message);
   }
-  gh_blossom_client_download_async(client, download->file->url, download->file->size,
-                                   cancellable, on_downloaded, task);
+  gh_blossom_client_download_async(client, download->file->url, download->file->x,
+                                   download->file->size, cancellable, on_downloaded, task);
 }
 
 GBytes *

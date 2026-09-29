@@ -119,7 +119,8 @@ update(GhRequestsView *self)
   const gchar *subject = first ? gh_message_get_subject(first) : NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->subject_label), subject && *subject);
   gtk_label_set_text(self->subject_label, subject ? subject : "");
-  g_autofree gchar *body = bounded(first ? gh_message_get_content(first) : NULL);
+  g_autofree gchar *text = first ? gh_message_dup_display_text(first) : NULL;
+  g_autofree gchar *body = bounded(text);
   gtk_label_set_text(self->message_label, body);
   gtk_stack_set_visible_child_name(self->stack, "request");
 }

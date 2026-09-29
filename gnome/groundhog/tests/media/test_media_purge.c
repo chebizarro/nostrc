@@ -106,27 +106,38 @@ fixture_down(Fixture *f)
   g_free(f->dir);
 }
 
+/* label's file (x) under key_label's key: the same label twice is one
+ * file (a genuine copy); another key_label is someone naming that x with a
+ * key of their own (W17 review B1). */
 static GhNip17File *
-file_of(const gchar *label)
+file_keyed(const gchar *label, const gchar *key_label)
 {
   GhNip17File *file = g_new0(GhNip17File, 1);
   g_autofree gchar *x = x_of(label);
   file->url = g_strdup_printf("https://blossom.example.com/%s", x);
   file->file_type = g_strdup("image/jpeg");
   file->nonce_size = GH_NIP17_FILE_NONCE_SIZE;
+  g_autofree gchar *seed = g_strdup_printf("%s/key/%s", run_id, key_label);
+  g_autofree gchar *key = g_compute_checksum_for_string(G_CHECKSUM_SHA256, seed, -1);
   for (guint i = 0; i < sizeof file->key; i++)
-    file->key[i] = (guint8)g_random_int();
+    file->key[i] = (guint8)((g_ascii_xdigit_value(key[2 * i]) << 4) |
+                            g_ascii_xdigit_value(key[2 * i + 1]));
   g_strlcpy(file->x, x, sizeof file->x);
   return file;
 }
 
-/* A kind-15 message from sender to the account naming label's file, as the
- * inbox admits it. */
-static void
-admit_file(Fixture *f, const gchar *sender, const gchar *label, gint64 created_at,
-           gint64 received_at, gint64 expires_at)
+static GhNip17File *
+file_of(const gchar *label)
 {
-  g_autoptr(GhNip17File) file = file_of(label);
+  return file_keyed(label, label);
+}
+
+/* A kind-15 message from sender to the account carrying file, as the inbox
+ * admits it. */
+static void
+admit_carrying(Fixture *f, const gchar *sender, const GhNip17File *file, gint64 created_at,
+               gint64 received_at, gint64 expires_at)
+{
   g_autofree gchar *id = NULL;
   g_autoptr(GError) error = NULL;
   g_autofree gchar *rumor = gh_nip17_file_rumor_new(sender, alice, file, created_at, expires_at,
@@ -156,6 +167,15 @@ admit_file(Fixture *f, const gchar *sender, const gchar *label, gint64 created_a
   g_assert_true(gh_store_admit(f->store, &message, &result, NULL, &error));
   g_assert_no_error(error);
   g_assert_cmpint(result, ==, GH_STORE_ADMIT_STORED);
+}
+
+/* A kind-15 message from sender to the account naming label's file. */
+static void
+admit_file(Fixture *f, const gchar *sender, const gchar *label, gint64 created_at,
+           gint64 received_at, gint64 expires_at)
+{
+  g_autoptr(GhNip17File) file = file_of(label);
+  admit_carrying(f, sender, file, created_at, received_at, expires_at);
 }
 
 /* The account's own kind-15 message to recipient, queued in the outbox. */
@@ -199,18 +219,18 @@ cache_file(Fixture *f, const gchar *label)
     g_string_append_printf(plain, "%s|%0960u|", canary, (guint)plain->len);
   g_autoptr(GBytes) bytes = g_bytes_new_take(g_strdup(plain->str), plain->len);
   g_string_free(plain, TRUE);
-  g_autofree gchar *x = x_of(label);
+  g_autoptr(GhNip17File) file = file_of(label);
   g_autoptr(GError) error = NULL;
-  g_assert_true(gh_store_media_put(f->store, x, "image/jpeg", bytes, &error));
+  g_assert_true(gh_store_media_put(f->store, file, "image/jpeg", bytes, &error));
   g_assert_no_error(error);
 }
 
 static gboolean
 cached(Fixture *f, const gchar *label)
 {
-  g_autofree gchar *x = x_of(label);
+  g_autoptr(GhNip17File) file = file_of(label);
   g_autoptr(GError) error = NULL;
-  g_autoptr(GBytes) bytes = gh_store_media_get(f->store, x, NULL, &error);
+  g_autoptr(GBytes) bytes = gh_store_media_get(f->store, file, NULL, &error);
   g_assert_no_error(error);
   return bytes != NULL;
 }
@@ -371,11 +391,50 @@ test_expiry_purge(void)
   assert_plaintext(&f, "expiry purge", gone, kept);
 
   /* The Download that was still running when it expired keeps nothing. */
-  g_autofree gchar *x = x_of("expiring");
+  g_autoptr(GhNip17File) expiring = file_of("expiring");
   g_autoptr(GBytes) late = g_bytes_new_static("late plaintext bytes", 20);
-  g_assert_false(gh_store_media_put(f.store, x, NULL, late, &error));
+  g_assert_false(gh_store_media_put(f.store, expiring, NULL, late, &error));
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
   g_assert_false(cached(&f, "expiring"));
+  fixture_down(&f);
+}
+
+/* W17 review B1: a message that names a disappearing photo's x with a key of
+ * its own (anyone who knows x: its Blossom operator) cannot keep the photo's
+ * plaintext alive. The photo's row goes with the photo's message; a
+ * genuine copy (same key and nonce) would keep it, the impostor does not. */
+static void
+test_same_x_other_key(void)
+{
+  Fixture f;
+  fixture_up(&f, "same-x");
+  admit_file(&f, bob, "private", T0 - 60, T0 - 60, T0 + 10);
+  cache_file(&f, "private");
+  g_autoptr(GhNip17File) impostor = file_keyed("private", "mallory");
+  admit_carrying(&f, dave, impostor, T0 - 30, T0 - 30, 0);
+  /* The impostor's key finds nothing; a key no stored message carries cannot
+   * be cached at all. */
+  g_autoptr(GError) error = NULL;
+  g_assert_null(gh_store_media_get(f.store, impostor, NULL, &error));
+  g_assert_no_error(error);
+  g_autoptr(GhNip17File) nobodys = file_keyed("private", "nobody");
+  g_autoptr(GBytes) other = g_bytes_new_static("impostor bytes", 14);
+  g_assert_false(gh_store_media_put(f.store, nobodys, NULL, other, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+
+  gh_clock_fake_advance(f.clock, 15 * G_USEC_PER_SEC);
+  GhStorePurgeStats stats;
+  g_assert_true(gh_store_conversations_purge(f.conversations, 0, &stats, NULL, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(stats.n_expired, ==, 1);
+  g_assert_cmpuint(stats.n_media, ==, 1);
+  g_assert_false(cached(&f, "private"));
+  gint64 total = -1;
+  g_assert_true(gh_store_media_get_total(f.store, &total, &error));
+  g_assert_cmpint(total, ==, 0);
+  const gchar *gone[] = { "private", NULL };
+  assert_plaintext(&f, "same x, other key", gone, NULL);
   fixture_down(&f);
 }
 
@@ -505,10 +564,11 @@ test_put_needs_message(void)
 {
   Fixture f;
   fixture_up(&f, "orphan");
+  g_autoptr(GhNip17File) nobody = file_of("nobody");
   g_autofree gchar *x = x_of("nobody");
   g_autoptr(GBytes) bytes = g_bytes_new_static("orphan plaintext", 16);
   g_autoptr(GError) error = NULL;
-  g_assert_false(gh_store_media_put(f.store, x, NULL, bytes, &error));
+  g_assert_false(gh_store_media_put(f.store, nobody, NULL, bytes, &error));
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
   g_clear_error(&error);
   g_assert_false(cached(&f, "nobody"));
@@ -527,7 +587,7 @@ test_put_needs_message(void)
     .participants = participants,
   };
   g_assert_true(gh_store_admit(f.store, &message, NULL, NULL, &error));
-  g_assert_false(gh_store_media_put(f.store, x, NULL, bytes, &error));
+  g_assert_false(gh_store_media_put(f.store, nobody, NULL, bytes, &error));
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
   fixture_down(&f);
 }
@@ -573,6 +633,7 @@ main(int argc, char **argv)
   carol = new_pubkey();
   dave = new_pubkey();
   g_test_add_func("/groundhog/media-purge/expiry", test_expiry_purge);
+  g_test_add_func("/groundhog/media-purge/same-x-other-key", test_same_x_other_key);
   g_test_add_func("/groundhog/media-purge/retention", test_retention_purge);
   g_test_add_func("/groundhog/media-purge/forget", test_forget);
   g_test_add_func("/groundhog/media-purge/block-and-forget", test_block_and_forget);

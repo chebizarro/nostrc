@@ -3,7 +3,6 @@
 #endif
 
 #include "gh-store.h"
-#include "gh-store-media.h"
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -563,6 +562,11 @@ static const SqliteEntry sqlite_entries[] = {
   SQLITE_ENTRY(sqlite3_wal_checkpoint_v2), SQLITE_ENTRY(sqlite3_threadsafe),
   SQLITE_ENTRY(sqlite3_compileoption_get), SQLITE_ENTRY(sqlite3_compileoption_used),
   SQLITE_ENTRY(sqlite3_libversion), SQLITE_ENTRY(sqlite3_libversion_number),
+  /* The media cache (gh-store-media.c) and its file identity function. */
+  SQLITE_ENTRY(sqlite3_bind_blob64), SQLITE_ENTRY(sqlite3_column_blob),
+  SQLITE_ENTRY(sqlite3_column_bytes), SQLITE_ENTRY(sqlite3_create_function_v2),
+  SQLITE_ENTRY(sqlite3_value_text), SQLITE_ENTRY(sqlite3_result_text),
+  SQLITE_ENTRY(sqlite3_result_null),
 };
 
 typedef struct {
@@ -1022,6 +1026,102 @@ gh_store_transaction(GhStore *store, GhStoreTransactionFunc func, gpointer user_
 
 /* ---- Open ------------------------------------------------------------------------ */
 
+/* ---- The media cache's file identity (W17 review B1) ---------------------------------------- */
+
+#define MEDIA_ID_DOMAIN "groundhog/v1/media-file-id"
+
+static gboolean
+hex_to_bytes(const gchar *hex, gsize hex_len, guint8 *out)
+{
+  if (hex_len % 2)
+    return FALSE;
+  for (gsize i = 0; i < hex_len / 2; i++) {
+    gint hi = g_ascii_xdigit_value(hex[2 * i]);
+    gint lo = g_ascii_xdigit_value(hex[2 * i + 1]);
+    if (hi < 0 || lo < 0)
+      return FALSE;
+    out[i] = (guint8) ((hi << 4) | lo);
+  }
+  return TRUE;
+}
+
+gchar *
+gh_store_media_file_id(const gchar *x_hex, const guint8 *key, gsize key_size,
+                       const guint8 *nonce, gsize nonce_size)
+{
+  guint8 x[32];
+  if (!x_hex || strlen(x_hex) != 64 || !hex_to_bytes(x_hex, 64, x) || !key || key_size != 32 ||
+      !nonce || (nonce_size != 12 && nonce_size != 16))
+    return NULL;
+  crypto_hash_sha256_state state;
+  guint8 digest[crypto_hash_sha256_BYTES];
+  const guint8 length = (guint8) nonce_size;
+  crypto_hash_sha256_init(&state);
+  crypto_hash_sha256_update(&state, (const guint8 *) MEDIA_ID_DOMAIN, sizeof MEDIA_ID_DOMAIN);
+  crypto_hash_sha256_update(&state, x, sizeof x);
+  crypto_hash_sha256_update(&state, key, key_size);
+  crypto_hash_sha256_update(&state, &length, 1);
+  crypto_hash_sha256_update(&state, nonce, nonce_size);
+  crypto_hash_sha256_final(&state, digest);
+  sodium_memzero(&state, sizeof state);
+  gchar *hex = g_malloc(2 * sizeof digest + 1);
+  sodium_bin2hex(hex, 2 * sizeof digest + 1, digest, sizeof digest);
+  return hex;
+}
+
+/* The value of a canonical rumor's ["name","<value>"] tag, as a pointer into
+ * json and its length; FALSE when there is none. In compact JSON every '"'
+ * inside a string is escaped, so the unescaped ["name"," can only be the
+ * tag itself; the kind-15 parser admitted exactly one of each. */
+static gboolean
+rumor_tag(const gchar *json, const gchar *name, const gchar **out_value, gsize *out_len)
+{
+  g_autofree gchar *needle = g_strdup_printf("[\"%s\",\"", name);
+  const gchar *start = strstr(json, needle);
+  if (!start)
+    return FALSE;
+  start += strlen(needle);
+  const gchar *end = strchr(start, '"');
+  if (!end || end[1] != ']')
+    return FALSE;
+  *out_value = start;
+  *out_len = (gsize) (end - start);
+  return TRUE;
+}
+
+/* SQL gh_media_file_id(raw_json): the file identity of a stored kind-15
+ * rumor (x, decryption-key and decryption-nonce tags), or NULL. What the
+ * cache's put guard and every message deletion compare, so a cached file is
+ * bound to the messages that can decrypt it, never to x alone. */
+static void
+sql_media_file_id(sqlite3_context *context, int argc, sqlite3_value **argv)
+{
+  (void) argc;
+  const gchar *json = (const gchar *) sqlite3_value_text(argv[0]);
+  const gchar *x = NULL, *key_hex = NULL, *nonce_hex = NULL;
+  gsize x_len = 0, key_len = 0, nonce_len = 0;
+  guint8 key[32], nonce[16];
+  gchar x_lower[65];
+  if (!json || !rumor_tag(json, "x", &x, &x_len) || x_len != 64 ||
+      !rumor_tag(json, "decryption-key", &key_hex, &key_len) || key_len != 64 ||
+      !rumor_tag(json, "decryption-nonce", &nonce_hex, &nonce_len) ||
+      (nonce_len != 24 && nonce_len != 32) || !hex_to_bytes(key_hex, key_len, key) ||
+      !hex_to_bytes(nonce_hex, nonce_len, nonce)) {
+    sqlite3_result_null(context);
+    return;
+  }
+  for (guint i = 0; i < 64; i++)
+    x_lower[i] = g_ascii_tolower(x[i]);
+  x_lower[64] = '\0';
+  g_autofree gchar *id = gh_store_media_file_id(x_lower, key, sizeof key, nonce, nonce_len / 2);
+  sodium_memzero(key, sizeof key);
+  sodium_memzero(nonce, sizeof nonce);
+  if (id)
+    sqlite3_result_text(context, id, -1, SQLITE_TRANSIENT);
+  else
+    sqlite3_result_null(context);
+}
+
 /* Connection settings and the pragma sequence of §3.5. The key has already
  * been applied (file stores) before this runs. */
 static gboolean
@@ -1036,6 +1136,14 @@ store_configure(GhStore *store, gboolean file_backed, GError **error)
   sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, (int *) NULL);
   sqlite3_db_config(db, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, (int *) NULL);
   sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, (int *) NULL);
+  /* Direct SQL only (never from the schema, a view or a trigger). */
+  int function_rc = sqlite3_create_function_v2(db, "gh_media_file_id", 1,
+                                               SQLITE_UTF8 | SQLITE_DETERMINISTIC |
+                                                 SQLITE_DIRECTONLY,
+                                               NULL, sql_media_file_id, NULL, NULL, NULL);
+  if (function_rc != SQLITE_OK)
+    return gh_store_set_sqlite_error(store, function_rc, "Registering the media identity",
+                                     error);
 
   /* Right after keying (§3.4): SQLCipher zeroes every SQLite allocation on
    * free and mlock()s it where RLIMIT_MEMLOCK allows, so its own copy of the
@@ -3231,15 +3339,17 @@ fail:
 
 /* nostrc-5x5b: the decrypted attachment cache (gh-store-media.h) goes with
  * the messages that named it. Run in the transaction that deletes messages,
- * before they go: deletes every media row that a doomed kind-15 message d
- * names and no surviving kind-15 message k does (a forwarded copy keeps it).
- * doomed and survivor are SQL conditions on d and k. secure_delete zeroes
- * the freed pages; each caller then checkpoints the WAL as it already does
- * for the messages. */
+ * before they go: deletes every media row whose file identity (x, key and
+ * nonce: gh_media_file_id(), W17 review B1) a doomed kind-15 message d has
+ * and no surviving kind-15 message k has. A genuine forward carries the same
+ * key and nonce and keeps it; a message that only names the same x does
+ * not. doomed and survivor are SQL conditions on d and k. secure_delete
+ * zeroes the freed pages; each caller then checkpoints the WAL as it already
+ * does for the messages. */
 #define MEDIA_FORGET(doomed, survivor) \
-  "DELETE FROM media WHERE sha256 IN (SELECT " GH_STORE_MEDIA_X_OF("d") " FROM messages d " \
-  "WHERE (" doomed ") AND " GH_STORE_MEDIA_FILE("d") ") AND NOT EXISTS (SELECT 1 FROM " \
-  "messages k WHERE (" survivor ") AND " GH_STORE_MEDIA_NAMED_BY("k") ")"
+  "DELETE FROM media WHERE sha256 IN (SELECT gh_media_file_id(d.raw_json) FROM messages d " \
+  "WHERE (" doomed ") AND d.kind = 15) AND NOT EXISTS (SELECT 1 FROM messages k WHERE (" \
+  survivor ") AND k.kind = 15 AND gh_media_file_id(k.raw_json) = media.sha256)"
 
 gboolean
 gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error)

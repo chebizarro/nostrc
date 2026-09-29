@@ -62,6 +62,10 @@ gint gh_message_get_kind(GhMessage *self);
  * file's URL; nothing is fetched: downloading is the user's explicit action
  * (charter PD-2, AT-7; src/media/gh-attachment.h). */
 GhNip17File *gh_message_dup_file(GhMessage *self);
+/* What the message says, as text for a list, a preview or a notification:
+ * its content, or for a kind-15 file message "Photo" or "File" (translated),
+ * never its URL (W17 review #2): the one text every surface shows. */
+gchar *gh_message_dup_display_text(GhMessage *self);
 /* The verified rumor JSON the message was built from, which the durable store
  * keeps (and verifies again when it restores the message). */
 const gchar *gh_message_get_rumor_json(GhMessage *self);

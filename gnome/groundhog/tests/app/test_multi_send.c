@@ -1632,6 +1632,7 @@ test_wire_room_file(void)
     g_autoptr(GhNip17File) file = gh_message_dup_file(message);
     g_assert_nonnull(file);
     GhBlossomClient *media = gh_blossom_client_new(NULL, http);
+    gh_blossom_client_set_allow_private_hosts(media, TRUE); /* the loopback fixture */
     memset(&t, 0, sizeof t);
     gh_attachment_download_async(media, NULL, file, NULL, on_downloaded, &t);
     gh_test_spin_until(transfer_done, &t);

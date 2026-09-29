@@ -22,7 +22,9 @@ G_BEGIN_DECLS
  * Receive: a kind-15 message is only metadata (gh_message_dup_file());
  * nothing is fetched until the user asks (PD-2, AT-7).
  * gh_attachment_download_async() is that request: it looks in the account's
- * encrypted cache first (gh-store-media.h, no network then), else downloads
+ * encrypted cache first for this very file, its x with its key and nonce
+ * (gh-store-media.h; never x alone, W17 review B1; no network then, and
+ * ox still checked), else downloads
  * the ciphertext into memory (capped, AT-3), checks x BEFORE decrypting, then
  * the GCM tag, then ox if the sender gave one; any mismatch discards
  * everything with "This file was changed or damaged." (AT-2). The plaintext

@@ -24,9 +24,21 @@ struct _GhBlossomClient {
   GDestroyNotify sign_destroy;
   GHashTable *consent; /* normalized server URL set */
   gsize max_file_size;
+  gboolean allow_private_hosts; /* tests only */
 };
 
 G_DEFINE_FINAL_TYPE(GhBlossomClient, gh_blossom_client, G_TYPE_OBJECT)
+
+static gboolean
+hex64_any_case(const gchar *s)
+{
+  if (!s || strlen(s) != 64)
+    return FALSE;
+  for (const gchar *p = s; *p; p++)
+    if (!g_ascii_isxdigit(*p))
+      return FALSE;
+  return TRUE;
+}
 
 static gboolean
 lower_hex64(const gchar *s)
@@ -525,6 +537,119 @@ gh_blossom_client_upload_finish(GhBlossomClient *self, GAsyncResult *result, gch
 
 /* ---- download -------------------------------------------------------------------- */
 
+void
+gh_blossom_client_set_allow_private_hosts(GhBlossomClient *self, gboolean allow)
+{
+  g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
+  self->allow_private_hosts = allow;
+}
+
+/* An IP address on the user's own machine or network, or no real address. */
+static gboolean
+address_private(GInetAddress *address)
+{
+  if (g_inet_address_get_is_loopback(address) || g_inet_address_get_is_link_local(address) ||
+      g_inet_address_get_is_site_local(address) || g_inet_address_get_is_multicast(address) ||
+      g_inet_address_get_is_any(address))
+    return TRUE;
+  const guint8 *b = g_inet_address_to_bytes(address);
+  if (g_inet_address_get_family(address) == G_SOCKET_FAMILY_IPV4)
+    return b[0] == 0 || b[0] >= 240 ||                 /* "this network", reserved */
+           (b[0] == 100 && (b[1] & 0xc0) == 64) ||     /* 100.64/10 shared (CGNAT) */
+           (b[0] == 192 && b[1] == 0 && b[2] == 0) ||  /* 192.0.0/24 IETF */
+           (b[0] == 198 && (b[1] & 0xfe) == 18);       /* 198.18/15 benchmarking */
+  if ((b[0] & 0xfe) == 0xfc)                           /* fc00::/7 unique local */
+    return TRUE;
+  static const guint8 mapped[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
+  if (memcmp(b, mapped, sizeof mapped) == 0) {         /* ::ffff:a.b.c.d */
+    g_autoptr(GInetAddress) v4 = g_inet_address_new_from_bytes(b + 12, G_SOCKET_FAMILY_IPV4);
+    return address_private(v4);
+  }
+  return FALSE;
+}
+
+/* A host a sender may point Download at: a public name or address, or a
+ * .onion (reachable only in Tor mode, which GhNetHttp enforces). */
+static gboolean
+host_public(const gchar *host)
+{
+  g_autofree gchar *lower = g_ascii_strdown(host, -1);
+  gsize len = strlen(lower);
+  while (len > 0 && lower[len - 1] == '.')
+    lower[--len] = '\0';
+  if (len == 0 || strchr(lower, '%'))
+    return FALSE; /* empty, or an IPv6 zone */
+  if (g_str_has_suffix(lower, ".onion"))
+    return TRUE;
+  g_autoptr(GInetAddress) address = g_inet_address_new_from_string(lower);
+  if (address)
+    return !address_private(address);
+  /* A name. No single label (the local search domain), no local names, and
+   * nothing numeric that is not a canonical address (127.1, 0x7f.1). */
+  const gchar *last = strrchr(lower, '.');
+  if (!last)
+    return FALSE;
+  last++;
+  gboolean numeric = *last != '\0';
+  for (const gchar *p = last; *p; p++)
+    numeric &= g_ascii_isdigit(*p);
+  if (numeric || g_str_has_prefix(last, "0x") || strchr(lower, ':'))
+    return FALSE;
+  static const gchar *const local_suffixes[] = { "localhost", "local", "lan", "internal",
+                                                 "home.arpa", "localdomain", NULL };
+  for (guint i = 0; local_suffixes[i]; i++) {
+    g_autofree gchar *dotted = g_strconcat(".", local_suffixes[i], NULL);
+    if (g_str_equal(lower, local_suffixes[i]) || g_str_has_suffix(lower, dotted))
+      return FALSE;
+  }
+  return TRUE;
+}
+
+/* The path names the blob: its last segment is sha256 (any case), maybe
+ * with an extension (BUD-01 GET /<sha256>[.ext]). */
+static gboolean
+path_names_blob(const gchar *path, const gchar *sha256)
+{
+  const gchar *segment = path ? strrchr(path, '/') : NULL;
+  if (!segment)
+    return FALSE;
+  segment++;
+  if (g_ascii_strncasecmp(segment, sha256, 64) != 0)
+    return FALSE;
+  const gchar *rest = segment + 64;
+  if (*rest == '\0')
+    return TRUE;
+  if (*rest != '.' || strlen(rest + 1) == 0 || strlen(rest + 1) > 16)
+    return FALSE;
+  for (const gchar *p = rest + 1; *p; p++)
+    if (!g_ascii_isalnum(*p))
+      return FALSE;
+  return TRUE;
+}
+
+static gboolean
+download_url_allowed(GhBlossomClient *self, const gchar *url, const gchar *sha256,
+                     GError **error)
+{
+  g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_ENCODED, NULL);
+  const gchar *host = uri ? g_uri_get_host(uri) : NULL;
+  if (!uri || !host || g_uri_get_userinfo(uri) || g_uri_get_query(uri) ||
+      g_uri_get_fragment(uri) || !hex64_any_case(sha256) ||
+      !path_names_blob(g_uri_get_path(uri), sha256)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "This file's address is not a Blossom address for it, so it isn't "
+                        "downloaded");
+    return FALSE;
+  }
+  if (!self->allow_private_hosts && !host_public(host)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "This file's address points at your own computer or local network, "
+                        "so it isn't downloaded");
+    return FALSE;
+  }
+  return TRUE;
+}
+
 static void
 on_downloaded(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -539,14 +664,21 @@ on_downloaded(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 void
-gh_blossom_client_download_async(GhBlossomClient *self, const gchar *url, guint64 size,
+gh_blossom_client_download_async(GhBlossomClient *self, const gchar *url,
+                                 const gchar *sha256_hex, guint64 size,
                                  GCancellable *cancellable, GAsyncReadyCallback callback,
                                  gpointer user_data)
 {
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
-  g_return_if_fail(url != NULL);
+  g_return_if_fail(url != NULL && sha256_hex != NULL);
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_blossom_client_download_async);
+  GError *refused = NULL;
+  if (!download_url_allowed(self, url, sha256_hex, &refused)) {
+    g_task_return_error(task, refused);
+    g_object_unref(task);
+    return;
+  }
   const gsize cap = max_ciphertext(self);
   if (size > cap) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_TOO_LARGE,

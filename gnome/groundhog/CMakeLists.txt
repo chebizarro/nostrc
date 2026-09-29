@@ -1851,6 +1851,24 @@ if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-convers
     set_tests_properties(groundhog-blossom PROPERTIES TIMEOUT 120
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
+  # W17 review B1: the cache is bound to the file (x, key and nonce), not
+  # to x: a message naming another file's x with its own key misses, goes to
+  # the network and fails as damaged, and cannot keep that file's plaintext
+  # past its message (the reviewer's repro; Tor mode through the SOCKS5
+  # fixture to a .onion on the local Blossom fixture).
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    add_executable(test-groundhog-media-cache-binding tests/media/test_cache_binding.c
+      tests/media/blossom-fixture.c tests/net/socks5-fixture.c)
+    target_include_directories(test-groundhog-media-cache-binding PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/tests/net)
+    target_link_libraries(test-groundhog-media-cache-binding PRIVATE groundhog-media)
+    target_compile_options(test-groundhog-media-cache-binding PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-media-cache-binding)
+    add_dependencies(test-groundhog-media-cache-binding groundhog-test-schemas)
+    add_test(NAME groundhog-media-cache-binding COMMAND test-groundhog-media-cache-binding)
+    set_tests_properties(groundhog-media-cache-binding PROPERTIES TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
   # W17 rooms (nostrc-qp24.78) with files: a kind-15 message to Bob and
   # Carol through gh_outbox_send_file_room(), each downloading and
   # decrypting it. That test links the test-hooks store, so the media

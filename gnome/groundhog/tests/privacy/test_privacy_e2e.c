@@ -2068,6 +2068,7 @@ test_at5_attachments(void)
   GhNetHttp *bob_http = gh_net_http_new(w.bob.settings);
   GhBlossomClient *alice_media = gh_blossom_client_new(w.alice.settings, alice_http);
   GhBlossomClient *bob_media = gh_blossom_client_new(w.bob.settings, bob_http);
+  gh_blossom_client_set_allow_private_hosts(bob_media, TRUE); /* the loopback fixture */
 
   const gchar *canary = world_canary(&w, "at5-file", FALSE);
   const gchar *gps = world_canary(&w, "at5-gps", FALSE);
@@ -2116,14 +2117,14 @@ test_at5_attachments(void)
   g_clear_pointer(&t.bytes, g_bytes_unref);
   /* Kept in Bob's encrypted cache, bound to the message his inbox stored,
    * and gone with it when he forgets the conversation (nostrc-5x5b). */
-  g_autoptr(GBytes) kept = gh_store_media_get(bob_store, received->x, NULL, &error);
+  g_autoptr(GBytes) kept = gh_store_media_get(bob_store, received, NULL, &error);
   g_assert_no_error(error);
   g_assert_nonnull(kept);
   g_clear_pointer(&kept, g_bytes_unref);
   g_autofree gchar *room = room_of(ALICE, BOB);
   g_assert_true(gh_store_conversations_forget(app_conversations(&w.bob), room, &error));
   g_assert_no_error(error);
-  g_assert_null(gh_store_media_get(bob_store, received->x, NULL, &error));
+  g_assert_null(gh_store_media_get(bob_store, received, NULL, &error));
   g_assert_no_error(error);
   g_assert_true(gh_store_checkpoint(bob_store, NULL));
 

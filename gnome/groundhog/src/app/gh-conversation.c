@@ -153,7 +153,8 @@ fallback_title(GhConversation *self)
 static gchar *
 preview_of(GhMessage *message)
 {
-  const gchar *body = gh_message_get_content(message);
+  /* A file message previews as "Photo"/"File", never its URL. */
+  g_autofree gchar *body = gh_message_dup_display_text(message);
   const gchar *newline = strchr(body, '\n');
   g_autofree gchar *line = newline ? g_strndup(body, newline - body) : g_strdup(body);
   if (!g_utf8_validate(line, -1, NULL))

@@ -76,6 +76,20 @@ gh_store_media_get_total(GhStore *store, gint64 *out_bytes, GError **error)
                                                        error);
 }
 
+static gboolean remove_id(GhStore *store, const gchar *id, GError **error);
+
+/* The row key of file: its identity (x, key, nonce), never x alone. */
+static gchar *
+file_id(const GhNip17File *file, GError **error)
+{
+  gchar *id = file ? gh_store_media_file_id(file->x, file->key, sizeof file->key, file->nonce,
+                                            file->nonce_size)
+                   : NULL;
+  if (!id)
+    invalid(error, "the file's x, key and nonce are required");
+  return id;
+}
+
 /* Evicts least recently used rows (ties: by key) until the total fits. */
 static gboolean
 evict(GhStore *store, gint64 cap, GError **error)
@@ -96,7 +110,7 @@ evict(GhStore *store, gint64 cap, GError **error)
     g_autofree gchar *oldest = g_strdup((const gchar *)sqlite3_column_text(stmt, 0));
     total -= sqlite3_column_int64(stmt, 1);
     sqlite3_finalize(stmt);
-    if (!gh_store_media_remove(store, oldest, error))
+    if (!remove_id(store, oldest, error))
       return FALSE;
   }
   return TRUE;
@@ -110,12 +124,13 @@ put_in_transaction(GhStore *store, gpointer data, GError **error)
   GBytes *bytes = args[2];
   gsize size = 0;
   gconstpointer raw = g_bytes_get_data(bytes, &size);
-  /* Only for a file a stored message names: plaintext never outlives its
-   * message (a download that finishes after the message expired or was
-   * forgotten keeps nothing). */
+  /* Only for a file a stored message carries (the same x, key and nonce):
+   * plaintext never outlives its message (a download that finishes after the
+   * message expired or was forgotten keeps nothing), and a message that only
+   * names another file's x can never pin that file. */
   sqlite3_stmt *named = prepare(store, "SELECT EXISTS (SELECT 1 FROM messages m WHERE "
-                                       GH_STORE_MEDIA_FILE("m") " AND "
-                                       GH_STORE_MEDIA_X_OF("m") " = ?1)", error);
+                                       "m.kind = 15 AND gh_media_file_id(m.raw_json) = ?1)",
+                                error);
   if (!named)
     return FALSE;
   sqlite3_bind_text(named, 1, sha256, -1, SQLITE_STATIC);
@@ -126,7 +141,7 @@ put_in_transaction(GhStore *store, gpointer data, GError **error)
     return gh_store_set_sqlite_error(store, rc, "Looking up the file's message", error);
   if (!exists) {
     g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND,
-                        "Media cache: no stored message names this file");
+                        "Media cache: no stored message carries this file");
     return FALSE;
   }
   sqlite3_stmt *stmt = prepare(store, "INSERT OR REPLACE INTO media (sha256, mime, bytes, "
@@ -145,12 +160,13 @@ put_in_transaction(GhStore *store, gpointer data, GError **error)
 }
 
 gboolean
-gh_store_media_put(GhStore *store, const gchar *sha256, const gchar *mime, GBytes *bytes,
+gh_store_media_put(GhStore *store, const GhNip17File *file, const gchar *mime, GBytes *bytes,
                    GError **error)
 {
   g_return_val_if_fail(store != NULL, FALSE);
-  if (!is_hex64(sha256))
-    return invalid(error, "the key must be 64 lowercase hex");
+  g_autofree gchar *sha256 = file_id(file, error);
+  if (!sha256)
+    return FALSE;
   gsize size = bytes ? g_bytes_get_size(bytes) : 0;
   if (size == 0 || size > GH_STORE_MAX_VALUE_SIZE || size > GH_STORE_MEDIA_CAP)
     return invalid(error, "the item is empty or larger than the cache allows");
@@ -169,15 +185,14 @@ wipe_free(gpointer data)
 }
 
 GBytes *
-gh_store_media_get(GhStore *store, const gchar *sha256, gchar **out_mime, GError **error)
+gh_store_media_get(GhStore *store, const GhNip17File *file, gchar **out_mime, GError **error)
 {
   g_return_val_if_fail(store != NULL, NULL);
   if (out_mime)
     *out_mime = NULL;
-  if (!is_hex64(sha256)) {
-    invalid(error, "the key must be 64 lowercase hex");
+  g_autofree gchar *sha256 = file_id(file, error);
+  if (!sha256)
     return NULL;
-  }
   sqlite3_stmt *stmt = prepare(store, "SELECT mime, bytes FROM media WHERE sha256 = ?1", error);
   if (!stmt)
     return NULL;
@@ -221,9 +236,16 @@ gh_store_media_get(GhStore *store, const gchar *sha256, gchar **out_mime, GError
 }
 
 gboolean
-gh_store_media_remove(GhStore *store, const gchar *sha256, GError **error)
+gh_store_media_remove(GhStore *store, const GhNip17File *file, GError **error)
 {
   g_return_val_if_fail(store != NULL, FALSE);
+  g_autofree gchar *id = file_id(file, error);
+  return id && remove_id(store, id, error);
+}
+
+static gboolean
+remove_id(GhStore *store, const gchar *sha256, GError **error)
+{
   if (!is_hex64(sha256))
     return invalid(error, "the key must be 64 lowercase hex");
   if (!writable(store, error))

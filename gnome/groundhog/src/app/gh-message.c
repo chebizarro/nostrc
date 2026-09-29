@@ -1,5 +1,7 @@
 #include "gh-message.h"
 
+#include <glib/gi18n.h>
+
 #include <nostr-event.h>
 #include <nostr-tag.h>
 #include <stdlib.h>
@@ -272,6 +274,17 @@ gh_message_get_kind(GhMessage *self)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
   return self->kind;
+}
+
+gchar *
+gh_message_dup_display_text(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
+  g_autoptr(GhNip17File) file = gh_message_dup_file(self);
+  if (file)
+    /* TRANSLATORS: an encrypted file received or sent, before it is opened. */
+    return g_strdup(gh_nip17_file_is_image(file) ? _("Photo") : _("File"));
+  return g_strdup(self->content);
 }
 
 GhNip17File *
