@@ -277,6 +277,23 @@ check_seen_id(GhStoreSeenNs ns, const gchar *id, GError **error)
   }
 }
 
+/* The seen-set key of a message (review M2): NIP-17 rumor and NIP-29 event
+ * ids as they are; an MLS message's id is scoped to its group,
+ * hex(SHA-256("groundhog/mls-seen/v1" NUL group-hex NUL id)), so the same
+ * inner event in two groups is two messages. */
+static gchar *
+seen_key_for(GhStoreBackend backend, const gchar *backend_key, const gchar *msg_id)
+{
+  if (backend != GH_STORE_BACKEND_MLS)
+    return g_strdup(msg_id);
+  g_autoptr(GChecksum) sum = g_checksum_new(G_CHECKSUM_SHA256);
+  static const guchar domain[] = "groundhog/mls-seen/v1";
+  g_checksum_update(sum, domain, sizeof domain);   /* with its NUL */
+  g_checksum_update(sum, (const guchar *)backend_key, (gssize)strlen(backend_key) + 1);
+  g_checksum_update(sum, (const guchar *)msg_id, (gssize)strlen(msg_id));
+  return g_strdup(g_checksum_get_string(sum));
+}
+
 static GhStoreSeenNs
 seen_ns_for_backend(GhStoreBackend backend)
 {
@@ -2788,8 +2805,8 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   if (m->wrap_id && !seen_insert(store, GH_STORE_SEEN_WRAP, m->wrap_id, now, NULL, error))
     return FALSE;
   STORE_CUT("admit", "seen-wrap");
-  if (!seen_insert(store, seen_ns_for_backend(m->backend), m->backend_msg_id, now,
-                   &fresh, error))
+  g_autofree gchar *seen_key = seen_key_for(m->backend, m->backend_key, m->backend_msg_id);
+  if (!seen_insert(store, seen_ns_for_backend(m->backend), seen_key, now, &fresh, error))
     return FALSE;
   STORE_CUT("admit", "seen-message");
   /* Seen before (stored, purged or forgotten): never store it again. */
@@ -2958,6 +2975,7 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
   sqlite3_stmt *stmt = NULL;
   gboolean has_row = FALSE;
   gint64 backend = 0;
+  g_autofree gchar *seen_key = NULL;
 
   /* Idempotent on op_id: a repeat after a crash or retry changes nothing. */
   stmt = store_prepare(store,
@@ -2976,7 +2994,8 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
   }
   g_clear_pointer(&stmt, sqlite3_finalize);
 
-  stmt = store_prepare(store, "SELECT backend FROM conversations WHERE id = ?1", error);
+  stmt = store_prepare(store, "SELECT backend, backend_key FROM conversations WHERE id = ?1",
+                       error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, o->conversation_id));
@@ -2987,6 +3006,9 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
     goto fail;
   }
   backend = sqlite3_column_int64(stmt, 0);
+  seen_key =
+    seen_key_for((GhStoreBackend)backend, (const gchar *)sqlite3_column_text(stmt, 1),
+                 o->backend_msg_id);
   g_clear_pointer(&stmt, sqlite3_finalize);
   if (backend != GH_STORE_BACKEND_MLS &&
       !check_hex("The event id", o->backend_msg_id, 64, 64, FALSE, error))
@@ -3034,7 +3056,7 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
   STORE_CUT("enqueue", "message");
 
   /* The self-copy that comes back from our inbox is then a duplicate. */
-  if (!seen_insert(store, seen_ns_for_backend((GhStoreBackend) backend), o->backend_msg_id,
+  if (!seen_insert(store, seen_ns_for_backend((GhStoreBackend) backend), seen_key,
                    now, NULL, error))
     return FALSE;
   STORE_CUT("enqueue", "seen");

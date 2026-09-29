@@ -39,6 +39,9 @@ enum { ALICE = 1, BOB = 2, CAROL = 3, STRANGER = 4 };
 static gchar *hex[GH_TEST_KEYS];
 static gchar *npub[GH_TEST_KEYS];
 static GhTestBus test_bus;
+/* The next world's accounts run on a fake store clock that does not move
+ * (e.g. two sends within one second, deterministically). */
+static gboolean world_fake_clock;
 
 static G_GNUC_UNUSED void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int line)
@@ -353,7 +356,7 @@ app_up(World *w, guint key)
   g_settings_set_strv(app->settings, "discovery-relays", discovery);
   app->accounts = gh_account_controller_new_full(app->settings, test_bus.client, list_one, app);
   spin_until(accounts_active, app->accounts, "the account becoming active");
-  app->clock = gh_clock_new_system();
+  app->clock = world_fake_clock ? gh_clock_new_fake(g_get_real_time()) : gh_clock_new_system();
   g_autofree gchar *name = g_strdup_printf("app-%u", key);
   app->data_dir = g_build_filename(w->root, name, NULL);
   g_assert_cmpint(g_mkdir_with_parents(app->data_dir, 0700), ==, 0);
@@ -426,6 +429,7 @@ world_down(World *w)
     relay_clear(relays[i]);
   drain();
   gh_test_signer_down(&test_bus, &w->signer);
+  world_fake_clock = FALSE;
   rm_rf(w->root);
   g_free(w->root);
 }

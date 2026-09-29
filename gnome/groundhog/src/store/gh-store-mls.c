@@ -205,18 +205,14 @@ delegate_has_wrap(gpointer data, const gchar *wrap_id)
   return FALSE; /* kind-445 envelopes are deduplicated by libmarmot */
 }
 
+/* The seen set keys an MLS message by (group, id) (gh-store.h), and this
+ * pre-check gets the id alone: T-admit (delegate_admit) is where a
+ * duplicate within its group is recognized. */
 static gboolean
 delegate_has_rumor(gpointer data, const gchar *message_id)
 {
-  GhStoreMls *self = data;
-  gboolean seen = FALSE;
-  g_autoptr(GError) error = NULL;
-  if (!self->store || !message_id)
-    return FALSE;
-  if (gh_store_seen_contains(self->store, GH_STORE_SEEN_MLS_MESSAGE, message_id, &seen, &error))
-    return seen;
-  if (!g_error_matches(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID))
-    g_warning("Groundhog could not read the encrypted-group seen set: %s", error->message);
+  (void)data;
+  (void)message_id;
   return FALSE;
 }
 

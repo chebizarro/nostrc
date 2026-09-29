@@ -2673,6 +2673,63 @@ register_full_suite(void)
 }
 #endif /* !GH_STORE_TEST_LINK_SET */
 
+/* Review M2: an MLS message id is unique within its group only. The same
+ * inner event id in two groups is two messages; within one group a repeat
+ * is a duplicate, whether first stored by T-admit or by T-enqueue. */
+static void
+test_mls_seen_per_group(void)
+{
+  g_autoptr(FakeKeys) keys = fake_keys_new();
+  GhStore *store = open_ok(keys, ACCOUNT_A, NULL, GH_STORE_OPEN_CREATE);
+  g_autofree gchar *group_a = g_strnfill(64, 'a');
+  g_autofree gchar *group_b = g_strnfill(64, 'b');
+  g_autofree gchar *id = hex_of("mls-inner");
+  g_autofree gchar *raw = g_strdup_printf("{\"id\":\"%s\",\"kind\":9,\"content\":\"ok\"}", id);
+  GhStoreMessage m = {
+    .backend = GH_STORE_BACKEND_MLS,
+    .backend_key = group_a,
+    .backend_msg_id = id,
+    .sender_pubkey = PEER,
+    .kind = 9,
+    .created_at = T0,
+    .direction = GH_STORE_DIRECTION_IN,
+    .body = "ok",
+    .raw_json = raw,
+    .unread = TRUE,
+    .request_state = GH_STORE_REQUEST_ACCEPTED,
+  };
+  g_assert_cmpint(admit_ok(store, &m), ==, GH_STORE_ADMIT_STORED);
+  g_assert_cmpint(admit_ok(store, &m), ==, GH_STORE_ADMIT_DUPLICATE);
+  m.backend_key = group_b;
+  g_assert_cmpint(admit_ok(store, &m), ==, GH_STORE_ADMIT_STORED);
+
+  /* An own message queued in group A: its echo there is a duplicate, the
+   * same id in group B is not. */
+  g_autofree gchar *own = hex_of("mls-own");
+  g_autofree gchar *own_raw = g_strdup_printf("{\"id\":\"%s\",\"kind\":9,\"content\":\"hi\"}", own);
+  gint64 conversation = 0, outbox = 0, message = 0;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_ensure_conversation(store, GH_STORE_BACKEND_MLS, group_a,
+                                             GH_STORE_REQUEST_ACCEPTED, &conversation, &error));
+  g_autofree gchar *op_id = gh_store_new_op_id();
+  GhStoreOutgoing outgoing = {
+    .conversation_id = conversation, .op_id = op_id, .backend_msg_id = own,
+    .sender_pubkey = ACCOUNT_A, .kind = 9, .created_at = T0, .body = "hi",
+    .rumor_json = own_raw,
+  };
+  g_assert_true(gh_store_enqueue(store, &outgoing, &outbox, &message, &error));
+  g_assert_no_error(error);
+  m.backend_key = group_a;
+  m.backend_msg_id = own;
+  m.raw_json = own_raw;
+  m.sender_pubkey = ACCOUNT_A;
+  m.direction = GH_STORE_DIRECTION_OUT;
+  g_assert_cmpint(admit_ok(store, &m), ==, GH_STORE_ADMIT_DUPLICATE);
+  m.backend_key = group_b;
+  g_assert_cmpint(admit_ok(store, &m), ==, GH_STORE_ADMIT_STORED);
+  gh_store_close(store);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2695,6 +2752,7 @@ main(int argc, char **argv)
   umask(022);
   g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, NULL);
 
+  g_test_add_func("/groundhog/store/mls-seen-per-group", test_mls_seen_per_group);
   g_test_add_func("/groundhog/store/st4/single-sqlite", test_st4_single_sqlite);
 #ifdef GH_STORE_TEST_LINK_SET
   g_test_add_func("/groundhog/store/st4/round-trip", test_st4_store_round_trip);

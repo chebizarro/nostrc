@@ -294,6 +294,8 @@ typedef enum {
   GH_STORE_SEEN_WRAP = 1,         /* NIP-17 gift-wrap id */
   GH_STORE_SEEN_RUMOR = 2,        /* NIP-17 rumor id */
   GH_STORE_SEEN_NIP29_EVENT = 3,
+  /* MLS message id scoped to its group (T-admit and T-enqueue key it
+   * hex(SHA-256("groundhog/mls-seen/v1" NUL group NUL id)), review M2) */
   GH_STORE_SEEN_MLS_MESSAGE = 4,
   /* NIP-17 gift-wrap id finally rejected after a signer call: skipped before
    * any signer call, never a seen message (G05, legacy .seen "x" lines). */

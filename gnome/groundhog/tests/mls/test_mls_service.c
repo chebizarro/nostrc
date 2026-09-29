@@ -699,6 +699,39 @@ test_send_republished_after_restart(void)
   world_down(&w);
 }
 
+
+/* M2: the same text sent to two groups within one second (the store clock
+ * frozen here) is two messages: the inner events are tagged with their
+ * group, and the store dedups within a group only. */
+static void
+test_same_text_two_groups(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_fake_clock = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *one = create_group(alice, "One", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  GhMlsGroup *two = create_group(alice, "Two", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  g_autofree gchar *room_one = g_strdup(gh_mls_group_get_room_id(one));
+  g_autofree gchar *room_two = g_strdup(gh_mls_group_get_room_id(two));
+  send_text(alice, one, "ok");
+  send_text(alice, two, "ok");
+  wait_message(bob, room_one, "ok");
+  wait_message(bob, room_two, "ok");
+  GhMessage *a = find_message(bob, room_one, "ok"), *b = find_message(bob, room_two, "ok");
+  g_assert_cmpint(gh_message_get_created_at(a), ==, gh_message_get_created_at(b));
+  g_assert_cmpstr(gh_message_get_rumor_id(a), !=, gh_message_get_rumor_id(b));
+  /* Both are Alice's own messages in her two rooms too. */
+  g_assert_nonnull(find_message(alice, room_one, "ok"));
+  g_assert_nonnull(find_message(alice, room_two, "ok"));
+  world_down(&w);
+}
+
 /* An account switch closes every group connection at once; the account
  * coming back reopens them. */
 static gboolean
@@ -763,6 +796,7 @@ main(int argc, char **argv)
                   test_join_reads_from_welcome);
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",
                   test_send_republished_after_restart);
+  g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
   gint rc = g_test_run();
   mls_world_finish();
   return rc;

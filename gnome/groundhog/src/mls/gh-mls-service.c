@@ -1893,16 +1893,20 @@ outbox_key(gint64 outbox_id)
 
 /* ---- Sending ------------------------------------------------------------------------------ */
 
-/* The canonical unsigned kind-9 inner event of a chat message. */
+/* The canonical unsigned kind-9 inner event of a chat message, tagged
+ * ["h", <the group's nostr group id>] (review M2: Marmot leaves inner tags
+ * to the application; this one makes the same text sent to two groups in
+ * the same second two events, which libmarmot, the store and the model all
+ * tell apart by id). */
 static gchar *
-inner_event_new(GhMlsService *self, const gchar *text, gchar **out_id)
+inner_event_new(GhMlsService *self, GhMlsGroup *group, const gchar *text, gchar **out_id)
 {
   NostrEvent *event = nostr_event_new();
   nostr_event_set_kind(event, GH_MESSAGE_MLS_KIND);
   nostr_event_set_pubkey(event, self->account);
   nostr_event_set_created_at(event, now_s(self));
   nostr_event_set_content(event, text);
-  nostr_event_set_tags(event, nostr_tags_new(0));
+  nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("h", group->nostr_hex, NULL)));
   gchar id[65] = { 0 };
   gchar *json = NULL;
   if (nostr_event_compute_id(event, id) == NOSTR_EVENT_VALIDATION_OK) {
@@ -1974,7 +1978,7 @@ gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text, GE
     return NULL;
   }
   g_autofree gchar *inner_id = NULL;
-  g_autofree gchar *inner = inner_event_new(self, text, &inner_id);
+  g_autofree gchar *inner = inner_event_new(self, group, text, &inner_id);
   g_autoptr(GhMessage) message = inner ? gh_message_new_from_mls(self->account, group->gid_hex,
                                                                  inner, error) : NULL;
   if (!message)
