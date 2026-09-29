@@ -30,6 +30,7 @@ typedef struct {
   gsize max_bytes;
   gboolean any_success;   /* G21 send: any 2xx is success, and HTTP errors are
                            * told apart (gh_net_http_send_async) */
+  gboolean own_session;   /* session is the request's alone (Tor, or public only) */
 } Request;
 
 static void
@@ -44,9 +45,10 @@ request_free(gpointer data)
   g_clear_object(&request->caller);
   g_clear_object(&request->cancellable);
   g_clear_object(&request->message);
-  /* A Tor request's session is its own: close its connection with it
-   * (disposing a session with a live connection is a libsoup warning). */
-  if (request->mode == GH_NET_MODE_TOR && request->session)
+  /* A Tor or public-only request's session is its own: close its connection
+   * with it (disposing a session with a live connection is a libsoup
+   * warning). */
+  if (request->own_session && request->session)
     soup_session_abort(request->session);
   g_clear_object(&request->session);
   g_clear_object(&request->stream);
@@ -88,12 +90,15 @@ setting(GhNetHttp *self, const gchar *key, const gchar *fallback)
   return g_settings_get_string(self->settings, key);
 }
 
+/* remote: every connection's target instead of the URI's host (NULL: the
+ * URI's host); see public_session_new(). */
 static SoupSession *
-session_new(GProxyResolver *resolver)
+session_new(GProxyResolver *resolver, GSocketConnectable *remote)
 {
   SoupSession *session = soup_session_new_with_options(
     "timeout", GH_NET_HTTP_TIMEOUT_S, "idle-timeout", GH_NET_HTTP_TIMEOUT_S,
-    "proxy-resolver", resolver, "user-agent", NULL, "accept-language-auto", FALSE, NULL);
+    "proxy-resolver", resolver, "user-agent", NULL, "accept-language-auto", FALSE,
+    "remote-connectable", remote, NULL);
   /* No cookie jar, cache, HSTS or auth store is added; drop any content
    * sniffer a default session may carry (nothing here renders content). */
   soup_session_remove_feature_by_type(session, SOUP_TYPE_CONTENT_SNIFFER);
@@ -111,7 +116,7 @@ session_for(GhNetHttp *self, GhNetMode mode, GError **error)
   if (mode == GH_NET_MODE_TOR) {
     g_autofree gchar *address = setting(self, "tor-socks-address", NULL);
     g_autoptr(GProxyResolver) resolver = gh_net_proxy_resolver_new(mode, address, NULL, error);
-    return resolver ? session_new(resolver) : NULL;
+    return resolver ? session_new(resolver, NULL) : NULL;
   }
   const gchar *name = mode == GH_NET_MODE_SYSTEM ? "system" : "none";
   if (!self->session || g_strcmp0(self->session_mode, name) != 0) {
@@ -122,7 +127,7 @@ session_for(GhNetHttp *self, GhNetMode mode, GError **error)
     /* SYSTEM follows the desktop settings (a NULL resolver would disable
      * proxies); NONE has no proxy. */
     g_autoptr(GProxyResolver) resolver = gh_net_proxy_resolver_new(mode, NULL, NULL, NULL);
-    self->session = session_new(resolver);
+    self->session = session_new(resolver, NULL);
     self->session_mode = g_strdup(name);
   }
   return g_object_ref(self->session);
@@ -136,6 +141,289 @@ report(Request *request, gboolean connected)
   g_autoptr(GhNetSession) session = gh_net_session_dup_default();
   if (session)
     gh_net_session_report(session, connected);
+}
+
+/* ---- public addresses (nostrc-qi5e) ---------------------------------------------- */
+
+static gboolean
+ipv4_public(const guint8 *bytes)
+{
+  g_autoptr(GInetAddress) v4 = g_inet_address_new_from_bytes(bytes, G_SOCKET_FAMILY_IPV4);
+  return gh_net_address_is_public(v4);
+}
+
+/* 64:ff9b:1::/48 (RFC 8215) is a network's own NAT64 prefix, of any RFC 6052
+ * length from /48 to /96, so where the IPv4 address sits is not known. Bits
+ * 64-71 are always zero, and so are the bits after the IPv4 address: every
+ * layout the address fits is decoded, and all of them must be public. */
+static gboolean
+nat64_local_public(const guint8 *b)
+{
+  static const struct {
+    guint8 at[4];  /* the IPv4 address's bytes */
+    guint8 suffix; /* the first byte after it */
+  } layouts[] = {
+    { { 6, 7, 9, 10 }, 11 },   /* /48 */
+    { { 7, 9, 10, 11 }, 12 },  /* /56 */
+    { { 9, 10, 11, 12 }, 13 }, /* /64 */
+    { { 12, 13, 14, 15 }, 16 }, /* /96 */
+  };
+  if (b[8] != 0)
+    return FALSE;
+  gboolean any = FALSE;
+  for (guint i = 0; i < G_N_ELEMENTS(layouts); i++) {
+    gboolean fits = TRUE;
+    for (guint j = layouts[i].suffix; j < 16; j++)
+      fits &= b[j] == 0;
+    if (!fits)
+      continue;
+    const guint8 v4[4] = { b[layouts[i].at[0]], b[layouts[i].at[1]], b[layouts[i].at[2]],
+                           b[layouts[i].at[3]] };
+    if (!ipv4_public(v4))
+      return FALSE;
+    any = TRUE;
+  }
+  return any;
+}
+
+gboolean
+gh_net_address_is_public(GInetAddress *address)
+{
+  g_return_val_if_fail(G_IS_INET_ADDRESS(address), FALSE);
+  if (g_inet_address_get_is_loopback(address) || g_inet_address_get_is_link_local(address) ||
+      g_inet_address_get_is_site_local(address) || g_inet_address_get_is_multicast(address) ||
+      g_inet_address_get_is_any(address))
+    return FALSE;
+  const guint8 *b = g_inet_address_to_bytes(address);
+  if (g_inet_address_get_family(address) == G_SOCKET_FAMILY_IPV4)
+    return !(b[0] == 0 || b[0] >= 240 ||                /* "this network", reserved */
+             (b[0] == 100 && (b[1] & 0xc0) == 64) ||    /* 100.64/10 shared (CGNAT) */
+             (b[0] == 192 && b[1] == 0 && b[2] == 0) || /* 192.0.0/24 IETF */
+             (b[0] == 198 && (b[1] & 0xfe) == 18));     /* 198.18/15 benchmarking */
+  /* IPv6 forms that carry an IPv4 address: the IPv4 address decides. */
+  static const guint8 zero[12] = { 0 };
+  if (memcmp(b, zero, 10) == 0 &&
+      ((b[10] == 0 && b[11] == 0) ||       /* ::a.b.c.d, IPv4-compatible */
+       (b[10] == 0xff && b[11] == 0xff)))  /* ::ffff:a.b.c.d, IPv4-mapped */
+    return ipv4_public(b + 12);
+  if (memcmp(b, zero, 8) == 0 && b[8] == 0xff && b[9] == 0xff && b[10] == 0 && b[11] == 0)
+    return ipv4_public(b + 12);            /* ::ffff:0:a.b.c.d, SIIT */
+  if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b) {
+    if (memcmp(b + 4, zero, 8) == 0)
+      return ipv4_public(b + 12);          /* 64:ff9b::/96, NAT64 */
+    if (b[4] == 0 && b[5] == 1)
+      return nat64_local_public(b);        /* 64:ff9b:1::/48, local NAT64 */
+    return FALSE;                          /* the rest of 64:ff9b::/32 */
+  }
+  if (b[0] == 0x20 && b[1] == 0x02)
+    return ipv4_public(b + 2);             /* 2002::/16, 6to4 */
+  if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0) {
+    /* 2001::/32, Teredo: the server's address, and the client's inverted. */
+    const guint8 client[4] = { b[12] ^ 0xff, b[13] ^ 0xff, b[14] ^ 0xff, b[15] ^ 0xff };
+    return ipv4_public(b + 4) && ipv4_public(client);
+  }
+  if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8)
+    return FALSE;                          /* 2001:db8::/32, documentation */
+  /* Global unicast is 2000::/3. Outside it: unique local fc00::/7,
+   * link-local, multicast, discard-only 100::/64 and the reserved ::/8. */
+  return (b[0] & 0xe0) == 0x20;
+}
+
+/* The addresses of a host name as a connection tries them, without any that
+ * gh_net_address_is_public() refuses. When every one was refused, the end is
+ * G_IO_ERROR_PERMISSION_DENIED. */
+#define GH_TYPE_PUBLIC_ENUMERATOR (gh_public_enumerator_get_type())
+G_DECLARE_FINAL_TYPE(GhPublicEnumerator, gh_public_enumerator, GH, PUBLIC_ENUMERATOR,
+                     GSocketAddressEnumerator)
+struct _GhPublicEnumerator {
+  GSocketAddressEnumerator parent_instance;
+  GSocketAddressEnumerator *inner;
+  gboolean refused;
+  gboolean yielded;
+};
+G_DEFINE_FINAL_TYPE(GhPublicEnumerator, gh_public_enumerator, G_TYPE_SOCKET_ADDRESS_ENUMERATOR)
+
+static gboolean
+socket_address_public(GSocketAddress *address)
+{
+  return G_IS_INET_SOCKET_ADDRESS(address) &&
+         gh_net_address_is_public(g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(address)));
+}
+
+/* Takes address; NULL when it was refused. */
+static GSocketAddress *
+public_enumerator_filter(GhPublicEnumerator *self, GSocketAddress *address)
+{
+  if (socket_address_public(address)) {
+    self->yielded = TRUE;
+    return address;
+  }
+  self->refused = TRUE;
+  g_object_unref(address);
+  return NULL;
+}
+
+/* The end of the addresses: inner's error, if any, unless nothing was left
+ * after the refusals. */
+static void
+public_enumerator_end(GhPublicEnumerator *self, GError *inner_error, GError **error)
+{
+  if (self->refused && !self->yielded) {
+    g_clear_error(&inner_error);
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "This address leads to your own computer or local network, so it "
+                        "isn't used");
+  } else if (inner_error) {
+    g_propagate_error(error, inner_error);
+  }
+}
+
+static GSocketAddress *
+public_enumerator_next(GSocketAddressEnumerator *enumerator, GCancellable *cancellable,
+                       GError **error)
+{
+  GhPublicEnumerator *self = GH_PUBLIC_ENUMERATOR(enumerator);
+  for (;;) {
+    GError *inner_error = NULL;
+    GSocketAddress *address = g_socket_address_enumerator_next(self->inner, cancellable,
+                                                               &inner_error);
+    if (!address) {
+      public_enumerator_end(self, inner_error, error);
+      return NULL;
+    }
+    if ((address = public_enumerator_filter(self, address)))
+      return address;
+  }
+}
+
+static void
+on_inner_next(GObject *source, GAsyncResult *result, gpointer data)
+{
+  g_autoptr(GTask) task = data;
+  GhPublicEnumerator *self = g_task_get_source_object(task);
+  GError *inner_error = NULL;
+  GSocketAddress *address = g_socket_address_enumerator_next_finish(
+    G_SOCKET_ADDRESS_ENUMERATOR(source), result, &inner_error);
+  if (!address) {
+    GError *error = NULL;
+    public_enumerator_end(self, inner_error, &error);
+    if (error)
+      g_task_return_error(task, error);
+    else
+      g_task_return_pointer(task, NULL, NULL);
+    return;
+  }
+  if ((address = public_enumerator_filter(self, address))) {
+    g_task_return_pointer(task, address, g_object_unref);
+    return;
+  }
+  g_socket_address_enumerator_next_async(self->inner, g_task_get_cancellable(task),
+                                         on_inner_next, g_steal_pointer(&task));
+}
+
+static void
+public_enumerator_next_async(GSocketAddressEnumerator *enumerator, GCancellable *cancellable,
+                             GAsyncReadyCallback callback, gpointer data)
+{
+  GhPublicEnumerator *self = GH_PUBLIC_ENUMERATOR(enumerator);
+  GTask *task = g_task_new(self, cancellable, callback, data);
+  g_task_set_source_tag(task, public_enumerator_next_async);
+  g_socket_address_enumerator_next_async(self->inner, cancellable, on_inner_next, task);
+}
+
+static GSocketAddress *
+public_enumerator_next_finish(GSocketAddressEnumerator *enumerator, GAsyncResult *result,
+                              GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, enumerator), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+static void
+gh_public_enumerator_dispose(GObject *object)
+{
+  g_clear_object(&GH_PUBLIC_ENUMERATOR(object)->inner);
+  G_OBJECT_CLASS(gh_public_enumerator_parent_class)->dispose(object);
+}
+
+static void
+gh_public_enumerator_class_init(GhPublicEnumeratorClass *klass)
+{
+  G_OBJECT_CLASS(klass)->dispose = gh_public_enumerator_dispose;
+  GSocketAddressEnumeratorClass *enumerator = G_SOCKET_ADDRESS_ENUMERATOR_CLASS(klass);
+  enumerator->next = public_enumerator_next;
+  enumerator->next_async = public_enumerator_next_async;
+  enumerator->next_finish = public_enumerator_next_finish;
+}
+
+static void
+gh_public_enumerator_init(GhPublicEnumerator *self)
+{
+  (void)self;
+}
+
+/* A host name (with port and scheme) whose direct addresses are enumerated
+ * through a GhPublicEnumerator. A GNetworkAddress otherwise: libsoup takes it
+ * as the TLS server identity (the name for SNI and certificate checks), and
+ * its proxy enumeration asks the session's proxy resolver first, enumerating
+ * this object for a direct connection only. */
+#define GH_TYPE_PUBLIC_ADDRESS (gh_public_address_get_type())
+G_DECLARE_FINAL_TYPE(GhPublicAddress, gh_public_address, GH, PUBLIC_ADDRESS, GNetworkAddress)
+struct _GhPublicAddress {
+  GNetworkAddress parent_instance;
+};
+
+static GSocketConnectableIface *public_address_parent_iface;
+
+static GSocketAddressEnumerator *
+public_address_enumerate(GSocketConnectable *connectable)
+{
+  GhPublicEnumerator *enumerator = g_object_new(GH_TYPE_PUBLIC_ENUMERATOR, NULL);
+  enumerator->inner = public_address_parent_iface->enumerate(connectable);
+  return G_SOCKET_ADDRESS_ENUMERATOR(enumerator);
+}
+
+static void
+public_address_connectable_init(GSocketConnectableIface *iface)
+{
+  public_address_parent_iface = g_type_interface_peek_parent(iface);
+  iface->enumerate = public_address_enumerate;
+  iface->proxy_enumerate = public_address_parent_iface->proxy_enumerate;
+  iface->to_string = public_address_parent_iface->to_string;
+}
+
+G_DEFINE_FINAL_TYPE_WITH_CODE(GhPublicAddress, gh_public_address, G_TYPE_NETWORK_ADDRESS,
+                              G_IMPLEMENT_INTERFACE(G_TYPE_SOCKET_CONNECTABLE,
+                                                    public_address_connectable_init))
+
+static void
+gh_public_address_class_init(GhPublicAddressClass *klass)
+{
+  (void)klass;
+}
+
+static void
+gh_public_address_init(GhPublicAddress *self)
+{
+  (void)self;
+}
+
+/* A session of the request's own whose every connection goes to parsed's
+ * host through a GhPublicAddress: the addresses checked are the addresses
+ * connected to, so a DNS answer cannot change between the check and the
+ * connection, and no connection kept from an earlier request is reused. */
+static SoupSession *
+public_session_new(GhNetMode mode, GUri *parsed)
+{
+  const gchar *scheme = g_uri_get_scheme(parsed);
+  gboolean https = g_ascii_strcasecmp(scheme, "https") == 0;
+  gint port = g_uri_get_port(parsed);
+  g_autofree gchar *lower_scheme = g_ascii_strdown(scheme, -1);
+  g_autoptr(GSocketConnectable) remote = g_object_new(
+    GH_TYPE_PUBLIC_ADDRESS, "hostname", g_uri_get_host(parsed), "port",
+    (guint)(port > 0 ? port : https ? 443 : 80), "scheme", lower_scheme, NULL);
+  g_autoptr(GProxyResolver) resolver = gh_net_proxy_resolver_new(mode, NULL, NULL, NULL);
+  return session_new(resolver, remote);
 }
 
 static gboolean
@@ -285,8 +573,8 @@ gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
  * gh_net_http_send_async() one (send set). */
 static void
 request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
-              const gchar *accept, gsize max_bytes, GCancellable *cancellable,
-              GAsyncReadyCallback callback, gpointer user_data)
+              const gchar *accept, gsize max_bytes, gboolean public_only,
+              GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
   g_autoptr(GTask) task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_net_http_get_async);
@@ -298,7 +586,12 @@ request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
     g_task_return_error(task, error);
     return;
   }
-  g_autoptr(SoupSession) session = session_for(self, mode, &error);
+  /* Public only: checked where the connection is made, in System and No
+   * Proxy modes; through Tor (or a desktop proxy) the proxy resolves. */
+  gboolean own_session = mode == GH_NET_MODE_TOR || public_only;
+  g_autoptr(SoupSession) session = public_only && mode != GH_NET_MODE_TOR
+                                     ? public_session_new(mode, parsed)
+                                     : session_for(self, mode, &error);
   if (!session) {
     /* Fail closed (P5): an unusable Tor address never means "direct". */
     g_task_return_error(task, error);
@@ -312,6 +605,7 @@ request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
   request->message = soup_message_new_from_uri(send && send->method ? send->method
                                                                    : SOUP_METHOD_GET, parsed);
   request->any_success = send != NULL;
+  request->own_session = own_session;
   request->cancellable = g_cancellable_new();
   g_task_set_task_data(task, request, request_free);
   g_ptr_array_add(self->requests, request);
@@ -344,7 +638,18 @@ gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *acc
   g_return_if_fail(GH_IS_NET_HTTP(self));
   g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
   g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
-  request_start(self, NULL, uri, accept, max_bytes, cancellable, callback, user_data);
+  request_start(self, NULL, uri, accept, max_bytes, FALSE, cancellable, callback, user_data);
+}
+
+void
+gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                             gsize max_bytes, GCancellable *cancellable,
+                             GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_NET_HTTP(self));
+  g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
+  g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
+  request_start(self, NULL, uri, accept, max_bytes, TRUE, cancellable, callback, user_data);
 }
 
 static gboolean
@@ -366,8 +671,8 @@ gh_net_http_send_async(GhNetHttp *self, const GhNetHttpRequest *request,
                    g_str_equal(request->method, SOUP_METHOD_HEAD));
   g_return_if_fail(header_value_ok(request->accept) && header_value_ok(request->authorization) &&
                    header_value_ok(request->content_type));
-  request_start(self, request, request->uri, request->accept, request->max_bytes, cancellable,
-                callback, user_data);
+  request_start(self, request, request->uri, request->accept, request->max_bytes, FALSE,
+                cancellable, callback, user_data);
 }
 
 GBytes *

@@ -125,7 +125,10 @@ gchar *gh_blossom_client_upload_finish(GhBlossomClient *self, GAsyncResult *resu
  * sha256_hex (the message's x), into memory. size is the message's size tag
  * (0: none). An address that is not a public Blossom blob of that x (see
  * above) fails with G_IO_ERROR_PERMISSION_DENIED, and a size over the cap
- * with GH_BLOSSOM_ERROR_TOO_LARGE, both before any request; a longer answer
+ * with GH_BLOSSOM_ERROR_TOO_LARGE, both before any request. A host name that
+ * resolves to no public address when connecting (System and No Proxy modes;
+ * gh_net_http_get_public_async()) also fails with
+ * G_IO_ERROR_PERMISSION_DENIED, without a connection. A longer answer
  * is cut off at min(size, cap + 16) + GH_BLOSSOM_DOWNLOAD_SLACK bytes
  * (G_IO_ERROR_MESSAGE_TOO_LARGE). Only for the user's explicit Download. */
 void gh_blossom_client_download_async(GhBlossomClient *self, const gchar *url,

@@ -63,6 +63,35 @@ void gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar
                                   GAsyncReadyCallback callback, gpointer user_data);
 GBytes *gh_net_http_get_finish(GhNetHttp *self, GAsyncResult *result, GError **error);
 
+/* nostrc-qi5e: as gh_net_http_get_accept_async(), for a URL someone else
+ * chose (a G21 attachment download), which may only reach a public address
+ * (gh_net_address_is_public()). In System and No Proxy modes this is checked
+ * where the connection is made. The request has a session of its own whose
+ * one target is the URL's host, and every address the host name resolves to
+ * as the connection is attempted, and any literal address, is checked before
+ * it is dialled. Refused addresses are skipped, so the addresses checked are
+ * the addresses connected to: a DNS answer cannot change between a check and
+ * the connection (DNS rebinding), and no kept connection is reused. A host
+ * with no public address fails with G_IO_ERROR_PERMISSION_DENIED after no
+ * connection. In Tor mode the proxy resolves the name and connects, and Tor
+ * exits refuse private addresses. In System mode through a desktop proxy the
+ * proxy does both too, and is trusted with the user's own network. Finished
+ * with gh_net_http_get_finish(). */
+void gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                                  gsize max_bytes, GCancellable *cancellable,
+                                  GAsyncReadyCallback callback, gpointer user_data);
+
+/* Whether a download may reach address: FALSE for loopback, private,
+ * link-local, CGNAT (100.64/10), 192.0.0/24, benchmarking (198.18/15),
+ * "this network" (0/8), reserved (240/4), multicast and unspecified IPv4;
+ * for IPv6 anything outside global unicast 2000::/3 (so unique local,
+ * link-local, multicast) and 2001:db8::/32. IPv6 forms carrying an IPv4
+ * address are judged by that address: IPv4-compatible ::a.b.c.d, mapped
+ * ::ffff:a.b.c.d, SIIT ::ffff:0:a.b.c.d, NAT64 64:ff9b::/96 and
+ * 64:ff9b:1::/48 (every RFC 6052 layout the address fits must be public),
+ * 6to4 2002::/16, and Teredo 2001::/32 (server and client). */
+gboolean gh_net_address_is_public(GInetAddress *address);
+
 /* G21 (Blossom, charter §6): one request with a method, headers and a body,
  * made exactly like a GET above (network mode, Tor isolation, URL policy, no
  * redirect, cookie, cache or TLS resumption, max_bytes on the answer's body).

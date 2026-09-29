@@ -544,32 +544,10 @@ gh_blossom_client_set_allow_private_hosts(GhBlossomClient *self, gboolean allow)
   self->allow_private_hosts = allow;
 }
 
-/* An IP address on the user's own machine or network, or no real address. */
-static gboolean
-address_private(GInetAddress *address)
-{
-  if (g_inet_address_get_is_loopback(address) || g_inet_address_get_is_link_local(address) ||
-      g_inet_address_get_is_site_local(address) || g_inet_address_get_is_multicast(address) ||
-      g_inet_address_get_is_any(address))
-    return TRUE;
-  const guint8 *b = g_inet_address_to_bytes(address);
-  if (g_inet_address_get_family(address) == G_SOCKET_FAMILY_IPV4)
-    return b[0] == 0 || b[0] >= 240 ||                 /* "this network", reserved */
-           (b[0] == 100 && (b[1] & 0xc0) == 64) ||     /* 100.64/10 shared (CGNAT) */
-           (b[0] == 192 && b[1] == 0 && b[2] == 0) ||  /* 192.0.0/24 IETF */
-           (b[0] == 198 && (b[1] & 0xfe) == 18);       /* 198.18/15 benchmarking */
-  if ((b[0] & 0xfe) == 0xfc)                           /* fc00::/7 unique local */
-    return TRUE;
-  static const guint8 mapped[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
-  if (memcmp(b, mapped, sizeof mapped) == 0) {         /* ::ffff:a.b.c.d */
-    g_autoptr(GInetAddress) v4 = g_inet_address_new_from_bytes(b + 12, G_SOCKET_FAMILY_IPV4);
-    return address_private(v4);
-  }
-  return FALSE;
-}
-
 /* A host a sender may point Download at: a public name or address, or a
- * .onion (reachable only in Tor mode, which GhNetHttp enforces). */
+ * .onion (reachable only in Tor mode, which GhNetHttp enforces). What a
+ * public-looking name resolves to is checked when connecting
+ * (gh_net_http_get_public_async(), nostrc-qi5e). */
 static gboolean
 host_public(const gchar *host)
 {
@@ -583,7 +561,7 @@ host_public(const gchar *host)
     return TRUE;
   g_autoptr(GInetAddress) address = g_inet_address_new_from_string(lower);
   if (address)
-    return !address_private(address);
+    return gh_net_address_is_public(address);
   /* A name. No single label (the local search domain), no local names, and
    * nothing numeric that is not a canonical address (127.1, 0x7f.1). */
   const gchar *last = strrchr(lower, '.');
@@ -688,8 +666,14 @@ gh_blossom_client_download_async(GhBlossomClient *self, const gchar *url,
     return;
   }
   const gsize limit = (size ? (gsize)size : cap) + GH_BLOSSOM_DOWNLOAD_SLACK;
-  gh_net_http_get_accept_async(self->http, url, "application/octet-stream", limit, cancellable,
-                               on_downloaded, task);
+  /* The sender chose the URL: connect only to a public address, checked
+   * where the connection is made (DNS rebinding; nostrc-qi5e). */
+  if (self->allow_private_hosts)
+    gh_net_http_get_accept_async(self->http, url, "application/octet-stream", limit,
+                                 cancellable, on_downloaded, task);
+  else
+    gh_net_http_get_public_async(self->http, url, "application/octet-stream", limit,
+                                 cancellable, on_downloaded, task);
 }
 
 GBytes *

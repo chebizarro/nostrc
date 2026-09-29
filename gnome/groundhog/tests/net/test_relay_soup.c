@@ -32,24 +32,49 @@ struct _TripResolver {
 };
 G_DEFINE_FINAL_TYPE(TripResolver, trip_resolver, G_TYPE_RESOLVER)
 
+/* nostrc-qi5e: a public-looking name that resolves to a loopback address
+ * (DNS rebinding); every other name is refused. Both are recorded. */
+#define REBIND_HOST "rebind.groundhog.test"
+
 static GList *
-trip_lookup(GResolver *resolver, const gchar *name, GCancellable *cancellable, GError **error)
+trip_lookup_flags(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
+                  GCancellable *cancellable, GError **error)
 {
   (void)resolver;
   (void)cancellable;
   g_ptr_array_add(dns_names, g_strdup(name));
+  if (g_str_equal(name, REBIND_HOST) && !(flags & G_RESOLVER_NAME_LOOKUP_FLAGS_IPV6_ONLY))
+    return g_list_append(NULL, g_inet_address_new_loopback(G_SOCKET_FAMILY_IPV4));
   g_set_error(error, G_RESOLVER_ERROR, G_RESOLVER_ERROR_NOT_FOUND, "tripwire: %s", name);
   return NULL;
+}
+
+static GList *
+trip_lookup(GResolver *resolver, const gchar *name, GCancellable *cancellable, GError **error)
+{
+  return trip_lookup_flags(resolver, name, G_RESOLVER_NAME_LOOKUP_FLAGS_DEFAULT, cancellable,
+                           error);
+}
+
+static void
+trip_lookup_flags_async(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
+                        GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data)
+{
+  g_autoptr(GTask) task = g_task_new(resolver, cancellable, callback, data);
+  GError *error = NULL;
+  GList *addresses = trip_lookup_flags(resolver, name, flags, cancellable, &error);
+  if (addresses)
+    g_task_return_pointer(task, addresses, (GDestroyNotify)g_resolver_free_addresses);
+  else
+    g_task_return_error(task, error);
 }
 
 static void
 trip_lookup_async(GResolver *resolver, const gchar *name, GCancellable *cancellable,
                   GAsyncReadyCallback callback, gpointer data)
 {
-  g_autoptr(GTask) task = g_task_new(resolver, cancellable, callback, data);
-  GError *error = NULL;
-  trip_lookup(resolver, name, cancellable, &error);
-  g_task_return_error(task, error);
+  trip_lookup_flags_async(resolver, name, G_RESOLVER_NAME_LOOKUP_FLAGS_DEFAULT, cancellable,
+                          callback, data);
 }
 
 static GList *
@@ -60,35 +85,25 @@ trip_lookup_finish(GResolver *resolver, GAsyncResult *result, GError **error)
 }
 
 static GList *
-trip_lookup_flags(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
-                  GCancellable *cancellable, GError **error)
-{
-  (void)flags;
-  return trip_lookup(resolver, name, cancellable, error);
-}
-
-static void
-trip_lookup_flags_async(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
-                        GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data)
-{
-  (void)flags;
-  trip_lookup_async(resolver, name, cancellable, callback, data);
-}
-
-static GList *
 trip_records(GResolver *resolver, const gchar *rrname, GResolverRecordType type,
              GCancellable *cancellable, GError **error)
 {
+  (void)resolver;
   (void)type;
-  return trip_lookup(resolver, rrname, cancellable, error);
+  (void)cancellable;
+  g_ptr_array_add(dns_names, g_strdup(rrname));
+  g_set_error(error, G_RESOLVER_ERROR, G_RESOLVER_ERROR_NOT_FOUND, "tripwire: %s", rrname);
+  return NULL;
 }
 
 static void
 trip_records_async(GResolver *resolver, const gchar *rrname, GResolverRecordType type,
                    GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data)
 {
-  (void)type;
-  trip_lookup_async(resolver, rrname, cancellable, callback, data);
+  g_autoptr(GTask) task = g_task_new(resolver, cancellable, callback, data);
+  GError *error = NULL;
+  trip_records(resolver, rrname, type, cancellable, &error);
+  g_task_return_error(task, error);
 }
 
 static void
@@ -1132,6 +1147,131 @@ test_no_session_refuses(void)
   g_free(seen.last_error);
 }
 
+/* ---- nostrc-qi5e: downloads reach public addresses only ------------------------------- */
+
+/* gh_net_address_is_public(), including every IPv6 form carrying an IPv4
+ * address, which the embedded address decides. */
+static void
+test_public_address(void)
+{
+  static const gchar *const refused[] = {
+    "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1",
+    "0.0.0.0", "0.1.2.3", "192.0.0.8", "198.18.0.1", "224.0.0.1", "240.0.0.1",
+    "255.255.255.255", "::", "::1", "fe80::1", "fd00::1", "fc00::1", "fec0::1", "ff02::1",
+    "100::1", "2001:db8::1",
+    /* IPv4-mapped, IPv4-compatible, SIIT */
+    "::ffff:127.0.0.1", "::ffff:192.168.1.1", "::127.0.0.1", "::10.0.0.1", "::0.0.0.2",
+    "::ffff:0:127.0.0.1", "::ffff:0:10.1.2.3",
+    /* NAT64 64:ff9b::/96 */
+    "64:ff9b::127.0.0.1", "64:ff9b::7f00:1", "64:ff9b::192.168.1.1", "64:ff9b::100.64.0.1",
+    /* local NAT64 64:ff9b:1::/48: 127.0.0.1 and 10.1.2.3 as /96, 127.0.0.1 as
+     * /64 (whose /96 reading, 1.0.0.0, is public), 10.0.0.1 as /48; and the
+     * rest of 64:ff9b::/32 */
+    "64:ff9b:1::7f00:1", "64:ff9b:1::a01:203", "64:ff9b:1:0:7f:0:100:0", "64:ff9b:1:a00:0:100::",
+    "64:ff9b:2::808:808",
+    /* 6to4 of 127.0.0.1, 192.168.1.1, 10.1.2.3 */
+    "2002:7f00:1::1", "2002:c0a8:101::", "2002:a01:203::1",
+    /* Teredo: client 127.0.0.1 (inverted 80ff:fffe); server 10.0.0.1 */
+    "2001:0:4136:e378:8000:63bf:80ff:fffe", "2001:0:a00:1::f7f7:f7f7",
+  };
+  static const gchar *const allowed[] = {
+    "8.8.8.8", "1.1.1.1", "93.184.216.34", "2606:4700:4700::1111", "2a00:1450:4001:80b::200e",
+    "::ffff:8.8.8.8", "64:ff9b::8.8.8.8", "64:ff9b:1::808:808", "2002:808:808::1",
+    "2001:0:4136:e378:8000:63bf:f7f7:f7f7",
+  };
+  g_autoptr(GString) wrong = g_string_new(NULL);
+  for (guint i = 0; i < G_N_ELEMENTS(refused); i++) {
+    g_autoptr(GInetAddress) address = g_inet_address_new_from_string(refused[i]);
+    g_assert_nonnull(address);
+    if (gh_net_address_is_public(address))
+      g_string_append_printf(wrong, " %s (taken for public)", refused[i]);
+  }
+  for (guint i = 0; i < G_N_ELEMENTS(allowed); i++) {
+    g_autoptr(GInetAddress) address = g_inet_address_new_from_string(allowed[i]);
+    g_assert_nonnull(address);
+    if (!gh_net_address_is_public(address))
+      g_string_append_printf(wrong, " %s (refused)", allowed[i]);
+  }
+  g_assert_cmpstr(wrong->str, ==, "");
+}
+
+static gboolean
+proxy_is_direct(GProxyResolver *resolver, const gchar *uri)
+{
+  g_auto(GStrv) proxies = g_proxy_resolver_lookup(resolver, uri, NULL, NULL);
+  return proxies && proxies[0] && g_str_equal(proxies[0], "direct://") && !proxies[1];
+}
+
+/* DNS rebinding: a public-looking name the resolver maps to 127.0.0.1. An
+ * ordinary request connects there (the control); a public-only one is
+ * refused where the connection is made, and nothing connects, in No Proxy
+ * and (direct) System mode, as are loopback literals. In Tor mode the proxy
+ * resolves the name: no local lookup, the name goes to the proxy. */
+static void
+test_public_only(void)
+{
+  Tripwire listener = { 0 }; /* here the connection counter, dialled on purpose */
+  tripwire_init(&listener);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "network-mode", "none");
+  g_autoptr(GhNetHttp) net = gh_net_http_new(settings);
+  g_autofree gchar *url = g_strdup_printf("https://" REBIND_HOST ":%u/blob", listener.port);
+  Fetched fetched = { 0 };
+
+  gh_net_http_get_async(net, url, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_nonnull(fetched.error); /* no TLS there */
+  fetched_clear(&fetched);
+  wait_at_least(&listener.accepted, 1);
+  g_assert_cmpuint(listener.accepted, ==, 1);
+
+  const gchar *const modes[] = { "none", "system" };
+  for (guint i = 0; i < G_N_ELEMENTS(modes); i++) {
+    if (g_str_equal(modes[i], "system") &&
+        !proxy_is_direct(g_proxy_resolver_get_default(), url)) {
+      g_test_message("System mode uses a proxy here: its public-only check is the proxy's");
+      continue;
+    }
+    g_settings_set_string(settings, "network-mode", modes[i]);
+    g_autofree gchar *literal = g_strdup_printf("https://127.0.0.1:%u/blob", listener.port);
+    g_autofree gchar *mapped = g_strdup_printf("https://[::ffff:127.0.0.1]:%u/blob",
+                                               listener.port);
+    const gchar *const urls[] = { url, literal, mapped };
+    for (guint j = 0; j < G_N_ELEMENTS(urls); j++) {
+      gh_net_http_get_public_async(net, urls[j], NULL, 1024, NULL, on_get, &fetched);
+      spin_until(fetched_done, &fetched);
+      g_test_message("%s, public only: %s", modes[i], urls[j]);
+      g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+      fetched_clear(&fetched);
+    }
+  }
+  run_for(100);
+  g_assert_cmpuint(listener.accepted, ==, 1);
+
+  Socks5Fixture *socks = socks5_fixture_new();
+  socks5_fixture_set_domain_port(socks, listener.port);
+  g_settings_set_string(settings, "tor-socks-address", socks5_fixture_address(socks));
+  g_settings_set_string(settings, "network-mode", "tor");
+  const guint looked_up = dns_names->len;
+  gh_net_http_get_public_async(net, url, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_nonnull(fetched.error); /* no TLS there either */
+  fetched_clear(&fetched);
+  GPtrArray *requests = socks5_fixture_requests(socks);
+  g_assert_cmpuint(requests->len, ==, 1);
+  Socks5Request *request = g_ptr_array_index(requests, 0);
+  g_assert_cmpuint(request->atyp, ==, 0x03);
+  g_assert_cmpstr(request->host, ==, REBIND_HOST);
+  g_assert_cmpuint(dns_names->len, ==, looked_up);
+
+  g_clear_object(&net);
+  g_settings_reset(settings, "network-mode");
+  g_settings_reset(settings, "tor-socks-address");
+  socks5_fixture_free(socks);
+  tripwire_clear(&listener);
+  g_ptr_array_set_size(dns_names, 0); /* the rebinding name's lookups, on purpose */
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1149,6 +1289,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);
   g_test_add_func("/groundhog/net/isolation", test_isolation);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
+  g_test_add_func("/groundhog/net/public-address", test_public_address);
+  g_test_add_func("/groundhog/net/public-only", test_public_only);
   int status = g_test_run();
   g_ptr_array_unref(dns_names);
   return status;

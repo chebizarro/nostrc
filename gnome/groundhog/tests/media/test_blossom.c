@@ -764,6 +764,11 @@ test_download_address_policy(void)
     "https://[::1]", "https://[fe80::1]", "https://[fd00::1]", "https://[::ffff:192.168.1.1]",
     "https://localhost", "https://printer.local", "https://router.lan", "https://nas.home.arpa",
     "https://router", "https://127.1", "https://2130706433", "https://0x7f.0.0.1",
+    /* IPv6 carrying a private IPv4 address (nostrc-qi5e): IPv4-compatible,
+     * SIIT, NAT64 (well-known and local), 6to4, Teredo (client 127.0.0.1) */
+    "https://[::127.0.0.1]", "https://[::ffff:0:127.0.0.1]", "https://[64:ff9b::7f00:1]",
+    "https://[64:ff9b::192.168.1.1]", "https://[64:ff9b:1::a01:203]", "https://[2002:c0a8:101::1]",
+    "https://[2001:0:4136:e378:8000:63bf:80ff:fffe]",
   };
   for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
     g_autofree gchar *origin = g_strdup_printf(hosts[i], blossom_fixture_port(f.blossom));
@@ -799,6 +804,151 @@ test_download_address_policy(void)
   g_assert_no_error(r.error);
   g_assert_nonnull(r.bytes);
   result_clear(&r);
+  fixture_down(&f);
+}
+
+/* ---- nostrc-qi5e: DNS rebinding ------------------------------------------------------ */
+
+/* A resolver for one public-looking name that leads to 127.0.0.1. */
+#define REBIND_HOST "rebind.groundhog.test"
+
+#define REBIND_TYPE_RESOLVER (rebind_resolver_get_type())
+G_DECLARE_FINAL_TYPE(RebindResolver, rebind_resolver, REBIND, RESOLVER, GResolver)
+struct _RebindResolver {
+  GResolver parent_instance;
+  guint lookups;
+};
+G_DEFINE_FINAL_TYPE(RebindResolver, rebind_resolver, G_TYPE_RESOLVER)
+
+static GList *
+rebind_lookup_flags(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
+                    GCancellable *cancellable, GError **error)
+{
+  (void)cancellable;
+  REBIND_RESOLVER(resolver)->lookups++;
+  if (g_str_equal(name, REBIND_HOST) && !(flags & G_RESOLVER_NAME_LOOKUP_FLAGS_IPV6_ONLY))
+    return g_list_append(NULL, g_inet_address_new_loopback(G_SOCKET_FAMILY_IPV4));
+  g_set_error(error, G_RESOLVER_ERROR, G_RESOLVER_ERROR_NOT_FOUND, "no address for %s", name);
+  return NULL;
+}
+
+static GList *
+rebind_lookup(GResolver *resolver, const gchar *name, GCancellable *cancellable, GError **error)
+{
+  return rebind_lookup_flags(resolver, name, G_RESOLVER_NAME_LOOKUP_FLAGS_DEFAULT, cancellable,
+                             error);
+}
+
+static void
+rebind_lookup_flags_async(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
+                          GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data)
+{
+  g_autoptr(GTask) task = g_task_new(resolver, cancellable, callback, data);
+  GError *error = NULL;
+  GList *addresses = rebind_lookup_flags(resolver, name, flags, cancellable, &error);
+  if (addresses)
+    g_task_return_pointer(task, addresses, (GDestroyNotify)g_resolver_free_addresses);
+  else
+    g_task_return_error(task, error);
+}
+
+static void
+rebind_lookup_async(GResolver *resolver, const gchar *name, GCancellable *cancellable,
+                    GAsyncReadyCallback callback, gpointer data)
+{
+  rebind_lookup_flags_async(resolver, name, G_RESOLVER_NAME_LOOKUP_FLAGS_DEFAULT, cancellable,
+                            callback, data);
+}
+
+static GList *
+rebind_lookup_finish(GResolver *resolver, GAsyncResult *result, GError **error)
+{
+  (void)resolver;
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+static void
+rebind_resolver_class_init(RebindResolverClass *klass)
+{
+  GResolverClass *resolver = G_RESOLVER_CLASS(klass);
+  resolver->lookup_by_name = rebind_lookup;
+  resolver->lookup_by_name_async = rebind_lookup_async;
+  resolver->lookup_by_name_finish = rebind_lookup_finish;
+  resolver->lookup_by_name_with_flags = rebind_lookup_flags;
+  resolver->lookup_by_name_with_flags_async = rebind_lookup_flags_async;
+  resolver->lookup_by_name_with_flags_finish = rebind_lookup_finish;
+}
+
+static void
+rebind_resolver_init(RebindResolver *self)
+{
+  (void)self;
+}
+
+static gboolean
+on_incoming(GSocketService *service, GSocketConnection *connection, GObject *source,
+            gpointer data)
+{
+  (void)service;
+  (void)source;
+  (*(guint *)data)++;
+  (void)g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+  return TRUE;
+}
+
+static gboolean
+at_least_one(gpointer data)
+{
+  return *(guint *)data >= 1;
+}
+
+/* A sender's URL whose public-looking name resolves to the user's own machine
+ * (DNS rebinding) passes the URL policy, and is refused where the connection
+ * is made: nothing connects. With the test seam the same URL does connect,
+ * which shows the name really leads to the listener. */
+static void
+test_download_rebinding(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024);
+  Result r = { 0 };
+  upload(&f, jpeg, &r, NULL);
+  g_assert_no_error(r.error);
+  g_autoptr(GhNip17File) file = g_steal_pointer(&r.file);
+
+  g_autoptr(GResolver) previous = g_resolver_get_default();
+  g_autoptr(RebindResolver) resolver = g_object_new(REBIND_TYPE_RESOLVER, NULL);
+  g_resolver_set_default(G_RESOLVER(resolver));
+  guint accepted = 0;
+  g_autoptr(GSocketService) listener = g_socket_service_new();
+  g_autoptr(GError) error = NULL;
+  guint16 port = g_socket_listener_add_any_inet_port(G_SOCKET_LISTENER(listener), NULL, &error);
+  g_assert_no_error(error);
+  g_signal_connect(listener, "incoming", G_CALLBACK(on_incoming), &accepted);
+  g_socket_service_start(listener);
+
+  g_autoptr(GhNip17File) aimed = gh_nip17_file_copy(file);
+  g_free(aimed->url);
+  aimed->url = g_strdup_printf("https://" REBIND_HOST ":%u/%s", port, file->x);
+  gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
+  download(&f, NULL, aimed, &r, NULL);
+  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_assert_cmpuint(resolver->lookups, >, 0); /* resolved when connecting */
+  drain();
+  g_assert_cmpuint(accepted, ==, 0);
+
+  gh_blossom_client_set_allow_private_hosts(f.client, TRUE);
+  download(&f, NULL, aimed, &r, NULL);
+  g_assert_nonnull(r.error); /* no TLS there */
+  spin_until(at_least_one, &accepted);
+  result_clear(&r);
+
+  g_signal_handlers_disconnect_by_data(listener, &accepted);
+  g_socket_service_stop(listener);
+  drain();
+  g_socket_listener_close(G_SOCKET_LISTENER(listener));
+  g_resolver_set_default(previous);
   fixture_down(&f);
 }
 
@@ -855,6 +1005,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/at8-cancel", test_at8_cancel);
   g_test_add_func("/groundhog/blossom/at9-tor", test_at9_tor);
   g_test_add_func("/groundhog/blossom/download-address-policy", test_download_address_policy);
+  g_test_add_func("/groundhog/blossom/download-rebinding", test_download_rebinding);
   int status = g_test_run();
   canary_log_capture_uninstall();
   remove_tree(root);
