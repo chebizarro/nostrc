@@ -239,7 +239,10 @@ if(BUILD_TESTING)
   add_test(NAME marmot_gobject_test COMMAND test_marmot_gobject)
 
   # Set test environment for GLib debugging
+  # TIMEOUT: a client deadlock (e.g. a signal emitted under the client lock,
+  # W17b D1) must fail the run, not hang it -- as meson's timeout: 120.
   set_tests_properties(marmot_gobject_test PROPERTIES
     ENVIRONMENT "G_DEBUG=fatal-warnings,gc-friendly;G_SLICE=always-malloc"
+    TIMEOUT 120
   )
 endif()

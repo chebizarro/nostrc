@@ -534,16 +534,18 @@ test_client_finalize_releases_storage(void)
     MarmotGobjectClient *client = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(store));
     g_assert_nonnull(client);
 
-    /* Ref store again so we can check it survives client destruction */
-    g_object_ref(store);
+    g_object_add_weak_pointer(G_OBJECT(store), (gpointer *) &store);
 
     /* Destroy client — should release its ref on storage */
     g_object_unref(client);
 
-    /* Store should still be alive (we hold one ref) */
+    /* Store should still be alive (we hold our own ref) */
+    g_assert_nonnull(store);
     g_assert_true(MARMOT_GOBJECT_IS_MEMORY_STORAGE(store));
 
+    /* ...and our ref was the last one. */
     g_object_unref(store);
+    g_assert_null(store);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1032,6 +1034,97 @@ test_client_update_metadata_commit_reaches_member(void)
     g_free(commit);
     g_clear_object(&inviter_sd.received_object);
     g_clear_object(&member_sd.received_object);
+    g_object_unref(welcome);
+    g_object_unref(created);
+    g_strfreev(welcomes);
+    g_object_unref(inviter);
+    g_object_unref(member);
+    g_object_unref(inviter_store);
+    g_object_unref(member_store);
+}
+
+static gchar *rename_sync(MarmotGobjectClient *client, const gchar *gid,
+                          const gchar *name);
+
+/* ── W17b addendum 2, D1: signals are never emitted under the lock ── */
+
+typedef struct {
+    MarmotGobjectClient *client;
+    const gchar *gid;
+    gint entered, returned;
+} ReentryFixture;
+
+static void
+on_group_updated_reenter(MarmotGobjectClient *client, MarmotGobjectGroup *group,
+                         gpointer user_data)
+{
+    (void)group;
+    ReentryFixture *f = user_data;
+    g_assert_true(g_main_context_is_owner(g_main_context_default()));
+    f->entered++;
+    GError *error = NULL;
+    MarmotGobjectGroup *g = marmot_gobject_client_get_group(client, f->gid, &error);
+    g_assert_no_error(error);
+    g_object_unref(g);
+    f->returned++;
+}
+
+static void
+count_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    (void)source;
+    (void)result;
+    (*(gint *) user_data)++;
+}
+
+/* The reviewer's repro: a ::group-updated handler that calls back into the
+ * client while no main loop runs.  The merge must not emit the signal on
+ * its worker under the lock (that deadlocked); the emission waits for the
+ * client's context and the handler then re-enters the client freely. */
+static void
+test_client_signal_handler_may_reenter(void)
+{
+    MarmotGobjectClient *inviter = NULL, *member = NULL;
+    MarmotGobjectMemoryStorage *inviter_store = NULL, *member_store = NULL;
+    MarmotGobjectGroup *created = NULL;
+    gchar **welcomes = NULL;
+    MarmotGobjectWelcome *welcome = setup_real_welcome_flow(
+        &inviter, &inviter_store, &member, &member_store, &created, &welcomes);
+    g_assert_true(accept_welcome_sync(member, welcome));
+    const gchar *gid = marmot_gobject_group_get_mls_group_id(created);
+    guint64 epoch = marmot_gobject_group_get_epoch(created);
+    g_autofree gchar *commit = rename_sync(inviter, gid, "Re-entered");
+
+    ReentryFixture f = { inviter, gid, 0, 0 };
+    g_signal_connect(inviter, "group-updated", G_CALLBACK(on_group_updated_reenter), &f);
+    gint done = 0;
+    marmot_gobject_client_merge_pending_commit_async(inviter, gid, NULL, count_done, &done);
+
+    /* No loop runs.  Sync calls must not block behind a worker stuck in a
+     * handler: wait for the merge through them. */
+    gint64 deadline = g_get_monotonic_time() + 20 * G_TIME_SPAN_SECOND;
+    for (;;) {
+        GError *error = NULL;
+        MarmotGobjectGroup *g = marmot_gobject_client_get_group(inviter, gid, &error);
+        g_assert_no_error(error);
+        guint64 now_epoch = marmot_gobject_group_get_epoch(g);
+        g_object_unref(g);
+        if (now_epoch == epoch + 1) break;
+        g_assert_cmpint(g_get_monotonic_time(), <, deadline);
+        g_usleep(2000);
+    }
+    /* Emission is deferred to the client's context: nothing ran yet. */
+    g_assert_cmpint(f.entered, ==, 0);
+
+    /* The context runs: the handler re-enters the client and returns. */
+    while (done == 0 || f.returned == 0) {
+        g_assert_cmpint(g_get_monotonic_time(), <, deadline);
+        g_main_context_iteration(NULL, TRUE);
+    }
+    g_assert_cmpint(f.entered, ==, 1);
+    g_assert_cmpint(f.returned, ==, 1);
+
+    g_signal_handlers_disconnect_by_data(inviter, &f);
     g_object_unref(welcome);
     g_object_unref(created);
     g_strfreev(welcomes);
@@ -2235,6 +2328,8 @@ main(int argc, char *argv[])
                     test_client_update_metadata_commit_reaches_member);
     g_test_add_func("/marmot-gobject/client/serializes-merge-and-process",
                     test_client_serializes_merge_and_process);
+    g_test_add_func("/marmot-gobject/client/signal-handler-may-reenter",
+                    test_client_signal_handler_may_reenter);
     g_test_add_func("/marmot-gobject/client/group-fields-and-media-metadata", test_client_create_group_fields_and_media_metadata);
 
     /* 8. Synchronous queries */

@@ -55,6 +55,9 @@ struct _MarmotGobjectClient {
      * call runs on the shared GTask thread pool: this serializes all
      * libmarmot calls of the client, async and sync (W17b addendum C1). */
     GMutex lock;
+    /* The context signals are emitted in: the thread-default context of the
+     * thread that created the client (W17b addendum 2, D1). */
+    GMainContext *context;
 };
 
 G_DEFINE_TYPE(MarmotGobjectClient, marmot_gobject_client, G_TYPE_OBJECT)
@@ -71,6 +74,7 @@ marmot_gobject_client_finalize(GObject *object)
     g_clear_object(&self->storage);
 
     g_mutex_clear(&self->lock);
+    g_clear_pointer(&self->context, g_main_context_unref);
     G_OBJECT_CLASS(marmot_gobject_client_parent_class)->finalize(object);
 }
 
@@ -150,6 +154,7 @@ static void
 marmot_gobject_client_init(MarmotGobjectClient *self)
 {
     g_mutex_init(&self->lock);
+    self->context = g_main_context_ref_thread_default();
 }
 
 MarmotGobjectClient *
@@ -324,6 +329,15 @@ emit_queued_signal(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
+/*
+ * Emit a client signal in the client's own context, never here: callers are
+ * worker threads holding the client lock, and a handler that calls back into
+ * the client would deadlock on it (or run GTK code off the main thread).
+ * g_main_context_invoke() would run the emission inline whenever nobody
+ * owns that context -- before a loop runs, after it quit, or when the app's
+ * loop runs another context -- so always post an idle source: it is
+ * dispatched only by that context's own loop, after the lock is released.
+ */
 static void
 queue_client_signal(MarmotGobjectClient *self, guint signal_id, GObject *object)
 {
@@ -334,7 +348,12 @@ queue_client_signal(MarmotGobjectClient *self, guint signal_id, GObject *object)
     queued->client = g_object_ref(self);
     queued->signal_id = signal_id;
     queued->object = g_object_ref(object);
-    g_main_context_invoke(NULL, emit_queued_signal, queued);
+    GSource *source = g_idle_source_new();
+    g_source_set_priority(source, G_PRIORITY_DEFAULT);
+    g_source_set_callback(source, emit_queued_signal, queued, NULL);
+    g_source_set_static_name(source, "[marmot-gobject] client signal");
+    g_source_attach(source, self->context);
+    g_source_unref(source);
 }
 
 static MarmotGobjectMessage *

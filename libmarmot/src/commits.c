@@ -732,19 +732,19 @@ load_current(Marmot *m, const MarmotGroupId *gid, MlsGroup *cur)
  * The id is SHA-256(recipient || rumor): stable, and equal copies merge.
  */
 
-static void
+/* 0 on success; -1 (nothing usable in `out`) when it cannot be computed --
+ * callers fail rather than invent an id that would merge distinct Welcomes. */
+static int
 welcome_id(const uint8_t recipient[32], const char *rumor, uint8_t out[32])
 {
     size_t len = rumor ? strlen(rumor) : 0;
     uint8_t *buf = malloc(32 + len);
-    if (!buf) {
-        memset(out, 0, 32);
-        return;
-    }
+    if (!buf) return -1;
     memcpy(buf, recipient, 32);
     if (len) memcpy(buf + 32, rumor, len);
-    if (mls_crypto_hash(out, buf, 32 + len) != 0) memset(out, 0, 32);
+    int rc = mls_crypto_hash(out, buf, 32 + len) == 0 ? 0 : -1;
     free(buf);
+    return rc;
 }
 
 void
@@ -786,9 +786,15 @@ outbox_load(Marmot *m, const MarmotGroupId *gid, MarmotUnsentWelcome **out,
                  mls_tls_read_opaque32(&r, &rumor, &rumor_len) == 0 &&
                  (w[i].rumor_json = calloc(1, rumor_len + 1)) != NULL;
             if (ok) {
-                if (rumor_len) memcpy(w[i].rumor_json, rumor, rumor_len);
-                welcome_id(w[i].recipient, w[i].rumor_json, w[i].id);
                 filled = i + 1;
+                if (rumor_len) memcpy(w[i].rumor_json, rumor, rumor_len);
+                if (welcome_id(w[i].recipient, w[i].rumor_json, w[i].id) != 0) {
+                    ok = false;
+                    free(rumor);
+                    rumor = NULL;
+                    err = MARMOT_ERR_MEMORY;
+                    break;
+                }
             }
             free(rumor);
         }
@@ -848,7 +854,11 @@ outbox_append(Marmot *m, const MarmotGroupId *gid, const MarmotUnsentWelcome *ad
     for (size_t i = 0; i < cur_count; i++) all[n++] = cur[i];   /* borrowed */
     for (size_t i = 0; i < add_count; i++) {
         MarmotUnsentWelcome e = add[i];
-        welcome_id(e.recipient, e.rumor_json, e.id);
+        if (welcome_id(e.recipient, e.rumor_json, e.id) != 0) {
+            free(all);
+            marmot_unsent_welcomes_free(cur, cur_count);
+            return MARMOT_ERR_MEMORY;
+        }
         bool dup = false;
         for (size_t j = 0; j < n && !dup; j++) dup = memcmp(all[j].id, e.id, 32) == 0;
         if (!dup) all[n++] = e;

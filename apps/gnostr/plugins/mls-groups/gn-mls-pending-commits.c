@@ -25,6 +25,8 @@ static GHashTable       *inflight;        /* gid -> GPtrArray<GTask> waiting */
 static GHashTable       *timers;          /* gid -> retry GSource id */
 static GHashTable       *attempts;        /* gid -> retries made */
 static GHashTable       *sending;         /* Welcome id hex -> in-flight send */
+static GHashTable       *welcome_timers;  /* gid -> Welcome resend GSource id */
+static GHashTable       *welcome_attempts;/* gid -> failed Welcome sends */
 
 static void
 ensure_tables(void)
@@ -36,6 +38,8 @@ ensure_tables(void)
       timers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
       attempts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
       sending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      welcome_timers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      welcome_attempts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     }
 }
 
@@ -63,6 +67,54 @@ client_of(GnMlsEventRouter *router)
 
 /* ── Welcome outbox (W17b addendum C2) ───────────────────────────── */
 
+static void send_unsent_welcomes(GnMlsEventRouter *router, const gchar *gid);
+
+typedef struct {
+  gchar *gid;
+} WelcomeRetry;
+
+static void
+welcome_retry_free(gpointer data)
+{
+  WelcomeRetry *wr = data;
+  g_free(wr->gid);
+  g_free(wr);
+}
+
+static gboolean
+welcome_retry_cb(gpointer user_data)
+{
+  WelcomeRetry *wr = user_data;
+  if (welcome_timers != NULL)
+    g_hash_table_remove(welcome_timers, wr->gid);
+  if (active_router != NULL)
+    send_unsent_welcomes(active_router, wr->gid);
+  return G_SOURCE_REMOVE;
+}
+
+/* A Welcome send failed: resend the group's outbox on its own timer,
+ * backing off like Commit retries (W17b addendum 2, low). */
+static void
+schedule_welcome_retry(const gchar *gid)
+{
+  if (active_router == NULL || g_hash_table_contains(welcome_timers, gid))
+    return;
+  guint n = GPOINTER_TO_UINT(g_hash_table_lookup(welcome_attempts, gid));
+  if (n >= RETRY_LIMIT)
+    {
+      g_warning("MLS pending: Welcomes of %s still unsent after %u retries; they stay "
+                "in the outbox until the next group update or start", gid, n);
+      return;
+    }
+  g_hash_table_insert(welcome_attempts, g_strdup(gid), GUINT_TO_POINTER(n + 1));
+  WelcomeRetry *wr = g_new0(WelcomeRetry, 1);
+  wr->gid = g_strdup(gid);
+  guint delay = gn_mls_retry_delay_seconds(n, RETRY_BASE_S, RETRY_MAX_S, g_random_int());
+  guint id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, delay, welcome_retry_cb, wr,
+                                        welcome_retry_free);
+  g_hash_table_insert(welcome_timers, g_strdup(gid), GUINT_TO_POINTER(id));
+}
+
 typedef struct {
   GnMlsEventRouter *router;   /* strong */
   gchar            *gid;
@@ -84,10 +136,16 @@ on_welcome_sent(GObject *source, GAsyncResult *result, gpointer user_data)
           !marmot_gobject_client_mark_welcomes_sent(client, ws->gid, ids, &mark_error))
         g_warning("MLS pending: cannot mark a Welcome of %s sent: %s", ws->gid,
                   mark_error->message);
+      else if (welcome_attempts != NULL)
+        g_hash_table_remove(welcome_attempts, ws->gid);
     }
   else
-    g_warning("MLS pending: sending a Welcome of %s failed (kept for a retry): %s",
-              ws->gid, error ? error->message : "unknown");
+    {
+      g_warning("MLS pending: sending a Welcome of %s failed (kept for a retry): %s",
+                ws->gid, error ? error->message : "unknown");
+      if (welcome_timers != NULL)
+        schedule_welcome_retry(ws->gid);
+    }
   if (sending != NULL)
     g_hash_table_remove(sending, ws->id);
   g_object_unref(ws->router);
@@ -456,6 +514,11 @@ gn_mls_pending_commits_stop(void)
         g_source_remove(GPOINTER_TO_UINT(timer));
       g_hash_table_remove_all(timers);
       g_hash_table_remove_all(attempts);
+      g_hash_table_iter_init(&it, welcome_timers);
+      while (g_hash_table_iter_next(&it, NULL, &timer))
+        g_source_remove(GPOINTER_TO_UINT(timer));
+      g_hash_table_remove_all(welcome_timers);
+      g_hash_table_remove_all(welcome_attempts);
     }
   /* In-flight resolutions finish on their own (a deactivated context fails
    * their publishes as CANCELLED, which is not retried). */

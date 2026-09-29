@@ -60,6 +60,11 @@ G_DECLARE_FINAL_TYPE(MarmotGobjectClient, marmot_gobject_client, MARMOT_GOBJECT,
  * Creates a new MarmotGobjectClient with default configuration.
  * The storage is borrowed — the client keeps a reference.
  *
+ * The client's signals are emitted in the thread-default #GMainContext of
+ * the calling thread (captured here), from an idle source: only when that
+ * context iterates, never on a worker thread or while the client is busy,
+ * so handlers may call back into the client.
+ *
  * Returns: (transfer full): a new #MarmotGobjectClient
  */
 MarmotGobjectClient *marmot_gobject_client_new(MarmotGobjectStorage *storage);
