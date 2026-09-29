@@ -1,5 +1,7 @@
 #include "gh-conversation-private.h"
 
+#include <glib/gi18n.h>
+
 #include <nostr-utils.h>
 #include <nostr/nip19/nip19.h>
 #include <stdlib.h>
@@ -158,6 +160,10 @@ fallback_title(GhConversation *self)
   if (self->backend == GH_CONVERSATION_BACKEND_NIP29 &&
       gh_message_nip29_room_split(self->room_id, NULL, &group_id))
     return g_steal_pointer(&group_id);
+  /* An encrypted group without a name: never its random id, never who wrote. */
+  if (self->backend == GH_CONVERSATION_BACKEND_MLS)
+    /* TRANSLATORS: the title of an encrypted (MLS) group that has no name. */
+    return g_strdup(_("Encrypted group"));
   if (!self->peers[0])
     return abbreviated_npub(self->account);
   g_autoptr(GPtrArray) names = g_ptr_array_new_with_free_func(g_free);
@@ -188,6 +194,7 @@ gh_conversation_new_for_message(GhMessage *message)
   g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
   GhConversation *self = g_object_new(GH_TYPE_CONVERSATION, NULL);
   self->backend = gh_message_is_nip29(message) ? GH_CONVERSATION_BACKEND_NIP29
+                  : gh_message_is_mls(message) ? GH_CONVERSATION_BACKEND_MLS
                                                : GH_CONVERSATION_BACKEND_NIP17;
   self->account = g_strdup(gh_message_get_account(message));
   self->room_id = g_strdup(gh_message_get_room_id(message));
@@ -231,6 +238,22 @@ gh_conversation_new_nip29(const gchar *account, const gchar *room_id)
   g_return_val_if_fail(gh_message_nip29_room_split(room_id, NULL, NULL), NULL);
   GhConversation *self = g_object_new(GH_TYPE_CONVERSATION, NULL);
   self->backend = GH_CONVERSATION_BACKEND_NIP29;
+  self->account = g_strdup(account);
+  self->room_id = g_strdup(room_id);
+  self->participants = g_new0(gchar *, 2);
+  self->participants[0] = g_strdup(account);
+  self->peers = g_new0(gchar *, 1);
+  self->fallback_title = fallback_title(self);
+  return self;
+}
+
+GhConversation *
+gh_conversation_new_mls(const gchar *account, const gchar *room_id)
+{
+  g_return_val_if_fail(account != NULL, NULL);
+  g_return_val_if_fail(gh_message_mls_room_split(room_id, NULL), NULL);
+  GhConversation *self = g_object_new(GH_TYPE_CONVERSATION, NULL);
+  self->backend = GH_CONVERSATION_BACKEND_MLS;
   self->account = g_strdup(account);
   self->room_id = g_strdup(room_id);
   self->participants = g_new0(gchar *, 2);
@@ -961,7 +984,9 @@ gh_conversation_get_is_request(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
   /* A group is listed because the account joined it, never as a request. */
-  if (self->backend == GH_CONVERSATION_BACKEND_NIP29)
+  /* An encrypted group is listed once the account accepted its invitation. */
+  if (self->backend == GH_CONVERSATION_BACKEND_NIP29 ||
+      self->backend == GH_CONVERSATION_BACKEND_MLS)
     return FALSE;
   return !self->accepted && !self->has_own_message;
 }

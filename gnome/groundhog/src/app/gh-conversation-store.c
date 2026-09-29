@@ -3,6 +3,15 @@
 
 #include <string.h>
 
+enum { GROUP_NIP29, GROUP_MLS, N_GROUP_BACKENDS };
+
+typedef struct {
+  GhConversationDelegate delegate;
+  gpointer data;
+  GDestroyNotify destroy;
+  gboolean set;
+} GroupDelegate;
+
 struct _GhConversationStore {
   GObject parent_instance;
   gchar *account;
@@ -13,11 +22,9 @@ struct _GhConversationStore {
   gpointer delegate_data;
   GDestroyNotify delegate_destroy;
   gboolean has_delegate;
-  /* NIP-29 group rooms (G20a): their own delegate, never the main one. */
-  GhConversationDelegate group_delegate;
-  gpointer group_delegate_data;
-  GDestroyNotify group_delegate_destroy;
-  gboolean has_group_delegate;
+  /* Group rooms: their backend's own delegate, never the main one
+   * (index GROUP_NIP29: NIP-29, G20a; GROUP_MLS: MLS, qp24.13). */
+  GroupDelegate groups[N_GROUP_BACKENDS];
   /* Arrival numbers for messages no delegate numbers (nostrc-qp24.75). */
   guint64 next_seq;
 };
@@ -115,26 +122,49 @@ clear_delegate(GhConversationStore *self)
 }
 
 static void
-clear_group_delegate(GhConversationStore *self)
+clear_group_delegate(GhConversationStore *self, guint group)
 {
-  gpointer data = self->group_delegate_data;
-  GDestroyNotify destroy = self->group_delegate_destroy;
-  memset(&self->group_delegate, 0, sizeof self->group_delegate);
-  self->group_delegate_data = NULL;
-  self->group_delegate_destroy = NULL;
-  self->has_group_delegate = FALSE;
+  GroupDelegate *slot = &self->groups[group];
+  gpointer data = slot->data;
+  GDestroyNotify destroy = slot->destroy;
+  memset(slot, 0, sizeof *slot);
   if (destroy)
     destroy(data);
 }
 
-/* The delegate that persists a room of backend (NULL: memory only). NIP-29
+static void
+clear_group_delegates(GhConversationStore *self)
+{
+  for (guint i = 0; i < N_GROUP_BACKENDS; i++)
+    clear_group_delegate(self, i);
+}
+
+/* The group slot of backend, or -1 for NIP-17. */
+static gint
+group_of(GhConversationBackend backend)
+{
+  return backend == GH_CONVERSATION_BACKEND_NIP29 ? GROUP_NIP29
+       : backend == GH_CONVERSATION_BACKEND_MLS ? GROUP_MLS
+       : -1;
+}
+
+static GhConversationBackend
+backend_of_message(GhMessage *message)
+{
+  return gh_message_is_nip29(message) ? GH_CONVERSATION_BACKEND_NIP29
+       : gh_message_is_mls(message) ? GH_CONVERSATION_BACKEND_MLS
+       : GH_CONVERSATION_BACKEND_NIP17;
+}
+
+/* The delegate that persists a room of backend (NULL: memory only). Group
  * rooms never reach the main (NIP-17) delegate. */
 static const GhConversationDelegate *
-delegate_for(GhConversationStore *self, gboolean group, gpointer *data)
+delegate_for(GhConversationStore *self, GhConversationBackend backend, gpointer *data)
 {
-  if (group) {
-    *data = self->group_delegate_data;
-    return self->has_group_delegate ? &self->group_delegate : NULL;
+  gint group = group_of(backend);
+  if (group >= 0) {
+    *data = self->groups[group].data;
+    return self->groups[group].set ? &self->groups[group].delegate : NULL;
   }
   *data = self->delegate_data;
   return self->has_delegate ? &self->delegate : NULL;
@@ -166,7 +196,7 @@ gh_conversation_store_set_account(GhConversationStore *self, const gchar *accoun
   }
   if (g_strcmp0(self->account, account_pubkey) == 0)
     return;
-  clear_group_delegate(self);
+  clear_group_delegates(self);
   guint removed = self->conversations->len;
   g_hash_table_remove_all(self->messages);
   g_hash_table_remove_all(self->rooms);
@@ -252,7 +282,7 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
   GhMessage *existing = gh_conversation_store_lookup_message(self, rumor_id);
   gpointer delegate_data = NULL;
   const GhConversationDelegate *delegate =
-    delegate_for(self, gh_message_is_nip29(message), &delegate_data);
+    delegate_for(self, backend_of_message(message), &delegate_data);
   /* A delivered rumor the delegate committed but the model does not list (a
    * restart without restore, or unloaded history) is not shown again. A
    * local echo of a stored rumor is listed unless the delegate hides it. */
@@ -372,7 +402,7 @@ gh_conversation_store_persist_read(GhConversationStore *self, GhConversation *co
   g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
   gpointer data = NULL;
   const GhConversationDelegate *delegate = delegate_for(self,
-    gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29, &data);
+    gh_conversation_get_backend(conversation), &data);
   if (!delegate || !delegate->mark_read)
     return;
   g_autoptr(GError) error = NULL;
@@ -387,7 +417,7 @@ gh_conversation_store_persist_accept(GhConversationStore *self, GhConversation *
   g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
   gpointer data = NULL;
   const GhConversationDelegate *delegate = delegate_for(self,
-    gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29, &data);
+    gh_conversation_get_backend(conversation), &data);
   if (!delegate || !delegate->accept)
     return;
   g_autoptr(GError) error = NULL;
@@ -403,7 +433,7 @@ gh_conversation_store_persist_unread(GhConversationStore *self, GhConversation *
   g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
   gpointer data = NULL;
   const GhConversationDelegate *delegate = delegate_for(self,
-    gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29, &data);
+    gh_conversation_get_backend(conversation), &data);
   if (!delegate || !delegate->mark_unread)
     return;
   g_autoptr(GError) error = NULL;
@@ -606,18 +636,20 @@ gh_conversation_store_set_backend_delegate(GhConversationStore *self,
                                            gpointer delegate_data, GDestroyNotify destroy)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), FALSE);
-  g_return_val_if_fail(backend == GH_CONVERSATION_BACKEND_NIP29, FALSE);
+  gint group = group_of(backend);
+  g_return_val_if_fail(group >= 0, FALSE);
   g_return_val_if_fail(delegate && delegate->has_rumor && delegate->admit, FALSE);
   if (!self->account || g_strcmp0(self->account, account_pubkey) != 0) {
     if (destroy)
       destroy(delegate_data);
     return FALSE;
   }
-  clear_group_delegate(self);
-  self->group_delegate = *delegate;
-  self->group_delegate_data = delegate_data;
-  self->group_delegate_destroy = destroy;
-  self->has_group_delegate = TRUE;
+  clear_group_delegate(self, (guint)group);
+  GroupDelegate *slot = &self->groups[group];
+  slot->delegate = *delegate;
+  slot->data = delegate_data;
+  slot->destroy = destroy;
+  slot->set = TRUE;
   return TRUE;
 }
 
@@ -627,9 +659,10 @@ gh_conversation_store_clear_backend_delegate(GhConversationStore *self,
                                              gpointer delegate_data)
 {
   g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
-  g_return_if_fail(backend == GH_CONVERSATION_BACKEND_NIP29);
-  if (self->has_group_delegate && self->group_delegate_data == delegate_data)
-    clear_group_delegate(self);
+  gint group = group_of(backend);
+  g_return_if_fail(group >= 0);
+  if (self->groups[group].set && self->groups[group].data == delegate_data)
+    clear_group_delegate(self, (guint)group);
 }
 
 GhConversation *
@@ -637,11 +670,13 @@ gh_conversation_store_ensure_group(GhConversationStore *self, const gchar *room_
                                    const gchar *name)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), NULL);
-  if (!self->account || !gh_message_nip29_room_split(room_id, NULL, NULL))
+  gboolean nip29 = gh_message_nip29_room_split(room_id, NULL, NULL);
+  if (!self->account || (!nip29 && !gh_message_mls_room_split(room_id, NULL)))
     return NULL;
   GhConversation *conversation = g_hash_table_lookup(self->rooms, room_id);
   if (!conversation) {
-    g_autoptr(GhConversation) created = gh_conversation_new_nip29(self->account, room_id);
+    g_autoptr(GhConversation) created = nip29 ? gh_conversation_new_nip29(self->account, room_id)
+                                              : gh_conversation_new_mls(self->account, room_id);
     conversation = created;
     if (name)
       gh_conversation_set_name(conversation, name);
@@ -657,7 +692,7 @@ static void
 gh_conversation_store_finalize(GObject *object)
 {
   GhConversationStore *self = GH_CONVERSATION_STORE(object);
-  clear_group_delegate(self);
+  clear_group_delegates(self);
   clear_delegate(self);
   detach_conversations(self->conversations);
   g_hash_table_unref(self->messages);

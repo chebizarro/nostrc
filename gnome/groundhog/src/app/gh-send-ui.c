@@ -94,13 +94,14 @@ message_delegated(GhSendUi *ui, GhMessage *message)
 /* Whom a message in conversation goes to (transfer full): its other
  * participants, one or a NIP-17 room of up to GH_NIP17_MAX_SEND_RECIPIENTS
  * (W17), or the account itself in a note to self. NULL for a room larger
- * than NIP-17 allows (it can only receive) and for a NIP-29 relay group,
- * which has no peers but is not a note to self: its messages go to its
- * relay through GhNip29Service, never through the NIP-17 outbox (G20b). */
+ * than NIP-17 allows (it can only receive) and for a group (NIP-29 or an
+ * encrypted MLS group), which has no peers but is not a note to self: its
+ * messages go through GhNip29Service or GhMlsService, never through the
+ * NIP-17 outbox (G20b, qp24.13). */
 static GStrv
 recipients_of(GhSendUi *ui, GhConversation *conversation)
 {
-  if (!conversation || gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29)
+  if (!conversation || gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_NIP17)
     return NULL;
   const gchar *const *peers = gh_conversation_get_peers(conversation);
   if (!peers || !peers[0]) {
@@ -485,6 +486,9 @@ update_reason(GhSendUi *ui)
     else if (gh_conversation_get_backend(ui->shown) == GH_CONVERSATION_BACKEND_NIP29)
       /* A relay group without its sending engine (G20b's delegate). */
       reason = g_strdup(_("Replying in group conversations isn't possible yet."));
+    else if (gh_conversation_get_backend(ui->shown) == GH_CONVERSATION_BACKEND_MLS)
+      /* An encrypted group without its sending engine (qp24.13 part 2). */
+      reason = g_strdup(_("Replying in encrypted groups isn't possible yet."));
     else if (!recipients)
       reason = g_strdup(_("Messages can't be sent in private conversations with more than "
                           "10 people."));

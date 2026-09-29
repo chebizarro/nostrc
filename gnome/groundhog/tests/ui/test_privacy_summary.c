@@ -216,6 +216,10 @@ test_backends(void)
   g_assert_true(has_line_with(group_mls->unprotected, "this device only"));
   g_assert_true(has_line_with(group_mls->unprotected, "can't be downloaded again"));
   g_assert_true(has_line_with(group_mls->visible, "don't see who the members are"));
+  /* qp24.13: relays hold ciphertext only; members see who is in the group. */
+  g_assert_true(has_line_with(group_mls->visible, "store only encrypted messages"));
+  g_assert_true(has_line_with(group_mls->visible, "the member list"));
+  g_assert_nonnull(strstr(group_mls->encrypted, "current members only"));
 
   GhPrivacyContext unknown = { .backend = 7 };
   g_assert_null(gh_privacy_summary_new(&unknown));

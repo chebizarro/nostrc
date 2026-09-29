@@ -142,5 +142,39 @@ const gchar *gh_message_get_group_relay(GhMessage *self);
  * for the unsigned local echo of an own group message). */
 gboolean gh_message_is_signed(GhMessage *self);
 
+/* ---- Marmot (MLS) encrypted-group messages (nostrc-qp24.13) -----------------
+ * A message can also be the decrypted inner event of a Marmot group's kind
+ * 445 (MIP-03): an unsigned kind-9 chat event whose author libmarmot
+ * authenticated as the MLS sender (0.9.0: the inner pubkey must be the
+ * sender leaf's account). Its room is the group: "mls:" followed by the
+ * lowercase hex MLS group id (never the routing h, which can change), so no
+ * MLS room id can ever equal a NIP-17 or NIP-29 one. Like a NIP-29 message it
+ * has no recipients and its only participant is the account (membership is
+ * the MLS state's, never derived from who wrote). The "rumor" accessors
+ * return the inner event's id and JSON.
+ *
+ * The inner event must be unsigned (a signed inner event would be a
+ * publishable proof of authorship, MIP-03), kind 9, authored by a lowercase
+ * hex pubkey, with a positive created_at, content, and an id that matches
+ * (a missing one is computed). G_IO_ERROR_INVALID_DATA otherwise
+ * (G_IO_ERROR_INVALID_ARGUMENT for a bad account or group id). */
+#define GH_MESSAGE_MLS_ROOM_PREFIX "mls:"
+#define GH_MESSAGE_MLS_KIND 9
+/* The longest MLS group id accepted, in bytes (GhStoreMarmot's bound). */
+#define GH_MESSAGE_MAX_MLS_GROUP_ID 256
+GhMessage *gh_message_new_from_mls(const gchar *account_pubkey,
+                                   const gchar *group_id_hex,
+                                   const gchar *inner_event_json,
+                                   GError **error);
+/* "mls:" + group_id_hex; NULL unless group_id_hex is 2 to 512 lowercase hex
+ * characters of whole bytes. */
+gchar *gh_message_mls_room_id(const gchar *group_id_hex);
+/* Splits an MLS room id; FALSE when room_id is not one. */
+gboolean gh_message_mls_room_split(const gchar *room_id, gchar **group_id_hex);
+/* TRUE for an MLS group message (gh_message_new_from_mls()); then
+ * gh_message_get_group_id() is its MLS group id (hex) and
+ * gh_message_get_group_relay() NULL. */
+gboolean gh_message_is_mls(GhMessage *self);
+
 G_END_DECLS
 #endif

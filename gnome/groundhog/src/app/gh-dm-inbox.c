@@ -1,4 +1,5 @@
 #include "gh-dm-inbox.h"
+#include "gh-nip17-envelope.h"
 #include "gh-auth-policy.h"
 #include "gh-identity.h"
 #include "gh-nip17-inbox.h"
@@ -105,6 +106,10 @@ struct _GhDmInbox {
   gboolean hold_checkpoint;
 
   GhDmInboxState state;
+
+  /* Marmot Welcomes go here instead of the store (qp24.13); borrowed. */
+  GhDmInboxWelcomeFunc welcome_func;
+  gpointer welcome_data;
 };
 
 enum { PROP_0, PROP_STATE, N_PROPS };
@@ -280,8 +285,10 @@ pump(GhDmInbox *self)
     call->session = self->session;
     call->job = job;
     self->counters.in_flight++;
-    gh_nip17_unwrap_async(self->accounts, job->wrap_json, self->cancellable,
-                          unwrap_done, call);
+    gh_nip17_unwrap_full_async(self->accounts, job->wrap_json,
+                               self->welcome_func ? GH_NIP17_UNWRAP_WELCOMES
+                                                  : GH_NIP17_UNWRAP_DEFAULT,
+                               self->cancellable, unwrap_done, call);
   }
 }
 
@@ -415,6 +422,31 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
   }
 }
 
+/* A verified Marmot Welcome: the sink stores it with its wrap id seen. */
+static void
+welcome(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
+{
+  g_autoptr(GError) error = NULL;
+  if (self->welcome_func && self->welcome_func(self->welcome_data, message, relay_url, &error)) {
+    self->counters.admitted++;
+    return;
+  }
+  /* Not stored, so not seen: a later session offers it again. */
+  g_message("Groundhog could not store an encrypted-group invitation: %s",
+            error ? error->message : "nothing takes invitations now");
+  self->counters.deferred++;
+  self->hold_checkpoint = TRUE;
+  g_hash_table_add(self->deferred_ids, g_strdup(message->wrap_id));
+}
+
+void
+gh_dm_inbox_set_welcome_sink(GhDmInbox *self, GhDmInboxWelcomeFunc func, gpointer data)
+{
+  g_return_if_fail(GH_IS_DM_INBOX(self));
+  self->welcome_func = func;
+  self->welcome_data = func ? data : NULL;
+}
+
 static void
 unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -434,7 +466,9 @@ unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
   self->counters.in_flight--;
   self->counters.pending--;
   g_hash_table_remove(self->pending_ids, call->job->wrap_id);
-  if (message) {
+  if (message && message->kind == GH_NIP17_WELCOME_KIND) {
+    welcome(self, message, call->job->relay_url);
+  } else if (message) {
     admit(self, message, call->job->relay_url);
   } else if (error->domain == GH_NIP17_INBOX_ERROR) {
     self->counters.rejected++;

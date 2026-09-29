@@ -34,6 +34,7 @@ typedef struct {
   guint destination;
   gboolean expiring;      /* the rumor expires: outer holds the layers' expirations */
   GhNip17RoomExpiration outer;
+  gboolean no_self_copy;  /* a Welcome (kind 444): the recipient's wrap only */
 } Build;
 
 static void
@@ -298,7 +299,8 @@ envelope_return(GTask *task)
   for (guint i = 0; i < n; i++)
     envelope->recipient_wraps[i] = g_strdup(g_ptr_array_index(build->wraps, i));
   envelope->recipient_wrap_json = n ? g_strdup(envelope->recipient_wraps[0]) : NULL;
-  envelope->sender_wrap_json = g_strdup(g_ptr_array_index(build->wraps, n));
+  envelope->sender_wrap_json = build->wraps->len > n ? g_strdup(g_ptr_array_index(build->wraps, n))
+                                                     : NULL;
   g_task_return_pointer(task, envelope, (GDestroyNotify)gh_nip17_envelope_free);
   g_object_unref(task);
 }
@@ -361,8 +363,10 @@ sign_done(GObject *source, GAsyncResult *result, gpointer data)
   free(json);
   if (build->destination < build->n_recipients) {
     build->destination++; /* the next recipient, then the self-copy */
-    begin_encrypt(task);
-    return;
+    if (build->destination < build->n_recipients || !build->no_self_copy) {
+      begin_encrypt(task);
+      return;
+    }
   }
   envelope_return(task);
 }
@@ -570,7 +574,7 @@ gh_nip17_rumor_get_expiration(const gchar *rumor_json, gint64 *out_created_at,
  * rumor that expires. */
 static void
 start_with_rumor(GTask *task, const gchar *const *recipients, gboolean self_only,
-                 gchar *rumor_json, const GhNip17RoomExpiration *outer)
+                 gchar *rumor_json, const GhNip17RoomExpiration *outer, gboolean no_self_copy)
 {
   GhAccountController *accounts = g_task_get_source_object(task);
   const gchar *npub = gh_account_controller_get_active_npub(accounts);
@@ -622,6 +626,7 @@ start_with_rumor(GTask *task, const gchar *const *recipients, gboolean self_only
   build->expiring = outer != NULL;
   if (outer)
     build->outer = *outer;
+  build->no_self_copy = no_self_copy && !self_only;
   g_task_set_task_data(task, build, build_free);
   begin_encrypt(task);
 }
@@ -657,7 +662,7 @@ build_start(GhAccountController *accounts, const gchar *recipient_pubkey_hex,
     }
   }
   /* Without a rumor (recipient == sender) this reports that recipient. */
-  start_with_rumor(task, recipients, self_only, rumor_json, NULL);
+  start_with_rumor(task, recipients, self_only, rumor_json, NULL, FALSE);
 }
 
 gchar *
@@ -755,7 +760,7 @@ seal_start(GhAccountController *accounts, const gchar *rumor_json,
     return;
   }
   start_with_rumor(task, (const gchar *const *)recipients, self_only, g_strdup(rumor_json),
-                   outer);
+                   outer, FALSE);
 }
 
 void
@@ -797,6 +802,41 @@ gh_nip17_envelope_seal_room_async(GhAccountController *accounts, const gchar *ru
 {
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   seal_start(accounts, rumor_json, outer, FALSE, cancellable, callback, user_data);
+}
+
+void
+gh_nip17_envelope_seal_welcome_async(GhAccountController *accounts, const gchar *rumor_json,
+                                     const gchar *recipient_pubkey_hex,
+                                     GCancellable *cancellable, GAsyncReadyCallback callback,
+                                     gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
+  GTask *task = g_task_new(accounts, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_nip17_envelope_build_async);
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  const gchar *npub = gh_account_controller_get_active_npub(accounts);
+  g_autofree gchar *sender = npub ? gh_identity_pubkey_hex(npub) : NULL;
+  g_autofree gchar *recipient = hex64(recipient_pubkey_hex)
+                                  ? g_ascii_strdown(recipient_pubkey_hex, -1) : NULL;
+  NostrEvent *rumor = nostr_event_new();
+  gboolean ok = sender && recipient && g_strcmp0(sender, recipient) != 0 && rumor_json &&
+                strnlen(rumor_json, GH_NIP17_MAX_PLAINTEXT + 1) <= GH_NIP17_MAX_PLAINTEXT &&
+                rumor && nostr_event_deserialize_compact(rumor, rumor_json, NULL) == 1 &&
+                nostr_event_get_kind(rumor) == GH_NIP17_WELCOME_KIND && !rumor->sig &&
+                rumor->id && nostr_event_validate_id(rumor, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                g_strcmp0(nostr_event_get_pubkey(rumor), sender) == 0 &&
+                nostr_event_get_content(rumor) && *nostr_event_get_content(rumor);
+  if (rumor)
+    nostr_event_free(rumor);
+  if (!ok) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "Not a canonical kind-444 Welcome rumor of the active account "
+                            "for another person");
+    g_object_unref(task);
+    return;
+  }
+  const gchar *const recipients[] = { recipient, NULL };
+  start_with_rumor(task, recipients, FALSE, g_strdup(rumor_json), NULL, TRUE);
 }
 
 void

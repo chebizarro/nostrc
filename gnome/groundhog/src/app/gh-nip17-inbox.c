@@ -24,6 +24,7 @@ typedef struct {
   gint64 wrap_expiration;
   gint64 seal_expiration;
   guint signer_calls;
+  GhNip17UnwrapFlags flags;
 } Unwrap;
 
 static void
@@ -188,6 +189,15 @@ gh_nip17_unwrap_async(GhAccountController *accounts, const gchar *wrap_json,
                       GCancellable *cancellable, GAsyncReadyCallback callback,
                       gpointer user_data)
 {
+  gh_nip17_unwrap_full_async(accounts, wrap_json, GH_NIP17_UNWRAP_DEFAULT, cancellable,
+                             callback, user_data);
+}
+
+void
+gh_nip17_unwrap_full_async(GhAccountController *accounts, const gchar *wrap_json,
+                           GhNip17UnwrapFlags flags, GCancellable *cancellable,
+                           GAsyncReadyCallback callback, gpointer user_data)
+{
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   GTask *task = g_task_new(accounts, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_nip17_unwrap_async);
@@ -204,6 +214,7 @@ gh_nip17_unwrap_async(GhAccountController *accounts, const gchar *wrap_json,
   unwrap->generation = gh_account_controller_get_generation(accounts);
   unwrap->account_npub = g_strdup(npub);
   unwrap->account = g_ascii_strdown(account, -1);
+  unwrap->flags = flags;
   g_free(account);
   g_task_set_task_data(task, unwrap, unwrap_free);
 
@@ -294,6 +305,71 @@ rumor_recipients(const NostrEvent *rumor)
   return (gchar **)g_ptr_array_free(g_steal_pointer(&out), FALSE);
 }
 
+#define WELCOME_KIND 444
+
+/* A Marmot Welcome rumor (GH_NIP17_UNWRAP_WELCOMES): takes rumor. */
+static void
+welcome_rumor(GTask *task, NostrEvent *rumor)
+{
+  Unwrap *unwrap = g_task_get_task_data(task);
+  gchar rumor_id[65] = { 0 };
+  gint64 rumor_expiration = 0;
+  const gchar *reason = NULL;
+  GhNip17InboxError code = GH_NIP17_INBOX_ERROR_INVALID_RUMOR;
+  if (g_strcmp0(nostr_event_get_pubkey(rumor), unwrap->seal_pubkey) != 0) {
+    code = GH_NIP17_INBOX_ERROR_SENDER_MISMATCH;
+    reason = "Welcome rumor author differs from the seal signer";
+  } else if (g_str_equal(unwrap->seal_pubkey, unwrap->account)) {
+    code = GH_NIP17_INBOX_ERROR_WRONG_RECIPIENT;
+    reason = "A Welcome is never sent to oneself";
+  } else if (!*nostr_event_get_content(rumor)) {
+    reason = "Welcome rumor has no content";
+  } else if ((rumor->id ? nostr_event_validate_id(rumor, rumor_id)
+                        : nostr_event_compute_id(rumor, rumor_id)) != NOSTR_EVENT_VALIDATION_OK) {
+    reason = "Welcome rumor id is invalid";
+  } else if (!expiration_tag(rumor, FALSE, &rumor_expiration)) {
+    reason = "Welcome rumor expiration tag is invalid";
+  }
+  if (reason) {
+    nostr_event_free(rumor);
+    reject(task, code, reason);
+    return;
+  }
+  free(rumor->id);
+  rumor->id = strdup(rumor_id);
+  char *canonical = rumor->id ? nostr_event_serialize_compact(rumor) : NULL;
+  gint64 created_at = nostr_event_get_created_at(rumor);
+  nostr_event_free(rumor);
+  if (!canonical) {
+    reject(task, GH_NIP17_INBOX_ERROR_INVALID_RUMOR, "Could not serialize a Welcome rumor");
+    return;
+  }
+  if (!current(task)) {
+    free(canonical);
+    fail_cancelled(task);
+    return;
+  }
+  GhNip17Message *message = g_new0(GhNip17Message, 1);
+  message->account_pubkey = g_strdup(unwrap->account);
+  message->wrap_id = g_strdup(unwrap->wrap_id);
+  message->rumor_id = g_strdup(rumor_id);
+  message->rumor_json = g_strdup(canonical);
+  message->sender_pubkey = g_strdup(unwrap->seal_pubkey);
+  message->recipients = g_new0(gchar *, 2);
+  message->recipients[0] = g_strdup(unwrap->account);
+  message->created_at = created_at;
+  message->rumor_expiration = rumor_expiration;
+  message->seal_expiration = unwrap->seal_expiration;
+  message->wrap_expiration = unwrap->wrap_expiration;
+  message->expires_at = rumor_expiration ? rumor_expiration :
+                        unwrap->seal_expiration ? unwrap->seal_expiration :
+                        unwrap->wrap_expiration;
+  message->kind = WELCOME_KIND;
+  free(canonical);
+  g_task_return_pointer(task, message, (GDestroyNotify)gh_nip17_message_free);
+  g_object_unref(task);
+}
+
 static void
 seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -315,6 +391,10 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
       !nostr_event_get_content(rumor)) {
     if (rumor) nostr_event_free(rumor);
     reject(task, GH_NIP17_INBOX_ERROR_INVALID_RUMOR, "NIP-17 rumor is malformed or signed");
+    return;
+  }
+  if (nostr_event_get_kind(rumor) == WELCOME_KIND && (unwrap->flags & GH_NIP17_UNWRAP_WELCOMES)) {
+    welcome_rumor(task, rumor);
     return;
   }
   if (nostr_event_get_kind(rumor) != 14 && nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND) {
@@ -369,6 +449,7 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
   rumor->id = strdup(rumor_id);
   char *canonical = rumor->id ? nostr_event_serialize_compact(rumor) : NULL;
   gint64 created_at = nostr_event_get_created_at(rumor);
+  gint kind = nostr_event_get_kind(rumor);
   nostr_event_free(rumor);
   if (!canonical) {
     g_strfreev(recipients);
@@ -396,6 +477,7 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
   message->expires_at = rumor_expiration ? rumor_expiration :
                         unwrap->seal_expiration ? unwrap->seal_expiration :
                         unwrap->wrap_expiration;
+  message->kind = kind;
   free(canonical);
   g_task_return_pointer(task, message, (GDestroyNotify)gh_nip17_message_free);
   g_object_unref(task);

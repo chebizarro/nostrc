@@ -40,7 +40,8 @@ typedef struct {
   gchar *rumor_json;          /* one canonical unsigned kind-14 rumor */
   gchar *recipient_wrap_json; /* the first recipient's signed kind-1059 wrap,
                                * not published; NULL for a note to self */
-  gchar *sender_wrap_json;    /* signed kind-1059 self-copy, not published */
+  gchar *sender_wrap_json;    /* signed kind-1059 self-copy, not published; NULL
+                               * for a Welcome (seal_welcome) */
   /* Every recipient (lowercase hex, the rumor's "p" order, never the sender)
    * and its own wrap, index for index; both empty for a note to self. Each
    * wrap has its own ephemeral key, and no two wraps (nor two seals) of one
@@ -168,6 +169,26 @@ void gh_nip17_envelope_seal_room_async(GhAccountController *accounts,
                                        GCancellable *cancellable,
                                        GAsyncReadyCallback callback,
                                        gpointer user_data);
+/* The kind of a Marmot Welcome rumor (MIP-02). */
+#define GH_NIP17_WELCOME_KIND 444
+/* nostrc-qp24.13: gift-wraps a Marmot Welcome (MIP-02; the adopted transport
+ * profile: a kind-444 rumor in a NIP-59 kind-13 seal in a kind-1059 wrap)
+ * to one invitee, exactly as a private message's recipient wrap is made
+ * (signer NIP-44 encryption, signer seal signature, a fresh ephemeral wrap
+ * key, randomized seal and wrap created_at) but with no self-copy: the
+ * Welcome is for the invitee alone. @rumor_json must be a canonical unsigned
+ * kind-444 rumor authored by the active account (its "pubkey" set and its
+ * "id" matching, since the seal binds the rumor's author) with content, and
+ * @recipient_pubkey_hex another person; G_IO_ERROR_INVALID_ARGUMENT before
+ * any signer call otherwise. The envelope's recipient_wrap_json (and
+ * recipient_wraps[0]) is the wrap; sender_wrap_json is NULL. Finish with
+ * gh_nip17_envelope_build_finish(). */
+void gh_nip17_envelope_seal_welcome_async(GhAccountController *accounts,
+                                          const gchar *rumor_json,
+                                          const gchar *recipient_pubkey_hex,
+                                          GCancellable *cancellable,
+                                          GAsyncReadyCallback callback,
+                                          gpointer user_data);
 /* Finishes any build or seal. */
 GhNip17Envelope *gh_nip17_envelope_build_finish(GAsyncResult *result,
                                                   GError **error);

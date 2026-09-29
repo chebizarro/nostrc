@@ -3,6 +3,7 @@
 
 #include "gh-account-relays.h"
 #include "gh-conversation-store.h"
+#include "gh-nip17-inbox.h"
 
 G_BEGIN_DECLS
 
@@ -190,6 +191,22 @@ gboolean gh_dm_inbox_set_storage(GhDmInbox *self, guint64 generation,
 void gh_dm_inbox_clear_storage(GhDmInbox *self);
 /* Whether a grant is held (always FALSE outside storage mode). */
 gboolean gh_dm_inbox_has_storage(GhDmInbox *self);
+
+/* ---- Marmot Welcomes (nostrc-qp24.13) -----------------------------------------
+ * Welcomes arrive like private messages (charter §2.2): a kind-444 rumor in
+ * a gift wrap to the account's own 10050 relays. With a sink set, the inbox
+ * unwraps with GH_NIP17_UNWRAP_WELCOMES and hands each verified Welcome
+ * (message->kind 444; its wrap id, inviter and canonical rumor) to the sink
+ * instead of the conversation store. The sink must store it durably and
+ * record message->wrap_id as a seen wrap in the same transaction (so
+ * gh_conversation_store_has_wrap() skips every later copy before any signer
+ * call) and return TRUE; FALSE with error defers the wrap like a failed
+ * commit (not recorded: a later session retries it). Without a sink a
+ * Welcome is an unsupported kind (rejected as before). data is borrowed:
+ * clear the sink (func NULL) before it goes away. */
+typedef gboolean (*GhDmInboxWelcomeFunc)(gpointer data, const GhNip17Message *welcome,
+                                         const gchar *relay_url, GError **error);
+void gh_dm_inbox_set_welcome_sink(GhDmInbox *self, GhDmInboxWelcomeFunc func, gpointer data);
 
 /* 1 (the default) to GH_DM_INBOX_MAX_IN_FLIGHT; applies to the next unwrap. */
 void gh_dm_inbox_set_max_in_flight(GhDmInbox *self, guint max_in_flight);

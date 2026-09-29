@@ -190,18 +190,21 @@ add_mls(const GhPrivacyContext *context, GhPrivacySummary *summary, GStrvBuilder
   summary->end_to_end = TRUE;
   summary->icon_name = "channel-secure-symbolic";
   summary->heading = g_strdup(tr(N_("End-to-end encrypted")));
-  summary->encrypted = g_strdup(tr(N_("Only current members can read messages. Relays can't see "
-                                      "what anyone writes or who wrote it.")));
+  summary->encrypted = g_strdup(tr(N_("Messages are encrypted end to end for the group's current "
+                                      "members only. Relays can't see what anyone writes or who "
+                                      "wrote it.")));
 
   /* §2.2 column "MLS encrypted group". */
-  g_strv_builder_add(visible, tr(N_("The group's relays see an id that links the group's "
-                                    "messages, their sizes and times, and the IP addresses of "
-                                    "members who connect. They don't see who the members are.")));
+  g_strv_builder_add(visible, tr(N_("The group's relays store only encrypted messages. They see "
+                                    "an id that links the group's messages, their sizes and "
+                                    "times, and the IP addresses of members who connect. They "
+                                    "don't see who the members are.")));
   g_strv_builder_add(visible, tr(N_("Invitations arrive like private messages: your message "
                                     "relays see their size and time.")));
   g_strv_builder_add(visible, tr(N_("Anyone can see that you can join encrypted groups, from the "
                                     "key packages you publish.")));
-  g_strv_builder_add(visible, tr(N_("Members see what you write and your public key.")));
+  g_strv_builder_add(visible, tr(N_("Members see what you write, your public key and the "
+                                    "member list.")));
 
   /* §1.4: one device per MLS identity in v1; D7: no history recovery. */
   g_strv_builder_add(unprotected, tr(N_("Other devices: this group works on this device only.")));

@@ -3,12 +3,12 @@ end-to-end: yes
 icon: channel-secure-symbolic
 subtitle: Encrypted group · 4 members
 heading: End-to-end encrypted
-encrypted: Only current members can read messages. Relays can't see what anyone writes or who wrote it.
+encrypted: Messages are encrypted end to end for the group's current members only. Relays can't see what anyone writes or who wrote it.
 what others can see:
-- The group's relays see an id that links the group's messages, their sizes and times, and the IP addresses of members who connect. They don't see who the members are.
+- The group's relays store only encrypted messages. They see an id that links the group's messages, their sizes and times, and the IP addresses of members who connect. They don't see who the members are.
 - Invitations arrive like private messages: your message relays see their size and time.
 - Anyone can see that you can join encrypted groups, from the key packages you publish.
-- Members see what you write and your public key.
+- Members see what you write, your public key and the member list.
 what Groundhog can't protect:
 - Other devices: this group works on this device only.
 - Lost history: if this device's data is lost, the group's history can't be downloaded again.

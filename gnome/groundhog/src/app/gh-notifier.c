@@ -456,7 +456,7 @@ preview_of(Room *room)
   }
   const gchar *const *peers = gh_conversation_get_peers(room->conversation);
   const gboolean group =
-    gh_conversation_get_backend(room->conversation) == GH_CONVERSATION_BACKEND_NIP29 ||
+    gh_conversation_get_backend(room->conversation) != GH_CONVERSATION_BACKEND_NIP17 ||
     (peers && peers[0] && peers[1]);
   g_autofree gchar *author = group
                                ? npub_of(gh_message_get_sender(message), TRUE) : NULL;

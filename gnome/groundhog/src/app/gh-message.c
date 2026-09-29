@@ -29,6 +29,8 @@ struct _GhMessage {
   gint kind;
   gchar *group_id;
   gchar *group_relay;
+  /* MLS group messages only (group_id is then the hex MLS group id). */
+  gboolean mls;
 };
 
 enum {
@@ -292,7 +294,7 @@ GhNip17File *
 gh_message_dup_file(GhMessage *self)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
-  if (self->nip29 || self->kind != GH_NIP17_FILE_KIND)
+  if (self->nip29 || self->mls || self->kind != GH_NIP17_FILE_KIND)
     return NULL;
   return gh_nip17_file_from_rumor(self->rumor_json, NULL);
 }
@@ -550,6 +552,110 @@ gh_message_is_signed(GhMessage *self)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(self), FALSE);
   return self->is_signed;
+}
+
+/* ---- MLS group messages ------------------------------------------------- */
+
+static gboolean
+mls_group_hex_valid(const gchar *hex)
+{
+  gsize length = hex ? strnlen(hex, 2 * GH_MESSAGE_MAX_MLS_GROUP_ID + 1) : 0;
+  if (length < 2 || length > 2 * GH_MESSAGE_MAX_MLS_GROUP_ID || length % 2)
+    return FALSE;
+  for (const gchar *p = hex; *p; p++)
+    if (!g_ascii_isdigit(*p) && (*p < 'a' || *p > 'f'))
+      return FALSE;
+  return TRUE;
+}
+
+gchar *
+gh_message_mls_room_id(const gchar *group_id_hex)
+{
+  if (!mls_group_hex_valid(group_id_hex))
+    return NULL;
+  return g_strconcat(GH_MESSAGE_MLS_ROOM_PREFIX, group_id_hex, NULL);
+}
+
+gboolean
+gh_message_mls_room_split(const gchar *room_id, gchar **group_id_hex)
+{
+  if (!room_id || !g_str_has_prefix(room_id, GH_MESSAGE_MLS_ROOM_PREFIX))
+    return FALSE;
+  const gchar *hex = room_id + strlen(GH_MESSAGE_MLS_ROOM_PREFIX);
+  if (!mls_group_hex_valid(hex))
+    return FALSE;
+  if (group_id_hex)
+    *group_id_hex = g_strdup(hex);
+  return TRUE;
+}
+
+GhMessage *
+gh_message_new_from_mls(const gchar *account_pubkey, const gchar *group_id_hex,
+                        const gchar *inner_event_json, GError **error)
+{
+  if (!lower_hex64(account_pubkey) || !mls_group_hex_valid(group_id_hex)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A lowercase hex account and MLS group id are required");
+    return NULL;
+  }
+  const gchar *reason = NULL;
+  if (!inner_event_json || strnlen(inner_event_json, GH_MESSAGE_MAX_RUMOR_JSON + 1) >
+                             GH_MESSAGE_MAX_RUMOR_JSON)
+    reason = "missing or too large";
+  NostrEvent *event = reason ? NULL : nostr_event_new();
+  gchar id[65] = { 0 };
+  if (!reason && !event)
+    reason = "out of memory";
+  if (!reason && nostr_event_deserialize_unsigned(event, inner_event_json, NULL) !=
+                   NOSTR_EVENT_VALIDATION_OK)
+    reason = "malformed";
+  else if (!reason && event->sig)
+    reason = "an inner event must not be signed";
+  else if (!reason && nostr_event_get_kind(event) != GH_MESSAGE_MLS_KIND)
+    reason = "not a kind-9 chat message";
+  else if (!reason && nostr_event_get_created_at(event) <= 0)
+    reason = "no created_at";
+  else if (!reason && !lower_hex64(nostr_event_get_pubkey(event)))
+    reason = "author is not a lowercase hex pubkey";
+  else if (!reason && !nostr_event_get_content(event))
+    reason = "no content";
+  else if (!reason && (event->id ? nostr_event_validate_id(event, id)
+                                 : nostr_event_compute_id(event, id)) != NOSTR_EVENT_VALIDATION_OK)
+    reason = "id does not match its content";
+  if (reason) {
+    if (event)
+      nostr_event_free(event);
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                "Not an encrypted group message: %s", reason);
+    return NULL;
+  }
+  GhMessage *self = g_object_new(GH_TYPE_MESSAGE, NULL);
+  self->mls = TRUE;
+  self->kind = GH_MESSAGE_MLS_KIND;
+  self->account = g_strdup(account_pubkey);
+  self->rumor_id = g_strdup(id);
+  self->rumor_json = g_strdup(inner_event_json);
+  self->sender = g_strdup(nostr_event_get_pubkey(event));
+  self->created_at = nostr_event_get_created_at(event);
+  self->content = g_strdup(nostr_event_get_content(event));
+  self->group_id = g_strdup(group_id_hex);
+  self->room_id = gh_message_mls_room_id(group_id_hex);
+  self->recipients = g_new0(gchar *, 1);
+  self->participants = g_new0(gchar *, 2);
+  self->participants[0] = g_strdup(account_pubkey);
+  const gchar *expiration = first_tag_value(event, "expiration", NULL);
+  gint64 expires_at = 0;
+  if (expiration && g_ascii_string_to_signed(expiration, 10, 1, G_MAXINT64, &expires_at, NULL))
+    self->expires_at = expires_at;
+  nostr_event_free(event);
+  return self;
+}
+
+gboolean
+gh_message_is_mls(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), FALSE);
+  return self->mls;
 }
 
 gint

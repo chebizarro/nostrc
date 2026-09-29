@@ -54,6 +54,9 @@ typedef struct {
    * the unwrap does not drop expired messages, so the caller can still
    * record them as seen without storing them. */
   gint64 expires_at;
+  /* The rumor's kind: 14 or 15, or 444 for a Marmot Welcome (only with
+   * GH_NIP17_UNWRAP_WELCOMES; see there). */
+  gint kind;
 } GhNip17Message;
 
 void gh_nip17_message_free(GhNip17Message *message);
@@ -95,6 +98,28 @@ void gh_nip17_unwrap_async(GhAccountController *accounts,
                            GAsyncReadyCallback callback,
                            gpointer user_data);
 GhNip17Message *gh_nip17_unwrap_finish(GAsyncResult *result, GError **error);
+
+/* nostrc-qp24.13: which rumors besides kind 14/15 an unwrap admits. */
+typedef enum {
+  GH_NIP17_UNWRAP_DEFAULT = 0,
+  /* A kind-444 Marmot Welcome rumor (MIP-02) is admitted too, as a
+   * GhNip17Message with kind 444: unsigned, rumor.pubkey == seal.pubkey (the
+   * inviter, authenticated by the seal), a canonical id (a declared id must
+   * match), non-empty content, at most one well-formed expiration tag, and
+   * not the account's own (a Welcome is never sent to oneself). Its other
+   * tags are libmarmot's to judge; it has no p tags, so recipients is the
+   * account alone and self_copy FALSE. The Welcome itself is validated only
+   * by libmarmot (marmot_process_welcome()). */
+  GH_NIP17_UNWRAP_WELCOMES = 1 << 0
+} GhNip17UnwrapFlags;
+
+/* gh_nip17_unwrap_async() with flags; finish with gh_nip17_unwrap_finish(). */
+void gh_nip17_unwrap_full_async(GhAccountController *accounts,
+                                const gchar *wrap_json,
+                                GhNip17UnwrapFlags flags,
+                                GCancellable *cancellable,
+                                GAsyncReadyCallback callback,
+                                gpointer user_data);
 /* The signer calls (NIP-44 decrypts) the unwrap behind @result started: 0
  * when it was rejected by the wrap checks of step 1, else 1 or 2. Readable
  * from the callback, before or after _finish. A final rejection with a

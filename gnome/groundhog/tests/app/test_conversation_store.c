@@ -1129,6 +1129,108 @@ test_request_title(void)
   g_signal_handlers_disconnect_by_data(party, &title_notified);
 }
 
+/* qp24.13: MLS group messages and rooms. A decrypted kind-9 inner event is
+ * a message of the room "mls:<hex group id>" (never a NIP-17 or NIP-29 room
+ * id), goes to the MLS delegate only, and the room is never a request. */
+static gchar *
+inner_event(guint author, const gchar *content, gint kind, gboolean sign)
+{
+  static const gchar *const secrets[] = {
+    NULL,
+    "0000000000000000000000000000000000000000000000000000000000000001",
+    "0000000000000000000000000000000000000000000000000000000000000002",
+  };
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, kind);
+  nostr_event_set_pubkey(event, hex[author]);
+  nostr_event_set_created_at(event, 50);
+  nostr_event_set_content(event, content);
+  nostr_event_set_tags(event, nostr_tags_new(0));
+  if (sign)
+    g_assert_cmpint(nostr_event_sign(event, secrets[author]), ==, 0);
+  else
+    event->id = nostr_event_get_id(event);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gchar *out = g_strdup(json);
+  free(json);
+  return out;
+}
+
+static void
+test_mls_rooms(void)
+{
+  const gchar *group = "abababababababababababababababababababababababababababababababab";
+  g_autofree gchar *room_id = gh_message_mls_room_id(group);
+  g_assert_cmpstr(room_id, ==, "mls:abababababababababababababababababababababababababababababababab");
+  g_autofree gchar *split = NULL;
+  g_assert_true(gh_message_mls_room_split(room_id, &split));
+  g_assert_cmpstr(split, ==, group);
+  g_assert_false(gh_message_mls_room_split(group, NULL));          /* a note-to-self id */
+  g_assert_false(gh_message_mls_room_split("mls:ABAB", NULL));    /* lowercase only */
+  g_assert_false(gh_message_mls_room_split("mls:abc", NULL));     /* whole bytes */
+  g_assert_null(gh_message_mls_room_id("xyz"));
+
+  FakeDelegate main_fake = { 0 }, mls_fake = { 0 };
+  fake_init(&main_fake);
+  fake_init(&mls_fake);
+  GhConversationStore *store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, hex[1], &fake_delegate, &main_fake, fake_destroy);
+  g_assert_true(gh_conversation_store_set_backend_delegate(store, GH_CONVERSATION_BACKEND_MLS,
+                                                           hex[1], &fake_delegate, &mls_fake,
+                                                           fake_destroy));
+  /* Listed before its first message, titled "Encrypted group" until named. */
+  GhConversation *room = gh_conversation_store_ensure_group(store, room_id, NULL);
+  g_assert_nonnull(room);
+  g_assert_cmpint(gh_conversation_get_backend(room), ==, GH_CONVERSATION_BACKEND_MLS);
+  g_assert_cmpstr(gh_conversation_get_title(room), ==, "Encrypted group");
+  g_assert_false(gh_conversation_get_is_request(room));
+  g_assert_true(gh_conversation_store_ensure_group(store, room_id, "Friends") == room);
+  g_assert_cmpstr(gh_conversation_get_title(room), ==, "Friends");
+
+  g_autofree gchar *inner = inner_event(2, "hello group", 9, FALSE);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) message = gh_message_new_from_mls(hex[1], group, inner, &error);
+  g_assert_no_error(error);
+  g_assert_true(gh_message_is_mls(message));
+  g_assert_false(gh_message_is_nip29(message));
+  g_assert_cmpstr(gh_message_get_room_id(message), ==, room_id);
+  g_assert_cmpstr(gh_message_get_group_id(message), ==, group);
+  g_assert_null(gh_message_get_group_relay(message));
+  g_assert_cmpstr(gh_message_get_sender(message), ==, hex[2]);
+  g_assert_null(gh_message_get_recipients(message)[0]);
+  g_assert_null(gh_message_dup_file(message));
+  const gchar *envelope = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  g_assert_cmpint(gh_conversation_store_admit(store, message, envelope, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+  g_assert_cmpuint(mls_fake.admits->len, ==, 1);
+  g_assert_cmpuint(main_fake.admits->len, ==, 0);   /* never the NIP-17 delegate */
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, 1);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
+  g_assert_false(gh_conversation_get_is_request(room));
+
+  /* Only unsigned kind-9 inner events are group messages. */
+  g_autofree gchar *signed_inner = inner_event(2, "signed", 9, TRUE);
+  g_assert_null(gh_message_new_from_mls(hex[1], group, signed_inner, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error(&error);
+  g_autofree gchar *dm = inner_event(2, "a dm", 14, FALSE);
+  g_assert_null(gh_message_new_from_mls(hex[1], group, dm, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error(&error);
+  g_assert_null(gh_message_new_from_mls(hex[1], "not hex", inner, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
+
+  /* Switching accounts drops the MLS delegate with the rooms. */
+  gh_conversation_store_set_account(store, hex[2], NULL, NULL, NULL);
+  g_assert_cmpuint(mls_fake.destroyed, ==, 1);
+  g_object_unref(store);
+  fake_clear(&main_fake);
+  fake_clear(&mls_fake);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1151,6 +1253,7 @@ main(int argc, char **argv)
                   test_mark_read_keeps_unloaded_unread);
   g_test_add_func("/groundhog/conversations/requests", test_requests);
   g_test_add_func("/groundhog/conversations/template-properties", test_template_properties);
+  g_test_add_func("/groundhog/conversations/mls-rooms", test_mls_rooms);
   int status = g_test_run();
   for (guint key = 1; key < 4; key++)
     g_free(hex[key]);
