@@ -7,9 +7,11 @@
  * (with the NIP-42 half) and, with libsoup, real local WebSocket relays (H2).
  * Signing runs against the mock org.nostr.Signer on a private bus
  * (gh-test-signer.h). Waits iterate the main context; their deadlines are
- * failure bounds only. The crash scenarios fork before any D-Bus use: each
- * runs in its own test subprocess, the child builds its own bus and dies at
- * the cut point, then the parent builds a fresh one and resumes. */
+ * failure bounds only. The crash scenarios run in their own test subprocess,
+ * which starts a private bus (nostrc-test-bus, no connection yet) and then
+ * forks: the child connects, runs until it is SIGKILLed at the cut point, and
+ * the parent connects to the same bus afterwards and resumes. The bus is
+ * bound to the subprocess's lifetime, so no daemon outlives a test. */
 #include "crash-harness.h"
 #include "gh-outbox.h"
 #include "gh-nip17-envelope.h"
@@ -614,38 +616,22 @@ store_open(const gchar *data_dir, GhClock *clock)
   return store;
 }
 
-/* Connects to a bus daemon this process did not start: a crash scenario's
- * parent brings the daemon up before fork() (without any GDBus connection,
- * so no GDBus thread crosses the fork), the child and later the parent
- * connect here. A SIGKILLed child therefore never leaves a daemon behind. */
+/* Connections to a crash scenario's bus, which this process's parent (or
+ * this process, before the fork) started. The bus owns them: never closed
+ * here, released by nostrc_test_bus_down() (or with the killed child). */
 static void
-bus_connect(GhTestBus *bus, GTestDBus *daemon)
+bus_connect(GhTestBus *bus, NostrcTestBus *daemon)
 {
-  g_autoptr(GError) error = NULL;
-  const gchar *address = g_test_dbus_get_bus_address(daemon);
-  GDBusConnectionFlags flags = G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-                               G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION;
-  bus->bus = NULL;
-  bus->client = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
-  g_assert_no_error(error);
-  bus->owner = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
-  g_assert_no_error(error);
-}
-
-static void
-bus_disconnect(GhTestBus *bus)
-{
-  g_dbus_connection_close_sync(bus->owner, NULL, NULL);
-  g_dbus_connection_close_sync(bus->client, NULL, NULL);
-  g_clear_object(&bus->owner);
-  g_clear_object(&bus->client);
+  bus->bus = daemon;
+  bus->client = nostrc_test_bus_connect(daemon);
+  bus->owner = nostrc_test_bus_connect(daemon);
 }
 
 /* Everything but the outbox. data_dir NULL creates a fresh one. With a
- * daemon (a crash-test process), private connections to it are used;
- * otherwise the binary's shared bus. */
+ * crash scenario's bus, fresh connections to it are used; otherwise the
+ * binary's shared bus. */
 static void
-fixture_up(Fixture *f, const gchar *data_dir, GTestDBus *daemon)
+fixture_up(Fixture *f, const gchar *data_dir, NostrcTestBus *daemon)
 {
   memset(f, 0, sizeof *f);
   if (daemon) {
@@ -727,8 +713,6 @@ fixture_down(Fixture *f)
   gh_store_close(f->store);
   gh_clock_unref(f->clock);
   gh_test_signer_down(f->bus, &f->mock);
-  if (f->bus == &f->own_bus)
-    bus_disconnect(&f->own_bus);
   if (f->own_dir)
     rm_rf(f->data_dir);
   g_free(f->data_dir);
@@ -1422,7 +1406,7 @@ test_send_happy_path(void)
 
 typedef struct {
   gchar *data_dir;
-  GTestDBus *daemon;
+  NostrcTestBus *daemon;
 } CrashEnv;
 
 static void
@@ -1476,8 +1460,13 @@ crash_run(CrashEnv *env, const gchar *cut_point, GhCrashScript child)
 {
   env->data_dir = g_dir_make_tmp("groundhog-outbox-crash-XXXXXX", NULL);
   g_assert_nonnull(env->data_dir);
-  env->daemon = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(env->daemon);
+  /* Not a session bus: nostrc_test_bus_up() would then connect, and no GDBus
+   * connection (or its worker thread) may exist before fork(). GhSigner
+   * finds the bus through DBUS_SESSION_BUS_ADDRESS, exported by hand. The
+   * child inherits the bus's lifeline, so its death leaves the bus up. */
+  env->daemon = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
+  nostrc_test_bus_up(env->daemon);
+  g_setenv("DBUS_SESSION_BUS_ADDRESS", nostrc_test_bus_get_address(env->daemon), TRUE);
   GhCrashOutcome outcome = gh_crash_harness_run(cut_point, 1, child, env);
   g_assert_cmpstr(gh_crash_outcome_to_string(outcome), ==,
                   gh_crash_outcome_to_string(GH_CRASH_KILLED));
@@ -1486,8 +1475,8 @@ crash_run(CrashEnv *env, const gchar *cut_point, GhCrashScript child)
 static void
 crash_env_clear(CrashEnv *env)
 {
-  g_test_dbus_down(env->daemon);
-  g_clear_object(&env->daemon);
+  nostrc_test_bus_down(g_steal_pointer(&env->daemon));
+  g_unsetenv("DBUS_SESSION_BUS_ADDRESS");
   rm_rf(env->data_dir);
   g_free(env->data_dir);
 }

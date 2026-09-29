@@ -742,7 +742,7 @@ if (TARGET groundhog-store AND GROUNDHOG_DM_SEND_SOURCES)
     target_include_directories(test-groundhog-outbox PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/store)
     target_link_libraries(test-groundhog-outbox PRIVATE groundhog-account-relays
-      groundhog-store-testhooks nostr_nip17_core nostr_nip59_core)
+      groundhog-store-testhooks nostr_nip17_core nostr_nip59_core nostrc-test-bus)
     if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       target_link_libraries(test-groundhog-outbox PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       target_compile_definitions(test-groundhog-outbox PRIVATE GROUNDHOG_TEST_WIRE=1)
