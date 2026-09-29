@@ -40,9 +40,13 @@ gh_group_parse_relay(const gchar *text, GError **error)
     invalid(error, _("This isn't a relay address. It looks like groups.example.com."));
     return NULL;
   }
+  /* ws:// only to a loopback test relay or a .onion service (Tor already
+   * encrypts it); the relay transport then allows .onion only in Tor mode
+   * (gh_net_relay_url_allowed, G09). */
   if (g_str_has_prefix(normalized, "ws://")) {
     g_autoptr(GUri) uri = g_uri_parse(normalized, G_URI_FLAGS_NONE, NULL);
-    if (!uri || !host_is_loopback(g_uri_get_host(uri))) {
+    const gchar *host = uri ? g_uri_get_host(uri) : NULL;
+    if (!host || !(host_is_loopback(host) || g_str_has_suffix(host, ".onion"))) {
       invalid(error, _("Groundhog only connects to group relays over a secure connection. "
                        "Use the relay’s wss address."));
       return NULL;

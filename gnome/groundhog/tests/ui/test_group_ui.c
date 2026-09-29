@@ -492,6 +492,15 @@ test_references(void)
   g_clear_pointer(&relay, g_free);
   g_clear_pointer(&group, g_free);
 
+  /* A .onion service over ws:// parses (Tor encrypts it); the transport
+   * allows it only in Tor mode (gh_net_relay_url_allowed). */
+  g_assert_true(gh_group_parse_reference("ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvw.onion'abc", &relay, &group,
+                                         &code, &error));
+  g_assert_no_error(error);
+  g_assert_cmpstr(relay, ==, "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvw.onion");
+  g_clear_pointer(&relay, g_free);
+  g_clear_pointer(&group, g_free);
+
   /* Not group addresses: said in words, nothing parsed. */
   const gchar *bad[] = { "", "   ", "npub1xyz", "groups.example.com", "host'Bad Id",
                          "https://example.com/'x", "host'a'b", NULL };
