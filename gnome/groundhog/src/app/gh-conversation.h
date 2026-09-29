@@ -39,11 +39,15 @@ const gchar *const *gh_conversation_get_peers(GhConversation *self);
 const gchar *gh_conversation_get_subject(GhConversation *self);
 /* created_at of the newest message. */
 gint64 gh_conversation_get_last_activity(GhConversation *self);
-/* Messages from others after the read marker. The marker moves to the end on
+/* Messages from others after the read marker, including any in the unloaded
+ * older history of a durably stored room. The marker moves to the end on
  * mark_read, and to any own message added after it (replying implies having
- * read what came before). */
+ * read what came before). With a durable store, mark_read is persisted. */
 guint gh_conversation_get_unread_count(GhConversation *self);
 void gh_conversation_mark_read(GhConversation *self);
+/* A durable store holds older messages of this room than those listed; it
+ * loads them on request (gh_store_conversations_load_older()). */
+gboolean gh_conversation_get_has_older(GhConversation *self);
 GhConversationBackend gh_conversation_get_backend(GhConversation *self);
 /* The subject when there is one; otherwise the peers' abbreviated npubs
  * (the account's own for a note to self). Profile names are not fetched here:
@@ -54,7 +58,8 @@ const gchar *gh_conversation_get_title(GhConversation *self);
 const gchar *gh_conversation_get_preview(GhConversation *self);
 /* A message request: nobody on this account has written in the room and it
  * was not accepted. Requests are listed apart and never fetch profiles.
- * Accepting (or sending) makes it a conversation; it is local only. */
+ * Accepting (or sending) makes it a conversation; it is local only (and
+ * persisted with a durable store). */
 gboolean gh_conversation_get_is_request(GhConversation *self);
 void gh_conversation_accept(GhConversation *self);
 /* Borrowed; NULL when the rumor is not in this room. */

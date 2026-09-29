@@ -61,13 +61,6 @@ typedef struct {
   Job *job;
 } UnwrapCall;
 
-/* The account's seen-set, shared by the store (as its delegate) and the
- * inbox (its rejected namespace). */
-typedef struct {
-  guint refs;
-  GhNip17Seen *seen;
-} SeenRef;
-
 struct _GhDmInbox {
   GObject parent_instance;
   GhAccountController *accounts; /* NULL once disposed */
@@ -91,7 +84,6 @@ struct _GhDmInbox {
   gint64 checkpoint_written; /* last value written this generation */
   gchar *error;
   GhDmInboxCounters counters;
-  SeenRef *seen;
   GhAccountAuth *auth;       /* NULL: no account AUTH this generation */
   gulong auth_handler;
 
@@ -153,23 +145,6 @@ unwrap_call_free(UnwrapCall *call)
   g_weak_ref_clear(&call->inbox);
   job_free(call->job);
   g_free(call);
-}
-
-static SeenRef *
-seen_ref(SeenRef *ref)
-{
-  ref->refs++;
-  return ref;
-}
-
-static void
-seen_unref(gpointer data)
-{
-  SeenRef *ref = data;
-  if (--ref->refs)
-    return;
-  gh_nip17_seen_free(ref->seen);
-  g_free(ref);
 }
 
 static gint64
@@ -315,25 +290,40 @@ pump(GhDmInbox *self)
   }
 }
 
-/* Today's persistence delegate: messages live in the store's memory only and
- * the per-account GhNip17Seen file holds the seen keys. The encrypted store
- * (G05) replaces this table with its T-admit transaction (and must keep the
- * rejected namespace, see gh_nip17_seen_record_rejected()). */
+/* The default persistence delegate: messages live in the store's memory only
+ * and the per-account GhNip17Seen file (the delegate data, owned by the
+ * store) holds the seen keys and the rejected namespace. The encrypted
+ * store's delegate (gh-store-conversations.h) replaces this table with its
+ * T-admit transaction and imports the file. */
 static gboolean
 seen_has_wrap(gpointer data, const gchar *wrap_id)
 {
-  return gh_nip17_seen_has_wrap(((SeenRef *)data)->seen, wrap_id);
+  return gh_nip17_seen_has_wrap(data, wrap_id);
 }
 
 static gboolean
 seen_has_rumor(gpointer data, const gchar *rumor_id)
 {
-  return gh_nip17_seen_has_rumor(((SeenRef *)data)->seen, rumor_id);
+  return gh_nip17_seen_has_rumor(data, rumor_id);
 }
 
 static gboolean
-seen_admit(gpointer data, GhMessage *message, const gchar *wrap_id, GError **error)
+seen_has_rejected(gpointer data, const gchar *wrap_id)
 {
+  return gh_nip17_seen_has_rejected(data, wrap_id);
+}
+
+static gboolean
+seen_add_rejected(gpointer data, const gchar *wrap_id, GError **error)
+{
+  return gh_nip17_seen_record_rejected(data, wrap_id, error);
+}
+
+static gboolean
+seen_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
+           GhConversationCommit *commit, GError **error)
+{
+  (void)commit;
   (void)error;
   if (!wrap_id)
     return TRUE; /* a local echo; its self-copy wrap is recorded on arrival */
@@ -346,25 +336,29 @@ seen_admit(gpointer data, GhMessage *message, const gchar *wrap_id, GError **err
   /* The message itself is only in memory, so a failed append must not hide
    * it: GhNip17Seen keeps the keys for this process, and a restart (which
    * loses the in-memory message anyway) fetches the wrap again. */
-  if (!gh_nip17_seen_record(((SeenRef *)data)->seen, &record, &local))
+  if (!gh_nip17_seen_record(data, &record, &local))
     g_warning("Groundhog could not record NIP-17 wrap %s as seen: %s", wrap_id,
               local->message);
   return TRUE;
 }
 
 static const GhConversationDelegate seen_delegate = {
-  seen_has_wrap, seen_has_rumor, seen_admit
+  .has_wrap = seen_has_wrap,
+  .has_rumor = seen_has_rumor,
+  .admit = seen_admit,
+  .has_rejected = seen_has_rejected,
+  .add_rejected = seen_add_rejected,
 };
 
 /* A final verdict reached after a signer call: no later session asks the
- * signer about this wrap again. */
+ * signer about this wrap again (the delegate's rejected namespace). */
 static void
 record_rejected(GhDmInbox *self, const gchar *wrap_id)
 {
   g_autoptr(GError) error = NULL;
-  if (self->seen && !gh_nip17_seen_record_rejected(self->seen->seen, wrap_id, &error))
+  if (!gh_conversation_store_record_rejected(self->store, wrap_id, &error))
     g_warning("Groundhog could not record rejected NIP-17 wrap %s: %s", wrap_id,
-              error->message);
+              error ? error->message : "unknown error");
 }
 
 /* One admission call: the store commits through its delegate (message and
@@ -378,6 +372,8 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
   GhConversationAddResult result = GH_CONVERSATION_ADD_REJECTED;
   if (parsed) {
     gh_message_add_relay(parsed, relay_url);
+    /* The seal's or the wrap's expiration when the rumor has none (§3.7). */
+    gh_message_set_expires_at(parsed, message->expires_at);
     result = gh_conversation_store_admit(self->store, parsed, message->wrap_id, &error);
   }
   switch (result) {
@@ -385,7 +381,10 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
     self->counters.admitted++;
     break;
   case GH_CONVERSATION_ADD_DUPLICATE:
-    self->counters.duplicates++; /* another relay copy or a re-wrap */
+  case GH_CONVERSATION_ADD_HIDDEN:
+    /* Another relay copy or a re-wrap; or recorded as seen only (expired on
+     * arrival, forgotten room) and never shown. */
+    self->counters.duplicates++;
     break;
   case GH_CONVERSATION_ADD_FAILED:
     /* Not committed, so not seen: a later session retries it. */
@@ -457,7 +456,7 @@ handle_wrap(GhDmInbox *self, const GhRelayUpdate *update)
   self->counters.received++;
   /* The id is the scope's verified one. Skip before any signer call. */
   if (gh_conversation_store_has_wrap(self->store, update->event_id) ||
-      (self->seen && gh_nip17_seen_has_rejected(self->seen->seen, update->event_id)) ||
+      gh_conversation_store_has_rejected(self->store, update->event_id) ||
       g_hash_table_contains(self->pending_ids, update->event_id) ||
       g_hash_table_contains(self->deferred_ids, update->event_id)) {
     self->counters.skipped++;
@@ -935,7 +934,6 @@ teardown_account(GhDmInbox *self)
     gh_account_auth_revoke(self->auth);
     g_clear_object(&self->auth);
   }
-  g_clear_pointer(&self->seen, seen_unref);
   g_clear_pointer(&self->pubkey_hex, g_free);
   g_clear_pointer(&self->checkpoint_path, g_free);
   g_clear_pointer(&self->error, g_free);
@@ -967,13 +965,11 @@ bind_account(GhDmInbox *self, guint64 generation, const gchar *npub)
       self->error = g_strdup_printf("The DM seen-set is unusable: %s", error->message);
   }
   /* The store drops the previous account's rooms before this one's appear
-   * and holds the seen-set from here on, as does the inbox. */
+   * and owns the seen-set from here on; the inbox reaches it (including the
+   * rejected namespace) through the store. */
   if (seen) {
-    self->seen = g_new0(SeenRef, 1);
-    self->seen->refs = 1;
-    self->seen->seen = seen;
     gh_conversation_store_set_account(self->store, self->pubkey_hex, &seen_delegate,
-                                      seen_ref(self->seen), seen_unref);
+                                      seen, (GDestroyNotify)gh_nip17_seen_free);
   } else {
     gh_conversation_store_set_account(self->store, self->pubkey_hex, NULL, NULL, NULL);
     return;

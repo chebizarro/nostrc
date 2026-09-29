@@ -53,7 +53,7 @@ jobs:
             test-groundhog-account-ui test-groundhog-relay test-groundhog-relay-wire \
             test-groundhog-relay-publish test-groundhog-relay-publish-wire \
             test-groundhog-nip29 test-groundhog-conversations test-groundhog-dm-inbox test-groundhog-store-key test-groundhog-store-key-keyring test-groundhog-store test-groundhog-store-sqlite \
-            test-groundhog-store-marmot
+            test-groundhog-store-marmot test-groundhog-store-conversations
 
       - name: Require complete Groundhog test registration
         run: |
@@ -72,7 +72,7 @@ jobs:
               'groundhog-version', 'groundhog-launch', 'groundhog-schema',
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
               'groundhog-blueprint', 'groundhog-privacy-static', 'groundhog-store-key', 'groundhog-store-key-keyring', 'groundhog-store', 'groundhog-store-sqlite',
-              'groundhog-store-marmot',
+              'groundhog-store-marmot', 'groundhog-store-conversations',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))

@@ -66,8 +66,18 @@ const gchar *gh_message_get_subject(GhMessage *self);
 
 /* NIP-17 rumor kind; 14 (kind-15 files are not accepted yet). */
 gint gh_message_get_kind(GhMessage *self);
-/* NIP-40 expiration tag of the rumor; 0 without a valid one. */
+/* The verified rumor JSON the message was built from, which the durable store
+ * keeps (and verifies again when it restores the message). */
+const gchar *gh_message_get_rumor_json(GhMessage *self);
+/* When the message disappears (NIP-40, charter §3.7), in unix seconds; 0 when
+ * it does not. The rumor's own expiration tag, else the value given to
+ * gh_message_set_expires_at(). */
 gint64 gh_message_get_expires_at(GhMessage *self);
+/* Sets the expiry from an outer layer when the rumor carries none: the
+ * unwrap's GhNip17Message.expires_at (the seal's expiration, else the
+ * wrap's), or the stored value on restore. Ignored when the message already
+ * has one or expires_at <= 0. Notifies "expires-at". */
+void gh_message_set_expires_at(GhMessage *self, gint64 expires_at);
 /* Always NONE for incoming messages. set_status is for the sender (local
  * echo) and is ignored on an incoming message. Notifies "status". */
 GhMessageStatus gh_message_get_status(GhMessage *self);

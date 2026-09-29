@@ -641,3 +641,43 @@ else()
                  "libmarmot target)")
 endif()
 # --- end G23 store marmot ---
+
+# --- G05 store conversations ---
+# The encrypted store's persistence delegate for GhConversationStore (privacy
+# charter §3.3, §3.5, §8.2 G05): T-admit (message, room, seen keys and read
+# state in one transaction), restore of rooms, read markers, requests and
+# drafts on attach, paged older history, forget, and the one-time import of the
+# legacy GhNip17Seen file. Needs the GhStore (G02) and the conversation model.
+# Nothing in the application uses it yet (G04 wires it), so the executable's
+# link set is unchanged.
+if (TARGET groundhog-store AND TARGET groundhog-conversations)
+  message(STATUS "Groundhog store conversations: enabled")
+  add_library(groundhog-store-conversations STATIC src/store/gh-store-conversations.c)
+  target_include_directories(groundhog-store-conversations PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-store-conversations PUBLIC groundhog-store
+    groundhog-conversations)
+  target_compile_options(groundhog-store-conversations PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    # The delegate compiled against the test-hooks store (H8 crash cut points):
+    # ST-6 admit cut points under the crash harness, ST-7, ST-9, ST-12, EX-4/6,
+    # restart restore (order, unread, requests, drafts, paging), the rejected
+    # namespace, per-account isolation and a canary scan of the store files.
+    add_executable(test-groundhog-store-conversations
+      tests/store/test_store_conversations.c tests/store/crash-harness.c
+      src/store/gh-store-conversations.c)
+    target_include_directories(test-groundhog-store-conversations PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+    target_link_libraries(test-groundhog-store-conversations PRIVATE
+      groundhog-store-testhooks groundhog-conversations)
+    target_compile_options(test-groundhog-store-conversations PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-store-conversations)
+    add_test(NAME groundhog-store-conversations COMMAND test-groundhog-store-conversations)
+    set_tests_properties(groundhog-store-conversations PROPERTIES TIMEOUT 120
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog store conversations: disabled (needs the GhStore and the "
+                 "conversation model)")
+endif()
+# --- end G05 store conversations ---

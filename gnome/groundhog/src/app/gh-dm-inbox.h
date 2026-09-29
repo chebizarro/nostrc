@@ -76,7 +76,8 @@ typedef struct {
   guint skipped;    /* wrap already seen, rejected, queued or deferred: no
                      * signer call made */
   guint admitted;   /* new messages added to the conversation store */
-  guint duplicates; /* unwrapped, but its rumor was already stored or seen */
+  guint duplicates; /* unwrapped, but its rumor was already stored or seen,
+                     * or it was recorded as seen only (expired on arrival) */
   guint rejected;   /* failed NIP-17 validation; counted, never shown, and
                      * recorded when a signer call was made (no re-prompt) */
   guint deferred;   /* signer error or full queue; a later session retries it */
@@ -109,8 +110,9 @@ G_DECLARE_FINAL_TYPE(GhDmInbox, gh_dm_inbox, GH, DM_INBOX, GObject)
  *
  * The seen-set becomes store's persistence delegate for the account (see
  * GhConversationDelegate; the encrypted store replaces it). Each delivered
- * wrap is checked with gh_conversation_store_has_wrap(), the seen-set's
- * rejected namespace and the wraps queued or deferred this session before any
+ * wrap is checked with gh_conversation_store_has_wrap(), the delegate's
+ * rejected namespace (gh_conversation_store_has_rejected()) and the wraps
+ * queued or deferred this session before any
  * signer call, queued, and unwrapped by gh_nip17_unwrap_async() at most
  * max-in-flight at a time. A verified message goes through the single
  * gh_conversation_store_admit() call, which commits it and its seen keys

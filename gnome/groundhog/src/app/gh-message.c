@@ -9,6 +9,7 @@ struct _GhMessage {
   GObject parent_instance;
   gchar *account;
   gchar *rumor_id;
+  gchar *rumor_json;
   gchar *sender;
   GStrv recipients;
   GStrv participants;
@@ -188,6 +189,7 @@ gh_message_new_from_rumor(const gchar *account_pubkey, const gchar *rumor_json,
   GhMessage *self = g_object_new(GH_TYPE_MESSAGE, NULL);
   self->account = g_strdup(account_pubkey);
   self->rumor_id = g_strdup(id);
+  self->rumor_json = g_strdup(rumor_json);
   self->sender = g_strdup(nostr_event_get_pubkey(rumor));
   self->created_at = nostr_event_get_created_at(rumor);
   self->content = g_strdup(nostr_event_get_content(rumor));
@@ -279,11 +281,28 @@ gh_message_get_kind(GhMessage *self)
   return 14;
 }
 
+const gchar *
+gh_message_get_rumor_json(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
+  return self->rumor_json;
+}
+
 gint64
 gh_message_get_expires_at(GhMessage *self)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
   return self->expires_at;
+}
+
+void
+gh_message_set_expires_at(GhMessage *self, gint64 expires_at)
+{
+  g_return_if_fail(GH_IS_MESSAGE(self));
+  if (self->expires_at != 0 || expires_at <= 0)
+    return;
+  self->expires_at = expires_at;
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_EXPIRES_AT]);
 }
 
 GhMessageStatus
@@ -375,6 +394,7 @@ gh_message_finalize(GObject *object)
   GhMessage *self = GH_MESSAGE(object);
   g_free(self->account);
   g_free(self->rumor_id);
+  g_free(self->rumor_json);
   g_free(self->sender);
   g_strfreev(self->recipients);
   g_strfreev(self->participants);
@@ -401,7 +421,8 @@ gh_message_class_init(GhMessageClass *klass)
   props[PROP_KIND] = g_param_spec_int("kind", NULL, NULL, 0, G_MAXINT, 14, ro);
   props[PROP_SUBJECT] = g_param_spec_string("subject", NULL, NULL, NULL, ro);
   props[PROP_EXPIRES_AT] = g_param_spec_int64("expires-at", NULL, NULL,
-                                              0, G_MAXINT64, 0, ro);
+                                              0, G_MAXINT64, 0,
+                                              ro | G_PARAM_EXPLICIT_NOTIFY);
   props[PROP_STATUS] = g_param_spec_enum("status", NULL, NULL, GH_TYPE_MESSAGE_STATUS,
                                          GH_MESSAGE_STATUS_NONE,
                                          ro | G_PARAM_EXPLICIT_NOTIFY);

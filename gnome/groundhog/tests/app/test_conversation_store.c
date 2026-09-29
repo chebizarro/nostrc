@@ -443,7 +443,11 @@ typedef struct {
   GHashTable *rumors;
   GPtrArray *admits; /* "rumor-id wrap-id|-" per admit() call */
   gboolean fail;
+  gboolean hide;     /* commit as seen only */
   guint destroyed;
+  GHashTable *rejected;
+  guint reads;
+  guint accepts;
 } FakeDelegate;
 
 static gboolean
@@ -459,9 +463,13 @@ fake_has_rumor(gpointer data, const gchar *rumor_id)
 }
 
 static gboolean
-fake_admit(gpointer data, GhMessage *message, const gchar *wrap_id, GError **error)
+fake_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
+           GhConversationCommit *commit, GError **error)
 {
   FakeDelegate *fake = data;
+  g_assert_false(commit->hidden);
+  g_assert_cmpint(commit->unread, ==, -1);
+  commit->hidden = fake->hide;
   g_ptr_array_add(fake->admits, g_strdup_printf("%s %s", gh_message_get_rumor_id(message),
                                                 wrap_id ? wrap_id : "-"));
   if (fake->fail) {
@@ -480,7 +488,50 @@ fake_destroy(gpointer data)
   ((FakeDelegate *)data)->destroyed++;
 }
 
-static const GhConversationDelegate fake_delegate = { fake_has_wrap, fake_has_rumor, fake_admit };
+static const GhConversationDelegate fake_delegate = {
+  .has_wrap = fake_has_wrap, .has_rumor = fake_has_rumor, .admit = fake_admit,
+};
+
+static gboolean
+fake_has_rejected(gpointer data, const gchar *wrap_id)
+{
+  return g_hash_table_contains(((FakeDelegate *)data)->rejected, wrap_id);
+}
+
+static gboolean
+fake_add_rejected(gpointer data, const gchar *wrap_id, GError **error)
+{
+  (void)error;
+  g_hash_table_add(((FakeDelegate *)data)->rejected, g_strdup(wrap_id));
+  return TRUE;
+}
+
+static gboolean
+fake_mark_read(gpointer data, GhConversation *conversation, GhMessage *last_read,
+               GError **error)
+{
+  (void)error;
+  g_assert_true(gh_conversation_lookup_message(conversation,
+                                               gh_message_get_rumor_id(last_read)) == last_read);
+  ((FakeDelegate *)data)->reads++;
+  return TRUE;
+}
+
+static gboolean
+fake_accept(gpointer data, GhConversation *conversation, GError **error)
+{
+  (void)error;
+  g_assert_false(gh_conversation_get_is_request(conversation));
+  ((FakeDelegate *)data)->accepts++;
+  return TRUE;
+}
+
+/* The optional members of a durable delegate. */
+static const GhConversationDelegate full_delegate = {
+  .has_wrap = fake_has_wrap, .has_rumor = fake_has_rumor, .admit = fake_admit,
+  .has_rejected = fake_has_rejected, .add_rejected = fake_add_rejected,
+  .mark_read = fake_mark_read, .accept = fake_accept,
+};
 
 static void
 fake_init(FakeDelegate *fake)
@@ -488,6 +539,7 @@ fake_init(FakeDelegate *fake)
   fake->wraps = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   fake->rumors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   fake->admits = g_ptr_array_new_with_free_func(g_free);
+  fake->rejected = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 }
 
 static void
@@ -496,6 +548,7 @@ fake_clear(FakeDelegate *fake)
   g_hash_table_unref(fake->wraps);
   g_hash_table_unref(fake->rumors);
   g_ptr_array_unref(fake->admits);
+  g_hash_table_unref(fake->rejected);
 }
 
 static void
@@ -577,6 +630,68 @@ test_persistence_delegate(void)
   g_assert_cmpuint(next.destroyed, ==, 1);
   fake_clear(&fake);
   fake_clear(&next);
+}
+
+/* HIDDEN commits, the rejected namespace, and the read/accept writes of a
+ * durable delegate, each made once per change. */
+static void
+test_delegate_hooks(void)
+{
+  FakeDelegate fake = { 0 };
+  fake_init(&fake);
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, hex[1], &full_delegate, &fake, NULL);
+  AddedProbe probe = { 0 };
+  g_signal_connect(store, "message-added", G_CALLBACK(on_message_added), &probe);
+  const gchar *wrap_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const gchar *wrap_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  /* Committed as seen only (e.g. expired on arrival): never listed. */
+  Rumor expired = { .author = 2, .p = { 1 }, .created_at = 10, .expiration = "11" };
+  g_autoptr(GhMessage) hidden = message_for(1, &expired, NULL);
+  fake.hide = TRUE;
+  g_assert_cmpint(gh_conversation_store_admit(store, hidden, wrap_a, NULL), ==,
+                  GH_CONVERSATION_ADD_HIDDEN);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(store)), ==, 0);
+  g_assert_cmpuint(probe.count, ==, 0);
+  fake.hide = FALSE;
+
+  /* The rejected namespace is the delegate's. */
+  g_assert_false(gh_conversation_store_has_rejected(store, wrap_b));
+  g_assert_true(gh_conversation_store_record_rejected(store, wrap_b, NULL));
+  g_assert_true(gh_conversation_store_has_rejected(store, wrap_b));
+  g_assert_false(gh_conversation_store_has_wrap(store, wrap_b));
+
+  /* Accepting a request and moving the read marker are written once. */
+  Rumor in = { .author = 2, .p = { 1 }, .created_at = 20 };
+  g_assert_cmpint(add(store, 1, &in), ==, GH_CONVERSATION_ADD_NEW);
+  g_autofree gchar *pair = room_id(1, 2, 0);
+  GhConversation *room = gh_conversation_store_lookup(store, pair);
+  gh_conversation_accept(room);
+  gh_conversation_accept(room);
+  g_assert_cmpuint(fake.accepts, ==, 1);
+  gh_conversation_mark_read(room);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(fake.reads, ==, 1);
+  Rumor reply = { .author = 1, .p = { 2 }, .created_at = 30 };
+  g_assert_cmpint(add(store, 1, &reply), ==, GH_CONVERSATION_ADD_NEW);
+  gh_conversation_mark_read(room); /* the reply already moved the marker */
+  g_assert_cmpuint(fake.reads, ==, 1);
+  Rumor more = { .author = 2, .p = { 1 }, .created_at = 40 };
+  g_assert_cmpint(add(store, 1, &more), ==, GH_CONVERSATION_ADD_NEW);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(fake.reads, ==, 2);
+  /* A room the store no longer lists (account switch) writes nothing. */
+  Rumor late = { .author = 2, .p = { 1 }, .created_at = 50 };
+  g_assert_cmpint(add(store, 1, &late), ==, GH_CONVERSATION_ADD_NEW);
+  g_object_ref(room);
+  gh_conversation_store_set_account(store, hex[2], NULL, NULL, NULL);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_assert_cmpuint(fake.reads, ==, 2);
+  g_object_unref(room);
+  g_signal_handlers_disconnect_by_data(store, &probe);
+  fake_clear(&fake);
 }
 
 static void
@@ -729,6 +844,7 @@ main(int argc, char **argv)
                   test_store_order_and_account);
   g_test_add_func("/groundhog/conversations/message-added", test_message_added_signal);
   g_test_add_func("/groundhog/conversations/persistence-delegate", test_persistence_delegate);
+  g_test_add_func("/groundhog/conversations/delegate-hooks", test_delegate_hooks);
   g_test_add_func("/groundhog/conversations/requests", test_requests);
   g_test_add_func("/groundhog/conversations/template-properties", test_template_properties);
   int status = g_test_run();

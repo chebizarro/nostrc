@@ -97,6 +97,13 @@ clear_delegate(GhConversationStore *self)
     destroy(data);
 }
 
+static void
+detach_conversations(GPtrArray *conversations)
+{
+  for (guint i = 0; conversations && i < conversations->len; i++)
+    gh_conversation_set_store(g_ptr_array_index(conversations, i), NULL);
+}
+
 void
 gh_conversation_store_set_account(GhConversationStore *self, const gchar *account_pubkey,
                                   const GhConversationDelegate *delegate,
@@ -122,6 +129,7 @@ gh_conversation_store_set_account(GhConversationStore *self, const gchar *accoun
   self->account = g_strdup(account_pubkey);
   /* Keep the objects alive until the removal is announced. */
   g_autoptr(GPtrArray) old = g_steal_pointer(&self->conversations);
+  detach_conversations(old);
   self->conversations = g_ptr_array_new_with_free_func(g_object_unref);
   if (removed)
     g_list_model_items_changed(G_LIST_MODEL(self), 0, removed, 0);
@@ -132,6 +140,54 @@ gh_conversation_store_get_account(GhConversationStore *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), NULL);
   return self->account;
+}
+
+/* Lists a new room at its place in the store order. */
+static void
+list_new(GhConversationStore *self, GhConversation *conversation)
+{
+  g_hash_table_insert(self->rooms, (gpointer)gh_conversation_get_room_id(conversation),
+                      conversation);
+  gh_conversation_set_store(conversation, self);
+  g_object_ref(conversation);
+  guint position = insertion_point(self, conversation);
+  g_ptr_array_insert(self->conversations, position, conversation);
+  g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
+}
+
+/* Moves a listed room (which was at old_position) to its new place. */
+static void
+reposition(GhConversationStore *self, GhConversation *conversation, guint old_position)
+{
+  g_ptr_array_steal_index(self->conversations, old_position);
+  guint position = insertion_point(self, conversation);
+  g_ptr_array_insert(self->conversations, position, conversation);
+  if (old_position != position) {
+    guint first = MIN(old_position, position);
+    guint span = MAX(old_position, position) - first + 1;
+    g_list_model_items_changed(G_LIST_MODEL(self), first, span, span);
+  }
+}
+
+static void
+index_messages(GhConversationStore *self, GhConversation *conversation)
+{
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(conversation), i);
+    /* The key is owned by the message, which the conversation keeps. */
+    g_hash_table_insert(self->messages, (gpointer)gh_message_get_rumor_id(message),
+                        conversation);
+  }
+}
+
+/* A durable delegate's unread count is authoritative (it also counts the
+ * room's unloaded history). */
+static void
+sync_unread(GhConversation *conversation, const GhConversationCommit *commit)
+{
+  if (conversation && commit->unread >= 0)
+    gh_conversation_sync_unread(conversation, (guint)MIN(commit->unread, (gint64)G_MAXUINT));
 }
 
 GhConversationAddResult
@@ -147,24 +203,34 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
   }
   const gchar *rumor_id = gh_message_get_rumor_id(message);
   GhMessage *existing = gh_conversation_store_lookup_message(self, rumor_id);
-  /* A rumor the delegate committed but the model does not hold (the
-   * in-memory model after a restart) is not shown again. */
+  /* A delivered rumor the delegate committed but the model does not list (a
+   * restart without restore, or unloaded history) is not shown again. A
+   * local echo of a stored rumor is listed unless the delegate hides it. */
   gboolean known = existing ||
-    (self->has_delegate && self->delegate.has_rumor(self->delegate_data, rumor_id));
+    (wrap_id && self->has_delegate && self->delegate.has_rumor(self->delegate_data, rumor_id));
   /* One commit per admission, before the model changes: a duplicate still
    * records the wrap id that carried it. */
+  GhConversationCommit commit = { FALSE, -1 };
   if (self->has_delegate &&
-      !self->delegate.admit(self->delegate_data, message, wrap_id, error))
+      !self->delegate.admit(self->delegate_data, message, wrap_id, &commit, error))
     return GH_CONVERSATION_ADD_FAILED;
-  if (known) {
+  GhConversation *conversation = g_hash_table_lookup(self->rooms,
+                                                     gh_message_get_room_id(message));
+  if (existing || known) {
     if (existing)
       for (const gchar *const *url = gh_message_get_relays(message); *url; url++)
         gh_message_add_relay(existing, *url);
+    sync_unread(conversation, &commit);
     return GH_CONVERSATION_ADD_DUPLICATE;
   }
+  if (commit.hidden)
+    return GH_CONVERSATION_ADD_HIDDEN;
+  if (conversation && gh_conversation_is_older_history(conversation, message)) {
+    gh_conversation_add_older_history(conversation, message);
+    sync_unread(conversation, &commit);
+    return GH_CONVERSATION_ADD_NEW;
+  }
 
-  GhConversation *conversation = g_hash_table_lookup(self->rooms,
-                                                     gh_message_get_room_id(message));
   g_autoptr(GhConversation) created = NULL;
   guint old_position = G_MAXUINT;
   if (!conversation) {
@@ -181,22 +247,12 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
                         "Conversation refused a new message");
     return GH_CONVERSATION_ADD_REJECTED;
   }
+  sync_unread(conversation, &commit);
   g_hash_table_insert(self->messages, (gpointer)rumor_id, conversation);
   if (created)
-    g_hash_table_insert(self->rooms, (gpointer)gh_conversation_get_room_id(conversation),
-                        conversation);
-  g_object_ref(conversation);
-  if (old_position != G_MAXUINT)
-    g_ptr_array_remove_index(self->conversations, old_position);
-  guint position = insertion_point(self, conversation);
-  g_ptr_array_insert(self->conversations, position, conversation);
-  if (old_position == G_MAXUINT)
-    g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
-  else if (old_position != position) {
-    guint first = MIN(old_position, position);
-    guint span = MAX(old_position, position) - first + 1;
-    g_list_model_items_changed(G_LIST_MODEL(self), first, span, span);
-  }
+    list_new(self, conversation);
+  else
+    reposition(self, conversation, old_position);
   g_signal_emit(self, signals[SIGNAL_MESSAGE_ADDED], 0, conversation, message);
   return GH_CONVERSATION_ADD_NEW;
 }
@@ -214,6 +270,25 @@ gh_conversation_store_has_wrap(GhConversationStore *self, const gchar *wrap_id)
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), FALSE);
   return wrap_id && self->has_delegate &&
          self->delegate.has_wrap(self->delegate_data, wrap_id);
+}
+
+gboolean
+gh_conversation_store_has_rejected(GhConversationStore *self, const gchar *wrap_id)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), FALSE);
+  return wrap_id && self->has_delegate && self->delegate.has_rejected &&
+         self->delegate.has_rejected(self->delegate_data, wrap_id);
+}
+
+gboolean
+gh_conversation_store_record_rejected(GhConversationStore *self, const gchar *wrap_id,
+                                      GError **error)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), FALSE);
+  g_return_val_if_fail(wrap_id != NULL, FALSE);
+  if (!self->has_delegate || !self->delegate.add_rejected)
+    return TRUE;
+  return self->delegate.add_rejected(self->delegate_data, wrap_id, error);
 }
 
 gboolean
@@ -237,11 +312,95 @@ gh_conversation_store_lookup(GhConversationStore *self, const gchar *room_id)
   return room_id ? g_hash_table_lookup(self->rooms, room_id) : NULL;
 }
 
+/* ---- Conversation hooks and the durable restore seam (private) ------------ */
+
+void
+gh_conversation_store_persist_read(GhConversationStore *self, GhConversation *conversation,
+                                   GhMessage *last_read)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
+  if (!self->has_delegate || !self->delegate.mark_read)
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!self->delegate.mark_read(self->delegate_data, conversation, last_read, &error))
+    g_warning("Groundhog could not save the read position of a conversation: %s",
+              error ? error->message : "unknown error");
+}
+
+void
+gh_conversation_store_persist_accept(GhConversationStore *self, GhConversation *conversation)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
+  if (!self->has_delegate || !self->delegate.accept)
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!self->delegate.accept(self->delegate_data, conversation, &error))
+    g_warning("Groundhog could not save an accepted message request: %s",
+              error ? error->message : "unknown error");
+}
+
+GhConversation *
+gh_conversation_store_restore(GhConversationStore *self, const gchar *room_id,
+                              GPtrArray *messages, const GhConversationState *state)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), NULL);
+  g_return_val_if_fail(room_id != NULL, NULL);
+  g_return_val_if_fail(state != NULL, NULL);
+  if (!self->account)
+    return NULL;
+  GhConversation *conversation = g_hash_table_lookup(self->rooms, room_id);
+  if (conversation) {
+    guint old_position = G_MAXUINT;
+    g_ptr_array_find(self->conversations, conversation, &old_position);
+    gh_conversation_restore(conversation, messages, state);
+    index_messages(self, conversation);
+    reposition(self, conversation, old_position);
+    return conversation;
+  }
+  GhMessage *first = NULL;
+  for (guint i = 0; messages && i < messages->len && !first; i++) {
+    GhMessage *message = g_ptr_array_index(messages, i);
+    if (g_strcmp0(gh_message_get_room_id(message), room_id) == 0 &&
+        g_strcmp0(gh_message_get_account(message), self->account) == 0 &&
+        !g_hash_table_contains(self->messages, gh_message_get_rumor_id(message)))
+      first = message;
+  }
+  if (!first)
+    return NULL;
+  g_autoptr(GhConversation) created = gh_conversation_new_for_message(first);
+  gh_conversation_restore(created, messages, state);
+  index_messages(self, created);
+  list_new(self, created);
+  return created;
+}
+
+gboolean
+gh_conversation_store_remove(GhConversationStore *self, const gchar *room_id)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), FALSE);
+  GhConversation *conversation = room_id ? g_hash_table_lookup(self->rooms, room_id) : NULL;
+  guint position = 0;
+  if (!conversation || !g_ptr_array_find(self->conversations, conversation, &position))
+    return FALSE;
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(conversation), i);
+    g_hash_table_remove(self->messages, gh_message_get_rumor_id(message));
+  }
+  g_hash_table_remove(self->rooms, room_id);
+  gh_conversation_set_store(conversation, NULL);
+  /* Keep it alive until the removal is announced. */
+  g_autoptr(GhConversation) removed = g_ptr_array_steal_index(self->conversations, position);
+  g_list_model_items_changed(G_LIST_MODEL(self), position, 1, 0);
+  return TRUE;
+}
+
 static void
 gh_conversation_store_finalize(GObject *object)
 {
   GhConversationStore *self = GH_CONVERSATION_STORE(object);
   clear_delegate(self);
+  detach_conversations(self->conversations);
   g_hash_table_unref(self->messages);
   g_hash_table_unref(self->rooms);
   g_ptr_array_unref(self->conversations);

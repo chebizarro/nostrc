@@ -253,6 +253,7 @@ check_seen_id(GhStoreSeenNs ns, const gchar *id, GError **error)
   case GH_STORE_SEEN_WRAP:
   case GH_STORE_SEEN_RUMOR:
   case GH_STORE_SEEN_NIP29_EVENT:
+  case GH_STORE_SEEN_REJECTED_WRAP:
     return check_hex("A seen event id", id, 64, 64, FALSE, error);
   case GH_STORE_SEEN_MLS_MESSAGE:
     return check_hex("A seen MLS message id", id, 1, GH_STORE_MAX_ID, FALSE, error);

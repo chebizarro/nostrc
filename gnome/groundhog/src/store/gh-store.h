@@ -287,7 +287,10 @@ typedef enum {
   GH_STORE_SEEN_WRAP = 1,         /* NIP-17 gift-wrap id */
   GH_STORE_SEEN_RUMOR = 2,        /* NIP-17 rumor id */
   GH_STORE_SEEN_NIP29_EVENT = 3,
-  GH_STORE_SEEN_MLS_MESSAGE = 4
+  GH_STORE_SEEN_MLS_MESSAGE = 4,
+  /* NIP-17 gift-wrap id finally rejected after a signer call: skipped before
+   * any signer call, never a seen message (G05, legacy .seen "x" lines). */
+  GH_STORE_SEEN_REJECTED_WRAP = 5
 } GhStoreSeenNs;
 
 typedef enum {
