@@ -1133,10 +1133,18 @@ test_drop_and_paste(void)
   /* A pasted image: a fresh PNG of its pixels, the photo shown; nothing
    * pasted as text. */
   GtkTextView *text_view = gh_composer_get_text_view(composer);
+  /* A private clipboard, never the system one (nostrc-rjz2): that one is
+   * shared with every other process (a parallel test, the user), and on
+   * macOS what this process puts there re-enters its main loop when another
+   * process reads it, which GLib reports as a failed poll(2) (fatal here). */
+  g_autoptr(GdkClipboard) clipboard =
+    g_object_new(GDK_TYPE_CLIPBOARD, "display", gtk_widget_get_display(GTK_WIDGET(text_view)),
+                 NULL);
+  gh_composer_set_clipboard(composer, clipboard);
   g_autoptr(GBytes) png = make_png(200);
   g_autoptr(GdkTexture) texture = gdk_texture_new_from_bytes(png, NULL);
   g_assert_nonnull(texture);
-  gdk_clipboard_set_texture(gtk_widget_get_clipboard(GTK_WIDGET(text_view)), texture);
+  gdk_clipboard_set_texture(clipboard, texture);
   g_signal_emit_by_name(text_view, "paste-clipboard");
   gh_test_spin_until(sheet_open, &f);
   sheet = wait_page(&f, "preview");
@@ -1148,7 +1156,7 @@ test_drop_and_paste(void)
   close_sheet(&f);
 
   /* Text pastes as text. */
-  gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(text_view)), "a caption");
+  gdk_clipboard_set_text(clipboard, "a caption");
   gtk_widget_grab_focus(GTK_WIDGET(text_view));
   g_signal_emit_by_name(text_view, "paste-clipboard");
   gh_test_spin_until(caption_pasted, composer);

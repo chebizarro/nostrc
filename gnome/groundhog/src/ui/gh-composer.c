@@ -42,6 +42,7 @@ struct _GhComposer {
   GhComposerLengthFunc length_func;
   gpointer length_data;
   GDestroyNotify length_destroy;
+  GdkClipboard *clipboard; /* what Paste reads; NULL: the text view's own */
 };
 
 enum {
@@ -414,18 +415,24 @@ on_files_pasted(GObject *source, GAsyncResult *result, gpointer data)
 static void
 on_paste_clipboard(GtkTextView *text_view, GhComposer *self)
 {
-  if (!attach_possible(self))
-    return;
-  GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(text_view));
+  GdkClipboard *clipboard = self->clipboard ? self->clipboard
+                                            : gtk_widget_get_clipboard(GTK_WIDGET(text_view));
   GdkContentFormats *formats = gdk_clipboard_get_formats(clipboard);
-  if (gdk_content_formats_contain_gtype(formats, GDK_TYPE_TEXTURE)) {
+  if (attach_possible(self) && gdk_content_formats_contain_gtype(formats, GDK_TYPE_TEXTURE)) {
     g_signal_stop_emission_by_name(text_view, "paste-clipboard");
     gdk_clipboard_read_texture_async(clipboard, NULL, on_texture_pasted, g_object_ref(self));
-  } else if (gdk_content_formats_contain_gtype(formats, GDK_TYPE_FILE_LIST) &&
+  } else if (attach_possible(self) &&
+             gdk_content_formats_contain_gtype(formats, GDK_TYPE_FILE_LIST) &&
              !gdk_content_formats_contain_gtype(formats, G_TYPE_STRING)) {
     g_signal_stop_emission_by_name(text_view, "paste-clipboard");
     gdk_clipboard_read_value_async(clipboard, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT, NULL,
                                    on_files_pasted, g_object_ref(self));
+  } else if (self->clipboard) {
+    /* Text, from the handed-in clipboard, as GtkTextView's own paste does
+     * from the widget's. */
+    g_signal_stop_emission_by_name(text_view, "paste-clipboard");
+    gtk_text_buffer_paste_clipboard(self->buffer, clipboard, NULL,
+                                    gtk_text_view_get_editable(text_view));
   }
 }
 
@@ -501,6 +508,7 @@ gh_composer_dispose(GObject *object)
   if (self->buffer)
     g_signal_handlers_disconnect_by_data(self->buffer, self);
   self->buffer = NULL;
+  g_clear_object(&self->clipboard);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_COMPOSER);
   G_OBJECT_CLASS(gh_composer_parent_class)->dispose(object);
 }
@@ -857,6 +865,14 @@ gh_composer_get_text_view(GhComposer *self)
 {
   g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
   return self->text_view;
+}
+
+void
+gh_composer_set_clipboard(GhComposer *self, GdkClipboard *clipboard)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  g_return_if_fail(clipboard == NULL || GDK_IS_CLIPBOARD(clipboard));
+  g_set_object(&self->clipboard, clipboard);
 }
 
 void

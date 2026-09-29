@@ -131,6 +131,13 @@ gboolean gh_composer_get_enter_sends(GhComposer *self);
 /* The text view, which takes keyboard focus (also through
  * gtk_widget_grab_focus() on the composer while it is editable). */
 GtkTextView *gh_composer_get_text_view(GhComposer *self);
+/* The clipboard Paste reads; NULL (the default): the text view's own, the
+ * display's. Tests hand in a private one (nostrc-rjz2): the system
+ * clipboard is shared with every other process, and on macOS an item this
+ * process put there re-enters its main loop whenever another process reads
+ * it (GDK's pasteboard provider), which GLib then reports as a failed
+ * poll(2). */
+void gh_composer_set_clipboard(GhComposer *self, GdkClipboard *clipboard);
 /* The disappearing timer shown before sending (see above); negative: off. */
 void gh_composer_set_disappearing_timer(GhComposer *self, gint64 seconds);
 gint64 gh_composer_get_disappearing_timer(GhComposer *self);
