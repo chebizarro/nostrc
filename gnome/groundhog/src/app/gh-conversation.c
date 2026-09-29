@@ -305,6 +305,55 @@ gh_conversation_set_store(GhConversation *self, GhConversationStore *store)
   self->store = store;
 }
 
+gboolean
+gh_conversation_remove(GhConversation *self, const gchar *rumor_id)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  GhMessage *found = rumor_id ? g_hash_table_lookup(self->by_id, rumor_id) : NULL;
+  guint position = 0;
+  if (!found || !g_ptr_array_find(self->messages, found, &position))
+    return FALSE;
+  gint64 last_activity = gh_conversation_get_last_activity(self);
+  g_autofree gchar *old_subject = g_strdup(gh_conversation_get_subject(self));
+  gboolean was_request = gh_conversation_get_is_request(self);
+  /* The hash key is the message's own id: unhash before the list drops it. */
+  g_autoptr(GhMessage) message = g_object_ref(found);
+  g_hash_table_remove(self->by_id, gh_message_get_rumor_id(message));
+  g_ptr_array_remove_index(self->messages, position);
+  /* An own message accepted the room when it was added; has_own_message
+   * stays set so the room does not turn back into a request. */
+  if (self->subject_source == message) {
+    self->subject_source = NULL;
+    for (guint i = self->messages->len; i-- > 0 && !self->subject_source;) {
+      GhMessage *candidate = g_ptr_array_index(self->messages, i);
+      if (gh_message_get_subject(candidate))
+        self->subject_source = candidate;
+    }
+  }
+  gboolean newest = position == self->messages->len;
+  if (newest) {
+    g_free(self->preview);
+    self->preview = self->messages->len
+      ? preview_of(g_ptr_array_index(self->messages, self->messages->len - 1)) : NULL;
+  }
+
+  g_object_freeze_notify(G_OBJECT(self));
+  g_list_model_items_changed(G_LIST_MODEL(self), position, 1, 0);
+  if (g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0) {
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
+  }
+  if (newest)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PREVIEW]);
+  if (gh_conversation_get_last_activity(self) != last_activity)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_LAST_ACTIVITY]);
+  if (was_request != gh_conversation_get_is_request(self))
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_IS_REQUEST]);
+  update_unread(self);
+  g_object_thaw_notify(G_OBJECT(self));
+  return TRUE;
+}
+
 void
 gh_conversation_restore(GhConversation *self, GPtrArray *messages,
                         const GhConversationState *state)

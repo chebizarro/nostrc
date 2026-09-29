@@ -62,6 +62,10 @@ struct _GhStore {
   gboolean registered;    /* holds the in-process registry entry for dir */
   gboolean checkpointed_once;
   gint64 last_checkpoint; /* monotonic us of the last purge checkpoint */
+  gint64 default_disappearing; /* disappearing_s of conversations created from now on */
+  GhStoreExpiryFunc expiry_func; /* told about each message stored with an expiry */
+  gpointer expiry_data;
+  GDestroyNotify expiry_destroy;
 };
 
 /* ---- Test hooks (charter H8) ------------------------------------------------ */
@@ -1394,6 +1398,8 @@ store_free(GhStore *store)
   g_free(store->dir);
   g_free(store->db_path);
   g_free(store->cipher_version);
+  if (store->expiry_destroy)
+    store->expiry_destroy(store->expiry_data);
   gh_clock_unref(store->clock);
   g_free(store);
 }
@@ -1991,7 +1997,7 @@ conversation_insert(GhStore *store, GhStoreBackend backend, const gchar *backend
 {
   sqlite3_stmt *stmt = store_prepare(store,
     "INSERT INTO conversations (backend, backend_key, created_at, last_activity, "
-    "request_state) VALUES (?1, ?2, ?3, ?4, ?5)", error);
+    "request_state, disappearing_s) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, backend));
@@ -1999,6 +2005,7 @@ conversation_insert(GhStore *store, GhStoreBackend backend, const gchar *backend
   BIND(sqlite3_bind_int64(stmt, 3, created_at));
   BIND(sqlite3_bind_int64(stmt, 4, last_activity));
   BIND(sqlite3_bind_int64(stmt, 5, state));
+  BIND(sqlite3_bind_int64(stmt, 6, store->default_disappearing));
   gboolean ok = store_step_done(store, stmt, "Creating a conversation", error);
   if (ok)
     *id = sqlite3_last_insert_rowid(store->db);
@@ -2120,6 +2127,100 @@ gh_store_get_draft(GhStore *store, gint64 conversation_id, gchar **out_draft,
 fail:
   sqlite3_finalize(stmt);
   return FALSE;
+}
+
+/* ---- Disappearing messages (G07) -------------------------------------------------- */
+
+static gboolean
+check_disappearing(gint64 seconds, GError **error)
+{
+  if (seconds >= 0 && seconds <= GH_STORE_MAX_DISAPPEARING)
+    return TRUE;
+  g_set_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+              "A disappearing timer is 0 to %d seconds", GH_STORE_MAX_DISAPPEARING);
+  return FALSE;
+}
+
+void
+gh_store_set_default_disappearing(GhStore *store, gint64 seconds)
+{
+  g_return_if_fail(store != NULL);
+  g_return_if_fail(seconds >= 0 && seconds <= GH_STORE_MAX_DISAPPEARING);
+  store->default_disappearing = seconds;
+}
+
+gboolean
+gh_store_get_disappearing(GhStore *store, gint64 conversation_id, gint64 *out_seconds,
+                          GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(out_seconds != NULL, FALSE);
+  *out_seconds = 0;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT disappearing_s FROM conversations WHERE id = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  gboolean has_row = FALSE;
+  gboolean ok = store_step_row(store, stmt, &has_row, "Reading a disappearing timer", error);
+  if (ok && !has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
+    ok = FALSE;
+  } else if (ok) {
+    *out_seconds = sqlite3_column_int64(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+gboolean
+gh_store_set_disappearing(GhStore *store, gint64 conversation_id, gint64 seconds,
+                          GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (!check_disappearing(seconds, error) || !store_writable(store, error))
+    return FALSE;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "UPDATE conversations SET disappearing_s = ?1 WHERE id = ?2", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, seconds));
+  BIND(sqlite3_bind_int64(stmt, 2, conversation_id));
+  gboolean ok = store_step_done(store, stmt, "Saving a disappearing timer", error);
+  sqlite3_finalize(stmt);
+  if (ok && sqlite3_changes(store->db) == 0) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
+    return FALSE;
+  }
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+void
+gh_store_set_expiry_notify(GhStore *store, GhStoreExpiryFunc func, gpointer user_data,
+                           GDestroyNotify destroy)
+{
+  g_return_if_fail(store != NULL);
+  GDestroyNotify old_destroy = store->expiry_destroy;
+  gpointer old_data = store->expiry_data;
+  store->expiry_func = func;
+  store->expiry_data = user_data;
+  store->expiry_destroy = destroy;
+  if (old_destroy)
+    old_destroy(old_data);
+}
+
+/* A message that expires at expires_at (0: never) was just stored. */
+static void
+store_notify_expiry(GhStore *store, gint64 expires_at)
+{
+  if (expires_at > 0 && store->expiry_func)
+    store->expiry_func(expires_at, store->expiry_data);
 }
 
 /* ---- Cursors ---------------------------------------------------------------------- */
@@ -2431,6 +2532,8 @@ gh_store_admit(GhStore *store, const GhStoreMessage *message,
   }
   if (!store_commit(store, error))
     return FALSE;
+  if (result == GH_STORE_ADMIT_STORED)
+    store_notify_expiry(store, message->expires_at);
   if (out_result)
     *out_result = result;
   if (out_message_id)
@@ -2596,6 +2699,7 @@ gh_store_enqueue(GhStore *store, const GhStoreOutgoing *outgoing, gint64 *out_ou
   }
   if (!store_commit(store, error))
     return FALSE;
+  store_notify_expiry(store, outgoing->expires_at);
   if (out_outbox_id)
     *out_outbox_id = outbox_id;
   if (out_message_id)
@@ -3129,21 +3233,126 @@ fail:
   return FALSE;
 }
 
+/* The messages one purge deletes, with ?1 = now and ?2 = the retention
+ * cutoff (0: none). */
+#define PURGE_DOOMED(m) \
+  "((" m ".expires_at IS NOT NULL AND " m ".expires_at <= ?1) OR " \
+  "(?2 > 0 AND " m ".received_at < ?2))"
+
+static gboolean
+purge_exec(GhStore *store, const char *sql, gint64 now, gint64 cutoff, GError **error)
+{
+  sqlite3_stmt *stmt = store_prepare(store, sql, error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, now));
+  BIND(sqlite3_bind_int64(stmt, 2, cutoff));
+  gboolean ok = store_step_done(store, stmt, "Purging messages", error);
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+void
+gh_store_purged_message_free(GhStorePurgedMessage *message)
+{
+  if (!message)
+    return;
+  g_free(message->backend_key);
+  g_free(message->backend_msg_id);
+  g_free(message);
+}
+
+static gboolean
+purge_collect(GhStore *store, gint64 now, gint64 cutoff, GPtrArray *purged, GError **error)
+{
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT c.backend, c.backend_key, m.backend_msg_id "
+    "FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE "
+    PURGE_DOOMED("m"), error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, now));
+  BIND(sqlite3_bind_int64(stmt, 2, cutoff));
+  gboolean has_row = FALSE;
+  while (TRUE) {
+    if (!store_step_row(store, stmt, &has_row, "Listing messages to purge", error))
+      goto fail;
+    if (!has_row)
+      break;
+    GhStorePurgedMessage *message = g_new0(GhStorePurgedMessage, 1);
+    message->backend = (GhStoreBackend) sqlite3_column_int64(stmt, 0);
+    message->backend_key = g_strdup((const gchar *) sqlite3_column_text(stmt, 1));
+    message->backend_msg_id = g_strdup((const gchar *) sqlite3_column_text(stmt, 2));
+    g_ptr_array_add(purged, message);
+  }
+  sqlite3_finalize(stmt);
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* Before the rows go: a read marker on a doomed message moves back to the
+ * newest surviving message at or before it (none: nothing is read), which
+ * leaves the same surviving messages after it; then each touched room's
+ * unread count becomes its surviving messages from others after the marker.
+ * A marker whose row was already gone keeps the clamp below. */
+static gboolean
+purge_read_state(GhStore *store, gint64 now, gint64 cutoff, GError **error)
+{
+  return purge_exec(store,
+           "UPDATE conversations SET last_read_msg = ("
+           "SELECT k.id FROM messages k, messages r WHERE r.id = conversations.last_read_msg "
+           "AND k.conversation_id = conversations.id AND NOT " PURGE_DOOMED("k") " "
+           "AND (k.created_at, k.backend_msg_id) <= (r.created_at, r.backend_msg_id) "
+           "ORDER BY k.created_at DESC, k.backend_msg_id DESC LIMIT 1) "
+           "WHERE last_read_msg IN (SELECT m.id FROM messages m WHERE " PURGE_DOOMED("m") ")",
+           now, cutoff, error) &&
+         purge_exec(store,
+           "UPDATE conversations SET unread_count = ("
+           "SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
+           "AND m.direction = 0 AND NOT " PURGE_DOOMED("m") " "
+           "AND (conversations.last_read_msg IS NULL OR (m.created_at, m.backend_msg_id) > "
+           "(SELECT r.created_at, r.backend_msg_id FROM messages r "
+           "WHERE r.id = conversations.last_read_msg))) "
+           "WHERE id IN (SELECT d.conversation_id FROM messages d WHERE " PURGE_DOOMED("d") ") "
+           "AND (last_read_msg IS NULL OR "
+           "EXISTS (SELECT 1 FROM messages r WHERE r.id = conversations.last_read_msg))",
+           now, cutoff, error);
+}
+
 gboolean
 gh_store_purge(GhStore *store, gint64 retention_cutoff, GhStorePurgeStats *out_stats,
                GError **error)
+{
+  return gh_store_purge_full(store, retention_cutoff, NULL, out_stats, error);
+}
+
+gboolean
+gh_store_purge_full(GhStore *store, gint64 retention_cutoff, GPtrArray **out_purged,
+                    GhStorePurgeStats *out_stats, GError **error)
 {
   g_return_val_if_fail(store != NULL, FALSE);
   GhStorePurgeStats stats = { 0 };
   if (out_stats)
     *out_stats = stats;
+  if (out_purged)
+    *out_purged = NULL;
   if (!check_nonnegative("The retention cutoff", retention_cutoff, error))
     return FALSE;
 
   const gint64 now = gh_clock_get_unix(store->clock);
   guint n_outbox = 0;
+  g_autoptr(GPtrArray) purged = out_purged
+    ? g_ptr_array_new_with_free_func((GDestroyNotify) gh_store_purged_message_free) : NULL;
   if (!store_begin(store, "purge", error))
     return FALSE;
+  if ((purged && !purge_collect(store, now, retention_cutoff, purged, error)) ||
+      !purge_read_state(store, now, retention_cutoff, error))
+    goto fail;
   /* An outgoing message's text is also in its outbox row (rumor_json) and
    * its signed wraps: those go first, with the message. */
   if (!store_delete_count(store,
@@ -3174,13 +3383,14 @@ gh_store_purge(GhStore *store, gint64 retention_cutoff, GhStorePurgeStats *out_s
         "AND m.direction = 0)) WHERE unread_count > 0", error))
     goto fail;
   STORE_CUT("purge", "conversations");
-  if (!store_commit(store, error))
-    return FALSE;
-
   if (!store_query_int64(store,
         "SELECT min(expires_at) FROM messages WHERE expires_at IS NOT NULL",
         &stats.next_expires_at, error))
+    goto fail;
+  if (!store_commit(store, error))
     return FALSE;
+  if (out_purged)
+    *out_purged = g_steal_pointer(&purged);
 
   /* Expired content must leave the WAL too, at most once a minute; inside a
    * caller's transaction that has to wait for its commit. */

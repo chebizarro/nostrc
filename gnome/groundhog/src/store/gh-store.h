@@ -92,6 +92,8 @@ typedef enum {
 #define GH_STORE_MAX_TARGETS_PER_EVENT  64
 /* SQLITE_LIMIT_LENGTH: the largest single value or row (media cache items). */
 #define GH_STORE_MAX_VALUE_SIZE         (32 * 1024 * 1024)
+/* The longest disappearing timer a conversation can keep, in seconds. */
+#define GH_STORE_MAX_DISAPPEARING       (366 * 24 * 60 * 60)
 
 /* ---- Key custody seam --------------------------------------------------------
  * GhStore never persists the key. Two ways to supply it:
@@ -352,6 +354,30 @@ gboolean gh_store_get_draft(GhStore *store, gint64 conversation_id,
 gboolean gh_store_forget_conversation(GhStore *store, gint64 conversation_id,
                                       GError **error);
 
+/* Disappearing messages (charter §3.7, G07): conversations.disappearing_s,
+ * the timer (seconds, 0 = off) given to the account's own messages in the
+ * conversation. Bounded by GH_STORE_MAX_DISAPPEARING; which values a user
+ * may pick is gh-expiry.h's policy. NOT_FOUND if the conversation is absent. */
+gboolean gh_store_get_disappearing(GhStore *store, gint64 conversation_id,
+                                   gint64 *out_seconds, GError **error);
+gboolean gh_store_set_disappearing(GhStore *store, gint64 conversation_id,
+                                   gint64 seconds, GError **error);
+/* The timer every conversation created from now on starts with, however it
+ * is created (sent to, received from, a draft); 0 (the default) is off.
+ * Kept in memory only: the owner sets it again after each open. */
+void gh_store_set_default_disappearing(GhStore *store, gint64 seconds);
+
+/* Called on the store's thread right after T-admit or T-enqueue stored a
+ * message that expires (at @expires_at, unix seconds), so a purge scheduler
+ * can move its next wake-up earlier. Inside a caller's transaction it runs
+ * before that commits (a rollback then only costs an early wake-up). The
+ * callback must not use the store. */
+typedef void (*GhStoreExpiryFunc)(gint64 expires_at, gpointer user_data);
+/* Replaces the callback (NULL removes it); @destroy releases @user_data when
+ * it is replaced or the store closes. */
+void gh_store_set_expiry_notify(GhStore *store, GhStoreExpiryFunc func,
+                                gpointer user_data, GDestroyNotify destroy);
+
 /* ---- Cursors (§3.3 `cursors`) -------------------------------------------------------
  * Sync checkpoints kept inside the encrypted store, e.g. the NIP-17 inbox's
  * "everything before this time was received" mark (G04), so no plaintext
@@ -565,13 +591,30 @@ typedef struct {
 
 /* T-purge (§3.7): deletes messages with expires_at <= now and, if
  * retention_cutoff > 0, those received before it, together with the outbox
- * entries of outgoing ones (their rumor text and signed events), and clamps
- * unread counts, in one transaction (seen keys are kept so they cannot
- * return); then truncates the WAL at most once a minute (GhClock) so expired
+ * entries of outgoing ones (their rumor text and signed events), in one
+ * transaction (seen keys are kept so they cannot return). The read state
+ * stays exact: a read marker on a deleted message moves back to the newest
+ * remaining one at or before it (or none), and each touched conversation's
+ * unread count becomes its remaining messages from others after the marker.
+ * Then the WAL is truncated at most once a minute (GhClock) so expired
  * content leaves it too. Inside a caller's transaction the truncation is
  * reported as deferred. */
 gboolean gh_store_purge(GhStore *store, gint64 retention_cutoff,
                         GhStorePurgeStats *out_stats, GError **error);
+
+/* One message a purge deleted. */
+typedef struct {
+  GhStoreBackend backend;
+  gchar *backend_key;        /* its conversation */
+  gchar *backend_msg_id;     /* NIP-17 rumor id, NIP-29 event id, MLS message id */
+} GhStorePurgedMessage;
+
+void gh_store_purged_message_free(GhStorePurgedMessage *message);
+/* gh_store_purge() that also lists what it deleted: *out_purged (nullable)
+ * receives a GPtrArray of GhStorePurgedMessage, possibly empty. */
+gboolean gh_store_purge_full(GhStore *store, gint64 retention_cutoff,
+                             GPtrArray **out_purged, GhStorePurgeStats *out_stats,
+                             GError **error);
 
 /* ---- Maintenance --------------------------------------------------------------------- */
 

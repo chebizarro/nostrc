@@ -395,6 +395,23 @@ gh_conversation_store_remove(GhConversationStore *self, const gchar *room_id)
   return TRUE;
 }
 
+gboolean
+gh_conversation_store_remove_message(GhConversationStore *self, const gchar *rumor_id)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), FALSE);
+  GhConversation *conversation = rumor_id ? g_hash_table_lookup(self->messages, rumor_id) : NULL;
+  guint old_position = 0;
+  if (!conversation || !g_ptr_array_find(self->conversations, conversation, &old_position))
+    return FALSE;
+  /* The key belongs to the message, which the room is about to release. */
+  g_autofree gchar *id = g_strdup(rumor_id);
+  g_hash_table_remove(self->messages, id);
+  /* As on insert: the room notifies where it is listed, then moves. */
+  gh_conversation_remove(conversation, id);
+  reposition(self, conversation, old_position);
+  return TRUE;
+}
+
 static void
 gh_conversation_store_finalize(GObject *object)
 {

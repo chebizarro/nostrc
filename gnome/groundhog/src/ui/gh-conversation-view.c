@@ -417,7 +417,6 @@ struct _GhConversationView {
   GtkCheckButton *preview_dont_ask;
 
   GhConversation *conversation;
-  GtkFilterListModel *visible; /* the conversation without expired messages */
   GhTimeline *timeline;
   GSettings *settings;
   gboolean compact;
@@ -435,9 +434,7 @@ struct _GhConversationView {
   gpointer load_older_data;
   GDestroyNotify load_older_destroy;
 
-  /* Expiry and day changes */
-  guint expiry_source;
-  gint64 expiry_at;      /* when expiry_source fires (unix seconds); 0 none */
+  /* Day changes */
   guint midnight_source;
 
   /* Delivery details */
@@ -467,12 +464,6 @@ enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhConversationView, gh_conversation_view, ADW_TYPE_BREAKPOINT_BIN)
-
-static gint64
-now_seconds(void)
-{
-  return g_get_real_time() / G_USEC_PER_SEC;
-}
 
 /* ---- announcements ------------------------------------------------------------------ */
 
@@ -666,60 +657,12 @@ gh_conversation_view_get_new_below(GhConversationView *self)
   return self->new_below;
 }
 
-/* ---- expiry and day changes ---------------------------------------------------------- */
+/* ---- day changes -------------------------------------------------------------------- */
 
-static gboolean
-not_expired(gpointer item, gpointer data)
-{
-  (void)data;
-  gint64 expires = gh_message_get_expires_at(GH_MESSAGE(item));
-  return expires == 0 || expires > now_seconds();
-}
-
-static void schedule_expiry(GhConversationView *self);
-
-static gboolean
-on_expiry(gpointer data)
-{
-  GhConversationView *self = data;
-  self->expiry_source = 0;
-  self->expiry_at = 0;
-  gtk_filter_changed(gtk_filter_list_model_get_filter(self->visible),
-                     GTK_FILTER_CHANGE_MORE_STRICT);
-  schedule_expiry(self);
-  return G_SOURCE_REMOVE;
-}
-
-/* The one expiry timer fires at @at unless it already fires sooner. */
-static void
-expire_by(GhConversationView *self, gint64 at)
-{
-  if (at <= 0 || (self->expiry_source && self->expiry_at <= at))
-    return;
-  g_clear_handle_id(&self->expiry_source, g_source_remove);
-  gint64 now = now_seconds();
-  gint64 wait_ms = at > now ? (at - now) * 1000 : 0;
-  self->expiry_at = at;
-  self->expiry_source = g_timeout_add((guint)MIN(wait_ms, (gint64)G_MAXINT32), on_expiry, self);
-}
-
-/* One timer at the soonest expiry of a shown message (charter §3.7): the
- * message is hidden then, whether or not the store has purged it yet. A
- * full scan only when the timer fires or the conversation changes; new
- * messages only bring it forward (expire_by()). */
-static void
-schedule_expiry(GhConversationView *self)
-{
-  g_clear_handle_id(&self->expiry_source, g_source_remove);
-  self->expiry_at = 0;
-  if (!self->visible)
-    return;
-  GListModel *model = G_LIST_MODEL(self->visible);
-  for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
-    g_autoptr(GhMessage) message = g_list_model_get_item(model, i);
-    expire_by(self, gh_message_get_expires_at(message));
-  }
-}
+/* Expiry (charter §3.7) has one source of truth: the conversation itself.
+ * G07's GhExpiry takes a message out of it when it expires (and the store
+ * never lists or admits an expired one), so the view shows exactly what the
+ * conversation holds and runs no expiry timer of its own. */
 
 static void schedule_midnight(GhConversationView *self);
 
@@ -753,16 +696,6 @@ schedule_midnight(GhConversationView *self)
 
 /* ---- messages of the shown conversation ---------------------------------------------- */
 
-/* An expiry learned later (gh_message_set_expires_at()). */
-static void
-on_message_expires(GhConversationView *self, GParamSpec *pspec, GhMessage *message)
-{
-  (void)pspec;
-  gtk_filter_changed(gtk_filter_list_model_get_filter(self->visible),
-                     GTK_FILTER_CHANGE_MORE_STRICT);
-  expire_by(self, gh_message_get_expires_at(message));
-}
-
 /* A send failure is announced assertively (charter §7.6, §7.14). */
 static void
 on_message_status(GhConversationView *self, GParamSpec *pspec, GhMessage *message)
@@ -779,8 +712,6 @@ on_message_status(GhConversationView *self, GParamSpec *pspec, GhMessage *messag
 static void
 watch_message(GhConversationView *self, GhMessage *message)
 {
-  g_signal_connect_object(message, "notify::expires-at", G_CALLBACK(on_message_expires), self,
-                          G_CONNECT_SWAPPED);
   if (gh_message_is_self(message))
     g_signal_connect_object(message, "notify::status", G_CALLBACK(on_message_status), self,
                             G_CONNECT_SWAPPED);
@@ -807,7 +738,6 @@ on_conversation_changed(GhConversationView *self, guint position, guint removed,
     g_autoptr(GhMessage) message = g_list_model_get_item(model, i);
     g_signal_handlers_disconnect_by_data(message, self);
     watch_message(self, message);
-    expire_by(self, gh_message_get_expires_at(message));
   }
 }
 
@@ -887,9 +817,6 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     g_signal_handlers_disconnect_by_data(self->timeline, self);
   gtk_list_view_set_model(self->message_list, NULL);
   g_clear_object(&self->timeline);
-  g_clear_object(&self->visible);
-  g_clear_handle_id(&self->expiry_source, g_source_remove);
-  self->expiry_at = 0;
   g_clear_handle_id(&self->midnight_source, g_source_remove);
   g_clear_handle_id(&self->pin_idle, g_source_remove);
   g_clear_handle_id(&self->open_idle, g_source_remove);
@@ -906,10 +833,7 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   g_set_object(&self->conversation, conversation);
 
   if (conversation) {
-    GtkCustomFilter *filter = gtk_custom_filter_new(not_expired, NULL, NULL);
-    self->visible = gtk_filter_list_model_new(g_object_ref(G_LIST_MODEL(conversation)),
-                                              GTK_FILTER(filter));
-    self->timeline = timeline_new(G_LIST_MODEL(self->visible), is_multi_party(conversation));
+    self->timeline = timeline_new(G_LIST_MODEL(conversation), is_multi_party(conversation));
     on_conversation_changed(self, 0, 0, g_list_model_get_n_items(G_LIST_MODEL(conversation)),
                             G_LIST_MODEL(conversation));
     g_signal_connect_object(conversation, "items-changed", G_CALLBACK(on_conversation_changed),
@@ -1296,13 +1220,6 @@ gh_conversation_view_set_locked_messages(GhConversationView *self, guint count)
   gtk_widget_set_visible(self->locked_row, count > 0);
 }
 
-gint64
-gh_conversation_view_get_next_expiry(GhConversationView *self)
-{
-  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), 0);
-  return self->expiry_source ? self->expiry_at : 0;
-}
-
 guint
 gh_conversation_view_get_announcements(GhConversationView *self,
                                        GtkAccessibleAnnouncementPriority priority)
@@ -1472,7 +1389,6 @@ gh_conversation_view_dispose(GObject *object)
   g_clear_object(&self->cancellable);
   g_clear_handle_id(&self->pin_idle, g_source_remove);
   g_clear_handle_id(&self->open_idle, g_source_remove);
-  g_clear_handle_id(&self->expiry_source, g_source_remove);
   g_clear_handle_id(&self->midnight_source, g_source_remove);
   gh_conversation_view_set_history_loader(self, NULL, NULL, NULL);
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);

@@ -31,6 +31,8 @@ struct _GhDmSend {
   Mode mode;
   gchar *content;     /* wiped once sealed */
   gchar *rumor;       /* seal_rumor: the caller's stored rumor; wiped once sealed */
+  gboolean has_outer; /* the rumor expires: outer holds its layers' expirations */
+  GhNip17OuterExpiration outer;
   gboolean self_dm;
   GMainContext *context;
   GCancellable *cancel; /* revokes the inbox lookup and signer approvals */
@@ -709,8 +711,9 @@ begin_seal(GhDmSend *self)
   if (is_done(self))
     return;
   if (self->rumor)
-    gh_nip17_envelope_seal_async(self->sender->accounts, self->rumor, self->cancel,
-                                 envelope_done, g_object_ref(self));
+    gh_nip17_envelope_seal_expiring_async(self->sender->accounts, self->rumor,
+                                          self->has_outer ? &self->outer : NULL, self->cancel,
+                                          envelope_done, g_object_ref(self));
   else if (self->self_dm)
     gh_nip17_envelope_build_self_async(self->sender->accounts, self->content, self->cancel,
                                        envelope_done, g_object_ref(self));
@@ -813,14 +816,18 @@ active_sender(GhDmSender *sender)
   return npub ? gh_identity_pubkey_hex(npub) : NULL;
 }
 
-/* One of content or rumor (seal_rumor) is set. */
+/* One of content or rumor (seal_rumor) is set; outer only with a rumor. */
 static GhDmSend *
 compose(GhDmSender *sender, const gchar *recipient_pubkey_hex, const gchar *content,
-        const gchar *rumor, GCancellable *cancellable, Mode mode)
+        const gchar *rumor, const GhNip17OuterExpiration *outer, GCancellable *cancellable,
+        Mode mode)
 {
   GhDmSend *self = g_object_new(GH_TYPE_DM_SEND, NULL);
   GhDmSendStatus *status = &self->status;
   self->mode = mode;
+  self->has_outer = outer != NULL;
+  if (outer)
+    self->outer = *outer;
   status->sender = active_sender(sender);
   gboolean text_ok = rumor || (content && *content && g_utf8_validate(content, -1, NULL));
   if (!status->sender || !hex64(recipient_pubkey_hex) || !text_ok) {
@@ -849,7 +856,7 @@ gh_dm_sender_send(GhDmSender *self, const gchar *recipient_pubkey_hex,
                   const gchar *content, GCancellable *cancellable)
 {
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  return compose(self, recipient_pubkey_hex, content, NULL, cancellable, MODE_SEND);
+  return compose(self, recipient_pubkey_hex, content, NULL, NULL, cancellable, MODE_SEND);
 }
 
 GhDmSend *
@@ -857,17 +864,25 @@ gh_dm_sender_seal(GhDmSender *self, const gchar *recipient_pubkey_hex,
                   const gchar *content, GCancellable *cancellable)
 {
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  return compose(self, recipient_pubkey_hex, content, NULL, cancellable, MODE_SEAL);
+  return compose(self, recipient_pubkey_hex, content, NULL, NULL, cancellable, MODE_SEAL);
 }
 
 GhDmSend *
 gh_dm_sender_seal_rumor(GhDmSender *self, const gchar *rumor_json, GCancellable *cancellable)
 {
+  return gh_dm_sender_seal_rumor_expiring(self, rumor_json, NULL, cancellable);
+}
+
+GhDmSend *
+gh_dm_sender_seal_rumor_expiring(GhDmSender *self, const gchar *rumor_json,
+                                 const GhNip17OuterExpiration *outer,
+                                 GCancellable *cancellable)
+{
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
   g_autofree gchar *sender = active_sender(self);
   g_autofree gchar *recipient = sender ? gh_nip17_rumor_get_recipient(rumor_json, sender) : NULL;
   /* An unusable rumor fails like an invalid recipient, before any lookup. */
-  return compose(self, recipient, NULL, rumor_json, cancellable, MODE_SEAL);
+  return compose(self, recipient, NULL, rumor_json, outer, cancellable, MODE_SEAL);
 }
 
 /* A stored wrap must be a signed gift wrap to exactly this leg's receiver,

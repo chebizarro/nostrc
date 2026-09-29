@@ -5,6 +5,22 @@
 
 G_BEGIN_DECLS
 
+/* NIP-40 expirations of the outer layers of a disappearing message (charter
+ * §3.7, PT-7). The rumor inside carries the exact expiration; each seal and
+ * each gift wrap carries its own value, never earlier than the rumor's, so
+ * that no outer layer reveals the real send time (expiration - timer) and
+ * the layers of one message do not share a value. gh-expiry.h computes
+ * them. */
+typedef struct {
+  gint64 seal; /* the kind-13 seal */
+  gint64 wrap; /* the kind-1059 gift wrap that carries it */
+} GhNip17LayerExpiration;
+
+typedef struct {
+  GhNip17LayerExpiration recipient; /* the recipient's; unused for a note to self */
+  GhNip17LayerExpiration self_copy; /* the sender's own (a note to self's only one) */
+} GhNip17OuterExpiration;
+
 typedef struct {
   gchar *rumor_json;          /* one canonical unsigned kind-14 rumor */
   gchar *recipient_wrap_json; /* signed kind-1059 event, not published;
@@ -38,6 +54,20 @@ gchar *gh_nip17_rumor_new(const gchar *sender_pubkey_hex,
                           const gchar *recipient_pubkey_hex,
                           const gchar *content, gint64 created_at,
                           gchar **out_rumor_id, GError **error);
+/* The same rumor that disappears: it carries ["expiration", "<expires_at>"]
+ * (NIP-40), inside the encryption. @expires_at is 0 (none, exactly
+ * gh_nip17_rumor_new()) or later than @created_at and at most
+ * GH_NIP17_MAX_EXPIRATION. */
+gchar *gh_nip17_rumor_new_expiring(const gchar *sender_pubkey_hex,
+                                   const gchar *recipient_pubkey_hex,
+                                   const gchar *content, gint64 created_at,
+                                   gint64 expires_at, gchar **out_rumor_id,
+                                   GError **error);
+/* The created_at and expiration (0: none) of a canonical unsigned kind-14
+ * rumor; FALSE for anything else, including a malformed or repeated
+ * expiration tag. Either out pointer may be NULL. */
+gboolean gh_nip17_rumor_get_expiration(const gchar *rumor_json, gint64 *out_created_at,
+                                       gint64 *out_expires_at);
 /* The recipient (lowercase hex; the sender itself for a note to self) of a
  * canonical unsigned kind-14 rumor authored by @sender_pubkey_hex with
  * exactly one "p" tag, or NULL for anything else. */
@@ -55,6 +85,21 @@ void gh_nip17_envelope_seal_async(GhAccountController *accounts,
                                   GCancellable *cancellable,
                                   GAsyncReadyCallback callback,
                                   gpointer user_data);
+/* gh_nip17_envelope_seal_async() with the outer expirations of a rumor that
+ * expires: each seal carries ["expiration", <its value>] as its only tag and
+ * each gift wrap has it beside its "p" tag (NIP-17: on the wrap, and on the
+ * seal in case it leaks). @outer is required exactly when the rumor has an
+ * expiration, and every value used (for a note to self only self_copy) must
+ * be at least the rumor's and at most GH_NIP17_MAX_EXPIRATION; anything else
+ * fails with G_IO_ERROR_INVALID_ARGUMENT before any signer call. So
+ * gh_nip17_envelope_seal_async() refuses a rumor that expires: it would
+ * leave the outer layers without one. */
+void gh_nip17_envelope_seal_expiring_async(GhAccountController *accounts,
+                                           const gchar *rumor_json,
+                                           const GhNip17OuterExpiration *outer,
+                                           GCancellable *cancellable,
+                                           GAsyncReadyCallback callback,
+                                           gpointer user_data);
 /* Finishes any build or seal. */
 GhNip17Envelope *gh_nip17_envelope_build_finish(GAsyncResult *result,
                                                   GError **error);

@@ -339,8 +339,11 @@ memory_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
              GhConversationCommit *commit, GError **error)
 {
   MemorySeen *seen = data;
-  (void)commit;
   (void)error;
+  /* Messages live in memory only here: one already expired on arrival is
+   * recorded as seen and never shown (charter §3.7, EX-4). */
+  gint64 expires_at = gh_message_get_expires_at(message);
+  commit->hidden = expires_at > 0 && expires_at <= now_seconds();
   if (!wrap_id)
     return TRUE; /* a local echo; its self-copy wrap is recorded on arrival */
   g_hash_table_add(seen->wraps, g_strdup(wrap_id));

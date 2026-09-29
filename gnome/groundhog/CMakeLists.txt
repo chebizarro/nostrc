@@ -960,3 +960,56 @@ if (BUILD_TESTING)
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
 endif()
 # --- end G17 preferences dialog ---
+
+# --- G07 disappearing messages ---
+# Disappearing messages and retention (privacy charter §3.7, §8.2 G07):
+# per-conversation timers in the encrypted store, the exact rumor expiration
+# and the jittered, hour-rounded seal and wrap expirations of outgoing
+# messages (PT-7), and the GhClock purge scheduler that keeps the store, the
+# conversation model and the outbox in step (EX-1, EX-3..EX-5). gh-outbox.c
+# computes its messages' expirations with gh-expiry.c, so every target built
+# from GROUNDHOG_OUTBOX_SOURCES gets it here (the outbox implies the store
+# delegate: both need the GhStore and the in-tree nostr/nip19 targets).
+if (GROUNDHOG_OUTBOX_SOURCES AND TARGET groundhog-store-conversations)
+  message(STATUS "Groundhog expiry: enabled")
+  set(GROUNDHOG_EXPIRY_SOURCES src/app/gh-expiry.c)
+  if (TARGET groundhog-account-store)
+    target_sources(groundhog PRIVATE ${GROUNDHOG_EXPIRY_SOURCES})
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_EXPIRY=1)
+  else()
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_EXPIRY=0)
+  endif()
+  if (TARGET test-groundhog-account-store)
+    target_sources(test-groundhog-account-store PRIVATE ${GROUNDHOG_EXPIRY_SOURCES})
+  endif()
+  if (TARGET test-groundhog-outbox)
+    # The delegate compiled against the test-hooks store that test links.
+    target_sources(test-groundhog-outbox PRIVATE ${GROUNDHOG_EXPIRY_SOURCES}
+      src/store/gh-store-conversations.c)
+    target_link_libraries(test-groundhog-outbox PRIVATE groundhog-conversations)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # EX-1 through real seals and the durable outbox (mock signer bus,
+    # recording transports), PT-7 bounds, rounding and jitter on the fake
+    # GhClock (H6), EX-3..EX-5 purges over real SQLCipher stores with the
+    # conversation model, and T-purge crash cut points (H8).
+    add_executable(test-groundhog-expiry tests/app/test_expiry.c tests/app/expiry-send.c
+      tests/store/crash-harness.c ${GROUNDHOG_EXPIRY_SOURCES} ${GROUNDHOG_OUTBOX_SOURCES} ${GROUNDHOG_DM_SEND_SOURCES}
+      src/app/gh-nip17-envelope.c src/store/gh-store-conversations.c)
+    target_include_directories(test-groundhog-expiry PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+    target_link_libraries(test-groundhog-expiry PRIVATE groundhog-account-relays
+      groundhog-conversations groundhog-store-testhooks nostr_nip17_core nostr_nip59_core
+      nostrc-test-bus)
+    target_compile_options(test-groundhog-expiry PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-expiry)
+    add_dependencies(test-groundhog-expiry groundhog-test-schemas)
+    add_test(NAME groundhog-expiry COMMAND test-groundhog-expiry)
+    set_tests_properties(groundhog-expiry PROPERTIES TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog expiry: disabled (needs the outbox and the store delegate)")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_EXPIRY=0)
+endif()
+# --- end G07 disappearing messages ---

@@ -20,6 +20,9 @@
 #if GROUNDHOG_HAVE_OUTBOX
 #include "gh-app-outbox.h"
 #endif
+#if GROUNDHOG_HAVE_EXPIRY
+#include "gh-expiry.h"
+#endif
 #if GROUNDHOG_HAVE_BACKGROUND
 #include "gh-background.h"
 #endif
@@ -57,6 +60,9 @@ struct _GhAppServices {
   GhStoreKey *store_key;
   GhAccountStore *account_store;
   GSimpleAction *store_actions[3];
+#endif
+#if GROUNDHOG_HAVE_EXPIRY
+  GhExpiry *expiry; /* the open store's, while there is one */
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
   GhBackground *background;
@@ -304,6 +310,103 @@ store_actions_teardown(GhAppServices *self)
 }
 #endif
 
+#if GROUNDHOG_HAVE_EXPIRY
+/* Disappearing messages and retention (G07): a GhExpiry for each open store
+ * (saved, in memory or damaged), purging at open, on time and daily, and gone
+ * as soon as that store closes. It is the one expiry timer: the conversation
+ * view shows what the model holds. */
+static gint64
+expiry_default_timer(GhAppServices *self)
+{
+  return g_settings_get_int(self->settings, "default-disappearing-seconds");
+}
+
+/* The outbox lets go of entries the purge deleted with their messages. */
+static void
+expiry_purged(GhExpiry *expiry, const gchar *const *rumor_ids, guint n_outbox, gpointer data)
+{
+  GhAppServices *self = data;
+  (void)expiry;
+  (void)rumor_ids;
+#if GROUNDHOG_HAVE_OUTBOX
+  if (n_outbox > 0)
+    gh_app_outbox_prune(gh_account_store_get_outbox(self->account_store));
+#else
+  (void)self;
+  (void)n_outbox;
+#endif
+}
+
+static void
+expiry_stop(GhAppServices *self)
+{
+  dispose_object(&self->expiry);
+}
+
+static void
+expiry_sync(GhAppServices *self)
+{
+  GhAccountStoreState state = gh_account_store_get_state(self->account_store);
+  GhStore *store = gh_account_store_get_store(self->account_store);
+  /* A damaged (read-only) store still gets one: expired messages must leave
+   * the conversation view even when nothing can be deleted. */
+  if (!store || (state != GH_ACCOUNT_STORE_OPEN && state != GH_ACCOUNT_STORE_EPHEMERAL &&
+                 state != GH_ACCOUNT_STORE_CORRUPT)) {
+    expiry_stop(self);
+    return;
+  }
+  if (self->expiry)
+    return;
+  GhExpiryConfig config = {
+    .store = store,
+    .conversations = gh_account_store_get_conversations(self->account_store),
+    .retention_days = g_settings_get_int(self->settings, "retention-days"),
+    .default_timer = expiry_default_timer(self),
+  };
+  self->expiry = gh_expiry_new(&config);
+  g_signal_connect(self->expiry, "purged", G_CALLBACK(expiry_purged), self);
+  g_autoptr(GError) error = NULL;
+  if (!gh_expiry_purge(self->expiry, &error))
+    g_warning("Groundhog could not delete expired messages: %s", error->message);
+}
+
+static void
+expiry_settings_changed(GSettings *settings, const gchar *key, gpointer data)
+{
+  GhAppServices *self = data;
+  if (!self->expiry)
+    return;
+  if (g_str_equal(key, "retention-days"))
+    gh_expiry_set_retention_days(self->expiry, g_settings_get_int(settings, key));
+  else if (g_str_equal(key, "default-disappearing-seconds"))
+    gh_expiry_set_default_timer(self->expiry, expiry_default_timer(self));
+}
+
+static gboolean
+expiry_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  g_signal_connect_swapped(self->account_store, "changed", G_CALLBACK(expiry_sync), self);
+  /* Right after the close, before any other store can open. */
+  g_signal_connect_swapped(self->account_store, "store-closed", G_CALLBACK(expiry_stop), self);
+  g_signal_connect(self->settings, "changed::retention-days",
+                   G_CALLBACK(expiry_settings_changed), self);
+  g_signal_connect(self->settings, "changed::default-disappearing-seconds",
+                   G_CALLBACK(expiry_settings_changed), self);
+  expiry_sync(self);
+  return TRUE;
+}
+
+static void
+expiry_teardown(GhAppServices *self)
+{
+  g_signal_handlers_disconnect_by_func(self->account_store, expiry_sync, self);
+  g_signal_handlers_disconnect_by_func(self->account_store, expiry_stop, self);
+  g_signal_handlers_disconnect_by_func(self->settings, expiry_settings_changed, self);
+  expiry_stop(self);
+}
+#endif
+
 #if GROUNDHOG_HAVE_BACKGROUND
 /* Background delivery (charter §5.3, G15): holds the application while
  * run-in-background is on, so the services above outlive the window, and
@@ -439,6 +542,9 @@ static const GhAppService services[] = {
   { "store-key", store_key_init, store_key_teardown },
   { "account-store", account_store_init, account_store_teardown },
   { "store-actions", store_actions_init, store_actions_teardown },
+#endif
+#if GROUNDHOG_HAVE_EXPIRY
+  { "expiry", expiry_init, expiry_teardown },
 #endif
 #if GROUNDHOG_HAVE_ACCOUNTS
   { "preferences", preferences_init, preferences_teardown },

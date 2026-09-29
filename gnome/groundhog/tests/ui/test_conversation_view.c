@@ -1056,47 +1056,42 @@ timeline_has_two(gpointer data)
   return timeline_length(GH_CONVERSATION_VIEW(data)) == 2;
 }
 
+/* Expiry has one source of truth (charter §3.7, G07): the conversation. The
+ * store never lists or admits an expired message and GhExpiry (tested in
+ * groundhog-expiry) takes one out of the model when it expires; the view
+ * shows exactly what the conversation holds and keeps no timer of its own. */
 static void
 test_expiry(Fixture *f, gconstpointer data)
 {
   (void)data;
   gint64 now = now_seconds();
-  GhMessage *gone = add_dm(f->store, 2, 1, now - 100, "already gone");
+  GhMessage *first = add_dm(f->store, 2, 1, now - 100, "stays");
   GhMessage *later = add_dm(f->store, 2, 1, now - 50, "disappears in an hour");
   GhMessage *soon = add_dm(f->store, 2, 1, now - 10, "disappears in a moment");
-  gh_message_set_expires_at(gone, now - 1);
   gh_message_set_expires_at(later, now + 3600);
+  gh_message_set_expires_at(soon, now + 60);
   GhConversation *conversation = room_of(f->store, soon);
   gh_conversation_mark_read(conversation);
   show(f, conversation, 600, 500);
 
-  /* Expired messages are hidden at once, before any purge (charter §3.7). */
-  g_assert_cmpuint(timeline_length(f->view), ==, 2);
-  g_assert_true(gh_timeline_item_get_message(timeline_item(f->view, 0)) == later);
+  /* Disappearing messages carry the timer icon and say so. */
+  g_assert_cmpuint(timeline_length(f->view), ==, 3);
   GhMessageRow *row = row_for(f->view, later);
   g_assert_true(shown(row_child(row, "timer_icon")));
   g_assert_true(shown(row_child(row, "meta_box")));
   g_assert_nonnull(strstr(gh_message_row_get_summary(row), "Disappearing message."));
-  g_assert_false(shown(row_child(row_for(f->view, soon), "timer_icon")));
-
-  /* One timer, at the soonest expiry shown; an expiry learned later (the
-   * seal's or wrap's) brings it forward. The test does not wait for real
-   * time: a long idle wait trips GTK 4.22's macOS event loop (a failed or
-   * recursive poll warning, fatal in tests). */
-  g_assert_cmpint(gh_conversation_view_get_next_expiry(f->view), ==, now + 3600);
-  gh_message_set_expires_at(soon, now + 60);
-  g_assert_cmpint(gh_conversation_view_get_next_expiry(f->view), ==, now + 60);
   g_assert_true(shown(row_child(row_for(f->view, soon), "timer_icon")));
+  g_assert_false(shown(row_child(row_for(f->view, first), "timer_icon")));
 
-  /* ...and a message whose time has come is hidden at once. */
-  GhMessage *due = add_dm(f->store, 2, 1, now - 5, "due already");
-  drain_idle();
-  g_assert_cmpuint(timeline_length(f->view), ==, 3);
-  gh_message_set_expires_at(due, now_seconds() - 1);
+  /* When it expires the purge takes it out of the conversation (as
+   * gh_store_conversations_purge() does), and the view follows at once. */
+  g_autofree gchar *soon_id = g_strdup(gh_message_get_rumor_id(soon));
+  g_assert_true(gh_conversation_store_remove_message(f->store, soon_id));
   spin_until(timeline_has_two, f->view);
-  g_assert_true(gh_timeline_item_get_message(timeline_item(f->view, 0)) == later);
-  g_assert_true(gh_timeline_item_get_message(timeline_item(f->view, 1)) == soon);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 4);
+  g_assert_true(gh_timeline_item_get_message(timeline_item(f->view, 0)) == first);
+  g_assert_true(gh_timeline_item_get_message(timeline_item(f->view, 1)) == later);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 2);
+  g_assert_cmpstr(gh_conversation_get_preview(conversation), ==, "disappears in an hour");
 }
 
 /* ---- scrolling ---------------------------------------------------------------------------- */

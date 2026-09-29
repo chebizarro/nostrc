@@ -124,7 +124,11 @@ GhOutbox *gh_outbox_new(const GhOutboxConfig *config, GError **error);
 gboolean gh_outbox_is_active(GhOutbox *self);
 
 /* T-enqueue a one-to-one text (recipient == the account: a note to self)
- * and start sending it. Errors: G_IO_ERROR_PERMISSION_DENIED when the
+ * and start sending it. In a conversation with a disappearing timer (charter
+ * §3.7, gh-expiry.h) the message expires at send + timer: the stored rumor
+ * and message carry that exact time, and each seal and gift wrap gets its
+ * own later expiration, drawn when it is sealed. Errors:
+ * G_IO_ERROR_PERMISSION_DENIED when the
  * store's account is not the active one, G_IO_ERROR_INVALID_ARGUMENT for a
  * bad recipient or text (empty, not UTF-8, or too long for a gift wrap:
  * about 40 KB), or the store's error (e.g. GH_STORE_ERROR_FULL; the draft is
@@ -150,6 +154,11 @@ gboolean gh_outbox_cancel(GhOutbox *self, gint64 outbox_id, GError **error);
 /* Stops sending and deletes the message and its outbox rows (seen keys
  * stay, so a self-copy that comes back is not shown again). */
 gboolean gh_outbox_delete(GhOutbox *self, gint64 outbox_id, GError **error);
+/* Drops every message whose outbox entry is no longer in the store, as if
+ * deleted: nothing more of it is sealed or published, and "item-removed" is
+ * emitted. The expiry purge deletes a disappearing message's entry (its
+ * rumor and wraps) when it expires (gh-expiry.h "purged"). */
+void gh_outbox_prune(GhOutbox *self);
 
 G_END_DECLS
 #endif

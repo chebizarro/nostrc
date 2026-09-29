@@ -33,8 +33,10 @@ gchar *gh_conversation_view_format_day(GDateTime *when, GDateTime *now);
  * GhConversationView (data/ui/gh-conversation-view.blp, charter §7.4, §7.6)
  * shows the messages of one GhConversation:
  *  - bubbles (GhMessageRow) in a ListView sectioned by local day with day
- *    separators, grouped into runs; messages whose expires-at has passed are
- *    hidden at once, before any purge;
+ *    separators, grouped into runs: exactly the messages the conversation
+ *    holds. An expired message is never in it (G07: the store neither lists
+ *    nor admits one, and GhExpiry takes it out when it expires), so the view
+ *    has no expiry timer of its own;
  *  - it sticks to the newest message while scrolled to the bottom; otherwise
  *    "Jump to Latest" appears with the number of new messages below. Opening
  *    a conversation with unread messages brings the first of them into view;
@@ -149,10 +151,6 @@ void gh_conversation_view_set_recipient_without_inbox(GhConversationView *self,
 /* Charter §7.15 state 12: "Waiting for Nostr Signer to unlock N messages"
  * with Unlock (conversation.unlock-messages); 0 hides it. */
 void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count);
-
-/* When the view next hides an expiring message it shows (unix seconds; 0:
- * none is due). */
-gint64 gh_conversation_view_get_next_expiry(GhConversationView *self);
 
 /* The view's accessibility announcements (charter §7.14), for tests: how
  * many were made at @priority, and the last text. */

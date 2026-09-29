@@ -4,6 +4,7 @@
 #include "gh-account-relays.h"
 #include "gh-inbox-resolver.h"
 #include "gh-message-status.h"
+#include "gh-nip17-envelope.h"
 #include "gh-relay-publish.h"
 
 G_BEGIN_DECLS
@@ -175,6 +176,13 @@ GhDmSend *gh_dm_sender_seal(GhDmSender *self, const gchar *recipient_pubkey_hex,
  * at once. */
 GhDmSend *gh_dm_sender_seal_rumor(GhDmSender *self, const gchar *rumor_json,
                                   GCancellable *cancellable);
+/* gh_dm_sender_seal_rumor() for a rumor that disappears (charter §3.7):
+ * @outer (copied) gives each seal and gift wrap its expiration, see
+ * gh_nip17_envelope_seal_expiring_async(). A rumor with an expiration
+ * needs it; one without must pass NULL (otherwise FAILED/INVALID). */
+GhDmSend *gh_dm_sender_seal_rumor_expiring(GhDmSender *self, const gchar *rumor_json,
+                                           const GhNip17OuterExpiration *outer,
+                                           GCancellable *cancellable);
 /* Republishes the stored wraps of a sealed (or partially published) status to
  * every target that has not ACCEPTED, byte-for-byte and without any signer
  * call. The status must belong to the active account; it is copied. */

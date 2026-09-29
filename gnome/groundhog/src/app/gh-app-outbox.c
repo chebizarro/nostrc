@@ -68,3 +68,11 @@ gh_app_outbox_create(GhStore *store, gpointer user_data, GError **error)
   };
   return G_OBJECT(gh_outbox_new(&config, error));
 }
+
+void
+gh_app_outbox_prune(GObject *outbox)
+{
+  g_return_if_fail(!outbox || GH_IS_OUTBOX(outbox));
+  if (outbox)
+    gh_outbox_prune(GH_OUTBOX(outbox));
+}

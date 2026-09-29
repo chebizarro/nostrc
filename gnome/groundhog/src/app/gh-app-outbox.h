@@ -31,6 +31,9 @@ void gh_app_outbox_free(GhAppOutbox *self);
 /* A GhAccountStoreOutboxFunc (gh-account-store.h): a new GhOutbox over
  * store; user_data is the GhAppOutbox. */
 GObject *gh_app_outbox_create(GhStore *store, gpointer user_data, GError **error);
+/* gh_outbox_prune() on a gh_app_outbox_create() object (NULL: nothing to
+ * do): the expiry purge deleted entries of disappearing messages (G07). */
+void gh_app_outbox_prune(GObject *outbox);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhAppOutbox, gh_app_outbox_free)
 

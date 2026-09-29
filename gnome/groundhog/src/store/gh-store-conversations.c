@@ -854,6 +854,272 @@ gh_store_conversations_forget(GhStoreConversations *self, const gchar *room_id,
   return TRUE;
 }
 
+/* ---- Purge ------------------------------------------------------------------------------ */
+
+/* The stored name of a room follows its newest subject (see delegate_admit):
+ * after a purge it is the newest remaining message's subject, or none, so a
+ * purged message's subject does not outlive it. */
+static gboolean
+refresh_title(GhStoreConversations *self, gint64 conversation_id, gboolean *out_changed,
+              GError **error)
+{
+  GhStore *store = self->store;
+  g_autofree gchar *title = NULL;
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT raw_json FROM messages WHERE conversation_id = ?1 AND "
+    "instr(raw_json, '\"subject\"') > 0 ORDER BY created_at DESC, backend_msg_id DESC", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  gboolean has_row = FALSE;
+  while (!title) {
+    if (!step_row(store, stmt, &has_row, "Reading stored subjects", error))
+      goto fail;
+    if (!has_row)
+      break;
+    g_autoptr(GhMessage) message = gh_message_new_from_rumor(self->account,
+      (const gchar *)sqlite3_column_text(stmt, 0), NULL);
+    if (message && gh_message_get_subject(message))
+      title = bounded_title(gh_message_get_subject(message));
+  }
+  g_clear_pointer(&stmt, sqlite3_finalize);
+  stmt = prepare(store, "UPDATE conversations SET title = ?2 WHERE id = ?1 AND title IS NOT ?2",
+                 error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  BIND(bind_text(stmt, 2, title));
+  if (!step_done(store, stmt, "Renaming a conversation", error))
+    goto fail;
+  *out_changed = *out_changed || sqlite3_changes(gh_store_get_db(store)) > 0;
+  sqlite3_finalize(stmt);
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* Whether the room stores a message (before the place (created_at, id) when
+ * id is not NULL). */
+static gboolean
+room_has_messages(GhStore *store, gint64 conversation_id, gint64 created_at, const gchar *id,
+                  gboolean *out_exists, GError **error)
+{
+  *out_exists = FALSE;
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND "
+    "(?3 IS NULL OR (created_at, backend_msg_id) < (?2, ?3)))", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  BIND(sqlite3_bind_int64(stmt, 2, created_at));
+  BIND(bind_text(stmt, 3, id));
+  gboolean has_row = FALSE;
+  gboolean ok = step_row(store, stmt, &has_row, "Reading stored messages", error);
+  *out_exists = ok && has_row && sqlite3_column_int(stmt, 0) != 0;
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* A listed room after a purge: unlisted when nothing of it is stored any
+ * more (as a restart would), otherwise given its durable state again (read
+ * marker, unread count, name) with the history floor it has, and when every
+ * loaded message went, its newest remaining page. */
+static gboolean
+refresh_room(GhStoreConversations *self, GhConversationStore *model, const gchar *room_id,
+             GError **error)
+{
+  GhStore *store = self->store;
+  GhConversation *conversation = gh_conversation_store_lookup(model, room_id);
+  if (!conversation)
+    return TRUE;
+  gboolean found = FALSE, has_messages = FALSE;
+  gint64 id = 0;
+  if (!lookup_room(store, room_id, &found, &id, error) ||
+      (found && !room_has_messages(store, id, 0, NULL, &has_messages, error)))
+    return FALSE;
+  if (!has_messages) {
+    gh_conversation_store_remove(model, room_id);
+    return TRUE;
+  }
+  const gchar *floor_ref = NULL;
+  gint64 floor_created_at = 0;
+  gboolean has_older = gh_conversation_get_floor(conversation, &floor_created_at, &floor_ref);
+  /* Restoring the state replaces the room's own copy of the floor id. */
+  g_autofree gchar *floor_id = g_strdup(floor_ref);
+  if (has_older &&
+      !room_has_messages(store, id, floor_created_at, floor_id, &has_older, error))
+    return FALSE;
+  RoomState state = { 0 };
+  if (!load_room_state(store, id, &state, error)) {
+    room_state_clear(&state);
+    return FALSE;
+  }
+  GhConversationState restored = {
+    .accepted = state.request_state == GH_STORE_REQUEST_ACCEPTED,
+    .has_marker = state.marker.has,
+    .marker_created_at = state.marker.created_at,
+    .marker_id = state.marker.id,
+    .subject = state.title,
+    .unread = (guint)CLAMP(state.unread, 0, (gint64)G_MAXUINT),
+    .has_older = has_older,
+    .floor_created_at = floor_created_at,
+    .floor_id = floor_id,
+  };
+  gh_conversation_store_restore(model, room_id, NULL, &restored);
+  room_state_clear(&state);
+  guint listed = 0;
+  if (g_list_model_get_n_items(G_LIST_MODEL(conversation)) == 0 && has_older &&
+      !restore_room(self, model, id, room_id, conversation, GH_STORE_CONVERSATIONS_PAGE_SIZE,
+                    &listed, error))
+    return FALSE;
+  return TRUE;
+}
+
+/* A read-only store (STORE_CORRUPT) deletes nothing: messages whose time
+ * has come only leave the attached model, and retention waits for a store
+ * that can be written. The next expiry is the earliest later one stored. */
+static gboolean
+hide_expired(GhStoreConversations *self, GhStorePurgeStats *stats, GStrvBuilder *ids,
+             GError **error)
+{
+  GhStore *store = self->store;
+  const gint64 now = gh_clock_get_unix(gh_store_get_clock(store));
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  if (model && g_strcmp0(gh_conversation_store_get_account(model), self->account) == 0) {
+    g_autoptr(GPtrArray) expired = g_ptr_array_new_with_free_func(g_free);
+    g_autoptr(GPtrArray) rooms = g_ptr_array_new_with_free_func(g_free);
+    for (guint i = 0; i < g_list_model_get_n_items(G_LIST_MODEL(model)); i++) {
+      g_autoptr(GhConversation) conversation = g_list_model_get_item(G_LIST_MODEL(model), i);
+      gboolean touched = FALSE;
+      for (guint j = 0; j < g_list_model_get_n_items(G_LIST_MODEL(conversation)); j++) {
+        g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(conversation), j);
+        gint64 expires_at = gh_message_get_expires_at(message);
+        if (expires_at > 0 && expires_at <= now) {
+          g_ptr_array_add(expired, g_strdup(gh_message_get_rumor_id(message)));
+          touched = TRUE;
+        }
+      }
+      if (touched)
+        g_ptr_array_add(rooms, g_strdup(gh_conversation_get_room_id(conversation)));
+    }
+    for (guint i = 0; i < expired->len; i++) {
+      gh_conversation_store_remove_message(model, g_ptr_array_index(expired, i));
+      g_strv_builder_add(ids, g_ptr_array_index(expired, i));
+    }
+    stats->n_expired = expired->len;
+    for (guint i = 0; i < rooms->len; i++) {
+      GhConversation *conversation = gh_conversation_store_lookup(model, g_ptr_array_index(rooms, i));
+      if (conversation && g_list_model_get_n_items(G_LIST_MODEL(conversation)) == 0 &&
+          !gh_conversation_get_has_older(conversation))
+        gh_conversation_store_remove(model, g_ptr_array_index(rooms, i));
+    }
+  }
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT min(expires_at) FROM messages WHERE expires_at > ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, now));
+  gboolean has_row = FALSE;
+  gboolean ok = step_row(store, stmt, &has_row, "Reading the next expiry", error);
+  if (ok && has_row)
+    stats->next_expires_at = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+gboolean
+gh_store_conversations_purge(GhStoreConversations *self, gint64 retention_cutoff,
+                             GhStorePurgeStats *out_stats, GStrv *out_purged, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  if (out_stats)
+    *out_stats = (GhStorePurgeStats){ 0 };
+  if (out_purged)
+    *out_purged = NULL;
+  if (!check_open(self, error))
+    return FALSE;
+  GhStore *store = self->store;
+  GhStorePurgeStats stats = { 0 };
+  if (gh_store_is_read_only(store)) {
+    g_autoptr(GStrvBuilder) hidden = g_strv_builder_new();
+    if (!hide_expired(self, &stats, hidden, error))
+      return FALSE;
+    if (out_stats)
+      *out_stats = stats;
+    if (out_purged)
+      *out_purged = g_strv_builder_end(hidden);
+    return TRUE;
+  }
+  g_autoptr(GPtrArray) purged = NULL;
+  if (!gh_store_purge_full(store, retention_cutoff, &purged, &stats, error))
+    return FALSE;
+  if (out_stats)
+    *out_stats = stats;
+
+  /* The NIP-17 rooms it touched (keys borrowed from purged), in order. */
+  g_autoptr(GPtrArray) rooms = g_ptr_array_new();
+  g_autoptr(GHashTable) seen_rooms = g_hash_table_new(g_str_hash, g_str_equal);
+  g_autoptr(GStrvBuilder) ids = g_strv_builder_new();
+  for (guint i = 0; i < purged->len; i++) {
+    GhStorePurgedMessage *message = g_ptr_array_index(purged, i);
+    if (message->backend != GH_STORE_BACKEND_NIP17)
+      continue;
+    g_strv_builder_add(ids, message->backend_msg_id);
+    if (g_hash_table_add(seen_rooms, message->backend_key))
+      g_ptr_array_add(rooms, message->backend_key);
+  }
+
+  /* The purge is committed: what follows only brings names and the model in
+   * line, so a failure there is reported but the model still drops every
+   * purged message. */
+  g_autoptr(GError) sync_error = NULL;
+  gboolean renamed = FALSE;
+  if (rooms->len > 0 && gh_store_begin(store, &sync_error)) {
+    gboolean ok = TRUE;
+    for (guint i = 0; ok && i < rooms->len; i++) {
+      gboolean found = FALSE;
+      gint64 id = 0;
+      ok = lookup_room(store, g_ptr_array_index(rooms, i), &found, &id, &sync_error) &&
+           (!found || refresh_title(self, id, &renamed, &sync_error));
+    }
+    if (!ok)
+      gh_store_rollback(store);
+    else if (!gh_store_commit(store, &sync_error))
+      renamed = FALSE;
+  }
+  /* A new name must not leave the purged one in the WAL; the purge's own
+   * checkpoint decided that this is not too soon. */
+  if (renamed && stats.checkpointed && !sync_error)
+    (void)gh_store_checkpoint(store, NULL);
+
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  if (model && g_strcmp0(gh_conversation_store_get_account(model), self->account) == 0) {
+    for (guint i = 0; i < purged->len; i++) {
+      GhStorePurgedMessage *message = g_ptr_array_index(purged, i);
+      if (message->backend == GH_STORE_BACKEND_NIP17)
+        gh_conversation_store_remove_message(model, message->backend_msg_id);
+    }
+    for (guint i = 0; i < rooms->len; i++) {
+      g_autoptr(GError) room_error = NULL;
+      if (!refresh_room(self, model, g_ptr_array_index(rooms, i), &room_error) && !sync_error)
+        sync_error = g_steal_pointer(&room_error);
+    }
+  }
+  if (sync_error)
+    g_warning("Groundhog could not update conversations after a purge: %s",
+              sync_error->message);
+  if (out_purged)
+    *out_purged = g_strv_builder_end(ids);
+  return TRUE;
+}
+
 /* ---- Legacy seen file ------------------------------------------------------------------ */
 
 gchar *

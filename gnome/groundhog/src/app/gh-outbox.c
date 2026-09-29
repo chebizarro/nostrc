@@ -1,4 +1,5 @@
 #include "gh-outbox.h"
+#include "gh-expiry.h"
 #include "gh-identity.h"
 #include "gh-nip17-envelope.h"
 
@@ -874,7 +875,16 @@ static void
 start_seal(Msg *msg)
 {
   msg->seal_tries++;
-  GhDmSend *seal = gh_dm_sender_seal_rumor(msg->outbox->sender, msg->entry->rumor_json, NULL);
+  /* A disappearing message's seals and wraps get their own later
+   * expirations (charter §3.7, PT-7), drawn again at every seal. Without
+   * them the envelope refuses an expiring rumor. */
+  GhNip17OuterExpiration outer;
+  gint64 created_at = 0, expires_at = 0;
+  gboolean expiring =
+    gh_nip17_rumor_get_expiration(msg->entry->rumor_json, &created_at, &expires_at) &&
+    expires_at > 0 && gh_expiry_draw_outer(msg->outbox->clock, created_at, expires_at, &outer);
+  GhDmSend *seal = gh_dm_sender_seal_rumor_expiring(msg->outbox->sender, msg->entry->rumor_json,
+                                                    expiring ? &outer : NULL, NULL);
   msg->seal = seal;
   msg->seal_handler = g_signal_connect(seal, "changed", G_CALLBACK(on_seal_changed), msg);
   if (gh_dm_send_is_done(seal))
@@ -1460,13 +1470,32 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
   g_autofree gchar *key = nip17_backend_key(self->account, recipient);
   g_autofree gchar *op_id = gh_store_new_op_id();
   gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
-  /* The conversation and T-enqueue commit together. */
+  /* The conversation and T-enqueue commit together, with the conversation's
+   * disappearing timer as it is at this moment (charter §3.7). */
+  gint64 timer = 0, expires_at = 0;
   if (!gh_store_begin(self->store, error))
     return NULL;
   if (!gh_store_ensure_conversation(self->store, GH_STORE_BACKEND_NIP17, key,
-                                    GH_STORE_REQUEST_ACCEPTED, &conversation_id, error)) {
+                                    GH_STORE_REQUEST_ACCEPTED, &conversation_id, error) ||
+      !gh_store_get_disappearing(self->store, conversation_id, &timer, error)) {
     gh_store_rollback(self->store);
     return NULL;
+  }
+  expires_at = gh_expiry_message_expiration(created_at, timer);
+  if (expires_at) {
+    g_clear_pointer(&rumor_id, g_free);
+    g_free(rumor);
+    rumor = gh_nip17_rumor_new_expiring(self->account, recipient_pubkey_hex, content, created_at,
+                                        expires_at, &rumor_id, error);
+    if (rumor && strlen(rumor) > MAX_RUMOR_JSON) {
+      g_clear_pointer(&rumor, g_free);
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                          "The message is too long to send privately");
+    }
+    if (!rumor) {
+      gh_store_rollback(self->store);
+      return NULL;
+    }
   }
   GhStoreOutgoing outgoing = {
     .conversation_id = conversation_id,
@@ -1477,6 +1506,7 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
     .created_at = created_at,
     .body = content,
     .rumor_json = rumor,
+    .expires_at = expires_at,
   };
   if (!gh_store_enqueue(self->store, &outgoing, &outbox_id, &message_id, error)) {
     gh_store_rollback(self->store);
@@ -1616,6 +1646,25 @@ gh_outbox_cancel(GhOutbox *self, gint64 outbox_id, GError **error)
     item_refresh(msg);
   msg_unref(msg);
   return ok;
+}
+
+void
+gh_outbox_prune(GhOutbox *self)
+{
+  g_return_if_fail(GH_IS_OUTBOX(self));
+  g_autoptr(GList) messages = g_hash_table_get_values(self->messages);
+  for (GList *l = messages; l; l = l->next)
+    msg_ref(l->data);
+  for (GList *l = messages; l; l = l->next) {
+    Msg *msg = l->data;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GhStoreOutboxEntry) entry = msg->dropped ? NULL
+      : gh_store_outbox_load(self->store, msg->entry->id, &error);
+    if (!msg->dropped && !entry && g_error_matches(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND))
+      msg_drop(msg);
+  }
+  for (GList *l = messages; l; l = l->next)
+    msg_unref(l->data);
 }
 
 gboolean

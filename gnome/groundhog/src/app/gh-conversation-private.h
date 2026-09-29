@@ -13,6 +13,11 @@ gboolean gh_conversation_insert(GhConversation *self, GhMessage *message);
 /* Store-only: the store that persists the room's read marker and acceptance
  * through its delegate; NULL detaches. Not a reference. */
 void gh_conversation_set_store(GhConversation *self, GhConversationStore *store);
+/* Store-only: takes rumor_id's message out of the room (it expired or was
+ * purged, charter §3.7). Subject, title, preview, last activity and the
+ * unread count follow; the read marker keeps its place in the order and
+ * the room stays accepted. FALSE when the rumor is not loaded here. */
+gboolean gh_conversation_remove(GhConversation *self, const gchar *rumor_id);
 
 /* ---- Durable restore (store layer, e.g. gh-store-conversations.c) ----------
  * A durable delegate loads each room's newest messages, then older pages on
@@ -71,6 +76,12 @@ GhConversation *gh_conversation_store_restore(GhConversationStore *self,
                                               const GhConversationState *state);
 /* Store-layer only: unlists a room (forget conversation). TRUE when listed. */
 gboolean gh_conversation_store_remove(GhConversationStore *self, const gchar *room_id);
+/* Store-layer only: takes a message that expired or was purged out of its
+ * room (gh_conversation_remove()) and moves the room to its new place in
+ * the store order; the room stays listed, even when empty. Calls no
+ * delegate. TRUE when the model held the rumor. */
+gboolean gh_conversation_store_remove_message(GhConversationStore *self,
+                                              const gchar *rumor_id);
 
 G_END_DECLS
 #endif

@@ -98,6 +98,24 @@ gboolean gh_store_conversations_set_draft(GhStoreConversations *self, const gcha
 gboolean gh_store_conversations_forget(GhStoreConversations *self, const gchar *room_id,
                                        GError **error);
 
+/* T-purge with the attached model kept in step (charter §3.7, G07):
+ * gh_store_purge_full() deletes what expired (and, with @retention_cutoff >
+ * 0, what was received before it). Then each NIP-17 room it touched gets
+ * its stored name back from the newest remaining subject, and in the
+ * attached model every purged message leaves its room: a room with nothing
+ * stored any more is unlisted, any other takes its durable read marker,
+ * unread count and name again (loading its newest remaining page if every
+ * listed message went). *out_purged (nullable, NULL-terminated) receives the
+ * purged NIP-17 rumor ids, so what showed them (notifications) can be
+ * withdrawn. Fails only if the purge itself did; a later failure to update
+ * names or rooms is logged, and the model still drops every purged
+ * message. A read-only store (STORE_CORRUPT) deletes nothing: expired
+ * messages only leave the model (reported as n_expired and in *out_purged),
+ * and retention waits for a writable store. */
+gboolean gh_store_conversations_purge(GhStoreConversations *self, gint64 retention_cutoff,
+                                      GhStorePurgeStats *out_stats, GStrv *out_purged,
+                                      GError **error);
+
 /* ---- Legacy seen file (charter §3.2, ST-12) -----------------------------------
  * Before the encrypted store, GhDmInbox kept the account's seen keys in a
  * 0600 flat file: <state_dir>/<account>.seen (Groundhog 0.6.0) or, in a build
