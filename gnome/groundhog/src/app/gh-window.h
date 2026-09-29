@@ -8,7 +8,9 @@
 G_BEGIN_DECLS
 
 /* The main window, a composite template (data/ui/gh-window.blp): toast
- * overlay, AdwNavigationSplitView with the sidebar and content pages, the
+ * overlay, root stack ("main": the AdwNavigationSplitView with the sidebar
+ * and content pages; full-window flows such as "onboarding" are added by
+ * their owners, see gh-onboarding-view.h), the
  * 360×294 minimum size and the 600sp AdwBreakpoint that collapses the split
  * view. It owns the window's GhStatus (shown by the sidebar banner), the
  * keyboard shortcuts window (data/ui/gh-shortcuts-window.blp) and these
@@ -31,6 +33,9 @@ G_DECLARE_FINAL_TYPE(GhWindow, gh_window, GH, WINDOW, AdwApplicationWindow)
 GhWindow *gh_window_new(GtkApplication *app);
 
 AdwToastOverlay *gh_window_get_toasts(GhWindow *self);
+/* The window's root pages. While a page other than "main" shows, typing no
+ * longer starts a conversation search. */
+GtkStack *gh_window_get_root_stack(GhWindow *self);
 AdwNavigationSplitView *gh_window_get_split(GhWindow *self);
 GhSidebarPage *gh_window_get_sidebar(GhWindow *self);
 GhContentPage *gh_window_get_content(GhWindow *self);

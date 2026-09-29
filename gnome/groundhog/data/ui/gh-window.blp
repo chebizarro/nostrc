@@ -1,10 +1,12 @@
 using Gtk 4.0;
 using Adw 1;
 
-// The main window (charter §7.3): toast overlay around the adaptive split
-// view. The size request is the GNOME HIG minimum, 360×294, at which every
-// primary state is laid out collapsed (charter §7.12, UX-1); below 600sp the
-// split view collapses. icon-name is the application id, org.nostr.Groundhog.
+// The main window (charter §7.3): toast overlay around the root stack, whose
+// "main" page is the adaptive split view; full-window flows such as
+// onboarding (gh-onboarding-view.blp) are added to it from C. The size
+// request is the GNOME HIG minimum, 360×294, at which every primary state is
+// laid out collapsed (charter §7.12, UX-1); below 600sp the split view
+// collapses. icon-name is the application id, org.nostr.Groundhog.
 // Behaviour (account state, conversations, actions) is attached from C.
 template $GhWindow: Adw.ApplicationWindow {
   title: "Groundhog";
@@ -15,13 +17,21 @@ template $GhWindow: Adw.ApplicationWindow {
   height-request: 294;
 
   content: Adw.ToastOverlay toasts {
-    child: Adw.NavigationSplitView split {
-      min-sidebar-width: 280;
-      max-sidebar-width: 380;
-      sidebar-width-fraction: 0.32;
-      show-content: false;
-      sidebar: $GhSidebarPage sidebar {};
-      content: $GhContentPage content {};
+    child: Stack root_stack {
+      transition-type: crossfade;
+
+      StackPage {
+        name: "main";
+
+        child: Adw.NavigationSplitView split {
+          min-sidebar-width: 280;
+          max-sidebar-width: 380;
+          sidebar-width-fraction: 0.32;
+          show-content: false;
+          sidebar: $GhSidebarPage sidebar {};
+          content: $GhContentPage content {};
+        };
+      }
     };
   };
 

@@ -9,9 +9,12 @@ are ignored, and boolean spellings of `translatable` are unified, because
 blueprint-compiler 0.12 (Ubuntu 24.04) writes translatable="true" where newer
 releases write "yes". Likewise an expression lookup's object is a <constant>
 child in 0.12 output and plain text (<lookup ...>GtkListItem</lookup>) in
-newer releases; GtkBuilder reads both as the same object reference. Any
-element, attribute, property value or string change still fails. Regenerate
-with the groundhog-update-ui build target.
+newer releases; GtkBuilder reads both as the same object reference. An inline
+list-item factory (BuilderListItemFactory { template ListItem { ... } })
+carries its template as an XML string in its "bytes" property; that string is
+parsed and compared by the same rules (newer releases also put the generated
+header comment in it). Any element, attribute, property value or string
+change still fails. Regenerate with the groundhog-update-ui build target.
 """
 
 import difflib
@@ -35,7 +38,23 @@ def lookup_object_as_constant(element):
         element.text = None
 
 
+def embedded_template(element):
+    """The parsed GtkBuilder document in an inline factory's "bytes" property."""
+    text = (element.text or "").strip()
+    if element.tag != "property" or element.get("name") != "bytes" or \
+            not text.startswith("<?xml") and not text.startswith("<interface"):
+        return None
+    root = ET.fromstring(text.encode("utf-8"))
+    lookup_object_as_constant(root)
+    return root
+
+
 def canonical(element, depth=0):
+    embedded = embedded_template(element)
+    if embedded is not None:
+        attrs = "".join(f' {k}="{v}"' for k, v in sorted(element.attrib.items()))
+        return ["  " * depth + f"<{element.tag}{attrs}>(template)"] + canonical(embedded,
+                                                                              depth + 1)
     attrib = dict(element.attrib)
     for name in BOOLEAN_ATTRIBUTES & attrib.keys():
         attrib[name] = "true" if attrib[name].lower() in TRUE_SPELLINGS else "false"

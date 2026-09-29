@@ -5,7 +5,7 @@ using Adw 1;
 // message and the main menu; the search bar; the one status banner (from
 // GhStatus); and the stack that shows the conversation list or its empty,
 // no-results and error states. Account-state pages (gh-account-ui.blp) or
-// the standalone onboarding page are added to the stack from C. The list's
+// the onboarding_unavailable page below are added to the stack from C. The list's
 // model and row factory are bound from C (gh-conversation-list.c); nothing
 // here fabricates conversations.
 template $GhSidebarPage: Adw.NavigationPage {
@@ -233,4 +233,19 @@ menu primary_menu {
       action: "app.quit";
     }
   }
+}
+
+// Added to the stack as "onboarding" only by builds without account support
+// (GROUNDHOG_HAVE_ACCOUNTS=0), where the onboarding flow
+// (gh-onboarding-view.blp) cannot run; see gh_sidebar_page_show_onboarding().
+Adw.StatusPage onboarding_unavailable {
+  icon-name: "mail-unread-symbolic";
+  title: _("Welcome to Groundhog");
+  description: _("Account support is not included in this build.");
+  hexpand: true;
+  vexpand: true;
+
+  styles [
+    "groundhog-shell-status",
+  ]
 }

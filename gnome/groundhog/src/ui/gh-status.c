@@ -135,12 +135,16 @@ static const struct {
     N_("No session bus — Nostr Signer can't be reached to unlock messages"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_INBOX_ERROR,
     N_("Can't receive messages on this device"), TRUE, NULL, NULL },
+  /* [Set Up]: the onboarding inbox step chooses message relays and, with
+   * none set up, the relays Groundhog finds them on. */
   { GH_STATUS_BANNER_NO_RELAYS,
-    N_("No relay is set up yet, so Groundhog can't receive messages"), TRUE, NULL, NULL },
+    N_("No relay is set up yet, so Groundhog can't receive messages"), TRUE,
+    N_("Set Up"), GH_STATUS_ACTION_SETUP_INBOX },
   { GH_STATUS_BANNER_LOOKUP_FAILED,
     N_("Can't reach your relays to find where your messages arrive"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_INBOX_MISSING,
-    N_("Set up private messaging so people can reach you"), TRUE, NULL, NULL },
+    N_("Set up private messaging so people can reach you"), TRUE,
+    N_("Set Up"), GH_STATUS_ACTION_SETUP_INBOX },
   { GH_STATUS_BANNER_INBOX_UNREACHABLE,
     N_("Can't reach your message relays"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_STORE_EPHEMERAL,

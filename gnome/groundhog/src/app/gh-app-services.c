@@ -26,6 +26,9 @@
 #if GROUNDHOG_HAVE_BACKGROUND
 #include "gh-background.h"
 #endif
+#if GROUNDHOG_HAVE_ONBOARDING
+#include "gh-onboarding-view.h"
+#endif
 
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-identity.h"
@@ -607,6 +610,16 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
   /* Without the encrypted store every message is in memory only: say so
    * with the in-memory banner (charter §3.4, P4). */
   gh_status_set_store(gh_window_get_status(window), GH_STATUS_STORE_EPHEMERAL, NULL);
+#endif
+#if GROUNDHOG_HAVE_ONBOARDING
+  /* First-run onboarding and the banners' [Set Up] (charter G14): it
+   * contacts no relay before the user confirms one. */
+  GhInboxSetupConfig onboarding = {
+    .accounts = self->accounts,
+    .account_relays = self->relays,
+    .settings = self->settings,
+  };
+  gh_onboarding_attach(window, &onboarding);
 #endif
 }
 

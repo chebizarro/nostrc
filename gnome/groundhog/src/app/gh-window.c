@@ -3,6 +3,7 @@
 struct _GhWindow {
   AdwApplicationWindow parent_instance;
   AdwToastOverlay *toasts;
+  GtkStack *root_stack;
   AdwNavigationSplitView *split;
   GhSidebarPage *sidebar;
   GhContentPage *content;
@@ -135,6 +136,16 @@ on_activate(GhWindow *self, guint position)
   gh_content_page_focus_conversation(self->content);
 }
 
+/* Typing starts a conversation search only while the conversations show;
+ * a full-window flow on the root stack keeps its keys. */
+static void
+on_root_page(GhWindow *self)
+{
+  gboolean shows_main =
+    g_strcmp0(gtk_stack_get_visible_child_name(self->root_stack), "main") == 0;
+  gh_sidebar_page_set_key_capture_widget(self->sidebar, shows_main ? GTK_WIDGET(self) : NULL);
+}
+
 static void
 gh_window_dispose(GObject *object)
 {
@@ -156,6 +167,7 @@ gh_window_class_init(GhWindowClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-window.ui");
   gtk_widget_class_bind_template_child(widget_class, GhWindow, toasts);
+  gtk_widget_class_bind_template_child(widget_class, GhWindow, root_stack);
   gtk_widget_class_bind_template_child(widget_class, GhWindow, split);
   gtk_widget_class_bind_template_child(widget_class, GhWindow, sidebar);
   gtk_widget_class_bind_template_child(widget_class, GhWindow, content);
@@ -187,6 +199,8 @@ gh_window_init(GhWindow *self)
                           self, G_CONNECT_SWAPPED);
   g_signal_connect_object(self->split, "notify::collapsed", G_CALLBACK(on_collapsed), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(self->root_stack, "notify::visible-child-name",
+                          G_CALLBACK(on_root_page), self, G_CONNECT_SWAPPED);
   GtkWidget *list = GTK_WIDGET(gh_sidebar_page_get_list(self->sidebar));
   g_signal_connect_object(list, "activate", G_CALLBACK(on_activate), self, G_CONNECT_SWAPPED);
   /* Capture phase: seen before the row selects (on release) or the list
@@ -215,6 +229,13 @@ gh_window_get_toasts(GhWindow *self)
 {
   g_return_val_if_fail(GH_IS_WINDOW(self), NULL);
   return self->toasts;
+}
+
+GtkStack *
+gh_window_get_root_stack(GhWindow *self)
+{
+  g_return_val_if_fail(GH_IS_WINDOW(self), NULL);
+  return self->root_stack;
 }
 
 AdwNavigationSplitView *

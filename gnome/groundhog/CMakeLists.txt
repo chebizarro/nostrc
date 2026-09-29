@@ -27,7 +27,7 @@ set(GROUNDHOG_DATA ${CMAKE_CURRENT_SOURCE_DIR}/data)
 # fails when the committed .ui no longer matches the .blp, and the
 # groundhog-update-ui target regenerates them on request.
 set(GROUNDHOG_BLUEPRINTS
-  gh-window gh-sidebar-page gh-content-page gh-onboarding-page gh-account-ui
+  gh-window gh-sidebar-page gh-content-page gh-onboarding-view gh-onboarding-row gh-account-ui
   gh-conversation-row gh-shortcuts-window
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details gh-preferences-dialog)
@@ -87,6 +87,7 @@ add_custom_command(
   DEPENDS ${GROUNDHOG_DATA}/groundhog.gresource.xml
           ${GROUNDHOG_DATA}/style.css
           ${GROUNDHOG_DATA}/icons/org.nostr.Groundhog.svg
+          ${GROUNDHOG_DATA}/relay-suggestions.json
           ${GROUNDHOG_UI_FILES}
   VERBATIM)
 
@@ -1013,3 +1014,63 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_EXPIRY=0)
 endif()
 # --- end G07 disappearing messages ---
+
+# --- G14 onboarding and inbox setup ---
+# The first-run flow and the account's kind-10050 message relays (privacy
+# charter §7.8, §8.2 G14, D4): GhInboxSetup (GTK-free: build, sign and
+# publish the list to the chosen inbox, own 10002 write and discovery relays
+# with account AUTH only on those publication connections, per-relay
+# outcomes, and the unauthenticated private-reads probe) and
+# GhOnboardingView (data/ui/gh-onboarding-view.blp). The reviewed
+# data/relay-suggestions.json is bundled in the GResource. Needs the account,
+# relay and NIP-17 inbox layers (GhAccountAuth is in groundhog-dm-inbox) and
+# json-glib; without them the window shows no onboarding.
+pkg_check_modules(GROUNDHOG_JSON QUIET IMPORTED_TARGET json-glib-1.0>=1.6)
+if (TARGET groundhog-dm-inbox AND TARGET groundhog-conversation-ui AND
+    TARGET PkgConfig::GROUNDHOG_JSON)
+  message(STATUS "Groundhog onboarding: enabled")
+  add_library(groundhog-inbox-setup STATIC src/app/gh-inbox-setup.c)
+  target_include_directories(groundhog-inbox-setup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-inbox-setup PUBLIC groundhog-dm-inbox PkgConfig::GROUNDHOG_JSON)
+  target_compile_options(groundhog-inbox-setup PRIVATE -Wall -Wextra -Werror)
+  add_library(groundhog-onboarding STATIC src/ui/gh-onboarding-view.c)
+  target_include_directories(groundhog-onboarding PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-onboarding PUBLIC groundhog-ui groundhog-inbox-setup)
+  target_compile_options(groundhog-onboarding PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-onboarding)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ONBOARDING=1)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # URL rules, the shipped suggestions, the 10050 event, the probe's
+    # classification and GhInboxSetup against recording scope/publish
+    # transports and the mock signer on a private bus: PT-9 (no connection
+    # before the signer approves; none at all on denial), per-relay outcomes,
+    # account AUTH only on publication connections, discovery adoption and
+    # account switches.
+    add_executable(test-groundhog-inbox-setup tests/app/test_inbox_setup.c)
+    target_link_libraries(test-groundhog-inbox-setup PRIVATE groundhog-inbox-setup
+      nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+    target_compile_definitions(test-groundhog-inbox-setup PRIVATE
+      "GROUNDHOG_RELAY_SUGGESTIONS=\"${GROUNDHOG_DATA}/relay-suggestions.json\"")
+    target_compile_options(test-groundhog-inbox-setup PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-inbox-setup groundhog-test-schemas)
+    add_test(NAME groundhog-inbox-setup COMMAND test-groundhog-inbox-setup)
+    set_tests_properties(groundhog-inbox-setup PROPERTIES TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+    # UX-6 and PT-9 through the real window: the onboarding view on a real
+    # account controller (mock signer bus), relay lists, inbox and status
+    # wiring with recording transports. Needs a display, so it self-skips
+    # (77). With GROUNDHOG_TEST_SCREENSHOTS=<dir> it also renders each step.
+    add_executable(test-groundhog-onboarding tests/ui/test_onboarding.c src/app/gh-account-ui.c)
+    target_link_libraries(test-groundhog-onboarding PRIVATE groundhog-onboarding
+      groundhog-conversation-ui nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+    target_compile_options(test-groundhog-onboarding PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-onboarding groundhog-test-schemas)
+    add_test(NAME groundhog-onboarding COMMAND test-groundhog-onboarding)
+    set_tests_properties(groundhog-onboarding PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;GIO_USE_NETWORK_MONITOR=base")
+  endif()
+else()
+  message(STATUS "Groundhog onboarding: disabled (needs the NIP-17 inbox layers and json-glib-1.0)")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ONBOARDING=0)
+endif()
+# --- end G14 onboarding and inbox setup ---

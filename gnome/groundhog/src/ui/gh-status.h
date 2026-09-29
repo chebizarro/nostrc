@@ -77,6 +77,10 @@ typedef enum {
 #define GH_STATUS_ACTION_STORE_UNLOCK    "app.store-unlock"
 #define GH_STATUS_ACTION_STORE_RETRY     "app.store-retry"
 #define GH_STATUS_ACTION_STORE_EPHEMERAL "app.store-continue-without-saving"
+/* [Set Up] on the "no inbox relays" banners (§7.15 #7, and no relay at all):
+ * the onboarding inbox step (gh-onboarding-view.h installs it on the
+ * window). */
+#define GH_STATUS_ACTION_SETUP_INBOX "win.setup-inbox"
 
 GType gh_status_signer_get_type(void);
 GType gh_status_inbox_get_type(void);
@@ -122,10 +126,12 @@ GhStatusBanner gh_status_get_banner(GhStatus *self);
 /* Translated banner copy; "" for NONE. */
 const gchar *gh_status_banner_get_title(GhStatusBanner banner);
 /* The banner's button and the detailed action it activates, or NULL when the
- * state has none yet. Charter §7.15 lists [Set Up] (#7, onboarding G14),
- * [Network Settings] (#6) and [Details] (#8, preferences G17); those
- * surfaces do not exist, so no button pretends to open them. The store
- * banners' actions (GH_STATUS_ACTION_STORE_*) are application actions. */
+ * state has none yet. [Set Up] (§7.15 #7, and "no relay is set up yet")
+ * opens the onboarding inbox step (GH_STATUS_ACTION_SETUP_INBOX). Charter
+ * §7.15 also lists [Network Settings] (#6) and [Details] (#8, preferences
+ * G17); those surfaces do not exist, so no button pretends to open them.
+ * The store banners' actions (GH_STATUS_ACTION_STORE_*) are application
+ * actions. */
 const gchar *gh_status_banner_get_button_label(GhStatusBanner banner);
 const gchar *gh_status_banner_get_action(GhStatusBanner banner);
 /* TRUE for states that need the user's attention (announced to assistive

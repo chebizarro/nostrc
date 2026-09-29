@@ -22,7 +22,8 @@ test_resource_registration(void)
     "/org/nostr/Groundhog/ui/gh-window.ui",
     "/org/nostr/Groundhog/ui/gh-sidebar-page.ui",
     "/org/nostr/Groundhog/ui/gh-content-page.ui",
-    "/org/nostr/Groundhog/ui/gh-onboarding-page.ui",
+    "/org/nostr/Groundhog/ui/gh-onboarding-view.ui",
+    "/org/nostr/Groundhog/ui/gh-onboarding-row.ui",
     "/org/nostr/Groundhog/ui/gh-account-ui.ui",
     "/org/nostr/Groundhog/ui/gh-conversation-row.ui",
     "/org/nostr/Groundhog/ui/gh-shortcuts-window.ui",
@@ -38,6 +39,8 @@ test_resource_registration(void)
   g_assert_nonnull(groundhog_get_resource());
 
   assert_resource("/org/nostr/Groundhog/style.css");
+  /* The reviewed onboarding relay suggestions (charter D4). */
+  assert_resource("/org/nostr/Groundhog/relay-suggestions.json");
   for (guint i = 0; i < G_N_ELEMENTS(ui); i++)
     assert_resource(ui[i]);
 

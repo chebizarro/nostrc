@@ -1,0 +1,801 @@
+using Gtk 4.0;
+using Adw 1;
+
+// First-run and inbox setup (charter §7.8, §8.2 G14): a full-window
+// Adw.NavigationView added to GhWindow's root stack as "onboarding". Pages:
+// welcome, account, signer, inbox (kind-10050 message relays), confirm,
+// publish, done. Every page scrolls, so each fits the 360x294 minimum.
+// Nothing here connects anywhere: relays are contacted only after the user
+// presses Publish or Check Privacy (PD-13, PT-9). Buttons run the
+// "onboarding.*" actions of gh-onboarding-view.c, which also fills the
+// lists (identities, relay choices, results; each row is a
+// gh-onboarding-row.blp) and the status texts.
+template $GhOnboardingView: Adw.Bin {
+  child: Adw.NavigationView navigation {
+    Adw.NavigationPage welcome_page {
+      tag: "welcome";
+      title: _("Welcome");
+      can-pop: false;
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-title: false;
+        }
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 520;
+            tightening-threshold: 360;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-top: 12;
+              margin-bottom: 24;
+              margin-start: 12;
+              margin-end: 12;
+
+              Image {
+                icon-name: "org.nostr.Groundhog";
+                pixel-size: 96;
+                accessible-role: presentation;
+
+                styles [
+                  "icon-dropshadow",
+                ]
+              }
+
+              Label {
+                label: _("Private Messaging for GNOME");
+                wrap: true;
+                justify: center;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label {
+                label: _("Groundhog is a calm, private place to talk. Here is what we promise:");
+                wrap: true;
+                justify: center;
+              }
+
+              ListBox {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.ActionRow {
+                  title: _("No read receipts or typing indicators");
+                  subtitle: _("Nobody can tell when you read a message or when you're typing.");
+
+                  [prefix]
+                  Image {
+                    icon-name: "view-conceal-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Your private key stays in Nostr Signer");
+                  subtitle: _("Groundhog never sees it. The signer asks you before anything is signed or unlocked.");
+
+                  [prefix]
+                  Image {
+                    icon-name: "dialog-password-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Nothing loads from the web unless you ask");
+                  subtitle: _("No link previews, images or profile pictures are fetched on their own.");
+
+                  [prefix]
+                  Image {
+                    icon-name: "network-offline-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+
+                // Charter §1.4: say plainly what Groundhog cannot hide.
+                Adw.ExpanderRow {
+                  title: _("What Groundhog can't hide");
+                  subtitle: _("Being honest about the limits");
+
+                  Adw.ActionRow {
+                    title: _("Relays can see your internet address and when you're online.");
+                    title-lines: 0;
+                  }
+
+                  Adw.ActionRow {
+                    title: _("Your message relays know when you receive messages, but not who sent them or what they say.");
+                    title-lines: 0;
+                  }
+
+                  Adw.ActionRow {
+                    title: _("The people you write to can keep or share what you send them.");
+                    title-lines: 0;
+                  }
+                }
+              }
+
+              Label {
+                label: _("Groundhog doesn't connect to anything until you choose where your messages arrive.");
+                wrap: true;
+                justify: center;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Button start_button {
+                label: _("_Get Started");
+                use-underline: true;
+                halign: center;
+                action-name: "onboarding.start";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            };
+          };
+        };
+      };
+    }
+
+    Adw.NavigationPage account_page {
+      tag: "account";
+      title: _("Choose an Account");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        // The "list" page is below (rows: gh-onboarding-row.blp); the
+        // discovering, unavailable and empty states reuse the account pages of
+        // gh-account-ui.blp (added from C).
+        content: Stack account_stack {
+          StackPage {
+            name: "list";
+
+            child: ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Viewport {
+                // Natural height: the lists get all their rows and the page scrolls.
+                vscroll-policy: natural;
+
+                child: Adw.Clamp {
+                  maximum-size: 560;
+                  tightening-threshold: 400;
+
+                  child: Box {
+                    orientation: vertical;
+                    spacing: 18;
+                    margin-top: 18;
+                    margin-bottom: 24;
+                    margin-start: 12;
+                    margin-end: 12;
+
+                    Label {
+                      label: _("Groundhog uses an identity you already keep in Nostr Signer. Choose the one people will write to.");
+                      wrap: true;
+                      xalign: 0;
+                    }
+
+                    ListBox identity_list {
+                      selection-mode: none;
+
+                      styles [
+                        "boxed-list",
+                      ]
+
+                      accessibility {
+                        label: _("Identities");
+                      }
+                    }
+
+                    Label {
+                      label: _("Choosing an account here doesn't change the account Gnostr uses.");
+                      wrap: true;
+                      xalign: 0;
+
+                      styles [
+                        "dim-label",
+                        "caption",
+                      ]
+                    }
+
+                    Box {
+                      orientation: vertical;
+                      spacing: 6;
+                      halign: center;
+
+                      Button account_continue {
+                        label: _("_Continue");
+                        use-underline: true;
+                        action-name: "onboarding.account-continue";
+
+                        styles [
+                          "pill",
+                          "suggested-action",
+                        ]
+                      }
+
+                      Button account_read_only {
+                        label: _("Use _Without an Account (Read-Only)");
+                        use-underline: true;
+                        action-name: "onboarding.read-only";
+
+                        styles [
+                          "flat",
+                        ]
+                      }
+
+                      Button account_refresh {
+                        label: _("_Refresh");
+                        use-underline: true;
+                        action-name: "onboarding.refresh";
+
+                        styles [
+                          "flat",
+                        ]
+                      }
+                    }
+                  };
+                };
+              };
+            };
+          }
+        };
+      };
+    }
+
+    Adw.NavigationPage signer_page {
+      tag: "signer";
+      title: _("Nostr Signer");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 560;
+            tightening-threshold: 400;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-top: 18;
+              margin-bottom: 24;
+              margin-start: 12;
+              margin-end: 12;
+
+              Label {
+                label: _("Your private key never leaves Nostr Signer. Whenever Groundhog sends a message or unlocks one you received, the signer asks you to approve.");
+                wrap: true;
+                xalign: 0;
+              }
+
+              ListBox {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                // Title, subtitle and icon follow the signer's availability.
+                Adw.ActionRow signer_status {
+                  title-lines: 0;
+                  subtitle-lines: 0;
+
+                  [prefix]
+                  Image signer_icon {
+                    icon-name: "dialog-password-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+              }
+
+              Label {
+                label: _("You can try it now: the signer may ask you to approve up to three small test requests. Nothing is sent anywhere.");
+                wrap: true;
+                xalign: 0;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Box {
+                spacing: 12;
+                halign: center;
+
+                Button signer_test {
+                  label: _("_Test Signer");
+                  use-underline: true;
+                  action-name: "onboarding.test-signer";
+
+                  styles [
+                    "pill",
+                  ]
+                }
+
+                Spinner signer_spinner {
+                  visible: false;
+                  spinning: false;
+                }
+              }
+
+              // What the test found, announced when it changes.
+              Label signer_result {
+                visible: false;
+                wrap: true;
+                xalign: 0;
+              }
+
+              Button signer_continue {
+                label: _("_Continue");
+                use-underline: true;
+                halign: center;
+                action-name: "onboarding.signer-continue";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            };
+          };
+        };
+      };
+    }
+
+    Adw.NavigationPage inbox_page {
+      tag: "inbox";
+      title: _("Where Messages Arrive");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Viewport {
+            // Natural height: the lists get all their rows and the page scrolls.
+            vscroll-policy: natural;
+
+            child: Adw.Clamp {
+              maximum-size: 560;
+              tightening-threshold: 400;
+
+              child: Box {
+                orientation: vertical;
+                spacing: 18;
+                margin-top: 18;
+                margin-bottom: 24;
+                margin-start: 12;
+                margin-end: 12;
+
+                Label {
+                  label: _("Private messages wait for you on message relays: servers that hold your sealed messages until Groundhog picks them up. They can't open them.");
+                  wrap: true;
+                  xalign: 0;
+                }
+
+                // Charter §2.2 UI surface 4.
+                Label {
+                  label: _("Your message relays will know when you receive messages. They won't know who sent them.");
+                  wrap: true;
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                // Shown when the account already published message relays.
+                Label current_note {
+                  visible: false;
+                  label: _("You already have message relays. They are ticked below; keep them as they are, or change them.");
+                  wrap: true;
+                  xalign: 0;
+                }
+
+                Label {
+                  label: _("Choose One or Two");
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox relay_list {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  accessibility {
+                    label: _("Message relays");
+                  }
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  Adw.EntryRow custom_entry {
+                    title: _("Add a Relay by Address");
+                    show-apply-button: true;
+                    input-purpose: url;
+                  }
+                }
+
+                // Why an address was not accepted (set from C).
+                Label custom_error {
+                  visible: false;
+                  wrap: true;
+                  xalign: 0;
+
+                  styles [
+                    "error",
+                    "caption",
+                  ]
+                }
+
+                Label {
+                  label: _("Relay addresses start with wss:// and are listed by the relay's operator. Suggestions were reviewed for Groundhog; none is contacted until you confirm.");
+                  wrap: true;
+                  xalign: 0;
+
+                  styles [
+                    "dim-label",
+                    "caption",
+                  ]
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 6;
+                  halign: center;
+
+                  Button inbox_continue {
+                    label: _("_Continue");
+                    use-underline: true;
+                    action-name: "onboarding.inbox-continue";
+
+                    styles [
+                      "pill",
+                      "suggested-action",
+                    ]
+                  }
+
+                  Button check_button {
+                    label: _("C_heck Privacy");
+                    use-underline: true;
+                    tooltip-text: _("Connects to the ticked relays to see whether they ask for sign-in before handing out messages");
+                    action-name: "onboarding.check-relays";
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+
+                  Button keep_button {
+                    visible: false;
+                    label: _("_Keep My Current Relays");
+                    use-underline: true;
+                    action-name: "onboarding.keep-current";
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+
+                  Button inbox_later {
+                    label: _("Set Up _Later");
+                    use-underline: true;
+                    action-name: "onboarding.later";
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+                }
+              };
+            };
+          };
+        };
+      };
+    }
+
+    Adw.NavigationPage confirm_page {
+      tag: "confirm";
+      title: _("Ready to Publish");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 560;
+            tightening-threshold: 400;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-top: 18;
+              margin-bottom: 24;
+              margin-start: 12;
+              margin-end: 12;
+
+              Label {
+                label: _("Here is what happens when you publish. Nothing has been sent yet.");
+                wrap: true;
+                xalign: 0;
+              }
+
+              ListBox {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.ActionRow {
+                  title: _("Nostr Signer asks you to approve");
+                  subtitle: _("Your list of message relays is signed with your key.");
+                  title-lines: 0;
+                  subtitle-lines: 0;
+
+                  [prefix]
+                  Image {
+                    icon-name: "dialog-password-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+
+                // The subtitle lists the relays (set from C).
+                Adw.ActionRow confirm_targets {
+                  title: _("Groundhog connects to these relays");
+                  title-lines: 0;
+                  subtitle-lines: 0;
+
+                  [prefix]
+                  Image {
+                    icon-name: "network-transmit-receive-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Your list is published");
+                  subtitle: _("Anyone can see which relays you use for messages. That's how people reach you.");
+                  title-lines: 0;
+                  subtitle-lines: 0;
+
+                  [prefix]
+                  Image {
+                    icon-name: "mail-send-receive-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+
+                Adw.ActionRow {
+                  title: _("Each message relay is checked");
+                  subtitle: _("Groundhog checks whether it asks for sign-in before handing out sealed messages.");
+                  title-lines: 0;
+                  subtitle-lines: 0;
+
+                  [prefix]
+                  Image {
+                    icon-name: "channel-secure-symbolic";
+                    accessible-role: presentation;
+                  }
+                }
+              }
+
+              // Only when no relay is set up to find settings (discovery).
+              ListBox discovery_group {
+                visible: false;
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.SwitchRow discovery_switch {
+                  active: true;
+                  title: _("Also Use Them to Find People");
+                  subtitle: _("Groundhog needs a relay to find your settings and to look up the people you write to. The relays that keep your list will see whom you look up. You can change this later.");
+                  title-lines: 0;
+                  subtitle-lines: 0;
+                }
+              }
+
+              Button publish_button {
+                label: _("_Publish");
+                use-underline: true;
+                halign: center;
+                action-name: "onboarding.publish";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            };
+          };
+        };
+      };
+    }
+
+    Adw.NavigationPage publish_page {
+      tag: "publish";
+      title: _("Publishing");
+      can-pop: false;
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Viewport {
+            vscroll-policy: natural;
+
+            child: Adw.Clamp {
+              maximum-size: 560;
+              tightening-threshold: 400;
+
+              child: Box {
+                orientation: vertical;
+                spacing: 18;
+                margin-top: 24;
+                margin-bottom: 24;
+                margin-start: 12;
+                margin-end: 12;
+
+                // Icon, title and description follow GhInboxSetup (set from C).
+                Image publish_icon {
+                  icon-name: "emblem-synchronizing-symbolic";
+                  pixel-size: 64;
+                  accessible-role: presentation;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Label publish_title {
+                  wrap: true;
+                  justify: center;
+
+                  styles [
+                    "title-2",
+                  ]
+                }
+
+                Label publish_description {
+                  wrap: true;
+                  justify: center;
+                }
+
+                ListBox result_list {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  accessibility {
+                    label: _("What each relay did");
+                  }
+                }
+
+                Box {
+                  orientation: vertical;
+                  spacing: 6;
+                  halign: center;
+
+                  Button publish_continue {
+                    visible: false;
+                    label: _("_Continue");
+                    use-underline: true;
+                    action-name: "onboarding.publish-continue";
+
+                    styles [
+                      "pill",
+                      "suggested-action",
+                    ]
+                  }
+
+                  Button publish_retry {
+                    visible: false;
+                    label: _("_Try Again");
+                    use-underline: true;
+                    action-name: "onboarding.retry";
+
+                    styles [
+                      "pill",
+                    ]
+                  }
+
+                  Button publish_later {
+                    visible: false;
+                    label: _("Set Up _Later");
+                    use-underline: true;
+                    action-name: "onboarding.later";
+
+                    styles [
+                      "flat",
+                    ]
+                  }
+                }
+              };
+            };
+          };
+        };
+      };
+    }
+
+    Adw.NavigationPage done_page {
+      tag: "done";
+      title: _("All Set");
+      can-pop: false;
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-title: false;
+        }
+
+        // The description says what was set up (set from C).
+        content: Adw.StatusPage done_status {
+          icon-name: "emblem-ok-symbolic";
+          title: _("You're All Set");
+
+          styles [
+            "compact",
+          ]
+
+          child: Button done_button {
+            label: _("_Start Using Groundhog");
+            use-underline: true;
+            halign: center;
+            action-name: "onboarding.finish";
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
+        };
+      };
+    }
+  };
+}

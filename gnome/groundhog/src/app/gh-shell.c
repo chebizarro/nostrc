@@ -19,6 +19,7 @@ struct _GhSidebarPage {
   GtkLabel *requests_count;
   GtkListView *list;
   AdwStatusPage *error_page;
+  AdwStatusPage *onboarding_unavailable; /* not in the stack unless added */
 
   GtkSingleSelection *selection; /* over the visible list's model */
   GListModel *conversations;
@@ -276,6 +277,7 @@ gh_sidebar_page_class_init(GhSidebarPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, requests_count);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, list);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, error_page);
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, onboarding_unavailable);
   /* Bound so tests and callers can reach them by name
    * (gtk_widget_get_template_child); no field is needed here. */
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, new_button);
@@ -348,10 +350,7 @@ gh_sidebar_page_show_onboarding(GhSidebarPage *self)
   g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
   g_return_if_fail(gtk_stack_get_child_by_name(self->stack, "onboarding") == NULL);
 
-  g_autoptr(GtkBuilder) builder =
-    gtk_builder_new_from_resource("/org/nostr/Groundhog/ui/gh-onboarding-page.ui");
-  gtk_stack_add_named(self->stack, GTK_WIDGET(gtk_builder_get_object(builder, "onboarding")),
-                      "onboarding");
+  gtk_stack_add_named(self->stack, GTK_WIDGET(self->onboarding_unavailable), "onboarding");
   gh_sidebar_page_set_account_page(self, "onboarding");
 }
 

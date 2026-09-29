@@ -34,8 +34,9 @@ GtkStack *gh_sidebar_page_get_stack(GhSidebarPage *self);
 GtkListView *gh_sidebar_page_get_list(GhSidebarPage *self);
 AdwBanner *gh_sidebar_page_get_banner(GhSidebarPage *self);
 
-/* For builds without account support: adds the "onboarding" page
- * (data/ui/gh-onboarding-page.blp) to the stack and shows it. */
+/* For builds without account support, where the onboarding flow cannot run:
+ * adds the "onboarding" page (onboarding_unavailable in
+ * data/ui/gh-sidebar-page.blp) to the stack and shows it. */
 void gh_sidebar_page_show_onboarding(GhSidebarPage *self);
 
 /* Shows the named account page added to the stack (see gh-account-ui.c)

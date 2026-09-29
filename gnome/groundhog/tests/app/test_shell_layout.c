@@ -1,6 +1,6 @@
 /* Shell layout, actions and status checks for the GTK-only templates
  * (data/ui/gh-window.blp, gh-sidebar-page.blp, gh-content-page.blp,
- * gh-onboarding-page.blp, gh-shortcuts-window.blp) and GhStatus. It registers
+ * gh-shortcuts-window.blp) and GhStatus. It registers
  * the compiled Groundhog GResource and instantiates GhWindow, GhSidebarPage
  * and GhContentPage exactly as the application does, without GSettings, the
  * signer or a conversation model (the pages are model-agnostic; generic
@@ -362,7 +362,12 @@ test_window_structure(void)
 
   g_assert_true(adw_application_window_get_content(ADW_APPLICATION_WINDOW(window)) ==
                 GTK_WIDGET(gh_window_get_toasts(window)));
-  g_assert_true(adw_toast_overlay_get_child(gh_window_get_toasts(window)) == GTK_WIDGET(split));
+  /* The root stack holds the split view as "main"; full-window flows such
+   * as onboarding (G14) are added to it by their owners. */
+  GtkStack *root = gh_window_get_root_stack(window);
+  g_assert_true(adw_toast_overlay_get_child(gh_window_get_toasts(window)) == GTK_WIDGET(root));
+  g_assert_true(gtk_stack_get_child_by_name(root, "main") == GTK_WIDGET(split));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(root), ==, "main");
   g_assert_true(adw_navigation_split_view_get_sidebar(split) ==
                 ADW_NAVIGATION_PAGE(gh_window_get_sidebar(window)));
   g_assert_true(adw_navigation_split_view_get_content(split) ==
@@ -517,8 +522,17 @@ assert_banner(GhWindow *window, GhStatusBanner banner, const char *title)
     return;
   g_assert_cmpstr(adw_banner_get_title(widget), ==, title);
   g_assert_cmpstr(gh_status_banner_get_title(banner), ==, title);
-  /* No banner offers a button whose destination does not exist yet. */
+  /* The "no inbox relays" banners offer [Set Up], the onboarding inbox step
+   * (G14). No other banner here offers a button whose destination does not
+   * exist yet. */
   const char *button = adw_banner_get_button_label(widget);
+  if (banner == GH_STATUS_BANNER_INBOX_MISSING || banner == GH_STATUS_BANNER_NO_RELAYS) {
+    g_assert_cmpstr(button, ==, "Set Up");
+    g_assert_cmpstr(gh_status_banner_get_action(banner), ==, GH_STATUS_ACTION_SETUP_INBOX);
+    g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(widget)), ==,
+                    "win.setup-inbox");
+    return;
+  }
   g_assert_true(button == NULL || *button == '\0');
   g_assert_null(gh_status_banner_get_action(banner));
 }

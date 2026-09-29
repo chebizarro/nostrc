@@ -48,6 +48,15 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
                         identifier ending in wrap_id, rumor_id or event_id):
                         a rumor id commits to the plaintext and a wrap id
                         names a relay event. (PD-10; W13 review, item 5)
+  relay-suggestions     data/relay-suggestions.json (the reviewed onboarding
+                        suggestions, D4) is short (1..6 relays), every URL is
+                        a normalized wss:// relay address, every entry says
+                        honestly whether the relay keeps kind-1059 reads
+                        private ("yes"/"no" with its review evidence, or
+                        "unknown"), and no host is one AGENTS.md bans. The
+                        banned hosts are read from AGENTS.md's "Banned Relays"
+                        section (its "never" sentences), so no banned name is
+                        ever written into this tree. Not waivable.
   app-id                GROUNDHOG_APP_ID in src/, the schema id and path, and
                         GhWindow's icon-name in gh-window.blp and gh-window.ui
                         all agree. (W11 review, non-blocking item 4)
@@ -79,6 +88,7 @@ expected rules, and every rule must have at least one failing fixture.
 
 import argparse
 from collections import namedtuple
+import json
 from pathlib import Path
 import re
 import sys
@@ -92,11 +102,12 @@ SCHEMA_FILE = f"data/{APP_ID}.gschema.xml"
 RULES = (
     "url-literal", "gsettings-allowlist", "blueprint-denylist", "libsoup-boundary",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
-    "lookup-sources", "account-auth-purpose", "message-status", "log-ids", "app-id",
-    "exceptions",
+    "lookup-sources", "account-auth-purpose", "message-status", "log-ids", "relay-suggestions",
+    "app-id", "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
-UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "exceptions"}
+UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
+              "exceptions"}
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 # Empty: nothing in Groundhog needs an exception today.
@@ -170,8 +181,15 @@ ACCOUNT_AUTH_FILES = {
     "src/relay/": "the NIP-42 mechanism; callers choose the identity per URL",
     "src/app/gh-account-auth.": "GhAccountAuth, the account's generation-bound AUTH signer",
     "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
+    "src/app/gh-inbox-setup.": "own list publish (the account's kind 10050) on its chosen inbox, "
+                               "own 10002 write and discovery relays only; its private-reads "
+                               "probe never authenticates",
 }
 FORBIDDEN_STATUS_WORDS = {"DELIVERED", "READ", "SEEN"}
+SUGGESTIONS_FILE = "data/relay-suggestions.json"
+MAX_SUGGESTIONS = 6  # GH_INBOX_SETUP_MAX_SUGGESTIONS in src/app/gh-inbox-setup.h
+SUGGESTION_URL_RE = re.compile(
+    r"^wss://(?P<host>[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::(?P<port>\d{1,5}))?(?P<path>/[^\s?#]*)?$")
 
 URL_RE = re.compile(r"\b(?:wss?|https?)://[^\s\"'\\<>]+", re.I)
 INCLUDE_RE = re.compile(r"^[ \t]*#[ \t]*include[ \t]*[<\"]([^>\"\n]+)[>\"]", re.M)
@@ -473,6 +491,99 @@ def check_message_status(tree):
     return found
 
 
+def banned_relay_hosts(root):
+    """Hosts AGENTS.md bans, from the "never" sentences of its Banned Relays
+    section (the nearest AGENTS.md at or above root, up to two levels)."""
+    root = Path(root).resolve()
+    for directory in (root, root.parent, root.parent.parent):
+        agents = directory / "AGENTS.md"
+        if not agents.is_file():
+            continue
+        text = agents.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r"^(#+)\s*Banned Relays\s*$", text, re.M | re.I)
+        if not m:
+            return agents, set()
+        level = len(m.group(1))
+        rest = text[m.end():]
+        end = re.search(r"^#{1,%d}\s" % level, rest, re.M)
+        section = rest[:end.start()] if end else rest
+        hosts = set()
+        for sentence in re.split(r"(?<=[.!?])\s+", section):
+            if re.search(r"\bnever\b", sentence, re.I):
+                for token in re.findall(r"`([^`\s]+)`", sentence):
+                    host = re.sub(r"^wss?://", "", token.lower()).split("/")[0]
+                    if "." in host:
+                        hosts.add(host)
+        return agents, hosts
+    return None, set()
+
+
+def check_relay_suggestions(tree):
+    rule, rel = "relay-suggestions", SUGGESTIONS_FILE
+    if not tree.exists(rel):
+        return [Violation(rule, rel, 0, "the reviewed relay suggestions file is missing", "")]
+    agents, banned = banned_relay_hosts(tree.root)
+    if not banned:
+        return [Violation(rule, rel, 0, "cannot read the banned relays from "
+                          f"{agents or 'AGENTS.md'} (a \"Banned Relays\" section naming them in a "
+                          "\"never\" sentence), so the suggestions cannot be checked", "")]
+    text, _, _ = tree.views(rel)
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        return [Violation(rule, rel, 0, f"invalid JSON: {error}", "")]
+
+    def at(value):
+        return line_of(text, text.find(value)) if value and value in text else 0
+
+    found = []
+    relays = data.get("relays") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or not str(data.get("reviewed", "")).strip():
+        found.append(Violation(rule, rel, 0, "no \"reviewed\" date: say when the list was "
+                               "last reviewed", "reviewed"))
+    if not isinstance(relays, list) or not 1 <= len(relays) <= MAX_SUGGESTIONS:
+        count = len(relays) if isinstance(relays, list) else "no"
+        return found + [Violation(rule, rel, 0, f"{count} relays: keep the reviewed list short "
+                                  f"(1..{MAX_SUGGESTIONS})", "relays")]
+    seen = set()
+    for index, entry in enumerate(relays):
+        entry = entry if isinstance(entry, dict) else {}
+        url = entry.get("url") if isinstance(entry.get("url"), str) else ""
+        where = at(f'"{url}"') if url else 0
+        for field in ("url", "name", "description", "private_reads"):
+            if not isinstance(entry.get(field), str) or not entry[field].strip():
+                found.append(Violation(rule, rel, where, f"entry {index} has no {field}",
+                                       f"{index}:{field}"))
+        m = SUGGESTION_URL_RE.match(url)
+        port = int(m.group("port")) if m and m.group("port") else None
+        if url and (not m or "." not in m.group("host") or ".." in m.group("host")
+                    or (port is not None and not 0 < port < 65536)
+                    or (m.group("path") or "").endswith("/")):
+            found.append(Violation(rule, rel, where, f"{url!r} is not a normalized secure relay "
+                                   "address (wss://, lower-case host, no trailing slash, "
+                                   "user name, query or fragment)", url))
+        if m:
+            host = m.group("host")
+            for ban in sorted(banned):
+                if host == ban or host.endswith("." + ban):
+                    found.append(Violation(rule, rel, where, f"entry {index} names a relay "
+                                           "AGENTS.md bans; it must never be suggested",
+                                           f"{index}:banned"))
+        if url in seen:
+            found.append(Violation(rule, rel, where, f"{url!r} is listed twice", url))
+        seen.add(url)
+        reads = entry.get("private_reads")
+        if isinstance(reads, str) and reads.strip():
+            if reads not in ("yes", "no", "unknown"):
+                found.append(Violation(rule, rel, where, f"private_reads {reads!r} must be "
+                                       "\"yes\", \"no\" or \"unknown\"", f"{index}:private_reads"))
+            elif reads != "unknown" and not str(entry.get("evidence", "")).strip():
+                found.append(Violation(rule, rel, where, f"entry {index} claims private_reads "
+                                       f"{reads!r} without review evidence; say \"unknown\" "
+                                       "unless it was checked", f"{index}:evidence"))
+    return found
+
+
 def blueprint_template_icon_name(keep, code, template="GhWindow"):
     """Return (value, offset) of the icon-name set directly on the template."""
     m = re.search(r"\btemplate\s+\$" + template + r"\s*:\s*[\w.]+\s*\{", code)
@@ -553,7 +664,8 @@ def check(root, exceptions=None):
     exceptions = EXCEPTIONS if exceptions is None else exceptions
     tree = Tree(root)
     raw = (check_url_literals(tree) + check_gsettings(tree) + check_blueprint(tree)
-           + check_sources(tree) + check_message_status(tree) + check_app_id(tree))
+           + check_sources(tree) + check_message_status(tree) + check_relay_suggestions(tree)
+           + check_app_id(tree))
     used, found = set(), []
     for violation in raw:
         key = (violation.rule, violation.path, violation.match)
@@ -672,6 +784,22 @@ def clean_tree():
             "static SoupSession *session_new(void) { return soup_session_new(); }\n"),
         "src/media/gh-blossom-client.c": "#include <libsoup/soup.h>\n",
         SCHEMA_FILE: render_schema(),
+        # The banned host is named only in the synthetic AGENTS.md, and the
+        # host it recommends instead is not banned.
+        "AGENTS.md": (
+            "# Agents\n\n## Banned Relays\n\n"
+            "**NEVER add `banned.example.org` (or `wss://banned.example.org`) anywhere.** "
+            "It is unreliable. Use `wss://good.example.org` instead.\n\n## Next\n\n"
+            "Never mind `other.example.org`.\n"),
+        SUGGESTIONS_FILE: json.dumps({
+            "reviewed": "2026-09-28",
+            "relays": [
+                {"url": "wss://good.example.org", "name": "Good", "description": "Reviewed.",
+                 "private_reads": "yes", "evidence": "synthetic: refused an unauthenticated REQ"},
+                {"url": "wss://other.example.org:4443/inbox", "name": "Other",
+                 "description": "Reviewed.", "private_reads": "unknown"},
+            ],
+        }, indent=2) + "\n",
         "data/ui/gh-window.blp": (
             "using Gtk 4.0;\n"
             "using Adw 1;\n\n"
@@ -817,6 +945,35 @@ MUTATIONS = [
       [append("src/app/gh-outbox.c",
               'static void w(Job *j, GError *e) {\n'
               '  g_warning("wrap %s: %s", g_strdup(j->wrap_id), e ? e->message : "?");\n}\n')]),
+    M("suggestions-banned-host", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, "wss://other.example.org:4443/inbox", "wss://banned.example.org")]),
+    M("suggestions-banned-subdomain", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, "wss://other.example.org:4443/inbox",
+               "wss://inbox.banned.example.org")]),
+    M("suggestions-insecure", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, "wss://good.example.org", "ws://good.example.org")]),
+    M("suggestions-not-normalized", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, "wss://good.example.org", "wss://Good.example.org/")]),
+    M("suggestions-query", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, "wss://good.example.org", "wss://good.example.org/?x=1")]),
+    M("suggestions-unproven-claim", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, '"private_reads": "unknown"', '"private_reads": "no"')]),
+    M("suggestions-bad-reads", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, '"private_reads": "unknown"', '"private_reads": "maybe"')]),
+    M("suggestions-duplicate", {"relay-suggestions"},
+      [replace(SUGGESTIONS_FILE, "wss://other.example.org:4443/inbox", "wss://good.example.org")]),
+    M("suggestions-too-many", {"relay-suggestions"},
+      [lambda tree: tree.__setitem__(SUGGESTIONS_FILE, json.dumps({"reviewed": "2026-09-28", "relays": [
+          {"url": f"wss://r{i}.example.org", "name": "R", "description": "D",
+           "private_reads": "unknown"} for i in range(MAX_SUGGESTIONS + 1)]}))]),
+    M("suggestions-no-banned-list", {"relay-suggestions"},
+      [replace("AGENTS.md", "## Banned Relays", "## Relays")]),
+    M("suggestions-missing", {"relay-suggestions"},
+      [lambda tree: tree.pop(SUGGESTIONS_FILE)]),
+    M("account-auth-inbox-setup-allowed", set(),
+      [append("src/app/gh-inbox-setup.c",
+              "static int own(GhRelayPublish *p, const char *u) {\n"
+              "  return gh_relay_publish_set_url_auth(p, u, GH_RELAY_AUTH_ACCOUNT, NULL);\n}\n")]),
     M("app-id-blueprint", {"app-id"},
       [replace("data/ui/gh-window.blp", f'icon-name: "{APP_ID}"', f'icon-name: "{APP_ID}.Devel"')]),
     M("app-id-ui", {"app-id"},

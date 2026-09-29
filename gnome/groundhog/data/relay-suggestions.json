@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "reviewed": "2026-09-28",
+  "review": "Privacy charter decision D4. Shown unchecked in onboarding's inbox step; none is contacted until the user picks it and confirms. Each relay was checked on the review date with an unauthenticated REQ for kind 1059 addressed to a random pubkey (the same probe Groundhog runs after confirmation) and its NIP-11 document. private_reads is 'yes' only when that REQ was refused as auth-required, 'no' when it was answered, and 'unknown' when it was not checked; Groundhog re-checks after the user confirms and shows the live result. Relays that answered such reads without sign-in, charge for use, or could not be reached on the review date are left out. Keep this list short, and re-review every entry before changing it.",
+  "relays": [
+    {
+      "url": "wss://relay.nostr.net",
+      "name": "nostr.net",
+      "description": "A general public relay run by nostr.net. It can also hold your published settings.",
+      "private_reads": "yes",
+      "evidence": "2026-09-28: REQ {kinds:[1059]} closed with 'auth-required: requested filter requires authentication'; NIP-11: strfry, free, lists NIP-59."
+    },
+    {
+      "url": "wss://auth.nostr1.com",
+      "name": "nostr1 inbox",
+      "description": "A free relay made for private messages. Its operator describes it as test (alpha) software.",
+      "private_reads": "yes",
+      "evidence": "2026-09-28: REQ {kinds:[1059]} closed with 'auth-required: you must auth'; NIP-11: strfry, auth_required true, payment_required false, 'free DM Inbox Relay running alpha software'."
+    },
+    {
+      "url": "wss://nip17.com",
+      "name": "NIP-17 relay",
+      "description": "Stores only private messages, so it can't hold your published settings. Choose it together with another relay.",
+      "private_reads": "yes",
+      "evidence": "2026-09-28: REQ {kinds:[1059]} closed with 'auth-required: you must authenticate first'; NIP-11: 'We only accept kind 1059 events', lists NIP-17, NIP-42, NIP-59."
+    }
+  ]
+}

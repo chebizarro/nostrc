@@ -1,0 +1,33 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One row of the onboarding lists (gh-onboarding-view.blp): an identity, a
+// message-relay choice or what one relay did with the published list. Its
+// item (GhOnboardingItem) supplies every text and state; relay replies are
+// untrusted text, so nothing here is read as markup. The check shows a
+// choice (the row itself toggles it); the icon shows a state.
+template $GhOnboardingRow: Adw.ActionRow {
+  use-markup: false;
+  title-lines: 0;
+  subtitle-lines: 0;
+  title: bind template.item as <$GhOnboardingItem>.title;
+  subtitle: bind template.item as <$GhOnboardingItem>.subtitle;
+
+  [prefix]
+  CheckButton check {
+    valign: center;
+    can-focus: false;
+    can-target: false;
+    accessible-role: presentation;
+    visible: bind template.item as <$GhOnboardingItem>.checkable;
+    active: bind template.item as <$GhOnboardingItem>.checked;
+  }
+
+  [suffix]
+  Image icon {
+    valign: center;
+    accessible-role: presentation;
+    visible: bind template.item as <$GhOnboardingItem>.has-icon;
+    icon-name: bind template.item as <$GhOnboardingItem>.icon-name;
+  }
+}
