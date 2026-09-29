@@ -14,6 +14,13 @@ GhConversation *gh_conversation_new_for_message(GhMessage *message);
 GhConversation *gh_conversation_new_for_room(const gchar *account,
                                              const gchar *const *participants,
                                              gint64 opened_at);
+/* Store-only: an empty NIP-29 group room (a joined group with no message
+ * yet); room_id as gh_message_nip29_room_id(). */
+GhConversation *gh_conversation_new_nip29(const gchar *account, const gchar *room_id);
+/* Store-only: the room's stored name (the NIP-17 subject kept durably, or a
+ * group's relay-signed name); NULL or "" clears. Notifies subject and title
+ * when they change. */
+void gh_conversation_set_name(GhConversation *self, const gchar *name);
 /* Store-only: inserts message in order. FALSE (nothing changed) when its
  * rumor id is already present or it belongs to another room or account. */
 gboolean gh_conversation_insert(GhConversation *self, GhMessage *message);
@@ -83,6 +90,34 @@ GhConversation *gh_conversation_store_restore(GhConversationStore *self,
                                               const GhConversationState *state);
 /* Store-layer only: unlists a room (forget conversation). TRUE when listed. */
 gboolean gh_conversation_store_remove(GhConversationStore *self, const gchar *room_id);
+
+/* ---- NIP-29 group rooms (G20a) ----------------------------------------------
+ * The main delegate (gh_conversation_store_set_account()) persists NIP-17
+ * rooms. NIP-29 group messages (gh_message_is_nip29()) never reach it: they
+ * go to the NIP-29 delegate set here (gh-store-nip29.h), or stay in memory
+ * when there is none. For such a message, gh_conversation_store_admit()'s
+ * wrap_id is non-NULL when a relay delivered the event (its own id: the event
+ * is its own carrier) and NULL for the local echo of an own message. Read
+ * markers of group rooms are persisted through this delegate too. It is
+ * dropped whenever the bound account changes (including to none). */
+/* backend must be GH_CONVERSATION_BACKEND_NIP29; FALSE (nothing set) when
+ * account_pubkey is not the bound account. */
+gboolean gh_conversation_store_set_backend_delegate(GhConversationStore *self,
+                                                    GhConversationBackend backend,
+                                                    const gchar *account_pubkey,
+                                                    const GhConversationDelegate *delegate,
+                                                    gpointer delegate_data,
+                                                    GDestroyNotify destroy);
+/* Drops the NIP-29 delegate if delegate_data is the one set. */
+void gh_conversation_store_clear_backend_delegate(GhConversationStore *self,
+                                                  GhConversationBackend backend,
+                                                  gpointer delegate_data);
+/* Lists a NIP-29 group room of the bound account (empty when new) and sets
+ * its name (NULL keeps the current one). Returns it (borrowed), or NULL when
+ * no account is bound or room_id is not a NIP-29 room id. */
+GhConversation *gh_conversation_store_ensure_group(GhConversationStore *self,
+                                                   const gchar *room_id,
+                                                   const gchar *name);
 /* Store-layer only: takes a message that expired or was purged out of its
  * room (gh_conversation_remove()) and moves the room to its new place in
  * the store order; the room stays listed, even when empty. Calls no

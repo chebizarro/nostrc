@@ -362,6 +362,11 @@ endif()
 if(BUILD_LIBHANAMI)
   set(ENABLE_NIP34 ON CACHE BOOL "Enable nip34 (required by libhanami)" FORCE)
 endif()
+# Groundhog's NIP-29 groups (qp24.12.2) need nips/nip29: register it here like
+# any NIP so it is added once, with the global flags, instead of by Groundhog.
+if(BUILD_GROUNDHOG)
+  set(ENABLE_NIP29 ON CACHE BOOL "Enable nip29 (required by Groundhog)" FORCE)
+endif()
 
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
 

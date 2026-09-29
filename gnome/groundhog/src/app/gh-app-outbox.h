@@ -46,6 +46,11 @@ void gh_app_outbox_set_conversations(GhAppOutbox *self, GhConversationStore *con
  * display names (gh_contact_directory_dup_conversation_title()). */
 GhContactDirectory *gh_app_outbox_get_directory(GhAppOutbox *self);
 
+/* G20a: the open store's NIP-29 groups (a GhNip29Service,
+ * gh-nip29-service.h), made beside each gh_app_outbox_create() outbox when
+ * the build has them and disposed with it; NULL otherwise. Borrowed. */
+GObject *gh_app_outbox_get_nip29_service(GhAppOutbox *self);
+
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhAppOutbox, gh_app_outbox_free)
 
 G_END_DECLS

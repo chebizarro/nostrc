@@ -227,6 +227,8 @@ ACCOUNT_PURPOSE_FILES = {
     "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
     "src/app/gh-outbox.": "the self-copy (and a note to self) on the own 10050 relays",
     "src/app/gh-dm-send.": "the self-copy (and a note to self) on the own 10050 relays",
+    "src/nip29/gh-nip29-service.": "NIP-29 group relays: the one group relay's live REQ",
+    "src/nip29/gh-nip29-outbox.": "NIP-29 group relays: publish to exactly the group's relay",
 }
 FORBIDDEN_STATUS_WORDS = {"DELIVERED", "READ", "SEEN"}
 SUGGESTIONS_FILE = "data/relay-suggestions.json"

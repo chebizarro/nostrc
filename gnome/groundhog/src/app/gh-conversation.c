@@ -46,6 +46,7 @@ struct _GhConversation {
   gboolean accepted;
   gint64 opened_at;          /* an empty room the user opened: its activity */
   GhConversationStore *store; /* persists read state and acceptance; not a ref */
+  GhConversationBackend backend;
 };
 
 enum {
@@ -133,6 +134,12 @@ abbreviated_npub(const gchar *pubkey_hex)
 static gchar *
 fallback_title(GhConversation *self)
 {
+  /* A group without a relay-signed name is shown by its id, never by who
+   * happened to write in it. */
+  g_autofree gchar *group_id = NULL;
+  if (self->backend == GH_CONVERSATION_BACKEND_NIP29 &&
+      gh_message_nip29_room_split(self->room_id, NULL, &group_id))
+    return g_steal_pointer(&group_id);
   if (!self->peers[0])
     return abbreviated_npub(self->account);
   g_autoptr(GPtrArray) names = g_ptr_array_new_with_free_func(g_free);
@@ -161,6 +168,8 @@ gh_conversation_new_for_message(GhMessage *message)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
   GhConversation *self = g_object_new(GH_TYPE_CONVERSATION, NULL);
+  self->backend = gh_message_is_nip29(message) ? GH_CONVERSATION_BACKEND_NIP29
+                                               : GH_CONVERSATION_BACKEND_NIP17;
   self->account = g_strdup(gh_message_get_account(message));
   self->room_id = g_strdup(gh_message_get_room_id(message));
   self->participants = g_strdupv((GStrv)gh_message_get_participants(message));
@@ -180,6 +189,7 @@ gh_conversation_new_for_room(const gchar *account, const gchar *const *participa
   g_return_val_if_fail(account != NULL && participants != NULL, NULL);
   g_return_val_if_fail(g_strv_contains(participants, account), NULL);
   GhConversation *self = g_object_new(GH_TYPE_CONVERSATION, NULL);
+  self->backend = GH_CONVERSATION_BACKEND_NIP17;
   self->account = g_strdup(account);
   self->participants = g_strdupv((GStrv)participants);
   self->room_id = g_strjoinv(",", self->participants);
@@ -193,6 +203,42 @@ gh_conversation_new_for_room(const gchar *account, const gchar *const *participa
   self->accepted = TRUE;
   self->opened_at = MAX(opened_at, 0);
   return self;
+}
+
+GhConversation *
+gh_conversation_new_nip29(const gchar *account, const gchar *room_id)
+{
+  g_return_val_if_fail(account != NULL, NULL);
+  g_return_val_if_fail(gh_message_nip29_room_split(room_id, NULL, NULL), NULL);
+  GhConversation *self = g_object_new(GH_TYPE_CONVERSATION, NULL);
+  self->backend = GH_CONVERSATION_BACKEND_NIP29;
+  self->account = g_strdup(account);
+  self->room_id = g_strdup(room_id);
+  self->participants = g_new0(gchar *, 2);
+  self->participants[0] = g_strdup(account);
+  self->peers = g_new0(gchar *, 1);
+  self->fallback_title = fallback_title(self);
+  return self;
+}
+
+void
+gh_conversation_set_name(GhConversation *self, const gchar *name)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  if (name && !*name)
+    name = NULL;
+  if (g_strcmp0(self->stored_subject, name) == 0)
+    return;
+  g_autofree gchar *old_subject = g_strdup(gh_conversation_get_subject(self));
+  g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
+  g_free(self->stored_subject);
+  self->stored_subject = g_strdup(name);
+  g_object_freeze_notify(G_OBJECT(self));
+  if (g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
+  if (g_strcmp0(old_title, gh_conversation_get_title(self)) != 0)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
+  g_object_thaw_notify(G_OBJECT(self));
 }
 
 /* <0, 0 or >0 as place a sorts before, at or after place b of the message
@@ -632,7 +678,7 @@ GhConversationBackend
 gh_conversation_get_backend(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), GH_CONVERSATION_BACKEND_NIP17);
-  return GH_CONVERSATION_BACKEND_NIP17;
+  return self->backend;
 }
 
 const gchar *
@@ -656,6 +702,9 @@ gboolean
 gh_conversation_get_is_request(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  /* A group is listed because the account joined it, never as a request. */
+  if (self->backend == GH_CONVERSATION_BACKEND_NIP29)
+    return FALSE;
   return !self->accepted && !self->has_own_message;
 }
 
@@ -765,6 +814,7 @@ gh_conversation_class_init(GhConversationClass *klass)
 static void
 gh_conversation_init(GhConversation *self)
 {
+  self->backend = GH_CONVERSATION_BACKEND_NIP17;
   self->messages = g_ptr_array_new_with_free_func(g_object_unref);
   self->by_id = g_hash_table_new(g_str_hash, g_str_equal);
 }

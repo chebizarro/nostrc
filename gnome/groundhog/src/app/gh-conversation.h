@@ -21,7 +21,10 @@ G_DECLARE_FINAL_TYPE(GhConversation, gh_conversation, GH, CONVERSATION, GObject)
 /* One NIP-17 room of one account: a GListModel of GhMessage ordered by
  * rumor created_at, then rumor id, holding each rumor id once. The room is
  * identified by its participant set (see gh_message_get_room_id), never by
- * who wrote a message. Messages are added only through
+ * who wrote a message. A NIP-29 group (backend NIP29) is a room too: its id
+ * is the group's (relay URL, group id) identity, its only participant the
+ * account (no peers), its title the relay-signed group name or else the
+ * group id, and it is never a request (the account joined it). Messages are added only through
  * gh_conversation_store_admit(). Readable properties for templates (charter
  * §7.4): "room-id", "backend", "title", "subject", "preview",
  * "last-activity", "unread-count" and "is-request"; all but the first two

@@ -800,6 +800,130 @@ test_template_is_signable(void)
   nostr_event_free(event);
 }
 
+/* ---- qp24.12.2 residuals ----------------------------------------------------- */
+
+/* A kind:9002 built from the admitted metadata carries the relay's unmodelled
+ * tags again (NIP-29 edits replace); d/h/previous and out-of-bounds tags are
+ * never carried. */
+static void
+test_edit_keeps_unknown_tags(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip29Group) group = group_new(RELAY_A, &relay_a);
+  NostrEvent *event = event_new(NOSTR_KIND_SIMPLE_GROUP_METADATA, 100, GROUP_ID);
+  event_tag(event, "name", "Pizza", NULL);
+  event_tag(event, "t", "food", NULL);
+  event_tag(event, "x-relay-policy", "slow", "30", NULL);
+  event_tag(event, "previous", "eb96c864", NULL);
+  event_tag(event, "h", GROUP_ID, NULL);
+  g_autofree gchar *huge = g_strnfill(GH_NIP29_MAX_EXTRA_TAG_VALUE_BYTES + 1, 'x');
+  event_tag(event, "x-huge", huge, NULL);
+  event_tag(event, "public", NULL);
+  g_assert_cmpint(admit_free(group, sign(&relay_a, event)), ==, GH_NIP29_ADMISSION_ACCEPTED);
+
+  g_autoptr(GhNip29Metadata) metadata = gh_nip29_group_dup_metadata(group);
+  g_assert_nonnull(metadata->extra_tags);
+  g_assert_cmpuint(metadata->extra_tags->len, ==, 3);
+  g_assert_true(strv_equal(g_ptr_array_index(metadata->extra_tags, 0),
+                           (const gchar *const[]){ "t", "food", NULL }));
+  g_assert_true(strv_equal(g_ptr_array_index(metadata->extra_tags, 1),
+                           (const gchar *const[]){ "x-relay-policy", "slow", "30", NULL }));
+  g_assert_true(strv_equal(g_ptr_array_index(metadata->extra_tags, 2),
+                           (const gchar *const[]){ "public", NULL }));
+  g_autoptr(GhNip29Metadata) copy = gh_nip29_metadata_copy(metadata);
+  g_assert_cmpuint(copy->extra_tags->len, ==, 3);
+
+  g_autoptr(GhNip29GroupKey) key = gh_nip29_group_key_new(RELAY_A, GROUP_ID, &error);
+  const GhNip29TemplateContext quiet = { AUTHOR, 1760000000, NULL, 0 };
+  g_free(copy->name);
+  copy->name = g_strdup("Pizza Fans");
+  assert_json(gh_nip29_template_edit_metadata(key, &quiet, copy, NULL, &error), error,
+              "{\"pubkey\":\"" AUTHOR "\",\"created_at\":1760000000,\"kind\":9002,"
+              "\"tags\":[[\"h\",\"pizza\"],[\"name\",\"Pizza Fans\"],[\"t\",\"food\"],"
+              "[\"x-relay-policy\",\"slow\",\"30\"],[\"public\"]],\"content\":\"\"}");
+
+  /* A caller cannot smuggle a modelled field (or h/d) in as an extra tag. */
+  g_ptr_array_add(copy->extra_tags, g_strsplit("closed", " ", -1));
+  g_assert_null(gh_nip29_template_edit_metadata(key, &quiet, copy, NULL, &error));
+  g_assert_error(error, GH_NIP29_ERROR, GH_NIP29_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
+  g_ptr_array_remove_index(copy->extra_tags, copy->extra_tags->len - 1);
+  g_ptr_array_add(copy->extra_tags, g_strsplit("h other", " ", -1));
+  g_assert_null(gh_nip29_template_edit_metadata(key, &quiet, copy, NULL, &error));
+  g_assert_error(error, GH_NIP29_ERROR, GH_NIP29_ERROR_INVALID_ARGUMENT);
+}
+
+/* A snapshot dated beyond the skew bound is refused, so it cannot pin its
+ * kind; one within the bound is admitted as before. */
+static void
+test_future_snapshot_bounded(void)
+{
+  const gint64 now = 1760000000;
+  g_autoptr(GhNip29Group) group = group_new(RELAY_A, &relay_a);
+  NostrEvent *future = metadata_event(&relay_a, now + GH_NIP29_MAX_FUTURE_SKEW_SECONDS + 1,
+                                      "From the future");
+  g_assert_cmpint(gh_nip29_group_admit_at(group, future, now), ==, GH_NIP29_ADMISSION_FUTURE);
+  g_assert_null(gh_nip29_group_get_snapshot_id(group, NOSTR_KIND_SIMPLE_GROUP_METADATA, NULL));
+  /* A correct later snapshot is still admitted afterwards. */
+  NostrEvent *current = metadata_event(&relay_a, now - 10, "Pizza");
+  g_assert_cmpint(gh_nip29_group_admit_at(group, current, now), ==, GH_NIP29_ADMISSION_ACCEPTED);
+  nostr_event_free(current);
+  NostrEvent *skewed = metadata_event(&relay_a, now + GH_NIP29_MAX_FUTURE_SKEW_SECONDS,
+                                      "Slightly ahead");
+  g_assert_cmpint(gh_nip29_group_admit_at(group, skewed, now), ==, GH_NIP29_ADMISSION_ACCEPTED);
+  nostr_event_free(skewed);
+  /* Once the clock has caught up, the same event is admissible. */
+  g_assert_cmpint(gh_nip29_group_admit_at(group, future, now + 2), ==,
+                  GH_NIP29_ADMISSION_ACCEPTED);
+  nostr_event_free(future);
+  g_assert_cmpstr(gh_nip29_admission_to_string(GH_NIP29_ADMISSION_FUTURE), ==,
+                  "dated too far in the future");
+}
+
+/* The timeline ring keeps the newest window by (created_at, id), each id
+ * once, and feeds the template context newest first. */
+static void
+test_timeline_ring(void)
+{
+  g_autoptr(GhNip29Timeline) timeline = gh_nip29_timeline_new();
+  g_autofree gchar *first = fake_event_id(0x10000000u);
+  g_assert_true(gh_nip29_timeline_add(timeline, first, OTHER, 5));
+  g_assert_false(gh_nip29_timeline_add(timeline, first, OTHER, 5));
+  g_assert_false(gh_nip29_timeline_add(timeline, "nope", OTHER, 5));
+  g_assert_false(gh_nip29_timeline_add(timeline, first, "nope", 5));
+  /* Backfill arrives in any order; the ring is kept newest first. */
+  for (guint i = 0; i < 70; i++) {
+    g_autofree gchar *id = fake_event_id(0xa0000000u + i);
+    gh_nip29_timeline_add(timeline, id, i % 2 ? OTHER : AUTHOR, 1000 + (gint64)((i * 37) % 70));
+  }
+  g_assert_cmpuint(gh_nip29_timeline_get_length(timeline), ==, GH_NIP29_PREVIOUS_WINDOW);
+  for (guint i = 1; i < GH_NIP29_PREVIOUS_WINDOW; i++) {
+    const GhNip29TimelineEntry *newer = gh_nip29_timeline_get_entry(timeline, i - 1);
+    const GhNip29TimelineEntry *older = gh_nip29_timeline_get_entry(timeline, i);
+    g_assert_cmpint(newer->created_at, >=, older->created_at);
+  }
+  g_assert_cmpint(gh_nip29_timeline_get_entry(timeline, 0)->created_at, ==, 1069);
+  /* The oldest (created_at 5) fell out of the window; older ones stay out. */
+  g_assert_false(gh_nip29_timeline_add(timeline, first, OTHER, 5));
+  gsize n = 0;
+  const GhNip29TimelineRef *refs = gh_nip29_timeline_get_refs(timeline, &n);
+  g_assert_cmpuint(n, ==, GH_NIP29_PREVIOUS_WINDOW);
+  g_autoptr(GError) error = NULL;
+  g_auto(GStrv) previous = gh_nip29_select_previous(AUTHOR, refs, n, &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(g_strv_length(previous), ==, GH_NIP29_PREVIOUS_REFS);
+  for (guint i = 0; previous[i]; i++)
+    g_assert_true(g_str_has_prefix(previous[i], "a"));
+  /* A deleted event leaves the ring and the refs follow. */
+  g_autofree gchar *newest = g_strdup(gh_nip29_timeline_get_entry(timeline, 0)->event_id);
+  g_assert_true(gh_nip29_timeline_remove(timeline, newest));
+  g_assert_false(gh_nip29_timeline_remove(timeline, newest));
+  refs = gh_nip29_timeline_get_refs(timeline, &n);
+  g_assert_cmpuint(n, ==, GH_NIP29_PREVIOUS_WINDOW - 1);
+  for (gsize i = 0; i < n; i++)
+    g_assert_cmpstr(refs[i].event_id, !=, newest);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -820,6 +944,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29/templates", test_templates_exact);
   g_test_add_func("/groundhog/nip29/template-validation", test_template_validation);
   g_test_add_func("/groundhog/nip29/template-signable", test_template_is_signable);
+  g_test_add_func("/groundhog/nip29/edit-keeps-unknown-tags", test_edit_keeps_unknown_tags);
+  g_test_add_func("/groundhog/nip29/future-snapshot-bounded", test_future_snapshot_bounded);
+  g_test_add_func("/groundhog/nip29/timeline-ring", test_timeline_ring);
   gint rc = g_test_run();
 
   for (gsize i = 0; i < G_N_ELEMENTS(keys); i++)

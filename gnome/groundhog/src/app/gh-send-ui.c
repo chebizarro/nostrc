@@ -71,10 +71,14 @@ toast(GhSendUi *ui, const gchar *text)
 }
 
 /* The one other participant (the account itself in a note to self); NULL
- * in a group conversation, which only receives for now. */
+ * in a group conversation, which only receives for now. A NIP-29 relay group
+ * has no peers but is not a note to self: its messages go to its relay
+ * through GhNip29Service, never through the NIP-17 outbox (G20b). */
 static const gchar *
 recipient_of(GhSendUi *ui, GhConversation *conversation)
 {
+  if (gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29)
+    return NULL;
   const gchar *const *peers = gh_conversation_get_peers(conversation);
   if (!peers || !peers[0])
     return gh_conversation_store_get_account(ui->model);

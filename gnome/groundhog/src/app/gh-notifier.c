@@ -449,7 +449,10 @@ preview_of(Room *room)
     text = g_strdup(_("New message"));
   }
   const gchar *const *peers = gh_conversation_get_peers(room->conversation);
-  g_autofree gchar *author = peers && peers[0] && peers[1]
+  const gboolean group =
+    gh_conversation_get_backend(room->conversation) == GH_CONVERSATION_BACKEND_NIP29 ||
+    (peers && peers[0] && peers[1]);
+  g_autofree gchar *author = group
                                ? npub_of(gh_message_get_sender(message), TRUE) : NULL;
   g_autofree gchar *body = author ? g_strdup_printf(_("%s: %s"), author, text)
                                   : g_steal_pointer(&text);

@@ -4,6 +4,13 @@
 #include "gh-dm-send.h"
 #include "gh-outbox.h"
 
+#ifndef GROUNDHOG_HAVE_NIP29
+#define GROUNDHOG_HAVE_NIP29 0
+#endif
+#if GROUNDHOG_HAVE_NIP29
+#include "gh-nip29-service.h"
+#endif
+
 struct _GhAppOutbox {
   GhAccountController *accounts;
   GhAccountRelays *account_relays;
@@ -14,6 +21,12 @@ struct _GhAppOutbox {
   GhRelayPublishTransport transport;
   gboolean custom_transport;
   gpointer transport_data;
+  /* G20a: the open store's NIP-29 groups, made and disposed with its outbox
+   * (so always before that store closes). */
+  GhConversationStore *conversations; /* borrowed: the app's model */
+  GSettings *settings;                /* network-mode for the NIP-11 fetches; nullable */
+  GObject *nip29;                     /* GhNip29Service, or NULL */
+  GObject *nip29_outbox;              /* the outbox it was made beside (weak) */
 };
 
 GhAppOutbox *
@@ -39,6 +52,8 @@ gh_app_outbox_new(const GhAppOutboxConfig *config)
     self->inboxes = GH_INBOX_RESOLVER(g_object_ref(self->directory));
     gh_contact_directory_set_conversations(self->directory, config->conversations);
   }
+  self->conversations = config->conversations;
+  self->settings = config->settings ? g_object_ref(config->settings) : NULL;
   if (config->transport) {
     self->transport = *config->transport;
     self->custom_transport = TRUE;
@@ -51,12 +66,17 @@ gh_app_outbox_new(const GhAppOutboxConfig *config)
 }
 
 static void unbind_directory(gpointer data, GObject *outbox);
+static void unbind_nip29(gpointer data, GObject *outbox);
 
 void
 gh_app_outbox_free(GhAppOutbox *self)
 {
   if (!self)
     return;
+  if (self->nip29_outbox) {
+    g_object_weak_unref(self->nip29_outbox, unbind_nip29, self);
+    unbind_nip29(self, self->nip29_outbox);
+  }
   if (self->bound_outbox) {
     g_object_weak_unref(self->bound_outbox, unbind_directory, self);
     unbind_directory(self, self->bound_outbox);
@@ -68,7 +88,58 @@ gh_app_outbox_free(GhAppOutbox *self)
   g_clear_object(&self->directory);
   g_clear_object(&self->account_relays);
   g_clear_object(&self->accounts);
+  g_clear_object(&self->settings);
   g_free(self);
+}
+
+/* G20a: the store's NIP-29 service beside its outbox; the account store
+ * disposes the outbox (and so the service) before it closes the store. */
+static void
+bind_nip29(GhAppOutbox *self, GhStore *store, GObject *outbox)
+{
+#if GROUNDHOG_HAVE_NIP29
+  if (self->nip29_outbox) {
+    g_object_weak_unref(self->nip29_outbox, unbind_nip29, self);
+    unbind_nip29(self, self->nip29_outbox);
+  }
+  if (!self->conversations ||
+      g_strcmp0(gh_conversation_store_get_account(self->conversations),
+                gh_store_get_account_pubkey(store)) != 0)
+    return;
+  GhNip29ServiceConfig config = {
+    .store = store,
+    .accounts = self->accounts,
+    .conversations = self->conversations,
+    .settings = self->settings,
+  };
+  g_autoptr(GError) error = NULL;
+  GhNip29Service *service = gh_nip29_service_new(&config, &error);
+  if (!service) {
+    g_message("Groundhog runs without its NIP-29 groups: %s", error->message);
+    return;
+  }
+  self->nip29 = G_OBJECT(service);
+  self->nip29_outbox = outbox;
+  g_object_weak_ref(outbox, unbind_nip29, self);
+#else
+  (void)self;
+  (void)store;
+  (void)outbox;
+#endif
+}
+
+/* The outbox the NIP-29 service was made beside is being disposed. */
+static void
+unbind_nip29(gpointer data, GObject *outbox)
+{
+  GhAppOutbox *self = data;
+  if (self->nip29_outbox != outbox)
+    return;
+  self->nip29_outbox = NULL;
+  if (self->nip29) {
+    g_object_run_dispose(self->nip29);
+    g_clear_object(&self->nip29);
+  }
 }
 
 GObject *
@@ -101,6 +172,8 @@ gh_app_outbox_create(GhStore *store, gpointer user_data, GError **error)
       g_message("Groundhog keeps its contact directory in memory only: %s", bind_error->message);
     }
   }
+  if (outbox)
+    bind_nip29(self, store, outbox);
   return outbox;
 }
 
@@ -119,6 +192,7 @@ void
 gh_app_outbox_set_conversations(GhAppOutbox *self, GhConversationStore *conversations)
 {
   g_return_if_fail(self != NULL);
+  self->conversations = conversations;
   if (self->directory)
     gh_contact_directory_set_conversations(self->directory, conversations);
 }
@@ -128,6 +202,13 @@ gh_app_outbox_get_directory(GhAppOutbox *self)
 {
   g_return_val_if_fail(self != NULL, NULL);
   return self->directory;
+}
+
+GObject *
+gh_app_outbox_get_nip29_service(GhAppOutbox *self)
+{
+  g_return_val_if_fail(self != NULL, NULL);
+  return self->nip29;
 }
 
 void

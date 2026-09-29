@@ -147,8 +147,17 @@ void
 gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
                       GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
+  gh_net_http_get_accept_async(self, uri, NULL, max_bytes, cancellable, callback, user_data);
+}
+
+void
+gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                             gsize max_bytes, GCancellable *cancellable,
+                             GAsyncReadyCallback callback, gpointer user_data)
+{
   g_return_if_fail(GH_IS_NET_HTTP(self));
   g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
+  g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
   g_autoptr(GTask) task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_net_http_get_async);
   g_autoptr(GUri) parsed = g_uri_parse(uri, G_URI_FLAGS_ENCODED, NULL);
@@ -175,7 +184,7 @@ gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
   g_task_set_task_data(task, request, request_free);
   soup_message_add_flags(request->message, SOUP_MESSAGE_NO_REDIRECT);
   SoupMessageHeaders *headers = soup_message_get_request_headers(request->message);
-  soup_message_headers_replace(headers, "Accept", "application/json");
+  soup_message_headers_replace(headers, "Accept", accept ? accept : "application/json");
   soup_session_send_async(session, request->message, G_PRIORITY_DEFAULT, cancellable, on_sent,
                           g_steal_pointer(&task));
 }

@@ -36,6 +36,7 @@ struct _GhNip29Group {
   gboolean has_livekit;
   gboolean has_supported_kinds;
   GArray *supported_kinds;
+  GPtrArray *extra_tags; /* GStrv; tags neither nips/nip29 nor this layer models */
 };
 
 struct _GhNip29RolePolicy {
@@ -245,6 +246,7 @@ gh_nip29_group_new(const GhNip29GroupKey *key, const gchar *relay_pubkey, GError
   group->relay_pubkey = g_steal_pointer(&pubkey);
   group->state = state;
   group->supported_kinds = g_array_new(FALSE, FALSE, sizeof(gint));
+  group->extra_tags = g_ptr_array_new_with_free_func((GDestroyNotify)g_strfreev);
   return group;
 }
 
@@ -257,6 +259,7 @@ gh_nip29_group_free(GhNip29Group *group)
   g_free(group->relay_pubkey);
   nostr_free_group(group->state);
   g_array_unref(group->supported_kinds);
+  g_ptr_array_unref(group->extra_tags);
   g_free(group);
 }
 
@@ -344,6 +347,58 @@ parse_supported_kinds(const NostrEvent *event, GArray *out)
   return TRUE;
 }
 
+/* kind:39000 tag names that the metadata model (or the event shape) owns;
+ * every other tag is carried through edits verbatim. */
+static gboolean
+metadata_tag_is_modelled(const gchar *name)
+{
+  static const gchar *const modelled[] = {
+    "d", "h", "previous", "name", "picture", "banner", "about", "private", "restricted",
+    "hidden", "closed", "livekit", "supported_kinds", "parent", "child", NULL,
+  };
+  return g_strv_contains(modelled, name);
+}
+
+/* The unmodelled tags of a kind:39000 within the GH_NIP29_MAX_EXTRA_* bounds. */
+static GPtrArray *
+collect_extra_tags(const NostrEvent *event)
+{
+  GPtrArray *extra = g_ptr_array_new_with_free_func((GDestroyNotify)g_strfreev);
+  const NostrTags *tags = nostr_event_get_tags(event);
+  for (gsize i = 0; tags && i < nostr_tags_size(tags); i++) {
+    const NostrTag *tag = nostr_tags_get(tags, i);
+    const gchar *name = tag ? nostr_tag_get_key(tag) : NULL;
+    gsize n = tag ? nostr_tag_size(tag) : 0;
+    if (!name || !*name || metadata_tag_is_modelled(name) || n > GH_NIP29_MAX_EXTRA_TAG_VALUES + 1 ||
+        extra->len >= GH_NIP29_MAX_EXTRA_TAGS)
+      continue;
+    gboolean ok = TRUE;
+    for (gsize j = 0; j < n && ok; j++) {
+      const gchar *value = nostr_tag_get(tag, j);
+      ok = value && strlen(value) <= GH_NIP29_MAX_EXTRA_TAG_VALUE_BYTES &&
+           g_utf8_validate(value, -1, NULL);
+    }
+    if (!ok)
+      continue;
+    GStrv copy = g_new0(gchar *, n + 1);
+    for (gsize j = 0; j < n; j++)
+      copy[j] = g_strdup(nostr_tag_get(tag, j));
+    g_ptr_array_add(extra, copy);
+  }
+  return extra;
+}
+
+static GPtrArray *
+copy_extra_tags(const GPtrArray *extra)
+{
+  if (!extra || extra->len == 0)
+    return NULL;
+  GPtrArray *copy = g_ptr_array_new_full(extra->len, (GDestroyNotify)g_strfreev);
+  for (guint i = 0; i < extra->len; i++)
+    g_ptr_array_add(copy, g_strdupv(g_ptr_array_index(extra, i)));
+  return copy;
+}
+
 static gboolean
 merge_snapshot(GhNip29Group *group, gint slot, const NostrEvent *event)
 {
@@ -359,6 +414,8 @@ merge_snapshot(GhNip29Group *group, gint slot, const NostrEvent *event)
     group->has_supported_kinds = has_kinds;
     g_array_unref(group->supported_kinds);
     group->supported_kinds = kinds;
+    g_ptr_array_unref(group->extra_tags);
+    group->extra_tags = collect_extra_tags(event);
     return TRUE;
   }
   case SNAPSHOT_ADMINS:
@@ -374,6 +431,12 @@ merge_snapshot(GhNip29Group *group, gint slot, const NostrEvent *event)
 
 GhNip29Admission
 gh_nip29_group_admit(GhNip29Group *group, const NostrEvent *event)
+{
+  return gh_nip29_group_admit_at(group, event, g_get_real_time() / G_USEC_PER_SEC);
+}
+
+GhNip29Admission
+gh_nip29_group_admit_at(GhNip29Group *group, const NostrEvent *event, gint64 now)
 {
   g_return_val_if_fail(group != NULL, GH_NIP29_ADMISSION_FAILED);
   if (!event)
@@ -401,6 +464,9 @@ gh_nip29_group_admit(GhNip29Group *group, const NostrEvent *event)
   gint64 created_at = nostr_event_get_created_at(event);
   if (created_at < 0)
     return GH_NIP29_ADMISSION_MALFORMED;
+  /* A relay with a bad clock must not freeze this kind until restart. */
+  if (created_at > now + GH_NIP29_MAX_FUTURE_SKEW_SECONDS)
+    return GH_NIP29_ADMISSION_FUTURE;
 
   /* Newest created_at wins per kind; on a tie NIP-01 keeps the lowest id.
    * nips/nip29 accepts equal timestamps, so the order is enforced here. */
@@ -447,6 +513,8 @@ gh_nip29_admission_to_string(GhNip29Admission admission)
     return "d tag does not name this group";
   case GH_NIP29_ADMISSION_STALE:
     return "older than the current snapshot";
+  case GH_NIP29_ADMISSION_FUTURE:
+    return "dated too far in the future";
   case GH_NIP29_ADMISSION_FAILED:
   default:
     return "could not apply snapshot";
@@ -502,6 +570,7 @@ gh_nip29_metadata_copy(const GhNip29Metadata *metadata)
   copy->n_supported_kinds = copy->supported_kinds ? metadata->n_supported_kinds : 0;
   copy->parent = g_strdup(metadata->parent);
   copy->children = g_strdupv(metadata->children);
+  copy->extra_tags = copy_extra_tags(metadata->extra_tags);
   return copy;
 }
 
@@ -517,6 +586,7 @@ gh_nip29_metadata_free(GhNip29Metadata *metadata)
   g_free(metadata->supported_kinds);
   g_free(metadata->parent);
   g_strfreev(metadata->children);
+  g_clear_pointer(&metadata->extra_tags, g_ptr_array_unref);
   g_free(metadata);
 }
 
@@ -558,6 +628,7 @@ gh_nip29_group_dup_metadata(const GhNip29Group *group)
   metadata->children = g_new0(gchar *, state->children_len + 1);
   for (gsize i = 0; i < state->children_len; i++)
     metadata->children[i] = g_strdup(state->children[i]);
+  metadata->extra_tags = copy_extra_tags(group->extra_tags);
   return metadata;
 }
 

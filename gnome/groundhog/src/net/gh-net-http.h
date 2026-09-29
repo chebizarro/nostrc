@@ -42,6 +42,12 @@ GhNetHttp *gh_net_http_new(GSettings *settings);
 void gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
                            GCancellable *cancellable, GAsyncReadyCallback callback,
                            gpointer user_data);
+/* As gh_net_http_get_async() with accept as the request's one Accept value
+ * (NULL: "application/json"), e.g. NIP-11's "application/nostr+json". The
+ * result is finished with gh_net_http_get_finish(). */
+void gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                                  gsize max_bytes, GCancellable *cancellable,
+                                  GAsyncReadyCallback callback, gpointer user_data);
 GBytes *gh_net_http_get_finish(GhNetHttp *self, GAsyncResult *result, GError **error);
 
 /* The GhHttpTransport over a GhNetHttp passed as its data. */

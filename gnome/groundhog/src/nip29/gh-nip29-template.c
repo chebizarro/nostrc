@@ -49,6 +49,122 @@ gh_nip29_select_previous(const gchar *author_pubkey, const GhNip29TimelineRef *r
   return (GStrv)g_ptr_array_free(prefixes, FALSE);
 }
 
+/* ---- Timeline ring --------------------------------------------------------- */
+
+struct _GhNip29Timeline {
+  GArray *entries;   /* GhNip29TimelineEntry, newest first */
+  GArray *refs;      /* GhNip29TimelineRef into entries; rebuilt on demand */
+  gboolean refs_valid;
+};
+
+GhNip29Timeline *
+gh_nip29_timeline_new(void)
+{
+  GhNip29Timeline *timeline = g_new0(GhNip29Timeline, 1);
+  timeline->entries = g_array_sized_new(FALSE, TRUE, sizeof(GhNip29TimelineEntry),
+                                        GH_NIP29_PREVIOUS_WINDOW + 1);
+  timeline->refs = g_array_new(FALSE, TRUE, sizeof(GhNip29TimelineRef));
+  return timeline;
+}
+
+void
+gh_nip29_timeline_free(GhNip29Timeline *timeline)
+{
+  if (!timeline)
+    return;
+  g_array_unref(timeline->entries);
+  g_array_unref(timeline->refs);
+  g_free(timeline);
+}
+
+/* <0 when (created_at, id) sorts before entry in newest-first order. */
+static gint
+timeline_order(gint64 created_at, const gchar *id, const GhNip29TimelineEntry *entry)
+{
+  if (created_at != entry->created_at)
+    return created_at > entry->created_at ? -1 : 1;
+  return strcmp(id, entry->event_id);
+}
+
+gboolean
+gh_nip29_timeline_add(GhNip29Timeline *timeline, const gchar *event_id, const gchar *pubkey,
+                      gint64 created_at)
+{
+  g_return_val_if_fail(timeline != NULL, FALSE);
+  if (!gh_nip29_is_hex64(event_id) || !gh_nip29_is_hex64(pubkey) || created_at < 0)
+    return FALSE;
+  GArray *entries = timeline->entries;
+  guint position = entries->len;
+  for (guint i = 0; i < entries->len; i++) {
+    const GhNip29TimelineEntry *entry = &g_array_index(entries, GhNip29TimelineEntry, i);
+    if (strcmp(entry->event_id, event_id) == 0)
+      return FALSE;
+    if (position == entries->len && timeline_order(created_at, event_id, entry) < 0)
+      position = i;
+  }
+  if (position >= GH_NIP29_PREVIOUS_WINDOW)
+    return FALSE; /* older than everything a full window keeps */
+  GhNip29TimelineEntry entry = { .created_at = created_at };
+  memcpy(entry.event_id, event_id, 65);
+  memcpy(entry.pubkey, pubkey, 65);
+  g_array_insert_val(entries, position, entry);
+  if (entries->len > GH_NIP29_PREVIOUS_WINDOW)
+    g_array_set_size(entries, GH_NIP29_PREVIOUS_WINDOW);
+  timeline->refs_valid = FALSE;
+  return TRUE;
+}
+
+gboolean
+gh_nip29_timeline_remove(GhNip29Timeline *timeline, const gchar *event_id)
+{
+  g_return_val_if_fail(timeline != NULL, FALSE);
+  for (guint i = 0; event_id && i < timeline->entries->len; i++) {
+    if (strcmp(g_array_index(timeline->entries, GhNip29TimelineEntry, i).event_id,
+               event_id) == 0) {
+      g_array_remove_index(timeline->entries, i);
+      timeline->refs_valid = FALSE;
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+guint
+gh_nip29_timeline_get_length(const GhNip29Timeline *timeline)
+{
+  g_return_val_if_fail(timeline != NULL, 0);
+  return timeline->entries->len;
+}
+
+const GhNip29TimelineEntry *
+gh_nip29_timeline_get_entry(const GhNip29Timeline *timeline, guint index)
+{
+  g_return_val_if_fail(timeline != NULL && index < timeline->entries->len, NULL);
+  return &g_array_index(timeline->entries, GhNip29TimelineEntry, index);
+}
+
+const GhNip29TimelineRef *
+gh_nip29_timeline_get_refs(GhNip29Timeline *timeline, gsize *n_refs)
+{
+  g_return_val_if_fail(timeline != NULL, NULL);
+  if (!timeline->refs_valid) {
+    g_array_set_size(timeline->refs, timeline->entries->len);
+    for (guint i = 0; i < timeline->entries->len; i++) {
+      const GhNip29TimelineEntry *entry =
+        &g_array_index(timeline->entries, GhNip29TimelineEntry, i);
+      GhNip29TimelineRef *ref = &g_array_index(timeline->refs, GhNip29TimelineRef, i);
+      ref->event_id = entry->event_id;
+      ref->pubkey = entry->pubkey;
+    }
+    timeline->refs_valid = TRUE;
+  }
+  if (n_refs)
+    *n_refs = timeline->refs->len;
+  return (const GhNip29TimelineRef *)(gconstpointer)timeline->refs->data;
+}
+
+/* ---- Templates ---------------------------------------------------------------- */
+
 static gboolean
 check_context(const GhNip29GroupKey *group, const GhNip29TemplateContext *context,
               GError **error)
@@ -273,6 +389,27 @@ check_metadata(const GhNip29GroupKey *group, const GhNip29Metadata *metadata, GE
     if (!check_related_group(group, metadata->children[i], "child", error))
       return FALSE;
   }
+  static const gchar *const modelled[] = {
+    "d", "h", "previous", "name", "picture", "banner", "about", "private", "restricted",
+    "hidden", "closed", "livekit", "supported_kinds", "parent", "child", NULL,
+  };
+  guint n_extra = metadata->extra_tags ? metadata->extra_tags->len : 0;
+  if (n_extra > GH_NIP29_MAX_EXTRA_TAGS)
+    return fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "too many extra metadata tags");
+  for (guint i = 0; i < n_extra; i++) {
+    const gchar *const *tag = g_ptr_array_index(metadata->extra_tags, i);
+    guint n = tag ? g_strv_length((GStrv)tag) : 0;
+    if (n == 0 || !*tag[0] || g_strv_contains(modelled, tag[0]) ||
+        n > GH_NIP29_MAX_EXTRA_TAG_VALUES + 1)
+      return fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT,
+                  "an extra metadata tag needs a name the model does not own");
+    for (guint j = 0; j < n; j++) {
+      if (strlen(tag[j]) > GH_NIP29_MAX_EXTRA_TAG_VALUE_BYTES ||
+          !g_utf8_validate(tag[j], -1, NULL))
+        return fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT,
+                    "an extra metadata tag value is too long or not UTF-8");
+    }
+  }
   return TRUE;
 }
 
@@ -323,6 +460,14 @@ gh_nip29_template_edit_metadata(const GhNip29GroupKey *group,
   add_optional(&build, "parent", metadata->parent);
   for (gsize i = 0; metadata->children && metadata->children[i]; i++)
     template_add(&build, nostr_tag_new("child", metadata->children[i], NULL));
+  /* Relay-specific and newer fields the relay published, verbatim. */
+  for (guint i = 0; metadata->extra_tags && i < metadata->extra_tags->len; i++) {
+    const gchar *const *extra = g_ptr_array_index(metadata->extra_tags, i);
+    NostrTag *tag = nostr_tag_new(extra[0], NULL);
+    for (guint j = 1; tag && extra[j]; j++)
+      nostr_tag_append(tag, extra[j]);
+    template_add(&build, tag);
+  }
   return template_finish(&build, context, NOSTR_KIND_SIMPLE_GROUP_EDIT_METADATA, reason, error);
 }
 

@@ -20,6 +20,12 @@ struct _GhMessage {
   gint64 expires_at;
   GhMessageStatus status;
   GPtrArray *relays; /* NULL-terminated */
+  /* NIP-29 group events only. */
+  gboolean nip29;
+  gboolean is_signed;
+  gint kind;
+  gchar *group_id;
+  gchar *group_relay;
 };
 
 enum {
@@ -253,7 +259,7 @@ gint
 gh_message_get_kind(GhMessage *self)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
-  return 14;
+  return self->nip29 ? self->kind : 14;
 }
 
 const gchar *
@@ -313,6 +319,188 @@ gh_message_add_relay(GhMessage *self, const gchar *url)
   g_ptr_array_insert(self->relays, self->relays->len - 1, g_strdup(url));
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_RELAYS]);
   return TRUE;
+}
+
+/* ---- NIP-29 group events ------------------------------------------------ */
+
+static gboolean
+nip29_group_id_valid(const gchar *id)
+{
+  gsize length = id ? strnlen(id, GH_MESSAGE_MAX_GROUP_ID + 1) : 0;
+  if (length == 0 || length > GH_MESSAGE_MAX_GROUP_ID)
+    return FALSE;
+  for (const gchar *p = id; *p; p++)
+    if (!g_ascii_islower(*p) && !g_ascii_isdigit(*p) && *p != '-' && *p != '_')
+      return FALSE;
+  return TRUE;
+}
+
+/* A normalized ws(s) relay URL as gh_nip29_normalize_relay_url() makes it:
+ * the scheme, a host, and no whitespace, control character or separator. */
+static gboolean
+nip29_relay_valid(const gchar *url)
+{
+  gsize length = url ? strnlen(url, 2049) : 0;
+  if (length == 0 || length > 2048 ||
+      !(g_str_has_prefix(url, "ws://") || g_str_has_prefix(url, "wss://")))
+    return FALSE;
+  const gchar *host = strstr(url, "://") + 3;
+  if (!*host || *host == '/')
+    return FALSE;
+  for (const gchar *p = url; *p; p++)
+    if ((guchar)*p <= 0x20 || *p == 0x7f)
+      return FALSE;
+  return TRUE;
+}
+
+gchar *
+gh_message_nip29_room_id(const gchar *relay_url, const gchar *group_id)
+{
+  g_return_val_if_fail(relay_url != NULL && group_id != NULL, NULL);
+  return g_strconcat(relay_url, GH_MESSAGE_NIP29_SEPARATOR, group_id, NULL);
+}
+
+gboolean
+gh_message_nip29_room_split(const gchar *room_id, gchar **relay_url, gchar **group_id)
+{
+  const gchar *separator = room_id ? strchr(room_id, '\x1f') : NULL;
+  if (!separator || strchr(separator + 1, '\x1f') || separator == room_id)
+    return FALSE;
+  g_autofree gchar *relay = g_strndup(room_id, separator - room_id);
+  if (!nip29_relay_valid(relay) || !nip29_group_id_valid(separator + 1))
+    return FALSE;
+  if (relay_url)
+    *relay_url = g_steal_pointer(&relay);
+  if (group_id)
+    *group_id = g_strdup(separator + 1);
+  return TRUE;
+}
+
+static const gchar *
+first_tag_value(const NostrEvent *event, const gchar *key, gboolean *present)
+{
+  NostrTags *tags = nostr_event_get_tags((NostrEvent *)event);
+  for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (tag && nostr_tag_size(tag) >= 1 && g_strcmp0(nostr_tag_get(tag, 0), key) == 0) {
+      if (present)
+        *present = TRUE;
+      return nostr_tag_size(tag) >= 2 ? nostr_tag_get(tag, 1) : NULL;
+    }
+  }
+  if (present)
+    *present = FALSE;
+  return NULL;
+}
+
+GhMessage *
+gh_message_new_from_nip29_event(const gchar *account_pubkey, const gchar *relay_url,
+                                const gchar *event_json, GError **error)
+{
+  if (!lower_hex64(account_pubkey) || !nip29_relay_valid(relay_url)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A lowercase hex account and a normalized relay URL are required");
+    return NULL;
+  }
+  const gchar *reason = NULL;
+  if (!event_json || strnlen(event_json, GH_MESSAGE_MAX_RUMOR_JSON + 1) >
+                       GH_MESSAGE_MAX_RUMOR_JSON)
+    reason = "missing or too large";
+  NostrEvent *event = reason ? NULL : nostr_event_new();
+  gchar id[65] = { 0 };
+  gboolean is_signed = FALSE;
+  if (!reason && !event)
+    reason = "out of memory";
+  if (!reason) {
+    if (nostr_event_deserialize_signed(event, event_json, NULL) == NOSTR_EVENT_VALIDATION_OK) {
+      is_signed = TRUE;
+      if (nostr_event_validate(event, id) != NOSTR_EVENT_VALIDATION_OK)
+        reason = "the id or signature does not verify";
+    } else {
+      /* Only the account's own event may be unsigned: its local echo. */
+      nostr_event_free(event);
+      event = nostr_event_new();
+      if (nostr_event_deserialize_unsigned(event, event_json, NULL) != NOSTR_EVENT_VALIDATION_OK)
+        reason = "malformed";
+      else if (g_strcmp0(nostr_event_get_pubkey(event), account_pubkey) != 0)
+        reason = "an unsigned event that is not the account's own";
+      else if ((event->id ? nostr_event_validate_id(event, id)
+                          : nostr_event_compute_id(event, id)) != NOSTR_EVENT_VALIDATION_OK)
+        reason = "id does not match its content";
+    }
+  }
+  gint kind = event && !reason ? nostr_event_get_kind(event) : 0;
+  const gchar *group_id = NULL;
+  if (!reason && (kind < 9 || kind > 12))
+    reason = "not a group message kind (9-12)";
+  if (!reason && nostr_event_get_created_at(event) <= 0)
+    reason = "no created_at";
+  if (!reason && !lower_hex64(nostr_event_get_pubkey(event)))
+    reason = "author is not a lowercase hex pubkey";
+  if (!reason && !nostr_event_get_content(event))
+    reason = "no content";
+  if (!reason) {
+    group_id = first_tag_value(event, "h", NULL);
+    if (!nip29_group_id_valid(group_id))
+      reason = "no valid h tag";
+  }
+  if (reason) {
+    nostr_event_free(event);
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                "Not a NIP-29 group message: %s", reason);
+    return NULL;
+  }
+
+  GhMessage *self = g_object_new(GH_TYPE_MESSAGE, NULL);
+  self->nip29 = TRUE;
+  self->is_signed = is_signed;
+  self->kind = kind;
+  self->account = g_strdup(account_pubkey);
+  self->rumor_id = g_strdup(id);
+  self->rumor_json = g_strdup(event_json);
+  self->sender = g_strdup(nostr_event_get_pubkey(event));
+  self->created_at = nostr_event_get_created_at(event);
+  self->content = g_strdup(nostr_event_get_content(event));
+  self->group_id = g_strdup(group_id);
+  self->group_relay = g_strdup(relay_url);
+  self->room_id = gh_message_nip29_room_id(relay_url, group_id);
+  self->recipients = g_new0(gchar *, 1);
+  self->participants = g_new0(gchar *, 2);
+  self->participants[0] = g_strdup(account_pubkey);
+  const gchar *expiration = first_tag_value(event, "expiration", NULL);
+  gint64 expires_at = 0;
+  if (expiration && g_ascii_string_to_signed(expiration, 10, 1, G_MAXINT64, &expires_at, NULL))
+    self->expires_at = expires_at;
+  nostr_event_free(event);
+  return self;
+}
+
+gboolean
+gh_message_is_nip29(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), FALSE);
+  return self->nip29;
+}
+
+const gchar *
+gh_message_get_group_id(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
+  return self->group_id;
+}
+
+const gchar *
+gh_message_get_group_relay(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
+  return self->group_relay;
+}
+
+gboolean
+gh_message_is_signed(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), FALSE);
+  return self->is_signed;
 }
 
 gint
@@ -376,6 +564,8 @@ gh_message_finalize(GObject *object)
   g_free(self->room_id);
   g_free(self->content);
   g_free(self->subject);
+  g_free(self->group_id);
+  g_free(self->group_relay);
   g_ptr_array_unref(self->relays);
   G_OBJECT_CLASS(gh_message_parent_class)->finalize(object);
 }

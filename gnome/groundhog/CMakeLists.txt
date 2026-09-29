@@ -316,10 +316,11 @@ endif()
 # --- end G11 ---
 
 # GTK-free NIP-29 relay-group core: (relay URL, group id) identity, admission
-# of relay-signed 39000-39003 snapshots, role checks and unsigned event
-# templates. No transport, subscription or UI is linked here. nips/nip29 is
-# only added by ENABLE_NIP29=ON, so pull it in here otherwise (as the identity
-# block does for gnostr-secret); that also registers its test_nip29 CTest.
+# of relay-signed 39000-39003 snapshots, role checks, unsigned event templates
+# and the timeline ring for `previous`. No transport, subscription or UI is
+# linked here. The top-level build forces ENABLE_NIP29 with BUILD_GROUNDHOG;
+# a standalone Groundhog build pulls nips/nip29 in here instead (as the
+# identity block does for gnostr-secret), which also registers test_nip29.
 if (TARGET nostr AND TARGET nip19)
   if (NOT TARGET nip29)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip29
@@ -1455,6 +1456,67 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_CONVERSATION_INFO=0)
 endif()
 # --- end G19 conversation info ---
+
+# --- G20a NIP-29 service ---
+# The account's NIP-29 relay groups (privacy charter §8.2 G20a, plan W5):
+# GhNip29Service (per relay one URL-scoped live REQ, EOSE-aware backfill,
+# relay-key-verified 39000-39003, honest join states, timeline ring for
+# `previous`), the durable NIP-29 engine of the outbox (GhNip29Outbox:
+# T-enqueue before the signer, T-seal, publish to exactly the group relay
+# with account AUTH through GhAuthPolicy), group rooms in the conversation
+# model through the encrypted store's NIP-29 delegate (gh-store-nip29.c,
+# nip29_groups), and the NIP-11 relay key fetch (src/net/gh-nip11.c on G18's
+# GhNetHttp in groundhog-net: the network-mode setting, https only, no
+# redirects, cookies or User-Agent; only for groups the user joined). Needs
+# the NIP-29 core, the GhStore, GhAuthPolicy, the conversation model and
+# groundhog-net. The executable runs one service per open store
+# (gh-app-outbox.c); no UI uses it yet (G20b).
+if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-policy AND
+    TARGET groundhog-conversations AND TARGET groundhog-net)
+  message(STATUS "Groundhog NIP-29 service: enabled")
+  target_sources(groundhog-net PRIVATE src/net/gh-nip11.c)
+  set(GROUNDHOG_NIP29_SERVICE_SOURCES src/nip29/gh-nip29-service.c src/nip29/gh-nip29-outbox.c
+    src/store/gh-store-nip29.c)
+  add_library(groundhog-nip29-service STATIC ${GROUNDHOG_NIP29_SERVICE_SOURCES})
+  target_include_directories(groundhog-nip29-service PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-nip29-service PUBLIC groundhog-nip29 groundhog-net
+    groundhog-store groundhog-auth-policy groundhog-conversations)
+  target_compile_options(groundhog-nip29-service PRIVATE -Wall -Wextra -Werror)
+  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+    target_link_libraries(groundhog PRIVATE groundhog-nip29-service)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NIP29=1)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
+      TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    # The acceptance tests of qp24.12 against a local NIP-29 relay
+    # (tests/nip29/nip29-relay.h: libsoup, relay-signed 39000-39003, NIP-11,
+    # membership-enforced writes, 9021 pending/accept/deny, admin rules,
+    # NIP-42): two relays with one group id, admin and non-admin, pending then
+    # admission, final denial and closed groups, duplicate, partial member
+    # lists, AUTH/CLOSED, restart restore and the outbox resume, over real
+    # SQLCipher stores (test hooks), the real gnostr relay transports and a
+    # real account controller with the mock signer on the private test bus.
+    add_executable(test-groundhog-nip29-service tests/nip29/test_nip29_service.c
+      ${GROUNDHOG_NIP29_SERVICE_SOURCES})
+    target_include_directories(test-groundhog-nip29-service PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(test-groundhog-nip29-service PRIVATE groundhog-nip29 groundhog-net
+      groundhog-store-testhooks groundhog-auth-policy groundhog-conversations
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST nostrc-test-bus)
+    target_compile_options(test-groundhog-nip29-service PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-nip29-service)
+    add_dependencies(test-groundhog-nip29-service groundhog-test-schemas)
+    add_test(NAME groundhog-nip29-service COMMAND test-groundhog-nip29-service)
+    set_tests_properties(groundhog-nip29-service PROPERTIES TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog NIP-29 service: disabled (needs the NIP-29 core, the GhStore, "
+                 "GhAuthPolicy, the conversation model and groundhog-net)")
+endif()
+# --- end G20a NIP-29 service ---
 
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from

@@ -85,5 +85,42 @@ gboolean gh_message_add_relay(GhMessage *self, const gchar *url);
 /* Total order of a conversation: created_at, then rumor id. */
 gint gh_message_compare(GhMessage *a, GhMessage *b);
 
+/* ---- NIP-29 relay-group messages (charter §8.2 G20a) -------------------------
+ * A message can also be one event of a NIP-29 group: kind 9 (chat), 10, 11 or
+ * 12 carrying the group's h tag, seen on the group's relay. Its room is the
+ * group's identity (charter §3.3 NIP-29 backend key):
+ * "<normalized relay URL>\x1f<group id>", never who wrote it, so the same
+ * group id on two relays is two rooms. It has no recipients, its only
+ * participant is the account (a group's membership is the relay's to say,
+ * never derived from who wrote, so no peer is ever looked up), no subject,
+ * and "rumor" accessors return the event id and the event JSON.
+ *
+ * The event must be signed (valid id and Schnorr signature) unless it is the
+ * account's own event not yet signed: the local echo of an outgoing message,
+ * whose id is recomputed. The group id uses NIP-29's charset (a-z, 0-9, '-'
+ * and '_'); relay_url must be a normalized ws(s) URL (gh-nip29-group.h). The
+ * account need not be the author (anyone in a group may write), and the kind
+ * is kept. Otherwise G_IO_ERROR_INVALID_DATA (G_IO_ERROR_INVALID_ARGUMENT for
+ * a bad account or relay). */
+#define GH_MESSAGE_NIP29_SEPARATOR "\x1f"
+#define GH_MESSAGE_MAX_GROUP_ID 256
+GhMessage *gh_message_new_from_nip29_event(const gchar *account_pubkey,
+                                           const gchar *relay_url,
+                                           const gchar *event_json,
+                                           GError **error);
+/* The room id of a group: relay_url "\x1f" group_id (no validation). */
+gchar *gh_message_nip29_room_id(const gchar *relay_url, const gchar *group_id);
+/* Splits a NIP-29 room id; FALSE when room_id is not one. */
+gboolean gh_message_nip29_room_split(const gchar *room_id, gchar **relay_url,
+                                     gchar **group_id);
+/* TRUE for a NIP-29 group event (gh_message_new_from_nip29_event()). */
+gboolean gh_message_is_nip29(GhMessage *self);
+/* The group id and its relay; NULL for a NIP-17 message. */
+const gchar *gh_message_get_group_id(GhMessage *self);
+const gchar *gh_message_get_group_relay(GhMessage *self);
+/* Whether the event JSON carries a signature (FALSE for a NIP-17 rumor and
+ * for the unsigned local echo of an own group message). */
+gboolean gh_message_is_signed(GhMessage *self);
+
 G_END_DECLS
 #endif

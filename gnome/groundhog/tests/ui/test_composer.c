@@ -1296,6 +1296,30 @@ test_reasons_group_and_no_inbox(void)
   GhConversation *dave = receive(&f, 3, NULL, "Hello, it's Carol");
   send_stack_select(&f.s, dave);
   wait_reason(composer, NULL);
+
+  /* G20a: a NIP-29 relay group has no peers, yet it is no note to self: the
+   * composer never sends into it through the NIP-17 outbox. */
+  g_autofree gchar *group_event = g_strdup_printf(
+    "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+    "\"tags\":[[\"h\",\"hikers\"]],\"content\":\"Trail report\"}",
+    stack_hex[f.s.key], g_get_real_time() / G_USEC_PER_SEC - 300);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) relay_message = gh_message_new_from_nip29_event(
+    stack_hex[f.s.key], "wss://groups.test.invalid", group_event, &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_conversation_store_add_message(f.s.model, relay_message, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+  GhConversation *relay_group =
+    gh_conversation_store_lookup(f.s.model, gh_message_get_room_id(relay_message));
+  g_assert_nonnull(relay_group);
+  g_assert_null(gh_conversation_get_peers(relay_group)[0]);
+  send_stack_select(&f.s, relay_group);
+  wait_reason(composer, "group"); /* from none: not a stale reason */
+  g_assert_cmpuint(pubs.opens->len, ==, 0);
+  send_stack_select(&f.s, dave);
+  wait_reason(composer, NULL);
+
   stack_type(composer, "Hi Carol");
   g_assert_true(gh_composer_send(composer));
   GhMessage *mine = stack_find(dave, "Hi Carol");

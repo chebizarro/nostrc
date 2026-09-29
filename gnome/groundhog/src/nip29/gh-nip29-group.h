@@ -70,8 +70,17 @@ typedef enum {
    * with a lexically greater id (NIP-01 replaceable tie-break). */
   GH_NIP29_ADMISSION_STALE,
   /* Allocation or merge failure; state unchanged. */
-  GH_NIP29_ADMISSION_FAILED
+  GH_NIP29_ADMISSION_FAILED,
+  /* created_at is more than GH_NIP29_MAX_FUTURE_SKEW_SECONDS ahead of the
+   * admission clock. Admitting it would pin that kind (every correct later
+   * snapshot would be STALE) until the relay's clock caught up; the relay
+   * may send it again once it is no longer in the future. */
+  GH_NIP29_ADMISSION_FUTURE
 } GhNip29Admission;
+
+/* How far a relay-signed snapshot may be dated ahead of the local clock
+ * (qp24.12.2): the same bound the relay layer allows AUTH events. */
+#define GH_NIP29_MAX_FUTURE_SKEW_SECONDS 600
 
 const gchar *gh_nip29_admission_to_string(GhNip29Admission admission);
 
@@ -90,10 +99,15 @@ const gchar *gh_nip29_group_get_relay_pubkey(const GhNip29Group *group);
 
 /* Admits a kind 39000-39003 event only if it is fully valid (canonical id
  * and Schnorr signature), authored by the relay key and addressed to this
- * group id, and newer than the current snapshot of the same kind. Rejections
- * leave state untouched. */
+ * group id, not dated more than GH_NIP29_MAX_FUTURE_SKEW_SECONDS after the
+ * current wall-clock time, and newer than the current snapshot of the same
+ * kind. Rejections leave state untouched. */
 GhNip29Admission gh_nip29_group_admit(GhNip29Group *group,
                                       const NostrEvent *event);
+/* The same with an explicit clock (unix seconds), e.g. a GhClock. */
+GhNip29Admission gh_nip29_group_admit_at(GhNip29Group *group,
+                                         const NostrEvent *event,
+                                         gint64 now);
 
 /* Canonical id of the admitted snapshot of @kind, or NULL when none. */
 const gchar *gh_nip29_group_get_snapshot_id(const GhNip29Group *group,
@@ -119,7 +133,20 @@ typedef struct {
   gsize n_supported_kinds;
   gchar *parent;   /* NULL for a root group */
   GStrv children;  /* display order; NULL or empty when none */
+  /* kind:39000 tags this model does not know (relay-specific or newer
+   * fields), each a GStrv of the tag name and its values, in event order;
+   * NULL when none. NIP-29 edits replace the whole metadata, so a kind:9002
+   * built from this struct carries them again (qp24.12.2): an edit made
+   * through Groundhog never silently drops what another client or the relay
+   * set. "d", "h" and "previous" are never kept; a tag beyond the bounds
+   * GH_NIP29_MAX_EXTRA_TAGS / _VALUES / _VALUE_BYTES, or not UTF-8, is not
+   * kept either (and so is lost by an edit). */
+  GPtrArray *extra_tags;
 } GhNip29Metadata;
+
+#define GH_NIP29_MAX_EXTRA_TAGS 64
+#define GH_NIP29_MAX_EXTRA_TAG_VALUES 16
+#define GH_NIP29_MAX_EXTRA_TAG_VALUE_BYTES 1024
 
 GhNip29Metadata *gh_nip29_metadata_new(void);
 GhNip29Metadata *gh_nip29_metadata_copy(const GhNip29Metadata *metadata);
