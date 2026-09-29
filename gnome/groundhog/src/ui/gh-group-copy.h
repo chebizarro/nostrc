@@ -24,8 +24,10 @@ G_BEGIN_DECLS
  * group identifier; a bare host means wss://), "wss://host'group-id", a
  * NIP-29 naddr (optionally "nostr:"), each with an optional "?invite=CODE".
  * The relay URL is normalized (gh_nip29_normalize_relay_url()) and must be
- * wss://, or ws:// on a loopback address (the test relays): Groundhog never
- * talks to a group relay in plaintext. invite is NULL when there is none.
+ * wss://, or ws:// on a loopback address (the test relays) or a .onion host
+ * (Tor encrypts it): Groundhog never talks to a group relay in plaintext.
+ * Whether a .onion relay can be reached now is gh_group_relay_reachable()'s
+ * question. invite is NULL when there is none.
  * Errors are G_IO_ERROR_INVALID_ARGUMENT with a translated sentence for the
  * user. Contacts nothing. */
 gboolean gh_group_parse_reference(const gchar *text, gchar **out_relay_url,
@@ -35,6 +37,22 @@ gboolean gh_group_parse_reference(const gchar *text, gchar **out_relay_url,
 /* Normalizes a relay the user typed (a bare host means wss://; the same
  * rules as above). */
 gchar *gh_group_parse_relay(const gchar *text, GError **error);
+
+/* Whether Groundhog connects through Tor now: the relay dispatcher's
+ * network session (gh_net_session_dup_default()) is in Tor mode. FALSE
+ * when none is installed (a build without Tor connects directly). */
+gboolean gh_group_network_is_tor(void);
+
+/* Whether relay_url can be reached in the current mode (tor): a .onion relay
+ * only through Tor. Otherwise FALSE with G_IO_ERROR_PERMISSION_DENIED and a
+ * sentence for the user, so a join or a new group that could never be sent
+ * is refused before anything is queued (no silent retries; W16 review #8). */
+gboolean gh_group_relay_reachable(const gchar *relay_url, gboolean tor, GError **error);
+
+/* What the relay learns when the user joins (creating FALSE) or creates a
+ * group, for the consent row before anything is sent: through Tor it learns
+ * the public key but not the IP address. */
+const gchar *gh_group_contact_copy(gboolean creating, gboolean tor);
 
 /* The relay's host for people ("groups.example.com", with a port that is
  * not the default); the URL itself when it has no host. */

@@ -1,5 +1,7 @@
 #include "gh-group-copy.h"
 
+#include "gh-net-session.h"
+
 #include <glib/gi18n.h>
 #include <nip29.h>
 #include <string.h>
@@ -46,13 +48,49 @@ gh_group_parse_relay(const gchar *text, GError **error)
   if (g_str_has_prefix(normalized, "ws://")) {
     g_autoptr(GUri) uri = g_uri_parse(normalized, G_URI_FLAGS_NONE, NULL);
     const gchar *host = uri ? g_uri_get_host(uri) : NULL;
-    if (!host || !(host_is_loopback(host) || g_str_has_suffix(host, ".onion"))) {
+    if (!host || !(host_is_loopback(host) || gh_net_host_is_onion(host))) {
       invalid(error, _("Groundhog only connects to group relays over a secure connection. "
                        "Use the relay’s wss address."));
       return NULL;
     }
   }
   return g_steal_pointer(&normalized);
+}
+
+gboolean
+gh_group_network_is_tor(void)
+{
+  g_autoptr(GhNetSession) session = gh_net_session_dup_default();
+  return session && gh_net_session_get_mode(session) == GH_NET_MODE_TOR;
+}
+
+gboolean
+gh_group_relay_reachable(const gchar *relay_url, gboolean tor, GError **error)
+{
+  g_autoptr(GUri) uri = relay_url ? g_uri_parse(relay_url, G_URI_FLAGS_NONE, NULL) : NULL;
+  const gchar *host = uri ? g_uri_get_host(uri) : NULL;
+  if (!tor && host && gh_net_host_is_onion(host)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        _(".onion relays can only be reached through Tor. Choose Tor in "
+                          "Preferences to use this group."));
+    return FALSE;
+  }
+  return TRUE;
+}
+
+const gchar *
+gh_group_contact_copy(gboolean creating, gboolean tor)
+{
+  if (creating)
+    return tor ? _("Groundhog connects through Tor, so it learns your public key but not your "
+                   "IP address, and makes you the group’s admin. Nothing is sent until you "
+                   "choose Create.")
+               : _("It learns your public key and your IP address, and makes you the group’s "
+                   "admin. Nothing is sent until you choose Create.");
+  return tor ? _("Groundhog connects through Tor, so it learns your public key but not your IP "
+                 "address. Nothing is sent until you choose Join.")
+             : _("It learns your public key and your IP address. Nothing is sent until you "
+                 "choose Join.");
 }
 
 gboolean

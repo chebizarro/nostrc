@@ -914,6 +914,22 @@ test_links(Fixture *f, gconstpointer data)
   g_assert_cmpuint(f->opened, ==, 2);
   close_dialog(ADW_DIALOG(link_dialog));
 
+  /* In Tor mode a plain https link is confirmed as well: the browser does
+   * not use Groundhog's Tor connection (W16 review #4). */
+  g_settings_set_string(f->settings, "network-mode", "tor");
+  g_signal_emit_by_name(body, "activate-link", "https://example.com/a", &handled);
+  g_assert_true(handled);
+  g_assert_cmpuint(f->opened, ==, 2);
+  spin_until(dialog_presented, link_dialog);
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(link_dialog),
+                          "doesn't use Groundhog's Tor connection"));
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(link_dialog), "https://example.com/a"));
+  g_signal_emit_by_name(link_dialog, "response", "link-open");
+  g_assert_cmpuint(f->opened, ==, 3);
+  g_assert_cmpstr(f->opened_uri, ==, "https://example.com/a");
+  close_dialog(ADW_DIALOG(link_dialog));
+  g_settings_set_string(f->settings, "network-mode", "system");
+
   /* Refused outright: no dialog, nothing opened. */
   static const char *refused[] = { "javascript:alert(1)", "data:text/html,x",
                                    "file:///etc/passwd", "ftp://files.example/x" };
@@ -923,13 +939,13 @@ test_links(Fixture *f, gconstpointer data)
     drain_idle();
     g_assert_false(dialog_presented(link_dialog));
   }
-  g_assert_cmpuint(f->opened, ==, 2);
+  g_assert_cmpuint(f->opened, ==, 3);
 
   /* A nostr: address is copied: never fetched, never handed to an app. */
   g_signal_emit_by_name(body, "activate-link", nprofile, &handled);
   g_assert_true(handled);
   g_assert_cmpstr(f->copied, ==, nprofile);
-  g_assert_cmpuint(f->opened, ==, 2);
+  g_assert_cmpuint(f->opened, ==, 3);
   g_assert_cmpuint(f->fetches, ==, 0);
 }
 

@@ -373,6 +373,7 @@ struct _GhOnboardingView {
   AdwStatusPage *done_status;
   GtkWidget *start_conversation_button;
   GtkWidget *done_button;
+  GtkLabel *check_note;
 
   GhInboxSetupConfig config; /* accounts, account_relays, settings, auth are owned refs */
   GListStore *identities;    /* GhOnboardingItem, key npub */
@@ -1364,6 +1365,20 @@ gh_onboarding_view_get_setup(GhOnboardingView *self)
   return self->setup;
 }
 
+/* What Check Privacy reveals in the current network mode (P9, and W16
+ * review #5: in Tor mode the relays don't see the IP address either). */
+static void
+sync_check_note(GhOnboardingView *self)
+{
+  g_autofree gchar *mode = g_settings_get_string(self->config.settings, "network-mode");
+  gtk_label_set_text(self->check_note,
+                     g_str_equal(mode, "tor")
+                       ? _("Checking connects to the ticked relays through Tor. They see neither "
+                           "your IP address nor your account.")
+                       : _("Checking connects to the ticked relays. They see your IP address, "
+                           "not your account."));
+}
+
 GhOnboardingView *
 gh_onboarding_view_new(const GhInboxSetupConfig *config)
 {
@@ -1380,6 +1395,9 @@ gh_onboarding_view_new(const GhInboxSetupConfig *config)
     g_object_ref(self->config.account_relays);
   if (self->config.auth)
     g_object_ref(self->config.auth);
+  g_signal_connect_object(self->config.settings, "changed::network-mode",
+                          G_CALLBACK(sync_check_note), self, G_CONNECT_SWAPPED);
+  sync_check_note(self);
 
   g_autoptr(GError) error = NULL;
   self->suggestions = gh_inbox_setup_load_suggestions(&error);
@@ -1511,12 +1529,12 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   BIND(done_status);
   BIND(start_conversation_button);
   BIND(done_button);
+  BIND(check_note);
 #undef BIND
   /* Reachable by name (gtk_widget_get_template_child) for tests. */
   gtk_widget_class_bind_template_child_full(widget_class, "account_continue", FALSE, 0);
   gtk_widget_class_bind_template_child_full(widget_class, "inbox_continue", FALSE, 0);
   gtk_widget_class_bind_template_child_full(widget_class, "check_button", FALSE, 0);
-  gtk_widget_class_bind_template_child_full(widget_class, "check_note", FALSE, 0);
   gtk_widget_class_bind_template_child_full(widget_class, "inbox_footer", FALSE, 0);
 
   static const gchar *const navigation_actions[] = {

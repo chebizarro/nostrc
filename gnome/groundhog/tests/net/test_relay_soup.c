@@ -520,6 +520,7 @@ typedef struct {
   SoupServer *server;
   guint16 port;
   guint hits;
+  SoupServerMessage *held; /* a /hold request not answered yet (weak) */
 } Http;
 
 static void
@@ -535,6 +536,11 @@ on_http(SoupServer *server, SoupServerMessage *message, const char *path, GHashT
     soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
     soup_server_message_set_response(message, "application/json", SOUP_MEMORY_STATIC, doc,
                                      strlen(doc));
+  } else if (g_str_equal(path, "/hold")) {
+    /* Unanswered until release_held(). */
+    http->held = message;
+    g_object_add_weak_pointer(G_OBJECT(message), (gpointer *)&http->held);
+    soup_server_message_pause(message);
   } else if (g_str_equal(path, "/relay")) {
     static const gchar doc[] = "{\"name\":\"test\",\"self\":\"" RELAY_SELF "\"}";
     soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
@@ -557,9 +563,30 @@ http_init(Http *http)
   g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
 }
 
+static gboolean
+http_holding(gpointer data)
+{
+  return ((Http *)data)->held != NULL;
+}
+
+/* Answers the held request, if its connection is still there. */
+static void
+release_held(Http *http)
+{
+  if (!http->held)
+    return;
+  SoupServerMessage *message = http->held;
+  g_object_remove_weak_pointer(G_OBJECT(message), (gpointer *)&http->held);
+  http->held = NULL;
+  soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
+  soup_server_message_set_response(message, "application/json", SOUP_MEMORY_STATIC, "{}", 2);
+  soup_server_message_unpause(message);
+}
+
 static void
 http_clear(Http *http)
 {
+  release_held(http);
   soup_server_disconnect(http->server);
   g_clear_object(&http->server);
 }
@@ -736,6 +763,70 @@ test_tor_routing(void)
   g_free(seen.last_error);
   g_free(web_seen.last_error);
   g_free(published.message);
+}
+
+/* ---- a mode change ends HTTP requests of the old mode (W16 review #10) ---------------- */
+
+/* As the relay dispatcher closes every old connection, a mode change ends
+ * every GhNetHttp request made in another mode: a direct request whose
+ * server has not answered yet never completes once the user picks Tor. It
+ * fails with G_IO_ERROR_CONNECTION_CLOSED (callers take CANCELLED for their
+ * own cancellation and would say nothing). A request of the mode chosen is
+ * not touched, and the caller's cancellation is still CANCELLED. */
+static void
+test_http_mode_switch(void)
+{
+  Http http = { 0 };
+  http_init(&http);
+  Socks5Fixture *socks = socks5_fixture_new();
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "network-mode", "none");
+  g_settings_set_string(settings, "tor-socks-address", socks5_fixture_address(socks));
+  g_autoptr(GhNetHttp) net = gh_net_http_new(settings);
+  g_autofree gchar *hold = g_strdup_printf("http://127.0.0.1:%u/hold", http.port);
+  Fetched fetched = { 0 };
+
+  /* Direct, then Tor is chosen: the request ends, and the server's late
+   * answer reaches nobody. */
+  gh_net_http_get_async(net, hold, 1024, NULL, on_get, &fetched);
+  spin_until(http_holding, &http);
+  g_settings_set_string(settings, "network-mode", "tor");
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  g_assert_null(fetched.value);
+  release_held(&http);
+  run_for(50);
+  g_assert_null(fetched.value);
+  fetched_clear(&fetched);
+
+  /* Through Tor, then No Proxy is chosen: the same. */
+  gh_net_http_get_async(net, hold, 1024, NULL, on_get, &fetched);
+  spin_until(http_holding, &http);
+  g_assert_cmpuint(socks5_fixture_requests(socks)->len, ==, 1);
+  g_settings_set_string(settings, "network-mode", "none");
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  release_held(&http);
+  fetched_clear(&fetched);
+
+  /* A change notice for the mode requests were made in leaves them be. */
+  g_autoptr(GCancellable) cancellable = g_cancellable_new();
+  gh_net_http_get_async(net, hold, 1024, cancellable, on_get, &fetched);
+  spin_until(http_holding, &http);
+  g_signal_emit_by_name(settings, "changed::network-mode", "network-mode");
+  run_for(50);
+  g_assert_false(fetched.done);
+  g_cancellable_cancel(cancellable);
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  fetched_clear(&fetched);
+
+  g_clear_object(&net);
+  g_settings_reset(settings, "network-mode");
+  g_settings_reset(settings, "tor-socks-address");
+  http_clear(&http);
+  socks5_fixture_free(socks);
+  g_assert_cmpuint(dns_names->len, ==, 0);
 }
 
 /* ---- NT-7 Tor fail-closed ------------------------------------------------------------ */
@@ -1017,6 +1108,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/modes", test_modes);
   g_test_add_func("/groundhog/net/url-policy", test_url_policy);
   g_test_add_func("/groundhog/net/tor-routing", test_tor_routing);
+  g_test_add_func("/groundhog/net/http-mode-switch", test_http_mode_switch);
   g_test_add_func("/groundhog/net/tor-fail-closed", test_tor_fail_closed);
   g_test_add_func("/groundhog/net/tor-probe", test_tor_probe);
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);

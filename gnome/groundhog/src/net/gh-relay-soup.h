@@ -16,7 +16,10 @@ G_BEGIN_DECLS
  *
  * Each handle (one scope URL, or one publish URL) owns its own SoupSession:
  * no cookie jar, cache, HSTS or authentication store, no User-Agent, no
- * Origin, and no connection or TLS session shared with any other handle.
+ * Origin, and no connection shared with any other handle. TLS sessions are
+ * never resumed or left to resume: glib-networking's session cache is one
+ * per process, keyed by host name, whatever the SoupSession, so every
+ * WebSocket message turns resumption off (gh-net-tls.h, PD-6).
  * All of its connections use the GProxyResolver it was opened with (NULL:
  * direct), so a SOCKS5 resolver sends the relay's host name to the proxy
  * (remote DNS) and nothing else is tried: libsoup/GIO never fall back to a

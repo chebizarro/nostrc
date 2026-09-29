@@ -1,6 +1,7 @@
 #include "gh-group-join-dialog.h"
 
 #include "gh-group-copy.h"
+#include "gh-net-session.h"
 
 #include <glib/gi18n.h>
 
@@ -18,6 +19,7 @@ struct _GhGroupJoinDialog {
   AdwEntryRow *retry_code_row;
   GtkWidget *open_button;
   GtkWidget *retry_button;
+  AdwActionRow *contact_row;
 
   GhNip29Service *service; /* weak */
   GhNip29Room *room;
@@ -113,6 +115,11 @@ ask(GhGroupJoinDialog *self, const gchar *relay, const gchar *group_id, const gc
 {
   if (!self->service)
     return FALSE;
+  g_autoptr(GError) unreachable = NULL;
+  if (!gh_group_relay_reachable(relay, gh_group_network_is_tor(), &unreachable)) {
+    show_error(self, unreachable->message);
+    return FALSE;
+  }
   g_autoptr(GhNip29Room) before = gh_nip29_service_lookup(self->service, relay, group_id);
   self->already_member = before &&
                          gh_nip29_room_get_join_state(before) == GH_NIP29_JOIN_MEMBER;
@@ -292,6 +299,7 @@ gh_group_join_dialog_class_init(GhGroupJoinDialogClass *klass)
   BIND(retry_code_row);
   BIND(open_button);
   BIND(retry_button);
+  BIND(contact_row);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "join.join", NULL, action_join);
   gtk_widget_class_install_action(widget_class, "join.open", NULL, action_open);
@@ -299,9 +307,21 @@ gh_group_join_dialog_class_init(GhGroupJoinDialogClass *klass)
 }
 
 static void
+sync_contact_copy(GhGroupJoinDialog *self)
+{
+  adw_action_row_set_subtitle(self->contact_row,
+                              gh_group_contact_copy(FALSE, gh_group_network_is_tor()));
+}
+
+static void
 gh_group_join_dialog_init(GhGroupJoinDialog *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  sync_contact_copy(self);
+  g_autoptr(GhNetSession) network = gh_net_session_dup_default();
+  if (network)
+    g_signal_connect_object(network, "changed", G_CALLBACK(sync_contact_copy), self,
+                            G_CONNECT_SWAPPED);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "join.open", FALSE);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "join.retry", FALSE);
   g_signal_connect_swapped(self->address_row, "entry-activated",

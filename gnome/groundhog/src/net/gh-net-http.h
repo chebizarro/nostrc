@@ -18,9 +18,14 @@ G_BEGIN_DECLS
  *               never a direct connection: an unusable address or an
  *               unreachable proxy is an error. The outcome is reported to the
  *               app's GhNetSession (gh_net_session_dup_default()).
+ * A change of network-mode ends every request made in another mode, with
+ * G_IO_ERROR_CONNECTION_CLOSED (never G_IO_ERROR_CANCELLED, which stays the
+ * caller's own cancellation): nothing made before the user chose Tor still
+ * completes directly afterwards.
  * The session has no cookie jar, cache, HSTS or authentication store, sends
  * no User-Agent, Referer or Accept-Language, follows no redirect (a 3xx is an
- * error), and waits at most GH_NET_HTTP_TIMEOUT_S for the server. Only
+ * error), resumes no TLS session and leaves none to resume (gh-net-tls.h),
+ * and waits at most GH_NET_HTTP_TIMEOUT_S for the server. Only
  * https URLs are fetched; plain http only to a loopback address (the test
  * fixtures) or, in Tor mode, to a .onion host. A .onion host is refused
  * (G_IO_ERROR_PERMISSION_DENIED) outside Tor mode, so it never reaches the

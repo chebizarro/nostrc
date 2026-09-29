@@ -1327,7 +1327,7 @@ if (TARGET nostr AND TARGET nip19)
 endif()
 if (TARGET groundhog-recipient AND TARGET PkgConfig::GROUNDHOG_NET_DEPS)
   message(STATUS "Groundhog NIP-05 lookup: enabled")
-  add_library(groundhog-net STATIC src/net/gh-net-http.c src/net/gh-nip05.c)
+  add_library(groundhog-net STATIC src/net/gh-net-http.c src/net/gh-net-tls.c src/net/gh-nip05.c)
   target_include_directories(groundhog-net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
   target_link_libraries(groundhog-net PUBLIC groundhog-recipient PkgConfig::GROUNDHOG_NET_DEPS)
   target_compile_options(groundhog-net PRIVATE -Wall -Wextra -Werror)
@@ -1561,6 +1561,24 @@ if (TARGET groundhog-net AND TARGET groundhog-relay)
     add_dependencies(test-groundhog-net groundhog-test-schemas)
     add_test(NAME groundhog-net COMMAND test-groundhog-net)
     set_tests_properties(groundhog-net PROPERTIES TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # W16 review B1 (PD-6): no Groundhog TLS connection offers to resume a
+    # session (src/net/gh-net-tls.h). A plain program, not a GTest one:
+    # glib-networking disables resumption in any process that called
+    # g_test_init(). A local TLS server reads each ClientHello (no
+    # pre_shared_key, no session ticket) for GhNetHttp (No Proxy, then Tor)
+    # and Tor-mode relay scopes through the SOCKS5 fixture, after a control
+    # that shows a plain SoupSession does resume there.
+    add_executable(test-groundhog-tls-resumption tests/net/test_tls_resumption.c
+      tests/net/socks5-fixture.c)
+    target_include_directories(test-groundhog-tls-resumption PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/net)
+    target_link_libraries(test-groundhog-tls-resumption PRIVATE groundhog-net-relay
+      OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_options(test-groundhog-tls-resumption PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-tls-resumption groundhog-test-schemas)
+    add_test(NAME groundhog-tls-resumption COMMAND test-groundhog-tls-resumption)
+    set_tests_properties(groundhog-tls-resumption PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
   # NT-10 transport parity: the existing wire suites run twice, once on the

@@ -23,6 +23,15 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
                         hosts with a newer libadwaita. (§7.2)
   libsoup-boundary      libsoup is included or used only under src/net/ and
                         src/media/.
+  tls-resumption        Every source under src/net/ and src/media/ passes each
+                        SoupMessage it makes (soup_message_new*) to
+                        gh_net_tls_no_resumption(): at least as many calls as
+                        messages made. No src/ file makes a GIO TLS client
+                        connection itself (g_tls_client_connection_new,
+                        g_socket_client_set_tls). glib-networking's TLS
+                        session cache is process-wide and keyed by host name,
+                        so one connection that stores a ticket links all later
+                        ones to that host, Tor or not. (PD-6; W16 review B1)
   no-gdk-pixbuf         src/** neither includes nor uses gdk-pixbuf; images
                         decode through GdkTexture's built-in loaders. (§2.1)
   no-tmp-cache          src/** never creates temporary files and never locates
@@ -120,6 +129,7 @@ SCHEMA_FILE = f"data/{APP_ID}.gschema.xml"
 
 RULES = (
     "url-literal", "gsettings-allowlist", "blueprint-denylist", "libsoup-boundary",
+    "tls-resumption",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
     "lookup-sources", "account-auth-purpose", "auth-policy", "message-status", "log-ids",
     "relay-suggestions",
@@ -239,6 +249,9 @@ SUGGESTION_URL_RE = re.compile(
 URL_RE = re.compile(r"\b(?:wss?|https?)://[^\s\"'\\<>]+", re.I)
 INCLUDE_RE = re.compile(r"^[ \t]*#[ \t]*include[ \t]*[<\"]([^>\"\n]+)[>\"]", re.M)
 SOUP_API_RE = re.compile(r"\b(?:soup_[a-z]\w*|Soup[A-Z]\w*|SOUP_[A-Z]\w*)\b")
+SOUP_MESSAGE_NEW_RE = re.compile(r"\bsoup_message_new\w*(?=\s*\()")
+NO_RESUMPTION_RE = re.compile(r"\bgh_net_tls_no_resumption(?=\s*\()")
+GIO_TLS_CLIENT_RE = re.compile(r"\b(?:g_tls_client_connection_new|g_socket_client_set_tls)\b")
 PIXBUF_API_RE = re.compile(
     r"\b(?:gdk_pixbuf_\w+|GdkPixbuf\w*|GDK_(?:TYPE_|IS_)?PIXBUF\w*|\w+_(?:from|for)_pixbuf)\b")
 TMP_API_RE = re.compile(
@@ -473,6 +486,16 @@ def check_sources(tree):
         if not soup_allowed:
             found += find_all("libsoup-boundary", rel, code, SOUP_API_RE,
                               lambda s: f"uses libsoup ({s}) outside src/net/ and src/media/")
+        elif len(SOUP_MESSAGE_NEW_RE.findall(code)) > len(NO_RESUMPTION_RE.findall(code)):
+            found += find_all("tls-resumption", rel, code, SOUP_MESSAGE_NEW_RE,
+                              lambda s: f"{s}: this file makes more SoupMessages than it passes "
+                                        "to gh_net_tls_no_resumption(); a message that may "
+                                        "resume a TLS session links connections (PD-6)")
+        found += find_all("tls-resumption", rel, code, GIO_TLS_CLIENT_RE,
+                          lambda s: f"{s}: a GIO TLS client outside libsoup may store TLS "
+                                    "session tickets in glib-networking's process-wide "
+                                    "cache; use a libsoup message passed to "
+                                    "gh_net_tls_no_resumption() (PD-6)")
         found += find_all("no-gdk-pixbuf", rel, code, PIXBUF_API_RE,
                           lambda s: f"uses gdk-pixbuf ({s}); decode with gdk_texture_new_from_bytes")
         found += find_all("no-tmp-cache", rel, keep, TMP_API_RE,
@@ -902,6 +925,16 @@ def clean_tree():
         "src/net/gh-net-session.c": (
             "#include <libsoup/soup.h>\n"
             "static SoupSession *session_new(void) { return soup_session_new(); }\n"),
+        # Each message made is passed on; the comment's soup_message_new( and
+        # the string's g_tls_client_connection_new are not code.
+        "src/net/gh-net-http.c": (
+            "/* soup_message_new() without resumption: */\n"
+            "static SoupMessage *get(GUri *u) {\n"
+            "  SoupMessage *m = soup_message_new_from_uri(\"GET\", u);\n"
+            "  gh_net_tls_no_resumption(m);\n"
+            "  return m;\n"
+            "}\n"
+            "static const char *why = \"not g_tls_client_connection_new\";\n"),
         "src/media/gh-blossom-client.c": "#include <libsoup/soup.h>\n",
         # Preferences: one live row with a consumer, one gated row without one
         # (its only mention elsewhere is a comment), and one row gated on a
@@ -1036,6 +1069,15 @@ MUTATIONS = [
       [append("src/app/gh-fetch.c", "#include <libsoup/soup.h>\n")]),
     M("libsoup-api", {"libsoup-boundary"},
       [append("src/relay/gh-relay-soup.c", "static SoupSession *s(void) { return soup_session_new(); }\n")]),
+    M("tls-message-resumable", {"tls-resumption"},
+      [append("src/media/gh-blossom-client.c",
+              "static SoupMessage *m(GUri *u) { return soup_message_new_from_uri(\"GET\", u); }\n")]),
+    M("tls-second-message", {"tls-resumption"},
+      [append("src/net/gh-net-http.c",
+              "static SoupMessage *head(const char *u) { return soup_message_new(\"HEAD\", u); }\n")]),
+    M("tls-gio-client", {"tls-resumption"},
+      [append("src/app/gh-fetch.c",
+              "static GIOStream *t(GIOStream *b) { return g_tls_client_connection_new(b, NULL, NULL); }\n")]),
     M("gdk-pixbuf-include", {"no-gdk-pixbuf"},
       [append("src/ui/gh-avatar.c", "#include <gdk-pixbuf/gdk-pixbuf.h>\n")]),
     M("gdk-pixbuf-api", {"no-gdk-pixbuf"},

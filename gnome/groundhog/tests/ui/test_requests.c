@@ -1182,8 +1182,8 @@ test_gui_new_message_refusals_and_note_to_self(void)
   GhNewMessageItem *lookup = suggestion(dialog, 0);
   g_assert_true(gh_new_message_item_get_enabled(lookup));
   g_assert_cmpstr(gh_new_message_item_get_subtitle(lookup), ==,
-                  "Connects to example.com through Tor, which learns whom you looked up but "
-                  "not your IP address");
+                  "Connects to example.com through Tor. example.com learns whom you looked "
+                  "up, not your IP address");
   g_assert_cmpuint(f.http.urls->len, ==, fetched);
   /* Outside Tor a .onion address is never looked up. */
   type_into(dialog, "");

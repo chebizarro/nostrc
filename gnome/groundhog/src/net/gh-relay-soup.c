@@ -1,4 +1,5 @@
 #include "gh-relay-soup.h"
+#include "gh-net-tls.h"
 #include "gh-relay-gnostr-write.h"
 
 #include <libsoup/soup.h>
@@ -110,10 +111,12 @@ handle_new(const gchar *url, GProxyResolver *resolver, GhRelaySoupStatusFunc sta
   handle->status_data = status_data;
   g_autoptr(GProxyResolver) direct = resolver ? NULL : g_simple_proxy_resolver_new(NULL, NULL);
   handle->resolver = g_object_ref(resolver ? resolver : direct);
-  /* One session per handle: nothing (connection, TLS session, cookie) is
-   * shared with another scope or publish. No cookie jar, cache or HSTS is
-   * added; no User-Agent or Accept-Language is sent. No I/O timeout: an open
-   * WebSocket may be quiet for long; only the dial has a deadline. */
+  /* One session per handle: no connection or cookie is shared with another
+   * scope or publish, and no TLS session either, since ws_message() turns
+   * resumption off (glib-networking's session cache is process-wide, not per
+   * SoupSession: gh-net-tls.h). No cookie jar, cache or HSTS is added; no
+   * User-Agent or Accept-Language is sent. No I/O timeout: an open WebSocket
+   * may be quiet for long; only the dial has a deadline. */
   handle->session = soup_session_new_with_options(
     "proxy-resolver", handle->resolver, "user-agent", NULL, "accept-language-auto", FALSE,
     "timeout", 0, "idle-timeout", 0, NULL);
@@ -365,7 +368,8 @@ on_ws_connected(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 /* libsoup speaks WebSocket over http(s) URIs; the host, port and path are
- * the relay's own. NULL for a URL libsoup cannot use. */
+ * the relay's own. The message resumes no TLS session and leaves none to
+ * resume (PD-6, gh-net-tls.h). NULL for a URL libsoup cannot use. */
 static SoupMessage *
 ws_message(const gchar *url)
 {
@@ -377,7 +381,10 @@ ws_message(const gchar *url)
   gboolean secure = g_ascii_strcasecmp(scheme, "wss") == 0;
   g_autoptr(GUri) http = soup_uri_copy(uri, SOUP_URI_SCHEME, secure ? "https" : "http",
                                        SOUP_URI_NONE);
-  return http ? soup_message_new_from_uri(SOUP_METHOD_GET, http) : NULL;
+  SoupMessage *message = http ? soup_message_new_from_uri(SOUP_METHOD_GET, http) : NULL;
+  if (message)
+    gh_net_tls_no_resumption(message);
+  return message;
 }
 
 static gboolean

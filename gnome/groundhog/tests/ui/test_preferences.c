@@ -434,6 +434,10 @@ test_tor_with_g09(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_get_visible(tor_note));
   const char *copy = gtk_label_get_text(GTK_LABEL(tor_note));
   g_assert_nonnull(strstr(copy, "hides your IP address"));
+  /* Only from what Groundhog itself connects to (W16 review #4): links open
+   * in the browser, outside Tor. */
+  g_assert_null(strstr(copy, "websites"));
+  g_assert_nonnull(strstr(copy, "browser, which doesn't use Groundhog's Tor connection"));
   g_assert_nonnull(strstr(copy, "doesn't hide your account"));
   g_assert_nonnull(strstr(copy, "sign in to your own inbox"));
   g_assert_nonnull(strstr(copy, "doesn't connect at all"));

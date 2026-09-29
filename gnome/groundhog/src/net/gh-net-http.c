@@ -1,5 +1,6 @@
 #include "gh-net-http.h"
 #include "gh-net-session.h"
+#include "gh-net-tls.h"
 
 #include <libsoup/soup.h>
 #include <string.h>
@@ -9,14 +10,20 @@ struct _GhNetHttp {
   GSettings *settings;
   SoupSession *session;
   gchar *session_mode; /* the network mode session was made for */
+  GPtrArray *requests; /* Request, in flight (not owned) */
 };
 
 G_DEFINE_FINAL_TYPE(GhNetHttp, gh_net_http, G_TYPE_OBJECT)
 
 typedef struct {
+  GhNetHttp *owner;       /* the task's source object, so alive */
+  GhNetMode mode;         /* the mode the request was made in */
   SoupSession *session;
   SoupMessage *message;
-  gboolean tor;           /* made through the Tor proxy */
+  GCancellable *cancellable; /* the request's own: the caller's, or a mode change */
+  GCancellable *caller;
+  gulong caller_handler;
+  gboolean mode_changed;  /* cancelled by a mode change */
   GInputStream *stream;
   guint8 *buffer;
   gsize max_bytes;
@@ -26,11 +33,42 @@ static void
 request_free(gpointer data)
 {
   Request *request = data;
+  if (request->owner->requests)
+    g_ptr_array_remove_fast(request->owner->requests, request);
+  if (request->caller)
+    g_cancellable_disconnect(request->caller, request->caller_handler);
+  g_clear_object(&request->caller);
+  g_clear_object(&request->cancellable);
   g_clear_object(&request->message);
+  /* A Tor request's session is its own: close its connection with it
+   * (disposing a session with a live connection is a libsoup warning). */
+  if (request->mode == GH_NET_MODE_TOR && request->session)
+    soup_session_abort(request->session);
   g_clear_object(&request->session);
   g_clear_object(&request->stream);
   g_free(request->buffer);
   g_free(request);
+}
+
+static void
+on_caller_cancelled(GCancellable *caller, gpointer data)
+{
+  (void)caller;
+  g_cancellable_cancel(G_CANCELLABLE(data));
+}
+
+/* A request cancelled by a mode change fails with this, not
+ * G_IO_ERROR_CANCELLED, which callers take for their own cancellation. */
+static GError *
+request_error(Request *request, GError *error)
+{
+  if (request->mode_changed && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+      !g_cancellable_is_cancelled(request->caller)) {
+    g_error_free(error);
+    return g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED,
+                               "The network setting changed before the server answered");
+  }
+  return error;
 }
 
 static gchar *
@@ -88,7 +126,7 @@ session_for(GhNetHttp *self, GhNetMode mode, GError **error)
 static void
 report(Request *request, gboolean connected)
 {
-  if (!request->tor)
+  if (request->mode != GH_NET_MODE_TOR)
     return;
   g_autoptr(GhNetSession) session = gh_net_session_dup_default();
   if (session)
@@ -138,7 +176,7 @@ on_read(GObject *source, GAsyncResult *result, gpointer data)
   gsize read = 0;
   GError *error = NULL;
   if (!g_input_stream_read_all_finish(G_INPUT_STREAM(source), result, &read, &error)) {
-    g_task_return_error(task, error);
+    g_task_return_error(task, request_error(request, error));
     return;
   }
   (void)g_input_stream_close(request->stream, NULL, NULL);
@@ -162,7 +200,7 @@ on_sent(GObject *source, GAsyncResult *result, gpointer data)
   if (!request->stream) {
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       report(request, FALSE);
-    g_task_return_error(task, error);
+    g_task_return_error(task, request_error(request, error));
     return;
   }
   report(request, TRUE);
@@ -191,7 +229,7 @@ on_sent(GObject *source, GAsyncResult *result, gpointer data)
   /* One byte more than allowed tells an oversized body apart. */
   request->buffer = g_malloc(request->max_bytes + 1);
   g_input_stream_read_all_async(request->stream, request->buffer, request->max_bytes + 1,
-                                G_PRIORITY_DEFAULT, g_task_get_cancellable(task), on_read,
+                                G_PRIORITY_DEFAULT, request->cancellable, on_read,
                                 g_object_ref(task));
 }
 
@@ -227,16 +265,26 @@ gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *acc
     return;
   }
   Request *request = g_new0(Request, 1);
+  request->owner = self;
+  request->mode = mode;
   request->max_bytes = max_bytes;
   request->session = g_object_ref(session);
-  request->tor = mode == GH_NET_MODE_TOR;
   request->message = soup_message_new_from_uri(SOUP_METHOD_GET, parsed);
+  request->cancellable = g_cancellable_new();
   g_task_set_task_data(task, request, request_free);
+  g_ptr_array_add(self->requests, request);
+  if (cancellable) {
+    request->caller = g_object_ref(cancellable);
+    request->caller_handler = g_cancellable_connect(cancellable, G_CALLBACK(on_caller_cancelled),
+                                                    g_object_ref(request->cancellable),
+                                                    g_object_unref);
+  }
+  gh_net_tls_no_resumption(request->message); /* PD-6: gh-net-tls.h */
   soup_message_add_flags(request->message, SOUP_MESSAGE_NO_REDIRECT);
   SoupMessageHeaders *headers = soup_message_get_request_headers(request->message);
   soup_message_headers_replace(headers, "Accept", accept ? accept : "application/json");
-  soup_session_send_async(session, request->message, G_PRIORITY_DEFAULT, cancellable, on_sent,
-                          g_steal_pointer(&task));
+  soup_session_send_async(session, request->message, G_PRIORITY_DEFAULT, request->cancellable,
+                          on_sent, g_steal_pointer(&task));
 }
 
 GBytes *
@@ -266,12 +314,48 @@ gh_net_http_transport(void)
   return &transport;
 }
 
+/* A mode change ends every request made in another mode (as the relay
+ * dispatcher closes every old connection): e.g. a System-mode request
+ * still waiting for its server when the user chooses Tor completes no more.
+ * The kept session of the old mode goes too. */
+static void
+on_mode_changed(GSettings *settings, const gchar *key, gpointer data)
+{
+  (void)settings;
+  (void)key;
+  GhNetHttp *self = data;
+  g_autofree gchar *name = setting(self, "network-mode", "system");
+  GhNetMode mode = gh_net_mode_from_string(name);
+  /* Mark first: cancelling may finish (and free) a request at once, so hold
+   * the cancellables, not the requests. */
+  g_autoptr(GPtrArray) cancel = g_ptr_array_new_with_free_func(g_object_unref);
+  for (guint i = 0; i < self->requests->len; i++) {
+    Request *request = g_ptr_array_index(self->requests, i);
+    if (request->mode != mode) {
+      request->mode_changed = TRUE;
+      g_ptr_array_add(cancel, g_object_ref(request->cancellable));
+    }
+  }
+  if (self->session && g_strcmp0(self->session_mode, name) != 0) {
+    soup_session_abort(self->session);
+    g_clear_object(&self->session);
+    g_clear_pointer(&self->session_mode, g_free);
+  }
+  for (guint i = 0; i < cancel->len; i++)
+    g_cancellable_cancel(g_ptr_array_index(cancel, i));
+}
+
 GhNetHttp *
 gh_net_http_new(GSettings *settings)
 {
   g_return_val_if_fail(!settings || G_IS_SETTINGS(settings), NULL);
   GhNetHttp *self = g_object_new(GH_TYPE_NET_HTTP, NULL);
   self->settings = settings ? g_object_ref(settings) : NULL;
+  if (settings) {
+    g_signal_connect(settings, "changed::network-mode", G_CALLBACK(on_mode_changed), self);
+    /* GSettings reports a change only of a key read since connecting. */
+    g_free(setting(self, "network-mode", NULL));
+  }
   return self;
 }
 
@@ -279,6 +363,8 @@ static void
 gh_net_http_dispose(GObject *object)
 {
   GhNetHttp *self = GH_NET_HTTP(object);
+  if (self->settings)
+    g_signal_handlers_disconnect_by_data(self->settings, self);
   if (self->session)
     soup_session_abort(self->session);
   g_clear_object(&self->session);
@@ -289,7 +375,9 @@ gh_net_http_dispose(GObject *object)
 static void
 gh_net_http_finalize(GObject *object)
 {
-  g_free(GH_NET_HTTP(object)->session_mode);
+  GhNetHttp *self = GH_NET_HTTP(object);
+  g_free(self->session_mode);
+  g_clear_pointer(&self->requests, g_ptr_array_unref);
   G_OBJECT_CLASS(gh_net_http_parent_class)->finalize(object);
 }
 
@@ -303,5 +391,5 @@ gh_net_http_class_init(GhNetHttpClass *klass)
 static void
 gh_net_http_init(GhNetHttp *self)
 {
-  (void)self;
+  self->requests = g_ptr_array_new();
 }

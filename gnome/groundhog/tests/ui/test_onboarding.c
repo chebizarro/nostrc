@@ -505,6 +505,12 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
                 gtk_widget_get_parent(child(f, "check_button")));
   g_assert_nonnull(strstr(gtk_label_get_text(check_note), "connects to the ticked relays"));
   g_assert_nonnull(strstr(gtk_label_get_text(check_note), "IP address"));
+  /* In Tor mode the relays don't see the IP address (W16 review #5). */
+  g_settings_set_string(f->settings, "network-mode", "tor");
+  g_assert_nonnull(strstr(gtk_label_get_text(check_note), "through Tor"));
+  g_assert_nonnull(strstr(gtk_label_get_text(check_note), "neither your IP address"));
+  g_settings_reset(f->settings, "network-mode");
+  g_assert_null(strstr(gtk_label_get_text(check_note), "through Tor"));
   const gchar *footer = gtk_label_get_text(child(f, "inbox_footer"));
   g_assert_null(strstr(footer, "until you confirm"));
   g_assert_nonnull(strstr(footer, "until you check or publish"));

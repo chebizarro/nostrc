@@ -99,7 +99,7 @@ typedef struct {
 /* ---- groups ------------------------------------------------------------- */
 
 
-/* An event's canonical id as an interned string: nip29_event_id()
+/* An event's canonical id as an interned string: nostr_event_get_id()
  * returns a fresh allocation, and the fixture compares ids inline, so the
  * copy is interned (reachable for LSan, never freed) and the allocation
  * released. */

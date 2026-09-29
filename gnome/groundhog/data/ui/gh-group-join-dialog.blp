@@ -68,7 +68,9 @@ template $GhGroupJoinDialog: Adw.Dialog {
               }
             }
 
-            Adw.ActionRow {
+            // The C code says what the relay learns in the current network
+            // mode (gh_group_contact_copy); this is the direct-connection text.
+            Adw.ActionRow contact_row {
               title: _("Joining contacts the group’s relay");
               subtitle: _("It learns your public key and your IP address. Nothing is sent until you choose Join.");
               use-markup: false;

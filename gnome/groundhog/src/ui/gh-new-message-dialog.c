@@ -650,8 +650,9 @@ lookup_item(GhNewMessageDialog *self, const GhRecipientInput *input)
     item->enabled = FALSE;
   } else if (tor) {
     /* G09: the lookup goes through Tor (GhNetHttp in Tor mode). */
-    subtitle = g_strdup_printf(_("Connects to %s through Tor, which learns whom you looked up "
-                                 "but not your IP address"), input->nip05_domain);
+    /* TRANSLATORS: both %s are the same domain. */
+    subtitle = g_strdup_printf(_("Connects to %s through Tor. %s learns whom you looked up, "
+                                 "not your IP address"), input->nip05_domain, input->nip05_domain);
   } else {
     /* PD-2: the row names who learns what before anything is contacted. */
     subtitle = g_strdup_printf(_("Connects to %s, which learns your IP address and whom you "

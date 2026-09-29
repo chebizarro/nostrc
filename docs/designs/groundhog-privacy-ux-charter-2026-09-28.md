@@ -57,7 +57,7 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 |---|---|---|---|
 | D1 | Store encryption technology | SQLCipher 4 (whole-file, raw key), guarded by the single-SQLite test ST-4. Fallback if ST-4 cannot hold on a target: per-record libsodium XChaCha20-Poly1305 on plain SQLite. | G02 |
 | D2 | Key custody | Secret Service item only for v1. Defer a signer-wrapped recovery blob until export exists (D7). | G03 |
-| D3 | Proxy/Tor transport | libsoup-3 transport behind existing seams, used for **all** Groundhog relay traffic. Alternatives: ship a SOCKS5-enabled libwebsockets everywhere, or declare "no proxy support" in v1. | G09, G21 |
+| D3 | Proxy/Tor transport | libsoup-3 transport behind existing seams, used for **all** Groundhog relay traffic. Alternatives: ship a SOCKS5-enabled libwebsockets everywhere, or declare "no proxy support" in v1. *(Amended 2026-09-29, nostrc-qp24.87, W16 review non-blocking #3: G09 uses the libsoup transport for relays in Tor mode only. In System and No Proxy modes relays still use GNostrRelay's libwebsockets, which ignores the desktop proxy; only GhNetHttp (NIP-05, NIP-11) follows it. Preferences and the schema say so. Moving System-mode relays to libsoup is nostrc-253z; see §4.2 and NT-9.)* | G09, G21 |
 | D4 | Onboarding relay suggestions | Ship a reviewed `data/relay-suggestions.json`. Prefer inbox relays that AUTH-gate kind-1059 reads. Nothing is contacted before the user confirms. It must respect the `AGENTS.md` banned-relay rule. | G14 |
 | D5 | MLS state location | Groundhog implements `MarmotStorage` over its own SQLCipher store, so MLS state and the outbox share one transaction. The alternative is fixing libmarmot's latent SQLCipher backend (§3.9) and keeping a second file. | G23, `qp24.7`, `qp24.13` |
 | D6 | Attachments | Default attachment server list empty (attach disabled until one is chosen); 25 MiB cap; metadata stripping mandatory for JPEG/PNG; account-key Blossom auth only with per-server consent. | G21 |
@@ -512,6 +512,7 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
     - Implement `GhRelayTransport` and `GhRelayPublishTransport` with `soup_session_websocket_connect_async`.
     - Frame NIP-01 client messages with libnostr's JSON and envelope parsers.
     - Use one `SoupSession` per (account generation, purpose, isolation token), with no cookie jar or HSTS database and a separate TLS session cache.
+    - *(Amended 2026-09-29, nostrc-qp24.87, W16 review B1: a per-session TLS session cache is not available. glib-networking keeps one client cache per process, keyed by host name alone, and looks a ticket up for every connection. Groundhog therefore turns resumption off on every TLS connection it makes, in every mode (`gh_net_tls_no_resumption()`, `src/net/gh-net-tls.h`), so it never stores a ticket to present. A full handshake per connection is the cost. `check_privacy.py` (`tls-resumption`) keeps every libsoup message on it and refuses other GIO TLS clients, and `groundhog-tls-resumption` checks the ClientHellos.)*
     - Set the proxy by network mode through `SoupSession:proxy-resolver`.
   - **Benefits.**
     - GIO's `socks5` proxy sends the destination hostname to the proxy (remote DNS).
@@ -524,6 +525,7 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 ### 4.2 Network modes (`network-mode`: `system` default, `none`, `tor`)
 
 - **`system`:** `g_proxy_resolver_get_default()`, which is direct when no proxy is configured.
+  - *(Amended 2026-09-29, nostrc-qp24.87, W16 review non-blocking #3: as shipped by G09, this applies to web requests (GhNetHttp: NIP-05, NIP-11) only. Relays in System mode connect directly through libwebsockets, which has no proxy support (§0.3), so a desktop proxy does not cover them. The Preferences note says so ("Groundhog connects to relays directly … Only web lookups … use the system's proxy settings"). Routing System-mode relays through the libsoup transport with this resolver is tracked as nostrc-253z.)*
 - **`none`:** a `GSimpleProxyResolver` with no proxy.
 - **`tor`:** `socks5://<user>:<pw>@<tor-socks-address>` (default `127.0.0.1:9050`).
   - Tor's default `IsolateSOCKSAuth` turns distinct credentials into distinct circuits.
@@ -1443,7 +1445,7 @@ flowchart LR
   - No username contains a pubkey or URL substring.
 - **NT-7 Tor fail-closed.** With the SOCKS port closed: zero relay connections and the Tor banner. Nothing connects until the mode changes.
 - **NT-8 .onion.** Refused outside Tor mode; `ws://…onion` accepted in Tor mode.
-- **NT-9 System mode.** The session uses the default resolver; in `none` mode, a direct resolver.
+- **NT-9 System mode.** The session uses the default resolver; in `none` mode, a direct resolver. *(Amended 2026-09-29, nostrc-qp24.87: today this holds for GhNetHttp only. System-mode relays are covered once nostrc-253z moves them to libsoup, see §4.2.)*
 - **NT-10 Transport parity.** The existing wire suites (REQ/EOSE/CLOSED/OK, same-second replay, per-scope private sockets, publish outcomes) pass for both transports.
 - **NT-11 Directory cache.**
   - A fresh cache means 0 discovery REQs at send.

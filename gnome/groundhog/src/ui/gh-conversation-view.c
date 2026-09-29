@@ -1047,10 +1047,15 @@ show_toast(GhConversationView *self, const gchar *title)
     adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(overlay), adw_toast_new(title));
 }
 
+static gboolean tor_mode(GhConversationView *self);
+
 static gchar *
-confirmation_body(GhLinkConfirmReasons reasons, const gchar *open_uri)
+confirmation_body(GhLinkConfirmReasons reasons, gboolean tor, const gchar *open_uri)
 {
   GString *body = g_string_new(NULL);
+  if (tor)
+    g_string_append(body, _("Your browser doesn't use Groundhog's Tor connection, so the "
+                            "website will see your IP address. "));
   if (reasons & GH_LINK_CONFIRM_IDN)
     g_string_append(body, _("This address uses letters that can look like other letters, "
                             "so it may not be the website it seems to be. "));
@@ -1069,12 +1074,19 @@ open_link(GhConversationView *self, const gchar *uri)
 {
   GhLinkConfirmReasons reasons = GH_LINK_CONFIRM_NONE;
   g_autofree gchar *open_uri = NULL;
-  switch (gh_link_policy_classify(uri, &reasons, &open_uri)) {
+  GhLinkAction action = gh_link_policy_classify(uri, &reasons, &open_uri);
+  /* In Tor mode a web link is confirmed too: the browser it goes to is
+   * outside Groundhog's Tor connection (W16 review #4). */
+  gboolean tor = (action == GH_LINK_ACTION_OPEN || action == GH_LINK_ACTION_CONFIRM) &&
+                 tor_mode(self);
+  if (action == GH_LINK_ACTION_OPEN && tor)
+    action = GH_LINK_ACTION_CONFIRM;
+  switch (action) {
   case GH_LINK_ACTION_OPEN:
     g_signal_emit(self, signals[SIGNAL_OPEN_URI], 0, open_uri);
     break;
   case GH_LINK_ACTION_CONFIRM: {
-    g_autofree gchar *body = confirmation_body(reasons, open_uri);
+    g_autofree gchar *body = confirmation_body(reasons, tor, open_uri);
     adw_alert_dialog_set_body(self->link_dialog, body);
     g_free(self->pending_link);
     self->pending_link = g_steal_pointer(&open_uri);
@@ -1187,13 +1199,19 @@ previews_allowed(GhConversationView *self)
          g_settings_get_boolean(self->settings, LINK_PREVIEWS_KEY);
 }
 
-static gchar *
-consent_body(GhConversationView *self, const gchar *host)
+static gboolean
+tor_mode(GhConversationView *self)
 {
   g_autofree gchar *mode = self->settings && settings_has_key(self->settings, NETWORK_MODE_KEY)
                              ? g_settings_get_string(self->settings, NETWORK_MODE_KEY)
                              : NULL;
-  if (g_strcmp0(mode, "tor") == 0)
+  return g_strcmp0(mode, "tor") == 0;
+}
+
+static gchar *
+consent_body(GhConversationView *self, const gchar *host)
+{
+  if (tor_mode(self))
     return g_strdup_printf(_("This connects to %s through Tor to load a preview of the link."),
                            host);
   return g_strdup_printf(_("This connects to %s from your IP address to load a preview of the "

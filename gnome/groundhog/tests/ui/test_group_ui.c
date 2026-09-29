@@ -498,8 +498,27 @@ test_references(void)
                                          &code, &error));
   g_assert_no_error(error);
   g_assert_cmpstr(relay, ==, "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvw.onion");
+  /* Outside Tor it is refused before anything is queued, with the reason,
+   * rather than retried as "can't connect" forever (W16 review #8). */
+  g_assert_false(gh_group_relay_reachable(relay, FALSE, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_assert_nonnull(strstr(error->message, "only be reached through Tor"));
+  g_clear_error(&error);
+  g_assert_true(gh_group_relay_reachable(relay, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_false(gh_group_relay_reachable("wss://ABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW.Onion.", FALSE, NULL));
+  g_assert_true(gh_group_relay_reachable("wss://groups.example.com", FALSE, NULL));
+  g_assert_false(gh_group_network_is_tor()); /* no network session installed here */
   g_clear_pointer(&relay, g_free);
   g_clear_pointer(&group, g_free);
+
+  /* What joining or creating tells the relay, per mode (W16 review #5). */
+  g_assert_nonnull(strstr(gh_group_contact_copy(FALSE, FALSE), "your public key and your IP address"));
+  g_assert_nonnull(strstr(gh_group_contact_copy(FALSE, TRUE), "through Tor"));
+  g_assert_nonnull(strstr(gh_group_contact_copy(FALSE, TRUE), "not your IP address"));
+  g_assert_nonnull(strstr(gh_group_contact_copy(TRUE, FALSE), "admin"));
+  g_assert_nonnull(strstr(gh_group_contact_copy(TRUE, TRUE), "not your IP address"));
+  g_assert_nonnull(strstr(gh_group_contact_copy(TRUE, TRUE), "Create"));
 
   /* Not group addresses: said in words, nothing parsed. */
   const gchar *bad[] = { "", "   ", "npub1xyz", "groups.example.com", "host'Bad Id",
@@ -789,6 +808,14 @@ test_admin_gating(void)
   wait_join(member, GH_NIP29_JOIN_MEMBER);
   wait_join(moderator, GH_NIP29_JOIN_MEMBER);
   wait_join(pending, GH_NIP29_JOIN_PENDING);
+  /* Alice was listed in club and mods before she asked, so their 39002 may
+   * say "member" while her 9021 is still on its way (as for "known" in
+   * test_join_states): wait for the relay's answer, or it would count as a write
+   * below. plain and review change state only on the relay's answer. */
+  g_autoptr(GhNip29Op) admin_request = gh_nip29_room_dup_request_op(admin);
+  g_autoptr(GhNip29Op) moderator_request = gh_nip29_room_dup_request_op(moderator);
+  wait_op(admin_request, GH_NIP29_OP_DUPLICATE);
+  wait_op(moderator_request, GH_NIP29_OP_DUPLICATE);
   gh_test_spin_until(admins_known, admin);
   gh_test_spin_until(admins_known, member);
   gh_test_spin_until(admins_known, moderator);
@@ -1224,6 +1251,21 @@ test_gui_join(void)
   g_assert_null(gh_group_join_dialog_get_room(dialog));
   g_assert_cmpuint(relay.reqs, ==, 0);
   g_assert_cmpuint(relay.events_seen, ==, 0);
+  /* The direct-connection consent copy (no Tor session here). */
+  g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW,
+                             "Joining contacts the group’s relay"));
+  AdwActionRow *contact = child_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "contact_row");
+  g_assert_cmpstr(adw_action_row_get_subtitle(contact), ==, gh_group_contact_copy(FALSE, FALSE));
+
+  /* A .onion group outside Tor: refused with the reason, nothing queued. */
+  gh_group_join_dialog_set_address(
+    dialog, "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvw.onion'abc");
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
+  drain();
+  GtkLabel *join_error = child_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "error_label");
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(join_error)));
+  g_assert_nonnull(strstr(gtk_label_get_text(join_error), "only be reached through Tor"));
+  g_assert_null(gh_group_join_dialog_get_room(dialog));
 
   /* Pending review, then admitted: Open Group opens it. */
   g_autofree gchar *review_ref = reference(&relay, "review", NULL);

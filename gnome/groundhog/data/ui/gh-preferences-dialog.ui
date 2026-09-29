@@ -250,7 +250,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="GtkLabel" id="tor_note">
-                <property name="label" translatable="yes">Tor hides your IP address from relays and websites, and hides which relays you use from your network. It doesn't hide your account: relays still see what your account publishes and asks for, and they see your account when you sign in to your own inbox. Your network can see that you use Tor. If Tor can't be reached, Groundhog doesn't connect at all.</property>
+                <property name="label" translatable="yes">Tor hides your IP address from relays and from the servers Groundhog asks to check an address, and hides which relays you use from your network. Links you open go to your web browser, which doesn't use Groundhog's Tor connection. It doesn't hide your account: relays still see what your account publishes and asks for, and they see your account when you sign in to your own inbox. Your network can see that you use Tor. If Tor can't be reached, Groundhog doesn't connect at all.</property>
                 <property name="visible">false</property>
                 <property name="wrap">true</property>
                 <property name="xalign">0</property>

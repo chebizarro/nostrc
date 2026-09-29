@@ -87,7 +87,9 @@ template $GhNewGroupDialog: Adw.Dialog {
               }
             }
 
-            Adw.ActionRow {
+            // The C code says what the relay learns in the current network
+            // mode (gh_group_contact_copy); this is the direct-connection text.
+            Adw.ActionRow contact_row {
               title: _("Creating contacts the relay");
               subtitle: _("It learns your public key and your IP address, and makes you the group’s admin. Nothing is sent until you choose Create.");
               use-markup: false;

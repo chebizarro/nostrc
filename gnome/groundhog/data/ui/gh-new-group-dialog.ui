@@ -98,7 +98,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child>
-                          <object class="AdwActionRow">
+                          <object class="AdwActionRow" id="contact_row">
                             <property name="title" translatable="yes">Creating contacts the relay</property>
                             <property name="subtitle" translatable="yes">It learns your public key and your IP address, and makes you the group’s admin. Nothing is sent until you choose Create.</property>
                             <property name="use-markup">false</property>

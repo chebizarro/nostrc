@@ -1,6 +1,7 @@
 #include "gh-new-group-dialog.h"
 
 #include "gh-group-copy.h"
+#include "gh-net-session.h"
 
 #include <glib/gi18n.h>
 
@@ -19,6 +20,7 @@ struct _GhNewGroupDialog {
   GtkLabel *status_description;
   GtkWidget *open_button;
   GtkWidget *back_button;
+  AdwActionRow *contact_row;
 
   GhNip29Service *service; /* weak */
   GhNip29Room *room;
@@ -114,7 +116,7 @@ action_create(GtkWidget *widget, const gchar *action, GVariant *parameter)
   g_autoptr(GError) error = NULL;
   g_autofree gchar *relay = gh_group_parse_relay(gtk_editable_get_text(
                                                    GTK_EDITABLE(self->relay_row)), &error);
-  if (!relay) {
+  if (!relay || !gh_group_relay_reachable(relay, gh_group_network_is_tor(), &error)) {
     show_error(self, error->message);
     gtk_widget_grab_focus(GTK_WIDGET(self->relay_row));
     return;
@@ -270,6 +272,7 @@ gh_new_group_dialog_class_init(GhNewGroupDialogClass *klass)
   BIND(status_description);
   BIND(open_button);
   BIND(back_button);
+  BIND(contact_row);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "new-group.create", NULL, action_create);
   gtk_widget_class_install_action(widget_class, "new-group.open", NULL, action_open);
@@ -277,9 +280,21 @@ gh_new_group_dialog_class_init(GhNewGroupDialogClass *klass)
 }
 
 static void
+sync_contact_copy(GhNewGroupDialog *self)
+{
+  adw_action_row_set_subtitle(self->contact_row,
+                              gh_group_contact_copy(TRUE, gh_group_network_is_tor()));
+}
+
+static void
 gh_new_group_dialog_init(GhNewGroupDialog *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  sync_contact_copy(self);
+  g_autoptr(GhNetSession) network = gh_net_session_dup_default();
+  if (network)
+    g_signal_connect_object(network, "changed", G_CALLBACK(sync_contact_copy), self,
+                            G_CONNECT_SWAPPED);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-group.open", FALSE);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-group.back", FALSE);
   g_signal_connect_swapped(self->relay_row, "entry-activated", G_CALLBACK(on_activated), self);
