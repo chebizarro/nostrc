@@ -167,3 +167,105 @@ Add both repros as regression tests.
 **Can follow separately:** N-a through N-d, and nostrc-6r6s as analysed above.
 
 Everything addressed from W17 (B1 signing and publish-before-merge, B2, B3, N2, N3, N5) is in good shape.
+
+---
+
+## Addendum: final pass on `4319ea45`, `2bcf7314`, `76936eca` (2026-09-29)
+
+Branch `marmot/w17-welcome-commits` at `76936eca`. No code or beads were changed; repros ran in throwaway worktrees (`/tmp/rr17d`, `/tmp/rr17e`), which were removed afterwards.
+
+**Final verdict: REQUEST CHANGES.** Blocking findings: **C1, C2**. R1 and R2 themselves are resolved.
+
+### R1 and R2: resolved
+
+**R1: a stale pending Commit wins.** Resolved.
+- A pending record (v2) is bound to its parent's epoch *and* confirmed transcript hash (`commits.c:544-555`). A same-epoch replacement changes the transcript, so the record becomes STALE.
+- Only a LIVE record competes with or defers inbound Commits.
+- A STALE merge drops the record and returns `WRONG_EPOCH`.
+- My repro is now a regression test. With liveness checked by epoch only, or with a stale merge allowed, `test_commits` fails.
+
+**R2: a pending Commit has no recovery path.** Resolved in libmarmot.
+- **Echo merge:** our own echo merges a LIVE record (`:1082-1091`).
+- **Idempotent merge:** a MERGED leftover finishes as `MARMOT_OK`.
+- **Unmergeable Commit:** one that can no longer pass authorization is dropped.
+- **Storage error:** the record stays pending and can still be cleared.
+- **Restart path:** `marmot_get_pending_commit` returns the stored signed event and whether it was superseded.
+
+Resolved in Gnostr.
+- **Classification:** only NIP-01 `OK false` counts as a rejection. Timeout or disconnect is UNCERTAIN.
+- **Resolver:** it republishes, merges on the first OK, and clears only on REJECTED or NO_RELAYS. It runs for every group at start.
+- **Honest copy:** "sent, but no relay has confirmed it yet".
+
+I spot-checked six mutations: epoch-only liveness, stale merge allowed, no echo merge, no MERGED detection, record dropped on a storage error, Welcomes not moved. Each fails `test_commits`.
+
+**Republish racing an incoming competitor is correct *if* calls are serialized.**
+- If the winner arrives first, the record is STALE: the resolver merges it only to drop it, and never republishes.
+- If the winner arrives between `get_pending` and merge, we republish a Commit that loses, and the merge returns `WRONG_EPOCH`.
+- A losing competitor is deferred and dropped on merge.
+
+C1 is about the calls not being serialized.
+
+**The stored signed event leaks nothing new.** It is the published envelope: NIP-44 ciphertext under the source epoch's exporter secret (the same bytes relays hold), an ephemeral pubkey and a signature. The ephemeral secret is never stored; it is wiped in `marmot_sign_ephemeral`. The Welcome rumors kept in the pending record and the outbox are local-only. They contain the MLS Welcome (encrypted to the joiner's init key) plus the preview tags the local group record already holds, protected like the rest of the MLS state.
+
+### C1 (High, blocking): concurrent operations on one `Marmot` instance are not serialized
+
+**Where**
+- marmot-gobject runs every operation via `g_task_run_in_thread` on GLib's shared pool (`marmot-gobject-client.c`, e.g. `:1062` process_message, `:1231` merge/clear) with no mutex. Neither libmarmot nor its storage backends lock.
+- The Gnostr router starts one `process_message_async` per incoming kind:445 without waiting for the previous one.
+- The new resolver merges at plugin start and every 20 s, while the relay replay (`limit:500`) is still driving inbound processing.
+
+**Why it matters.** Every multi-step transition in `commits.c` assumes exclusive access to the group's records: persist with rollback, `defer_inbound` rewriting the pending record, merge, outbox.
+
+**Evidence.** A two-thread repro on one instance, `marmot_merge_pending_commit` versus `marmot_process_message` of a competing Commit, run under ThreadSanitizer (`-DSANITIZE=thread`), reports **15 data races** in these paths:
+- `mem_mls_store` (including its `realloc`) against `mem_mls_load`;
+- `mem_save_exporter_secret` against `mem_get_exporter_secret`;
+- reached from `pending_apply` / `marmot_commit_persist` on one side and `marmot_commit_process_inbound` / `marmot_group_reconcile` on the other.
+
+With the memory backend that is undefined behaviour. With a thread-safe backend (SQLite) it is still a logical lost update. For example, a winning competitor persisted between the merge's load and its write is overwritten, and the competitor was already marked processed, so it is never re-applied.
+
+No divergence showed up in 30 runs, but the interleaving is unsynchronized. This is exactly the "republish racing an incoming competing Commit" case.
+
+**Before vs now.** The missing serialization is not new. W17 is what makes concurrent *state transitions* (Commit ingestion, merges, resolvers) routine.
+
+**Fix.** Serialize every libmarmot call per `MarmotGobjectClient`: a `GMutex` held for the whole body of each `*_thread` function, or a dedicated single-worker `GThreadPool`. Also document in `marmot.h` and the README that a `Marmot` instance is not thread-safe. Add a concurrent merge/process test (TSAN-clean) as a regression.
+
+### C2 (Medium-High, blocking): the Welcome outbox loses Welcomes
+
+**(a) libmarmot overwrites the outbox (verified).** `outbox_store()` (`commits.c:727-739`) *replaces* the outbox record, and producers check only for a pending Commit (`groups.c:722-723`), not for unsent Welcomes.
+
+Repro: Alice adds Dave and merges; Dave's Welcome is not yet marked sent (offline, or its send failed). Alice adds Eve and merges. `marmot_get_unsent_welcomes` then returns **only Eve's** Welcome. Dave's is gone, while Dave already occupies a leaf: a ghost member who can never join, and future UpdatePaths encrypt to him.
+
+`marmot_mark_welcomes_sent()` also deletes the whole outbox. Welcomes stored between the application's read and its mark are lost too.
+
+**(b) Gnostr marks Welcomes sent before sending them.** `send_unsent_welcomes()` (`gn-mls-pending-commits.c:45-66`) dispatches `gn_mls_event_router_send_welcome_async(..., NULL, NULL, NULL)` and calls `mark_welcomes_sent` immediately, without waiting for, or checking, the gift-wrap publishes. A failed send loses the Welcome, which is precisely the failure the outbox exists to survive.
+
+**Fix**
+- Append to the outbox.
+- Remove entries individually, by recipient plus rumor digest, only after that entry's send is confirmed (or refuse a new Commit while the outbox is non-empty).
+- In Gnostr, mark each entry after its gift wrap reaches a relay.
+- Resends then become possible, so the joiner must also treat duplicates safely (N1).
+
+### Non-blocking
+
+- **N1 (Medium, pre-existing): a duplicate Welcome rolls the joiner back.** `accept_welcome` (`welcome.c`) never deletes `kp_priv`/`kp_full` after joining and does not check whether the group is already active. A second copy of a Welcome (another gift wrap) is offered as a new invitation. Accepting it overwrites `mls_group` with the Welcome-epoch state, which undoes a joiner that has moved on. Add an "already a member of this group" guard, and consider consuming non-last-resort KeyPackage privates. This matters more once C2's resends exist.
+- **N2 (Low): resolver lifecycle.**
+  - Retries use a fixed 20 s interval, up to 15 per activation, with no backoff or jitter.
+  - The `g_timeout` holds a router reference past deactivation. A deactivated context yields `G_IO_ERROR_CANCELLED`, which counts as UNCERTAIN and reschedules, so retries continue for up to five minutes after deactivation.
+  - Concurrent resolvers for one group (settings action, timer, start) are not coalesced, giving duplicate publishes and merges and, with the outbox, possible duplicate Welcome sends.
+  - Suggested: keep an in-flight set per group, cancel timers on deactivation, and use exponential backoff with jitter.
+- **N3 (Low): no outbox flush after an echo merge.** A merge by relay echo happens in `process_message`, and the router does not flush the outbox afterwards. The Welcomes wait for the next resolver retry (≤ 20 s) or the next start. Trigger `send_unsent_welcomes` on `MARMOT_RESULT_COMMIT`.
+
+### Verification
+
+- Build with `BUILD_GROUNDHOG=ON`: ok.
+- `ctest -R 'marmot|mls|gnostr' -j6`: **81/81 passed**.
+- ASAN+UBSAN (runtime confirmed): `test_commits`, `test_mls_welcome`, `test_mls_group`, `test_protocol`, `test_marmot_interop` and `test_marmot_gobject` all pass with no reports.
+- `leaks --atExit`: `test_commits`, `test_mls_group` and `test_protocol` each report **0 leaks**.
+- TSAN repro for C1: 15 data-race reports.
+- Outbox repro for C2(a): outbox holds only Eve after two merged Adds.
+
+### Final recommendation
+
+**REQUEST CHANGES** for **C1** (serialize per client, plus a TSAN regression) and **C2** (append-only outbox with per-entry confirmation; Gnostr marks each entry only after its send is confirmed).
+
+R1 and R2 are properly fixed and pinned. N1–N3 can follow, but N1 should land together with the C2 resend change.
