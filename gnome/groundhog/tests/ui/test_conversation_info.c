@@ -445,7 +445,8 @@ test_block(void)
   g_assert_true(notify_state(a, room).blocked);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a->model)), ==, 1);
 
-  /* New messages in it are kept, hidden, and never notified. */
+  /* New messages in it are recorded as seen only: not stored, never
+   * notified. */
   fake_gtk_notifications_clear(fake);
   g_autoptr(GhMessage) hidden = NULL;
   g_assert_cmpint(receive_full(a, PEER[0], now(a), "while blocked", &hidden), ==,
@@ -460,14 +461,15 @@ test_block(void)
   g_assert_true(notify_state(a, room).blocked);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a->model)), ==, 1);
 
-  /* Unblocking lists it again with what arrived meanwhile, as a message
-   * request: nobody here wrote in it, and unblocking is not accepting. */
+  /* Unblocking lists it again with its history from before the block
+   * (what arrived meanwhile was never stored), as a message request:
+   * nobody here wrote in it, and unblocking is not accepting. */
   g_assert_true(gh_conversation_actions_block(a->conversations, NULL, room, FALSE, &error));
   g_assert_no_error(error);
   GhConversation *back = gh_conversation_store_lookup(a->model, room);
   g_assert_nonnull(back);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(back)), ==, 2);
-  g_assert_nonnull(gh_conversation_lookup_message(back, gh_message_get_rumor_id(hidden)));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(back)), ==, 1);
+  g_assert_null(gh_conversation_lookup_message(back, gh_message_get_rumor_id(hidden)));
   g_assert_true(gh_conversation_get_is_request(back));
   g_assert_false(notify_state(a, room).blocked);
   account_restart(a);

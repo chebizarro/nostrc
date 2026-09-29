@@ -506,7 +506,7 @@ test_accept_delete_block_persist(void)
   /* Block: gone and seen-only from now on, across restarts. */
   g_autofree gchar *z_room = room_id_with(z);
   g_assert_false(blocked(&f, z));
-  g_assert_true(gh_store_conversations_block(f.delegate, z_room, &error));
+  g_assert_true(gh_store_conversations_block_and_forget(f.delegate, z_room, &error));
   g_assert_no_error(error);
   g_assert_null(room_of(&f, z));
   g_assert_true(blocked(&f, z));
@@ -525,7 +525,7 @@ test_accept_delete_block_persist(void)
                   GH_CONVERSATION_ADD_HIDDEN);
   g_assert_null(room_of(&f, z));
   /* Nothing of the blocked sender's text reached the store's rows. */
-  g_assert_false(gh_store_conversations_block(f.delegate, "not a room", &error));
+  g_assert_false(gh_store_conversations_block_and_forget(f.delegate, "not a room", &error));
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
   g_clear_error(&error);
 
@@ -537,6 +537,40 @@ test_accept_delete_block_persist(void)
   g_assert_cmpint(deliver(&f, z, FALSE, T0 + 50, "thanks", NULL), ==, GH_CONVERSATION_ADD_NEW);
   reopen(&f);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_of(&f, z))), ==, 2);
+  fixture_down(&f);
+}
+
+/* A block kept for Undo (gh_store_conversations_set_blocked) survives a
+ * relay replaying an old self-copy, as a duplicate or as an own message older
+ * than the read marker; only a new own message lifts it. */
+static void
+test_replayed_self_copy_keeps_block(void)
+{
+  Fixture f;
+  fixture_up(&f, FALSE);
+  const Person *w = &people[3];
+  g_autofree gchar *room = room_id_with(w);
+  g_autoptr(GError) error = NULL;
+  g_assert_cmpint(deliver(&f, w, TRUE, T0 + 100, "hi", NULL), ==, GH_CONVERSATION_ADD_NEW);
+  deliver(&f, w, FALSE, T0 + 110, "hey", NULL);
+  g_assert_true(gh_store_conversations_set_blocked(f.delegate, room, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_true(blocked(&f, w));
+
+  /* The same self-copy again (a duplicate), and an older one never seen. */
+  deliver(&f, w, TRUE, T0 + 100, "hi", NULL);
+  g_assert_true(blocked(&f, w));
+  deliver(&f, w, TRUE, T0 + 50, "an older self-copy", NULL);
+  g_assert_true(blocked(&f, w));
+  g_assert_null(room_of(&f, w));
+  reopen(&f);
+  g_assert_true(blocked(&f, w));
+
+  /* Writing to them again does lift it. */
+  g_assert_cmpint(deliver(&f, w, TRUE, T0 + 200, "back again", NULL), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_false(blocked(&f, w));
+  g_assert_nonnull(room_of(&f, w));
   fixture_down(&f);
 }
 
@@ -558,7 +592,7 @@ test_pt8_until_accept(void)
   g_autofree gchar *y_room = room_id_with(y);
   g_autofree gchar *z_room = room_id_with(z);
   g_assert_true(gh_store_conversations_forget(f.delegate, y_room, NULL));
-  g_assert_true(gh_store_conversations_block(f.delegate, z_room, NULL));
+  g_assert_true(gh_store_conversations_block_and_forget(f.delegate, z_room, NULL));
   /* Two days of scheduled refreshes. */
   run_directory_for(&f, 2 * 86400);
   g_assert_cmpuint(reqs_naming(&f.rec, w->pk, FALSE), >, 0);
@@ -602,7 +636,7 @@ static gboolean
 store_block(gpointer data, GhConversation *request, GError **error)
 {
   Fixture *f = data;
-  return gh_store_conversations_block(f->delegate, gh_conversation_get_room_id(request), error);
+  return gh_store_conversations_block_and_forget(f->delegate, gh_conversation_get_room_id(request), error);
 }
 
 static const gchar *
@@ -1296,6 +1330,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/requests/accept-delete-block-persist",
                     test_accept_delete_block_persist);
     g_test_add_func("/groundhog/requests/pt8-until-accept", test_pt8_until_accept);
+    g_test_add_func("/groundhog/requests/replayed-self-copy-keeps-block",
+                    test_replayed_self_copy_keeps_block);
   }
   int result = g_test_run();
   gh_test_bus_down(&shared_bus);

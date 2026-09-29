@@ -342,7 +342,7 @@ fail:
  * from them, G18); the unread count follows. */
 static gboolean
 admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
-                 GhMessage *message, gint64 *out_unread, GError **error)
+                 GhMessage *message, gboolean fresh, gint64 *out_unread, GError **error)
 {
   gboolean found = FALSE;
   gint64 conversation_id = 0;
@@ -355,11 +355,17 @@ admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
   Place marker = { 0 };
   gboolean ok = load_marker(store, conversation_id, &marker, error);
   if (ok && gh_message_is_self(message)) {
-    if (is_after(&marker, gh_message_get_created_at(message), gh_message_get_rumor_id(message)))
+    const gboolean after =
+      is_after(&marker, gh_message_get_created_at(message), gh_message_get_rumor_id(message));
+    if (after)
       place_set(&marker, message_row, gh_message_get_created_at(message),
                 gh_message_get_rumor_id(message));
-    sqlite3_stmt *stmt = prepare(store,
-      "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state IN (1, 2)",
+    /* Only a new own message lifts a block: a relay replaying an old
+     * self-copy (a duplicate, or older than the read marker) must not
+     * unblock a room whose history was kept for Undo (G19). */
+    sqlite3_stmt *stmt = prepare(store, fresh && after
+      ? "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state IN (1, 2)"
+      : "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state = 1",
       error);
     ok = stmt && sqlite3_bind_int64(stmt, 1, conversation_id) == SQLITE_OK &&
          step_done(store, stmt, "Accepting a conversation", error);
@@ -430,27 +436,6 @@ bounded_title(const gchar *subject)
   return g_strndup(subject, end - subject);
 }
 
-/* Whether the room is stored with request_state BLOCKED. */
-static gboolean
-room_blocked(GhStore *store, const gchar *room_id, gboolean *out_blocked, GError **error)
-{
-  *out_blocked = FALSE;
-  sqlite3_stmt *stmt = prepare(store,
-    "SELECT request_state FROM conversations WHERE backend = 1 AND backend_key = ?1", error);
-  if (!stmt)
-    return FALSE;
-  BIND(bind_text(stmt, 1, room_id));
-  gboolean has_row = FALSE;
-  gboolean ok = step_row(store, stmt, &has_row, "Reading a conversation", error);
-  if (ok && has_row)
-    *out_blocked = sqlite3_column_int64(stmt, 0) == GH_STORE_REQUEST_BLOCKED;
-  sqlite3_finalize(stmt);
-  return ok;
-fail:
-  sqlite3_finalize(stmt);
-  return FALSE;
-}
-
 /* A message from someone else in a blocked room (G18): its wrap and rumor
  * ids are recorded as seen, so it is neither unwrapped nor offered again,
  * and nothing of it is stored. */
@@ -519,10 +504,13 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
       !find_message_row(store, room_id, m.backend_msg_id, &message_row, error))
     goto fail;
   if (message_row > 0) {
-    if (!admit_read_state(store, room_id, message_row, message, &commit->unread, error))
+    if (!admit_read_state(store, room_id, message_row, message,
+                          result != GH_STORE_ADMIT_DUPLICATE, &commit->unread, error))
       goto fail;
-    /* A blocked room keeps what arrives, unlisted: none of it shows or is
-     * notified unless the room is unblocked. */
+    /* Someone else's message in a blocked room returned above. An own
+     * message lifts the block only when it is new (admit_read_state); a
+     * replayed or older self-copy is stored unlisted and the room stays
+     * out of the list. */
     gboolean blocked = FALSE;
     if (!room_blocked(store, room_id, &blocked, error))
       goto fail;
@@ -942,7 +930,7 @@ unlist_blocked(GhStoreConversations *self, const gchar *room_id)
 }
 
 gboolean
-gh_store_conversations_block(GhStoreConversations *self, const gchar *room_id, GError **error)
+gh_store_conversations_block_and_forget(GhStoreConversations *self, const gchar *room_id, GError **error)
 {
   g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
   if (!check_open(self, error) || !check_room(self, room_id, error))

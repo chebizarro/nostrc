@@ -676,8 +676,8 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
                                          : g_strdup(_("Block This Conversation?"));
   adw_alert_dialog_set_heading(self->block_dialog, block_heading);
   adw_alert_dialog_set_body(self->block_dialog,
-    _("The conversation leaves your list and Groundhog stops notifying you about it. New "
-      "messages in it are kept hidden on this device.\n\nNobody is told. Relays can still "
+    _("The conversation leaves your list and Groundhog stops notifying you about it. "
+      "Messages sent to it while it is blocked are not saved on this device.\n\nNobody is told. Relays can still "
       "deliver their messages to your message relays."));
   g_autofree gchar *forget_body = only
     ? g_strdup_printf(_("Its messages and draft are deleted from this device, and older messages "

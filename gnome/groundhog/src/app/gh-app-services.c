@@ -698,7 +698,7 @@ static gboolean
 requests_block(gpointer data, GhConversation *request, GError **error)
 {
   GhStoreConversations *store = requests_store(data, error);
-  return store && gh_store_conversations_block(store, gh_conversation_get_room_id(request),
+  return store && gh_store_conversations_block_and_forget(store, gh_conversation_get_room_id(request),
                                                error);
 }
 #endif

@@ -99,17 +99,15 @@ gboolean gh_store_conversations_set_draft(GhStoreConversations *self, const gcha
 gboolean gh_store_conversations_forget(GhStoreConversations *self, const gchar *room_id,
                                        GError **error);
 
-/* Block a conversation (charter §7.9 Message Requests, PD-8, G18): in one
- * transaction the room's request_state becomes BLOCKED and the room is
- * forgotten as above (its tombstone keeps the block), then it is unlisted
- * from the attached model. Local only: nothing is published and the other
- * people are not told. From then on a message from someone else in the room
- * is recorded as seen only and reported hidden: never listed, stored or
- * notified (backfill included). An own message to the room (starting a
- * conversation with them again) lifts the block. NOT_FOUND when the room is
- * not stored. */
-gboolean gh_store_conversations_block(GhStoreConversations *self, const gchar *room_id,
-                                      GError **error);
+/* Block a message request and forget it (charter §7.9 Message Requests,
+ * PD-8, G18): in one transaction the room's request_state becomes BLOCKED
+ * and the room is forgotten as above (its tombstone keeps the block), then
+ * it is unlisted from the attached model. Unlike
+ * gh_store_conversations_set_blocked() nothing is kept to undo. Local only:
+ * nothing is published and the other people are not told. The block itself
+ * behaves as described there. NOT_FOUND when the room is not stored. */
+gboolean gh_store_conversations_block_and_forget(GhStoreConversations *self,
+                                                 const gchar *room_id, GError **error);
 /* Whether a stored room is blocked (FALSE when it is not stored). */
 gboolean gh_store_conversations_is_blocked(GhStoreConversations *self, const gchar *room_id,
                                            gboolean *out_blocked, GError **error);
@@ -158,8 +156,12 @@ gboolean gh_store_conversations_set_muted_until(GhStoreConversations *self,
                                                 GError **error);
 /* Blocks a stored room (charter §7.9 "Block", NO-2; G19): request_state
  * BLOCKED, and the room leaves the attached model. It stays out of every
- * later restore, and what arrives in it is stored unlisted and never
- * notified. Unblocking (FALSE) lists its newest page again, as a message
+ * later restore; its history is kept so the block can be undone. From then
+ * on a message from someone else in the room is recorded as seen only and
+ * reported hidden: never listed, stored or notified (backfill included), so
+ * it does not come back on unblocking. A new own message to the room
+ * (writing to them again) lifts the block; a replayed or older self-copy
+ * does not. Unblocking (FALSE) lists its newest page again, as a message
  * request unless the account has written in it: unblocking is not
  * accepting (PT-8). Nothing is published: the other side is not told (P8).
  * Mute, timer and draft are kept. NOT_FOUND when the room is not stored. */
