@@ -263,10 +263,21 @@ kind:445 event comes back signed.
   signed event after a crash or a lost answer. Republish it and merge on the
   first `OK`.
 - **Welcome outbox.** When a pending Add merges (by call, echo or after a
-  restart), its Welcomes and their recipients move to
-  `marmot_get_unsent_welcomes()`. Gift-wrap and send them, then call
-  `marmot_mark_welcomes_sent()`. The rumors `marmot_add_members()` returns
-  are the same Welcomes; send one copy only.
+  restart), its Welcomes and their recipients are *appended* to
+  `marmot_get_unsent_welcomes()`. Earlier Adds' Welcomes stay until sent.
+  - Each entry has a stable `id` (SHA-256 of recipient ‖ rumor).
+  - Gift-wrap and send each entry. Once that send is confirmed, pass its id
+    to `marmot_mark_welcomes_sent(m, gid, ids, count)`, which removes only
+    those entries.
+  - Entries appended after your read stay; a failed send stays for a retry.
+  - The rumors `marmot_add_members()` returns are the same Welcomes; send one
+    copy only.
+- **Duplicate Welcomes.** Resent Welcomes can arrive twice. A member that
+  already joined through a Welcome refuses a second copy:
+  `marmot_accept_welcome()` returns `MARMOT_ERR_WELCOME_ALREADY_ACCEPTED`,
+  keeps its current (possibly newer) state, and retires the copy. A
+  re-invite after a removal still joins, because its Welcome is for a later
+  epoch.
   - `marmot_create_group()` still applies immediately: only its joiners see
     its Commit.
 - **Every kind:445 is signed** with a fresh ephemeral key (MIP-03), never the
@@ -368,6 +379,14 @@ select different winners on different members, and the group splits as
 described above.
 
 #### Robustness
+
+- **Thread safety.** A `Marmot` instance and its storage are not
+  thread-safe; serialize every call on one instance. Commit processing,
+  merges and message handling are multi-step read-modify-write transitions.
+  marmot-gobject does this per client (every async and sync call holds the
+  client's lock; direct libmarmot calls through
+  `marmot_gobject_client_get_marmot()` must hold
+  `marmot_gobject_client_lock()`).
 
 - **Rollback of failed writes.** An epoch transition writes, in order, the
   exporter secret, the retained parent, the MLS state and the group record. A

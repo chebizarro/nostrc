@@ -57,6 +57,9 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.2.0 | No further bump (unreleased 1.2.0): adds `get_pending_commit`, `get_unsent_welcomes`, `mark_welcomes_sent`. |
 | same | gnostr | 0.1.0 | No bump (unreleased): pending Commits resolved by a plugin-level resolver (publish until a relay OK, clear only when every relay refused, keep and retry when uncertain, resolve leftovers and unsent Welcomes at startup). |
 | same | groundhog | 0.10.0 | No bump (unreleased): GhStoreMarmot snapshots also cover `mls_group_welcomes`. |
+| libmarmot 0.5.0 addendum fixes (W17b C1, C2, N1; still unreleased 0.5.0) | libmarmot | 0.5.0 | No further bump: folded into unreleased 0.5.0. Documented that a `Marmot` is not thread-safe; Welcome outbox append-only with stable ids (`MarmotUnsentWelcome.id`), `marmot_mark_welcomes_sent()` now takes the ids to remove (outbox record v2); a duplicate Welcome for a group already joined is refused (`MARMOT_ERR_WELCOME_ALREADY_ACCEPTED`). |
+| same | marmot-gobject | 1.2.0 | No further bump (unreleased 1.2.0): every libmarmot call serialized per client; new `marmot_gobject_client_lock/unlock`; `get_unsent_welcomes` returns ids and `mark_welcomes_sent` takes them. |
+| same | gnostr | 0.1.0 | No bump (unreleased): direct libmarmot calls hold the client lock; each Welcome is marked sent after its own send; resolver coalesces per group, backs off exponentially with jitter, stops on deactivation, and flushes the outbox on every group update. |
 
 ## Maintenance
 
