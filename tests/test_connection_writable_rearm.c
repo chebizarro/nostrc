@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE /* usleep under -std=c11 on glibc */
 /* Regression test for nostrc-75rv: a frame enqueued while the lws service
  * thread is concluding "send queue drained" must still be written.
  *

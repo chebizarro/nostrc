@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L /* nanosleep under -std=c11 on glibc */
 /* Regression test for nostrc-75rv: every MPMC channel path must honour the
  * per-slot sequence protocol.
  *
