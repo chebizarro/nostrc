@@ -3575,6 +3575,111 @@ assert_relays(const GhMlsCommitPublish *publish, const gchar *const *want)
     g_assert_cmpstr(publish->relay_urls[i], ==, want[i]);
 }
 
+/* ---- A send cut at every write and commit (nostrc-ai04) ------------------------------------ */
+
+typedef struct {
+  MarmotGroupId *gid;
+  Actor *receiver;
+  GPtrArray *receiver_files;   /* the receiver before any of the sends below */
+  gchar *reference;            /* a send from the same start: the generation the op uses */
+  gchar *sent;                 /* the op's event (kept from the real run) */
+} SendCrash;
+
+static const gchar SEND_INNER[] =
+  "{\"kind\":9,\"content\":\"crash-suite send\",\"created_at\":1700000000,\"tags\":[]}";
+
+static void
+op_send(GhStore *store, MarmotStorage *storage, Marmot *marmot, CrashCase *c)
+{
+  (void) store;
+  (void) storage;
+  SendCrash *d = c->data;
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  assert_marmot_ok(marmot_create_message(marmot, d->gid, SEND_INNER, &out));
+  g_free(d->sent);
+  d->sent = g_strdup(out.event_json);
+  marmot_outgoing_message_free(&out);
+}
+
+/* The op's ratchet step is durable: a send from the stored state now is read
+ * after the reference (the op's generation, consumed first by a receiver). Had
+ * the step been lost, that send would reuse the op's generation -- the same
+ * key and nonce as an event that may already be out -- and the receiver, which
+ * consumed that generation, would refuse it. */
+static void
+check_send_step_stored(GhStore *store, CrashCase *c)
+{
+  SendCrash *d = c->data;
+  MarmotStorage *storage = storage_new(store);
+  Marmot *marmot = marmot_new(storage);
+  g_assert_nonnull(marmot);
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  assert_marmot_ok(marmot_create_message(marmot, d->gid, SEND_INNER, &out));
+  g_autofree gchar *next = g_strdup(out.event_json);
+  marmot_outgoing_message_free(&out);
+  marmot_free(marmot);
+
+  files_restore(d->receiver_files);
+  actor_start(d->receiver);
+  MarmotError err = MARMOT_OK;
+  g_assert_cmpint(deliver_to(d->receiver, d->reference, &err), ==,
+                  MARMOT_RESULT_APPLICATION_MESSAGE);
+  g_assert_cmpint(deliver_to(d->receiver, next, &err), ==, MARMOT_RESULT_APPLICATION_MESSAGE);
+  g_assert_cmpint(err, ==, MARMOT_OK);
+  actor_stop(d->receiver);
+}
+
+/* Acceptance (nostrc-ai04): marmot_create_message() stores the advanced sender
+ * ratchet in the operation's T-mls transaction before it returns the event.
+ * Killed at any write or before the commit, nothing is stored and no event
+ * left the process; killed after the commit (the event lost before it could
+ * be published) or run to completion, the step is durable and the next send
+ * uses a new generation. */
+static void
+test_send_crash_never_reuses_a_generation(void)
+{
+  Actor alice, bob;
+  actor_init(&alice);
+  actor_init(&bob);
+  actor_start(&bob);
+  g_autofree gchar *bob_kp = actor_key_package(&bob);
+  actor_stop(&bob);
+  actor_start(&alice);
+  const char *kps[] = { bob_kp };
+  g_auto(GStrv) welcomes = NULL;
+  MarmotGroupId gid = create_group_with(&alice, "Send crash", kps, 1, NULL, &welcomes);
+  g_autofree gchar *first = actor_message(&alice, &gid, "first");
+  actor_stop(&alice);
+  actor_start(&bob);
+  actor_join(&bob, welcomes[0]);
+  g_assert_cmpint(deliver_to(&bob, first, NULL), ==, MARMOT_RESULT_APPLICATION_MESSAGE);
+  actor_stop(&bob);
+
+  SendCrash d = { .gid = &gid, .receiver = &bob };
+  d.receiver_files = files_save(&bob.account);
+  /* The reference: what Alice's next send is, from the state the op starts in. */
+  g_autoptr(GPtrArray) alice_files = files_save(&alice.account);
+  actor_start(&alice);
+  d.reference = actor_message(&alice, &gid, "reference");
+  actor_stop(&alice);
+  files_restore(alice_files);
+
+  CrashCase c = crash_case("send message", &alice.account, "mls", op_send,
+                           check_send_step_stored, &d, NULL);
+  c.min_writes = 2;   /* marmot_new()'s pruning and the ratchet step */
+  crash_case_run(&c);
+  g_assert_nonnull(d.sent);
+
+  g_free(d.sent);
+  g_free(d.reference);
+  g_ptr_array_unref(d.receiver_files);
+  marmot_group_id_free(&gid);
+  actor_clear(&alice);
+  actor_clear(&bob);
+}
+
 /* Acceptance (qp24.7): restart is idempotent and republishes the same signed
  * event from the pending record, on the relays that have not answered; a
  * refusal is not repeated; the relay echo merges; a late OK changes nothing. */
@@ -4121,6 +4226,8 @@ main(int argc, char **argv)
   g_test_add_func("/store-marmot/e2e/persistence", test_e2e_persistence);
   g_test_add_func("/store-marmot/privacy/no-plaintext-on-disk", test_no_plaintext_on_disk);
   g_test_add_func("/store-marmot/lifecycle/crash-every-write", test_lifecycle_crash_every_write);
+  g_test_add_func("/store-marmot/lifecycle/send-crash-never-reuses-a-generation",
+                  test_send_crash_never_reuses_a_generation);
   g_test_add_func("/store-marmot/lifecycle/restart-republishes", test_lifecycle_restart_republishes);
   g_test_add_func("/store-marmot/lifecycle/superseded-and-refused",
                   test_lifecycle_superseded_and_refused);

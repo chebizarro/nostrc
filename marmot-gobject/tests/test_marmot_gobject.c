@@ -872,6 +872,90 @@ test_process_rumor_and_signed_paths(void)
     g_object_unref(member_store);
 }
 
+/* @json re-signed by a fresh key: the same content in a new envelope (a new
+ * event id, so no processed marker catches it), as a relay replay or a
+ * second publisher would deliver it. */
+static gchar *
+rewrap(const gchar *json)
+{
+    NostrEvent *ev = nostr_event_new();
+    g_assert_nonnull(ev);
+    g_assert_true(nostr_event_deserialize_compact(ev, json, NULL));
+    gchar *sk = nostr_key_generate_private();
+    g_assert_nonnull(sk);
+    g_assert_cmpint(nostr_event_sign(ev, sk), ==, 0);
+    gchar *out = nostr_event_serialize_compact(ev);
+    g_assert_nonnull(out);
+    g_assert_cmpstr(out, !=, json);
+    memset(sk, 0, strlen(sk));
+    free(sk);
+    nostr_event_free(ev);
+    return out;
+}
+
+static gint
+process_message_error(MarmotGobjectClient *client, const gchar *group_event_json)
+{
+    AsyncFixture *f = async_fixture_new();
+    marmot_gobject_client_process_message_async(client, group_event_json, NULL,
+                                                async_callback, f);
+    g_main_loop_run(f->loop);
+    GError *error = NULL;
+    g_assert_null(marmot_gobject_client_process_message_finish(client, f->result, NULL,
+                                                               &error));
+    g_assert_nonnull(error);
+    gint code = error->code;
+    g_clear_error(&error);
+    async_fixture_free(f);
+    drain_main_context();
+    return code;
+}
+
+/* nostrc-ai04 audit: every send goes through marmot_create_message(), which
+ * loads the group state per call.  Two sends of one epoch must use two
+ * generations (were: generation 0 both times, the same key), and a receiver
+ * must refuse either one re-published in a new envelope.  A reused generation
+ * would show here: the member, having consumed it with the first message,
+ * would refuse the second. */
+static void
+test_client_sends_distinct_generations_replays_refused(void)
+{
+    MarmotGobjectClient *inviter = NULL, *member = NULL;
+    MarmotGobjectMemoryStorage *inviter_store = NULL, *member_store = NULL;
+    MarmotGobjectGroup *created = NULL;
+    gchar **welcomes = NULL;
+    MarmotGobjectWelcome *welcome = setup_real_welcome_flow(
+        &inviter, &inviter_store, &member, &member_store, &created, &welcomes);
+    g_assert_true(accept_welcome_sync(member, welcome));
+
+    const gchar *gid = marmot_gobject_group_get_mls_group_id(created);
+    g_autofree gchar *e1 = send_message_sync(inviter, gid,
+        "{\"kind\":9,\"content\":\"first\",\"created_at\":1700000000,\"tags\":[]}");
+    g_autofree gchar *e2 = send_message_sync(inviter, gid,
+        "{\"kind\":9,\"content\":\"second\",\"created_at\":1700000001,\"tags\":[]}");
+
+    MarmotGobjectMessageResultType type = MARMOT_GOBJECT_MESSAGE_RESULT_UNPROCESSABLE;
+    g_autofree gchar *in1 = process_message_sync(member, e1, &type);
+    g_assert_cmpint(type, ==, MARMOT_GOBJECT_MESSAGE_RESULT_APPLICATION);
+    g_assert_nonnull(strstr(in1, "first"));
+    g_autofree gchar *in2 = process_message_sync(member, e2, &type);
+    g_assert_cmpint(type, ==, MARMOT_GOBJECT_MESSAGE_RESULT_APPLICATION);
+    g_assert_nonnull(strstr(in2, "second"));
+
+    g_autofree gchar *again1 = rewrap(e1);
+    g_autofree gchar *again2 = rewrap(e2);
+    g_assert_cmpint(process_message_error(member, again1), ==, MARMOT_ERR_MLS);
+    g_assert_cmpint(process_message_error(member, again2), ==, MARMOT_ERR_MLS);
+
+    g_object_unref(welcome);
+    g_object_unref(created);
+    g_strfreev(welcomes);
+    g_object_unref(inviter);
+    g_object_unref(member);
+    g_object_unref(inviter_store);
+    g_object_unref(member_store);
+}
+
 static void
 on_message_received(MarmotGobjectClient *client, MarmotGobjectMessage *msg, gpointer data)
 {
@@ -2386,6 +2470,8 @@ main(int argc, char *argv[])
     /* 7. Signals */
     g_test_add_func("/marmot-gobject/client/signal-group-joined", test_client_signal_group_joined);
     g_test_add_func("/marmot-gobject/client/signal-message-received", test_client_signal_message_received);
+    g_test_add_func("/marmot-gobject/client/sends-distinct-generations-replays-refused",
+                    test_client_sends_distinct_generations_replays_refused);
     g_test_add_func("/marmot-gobject/client/signal-welcome-received", test_client_signal_welcome_received);
     g_test_add_func("/marmot-gobject/client/update-metadata-commit-reaches-member",
                     test_client_update_metadata_commit_reaches_member);
