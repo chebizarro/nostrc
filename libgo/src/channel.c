@@ -38,7 +38,8 @@ typedef struct GoFiberWaiter {
 
 /* Wake one fiber waiter from a list. Returns the removed waiter, or NULL.
  * Must be called while holding chan->mutex. */
-static GoFiberWaiter *fiber_waiter_wake_one(GoFiberWaiter **list) {
+/* Used only by the REFINED_SIGNALING single-wakeup macros. */
+static __attribute__((unused)) GoFiberWaiter *fiber_waiter_wake_one(GoFiberWaiter **list) {
     GoFiberWaiter *w = *list;
     if (w) {
         *list = w->next;
@@ -492,7 +493,11 @@ int go_channel_has_space(const void *chan) {
  * when slot_seq == t and holds ticket t's value when slot_seq == t + 1.  A
  * sender claims ticket t by advancing `in`, then stores the value and
  * publishes slot_seq = t + 1; a receiver claims by advancing `out`, takes the
- * value and releases the slot with slot_seq = t + capacity.  Between claim
+ * value and releases the slot with slot_seq = t + ring, ring = mask + 1.
+ * The physical ring has at least two slots (go_channel_create): with one,
+ * "t published" == "free for t + 1" and a sender could overwrite a claimed
+ * element.  The logical capacity (in - out <= capacity <= ring) is enforced
+ * separately.  Between claim
  * and publish (or release) the slot is BUSY: `in - out` already counts the
  * element, but it cannot be read yet (or its slot cannot be reused yet).
  *
@@ -558,7 +563,7 @@ static inline MpmcResult mpmc_pop(GoChannel *chan, void **data, size_t *occ_befo
                 void *value = atomic_load_explicit(&chan->buffer[idx], memory_order_acquire);
                 /* nostrc-nft: clear the slot so no stale pointer survives. */
                 atomic_store_explicit(&chan->buffer[idx], NULL, memory_order_relaxed);
-                atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity,
+                atomic_store_explicit(&chan->slot_seq[idx], tail + chan->mask + 1,
                                       memory_order_release);
                 if (data) *data = value;
                 if (occ_before)
@@ -577,6 +582,38 @@ static inline MpmcResult mpmc_pop(GoChannel *chan, void **data, size_t *occ_befo
 
 /* Bounded spin for the try paths: a BUSY peer is normally two stores away. */
 #define MPMC_TRY_SPINS 64
+
+/* Longest a blocking send/receive sleeps on a BUSY slot before re-checking. */
+#define MPMC_BUSY_WAIT_NS 1000000ull /* 1 ms */
+
+/* A blocking send/receive found the slot it needs BUSY even after spinning:
+ * its peer was descheduled between claiming and publishing (or releasing).
+ * Called with chan->mutex held; returns with it held.  Sleep on the
+ * condition the peer signals once it finishes -- every transfer signals
+ * cond_empty (after a publish) or cond_full (after a release) under
+ * chan->mutex -- with a short deadline as insurance when that signal is
+ * conditional (REFINED_SIGNALING=OFF, nostrc-v624).  A fiber parks instead
+ * of blocking its worker thread.  This replaced an unbounded sched_yield
+ * spin that burned a core and never parked (nostrc-75rv review F3). */
+static void mpmc_wait_busy(GoChannel *chan, nsync_cv *cv, GoFiberWaiter **fiber_waiters) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    uint64_t deadline_ns = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec +
+                           MPMC_BUSY_WAIT_NS;
+    gof_fiber_handle fiber = gof_hook_current();
+    if (fiber) {
+        GoFiberWaiter fw = { .fiber = fiber, .next = NULL };
+        fiber_waiter_enqueue(fiber_waiters, &fw);
+        NUNLOCK(&chan->mutex);
+        gof_hook_block_current_until(deadline_ns);
+        NLOCK(&chan->mutex);
+        fiber_waiter_remove(fiber_waiters, &fw);
+    } else {
+        struct timespec deadline = { .tv_sec = (time_t)(deadline_ns / 1000000000ull),
+                                     .tv_nsec = (long)(deadline_ns % 1000000000ull) };
+        (void)CV_WAIT_DEADLINE_OS(cv, &chan->mutex, deadline, NULL);
+    }
+}
 #endif /* NOSTR_CHANNEL_MPMC_SLOTS */
 
 /* Non-blocking send: returns 0 on success, -1 if full or closed */
@@ -694,7 +731,13 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
             atomic_store_explicit(p, data, memory_order_release);
         }
         go_channel_inc_in(chan);
-        // size derived: no counter update
+#if !NOSTR_CHANNEL_DERIVE_SIZE
+        /* The size-counted ring gates on `size`: the try paths must keep it
+         * in step with the blocking paths, or try_send never sees the ring
+         * full (overwriting it) and blocking receivers wait on size == 0
+         * with data queued (a ticker produced no ticks). */
+        chan->size++;
+#endif
         // success + depth sample (post-increment size)
         nostr_metric_counter_add("go_chan_send_successes", 1);
         nostr_metric_counter_add("go_chan_send_depth_samples", 1);
@@ -869,7 +912,9 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         chan->buffer[out_idx] = NULL;
         if (data) *data = tmp;
         go_channel_inc_out(chan);
-        // size derived: no counter update
+#if !NOSTR_CHANNEL_DERIVE_SIZE
+        chan->size--; /* see go_channel_try_send */
+#endif
         // success + depth sample (post-decrement size)
         nostr_metric_counter_add("go_chan_recv_successes", 1);
         nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
@@ -934,8 +979,11 @@ GoChannel *go_channel_create(size_t capacity) {
     if (!chan) return NULL;
     // Set magic number for validation
     chan->magic = GO_CHANNEL_MAGIC;
+    /* libgo has no unbuffered (rendezvous) channels: capacity 0 means 1.
+     * A zero-slot ring had mask SIZE_MAX over a zero-byte buffer, so every
+     * access was out of bounds (nostrc-75rv review F4). */
+    size_t cap = capacity ? capacity : 1;
     // Optionally round capacity up to next power of two for faster masking
-    size_t cap = capacity;
 #if NOSTR_CHANNEL_ENFORCE_POW2_CAP
     if (cap > 1) {
         size_t v = cap - 1;
@@ -950,25 +998,38 @@ GoChannel *go_channel_create(size_t capacity) {
         cap = v + 1;
     }
 #endif
+#if NOSTR_CHANNEL_MPMC_SLOTS
+    /* The slot protocol needs a physical ring of at least two slots (see
+     * mpmc_push).  With one slot, "ticket t published" and "slot free for
+     * ticket t + 1" are the same sequence value, so a sender could claim the
+     * slot a receiver had claimed but not yet read: the element was lost,
+     * slot_seq went backwards and the channel wedged (nostrc-75rv review F1).
+     * The logical capacity -- how many elements the channel holds, and so
+     * how a capacity-1 wake/ticker channel coalesces -- is unchanged. */
+    size_t ring = 2;
+    while (ring < cap) ring <<= 1;
+#else
+    size_t ring = cap;
+#endif
     // Align the ring buffer to cache line size to reduce cross-line traffic
     _Atomic(void*) *buf = NULL;
-    size_t bytes = sizeof(void *) * cap;
+    size_t bytes = sizeof(void *) * ring;
     buf = (_Atomic(void*)*)go_aligned_alloc(64, bytes);
     if (buf) memset(buf, 0, bytes);  // Zero the buffer to avoid garbage pointers
     chan->buffer = buf;
     chan->capacity = cap;
-    // Capacity is enforced to a power of two; compute mask for fast wrap
-    chan->mask = chan->capacity - 1;
+    // The ring is a power of two; compute mask for fast wrap
+    chan->mask = ring - 1;
     chan->size = 0; // unused when NOSTR_CHANNEL_DERIVE_SIZE enabled
     atomic_store_explicit(&chan->in, 0, memory_order_relaxed);
     atomic_store_explicit(&chan->out, 0, memory_order_relaxed);
 #if NOSTR_CHANNEL_MPMC_SLOTS
     // Allocate per-slot sequence numbers (aligned to cacheline)
     _Atomic size_t *seq = NULL;
-    size_t sbytes = sizeof(_Atomic size_t) * cap;
+    size_t sbytes = sizeof(_Atomic size_t) * ring;
     seq = (_Atomic size_t *)go_aligned_alloc(64, sbytes);
     chan->slot_seq = seq;
-    for (size_t i = 0; i < cap; ++i) {
+    for (size_t i = 0; i < ring; ++i) {
         atomic_store_explicit(&chan->slot_seq[i], i, memory_order_relaxed);
     }
 #else
@@ -1143,7 +1204,9 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     }
 
     /* removed wa_send: no predicate waits */
-send_again:
+#if NOSTR_CHANNEL_MPMC_SLOTS
+send_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
+#endif
     while (
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_is_full(chan))
@@ -1232,15 +1295,16 @@ send_again:
     /* The mutex does not exclude lock-free try_send/try_receive, so claim a
      * ticket with the slot protocol (nostrc-75rv).  NONE: lock-free senders
      * refilled the ring since the wait; BUSY: a receiver has claimed the
-     * slot but not released it yet.  Either way, wait again. */
+     * slot but not released it yet (spin briefly, then mpmc_wait_busy).
+     * Either way, re-evaluate. */
     {
-        MpmcResult pr = mpmc_push(chan, data, NULL);
+        MpmcResult pr;
+        int spins = 0;
+        while ((pr = mpmc_push(chan, data, NULL)) == MPMC_BUSY && spins++ < MPMC_TRY_SPINS)
+            NOSTR_CPU_RELAX();
         if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
-            if (pr == MPMC_BUSY) {
-                NUNLOCK(&chan->mutex);
-                sched_yield();
-                NLOCK(&chan->mutex);
-            }
+            if (pr == MPMC_BUSY)
+                mpmc_wait_busy(chan, &chan->cond_full, &chan->fiber_waiters_full);
             goto send_again;
         }
     }
@@ -1334,7 +1398,9 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     }
 
     /* removed wa_recv: no predicate waits */
-recv_again:
+#if NOSTR_CHANNEL_MPMC_SLOTS
+recv_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
+#endif
     while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
@@ -1445,16 +1511,16 @@ recv_again:
      * receivers do not take this mutex.  Reading buffer[out] regardless
      * returned NULL and skipped the element (nostrc-75rv).  NONE: a lock-free
      * receiver took the element since the wait; BUSY: wait for the sender to
-     * publish.  Either way, re-evaluate. */
+     * publish (spin briefly, then mpmc_wait_busy).  Either way, re-evaluate. */
     void *tmp = NULL;
     {
-        MpmcResult pr = mpmc_pop(chan, &tmp, NULL);
+        MpmcResult pr;
+        int spins = 0;
+        while ((pr = mpmc_pop(chan, &tmp, NULL)) == MPMC_BUSY && spins++ < MPMC_TRY_SPINS)
+            NOSTR_CPU_RELAX();
         if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
-            if (pr == MPMC_BUSY) {
-                NUNLOCK(&chan->mutex);
-                sched_yield();
-                NLOCK(&chan->mutex);
-            }
+            if (pr == MPMC_BUSY)
+                mpmc_wait_busy(chan, &chan->cond_empty, &chan->fiber_waiters_empty);
             goto recv_again;
         }
     }
@@ -1548,7 +1614,9 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     }
 
     /* no predicate waits: correctness-first */
-send_ctx_again:
+#if NOSTR_CHANNEL_MPMC_SLOTS
+send_ctx_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
+#endif
     while (
         /* avoid preprocessor inside macro args */
         (/* full? */ (
@@ -1634,13 +1702,13 @@ send_ctx_again:
      * slot_seq, so a ring filled to capacity read as empty and every
      * lock-free receive of its elements depended on the broken fallback. */
     {
-        MpmcResult pr = mpmc_push(chan, data, NULL);
+        MpmcResult pr;
+        int spins = 0;
+        while ((pr = mpmc_push(chan, data, NULL)) == MPMC_BUSY && spins++ < MPMC_TRY_SPINS)
+            NOSTR_CPU_RELAX();
         if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
-            if (pr == MPMC_BUSY) {
-                NUNLOCK(&chan->mutex);
-                sched_yield();
-                NLOCK(&chan->mutex);
-            }
+            if (pr == MPMC_BUSY)
+                mpmc_wait_busy(chan, &chan->cond_full, &chan->fiber_waiters_full);
             goto send_ctx_again;
         }
     }
@@ -1723,7 +1791,9 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     }
 
     /* no predicate waits: correctness-first */
-recv_ctx_again:
+#if NOSTR_CHANNEL_MPMC_SLOTS
+recv_ctx_again: /* BUSY/NONE retry (mpmc_push/mpmc_pop below) */
+#endif
     while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
@@ -1844,13 +1914,13 @@ recv_ctx_again:
     /* Same slot protocol as go_channel_receive (nostrc-75rv). */
     void *tmp2 = NULL;
     {
-        MpmcResult pr = mpmc_pop(chan, &tmp2, NULL);
+        MpmcResult pr;
+        int spins = 0;
+        while ((pr = mpmc_pop(chan, &tmp2, NULL)) == MPMC_BUSY && spins++ < MPMC_TRY_SPINS)
+            NOSTR_CPU_RELAX();
         if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
-            if (pr == MPMC_BUSY) {
-                NUNLOCK(&chan->mutex);
-                sched_yield();
-                NLOCK(&chan->mutex);
-            }
+            if (pr == MPMC_BUSY)
+                mpmc_wait_busy(chan, &chan->cond_empty, &chan->fiber_waiters_empty);
             goto recv_ctx_again;
         }
     }

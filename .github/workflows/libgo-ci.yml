@@ -14,7 +14,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        sanitizer: [asan_ubsan, tsan]
+        # tsan keeps the default TSAN configuration (single-lock ring);
+        # tsan_mpmc keeps the MPMC slot protocol every other build ships, so
+        # the lock-free channel paths get ThreadSanitizer coverage too
+        # (nostrc-75rv review F8).
+        sanitizer: [asan_ubsan, tsan, tsan_mpmc]
 
     env:
       CMAKE_BUILD_TYPE: Debug
@@ -64,6 +68,10 @@ jobs:
               cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
                 -DGO_ENABLE_TSAN=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
               ;;
+            tsan_mpmc)
+              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_C_STANDARD=11 -DCMAKE_C_EXTENSIONS=ON \
+                -DGO_ENABLE_TSAN=ON -DGO_TSAN_MPMC_SLOTS=ON -DGO_WARNINGS_AS_ERRORS=ON -DGOF_PORTABLE_CONTEXT=OFF
+              ;;
           esac
 
       - name: Build
@@ -74,8 +82,13 @@ jobs:
         working-directory: libgo
         run: |
           export ASAN_OPTIONS=detect_leaks=0
-          if [ "${{ matrix.sanitizer }}" = "tsan" ]; then
-            # Skip flaky tests under TSAN to keep CI green
+          if [ "${{ matrix.sanitizer }}" = "tsan_mpmc" ]; then
+            # Full suite: with MPMC slots the capacity-1 channels work, so the
+            # tests the single-lock cell must skip (nostrc-ecz3) run here.
+            ctest --test-dir build --output-on-failure -j2
+          elif [ "${{ matrix.sanitizer }}" = "tsan" ]; then
+            # Single-lock ring: capacity-1 channels never accept an element
+            # (nostrc-ecz3), so these hang rather than flake.
             ctest --test-dir build --output-on-failure -j2 -E "GoChannelTest|GoTickerTest|GoChannelStressTest|GoSelectTest|GoChannelCloseTest|GoSelectMultiTest"
           else
             if [ "$RUNNER_OS" = "macOS" ]; then

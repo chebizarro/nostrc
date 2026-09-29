@@ -128,15 +128,25 @@ endif()
 
 # Optionally derive channel occupancy from indices to avoid hot size updates
 option(GO_CHANNEL_DERIVE_SIZE "Compute channel occupancy from indices instead of maintaining size" OFF)
-option(GO_CHANNEL_ATOMIC_TRY "Use atomic lockless full/empty check in try paths" ON)
+# GO_CHANNEL_ATOMIC_TRY only affects the single-lock ring (GO_CHANNEL_MPMC_SLOTS=OFF):
+# with MPMC slots every try path is lock-free and follows the slot protocol, and
+# the option is ignored (nostrc-75rv review F7).
+option(GO_CHANNEL_ATOMIC_TRY "Lockless full/empty pre-check in try paths (single-lock ring only; ignored with GO_CHANNEL_MPMC_SLOTS=ON)" ON)
 option(GO_CHANNEL_MPMC_SLOTS "Enable MPMC lock-free per-slot sequence protocol for channels" ON)
+# By default a TSAN build falls back to the single-lock ring, so it never
+# exercises the MPMC slot protocol that every other build ships.  Turn this on
+# to keep the slots under TSAN (CI's tsan_mpmc cell; nostrc-75rv review F8).
+option(GO_TSAN_MPMC_SLOTS "Keep the MPMC slot protocol in GO_ENABLE_TSAN builds" OFF)
 
 # Under ThreadSanitizer, prefer fully locked try paths and disable MPMC slot protocol
-if (GO_ENABLE_TSAN)
+if (GO_ENABLE_TSAN AND NOT GO_TSAN_MPMC_SLOTS)
   # Avoid non-atomic shared size field under TSAN by deriving occupancy from indices
   set(GO_CHANNEL_DERIVE_SIZE ON CACHE BOOL "Compute channel occupancy from indices instead of maintaining size" FORCE)
   set(GO_CHANNEL_ATOMIC_TRY OFF CACHE BOOL "Use atomic lockless full/empty check in try paths" FORCE)
   set(GO_CHANNEL_MPMC_SLOTS OFF CACHE BOOL "Enable MPMC lock-free per-slot sequence protocol for channels" FORCE)
+elseif (GO_ENABLE_TSAN AND GO_TSAN_MPMC_SLOTS)
+  # Undo a FORCE left in the cache by an earlier TSAN configure without the option.
+  set(GO_CHANNEL_MPMC_SLOTS ON CACHE BOOL "Enable MPMC lock-free per-slot sequence protocol for channels" FORCE)
 endif()
 if(GO_CHANNEL_DERIVE_SIZE)
   target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_DERIVE_SIZE=1)
@@ -379,6 +389,8 @@ add_test(NAME GoContextStressTest COMMAND go_context_stress_test)
 add_test(NAME GoSelectClosedTest COMMAND go_select_closed_test)
 add_test(NAME GoSelectCancelTest COMMAND go_select_cancel_test)
 add_test(NAME GoChannelMpmcSlotTest COMMAND go_channel_mpmc_slot_test)
+# The stress case bounds itself at 20 s; never let a regression hang CI.
+set_tests_properties(GoChannelMpmcSlotTest PROPERTIES TIMEOUT 60)
 
 # Register utility tests
 add_test(NAME GoErrorTest COMMAND error_test)

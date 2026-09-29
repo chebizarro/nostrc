@@ -16,7 +16,17 @@
  * The white-box cases below put a slot into exactly the state a preempted
  * peer leaves it in (claimed, not yet published/released), so they are
  * deterministic.  They are skipped when the library is built without MPMC
- * slots.  The API-level cases run in both modes.
+ * slots.  The API-level cases run in both modes, sized for the single-lock
+ * ring's one-empty-slot discipline when slots are off.
+ *
+ * Capacity 1 (review F1): the slot protocol needs a physical ring of at least
+ * two slots.  With one, "ticket t published" and "slot free for ticket t+1"
+ * are the same sequence value, so a sender claimed the slot a receiver had
+ * claimed but not yet read: the element was lost, slot_seq went backwards and
+ * the channel wedged (try paths failed forever, a blocking receive spun at
+ * 100% CPU and ignored close).  Cases 6 and 7 cover it.  Case 6 is
+ * white-box (MPMC only); case 7 runs wherever a capacity-1 channel can hold
+ * an element, which the index-derived single-lock ring cannot (nostrc-ecz3).
  */
 #include <pthread.h>
 #include <stdatomic.h>
@@ -44,6 +54,23 @@ static void sleep_ms(int ms) {
 }
 
 static int mpmc_enabled(GoChannel *c) { return c->slot_seq != NULL; }
+/* Physical slots.  With MPMC slots this can exceed the logical capacity. */
+static size_t ring_slots(GoChannel *c) { return c->mask + 1; }
+
+/* How many elements a fresh channel of @capacity actually holds.  MPMC slots
+ * and the size-counted single-lock ring hold @capacity; the index-derived
+ * single-lock ring (DERIVE_SIZE, what TSAN builds use) keeps one slot empty
+ * and holds @capacity - 1 -- none at all for capacity 1 (nostrc-ecz3). */
+static unsigned channel_holds(size_t capacity) {
+    GoChannel *c = go_channel_create(capacity);
+    unsigned n = 0;
+    while (n <= capacity && go_channel_try_send(c, V(1 + n)) == 0)
+        n++;
+    void *v;
+    while (go_channel_try_receive(c, &v) == 0) {}
+    go_channel_unref(c);
+    return n;
+}
 
 /* Move the tickets past the capacity so masking bugs cannot hide. */
 static void advance_laps(GoChannel *c, unsigned laps) {
@@ -112,7 +139,7 @@ static void test_try_send_waits_for_release(void) {
     /* The receiver finishes. */
     void *taken = atomic_load(&c->buffer[idx]);
     atomic_store(&c->buffer[idx], NULL);
-    atomic_store_explicit(&c->slot_seq[idx], t + c->capacity, memory_order_release);
+    atomic_store_explicit(&c->slot_seq[idx], t + ring_slots(c), memory_order_release);
     CHECK(taken == V(10), "receiver's element");
 
     CHECK(go_channel_try_send(c, V(14)) == 0, "send after release");
@@ -166,13 +193,19 @@ static void test_blocking_receive_waits_for_publish(int with_context) {
 /* --- 4. every send/receive variant keeps FIFO and tickets across laps ------ */
 static void test_mixed_variants_fifo(void) {
     GoChannel *c = go_channel_create(4);
+    /* Sending more than the ring holds with a NULL context would block
+     * forever, so measure it (see channel_holds). */
+    const unsigned holds = channel_holds(4);
+    if (mpmc_enabled(c))
+        CHECK(holds == 4, "an MPMC channel must hold its full capacity");
+    CHECK(holds == 4 || holds == 3, "unexpected ring size");
     /* send_with_context used the masked single-lock increment in MPMC mode:
      * filling the ring to capacity made it read as empty. */
-    for (unsigned i = 0; i < 4; i++)
+    for (unsigned i = 0; i < holds; i++)
         CHECK(go_channel_send_with_context(c, V(1 + i), NULL) == 0, "send_with_context");
-    CHECK(go_channel_get_depth(c) == 4, "full ring must report depth 4");
+    CHECK(go_channel_get_depth(c) == holds, "a full ring must report its depth");
     CHECK(go_channel_try_send(c, V(5)) != 0, "full ring must refuse try_send");
-    for (unsigned i = 0; i < 4; i++) {
+    for (unsigned i = 0; i < holds; i++) {
         void *v = NULL;
         CHECK(go_channel_try_receive(c, &v) == 0 && v == V(1 + i), "FIFO after send_with_context");
     }
@@ -180,7 +213,7 @@ static void test_mixed_variants_fifo(void) {
 
     unsigned next_send = 100, next_recv = 100;
     for (unsigned round = 0; round < 40; round++) {
-        unsigned burst = 1 + round % 4;
+        unsigned burst = 1 + round % holds;
         for (unsigned i = 0; i < burst; i++) {
             void *v = V(next_send++);
             switch ((round + i) % 3) {
@@ -205,6 +238,222 @@ static void test_mixed_variants_fifo(void) {
     CHECK(go_channel_get_depth(c) == 0, "empty at end");
     go_channel_unref(c);
     printf("4: ok\n");
+}
+
+/* --- 6. capacity 1: a send must not overwrite a claimed, unread element ---- */
+typedef struct {
+    GoChannel *c;
+    int rc;
+    void *value;
+    atomic_int done;
+} Cap1Recv;
+
+static void *cap1_blocking_receiver(void *p) {
+    Cap1Recv *a = p;
+    a->rc = go_channel_receive(a->c, &a->value);
+    atomic_store(&a->done, 1);
+    return NULL;
+}
+
+static void test_capacity1_claimed_slot(int finish_with_blocking_receive) {
+    const char *name = finish_with_blocking_receive ? "6b" : "6a";
+    GoChannel *c = go_channel_create(1);
+    if (!mpmc_enabled(c)) { printf("%s: skipped (MPMC slots disabled)\n", name); go_channel_unref(c); return; }
+    CHECK(c->capacity == 1, "logical capacity stays 1");
+    advance_laps(c, 3);
+
+    CHECK(go_channel_try_send(c, V(10)) == 0, "send A");
+    CHECK(go_channel_try_send(c, V(11)) != 0, "capacity 1 holds one element");
+    /* A receiver preempted after claiming A: out advanced, A not yet read. */
+    size_t t = atomic_fetch_add_explicit(&c->out, 1, memory_order_acq_rel);
+    size_t idx = t & c->mask;
+
+    /* Logically the channel is empty again, so a send may proceed -- but it
+     * must land in a different slot, never on the element being received. */
+    CHECK(go_channel_try_send(c, V(99)) == 0, "send B while A is being received");
+    int clobbered = atomic_load(&c->buffer[idx]) != V(10);
+    /* 6a asserts the overwrite itself; 6b goes on to the blocking receive,
+     * which on the one-slot ring then spun forever. */
+    if (!finish_with_blocking_receive)
+        CHECK(!clobbered, "B overwrote the element being received");
+    CHECK(go_channel_try_send(c, V(12)) != 0, "capacity 1 still holds one element");
+
+    /* The receiver finishes taking A. */
+    void *taken = atomic_load(&c->buffer[idx]);
+    atomic_store(&c->buffer[idx], NULL);
+    atomic_store_explicit(&c->slot_seq[idx], t + ring_slots(c), memory_order_release);
+
+    void *v = NULL;
+    if (finish_with_blocking_receive) {
+        /* On the one-slot ring this receive spun forever at 100% CPU. */
+        Cap1Recv a = { .c = c, .value = V(0xbad) };
+        pthread_t th;
+        CHECK(pthread_create(&th, NULL, cap1_blocking_receiver, &a) == 0, "thread");
+        for (int waited = 0; !atomic_load(&a.done) && waited < 2000; waited += 5)
+            sleep_ms(5);
+        CHECK(atomic_load(&a.done), "blocking receive wedged on a capacity-1 channel");
+        pthread_join(th, NULL);
+        CHECK(a.rc == 0, "blocking receive");
+        v = a.value;
+    } else {
+        CHECK(go_channel_try_receive(c, &v) == 0, "try_receive after the in-flight receive");
+    }
+    CHECK(!clobbered, "B overwrote the element being received");
+    CHECK(taken == V(10), "the receiver must get A");
+    CHECK(v == V(99), "B must be delivered intact");
+    CHECK(go_channel_get_depth(c) == 0, "ring must be empty");
+
+    /* Not wedged: the channel keeps working in both directions. */
+    for (unsigned i = 0; i < 8; i++) {
+        CHECK(go_channel_try_send(c, V(200 + i)) == 0, "send after recovery");
+        CHECK(go_channel_try_receive(c, &v) == 0 && v == V(200 + i), "receive after recovery");
+    }
+    CHECK(ring_slots(c) >= 2, "the slot protocol needs at least two physical slots");
+    go_channel_unref(c);
+    printf("%s: ok\n", name);
+}
+
+/* --- 7. capacity 1 under threads: the ticker / wake-channel shapes ------- */
+#define CAP1_RUN_MS 1500
+
+typedef struct {
+    GoChannel *c;
+    atomic_int stop;
+    atomic_ulong sent;
+    atomic_ulong received;
+    atomic_ulong nulls;
+    atomic_int consumer_done;
+} Cap1Stress;
+
+static void *cap1_try_producer(void *p) {
+    Cap1Stress *s = p;
+    unsigned long n = 0;
+    while (!atomic_load(&s->stop)) {
+        if (go_channel_try_send(s->c, V(++n)) == 0)
+            atomic_fetch_add(&s->sent, 1);
+        else
+            n--; /* coalesced: a capacity-1 wake channel already holds a token */
+    }
+    return NULL;
+}
+
+static void *cap1_blocking_consumer(void *p) {
+    Cap1Stress *s = p;
+    void *v = NULL;
+    while (go_channel_receive(s->c, &v) == 0) { /* returns -1 once closed and drained */
+        if (!v) atomic_fetch_add(&s->nulls, 1);
+        atomic_fetch_add(&s->received, 1);
+    }
+    atomic_store(&s->consumer_done, 1);
+    return NULL;
+}
+
+static void *cap1_try_consumer(void *p) {
+    Cap1Stress *s = p;
+    void *v = NULL;
+    while (!atomic_load(&s->stop)) {
+        if (go_channel_try_receive(s->c, &v) == 0) {
+            if (!v) atomic_fetch_add(&s->nulls, 1);
+            atomic_fetch_add(&s->received, 1);
+        }
+    }
+    return NULL;
+}
+
+/* 1 try_send producer x 1 blocking go_channel_receive consumer, then close:
+ * every sent token arrives and the consumer returns promptly on close. */
+static void test_capacity1_try_send_blocking_receive(void) {
+    if (channel_holds(1) != 1) { printf("7a: skipped (capacity-1 ring holds nothing; nostrc-ecz3)\n"); return; }
+
+    Cap1Stress s = { .c = go_channel_create(1) };
+    pthread_t prod, cons;
+    CHECK(pthread_create(&cons, NULL, cap1_blocking_consumer, &s) == 0, "thread");
+    CHECK(pthread_create(&prod, NULL, cap1_try_producer, &s) == 0, "thread");
+    sleep_ms(CAP1_RUN_MS);
+    atomic_store(&s.stop, 1);
+    pthread_join(prod, NULL);
+    go_channel_close(s.c);
+    for (int waited = 0; !atomic_load(&s.consumer_done) && waited < 3000; waited += 5)
+        sleep_ms(5);
+    printf("7a: sent %lu, received %lu, NULL %lu\n", atomic_load(&s.sent),
+           atomic_load(&s.received), atomic_load(&s.nulls));
+    CHECK(atomic_load(&s.consumer_done), "blocking receiver did not return after close (wedged)");
+    pthread_join(cons, NULL);
+    CHECK(atomic_load(&s.nulls) == 0, "a receive returned a NULL token");
+    CHECK(atomic_load(&s.received) == atomic_load(&s.sent), "tokens were lost");
+    CHECK(atomic_load(&s.sent) > 1000, "too few transfers to exercise the race");
+    go_channel_unref(s.c);
+    printf("7a: ok\n");
+}
+
+/* 2 try_send producers x 2 try_receive consumers, then drain: nothing lost,
+ * and the channel still works afterwards (it used to wedge in <2000 ops). */
+static void test_capacity1_try_try(void) {
+    if (channel_holds(1) != 1) { printf("7b: skipped (capacity-1 ring holds nothing; nostrc-ecz3)\n"); return; }
+
+    Cap1Stress s = { .c = go_channel_create(1) };
+    pthread_t prod[2], cons[2];
+    for (int i = 0; i < 2; i++) {
+        CHECK(pthread_create(&cons[i], NULL, cap1_try_consumer, &s) == 0, "thread");
+        CHECK(pthread_create(&prod[i], NULL, cap1_try_producer, &s) == 0, "thread");
+    }
+    sleep_ms(CAP1_RUN_MS);
+    atomic_store(&s.stop, 1);
+    for (int i = 0; i < 2; i++) {
+        pthread_join(prod[i], NULL);
+        pthread_join(cons[i], NULL);
+    }
+    void *v = NULL;
+    while (go_channel_try_receive(s.c, &v) == 0)
+        atomic_fetch_add(&s.received, 1);
+    printf("7b: sent %lu, received %lu, NULL %lu, depth %zu\n", atomic_load(&s.sent),
+           atomic_load(&s.received), atomic_load(&s.nulls), go_channel_get_depth(s.c));
+    CHECK(atomic_load(&s.nulls) == 0, "a receive returned a NULL token");
+    CHECK(atomic_load(&s.received) == atomic_load(&s.sent), "tokens were lost");
+    CHECK(go_channel_get_depth(s.c) == 0, "drained ring must be empty");
+    CHECK(go_channel_try_send(s.c, V(1)) == 0, "channel wedged: try_send fails on an empty ring");
+    CHECK(go_channel_try_receive(s.c, &v) == 0 && v == V(1), "channel wedged: try_receive");
+    go_channel_unref(s.c);
+    printf("7b: ok\n");
+}
+
+/* --- 8. select must not report "closed" over a claimed, unpublished element */
+static void test_select_close_with_inflight_send(void) {
+    GoChannel *c = go_channel_create(4);
+    if (!mpmc_enabled(c)) { printf("8: skipped (MPMC slots disabled)\n"); go_channel_unref(c); return; }
+    advance_laps(c, 2);
+    /* A sender claimed a slot before the close and is still publishing. */
+    size_t t = claim_send_ticket(c);
+    go_channel_close(c);
+
+    void *v = V(0xbad);
+    GoSelectCase cases[1] = { { GO_SELECT_RECEIVE, c, NULL, &v } };
+    GoSelectResult r = go_select_timeout(cases, 1, 30);
+    CHECK(r.selected_case == -1, "select reported closed while an element was being published");
+
+    publish_send_ticket(c, t, V(55));
+    r = go_select_timeout(cases, 1, 1000);
+    CHECK(r.selected_case == 0 && r.ok && v == V(55), "select must deliver the in-flight element");
+    r = go_select_timeout(cases, 1, 1000);
+    CHECK(r.selected_case == 0 && !r.ok, "then report closed");
+    go_channel_unref(c);
+    printf("8: ok\n");
+}
+
+/* --- 9. capacity 0 means 1 (no unbuffered channels): no out-of-bounds ring - */
+static void test_capacity0(void) {
+    GoChannel *c = go_channel_create(0);
+    CHECK(c && c->capacity == 1, "capacity 0 must become capacity 1");
+    void *v = NULL;
+    /* Used to index a zero-byte slot_seq here (ASAN heap-buffer-overflow). */
+    CHECK(go_channel_try_receive(c, &v) != 0, "empty channel");
+    if (channel_holds(1) == 1) {
+        CHECK(go_channel_try_send(c, V(7)) == 0, "one element fits");
+        CHECK(go_channel_try_send(c, V(8)) != 0, "only one element fits");
+        CHECK(go_channel_try_receive(c, &v) == 0 && v == V(7), "receive it back");
+    }
+    go_channel_unref(c);
+    printf("9: ok\n");
 }
 
 /* --- 5. bounded mixed-mode stress: nothing lost, duplicated or NULL -------- */
@@ -302,6 +551,12 @@ int main(void) {
     test_blocking_receive_waits_for_publish(1);
     test_mixed_variants_fifo();
     test_mixed_stress();
+    test_capacity1_claimed_slot(0);
+    test_capacity1_claimed_slot(1);
+    test_capacity1_try_send_blocking_receive();
+    test_capacity1_try_try();
+    test_select_close_with_inflight_send();
+    test_capacity0();
     printf("go_channel_mpmc_slot_test: OK\n");
     return 0;
 }

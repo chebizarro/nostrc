@@ -35,7 +35,9 @@ typedef struct GoChannel {
     size_t capacity;
     // Optional per-slot sequence numbers for MPMC lock-free try paths
     _Atomic size_t *slot_seq;
-    // Mask for fast wrap (capacity is enforced to power-of-two)
+    // Physical ring slots - 1 (a power of two).  `capacity` is the logical
+    // bound on buffered elements; with MPMC slots the ring has at least two
+    // slots, so it can be larger than `capacity` (e.g. capacity 1, ring 2).
     size_t mask;
 
     // Separate hot fields across cache lines to reduce false sharing.
@@ -71,6 +73,9 @@ _Static_assert((offsetof(GoChannel, size) % NOSTR_CACHELINE) == 0,  "GoChannel.s
 _Static_assert((offsetof(GoChannel, mutex) % NOSTR_CACHELINE) == 0, "GoChannel.mutex not cacheline-aligned");
 #endif
 
+/* Creates a buffered channel holding up to @capacity elements (rounded up to
+ * a power of two by default, NOSTR_CHANNEL_ENFORCE_POW2_CAP).  There are no
+ * unbuffered channels: 0 is treated as 1. */
 GoChannel *go_channel_create(size_t capacity);
 GoChannel *go_channel_ref(GoChannel *chan);
 void go_channel_unref(GoChannel *chan);

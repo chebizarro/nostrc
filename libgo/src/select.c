@@ -247,8 +247,13 @@ static TryResult try_cases_once(GoSelectCase *cases, size_t num_cases) {
                 r.ok = 1;
                 return r;
             }
-            /* Closed channel is also "ready" (returns immediately) */
-            if (go_channel_is_closed(c->chan)) {
+            /* Closed and drained is also "ready" (returns immediately).
+             * Closed but not drained means a sender claimed a slot before
+             * the close and is still publishing it: report nothing yet --
+             * its post-publish signal wakes this select -- rather than
+             * "closed", which would strand the element, as
+             * go_channel_receive() does (nostrc-75rv review F6). */
+            if (go_channel_is_closed(c->chan) && go_channel_get_depth(c->chan) == 0) {
                 if (c->recv_buf) *c->recv_buf = NULL;
                 r.selected = (int)idx;
                 r.ok = 0; /* closed */
