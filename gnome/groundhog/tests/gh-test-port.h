@@ -8,7 +8,10 @@
  * Loopback port 1 lies below every ephemeral range (macOS 49152-65535, Linux
  * 32768-60999 by default), so the kernel never hands it out for a bind to
  * port 0 or an outgoing connection, and nothing in this suite binds it. A
- * host with a listener there fails the test by name, not as a flake.
+ * host with a listener there fails the test by name, not as a flake, and so
+ * does one whose firewall drops (rather than refuses) loopback traffic to
+ * it: the probe gives up after GH_TEST_REFUSED_PORT_PROBE_SECONDS instead
+ * of waiting out the kernel's SYN retries past the ctest timeout.
  *
  * GhTestHeldPort: the port of a server that is down now and comes up later
  * on the same URL. A loopback listener, held for the whole test, that closes
@@ -26,7 +29,10 @@
 
 #include <gio/gio.h>
 
+#ifndef GH_TEST_REFUSED_PORT /* overridable only to exercise the probe */
 #define GH_TEST_REFUSED_PORT 1
+#endif
+#define GH_TEST_REFUSED_PORT_PROBE_SECONDS 5
 
 static G_GNUC_UNUSED guint16
 gh_test_refused_port(void)
@@ -37,12 +43,17 @@ gh_test_refused_port(void)
     g_autoptr(GSocket) socket = g_socket_new(G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_STREAM,
                                              G_SOCKET_PROTOCOL_DEFAULT, &error);
     g_assert_no_error(error);
+    g_socket_set_timeout(socket, GH_TEST_REFUSED_PORT_PROBE_SECONDS);
     g_autoptr(GInetAddress) loopback = g_inet_address_new_loopback(G_SOCKET_FAMILY_IPV4);
     g_autoptr(GSocketAddress) address = g_inet_socket_address_new(loopback,
                                                                   GH_TEST_REFUSED_PORT);
     if (g_socket_connect(socket, address, NULL, &error))
       g_error("something listens on 127.0.0.1:%u; the tests need that port closed",
               GH_TEST_REFUSED_PORT);
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT))
+      g_error("a dial to 127.0.0.1:%u got no answer within %u s (a firewall dropping "
+              "loopback traffic?); the tests need it refused at once", GH_TEST_REFUSED_PORT,
+              GH_TEST_REFUSED_PORT_PROBE_SECONDS);
     if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_REFUSED))
       g_error("a dial to 127.0.0.1:%u was not refused: %s", GH_TEST_REFUSED_PORT,
               error->message);
