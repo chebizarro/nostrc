@@ -2969,6 +2969,289 @@ TEST(test_update_path_leaf_validation)
     three_member_fixture_clear(&f);
 }
 
+/* ── Leaves added by the Commit are not UpdatePath recipients (nostrc-5q55) ──
+ *
+ * RFC 9420 §12.4.2: the committer encrypts each path secret to the copath
+ * resolution *excluding the leaves this Commit adds* (they get the joiner
+ * secret through the Welcome), and a receiver picks its HPKECiphertext by its
+ * index in that same reduced resolution. */
+
+typedef struct {
+    MlsGroup             g;
+    MlsKeyPackage        kp;
+    MlsKeyPackagePrivate priv;
+} MemberForTest;
+
+static void
+member_init_for_test(MemberForTest *m, uint8_t tag)
+{
+    uint8_t id[32];
+    memset(m, 0, sizeof(*m));
+    memset(id, tag, sizeof(id));
+    assert(mls_key_package_create(&m->kp, &m->priv, id, sizeof(id), NULL, 0) == 0);
+}
+
+static void
+member_clear_for_test(MemberForTest *m)
+{
+    mls_group_free(&m->g);
+    mls_key_package_clear(&m->kp);
+    mls_key_package_private_clear(&m->priv);
+}
+
+/* `committer` adds `joiner`; the other listed members follow the Commit and
+ * the joiner joins from the Welcome.  Returns the Commit if `commit_out`. */
+static void
+add_and_welcome_for_test(MlsGroup *const *members, size_t n, MlsGroup *committer,
+                         MemberForTest *joiner, const char *what,
+                         uint8_t **commit_out, size_t *commit_len_out)
+{
+    MlsAddResult add;
+    assert(mls_group_add_member(committer, &joiner->kp, &add) == 0);
+    deliver_commit_for_test(members, n, committer, add.commit_data, add.commit_len, what);
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &joiner->kp,
+                               &joiner->priv, NULL, 0, &joiner->g) == 0);
+    if (commit_out) {
+        *commit_out = add.commit_data;
+        *commit_len_out = add.commit_len;
+        add.commit_data = NULL;
+    }
+    mls_add_result_clear(&add);
+}
+
+/* The receiver-side count an OpenMLS/MDK peer enforces: over the tree after
+ * the Commit's proposals, UpdatePathNode i carries exactly one HPKECiphertext
+ * per node of its copath resolution minus the added leaves.  Returns how many
+ * added leaves were dropped from some resolution. */
+static size_t
+assert_path_ciphertexts_exclude_added_for_test(const MlsRatchetTree *after_proposals,
+                                               uint32_t committer,
+                                               const MlsUpdatePath *path,
+                                               const uint32_t *added, size_t n_added)
+{
+    uint32_t fdp[32], fdp_len = 0;
+    size_t dropped = 0;
+    uint32_t n_leaves = after_proposals->n_leaves;
+    assert(mls_tree_filtered_direct_path(after_proposals, committer, fdp, 32,
+                                         &fdp_len) == 0);
+    assert(path->node_count == fdp_len);
+    for (uint32_t i = 0; i < fdp_len; i++) {
+        uint32_t child = mls_tree_leaf_to_node(committer);
+        while (mls_tree_parent(child, n_leaves) != fdp[i])
+            child = mls_tree_parent(child, n_leaves);
+        uint32_t res[64], res_len = 0, kept = 0;
+        assert(mls_tree_resolution(after_proposals, mls_tree_sibling(child, n_leaves),
+                                   res, 64, &res_len) == 0);
+        for (uint32_t j = 0; j < res_len; j++) {
+            bool is_added = false;
+            for (size_t a = 0; a < n_added; a++)
+                is_added |= res[j] == mls_tree_leaf_to_node(added[a]);
+            if (is_added) dropped++;
+            else kept++;
+        }
+        if (path->nodes[i].secret_count != kept)
+            fprintf(stderr, "\n    UpdatePathNode %u (node %u): %u ciphertexts, "
+                            "resolution minus added leaves has %u",
+                    i, fdp[i], path->nodes[i].secret_count, kept);
+        assert(path->nodes[i].secret_count == kept);
+    }
+    return dropped;
+}
+
+/* nostrc-5q55 (the bead's repro): Alice adds Dave (leaf 3), removes Charlie
+ * (leaf 2), then adds Eve, who refills leaf 2.  Node 5 is blank, so the copath
+ * resolution of the root for Alice is [Eve, Dave]: Dave must decrypt entry 0,
+ * not Eve's (was rc -21). */
+TEST(test_update_path_excludes_leaves_added_by_commit)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MemberForTest dave, eve;
+    memset(&dave, 0, sizeof(dave));
+    dave.kp = f.dave_kp;   /* borrowed; cleared by the fixture */
+    dave.priv = f.dave_priv;
+    member_init_for_test(&eve, 0xEE);
+
+    MlsGroup *three[] = {&f.alice, &f.bob, &f.charlie};
+    add_and_welcome_for_test(three, 3, &f.alice, &dave, "Alice adds Dave", NULL, NULL);
+    assert(dave.g.own_leaf_index == 3);
+    MlsGroup *four[] = {&f.alice, &f.bob, &f.charlie, &dave.g};
+    assert_converged_for_test(four, 4);
+
+    MlsCommitResult rm;
+    assert(mls_group_remove_member(&f.alice, 2, &rm) == 0);
+    MlsGroup *after_rm[] = {&f.alice, &f.bob, &dave.g};
+    deliver_commit_for_test(after_rm, 3, &f.alice, rm.commit_data, rm.commit_len,
+                            "Alice removes Charlie");
+    assert_converged_for_test(after_rm, 3);
+    mls_commit_result_clear(&rm);
+
+    /* The tree the Add produces, as every receiver builds it. */
+    MlsRatchetTree after_add;
+    assert(tree_clone_for_test(&f.bob.tree, &after_add) == 0);
+    assert(add_leaf_for_test(&after_add, &eve.kp) == 0);
+    uint32_t res[8], res_len = 0;
+    assert(mls_tree_resolution(&after_add, 5, res, 8, &res_len) == 0);
+    assert(res_len == 2 && res[0] == mls_tree_leaf_to_node(2) &&
+           res[1] == mls_tree_leaf_to_node(3));
+
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    add_and_welcome_for_test(after_rm, 3, &f.alice, &eve, "Alice adds Eve",
+                             &commit, &commit_len);
+    assert(eve.g.own_leaf_index == 2);
+    MlsGroup *all[] = {&f.alice, &f.bob, &dave.g, &eve.g};
+    assert_converged_for_test(all, 4);
+
+    MlsCommit produced;
+    parse_commit_for_test(commit, commit_len, &produced);
+    const uint32_t added[] = {2};
+    assert(assert_path_ciphertexts_exclude_added_for_test(&after_add, 0,
+               &produced.path, added, 1) == 1);
+    assert(produced.path.nodes[produced.path.node_count - 1].secret_count == 1);
+
+    /* The group keeps working: everyone commits once more and follows. */
+    for (size_t c = 0; c < 4; c++) {
+        MlsCommitResult r;
+        assert(mls_group_self_update(all[c], &r) == 0);
+        deliver_commit_for_test(all, 4, all[c], r.commit_data, r.commit_len,
+                                "self-update after Add(Eve)");
+        assert_converged_for_test(all, 4);
+        mls_commit_result_clear(&r);
+    }
+
+    mls_commit_clear(&produced);
+    free(commit);
+    mls_tree_free(&after_add);
+    mls_group_free(&dave.g);
+    member_clear_for_test(&eve);
+    three_member_fixture_clear(&f);
+}
+
+/* Receivers enforce the ciphertext count: an UpdatePath that also encrypts to
+ * the leaf the Commit adds (what libmarmot <= 0.3.7 produced) is rejected by
+ * every member, without state change -- not just by the members whose index
+ * it shifts.  Alice (after removing Charlie) adds Eve; Bob and Dave receive. */
+TEST(test_update_path_encrypting_to_added_leaf_rejected)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MemberForTest dave, eve;
+    memset(&dave, 0, sizeof(dave));
+    dave.kp = f.dave_kp;
+    dave.priv = f.dave_priv;
+    member_init_for_test(&eve, 0xEE);
+    MlsGroup *three[] = {&f.alice, &f.bob, &f.charlie};
+    add_and_welcome_for_test(three, 3, &f.alice, &dave, "Alice adds Dave", NULL, NULL);
+    MlsCommitResult rm;
+    assert(mls_group_remove_member(&f.alice, 2, &rm) == 0);
+    MlsGroup *after_rm[] = {&f.alice, &f.bob, &dave.g};
+    deliver_commit_for_test(after_rm, 3, &f.alice, rm.commit_data, rm.commit_len,
+                            "Alice removes Charlie");
+    mls_commit_result_clear(&rm);
+
+    MlsTlsBuf v;
+    assert(mls_tls_buf_init(&v, 512) == 0);
+    assert(inline_add_for_test(&v, &eve.kp) == 0);
+    MlsRatchetTree next, provisional;
+    assert(tree_clone_for_test(&f.alice.tree, &next) == 0);
+    assert(add_leaf_for_test(&next, &eve.kp) == 0);
+    MlsUpdatePath path;
+    uint8_t commit_secret[MLS_HASH_LEN];
+    /* Encrypts to the full resolution, Eve included. */
+    build_update_path_for_test(&f.alice, &next, f.alice.extensions_data,
+                               f.alice.extensions_len, PATH_LEAF_VALID, NULL,
+                               &path, &provisional, commit_secret);
+    assert(path.node_count == 2 && path.nodes[1].secret_count == 2);
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    ExpectedEpochForTest expected;
+    assert(build_commit_for_test(&f.alice, v.data, v.len, &path, commit_secret,
+                                 &provisional, f.alice.extensions_data,
+                                 f.alice.extensions_len, NULL,
+                                 &commit, &commit_len, &expected) == 0);
+    int accepted = 0;
+    MlsGroup *receivers[] = {&f.bob, &dave.g};
+    for (size_t i = 0; i < 2; i++) {
+        GroupSnapshotForTest parent;
+        snapshot_group_for_test(receivers[i], &parent);
+        char what[80];
+        snprintf(what, sizeof(what), "leaf %u: UpdatePath encrypting to the added leaf",
+                 receivers[i]->own_leaf_index);
+        int rc = mls_group_process_commit(receivers[i], commit, commit_len, 0);
+        if (rc == 0) {
+            assert_group_reached_for_test(receivers[i], &expected);
+            fprintf(stderr, "\n    %s ACCEPTED", what);
+            accepted++;
+            mls_group_free(receivers[i]);
+            assert(mls_group_deserialize(parent.blob, parent.blob_len, receivers[i]) == 0);
+        } else {
+            if (rc != MARMOT_ERR_MLS_PROCESS_MESSAGE)
+                fprintf(stderr, "\n    %s: rc=%d", what, rc);
+            assert(rc == MARMOT_ERR_MLS_PROCESS_MESSAGE);
+            assert_group_matches_snapshot_for_test(receivers[i], &parent);
+        }
+        free(parent.blob);
+    }
+    assert(accepted == 0);
+
+    free(commit);
+    mls_update_path_clear(&path);
+    mls_tree_free(&provisional);
+    mls_tree_free(&next);
+    mls_tls_buf_free(&v);
+    mls_group_free(&dave.g);
+    member_clear_for_test(&eve);
+    three_member_fixture_clear(&f);
+}
+
+/* The committer's tree after an Add matches the receivers': the new leaf
+ * joins the unmerged_leaves of every non-blank parent on its direct path,
+ * including ones off the committer's path (RFC 9420 §12.1.1).  Five members
+ * (8-leaf tree); Bob removes Alice, re-keying node 3 above her blank leaf;
+ * Eve (leaf 4) adds Frank into leaf 0, whose path crosses node 3. */
+TEST(test_add_unmerged_leaf_off_committer_path)
+{
+    MemberForTest m[6];
+    member_init_for_test(&m[0], 0xA0);
+    for (int i = 1; i < 6; i++) member_init_for_test(&m[i], (uint8_t)(0xB0 + i));
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+    assert(mls_group_create(&m[0].g, GROUP_ID, sizeof(GROUP_ID), ALICE_ID, 32,
+                            sk, NULL, 0) == 0);
+    MlsGroup *g[6];
+    for (int i = 0; i < 6; i++) g[i] = &m[i].g;
+    for (size_t n = 1; n < 5; n++)
+        add_and_welcome_for_test(g, n, g[0], &m[n], "grow", NULL, NULL);
+    assert(g[0]->tree.n_leaves == 8 && g[4]->own_leaf_index == 4);
+    assert_converged_for_test(g, 5);
+
+    MlsCommitResult rm;
+    assert(mls_group_remove_member(g[1], 0, &rm) == 0);
+    deliver_commit_for_test(g + 1, 4, g[1], rm.commit_data, rm.commit_len,
+                            "Bob removes Alice");
+    mls_commit_result_clear(&rm);
+    assert(g[1]->tree.nodes[3].type == MLS_NODE_PARENT);
+
+    add_and_welcome_for_test(g + 1, 4, g[4], &m[5], "Eve adds Frank", NULL, NULL);
+    assert(g[5]->own_leaf_index == 0);
+    const MlsParentNode *n3 = &g[4]->tree.nodes[3].parent;
+    assert(g[4]->tree.nodes[3].type == MLS_NODE_PARENT &&
+           n3->unmerged_leaf_count == 1 && n3->unmerged_leaves[0] == 0);
+    assert_converged_for_test(g + 1, 5);
+
+    for (size_t c = 1; c < 6; c++) {
+        MlsCommitResult r;
+        assert(mls_group_self_update(g[c], &r) == 0);
+        deliver_commit_for_test(g + 1, 5, g[c], r.commit_data, r.commit_len,
+                                "self-update after Add(Frank)");
+        assert_converged_for_test(g + 1, 5);
+        mls_commit_result_clear(&r);
+    }
+    sodium_memzero(sk, sizeof(sk));
+    for (int i = 0; i < 6; i++) member_clear_for_test(&m[i]);
+}
+
 TEST(test_group_creator_leaf_signature_bound_to_group)
 {
     MlsGroup group;
@@ -3540,6 +3823,9 @@ int main(void)
     RUN(test_remove_filters_root_from_committer_path);
     RUN(test_committer_keeps_own_path_keys);
     RUN(test_commit_producers_fail_closed);
+    RUN(test_update_path_excludes_leaves_added_by_commit);
+    RUN(test_update_path_encrypting_to_added_leaf_rejected);
+    RUN(test_add_unmerged_leaf_off_committer_path);
     RUN(test_group_creator_leaf_signature_bound_to_group);
     RUN(test_update_by_ref_leaf_validation);
     RUN(test_update_path_leaf_validation);

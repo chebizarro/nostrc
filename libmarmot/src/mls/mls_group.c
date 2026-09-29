@@ -94,6 +94,61 @@ child_below_path_node(uint32_t sender_leaf, uint32_t n_leaves,
 }
 
 /**
+ * RFC 9420 §12.1.1: a leaf added at `leaf_node_idx` becomes an unmerged leaf
+ * of every non-blank parent on its direct path.  Shared by the Add producer
+ * and the Commit processor so both build the same tree.
+ */
+static int
+tree_add_unmerged_leaf(MlsRatchetTree *tree, uint32_t leaf_node_idx)
+{
+    uint32_t dp[64];
+    uint32_t dp_len = 0;
+    if (mls_tree_direct_path(leaf_node_idx, tree->n_leaves, dp, 64, &dp_len) != 0)
+        return -1;
+    uint32_t leaf = mls_tree_node_to_leaf(leaf_node_idx);
+    for (uint32_t j = 0; j < dp_len; j++) {
+        MlsNode *parent = &tree->nodes[dp[j]];
+        if (parent->type != MLS_NODE_PARENT) continue;
+        uint32_t *leaves = realloc(parent->parent.unmerged_leaves,
+                                   (parent->parent.unmerged_leaf_count + 1) *
+                                       sizeof(uint32_t));
+        if (!leaves) return -1;
+        parent->parent.unmerged_leaves = leaves;
+        parent->parent.unmerged_leaves[parent->parent.unmerged_leaf_count++] = leaf;
+    }
+    return 0;
+}
+
+/**
+ * Resolution of `node_idx` without the leaves in `excluded` (RFC 9420
+ * §12.4.2: UpdatePath secrets are not encrypted to leaves added by the same
+ * Commit, and receivers index the HPKECiphertexts over this reduced list).
+ * Committer, receiver and the ciphertext-count check all use this one
+ * definition so their indices cannot disagree.
+ */
+static int
+resolution_excluding(const MlsRatchetTree *tree, uint32_t node_idx,
+                     const uint32_t *excluded, size_t excluded_count,
+                     uint32_t *out, uint32_t max_len, uint32_t *out_len)
+{
+    if (excluded_count > 0 && !excluded) return -1;
+    if (mls_tree_resolution(tree, node_idx, out, max_len, out_len) != 0)
+        return -1;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < *out_len; i++) {
+        bool drop = false;
+        if (mls_tree_is_leaf(out[i])) {
+            uint32_t leaf = mls_tree_node_to_leaf(out[i]);
+            for (size_t j = 0; j < excluded_count && !drop; j++)
+                drop = excluded[j] == leaf;
+        }
+        if (!drop) out[kept++] = out[i];
+    }
+    *out_len = kept;
+    return 0;
+}
+
+/**
  * Derive epoch secrets and re-initialize the secret tree for the current
  * group state. Updates group->epoch_secrets and group->secret_tree.
  */
@@ -141,12 +196,15 @@ group_derive_epoch(MlsGroup *group,
 /**
  * Generate an UpdatePath for the committer. Produces:
  *   - New leaf node with fresh encryption key
- *   - Path secrets encrypted for each copath resolution member
+ *   - Path secrets encrypted for each copath resolution member, except the
+ *     `added_leaves` this Commit adds (RFC 9420 §12.4.2; they learn the
+ *     epoch from the Welcome)
  *   - The path_secret at the root (used to derive commit_secret)
  */
 static int
 generate_update_path(MlsGroup *group,
                      const uint8_t *credential_identity, size_t cred_len,
+                     const uint32_t *added_leaves, size_t added_leaf_count,
                      MlsUpdatePath *path_out,
                      uint8_t root_path_secret[MLS_HASH_LEN])
 {
@@ -336,10 +394,12 @@ generate_update_path(MlsGroup *group,
             goto fail;
         uint32_t sibling = mls_tree_sibling(child_below, n_leaves);
 
-        /* Get resolution of the sibling (nodes we need to encrypt to) */
+        /* Resolution of the sibling minus the leaves this Commit adds: the
+         * nodes we encrypt to, in the order receivers index them. */
         uint32_t resolution[256];
         uint32_t res_len = 0;
-        if (mls_tree_resolution(&group->tree, sibling, resolution, 256, &res_len) != 0)
+        if (resolution_excluding(&group->tree, sibling, added_leaves,
+                                 added_leaf_count, resolution, 256, &res_len) != 0)
             goto fail;
 
         /* Encrypt path_secret to each resolution member's encryption key */
@@ -411,29 +471,12 @@ decrypt_path_secret(const MlsGroup *group,
                     const uint8_t own_enc_pk[MLS_KEM_PK_LEN],
                     uint8_t out_path_secret[MLS_HASH_LEN])
 {
-    /* Get resolution of the copath node to find our position */
+    /* Our position in the copath resolution minus the added leaves */
     uint32_t resolution[256];
     uint32_t res_len = 0;
-    if (mls_tree_resolution(&group->tree, copath_node_idx, resolution, 256, &res_len) != 0)
+    if (resolution_excluding(&group->tree, copath_node_idx, excluded_leaves,
+                             excluded_leaf_count, resolution, 256, &res_len) != 0)
         return -1;
-    if (excluded_leaf_count > 0 && excluded_leaves) {
-        uint32_t kept = 0;
-        for (uint32_t i = 0; i < res_len; i++) {
-            bool excluded = false;
-            if (mls_tree_is_leaf(resolution[i])) {
-                uint32_t leaf = mls_tree_node_to_leaf(resolution[i]);
-                for (size_t j = 0; j < excluded_leaf_count; j++) {
-                    if (excluded_leaves[j] == leaf) {
-                        excluded = true;
-                        break;
-                    }
-                }
-            }
-            if (!excluded)
-                resolution[kept++] = resolution[i];
-        }
-        res_len = kept;
-    }
 
     /* Find a resolution entry for which we have the private key. */
     uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
@@ -1204,6 +1247,15 @@ add_member_staged(MlsGroup *group,
         free(pre_gc);
         return MARMOT_ERR_INTERNAL;
     }
+    /* RFC 9420 §12.1.1, exactly as receivers apply the Add: the new leaf is
+     * unmerged at every non-blank parent on its direct path.  The UpdatePath
+     * below re-keys (and so clears) the ones on our own path; any others --
+     * above a blank leaf another member's path re-keyed -- keep it, and the
+     * tree hash covers them. */
+    if (tree_add_unmerged_leaf(&group->tree, new_leaf_node_idx) != 0) {
+        free(pre_gc);
+        return MARMOT_ERR_INTERNAL;
+    }
 
     /* Build the Add proposal */
     MlsProposal add_prop;
@@ -1234,7 +1286,8 @@ add_member_staged(MlsGroup *group,
     const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
-    if (generate_update_path(group, own_cred, own_cred_len,
+    const uint32_t added_leaf = mls_tree_node_to_leaf(new_leaf_node_idx);
+    if (generate_update_path(group, own_cred, own_cred_len, &added_leaf, 1,
                              &update_path, root_path_secret) != 0) {
         mls_proposal_clear(&add_prop);
         return MARMOT_ERR_INTERNAL;
@@ -1603,7 +1656,7 @@ remove_member_staged(MlsGroup *group,
     const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
-    if (generate_update_path(group, own_cred, own_cred_len,
+    if (generate_update_path(group, own_cred, own_cred_len, NULL, 0,
                              &update_path, root_path_secret) != 0) {
         free(pre_gc);
         return MARMOT_ERR_INTERNAL;
@@ -1753,7 +1806,7 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
     const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
-    if (generate_update_path(group, own_cred, own_cred_len,
+    if (generate_update_path(group, own_cred, own_cred_len, NULL, 0,
                              &update_path, root_path_secret) != 0) {
         free(pre_gc);
         return MARMOT_ERR_INTERNAL;
@@ -2911,29 +2964,11 @@ process_commit_impl(MlsGroup *group,
                 staged_rc = MARMOT_ERR_INTERNAL;
                 goto staged_fail;
             }
-            uint32_t new_leaf = mls_tree_node_to_leaf(new_leaf_idx);
-            uint32_t add_dp[64];
-            uint32_t add_dp_len = 0;
-            if (mls_tree_direct_path(new_leaf_idx, group->tree.n_leaves,
-                                     add_dp, 64, &add_dp_len) != 0) {
+            if (tree_add_unmerged_leaf(&group->tree, new_leaf_idx) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
                 staged_rc = MARMOT_ERR_INTERNAL;
                 goto staged_fail;
-            }
-            for (uint32_t j = 0; j < add_dp_len; j++) {
-                MlsNode *parent = &group->tree.nodes[add_dp[j]];
-                if (parent->type != MLS_NODE_PARENT) continue;
-                uint32_t *leaves = realloc(parent->parent.unmerged_leaves,
-                                           (parent->parent.unmerged_leaf_count + 1) * sizeof(uint32_t));
-                if (!leaves) {
-                    mls_commit_clear(&commit);
-                    sodium_memzero(psk_secret, sizeof(psk_secret));
-                    staged_rc = MARMOT_ERR_INTERNAL;
-                    goto staged_fail;
-                }
-                parent->parent.unmerged_leaves = leaves;
-                parent->parent.unmerged_leaves[parent->parent.unmerged_leaf_count++] = new_leaf;
             }
             break;
         }
@@ -3074,6 +3109,36 @@ process_commit_impl(MlsGroup *group,
             sodium_memzero(psk_secret, sizeof(psk_secret));
             staged_rc = MARMOT_ERR_INTERNAL;
             goto staged_fail;
+        }
+
+        /* One UpdatePathNode per filtered direct path node, each with exactly
+         * one HPKECiphertext per node of its copath resolution minus the
+         * leaves this Commit adds (RFC 9420 §7.6, §12.4.2).  Checked for every
+         * node, not only ours, so all members accept or reject a Commit alike:
+         * a path that also encrypts to a new member would otherwise fork the
+         * group between members whose index it shifts and those it does not. */
+        if (commit.path.node_count != fdp_len) {
+            mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
+        }
+        for (uint32_t i = 0; i < fdp_len; i++) {
+            uint32_t below = UINT32_MAX;
+            uint32_t res[256];
+            uint32_t res_len = 0;
+            if (child_below_path_node(sender_leaf, group->tree.n_leaves,
+                                      fdp[i], &below) != 0 ||
+                resolution_excluding(&group->tree,
+                                     mls_tree_sibling(below, group->tree.n_leaves),
+                                     added_leaves, added_leaf_count,
+                                     res, 256, &res_len) != 0 ||
+                commit.path.nodes[i].secret_count != res_len) {
+                mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
+                staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+                goto staged_fail;
+            }
         }
 
         /* Find which copath node we're under */
@@ -3222,15 +3287,6 @@ process_commit_impl(MlsGroup *group,
             }
         }
         memcpy(root_path_secret, current_secret, MLS_HASH_LEN);
-
-        if (commit.path.node_count != fdp_len) {
-            mls_commit_clear(&commit);
-            sodium_memzero(psk_secret, sizeof(psk_secret));
-            sodium_memzero(our_path_secret, sizeof(our_path_secret));
-            sodium_memzero(current_secret, sizeof(current_secret));
-            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
-            goto staged_fail;
-        }
 
         uint8_t final_tree_hash[MLS_HASH_LEN];
         int final_apply_rc = mls_treekem_apply_update_path(&group->tree,
