@@ -30,6 +30,7 @@
 #include "gh-new-group-dialog.h"
 #include "gh-shell.h"
 #include "gh-store-nip29.h"
+#include "gh-test-dialog.h"
 #include "gh-test-signer.h"
 #include "group-send-stub.h"
 #include "nip29-relay.h"
@@ -1238,7 +1239,7 @@ test_gui_join(void)
   g_signal_connect(dialog, "open-group", G_CALLBACK(on_open_group), &opened);
   g_signal_connect(dialog, "closed", G_CALLBACK(on_closed), &closed);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, dialog);
+  gh_test_spin_until(gh_test_dialog_shown, dialog);
   /* What joining means is on screen before anything is sent. */
   g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW,
                              "Not end-to-end encrypted"));
@@ -1286,7 +1287,7 @@ test_gui_join(void)
   /* Invite only: a code field, then in. */
   dialog = g_object_ref_sink(gh_group_join_dialog_new(f.service));
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, dialog);
+  gh_test_spin_until(gh_test_dialog_shown, dialog);
   g_autofree gchar *vip_ref = reference(&relay, "vip", NULL);
   gh_group_join_dialog_set_address(dialog, vip_ref);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
@@ -1302,7 +1303,7 @@ test_gui_join(void)
   /* Declined, with the relay's words; already a member when asked again. */
   dialog = g_object_ref_sink(gh_group_join_dialog_new(f.service));
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, dialog);
+  gh_test_spin_until(gh_test_dialog_shown, dialog);
   g_autofree gchar *nope_ref = reference(&relay, "nope", NULL);
   gh_group_join_dialog_set_address(dialog, nope_ref);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
@@ -1391,7 +1392,7 @@ test_gui_group_info(void)
   /* The admin (no role policy: the relay decides). */
   GhGroupInfoDialog *dialog = g_object_ref_sink(gh_group_info_dialog_new(admin, &config));
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, dialog);
+  gh_test_spin_until(gh_test_dialog_shown, dialog);
   g_assert_cmpstr(gtk_label_get_text(child_of(dialog, GH_TYPE_GROUP_INFO_DIALOG, "title_label")),
                   ==, "Club");
   AdwActionRow *privacy = child_of(dialog, GH_TYPE_GROUP_INFO_DIALOG, "privacy_row");
@@ -1432,7 +1433,7 @@ test_gui_group_info(void)
   gboolean closed = FALSE;
   g_signal_connect(dialog, "closed", G_CALLBACK(on_closed), &closed);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, dialog);
+  gh_test_spin_until(gh_test_dialog_shown, dialog);
   g_assert_false(visible_of(dialog, GH_TYPE_GROUP_INFO_DIALOG, "admin_group"));
   g_assert_false(visible_of(dialog, GH_TYPE_GROUP_INFO_DIALOG, "add_member_button"));
   bob = member_row(GTK_WIDGET(dialog), "<b>Bob</b>");
@@ -1480,7 +1481,7 @@ test_gui_new_group(void)
 
   GhNewGroupDialog *dialog = g_object_ref_sink(gh_new_group_dialog_new(f.service));
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, dialog);
+  gh_test_spin_until(gh_test_dialog_shown, dialog);
   AdwEntryRow *relay_row = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "relay_row");
   AdwEntryRow *name_row = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "name_row");
   gtk_editable_set_text(GTK_EDITABLE(relay_row), "ws://groups.example.com");
@@ -1504,7 +1505,7 @@ test_gui_new_group(void)
 
   dialog = g_object_ref_sink(gh_new_group_dialog_new(f.service));
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, dialog);
+  gh_test_spin_until(gh_test_dialog_shown, dialog);
   gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "relay_row")),
                         strict.url);
   gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "name_row")),
@@ -1626,6 +1627,7 @@ test_gui_window(void)
   AdwDialog *visible = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   g_assert_true(GH_IS_GROUP_INFO_DIALOG(visible));
   g_assert_true(gh_group_info_dialog_get_room(GH_GROUP_INFO_DIALOG(visible)) == room);
+  gh_test_spin_until(gh_test_dialog_shown, visible);
   adw_dialog_force_close(visible);
   drain();
 
@@ -1642,6 +1644,7 @@ test_gui_window(void)
   g_action_group_activate_action(G_ACTION_GROUP(window), "join-group", NULL);
   visible = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   g_assert_true(GH_IS_GROUP_JOIN_DIALOG(visible));
+  gh_test_spin_until(gh_test_dialog_shown, visible);
   adw_dialog_force_close(visible);
 
   gtk_window_destroy(GTK_WINDOW(window));
@@ -1699,14 +1702,14 @@ test_gui_screenshots(void)
   GhGroupInfoConfig config = { .service = f.service, .display_name = bob_name };
   GhGroupInfoDialog *info = g_object_ref_sink(gh_group_info_dialog_new(admin, &config));
   adw_dialog_present(ADW_DIALOG(info), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, info);
+  gh_test_spin_until(gh_test_dialog_shown, info);
   save_png(GTK_WIDGET(window), dir, "group-info");
   adw_dialog_force_close(ADW_DIALOG(info));
   g_object_unref(info);
 
   GhGroupJoinDialog *join = g_object_ref_sink(gh_group_join_dialog_new(f.service));
   adw_dialog_present(ADW_DIALOG(join), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, join);
+  gh_test_spin_until(gh_test_dialog_shown, join);
   save_png(GTK_WIDGET(window), dir, "join");
   g_autofree gchar *review_ref = reference(&relay, "review", NULL);
   gh_group_join_dialog_set_address(join, review_ref);
@@ -1718,7 +1721,7 @@ test_gui_screenshots(void)
 
   GhNewGroupDialog *create = g_object_ref_sink(gh_new_group_dialog_new(f.service));
   adw_dialog_present(ADW_DIALOG(create), GTK_WIDGET(window));
-  gh_test_spin_until(is_mapped, create);
+  gh_test_spin_until(gh_test_dialog_shown, create);
   save_png(GTK_WIDGET(window), dir, "new-group");
   adw_dialog_force_close(ADW_DIALOG(create));
   g_object_unref(create);
@@ -1768,7 +1771,8 @@ main(int argc, char **argv)
     g_object_set(gtk_settings_get_default(), "gtk-xft-dpi", 96 * 1024, "gtk-enable-animations",
                  FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
     g_test_init(&argc, &argv, NULL);
-    gh_test_bus_up(&shared_bus);
+    /* As send-stack.h: GTK keeps the session bus it was given. */
+    gh_test_bus_up_beside_gtk(&shared_bus);
     g_test_add_func("/groundhog/group-ui-gui/join", test_gui_join);
     g_test_add_func("/groundhog/group-ui-gui/group-info", test_gui_group_info);
     g_test_add_func("/groundhog/group-ui-gui/new-group", test_gui_new_group);

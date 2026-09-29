@@ -298,12 +298,19 @@ typedef struct {
   int width;
 } Sized;
 
+/* Laid out at the width asked for: the window's border box, which is what
+ * the default size sizes. Its content can be narrower: without a compositor
+ * (X11 under Xvfb, the CI job) GTK draws the window's frame (.solid-csd, a
+ * 5 px border and padding) inside it, where elsewhere it is a shadow outside
+ * (nostrc-qp24.88). */
 static gboolean
 is_laid_out(gpointer data)
 {
   Sized *sized = data;
+  graphene_rect_t bounds;
   return gtk_widget_get_mapped(sized->window) &&
-         gtk_widget_get_width(sized->window) == sized->width;
+         gtk_widget_compute_bounds(sized->window, sized->window, &bounds) &&
+         (int)bounds.size.width == sized->width;
 }
 
 static gboolean

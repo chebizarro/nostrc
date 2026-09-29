@@ -33,11 +33,9 @@ void groundhog_register_resource(void);
 static gchar *stack_hex[GH_TEST_KEYS];
 static gchar *stack_npub[GH_TEST_KEYS];
 
-/* GTK first, on the session bus it was given (its accessibility bus and
- * portals live there), then the private test bus for the mock signer, which
- * is not the session bus: GhSigner opens its private senders to the address
- * DBUS_SESSION_BUS_ADDRESS names at each call, so that is pointed at it. FALSE
- * without a display. */
+/* GTK first, on the session bus it was given, then the private test bus for
+ * the mock signer beside it (gh_test_bus_up_beside_gtk()). FALSE without a
+ * display. */
 static G_GNUC_UNUSED gboolean
 stack_gtk_and_bus_up(GhTestBus *bus)
 {
@@ -49,11 +47,7 @@ stack_gtk_and_bus_up(GhTestBus *bus)
   if (!gtk_init_check())
     return FALSE;
   adw_init();
-  bus->bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
-  nostrc_test_bus_up(bus->bus);
-  bus->client = nostrc_test_bus_connect(bus->bus);
-  bus->owner = nostrc_test_bus_connect(bus->bus);
-  g_setenv("DBUS_SESSION_BUS_ADDRESS", nostrc_test_bus_get_address(bus->bus), TRUE);
+  gh_test_bus_up_beside_gtk(bus);
   return TRUE;
 }
 

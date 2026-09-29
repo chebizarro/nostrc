@@ -119,6 +119,23 @@ gh_test_bus_up(GhTestBus *fixture)
   fixture->owner = nostrc_test_bus_connect(fixture->bus);
 }
 
+/* For a GUI test, after gtk_init_check() and adw_init(): GTK and libadwaita
+ * keep the session bus they were given (the accessibility bus and, on Linux,
+ * libadwaita's settings portal live there), so the private bus for the mock
+ * signer is not the session bus. GhSigner opens its private senders to the
+ * address DBUS_SESSION_BUS_ADDRESS names at each call, so that is pointed at
+ * it. (gh_test_bus_up() after GTK fails on Linux: the session connection
+ * libadwaita made is not the test bus's; nostrc-qp24.88.) */
+static G_GNUC_UNUSED void
+gh_test_bus_up_beside_gtk(GhTestBus *fixture)
+{
+  fixture->bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
+  nostrc_test_bus_up(fixture->bus);
+  fixture->client = nostrc_test_bus_connect(fixture->bus);
+  fixture->owner = nostrc_test_bus_connect(fixture->bus);
+  g_setenv("DBUS_SESSION_BUS_ADDRESS", nostrc_test_bus_get_address(fixture->bus), TRUE);
+}
+
 /* Stops the bus; the connections only see it vanish (see
  * nostrc_test_bus_down()). */
 static G_GNUC_UNUSED void

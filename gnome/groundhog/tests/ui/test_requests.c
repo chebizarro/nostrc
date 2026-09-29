@@ -1427,9 +1427,8 @@ main(int argc, char **argv)
      * no announce. Linux (AT-SPI) is unaffected. */
     g_setenv("GTK_A11Y", "none", FALSE);
 #endif
-    /* GTK first, on the session bus it was given (its accessibility bus
-     * and portals live there); the private bus for the mock signer comes up
-     * after it as a separate bus (see gui_bus_up()). */
+    /* GTK first, on the session bus it was given; the private bus for the
+     * mock signer comes up after it, beside it (gh_test_bus_up_beside_gtk()). */
     if (!gtk_init_check()) {
       g_printerr("groundhog-requests-gui skipped: no graphical display\n");
       return 77;
@@ -1456,17 +1455,10 @@ main(int argc, char **argv)
     free(sk);
     free(pk);
   }
-  if (gui) {
-    /* Not the session bus: GhSigner opens its private senders to the address
-     * DBUS_SESSION_BUS_ADDRESS names at each call, so that is pointed at it. */
-    shared_bus.bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
-    nostrc_test_bus_up(shared_bus.bus);
-    shared_bus.client = nostrc_test_bus_connect(shared_bus.bus);
-    shared_bus.owner = nostrc_test_bus_connect(shared_bus.bus);
-    g_setenv("DBUS_SESSION_BUS_ADDRESS", nostrc_test_bus_get_address(shared_bus.bus), TRUE);
-  } else {
+  if (gui)
+    gh_test_bus_up_beside_gtk(&shared_bus);
+  else
     gh_test_bus_up(&shared_bus);
-  }
   if (gui) {
     g_test_add_func("/groundhog/requests/gui/requests-view", test_gui_requests_view);
     g_test_add_func("/groundhog/requests/gui/without-storage", test_gui_requests_without_storage);

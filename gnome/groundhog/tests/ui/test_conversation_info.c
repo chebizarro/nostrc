@@ -27,6 +27,7 @@
 #include "gh-store-contacts.h"
 #include "gh-store-conversations.h"
 #include "fake-gtk-notifications.h"
+#include "gh-test-dialog.h"
 #include "nostrc-test-bus.h"
 
 #include "nostr-event.h"
@@ -756,7 +757,7 @@ gui_open(Gui *g, GhConversation *conversation)
   g->dialog = g_object_ref_sink(gh_conversation_info_dialog_new(conversation, &services));
   g_signal_connect(g->dialog, "closed", G_CALLBACK(on_closed), g);
   adw_dialog_present(ADW_DIALOG(g->dialog), GTK_WIDGET(g->window));
-  spin_until(is_mapped, g->dialog);
+  spin_until(gh_test_dialog_shown, g->dialog);
   drain_idle();
 }
 
@@ -1163,7 +1164,7 @@ test_gui_without_store(void)
   g.dialog = g_object_ref_sink(gh_conversation_info_dialog_new(conversation, &services));
   g_signal_connect(g.dialog, "closed", G_CALLBACK(on_closed), &g);
   adw_dialog_present(ADW_DIALOG(g.dialog), GTK_WIDGET(g.window));
-  spin_until(is_mapped, g.dialog);
+  spin_until(gh_test_dialog_shown, g.dialog);
   static const char *const rows[] = { "mute_row", "timer_row", "block_row", "forget_row" };
   for (guint i = 0; i < G_N_ELEMENTS(rows); i++) {
     AdwActionRow *row = child(&g, rows[i]);
@@ -1258,6 +1259,7 @@ test_gui_header_button(void)
   g_assert_true(GH_IS_CONVERSATION_INFO_DIALOG(shown));
   g_assert_true(gh_conversation_info_dialog_get_conversation(GH_CONVERSATION_INFO_DIALOG(shown)) ==
                 conversation);
+  spin_until(gh_test_dialog_shown, shown);
   adw_dialog_force_close(shown);
   drain_idle();
 

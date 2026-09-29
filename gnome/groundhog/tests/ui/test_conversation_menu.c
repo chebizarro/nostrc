@@ -24,6 +24,7 @@
 #include "gh-conversation-private.h"
 #include "gh-conversation-row.h"
 #include "gh-store-conversations.h"
+#include "gh-test-dialog.h"
 
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -368,11 +369,18 @@ visible_dialog(Gui *g)
   return adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(g->window));
 }
 
+/* The visible dialog, shown (see gh-test-dialog.h). */
+static gboolean
+dialog_shown(gpointer data)
+{
+  AdwDialog *dialog = visible_dialog(data);
+  return dialog && gh_test_dialog_shown(dialog);
+}
+
 static gboolean
 alert_shown(gpointer data)
 {
-  AdwDialog *dialog = visible_dialog(data);
-  return ADW_IS_ALERT_DIALOG(dialog) && gtk_widget_get_mapped(GTK_WIDGET(dialog));
+  return ADW_IS_ALERT_DIALOG(visible_dialog(data)) && dialog_shown(data);
 }
 
 static gboolean
@@ -469,6 +477,7 @@ test_gui_menu(void)
   g_assert_true(GH_IS_CONVERSATION_INFO_DIALOG(info));
   g_assert_true(gh_conversation_info_dialog_get_conversation(GH_CONVERSATION_INFO_DIALOG(info)) ==
                 conversation);
+  spin_until(dialog_shown, &g);
   adw_dialog_force_close(info);
   spin_until(no_dialog, &g);
 
@@ -644,7 +653,7 @@ test_gui_blocked_page(void)
                   "Blocked Conversations");
   g_assert_true(gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(entry)));
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(g.window));
-  spin_until(is_mapped, dialog);
+  spin_until(gh_test_dialog_shown, dialog);
   g_signal_emit_by_name(entry, "activated");
   spin_until(page_shown, dialog);
   GhBlockedPage *page = GH_BLOCKED_PAGE(find_type(GTK_WIDGET(dialog), GH_TYPE_BLOCKED_PAGE));
