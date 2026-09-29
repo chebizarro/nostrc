@@ -103,8 +103,10 @@ typedef struct {
     };
 
     /** Target leaf for an Update proposal.  An Update replaces the LeafNode of
-     *  the member that *sent* the proposal, not the committer.  UINT32_MAX
-     *  means "the committer's own leaf" (legacy inline behavior). */
+     *  the member that *sent* the proposal, not the committer; it is taken
+     *  from the framing of a by-reference Update.  UINT32_MAX (an inline
+     *  Update, i.e. one the committer generated) is rejected on processing
+     *  (RFC 9420 §12.2): the committer updates itself via the UpdatePath. */
     uint32_t update_leaf_index;
 
     /** True when this slot is a referenced proposal (ProposalOrRef type 2)

@@ -87,6 +87,11 @@ static inline bool mls_tree_is_leaf(uint32_t x) {
 /** Credential type (we only support basic for Marmot) */
 #define MLS_CREDENTIAL_BASIC    0x0001
 
+/** LeafNodeSource (RFC 9420 §7.2) */
+#define MLS_LEAF_NODE_SOURCE_KEY_PACKAGE 1
+#define MLS_LEAF_NODE_SOURCE_UPDATE      2
+#define MLS_LEAF_NODE_SOURCE_COMMIT      3
+
 /**
  * MlsLeafNode:
  *
@@ -217,6 +222,32 @@ int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
 
 /** Free parent node internals. */
 void mls_parent_node_clear(MlsParentNode *node);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * LeafNode signatures (RFC 9420 §7.2)
+ *
+ * LeafNodeTBS is the LeafNode without its signature, followed -- for the
+ * update and commit sources only -- by the group_id<V> and uint32 leaf_index
+ * the leaf is bound to.  key_package leaves ignore group_id/leaf_index; the
+ * update and commit sources require a non-NULL group_id.  Any other source
+ * value has no defined TBS and fails.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Serialize LeafNodeTBS into buf. */
+int mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
+                                const uint8_t *group_id, size_t group_id_len,
+                                uint32_t leaf_index, MlsTlsBuf *buf);
+
+/** Sign node with SignWithLabel("LeafNodeTBS") and set node->signature. */
+int mls_leaf_node_sign(MlsLeafNode *node,
+                       const uint8_t signature_key_private[MLS_SIG_SK_LEN],
+                       const uint8_t *group_id, size_t group_id_len,
+                       uint32_t leaf_index);
+
+/** Verify node's signature against its own signature_key.  0 when valid. */
+int mls_leaf_node_verify_signature(const MlsLeafNode *node,
+                                   const uint8_t *group_id, size_t group_id_len,
+                                   uint32_t leaf_index);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Resolution (RFC 9420 §4.1.1)

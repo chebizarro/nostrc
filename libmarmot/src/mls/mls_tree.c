@@ -482,6 +482,94 @@ mls_leaf_node_serialize(const MlsLeafNode *node, MlsTlsBuf *buf)
 }
 
 int
+mls_leaf_node_tbs_serialize(const MlsLeafNode *node,
+                            const uint8_t *group_id, size_t group_id_len,
+                            uint32_t leaf_index, MlsTlsBuf *buf)
+{
+    if (!node || !buf) return -1;
+    uint8_t source = node->leaf_node_source;
+    if (source != MLS_LEAF_NODE_SOURCE_KEY_PACKAGE &&
+        source != MLS_LEAF_NODE_SOURCE_UPDATE &&
+        source != MLS_LEAF_NODE_SOURCE_COMMIT)
+        return -1;
+    if (source != MLS_LEAF_NODE_SOURCE_KEY_PACKAGE && !group_id) return -1;
+    if (node->parent_hash_len > 0 && !node->parent_hash) return -1;
+
+    if (mls_tls_write_opaque16(buf, node->encryption_key, MLS_KEM_PK_LEN) != 0 ||
+        mls_tls_write_opaque16(buf, node->signature_key, MLS_SIG_PK_LEN) != 0 ||
+        mls_tls_write_u16(buf, node->credential_type) != 0 ||
+        mls_tls_write_opaque16(buf, node->credential_identity,
+                               node->credential_identity_len) != 0)
+        return -1;
+#define WRITE_U16_VEC(arr, count) do { \
+        if (mls_tls_write_vli(buf, (count) * 2) != 0) return -1; \
+        for (size_t _i = 0; _i < (count); _i++) { \
+            if (mls_tls_write_u16(buf, (arr)[_i]) != 0) return -1; \
+        } \
+    } while (0)
+    WRITE_U16_VEC(node->versions, node->version_count);
+    WRITE_U16_VEC(node->ciphersuites, node->ciphersuite_count);
+    WRITE_U16_VEC(node->cap_extensions, node->cap_extension_count);
+    WRITE_U16_VEC(node->proposals, node->proposal_count);
+    WRITE_U16_VEC(node->cap_credentials, node->cap_credential_count);
+#undef WRITE_U16_VEC
+    if (mls_tls_write_u8(buf, source) != 0) return -1;
+    if (source == MLS_LEAF_NODE_SOURCE_KEY_PACKAGE) {
+        if (mls_tls_write_u64(buf, node->lifetime_not_before) != 0 ||
+            mls_tls_write_u64(buf, node->lifetime_not_after) != 0)
+            return -1;
+    } else if (source == MLS_LEAF_NODE_SOURCE_COMMIT) {
+        if (mls_tls_write_opaque8(buf, node->parent_hash, node->parent_hash_len) != 0)
+            return -1;
+    }
+    if (mls_tls_write_opaque32(buf, node->extensions_data, node->extensions_len) != 0)
+        return -1;
+    if (source != MLS_LEAF_NODE_SOURCE_KEY_PACKAGE) {
+        if (mls_tls_write_opaque32(buf, group_id, group_id_len) != 0 ||
+            mls_tls_write_u32(buf, leaf_index) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+int
+mls_leaf_node_sign(MlsLeafNode *node,
+                   const uint8_t signature_key_private[MLS_SIG_SK_LEN],
+                   const uint8_t *group_id, size_t group_id_len,
+                   uint32_t leaf_index)
+{
+    if (!node || !signature_key_private) return -1;
+    MlsTlsBuf tbs;
+    if (mls_tls_buf_init(&tbs, 256) != 0) return -1;
+    int rc = mls_leaf_node_tbs_serialize(node, group_id, group_id_len,
+                                         leaf_index, &tbs);
+    if (rc == 0)
+        rc = mls_crypto_sign_with_label(node->signature, signature_key_private,
+                                        "LeafNodeTBS", tbs.data, tbs.len);
+    mls_tls_buf_free(&tbs);
+    if (rc != 0) return -1;
+    node->signature_len = MLS_SIG_LEN;
+    return 0;
+}
+
+int
+mls_leaf_node_verify_signature(const MlsLeafNode *node,
+                               const uint8_t *group_id, size_t group_id_len,
+                               uint32_t leaf_index)
+{
+    if (!node || node->signature_len != MLS_SIG_LEN) return -1;
+    MlsTlsBuf tbs;
+    if (mls_tls_buf_init(&tbs, 256) != 0) return -1;
+    int rc = mls_leaf_node_tbs_serialize(node, group_id, group_id_len,
+                                         leaf_index, &tbs);
+    if (rc == 0)
+        rc = mls_crypto_verify_with_label(node->signature, node->signature_key,
+                                          "LeafNodeTBS", tbs.data, tbs.len);
+    mls_tls_buf_free(&tbs);
+    return rc == 0 ? 0 : -1;
+}
+
+int
 mls_parent_node_serialize(const MlsParentNode *node, MlsTlsBuf *buf)
 {
     if (!node || !buf) return -1;

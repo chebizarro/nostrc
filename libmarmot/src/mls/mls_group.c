@@ -91,66 +91,6 @@ child_below_path_node(uint32_t sender_leaf, uint32_t n_leaves,
     return -1;
 }
 
-static int
-leaf_node_tbs_serialize_local(const MlsLeafNode *node, MlsTlsBuf *buf)
-{
-    if (!node || !buf) return -1;
-    if (mls_tls_write_opaque16(buf, node->encryption_key, MLS_KEM_PK_LEN) != 0)
-        return -1;
-    if (mls_tls_write_opaque16(buf, node->signature_key, MLS_SIG_PK_LEN) != 0)
-        return -1;
-    if (mls_tls_write_u16(buf, node->credential_type) != 0)
-        return -1;
-    if (mls_tls_write_opaque16(buf, node->credential_identity,
-                                node->credential_identity_len) != 0)
-        return -1;
-#define WRITE_U16_VEC_LOCAL(arr, count) do { \
-        size_t total = (count) * 2; \
-        if (mls_tls_write_vli(buf, total) != 0) return -1; \
-        for (size_t _i = 0; _i < (count); _i++) { \
-            if (mls_tls_write_u16(buf, (arr)[_i]) != 0) return -1; \
-        } \
-    } while (0)
-    WRITE_U16_VEC_LOCAL(node->versions, node->version_count);
-    WRITE_U16_VEC_LOCAL(node->ciphersuites, node->ciphersuite_count);
-    WRITE_U16_VEC_LOCAL(node->cap_extensions, node->cap_extension_count);
-    WRITE_U16_VEC_LOCAL(node->proposals, node->proposal_count);
-    WRITE_U16_VEC_LOCAL(node->cap_credentials, node->cap_credential_count);
-#undef WRITE_U16_VEC_LOCAL
-    if (mls_tls_write_u8(buf, node->leaf_node_source) != 0)
-        return -1;
-    if (node->leaf_node_source == 1) {
-        if (mls_tls_write_u64(buf, node->lifetime_not_before) != 0) return -1;
-        if (mls_tls_write_u64(buf, node->lifetime_not_after) != 0) return -1;
-    } else if (node->leaf_node_source == 3) {
-        if (mls_tls_write_opaque8(buf, node->parent_hash,
-                                  node->parent_hash_len) != 0)
-            return -1;
-    }
-    if (mls_tls_write_opaque32(buf, node->extensions_data,
-                                node->extensions_len) != 0)
-        return -1;
-    return 0;
-}
-
-static int
-sign_leaf_node_local(MlsLeafNode *node,
-                     const uint8_t signature_key[MLS_SIG_SK_LEN])
-{
-    MlsTlsBuf tbs;
-    if (!node || !signature_key) return -1;
-    if (mls_tls_buf_init(&tbs, 256) != 0) return -1;
-    if (leaf_node_tbs_serialize_local(node, &tbs) != 0) {
-        mls_tls_buf_free(&tbs);
-        return -1;
-    }
-    int rc = mls_crypto_sign_with_label(node->signature, signature_key,
-                                        "LeafNodeTBS", tbs.data, tbs.len);
-    mls_tls_buf_free(&tbs);
-    if (rc == 0) node->signature_len = MLS_SIG_LEN;
-    return rc;
-}
-
 /**
  * Derive epoch secrets and re-initialize the secret tree for the current
  * group state. Updates group->epoch_secrets and group->secret_tree.
@@ -247,7 +187,7 @@ generate_update_path(MlsGroup *group,
                old_leaf->credential_identity, old_leaf->credential_identity_len);
         path_out->leaf_node.credential_identity_len = old_leaf->credential_identity_len;
     }
-    path_out->leaf_node.leaf_node_source = 3; /* commit */
+    path_out->leaf_node.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT;
     /* Capabilities (RFC 9420 §7.2; nostrc-prqu.10) */
     if (mls_leaf_node_set_marmot_capabilities(&path_out->leaf_node) != 0) goto fail;
 
@@ -337,7 +277,11 @@ generate_update_path(MlsGroup *group,
                                 ph) != 0)
             goto fail;
     }
-    if (sign_leaf_node_local(&path_out->leaf_node, group->own_signature_key) != 0)
+    /* LeafNodeTBS for the commit source binds group_id and our leaf index
+     * (RFC 9420 §7.2). */
+    if (mls_leaf_node_sign(&path_out->leaf_node, group->own_signature_key,
+                           group->group_id, group->group_id_len,
+                           group->own_leaf_index) != 0)
         goto fail;
 
     mls_leaf_node_clear(&group->tree.nodes[own_node].leaf);
@@ -1154,8 +1098,9 @@ mls_group_create(MlsGroup *group,
         sodium_memzero(enc_sk, sizeof(enc_sk));
         goto fail;
     }
-    leaf->leaf.leaf_node_source = 3; /* commit (initial group creation) */
-    if (sign_leaf_node_local(&leaf->leaf, signature_key_private) != 0) {
+    leaf->leaf.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT; /* initial group creation */
+    if (mls_leaf_node_sign(&leaf->leaf, signature_key_private,
+                           group->group_id, group->group_id_len, 0) != 0) {
         sodium_memzero(enc_sk, sizeof(enc_sk));
         goto fail;
     }
@@ -2348,6 +2293,314 @@ remember_own_path_key(MlsGroup *group, uint32_t node,
     return 0;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * LeafNode validation (RFC 9420 §7.3)
+ *
+ * Every LeafNode a Commit installs -- each committed Update proposal and the
+ * UpdatePath leaf -- is validated before it is applied.  All checks run on
+ * the staged clone in process_commit_impl, so a rejection never touches the
+ * live group.  Public keys are compared with memcmp: they are not secret.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+#define MLS_PROTOCOL_VERSION_MLS10          0x0001
+#define MLS_EXTENSION_REQUIRED_CAPABILITIES 0x0003
+
+static bool
+u16_list_contains(const uint16_t *list, size_t count, uint16_t value)
+{
+    if (count > 0 && !list) return false;
+    for (size_t i = 0; i < count; i++) {
+        if (list[i] == value) return true;
+    }
+    return false;
+}
+
+/* RFC 9420 §7.2: the default extension types (application_id through
+ * external_senders) and proposal types (add through
+ * group_context_extensions) are implicitly supported and are not listed in
+ * capabilities. */
+static bool
+extension_type_is_default(uint16_t type)
+{
+    return type >= 0x0001 && type <= 0x0005;
+}
+
+static bool
+proposal_type_is_default(uint16_t type)
+{
+    return type >= 0x0001 && type <= 0x0007;
+}
+
+typedef int (*extension_visit_fn)(uint16_t type, const uint8_t *data,
+                                  size_t len, const MlsLeafNode *leaf);
+
+/* Visit each Extension { uint16 extension_type; opaque extension_data<V>; }
+ * of a serialized list.  A malformed list or a repeated type fails: support
+ * cannot be established for extensions that cannot be enumerated. */
+static int
+extensions_foreach(const uint8_t *list, size_t list_len,
+                   extension_visit_fn visit, const MlsLeafNode *leaf)
+{
+    if (list_len > 0 && !list) return -1;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, list, list_len);
+    while (!mls_tls_reader_done(&r)) {
+        size_t entry_start = r.pos;
+        uint16_t type;
+        size_t len;
+        if (mls_tls_read_u16(&r, &type) != 0 ||
+            mls_tls_read_vli(&r, &len) != 0 ||
+            len > mls_tls_reader_remaining(&r))
+            return -1;
+        const uint8_t *data = r.data + r.pos;
+        r.pos += len;
+
+        MlsTlsReader prev;
+        mls_tls_reader_init(&prev, list, entry_start);
+        while (!mls_tls_reader_done(&prev)) {
+            uint16_t prev_type;
+            size_t prev_len;
+            if (mls_tls_read_u16(&prev, &prev_type) != 0 ||
+                mls_tls_read_vli(&prev, &prev_len) != 0 ||
+                prev_type == type)
+                return -1;
+            prev.pos += prev_len;
+        }
+        if (visit(type, data, len, leaf) != 0) return -1;
+    }
+    return 0;
+}
+
+/* §7.3 step 6: each LeafNode extension is listed in its own capabilities. */
+static int
+leaf_extension_supported(uint16_t type, const uint8_t *data, size_t len,
+                         const MlsLeafNode *leaf)
+{
+    (void)data;
+    (void)len;
+    return (extension_type_is_default(type) ||
+            u16_list_contains(leaf->cap_extensions, leaf->cap_extension_count, type))
+               ? 0 : -1;
+}
+
+/* RequiredCapabilities { ExtensionType extension_types<V>;
+ *   ProposalType proposal_types<V>; CredentialType credential_types<V>; } */
+static int
+required_capabilities_supported(const MlsLeafNode *leaf,
+                                const uint8_t *data, size_t len)
+{
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, data, len);
+    for (int list = 0; list < 3; list++) {
+        size_t bytes;
+        if (mls_tls_read_vli(&r, &bytes) != 0 || bytes % 2 != 0 ||
+            bytes > mls_tls_reader_remaining(&r))
+            return -1;
+        for (size_t i = 0; i < bytes / 2; i++) {
+            uint16_t type;
+            if (mls_tls_read_u16(&r, &type) != 0) return -1;
+            bool supported;
+            if (list == 0)
+                supported = extension_type_is_default(type) ||
+                            u16_list_contains(leaf->cap_extensions,
+                                              leaf->cap_extension_count, type);
+            else if (list == 1)
+                supported = proposal_type_is_default(type) ||
+                            u16_list_contains(leaf->proposals,
+                                              leaf->proposal_count, type);
+            else
+                supported = u16_list_contains(leaf->cap_credentials,
+                                              leaf->cap_credential_count, type);
+            if (!supported) return -1;
+        }
+    }
+    return mls_tls_reader_done(&r) ? 0 : -1;
+}
+
+/* §7.3 step 3: the leaf supports every GroupContext extension and whatever
+ * a required_capabilities extension demands. */
+static int
+group_extension_supported(uint16_t type, const uint8_t *data, size_t len,
+                          const MlsLeafNode *leaf)
+{
+    if (!extension_type_is_default(type) &&
+        !u16_list_contains(leaf->cap_extensions, leaf->cap_extension_count, type))
+        return -1;
+    if (type == MLS_EXTENSION_REQUIRED_CAPABILITIES)
+        return required_capabilities_supported(leaf, data, len);
+    return 0;
+}
+
+/**
+ * RFC 9420 §7.3 checks that depend on the LeafNode, the group and the member
+ * leaf it replaces (`replaced`, the current LeafNode at `leaf_index`).  Key
+ * uniqueness needs the tree the leaf lands in and is checked separately.
+ * `group_extensions` are the GroupContext extensions of the epoch the leaf
+ * joins (after any GroupContextExtensions proposal in the same Commit).
+ */
+static int
+leaf_node_validate(const MlsGroup *group, const MlsLeafNode *leaf,
+                   uint8_t expected_source, uint32_t leaf_index,
+                   const MlsLeafNode *replaced,
+                   const uint8_t *group_extensions, size_t group_extensions_len)
+{
+    if (!group || !leaf || !replaced) return -1;
+
+    /* Step 7: leaf_node_source.  Only key_package leaves carry a lifetime,
+     * so no lifetime rule applies to update/commit leaves.  An update leaf
+     * has no parent_hash; a commit leaf's must be empty or hash-sized (its
+     * value is checked against the tree when the UpdatePath is merged). */
+    if (leaf->leaf_node_source != expected_source) return -1;
+    if (expected_source == MLS_LEAF_NODE_SOURCE_UPDATE &&
+        (leaf->parent_hash || leaf->parent_hash_len != 0))
+        return -1;
+    if (expected_source == MLS_LEAF_NODE_SOURCE_COMMIT &&
+        leaf->parent_hash_len != 0 && leaf->parent_hash_len != MLS_HASH_LEN)
+        return -1;
+
+    /* Step 1 (§5.3.1, §5.3.3): a basic credential, and a valid successor of
+     * the credential it replaces -- a member cannot take on another identity
+     * through an Update or a Commit. */
+    if (leaf->credential_type != MLS_CREDENTIAL_BASIC ||
+        !leaf->credential_identity || leaf->credential_identity_len == 0 ||
+        leaf->credential_type != replaced->credential_type ||
+        leaf->credential_identity_len != replaced->credential_identity_len ||
+        !replaced->credential_identity ||
+        memcmp(leaf->credential_identity, replaced->credential_identity,
+               leaf->credential_identity_len) != 0)
+        return -1;
+
+    /* Step 3 (and §7.2): the group's protocol version, ciphersuite and the
+     * leaf's own credential type are advertised; GroupContext extensions and
+     * required capabilities are supported. */
+    if (!u16_list_contains(leaf->versions, leaf->version_count,
+                           MLS_PROTOCOL_VERSION_MLS10) ||
+        !u16_list_contains(leaf->ciphersuites, leaf->ciphersuite_count,
+                           MARMOT_CIPHERSUITE) ||
+        !u16_list_contains(leaf->cap_credentials, leaf->cap_credential_count,
+                           leaf->credential_type))
+        return -1;
+    if (extensions_foreach(group_extensions, group_extensions_len,
+                           group_extension_supported, leaf) != 0)
+        return -1;
+
+    /* Step 4: every other member supports this credential type, and this
+     * leaf supports every credential type the other members use. */
+    for (uint32_t i = 0; i < group->tree.n_leaves; i++) {
+        if (i == leaf_index) continue;
+        const MlsNode *n = &group->tree.nodes[mls_tree_leaf_to_node(i)];
+        if (n->type != MLS_NODE_LEAF) continue;
+        if (!u16_list_contains(n->leaf.cap_credentials, n->leaf.cap_credential_count,
+                               leaf->credential_type) ||
+            !u16_list_contains(leaf->cap_credentials, leaf->cap_credential_count,
+                               n->leaf.credential_type))
+            return -1;
+    }
+
+    /* Step 6: the leaf's own extensions are listed in its capabilities. */
+    if (extensions_foreach(leaf->extensions_data, leaf->extensions_len,
+                           leaf_extension_supported, leaf) != 0)
+        return -1;
+
+    /* Step 2: signature over LeafNodeTBS, which for the update and commit
+     * sources binds this group_id and leaf_index (§7.2). */
+    if (mls_leaf_node_verify_signature(leaf, group->group_id, group->group_id_len,
+                                       leaf_index) != 0)
+        return -1;
+    return 0;
+}
+
+/**
+ * Validate a committed Update proposal against the pre-Commit tree
+ * (RFC 9420 §12.1.2): its target is the proposer's leaf, known only from the
+ * framing of a by-reference Update.  An inline Update, or one the committer
+ * sent, is the committer updating itself, which a Commit must do through its
+ * UpdatePath instead (§12.2).
+ */
+static int
+update_proposal_validate(const MlsGroup *group, const MlsProposal *p,
+                         uint32_t committer_leaf,
+                         const uint8_t *group_extensions, size_t group_extensions_len)
+{
+    if (p->type != MLS_PROPOSAL_UPDATE) return 0;
+    uint32_t leaf = p->update_leaf_index;
+    if (leaf == UINT32_MAX || leaf == committer_leaf || leaf >= group->tree.n_leaves)
+        return -1;
+    const MlsNode *current = &group->tree.nodes[mls_tree_leaf_to_node(leaf)];
+    if (current->type != MLS_NODE_LEAF) return -1;
+    if (leaf_node_validate(group, &p->update.leaf_node, MLS_LEAF_NODE_SOURCE_UPDATE,
+                           leaf, &current->leaf,
+                           group_extensions, group_extensions_len) != 0)
+        return -1;
+    /* §7.3 step 7: the Update must replace the encryption key. */
+    if (memcmp(p->update.leaf_node.encryption_key, current->leaf.encryption_key,
+               MLS_KEM_PK_LEN) == 0)
+        return -1;
+    return 0;
+}
+
+/**
+ * §7.3 step 8 for a leaf just installed at `leaf_index`: its signature and
+ * encryption keys are unique among the members, and its encryption key does
+ * not reuse any parent node's public key.
+ */
+static int
+leaf_keys_unique(const MlsRatchetTree *tree, uint32_t leaf_index)
+{
+    uint32_t node_idx = mls_tree_leaf_to_node(leaf_index);
+    if (leaf_index >= tree->n_leaves || tree->nodes[node_idx].type != MLS_NODE_LEAF)
+        return -1;
+    const MlsLeafNode *leaf = &tree->nodes[node_idx].leaf;
+    for (uint32_t i = 0; i < tree->n_nodes; i++) {
+        if (i == node_idx) continue;
+        const MlsNode *n = &tree->nodes[i];
+        if (n->type == MLS_NODE_LEAF) {
+            if (memcmp(n->leaf.encryption_key, leaf->encryption_key, MLS_KEM_PK_LEN) == 0 ||
+                memcmp(n->leaf.signature_key, leaf->signature_key, MLS_SIG_PK_LEN) == 0)
+                return -1;
+        } else if (n->type == MLS_NODE_PARENT) {
+            if (memcmp(n->parent.encryption_key, leaf->encryption_key, MLS_KEM_PK_LEN) == 0)
+                return -1;
+        }
+    }
+    return 0;
+}
+
+/**
+ * RFC 9420 §12.4.2, against the tree the proposals produced (before the
+ * UpdatePath is merged): none of the UpdatePath's public keys may appear in
+ * any node of that tree -- including the committer's current leaf, so the
+ * leaf encryption key is always replaced -- and none may repeat within the
+ * path.  The new leaf's signature key must not belong to another member.
+ */
+static int
+update_path_keys_fresh(const MlsRatchetTree *tree, uint32_t sender_leaf,
+                       const MlsUpdatePath *path)
+{
+    for (size_t k = 0; k <= path->node_count; k++) {
+        const uint8_t *key = (k == 0) ? path->leaf_node.encryption_key
+                                      : path->nodes[k - 1].encryption_key;
+        for (size_t j = 0; j < k; j++) {
+            const uint8_t *prior = (j == 0) ? path->leaf_node.encryption_key
+                                            : path->nodes[j - 1].encryption_key;
+            if (memcmp(prior, key, MLS_KEM_PK_LEN) == 0) return -1;
+        }
+        for (uint32_t i = 0; i < tree->n_nodes; i++) {
+            const uint8_t *existing = mls_tree_node_encryption_key(tree, i);
+            if (existing && memcmp(existing, key, MLS_KEM_PK_LEN) == 0) return -1;
+        }
+    }
+    for (uint32_t i = 0; i < tree->n_leaves; i++) {
+        if (i == sender_leaf) continue;
+        const MlsNode *n = &tree->nodes[mls_tree_leaf_to_node(i)];
+        if (n->type == MLS_NODE_LEAF &&
+            memcmp(n->leaf.signature_key, path->leaf_node.signature_key,
+                   MLS_SIG_PK_LEN) == 0)
+            return -1;
+    }
+    return 0;
+}
+
 static int
 process_commit_impl(MlsGroup *group,
                     const uint8_t *commit_data, size_t commit_len,
@@ -2468,6 +2721,28 @@ process_commit_impl(MlsGroup *group,
         goto staged_fail;
     }
 
+    /* Validate every Update's LeafNode (RFC 9420 §12.1.2, §7.3) against
+     * the pre-Commit tree, before any proposal is applied.  Capabilities are
+     * checked against the GroupContext extensions of the epoch being entered:
+     * the last GroupContextExtensions proposal, as applied below. */
+    {
+        const uint8_t *next_ext = group->extensions_data;
+        size_t next_ext_len = group->extensions_len;
+        for (size_t i = 0; i < commit.proposal_count; i++) {
+            if (commit.proposals[i].type != MLS_PROPOSAL_GROUP_CONTEXT_EXT) continue;
+            next_ext = commit.proposals[i].group_context_extensions.extensions;
+            next_ext_len = commit.proposals[i].group_context_extensions.extensions_len;
+        }
+        for (size_t i = 0; i < commit.proposal_count; i++) {
+            if (update_proposal_validate(group, &commit.proposals[i], sender_leaf,
+                                         next_ext, next_ext_len) != 0) {
+                mls_commit_clear(&commit);
+                staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+                goto staged_fail;
+            }
+        }
+    }
+
     uint8_t psk_secret[MLS_HASH_LEN];
     int psk_rc = commit_psk_secret_compute(group, commit.proposals,
                                            commit.proposal_count,
@@ -2483,6 +2758,8 @@ process_commit_impl(MlsGroup *group,
 
     uint32_t added_leaves[64];
     size_t added_leaf_count = 0;
+    uint32_t updated_leaves[64];
+    size_t updated_leaf_count = 0;
 
     /* Apply proposals */
     for (size_t i = 0; i < commit.proposal_count; i++) {
@@ -2570,15 +2847,17 @@ process_commit_impl(MlsGroup *group,
         }
         case MLS_PROPOSAL_UPDATE: {
             /* Update targets the proposer's leaf (from the standalone proposal
-             * framing); fall back to the committer for legacy inline use. */
-            uint32_t upd_leaf = (p->update_leaf_index != UINT32_MAX)
-                                    ? p->update_leaf_index : sender_leaf;
-            if (upd_leaf >= group->tree.n_leaves) {
+             * framing); update_proposal_validate() already rejected inline and
+             * committer-sent Updates and validated the LeafNode. */
+            uint32_t upd_leaf = p->update_leaf_index;
+            if (upd_leaf >= group->tree.n_leaves ||
+                updated_leaf_count >= sizeof(updated_leaves) / sizeof(updated_leaves[0])) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
                 staged_rc = MARMOT_ERR_INVALID_ARG;
                 goto staged_fail;
             }
+            updated_leaves[updated_leaf_count++] = upd_leaf;
             uint32_t upd_node = mls_tree_leaf_to_node(upd_leaf);
             mls_leaf_node_clear(&group->tree.nodes[upd_node].leaf);
             if (mls_leaf_node_clone(&group->tree.nodes[upd_node].leaf,
@@ -2625,12 +2904,42 @@ process_commit_impl(MlsGroup *group,
         }
     }
 
+    /* §7.3 step 8: every leaf this Commit installed has signature and
+     * encryption keys unique in the resulting tree.  A leaf that a later
+     * proposal blanked again (Update plus Remove of one leaf) fails too. */
+    for (size_t i = 0; i < updated_leaf_count + added_leaf_count; i++) {
+        uint32_t leaf = (i < updated_leaf_count) ? updated_leaves[i]
+                                                 : added_leaves[i - updated_leaf_count];
+        if (leaf_keys_unique(&group->tree, leaf) != 0) {
+            mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
+        }
+    }
+
     /* Process UpdatePath if present */
     uint8_t root_path_secret[MLS_HASH_LEN];
     bool has_path = commit.has_path;
     if (has_path) {
-        /* Update sender's leaf in the tree */
+        /* RFC 9420 §12.4.2: validate the UpdatePath LeafNode (§7.3, source
+         * commit, bound to the committer's leaf) and the freshness of every
+         * UpdatePath public key against the tree the proposals produced,
+         * before anything of the path is merged. */
         uint32_t sender_node = mls_tree_leaf_to_node(sender_leaf);
+        if (group->tree.nodes[sender_node].type != MLS_NODE_LEAF ||
+            leaf_node_validate(group, &commit.path.leaf_node,
+                               MLS_LEAF_NODE_SOURCE_COMMIT, sender_leaf,
+                               &group->tree.nodes[sender_node].leaf,
+                               group->extensions_data, group->extensions_len) != 0 ||
+            update_path_keys_fresh(&group->tree, sender_leaf, &commit.path) != 0) {
+            mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
+        }
+
+        /* Update sender's leaf in the tree */
         mls_leaf_node_clear(&group->tree.nodes[sender_node].leaf);
         if (mls_leaf_node_clone(&group->tree.nodes[sender_node].leaf,
                                  &commit.path.leaf_node) != 0) {

@@ -74,73 +74,6 @@ key_package_tbs_serialize_for_signature(const MlsKeyPackage *kp, MlsTlsBuf *buf)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- * LeafNode signing
- *
- * LeafNodeTBS (for key_package source):
- * struct {
- *   <leaf_node_content>   // encryption_key, signature_key, credential, ...
- * } LeafNodeTBS;
- *
- * For key_package source, the signature is over the LeafNode content
- * (everything except the signature field).
- * ══════════════════════════════════════════════════════════════════════════ */
-
-/**
- * Serialize the LeafNode content for signing (LeafNodeTBS for key_package source).
- */
-static int
-leaf_node_tbs_serialize(const MlsLeafNode *node, MlsTlsBuf *buf)
-{
-    if (!node || !buf) return -1;
-
-    /* encryption_key: HPKEPublicKey */
-    if (mls_tls_write_opaque16(buf, node->encryption_key, MLS_KEM_PK_LEN) != 0)
-        return -1;
-    /* signature_key: SignaturePublicKey */
-    if (mls_tls_write_opaque16(buf, node->signature_key, MLS_SIG_PK_LEN) != 0)
-        return -1;
-    /* credential_type */
-    if (mls_tls_write_u16(buf, node->credential_type) != 0)
-        return -1;
-    /* credential identity */
-    if (mls_tls_write_opaque16(buf, node->credential_identity,
-                                node->credential_identity_len) != 0)
-        return -1;
-    /* capabilities (RFC 9420 §7.2): versions, ciphersuites, extensions, proposals, credentials */
-#define WRITE_U16_VEC(arr, count) do { \
-        size_t total = (count) * 2; \
-        if (mls_tls_write_vli(buf, total) != 0) return -1; \
-        for (size_t _i = 0; _i < (count); _i++) { \
-            if (mls_tls_write_u16(buf, (arr)[_i]) != 0) return -1; \
-        } \
-    } while (0)
-
-    WRITE_U16_VEC(node->versions, node->version_count);
-    WRITE_U16_VEC(node->ciphersuites, node->ciphersuite_count);
-    WRITE_U16_VEC(node->cap_extensions, node->cap_extension_count);
-    WRITE_U16_VEC(node->proposals, node->proposal_count);
-    WRITE_U16_VEC(node->cap_credentials, node->cap_credential_count);
-
-#undef WRITE_U16_VEC
-    /* leaf_node_source */
-    if (mls_tls_write_u8(buf, node->leaf_node_source) != 0)
-        return -1;
-    /* source-dependent fields (RFC 9420 §7.2) */
-    if (node->leaf_node_source == 1) { /* key_package: Lifetime */
-        if (mls_tls_write_u64(buf, node->lifetime_not_before) != 0) return -1;
-        if (mls_tls_write_u64(buf, node->lifetime_not_after) != 0) return -1;
-    } else if (node->leaf_node_source == 3) { /* commit: parent_hash */
-        if (mls_tls_write_opaque8(buf, node->parent_hash, node->parent_hash_len) != 0)
-            return -1;
-    }
-    /* extensions */
-    if (mls_tls_write_opaque32(buf, node->extensions_data, node->extensions_len) != 0)
-        return -1;
-
-    return 0;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
  * KeyPackage creation
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -150,12 +83,12 @@ int
 mls_key_package_sign(MlsKeyPackage *kp, const MlsKeyPackagePrivate *priv_out)
 {
     if (!kp || !priv_out) return -1;
-    /* Sign the leaf node (LeafNodeTBS for key_package source) */
+    /* Sign the leaf node (LeafNodeTBS for key_package source, RFC 9420 §7.2) */
     {
         MlsTlsBuf tbs_buf;
         if (mls_tls_buf_init(&tbs_buf, 256) != 0) return -1;
 
-        if (leaf_node_tbs_serialize(&kp->leaf_node, &tbs_buf) != 0) {
+        if (mls_leaf_node_tbs_serialize(&kp->leaf_node, NULL, 0, 0, &tbs_buf) != 0) {
             mls_tls_buf_free(&tbs_buf);
             return -1;
         }
@@ -442,7 +375,7 @@ mls_key_package_validate(const MlsKeyPackage *kp)
     {
         MlsTlsBuf tbs;
         if (mls_tls_buf_init(&tbs, 512) != 0) return MARMOT_ERR_INTERNAL;
-        if (leaf_node_tbs_serialize(&kp->leaf_node, &tbs) != 0) {
+        if (mls_leaf_node_tbs_serialize(&kp->leaf_node, NULL, 0, 0, &tbs) != 0) {
             mls_tls_buf_free(&tbs);
             return MARMOT_ERR_INTERNAL;
         }
