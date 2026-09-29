@@ -243,9 +243,30 @@ kind:445 event comes back signed.
     Send an Add's Welcomes only after that.
   - When no relay accepts it, call `marmot_clear_pending_commit()` (new).
   - Until then, the next Commit is `MARMOT_ERR_OWN_COMMIT_PENDING`.
-  - If a competing member's Commit wins while ours is pending, the merge
-    returns `MARMOT_ERR_WRONG_EPOCH`, ours is discarded and the group follows
-    the winner. Do not send that Add's Welcomes.
+  - When a relay's answer is lost (timeout, disconnect), do not clear: the
+    relay may have stored the Commit. Keep it pending and retry. When our own
+    pending Commit comes back from a relay, `marmot_process_message()` merges
+    it and returns `MARMOT_RESULT_COMMIT`, since a stored copy proves it was
+    published.
+  - A pending Commit is bound to the exact state it was built on (epoch and
+    confirmed transcript hash). If a competing member's Commit replaces that
+    state, even with another Commit of the same epoch, the pending one no
+    longer defers anything, `marmot_get_pending_commit()` reports it
+    superseded, and the merge returns `MARMOT_ERR_WRONG_EPOCH`: ours is
+    discarded and the group follows the winner. Do not send that Add's
+    Welcomes.
+  - Merging is idempotent: a Commit already applied (by its echo, or before
+    a crash) merges as `MARMOT_OK`. A Commit that can no longer pass
+    authorization is discarded; a storage error leaves it pending, so merge
+    again or clear it.
+- **Restart path.** `marmot_get_pending_commit()` returns the pending Commit's
+  signed event after a crash or a lost answer. Republish it and merge on the
+  first `OK`.
+- **Welcome outbox.** When a pending Add merges (by call, echo or after a
+  restart), its Welcomes and their recipients move to
+  `marmot_get_unsent_welcomes()`. Gift-wrap and send them, then call
+  `marmot_mark_welcomes_sent()`. The rumors `marmot_add_members()` returns
+  are the same Welcomes; send one copy only.
   - `marmot_create_group()` still applies immediately: only its joiners see
     its Commit.
 - **Every kind:445 is signed** with a fresh ephemeral key (MIP-03), never the
@@ -363,9 +384,21 @@ described above.
   `mls_group_pending` (GhStoreMarmot does).
 - **Memory backend.** The in-memory backend no longer lists processed-event
   markers as messages.
-- **Proposals and signatures.** Standalone Proposal messages return
-  `MARMOT_ERR_UNSUPPORTED` (not queued). Receivers do not yet verify the
-  outer kind:445 signature (follow-up).
+- **Proposals.** Standalone Proposal messages return
+  `MARMOT_ERR_UNSUPPORTED` (not queued).
+- **Callers must verify kind:445 signatures (until nostrc-6r6s).**
+  - The adopted spec (`transports/nostr.md`) says receivers MUST verify the
+    kind:445 event id and signature before decrypting. `marmot_process_message()`
+    does not do that yet.
+  - Until it does, verify the id and signature of every kind:445 taken from a
+    relay before passing it in, and drop events that fail.
+  - The signature is by a throwaway ephemeral key, so it authenticates only
+    the envelope, not the sender. Sender authenticity still comes from the
+    exporter-keyed NIP-44 layer and MLS.
+  - Gnostr's main path gets events through nostrdb, which verifies
+    signatures. Its gift-wrap route delivers NIP-59 *rumors*, which are
+    unsigned by design; verification must exempt or deliberately drop that
+    route.
 
 ### 0.4.1 (unreleased): Welcome path secrets
 

@@ -53,6 +53,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.2.0 | No further bump: folded into unreleased 1.2.0 (adds `merge_pending_commit_async/_finish`, `clear_pending_commit_async/_finish`; `update_group_metadata` no longer emits ::group-updated before the merge). |
 | same | gnostr | 0.1.0 | No bump (unreleased): add-member and rename Commits are merged only after a group relay's OK and cleared otherwise, with the outcome shown in the view. |
 | same | groundhog | 0.10.0 | No bump (unreleased): GhStoreMarmot snapshots also cover `mls_group_pending`; tests merge their Commits. |
+| libmarmot 0.5.0 re-review fixes (W17b R1, R2; still unreleased 0.5.0) | libmarmot | 0.5.0 | No further bump: folded into unreleased 0.5.0. Pending record v2 bound to its parent state and carrying the signed event and Welcomes; merge on our own relay echo; idempotent merge; new `marmot_get_pending_commit()`, `marmot_get_unsent_welcomes()`, `marmot_mark_welcomes_sent()`, `MarmotUnsentWelcome`; new `mls_kv` label `mls_group_welcomes`. |
+| same | marmot-gobject | 1.2.0 | No further bump (unreleased 1.2.0): adds `get_pending_commit`, `get_unsent_welcomes`, `mark_welcomes_sent`. |
+| same | gnostr | 0.1.0 | No bump (unreleased): pending Commits resolved by a plugin-level resolver (publish until a relay OK, clear only when every relay refused, keep and retry when uncertain, resolve leftovers and unsent Welcomes at startup). |
+| same | groundhog | 0.10.0 | No bump (unreleased): GhStoreMarmot snapshots also cover `mls_group_welcomes`. |
 
 ## Maintenance
 
