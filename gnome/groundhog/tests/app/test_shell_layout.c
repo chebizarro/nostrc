@@ -302,20 +302,26 @@ test_content_page_structure(void)
   assert_status_page(none);
   g_assert_cmpstr(adw_status_page_get_title(ADW_STATUS_PAGE(none)), ==,
                   "No Conversation Selected");
-  assert_label(gh_content_page_get_message_list(page), "Messages");
-  g_assert_cmpint(gtk_accessible_get_accessible_role(
-                    GTK_ACCESSIBLE(gh_content_page_get_message_list(page))), ==,
-                  GTK_ACCESSIBLE_ROLE_LIST);
+  /* The conversation view is the typed layer's (G12, tested in
+   * tests/ui/test_conversation_view.c); any widget stands in for it here. */
+  g_assert_null(gh_content_page_get_view(page));
+  g_assert_false(gh_content_page_focus_conversation(page));
+  GtkWidget *view = gtk_label_new("view");
+  gh_content_page_set_view(page, view);
+  g_assert_true(gh_content_page_get_view(page) == view);
 
-  /* The reason sending is unavailable sits under the messages. */
+  /* The reason sending is unavailable sits under the conversation, in the
+   * composer's place. */
   g_assert_false(gtk_widget_get_visible(reason));
   gh_content_page_set_read_only_reason(page, "Read-only: test");
-  g_autoptr(GListStore) messages = store_of(2);
-  gh_content_page_set_messages(page, G_LIST_MODEL(messages));
+  gh_content_page_set_conversation_shown(page, TRUE);
+  g_assert_true(gh_content_page_get_conversation_shown(page));
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "conversation");
-  g_assert_true(gh_content_page_get_messages(page) == G_LIST_MODEL(messages));
+  g_assert_true(gtk_widget_is_ancestor(view, gtk_stack_get_visible_child(stack)));
   g_assert_true(gtk_widget_get_visible(reason));
   g_assert_true(gtk_widget_is_ancestor(reason, gtk_stack_get_visible_child(stack)));
+  g_assert_true(gtk_widget_is_ancestor(
+    reason, template_child(page, GH_TYPE_CONTENT_PAGE, "composer_slot")));
   g_assert_cmpstr(gh_content_page_get_read_only_reason(page), ==, "Read-only: test");
   gh_content_page_set_read_only_reason(page, NULL);
   g_assert_false(gtk_widget_get_visible(reason));
@@ -329,8 +335,9 @@ test_content_page_structure(void)
   gh_content_page_set_title(page, NULL, NULL);
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(page)), ==, "Messages");
 
-  gh_content_page_set_messages(page, NULL);
+  gh_content_page_set_conversation_shown(page, FALSE);
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "none");
+  g_assert_false(gh_content_page_focus_conversation(page));
 
   g_object_unref(page);
 }

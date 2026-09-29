@@ -28,7 +28,8 @@ set(GROUNDHOG_DATA ${CMAKE_CURRENT_SOURCE_DIR}/data)
 # groundhog-update-ui target regenerates them on request.
 set(GROUNDHOG_BLUEPRINTS
   gh-window gh-sidebar-page gh-content-page gh-onboarding-page gh-account-ui
-  gh-conversation-row gh-message-item gh-shortcuts-window)
+  gh-conversation-row gh-shortcuts-window
+  gh-conversation-view gh-message-row gh-day-separator gh-delivery-details)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -234,11 +235,15 @@ endif()
 
 # GTK-free NIP-17 conversation model: messages, rooms keyed by participant set
 # and the per-account store (in-memory backend; see gh-conversation-store.h).
+# A message's status is the honest GhMessageStatus of gh-message-status.h,
+# whose header names the relay publish outcomes (enums only, no link).
 if (TARGET nostr AND TARGET nip19)
   pkg_check_modules(GROUNDHOG_GIO REQUIRED IMPORTED_TARGET gio-2.0>=2.72)
   add_library(groundhog-conversations STATIC
-    src/app/gh-message.c src/app/gh-conversation.c src/app/gh-conversation-store.c)
-  target_include_directories(groundhog-conversations PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+    src/app/gh-message.c src/app/gh-conversation.c src/app/gh-conversation-store.c
+    src/app/gh-message-status.c)
+  target_include_directories(groundhog-conversations PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
   target_link_libraries(groundhog-conversations PUBLIC nostr nip19 PkgConfig::GROUNDHOG_GIO)
   target_compile_options(groundhog-conversations PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
@@ -815,3 +820,42 @@ else()
     GROUNDHOG_HAVE_OUTBOX=0)
 endif()
 # --- end G04 account store and app services ---
+
+# --- G12 Conversation view: bubbles, day separators, delivery, links ---
+# The selected conversation's messages (privacy charter §7.4, §7.6):
+# GhConversationView, GhMessageRow and GhDeliveryIndicator join the typed
+# conversation UI (G11 block), and the GTK-free link policy (PD-3, PT-3) is a
+# library of its own, tested without a display.
+pkg_check_modules(GROUNDHOG_LINK_POLICY_DEPS REQUIRED IMPORTED_TARGET glib-2.0>=2.66)
+add_library(groundhog-link-policy STATIC src/ui/gh-link-policy.c)
+target_include_directories(groundhog-link-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+target_link_libraries(groundhog-link-policy PUBLIC PkgConfig::GROUNDHOG_LINK_POLICY_DEPS)
+target_compile_options(groundhog-link-policy PRIVATE -Wall -Wextra -Werror)
+if (BUILD_TESTING)
+  add_executable(test-groundhog-link-policy tests/ui/test_link_policy.c)
+  target_link_libraries(test-groundhog-link-policy PRIVATE groundhog-link-policy)
+  target_compile_options(test-groundhog-link-policy PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-link-policy COMMAND test-groundhog-link-policy)
+  set_tests_properties(groundhog-link-policy PROPERTIES TIMEOUT 20
+    ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+endif()
+if (TARGET groundhog-conversation-ui)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-conversation-view.c
+    src/ui/gh-message-row.c src/ui/gh-delivery-indicator.c)
+  target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-link-policy)
+  # Bubbles, runs, day separators, delivery indicator and details, links,
+  # previews behind consent, scrolling, paging, expiry and the §7.15 states
+  # 11-13 on a real GhConversationStore with fixture rumors: no relay, no
+  # signer, no network (a counting fake stands in for a preview fetcher).
+  # Needs a display, so it self-skips (77) like the other GUI tests.
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    add_executable(test-groundhog-conversation-view tests/ui/test_conversation_view.c)
+    target_link_libraries(test-groundhog-conversation-view PRIVATE groundhog-conversation-ui)
+    target_compile_options(test-groundhog-conversation-view PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-conversation-view groundhog-test-schemas)
+    add_test(NAME groundhog-conversation-view COMMAND test-groundhog-conversation-view)
+    set_tests_properties(groundhog-conversation-view PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+endif()
+# --- end G12 ---

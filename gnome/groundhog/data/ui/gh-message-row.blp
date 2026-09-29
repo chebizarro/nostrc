@@ -1,0 +1,154 @@
+using Gtk 4.0;
+
+// One message of a conversation (charter §7.4, §7.6), bound by
+// gh-message-row.c: the sender's name (first message of a run in a
+// multi-party room), the bubble, the link preview area and the meta line.
+// The body is escaped markup from gh-link-policy.c: only plain addresses
+// are links and any markup in the message shows literally (charter PT-3).
+// Nothing is loaded from the web until "Show Preview" is chosen (charter
+// §2.1, D13). gh-message-row.c aligns the parts (end for your own messages),
+// sets the run classes and composes the accessible text.
+template $GhMessageRow: Widget {
+  layout-manager: BoxLayout {
+    orientation: vertical;
+    spacing: 2;
+  };
+
+  styles [
+    "groundhog-message-row",
+  ]
+
+  Label sender_label {
+    visible: false;
+    xalign: 0;
+    ellipsize: middle;
+    halign: start;
+
+    styles [
+      "caption-heading",
+      "groundhog-message-sender",
+    ]
+  }
+
+  Box bubble {
+    orientation: vertical;
+    spacing: 6;
+
+    styles [
+      "message-bubble",
+    ]
+
+    Label body_label {
+      use-markup: true;
+      selectable: true;
+      wrap: true;
+      wrap-mode: word_char;
+      xalign: 0;
+      max-width-chars: 60;
+
+      styles [
+        "groundhog-message-body",
+      ]
+    }
+
+    // Attachment cards (charter G22).
+    Box attachment_slot {
+      visible: false;
+      orientation: vertical;
+    }
+  }
+
+  Box preview_box {
+    visible: false;
+    orientation: vertical;
+    spacing: 2;
+
+    styles [
+      "groundhog-link-preview",
+    ]
+
+    Button preview_button {
+      label: _("Show Preview");
+      halign: start;
+      action-name: "conversation.show-preview";
+
+      styles [
+        "flat",
+        "groundhog-preview-button",
+      ]
+    }
+
+    Label preview_title {
+      visible: false;
+      xalign: 0;
+      wrap: true;
+      wrap-mode: word_char;
+      max-width-chars: 60;
+      selectable: true;
+
+      styles [
+        "heading",
+      ]
+    }
+
+    Label preview_text {
+      visible: false;
+      xalign: 0;
+      wrap: true;
+      wrap-mode: word_char;
+      max-width-chars: 60;
+      selectable: true;
+
+      styles [
+        "dim-label",
+      ]
+    }
+  }
+
+  Box meta_box {
+    spacing: 4;
+
+    styles [
+      "groundhog-message-meta",
+    ]
+
+    Image timer_icon {
+      visible: false;
+      icon-name: "alarm-symbolic";
+      pixel-size: 12;
+      valign: center;
+
+      styles [
+        "dim-label",
+      ]
+    }
+
+    Label time_label {
+      valign: center;
+
+      styles [
+        "caption",
+        "numeric",
+        "dim-label",
+      ]
+    }
+
+    $GhDeliveryIndicator delivery {
+      valign: center;
+    }
+
+    Button retry_button {
+      visible: false;
+      label: _("_Try Again");
+      use-underline: true;
+      valign: center;
+      action-name: "conversation.retry-message";
+      tooltip-text: _("Send this message again");
+
+      styles [
+        "flat",
+        "groundhog-retry-button",
+      ]
+    }
+  }
+}

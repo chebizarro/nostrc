@@ -16,10 +16,13 @@ G_BEGIN_DECLS
  *  - rows are GhConversationRow; they show message previews only while the
  *    sidebar's show-previews is set, which follows the settings key
  *    show-message-previews when settings has it and stays off otherwise;
- *  - the selected conversation's messages fill the content page (plain,
- *    read-only rows from gh-message-item.blp) and are marked read locally
- *    once they are on screen, as are messages arriving while they are on
- *    screen in the active window.
+ *  - the content page shows the selected conversation in a
+ *    GhConversationView (charter G12), which it installs and which takes
+ *    settings for link previews; its messages are marked read locally once
+ *    they are on screen, as are messages arriving while they are on screen
+ *    in the active window. The view is gh_content_page_get_view() of the
+ *    window's content page; its retry, unlock, history and delivery hooks
+ *    are wired by their owners (gh-conversation-view.h).
  * Nothing here publishes anything. settings may be NULL. Everything is
  * released with window. */
 void gh_conversation_list_attach(GhWindow *window, GhConversationStore *store,
@@ -28,12 +31,6 @@ void gh_conversation_list_attach(GhWindow *window, GhConversationStore *store,
 /* The settings key that governs list previews (owned by the schema, charter
  * §7.11); absent from schemas that predate it. */
 #define GH_CONVERSATION_LIST_PREVIEWS_KEY "show-message-previews"
-
-/* The message list's text for message: "You · 10:42" or the sender's
- * abbreviated npub and time, and the list item's accessible label, e.g.
- * "You, 10:42: Hello" (charter §7.14). Exposed for tests. */
-gchar *gh_conversation_list_message_heading(GhMessage *message, GDateTime *now);
-gchar *gh_conversation_list_message_label(GhMessage *message, GDateTime *now);
 
 G_END_DECLS
 #endif

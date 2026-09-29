@@ -32,6 +32,8 @@ gchar *gh_conversation_row_format_time(gint64 timestamp, GDateTime *now);
 /* A message's time: the time of day today, else the day as above followed
  * by the time of day. */
 gchar *gh_conversation_row_format_message_time(gint64 timestamp, GDateTime *now);
+/* The local time of day alone, in the clock format above. "" for 0. */
+gchar *gh_conversation_row_format_time_of_day(gint64 timestamp);
 
 G_END_DECLS
 #endif

@@ -1,4 +1,4 @@
-/* The conversation list and read-only message view of the Groundhog shell
+/* The conversation list of the Groundhog shell and the conversation it shows
  * (charter G11: UX-1, UX-3 list, UX-8), on a real GhConversationStore fed
  * through its admission API with fixture rumors: no relay, no signer, no
  * network. Covered: list order, unread badges and bold titles, message
@@ -15,6 +15,8 @@
  */
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
+#include "gh-conversation-view.h"
+#include "gh-message-row.h"
 #include "gh-identity.h"
 #include "gh-inbox-status.h"
 
@@ -195,16 +197,39 @@ row_shown(GhConversationRow *row, const char *name)
   return gtk_widget_get_visible(template_child(row, GH_TYPE_CONVERSATION_ROW, name));
 }
 
+/* The conversation view the binder installs in the content page (G12). */
+static GhConversationView *
+view_of(GhContentPage *content)
+{
+  return GH_CONVERSATION_VIEW(gh_content_page_get_view(content));
+}
+
+/* The messages of the conversation the content page shows, or NULL. */
+static GListModel *
+shown_messages(GhContentPage *content)
+{
+  GhConversation *conversation = gh_conversation_view_get_conversation(view_of(content));
+  return conversation ? G_LIST_MODEL(conversation) : NULL;
+}
+
+static GtkWidget *
+message_list_of(GhContentPage *content)
+{
+  return GTK_WIDGET(gh_conversation_view_get_message_list(view_of(content)));
+}
+
 /* The list item widgets of the message list: each is a GtkListItem's
- * widget whose child is the gh-message-item.blp box. */
+ * widget whose child is a bound GhMessageRow (day separators are skipped). */
 static GPtrArray *
 message_items(GhContentPage *content)
 {
   GPtrArray *items = g_ptr_array_new();
-  GtkWidget *list = GTK_WIDGET(gh_content_page_get_message_list(content));
-  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c))
-    if (GTK_IS_BOX(gtk_widget_get_first_child(c)))
+  GtkWidget *list = message_list_of(content);
+  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *child = gtk_widget_get_first_child(c);
+    if (GH_IS_MESSAGE_ROW(child) && gh_message_row_get_message(GH_MESSAGE_ROW(child)))
       g_ptr_array_add(items, c);
+  }
   return items;
 }
 
@@ -408,7 +433,7 @@ test_requests_are_separate(Fixture *f, gconstpointer data)
 
   /* A request's messages can be read; the header says what it is. */
   g_assert_true(gh_sidebar_page_select_relative(f->sidebar, 1));
-  g_assert_true(gh_content_page_get_messages(f->content) == G_LIST_MODEL(f->ad));
+  g_assert_true(shown_messages(f->content) == G_LIST_MODEL(f->ad));
   g_assert_cmpstr(adw_window_title_get_subtitle(gh_content_page_get_window_title(f->content)),
                   ==, "Message request · end-to-end encrypted");
 
@@ -498,25 +523,25 @@ has_message_items(gpointer data)
 {
   Fixture *f = data;
   g_autoptr(GPtrArray) items = message_items(f->content);
-  GListModel *messages = gh_content_page_get_messages(f->content);
-  return messages && gtk_widget_get_mapped(GTK_WIDGET(gh_content_page_get_message_list(f->content))) &&
+  GListModel *messages = shown_messages(f->content);
+  return messages && gtk_widget_get_mapped(message_list_of(f->content)) &&
          items->len == g_list_model_get_n_items(messages);
 }
 
+/* A message row shows its text as typed (markup never interpreted, charter
+ * PT-3) and its list item carries the composed accessible label; the
+ * bubbles themselves are tests/ui/test_conversation_view.c's. */
 static void
 assert_message_item(GtkWidget *item, GhMessage *message)
 {
   g_autoptr(GDateTime) now = g_date_time_new_now_local();
-  g_autofree char *label = gh_conversation_list_message_label(message, now);
-  g_autofree char *heading = gh_conversation_list_message_heading(message, now);
+  g_autofree char *label = gh_message_row_compose_summary(message, now);
   gtk_test_accessible_assert_property(GTK_ACCESSIBLE(item), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                       label);
-  GtkWidget *box = gtk_widget_get_first_child(item);
-  GtkLabel *heading_label = GTK_LABEL(gtk_widget_get_first_child(box));
-  GtkLabel *body = GTK_LABEL(gtk_widget_get_next_sibling(GTK_WIDGET(heading_label)));
-  g_assert_cmpstr(gtk_label_get_text(heading_label), ==, heading);
-  g_assert_cmpstr(gtk_label_get_label(body), ==, gh_message_get_content(message));
-  g_assert_false(gtk_label_get_use_markup(body));
+  GhMessageRow *row = GH_MESSAGE_ROW(gtk_widget_get_first_child(item));
+  g_assert_true(gh_message_row_get_message(row) == message);
+  GtkLabel *body = template_child(row, GH_TYPE_MESSAGE_ROW, "body_label");
+  g_assert_cmpstr(gtk_label_get_text(body), ==, gh_message_get_content(message));
 }
 
 static void
@@ -534,7 +559,7 @@ test_selection_shows_messages(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), "win.next-conversation",
                                            NULL));
   g_assert_true(gh_sidebar_page_get_selected(f->sidebar) == f->ab);
-  g_assert_true(gh_content_page_get_messages(f->content) == G_LIST_MODEL(f->ab));
+  g_assert_true(shown_messages(f->content) == G_LIST_MODEL(f->ab));
   g_assert_cmpstr(gtk_stack_get_visible_child_name(content_stack), ==, "conversation");
   g_assert_cmpstr(adw_window_title_get_title(title), ==, gh_conversation_get_title(f->ab));
   g_assert_cmpstr(adw_window_title_get_subtitle(title), ==, "Private · end-to-end encrypted");
@@ -554,10 +579,10 @@ test_selection_shows_messages(Fixture *f, gconstpointer data)
   assert_message_item(g_ptr_array_index(items, 0), first);
   assert_message_item(g_ptr_array_index(items, 1), second);
   g_autoptr(GDateTime) now = g_date_time_new_now_local();
-  g_autofree char *own = gh_conversation_list_message_label(first, now);
+  g_autofree char *own = gh_message_row_compose_summary(first, now);
   g_assert_true(g_str_has_prefix(own, "You, "));
   g_assert_true(g_str_has_suffix(own, ": hey B"));
-  g_autofree char *theirs = gh_conversation_list_message_label(second, now);
+  g_autofree char *theirs = gh_message_row_compose_summary(second, now);
   g_assert_true(g_str_has_prefix(theirs, "npub1"));
   g_assert_cmpint(gtk_accessible_get_accessible_role(
                     GTK_ACCESSIBLE(g_ptr_array_index(items, 0))), ==,
@@ -580,7 +605,7 @@ test_selection_shows_messages(Fixture *f, gconstpointer data)
   /* The shown conversation moving to the top keeps it selected and shown. */
   add(f->store, 3, 1, f->now - 1, "moving up", NULL);
   g_assert_true(gh_sidebar_page_get_selected(f->sidebar) == f->ac);
-  g_assert_true(gh_content_page_get_messages(f->content) == G_LIST_MODEL(f->ac));
+  g_assert_true(shown_messages(f->content) == G_LIST_MODEL(f->ac));
   GhConversation *const moved[] = { f->ac, f->ab };
   assert_list(f, moved, 2);
 
@@ -612,7 +637,7 @@ test_empty_and_banner(Fixture *f, gconstpointer data)
   gh_conversation_store_set_account(f->store, hex[2], NULL, NULL, NULL);
   g_assert_cmpuint(g_list_model_get_n_items(list_model(f->sidebar)), ==, 0);
   g_assert_null(gh_sidebar_page_get_selected(f->sidebar));
-  g_assert_null(gh_content_page_get_messages(f->content));
+  g_assert_null(shown_messages(f->content));
   g_assert_false(gtk_widget_get_visible(template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE,
                                                        "requests_button")));
   /* #9 */
@@ -646,7 +671,7 @@ content_shown(gpointer data)
 {
   Fixture *f = data;
   return gtk_widget_get_mapped(GTK_WIDGET(f->content)) && has_message_items(f) &&
-         gtk_widget_get_width(GTK_WIDGET(gh_content_page_get_message_list(f->content))) > 0;
+         gtk_widget_get_width(message_list_of(f->content)) > 0;
 }
 
 static gboolean
@@ -722,7 +747,7 @@ test_collapsed_360x294(Fixture *f, gconstpointer data)
   spin_until(content_shown, f);
   drain_idle();
   assert_fits(f);
-  GtkWidget *messages = GTK_WIDGET(gh_content_page_get_message_list(f->content));
+  GtkWidget *messages = message_list_of(f->content);
   g_assert_cmpint(gtk_widget_get_width(messages), >, 0);
   g_assert_cmpint(gtk_widget_get_width(messages), <=, 360);
 
@@ -797,7 +822,7 @@ shot_ready(gpointer data)
   if (!shot->want_messages)
     return TRUE;
   g_autoptr(GPtrArray) items = message_items(content);
-  GListModel *messages = gh_content_page_get_messages(content);
+  GListModel *messages = shown_messages(content);
   return messages && gtk_widget_get_mapped(GTK_WIDGET(content)) &&
          items->len == g_list_model_get_n_items(messages);
 }

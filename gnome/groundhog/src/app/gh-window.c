@@ -130,7 +130,7 @@ on_activate(GhWindow *self, guint position)
   if (!gh_sidebar_page_get_selected(self->sidebar))
     return;
   adw_navigation_split_view_set_show_content(self->split, TRUE);
-  gtk_widget_grab_focus(GTK_WIDGET(gh_content_page_get_message_list(self->content)));
+  gh_content_page_focus_conversation(self->content);
 }
 
 static void

@@ -1,14 +1,15 @@
 using Gtk 4.0;
 using Adw 1;
 
-// Content navigation page: the selected conversation's messages as a plain,
-// read-only list, or "No Conversation Selected". This is the interim view
-// until the conversation view (charter G12) replaces the list with bubbles
-// and the reason line below it with the composer (G13). The reason line says
-// why sending is unavailable (kept current by gh-account-ui.c); it sits in a
-// plain box, not a toolbar bottom bar, so a wrapped reason gets the height of
-// every line on libadwaita 1.5 too. The message rows come from
-// gh-message-item.blp through gh-conversation-list.c.
+// Content navigation page (charter §7.3, §7.4): the header, whose title
+// follows the selected conversation, over "No Conversation Selected" or the
+// conversation. The conversation page has two slots filled from C: the
+// conversation view (GhConversationView, gh-conversation-view.blp), which
+// gh-conversation-list.c sets because it knows the conversation model, and
+// the composer (charter G13). Until the composer lands, the composer slot
+// holds the line saying why sending is unavailable (kept current by
+// gh-account-ui.c); it is a plain box rather than a toolbar bottom bar, so a
+// wrapped reason gets the height of every line on libadwaita 1.5 too.
 template $GhContentPage: Adw.NavigationPage {
   title: _("Messages");
 
@@ -43,36 +44,23 @@ template $GhContentPage: Adw.NavigationPage {
         child: Box {
           orientation: vertical;
 
-          ScrolledWindow {
-            hscrollbar-policy: never;
+          Adw.Bin conversation_slot {
             vexpand: true;
-
-            child: Adw.ClampScrollable {
-              maximum-size: 760;
-              tightening-threshold: 560;
-
-              child: ListView message_list {
-                styles [
-                  "groundhog-message-list",
-                ]
-
-                accessibility {
-                  label: _("Messages");
-                }
-              };
-            };
           }
 
-          Label read_only_reason {
-            visible: false;
-            wrap: true;
-            wrap-mode: word_char;
-            justify: center;
+          // The composer (charter G13) replaces the reason line.
+          Adw.Bin composer_slot {
+            child: Label read_only_reason {
+              visible: false;
+              wrap: true;
+              wrap-mode: word_char;
+              justify: center;
 
-            styles [
-              "dim-label",
-              "groundhog-read-only-reason",
-            ]
+              styles [
+                "dim-label",
+                "groundhog-read-only-reason",
+              ]
+            };
           }
         };
       }

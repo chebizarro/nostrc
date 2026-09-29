@@ -12,8 +12,8 @@ G_BEGIN_DECLS
  * bundled in the Groundhog GResource, so groundhog_register_resource() must
  * run before either type is first used. This unit knows no model type: the
  * conversation list binder (src/ui/gh-conversation-list.c) supplies the
- * models, row factories and titles. It never touches GSettings or the
- * signer. */
+ * models, row factories, titles and the conversation view. It never touches
+ * GSettings or the signer. */
 
 /* The sidebar navigation page (charter §7.5): header, search bar, status
  * banner and a stack whose pages are "conversations" (the Message Requests
@@ -76,20 +76,27 @@ void gh_sidebar_page_set_show_previews(GhSidebarPage *self, gboolean show_previe
  * gh-account-ui.c names those pages' targets. */
 GtkWidget *gh_sidebar_page_get_focus_target(GhSidebarPage *self);
 
-/* The content navigation page: the selected conversation's messages as a
- * read-only list ("conversation") with a line below it stating why sending is
- * unavailable, or "No Conversation Selected" ("none"). The message rows'
- * factory is set by the caller. */
+/* The content navigation page (charter §7.3, §7.4): the header, whose title
+ * follows the selected conversation, over "No Conversation Selected"
+ * ("none") or the conversation ("conversation"). The conversation page holds
+ * the conversation view, set by the typed layer (gh_conversation_list_attach()
+ * sets a GhConversationView), above the composer slot, which until the
+ * composer (charter G13) holds the line stating why sending is
+ * unavailable. */
 #define GH_TYPE_CONTENT_PAGE (gh_content_page_get_type())
 G_DECLARE_FINAL_TYPE(GhContentPage, gh_content_page, GH, CONTENT_PAGE, AdwNavigationPage)
 
 GtkStack *gh_content_page_get_stack(GhContentPage *self);
-GtkListView *gh_content_page_get_message_list(GhContentPage *self);
 AdwWindowTitle *gh_content_page_get_window_title(GhContentPage *self);
-/* messages NULL shows "none"; otherwise the list shows them (scrolled to
- * the newest). */
-void gh_content_page_set_messages(GhContentPage *self, GListModel *messages);
-GListModel *gh_content_page_get_messages(GhContentPage *self);
+/* The conversation page's view; set once. */
+void gh_content_page_set_view(GhContentPage *self, GtkWidget *view);
+GtkWidget *gh_content_page_get_view(GhContentPage *self);
+/* Shows the conversation page (TRUE) or "No Conversation Selected". */
+void gh_content_page_set_conversation_shown(GhContentPage *self, gboolean shown);
+gboolean gh_content_page_get_conversation_shown(GhContentPage *self);
+/* Moves keyboard focus into the conversation view; FALSE when none is
+ * shown or it cannot take focus. */
+gboolean gh_content_page_focus_conversation(GhContentPage *self);
 /* The page and header title; NULL restores the template's "Messages". */
 void gh_content_page_set_title(GhContentPage *self, const gchar *title,
                                const gchar *subtitle);

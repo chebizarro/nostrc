@@ -537,9 +537,8 @@ struct _GhContentPage {
   AdwNavigationPage parent_instance;
   AdwWindowTitle *window_title;
   GtkStack *content_stack;
-  GtkListView *message_list;
+  AdwBin *conversation_slot;
   GtkLabel *read_only_reason;
-  GListModel *messages;
   gchar *default_title;
 };
 
@@ -548,11 +547,7 @@ G_DEFINE_FINAL_TYPE(GhContentPage, gh_content_page, ADW_TYPE_NAVIGATION_PAGE)
 static void
 gh_content_page_dispose(GObject *object)
 {
-  GhContentPage *self = GH_CONTENT_PAGE(object);
-  if (self->message_list)
-    gtk_list_view_set_model(self->message_list, NULL);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_CONTENT_PAGE);
-  g_clear_object(&self->messages);
   G_OBJECT_CLASS(gh_content_page_parent_class)->dispose(object);
 }
 
@@ -574,9 +569,10 @@ gh_content_page_class_init(GhContentPageClass *klass)
                                               "/org/nostr/Groundhog/ui/gh-content-page.ui");
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, window_title);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, content_stack);
-  gtk_widget_class_bind_template_child(widget_class, GhContentPage, message_list);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, conversation_slot);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, read_only_reason);
   gtk_widget_class_bind_template_child_full(widget_class, "none_page", FALSE, 0);
+  gtk_widget_class_bind_template_child_full(widget_class, "composer_slot", FALSE, 0);
 }
 
 static void
@@ -593,13 +589,6 @@ gh_content_page_get_stack(GhContentPage *self)
   return self->content_stack;
 }
 
-GtkListView *
-gh_content_page_get_message_list(GhContentPage *self)
-{
-  g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
-  return self->message_list;
-}
-
 AdwWindowTitle *
 gh_content_page_get_window_title(GhContentPage *self)
 {
@@ -608,31 +597,41 @@ gh_content_page_get_window_title(GhContentPage *self)
 }
 
 void
-gh_content_page_set_messages(GhContentPage *self, GListModel *messages)
+gh_content_page_set_view(GhContentPage *self, GtkWidget *view)
 {
   g_return_if_fail(GH_IS_CONTENT_PAGE(self));
-  g_return_if_fail(!messages || G_IS_LIST_MODEL(messages));
-  if (self->messages == messages)
-    return;
-  g_set_object(&self->messages, messages);
-  if (messages) {
-    g_autoptr(GtkNoSelection) model = gtk_no_selection_new(g_object_ref(messages));
-    gtk_list_view_set_model(self->message_list, GTK_SELECTION_MODEL(model));
-    guint n = g_list_model_get_n_items(messages);
-    if (n > 0)
-      gtk_list_view_scroll_to(self->message_list, n - 1, GTK_LIST_SCROLL_NONE, NULL);
-    gtk_stack_set_visible_child_name(self->content_stack, "conversation");
-  } else {
-    gtk_list_view_set_model(self->message_list, NULL);
-    gtk_stack_set_visible_child_name(self->content_stack, "none");
-  }
+  g_return_if_fail(GTK_IS_WIDGET(view));
+  g_return_if_fail(adw_bin_get_child(self->conversation_slot) == NULL);
+  adw_bin_set_child(self->conversation_slot, view);
 }
 
-GListModel *
-gh_content_page_get_messages(GhContentPage *self)
+GtkWidget *
+gh_content_page_get_view(GhContentPage *self)
 {
   g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
-  return self->messages;
+  return adw_bin_get_child(self->conversation_slot);
+}
+
+void
+gh_content_page_set_conversation_shown(GhContentPage *self, gboolean shown)
+{
+  g_return_if_fail(GH_IS_CONTENT_PAGE(self));
+  gtk_stack_set_visible_child_name(self->content_stack, shown ? "conversation" : "none");
+}
+
+gboolean
+gh_content_page_get_conversation_shown(GhContentPage *self)
+{
+  g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), FALSE);
+  return g_strcmp0(gtk_stack_get_visible_child_name(self->content_stack), "conversation") == 0;
+}
+
+gboolean
+gh_content_page_focus_conversation(GhContentPage *self)
+{
+  g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), FALSE);
+  GtkWidget *view = adw_bin_get_child(self->conversation_slot);
+  return view && gh_content_page_get_conversation_shown(self) && gtk_widget_grab_focus(view);
 }
 
 void

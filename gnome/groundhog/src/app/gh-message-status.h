@@ -1,7 +1,7 @@
 #ifndef GH_MESSAGE_STATUS_H
 #define GH_MESSAGE_STATUS_H
 
-#include <glib.h>
+#include <glib-object.h>
 
 #include "gh-relay-publish.h"
 
@@ -13,6 +13,10 @@ G_BEGIN_DECLS
  * self-copy failure never changes this status (it is a secondary "Not saved
  * to your other devices" note). */
 typedef enum {
+  /* Not a sending state: an incoming message, or an own message the outbox
+   * does not track (known only from its self-copy). Nothing is shown for it
+   * and the copy getters below return NULL. */
+  GH_MESSAGE_STATUS_NONE = -1,
   GH_MESSAGE_STATUS_WAITING_FOR_SIGNER,   /* "Waiting for approval" */
   GH_MESSAGE_STATUS_QUEUED_OFFLINE,       /* "Waiting for connection" */
   GH_MESSAGE_STATUS_SENDING,              /* "Sending…": no recipient reached yet */
@@ -24,14 +28,15 @@ typedef enum {
   GH_MESSAGE_STATUS_CANCELLED
 } GhMessageStatus;
 
-/* No GType is registered here: the conversation model's interim
- * GhMessage:status (gh-message.h) still registers "GhMessageStatus"; G12/G13
- * move it onto this enum. GhOutboxItem:status is an int holding these values. */
+/* The enum GType, e.g. for GhMessage:status (gh-message.h). GhOutboxItem:status
+ * is an int holding these values. */
+GType gh_message_status_get_type(void);
+#define GH_TYPE_MESSAGE_STATUS (gh_message_status_get_type())
 
-/* UX-5: every status has a short label, a symbolic icon name and a full
- * accessible description. Labels and descriptions are translatable source
- * strings, looked up in the application's text domain; none claims delivery
- * or reading. */
+/* UX-5: every status but NONE has a short label, a symbolic icon name and a
+ * full accessible description. Labels and descriptions are translatable
+ * source strings, looked up in the application's text domain; none claims
+ * delivery or reading. */
 const gchar *gh_message_status_get_label(GhMessageStatus status);
 const gchar *gh_message_status_get_icon_name(GhMessageStatus status);
 const gchar *gh_message_status_get_accessible_description(GhMessageStatus status);

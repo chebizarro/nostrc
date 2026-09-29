@@ -7,14 +7,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GhContentPage" parent="AdwNavigationPage">
-    <property name="title" translatable="yes">Messages</property>
+    <property name="title" translatable="true">Messages</property>
     <property name="child">
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
             <property name="title-widget">
               <object class="AdwWindowTitle" id="window_title">
-                <property name="title" translatable="yes">Messages</property>
+                <property name="title" translatable="true">Messages</property>
               </object>
             </property>
           </object>
@@ -27,8 +27,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="child">
                   <object class="AdwStatusPage" id="none_page">
                     <property name="icon-name">mail-read-symbolic</property>
-                    <property name="title" translatable="yes">No Conversation Selected</property>
-                    <property name="description" translatable="yes">Choose a conversation to read its messages.</property>
+                    <property name="title" translatable="true">No Conversation Selected</property>
+                    <property name="description" translatable="true">Choose a conversation to read its messages.</property>
                     <property name="hexpand">true</property>
                     <property name="vexpand">true</property>
                     <style>
@@ -45,37 +45,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkBox">
                     <property name="orientation">1</property>
                     <child>
-                      <object class="GtkScrolledWindow">
-                        <property name="hscrollbar-policy">2</property>
+                      <object class="AdwBin" id="conversation_slot">
                         <property name="vexpand">true</property>
-                        <property name="child">
-                          <object class="AdwClampScrollable">
-                            <property name="maximum-size">760</property>
-                            <property name="tightening-threshold">560</property>
-                            <property name="child">
-                              <object class="GtkListView" id="message_list">
-                                <style>
-                                  <class name="groundhog-message-list"/>
-                                </style>
-                                <accessibility>
-                                  <property name="label" translatable="yes">Messages</property>
-                                </accessibility>
-                              </object>
-                            </property>
-                          </object>
-                        </property>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkLabel" id="read_only_reason">
-                        <property name="visible">false</property>
-                        <property name="wrap">true</property>
-                        <property name="wrap-mode">2</property>
-                        <property name="justify">2</property>
-                        <style>
-                          <class name="dim-label"/>
-                          <class name="groundhog-read-only-reason"/>
-                        </style>
+                      <object class="AdwBin" id="composer_slot">
+                        <property name="child">
+                          <object class="GtkLabel" id="read_only_reason">
+                            <property name="visible">false</property>
+                            <property name="wrap">true</property>
+                            <property name="wrap-mode">2</property>
+                            <property name="justify">2</property>
+                            <style>
+                              <class name="dim-label"/>
+                              <class name="groundhog-read-only-reason"/>
+                            </style>
+                          </object>
+                        </property>
                       </object>
                     </child>
                   </object>

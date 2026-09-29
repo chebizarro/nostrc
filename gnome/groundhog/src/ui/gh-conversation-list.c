@@ -1,5 +1,6 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
+#include "gh-conversation-view.h"
 
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
@@ -12,6 +13,7 @@
 typedef struct {
   GhSidebarPage *sidebar; /* not owned: the struct is the window's data */
   GhContentPage *content;
+  GhConversationView *view;
   GhConversationStore *store;
   GtkFilter *accepted;        /* not a message request */
   GtkFilter *requests;        /* a message request */
@@ -54,73 +56,6 @@ npub_of(const gchar *pubkey_hex, gboolean abbreviated)
                  : g_strdup(npub);
   free(npub);
   return out;
-}
-
-/* ---- message rows ---------------------------------------------------------- */
-
-static gchar *
-sender_name(GhMessage *message)
-{
-  return gh_message_is_self(message) ? g_strdup(_("You"))
-                                     : npub_of(gh_message_get_sender(message), TRUE);
-}
-
-gchar *
-gh_conversation_list_message_heading(GhMessage *message, GDateTime *now)
-{
-  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
-  g_autofree gchar *sender = sender_name(message);
-  g_autofree gchar *time =
-    gh_conversation_row_format_message_time(gh_message_get_created_at(message), now);
-  /* TRANSLATORS: a message's sender and time, e.g. "You · 10:42". */
-  return g_strdup_printf(_("%s · %s"), sender, time);
-}
-
-gchar *
-gh_conversation_list_message_label(GhMessage *message, GDateTime *now)
-{
-  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
-  g_autofree gchar *sender = sender_name(message);
-  g_autofree gchar *time =
-    gh_conversation_row_format_message_time(gh_message_get_created_at(message), now);
-  /* TRANSLATORS: a message's accessible label: sender, time, text. */
-  return g_strdup_printf(_("%s, %s: %s"), sender, time, gh_message_get_content(message));
-}
-
-/* Closures of gh-message-item.blp: (this, template.item, user data). */
-static gchar *
-message_item_heading(GObject *self, GObject *item, gpointer data)
-{
-  (void)self;
-  (void)data;
-  if (!GH_IS_MESSAGE(item))
-    return g_strdup("");
-  g_autoptr(GDateTime) now = g_date_time_new_now_local();
-  return gh_conversation_list_message_heading(GH_MESSAGE(item), now);
-}
-
-static gchar *
-message_item_accessible_label(GObject *self, GObject *item, gpointer data)
-{
-  (void)self;
-  (void)data;
-  if (!GH_IS_MESSAGE(item))
-    return g_strdup("");
-  g_autoptr(GDateTime) now = g_date_time_new_now_local();
-  return gh_conversation_list_message_label(GH_MESSAGE(item), now);
-}
-
-static GtkListItemFactory *
-message_factory(void)
-{
-  g_autoptr(GtkBuilderScope) scope = gtk_builder_cscope_new();
-  gtk_builder_cscope_add_callback_symbol(GTK_BUILDER_CSCOPE(scope), "gh_message_item_heading",
-                                         G_CALLBACK(message_item_heading));
-  gtk_builder_cscope_add_callback_symbol(GTK_BUILDER_CSCOPE(scope),
-                                         "gh_message_item_accessible_label",
-                                         G_CALLBACK(message_item_accessible_label));
-  return gtk_builder_list_item_factory_new_from_resource(
-    scope, "/org/nostr/Groundhog/ui/gh-message-item.ui");
 }
 
 /* ---- conversation rows ------------------------------------------------------ */
@@ -236,7 +171,9 @@ on_selected(GhWindow *window)
   if (conversation == list->shown)
     return;
   g_set_object(&list->shown, conversation);
-  gh_content_page_set_messages(list->content, conversation ? G_LIST_MODEL(conversation) : NULL);
+  /* Before marking it read: the unread count decides where the view opens. */
+  gh_conversation_view_set_conversation(list->view, conversation);
+  gh_content_page_set_conversation_shown(list->content, conversation != NULL);
   update_title(list);
   mark_read_if_visible(window, list);
 }
@@ -319,15 +256,14 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   g_return_if_fail(!settings || G_IS_SETTINGS(settings));
   g_return_if_fail(list_of(window) == NULL);
 
-  /* The row and message templates name these types; they resolve by name. */
-  g_type_ensure(GH_TYPE_CONVERSATION_ROW);
-  g_type_ensure(GH_TYPE_MESSAGE);
-
   GhConversationList *list = g_new0(GhConversationList, 1);
   list->sidebar = gh_window_get_sidebar(window);
   list->content = gh_window_get_content(window);
   list->store = g_object_ref(store);
   g_object_set_data_full(G_OBJECT(window), LIST_DATA, list, list_free);
+  list->view = GH_CONVERSATION_VIEW(gh_conversation_view_new());
+  gh_conversation_view_set_settings(list->view, settings);
+  gh_content_page_set_view(list->content, GTK_WIDGET(list->view));
 
   if (settings) {
     g_autoptr(GSettingsSchema) schema = NULL;
@@ -353,8 +289,6 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   g_signal_connect(rows, "unbind", G_CALLBACK(unbind_row), NULL);
   gtk_list_view_set_factory(gh_sidebar_page_get_list(list->sidebar), rows);
   g_object_unref(rows);
-  g_autoptr(GtkListItemFactory) messages = message_factory();
-  gtk_list_view_set_factory(gh_content_page_get_message_list(list->content), messages);
 
   gh_sidebar_page_set_models(list->sidebar, conversations, requests);
   on_store_changed(window, 0, 0, g_list_model_get_n_items(G_LIST_MODEL(store)),

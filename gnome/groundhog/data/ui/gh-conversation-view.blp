@@ -1,0 +1,189 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The messages of one conversation (charter §7.4, §7.6), driven by
+// gh-conversation-view.c: the conversation banner (e.g. a recipient without
+// a message inbox, charter §7.15 state 11), the message list with a day
+// separator per local day (gh-day-separator.blp, loaded from C because
+// blueprint-compiler 0.12 has no inline ListHeader template) and rows from
+// gh-message-row.blp, "Loading earlier messages", "Jump to Latest" with the
+// number of new messages, and "Waiting for Nostr Signer to unlock N
+// messages" (state 12). The two alert dialogs confirm a link that is not a
+// plain https address (charter PD-3) and ask before a link preview connects
+// anywhere (charter §2.1, D13). Below 480sp the compact breakpoint narrows
+// the bubbles (charter §7.12). The minimum height leaves room for the
+// header and the composer slot of gh-content-page.blp in a 360x294 window
+// (charter UX-1).
+template $GhConversationView: Adw.BreakpointBin {
+  width-request: 300;
+  height-request: 150;
+
+  child: Adw.ToolbarView {
+    [top]
+    // Its title can name a person: plain text, never markup.
+    Adw.Banner banner {
+      revealed: false;
+      use-markup: false;
+    }
+
+    content: Overlay {
+      child: ScrolledWindow scroller {
+        hscrollbar-policy: never;
+        vexpand: true;
+
+        child: Adw.ClampScrollable {
+          maximum-size: 760;
+          tightening-threshold: 560;
+
+          child: ListView message_list {
+            tab-behavior: item;
+
+            styles [
+              "groundhog-message-list",
+            ]
+
+            accessibility {
+              label: _("Messages");
+            }
+
+            factory: BuilderListItemFactory {
+              template ListItem {
+                activatable: false;
+                selectable: false;
+                accessible-label: bind template.child as <$GhMessageRow>.summary;
+
+                child: $GhMessageRow {
+                  message: bind template.item as <$GhTimelineItem>.message;
+                  run-start: bind template.item as <$GhTimelineItem>.run-start;
+                  run-end: bind template.item as <$GhTimelineItem>.run-end;
+                  show-sender: bind template.item as <$GhTimelineItem>.show-sender;
+                };
+              }
+            };
+          };
+        };
+      };
+
+      [overlay]
+      Box loading_box {
+        visible: false;
+        halign: center;
+        valign: start;
+        margin-top: 12;
+        spacing: 8;
+
+        styles [
+          "osd",
+          "groundhog-loading-older",
+        ]
+
+        Spinner {
+          spinning: true;
+        }
+
+        Label {
+          label: _("Loading earlier messages");
+        }
+      }
+
+      [overlay]
+      Button jump_button {
+        visible: false;
+        halign: end;
+        valign: end;
+        margin-end: 18;
+        margin-bottom: 12;
+        action-name: "conversation.jump-to-latest";
+        tooltip-text: _("Jump to Latest");
+
+        styles [
+          "osd",
+          "groundhog-jump-button",
+        ]
+
+        child: Box {
+          spacing: 6;
+
+          Image {
+            icon-name: "go-bottom-symbolic";
+            accessible-role: presentation;
+          }
+
+          Label jump_count {
+            visible: false;
+
+            styles [
+              "numeric",
+            ]
+          }
+        };
+      }
+    };
+
+    [bottom]
+    Box locked_row {
+      visible: false;
+      halign: center;
+      spacing: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+      margin-start: 12;
+      margin-end: 12;
+
+      styles [
+        "groundhog-locked-messages",
+      ]
+
+      Image {
+        icon-name: "changes-prevent-symbolic";
+        accessible-role: presentation;
+      }
+
+      Label locked_label {
+        wrap: true;
+        xalign: 0;
+      }
+
+      Button unlock_button {
+        label: _("_Unlock");
+        use-underline: true;
+        valign: center;
+        action-name: "conversation.unlock-messages";
+        tooltip-text: _("Ask Nostr Signer to unlock these messages");
+      }
+    }
+  };
+
+  Adw.Breakpoint compact_breakpoint {
+    condition ("max-width: 480sp")
+  }
+}
+
+// Response ids are unique across the file: blueprint-compiler 0.12 treats
+// them as object ids.
+Adw.AlertDialog link_dialog {
+  heading: _("Open Link?");
+  default-response: "link-cancel";
+  close-response: "link-cancel";
+
+  responses [
+    link-cancel: _("_Cancel"),
+    link-open: _("_Open Link"),
+  ]
+}
+
+Adw.AlertDialog preview_dialog {
+  heading: _("Show Link Preview?");
+  default-response: "preview-cancel";
+  close-response: "preview-cancel";
+
+  extra-child: CheckButton preview_dont_ask {
+    label: _("_Don't ask again");
+    use-underline: true;
+  };
+
+  responses [
+    preview-cancel: _("_Cancel"),
+    preview-show: _("_Show Preview") suggested,
+  ]
+}

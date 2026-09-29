@@ -3,6 +3,8 @@
 
 #include <gio/gio.h>
 
+#include "gh-message-status.h"
+
 G_BEGIN_DECLS
 
 /* Bounds shared with the NIP-17 inbox (gh-nip17-inbox.h): a rumor is at most
@@ -10,25 +12,11 @@ G_BEGIN_DECLS
 #define GH_MESSAGE_MAX_RUMOR_JSON 65535
 #define GH_MESSAGE_MAX_RECIPIENTS 128
 
-/* Honest send status of an own message (privacy/UX charter §3.6). There is
- * deliberately no "delivered" or "read" value: relay acceptance is all a
- * sender can know. Placeholder: the durable outbox (G06) derives it and owns
- * the derivation; until then only a local echo sets it. NONE is every
+/* An own message's honest send status is a GhMessageStatus
+ * (gh-message-status.h, privacy/UX charter §3.6): there is deliberately no
+ * "delivered" or "read" value, since relay acceptance is all a sender can
+ * know. The durable outbox (G06) derives it; GH_MESSAGE_STATUS_NONE is every
  * incoming message and every own message known only from its self-copy. */
-typedef enum {
-  GH_MESSAGE_STATUS_NONE,
-  GH_MESSAGE_STATUS_WAITING_FOR_SIGNER,
-  GH_MESSAGE_STATUS_QUEUED_OFFLINE,
-  GH_MESSAGE_STATUS_SENDING,
-  GH_MESSAGE_STATUS_SENT,
-  GH_MESSAGE_STATUS_PARTIALLY_SENT,
-  GH_MESSAGE_STATUS_RETRYING,
-  GH_MESSAGE_STATUS_NOT_SENT,
-  GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX
-} GhMessageStatus;
-
-GType gh_message_status_get_type(void);
-#define GH_TYPE_MESSAGE_STATUS (gh_message_status_get_type())
 
 #define GH_TYPE_MESSAGE (gh_message_get_type())
 G_DECLARE_FINAL_TYPE(GhMessage, gh_message, GH, MESSAGE, GObject)

@@ -40,31 +40,6 @@ static GParamSpec *props[N_PROPS];
 
 G_DEFINE_FINAL_TYPE(GhMessage, gh_message, G_TYPE_OBJECT)
 
-GType
-gh_message_status_get_type(void)
-{
-  static gsize type = 0;
-  if (g_once_init_enter(&type)) {
-    static const GEnumValue values[] = {
-      { GH_MESSAGE_STATUS_NONE, "GH_MESSAGE_STATUS_NONE", "none" },
-      { GH_MESSAGE_STATUS_WAITING_FOR_SIGNER, "GH_MESSAGE_STATUS_WAITING_FOR_SIGNER",
-        "waiting-for-signer" },
-      { GH_MESSAGE_STATUS_QUEUED_OFFLINE, "GH_MESSAGE_STATUS_QUEUED_OFFLINE", "queued-offline" },
-      { GH_MESSAGE_STATUS_SENDING, "GH_MESSAGE_STATUS_SENDING", "sending" },
-      { GH_MESSAGE_STATUS_SENT, "GH_MESSAGE_STATUS_SENT", "sent" },
-      { GH_MESSAGE_STATUS_PARTIALLY_SENT, "GH_MESSAGE_STATUS_PARTIALLY_SENT", "partially-sent" },
-      { GH_MESSAGE_STATUS_RETRYING, "GH_MESSAGE_STATUS_RETRYING", "retrying" },
-      { GH_MESSAGE_STATUS_NOT_SENT, "GH_MESSAGE_STATUS_NOT_SENT", "not-sent" },
-      { GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX, "GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX",
-        "cannot-send-no-inbox" },
-      { 0, NULL, NULL }
-    };
-    g_once_init_leave(&type, g_enum_register_static(
-      g_intern_static_string("GhMessageStatus"), values));
-  }
-  return type;
-}
-
 static gboolean
 lower_hex64(const gchar *value)
 {
@@ -434,6 +409,7 @@ gh_message_class_init(GhMessageClass *klass)
 static void
 gh_message_init(GhMessage *self)
 {
+  self->status = GH_MESSAGE_STATUS_NONE;
   self->relays = g_ptr_array_new_with_free_func(g_free);
   g_ptr_array_add(self->relays, NULL);
 }

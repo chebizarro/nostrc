@@ -1,0 +1,140 @@
+using Gtk 4.0;
+
+// The delivery indicator of one of your own messages and the details it
+// opens (charter §3.6, §7.4, §7.6), driven by gh-delivery-indicator.c: a
+// flat button with the status icon (and the short label unless the message
+// is simply "Sent"), and a popover with the status, its description, the
+// relays of each recipient with what each one reported, the next automatic
+// try and the self-copy note. A relay's OK only means it stored the
+// message: nothing here claims delivery or reading (charter PD-1, UX-5).
+template $GhDeliveryIndicator: Widget {
+  layout-manager: BinLayout {};
+  visible: false;
+
+  MenuButton button {
+    has-frame: false;
+    direction: up;
+
+    styles [
+      "groundhog-delivery-button",
+    ]
+
+    child: Box {
+      spacing: 4;
+
+      Image status_icon {
+        pixel-size: 12;
+        accessible-role: presentation;
+      }
+
+      Label status_label {
+        visible: false;
+
+        styles [
+          "caption",
+        ]
+      }
+    };
+
+    popover: Popover details {
+      styles [
+        "groundhog-delivery-details",
+      ]
+
+      child: ScrolledWindow {
+        hscrollbar-policy: never;
+        propagate-natural-height: true;
+        max-content-height: 420;
+
+        child: Box {
+          orientation: vertical;
+          spacing: 12;
+          margin-top: 6;
+          margin-bottom: 6;
+          margin-start: 6;
+          margin-end: 6;
+          width-request: 280;
+
+          Box {
+            orientation: vertical;
+            spacing: 4;
+
+            Label details_title {
+              xalign: 0;
+              wrap: true;
+
+              styles [
+                "heading",
+              ]
+            }
+
+            Label details_summary {
+              xalign: 0;
+              wrap: true;
+              max-width-chars: 36;
+            }
+
+            Label details_retry {
+              visible: false;
+              xalign: 0;
+              wrap: true;
+              max-width-chars: 36;
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          ListBox relay_list {
+            visible: false;
+            selection-mode: none;
+
+            styles [
+              "boxed-list",
+            ]
+
+            accessibility {
+              label: _("Message relays");
+            }
+          }
+
+          Label details_unavailable {
+            visible: false;
+            label: _("Relay details aren't available for this message.");
+            xalign: 0;
+            wrap: true;
+            max-width-chars: 36;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label details_note {
+            visible: false;
+            xalign: 0;
+            wrap: true;
+            max-width-chars: 36;
+
+            styles [
+              "warning",
+            ]
+          }
+
+          Label details_honesty {
+            label: _("A relay accepting a message means it stored it. Groundhog can't tell when anyone receives or reads it.");
+            xalign: 0;
+            wrap: true;
+            max-width-chars: 36;
+
+            styles [
+              "caption",
+              "dim-label",
+            ]
+          }
+        };
+      };
+    };
+  }
+}

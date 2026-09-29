@@ -37,3 +37,143 @@
   padding: 9px 12px;
   border-top: 1px solid alpha(currentColor, 0.15);
 }
+
+/* == bubbles (G12) == */
+
+/* The message list sits on the window background so incoming (card)
+ * bubbles stand out in light and dark; rows neither hover nor select, but
+ * keep the keyboard focus ring. */
+.groundhog-message-list {
+  background: none;
+  padding-bottom: 6px;
+}
+
+.groundhog-message-list > row,
+.groundhog-message-list > row:hover,
+.groundhog-message-list > row:active {
+  padding: 0;
+  background: none;
+}
+
+.groundhog-message-row {
+  margin: 1px 12px;
+}
+
+.groundhog-message-row.run-start {
+  margin-top: 8px;
+}
+
+.groundhog-message-sender {
+  margin: 0 12px 2px 12px;
+  color: alpha(currentColor, 0.7);
+}
+
+.message-bubble {
+  border-radius: 18px;
+  padding: 6px 12px;
+}
+
+.message-bubble.incoming {
+  background-color: @card_bg_color;
+  color: @card_fg_color;
+  box-shadow: 0 0 0 1px @card_shade_color, 0 1px 3px @card_shade_color;
+}
+
+/* White on the accent at least 4.5:1 (WCAG AA for body text): libadwaita
+ * 1.5's accent background is slightly too light for that, so it is darkened
+ * a little. */
+.message-bubble.outgoing {
+  background-color: mix(@accent_bg_color, black, 0.12);
+  color: @accent_fg_color;
+}
+
+.message-bubble.outgoing link,
+.message-bubble.outgoing link:visited {
+  color: @accent_fg_color;
+}
+
+.message-bubble.outgoing selection {
+  background-color: alpha(@accent_fg_color, 0.3);
+  color: @accent_fg_color;
+}
+
+.groundhog-undecryptable {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* Runs: the corners facing the neighbouring bubbles of the same run are
+ * tighter, on the sender's side (mirrored right to left). */
+.groundhog-message-row:not(.run-end) .message-bubble.outgoing:dir(ltr),
+.groundhog-message-row:not(.run-end) .message-bubble.incoming:dir(rtl) {
+  border-bottom-right-radius: 6px;
+}
+
+.groundhog-message-row:not(.run-start) .message-bubble.outgoing:dir(ltr),
+.groundhog-message-row:not(.run-start) .message-bubble.incoming:dir(rtl) {
+  border-top-right-radius: 6px;
+}
+
+.groundhog-message-row:not(.run-end) .message-bubble.incoming:dir(ltr),
+.groundhog-message-row:not(.run-end) .message-bubble.outgoing:dir(rtl) {
+  border-bottom-left-radius: 6px;
+}
+
+.groundhog-message-row:not(.run-start) .message-bubble.incoming:dir(ltr),
+.groundhog-message-row:not(.run-start) .message-bubble.outgoing:dir(rtl) {
+  border-top-left-radius: 6px;
+}
+
+/* High contrast (the view's .hc class): every bubble is outlined. */
+.hc .message-bubble {
+  box-shadow: none;
+  border: 1px solid currentColor;
+}
+
+.groundhog-message-meta {
+  margin: 1px 8px 0 8px;
+}
+
+.groundhog-delivery-button {
+  min-height: 0;
+  min-width: 0;
+  padding: 1px 4px;
+}
+
+.groundhog-retry-button {
+  min-height: 0;
+  padding: 1px 8px;
+}
+
+/* "Show Preview" reads as an offer, not as part of the message. */
+.groundhog-preview-button {
+  min-height: 0;
+  padding: 1px 8px;
+  font-size: smaller;
+  font-weight: normal;
+  color: @accent_color;
+}
+
+.groundhog-link-preview {
+  margin: 2px 8px 0 8px;
+}
+
+.groundhog-link-preview.card {
+  padding: 8px 12px;
+}
+
+.groundhog-jump-button {
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.groundhog-loading-older {
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+/* Per-receiver headers in the delivery details, inset like the rows. */
+.groundhog-delivery-group {
+  padding: 10px 12px 4px 12px;
+  opacity: 0.8;
+}

@@ -114,6 +114,15 @@ gh_conversation_row_format_message_time(gint64 timestamp, GDateTime *now)
   return g_strdup_printf(_("%s %s"), day, time);
 }
 
+gchar *
+gh_conversation_row_format_time_of_day(gint64 timestamp)
+{
+  if (timestamp <= 0)
+    return g_strdup("");
+  g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(timestamp);
+  return when ? g_strstrip(time_of_day(when)) : g_strdup("");
+}
+
 /* ---- row -------------------------------------------------------------------- */
 
 static void

@@ -50,29 +50,61 @@ static const StatusCopy status_copy[] = {
     N_("Cancelled before it was sent.") },
 };
 
+/* NULL for NONE, which is shown as nothing. */
 static const StatusCopy *
 copy_for(GhMessageStatus status)
 {
-  g_return_val_if_fail((guint) status < G_N_ELEMENTS(status_copy), &status_copy[0]);
+  if (status == GH_MESSAGE_STATUS_NONE)
+    return NULL;
+  g_return_val_if_fail((guint) status < G_N_ELEMENTS(status_copy), NULL);
   return &status_copy[status];
 }
 
 const gchar *
 gh_message_status_get_label(GhMessageStatus status)
 {
-  return tr(copy_for(status)->label);
+  const StatusCopy *copy = copy_for(status);
+  return copy ? tr(copy->label) : NULL;
 }
 
 const gchar *
 gh_message_status_get_icon_name(GhMessageStatus status)
 {
-  return copy_for(status)->icon_name;
+  const StatusCopy *copy = copy_for(status);
+  return copy ? copy->icon_name : NULL;
 }
 
 const gchar *
 gh_message_status_get_accessible_description(GhMessageStatus status)
 {
-  return tr(copy_for(status)->description);
+  const StatusCopy *copy = copy_for(status);
+  return copy ? tr(copy->description) : NULL;
+}
+
+GType
+gh_message_status_get_type(void)
+{
+  static gsize type = 0;
+  if (g_once_init_enter(&type)) {
+    static const GEnumValue values[] = {
+      { GH_MESSAGE_STATUS_NONE, "GH_MESSAGE_STATUS_NONE", "none" },
+      { GH_MESSAGE_STATUS_WAITING_FOR_SIGNER, "GH_MESSAGE_STATUS_WAITING_FOR_SIGNER",
+        "waiting-for-signer" },
+      { GH_MESSAGE_STATUS_QUEUED_OFFLINE, "GH_MESSAGE_STATUS_QUEUED_OFFLINE", "queued-offline" },
+      { GH_MESSAGE_STATUS_SENDING, "GH_MESSAGE_STATUS_SENDING", "sending" },
+      { GH_MESSAGE_STATUS_SENT, "GH_MESSAGE_STATUS_SENT", "sent" },
+      { GH_MESSAGE_STATUS_PARTIALLY_SENT, "GH_MESSAGE_STATUS_PARTIALLY_SENT", "partially-sent" },
+      { GH_MESSAGE_STATUS_RETRYING, "GH_MESSAGE_STATUS_RETRYING", "retrying" },
+      { GH_MESSAGE_STATUS_NOT_SENT, "GH_MESSAGE_STATUS_NOT_SENT", "not-sent" },
+      { GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX, "GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX",
+        "cannot-send-no-inbox" },
+      { GH_MESSAGE_STATUS_CANCELLED, "GH_MESSAGE_STATUS_CANCELLED", "cancelled" },
+      { 0, NULL, NULL }
+    };
+    g_once_init_leave(&type, g_enum_register_static(
+      g_intern_static_string("GhMessageStatus"), values));
+  }
+  return type;
 }
 
 const gchar *
