@@ -235,6 +235,28 @@ wraps_for(Relay *relay, const gchar *pubkey)
   return n;
 }
 
+typedef struct {
+  Relay *relay;
+  const gchar *pubkey;
+} WrapWait;
+
+static gboolean
+has_wrap_for(gpointer data)
+{
+  WrapWait *wait = data;
+  return wraps_for(wait->relay, wait->pubkey) > 0;
+}
+
+/* SENT means a recipient's copy was accepted (the product contract); the
+ * self-copy to the account's own inbox may still be in flight then
+ * (nostrc-qp24.89), so wait for it rather than assert it at once. */
+static void
+wait_wrap_for(Relay *relay, const gchar *pubkey)
+{
+  WrapWait wait = { relay, pubkey };
+  gh_test_spin_until(has_wrap_for, &wait);
+}
+
 /* ---- a directory over the discovery relay's stored kind-10050s (G10's role) ------ */
 
 #define STORE_TYPE_DIRECTORY (store_directory_get_type())
@@ -449,6 +471,7 @@ test_two_accounts(void)
   g_assert_nonnull(room_a); /* shown at once, before any signer or relay */
   wait_sent(room_a, "Hello B, it's A");
   g_assert_cmpuint(wraps_for(&inbox_b, stack_hex[2]), ==, 1);
+  wait_wrap_for(&inbox_a, stack_hex[1]);
   g_assert_cmpuint(wraps_for(&inbox_a, stack_hex[1]), ==, 1); /* A's self-copy */
   g_assert_cmpuint(wraps_for(&inbox_a, stack_hex[2]) + wraps_for(&inbox_b, stack_hex[1]), ==, 0);
 
