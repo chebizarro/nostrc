@@ -159,7 +159,9 @@ MarmotOutgoingMessage out;
 int rc = marmot_create_message(m, group_id, inner_event, &out);
 // out.event_json → kind:445 event, signed by a fresh ephemeral key: publish as is
 
-// Receive (application messages and Commits share kind:445)
+// Receive (application messages and Commits share kind:445). A relay's
+// event must carry a valid id and signature (checked first, since 0.6.0);
+// a rumor from a NIP-59 gift wrap goes to marmot_process_rumor_message().
 MarmotMessageResult result;
 rc = marmot_process_message(m, received_event, &result);
 if (result.type == MARMOT_RESULT_APPLICATION_MESSAGE) {
@@ -221,6 +223,45 @@ libmarmot is designed for byte-level interoperability with the [MDK](https://git
 Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-validation.
 
 ## Changelog
+
+### 0.6.0 (unreleased): kind:445 envelopes are authenticated (nostrc-6r6s)
+
+**Behaviour change and new API** (MINOR for 0.x). `transports/nostr.md`
+(marmot `26fa6a6`) says receivers MUST verify a kind:445's event id and
+signature before decrypting it. libmarmot now does.
+
+- **`marmot_process_message()` is the relay path.** Before any storage
+  access or decryption it checks the event:
+  - the id must be the canonical NIP-01 hash, else `MARMOT_ERR_EVENT`;
+  - the Schnorr signature by the event's pubkey must verify, else
+    `MARMOT_ERR_SIGNATURE`. A missing or malformed signature counts as
+    invalid.
+
+  A rejected event changes nothing: no MLS generation is consumed, no
+  Commit is applied or deferred, and nothing is marked processed. The
+  canonical id then keys the processed markers.
+- **`marmot_process_rumor_message()` (new) is the gift-wrap path.** It
+  takes a kind:445 *rumor* from a NIP-59 gift wrap that the caller unwrapped
+  and whose seal signature it verified. Rumors are unsigned by design, and
+  the seal authenticates them.
+  - A declared id must still be canonical (`MARMOT_ERR_EVENT`); a missing
+    one is computed.
+  - Never pass events that came from a relay directly: they belong on the
+    signed path.
+- **`marmot_save_created_message()`** verifies the signed event it
+  persists in the same way.
+- **What the signature proves.** It is made by a fresh ephemeral key, so it
+  authenticates only the envelope. Sender authenticity still comes from the
+  exporter-keyed NIP-44 layer and MLS.
+- **Migration.**
+  - Callers no longer need to verify kind:445 events themselves.
+  - Callers that fed hand-built or unsigned events to
+    `marmot_process_message()` must sign them, or use the rumor path when
+    the event came out of a gift wrap.
+  - marmot-gobject 1.3.0 adds
+    `marmot_gobject_client_process_rumor_message_async/_finish`. Gnostr's
+    gift-wrap route uses it; its relay route, fed by nostrdb, keeps
+    `process_message`.
 
 ### 0.5.0 (unreleased): Commits are published and processed (nostrc-9ata)
 
@@ -409,19 +450,8 @@ described above.
   markers as messages.
 - **Proposals.** Standalone Proposal messages return
   `MARMOT_ERR_UNSUPPORTED` (not queued).
-- **Callers must verify kind:445 signatures (until nostrc-6r6s).**
-  - The adopted spec (`transports/nostr.md`) says receivers MUST verify the
-    kind:445 event id and signature before decrypting. `marmot_process_message()`
-    does not do that yet.
-  - Until it does, verify the id and signature of every kind:445 taken from a
-    relay before passing it in, and drop events that fail.
-  - The signature is by a throwaway ephemeral key, so it authenticates only
-    the envelope, not the sender. Sender authenticity still comes from the
-    exporter-keyed NIP-44 layer and MLS.
-  - Gnostr's main path gets events through nostrdb, which verifies
-    signatures. Its gift-wrap route delivers NIP-59 *rumors*, which are
-    unsigned by design; verification must exempt or deliberately drop that
-    route.
+- **kind:445 signatures** are verified by libmarmot since 0.6.0
+  (nostrc-6r6s, above). Before 0.6.0, callers had to verify them.
 
 ### 0.4.1 (unreleased): Welcome path secrets
 

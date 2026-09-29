@@ -261,8 +261,50 @@ parsed_group_event_clear(ParsedGroupEvent *ev)
     memset(ev, 0, sizeof(*ev));
 }
 
+/* How a kind:445 reached us, which decides how it is authenticated. */
+typedef enum {
+    /* From a relay (or any untrusted transport): the event id must be its
+     * canonical NIP-01 hash and the Schnorr signature by its (ephemeral)
+     * pubkey must verify (transports/nostr.md, nostrc-6r6s). */
+    GROUP_EVENT_SIGNED,
+    /* A rumor the caller took out of a NIP-59 gift wrap whose seal it
+     * verified: unsigned by design.  A declared id must still be canonical;
+     * a missing one is computed. */
+    GROUP_EVENT_RUMOR
+} GroupEventOrigin;
+
+/* The canonical id of `event` checked as `origin` requires, into `id`
+ * (65 bytes).  MARMOT_ERR_EVENT for a malformed or non-canonical id,
+ * MARMOT_ERR_SIGNATURE for a missing or invalid signature. */
 static MarmotError
-parse_group_event(const char *event_json, ParsedGroupEvent *out)
+authenticate_group_event(const NostrEvent *event, GroupEventOrigin origin,
+                         char id[65])
+{
+    NostrEventValidationStatus st;
+    if (origin == GROUP_EVENT_SIGNED)
+        st = nostr_event_validate(event, id);
+    else if (event->id)
+        st = nostr_event_validate_id(event, id);   /* a declared id must be canonical */
+    else
+        st = nostr_event_compute_id(event, id);
+    switch (st) {
+    case NOSTR_EVENT_VALIDATION_OK:
+        return MARMOT_OK;
+    case NOSTR_EVENT_VALIDATION_MISSING_FIELD:
+        /* validate() requires id, pubkey and sig; the others only what
+         * the hash covers. */
+        return origin == GROUP_EVENT_SIGNED ? MARMOT_ERR_SIGNATURE : MARMOT_ERR_EVENT;
+    case NOSTR_EVENT_VALIDATION_BAD_SIGNATURE_FORMAT:
+    case NOSTR_EVENT_VALIDATION_SIGNATURE_INVALID:
+        return MARMOT_ERR_SIGNATURE;
+    default:
+        return MARMOT_ERR_EVENT;   /* bad or non-canonical id, bad pubkey, limits */
+    }
+}
+
+static MarmotError
+parse_group_event(const char *event_json, GroupEventOrigin origin,
+                  ParsedGroupEvent *out)
 {
     memset(out, 0, sizeof(*out));
 
@@ -283,12 +325,6 @@ parse_group_event(const char *event_json, ParsedGroupEvent *out)
         return MARMOT_ERR_DESERIALIZATION;
     }
 
-    /* Transfer ownership of fields we need */
-    out->content = event.content;     event.content = NULL;
-    out->event_id = event.id;         event.id = NULL;
-    out->pubkey = event.pubkey;       event.pubkey = NULL;
-    out->created_at = event.created_at;
-
     /* Extract "h" tag (nostr_group_id) */
     if (event.tags) {
         for (size_t i = 0; i < nostr_tags_size(event.tags); i++) {
@@ -306,16 +342,35 @@ parse_group_event(const char *event_json, ParsedGroupEvent *out)
             }
         }
     }
-
-    /* Free remaining event fields */
-    free(event.sig);
-    nostr_tags_free(event.tags);
-
     if (!out->has_group_id) {
-        parsed_group_event_clear(out);
+        free_stack_event(&event);
+        memset(out, 0, sizeof(*out));
         return MARMOT_ERR_MISSING_GROUP_ID_TAG;
     }
 
+    /* Authenticate before anything reads storage or tries a key, so a
+     * rejected event changes nothing.  From here on the id is the canonical
+     * one: it keys the processed markers. */
+    {
+        char canonical_id[65] = { 0 };
+        MarmotError aerr = authenticate_group_event(&event, origin, canonical_id);
+        char *id = aerr == MARMOT_OK ? strdup(canonical_id) : NULL;
+        if (aerr == MARMOT_OK && !id) aerr = MARMOT_ERR_MEMORY;
+        if (aerr != MARMOT_OK) {
+            free_stack_event(&event);
+            memset(out, 0, sizeof(*out));
+            return aerr;
+        }
+        free(event.id);
+        event.id = id;
+    }
+
+    /* Transfer ownership of fields we need */
+    out->content = event.content;     event.content = NULL;
+    out->event_id = event.id;         event.id = NULL;
+    out->pubkey = event.pubkey;       event.pubkey = NULL;
+    out->created_at = event.created_at;
+    free_stack_event(&event);
     return MARMOT_OK;
 }
 
@@ -514,7 +569,8 @@ marmot_save_created_message(Marmot *m,
         return MARMOT_ERR_STORAGE;
 
     ParsedGroupEvent parsed;
-    MarmotError err = parse_group_event(signed_group_event_json, &parsed);
+    MarmotError err = parse_group_event(signed_group_event_json, GROUP_EVENT_SIGNED,
+                                        &parsed);
     if (err != MARMOT_OK)
         return err;
     if (!parsed.event_id || !parsed.pubkey ||
@@ -567,10 +623,9 @@ marmot_save_created_message(Marmot *m,
  * Public API: marmot_process_message
  * ══════════════════════════════════════════════════════════════════════════ */
 
-MarmotError
-marmot_process_message(Marmot *m,
-                        const char *group_event_json,
-                        MarmotMessageResult *result)
+static MarmotError
+process_group_event(Marmot *m, const char *group_event_json,
+                    GroupEventOrigin origin, MarmotMessageResult *result)
 {
     if (!m || !group_event_json || !result)
         return MARMOT_ERR_INVALID_ARG;
@@ -581,9 +636,9 @@ marmot_process_message(Marmot *m,
 
     memset(result, 0, sizeof(*result));
 
-    /* ── 1. Parse the kind:445 event ──────────────────────────────────── */
+    /* ── 1. Parse and authenticate the kind:445 event ─────────────────── */
     ParsedGroupEvent parsed;
-    MarmotError err = parse_group_event(group_event_json, &parsed);
+    MarmotError err = parse_group_event(group_event_json, origin, &parsed);
     if (err != MARMOT_OK)
         return err;
 
@@ -896,4 +951,20 @@ marmot_process_message(Marmot *m,
     marmot_group_free(group);
     parsed_group_event_clear(&parsed);
     return MARMOT_OK;
+}
+
+MarmotError
+marmot_process_message(Marmot *m,
+                        const char *group_event_json,
+                        MarmotMessageResult *result)
+{
+    return process_group_event(m, group_event_json, GROUP_EVENT_SIGNED, result);
+}
+
+MarmotError
+marmot_process_rumor_message(Marmot *m,
+                              const char *rumor_json,
+                              MarmotMessageResult *result)
+{
+    return process_group_event(m, rumor_json, GROUP_EVENT_RUMOR, result);
 }

@@ -314,7 +314,11 @@ on_gift_wrap_unwrapped(GnostrUnwrapResult *unwrap_result, gpointer user_data)
     }
   else if (kind == 445)
     {
-      /* Group message — route to marmot for MLS decryption */
+      /* Group message inside a gift wrap: an unsigned rumor, authenticated
+       * by the seal that gnostr_nip59_unwrap_async() verified. It takes
+       * libmarmot's rumor path; the relay path
+       * (gn_mls_event_router_process_group_message) requires a valid
+       * signature (nostrc-6r6s). */
       g_autofree gchar *event_json = nostr_event_serialize_compact(rumor);
       if (event_json != NULL)
         {
@@ -324,7 +328,7 @@ on_gift_wrap_unwrapped(GnostrUnwrapResult *unwrap_result, gpointer user_data)
           msg_data->router       = g_object_ref(data->router);
           msg_data->group_id_hex = g_steal_pointer(&group_id_hex);
 
-          marmot_gobject_client_process_message_async(
+          marmot_gobject_client_process_rumor_message_async(
             client,
             event_json,
             NULL,

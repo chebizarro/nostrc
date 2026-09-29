@@ -1650,6 +1650,195 @@ test_duplicate_welcome_does_not_roll_back(void)
     trio_clear(&t);
 }
 
+/* ── Envelope authentication (nostrc-6r6s) ─────────────────────────────── */
+
+typedef enum {
+    TAMPER_FORGED_ID,     /* another well-formed id */
+    TAMPER_CONTENT,       /* content changed, id and signature kept */
+    TAMPER_BAD_SIG,       /* one signature byte changed */
+    TAMPER_FOREIGN_SIG,   /* a valid signature by another key over this id */
+    TAMPER_UNSIGNED,      /* no signature (a rumor) */
+    TAMPER_NO_ID_NO_SIG,  /* neither id nor signature */
+} Tamper;
+
+static void
+flip_hex(char *hex)
+{
+    hex[0] = hex[0] == '0' ? '1' : '0';
+}
+
+/* `event_json` changed as `how` says. */
+static char *
+tampered(const char *event_json, Tamper how)
+{
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, event_json, NULL), "parse");
+    CHECK(ev->pubkey, "the source event has a pubkey");
+    CHECK(ev->id || how == TAMPER_NO_ID_NO_SIG, "the source event has an id");
+    CHECK(ev->sig || how == TAMPER_FORGED_ID || how == TAMPER_CONTENT ||
+          how == TAMPER_UNSIGNED || how == TAMPER_NO_ID_NO_SIG, "the source event is signed");
+    switch (how) {
+    case TAMPER_FORGED_ID:
+        flip_hex(ev->id);
+        break;
+    case TAMPER_CONTENT: {
+        size_t n = strlen(ev->content);
+        char *c = malloc(n + 1);
+        CHECK(c, "alloc");
+        memcpy(c, ev->content, n + 1);
+        c[n / 2] = c[n / 2] == 'A' ? 'B' : 'A';
+        free(ev->content);
+        ev->content = c;
+        break;
+    }
+    case TAMPER_BAD_SIG:
+        flip_hex(ev->sig + 70);
+        break;
+    case TAMPER_FOREIGN_SIG: {
+        /* Signed by another ephemeral key, then the original pubkey put
+         * back: the id no longer matches, and a recomputed one would not
+         * match the signature. */
+        char *pk = strdup(ev->pubkey);
+        CHECK(pk && marmot_sign_ephemeral(ev) == 0, "re-sign");
+        free(ev->pubkey);
+        ev->pubkey = pk;
+        break;
+    }
+    case TAMPER_UNSIGNED:
+        free(ev->sig);
+        ev->sig = NULL;
+        break;
+    case TAMPER_NO_ID_NO_SIG:
+        free(ev->sig);
+        free(ev->id);
+        ev->sig = NULL;
+        ev->id = NULL;
+        break;
+    }
+    char *json = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    CHECK(json, "serialize");
+    return json;
+}
+
+static MarmotMessageResultType
+deliver_rumor(Member *x, const char *rumor_json, MarmotError *err)
+{
+    MarmotMessageResult r;
+    memset(&r, 0, sizeof(r));
+    *err = marmot_process_rumor_message(x->m, rumor_json, &r);
+    MarmotMessageResultType type = r.type;
+    marmot_message_result_free(&r);
+    return type;
+}
+
+static char *
+app_message(Member *x, const MarmotGroupId *gid, const char *text)
+{
+    char inner[160];
+    snprintf(inner, sizeof(inner),
+             "{\"kind\":9,\"content\":\"%s\",\"created_at\":1700000000,\"tags\":[]}", text);
+    MarmotOutgoingMessage out;
+    memset(&out, 0, sizeof(out));
+    OK(marmot_create_message(x->m, gid, inner, &out));
+    char *json = strdup(out.event_json);
+    marmot_outgoing_message_free(&out);
+    CHECK(json, "strdup");
+    return json;
+}
+
+/* transports/nostr.md: a relay-delivered kind:445 whose id or signature does
+ * not verify is rejected before any decryption, and changes nothing: the
+ * genuine event is still processed afterwards (its MLS generation was not
+ * consumed, the Commit was not applied or deferred). */
+static void
+test_unauthenticated_events_rejected(void)
+{
+    Trio t;
+    trio_init(&t);
+    static const struct { Tamper how; MarmotError want; const char *what; } cases[] = {
+        { TAMPER_FORGED_ID,    MARMOT_ERR_EVENT,     "forged id" },
+        { TAMPER_CONTENT,      MARMOT_ERR_EVENT,     "content changed under the id" },
+        { TAMPER_BAD_SIG,      MARMOT_ERR_SIGNATURE, "bad signature" },
+        { TAMPER_FOREIGN_SIG,  MARMOT_ERR_EVENT,     "signature by another key" },
+        { TAMPER_UNSIGNED,     MARMOT_ERR_SIGNATURE, "unsigned" },
+        { TAMPER_NO_ID_NO_SIG, MARMOT_ERR_SIGNATURE, "no id, no signature" },
+    };
+
+    /* An application message. */
+    char *msg = app_message(&t.alice, &t.gid, "authentic");
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *bad = tampered(msg, cases[i].how);
+        expect_rejected(&t.bob, &t.gid, bad, cases[i].want, cases[i].what);
+        free(bad);
+    }
+    MarmotError err;
+    CHECK(deliver(&t.bob, msg, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "the genuine message after the forgeries: %d", err);
+    free(msg);
+
+    /* A Commit: rejected copies neither apply nor defer anything. */
+    char *commit = rename_group(&t.alice, &t.gid, "After");
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *bad = tampered(commit, cases[i].how);
+        expect_rejected(&t.charlie, &t.gid, bad, cases[i].want, cases[i].what);
+        free(bad);
+    }
+    expect_commit(&t.charlie, commit, "the genuine Commit after the forgeries");
+    expect_commit(&t.bob, commit, "Bob follows");
+    free(commit);
+    expect_converged(t.all, 3, &t.gid, "After", t.epoch + 1);
+    trio_clear(&t);
+}
+
+/* The gift-wrap route: an unsigned kind:445 rumor (its seal authenticated
+ * it) is processed by marmot_process_rumor_message(), with or without an
+ * id; a declared id must still be canonical; the relay path refuses it. */
+static void
+test_rumor_path_accepts_unsigned(void)
+{
+    Trio t;
+    trio_init(&t);
+
+    char *msg = app_message(&t.charlie, &t.gid, "wrapped one");
+    char *rumor = tampered(msg, TAMPER_UNSIGNED);
+    expect_rejected(&t.bob, &t.gid, rumor, MARMOT_ERR_SIGNATURE, "rumor on the relay path");
+    char *forged = tampered(rumor, TAMPER_FORGED_ID);
+    Snapshot before;
+    snapshot(&t.bob, &t.gid, &before);
+    MarmotError err;
+    deliver_rumor(&t.bob, forged, &err);
+    CHECK(err == MARMOT_ERR_EVENT, "rumor with a forged id: %d", err);
+    expect_unchanged(&t.bob, &t.gid, &before, "rumor with a forged id");
+    snapshot_clear(&before);
+    CHECK(deliver_rumor(&t.bob, rumor, &err) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "rumor with id: %d", err);
+    /* Processed under its canonical id: the same rumor again is a duplicate. */
+    CHECK(deliver_rumor(&t.bob, rumor, &err) == MARMOT_RESULT_OWN_MESSAGE &&
+          err == MARMOT_OK, "rumor again: %d", err);
+    free(forged);
+    free(rumor);
+    free(msg);
+
+    msg = app_message(&t.charlie, &t.gid, "wrapped two");
+    rumor = tampered(msg, TAMPER_NO_ID_NO_SIG);
+    CHECK(deliver_rumor(&t.bob, rumor, &err) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "rumor without id: %d", err);
+    free(rumor);
+    free(msg);
+
+    /* A Commit through the rumor path is applied too. */
+    char *commit = rename_group(&t.bob, &t.gid, "Wrapped");
+    rumor = tampered(commit, TAMPER_NO_ID_NO_SIG);
+    CHECK(deliver_rumor(&t.charlie, rumor, &err) == MARMOT_RESULT_COMMIT && err == MARMOT_OK,
+          "Commit rumor: %d", err);
+    expect_commit(&t.alice, commit, "Alice from a relay");
+    free(rumor);
+    free(commit);
+    expect_converged(t.all, 3, &t.gid, "Wrapped", t.epoch + 1);
+    trio_clear(&t);
+}
+
 int
 main(void)
 {
@@ -1673,6 +1862,8 @@ main(void)
     RUN(test_failed_merge_stays_clearable);
     RUN(test_outbox_keeps_every_welcome_until_marked);
     RUN(test_duplicate_welcome_does_not_roll_back);
+    RUN(test_unauthenticated_events_rejected);
+    RUN(test_rumor_path_accepts_unsigned);
     printf("All commit tests passed\n");
     return 0;
 }

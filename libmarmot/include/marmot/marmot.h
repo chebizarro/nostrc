@@ -709,10 +709,22 @@ MarmotError marmot_save_created_message(Marmot *m,
 /**
  * marmot_process_message:
  * @m: Marmot instance
- * @group_event_json: JSON of the kind:445 group event (rumor, after NIP-59 unwrap)
+ * @group_event_json: JSON of the signed kind:445 group event, as a relay
+ *   delivered it
  * @result: (out): processing result
  *
- * Process a received group message. Handles:
+ * Process a received group message.  Since 0.6.0 (nostrc-6r6s) the event is
+ * authenticated first, as the Marmot transport (transports/nostr.md)
+ * requires before any decryption: its id must be the canonical NIP-01 hash
+ * of its content (else MARMOT_ERR_EVENT) and its Schnorr signature by its
+ * pubkey -- a fresh ephemeral key -- must verify (a missing, malformed or
+ * wrong signature is MARMOT_ERR_SIGNATURE).  A rejected event changes
+ * nothing.  The signature authenticates only the envelope; the sender is
+ * authenticated by the exporter-keyed NIP-44 layer and MLS.  A kind:445
+ * rumor taken out of a NIP-59 gift wrap is unsigned by design: pass it to
+ * marmot_process_rumor_message() instead.
+ *
+ * Handles:
  * - Application messages (decrypts content): MARMOT_RESULT_APPLICATION_MESSAGE
  * - Commits (since 0.5.0): the Commit is applied through the same validated
  *   MLS path the producers use, then checked against MIP-01 (a Commit that
@@ -747,6 +759,27 @@ MarmotError marmot_save_created_message(Marmot *m,
 MarmotError marmot_process_message(Marmot *m,
                                     const char *group_event_json,
                                     MarmotMessageResult *result);
+
+/**
+ * marmot_process_rumor_message:
+ * @m: Marmot instance
+ * @rumor_json: JSON of an unsigned kind:445 rumor
+ * @result: (out): processing result
+ *
+ * Like marmot_process_message(), for a kind:445 that arrived as the rumor of
+ * a NIP-59 gift wrap (kind:1059) the caller has unwrapped and whose seal
+ * signature it has verified: the seal authenticates it, and a rumor carries
+ * no signature by design.  Its id, when present, must still be the
+ * canonical NIP-01 hash (else MARMOT_ERR_EVENT); a missing one is computed.
+ * Never use this for events taken from a relay directly, which must be
+ * signed: that path is marmot_process_message().
+ *
+ * Since: 0.6.0
+ * Returns: as marmot_process_message()
+ */
+MarmotError marmot_process_rumor_message(Marmot *m,
+                                          const char *rumor_json,
+                                          MarmotMessageResult *result);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * Group queries

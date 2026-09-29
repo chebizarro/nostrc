@@ -15,8 +15,8 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.5.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
-| marmot-gobject | `marmot-gobject/` | 1.2.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
+| libmarmot | `libmarmot/` | 0.6.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| marmot-gobject | `marmot-gobject/` | 1.3.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.11.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
@@ -69,6 +69,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | groundhog 0.10.1 -> 0.11.0 (MINOR: attachment UI G22 nostrc-qp24.40; pins, mark read/unread, header menu, backfill notifications, timer rows, arrival-order read marker with store schema v4, multi-send follow-ups; W18 polish) | groundhog | 0.11.0 | MINOR: new user-visible features and a store schema migration. |
 | Linux pre-push gate fixes (nostrc-y9xg): libgo's no-op metrics stubs become weak, so GNU ld no longer reports duplicate definitions when gnostr and gnostr-live-log link both libnostrgo.a and libnostr.a | libgo | 0.1.2 | No bump: 0.1.2 is unreleased, and the change is link-time only (no API/ABI change); the fix ships in 0.1.2. |
 | same (gnostr's Linux link now succeeds; its image-viewer test links libm; the mls-groups plugin casts its storage to the interface type, identical code) | gnostr | 0.1.0 | No bump (unreleased): build corrections with no behaviour change. |
+| libmarmot 0.5.0 -> 0.6.0 (MINOR: `marmot_process_message()` verifies the kind:445 id and signature before decrypting; new `marmot_process_rumor_message()` for gift-wrapped rumors; nostrc-6r6s) | libmarmot | 0.6.0 | MINOR bump: new API, and a 0.x behaviour break (unsigned or mis-signed events are now `MARMOT_ERR_SIGNATURE` / `MARMOT_ERR_EVENT`, not processed). Migration notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.3.0 | MINOR bump: new `marmot_gobject_client_process_rumor_message_async/_finish` (backward compatible); `process_message_async` now gets the verifying libmarmot path. |
+| same | gnostr | 0.1.0 | No bump (unreleased): the mls-groups gift-wrap route sends kind:445 rumors to the rumor path; the relay route is unchanged (nostrdb already verified). |
+| same | groundhog | 0.11.0 | No bump: the application does not call libmarmot yet (qp24.13); only GhStoreMarmot tests do, with signed events. |
 
 ## Maintenance
 

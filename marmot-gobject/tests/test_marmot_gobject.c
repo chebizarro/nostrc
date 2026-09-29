@@ -15,6 +15,7 @@
 #include <marmot-gobject-1.0/marmot-gobject.h>
 #include <nostr-keys.h>
 #include <nostr-event.h>
+#include <marmot/marmot-error.h>
 #include <string.h>
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -800,6 +801,68 @@ test_client_signal_group_joined(void)
     g_strfreev(relays);
 
     g_object_unref(sd.received_object);
+    g_object_unref(welcome);
+    g_object_unref(created);
+    g_strfreev(welcomes);
+    g_object_unref(inviter);
+    g_object_unref(member);
+    g_object_unref(inviter_store);
+    g_object_unref(member_store);
+}
+
+/* @json without its "sig" member: what a NIP-59 rumor looks like. */
+static gchar *
+strip_signature(const gchar *json)
+{
+    g_autoptr(GRegex) re = g_regex_new(",?\"sig\":\"[0-9a-f]{128}\"", 0, 0, NULL);
+    g_assert_nonnull(re);
+    gchar *out = g_regex_replace_literal(re, json, -1, 0, "", 0, NULL);
+    g_assert_nonnull(out);
+    g_assert_null(strstr(out, "\"sig\""));
+    return out;
+}
+
+/* nostrc-6r6s: the relay path refuses an unsigned kind:445 and changes
+ * nothing; the gift-wrap (rumor) path processes the same event. */
+static void
+test_process_rumor_and_signed_paths(void)
+{
+    MarmotGobjectClient *inviter = NULL, *member = NULL;
+    MarmotGobjectMemoryStorage *inviter_store = NULL, *member_store = NULL;
+    MarmotGobjectGroup *created = NULL;
+    gchar **welcomes = NULL;
+    MarmotGobjectWelcome *welcome = setup_real_welcome_flow(
+        &inviter, &inviter_store, &member, &member_store, &created, &welcomes);
+    g_assert_true(accept_welcome_sync(member, welcome));
+
+    const gchar *inner = "{\"kind\":9,\"content\":\"wrapped hello\",\"created_at\":1700000000,\"tags\":[]}";
+    g_autofree gchar *signed_event = send_message_sync(inviter,
+        marmot_gobject_group_get_mls_group_id(created), inner);
+    g_autofree gchar *rumor = strip_signature(signed_event);
+
+    AsyncFixture *f = async_fixture_new();
+    marmot_gobject_client_process_message_async(member, rumor, NULL, async_callback, f);
+    g_main_loop_run(f->loop);
+    GError *error = NULL;
+    g_assert_null(marmot_gobject_client_process_message_finish(member, f->result, NULL, &error));
+    /* The client's error domain is private; its codes are MarmotError. */
+    g_assert_nonnull(error);
+    g_assert_cmpint(error->code, ==, MARMOT_ERR_SIGNATURE);
+    g_clear_error(&error);
+    async_fixture_free(f);
+
+    f = async_fixture_new();
+    marmot_gobject_client_process_rumor_message_async(member, rumor, NULL, async_callback, f);
+    g_main_loop_run(f->loop);
+    MarmotGobjectMessageResultType type = MARMOT_GOBJECT_MESSAGE_RESULT_UNPROCESSABLE;
+    g_autofree gchar *decrypted = marmot_gobject_client_process_rumor_message_finish(
+        member, f->result, &type, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(type, ==, MARMOT_GOBJECT_MESSAGE_RESULT_APPLICATION);
+    g_assert_nonnull(strstr(decrypted, "wrapped hello"));
+    async_fixture_free(f);
+    drain_main_context();
+
     g_object_unref(welcome);
     g_object_unref(created);
     g_strfreev(welcomes);
@@ -2382,6 +2445,8 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/async/welcome-wrapper-event-id", test_welcome_wrapper_event_id);
     g_test_add_func("/marmot-gobject/async/accept-welcome-no-wrapper-id", test_accept_welcome_no_wrapper_id);
     g_test_add_func("/marmot-gobject/async/key-package-roundtrip", test_async_key_package_roundtrip);
+    g_test_add_func("/marmot-gobject/async/process-rumor-and-signed",
+                    test_process_rumor_and_signed_paths);
 
     /* 16. GCancellable and additional async */
     g_test_add_func("/marmot-gobject/cancel/key-package-cancel", test_cancellable_key_package);

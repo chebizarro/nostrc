@@ -327,12 +327,16 @@ gchar *marmot_gobject_client_send_message_finish(MarmotGobjectClient *self,
 /**
  * marmot_gobject_client_process_message_async:
  * @self: a #MarmotGobjectClient
- * @group_event_json: JSON of the kind:445 event (after NIP-59 unwrap)
+ * @group_event_json: JSON of the signed kind:445 event, as a relay delivered it
  * @cancellable: (nullable): a #GCancellable
  * @callback: callback
  * @user_data: data for @callback
  *
- * Asynchronously processes a received group message.
+ * Asynchronously processes a received group message.  The event's id and
+ * signature must verify (marmot_process_message(), libmarmot >= 0.6.0);
+ * otherwise it fails with MARMOT_ERR_EVENT or MARMOT_ERR_SIGNATURE and
+ * changes nothing.  A kind:445 rumor taken out of a NIP-59 gift wrap goes
+ * to marmot_gobject_client_process_rumor_message_async() instead.
  */
 void marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
                                                   const gchar *group_event_json,
@@ -360,6 +364,46 @@ gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
                                                      GAsyncResult *result,
                                                      MarmotGobjectMessageResultType *out_result_type,
                                                      GError **error);
+
+/**
+ * marmot_gobject_client_process_rumor_message_async:
+ * @self: a #MarmotGobjectClient
+ * @rumor_json: JSON of an unsigned kind:445 rumor
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback
+ * @user_data: data for @callback
+ *
+ * Like marmot_gobject_client_process_message_async(), for a kind:445 rumor
+ * from a NIP-59 gift wrap the caller unwrapped and whose seal it verified
+ * (marmot_process_rumor_message()): it carries no signature by design.
+ * Never use it for events taken from a relay directly.
+ *
+ * Since: 1.3
+ */
+void marmot_gobject_client_process_rumor_message_async(MarmotGobjectClient *self,
+                                                        const gchar *rumor_json,
+                                                        GCancellable *cancellable,
+                                                        GAsyncReadyCallback callback,
+                                                        gpointer user_data);
+
+/**
+ * marmot_gobject_client_process_rumor_message_finish:
+ * @self: a #MarmotGobjectClient
+ * @result: a #GAsyncResult
+ * @out_result_type: (out) (nullable): the message result type
+ * @error: (nullable): return location for a #GError
+ *
+ * Finishes marmot_gobject_client_process_rumor_message_async().
+ *
+ * Returns: (transfer full) (nullable): as
+ *   marmot_gobject_client_process_message_finish()
+ *
+ * Since: 1.3
+ */
+gchar *marmot_gobject_client_process_rumor_message_finish(MarmotGobjectClient *self,
+                                                            GAsyncResult *result,
+                                                            MarmotGobjectMessageResultType *out_result_type,
+                                                            GError **error);
 
 /**
  * marmot_gobject_client_update_group_metadata_async:

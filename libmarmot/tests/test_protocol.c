@@ -1819,6 +1819,28 @@ test_create_message_requires_mls_state_by_default(void)
     PASS();
 }
 
+/* A relay-delivered kind:445 is signed (nostrc-6r6s): sign a hand-built one
+ * with a throwaway key so the check under test is reached. */
+static char *
+sign_test_event(const char *json)
+{
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+    char *sk_hex = marmot_hex_encode(sk, 32);
+    sodium_memzero(sk, sizeof(sk));
+    NostrEvent *ev = nostr_event_new();
+    char *signed_json = NULL;
+    if (sk_hex && ev && nostr_event_deserialize_compact(ev, json, NULL) &&
+        nostr_event_sign(ev, sk_hex) == 0)
+        signed_json = nostr_event_serialize_compact(ev);
+    if (sk_hex) {
+        sodium_memzero(sk_hex, strlen(sk_hex));
+        free(sk_hex);
+    }
+    nostr_event_free(ev);
+    return signed_json;
+}
+
 static void
 test_process_message_rejects_raw_json_with_mls_state_by_default(void)
 {
@@ -1868,13 +1890,16 @@ test_process_message_rejects_raw_json_with_mls_state_by_default(void)
              "\"tags\":[[\"h\",\"%s\"]]}",
              ciphertext, gid_hex);
 
+    char *signed_json = sign_test_event(event_json);
+    ASSERT(signed_json != NULL, "sign failed");
     MarmotMessageResult result;
     memset(&result, 0, sizeof(result));
-    err = marmot_process_message(m, event_json, &result);
+    err = marmot_process_message(m, signed_json, &result);
     ASSERT(err == MARMOT_ERR_MLS,
            "raw JSON fallback should require explicit legacy opt-in");
     marmot_message_result_free(&result);
 
+    free(signed_json);
     free(event_json);
     free(gid_hex);
     free(ciphertext);
@@ -1972,7 +1997,14 @@ test_process_message_unknown_group(void)
     MarmotMessageResult result;
     memset(&result, 0, sizeof(result));
 
+    /* Unsigned, it is refused before any lookup (nostrc-6r6s). */
     MarmotError err = marmot_process_message(m, json, &result);
+    ASSERT(err == MARMOT_ERR_SIGNATURE, "unsigned: should return SIGNATURE");
+
+    char *signed_json = sign_test_event(json);
+    ASSERT(signed_json != NULL, "sign failed");
+    err = marmot_process_message(m, signed_json, &result);
+    free(signed_json);
     ASSERT(err == MARMOT_ERR_GROUP_NOT_FOUND,
            "should return GROUP_NOT_FOUND");
 

@@ -1028,6 +1028,7 @@ marmot_gobject_client_send_message_finish(MarmotGobjectClient *self,
 
 typedef struct {
     gchar *group_event_json;
+    gboolean rumor;   /* a gift-wrapped rumor: marmot_process_rumor_message() */
     MarmotGobjectMessageResultType result_type;
 } ProcessMessageData;
 
@@ -1050,8 +1051,9 @@ process_message_thread(GTask *task, gpointer source_object,
     (void)cancellable;
 
     MarmotMessageResult result = { 0 };
-    MarmotError err = marmot_process_message(
-        self->marmot, d->group_event_json, &result);
+    MarmotError err = d->rumor
+        ? marmot_process_rumor_message(self->marmot, d->group_event_json, &result)
+        : marmot_process_message(self->marmot, d->group_event_json, &result);
 
     if (err != MARMOT_OK) {
         g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
@@ -1084,6 +1086,26 @@ process_message_thread(GTask *task, gpointer source_object,
     g_task_return_pointer(task, inner_json, g_free);
 }
 
+/* Source tags (data, not function pointers: ISO C cannot convert those). */
+static const int process_message_tag;
+static const int process_rumor_message_tag;
+
+static void
+process_group_event_async(MarmotGobjectClient *self, const gchar *group_event_json,
+                          gboolean rumor, gconstpointer source_tag,
+                          GCancellable *cancellable, GAsyncReadyCallback callback,
+                          gpointer user_data)
+{
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    g_task_set_source_tag(task, (gpointer) source_tag);
+    ProcessMessageData *d = g_new0(ProcessMessageData, 1);
+    d->group_event_json = g_strdup(group_event_json);
+    d->rumor = rumor;
+    g_task_set_task_data(task, d, process_message_data_free);
+    g_task_run_in_thread(task, process_message_thread);
+    g_object_unref(task);
+}
+
 void
 marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
                                               const gchar *group_event_json,
@@ -1093,12 +1115,31 @@ marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
 {
     g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
     g_return_if_fail(group_event_json != NULL);
-    GTask *task = g_task_new(self, cancellable, callback, user_data);
-    ProcessMessageData *d = g_new0(ProcessMessageData, 1);
-    d->group_event_json = g_strdup(group_event_json);
-    g_task_set_task_data(task, d, process_message_data_free);
-    g_task_run_in_thread(task, process_message_thread);
-    g_object_unref(task);
+    process_group_event_async(self, group_event_json, FALSE, &process_message_tag,
+                              cancellable, callback, user_data);
+}
+
+void
+marmot_gobject_client_process_rumor_message_async(MarmotGobjectClient *self,
+                                                    const gchar *rumor_json,
+                                                    GCancellable *cancellable,
+                                                    GAsyncReadyCallback callback,
+                                                    gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(rumor_json != NULL);
+    process_group_event_async(self, rumor_json, TRUE, &process_rumor_message_tag,
+                              cancellable, callback, user_data);
+}
+
+gchar *
+marmot_gobject_client_process_rumor_message_finish(MarmotGobjectClient *self,
+                                                     GAsyncResult *result,
+                                                     MarmotGobjectMessageResultType *out_result_type,
+                                                     GError **error)
+{
+    return marmot_gobject_client_process_message_finish(self, result, out_result_type,
+                                                        error);
 }
 
 gchar *

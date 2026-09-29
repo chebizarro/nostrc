@@ -119,6 +119,15 @@ When built with Meson and `introspection=true`:
 
 ## Changelog
 
+### 1.3.0 (unreleased)
+
+- Added `marmot_gobject_client_process_rumor_message_async()` and
+  `_finish()` for kind:445 rumors from NIP-59 gift wraps. They take
+  libmarmot 0.6.0's `marmot_process_rumor_message()`.
+- `marmot_gobject_client_process_message_async()` now rejects kind:445 events
+  whose id or signature does not verify (libmarmot 0.6.0, nostrc-6r6s). The
+  error codes are `MARMOT_ERR_EVENT` and `MARMOT_ERR_SIGNATURE`.
+
 ### 1.1.0 (unreleased)
 
 - Added `MARMOT_GOBJECT_KIND_KEY_PACKAGE` (30443) and
