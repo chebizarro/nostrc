@@ -961,7 +961,7 @@ test_inbox_status_wiring(void)
     gh_account_controller_new_full(settings, NULL, fake_identities, NULL);
   GhAccountRelays *relays = gh_account_relays_new(accounts, settings, NULL, NULL);
   GhConversationStore *store = gh_conversation_store_new();
-  GhDmInbox *inbox = gh_dm_inbox_new(accounts, relays, store, state_dir, NULL, NULL);
+  GhDmInbox *inbox = gh_dm_inbox_new(accounts, relays, store, state_dir, NULL, NULL, NULL);
   GhWindow *window = gh_window_new(NULL);
   GhStatus *status = gh_window_get_status(window);
   gh_conversation_list_attach(window, store, settings);
@@ -982,8 +982,13 @@ test_inbox_status_wiring(void)
   g_assert_true(adw_banner_get_revealed(banner));
   g_assert_cmpstr(adw_banner_get_title(banner), ==,
                   "No relay is set up yet, so Groundhog can't receive messages");
-  /* Previews: this schema predates show-message-previews, so they stay off. */
+  /* Previews follow the show-message-previews key (charter §7.11, G01). */
+  g_assert_cmpint(gh_sidebar_page_get_show_previews(gh_window_get_sidebar(window)), ==,
+                  g_settings_get_boolean(settings, "show-message-previews"));
+  g_settings_set_boolean(settings, "show-message-previews", FALSE);
   g_assert_false(gh_sidebar_page_get_show_previews(gh_window_get_sidebar(window)));
+  g_settings_set_boolean(settings, "show-message-previews", TRUE);
+  g_assert_true(gh_sidebar_page_get_show_previews(gh_window_get_sidebar(window)));
 
   /* Teardown in the executable's order: inbox, relays, accounts. */
   gtk_window_destroy(GTK_WINDOW(window));

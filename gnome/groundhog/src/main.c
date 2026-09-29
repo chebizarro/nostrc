@@ -118,7 +118,7 @@ app_startup(GApplication *app, gpointer user_data)
   app_store = gh_conversation_store_new();
   /* Contacts nothing until an account is active and its own inbox list is
    * known; the seen-set lives under $XDG_STATE_HOME/groundhog/nip17. */
-  app_inbox = gh_dm_inbox_new(app_accounts, app_relays, app_store, NULL, NULL, NULL);
+  app_inbox = gh_dm_inbox_new(app_accounts, app_relays, app_store, NULL, NULL, NULL, NULL);
 #endif
 #endif
 }
