@@ -264,6 +264,11 @@ void gh_mls_service_update_metadata_async(GhMlsService *self, GhMlsGroup *group,
                                           const gchar *name, const gchar *description,
                                           GCancellable *cancellable,
                                           GAsyncReadyCallback callback, gpointer user_data);
+/* Replaces the GroupData admins (charter §7.10 owner/admin) with admins:
+ * 1 to 1000 hex pubkeys of current members. */
+void gh_mls_service_set_admins_async(GhMlsService *self, GhMlsGroup *group,
+                                     const gchar *const *admins, GCancellable *cancellable,
+                                     GAsyncReadyCallback callback, gpointer user_data);
 gboolean gh_mls_service_change_finish(GhMlsService *self, GAsyncResult *result,
                                       GError **error);
 

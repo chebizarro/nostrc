@@ -732,6 +732,59 @@ test_same_text_two_groups(void)
   world_down(&w);
 }
 
+
+static gboolean
+is_admin(gpointer data)
+{
+  return gh_mls_group_get_is_admin(data);
+}
+
+/* §7.10 owner/admin: the creator makes Bob an admin; Bob then invites Carol,
+ * who joins and reads. (With libmarmot >= 0.10.0 Carol's join checks every
+ * leaf's account proof, the creator's included: this needs the creator's
+ * enrollment, review B2.) */
+static void
+test_second_admin_invites(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(bob, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Admins", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_assert_false(gh_mls_group_get_is_admin(gb));
+
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(is_admin, gb, "Bob becoming an admin");
+  g_auto(GStrv) listed = gh_mls_group_dup_admins(gb);
+  g_assert_cmpuint(g_strv_length(listed), ==, 2);
+
+  /* Only members can be admins. */
+  const gchar *stranger[] = { hex[STRANGER], NULL };
+  OpWait refused = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, stranger, NULL, on_changed, &refused);
+  spin_until(op_done, &refused, "the refused admin change");
+  g_assert_error(refused.error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&refused.error);
+
+  const gchar *carol_only[] = { hex[CAROL], NULL };
+  OpWait added = { 0 };
+  gh_mls_service_add_members_async(bob->service, gb, carol_only, NULL, on_changed, &added);
+  change(bob, &added);
+  GhMlsGroup *gc = join(carol, BOB);
+  wait_members(ga, 3);
+  send_text(carol, gc, "invited by bob");
+  wait_message(alice, room, "invited by bob");
+  wait_message(bob, room, "invited by bob");
+  world_down(&w);
+}
+
 /* An account switch closes every group connection at once; the account
  * coming back reopens them. */
 static gboolean
@@ -797,6 +850,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",
                   test_send_republished_after_restart);
   g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
+  g_test_add_func("/groundhog/mls-service/second-admin-invites", test_second_admin_invites);
   gint rc = g_test_run();
   mls_world_finish();
   return rc;

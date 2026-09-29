@@ -1659,6 +1659,45 @@ gh_mls_service_update_metadata_async(GhMlsService *self, GhMlsGroup *group, cons
   stage_change(task, group, produce_metadata, &config);
 }
 
+void
+gh_mls_service_set_admins_async(GhMlsService *self, GhMlsGroup *group,
+                                const gchar *const *admins, GCancellable *cancellable,
+                                GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  GTask *task = op_task(self, OP_METADATA, group, cancellable, callback, user_data,
+                        gh_mls_service_change_finish);
+  Op *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!check_change(self, group, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  op->people = lowercase_unique(admins);
+  guint n = g_strv_length(op->people);
+  g_autofree guint8 *key_bytes = g_malloc0(MAX(n, 1) * 32);
+  uint8_t (*keys)[32] = (uint8_t (*)[32])key_bytes;
+  for (guint i = 0; i < n; i++) {
+    if (!lower_hex64(op->people[i]) ||
+        !g_strv_contains((const gchar *const *)group->members, op->people[i]) ||
+        !nostr_hex2bin(keys[i], op->people[i], 32)) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                              "Admins must be current members");
+      g_object_unref(task);
+      return;
+    }
+  }
+  if (n == 0 || n > 1000) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "A group has 1 to 1000 admins");
+    g_object_unref(task);
+    return;
+  }
+  MarmotGroupConfig config = { .admin_pubkeys = keys, .admin_count = n };
+  stage_change(task, group, produce_metadata, &config);
+}
+
 gboolean
 gh_mls_service_change_finish(GhMlsService *self, GAsyncResult *result, GError **error)
 {
