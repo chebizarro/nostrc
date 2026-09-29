@@ -128,6 +128,17 @@ void gn_marmot_service_set_user_identity(GnMarmotService *self,
  * Emitted when group metadata is updated (name, members, epoch, etc.).
  */
 
+/**
+ * GnMarmotService::group-error:
+ * @service: The service
+ * @group_id_hex: Group ID hex from the event's h tag ("" if unknown)
+ * @message: Why the incoming group event could not be processed
+ *
+ * Emitted when an incoming group event is rejected (for example a Commit
+ * from a peer on an incompatible libmarmot version), so the group may be
+ * out of sync instead of silently falling behind.
+ */
+
 G_END_DECLS
 
 #endif /* GN_MARMOT_SERVICE_H */

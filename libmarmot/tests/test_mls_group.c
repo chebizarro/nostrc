@@ -2579,13 +2579,26 @@ typedef enum {
     PATH_LEAF_WRONG_LEAF_INDEX,
     PATH_LEAF_DUPLICATE_ENCRYPTION_KEY,
     PATH_LEAF_UNSUPPORTED_GROUP_EXTENSION,
+    PATH_LEAF_DUPLICATE_SIGNATURE_KEY,  /* review W16 M4 */
+    PATH_NODE_KEY_IN_TREE,              /* review W16 M3 */
+    PATH_NODE_KEY_REPEATED,             /* review W16 M3 */
     PATH_LEAF_CASE_COUNT
 } PathLeafCase;
 
 static const char *const path_leaf_case_names[PATH_LEAF_CASE_COUNT] = {
     "valid", "tampered signature", "wrong leaf_index",
     "duplicate encryption key", "unsupported GroupContext extension",
+    "another member's signature key", "path node key already in the tree",
+    "path node key repeated within the path",
 };
+
+/* Signing key of the member whose signature key PATH_LEAF_DUPLICATE_-
+ * SIGNATURE_KEY reuses (so the leaf signature itself verifies). */
+static const uint8_t *path_leaf_other_signer_for_test;
+
+/* The committer's UpdatePath leaf drops last_resort from its capabilities
+ * (a required_capabilities demand; review W16 M7). */
+#define PATH_LEAF_DROP_LAST_RESORT ((PathLeafCase)(PATH_LEAF_CASE_COUNT + 2))
 
 /* Leave only last_resort in the capabilities: marmot_group_data unsupported. */
 static void
@@ -2633,6 +2646,15 @@ build_update_path_for_test(const MlsGroup *committer,
                                             path->nodes[i].encryption_key) == 0);
         sodium_memzero(node_sk, sizeof(node_sk));
     }
+    /* Receivers do not yet match node keys against the path secrets
+     * (nostrc-11r1), so only the §12.4.2 freshness rule can reject these. */
+    if (leaf_case == PATH_NODE_KEY_IN_TREE)
+        memcpy(path->nodes[fdp_len - 1].encryption_key, dup_key, MLS_KEM_PK_LEN);
+    if (leaf_case == PATH_NODE_KEY_REPEATED) {
+        assert(fdp_len >= 2);
+        memcpy(path->nodes[1].encryption_key, path->nodes[0].encryption_key,
+               MLS_KEM_PK_LEN);
+    }
 
     /* New committer leaf: current leaf, fresh HPKE key, source commit. */
     assert(mls_leaf_node_clone(&path->leaf_node, &next_tree->nodes[sender_node].leaf) == 0);
@@ -2643,6 +2665,19 @@ build_update_path_for_test(const MlsGroup *committer,
         memcpy(path->leaf_node.encryption_key, dup_key, MLS_KEM_PK_LEN);
     if (leaf_case == PATH_LEAF_UNSUPPORTED_GROUP_EXTENSION)
         drop_group_data_capability_for_test(&path->leaf_node);
+    if (leaf_case == PATH_LEAF_DROP_LAST_RESORT) {
+        size_t kept = 0;
+        for (size_t i = 0; i < path->leaf_node.cap_extension_count; i++)
+            if (path->leaf_node.cap_extensions[i] != 0x000A)
+                path->leaf_node.cap_extensions[kept++] = path->leaf_node.cap_extensions[i];
+        assert(kept + 1 == path->leaf_node.cap_extension_count);
+        path->leaf_node.cap_extension_count = kept;
+    }
+    if (leaf_case == PATH_LEAF_DUPLICATE_SIGNATURE_KEY) {
+        assert(path_leaf_other_signer_for_test);
+        memcpy(path->leaf_node.signature_key, path_leaf_other_signer_for_test + 32,
+               MLS_SIG_PK_LEN);
+    }
     if (leaf_case == (PathLeafCase)(PATH_LEAF_CASE_COUNT + 1)) {
         /* PATH_LEAF_EXTRA_CAPABILITY: also advertise extension 0xBEEF. */
         uint16_t *caps = realloc(path->leaf_node.cap_extensions,
@@ -2687,7 +2722,10 @@ build_update_path_for_test(const MlsGroup *committer,
 
     /* LeafNodeTBS binds group_id and the committer's leaf index (§7.2). */
     uint32_t signed_index = leaf_case == PATH_LEAF_WRONG_LEAF_INDEX ? sender + 1 : sender;
-    assert(mls_leaf_node_sign(&path->leaf_node, committer->own_signature_key,
+    const uint8_t *signer = leaf_case == PATH_LEAF_DUPLICATE_SIGNATURE_KEY
+                                ? path_leaf_other_signer_for_test
+                                : committer->own_signature_key;
+    assert(mls_leaf_node_sign(&path->leaf_node, signer,
                               committer->group_id, committer->group_id_len,
                               signed_index) == 0);
     if (leaf_case == PATH_LEAF_TAMPERED_SIGNATURE)
@@ -2773,6 +2811,8 @@ enum {
     UPDATE_LEAF_UNSUPPORTED_GROUP_EXTENSION,
     UPDATE_LEAF_CHANGED_IDENTITY,
     UPDATE_LEAF_BY_COMMITTER,
+    UPDATE_LEAF_UNCHANGED_ENCRYPTION_KEY,  /* review W16 M1 */
+    UPDATE_LEAF_DUPLICATE_SIGNATURE_KEY,   /* review W16 M2 */
     UPDATE_LEAF_CASE_COUNT
 };
 
@@ -2780,6 +2820,7 @@ static const char *const update_leaf_case_names[UPDATE_LEAF_CASE_COUNT] = {
     "valid", "tampered signature", "wrong leaf_index", "key_package source",
     "duplicate encryption key", "unsupported GroupContext extension",
     "changed credential identity", "committer's own Update",
+    "unchanged encryption key", "another member's signature key",
 };
 
 /* nostrc-2io4: Alice commits Charlie's by-reference Update with a valid
@@ -2829,6 +2870,23 @@ TEST(test_update_by_ref_leaf_validation)
         case UPDATE_LEAF_UNSUPPORTED_GROUP_EXTENSION:
             drop_group_data_capability_for_test(&leaf);
             assert(mls_leaf_node_sign(&leaf, proposer->own_signature_key,
+                                      proposer->group_id, proposer->group_id_len,
+                                      target) == 0);
+            break;
+        case UPDATE_LEAF_UNCHANGED_ENCRYPTION_KEY:
+            /* Unique in the resulting tree (it replaces the old leaf), so
+             * only the §7.3 "must change encryption_key" rule applies. */
+            memcpy(leaf.encryption_key,
+                   f.alice.tree.nodes[mls_tree_leaf_to_node(target)].leaf.encryption_key,
+                   MLS_KEM_PK_LEN);
+            assert(mls_leaf_node_sign(&leaf, proposer->own_signature_key,
+                                      proposer->group_id, proposer->group_id_len,
+                                      target) == 0);
+            break;
+        case UPDATE_LEAF_DUPLICATE_SIGNATURE_KEY:
+            /* Bob's signature key, validly signed with it. */
+            memcpy(leaf.signature_key, f.bob.own_signature_key + 32, MLS_SIG_PK_LEN);
+            assert(mls_leaf_node_sign(&leaf, f.bob.own_signature_key,
                                       proposer->group_id, proposer->group_id_len,
                                       target) == 0);
             break;
@@ -2923,6 +2981,7 @@ TEST(test_update_path_leaf_validation)
     uint8_t bob_enc_key[MLS_KEM_PK_LEN];
     memcpy(bob_enc_key, f.bob.tree.nodes[mls_tree_leaf_to_node(1)].leaf.encryption_key,
            MLS_KEM_PK_LEN);
+    path_leaf_other_signer_for_test = f.bob.own_signature_key;
     int accepted = 0;
 
     for (int c = 0; c < PATH_LEAF_CASE_COUNT; c++) {
@@ -3427,6 +3486,106 @@ TEST(test_group_context_extensions_commit_validation)
         mls_tree_free(&provisional);
         mls_tree_free(&next);
         mls_tls_buf_free(&v);
+    }
+    assert(accepted == 0);
+    free(parent.blob);
+    three_member_fixture_clear(&f);
+}
+
+/* Review W16 F2 (RFC 9420 §7.4/§7.5): the committer blanks its whole direct
+ * path before installing the filtered one, as receivers do.  ≤0.3.6 left
+ * non-blank parents over empty copaths in lone-member trees (the removed
+ * full-path shortcut); seed that persisted shape -- Alice alone in a 4-leaf
+ * tree with a parent key at the root, node 3 -- and add Dave.  Alice's
+ * filtered path is [1]: without the blanking node 3 stayed non-blank at
+ * Alice only, and Dave's Welcome failed (-71, no parent-hash-valid
+ * descendant). */
+TEST(test_committer_blanks_unfiltered_direct_path)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MlsCommitResult r;
+    assert(mls_group_remove_member(&f.alice, 1, &r) == 0);
+    mls_commit_result_clear(&r);
+    assert(mls_group_remove_member(&f.alice, 2, &r) == 0);
+    mls_commit_result_clear(&r);
+    assert(f.alice.tree.n_leaves == 4 && f.alice.tree.nodes[3].type == MLS_NODE_BLANK);
+
+    MlsNode *root = &f.alice.tree.nodes[3];
+    root->type = MLS_NODE_PARENT;
+    memset(&root->parent, 0, sizeof(root->parent));
+    uint8_t seed_sk[MLS_KEM_SK_LEN];
+    assert(mls_crypto_kem_keygen(seed_sk, root->parent.encryption_key) == 0);
+    sodium_memzero(seed_sk, sizeof(seed_sk));
+    reload_group_for_test(&f.alice);
+
+    MlsAddResult add;
+    assert(mls_group_add_member(&f.alice, &f.dave_kp, &add) == 0);
+    uint32_t fdp[8], fdp_len = 0;
+    assert(mls_tree_filtered_direct_path(&f.alice.tree, 0, fdp, 8, &fdp_len) == 0);
+    assert(fdp_len == 1 && fdp[0] == 1);
+    assert(f.alice.tree.nodes[3].type == MLS_NODE_BLANK);
+
+    MlsGroup dave;
+    int rc = mls_welcome_process(add.welcome_data, add.welcome_len, &f.dave_kp,
+                                 &f.dave_priv, NULL, 0, &dave);
+    if (rc != 0) fprintf(stderr, "\n    Dave's Welcome rc=%d", rc);
+    assert(rc == 0);
+    MlsGroup *both[] = {&f.alice, &dave};
+    assert_converged_for_test(both, 2);
+    assert(mls_group_self_update(&dave, &r) == 0);
+    deliver_commit_for_test(both, 2, &dave, r.commit_data, r.commit_len,
+                            "Dave self-update");
+    assert_converged_for_test(both, 2);
+    mls_commit_result_clear(&r);
+
+    mls_group_free(&dave);
+    mls_add_result_clear(&add);
+    three_member_fixture_clear(&f);
+}
+
+/* Review W16 M7 (RFC 9420 §7.3 step 3, §11.1): a GroupContext
+ * required_capabilities demand the UpdatePath leaf does not meet is
+ * rejected, even when it supports every extension actually present. */
+TEST(test_update_path_leaf_required_capabilities)
+{
+    /* marmot_group_data plus required_capabilities{extensions: [last_resort],
+     * proposals: [], credentials: []}. */
+    static const uint8_t ext[] = {0xF2, 0xEE, 0x02, 0xCA, 0xFE,
+                                  0x00, 0x03, 0x05, 0x02, 0x00, 0x0A, 0x00, 0x00};
+    ThreeMemberFixture f;
+    three_member_fixture_init_ext(&f, ext, sizeof(ext));
+    GroupSnapshotForTest parent;
+    snapshot_group_for_test(&f.bob, &parent);
+    int accepted = 0;
+    for (int c = 0; c < 2; c++) {
+        MlsRatchetTree next, provisional;
+        assert(tree_clone_for_test(&f.alice.tree, &next) == 0);
+        MlsUpdatePath path;
+        uint8_t commit_secret[MLS_HASH_LEN];
+        build_update_path_for_test(&f.alice, &next, ext, sizeof(ext),
+                                   c ? PATH_LEAF_DROP_LAST_RESORT : PATH_LEAF_VALID,
+                                   NULL, &path, &provisional, commit_secret);
+        uint8_t *commit = NULL;
+        size_t commit_len = 0;
+        ExpectedEpochForTest expected;
+        assert(build_commit_for_test(&f.alice, NULL, 0, &path, commit_secret,
+                                     &provisional, ext, sizeof(ext), NULL,
+                                     &commit, &commit_len, &expected) == 0);
+        if (!c) {
+            assert(mls_group_process_commit(&f.bob, commit, commit_len, 0) == 0);
+            assert_group_reached_for_test(&f.bob, &expected);
+            mls_group_free(&f.bob);
+            assert(mls_group_deserialize(parent.blob, parent.blob_len, &f.bob) == 0);
+        } else {
+            accepted += expect_leaf_rejected_for_test(&f.bob, &parent,
+                "UpdatePath leaf missing a required capability",
+                commit, commit_len, 0, NULL, NULL, 0, &expected);
+        }
+        free(commit);
+        mls_update_path_clear(&path);
+        mls_tree_free(&provisional);
+        mls_tree_free(&next);
     }
     assert(accepted == 0);
     free(parent.blob);
@@ -4007,11 +4166,13 @@ int main(void)
     RUN(test_update_path_excludes_leaves_added_by_commit);
     RUN(test_update_path_encrypting_to_added_leaf_rejected);
     RUN(test_add_unmerged_leaf_off_committer_path);
+    RUN(test_committer_blanks_unfiltered_direct_path);
     RUN(test_group_context_extensions_commit_followed);
     RUN(test_group_context_extensions_commit_validation);
     RUN(test_group_creator_leaf_signature_bound_to_group);
     RUN(test_update_by_ref_leaf_validation);
     RUN(test_update_path_leaf_validation);
+    RUN(test_update_path_leaf_required_capabilities);
     RUN(test_bad_committer_signature_rejected);
     RUN(test_wrong_confirmation_tag_rejected);
     RUN(test_unknown_proposal_type_rejected);

@@ -212,6 +212,53 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ## Changelog
 
+### 0.4.0 (unreleased): RFC 9420 LeafNode signatures and Commit processing fixes
+
+**Breaking wire change.** Update- and commit-source LeafNodes are now signed
+and verified over a LeafNodeTBS that binds `group_id<V>` and `uint32
+leaf_index` (RFC 9420 §7.2), and every Update and UpdatePath LeafNode is
+validated before a Commit is applied (§7.3, §12.4.2).
+
+- **Mixed-version groups split.** libmarmot ≤ 0.3.x signs commit leaves
+  without that suffix, so a 0.4.0 member rejects every path-bearing Commit
+  (Add, Remove, self-update, metadata update) from a ≤ 0.3.x member with
+  `MARMOT_ERR_MLS_PROCESS_MESSAGE` and stays in the old epoch while the
+  sender moves on. (0.3.x members still accept 0.4.0 Commits, so the break is
+  one-directional.) There is no in-band recovery: the stranded member must be
+  removed and re-added. **Upgrade every member to ≥ 0.4.0 before anyone sends
+  a Commit.** Add Commits from ≤ 0.3.7 whose UpdatePath also encrypts to the
+  new member are rejected as well (they were already undecryptable for some
+  members and are rejected by OpenMLS/MDK).
+- **Persisted groups.** The state format is unchanged and loads as before.
+  But every leaf signed by ≤ 0.3.x -- the creator's leaf and each member's
+  last commit leaf -- stays in the tree until that member commits again.
+  RFC-conformant joiners (MDK/OpenMLS) validate every LeafNode of a Welcome
+  ratchet tree (§12.4.3.1) and reject such trees; libmarmot joiners will too
+  once `nostrc-3hzu` lands. **After upgrading, have each member self-update**
+  so its leaf is re-signed. Trees persisted by ≤ 0.3.6 can also hold non-blank
+  parents over empty copaths; the member's next Commit now blanks them, as
+  receivers always did (§7.4/§7.5).
+- **Interop gain.** MDK/OpenMLS now accept libmarmot path Commits; before,
+  the missing suffix made them reject every one.
+- **UpdatePath shape.** A lone committer sends a zero-node UpdatePath
+  (§7.6); parent hashes link along the filtered direct path (§7.9); path
+  secrets are not encrypted to leaves the Commit adds (§12.4.2), and
+  receivers check the ciphertext count of every UpdatePathNode.
+- **Commit processing fixes.** The committer keeps the private keys of the
+  path nodes it installs (it could not follow the next Commit encrypting to
+  them); the Add producer records the new leaf in `unmerged_leaves` like
+  receivers do; Commit producers build on a staged copy and leave the group
+  unchanged on failure.
+- **Metadata updates.** `marmot_update_group_metadata` now commits a
+  GroupContextExtensions proposal (§12.1.7) carrying the stored GroupData with
+  only the given fields changed, and changes nothing if the Commit cannot be
+  made. Receivers validate such proposals (one per Commit, supported by every
+  member). The API does not yet return the Commit for publication, and
+  `marmot_process_message` does not ingest Commits (`nostrc-9ata`).
+- **Known gap.** Welcomes do not carry `GroupSecrets.path_secret` yet
+  (`nostrc-il4i`): a joiner cannot follow a later Commit that encrypts to its
+  common ancestor with the member who added it.
+
 ### 0.3.1 (unreleased): AppDataUpdate wire recognition (not adopted group support)
 
 The MLS draft-10 AppDataUpdate `update` and `remove` proposal bodies have

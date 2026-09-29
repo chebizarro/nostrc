@@ -286,6 +286,21 @@ generate_update_path(MlsGroup *group,
         memcpy(root_path_secret, path_secrets[fdp_len - 1], MLS_HASH_LEN);
     }
 
+    /* RFC 9420 §7.4/§7.5: blank the whole direct path first, exactly as
+     * receivers do in mls_treekem_apply_update_path(); only the filtered
+     * nodes get new keys.  A parent over an empty copath (which trees
+     * persisted by libmarmot <= 0.3.6 can hold) otherwise stays non-blank at
+     * the committer alone, and joiners reject the resulting tree. */
+    {
+        uint32_t dp[64];
+        uint32_t dp_len = 0;
+        if (mls_tree_direct_path(mls_tree_leaf_to_node(group->own_leaf_index),
+                                 n_leaves, dp, 64, &dp_len) != 0)
+            goto fail;
+        for (uint32_t i = 0; i < dp_len; i++)
+            mls_tree_blank_node(&group->tree.nodes[dp[i]]);
+    }
+
     /* For each node on the filtered direct path, derive the node key and
      * install it in the tree.  Encryption of the path secrets happens below,
      * once the provisional tree (and thus the provisional GroupContext the

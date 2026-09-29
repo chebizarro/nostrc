@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.3.8',
+  version: '0.4.0',
   license: 'MIT',
   default_options: [
     'c_std=c11',

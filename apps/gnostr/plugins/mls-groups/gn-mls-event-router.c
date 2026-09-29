@@ -166,8 +166,15 @@ on_message_processed(GObject      *source,
 
   if (error != NULL)
     {
-      g_warning("MLS EventRouter: failed to process group message: %s",
+      /* A rejected Commit leaves this client behind the group's epoch; say
+       * so instead of dropping it silently. */
+      g_warning("MLS EventRouter: failed to process group message for group %s: %s",
+                data->group_id_hex ? data->group_id_hex : "(unknown)",
                 error->message);
+      if (data->router->service != NULL)
+        g_signal_emit_by_name(data->router->service, "group-error",
+                              data->group_id_hex ? data->group_id_hex : "",
+                              error->message);
       process_msg_data_free(data);
       return;
     }

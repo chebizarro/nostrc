@@ -66,6 +66,32 @@ on_msg_factory_unbind(GtkSignalListItemFactory *factory,
   gn_group_message_row_unbind(row);
 }
 
+/* ── Group error handler ─────────────────────────────────────────── */
+
+static void
+on_group_error(GnMarmotService *service,
+               const gchar     *group_id_hex,
+               const gchar     *message,
+               gpointer         user_data)
+{
+  GnGroupChatView *self = GN_GROUP_CHAT_VIEW(user_data);
+  (void)service;
+
+  /* The h tag carries the Nostr group id; accept either id form. */
+  if (g_strcmp0(group_id_hex, marmot_gobject_group_get_nostr_group_id(self->group)) != 0 &&
+      g_strcmp0(group_id_hex, marmot_gobject_group_get_mls_group_id(self->group)) != 0)
+    return;
+
+  GtkWidget *overlay = gtk_widget_get_ancestor(GTK_WIDGET(self),
+                                               ADW_TYPE_TOAST_OVERLAY);
+  if (overlay == NULL)
+    return;
+  g_autofree gchar *msg = g_strdup_printf(
+    "This group may be out of sync: an update could not be applied (%s)",
+    message ? message : "unknown error");
+  adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(overlay), adw_toast_new(msg));
+}
+
 /* ── Send message handler ────────────────────────────────────────── */
 
 static void
@@ -307,6 +333,10 @@ gn_group_chat_view_new(GnMarmotService      *service,
   /* Listen for new messages to auto-scroll */
   g_signal_connect(self->msg_model, "items-changed",
                    G_CALLBACK(on_messages_changed), self);
+
+  /* Surface rejected group events (disconnected when the view is freed) */
+  g_signal_connect_object(self->service, "group-error",
+                          G_CALLBACK(on_group_error), self, 0);
 
   return self;
 }

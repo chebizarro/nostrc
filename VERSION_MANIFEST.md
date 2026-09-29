@@ -15,7 +15,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.1 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.3.8 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.4.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.1.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.8.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
@@ -25,6 +25,18 @@ files already declare a version.
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.5.1 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
+
+## Recorded version decisions
+
+Decisions for components affected by another component's change (AGENTS.md,
+"Updating versions", step 5).
+
+| Change | Component | Declared | Decision |
+| --- | --- | --- | --- |
+| libmarmot 0.3.6 -> 0.4.0 (MINOR: breaking LeafNodeTBS wire change, nostrc-2io4; plus nostrc-lz4f, -va60, -5q55, -8u1k) | libmarmot | 0.4.0 | MINOR bump (0.x breaking wire change; migration notes in `libmarmot/README.md`). |
+| same | marmot-gobject | 1.1.0 | No bump: no source, API or ABI change. It links libmarmot statically, so its next (first) 1.1.0 release embeds 0.4.0 and must carry libmarmot's wire-compatibility note. |
+| same | gnostr | 0.1.0 | No bump: 0.1.0 is not yet released (only `gnostr-v0.1.0-preview`), so the statically linked libmarmot 0.4.0 and the mls-groups `group-error` signal/toast ship in 0.1.0. Its release notes must say that 0.1.0 cannot follow path Commits from the 0.1.0-preview (libmarmot 0.1.0). |
+| same | groundhog | 0.8.0 | Not bumped here; the decision belongs to the coordinator. Groundhog links libmarmot statically, but its Marmot app integration is not live (nostrc-qp24.13) and `GhStoreMarmot` stores opaque state, so only a rebuild is needed. |
 
 ## Maintenance
 

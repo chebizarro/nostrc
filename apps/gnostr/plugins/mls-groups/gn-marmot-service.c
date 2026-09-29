@@ -28,6 +28,7 @@ enum {
   SIGNAL_MESSAGE_RECEIVED,
   SIGNAL_WELCOME_RECEIVED,
   SIGNAL_GROUP_UPDATED,
+  SIGNAL_GROUP_ERROR,
   N_SIGNALS,
 };
 
@@ -143,6 +144,24 @@ gn_marmot_service_class_init(GnMarmotServiceClass *klass)
                  0, NULL, NULL, NULL,
                  G_TYPE_NONE, 1,
                  MARMOT_GOBJECT_TYPE_GROUP);
+
+  /**
+   * GnMarmotService::group-error:
+   * @service: the service
+   * @group_id_hex: group ID hex from the event's h tag ("" if unknown)
+   * @message: why the group event could not be processed
+   *
+   * An incoming group event (e.g. a Commit) was rejected: this client may
+   * have fallen behind the group's epoch.
+   */
+  signals[SIGNAL_GROUP_ERROR] =
+    g_signal_new("group-error",
+                 G_TYPE_FROM_CLASS(klass),
+                 G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL,
+                 G_TYPE_NONE, 2,
+                 G_TYPE_STRING,
+                 G_TYPE_STRING);
 }
 
 static void
