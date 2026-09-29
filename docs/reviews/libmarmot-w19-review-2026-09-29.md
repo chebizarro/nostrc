@@ -4,7 +4,8 @@
 - **Branch reviewed:** `marmot/w19-ratchet-persist` at `9a421fe1`. The four commits sit on `c0f8e059`, which differs from origin/master only in beads files.
 - **Review branch:** `marmot/w19-review`
 - **Date:** 2026-09-29
-- **Verdict:** **REQUEST CHANGES**. Blocking finding: **B1**. **C1** is a critical pre-existing issue that must be filed as P0 and fixed before any release, but it is not a merge blocker for this branch.
+- **Verdict (initial, at `9a421fe1`):** **REQUEST CHANGES**. Blocking finding: **B1**. **C1** is a critical pre-existing issue that must be filed as P0 and fixed before any release, but it is not a merge blocker for this branch.
+- **Verdict (final, at `6cfa86d5`):** **APPROVED**. B1 and C1 are resolved; see "Final pass" at the end.
 
 **Commits**
 
@@ -198,3 +199,134 @@ This is inherent to keeping a parent that can re-process a competing Commit (Mar
 **Before any release:** file **C1** as P0 and fix it (inner `pubkey` must equal the sender leaf identity; ideally §6.3 content signatures). It does not block merging this P0 fix, which is otherwise sound.
 
 **Can follow:** N1–N3.
+
+---
+
+## Final pass (2026-09-29): `8ff2667b`, `6cfa86d5`
+
+**Scope.** Two new commits on `marmot/w19-ratchet-persist`:
+- `8ff2667b`: B1 docs, N1 docs.
+- `6cfa86d5`, nostrc-we6g (C1): RFC 9420 §6.3.1 signed PrivateMessageContent, §6.3.2 SenderDataAAD, inner-author binding, handshake PrivateMessages refused, inner-id dedupe, N2 test, libmarmot 0.9.0.
+
+Scratch worktrees: `/tmp/rr19b` (tip), with an ASAN build dir. No code or beads changed.
+
+**Verdict: APPROVED.** B1 is resolved and C1 is closed. What remains is non-blocking (F1–F5).
+
+### C1: closed
+
+**The signature is exactly RFC 9420's.** `mls_application_content_encode`/`_decode` build a FramedContent view:
+- `group_id`, `epoch`;
+- `sender = member(leaf)`;
+- the PrivateMessage's `authenticated_data`;
+- `content_type = application`;
+- `application_data<V>`.
+
+They sign or verify it with the existing `mls_framed_content_sign`/`_verify`:
+- **FramedContentTBS:** `version = mls10`, `wire_format = mls_private_message`, the FramedContent, and, for a member sender, the serialized GroupContext.
+- **Wrapper:** `SignWithLabel(…, "FramedContentTBS", …)`, i.e. SignContent = `opaque label<V> = "MLS 1.0 FramedContentTBS"`, `opaque content<V>`.
+- **Encoding:** every `<V>` is a QUIC varint (`mls_tls_write_opaque*` → `write_vli`).
+- **PrivateMessageContent:** `application_data<V>`, `signature<V>` (exactly 64 bytes), then zero padding. Receivers reject non-zero padding; senders send none.
+- **Keys and context:**
+  - The sender signs with `own_signature_key` over its GroupContext.
+  - The receiver verifies with `tree.nodes[leaf].leaf.signature_key` of the sender-data leaf, over its own GroupContext. The epoch is already checked equal, so the GroupContexts match.
+  - The late path runs `mls_group_decrypt` on the retained parent, so it uses epoch-N's tree, GroupContext and key.
+
+**Interop.** The MDK/RFC `message-protection` vector now opens `application_priv` end to end under ctest ("application_priv unprotected and its signature verified"):
+- the SenderDataAAD decrypts;
+- the signature verifies with `signature_pub` over the vector's GroupContext;
+- a flipped key fails;
+- our encoder reproduces the vector's PrivateMessageContent byte for byte (Ed25519 is deterministic).
+
+Run bare from the build dir, `test_marmot_interop` loads no vectors; ctest runs it from the source dir, where it does.
+
+**Ratchet safety.**
+- `mls_group_decrypt` validates the sender data before consuming anything: leaf in range, `content_type == application` (else `UNSUPPORTED`), leaf node present, not our own leaf.
+- It snapshots the sender's ratchet (leaf secret, ratchet struct with its skipped keys, init flag).
+- It restores the snapshot on an AEAD or signature failure.
+
+**Repros.** My own adversarial variants were throwaway, added to `test_commits` in `/tmp/rr19b` and since removed. Each rejection is checked with `expect_rejected`, which also asserts that the stored state is byte-for-byte unchanged.
+
+| # | Attack | Result |
+|---|---|---|
+| — | Original repro: Bob `marmot_create_message` with Alice's pubkey | `MARMOT_ERR_AUTHOR_MISMATCH` at the sender, no event (the author's `test_member_cannot_post_as_another` also covers a modified client, on both the relay and rumor paths, live and late) |
+| V1 | **Sender data from another member:** Bob encrypts under Charlie's leaf (keys derivable from the shared secret tree), inner pubkey Charlie's, signed with Bob's key | Alice: `MARMOT_ERR_MLS` (signature), state unchanged (relay and rumor path). Charlie: `OWN_MESSAGE`, state unchanged |
+| V2 | **Signature key swapped mid-epoch:** Bob's own leaf and pubkey, fresh Ed25519 key not in the tree | Alice and Charlie: `MARMOT_ERR_MLS`, unchanged. A leaf's key changes only through a Commit (new epoch, new tree); `marmot_commit_authorize` pins the committer's identity, and the UpdatePath leaf keeps the credential |
+| V3 | **Forged leaf index, pre-emption:** Bob forges Alice's leaf at the generation Alice sends next | Charlie rejects it (`MARMOT_ERR_MLS`, unchanged). Alice's genuine message at that **same leaf and generation** (checked through the sender data) then reads, with `sender_pubkey_hex` Alice's. Restore works; N4's pre-emption DoS is gone |
+| V4 | **Handshake content type in a PrivateMessage** from Bob's real leaf | `MARMOT_ERR_MLS` (`UNSUPPORTED` inside), unchanged |
+| V5 | **Key and leaf changed by a Commit:** Alice's epoch-E message read after her path Commit replaced her leaf | Accepted as Alice, via the parent tree. V1's epoch-E forgery read late by Alice: rejected, unchanged |
+
+**Negative control.** With `mls_framed_content_verify`'s result ignored, V1 is accepted (as Charlie), and so is the author's "Alice's leaf" case. The signature carries the load, and the tests see it.
+
+**Author binding.** The inner pubkey must equal the sender leaf's 32-byte credential identity from the state that decrypted the message (`check_inner_author`):
+- A mismatch, a missing pubkey or non-event JSON is rejected.
+- A late step is undone with `state_undo_apply`.
+- `sender_pubkey_hex` is taken from the inner event only after that check, so it is authenticated.
+- The identity rests on:
+  - the adder's KeyPackage check (event pubkey, or ACCOUNT_PROOF_V2);
+  - `marmot_commit_authorize` (a committer cannot change its identity);
+  - the MLS Update and UpdatePath pinning (see F2).
+
+### B1: wording now accurate
+
+The README "What 0.8.0 does not protect" section is correct:
+- the retained parent holds the parent's init secret and UpdatePath private keys;
+- with the relay-visible Commit, the current epoch re-derives: every current-epoch message, including already-read ones, plus the parent's unconsumed keys;
+- this lasts until the next transition;
+- nostrc-yuj2 tracks it.
+
+The other corrections:
+- The Deletion bullet is limited to the live `mls_group`, and the byte-scan sentence now says it covers the live state only.
+- The false signature claim is replaced by an accurate statement that pre-0.9.0 nothing authenticated the author.
+- The format and serializer comments match (checked in the diff).
+
+One nit (F4): "Forward secrecy … covers only messages older than the previous epoch" is conservative. The previous epoch's *consumed* messages are also protected, because the parent holds only its unconsumed values. It understates rather than overclaims, so it is fine.
+
+**N1** is documented in the `marmot_create_message()` header, the hook contract and the Groundhog headers. **N2** now has a test: replacing the AEAD-failure restore with a discard fails `test_ratchet_persist` ("tampered generation 5: the rejection changed the state"). **N3**'s dedupe is implemented, and the ≤ 0.7.0 generation-0 note is in the README.
+
+### Regressions checked
+
+- **Interop.** All MDK and RFC vectors still pass. The SenderDataAAD change fixes a latent non-interop: the empty AAD, which OpenMLS and MDK reject.
+- **Migration notes.** Accurate.
+  - 0.9.0 ↔ ≤ 0.8.0 cannot read each other's application messages (unsigned content, empty sender-data AAD). Commits, Welcomes and KeyPackages are unchanged; state stays format 3.
+  - The MINOR bump is right for 0.x.
+  - "No public API change" holds: `MARMOT_ERR_AUTHOR_MISMATCH` (-34) already existed.
+  - Gnostr's router already puts the user's pubkey in the rumor, so it is unaffected.
+- **Dedupe semantics.**
+  - A duplicate (same inner NIP-01 id in another envelope) keeps its ratchet step, marks the outer envelope, and returns `MARMOT_RESULT_OWN_MESSAGE`. A replay of that envelope then fails on the used generation (tested).
+  - A foreign author cannot collide with another member's inner id, because the id covers the pubkey, which is now bound.
+  - Namespace: see F1.
+
+### Non-blocking follow-ups
+
+**F1 (Low): inner-id dedupe is global, not per group.** `is_message_processed(ctx, id)` takes no group id in any backend (memory, SQLite, nostrdb, GhStoreMarmot).
+- A member of two groups who receives the *same* rumor in both gets it only in the first; the second returns `OWN_MESSAGE`.
+- Gnostr's rumors (second-granularity `created_at`, empty tags, no group tag) make that reachable: the same text sent to two groups within a second. So is the same text sent twice within a second in one group; the sender shows two, receivers one. The README documents the single-group case.
+- Suggest scoping the dedupe key to (group, inner id), for example by hashing the group id into the stored key.
+
+**F2 (Medium, pre-existing, outside we6g): the leaf identity rests on the committer's KeyPackage check.** ACCOUNT_PROOF_V2 is verified only where the adder parses a KeyPackage (`validate_leaf_adopted`, `credentials.c:1213`). Receivers of a Commit's Add, and joiners reading a Welcome's tree, do not re-verify it.
+- A malicious or compromised admin can therefore add a leaf whose credential names another account and post as that account; C1's fix then faithfully reports it.
+- Admins are already trusted with membership, so this does not block. But RFC 9420 §5.3.1 expects every member to validate new credentials.
+- Suggest verifying the proof on received Adds and on Welcome trees whenever the leaf carries it. File a bead.
+
+**F3 (Info): result labels.**
+- A duplicate is reported as `MARMOT_RESULT_OWN_MESSAGE`. A future `DUPLICATE` result would be clearer (an API change, so defer).
+- Sender data naming the receiver's own leaf also returns `OWN_MESSAGE` before any signature check. This is harmless: nothing is consumed or stored (V1).
+
+**F4 (Nit):** the conservative forward-secrecy sentence above.
+
+**F5 (Nit): legacy raw mode is unauthenticated.** With `MarmotConfig.allow_legacy_raw_messages`, the raw-JSON path has no MLS signature and no author binding, yet `marmot_process_message`'s doc says `sender_pubkey_hex` "is therefore the authenticated author". Qualify that sentence for legacy mode. The mode is off by default.
+
+### Verification (tip `6cfa86d5`)
+
+- **Build.** `cmake -S . -B /tmp/rr19b-build -G Ninja -DBUILD_GROUNDHOG=ON && ninja` ok. The blueprint `.ui` rewrite was restored.
+- **Tests.** `ctest -R 'marmot|mls|gnostr|groundhog-store' -j6`: **87 run; 86 passed, 1 skipped** (`groundhog-store-key-keyring`, no keyring).
+- **ASAN+UBSAN** (RelWithDebInfo, `-fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-macro-redefined`, see N6): `ctest -R 'marmot|mls|groundhog-store-marmot'` **26/26 passed**, with no ASAN or UBSAN reports. This covers all `marmot_test_*` (including the RFC 9420 and MDK vectors), `marmot_gobject_test`, the gnostr MLS plugin tests, `groundhog-store-marmot`, and my V1–V5 variants.
+- **`leaks --atExit`: 0 leaks** in `test_commits` (with V1–V5), `test_ratchet_persist`, `test_mls_framing`, `test_mls_group`, `test_marmot_interop`, `test_protocol`, `test_storage_contract` and `test_marmot_gobject`.
+- **Mutations:**
+  - signature verification ignored → V1 and the author's leaf-forgery test fail;
+  - AEAD-failure restore → discard → `test_ratchet_persist` fails.
+  - The author reports six more (author check, sender-side binding, either restore, SenderDataAAD, dedupe).
+
+### Recommendation
+
+**APPROVED** for merge. Before release, consider F1 (dedupe scope) and file F2 (receiver-side account-proof checks) as a bead. F3–F5 can follow.
