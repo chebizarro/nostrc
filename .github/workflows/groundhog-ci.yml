@@ -19,6 +19,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: No call modifies a variable another argument uses
+        # nostrc-td3b: this job's x86_64 GCC evaluates arguments right to left,
+        # so g_steal_pointer(&task) beside task, or g_bytes_get_data(b, &size)
+        # beside size, breaks here and nowhere else (nostrc-qp24.91).
+        run: python3 scripts/check-unsequenced-args.py --self-test
+
       - name: Install build and display dependencies
         run: |
           sudo apt-get update

@@ -101,8 +101,12 @@ rm -rf _build && cmake -B _build && cmake --build _build
 
 **If build fails, DO NOT PUSH. Fix the issue first.**
 
-The hook validates each pushed commit in a temporary worktree: the macOS (host)
-build and full CTest run, and in parallel a Linux stage
+The hook validates each pushed commit in a temporary worktree. It first runs
+the commit's static checks, among them `scripts/check-unsequenced-args.py`: no
+call may modify a variable in one argument (`g_steal_pointer(&task)`,
+`g_bytes_get_data(b, &size)`, `i++`) and use it in another, because argument
+order is unspecified and x86_64 GCC evaluates right to left. Then the macOS
+(host) build and full CTest run, and in parallel a Linux stage
 (`scripts/linux-gate.sh`): a GCC build of every default target plus Groundhog in
 an Ubuntu 24.04 container, then a smoke CTest subset. It catches glibc/GCC-only
 breaks (a POSIX function hidden by `-std=c11`, archive symbol clashes Apple's

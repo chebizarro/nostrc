@@ -17,6 +17,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: No call modifies a variable another argument uses
+        # nostrc-td3b: argument evaluation order is unspecified; x86_64 GCC
+        # goes right to left, so such a call breaks only on x86_64 runners.
+        run: python3 scripts/check-unsequenced-args.py --self-test
+
       - name: Local Linux image mirrors the CI package lists
         run: python3 scripts/check-linux-ci-packages.py --self-test
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Validate pushed commits in temporary worktrees, never in the caller's checkout.
 #
-# For each pushed ref: the candidate's static checks, then the macOS (host)
+# For each pushed ref: the candidate's static checks (the Linux image's package
+# list, and no call argument modifying a variable another argument uses: x86_64
+# GCC evaluates arguments right to left), then the macOS (host)
 # build and full CTest run, and in parallel the Linux stage
 # (scripts/linux-gate.sh: a GCC build of every default target plus Groundhog in
 # an Ubuntu 24.04 container, and a smoke CTest subset) on its own checkout of
@@ -99,7 +101,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     add_checkout "$checkout" "$local_oid"
 
     # Static checks shipped with the candidate (none in older commits).
-    for check in scripts/check-linux-ci-packages.py; do
+    for check in scripts/check-linux-ci-packages.py scripts/check-unsequenced-args.py; do
         if [ -f "$checkout/$check" ]; then
             python3 "$checkout/$check" --root "$checkout"
         fi
