@@ -26,6 +26,12 @@ typedef struct {
     size_t msg_count;
     size_t msg_cap;
 
+    /* Processed-event markers (save_processed_message), kept apart from
+     * the messages so they never show up as messages. */
+    uint8_t (*processed_ids)[32];
+    size_t processed_count;
+    size_t processed_cap;
+
     /* Welcomes */
     MarmotWelcome **welcomes;
     size_t welcome_count;
@@ -382,6 +388,12 @@ mem_is_message_processed(void *ctx, const uint8_t wrapper_id[32], bool *out)
             return MARMOT_OK;
         }
     }
+    for (size_t i = 0; i < mc->processed_count; i++) {
+        if (memcmp(mc->processed_ids[i], wrapper_id, 32) == 0) {
+            *out = true;
+            return MARMOT_OK;
+        }
+    }
     return MARMOT_OK;
 }
 
@@ -393,29 +405,22 @@ mem_save_processed_message(void *ctx, const uint8_t wrapper_id[32],
 {
     MemCtx *mc = ctx;
     (void)reason;
+    (void)msg_id;
+    (void)processed_at;
+    (void)epoch;
+    (void)gid;
+    (void)state;
 
-    /* Grow messages array if needed */
-    if (mc->msg_count >= mc->msg_cap) {
-        size_t new_cap = mc->msg_cap ? mc->msg_cap * 2 : 16;
-        MarmotMessage **arr = realloc(mc->messages, new_cap * sizeof(MarmotMessage *));
+    for (size_t i = 0; i < mc->processed_count; i++)
+        if (memcmp(mc->processed_ids[i], wrapper_id, 32) == 0) return MARMOT_OK;
+    if (mc->processed_count >= mc->processed_cap) {
+        size_t new_cap = mc->processed_cap ? mc->processed_cap * 2 : 16;
+        uint8_t (*arr)[32] = realloc(mc->processed_ids, new_cap * 32);
         if (!arr) return MARMOT_ERR_MEMORY;
-        mc->messages = arr;
-        mc->msg_cap = new_cap;
+        mc->processed_ids = arr;
+        mc->processed_cap = new_cap;
     }
-
-    MarmotMessage *m = marmot_message_new();
-    if (!m) return MARMOT_ERR_MEMORY;
-
-    memcpy(m->wrapper_event_id, wrapper_id, 32);
-    if (msg_id)
-        memcpy(m->id, msg_id, 32);
-    m->processed_at = processed_at;
-    m->epoch = epoch;
-    if (gid)
-        m->mls_group_id = marmot_group_id_new(gid->data, gid->len);
-    m->state = (MarmotMessageState)state;
-
-    mc->messages[mc->msg_count++] = m;
+    memcpy(mc->processed_ids[mc->processed_count++], wrapper_id, 32);
     return MARMOT_OK;
 }
 
@@ -979,6 +984,7 @@ mem_destroy(void *ctx)
     free(mc->groups);
     for (size_t i = 0; i < mc->msg_count; i++) marmot_message_free(mc->messages[i]);
     free(mc->messages);
+    free(mc->processed_ids);
     for (size_t i = 0; i < mc->welcome_count; i++) marmot_welcome_free(mc->welcomes[i]);
     free(mc->welcomes);
     for (size_t i = 0; i < mc->mls_count; i++) {

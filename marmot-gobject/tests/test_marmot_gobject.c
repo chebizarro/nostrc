@@ -14,6 +14,7 @@
 #include <gio/gio.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
 #include <nostr-keys.h>
+#include <nostr-event.h>
 #include <string.h>
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -932,6 +933,28 @@ test_client_update_metadata_commit_reaches_member(void)
     g_assert_no_error(error);
     g_assert_nonnull(commit);
     drain_main_context();
+    /* Pending until a relay accepts it: nothing changed yet. */
+    g_assert_false(inviter_sd.fired);
+    MarmotGobjectGroup *unchanged = marmot_gobject_client_get_group(inviter, gid, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(marmot_gobject_group_get_epoch(unchanged), ==,
+                     marmot_gobject_group_get_epoch(created));
+    g_object_unref(unchanged);
+    /* The event is signed by an ephemeral key (MIP-03). */
+    NostrEvent *ev = nostr_event_new();
+    g_assert_true(nostr_event_deserialize_compact(ev, commit, NULL));
+    g_assert_true(nostr_event_check_signature(ev));
+    nostr_event_free(ev);
+
+    /* The relay accepted it. */
+    AsyncFixture *mf = async_fixture_new();
+    marmot_gobject_client_merge_pending_commit_async(inviter, gid, NULL, async_callback, mf);
+    g_main_loop_run(mf->loop);
+    g_assert_true(marmot_gobject_client_merge_pending_commit_finish(inviter, mf->result,
+                                                                    &error));
+    async_fixture_free(mf);
+    g_assert_no_error(error);
+    drain_main_context();
     g_assert_true(inviter_sd.fired);
     g_assert_cmpstr(marmot_gobject_group_get_name(MARMOT_GOBJECT_GROUP(inviter_sd.received_object)),
                     ==, "Renamed");
@@ -959,6 +982,30 @@ test_client_update_metadata_commit_reaches_member(void)
     g_assert_no_error(error);
     g_assert_cmpstr(marmot_gobject_group_get_name(stored), ==, "Renamed");
     g_object_unref(stored);
+
+    /* A rename no relay accepts is discarded and changes nothing. */
+    AsyncFixture *uf2 = async_fixture_new();
+    marmot_gobject_client_update_group_metadata_async(inviter, gid, "Never", NULL,
+                                                      NULL, async_callback, uf2);
+    g_main_loop_run(uf2->loop);
+    gchar *lost = marmot_gobject_client_update_group_metadata_finish(inviter, uf2->result,
+                                                                    &error);
+    async_fixture_free(uf2);
+    g_assert_no_error(error);
+    g_assert_nonnull(lost);
+    AsyncFixture *cf = async_fixture_new();
+    marmot_gobject_client_clear_pending_commit_async(inviter, gid, NULL, async_callback, cf);
+    g_main_loop_run(cf->loop);
+    g_assert_true(marmot_gobject_client_clear_pending_commit_finish(inviter, cf->result,
+                                                                    &error));
+    async_fixture_free(cf);
+    g_assert_no_error(error);
+    stored = marmot_gobject_client_get_group(inviter, gid, &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(marmot_gobject_group_get_name(stored), ==, "Renamed");
+    g_assert_cmpuint(marmot_gobject_group_get_epoch(stored), ==, epoch);
+    g_object_unref(stored);
+    g_free(lost);
 
     g_free(commit);
     g_clear_object(&inviter_sd.received_object);

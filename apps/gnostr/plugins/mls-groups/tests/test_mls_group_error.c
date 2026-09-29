@@ -41,6 +41,30 @@ test_only_mls_errors_are_divergence(void)
   g_assert_false(gn_mls_group_error_is_divergence(NULL));
 }
 
+/* Commit outcomes that are not divergence: a stale or losing Commit, one
+ * deferred behind our pending Commit, an unauthorized one; and the merge
+ * result "another member's Commit won" (review B1). */
+static void
+test_commit_outcomes(void)
+{
+  const gint not_divergence[] = {
+    MARMOT_ERR_WRONG_EPOCH, MARMOT_ERR_OWN_COMMIT_PENDING,
+    MARMOT_ERR_COMMIT_FROM_NON_ADMIN, MARMOT_ERR_PROTOCOL_GROUP_MISMATCH,
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(not_divergence); i++)
+    {
+      g_autoptr(GError) e = client_error(not_divergence[i]);
+      g_assert_false(gn_mls_group_error_is_divergence(e));
+    }
+  g_autoptr(GError) superseded = client_error(MARMOT_ERR_WRONG_EPOCH);
+  g_assert_true(gn_mls_group_error_is_superseded(superseded));
+  g_autoptr(GError) storage = client_error(MARMOT_ERR_STORAGE);
+  g_assert_false(gn_mls_group_error_is_superseded(storage));
+  g_autoptr(GError) other = g_error_new_literal(G_FILE_ERROR, MARMOT_ERR_WRONG_EPOCH, "x");
+  g_assert_false(gn_mls_group_error_is_superseded(other));
+  g_assert_false(gn_mls_group_error_is_superseded(NULL));
+}
+
 /* A 500-event backfill of MLS failures reports once per group; a group
  * that moves to a new epoch can report again. */
 static void
@@ -71,5 +95,6 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/mls-groups/group-error/only-mls-errors", test_only_mls_errors_are_divergence);
   g_test_add_func("/mls-groups/group-error/once-per-group", test_gate_reports_once_per_group);
+  g_test_add_func("/mls-groups/group-error/commit-outcomes", test_commit_outcomes);
   return g_test_run();
 }

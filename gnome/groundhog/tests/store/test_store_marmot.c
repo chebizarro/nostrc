@@ -2298,8 +2298,9 @@ free_strings_n(char **strings, size_t n)
   free(strings);
 }
 
-/* Every label libmarmot has written must be classified: "mls_group" and
- * "mls_group_parent" are group state (snapshots copy them); the others are
+/* Every label libmarmot has written must be classified: "mls_group",
+ * "mls_group_parent" and "mls_group_pending" are group state (snapshots copy
+ * them); the others are
  * account-scoped and must
  * stay out of group snapshots. A new label fails here, to be classified in
  * gh-store-marmot.c before it can silently escape (or join) a snapshot. */
@@ -2307,8 +2308,8 @@ static void
 assert_labels_classified(GhStore *store)
 {
   static const gchar *const known[] = {
-    "mls_group", "mls_group_parent", "kp_slot", "kp_priv", "kp_full", "welcome_data",
-    NULL,
+    "mls_group", "mls_group_parent", "mls_group_pending", "kp_slot", "kp_priv",
+    "kp_full", "welcome_data", NULL,
   };
   g_autofree gchar *labels = sql_text(store, "SELECT group_concat(label, ',') FROM "
                                              "(SELECT DISTINCT label FROM mls_kv ORDER BY label)");
@@ -2394,6 +2395,8 @@ test_e2e_persistence(void)
   size_t n_welcomes = 0;
   char *commit = NULL;
   assert_marmot_ok(marmot_add_members(alice.marmot, &gid, kps, 1, &welcomes, &n_welcomes, &commit));
+  /* A relay accepted the Commit (libmarmot 0.5.0 merges only then). */
+  assert_marmot_ok(marmot_merge_pending_commit(alice.marmot, &gid));
   g_assert_cmpuint(n_welcomes, ==, 1);
   g_assert_nonnull(commit);
   actor_stop(&alice);
@@ -2479,6 +2482,7 @@ test_snapshot_libmarmot_state(void)
   g_autofree gchar *commit_json = NULL;
   assert_marmot_ok(marmot_update_group_metadata(alice.marmot, &gid, &update, &commit_json));
   g_assert_nonnull(commit_json);
+  assert_marmot_ok(marmot_merge_pending_commit(alice.marmot, &gid));
   MarmotGroup *group = NULL;
   assert_marmot_ok(marmot_get_group(alice.marmot, &gid, &group));
   g_assert_cmpuint(group->epoch, ==, epoch0 + 1);
@@ -2504,6 +2508,7 @@ test_snapshot_libmarmot_state(void)
   g_assert_nonnull(message);
   g_autofree gchar *commit_json2 = NULL;
   assert_marmot_ok(marmot_update_group_metadata(alice.marmot, &gid, &update, &commit_json2));
+  assert_marmot_ok(marmot_merge_pending_commit(alice.marmot, &gid));
   assert_marmot_ok(marmot_get_group(alice.marmot, &gid, &group));
   g_assert_cmpuint(group->epoch, ==, epoch0 + 1);
   g_assert_cmpstr(group->name, ==, "After");
@@ -2549,6 +2554,7 @@ script_tmls_add_member(gpointer data)
   size_t n_welcomes = 0;
   char *commit = NULL;
   assert_marmot_ok(marmot_add_members(marmot, t->gid, kps, 1, &welcomes, &n_welcomes, &commit));
+  assert_marmot_ok(marmot_merge_pending_commit(marmot, t->gid));
 
   g_autofree gchar *gid_hex = marmot_group_id_to_hex(t->gid);
   gint64 conversation = 0;

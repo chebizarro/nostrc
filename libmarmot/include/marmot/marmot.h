@@ -348,11 +348,15 @@ MarmotError marmot_select_key_package_event_for_profile(const char **event_jsons
  * @result: (out): result containing group, welcome rumors, evolution event
  *
  * Create a new MLS group and generate welcome messages for each member.
+ * All invitees are added by one Commit and share one Welcome (each rumor
+ * names that invitee's KeyPackage event), so every invitee joins at the
+ * same epoch.  The group state is stored immediately: nobody but the
+ * joiners can see this Commit.
  *
- * After creating a group, the caller must:
- * 1. Call marmot_merge_pending_commit() to finalize the group state
+ * After creating a group, the caller should:
+ * 1. Call marmot_merge_pending_commit() (records the confirmation)
  * 2. Gift-wrap each welcome rumor (NIP-59) and send to the member
- * 3. Publish the evolution event to group relays
+ * 3. Publish the evolution event (signed kind:445) to group relays
  *
  * Returns: MARMOT_OK on success
  */
@@ -367,12 +371,34 @@ MarmotError marmot_create_group(Marmot *m,
  * @m: Marmot instance
  * @mls_group_id: the group to merge
  *
- * Merge the pending commit after group creation or member addition.
- * Must be called after marmot_create_group() or marmot_add_members().
+ * Apply the group's pending Commit, made by marmot_add_members(),
+ * marmot_remove_members() or marmot_update_group_metadata(), once at least
+ * one group relay accepted its kind:445 event (NIP-01 OK).  Until then the
+ * group stays in its current epoch (MIP-03: a Commit is not applied before a
+ * relay confirms it) and no other Commit can be made.  Send the Welcomes of
+ * an Add only after this succeeds.  Without a pending Commit (e.g. after
+ * marmot_create_group()) this only records the confirmation.
  *
- * Returns: MARMOT_OK on success
+ * Returns: MARMOT_OK on success; MARMOT_ERR_WRONG_EPOCH when a competing
+ *   member's Commit won while ours was pending -- ours is discarded and the
+ *   group follows the winner (do not send its Welcomes)
  */
 MarmotError marmot_merge_pending_commit(Marmot *m,
+                                         const MarmotGroupId *mls_group_id);
+
+/**
+ * marmot_clear_pending_commit:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ *
+ * Discard the group's pending Commit when no relay accepted it, leaving the
+ * group in its current epoch.  Commits from other members that arrived while
+ * ours was pending and lost to it (marmot_process_message() returned
+ * MARMOT_ERR_OWN_COMMIT_PENDING) are processed now.
+ *
+ * Returns: MARMOT_OK (also when nothing was pending)
+ */
+MarmotError marmot_clear_pending_commit(Marmot *m,
                                          const MarmotGroupId *mls_group_id);
 
 /**
@@ -388,13 +414,14 @@ MarmotError marmot_merge_pending_commit(Marmot *m,
  *
  * Add members to an existing group.
  *
- * @out_commit_json is an unsigned kind:445 event carrying the Commit,
- * NIP-44-encrypted with the exporter secret of the epoch it was made in (as
- * application messages are); sign it with a fresh ephemeral key and publish
- * it to the group relays so members can apply it with
- * marmot_process_message().  Each KeyPackage is added by its own Commit and
- * only the last one is returned, so pass one KeyPackage per call when the
- * group has other members.
+ * All KeyPackages are added by one Commit with one Welcome (nostrc-wc6v).
+ * @out_commit_json is a kind:445 event carrying the Commit, NIP-44-encrypted
+ * with the exporter secret of the current epoch (as application messages
+ * are) and signed by a fresh ephemeral key.  The Commit is pending: publish
+ * the event to the group relays, then call marmot_merge_pending_commit() once
+ * one accepted it (and only then send the Welcomes), or
+ * marmot_clear_pending_commit() if none did.  MARMOT_ERR_OWN_COMMIT_PENDING
+ * while another Commit of ours is pending.
  *
  * Returns: MARMOT_OK on success
  */
@@ -411,7 +438,9 @@ MarmotError marmot_add_members(Marmot *m,
  * @member_pubkeys: (array length=count): 32-byte pubkeys of members to remove
  * @count: number of members
  * @out_commit_json: (out) (transfer full): commit event JSON, as for
- *   marmot_add_members()
+ *   marmot_add_members() (pending until merged)
+ *
+ * All members are removed by one Commit (nostrc-wc6v).
  *
  * Returns: MARMOT_OK on success
  */
@@ -449,9 +478,11 @@ MarmotError marmot_leave_group(Marmot *m,
  * cannot be committed (no MLS state, unsupported extensions) nothing is
  * changed.
  *
- * The caller must publish @out_commit_json: until the other members process
- * it they stay in the previous epoch (since 0.5.0; before, the Commit was
- * discarded).
+ * The Commit is pending (since 0.5.0; before, it was applied locally and
+ * discarded): publish @out_commit_json, then call
+ * marmot_merge_pending_commit() once a relay accepted it, or
+ * marmot_clear_pending_commit() if none did.  The stored group changes only
+ * on merge.
  *
  * Returns: MARMOT_OK on success, MARMOT_ERR_INVALID_ARG when @out_commit_json
  * is NULL, MARMOT_ERR_ADMIN_ONLY for non-admins, MARMOT_ERR_MLS /
@@ -553,7 +584,9 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
  * MarmotConfig.allow_legacy_raw_messages permits the legacy pre-framing path
  * that NIP-44-encrypts the raw inner JSON only when MLS state is unavailable.
  *
- * The caller must gift-wrap the result and publish to group relays.
+ * result->event_json is signed by a fresh ephemeral key (MIP-03; since
+ * 0.5.0 -- before, the caller had to sign it) and can be published to the
+ * group relays as is; marmot_save_created_message() persists it with its id.
  *
  * Returns: MARMOT_OK on success
  */
@@ -569,10 +602,9 @@ MarmotError marmot_create_message(Marmot *m,
  * @signed_group_event_json: signed outer kind:445 event JSON with real id
  * @inner_event_json: plaintext inner event JSON saved as local content
  *
- * Persist an outgoing message after the caller has filled the ephemeral pubkey
- * and signature for the kind:445 event. marmot_create_message() intentionally
- * does not persist CREATED rows because unsigned events have no stable Nostr
- * event ID.
+ * Persist an outgoing message (the signed kind:445 event from
+ * marmot_create_message()) under its event id, e.g. once it was published.
+ * marmot_create_message() does not persist CREATED rows itself.
  *
  * Returns: MARMOT_OK on success
  */
@@ -598,7 +630,11 @@ MarmotError marmot_save_created_message(Marmot *m,
  *   state, its exporter secret and the group record are then stored, and
  *   result->commit.updated_group holds the updated group
  *   (MARMOT_RESULT_COMMIT).  Epochs: a Commit for the current epoch advances
- *   the group.  One for the previous epoch competes with the Commit already
+ *   the group -- unless our own Commit for this epoch is pending: then the
+ *   lower CommitOrderingSuffix (below) wins now; a received Commit that
+ *   loses is kept and MARMOT_ERR_OWN_COMMIT_PENDING returned, and it is
+ *   processed again by marmot_clear_pending_commit().  One for the
+ *   previous epoch competes with the Commit already
  *   applied from that parent: the same Commit again is
  *   MARMOT_RESULT_OWN_MESSAGE (e.g. our own, echoed); a different one
  *   replaces it only if it wins the Marmot same-epoch ordering (privileged

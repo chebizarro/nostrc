@@ -28,6 +28,13 @@ gboolean gn_mls_group_error_is_divergence(const GError *error);
  * is never reported.  gn_mls_group_error_gate_reset() re-arms a group once it
  * has successfully moved to a new epoch.
  */
+/*
+ * TRUE when @error from merging our pending Commit means another member's
+ * Commit for the same epoch won (MARMOT_ERR_WRONG_EPOCH): the group followed
+ * theirs and ours was discarded, so e.g. an Add's Welcomes must not be sent.
+ */
+gboolean gn_mls_group_error_is_superseded(const GError *error);
+
 gboolean gn_mls_group_error_gate_admit(GHashTable *reported, const gchar *group_id);
 void     gn_mls_group_error_gate_reset(GHashTable *reported, const gchar *group_id);
 

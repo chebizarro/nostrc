@@ -2121,8 +2121,18 @@ test_add_members_to_existing_group(void)
     ASSERT(welcome_jsons[0] != NULL, "welcome[0] is NULL");
     ASSERT(commit_json != NULL, "commit json is NULL");
 
-    /* Verify the group epoch advanced */
+    /* The Commit is pending until a relay accepts it (MIP-03). */
     MarmotGroup *updated = NULL;
+    err = marmot_get_group(creator, &group_result.group->mls_group_id, &updated);
+    ASSERT_OK(err, "get_group before merge");
+    ASSERT(updated->epoch == group_result.group->epoch,
+           "epoch must not move before the Commit is merged");
+    marmot_group_free(updated);
+    updated = NULL;
+    ASSERT_OK(marmot_merge_pending_commit(creator, &group_result.group->mls_group_id),
+              "merge_pending_commit");
+
+    /* Verify the group epoch advanced */
     err = marmot_get_group(creator, &group_result.group->mls_group_id, &updated);
     ASSERT_OK(err, "get_group after add");
     ASSERT(updated != NULL, "updated group is NULL");
@@ -2183,6 +2193,8 @@ test_remove_members_from_group(void)
                                  pubkeys, 1, &commit_json);
     ASSERT_OK(err, "remove_members");
     ASSERT(commit_json != NULL, "commit json is NULL");
+    ASSERT_OK(marmot_merge_pending_commit(creator, &group_result.group->mls_group_id),
+              "merge_pending_commit");
 
     /* Verify epoch advanced */
     MarmotGroup *updated = NULL;
@@ -2348,6 +2360,8 @@ test_update_group_metadata(void)
     ASSERT_OK(err, "update_group_metadata");
     ASSERT(commit_json != NULL, "update_group_metadata must return the Commit");
     free(commit_json);
+    ASSERT_OK(marmot_merge_pending_commit(m, &result.group->mls_group_id),
+              "merge_pending_commit");
 
     /* Verify the update took effect */
     MarmotGroup *updated = NULL;
@@ -2680,6 +2694,8 @@ test_message_epoch_lookback(void)
                                         &update_config, &commit_json);
     ASSERT_OK(err, "update_group_metadata to advance epoch");
     free(commit_json);
+    ASSERT_OK(marmot_merge_pending_commit(m, &gresult.group->mls_group_id),
+              "merge_pending_commit");
 
     /* Try to decrypt the epoch-0 message at epoch 1.
      * NIP-44 lookback finds the exporter_secret, but MLS epoch 0 state
@@ -2962,6 +2978,7 @@ test_full_protocol_lifecycle(void)
                                           &add_alice_commit);
     ASSERT_OK(err, "add alice to group");
     ASSERT(add_alice_count == 1, "should have 1 welcome for alice");
+    ASSERT_OK(marmot_merge_pending_commit(creator, &gid), "merge add alice");
 
     /* Alice accepts welcome */
     uint8_t wid[32];
@@ -3003,6 +3020,7 @@ test_full_protocol_lifecycle(void)
     ASSERT_OK(marmot_update_group_metadata(creator, &gid, &update_cfg, &rename_commit),
               "update group name");
     free(rename_commit);
+    ASSERT_OK(marmot_merge_pending_commit(creator, &gid), "merge rename");
 
     /* Verify updated name */
     MarmotGroup *updated = NULL;
@@ -3119,6 +3137,14 @@ test_update_group_metadata_commits_merged_group_data(void)
                                            &commit_json),
               "update_group_metadata");
     free(commit_json);
+    MarmotGroup *before_merge = NULL;
+    ASSERT_OK(marmot_get_group(m, &result.group->mls_group_id, &before_merge), "get_group");
+    ASSERT(strcmp(before_merge->name, "Original Name") == 0 &&
+           before_merge->epoch == result.group->epoch,
+           "the stored group must not change before the Commit is merged");
+    marmot_group_free(before_merge);
+    ASSERT_OK(marmot_merge_pending_commit(m, &result.group->mls_group_id),
+              "merge_pending_commit");
 
     MarmotGroup *updated = NULL;
     ASSERT_OK(marmot_get_group(m, &result.group->mls_group_id, &updated), "get_group");

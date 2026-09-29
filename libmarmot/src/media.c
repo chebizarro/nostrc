@@ -13,6 +13,7 @@
 
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
+#include "commits.h"
 
 #include <sodium.h>
 #include <openssl/evp.h>
@@ -80,6 +81,11 @@ marmot_encrypt_media(Marmot *m,
                                                          mls_group_id, &group);
     if (err != MARMOT_OK) return err;
     if (!group) return MARMOT_ERR_GROUP_NOT_FOUND;
+    err = marmot_group_reconcile(m, group);   /* after an interrupted transition */
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        return err;
+    }
 
     uint64_t epoch = group->epoch;
     marmot_group_free(group);

@@ -371,6 +371,71 @@ mls_group_to_marmot_group(const MlsGroup *mls,
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Internal: several invitees, one Commit (nostrc-wc6v)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static void
+free_key_packages(MlsKeyPackage *kps, size_t count)
+{
+    if (!kps) return;
+    for (size_t i = 0; i < count; i++) mls_key_package_clear(&kps[i]);
+    free(kps);
+}
+
+static MarmotError
+parse_key_packages(const char **jsons, size_t count, MlsKeyPackage **out)
+{
+    *out = NULL;
+    MlsKeyPackage *kps = calloc(count, sizeof(*kps));
+    if (!kps) return MARMOT_ERR_MEMORY;
+    for (size_t i = 0; i < count; i++) {
+        uint8_t member_pubkey[32];
+        if (!jsons[i] ||
+            marmot_parse_key_package_event(jsons[i], &kps[i], member_pubkey) != 0) {
+            free_key_packages(kps, i);
+            return MARMOT_ERR_VALIDATION;
+        }
+    }
+    *out = kps;
+    return MARMOT_OK;
+}
+
+/* One Commit adding every KeyPackage; the group is unchanged on failure. */
+static int
+add_key_packages(MlsGroup *mls, const MlsKeyPackage *kps, size_t count,
+                 MlsAddResult *result)
+{
+    const MlsKeyPackage **ptrs = calloc(count, sizeof(*ptrs));
+    if (!ptrs) return MARMOT_ERR_MEMORY;
+    for (size_t i = 0; i < count; i++) ptrs[i] = &kps[i];
+    int rc = mls_group_add_members(mls, ptrs, count, result);
+    free(ptrs);
+    return rc;
+}
+
+/* The single Welcome, wrapped once per invitee (each rumor names that
+ * invitee's KeyPackage event; the joiner finds its own EncryptedGroupSecrets
+ * entry by KeyPackageRef). */
+static MarmotError
+build_welcome_rumors(const MlsAddResult *add, const char **kp_event_jsons,
+                     size_t count, const uint8_t nostr_group_id[32],
+                     const char *name, const char *description,
+                     const uint8_t (*admins)[32], size_t admin_count,
+                     size_t member_count, const char **relay_urls,
+                     size_t relay_count, char **out)
+{
+    for (size_t i = 0; i < count; i++) {
+        char *kp_event_id = extract_event_id_hex(kp_event_jsons[i]);
+        out[i] = build_welcome_rumor(add->welcome_data, add->welcome_len, kp_event_id,
+                                     nostr_group_id, name, description, admins,
+                                     admin_count, member_count, relay_urls, relay_count);
+        free(kp_event_id);
+        if (!out[i]) return MARMOT_ERR_EVENT_BUILD;
+    }
+    return MARMOT_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_create_group
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -424,91 +489,52 @@ marmot_create_group(Marmot *m,
     free(ext_data);
     if (rc != 0) return MARMOT_ERR_MLS;
 
-    /* Parse each KeyPackage event and add members */
+    /* All invitees join through one Commit with one Add each and one
+     * Welcome (RFC 9420 §12.4; nostrc-wc6v): one Commit per invitee left
+     * every earlier invitee at a stale epoch. */
     result->welcome_count = kp_count;
     if (kp_count > 0) {
+        MlsKeyPackage *kps = NULL;
+        err = parse_key_packages(key_package_event_jsons, kp_count, &kps);
+        if (err != MARMOT_OK) {
+            mls_group_free(&mls_group);
+            return err;
+        }
         result->welcome_rumor_jsons = calloc(kp_count, sizeof(char *));
-        if (!result->welcome_rumor_jsons) {
-            mls_group_free(&mls_group);
-            return MARMOT_ERR_MEMORY;
-        }
-    }
-
-    MlsAddResult last_add_result;
-    memset(&last_add_result, 0, sizeof(last_add_result));
-    /* The published Commit is sealed with its source epoch's exporter
-     * secret (MIP-03), like any kind:445 event of that epoch. */
-    uint8_t last_source_exporter[32];
-    memset(last_source_exporter, 0, sizeof(last_source_exporter));
-
-    for (size_t i = 0; i < kp_count; i++) {
-        /* Parse KeyPackage event */
-        MlsKeyPackage kp;
-        uint8_t member_pubkey[32];
-        rc = marmot_parse_key_package_event(key_package_event_jsons[i],
-                                             &kp, member_pubkey);
-        if (rc != 0) {
-            /* Clean up on failure */
-            sodium_memzero(last_source_exporter, sizeof(last_source_exporter));
-            mls_add_result_clear(&last_add_result);
-            for (size_t j = 0; j < i; j++)
-                free(result->welcome_rumor_jsons[j]);
-            free(result->welcome_rumor_jsons);
-            result->welcome_rumor_jsons = NULL;
-            mls_group_free(&mls_group);
-            return MARMOT_ERR_VALIDATION;
-        }
-
-        /* Add member to MLS group */
-        MlsAddResult add_result;
-        memset(&add_result, 0, sizeof(add_result));
+        /* The published Commit is sealed with its source epoch's exporter
+         * secret (MIP-03), like any kind:445 event of that epoch. */
         uint8_t source_exporter[32];
         memcpy(source_exporter, mls_group.epoch_secrets.exporter_secret, 32);
-        rc = mls_group_add_member(&mls_group, &kp, &add_result);
-        mls_key_package_clear(&kp);
-        if (rc != 0) {
-            sodium_memzero(source_exporter, sizeof(source_exporter));
-            sodium_memzero(last_source_exporter, sizeof(last_source_exporter));
-            mls_add_result_clear(&last_add_result);
-            for (size_t j = 0; j < i; j++)
-                free(result->welcome_rumor_jsons[j]);
-            free(result->welcome_rumor_jsons);
-            result->welcome_rumor_jsons = NULL;
-            mls_group_free(&mls_group);
-            return MARMOT_ERR_MLS;
+        MlsAddResult add_result;
+        memset(&add_result, 0, sizeof(add_result));
+        rc = result->welcome_rumor_jsons
+                 ? add_key_packages(&mls_group, kps, kp_count, &add_result)
+                 : MARMOT_ERR_MEMORY;
+        free_key_packages(kps, kp_count);
+        if (rc == 0) {
+            err = build_welcome_rumors(&add_result, key_package_event_jsons, kp_count,
+                                       nostr_group_id, config->name, config->description,
+                                       (const uint8_t (*)[32])config->admin_pubkeys,
+                                       config->admin_count, mls_group.tree.n_leaves,
+                                       (const char **)config->relay_urls,
+                                       config->relay_count, result->welcome_rumor_jsons);
+            if (err == MARMOT_OK)
+                result->evolution_event_json = marmot_commit_build_event(
+                    add_result.commit_data, add_result.commit_len,
+                    source_exporter, nostr_group_id);
+            if (err == MARMOT_OK && !result->evolution_event_json)
+                err = MARMOT_ERR_EVENT_BUILD;
+        } else {
+            err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
         }
-
-        /* Build welcome rumor for this member, including the KeyPackage event
-         * id and cleartext preview tags used by pending-welcome UIs. */
-        char *kp_event_id = extract_event_id_hex(key_package_event_jsons[i]);
-        result->welcome_rumor_jsons[i] = build_welcome_rumor(
-            add_result.welcome_data, add_result.welcome_len,
-            kp_event_id,
-            nostr_group_id,
-            config->name,
-            config->description,
-            config->admin_pubkeys, config->admin_count,
-            mls_group.tree.n_leaves,
-            (const char **)config->relay_urls, config->relay_count);
-        free(kp_event_id);
-
-        /* Keep the last commit (for groups with >1 new member, we only
-         * publish the final commit) */
-        mls_add_result_clear(&last_add_result);
-        last_add_result = add_result;
-        memcpy(last_source_exporter, source_exporter, 32);
         sodium_memzero(source_exporter, sizeof(source_exporter));
-        /* Don't clear add_result — ownership transferred to last_add_result */
+        mls_add_result_clear(&add_result);
+        if (err != MARMOT_OK) {
+            mls_group_free(&mls_group);
+            marmot_create_group_result_free(result);
+            return err;
+        }
     }
-
-    /* Build evolution event from the last commit */
-    if (kp_count > 0 && last_add_result.commit_data) {
-        result->evolution_event_json = marmot_commit_build_event(
-            last_add_result.commit_data, last_add_result.commit_len,
-            last_source_exporter, nostr_group_id);
-    }
-    sodium_memzero(last_source_exporter, sizeof(last_source_exporter));
-    mls_add_result_clear(&last_add_result);
 
     /* Build the GroupData extension struct for populating the MarmotGroup */
     /* Note: Shallow copies are safe here because mls_group_to_marmot_group()
@@ -605,41 +631,7 @@ marmot_create_group(Marmot *m,
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- * Public API: marmot_merge_pending_commit
- * ──────────────────────────────────────────────────────────────────────── */
-
-MarmotError
-marmot_merge_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
-{
-    if (!m || !mls_group_id)
-        return MARMOT_ERR_INVALID_ARG;
-    if (!m->storage || !m->storage->find_group_by_mls_id || !m->storage->save_group)
-        return MARMOT_ERR_STORAGE;
-
-    /*
-     * In the current architecture, mls_group_add_member() already advances
-     * the group state in-place. So "merging a pending commit" is the
-     * operation of confirming that the commit was accepted by relays.
-     *
-     * In the MDK, this is where you'd call merge_pending_commit() on the
-     * OpenMLS group. For our pure-C implementation, the group state is
-     * already advanced after create_group/add_members, so this is
-     * primarily a storage-layer operation: update the group's
-     * last_message_processed_at timestamp.
-     */
-    MarmotGroup *group = NULL;
-    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
-                                                         mls_group_id, &group);
-    if (err != MARMOT_OK || !group) return MARMOT_ERR_GROUP_NOT_FOUND;
-
-    group->last_message_processed_at = marmot_now();
-    err = m->storage->save_group(m->storage->ctx, group);
-    marmot_group_free(group);
-    return err;
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
- * Internal: publish and persist a local Commit (nostrc-9ata)
+ * Internal: stage a local Commit for publication (nostrc-9ata)
  * ──────────────────────────────────────────────────────────────────────── */
 
 static int
@@ -666,13 +658,14 @@ storage_can_commit(const MarmotStorage *s)
 }
 
 /*
- * Tail shared by the Commit producers.  `pre` is the state the published
- * Commit was made from and `post` the state it produced.  The Commit must
- * pass the same Marmot policy every receiver applies (so a member never
- * publishes what the group rejects); the kind:445 event is sealed with the
- * source epoch's exporter secret; then post, its exporter secret, the
- * retained parent and `group` are persisted (all or nothing).  Nothing is
- * stored on failure.
+ * Tail shared by the Commit producers.  `pre` is the current state and
+ * `post` the state the Commit produces.  The Commit must pass the same
+ * Marmot policy every receiver applies; the kind:445 event is sealed with
+ * `pre`'s exporter secret and signed by a fresh ephemeral key; and `post` is
+ * stored as the group's pending Commit.  Nothing is applied: the caller
+ * publishes the event and calls marmot_merge_pending_commit() once a relay
+ * accepted it, or marmot_clear_pending_commit() when none did (MIP-03:
+ * never apply a Commit before a relay confirms it).
  */
 static MarmotError
 finish_local_commit(Marmot *m, MarmotGroup *group,
@@ -681,24 +674,11 @@ finish_local_commit(Marmot *m, MarmotGroup *group,
                     char **out_commit_json)
 {
     if (!commit || commit_len == 0) return MARMOT_ERR_MLS;
-    MarmotCommitKey key;
-    MarmotGroupDataExtension *gde = NULL;
-    MarmotError err = marmot_commit_authorize(pre, post, pre->own_leaf_index,
-                                              &key, &gde);
-    if (err != MARMOT_OK) return err;
-    if (mls_crypto_hash(key.digest, commit, commit_len) != 0) {
-        marmot_group_data_extension_free(gde);
-        return MARMOT_ERR_CRYPTO;
-    }
     char *json = marmot_commit_build_event(commit, commit_len,
                                            pre->epoch_secrets.exporter_secret,
                                            group->nostr_group_id);
-    if (!json) {
-        marmot_group_data_extension_free(gde);
-        return MARMOT_ERR_EVENT_BUILD;
-    }
-    err = marmot_commit_persist(m, pre, post, &key, gde, group);
-    marmot_group_data_extension_free(gde);
+    if (!json) return MARMOT_ERR_EVENT_BUILD;
+    MarmotError err = marmot_commit_stage_pending(m, pre, post, commit, commit_len);
     if (err != MARMOT_OK) {
         free(json);
         return err;
@@ -729,6 +709,15 @@ load_group_for_commit(Marmot *m, const MarmotGroupId *mls_group_id,
         marmot_group_free(group);
         return MARMOT_ERR_USE_AFTER_EVICTION;
     }
+    err = marmot_group_reconcile(m, group);
+    /* One Commit at a time: the previous one must be merged or cleared. */
+    bool pending = false;
+    if (err == MARMOT_OK) err = marmot_commit_has_pending(m, mls_group_id, &pending);
+    if (err == MARMOT_OK && pending) err = MARMOT_ERR_OWN_COMMIT_PENDING;
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        return err;
+    }
     /* The group's MLS state is required: without it nothing can be committed. */
     if (load_mls_group(m, mls_group_id, mls_out) != 0) {
         marmot_group_free(group);
@@ -744,6 +733,52 @@ load_group_for_commit(Marmot *m, const MarmotGroupId *mls_group_id,
     }
     *group_out = group;
     return MARMOT_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Public API: marmot_merge_pending_commit / marmot_clear_pending_commit
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_merge_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
+{
+    if (!m || !mls_group_id)
+        return MARMOT_ERR_INVALID_ARG;
+    if (!storage_can_commit(m->storage))
+        return MARMOT_ERR_STORAGE;
+
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                                         mls_group_id, &group);
+    if (err != MARMOT_OK || !group) return MARMOT_ERR_GROUP_NOT_FOUND;
+
+    err = marmot_group_reconcile(m, group);
+    if (err == MARMOT_OK) err = marmot_commit_merge_pending(m, group);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND) {
+        /* Nothing pending (e.g. after marmot_create_group(), whose Commit
+         * only joiners see): just note the confirmation. */
+        group->last_message_processed_at = marmot_now();
+        err = m->storage->save_group(m->storage->ctx, group);
+    }
+    marmot_group_free(group);
+    return err;
+}
+
+MarmotError
+marmot_clear_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
+{
+    if (!m || !mls_group_id)
+        return MARMOT_ERR_INVALID_ARG;
+    if (!storage_can_commit(m->storage))
+        return MARMOT_ERR_STORAGE;
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                                         mls_group_id, &group);
+    if (err != MARMOT_OK || !group) return MARMOT_ERR_GROUP_NOT_FOUND;
+    err = marmot_group_reconcile(m, group);
+    if (err == MARMOT_OK) err = marmot_commit_clear_pending(m, group);
+    marmot_group_free(group);
+    return err;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -771,68 +806,43 @@ marmot_add_members(Marmot *m,
     MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
     if (err != MARMOT_OK) return err;
 
+    MlsKeyPackage *kps = NULL;
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    char *commit_json = NULL;
     char **welcomes = calloc(kp_count, sizeof(char *));
     if (!welcomes) {
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return MARMOT_ERR_MEMORY;
+        err = MARMOT_ERR_MEMORY;
+        goto fail;
     }
-
-    /* Each KeyPackage is one Commit; only the last one is published
-     * (nostrc-9ata follow-up), so `pre` is the state before that Commit. */
-    MlsGroup pre;
-    memset(&pre, 0, sizeof(pre));
-    MlsAddResult last_add_result;
-    memset(&last_add_result, 0, sizeof(last_add_result));
-    char *commit_json = NULL;
-
-    for (size_t i = 0; i < kp_count; i++) {
-        MlsKeyPackage kp;
-        uint8_t member_pubkey[32];
-        if (marmot_parse_key_package_event(key_package_event_jsons[i],
-                                           &kp, member_pubkey) != 0) {
-            err = MARMOT_ERR_VALIDATION;
-            goto fail;
-        }
-        mls_group_free(&pre);
-        if (clone_mls_group(&mls, &pre) != 0) {
-            mls_key_package_clear(&kp);
-            err = MARMOT_ERR_MLS;
-            goto fail;
-        }
-
-        MlsAddResult add_result;
-        memset(&add_result, 0, sizeof(add_result));
-        int rc = mls_group_add_member(&mls, &kp, &add_result);
-        mls_key_package_clear(&kp);
-        if (rc != 0) {
-            err = MARMOT_ERR_MLS;
-            goto fail;
-        }
-
-        /* Build welcome rumor */
-        char *kp_event_id = extract_event_id_hex(key_package_event_jsons[i]);
-        welcomes[i] = build_welcome_rumor(
-            add_result.welcome_data, add_result.welcome_len,
-            kp_event_id,
-            group->nostr_group_id,
-            group->name,
-            group->description,
-            (const uint8_t (*)[32])group->admin_pubkeys, group->admin_count,
-            mls.tree.n_leaves,
-            NULL, 0);
-        free(kp_event_id);
-
-        mls_add_result_clear(&last_add_result);
-        last_add_result = add_result;
-    }
-
-    err = finish_local_commit(m, group, &pre, &mls, last_add_result.commit_data,
-                              last_add_result.commit_len, &commit_json);
+    err = parse_key_packages(key_package_event_jsons, kp_count, &kps);
     if (err != MARMOT_OK) goto fail;
 
-    mls_add_result_clear(&last_add_result);
-    mls_group_free(&pre);
+    /* Every KeyPackage in one Commit (nostrc-wc6v). */
+    if (clone_mls_group(&mls, &post) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto fail;
+    }
+    int rc = add_key_packages(&post, kps, kp_count, &add);
+    if (rc != 0) {
+        err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
+        goto fail;
+    }
+    err = build_welcome_rumors(&add, key_package_event_jsons, kp_count,
+                               group->nostr_group_id, group->name, group->description,
+                               (const uint8_t (*)[32])group->admin_pubkeys,
+                               group->admin_count, post.tree.n_leaves, NULL, 0,
+                               welcomes);
+    if (err != MARMOT_OK) goto fail;
+    err = finish_local_commit(m, group, &mls, &post, add.commit_data, add.commit_len,
+                              &commit_json);
+    if (err != MARMOT_OK) goto fail;
+
+    free_key_packages(kps, kp_count);
+    mls_add_result_clear(&add);
+    mls_group_free(&post);
     mls_group_free(&mls);
     marmot_group_free(group);
     *out_welcome_jsons = welcomes;
@@ -841,10 +851,13 @@ marmot_add_members(Marmot *m,
     return MARMOT_OK;
 
 fail:
-    mls_add_result_clear(&last_add_result);
-    for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
-    free(welcomes);
-    mls_group_free(&pre);
+    free_key_packages(kps, kp_count);
+    mls_add_result_clear(&add);
+    if (welcomes) {
+        for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
+        free(welcomes);
+    }
+    mls_group_free(&post);
     mls_group_free(&mls);
     marmot_group_free(group);
     return err;
@@ -870,37 +883,37 @@ marmot_remove_members(Marmot *m,
     MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
     if (err != MARMOT_OK) return err;
 
-    MlsGroup pre;
-    memset(&pre, 0, sizeof(pre));
-    MlsCommitResult last_result;
-    memset(&last_result, 0, sizeof(last_result));
-
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MlsCommitResult result;
+    memset(&result, 0, sizeof(result));
+    uint32_t *leaves = calloc(count, sizeof(uint32_t));
+    if (!leaves) {
+        err = MARMOT_ERR_MEMORY;
+        goto out;
+    }
     for (size_t i = 0; i < count; i++) {
-        uint32_t leaf_idx;
-        if (find_leaf_by_pubkey(&mls, member_pubkeys[i], &leaf_idx) != 0) {
+        if (find_leaf_by_pubkey(&mls, member_pubkeys[i], &leaves[i]) != 0) {
             err = MARMOT_ERR_MEMBER_NOT_FOUND;
             goto out;
         }
-        mls_group_free(&pre);
-        if (clone_mls_group(&mls, &pre) != 0) {
-            err = MARMOT_ERR_MLS;
-            goto out;
-        }
-        MlsCommitResult result;
-        memset(&result, 0, sizeof(result));
-        if (mls_group_remove_member(&mls, leaf_idx, &result) != 0) {
-            err = MARMOT_ERR_MLS;
-            goto out;
-        }
-        mls_commit_result_clear(&last_result);
-        last_result = result;
     }
-
-    err = finish_local_commit(m, group, &pre, &mls, last_result.commit_data,
-                              last_result.commit_len, out_commit_json);
+    /* Every member in one Commit (nostrc-wc6v). */
+    if (clone_mls_group(&mls, &post) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto out;
+    }
+    int rc = mls_group_remove_members(&post, leaves, count, &result);
+    if (rc != 0) {
+        err = rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG : MARMOT_ERR_MLS;
+        goto out;
+    }
+    err = finish_local_commit(m, group, &mls, &post, result.commit_data,
+                              result.commit_len, out_commit_json);
 out:
-    mls_commit_result_clear(&last_result);
-    mls_group_free(&pre);
+    free(leaves);
+    mls_commit_result_clear(&result);
+    mls_group_free(&post);
     mls_group_free(&mls);
     marmot_group_free(group);
     return err;

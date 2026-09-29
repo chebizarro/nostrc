@@ -1133,15 +1133,7 @@ update_metadata_thread(GTask *task, gpointer source_object,
         return;
     }
 
-    MarmotGroup *updated = NULL;
-    if (marmot_get_group(self->marmot, &gid, &updated) == MARMOT_OK && updated) {
-        MarmotGobjectGroup *group = gobject_group_from_marmot(updated);
-        if (group) {
-            queue_client_signal(self, client_signals[SIGNAL_GROUP_UPDATED], G_OBJECT(group));
-            g_object_unref(group);
-        }
-        marmot_group_free(updated);
-    }
+    /* The Commit is pending: ::group-updated follows the merge. */
     marmot_group_id_free(&gid);
 
     gchar *json = g_strdup(commit_json);
@@ -1161,7 +1153,6 @@ marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self,
     g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
     g_return_if_fail(mls_group_id_hex != NULL);
     GTask *task = g_task_new(self, cancellable, callback, user_data);
-    g_task_set_source_tag(task, marmot_gobject_client_update_group_metadata_async);
     UpdateMetadataData *d = g_new0(UpdateMetadataData, 1);
     d->mls_group_id_hex = g_strdup(mls_group_id_hex);
     d->name = g_strdup(name);
@@ -1178,6 +1169,111 @@ marmot_gobject_client_update_group_metadata_finish(MarmotGobjectClient *self,
 {
     g_return_val_if_fail(g_task_is_valid(result, self), NULL);
     return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+/* ── Pending Commit: merge / clear ──────────────────────────────── */
+
+/* Task source tags (addresses, not function pointers: ISO C). */
+static const char merge_pending_tag = 'm';
+static const char clear_pending_tag = 'c';
+
+static void
+pending_commit_thread(GTask *task, gpointer source_object,
+                      gpointer task_data, GCancellable *cancellable)
+{
+    MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    const gchar *gid_hex = task_data;
+    gboolean merge = g_task_get_source_tag(task) == (gpointer)&merge_pending_tag;
+    (void)cancellable;
+
+    uint8_t bytes[128];
+    size_t hex_len = strlen(gid_hex);
+    size_t byte_len = hex_len / 2;
+    if (hex_len % 2 != 0 || byte_len == 0 || byte_len > sizeof(bytes) ||
+        !hex_to_bytes(gid_hex, bytes, byte_len)) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                                "Invalid MLS group ID hex");
+        return;
+    }
+    MarmotGroupId gid = marmot_group_id_new(bytes, byte_len);
+    MarmotError err = merge ? marmot_merge_pending_commit(self->marmot, &gid)
+                            : marmot_clear_pending_commit(self->marmot, &gid);
+    /* Announce the group as stored now: merged, followed a Commit that beat
+     * ours, or applied a deferred Commit after the clear. */
+    MarmotGroup *updated = NULL;
+    if ((err == MARMOT_OK || err == MARMOT_ERR_WRONG_EPOCH) &&
+        marmot_get_group(self->marmot, &gid, &updated) == MARMOT_OK && updated) {
+        MarmotGobjectGroup *group = gobject_group_from_marmot(updated);
+        if (group) {
+            queue_client_signal(self, client_signals[SIGNAL_GROUP_UPDATED], G_OBJECT(group));
+            g_object_unref(group);
+        }
+        marmot_group_free(updated);
+    }
+    marmot_group_id_free(&gid);
+    if (err != MARMOT_OK) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
+                                "%s", marmot_error_string(err));
+        return;
+    }
+    g_task_return_boolean(task, TRUE);
+}
+
+static void
+run_pending_commit_task(MarmotGobjectClient *self, gpointer tag,
+                        const gchar *mls_group_id_hex, GCancellable *cancellable,
+                        GAsyncReadyCallback callback, gpointer user_data)
+{
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    g_task_set_source_tag(task, tag);
+    g_task_set_task_data(task, g_strdup(mls_group_id_hex), g_free);
+    g_task_run_in_thread(task, pending_commit_thread);
+    g_object_unref(task);
+}
+
+void
+marmot_gobject_client_merge_pending_commit_async(MarmotGobjectClient *self,
+                                                  const gchar *mls_group_id_hex,
+                                                  GCancellable *cancellable,
+                                                  GAsyncReadyCallback callback,
+                                                  gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(mls_group_id_hex != NULL);
+    run_pending_commit_task(self, (gpointer)&merge_pending_tag,
+                            mls_group_id_hex, cancellable, callback, user_data);
+}
+
+gboolean
+marmot_gobject_client_merge_pending_commit_finish(MarmotGobjectClient *self,
+                                                   GAsyncResult *result,
+                                                   GError **error)
+{
+    g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+    return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+void
+marmot_gobject_client_clear_pending_commit_async(MarmotGobjectClient *self,
+                                                  const gchar *mls_group_id_hex,
+                                                  GCancellable *cancellable,
+                                                  GAsyncReadyCallback callback,
+                                                  gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(mls_group_id_hex != NULL);
+    run_pending_commit_task(self, (gpointer)&clear_pending_tag,
+                            mls_group_id_hex, cancellable, callback, user_data);
+}
+
+gboolean
+marmot_gobject_client_clear_pending_commit_finish(MarmotGobjectClient *self,
+                                                   GAsyncResult *result,
+                                                   GError **error)
+{
+    g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+    return g_task_propagate_boolean(G_TASK(result), error);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

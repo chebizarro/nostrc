@@ -23,6 +23,7 @@ set(PLUGIN_SOURCES
     gn-key-package-discovery-plugin.c
     gn-mls-event-router.c
     gn-mls-group-error.c
+    gn-mls-commit-publish.c
     # Phase 4: Models
     model/gn-group-list-model.c
     model/gn-group-message-model.c
@@ -131,6 +132,19 @@ if(BUILD_TESTING)
     target_link_libraries(gnostr-test-mls-group-error PRIVATE PkgConfig::GLIB)
     add_test(NAME gnostr-test-mls-group-error COMMAND gnostr-test-mls-group-error)
     set_tests_properties(gnostr-test-mls-group-error PROPERTIES
+        TIMEOUT 30
+        LABELS "mls;plugin;unit;gnostr")
+
+    # Review B1: a Commit is merged only after a relay accepted it.
+    pkg_check_modules(MLS_TEST_GIO REQUIRED IMPORTED_TARGET gio-2.0)
+    add_executable(gnostr-test-mls-commit-publish
+        tests/test_mls_commit_publish.c
+        gn-mls-commit-publish.c)
+    target_include_directories(gnostr-test-mls-commit-publish PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(gnostr-test-mls-commit-publish PRIVATE PkgConfig::MLS_TEST_GIO)
+    add_test(NAME gnostr-test-mls-commit-publish COMMAND gnostr-test-mls-commit-publish)
+    set_tests_properties(gnostr-test-mls-commit-publish PROPERTIES
         TIMEOUT 30
         LABELS "mls;plugin;unit;gnostr")
 endif()

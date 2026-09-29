@@ -12,6 +12,7 @@
 
 #include "marmot-internal.h"
 #include "mls/mls_group.h"
+#include <nostr-event.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -71,12 +72,57 @@ MarmotError marmot_group_apply_group_data(MarmotGroup *group,
  * Build the kind:445 event carrying a Commit MLSMessage: the bytes are
  * NIP-44-encrypted with the exporter secret of the epoch the Commit was
  * created in (`source_exporter`), exactly like application messages
- * (MIP-03), and routed by the `h` tag.  Unsigned; the caller signs with an
- * ephemeral key.  Returns NULL on failure.
+ * (MIP-03), routed by the `h` tag, and signed by a fresh ephemeral key.
+ * Returns NULL on failure.
  */
 char *marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
                                 const uint8_t source_exporter[32],
                                 const uint8_t nostr_group_id[32]);
+
+/**
+ * Sign `event` with a freshly generated secp256k1 key that is wiped
+ * afterwards (MIP-03: every kind:445 has its own ephemeral author, never the
+ * account key).  Sets pubkey, id and sig.  Returns 0 on success.
+ */
+int marmot_sign_ephemeral(NostrEvent *event);
+
+/**
+ * Crash recovery (review N2): marmot_commit_persist() stores the MLS state
+ * before the group record, so after an interrupted transition the record's
+ * epoch lags the state.  Bring `group` (epoch and GroupData fields) up to
+ * the stored MLS state and save it.  A no-op when they agree or the group
+ * has no MLS state.
+ */
+MarmotError marmot_group_reconcile(Marmot *m, MarmotGroup *group);
+
+/**
+ * Publish-before-merge (MIP-03): a local Commit is staged, not applied.
+ * marmot_commit_stage_pending() authorizes `pre` -> `post` like a receiver
+ * and stores `post` and the Commit's ordering key as the group's pending
+ * Commit (label "mls_group_pending"); the live state stays at `pre`.
+ */
+MarmotError marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre,
+                                        const MlsGroup *post,
+                                        const uint8_t *commit, size_t commit_len);
+
+/** Whether the group has a pending local Commit. */
+MarmotError marmot_commit_has_pending(Marmot *m, const MarmotGroupId *gid, bool *out);
+
+/**
+ * Apply the pending Commit (a relay accepted it): persist it as
+ * marmot_commit_persist() does and drop the pending record.
+ * MARMOT_ERR_STORAGE_NOT_FOUND without a pending Commit;
+ * MARMOT_ERR_WRONG_EPOCH (record dropped) when a competing Commit won while
+ * it was pending.  Idempotent after a crash between persisting and dropping.
+ */
+MarmotError marmot_commit_merge_pending(Marmot *m, MarmotGroup *group);
+
+/**
+ * Discard the pending Commit (no relay accepted it) and re-process the
+ * inbound Commits that were deferred because they lost to it.  MARMOT_OK
+ * when there is nothing pending.
+ */
+MarmotError marmot_commit_clear_pending(Marmot *m, MarmotGroup *group);
 
 /**
  * Apply a received Commit (`msg`, an MLSMessage PublicMessage already

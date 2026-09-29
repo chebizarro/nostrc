@@ -66,6 +66,19 @@ member_init(Member *x, const char *name)
     secp256k1_context_destroy(ctx);
 }
 
+/* Regenerate `x`'s account key until it sorts above (`above` true) or
+ * below `other`'s: keeps key-order-dependent tests deterministic. */
+static void
+member_rekey_order(Member *x, const Member *other, bool above)
+{
+    for (;;) {
+        int c = memcmp(x->pk, other->pk, 32);
+        if ((above && c > 0) || (!above && c < 0)) return;
+        marmot_free(x->m);
+        member_init(x, x->name);
+    }
+}
+
 static char *
 key_package(Member *x)
 {
@@ -86,6 +99,13 @@ join(Member *x, const char *welcome_rumor)
     OK(marmot_process_welcome(x->m, wrapper, welcome_rumor, &w));
     OK(marmot_accept_welcome(x->m, w));
     marmot_welcome_free(w);
+}
+
+/* The relay accepted our Commit (MIP-03: merge only then). */
+static void
+merge(Member *x, const MarmotGroupId *gid)
+{
+    OK(marmot_merge_pending_commit(x->m, gid));
 }
 
 /* Deliver a kind:445 event; returns the result type, *err the error. */
@@ -115,6 +135,21 @@ expect_commit(Member *x, const char *event_json, const char *what)
           marmot_error_string(err), t);
     CHECK(g != NULL, "%s: %s: COMMIT result without updated_group", what, x->name);
     marmot_group_free(g);
+}
+
+/* The same kind:445 content re-published in a new envelope (another
+ * ephemeral key, so another event id): what a relay replay or a second
+ * publisher looks like.  Event-id idempotency does not apply to it. */
+static char *
+republish(const char *event_json)
+{
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, event_json, NULL), "parse");
+    CHECK(marmot_sign_ephemeral(ev) == 0, "re-sign");
+    char *json = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    CHECK(json, "serialize");
+    return json;
 }
 
 /* ── Stored state ─────────────────────────────────────────────────────── */
@@ -278,7 +313,7 @@ expect_messages_flow(Member *const *ms, size_t n, const MarmotGroupId *gid)
     }
 }
 
-/* ── Fixture: Alice (admin) + Bob + Charlie ────────────────────────────── */
+/* ── Fixture: Alice + Bob (admins) + Charlie ──────────────────────────── */
 
 typedef struct {
     Member        alice, bob, charlie;
@@ -294,17 +329,24 @@ trio_init(Trio *t)
     member_init(&t->alice, "Alice");
     member_init(&t->bob, "Bob");
     member_init(&t->charlie, "Charlie");
+    /* Alice's account key sorts above Bob's: wherever they compete with
+     * equal priority Bob wins, so a test in which Alice's privileged Commit
+     * beats Bob's ordinary one depends on the privileged step alone. */
+    member_rekey_order(&t->alice, &t->bob, true);
     t->all[0] = &t->alice;
     t->all[1] = &t->bob;
     t->all[2] = &t->charlie;
 
     char *bob_kp = key_package(&t->bob);
     const char *kps[] = { bob_kp };
+    uint8_t admins[2][32];
+    memcpy(admins[0], t->alice.pk, 32);
+    memcpy(admins[1], t->bob.pk, 32);
     MarmotGroupConfig cfg = {0};
     cfg.name = "Before";
     cfg.description = "Desc";
-    cfg.admin_pubkeys = (uint8_t (*)[32])t->alice.pk;
-    cfg.admin_count = 1;
+    cfg.admin_pubkeys = admins;
+    cfg.admin_count = 2;
     MarmotCreateGroupResult cg;
     memset(&cg, 0, sizeof(cg));
     OK(marmot_create_group(t->alice.m, t->alice.pk, kps, 1, &cfg, &cg));
@@ -323,6 +365,7 @@ trio_init(Trio *t)
     OK(marmot_add_members(t->alice.m, &t->gid, kps2, 1, &welcomes, &welcome_count,
                           &commit));
     free(charlie_kp);
+    merge(&t->alice, &t->gid);
     expect_commit(&t->bob, commit, "Alice adds Charlie");
     join(&t->charlie, welcomes[0]);
     free(welcomes[0]);
@@ -343,8 +386,9 @@ trio_clear(Trio *t)
     marmot_group_id_free(&t->gid);
 }
 
+/* A rename, left pending (not merged). */
 static char *
-rename_group(Member *x, const MarmotGroupId *gid, const char *name)
+rename_pending(Member *x, const MarmotGroupId *gid, const char *name)
 {
     MarmotGroupConfig cfg = {0};
     cfg.name = (char *)name;
@@ -354,9 +398,18 @@ rename_group(Member *x, const MarmotGroupId *gid, const char *name)
     return commit;
 }
 
+/* A rename a relay accepted: pending, then merged. */
+static char *
+rename_group(Member *x, const MarmotGroupId *gid, const char *name)
+{
+    char *commit = rename_pending(x, gid, name);
+    merge(x, gid);
+    return commit;
+}
+
 /* An ordinary Commit (empty Commit with an UpdatePath) made and applied by
- * `x` through the same authorize/persist path as the API producers; there
- * is no public self-update API yet. */
+ * `x` through the same authorize/persist path as a merged producer; there is
+ * no public self-update API yet (nostrc-yd0q). */
 static char *
 self_update(Member *x, const MarmotGroupId *gid)
 {
@@ -386,11 +439,41 @@ self_update(Member *x, const MarmotGroupId *gid)
     return json;
 }
 
-/* A GroupContextExtensions Commit carrying `gde` that `x` makes but never
+/* A Commit event `x` makes from `state` but never applies. */
+static char *
+event_for_commit(const MlsCommitResult *r, const uint8_t exporter[32],
+                 const uint8_t nostr_gid[32])
+{
+    char *json = marmot_commit_build_event(r->commit_data, r->commit_len, exporter,
+                                           nostr_gid);
+    CHECK(json, "build event");
+    return json;
+}
+
+/* A GroupContextExtensions Commit carrying `ext` that `x` makes but never
  * applies (a forgery from the receivers' point of view). */
 static char *
+forge_extensions_commit(Member *x, const MarmotGroupId *gid,
+                        const uint8_t *ext, size_t ext_len,
+                        const uint8_t nostr_gid[32])
+{
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    uint8_t exporter[32];
+    memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+    MlsCommitResult r;
+    memset(&r, 0, sizeof(r));
+    CHECK(mls_group_commit_extensions(&g, ext, ext_len, &r) == 0, "commit_extensions");
+    char *json = event_for_commit(&r, exporter, nostr_gid);
+    mls_commit_result_clear(&r);
+    mls_group_free(&g);
+    sodium_memzero(exporter, sizeof(exporter));
+    return json;
+}
+
+static char *
 forge_group_data_commit(Member *x, const MarmotGroupId *gid,
-                        const MarmotGroupDataExtension *gde)
+                        const MarmotGroupDataExtension *gde, const uint8_t nostr_gid[32])
 {
     uint8_t *bytes = NULL;
     size_t len = 0;
@@ -400,23 +483,8 @@ forge_group_data_commit(Member *x, const MarmotGroupId *gid,
           mls_tls_write_u16(&ext, MARMOT_EXTENSION_TYPE) == 0 &&
           mls_tls_write_opaque16(&ext, bytes, len) == 0, "extension list");
     free(bytes);
-    MlsGroup g;
-    load_mls(x, gid, &g);
-    uint8_t exporter[32];
-    memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
-    MlsCommitResult r;
-    memset(&r, 0, sizeof(r));
-    CHECK(mls_group_commit_extensions(&g, ext.data, ext.len, &r) == 0, "commit_extensions");
-    MarmotGroup *rec = NULL;
-    OK(marmot_get_group(x->m, gid, &rec));
-    char *json = marmot_commit_build_event(r.commit_data, r.commit_len, exporter,
-                                           rec->nostr_group_id);
-    CHECK(json, "build event");
-    marmot_group_free(rec);
-    mls_commit_result_clear(&r);
+    char *json = forge_extensions_commit(x, gid, ext.data, ext.len, nostr_gid);
     mls_tls_buf_free(&ext);
-    mls_group_free(&g);
-    sodium_memzero(exporter, sizeof(exporter));
     return json;
 }
 
@@ -428,8 +496,6 @@ group_data_with(Member *x, const MarmotGroupId *gid, const char *name,
 {
     MlsGroup g;
     load_mls(x, gid, &g);
-    const uint8_t *data = NULL;
-    size_t len = 0;
     MlsTlsReader r;
     mls_tls_reader_init(&r, g.extensions_data, g.extensions_len);
     uint16_t type = 0;
@@ -437,9 +503,7 @@ group_data_with(Member *x, const MarmotGroupId *gid, const char *name,
     size_t ext_len = 0;
     CHECK(mls_tls_read_u16(&r, &type) == 0 && type == MARMOT_EXTENSION_TYPE &&
           mls_tls_read_opaque16(&r, &ext, &ext_len) == 0, "GroupData extension");
-    data = ext;
-    len = ext_len;
-    MarmotGroupDataExtension *gde = marmot_group_data_extension_deserialize(data, len);
+    MarmotGroupDataExtension *gde = marmot_group_data_extension_deserialize(ext, ext_len);
     CHECK(gde, "GroupData parses");
     free(ext);
     free(gde->name);
@@ -447,6 +511,122 @@ group_data_with(Member *x, const MarmotGroupId *gid, const char *name,
     if (new_nostr_gid) memcpy(gde->nostr_group_id, new_nostr_gid, 32);
     mls_group_free(&g);
     return gde;
+}
+
+/* ── Fault-injecting storage (review N3/N5) ───────────────────────────── */
+
+typedef struct {
+    MarmotStorage orig;           /* the wrapped backend's operations */
+    int   writes;                 /* writes seen while armed */
+    int   fail_at;                /* fail the n-th write (1-based); 0 = never */
+    bool  fail_later;             /* ...and every write after it (undo fails) */
+    bool  drop_group_record;      /* save_group "succeeds" without writing (crash) */
+    const char *fail_load_label;  /* mls_load of this label fails */
+    bool  fail_exporter_load;     /* get_exporter_secret(exporter_epoch) fails */
+    uint64_t exporter_epoch;
+} Faults;
+
+static Faults g_faults;
+
+/* MARMOT_OK, or the injected failure: the n-th write fails with
+ * STORAGE_CONSTRAINT (so its propagation is observable), later ones -- the
+ * undo -- with STORAGE when fail_later is set. */
+static MarmotError
+fault_write(void)
+{
+    g_faults.writes++;
+    if (g_faults.fail_at == 0) return MARMOT_OK;
+    if (g_faults.writes == g_faults.fail_at) return MARMOT_ERR_STORAGE_CONSTRAINT;
+    if (g_faults.fail_later && g_faults.writes > g_faults.fail_at) return MARMOT_ERR_STORAGE;
+    return MARMOT_OK;
+}
+
+static MarmotError
+f_mls_store(void *ctx, const char *label, const uint8_t *key, size_t key_len,
+            const uint8_t *value, size_t value_len)
+{
+    MarmotError ferr = fault_write();
+    if (ferr != MARMOT_OK) return ferr;
+    return g_faults.orig.mls_store(ctx, label, key, key_len, value, value_len);
+}
+
+static MarmotError
+f_mls_delete(void *ctx, const char *label, const uint8_t *key, size_t key_len)
+{
+    MarmotError ferr = fault_write();
+    if (ferr != MARMOT_OK) return ferr;
+    return g_faults.orig.mls_delete(ctx, label, key, key_len);
+}
+
+static MarmotError
+f_mls_load(void *ctx, const char *label, const uint8_t *key, size_t key_len,
+           uint8_t **out, size_t *out_len)
+{
+    if (g_faults.fail_load_label && strcmp(label, g_faults.fail_load_label) == 0)
+        return MARMOT_ERR_STORAGE;
+    return g_faults.orig.mls_load(ctx, label, key, key_len, out, out_len);
+}
+
+static MarmotError
+f_save_exporter(void *ctx, const MarmotGroupId *gid, uint64_t epoch,
+                const uint8_t secret[32])
+{
+    MarmotError ferr = fault_write();
+    if (ferr != MARMOT_OK) return ferr;
+    return g_faults.orig.save_exporter_secret(ctx, gid, epoch, secret);
+}
+
+static MarmotError
+f_delete_exporter(void *ctx, const MarmotGroupId *gid, uint64_t epoch)
+{
+    MarmotError ferr = fault_write();
+    if (ferr != MARMOT_OK) return ferr;
+    return g_faults.orig.delete_exporter_secret(ctx, gid, epoch);
+}
+
+static MarmotError
+f_get_exporter(void *ctx, const MarmotGroupId *gid, uint64_t epoch, uint8_t out[32])
+{
+    if (g_faults.fail_exporter_load && epoch == g_faults.exporter_epoch)
+        return MARMOT_ERR_STORAGE;
+    return g_faults.orig.get_exporter_secret(ctx, gid, epoch, out);
+}
+
+static MarmotError
+f_save_group(void *ctx, const MarmotGroup *group)
+{
+    if (g_faults.drop_group_record) return MARMOT_OK;
+    MarmotError ferr = fault_write();
+    if (ferr != MARMOT_OK) return ferr;
+    return g_faults.orig.save_group(ctx, group);
+}
+
+static void
+faults_arm(Member *x)
+{
+    MarmotStorage *s = x->m->storage;
+    memset(&g_faults, 0, sizeof(g_faults));
+    g_faults.orig = *s;
+    s->mls_store = f_mls_store;
+    s->mls_delete = f_mls_delete;
+    s->mls_load = f_mls_load;
+    s->save_exporter_secret = f_save_exporter;
+    s->delete_exporter_secret = f_delete_exporter;
+    s->get_exporter_secret = f_get_exporter;
+    s->save_group = f_save_group;
+}
+
+static void
+faults_disarm(Member *x)
+{
+    MarmotStorage *s = x->m->storage;
+    s->mls_store = g_faults.orig.mls_store;
+    s->mls_delete = g_faults.orig.mls_delete;
+    s->mls_load = g_faults.orig.mls_load;
+    s->save_exporter_secret = g_faults.orig.save_exporter_secret;
+    s->delete_exporter_secret = g_faults.orig.delete_exporter_secret;
+    s->get_exporter_secret = g_faults.orig.get_exporter_secret;
+    s->save_group = g_faults.orig.save_group;
 }
 
 /* ── Tests ────────────────────────────────────────────────────────────── */
@@ -471,7 +651,7 @@ test_rename_reaches_every_member(void)
               marmot_error_string(err));
         CHECK(g && g->epoch == t.epoch + 1 && strcmp(g->name, "Renamed") == 0 &&
               g->description && strcmp(g->description, "Desc") == 0 &&
-              g->admin_count == 1 && memcmp(g->admin_pubkeys[0], t.alice.pk, 32) == 0,
+              g->admin_count == 2 && memcmp(g->admin_pubkeys[0], t.alice.pk, 32) == 0,
               "%s: updated_group does not carry the new GroupData", t.all[i]->name);
         marmot_group_free(g);
         g = NULL;
@@ -487,11 +667,11 @@ test_rename_reaches_every_member(void)
     expect_converged(t.all, 3, &t.gid, "Renamed", t.epoch + 1);
     expect_messages_flow(t.all, 3, &t.gid);
 
-    /* Bob is not an admin: he cannot rename. */
+    /* Charlie is not an admin: he cannot rename. */
     MarmotGroupConfig cfg = {0};
-    cfg.name = "Bob's";
+    cfg.name = "Charlie's";
     char *none = NULL;
-    CHECK(marmot_update_group_metadata(t.bob.m, &t.gid, &cfg, &none) ==
+    CHECK(marmot_update_group_metadata(t.charlie.m, &t.gid, &cfg, &none) ==
           MARMOT_ERR_ADMIN_ONLY && none == NULL, "non-admin rename");
     CHECK(marmot_update_group_metadata(t.alice.m, &t.gid, &cfg, NULL) ==
           MARMOT_ERR_INVALID_ARG, "out_commit_json is required");
@@ -499,6 +679,154 @@ test_rename_reaches_every_member(void)
 
     free(commit);
     trio_clear(&t);
+}
+
+/* Every kind:445 is signed by its own fresh ephemeral key (MIP-03, review
+ * B1): never an account key, never reused. */
+static void
+test_events_signed_by_fresh_ephemeral_keys(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *events[4];
+    MarmotOutgoingMessage out[2];
+    memset(out, 0, sizeof(out));
+    for (int i = 0; i < 2; i++) {
+        OK(marmot_create_message(t.alice.m, &t.gid,
+                                 "{\"kind\":9,\"content\":\"x\",\"created_at\":1,\"tags\":[]}",
+                                 &out[i]));
+        events[i] = out[i].event_json;
+    }
+    events[2] = rename_group(&t.alice, &t.gid, "Signed");
+    events[3] = self_update(&t.bob, &t.gid);
+    char *pubkeys[4];
+    for (int i = 0; i < 4; i++) {
+        NostrEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        CHECK(nostr_event_deserialize_compact(&ev, events[i], NULL), "parse %d", i);
+        CHECK(ev.kind == MARMOT_KIND_GROUP_MESSAGE, "kind");
+        CHECK(ev.id && ev.sig && ev.pubkey && nostr_event_check_signature(&ev),
+              "event %d is not signed", i);
+        pubkeys[i] = strdup(ev.pubkey);
+        for (size_t k = 0; k < 3; k++) {
+            char *acct = marmot_hex_encode(t.all[k]->pk, 32);
+            CHECK(strcmp(acct, ev.pubkey) != 0, "event %d signed by an account key", i);
+            free(acct);
+        }
+        for (int j = 0; j < i; j++)
+            CHECK(strcmp(pubkeys[j], pubkeys[i]) != 0, "ephemeral key reused");
+        free(ev.id); free(ev.pubkey); free(ev.content); free(ev.sig);
+        nostr_tags_free(ev.tags);
+    }
+    for (int i = 0; i < 4; i++) free(pubkeys[i]);
+    marmot_outgoing_message_free(&out[0]);
+    marmot_outgoing_message_free(&out[1]);
+    free(events[2]);
+    free(events[3]);
+    trio_clear(&t);
+}
+
+/* Publish-before-merge (MIP-03, review B1): a Commit changes nothing until
+ * merged; a failed publish is cleared and changes nothing either. */
+static void
+test_commit_pending_until_merged(void)
+{
+    Trio t;
+    trio_init(&t);
+
+    Snapshot before;
+    snapshot(&t.alice, &t.gid, &before);
+    char *failed = rename_pending(&t.alice, &t.gid, "Never published");
+    expect_unchanged(&t.alice, &t.gid, &before, "pending rename");
+    /* One Commit at a time. */
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Second";
+    char *none = NULL;
+    CHECK(marmot_update_group_metadata(t.alice.m, &t.gid, &cfg, &none) ==
+          MARMOT_ERR_OWN_COMMIT_PENDING && !none, "second Commit while pending");
+    /* Our own pending Commit echoed back is not applied by processing. */
+    MarmotError err;
+    CHECK(deliver(&t.alice, failed, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
+          err == MARMOT_OK, "pending echo: %d", err);
+    expect_unchanged(&t.alice, &t.gid, &before, "pending echo");
+    /* No relay accepted it. */
+    OK(marmot_clear_pending_commit(t.alice.m, &t.gid));
+    expect_unchanged(&t.alice, &t.gid, &before, "cleared");
+    CHECK(marmot_merge_pending_commit(t.alice.m, &t.gid) == MARMOT_OK, "nothing to merge");
+    expect_unchanged(&t.alice, &t.gid, &before, "merge without pending");
+    snapshot_clear(&before);
+    expect_converged(t.all, 3, &t.gid, "Before", t.epoch);
+    expect_messages_flow(t.all, 3, &t.gid);
+
+    /* The next rename is published and merged. */
+    char *ok = rename_group(&t.alice, &t.gid, "Published");
+    expect_commit(&t.bob, ok, "published rename");
+    expect_commit(&t.charlie, ok, "published rename");
+    expect_converged(t.all, 3, &t.gid, "Published", t.epoch + 1);
+    free(failed);
+    free(ok);
+    trio_clear(&t);
+}
+
+/* A member's Commit reaches us while ours is pending: the two compete now. */
+static void
+test_pending_commit_races(void)
+{
+    /* 1. Bob's ordinary Commit loses to Alice's pending rename: it is kept
+     *    and, when Alice's publish fails, applied by the clear. */
+    {
+        Trio t;
+        trio_init(&t);
+        char *mine = rename_pending(&t.alice, &t.gid, "Lost");
+        char *theirs = self_update(&t.bob, &t.gid);
+        expect_rejected(&t.alice, &t.gid, theirs, MARMOT_ERR_OWN_COMMIT_PENDING,
+                        "deferred behind the pending rename");
+        expect_commit(&t.charlie, theirs, "Charlie follows Bob");
+        OK(marmot_clear_pending_commit(t.alice.m, &t.gid));
+        expect_converged(t.all, 3, &t.gid, "Before", t.epoch + 1);
+        expect_messages_flow(t.all, 3, &t.gid);
+        free(mine);
+        free(theirs);
+        trio_clear(&t);
+    }
+    /* 2. Same, but Alice's rename reaches a relay: merging applies it and
+     *    the deferred Commit stays lost; Bob and Charlie switch to it. */
+    {
+        Trio t;
+        trio_init(&t);
+        char *mine = rename_pending(&t.alice, &t.gid, "Merged");
+        char *theirs = self_update(&t.bob, &t.gid);
+        expect_rejected(&t.alice, &t.gid, theirs, MARMOT_ERR_OWN_COMMIT_PENDING,
+                        "deferred behind the pending rename");
+        merge(&t.alice, &t.gid);
+        expect_commit(&t.charlie, theirs, "Charlie: Bob first");
+        expect_commit(&t.charlie, mine, "Charlie: Alice's wins");
+        expect_commit(&t.bob, mine, "Bob: Alice's wins over his own");
+        expect_converged(t.all, 3, &t.gid, "Merged", t.epoch + 1);
+        expect_messages_flow(t.all, 3, &t.gid);
+        free(mine);
+        free(theirs);
+        trio_clear(&t);
+    }
+    /* 3. Bob's privileged rename beats Alice's pending one (equal priority,
+     *    Bob's key sorts lower): Alice applies Bob's, and her merge reports
+     *    that her Commit lost. */
+    {
+        Trio t;
+        trio_init(&t);
+        char *mine = rename_pending(&t.alice, &t.gid, "Alice's");
+        char *theirs = rename_group(&t.bob, &t.gid, "Bob's");
+        expect_commit(&t.alice, theirs, "Bob's rename supersedes Alice's pending one");
+        CHECK(marmot_merge_pending_commit(t.alice.m, &t.gid) == MARMOT_ERR_WRONG_EPOCH,
+              "merge of a superseded Commit must fail");
+        CHECK(marmot_merge_pending_commit(t.alice.m, &t.gid) == MARMOT_OK,
+              "the superseded Commit is gone");
+        expect_commit(&t.charlie, theirs, "Charlie follows Bob");
+        expect_converged(t.all, 3, &t.gid, "Bob's", t.epoch + 1);
+        free(mine);
+        free(theirs);
+        trio_clear(&t);
+    }
 }
 
 /* Duplicates, stale Commits and Commits from an epoch we have not reached
@@ -521,8 +849,16 @@ test_stale_duplicate_and_future_commits(void)
 
     char *r2 = rename_group(&t.alice, &t.gid, "Two");
     expect_commit(&t.bob, r2, "R2");
-    /* R1 is now older than the Commit Bob's state was built on. */
-    expect_rejected(&t.bob, &t.gid, r1, MARMOT_ERR_WRONG_EPOCH, "stale R1");
+    /* The same event again is already processed (event-id idempotency)... */
+    snapshot(&t.bob, &t.gid, &before);
+    CHECK(deliver(&t.bob, r1, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
+          err == MARMOT_OK, "processed R1 event: %d", err);
+    expect_unchanged(&t.bob, &t.gid, &before, "processed R1 event");
+    snapshot_clear(&before);
+    /* ...and R1 in a new envelope is older than the Commit Bob's state was
+     * built on. */
+    char *r1_again = republish(r1);
+    expect_rejected(&t.bob, &t.gid, r1_again, MARMOT_ERR_WRONG_EPOCH, "stale R1");
 
     /* Charlie missed R1: R2 comes from an epoch he has no key for yet. */
     expect_rejected(&t.charlie, &t.gid, r2, MARMOT_ERR_NIP44, "future R2");
@@ -534,7 +870,9 @@ test_stale_duplicate_and_future_commits(void)
 
     /* Old Commits stay stale for everyone, the committer included. */
     for (size_t i = 0; i < 3; i++)
-        expect_rejected(t.all[i], &t.gid, r1, MARMOT_ERR_WRONG_EPOCH, "stale R1 again");
+        expect_rejected(t.all[i], &t.gid, r1_again, MARMOT_ERR_WRONG_EPOCH,
+                        "stale R1 again");
+    free(r1_again);
     free(r1);
     free(r2);
     trio_clear(&t);
@@ -548,27 +886,26 @@ test_unauthorized_and_invalid_commits_rejected(void)
     Trio t;
     trio_init(&t);
 
-    /* Bob (not an admin) renames the group behind the API's back. */
-    MarmotGroupDataExtension *gde = group_data_with(&t.bob, &t.gid, "Bob's", NULL);
-    char *forged = forge_group_data_commit(&t.bob, &t.gid, gde);
+    /* Charlie (not an admin) renames the group behind the API's back. */
+    MarmotGroupDataExtension *gde = group_data_with(&t.charlie, &t.gid, "Charlie's", NULL);
+    char *forged = forge_group_data_commit(&t.charlie, &t.gid, gde, t.nostr_gid);
     marmot_group_data_extension_free(gde);
     expect_rejected(&t.alice, &t.gid, forged, MARMOT_ERR_COMMIT_FROM_NON_ADMIN,
                     "non-admin GroupData change");
-    expect_rejected(&t.charlie, &t.gid, forged, MARMOT_ERR_COMMIT_FROM_NON_ADMIN,
+    expect_rejected(&t.bob, &t.gid, forged, MARMOT_ERR_COMMIT_FROM_NON_ADMIN,
                     "non-admin GroupData change");
     free(forged);
 
     /* Removing a member is privileged too. */
     {
         MlsGroup g;
-        load_mls(&t.bob, &t.gid, &g);
+        load_mls(&t.charlie, &t.gid, &g);
         uint8_t exporter[32];
         memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
         MlsCommitResult r;
         memset(&r, 0, sizeof(r));
-        CHECK(mls_group_remove_member(&g, 2, &r) == 0, "remove");
-        char *removal = marmot_commit_build_event(r.commit_data, r.commit_len,
-                                                  exporter, t.nostr_gid);
+        CHECK(mls_group_remove_member(&g, 1, &r) == 0, "remove");
+        char *removal = event_for_commit(&r, exporter, t.nostr_gid);
         expect_rejected(&t.alice, &t.gid, removal, MARMOT_ERR_COMMIT_FROM_NON_ADMIN,
                         "non-admin Remove");
         free(removal);
@@ -577,16 +914,22 @@ test_unauthorized_and_invalid_commits_rejected(void)
         sodium_memzero(exporter, sizeof(exporter));
     }
 
-    /* An admin cannot move the group to another nostr_group_id. */
+    /* An admin cannot move the group to another nostr_group_id... */
     uint8_t other[32];
     randombytes_buf(other, sizeof(other));
     gde = group_data_with(&t.alice, &t.gid, "Moved", other);
-    forged = forge_group_data_commit(&t.alice, &t.gid, gde);
+    forged = forge_group_data_commit(&t.alice, &t.gid, gde, t.nostr_gid);
     marmot_group_data_extension_free(gde);
     expect_rejected(&t.bob, &t.gid, forged, MARMOT_ERR_PROTOCOL_GROUP_MISMATCH,
                     "nostr_group_id change");
     expect_rejected(&t.charlie, &t.gid, forged, MARMOT_ERR_PROTOCOL_GROUP_MISMATCH,
                     "nostr_group_id change");
+    free(forged);
+
+    /* ...nor drop the GroupData altogether (review N5). */
+    forged = forge_extensions_commit(&t.alice, &t.gid, NULL, 0, t.nostr_gid);
+    expect_rejected(&t.bob, &t.gid, forged, MARMOT_ERR_EXTENSION_FORMAT,
+                    "GroupData removed");
     free(forged);
 
     /* A Commit whose bytes were altered in transit fails MLS validation. */
@@ -599,8 +942,7 @@ test_unauthorized_and_invalid_commits_rejected(void)
         memset(&r, 0, sizeof(r));
         CHECK(mls_group_self_update(&g, &r) == 0, "self_update");
         r.commit_data[r.commit_len - 5] ^= 0x01;   /* inside the membership tag */
-        char *tampered = marmot_commit_build_event(r.commit_data, r.commit_len,
-                                                   exporter, t.nostr_gid);
+        char *tampered = event_for_commit(&r, exporter, t.nostr_gid);
         expect_rejected(&t.alice, &t.gid, tampered, MARMOT_ERR_MLS_PROCESS_MESSAGE,
                         "tampered Commit");
         expect_rejected(&t.bob, &t.gid, tampered, MARMOT_ERR_MLS_PROCESS_MESSAGE,
@@ -611,16 +953,183 @@ test_unauthorized_and_invalid_commits_rejected(void)
         sodium_memzero(exporter, sizeof(exporter));
     }
 
+    /* Sealed under another epoch's exporter secret than its own (review N5):
+     * a valid current-epoch Commit wrapped with the previous epoch's key. */
+    {
+        MlsGroup g;
+        load_mls(&t.alice, &t.gid, &g);
+        uint8_t previous[32];
+        OK(t.alice.m->storage->get_exporter_secret(t.alice.m->storage->ctx,
+                                                   &t.gid, g.epoch - 1, previous));
+        MlsCommitResult r;
+        memset(&r, 0, sizeof(r));
+        CHECK(mls_group_self_update(&g, &r) == 0, "self_update");
+        char *wrapped = event_for_commit(&r, previous, t.nostr_gid);
+        /* Bob holds both exporter secrets: the envelope opens with the older
+         * one, the Commit inside is for the current epoch. */
+        expect_rejected(&t.bob, &t.gid, wrapped, MARMOT_ERR_WRONG_EPOCH,
+                        "outer/inner epoch mismatch");
+        free(wrapped);
+        mls_commit_result_clear(&r);
+        mls_group_free(&g);
+        sodium_memzero(previous, sizeof(previous));
+    }
+
     /* Nothing above moved anyone. */
     expect_converged(t.all, 3, &t.gid, "Before", t.epoch);
 
     /* Any member may self-update. */
-    char *upd = self_update(&t.bob, &t.gid);
-    expect_commit(&t.alice, upd, "Bob self-update");
-    expect_commit(&t.charlie, upd, "Bob self-update");
+    char *upd = self_update(&t.charlie, &t.gid);
+    expect_commit(&t.alice, upd, "Charlie self-update");
+    expect_commit(&t.bob, upd, "Charlie self-update");
     expect_converged(t.all, 3, &t.gid, "Before", t.epoch + 1);
     expect_messages_flow(t.all, 3, &t.gid);
     free(upd);
+    trio_clear(&t);
+}
+
+/* The committer must stay in the group under its own account (review N5:
+ * the MLS layer already pins UpdatePath identities, so this is checked on
+ * the authorization function directly). */
+static void
+test_authorize_pins_committer_identity(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup pre, post;
+    load_mls(&t.alice, &t.gid, &pre);
+    load_mls(&t.alice, &t.gid, &post);
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    OK(marmot_commit_authorize(&pre, &post, 0, &key, &gde));
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+    CHECK(!key.privileged && memcmp(key.committer, t.alice.pk, 32) == 0, "key");
+
+    MlsLeafNode *leaf = &post.tree.nodes[mls_tree_leaf_to_node(0)].leaf;
+    leaf->credential_identity[0] ^= 0x01;
+    CHECK(marmot_commit_authorize(&pre, &post, 0, &key, &gde) ==
+          MARMOT_ERR_IDENTITY_CHANGE && !gde, "committer account changed");
+    leaf->credential_identity[0] ^= 0x01;
+    /* Another member's slot taken by a different account is a membership
+     * change (Remove + Add), i.e. privileged -- not an identity change. */
+    MlsLeafNode *bob_leaf = &post.tree.nodes[mls_tree_leaf_to_node(1)].leaf;
+    bob_leaf->credential_identity[0] ^= 0x01;
+    OK(marmot_commit_authorize(&pre, &post, 0, &key, &gde));
+    CHECK(key.privileged, "reused slot must be privileged");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+    CHECK(marmot_commit_authorize(&pre, &post, 2, &key, &gde) ==
+          MARMOT_ERR_COMMIT_FROM_NON_ADMIN && !gde, "non-admin membership change");
+    mls_group_free(&pre);
+    mls_group_free(&post);
+    trio_clear(&t);
+}
+
+/* Our own leaf cannot author a Commit we did not make (review N5). */
+static void
+test_own_leaf_commit_not_ours_rejected(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup parent;
+    load_mls(&t.bob, &t.gid, &parent);
+    uint8_t exporter[32];
+    memcpy(exporter, parent.epoch_secrets.exporter_secret, 32);
+    char *applied = self_update(&t.bob, &t.gid);
+    /* A second Commit from the same parent state and Bob's own leaf. */
+    MlsCommitResult r;
+    memset(&r, 0, sizeof(r));
+    CHECK(mls_group_self_update(&parent, &r) == 0, "self_update");
+    char *other = event_for_commit(&r, exporter, t.nostr_gid);
+    expect_rejected(&t.bob, &t.gid, other, MARMOT_ERR_WRONG_EPOCH,
+                    "a different Commit from our own leaf");
+    free(other);
+    free(applied);
+    mls_commit_result_clear(&r);
+    mls_group_free(&parent);
+    sodium_memzero(exporter, sizeof(exporter));
+    trio_clear(&t);
+}
+
+/* A failed write rolls back every earlier write; a failed rollback is
+ * reported as a storage error; unreadable records abort before any write
+ * (review N3/N5). */
+static void
+test_persist_rolls_back_failed_writes(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *c = rename_group(&t.alice, &t.gid, "Faults");
+    /* Bob applying `c` writes: exporter secret, retained parent, MLS state,
+     * group record. */
+    for (int k = 1; k <= 4; k++) {
+        Snapshot before;
+        snapshot(&t.bob, &t.gid, &before);
+        faults_arm(&t.bob);
+        g_faults.fail_at = k;
+        MarmotError err;
+        deliver(&t.bob, c, &err, NULL);
+        faults_disarm(&t.bob);
+        /* A clean rollback reports the failed write's own error. */
+        CHECK(err == MARMOT_ERR_STORAGE_CONSTRAINT, "write %d: err %d", k, err);
+        expect_unchanged(&t.bob, &t.gid, &before, "rolled back");
+        snapshot_clear(&before);
+    }
+    /* The undo itself fails: the caller must learn storage is suspect. */
+    faults_arm(&t.bob);
+    g_faults.fail_at = 3;
+    g_faults.fail_later = true;
+    MarmotError err;
+    deliver(&t.bob, c, &err, NULL);
+    faults_disarm(&t.bob);
+    CHECK(err == MARMOT_ERR_STORAGE, "a failed undo must be reported as such: %d", err);
+    /* Unreadable earlier records: nothing is written at all. */
+    const char *labels[] = { "mls_group_parent", NULL };
+    for (int i = 0; i < 2; i++) {
+        Snapshot before;
+        snapshot(&t.charlie, &t.gid, &before);
+        faults_arm(&t.charlie);
+        g_faults.fail_load_label = labels[i];
+        /* The next epoch's secret is read only by the persist step. */
+        g_faults.fail_exporter_load = labels[i] == NULL;
+        g_faults.exporter_epoch = t.epoch + 1;
+        deliver(&t.charlie, c, &err, NULL);
+        int writes = g_faults.writes;
+        faults_disarm(&t.charlie);
+        CHECK(err == MARMOT_ERR_STORAGE && writes == 0,
+              "read error %d: err %d after %d writes", i, err, writes);
+        expect_unchanged(&t.charlie, &t.gid, &before, "read error");
+        snapshot_clear(&before);
+    }
+    expect_commit(&t.charlie, c, "Charlie, storage healthy");
+    free(c);
+    trio_clear(&t);
+}
+
+/* A crash between the MLS state write and the group record write leaves the
+ * record an epoch behind; the next operation repairs it (review N2). */
+static void
+test_interrupted_transition_is_repaired(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *c = rename_group(&t.alice, &t.gid, "After crash");
+    faults_arm(&t.bob);
+    g_faults.drop_group_record = true;
+    expect_commit(&t.bob, c, "record write lost");
+    faults_disarm(&t.bob);
+    MarmotGroup *rec = NULL;
+    MarmotStorage *s = t.bob.m->storage;
+    OK(s->find_group_by_mls_id(s->ctx, &t.gid, &rec));
+    CHECK(rec->epoch == t.epoch, "the record lags the MLS state");
+    marmot_group_free(rec);
+    expect_commit(&t.charlie, c, "Charlie");
+    /* Bob reads Alice's next-epoch message, which trial decryption from the
+     * stale record epoch alone would miss. */
+    expect_messages_flow(t.all, 3, &t.gid);
+    expect_converged(t.all, 3, &t.gid, "After crash", t.epoch + 1);
+    free(c);
     trio_clear(&t);
 }
 
@@ -634,18 +1143,22 @@ test_same_epoch_race_converges(void)
     Trio t;
     trio_init(&t);
 
-    /* Admin rename (privileged) vs Bob's self-update (ordinary). */
+    /* Admin rename (privileged) vs Bob's self-update (ordinary).  Alice's key
+     * sorts above Bob's, so only the privileged step makes Alice's win. */
     char *c_a = rename_group(&t.alice, &t.gid, "Admin wins");
     char *c_b = self_update(&t.bob, &t.gid);
     expect_commit(&t.charlie, c_b, "Charlie: B first");
     expect_commit(&t.charlie, c_a, "Charlie: A replaces B");
     expect_commit(&t.bob, c_a, "Bob: A replaces his own B");
     expect_rejected(&t.alice, &t.gid, c_b, MARMOT_ERR_WRONG_EPOCH, "Alice: B loses");
-    /* Re-deliveries change nothing. */
-    expect_rejected(&t.charlie, &t.gid, c_b, MARMOT_ERR_WRONG_EPOCH, "B again");
+    /* Re-deliveries in new envelopes change nothing. */
+    char *c_b2 = republish(c_b), *c_a2 = republish(c_a);
+    expect_rejected(&t.charlie, &t.gid, c_b2, MARMOT_ERR_WRONG_EPOCH, "B again");
     MarmotError err;
-    CHECK(deliver(&t.bob, c_a, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
+    CHECK(deliver(&t.bob, c_a2, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
           err == MARMOT_OK, "A again: %d", err);
+    free(c_b2);
+    free(c_a2);
     expect_converged(t.all, 3, &t.gid, "Admin wins", t.epoch + 1);
     expect_messages_flow(t.all, 3, &t.gid);
     free(c_a);
@@ -668,7 +1181,6 @@ test_same_epoch_race_converges(void)
         else
             CHECK(e2 == MARMOT_ERR_WRONG_EPOCH,
                   "Alice: the losing second Commit must be rejected: %d", e2);
-        /* Each committer sees the other's Commit. */
         MarmotError eb, ec;
         MarmotMessageResultType tb = deliver(&t.bob, cc, &eb, NULL);
         MarmotMessageResultType tc = deliver(&t.charlie, cb, &ec, NULL);
@@ -689,15 +1201,100 @@ test_same_epoch_race_converges(void)
     trio_clear(&t);
 }
 
+/* Several invitees or members per call are one Commit (review B2,
+ * nostrc-wc6v): a three-invitee group, a two-member add and a two-member
+ * remove leave every member on the same epoch. */
+static void
+test_multi_member_commits_converge(void)
+{
+    Member alice, bob, charlie, dave, eve, frank;
+    member_init(&alice, "Alice");
+    member_init(&bob, "Bob");
+    member_init(&charlie, "Charlie");
+    member_init(&dave, "Dave");
+    member_init(&eve, "Eve");
+    member_init(&frank, "Frank");
+
+    char *kp[3] = { key_package(&bob), key_package(&charlie), key_package(&dave) };
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Many";
+    cfg.admin_pubkeys = (uint8_t (*)[32])alice.pk;
+    cfg.admin_count = 1;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(alice.m, alice.pk, (const char **)kp, 3, &cfg, &cg));
+    CHECK(cg.welcome_count == 3 && cg.group->epoch == 1,
+          "three invitees, one Commit: epoch %llu", (unsigned long long)cg.group->epoch);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    join(&charlie, cg.welcome_rumor_jsons[1]);
+    join(&dave, cg.welcome_rumor_jsons[2]);
+    marmot_create_group_result_free(&cg);
+    for (int i = 0; i < 3; i++) free(kp[i]);
+    Member *four[] = { &alice, &bob, &charlie, &dave };
+    expect_converged(four, 4, &gid, "Many", 1);
+    expect_messages_flow(four, 4, &gid);
+
+    /* Two more in one Commit. */
+    char *kp2[2] = { key_package(&eve), key_package(&frank) };
+    char **welcomes = NULL;
+    size_t n_welcomes = 0;
+    char *commit = NULL;
+    OK(marmot_add_members(alice.m, &gid, (const char **)kp2, 2, &welcomes, &n_welcomes,
+                          &commit));
+    merge(&alice, &gid);
+    for (int i = 1; i < 4; i++) expect_commit(four[i], commit, "two Adds in one Commit");
+    join(&eve, welcomes[0]);
+    join(&frank, welcomes[1]);
+    for (size_t i = 0; i < n_welcomes; i++) free(welcomes[i]);
+    free(welcomes);
+    free(commit);
+    for (int i = 0; i < 2; i++) free(kp2[i]);
+    Member *six[] = { &alice, &bob, &charlie, &dave, &eve, &frank };
+    expect_converged(six, 6, &gid, "Many", 2);
+    expect_messages_flow(six, 6, &gid);
+
+    /* Two out in one Commit. */
+    uint8_t out[2][32];
+    memcpy(out[0], dave.pk, 32);
+    memcpy(out[1], eve.pk, 32);
+    OK(marmot_remove_members(alice.m, &gid, (const uint8_t (*)[32])out, 2, &commit));
+    merge(&alice, &gid);
+    Member *rest[] = { &alice, &bob, &charlie, &frank };
+    for (int i = 1; i < 4; i++) expect_commit(rest[i], commit, "two Removes in one Commit");
+    free(commit);
+    expect_converged(rest, 4, &gid, "Many", 3);
+    expect_messages_flow(rest, 4, &gid);
+    /* The same member twice is refused, not half-applied. */
+    uint8_t twice[2][32];
+    memcpy(twice[0], bob.pk, 32);
+    memcpy(twice[1], bob.pk, 32);
+    CHECK(marmot_remove_members(alice.m, &gid, (const uint8_t (*)[32])twice, 2, &commit) ==
+          MARMOT_ERR_INVALID_ARG && commit == NULL, "duplicate Remove");
+    expect_converged(rest, 4, &gid, "Many", 3);
+
+    for (int i = 0; i < 6; i++) marmot_free(six[i]->m);
+    marmot_group_id_free(&gid);
+}
+
 int
 main(void)
 {
     if (sodium_init() < 0) return 1;
     printf("libmarmot: Commit publication and ingestion (nostrc-9ata)\n");
     RUN(test_rename_reaches_every_member);
+    RUN(test_events_signed_by_fresh_ephemeral_keys);
+    RUN(test_commit_pending_until_merged);
+    RUN(test_pending_commit_races);
     RUN(test_stale_duplicate_and_future_commits);
     RUN(test_unauthorized_and_invalid_commits_rejected);
+    RUN(test_authorize_pins_committer_identity);
+    RUN(test_own_leaf_commit_not_ours_rejected);
+    RUN(test_persist_rolls_back_failed_writes);
+    RUN(test_interrupted_transition_is_repaired);
     RUN(test_same_epoch_race_converges);
+    RUN(test_multi_member_commits_converge);
     printf("All commit tests passed\n");
     return 0;
 }

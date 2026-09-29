@@ -366,9 +366,9 @@ gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
  * @callback: callback
  * @user_data: data for @callback
  *
- * Asynchronously commits a change of the group's metadata (admins only;
- * marmot_update_group_metadata()).  On success the group has moved to a new
- * epoch and #MarmotGobjectClient::group-updated is emitted.
+ * Asynchronously makes a Commit changing the group's metadata (admins only;
+ * marmot_update_group_metadata()).  The Commit is pending: the group does
+ * not change until marmot_gobject_client_merge_pending_commit_async().
  *
  * Since: 1.2
  */
@@ -386,9 +386,10 @@ void marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self
  * @result: a #GAsyncResult
  * @error: (nullable): return location for a #GError
  *
- * Returns the unsigned kind:445 Commit event.  The caller must sign it with
- * a fresh ephemeral key and publish it to the group relays: until the other
- * members process it they stay in the previous epoch.
+ * Returns the kind:445 Commit event, signed by a fresh ephemeral key.
+ * Publish it to the group relays; once one accepts it (NIP-01 OK) call
+ * marmot_gobject_client_merge_pending_commit_async(), otherwise
+ * marmot_gobject_client_clear_pending_commit_async().
  *
  * Returns: (transfer full) (nullable): the Commit event JSON, or %NULL on error
  *
@@ -397,6 +398,75 @@ void marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self
 gchar *marmot_gobject_client_update_group_metadata_finish(MarmotGobjectClient *self,
                                                            GAsyncResult *result,
                                                            GError **error);
+
+/**
+ * marmot_gobject_client_merge_pending_commit_async:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: hex-encoded MLS group ID
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback
+ * @user_data: data for @callback
+ *
+ * Applies the group's pending Commit once a relay accepted its event
+ * (marmot_merge_pending_commit()) and emits #MarmotGobjectClient::group-updated.
+ * Fails with %MARMOT_ERR_WRONG_EPOCH when a competing Commit won meanwhile;
+ * the group then follows that Commit (also announced by ::group-updated).
+ *
+ * Since: 1.2
+ */
+void marmot_gobject_client_merge_pending_commit_async(MarmotGobjectClient *self,
+                                                       const gchar *mls_group_id_hex,
+                                                       GCancellable *cancellable,
+                                                       GAsyncReadyCallback callback,
+                                                       gpointer user_data);
+
+/**
+ * marmot_gobject_client_merge_pending_commit_finish:
+ * @self: a #MarmotGobjectClient
+ * @result: a #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Returns: %TRUE when the Commit was applied
+ *
+ * Since: 1.2
+ */
+gboolean marmot_gobject_client_merge_pending_commit_finish(MarmotGobjectClient *self,
+                                                            GAsyncResult *result,
+                                                            GError **error);
+
+/**
+ * marmot_gobject_client_clear_pending_commit_async:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: hex-encoded MLS group ID
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback
+ * @user_data: data for @callback
+ *
+ * Discards the group's pending Commit when no relay accepted it
+ * (marmot_clear_pending_commit()); the group stays in its epoch, apart from
+ * member Commits that were deferred behind ours and now apply.
+ *
+ * Since: 1.2
+ */
+void marmot_gobject_client_clear_pending_commit_async(MarmotGobjectClient *self,
+                                                       const gchar *mls_group_id_hex,
+                                                       GCancellable *cancellable,
+                                                       GAsyncReadyCallback callback,
+                                                       gpointer user_data);
+
+/**
+ * marmot_gobject_client_clear_pending_commit_finish:
+ * @self: a #MarmotGobjectClient
+ * @result: a #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 1.2
+ */
+gboolean marmot_gobject_client_clear_pending_commit_finish(MarmotGobjectClient *self,
+                                                            GAsyncResult *result,
+                                                            GError **error);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-04: Media Encryption (async)

@@ -35,6 +35,14 @@ gn_mls_group_error_is_divergence(const GError *error)
 }
 
 gboolean
+gn_mls_group_error_is_superseded(const GError *error)
+{
+  return error != NULL &&
+         error->domain == g_quark_from_static_string(MARMOT_GOBJECT_CLIENT_ERROR_DOMAIN) &&
+         error->code == MARMOT_ERR_WRONG_EPOCH;
+}
+
+gboolean
 gn_mls_group_error_gate_admit(GHashTable *reported, const gchar *group_id)
 {
   if (reported == NULL || group_id == NULL || *group_id == '\0')

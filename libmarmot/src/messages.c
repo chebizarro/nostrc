@@ -349,6 +349,13 @@ marmot_create_message(Marmot *m,
         marmot_group_free(group);
         return MARMOT_ERR_USE_AFTER_EVICTION;
     }
+    /* The record's epoch picks the exporter secret: repair it first if a
+     * crash interrupted the last epoch transition. */
+    err = marmot_group_reconcile(m, group);
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        return err;
+    }
 
     /* ── 2. Get exporter_secret for current epoch ─────────────────────── */
     uint8_t exporter_secret[32];
@@ -424,11 +431,9 @@ marmot_create_message(Marmot *m,
     }
 
     /* ── 4. Build kind:445 event ──────────────────────────────────────── */
-    /*
-     * Per MIP-03: use a completely separate ephemeral keypair for pubkey.
-     * The caller must sign the event with this ephemeral key.
-     * We leave pubkey unset — the caller fills it in when signing.
-     */
+    /* Per MIP-03 a completely separate, fresh ephemeral key signs every
+     * kind:445 (marmot_sign_ephemeral(), below); it is never the account
+     * key and never reused. */
     NostrEvent *event = nostr_event_new();
     if (!event) {
         free(nip44_ciphertext);
@@ -458,7 +463,11 @@ marmot_create_message(Marmot *m,
     }
     nostr_event_set_tags(event, tags);
 
-    /* Serialize the unsigned event */
+    if (marmot_sign_ephemeral(event) != 0) {
+        nostr_event_free(event);
+        marmot_group_free(group);
+        return MARMOT_ERR_EVENT_BUILD;
+    }
     result->event_json = nostr_event_serialize_compact(event);
     nostr_event_free(event);
 
@@ -592,6 +601,14 @@ marmot_process_message(Marmot *m,
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);
         return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+    /* Trial decryption starts at the record's epoch: repair it first if a
+     * crash interrupted the last epoch transition (review N2). */
+    err = marmot_group_reconcile(m, group);
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return err;
     }
 
     /* ── 3. Idempotency: check if already processed ───────────────────── */
