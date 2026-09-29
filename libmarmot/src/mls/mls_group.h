@@ -251,6 +251,22 @@ int mls_group_create(MlsGroup *group,
                      const uint8_t signature_key_private[MLS_SIG_SK_LEN],
                      const uint8_t *extensions_data, size_t extensions_len);
 
+/**
+ * mls_group_create() whose creator LeafNode also carries `leaf_extensions`
+ * (a serialized Extension list, e.g. the account proof's
+ * app_data_dictionary; nostrc-7vyi), covered by its signature.  Every type in
+ * it must be one the Marmot leaf capabilities list.
+ */
+int mls_group_create_with_leaf_extensions(MlsGroup *group,
+                                          const uint8_t *group_id, size_t group_id_len,
+                                          const uint8_t *credential_identity,
+                                          size_t credential_identity_len,
+                                          const uint8_t signature_key_private[MLS_SIG_SK_LEN],
+                                          const uint8_t *extensions_data,
+                                          size_t extensions_len,
+                                          const uint8_t *leaf_extensions,
+                                          size_t leaf_extensions_len);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Add member (Commit + Welcome)
  *

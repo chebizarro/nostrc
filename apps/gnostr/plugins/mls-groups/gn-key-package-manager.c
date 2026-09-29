@@ -88,6 +88,10 @@ gn_key_package_manager_init(GnKeyPackageManager *self)
 /* ══════════════════════════════════════════════════════════════════════════
  * Internal: Key Package Creation Flow
  *
+ * 0. Once per client (libmarmot 0.10.0, nostrc-7vyi): the account signs the
+ *    marmot.member.account-identity-proof.v2 template for the client's MLS
+ *    signature key (a local-only kind:450, never published), and the client
+ *    keeps the proof. Other members accept our leaves only with it.
  * 1. marmot_gobject_client_create_key_package_unsigned_async() → unsigned kind:30443 event JSON
  * 2. gnostr_plugin_context_request_sign_event() → signed event JSON
  * 3. gnostr_plugin_context_publish_event_to_relays_async() → publish to our
@@ -98,6 +102,7 @@ typedef struct {
   GnKeyPackageManager *manager;   /* strong ref */
   GTask               *task;
   gchar              **write_relays;   /* where the KeyPackage is published */
+  gchar               *pubkey;         /* the account */
 } CreateKpData;
 
 static void
@@ -105,8 +110,11 @@ create_kp_data_free(CreateKpData *data)
 {
   g_clear_object(&data->manager);
   g_strfreev(data->write_relays);
+  g_free(data->pubkey);
   g_free(data);
 }
+
+static void start_key_package(CreateKpData *data);
 
 static void
 on_kp_published(GObject      *source,
@@ -231,6 +239,84 @@ on_kp_created(GObject      *source,
     data);
 }
 
+/* Step 0 done: the signer returned the proof template, signed. */
+static void
+on_account_proof_signed(GObject      *source,
+                        GAsyncResult *result,
+                        gpointer      user_data)
+{
+  CreateKpData *data = user_data;
+  g_autoptr(GError) error = NULL;
+
+  if (data->manager->context == NULL || data->manager->service == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "Plugin deactivated");
+      g_object_unref(data->task);
+      create_kp_data_free(data);
+      return;
+    }
+
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(
+      data->manager->context, result, &error);
+  MarmotGobjectClient *client = gn_marmot_service_get_client(data->manager->service);
+  if (signed_json == NULL ||
+      !marmot_gobject_client_set_account_proof(client, data->pubkey, signed_json, &error))
+    {
+      g_warning("KeyPackageManager: account proof not signed: %s",
+                error ? error->message : "unknown");
+      if (error)
+        g_task_return_error(data->task, g_steal_pointer(&error));
+      else
+        g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                "Account proof not signed");
+      g_object_unref(data->task);
+      create_kp_data_free(data);
+      return;
+    }
+
+  g_info("KeyPackageManager: account proof enrolled");
+  start_key_package(data);
+}
+
+/* Step 0: the client's leaves need the account's proof (nostrc-7vyi). */
+static void
+enroll_then_create(CreateKpData *data, MarmotGobjectClient *client)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *tmpl =
+    marmot_gobject_client_get_account_proof_template(client, data->pubkey, &error);
+  if (tmpl == NULL)
+    {
+      g_task_return_error(data->task, g_steal_pointer(&error));
+      g_object_unref(data->task);
+      create_kp_data_free(data);
+      return;
+    }
+  g_info("KeyPackageManager: requesting the account-identity proof signature…");
+  gnostr_plugin_context_request_sign_event(
+    data->manager->context,
+    tmpl,
+    g_task_get_cancellable(data->task),
+    on_account_proof_signed,
+    data);
+}
+
+/* Step 1: the unsigned KeyPackage (its leaf carries the enrolled proof). */
+static void
+start_key_package(CreateKpData *data)
+{
+  MarmotGobjectClient *client = gn_marmot_service_get_client(data->manager->service);
+  marmot_gobject_client_create_key_package_unsigned_async(
+    client,
+    data->pubkey,
+    (const gchar * const *)data->write_relays,
+    g_task_get_cancellable(data->task),
+    on_kp_created,
+    data);
+}
+
 static void
 create_and_publish_key_package(GnKeyPackageManager *self,
                                GTask               *task)
@@ -269,23 +355,20 @@ create_and_publish_key_package(GnKeyPackageManager *self,
   data->manager      = g_object_ref(self);   /* strong ref for async safety */
   data->task         = task; /* takes ownership */
   data->write_relays = relay_urls;
+  data->pubkey       = g_strdup(pubkey);
 
   MarmotGobjectClient *client = gn_marmot_service_get_client(service);
 
   /*
-   * Step 1: Create the key package via marmot (unsigned variant).
-   *
    * We use the _unsigned API because the signer service owns the
-   * private key. The returned event will be signed in step 2 via
+   * private key. The account-identity proof (step 0, once per client) and
+   * the returned event (step 2) are signed via
    * gnostr_plugin_context_request_sign_event().
    */
-  marmot_gobject_client_create_key_package_unsigned_async(
-    client,
-    pubkey,
-    (const gchar * const *)relay_urls,
-    g_task_get_cancellable(task),
-    on_kp_created,
-    data);
+  if (!marmot_gobject_client_has_account_proof(client, pubkey))
+    enroll_then_create(data, client);
+  else
+    start_key_package(data);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

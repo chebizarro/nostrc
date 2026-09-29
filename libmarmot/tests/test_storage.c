@@ -515,7 +515,10 @@ static void test_key_package_reports_private_store_failure(void)
     s->save_key_package_info = test_save_key_package_info_ok;
     s->deactivate_key_packages = test_deactivate_key_packages_ok;
 
-    Marmot *m = marmot_new(s);
+    /* No account proof here (the key is fake): a legacy KeyPackage. */
+    MarmotConfig cfg = marmot_config_default();
+    cfg.allow_unproven_members = true;
+    Marmot *m = marmot_new_with_config(s, &cfg);
     assert(m != NULL);
 
     uint8_t pubkey[32];

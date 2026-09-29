@@ -489,6 +489,69 @@ marmot_gobject_client_create_key_package_finish(MarmotGobjectClient *self,
     return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* ── Account-identity proof enrollment (libmarmot 0.10.0, nostrc-7vyi) ── */
+
+gchar *
+marmot_gobject_client_get_account_proof_template(MarmotGobjectClient *self,
+                                                 const gchar *nostr_pubkey_hex,
+                                                 GError **error)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
+    g_return_val_if_fail(nostr_pubkey_hex != NULL, NULL);
+    uint8_t pubkey[32];
+    if (!hex_to_bytes(nostr_pubkey_hex, pubkey, 32)) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                    "Invalid hex pubkey");
+        return NULL;
+    }
+    /* One libmarmot call at a time per client (a Marmot is not thread-safe). */
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
+    char *json = NULL;
+    MarmotError err = marmot_account_proof_template(self->marmot, pubkey, &json);
+    if (err != MARMOT_OK) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, (gint)err, "%s", marmot_error_string(err));
+        return NULL;
+    }
+    gchar *out = g_strdup(json);
+    free(json);
+    return out;
+}
+
+gboolean
+marmot_gobject_client_set_account_proof(MarmotGobjectClient *self,
+                                        const gchar *nostr_pubkey_hex,
+                                        const gchar *signed_event_json,
+                                        GError **error)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), FALSE);
+    g_return_val_if_fail(nostr_pubkey_hex != NULL && signed_event_json != NULL, FALSE);
+    uint8_t pubkey[32];
+    if (!hex_to_bytes(nostr_pubkey_hex, pubkey, 32)) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                    "Invalid hex pubkey");
+        return FALSE;
+    }
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
+    MarmotError err = marmot_set_account_proof(self->marmot, pubkey, signed_event_json);
+    if (err != MARMOT_OK) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, (gint)err, "%s", marmot_error_string(err));
+        return FALSE;
+    }
+    return TRUE;
+}
+
+gboolean
+marmot_gobject_client_has_account_proof(MarmotGobjectClient *self,
+                                        const gchar *nostr_pubkey_hex)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), FALSE);
+    g_return_val_if_fail(nostr_pubkey_hex != NULL, FALSE);
+    uint8_t pubkey[32];
+    if (!hex_to_bytes(nostr_pubkey_hex, pubkey, 32)) return FALSE;
+    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->lock);
+    return marmot_has_account_proof(self->marmot, pubkey);
+}
+
 /* ── Unsigned key package (signer-only flow) ─────────────────────── */
 
 typedef struct {

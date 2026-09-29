@@ -647,9 +647,12 @@ test_key_package_emits_30443_tag_set(void)
     ASSERT(nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "1.0") == 0, "version");
     t = kp_first_tag(&ev, "mls_ciphersuite");
     ASSERT(nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "0x0001") == 0, "ciphersuite");
+    /* 0x0006: the LeafNode app_data_dictionary carrying the account proof
+     * (nostrc-7vyi); MDK 0.8 requires 0x000a and 0xf2ee and allows others. */
     t = kp_first_tag(&ev, "mls_extensions");
-    ASSERT(nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x000a") == 0 &&
-           strcmp(nostr_tag_get(t, 2), "0xf2ee") == 0, "extensions");
+    ASSERT(nostr_tag_size(t) == 4 && strcmp(nostr_tag_get(t, 1), "0x0006") == 0 &&
+           strcmp(nostr_tag_get(t, 2), "0x000a") == 0 &&
+           strcmp(nostr_tag_get(t, 3), "0xf2ee") == 0, "extensions");
     t = kp_first_tag(&ev, "mls_proposals");
     ASSERT(nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "0x000a") == 0, "proposals");
     t = kp_first_tag(&ev, "relays");

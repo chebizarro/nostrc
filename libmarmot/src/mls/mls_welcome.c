@@ -455,7 +455,8 @@ welcome_process_impl(const MlsWelcome *welcome,
                      const uint8_t *ratchet_tree, size_t tree_len,
                      const MlsPskInput *psks, size_t psk_count,
                      MlsGroup *group_out,
-                     uint8_t path_secret[MLS_HASH_LEN])
+                     uint8_t path_secret[MLS_HASH_LEN],
+                     uint32_t *out_signer_leaf)
 {
     if (!welcome || !kp || !kp_priv || !group_out ||
         (psk_count > 0 && !psks))
@@ -963,6 +964,7 @@ welcome_process_impl(const MlsWelcome *welcome,
         }
     }
 
+    if (out_signer_leaf) *out_signer_leaf = gi.signer_leaf;
     free(gc_data);
     mls_group_info_clear(&gi);
     sodium_memzero(joiner_secret, sizeof(joiner_secret));
@@ -983,7 +985,23 @@ mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
     uint8_t path_secret[MLS_HASH_LEN];
     memset(path_secret, 0, sizeof(path_secret));
     int rc = welcome_process_impl(welcome, kp, kp_priv, ratchet_tree, tree_len,
-                                  psks, psk_count, group_out, path_secret);
+                                  psks, psk_count, group_out, path_secret, NULL);
+    sodium_memzero(path_secret, sizeof(path_secret));
+    return rc;
+}
+
+int
+mls_welcome_process_parsed_signer(const MlsWelcome *welcome,
+                                  const MlsKeyPackage *kp,
+                                  const MlsKeyPackagePrivate *kp_priv,
+                                  MlsGroup *group_out,
+                                  uint32_t *out_signer_leaf)
+{
+    if (!out_signer_leaf) return MARMOT_ERR_INVALID_ARG;
+    uint8_t path_secret[MLS_HASH_LEN];
+    memset(path_secret, 0, sizeof(path_secret));
+    int rc = welcome_process_impl(welcome, kp, kp_priv, NULL, 0, NULL, 0, group_out,
+                                  path_secret, out_signer_leaf);
     sodium_memzero(path_secret, sizeof(path_secret));
     return rc;
 }

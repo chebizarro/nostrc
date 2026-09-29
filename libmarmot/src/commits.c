@@ -125,6 +125,44 @@ same_identity(const MlsLeafNode *a, const MlsLeafNode *b)
                    a->credential_identity_len) == 0);
 }
 
+/* The same LeafNode, as far as its account binding goes (the signature
+ * covers the rest; the MLS layer verified every new one). */
+static bool
+same_leaf(const MlsLeafNode *a, const MlsLeafNode *b)
+{
+    return a->signature_len == b->signature_len &&
+           memcmp(a->signature, b->signature, a->signature_len) == 0 &&
+           memcmp(a->signature_key, b->signature_key, MLS_SIG_PK_LEN) == 0 &&
+           same_identity(a, b) && a->extensions_len == b->extensions_len &&
+           (a->extensions_len == 0 ||
+            memcmp(a->extensions_data, b->extensions_data, a->extensions_len) == 0);
+}
+
+/* nostrc-7vyi: `after` (the leaf a Commit left in a slot that held `before`,
+ * NULL for a new slot) is bound to the account its credential names.  An
+ * unchanged leaf was checked when it joined. */
+static MarmotError
+leaf_binding_check(const MlsLeafNode *before, const MlsLeafNode *after, bool allow_unproven)
+{
+    if (before && same_leaf(before, after)) return MARMOT_OK;
+    switch (marmot_leaf_proof_status(after, MARMOT_CIPHERSUITE)) {
+    case MARMOT_LEAF_PROOF_VALID:
+        return MARMOT_OK;
+    case MARMOT_LEAF_PROOF_INVALID:
+        return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+    case MARMOT_LEAF_PROOF_ABSENT:
+        break;
+    }
+    /* The same member's new leaf: the MLS layer pinned its identity; it may
+     * stay unproven, but not drop a proof (account-identity-proof-v2.md,
+     * "Lifecycle"). */
+    if (before && same_identity(before, after))
+        return marmot_leaf_proof_status(before, MARMOT_CIPHERSUITE) == MARMOT_LEAF_PROOF_ABSENT
+                   ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+    /* A new identity claim: only the account's own proof supports it. */
+    return allow_unproven ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+}
+
 /* Lower wins (CommitOrderingSuffix). */
 static int
 commit_key_cmp(const MarmotCommitKey *a, const MarmotCommitKey *b)
@@ -141,7 +179,7 @@ commit_key_cmp(const MarmotCommitKey *a, const MarmotCommitKey *b)
 
 MarmotError
 marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
-                        uint32_t committer_leaf,
+                        uint32_t committer_leaf, bool allow_unproven,
                         MarmotCommitKey *key,
                         MarmotGroupDataExtension **post_gde)
 {
@@ -187,6 +225,11 @@ marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
         err = MARMOT_ERR_PROTOCOL_GROUP_MISMATCH;   /* nostr_group_id is immutable */
     if (err == MARMOT_OK && key->privileged && !gde_is_admin(before, key->committer))
         err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
+    /* Every account the Commit brings in is its own (nostrc-7vyi). */
+    for (uint32_t i = 0; err == MARMOT_OK && i < post->tree.n_leaves; i++) {
+        const MlsLeafNode *b = leaf_at(post, i);
+        if (b) err = leaf_binding_check(leaf_at(pre, i), b, allow_unproven);
+    }
     marmot_group_data_extension_free(before);
     if (err != MARMOT_OK) {
         marmot_group_data_extension_free(after);
@@ -1018,6 +1061,7 @@ marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre, const MlsGroup *post
     /* The same policy every receiver applies: never publish what the group
      * rejects. */
     MarmotError err = marmot_commit_authorize(pre, post, pre->own_leaf_index,
+                                              m->config.allow_unproven_members,
                                               &p.key, &gde);
     marmot_group_data_extension_free(gde);
     if (err != MARMOT_OK) return err;
@@ -1081,6 +1125,7 @@ pending_apply(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const PendingC
     MarmotCommitKey key;
     MarmotGroupDataExtension *gde = NULL;
     MarmotError err = marmot_commit_authorize(cur, &p->post, cur->own_leaf_index,
+                                              m->config.allow_unproven_members,
                                               &key, &gde);
     if (err != MARMOT_OK) {
         /* It can never apply: drop it rather than wedge the group. */
@@ -1167,7 +1212,7 @@ marmot_commit_clear_pending(Marmot *m, MarmotGroup *group)
 
 /* Apply `msg` from `sender` to a copy of `parent`, then authorize it. */
 static MarmotError
-stage_inbound(const MlsGroup *parent, const uint8_t *msg, size_t msg_len,
+stage_inbound(const Marmot *m, const MlsGroup *parent, const uint8_t *msg, size_t msg_len,
               uint32_t sender, MlsGroup *post, MarmotCommitKey *key,
               MarmotGroupDataExtension **gde)
 {
@@ -1180,7 +1225,8 @@ stage_inbound(const MlsGroup *parent, const uint8_t *msg, size_t msg_len,
             return (MarmotError)rc;
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
     }
-    MarmotError err = marmot_commit_authorize(parent, post, sender, key, gde);
+    MarmotError err = marmot_commit_authorize(parent, post, sender,
+                                              m->config.allow_unproven_members, key, gde);
     if (err != MARMOT_OK) mls_group_free(post);
     return err;
 }
@@ -1299,7 +1345,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
             fill_commit_result(m, group, result);
             return MARMOT_OK;
         }
-        err = stage_inbound(&cur, msg, msg_len, sender, &post, &key, &gde);
+        err = stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde);
         if (err == MARMOT_OK) {
             memcpy(key.digest, digest, 32);
             if (live && commit_key_cmp(&key, &p.key) >= 0)
@@ -1328,7 +1374,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
             } else if (sender == rp.parent.own_leaf_index) {
                 err = MARMOT_ERR_WRONG_EPOCH;   /* not the Commit we made */
             } else {
-                err = stage_inbound(&rp.parent, msg, msg_len, sender, &post,
+                err = stage_inbound(m, &rp.parent, msg, msg_len, sender, &post,
                                     &key, &gde);
                 if (err == MARMOT_OK) {
                     memcpy(key.digest, digest, 32);

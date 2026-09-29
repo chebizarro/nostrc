@@ -182,6 +182,7 @@ marmot_free(Marmot *m)
     /* Securely wipe key material using libsodium */
     sodium_memzero(m->ed25519_sk, sizeof(m->ed25519_sk));
     sodium_memzero(m->hpke_sk, sizeof(m->hpke_sk));
+    sodium_memzero(m->account_proof, sizeof(m->account_proof));
 
     /* Free storage backend */
     marmot_storage_free(m->storage);

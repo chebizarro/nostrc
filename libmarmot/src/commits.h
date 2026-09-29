@@ -45,11 +45,18 @@ typedef struct {
  * pre-Commit GroupData; the post-Commit GroupData is present exactly once,
  * well formed, and keeps nostr_group_id.
  *
+ * Account binding (nostrc-7vyi): every leaf the Commit adds, or whose slot
+ * now holds another account, carries a valid account-identity proof, else
+ * MARMOT_ERR_KEY_PACKAGE_IDENTITY; with `allow_unproven` (legacy mode) one
+ * without any proof passes.  A member's replaced leaf (Update, UpdatePath)
+ * keeps its identity (the MLS layer pins it) and may not drop a proof it
+ * had.  A proof that does not verify always fails.
+ *
  * Fills `key` (all but digest) and returns the post-Commit GroupData in
  * *post_gde (caller frees).  Pure: touches no storage.
  */
 MarmotError marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
-                                    uint32_t committer_leaf,
+                                    uint32_t committer_leaf, bool allow_unproven,
                                     MarmotCommitKey *key,
                                     MarmotGroupDataExtension **post_gde);
 

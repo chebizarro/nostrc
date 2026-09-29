@@ -269,6 +269,18 @@ marmot_account_proof_template_id(const uint8_t account_pk[32], uint64_t created_
     return id;
 }
 
+char *
+marmot_account_proof_template_json(const uint8_t account_pk[32], uint64_t created_at,
+                                   const uint8_t *sig_key, size_t sig_key_len)
+{
+    NostrEvent *ev = proof_template(account_pk, created_at, MARMOT_CIPHERSUITE,
+                                    MARMOT_SIGNATURE_SCHEME_ED25519, sig_key, sig_key_len);
+    if (!ev) return NULL;
+    char *json = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    return json;
+}
+
 static void
 write_proof(uint8_t out[MARMOT_ACCOUNT_PROOF_LEN], const uint8_t pk[32], uint64_t at,
             const uint8_t sig[64])
@@ -360,6 +372,51 @@ out:
 }
 
 MarmotError
+marmot_account_proof_from_signed(const uint8_t account_pk[32],
+                                 const uint8_t *sig_key, size_t sig_key_len,
+                                 const char *signed_json,
+                                 uint8_t out[MARMOT_ACCOUNT_PROOF_LEN])
+{
+    if (!account_pk || !sig_key || !signed_json || !out) return MARMOT_ERR_INVALID_ARG;
+    NostrEvent *ev = nostr_event_new();
+    if (!ev) return MARMOT_ERR_MEMORY;
+    MarmotError err = MARMOT_ERR_VALIDATION;
+    char *pk_hex = marmot_hex_encode(account_pk, 32);
+    char *want_id = NULL, *got_id = NULL;
+    uint8_t sig[64];
+    if (!pk_hex) {
+        err = MARMOT_ERR_MEMORY;
+        goto out;
+    }
+    if (!nostr_event_deserialize_compact(ev, signed_json, NULL) || ev->created_at < 1 ||
+        !ev->pubkey || strcmp(ev->pubkey, pk_hex) != 0 || !ev->id || !ev->sig ||
+        strlen(ev->sig) != 128)
+        goto out;
+    /* Exactly the template for this key, at the event's own created_at: the
+     * id commits to pubkey, created_at, kind, tags and content. */
+    want_id = marmot_account_proof_template_id(account_pk, (uint64_t)ev->created_at,
+                                               MARMOT_CIPHERSUITE,
+                                               MARMOT_SIGNATURE_SCHEME_ED25519, sig_key,
+                                               sig_key_len);
+    char *claimed = ev->id;
+    ev->id = NULL;
+    got_id = nostr_event_get_id(ev);
+    free(ev->id);
+    ev->id = claimed;
+    if (!want_id || !got_id || strcmp(got_id, want_id) != 0 || strcmp(claimed, want_id) != 0 ||
+        !nostr_event_check_signature(ev) || marmot_hex_decode(ev->sig, sig, sizeof(sig)) != 0)
+        goto out;
+    write_proof(out, account_pk, (uint64_t)ev->created_at, sig);
+    err = MARMOT_OK;
+out:
+    free(want_id);
+    free(got_id);
+    free(pk_hex);
+    nostr_event_free(ev);
+    return err;
+}
+
+MarmotError
 marmot_account_proof_verify(const uint8_t *proof, size_t proof_len, const uint8_t identity[32],
                             uint16_t ciphersuite, uint16_t signature_scheme,
                             const uint8_t *sig_key, size_t sig_key_len)
@@ -388,4 +445,100 @@ marmot_account_proof_verify(const uint8_t *proof, size_t proof_len, const uint8_
     free(sig_hex);
     nostr_event_free(ev);
     return err;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * The proof on a member LeafNode (nostrc-7vyi)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotLeafProofStatus
+marmot_leaf_proof_status(const MlsLeafNode *leaf, uint16_t ciphersuite)
+{
+    if (!leaf) return MARMOT_LEAF_PROOF_INVALID;
+    const uint8_t *dict = NULL;
+    size_t dlen = 0, count = 0;
+    if (marmot_extensions_find(leaf->extensions_data, leaf->extensions_len,
+                               MARMOT_EXT_APP_DATA_DICTIONARY, &dict, &dlen, &count) != 0)
+        return MARMOT_LEAF_PROOF_INVALID;
+    if (count == 0) return MARMOT_LEAF_PROOF_ABSENT;
+    if (count != 1) return MARMOT_LEAF_PROOF_INVALID;
+
+    MarmotComponentData *entries = NULL;
+    size_t ne = 0;
+    if (marmot_app_data_dict_parse(dict, dlen, &entries, &ne) != 0)
+        return MARMOT_LEAF_PROOF_INVALID;
+    const MarmotComponentData *app_components = NULL, *proof = NULL;
+    for (size_t i = 0; i < ne; i++) {
+        if (entries[i].component_id == MARMOT_COMPONENT_APP_COMPONENTS)
+            app_components = &entries[i];
+        else if (entries[i].component_id == MARMOT_COMPONENT_ACCOUNT_PROOF_V2)
+            proof = &entries[i];   /* keys are unique: the parse rejects repeats */
+    }
+    MarmotLeafProofStatus st = MARMOT_LEAF_PROOF_INVALID;
+    uint16_t *ids = NULL;
+    size_t n_ids = 0;
+    if (app_components && proof &&
+        marmot_components_list_decode(app_components->data, app_components->len,
+                                      &ids, &n_ids) == 0 &&
+        marmot_u16_list_contains(ids, n_ids, MARMOT_COMPONENT_ACCOUNT_PROOF_V2) &&
+        leaf->credential_identity_len == 32 && leaf->credential_identity &&
+        marmot_account_proof_verify(proof->data, proof->len, leaf->credential_identity,
+                                    ciphersuite, MARMOT_SIGNATURE_SCHEME_ED25519,
+                                    leaf->signature_key, MLS_SIG_PK_LEN) == MARMOT_OK)
+        st = MARMOT_LEAF_PROOF_VALID;
+    free(ids);
+    free(entries);
+    return st;
+}
+
+MarmotError
+marmot_leaf_proof_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+                             uint8_t **out, size_t *out_len)
+{
+    if (!proof || !out || !out_len) return MARMOT_ERR_INVALID_ARG;
+    static const uint16_t supported[] = {MARMOT_COMPONENT_APP_COMPONENTS,
+                                         MARMOT_COMPONENT_ACCOUNT_PROOF_V2};
+    MlsTlsBuf app_components, safe_aad, dict, exts;
+    mls_tls_buf_init(&app_components, 16);
+    mls_tls_buf_init(&safe_aad, 4);
+    mls_tls_buf_init(&dict, 160);
+    mls_tls_buf_init(&exts, 176);
+    MarmotError err = MARMOT_ERR_MEMORY;
+    if (!app_components.data || !safe_aad.data || !dict.data || !exts.data) goto out;
+    if (marmot_components_list_encode(supported, 2, &app_components) != 0 ||
+        marmot_components_list_encode(NULL, 0, &safe_aad) != 0)
+        goto out;
+    MarmotComponentData entries[3] = {
+        {MARMOT_COMPONENT_APP_COMPONENTS, app_components.data, app_components.len},
+        {MARMOT_COMPONENT_SAFE_AAD, safe_aad.data, safe_aad.len},
+        {MARMOT_COMPONENT_ACCOUNT_PROOF_V2, proof, MARMOT_ACCOUNT_PROOF_LEN},
+    };
+    if (marmot_app_data_dict_encode(entries, 3, &dict) != 0 ||
+        mls_tls_write_u16(&exts, MARMOT_EXT_APP_DATA_DICTIONARY) != 0 ||
+        mls_tls_write_opaque32(&exts, dict.data, dict.len) != 0)
+        goto out;
+    *out = exts.data;
+    *out_len = exts.len;
+    exts.data = NULL;
+    err = MARMOT_OK;
+out:
+    mls_tls_buf_free(&app_components);
+    mls_tls_buf_free(&safe_aad);
+    mls_tls_buf_free(&dict);
+    if (exts.data) mls_tls_buf_free(&exts);
+    return err;
+}
+
+MarmotError
+marmot_leaf_set_proof(MlsLeafNode *leaf, const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN])
+{
+    if (!leaf || !proof) return MARMOT_ERR_INVALID_ARG;
+    uint8_t *exts = NULL;
+    size_t len = 0;
+    MarmotError err = marmot_leaf_proof_extensions(proof, &exts, &len);
+    if (err != MARMOT_OK) return err;
+    free(leaf->extensions_data);
+    leaf->extensions_data = exts;
+    leaf->extensions_len = len;
+    return MARMOT_OK;
 }

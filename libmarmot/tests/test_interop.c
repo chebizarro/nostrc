@@ -689,7 +689,11 @@ test_mdk_protocol_kp_tag_parity(const char *json, size_t json_len)
     memset(&mdk, 0, sizeof(mdk));
     assert(mdk_json && nostr_event_deserialize_compact(&mdk, mdk_json, NULL));
 
-    Marmot *m = marmot_new(marmot_storage_memory_new());
+    /* The tags do not depend on the leaf's account proof (nostrc-7vyi):
+     * a legacy instance makes this unsigned KeyPackage without one. */
+    MarmotConfig cfg = marmot_config_default();
+    cfg.allow_unproven_members = true;
+    Marmot *m = marmot_new_with_config(marmot_storage_memory_new(), &cfg);
     assert(m);
     uint8_t pk[32];
     randombytes_buf(pk, sizeof(pk));
@@ -710,6 +714,18 @@ test_mdk_protocol_kp_tag_parity(const char *json, size_t json_len)
         assert(j < nostr_tags_size(ours.tags) && "libmarmot is missing an MDK tag");
         NostrTag *ot = nostr_tags_get(ours.tags, j++);
         assert(strcmp(nostr_tag_get_key(ot), key) == 0 && "tag order differs from MDK");
+        if (strcmp(key, "mls_extensions") == 0) {
+            /* One more id than MDK 0.7/0.8, 0x0006 (the LeafNode
+             * app_data_dictionary with the account proof, nostrc-7vyi): MDK
+             * 0.8 requires 0x000a and 0xf2ee in it and accepts others. */
+            assert(nostr_tag_size(ot) == nostr_tag_size(mt) + 1 &&
+                   strcmp(nostr_tag_get(ot, 1), "0x0006") == 0 &&
+                   "mls_extensions: MDK's ids plus 0x0006");
+            for (size_t v = 1; v < nostr_tag_size(mt); v++)
+                assert(strcmp(nostr_tag_get(ot, v + 1), nostr_tag_get(mt, v)) == 0 &&
+                       "mls_extensions value differs from MDK");
+            continue;
+        }
         assert(nostr_tag_size(ot) == nostr_tag_size(mt) && "tag arity differs from MDK");
         if (strcmp(key, "d") == 0 || strcmp(key, "i") == 0) continue;
         for (size_t v = 1; v < nostr_tag_size(mt); v++)

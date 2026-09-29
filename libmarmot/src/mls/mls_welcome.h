@@ -130,6 +130,18 @@ int mls_welcome_process_parsed(const MlsWelcome *welcome,
                                const uint8_t *ratchet_tree, size_t tree_len,
                                MlsGroup *group_out);
 
+/**
+ * mls_welcome_process_parsed() without an out-of-band tree, also returning
+ * the GroupInfo signer (the committer who built the Welcome) in
+ * *out_signer_leaf (nostrc-7vyi: the joiner binds that leaf to the Welcome's
+ * sender).
+ */
+int mls_welcome_process_parsed_signer(const MlsWelcome *welcome,
+                                      const MlsKeyPackage *kp,
+                                      const MlsKeyPackagePrivate *kp_priv,
+                                      MlsGroup *group_out,
+                                      uint32_t *out_signer_leaf);
+
 /** Process a parsed Welcome with external PSK inputs. */
 int mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
                                          const MlsKeyPackage *kp,

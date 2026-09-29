@@ -225,6 +225,141 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ## Changelog
 
+### 0.10.0 (unreleased): member leaves are bound to their accounts (nostrc-7vyi, security)
+
+**Security fix, wire change and new API** (MINOR for 0.x).
+
+#### Security advisory
+
+Before 0.10.0 a member's credential was trusted exactly as it was added.
+Only the inviter checked that a KeyPackage belongs to the account its
+credential names (the kind:30443 event is signed by that account). Every
+other member got the bare leaf in the Commit's Add, and a joiner got the
+bare ratchet tree in the Welcome: nothing bound those leaves to their
+accounts. A malicious or compromised admin (in a group without admins, any
+member) could therefore:
+
+- add a leaf naming another account, a non-member or a second "device" of a
+  member, with an MLS key it holds, and post as that account. 0.9.0's author
+  check then reported the forged author faithfully;
+- send a Welcome for a group whose other "members" it made up.
+
+Outsiders could not do this. Treat the membership of groups joined before
+the upgrade, and the authors of messages from members added by someone you
+do not trust, as unauthenticated.
+
+#### What changed
+
+- **The binding travels in the leaf** (Marmot `foundation/identity.md`,
+  `app-components/account-identity-proof-v2.md`).
+  - Every LeafNode libmarmot produces carries
+    `marmot.member.account-identity-proof.v2`: the account's BIP-340
+    signature over the leaf's MLS signature key, ciphersuite and signature
+    scheme.
+  - It sits in a LeafNode `app_data_dictionary` (0x0006) with
+    `app_components` [0x0001, 0x8009], `safe_aad` [] and the 104-byte proof:
+    the same entries as the adopted profile and MDK's cgka-engine.
+  - Leaf capabilities list 0x0006, so the MDK 0.8 kind:30443 `mls_extensions`
+    tag is now `0x0006 0x000a 0xf2ee`. MDK 0.8 requires `0x000a` and `0xf2ee`
+    there and accepts other ids (MDK v0.8.0 `key_packages.rs`).
+- **Where the proof comes from.**
+  - `marmot_create_key_package()` signs it with the account key.
+  - `marmot_create_key_package_for_profile()` signs it through
+    `account_sign` (now also for the MDK 0.8 profile).
+  - `marmot_create_key_package_unsigned()` uses the enrolled instance key.
+    Without an enrollment it fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY`.
+  - A member's Commit keeps its leaf's proof: the UpdatePath leaf keeps the
+    signature key and credential the proof binds.
+  - The creator's leaf of `marmot_create_group()` carries it when the
+    instance is enrolled for the creator.
+- **Enrollment (new API)** for callers that sign through a signer:
+  `marmot_account_proof_template()`, `marmot_set_account_proof()`,
+  `marmot_has_account_proof()`.
+  - The template is a local-only kind:450 event for this instance's MLS
+    signature key. The account signs it once, and unsigned KeyPackages and
+    created groups use that key and proof.
+  - The instance key is generated per `Marmot` and not stored, so enroll after
+    every `marmot_new()`. `marmot_create_key_package()` with the account key
+    also enrolls.
+  - marmot-gobject 1.4.0 wraps these calls, and Gnostr enrolls before its
+    first KeyPackage.
+- **Every member checks it.** A proof must name the leaf's credential
+  identity, sign that leaf's own signature key (a proof replayed from
+  another leaf fails) under ciphersuite 0x0001 and Ed25519, and verify
+  under the account key.
+  - **Commits** (`marmot_commit_authorize()`; the same policy runs on our own
+    Commits before they are published). Each leaf a Commit adds, or whose
+    slot now holds another account, must carry a valid proof. A member's
+    replaced leaf (UpdatePath, Update) may not drop one it had. Otherwise the
+    Commit fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY` and nothing is
+    stored.
+  - **Welcome joins** (`protocol-core/joining.md`, step 5). Every leaf of the
+    tree must carry a valid proof, with two exceptions:
+    - our own leaf;
+    - the leaf that signed the GroupInfo, when it is the Welcome's sender.
+      That is the rumor's `pubkey`, which the NIP-59 seal authenticates; the
+      caller must have checked it.
+
+    Otherwise the join fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY`, nothing
+    of the group is stored, and the Welcome is recorded as failed.
+  - **The inviter.** `marmot_create_group()` and `marmot_add_members()` refuse
+    a KeyPackage without a valid proof. KeyPackage validation rejects a
+    proof that does not verify.
+- **Welcome rumors carry their sender's pubkey**, as NIP-59 requires.
+  Gnostr's unwrap already rejected rumors whose pubkey is not the seal's.
+- **Legacy mode.** `MarmotConfig.allow_unproven_members` (default `false`)
+  accepts leaves that carry no proof: KeyPackages and members from MDK 0.8
+  or libmarmot 0.9.0 and older. A proof that does not verify is rejected
+  in either mode.
+
+#### Why a proof in the leaf, and what stays separate
+
+The kind:30443 signature binds a KeyPackage only for the inviter, who sees
+the event. Every other member sees only what the MLS messages carry, so
+Marmot binds the leaf itself (`foundation/identity.md`, "Account identity
+proof"). This release is the minimal additive form of that proof for
+libmarmot's legacy (0xF2EE) groups: the LeafNode component, produced on
+every leaf and checked on every Add, replaced leaf and Welcome tree, and
+persisted and cloned with the tree.
+
+The adopted profile's group-level rules stay with nostrc-qp24.5.1 (W2a),
+and with them the rest of nostrc-qp24.5.1.1. The group engine refuses a
+GroupContext `app_data_dictionary`, so it cannot require 0x8009 in the
+GroupContext's `app_components`, run AppDataUpdate, or admit adopted-profile
+groups. There is no adopted peer to test against either.
+
+#### Compatibility
+
+- **Wire.** KeyPackages gain the leaf dictionary and the `0x0006` id; the
+  Welcome rumor gains a `pubkey`. Readers that ignore unknown leaf
+  extensions listed in the capabilities (libmarmot 0.9.0 and older) are
+  unaffected. Whether an OpenMLS-based peer accepts the leaf dictionary is
+  untested.
+- **Unproven KeyPackages are refused.** A 0.10.0 member refuses to add a
+  KeyPackage from MDK 0.8 or libmarmot 0.9.0 and older. It also refuses a
+  Commit that adds such a leaf, and a Welcome whose tree holds one (other
+  than the sender's), unless `allow_unproven_members` is set. Upgrade every
+  member and publish new KeyPackages.
+- **Existing groups.** Leaves from 0.9.0 and older keep their place (a
+  Commit re-checks only the leaves it changes), and those members can still
+  commit. A joiner, however, accepts such a leaf only in legacy mode or when
+  it sent the Welcome, so in practice only an unproven member can admit new
+  members. The same holds for a group whose creator never enrolled. There
+  is no in-band way yet to add a proof to an existing leaf (it needs a
+  self-update that carries one).
+- **API/ABI.**
+  - `MarmotConfig` gains a field: rebuild, and start from
+    `marmot_config_default()`.
+  - New `marmot_account_proof_template()`, `marmot_set_account_proof()` and
+    `marmot_has_account_proof()`.
+  - `marmot_create_key_package_unsigned()` fails without an enrollment, as
+    above.
+  - Internal: `marmot_commit_authorize()` takes the legacy flag; new
+    `mls_group_create_with_leaf_extensions()`,
+    `mls_welcome_process_parsed_signer()` and `marmot_leaf_proof_status()`.
+- **State.** Unchanged. The proof lives in the leaf and is stored with the
+  tree.
+
 ### 0.9.0 (unreleased): application messages are signed and bound to their author (nostrc-we6g, security)
 
 **Security fix and wire-format change** (MINOR for 0.x: 0.9.0 and 0.8.0 or

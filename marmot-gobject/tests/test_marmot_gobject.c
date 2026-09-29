@@ -2288,6 +2288,59 @@ test_unsigned_key_package_async(void)
     g_object_unref(storage);
 }
 
+/* libmarmot 0.10.0 (nostrc-7vyi): a signer-only client enrolls its account
+ * proof, then its unsigned KeyPackages carry it. */
+static void
+test_account_proof_enrollment(void)
+{
+    MarmotGobjectMemoryStorage *storage = marmot_gobject_memory_storage_new();
+    MarmotGobjectClient *client = marmot_gobject_client_new(MARMOT_GOBJECT_STORAGE(storage));
+    g_assert_nonnull(client);
+    g_autofree gchar *sk = nostr_key_generate_private();
+    g_autofree gchar *pk = nostr_key_get_public(sk);
+    g_assert_nonnull(pk);
+    g_assert_false(marmot_gobject_client_has_account_proof(client, pk));
+
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    GenericAsyncCtx ctx = { loop, NULL, NULL };
+    marmot_gobject_client_create_key_package_unsigned_async(client, pk, NULL, NULL,
+                                                            unsigned_kp_cb, &ctx);
+    g_main_loop_run(loop);
+    g_assert_nonnull(ctx.error);
+    g_assert_cmpint(ctx.error->code, ==, MARMOT_ERR_KEY_PACKAGE_IDENTITY);
+    g_assert_null(ctx.json);
+    g_clear_error(&ctx.error);
+
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *tmpl = marmot_gobject_client_get_account_proof_template(client, pk, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(tmpl);
+    NostrEvent *ev = nostr_event_new();
+    g_assert_true(nostr_event_deserialize_compact(ev, tmpl, NULL));
+    g_assert_cmpint(nostr_event_get_kind(ev), ==, 450);
+    g_assert_cmpint(nostr_event_sign(ev, sk), ==, 0);
+    g_autofree gchar *signed_json = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    g_assert_false(marmot_gobject_client_set_account_proof(client, pk, tmpl, &error));
+    g_assert_nonnull(error);
+    g_assert_cmpint(error->code, ==, MARMOT_ERR_VALIDATION);
+    g_clear_error(&error);
+    g_assert_true(marmot_gobject_client_set_account_proof(client, pk, signed_json, &error));
+    g_assert_no_error(error);
+    g_assert_true(marmot_gobject_client_has_account_proof(client, pk));
+
+    marmot_gobject_client_create_key_package_unsigned_async(client, pk, NULL, NULL,
+                                                            unsigned_kp_cb, &ctx);
+    g_main_loop_run(loop);
+    g_assert_no_error(ctx.error);
+    g_assert_nonnull(ctx.json);
+    g_free(ctx.json);
+
+    g_main_loop_unref(loop);
+    g_object_unref(client);
+    g_object_unref(storage);
+}
+
 static void
 test_weak_ref_finalization(void)
 {
@@ -2537,6 +2590,7 @@ main(int argc, char *argv[])
     /* 16. GCancellable and additional async */
     g_test_add_func("/marmot-gobject/cancel/key-package-cancel", test_cancellable_key_package);
     g_test_add_func("/marmot-gobject/async/unsigned-key-package", test_unsigned_key_package_async);
+    g_test_add_func("/marmot-gobject/async/account-proof-enrollment", test_account_proof_enrollment);
     g_test_add_func("/marmot-gobject/lifecycle/weak-ref-finalization", test_weak_ref_finalization);
     g_test_add_func("/marmot-gobject/lifecycle/multiple-client-instances", test_multiple_client_instances);
 

@@ -13,7 +13,9 @@
  *      - d = stable per-account publication slot (32 random bytes, hex)
  *      - mls_protocol_version = "1.0"
  *      - mls_ciphersuite = "0x0001"
- *      - mls_extensions = "0x000a" "0xf2ee"
+ *      - mls_extensions = "0x0006" "0x000a" "0xf2ee" (0x0006: the LeafNode
+ *        app_data_dictionary carrying the account-identity proof v2,
+ *        nostrc-7vyi; MDK 0.8 requires 0x000a and 0xf2ee, allows others)
  *      - mls_proposals = "0x000a"
  *      - relays = relay URLs (omitted when none are given)
  *      - i = hex(KeyPackageRef)
@@ -386,9 +388,9 @@ replace_u16_vec(uint16_t **arr, size_t *count, const uint16_t *vals, size_t n)
     return 0;
 }
 
-/* Leaf app_data_dictionary: app_components [0x0001, 0x8009], safe_aad []
- * and the account-identity proof over the leaf's signature key (the same
- * three entries MDK's cgka-engine emits). */
+/* Leaf app_data_dictionary: app_components [0x0001, 0x8009], safe_aad [] and
+ * the account-identity proof over the leaf's signature key (the same three
+ * entries MDK's cgka-engine emits; marmot_leaf_set_proof()). */
 static MarmotError
 build_leaf_dictionary_adopted(MlsKeyPackage *kp, const uint8_t account_pk[32],
                               const uint8_t *account_sk, MarmotAccountSignFunc sign_fn,
@@ -399,41 +401,119 @@ build_leaf_dictionary_adopted(MlsKeyPackage *kp, const uint8_t account_pk[32],
         account_pk, account_sk, sign_fn, sign_data, kp->cipher_suite,
         MARMOT_SIGNATURE_SCHEME_ED25519, kp->leaf_node.signature_key, MLS_SIG_PK_LEN,
         (uint64_t)time(NULL), proof);
-    if (err != MARMOT_OK) return err;
-
-    static const uint16_t supported[] = {MARMOT_COMPONENT_APP_COMPONENTS,
-                                         MARMOT_COMPONENT_ACCOUNT_PROOF_V2};
-    MlsTlsBuf app_components, safe_aad, dict, exts;
-    mls_tls_buf_init(&app_components, 16);
-    mls_tls_buf_init(&safe_aad, 4);
-    mls_tls_buf_init(&dict, 160);
-    mls_tls_buf_init(&exts, 176);
-    err = MARMOT_ERR_MEMORY;
-    if (!app_components.data || !safe_aad.data || !dict.data || !exts.data) goto out;
-    if (marmot_components_list_encode(supported, 2, &app_components) != 0 ||
-        marmot_components_list_encode(NULL, 0, &safe_aad) != 0)
-        goto out;
-    MarmotComponentData entries[3] = {
-        {MARMOT_COMPONENT_APP_COMPONENTS, app_components.data, app_components.len},
-        {MARMOT_COMPONENT_SAFE_AAD, safe_aad.data, safe_aad.len},
-        {MARMOT_COMPONENT_ACCOUNT_PROOF_V2, proof, sizeof(proof)},
-    };
-    if (marmot_app_data_dict_encode(entries, 3, &dict) != 0 ||
-        mls_tls_write_u16(&exts, MARMOT_EXT_APP_DATA_DICTIONARY) != 0 ||
-        mls_tls_write_opaque32(&exts, dict.data, dict.len) != 0)
-        goto out;
-    free(kp->leaf_node.extensions_data);
-    kp->leaf_node.extensions_data = exts.data;
-    kp->leaf_node.extensions_len = exts.len;
-    exts.data = NULL;
-    err = MARMOT_OK;
-out:
-    mls_tls_buf_free(&app_components);
-    mls_tls_buf_free(&safe_aad);
-    mls_tls_buf_free(&dict);
-    if (exts.data) mls_tls_buf_free(&exts);
+    if (err == MARMOT_OK) err = marmot_leaf_set_proof(&kp->leaf_node, proof);
     sodium_memzero(proof, sizeof(proof));
     return err;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Account binding of MDK 0.8 profile leaves (nostrc-7vyi)
+ *
+ * The kind:30443 signature binds a KeyPackage to its account only for the
+ * inviter, who sees the event. Every other member gets the bare leaf in the
+ * Commit's Add, and a joiner gets it in the Welcome's tree: they can check
+ * the binding only if the leaf carries it. So the MDK 0.8 profile leaf
+ * carries marmot.member.account-identity-proof.v2 too, and receivers require
+ * it (marmot_commit_authorize(), the Welcome join).
+ * ──────────────────────────────────────────────────────────────────────── */
+
+bool
+marmot_account_proof_lookup(const Marmot *m, const uint8_t owner[32],
+                            uint8_t out[MARMOT_ACCOUNT_PROOF_LEN])
+{
+    if (!m || !owner || !m->account_proof_ready ||
+        memcmp(m->account_proof_owner, owner, 32) != 0)
+        return false;
+    if (out) memcpy(out, m->account_proof, MARMOT_ACCOUNT_PROOF_LEN);
+    return true;
+}
+
+static void
+account_proof_remember(Marmot *m, const uint8_t owner[32],
+                       const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN])
+{
+    memcpy(m->account_proof_owner, owner, 32);
+    memcpy(m->account_proof, proof, MARMOT_ACCOUNT_PROOF_LEN);
+    m->account_proof_ready = true;
+}
+
+/* The proof on a new MDK 0.8 KeyPackage leaf: signed now with the account key
+ * or @sign_fn over the leaf's fresh key; else this instance's enrolled key
+ * and proof (marmot_set_account_proof()); else, only in legacy mode
+ * (MarmotConfig.allow_unproven_members), no proof. The leaf is signed after. */
+static MarmotError
+prove_key_package_leaf(Marmot *m, MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
+                       const uint8_t account_pk[32], const uint8_t *account_sk,
+                       MarmotAccountSignFunc sign_fn, void *sign_data)
+{
+    uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
+    MarmotError err;
+    if (account_sk || sign_fn) {
+        err = marmot_account_proof_create(account_pk, account_sk, sign_fn, sign_data,
+                                          kp->cipher_suite, MARMOT_SIGNATURE_SCHEME_ED25519,
+                                          kp->leaf_node.signature_key, MLS_SIG_PK_LEN,
+                                          (uint64_t)time(NULL), proof);
+    } else if (marmot_account_proof_lookup(m, account_pk, proof)) {
+        memcpy(kp->leaf_node.signature_key, m->ed25519_pk, MLS_SIG_PK_LEN);
+        memcpy(priv->signature_key_private, m->ed25519_sk, MLS_SIG_SK_LEN);
+        err = MARMOT_OK;
+    } else {
+        return m->config.allow_unproven_members ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+    }
+    if (err == MARMOT_OK) err = marmot_leaf_set_proof(&kp->leaf_node, proof);
+    sodium_memzero(proof, sizeof(proof));
+    return err;
+}
+
+/* With the account key at hand, also enroll this instance's leaf key once,
+ * so the groups it creates start with a proven creator leaf. */
+static MarmotError
+enroll_with_account_key(Marmot *m, const uint8_t account_pk[32], const uint8_t account_sk[32])
+{
+    if (m->account_proof_ready) return MARMOT_OK;
+    uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
+    MarmotError err = marmot_account_proof_create(account_pk, account_sk, NULL, NULL,
+                                                  MARMOT_CIPHERSUITE,
+                                                  MARMOT_SIGNATURE_SCHEME_ED25519,
+                                                  m->ed25519_pk, MLS_SIG_PK_LEN,
+                                                  (uint64_t)time(NULL), proof);
+    if (err == MARMOT_OK) account_proof_remember(m, account_pk, proof);
+    sodium_memzero(proof, sizeof(proof));
+    return err;
+}
+
+MarmotError
+marmot_account_proof_template(Marmot *m, const uint8_t account_pubkey[32],
+                              char **out_unsigned_event_json)
+{
+    if (!m || !account_pubkey || !out_unsigned_event_json) return MARMOT_ERR_INVALID_ARG;
+    *out_unsigned_event_json = NULL;
+    if (marmot_ensure_identity(m) != 0) return MARMOT_ERR_CRYPTO;
+    int64_t now = marmot_now();
+    *out_unsigned_event_json = marmot_account_proof_template_json(
+        account_pubkey, (uint64_t)(now > 0 ? now : 1), m->ed25519_pk, MLS_SIG_PK_LEN);
+    return *out_unsigned_event_json ? MARMOT_OK : MARMOT_ERR_MEMORY;
+}
+
+MarmotError
+marmot_set_account_proof(Marmot *m, const uint8_t account_pubkey[32],
+                         const char *signed_event_json)
+{
+    if (!m || !account_pubkey || !signed_event_json) return MARMOT_ERR_INVALID_ARG;
+    if (marmot_ensure_identity(m) != 0) return MARMOT_ERR_CRYPTO;
+    uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
+    MarmotError err = marmot_account_proof_from_signed(account_pubkey, m->ed25519_pk,
+                                                       MLS_SIG_PK_LEN, signed_event_json,
+                                                       proof);
+    if (err == MARMOT_OK) account_proof_remember(m, account_pubkey, proof);
+    sodium_memzero(proof, sizeof(proof));
+    return err;
+}
+
+bool
+marmot_has_account_proof(Marmot *m, const uint8_t account_pubkey[32])
+{
+    return marmot_account_proof_lookup(m, account_pubkey, NULL);
 }
 
 static MarmotError
@@ -553,11 +633,23 @@ create_key_package_common_impl(Marmot *m,
         size_t ext_len = 0;
         if (build_kp_extensions(&ext_data, &ext_len) != 0)
             return MARMOT_ERR_MEMORY;
-        int rc = mls_key_package_create(&kp, &kp_priv,
-                                         nostr_pubkey, 32,
-                                         ext_data, ext_len);
+        int rc = mls_key_package_create_unsigned(&kp, &kp_priv,
+                                                 nostr_pubkey, 32,
+                                                 ext_data, ext_len);
         free(ext_data);
         if (rc != 0) return MARMOT_ERR_MLS;
+        /* The leaf carries its account proof (nostrc-7vyi). */
+        MarmotError perr = prove_key_package_leaf(m, &kp, &kp_priv, nostr_pubkey, nostr_sk,
+                                                  account_sign, sign_data);
+        if (perr == MARMOT_OK && nostr_sk)
+            perr = enroll_with_account_key(m, nostr_pubkey, nostr_sk);
+        if (perr == MARMOT_OK && mls_key_package_sign(&kp, &kp_priv) != 0)
+            perr = MARMOT_ERR_CRYPTO;
+        if (perr != MARMOT_OK) {
+            mls_key_package_clear(&kp);
+            mls_key_package_private_clear(&kp_priv);
+            return perr;
+        }
     }
 
     /* Compute KeyPackageRef */
@@ -648,8 +740,9 @@ create_key_package_common_impl(Marmot *m,
 
     /* mls_extensions id-list tag, derived from the signed LeafNode
      * capabilities so the advertisement cannot drift from what receivers
-     * validate (nostrc-prqu.10): 0x000a last_resort, 0xf2ee
-     * marmot_group_data — the exact MDK 0.8 tag value. */
+     * validate (nostrc-prqu.10): 0x0006 app_data_dictionary (the leaf's
+     * account proof, nostrc-7vyi), 0x000a last_resort, 0xf2ee
+     * marmot_group_data. MDK 0.8 requires the last two and allows others. */
     tag = id_list_tag_new("mls_extensions", kp.leaf_node.cap_extensions,
                           kp.leaf_node.cap_extension_count);
     if (!tag) goto tag_fail;
@@ -1033,6 +1126,14 @@ marmot_validate_key_package_event(NostrEvent *event,
         goto fail_kp;
     }
 
+    /* An account proof on the leaf must verify (nostrc-7vyi). Whether one
+     * is required is the inviter's policy: see parse_key_packages(). */
+    if (marmot_leaf_proof_status(&kp_out->leaf_node, kp_out->cipher_suite) ==
+        MARMOT_LEAF_PROOF_INVALID) {
+        err = MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+        goto fail_kp;
+    }
+
     if (mls_key_package_ref(kp_out, expected_ref) != 0) {
         err = MARMOT_ERR_MLS;
         goto fail_kp;
@@ -1085,42 +1186,13 @@ validate_leaf_adopted(const MlsKeyPackage *kp)
                                   MARMOT_PROPOSAL_APP_DATA_UPDATE))
         return MARMOT_ERR_KEY_PACKAGE;
 
-    /* Exactly one LeafNode app_data_dictionary. */
-    const uint8_t *dict = NULL;
-    size_t dlen = 0, count = 0;
-    if (marmot_extensions_find(leaf->extensions_data, leaf->extensions_len,
-                               MARMOT_EXT_APP_DATA_DICTIONARY, &dict, &dlen, &count) != 0 ||
-        count != 1)
-        return MARMOT_ERR_KEY_PACKAGE;
-    MarmotComponentData *entries = NULL;
-    size_t ne = 0;
-    if (marmot_app_data_dict_parse(dict, dlen, &entries, &ne) != 0)
+    /* Exactly one LeafNode app_data_dictionary, advertising 0x8009, whose
+     * proof binds the credential identity to this leaf's signature key under
+     * the KeyPackage ciphersuite. */
+    if (marmot_leaf_proof_status(leaf, kp->cipher_suite) != MARMOT_LEAF_PROOF_VALID)
         return MARMOT_ERR_KEY_PACKAGE;
 
     MarmotError err = MARMOT_ERR_KEY_PACKAGE;
-    const MarmotComponentData *app_components = NULL, *proof = NULL;
-    for (size_t i = 0; i < ne; i++) {
-        if (entries[i].component_id == MARMOT_COMPONENT_APP_COMPONENTS)
-            app_components = &entries[i];
-        else if (entries[i].component_id == MARMOT_COMPONENT_ACCOUNT_PROOF_V2)
-            proof = &entries[i]; /* keys are unique: parse rejects repeats */
-    }
-    uint16_t *ids = NULL;
-    size_t n_ids = 0;
-    if (!app_components || !proof ||
-        marmot_components_list_decode(app_components->data, app_components->len,
-                                      &ids, &n_ids) != 0)
-        goto out;
-    if (!marmot_u16_list_contains(ids, n_ids, MARMOT_COMPONENT_ACCOUNT_PROOF_V2))
-        goto out;
-    /* The proof binds the credential identity to this leaf's signature key
-     * under the KeyPackage ciphersuite. */
-    if (leaf->credential_identity_len != 32 ||
-        marmot_account_proof_verify(proof->data, proof->len, leaf->credential_identity,
-                                    kp->cipher_suite, MARMOT_SIGNATURE_SCHEME_ED25519,
-                                    leaf->signature_key, MLS_SIG_PK_LEN) != MARMOT_OK)
-        goto out;
-
     /* KeyPackage-level extensions: the proof is invalid there; the only
      * dictionary entry we accept is the empty last-resort marker. */
     const uint8_t *kdict = NULL;
@@ -1143,8 +1215,6 @@ validate_leaf_adopted(const MlsKeyPackage *kp)
     }
     err = MARMOT_OK;
 out:
-    free(ids);
-    free(entries);
     return err;
 }
 

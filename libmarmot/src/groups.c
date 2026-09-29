@@ -230,6 +230,7 @@ extract_event_id_hex(const char *event_json)
 
 static char *
 build_welcome_rumor(const uint8_t *welcome_data, size_t welcome_len,
+                     const uint8_t sender_pubkey[32],
                      const char *kp_event_id,
                      const uint8_t nostr_group_id[32],
                      const char *group_name,
@@ -239,6 +240,8 @@ build_welcome_rumor(const uint8_t *welcome_data, size_t welcome_len,
                      const char **relay_urls, size_t relay_count)
 {
     /* Welcome rumor is a kind:444 unsigned event with:
+     * - pubkey: the sender's account (NIP-59: the seal's author). The joiner
+     *   binds the Welcome's GroupInfo signer leaf to it (nostrc-7vyi).
      * - content: base64 of the serialized MLS Welcome
      * - e tag: referencing the KeyPackage event used
      * - relays tag: where to find group messages
@@ -252,6 +255,10 @@ build_welcome_rumor(const uint8_t *welcome_data, size_t welcome_len,
     NostrEvent *event = nostr_event_new();
     if (!event) { free(b64_content); return NULL; }
 
+    char *sender_hex = marmot_hex_encode(sender_pubkey, 32);
+    if (!sender_hex) { nostr_event_free(event); free(b64_content); return NULL; }
+    nostr_event_set_pubkey(event, sender_hex);
+    free(sender_hex);
     nostr_event_set_kind(event, MARMOT_KIND_WELCOME);
     nostr_event_set_content(event, b64_content);
     nostr_event_set_created_at(event, (int64_t)time(NULL));
@@ -383,9 +390,12 @@ free_key_packages(MlsKeyPackage *kps, size_t count)
     free(kps);
 }
 
-/* `pubkeys` (optional, `count` entries) receives each KeyPackage's account. */
+/* `pubkeys` (optional, `count` entries) receives each KeyPackage's account.
+ * Every leaf must carry a valid account proof, which every member will check
+ * (nostrc-7vyi): MARMOT_ERR_KEY_PACKAGE_IDENTITY otherwise, unless legacy
+ * mode accepts one without any. */
 static MarmotError
-parse_key_packages(const char **jsons, size_t count, MlsKeyPackage **out,
+parse_key_packages(Marmot *m, const char **jsons, size_t count, MlsKeyPackage **out,
                    uint8_t (*pubkeys)[32])
 {
     *out = NULL;
@@ -393,11 +403,21 @@ parse_key_packages(const char **jsons, size_t count, MlsKeyPackage **out,
     if (!kps) return MARMOT_ERR_MEMORY;
     for (size_t i = 0; i < count; i++) {
         uint8_t member_pubkey[32];
-        if (!jsons[i] ||
-            marmot_parse_key_package_event(jsons[i], &kps[i],
-                                           pubkeys ? pubkeys[i] : member_pubkey) != 0) {
+        MarmotError err = jsons[i]
+            ? marmot_parse_key_package_event(jsons[i], &kps[i],
+                                             pubkeys ? pubkeys[i] : member_pubkey)
+            : MARMOT_ERR_VALIDATION;
+        if (err == MARMOT_OK) {
+            MarmotLeafProofStatus st = marmot_leaf_proof_status(&kps[i].leaf_node,
+                                                                kps[i].cipher_suite);
+            if (st == MARMOT_LEAF_PROOF_INVALID ||
+                (st == MARMOT_LEAF_PROOF_ABSENT && !m->config.allow_unproven_members))
+                err = MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+            if (err != MARMOT_OK) mls_key_package_clear(&kps[i]);
+        }
+        if (err != MARMOT_OK) {
             free_key_packages(kps, i);
-            return MARMOT_ERR_VALIDATION;
+            return err == MARMOT_ERR_KEY_PACKAGE_IDENTITY ? err : MARMOT_ERR_VALIDATION;
         }
     }
     *out = kps;
@@ -421,7 +441,8 @@ add_key_packages(MlsGroup *mls, const MlsKeyPackage *kps, size_t count,
  * invitee's KeyPackage event; the joiner finds its own EncryptedGroupSecrets
  * entry by KeyPackageRef). */
 static MarmotError
-build_welcome_rumors(const MlsAddResult *add, const char **kp_event_jsons,
+build_welcome_rumors(const MlsAddResult *add, const uint8_t sender_pubkey[32],
+                     const char **kp_event_jsons,
                      size_t count, const uint8_t nostr_group_id[32],
                      const char *name, const char *description,
                      const uint8_t (*admins)[32], size_t admin_count,
@@ -430,7 +451,8 @@ build_welcome_rumors(const MlsAddResult *add, const char **kp_event_jsons,
 {
     for (size_t i = 0; i < count; i++) {
         char *kp_event_id = extract_event_id_hex(kp_event_jsons[i]);
-        out[i] = build_welcome_rumor(add->welcome_data, add->welcome_len, kp_event_id,
+        out[i] = build_welcome_rumor(add->welcome_data, add->welcome_len, sender_pubkey,
+                                     kp_event_id,
                                      nostr_group_id, name, description, admins,
                                      admin_count, member_count, relay_urls, relay_count);
         free(kp_event_id);
@@ -481,16 +503,32 @@ create_group_impl(Marmot *m,
                                                   &ext_data, &ext_len);
     if (err != MARMOT_OK) return err;
 
+    /* The creator's leaf carries this instance's account proof when it is
+     * enrolled for the creator (nostrc-7vyi; marmot_set_account_proof()). */
+    uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
+    uint8_t *leaf_ext = NULL;
+    size_t leaf_ext_len = 0;
+    if (marmot_account_proof_lookup(m, creator_pubkey, proof)) {
+        err = marmot_leaf_proof_extensions(proof, &leaf_ext, &leaf_ext_len);
+        sodium_memzero(proof, sizeof(proof));
+        if (err != MARMOT_OK) {
+            free(ext_data);
+            return err;
+        }
+    }
+
     /* Create the single-member MLS group */
     MlsGroup mls_group;
     memset(&mls_group, 0, sizeof(mls_group));
 
-    int rc = mls_group_create(&mls_group,
-                               mls_group_id, 32,
-                               creator_pubkey, 32,
-                               m->ed25519_sk,
-                               ext_data, ext_len);
+    int rc = mls_group_create_with_leaf_extensions(&mls_group,
+                                                   mls_group_id, 32,
+                                                   creator_pubkey, 32,
+                                                   m->ed25519_sk,
+                                                   ext_data, ext_len,
+                                                   leaf_ext, leaf_ext_len);
     free(ext_data);
+    free(leaf_ext);
     if (rc != 0) return MARMOT_ERR_MLS;
 
     /* All invitees join through one Commit with one Add each and one
@@ -499,7 +537,7 @@ create_group_impl(Marmot *m,
     result->welcome_count = kp_count;
     if (kp_count > 0) {
         MlsKeyPackage *kps = NULL;
-        err = parse_key_packages(key_package_event_jsons, kp_count, &kps, NULL);
+        err = parse_key_packages(m, key_package_event_jsons, kp_count, &kps, NULL);
         if (err != MARMOT_OK) {
             mls_group_free(&mls_group);
             return err;
@@ -516,7 +554,8 @@ create_group_impl(Marmot *m,
                  : MARMOT_ERR_MEMORY;
         free_key_packages(kps, kp_count);
         if (rc == 0) {
-            err = build_welcome_rumors(&add_result, key_package_event_jsons, kp_count,
+            err = build_welcome_rumors(&add_result, creator_pubkey, key_package_event_jsons,
+                                       kp_count,
                                        nostr_group_id, config->name, config->description,
                                        (const uint8_t (*)[32])config->admin_pubkeys,
                                        config->admin_count, mls_group.tree.n_leaves,
@@ -894,8 +933,13 @@ add_members_impl(Marmot *m,
         err = MARMOT_ERR_MEMORY;
         goto fail;
     }
-    err = parse_key_packages(key_package_event_jsons, kp_count, &kps, recipients);
+    err = parse_key_packages(m, key_package_event_jsons, kp_count, &kps, recipients);
     if (err != MARMOT_OK) goto fail;
+    uint8_t sender[32];
+    if (get_own_credential_identity(&mls, sender) != 0) {
+        err = MARMOT_ERR_OWN_LEAF_NOT_FOUND;
+        goto fail;
+    }
 
     /* Every KeyPackage in one Commit (nostrc-wc6v). */
     if (clone_mls_group(&mls, &post) != 0) {
@@ -907,7 +951,7 @@ add_members_impl(Marmot *m,
         err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
         goto fail;
     }
-    err = build_welcome_rumors(&add, key_package_event_jsons, kp_count,
+    err = build_welcome_rumors(&add, sender, key_package_event_jsons, kp_count,
                                group->nostr_group_id, group->name, group->description,
                                (const uint8_t (*)[32])group->admin_pubkeys,
                                group->admin_count, post.tree.n_leaves, NULL, 0,

@@ -13,6 +13,7 @@
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
 #include "commits.h"
+#include "kp_profile.h"
 #include "mls/mls_group.h"
 #include "mls/mls_framing.h"
 #include "mls/mls-internal.h"
@@ -22,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK(cond, ...)                                                    \
     do {                                                                    \
@@ -479,7 +481,7 @@ self_update(Member *x, const MarmotGroupId *gid)
     CHECK(mls_group_self_update(&post, &r) == 0, "self_update");
     MarmotCommitKey key;
     MarmotGroupDataExtension *gde = NULL;
-    OK(marmot_commit_authorize(&pre, &post, pre.own_leaf_index, &key, &gde));
+    OK(marmot_commit_authorize(&pre, &post, pre.own_leaf_index, false, &key, &gde));
     CHECK(!key.privileged, "self-update must be ordinary");
     CHECK(mls_crypto_hash(key.digest, r.commit_data, r.commit_len) == 0, "hash");
     MarmotGroup *g = NULL;
@@ -1075,25 +1077,34 @@ test_authorize_pins_committer_identity(void)
     load_mls(&t.alice, &t.gid, &post);
     MarmotCommitKey key;
     MarmotGroupDataExtension *gde = NULL;
-    OK(marmot_commit_authorize(&pre, &post, 0, &key, &gde));
+    OK(marmot_commit_authorize(&pre, &post, 0, false, &key, &gde));
     marmot_group_data_extension_free(gde);
     gde = NULL;
     CHECK(!key.privileged && memcmp(key.committer, t.alice.pk, 32) == 0, "key");
 
     MlsLeafNode *leaf = &post.tree.nodes[mls_tree_leaf_to_node(0)].leaf;
     leaf->credential_identity[0] ^= 0x01;
-    CHECK(marmot_commit_authorize(&pre, &post, 0, &key, &gde) ==
+    CHECK(marmot_commit_authorize(&pre, &post, 0, false, &key, &gde) ==
           MARMOT_ERR_IDENTITY_CHANGE && !gde, "committer account changed");
     leaf->credential_identity[0] ^= 0x01;
     /* Another member's slot taken by a different account is a membership
-     * change (Remove + Add), i.e. privileged -- not an identity change. */
+     * change (Remove + Add), i.e. privileged -- not an identity change.
+     * Bob's proof does not bind the new account (nostrc-7vyi) ... */
     MlsLeafNode *bob_leaf = &post.tree.nodes[mls_tree_leaf_to_node(1)].leaf;
     bob_leaf->credential_identity[0] ^= 0x01;
-    OK(marmot_commit_authorize(&pre, &post, 0, &key, &gde));
+    CHECK(marmot_commit_authorize(&pre, &post, 0, true, &key, &gde) ==
+          MARMOT_ERR_KEY_PACKAGE_IDENTITY && !gde, "Bob's proof on another account's leaf");
+    /* ... and without any, only legacy mode takes it. */
+    free(bob_leaf->extensions_data);
+    bob_leaf->extensions_data = NULL;
+    bob_leaf->extensions_len = 0;
+    CHECK(marmot_commit_authorize(&pre, &post, 0, false, &key, &gde) ==
+          MARMOT_ERR_KEY_PACKAGE_IDENTITY && !gde, "an unproven account in Bob's slot");
+    OK(marmot_commit_authorize(&pre, &post, 0, true, &key, &gde));
     CHECK(key.privileged, "reused slot must be privileged");
     marmot_group_data_extension_free(gde);
     gde = NULL;
-    CHECK(marmot_commit_authorize(&pre, &post, 2, &key, &gde) ==
+    CHECK(marmot_commit_authorize(&pre, &post, 2, true, &key, &gde) ==
           MARMOT_ERR_COMMIT_FROM_NON_ADMIN && !gde, "non-admin membership change");
     mls_group_free(&pre);
     mls_group_free(&post);
@@ -2584,6 +2595,588 @@ test_sends_use_distinct_generations(void)
     trio_clear(&t);
 }
 
+/* ── Member identity binding (nostrc-7vyi) ─────────────────────────────── */
+
+/* credentials.c (internal) */
+extern MarmotError marmot_parse_key_package_event(const char *event_json, MlsKeyPackage *kp_out,
+                                                  uint8_t nostr_pubkey_out[32]);
+extern MarmotError marmot_validate_key_package_event(NostrEvent *event, MlsKeyPackage *kp_out,
+                                                     uint8_t nostr_pubkey_out[32]);
+
+static void
+groups_free(MarmotGroup **groups, size_t n)
+{
+    for (size_t i = 0; i < n; i++) marmot_group_free(groups[i]);
+    free(groups);
+}
+
+typedef enum {
+    LEAF_NO_PROOF,        /* the shape of every leaf before 0.10.0 */
+    LEAF_PROOF_BY_OTHER,  /* a proof the forger signed with its own account */
+    LEAF_REPLAYED_PROOF,  /* the victim's genuine proof, over another key */
+    LEAF_GENUINE,         /* the account's own proof over this leaf's key */
+} LeafProof;
+
+/* A KeyPackage whose leaf claims `identity`, with a fresh MLS signature key
+ * (the forger's), carrying the proof `mode` says.  `owner_sk` is the
+ * identity's secret key (LEAF_GENUINE, LEAF_REPLAYED_PROOF); `forger` signs
+ * LEAF_PROOF_BY_OTHER. */
+static void
+leaf_key_package(const uint8_t identity[32], const uint8_t *owner_sk, const Member *forger,
+                 LeafProof mode, MlsKeyPackage *kp, MlsKeyPackagePrivate *priv)
+{
+    CHECK(mls_key_package_create_unsigned(kp, priv, identity, 32, NULL, 0) == 0, "KeyPackage");
+    uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
+    uint64_t now = (uint64_t)time(NULL);
+    switch (mode) {
+    case LEAF_NO_PROOF:
+        break;
+    case LEAF_PROOF_BY_OTHER:
+        CHECK(marmot_account_proof_create(forger->pk, forger->sk, NULL, NULL, MARMOT_CIPHERSUITE,
+                                          MARMOT_SIGNATURE_SCHEME_ED25519,
+                                          kp->leaf_node.signature_key, MLS_SIG_PK_LEN, now,
+                                          proof) == MARMOT_OK, "forger's proof");
+        CHECK(marmot_leaf_set_proof(&kp->leaf_node, proof) == MARMOT_OK, "set proof");
+        break;
+    case LEAF_REPLAYED_PROOF: {
+        /* The victim's real proof, as anyone can read it from a KeyPackage
+         * the victim published: it signs the victim's own leaf key. */
+        uint8_t victim_key[MLS_SIG_PK_LEN];
+        randombytes_buf(victim_key, sizeof(victim_key));
+        CHECK(marmot_account_proof_create(identity, owner_sk, NULL, NULL, MARMOT_CIPHERSUITE,
+                                          MARMOT_SIGNATURE_SCHEME_ED25519, victim_key,
+                                          MLS_SIG_PK_LEN, now, proof) == MARMOT_OK,
+              "victim's proof");
+        CHECK(marmot_leaf_set_proof(&kp->leaf_node, proof) == MARMOT_OK, "set proof");
+        break;
+    }
+    case LEAF_GENUINE:
+        CHECK(marmot_account_proof_create(identity, owner_sk, NULL, NULL, MARMOT_CIPHERSUITE,
+                                          MARMOT_SIGNATURE_SCHEME_ED25519,
+                                          kp->leaf_node.signature_key, MLS_SIG_PK_LEN, now,
+                                          proof) == MARMOT_OK, "genuine proof");
+        CHECK(marmot_leaf_set_proof(&kp->leaf_node, proof) == MARMOT_OK, "set proof");
+        break;
+    }
+    CHECK(mls_key_package_sign(kp, priv) == 0, "sign KeyPackage");
+    MarmotLeafProofStatus want = mode == LEAF_GENUINE    ? MARMOT_LEAF_PROOF_VALID
+                                 : mode == LEAF_NO_PROOF ? MARMOT_LEAF_PROOF_ABSENT
+                                                         : MARMOT_LEAF_PROOF_INVALID;
+    CHECK(marmot_leaf_proof_status(&kp->leaf_node, MARMOT_CIPHERSUITE) == want,
+          "leaf proof status %d", (int)mode);
+}
+
+/* The Add Commit `x`'s own (modified) client makes for `kp`, never applied. */
+static char *
+forge_add_commit(Member *x, const MarmotGroupId *gid, const MlsKeyPackage *kp,
+                 const uint8_t nostr_gid[32])
+{
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    uint8_t exporter[32];
+    memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_member(&g, kp, &add) == 0, "MLS Add");
+    char *json = marmot_commit_build_event(add.commit_data, add.commit_len, exporter,
+                                           nostr_gid);
+    CHECK(json, "Commit event");
+    mls_add_result_clear(&add);
+    mls_group_free(&g);
+    sodium_memzero(exporter, sizeof(exporter));
+    return json;
+}
+
+/* The reviewer's F2: a malicious admin adds a leaf that claims another
+ * account, to post as it.  Every other member rejects the Commit, and
+ * nothing changes; honest Adds carry the account's proof and pass. */
+static void
+test_forged_member_identity_rejected(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member victor;
+    member_init(&victor, "Victor");   /* the impersonated account, not a member */
+
+    /* 1. The API refuses a KeyPackage without the proof (an unproven event
+     *    that is otherwise valid: signed by its own account). */
+    {
+        MarmotConfig legacy = marmot_config_default();
+        legacy.allow_unproven_members = true;
+        Marmot *old = marmot_new_with_config(marmot_storage_memory_new(), &legacy);
+        CHECK(old, "legacy instance");
+        MarmotKeyPackageResult r;
+        memset(&r, 0, sizeof(r));
+        OK(marmot_create_key_package_unsigned(old, victor.pk, NULL, 0, &r));
+        NostrEvent *ev = nostr_event_new();
+        char *sk_hex = marmot_hex_encode(victor.sk, 32);
+        CHECK(ev && sk_hex && nostr_event_deserialize_compact(ev, r.event_json, NULL) &&
+              nostr_event_sign(ev, sk_hex) == 0, "sign the unproven KeyPackage");
+        char *unproven = nostr_event_serialize_compact(ev);
+        const char *kps[] = { unproven };
+        char **welcomes = NULL;
+        size_t n = 0;
+        char *commit = NULL;
+        MarmotError err = marmot_add_members(t.alice.m, &t.gid, kps, 1, &welcomes, &n, &commit);
+        CHECK(err == MARMOT_ERR_KEY_PACKAGE_IDENTITY && !commit && !welcomes,
+              "add_members with an unproven KeyPackage: %d", err);
+        bool pending = true;
+        char *pending_json = NULL;
+        OK(marmot_get_pending_commit(t.alice.m, &t.gid, &pending_json, &pending));
+        CHECK(pending_json == NULL, "nothing pending");
+        /* Group creation applies its Commit at once: the inviter's own
+         * check is all there is before the Welcome goes out. */
+        MarmotGroupConfig cfg = {0};
+        cfg.name = "With Victor";
+        MarmotCreateGroupResult cg;
+        memset(&cg, 0, sizeof(cg));
+        err = marmot_create_group(t.alice.m, t.alice.pk, kps, 1, &cfg, &cg);
+        CHECK(err == MARMOT_ERR_KEY_PACKAGE_IDENTITY && !cg.group && !cg.welcome_rumor_jsons,
+              "create_group with an unproven KeyPackage: %d", err);
+        free(unproven);
+        free(sk_hex);
+        nostr_event_free(ev);
+        marmot_key_package_result_free(&r);
+        marmot_free(old);
+    }
+
+    /* 2. A modified client builds the Adds anyway: every other member drops
+     *    them, whatever the leaf carries. */
+    struct {
+        const char   *what;
+        const uint8_t *claimed;
+        LeafProof     mode;
+    } cases[] = {
+        { "Victor, no proof", victor.pk, LEAF_NO_PROOF },
+        { "Victor, a proof Alice signed", victor.pk, LEAF_PROOF_BY_OTHER },
+        { "Victor, his published proof over Alice's key", victor.pk, LEAF_REPLAYED_PROOF },
+        { "a second Charlie, no proof", t.charlie.pk, LEAF_NO_PROOF },
+        { "a second Charlie, his proof over Alice's key", t.charlie.pk, LEAF_REPLAYED_PROOF },
+    };
+    char *forged[5] = { NULL };
+    for (size_t i = 0; i < 5; i++) {
+        const uint8_t *owner_sk = cases[i].claimed == victor.pk ? victor.sk : t.charlie.sk;
+        MlsKeyPackage kp;
+        MlsKeyPackagePrivate priv;
+        leaf_key_package(cases[i].claimed, owner_sk, &t.alice, cases[i].mode, &kp, &priv);
+        forged[i] = forge_add_commit(&t.alice, &t.gid, &kp, t.nostr_gid);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&priv);
+        expect_rejected(&t.bob, &t.gid, forged[i], MARMOT_ERR_KEY_PACKAGE_IDENTITY, cases[i].what);
+        expect_rejected(&t.charlie, &t.gid, forged[i], MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                        cases[i].what);
+    }
+
+    /* 3. A member's Commit may not drop the proof from its own leaf: the
+     *    transition as authorization sees it, Bob's leaf replaced by a
+     *    (re-signed) one without the proof.  Not even in legacy mode. */
+    {
+        MlsGroup pre, post;
+        load_mls(&t.alice, &t.gid, &pre);
+        load_mls(&t.alice, &t.gid, &post);
+        uint32_t bob_leaf = UINT32_MAX;
+        uint8_t id[32];
+        for (uint32_t i = 0; i < post.tree.n_leaves; i++)
+            if (marmot_mls_sender_identity(&post, i, id) == 0 && memcmp(id, t.bob.pk, 32) == 0)
+                bob_leaf = i;
+        CHECK(bob_leaf != UINT32_MAX, "Bob's leaf");
+        MlsLeafNode *leaf = &post.tree.nodes[mls_tree_leaf_to_node(bob_leaf)].leaf;
+        CHECK(marmot_leaf_proof_status(leaf, MARMOT_CIPHERSUITE) == MARMOT_LEAF_PROOF_VALID,
+              "Bob's leaf carries his proof");
+        free(leaf->extensions_data);
+        leaf->extensions_data = NULL;
+        leaf->extensions_len = 0;
+        leaf->signature[0] ^= 1;
+        MarmotCommitKey key;
+        MarmotGroupDataExtension *gde = NULL;
+        CHECK(marmot_commit_authorize(&pre, &post, bob_leaf, false, &key, &gde) ==
+                  MARMOT_ERR_KEY_PACKAGE_IDENTITY && !gde, "Bob drops his proof");
+        CHECK(marmot_commit_authorize(&pre, &post, bob_leaf, true, &key, &gde) ==
+                  MARMOT_ERR_KEY_PACKAGE_IDENTITY && !gde, "Bob drops his proof (legacy mode)");
+        mls_group_free(&post);
+        mls_group_free(&pre);
+    }
+
+    /* 4. Honest Commits pass: a member's UpdatePath keeps its proof, and
+     *    Victor's own KeyPackage admits him; he then posts as himself. */
+    char *renamed = rename_group(&t.bob, &t.gid, "Still bound");
+    expect_commit(&t.alice, renamed, "Bob's rename (UpdatePath keeps his proof)");
+    expect_commit(&t.charlie, renamed, "Bob's rename (UpdatePath keeps his proof)");
+    char *victor_kp = key_package(&victor);
+    const char *kps[] = { victor_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &welcomes, &n, &add));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, add, "Victor's genuine Add");
+    expect_commit(&t.charlie, add, "Victor's genuine Add");
+    join(&victor, welcomes[0]);
+    Member *four[] = { &t.alice, &t.bob, &t.charlie, &victor };
+    expect_messages_flow(four, 4, &t.gid);
+
+    /* 5. Legacy mode (MarmotConfig.allow_unproven_members) takes a leaf
+     *    without any proof -- the pre-0.10.0 behaviour this fixes -- but
+     *    never one whose proof does not verify. */
+    t.charlie.m->config.allow_unproven_members = true;
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(t.bob.pk, t.bob.sk, &t.alice, LEAF_REPLAYED_PROOF, &kp, &priv);
+    char *bad = forge_add_commit(&t.alice, &t.gid, &kp, t.nostr_gid);
+    expect_rejected(&t.charlie, &t.gid, bad, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                    "legacy mode, a replayed proof");
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    leaf_key_package(t.bob.pk, NULL, &t.alice, LEAF_NO_PROOF, &kp, &priv);
+    char *bare = forge_add_commit(&t.alice, &t.gid, &kp, t.nostr_gid);
+    expect_commit(&t.charlie, bare, "legacy mode, no proof");
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+
+    free(bare);
+    free(bad);
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    free(victor_kp);
+    free(renamed);
+    for (size_t i = 0; i < 5; i++) free(forged[i]);
+    marmot_free(victor.m);
+    trio_clear(&t);
+}
+
+/* A kind:444 rumor for Mallory's Welcome: she built the group herself with
+ * her own (modified) client, her leaf credential naming `creator`, and adds
+ * `other` and the joiner's genuine KeyPackage `joiner_kp` in one Commit.
+ * `author` is the rumor's pubkey (the NIP-59 seal's, in real delivery). */
+static char *
+mallory_welcome(const uint8_t creator[32], const MlsKeyPackage *other,
+                const MlsKeyPackage *joiner_kp, const uint8_t author[32])
+{
+    MarmotGroupDataExtension *gde = marmot_group_data_extension_new();
+    CHECK(gde, "GroupData");
+    gde->version = MARMOT_EXTENSION_VERSION;
+    randombytes_buf(gde->nostr_group_id, 32);
+    gde->name = strdup("Mallory's");
+    uint8_t *bytes = NULL;
+    size_t len = 0;
+    CHECK(marmot_group_data_extension_serialize(gde, &bytes, &len) == 0, "serialize");
+    marmot_group_data_extension_free(gde);
+    MlsTlsBuf ext;
+    CHECK(mls_tls_buf_init(&ext, len + 8) == 0 &&
+          mls_tls_write_u16(&ext, MARMOT_EXTENSION_TYPE) == 0 &&
+          mls_tls_write_opaque16(&ext, bytes, len) == 0, "extension list");
+    free(bytes);
+
+    uint8_t gid[32], sig_sk[MLS_SIG_SK_LEN], sig_pk[MLS_SIG_PK_LEN];
+    randombytes_buf(gid, sizeof(gid));
+    CHECK(mls_crypto_sign_keygen(sig_sk, sig_pk) == 0, "Mallory's leaf key");
+    MlsGroup g;
+    CHECK(mls_group_create(&g, gid, 32, creator, 32, sig_sk, ext.data, ext.len) == 0,
+          "Mallory's group");
+    mls_tls_buf_free(&ext);
+    sodium_memzero(sig_sk, sizeof(sig_sk));
+    const MlsKeyPackage *kps[] = { other, joiner_kp };
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_members(&g, kps, 2, &add) == 0, "Mallory's Add");
+
+    size_t b64_len = sodium_base64_ENCODED_LEN(add.welcome_len, sodium_base64_VARIANT_ORIGINAL);
+    char *b64 = malloc(b64_len);
+    CHECK(b64, "base64");
+    sodium_bin2base64(b64, b64_len, add.welcome_data, add.welcome_len,
+                      sodium_base64_VARIANT_ORIGINAL);
+    char *author_hex = marmot_hex_encode(author, 32);
+    size_t cap = strlen(b64) + 256;
+    char *rumor = malloc(cap);
+    CHECK(author_hex && rumor, "rumor");
+    snprintf(rumor, cap,
+             "{\"pubkey\":\"%s\",\"created_at\":%lld,\"kind\":444,"
+             "\"tags\":[[\"encoding\",\"base64\"]],\"content\":\"%s\"}",
+             author_hex, (long long)time(NULL), b64);
+    free(author_hex);
+    free(b64);
+    mls_add_result_clear(&add);
+    mls_group_free(&g);
+    return rumor;
+}
+
+/* The joiner's own KeyPackage, as mls_group_add_members() takes it. */
+static void
+own_key_package(Member *x, MlsKeyPackage *kp)
+{
+    char *json = key_package(x);
+    uint8_t owner[32];
+    OK(marmot_parse_key_package_event(json, kp, owner));
+    free(json);
+}
+
+/* Bob tries to join through `rumor`: `want` is the outcome; on failure
+ * nothing of the group may be stored.  `forget_sender` models a storage
+ * backend that keeps only the rumor (nostrdb): the record loses welcomer. */
+static void
+expect_join_ex(Member *x, const char *rumor, MarmotError want, const char *what,
+               bool forget_sender)
+{
+    uint8_t wrapper[32];
+    randombytes_buf(wrapper, sizeof(wrapper));
+    MarmotWelcome *w = NULL;
+    OK(marmot_process_welcome(x->m, wrapper, rumor, &w));
+    if (forget_sender) memset(w->welcomer, 0, sizeof(w->welcomer));
+    MarmotGroup **before = NULL;
+    size_t n_before = 0;
+    OK(marmot_get_all_groups(x->m, &before, &n_before));
+    MarmotError err = marmot_accept_welcome(x->m, w);
+    CHECK(err == want, "%s: %s got %d (%s), want %d", what, x->name, err,
+          marmot_error_string(err), want);
+    MarmotGroup **after = NULL;
+    size_t n_after = 0;
+    OK(marmot_get_all_groups(x->m, &after, &n_after));
+    CHECK(n_after == n_before + (want == MARMOT_OK ? 1 : 0),
+          "%s: %s has %zu groups, had %zu", what, x->name, n_after, n_before);
+    groups_free(before, n_before);
+    groups_free(after, n_after);
+    marmot_welcome_free(w);
+}
+
+static void
+expect_join(Member *x, const char *rumor, MarmotError want, const char *what)
+{
+    expect_join_ex(x, rumor, want, what, false);
+}
+
+/* A Welcome whose tree holds a leaf claiming another account is rejected by
+ * the joiner, which stores nothing of the group (joining.md steps 5-6).  The
+ * Welcome's own author may lack a proof: the seal binds it. */
+static void
+test_welcome_with_forged_member_rejected(void)
+{
+    Member mallory, alice, bob;
+    member_init(&mallory, "Mallory");
+    member_init(&alice, "Alice");
+    member_init(&bob, "Bob");
+    MlsKeyPackage bob_kp, other;
+    MlsKeyPackagePrivate other_priv;
+    own_key_package(&bob, &bob_kp);
+
+    struct {
+        const char *what;
+        LeafProof   mode;
+    } forged[] = {
+        { "Alice's leaf without a proof", LEAF_NO_PROOF },
+        { "Alice's leaf with a proof Mallory signed", LEAF_PROOF_BY_OTHER },
+        { "Alice's leaf with her published proof over Mallory's key", LEAF_REPLAYED_PROOF },
+    };
+    for (size_t i = 0; i < 3; i++) {
+        leaf_key_package(alice.pk, alice.sk, &mallory, forged[i].mode, &other, &other_priv);
+        char *rumor = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+        expect_join(&bob, rumor, MARMOT_ERR_KEY_PACKAGE_IDENTITY, forged[i].what);
+        free(rumor);
+        mls_key_package_clear(&other);
+        mls_key_package_private_clear(&other_priv);
+    }
+
+    /* The GroupInfo signer is unproven, so it must be the Welcome's sender. */
+    leaf_key_package(alice.pk, alice.sk, &mallory, LEAF_GENUINE, &other, &other_priv);
+    char *claims_alice = mallory_welcome(alice.pk, &other, &bob_kp, mallory.pk);
+    expect_join(&bob, claims_alice, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                "Mallory's leaf claims Alice");
+    char *sent_as_alice = mallory_welcome(mallory.pk, &other, &bob_kp, alice.pk);
+    expect_join(&bob, sent_as_alice, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                "Welcome says Alice sent it; Mallory signed the GroupInfo");
+
+    /* Genuine: Alice's own proof, Mallory the sender -- also when the
+     * stored record lost the sender (it is read from the rumor). */
+    char *genuine = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    expect_join(&bob, genuine, MARMOT_OK, "every leaf bound");
+    char *genuine2 = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    expect_join_ex(&bob, genuine2, MARMOT_OK, "sender read from the stored rumor", true);
+    free(genuine2);
+    mls_key_package_clear(&other);
+    mls_key_package_private_clear(&other_priv);
+
+    /* Legacy mode takes a leaf without a proof, never a bad proof. */
+    bob.m->config.allow_unproven_members = true;
+    leaf_key_package(alice.pk, alice.sk, &mallory, LEAF_REPLAYED_PROOF, &other, &other_priv);
+    char *replayed = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    expect_join(&bob, replayed, MARMOT_ERR_KEY_PACKAGE_IDENTITY, "legacy mode, replayed proof");
+    mls_key_package_clear(&other);
+    mls_key_package_private_clear(&other_priv);
+    leaf_key_package(alice.pk, NULL, &mallory, LEAF_NO_PROOF, &other, &other_priv);
+    char *bare = mallory_welcome(mallory.pk, &other, &bob_kp, mallory.pk);
+    expect_join(&bob, bare, MARMOT_OK, "legacy mode, no proof");
+    mls_key_package_clear(&other);
+    mls_key_package_private_clear(&other_priv);
+
+    free(bare);
+    free(replayed);
+    free(genuine);
+    free(sent_as_alice);
+    free(claims_alice);
+    mls_key_package_clear(&bob_kp);
+    marmot_free(mallory.m);
+    marmot_free(alice.m);
+    marmot_free(bob.m);
+}
+
+/* marmot_account_proof_template() + marmot_set_account_proof(): what a
+ * signer-only client (Gnostr) does to prove its leaves; the created group's
+ * creator leaf then admits members added by another admin. */
+static void
+test_account_proof_enrollment(void)
+{
+    Member alice, bob, charlie;
+    member_init(&alice, "Alice");
+    member_init(&bob, "Bob");
+    member_init(&charlie, "Charlie");
+
+    /* Without enrollment, a signer-only KeyPackage would carry no proof. */
+    MarmotKeyPackageResult r;
+    memset(&r, 0, sizeof(r));
+    CHECK(marmot_create_key_package_unsigned(alice.m, alice.pk, NULL, 0, &r) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY && !r.event_json,
+          "unsigned KeyPackage before enrollment");
+    CHECK(!marmot_has_account_proof(alice.m, alice.pk), "not enrolled");
+
+    /* Enroll: sign the template with the account key, as a signer would. */
+    char *tmpl = NULL;
+    OK(marmot_account_proof_template(alice.m, alice.pk, &tmpl));
+    char *sk_hex = marmot_hex_encode(alice.sk, 32);
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && sk_hex && nostr_event_deserialize_compact(ev, tmpl, NULL) &&
+          ev->kind == 450 && nostr_event_sign(ev, sk_hex) == 0, "sign template");
+    char *signed_json = nostr_event_serialize_compact(ev);
+    /* Signed by another account, or a changed field: refused. */
+    char *bob_hex = marmot_hex_encode(bob.sk, 32);
+    NostrEvent *wrong = nostr_event_new();
+    CHECK(wrong && nostr_event_deserialize_compact(wrong, tmpl, NULL) &&
+          nostr_event_sign(wrong, bob_hex) == 0, "sign as Bob");
+    char *wrong_json = nostr_event_serialize_compact(wrong);
+    CHECK(marmot_set_account_proof(alice.m, alice.pk, wrong_json) == MARMOT_ERR_VALIDATION,
+          "Bob's signature");
+    char *edited = strdup(signed_json);
+    char *c = strstr(edited, "Authorize");
+    CHECK(c, "content");
+    c[0] = 'a';
+    CHECK(marmot_set_account_proof(alice.m, alice.pk, edited) == MARMOT_ERR_VALIDATION,
+          "edited content");
+    CHECK(!marmot_has_account_proof(alice.m, alice.pk), "still not enrolled");
+    OK(marmot_set_account_proof(alice.m, alice.pk, signed_json));
+    CHECK(marmot_has_account_proof(alice.m, alice.pk), "enrolled");
+
+    /* Now the signer-only KeyPackage carries it... */
+    OK(marmot_create_key_package_unsigned(alice.m, alice.pk, NULL, 0, &r));
+    NostrEvent *kpev = nostr_event_new();
+    MlsKeyPackage kp;
+    CHECK(kpev && nostr_event_deserialize_compact(kpev, r.event_json, NULL) &&
+          marmot_validate_key_package_event(kpev, &kp, NULL) == MARMOT_OK, "validate");
+    CHECK(marmot_leaf_proof_status(&kp.leaf_node, MARMOT_CIPHERSUITE) ==
+              MARMOT_LEAF_PROOF_VALID, "the unsigned KeyPackage's leaf is proven");
+    mls_key_package_clear(&kp);
+    nostr_event_free(kpev);
+    marmot_key_package_result_free(&r);
+
+    /* ...and so does the leaf of a group Alice creates: Bob (an admin) can
+     * admit Charlie, who accepts Alice's leaf although Bob sent him the
+     * Welcome. */
+    char *bob_kp = key_package(&bob);
+    const char *kps[] = { bob_kp };
+    uint8_t admins[2][32];
+    memcpy(admins[0], alice.pk, 32);
+    memcpy(admins[1], bob.pk, 32);
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Enrolled";
+    cfg.admin_pubkeys = admins;
+    cfg.admin_count = 2;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+    char *charlie_kp = key_package(&charlie);
+    const char *kps2[] = { charlie_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(bob.m, &gid, kps2, 1, &welcomes, &n, &add));
+    merge(&bob, &gid);
+    expect_commit(&alice, add, "Bob adds Charlie");
+    join(&charlie, welcomes[0]);
+    Member *all[] = { &alice, &bob, &charlie };
+    expect_messages_flow(all, 3, &gid);
+
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    free(charlie_kp);
+    free(bob_kp);
+    marmot_group_id_free(&gid);
+    free(edited);
+    free(wrong_json);
+    nostr_event_free(wrong);
+    free(bob_hex);
+    free(signed_json);
+    nostr_event_free(ev);
+    free(sk_hex);
+    free(tmpl);
+    marmot_free(alice.m);
+    marmot_free(bob.m);
+    marmot_free(charlie.m);
+}
+
+/* A group whose creator never enrolled (as Groundhog's tests create them)
+ * still works through the creator: joiners accept its unproven leaf in the
+ * Welcomes it sends itself, and refuse it in another admin's. */
+static void
+test_unproven_creator_admits_through_itself(void)
+{
+    Member alice, bob, charlie;
+    member_init(&alice, "Alice");
+    member_init(&bob, "Bob");
+    member_init(&charlie, "Charlie");
+    char *bob_kp = key_package(&bob);
+    const char *kps[] = { bob_kp };
+    uint8_t admins[2][32];
+    memcpy(admins[0], alice.pk, 32);
+    memcpy(admins[1], bob.pk, 32);
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Unproven creator";
+    cfg.admin_pubkeys = admins;
+    cfg.admin_count = 2;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    CHECK(!marmot_has_account_proof(alice.m, alice.pk), "Alice never enrolled");
+    OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+
+    /* Bob admits Charlie: Alice's leaf has no proof, and Bob sent it. */
+    char *charlie_kp = key_package(&charlie);
+    const char *kps2[] = { charlie_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(bob.m, &gid, kps2, 1, &welcomes, &n, &add));
+    merge(&bob, &gid);
+    expect_commit(&alice, add, "Bob adds Charlie");
+    expect_join(&charlie, welcomes[0], MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                "Alice's unproven leaf in Bob's Welcome");
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    free(charlie_kp);
+
+    marmot_group_id_free(&gid);
+    free(bob_kp);
+    marmot_free(alice.m);
+    marmot_free(bob.m);
+    marmot_free(charlie.m);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2618,6 +3211,10 @@ main(int argc, char **argv)
     RUN(test_late_messages_use_retained_parent);
     RUN(test_operations_run_in_one_transaction);
     RUN(test_send_stores_step_before_event);
+    RUN(test_forged_member_identity_rejected);
+    RUN(test_welcome_with_forged_member_rejected);
+    RUN(test_account_proof_enrollment);
+    RUN(test_unproven_creator_admits_through_itself);
     printf("All commit tests passed\n");
     return 0;
 }

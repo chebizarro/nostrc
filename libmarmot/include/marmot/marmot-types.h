@@ -152,6 +152,18 @@ typedef struct {
      * Default: false
      */
     bool allow_legacy_raw_messages;
+
+    /**
+     * Accept member leaves that carry no account-identity proof
+     * (marmot.member.account-identity-proof.v2): KeyPackages and added
+     * members from MDK 0.8 or libmarmot before 0.10.0, and such leaves in a
+     * Welcome's tree. Disabled by default: without the proof nothing binds a
+     * leaf's credential to its Nostr account, so an admin could add a leaf
+     * claiming any account and post as it (nostrc-7vyi). A proof that is
+     * present but does not verify is rejected either way.
+     * Default: false
+     */
+    bool allow_unproven_members;
 } MarmotConfig;
 
 /**

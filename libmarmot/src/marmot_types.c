@@ -78,6 +78,7 @@ marmot_config_default(void)
         .epoch_snapshot_retention = 5,
         .snapshot_ttl_seconds    = 604800,     /* 1 week */
         .allow_legacy_raw_messages = false,
+        .allow_unproven_members = false,
     };
 }
 

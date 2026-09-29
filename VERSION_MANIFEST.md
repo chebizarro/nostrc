@@ -15,8 +15,8 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.9.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
-| marmot-gobject | `marmot-gobject/` | 1.3.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
+| libmarmot | `libmarmot/` | 0.10.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| marmot-gobject | `marmot-gobject/` | 1.4.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.11.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
@@ -85,6 +85,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.3.0 | No bump: no source, API or ABI change. It links libmarmot statically: its next release embeds 0.9.0 and must carry the wire note (upgrade whole groups together). `send_message_async` now fails with `MARMOT_ERR_AUTHOR_MISMATCH` for an inner event authored by another key, and `process_message_async` for a forged author. |
 | same | gnostr | 0.1.0 | No bump (unreleased): rebuild only. The mls-groups plugin already sets the inner pubkey to the account its KeyPackages and groups use. |
 | same | groundhog | 0.11.0 | No bump: documentation in `gh-store-marmot.h`/`gh-mls-commits.h` (review N1: publish only after the outer transaction commits); the application does not send libmarmot messages yet (qp24.13). |
+| libmarmot 0.9.0 -> 0.10.0 (MINOR, security: every member leaf carries marmot.member.account-identity-proof.v2 in a LeafNode app_data_dictionary, and receivers require it on each Commit's added or re-filled leaves and on every Welcome-tree leaf except their own and the Welcome sender's; account-proof enrollment API; Welcome rumors carry the sender's pubkey; `MarmotConfig.allow_unproven_members` legacy opt-in; nostrc-7vyi) | libmarmot | 0.10.0 | MINOR bump: 0.x wire change (KeyPackage leaves carry the proof, `mls_extensions` adds 0x0006; 0.10.0 refuses unproven KeyPackages, Adds and Welcome-tree leaves from MDK 0.8 and libmarmot <= 0.9.0 unless in legacy mode), new public API (`marmot_account_proof_template()`, `marmot_set_account_proof()`, `marmot_has_account_proof()`), ABI change (`MarmotConfig` grows) and a security fix (an admin could add a leaf claiming another account and post as it). State format unchanged. Advisory and compatibility notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.4.0 | MINOR bump: new `marmot_gobject_client_get_account_proof_template()`, `_set_account_proof()` and `_has_account_proof()` (backward compatible). `create_key_package_unsigned_async` now fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY` until the client is enrolled. |
+| same | gnostr | 0.1.0 | No bump (unreleased): the mls-groups KeyPackage manager enrolls the account proof (one kind:450 signing request through the signer, never published) before its first KeyPackage. Welcome rumors from libmarmot now carry the pubkey that Gnostr's NIP-59 unwrap requires. |
+| same | groundhog | 0.11.0 | No bump: rebuild only, no source change. Groundhog's tests create groups without an account proof and admit members only through the creator, whose leaf the Welcome's sender rule accepts. |
 
 ## Maintenance
 

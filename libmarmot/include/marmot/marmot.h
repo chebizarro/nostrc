@@ -129,6 +129,12 @@ void marmot_free(Marmot *m);
  * `mls_ciphersuite`, `mls_extensions`, `mls_proposals`, `relays` (only when
  * @relay_count > 0), `i` (KeyPackageRef) and `encoding` = `base64`.
  *
+ * Since 0.10.0 the LeafNode also carries marmot.member.account-identity-proof.v2
+ * (a LeafNode app_data_dictionary; `mls_extensions` adds `0x0006`), signed
+ * with @nostr_sk over the leaf's MLS signature key. Other members accept the
+ * leaf only with it (nostrc-7vyi). With @nostr_sk at hand this call also
+ * enrolls the instance once, as marmot_set_account_proof() would.
+ *
  * Returns: MARMOT_OK on success
  */
 MarmotError marmot_create_key_package(Marmot *m,
@@ -153,12 +159,79 @@ MarmotError marmot_create_key_package(Marmot *m,
  * This is the preferred API for signer-only architectures where the caller
  * delegates Nostr event signing to an external service (e.g., D-Bus signer).
  *
- * Returns: MARMOT_OK on success
+ * The LeafNode needs an account-identity proof (nostrc-7vyi), which this
+ * call cannot sign: enroll the instance first (marmot_account_proof_template(),
+ * sign, marmot_set_account_proof()). The KeyPackage then uses the enrolled
+ * MLS signature key and its proof.
+ *
+ * Returns: MARMOT_OK on success; MARMOT_ERR_KEY_PACKAGE_IDENTITY when the
+ *   instance holds no account proof for @nostr_pubkey (unless
+ *   MarmotConfig.allow_unproven_members, which yields a legacy KeyPackage
+ *   without one)
  */
 MarmotError marmot_create_key_package_unsigned(Marmot *m,
                                                 const uint8_t nostr_pubkey[32],
                                                 const char **relay_urls, size_t relay_count,
                                                 MarmotKeyPackageResult *result);
+
+/**
+ * marmot_account_proof_template:
+ * @m: Marmot instance
+ * @account_pubkey: (array fixed-size=32): the account's Nostr public key
+ * @out_unsigned_event_json: (out) (transfer full): the unsigned kind:450
+ *   signing template (free() it)
+ *
+ * Enrollment, step 1 (nostrc-7vyi). A Marmot member leaf must carry
+ * marmot.member.account-identity-proof.v2: the account's signature over the
+ * leaf's MLS signature key (app-components/account-identity-proof-v2.md).
+ * This returns the proof's signing template for this instance's MLS
+ * signature key, created now. Sign it with the account key (e.g.
+ * org.nostr.Signer.SignEvent) and pass the signed event to
+ * marmot_set_account_proof(). The template is local-only: never publish it.
+ *
+ * The instance key is generated per Marmot instance and not stored, so
+ * enroll again after every marmot_new().
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; MARMOT_ERR_CRYPTO or
+ *   MARMOT_ERR_MEMORY
+ */
+MarmotError marmot_account_proof_template(Marmot *m,
+                                           const uint8_t account_pubkey[32],
+                                           char **out_unsigned_event_json);
+
+/**
+ * marmot_set_account_proof:
+ * @m: Marmot instance
+ * @account_pubkey: (array fixed-size=32): the account's Nostr public key
+ * @signed_event_json: the template from marmot_account_proof_template(),
+ *   signed by @account_pubkey
+ *
+ * Enrollment, step 2 (nostrc-7vyi). Checks that @signed_event_json is
+ * exactly a proof signing template for this instance's MLS signature key
+ * (any created_at), with a valid id and signature by @account_pubkey, and
+ * keeps the proof in memory. From then on:
+ * - marmot_create_group() for @account_pubkey starts the group with a
+ *   proven creator leaf, so any admin can later admit members;
+ * - marmot_create_key_package_unsigned() for @account_pubkey produces
+ *   KeyPackages that carry it.
+ * One account per instance: a later call replaces the proof.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_VALIDATION when the event is not such a
+ *   template or its signature does not verify; MARMOT_ERR_INVALID_ARG
+ */
+MarmotError marmot_set_account_proof(Marmot *m,
+                                      const uint8_t account_pubkey[32],
+                                      const char *signed_event_json);
+
+/**
+ * marmot_has_account_proof:
+ * @m: Marmot instance
+ * @account_pubkey: (array fixed-size=32): the account's Nostr public key
+ *
+ * Returns: whether this instance holds an account proof for @account_pubkey
+ *   (marmot_set_account_proof(), or marmot_create_key_package() with the key)
+ */
+bool marmot_has_account_proof(Marmot *m, const uint8_t account_pubkey[32]);
 
 /**
  * marmot_select_key_package_event:
@@ -269,9 +342,11 @@ typedef int (*MarmotAccountSignFunc)(void *user_data,
  * @nostr_sk: (array fixed-size=32) (nullable): the account secret key. When
  *   given, the kind:30443 event is signed (as marmot_create_key_package());
  *   when NULL it is left unsigned (as marmot_create_key_package_unsigned()).
- * @account_sign: (scope call) (nullable): signs the ADOPTED profile's
- *   account-identity proof when @nostr_sk is NULL; called synchronously,
- *   at most once, before this function returns. Unused for MDK_0_8.
+ * @account_sign: (scope call) (nullable): signs the account-identity proof
+ *   when @nostr_sk is NULL; called synchronously, at most once, before this
+ *   function returns. Since 0.10.0 also used for MDK_0_8, whose leaf carries
+ *   the proof too (without either, MDK_0_8 falls back to the enrolled
+ *   instance key as marmot_create_key_package_unsigned() does).
  * @sign_data: (closure account_sign): user data for @account_sign
  * @relay_urls: (array length=relay_count) (nullable): stored with the
  *   KeyPackage; also emitted as the `relays` tag in the MDK_0_8 profile only
@@ -369,6 +444,14 @@ MarmotError marmot_select_key_package_event_for_profile(const char **event_jsons
  * 1. Call marmot_merge_pending_commit() (records the confirmation)
  * 2. Gift-wrap each welcome rumor (NIP-59) and send to the member
  * 3. Publish the evolution event (signed kind:445) to group relays
+ *
+ * Account binding (nostrc-7vyi): every invitee's KeyPackage leaf must carry
+ * a valid account-identity proof (MARMOT_ERR_KEY_PACKAGE_IDENTITY, unless
+ * MarmotConfig.allow_unproven_members). The creator's leaf carries one when
+ * the instance is enrolled for @creator_pubkey (marmot_set_account_proof()).
+ * Without it, joiners accept the creator only in the Welcomes the creator
+ * sends itself (the NIP-59 seal authenticates their author), so only the
+ * creator could admit members: enroll before creating groups.
  *
  * Returns: MARMOT_OK on success
  */
@@ -519,7 +602,9 @@ MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_
  * the event to the group relays, then call marmot_merge_pending_commit() once
  * one accepted it (and only then send the Welcomes), or
  * marmot_clear_pending_commit() if none did.  MARMOT_ERR_OWN_COMMIT_PENDING
- * while another Commit of ours is pending.
+ * while another Commit of ours is pending.  Every KeyPackage leaf must carry
+ * a valid account-identity proof, which every member checks
+ * (MARMOT_ERR_KEY_PACKAGE_IDENTITY; nostrc-7vyi).
  *
  * Returns: MARMOT_OK on success
  */
@@ -605,6 +690,12 @@ MarmotError marmot_update_group_metadata(Marmot *m,
  * Process a received welcome message. Validates structure per MIP-02,
  * extracts group info, and stores the welcome as pending.
  *
+ * @rumor_event_json must come from a NIP-59 gift wrap whose seal signature
+ * the caller verified, with the rumor's `pubkey` equal to the seal's (as
+ * NIP-59 requires). Since 0.10.0 that pubkey is the Welcome's author, whose
+ * own leaf the join accepts without an account proof (see
+ * marmot_accept_welcome()).
+ *
  * Returns: MARMOT_OK on success
  */
 MarmotError marmot_process_welcome(Marmot *m,
@@ -618,6 +709,16 @@ MarmotError marmot_process_welcome(Marmot *m,
  * @welcome: the welcome to accept
  *
  * Accept a pending welcome and join the group.
+ *
+ * Every member leaf of the Welcome's ratchet tree must be bound to its
+ * account (nostrc-7vyi; Marmot protocol-core/joining.md): by a valid
+ * marmot.member.account-identity-proof.v2, or -- for the leaf that signed
+ * the GroupInfo only -- by being the account that sent the Welcome (the
+ * rumor's `pubkey`). Our own leaf is our KeyPackage's. Otherwise the join
+ * fails with MARMOT_ERR_KEY_PACKAGE_IDENTITY, nothing of the group is
+ * stored and the Welcome is recorded as failed. A leaf without a proof is
+ * accepted in legacy mode only (MarmotConfig.allow_unproven_members); a
+ * proof that does not verify never is.
  *
  * Returns: MARMOT_OK on success
  */
@@ -758,7 +859,10 @@ MarmotError marmot_save_created_message(Marmot *m,
  *   adds or removes members or changes the GroupData needs a committer who is
  *   an admin of the pre-Commit GroupData, MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
  *   nostr_group_id cannot change, MARMOT_ERR_PROTOCOL_GROUP_MISMATCH; the
- *   committer keeps its account, MARMOT_ERR_IDENTITY_CHANGE).  The new MLS
+ *   committer keeps its account, MARMOT_ERR_IDENTITY_CHANGE; since 0.10.0
+ *   every account it adds, or puts in another's slot, is bound by a valid
+ *   account-identity proof in its leaf and no member leaf loses one,
+ *   MARMOT_ERR_KEY_PACKAGE_IDENTITY, nostrc-7vyi).  The new MLS
  *   state, its exporter secret and the group record are then stored, and
  *   result->commit.updated_group holds the updated group
  *   (MARMOT_RESULT_COMMIT).  Epochs: a Commit for the current epoch advances

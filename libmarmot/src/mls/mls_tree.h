@@ -212,8 +212,11 @@ void mls_leaf_node_clear(MlsLeafNode *node);
  * RequiredCapabilities from the decoded LeafNode:
  *   versions     mls10
  *   ciphersuites 0x0001
- *   extensions   0x000a last_resort (KeyPackage-level; OpenMLS requires it to
- *                be listed) and 0xf2ee marmot_group_data (MDK groups require
+ *   extensions   0x0006 app_data_dictionary (the LeafNode carrying
+ *                marmot.member.account-identity-proof.v2, nostrc-7vyi; a
+ *                GroupContext app_data_dictionary is still refused), 0x000a
+ *                last_resort (KeyPackage-level; OpenMLS requires it to be
+ *                listed) and 0xf2ee marmot_group_data (MDK groups require
  *                it in GroupContext RequiredCapabilities)
  *   proposals    none beyond the RFC 9420 defaults. SelfRemove (0x000a) is
  *                NOT implemented, so it is not advertised; MDK computes the
@@ -223,7 +226,7 @@ void mls_leaf_node_clear(MlsLeafNode *node);
  *   credentials  basic
  * The ids are sorted ascending. Replaces any capability vectors in @node.
  */
-#define MLS_MARMOT_CAP_EXTENSION_COUNT 2
+#define MLS_MARMOT_CAP_EXTENSION_COUNT 3
 extern const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT];
 int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
 

@@ -118,6 +118,12 @@ void marmot_gobject_client_create_key_package_async(MarmotGobjectClient *self,
  * This is the preferred API for signer-only architectures where
  * the plugin does not hold the user's secret key.
  *
+ * Since 1.4 (libmarmot 0.10.0) the KeyPackage's leaf must carry the
+ * account's identity proof: enroll the client first
+ * (marmot_gobject_client_get_account_proof_template(), sign,
+ * marmot_gobject_client_set_account_proof()). Otherwise this fails with
+ * MARMOT_ERR_KEY_PACKAGE_IDENTITY.
+ *
  * Since: 1.0
  */
 void marmot_gobject_client_create_key_package_unsigned_async(MarmotGobjectClient *self,
@@ -141,6 +147,61 @@ void marmot_gobject_client_create_key_package_unsigned_async(MarmotGobjectClient
 gchar *marmot_gobject_client_create_key_package_unsigned_finish(MarmotGobjectClient *self,
                                                                  GAsyncResult *result,
                                                                  GError **error);
+
+/**
+ * marmot_gobject_client_get_account_proof_template:
+ * @self: a #MarmotGobjectClient
+ * @nostr_pubkey_hex: the account's Nostr public key (hex)
+ * @error: (nullable): return location for a #GError
+ *
+ * Enrollment, step 1 (libmarmot marmot_account_proof_template()): the
+ * unsigned kind:450 signing template of marmot.member.account-identity-proof.v2
+ * for this client's MLS signature key. Sign it with the account key (e.g.
+ * org.nostr.Signer.SignEvent) and pass the result to
+ * marmot_gobject_client_set_account_proof(). It is a local-only template:
+ * never publish it. Enroll again after the client is recreated.
+ *
+ * Returns: (transfer full) (nullable): the template JSON, or %NULL on error
+ *
+ * Since: 1.4
+ */
+gchar *marmot_gobject_client_get_account_proof_template(MarmotGobjectClient *self,
+                                                        const gchar *nostr_pubkey_hex,
+                                                        GError **error);
+
+/**
+ * marmot_gobject_client_set_account_proof:
+ * @self: a #MarmotGobjectClient
+ * @nostr_pubkey_hex: the account's Nostr public key (hex)
+ * @signed_event_json: the template, signed by that account
+ * @error: (nullable): return location for a #GError
+ *
+ * Enrollment, step 2 (libmarmot marmot_set_account_proof()): checks the
+ * signed template and keeps the proof. Unsigned KeyPackages and the groups
+ * this client creates for that account then carry it, so other members
+ * accept their leaves.
+ *
+ * Returns: %TRUE on success; %FALSE with MARMOT_ERR_VALIDATION when the event
+ *   is not the template or not signed by that account
+ *
+ * Since: 1.4
+ */
+gboolean marmot_gobject_client_set_account_proof(MarmotGobjectClient *self,
+                                                 const gchar *nostr_pubkey_hex,
+                                                 const gchar *signed_event_json,
+                                                 GError **error);
+
+/**
+ * marmot_gobject_client_has_account_proof:
+ * @self: a #MarmotGobjectClient
+ * @nostr_pubkey_hex: the account's Nostr public key (hex)
+ *
+ * Returns: whether this client is enrolled for that account
+ *
+ * Since: 1.4
+ */
+gboolean marmot_gobject_client_has_account_proof(MarmotGobjectClient *self,
+                                                 const gchar *nostr_pubkey_hex);
 
 /**
  * marmot_gobject_client_create_key_package_finish:

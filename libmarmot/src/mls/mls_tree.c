@@ -1328,6 +1328,7 @@ mls_tree_node_encryption_key(const MlsRatchetTree *tree, uint32_t node_idx)
  * ══════════════════════════════════════════════════════════════════════════ */
 
 const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT] = {
+    0x0006, /* app_data_dictionary: the LeafNode account proof (nostrc-7vyi) */
     0x000A, /* last_resort */
     0xF2EE, /* marmot_group_data */
 };

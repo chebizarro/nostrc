@@ -119,6 +119,17 @@ When built with Meson and `introspection=true`:
 
 ## Changelog
 
+### 1.4.0 (unreleased)
+
+- Added `marmot_gobject_client_get_account_proof_template()`,
+  `marmot_gobject_client_set_account_proof()` and
+  `marmot_gobject_client_has_account_proof()`, which wrap libmarmot 0.10.0's
+  account-proof enrollment (nostrc-7vyi). A signer-only client signs the
+  kind:450 template once per client; its unsigned KeyPackages and the groups
+  it creates then carry the account-identity proof that other members require.
+- `marmot_gobject_client_create_key_package_unsigned_async()` fails with
+  `MARMOT_ERR_KEY_PACKAGE_IDENTITY` until the client is enrolled.
+
 ### 1.3.0 (unreleased)
 
 - Added `marmot_gobject_client_process_rumor_message_async()` and

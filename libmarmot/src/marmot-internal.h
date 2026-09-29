@@ -33,6 +33,15 @@ struct Marmot {
     uint8_t  hpke_pk[32];       /* X25519 public key  */
     bool     identity_ready;
 
+    /* marmot.member.account-identity-proof.v2 binding ed25519_pk (the leaf
+     * key of groups this instance creates, and of KeyPackages made without
+     * the account key) to account_proof_owner (nostrc-7vyi). Set by
+     * marmot_set_account_proof(), or by marmot_create_key_package() with the
+     * account key. In memory only, like the key it binds. */
+    bool     account_proof_ready;
+    uint8_t  account_proof_owner[32];
+    uint8_t  account_proof[104];
+
     /* One storage transaction per public operation (nostrc-qp24.7). */
     unsigned txn_depth;         /* public calls in progress (never > 1 in practice) */
     bool     txn_keep;          /* commit even though the operation returns an error */
@@ -56,6 +65,10 @@ int64_t marmot_now(void);
 
 /** Ensure MLS identity is initialized. Returns 0 on success, -1 on error. */
 int marmot_ensure_identity(Marmot *m);
+
+/** The account proof of ed25519_pk for `owner` (104 bytes into `out`, which
+ *  may be NULL), if this instance holds one (nostrc-7vyi). */
+bool marmot_account_proof_lookup(const Marmot *m, const uint8_t owner[32], uint8_t out[104]);
 
 /* ── Storage transactions (nostrc-qp24.7) ─────────────────────────────────
  * Every public operation that may write runs between marmot_txn_begin() and

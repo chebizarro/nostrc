@@ -15,6 +15,7 @@
  */
 
 #include "marmot-internal.h"
+#include "kp_profile.h"
 #include "mls/mls_welcome.h"
 #include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
@@ -163,6 +164,64 @@ already_member_of(Marmot *m, const MlsGroup *joined)
     }
     mls_group_free(&stored);
     return member;
+}
+
+/*
+ * nostrc-7vyi (Marmot protocol-core/joining.md steps 5-6): every member leaf
+ * of the joined tree is bound to the account its credential names.
+ * - A valid account-identity proof binds any leaf; one that does not verify
+ *   (or a malformed dictionary) rejects the Welcome.
+ * - Our own leaf is our KeyPackage's.
+ * - The leaf that signed the GroupInfo -- the committer who built this
+ *   Welcome -- is bound by the Welcome's sender (the rumor pubkey, which the
+ *   caller checked against the NIP-59 seal): it may lack a proof.
+ * - Any other leaf without a proof is accepted in legacy mode only.
+ */
+/* The Welcome's sender: the rumor's pubkey, as process_welcome recorded it
+ * or, for a backend that keeps only the rumor (nostrdb), from the rumor. */
+static bool
+welcome_sender(const MarmotWelcome *w, uint8_t out[32])
+{
+    static const uint8_t zero[32];
+    if (sodium_memcmp(w->welcomer, zero, 32) != 0) {
+        memcpy(out, w->welcomer, 32);
+        return true;
+    }
+    if (!w->event_json) return false;
+    NostrEvent rumor;
+    memset(&rumor, 0, sizeof(rumor));
+    bool ok = nostr_event_deserialize_compact(&rumor, w->event_json, NULL) &&
+              rumor.pubkey && is_hex_len(rumor.pubkey, 64) &&
+              marmot_hex_decode(rumor.pubkey, out, 32) == 0;
+    free(rumor.id); free(rumor.pubkey); free(rumor.content);
+    free(rumor.sig); nostr_tags_free(rumor.tags);
+    return ok;
+}
+
+static MarmotError
+welcome_tree_bound(const Marmot *m, const MlsGroup *g, uint32_t signer_leaf,
+                   const MarmotWelcome *welcome)
+{
+    uint8_t welcomer[32];
+    bool have_sender = welcome_sender(welcome, welcomer);
+    for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
+        const MlsNode *n = &g->tree.nodes[mls_tree_leaf_to_node(i)];
+        if (n->type != MLS_NODE_LEAF || i == g->own_leaf_index) continue;
+        switch (marmot_leaf_proof_status(&n->leaf, MARMOT_CIPHERSUITE)) {
+        case MARMOT_LEAF_PROOF_VALID:
+            continue;
+        case MARMOT_LEAF_PROOF_INVALID:
+            return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+        case MARMOT_LEAF_PROOF_ABSENT:
+            break;
+        }
+        bool is_sender = i == signer_leaf && have_sender &&
+                         n->leaf.credential_identity_len == 32 && n->leaf.credential_identity &&
+                         memcmp(n->leaf.credential_identity, welcomer, 32) == 0;
+        if (!is_sender && !m->config.allow_unproven_members)
+            return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+    }
+    return MARMOT_OK;
 }
 
 static MarmotError
@@ -488,9 +547,9 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     MlsGroup mls_group;
     memset(&mls_group, 0, sizeof(mls_group));
 
-    int rc = mls_welcome_process_parsed(&mls_welcome, &matched_kp, &matched_priv,
-                                         NULL, 0, /* no out-of-band ratchet tree */
-                                         &mls_group);
+    uint32_t signer_leaf = UINT32_MAX;
+    int rc = mls_welcome_process_parsed_signer(&mls_welcome, &matched_kp, &matched_priv,
+                                               &mls_group, &signer_leaf);
     mls_welcome_clear(&mls_welcome);
     mls_key_package_clear(&matched_kp);
     sodium_memzero(&matched_priv, sizeof(matched_priv));
@@ -498,6 +557,16 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     if (rc != 0) {
         record_welcome_failure(m, welcome->wrapper_event_id, "MLS Welcome processing failed", true);
         return MARMOT_ERR_MLS;
+    }
+
+    /* Every member is who its credential says (nostrc-7vyi): otherwise
+     * nothing of the group is stored. */
+    MarmotError bind_err = welcome_tree_bound(m, &mls_group, signer_leaf, welcome);
+    if (bind_err != MARMOT_OK) {
+        mls_group_free(&mls_group);
+        record_welcome_failure(m, welcome->wrapper_event_id,
+                               "member leaf without a valid account-identity proof", true);
+        return bind_err;
     }
 
     /* A duplicate Welcome for a group we already joined: keep our state

@@ -270,6 +270,16 @@ generate_update_path(MlsGroup *group,
     path_out->leaf_node.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT;
     /* Capabilities (RFC 9420 §7.2; nostrc-prqu.10) */
     if (mls_leaf_node_set_marmot_capabilities(&path_out->leaf_node) != 0) goto fail;
+    /* The LeafNode extensions carry over, and with the signature key and the
+     * credential they bind, so does the account proof: it must not be
+     * dropped from a member's leaf (nostrc-7vyi; receivers check). */
+    if (old_leaf->extensions_len > 0) {
+        path_out->leaf_node.extensions_data = malloc(old_leaf->extensions_len);
+        if (!path_out->leaf_node.extensions_data) goto fail;
+        memcpy(path_out->leaf_node.extensions_data, old_leaf->extensions_data,
+               old_leaf->extensions_len);
+        path_out->leaf_node.extensions_len = old_leaf->extensions_len;
+    }
 
     /* Generate path secrets for each filtered direct path node */
     uint8_t path_secrets[64][MLS_HASH_LEN];
@@ -1174,7 +1184,26 @@ mls_group_create(MlsGroup *group,
                  const uint8_t signature_key_private[MLS_SIG_SK_LEN],
                  const uint8_t *extensions_data, size_t extensions_len)
 {
-    if (!group || !group_id || !credential_identity || !signature_key_private)
+    return mls_group_create_with_leaf_extensions(group, group_id, group_id_len,
+                                                 credential_identity,
+                                                 credential_identity_len,
+                                                 signature_key_private,
+                                                 extensions_data, extensions_len,
+                                                 NULL, 0);
+}
+
+int
+mls_group_create_with_leaf_extensions(MlsGroup *group,
+                                      const uint8_t *group_id, size_t group_id_len,
+                                      const uint8_t *credential_identity,
+                                      size_t credential_identity_len,
+                                      const uint8_t signature_key_private[MLS_SIG_SK_LEN],
+                                      const uint8_t *extensions_data, size_t extensions_len,
+                                      const uint8_t *leaf_extensions,
+                                      size_t leaf_extensions_len)
+{
+    if (!group || !group_id || !credential_identity || !signature_key_private ||
+        (leaf_extensions_len > 0 && !leaf_extensions))
         return MARMOT_ERR_INVALID_ARG;
     if (mls_group_extensions_supported(extensions_data, extensions_len) != 0)
         return MARMOT_ERR_UNSUPPORTED;
@@ -1234,6 +1263,17 @@ mls_group_create(MlsGroup *group,
     if (mls_leaf_node_set_marmot_capabilities(&leaf->leaf) != 0) {
         sodium_memzero(enc_sk, sizeof(enc_sk));
         goto fail;
+    }
+    /* The creator's LeafNode extensions (its account proof, nostrc-7vyi),
+     * covered by the leaf signature below. */
+    if (leaf_extensions_len > 0) {
+        leaf->leaf.extensions_data = malloc(leaf_extensions_len);
+        if (!leaf->leaf.extensions_data) {
+            sodium_memzero(enc_sk, sizeof(enc_sk));
+            goto fail;
+        }
+        memcpy(leaf->leaf.extensions_data, leaf_extensions, leaf_extensions_len);
+        leaf->leaf.extensions_len = leaf_extensions_len;
     }
     leaf->leaf.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT; /* initial group creation */
     if (mls_leaf_node_sign(&leaf->leaf, signature_key_private,
