@@ -13,6 +13,11 @@ struct _GhWindow {
    * previous/next actions, cleared by any key press in the list and once
    * used. Arrow keys only move the selection; Enter opens (activate). */
   gboolean open_on_select;
+  /* win.new-message (charter G18). */
+  GhWindowNewMessageFunc new_message;
+  gpointer new_message_data;
+  GDestroyNotify new_message_destroy;
+  gboolean new_message_enabled;
 };
 
 G_DEFINE_FINAL_TYPE(GhWindow, gh_window, ADW_TYPE_APPLICATION_WINDOW)
@@ -70,13 +75,31 @@ on_next(GSimpleAction *action, GVariant *parameter, gpointer data)
   select_relative(GH_WINDOW(data), 1);
 }
 
+static void
+on_new_message(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  GhWindow *self = data;
+  (void)action;
+  (void)parameter;
+  if (self->new_message)
+    self->new_message(self, self->new_message_data);
+}
+
 static const GActionEntry window_actions[] = {
   { "search", on_search, NULL, NULL, NULL, { 0 } },
   { "previous-conversation", on_previous, NULL, NULL, NULL, { 0 } },
   { "next-conversation", on_next, NULL, NULL, NULL, { 0 } },
-  /* Disabled below until starting a conversation exists (charter G18). */
-  { "new-message", NULL, NULL, NULL, NULL, { 0 } },
+  /* Enabled once a New Message flow is attached (charter G18). */
+  { "new-message", on_new_message, NULL, NULL, NULL, { 0 } },
 };
+
+static void
+sync_new_message(GhWindow *self)
+{
+  GAction *action = g_action_map_lookup_action(G_ACTION_MAP(self), "new-message");
+  g_simple_action_set_enabled(G_SIMPLE_ACTION(action),
+                              self->new_message != NULL && self->new_message_enabled);
+}
 
 /* The content page follows the selection (charter §7.12), except that while
  * collapsed a keyboard user moving through the list with the arrow keys is
@@ -151,6 +174,7 @@ gh_window_dispose(GObject *object)
 {
   GhWindow *self = GH_WINDOW(object);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_WINDOW);
+  gh_window_set_new_message_handler(self, NULL, NULL, NULL);
   g_clear_object(&self->status);
   G_OBJECT_CLASS(gh_window_parent_class)->dispose(object);
 }
@@ -184,8 +208,8 @@ gh_window_init(GhWindow *self)
 
   g_action_map_add_action_entries(G_ACTION_MAP(self), window_actions,
                                   G_N_ELEMENTS(window_actions), self);
-  g_simple_action_set_enabled(
-    G_SIMPLE_ACTION(g_action_map_lookup_action(G_ACTION_MAP(self), "new-message")), FALSE);
+  self->new_message_enabled = TRUE;
+  sync_new_message(self);
 
   g_autoptr(GtkBuilder) builder =
     gtk_builder_new_from_resource("/org/nostr/Groundhog/ui/gh-shortcuts-window.ui");
@@ -283,6 +307,30 @@ gh_window_open_item(GhWindow *self, gpointer item)
   /* Also when it was selected already (no selection change). */
   adw_navigation_split_view_set_show_content(self->split, TRUE);
   return TRUE;
+}
+
+void
+gh_window_set_new_message_handler(GhWindow *self, GhWindowNewMessageFunc func, gpointer data,
+                                  GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_WINDOW(self));
+  GDestroyNotify old_destroy = self->new_message_destroy;
+  gpointer old_data = self->new_message_data;
+  self->new_message = func;
+  self->new_message_data = data;
+  self->new_message_destroy = destroy;
+  if (old_destroy)
+    old_destroy(old_data);
+  if (g_action_map_lookup_action(G_ACTION_MAP(self), "new-message"))
+    sync_new_message(self);
+}
+
+void
+gh_window_set_new_message_enabled(GhWindow *self, gboolean enabled)
+{
+  g_return_if_fail(GH_IS_WINDOW(self));
+  self->new_message_enabled = enabled;
+  sync_new_message(self);
 }
 
 static void

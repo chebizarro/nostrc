@@ -7,6 +7,13 @@ G_BEGIN_DECLS
 
 /* Store-only: the conversation of message's room for its account. */
 GhConversation *gh_conversation_new_for_message(GhMessage *message);
+/* Store-only: an empty, accepted room the user opened (G18: New Message,
+ * note to self). participants: sorted, unique, lowercase hex, including
+ * account. opened_at (unix seconds) is its last activity until it has a
+ * message. */
+GhConversation *gh_conversation_new_for_room(const gchar *account,
+                                             const gchar *const *participants,
+                                             gint64 opened_at);
 /* Store-only: inserts message in order. FALSE (nothing changed) when its
  * rumor id is already present or it belongs to another room or account. */
 gboolean gh_conversation_insert(GhConversation *self, GhMessage *message);

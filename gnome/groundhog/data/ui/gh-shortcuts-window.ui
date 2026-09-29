@@ -69,7 +69,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">New Message (not available in this version yet)</property>
+                <property name="title" translatable="yes" context="shortcut window">New Message</property>
                 <property name="accelerator">&lt;Control&gt;n</property>
               </object>
             </child>

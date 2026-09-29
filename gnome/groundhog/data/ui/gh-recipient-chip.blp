@@ -1,0 +1,31 @@
+using Gtk 4.0;
+
+// A chosen recipient in New Message (gh-new-message-dialog.blp): the name,
+// address or short npub, and a button that removes it. Its item is a
+// GhNewMessageItem; the remove button's accessible label names the person
+// (set in gh-new-message-dialog.c).
+template $GhRecipientChip: Box {
+  spacing: 2;
+
+  styles [
+    "groundhog-recipient-chip",
+  ]
+
+  Label label {
+    ellipsize: middle;
+    max-width-chars: 24;
+    margin-start: 10;
+    label: bind template.item as <$GhNewMessageItem>.title;
+  }
+
+  Button remove_button {
+    icon-name: "window-close-symbolic";
+    valign: center;
+    tooltip-text: _("Remove");
+
+    styles [
+      "flat",
+      "circular",
+    ]
+  }
+}

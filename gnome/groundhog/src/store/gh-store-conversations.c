@@ -316,7 +316,8 @@ fail:
 
 /* The read state after a stored message: an own message moves the marker to
  * itself (replying implies having read what came before) and accepts the
- * room; the unread count follows. */
+ * room, lifting a block too (writing to someone again is choosing to hear
+ * from them, G18); the unread count follows. */
 static gboolean
 admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
                  GhMessage *message, gint64 *out_unread, GError **error)
@@ -336,7 +337,8 @@ admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
       place_set(&marker, message_row, gh_message_get_created_at(message),
                 gh_message_get_rumor_id(message));
     sqlite3_stmt *stmt = prepare(store,
-      "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state = 1", error);
+      "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state IN (1, 2)",
+      error);
     ok = stmt && sqlite3_bind_int64(stmt, 1, conversation_id) == SQLITE_OK &&
          step_done(store, stmt, "Accepting a conversation", error);
     sqlite3_finalize(stmt);
@@ -406,6 +408,37 @@ bounded_title(const gchar *subject)
   return g_strndup(subject, end - subject);
 }
 
+/* Whether the room is stored with request_state BLOCKED. */
+static gboolean
+room_blocked(GhStore *store, const gchar *room_id, gboolean *out_blocked, GError **error)
+{
+  *out_blocked = FALSE;
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT request_state FROM conversations WHERE backend = 1 AND backend_key = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(bind_text(stmt, 1, room_id));
+  gboolean has_row = FALSE;
+  gboolean ok = step_row(store, stmt, &has_row, "Reading a conversation", error);
+  if (ok && has_row)
+    *out_blocked = sqlite3_column_int64(stmt, 0) == GH_STORE_REQUEST_BLOCKED;
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* A message from someone else in a blocked room (G18): its wrap and rumor
+ * ids are recorded as seen, so it is neither unwrapped nor offered again,
+ * and nothing of it is stored. */
+static gboolean
+admit_blocked(GhStore *store, GhMessage *message, const gchar *wrap_id, GError **error)
+{
+  return (!wrap_id || gh_store_seen_add(store, GH_STORE_SEEN_WRAP, wrap_id, error)) &&
+         gh_store_seen_add(store, GH_STORE_SEEN_RUMOR, gh_message_get_rumor_id(message), error);
+}
+
 /* T-admit (see the header): one transaction for the message, its room, its
  * seen keys and the room's read state. */
 static gboolean
@@ -445,6 +478,17 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
   gint64 message_row = 0;
   if (!gh_store_begin(store, error))
     return FALSE;
+  if (!own) {
+    gboolean blocked = FALSE;
+    if (!room_blocked(store, room_id, &blocked, error))
+      goto fail;
+    if (blocked) {
+      if (!admit_blocked(store, message, wrap_id, error))
+        goto fail;
+      commit->hidden = TRUE;
+      return gh_store_commit(store, error);
+    }
+  }
   if (!gh_store_admit(store, &m, &result, &message_row, error))
     goto fail;
   /* A duplicate may still be a stored message (e.g. the outbox stored it
@@ -852,6 +896,67 @@ gh_store_conversations_forget(GhStoreConversations *self, const gchar *room_id,
   if (model && g_strcmp0(gh_conversation_store_get_account(model), self->account) == 0)
     gh_conversation_store_remove(model, room_id);
   return TRUE;
+}
+
+/* After a committed block: the deleted messages leave the WAL now (the
+ * nested forget could not checkpoint) and the room leaves the model. */
+static void
+unlist_blocked(GhStoreConversations *self, const gchar *room_id)
+{
+  g_autoptr(GError) checkpoint = NULL;
+  if (gh_store_get_transaction_depth(self->store) == 0 &&
+      !gh_store_checkpoint(self->store, &checkpoint))
+    g_message("Groundhog will clear a blocked conversation from its journal later: %s",
+              checkpoint->message);
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  if (model && g_strcmp0(gh_conversation_store_get_account(model), self->account) == 0)
+    gh_conversation_store_remove(model, room_id);
+}
+
+gboolean
+gh_store_conversations_block(GhStoreConversations *self, const gchar *room_id, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  if (!check_open(self, error) || !check_room(self, room_id, error))
+    return FALSE;
+  GhStore *store = self->store;
+  const guint depth = gh_store_get_transaction_depth(store);
+  gint64 id = 0;
+  sqlite3_stmt *stmt = NULL;
+  if (!gh_store_begin(store, error))
+    return FALSE;
+  if (!gh_store_find_conversation(store, GH_STORE_BACKEND_NIP17, room_id, &id, error))
+    goto fail;
+  stmt = prepare(store, "UPDATE conversations SET request_state = 2 WHERE id = ?1", error);
+  if (!stmt)
+    goto fail;
+  BIND(sqlite3_bind_int64(stmt, 1, id));
+  if (!step_done(store, stmt, "Blocking a conversation", error))
+    goto fail;
+  g_clear_pointer(&stmt, sqlite3_finalize);
+  /* Nested: the forget is part of this transaction. */
+  if (!gh_store_forget_conversation(store, id, error) || !gh_store_commit(store, error))
+    goto fail;
+  unlist_blocked(self, room_id);
+  return TRUE;
+
+fail:
+  sqlite3_finalize(stmt);
+  /* A failed commit has already rolled back. */
+  if (gh_store_get_transaction_depth(store) > depth)
+    gh_store_rollback(store);
+  return FALSE;
+}
+
+gboolean
+gh_store_conversations_is_blocked(GhStoreConversations *self, const gchar *room_id,
+                                  gboolean *out_blocked, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  g_return_val_if_fail(out_blocked != NULL, FALSE);
+  *out_blocked = FALSE;
+  return check_open(self, error) && check_room(self, room_id, error) &&
+         room_blocked(self->store, room_id, out_blocked, error);
 }
 
 /* ---- Purge ------------------------------------------------------------------------------ */

@@ -53,10 +53,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkButton" id="new_button">
                 <property name="icon-name">list-add-symbolic</property>
                 <property name="action-name">win.new-message</property>
-                <property name="tooltip-text" translatable="yes">New Message — not available in this version yet</property>
+                <property name="tooltip-text" translatable="yes">New Message</property>
                 <accessibility>
                   <property name="label" translatable="yes">New Message</property>
-                  <property name="description" translatable="yes">Not available in this version yet</property>
                 </accessibility>
               </object>
             </child>
@@ -164,12 +163,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="AdwStatusPage" id="empty_page">
                     <property name="icon-name">mail-unread-symbolic</property>
                     <property name="title" translatable="yes">No Conversations</property>
-                    <property name="description" translatable="yes">Private messages people send you will appear here. Starting a new conversation isn't available in this version yet.</property>
+                    <property name="description" translatable="yes">Start a private conversation. Messages people send you will appear here too.</property>
                     <property name="hexpand">true</property>
                     <property name="vexpand">true</property>
                     <style>
                       <class name="groundhog-shell-status"/>
                     </style>
+                    <property name="child">
+                      <object class="GtkButton" id="empty_new_button">
+                        <property name="label" translatable="yes">_New Message</property>
+                        <property name="use-underline">true</property>
+                        <property name="halign">3</property>
+                        <property name="action-name">win.new-message</property>
+                        <style>
+                          <class name="pill"/>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </property>
                   </object>
                 </property>
               </object>

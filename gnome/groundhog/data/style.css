@@ -228,3 +228,23 @@
 .groundhog-composer-disabled {
   padding: 3px 0;
 }
+
+/* == requests and new message (G18) == */
+.groundhog-request-message {
+  padding: 12px;
+}
+
+flowbox.groundhog-recipient-chips > flowboxchild {
+  padding: 0;
+  background: none;
+}
+
+.groundhog-recipient-chip {
+  border-radius: 999px;
+  background-color: alpha(currentColor, 0.08);
+}
+
+.groundhog-npub-row .subtitle {
+  font-family: monospace;
+}
+

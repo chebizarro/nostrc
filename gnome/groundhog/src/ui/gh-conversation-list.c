@@ -1,6 +1,7 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
+#include "gh-requests-view.h"
 
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
@@ -15,6 +16,7 @@ typedef struct {
   GhSidebarPage *sidebar;
   GhContentPage *content;
   GhConversationView *view; /* a reference: a queued load may outlive the window's dispose */
+  GhRequestsView *requests_view; /* the content page's "requests" page (G18) */
   GhConversationStore *store;
   GtkFilter *accepted;        /* not a message request */
   GtkFilter *requests;        /* a message request */
@@ -195,11 +197,27 @@ on_selected(GhWindow *window)
   if (conversation == list->shown)
     return;
   g_set_object(&list->shown, conversation);
+  /* A message request opens in the Message Requests page (charter §7.9,
+   * G18): its npub, count and first message as plain text, with Accept,
+   * Delete and Block; its messages are read in the conversation view only
+   * once it is accepted. */
+  gboolean request = conversation && gh_conversation_get_is_request(conversation);
+  gh_requests_view_set_request(list->requests_view, request ? conversation : NULL);
   /* Before marking it read: the unread count decides where the view opens. */
-  gh_conversation_view_set_conversation(list->view, conversation);
-  gh_content_page_set_conversation_shown(list->content, conversation != NULL);
+  gh_conversation_view_set_conversation(list->view, request ? NULL : conversation);
+  if (request)
+    gtk_stack_set_visible_child_name(gh_content_page_get_stack(list->content), "requests");
+  else
+    gh_content_page_set_conversation_shown(list->content, conversation != NULL);
   update_title(list);
   mark_read_if_visible(window, list);
+}
+
+/* Accepted from the Message Requests page: open it as a conversation. */
+static void
+on_request_accepted(GhWindow *window, GhConversation *conversation)
+{
+  gh_window_open_item(window, conversation);
 }
 
 static void
@@ -347,6 +365,11 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   list->view = g_object_ref_sink(GH_CONVERSATION_VIEW(gh_conversation_view_new()));
   gh_conversation_view_set_settings(list->view, settings);
   gh_content_page_set_view(list->content, GTK_WIDGET(list->view));
+  list->requests_view = GH_REQUESTS_VIEW(gh_requests_view_new());
+  gtk_stack_add_named(gh_content_page_get_stack(list->content), GTK_WIDGET(list->requests_view),
+                      "requests");
+  g_signal_connect_object(list->requests_view, "accepted", G_CALLBACK(on_request_accepted),
+                          window, G_CONNECT_SWAPPED);
 
   if (settings) {
     g_autoptr(GSettingsSchema) schema = NULL;
@@ -387,4 +410,12 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   g_signal_connect_object(gh_window_get_split(window), "notify::show-content",
                           G_CALLBACK(on_content_shown), window, G_CONNECT_SWAPPED);
   on_selected(window);
+}
+
+GhRequestsView *
+gh_conversation_list_get_requests_view(GhWindow *window)
+{
+  g_return_val_if_fail(GH_IS_WINDOW(window), NULL);
+  GhConversationList *list = list_of(window);
+  return list ? list->requests_view : NULL;
 }

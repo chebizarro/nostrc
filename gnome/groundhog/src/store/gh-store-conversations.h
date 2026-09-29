@@ -98,6 +98,21 @@ gboolean gh_store_conversations_set_draft(GhStoreConversations *self, const gcha
 gboolean gh_store_conversations_forget(GhStoreConversations *self, const gchar *room_id,
                                        GError **error);
 
+/* Block a conversation (charter §7.9 Message Requests, PD-8, G18): in one
+ * transaction the room's request_state becomes BLOCKED and the room is
+ * forgotten as above (its tombstone keeps the block), then it is unlisted
+ * from the attached model. Local only: nothing is published and the other
+ * people are not told. From then on a message from someone else in the room
+ * is recorded as seen only and reported hidden: never listed, stored or
+ * notified (backfill included). An own message to the room (starting a
+ * conversation with them again) lifts the block. NOT_FOUND when the room is
+ * not stored. */
+gboolean gh_store_conversations_block(GhStoreConversations *self, const gchar *room_id,
+                                      GError **error);
+/* Whether a stored room is blocked (FALSE when it is not stored). */
+gboolean gh_store_conversations_is_blocked(GhStoreConversations *self, const gchar *room_id,
+                                           gboolean *out_blocked, GError **error);
+
 /* T-purge with the attached model kept in step (charter §3.7, G07):
  * gh_store_purge_full() deletes what expired (and, with @retention_cutoff >
  * 0, what was received before it). Then each NIP-17 room it touched gets

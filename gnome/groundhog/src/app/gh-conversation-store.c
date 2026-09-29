@@ -379,6 +379,64 @@ gh_conversation_store_restore(GhConversationStore *self, const gchar *room_id,
   return created;
 }
 
+static gint
+compare_members(gconstpointer a, gconstpointer b)
+{
+  return strcmp(*(const gchar *const *)a, *(const gchar *const *)b);
+}
+
+static gboolean
+is_pubkey(const gchar *value)
+{
+  if (!value || strlen(value) != 64)
+    return FALSE;
+  for (guint i = 0; i < 64; i++)
+    if (!g_ascii_isxdigit(value[i]))
+      return FALSE;
+  return TRUE;
+}
+
+GhConversation *
+gh_conversation_store_open_room(GhConversationStore *self, const gchar *const *peers,
+                                GError **error)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), NULL);
+  if (!self->account) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "No account is active");
+    return NULL;
+  }
+  g_autoptr(GPtrArray) members = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_add(members, g_strdup(self->account));
+  for (guint i = 0; peers && peers[i]; i++) {
+    if (!is_pubkey(peers[i])) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                          "A recipient is not a 64-character hex public key");
+      return NULL;
+    }
+    g_autofree gchar *pubkey = g_ascii_strdown(peers[i], -1);
+    if (!g_ptr_array_find_with_equal_func(members, pubkey, g_str_equal, NULL))
+      g_ptr_array_add(members, g_steal_pointer(&pubkey));
+  }
+  if (members->len - 1 > GH_CONVERSATION_MAX_PEERS) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                "A private conversation has at most %d other people", GH_CONVERSATION_MAX_PEERS);
+    return NULL;
+  }
+  g_ptr_array_sort(members, compare_members);
+  g_ptr_array_add(members, NULL);
+  g_autofree gchar *room_id = g_strjoinv(",", (gchar **)members->pdata);
+  GhConversation *conversation = g_hash_table_lookup(self->rooms, room_id);
+  if (conversation) {
+    gh_conversation_accept(conversation);
+    return conversation;
+  }
+  g_autoptr(GhConversation) created =
+    gh_conversation_new_for_room(self->account, (const gchar *const *)members->pdata,
+                                 g_get_real_time() / G_USEC_PER_SEC);
+  list_new(self, created);
+  return created; /* the store holds it */
+}
+
 gboolean
 gh_conversation_store_remove(GhConversationStore *self, const gchar *room_id)
 {

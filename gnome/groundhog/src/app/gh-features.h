@@ -7,7 +7,9 @@ G_BEGIN_DECLS
 
 /*
  * The one list of what this build performs among the features preferences
- * control (privacy charter §7.1, §7.11: no fake support; W13b review B2).
+ * control (privacy charter §7.1, §7.11: no fake support; W13b review B2),
+ * plus the few other UI surfaces that must not offer what is missing
+ * (GH_FEATURE_ENCRYPTED_GROUPS).
  * Preferences shows a row whose feature is 0 here unbound, insensitive and
  * "Not available in this version yet" (gh-preferences-dialog.h says which
  * row needs which feature).
@@ -46,6 +48,10 @@ G_BEGIN_DECLS
 #define GH_FEATURE_REQUEST_FILTER   0 /* message requests are always kept apart */
 #define GH_FEATURE_ATTACHMENTS      0 /* G21/G22: Blossom attachments */
 #define GH_FEATURE_EXPIRY           GROUNDHOG_HAVE_EXPIRY /* G07: gh-expiry.c, gh-app-services.c */
+/* Not a preference: New Message's 10-recipient limit points to encrypted
+ * groups only when they exist (charter §7.9; Marmot MLS, nostrc-qp24.13).
+ * gh-app-services.c passes it as GhNewMessageConfig.encrypted_groups. */
+#define GH_FEATURE_ENCRYPTED_GROUPS 0
 
 static inline GhPreferencesFeatures
 gh_features_for_preferences(void)

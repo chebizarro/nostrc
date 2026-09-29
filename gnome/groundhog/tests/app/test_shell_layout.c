@@ -105,11 +105,7 @@ test_sidebar_page_structure(void)
   assert_label(search, "Search Conversations");
   g_assert_cmpstr(gtk_widget_get_tooltip_text(search), ==, "Search Conversations");
   assert_label(new_button, "New Message");
-  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(new_button),
-                                      GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
-                                      "Not available in this version yet");
-  g_assert_cmpstr(gtk_widget_get_tooltip_text(new_button), ==,
-                  "New Message — not available in this version yet");
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(new_button), ==, "New Message");
   g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(new_button)), ==,
                   "win.new-message");
   assert_label(menu, "Main Menu");
@@ -123,6 +119,13 @@ test_sidebar_page_structure(void)
   assert_stack_pages(stack, TRUE);
 
   g_object_unref(page);
+}
+
+static void
+count_new_message(GhWindow *window, gpointer data)
+{
+  (void)window;
+  (*(guint *)data)++;
 }
 
 static GListStore *
@@ -156,12 +159,14 @@ test_sidebar_list_states(void)
   GtkLabel *count = template_child(page, GH_TYPE_SIDEBAR_PAGE, "requests_count");
 
   gh_sidebar_page_set_models(page, G_LIST_MODEL(conversations), G_LIST_MODEL(requests));
-  /* #9 No conversations: no fake action (starting one is charter G18). */
+  /* #9 No conversations: [New Message] (charter §7.15, G18). */
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "empty");
   g_assert_cmpstr(adw_status_page_get_title(ADW_STATUS_PAGE(visible_page(page))), ==,
                   "No Conversations");
-  g_assert_null(adw_status_page_get_child(ADW_STATUS_PAGE(visible_page(page))));
-  g_assert_null(gh_sidebar_page_get_focus_target(page));
+  GtkWidget *start = adw_status_page_get_child(ADW_STATUS_PAGE(visible_page(page)));
+  g_assert_true(GTK_IS_BUTTON(start));
+  g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(start)), ==, "win.new-message");
+  g_assert_true(gh_sidebar_page_get_focus_target(page) == start);
 
   /* Requests alone still list: the entry is the way to them. */
   g_autoptr(GtkStringObject) request = gtk_string_object_new("request");
@@ -284,7 +289,8 @@ test_sidebar_search_states(void)
   g_object_set_data(G_OBJECT(page), "want", (gpointer)"");
   spin_until(search_text_is, page);
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "empty");
-  g_assert_null(gh_sidebar_page_get_focus_target(page));
+  g_assert_true(gh_sidebar_page_get_focus_target(page) ==
+                adw_status_page_get_child(ADW_STATUS_PAGE(visible_page(page))));
 
   g_object_unref(page);
 }
@@ -380,8 +386,8 @@ test_window_structure(void)
   assert_stack_pages(gh_sidebar_page_get_stack(gh_window_get_sidebar(window)), FALSE);
   g_assert_true(GH_IS_STATUS(gh_window_get_status(window)));
 
-  /* The window actions exist; new-message is disabled until starting a
-   * conversation exists (charter G18), and says so on its button. */
+  /* The window actions exist; new-message is disabled until a New Message
+   * flow is attached (charter G18), then runs it while enabled. */
   GActionGroup *actions = G_ACTION_GROUP(window);
   static const char *win_actions[] = {
     "search", "previous-conversation", "next-conversation", "new-message",
@@ -389,6 +395,16 @@ test_window_structure(void)
   };
   for (guint i = 0; i < G_N_ELEMENTS(win_actions); i++)
     g_assert_true(g_action_group_has_action(actions, win_actions[i]));
+  g_assert_false(g_action_group_get_action_enabled(actions, "new-message"));
+  guint new_message_runs = 0;
+  gh_window_set_new_message_handler(window, count_new_message, &new_message_runs, NULL);
+  g_assert_true(g_action_group_get_action_enabled(actions, "new-message"));
+  g_action_group_activate_action(actions, "new-message", NULL);
+  g_assert_cmpuint(new_message_runs, ==, 1);
+  gh_window_set_new_message_enabled(window, FALSE);
+  g_assert_false(g_action_group_get_action_enabled(actions, "new-message"));
+  gh_window_set_new_message_enabled(window, TRUE);
+  gh_window_set_new_message_handler(window, NULL, NULL, NULL);
   g_assert_false(g_action_group_get_action_enabled(actions, "new-message"));
   g_assert_true(g_action_group_get_action_enabled(actions, "search"));
   g_assert_true(GTK_IS_SHORTCUTS_WINDOW(

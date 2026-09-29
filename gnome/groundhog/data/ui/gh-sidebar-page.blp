@@ -54,17 +54,15 @@ template $GhSidebarPage: Adw.NavigationPage {
         }
       }
 
-      // win.new-message stays disabled until starting a conversation exists
-      // (charter G18); the tooltip and description say so in place.
+      // win.new-message opens New Message (charter §7.9, G18).
       [end]
       Button new_button {
         icon-name: "list-add-symbolic";
         action-name: "win.new-message";
-        tooltip-text: _("New Message — not available in this version yet");
+        tooltip-text: _("New Message");
 
         accessibility {
           label: _("New Message");
-          description: _("Not available in this version yet");
         }
       }
     }
@@ -164,16 +162,29 @@ template $GhSidebarPage: Adw.NavigationPage {
       StackPage {
         name: "empty";
 
+        // #9 (charter §7.15): the way to start one is right here.
         child: Adw.StatusPage empty_page {
           icon-name: "mail-unread-symbolic";
           title: _("No Conversations");
-          description: _("Private messages people send you will appear here. Starting a new conversation isn't available in this version yet.");
+          description: _("Start a private conversation. Messages people send you will appear here too.");
           hexpand: true;
           vexpand: true;
 
           styles [
             "groundhog-shell-status",
           ]
+
+          child: Button empty_new_button {
+            label: _("_New Message");
+            use-underline: true;
+            halign: center;
+            action-name: "win.new-message";
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
         };
       }
 

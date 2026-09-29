@@ -34,6 +34,9 @@
 #if GROUNDHOG_HAVE_NOTIFIER
 #include "gh-notifier.h"
 #endif
+#if GROUNDHOG_HAVE_NEW_MESSAGE
+#include "gh-new-message-dialog.h"
+#endif
 
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-features.h"
@@ -72,6 +75,9 @@ struct _GhAppServices {
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
   GhBackground *background;
+#endif
+#if GROUNDHOG_HAVE_NEW_MESSAGE
+  GhNip05 *nip05; /* New Message's address lookups (G18) */
 #endif
 #if GROUNDHOG_HAVE_ACCOUNTS
   GSimpleAction *preferences_action;
@@ -596,6 +602,70 @@ preferences_teardown(GhAppServices *self)
 }
 #endif
 
+#if GROUNDHOG_HAVE_NEW_MESSAGE
+/* NIP-05 lookups for New Message (charter §7.9, G18): one HTTPS GET per
+ * lookup the user chose, in the configured network mode. Nothing is
+ * contacted until then. */
+static gboolean
+new_message_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  self->nip05 = gh_nip05_new(self->settings, NULL, NULL);
+  return TRUE;
+}
+
+static void
+new_message_teardown(GhAppServices *self)
+{
+  dispose_object(&self->nip05);
+}
+#endif
+
+#if GROUNDHOG_HAVE_NEW_MESSAGE && GROUNDHOG_HAVE_OUTBOX
+/* What the contact directory has cached; never a lookup. */
+static const gchar *
+directory_display_name(gpointer data, const gchar *pubkey)
+{
+  return gh_contact_directory_get_display_name(GH_CONTACT_DIRECTORY(data), pubkey);
+}
+
+static const gchar *
+directory_claimed_nip05(gpointer data, const gchar *pubkey)
+{
+  return gh_contact_directory_get_nip05(GH_CONTACT_DIRECTORY(data), pubkey);
+}
+#endif
+
+#if GROUNDHOG_HAVE_ACCOUNT_STORE
+/* Message Requests' Delete and Block (charter §7.9, G18) on the open store:
+ * local only, nothing is published. */
+static GhStoreConversations *
+requests_store(gpointer data, GError **error)
+{
+  GhStoreConversations *store = gh_account_store_get_conversations(GH_ACCOUNT_STORE(data));
+  if (!store)
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        "The account's message storage is not open");
+  return store;
+}
+
+static gboolean
+requests_forget(gpointer data, GhConversation *request, GError **error)
+{
+  GhStoreConversations *store = requests_store(data, error);
+  return store && gh_store_conversations_forget(store, gh_conversation_get_room_id(request),
+                                                error);
+}
+
+static gboolean
+requests_block(gpointer data, GhConversation *request, GError **error)
+{
+  GhStoreConversations *store = requests_store(data, error);
+  return store && gh_store_conversations_block(store, gh_conversation_get_room_id(request),
+                                               error);
+}
+#endif
+
 typedef struct {
   const gchar *name;
   gboolean (*init)(GhAppServices *self, GError **error);
@@ -634,6 +704,9 @@ static const GhAppService services[] = {
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
   { "background", background_init, background_teardown },
+#endif
+#if GROUNDHOG_HAVE_NEW_MESSAGE
+  { "new-message", new_message_init, new_message_teardown },
 #endif
 };
 
@@ -683,6 +756,32 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #if GROUNDHOG_HAVE_INBOX
   gh_conversation_list_attach(window, self->conversations, self->settings);
   gh_inbox_status_attach(gh_window_get_status(window), self->inbox, self->relays);
+#endif
+#if GROUNDHOG_HAVE_ACCOUNT_STORE
+  static const GhRequestsBackend requests_backend = { requests_forget, requests_block };
+  gh_requests_view_set_backend(gh_conversation_list_get_requests_view(window), &requests_backend,
+                               g_object_ref(self->account_store), g_object_unref);
+#endif
+#if GROUNDHOG_HAVE_NEW_MESSAGE
+  /* New Message (G18): local suggestions from the directory's cache; the
+   * directory resolves inboxes and NIP-05 looks addresses up only when the
+   * user chooses the row that says so. */
+  GhNewMessageConfig new_message = {
+    .conversations = self->conversations,
+    .nip05 = self->nip05,
+    .settings = self->settings,
+    .encrypted_groups = GH_FEATURE_ENCRYPTED_GROUPS,
+  };
+#if GROUNDHOG_HAVE_OUTBOX
+  GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
+  if (directory) {
+    new_message.inboxes = GH_INBOX_RESOLVER(directory);
+    new_message.display_name = directory_display_name;
+    new_message.claimed_nip05 = directory_claimed_nip05;
+    new_message.names_data = directory;
+  }
+#endif
+  gh_new_message_attach(window, &new_message);
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   gh_store_status_attach(gh_window_get_status(window), self->account_store);

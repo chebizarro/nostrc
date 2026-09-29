@@ -431,9 +431,14 @@ test_requests_are_separate(Fixture *f, gconstpointer data)
   g_assert_true(g_strstr_len(gh_conversation_row_get_summary(ad), -1,
                              ". Message request. 1 unread. ") != NULL);
 
-  /* A request's messages can be read; the header says what it is. */
+  /* A request opens in the Message Requests page (G18), not the
+   * conversation view; the header says what it is. */
   g_assert_true(gh_sidebar_page_select_relative(f->sidebar, 1));
-  g_assert_true(shown_messages(f->content) == G_LIST_MODEL(f->ad));
+  g_assert_null(shown_messages(f->content));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(gh_content_page_get_stack(f->content)), ==,
+                  "requests");
+  g_assert_true(gh_requests_view_get_request(gh_conversation_list_get_requests_view(f->window)) ==
+                f->ad);
   g_assert_cmpstr(adw_window_title_get_subtitle(gh_content_page_get_window_title(f->content)),
                   ==, "Message request · end-to-end encrypted");
 
@@ -506,7 +511,8 @@ test_request_subject_secondary(Fixture *f, gconstpointer data)
 
   /* The header: the npub as the title, the quoted subject in the subtitle. */
   g_assert_true(gh_sidebar_page_select_relative(f->sidebar, 1));
-  g_assert_true(shown_messages(f->content) == G_LIST_MODEL(f->ae));
+  g_assert_true(gh_requests_view_get_request(gh_conversation_list_get_requests_view(f->window)) ==
+                f->ae);
   AdwWindowTitle *header = gh_content_page_get_window_title(f->content);
   g_assert_cmpstr(adw_window_title_get_title(header), ==, title);
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(f->content)), ==, title);

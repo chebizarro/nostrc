@@ -1,0 +1,58 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One row of New Message (gh-new-message-dialog.blp): a person you talk to, a
+// pasted identifier, a lookup to consent to, or (on the confirm page) a
+// recipient and whether they can receive private messages. Its item
+// (GhNewMessageItem, gh-new-message-dialog.c) supplies every text and state.
+// Names come from other people's profiles and addresses from what was typed,
+// so nothing here is read as markup; avatars show initials only (no picture
+// is ever loaded, PD-2).
+template $GhNewMessageRow: Adw.ActionRow {
+  use-markup: false;
+  title-lines: 0;
+  subtitle-lines: 0;
+  title: bind template.item as <$GhNewMessageItem>.title;
+  subtitle: bind template.item as <$GhNewMessageItem>.subtitle;
+  sensitive: bind template.item as <$GhNewMessageItem>.enabled;
+
+  [prefix]
+  Adw.Avatar avatar {
+    size: 32;
+    valign: center;
+    accessible-role: presentation;
+    text: bind template.item as <$GhNewMessageItem>.avatar-text;
+    show-initials: bind template.item as <$GhNewMessageItem>.show-initials;
+    visible: bind template.item as <$GhNewMessageItem>.show-avatar;
+  }
+
+  [prefix]
+  Image icon {
+    valign: center;
+    accessible-role: presentation;
+    icon-name: bind template.item as <$GhNewMessageItem>.icon-name;
+    visible: bind template.item as <$GhNewMessageItem>.show-icon;
+  }
+
+  [suffix]
+  Spinner spinner {
+    valign: center;
+    spinning: bind template.item as <$GhNewMessageItem>.busy;
+    visible: bind template.item as <$GhNewMessageItem>.busy;
+  }
+
+  [suffix]
+  Label status_label {
+    valign: center;
+    wrap: true;
+    xalign: 1;
+    max-width-chars: 18;
+    label: bind template.item as <$GhNewMessageItem>.status;
+    visible: bind template.item as <$GhNewMessageItem>.has-status;
+
+    styles [
+      "dim-label",
+      "caption",
+    ]
+  }
+}

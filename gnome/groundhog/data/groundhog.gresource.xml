@@ -22,6 +22,10 @@
     <file>ui/gh-shortcuts-window.ui</file>
     <file>ui/gh-preferences-dialog.ui</file>
     <file>ui/gh-composer.ui</file>
+    <file>ui/gh-requests-view.ui</file>
+    <file>ui/gh-new-message-dialog.ui</file>
+    <file>ui/gh-new-message-row.ui</file>
+    <file>ui/gh-recipient-chip.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
   </gresource>

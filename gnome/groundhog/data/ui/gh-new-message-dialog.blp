@@ -1,0 +1,231 @@
+using Gtk 4.0;
+using Adw 1;
+
+// New Message (charter §7.9, §2 PD-2, §8.2 G18): an Adw.Dialog (a bottom
+// sheet at the 360x294 minimum) with two pages. "pick": the search entry
+// matches the people you already talk to (local only); a pasted npub,
+// nprofile or nostr: address gives an exact row, checked offline; a
+// name@domain address gives a consent row that names the host it would
+// contact, and nothing is looked up until that row is chosen. Chosen people
+// are chips (up to 10). "confirm": each person's npub in groups of four and
+// whether they can receive private messages, which is checked only when the
+// consent row that names the discovery relays is chosen. Rows are
+// gh-new-message-row.blp, chips gh-recipient-chip.blp; gh-new-message-dialog.c
+// fills them and runs the "new-message.*" actions.
+template $GhNewMessageDialog: Adw.Dialog {
+  title: _("New Message");
+  content-width: 420;
+  content-height: 520;
+  focus-widget: entry;
+
+  child: Adw.NavigationView navigation {
+    Adw.NavigationPage pick_page {
+      tag: "pick";
+      title: _("New Message");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          [end]
+          Button next_button {
+            label: _("_Next");
+            use-underline: true;
+            action-name: "new-message.next";
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        [top]
+        Adw.Clamp {
+          maximum-size: 560;
+          tightening-threshold: 360;
+
+          child: SearchEntry entry {
+            placeholder-text: _("Name, npub or nostr: address");
+            hexpand: true;
+            margin-start: 12;
+            margin-end: 12;
+            margin-bottom: 6;
+
+            accessibility {
+              label: _("Name, npub or nostr: address");
+            }
+          };
+        }
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 560;
+            tightening-threshold: 360;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 12;
+              margin-top: 6;
+              margin-bottom: 18;
+              margin-start: 12;
+              margin-end: 12;
+
+              FlowBox chips {
+                visible: false;
+                selection-mode: none;
+                homogeneous: false;
+                max-children-per-line: 10;
+                row-spacing: 6;
+                column-spacing: 6;
+
+                styles [
+                  "groundhog-recipient-chips",
+                ]
+
+                accessibility {
+                  label: _("Recipients");
+                }
+              }
+
+              Label limit_label {
+                visible: false;
+                label: _("A private conversation can include up to 10 people. Larger groups aren't available in this version yet.");
+                wrap: true;
+                xalign: 0;
+
+                styles [
+                  "warning",
+                ]
+              }
+
+              Label input_error {
+                visible: false;
+                wrap: true;
+                xalign: 0;
+
+                styles [
+                  "error",
+                ]
+              }
+
+              ListBox results {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                accessibility {
+                  label: _("Suggestions");
+                }
+              }
+
+              Label search_note {
+                label: _("Only people you already talk to are searched, on this device. To reach someone new, paste their npub or enter their address.");
+                wrap: true;
+                xalign: 0;
+
+                styles [
+                  "dim-label",
+                  "caption",
+                ]
+              }
+            };
+          };
+        };
+      };
+    }
+
+    Adw.NavigationPage confirm_page {
+      tag: "confirm";
+      title: _("Start Conversation");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 560;
+            tightening-threshold: 360;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 18;
+              margin-top: 6;
+              margin-bottom: 18;
+              margin-start: 12;
+              margin-end: 12;
+
+              ListBox people {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                accessibility {
+                  label: _("People in this conversation");
+                }
+              }
+
+              ListBox check_list {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.ActionRow check_row {
+                  activatable: true;
+                  use-markup: false;
+                  title: _("Check Whether They Can Receive Private Messages");
+                  subtitle-lines: 0;
+                  title-lines: 0;
+
+                  [prefix]
+                  Image {
+                    icon-name: "network-server-symbolic";
+                    accessible-role: presentation;
+                  }
+
+                  [suffix]
+                  Spinner check_spinner {
+                    visible: false;
+                    valign: center;
+                  }
+                }
+              }
+
+              Button start_button {
+                label: _("_Start Conversation");
+                use-underline: true;
+                halign: center;
+                action-name: "new-message.start";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+
+              Label start_note {
+                label: _("Nothing is sent until you write a message.");
+                wrap: true;
+                justify: center;
+
+                styles [
+                  "dim-label",
+                  "caption",
+                ]
+              }
+            };
+          };
+        };
+      };
+    }
+  };
+}

@@ -2,12 +2,13 @@
 #define GH_CONVERSATION_LIST_H
 
 #include "gh-conversation-store.h"
+#include "gh-requests-view.h"
 #include "gh-window.h"
 
 G_BEGIN_DECLS
 
 /* Binds store (the active account's NIP-17 conversations) to window
- * (charter §7.5):
+ * (charter §7.5, §7.9):
  *  - the sidebar lists the conversations that are not message requests in
  *    the store's order (newest activity first) and counts the requests in its
  *    Message Requests entry, both filtered by the search text, which matches
@@ -23,7 +24,10 @@ G_BEGIN_DECLS
  *    in the active window. The view is gh_content_page_get_view() of the
  *    window's content page; its retry, unlock and delivery hooks are wired
  *    by their owners (gh-conversation-view.h), its older history through
- *    gh_conversation_list_set_history_source().
+ *    gh_conversation_list_set_history_source();
+ *  - a selected message request shows in the content page's "requests"
+ *    page instead, a GhRequestsView (G18); accepting it there opens it as a
+ *    conversation.
  * Nothing here publishes anything. settings may be NULL. Everything is
  * released with window. */
 void gh_conversation_list_attach(GhWindow *window, GhConversationStore *store,
@@ -45,6 +49,11 @@ typedef gboolean (*GhConversationListLoadOlder)(GhConversation *conversation, GE
 void gh_conversation_list_set_history_source(GhWindow *window,
                                              GhConversationListLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);
+
+/* The Message Requests page installed by gh_conversation_list_attach(); its
+ * Delete/Block backend is set by the owner of the store (gh-app-services.c).
+ * NULL before attaching. */
+GhRequestsView *gh_conversation_list_get_requests_view(GhWindow *window);
 
 /* The settings key that governs list previews (owned by the schema, charter
  * §7.11); absent from schemas that predate it. */

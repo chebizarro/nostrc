@@ -30,7 +30,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-window gh-sidebar-page gh-content-page gh-onboarding-view gh-onboarding-row gh-account-ui
   gh-conversation-row gh-shortcuts-window
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
-  gh-delivery-details gh-preferences-dialog gh-composer)
+  gh-delivery-details gh-preferences-dialog gh-composer
+  gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1297,6 +1298,93 @@ if (BUILD_TESTING AND TARGET groundhog-account-store AND TARGET groundhog-notifi
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;G_MESSAGES_DEBUG=all")
 endif()
 # --- end G24 privacy acceptance harness ---
+# --- G18 New message, lookup consent, Message Requests ---
+# Starting conversations and answering message requests (privacy charter
+# §7.9, PD-2, PD-8, PT-8, §8.2 G18):
+#  - groundhog-recipient (GTK-free): what was typed into New Message
+#    (npub, nprofile, nostr: URI, name@domain, secrets refused), offline;
+#  - groundhog-net: GhNetHttp, the one libsoup HTTP client (src/net/ only,
+#    check_privacy libsoup-boundary; the network-mode setting, no redirects,
+#    cookies, cache or User-Agent) and the NIP-05 lookup on it, which runs only
+#    when the user chooses the consent row that names the host;
+#  - GhRequestsView (data/ui/gh-requests-view.blp) joins the conversation UI:
+#    a selected request's npub, count and first message, Accept / Delete /
+#    Block (the store's gh_store_conversations_block), no profile fetch before
+#    Accept;
+#  - GhNewMessageDialog (gh-new-message-dialog.blp, -row.blp,
+#    gh-recipient-chip.blp) behind win.new-message / Ctrl+N.
+pkg_check_modules(GROUNDHOG_NET_DEPS QUIET IMPORTED_TARGET libsoup-3.0 json-glib-1.0>=1.6)
+if (TARGET nostr AND TARGET nip19)
+  add_library(groundhog-recipient STATIC src/ui/gh-recipient.c)
+  target_include_directories(groundhog-recipient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-recipient PUBLIC nostr nip19 PkgConfig::GROUNDHOG_LINK_POLICY_DEPS)
+  target_compile_options(groundhog-recipient PRIVATE -Wall -Wextra -Werror)
+endif()
+if (TARGET groundhog-recipient AND TARGET PkgConfig::GROUNDHOG_NET_DEPS)
+  message(STATUS "Groundhog NIP-05 lookup: enabled")
+  add_library(groundhog-net STATIC src/net/gh-net-http.c src/net/gh-nip05.c)
+  target_include_directories(groundhog-net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
+  target_link_libraries(groundhog-net PUBLIC groundhog-recipient PkgConfig::GROUNDHOG_NET_DEPS)
+  target_compile_options(groundhog-net PRIVATE -Wall -Wextra -Werror)
+else()
+  message(STATUS "Groundhog NIP-05 lookup: disabled (needs libsoup-3.0 and json-glib-1.0)")
+endif()
+if (TARGET groundhog-conversation-ui AND TARGET groundhog-recipient)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-requests-view.c)
+  target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-recipient)
+endif()
+if (TARGET groundhog-conversation-ui AND TARGET groundhog-net AND GROUNDHOG_DM_SEND_SOURCES)
+  add_library(groundhog-new-message STATIC src/ui/gh-new-message-dialog.c)
+  target_link_libraries(groundhog-new-message PUBLIC groundhog-conversation-ui groundhog-net)
+  target_compile_options(groundhog-new-message PRIVATE -Wall -Wextra -Werror)
+  # gh-inbox-resolver.c (the directory's interface) is one of the
+  # executable's GROUNDHOG_DM_SEND_SOURCES.
+  target_link_libraries(groundhog PRIVATE groundhog-new-message)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NEW_MESSAGE=1)
+else()
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NEW_MESSAGE=0)
+endif()
+if (BUILD_TESTING AND TARGET groundhog-net AND TARGET groundhog-test-schemas)
+  # Offline parsing of every identifier form, NIP-05 URL and document rules,
+  # consent (a recording transport sees nothing until a lookup is asked for;
+  # Tor mode and .onion refused), and GhNetHttp against a loopback libsoup
+  # server: status, redirect not followed, size cap, https-only, no cookies
+  # or User-Agent sent.
+  add_executable(test-groundhog-new-message tests/ui/test_new_message.c)
+  target_link_libraries(test-groundhog-new-message PRIVATE groundhog-net)
+  target_compile_options(test-groundhog-new-message PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-new-message groundhog-test-schemas)
+  add_test(NAME groundhog-new-message COMMAND test-groundhog-new-message)
+  set_tests_properties(groundhog-new-message PROPERTIES TIMEOUT 60
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+endif()
+if (BUILD_TESTING AND TARGET groundhog-new-message AND TARGET groundhog-store-conversations AND
+    TARGET groundhog-auth-policy AND TARGET groundhog-test-schemas)
+  # The dialog and the requests view on a real account controller (mock
+  # signer, private bus), the real contact directory over a recording scope
+  # transport (H1) with the fake GhClock (H6), real SQLCipher stores and a
+  # recording HTTP transport: PT-8 (no REQ for a request's sender until
+  # Accept, then its kind 0), consent rows (no NIP-05 GET and no 10050 REQ
+  # before the click), the 10-recipient limit copy, note to self, opening
+  # the room, and Accept / Delete / Block persisted across a reopen. The
+  # store half runs without a display; --gui needs one and self-skips (77).
+  add_executable(test-groundhog-requests tests/ui/test_requests.c
+    ${GROUNDHOG_DIRECTORY_SOURCES} src/app/gh-inbox-resolver.c)
+  target_include_directories(test-groundhog-requests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/store ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+  target_link_libraries(test-groundhog-requests PRIVATE groundhog-new-message
+    groundhog-store-conversations groundhog-auth-policy nostrc-test-bus)
+  target_compile_options(test-groundhog-requests PRIVATE -Wall -Wextra -Werror)
+  groundhog_store_link_sqlcipher_first(test-groundhog-requests)
+  add_dependencies(test-groundhog-requests groundhog-test-schemas)
+  add_test(NAME groundhog-requests COMMAND test-groundhog-requests)
+  set_tests_properties(groundhog-requests PROPERTIES TIMEOUT 120
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  add_test(NAME groundhog-requests-gui COMMAND test-groundhog-requests --gui)
+  set_tests_properties(groundhog-requests-gui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+endif()
+# --- end G18 New message, lookup consent, Message Requests ---
 
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from

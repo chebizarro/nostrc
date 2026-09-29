@@ -79,8 +79,9 @@ void gh_sidebar_page_set_show_previews(GhSidebarPage *self, gboolean show_previe
 
 /* The explicit focus target of the visible conversation page (charter
  * §7.14: never a page's implicit first child): the search entry on
- * "no-results", nothing on the others. NULL while an account page shows;
- * gh-account-ui.c names those pages' targets. */
+ * "no-results", the New Message button on "empty", nothing on the others.
+ * NULL while an account page shows; gh-account-ui.c names those pages'
+ * targets. */
 GtkWidget *gh_sidebar_page_get_focus_target(GhSidebarPage *self);
 
 /* The content navigation page (charter §7.3, §7.4): the header, whose title

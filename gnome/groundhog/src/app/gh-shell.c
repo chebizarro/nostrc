@@ -13,6 +13,7 @@ struct _GhSidebarPage {
   GtkButton *new_button;
   GtkSearchBar *search_bar;
   GtkSearchEntry *search_entry;
+  GtkWidget *empty_new_button;
   AdwBanner *status_banner;
   GtkStack *stack;
   GtkButton *requests_button;
@@ -271,6 +272,7 @@ gh_sidebar_page_class_init(GhSidebarPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, search_button);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, search_bar);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, search_entry);
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, empty_new_button);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, status_banner);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, stack);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, requests_button);
@@ -567,6 +569,8 @@ gh_sidebar_page_get_focus_target(GhSidebarPage *self)
     return NULL;
   if (g_str_equal(conversation_page(self), "no-results"))
     return GTK_WIDGET(self->search_entry);
+  if (g_str_equal(conversation_page(self), "empty"))
+    return self->empty_new_button;
   return NULL;
 }
 

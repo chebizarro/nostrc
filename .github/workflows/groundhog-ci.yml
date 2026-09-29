@@ -58,7 +58,8 @@ jobs:
             test-groundhog-inbox-setup test-groundhog-onboarding \
             test-groundhog-composer test-groundhog-e2e-dm test-groundhog-expiry \
             test-groundhog-auth-policy test-groundhog-contact-directory \
-            test-groundhog-privacy-e2e
+            test-groundhog-privacy-e2e \
+            test-groundhog-new-message test-groundhog-requests
 
       - name: Require complete Groundhog test registration
         run: |
@@ -83,6 +84,7 @@ jobs:
               'groundhog-composer', 'groundhog-e2e-dm', 'groundhog-expiry',
               'groundhog-auth-policy', 'groundhog-contact-directory',
               'groundhog-privacy-e2e',
+              'groundhog-new-message', 'groundhog-requests', 'groundhog-requests-gui',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))

@@ -125,5 +125,24 @@ GhMessage *gh_conversation_store_lookup_message(GhConversationStore *self,
 GhConversation *gh_conversation_store_lookup(GhConversationStore *self,
                                              const gchar *room_id);
 
+/* The most people besides the account a conversation the user starts may
+ * have (charter §7.9: NIP-17 conversations of up to 10; larger groups are
+ * encrypted groups). Rooms others start are not limited here. */
+#define GH_CONVERSATION_MAX_PEERS 10
+
+/* Opens the NIP-17 room of the bound account with peers (64-character hex
+ * pubkeys in any case; duplicates and the account itself are ignored; NULL
+ * or none: a note to self), the way New Message starts a conversation
+ * (charter §7.9, G18): a listed room is returned (a message request is
+ * accepted, since starting a conversation accepts it); otherwise an empty,
+ * accepted room is listed at the top of the store order and returned. An
+ * empty room is kept in memory only (nothing is sent or stored until a
+ * message is) and calls no delegate. Borrowed; NULL with error without a
+ * bound account (G_IO_ERROR_NOT_INITIALIZED), for a malformed pubkey or more
+ * than GH_CONVERSATION_MAX_PEERS peers (G_IO_ERROR_INVALID_ARGUMENT). */
+GhConversation *gh_conversation_store_open_room(GhConversationStore *self,
+                                                const gchar *const *peers,
+                                                GError **error);
+
 G_END_DECLS
 #endif

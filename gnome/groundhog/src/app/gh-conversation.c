@@ -44,6 +44,7 @@ struct _GhConversation {
   gchar *preview;
   gboolean has_own_message;
   gboolean accepted;
+  gint64 opened_at;          /* an empty room the user opened: its activity */
   GhConversationStore *store; /* persists read state and acceptance; not a ref */
 };
 
@@ -169,6 +170,28 @@ gh_conversation_new_for_message(GhMessage *message)
       g_strv_builder_add(peers, self->participants[i]);
   self->peers = g_strv_builder_end(peers);
   self->fallback_title = fallback_title(self);
+  return self;
+}
+
+GhConversation *
+gh_conversation_new_for_room(const gchar *account, const gchar *const *participants,
+                             gint64 opened_at)
+{
+  g_return_val_if_fail(account != NULL && participants != NULL, NULL);
+  g_return_val_if_fail(g_strv_contains(participants, account), NULL);
+  GhConversation *self = g_object_new(GH_TYPE_CONVERSATION, NULL);
+  self->account = g_strdup(account);
+  self->participants = g_strdupv((GStrv)participants);
+  self->room_id = g_strjoinv(",", self->participants);
+  g_autoptr(GStrvBuilder) peers = g_strv_builder_new();
+  for (guint i = 0; self->participants[i]; i++)
+    if (!g_str_equal(self->participants[i], self->account))
+      g_strv_builder_add(peers, self->participants[i]);
+  self->peers = g_strv_builder_end(peers);
+  self->fallback_title = fallback_title(self);
+  /* Starting a conversation is accepting it (charter §7.9). */
+  self->accepted = TRUE;
+  self->opened_at = MAX(opened_at, 0);
   return self;
 }
 
@@ -549,7 +572,7 @@ gh_conversation_get_last_activity(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
   if (self->messages->len == 0)
-    return 0;
+    return self->opened_at;
   return gh_message_get_created_at(
     g_ptr_array_index(self->messages, self->messages->len - 1));
 }

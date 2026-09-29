@@ -18,7 +18,9 @@ G_BEGIN_DECLS
  *   win.search                  reveal and focus the conversation search
  *   win.previous-conversation   select the previous / next conversation
  *   win.next-conversation
- *   win.new-message             disabled: starting conversations is charter G18
+ *   win.new-message             New Message (charter G18): runs the handler set
+ *                               with gh_window_set_new_message_handler();
+ *                               disabled until one is set and enabled
  *   win.show-help-overlay       the shortcuts window
  * When collapsed, a press on a row, Enter, or the previous/next actions open
  * the selected conversation (show-content), while the arrow keys only move
@@ -47,6 +49,17 @@ gboolean gh_window_get_content_visible(GhWindow *self);
  * and shown in the content page, collapsed or not. FALSE when no list holds
  * it. */
 gboolean gh_window_open_item(GhWindow *self, gpointer item);
+
+/* The New Message flow behind win.new-message (Ctrl+N, the header's New
+ * Message button and the empty list's): func runs on activation.
+ * gh_new_message_attach() sets it. data is released with destroy when
+ * replaced or when the window is disposed. The action is disabled while no
+ * handler is set or gh_window_set_new_message_enabled() turned it off. */
+typedef void (*GhWindowNewMessageFunc)(GhWindow *window, gpointer data);
+void gh_window_set_new_message_handler(GhWindow *self, GhWindowNewMessageFunc func,
+                                       gpointer data, GDestroyNotify destroy);
+/* Whether New Message can run now (e.g. an account is active). */
+void gh_window_set_new_message_enabled(GhWindow *self, gboolean enabled);
 
 /* Adds app.quit and binds every accelerator of the shortcuts window to its
  * action on app (Ctrl+F, Alt+Up/Down and Ctrl+Page Up/Down, Ctrl+N, Ctrl+?,

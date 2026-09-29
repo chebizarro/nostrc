@@ -1,0 +1,180 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Message Requests (charter §7.9, PD-8, PT-8, §8.2 G18): the content page for
+// a request chosen in the sidebar's Message Requests list (the list itself is
+// the sidebar's requests mode). A request shows its sender's npub (no profile
+// is fetched before Accept), how many messages it holds and its first message
+// as plain, selectable text: no markup, no links to open and nothing loaded
+// from the web. Accept, Delete and Block run the "requests.*" actions of
+// gh-requests-view.c; Delete and Block confirm first. Nothing here publishes
+// anything, and the sender is never told.
+template $GhRequestsView: Adw.Bin {
+  child: Stack stack {
+    StackPage {
+      name: "none";
+
+      child: Adw.StatusPage none_page {
+        icon-name: "mail-unread-symbolic";
+        title: _("Message Requests");
+        description: _("People you haven't accepted can write to you here. They can't tell whether you've seen their messages, and Groundhog doesn't look them up until you accept.");
+        hexpand: true;
+        vexpand: true;
+
+        styles [
+          "groundhog-shell-status",
+        ]
+      };
+    }
+
+    StackPage {
+      name: "request";
+
+      child: Box {
+        orientation: vertical;
+
+        ScrolledWindow {
+          vexpand: true;
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 560;
+            tightening-threshold: 360;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 12;
+              margin-top: 18;
+              margin-bottom: 18;
+              margin-start: 12;
+              margin-end: 12;
+
+              // Initials would come from an npub: a neutral avatar instead.
+              Adw.Avatar avatar {
+                size: 64;
+                show-initials: false;
+                halign: center;
+                accessible-role: presentation;
+              }
+
+              Label title_label {
+                wrap: true;
+                wrap-mode: word_char;
+                justify: center;
+                selectable: true;
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label npub_label {
+                wrap: true;
+                wrap-mode: word_char;
+                justify: center;
+                selectable: true;
+
+                styles [
+                  "monospace",
+                  "dim-label",
+                ]
+              }
+
+              Label count_label {
+                wrap: true;
+                justify: center;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Adw.PreferencesGroup message_group {
+                title: _("First Message");
+
+                Box {
+                  orientation: vertical;
+                  spacing: 6;
+
+                  styles [
+                    "card",
+                    "groundhog-request-message",
+                  ]
+
+                  Label subject_label {
+                    visible: false;
+                    wrap: true;
+                    wrap-mode: word_char;
+                    xalign: 0;
+                    selectable: true;
+                    use-markup: false;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+
+                  Label message_label {
+                    wrap: true;
+                    wrap-mode: word_char;
+                    xalign: 0;
+                    selectable: true;
+                    use-markup: false;
+                  }
+                }
+              }
+
+              Label privacy_label {
+                label: _("Groundhog hasn't looked up who this is. Accepting moves the conversation to your list and lets Groundhog ask your discovery relays for their name and message relays. Nothing is sent to them until you reply.");
+                wrap: true;
+                xalign: 0;
+
+                styles [
+                  "dim-label",
+                  "caption",
+                ]
+              }
+            };
+          };
+        }
+
+        // Three equal buttons fit the 360 px minimum.
+        Box action_bar {
+          spacing: 6;
+          homogeneous: true;
+          margin-top: 6;
+          margin-bottom: 6;
+          margin-start: 6;
+          margin-end: 6;
+
+          Button block_button {
+            label: _("_Block…");
+            use-underline: true;
+            action-name: "requests.block";
+
+            styles [
+              "destructive-action",
+            ]
+          }
+
+          Button delete_button {
+            label: _("_Delete…");
+            use-underline: true;
+            action-name: "requests.delete";
+          }
+
+          Button accept_button {
+            label: _("_Accept");
+            use-underline: true;
+            action-name: "requests.accept";
+            tooltip-text: _("Move to your conversations");
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+      };
+    }
+  };
+}
