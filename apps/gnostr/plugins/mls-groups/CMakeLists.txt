@@ -24,6 +24,7 @@ set(PLUGIN_SOURCES
     gn-mls-event-router.c
     gn-mls-group-error.c
     gn-mls-commit-publish.c
+    gn-mls-pending-commits.c
     # Phase 4: Models
     model/gn-group-list-model.c
     model/gn-group-message-model.c

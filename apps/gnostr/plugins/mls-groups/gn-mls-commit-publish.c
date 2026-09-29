@@ -6,9 +6,13 @@
 
 #include "gn-mls-commit-publish.h"
 
+G_DEFINE_QUARK(gn-mls-publish-error-quark, gn_mls_publish_error)
+
 typedef struct {
   GnMlsAckPublishFunc publish;
   GnMlsAckFinishFunc  finish;
+  GnMlsAckIsRejectionFunc is_rejection;
+  gboolean            uncertain;   /* some relay may have stored it */
   gpointer            target;
   gchar              *event_json;
   GStrv               relays;
@@ -41,6 +45,8 @@ on_relay_answer(GObject *source, GAsyncResult *result, gpointer user_data)
       g_object_unref(task);
       return;
     }
+  if (!st->is_rejection(error))
+    st->uncertain = TRUE;
   g_clear_error(&st->last_error);
   st->last_error = error;
   try_next_relay(task);
@@ -52,11 +58,16 @@ try_next_relay(GTask *task)
   PublishState *st = g_task_get_task_data(task);
   if (st->relays == NULL || st->relays[st->next] == NULL)
     {
-      if (st->last_error != NULL)
-        g_task_return_error(task, g_steal_pointer(&st->last_error));
-      else
-        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+      if (st->last_error == NULL)
+        g_task_return_new_error(task, GN_MLS_PUBLISH_ERROR, GN_MLS_PUBLISH_NO_RELAYS,
                                 "The group has no relays to publish to");
+      else if (st->uncertain)
+        g_task_return_new_error(task, GN_MLS_PUBLISH_ERROR, GN_MLS_PUBLISH_UNCERTAIN,
+                                "No relay confirmed it yet (%s)", st->last_error->message);
+      else
+        g_task_return_new_error(task, GN_MLS_PUBLISH_ERROR, GN_MLS_PUBLISH_REJECTED,
+                                "Refused by the group relays (%s)",
+                                st->last_error->message);
       g_object_unref(task);
       return;
     }
@@ -68,6 +79,7 @@ try_next_relay(GTask *task)
 void
 gn_mls_publish_until_ack_async(GnMlsAckPublishFunc  publish,
                                GnMlsAckFinishFunc   finish,
+                               GnMlsAckIsRejectionFunc is_rejection,
                                gpointer             target,
                                const char          *event_json,
                                const char * const  *relay_urls,
@@ -75,11 +87,13 @@ gn_mls_publish_until_ack_async(GnMlsAckPublishFunc  publish,
                                GAsyncReadyCallback  callback,
                                gpointer             user_data)
 {
-  g_return_if_fail(publish != NULL && finish != NULL && event_json != NULL);
+  g_return_if_fail(publish != NULL && finish != NULL && is_rejection != NULL &&
+                   event_json != NULL);
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   PublishState *st = g_new0(PublishState, 1);
   st->publish = publish;
   st->finish = finish;
+  st->is_rejection = is_rejection;
   st->target = target;
   st->event_json = g_strdup(event_json);
   st->relays = g_strdupv((gchar **)relay_urls);

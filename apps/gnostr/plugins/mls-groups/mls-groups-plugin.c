@@ -20,6 +20,7 @@
 #include "gn-marmot-service.h"
 #include "gn-key-package-manager.h"
 #include "gn-mls-event-router.h"
+#include "gn-mls-pending-commits.h"
 #include "gn-mls-dm-manager.h"
 #include "gn-mls-media-manager.h"
 #include "ui/gn-group-list-view.h"
@@ -284,6 +285,10 @@ mls_groups_plugin_activate(GnostrPlugin       *plugin,
   self->kp_manager    = gn_key_package_manager_new(service, context);
   self->dm_manager    = gn_mls_dm_manager_new(service, self->event_router, context);
   self->media_manager = gn_mls_media_manager_new(service, context, NULL);
+
+  /* Resolve Commits left pending by a crash or a lost relay answer, and
+   * send Welcomes of Adds merged meanwhile (review R2). */
+  gn_mls_resolve_all_pending_commits(self->event_router);
 
   /* Ensure key package is published */
   if (user_pubkey != NULL)

@@ -7,7 +7,7 @@
 #include "gn-group-settings-view.h"
 #include "gn-member-row.h"
 #include "../gn-key-package-discovery.h"
-#include "../gn-mls-commit-publish.h"
+#include "../gn-mls-pending-commits.h"
 #include "../gn-mls-group-error.h"
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
@@ -175,41 +175,7 @@ rebuild_member_list(GnGroupSettingsView *self)
   gtk_widget_set_visible(GTK_WIDGET(self->rename_entry), i_am_admin);
 }
 
-/* ── Publishing a Commit (MIP-03 publish-before-merge, review B1) ──
- *
- * libmarmot keeps a Commit pending until we report that a group relay
- * accepted it (NIP-01 OK): merge it then, clear it when no relay did. */
-
-static void
-ack_publish(gpointer target, const char *event_json, const char *relay_url,
-            GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
-{
-  gnostr_plugin_context_publish_event_to_relay_ack_async(target, event_json, relay_url,
-                                                         cancellable, callback, user_data);
-}
-
-static gboolean
-ack_finish(gpointer target, GAsyncResult *result, GError **error)
-{
-  return gnostr_plugin_context_publish_event_to_relay_ack_finish(target, result, error);
-}
-
-static void
-publish_commit_async(GnGroupSettingsView *self, const gchar *commit_json,
-                     GAsyncReadyCallback callback, gpointer user_data)
-{
-  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
-  const gchar *group_id_hex = marmot_gobject_group_get_mls_group_id(self->group);
-  gsize relay_count = 0;
-  /* Without a plugin context nothing can be published: no relays, so the
-   * attempt fails and the caller discards the pending Commit. */
-  g_auto(GStrv) relays = (client && group_id_hex && self->plugin_context)
-    ? marmot_gobject_client_get_group_relay_urls(client, group_id_hex, &relay_count)
-    : NULL;
-  gn_mls_publish_until_ack_async(ack_publish, ack_finish, self->plugin_context,
-                                 commit_json, (const char * const *) relays, NULL,
-                                 callback, user_data);
-}
+/* ── Status text ─────────────────────────────────────────────────── */
 
 static void
 show_status(GtkLabel *label, const gchar *text)
@@ -356,23 +322,7 @@ typedef struct
 {
   GnGroupSettingsView *view;   /* strong */
   gchar               *pk;
-  guint8              *gid;
-  gsize                gid_len;
-  char               **welcomes;   /* malloc()ed by libmarmot */
-  size_t               welcome_count;
-} AddCommitData;
-
-static void
-add_commit_data_free(AddCommitData *data)
-{
-  for (size_t i = 0; i < data->welcome_count && data->welcomes; i++)
-    free(data->welcomes[i]);
-  free(data->welcomes);
-  g_free(data->gid);
-  g_free(data->pk);
-  g_clear_object(&data->view);
-  g_free(data);
-}
+} AddResolve;
 
 static void
 finish_add_member_ui(GnGroupSettingsView *self, const gchar *status)
@@ -383,55 +333,48 @@ finish_add_member_ui(GnGroupSettingsView *self, const gchar *status)
   gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), TRUE);
 }
 
+/* The resolver published the pending Add, merged it and sent its Welcomes
+ * (or knows why not). */
 static void
-on_add_commit_published(GObject *source, GAsyncResult *result, gpointer user_data)
+on_add_resolved(GObject *source, GAsyncResult *result, gpointer user_data)
 {
   (void)source;
-  AddCommitData *data = user_data;
-  GnGroupSettingsView *self = data->view;
+  AddResolve *ar = user_data;
+  GnGroupSettingsView *self = ar->view;
   g_autoptr(GError) error = NULL;
-  g_autofree gchar *relay = gn_mls_publish_until_ack_finish(result, &error);
-  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
-  struct Marmot *m = client ? marmot_gobject_client_get_marmot(client) : NULL;
-  MarmotGroupId gid = marmot_group_id_new(data->gid, data->gid_len);
-
-  if (relay == NULL)
+  GnMlsCommitOutcome outcome = gn_mls_resolve_pending_commit_finish(result, &error);
+  g_autofree gchar *msg = NULL;
+  switch (outcome)
     {
-      /* No relay took the Commit: the group stays as it was. */
-      if (m != NULL) marmot_clear_pending_commit(m, &gid);
-      g_warning("GroupSettings: add-member Commit not accepted by any relay: %s",
-                error ? error->message : "unknown");
-      g_autofree gchar *msg = g_strdup_printf("Could not publish the invitation: %s",
-                                              error ? error->message : "no relay accepted it");
+    case GN_MLS_COMMIT_MERGED:
+    case GN_MLS_COMMIT_NONE:
+      finish_add_member_ui(self, "Member added");
+      gtk_editable_set_text(GTK_EDITABLE(self->add_member_entry), "");
+      g_signal_emit(self, signals[SIGNAL_MEMBER_ADDED], 0, ar->pk);
+      break;
+    case GN_MLS_COMMIT_SUPERSEDED:
+      finish_add_member_ui(self, "Another member's change reached the group first; "
+                                 "the member was not added. Try again.");
+      break;
+    case GN_MLS_COMMIT_REJECTED:
+      msg = g_strdup_printf("The group relays refused the invitation: %s",
+                            error ? error->message : "unknown");
       finish_add_member_ui(self, msg);
+      break;
+    case GN_MLS_COMMIT_UNCERTAIN:
+      finish_add_member_ui(self, "Invitation sent, but no relay has confirmed it yet. "
+                                 "The member is added once a relay does.");
+      break;
+    case GN_MLS_COMMIT_FAILED:
+    default:
+      msg = g_strdup_printf("Could not add the member: %s",
+                            error ? error->message : "unknown");
+      finish_add_member_ui(self, msg);
+      break;
     }
-  else
-    {
-      MarmotError err = m ? marmot_merge_pending_commit(m, &gid) : MARMOT_ERR_INVALID_ARG;
-      if (err == MARMOT_OK)
-        {
-          g_info("GroupSettings: add-member Commit accepted by %s and merged", relay);
-          /* Send welcome(s) via NIP-59 gift wrap to the new member(s) */
-          for (size_t i = 0; i < data->welcome_count && data->welcomes; i++)
-            if (data->welcomes[i] != NULL)
-              gn_mls_event_router_send_welcome_async(self->router, data->pk,
-                                                     data->welcomes[i], NULL, NULL, NULL);
-          finish_add_member_ui(self, "Member added");
-          gtk_editable_set_text(GTK_EDITABLE(self->add_member_entry), "");
-          g_signal_emit(self, signals[SIGNAL_MEMBER_ADDED], 0, data->pk);
-        }
-      else if (err == MARMOT_ERR_WRONG_EPOCH)
-        finish_add_member_ui(self, "Another member's change reached the group first; "
-                                   "the member was not added. Try again.");
-      else
-        {
-          g_autofree gchar *msg = g_strdup_printf("Could not add the member: %s",
-                                                  marmot_error_string(err));
-          finish_add_member_ui(self, msg);
-        }
-    }
-  marmot_group_id_free(&gid);
-  add_commit_data_free(data);
+  g_object_unref(ar->view);
+  g_free(ar->pk);
+  g_free(ar);
 }
 
 static void
@@ -506,18 +449,16 @@ add_member_with_key_package(GnGroupSettingsView *self, const gchar *pk, const gc
 
   g_info("GroupSettings: marmot_add_members made a pending Commit (%zu welcome(s))",
          welcome_count);
-
-  /* Publish the Commit; merge and send the Welcomes only once a group relay
-   * accepted it, otherwise discard it (MIP-03). */
-  AddCommitData *data = g_new0(AddCommitData, 1);
-  data->view = g_object_ref(self);
-  data->pk = g_strdup(pk);
-  data->gid = g_memdup2(gid_bytes, gid_len);
-  data->gid_len = gid_len;
-  data->welcomes = welcome_jsons;
-  data->welcome_count = welcome_count;
-  publish_commit_async(self, commit_json, on_add_commit_published, data);
+  /* libmarmot keeps the signed Commit and the Welcomes: the resolver
+   * publishes it until a group relay accepts it, merges it, and only then
+   * sends the Welcomes -- also after a restart (MIP-03, review R2). */
+  for (size_t i = 0; i < welcome_count && welcome_jsons; i++) free(welcome_jsons[i]);
+  free(welcome_jsons);
   free(commit_json);
+  AddResolve *ar = g_new0(AddResolve, 1);
+  ar->view = g_object_ref(self);
+  ar->pk = g_strdup(pk);
+  gn_mls_resolve_pending_commit_async(self->router, group_id_hex, on_add_resolved, ar);
 }
 
 static void
@@ -537,75 +478,39 @@ finish_rename_ui(GnGroupSettingsView *self, const gchar *status)
 }
 
 static void
-on_rename_merged(GObject *source, GAsyncResult *result, gpointer user_data)
-{
-  GnGroupSettingsView *self = user_data;   /* strong */
-  g_autoptr(GError) error = NULL;
-  if (marmot_gobject_client_merge_pending_commit_finish(MARMOT_GOBJECT_CLIENT(source),
-                                                        result, &error))
-    finish_rename_ui(self, NULL);   /* ::group-updated shows the new name */
-  else if (gn_mls_group_error_is_superseded(error))
-    finish_rename_ui(self, "Another member's change reached the group first; "
-                           "the group was not renamed.");
-  else
-    {
-      g_autofree gchar *msg = g_strdup_printf("Rename failed: %s", error->message);
-      finish_rename_ui(self, msg);
-    }
-  g_object_unref(self);
-}
-
-typedef struct
-{
-  GnGroupSettingsView *view;   /* strong */
-  gchar               *reason;
-} RenameClear;
-
-static void
-on_rename_cleared(GObject *source, GAsyncResult *result, gpointer user_data)
-{
-  RenameClear *rc = user_data;
-  g_autoptr(GError) error = NULL;
-  if (!marmot_gobject_client_clear_pending_commit_finish(MARMOT_GOBJECT_CLIENT(source),
-                                                         result, &error))
-    g_warning("GroupSettings: discarding the rename Commit failed: %s", error->message);
-  g_autofree gchar *msg = g_strdup_printf("The group was not renamed: %s", rc->reason);
-  finish_rename_ui(rc->view, msg);
-  g_object_unref(rc->view);
-  g_free(rc->reason);
-  g_free(rc);
-}
-
-static void
-on_rename_published(GObject *source, GAsyncResult *result, gpointer user_data)
+on_rename_resolved(GObject *source, GAsyncResult *result, gpointer user_data)
 {
   (void)source;
   GnGroupSettingsView *self = user_data;   /* strong */
   g_autoptr(GError) error = NULL;
-  g_autofree gchar *relay = gn_mls_publish_until_ack_finish(result, &error);
-  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
-  const gchar *group_id_hex = marmot_gobject_group_get_mls_group_id(self->group);
-  if (client == NULL || group_id_hex == NULL)
+  GnMlsCommitOutcome outcome = gn_mls_resolve_pending_commit_finish(result, &error);
+  g_autofree gchar *msg = NULL;
+  switch (outcome)
     {
-      finish_rename_ui(self, "The group service is not available.");
-      g_object_unref(self);
-      return;
+    case GN_MLS_COMMIT_MERGED:
+    case GN_MLS_COMMIT_NONE:
+      finish_rename_ui(self, NULL);   /* ::group-updated shows the new name */
+      break;
+    case GN_MLS_COMMIT_SUPERSEDED:
+      finish_rename_ui(self, "Another member's change reached the group first; "
+                             "the group was not renamed.");
+      break;
+    case GN_MLS_COMMIT_REJECTED:
+      msg = g_strdup_printf("The group was not renamed: %s",
+                            error ? error->message : "unknown");
+      finish_rename_ui(self, msg);
+      break;
+    case GN_MLS_COMMIT_UNCERTAIN:
+      finish_rename_ui(self, "Sent, but no relay has confirmed it yet. "
+                             "The new name applies once a relay does.");
+      break;
+    case GN_MLS_COMMIT_FAILED:
+    default:
+      msg = g_strdup_printf("Rename failed: %s", error ? error->message : "unknown");
+      finish_rename_ui(self, msg);
+      break;
     }
-  if (relay != NULL)
-    {
-      g_info("GroupSettings: rename Commit accepted by %s; merging", relay);
-      marmot_gobject_client_merge_pending_commit_async(client, group_id_hex, NULL,
-                                                       on_rename_merged, self);
-      return;
-    }
-  /* No relay took it: the group stays as it was (MIP-03). */
-  g_warning("GroupSettings: rename Commit not accepted by any relay: %s",
-            error ? error->message : "unknown");
-  RenameClear *rc = g_new0(RenameClear, 1);
-  rc->view = self;   /* ref passed on */
-  rc->reason = g_strdup(error ? error->message : "no relay accepted it");
-  marmot_gobject_client_clear_pending_commit_async(client, group_id_hex, NULL,
-                                                   on_rename_cleared, rc);
+  g_object_unref(self);
 }
 
 static void
@@ -627,18 +532,11 @@ on_rename_committed(GObject      *source,
       g_object_unref(self);
       return;
     }
-  if (self->plugin_context == NULL)
-    {
-      /* Cannot publish: do not leave the Commit pending. */
-      marmot_gobject_client_clear_pending_commit_async(
-        client, marmot_gobject_group_get_mls_group_id(self->group), NULL, NULL, NULL);
-      finish_rename_ui(self, "The group was not renamed: the plugin is shutting down.");
-      g_object_unref(self);
-      return;
-    }
-  /* The Commit (signed kind:445) goes to the group relays; libmarmot keeps
-   * it pending until one of them accepts it. */
-  publish_commit_async(self, commit_json, on_rename_published, self);   /* ref passed on */
+  /* libmarmot keeps the signed Commit pending; the resolver publishes it to
+   * the group relays and merges on the first OK. */
+  gn_mls_resolve_pending_commit_async(self->router,
+                                      marmot_gobject_group_get_mls_group_id(self->group),
+                                      on_rename_resolved, self);   /* ref passed on */
 }
 
 static void

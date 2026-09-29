@@ -479,6 +479,20 @@ gn_mls_event_router_new(GnMarmotService     *service,
   return self;
 }
 
+GnMarmotService *
+gn_mls_event_router_get_service(GnMlsEventRouter *self)
+{
+  g_return_val_if_fail(GN_IS_MLS_EVENT_ROUTER(self), NULL);
+  return self->service;
+}
+
+GnostrPluginContext *
+gn_mls_event_router_get_context(GnMlsEventRouter *self)
+{
+  g_return_val_if_fail(GN_IS_MLS_EVENT_ROUTER(self), NULL);
+  return self->context;
+}
+
 void
 gn_mls_event_router_process_gift_wrap(GnMlsEventRouter *self,
                                        const gchar       *gift_wrap_json)

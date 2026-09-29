@@ -104,6 +104,11 @@ gboolean gn_mls_event_router_send_message_finish(GnMlsEventRouter *self,
  *
  * Gift-wrap and send a welcome message to a recipient.
  */
+/* The router's service and plugin context (NULL once the plugin is
+ * deactivated); borrowed. */
+GnMarmotService     *gn_mls_event_router_get_service(GnMlsEventRouter *self);
+GnostrPluginContext *gn_mls_event_router_get_context(GnMlsEventRouter *self);
+
 void gn_mls_event_router_send_welcome_async(GnMlsEventRouter   *self,
                                               const gchar         *recipient_pubkey_hex,
                                               const gchar         *welcome_rumor_json,
