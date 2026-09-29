@@ -22,14 +22,25 @@
   <url type="homepage">https://github.com/chebizarro/nostrc</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.8.0" type="development" date="2026-09-29">
+      <description>
+        <p>Unreleased preview.</p>
+        <ul>
+          <li>Start a conversation with New Message: paste an npub, or look up a name@domain address only when you choose to</li>
+          <li>Message Requests: messages from people you haven’t accepted wait apart, with Accept, Delete and Block</li>
+          <li>Conversation Info: privacy summary, mute, block, forget, disappearing timer, and safety codes to verify each other’s keys</li>
+          <li>A timer indicator in the composer when messages will disappear</li>
+          <li>More reliable delivery checks for a contact’s message relays</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.0" type="development" date="2026-09-28">
       <description>
         <p>Unreleased preview.</p>
         <ul>
           <li>Send private messages (NIP-17) through a queue that survives restarts, with honest status: waiting for approval, sending, sent to at least one of each person’s relays, or not sent</li>
           <li>Encrypted message storage on this device, with history, drafts and retention (keep forever, 1 year or 30 days)</li>
-          <li>New Message, Message Requests and Conversation Info (mute, block, forget, verify key, disappearing timer)</li>
-          <li>Disappearing messages with a timer indicator in the composer</li>
+          <li>Disappearing messages</li>
           <li>Private notifications, off by default</li>
           <li>First-run setup of your message relays</li>
         </ul>
