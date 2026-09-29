@@ -60,6 +60,9 @@ Decisions for components affected by another component's change (AGENTS.md,
 | libmarmot 0.5.0 addendum fixes (W17b C1, C2, N1; still unreleased 0.5.0) | libmarmot | 0.5.0 | No further bump: folded into unreleased 0.5.0. Documented that a `Marmot` is not thread-safe; Welcome outbox append-only with stable ids (`MarmotUnsentWelcome.id`), `marmot_mark_welcomes_sent()` now takes the ids to remove (outbox record v2); a duplicate Welcome for a group already joined is refused (`MARMOT_ERR_WELCOME_ALREADY_ACCEPTED`). |
 | same | marmot-gobject | 1.2.0 | No further bump (unreleased 1.2.0): every libmarmot call serialized per client; new `marmot_gobject_client_lock/unlock`; `get_unsent_welcomes` returns ids and `mark_welcomes_sent` takes them. |
 | same | gnostr | 0.1.0 | No bump (unreleased): direct libmarmot calls hold the client lock; each Welcome is marked sent after its own send; resolver coalesces per group, backs off exponentially with jitter, stops on deactivation, and flushes the outbox on every group update. |
+| W17b addendum 2 (D1 and low items; still unreleased) | marmot-gobject | 1.2.0 | No further bump: client signals are posted as idle sources to the context captured at construction instead of `g_main_context_invoke()` from workers holding the lock (no API change; documented on `marmot_gobject_client_new()`). |
+| same | libmarmot | 0.5.0 | No further bump: an uncomputable Welcome id fails the outbox operation (`MARMOT_ERR_MEMORY`) instead of using an all-zero id. |
+| same | gnostr | 0.1.0 | No bump (unreleased): failed Welcome sends are retried on their own backoff timer, cancelled on deactivation. |
 
 ## Maintenance
 

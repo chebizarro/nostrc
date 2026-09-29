@@ -386,7 +386,11 @@ described above.
   marmot-gobject does this per client (every async and sync call holds the
   client's lock; direct libmarmot calls through
   `marmot_gobject_client_get_marmot()` must hold
-  `marmot_gobject_client_lock()`).
+  `marmot_gobject_client_lock()`). Its signals are emitted only in the
+  thread-default main context of the thread that created the client, from
+  an idle source, never on a worker thread or under the lock. Handlers may
+  therefore call back into the client; emissions wait until that context
+  runs.
 
 - **Rollback of failed writes.** An epoch transition writes, in order, the
   exporter secret, the retained parent, the MLS state and the group record. A
