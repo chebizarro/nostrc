@@ -23,9 +23,15 @@ G_BEGIN_DECLS
  * "draft-changed" and says why sending is impossible, if it is.
  *
  * Keys (a capture-phase controller on the text view, named
- * "groundhog-composer-keys"; an input method composing text gets Enter first
- * through gtk_text_view_im_context_filter_keypress(), so Enter commits a
- * preedit and never sends it half-typed):
+ * "groundhog-composer-keys"). While an input method composes text (the text
+ * view's "preedit-changed" reports a preedit), Enter goes to the input
+ * method (gtk_text_view_im_context_filter_keypress()) to commit it and does
+ * nothing else: it never sends a half-typed word. An Enter that would send
+ * is offered to the input method first too; Shift+Enter and the like are
+ * left to the text view, whose own controller filters them once. (GTK runs
+ * a widget's most recently added controller first, so none the composer
+ * adds could run after the text view's input-method filtering, as charter
+ * §7.7 first asked; it consults the input method itself instead.)
  *  - Enter sends while "enter-sends" is set (the enter-sends setting),
  *    otherwise it inserts a newline;
  *  - Shift+Enter always inserts a newline, Ctrl+Enter always sends;
@@ -50,13 +56,20 @@ G_BEGIN_DECLS
  * sentence (the text is kept for when sending is possible again), with an
  * optional button (gh_composer_set_disabled_action()).
  *
- * Slots for later items: "attach_button" (hidden until attachments, G22)
- * and "timer_slot" (an empty, hidden box before the entry for the
- * disappearing-messages timer, G07; gh_composer_get_timer_slot()).
+ * Disappearing timer (charter §3.7, G07; W14 review B1): "disappearing-timer"
+ * is the shown conversation's timer in seconds, 0 while it is off. While it
+ * is on, "timer_slot" before the entry shows a compact indicator (an alarm
+ * icon and the duration, e.g. "1 day") whose tooltip and accessible label
+ * say "Messages you send disappear after 1 day", so nothing disappears
+ * without a word before sending. It activates win.conversation-info
+ * (gh_conversation_info_attach()), where the timer is changed; the owner
+ * keeps the property in step with the conversation (gh-send-ui.c).
+ *
+ * Slot for a later item: "attach_button" (hidden until attachments, G22).
  *
  * Properties: "compact" (hides the emoji button, tighter padding), "max-lines"
  * (lines shown before scrolling), "enter-sends", "disabled-reason" (nullable),
- * and the read-only "can-send" and "too-long".
+ * "disappearing-timer", and the read-only "can-send" and "too-long".
  */
 #define GH_TYPE_COMPOSER (gh_composer_get_type())
 G_DECLARE_FINAL_TYPE(GhComposer, gh_composer, GH, COMPOSER, GtkWidget)
@@ -109,7 +122,10 @@ gboolean gh_composer_get_enter_sends(GhComposer *self);
 /* The text view, which takes keyboard focus (also through
  * gtk_widget_grab_focus() on the composer while it is editable). */
 GtkTextView *gh_composer_get_text_view(GhComposer *self);
-/* The G07 timer slot (see above). */
+/* The disappearing timer shown before sending (see above); negative: off. */
+void gh_composer_set_disappearing_timer(GhComposer *self, gint64 seconds);
+gint64 gh_composer_get_disappearing_timer(GhComposer *self);
+/* The box holding the timer indicator (visible while the timer is on). */
 GtkBox *gh_composer_get_timer_slot(GhComposer *self);
 
 G_END_DECLS

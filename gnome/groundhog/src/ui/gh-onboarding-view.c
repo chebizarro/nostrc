@@ -1495,6 +1495,9 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   /* Reachable by name (gtk_widget_get_template_child) for tests. */
   gtk_widget_class_bind_template_child_full(widget_class, "account_continue", FALSE, 0);
   gtk_widget_class_bind_template_child_full(widget_class, "inbox_continue", FALSE, 0);
+  gtk_widget_class_bind_template_child_full(widget_class, "check_button", FALSE, 0);
+  gtk_widget_class_bind_template_child_full(widget_class, "check_note", FALSE, 0);
+  gtk_widget_class_bind_template_child_full(widget_class, "inbox_footer", FALSE, 0);
 
   static const gchar *const navigation_actions[] = {
     "onboarding.start", "onboarding.refresh", "onboarding.read-only",

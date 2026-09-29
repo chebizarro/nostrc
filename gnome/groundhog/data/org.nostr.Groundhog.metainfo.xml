@@ -6,9 +6,34 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <description>
-    <p>Groundhog is a GTK4 and libadwaita app for private Nostr messaging. This preview receives NIP-17 private messages on your own message relays and unlocks them through Nostr Signer; it cannot send messages yet, and messages are not kept after it closes.</p>
+    <p>Groundhog is a GTK4 and libadwaita app for private Nostr messaging. It is a preview: it sends and receives NIP-17 private messages between two people, and keeps them only on this device, in encrypted storage.</p>
+    <ul>
+      <li>Private messages are end-to-end encrypted and sent only to the relays each person chose for receiving them. Your key stays in Nostr Signer, which signs and decrypts for Groundhog.</li>
+      <li>Messages, drafts, mutes and blocks are kept in an encrypted database whose key is in your keyring. There is no backup or export: another device can download your private messages again with your key from relays that still hold them.</li>
+      <li>People you haven’t accepted go to Message Requests, with no profile lookups. You can mute, block, forget a conversation on this device, and mark a person’s key as verified.</li>
+      <li>Disappearing messages: each conversation can have its own timer, and the composer shows it before you send. Relays are asked to delete expired messages, but may not.</li>
+      <li>There are no read receipts, typing indicators or online status. Nothing loads from the web unless you ask, and notifications are off by default and hide the sender and text.</li>
+      <li>Setup can publish the list of relays where people can reach you. No relay is contacted until you choose one.</li>
+    </ul>
+    <p>Not in this version: relay groups (NIP-29) and encrypted groups (MLS), replying in group conversations, attachments, and Tor or proxy support. Connections go directly to relays, which see your IP address.</p>
+    <p>Groundhog does not protect against malware running as you, hide that you use Nostr or which relays you use, hide from your own message relays that you receive messages and when, or guarantee that relays or other people delete disappearing messages.</p>
   </description>
   <launchable type="desktop-id">org.nostr.Groundhog.desktop</launchable>
   <url type="homepage">https://github.com/chebizarro/nostrc</url>
   <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.7.0" type="development" date="2026-09-28">
+      <description>
+        <p>Unreleased preview.</p>
+        <ul>
+          <li>Send private messages (NIP-17) through a queue that survives restarts, with honest status: waiting for approval, sending, sent to at least one of each person’s relays, or not sent</li>
+          <li>Encrypted message storage on this device, with history, drafts and retention (keep forever, 1 year or 30 days)</li>
+          <li>New Message, Message Requests and Conversation Info (mute, block, forget, verify key, disappearing timer)</li>
+          <li>Disappearing messages with a timer indicator in the composer</li>
+          <li>Private notifications, off by default</li>
+          <li>First-run setup of your message relays</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
 </component>

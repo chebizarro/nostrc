@@ -463,8 +463,8 @@ template $GhOnboardingView: Adw.Bin {
                   ]
                 }
 
-                Label {
-                  label: _("Relay addresses start with wss:// and are listed by the relay's operator. Suggestions were reviewed for Groundhog; none is contacted until you confirm.");
+                Label inbox_footer {
+                  label: _("Relay addresses start with wss:// and are listed by the relay's operator. Suggestions were reviewed for Groundhog. No relay is contacted until you check or publish.");
                   wrap: true;
                   xalign: 0;
 
@@ -496,8 +496,25 @@ template $GhOnboardingView: Adw.Bin {
                     tooltip-text: _("Connects to the ticked relays to see whether they ask for sign-in before handing out messages");
                     action-name: "onboarding.check-relays";
 
+                    accessibility {
+                      described-by: check_note;
+                    }
+
                     styles [
                       "flat",
+                    ]
+                  }
+
+                  // P9: what Check Privacy reveals, visible without a tooltip.
+                  Label check_note {
+                    label: _("Checking connects to the ticked relays. They see your IP address, not your account.");
+                    wrap: true;
+                    justify: center;
+                    max-width-chars: 40;
+
+                    styles [
+                      "dim-label",
+                      "caption",
                     ]
                   }
 

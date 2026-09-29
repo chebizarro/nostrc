@@ -563,10 +563,24 @@ schedule(GhNotifier *self, Slot *slot)
 
 /* ---- the locked-store notice (charter §3.4, NO-11) ---------------------------------- */
 
+/* The notice names nothing (no account, sender or count), so only an
+ * explicit "off" keeps it back (charter §5.3 B4). notifications-enabled is
+ * false by default only until onboarding asks (PD-9); gating on that default
+ * would leave background delivery stopped without a word (W14 review
+ * non-blocking #1). */
+static gboolean
+notice_allowed(GhNotifier *self)
+{
+  if (enabled(self))
+    return TRUE;
+  g_autoptr(GVariant) chosen = g_settings_get_user_value(self->settings, KEY_ENABLED);
+  return chosen == NULL;
+}
+
 static void
 update_notice(GhNotifier *self)
 {
-  gboolean want = self->app && self->store_locked && !self->window && enabled(self);
+  gboolean want = self->app && self->store_locked && !self->window && notice_allowed(self);
   if (want == self->notice_shown || !self->app)
     return;
   self->notice_shown = want;

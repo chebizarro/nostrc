@@ -60,10 +60,40 @@ template $GhComposer: Widget {
             ]
           }
 
-          // The disappearing-messages timer (charter G07) goes here.
+          // The conversation's disappearing-messages timer (charter §3.7,
+          // G07), shown before sending while it is on; the text and the
+          // accessible label are set from C. It opens Conversation Info
+          // (win.conversation-info), where the timer is changed.
           Box timer_slot {
             visible: false;
             valign: end;
+
+            Button timer_button {
+              action-name: "win.conversation-info";
+
+              child: Box {
+                spacing: 4;
+
+                Image {
+                  icon-name: "alarm-symbolic";
+                  accessible-role: presentation;
+                }
+
+                Label timer_label {
+                  accessible-role: presentation;
+
+                  styles [
+                    "caption",
+                    "numeric",
+                  ]
+                }
+              };
+
+              styles [
+                "flat",
+                "groundhog-composer-timer",
+              ]
+            }
           }
 
           Overlay {

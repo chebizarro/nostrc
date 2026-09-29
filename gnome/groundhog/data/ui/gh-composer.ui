@@ -59,6 +59,35 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="GtkBox" id="timer_slot">
                         <property name="visible">false</property>
                         <property name="valign">2</property>
+                        <child>
+                          <object class="GtkButton" id="timer_button">
+                            <property name="action-name">win.conversation-info</property>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkImage">
+                                    <property name="icon-name">alarm-symbolic</property>
+                                    <property name="accessible-role">43</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="timer_label">
+                                    <property name="accessible-role">43</property>
+                                    <style>
+                                      <class name="caption"/>
+                                      <class name="numeric"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                            <style>
+                              <class name="flat"/>
+                              <class name="groundhog-composer-timer"/>
+                            </style>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <child>

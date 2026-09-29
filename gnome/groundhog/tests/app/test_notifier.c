@@ -1030,6 +1030,51 @@ test_no11_locked_notice(void)
   fixture_down(&f);
 }
 
+/* NO-11 with the default settings (W14 review non-blocking #1): the notice
+ * names nothing, so it shows while notifications-enabled is merely at its
+ * default (off until onboarding asks, PD-9); message notifications stay
+ * off. Only the user's own "off" keeps the notice back (charter §5.3 B4). */
+static void
+test_no11_default_settings(void)
+{
+  Fixture f;
+  fixture_up(&f, "hidden", TRUE);
+  g_settings_reset(f.settings, "notifications-enabled");
+  g_autoptr(GVariant) user = g_settings_get_user_value(f.settings, "notifications-enabled");
+  g_assert_null(user);
+  g_assert_false(g_settings_get_boolean(f.settings, "notifications-enabled"));
+  sync_calls(&f);
+  guint before = fake_gtk_notifications_count(fake, TRUE, NULL);
+
+  gh_notifier_set_store_locked(f.notifier, TRUE);
+  sync_calls(&f);
+  GVariant *n = shown(GH_NOTIFIER_ID_STORE_LOCKED);
+  g_assert_nonnull(n);
+  g_assert_cmpstr(field(n, "title"), ==, "Unlock to receive messages");
+  g_assert_null(field(n, "default-action"));
+  assert_identity_hidden(PEER[0]);
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, before + 1);
+
+  /* The user turns notifications off: withdrawn, and none while it stays off. */
+  g_settings_set_boolean(f.settings, "notifications-enabled", FALSE);
+  sync_calls(&f);
+  assert_withdrawn(GH_NOTIFIER_ID_STORE_LOCKED);
+  gh_notifier_set_store_locked(f.notifier, FALSE);
+  gh_notifier_set_store_locked(f.notifier, TRUE);
+  sync_calls(&f);
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, before + 1);
+
+  /* Back to the default: shown again. */
+  g_settings_reset(f.settings, "notifications-enabled");
+  sync_calls(&f);
+  g_assert_nonnull(shown(GH_NOTIFIER_ID_STORE_LOCKED));
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, before + 2);
+  gh_notifier_set_store_locked(f.notifier, FALSE);
+  sync_calls(&f);
+  assert_withdrawn(GH_NOTIFIER_ID_STORE_LOCKED);
+  fixture_down(&f);
+}
+
 /* ---- --gui: the window glue ------------------------------------------------------------------ */
 
 static gboolean
@@ -1203,6 +1248,8 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/notifier/no8-category-priority",
                            test_no8_category_priority);
   nostrc_test_bus_add_func("/groundhog/notifier/no11-locked-notice", test_no11_locked_notice);
+  nostrc_test_bus_add_func("/groundhog/notifier/no11-default-settings",
+                           test_no11_default_settings);
   status = g_test_run();
   fake_gtk_notifications_free(fake);
   nostrc_test_bus_down(bus);

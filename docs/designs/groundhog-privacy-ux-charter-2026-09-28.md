@@ -41,8 +41,8 @@ Where this charter tightens the plan, the tightening is called out and the plan 
    - senders you haven't accepted are always hidden;
    - mute and read state live in the encrypted store, never in dconf.
 8. **Disappearing messages follow NIP-40 and NIP-17:**
-   - exact `expiration` on the rumor and the seal;
-   - a *jittered, hour-rounded* `expiration` on the outer wrap, so the wrap does not reveal the real send time;
+   - exact `expiration` on the rumor;
+   - a *jittered, hour-rounded* `expiration` on the seal and on the outer wrap, drawn independently per layer, so neither reveals the real send time (§3.7);
    - an exact local purge with `secure_delete`.
 9. **Attachments (kind 15) are off until proven:**
    - EXIF/metadata stripping for JPEG/PNG;
@@ -102,7 +102,7 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 
 | Adversary | Capabilities | Groundhog protects | Groundhog does **not** protect | Mechanism / test |
 |---|---|---|---|---|
-| **A1 Relay operators** (your inbox, recipients' inboxes, discovery, NIP-29, MLS routing, Blossom) | See IP (without a proxy), AUTH identity, REQ filters, event sizes, arrival times. Can withhold, replay, reorder, inject, fake `OK`, and read NIP-29 plaintext | NIP-17 content and sender identity, from every relay. Sender identity from the recipient's relay (ephemeral wrap key **and** no account AUTH, §4.4). Real send time (randomized seal and wrap time, jittered wrap expiration). Forgery (seal/rumor binding, signatures). Minimal relay set | That your inbox relay learns you receive N messages and when. Your IP without Tor. NIP-29 plaintext and membership. Availability (withholding). Colluding relays correlating by IP and timing | §2, §4; PT-4, PT-7, NT-1..4 |
+| **A1 Relay operators** (your inbox, recipients' inboxes, discovery, NIP-29, MLS routing, Blossom) | See IP (without a proxy), AUTH identity, REQ filters, event sizes, arrival times. Can withhold, replay, reorder, inject, fake `OK`, and read NIP-29 plaintext | NIP-17 content and sender identity, from every relay. Sender identity from the recipient's relay (ephemeral wrap key **and** no account AUTH, §4.4). Real send time (randomized seal and wrap time, jittered seal and wrap expiration). Forgery (seal/rumor binding, signatures). Minimal relay set | That your inbox relay learns you receive N messages and when. Your IP without Tor. NIP-29 plaintext and membership. Availability (withholding). Colluding relays correlating by IP and timing | §2, §4; PT-4, PT-7, NT-1..4 |
 | **A2 Network observers** (ISP, Wi-Fi, state) | See DNS, TLS SNI, IPs, timing, volume | Content (TLS plus E2EE). In Tor mode, which relays you use | In direct mode, which relays you use and when. That you use Tor | PD-5, NT-5..8 |
 | **A3 Other local users** (different UID) | Read world-readable files | Everything: 0700 directories, 0600 files, encrypted store, per-user keyring | root | ST-1, ST-3 |
 | **A4 Other apps running as you** (unsandboxed) | Read your files, unlocked keyring items and dconf; `BecomeMonitor` on the session bus (sees signer traffic); ptrace; X11 screenshots | Nothing absolute. Raises the bar: no plaintext in dconf, logs, cache or tmp; store encrypted with a key that requires the unlocked keyring. Under Flatpak, the Secret portal and bus filtering prevent keyring and bus snooping | **Malware running as you is out of scope.** State this in docs and metainfo | PT-10, PT-11, AT-5 |
@@ -158,7 +158,7 @@ Each default has an ID, a rationale and a test. Test IDs are defined in §9.
 | PD-4 | Relay minimization: DM wraps go only to the recipient's 10050 list and the self-copy only to your own 10050. With no 10050, nothing is sent. No 10002 fallback, no hard-coded relays, no startup fan-out | Current NIP-17 MUST; P1 | PT-4, NT-12 |
 | PD-5 | Transport security: `wss://` required. `ws://` only for loopback (tests, local session relay) or `.onion` in Tor mode | Plain WebSocket exposes AUTH and REQ filters to the network | PT-5, NT-8 |
 | PD-6 | Isolation by account and by purpose: separate sockets per account generation *and* per purpose (inbox, discovery, each publish, each group). In Tor mode, a separate SOCKS isolation credential for each | Prevents cross-account and cross-purpose linkage on a shared socket, TLS session or circuit | PT-6, NT-6 |
-| PD-7 | Timestamps: seal and wrap `created_at` randomized independently; the rumor carries the real time. Inbox backfill `since` = cursor − 172 800 − 600 s. The wrap `expiration` is jittered (§3.7) | NIP-17/59: grouping by `created_at` must not reveal metadata | PT-7 |
+| PD-7 | Timestamps: seal and wrap `created_at` randomized independently; the rumor carries the real time. Inbox backfill `since` = cursor − 172 800 − 600 s. The seal and wrap `expiration` are jittered (§3.7) | NIP-17/59: grouping by `created_at` must not reveal metadata | PT-7 |
 | PD-8 | Message Requests: senders you haven't accepted (not in your local accepted set) are quarantined. No profile fetch until you accept, and notifications are forced to hidden | Stops spam and harassment, and avoids revealing to relays that you looked at a stranger's profile | PT-8 |
 | PD-9 | Notification content `hidden`, sound off (existing schema), notifications enabled once background mode is chosen | Lock screen and shoulder-surfing | NO-1 |
 | PD-10 | No logs of plaintext, keys, bunker URIs or full relay responses at any debug level | Logs persist in the journal, readable by the user's other processes | PT-10 |
@@ -447,8 +447,9 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 
 **Outgoing** (conversation setting `disappearing_s` ∈ {off, 1 day, 1 week, 4 weeks}):
 
-- The rumor and the seal carry exact `expiration` = send + D. NIP-17 says the seal SHOULD carry it; both are inside the encryption.
-- Each wrap (recipient and self) carries `expiration` = ceil_hour(send + D + U(0, min(D, 24 h))). An exact outer expiration would reveal the real send time (expiration − D) and defeat timestamp randomization.
+- The rumor carries the exact `expiration` = send + D. It is what receivers (Groundhog included) honour first.
+- Each seal and each wrap (recipient and self) carries its own `expiration` = ceil_hour(send + D + U(0, min(D, 24 h))), drawn independently per layer. An exact outer expiration would reveal the real send time (expiration − D, with D one of three values) and defeat timestamp randomization.
+  - **Why the seal is jittered too** (amended 2026-09-28, W14 review non-blocking #3). NIP-17 asks for the seal's tag "in case it leaks"; a leaked seal with an exact value would give away the send time that its randomized `created_at` hides. Inside the wrap the jitter costs nothing: only the recipient decrypts the seal, and the rumor beside it carries the exact time. Independent draws also keep a message's layers from sharing a value. The one cost is interop: a client that honours the seal's tag rather than the rumor's may keep the message up to about 25 h longer, which §1.4 (no guaranteed deletion) already allows.
 - The self-copy is still produced, so multi-device keeps working. NIP-17's alternative of omitting it is not used.
 
 **Incoming:**
@@ -612,7 +613,7 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
   - Closing the window destroys widgets and in-memory message models of closed conversations; the store, inbox and group scopes stay.
   - `app.quit` (Ctrl+Q) releases the hold, closes scopes, checkpoints the WAL and exits.
   - The process ends at logout with the session, and `SIGTERM` runs normal shutdown.
-- **B4 Store locked at start:** see §3.4. No inbox REQ is opened and no keyring prompt is shown.
+- **B4 Store locked at start:** see §3.4. No inbox REQ is opened and no keyring prompt is shown. The NO-11 notice names nothing (no account, sender or count), so it is shown unless the user has explicitly turned notifications off: `notifications-enabled` is false by default only until the onboarding privacy step asks (PD-9), and background delivery must not stop silently.
 - **B5 Bounds:** at most 16 URLs per scope (existing), and no timer shorter than 60 s while idle. Purge, retry and directory timers all go through `GhClock`.
 - **B6 Ownership against `nostr-notify-daemon`** stays in `qp24.14`, and is required before background mode ships in distro packages.
 
@@ -865,7 +866,7 @@ If blueprint-compiler 0.12 (the CI version) rejects a `template ListHeader` insi
 
 - **Keys.**
   - Enter sends when `enter-sends` is on (default). Shift+Enter inserts a newline. Ctrl+Enter always sends.
-  - Enter during IME preedit is left to the input method. The key controller runs in the bubble phase after the `GtkIMContext`.
+  - Enter during IME preedit is left to the input method: it commits the preedit and neither sends nor inserts a newline. The composer's key controller runs in the capture phase, so it acts before the text view's own Enter handling. It tracks the preedit through `GtkTextView::preedit-changed`. It offers an Enter that would send to the input method first (`gtk_text_view_im_context_filter_keypress`), and leaves Shift+Enter and similar keys to the text view, whose controller filters each key through the `GtkIMContext` once. *(Amended 2026-09-28, W14 review non-blocking #5: GTK runs a widget's most recently added controller first, so no controller the composer adds runs after the text view's own input-method filtering; the composer consults the input method itself instead.)*
   - Ctrl+. or Ctrl+; opens the emoji chooser (GTK built-in).
 - **Placeholder.** An overlay label "Message", because `GtkTextView` has no placeholder at 4.14. Its accessible label is "Message".
 - **Send button.** Insensitive when the text is empty or whitespace, or when the account cannot send. The `disabled` stack page then shows the exact reason from `gh_account_describe_limits()` and friends (read-only, signer unavailable, recipient has no inbox, relay group closed to you).
@@ -1375,7 +1376,7 @@ flowchart LR
   - seal ≠ wrap in ≥ 99% of cases;
   - rumor = now ± 1 s;
   - inbox `since` ≤ cursor − 173 400;
-  - wrap `expiration` ∈ [send + D, send + D + min(D, 24 h) + 3600] and a multiple of 3600.
+  - seal and wrap `expiration` ∈ [send + D, send + D + min(D, 24 h) + 3600] and a multiple of 3600.
 - **PT-8 Requests.** A DM from an unaccepted pubkey gets `request_state = 1`. There is no kind-0 REQ for it, and the notification is hidden even at `preview`. Accept → a kind-0 name fetch is allowed; pictures stay governed by `load-profile-pictures`.
 - **PT-9 Defaults.** Schema defaults equal §7.11. With no confirmed relay, H1 sees zero connections through onboarding pages 1–3.
 - **PT-10 Logs.** With `G_MESSAGES_DEBUG=all` through PT-1 and a send, H7 finds no canary, nsec or bunker URI in the logs.
@@ -1422,7 +1423,7 @@ flowchart LR
 - **OB-8 10050 changed after sealing.** The new relay gets the same wrap id.
 - **OB-9 Self-copy jitter.** With overlapping sets, the self publish is at +[5, 90] s on H6; with disjoint sets, immediate. It uses a separate connection either way.
 - **OB-10 Offline.** No attempts while the fake `GNetworkMonitor` reports offline; publishing resumes on online.
-- **EX-1 Outgoing expiration.** The rumor and seal carry the exact `expiration`; the wraps are jittered per PT-7.
+- **EX-1 Outgoing expiration.** The rumor carries the exact `expiration`; each seal and wrap carries its own jittered value per PT-7 (§3.7).
 - **EX-2 Seal expiration.** A seal with one valid `expiration` is admitted. Any other seal tag, or two expirations, is rejected with no extra signer calls.
 - **EX-3 Purge.** On H6, the row is removed, the preview updated, the notification withdrawn, and the WAL truncated.
 - **EX-4 Expired on arrival.** Seen-recorded only: not stored, not notified.
@@ -1469,7 +1470,7 @@ flowchart LR
   - Closing the window keeps the process when background mode is on.
   - `app.quit` closes scopes and store (WAL checkpointed).
 - **NO-10 Background off.** The autostart file is removed (host), or the portal is called with `autostart=false` (Flatpak, mocked).
-- **NO-11 Locked store at start.** No inbox REQ, one hidden notification, no prompt.
+- **NO-11 Locked store at start.** No inbox REQ, one hidden notification, no prompt. This holds with the default settings; only an explicit "notifications off" suppresses it (§5.3 B4).
 - **NO-12 Idle timers.** After EOSE with no traffic, H6 holds no timer shorter than 60 s.
 
 **Attachments (AT):**

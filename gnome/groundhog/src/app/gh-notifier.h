@@ -76,7 +76,10 @@ G_BEGIN_DECLS
  *
  * Locked store (charter §3.4, NO-11): gh_notifier_set_store_locked() shows one
  * hidden-level notice (GH_NOTIFIER_ID_STORE_LOCKED) while no window is
- * attached, withdrawn once the store opens or a window shows the state.
+ * attached, withdrawn once the store opens or a window shows the state. It
+ * names nothing, so it also shows with notifications-enabled at its default
+ * (off until onboarding asks, PD-9); only a user's explicit "off" (a user
+ * value of false) keeps it back (charter §5.3 B4).
  *
  * GTK-free apart from the window glue; used on the main context.
  */

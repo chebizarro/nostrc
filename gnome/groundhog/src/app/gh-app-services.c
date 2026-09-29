@@ -368,10 +368,30 @@ expiry_purged(GhExpiry *expiry, const gchar *const *rumor_ids, guint n_outbox, g
 #endif
 }
 
+/* Every window's composer shows the shown conversation's timer before
+ * sending (W14 review B1): each gets the current GhExpiry, or NULL before
+ * it is disposed. */
+static void
+expiry_share(GhAppServices *self)
+{
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+  for (GList *l = gtk_application_get_windows(self->app); l; l = l->next)
+    if (GH_IS_WINDOW(l->data))
+      gh_send_ui_set_expiry(GH_WINDOW(l->data), self->expiry);
+#else
+  (void)self;
+#endif
+}
+
 static void
 expiry_stop(GhAppServices *self)
 {
-  dispose_object(&self->expiry);
+  if (!self->expiry)
+    return;
+  GhExpiry *expiry = g_steal_pointer(&self->expiry);
+  expiry_share(self); /* the windows let go of it first */
+  g_object_run_dispose(G_OBJECT(expiry));
+  g_object_unref(expiry);
 }
 
 static void
@@ -399,6 +419,7 @@ expiry_sync(GhAppServices *self)
   g_autoptr(GError) error = NULL;
   if (!gh_expiry_purge(self->expiry, &error))
     g_warning("Groundhog could not delete expired messages: %s", error->message);
+  expiry_share(self);
 }
 
 static void
@@ -409,8 +430,10 @@ expiry_settings_changed(GSettings *settings, const gchar *key, gpointer data)
     return;
   if (g_str_equal(key, "retention-days"))
     gh_expiry_set_retention_days(self->expiry, g_settings_get_int(settings, key));
-  else if (g_str_equal(key, "default-disappearing-seconds"))
+  else if (g_str_equal(key, "default-disappearing-seconds")) {
     gh_expiry_set_default_timer(self->expiry, expiry_default_timer(self));
+    expiry_share(self); /* a conversation not stored yet shows the default */
+  }
 }
 
 static gboolean
@@ -851,6 +874,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .account_store = self->account_store,
     .inbox = self->inbox,
     .settings = self->settings,
+#if GROUNDHOG_HAVE_EXPIRY
+    .expiry = self->expiry,
+#endif
   };
   gh_send_ui_attach(window, &send);
 #else

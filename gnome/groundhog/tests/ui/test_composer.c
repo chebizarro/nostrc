@@ -14,6 +14,7 @@
 #include "send-stack.h"
 
 #include "gh-delivery-indicator.h"
+#include "gh-expiry.h"
 
 #include <string.h>
 
@@ -1490,6 +1491,269 @@ test_focus_guard(void)
   fixture_clear(&f);
 }
 
+/* ---- the disappearing timer before sending (charter §3.7; W14 review B1) --------------- */
+
+/* The indicator's text, tooltip and accessible label. */
+static void
+assert_timer_shown(GhComposer *composer, const gchar *duration)
+{
+  GtkWidget *slot = GTK_WIDGET(gh_composer_get_timer_slot(composer));
+  GtkWidget *button = template_child(composer, GH_TYPE_COMPOSER, "timer_button");
+  GtkLabel *label = GTK_LABEL(template_child(composer, GH_TYPE_COMPOSER, "timer_label"));
+  if (!duration) {
+    g_assert_false(gtk_widget_get_visible(slot));
+    g_assert_cmpint(gh_composer_get_disappearing_timer(composer), ==, 0);
+    return;
+  }
+  g_assert_true(gtk_widget_get_visible(slot));
+  g_assert_true(gtk_widget_is_ancestor(button, slot));
+  g_assert_cmpstr(gtk_label_get_text(label), ==, duration);
+  g_autofree gchar *said = g_strdup_printf("Messages you send disappear after %s", duration);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(button), ==, said);
+  /* The accessible label, where there is an AT context (not with the
+   * GTK_A11Y=none that stack_gtk_and_bus_up() sets on macOS). */
+  g_autoptr(GtkATContext) at = gtk_accessible_get_at_context(GTK_ACCESSIBLE(button));
+  if (at)
+    gtk_test_accessible_assert_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                        said);
+  /* It opens Conversation Info, where the timer is changed. */
+  g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(button)), ==,
+                  "win.conversation-info");
+}
+
+/* The widget alone: hidden while off, "1 day" / "1 week" / "4 weeks" with
+ * the full sentence for tooltips and assistive technologies. */
+static void
+test_timer_indicator(void)
+{
+  Sink sink = { .accept = TRUE };
+  GtkWindow *window = NULL;
+  GhComposer *composer = lone_composer(&window, &sink);
+  gtk_window_present(window);
+  assert_timer_shown(composer, NULL);
+  gh_composer_set_disappearing_timer(composer, GH_EXPIRY_TIMER_DAY);
+  assert_timer_shown(composer, "1 day");
+  g_object_set(composer, "disappearing-timer", GH_EXPIRY_TIMER_WEEK, NULL);
+  assert_timer_shown(composer, "1 week");
+  gh_composer_set_disappearing_timer(composer, GH_EXPIRY_TIMER_FOUR_WEEKS);
+  assert_timer_shown(composer, "4 weeks");
+  gh_composer_set_disappearing_timer(composer, 2 * GH_EXPIRY_TIMER_DAY);
+  assert_timer_shown(composer, "2 days");
+  gh_composer_set_disappearing_timer(composer, 90 * 60); /* never shown shorter */
+  assert_timer_shown(composer, "2 hours");
+  gh_composer_set_disappearing_timer(composer, GH_EXPIRY_TIMER_OFF);
+  assert_timer_shown(composer, NULL);
+  gh_composer_set_disappearing_timer(composer, -5);
+  assert_timer_shown(composer, NULL);
+  gtk_window_destroy(window);
+  sink_clear(&sink);
+}
+
+static void
+on_info_requested(GSimpleAction *action, GVariant *parameter, guint *activations)
+{
+  (void)action;
+  (void)parameter;
+  (*activations)++;
+}
+
+static gboolean
+activated_once(gpointer data)
+{
+  return *(guint *)data == 1;
+}
+
+static GhExpiry *
+stack_expiry(Fixture *f)
+{
+  GhExpiryConfig config = {
+    .store = gh_account_store_get_store(f->s.store),
+    .conversations = gh_account_store_get_conversations(f->s.store),
+  };
+  g_assert_nonnull(config.store);
+  return gh_expiry_new(&config);
+}
+
+/* W14 review B1: a conversation's timer is visible in the composer before
+ * sending, live as Conversation Info (gh_expiry_set_timer()) changes it,
+ * per conversation, hidden while off, and the message then sent does
+ * disappear. The window lets go of a GhExpiry when told (the application
+ * does so before disposing it), and its signals stop reaching it. */
+static void
+test_timer_live(void)
+{
+  Fixture f = { 0 };
+  fixture_init(&f, bus.client);
+  fixture_up(&f, 960, 680);
+  GhConversation *bob = receive(&f, 2, NULL, "Hi from Bob");
+  GhConversation *carol = receive(&f, 3, NULL, "Hi from Carol");
+  g_autofree gchar *bob_room = g_strdup(gh_conversation_get_room_id(bob));
+  g_autofree gchar *carol_room = g_strdup(gh_conversation_get_room_id(carol));
+  GhComposer *composer = send_stack_composer(&f.s);
+  guint activations = 0;
+  g_autoptr(GSimpleAction) info = g_simple_action_new("conversation-info", NULL);
+  g_signal_connect(info, "activate", G_CALLBACK(on_info_requested), &activations);
+  g_action_map_add_action(G_ACTION_MAP(f.s.window), G_ACTION(info));
+
+  GhExpiry *expiry = stack_expiry(&f);
+  g_assert_true(gh_expiry_set_timer(expiry, carol_room, GH_EXPIRY_TIMER_WEEK, NULL));
+  gh_send_ui_set_expiry(f.s.window, expiry);
+  send_stack_select(&f.s, bob);
+  assert_timer_shown(composer, NULL);
+
+  /* Changed elsewhere (Conversation Info): shown at once. */
+  g_assert_true(gh_expiry_set_timer(expiry, bob_room, GH_EXPIRY_TIMER_DAY, NULL));
+  assert_timer_shown(composer, "1 day");
+  /* Another conversation's change says nothing here. */
+  g_assert_true(gh_expiry_set_timer(expiry, carol_room, GH_EXPIRY_TIMER_FOUR_WEEKS, NULL));
+  assert_timer_shown(composer, "1 day");
+  send_stack_select(&f.s, carol);
+  assert_timer_shown(composer, "4 weeks");
+  send_stack_select(&f.s, bob);
+  assert_timer_shown(composer, "1 day");
+
+  /* Activating it opens Conversation Info. */
+  GtkWidget *button = template_child(composer, GH_TYPE_COMPOSER, "timer_button");
+  g_assert_true(gtk_widget_is_sensitive(button));
+  /* A keyboard activation clicks after the button's press feedback. */
+  g_assert_true(gtk_widget_activate(button));
+  gh_test_spin_until(activated_once, &activations);
+  g_assert_cmpuint(activations, ==, 1);
+
+  /* What it says holds: the message sent now expires a day after it. */
+  signer.hold = TRUE;
+  stack_type(composer, "Gone tomorrow");
+  g_assert_true(stack_press(composer, GDK_KEY_Return, 0));
+  GhMessage *mine = stack_find(bob, "Gone tomorrow");
+  g_assert_cmpint(gh_message_get_expires_at(mine), ==,
+                  gh_message_get_created_at(mine) + GH_EXPIRY_TIMER_DAY);
+
+  /* Off: hidden. */
+  g_assert_true(gh_expiry_set_timer(expiry, bob_room, GH_EXPIRY_TIMER_OFF, NULL));
+  assert_timer_shown(composer, NULL);
+  g_assert_true(gh_expiry_set_timer(expiry, bob_room, GH_EXPIRY_TIMER_WEEK, NULL));
+  assert_timer_shown(composer, "1 week");
+
+  /* The store's GhExpiry goes (as at store-closed): nothing is claimed, and
+   * the old object's signals no longer reach the window. */
+  gh_send_ui_set_expiry(f.s.window, NULL);
+  assert_timer_shown(composer, NULL);
+  g_assert_true(gh_expiry_set_timer(expiry, bob_room, GH_EXPIRY_TIMER_DAY, NULL));
+  assert_timer_shown(composer, NULL);
+  /* A new one (the next store open) is followed again. */
+  GhExpiry *next = stack_expiry(&f);
+  gh_send_ui_set_expiry(f.s.window, next);
+  assert_timer_shown(composer, "1 day");
+  gh_send_ui_set_expiry(f.s.window, NULL);
+  g_object_run_dispose(G_OBJECT(next));
+  g_object_unref(next);
+  g_object_run_dispose(G_OBJECT(expiry));
+  g_object_unref(expiry);
+  signer.hold = FALSE;
+  fixture_clear(&f);
+}
+
+/* ---- the input method's Enter (charter §7.7; W14 review non-blocking #5) --------------- */
+
+/* The text view's own input method context (its key controller's). */
+static GtkIMContext *
+text_view_im(GhComposer *composer)
+{
+  GtkWidget *text_view = GTK_WIDGET(gh_composer_get_text_view(composer));
+  g_autoptr(GListModel) controllers = gtk_widget_observe_controllers(text_view);
+  for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+    g_autoptr(GtkEventController) controller = g_list_model_get_item(controllers, i);
+    if (GTK_IS_EVENT_CONTROLLER_KEY(controller) &&
+        gtk_event_controller_key_get_im_context(GTK_EVENT_CONTROLLER_KEY(controller)))
+      return gtk_event_controller_key_get_im_context(GTK_EVENT_CONTROLLER_KEY(controller));
+  }
+  g_error("the text view has no input method context");
+  return NULL;
+}
+
+/* A key press through the input method as the display would deliver it
+ * (real key events, translated by the display's keymap). */
+static gboolean
+im_press(GtkIMContext *im, GtkWidget *widget, guint keyval, GdkModifierType state)
+{
+  GdkDisplay *display = gtk_widget_get_display(widget);
+  g_autofree GdkKeymapKey *keys = NULL;
+  gint n = 0;
+  g_assert_true(gdk_display_map_keyval(display, keyval, &keys, &n));
+  g_assert_cmpint(n, >, 0);
+  GdkSurface *surface = gtk_native_get_surface(gtk_widget_get_native(widget));
+  GdkDevice *keyboard = gdk_seat_get_keyboard(gdk_display_get_default_seat(display));
+  g_assert_nonnull(surface);
+  g_assert_nonnull(keyboard);
+  return gtk_im_context_filter_key(im, TRUE, surface, keyboard, GDK_CURRENT_TIME,
+                                   keys[0].keycode, state, keys[0].group);
+}
+
+/* While an input method composes text, Enter is the input method's: it
+ * neither sends the half-typed text nor becomes a newline. Driven through a
+ * real GtkIMContextSimple hex sequence (Ctrl+Shift+U e 9 = "é") on the text
+ * view's own input method context. Once it has committed, Enter sends. */
+static void
+test_preedit_enter(void)
+{
+  Sink sink = { .accept = TRUE };
+  GtkWindow *window = NULL;
+  GhComposer *composer = lone_composer(&window, &sink);
+  gtk_window_present(window);
+  gh_test_spin_until(is_mapped, composer);
+  GtkWidget *text_view = GTK_WIDGET(gh_composer_get_text_view(composer));
+  g_assert_true(gtk_widget_grab_focus(text_view));
+  GtkIMContext *im = text_view_im(composer);
+  g_assert_true(GTK_IS_IM_MULTICONTEXT(im));
+  gtk_im_multicontext_set_context_id(GTK_IM_MULTICONTEXT(im), "gtk-im-context-simple");
+
+  stack_type(composer, "Caf");
+  const GdkModifierType hex = GDK_CONTROL_MASK | GDK_SHIFT_MASK;
+  g_assert_true(im_press(im, text_view, GDK_KEY_u, hex)); /* starts a preedit */
+  g_assert_true(im_press(im, text_view, GDK_KEY_e, hex));
+  g_assert_true(im_press(im, text_view, GDK_KEY_9, hex));
+  g_autofree gchar *preedit = NULL;
+  gtk_im_context_get_preedit_string(im, &preedit, NULL, NULL);
+  g_assert_true(preedit && *preedit);
+  assert_composer_text(composer, "Caf");
+
+  /* Enter (and Shift+Enter, Ctrl+Enter) during the preedit: taken, nothing
+   * sent, no newline. */
+  g_assert_true(stack_press(composer, GDK_KEY_Return, 0));
+  g_assert_true(stack_press(composer, GDK_KEY_Return, GDK_SHIFT_MASK));
+  g_assert_true(stack_press(composer, GDK_KEY_KP_Enter, GDK_CONTROL_MASK));
+  g_assert_cmpuint(sink.sends, ==, 0);
+  assert_composer_text(composer, "Caf");
+
+  /* The input method gets that Enter and commits "é"; the preedit ends. */
+  g_assert_true(im_press(im, text_view, GDK_KEY_Return, hex));
+  assert_composer_text(composer, "Café");
+  g_clear_pointer(&preedit, g_free);
+  gtk_im_context_get_preedit_string(im, &preedit, NULL, NULL);
+  g_assert_cmpstr(preedit, ==, "");
+  g_assert_cmpuint(sink.sends, ==, 0);
+
+  /* Now Enter sends the whole word. */
+  g_assert_true(stack_press(composer, GDK_KEY_Return, 0));
+  g_assert_cmpuint(sink.sends, ==, 1);
+  g_assert_cmpstr(sink.last, ==, "Café");
+  assert_composer_text(composer, "");
+
+  /* A preedit the input method drops (a reset, e.g. focus moving away) ends
+   * it too: Enter sends again. */
+  stack_type(composer, "Bye");
+  g_assert_true(im_press(im, text_view, GDK_KEY_u, hex));
+  g_assert_true(stack_press(composer, GDK_KEY_Return, 0));
+  g_assert_cmpuint(sink.sends, ==, 1);
+  gtk_im_context_reset(im);
+  g_assert_true(stack_press(composer, GDK_KEY_Return, 0));
+  g_assert_cmpuint(sink.sends, ==, 2);
+  g_assert_cmpstr(sink.last, ==, "Bye");
+
+  gtk_window_destroy(window);
+  sink_clear(&sink);
+}
+
 /* ---- screenshots (opt-in evidence) --------------------------------------------------- */
 
 static gboolean
@@ -1653,6 +1917,9 @@ main(int argc, char **argv)
   ADD("reasons-group-and-no-inbox", test_reasons_group_and_no_inbox);
   ADD("locked-messages", test_locked_messages);
   ADD("focus-guard", test_focus_guard);
+  ADD("timer-indicator", test_timer_indicator);
+  ADD("timer-live", test_timer_live);
+  ADD("preedit-enter", test_preedit_enter);
   ADD("screenshots", test_screenshots);
 #undef ADD
   int status = g_test_run();

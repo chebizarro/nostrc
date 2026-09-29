@@ -489,8 +489,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Relay addresses start with wss:// and are listed by the relay's operator. Suggestions were reviewed for Groundhog; none is contacted until you confirm.</property>
+                                  <object class="GtkLabel" id="inbox_footer">
+                                    <property name="label" translatable="yes">Relay addresses start with wss:// and are listed by the relay's operator. Suggestions were reviewed for Groundhog. No relay is contacted until you check or publish.</property>
                                     <property name="wrap">true</property>
                                     <property name="xalign">0</property>
                                     <style>
@@ -521,8 +521,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="use-underline">true</property>
                                         <property name="tooltip-text" translatable="yes">Connects to the ticked relays to see whether they ask for sign-in before handing out messages</property>
                                         <property name="action-name">onboarding.check-relays</property>
+                                        <accessibility>
+                                          <relation name="described-by">check_note</relation>
+                                        </accessibility>
                                         <style>
                                           <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="check_note">
+                                        <property name="label" translatable="yes">Checking connects to the ticked relays. They see your IP address, not your account.</property>
+                                        <property name="wrap">true</property>
+                                        <property name="justify">2</property>
+                                        <property name="max-width-chars">40</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                          <class name="caption"/>
                                         </style>
                                       </object>
                                     </child>

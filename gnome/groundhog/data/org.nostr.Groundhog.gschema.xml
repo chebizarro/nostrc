@@ -24,7 +24,7 @@
     <key name="notifications-enabled" type="b">
       <default>false</default>
       <summary>Show messaging notifications</summary>
-      <description>Show a notification for new messages, including while the window is closed. Off until you turn it on.</description>
+      <description>Show a notification for new messages, including while the window is closed. Off until you turn it on. The reminder to unlock the keyring, which names no one, is shown unless you turn this off yourself.</description>
     </key>
     <key name="notification-privacy" type="s">
       <default>'hidden'</default>
@@ -63,7 +63,7 @@
     <key name="show-message-previews" type="b">
       <default>true</default>
       <summary>Show message previews in the conversation list</summary>
-      <description>Show the latest message text under each conversation in the list. Reserved; not used yet.</description>
+      <description>Show the latest message text under each conversation in the list.</description>
     </key>
 
     <!-- Network / Connection -->
@@ -94,31 +94,31 @@
     <key name="signer-method" type="s">
       <default>'auto'</default>
       <summary>Requested signer method</summary>
-      <description>One of auto, local, nip46, or nip55l. For auto, local and nip55l, account-bound signing and NIP-44 use org.nostr.Signer; nip46 and message sending remain unsupported.</description>
+      <description>One of auto, local, nip46, or nip55l. For auto, local and nip55l, account-bound signing and NIP-44 use org.nostr.Signer; nip46 remains unsupported.</description>
     </key>
 
     <!-- Account & Storage / Background -->
     <key name="run-in-background" type="b">
       <default>true</default>
       <summary>Receive messages when closed</summary>
-      <description>Keep receiving messages after the window is closed. Setup asks for this choice explicitly. Reserved; not used yet.</description>
+      <description>Keep receiving messages after the window is closed. Once you choose it in Preferences, Groundhog also starts at login.</description>
     </key>
 
     <!-- Account & Storage / Messages -->
     <key name="retention-days" type="i">
       <default>0</default>
       <summary>Keep messages</summary>
-      <description>Delete messages from this device after this many days; 0 keeps them. Reserved; not used yet.</description>
+      <description>Delete messages received longer ago than this many days from this device; 0 keeps them. Relays may still hold encrypted copies.</description>
     </key>
     <key name="default-disappearing-seconds" type="i">
       <default>0</default>
       <summary>Default disappearing message timer</summary>
-      <description>Expiration, in seconds, requested for messages in new conversations; 0 turns disappearing messages off. Reserved; not used yet.</description>
+      <description>Disappearing timer, in seconds, that conversations started from now on begin with, including ones others start; 0 is off. Existing conversations keep their own timer, changed in Conversation Info.</description>
     </key>
     <key name="enter-sends" type="b">
       <default>true</default>
       <summary>Send with Enter</summary>
-      <description>Enter sends and Shift+Enter starts a new line; when off, Ctrl+Enter sends. Reserved; not used yet.</description>
+      <description>Enter sends and Shift+Enter starts a new line; when off, Ctrl+Enter sends.</description>
     </key>
     <key name="blossom-servers" type="as">
       <default>[]</default>

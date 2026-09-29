@@ -965,9 +965,10 @@ lookup_filters(GPtrArray *authors, gboolean profiles)
   return filters;
 }
 
-/* One REQ for authors on a fresh scope to the discovery relays only (never
- * the account's own relays: they would learn whom it talks to, §4.3). NULL
- * when there is no usable source. */
+/* One REQ for authors on a fresh scope to the discovery relays only, not the
+ * account's own relay lists (they would learn whom it talks to, §4.3) unless
+ * the user adopted them as discovery relays in onboarding, with that
+ * disclosed. NULL when there is no usable source. */
 static Fetch *
 fetch_new(GhContactDirectory *self, GPtrArray *authors, gboolean profiles)
 {

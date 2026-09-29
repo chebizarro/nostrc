@@ -13,6 +13,8 @@ struct _GhComposer {
   GtkLabel *error_label;
   GtkButton *attach_button;
   GtkBox *timer_slot;
+  GtkButton *timer_button;
+  GtkLabel *timer_label;
   GtkScrolledWindow *scroller;
   GtkTextView *text_view;
   GtkLabel *placeholder;
@@ -26,12 +28,14 @@ struct _GhComposer {
   gboolean compact;
   gboolean enter_sends;
   guint max_lines;
+  gint64 timer;          /* the conversation's disappearing timer; 0: off */
   gchar *reason;         /* why sending is impossible; NULL: it is possible */
   gchar *error;          /* the owner's inline error (e.g. storage full) */
   gboolean blank;
   gboolean too_long;
   gboolean can_send;
   gboolean setting_text; /* a programmatic change: no draft report */
+  gboolean preedit;      /* an input method is composing text (a preedit) */
   gboolean draft_pending;
   guint draft_timer;
   GhComposerLengthFunc length_func;
@@ -45,6 +49,7 @@ enum {
   PROP_MAX_LINES,
   PROP_ENTER_SENDS,
   PROP_DISABLED_REASON,
+  PROP_DISAPPEARING_TIMER,
   PROP_CAN_SEND,
   PROP_TOO_LONG,
   N_PROPS
@@ -187,6 +192,56 @@ replace_text(GhComposer *self, const gchar *text)
   update_state(self);
 }
 
+/* ---- the disappearing timer --------------------------------------------------------- */
+
+#define HOUR_S (G_GINT64_CONSTANT(3600))
+#define DAY_S  (24 * HOUR_S)
+#define WEEK_S (7 * DAY_S)
+
+/* "1 day", "1 week", "4 weeks": the timer in its largest whole unit (the
+ * charter's timers are whole days or weeks; anything else is rounded up to
+ * a whole hour, so it is never shown shorter than it is). */
+static gchar *
+describe_timer(gint64 seconds)
+{
+  if (seconds % WEEK_S == 0) {
+    gulong weeks = (gulong)(seconds / WEEK_S);
+    return g_strdup_printf(g_dngettext(NULL, "%lu week", "%lu weeks", weeks), weeks);
+  }
+  if (seconds % DAY_S == 0) {
+    gulong days = (gulong)(seconds / DAY_S);
+    return g_strdup_printf(g_dngettext(NULL, "%lu day", "%lu days", days), days);
+  }
+  gulong hours = (gulong)((seconds + HOUR_S - 1) / HOUR_S);
+  return g_strdup_printf(g_dngettext(NULL, "%lu hour", "%lu hours", hours), hours);
+}
+
+/* Shown only while the timer is on, with its duration in the text, the
+ * tooltip and the accessible label. */
+static void
+update_timer(GhComposer *self)
+{
+  gboolean on = self->timer > 0;
+  gtk_widget_set_visible(GTK_WIDGET(self->timer_slot), on);
+  if (!on) {
+    gtk_label_set_text(self->timer_label, "");
+    gtk_widget_set_tooltip_text(GTK_WIDGET(self->timer_button), NULL);
+    gtk_accessible_reset_property(GTK_ACCESSIBLE(self->timer_button),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL);
+    return;
+  }
+  g_autofree gchar *duration = describe_timer(self->timer);
+  /* TRANSLATORS: %s is a duration such as "1 day" or "4 weeks". */
+  g_autofree gchar *label = g_strdup_printf(_("Messages you send disappear after %s"), duration);
+  gtk_label_set_text(self->timer_label, duration);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->timer_button), label);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->timer_button),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, label,
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                 _("Opens Conversation Info, where the timer can be changed"),
+                                 -1);
+}
+
 /* ---- input ------------------------------------------------------------------------- */
 
 static gboolean
@@ -196,7 +251,19 @@ is_enter(guint keyval)
          keyval == GDK_KEY_ISO_Enter;
 }
 
-/* Capture phase, before the text view inserts a newline for Enter. */
+/* The text view reports its input method's preedit, "" when it ends
+ * (committed or cancelled). */
+static void
+on_preedit_changed(GhComposer *self, const gchar *preedit)
+{
+  self->preedit = preedit && *preedit;
+}
+
+/* Capture phase, before the text view inserts a newline for Enter. The text
+ * view's own key controller (bubble phase) hands every key it gets to its
+ * input method first; this one asks the input method itself only for an
+ * Enter it would otherwise send or swallow, so no key reaches the input
+ * method twice. */
 static gboolean
 on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode,
                GdkModifierType state, GhComposer *self)
@@ -204,18 +271,22 @@ on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode,
   (void)keycode;
   if (!is_enter(keyval))
     return GDK_EVENT_PROPAGATE;
-  /* An input method composing text (a preedit) takes Enter to commit it. */
   GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller));
-  if (event && gtk_text_view_im_context_filter_keypress(self->text_view, event))
-    return GDK_EVENT_STOP;
-  GdkModifierType mods = state & gtk_accelerator_get_default_mod_mask();
-  if (mods == GDK_CONTROL_MASK) {
-    gh_composer_send(self); /* Ctrl+Enter always sends, never a newline */
+  /* Enter while an input method composes text (charter §7.7) is the input
+   * method's, to commit the preedit: it never sends a half-typed word, nor
+   * becomes a newline, whatever the input method answers. */
+  if (self->preedit) {
+    if (event)
+      gtk_text_view_im_context_filter_keypress(self->text_view, event);
     return GDK_EVENT_STOP;
   }
-  if (mods != 0 || !self->enter_sends)
+  GdkModifierType mods = state & gtk_accelerator_get_default_mod_mask();
+  if (mods != GDK_CONTROL_MASK && (mods != 0 || !self->enter_sends))
     return GDK_EVENT_PROPAGATE; /* Shift+Enter (or Enter without enter-sends): newline */
-  gh_composer_send(self);
+  /* An input method may take Enter without a preedit (a candidate list). */
+  if (event && gtk_text_view_im_context_filter_keypress(self->text_view, event))
+    return GDK_EVENT_STOP;
+  gh_composer_send(self); /* Ctrl+Enter always sends, never a newline */
   return GDK_EVENT_STOP;
 }
 
@@ -263,6 +334,7 @@ gh_composer_get_property(GObject *object, guint prop_id, GValue *value, GParamSp
   case PROP_MAX_LINES:       g_value_set_uint(value, self->max_lines); break;
   case PROP_ENTER_SENDS:     g_value_set_boolean(value, self->enter_sends); break;
   case PROP_DISABLED_REASON: g_value_set_string(value, self->reason); break;
+  case PROP_DISAPPEARING_TIMER: g_value_set_int64(value, self->timer); break;
   case PROP_CAN_SEND:        g_value_set_boolean(value, self->can_send); break;
   case PROP_TOO_LONG:        g_value_set_boolean(value, self->too_long); break;
   default:
@@ -281,6 +353,9 @@ gh_composer_set_property(GObject *object, guint prop_id, const GValue *value,
   case PROP_ENTER_SENDS: gh_composer_set_enter_sends(self, g_value_get_boolean(value)); break;
   case PROP_DISABLED_REASON:
     gh_composer_set_disabled_reason(self, g_value_get_string(value));
+    break;
+  case PROP_DISAPPEARING_TIMER:
+    gh_composer_set_disappearing_timer(self, g_value_get_int64(value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -347,6 +422,8 @@ gh_composer_class_init(GhComposerClass *klass)
                                             GH_COMPOSER_DEFAULT_MAX_LINES, rw);
   props[PROP_ENTER_SENDS] = g_param_spec_boolean("enter-sends", NULL, NULL, TRUE, rw);
   props[PROP_DISABLED_REASON] = g_param_spec_string("disabled-reason", NULL, NULL, NULL, rw);
+  props[PROP_DISAPPEARING_TIMER] = g_param_spec_int64("disappearing-timer", NULL, NULL, 0,
+                                                      G_MAXINT64, 0, rw);
   props[PROP_CAN_SEND] = g_param_spec_boolean("can-send", NULL, NULL, FALSE, ro);
   props[PROP_TOO_LONG] = g_param_spec_boolean("too-long", NULL, NULL, FALSE, ro);
   g_object_class_install_properties(object_class, N_PROPS, props);
@@ -365,6 +442,8 @@ gh_composer_class_init(GhComposerClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhComposer, error_label);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, attach_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_slot);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_button);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_label);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, scroller);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, text_view);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, placeholder);
@@ -388,6 +467,8 @@ gh_composer_init(GhComposer *self)
   g_signal_connect_swapped(self->buffer, "changed", G_CALLBACK(on_buffer_changed), self);
   g_signal_connect_swapped(self->emoji_chooser, "emoji-picked", G_CALLBACK(on_emoji_picked),
                            self);
+  g_signal_connect_swapped(self->text_view, "preedit-changed", G_CALLBACK(on_preedit_changed),
+                           self);
 
   GtkEventController *keys = gtk_event_controller_key_new();
   gtk_event_controller_set_name(keys, "groundhog-composer-keys");
@@ -397,6 +478,7 @@ gh_composer_init(GhComposer *self)
 
   gtk_stack_set_visible_child_name(self->composer_stack, "edit");
   update_state(self);
+  update_timer(self);
 }
 
 /* ---- public ------------------------------------------------------------------------ */
@@ -623,6 +705,25 @@ gh_composer_get_text_view(GhComposer *self)
 {
   g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
   return self->text_view;
+}
+
+void
+gh_composer_set_disappearing_timer(GhComposer *self, gint64 seconds)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  seconds = MAX(seconds, 0);
+  if (self->timer == seconds)
+    return;
+  self->timer = seconds;
+  update_timer(self);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_DISAPPEARING_TIMER]);
+}
+
+gint64
+gh_composer_get_disappearing_timer(GhComposer *self)
+{
+  g_return_val_if_fail(GH_IS_COMPOSER(self), 0);
+  return self->timer;
 }
 
 GtkBox *

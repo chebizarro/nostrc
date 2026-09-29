@@ -1084,6 +1084,12 @@ test_copy_follows_features(void)
   g_assert_nonnull(strstr(both, "ask relays to delete them within about a day"));
   g_assert_nonnull(strstr(both, "may not honour this"));
   g_assert_true(gh_preferences_dialog_get_key_available(sending, "default-disappearing-seconds"));
+  /* W14 review B1: the default reaches new conversations only (incoming
+   * ones too); existing ones keep theirs. */
+  const char *timer = adw_action_row_get_subtitle(template_child(sending, "disappearing_row"));
+  g_assert_nonnull(strstr(timer, "Only for new conversations"));
+  g_assert_nonnull(strstr(timer, "including ones others start"));
+  g_assert_nonnull(strstr(timer, "Existing conversations keep their own timer"));
 
   /* Web content: the Tor clause only with Tor. */
   g_autoptr(GhPreferencesDialog) images =

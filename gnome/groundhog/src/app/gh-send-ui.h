@@ -9,12 +9,15 @@
 
 G_BEGIN_DECLS
 
+struct _GhExpiry;
+
 typedef struct {
   GhAccountController *accounts;       /* required */
   GhConversationStore *conversations;  /* required: the model the window lists */
   GhAccountStore *account_store;       /* required: drafts and the account's outbox */
   GhDmInbox *inbox;                    /* nullable: messages waiting for the signer */
   GSettings *settings;                 /* nullable: enter-sends, signer-method */
+  struct _GhExpiry *expiry;            /* nullable: the open store's timers (G07) */
 } GhSendUiConfig;
 
 /*
@@ -55,9 +58,22 @@ typedef struct {
  *    reason: the outbox waits for the connection.
  *  - Length: the composer measures texts with gh_outbox_text_fits().
  *  - Enter sends while the enter-sends setting is on.
+ *  - The disappearing timer before sending (charter §3.7, W14 review B1):
+ *    the composer's "disappearing-timer" is the shown conversation's timer
+ *    (gh_expiry_get_timer()), kept live through GhExpiry's "timer-changed"
+ *    (e.g. from Conversation Info); 0 (hidden) with no GhExpiry, no
+ *    conversation or a timer that can't be read.
  * Everything is released with window.
  */
 void gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config);
+
+/* The GhExpiry of the account's open store, NULL while none is open: the
+ * application calls this whenever it creates or disposes one (before the
+ * dispose), and after changing its default timer, which a conversation not
+ * stored yet shows. The window holds a reference until the next call and
+ * disconnects from the previous one. Nothing for a window without the send
+ * UI. */
+void gh_send_ui_set_expiry(GhWindow *window, struct _GhExpiry *expiry);
 
 G_END_DECLS
 #endif

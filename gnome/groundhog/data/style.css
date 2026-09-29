@@ -229,6 +229,14 @@
   padding: 3px 0;
 }
 
+/* The disappearing timer (alarm icon and "1 day") beside the entry: a
+ * compact pill as tall as the entry's one line. */
+.groundhog-composer-timer {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 17px;
+}
+
 /* == requests and new message (G18) == */
 .groundhog-request-message {
   padding: 12px;

@@ -488,6 +488,18 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
     g_assert_false(gh_onboarding_item_get_checked(item_at(relays, i)));
   g_assert_false(sensitive(f, "inbox_continue"));
   g_assert_false(gtk_widget_get_visible(child(f, "keep_button")));
+  /* P9 (W14 review non-blocking #2): what Check Privacy reveals is said in
+   * visible text beside it, not only in a tooltip, and the footer does not
+   * claim that nothing is contacted before the confirm page. */
+  GtkLabel *check_note = child(f, "check_note");
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(check_note)));
+  g_assert_true(gtk_widget_get_parent(GTK_WIDGET(check_note)) ==
+                gtk_widget_get_parent(child(f, "check_button")));
+  g_assert_nonnull(strstr(gtk_label_get_text(check_note), "connects to the ticked relays"));
+  g_assert_nonnull(strstr(gtk_label_get_text(check_note), "IP address"));
+  const gchar *footer = gtk_label_get_text(child(f, "inbox_footer"));
+  g_assert_null(strstr(footer, "until you confirm"));
+  g_assert_nonnull(strstr(footer, "until you check or publish"));
 
   /* A typed address is checked in place. */
   AdwEntryRow *entry = child(f, "custom_entry");

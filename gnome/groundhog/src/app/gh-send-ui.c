@@ -3,6 +3,7 @@
 #include "gh-composer.h"
 #include "gh-conversation-view.h"
 #include "gh-delivery-indicator.h"
+#include "gh-expiry.h"
 #include "gh-outbox.h"
 
 #include <glib/gi18n.h>
@@ -22,6 +23,7 @@ typedef struct {
   GhDmInbox *inbox;
   GSettings *settings;
   GhOutbox *outbox;           /* the account store's current outbox */
+  GhExpiry *expiry;           /* the open store's timers, or NULL */
   GHashTable *items;          /* rumor id -> GhOutboxItem (ref) of outbox */
   GHashTable *unknown;        /* rumor ids outbox has no entry for */
   GhConversation *shown;
@@ -50,6 +52,7 @@ send_ui_free(gpointer data)
   g_clear_pointer(&ui->items, g_hash_table_unref);
   g_clear_pointer(&ui->unknown, g_hash_table_unref);
   g_clear_object(&ui->outbox);
+  g_clear_object(&ui->expiry);
   g_clear_object(&ui->shown);
   g_clear_object(&ui->drafts);
   g_clear_object(&ui->accounts);
@@ -280,6 +283,50 @@ watch_shown(GhSendUi *ui)
   }
 }
 
+/* ---- the disappearing timer ---------------------------------------------------------- */
+
+/* The shown conversation's timer, 0 (hidden) when there is nothing to say. */
+static void
+update_timer(GhSendUi *ui)
+{
+  gint64 seconds = 0;
+  if (ui->expiry && ui->shown) {
+    g_autoptr(GError) error = NULL;
+    if (!gh_expiry_get_timer(ui->expiry, gh_conversation_get_room_id(ui->shown), &seconds,
+                             &error)) {
+      /* Not a NIP-17 room of the account (nothing to show), or unreadable. */
+      if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT))
+        g_message("Groundhog could not read a disappearing timer: %s", error->message);
+      seconds = 0;
+    }
+  }
+  gh_composer_set_disappearing_timer(ui->composer, seconds);
+}
+
+static void
+on_timer_changed(GhExpiry *expiry, const gchar *room_id, gint64 seconds, GhComposer *composer)
+{
+  GhSendUi *ui = ui_of(composer);
+  if (expiry == ui->expiry && ui->shown &&
+      g_strcmp0(room_id, gh_conversation_get_room_id(ui->shown)) == 0)
+    gh_composer_set_disappearing_timer(ui->composer, seconds);
+}
+
+static void
+use_expiry(GhSendUi *ui, GhExpiry *expiry)
+{
+  if (expiry != ui->expiry) {
+    if (ui->expiry)
+      g_signal_handlers_disconnect_by_data(ui->expiry, ui->composer);
+    g_set_object(&ui->expiry, expiry);
+    /* Tied to the composer: it stops with the window's widgets. */
+    if (expiry)
+      g_signal_connect_object(expiry, "timer-changed", G_CALLBACK(on_timer_changed),
+                              ui->composer, 0);
+  }
+  update_timer(ui);
+}
+
 /* ---- drafts -------------------------------------------------------------------------- */
 
 static void
@@ -332,6 +379,7 @@ on_view_conversation(GhComposer *composer)
   g_set_object(&ui->shown, conversation);
   load_draft(ui);
   watch_shown(ui);
+  update_timer(ui);
   update_reason(ui);
   gh_composer_revalidate(ui->composer);
 }
@@ -556,6 +604,7 @@ gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config)
   g_return_if_fail(GH_IS_ACCOUNT_STORE(config->account_store));
   g_return_if_fail(!config->inbox || GH_IS_DM_INBOX(config->inbox));
   g_return_if_fail(!config->settings || G_IS_SETTINGS(config->settings));
+  g_return_if_fail(!config->expiry || GH_IS_EXPIRY(config->expiry));
   g_return_if_fail(g_object_get_data(G_OBJECT(window), SEND_UI_DATA) == NULL);
   GhContentPage *content = gh_window_get_content(window);
   GtkWidget *view = gh_content_page_get_view(content);
@@ -612,6 +661,17 @@ gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config)
   g_signal_connect_object(ui->store, "changed", G_CALLBACK(on_state_source), ui->composer,
                           G_CONNECT_SWAPPED);
   sync_outbox(ui);
+  use_expiry(ui, config->expiry);
   on_view_conversation(ui->composer);
   update_reason(ui);
+}
+
+void
+gh_send_ui_set_expiry(GhWindow *window, GhExpiry *expiry)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  g_return_if_fail(!expiry || GH_IS_EXPIRY(expiry));
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (ui)
+    use_expiry(ui, expiry);
 }

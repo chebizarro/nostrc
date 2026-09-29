@@ -125,7 +125,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.ComboRow disappearing_row {
         title: _("Default Timer");
-        subtitle: _("For conversations started from now on");
+        subtitle: _("Only for new conversations, including ones others start. Existing conversations keep their own timer.");
 
         model: StringList {
           strings [

@@ -46,8 +46,11 @@ G_BEGIN_DECLS
  *
  * Connections (§4.3, PD-12). Every lookup is one URL-scoped REQ, on a fresh
  * scope, to the discovery-relays setting only (never the account's own
- * relays), with GhAuthPolicy's CONTACT_DIRECTORY identity (an ephemeral key
- * if a relay demands AUTH, never the account). A REQ completes when every
+ * relay lists as such), with GhAuthPolicy's CONTACT_DIRECTORY identity (an
+ * ephemeral key if a relay demands AUTH, never the account). The user can
+ * make their own inbox relays discovery relays in onboarding, whose confirm
+ * page says those relays "will see whom you look up"; lookups then reach
+ * them, still unauthenticated as the account. A REQ completes when every
  * source sent EOSE or failed; the deadline only bounds a silent source.
  *
  * Scheduling (S1, NT-12). Nothing is refreshed until a store is bound; the
