@@ -624,6 +624,37 @@ send_text(App *app, GhMlsGroup *group, const gchar *text)
   g_assert_nonnull(message);
 }
 
+/* The account's network goes away or comes back (the fake monitor). */
+static G_GNUC_UNUSED void
+set_online(App *app, gboolean online)
+{
+  app->network->available = online;
+  g_signal_emit_by_name(app->network, "network-changed", online);
+}
+
+static G_GNUC_UNUSED gboolean
+unreadable_is(gpointer data)
+{
+  GroupWait *wait = data;
+  return gh_mls_group_get_unreadable(wait->group) == (guint)wait->value;
+}
+
+#define wait_unreadable(group_, n_) \
+  G_STMT_START { GroupWait gw_ = { (group_), (n_) }; \
+    spin_until(unreadable_is, &gw_, "the unreadable count"); } G_STMT_END
+
+/* The newest kind 445 the relay stored (arrival order), or NULL. */
+static G_GNUC_UNUSED WireStored *
+last_stored_445(WireRelay *relay)
+{
+  for (guint i = relay->stored->len; i > 0; i--) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i - 1);
+    if (nostr_event_get_kind(stored->event) == 445)
+      return stored;
+  }
+  return NULL;
+}
+
 /* ---- relay frames --------------------------------------------------------------------- */
 
 /* The event of an ["EVENT", {...}] (client) or ["EVENT", sub, {...}] (relay)

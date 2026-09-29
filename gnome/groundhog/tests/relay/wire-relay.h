@@ -79,6 +79,8 @@ struct _WireRelay {
   GPtrArray *frames;         /* WireFrame, in order */
   guint served;              /* EVENT frames sent to subscriptions */
   GhTestHeldPort *held;      /* relay_init_held(): the port it serves on */
+  GHashTable *withheld;      /* ids kept but served to nobody until released */
+  gboolean withhold_new;     /* every event kept from now on is withheld */
 };
 
 /* One text frame on one of the relay's connections. */
@@ -256,6 +258,8 @@ wire_subs(SoupWebsocketConnection *connection)
 static G_GNUC_UNUSED gboolean
 wire_may_serve(WireRelay *relay, SoupWebsocketConnection *connection, WireStored *stored)
 {
+  if (relay->withheld && g_hash_table_contains(relay->withheld, stored->id))
+    return FALSE;
   if (!relay->auth_gate_dms || nostr_event_get_kind(stored->event) != 1059)
     return TRUE;
   GHashTable *keys = wire_keys(connection);
@@ -349,6 +353,18 @@ wire_broadcast(WireRelay *relay, WireStored *stored)
 
 /* Keeps a signed event once; NULL when its id is already kept. Asserts that
  * it is valid: Groundhog must never publish an unverifiable event. */
+/* Serve-mode ordering control: the stored event @id is kept but sent to no
+ * subscription (stored answers and live ones) until wire_relay_release(),
+ * which then sends it to every matching live subscription, e.g. a later
+ * epoch's message delivered before the Commit that opens it. */
+static G_GNUC_UNUSED void
+wire_relay_withhold(WireRelay *relay, const gchar *id)
+{
+  if (!relay->withheld)
+    relay->withheld = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_hash_table_add(relay->withheld, g_strdup(id));
+}
+
 static G_GNUC_UNUSED WireStored *
 wire_keep(WireRelay *relay, const gchar *json)
 {
@@ -368,11 +384,25 @@ wire_keep(WireRelay *relay, const gchar *json)
   stored->id = g_strdup(id);
   stored->event = event;
   g_ptr_array_add(relay->stored, stored);
+  if (relay->withhold_new)
+    wire_relay_withhold(relay, id);
   return stored;
 }
 
 /* A fixture event, kept as if a client published it (not recorded as a
  * frame), and sent to matching live REQs. */
+static G_GNUC_UNUSED void
+wire_relay_release(WireRelay *relay, const gchar *id)
+{
+  if (!relay->withheld || !g_hash_table_remove(relay->withheld, id))
+    return;
+  for (guint i = 0; i < relay->stored->len; i++) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i);
+    if (g_str_equal(stored->id, id))
+      wire_broadcast(relay, stored);
+  }
+}
+
 static G_GNUC_UNUSED void
 wire_relay_inject(WireRelay *relay, const gchar *json)
 {
@@ -627,6 +657,7 @@ relay_clear(WireRelay *relay)
   g_clear_pointer(&relay->auth_pubkeys, g_ptr_array_unref);
   g_clear_pointer(&relay->stored, g_ptr_array_unref);
   g_clear_pointer(&relay->frames, g_ptr_array_unref);
+  g_clear_pointer(&relay->withheld, g_hash_table_unref);
   soup_server_disconnect(relay->server);
   g_object_unref(relay->server);
   g_free(relay->url);

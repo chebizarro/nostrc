@@ -64,7 +64,13 @@ G_BEGIN_DECLS
  * admission to the conversation model (T-admit), so a ratchet step and its
  * message commit together. Events of a later epoch wait (bounded) for the
  * Commit that makes them readable; duplicates are dropped by the scope, by
- * libmarmot's processed markers and by the seen set. A sent message is one
+ * libmarmot's processed markers and by the seen set. The read cursor (the
+ * REQ's since, minus an overlap) moves only for events libmarmot accepted
+ * and the store kept, never past now + GH_MLS_SERVICE_MAX_FUTURE_SKEW and
+ * never past an event held or dropped unread; held events are kept once per
+ * id (oldest dropped first when full, junk dropped after
+ * GH_MLS_SERVICE_JUNK_AFTER_COMMITS Commits) across network flaps. A
+ * joined group is read from its Welcome's time. A sent message is one
  * transaction -- the outgoing message row, marmot_create_message() (the
  * sender ratchet step) and its sealed kind 445 -- committed before anything
  * is published (libmarmot 0.8.0 review N1), then published to the group
@@ -97,6 +103,11 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_MAX_HELD 256
 /* Overlap subtracted from a group's read cursor (seconds). */
 #define GH_MLS_SERVICE_CURSOR_OVERLAP 600
+/* A group's read cursor never moves past now plus this (seconds), whatever
+ * created_at an event claims (as GH_NIP29_MAX_FUTURE_SKEW_SECONDS). */
+#define GH_MLS_SERVICE_MAX_FUTURE_SKEW 600
+/* A held event still unreadable after this many applied Commits is junk. */
+#define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
 #define GH_MLS_SERVICE_MAX_INVITEES 32
 
