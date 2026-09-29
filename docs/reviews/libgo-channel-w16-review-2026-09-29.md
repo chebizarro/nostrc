@@ -337,3 +337,127 @@ The idle busy-poll fix (libnostr-idle-writable-busy-poll-20260817) is preserved:
 ## Verdict
 
 **REQUEST CHANGES.** The root-cause analysis is right, the libnostr re-arm is correct, and the unified slot protocol fixes the NULL receives, the ticket corruption and the stranded REQ, with good evidence. However, the shared protocol loses elements and wedges capacity-1 channels (F1), which now includes the blocking receive paths and, after close, becomes a 100% CPU hang. And the new test will hang libgo-ci's TSAN cells (F2). Both fixes are small.
+
+---
+---
+
+# Addendum 1 — re-review of `bb001698` (2026-09-29)
+
+**Commit:** `bb001698`, *fix(libgo): address the nostrc-75rv channel review (capacity-1 wedge, CI hang)*, on `nostr-gobject/w16-eose-timeout` (parent `37b0203a`)
+**Files:** `libgo/src/channel.c`, `libgo/src/select.c`, `libgo/include/channel.h`, `libgo/CMakeLists.txt`, `libgo/tests/go_channel_mpmc_slot_test.c`, `.github/workflows/libgo-ci.yml`. libnostr is unchanged.
+**Verdict:** **APPROVED.** Both blocking findings are fixed and verified. The new findings (N1–N4) are non-blocking follow-ups.
+
+## Verification performed
+
+| # | What | Result |
+|---|---|---|
+| 1 | Full build and `ctest -j6 --timeout 300`, run three times on a loaded host (another session was running a Docker Groundhog CI loop; load average 10–22) | **414/414** on the third run. The first two runs were 412/414 each, and every failure is a pre-existing load flake that reproduces on `37b0203a` (N3) |
+| 2 | My original capacity-1 reproductions (review F1), against `bb001698` | White-box: the second send lands in the other slot and element 10 is **not clobbered**; the receiver gets 10; the channel keeps working afterwards. 2 try producers × 2 try consumers: 2.25 M / 3.65 M / 3.78 M tokens with **0 lost**, `depth_after_drain=0`, both probes succeed. 1 `try_send` producer × 1 blocking `go_channel_receive`, then close: **5/5** runs deliver every token (62 k – 3.4 M), and the consumer returns on close using 0.00 s of CPU |
+| 3 | Every case of the new slot test, each in its own process, on `bb001698`, `37b0203a` and the parent `90c1f9ed` | `bb001698`: all 12 pass. `37b0203a`: the six new cases (6a, 6b, 7a, 7b, 8, 9) all **FAIL**. Parent: those six also fail (7b hangs, which the new 60 s TIMEOUT bounds). The author's claim "every new case fails on both 90c1f9ed and 37b0203a" holds |
+| 4 | libgo standalone with `-DGO_WARNINGS_AS_ERRORS=ON`, reproducing libgo-ci's three cells exactly: `asan_ubsan` (−E GoChannelStressTest), `tsan` (six exclusions), `tsan_mpmc` (no exclusions); TSAN with `halt_on_error=1` | asan_ubsan **24/24**, tsan (slots off) **19/19**, tsan_mpmc (slots on, confirmed `NOSTR_CHANNEL_MPMC_SLOTS=1`) **25/25**. No sanitizer reports |
+| 5 | Both slot modes × both REFINED settings, standalone `-Werror` | slots ON / REFINED ON **25/25**. slots OFF (size-counted ring) **25/25**, including GoTickerTest/GoSelectTest, which now pass thanks to the `chan->size` fix. slots ON / REFINED OFF **25/25**. slots OFF / REFINED OFF **25/25**. All four `-Werror` builds compile clean |
+| 6 | Workspace ASAN (`-DGNOSTR_ENABLE_ASAN=ON`), `libgo/` and `tests/` | libgo **25/25**, tests/ **36/36**. `test_concurrency_subscription_shutdown` exits 0 with `detect_leaks=0`, since leak detection is unsupported on macOS arm64 |
+| 7 | Capacity-0 ASAN probe (review F4) against the ASAN libgo | capacity becomes 1 on a two-slot ring (`mask=1`), `try_receive` returns −1, **no ASAN report** |
+| 8 | `test_nostr_gobject_subscription_eose_order` × 40 alongside a continuous `ctest -R groundhog- -j8` | **40/40** |
+| 9 | `chan_bench`, `37b0203a` vs `bb001698` (see Performance) | on par; capacity-1 now works |
+| 10 | Fiber probes for the new `mpmc_wait_busy` fiber path | see N1 |
+
+## Status of the original findings
+
+| ID | Status | Evidence |
+|---|---|---|
+| **F1** capacity-1 ABA | ✅ **Fixed** | `go_channel_create` sizes the MPMC ring as `max(2, pow2(cap))` (`channel.c:1009`) with `mask = ring − 1` (`:1022`). `slot_seq` is initialised for `ring` entries, and `mpmc_pop` releases with `tail + mask + 1` (`:566`). The logical `capacity` still bounds `head − tail` in `mpmc_push` and `go_channel_is_full`, so capacity-1 wake and ticker channels still coalesce to one token. Header comment updated (`channel.h`). Probes and cases 6a/6b/7a/7b confirm it |
+| **F2** test hangs with slots off | ✅ **Fixed** | Case 4 measures what the ring actually holds (`channel_holds`), and 7a/7b skip where a capacity-1 ring holds nothing (nostrc-ecz3). `set_tests_properties(GoChannelMpmcSlotTest PROPERTIES TIMEOUT 60)`. It passes in the libgo-ci `tsan` cell configuration (19/19) |
+| F3 unbounded BUSY yield spin | ✅ **Fixed for OS threads**; the fiber path has a latent clock bug (N1) | `mpmc_wait_busy` (`channel.c:598-616`): spin `MPMC_TRY_SPINS`, then `CV_WAIT_DEADLINE_OS` with a 1 ms nsync (realtime) deadline. Cases 3a/3b publish **without signalling** and pass, so the OS-thread deadline works |
+| F4 capacity-0 out-of-bounds | ✅ **Fixed** | `size_t cap = capacity ? capacity : 1;` (`:985`), documented in `channel.h`. Case 9 plus the ASAN probe |
+| F5 stale snapshots with REFINED OFF | ✅ **Filed** | nostrc-v624 widened, naming all three expressions and `occ_before` |
+| F6 select "closed" over an in-flight element | ✅ **Fixed** | `go_channel_is_closed(c->chan) && go_channel_get_depth(c->chan) == 0` (`select.c:256`). Case 8 (fails on `37b0203a`, passes now). Minor note in N4 |
+| F7 `ATOMIC_TRY` ignored with slots on | ✅ **Fixed** (documented) | Comment and option help text in `libgo/CMakeLists.txt` |
+| F8 no TSAN coverage of MPMC; single-lock capacity-1 | ✅ **Fixed / filed** | New `GO_TSAN_MPMC_SLOTS` option, which also undoes a stale FORCE left in the cache. New `tsan_mpmc` CI cell running the full suite with no exclusions (25/25 locally). The single-lock capacity-1 bug is filed as nostrc-ecz3, and the `tsan` cell's exclusion comment now names the real cause |
+| F9 "4 of 6" | ✅ Corrected in the `bb001698` message | — |
+
+**Extra fixes the author found through the configuration matrix, reviewed and correct:**
+- The retry labels are now inside `#if NOSTR_CHANNEL_MPMC_SLOTS`, which fixes `-Werror` with slots off.
+- `fiber_waiter_wake_one` is marked `unused` for REFINED OFF.
+- The single-lock try paths now maintain `chan->size` when `!DERIVE_SIZE`. The try paths hold `chan->mutex` there, so the update is ordered with the blocking paths. This is what makes the slots-off build pass GoTickerTest/GoSelectTest.
+
+## New findings (all non-blocking)
+
+### N1 — Low (latent) — fiber deadlines use CLOCK_REALTIME, but the scheduler compares against CLOCK_MONOTONIC
+
+**Where.** `mpmc_wait_busy`'s fiber branch builds its deadline from `clock_gettime(CLOCK_REALTIME)` (`channel.c:600`) and passes it to `gof_hook_block_current_until` (`:608`). The pre-existing `go_select_timeout` fiber path does the same (`select.c:528`, `:533`). The hook's doc says "nanoseconds since epoch" (`fiber_hooks.h:62`). But the scheduler files and wakes sleepers against `gof_now_ns()`, which is `CLOCK_MONOTONIC` (`libgo/fiber/sched/sched.c:310-318`, compared at `:582` and `:628`), and `__gof_sleep_ns` (`timers/timer_bridge.c:8-18`) builds monotonic deadlines. On Linux a realtime deadline is therefore about 1.79e18 ns while "now" is uptime, so the deadline lies decades in the future. A BUSY-parked fiber then wakes only if a peer's signal happens to reach it.
+
+**Why the macOS runs don't show it.** Homebrew's `libnsync.dylib` exports its own `clock_gettime` (`nm -gU … T _clock_gettime`; nsync `platform/macos/platform.h:34-38`: "Some versions(!) of MacOS don't implement clock_gettime()"). Every binary linking nsync binds to that shim, which returns wall-clock time for every clock id.
+- A plain program printed MONOTONIC = 745 515 s (uptime).
+- The same `mono()` linked against libgo and nsync returned 1.79e18.
+- Fiber deadlines of REALTIME + 2 s and MONOTONIC + 2 s both fired at exactly 2 s. A deadline of 1 ns returned immediately, and 2^62 never returned. The only consistent explanation is that the scheduler's "monotonic" clock *is* wall time on this platform.
+
+So no macOS test can catch a clock-domain mismatch in libgo. Monotonic timers there also jump with wall-clock changes.
+
+**Impact.** It is latent today:
+- In-tree goroutines run through `go_fiber_compat`, on OS threads ("Fiber scheduler removed", `nostr-homed/src/fs/nostrfs.c:893`; `nostr-gobject/src/nostr_simple_pool.c:1821`, `:2112`).
+- No in-tree configuration builds REFINED_SIGNALING=OFF.
+- With REFINED ON, the claimant's post-publish/release `CV_SIGNAL_*` still reaches a parked fiber.
+
+Where it bites is the case this deadline exists for. The widened nostrc-v624 note says the 1 ms deadline guarantees BUSY waits "cannot hang on a skipped broadcast in the OFF configuration". That is true for OS threads but **not for fibers on Linux**, and the pre-existing `go_select_timeout` fiber path would never time out on Linux.
+
+**Recommended follow-up bead:**
+- Define the hook deadline as `CLOCK_MONOTONIC`, matching `gof_now_ns` and `__gof_sleep_ns`.
+- Fix both callers.
+- Correct `fiber_hooks.h:62`.
+- Add a Linux CI fiber test that parks a fiber through `go_select_timeout`.
+
+Not blocking, because nothing in the tree reaches it.
+
+### N2 — Info — `get_depth` in `select` reads `chan->size` without the lock in size-counted single-lock builds
+
+The F6 check calls `go_channel_get_depth`. With slots OFF and `DERIVE_SIZE` OFF, that returns plain `chan->size` read outside `chan->mutex`. It is a benign racy read: select re-checks after a signal. TSAN can't see it, because TSAN builds force `DERIVE_SIZE`. It could be folded into nostrc-ecz3.
+
+### N3 — Info — pre-existing load flakes seen in the full runs (none are channel regressions)
+
+Each was reproduced in a loop under CPU load, on both `37b0203a` and `bb001698`:
+
+| test | failure | `37b0203a` | `bb001698` | cause |
+|---|---|---|---|---|
+| `concurrency_channels` | `FAIL: sender didn't complete` (`tests/test_concurrency_channels.c:99`) | 1/600 | 0/600 (1/300 in an earlier loop) | the test's own race: the receiver can return between the sender's publish and its `completed = true` store. Join the sender before asserting |
+| `groundhog-group-ui` | `test_admin_gating: events_seen (4 == 3/2)` (`test_group_ui.c:840`) | 3/150 | 3/150 | the admin-gating flake, fixed on master by nostrc-qp24.87; not in this branch's base |
+| `gnostr-test-event-item-txn-budget` | `elapsed < TIMING_BUDGET_US(1000)`: 2207 µs (`test_event_item_txn_budget.c:202`) | 1/300 | 0/300 (1 abort in a full run) | a 1 ms wall-clock budget under host load; the test doesn't touch channels |
+
+Recommend beads for the first and third if they aren't already tracked. The commit message reports "Full ctest -j6: 419/419", but `bb001698` registers 414 tests; the author's count probably came from a working tree with other changes.
+
+### N4 — Info — F6 trades "closed" for "wait" if a claimant never publishes
+
+A select on a closed channel whose claimed slot is never published now waits (until its timeout) instead of reporting closed. That is the correct trade-off, and it matches `go_channel_receive`. A claimant can only fail to publish if its thread dies mid-push.
+
+## Performance
+
+`chan_bench`: 1 M messages, messages per second. The host was loaded by another session, so the numbers are noisy.
+
+| capacity / producers / consumers | `37b0203a` | `bb001698` |
+|---|---|---|
+| 1024 / 1 / 1 | 2.62 M, 2.60 M, 2.59 M | 2.61 M, 2.49 M, 2.55 M |
+| 1024 / 4 / 4 | 2.31 M, 2.36 M, 2.36 M | 2.29 M, 2.45 M, 2.43 M |
+| 8 / 4 / 4 (×8) | 0.63–0.98 M | 0.94–0.99 M |
+| 8 / 8 / 8 (×8) | 0.77–0.85 M | 0.76–0.86 M |
+| 64 / 8 / 8 | 1.44 M, 1.50 M, 1.54 M | 1.38 M, 1.41 M, 1.24 M |
+| **1 / 1 / 1** | **timeout ×3 (wedged)** | 0.59 M, 0.60 M, 0.75 M |
+| **1 / 2 / 2** | **timeout ×3 (wedged)** | 0.44 M, 0.42 M, 0.42 M |
+
+- There is no regression. The two-slot ring for capacity 1 costs one extra pointer per channel.
+- The 1 ms BUSY wait does not show up in the contended small-ring configurations: an earlier single 8/4/4 outlier at 212 k did not reproduce in 8 repeats, and `37b0203a` has a similar outlier (632 k).
+- **The capacity-1 rows are the F1 fix measured directly:** `chan_bench` wedges on `37b0203a` and runs on `bb001698`.
+
+## Versioning
+
+libgo stays at **0.1.2**. That is correct: 0.1.2 is unreleased (manifest *Latest release*: Unreleased), and these are PATCH-level fixes to it. `channel.h` changes only comments; the `GoChannel` layout and API are unchanged. The one behaviour change is that `go_channel_create(0)` now creates a 1-slot channel where it used to create a broken one; it is documented and backward compatible. No libnostr change.
+
+## Addendum verdict
+
+**APPROVED.**
+- F1 and F2, the blocking findings, are fixed and independently verified: the probes that wedged `37b0203a` now pass, the new regression cases fail on both older commits, and the libgo-ci cell configurations pass with `-Werror` and no sanitizer reports.
+- F3, F4, F6, F7 and F8 are fixed; F5 and the single-lock capacity-1 bug are filed (nostrc-v624, nostrc-ecz3); F9 is corrected.
+
+Recommended follow-ups (not blocking):
+- **N1:** a bead for the fiber deadline clock domain (`mpmc_wait_busy`, `go_select_timeout`, `fiber_hooks.h`), plus a Linux fiber-timeout test; and qualify the nostrc-v624 note.
+- **N2:** fold into nostrc-ecz3.
+- **N3:** beads for the `concurrency_channels:99` race and the txn-budget timing test, if not already tracked.
