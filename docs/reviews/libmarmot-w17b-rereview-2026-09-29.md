@@ -336,3 +336,61 @@ Branch `marmot/w17-welcome-commits` at `47483248`. No code or beads were changed
 **REQUEST CHANGES** for **D1**: never emit client signals inline or under the lock, and add a re-entrant-handler regression test.
 
 Everything else from W17 and W17b (R1, R2, C1's lock coverage, C2, N1–N3) is verified and pinned. The zero-id OOM case, the Welcome-send retry trigger and nostrc-ba81 can follow separately.
+
+---
+
+## Addendum 3: final confirmation of D1 on `542af7ad`, `51bafc38` (2026-09-29)
+
+Branch `marmot/w17-welcome-commits` at `51bafc38`. No code or beads were changed; repros ran in a throwaway worktree (`/tmp/rr17h`), which was removed afterwards.
+
+**Final verdict: APPROVED.**
+
+### D1: resolved
+
+**No emission on a worker or under the lock**
+- The only `g_signal_emit` left in `marmot-gobject-client.c` is in `emit_queued_signal`, and the only `g_main_context_invoke` has been removed.
+- `queue_client_signal` (still called by workers holding the lock) now only creates a `g_idle_source_new()` and attaches it to the client's captured context. The emission runs when that context iterates, on the thread iterating it, after the worker has released the lock.
+- The new regression, `/marmot-gobject/client/signal-handler-may-reenter`, asserts the handler runs on the owner of the default context and only once the context iterates, and that sync client calls do not block meanwhile. It passes.
+- With `queue_client_signal` reverted to the old inline `g_main_context_invoke`, the same test deadlocks and is killed by a 40 s `timeout` (rc 124).
+
+**Idle-source lifetime versus client finalize**
+- Each queued signal takes strong references to the client and the emitted object, and releases them only after emitting. A pending emission therefore can never touch a finalized client.
+- Repro (not committed), under ASAN+UBSAN:
+  1. Merge runs; the app drops its last references to the client and store while the `::group-updated` emission is still queued: `finalized=0 emitted=0`.
+  2. The context is drained: the signal is delivered, then the client finalizes: `finalized=1 emitted=1`.
+  3. No ASAN reports.
+- Handlers remain responsible for disconnecting themselves in their own dispose, as the Gnostr views do.
+
+**Residual (Low, non-blocking).** The source has no destroy notify. If the captured context is never iterated again, queued signals keep their references and allocations, and the client's finalize never runs. That happens with a thread-default context whose loop ended, or at process exit. Consider `g_source_set_callback(..., queued, queued_signal_free)`, with the emit path leaving the release to the notify.
+
+**Thread-default semantics for clients created off the main thread**
+- `marmot_gobject_client_init` captures `g_main_context_ref_thread_default()`.
+- A client created on the main thread, or on any thread without a pushed context (including GTask workers), gets the global default context, so signals go to the application's main loop.
+- A client created on a thread that pushed its own context gets that context, so signals are delivered only while that thread iterates it.
+- This is the documented contract in `marmot_gobject_client_new()` and the README. GTask callbacks still go to each caller's own context, so if a client is used from several threads, the relative order of signals and async callbacks across contexts is not defined (informational).
+
+### Low items: resolved
+
+- **Welcome-id OOM.** `welcome_id()` returns an error; outbox load and append fail with `MARMOT_ERR_MEMORY` instead of inventing an all-zero id.
+- **Welcome resend timer.** A failed Welcome send schedules a per-group resend of the outbox, using the same exponential backoff with jitter. Timers are removed on deactivation.
+- **Test leak.** The gobject suite's test leak is fixed: `leaks` reports 0.
+
+### Verification
+
+- Build with `BUILD_GROUNDHOG=ON`: ok.
+- `ctest -R 'marmot|mls|gnostr' -j6`: **81/81 passed**.
+- TSAN on `test_marmot_gobject`: **73 ok, 0 not ok, 0 warnings**.
+- ASAN+UBSAN: `test_commits`, `test_mls_welcome`, `test_mls_group`, `test_protocol`, `test_marmot_interop` and `test_marmot_gobject` (73 ok) all pass with no reports.
+- `leaks --atExit`: `test_commits`, `test_mls_group`, `test_protocol` and `test_marmot_gobject` each report **0 leaks**.
+
+### Final recommendation
+
+**APPROVED.** All blocking findings from W17, W17b and its addenda are resolved and pinned by tests: R1, R2, C1, C2 and D1.
+
+**Tracked follow-ups:**
+- nostrc-w1m0 (full convergence);
+- nostrc-6r6s (inbound kind:445 signature verification; callers verify until then);
+- nostrc-ba81 (Welcome delivery confirmation and inbox relays);
+- nostrc-xgko (privilege from the proposal set).
+
+**Low follow-up:** the destroy-notify for undispatched signal sources noted above.
