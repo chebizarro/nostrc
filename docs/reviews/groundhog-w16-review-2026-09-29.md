@@ -380,3 +380,42 @@ Exceptions found:
 - **B1 is closed.** Every Groundhog TLS connection has resumption off, in all modes. No other GIO TLS client or libsoup hand-off path remains. A genuine ClientHello-level test proves it and fails without the fix.
 - **`nostrc-0d0d` is acceptable as a follow-up.** The lws cache never reaches Tor connections.
 - **Blocking: N1.** The new `Request.owner` borrowed pointer is read after `g_task_finalize` has freed the `GhNetHttp`. That is a heap use-after-free on account switch, logout or store close during a NIP-11 fetch (and at quit during a NIP-05 lookup). The fix is one owned reference plus a sanitizer-visible test. Everything else in `cd70d443` is approved as is.
+
+### N1 fix confirmation (`2e46e4b3` on local `master`) and final verdict
+
+- **The fix.**
+  - `Request.owner` is now `g_object_ref(self)` (`gh-net-http.c:271`).
+  - `request_free` works in this order:
+    1. removes the request from the non-owning `owner->requests`;
+    2. disconnects the caller's cancellable;
+    3. frees the rest, aborting a Tor request's own session;
+    4. unrefs the owner last.
+  - The owner therefore cannot be finalized while `request_free` still uses it, whatever order `g_task_finalize` uses.
+- **ASAN reproduction.** The same harness, built from `master`'s `gh-net-http.c`, `gh-net-session.c` and `gh-net-tls.c` with `-fsanitize=address`, is clean on three runs; it reported the use-after-free at `gh-net-http.c:36` before the fix.
+- **Other endings.** An extended harness against a server that accepts and never answers drops the `GhNetHttp` in flight, then ends the request three ways. All are ASAN-clean, and each checks with a weak pointer that the object stays alive while the request runs and is **finalized** after it completes:
+  - by the caller's cancel (`G_IO_ERROR_CANCELLED`);
+  - by a mode switch (`G_IO_ERROR_CONNECTION_CLOSED`, "The network setting changed…");
+  - by the 10 s I/O timeout.
+- **No reference cycle or leak.**
+  - `owner->requests` does not own its entries.
+  - While a request is in flight there is a loop: owner → kept System/No Proxy `SoupSession` → queued message → our `GTask` → `Request` → owner. Before the fix the same loop existed through the task's `source_object`, so it isn't new.
+  - That loop ends on every completion (response, error, cancel, mode switch, timeout), as the finalization checks show.
+  - `dispose` aborting the kept session only matters once no request holds the owner, as before.
+- **The new test.** `/groundhog/net/http-owner-dropped-in-flight` checks the owner is kept alive and then released.
+  - Without ASAN, a use-after-free need not crash, so the regression is caught by the CI sanitizer job, which lists `groundhog-net`.
+  - It passed 10/10 in `--repeat until-fail:10`.
+- **Other `GhNetHttp` users need nothing more.**
+  - **`GhNip05`.** Its `on_fetched` calls `get_finish` on `transport_data`. That is the same `GhNetHttp` the request keeps alive until after the callback, so a lookup completing after `gh_nip05_dispose` (`gh-nip05.c:190`) is safe. It never reads `self->http`. A lookup at quit that nobody cancels ends at the 10 s timeout, then frees both objects.
+  - **`GhNip29Service`.** It cancels its key fetches before dropping `self->http` (`gh-nip29-service.c:2297`, `:2317`). That now ends cleanly, as in the harness.
+  - **NIP-11.** `gh_nip11_fetch_relay_key_async` uses only the `GhNetHttp` it was given, as the async source.
+  - No other `src/` code creates a `GhNetHttp`.
+- **Verification.**
+  - `cmake -S . -B /tmp/w16m -G Ninja -DBUILD_GROUNDHOG=ON && ninja -C /tmp/w16m` on the main checkout at `2e46e4b3` builds all 2280 targets. The rewritten `gnostr-profile-edit.ui` was restored.
+  - `ctest -R 'groundhog-' -j8`: **59/59 on three runs**, with the same four platform skips.
+
+**APPROVED**
+
+- **Blocking findings.** B1 (closed by `cd70d443`) and N1 (closed by `2e46e4b3`) are both resolved.
+- **Other W16 items.** Every remaining W16 and addendum item is either fixed or filed:
+  - `nostrc-0d0d`, `-dod2`, `-81ad`, `-jpwe`, `-idz0`, `-253z`, `-f56o`;
+  - the addendum's non-blocking notes on existing `.onion` rooms, the two network-mode sources, and two copy nits, which should be filed as follow-ups.
