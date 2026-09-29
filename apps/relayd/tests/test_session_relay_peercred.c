@@ -42,10 +42,20 @@ int main(void) { return 77; }
 int main(void) { return 77; }
 #else
 
+/* Wait until the daemon accepts connections. The socket file appears at
+ * bind(), before listen(), so its existence alone races the daemon's startup:
+ * on a slow host (linux/amd64 under emulation) the connect below was refused. */
 static int wait_for_socket(const char *path, int timeout_ms) {
+  struct sockaddr_un sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sun_family = AF_UNIX;
+  strncpy(sa.sun_path, path, sizeof(sa.sun_path) - 1);
   for (int i = 0; i < timeout_ms / 10; i++) {
-    struct stat st;
-    if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) return 0;
+    int c = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (c < 0) return -1;
+    int rc = connect(c, (struct sockaddr *)&sa, sizeof sa);
+    close(c);
+    if (rc == 0) return 0;
     struct timespec ts = { 0, 10 * 1000 * 1000 };
     nanosleep(&ts, NULL);
   }

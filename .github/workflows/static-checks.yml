@@ -1,0 +1,24 @@
+name: Static checks
+
+# Repository-wide checks that need no build. The pre-push gate
+# (scripts/pre-push) runs the same scripts before every push.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Local Linux image mirrors the CI package lists
+        run: python3 scripts/check-linux-ci-packages.py --self-test
+
+      - name: Pre-push gate behaviour
+        run: bash scripts/test-pre-push.sh

@@ -1,17 +1,87 @@
 #!/usr/bin/env bash
 # Validate pushed commits in temporary worktrees, never in the caller's checkout.
+#
+# For each pushed ref: the candidate's static checks, then the macOS (host)
+# build and full CTest run, and in parallel the Linux stage
+# (scripts/linux-gate.sh: a GCC build of every default target plus Groundhog in
+# an Ubuntu 24.04 container, and a smoke CTest subset) on its own checkout of
+# the same commit. Any failure blocks the push.
+#
+# The Linux stage needs Docker. Without it the push is blocked; on a machine
+# that cannot run Docker, set NOSTRC_SKIP_LINUX_GATE=1 to validate on the host
+# only (announced on every push). NOSTRC_GATE_AMD64=1 runs the Linux stage as
+# linux/amd64 under emulation (slow).
 set -euo pipefail
+# Bash reads a script while running it: parse all of it first, so a checkout
+# that rewrites this file mid-run cannot splice two versions together.
+{
 
 repo_root="$(git rev-parse --show-toplevel)"
 tmp="$(mktemp -d)"
 checkout=""
+linux_src=""
+linux_pid=""
+remove_worktree() {
+    git -C "$repo_root" worktree remove --force "$1" || true
+}
 cleanup() {
-    if [ -n "$checkout" ]; then
-        git -C "$repo_root" worktree remove --force "$checkout" || true
+    if [ -n "$linux_pid" ]; then
+        kill "$linux_pid" 2>/dev/null || true
+        wait "$linux_pid" 2>/dev/null || true
     fi
+    if [ -n "$checkout" ]; then remove_worktree "$checkout"; fi
+    if [ -n "$linux_src" ]; then remove_worktree "$linux_src"; fi
     rm -rf "$tmp"
 }
 trap cleanup EXIT
+
+# Collect the Linux stage's result and block the push if it failed. With
+# "if-done", only when it has already finished (a Linux-only break then fails
+# the push before the macOS test run, not after it).
+finish_linux() {
+    [ -n "$linux_pid" ] || return 0
+    if [ "${1:-}" = if-done ] && kill -0 "$linux_pid" 2>/dev/null; then
+        return 0
+    fi
+    local status=0
+    wait "$linux_pid" || status=$?
+    linux_pid=""
+    cat "$linux_log"
+    if [ "$status" -ne 0 ]; then
+        echo "Linux build failed for $local_ref ($local_oid) - push blocked" >&2
+        exit 1
+    fi
+}
+
+# A detached worktree of $2 at $1, with the submodules the build needs.
+add_checkout() {
+    git -c core.hooksPath=/dev/null -C "$repo_root" worktree add --detach "$1" "$2"
+    for submodule in third_party/nsync third_party/nostrdb; do
+        if git -C "$1" ls-files --stage -- "$submodule" | grep -q "^160000 "; then
+            git -c core.hooksPath=/dev/null -C "$1" submodule update --init "$submodule"
+        fi
+    done
+}
+
+# 1: run the Linux stage; 0: skipped by NOSTRC_SKIP_LINUX_GATE; "": not decided
+# yet (a push that only deletes refs needs no Docker).
+linux_gate=""
+linux_gate_enabled() {
+    if [ -z "$linux_gate" ]; then
+        if [ "${NOSTRC_SKIP_LINUX_GATE:-0}" = 1 ]; then
+            linux_gate=0
+            echo "!! Pre-push: Linux build SKIPPED (NOSTRC_SKIP_LINUX_GATE=1)." >&2
+            echo "!! These commits are validated on this host only; glibc/GCC-only breaks can still reach master." >&2
+        elif ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+            echo "Pre-push: the Linux build needs Docker, which is not available (not installed, or the daemon is not running)." >&2
+            echo "Start Docker and push again. On a machine without Docker, set NOSTRC_SKIP_LINUX_GATE=1 to validate on this host only - push blocked" >&2
+            exit 1
+        else
+            linux_gate=1
+        fi
+    fi
+    [ "$linux_gate" = 1 ]
+}
 
 zero_oid=0000000000000000000000000000000000000000
 saw_ref=0
@@ -22,16 +92,34 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     [ "$local_oid" != "$zero_oid" ] || continue
 
     if [ -n "$checkout" ]; then
-        git -C "$repo_root" worktree remove --force "$checkout"
+        remove_worktree "$checkout"
         checkout=""
     fi
     checkout="$tmp/checkout"
-    git -c core.hooksPath=/dev/null -C "$repo_root" worktree add --detach "$checkout" "$local_oid"
-    for submodule in third_party/nsync third_party/nostrdb; do
-        if git -C "$checkout" ls-files --stage -- "$submodule" | grep -q "^160000 "; then
-            git -c core.hooksPath=/dev/null -C "$checkout" submodule update --init "$submodule"
+    add_checkout "$checkout" "$local_oid"
+
+    # Static checks shipped with the candidate (none in older commits).
+    for check in scripts/check-linux-ci-packages.py; do
+        if [ -f "$checkout/$check" ]; then
+            python3 "$checkout/$check" --root "$checkout"
         fi
     done
+
+    # The Linux stage gets its own checkout: the macOS build rewrites committed
+    # Blueprint .ui files in its tree, which the container must not copy
+    # half-written.
+    linux_log="$tmp/linux.log"
+    if linux_gate_enabled; then
+        if [ -n "$linux_src" ]; then
+            remove_worktree "$linux_src"
+            linux_src=""
+        fi
+        linux_src="$tmp/linux-src"
+        add_checkout "$linux_src" "$local_oid" >/dev/null
+        echo "Pre-push verification (Linux, in background): $local_ref ($local_oid)"
+        "$repo_root/scripts/linux-gate.sh" "$linux_src" < /dev/null > "$linux_log" 2>&1 &
+        linux_pid=$!
+    fi
 
     groundhog=OFF
     base="$remote_oid"
@@ -57,6 +145,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     echo "Pre-push verification: $local_ref ($local_oid), BUILD_GROUNDHOG=$groundhog"
     cmake -S "$checkout" -B "$build" -DCMAKE_BUILD_TYPE=Debug -DBUILD_GROUNDHOG="$groundhog"
     cmake --build "$build"
+    finish_linux if-done
     test_count="$(ctest --test-dir "$build" -N | awk '/^Total Tests: [0-9]+$/ { print $3 }')"
     if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then
         echo "No registered CTest tests for $local_ref (count=${test_count:-unknown}) - push blocked" >&2
@@ -64,9 +153,12 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     fi
     ctest --test-dir "$build" --output-on-failure
     rm -rf "$build"
+    finish_linux
 done
 
 if [ "$saw_ref" -eq 0 ]; then
     echo "No pre-push refs received - push blocked" >&2
     exit 1
 fi
+exit
+}

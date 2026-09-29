@@ -1219,6 +1219,8 @@ if (BUILD_TESTING)
     target_link_options(gnostr-test-image-viewer-remote-media PRIVATE -Wl,-undefined,dynamic_lookup)
   else()
     target_link_options(gnostr-test-image-viewer-remote-media PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+    # fmax/fmin: glibc keeps them in libm, which GNU ld does not add implicitly.
+    target_link_libraries(gnostr-test-image-viewer-remote-media PRIVATE m)
   endif()
   _gnostr_apply_sanitizers(gnostr-test-image-viewer-remote-media)
   add_test(NAME gnostr-test-image-viewer-remote-media COMMAND gnostr-test-image-viewer-remote-media)

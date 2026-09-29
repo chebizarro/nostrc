@@ -67,6 +67,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | nostr-gobject, gnostr, groundhog | 2.0.2, 0.1.0, 0.10.0 | No bump: no source or API change (Groundhog's gh-net-tls.h only gains a comment); a rebuild or relink picks the fix up, as it does for signet. |
 | groundhog 0.10.0 -> 0.10.1 (PATCH: attachment downloads refuse non-public addresses including embedded-IPv4 IPv6 forms and names resolving to private addresses, nostrc-qi5e; picks up libnostr 1.0.11 TLS no-resumption) | groundhog | 0.10.1 | PATCH: privacy fixes, no new feature. |
 | groundhog 0.10.1 -> 0.11.0 (MINOR: attachment UI G22 nostrc-qp24.40; pins, mark read/unread, header menu, backfill notifications, timer rows, arrival-order read marker with store schema v4, multi-send follow-ups; W18 polish) | groundhog | 0.11.0 | MINOR: new user-visible features and a store schema migration. |
+| Linux pre-push gate fixes (nostrc-y9xg): libgo's no-op metrics stubs become weak, so GNU ld no longer reports duplicate definitions when gnostr and gnostr-live-log link both libnostrgo.a and libnostr.a | libgo | 0.1.2 | No bump: 0.1.2 is unreleased, and the change is link-time only (no API/ABI change); the fix ships in 0.1.2. |
+| same (gnostr's Linux link now succeeds; its image-viewer test links libm; the mls-groups plugin casts its storage to the interface type, identical code) | gnostr | 0.1.0 | No bump (unreleased): build corrections with no behaviour change. |
 
 ## Maintenance
 

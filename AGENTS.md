@@ -101,6 +101,19 @@ rm -rf _build && cmake -B _build && cmake --build _build
 
 **If build fails, DO NOT PUSH. Fix the issue first.**
 
+The hook validates each pushed commit in a temporary worktree: the macOS (host)
+build and full CTest run, and in parallel a Linux stage
+(`scripts/linux-gate.sh`): a GCC build of every default target plus Groundhog in
+an Ubuntu 24.04 container, then a smoke CTest subset. It catches glibc/GCC-only
+breaks (a POSIX function hidden by `-std=c11`, archive symbol clashes Apple's
+linker accepts) that a macOS build cannot. It needs Docker; without it the
+push is blocked. On a machine that cannot run Docker, set
+`NOSTRC_SKIP_LINUX_GATE=1` (the skip is announced on every push).
+`NOSTRC_GATE_AMD64=1` runs the Linux stage as linux/amd64 under emulation,
+where x86_64 GCC's right-to-left argument evaluation exposes unsequenced-argument
+bugs at run time (slow). Run the Linux stage alone with
+`scripts/linux-gate.sh <clean checkout>`.
+
 ### 2. Unit Tests
 
 If touching code in `apps/`, `lib*/`, or `nips/`:
