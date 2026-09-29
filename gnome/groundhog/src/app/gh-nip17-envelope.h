@@ -30,7 +30,32 @@ void gh_nip17_envelope_build_self_async(GhAccountController *accounts,
                                          GCancellable *cancellable,
                                          GAsyncReadyCallback callback,
                                          gpointer user_data);
-/* Finishes either build. */
+/* The canonical unsigned kind-14 rumor of a one-to-one message (a note to
+ * self when recipient == sender) created at @created_at (unix seconds, > 0),
+ * as compact JSON; @out_rumor_id receives its id. A durable outbox stores it
+ * before the first signer call and seals exactly it later. Needs no signer. */
+gchar *gh_nip17_rumor_new(const gchar *sender_pubkey_hex,
+                          const gchar *recipient_pubkey_hex,
+                          const gchar *content, gint64 created_at,
+                          gchar **out_rumor_id, GError **error);
+/* The recipient (lowercase hex; the sender itself for a note to self) of a
+ * canonical unsigned kind-14 rumor authored by @sender_pubkey_hex with
+ * exactly one "p" tag, or NULL for anything else. */
+gchar *gh_nip17_rumor_get_recipient(const gchar *rumor_json,
+                                    const gchar *sender_pubkey_hex);
+/* Seals an existing rumor of the active account: a canonical unsigned
+ * kind 14 it authored, with exactly one "p" tag. A "p" naming the account is
+ * a note to self (one wrap, like build_self); any other names the recipient
+ * (a recipient wrap and a self-copy, like build). The rumor text is encrypted
+ * byte-for-byte, so every wrap carries exactly the stored rumor id.
+ * Anything else fails with G_IO_ERROR_INVALID_ARGUMENT before any signer
+ * call. */
+void gh_nip17_envelope_seal_async(GhAccountController *accounts,
+                                  const gchar *rumor_json,
+                                  GCancellable *cancellable,
+                                  GAsyncReadyCallback callback,
+                                  gpointer user_data);
+/* Finishes any build or seal. */
 GhNip17Envelope *gh_nip17_envelope_build_finish(GAsyncResult *result,
                                                   GError **error);
 void gh_nip17_envelope_free(GhNip17Envelope *envelope);

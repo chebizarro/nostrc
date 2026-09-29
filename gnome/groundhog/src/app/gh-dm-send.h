@@ -167,6 +167,14 @@ GhDmSend *gh_dm_sender_send(GhDmSender *self, const gchar *recipient_pubkey_hex,
                             const gchar *content, GCancellable *cancellable);
 GhDmSend *gh_dm_sender_seal(GhDmSender *self, const gchar *recipient_pubkey_hex,
                             const gchar *content, GCancellable *cancellable);
+/* Like gh_dm_sender_seal(), for a rumor the caller already stored (see
+ * gh_nip17_rumor_new(); a durable outbox persists it before any signer
+ * call): the recipient is its single "p" tag (the account itself for a note
+ * to self), and the wraps carry exactly this rumor and its id. A rumor that
+ * is not a canonical kind 14 of the active account finishes FAILED/INVALID
+ * at once. */
+GhDmSend *gh_dm_sender_seal_rumor(GhDmSender *self, const gchar *rumor_json,
+                                  GCancellable *cancellable);
 /* Republishes the stored wraps of a sealed (or partially published) status to
  * every target that has not ACCEPTED, byte-for-byte and without any signer
  * call. The status must belong to the active account; it is copied. */

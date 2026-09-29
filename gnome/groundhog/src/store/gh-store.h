@@ -465,6 +465,78 @@ gboolean gh_store_record_outcome(GhStore *store, gint64 outbox_event_id,
                                  const GhStoreTargetOutcome *outcome,
                                  GError **error);
 
+/* ---- Outbox engine (G06) ---------------------------------------------------------------
+ * What the durable outbox engine (src/app/gh-outbox.c) resumes from after a
+ * restart, and the §3.6 transitions it records after SEALED. Each write is one
+ * small transaction (cut points "outbox:*"). */
+
+typedef struct {
+  gchar *relay_url;
+  gint outcome;              /* a GhRelayPublishOutcome value; 0 = not reported yet */
+  gint ok_prefix;            /* a GhRelayOkPrefix value, or -1 for none */
+  gchar *ok_message;
+  guint attempts;            /* counted attempts (T-outcome count_attempt) */
+  gint64 last_attempt_at;    /* unix seconds; 0 = never */
+} GhStoreOutboxTarget;
+
+typedef struct {
+  gint64 id;                 /* outbox_events.id: the T-outcome key */
+  GhStoreOutboxRole role;
+  gchar *target_pubkey;      /* recipient of a wrap, else NULL */
+  gchar *event_id;
+  gchar *event_json;         /* signed, byte-identical to T-seal; NULL once pruned */
+  gint64 not_before;         /* unix seconds; 0 = immediately (D8) */
+  GPtrArray *targets;        /* GhStoreOutboxTarget, ordered by URL */
+} GhStoreOutboxEvent;
+
+typedef struct {
+  gint64 id;
+  gint64 conversation_id;
+  gint64 message_id;         /* the outgoing message row; 0 if it is gone */
+  gchar *op_id;
+  GhStoreBackend backend;
+  GhStoreOutboxState state;
+  gchar *rumor_json;
+  gint64 created_at;         /* unix seconds at T-enqueue (store clock) */
+  gint64 next_attempt_at;    /* 0 = none */
+  guint attempts;            /* rounds counted by gh_store_outbox_update() */
+  gchar *last_error;         /* the engine's reason code, or NULL */
+  GPtrArray *events;         /* GhStoreOutboxEvent in sealing order; empty until sealed */
+} GhStoreOutboxEntry;
+
+void gh_store_outbox_entry_free(GhStoreOutboxEntry *entry);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhStoreOutboxEntry, gh_store_outbox_entry_free)
+
+/* The ids (gint64) of @backend's entries that are neither SETTLED nor
+ * CANCELLED, oldest first. Each backend's engine resumes only its own. */
+GArray *gh_store_outbox_list_unfinished(GhStore *store, GhStoreBackend backend,
+                                        GError **error);
+/* One entry with its events and their targets; NOT_FOUND if absent. */
+GhStoreOutboxEntry *gh_store_outbox_load(GhStore *store, gint64 outbox_id, GError **error);
+/* The entry an outgoing message was queued with; NOT_FOUND if none. */
+gboolean gh_store_outbox_find_by_message(GhStore *store, gint64 message_id,
+                                         gint64 *out_outbox_id, GError **error);
+
+typedef struct {
+  GhStoreOutboxState state;
+  gint64 next_attempt_at;    /* unix seconds; 0 = none */
+  gboolean count_attempt;    /* attempts + 1 (one publish or seal round) */
+  const gchar *last_error;   /* reason code; NULL clears; at most GH_STORE_MAX_OK_MESSAGE */
+} GhStoreOutboxUpdate;
+
+/* Records one transition of the outbox engine. Refused with STATE: leaving
+ * CANCELLED; SEALED (only gh_store_seal() seals); QUEUED or SEALING once the
+ * entry has stored events (they are republished, never re-sealed); and
+ * PUBLISHING, WAITING_RETRY or SETTLED while it has none. NOT_FOUND if
+ * absent. */
+gboolean gh_store_outbox_update(GhStore *store, gint64 outbox_id,
+                                const GhStoreOutboxUpdate *update, GError **error);
+/* The user deleted a message before it settled: deletes the entry (its events
+ * and targets cascade) and its outgoing message in one transaction, then
+ * truncates the WAL. The seen keys stay, so a self-copy that comes back from
+ * a relay is not admitted again. NOT_FOUND if absent. */
+gboolean gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error);
+
 /* ---- T-purge ------------------------------------------------------------------------ */
 
 typedef struct {

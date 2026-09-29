@@ -681,3 +681,39 @@ else()
                  "conversation model)")
 endif()
 # --- end G05 store conversations ---
+
+# --- G06 outbox ---
+# Durable NIP-17 outbox over the encrypted GhStore (privacy charter §3.5,
+# §3.6, item G06): T-enqueue before any signer call, T-seal before any
+# publish, per-relay T-outcome, the retry scheduler on GhClock, and the
+# GTK-free GhMessageStatus derivation. Nothing in the application uses it
+# yet (G04/G13 wire it by adding GROUNDHOG_OUTBOX_SOURCES to the executable),
+# so the executable's link set is unchanged.
+if (TARGET groundhog-store AND GROUNDHOG_DM_SEND_SOURCES)
+  message(STATUS "Groundhog outbox: enabled")
+  set(GROUNDHOG_OUTBOX_SOURCES src/app/gh-outbox.c src/app/gh-message-status.c)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # OB-1..OB-10 against the test-hooks store (H8 crash cut points), the
+    # fake GhClock, recording transports and the mock signer bus; with
+    # libsoup also real local WebSocket relays (H2).
+    add_executable(test-groundhog-outbox tests/app/test_outbox.c tests/store/crash-harness.c
+      ${GROUNDHOG_OUTBOX_SOURCES} ${GROUNDHOG_DM_SEND_SOURCES} src/app/gh-nip17-envelope.c)
+    target_include_directories(test-groundhog-outbox PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store)
+    target_link_libraries(test-groundhog-outbox PRIVATE groundhog-account-relays
+      groundhog-store-testhooks nostr_nip17_core nostr_nip59_core)
+    if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_link_libraries(test-groundhog-outbox PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_definitions(test-groundhog-outbox PRIVATE GROUNDHOG_TEST_WIRE=1)
+    endif()
+    target_compile_options(test-groundhog-outbox PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-outbox)
+    add_dependencies(test-groundhog-outbox groundhog-test-schemas)
+    add_test(NAME groundhog-outbox COMMAND test-groundhog-outbox)
+    set_tests_properties(groundhog-outbox PROPERTIES TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog outbox: disabled (needs the GhStore and the NIP-17 send sources)")
+endif()
+# --- end G06 outbox ---

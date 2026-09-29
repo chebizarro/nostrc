@@ -211,29 +211,76 @@ sign_done(GObject *source, GAsyncResult *result, gpointer data)
   g_object_unref(task);
 }
 
-static void
-build_start(GhAccountController *accounts, const gchar *recipient_pubkey_hex,
-            gboolean self_only, const gchar *content, GCancellable *cancellable,
-            GAsyncReadyCallback callback, gpointer user_data)
+/* A canonical rumor with its id; created_at 0 means now. */
+static gchar *
+rumor_new(const gchar *sender, const gchar *recipient, const gchar *content,
+          gint64 created_at, gchar **out_id, GError **error)
 {
-  GTask *task = g_task_new(accounts, cancellable, callback, user_data);
-  g_task_set_source_tag(task, gh_nip17_envelope_build_async);
-  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  NostrEvent *rumor = nostr_nip17_create_rumor(sender, recipient, content, created_at);
+  if (!rumor) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Could not create NIP-17 rumor");
+    return NULL;
+  }
+  rumor->id = nostr_event_get_id(rumor);
+  if (!rumor->id || nostr_event_validate_id(rumor, NULL) != NOSTR_EVENT_VALIDATION_OK ||
+      rumor->sig != NULL) {
+    nostr_event_free(rumor);
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not canonicalize NIP-17 rumor");
+    return NULL;
+  }
+  char *json = nostr_event_serialize_compact(rumor);
+  if (out_id && json)
+    *out_id = g_strdup(rumor->id);
+  nostr_event_free(rumor);
+  if (!json) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Could not serialize NIP-17 rumor");
+    return NULL;
+  }
+  gchar *copy = g_strdup(json);
+  free(json);
+  return copy;
+}
+
+gchar *
+gh_nip17_rumor_new(const gchar *sender_pubkey_hex, const gchar *recipient_pubkey_hex,
+                   const gchar *content, gint64 created_at, gchar **out_rumor_id,
+                   GError **error)
+{
+  if (!hex64(sender_pubkey_hex) || !hex64(recipient_pubkey_hex) || !content || !*content ||
+      !g_utf8_validate(content, -1, NULL) || created_at <= 0) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Sender and recipient pubkeys, UTF-8 content and a time are required");
+    return NULL;
+  }
+  g_autofree gchar *sender = g_ascii_strdown(sender_pubkey_hex, -1);
+  g_autofree gchar *recipient = g_ascii_strdown(recipient_pubkey_hex, -1);
+  return rumor_new(sender, recipient, content, created_at, out_rumor_id, error);
+}
+
+/* Validates the active account and recipient, then encrypts rumor_json
+ * (owned) towards the recipient (or only to self). */
+static void
+start_with_rumor(GTask *task, const gchar *recipient_pubkey_hex, gboolean self_only,
+                 gchar *rumor_json)
+{
+  GhAccountController *accounts = g_task_get_source_object(task);
   const gchar *npub = gh_account_controller_get_active_npub(accounts);
   g_autofree gchar *sender = npub ? gh_identity_pubkey_hex(npub) : NULL;
   if (self_only && sender)
     recipient_pubkey_hex = sender;
-  if (!sender || !hex64(recipient_pubkey_hex) || !content || !*content ||
-      !g_utf8_validate(content, -1, NULL)) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                            "Active account, recipient pubkey and UTF-8 content are required");
-    g_object_unref(task);
-    return;
-  }
-  g_autofree gchar *recipient = g_ascii_strdown(recipient_pubkey_hex, -1);
-  if (!self_only && g_strcmp0(sender, recipient) == 0) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                            "Recipient must differ from the selected sender");
+  g_autofree gchar *recipient = hex64(recipient_pubkey_hex)
+                                  ? g_ascii_strdown(recipient_pubkey_hex, -1) : NULL;
+  const gchar *invalid = NULL;
+  if (!sender || !recipient)
+    invalid = "Active account, recipient pubkey and UTF-8 content are required";
+  else if (!self_only && g_strcmp0(sender, recipient) == 0)
+    invalid = "Recipient must differ from the selected sender";
+  else if (!rumor_json)
+    invalid = "Active account, recipient pubkey and UTF-8 content are required";
+  if (invalid) {
+    g_free(rumor_json);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s", invalid);
     g_object_unref(task);
     return;
   }
@@ -244,22 +291,93 @@ build_start(GhAccountController *accounts, const gchar *recipient_pubkey_hex,
   build->recipient = g_strdup(recipient);
   /* A note to self skips straight to the single self wrap. */
   build->destination = self_only ? 1 : 0;
+  build->rumor_json = rumor_json;
   g_task_set_task_data(task, build, build_free);
-  NostrEvent *rumor = nostr_nip17_create_rumor(sender, recipient, content, 0);
-  if (!rumor) { fail_local(task, "Could not create NIP-17 rumor"); return; }
-  rumor->id = nostr_event_get_id(rumor);
-  if (!rumor->id || nostr_event_validate_id(rumor, NULL) != NOSTR_EVENT_VALIDATION_OK ||
-      rumor->sig != NULL) {
-    nostr_event_free(rumor);
-    fail_local(task, "Could not canonicalize NIP-17 rumor");
+  begin_encrypt(task);
+}
+
+static void
+build_start(GhAccountController *accounts, const gchar *recipient_pubkey_hex,
+            gboolean self_only, const gchar *content, GCancellable *cancellable,
+            GAsyncReadyCallback callback, gpointer user_data)
+{
+  GTask *task = g_task_new(accounts, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_nip17_envelope_build_async);
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  const gchar *npub = gh_account_controller_get_active_npub(accounts);
+  g_autofree gchar *sender = npub ? gh_identity_pubkey_hex(npub) : NULL;
+  const gchar *recipient = self_only ? sender : recipient_pubkey_hex;
+  if (!sender || !hex64(recipient) || !content || !*content ||
+      !g_utf8_validate(content, -1, NULL)) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "Active account, recipient pubkey and UTF-8 content are required");
+    g_object_unref(task);
     return;
   }
-  char *json = nostr_event_serialize_compact(rumor);
-  nostr_event_free(rumor);
-  if (!json) { fail_local(task, "Could not serialize NIP-17 rumor"); return; }
-  build->rumor_json = g_strdup(json);
-  free(json);
-  begin_encrypt(task);
+  g_autofree gchar *lower = g_ascii_strdown(recipient, -1);
+  gchar *rumor_json = NULL;
+  if (self_only || g_strcmp0(sender, lower) != 0) {
+    g_autoptr(GError) error = NULL;
+    rumor_json = rumor_new(sender, lower, content, 0, NULL, &error);
+    if (!rumor_json) {
+      g_task_return_error(task, g_steal_pointer(&error));
+      g_object_unref(task);
+      return;
+    }
+  }
+  /* Without a rumor (recipient == sender) this reports that recipient. */
+  start_with_rumor(task, lower, self_only, rumor_json);
+}
+
+gchar *
+gh_nip17_rumor_get_recipient(const gchar *rumor_json, const gchar *sender)
+{
+  if (!rumor_json || !hex64(sender) || !g_utf8_validate(rumor_json, -1, NULL))
+    return NULL;
+  NostrEvent *rumor = nostr_event_new();
+  gchar *recipient = NULL;
+  if (rumor && nostr_event_deserialize_compact(rumor, rumor_json, NULL) == 1 &&
+      nostr_event_get_kind(rumor) == 14 && !rumor->sig && rumor->id &&
+      nostr_event_validate_id(rumor, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+      g_strcmp0(nostr_event_get_pubkey(rumor), sender) == 0) {
+    NostrTags *tags = nostr_event_get_tags(rumor);
+    guint p_tags = 0;
+    for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+      NostrTag *tag = nostr_tags_get(tags, i);
+      if (g_strcmp0(nostr_tag_get_key(tag), "p") != 0)
+        continue;
+      p_tags++;
+      g_free(recipient);
+      recipient = hex64(nostr_tag_get_value(tag))
+        ? g_ascii_strdown(nostr_tag_get_value(tag), -1) : NULL;
+    }
+    if (p_tags != 1)
+      g_clear_pointer(&recipient, g_free);
+  }
+  if (rumor)
+    nostr_event_free(rumor);
+  return recipient;
+}
+
+void
+gh_nip17_envelope_seal_async(GhAccountController *accounts, const gchar *rumor_json,
+                             GCancellable *cancellable, GAsyncReadyCallback callback,
+                             gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
+  GTask *task = g_task_new(accounts, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_nip17_envelope_build_async);
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  const gchar *npub = gh_account_controller_get_active_npub(accounts);
+  g_autofree gchar *sender = npub ? gh_identity_pubkey_hex(npub) : NULL;
+  g_autofree gchar *recipient = sender ? gh_nip17_rumor_get_recipient(rumor_json, sender) : NULL;
+  if (!recipient) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "Not a canonical NIP-17 rumor of the active account");
+    g_object_unref(task);
+    return;
+  }
+  start_with_rumor(task, recipient, g_strcmp0(recipient, sender) == 0, g_strdup(rumor_json));
 }
 
 void

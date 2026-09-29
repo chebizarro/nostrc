@@ -30,6 +30,7 @@ struct _GhDmSend {
   GhDmSendStatus status;
   Mode mode;
   gchar *content;     /* wiped once sealed */
+  gchar *rumor;       /* seal_rumor: the caller's stored rumor; wiped once sealed */
   gboolean self_dm;
   GMainContext *context;
   GCancellable *cancel; /* revokes the inbox lookup and signer approvals */
@@ -273,12 +274,19 @@ destroy_source(GSource **source)
 }
 
 static void
+wipe_string(gchar **text)
+{
+  if (!*text)
+    return;
+  memset(*text, 0, strlen(*text));
+  g_clear_pointer(text, g_free);
+}
+
+static void
 wipe_content(GhDmSend *self)
 {
-  if (!self->content)
-    return;
-  memset(self->content, 0, strlen(self->content));
-  g_clear_pointer(&self->content, g_free);
+  wipe_string(&self->content);
+  wipe_string(&self->rumor);
 }
 
 /* Terminal transition; runs once. Every hook is released, and the inbox
@@ -700,7 +708,10 @@ begin_seal(GhDmSend *self)
   emit_changed(self);
   if (is_done(self))
     return;
-  if (self->self_dm)
+  if (self->rumor)
+    gh_nip17_envelope_seal_async(self->sender->accounts, self->rumor, self->cancel,
+                                 envelope_done, g_object_ref(self));
+  else if (self->self_dm)
     gh_nip17_envelope_build_self_async(self->sender->accounts, self->content, self->cancel,
                                        envelope_done, g_object_ref(self));
   else
@@ -802,18 +813,20 @@ active_sender(GhDmSender *sender)
   return npub ? gh_identity_pubkey_hex(npub) : NULL;
 }
 
+/* One of content or rumor (seal_rumor) is set. */
 static GhDmSend *
 compose(GhDmSender *sender, const gchar *recipient_pubkey_hex, const gchar *content,
-        GCancellable *cancellable, Mode mode)
+        const gchar *rumor, GCancellable *cancellable, Mode mode)
 {
   GhDmSend *self = g_object_new(GH_TYPE_DM_SEND, NULL);
   GhDmSendStatus *status = &self->status;
   self->mode = mode;
   status->sender = active_sender(sender);
-  if (!status->sender || !hex64(recipient_pubkey_hex) || !content || !*content ||
-      !g_utf8_validate(content, -1, NULL)) {
-    finish_invalid(self, status->sender ? "A hex recipient pubkey and UTF-8 text are required"
-                                        : "No active Groundhog account");
+  gboolean text_ok = rumor || (content && *content && g_utf8_validate(content, -1, NULL));
+  if (!status->sender || !hex64(recipient_pubkey_hex) || !text_ok) {
+    finish_invalid(self, !status->sender ? "No active Groundhog account"
+                         : rumor ? "Not a canonical NIP-17 rumor of the active account"
+                                 : "A hex recipient pubkey and UTF-8 text are required");
     return self;
   }
   g_autofree gchar *recipient = g_ascii_strdown(recipient_pubkey_hex, -1);
@@ -824,6 +837,7 @@ compose(GhDmSender *sender, const gchar *recipient_pubkey_hex, const gchar *cont
   else
     status->self_copy = leg_new(status->sender);
   self->content = g_strdup(content);
+  self->rumor = g_strdup(rumor);
   if (!track(self, sender, cancellable))
     return self;
   await_own_relays(self, resolve);
@@ -835,7 +849,7 @@ gh_dm_sender_send(GhDmSender *self, const gchar *recipient_pubkey_hex,
                   const gchar *content, GCancellable *cancellable)
 {
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  return compose(self, recipient_pubkey_hex, content, cancellable, MODE_SEND);
+  return compose(self, recipient_pubkey_hex, content, NULL, cancellable, MODE_SEND);
 }
 
 GhDmSend *
@@ -843,7 +857,17 @@ gh_dm_sender_seal(GhDmSender *self, const gchar *recipient_pubkey_hex,
                   const gchar *content, GCancellable *cancellable)
 {
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  return compose(self, recipient_pubkey_hex, content, cancellable, MODE_SEAL);
+  return compose(self, recipient_pubkey_hex, content, NULL, cancellable, MODE_SEAL);
+}
+
+GhDmSend *
+gh_dm_sender_seal_rumor(GhDmSender *self, const gchar *rumor_json, GCancellable *cancellable)
+{
+  g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
+  g_autofree gchar *sender = active_sender(self);
+  g_autofree gchar *recipient = sender ? gh_nip17_rumor_get_recipient(rumor_json, sender) : NULL;
+  /* An unusable rumor fails like an invalid recipient, before any lookup. */
+  return compose(self, recipient, NULL, rumor_json, cancellable, MODE_SEAL);
 }
 
 /* A stored wrap must be a signed gift wrap to exactly this leg's receiver,

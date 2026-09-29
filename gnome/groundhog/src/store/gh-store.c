@@ -79,6 +79,7 @@ static const gchar *const store_cut_points[] = {
   "enqueue:before-commit", "enqueue:after-commit",
   "seal:event", "seal:targets", "seal:state", "seal:before-commit", "seal:after-commit",
   "outcome:before-commit", "outcome:after-commit",
+  "outbox:before-commit", "outbox:after-commit",
   "purge:expired", "purge:retention", "purge:conversations",
   "purge:before-commit", "purge:after-commit", "purge:checkpoint",
   "forget:outbox", "forget:messages", "forget:conversation",
@@ -2698,6 +2699,322 @@ fail:
   sqlite3_finalize(stmt);
   store_rollback(store);
   return FALSE;
+}
+
+/* ---- Outbox engine (G06) --------------------------------------------------------------- */
+
+static gboolean store_exec_id(GhStore *store, const char *sql, gint64 id, gint64 value,
+                              GError **error);
+
+static gchar *
+column_text_dup(sqlite3_stmt *stmt, int column)
+{
+  const unsigned char *text = sqlite3_column_text(stmt, column);
+  return text ? g_strdup((const gchar *) text) : NULL;
+}
+
+static void
+outbox_target_free(gpointer data)
+{
+  GhStoreOutboxTarget *target = data;
+  g_free(target->relay_url);
+  g_free(target->ok_message);
+  g_free(target);
+}
+
+static void
+outbox_event_free(gpointer data)
+{
+  GhStoreOutboxEvent *event = data;
+  g_free(event->target_pubkey);
+  g_free(event->event_id);
+  g_free(event->event_json);
+  g_ptr_array_unref(event->targets);
+  g_free(event);
+}
+
+void
+gh_store_outbox_entry_free(GhStoreOutboxEntry *entry)
+{
+  if (!entry)
+    return;
+  g_free(entry->op_id);
+  g_free(entry->rumor_json);
+  g_free(entry->last_error);
+  g_ptr_array_unref(entry->events);
+  g_free(entry);
+}
+
+GArray *
+gh_store_outbox_list_unfinished(GhStore *store, GhStoreBackend backend, GError **error)
+{
+  g_return_val_if_fail(store != NULL, NULL);
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT id FROM outbox WHERE backend = ?3 AND state NOT IN (?1, ?2) "
+    "ORDER BY created_at, id", error);
+  if (!stmt)
+    return NULL;
+  GArray *ids = g_array_new(FALSE, FALSE, sizeof(gint64));
+  BIND(sqlite3_bind_int64(stmt, 1, GH_STORE_OUTBOX_SETTLED));
+  BIND(sqlite3_bind_int64(stmt, 2, GH_STORE_OUTBOX_CANCELLED));
+  BIND(sqlite3_bind_int64(stmt, 3, backend));
+  for (;;) {
+    gboolean has_row = FALSE;
+    if (!store_step_row(store, stmt, &has_row, "Listing the outbox", error))
+      goto fail;
+    if (!has_row)
+      break;
+    gint64 id = sqlite3_column_int64(stmt, 0);
+    g_array_append_val(ids, id);
+  }
+  sqlite3_finalize(stmt);
+  return ids;
+
+fail:
+  sqlite3_finalize(stmt);
+  g_array_unref(ids);
+  return NULL;
+}
+
+static gboolean
+outbox_load_targets(GhStore *store, GhStoreOutboxEvent *event, GError **error)
+{
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT relay_url, outcome, ok_prefix, ok_message, attempts, last_attempt_at "
+    "FROM outbox_targets WHERE outbox_event_id = ?1 ORDER BY relay_url", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, event->id));
+  for (;;) {
+    gboolean has_row = FALSE;
+    if (!store_step_row(store, stmt, &has_row, "Loading relay targets", error))
+      goto fail;
+    if (!has_row)
+      break;
+    GhStoreOutboxTarget *target = g_new0(GhStoreOutboxTarget, 1);
+    target->relay_url = column_text_dup(stmt, 0);
+    target->outcome = sqlite3_column_int(stmt, 1);
+    target->ok_prefix = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                          ? -1 : sqlite3_column_int(stmt, 2);
+    target->ok_message = column_text_dup(stmt, 3);
+    target->attempts = (guint) MAX(sqlite3_column_int64(stmt, 4), 0);
+    target->last_attempt_at = sqlite3_column_int64(stmt, 5);
+    g_ptr_array_add(event->targets, target);
+  }
+  sqlite3_finalize(stmt);
+  return TRUE;
+
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+GhStoreOutboxEntry *
+gh_store_outbox_load(GhStore *store, gint64 outbox_id, GError **error)
+{
+  g_return_val_if_fail(store != NULL, NULL);
+  gboolean has_row = FALSE;
+  GhStoreOutboxEntry *entry = NULL;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT o.conversation_id, o.op_id, o.backend, o.state, o.rumor_json, o.created_at, "
+    "o.next_attempt_at, o.attempts, o.last_error, "
+    "(SELECT m.id FROM messages m WHERE m.outbox_id = o.id) "
+    "FROM outbox o WHERE o.id = ?1", error);
+  if (!stmt)
+    return NULL;
+  BIND(sqlite3_bind_int64(stmt, 1, outbox_id));
+  if (!store_step_row(store, stmt, &has_row, "Loading an outbox entry", error))
+    goto fail;
+  if (!has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such outbox entry");
+    goto fail;
+  }
+  entry = g_new0(GhStoreOutboxEntry, 1);
+  entry->id = outbox_id;
+  entry->conversation_id = sqlite3_column_int64(stmt, 0);
+  entry->op_id = column_text_dup(stmt, 1);
+  entry->backend = (GhStoreBackend) sqlite3_column_int(stmt, 2);
+  entry->state = (GhStoreOutboxState) sqlite3_column_int(stmt, 3);
+  entry->rumor_json = column_text_dup(stmt, 4);
+  entry->created_at = sqlite3_column_int64(stmt, 5);
+  entry->next_attempt_at = sqlite3_column_int64(stmt, 6);
+  entry->attempts = (guint) MAX(sqlite3_column_int64(stmt, 7), 0);
+  entry->last_error = column_text_dup(stmt, 8);
+  entry->message_id = sqlite3_column_int64(stmt, 9);
+  entry->events = g_ptr_array_new_with_free_func(outbox_event_free);
+  g_clear_pointer(&stmt, sqlite3_finalize);
+
+  stmt = store_prepare(store,
+    "SELECT id, role, target_pubkey, event_id, event_json, not_before "
+    "FROM outbox_events WHERE outbox_id = ?1 ORDER BY id", error);
+  if (!stmt)
+    goto fail;
+  BIND(sqlite3_bind_int64(stmt, 1, outbox_id));
+  for (;;) {
+    if (!store_step_row(store, stmt, &has_row, "Loading stored events", error))
+      goto fail;
+    if (!has_row)
+      break;
+    GhStoreOutboxEvent *event = g_new0(GhStoreOutboxEvent, 1);
+    event->id = sqlite3_column_int64(stmt, 0);
+    event->role = (GhStoreOutboxRole) sqlite3_column_int(stmt, 1);
+    event->target_pubkey = column_text_dup(stmt, 2);
+    event->event_id = column_text_dup(stmt, 3);
+    event->event_json = column_text_dup(stmt, 4);
+    event->not_before = sqlite3_column_int64(stmt, 5);
+    event->targets = g_ptr_array_new_with_free_func(outbox_target_free);
+    g_ptr_array_add(entry->events, event);
+  }
+  g_clear_pointer(&stmt, sqlite3_finalize);
+  for (guint i = 0; i < entry->events->len; i++)
+    if (!outbox_load_targets(store, g_ptr_array_index(entry->events, i), error))
+      goto fail;
+  return entry;
+
+fail:
+  sqlite3_finalize(stmt);
+  gh_store_outbox_entry_free(entry);
+  return NULL;
+}
+
+gboolean
+gh_store_outbox_find_by_message(GhStore *store, gint64 message_id, gint64 *out_outbox_id,
+                                GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  gboolean has_row = FALSE;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT outbox_id FROM messages WHERE id = ?1 AND outbox_id IS NOT NULL", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, message_id));
+  if (!store_step_row(store, stmt, &has_row, "Looking up a message's outbox entry", error))
+    goto fail;
+  if (!has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND,
+                        "The message has no outbox entry");
+    goto fail;
+  }
+  if (out_outbox_id)
+    *out_outbox_id = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return TRUE;
+
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* The entry's state and whether it has stored events; NOT_FOUND if absent. */
+static gboolean
+outbox_state_locked(GhStore *store, gint64 outbox_id, gint64 *state, gboolean *sealed,
+                    GError **error)
+{
+  gboolean has_row = FALSE;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT state, EXISTS (SELECT 1 FROM outbox_events e WHERE e.outbox_id = o.id) "
+    "FROM outbox o WHERE o.id = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, outbox_id));
+  if (!store_step_row(store, stmt, &has_row, "Looking up an outbox entry", error))
+    goto fail;
+  if (!has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such outbox entry");
+    goto fail;
+  }
+  *state = sqlite3_column_int64(stmt, 0);
+  *sealed = sqlite3_column_int(stmt, 1) != 0;
+  sqlite3_finalize(stmt);
+  return TRUE;
+
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+static gboolean
+outbox_transition_allowed(gint64 from, GhStoreOutboxState to, gboolean sealed, GError **error)
+{
+  const gchar *why = NULL;
+  if (from == GH_STORE_OUTBOX_CANCELLED)
+    why = "A cancelled message stays cancelled";
+  else if (to == GH_STORE_OUTBOX_SEALED)
+    why = "Only sealing (T-seal) marks a message sealed";
+  else if (sealed && (to == GH_STORE_OUTBOX_QUEUED || to == GH_STORE_OUTBOX_SEALING))
+    why = "This message is already sealed: its stored events are republished, never re-sealed";
+  else if (!sealed && (to == GH_STORE_OUTBOX_PUBLISHING || to == GH_STORE_OUTBOX_WAITING_RETRY ||
+                       to == GH_STORE_OUTBOX_SETTLED))
+    why = "This message has no stored events to publish";
+  if (!why)
+    return TRUE;
+  g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE, why);
+  return FALSE;
+}
+
+gboolean
+gh_store_outbox_update(GhStore *store, gint64 outbox_id, const GhStoreOutboxUpdate *update,
+                       GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(update != NULL, FALSE);
+  if (update->state < GH_STORE_OUTBOX_QUEUED || update->state > GH_STORE_OUTBOX_CANCELLED) {
+    g_set_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID, "Unknown outbox state %d",
+                update->state);
+    return FALSE;
+  }
+  if (!check_nonnegative("next_attempt_at", update->next_attempt_at, error) ||
+      !check_text("The outbox reason", update->last_error, GH_STORE_MAX_OK_MESSAGE, TRUE, error))
+    return FALSE;
+  sqlite3_stmt *stmt = NULL;
+  gint64 state = 0;
+  gboolean sealed = FALSE;
+  if (!store_begin(store, "outbox", error))
+    return FALSE;
+  if (!outbox_state_locked(store, outbox_id, &state, &sealed, error) ||
+      !outbox_transition_allowed(state, update->state, sealed, error))
+    goto fail;
+  stmt = store_prepare(store,
+    "UPDATE outbox SET state = ?1, next_attempt_at = ?2, attempts = attempts + ?3, "
+    "last_error = ?4 WHERE id = ?5", error);
+  if (!stmt)
+    goto fail;
+  BIND(sqlite3_bind_int64(stmt, 1, update->state));
+  BIND(bind_int64_or_null(stmt, 2, update->next_attempt_at));
+  BIND(sqlite3_bind_int64(stmt, 3, update->count_attempt ? 1 : 0));
+  BIND(bind_text(stmt, 4, update->last_error));
+  BIND(sqlite3_bind_int64(stmt, 5, outbox_id));
+  if (!store_step_done(store, stmt, "Recording an outbox transition", error))
+    goto fail;
+  g_clear_pointer(&stmt, sqlite3_finalize);
+  return store_commit(store, error);
+
+fail:
+  sqlite3_finalize(stmt);
+  store_rollback(store);
+  return FALSE;
+}
+
+gboolean
+gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  gint64 state = 0;
+  gboolean sealed = FALSE;
+  if (!store_begin(store, "outbox", error))
+    return FALSE;
+  if (!outbox_state_locked(store, outbox_id, &state, &sealed, error) ||
+      !store_exec_id(store, "DELETE FROM messages WHERE outbox_id = ?1", outbox_id, 0, error) ||
+      !store_exec_id(store, "DELETE FROM outbox WHERE id = ?1", outbox_id, 0, error)) {
+    store_rollback(store);
+    return FALSE;
+  }
+  if (!store_commit(store, error))
+    return FALSE;
+  /* The deleted text (body, rumor, signed wraps) leaves the WAL now. */
+  if (store->depth == 0 && !store->ephemeral)
+    (void) sqlite3_wal_checkpoint_v2(store->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL);
+  return TRUE;
 }
 
 /* ---- T-purge ---------------------------------------------------------------------------- */
