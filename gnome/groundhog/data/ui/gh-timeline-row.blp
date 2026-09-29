@@ -1,0 +1,57 @@
+using Gtk 4.0;
+
+// One entry of a conversation's timeline (gh-message-list-item.blp; charter
+// §7.6): a message (its GhMessageRow), or a local event, shown centred: the
+// disappearing timer's change, "You set messages to disappear after 1 day"
+// (charter §3.7 UI, §7.6 special rows; nostrc-qp24.83). An event is this
+// device's own record: it is never sent or published. gh-timeline-row.c
+// composes the entry's accessible text ("summary").
+template $GhTimelineRow: Widget {
+  layout-manager: BoxLayout {
+    orientation: vertical;
+  };
+
+  $GhMessageRow message_row {
+    visible: bind template.item as <$GhTimelineItem>.is-message;
+    message: bind template.item as <$GhTimelineItem>.message;
+    run-start: bind template.item as <$GhTimelineItem>.run-start;
+    run-end: bind template.item as <$GhTimelineItem>.run-end;
+    show-sender: bind template.item as <$GhTimelineItem>.show-sender;
+  }
+
+  Box event_box {
+    visible: bind template.item as <$GhTimelineItem>.is-event;
+    halign: center;
+    spacing: 6;
+    margin-top: 6;
+    margin-bottom: 6;
+    margin-start: 12;
+    margin-end: 12;
+
+    styles [
+      "groundhog-timeline-event",
+    ]
+
+    Image {
+      icon-name: "alarm-symbolic";
+      pixel-size: 12;
+      valign: center;
+      accessible-role: presentation;
+
+      styles [
+        "dim-label",
+      ]
+    }
+
+    Label event_label {
+      label: bind template.item as <$GhTimelineItem>.event-text;
+      wrap: true;
+      justify: center;
+
+      styles [
+        "caption",
+        "dim-label",
+      ]
+    }
+  }
+}

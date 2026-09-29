@@ -1353,6 +1353,44 @@ typedef struct {
   GhMessageStatus status;
 } AdvanceWait;
 
+static void approve_advancing(Fixture *f, GhMessage *message, GhMessageStatus status);
+
+/* nostrc-lff5: a room where nobody has set up private messaging gets the
+ * banner too, speaking of everyone (not only the composer's reason); once
+ * one of them has, Check Again sends to them and the banner goes. */
+static void
+test_room_nobody_has_inbox(void)
+{
+  Fixture f = { 0 };
+  fixture_init(&f, bus.client);
+  f.s.clock = gh_clock_new_fake(g_get_real_time());
+  fixture_up(&f, 960, 680);
+  GhComposer *composer = send_stack_composer(&f.s);
+  GhConversationView *view = send_stack_view(&f.s);
+  GtkWidget *banner = template_child(view, GH_TYPE_CONVERSATION_VIEW, "banner");
+  const guint dave[] = { 4, 0 };
+  GhConversation *room = receive(&f, 3, dave, "Anyone around?");
+  send_stack_select(&f.s, room);
+  wait_reason(composer, NULL);
+  stack_type(composer, "Me, but nobody can read this yet");
+  g_assert_true(gh_composer_send(composer));
+  GhMessage *mine = stack_find(room, "Me, but nobody can read this yet");
+  wait_status(mine, GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX);
+  wait_reason(composer, "No one in this conversation");
+  gh_test_spin_until(banner_revealed, banner);
+  g_assert_cmpstr(adw_banner_get_title(ADW_BANNER(banner)), ==,
+                  "No one in this conversation has set up private messaging yet");
+  g_assert_cmpuint(pubs.opens->len, ==, 0); /* nothing was published */
+
+  g_hash_table_insert(f.directory->inboxes, g_strdup(stack_hex[3]), g_strdup(INBOX_C));
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f.s.window), "send.check-inbox", NULL));
+  approve_advancing(&f, mine, GH_MESSAGE_STATUS_PARTIALLY_SENT);
+  wait_reason(composer, NULL);
+  gh_test_spin_until(banner_hidden, banner);
+  g_assert_cmpuint(pubs_to(INBOX_C, stack_hex[3]), ==, 1);
+  fixture_clear(&f);
+}
+
 /* Approves the signer and lets the fake clock run (a room's wraps go out
  * U(0, 3) s apart, charter §4.5 S4) until the message has status. */
 static gboolean
@@ -2009,6 +2047,7 @@ main(int argc, char **argv)
   ADD("reason-no-signer-bus", test_reason_no_signer_bus);
   ADD("reasons-group-and-no-inbox", test_reasons_group_and_no_inbox);
   ADD("room-send", test_room_send);
+  ADD("room-nobody-has-inbox", test_room_nobody_has_inbox);
   ADD("locked-messages", test_locked_messages);
   ADD("focus-guard", test_focus_guard);
   ADD("timer-indicator", test_timer_indicator);

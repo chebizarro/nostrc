@@ -20,6 +20,7 @@ struct _GhMessage {
   gchar *content;
   gchar *subject;
   gint64 expires_at;
+  guint64 seq;       /* local arrival order in its room (store-assigned) */
   GhMessageStatus status;
   GPtrArray *relays; /* NULL-terminated */
   /* NIP-29 group events only. */
@@ -318,6 +319,20 @@ gh_message_set_expires_at(GhMessage *self, gint64 expires_at)
     return;
   self->expires_at = expires_at;
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_EXPIRES_AT]);
+}
+
+guint64
+gh_message_get_seq(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
+  return self->seq;
+}
+
+void
+gh_message_set_seq(GhMessage *self, guint64 seq)
+{
+  g_return_if_fail(GH_IS_MESSAGE(self));
+  self->seq = seq;
 }
 
 GhMessageStatus

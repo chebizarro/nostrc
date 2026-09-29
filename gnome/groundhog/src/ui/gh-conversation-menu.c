@@ -1,6 +1,8 @@
 #include "gh-conversation-menu.h"
 #include "gh-conversation-actions.h"
 #include "gh-conversation-row.h"
+#include "gh-conversation-view.h"
+#include "gh-shell.h"
 
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
@@ -17,12 +19,31 @@ typedef struct {
   gpointer user_data;
   GDestroyNotify destroy;
   gchar *last_toast;
+  GhConversation *shown; /* the header menu's conversation (a reference), or NULL */
 } MenuAttach;
+
+static void sync_header(MenuAttach *attach);
+
+static void
+watch_shown(MenuAttach *attach, GhConversation *conversation)
+{
+  if (attach->shown == conversation)
+    return;
+  if (attach->shown)
+    g_signal_handlers_disconnect_by_data(attach->shown, attach);
+  g_set_object(&attach->shown, conversation);
+  if (conversation) {
+    g_signal_connect_swapped(conversation, "notify::pinned", G_CALLBACK(sync_header), attach);
+    g_signal_connect_swapped(conversation, "notify::is-request", G_CALLBACK(sync_header),
+                             attach);
+  }
+}
 
 static void
 attach_free(gpointer data)
 {
   MenuAttach *attach = data;
+  watch_shown(attach, NULL);
   if (attach->destroy)
     attach->destroy(attach->user_data);
   g_free(attach->last_toast);
@@ -288,20 +309,159 @@ on_delete(GSimpleAction *action, GVariant *parameter, gpointer data)
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(attach->window));
 }
 
-/* ---- info --------------------------------------------------------------------------- */
+/* ---- info and the disappearing timer ------------------------------------------------ */
 
+/* Conversation Info for room_id, at its disappearing timer when timer. */
 static void
-on_show_info(GSimpleAction *action, GVariant *parameter, gpointer data)
+show_info(MenuAttach *attach, const gchar *room_id, gboolean timer)
 {
-  MenuAttach *attach = data;
-  (void)action;
   GhConversationInfoServices services;
-  GhConversation *conversation =
-    lookup(attach, g_variant_get_string(parameter, NULL), &services);
+  GhConversation *conversation = lookup(attach, room_id, &services);
   if (!conversation)
     return;
   GhConversationInfoDialog *dialog = gh_conversation_info_dialog_new(conversation, &services);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(attach->window));
+  if (timer)
+    gh_conversation_info_dialog_focus_timer(dialog);
+}
+
+static void
+on_show_info(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  show_info(data, g_variant_get_string(parameter, NULL), FALSE);
+}
+
+static void
+on_disappearing(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  show_info(data, g_variant_get_string(parameter, NULL), TRUE);
+}
+
+/* ---- pin, read and unread (charter §7.4, §7.5; nostrc-qp24.86) ------------------- */
+
+/* Local only (P8): a pin is conversations.pinned_rank in the encrypted store
+ * (PD-11), never GSettings; nothing is published. */
+static void
+set_pinned(MenuAttach *attach, const gchar *room_id, gboolean pinned)
+{
+  GhConversationInfoServices services;
+  if (!lookup(attach, room_id, &services))
+    return;
+  if (!services.conversations) {
+    toast(attach, _("Unavailable while Groundhog isn’t saving messages on this device"));
+    return;
+  }
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_conversations_set_pinned(services.conversations, room_id, pinned, &error))
+    report_failure(attach, pinned ? "pin a conversation" : "unpin a conversation", error);
+}
+
+static void
+on_pin(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  set_pinned(data, g_variant_get_string(parameter, NULL), TRUE);
+}
+
+static void
+on_unpin(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  set_pinned(data, g_variant_get_string(parameter, NULL), FALSE);
+}
+
+/* Read state is local only too (PD-1, P8), kept by the model's store. */
+static void
+on_mark_read(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  GhConversationInfoServices services;
+  GhConversation *conversation = lookup(data, g_variant_get_string(parameter, NULL), &services);
+  if (conversation && !gh_conversation_get_is_request(conversation))
+    gh_conversation_mark_read(conversation);
+}
+
+static void
+on_mark_unread(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  GhConversationInfoServices services;
+  GhConversation *conversation = lookup(data, g_variant_get_string(parameter, NULL), &services);
+  if (conversation && !gh_conversation_get_is_request(conversation))
+    gh_conversation_mark_unread(conversation);
+}
+
+/* ---- the conversation header menu (charter §7.4 conversation_menu) ------------------ */
+
+/* The private conversation the content page shows, or NULL. */
+static GhConversation *
+shown_private(MenuAttach *attach)
+{
+  GhContentPage *content = gh_window_get_content(attach->window);
+  GtkWidget *view = gh_content_page_get_view(content);
+  if (!gh_content_page_get_conversation_shown(content) || !GH_IS_CONVERSATION_VIEW(view))
+    return NULL;
+  GhConversation *conversation = gh_conversation_view_get_conversation(GH_CONVERSATION_VIEW(view));
+  return conversation &&
+         gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP17 &&
+         !gh_conversation_get_is_request(conversation)
+    ? conversation : NULL;
+}
+
+static void
+set_enabled(MenuAttach *attach, const gchar *name, gboolean enabled)
+{
+  GAction *action = g_action_map_lookup_action(G_ACTION_MAP(attach->window), name);
+  if (G_IS_SIMPLE_ACTION(action))
+    g_simple_action_set_enabled(G_SIMPLE_ACTION(action), enabled);
+}
+
+/* The header's menu button shows with a private conversation; of Pin and
+ * Unpin only the one that applies. */
+static void
+sync_header(MenuAttach *attach)
+{
+  GhConversation *conversation = shown_private(attach);
+  watch_shown(attach, conversation);
+  gboolean pinned = conversation && gh_conversation_get_pinned(conversation);
+  set_enabled(attach, "pin-shown-conversation", conversation && !pinned);
+  set_enabled(attach, "unpin-shown-conversation", pinned);
+  set_enabled(attach, "mute-shown-conversation", conversation != NULL);
+  set_enabled(attach, "disappearing-shown-conversation", conversation != NULL);
+  set_enabled(attach, "delete-shown-conversation", conversation != NULL);
+  gtk_widget_set_visible(gh_content_page_get_menu_button(gh_window_get_content(attach->window)),
+                         conversation != NULL);
+}
+
+/* Each header item runs the row action of the same name for the shown
+ * conversation. */
+static void
+on_shown(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  MenuAttach *attach = data;
+  (void)parameter;
+  GhConversation *conversation = shown_private(attach);
+  if (!conversation)
+    return;
+  typedef void (*RoomAction)(GSimpleAction *action, GVariant *parameter, gpointer data);
+  static const struct {
+    const gchar *name;
+    RoomAction func;
+  } forward[] = {
+    { "pin-shown-conversation", on_pin },
+    { "unpin-shown-conversation", on_unpin },
+    { "mute-shown-conversation", on_mute },
+    { "disappearing-shown-conversation", on_disappearing },
+    { "delete-shown-conversation", on_delete },
+  };
+  const gchar *name = g_action_get_name(G_ACTION(action));
+  g_autoptr(GVariant) room =
+    g_variant_ref_sink(g_variant_new_string(gh_conversation_get_room_id(conversation)));
+  for (guint i = 0; i < G_N_ELEMENTS(forward); i++)
+    if (g_str_equal(name, forward[i].name))
+      forward[i].func(action, room, attach);
 }
 
 /* ---- keyboard ----------------------------------------------------------------------- */
@@ -342,8 +502,26 @@ gh_conversation_menu_attach(GhWindow *window, GhConversationInfoServicesFunc ser
     { "show-conversation-info", on_show_info, "s", NULL, NULL, { 0 } },
     { "mute-conversation", on_mute, "s", NULL, NULL, { 0 } },
     { "delete-conversation", on_delete, "s", NULL, NULL, { 0 } },
+    { "pin-conversation", on_pin, "s", NULL, NULL, { 0 } },
+    { "unpin-conversation", on_unpin, "s", NULL, NULL, { 0 } },
+    { "mark-conversation-read", on_mark_read, "s", NULL, NULL, { 0 } },
+    { "mark-conversation-unread", on_mark_unread, "s", NULL, NULL, { 0 } },
+    { "disappearing-messages", on_disappearing, "s", NULL, NULL, { 0 } },
+    { "pin-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
+    { "unpin-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
+    { "mute-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
+    { "disappearing-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
+    { "delete-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(window), entries, G_N_ELEMENTS(entries), attach);
+  /* The header menu follows the shown conversation. */
+  GhContentPage *content = gh_window_get_content(window);
+  g_signal_connect_swapped(gh_content_page_get_stack(content), "notify::visible-child-name",
+                           G_CALLBACK(sync_header), attach);
+  GtkWidget *view = gh_content_page_get_view(content);
+  if (GH_IS_CONVERSATION_VIEW(view))
+    g_signal_connect_swapped(view, "notify::conversation", G_CALLBACK(sync_header), attach);
+  sync_header(attach);
 
   GtkEventController *keys = gtk_shortcut_controller_new();
   gtk_shortcut_controller_add_shortcut(

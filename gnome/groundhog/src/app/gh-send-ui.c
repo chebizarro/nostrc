@@ -504,10 +504,12 @@ update_reason(GhSendUi *ui)
   gh_composer_set_disabled_reason(ui->composer, reason);
   gh_composer_set_disabled_action(ui->composer, no_inbox ? _("_Check Again") : NULL,
                                   "send.check-inbox");
-  /* The banner names one person; a room's reason is the composer's. */
+  /* The banner names the one person, or says nobody in a room has one
+   * (nostrc-lff5); the composer gives the reason too. */
   gh_conversation_view_set_recipient_without_inbox(ui->view, no_inbox && !room
                                                      ? gh_conversation_get_title(ui->shown)
                                                      : NULL);
+  gh_conversation_view_set_room_without_inbox(ui->view, no_inbox && room);
   ui->updating = FALSE;
 }
 

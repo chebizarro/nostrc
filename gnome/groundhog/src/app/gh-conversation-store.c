@@ -18,6 +18,8 @@ struct _GhConversationStore {
   gpointer group_delegate_data;
   GDestroyNotify group_delegate_destroy;
   gboolean has_group_delegate;
+  /* Arrival numbers for messages no delegate numbers (nostrc-qp24.75). */
+  guint64 next_seq;
 };
 
 enum { SIGNAL_MESSAGE_ADDED, N_SIGNALS };
@@ -61,10 +63,17 @@ gh_conversation_store_list_model_init(GListModelInterface *iface)
   iface->get_item = list_get_item;
 }
 
-/* Newest activity first; the room id makes the order total. */
+/* Pinned first, in pin order (nostrc-qp24.86); then newest activity first;
+ * the room id makes the order total. */
 static gint
 store_compare(GhConversation *a, GhConversation *b)
 {
+  gint64 pa = gh_conversation_get_pinned_rank(a);
+  gint64 pb = gh_conversation_get_pinned_rank(b);
+  if ((pa > 0) != (pb > 0))
+    return pa > 0 ? -1 : 1;
+  if (pa != pb)
+    return pa < pb ? -1 : 1;
   gint64 la = gh_conversation_get_last_activity(a);
   gint64 lb = gh_conversation_get_last_activity(b);
   if (la != lb)
@@ -251,7 +260,7 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
     (wrap_id && delegate && delegate->has_rumor(delegate_data, rumor_id));
   /* One commit per admission, before the model changes: a duplicate still
    * records the wrap id that carried it. */
-  GhConversationCommit commit = { FALSE, -1 };
+  GhConversationCommit commit = { FALSE, -1, -1 };
   if (delegate && !delegate->admit(delegate_data, message, wrap_id, &commit, error))
     return GH_CONVERSATION_ADD_FAILED;
   GhConversation *conversation = g_hash_table_lookup(self->rooms,
@@ -265,8 +274,10 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
   }
   if (commit.hidden)
     return GH_CONVERSATION_ADD_HIDDEN;
+  /* Its place in the room's arrival order: the durable one, else ours. */
+  gh_message_set_seq(message, commit.seq >= 0 ? (guint64)commit.seq : ++self->next_seq);
   if (conversation && gh_conversation_is_older_history(conversation, message)) {
-    gh_conversation_add_older_history(conversation, message);
+    gh_conversation_add_older_history(conversation, message, wrap_id != NULL);
     sync_unread(conversation, &commit);
     return GH_CONVERSATION_ADD_NEW;
   }
@@ -281,7 +292,7 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
   }
   /* The room updates (and notifies) while the store still lists it where it
    * was; only then does it move to its new position. */
-  if (!gh_conversation_insert(conversation, message)) {
+  if (!gh_conversation_insert(conversation, message, wrap_id != NULL)) {
     /* Unreachable: the room id and account match and the rumor id is new. */
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                         "Conversation refused a new message");
@@ -383,6 +394,40 @@ gh_conversation_store_persist_accept(GhConversationStore *self, GhConversation *
   if (!delegate->accept(data, conversation, &error))
     g_warning("Groundhog could not save an accepted message request: %s",
               error ? error->message : "unknown error");
+}
+
+void
+gh_conversation_store_persist_unread(GhConversationStore *self, GhConversation *conversation,
+                                     GhMessage *first_unread)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
+  gpointer data = NULL;
+  const GhConversationDelegate *delegate = delegate_for(self,
+    gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29, &data);
+  if (!delegate || !delegate->mark_unread)
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!delegate->mark_unread(data, conversation, first_unread, &error))
+    g_warning("Groundhog could not save a conversation marked unread: %s",
+              error ? error->message : "unknown error");
+}
+
+void
+gh_conversation_store_pin(GhConversationStore *self, GhConversation *conversation, gint64 rank)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
+  g_return_if_fail(GH_IS_CONVERSATION(conversation));
+  guint position = 0;
+  if (!g_ptr_array_find(self->conversations, conversation, &position))
+    return;
+  gh_conversation_set_pinned_rank(conversation, rank);
+  /* Announced even where it stays: the list's sections follow "pinned". */
+  g_ptr_array_steal_index(self->conversations, position);
+  guint at = insertion_point(self, conversation);
+  g_ptr_array_insert(self->conversations, at, conversation);
+  guint first = MIN(position, at);
+  guint span = MAX(position, at) - first + 1;
+  g_list_model_items_changed(G_LIST_MODEL(self), first, span, span);
 }
 
 GhConversation *

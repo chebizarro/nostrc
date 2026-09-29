@@ -23,6 +23,13 @@ gboolean gh_timeline_item_get_run_start(GhTimelineItem *self);
 gboolean gh_timeline_item_get_run_end(GhTimelineItem *self);
 gboolean gh_timeline_item_get_show_sender(GhTimelineItem *self);
 const gchar *gh_timeline_item_get_day_label(GhTimelineItem *self);
+/* A local event instead of a message (message NULL): the conversation's
+ * disappearing timer changed (charter §3.7, nostrc-qp24.83), in its own
+ * words ("You set messages to disappear after 1 day"), and when (unix
+ * seconds). Readable properties "is-message", "is-event" and "event-text".
+ * NULL and 0 for a message. */
+const gchar *gh_timeline_item_get_event_text(GhTimelineItem *self);
+gint64 gh_timeline_item_get_event_at(GhTimelineItem *self);
 
 /* The day separator text for the local day of @when relative to @now:
  * "Today", "Yesterday", the weekday within the last 6 days, else the
@@ -83,7 +90,9 @@ void gh_conversation_view_set_conversation(GhConversationView *self,
 GhConversation *gh_conversation_view_get_conversation(GhConversationView *self);
 void gh_conversation_view_set_settings(GhConversationView *self, GSettings *settings);
 gboolean gh_conversation_view_get_compact(GhConversationView *self);
-/* The visible timeline: a GListModel (and GtkSectionModel) of GhTimelineItem. */
+/* The visible timeline: a GListModel (and GtkSectionModel) of GhTimelineItem:
+ * the conversation's messages and, after the messages written at or before
+ * it, its latest timer change (a local event; nostrc-qp24.83). */
 GListModel *gh_conversation_view_get_timeline(GhConversationView *self);
 GtkListView *gh_conversation_view_get_message_list(GhConversationView *self);
 
@@ -162,6 +171,10 @@ GhLinkPreviewState gh_conversation_view_get_link_preview(GhConversationView *sel
  * yet" (NULL hides it). */
 void gh_conversation_view_set_recipient_without_inbox(GhConversationView *self,
                                                       const gchar *name);
+/* The same for a room of several people where nobody has set up private
+ * messaging (nostrc-lff5): "No one in this conversation has set up private
+ * messaging yet" (FALSE hides it). It takes the banner's place over a name. */
+void gh_conversation_view_set_room_without_inbox(GhConversationView *self, gboolean nobody);
 /* Charter §7.15 state 12: "Waiting for Nostr Signer to unlock N messages"
  * with Unlock (conversation.unlock-messages); 0 hides it. */
 void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count);

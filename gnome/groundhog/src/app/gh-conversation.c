@@ -18,24 +18,38 @@ struct _GhConversation {
   GhMessage *subject_source; /* latest loaded message with a subject tag */
   gchar *stored_subject;     /* the durable room name; used while no loaded
                               * message carries a subject */
-  /* The read marker: the last read message's place in the message order. It
-   * may lie in the unloaded older history. An own message moves it, so every
-   * message after it is someone else's and unread. */
+  /* The read state (nostrc-qp24.75). A message from someone else is read
+   * when it sorts at or before the reply boundary, or at or before the
+   * marker and arrived (gh_message_get_seq()) by the time it was set: one
+   * that arrives later is unread wherever its sender-claimed time sorts it.
+   *  - The marker: the last message read on this device (shown, or an own
+   *    message written here), with read_seq, the newest arrival it covered.
+   *    It may lie in the unloaded older history.
+   *  - The reply boundary: the newest own message another device wrote
+   *    (relay-delivered): whatever sorts before it was read there. */
   gboolean has_marker;       /* FALSE: nothing read yet */
   gint64 marker_created_at;
   gchar *marker_id;
+  guint64 read_seq;
+  gboolean has_reply;
+  gint64 reply_created_at;
+  gchar *reply_id;
   guint unread;
   guint unread_older;        /* unread messages in the unloaded older history */
   /* Listed messages read on screen while older unread ones were still
-   * unloaded (W13b review B1): [seen_first, seen_last] in the message order.
-   * The marker cannot say "these are read, older ones are not", so it stays
-   * put (and nothing is persisted) until the older unread are listed; the
-   * range only keeps this session's count honest. */
+   * unloaded (W13b review B1): [seen_first, seen_last] in the message order,
+   * arrived by seen_seq. The marker cannot say "these are read, older ones
+   * are not", so it stays put (and nothing is persisted) until the older
+   * unread are listed; the range only keeps this session's count honest. */
   gboolean has_seen;
   gint64 seen_first_created_at;
   gchar *seen_first_id;
   gint64 seen_last_created_at;
   gchar *seen_last_id;
+  guint64 seen_seq;
+  gint64 pinned_rank;        /* 0: not pinned; else its place among pins (nostrc-qp24.86) */
+  gint64 timer_seconds;      /* the disappearing timer after its last change */
+  gint64 timer_changed_at;   /* when it last changed (0: never; nostrc-qp24.83) */
   /* Durable paging: stored messages before the floor are not loaded. */
   gboolean has_older;
   gint64 floor_created_at;
@@ -60,6 +74,9 @@ enum {
   PROP_LAST_ACTIVITY,
   PROP_UNREAD_COUNT,
   PROP_IS_REQUEST,
+  PROP_PINNED,
+  PROP_TIMER_SECONDS,
+  PROP_TIMER_CHANGED_AT,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -269,12 +286,31 @@ after_marker(GhConversation *self, GhMessage *message)
          compare_place(message, self->marker_created_at, self->marker_id) > 0;
 }
 
+/* See the read state in struct _GhConversation. */
+static gboolean
+is_read(GhConversation *self, GhMessage *message)
+{
+  if (self->has_reply &&
+      compare_place(message, self->reply_created_at, self->reply_id) <= 0)
+    return TRUE;
+  return self->has_marker &&
+         compare_place(message, self->marker_created_at, self->marker_id) <= 0 &&
+         gh_message_get_seq(message) <= self->read_seq;
+}
+
+static gboolean
+is_unread(GhConversation *self, GhMessage *message)
+{
+  return !gh_message_is_self(message) && !is_read(self, message);
+}
+
 static gboolean
 in_seen(GhConversation *self, GhMessage *message)
 {
   return self->has_seen &&
          compare_place(message, self->seen_first_created_at, self->seen_first_id) >= 0 &&
-         compare_place(message, self->seen_last_created_at, self->seen_last_id) <= 0;
+         compare_place(message, self->seen_last_created_at, self->seen_last_id) <= 0 &&
+         gh_message_get_seq(message) <= self->seen_seq;
 }
 
 static void
@@ -293,16 +329,72 @@ set_marker(GhConversation *self, gint64 created_at, const gchar *id)
   self->marker_id = copy;
   self->marker_created_at = created_at;
   self->has_marker = TRUE;
-  /* Everything the seen range held is now read by the marker itself. */
-  if (self->has_seen &&
-      compare_places(created_at, copy, self->seen_last_created_at, self->seen_last_id) >= 0)
-    clear_seen(self);
 }
 
 static void
 set_marker_to(GhConversation *self, GhMessage *message)
 {
   set_marker(self, gh_message_get_created_at(message), gh_message_get_rumor_id(message));
+}
+
+static void
+clear_marker(GhConversation *self)
+{
+  self->has_marker = FALSE;
+  g_clear_pointer(&self->marker_id, g_free);
+  self->marker_created_at = 0;
+}
+
+static void
+set_reply(GhConversation *self, gint64 created_at, const gchar *id)
+{
+  gchar *copy = g_strdup(id);
+  g_free(self->reply_id);
+  self->reply_id = copy;
+  self->reply_created_at = created_at;
+  self->has_reply = TRUE;
+}
+
+static void
+clear_reply(GhConversation *self)
+{
+  self->has_reply = FALSE;
+  g_clear_pointer(&self->reply_id, g_free);
+  self->reply_created_at = 0;
+}
+
+/* Everything the seen range held is now read by the marker itself. */
+static void
+absorb_seen(GhConversation *self)
+{
+  if (self->has_seen && self->has_marker && self->read_seq >= self->seen_seq &&
+      compare_places(self->marker_created_at, self->marker_id, self->seen_last_created_at,
+                     self->seen_last_id) >= 0)
+    clear_seen(self);
+}
+
+/* An own message moves the read state: one written on this device (not
+ * delivered by a relay) reads what had arrived before it and sorts before
+ * it; one another device wrote reads whatever sorts before it (the reply
+ * boundary). TRUE when something moved. */
+static gboolean
+note_own(GhConversation *self, GhMessage *message, gboolean delivered)
+{
+  if (delivered) {
+    if (self->has_reply &&
+        compare_place(message, self->reply_created_at, self->reply_id) <= 0)
+      return FALSE;
+    set_reply(self, gh_message_get_created_at(message), gh_message_get_rumor_id(message));
+    return TRUE;
+  }
+  gboolean later = after_marker(self, message);
+  if (!later && compare_place(message, self->marker_created_at, self->marker_id) != 0)
+    return FALSE; /* written before what was read: nothing new is read */
+  if (later)
+    set_marker_to(self, message);
+  self->read_seq = MAX(self->read_seq, gh_message_get_seq(message));
+  absorb_seen(self);
+  return TRUE;
 }
 
 /* First index whose message sorts after message. */
@@ -320,19 +412,18 @@ insertion_point(GhConversation *self, GhMessage *message)
   return low;
 }
 
-/* Loaded messages after the marker from someone else: all of them (what the
- * durable count covers), or with skip_seen only those not read on screen
- * (what the unread count shows). *out_first (nullable) is the position of
- * the first one counted, the number of loaded messages when none is. */
+/* Loaded unread messages: all of them (what the durable count covers), or
+ * with skip_seen only those not read on screen (what the unread count
+ * shows). *out_first (nullable) is the position of the first one counted,
+ * the number of loaded messages when none is. Unread messages need not be
+ * the newest: one that arrived after the read can sort before read ones. */
 static guint
 count_loaded_unread(GhConversation *self, gboolean skip_seen, guint *out_first)
 {
   guint unread = 0, first = self->messages->len;
   for (guint i = self->messages->len; i-- > 0;) {
     GhMessage *message = g_ptr_array_index(self->messages, i);
-    if (!after_marker(self, message))
-      break;
-    if (!gh_message_is_self(message) && !(skip_seen && in_seen(self, message))) {
+    if (is_unread(self, message) && !(skip_seen && in_seen(self, message))) {
       unread++;
       first = i;
     }
@@ -381,7 +472,7 @@ place_message(GhConversation *self, GhMessage *message)
 }
 
 gboolean
-gh_conversation_insert(GhConversation *self, GhMessage *message)
+gh_conversation_insert(GhConversation *self, GhMessage *message, gboolean delivered)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
   g_return_val_if_fail(GH_IS_MESSAGE(message), FALSE);
@@ -393,8 +484,8 @@ gh_conversation_insert(GhConversation *self, GhMessage *message)
   gboolean was_request = gh_conversation_get_is_request(self);
   guint position = place_message(self, message);
   /* Replying implies having read what came before. */
-  if (gh_message_is_self(message) && after_marker(self, message))
-    set_marker_to(self, message);
+  if (gh_message_is_self(message))
+    note_own(self, message, delivered);
   gboolean subject_changed = g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0;
   gboolean newest = position == self->messages->len - 1;
 
@@ -495,12 +586,22 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   }
   /* A request accepted in memory stays accepted even if persisting it failed. */
   self->accepted = self->accepted || state->accepted;
-  if (state->has_marker) {
+  if (state->has_marker)
     set_marker(self, state->marker_created_at, state->marker_id);
-  } else {
-    self->has_marker = FALSE;
-    g_clear_pointer(&self->marker_id, g_free);
-  }
+  else
+    clear_marker(self);
+  self->read_seq = state->read_seq;
+  if (state->has_reply)
+    set_reply(self, state->reply_created_at, state->reply_id);
+  else
+    clear_reply(self);
+  absorb_seen(self);
+  gboolean pinned_changed = (self->pinned_rank > 0) != (state->pinned_rank > 0);
+  self->pinned_rank = MAX(state->pinned_rank, 0);
+  gboolean timer_changed = self->timer_changed_at != state->timer_changed_at ||
+                           self->timer_seconds != state->timer_seconds;
+  self->timer_seconds = state->timer_seconds;
+  self->timer_changed_at = MAX(state->timer_changed_at, 0);
   g_free(self->stored_subject);
   self->stored_subject = g_strdup(state->subject);
   g_free(self->floor_id);
@@ -520,6 +621,12 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_LAST_ACTIVITY]);
   if (was_request != gh_conversation_get_is_request(self))
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_IS_REQUEST]);
+  if (pinned_changed)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PINNED]);
+  if (timer_changed) {
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TIMER_SECONDS]);
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TIMER_CHANGED_AT]);
+  }
   update_unread(self);
   g_object_thaw_notify(G_OBJECT(self));
 }
@@ -534,19 +641,17 @@ gh_conversation_is_older_history(GhConversation *self, GhMessage *message)
 }
 
 void
-gh_conversation_add_older_history(GhConversation *self, GhMessage *message)
+gh_conversation_add_older_history(GhConversation *self, GhMessage *message, gboolean delivered)
 {
   g_return_if_fail(GH_IS_CONVERSATION(self));
   g_return_if_fail(GH_IS_MESSAGE(message));
   gboolean was_request = gh_conversation_get_is_request(self);
   if (gh_message_is_self(message)) {
     self->has_own_message = TRUE;
-    if (after_marker(self, message)) {
-      /* How many unloaded messages follow it is the store's to say (sync). */
-      set_marker_to(self, message);
+    /* How many unloaded messages it read is the store's to say (sync). */
+    if (note_own(self, message, delivered))
       self->unread_older = 0;
-    }
-  } else if (after_marker(self, message)) {
+  } else if (is_unread(self, message)) {
     self->unread_older++;
   }
   g_object_freeze_notify(G_OBJECT(self));
@@ -632,6 +737,16 @@ gh_conversation_get_unread_count(GhConversation *self)
   return self->unread;
 }
 
+/* The newest arrival among the listed messages. */
+static guint64
+listed_seq(GhConversation *self)
+{
+  guint64 seq = 0;
+  for (guint i = 0; i < self->messages->len; i++)
+    seq = MAX(seq, gh_message_get_seq(g_ptr_array_index(self->messages, i)));
+  return seq;
+}
+
 void
 gh_conversation_mark_read(GhConversation *self)
 {
@@ -640,6 +755,9 @@ gh_conversation_mark_read(GhConversation *self)
     return;
   GhMessage *first = g_ptr_array_index(self->messages, 0);
   GhMessage *last = g_ptr_array_index(self->messages, self->messages->len - 1);
+  /* Exactly what is listed now is read: a message that arrives later is
+   * unread wherever it sorts (nostrc-qp24.75). */
+  guint64 seq = listed_seq(self);
   if (self->unread_older > 0) {
     /* Unread messages are still in the unloaded older history: only what is
      * listed is read. The marker stays before the unloaded ones, so they stay
@@ -652,14 +770,134 @@ gh_conversation_mark_read(GhConversation *self)
     self->seen_first_id = first_id;
     self->seen_last_created_at = gh_message_get_created_at(last);
     self->seen_last_id = last_id;
+    self->seen_seq = seq;
     update_unread(self);
     return;
   }
-  gboolean moved = after_marker(self, last);
-  set_marker_to(self, last);
+  gboolean moved = after_marker(self, last) || seq > self->read_seq;
+  if (after_marker(self, last))
+    set_marker_to(self, last);
+  self->read_seq = MAX(self->read_seq, seq);
+  absorb_seen(self);
   update_unread(self);
   if (moved && self->store)
     gh_conversation_store_persist_read(self->store, self, last);
+}
+
+/* The newest listed message from someone else, with its position. */
+static GhMessage *
+newest_incoming(GhConversation *self, guint *out_position)
+{
+  for (guint i = self->messages->len; i-- > 0;) {
+    GhMessage *message = g_ptr_array_index(self->messages, i);
+    if (!gh_message_is_self(message)) {
+      *out_position = i;
+      return message;
+    }
+  }
+  return NULL;
+}
+
+gboolean
+gh_conversation_can_mark_unread(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  guint position = 0;
+  GhMessage *target = newest_incoming(self, &position);
+  /* Its place just before must be known: listed, or the room's start. */
+  return target && self->unread == 0 && (position > 0 || !self->has_older);
+}
+
+gboolean
+gh_conversation_mark_unread(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  if (!gh_conversation_can_mark_unread(self))
+    return FALSE;
+  guint position = 0;
+  GhMessage *target = newest_incoming(self, &position);
+  GhMessage *before = position > 0 ? g_ptr_array_index(self->messages, position - 1) : NULL;
+  /* Everything before it stays read; it and what follows are unread. */
+  clear_seen(self);
+  if (before)
+    set_marker_to(self, before);
+  else
+    clear_marker(self);
+  self->read_seq = MAX(self->read_seq, listed_seq(self));
+  if (self->has_reply && compare_place(target, self->reply_created_at, self->reply_id) <= 0) {
+    if (before)
+      set_reply(self, gh_message_get_created_at(before), gh_message_get_rumor_id(before));
+    else
+      clear_reply(self);
+  }
+  update_unread(self);
+  if (self->store)
+    gh_conversation_store_persist_unread(self->store, self, target);
+  return TRUE;
+}
+
+gboolean
+gh_conversation_is_unread(GhConversation *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), FALSE);
+  return is_unread(self, message) && !in_seen(self, message);
+}
+
+guint64
+gh_conversation_get_read_seq(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
+  return self->read_seq;
+}
+
+gboolean
+gh_conversation_get_pinned(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  return self->pinned_rank > 0;
+}
+
+gint64
+gh_conversation_get_pinned_rank(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
+  return self->pinned_rank;
+}
+
+void
+gh_conversation_set_pinned_rank(GhConversation *self, gint64 rank)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  rank = MAX(rank, 0);
+  gboolean was = self->pinned_rank > 0;
+  self->pinned_rank = rank;
+  if (was != (rank > 0))
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PINNED]);
+}
+
+gint64
+gh_conversation_get_timer_change(GhConversation *self, gint64 *out_seconds)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
+  if (out_seconds)
+    *out_seconds = self->timer_seconds;
+  return self->timer_changed_at;
+}
+
+void
+gh_conversation_set_timer_change(GhConversation *self, gint64 seconds, gint64 changed_at)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  changed_at = MAX(changed_at, 0);
+  if (self->timer_seconds == seconds && self->timer_changed_at == changed_at)
+    return;
+  self->timer_seconds = seconds;
+  self->timer_changed_at = changed_at;
+  g_object_freeze_notify(G_OBJECT(self));
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TIMER_SECONDS]);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TIMER_CHANGED_AT]);
+  g_object_thaw_notify(G_OBJECT(self));
 }
 
 guint
@@ -781,6 +1019,15 @@ gh_conversation_get_property(GObject *object, guint id, GValue *value, GParamSpe
   case PROP_UNREAD_COUNT:
     g_value_set_uint(value, self->unread);
     break;
+  case PROP_PINNED:
+    g_value_set_boolean(value, self->pinned_rank > 0);
+    break;
+  case PROP_TIMER_SECONDS:
+    g_value_set_int64(value, self->timer_seconds);
+    break;
+  case PROP_TIMER_CHANGED_AT:
+    g_value_set_int64(value, self->timer_changed_at);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -798,6 +1045,7 @@ gh_conversation_finalize(GObject *object)
   g_strfreev(self->peers);
   g_free(self->stored_subject);
   g_free(self->marker_id);
+  g_free(self->reply_id);
   clear_seen(self);
   g_free(self->floor_id);
   g_free(self->fallback_title);
@@ -829,6 +1077,12 @@ gh_conversation_class_init(GhConversationClass *klass)
     0, G_MAXINT64, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_UNREAD_COUNT] = g_param_spec_uint("unread-count", NULL, NULL,
     0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_PINNED] = g_param_spec_boolean("pinned", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_TIMER_SECONDS] = g_param_spec_int64("timer-seconds", NULL, NULL,
+    G_MININT64, G_MAXINT64, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_TIMER_CHANGED_AT] = g_param_spec_int64("timer-changed-at", NULL, NULL,
+    0, G_MAXINT64, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object_class, N_PROPS, props);
 }
 

@@ -392,8 +392,15 @@ gh_expiry_set_timer(GhExpiry *self, const gchar *room_id, gint64 seconds, GError
   }
   if (!gh_store_commit(self->store, error))
     return FALSE;
-  if (current != seconds)
+  if (current != seconds) {
+    /* The local timeline row (charter §3.7 UI, nostrc-qp24.83): the model
+     * learns when the timer changed; nothing is published. */
+    g_autoptr(GError) sync = NULL;
+    if (self->conversations &&
+        !gh_store_conversations_sync_timer(self->conversations, room_id, &sync))
+      g_message("Groundhog could not show a timer change: %s", sync->message);
     g_signal_emit(self, signals[SIGNAL_TIMER_CHANGED], 0, room_id, seconds);
+  }
   return TRUE;
 }
 

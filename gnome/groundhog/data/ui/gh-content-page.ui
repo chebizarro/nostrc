@@ -18,13 +18,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </property>
             <child type="end">
+              <object class="GtkMenuButton" id="menu_button">
+                <property name="visible">false</property>
+                <property name="icon-name">view-more-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Conversation Menu</property>
+                <property name="menu-model">conversation_menu</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Conversation Menu</property>
+                </accessibility>
+              </object>
+            </child>
+            <child type="end">
               <object class="GtkButton" id="info_button">
                 <property name="visible">false</property>
                 <property name="icon-name">help-about-symbolic</property>
-                <property name="tooltip-text" translatable="true">Conversation Info</property>
+                <property name="tooltip-text" translatable="yes">Conversation Info</property>
                 <property name="action-name">win.conversation-info</property>
                 <accessibility>
-                  <property name="label" translatable="true">Conversation Info</property>
+                  <property name="label" translatable="yes">Conversation Info</property>
                 </accessibility>
               </object>
             </child>
@@ -97,4 +108,41 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </property>
   </template>
+  <menu id="conversation_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Conversation _Info</attribute>
+        <attribute name="action">win.conversation-info</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Pin</attribute>
+        <attribute name="action">win.pin-shown-conversation</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Un_pin</attribute>
+        <attribute name="action">win.unpin-shown-conversation</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Mute…</attribute>
+        <attribute name="action">win.mute-shown-conversation</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Disappearing Messages…</attribute>
+        <attribute name="action">win.disappearing-shown-conversation</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Delete Conversation…</attribute>
+        <attribute name="action">win.delete-shown-conversation</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+    </section>
+  </menu>
 </interface>

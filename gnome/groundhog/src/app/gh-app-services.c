@@ -592,6 +592,26 @@ notifier_room_state(gpointer data, const gchar *room_id, GhNotifierRoomState *st
   return TRUE;
 }
 
+/* N1 (nostrc-qp24.84): the account's last-seen marker is the DM inbox's
+ * checkpoint in its encrypted store, read when the model binds it (before
+ * this session's inbox moves it). None without an open store of that
+ * account. */
+static gint64
+notifier_last_seen(gpointer data, const gchar *account)
+{
+  GhAccountStore *account_store = GH_ACCOUNT_STORE(data);
+  GhStore *store = gh_account_store_get_store(account_store);
+  gint64 since = 0;
+  g_autoptr(GError) error = NULL;
+  if (!store || g_strcmp0(gh_store_get_account_pubkey(store), account) != 0)
+    return 0;
+  if (!gh_store_get_cursor(store, GH_ACCOUNT_STORE_INBOX_CURSOR, "", &since, &error)) {
+    g_message("Groundhog could not read when messages were last received: %s", error->message);
+    return 0;
+  }
+  return since;
+}
+
 /* NO-11: a locked store gets one hidden notice while no window shows it. */
 static void
 sync_notifier_locked(GhAppServices *self)
@@ -609,6 +629,8 @@ notifier_init(GhAppServices *self, GError **error)
     .conversations = self->conversations,
     .room_state = notifier_room_state,
     .room_state_data = self->account_store,
+    .last_seen = notifier_last_seen,
+    .last_seen_data = self->account_store,
   };
   self->notifier = gh_notifier_new(G_APPLICATION(self->app), &config);
   g_signal_connect_swapped(self->account_store, "changed", G_CALLBACK(sync_notifier_locked),

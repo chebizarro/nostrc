@@ -53,7 +53,9 @@ typedef struct {
   Msg *msg;
   GhStoreOutboxEvent *event; /* borrowed from msg->entry */
   GhRelayPublish *publish;   /* this round's, while in flight */
-  gboolean waiting;          /* this round waits for its not_before (D8) */
+  gboolean waiting;          /* this round waits for its not_before (D8) or round_at */
+  gint64 round_at;           /* S4 on a later round: this round's own spacing (in
+                              * memory, never stored); 0 = none */
 } Leg;
 
 struct _Msg {
@@ -129,6 +131,7 @@ struct _GhOutboxItem {
   gboolean can_retry;
   gchar *rumor_json;
   gchar *rumor_id;
+  guint n_recipients;        /* people it goes to (1 for a note to self; nostrc-lff5) */
 };
 
 enum {
@@ -335,6 +338,46 @@ static gboolean
 event_targetless(const GhStoreOutboxEvent *event)
 {
   return event->role == GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP && event->targets->len == 0;
+}
+
+/* nostrc-9cho: whether a recipient had no usable 10050 is kept with its
+ * stored wrap (outbox_events.no_inbox) while the wrap has no target, so a
+ * restart still says "hasn't set up private messaging" rather than "Not
+ * sent". Recorded as this session learns it; a failed write only loses
+ * that after a restart (the next lookup finds it again). */
+static void
+msg_keep_inbox(Msg *msg, GhStoreOutboxEvent *event)
+{
+  gboolean no_inbox = event_targetless(event) && msg_inbox_absent(msg, event->target_pubkey);
+  if (event->no_inbox == no_inbox)
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_outbox_set_no_inbox(msg->outbox->store, event->id, no_inbox, &error))
+    g_message("Groundhog could not record a recipient without message relays: %s",
+              error->message);
+  else
+    event->no_inbox = no_inbox;
+}
+
+/* What a restart knows from the store: a stored wrap marked without an inbox,
+ * and, for a message that stopped before sealing because nobody had one
+ * (REASON_NO_INBOX), every recipient. */
+static void
+msg_restore_inboxes(Msg *msg)
+{
+  GhStoreOutboxEntry *entry = msg->entry;
+  if (entry->events->len == 0) {
+    if (g_strcmp0(entry->last_error, REASON_NO_INBOX) == 0)
+      for (guint i = 0; msg->recipients && msg->recipients[i]; i++)
+        msg_set_inbox(msg, msg->recipients[i], GH_INBOX_NOT_FOUND);
+    return;
+  }
+  for (guint i = 0; i < entry->events->len; i++) {
+    GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, i);
+    if (event->role == GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP && event->no_inbox &&
+        event_targetless(event) && event->target_pubkey)
+      msg_set_inbox(msg, event->target_pubkey, GH_INBOX_NOT_FOUND);
+  }
 }
 
 static gboolean
@@ -636,6 +679,7 @@ msg_new(GhOutbox *self, GhStoreOutboxEntry *entry)
   msg_set_entry(msg, entry);
   msg->recipients = gh_nip17_rumor_dup_recipients(entry->rumor_json, self->account);
   msg->inboxes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  msg_restore_inboxes(msg);
   msg->item = g_object_new(GH_TYPE_OUTBOX_ITEM, NULL);
   msg->item->msg = msg;
   msg->item->outbox_id = entry->id;
@@ -644,6 +688,7 @@ msg_new(GhOutbox *self, GhStoreOutboxEntry *entry)
   msg->item->state = entry->state;
   msg->item->rumor_json = g_strdup(entry->rumor_json);
   msg->item->rumor_id = rumor_id_of(entry->rumor_json);
+  msg->item->n_recipients = MAX(msg_n_recipients(msg), 1);
   item_refresh(msg);
   g_hash_table_insert(self->messages, g_memdup2(&entry->id, sizeof entry->id), msg);
   return msg;
@@ -841,6 +886,12 @@ give_up(Msg *msg, const gchar *reason)
 
 /* ---- sealing ------------------------------------------------------------- */
 
+static gboolean
+inbox_status_absent(GhInboxStatus status)
+{
+  return status == GH_INBOX_NOT_FOUND || status == GH_INBOX_EMPTY;
+}
+
 static void
 add_sealed_event(GArray *events, GPtrArray *url_lists, GhStoreOutboxRole role,
                  const GhDmSendLeg *leg, gint64 not_before)
@@ -857,6 +908,8 @@ add_sealed_event(GArray *events, GPtrArray *url_lists, GhStoreOutboxRole role,
     .event_json = leg->wrap_json,
     .not_before = not_before,
     .relay_urls = (const gchar *const *) urls->pdata,
+    /* nostrc-9cho: sealed for someone without a 10050: kept as such. */
+    .no_inbox = leg->relays->len == 0 && inbox_status_absent(leg->inbox),
   };
   g_array_append_val(events, event);
 }
@@ -916,6 +969,45 @@ room_schedule(GhOutbox *self, guint n, gint64 *not_before)
     at += gh_clock_random_range(self->clock, 0, ROOM_SPACING_MAX_S);
     not_before[order[k]] = at;
   }
+}
+
+/* When a leg goes out this round: its stored not_before (D8, and S4 of the
+ * first round) or this round's own spacing, whichever is later. */
+static gint64
+leg_start_at(const Leg *leg)
+{
+  return MAX(leg->event->not_before, leg->round_at);
+}
+
+/* S4 for every later round too (nostrc-yp69): a retry, the user's Retry and
+ * a republish after a restart draw a fresh random order and U(0, 3) s
+ * spacing for the recipient wraps due this round, in memory (the stored
+ * not_before is never rewritten), so that a relay on several recipients'
+ * lists does not get them back to back in "p" order after it was down. The
+ * first round keeps the spacing drawn at T-seal (a stored not_before still
+ * ahead). The self-copy keeps its D8 delay only. */
+static void
+round_schedule(Msg *msg)
+{
+  GhOutbox *self = msg->outbox;
+  gint64 now = now_unix(self);
+  g_autoptr(GPtrArray) due = g_ptr_array_new();
+  gboolean stored_ahead = FALSE;
+  for (guint i = 0; i < msg->legs->len; i++) {
+    Leg *leg = g_ptr_array_index(msg->legs, i);
+    leg->round_at = 0;
+    if (leg->event->role != GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP ||
+        !leg_has_due(leg, msg->manual))
+      continue;
+    g_ptr_array_add(due, leg);
+    stored_ahead = stored_ahead || leg->event->not_before > now;
+  }
+  if (due->len < 2 || stored_ahead)
+    return;
+  g_autofree gint64 *spacing = g_new0(gint64, due->len);
+  room_schedule(self, due->len, spacing);
+  for (guint i = 0; i < due->len; i++)
+    ((Leg *) g_ptr_array_index(due, i))->round_at = spacing[i];
 }
 
 /* T-seal: every signed wrap and its targets, before any publish. */
@@ -1264,8 +1356,8 @@ round_check(Msg *msg)
   for (guint i = 0; i < msg->legs->len; i++) {
     Leg *leg = g_ptr_array_index(msg->legs, i);
     busy |= leg->publish != NULL;
-    if (leg->waiting && (!wake || leg->event->not_before < wake))
-      wake = leg->event->not_before;
+    if (leg->waiting && (!wake || leg_start_at(leg) < wake))
+      wake = leg_start_at(leg);
   }
   /* A waiting leg goes out on time, whatever the others are doing. */
   if (wake)
@@ -1287,7 +1379,7 @@ round_start_legs(Msg *msg, gboolean first)
     leg->waiting = FALSE;
     if (!leg_has_due(leg, msg->manual))
       continue;
-    if (leg->event->not_before > now)
+    if (leg_start_at(leg) > now)
       leg->waiting = TRUE;
     else
       leg_start(leg);
@@ -1307,6 +1399,7 @@ round_publish(Msg *msg)
     return;
   }
   item_refresh(msg);
+  round_schedule(msg);
   round_start_legs(msg, TRUE);
 }
 
@@ -1398,6 +1491,8 @@ on_resolved(GObject *source, GAsyncResult *result, gpointer data)
       /* A list naming no usable relay is as good as none. */
       msg_set_inbox(msg, call->pubkey, inbox->status == GH_INBOX_FOUND && event_targetless(event)
                                          ? GH_INBOX_EMPTY : inbox->status);
+      if (!msg->dropped)
+        msg_keep_inbox(msg, event);
     }
     if (msg->resolving > 0 && --msg->resolving == 0) {
       g_clear_object(&msg->resolve);
@@ -2243,7 +2338,7 @@ const gchar *
 gh_outbox_item_get_accessible_description(GhOutboxItem *self)
 {
   g_return_val_if_fail(GH_IS_OUTBOX_ITEM(self), NULL);
-  return gh_message_status_get_accessible_description(self->status);
+  return gh_message_status_get_accessible_description_for(self->status, self->n_recipients);
 }
 
 const gchar *
@@ -2305,7 +2400,8 @@ gh_outbox_item_get_property(GObject *object, guint prop_id, GValue *value, GPara
     g_value_set_string(value, gh_message_status_get_icon_name(self->status));
     break;
   case ITEM_PROP_ACCESSIBLE_DESCRIPTION:
-    g_value_set_string(value, gh_message_status_get_accessible_description(self->status));
+    g_value_set_string(value, gh_message_status_get_accessible_description_for(
+      self->status, self->n_recipients));
     break;
   case ITEM_PROP_DETAIL:          g_value_set_string(value, self->detail); break;
   case ITEM_PROP_SELF_COPY_MISSING: g_value_set_boolean(value, self->self_copy_missing); break;

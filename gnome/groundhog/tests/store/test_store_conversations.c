@@ -328,10 +328,34 @@ assert_integrity(GhStore *store)
   g_assert_no_error(error);
 }
 
+/* m (a message of room c, whose marker row is r) is at or before the read
+ * marker, or at or before the reply boundary (schema v4, nostrc-qp24.75). */
+#define AT_MARKER(m) \
+  "(r.id IS NOT NULL AND (" m ".created_at < r.created_at OR (" m ".created_at = " \
+  "r.created_at AND " m ".backend_msg_id <= r.backend_msg_id)))"
+#define AT_REPLY(m) \
+  "(c.reply_read_id IS NOT NULL AND (" m ".created_at < c.reply_read_at OR (" m \
+  ".created_at = c.reply_read_at AND " m ".backend_msg_id <= c.reply_read_id)))"
+
+/* Every room's unread count is the messages from others that are not read:
+ * neither at or before the reply boundary nor at or before the marker and
+ * arrived by then (read_seq). */
+static void
+assert_unread_consistent(GhStore *store)
+{
+  g_assert_cmpint(sql_int(store,
+    "SELECT count(*) FROM conversations c WHERE c.unread_count != "
+    "(SELECT count(*) FROM messages m LEFT JOIN messages r ON r.id = c.last_read_msg "
+    "WHERE m.conversation_id = c.id AND m.direction = 0 AND NOT (" AT_REPLY("m") " OR "
+    "(m.seq <= c.read_seq AND " AT_MARKER("m") ")))"), ==, 0);
+}
+
 /* The durable invariants: every message has its rumor seen key; no own
- * message lies after its room's read marker (replying reads what came
- * before) and no room holding one is a request; every room's unread count is
- * the messages from others after its read marker. */
+ * message lies after both its room's read marker and its reply boundary
+ * (replying reads what came before) and no room holding one is a request;
+ * every room's unread count is the messages from others that are not read:
+ * neither at or before the reply boundary nor at or before the marker and
+ * arrived by then (read_seq). */
 static void
 assert_store_consistent(GhStore *store)
 {
@@ -340,18 +364,12 @@ assert_store_consistent(GhStore *store)
     "(SELECT 1 FROM seen s WHERE s.ns = 2 AND s.id = m.backend_msg_id)"), ==, 0);
   g_assert_cmpint(sql_int(store,
     "SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id "
-    "LEFT JOIN messages r ON r.id = c.last_read_msg WHERE m.direction = 1 AND "
-    "(c.last_read_msg IS NULL OR m.created_at > r.created_at OR "
-    "(m.created_at = r.created_at AND m.backend_msg_id > r.backend_msg_id))"), ==, 0);
+    "LEFT JOIN messages r ON r.id = c.last_read_msg WHERE m.direction = 1 AND NOT ("
+    AT_MARKER("m") " OR " AT_REPLY("m") ")"), ==, 0);
   g_assert_cmpint(sql_int(store,
     "SELECT count(*) FROM conversations c WHERE c.request_state = 1 AND EXISTS "
     "(SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.direction = 1)"), ==, 0);
-  g_assert_cmpint(sql_int(store,
-    "SELECT count(*) FROM conversations c WHERE c.unread_count != "
-    "(SELECT count(*) FROM messages m LEFT JOIN messages r ON r.id = c.last_read_msg "
-    "WHERE m.conversation_id = c.id AND m.direction = 0 AND (c.last_read_msg IS NULL OR "
-    "m.created_at > r.created_at OR (m.created_at = r.created_at AND "
-    "m.backend_msg_id > r.backend_msg_id)))"), ==, 0);
+  assert_unread_consistent(store);
 }
 
 /* The model shows a room with n messages and this unread/request state, and
@@ -516,6 +534,210 @@ set_draft(Fixture *f, const gchar *room_id, const gchar *draft)
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_store_conversations_set_draft(f->conversations, room_id, draft, &error));
   g_assert_no_error(error);
+}
+
+/* A message from author in the room (author, A) at created_at whose rumor id
+ * sorts before reference_id: a burst in the same second. */
+static GhMessage *
+same_second_before(const gchar *account, const gchar *author, gint64 created_at,
+                   const gchar *reference_id)
+{
+  for (guint i = 0; i < 1000; i++) {
+    g_autofree gchar *content = g_strdup_printf("burst %u", i);
+    Rumor r = { .author = author, .to = { author == account ? PEER_P : account },
+                .created_at = created_at, .content = content };
+    GhMessage *message = message_new(account, &r);
+    if (strcmp(gh_message_get_rumor_id(message), reference_id) < 0)
+      return message;
+    g_object_unref(message);
+  }
+  g_assert_not_reached();
+}
+
+/* nostrc-qp24.75, durably: a message that arrives after the room was read
+ * is unread wherever it sorts, before and after a restart (messages.seq,
+ * conversations.read_seq); a reply written here reads what had arrived, one
+ * written on another device whatever sorts before it (the reply boundary);
+ * and Mark as Unread (nostrc-qp24.86) is kept. */
+static void
+test_read_by_arrival(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  Rumor first = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 100,
+                  .content = "first" };
+  g_assert_cmpint(deliver(f.model, &first, "first"), ==, GH_CONVERSATION_ADD_NEW);
+  gh_conversation_accept(room(&f, ap));
+  gh_conversation_mark_read(room(&f, ap));
+  assert_room(&f, ap, 1, 0, FALSE);
+
+  /* The burst: same second, lower id, so it sorts before the read one. */
+  g_autofree gchar *first_id = rumor_id(ACCOUNT_A, &first);
+  g_autoptr(GhMessage) burst = same_second_before(ACCOUNT_A, PEER_P, T0 - 100, first_id);
+  g_assert_cmpint(deliver_message(f.model, burst, "burst"), ==, GH_CONVERSATION_ADD_NEW);
+  assert_room(&f, ap, 2, 1, FALSE);
+  assert_store_consistent(f.store);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM messages WHERE seq = 0"), ==, 0);
+  g_assert_cmpint(sql_int(f.store, "SELECT max(seq) FROM messages"), ==, 2);
+  fixture_restart(&f);
+  assert_room(&f, ap, 2, 1, FALSE);
+  GhMessage *listed = gh_conversation_lookup_message(room(&f, ap),
+                                                     gh_message_get_rumor_id(burst));
+  g_assert_nonnull(listed);
+  g_assert_true(gh_conversation_is_unread(room(&f, ap), listed));
+  gh_conversation_mark_read(room(&f, ap));
+  fixture_restart(&f);
+  assert_room(&f, ap, 2, 0, FALSE);
+
+  /* A reply written here (the local echo) reads what had arrived; one in its
+   * second arriving after it is unread. */
+  Rumor reply = { .author = ACCOUNT_A, .to = { PEER_P }, .created_at = T0 - 50,
+                  .content = "my reply" };
+  g_assert_cmpint(deliver(f.model, &reply, NULL), ==, GH_CONVERSATION_ADD_NEW);
+  g_autofree gchar *reply_id = rumor_id(ACCOUNT_A, &reply);
+  g_autoptr(GhMessage) quick = same_second_before(ACCOUNT_A, PEER_P, T0 - 50, reply_id);
+  g_assert_cmpint(deliver_message(f.model, quick, "quick"), ==, GH_CONVERSATION_ADD_NEW);
+  assert_room(&f, ap, 4, 1, FALSE);
+  assert_store_consistent(f.store);
+  fixture_restart(&f);
+  assert_room(&f, ap, 4, 1, FALSE);
+  gh_conversation_mark_read(room(&f, ap));
+
+  /* A reply written on another device (a relay's self-copy) reads what sorts
+   * before it, even what arrives after it. */
+  Rumor phone = { .author = ACCOUNT_A, .to = { PEER_P }, .created_at = T0 - 10,
+                  .content = "from my phone" };
+  Rumor answered = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 20,
+                     .content = "answered on the phone" };
+  g_assert_cmpint(deliver(f.model, &phone, "phone"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &answered, "answered"), ==, GH_CONVERSATION_ADD_NEW);
+  assert_room(&f, ap, 6, 0, FALSE);
+  assert_store_consistent(f.store);
+  g_assert_cmpint(sql_int(f.store, "SELECT reply_read_at FROM conversations WHERE "
+                                   "backend_key = '%s'", ap), ==, T0 - 10);
+  fixture_restart(&f);
+  assert_room(&f, ap, 6, 0, FALSE);
+
+  /* Mark as Unread: the newest message from P is unread again, and stays so
+   * after a restart; everything before it stays read. */
+  g_assert_true(gh_conversation_mark_unread(room(&f, ap)));
+  assert_room(&f, ap, 6, 1, FALSE);
+  /* The one invariant it bends on purpose: the own message after it now
+   * lies after the read state too. The count still matches. */
+  assert_unread_consistent(f.store);
+  fixture_restart(&f);
+  assert_room(&f, ap, 6, 1, FALSE);
+  g_autofree gchar *answered_id = rumor_id(ACCOUNT_A, &answered);
+  g_assert_true(gh_conversation_is_unread(room(&f, ap),
+    gh_conversation_lookup_message(room(&f, ap), answered_id)));
+  gh_conversation_mark_read(room(&f, ap));
+  assert_room(&f, ap, 6, 0, FALSE);
+  fixture_clear(&f);
+}
+
+/* nostrc-qp24.86: pins live in the encrypted store's conversations.
+ * pinned_rank (PD-11), in the order pinned; pinned rooms are listed first,
+ * before and after a restart; unpinning puts a room back in activity order;
+ * forgetting a room drops its pin. */
+static void
+test_pins(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *aq = room_of(ACCOUNT_A, PEER_Q, NULL);
+  g_autofree gchar *ar = room_of(ACCOUNT_A, PEER_R, NULL);
+  Rumor p = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 30, .content = "p" };
+  Rumor q = { .author = PEER_Q, .to = { ACCOUNT_A }, .created_at = T0 - 20, .content = "q" };
+  Rumor r = { .author = PEER_R, .to = { ACCOUNT_A }, .created_at = T0 - 10, .content = "r" };
+  g_assert_cmpint(deliver(f.model, &p, "p"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &q, "q"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &r, "r"), ==, GH_CONVERSATION_ADD_NEW);
+  g_autofree gchar *by_activity = g_strjoin("|", ar, aq, ap, NULL);
+  g_autofree gchar *order = room_order(f.model);
+  g_assert_cmpstr(order, ==, by_activity);
+
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_set_pinned(f.conversations, ap, TRUE, &error));
+  g_assert_true(gh_store_conversations_set_pinned(f.conversations, aq, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_conversation_get_pinned(room(&f, ap)));
+  g_autofree gchar *pinned_first = g_strjoin("|", ap, aq, ar, NULL);
+  g_clear_pointer(&order, g_free);
+  order = room_order(f.model);
+  g_assert_cmpstr(order, ==, pinned_first);
+  /* Pinning again keeps the place; a new message does not reorder pins. */
+  g_assert_true(gh_store_conversations_set_pinned(f.conversations, ap, TRUE, &error));
+  Rumor q2 = { .author = PEER_Q, .to = { ACCOUNT_A }, .created_at = T0 - 5, .content = "q2" };
+  g_assert_cmpint(deliver(f.model, &q2, "q2"), ==, GH_CONVERSATION_ADD_NEW);
+  g_clear_pointer(&order, g_free);
+  order = room_order(f.model);
+  g_assert_cmpstr(order, ==, pinned_first);
+  fixture_restart(&f);
+  g_clear_pointer(&order, g_free);
+  order = room_order(f.model);
+  g_assert_cmpstr(order, ==, pinned_first);
+  g_assert_true(gh_conversation_get_pinned(room(&f, aq)));
+  g_assert_false(gh_conversation_get_pinned(room(&f, ar)));
+
+  /* Unpinned, P goes back to its activity place (the oldest). */
+  g_assert_true(gh_store_conversations_set_pinned(f.conversations, ap, FALSE, &error));
+  g_assert_no_error(error);
+  g_assert_false(gh_conversation_get_pinned(room(&f, ap)));
+  g_autofree gchar *one_pin = g_strjoin("|", aq, ar, ap, NULL);
+  g_clear_pointer(&order, g_free);
+  order = room_order(f.model);
+  g_assert_cmpstr(order, ==, one_pin);
+  /* Local only: in the store, never anywhere else. */
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM conversations WHERE "
+                                   "pinned_rank IS NOT NULL"), ==, 1);
+  g_assert_true(gh_store_conversations_forget(f.conversations, aq, &error));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM conversations WHERE "
+                                   "pinned_rank IS NOT NULL"), ==, 0);
+  /* Not stored and not pinned: nothing to do. */
+  g_autofree gchar *as = room_of(ACCOUNT_A, PEER_S, NULL);
+  g_assert_true(gh_store_conversations_set_pinned(f.conversations, as, FALSE, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM conversations WHERE backend_key = '%s'",
+                          as), ==, 0);
+  fixture_clear(&f);
+}
+
+/* nostrc-qp24.83: a timer change is kept with its time (local only) and the
+ * model's room carries it, before and after a restart; forgetting the room
+ * clears it. */
+static void
+test_timer_change(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  Rumor p = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 30, .content = "p" };
+  g_assert_cmpint(deliver(f.model, &p, "p"), ==, GH_CONVERSATION_ADD_NEW);
+  gint64 id = sql_int(f.store, "SELECT id FROM conversations WHERE backend_key = '%s'", ap);
+  g_autoptr(GError) error = NULL;
+  gint64 seconds = -1;
+  g_assert_cmpint(gh_conversation_get_timer_change(room(&f, ap), &seconds), ==, 0);
+  gh_clock_fake_advance(f.clock, 5 * G_USEC_PER_SEC);
+  g_assert_true(gh_store_set_disappearing(f.store, id, 86400, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_store_conversations_sync_timer(f.conversations, ap, &error));
+  g_assert_cmpint(gh_conversation_get_timer_change(room(&f, ap), &seconds), ==, T0 + 5);
+  g_assert_cmpint(seconds, ==, 86400);
+  /* The same value again is no change. */
+  gh_clock_fake_advance(f.clock, 5 * G_USEC_PER_SEC);
+  g_assert_true(gh_store_set_disappearing(f.store, id, 86400, &error));
+  gint64 changed_at = 0;
+  g_assert_true(gh_store_get_timer_change(f.store, id, &seconds, &changed_at, &error));
+  g_assert_cmpint(changed_at, ==, T0 + 5);
+  fixture_restart(&f);
+  g_assert_cmpint(gh_conversation_get_timer_change(room(&f, ap), &seconds), ==, T0 + 5);
+  g_assert_cmpint(seconds, ==, 86400);
+  g_assert_true(gh_store_conversations_forget(f.conversations, ap, &error));
+  g_assert_true(gh_store_get_timer_change(f.store, id, &seconds, &changed_at, &error));
+  g_assert_cmpint(changed_at, ==, 0);
+  fixture_clear(&f);
 }
 
 static void
@@ -1426,6 +1648,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/store-conversations/st6/crash-admit", test_st6_crash_admit);
   g_test_add_func("/groundhog/store-conversations/st7/idempotent", test_st7_idempotent);
   g_test_add_func("/groundhog/store-conversations/restart/restores", test_restart_restores);
+  g_test_add_func("/groundhog/store-conversations/read-by-arrival", test_read_by_arrival);
+  g_test_add_func("/groundhog/store-conversations/pins", test_pins);
+  g_test_add_func("/groundhog/store-conversations/timer-change", test_timer_change);
   g_test_add_func("/groundhog/store-conversations/restart/paging", test_paging);
   g_test_add_func("/groundhog/store-conversations/restart/verifies", test_restore_verifies);
   g_test_add_func("/groundhog/store-conversations/st9/forget", test_st9_forget);

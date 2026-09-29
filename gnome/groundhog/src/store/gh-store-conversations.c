@@ -207,110 +207,6 @@ place_set(Place *place, gint64 row, gint64 created_at, const gchar *id)
   place->id = copy;
 }
 
-/* Whether (created_at, id) sorts after place (always, when place is empty). */
-static gboolean
-is_after(const Place *place, gint64 created_at, const gchar *id)
-{
-  if (!place->has)
-    return TRUE;
-  if (created_at != place->created_at)
-    return created_at > place->created_at;
-  return strcmp(id, place->id) > 0;
-}
-
-/* Reads (row id, created_at, backend_msg_id) from the first row of stmt. */
-static gboolean
-place_query(GhStore *store, sqlite3_stmt *stmt, Place *place, GError **error)
-{
-  gboolean has_row = FALSE;
-  if (!step_row(store, stmt, &has_row, "Reading a message position", error))
-    return FALSE;
-  if (has_row)
-    place_set(place, sqlite3_column_int64(stmt, 0), sqlite3_column_int64(stmt, 1),
-              (const gchar *)sqlite3_column_text(stmt, 2));
-  return TRUE;
-}
-
-/* The room's read marker: last_read_msg, or when that row is gone (purged)
- * the message just before the newest unread_count ones. */
-static gboolean
-load_marker(GhStore *store, gint64 conversation_id, Place *marker, GError **error)
-{
-  place_clear(marker);
-  sqlite3_stmt *stmt = prepare(store,
-    "SELECT c.last_read_msg, c.unread_count, m.id, m.created_at, m.backend_msg_id "
-    "FROM conversations c LEFT JOIN messages m "
-    "ON m.id = c.last_read_msg AND m.conversation_id = c.id WHERE c.id = ?1", error);
-  if (!stmt)
-    return FALSE;
-  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-  gboolean has_row = FALSE;
-  if (!step_row(store, stmt, &has_row, "Reading a read marker", error))
-    goto fail;
-  if (!has_row) {
-    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
-    goto fail;
-  }
-  gboolean has_marker = sqlite3_column_type(stmt, 0) != SQLITE_NULL;
-  gboolean dangling = has_marker && sqlite3_column_type(stmt, 2) == SQLITE_NULL;
-  gint64 unread = sqlite3_column_int64(stmt, 1);
-  if (has_marker && !dangling)
-    place_set(marker, sqlite3_column_int64(stmt, 2), sqlite3_column_int64(stmt, 3),
-              (const gchar *)sqlite3_column_text(stmt, 4));
-  g_clear_pointer(&stmt, sqlite3_finalize);
-  if (!dangling)
-    return TRUE;
-
-  stmt = prepare(store,
-    "SELECT id, created_at, backend_msg_id FROM messages WHERE conversation_id = ?1 "
-    "ORDER BY created_at DESC, backend_msg_id DESC LIMIT 1 OFFSET ?2", error);
-  if (!stmt)
-    return FALSE;
-  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-  BIND(sqlite3_bind_int64(stmt, 2, MAX(unread, 0)));
-  gboolean ok = place_query(store, stmt, marker, error);
-  sqlite3_finalize(stmt);
-  return ok;
-fail:
-  sqlite3_finalize(stmt);
-  return FALSE;
-}
-
-/* Stores marker as last_read_msg and recomputes unread_count as the messages
- * from others after it; *out_unread is the new count. */
-static gboolean
-save_read_state(GhStore *store, gint64 conversation_id, const Place *marker,
-                gint64 *out_unread, GError **error)
-{
-  sqlite3_stmt *stmt = prepare(store,
-    "UPDATE conversations SET last_read_msg = ?2, unread_count = "
-    "(SELECT count(*) FROM messages WHERE conversation_id = ?1 AND direction = 0 "
-    "AND (?2 IS NULL OR created_at > ?3 OR (created_at = ?3 AND backend_msg_id > ?4))) "
-    "WHERE id = ?1", error);
-  if (!stmt)
-    return FALSE;
-  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-  BIND(marker->has ? sqlite3_bind_int64(stmt, 2, marker->row) : sqlite3_bind_null(stmt, 2));
-  BIND(sqlite3_bind_int64(stmt, 3, marker->has ? marker->created_at : 0));
-  BIND(bind_text(stmt, 4, marker->has ? marker->id : ""));
-  if (!step_done(store, stmt, "Saving a read position", error))
-    goto fail;
-  g_clear_pointer(&stmt, sqlite3_finalize);
-
-  stmt = prepare(store, "SELECT unread_count FROM conversations WHERE id = ?1", error);
-  if (!stmt)
-    return FALSE;
-  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-  gboolean has_row = FALSE;
-  gboolean ok = step_row(store, stmt, &has_row, "Reading an unread count", error);
-  if (ok)
-    *out_unread = has_row ? sqlite3_column_int64(stmt, 0) : 0;
-  sqlite3_finalize(stmt);
-  return ok;
-fail:
-  sqlite3_finalize(stmt);
-  return FALSE;
-}
 
 /* The stored row of the room's message rumor_id; 0 when not stored. */
 static gboolean
@@ -336,16 +232,22 @@ fail:
   return FALSE;
 }
 
-/* The read state after a stored message: an own message moves the marker to
- * itself (replying implies having read what came before) and accepts a
- * message request; the unread count follows. It never lifts a block: only
- * writing from this device does, in T-enqueue (gh_store_enqueue()), which
- * stored the message before its local echo gets here. A self-copy a relay
- * delivers (replayed, older, or written on another device, which knows
- * nothing of this device's block, P8) leaves the room blocked. */
+/* The read state after a stored message (see GhStoreReadState): an own
+ * message accepts a message request and moves the read state (replying
+ * implies having read what came before). One written on this device (its
+ * local echo, wrap_id NULL, whether new or stored by T-enqueue) reads what
+ * had arrived before it and sorts before it; one another device wrote,
+ * first delivered now (stored), moves the reply boundary; a relay's copy of
+ * an own message already stored changes nothing. The unread count follows.
+ * It never lifts a block: only writing from this device does, in T-enqueue
+ * (gh_store_enqueue()), which stored the message before its local echo gets
+ * here. A self-copy a relay delivers (replayed, older, or written on another
+ * device, which knows nothing of this device's block, P8) leaves the room
+ * blocked. */
 static gboolean
-admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
-                 GhMessage *message, gint64 *out_unread, GError **error)
+admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row, gint64 seq,
+                 GhMessage *message, const gchar *wrap_id, gboolean stored_now,
+                 gint64 *out_unread, GError **error)
 {
   gboolean found = FALSE;
   gint64 conversation_id = 0;
@@ -355,23 +257,19 @@ admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
     g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
     return FALSE;
   }
-  Place marker = { 0 };
-  gboolean ok = load_marker(store, conversation_id, &marker, error);
-  if (ok && gh_message_is_self(message)) {
-    const gboolean after =
-      is_after(&marker, gh_message_get_created_at(message), gh_message_get_rumor_id(message));
-    if (after)
-      place_set(&marker, message_row, gh_message_get_created_at(message),
-                gh_message_get_rumor_id(message));
+  GhStoreReadMove move = GH_STORE_READ_RECOUNT;
+  gboolean ok = TRUE;
+  if (gh_message_is_self(message)) {
+    move = !wrap_id ? GH_STORE_READ_LISTED : stored_now ? GH_STORE_READ_REPLY
+                                                        : GH_STORE_READ_RECOUNT;
     sqlite3_stmt *stmt = prepare(store,
       "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state = 1", error);
     ok = stmt && sqlite3_bind_int64(stmt, 1, conversation_id) == SQLITE_OK &&
          step_done(store, stmt, "Accepting a conversation", error);
     sqlite3_finalize(stmt);
   }
-  ok = ok && save_read_state(store, conversation_id, &marker, out_unread, error);
-  place_clear(&marker);
-  return ok;
+  return ok && gh_store_read_state_update(store, conversation_id, move, message_row, seq,
+                                          out_unread, error);
 }
 
 /* ---- The delegate ---------------------------------------------------------------- */
@@ -502,8 +400,12 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
       !find_message_row(store, room_id, m.backend_msg_id, &message_row, error))
     goto fail;
   if (message_row > 0) {
-    if (!admit_read_state(store, room_id, message_row, message, &commit->unread, error))
+    gint64 seq = 0;
+    if (!gh_store_message_seq(store, message_row, &seq, error) ||
+        !admit_read_state(store, room_id, message_row, seq, message, wrap_id,
+                          result == GH_STORE_ADMIT_STORED, &commit->unread, error))
       goto fail;
+    commit->seq = seq;
     /* Someone else's message in a blocked room returned above. An own one
      * is stored; the local echo of a message this device wrote is listed,
      * since its T-enqueue lifted the block, while a relay's self-copy in a
@@ -522,19 +424,50 @@ fail:
   return FALSE;
 }
 
+/* The stored row of @message in the room, or with @newest and none, the
+ * room's newest stored message; 0 when neither. */
 static gboolean
-delegate_mark_read(gpointer data, GhConversation *conversation, GhMessage *last_read,
-                   GError **error)
+room_message_row(GhStore *store, gint64 conversation_id, GhMessage *message, gboolean newest,
+                 gint64 *out_row, GError **error)
 {
-  GhStoreConversations *self = data;
+  *out_row = 0;
+  static const char *const queries[] = {
+    "SELECT id FROM messages WHERE conversation_id = ?1 AND backend_msg_id = ?2",
+    "SELECT id FROM messages WHERE conversation_id = ?1 "
+    "ORDER BY created_at DESC, backend_msg_id DESC LIMIT 1",
+  };
+  sqlite3_stmt *stmt = NULL;
+  for (guint i = 0; i < (newest ? 2u : 1u) && *out_row == 0; i++) {
+    stmt = prepare(store, queries[i], error);
+    if (!stmt)
+      return FALSE;
+    BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+    if (i == 0)
+      BIND(bind_text(stmt, 2, gh_message_get_rumor_id(message)));
+    gboolean has_row = FALSE;
+    if (!step_row(store, stmt, &has_row, "Looking up a message", error))
+      goto fail;
+    if (has_row)
+      *out_row = sqlite3_column_int64(stmt, 0);
+    g_clear_pointer(&stmt, sqlite3_finalize);
+  }
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* Mark read or unread (gh_conversation_mark_read()/_unread()) in one
+ * transaction; read state is local only (P8). */
+static gboolean
+persist_read_move(GhStoreConversations *self, GhConversation *conversation, GhMessage *message,
+                  GhStoreReadMove move, GError **error)
+{
   if (!check_open(self, error))
     return FALSE;
   GhStore *store = self->store;
   gboolean found = FALSE;
-  gint64 conversation_id = 0;
-  sqlite3_stmt *stmt = NULL;
-  Place read = { 0 }, marker = { 0 };
-  gint64 unread = 0;
+  gint64 conversation_id = 0, row = 0;
   if (!gh_store_begin(store, error))
     return FALSE;
   if (!lookup_room(store, gh_conversation_get_room_id(conversation), &found,
@@ -544,45 +477,36 @@ delegate_mark_read(gpointer data, GhConversation *conversation, GhMessage *last_
     g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
     goto fail;
   }
-  /* The listed newest message, or (not stored) the newest stored one. */
-  stmt = prepare(store,
-    "SELECT id, created_at, backend_msg_id FROM messages "
-    "WHERE conversation_id = ?1 AND backend_msg_id = ?2", error);
-  if (!stmt)
+  /* Read: the listed newest message, or (not stored) the newest stored one;
+   * a read position only moves forward. Unread: exactly that message. */
+  if (!room_message_row(store, conversation_id, message, move == GH_STORE_READ_LISTED, &row,
+                        error))
     goto fail;
-  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-  BIND(bind_text(stmt, 2, gh_message_get_rumor_id(last_read)));
-  if (!place_query(store, stmt, &read, error))
+  if (row > 0 &&
+      !gh_store_read_state_update(store, conversation_id, move, row,
+                                  (gint64)MIN(gh_conversation_get_read_seq(conversation),
+                                              (guint64)G_MAXINT64),
+                                  NULL, error))
     goto fail;
-  g_clear_pointer(&stmt, sqlite3_finalize);
-  if (!read.has) {
-    stmt = prepare(store,
-      "SELECT id, created_at, backend_msg_id FROM messages WHERE conversation_id = ?1 "
-      "ORDER BY created_at DESC, backend_msg_id DESC LIMIT 1", error);
-    if (!stmt)
-      goto fail;
-    BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-    if (!place_query(store, stmt, &read, error))
-      goto fail;
-    g_clear_pointer(&stmt, sqlite3_finalize);
-  }
-  if (!load_marker(store, conversation_id, &marker, error))
-    goto fail;
-  /* A read position only moves forward. */
-  if (read.has && is_after(&marker, read.created_at, read.id))
-    place_set(&marker, read.row, read.created_at, read.id);
-  if (!save_read_state(store, conversation_id, &marker, &unread, error))
-    goto fail;
-  place_clear(&read);
-  place_clear(&marker);
   return gh_store_commit(store, error);
 
 fail:
-  sqlite3_finalize(stmt);
-  place_clear(&read);
-  place_clear(&marker);
   gh_store_rollback(store);
   return FALSE;
+}
+
+static gboolean
+delegate_mark_read(gpointer data, GhConversation *conversation, GhMessage *last_read,
+                   GError **error)
+{
+  return persist_read_move(data, conversation, last_read, GH_STORE_READ_LISTED, error);
+}
+
+static gboolean
+delegate_mark_unread(gpointer data, GhConversation *conversation, GhMessage *first_unread,
+                     GError **error)
+{
+  return persist_read_move(data, conversation, first_unread, GH_STORE_READ_UNREAD, error);
 }
 
 static gboolean
@@ -640,6 +564,7 @@ static const GhConversationDelegate store_delegate = {
   .accept = delegate_accept,
   .is_blocked = delegate_is_blocked,
   .unblock = delegate_unblock,
+  .mark_unread = delegate_mark_unread,
 };
 
 /* ---- Restore ------------------------------------------------------------------------ */
@@ -648,22 +573,25 @@ static const GhConversationDelegate store_delegate = {
 typedef struct {
   gint64 request_state;
   gchar *title;
-  gint64 unread;
-  Place marker;
+  gint64 pinned_rank;
+  gint64 timer_seconds;
+  gint64 timer_changed_at;
+  GhStoreReadState read;
 } RoomState;
 
 static void
 room_state_clear(RoomState *state)
 {
   g_clear_pointer(&state->title, g_free);
-  place_clear(&state->marker);
+  gh_store_read_state_clear(&state->read);
 }
 
 static gboolean
 load_room_state(GhStore *store, gint64 conversation_id, RoomState *state, GError **error)
 {
   sqlite3_stmt *stmt = prepare(store,
-    "SELECT request_state, title, unread_count FROM conversations WHERE id = ?1", error);
+    "SELECT request_state, title, pinned_rank, disappearing_s, timer_changed_at "
+    "FROM conversations WHERE id = ?1", error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
@@ -676,12 +604,40 @@ load_room_state(GhStore *store, gint64 conversation_id, RoomState *state, GError
   }
   state->request_state = sqlite3_column_int64(stmt, 0);
   state->title = column_text(stmt, 1);
-  state->unread = sqlite3_column_int64(stmt, 2);
+  state->pinned_rank = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                         ? 0 : MAX(sqlite3_column_int64(stmt, 2), 1);
+  state->timer_seconds = sqlite3_column_int64(stmt, 3);
+  state->timer_changed_at = sqlite3_column_int64(stmt, 4);
   sqlite3_finalize(stmt);
-  return load_marker(store, conversation_id, &state->marker, error);
+  return gh_store_read_state_load(store, conversation_id, &state->read, error);
 fail:
   sqlite3_finalize(stmt);
   return FALSE;
+}
+
+/* The model's view of a stored room's state (borrows from state). */
+static GhConversationState
+conversation_state(const RoomState *state, gboolean has_older, gint64 floor_created_at,
+                   const gchar *floor_id)
+{
+  return (GhConversationState){
+    .accepted = state->request_state == GH_STORE_REQUEST_ACCEPTED,
+    .has_marker = state->read.has_marker,
+    .marker_created_at = state->read.marker_created_at,
+    .marker_id = state->read.marker_id,
+    .subject = state->title,
+    .unread = (guint)CLAMP(state->read.unread, 0, (gint64)G_MAXUINT),
+    .has_older = has_older,
+    .floor_created_at = floor_created_at,
+    .floor_id = floor_id,
+    .read_seq = (guint64)MAX(state->read.read_seq, 0),
+    .has_reply = state->read.has_reply,
+    .reply_created_at = state->read.reply_created_at,
+    .reply_id = state->read.reply_id,
+    .pinned_rank = state->pinned_rank,
+    .timer_seconds = state->timer_seconds,
+    .timer_changed_at = state->timer_changed_at,
+  };
 }
 
 /* Lists a page of a stored room: its newest messages (conversation NULL) or
@@ -708,7 +664,7 @@ restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conv
   g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
   RoomState state = { 0 };
   sqlite3_stmt *stmt = prepare(store,
-    "SELECT created_at, backend_msg_id, raw_json, expires_at FROM messages "
+    "SELECT created_at, backend_msg_id, raw_json, expires_at, seq FROM messages "
     "WHERE conversation_id = ?1 AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
@@ -749,6 +705,7 @@ restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conv
         continue;
       }
       gh_message_set_expires_at(message, expires_at);
+      gh_message_set_seq(message, (guint64)MAX(sqlite3_column_int64(stmt, 4), 0));
       g_ptr_array_add(messages, message);
     }
   } while (!conversation && messages->len == 0 && more);
@@ -761,17 +718,8 @@ restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conv
   }
   if (!load_room_state(store, conversation_id, &state, error))
     goto fail;
-  GhConversationState restored = {
-    .accepted = state.request_state == GH_STORE_REQUEST_ACCEPTED,
-    .has_marker = state.marker.has,
-    .marker_created_at = state.marker.created_at,
-    .marker_id = state.marker.id,
-    .subject = state.title,
-    .unread = (guint)CLAMP(state.unread, 0, (gint64)G_MAXUINT),
-    .has_older = more && cursor.has,
-    .floor_created_at = cursor.created_at,
-    .floor_id = cursor.id,
-  };
+  GhConversationState restored = conversation_state(&state, more && cursor.has,
+                                                    cursor.created_at, cursor.id);
   gh_conversation_store_restore(model, room_id, messages, &restored);
   *out_listed = messages->len;
   room_state_clear(&state);
@@ -1101,17 +1049,8 @@ refresh_room(GhStoreConversations *self, GhConversationStore *model, const gchar
     room_state_clear(&state);
     return FALSE;
   }
-  GhConversationState restored = {
-    .accepted = state.request_state == GH_STORE_REQUEST_ACCEPTED,
-    .has_marker = state.marker.has,
-    .marker_created_at = state.marker.created_at,
-    .marker_id = state.marker.id,
-    .subject = state.title,
-    .unread = (guint)CLAMP(state.unread, 0, (gint64)G_MAXUINT),
-    .has_older = has_older,
-    .floor_created_at = floor_created_at,
-    .floor_id = floor_id,
-  };
+  GhConversationState restored = conversation_state(&state, has_older, floor_created_at,
+                                                    floor_id);
   gh_conversation_store_restore(model, room_id, NULL, &restored);
   room_state_clear(&state);
   guint listed = 0;
@@ -1260,6 +1199,95 @@ gh_store_conversations_purge(GhStoreConversations *self, gint64 retention_cutoff
               sync_error->message);
   if (out_purged)
     *out_purged = g_strv_builder_end(ids);
+  return TRUE;
+}
+
+/* ---- Pins and timer changes (nostrc-qp24.86, qp24.83) ----------------------------------- */
+
+/* The attached model's listing of room_id, or NULL. */
+static GhConversation *
+listed_room(GhStoreConversations *self, GhConversationStore **out_model, const gchar *room_id)
+{
+  *out_model = g_weak_ref_get(&self->model);
+  if (!*out_model || g_strcmp0(gh_conversation_store_get_account(*out_model), self->account) != 0)
+    return NULL;
+  return gh_conversation_store_lookup(*out_model, room_id);
+}
+
+static void
+pin_listed(GhStoreConversations *self, const gchar *room_id, gint64 rank)
+{
+  g_autoptr(GhConversationStore) model = NULL;
+  GhConversation *conversation = listed_room(self, &model, room_id);
+  if (conversation)
+    gh_conversation_store_pin(model, conversation, rank);
+}
+
+gboolean
+gh_store_conversations_set_pinned(GhStoreConversations *self, const gchar *room_id,
+                                  gboolean pinned, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  if (!check_open(self, error) || !check_room(self, room_id, error))
+    return FALSE;
+  GhStore *store = self->store;
+  gboolean found = FALSE;
+  gint64 id = 0, rank = 0;
+  sqlite3_stmt *stmt = NULL;
+  if (!gh_store_begin(store, error))
+    return FALSE;
+  if (!lookup_room(store, room_id, &found, &id, error))
+    goto fail;
+  if (!found && !pinned) {
+    gh_store_rollback(store);
+    return TRUE; /* nothing stored, nothing pinned */
+  }
+  /* Pinning is the account's own choice: a room it creates is accepted. A new
+   * pin goes after the others; a pinned room keeps its place. */
+  if ((!found && !gh_store_ensure_conversation(store, GH_STORE_BACKEND_NIP17, room_id,
+                                               GH_STORE_REQUEST_ACCEPTED, &id, error)))
+    goto fail;
+  stmt = prepare(store, pinned
+    ? "UPDATE conversations SET pinned_rank = COALESCE(pinned_rank, (SELECT "
+      "COALESCE(MAX(pinned_rank), 0) + 1 FROM conversations WHERE backend = 1)) WHERE id = ?1 "
+      "RETURNING pinned_rank"
+    : "UPDATE conversations SET pinned_rank = NULL WHERE id = ?1 RETURNING 0", error);
+  if (!stmt)
+    goto fail;
+  BIND(sqlite3_bind_int64(stmt, 1, id));
+  gboolean has_row = FALSE;
+  if (!step_row(store, stmt, &has_row, pinned ? "Pinning a conversation"
+                                              : "Unpinning a conversation", error))
+    goto fail;
+  rank = has_row ? MAX(sqlite3_column_int64(stmt, 0), 0) : 0;
+  g_clear_pointer(&stmt, sqlite3_finalize);
+  if (!gh_store_commit(store, error))
+    return FALSE;
+  pin_listed(self, room_id, rank);
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+  gh_store_rollback(store);
+  return FALSE;
+}
+
+gboolean
+gh_store_conversations_sync_timer(GhStoreConversations *self, const gchar *room_id,
+                                  GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  if (!check_open(self, error) || !check_room(self, room_id, error))
+    return FALSE;
+  gboolean found = FALSE;
+  gint64 id = 0, seconds = 0, changed_at = 0;
+  if (!lookup_room(self->store, room_id, &found, &id, error))
+    return FALSE;
+  if (found && !gh_store_get_timer_change(self->store, id, &seconds, &changed_at, error))
+    return FALSE;
+  g_autoptr(GhConversationStore) model = NULL;
+  GhConversation *conversation = listed_room(self, &model, room_id);
+  if (conversation)
+    gh_conversation_set_timer_change(conversation, seconds, changed_at);
   return TRUE;
 }
 

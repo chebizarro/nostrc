@@ -109,7 +109,19 @@ typedef struct {
   GPtrArray *opened;                 /* GhConversation */
   GPtrArray *stale;                  /* npub, or "" when unknown */
   GArray *sounds;                    /* gint64 monotonic */
+  gint64 last_seen;                  /* the last-seen marker offered (N1); 0 none */
+  guint last_seen_asked;
 } Fixture;
+
+static gint64
+last_seen(gpointer data, const gchar *account)
+{
+  Fixture *f = data;
+  if (g_strcmp0(account, ACCOUNT_A) != 0)
+    return 0; /* another account's marker is its own */
+  f->last_seen_asked++;
+  return f->last_seen;
+}
 
 static gboolean
 room_state(gpointer data, const gchar *room_id, GhNotifierRoomState *state)
@@ -175,6 +187,8 @@ notifier_new(Fixture *f)
     .clock = f->clock,
     .room_state = room_state,
     .room_state_data = f,
+    .last_seen = last_seen,
+    .last_seen_data = f,
   };
   GhNotifier *notifier = gh_notifier_new(f->app, &config);
   g_signal_connect(notifier, "open-conversation", G_CALLBACK(on_open), f);
@@ -615,6 +629,136 @@ test_no3_suppression(void)
   receive(&f, PEER[0], NULL, "notified");
   settle(&f);
   g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_CONVERSATION_PREFIX "1"), "body"), ==, "notified");
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 1);
+  fixture_down(&f);
+}
+
+/* ---- nostrc-qp24.75: read by arrival ------------------------------------------------------ */
+
+/* A message from peer at created_at whose rumor id sorts before
+ * reference_id (a burst within one second). */
+static GhMessage *
+same_second_before(const gchar *peer, gint64 created_at, const gchar *reference_id)
+{
+  for (guint i = 0; i < 1000; i++) {
+    g_autofree gchar *content = g_strdup_printf("burst %u", i);
+    Rumor r = { .author = peer, .to = { ACCOUNT_A }, .content = content,
+                .created_at = created_at };
+    GhMessage *message = message_new(ACCOUNT_A, &r);
+    if (strcmp(gh_message_get_rumor_id(message), reference_id) < 0)
+      return message;
+    g_object_unref(message);
+  }
+  g_assert_not_reached();
+}
+
+/* The G24 NO-1 case: two messages within one second, the first read at
+ * once. The second has a lower rumor id, so it sorts before the read one;
+ * it arrived after the read, so it is unread and notified (it used to count
+ * as read and be dropped). */
+static void
+test_read_by_arrival(void)
+{
+  Fixture f;
+  fixture_up(&f, "hidden", TRUE);
+  GhConversation *p = open_room(&f, PEER[0], NULL);
+  receive(&f, PEER[0], NULL, "first");
+  gh_conversation_mark_read(p);
+  assert_nothing_sent(&f);
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(p));
+  g_autoptr(GhMessage) read = g_list_model_get_item(G_LIST_MODEL(p), n - 1);
+  g_autoptr(GhMessage) burst = same_second_before(PEER[0], gh_message_get_created_at(read),
+                                                  gh_message_get_rumor_id(read));
+  g_autofree gchar *wrap = hex_of("arrival/burst");
+  g_assert_cmpint(gh_conversation_store_admit(f.model, burst, wrap, NULL), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(gh_conversation_get_unread_count(p), ==, 1);
+  settle(&f);
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 1);
+  g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_MESSAGES), "body"), ==, "1 new message");
+  /* Read now: withdrawn. */
+  gh_conversation_mark_read(p);
+  settle(&f);
+  g_assert_null(shown(GH_NOTIFIER_ID_MESSAGES));
+  fixture_down(&f);
+}
+
+/* ---- nostrc-qp24.84: what came while not receiving ------------------------------------------ */
+
+/* Charter §5.2 N1 (amended): with autostart at login, what arrived overnight
+ * is notified when it was written after the account's last-seen marker (the
+ * inbox checkpoint, less GH_NOTIFIER_LAST_SEEN_GRACE), coalesced like any
+ * burst (one hidden "N new messages"), requests hidden too; what was written
+ * before it is old history and never notified; without a marker (a first
+ * session) only what is written after binding is. */
+static void
+test_backfill(void)
+{
+  Fixture f;
+  fixture_up(&f, "sender", FALSE);
+  const gint64 night = T0 - 8 * 3600; /* Groundhog stopped receiving here */
+  f.last_seen = night;
+  gh_conversation_store_set_account(f.model, ACCOUNT_A, NULL, NULL, NULL);
+  g_assert_cmpuint(f.last_seen_asked, >=, 1);
+  /* Accepted conversations: the account wrote in them before the night (an
+   * own message from another device reads whatever sorts before it). */
+  Rumor mine_p = { .author = ACCOUNT_A, .to = { PEER[0] }, .content = "earlier",
+                   .created_at = night - 3 * GH_NOTIFIER_LAST_SEEN_GRACE };
+  Rumor mine_q = { .author = ACCOUNT_A, .to = { PEER[1] }, .content = "earlier",
+                   .created_at = night - 3 * GH_NOTIFIER_LAST_SEEN_GRACE };
+  GhConversation *p = deliver(&f, &mine_p);
+  GhConversation *q = deliver(&f, &mine_q);
+
+  /* Old history (before the marker less the grace): nothing. */
+  Rumor old = { .author = PEER[0], .to = { ACCOUNT_A }, .content = "old",
+                .created_at = night - GH_NOTIFIER_LAST_SEEN_GRACE - 1 };
+  deliver(&f, &old);
+  assert_nothing_sent(&f);
+  gh_conversation_mark_read(p);
+
+  /* Overnight (after the marker, and within the grace before it), in two
+   * conversations and a request: one notification per id, each once. */
+  const gint64 times[] = { night - GH_NOTIFIER_LAST_SEEN_GRACE + 60, night + 3600, T0 - 60 };
+  for (guint i = 0; i < G_N_ELEMENTS(times); i++) {
+    Rumor r = { .author = PEER[0], .to = { ACCOUNT_A }, .content = CANARY " overnight",
+                .created_at = times[i] };
+    deliver(&f, &r);
+  }
+  Rumor to_q = { .author = PEER[1], .to = { ACCOUNT_A }, .content = CANARY " q",
+                 .created_at = night + 60 };
+  deliver(&f, &to_q);
+  Rumor stranger = { .author = PEER[3], .to = { ACCOUNT_A }, .content = CANARY " request",
+                     .created_at = night + 120 };
+  GhConversation *request = deliver(&f, &stranger);
+  g_assert_true(gh_conversation_get_is_request(request));
+  settle(&f);
+  g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_CONVERSATION_PREFIX "1"), "title"), ==,
+                  gh_conversation_get_title(p));
+  g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_CONVERSATION_PREFIX "1"), "body"), ==,
+                  "3 new messages");
+  g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_CONVERSATION_PREFIX "2"), "title"), ==,
+                  gh_conversation_get_title(q));
+  /* The request stays in the hidden, count-only notification. */
+  g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_MESSAGES), "title"), ==, "New message");
+  g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_MESSAGES), "body"), ==, "1 new message");
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 3);
+  assert_identity_hidden(PEER[3]);
+  const gchar *const secrets[] = { CANARY, NULL };
+  assert_payloads_hide(secrets);
+  fixture_down(&f);
+
+  /* No marker (the store's first session): what was written before binding
+   * is never notified, so a first backfill is not replayed. */
+  fixture_up(&f, "hidden", FALSE);
+  f.last_seen = 0;
+  gh_conversation_store_set_account(f.model, ACCOUNT_A, NULL, NULL, NULL);
+  open_room(&f, PEER[0], NULL);
+  Rumor before = { .author = PEER[0], .to = { ACCOUNT_A }, .content = "history",
+                   .created_at = T0 - 1 };
+  deliver(&f, &before);
+  assert_nothing_sent(&f);
+  receive(&f, PEER[0], NULL, "new");
+  settle(&f);
   g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 1);
   fixture_down(&f);
 }
@@ -1250,6 +1394,8 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/notifier/no11-locked-notice", test_no11_locked_notice);
   nostrc_test_bus_add_func("/groundhog/notifier/no11-default-settings",
                            test_no11_default_settings);
+  nostrc_test_bus_add_func("/groundhog/notifier/read-by-arrival", test_read_by_arrival);
+  nostrc_test_bus_add_func("/groundhog/notifier/backfill", test_backfill);
   status = g_test_run();
   fake_gtk_notifications_free(fake);
   nostrc_test_bus_down(bus);

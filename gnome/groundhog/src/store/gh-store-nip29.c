@@ -110,8 +110,9 @@ lower_hex(const gchar *s, gsize length)
 
 static gboolean lookup_room(GhStore *store, const gchar *room_id, gboolean *found, gint64 *id,
                             GError **error);
-static gboolean update_read_state(GhStore *store, gint64 conversation_id, gint64 row,
-                                  gboolean force, gint64 *out_unread, GError **error);
+static gboolean update_read_state(GhStore *store, gint64 conversation_id, GhStoreReadMove move,
+                                  gint64 row, gint64 read_seq, gint64 *out_unread,
+                                  GError **error);
 
 /* ---- Groups ------------------------------------------------------------------- */
 
@@ -412,49 +413,15 @@ fail:
   return FALSE;
 }
 
-/* Moves the read marker to row when it sorts after the current one (or
- * always, when force); then recomputes unread_count as the messages from
- * others after the marker. A marker whose row is gone counts as none. */
+/* The group room's read state after a change (gh-store.h GhStoreReadState,
+ * shared with NIP-17 rooms): the unread count is recomputed, *out_unread
+ * (nullable) receives it. */
 static gboolean
-update_read_state(GhStore *store, gint64 conversation_id, gint64 row, gboolean force,
-                  gint64 *out_unread, GError **error)
+update_read_state(GhStore *store, gint64 conversation_id, GhStoreReadMove move, gint64 row,
+                  gint64 read_seq, gint64 *out_unread, GError **error)
 {
-  sqlite3_stmt *stmt = NULL;
-  if (row > 0) {
-    stmt = prepare(store,
-      "UPDATE conversations SET last_read_msg = ?2 WHERE id = ?1 AND (?3 OR "
-      "last_read_msg IS NULL OR NOT EXISTS (SELECT 1 FROM messages r WHERE r.id = last_read_msg) "
-      "OR EXISTS (SELECT 1 FROM messages r, messages m WHERE r.id = last_read_msg AND m.id = ?2 "
-      "AND (m.created_at > r.created_at OR (m.created_at = r.created_at AND "
-      "m.backend_msg_id > r.backend_msg_id))))", error);
-    if (!stmt)
-      return FALSE;
-    BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-    BIND(sqlite3_bind_int64(stmt, 2, row));
-    BIND(sqlite3_bind_int(stmt, 3, force));
-    if (!step_done(store, stmt, "Moving a group's read marker", error))
-      goto fail;
-    g_clear_pointer(&stmt, sqlite3_finalize);
-  }
-  stmt = prepare(store,
-    "UPDATE conversations SET unread_count = (SELECT count(*) FROM messages m "
-    "WHERE m.conversation_id = ?1 AND m.direction = 0 AND NOT EXISTS ("
-    "SELECT 1 FROM conversations c JOIN messages r ON r.id = c.last_read_msg WHERE c.id = ?1 "
-    "AND (m.created_at < r.created_at OR (m.created_at = r.created_at AND "
-    "m.backend_msg_id <= r.backend_msg_id)))) WHERE id = ?1 RETURNING unread_count", error);
-  if (!stmt)
-    return FALSE;
-  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
-  gboolean has_row = FALSE;
-  if (!step_row(store, stmt, &has_row, "Counting a group's unread messages", error))
-    goto fail;
-  if (out_unread)
-    *out_unread = has_row ? sqlite3_column_int64(stmt, 0) : -1;
-  sqlite3_finalize(stmt);
-  return TRUE;
-fail:
-  sqlite3_finalize(stmt);
-  return FALSE;
+  return gh_store_read_state_update(store, conversation_id, move, row, read_seq, out_unread,
+                                    error);
 }
 
 gboolean
@@ -484,7 +451,7 @@ gh_store_nip29_delete_message(GhStore *store, const gchar *room_id, const gchar 
   if (!step_done(store, stmt, "Deleting a group message", error))
     goto fail;
   g_clear_pointer(&stmt, sqlite3_finalize);
-  if (!update_read_state(store, conversation_id, 0, FALSE, NULL, error))
+  if (!update_read_state(store, conversation_id, GH_STORE_READ_RECOUNT, 0, 0, NULL, error))
     goto fail;
   return gh_store_commit(store, error);
 fail:
@@ -524,7 +491,8 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
                GhConversationCommit *commit, GError **error)
 {
   GhStoreNip29 *self = data;
-  (void)wrap_id; /* the event is its own carrier; nothing else to record */
+  /* The event is its own carrier: wrap_id only tells a relay's delivery
+   * from the local echo. */
   if (!check_open(self, error))
     return FALSE;
   if (!gh_message_is_nip29(message) ||
@@ -560,8 +528,17 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
       !message_row(store, conversation_id, m.backend_msg_id, &row, error))
     goto fail;
   if (found && row > 0) {
-    if (!update_read_state(store, conversation_id, own ? row : 0, FALSE, &commit->unread, error))
+    /* An own event: its local echo reads what arrived before it; one another
+     * device posted (first delivered now) moves the reply boundary. */
+    GhStoreReadMove move = !own ? GH_STORE_READ_RECOUNT
+                           : !wrap_id ? GH_STORE_READ_LISTED
+                           : result == GH_STORE_ADMIT_STORED ? GH_STORE_READ_REPLY
+                           : GH_STORE_READ_RECOUNT;
+    gint64 seq = 0;
+    if (!gh_store_message_seq(store, row, &seq, error) ||
+        !update_read_state(store, conversation_id, move, row, seq, &commit->unread, error))
       goto fail;
+    commit->seq = seq;
   } else {
     commit->hidden = TRUE; /* seen only: expired, forgotten room, purged */
   }
@@ -591,7 +568,10 @@ delegate_mark_read(gpointer data, GhConversation *conversation, GhMessage *last_
     return TRUE; /* a memory-only room */
   }
   if (!message_row(store, conversation_id, gh_message_get_rumor_id(last_read), &row, error) ||
-      (row > 0 && !update_read_state(store, conversation_id, row, TRUE, NULL, error)))
+      (row > 0 &&
+       !update_read_state(store, conversation_id, GH_STORE_READ_LISTED, row,
+                          (gint64)MIN(gh_conversation_get_read_seq(conversation),
+                                      (guint64)G_MAXINT64), NULL, error)))
     goto fail;
   return gh_store_commit(store, error);
 fail:
@@ -625,9 +605,10 @@ restore_room(GhStoreNip29 *self, GhConversationStore *model, gint64 conversation
   GhStore *store = self->store;
   const gint64 now = gh_clock_get_unix(gh_store_get_clock(store));
   g_autofree gchar *relay_url = NULL;
-  Place cursor = { 0 }, marker = { 0 };
+  Place cursor = { 0 };
+  GhStoreReadState read = { 0 };
   g_autofree gchar *title = NULL;
-  gint64 unread = 0;
+  gint64 pinned_rank = 0;
   g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
   sqlite3_stmt *stmt = NULL;
   *out_listed = 0;
@@ -641,7 +622,7 @@ restore_room(GhStoreNip29 *self, GhConversationStore *model, gint64 conversation
     cursor.id = g_strdup(floor_id);
   }
   stmt = prepare(store,
-    "SELECT created_at, backend_msg_id, raw_json, expires_at FROM messages "
+    "SELECT created_at, backend_msg_id, raw_json, expires_at, seq FROM messages "
     "WHERE conversation_id = ?1 AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
@@ -683,6 +664,7 @@ restore_room(GhStoreNip29 *self, GhConversationStore *model, gint64 conversation
         g_clear_object(&message);
         continue;
       }
+      gh_message_set_seq(message, (guint64)MAX(sqlite3_column_int64(stmt, 4), 0));
       g_ptr_array_add(messages, message);
     }
   } while (!conversation && messages->len == 0 && more);
@@ -691,9 +673,7 @@ restore_room(GhStoreNip29 *self, GhConversationStore *model, gint64 conversation
     goto done;
 
   stmt = prepare(store,
-    "SELECT c.title, c.unread_count, r.created_at, r.backend_msg_id FROM conversations c "
-    "LEFT JOIN messages r ON r.id = c.last_read_msg AND r.conversation_id = c.id "
-    "WHERE c.id = ?1", error);
+    "SELECT title, pinned_rank FROM conversations WHERE id = ?1", error);
   if (!stmt)
     goto fail;
   BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
@@ -702,33 +682,38 @@ restore_room(GhStoreNip29 *self, GhConversationStore *model, gint64 conversation
     goto fail;
   if (has_row) {
     title = column_text(stmt, 0);
-    unread = sqlite3_column_int64(stmt, 1);
-    marker.has = sqlite3_column_type(stmt, 3) != SQLITE_NULL;
-    marker.created_at = sqlite3_column_int64(stmt, 2);
-    marker.id = column_text(stmt, 3);
+    pinned_rank = sqlite3_column_type(stmt, 1) == SQLITE_NULL
+                    ? 0 : MAX(sqlite3_column_int64(stmt, 1), 1);
   }
   g_clear_pointer(&stmt, sqlite3_finalize);
+  if (!gh_store_read_state_load(store, conversation_id, &read, error))
+    goto fail;
   GhConversationState state = {
     .accepted = TRUE,
-    .has_marker = marker.has,
-    .marker_created_at = marker.created_at,
-    .marker_id = marker.id,
+    .has_marker = read.has_marker,
+    .marker_created_at = read.marker_created_at,
+    .marker_id = read.marker_id,
     .subject = title,
-    .unread = (guint)CLAMP(unread, 0, (gint64)G_MAXUINT),
+    .unread = (guint)CLAMP(read.unread, 0, (gint64)G_MAXUINT),
     .has_older = more && cursor.has,
     .floor_created_at = cursor.created_at,
     .floor_id = cursor.id,
+    .read_seq = (guint64)MAX(read.read_seq, 0),
+    .has_reply = read.has_reply,
+    .reply_created_at = read.reply_created_at,
+    .reply_id = read.reply_id,
+    .pinned_rank = pinned_rank,
   };
   gh_conversation_store_restore(model, room_id, messages, &state);
   *out_listed = messages->len;
 done:
   g_free(cursor.id);
-  g_free(marker.id);
+  gh_store_read_state_clear(&read);
   return TRUE;
 fail:
   sqlite3_finalize(stmt);
   g_free(cursor.id);
-  g_free(marker.id);
+  gh_store_read_state_clear(&read);
   return FALSE;
 }
 

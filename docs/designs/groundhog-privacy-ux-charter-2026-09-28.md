@@ -296,6 +296,9 @@ CREATE TABLE messages (
   UNIQUE (conversation_id, backend_msg_id));
 CREATE INDEX messages_by_time ON messages (conversation_id, created_at, backend_msg_id);
 CREATE INDEX messages_by_expiry ON messages (expires_at) WHERE expires_at IS NOT NULL;
+-- Schema v4 (W18) adds messages.seq and conversations.admit_seq, read_seq,
+-- reply_read_at/_id and timer_changed_at, and outbox_events.no_inbox: see the
+-- read-state amendment below, §3.6 and §3.7.
 
 CREATE TABLE seen (ns INTEGER NOT NULL, id TEXT NOT NULL, first_seen INTEGER NOT NULL,
                    PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg,
@@ -343,6 +346,8 @@ CREATE TABLE mls_snapshots (group_id BLOB NOT NULL, name TEXT NOT NULL, created_
 
 CREATE VIRTUAL TABLE messages_fts USING fts5(body, content='messages', content_rowid='id');  -- optional; search
 ```
+
+*(Amended 2026-09-29, nostrc-qp24.75: read state follows arrival, not only the sender-claimed order. A rumor's `created_at` has whole-second resolution and ties are broken by rumor id, so a place in the message order cannot tell "read" from "arrived later": a message arriving after the user read the room, in the second of the last read one and with a lower id (a burst), or earlier still (a delay, a sender's clock), would count as read, never be notified and be listed above read messages. Every stored message now carries `seq`, its place in the room's arrival order (a per-room counter that never goes back, so a sequence is never reused), and the read marker `last_read_msg` comes with `read_seq`, how far that order it covered: a message is read when it sorts at or before the marker **and** arrived by then. Marking read reads exactly what is listed; a reply written on this device reads what had arrived before it; a reply another device wrote (a relay's self-copy) moves `reply_read_at/_id`, a reply boundary before which everything is read, since it was written there after reading. Read state stays local only (PD-1, P8). A trigger moves a marker off a message row before it is deleted, so a marker never dangles.)*
 
 ### 3.4 Key custody without an nsec (D2)
 
@@ -443,6 +448,8 @@ A failed integrity check puts the store in `STORE_CORRUPT`, read-only with a "Re
 
 A self-copy failure never changes the status. It adds the secondary note "Not saved to your other devices". There is **no** `DELIVERED` or `READ` value (UX-5).
 
+*(Amended 2026-09-29, W18: in a room of several people the copy speaks of everyone, not "the recipient": `CANNOT_SEND_NO_INBOX` reads "Can't send. No one in this conversation has set up private messaging yet." and the conversation banner says the same (nostrc-lff5; §7.15 state 11). Whether a room recipient had no 10050 when last looked up is kept with their stored wrap (`outbox_events.no_inbox`), so after a restart a message that needs attention still says "hasn't set up private messaging" for them, not "Not sent" (nostrc-9cho).)*
+
 ### 3.7 Disappearing messages and retention (NIP-40)
 
 **Outgoing** (conversation setting `disappearing_s` ∈ {off, 1 day, 1 week, 4 weeks}):
@@ -471,6 +478,11 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 - a timer icon on disappearing messages;
 - a local-only timeline row "You set messages to disappear after 1 day";
 - Info row copy: "Messages are deleted from this device when they expire, and relays are asked to delete them. Relays and other people's apps may not honour this."
+
+*(Amended 2026-09-29, nostrc-qp24.83:*
+
+- *The timeline row shows the conversation's latest timer change ("You set messages to disappear after 1 week", "You turned off disappearing messages") after the messages written at or before it. The change's time is kept in the encrypted store (`conversations.timer_changed_at`) so the row survives a restart; forgetting the conversation clears it. It is this device's record only: nothing is sent or published, and the other people are not told (P8).*
+- *The default timer (`default-disappearing-seconds`) applies only to conversations the account starts: by writing, a draft, a timer or pin choice, or its own message from another device. A conversation someone else starts (a message request) begins with the timer off: a stranger's request never gets the account's timer unasked, and accepting and replying uses the timer the composer shows, which the user can set in Conversation Info. This follows the established messenger convention ("default timer for new chats you start"). Preferences says "Only for new conversations you start".)*
 
 ### 3.8 Export, backup and erase
 
@@ -563,7 +575,7 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 - **S1 No startup fan-out.** At launch, open only own inbox, own discovery, and joined group relays. Contact-directory refresh starts U(2, 30) min later, in batches of ≤10 authors in random order and random spacing, each batch on a fresh token.
 - **S2 No send-time lookups for known contacts.** A cache entry younger than 24 h is used as is. A stale entry is still used for the publish, and the refresh happens in the background; new relays found by the refresh are added as targets for the same wrap. Only the first contact with someone triggers a synchronous lookup.
 - **S3 Separate connections.** Recipient and self publications never share a connection. The D8 jitter applies on overlap.
-- **S4 Multi-recipient rooms** (≤10 people, per NIP-17): per-recipient wraps are published in random order with U(0, 3) s spacing.
+- **S4 Multi-recipient rooms** (≤10 people, per NIP-17): per-recipient wraps are published in random order with U(0, 3) s spacing. *(Amended 2026-09-29, nostrc-yp69: on every round. The first round keeps the spacing drawn at T-seal (`outbox_events.not_before`); a retry, a manual Retry and a republish after a restart draw a fresh order and spacing for the wraps due that round, in memory. `GhDmSender`'s direct room send spaces its wraps the same way.)*
 - **S5 Reconnect backoff** is jittered ×U(0.5, 1.5). There are no periodic polls; subscriptions stay open.
 - **S6 Inbox backfill** `since` = min(cursor) − 172 800 − 600 s, paged with `until`.
 - **S7 Account switch** closes every old-generation socket before any new-generation socket opens (existing wire test).
@@ -593,6 +605,7 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 ### 5.2 Rules
 
 - **N1 When not to notify:** self-copies, own messages, expired messages, forgotten or muted conversations, and while that conversation is visible in an active window.
+  - *(Amended 2026-09-29, nostrc-qp24.84: what arrived while Groundhog was not receiving (e.g. overnight, before an autostart at login) is notified when it was written after the account's **last-seen marker**: the inbox checkpoint (the time by which every wrap the inbox relays had was received and settled, see S6), less one hour of clock slack. It coalesces like any burst (N2: one hidden "N new messages" by default), and requests stay hidden. Old history is never replayed: a message written before the marker is not notified, and without a marker (the store's first session, or a store that keeps none) only what is written after the session bound the account is. A message this device already had is never admitted again (the seen set), so nothing is notified twice. Read state follows arrival (§3.3 amendment), so a message that arrives after the room was read is notified wherever its time sorts it.)*
 - **N2 Coalesce:** replace by id; update a given id at most once per 2 s; sound at most once per 10 s (and only if `sound-enabled`).
 - **N3 Withdraw** when the conversation is opened in an active window, on account switch (all ids), on forget, and on purge of the referenced messages.
 - **N4 Category:** `g_notification_set_category("im.received")` (GLib ≥ 2.70; the floor is 2.80).
@@ -708,7 +721,7 @@ Adw.PreferencesDialog: GhPreferencesDialog; Adw.AboutDialog; Gtk.ShortcutsWindow
 |---|---|---|---|
 | `gh-window.blp` (edit) | `template $GhWindow: Adw.ApplicationWindow` | `toasts`, `root_stack`, `split`, breakpoint | Window actions (`win.*`), root-stack switching from `GhStatus` |
 | `gh-sidebar-page.blp` (edit) | `$GhSidebarPage: Adw.NavigationPage` | Header: `account_button` (`MenuButton` → `Adw.Avatar` 24), `window_title`, `new_button` (menu: New Message, New Group), `primary_button`. Also `search_bar`/`search_entry` (`key-capture-widget` = window), `status_banner` (`Adw.Banner`), `stack` (`conversations`, `empty`, `no_results`, `error`, account pages). *(Amended 2026-09-29, nostrc-qp24.70: there is no header `account_button`; the account menu is the main menu's first entry ("Account") and the "Choose an Account" page's button, and `window_title` is the active account's name, without a subtitle, else "Groundhog", so the title fits a 280 px sidebar and the 360 px window.)* | Filter model; banner from `GhStatus` |
-| `gh-conversation-row.blp` (new) | `$GhConversationRow: Gtk.Widget` (box layout) | `avatar` (`Adw.Avatar` 40, initials, **no remote image unless `load-profile-pictures`**), `title_label`, `preview_label` (`.dim-label`, one line), `time_label` (`.caption .numeric`), `unread_badge`, `muted_icon`, `pinned_icon`, `failed_icon`, `kind_icon` | Binds `GhConversation`; context menu (Pin, Mute…, Mark as Read/Unread, Info, Delete…) |
+| `gh-conversation-row.blp` (new) | `$GhConversationRow: Gtk.Widget` (box layout) | `avatar` (`Adw.Avatar` 40, initials, **no remote image unless `load-profile-pictures`**), `title_label`, `preview_label` (`.dim-label`, one line), `time_label` (`.caption .numeric`), `unread_badge`, `muted_icon`, `pinned_icon`, `failed_icon`, `kind_icon` | Binds `GhConversation`; context menu (Pin, Mute…, Mark as Read/Unread, Info, Delete…). *(Amended 2026-09-29, nostrc-qp24.86: Pin or Unpin and Mark as Read or Mark as Unread show whichever applies; a message request has neither. Mark as Unread makes the newest message from someone else unread again, local only. The conversation header's `menu_button` (in `gh-content-page.blp`, beside the info button) carries Conversation Info, Pin or Unpin, Mute…, Disappearing Messages… (Conversation Info at its timer) and Delete Conversation… for a private conversation.)* |
 | `gh-content-page.blp` (edit) | `$GhContentPage: Adw.NavigationPage` | `content_stack` | Shows selection; header title follows the conversation |
 | `gh-conversation-view.blp` (new) | `$GhConversationView: Adw.BreakpointBin` (width-request 300, height-request 240) | `Adw.ToolbarView` (bottom-bar-style `raised_border`) with: `title_button` (`.flat`) → `Adw.WindowTitle title`, `menu_button`, `banner`, `Overlay` { `scroller` → `Adw.ClampScrollable` (maximum-size 760, tightening-threshold 560) → `ListView message_list`; `jump_button` (`.osd .circular`) }, `[bottom] $GhComposer composer`. Breakpoints: `max-width: 480sp` → `composer.compact=true`, `max-height: 360sp` → `composer.max-lines=3` | Scroll anchoring (stick to bottom unless scrolled up), load-earlier paging, announcements |
 | `gh-message-row.blp` (new) | `$GhMessageRow: Gtk.Widget` | `sender_label` (groups, first in run), `bubble` (`.message-bubble` + `.incoming`/`.outgoing`, halign start/end), `body_label` (wrap `word_char`, selectable, xalign 0, escaped markup), `attachment_slot`, `meta_box`{`timer_icon`, `time_label`, `$GhDeliveryIndicator delivery`}, `retry_button` | Run grouping classes (`.run-start/.run-mid/.run-end`); linkify via `GhLinkPolicy` |
@@ -833,6 +846,7 @@ If blueprint-compiler 0.12 (the CI version) rejects a `template ListHeader` insi
 - **Model.** `GtkSingleSelection(GtkFilterListModel(GtkSortListModel(GhConversationStore)))`.
   - Sorted by pinned rank, then `last-activity` descending.
   - Sections "Pinned" and "Recent" come from the `section-sorter` (GTK 4.12); there are no headers when nothing is pinned.
+  - *(Amended 2026-09-29, nostrc-qp24.86: pinned conversations are listed in the order they were pinned, a new pin after the others; a new message does not move a pinned conversation. The pin is `conversations.pinned_rank` in the encrypted store (PD-11), never GSettings, and never published.)*
   - The filter covers search text (title and participant names; message bodies only through FTS on explicit "Search Messages") and excludes requests.
   - A single-click-activate row runs `win.show-conversation`.
 - **Requests entry.** When requests exist, a first row "Message Requests · N" opens `content_stack:requests`.
@@ -861,7 +875,7 @@ If blueprint-compiler 0.12 (the CI version) rejects a `template ListHeader` insi
   - "Unable to decrypt yet" (MLS);
   - "Loading earlier messages" (`GtkSpinner`);
   - a local timer-change row.
-- **Scrolling.** The view sticks to the bottom when already at the bottom. Otherwise it shows `jump_button` with an unread count. Opening a conversation scrolls to the first unread and marks messages read locally only (P8).
+- **Scrolling.** The view sticks to the bottom when already at the bottom. Otherwise it shows `jump_button` with an unread count. Opening a conversation scrolls to the first unread and marks messages read locally only (P8). *(Amended 2026-09-29, nostrc-qp24.75: the first unread can sort before read messages when it arrived later; see the §3.3 amendment.)*
 - **Links.** Per PD-3, activated through `GtkUriLauncher`. Previews per §2.1.
 
 ### 7.7 Composer

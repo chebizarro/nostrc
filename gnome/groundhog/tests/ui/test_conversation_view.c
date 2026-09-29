@@ -20,6 +20,7 @@
 #include "gh-conversation-private.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
+#include "gh-timeline-row.h"
 #include "gh-delivery-indicator.h"
 #include "gh-message-row.h"
 
@@ -225,17 +226,27 @@ collect(GtkWidget *widget, GType type, GPtrArray *found)
   }
 }
 
+/* A list item widget's message row (its child is a GhTimelineRow), or NULL
+ * for a header or a local event. */
+static GhMessageRow *
+item_row(GtkWidget *item)
+{
+  GtkWidget *child = gtk_widget_get_first_child(item);
+  if (!GH_IS_TIMELINE_ROW(child))
+    return NULL;
+  GhMessageRow *row = gh_timeline_row_get_message_row(GH_TIMELINE_ROW(child));
+  return gh_message_row_get_message(row) ? row : NULL;
+}
+
 /* The list item widgets holding a bound GhMessageRow, in list order. */
 static GPtrArray *
 item_widgets(GhConversationView *view)
 {
   GPtrArray *items = g_ptr_array_new();
   GtkWidget *list = GTK_WIDGET(gh_conversation_view_get_message_list(view));
-  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c)) {
-    GtkWidget *child = gtk_widget_get_first_child(c);
-    if (GH_IS_MESSAGE_ROW(child) && gh_message_row_get_message(GH_MESSAGE_ROW(child)))
+  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c))
+    if (item_row(c))
       g_ptr_array_add(items, c);
-  }
   return items;
 }
 
@@ -245,7 +256,7 @@ item_for(GhConversationView *view, GhMessage *message)
   g_autoptr(GPtrArray) items = item_widgets(view);
   for (guint i = 0; i < items->len; i++) {
     GtkWidget *item = g_ptr_array_index(items, i);
-    if (gh_message_row_get_message(GH_MESSAGE_ROW(gtk_widget_get_first_child(item))) == message)
+    if (gh_message_row_get_message(item_row(item)) == message)
       return item;
   }
   return NULL;
@@ -257,7 +268,7 @@ row_for(GhConversationView *view, GhMessage *message)
   GtkWidget *item = item_for(view, message);
   if (!item)
     g_error("no row for \"%s\"", gh_message_get_content(message));
-  return GH_MESSAGE_ROW(gtk_widget_get_first_child(item));
+  return item_row(item);
 }
 
 /* The day separator texts, in list order. */
@@ -692,7 +703,17 @@ test_delivery_indicator(Fixture *f, gconstpointer data)
     g_assert_true(gh_message_status_get_icon_name(status) != NULL);
     g_assert_false(g_regex_match(claims, label, 0, NULL));
     g_assert_false(g_regex_match(claims, description, 0, NULL));
+    /* nostrc-lff5: a room's description never speaks of one recipient. */
+    const gchar *room = gh_message_status_get_accessible_description_for(status, 3);
+    g_assert_true(room && *room);
+    g_assert_false(g_regex_match(claims, room, 0, NULL));
+    g_assert_null(strstr(room, "The recipient"));
+    g_assert_null(strstr(room, "the recipient's"));
+    g_assert_cmpstr(gh_message_status_get_accessible_description_for(status, 1), ==, description);
   }
+  g_assert_cmpstr(gh_message_status_get_accessible_description_for(
+                    GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX, 2), ==,
+                  "Can't send. No one in this conversation has set up private messaging yet.");
 
   gint64 t = noon_today();
   GhMessage *theirs = add_dm(f->store, 2, 1, t, "hello");
@@ -1499,6 +1520,19 @@ test_states(Fixture *f, gconstpointer data)
   AdwBanner *banner = view_child(f->view, "banner");
   g_assert_false(adw_banner_get_revealed(banner));
   gh_conversation_view_set_recipient_without_inbox(f->view, "Alice");
+  g_assert_true(adw_banner_get_revealed(banner));
+  g_assert_cmpstr(adw_banner_get_title(banner), ==, "Alice hasn't set up private messaging yet");
+  gh_conversation_view_set_recipient_without_inbox(f->view, NULL);
+  g_assert_false(adw_banner_get_revealed(banner));
+  /* nostrc-lff5: a room where nobody has one says so, over a name. */
+  gh_conversation_view_set_room_without_inbox(f->view, TRUE);
+  g_assert_true(adw_banner_get_revealed(banner));
+  g_assert_cmpstr(adw_banner_get_title(banner), ==,
+                  "No one in this conversation has set up private messaging yet");
+  gh_conversation_view_set_recipient_without_inbox(f->view, "Alice");
+  g_assert_cmpstr(adw_banner_get_title(banner), ==,
+                  "No one in this conversation has set up private messaging yet");
+  gh_conversation_view_set_room_without_inbox(f->view, FALSE);
   g_assert_true(adw_banner_get_revealed(banner));
   g_assert_cmpstr(adw_banner_get_title(banner), ==, "Alice hasn't set up private messaging yet");
   gh_conversation_view_set_recipient_without_inbox(f->view, NULL);

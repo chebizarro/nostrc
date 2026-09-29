@@ -11,7 +11,9 @@ using Adw 1;
 // wrapped "why you can't send" reason gets the height of every line on
 // libadwaita 1.5 too. The page's breakpoints (charter §7.12, UX-2) make the
 // composer compact below 480sp and cap it at 3 lines below 360sp; the
-// minimum size leaves the 360x294 window usable (UX-1).
+// minimum size leaves the 360x294 window usable (UX-1). The conversation
+// menu (charter §7.4 conversation_menu, nostrc-qp24.86) shows with a
+// private conversation; gh-conversation-menu.c owns its actions and shows it.
 template $GhContentPage: Adw.NavigationPage {
   title: _("Messages");
 
@@ -21,6 +23,18 @@ template $GhContentPage: Adw.NavigationPage {
       title-widget: Adw.WindowTitle window_title {
         title: _("Messages");
       };
+
+      [end]
+      MenuButton menu_button {
+        visible: false;
+        icon-name: "view-more-symbolic";
+        tooltip-text: _("Conversation Menu");
+        menu-model: conversation_menu;
+
+        accessibility {
+          label: _("Conversation Menu");
+        }
+      }
 
       // Conversation Info (charter §7.4, G19): shown with a conversation;
       // win.conversation-info comes from gh-conversation-info-dialog.c.
@@ -101,4 +115,50 @@ template $GhContentPage: Adw.NavigationPage {
       }
     };
   };
+}
+
+// The shown conversation's menu (gh-conversation-menu.c): each item acts on
+// the conversation the page shows. Of Pin and Unpin only the one that
+// applies shows.
+menu conversation_menu {
+  section {
+    item {
+      label: _("Conversation _Info");
+      action: "win.conversation-info";
+    }
+
+    item {
+      label: _("_Pin");
+      action: "win.pin-shown-conversation";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("Un_pin");
+      action: "win.unpin-shown-conversation";
+      hidden-when: "action-disabled";
+    }
+  }
+
+  section {
+    item {
+      label: _("_Mute…");
+      action: "win.mute-shown-conversation";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("_Disappearing Messages…");
+      action: "win.disappearing-shown-conversation";
+      hidden-when: "action-disabled";
+    }
+  }
+
+  section {
+    item {
+      label: _("_Delete Conversation…");
+      action: "win.delete-shown-conversation";
+      hidden-when: "action-disabled";
+    }
+  }
 }

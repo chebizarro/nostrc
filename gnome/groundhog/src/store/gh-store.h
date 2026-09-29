@@ -363,9 +363,20 @@ gboolean gh_store_get_disappearing(GhStore *store, gint64 conversation_id,
                                    gint64 *out_seconds, GError **error);
 gboolean gh_store_set_disappearing(GhStore *store, gint64 conversation_id,
                                    gint64 seconds, GError **error);
-/* The timer every conversation created from now on starts with, however it
- * is created (sent to, received from, a draft); 0 (the default) is off.
- * Kept in memory only: the owner sets it again after each open. */
+/* When the timer last changed (a set that changed its value), in unix seconds
+ * on the store's clock (0: never), and the timer: the local timeline row
+ * "You set messages to disappear after 1 day" (charter §3.7 UI; nostrc-
+ * qp24.83). Local only: it is never published. NOT_FOUND if absent. */
+gboolean gh_store_get_timer_change(GhStore *store, gint64 conversation_id,
+                                   gint64 *out_seconds, gint64 *out_changed_at,
+                                   GError **error);
+/* The timer the conversations the account starts from now on begin with; 0
+ * (the default) is off. A conversation is the account's when it is created
+ * accepted: by writing (T-enqueue), a draft, a timer choice, or an own
+ * message (T-admit of a self-copy). One someone else starts (created by
+ * T-admit as a message request) begins with the timer off, so a stranger's
+ * request never gets the account's timer unasked (nostrc-qp24.83; charter
+ * §3.7). Kept in memory only: the owner sets it again after each open. */
 void gh_store_set_default_disappearing(GhStore *store, gint64 seconds);
 
 /* Called on the store's thread right after T-admit or T-enqueue stored a
@@ -378,6 +389,62 @@ typedef void (*GhStoreExpiryFunc)(gint64 expires_at, gpointer user_data);
  * it is replaced or the store closes. */
 void gh_store_set_expiry_notify(GhStore *store, GhStoreExpiryFunc func,
                                 gpointer user_data, GDestroyNotify destroy);
+
+/* ---- Read state (§3.3 last_read_msg; schema v4, nostrc-qp24.75) ----------------------
+ * Local only (charter PD-1, P8): nothing here is ever published. A room's
+ * read state is
+ *   - the marker (last_read_msg): a message's place in the room's order
+ *     (created_at, then message id), with read_seq, how far the room's
+ *     arrival order (messages.seq) it covered: a message is read when it
+ *     sorts at or before the marker and arrived by then. One that arrives
+ *     later is unread wherever it sorts;
+ *   - the reply boundary (reply_read_at/_id): the newest own message another
+ *     device wrote; everything at or before it is read, whenever it arrives.
+ * unread_count is the room's messages from others that are not read. */
+typedef struct {
+  gboolean has_marker;
+  gint64 marker_row;        /* messages.id; 0 when the marker lies before every row */
+  gint64 marker_created_at;
+  gchar *marker_id;
+  gint64 read_seq;
+  gboolean has_reply;
+  gint64 reply_created_at;
+  gchar *reply_id;
+  gint64 unread;
+  gint64 admit_seq;         /* the room's arrival counter: its newest seq */
+} GhStoreReadState;
+
+void gh_store_read_state_clear(GhStoreReadState *state);
+/* The room's read state. A marker whose row is gone (a store older than
+ * schema v4) is taken to lie just before the newest unread_count messages.
+ * NOT_FOUND if the room is absent. */
+gboolean gh_store_read_state_load(GhStore *store, gint64 conversation_id,
+                                  GhStoreReadState *out_state, GError **error);
+
+typedef enum {
+  GH_STORE_READ_RECOUNT,  /* recompute unread_count only */
+  /* @row was read on this device: shown (mark read, read_seq the listed
+   * messages' newest seq) or written here (an own message, read_seq its
+   * seq). The marker moves to it when it sorts later; read_seq only grows. */
+  GH_STORE_READ_LISTED,
+  /* @row is an own message another device wrote: the reply boundary moves
+   * to it when it sorts later. */
+  GH_STORE_READ_REPLY,
+  /* Mark as unread: @row (a message from someone else) and everything after
+   * it become unread; everything before it stays read. */
+  GH_STORE_READ_UNREAD,
+} GhStoreReadMove;
+
+/* Applies @move with @row (a message of the room; ignored for RECOUNT) and
+ * @read_seq (LISTED only), then recomputes unread_count, in the caller's
+ * transaction if any. *out_unread (nullable) is the new count. */
+gboolean gh_store_read_state_update(GhStore *store, gint64 conversation_id,
+                                    GhStoreReadMove move, gint64 row, gint64 read_seq,
+                                    gint64 *out_unread, GError **error);
+/* The message's arrival sequence in its room (messages.seq; 0 for a row
+ * stored before schema v4). NOT_FOUND if absent. */
+gboolean gh_store_message_seq(GhStore *store, gint64 message_row, gint64 *out_seq,
+                              GError **error);
 
 /* ---- Cursors (§3.3 `cursors`) -------------------------------------------------------
  * Sync checkpoints kept inside the encrypted store, e.g. the NIP-17 inbox's
@@ -484,6 +551,7 @@ typedef struct {
   const gchar *event_json;          /* signed; republished byte-identically */
   gint64 not_before;                /* unix seconds; 0 = immediately (D8) */
   const gchar *const *relay_urls;   /* NULL-terminated target snapshot */
+  gboolean no_inbox;                /* recipient wrap: they had no usable 10050 */
 } GhStoreSealedEvent;
 
 /* T-seal: every signed event, its target URL snapshot and state SEALED, in
@@ -533,6 +601,7 @@ typedef struct {
   gchar *event_json;         /* signed, byte-identical to T-seal; NULL once pruned */
   gint64 not_before;         /* unix seconds; 0 = immediately (D8) */
   GPtrArray *targets;        /* GhStoreOutboxTarget, ordered by URL */
+  gboolean no_inbox;         /* the recipient had no usable 10050 when last looked up */
 } GhStoreOutboxEvent;
 
 typedef struct {
@@ -583,6 +652,11 @@ typedef struct {
  * absent. */
 gboolean gh_store_outbox_update(GhStore *store, gint64 outbox_id,
                                 const GhStoreOutboxUpdate *update, GError **error);
+/* Records whether the recipient of a stored wrap had no usable kind-10050
+ * when last looked up (nostrc-9cho), so the verdict outlives the session.
+ * NOT_FOUND if absent. */
+gboolean gh_store_outbox_set_no_inbox(GhStore *store, gint64 outbox_event_id,
+                                      gboolean no_inbox, GError **error);
 /* The user deleted a message before it settled: deletes the entry (its events
  * and targets cascade) and its outgoing message (with a decrypted attachment
  * only it named, gh-store-media.h) in one transaction, then
@@ -654,7 +728,7 @@ gboolean gh_store_checkpoint(GhStore *store, GError **error);
  * Ordered, append-only migrations; each runs in one transaction that also
  * records it in schema_migrations and sets PRAGMA user_version. A store with
  * a higher user_version is refused (NEWER_SCHEMA). */
-#define GH_STORE_SCHEMA_VERSION 3
+#define GH_STORE_SCHEMA_VERSION 4
 
 typedef struct {
   gint version;

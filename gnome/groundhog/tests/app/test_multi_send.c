@@ -1246,6 +1246,73 @@ test_wire_missing_inbox(void)
   relay_clear(&own);
 }
 
+/* nostrc-9cho: what the lookups found about recipients without a 10050
+ * outlives a restart. In a message that needs attention Carol stays "no
+ * inbox" (not "not sent"): her stored wrap without targets is marked so;
+ * and when nobody had one (nothing sealed) every recipient stays "no inbox".
+ * Once Carol sets one up, Retry reaches her and the mark goes. */
+static void
+test_wire_no_inbox_restart(void)
+{
+  WireRelay bob_only = { 0 }, carol_new = { 0 }, own = { 0 };
+  store_relay(&bob_only);
+  store_relay(&carol_new);
+  store_relay(&own);
+  Fixture f;
+  fixture_up(&f);
+  fake_resolver_set(f.resolver, hex[KEY_BOB], GH_INBOX_FOUND, bob_only.url, NULL);
+  settle_own(&f, own.url, NULL); /* Carol and Dave: NOT_FOUND */
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) item = send_room(&f, "Carol has none", hex[KEY_BOB], hex[KEY_CAROL],
+                                           NULL);
+  wait_until(&f, item, GH_MESSAGE_STATUS_PARTIALLY_SENT);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_NEEDS_ATTENTION);
+  g_assert_cmpint(state_of(item, KEY_CAROL), ==, GH_OUTBOX_RECIPIENT_NO_INBOX);
+  g_autoptr(GhStoreOutboxEntry) entry = load_entry(&f, item);
+  g_assert_true(entry_wrap_for(entry, hex[KEY_CAROL], GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP)->no_inbox);
+  g_assert_false(entry_wrap_for(entry, hex[KEY_BOB], GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP)->no_inbox);
+  g_autofree gchar *stranger = hex_of("stranger");
+  g_autoptr(GhOutboxItem) nobody = send_room(&f, "Anyone?", hex[KEY_DAVE], stranger, NULL);
+  wait_until(&f, nobody, GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX);
+  gint64 item_id = gh_outbox_item_get_outbox_id(item);
+  gint64 nobody_id = gh_outbox_item_get_outbox_id(nobody);
+
+  /* A restart: a new outbox over the same store. */
+  gh_test_release(f.outbox);
+  f.outbox = NULL;
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) resumed = gh_outbox_lookup(f.outbox, item_id);
+  g_assert_nonnull(resumed);
+  g_assert_cmpint(gh_outbox_item_get_status(resumed), ==, GH_MESSAGE_STATUS_PARTIALLY_SENT);
+  g_assert_cmpint(state_of(resumed, KEY_CAROL), ==, GH_OUTBOX_RECIPIENT_NO_INBOX);
+  g_assert_cmpint(state_of(resumed, KEY_BOB), ==, GH_OUTBOX_RECIPIENT_SENT);
+  g_autoptr(GhOutboxItem) resumed_nobody = gh_outbox_lookup(f.outbox, nobody_id);
+  g_assert_nonnull(resumed_nobody);
+  g_assert_cmpint(gh_outbox_item_get_status(resumed_nobody), ==,
+                  GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX);
+  g_assert_cmpint(state_of(resumed_nobody, KEY_DAVE), ==, GH_OUTBOX_RECIPIENT_NO_INBOX);
+  /* nostrc-lff5: its accessible description speaks of everyone. */
+  g_assert_cmpstr(gh_outbox_item_get_accessible_description(resumed_nobody), ==,
+                  "Can't send. No one in this conversation has set up private messaging yet.");
+  g_autoptr(GPtrArray) strangers = gh_outbox_item_dup_recipients(resumed_nobody);
+  g_assert_cmpint(recipient_in(strangers, stranger)->state, ==, GH_OUTBOX_RECIPIENT_NO_INBOX);
+
+  /* Carol sets one up: Retry publishes her stored wrap and drops the mark. */
+  fake_resolver_set(f.resolver, hex[KEY_CAROL], GH_INBOX_FOUND, carol_new.url, NULL);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_outbox_retry(f.outbox, item_id, &error));
+  g_assert_no_error(error);
+  wait_until(&f, resumed, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpint(state_of(resumed, KEY_CAROL), ==, GH_OUTBOX_RECIPIENT_SENT);
+  g_autoptr(GhStoreOutboxEntry) after = load_entry(&f, resumed);
+  g_assert_false(entry_wrap_for(after, hex[KEY_CAROL], GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP)->no_inbox);
+  g_assert_cmpuint(carol_new.events, ==, 1);
+  fixture_down(&f);
+  relay_clear(&bob_only);
+  relay_clear(&carol_new);
+  relay_clear(&own);
+}
+
 /* A lookup that failed is not "no inbox": Carol's wrap waits, the message
  * retries on its own, and the next round finds her list. When nobody can
  * be reached nothing is sealed at all: "Can't send" (no list anywhere, no
@@ -1408,6 +1475,77 @@ test_wire_spacing(void)
     relay_clear(relays[i]);
 }
 
+/* nostrc-yp69: S4 on every round, not only the first. All three
+ * recipients' relays are down for the first round (which runs on the
+ * spacing drawn at T-seal, all at once here); for the retry they are back,
+ * and the round draws its own random order and spacing in memory: with
+ * scripted draws Dave at once, Bob 1 s later, Carol 2 s after him, never all
+ * three back to back in "p" order. The stored not_before stays as sealed. */
+static void
+test_wire_retry_spacing(void)
+{
+  guint16 ports[3] = { 0 };
+  g_autofree gchar *bob_url = unused_relay_url(&ports[0]);
+  g_autofree gchar *carol_url = unused_relay_url(&ports[1]);
+  g_autofree gchar *dave_url = unused_relay_url(&ports[2]);
+  WireRelay bob_back = { 0 }, carol_back = { 0 }, dave_back = { 0 }, own = { 0 };
+  store_relay(&own);
+
+  Fixture f;
+  fixture_up(&f);
+  fake_resolver_set(f.resolver, hex[KEY_BOB], GH_INBOX_FOUND, bob_url, NULL);
+  fake_resolver_set(f.resolver, hex[KEY_CAROL], GH_INBOX_FOUND, carol_url, NULL);
+  fake_resolver_set(f.resolver, hex[KEY_DAVE], GH_INBOX_FOUND, dave_url, NULL);
+  settle_own(&f, own.url, NULL);
+  fixture_outbox(&f);
+  /* T-seal's S4 draws: no reordering, no gaps. */
+  for (guint i = 0; i < 4; i++)
+    gh_clock_fake_push_random(f.clock, 0);
+  g_autoptr(GhOutboxItem) item = send_room(&f, "spaced again", hex[KEY_BOB], hex[KEY_CAROL],
+                                           hex[KEY_DAVE], NULL);
+  wait_until(&f, item, GH_MESSAGE_STATUS_RETRYING);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_WAITING_RETRY);
+  g_autoptr(GhStoreOutboxEntry) sealed = load_entry(&f, item);
+
+  WireRelay *back[] = { &bob_back, &carol_back, &dave_back };
+  const gchar *urls[] = { bob_url, carol_url, dave_url };
+  for (guint i = 0; i < G_N_ELEMENTS(back); i++) {
+    back[i]->url = g_strdup(urls[i]);
+    back[i]->serve = TRUE;
+    relay_init_port(back[i], ports[i]);
+  }
+  /* The retry round's draws: the shuffle of Bob, Carol, Dave (Fisher-Yates
+   * from the end: j = 1, then 0: Dave, Bob, Carol) and two gaps. */
+  const guint32 draws[] = { 1, 0, 1, 2 };
+  for (guint i = 0; i < G_N_ELEMENTS(draws); i++)
+    gh_clock_fake_push_random(f.clock, draws[i]);
+  advance_to_next(&f); /* the retry is due */
+  wait_for_count(&dave_back.events, 1);
+  drain();
+  g_assert_cmpuint(bob_back.events + carol_back.events, ==, 0);
+  gh_clock_fake_advance(f.clock, 1 * G_USEC_PER_SEC);
+  wait_for_count(&bob_back.events, 1);
+  drain();
+  g_assert_cmpuint(carol_back.events, ==, 0);
+  gh_clock_fake_advance(f.clock, 2 * G_USEC_PER_SEC);
+  wait_for_count(&carol_back.events, 1);
+  wait_until(&f, item, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_SETTLED);
+  /* In memory only: what T-seal stored is unchanged. */
+  g_autoptr(GhStoreOutboxEntry) settled = load_entry(&f, item);
+  const guint keys[] = { KEY_BOB, KEY_CAROL, KEY_DAVE };
+  for (guint i = 0; i < G_N_ELEMENTS(keys); i++)
+    g_assert_cmpint(entry_wrap_for(settled, hex[keys[i]],
+                                   GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP)->not_before, ==,
+                    entry_wrap_for(sealed, hex[keys[i]],
+                                   GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP)->not_before);
+  g_assert_cmpuint(own.events, ==, 1);
+  fixture_down(&f);
+  WireRelay *relays[] = { &bob_back, &carol_back, &dave_back, &own };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
+    relay_clear(relays[i]);
+}
+
 /* ---- GhDmSender directly ------------------------------------------------------ */
 
 typedef struct {
@@ -1491,6 +1629,54 @@ test_wire_dm_sender(void)
   g_assert_cmpint(gh_dm_send_get_status(too_many)->failure, ==, GH_DM_SEND_FAILURE_INVALID);
   fixture_down(&f);
   relay_clear(&bob_only);
+  relay_clear(&own);
+}
+
+/* nostrc-yp69, the direct path: gh_dm_sender_send_room() spaces a room's
+ * wraps too, on the sender's clock. With scripted draws Carol goes at once
+ * and Bob 2 s later; the self-copy goes at once. */
+static void
+test_wire_dm_sender_spacing(void)
+{
+  WireRelay bob_only = { 0 }, carol_only = { 0 }, own = { 0 };
+  store_relay(&bob_only);
+  store_relay(&carol_only);
+  store_relay(&own);
+  Fixture f;
+  fixture_up(&f);
+  gh_dm_sender_set_clock(f.sender, f.clock);
+  fake_resolver_set(f.resolver, hex[KEY_BOB], GH_INBOX_FOUND, bob_only.url, NULL);
+  fake_resolver_set(f.resolver, hex[KEY_CAROL], GH_INBOX_FOUND, carol_only.url, NULL);
+  settle_own(&f, own.url, NULL);
+  /* The shuffle of Bob, Carol (j = 0: Carol first) and the gap. */
+  gh_clock_fake_push_random(f.clock, 0);
+  gh_clock_fake_push_random(f.clock, 2);
+  const gchar *const bob_carol[] = { hex[KEY_BOB], hex[KEY_CAROL], NULL };
+  g_autoptr(GhDmSend) send = gh_dm_sender_send_room(f.sender, bob_carol, "spaced directly",
+                                                    NULL);
+  wait_for_count(&carol_only.events, 1);
+  wait_for_count(&own.events, 1);
+  drain();
+  g_assert_cmpuint(bob_only.events, ==, 0);
+  g_assert_false(gh_dm_send_is_done(send));
+  gh_clock_fake_advance(f.clock, 2 * G_USEC_PER_SEC);
+  wait_for_count(&bob_only.events, 1);
+  DoneWait wait = { send };
+  gh_test_spin_until(send_done, &wait);
+  g_assert_cmpint(gh_dm_send_get_status(send)->result, ==, GH_DM_SEND_RESULT_SENT);
+  /* Cancelled while a wrap waits: nothing more goes out. */
+  gh_clock_fake_push_random(f.clock, 0);
+  gh_clock_fake_push_random(f.clock, 3);
+  g_autoptr(GhDmSend) cancelled = gh_dm_sender_send_room(f.sender, bob_carol, "never both",
+                                                         NULL);
+  wait_for_count(&carol_only.events, 2);
+  gh_dm_send_cancel(cancelled);
+  gh_clock_fake_advance(f.clock, 3 * G_USEC_PER_SEC);
+  drain();
+  g_assert_cmpuint(bob_only.events, ==, 1);
+  fixture_down(&f);
+  relay_clear(&bob_only);
+  relay_clear(&carol_only);
   relay_clear(&own);
 }
 
@@ -1674,9 +1860,12 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/multi-send/wire/room", test_wire_room);
   g_test_add_func("/groundhog/multi-send/wire/partial-retry", test_wire_partial_retry);
   g_test_add_func("/groundhog/multi-send/wire/missing-inbox", test_wire_missing_inbox);
+  g_test_add_func("/groundhog/multi-send/wire/no-inbox-restart", test_wire_no_inbox_restart);
   g_test_add_func("/groundhog/multi-send/wire/lookup-and-nobody", test_wire_lookup_and_nobody);
   g_test_add_func("/groundhog/multi-send/wire/disappearing", test_wire_disappearing);
   g_test_add_func("/groundhog/multi-send/wire/spacing", test_wire_spacing);
+  g_test_add_func("/groundhog/multi-send/wire/retry-spacing", test_wire_retry_spacing);
+  g_test_add_func("/groundhog/multi-send/wire/dm-sender-spacing", test_wire_dm_sender_spacing);
   g_test_add_func("/groundhog/multi-send/wire/dm-sender", test_wire_dm_sender);
 #if GROUNDHOG_TEST_ATTACHMENTS
   g_test_add_func("/groundhog/multi-send/wire/room-file", test_wire_room_file);

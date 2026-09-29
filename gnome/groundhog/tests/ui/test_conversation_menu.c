@@ -23,6 +23,9 @@
 #include "gh-conversation-menu.h"
 #include "gh-conversation-private.h"
 #include "gh-conversation-row.h"
+#include "gh-conversation-view.h"
+#include "gh-expiry.h"
+#include "gh-shell.h"
 #include "gh-store-conversations.h"
 #include "gh-test-dialog.h"
 
@@ -95,6 +98,7 @@ typedef struct {
   GhStore *store;
   GhConversationStore *model;
   GhStoreConversations *conversations;
+  GhExpiry *expiry; /* the timer row's (nostrc-qp24.86 Disappearing Messages…) */
 } Account;
 
 static void
@@ -109,11 +113,15 @@ account_up(Account *a)
   a->conversations = gh_store_conversations_new(a->store);
   g_assert_true(gh_store_conversations_attach(a->conversations, a->model, 0, &error));
   g_assert_no_error(error);
+  GhExpiryConfig expiry = { .store = a->store, .conversations = a->conversations };
+  a->expiry = gh_expiry_new(&expiry);
 }
 
 static void
 account_down(Account *a)
 {
+  g_object_run_dispose(G_OBJECT(a->expiry));
+  g_clear_object(&a->expiry);
   gh_store_conversations_close(a->conversations);
   g_clear_object(&a->conversations);
   gh_conversation_store_set_account(a->model, NULL, NULL, NULL, NULL);
@@ -327,6 +335,7 @@ services_func(GhConversationInfoServices *services, gpointer data)
     .model = g->account.model,
     .conversations = g->with_store ? g->account.conversations : NULL,
     .store = g->with_store ? g->account.store : NULL,
+    .expiry = g->with_store ? g->account.expiry : NULL,
     .profile = profile,
   };
   return TRUE;
@@ -443,11 +452,12 @@ test_gui_menu(void)
   g_autofree gchar *room = g_strdup(gh_conversation_get_room_id(conversation));
   GhConversationRow *row = row_of(&g, conversation);
 
-  /* The menu: Mute…, Conversation Info, Delete…, for this row's room. */
+  /* The menu, for this row's room: Pin or Unpin and Mark as Read or Unread
+   * (nostrc-qp24.86); Mute…, Conversation Info; Delete…. */
   GtkPopover *menu = gh_conversation_row_get_menu(row);
   g_assert_true(GTK_IS_POPOVER_MENU(menu));
   GMenuModel *model = gtk_popover_menu_get_menu_model(GTK_POPOVER_MENU(menu));
-  g_assert_cmpint(g_menu_model_get_n_items(model), ==, 2);
+  g_assert_cmpint(g_menu_model_get_n_items(model), ==, 3);
   AdwAlertDialog *alert = row_alert(&g, row, "row.mute");
   /* The person as Conversation Info names them (their cached name). */
   g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, "Mute Alice?");
@@ -494,6 +504,220 @@ test_gui_menu(void)
   g_assert_null(gh_conversation_store_lookup(g.account.model, room));
   g_assert_cmpstr(gh_conversation_menu_get_last_toast(g.window), ==,
                   "Conversation deleted from this device");
+  gui_down(&g);
+}
+
+/* The sidebar list's section header texts, in list order. */
+static GPtrArray *
+section_texts(Gui *g)
+{
+  GPtrArray *texts = g_ptr_array_new();
+  GtkWidget *list = GTK_WIDGET(gh_sidebar_page_get_list(gh_window_get_sidebar(g->window)));
+  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c))
+    if (g_str_equal(gtk_widget_get_css_name(c), "header") &&
+        GTK_IS_LABEL(gtk_widget_get_first_child(c)))
+      g_ptr_array_add(texts, (gpointer)gtk_label_get_text(GTK_LABEL(gtk_widget_get_first_child(c))));
+  return texts;
+}
+
+typedef struct {
+  Gui *g;
+  const gchar *expected; /* "|"-joined */
+} SectionsWait;
+
+static gboolean
+sections_are(gpointer data)
+{
+  SectionsWait *wait = data;
+  g_autoptr(GPtrArray) texts = section_texts(wait->g);
+  g_ptr_array_add(texts, NULL);
+  g_autofree gchar *joined = g_strjoinv("|", (gchar **)texts->pdata);
+  return g_strcmp0(joined, wait->expected) == 0;
+}
+
+static gpointer
+listed_first(Gui *g)
+{
+  GListModel *model = G_LIST_MODEL(gtk_list_view_get_model(
+    gh_sidebar_page_get_list(gh_window_get_sidebar(g->window))));
+  return g_list_model_get_n_items(model) ? g_list_model_get_item(model, 0) : NULL;
+}
+
+/* Runs an enabled row action, as its (shown) menu item does. */
+static gboolean
+action_enabled(GhConversationRow *row, const char *action)
+{
+  return gtk_widget_activate_action(GTK_WIDGET(row), action, NULL);
+}
+
+/* nostrc-qp24.86: Pin and Mark as Read/Unread from a row's menu. A pinned
+ * conversation is listed first, under "Pinned" (the others under "Recent"),
+ * whatever arrives later; there are no headers while nothing is pinned. The
+ * pin lives in the encrypted store's conversations row (PD-11), survives a
+ * restart of the model and is never published. Mark as Unread makes the
+ * newest message unread again (a badge, a count); Mark as Read reads it. Of
+ * each pair only the one that applies runs. */
+static void
+test_gui_pin_and_read(void)
+{
+  Gui g;
+  gui_up(&g);
+  GhConversation *alice = accepted_room(&g); /* T0 - 60 */
+  GhConversation *bob = receive(&g.account, PEER[1], T0 - 30, "newer");
+  gh_conversation_accept(bob);
+  GhConversationRow *alice_row = row_of(&g, alice);
+  GtkListView *list = gh_sidebar_page_get_list(gh_window_get_sidebar(g.window));
+  g_assert_null(gtk_list_view_get_header_factory(list));
+  g_autoptr(GObject) first = listed_first(&g);
+  g_assert_true(first == G_OBJECT(bob));
+  g_clear_object(&first);
+
+  /* Unpin does nothing while it is not pinned; Pin pins it. */
+  gtk_widget_activate_action(GTK_WIDGET(alice_row), "row.unpin", NULL);
+  drain_idle();
+  g_assert_false(gh_conversation_get_pinned(alice));
+  g_assert_true(action_enabled(alice_row, "row.pin"));
+  drain_idle();
+  g_assert_true(gh_conversation_get_pinned(alice));
+  first = listed_first(&g);
+  g_assert_true(first == G_OBJECT(alice));
+  g_clear_object(&first);
+  g_assert_nonnull(gtk_list_view_get_header_factory(list));
+  SectionsWait sections = { &g, "Pinned|Recent" };
+  spin_until(sections_are, &sections);
+  alice_row = row_of(&g, alice);
+  GtkWidget *pin = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(alice_row),
+                                                            GH_TYPE_CONVERSATION_ROW,
+                                                            "pinned_icon"));
+  g_assert_true(gtk_widget_get_visible(pin));
+  g_assert_nonnull(strstr(gh_conversation_row_get_summary(alice_row), ". Pinned."));
+  /* A newer message elsewhere does not move it. */
+  receive(&g.account, PEER[1], T0 - 10, "newest");
+  first = listed_first(&g);
+  g_assert_true(first == G_OBJECT(alice));
+  g_clear_object(&first);
+
+  /* In the store, and back after the model is restored from it. */
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhConversationStore) restored = gh_conversation_store_new();
+  g_autoptr(GhStoreConversations) again = gh_store_conversations_new(g.account.store);
+  g_assert_true(gh_store_conversations_attach(again, restored, 0, &error));
+  g_assert_no_error(error);
+  GhConversation *alice_again =
+    gh_conversation_store_lookup(restored, gh_conversation_get_room_id(alice));
+  g_assert_nonnull(alice_again);
+  g_assert_true(gh_conversation_get_pinned(alice_again));
+  g_autoptr(GhConversation) top = g_list_model_get_item(G_LIST_MODEL(restored), 0);
+  g_assert_true(top == alice_again);
+  gh_store_conversations_close(again);
+
+  /* Unpinned: back in activity order, and no headers. */
+  alice_row = row_of(&g, alice);
+  g_assert_true(action_enabled(alice_row, "row.unpin"));
+  drain_idle();
+  g_assert_false(gh_conversation_get_pinned(alice));
+  first = listed_first(&g);
+  g_assert_true(first == G_OBJECT(bob));
+  g_clear_object(&first);
+  g_assert_null(gtk_list_view_get_header_factory(list));
+
+  /* Mark as Unread, then as Read (local only: nothing is published). */
+  alice_row = row_of(&g, alice);
+  gh_conversation_mark_read(alice);
+  gtk_widget_activate_action(GTK_WIDGET(alice_row), "row.mark-read", NULL); /* nothing unread */
+  g_assert_true(action_enabled(alice_row, "row.mark-unread"));
+  drain_idle();
+  g_assert_cmpuint(gh_conversation_get_unread_count(alice), ==, 1);
+  GtkWidget *badge = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(alice_row),
+                                                              GH_TYPE_CONVERSATION_ROW,
+                                                              "unread_badge"));
+  g_assert_true(gtk_widget_get_visible(badge));
+  gtk_widget_activate_action(GTK_WIDGET(alice_row), "row.mark-unread", NULL); /* already */
+  g_assert_cmpuint(gh_conversation_get_unread_count(alice), ==, 1);
+  g_assert_true(action_enabled(alice_row, "row.mark-read"));
+  drain_idle();
+  g_assert_cmpuint(gh_conversation_get_unread_count(alice), ==, 0);
+  g_assert_false(gtk_widget_get_visible(badge));
+
+  /* A message request has none of them. */
+  GhConversation *request = receive(&g.account, PEER[2], T0 - 5, "a request");
+  gh_sidebar_page_set_show_requests(gh_window_get_sidebar(g.window), TRUE);
+  GhConversationRow *request_row = row_of(&g, request);
+  gtk_widget_activate_action(GTK_WIDGET(request_row), "row.pin", NULL);
+  gtk_widget_activate_action(GTK_WIDGET(request_row), "row.mark-read", NULL);
+  drain_idle();
+  g_assert_false(gh_conversation_get_pinned(request));
+  g_assert_cmpuint(gh_conversation_get_unread_count(request), ==, 1);
+  gh_sidebar_page_set_show_requests(gh_window_get_sidebar(g.window), FALSE);
+  gui_down(&g);
+}
+
+/* nostrc-qp24.86: the conversation header's menu (charter §7.4
+ * conversation_menu): shown with a private conversation; Conversation Info,
+ * Pin or Unpin, Mute…, Disappearing Messages… (Conversation Info at its
+ * timer) and Delete Conversation…, each for the shown conversation. */
+static void
+test_gui_header_menu(void)
+{
+  Gui g;
+  gui_up(&g);
+  gh_conversation_info_attach(g.window, services_func, &g, NULL);
+  GhConversation *alice = accepted_room(&g);
+  GhContentPage *content = gh_window_get_content(g.window);
+  GtkWidget *button = gh_content_page_get_menu_button(content);
+  g_assert_false(gtk_widget_get_visible(button));
+  g_assert_true(gh_window_open_item(g.window, alice));
+  drain_idle();
+  g_assert_true(gtk_widget_get_visible(button));
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(button), ==, "Conversation Menu");
+  GMenuModel *model = gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button));
+  g_assert_cmpint(g_menu_model_get_n_items(model), ==, 3);
+  GActionGroup *actions = G_ACTION_GROUP(g.window);
+  g_assert_true(g_action_group_get_action_enabled(actions, "pin-shown-conversation"));
+  g_assert_false(g_action_group_get_action_enabled(actions, "unpin-shown-conversation"));
+
+  g_action_group_activate_action(actions, "pin-shown-conversation", NULL);
+  drain_idle();
+  g_assert_true(gh_conversation_get_pinned(alice));
+  g_assert_false(g_action_group_get_action_enabled(actions, "pin-shown-conversation"));
+  g_assert_true(g_action_group_get_action_enabled(actions, "unpin-shown-conversation"));
+  g_action_group_activate_action(actions, "unpin-shown-conversation", NULL);
+  drain_idle();
+  g_assert_false(gh_conversation_get_pinned(alice));
+
+  /* Disappearing Messages…: Conversation Info, at its timer. */
+  g_action_group_activate_action(actions, "disappearing-shown-conversation", NULL);
+  spin_until(dialog_shown, &g);
+  AdwDialog *info = visible_dialog(&g);
+  g_assert_true(GH_IS_CONVERSATION_INFO_DIALOG(info));
+  GtkWidget *timer = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(info),
+                                                              GH_TYPE_CONVERSATION_INFO_DIALOG,
+                                                              "timer_row"));
+  g_assert_true(adw_dialog_get_focus(info) == timer);
+  adw_dialog_force_close(info);
+  spin_until(no_dialog, &g);
+
+  /* Mute… and Delete Conversation… ask first, about the shown one. */
+  g_action_group_activate_action(actions, "mute-shown-conversation", NULL);
+  spin_until(alert_shown, &g);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(visible_dialog(&g))), ==,
+                  "Mute Alice?");
+  answer(&g, ADW_ALERT_DIALOG(visible_dialog(&g)), "_Cancel");
+  g_action_group_activate_action(actions, "delete-shown-conversation", NULL);
+  spin_until(alert_shown, &g);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(visible_dialog(&g))), ==,
+                  "Delete Conversation with Alice?");
+  answer(&g, ADW_ALERT_DIALOG(visible_dialog(&g)), "_Cancel");
+  g_assert_nonnull(gh_conversation_store_lookup(g.account.model,
+                                                gh_conversation_get_room_id(alice)));
+
+  /* A relay group has its own dialogs: no menu. */
+  g_autofree gchar *group_room = gh_message_nip29_room_id("wss://groups.test.invalid", "pies");
+  GhConversation *group = gh_conversation_store_ensure_group(g.account.model, group_room, "Pies");
+  g_assert_true(gh_window_open_item(g.window, group));
+  drain_idle();
+  g_assert_false(gtk_widget_get_visible(button));
+  g_assert_false(g_action_group_get_action_enabled(actions, "mute-shown-conversation"));
   gui_down(&g);
 }
 
@@ -739,6 +963,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/conversation-menu-gui/menu-states", test_gui_menu_states);
     g_test_add_func("/groundhog/conversation-menu-gui/contact-title", test_gui_contact_title);
     g_test_add_func("/groundhog/conversation-menu-gui/blocked-page", test_gui_blocked_page);
+    g_test_add_func("/groundhog/conversation-menu-gui/pin-and-read", test_gui_pin_and_read);
+    g_test_add_func("/groundhog/conversation-menu-gui/header-menu", test_gui_header_menu);
     status = g_test_run();
     goto out;
   }

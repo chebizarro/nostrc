@@ -81,6 +81,22 @@ gh_message_status_get_accessible_description(GhMessageStatus status)
   return copy ? tr(copy->description) : NULL;
 }
 
+/* nostrc-lff5: what differs in a room of several people (W17). */
+static const gchar *const room_descriptions[] = {
+  [GH_MESSAGE_STATUS_SENDING] = N_("Sending to each person's message relays."),
+  [GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX] =
+    N_("Can't send. No one in this conversation has set up private messaging yet."),
+};
+
+const gchar *
+gh_message_status_get_accessible_description_for(GhMessageStatus status, guint n_recipients)
+{
+  if (n_recipients > 1 && status >= 0 && (guint) status < G_N_ELEMENTS(room_descriptions) &&
+      room_descriptions[status])
+    return tr(room_descriptions[status]);
+  return gh_message_status_get_accessible_description(status);
+}
+
 GType
 gh_message_status_get_type(void)
 {

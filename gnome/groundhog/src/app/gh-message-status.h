@@ -40,6 +40,12 @@ GType gh_message_status_get_type(void);
 const gchar *gh_message_status_get_label(GhMessageStatus status);
 const gchar *gh_message_status_get_icon_name(GhMessageStatus status);
 const gchar *gh_message_status_get_accessible_description(GhMessageStatus status);
+/* The description for a message to @n_recipients people (nostrc-lff5): in a
+ * room (more than one) the copy that would speak of "the recipient" speaks
+ * of everyone ("No one in this conversation has set up private messaging
+ * yet"); otherwise gh_message_status_get_accessible_description(). */
+const gchar *gh_message_status_get_accessible_description_for(GhMessageStatus status,
+                                                              guint n_recipients);
 /* The secondary note for a self-copy that will not be stored. */
 const gchar *gh_message_status_get_self_copy_note(void);
 

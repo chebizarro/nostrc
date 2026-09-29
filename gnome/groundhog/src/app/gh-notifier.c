@@ -52,6 +52,11 @@ struct _GhNotifier {
   GHashTable *stale;        /* guint64 generation -> account hex */
   GQueue stale_order;       /* guint64 *, oldest first */
   gint64 session_start;     /* unix seconds: the model bound the account */
+  GhNotifierLastSeenFunc last_seen;
+  gpointer last_seen_data;
+  /* unix seconds: messages written before it are old history (N1); the
+   * last-seen marker less the grace, or session_start without one. */
+  gint64 notify_since;
   guint next_number;
   GHashTable *numbers;      /* room id -> number */
   GHashTable *number_rooms; /* number -> room id */
@@ -252,7 +257,9 @@ room_allowed(GhNotifier *self, Room *room)
 }
 
 /* Drops what the notification may no longer count; FALSE when nothing is
- * left. Read messages go first: they are the oldest. */
+ * left. A read message goes, whatever its place: one that arrived after the
+ * room was read is unread even if it sorts before read ones (nostrc-
+ * qp24.75), so the newest are not simply the unread ones. */
 static gboolean
 room_prune(GhNotifier *self, Room *room, gboolean ask_store)
 {
@@ -267,9 +274,9 @@ room_prune(GhNotifier *self, Room *room, gboolean ask_store)
         !gh_conversation_lookup_message(room->conversation, gh_message_get_rumor_id(message)))
       return FALSE; /* expired or purged: never keep what named it */
   }
-  guint unread = gh_conversation_get_unread_count(room->conversation);
-  if (room->messages->len > unread)
-    g_ptr_array_remove_range(room->messages, 0, room->messages->len - unread);
+  for (guint i = room->messages->len; i-- > 0;)
+    if (!gh_conversation_is_unread(room->conversation, g_ptr_array_index(room->messages, i)))
+      g_ptr_array_remove_index(room->messages, i);
   if (room->messages->len == 0)
     return FALSE;
   return !ask_store || room_allowed(self, room);
@@ -609,6 +616,22 @@ remember_stale(GhNotifier *self, guint64 generation, const gchar *account)
     g_hash_table_remove(self->stale, g_queue_pop_head(&self->stale_order));
 }
 
+/* N1 (nostrc-qp24.84): what came while Groundhog was not receiving is
+ * notified when it was written after the account's last-seen marker (the
+ * time by which everything the inbox relays had was received, less
+ * GH_NOTIFIER_LAST_SEEN_GRACE); without a marker (a first session, or a
+ * store that keeps none) only what was written since binding is, so old
+ * history is never replayed. */
+static void
+sync_since(GhNotifier *self)
+{
+  gint64 last_seen = self->account && self->last_seen
+                       ? self->last_seen(self->last_seen_data, self->account) : 0;
+  self->notify_since = last_seen > 0
+    ? MIN(self->session_start, last_seen - GH_NOTIFIER_LAST_SEEN_GRACE)
+    : self->session_start;
+}
+
 /* The model switched accounts: withdraw every id, start a new generation. */
 static void
 sync_account(GhNotifier *self)
@@ -626,6 +649,7 @@ sync_account(GhNotifier *self)
   self->account = g_strdup(account);
   self->generation++;
   self->session_start = now_unix(self);
+  sync_since(self);
   g_clear_object(&self->visible);
 }
 
@@ -636,8 +660,10 @@ on_message_added(GhNotifier *self, GhConversation *conversation, GhMessage *mess
   if (!self->account || g_strcmp0(gh_message_get_account(message), self->account) != 0 ||
       !enabled(self) || gh_message_is_self(message) || conversation == self->visible)
     return;
-  /* Backfill of what came while this session was not receiving. */
-  if (gh_message_get_created_at(message) < self->session_start)
+  /* Old history: written before the last-seen marker (N1). What came while
+   * Groundhog was not receiving but after it is new, and coalesces like
+   * any burst (N2). */
+  if (gh_message_get_created_at(message) < self->notify_since)
     return;
   gint64 expires = gh_message_get_expires_at(message);
   if (expires > 0 && expires <= now_unix(self))
@@ -883,6 +909,9 @@ gh_notifier_new(GApplication *app, const GhNotifierConfig *config)
   self->generation = ((guint64)g_random_int() << 32 | g_random_int()) & G_MAXINT64;
   self->account = g_strdup(gh_conversation_store_get_account(self->model));
   self->session_start = now_unix(self);
+  self->last_seen = config->last_seen;
+  self->last_seen_data = config->last_seen_data;
+  sync_since(self);
 
   self->action = g_simple_action_new(GH_NOTIFIER_ACTION, G_VARIANT_TYPE("(tx)"));
   g_signal_connect(self->action, "activate", G_CALLBACK(on_open_conversation), self);

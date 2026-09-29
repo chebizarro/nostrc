@@ -23,6 +23,8 @@ typedef struct {
   GtkFilter *requests;        /* a message request */
   GtkFilter *accepted_search; /* the sidebar's search text */
   GtkFilter *requests_search;
+  GListModel *listed;         /* the accepted conversations as listed: pinned first */
+  GtkListItemFactory *sections; /* "Pinned" and "Recent" headers */
   GhConversation *shown;
   /* Older history (gh_conversation_list_set_history_source()). */
   GhConversationListLoadOlder load_older;
@@ -46,6 +48,8 @@ list_free(gpointer data)
   g_clear_object(&list->requests);
   g_clear_object(&list->accepted_search);
   g_clear_object(&list->requests_search);
+  g_clear_object(&list->listed);
+  g_clear_object(&list->sections);
   g_clear_object(&list->shown);
   g_free(list);
 }
@@ -101,6 +105,63 @@ unbind_row(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data)
   (void)data;
   gh_conversation_row_set_conversation(GH_CONVERSATION_ROW(gtk_list_item_get_child(item)),
                                        NULL);
+}
+
+/* ---- sections: Pinned and Recent (charter §7.5, nostrc-qp24.86) --------------- */
+
+static void
+setup_section(GtkSignalListItemFactory *factory, GObject *item, gpointer data)
+{
+  (void)factory;
+  (void)data;
+  g_autoptr(GtkBuilder) builder =
+    gtk_builder_new_from_resource("/org/nostr/Groundhog/ui/gh-conversation-section.ui");
+  gtk_list_header_set_child(GTK_LIST_HEADER(item),
+                            GTK_WIDGET(gtk_builder_get_object(builder, "section_label")));
+}
+
+static void
+bind_section(GtkSignalListItemFactory *factory, GObject *item, gpointer data)
+{
+  (void)factory;
+  (void)data;
+  gpointer first = gtk_list_header_get_item(GTK_LIST_HEADER(item));
+  gtk_label_set_text(GTK_LABEL(gtk_list_header_get_child(GTK_LIST_HEADER(item))),
+                     GH_IS_CONVERSATION(first) && gh_conversation_get_pinned(first)
+                       ? _("Pinned") : _("Recent"));
+}
+
+/* Headers only while a pinned conversation is listed (pinned ones come
+ * first), and never over Message Requests. */
+static void
+sync_sections(GhConversationList *list)
+{
+  g_autoptr(GhConversation) first = g_list_model_get_n_items(list->listed) > 0
+                                      ? g_list_model_get_item(list->listed, 0) : NULL;
+  gboolean pinned = first && gh_conversation_get_pinned(first) &&
+                    !gh_sidebar_page_get_show_requests(list->sidebar);
+  GtkListView *view = gh_sidebar_page_get_list(list->sidebar);
+  if ((gtk_list_view_get_header_factory(view) != NULL) != pinned)
+    gtk_list_view_set_header_factory(view, pinned ? list->sections : NULL);
+}
+
+static void
+on_listed_changed(GhWindow *window)
+{
+  sync_sections(g_object_get_data(G_OBJECT(window), LIST_DATA));
+}
+
+/* The store lists pinned conversations first; this only groups them. */
+static GListModel *
+sectioned(GListModel *conversations)
+{
+  GtkExpression *pinned = gtk_property_expression_new(GH_TYPE_CONVERSATION, NULL, "pinned");
+  GtkNumericSorter *by_pin = gtk_numeric_sorter_new(pinned);
+  gtk_numeric_sorter_set_sort_order(by_pin, GTK_SORT_DESCENDING);
+  GtkSortListModel *model = gtk_sort_list_model_new(g_object_ref(conversations), NULL);
+  gtk_sort_list_model_set_section_sorter(model, GTK_SORTER(by_pin));
+  g_object_unref(by_pin);
+  return G_LIST_MODEL(model);
 }
 
 /* ---- filters ---------------------------------------------------------------- */
@@ -399,7 +460,16 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   gtk_list_view_set_factory(gh_sidebar_page_get_list(list->sidebar), rows);
   g_object_unref(rows);
 
-  gh_sidebar_page_set_models(list->sidebar, conversations, requests);
+  list->listed = sectioned(conversations);
+  list->sections = gtk_signal_list_item_factory_new();
+  g_signal_connect(list->sections, "setup", G_CALLBACK(setup_section), NULL);
+  g_signal_connect(list->sections, "bind", G_CALLBACK(bind_section), NULL);
+  gh_sidebar_page_set_models(list->sidebar, list->listed, requests);
+  g_signal_connect_object(list->listed, "items-changed", G_CALLBACK(on_listed_changed), window,
+                          G_CONNECT_SWAPPED);
+  g_signal_connect_object(list->sidebar, "notify::show-requests", G_CALLBACK(on_listed_changed),
+                          window, G_CONNECT_SWAPPED);
+  sync_sections(list);
   on_store_changed(window, 0, 0, g_list_model_get_n_items(G_LIST_MODEL(store)),
                    G_LIST_MODEL(store));
   g_signal_connect_object(store, "items-changed", G_CALLBACK(on_store_changed), window,

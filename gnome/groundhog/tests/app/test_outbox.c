@@ -1007,8 +1007,10 @@ test_store_api(void)
   const gchar *wrap_urls[] = { "wss://b.test.invalid", "wss://a.test.invalid", NULL };
   const gchar *self_urls[] = { "wss://own.test.invalid", NULL };
   GhStoreSealedEvent events[] = {
-    { GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP, recipient, wrap_id, "{\"wrap\":1}", 0, wrap_urls },
-    { GH_STORE_OUTBOX_ROLE_SELF_WRAP, hex_alice, self_id, "{\"wrap\":2}", T0 + 42, self_urls },
+    { GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP, recipient, wrap_id, "{\"wrap\":1}", 0, wrap_urls,
+      FALSE },
+    { GH_STORE_OUTBOX_ROLE_SELF_WRAP, hex_alice, self_id, "{\"wrap\":2}", T0 + 42, self_urls,
+      FALSE },
   };
   g_assert_true(gh_store_seal(store, id, events, G_N_ELEMENTS(events), &error));
   g_assert_no_error(error);

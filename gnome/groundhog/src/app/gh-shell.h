@@ -116,6 +116,10 @@ gboolean gh_content_page_focus_conversation(GhContentPage *self);
 void gh_content_page_set_title(GhContentPage *self, const gchar *title,
                                const gchar *subtitle);
 /* The composer under the conversation (a template child). */
+/* The conversation menu's button (charter §7.4 conversation_menu,
+ * nostrc-qp24.86): hidden until gh-conversation-menu.c shows it for a
+ * private conversation. */
+GtkWidget *gh_content_page_get_menu_button(GhContentPage *self);
 GhComposer *gh_content_page_get_composer(GhContentPage *self);
 
 G_END_DECLS

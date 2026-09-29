@@ -2110,8 +2110,23 @@ make_v1_store(const TestAccount *account)
     g_autofree gchar *sql = g_strdup_printf("DROP TABLE %s", v2_tables[i]);
     sql_exec(store, sql);
   }
-  /* Later migrations are undone too: v3 (G19) added contacts.verified_at. */
+  /* Later migrations are undone too: v3 (G19) added contacts.verified_at;
+   * v4 (W18) the arrival order, read, timer and inbox columns and two
+   * triggers. */
   sql_exec(store, "ALTER TABLE contacts DROP COLUMN verified_at");
+  static const gchar *const v4_undo[] = {
+    "DROP TRIGGER messages_admit_seq",
+    "DROP TRIGGER messages_keep_read_marker",
+    "ALTER TABLE messages DROP COLUMN seq",
+    "ALTER TABLE conversations DROP COLUMN admit_seq",
+    "ALTER TABLE conversations DROP COLUMN read_seq",
+    "ALTER TABLE conversations DROP COLUMN reply_read_at",
+    "ALTER TABLE conversations DROP COLUMN reply_read_id",
+    "ALTER TABLE conversations DROP COLUMN timer_changed_at",
+    "ALTER TABLE outbox_events DROP COLUMN no_inbox",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(v4_undo); i++)
+    sql_exec(store, v4_undo[i]);
   sql_exec(store, "DELETE FROM schema_migrations WHERE version >= 2");
   sql_exec(store, "PRAGMA user_version = 1");
   gh_store_close(store);
@@ -2149,7 +2164,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 3);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 4);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */

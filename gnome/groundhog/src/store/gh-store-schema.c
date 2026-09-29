@@ -274,10 +274,58 @@ static const gchar schema_v2[] =
 static const gchar schema_v3[] =
   "ALTER TABLE contacts ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0;";
 
+/* Schema v4 (W18; local only, never published, P8):
+ *
+ * - Read state by admission (nostrc-qp24.75). messages.seq is the message's
+ *   place in its room's arrival order, from the room's own counter
+ *   conversations.admit_seq, which never goes back, so a sequence is never
+ *   reused (unlike a rowid after its row is deleted). The trigger numbers
+ *   every insert, whichever write stores it. conversations.read_seq is how
+ *   far that order the read marker (last_read_msg) was set: a message is read
+ *   when it sorts at or before the marker AND arrived by then, so one that
+ *   arrives later (a same-second rumor with a lower id, a clock-skewed or
+ *   delayed one) is unread wherever it sorts. reply_read_at/_id is the
+ *   newest own message another device wrote (a relay-delivered self-copy):
+ *   everything sorting at or before it is read, as "replying implies having
+ *   read what came before" holds there. Existing rows keep seq 0 and
+ *   read_seq 0, which reads exactly as before.
+ * - A read marker never dangles: before a message row is deleted (purge,
+ *   cancel, moderation, forget), a marker on it moves back to the newest
+ *   remaining message of its room at or before it.
+ * - conversations.timer_changed_at: when the disappearing timer last changed
+ *   (unix seconds; 0 = never), for the local timeline row (nostrc-qp24.83).
+ * - outbox_events.no_inbox: the recipient had no usable kind-10050 when last
+ *   looked up, so a targetless wrap stays "hasn't set up private messaging"
+ *   across restarts (nostrc-9cho). */
+static const gchar schema_v4[] =
+  "ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;"
+  "ALTER TABLE conversations ADD COLUMN admit_seq INTEGER NOT NULL DEFAULT 0;"
+  "ALTER TABLE conversations ADD COLUMN read_seq INTEGER NOT NULL DEFAULT 0;"
+  "ALTER TABLE conversations ADD COLUMN reply_read_at INTEGER;"
+  "ALTER TABLE conversations ADD COLUMN reply_read_id TEXT;"
+  "ALTER TABLE conversations ADD COLUMN timer_changed_at INTEGER NOT NULL DEFAULT 0;"
+  "ALTER TABLE outbox_events ADD COLUMN no_inbox INTEGER NOT NULL DEFAULT 0;"
+
+  "CREATE TRIGGER messages_admit_seq AFTER INSERT ON messages BEGIN "
+  "  UPDATE conversations SET admit_seq = admit_seq + 1 WHERE id = NEW.conversation_id; "
+  "  UPDATE messages SET seq = (SELECT admit_seq FROM conversations "
+  "    WHERE id = NEW.conversation_id) WHERE id = NEW.id; "
+  "END;"
+
+  "CREATE TRIGGER messages_keep_read_marker BEFORE DELETE ON messages BEGIN "
+  "  UPDATE conversations SET last_read_msg = (SELECT k.id FROM messages k "
+  "    WHERE k.conversation_id = OLD.conversation_id AND k.id <> OLD.id AND "
+  "    (k.created_at < OLD.created_at OR (k.created_at = OLD.created_at AND "
+  "    k.backend_msg_id < OLD.backend_msg_id)) "
+  "    ORDER BY k.created_at DESC, k.backend_msg_id DESC LIMIT 1) "
+  "  WHERE id = OLD.conversation_id AND last_read_msg = OLD.id; "
+  "END;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
   { 3, "Local verification marks on contacts (charter §3.3, G19)", schema_v3 },
+  { 4, "Read state by arrival, timer changes, recipients without an inbox (W18)", schema_v4 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

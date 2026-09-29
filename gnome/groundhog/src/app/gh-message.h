@@ -78,6 +78,14 @@ gint64 gh_message_get_expires_at(GhMessage *self);
  * wrap's), or the stored value on restore. Ignored when the message already
  * has one or expires_at <= 0. Notifies "expires-at". */
 void gh_message_set_expires_at(GhMessage *self, gint64 expires_at);
+/* The message's place in its room's local arrival order (nostrc-qp24.75):
+ * GhConversationStore numbers each admitted message (the durable store's
+ * messages.seq, or its own counter in memory), so a message that arrives
+ * after the room was read is unread wherever its sender-claimed time sorts
+ * it. 0 while not admitted (or stored before arrival order was kept). Local
+ * only: never published, never part of the rumor. Store-layer use. */
+guint64 gh_message_get_seq(GhMessage *self);
+void gh_message_set_seq(GhMessage *self, guint64 seq);
 /* Always NONE for incoming messages. set_status is for the sender (local
  * echo) and is ignored on an incoming message. Notifies "status". */
 GhMessageStatus gh_message_get_status(GhMessage *self);

@@ -133,6 +133,22 @@ gboolean gh_store_conversations_purge(GhStoreConversations *self, gint64 retenti
                                       GhStorePurgeStats *out_stats, GStrv *out_purged,
                                       GError **error);
 
+/* ---- Pins and timer changes (charter §7.4, §7.5, §3.7; W18) -------------------
+ * Local only: kept in the conversations row (PD-11), never published (P8). */
+
+/* Pins (TRUE) or unpins a room (nostrc-qp24.86): conversations.pinned_rank,
+ * a new pin after the others (a pinned room keeps its place). A room that is
+ * not stored yet is created, as accepted (pinning is the account's own
+ * choice); unpinning one is success with nothing to do. The attached model
+ * lists it at its new place (pinned rooms first). */
+gboolean gh_store_conversations_set_pinned(GhStoreConversations *self, const gchar *room_id,
+                                           gboolean pinned, GError **error);
+/* Brings the attached model's room in line with its stored timer change
+ * (gh_store_get_timer_change(); gh_conversation_get_timer_change()), after
+ * the timer was set (GhExpiry does, nostrc-qp24.83). */
+gboolean gh_store_conversations_sync_timer(GhStoreConversations *self, const gchar *room_id,
+                                           GError **error);
+
 /* ---- Notification state (charter §5.2 N8, §8.2 G16; NO-7) ---------------------
  * A room's mute lives in its conversations row (muted_until), inside the
  * encrypted store and never in GSettings, which is plaintext dconf: the unix

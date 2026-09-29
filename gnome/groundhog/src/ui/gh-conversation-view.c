@@ -1,6 +1,7 @@
 #include "gh-conversation-view.h"
 #include "gh-link-policy.h"
 #include "gh-message-row.h"
+#include "gh-timeline-row.h"
 
 #include <glib/gi18n.h>
 
@@ -17,7 +18,9 @@
 
 struct _GhTimelineItem {
   GObject parent_instance;
-  GhMessage *message;
+  GhMessage *message;  /* NULL for a local event */
+  gchar *event_text;   /* a local event (nostrc-qp24.83), else NULL */
+  gint64 event_at;
   gint day;        /* local calendar day of created_at, as yyyymmdd */
   gchar *day_label;
   gboolean run_start;
@@ -32,6 +35,9 @@ enum {
   ITEM_PROP_RUN_END,
   ITEM_PROP_SHOW_SENDER,
   ITEM_PROP_DAY_LABEL,
+  ITEM_PROP_IS_MESSAGE,
+  ITEM_PROP_IS_EVENT,
+  ITEM_PROP_EVENT_TEXT,
   ITEM_N_PROPS
 };
 static GParamSpec *item_props[ITEM_N_PROPS];
@@ -77,18 +83,62 @@ gh_conversation_view_format_day(GDateTime *when, GDateTime *now)
   return g_date_time_format(local_when, _("%-d %B %Y"));
 }
 
-static GhTimelineItem *
-timeline_item_new(GhMessage *message, GDateTime *now)
+/* When the entry happened: the message's sender-claimed time, or the
+ * event's. */
+static gint64
+item_time(GhTimelineItem *self)
 {
-  GhTimelineItem *self = g_object_new(GH_TYPE_TIMELINE_ITEM, NULL);
-  self->message = g_object_ref(message);
-  g_autoptr(GDateTime) when =
-    g_date_time_new_from_unix_local(gh_message_get_created_at(message));
+  return self->message ? gh_message_get_created_at(self->message) : self->event_at;
+}
+
+static GhTimelineItem *
+timeline_item_init_time(GhTimelineItem *self, GDateTime *now)
+{
+  g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(item_time(self));
   self->day = when ? day_key(when) : 0;
   self->day_label = when ? gh_conversation_view_format_day(when, now) : g_strdup("");
   self->run_start = TRUE;
   self->run_end = TRUE;
   return self;
+}
+
+static GhTimelineItem *
+timeline_item_new(GhMessage *message, GDateTime *now)
+{
+  GhTimelineItem *self = g_object_new(GH_TYPE_TIMELINE_ITEM, NULL);
+  self->message = g_object_ref(message);
+  return timeline_item_init_time(self, now);
+}
+
+/* The local timer-change row (charter §3.7 UI, §7.6; nostrc-qp24.83):
+ * what the account set, in its own words. Local only: never sent. */
+static gchar *
+timer_event_text(gint64 seconds)
+{
+  if (seconds <= 0)
+    return g_strdup(_("You turned off disappearing messages"));
+  if (seconds % (7 * 86400) == 0) {
+    guint weeks = (guint)(seconds / (7 * 86400));
+    return g_strdup_printf(g_dngettext(NULL, "You set messages to disappear after %u week",
+                                       "You set messages to disappear after %u weeks", weeks),
+                           weeks);
+  }
+  if (seconds % 86400 == 0) {
+    guint days = (guint)(seconds / 86400);
+    return g_strdup_printf(g_dngettext(NULL, "You set messages to disappear after %u day",
+                                       "You set messages to disappear after %u days", days),
+                           days);
+  }
+  return g_strdup(_("You changed when messages disappear"));
+}
+
+static GhTimelineItem *
+timeline_item_new_event(gchar *text, gint64 at, GDateTime *now)
+{
+  GhTimelineItem *self = g_object_new(GH_TYPE_TIMELINE_ITEM, NULL);
+  self->event_text = text;
+  self->event_at = at;
+  return timeline_item_init_time(self, now);
 }
 
 static void
@@ -103,8 +153,7 @@ item_set_flag(GhTimelineItem *self, gboolean *flag, gboolean value, guint prop)
 static void
 item_refresh_day(GhTimelineItem *self, GDateTime *now)
 {
-  g_autoptr(GDateTime) when =
-    g_date_time_new_from_unix_local(gh_message_get_created_at(self->message));
+  g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(item_time(self));
   g_autofree gchar *label = when ? gh_conversation_view_format_day(when, now) : g_strdup("");
   if (g_strcmp0(label, self->day_label) == 0)
     return;
@@ -148,6 +197,20 @@ gh_timeline_item_get_day_label(GhTimelineItem *self)
   return self->day_label;
 }
 
+const gchar *
+gh_timeline_item_get_event_text(GhTimelineItem *self)
+{
+  g_return_val_if_fail(GH_IS_TIMELINE_ITEM(self), NULL);
+  return self->event_text;
+}
+
+gint64
+gh_timeline_item_get_event_at(GhTimelineItem *self)
+{
+  g_return_val_if_fail(GH_IS_TIMELINE_ITEM(self), 0);
+  return self->event_at;
+}
+
 static void
 gh_timeline_item_get_property(GObject *object, guint id, GValue *value, GParamSpec *pspec)
 {
@@ -168,6 +231,15 @@ gh_timeline_item_get_property(GObject *object, guint id, GValue *value, GParamSp
   case ITEM_PROP_DAY_LABEL:
     g_value_set_string(value, self->day_label);
     break;
+  case ITEM_PROP_IS_MESSAGE:
+    g_value_set_boolean(value, self->message != NULL);
+    break;
+  case ITEM_PROP_IS_EVENT:
+    g_value_set_boolean(value, self->message == NULL);
+    break;
+  case ITEM_PROP_EVENT_TEXT:
+    g_value_set_string(value, self->event_text);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -178,6 +250,7 @@ gh_timeline_item_finalize(GObject *object)
 {
   GhTimelineItem *self = GH_TIMELINE_ITEM(object);
   g_clear_object(&self->message);
+  g_free(self->event_text);
   g_free(self->day_label);
   G_OBJECT_CLASS(gh_timeline_item_parent_class)->finalize(object);
 }
@@ -196,6 +269,13 @@ gh_timeline_item_class_init(GhTimelineItemClass *klass)
   item_props[ITEM_PROP_SHOW_SENDER] = g_param_spec_boolean("show-sender", NULL, NULL, FALSE,
                                                            ro);
   item_props[ITEM_PROP_DAY_LABEL] = g_param_spec_string("day-label", NULL, NULL, "", ro);
+  /* Constant for an item: a message, or a local event (nostrc-qp24.83). */
+  const GParamFlags constant = G_PARAM_READABLE | G_PARAM_STATIC_STRINGS;
+  item_props[ITEM_PROP_IS_MESSAGE] = g_param_spec_boolean("is-message", NULL, NULL, TRUE,
+                                                          constant);
+  item_props[ITEM_PROP_IS_EVENT] = g_param_spec_boolean("is-event", NULL, NULL, FALSE, constant);
+  item_props[ITEM_PROP_EVENT_TEXT] = g_param_spec_string("event-text", NULL, NULL, NULL,
+                                                         constant);
   g_object_class_install_properties(object_class, ITEM_N_PROPS, item_props);
 }
 
@@ -212,9 +292,14 @@ G_DECLARE_FINAL_TYPE(GhTimeline, gh_timeline, GH, TIMELINE, GObject)
 
 struct _GhTimeline {
   GObject parent_instance;
-  GListModel *source; /* GhMessage in conversation order */
-  GPtrArray *items;   /* GhTimelineItem, parallel to source */
+  GListModel *source; /* GhMessage in conversation order (the GhConversation) */
+  GPtrArray *items;   /* GhTimelineItem: parallel to source, but for the event */
   gboolean multi_party;
+  /* The conversation's timer change (nostrc-qp24.83), an item after every
+   * message written at or before it: at items[event_index], with
+   * event_index messages before it. NULL when there is none. */
+  GhTimelineItem *event;
+  guint event_index;
 };
 
 static void gh_timeline_list_model_init(GListModelInterface *iface);
@@ -291,6 +376,8 @@ gh_timeline_section_model_init(GtkSectionModelInterface *iface)
 static gboolean
 same_run(GhTimelineItem *a, GhTimelineItem *b)
 {
+  if (!a->message || !b->message)
+    return FALSE; /* an event stands alone */
   gint64 gap = gh_message_get_created_at(b->message) - gh_message_get_created_at(a->message);
   return a->day == b->day && gap >= 0 && gap <= RUN_GAP_SECONDS &&
          g_strcmp0(gh_message_get_sender(a->message), gh_message_get_sender(b->message)) == 0;
@@ -308,23 +395,105 @@ timeline_refresh_runs(GhTimeline *self, guint from, guint to)
     item_set_flag(item, &item->run_start, start, ITEM_PROP_RUN_START);
     item_set_flag(item, &item->run_end, end, ITEM_PROP_RUN_END);
     item_set_flag(item, &item->show_sender,
-                  self->multi_party && start && !gh_message_is_self(item->message),
+                  self->multi_party && start && item->message &&
+                    !gh_message_is_self(item->message),
                   ITEM_PROP_SHOW_SENDER);
   }
+}
+
+/* Replaces `removed` items at item index `at` with items for the source's
+ * [position, position + added). */
+static void
+timeline_splice(GhTimeline *self, guint at, guint position, guint removed, guint added,
+                GDateTime *now)
+{
+  g_ptr_array_remove_range(self->items, at, removed);
+  for (guint i = 0; i < added; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(self->source, position + i);
+    g_ptr_array_insert(self->items, at + i, timeline_item_new(message, now));
+  }
+  timeline_refresh_runs(self, at > 0 ? at - 1 : 0, at + added + 1);
+  g_list_model_items_changed(G_LIST_MODEL(self), at, removed, added);
+}
+
+/* Messages written at or before `at`: the event comes after them. */
+static guint
+event_place(GhTimeline *self, gint64 at)
+{
+  guint low = 0, high = g_list_model_get_n_items(self->source);
+  while (low < high) {
+    guint mid = low + (high - low) / 2;
+    g_autoptr(GhMessage) message = g_list_model_get_item(self->source, mid);
+    if (gh_message_get_created_at(message) <= at)
+      low = mid + 1;
+    else
+      high = mid;
+  }
+  return low;
+}
+
+static GhTimelineItem *
+timeline_take_event(GhTimeline *self)
+{
+  GhTimelineItem *event = g_steal_pointer(&self->event);
+  if (!event)
+    return NULL;
+  guint at = self->event_index;
+  g_ptr_array_steal_index(self->items, at);
+  timeline_refresh_runs(self, at > 0 ? at - 1 : 0, at + 1);
+  g_list_model_items_changed(G_LIST_MODEL(self), at, 1, 0);
+  return event;
+}
+
+static void
+timeline_put_event(GhTimeline *self, GhTimelineItem *event)
+{
+  guint at = event_place(self, event->event_at);
+  self->event = event;
+  self->event_index = at;
+  g_ptr_array_insert(self->items, at, event);
+  timeline_refresh_runs(self, at > 0 ? at - 1 : 0, at + 2);
+  g_list_model_items_changed(G_LIST_MODEL(self), at, 0, 1);
 }
 
 static void
 on_source_changed(GhTimeline *self, guint position, guint removed, guint added,
                   GListModel *source)
 {
+  (void)source;
   g_autoptr(GDateTime) now = g_date_time_new_now_local();
-  g_ptr_array_remove_range(self->items, position, removed);
-  for (guint i = 0; i < added; i++) {
-    g_autoptr(GhMessage) message = g_list_model_get_item(source, position + i);
-    g_ptr_array_insert(self->items, position + i, timeline_item_new(message, now));
+  if (!self->event) {
+    timeline_splice(self, position, position, removed, added, now);
+    return;
   }
-  timeline_refresh_runs(self, position > 0 ? position - 1 : 0, position + added + 1);
-  g_list_model_items_changed(G_LIST_MODEL(self), position, removed, added);
+  /* The event stays where it is when the change is all after it, or all
+   * before it; otherwise it moves (out, then back in its new place). */
+  guint before = self->event_index;
+  guint place = event_place(self, self->event->event_at);
+  if (position >= before && place == before) {
+    timeline_splice(self, position + 1, position, removed, added, now);
+  } else if (position + removed <= before && place + removed == before + added) {
+    self->event_index = place;
+    timeline_splice(self, position, position, removed, added, now);
+  } else {
+    GhTimelineItem *event = timeline_take_event(self);
+    timeline_splice(self, position, position, removed, added, now);
+    timeline_put_event(self, event);
+  }
+}
+
+/* The conversation's timer changed (or was restored): its row follows. */
+static void
+timeline_sync_event(GhTimeline *self)
+{
+  gint64 seconds = 0;
+  gint64 at = GH_IS_CONVERSATION(self->source)
+                ? gh_conversation_get_timer_change(GH_CONVERSATION(self->source), &seconds) : 0;
+  g_autoptr(GhTimelineItem) old = timeline_take_event(self);
+  if (at <= 0)
+    return;
+  g_autoptr(GDateTime) now = g_date_time_new_now_local();
+  timeline_put_event(self, timeline_item_new_event(timer_event_text(seconds), at, now));
 }
 
 static GhTimeline *
@@ -336,7 +505,19 @@ timeline_new(GListModel *source, gboolean multi_party)
   g_signal_connect_object(source, "items-changed", G_CALLBACK(on_source_changed), self,
                           G_CONNECT_SWAPPED);
   on_source_changed(self, 0, 0, g_list_model_get_n_items(source), source);
+  if (GH_IS_CONVERSATION(source)) {
+    g_signal_connect_object(source, "notify::timer-changed-at", G_CALLBACK(timeline_sync_event),
+                            self, G_CONNECT_SWAPPED);
+    timeline_sync_event(self);
+  }
   return self;
+}
+
+/* The timeline index of the conversation's message at position. */
+static guint
+timeline_index_of(GhTimeline *self, guint position)
+{
+  return position + (self->event && position >= self->event_index ? 1 : 0);
 }
 
 static void
@@ -457,6 +638,10 @@ struct _GhConversationView {
 
   guint announcements[3];
   gchar *last_announcement;
+
+  /* Charter §7.15 state 11 (nostrc-lff5: a room too). */
+  gchar *no_inbox_name;
+  gboolean no_inbox_room;
 };
 
 enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, N_PROPS };
@@ -759,7 +944,8 @@ on_message_status(GhConversationView *self, GParamSpec *pspec, GhMessage *messag
   if (status == GH_MESSAGE_STATUS_NOT_SENT)
     announce(self, _("Message not sent"), GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
   else if (status == GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX)
-    announce(self, gh_message_status_get_accessible_description(status),
+    announce(self, gh_message_status_get_accessible_description_for(
+               status, g_strv_length((gchar **) gh_message_get_recipients(message))),
              GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
 }
 
@@ -806,17 +992,22 @@ on_timeline_changed(GhConversationView *self, guint position, guint removed, gui
   if (added == 0 || position + added != g_list_model_get_n_items(timeline) ||
       self->open_scroll != OPEN_NONE)
     return;
-  guint incoming = 0;
+  guint incoming = 0, messages = 0;
   g_autoptr(GhTimelineItem) last_incoming = NULL;
   for (guint i = position; i < position + added; i++) {
     g_autoptr(GhTimelineItem) item = g_list_model_get_item(timeline, i);
+    if (!item->message)
+      continue; /* a local event (a timer change) moves nothing */
+    messages++;
     if (!gh_message_is_self(item->message)) {
       incoming++;
       g_set_object(&last_incoming, item);
     }
   }
+  if (messages == 0)
+    return;
   /* An own message (a local echo) always brings the view to the end. */
-  if (self->sticky || incoming < added) {
+  if (self->sticky || incoming < messages) {
     set_sticky(self, TRUE);
     queue_pin(self);
   } else if (removed == 0) {
@@ -902,7 +1093,7 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
       gtk_no_selection_new(g_object_ref(G_LIST_MODEL(self->timeline)));
     gtk_list_view_set_model(self->message_list, GTK_SELECTION_MODEL(selection));
 
-    guint n = n_visible(self);
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
     guint first = n;
     guint listed = gh_conversation_get_listed_unread(conversation, &first);
     /* Unread messages still in the unloaded older history come before every
@@ -911,7 +1102,8 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
       first = 0;
     gboolean unread = first < n;
     self->open_scroll = unread ? OPEN_FIRST_UNREAD : OPEN_LATEST;
-    self->open_target = first;
+    /* A timer-change row before it shifts it in the timeline. */
+    self->open_target = unread ? timeline_index_of(self->timeline, first) : n_visible(self);
     self->new_below = listed;
     self->sticky = !unread;
     schedule_midnight(self);
@@ -1316,15 +1508,38 @@ gh_conversation_view_get_previews_available(GhConversationView *self)
 
 /* ---- conversation states ---------------------------------------------------------------- */
 
+/* One banner (charter §7.1): a room where nobody has an inbox, else the one
+ * person who has none. */
+static void
+sync_no_inbox(GhConversationView *self)
+{
+  if (self->no_inbox_room) {
+    adw_banner_set_title(self->banner,
+                         _("No one in this conversation has set up private messaging yet"));
+  } else if (self->no_inbox_name) {
+    g_autofree gchar *title = g_strdup_printf(_("%s hasn't set up private messaging yet"),
+                                              self->no_inbox_name);
+    adw_banner_set_title(self->banner, title);
+  }
+  adw_banner_set_revealed(self->banner, self->no_inbox_room || self->no_inbox_name);
+}
+
 void
 gh_conversation_view_set_recipient_without_inbox(GhConversationView *self, const gchar *name)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
-  if (name) {
-    g_autofree gchar *title = g_strdup_printf(_("%s hasn't set up private messaging yet"), name);
-    adw_banner_set_title(self->banner, title);
-  }
-  adw_banner_set_revealed(self->banner, name != NULL);
+  gchar *copy = g_strdup(name);
+  g_free(self->no_inbox_name);
+  self->no_inbox_name = copy;
+  sync_no_inbox(self);
+}
+
+void
+gh_conversation_view_set_room_without_inbox(GhConversationView *self, gboolean nobody)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  self->no_inbox_room = !!nobody;
+  sync_no_inbox(self);
 }
 
 void
@@ -1534,6 +1749,7 @@ gh_conversation_view_finalize(GObject *object)
   g_free(self->pending_link);
   g_free(self->pending_preview);
   g_free(self->last_announcement);
+  g_free(self->no_inbox_name);
   G_OBJECT_CLASS(gh_conversation_view_parent_class)->finalize(object);
 }
 
@@ -1573,6 +1789,7 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   /* The templates name these types; they resolve by name. */
   g_type_ensure(GH_TYPE_TIMELINE_ITEM);
   g_type_ensure(GH_TYPE_MESSAGE_ROW);
+  g_type_ensure(GH_TYPE_TIMELINE_ROW);
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-conversation-view.ui");
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, banner);

@@ -1,5 +1,6 @@
 #include "gh-dm-send.h"
 #include "gh-auth-policy.h"
+#include "gh-clock.h"
 #include "gh-identity.h"
 #include "gh-nip17-envelope.h"
 #include "gh-signer.h"
@@ -10,6 +11,7 @@
 #include <string.h>
 
 #define MAX_TARGETS 16 /* the relay publish's own bound */
+#define ROOM_SPACING_MAX_S 3 /* charter §4.5 S4: a room's wraps U(0, 3) s apart */
 
 typedef enum { MODE_SEND, MODE_SEAL, MODE_PUBLISH } Mode;
 
@@ -23,7 +25,15 @@ struct _GhDmSender {
   gboolean custom_transport;
   guint publish_deadline; /* 0: the publish default */
   GHashTable *inflight;   /* GhDmSend (owned) until done */
+  GhClock *clock;         /* S4 spacing; the system clock unless set */
 };
+
+/* A room recipient's wrap waiting for its S4 turn (nostrc-yp69). */
+typedef struct {
+  GhDmSend *self;         /* not a reference: finish() removes the timeout */
+  GhDmSendLeg *leg;       /* borrowed from self->status */
+  guint id;               /* the GhClock timeout; 0 once it ran */
+} Spaced;
 
 struct _GhDmSend {
   GObject parent_instance;
@@ -44,6 +54,8 @@ struct _GhDmSend {
   gulong relays_handler;
   void (*after_relays)(GhDmSend *self);
   GHashTable *publishes; /* GhRelayPublish (owned) -> GhDmSendLeg (borrowed) */
+  GhClock *clock;        /* the sender's, for the S4 timeouts */
+  GPtrArray *spaced;     /* Spaced, room wraps still waiting */
 };
 
 enum { SIGNAL_CHANGED, N_SIGNALS };
@@ -306,12 +318,26 @@ wipe_content(GhDmSend *self)
 /* Terminal transition; runs once. Every hook is released, and the inbox
  * lookup and any signer approval still pending are revoked via self->cancel. */
 static void
+clear_spaced(GhDmSend *self)
+{
+  for (guint i = 0; self->spaced && i < self->spaced->len; i++) {
+    Spaced *spaced = g_ptr_array_index(self->spaced, i);
+    if (spaced->id)
+      gh_clock_source_remove(self->clock, spaced->id);
+    spaced->id = 0;
+  }
+  if (self->spaced)
+    g_ptr_array_set_size(self->spaced, 0);
+}
+
+static void
 finish(GhDmSend *self, GhDmSendResult result, GhDmSendFailure failure,
        const gchar *message, gboolean emit)
 {
   if (is_done(self))
     return;
   g_object_ref(self);
+  clear_spaced(self);
   GHashTableIter iter;
   gpointer publish;
   g_hash_table_iter_init(&iter, self->publishes);
@@ -386,6 +412,9 @@ track(GhDmSend *self, GhDmSender *sender, GCancellable *cancellable)
 {
   self->status.account_generation = gh_account_controller_get_generation(sender->accounts);
   self->sender = g_object_ref(sender);
+  if (!sender->clock)
+    sender->clock = gh_clock_new_system();
+  self->clock = gh_clock_ref(sender->clock);
   g_hash_table_add(sender->inflight, g_object_ref(self));
   if (cancellable && g_cancellable_is_cancelled(cancellable)) {
     finish(self, GH_DM_SEND_RESULT_CANCELLED, GH_DM_SEND_FAILURE_NONE,
@@ -630,14 +659,80 @@ start_leg(GhDmSend *self, GhDmSendLeg *leg)
   leg->complete = TRUE;
 }
 
+static gboolean
+leg_has_pending(const GhDmSendLeg *leg)
+{
+  for (guint i = 0; i < leg->relays->len; i++)
+    if (((GhDmRelayOutcome *)g_ptr_array_index(leg->relays, i))->outcome ==
+        GH_RELAY_PUBLISH_PENDING)
+      return TRUE;
+  return FALSE;
+}
+
+static gboolean
+spaced_due(gpointer data)
+{
+  Spaced *spaced = data;
+  GhDmSend *self = spaced->self;
+  GhDmSendLeg *leg = spaced->leg; /* spaced may go with a finish below */
+  spaced->id = 0;
+  if (is_done(self))
+    return G_SOURCE_REMOVE;
+  g_object_ref(self);
+  if (!is_current(self)) {
+    finish_cancelled(self);
+  } else {
+    start_leg(self, leg);
+    if (!is_done(self)) {
+      emit_changed(self);
+      check_published(self);
+    }
+  }
+  g_object_unref(self);
+  return G_SOURCE_REMOVE;
+}
+
+/* Charter §4.5 S4 (nostrc-yp69): a room's recipient wraps go out in a random
+ * order, U(0, 3) s apart (the first at once), so that a relay on several
+ * recipients' lists does not get them back to back in "p" order; each
+ * publish of a status draws its own. One wrap (a one-to-one message) goes
+ * at once, and so does the self-copy. */
 static void
 begin_publish(GhDmSend *self)
 {
   GhDmSendStatus *status = &self->status;
   status->phase = GH_DM_SEND_PHASE_PUBLISHING;
   g_object_ref(self); /* publish callbacks may finish (and release) the operation */
-  for (guint i = 0; i < status->recipients->len && !is_done(self); i++)
-    start_leg(self, g_ptr_array_index(status->recipients, i));
+  g_autoptr(GPtrArray) room = g_ptr_array_new();
+  for (guint i = 0; i < status->recipients->len && !is_done(self); i++) {
+    GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
+    if (leg_has_pending(leg))
+      g_ptr_array_add(room, leg);
+    else
+      start_leg(self, leg); /* nothing to send: complete */
+  }
+  for (guint i = room->len; room->len > 1 && i-- > 1;) {
+    guint j = gh_clock_random_uniform(self->clock, i + 1);
+    gpointer swap = room->pdata[i];
+    room->pdata[i] = room->pdata[j];
+    room->pdata[j] = swap;
+  }
+  gint64 delay = 0;
+  for (guint k = 0; k < room->len && !is_done(self); k++) {
+    GhDmSendLeg *leg = g_ptr_array_index(room, k);
+    if (k > 0)
+      delay += gh_clock_random_range(self->clock, 0, ROOM_SPACING_MAX_S);
+    if (delay == 0) {
+      start_leg(self, leg);
+      continue;
+    }
+    Spaced *spaced = g_new0(Spaced, 1);
+    spaced->self = self;
+    spaced->leg = leg;
+    spaced->id = gh_clock_timeout_add(self->clock, (guint64)delay * 1000, spaced_due, spaced,
+                                      NULL);
+    g_ptr_array_add(self->spaced, spaced);
+  }
   if (status->self_copy && !is_done(self))
     start_leg(self, status->self_copy);
   if (!is_done(self)) {
@@ -1175,6 +1270,9 @@ static void
 gh_dm_send_finalize(GObject *object)
 {
   GhDmSend *self = GH_DM_SEND(object);
+  clear_spaced(self);
+  g_ptr_array_unref(self->spaced);
+  g_clear_pointer(&self->clock, gh_clock_unref);
   status_clear(&self->status);
   g_hash_table_unref(self->publishes);
   g_clear_object(&self->cancel);
@@ -1202,6 +1300,7 @@ gh_dm_send_init(GhDmSend *self)
                                           (GDestroyNotify)gh_relay_publish_unref, NULL);
   self->status.phase = GH_DM_SEND_PHASE_RESOLVING;
   self->status.recipients = g_ptr_array_new_with_free_func(leg_free);
+  self->spaced = g_ptr_array_new_with_free_func(g_free);
 }
 
 /* ---- sender -------------------------------------------------------------- */
@@ -1234,6 +1333,16 @@ gh_dm_sender_set_publish_deadline(GhDmSender *self, guint seconds)
   self->publish_deadline = seconds;
 }
 
+void
+gh_dm_sender_set_clock(GhDmSender *self, GhClock *clock)
+{
+  g_return_if_fail(GH_IS_DM_SENDER(self));
+  GhClock *old = self->clock;
+  self->clock = clock ? gh_clock_ref(clock) : NULL;
+  if (old)
+    gh_clock_unref(old);
+}
+
 static void
 gh_dm_sender_dispose(GObject *object)
 {
@@ -1257,6 +1366,7 @@ gh_dm_sender_finalize(GObject *object)
 {
   GhDmSender *self = GH_DM_SENDER(object);
   g_hash_table_unref(self->inflight);
+  g_clear_pointer(&self->clock, gh_clock_unref);
   G_OBJECT_CLASS(gh_dm_sender_parent_class)->finalize(object);
 }
 

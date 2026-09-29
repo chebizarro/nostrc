@@ -16,6 +16,7 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
+#include "gh-timeline-row.h"
 #include "gh-message-row.h"
 #include "gh-identity.h"
 #include "gh-inbox-status.h"
@@ -218,18 +219,29 @@ message_list_of(GhContentPage *content)
   return GTK_WIDGET(gh_conversation_view_get_message_list(view_of(content)));
 }
 
+/* A list item widget's bound message row (its child is a GhTimelineRow),
+ * or NULL for a day separator or a local event. */
+static GhMessageRow *
+item_row(GtkWidget *item)
+{
+  GtkWidget *child = gtk_widget_get_first_child(item);
+  if (!GH_IS_TIMELINE_ROW(child))
+    return NULL;
+  GhMessageRow *row = gh_timeline_row_get_message_row(GH_TIMELINE_ROW(child));
+  return gh_message_row_get_message(row) ? row : NULL;
+}
+
 /* The list item widgets of the message list: each is a GtkListItem's
- * widget whose child is a bound GhMessageRow (day separators are skipped). */
+ * widget whose child holds a bound GhMessageRow (day separators are
+ * skipped). */
 static GPtrArray *
 message_items(GhContentPage *content)
 {
   GPtrArray *items = g_ptr_array_new();
   GtkWidget *list = message_list_of(content);
-  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c)) {
-    GtkWidget *child = gtk_widget_get_first_child(c);
-    if (GH_IS_MESSAGE_ROW(child) && gh_message_row_get_message(GH_MESSAGE_ROW(child)))
+  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c))
+    if (item_row(c))
       g_ptr_array_add(items, c);
-  }
   return items;
 }
 
@@ -617,7 +629,7 @@ assert_message_item(GtkWidget *item, GhMessage *message)
   g_autofree char *label = gh_message_row_compose_summary(message, now);
   gtk_test_accessible_assert_property(GTK_ACCESSIBLE(item), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                       label);
-  GhMessageRow *row = GH_MESSAGE_ROW(gtk_widget_get_first_child(item));
+  GhMessageRow *row = item_row(item);
   g_assert_true(gh_message_row_get_message(row) == message);
   GtkLabel *body = template_child(row, GH_TYPE_MESSAGE_ROW, "body_label");
   g_assert_cmpstr(gtk_label_get_text(body), ==, gh_message_get_content(message));

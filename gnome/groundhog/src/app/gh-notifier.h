@@ -16,15 +16,26 @@ G_BEGIN_DECLS
  *
  * What is notified: an incoming message the conversation model newly
  * admitted ("message-added") for its bound account, while
- * `notifications-enabled` is on. Never:
+ * `notifications-enabled` is on, including what arrived while Groundhog was
+ * not receiving (backfill after an autostart at login, nostrc-qp24.84):
+ * whatever was written after the account's last-seen marker (the inbox
+ * checkpoint, config->last_seen) less GH_NOTIFIER_LAST_SEEN_GRACE. A message
+ * this device already had is never admitted again (the store's seen set), so
+ * nothing is notified twice. Never:
  *   - the account's own messages (self-copies, messages sent elsewhere);
- *   - messages written before this session: before the model bound the
- *     account (backfill of what arrived while Groundhog was not receiving);
+ *   - old history: written before that marker, or, without one (the first
+ *     session of a store, or a store that keeps no marker), before the model
+ *     bound the account, so a first backfill is never replayed;
  *   - expired messages;
  *   - a conversation that is muted or blocked (room_state: the encrypted
  *     store, never GSettings), visible in the active window
  *     (gh_notifier_set_visible_conversation()), or read by the time the
- *     notification would go out. Decrypt failures never reach the model.
+ *     notification would go out (gh_conversation_is_unread(): a message
+ *     that arrived after the room was read stays unread and is notified,
+ *     wherever it sorts, nostrc-qp24.75). Decrypt failures never reach the
+ *     model.
+ * A backfill burst coalesces like any other (N2): at the hidden level one
+ * "N new messages"; Message Requests stay hidden at every level.
  *
  * Content (`notification-privacy`; any unknown value counts as hidden):
  *   hidden (default)  title "New message", body "N new messages", one id for
@@ -92,6 +103,10 @@ G_BEGIN_DECLS
 #define GH_NOTIFIER_UPDATE_INTERVAL_MS 2000
 #define GH_NOTIFIER_SOUND_INTERVAL_MS 10000
 #define GH_NOTIFIER_PREVIEW_MAX 120
+/* Seconds before the last-seen marker a message still counts as new: the
+ * inbox's clock slack (gh-dm-inbox.h GH_DM_INBOX_WRAP_SKEW's hour), for
+ * sender clocks and relay latency. */
+#define GH_NOTIFIER_LAST_SEEN_GRACE 3600
 
 /* A room's notification state where it is kept (the encrypted store). */
 typedef struct {
@@ -104,6 +119,12 @@ typedef struct {
 typedef gboolean (*GhNotifierRoomStateFunc)(gpointer data, const gchar *room_id,
                                             GhNotifierRoomState *state);
 
+/* The account's last-seen marker (charter §5.2 N1): unix seconds by which
+ * everything its inbox relays held was received (the inbox checkpoint, kept
+ * in the encrypted store), 0 when none is known. Asked once each time the
+ * model binds @account, before this session's inbox moves it. */
+typedef gint64 (*GhNotifierLastSeenFunc)(gpointer data, const gchar *account);
+
 typedef struct {
   /* Required: org.nostr.Groundhog (notifications-enabled,
    * notification-privacy, sound-enabled). */
@@ -112,6 +133,9 @@ typedef struct {
   GhClock *clock;                      /* NULL = system clock */
   GhNotifierRoomStateFunc room_state;  /* nullable: nothing muted or blocked */
   gpointer room_state_data;
+  GhNotifierLastSeenFunc last_seen;    /* nullable: no marker, so only what is
+                                        * written after binding is notified */
+  gpointer last_seen_data;
 } GhNotifierConfig;
 
 #define GH_TYPE_NOTIFIER (gh_notifier_get_type())

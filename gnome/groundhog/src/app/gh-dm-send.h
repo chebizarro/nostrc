@@ -41,7 +41,10 @@ G_BEGIN_DECLS
  * PUBLISHING sends each recipient's wrap ONLY to that recipient's 10050 relays
  * and the self-copy ONLY to the account's own 10050 relays (GhAccountRelays),
  * one GhRelayPublish per wrap, so no two wraps share a connection (a relay
- * on several recipients' lists gets each wrap separately). Only
+ * on several recipients' lists gets each wrap separately). A room's
+ * recipient wraps go out in a random order, U(0, 3) s apart, on the
+ * sender's clock (charter §4.5 S4, nostrc-yp69; each publish draws its own).
+ * Only
  * targets not already ACCEPTED are published to, so republishing a partially
  * settled status resumes the fanout. GhAuthPolicy (gh-auth-policy.h) picks
  * each URL's NIP-42 identity: a recipient's inbox relay only ever gets an
@@ -173,6 +176,11 @@ GhDmSender *gh_dm_sender_new(GhAccountController *accounts,
                              gpointer transport_data);
 /* Per-relay publish failure bound (see gh_relay_publish_set_deadline). */
 void gh_dm_sender_set_publish_deadline(GhDmSender *self, guint seconds);
+/* The GhClock (src/store/gh-clock.h) that spaces a room's wraps (S4) and
+ * draws their order; NULL: the system clock. Operations started later use
+ * it. */
+struct _GhClock;
+void gh_dm_sender_set_clock(GhDmSender *self, struct _GhClock *clock);
 
 /* Each returns a new reference to an operation the sender keeps alive until
  * it is done (dropping the reference does not cancel it). Invalid input

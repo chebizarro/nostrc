@@ -22,8 +22,11 @@ GhConversation *gh_conversation_new_nip29(const gchar *account, const gchar *roo
  * when they change. */
 void gh_conversation_set_name(GhConversation *self, const gchar *name);
 /* Store-only: inserts message in order. FALSE (nothing changed) when its
- * rumor id is already present or it belongs to another room or account. */
-gboolean gh_conversation_insert(GhConversation *self, GhMessage *message);
+ * rumor id is already present or it belongs to another room or account.
+ * delivered: a relay delivered it (an own message then was written on
+ * another device), else it is a local echo (see the read state in
+ * gh-conversation.h). */
+gboolean gh_conversation_insert(GhConversation *self, GhMessage *message, gboolean delivered);
 /* Store-only: the store that persists the room's read marker and acceptance
  * through its delegate; NULL detaches. Not a reference. */
 void gh_conversation_set_store(GhConversation *self, GhConversationStore *store);
@@ -49,6 +52,15 @@ typedef struct {
   gboolean has_older;        /* messages before the floor are not loaded */
   gint64 floor_created_at;   /* the oldest stored message fetched so far */
   const gchar *floor_id;
+  /* nostrc-qp24.75: how far the arrival order the marker covered, and the
+   * reply boundary (the newest own message another device wrote). */
+  guint64 read_seq;
+  gboolean has_reply;
+  gint64 reply_created_at;
+  const gchar *reply_id;
+  gint64 pinned_rank;        /* 0: not pinned (nostrc-qp24.86) */
+  gint64 timer_seconds;      /* the timer after its last change (nostrc-qp24.83) */
+  gint64 timer_changed_at;   /* 0: never changed */
 } GhConversationState;
 
 /* Store-only: inserts restored messages (committed earlier; no read-marker
@@ -59,8 +71,21 @@ void gh_conversation_restore(GhConversation *self, GPtrArray *messages,
 /* Whether message belongs to the unloaded older history (before the floor). */
 gboolean gh_conversation_is_older_history(GhConversation *self, GhMessage *message);
 /* A new message committed into the unloaded older history: moves the read
- * marker for an own message; the caller syncs the durable unread count. */
-void gh_conversation_add_older_history(GhConversation *self, GhMessage *message);
+ * state for an own message (delivered as for gh_conversation_insert()); the
+ * caller syncs the durable unread count. */
+void gh_conversation_add_older_history(GhConversation *self, GhMessage *message,
+                                       gboolean delivered);
+/* The newest arrival (gh_message_get_seq()) the read marker covers, for a
+ * durable delegate's mark_read(). */
+guint64 gh_conversation_get_read_seq(GhConversation *self);
+/* Store-only: the pin rank (0 unpins); notifies "pinned" when it turns on
+ * or off. The store orders pinned rooms first (gh_conversation_store_pin()). */
+void gh_conversation_set_pinned_rank(GhConversation *self, gint64 rank);
+gint64 gh_conversation_get_pinned_rank(GhConversation *self);
+/* Store-only: the disappearing timer's last change (charter §3.7, nostrc-
+ * qp24.83); notifies "timer-seconds" and "timer-changed-at". */
+void gh_conversation_set_timer_change(GhConversation *self, gint64 seconds,
+                                      gint64 changed_at);
 /* Makes the unread count equal the durable one (the unloaded part absorbs
  * the difference). */
 void gh_conversation_sync_unread(GhConversation *self, guint unread);
@@ -77,6 +102,10 @@ void gh_conversation_store_persist_read(GhConversationStore *self,
 /* The room stopped being a request (gh_conversation_accept). */
 void gh_conversation_store_persist_accept(GhConversationStore *self,
                                           GhConversation *conversation);
+/* first_unread and what follows became unread (gh_conversation_mark_unread). */
+void gh_conversation_store_persist_unread(GhConversationStore *self,
+                                          GhConversation *conversation,
+                                          GhMessage *first_unread);
 
 /* Store-layer only: restores one room of the bound account from the durable
  * store (see GhConversationState). A room that is not listed yet is created

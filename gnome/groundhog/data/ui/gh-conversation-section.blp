@@ -1,0 +1,15 @@
+using Gtk 4.0;
+
+// A section header of the conversation list (charter §7.5, nostrc-qp24.86):
+// "Pinned" or "Recent", set by gh-conversation-list.c from the section's
+// first conversation. The list has headers only while something is pinned.
+Label section_label {
+  xalign: 0;
+  ellipsize: end;
+
+  styles [
+    "heading",
+    "dim-label",
+    "groundhog-conversation-section",
+  ]
+}

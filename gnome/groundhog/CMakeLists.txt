@@ -29,6 +29,7 @@ set(GROUNDHOG_DATA ${CMAKE_CURRENT_SOURCE_DIR}/data)
 set(GROUNDHOG_BLUEPRINTS
   gh-window gh-sidebar-page gh-content-page gh-onboarding-view gh-onboarding-row gh-account-ui
   gh-conversation-row gh-shortcuts-window
+  gh-conversation-section gh-timeline-row
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
@@ -1913,6 +1914,32 @@ else()
                  "GhStore, the conversation model and OpenSSL)")
 endif()
 # --- end G21 encrypted attachments core ---
+# --- W18 messaging polish (nostrc-qp24.75, .83, .84, .86, yp69, 9cho, lff5) ---
+#  - GhDmSender spaces a room's wraps on a GhClock (charter §4.5 S4 on the
+#    direct path, nostrc-yp69): every executable that compiles gh-dm-send.c
+#    gets the clock, GTK-free and without the store (groundhog-clock; linked
+#    beside groundhog-store too, its object is then simply not pulled twice).
+if (TARGET PkgConfig::GROUNDHOG_STORE_DEPS)
+  add_library(groundhog-clock STATIC src/store/gh-clock.c)
+  target_include_directories(groundhog-clock PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-clock PUBLIC PkgConfig::GROUNDHOG_STORE_DEPS)
+  target_compile_options(groundhog-clock PRIVATE -Wall -Wextra -Werror)
+  get_property(GROUNDHOG_W18_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach (target IN LISTS GROUNDHOG_W18_TARGETS)
+    get_target_property(type ${target} TYPE)
+    get_target_property(sources ${target} SOURCES)
+    if (type STREQUAL "EXECUTABLE" AND sources MATCHES "gh-dm-send\\.c")
+      target_link_libraries(${target} PRIVATE groundhog-clock)
+    endif()
+  endforeach()
+endif()
+#  - The conversation timeline's rows (nostrc-qp24.83): a message or a local
+#    event such as the disappearing timer's change (GhTimelineRow,
+#    data/ui/gh-timeline-row.blp; the list item binds it).
+if (TARGET groundhog-conversation-ui)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-timeline-row.c)
+endif()
+# --- end W18 messaging polish ---
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from
 # src/app/gh-features.h, whose features follow the executable's

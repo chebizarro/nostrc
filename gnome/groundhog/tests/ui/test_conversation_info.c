@@ -21,6 +21,7 @@
 #include "gh-conversation-private.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
+#include "gh-timeline-row.h"
 #include "gh-expiry.h"
 #include "gh-notifier.h"
 #include "gh-privacy-summary.h"
@@ -1061,6 +1062,54 @@ test_gui_verify(void)
   account_clear(a);
 }
 
+/* The shown conversation's timer-change row (nostrc-qp24.83): its text in
+ * the timeline, or NULL. */
+static const gchar *
+timeline_event(Gui *g)
+{
+  GtkWidget *view = gh_content_page_get_view(gh_window_get_content(g->window));
+  GListModel *timeline = gh_conversation_view_get_timeline(GH_CONVERSATION_VIEW(view));
+  for (guint i = 0; timeline && i < g_list_model_get_n_items(timeline); i++) {
+    g_autoptr(GhTimelineItem) item = g_list_model_get_item(timeline, i);
+    if (gh_timeline_item_get_event_text(item))
+      return gh_timeline_item_get_event_text(item); /* the model keeps it */
+  }
+  return NULL;
+}
+
+typedef struct {
+  GtkWidget *root;
+  const gchar *text;
+} EventWait;
+
+/* A mapped timeline row showing text, whose accessible text starts with it. */
+static gboolean
+event_row_shown(GtkWidget *widget, const gchar *text)
+{
+  if (GH_IS_TIMELINE_ROW(widget) && gtk_widget_get_mapped(widget)) {
+    GhTimelineItem *item = gh_timeline_row_get_item(GH_TIMELINE_ROW(widget));
+    if (item && g_strcmp0(gh_timeline_item_get_event_text(item), text) == 0 &&
+        g_str_has_prefix(gh_timeline_row_get_summary(GH_TIMELINE_ROW(widget)), text))
+      return TRUE;
+  }
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c))
+    if (event_row_shown(c, text))
+      return TRUE;
+  return FALSE;
+}
+
+static gboolean
+event_shown(gpointer data)
+{
+  EventWait *wait = data;
+  return event_row_shown(wait->root, wait->text);
+}
+
+/* Charter §3.7 UI (nostrc-qp24.83): changing the timer in Conversation Info
+ * adds the local timeline row "You set messages to disappear after 1 week"
+ * (and "You turned off disappearing messages"); it stays after a restart,
+ * and it is this device's record only: nothing is queued or sent, and the
+ * conversation's messages are unchanged. */
 static void
 test_gui_timer(void)
 {
@@ -1069,7 +1118,12 @@ test_gui_timer(void)
   Account *a = &g.account;
   g_autofree gchar *room = room_of(PEER[0]);
   GhConversation *conversation = receive(a, PEER[0], T0 - 60, "hello");
+  gh_conversation_accept(conversation); /* shown in the conversation view */
   gui_window(&g, 900, 760, conversation);
+  GtkWidget *view = gh_content_page_get_view(gh_window_get_content(g.window));
+  g_assert_true(gh_conversation_view_get_conversation(GH_CONVERSATION_VIEW(view)) ==
+                conversation);
+  g_assert_null(timeline_event(&g));
   gui_open(&g, conversation);
   AdwComboRow *timer = child(&g, "timer_row");
   g_assert_true(gtk_widget_get_sensitive(GTK_WIDGET(timer)));
@@ -1079,17 +1133,30 @@ test_gui_timer(void)
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_expiry_get_timer(a->expiry, room, &seconds, &error));
   g_assert_cmpint(seconds, ==, GH_EXPIRY_TIMER_WEEK);
+  const gchar *week = "You set messages to disappear after 1 week";
+  g_assert_cmpstr(timeline_event(&g), ==, week);
+  EventWait shown = { GTK_WIDGET(g.window), week };
+  adw_dialog_force_close(ADW_DIALOG(g.dialog));
+  spin_until(event_shown, &shown);
+  /* Local only (P8): nothing queued, nothing new in the conversation. */
+  g_autoptr(GArray) queued = gh_store_outbox_list_unfinished(a->store, GH_STORE_BACKEND_NIP17,
+                                                             &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(queued->len, ==, 0);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 1);
   gui_close(&g);
   account_restart(a);
   g_assert_true(gh_expiry_get_timer(a->expiry, room, &seconds, &error));
   g_assert_cmpint(seconds, ==, GH_EXPIRY_TIMER_WEEK);
   conversation = gh_conversation_store_lookup(a->model, room);
   gui_window(&g, 900, 760, conversation);
+  g_assert_cmpstr(timeline_event(&g), ==, week);
   gui_open(&g, conversation);
   g_assert_cmpuint(adw_combo_row_get_selected(child(&g, "timer_row")), ==, 2);
   adw_combo_row_set_selected(child(&g, "timer_row"), 0);
   g_assert_true(gh_expiry_get_timer(a->expiry, room, &seconds, &error));
   g_assert_cmpint(seconds, ==, GH_EXPIRY_TIMER_OFF);
+  g_assert_cmpstr(timeline_event(&g), ==, "You turned off disappearing messages");
   gui_close(&g);
   account_clear(a);
 }

@@ -6,7 +6,8 @@ using Adw 1;
 // item's accessible label. The avatar only ever shows initials: no picture
 // is loaded (charter PD-2), and a request never triggers a profile fetch.
 // Its context menu (right click, long press, Shift+F10 or Menu; charter
-// §7.4, §7.13; nostrc-qp24.74) is context_popover.
+// §7.4, §7.13; nostrc-qp24.74, qp24.86) is context_popover. A pinned
+// conversation shows pinned_icon (its accessible text is the row's).
 template $GhConversationRow: Widget {
   layout-manager: BoxLayout {
     spacing: 12;
@@ -53,6 +54,18 @@ template $GhConversationRow: Widget {
 
         styles [
           "groundhog-conversation-title",
+        ]
+      }
+
+      Image pinned_icon {
+        icon-name: "view-pin-symbolic";
+        visible: false;
+        valign: center;
+        tooltip-text: _("Pinned");
+        accessible-role: presentation;
+
+        styles [
+          "dim-label",
         ]
       }
 
@@ -117,10 +130,38 @@ template $GhConversationRow: Widget {
 }
 
 // Row actions (gh-conversation-row.c) forward to the window's
-// win.mute-conversation, win.show-conversation-info and
-// win.delete-conversation with this row's room (gh-conversation-menu.c).
-// Mute is hidden for a message request, which is never notified.
+// win.pin-conversation, win.unpin-conversation, win.mark-conversation-read,
+// win.mark-conversation-unread, win.mute-conversation,
+// win.show-conversation-info and win.delete-conversation with this row's
+// room (gh-conversation-menu.c). Each pair shows the one that applies;
+// a message request has no Pin, Mark or Mute (it is never notified).
 menu context_menu {
+  section {
+    item {
+      label: _("_Pin");
+      action: "row.pin";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("Un_pin");
+      action: "row.unpin";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("Mark as _Read");
+      action: "row.mark-read";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("Mark as _Unread");
+      action: "row.mark-unread";
+      hidden-when: "action-disabled";
+    }
+  }
+
   section {
     item {
       label: _("_Mute…");

@@ -96,7 +96,7 @@ typedef struct {
    * purge (gh_store_conversations_purge()). */
   struct _GhStoreConversations *conversations;
   gint retention_days;   /* 0 keeps messages (default); capped */
-  gint64 default_timer;  /* timer of conversations created from now on */
+  gint64 default_timer;  /* timer of conversations the account starts from now on */
 } GhExpiryConfig;
 
 /* Takes over the store's expiry notification and its default timer, and
@@ -116,18 +116,23 @@ gint64 gh_expiry_get_next_run(GhExpiry *self);
 /* Retention period in days (0: keep). A new or shorter period purges now. */
 void gh_expiry_set_retention_days(GhExpiry *self, gint days);
 gint gh_expiry_get_retention_days(GhExpiry *self);
-/* The timer conversations created from now on start with (a valid timer;
- * anything else turns it off). */
+/* The timer conversations the account starts from now on begin with (a
+ * valid timer; anything else turns it off). One someone else starts (a
+ * message request) begins with the timer off (gh_store_set_default_
+ * disappearing(); nostrc-qp24.83). */
 void gh_expiry_set_default_timer(GhExpiry *self, gint64 seconds);
 
 /* The timer of the NIP-17 room @room_id (a canonical room id of the store's
  * account, gh_message_get_room_id()); a room not stored yet reports the
- * default a new one would get. */
+ * default it would get when the account starts it. */
 gboolean gh_expiry_get_timer(GhExpiry *self, const gchar *room_id, gint64 *out_seconds,
                              GError **error);
 /* Sets it (gh_expiry_timer_is_valid(), else G_IO_ERROR_INVALID_ARGUMENT);
  * a room not stored yet is created, as accepted. It applies to messages the
- * account sends from now on; received ones keep their sender's expiration. */
+ * account sends from now on; received ones keep their sender's expiration.
+ * A change is recorded with its time and shown as the local timeline row
+ * "You set messages to disappear after 1 day" (the attached model's
+ * gh_conversation_get_timer_change(), charter §3.7; never published). */
 gboolean gh_expiry_set_timer(GhExpiry *self, const gchar *room_id, gint64 seconds,
                              GError **error);
 

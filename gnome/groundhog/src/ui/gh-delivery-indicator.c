@@ -204,6 +204,14 @@ fill_relays(GhDeliveryIndicator *self, GhDeliveryReport *report)
   }
 }
 
+/* The people an own message goes to (its "p" tags; a room: several). */
+static guint
+n_recipients(GhMessage *message)
+{
+  const gchar *const *recipients = message ? gh_message_get_recipients(message) : NULL;
+  return recipients ? g_strv_length((gchar **) recipients) : 0;
+}
+
 static void
 fill_details(GhDeliveryIndicator *self)
 {
@@ -219,7 +227,8 @@ fill_details(GhDeliveryIndicator *self)
   gtk_label_set_text(self->details_summary,
                      report && report->detail && *report->detail
                        ? report->detail
-                       : gh_message_status_get_accessible_description(status));
+                       : gh_message_status_get_accessible_description_for(
+                           status, n_recipients(self->message)));
   gboolean relays = report && report->targets->len > 0;
   if (relays)
     fill_relays(self, report);
@@ -266,7 +275,8 @@ update(GhDeliveryIndicator *self)
     gtk_widget_set_tooltip_text(GTK_WIDGET(self->button), tooltip);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->button), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                    label, GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
-                                   gh_message_status_get_accessible_description(status), -1);
+                                   gh_message_status_get_accessible_description_for(
+                                     status, n_recipients(self->message)), -1);
   } else {
     gtk_popover_popdown(self->details);
   }

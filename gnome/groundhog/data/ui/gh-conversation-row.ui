@@ -54,6 +54,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="GtkImage" id="pinned_icon">
+                <property name="icon-name">view-pin-symbolic</property>
+                <property name="visible">false</property>
+                <property name="valign">3</property>
+                <property name="tooltip-text" translatable="yes">Pinned</property>
+                <property name="accessible-role">43</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
               <object class="GtkLabel" id="time_label">
                 <property name="valign">4</property>
                 <style>
@@ -113,6 +125,28 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     </child>
   </template>
   <menu id="context_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Pin</attribute>
+        <attribute name="action">row.pin</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Un_pin</attribute>
+        <attribute name="action">row.unpin</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Mark as _Read</attribute>
+        <attribute name="action">row.mark-read</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Mark as _Unread</attribute>
+        <attribute name="action">row.mark-unread</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+    </section>
     <section>
       <item>
         <attribute name="label" translatable="yes">_Mute…</attribute>

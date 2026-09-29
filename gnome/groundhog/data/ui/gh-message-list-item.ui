@@ -10,42 +10,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="activatable">false</property>
     <property name="selectable">false</property>
     <binding name="accessible-label">
-      <lookup name="summary" type="GhMessageRow">
-        <lookup name="child" type="GtkListItem">
-          <constant>GtkListItem</constant>
-        </lookup>
+      <lookup name="summary" type="GhTimelineRow">
+        <lookup name="child" type="GtkListItem">GtkListItem</lookup>
       </lookup>
     </binding>
     <property name="child">
-      <object class="GhMessageRow">
-        <binding name="message">
-          <lookup name="message" type="GhTimelineItem">
-            <lookup name="item" type="GtkListItem">
-              <constant>GtkListItem</constant>
-            </lookup>
-          </lookup>
-        </binding>
-        <binding name="run-start">
-          <lookup name="run-start" type="GhTimelineItem">
-            <lookup name="item" type="GtkListItem">
-              <constant>GtkListItem</constant>
-            </lookup>
-          </lookup>
-        </binding>
-        <binding name="run-end">
-          <lookup name="run-end" type="GhTimelineItem">
-            <lookup name="item" type="GtkListItem">
-              <constant>GtkListItem</constant>
-            </lookup>
-          </lookup>
-        </binding>
-        <binding name="show-sender">
-          <lookup name="show-sender" type="GhTimelineItem">
-            <lookup name="item" type="GtkListItem">
-              <constant>GtkListItem</constant>
-            </lookup>
-          </lookup>
-        </binding>
+      <object class="GhTimelineRow">
+        <property name="item" bind-source="GtkListItem" bind-property="item" bind-flags="sync-create"/>
       </object>
     </property>
   </template>

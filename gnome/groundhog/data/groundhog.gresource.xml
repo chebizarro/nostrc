@@ -17,6 +17,8 @@
     <file>ui/gh-onboarding-row.ui</file>
     <file>ui/gh-account-ui.ui</file>
     <file>ui/gh-conversation-row.ui</file>
+    <file>ui/gh-conversation-section.ui</file>
+    <file>ui/gh-timeline-row.ui</file>
     <file>ui/gh-conversation-view.ui</file>
     <file>ui/gh-message-row.ui</file>
     <file>ui/gh-message-list-item.ui</file>

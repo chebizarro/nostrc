@@ -353,12 +353,16 @@ assert_read_state_consistent(GhStore *store)
     "SELECT count(*) FROM conversations c WHERE c.last_read_msg IS NOT NULL AND NOT EXISTS "
     "(SELECT 1 FROM messages m WHERE m.id = c.last_read_msg AND m.conversation_id = c.id)"),
     ==, 0);
+  /* Unread: neither at or before the reply boundary nor at or before the
+   * marker and arrived by then (schema v4, nostrc-qp24.75). */
   g_assert_cmpint(sql_int(store,
     "SELECT count(*) FROM conversations c WHERE c.unread_count != "
     "(SELECT count(*) FROM messages m LEFT JOIN messages r ON r.id = c.last_read_msg "
-    "WHERE m.conversation_id = c.id AND m.direction = 0 AND (r.id IS NULL OR "
-    "m.created_at > r.created_at OR (m.created_at = r.created_at AND "
-    "m.backend_msg_id > r.backend_msg_id)))"), ==, 0);
+    "WHERE m.conversation_id = c.id AND m.direction = 0 AND NOT ((c.reply_read_id IS NOT NULL "
+    "AND (m.created_at < c.reply_read_at OR (m.created_at = c.reply_read_at AND "
+    "m.backend_msg_id <= c.reply_read_id))) OR (r.id IS NOT NULL AND m.seq <= c.read_seq AND "
+    "(m.created_at < r.created_at OR (m.created_at = r.created_at AND "
+    "m.backend_msg_id <= r.backend_msg_id)))))"), ==, 0);
 }
 
 static void
@@ -988,11 +992,23 @@ test_timers(void)
   gh_expiry_set_default_timer(f.expiry, GH_EXPIRY_TIMER_WEEK);
   g_assert_true(gh_expiry_get_timer(f.expiry, ac, &timer, &error));
   g_assert_cmpint(timer, ==, GH_EXPIRY_TIMER_WEEK);
-  /* However a conversation is created, it starts with the default. */
+  /* nostrc-qp24.83: only a conversation the account starts takes the
+   * default. One someone else starts (Carol's message: a request from a
+   * stranger) starts with the timer off; one the account starts (its own
+   * message, here a self-copy from another device) with the default. */
   Rumor hello = { hex_carol, hex_alice, T0 - 5, "hello", NULL, 0 };
   g_assert_cmpint(deliver(&f, &hello, "w/hello", 0), ==, GH_CONVERSATION_ADD_NEW);
   g_assert_cmpint(sql_int(f.store, "SELECT disappearing_s FROM conversations WHERE "
-                                   "backend_key = '%s'", ac), ==, GH_EXPIRY_TIMER_WEEK);
+                                   "backend_key = '%s' AND request_state = 1", ac), ==, 0);
+  g_assert_true(gh_expiry_get_timer(f.expiry, ac, &timer, &error));
+  g_assert_cmpint(timer, ==, GH_EXPIRY_TIMER_OFF);
+  g_autofree gchar *hex_erin = hex_of("erin");
+  g_autofree gchar *to_erin = room_of(hex_alice, hex_erin);
+  Rumor mine = { hex_alice, hex_erin, T0 - 4, "hi Erin", NULL, 0 };
+  g_assert_cmpint(deliver(&f, &mine, "w/mine", 0), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(sql_int(f.store, "SELECT disappearing_s FROM conversations WHERE "
+                                   "backend_key = '%s' AND request_state = 0", to_erin), ==,
+                  GH_EXPIRY_TIMER_WEEK);
   g_assert_cmpuint(f.timers->len, ==, 0);
 
   /* Set on a room not stored yet: created as accepted, announced once. */
@@ -1028,7 +1044,7 @@ test_timers(void)
     g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
     g_clear_error(&error);
   }
-  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM conversations"), ==, 2);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM conversations"), ==, 3);
   /* A default that is not a timer turns it off. */
   gh_expiry_set_default_timer(f.expiry, 12345);
   g_autofree gchar *ad = room_of(hex_alice, hex_dave);

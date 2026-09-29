@@ -371,12 +371,13 @@ test_unread(void)
   g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 2);
   gh_conversation_mark_read(room);
   g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
-  /* Backfill older than the marker stays read; newer incoming is unread. */
+  /* What arrives after the read is unread, older than the marker or not
+   * (nostrc-qp24.75): the user never saw it. */
   Rumor old = { .author = 2, .p = { 1 }, .created_at = 5 };
   Rumor in3 = { .author = 2, .p = { 1 }, .created_at = 30 };
   g_assert_cmpint(add(store, 1, &old), ==, GH_CONVERSATION_ADD_NEW);
   g_assert_cmpint(add(store, 1, &in3), ==, GH_CONVERSATION_ADD_NEW);
-  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 2);
   /* Replying implies reading what came before; own messages never count. */
   Rumor reply = { .author = 1, .p = { 2 }, .created_at = 35 };
   g_assert_cmpint(add(store, 1, &reply), ==, GH_CONVERSATION_ADD_NEW);
@@ -386,6 +387,113 @@ test_unread(void)
   guint unread = 0;
   g_object_get(room, "unread-count", &unread, NULL);
   g_assert_cmpuint(unread, ==, 1);
+}
+
+/* A rumor from author to account at created_at whose id sorts before
+ * (lower) or after (!lower) reference_id: contents are tried until one does. */
+static GhMessage *
+same_second(guint author, guint to, guint account, gint64 created_at, const gchar *reference_id,
+            gboolean lower)
+{
+  for (guint i = 0; i < 1000; i++) {
+    g_autofree gchar *content = g_strdup_printf("burst %u", i);
+    Rumor r = { .author = author, .p = { to }, .created_at = created_at, .content = content };
+    GhMessage *message = message_for(account, &r, NULL);
+    gint order = strcmp(gh_message_get_rumor_id(message), reference_id);
+    if (lower ? order < 0 : order > 0)
+      return message;
+    g_object_unref(message);
+  }
+  g_assert_not_reached();
+}
+
+static GhConversationAddResult
+admit_wrapped(GhConversationStore *store, GhMessage *message, const gchar *seed)
+{
+  g_autofree gchar *wrap = g_compute_checksum_for_string(G_CHECKSUM_SHA256, seed, -1);
+  return gh_conversation_store_admit(store, message, wrap, NULL);
+}
+
+/* nostrc-qp24.75: the read marker is not a place in the sender-claimed
+ * order alone. A message that arrives after the room was read is unread
+ * wherever it sorts: the same second as the last read message with a lower
+ * rumor id (a burst), or an earlier time (a delay, a sender's clock).
+ * Replying on this device reads what had arrived; a reply written on
+ * another device reads whatever sorts before it. */
+static void
+test_read_by_arrival(void)
+{
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, hex[1], NULL, NULL, NULL);
+  g_autofree gchar *pair = room_id(1, 2, 0);
+
+  Rumor first = { .author = 2, .p = { 1 }, .created_at = 100, .content = "first" };
+  g_autoptr(GhMessage) a = message_for(1, &first, NULL);
+  g_assert_cmpint(admit_wrapped(store, a, "w/a"), ==, GH_CONVERSATION_ADD_NEW);
+  GhConversation *room = gh_conversation_store_lookup(store, pair);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_assert_false(gh_conversation_is_unread(room, a));
+
+  /* A burst: the second message has the same second and a lower id, so it
+   * sorts before the read one; it is unread all the same, and listed first. */
+  g_autoptr(GhMessage) b = same_second(2, 1, 1, 100, gh_message_get_rumor_id(a), TRUE);
+  g_assert_cmpint(admit_wrapped(store, b, "w/b"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(gh_message_compare(b, a), <, 0);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
+  g_assert_true(gh_conversation_is_unread(room, b));
+  g_assert_false(gh_conversation_is_unread(room, a));
+  guint first_unread = G_MAXUINT;
+  g_assert_cmpuint(gh_conversation_get_listed_unread(room, &first_unread), ==, 1);
+  g_assert_cmpuint(first_unread, ==, 0);
+  /* A delayed one from before both is unread too. */
+  Rumor late = { .author = 2, .p = { 1 }, .created_at = 40, .content = "delayed" };
+  g_autoptr(GhMessage) c = message_for(1, &late, NULL);
+  g_assert_cmpint(admit_wrapped(store, c, "w/c"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 2);
+  /* Reading what is listed reads them. */
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+
+  /* A reply written here (its local echo) reads what had arrived; a message
+   * arriving after it in the reply's second, sorting before it, is unread. */
+  Rumor mine = { .author = 1, .p = { 2 }, .created_at = 200, .content = "reply" };
+  g_autoptr(GhMessage) reply = message_for(1, &mine, NULL);
+  g_assert_cmpint(gh_conversation_store_add_message(store, reply, NULL), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_autoptr(GhMessage) d = same_second(2, 1, 1, 200, gh_message_get_rumor_id(reply), TRUE);
+  g_assert_cmpint(admit_wrapped(store, d, "w/d"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(gh_message_compare(d, reply), <, 0);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
+  g_assert_true(gh_conversation_is_unread(room, d));
+  gh_conversation_mark_read(room);
+
+  /* A reply another device wrote (a relay's self-copy) reads whatever sorts
+   * before it, even what arrives after it (a backfill in any order). */
+  Rumor elsewhere = { .author = 1, .p = { 2 }, .created_at = 300, .content = "from my phone" };
+  g_autoptr(GhMessage) remote = message_for(1, &elsewhere, NULL);
+  g_assert_cmpint(admit_wrapped(store, remote, "w/remote"), ==, GH_CONVERSATION_ADD_NEW);
+  Rumor answered = { .author = 2, .p = { 1 }, .created_at = 290, .content = "answered there" };
+  g_autoptr(GhMessage) e = message_for(1, &answered, NULL);
+  g_assert_cmpint(admit_wrapped(store, e, "w/e"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_assert_false(gh_conversation_is_unread(room, e));
+  Rumor after = { .author = 2, .p = { 1 }, .created_at = 310, .content = "after it" };
+  g_autoptr(GhMessage) f = message_for(1, &after, NULL);
+  g_assert_cmpint(admit_wrapped(store, f, "w/f"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
+
+  /* Mark as Unread (nostrc-qp24.86): the newest message from someone else
+   * is unread again, what came before stays read. */
+  gh_conversation_mark_read(room);
+  g_assert_true(gh_conversation_can_mark_unread(room));
+  g_assert_true(gh_conversation_mark_unread(room));
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
+  g_assert_true(gh_conversation_is_unread(room, f));
+  g_assert_false(gh_conversation_is_unread(room, e));
+  g_assert_false(gh_conversation_can_mark_unread(room)); /* something is unread */
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
 }
 
 static void
@@ -1033,6 +1141,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/conversations/subject", test_subject);
   g_test_add_func("/groundhog/conversations/request-title", test_request_title);
   g_test_add_func("/groundhog/conversations/unread", test_unread);
+  g_test_add_func("/groundhog/conversations/read-by-arrival", test_read_by_arrival);
   g_test_add_func("/groundhog/conversations/store-order-and-account",
                   test_store_order_and_account);
   g_test_add_func("/groundhog/conversations/message-added", test_message_added_signal);

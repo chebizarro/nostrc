@@ -706,9 +706,9 @@ seal_three(GhStore *store, gint64 outbox, GError **error)
   g_autofree gchar *json2 = g_strdup_printf("{\"id\":\"%s\",\"kind\":1059}", id2);
   g_autofree gchar *json3 = g_strdup_printf("{\"id\":\"%s\",\"kind\":1059}", id3);
   GhStoreSealedEvent events[] = {
-    { GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP, PEER, id1, json1, 0, recipient_urls },
-    { GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP, ACCOUNT_B, id2, json2, 0, recipient_urls },
-    { GH_STORE_OUTBOX_ROLE_SELF_WRAP, ACCOUNT_A, id3, json3, T0 + 30, own_urls },
+    { GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP, PEER, id1, json1, 0, recipient_urls, FALSE },
+    { GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP, ACCOUNT_B, id2, json2, 0, recipient_urls, FALSE },
+    { GH_STORE_OUTBOX_ROLE_SELF_WRAP, ACCOUNT_A, id3, json3, T0 + 30, own_urls, FALSE },
   };
   return gh_store_seal(store, outbox, events, G_N_ELEMENTS(events), error);
 }

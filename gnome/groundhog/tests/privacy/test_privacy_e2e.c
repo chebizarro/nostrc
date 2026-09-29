@@ -40,8 +40,7 @@
  * notification payload.
  *
  * Nothing sleeps: every wait is for an observable condition, bounded only
- * to turn a hang into a failure (NO-1 also waits for the wall clock's second
- * to change; see wait_next_second()). PT-1's negative claim ("nothing is
+ * to turn a hang into a failure. PT-1's negative claim ("nothing is
  * published") is closed by a barrier instead of a quiet period: a reply sent
  * after the scripted actions and awaited until both of its wraps were
  * accepted and the reply received, so anything the script had caused to be
@@ -1763,23 +1762,10 @@ shown_conversation(App *app)
   return NULL;
 }
 
-/* Rumor times have whole-second resolution and the read marker breaks a
- * same-second tie by rumor id (nostrc-qp24.75): a message sent in the second
- * of the last-read one may count as read and never be notified. Until that
- * is fixed, NO-1 starts each send after a read in a new second. */
-static gboolean
-second_changed(gpointer data)
-{
-  return g_get_real_time() / G_USEC_PER_SEC != *(gint64 *)data;
-}
-
-static void
-wait_next_second(void)
-{
-  gint64 second = g_get_real_time() / G_USEC_PER_SEC;
-  spin_until(second_changed, &second, "the next wall-clock second");
-}
-
+/* Rumor times have whole-second resolution. NO-1 sends right after each
+ * read, often in the second of the last-read message and with a lower rumor
+ * id: read state follows arrival (nostrc-qp24.75), so such a message is
+ * unread and notified all the same. */
 static void
 read_and_withdraw(App *app, GhConversation *conversation)
 {
@@ -1813,7 +1799,6 @@ test_no1_levels(void)
   /* hidden: "New message", the app-wide id, no name, npub, title or text. */
   const gchar *hidden_text = world_canary(&w, "no1-hidden", FALSE);
   guint before = count_added(bob);
-  wait_next_second();
   g_autoptr(GhOutboxItem) hidden = send_and_deliver(&w.alice, bob, hidden_text);
   notify_settle(bob);
   g_assert_cmpuint(count_added(bob), ==, before + 1);
@@ -1830,7 +1815,6 @@ test_no1_levels(void)
   g_settings_set_string(bob->settings, "notification-privacy", "sender");
   notify_next_window(bob);
   const gchar *sender_text = world_canary(&w, "no1-sender", FALSE);
-  wait_next_second();
   g_autoptr(GhOutboxItem) sender = send_and_deliver(&w.alice, bob, sender_text);
   notify_settle(bob);
   n = shown_conversation(bob);
@@ -1848,7 +1832,6 @@ test_no1_levels(void)
   g_autoptr(GString) long_text = g_string_new(preview_text);
   while (long_text->len < 300)
     g_string_append(long_text, " lorem ipsum");
-  wait_next_second();
   g_autoptr(GhOutboxItem) preview = send_and_deliver(&w.alice, bob, long_text->str);
   notify_settle(bob);
   n = shown_conversation(bob);

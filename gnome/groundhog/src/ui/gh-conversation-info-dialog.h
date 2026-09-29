@@ -84,6 +84,9 @@ G_DECLARE_FINAL_TYPE(GhConversationInfoDialog, gh_conversation_info_dialog, GH,
 GhConversationInfoDialog *gh_conversation_info_dialog_new(GhConversation *conversation,
                                                           const GhConversationInfoServices *services);
 GhConversation *gh_conversation_info_dialog_get_conversation(GhConversationInfoDialog *self);
+/* Focuses the disappearing-messages timer row ("Disappearing Messages…" in
+ * the conversation menu opens the dialog there; nostrc-qp24.86). */
+void gh_conversation_info_dialog_focus_timer(GhConversationInfoDialog *self);
 
 /* Window glue (charter §7.4): adds win.conversation-info to window, enabled
  * while its content page shows a conversation, and the content page's info

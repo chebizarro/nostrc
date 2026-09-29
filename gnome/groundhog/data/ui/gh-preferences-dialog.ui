@@ -148,7 +148,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwComboRow" id="disappearing_row">
                 <property name="title" translatable="yes">Default Timer</property>
-                <property name="subtitle" translatable="yes">Only for new conversations, including ones others start. Existing conversations keep their own timer.</property>
+                <property name="subtitle" translatable="yes">Only for new conversations you start. Ones others start begin without it, and existing conversations keep their own timer.</property>
                 <property name="model">
                   <object class="GtkStringList">
                     <items>

@@ -2114,7 +2114,11 @@ conversation_insert(GhStore *store, GhStoreBackend backend, const gchar *backend
   BIND(sqlite3_bind_int64(stmt, 3, created_at));
   BIND(sqlite3_bind_int64(stmt, 4, last_activity));
   BIND(sqlite3_bind_int64(stmt, 5, state));
-  BIND(sqlite3_bind_int64(stmt, 6, store->default_disappearing));
+  /* Only a conversation the account starts takes its default timer; one
+   * someone else starts (a message request) begins with it off (nostrc-
+   * qp24.83, charter §3.7). */
+  BIND(sqlite3_bind_int64(stmt, 6, state == GH_STORE_REQUEST_ACCEPTED
+                                     ? store->default_disappearing : 0));
   gboolean ok = store_step_done(store, stmt, "Creating a conversation", error);
   if (ok)
     *id = sqlite3_last_insert_rowid(store->db);
@@ -2292,12 +2296,15 @@ gh_store_set_disappearing(GhStore *store, gint64 conversation_id, gint64 seconds
   g_return_val_if_fail(store != NULL, FALSE);
   if (!check_disappearing(seconds, error) || !store_writable(store, error))
     return FALSE;
+  /* SET reads the row as it was: the change time moves only with a change. */
   sqlite3_stmt *stmt = store_prepare(store,
-    "UPDATE conversations SET disappearing_s = ?1 WHERE id = ?2", error);
+    "UPDATE conversations SET disappearing_s = ?1, timer_changed_at = CASE "
+    "WHEN disappearing_s <> ?1 THEN ?3 ELSE timer_changed_at END WHERE id = ?2", error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, seconds));
   BIND(sqlite3_bind_int64(stmt, 2, conversation_id));
+  BIND(sqlite3_bind_int64(stmt, 3, gh_clock_get_unix(store->clock)));
   gboolean ok = store_step_done(store, stmt, "Saving a disappearing timer", error);
   sqlite3_finalize(stmt);
   if (ok && sqlite3_changes(store->db) == 0) {
@@ -2330,6 +2337,250 @@ store_notify_expiry(GhStore *store, gint64 expires_at)
 {
   if (expires_at > 0 && store->expiry_func)
     store->expiry_func(expires_at, store->expiry_data);
+}
+
+gboolean
+gh_store_get_timer_change(GhStore *store, gint64 conversation_id, gint64 *out_seconds,
+                          gint64 *out_changed_at, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (out_seconds)
+    *out_seconds = 0;
+  if (out_changed_at)
+    *out_changed_at = 0;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT disappearing_s, timer_changed_at FROM conversations WHERE id = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  gboolean has_row = FALSE;
+  gboolean ok = store_step_row(store, stmt, &has_row, "Reading a timer change", error);
+  if (ok && !has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
+    ok = FALSE;
+  } else if (ok) {
+    if (out_seconds)
+      *out_seconds = sqlite3_column_int64(stmt, 0);
+    if (out_changed_at)
+      *out_changed_at = sqlite3_column_int64(stmt, 1);
+  }
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* ---- Read state (nostrc-qp24.75) ----------------------------------------------------
+ * See GhStoreReadState. READ_BY(m, c) is whether message m of conversation c
+ * is read: at or before the reply boundary, or at or before the marker and
+ * arrived by the time it was set. */
+#define READ_BY(m, c)                                                                       \
+  "((" c ".reply_read_id IS NOT NULL AND (" m ".created_at < " c ".reply_read_at OR "       \
+  "(" m ".created_at = " c ".reply_read_at AND " m ".backend_msg_id <= " c                  \
+  ".reply_read_id))) OR (" m ".seq <= " c ".read_seq AND EXISTS (SELECT 1 FROM messages r " \
+  "WHERE r.id = " c ".last_read_msg AND (" m ".created_at < r.created_at OR (" m            \
+  ".created_at = r.created_at AND " m ".backend_msg_id <= r.backend_msg_id)))))"
+
+void
+gh_store_read_state_clear(GhStoreReadState *state)
+{
+  if (!state)
+    return;
+  g_free(state->marker_id);
+  g_free(state->reply_id);
+  memset(state, 0, sizeof *state);
+}
+
+gboolean
+gh_store_read_state_load(GhStore *store, gint64 conversation_id, GhStoreReadState *out,
+                         GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(out != NULL, FALSE);
+  memset(out, 0, sizeof *out);
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT c.last_read_msg, c.unread_count, m.id, m.created_at, m.backend_msg_id, "
+    "c.read_seq, c.reply_read_at, c.reply_read_id, c.admit_seq "
+    "FROM conversations c LEFT JOIN messages m "
+    "ON m.id = c.last_read_msg AND m.conversation_id = c.id WHERE c.id = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  gboolean has_row = FALSE;
+  if (!store_step_row(store, stmt, &has_row, "Reading a read marker", error))
+    goto fail;
+  if (!has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
+    goto fail;
+  }
+  gboolean has_marker = sqlite3_column_type(stmt, 0) != SQLITE_NULL;
+  gboolean dangling = has_marker && sqlite3_column_type(stmt, 2) == SQLITE_NULL;
+  out->unread = sqlite3_column_int64(stmt, 1);
+  if (has_marker && !dangling) {
+    out->has_marker = TRUE;
+    out->marker_row = sqlite3_column_int64(stmt, 2);
+    out->marker_created_at = sqlite3_column_int64(stmt, 3);
+    out->marker_id = g_strdup((const gchar *) sqlite3_column_text(stmt, 4));
+  }
+  out->read_seq = sqlite3_column_int64(stmt, 5);
+  if (sqlite3_column_type(stmt, 7) != SQLITE_NULL) {
+    out->has_reply = TRUE;
+    out->reply_created_at = sqlite3_column_int64(stmt, 6);
+    out->reply_id = g_strdup((const gchar *) sqlite3_column_text(stmt, 7));
+  }
+  out->admit_seq = sqlite3_column_int64(stmt, 8);
+  g_clear_pointer(&stmt, sqlite3_finalize);
+  if (!dangling)
+    return TRUE;
+
+  /* A store older than schema v4 could lose the marker's row. */
+  stmt = store_prepare(store,
+    "SELECT id, created_at, backend_msg_id FROM messages WHERE conversation_id = ?1 "
+    "ORDER BY created_at DESC, backend_msg_id DESC LIMIT 1 OFFSET ?2", error);
+  if (!stmt)
+    goto fail_state;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  BIND(sqlite3_bind_int64(stmt, 2, MAX(out->unread, 0)));
+  if (!store_step_row(store, stmt, &has_row, "Reading a message position", error))
+    goto fail;
+  if (has_row) {
+    out->has_marker = TRUE;
+    out->marker_row = sqlite3_column_int64(stmt, 0);
+    out->marker_created_at = sqlite3_column_int64(stmt, 1);
+    out->marker_id = g_strdup((const gchar *) sqlite3_column_text(stmt, 2));
+  }
+  sqlite3_finalize(stmt);
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+fail_state:
+  gh_store_read_state_clear(out);
+  return FALSE;
+}
+
+static gboolean
+read_exec(GhStore *store, const char *sql, gint64 conversation_id, gint64 row,
+          gint64 read_seq, GError **error)
+{
+  sqlite3_stmt *stmt = store_prepare(store, sql, error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  if (sqlite3_bind_parameter_count(stmt) >= 2)
+    BIND(sqlite3_bind_int64(stmt, 2, row));
+  if (sqlite3_bind_parameter_count(stmt) >= 3)
+    BIND(sqlite3_bind_int64(stmt, 3, read_seq));
+  gboolean ok = store_step_done(store, stmt, "Saving a read position", error);
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* ?2 (a message row) sorts after the marker, or there is none. */
+#define AFTER_MARKER                                                                     \
+  "(last_read_msg IS NULL OR NOT EXISTS (SELECT 1 FROM messages r WHERE r.id = "         \
+  "last_read_msg) OR EXISTS (SELECT 1 FROM messages r, messages m WHERE r.id = "         \
+  "last_read_msg AND m.id = ?2 AND (m.created_at > r.created_at OR (m.created_at = "     \
+  "r.created_at AND m.backend_msg_id > r.backend_msg_id))))"
+
+gboolean
+gh_store_read_state_update(GhStore *store, gint64 conversation_id, GhStoreReadMove move,
+                           gint64 row, gint64 read_seq, gint64 *out_unread, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (!store_writable(store, error))
+    return FALSE;
+  /* A marker a store older than schema v4 lost is placed first, where
+   * gh_store_read_state_load() takes it to be. */
+  GhStoreReadState state = { 0 };
+  if (!gh_store_read_state_load(store, conversation_id, &state, error))
+    return FALSE;
+  gboolean ok = TRUE;
+  if (state.has_marker)
+    ok = read_exec(store,
+      "UPDATE conversations SET last_read_msg = ?2 WHERE id = ?1 AND last_read_msg IS NOT NULL "
+      "AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.id = last_read_msg)",
+      conversation_id, state.marker_row, 0, error);
+  gh_store_read_state_clear(&state);
+  switch (move) {
+  case GH_STORE_READ_LISTED:
+    /* Only forward: a row before the marker leaves it (and read_seq) be,
+     * since read_seq covers every message up to the marker. */
+    ok = ok && read_exec(store,
+      "UPDATE conversations SET read_seq = MAX(read_seq, ?3), last_read_msg = CASE WHEN "
+      AFTER_MARKER " THEN ?2 ELSE last_read_msg END WHERE id = ?1 AND (" AFTER_MARKER " OR "
+      "last_read_msg = ?2) AND EXISTS (SELECT 1 FROM messages WHERE id = ?2 AND "
+      "conversation_id = ?1)", conversation_id, row, read_seq, error);
+    break;
+  case GH_STORE_READ_REPLY:
+    ok = ok && read_exec(store,
+      "UPDATE conversations SET reply_read_at = (SELECT created_at FROM messages WHERE id = ?2), "
+      "reply_read_id = (SELECT backend_msg_id FROM messages WHERE id = ?2) WHERE id = ?1 AND "
+      "EXISTS (SELECT 1 FROM messages m WHERE m.id = ?2 AND m.conversation_id = ?1 AND "
+      "(conversations.reply_read_id IS NULL OR m.created_at > conversations.reply_read_at OR "
+      "(m.created_at = conversations.reply_read_at AND "
+      "m.backend_msg_id > conversations.reply_read_id)))", conversation_id, row, 0, error);
+    break;
+  case GH_STORE_READ_UNREAD:
+    /* Everything before row is read (the marker just before it, every
+     * arrival so far), row and what follows are not: the reply boundary
+     * moves back before it too. */
+    ok = ok && read_exec(store,
+      "UPDATE conversations SET read_seq = admit_seq, last_read_msg = (SELECT k.id FROM "
+      "messages k, messages t WHERE t.id = ?2 AND k.conversation_id = t.conversation_id AND "
+      "(k.created_at < t.created_at OR (k.created_at = t.created_at AND "
+      "k.backend_msg_id < t.backend_msg_id)) ORDER BY k.created_at DESC, k.backend_msg_id DESC "
+      "LIMIT 1) WHERE id = ?1 AND EXISTS (SELECT 1 FROM messages WHERE id = ?2 AND "
+      "conversation_id = ?1)", conversation_id, row, 0, error) &&
+      read_exec(store,
+      "UPDATE conversations SET reply_read_at = (SELECT r.created_at FROM messages r WHERE "
+      "r.id = conversations.last_read_msg), reply_read_id = (SELECT r.backend_msg_id FROM "
+      "messages r WHERE r.id = conversations.last_read_msg) WHERE id = ?1 AND reply_read_id IS "
+      "NOT NULL AND EXISTS (SELECT 1 FROM messages t WHERE t.id = ?2 AND (t.created_at < "
+      "conversations.reply_read_at OR (t.created_at = conversations.reply_read_at AND "
+      "t.backend_msg_id <= conversations.reply_read_id)))", conversation_id, row, 0, error);
+    break;
+  case GH_STORE_READ_RECOUNT:
+  default:
+    break;
+  }
+  ok = ok && read_exec(store,
+    "UPDATE conversations SET unread_count = (SELECT count(*) FROM messages m WHERE "
+    "m.conversation_id = conversations.id AND m.direction = 0 AND NOT "
+    READ_BY("m", "conversations") ") WHERE id = ?1", conversation_id, 0, 0, error);
+  if (!ok || !out_unread)
+    return ok;
+  g_autofree gchar *sql = g_strdup_printf(
+    "SELECT unread_count FROM conversations WHERE id = %" G_GINT64_FORMAT, conversation_id);
+  return store_query_int64(store, sql, out_unread, error);
+}
+
+gboolean
+gh_store_message_seq(GhStore *store, gint64 message_row, gint64 *out_seq, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(out_seq != NULL, FALSE);
+  *out_seq = 0;
+  sqlite3_stmt *stmt = store_prepare(store, "SELECT seq FROM messages WHERE id = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, message_row));
+  gboolean has_row = FALSE;
+  gboolean ok = store_step_row(store, stmt, &has_row, "Reading a message's arrival", error);
+  if (ok && !has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such message");
+    ok = FALSE;
+  } else if (ok) {
+    *out_seq = sqlite3_column_int64(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
 }
 
 /* ---- Cursors ---------------------------------------------------------------------- */
@@ -2887,7 +3138,7 @@ seal_locked(GhStore *store, gint64 outbox_id, const GhStoreSealedEvent *events,
 
   stmt = store_prepare(store,
     "INSERT INTO outbox_events (outbox_id, role, target_pubkey, event_id, event_json, "
-    "not_before) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", error);
+    "not_before, no_inbox) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", error);
   targets = stmt ? store_prepare(store,
     "INSERT INTO outbox_targets (outbox_event_id, relay_url) VALUES (?1, ?2) "
     "ON CONFLICT (outbox_event_id, relay_url) DO NOTHING", error) : NULL;
@@ -2902,6 +3153,8 @@ seal_locked(GhStore *store, gint64 outbox_id, const GhStoreSealedEvent *events,
     BIND(bind_text(stmt, 4, e->event_id));
     BIND(bind_text(stmt, 5, e->event_json));
     BIND(sqlite3_bind_int64(stmt, 6, e->not_before));
+    BIND(sqlite3_bind_int(stmt, 7, e->role == GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP &&
+                                   e->no_inbox));
     if (!store_step_done(store, stmt, "Storing a signed event", error))
       goto fail;
     gint64 event_row = sqlite3_last_insert_rowid(store->db);
@@ -3155,7 +3408,7 @@ gh_store_outbox_load(GhStore *store, gint64 outbox_id, GError **error)
   g_clear_pointer(&stmt, sqlite3_finalize);
 
   stmt = store_prepare(store,
-    "SELECT id, role, target_pubkey, event_id, event_json, not_before "
+    "SELECT id, role, target_pubkey, event_id, event_json, not_before, no_inbox "
     "FROM outbox_events WHERE outbox_id = ?1 ORDER BY id", error);
   if (!stmt)
     goto fail;
@@ -3172,6 +3425,7 @@ gh_store_outbox_load(GhStore *store, gint64 outbox_id, GError **error)
     event->event_id = column_text_dup(stmt, 3);
     event->event_json = column_text_dup(stmt, 4);
     event->not_before = sqlite3_column_int64(stmt, 5);
+    event->no_inbox = sqlite3_column_int64(stmt, 6) != 0;
     event->targets = g_ptr_array_new_with_free_func(outbox_target_free);
     g_ptr_array_add(entry->events, event);
   }
@@ -3185,6 +3439,31 @@ fail:
   sqlite3_finalize(stmt);
   gh_store_outbox_entry_free(entry);
   return NULL;
+}
+
+gboolean
+gh_store_outbox_set_no_inbox(GhStore *store, gint64 outbox_event_id, gboolean no_inbox,
+                             GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (!store_writable(store, error))
+    return FALSE;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "UPDATE outbox_events SET no_inbox = ?2 WHERE id = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, outbox_event_id));
+  BIND(sqlite3_bind_int(stmt, 2, no_inbox ? 1 : 0));
+  gboolean ok = store_step_done(store, stmt, "Recording a recipient without an inbox", error);
+  sqlite3_finalize(stmt);
+  if (ok && sqlite3_changes(store->db) == 0) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such stored event");
+    return FALSE;
+  }
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
 }
 
 gboolean
@@ -3477,9 +3756,7 @@ purge_read_state(GhStore *store, gint64 now, gint64 cutoff, GError **error)
            "UPDATE conversations SET unread_count = ("
            "SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
            "AND m.direction = 0 AND NOT " PURGE_DOOMED("m") " "
-           "AND (conversations.last_read_msg IS NULL OR (m.created_at, m.backend_msg_id) > "
-           "(SELECT r.created_at, r.backend_msg_id FROM messages r "
-           "WHERE r.id = conversations.last_read_msg))) "
+           "AND NOT " READ_BY("m", "conversations") ") "
            "WHERE id IN (SELECT d.conversation_id FROM messages d WHERE " PURGE_DOOMED("d") ") "
            "AND (last_read_msg IS NULL OR "
            "EXISTS (SELECT 1 FROM messages r WHERE r.id = conversations.last_read_msg))",
@@ -3647,6 +3924,7 @@ gh_store_forget_conversation(GhStore *store, gint64 conversation_id, GError **er
   if (!store_exec_id(store,
         "UPDATE conversations SET forgotten_before = MAX(forgotten_before, ?2), "
         "title = NULL, draft = NULL, unread_count = 0, last_read_msg = NULL, "
+        "read_seq = 0, reply_read_at = NULL, reply_read_id = NULL, timer_changed_at = 0, "
         "pinned_rank = NULL, last_activity = 0 WHERE id = ?1",
         conversation_id, now, error))
     goto fail;

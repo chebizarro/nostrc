@@ -27,9 +27,10 @@ G_DECLARE_FINAL_TYPE(GhConversation, gh_conversation, GH, CONVERSATION, GObject)
  * group id, and it is never a request (the account joined it). Messages are added only through
  * gh_conversation_store_admit(). Readable properties for templates (charter
  * §7.4): "room-id", "backend", "title", "subject", "preview",
- * "last-activity", "unread-count" and "is-request"; all but the first two
- * notify on change. pinned, muted, privacy-label and has-failure belong to
- * the durable store, UI and outbox slices. */
+ * "last-activity", "unread-count", "is-request", "pinned" (nostrc-qp24.86),
+ * "timer-seconds" and "timer-changed-at" (nostrc-qp24.83); all but the first
+ * two notify on change. muted, privacy-label and has-failure belong to the
+ * durable store, UI and outbox slices. */
 
 const gchar *gh_conversation_get_account(GhConversation *self);
 const gchar *gh_conversation_get_room_id(GhConversation *self);
@@ -42,10 +43,17 @@ const gchar *const *gh_conversation_get_peers(GhConversation *self);
 const gchar *gh_conversation_get_subject(GhConversation *self);
 /* created_at of the newest message. */
 gint64 gh_conversation_get_last_activity(GhConversation *self);
-/* Messages from others after the read marker, including any in the unloaded
- * older history of a durably stored room. The marker moves to the end on
- * mark_read, and to any own message added after it (replying implies having
- * read what came before). With a durable store, mark_read is persisted.
+/* Unread messages from others, including any in the unloaded older history
+ * of a durably stored room. Read state is local only (charter PD-1, P8) and
+ * follows arrival, not only the sender-claimed order (nostrc-qp24.75):
+ * mark_read reads exactly the messages listed at that moment, and an own
+ * message written on this device reads what had arrived before it and sorts
+ * before it (replying implies having read what came before). A message that
+ * arrives later is unread wherever it sorts, e.g. one with the same second
+ * as the last read one and a lower rumor id, or a delayed one. An own
+ * message another device wrote (delivered by a relay) reads whatever sorts
+ * before it, since it was written there after reading. With a durable
+ * store, mark_read is persisted.
  *
  * Unread messages that are not listed are never marked read (W13b review
  * B1): while some remain in the unloaded older history, mark_read counts only
@@ -59,6 +67,24 @@ void gh_conversation_mark_read(GhConversation *self);
  * is none). The rest of the unread count is in the unloaded older history,
  * before every listed message. */
 guint gh_conversation_get_listed_unread(GhConversation *self, guint *out_first);
+/* Whether @message (one of the room's) counts as unread now. */
+gboolean gh_conversation_is_unread(GhConversation *self, GhMessage *message);
+/* Mark as Unread (charter §7.4; nostrc-qp24.86): the newest listed message
+ * from someone else becomes unread again, and everything before it stays
+ * read. Local only, never published (P8); persisted with a durable store.
+ * Offered when nothing is unread, the room has a message from someone else
+ * and the place just before it is known (it is not the oldest listed one of
+ * a room with unloaded older history). FALSE when it is not offered. */
+gboolean gh_conversation_can_mark_unread(GhConversation *self);
+gboolean gh_conversation_mark_unread(GhConversation *self);
+/* Pinned (charter §7.4, §7.5; nostrc-qp24.86): pinned rooms are listed
+ * first, in the order they were pinned. Local only; kept in the encrypted
+ * store's conversations.pinned_rank, never in GSettings (PD-11). */
+gboolean gh_conversation_get_pinned(GhConversation *self);
+/* When the disappearing timer last changed (unix seconds; 0: never) and in
+ * *out_seconds (nullable) the timer it was set to: the local timeline row
+ * "You set messages to disappear after 1 day" (charter §3.7). */
+gint64 gh_conversation_get_timer_change(GhConversation *self, gint64 *out_seconds);
 /* A durable store holds older messages of this room than those listed; it
  * loads them on request (gh_store_conversations_load_older()). */
 gboolean gh_conversation_get_has_older(GhConversation *self);

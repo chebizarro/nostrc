@@ -9,6 +9,7 @@ struct _GhConversationRow {
   AdwAvatar *avatar;
   GtkImage *kind_icon;
   GtkLabel *title_label;
+  GtkImage *pinned_icon;
   GtkLabel *time_label;
   GtkLabel *preview_label;
   GtkLabel *request_label;
@@ -129,17 +130,27 @@ gh_conversation_row_format_time_of_day(gint64 timestamp)
 
 /* ---- context menu (charter §7.4; nostrc-qp24.74) ----------------------------- */
 
-/* Which of the menu's actions apply: all three to a private (NIP-17)
- * conversation, none to a group (its dialogs are its own). */
+/* Which of the menu's actions apply: to a private (NIP-17) conversation,
+ * none to a group (its dialogs are its own). Of each pair only the one that
+ * applies is enabled (its menu item shows): Pin or Unpin, Mark as Read (while
+ * something is unread) or Mark as Unread (nostrc-qp24.86). */
 static void
 sync_actions(GhConversationRow *self)
 {
   GhConversation *conversation = self->conversation;
   gboolean nip17 = conversation &&
                    gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP17;
-  /* A message request is never notified: nothing to mute. */
-  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.mute",
-                                nip17 && !gh_conversation_get_is_request(conversation));
+  /* A message request is never notified (nothing to mute) and lives in
+   * Message Requests (nothing to pin or mark). */
+  gboolean accepted = nip17 && !gh_conversation_get_is_request(conversation);
+  gboolean pinned = accepted && gh_conversation_get_pinned(conversation);
+  gboolean unread = accepted && gh_conversation_get_unread_count(conversation) > 0;
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.pin", accepted && !pinned);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.unpin", pinned);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.mark-read", unread);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.mark-unread",
+                                accepted && gh_conversation_can_mark_unread(conversation));
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.mute", accepted);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.info", nip17);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.delete", nip17);
 }
@@ -163,9 +174,24 @@ row_action(GtkWidget *widget, const char *name, GVariant *parameter)
   (void)parameter;
   if (!self->conversation)
     return;
-  const gchar *action = g_str_equal(name, "row.mute")   ? "win.mute-conversation"
-                        : g_str_equal(name, "row.info") ? "win.show-conversation-info"
-                                                        : "win.delete-conversation";
+  static const struct {
+    const gchar *row;
+    const gchar *window;
+  } forward[] = {
+    { "row.pin", "win.pin-conversation" },
+    { "row.unpin", "win.unpin-conversation" },
+    { "row.mark-read", "win.mark-conversation-read" },
+    { "row.mark-unread", "win.mark-conversation-unread" },
+    { "row.mute", "win.mute-conversation" },
+    { "row.info", "win.show-conversation-info" },
+    { "row.delete", "win.delete-conversation" },
+  };
+  const gchar *action = NULL;
+  for (guint i = 0; i < G_N_ELEMENTS(forward) && !action; i++)
+    if (g_str_equal(name, forward[i].row))
+      action = forward[i].window;
+  if (!action)
+    return;
   gtk_widget_activate_action(widget, action, "s",
                              gh_conversation_get_room_id(self->conversation));
 }
@@ -236,6 +262,7 @@ update(GhConversationRow *self)
   if (!conversation) {
     adw_avatar_set_text(self->avatar, NULL);
     gtk_label_set_text(self->title_label, "");
+    gtk_widget_set_visible(GTK_WIDGET(self->pinned_icon), FALSE);
     gtk_label_set_text(self->time_label, "");
     gtk_label_set_text(self->preview_label, "");
     gtk_widget_set_visible(GTK_WIDGET(self->request_label), FALSE);
@@ -251,6 +278,7 @@ update(GhConversationRow *self)
   const gchar *title = gh_conversation_get_title(conversation);
   guint unread = gh_conversation_get_unread_count(conversation);
   gboolean request = gh_conversation_get_is_request(conversation);
+  gboolean pinned = gh_conversation_get_pinned(conversation);
   const gchar *subject = request ? gh_conversation_get_subject(conversation) : NULL;
   const gchar *preview = self->show_preview ? gh_conversation_get_preview(conversation) : NULL;
   g_autoptr(GDateTime) now = g_date_time_new_now_local();
@@ -275,6 +303,7 @@ update(GhConversationRow *self)
 
   adw_avatar_set_text(self->avatar, title);
   gtk_label_set_text(self->title_label, title);
+  gtk_widget_set_visible(GTK_WIDGET(self->pinned_icon), pinned);
   gtk_label_set_text(self->time_label, time);
   gtk_label_set_text(self->preview_label, secondary);
   gtk_widget_set_visible(GTK_WIDGET(self->request_label), request);
@@ -292,6 +321,8 @@ update(GhConversationRow *self)
   g_ptr_array_add(parts, g_strdup(title));
   g_ptr_array_add(parts, g_strdup(request ? _("Message request")
                                            : kind ? kind : _("Private conversation")));
+  if (pinned)
+    g_ptr_array_add(parts, g_strdup(_("Pinned")));
   if (subject)
     /* TRANSLATORS: a message request's subject, read out after its sender. */
     g_ptr_array_add(parts, g_strdup_printf(_("Subject: %s"), subject));
@@ -327,7 +358,7 @@ gh_conversation_row_set_conversation(GhConversationRow *self, GhConversation *co
   if (conversation) {
     static const gchar *const watched[] = {
       "notify::title", "notify::subject", "notify::preview", "notify::last-activity",
-      "notify::unread-count", "notify::is-request",
+      "notify::unread-count", "notify::is-request", "notify::pinned",
     };
     for (guint i = 0; i < G_N_ELEMENTS(watched); i++)
       g_signal_connect_swapped(conversation, watched[i], G_CALLBACK(on_conversation_notify),
@@ -449,11 +480,16 @@ gh_conversation_row_class_init(GhConversationRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, kind_icon);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, title_label);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationRow, pinned_icon);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, time_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, preview_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, request_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, unread_badge);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, context_popover);
+  gtk_widget_class_install_action(widget_class, "row.pin", NULL, row_action);
+  gtk_widget_class_install_action(widget_class, "row.unpin", NULL, row_action);
+  gtk_widget_class_install_action(widget_class, "row.mark-read", NULL, row_action);
+  gtk_widget_class_install_action(widget_class, "row.mark-unread", NULL, row_action);
   gtk_widget_class_install_action(widget_class, "row.mute", NULL, row_action);
   gtk_widget_class_install_action(widget_class, "row.info", NULL, row_action);
   gtk_widget_class_install_action(widget_class, "row.delete", NULL, row_action);

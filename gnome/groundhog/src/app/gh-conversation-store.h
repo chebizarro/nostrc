@@ -19,7 +19,7 @@ typedef enum {
 } GhConversationAddResult;
 
 /* What one delegate commit did, beyond success. The store initializes it to
- * { FALSE, -1 } before calling admit(). */
+ * { FALSE, -1, -1 } before calling admit(). */
 typedef struct {
   /* The rumor is recorded as seen but stored as no visible message (expired
    * on arrival, forgotten room, purged): the model must not show it. */
@@ -27,6 +27,10 @@ typedef struct {
   /* The room's durable unread count after the commit, or -1 when the
    * delegate keeps none; the model then counts unloaded history with it. */
   gint64 unread;
+  /* The message's arrival sequence in its room (the durable messages.seq,
+   * nostrc-qp24.75), or -1 when the delegate keeps none: the model then
+   * numbers it itself (gh_message_get_seq()). */
+  gint64 seq;
 } GhConversationCommit;
 
 /* Persistence delegate: where admitted messages and the NIP-17 seen keys
@@ -50,7 +54,12 @@ typedef struct {
  *     model does not list although the delegate keeps it. is_blocked() tells
  *     whether room_id is one; unblock() lifts its block, accepting it, and
  *     lists what it kept of the room through gh_conversation_store_restore()
- *     (nothing when it kept no message). Both or neither.
+ *     (nothing when it kept no message). Both or neither;
+ *   - mark_unread(): persist gh_conversation_mark_unread() (first_unread and
+ *     what follows are unread), like mark_read(). A NEW admission's wrap_id
+ *     tells a relay delivery from a local echo: an own message a relay
+ *     delivered was written on another device (the read state in
+ *     gh-conversation.h).
  *
  * A memory-only GhDmInbox installs a delegate that keeps the messages' seen
  * keys in memory with them (only rejected wrap ids reach a file). The
@@ -70,6 +79,8 @@ typedef struct {
   gboolean (*accept)(gpointer data, GhConversation *conversation, GError **error);
   gboolean (*is_blocked)(gpointer data, const gchar *room_id);
   gboolean (*unblock)(gpointer data, const gchar *room_id, GError **error);
+  gboolean (*mark_unread)(gpointer data, GhConversation *conversation,
+                          GhMessage *first_unread, GError **error);
 } GhConversationDelegate;
 
 #define GH_TYPE_CONVERSATION_STORE (gh_conversation_store_get_type())
@@ -77,7 +88,9 @@ G_DECLARE_FINAL_TYPE(GhConversationStore, gh_conversation_store, GH,
                      CONVERSATION_STORE, GObject)
 
 /* The NIP-17 conversations of exactly one account: a GListModel of
- * GhConversation ordered by last activity (newest first, then room id).
+ * GhConversation, pinned ones first in the order they were pinned
+ * (gh_conversation_store_pin(); charter §7.5), then by last activity
+ * (newest first, then room id).
  * Requests (gh_conversation_get_is_request) are included; the UI filters
  * them into their own list. Used from the main context only. */
 GhConversationStore *gh_conversation_store_new(void);
@@ -112,6 +125,13 @@ GhConversationAddResult gh_conversation_store_admit(GhConversationStore *self,
                                                     GhMessage *message,
                                                     const gchar *wrap_id,
                                                     GError **error);
+/* Store-layer: pins @conversation (listed here) with @rank (> 0; lower
+ * ranks are listed first) or unpins it (0), and moves it to its place in the
+ * store order. The durable delegate owns the ranks
+ * (gh_store_conversations_set_pinned()). */
+void gh_conversation_store_pin(GhConversationStore *self, GhConversation *conversation,
+                               gint64 rank);
+
 /* A local echo: gh_conversation_store_admit(self, message, NULL, error). */
 GhConversationAddResult gh_conversation_store_add_message(GhConversationStore *self,
                                                           GhMessage *message,

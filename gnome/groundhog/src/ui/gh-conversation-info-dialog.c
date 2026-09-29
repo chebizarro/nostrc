@@ -737,6 +737,13 @@ gh_conversation_info_dialog_new(GhConversation *conversation,
   return self;
 }
 
+void
+gh_conversation_info_dialog_focus_timer(GhConversationInfoDialog *self)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_INFO_DIALOG(self));
+  adw_dialog_set_focus(ADW_DIALOG(self), GTK_WIDGET(self->timer_row));
+}
+
 GhConversation *
 gh_conversation_info_dialog_get_conversation(GhConversationInfoDialog *self)
 {
