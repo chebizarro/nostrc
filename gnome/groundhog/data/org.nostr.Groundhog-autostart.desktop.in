@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Groundhog
+Comment=Receive messages while the window is closed
+Exec=@GROUNDHOG_BINDIR@/groundhog --gapplication-service
+Icon=org.nostr.Groundhog
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-UsesNotifications=true
+X-Groundhog-Autostart=true

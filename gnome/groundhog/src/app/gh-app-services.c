@@ -20,6 +20,9 @@
 #if GROUNDHOG_HAVE_OUTBOX
 #include "gh-app-outbox.h"
 #endif
+#if GROUNDHOG_HAVE_BACKGROUND
+#include "gh-background.h"
+#endif
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
@@ -43,6 +46,9 @@ struct _GhAppServices {
   GhStoreKey *store_key;
   GhAccountStore *account_store;
   GSimpleAction *store_actions[3];
+#endif
+#if GROUNDHOG_HAVE_BACKGROUND
+  GhBackground *background;
 #endif
   guint started; /* services initialized, from the top of the table */
 };
@@ -282,6 +288,34 @@ store_actions_teardown(GhAppServices *self)
 }
 #endif
 
+#if GROUNDHOG_HAVE_BACKGROUND
+/* Background delivery (charter §5.3, G15): holds the application while
+ * run-in-background is on, so the services above outlive the window, and
+ * keeps autostart in line with the user's choice. Last in the table, so its
+ * hold is released and its portal requests cancelled before anything it
+ * watches stops. Onboarding and Preferences reach it with
+ * gh_background_get_for_application(). */
+static gboolean
+background_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  GhBackgroundConfig config = {
+    .settings = self->settings,
+#if GROUNDHOG_HAVE_ACCOUNT_STORE
+    .account_store = G_OBJECT(self->account_store),
+#endif
+  };
+  self->background = gh_background_new(G_APPLICATION(self->app), &config);
+  return TRUE;
+}
+
+static void
+background_teardown(GhAppServices *self)
+{
+  dispose_object(&self->background);
+}
+#endif
+
 typedef struct {
   const gchar *name;
   gboolean (*init)(GhAppServices *self, GError **error);
@@ -308,6 +342,9 @@ static const GhAppService services[] = {
   { "store-key", store_key_init, store_key_teardown },
   { "account-store", account_store_init, account_store_teardown },
   { "store-actions", store_actions_init, store_actions_teardown },
+#endif
+#if GROUNDHOG_HAVE_BACKGROUND
+  { "background", background_init, background_teardown },
 #endif
 };
 

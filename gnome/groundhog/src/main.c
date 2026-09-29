@@ -1,6 +1,11 @@
 #include <adwaita.h>
+#include <glib-unix.h>
+#include <signal.h>
 
 #include "gh-app-services.h"
+#if GROUNDHOG_HAVE_BACKGROUND
+#include "gh-background.h"
+#endif
 #include "gh-window.h"
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
@@ -56,6 +61,11 @@ smoke_check(gpointer user_data)
     if (!gtk_list_view_get_factory(gh_sidebar_page_get_list(gh_window_get_sidebar(GH_WINDOW(window)))))
       smoke_status = 1;
 #endif
+#if GROUNDHOG_HAVE_BACKGROUND
+    /* Background delivery is up (onboarding and Preferences find it). */
+    if (!gh_background_get_for_application(G_APPLICATION(app)))
+      smoke_status = 1;
+#endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
     /* The store banners' buttons have somewhere to go. */
     if (!gh_app_services_get_account_store(app_services) ||
@@ -99,6 +109,18 @@ app_shutdown(GApplication *app, gpointer user_data)
   g_clear_pointer(&app_services, gh_app_services_free);
 }
 
+/* SIGTERM (the session ending, `kill`) and SIGINT run the normal shutdown:
+ * scopes close and the store checkpoints, as for app.quit (charter §5.3 B3). */
+static gboolean
+on_terminate(gpointer data)
+{
+  g_application_quit(G_APPLICATION(data));
+  return G_SOURCE_CONTINUE;
+}
+
+/* Not called in service mode (`--gapplication-service`, the autostart
+ * command): the process then runs windowless until something activates it,
+ * held by the background service while run-in-background is on. */
 static void
 activate(GApplication *app, gpointer user_data)
 {
@@ -160,10 +182,17 @@ main(int argc, char **argv)
 
   groundhog_register_resource();
   app = adw_application_new(GROUNDHOG_APP_ID, flags);
+  /* Logout ends the session's clients: GTK quits on the session manager's
+   * EndSession/Stop, so a background process shuts down cleanly too. */
+  g_object_set(app, "register-session", TRUE, NULL);
   g_signal_connect(app, "startup", G_CALLBACK(app_startup), NULL);
   g_signal_connect(app, "shutdown", G_CALLBACK(app_shutdown), NULL);
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
+  guint sigterm = g_unix_signal_add(SIGTERM, on_terminate, app);
+  guint sigint = g_unix_signal_add(SIGINT, on_terminate, app);
   status = g_application_run(G_APPLICATION(app), argc, argv);
+  g_source_remove(sigterm);
+  g_source_remove(sigint);
   /* smoke_status is also set when the services could not start. */
   return smoke_status != 0 ? smoke_status : status;
 }

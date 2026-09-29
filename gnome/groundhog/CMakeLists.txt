@@ -859,3 +859,76 @@ if (TARGET groundhog-conversation-ui)
   endif()
 endif()
 # --- end G12 ---
+
+# --- G15 background service lifecycle ---
+# Background delivery with the window closed (privacy charter §5.3, §8.2
+# G15): GhBackground holds the application while run-in-background is on,
+# explains it once on the first close, and keeps autostart in line with a
+# confirmed choice (the XDG autostart entry on a host install, the Background
+# portal in a Flatpak sandbox). The entry's template is configured here and
+# compiled in, so the file Groundhog writes is exactly the one validated below.
+set(GROUNDHOG_AUTOSTART_DESKTOP ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog-autostart.desktop)
+configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog-autostart.desktop.in
+               ${GROUNDHOG_AUTOSTART_DESKTOP} @ONLY)
+file(READ ${GROUNDHOG_AUTOSTART_DESKTOP} GROUNDHOG_AUTOSTART_TEMPLATE)
+string(REPLACE "\\" "\\\\" GROUNDHOG_AUTOSTART_TEMPLATE "${GROUNDHOG_AUTOSTART_TEMPLATE}")
+string(REPLACE "\"" "\\\"" GROUNDHOG_AUTOSTART_TEMPLATE "${GROUNDHOG_AUTOSTART_TEMPLATE}")
+string(REPLACE "\n" "\\n\" \\\n  \"" GROUNDHOG_AUTOSTART_TEMPLATE "${GROUNDHOG_AUTOSTART_TEMPLATE}")
+set(GROUNDHOG_BACKGROUND_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/background)
+file(CONFIGURE OUTPUT ${GROUNDHOG_BACKGROUND_GENERATED}/gh-background-autostart.h
+  CONTENT "/* Generated from data/org.nostr.Groundhog-autostart.desktop.in. */
+#define GH_BACKGROUND_AUTOSTART_TEMPLATE \\
+  \"@GROUNDHOG_AUTOSTART_TEMPLATE@\"
+" @ONLY)
+add_library(groundhog-background STATIC src/app/gh-background.c)
+target_include_directories(groundhog-background PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+                           PRIVATE ${GROUNDHOG_BACKGROUND_GENERATED})
+target_link_libraries(groundhog-background PUBLIC groundhog-ui)
+target_compile_options(groundhog-background PRIVATE -Wall -Wextra -Werror)
+if (TARGET groundhog-account-store)
+  # The portal status follows the account's store (locked, receiving).
+  target_link_libraries(groundhog-background PUBLIC groundhog-account-store)
+  target_compile_definitions(groundhog-background PRIVATE GH_BACKGROUND_WITH_STORE=1)
+else()
+  target_compile_definitions(groundhog-background PRIVATE GH_BACKGROUND_WITH_STORE=0)
+endif()
+if (TARGET groundhog-account)
+  # run-in-background lives in the settings the account build brings up.
+  target_link_libraries(groundhog PRIVATE groundhog-background)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_BACKGROUND=1)
+else()
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_BACKGROUND=0)
+endif()
+if (BUILD_TESTING)
+  find_program(DESKTOP_FILE_VALIDATE desktop-file-validate)
+  if (DESKTOP_FILE_VALIDATE)
+    add_test(NAME groundhog-background-desktop
+      COMMAND ${DESKTOP_FILE_VALIDATE} ${GROUNDHOG_AUTOSTART_DESKTOP})
+  endif()
+  if (TARGET groundhog-account-store AND TARGET groundhog-test-schemas)
+    # NO-9…NO-12: the real inbox and store on the shared private bus with the
+    # mock signer, FakeSecret (H5), recording transports (H1), a fake
+    # Background portal, and the real executable for the process checks.
+    add_executable(test-groundhog-background tests/app/test_background.c tests/store/fake-secret.c)
+    target_include_directories(test-groundhog-background PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store)
+    target_link_libraries(test-groundhog-background PRIVATE groundhog-background
+      groundhog-account-store nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+    target_compile_definitions(test-groundhog-background PRIVATE
+      GROUNDHOG_TEST_EXECUTABLE="$<TARGET_FILE:groundhog>"
+      GROUNDHOG_TEST_SCHEMA_DIR="${GROUNDHOG_TEST_SCHEMAS}"
+      GROUNDHOG_TEST_AUTOSTART="${GROUNDHOG_AUTOSTART_DESKTOP}")
+    target_compile_options(test-groundhog-background PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-background)
+    add_dependencies(test-groundhog-background groundhog groundhog-test-schemas)
+    add_test(NAME groundhog-background COMMAND test-groundhog-background)
+    set_tests_properties(groundhog-background PROPERTIES TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # The window-close half (the one-time explanation) needs a display and no
+    # private bus; it self-skips (77) without one, like groundhog-shell.
+    add_test(NAME groundhog-background-gui COMMAND test-groundhog-background --gui)
+    set_tests_properties(groundhog-background-gui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+endif()
+# --- end G15 background service lifecycle ---
