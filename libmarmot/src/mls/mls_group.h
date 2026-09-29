@@ -543,6 +543,20 @@ int mls_treekem_apply_update_path(MlsRatchetTree *tree,
                                   uint32_t sender_leaf,
                                   const MlsUpdatePath *path);
 
+/**
+ * Install the path keys a joiner learns from its Welcome (RFC 9420
+ * §12.4.3.1, nostrc-il4i).  `path_secret` is GroupSecrets.path_secret: the
+ * path secret of the lowest common ancestor of the joiner (group->
+ * own_leaf_index) and the committer (`committer_leaf`, GroupInfo.signer).
+ * The key pair of that node and of every node above it on the committer's
+ * filtered direct path is derived; each public key must equal the node's key
+ * in group->tree.  On success the private keys join group->own_path_keys; on
+ * any mismatch MARMOT_ERR_WELCOME_INVALID is returned and the cache is left
+ * as it was.
+ */
+int mls_group_welcome_install_path_secret(MlsGroup *group, uint32_t committer_leaf,
+                                          const uint8_t path_secret[MLS_HASH_LEN]);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Group info (for Welcome construction)
  * ──────────────────────────────────────────────────────────────────────── */

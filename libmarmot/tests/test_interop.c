@@ -2384,6 +2384,36 @@ mdk_passive_commit_sender(const uint8_t *commit, size_t commit_len)
     return sender;
 }
 
+/* Passive-client Welcomes whose GroupSecrets.path_secret gave the joiner path
+ * keys (nostrc-il4i): OpenMLS sends it for every Commit with an UpdatePath. */
+static size_t g_passive_welcomes_with_path_keys;
+
+/* Every cached path key is a valid key pair for a parent node on the
+ * member's direct path whose public key is in the tree.  Returns the count. */
+static size_t
+passive_path_keys_checked(const MlsGroup *g)
+{
+    uint32_t dp[64], dp_len = 0;
+    assert(mls_tree_direct_path(mls_tree_leaf_to_node(g->own_leaf_index),
+                                g->tree.n_leaves, dp, 64, &dp_len) == 0);
+    size_t n = 0;
+    for (size_t i = 0; i < MLS_OWN_PATH_KEY_CACHE_SIZE; i++) {
+        const MlsOwnPathKeyCacheEntry *e = &g->own_path_keys[i];
+        if (!e->valid) continue;
+        bool on_path = false;
+        for (uint32_t j = 0; j < dp_len; j++) on_path |= dp[j] == e->node;
+        assert(on_path && "passive-client path key off the joiner's direct path");
+        const MlsNode *node = &g->tree.nodes[e->node];
+        assert(node->type == MLS_NODE_PARENT &&
+               memcmp(node->parent.encryption_key, e->pk, MLS_KEM_PK_LEN) == 0);
+        uint8_t pk[MLS_KEM_PK_LEN];
+        assert(crypto_scalarmult_curve25519_base(pk, e->sk) == 0 &&
+               memcmp(pk, e->pk, MLS_KEM_PK_LEN) == 0);
+        n++;
+    }
+    return n;
+}
+
 static void
 test_mdk_passive_client_vector(const MdkPassiveClientVector *vec,
                                const char *file, size_t vidx,
@@ -2440,6 +2470,8 @@ test_mdk_passive_client_vector(const MdkPassiveClientVector *vec,
                 welcome_rc, vec->external_psk_count, vec->epoch_count,
                 vec->welcome_len, vec->ratchet_tree_len);
     assert(welcome_rc == 0 && "passive-client Welcome processing must succeed");
+    if (passive_path_keys_checked(&group) > 0)
+        g_passive_welcomes_with_path_keys++;
     assert_bytes_eq("passive-client.initial_epoch_authenticator",
                     group.epoch_secrets.epoch_authenticator,
                     vec->initial_epoch_authenticator, MLS_HASH_LEN);
@@ -2537,9 +2569,14 @@ test_mdk_passive_client_all_vectors(const char *vector_dir)
         total += count;
         free(vectors);
     }
+    /* The OpenMLS Welcomes carry path_secret: libmarmot must derive and
+     * verify those keys (nostrc-il4i), not discard them. */
+    assert(g_passive_welcomes_with_path_keys > 0 &&
+           "no passive-client Welcome exercised GroupSecrets.path_secret");
     printf("PASS (%zu passive clients: %zu fully asserted, %zu honest XFAIL; "
-           "%zu per-epoch commits asserted)\n",
-           total, asserted_vectors, xfail_vectors, total_epochs);
+           "%zu per-epoch commits asserted; %zu Welcomes with path_secret keys)\n",
+           total, asserted_vectors, xfail_vectors, total_epochs,
+           g_passive_welcomes_with_path_keys);
     for (size_t r = 0; r < reason_count; r++)
         printf("      XFAIL: %s\n", reasons[r]);
 }

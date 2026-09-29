@@ -15,7 +15,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.1 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.4.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.4.1 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.1.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.9.1 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
@@ -40,6 +40,9 @@ Decisions for components affected by another component's change (AGENTS.md,
 | libnostr 1.0.8 -> 1.0.9 (PATCH: `nostr_envelope_serialize_compact()` REQ/COUNT frames keep their closing `]`; `event_envelope_marshal_json()` escapes the subscription id; nostrc-ptwq) | libnostr | 1.0.9 | PATCH: bug fix, no API or ABI change. |
 | same | groundhog | 0.9.0 | No bump for this change: the libsoup transport now builds its REQ with the library serializer instead of by hand, which puts the same bytes on the wire. |
 | groundhog 0.9.0 -> 0.9.1 (PATCH: a build without G09 fails closed on network-mode tor or an unknown mode, and never dials .onion; nostrc-6v0i) | groundhog | 0.9.1 | PATCH: privacy bug fix (charter P5). The new `tor-unavailable` status input, banner and Preferences note are app-internal, not a public surface. |
+| libmarmot 0.4.0 -> 0.4.1 (PATCH: Welcome GroupSecrets.path_secret sent and applied, nostrc-il4i) | libmarmot | 0.4.1 | PATCH bump: RFC 9420 conformance fix, no API/ABI or state-format change. Wire-compatible both ways: 0.4.0 joiners ignore the new `path_secret` (and keep the old inability to follow some Commits); 0.4.1 joiners accept 0.4.0 Welcomes without it. |
+| same | marmot-gobject | 1.1.0 | No bump: no source, API or ABI change; rebuild picks up the fix. |
+| same | gnostr, groundhog | 0.1.0, 0.9.1 | No bump: rebuild only (static link, no API change). |
 
 ## Maintenance
 

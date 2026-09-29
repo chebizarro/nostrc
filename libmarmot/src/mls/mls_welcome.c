@@ -83,31 +83,55 @@ welcome_psk_ids_free(MlsWelcomePskId *ids, size_t count)
     free(ids);
 }
 
+/* Free a heap copy of secret material. */
+static void
+free_secret(uint8_t *p, size_t len)
+{
+    if (!p) return;
+    sodium_memzero(p, len);
+    free(p);
+}
+
+/*
+ * GroupSecrets (RFC 9420 §12.4.3.1):
+ *   opaque joiner_secret<V>;
+ *   optional<PathSecret> path_secret;   PathSecret = { opaque path_secret<V>; }
+ *   PreSharedKeyID psks<V>;
+ * *has_path_secret reports whether path_secret was present; when it is, its
+ * value (exactly Hash.length bytes) is written to path_secret.
+ */
 static int
 parse_group_secrets(const uint8_t *data, size_t len,
                     uint8_t joiner_secret[MLS_HASH_LEN],
+                    uint8_t path_secret[MLS_HASH_LEN],
+                    bool *has_path_secret,
                     MlsWelcomePskId **psk_ids_out,
                     size_t *psk_id_count_out)
 {
     MlsTlsReader r;
     mls_tls_reader_init(&r, data, len);
+    *has_path_secret = false;
     uint8_t *js = NULL;
     size_t js_len = 0;
     if (mls_tls_read_opaque16(&r, &js, &js_len) != 0) return -1;
-    if (js_len != MLS_HASH_LEN) { free(js); return -1; }
+    if (js_len != MLS_HASH_LEN) { free_secret(js, js_len); return -1; }
     memcpy(joiner_secret, js, MLS_HASH_LEN);
-    free(js);
+    free_secret(js, js_len);
 
     if (psk_ids_out) *psk_ids_out = NULL;
     if (psk_id_count_out) *psk_id_count_out = 0;
 
+    /* optional<T> presence is exactly 0 or 1 (RFC 9420 §2.1.1). */
     uint8_t has_path = 0;
-    if (mls_tls_read_u8(&r, &has_path) != 0) return -1;
+    if (mls_tls_read_u8(&r, &has_path) != 0 || has_path > 1) return -1;
     if (has_path) {
         uint8_t *path = NULL;
         size_t path_len = 0;
         if (mls_tls_read_opaque16(&r, &path, &path_len) != 0) return -1;
-        free(path);
+        if (path_len != MLS_HASH_LEN) { free_secret(path, path_len); return -1; }
+        memcpy(path_secret, path, MLS_HASH_LEN);
+        free_secret(path, path_len);
+        *has_path_secret = true;
     }
     uint8_t *psks = NULL;
     size_t psks_len = 0;
@@ -146,7 +170,14 @@ parse_group_secrets(const uint8_t *data, size_t len,
         }
     }
     free(psks);
-    return mls_tls_reader_done(&r) ? 0 : -1;
+    if (!mls_tls_reader_done(&r)) {
+        welcome_psk_ids_free(psk_ids_out ? *psk_ids_out : NULL,
+                             psk_id_count_out ? *psk_id_count_out : 0);
+        if (psk_ids_out) *psk_ids_out = NULL;
+        if (psk_id_count_out) *psk_id_count_out = 0;
+        return -1;
+    }
+    return 0;
 }
 
 static int
@@ -415,13 +446,16 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
                                                 NULL, 0, group_out);
 }
 
-int
-mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
-                                     const MlsKeyPackage *kp,
-                                     const MlsKeyPackagePrivate *kp_priv,
-                                     const uint8_t *ratchet_tree, size_t tree_len,
-                                     const MlsPskInput *psks, size_t psk_count,
-                                     MlsGroup *group_out)
+/* `path_secret` is scratch space owned (and wiped) by the caller, so every
+ * return path below leaves no copy of GroupSecrets.path_secret behind. */
+static int
+welcome_process_impl(const MlsWelcome *welcome,
+                     const MlsKeyPackage *kp,
+                     const MlsKeyPackagePrivate *kp_priv,
+                     const uint8_t *ratchet_tree, size_t tree_len,
+                     const MlsPskInput *psks, size_t psk_count,
+                     MlsGroup *group_out,
+                     uint8_t path_secret[MLS_HASH_LEN])
 {
     if (!welcome || !kp || !kp_priv || !group_out ||
         (psk_count > 0 && !psks))
@@ -459,19 +493,24 @@ mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
                                 welcome->encrypted_group_info_len,
                                 our_egs->encrypted_joiner_secret,
                                 our_egs->encrypted_joiner_secret_len) != 0) {
-        free(group_secrets);
+        free_secret(group_secrets, our_egs->encrypted_joiner_secret_len);
         return MARMOT_ERR_CRYPTO;
     }
 
     uint8_t joiner_secret[MLS_HASH_LEN];
+    /* GroupSecrets.path_secret (nostrc-il4i): installed into the joiner's
+     * path-key cache once the Welcome has been fully verified, below. */
+    bool has_path_secret = false;
     MlsWelcomePskId *welcome_psk_ids = NULL;
     size_t welcome_psk_id_count = 0;
     if (parse_group_secrets(group_secrets, group_secrets_len, joiner_secret,
+                            path_secret, &has_path_secret,
                             &welcome_psk_ids, &welcome_psk_id_count) != 0) {
-        free(group_secrets);
+        free_secret(group_secrets, our_egs->encrypted_joiner_secret_len);
+        sodium_memzero(joiner_secret, sizeof(joiner_secret));
         return MARMOT_ERR_WELCOME_INVALID;
     }
-    free(group_secrets);
+    free_secret(group_secrets, our_egs->encrypted_joiner_secret_len);
 
     uint8_t psk_secret[MLS_HASH_LEN];
     MlsPskInput *effective_psks = NULL;
@@ -897,6 +936,27 @@ mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
         return MARMOT_ERR_WELCOME_INVALID;
     }
 
+    /* RFC 9420 §12.4.3.1: with a path_secret, derive the keys of our lowest
+     * common ancestor with the committer (GroupInfo.signer) and of the nodes
+     * above it on the committer's filtered direct path, verify each against
+     * the (now authenticated) tree, and keep the private keys (nostrc-il4i).
+     * Its absence is legitimate: the Commit may have had no UpdatePath. */
+    if (has_path_secret) {
+        int path_rc = mls_group_welcome_install_path_secret(group_out,
+                                                            gi.signer_leaf,
+                                                            path_secret);
+        if (path_rc != 0) {
+            free(gc_data);
+            mls_group_info_clear(&gi);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            sodium_memzero(psk_secret, sizeof(psk_secret));
+            sodium_memzero(epoch_secret, sizeof(epoch_secret));
+            mls_group_free(group_out);
+            return path_rc == MARMOT_ERR_INTERNAL ? MARMOT_ERR_INTERNAL
+                                                  : MARMOT_ERR_WELCOME_INVALID;
+        }
+    }
+
     free(gc_data);
     mls_group_info_clear(&gi);
     sodium_memzero(joiner_secret, sizeof(joiner_secret));
@@ -904,4 +964,20 @@ mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
     sodium_memzero(epoch_secret, sizeof(epoch_secret));
 
     return 0;
+}
+
+int
+mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
+                                     const MlsKeyPackage *kp,
+                                     const MlsKeyPackagePrivate *kp_priv,
+                                     const uint8_t *ratchet_tree, size_t tree_len,
+                                     const MlsPskInput *psks, size_t psk_count,
+                                     MlsGroup *group_out)
+{
+    uint8_t path_secret[MLS_HASH_LEN];
+    memset(path_secret, 0, sizeof(path_secret));
+    int rc = welcome_process_impl(welcome, kp, kp_priv, ratchet_tree, tree_len,
+                                  psks, psk_count, group_out, path_secret);
+    sodium_memzero(path_secret, sizeof(path_secret));
+    return rc;
 }

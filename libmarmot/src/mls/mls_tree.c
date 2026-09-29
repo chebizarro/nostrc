@@ -111,6 +111,22 @@ mls_tree_direct_path(uint32_t x, uint32_t n,
     return 0;
 }
 
+uint32_t
+mls_tree_common_ancestor(uint32_t x, uint32_t y, uint32_t n)
+{
+    if (n == 0 || x >= mls_tree_node_width(n) || y >= mls_tree_node_width(n))
+        return UINT32_MAX;
+    uint32_t root = mls_tree_root(n);
+    for (uint32_t a = x;; a = mls_tree_parent(a, n)) {
+        for (uint32_t b = y;; b = mls_tree_parent(b, n)) {
+            if (a == b) return a;
+            if (b == root) break;
+        }
+        if (a == root) break;
+    }
+    return UINT32_MAX;
+}
+
 int
 mls_tree_copath(uint32_t x, uint32_t n,
                  uint32_t *copath, uint32_t max_len,

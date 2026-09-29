@@ -58,6 +58,13 @@ int mls_tree_direct_path(uint32_t x, uint32_t n,
                          uint32_t *path_len);
 
 /**
+ * Lowest common ancestor of nodes x and y in a tree with n leaves: the
+ * lowest node whose subtree contains both (x itself when y is below x).
+ * Returns UINT32_MAX when either node is outside the tree.
+ */
+uint32_t mls_tree_common_ancestor(uint32_t x, uint32_t y, uint32_t n);
+
+/**
  * Copath of node x: siblings of nodes on the direct path.
  * Returns 0 on success and writes count to copath_len; returns -1 on overflow.
  */

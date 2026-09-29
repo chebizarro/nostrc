@@ -208,14 +208,20 @@ group_derive_epoch(MlsGroup *group,
  *     `added_leaves` this Commit adds (RFC 9420 §12.4.2; they learn the
  *     epoch from the Welcome)
  *   - The path_secret at the root (used to derive commit_secret)
+ *   - Optionally, the path_secret of `secret_node` (UINT32_MAX for none),
+ *     which must lie on the filtered direct path: the lowest common ancestor
+ *     a Welcome hands to a joiner (RFC 9420 §12.4.3.1, nostrc-il4i)
  */
 static int
 generate_update_path(MlsGroup *group,
                      const uint8_t *credential_identity, size_t cred_len,
                      const uint32_t *added_leaves, size_t added_leaf_count,
+                     uint32_t secret_node,
+                     uint8_t out_node_secret[MLS_HASH_LEN],
                      MlsUpdatePath *path_out,
                      uint8_t root_path_secret[MLS_HASH_LEN])
 {
+    if (secret_node != UINT32_MAX && !out_node_secret) return -1;
     uint32_t n_leaves = group->tree.n_leaves;
     uint8_t *path_context = NULL;
     size_t path_context_len = 0;
@@ -284,6 +290,12 @@ generate_update_path(MlsGroup *group,
 
         /* The root path secret is the last one */
         memcpy(root_path_secret, path_secrets[fdp_len - 1], MLS_HASH_LEN);
+    }
+    if (secret_node != UINT32_MAX) {
+        uint32_t k = 0;
+        while (k < fdp_len && fdp[k] != secret_node) k++;
+        if (k == fdp_len) goto fail;
+        memcpy(out_node_secret, path_secrets[k], MLS_HASH_LEN);
     }
 
     /* RFC 9420 §7.4/§7.5: blank the whole direct path first, exactly as
@@ -473,6 +485,7 @@ fail:
     free(path_context);
     sodium_memzero(new_enc_sk, sizeof(new_enc_sk));
     sodium_memzero(path_secrets, sizeof(path_secrets));
+    if (out_node_secret) sodium_memzero(out_node_secret, MLS_HASH_LEN);
     mls_update_path_clear(path_out);
     return -1;
 }
@@ -838,16 +851,22 @@ hpke_decrypt_with_label(uint8_t *pt, size_t *pt_len,
     return rc;
 }
 
+/* GroupSecrets (RFC 9420 §12.4.3.1): joiner_secret<V>,
+ * optional<PathSecret> path_secret (present when `path_secret` is non-NULL),
+ * psks<V> empty.  The buffer holds secrets: callers wipe it before freeing. */
 static int
 serialize_group_secrets(const uint8_t joiner_secret[MLS_HASH_LEN],
+                        const uint8_t *path_secret,
                         uint8_t **out, size_t *out_len)
 {
     MlsTlsBuf buf;
-    if (mls_tls_buf_init(&buf, MLS_HASH_LEN + 16) != 0) return -1;
-    /* GroupSecrets: joiner_secret<V>, optional path_secret absent, psks<V> empty. */
+    if (mls_tls_buf_init(&buf, 2 * MLS_HASH_LEN + 16) != 0) return -1;
     if (mls_tls_write_opaque16(&buf, joiner_secret, MLS_HASH_LEN) != 0 ||
-        mls_tls_write_u8(&buf, 0) != 0 ||
+        mls_tls_write_u8(&buf, path_secret ? 1 : 0) != 0 ||
+        (path_secret &&
+         mls_tls_write_opaque16(&buf, path_secret, MLS_HASH_LEN) != 0) ||
         mls_tls_write_opaque32(&buf, NULL, 0) != 0) {
+        if (buf.data) sodium_memzero(buf.data, buf.len);
         mls_tls_buf_free(&buf);
         return -1;
     }
@@ -1250,8 +1269,10 @@ add_member_staged(MlsGroup *group,
      * fail_wire_msg). */
     uint8_t root_path_secret[MLS_HASH_LEN];
     uint8_t commit_secret[MLS_HASH_LEN];
+    uint8_t lca_path_secret[MLS_HASH_LEN];
     memset(root_path_secret, 0, sizeof(root_path_secret));
     memset(commit_secret, 0, sizeof(commit_secret));
+    memset(lca_path_secret, 0, sizeof(lca_path_secret));
 
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
@@ -1321,7 +1342,15 @@ add_member_staged(MlsGroup *group,
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
     const uint32_t added_leaf = mls_tree_node_to_leaf(new_leaf_node_idx);
-    if (generate_update_path(group, own_cred, own_cred_len, &added_leaf, 1,
+    /* The Welcome gives the joiner the path secret of its lowest common
+     * ancestor with us (RFC 9420 §12.4.3.1): a later Commit may encrypt to
+     * that node rather than to the joiner's leaf (nostrc-il4i).  The joiner
+     * is a non-blank leaf below it, so the node is on our filtered path. */
+    uint32_t lca_node = mls_tree_common_ancestor(own_node, new_leaf_node_idx,
+                                                 group->tree.n_leaves);
+    if (lca_node == UINT32_MAX ||
+        generate_update_path(group, own_cred, own_cred_len, &added_leaf, 1,
+                             lca_node, lca_path_secret,
                              &update_path, root_path_secret) != 0) {
         mls_proposal_clear(&add_prop);
         rc = MARMOT_ERR_INTERNAL;
@@ -1514,6 +1543,7 @@ add_member_staged(MlsGroup *group,
         uint8_t *group_secrets = NULL;
         size_t group_secrets_len = 0;
         if (serialize_group_secrets(group->epoch_secrets.joiner_secret,
+                                    lca_path_secret,
                                     &group_secrets, &group_secrets_len) != 0) {
             free(enc_gi);
             mls_group_info_clear(&gi);
@@ -1527,6 +1557,7 @@ add_member_staged(MlsGroup *group,
         uint8_t kem_enc[MLS_KEM_ENC_LEN];
         uint8_t *enc_js = malloc(group_secrets_len + MLS_AEAD_TAG_LEN);
         if (!enc_js) {
+            sodium_memzero(group_secrets, group_secrets_len);
             free(group_secrets);
             free(enc_gi);
             mls_group_info_clear(&gi);
@@ -1541,6 +1572,7 @@ add_member_staged(MlsGroup *group,
                                     "Welcome", enc_gi, enc_gi_len,
                                     group_secrets, group_secrets_len) != 0) {
             free(enc_js);
+            sodium_memzero(group_secrets, group_secrets_len);
             free(group_secrets);
             free(enc_gi);
             mls_group_info_clear(&gi);
@@ -1550,6 +1582,7 @@ add_member_staged(MlsGroup *group,
             mls_commit_clear(&commit);
             goto fail_wire_msg_internal;
         }
+        sodium_memzero(group_secrets, group_secrets_len);
         free(group_secrets);
 
         /* Assemble Welcome message:
@@ -1634,6 +1667,7 @@ add_member_staged(MlsGroup *group,
     mls_commit_clear(&commit);
     sodium_memzero(root_path_secret, sizeof(root_path_secret));
     sodium_memzero(commit_secret, sizeof(commit_secret));
+    sodium_memzero(lca_path_secret, sizeof(lca_path_secret));
 
     return 0;
 
@@ -1648,6 +1682,7 @@ fail_pre_gc:
     free(pre_gc);
     sodium_memzero(root_path_secret, sizeof(root_path_secret));
     sodium_memzero(commit_secret, sizeof(commit_secret));
+    sodium_memzero(lca_path_secret, sizeof(lca_path_secret));
     return rc;
 }
 
@@ -1699,6 +1734,7 @@ remove_member_staged(MlsGroup *group,
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
     if (generate_update_path(group, own_cred, own_cred_len, NULL, 0,
+                             UINT32_MAX, NULL,
                              &update_path, root_path_secret) != 0) {
         free(pre_gc);
         return MARMOT_ERR_INTERNAL;
@@ -1868,6 +1904,7 @@ path_commit_staged(MlsGroup *group,
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
     if (generate_update_path(group, own_cred, own_cred_len, NULL, 0,
+                             UINT32_MAX, NULL,
                              &update_path, root_path_secret) != 0) {
         free(pre_gc);
         return MARMOT_ERR_INTERNAL;
@@ -2559,6 +2596,78 @@ prune_own_path_keys(MlsGroup *group)
         if (!keep)
             sodium_memzero(entry, sizeof(*entry));
     }
+}
+
+int
+mls_group_welcome_install_path_secret(MlsGroup *group, uint32_t committer_leaf,
+                                      const uint8_t path_secret[MLS_HASH_LEN])
+{
+    if (!group || !path_secret) return MARMOT_ERR_INVALID_ARG;
+    const uint32_t n = group->tree.n_leaves;
+    if (committer_leaf >= n || committer_leaf == group->own_leaf_index ||
+        group->own_leaf_index >= n)
+        return MARMOT_ERR_WELCOME_INVALID;
+    uint32_t committer_node = mls_tree_leaf_to_node(committer_leaf);
+    uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
+    if (group->tree.nodes[committer_node].type != MLS_NODE_LEAF)
+        return MARMOT_ERR_WELCOME_INVALID;
+
+    /* The path secret belongs to the lowest common ancestor, which must be on
+     * the committer's filtered direct path; the chain continues through the
+     * filtered nodes above it, exactly as the committer derived it. */
+    uint32_t lca = mls_tree_common_ancestor(own_node, committer_node, n);
+    uint32_t fdp[64];
+    uint32_t fdp_len = 0;
+    if (lca == UINT32_MAX ||
+        mls_tree_filtered_direct_path(&group->tree, committer_leaf,
+                                      fdp, 64, &fdp_len) != 0)
+        return MARMOT_ERR_WELCOME_INVALID;
+    uint32_t k = 0;
+    while (k < fdp_len && fdp[k] != lca) k++;
+    if (k == fdp_len) return MARMOT_ERR_WELCOME_INVALID;
+
+    /* Derive and verify every key before installing any: a mismatch leaves
+     * the cache untouched. */
+    uint8_t secret[MLS_HASH_LEN];
+    uint8_t sks[64][MLS_KEM_SK_LEN];
+    uint8_t pks[64][MLS_KEM_PK_LEN];
+    int rc = MARMOT_ERR_WELCOME_INVALID;
+    memcpy(secret, path_secret, MLS_HASH_LEN);
+    for (uint32_t i = k; i < fdp_len; i++) {
+        const MlsNode *node = &group->tree.nodes[fdp[i]];
+        if (node->type != MLS_NODE_PARENT ||
+            mls_tree_derive_node_keypair(secret, sks[i], pks[i]) != 0 ||
+            sodium_memcmp(pks[i], node->parent.encryption_key, MLS_KEM_PK_LEN) != 0)
+            goto done;
+        if (i + 1 < fdp_len) {
+            uint8_t next[MLS_HASH_LEN];
+            int next_rc = mls_tree_derive_next_path_secret(secret, next);
+            memcpy(secret, next, MLS_HASH_LEN);
+            sodium_memzero(next, sizeof(next));
+            if (next_rc != 0) goto done;
+        }
+    }
+    for (uint32_t i = k; i < fdp_len; i++) {
+        if (remember_own_path_key(group, fdp[i], sks[i], pks[i]) != 0) {
+            rc = MARMOT_ERR_INTERNAL;
+            goto done;
+        }
+    }
+    rc = 0;
+done:
+    if (rc != 0) {
+        /* Drop anything installed before the failure. */
+        for (uint32_t i = k; i < fdp_len; i++) {
+            for (size_t j = 0; j < MLS_OWN_PATH_KEY_CACHE_SIZE; j++) {
+                MlsOwnPathKeyCacheEntry *e = &group->own_path_keys[j];
+                if (e->valid && e->node == fdp[i])
+                    sodium_memzero(e, sizeof(*e));
+            }
+        }
+    }
+    sodium_memzero(secret, sizeof(secret));
+    sodium_memzero(sks, sizeof(sks));
+    return rc;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

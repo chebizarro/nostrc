@@ -2537,6 +2537,204 @@ TEST(test_committer_keeps_own_path_keys)
     three_member_fixture_clear(&f);
 }
 
+/* ── Welcome path_secret (nostrc-il4i, RFC 9420 §12.4.3.1) ──────────────────
+ *
+ * The committer's Welcome carries the path secret of the lowest common
+ * ancestor of the committer and the joiner; the joiner derives that node's
+ * key and every key above it on the committer's filtered direct path.  In the
+ * fixture Charlie (leaf 2) adds Dave (leaf 3): their LCA is node 5, below the
+ * root (node 3).  Alice's next self-update encrypts node 3's path secret to
+ * resolution(node 5) = [node 5], which Dave can only open if he holds node 5's
+ * private key (was rc -116). */
+
+/* Charlie adds Dave; Alice and Bob follow.  Returns Dave's Welcome. */
+static void
+charlie_adds_dave_for_test(ThreeMemberFixture *f, MlsAddResult *add)
+{
+    MlsGroup *all[] = {&f->alice, &f->bob, &f->charlie};
+    for (size_t i = 0; i < 3; i++) reload_group_for_test(all[i]);
+    assert(mls_group_add_member(&f->charlie, &f->dave_kp, add) == 0);
+    deliver_commit_for_test(all, 3, &f->charlie, add->commit_data, add->commit_len,
+                            "Charlie adds Dave");
+    assert_converged_for_test(all, 3);
+}
+
+TEST(test_welcome_path_secret_lets_joiner_follow)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MlsAddResult add;
+    charlie_adds_dave_for_test(&f, &add);
+
+    MlsGroup dave;
+    memset(&dave, 0, sizeof(dave));
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &f.dave_kp,
+                               &f.dave_priv, NULL, 0, &dave) == 0);
+    assert(dave.own_leaf_index == 3);
+    MlsGroup *all[] = {&f.alice, &f.bob, &f.charlie, &dave};
+    assert_converged_for_test(all, 4);
+    /* Dave's direct path is [5, 3], both installed by Charlie's UpdatePath:
+     * the joiner holds both private keys, straight from the Welcome and after
+     * a persist/reload. */
+    assert(dave.tree.nodes[5].type == MLS_NODE_PARENT &&
+           dave.tree.nodes[3].type == MLS_NODE_PARENT);
+    assert_committer_holds_path_keys_for_test(&dave);
+    reload_group_for_test(&dave);
+    assert_committer_holds_path_keys_for_test(&dave);
+
+    /* The bead's repro: Alice self-updates, everyone -- Dave included --
+     * follows. */
+    MlsCommitResult upd;
+    assert(mls_group_self_update(&f.alice, &upd) == 0);
+    deliver_commit_for_test(all, 4, &f.alice, upd.commit_data, upd.commit_len,
+                            "Alice self-update after Dave joined");
+    assert_converged_for_test(all, 4);
+    mls_commit_result_clear(&upd);
+
+    /* Then every member commits in turn and every other member follows. */
+    for (int round = 0; round < 2; round++) {
+        for (size_t c = 0; c < 4; c++) {
+            MlsCommitResult r;
+            assert(mls_group_self_update(all[c], &r) == 0);
+            deliver_commit_for_test(all, 4, all[c], r.commit_data, r.commit_len,
+                                    "four-member self-update round");
+            assert_converged_for_test(all, 4);
+            for (size_t i = 0; i < 4; i++) {
+                reload_group_for_test(all[i]);
+                assert_path_keys_current_for_test(all[i]);
+            }
+            mls_commit_result_clear(&r);
+        }
+    }
+
+    mls_add_result_clear(&add);
+    mls_group_free(&dave);
+    three_member_fixture_clear(&f);
+}
+
+enum {
+    WELCOME_PATH_SECRET_FLIPPED,     /* one bit of the path secret flipped */
+    WELCOME_PATH_SECRET_SHORT,       /* 31-byte path secret */
+    WELCOME_PATH_SECRET_BAD_PRESENCE,/* optional<> presence byte 2 */
+    WELCOME_PATH_SECRET_CASE_COUNT
+};
+
+/* Re-seal Dave's GroupSecrets in `welcome` with its path_secret mutated per
+ * `variant`; the GroupInfo and joiner_secret are unchanged. */
+static void
+tamper_welcome_path_secret_for_test(const MlsAddResult *add,
+                                    const MlsKeyPackage *kp,
+                                    const MlsKeyPackagePrivate *priv,
+                                    int variant, MlsTlsBuf *out)
+{
+    MlsWelcome w;
+    MlsTlsReader wr;
+    mls_tls_reader_init(&wr, add->welcome_data, add->welcome_len);
+    assert(mls_welcome_deserialize(&wr, &w) == 0 && w.secret_count == 1);
+    MlsEncryptedGroupSecrets *egs = &w.secrets[0];
+
+    uint8_t *info = NULL;
+    size_t info_len = 0;
+    assert(build_encrypt_context_for_test("Welcome", w.encrypted_group_info,
+                                          w.encrypted_group_info_len,
+                                          &info, &info_len) == 0);
+    uint8_t pt[256];
+    size_t pt_len = 0;
+    assert(egs->encrypted_joiner_secret_len <= sizeof(pt));
+    assert(mls_crypto_hpke_open_base(pt, &pt_len, egs->kem_output,
+                                     priv->init_key_private, kp->init_key,
+                                     info, info_len, NULL, 0,
+                                     egs->encrypted_joiner_secret,
+                                     egs->encrypted_joiner_secret_len) == 0);
+
+    /* GroupSecrets = joiner_secret<V> || optional<PathSecret> || psks<V>.
+     * libmarmot's committer must now send the path secret (present = 1). */
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, pt, pt_len);
+    uint8_t *js = NULL, *ps = NULL, *psks = NULL;
+    size_t js_len = 0, ps_len = 0, psks_len = 0;
+    uint8_t present = 0;
+    assert(mls_tls_read_opaque16(&r, &js, &js_len) == 0 && js_len == MLS_HASH_LEN);
+    assert(mls_tls_read_u8(&r, &present) == 0);
+    assert(present == 1 && "committer Welcome must carry path_secret");
+    assert(mls_tls_read_opaque16(&r, &ps, &ps_len) == 0 && ps_len == MLS_HASH_LEN);
+    assert(mls_tls_read_opaque32(&r, &psks, &psks_len) == 0 && psks_len == 0);
+    assert(mls_tls_reader_done(&r));
+
+    MlsTlsBuf gs;
+    assert(mls_tls_buf_init(&gs, 128) == 0);
+    assert(mls_tls_write_opaque16(&gs, js, js_len) == 0);
+    switch (variant) {
+    case WELCOME_PATH_SECRET_FLIPPED:
+        ps[7] ^= 0x01;
+        assert(mls_tls_write_u8(&gs, 1) == 0);
+        assert(mls_tls_write_opaque16(&gs, ps, ps_len) == 0);
+        break;
+    case WELCOME_PATH_SECRET_SHORT:
+        assert(mls_tls_write_u8(&gs, 1) == 0);
+        assert(mls_tls_write_opaque16(&gs, ps, ps_len - 1) == 0);
+        break;
+    case WELCOME_PATH_SECRET_BAD_PRESENCE:
+        assert(mls_tls_write_u8(&gs, 2) == 0);
+        assert(mls_tls_write_opaque16(&gs, ps, ps_len) == 0);
+        break;
+    default:
+        assert(0);
+    }
+    assert(mls_tls_write_opaque32(&gs, NULL, 0) == 0);
+
+    free(egs->encrypted_joiner_secret);
+    egs->encrypted_joiner_secret = malloc(gs.len + MLS_AEAD_TAG_LEN);
+    assert(egs->encrypted_joiner_secret);
+    assert(mls_crypto_hpke_seal_base(egs->kem_output, egs->encrypted_joiner_secret,
+                                     &egs->encrypted_joiner_secret_len,
+                                     kp->init_key, info, info_len, NULL, 0,
+                                     gs.data, gs.len) == 0);
+    assert(mls_tls_buf_init(out, add->welcome_len + 64) == 0);
+    assert(mls_welcome_serialize(&w, out) == 0);
+
+    sodium_memzero(pt, sizeof(pt));
+    sodium_memzero(js, js_len);
+    sodium_memzero(ps, ps_len);
+    sodium_memzero(gs.data, gs.len);
+    free(js);
+    free(ps);
+    free(psks);
+    free(info);
+    mls_tls_buf_free(&gs);
+    mls_welcome_clear(&w);
+}
+
+/* A path secret that does not reproduce the tree's public keys, or that is
+ * malformed, invalidates the Welcome (RFC 9420 §12.4.3.1). */
+TEST(test_welcome_bad_path_secret_rejected)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MlsAddResult add;
+    charlie_adds_dave_for_test(&f, &add);
+
+    for (int v = 0; v < WELCOME_PATH_SECRET_CASE_COUNT; v++) {
+        MlsTlsBuf bad;
+        tamper_welcome_path_secret_for_test(&add, &f.dave_kp, &f.dave_priv, v, &bad);
+        MlsGroup rejected;
+        int rc = mls_welcome_process(bad.data, bad.len, &f.dave_kp, &f.dave_priv,
+                                     NULL, 0, &rejected);
+        if (rc != MARMOT_ERR_WELCOME_INVALID)
+            fprintf(stderr, "\n    tampered path_secret case %d: rc=%d", v, rc);
+        assert(rc == MARMOT_ERR_WELCOME_INVALID);
+        mls_tls_buf_free(&bad);
+    }
+
+    /* The untampered Welcome still joins. */
+    MlsGroup dave;
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &f.dave_kp,
+                               &f.dave_priv, NULL, 0, &dave) == 0);
+    mls_group_free(&dave);
+    mls_add_result_clear(&add);
+    three_member_fixture_clear(&f);
+}
+
 /* Commit producers merge a staged clone: a producer that fails part-way
  * leaves the live group byte-for-byte unchanged (fail closed). */
 TEST(test_commit_producers_fail_closed)
@@ -4167,6 +4365,8 @@ int main(void)
     RUN(test_commit_serialize_requires_path);
     RUN(test_remove_filters_root_from_committer_path);
     RUN(test_committer_keeps_own_path_keys);
+    RUN(test_welcome_path_secret_lets_joiner_follow);
+    RUN(test_welcome_bad_path_secret_rejected);
     RUN(test_commit_producers_fail_closed);
     RUN(test_update_path_excludes_leaves_added_by_commit);
     RUN(test_update_path_encrypting_to_added_leaf_rejected);

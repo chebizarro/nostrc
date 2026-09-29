@@ -212,6 +212,26 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ## Changelog
 
+### 0.4.1 (unreleased): Welcome path secrets
+
+- **Joiners can follow every Commit.** The committer's Welcome now carries
+  `GroupSecrets.path_secret` for the lowest common ancestor of itself and the
+  joiner on its filtered direct path (RFC 9420 §12.4.3.1). The joiner derives
+  the key pair of that node and of every node above it on the committer's
+  filtered path, checks each public key against the ratchet tree (constant
+  time), and keeps the private keys; a mismatching, malformed (wrong length)
+  or badly framed (`optional<>` presence byte other than 0/1) path secret
+  makes the Welcome invalid (`MARMOT_ERR_WELCOME_INVALID`). Before, the
+  secret was never sent and was discarded on receipt, so a joiner could not
+  decrypt a later Commit whose UpdatePath encrypted to that ancestor
+  (`MARMOT_ERR_MLS_PROCESS_MESSAGE`, e.g. Charlie adds Dave, Alice
+  self-updates). OpenMLS/MDK Welcomes, which always carried the secret, are
+  now verified against it (8 of the passive-client vectors).
+- **Compatibility.** No API, ABI or state-format change. A Welcome without a
+  path secret is still accepted (a Commit need not carry an UpdatePath).
+  0.4.0 joiners ignore the new field.
+- GroupSecrets plaintext and its joiner/path secret copies are wiped after use.
+
 ### 0.4.0 (unreleased): RFC 9420 LeafNode signatures and Commit processing fixes
 
 **Breaking wire change.** Update- and commit-source LeafNodes are now signed
@@ -255,9 +275,10 @@ validated before a Commit is applied (§7.3, §12.4.2).
   made. Receivers validate such proposals (one per Commit, supported by every
   member). The API does not yet return the Commit for publication, and
   `marmot_process_message` does not ingest Commits (`nostrc-9ata`).
-- **Known gap.** Welcomes do not carry `GroupSecrets.path_secret` yet
-  (`nostrc-il4i`): a joiner cannot follow a later Commit that encrypts to its
-  common ancestor with the member who added it.
+- **Known gap** (fixed in 0.4.1). Welcomes did not carry
+  `GroupSecrets.path_secret` (`nostrc-il4i`): a joiner could not follow a
+  later Commit that encrypts to its common ancestor with the member who added
+  it.
 
 ### 0.3.1 (unreleased): AppDataUpdate wire recognition (not adopted group support)
 
