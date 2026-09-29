@@ -432,11 +432,23 @@ world_down(World *w)
 
 /* ---- waits and lookups ------------------------------------------------------------ */
 
+/* The account's KeyPackage is published and on its write relay W (where
+ * lookups find it; the state turns PUBLISHED on the first relay's OK, which
+ * may be the inbox relay's). */
 static G_GNUC_UNUSED gboolean
 key_package_published(gpointer data)
 {
   App *app = data;
-  return gh_mls_service_get_key_package_state(app->service) == GH_MLS_KEY_PACKAGE_PUBLISHED;
+  if (gh_mls_service_get_key_package_state(app->service) != GH_MLS_KEY_PACKAGE_PUBLISHED)
+    return FALSE;
+  GPtrArray *stored = app->world->w.stored;
+  for (guint i = 0; i < stored->len; i++) {
+    WireStored *event = g_ptr_array_index(stored, i);
+    if (nostr_event_get_kind(event->event) == 30443 &&
+        g_strcmp0(nostr_event_get_pubkey(event->event), hex[app->key]) == 0)
+      return TRUE;
+  }
+  return FALSE;
 }
 
 typedef struct {

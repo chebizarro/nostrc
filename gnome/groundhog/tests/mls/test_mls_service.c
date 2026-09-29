@@ -63,6 +63,21 @@ key_packages_reached(gpointer data)
   return key_packages_by(wait->relay, wait->key, NULL) >= wait->count;
 }
 
+typedef struct {
+  App *app;
+  const gchar *old_id;
+} RotatedWait;
+
+static gboolean
+key_package_rotated(gpointer data)
+{
+  RotatedWait *wait = data;
+  const gchar *id = gh_mls_service_get_key_package_id(wait->app->service);
+  return id && g_strcmp0(id, wait->old_id) != 0 &&
+         gh_mls_service_get_key_package_state(wait->app->service) ==
+           GH_MLS_KEY_PACKAGE_PUBLISHED;
+}
+
 /* MIP-00: each account's KeyPackage on its own write and inbox relays,
  * signed by the account; a rotation replaces it in the same `d` slot. */
 static void
@@ -72,6 +87,8 @@ test_key_packages(void)
   const guint keys[] = { ALICE, BOB };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  CountWait on_inbox = { &w.x, ALICE, 1 };
+  spin_until(key_packages_reached, &on_inbox, "Alice's KeyPackage on her inbox relay");
   g_autofree gchar *d_first = NULL, *d_second = NULL;
   g_assert_cmpuint(key_packages_by(&w.w, ALICE, &d_first), ==, 1);
   g_assert_cmpuint(key_packages_by(&w.x, ALICE, NULL), ==, 1);
@@ -86,10 +103,10 @@ test_key_packages(void)
   g_assert_no_error(error);
   CountWait again = { &w.w, ALICE, 2 };
   spin_until(key_packages_reached, &again, "the rotated KeyPackage");
-  spin_until(key_package_published, &w.apps[ALICE], "the rotated KeyPackage accepted");
+  RotatedWait rotated = { &w.apps[ALICE], first };
+  spin_until(key_package_rotated, &rotated, "the rotated KeyPackage accepted");
   g_assert_cmpuint(key_packages_by(&w.w, ALICE, &d_second), ==, 2);
   g_assert_cmpstr(d_first, ==, d_second);
-  g_assert_cmpstr(gh_mls_service_get_key_package_id(w.apps[ALICE].service), !=, first);
 
   /* A restart within the lifetime publishes nothing new. */
   app_restart(&w.apps[ALICE]);
