@@ -23,6 +23,15 @@
   <url type="homepage">https://github.com/chebizarro/nostrc</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.10.1" type="development" date="2026-09-29">
+      <description>
+        <p>Unreleased preview.</p>
+        <ul>
+          <li>Safer attachment downloads: addresses on your own network, including IPv6 forms that hide one and names that resolve to one, are refused before any connection</li>
+          <li>Relays can no longer link separate connections through resumed encrypted sessions, in any network mode</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.0" type="development" date="2026-09-29">
       <description>
         <p>Unreleased preview.</p>
