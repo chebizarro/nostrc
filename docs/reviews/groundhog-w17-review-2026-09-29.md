@@ -297,3 +297,117 @@ It is correct. SENT is recipient acceptance, so waiting (bounded) for the self-c
   - the AT-2 ordering test (#4);
   - the guard-build onboarding copy (#5).
 - **Approved as is.** `8535de5a`, `89ac973b` (with #1 as a follow-up), `5893b836`, and the crypto, stripper, Blossom and Tor parts of `ae2f8115`.
+
+---
+
+## Addendum: fix confirmation (`58308eb8`, `363b9d03` on local `master`)
+
+**Scope.** This pass covers:
+- `58308eb8`: ci(groundhog), which builds and requires `groundhog-relay-guard` and runs it under the sanitizers;
+- `363b9d03`: fix(groundhog), which binds the attachment cache to the file key (W17 review B1). It was `208e451a` before a rebase.
+
+My branch was rebased onto `master` (`363b9d03`). File:line references are to that commit. I changed no code or beads.
+
+### B2: closed
+
+- **The workflow.** `test-groundhog-relay-guard` is in the build list, `groundhog-relay-guard` in the required set and in `GROUNDHOG_SANITIZER_TESTS`.
+- **The new test.** `363b9d03` adds `groundhog-media-cache-binding` to all three lists at once.
+- **Cross-check.** I reran my script against `ctest --show-only=json-v1 -R '^(groundhog-|nostrc-test-bus-selftest$)'`:
+  - every registered test's executable is in the build list;
+  - every registered test is in the required set;
+  - both new tests are in the sanitizer set, whose build step builds `test-<name>`.
+  No registered test can be "Not Run" in the job any more.
+
+### B1: closed
+
+- **The fix.**
+  - A row is kept under `gh_store_media_file_id`. That is SHA-256 over a domain tag (NUL included), `x`, the 32-byte key, a nonce-length byte and the 12- or 16-byte nonce (`gh-store.c:1048-1070`).
+  - `gh_store_media_put`, `_get` and `_remove` take the `GhNip17File`, so no `x`-only entry point is left.
+  - The store registers `gh_media_file_id(raw_json)` as `SQLITE_DETERMINISTIC | SQLITE_DIRECTONLY` (`:1139-1146`). It is used by the put guard and by `MEDIA_FORGET` (`:3349-3352`) for expiry, retention, forget, block and outbox delete.
+  - A hit also re-checks `ox` (`gh-attachment.c`, the cache branch of `gh_attachment_download_async`).
+- **C and SQL compute the same identity.**
+  - The SQL side reads the `x`, `decryption-key` and `decryption-nonce` tags from the canonical rumor, with the same `["name","` argument as before. In compact JSON an unescaped `["` can only open a tag, and the strict parser admits exactly one of each.
+  - It lowercases `x` and decodes key and nonce from either case, as `gh_nip17_file_from_rumor` does.
+  - It requires the tag to close right after its value. A 3-element tag, which the parser tolerates, yields NULL. That is fail-safe: no row can exist for it, and none is ever pinned.
+- **My repro against the new code** (`/tmp/w17scratch/repro_cache2.c`: the same attack, adapted to the new signatures). Mallory's URL is `https://127.0.0.1:1/<x>` with the test seam on, so it passes the new address policy and reaches a closed port. Output:
+  ```
+  control decrypt with Mallory's key: This file was changed or damaged.
+  direct cache lookup for Mallory's file: miss
+  download of Mallory's message: cached=0 error=Could not connect to 127.0.0.1: Connection refused bytes=
+  after Bob's message expired: n_expired=1 n_media=1 cached=gone
+  ```
+  This covers all three B1 scenarios:
+  - no plaintext for a message that only names `x`;
+  - no pinning past expiry;
+  - no cache oracle, because a miss goes to the network whatever the account holds.
+  A genuine forward carries the same key and nonce and still keeps the row, as intended.
+- **The committed regression test.** `groundhog-media-cache-binding` is my repro as a test, through Tor mode to a `.onion` via the SOCKS5 fixture. With `groundhog-media`'s other-key, other-nonce and put-guard cases and `groundhog-media-purge`'s same-x-other-key case, it covers the defect from both the cache and the purge side.
+
+### Non-blocking items
+
+| Item | Status |
+|---|---|
+| #1 S4 on retries | Filed as `nostrc-yp69` |
+| #2 URL in previews | Fixed. `gh_message_dup_display_text()` ("Photo"/"File") is used by the sidebar preview (`gh-conversation.c`), Requests, the notifier and the row. Only `gh-message-row.c` (non-file bodies) and the store's `body` column still read the raw content. `groundhog-conversations` gains `file-preview` |
+| #3 download targets | Fixed (policy review below) |
+| #4 AT-2 ordering | Fixed. **Mutation check:** a `gh-attachment.c` that runs the cipher before the `x` check fails `/groundhog/media/at2-tampering` at `test_media.c:492` (decrypt runs 2 ≠ 1); the real code passes |
+| #5 guard-build onboarding copy | Filed as `nostrc-4nur`, with an accurate plan (a `tor_available` config field and a test for both builds) |
+
+### The download address policy (`gh-blossom-client.c`, `download_url_allowed`)
+
+- **The path.** It must be `<origin>/<x>[.ext]`, with no query, fragment or user info. That also stops a sender from aiming Download at arbitrary paths (`/admin`, `?x=1`).
+- **Host checks.** The host is checked after GUri parsing.
+  - **IDN is normalised before the check.** GUri (ENCODED, without NON_DNS) applies IDNA to non-ASCII hosts, so `host_public()` sees the ASCII form.
+  - **Tested empirically.** `/tmp/w17scratch/ssrf_probe.c` drives the real `gh_blossom_client_download_async` in System mode against a listener on every local address and counts TCP connections.
+    - The positive control (seam on, `127.0.0.1`) got one connection.
+    - These got **0 connections and a policy refusal**:
+      - `127.0.0.1` and `127.0.0.1.`;
+      - `localhost`, `127.1`, `2130706433`;
+      - `[::1]`, `[0:0:0:0:0:0:0:1]`, `[::]`, `0.0.0.0`;
+      - `[::ffff:127.0.0.1]` and `[::ffff:7f00:1]`;
+      - `127.0.0。1` (U+3002), `127．0．0．1` (U+FF0E), `127.0.0.１` and `１２７.0.0.1` (fullwidth digits);
+      - `ⓛⓞⓒⓐⓛⓗⓞⓢⓣ.`, which normalises to `localhost`.
+  - **Other numeric forms.** `0x7f.0.0.1` and `0177.0.0.1` are refused on Linux by the numeric-last-label rule, since glibc's `inet_pton` rejects leading zeros. On macOS, `inet_pton` reads `0177.0.0.1` as decimal 177.0.0.1, public, and GIO's resolver uses the same parser. So the check and the connection agree, and nothing local is reached.
+  - **Zone IDs** (`%`) are refused.
+  - **Redirects** are never followed, so a public server cannot bounce Download onward.
+- **Not refused: IPv6 forms that embed an IPv4 address** (new note 1 below):
+  - IPv4-compatible `[::127.0.0.1]` / `[::7f00:1]`;
+  - SIIT `[::ffff:0:127.0.0.1]`;
+  - NAT64 `[64:ff9b::7f00:1]`.
+  All four passed the policy and failed here only with "No route to host".
+- **Regressions.**
+  - The test seam (`gh_blossom_client_set_allow_private_hosts`) has no caller in `src/`. Only the Blossom, e2e and multi-send tests set it, for their loopback fixtures.
+  - AT-9 now runs without the seam and still passes.
+  - The deliberate cost: a sender's URL that is not a Blossom blob (NIP-96-style names, presigned URLs with a query) or that is on a LAN or Tailscale (100.64/10) server cannot be downloaded, even by a recipient on that network. The refusal says why. `nostrc-qi5e` records the NIP-96 question along with DNS rebinding. I agree this is the right default before G22.
+
+### New non-blocking notes
+
+1. **Low: IPv4-embedding IPv6 prefixes are not checked for a private embedded address** (`gh-blossom-client.c`, `address_private`).
+   - **What's covered.** v4-mapped `::ffff:0:0/96` is unwrapped.
+   - **What isn't.** `::/96` (IPv4-compatible), `::ffff:0:0:0/96` (SIIT), `64:ff9b::/96` and `64:ff9b:1::/48` (NAT64) are not.
+   - **Scenario.** On an IPv6-only network with NAT64, common on mobile carriers, a message naming `https://[64:ff9b::c0a8:101]/<x>` asks the NAT64 gateway for 192.168.1.1. RFC 6052 forbids translating non-global addresses with the well-known prefix, but that depends on the gateway.
+   - **Suggestion.** Unwrap the embedded IPv4 for those prefixes (or refuse the compatible, SIIT and NAT64 ranges outright), and add them to `download-address-policy`. This fits `nostrc-qi5e`.
+2. **Nit: rows cached before `363b9d03` are keyed by `x` and no longer match anything.** No purge can reach them; only LRU eviction removes them. This affects only developer stores (no production caller has ever run), but `gh_store_media_prune(store, 0)` once at open, or a schema bump, would clear them.
+3. **Nit: the identity is recomputed per row.**
+   - **Where.** The put guard and `MEDIA_FORGET`'s survivor test compute `gh_media_file_id` over every stored kind-15 message: a JSON scan and a SHA-256 each, per put and per doomed row.
+   - **Cost.** Fine at expected sizes (a purge touches few rows), but it is O(kind-15 messages).
+   - **Suggestion.** A stored generated column or an index on the identity would make it O(log n) if attachments become common.
+
+### Verification
+
+- **Build.** `cmake -S . -B /tmp/w17rev -G Ninja -DBUILD_GROUNDHOG=ON && ninja -C /tmp/w17rev` (incremental, 627 steps) at `363b9d03` succeeded. There were no Groundhog compiler warnings and the source tree was left clean.
+- **Tests.** `ctest --test-dir /tmp/w17rev -R 'groundhog-' -j6 --timeout 300`: **65/65 passed**, with four platform skips (`groundhog-launch`, `-store-key-keyring`, `-background-gui`, `-notifier-gui`). `groundhog-media-cache-binding`, `-media`, `-media-purge`, `-blossom`, `-relay-guard`, `-conversations` and `-privacy-e2e` are among them.
+- **Scratch programs (`/tmp/w17scratch`).**
+  - `repro_cache2.c`: the B1 repro, above.
+  - `ssrf_probe.c`: 21 address forms and a positive control.
+  - An AT-2 mutant.
+  - The CI list cross-check.
+- **Checks.** `git diff --check` for `58308eb8` and `363b9d03` (excluding `.beads`) is clean.
+- **Not run.** A real NAT64 network, DNS-rebinding names (`nostrc-qi5e`), and the hosted CI (not pushed).
+
+**APPROVED**
+
+- **B1 is closed.** The cache is bound to the file's key and nonce in lookup, admission and every purge. My repro now misses, goes to the network and purges. The committed regression test covers it.
+- **B2 is closed.** Every registered Groundhog test is built, required and (where display-free) sanitized.
+- **Non-blocking #1–#5.** Fixed (#2, #3, #4) or filed (`nostrc-yp69`, `nostrc-4nur`).
+- **The address policy.** It resists the IDN and non-canonical numeric bypasses I tried. The IPv4-embedding IPv6 prefixes (new note 1) and DNS rebinding (`nostrc-qi5e`) are follow-ups before G22 enables Download.
