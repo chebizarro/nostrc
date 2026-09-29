@@ -330,6 +330,31 @@ test_wire_auth_cancel_while_signing(void)
   wire_updates_clear(&updates);
 }
 
+/* nostrc-gem9, nostrc-f56o: a held port is never free. While down, nobody
+ * else can bind it as libsoup and GSocketListener do (loopback,
+ * SO_REUSEADDR), so a parallel test cannot take it; the relay then comes
+ * up on it at the same URL. (A port reserved by binding and closing a
+ * listener is free again at once: that was the flake.) */
+static void
+test_held_port(void)
+{
+  GhTestHeldPort held = { 0 };
+  WireRelay relay = { .url = held_relay_url(&held) };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GSocket) stranger = g_socket_new(G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_STREAM,
+                                             G_SOCKET_PROTOCOL_DEFAULT, &error);
+  g_assert_no_error(error);
+  g_autoptr(GInetAddress) loopback = g_inet_address_new_loopback(G_SOCKET_FAMILY_IPV4);
+  g_autoptr(GSocketAddress) taken = g_inet_socket_address_new(loopback, held.port);
+  g_assert_false(g_socket_bind(stranger, taken, TRUE, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_ADDRESS_IN_USE);
+  relay_init_held(&relay, &held);
+  g_autofree gchar *expected = g_strdup_printf("ws://127.0.0.1:%u/relay", held.port);
+  g_assert_cmpstr(relay.url, ==, expected);
+  relay_clear(&relay);
+  g_assert_null(held.service);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -345,5 +370,7 @@ main(int argc, char **argv)
     { "/groundhog/relay/cancel-closes-subscription", test_cancel_closes_relay_subscription, FALSE },
   };
   wire_add_tests(cases, G_N_ELEMENTS(cases));
+  /* The harness itself, no traffic: not a wire case (no Tor variant). */
+  g_test_add_func("/groundhog/relay/held-port", test_held_port);
   return g_test_run();
 }
