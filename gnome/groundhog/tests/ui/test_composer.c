@@ -16,6 +16,7 @@
 #include "gh-delivery-indicator.h"
 #include "gh-expiry.h"
 #include "gh-message-row.h"
+#include "gh-test-active.h"
 
 #include <string.h>
 
@@ -1029,6 +1030,8 @@ test_failed_retry(void)
   GhConversationView *view = send_stack_view(&f.s);
   guint assertive = gh_conversation_view_get_announcements(
     view, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
+  GhTestActiveSpan span;
+  gh_test_active_span_begin(&span, GTK_WINDOW(f.s.window));
 
   pubs.refuse_url = INBOX_B;
   pubs.refuse_message = "error: try again later";
@@ -1045,9 +1048,14 @@ test_failed_retry(void)
   }
   wait_status(mine, GH_MESSAGE_STATUS_NOT_SENT);
   g_assert_cmpuint(pubs_to(INBOX_B, stack_hex[2]), ==, GH_MESSAGE_STATUS_ERROR_ATTEMPTS);
-  g_assert_cmpuint(gh_conversation_view_get_announcements(
-                     view, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH), ==,
-                   assertive + (gtk_window_is_active(GTK_WINDOW(f.s.window)) ? 1 : 0));
+  gboolean either = FALSE;
+  guint step = gh_test_active_span_expect(&span, 1, &either);
+  guint made = gh_conversation_view_get_announcements(
+    view, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH) - assertive;
+  if (either) /* nostrc-9g6e */
+    g_assert_cmpuint(made, <=, 1);
+  else
+    g_assert_cmpuint(made, ==, step);
 
   pubs.refuse_url = NULL;
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "conversation.retry-message", "s",
@@ -1591,13 +1599,20 @@ test_focus_guard(void)
   gh_sidebar_page_start_search(sidebar);
   GtkWidget *search = focus_of(window);
   g_assert_true(GTK_IS_EDITABLE(search));
+  GhTestActiveSpan span;
+  gh_test_active_span_begin(&span, GTK_WINDOW(window));
   g_settings_set_string(f.s.settings, "current-npub", "");
   PageWait unselected = { sidebar, "account-unselected" };
   gh_test_spin_until(sidebar_page_is, &unselected);
   gh_test_run_until_idle();
   g_assert_true(focus_of(window) == search);
-  g_assert_cmpuint(gh_account_ui_get_announcements(f.s.window), ==,
-                   announced + (gtk_window_is_active(GTK_WINDOW(window)) ? 1 : 0));
+  gboolean either = FALSE;
+  guint step = gh_test_active_span_expect(&span, 1, &either);
+  guint made = gh_account_ui_get_announcements(f.s.window) - announced;
+  if (either) /* nostrc-9g6e */
+    g_assert_cmpuint(made, <=, 1);
+  else
+    g_assert_cmpuint(made, ==, step);
 
   /* Back, and typing in the composer when the account goes: the composer
    * went with the conversation, so focus moves to the page's action (the

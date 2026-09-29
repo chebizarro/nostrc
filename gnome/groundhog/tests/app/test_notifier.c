@@ -20,6 +20,7 @@
 #include "nostr-tag.h"
 #include "nostr-utils.h"
 #include "nostr/nip19/nip19.h"
+#include "../ui/gh-test-active.h"
 
 #include <adwaita.h>
 #include <stdlib.h>
@@ -1272,6 +1273,8 @@ test_gui_open_and_stale(void)
   GhSidebarPage *sidebar = gh_window_get_sidebar(window);
 
   /* Open: the conversation is selected and shown, from whichever list. */
+  GhTestActiveSpan span;
+  gh_test_active_span_begin(&span, GTK_WINDOW(window));
   g_signal_emit_by_name(f.notifier, "open-conversation", request);
   g_assert_true(gh_sidebar_page_get_selected(sidebar) == request);
   g_assert_true(gh_sidebar_page_get_show_requests(sidebar));
@@ -1282,8 +1285,12 @@ test_gui_open_and_stale(void)
   /* The notifier follows the shown conversation only while the window is
    * active (a display without a window manager may never activate it). */
   spin();
-  g_assert_true(gh_notifier_get_visible_conversation(f.notifier) ==
-                (gtk_window_is_active(GTK_WINDOW(window)) ? accepted : NULL));
+  gboolean active = FALSE;
+  GhConversation *visible = gh_notifier_get_visible_conversation(f.notifier);
+  if (gh_test_active_span_end(&span, &active))
+    g_assert_true(visible == (active ? accepted : NULL));
+  else /* activation changed meanwhile (nostrc-9g6e) */
+    g_assert_true(visible == accepted || visible == NULL);
 
   /* Stale: the list, no thread, and the toast with Switch for a known
    * account. */

@@ -28,6 +28,7 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-tag.h"
+#include "gh-test-active.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1256,8 +1257,12 @@ test_scrolling(Fixture *f, gconstpointer data)
   spin_until(scrolled_up, f->view);
   guint polite = gh_conversation_view_get_announcements(
     f->view, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+  GhTestActiveSpan span;
+  gh_test_active_span_begin(&span, f->window);
   GhMessage *news = add_dm(f->store, 2, 1, noon_today() + 60, "something new");
   drain_idle();
+  gboolean either = FALSE;
+  guint step = gh_test_active_span_expect(&span, 1, &either);
   g_assert_false(gh_conversation_view_get_at_latest(f->view));
   g_assert_cmpuint(gh_conversation_view_get_new_below(f->view), ==, 1);
   GtkWidget *count = view_child(f->view, "jump_count");
@@ -1265,13 +1270,17 @@ test_scrolling(Fixture *f, gconstpointer data)
   g_assert_cmpstr(text_of(count), ==, "1");
   gtk_test_accessible_assert_property(GTK_ACCESSIBLE(jump), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                       "Jump to Latest, 1 new message");
-  /* Announced politely, in full, if the window is active (Xvfb: it is). */
-  guint step = announced_if_active(f);
-  g_assert_cmpuint(gh_conversation_view_get_announcements(
-                     f->view, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM), ==, polite + step);
+  /* Announced politely, in full, if the window was active (nostrc-9g6e:
+   * another test's window may have taken activation meanwhile). */
+  guint made = gh_conversation_view_get_announcements(
+    f->view, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM) - polite;
+  if (either)
+    g_assert_cmpuint(made, <=, 1);
+  else
+    g_assert_cmpuint(made, ==, step);
   g_autoptr(GDateTime) now = g_date_time_new_now_local();
   g_autofree gchar *announced = gh_message_row_compose_summary(news, now);
-  if (step)
+  if (made)
     g_assert_cmpstr(gh_conversation_view_get_last_announcement(f->view), ==, announced);
 
   /* Jump to Latest brings the newest into view and clears the count. */
@@ -1615,10 +1624,15 @@ test_compact_and_keyboard(Fixture *f, gconstpointer data)
   g_assert_cmpint(min_height, <=, 150);
 
   /* Keyboard: focusing the view focuses the list; arrows move between
-   * messages and Tab stays within one (tab-behavior item). */
+   * messages and Tab stays within one (tab-behavior item). The window's
+   * focus, not the focus state flags: GTK clears those whenever the window
+   * is not active, and another test's window can take activation at any
+   * moment (nostrc-9g6e). */
   g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(f->view)));
   GtkWidget *list = GTK_WIDGET(gh_conversation_view_get_message_list(f->view));
-  g_assert_true(gtk_widget_get_state_flags(list) & GTK_STATE_FLAG_FOCUS_WITHIN);
+  GtkWidget *focus = gtk_root_get_focus(gtk_widget_get_root(list));
+  g_assert_nonnull(focus);
+  g_assert_true(focus == list || gtk_widget_is_ancestor(focus, list));
   g_assert_true(gtk_widget_get_focusable(item_for(f->view, m)));
 }
 
