@@ -30,7 +30,6 @@ typedef struct {
    * are template children of that window or were added to them. */
   GtkWidget *window;
   GhSidebarPage *sidebar;
-  GhContentPage *content;
   GhStatus *status;
   AdwWindowTitle *title;
   GtkStack *stack;
@@ -43,6 +42,11 @@ typedef struct {
    * actual state transition, not on every redundant "changed" or
    * network-monitor notification. */
   gchar *last_page;
+  /* A transition's focus move runs once the transition has settled
+   * (focus_idle), and waits for an inactive window (focus_deferred). */
+  guint focus_idle;
+  gboolean focus_deferred;
+  guint announcements; /* made (only while the window is active, §7.14) */
 } GhAccountUi;
 
 static void
@@ -53,6 +57,7 @@ account_ui_free(gpointer data)
   g_clear_object(&ui->settings);
   g_clear_object(&ui->identities_menu);
   g_clear_object(&ui->select);
+  g_clear_handle_id(&ui->focus_idle, g_source_remove);
   g_free(ui->last_page);
   g_free(ui);
 }
@@ -110,6 +115,74 @@ status_signer(GhSignerAvailability availability)
   }
 }
 
+/* The user is typing: keyboard focus is in a text field or the composer
+ * (nostrc-qp24.8.1). */
+static gboolean
+editing(GhAccountUi *ui)
+{
+  GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(ui->window));
+  return focus && gtk_widget_get_mapped(focus) &&
+         (GTK_IS_EDITABLE(focus) || GTK_IS_TEXT_VIEW(focus));
+}
+
+/* Charter §7.14: no announcement to an inactive window; on its activation
+ * the deferred focus move puts the page's action, which says the same, in
+ * front of the screen reader. */
+static void
+announce(GhAccountUi *ui, const gchar *text)
+{
+  if (!text || !GTK_IS_ACCESSIBLE(ui->window) || !gtk_window_is_active(GTK_WINDOW(ui->window)))
+    return;
+  gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), text,
+                          GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+  ui->announcements++;
+}
+
+/* Keyboard/screen-reader focus to the shown page's named target, unless
+ * someone is typing (in a field or the composer that is still on screen), or
+ * the window is not active: then it moves once the window is activated
+ * again, if nobody is typing by then. */
+static void
+apply_focus(GhAccountUi *ui)
+{
+  ui->focus_deferred = FALSE;
+  GtkWidget *target = focus_target(ui, *ui->last_page ? ui->last_page : NULL);
+  if (!target || editing(ui))
+    return;
+  if (!gtk_window_is_active(GTK_WINDOW(ui->window))) {
+    ui->focus_deferred = TRUE;
+    return;
+  }
+  gtk_widget_grab_focus(target);
+}
+
+static gboolean
+focus_idle(gpointer data)
+{
+  GhAccountUi *ui = data;
+  ui->focus_idle = 0;
+  apply_focus(ui);
+  return G_SOURCE_REMOVE;
+}
+
+/* A real transition moves focus to the page's target. A window on screen
+ * decides once the transition has settled (a conversation that went with
+ * the account has taken its composer off screen by then); one never shown
+ * gets it at once, as its initial focus. */
+static void
+move_focus(GhAccountUi *ui)
+{
+  g_clear_handle_id(&ui->focus_idle, g_source_remove);
+  ui->focus_deferred = FALSE;
+  if (!gtk_widget_get_mapped(ui->window)) {
+    GtkWidget *target = focus_target(ui, *ui->last_page ? ui->last_page : NULL);
+    if (target)
+      gtk_widget_grab_focus(target);
+    return;
+  }
+  ui->focus_idle = g_idle_add(focus_idle, ui);
+}
+
 static void
 update(GhAccountUi *ui)
 {
@@ -126,7 +199,6 @@ update(GhAccountUi *ui)
   const gchar *page_name = page_for_state(state);
 
   gh_sidebar_page_set_account_page(ui->sidebar, page_name);
-  gh_content_page_set_read_only_reason(ui->content, limits);
   g_object_freeze_notify(G_OBJECT(ui->status));
   gh_status_set_account_active(ui->status, state == GH_ACCOUNT_STATE_ACTIVE);
   gh_status_set_network_available(ui->status, online);
@@ -141,16 +213,13 @@ update(GhAccountUi *ui)
     g_free(ui->last_page);
     ui->last_page = g_strdup(page_name ? page_name : "");
 
-    if (GTK_IS_ACCESSIBLE(ui->window))
-      gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), limits,
-                              GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+    /* Announced even while someone types: it says why sending stopped. */
+    announce(ui, limits);
 
     /* Move keyboard/screen-reader focus straight to the page's named focus
      * target instead of leaving it wherever it was, often the header bar
      * several tabs away. Pages without one leave focus alone. */
-    GtkWidget *target = focus_target(ui, page_name);
-    if (target)
-      gtk_widget_grab_focus(target);
+    move_focus(ui);
   }
 
   g_menu_remove_all(ui->identities_menu);
@@ -173,6 +242,14 @@ static void
 on_window_state_source(GtkWidget *window)
 {
   update(g_object_get_data(G_OBJECT(window), "groundhog-account-ui"));
+}
+
+static void
+on_window_active(GtkWidget *window)
+{
+  GhAccountUi *ui = g_object_get_data(G_OBJECT(window), "groundhog-account-ui");
+  if (ui->focus_deferred && gtk_window_is_active(GTK_WINDOW(window)))
+    apply_focus(ui);
 }
 
 static void
@@ -208,7 +285,6 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
   ui->settings = g_object_ref(settings);
   ui->window = GTK_WIDGET(window);
   ui->sidebar = sidebar;
-  ui->content = gh_window_get_content(window);
   ui->status = gh_window_get_status(window);
   ui->title = gh_sidebar_page_get_window_title(sidebar);
   ui->stack = gh_sidebar_page_get_stack(sidebar);
@@ -242,5 +318,15 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
                           window, G_CONNECT_SWAPPED);
   g_signal_connect_object(g_network_monitor_get_default(), "notify::network-available",
                           G_CALLBACK(on_window_state_source), window, G_CONNECT_SWAPPED);
+  g_signal_connect_object(window, "notify::is-active", G_CALLBACK(on_window_active), window,
+                          G_CONNECT_SWAPPED);
   update(ui);
+}
+
+guint
+gh_account_ui_get_announcements(GhWindow *window)
+{
+  g_return_val_if_fail(GH_IS_WINDOW(window), 0);
+  GhAccountUi *ui = g_object_get_data(G_OBJECT(window), "groundhog-account-ui");
+  return ui ? ui->announcements : 0;
 }

@@ -1322,6 +1322,29 @@ gh_dm_inbox_get_counters(GhDmInbox *self, GhDmInboxCounters *counters)
   *counters = self->counters;
 }
 
+guint
+gh_dm_inbox_get_locked(GhDmInbox *self)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), 0);
+  return g_hash_table_size(self->deferred_ids);
+}
+
+gboolean
+gh_dm_inbox_unlock(GhDmInbox *self)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), FALSE);
+  if (!self->urls || g_hash_table_size(self->deferred_ids) == 0)
+    return FALSE;
+  /* The checkpoint was held for them, so the same REQs deliver them again;
+   * the seen-set skips everything already stored. */
+  g_auto(GStrv) urls = g_strdupv(self->urls);
+  teardown_session(self);
+  start_session(self, g_steal_pointer(&urls));
+  update_state(self);
+  emit_changed(self);
+  return TRUE;
+}
+
 static void
 gh_dm_inbox_get_property(GObject *object, guint id, GValue *value, GParamSpec *pspec)
 {

@@ -966,11 +966,15 @@ test_limits(void)
                 "Read-only:", "no session bus");
   assert_limits(GH_ACCOUNT_STATE_ACTIVE, GH_SIGNER_AVAILABILITY_UNKNOWN, "auto", TRUE,
                 "Read-only:", "checking");
-  /* Even with a reachable signer this build has no send path. */
-  assert_limits(GH_ACCOUNT_STATE_ACTIVE, GH_SIGNER_AVAILABILITY_ACTIVATABLE, "auto", TRUE,
-                "Signer available", "not implemented");
-  assert_limits(GH_ACCOUNT_STATE_ACTIVE, GH_SIGNER_AVAILABILITY_RUNNING, "local", TRUE,
-                "Signer available", "not implemented");
+  /* An active account with a reachable signer can send: no limit. */
+  g_autofree gchar *none = gh_account_describe_limits(GH_ACCOUNT_STATE_ACTIVE,
+                                                      GH_SIGNER_AVAILABILITY_ACTIVATABLE,
+                                                      "auto", TRUE);
+  g_assert_null(none);
+  g_autofree gchar *running = gh_account_describe_limits(GH_ACCOUNT_STATE_ACTIVE,
+                                                         GH_SIGNER_AVAILABILITY_RUNNING,
+                                                         "local", TRUE);
+  g_assert_null(running);
 }
 
 #ifdef GROUNDHOG_TEST_NIP17

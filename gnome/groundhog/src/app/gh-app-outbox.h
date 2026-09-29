@@ -11,9 +11,9 @@ G_BEGIN_DECLS
 
 /* The send side the account store makes a durable outbox (G06, gh-outbox.h)
  * with, once per open store: the recipient 10050 resolver and the NIP-17
- * sealer/publisher. Kept in its own translation unit because gh-outbox.h's
- * GhMessageStatus and the conversation model's interim one (gh-message.h)
- * cannot share one until G12/G13 merge them. Main context only. */
+ * sealer/publisher. (gh-outbox.h and the conversation model share one
+ * GhMessageStatus since G13; see gh-send-ui.h for the UI side.) Main context
+ * only. */
 
 typedef struct {
   GhAccountController *accounts;             /* required */

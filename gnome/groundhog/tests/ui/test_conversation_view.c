@@ -1577,8 +1577,6 @@ take_shot(Scenes *s, const char *dir, GhConversation *conversation, int width, i
   gh_status_set_signer(status, GH_STATUS_SIGNER_AVAILABLE);
   gh_status_set_inbox(status, GH_STATUS_INBOX_LIVE, NULL);
   gh_sidebar_page_set_show_previews(sidebar, TRUE);
-  gh_content_page_set_read_only_reason(content,
-                                       "Sending arrives with the composer in a later build");
   shot.view = GH_CONVERSATION_VIEW(gh_content_page_get_view(content));
   gh_conversation_view_set_delivery_report_func(shot.view, failed_report, NULL, NULL);
   gtk_window_set_default_size(GTK_WINDOW(shot.window), width, height);

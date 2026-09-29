@@ -3,7 +3,9 @@
 #include "gh-expiry.h"
 #include "gh-identity.h"
 #include "gh-nip17-envelope.h"
+#include "nostr-event.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define RETRY_WINDOW_S        (72 * 3600)
@@ -116,6 +118,8 @@ struct _GhOutboxItem {
   gboolean self_copy_missing;
   gint64 next_attempt_at;
   gboolean can_retry;
+  gchar *rumor_json;
+  gchar *rumor_id;
 };
 
 enum {
@@ -517,6 +521,23 @@ msg_set_entry(Msg *msg, GhStoreOutboxEntry *entry)
   }
 }
 
+/* The id of a stored rumor (recomputed, as GhMessage does), or NULL. */
+static gchar *
+rumor_id_of(const gchar *rumor_json)
+{
+  if (!rumor_json)
+    return NULL;
+  NostrEvent *event = nostr_event_new();
+  gchar *id = NULL;
+  if (nostr_event_deserialize_compact(event, rumor_json, NULL) == 1) {
+    char *computed = nostr_event_get_id(event);
+    id = g_strdup(computed);
+    free(computed);
+  }
+  nostr_event_free(event);
+  return id;
+}
+
 static Msg *
 msg_new(GhOutbox *self, GhStoreOutboxEntry *entry)
 {
@@ -532,6 +553,8 @@ msg_new(GhOutbox *self, GhStoreOutboxEntry *entry)
   msg->item->message_id = entry->message_id;
   msg->item->conversation_id = entry->conversation_id;
   msg->item->state = entry->state;
+  msg->item->rumor_json = g_strdup(entry->rumor_json);
+  msg->item->rumor_id = rumor_id_of(entry->rumor_json);
   item_refresh(msg);
   g_hash_table_insert(self->messages, g_memdup2(&entry->id, sizeof entry->id), msg);
   return msg;
@@ -1655,6 +1678,45 @@ gh_outbox_lookup_message(GhOutbox *self, gint64 message_id)
   return gh_outbox_lookup(self, outbox_id);
 }
 
+GhOutboxItem *
+gh_outbox_lookup_rumor(GhOutbox *self, const gchar *room_key, const gchar *rumor_id)
+{
+  g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
+  g_return_val_if_fail(room_key != NULL && rumor_id != NULL, NULL);
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->messages);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    GhOutboxItem *item = ((Msg *) value)->item;
+    if (g_strcmp0(item->rumor_id, rumor_id) == 0)
+      return g_object_ref(item);
+  }
+  gint64 conversation_id = 0, outbox_id = 0;
+  if (!gh_store_find_conversation(self->store, GH_STORE_BACKEND_NIP17, room_key,
+                                  &conversation_id, NULL) ||
+      !gh_store_outbox_find_by_rumor(self->store, conversation_id, rumor_id, &outbox_id, NULL))
+    return NULL;
+  return gh_outbox_lookup(self, outbox_id);
+}
+
+gboolean
+gh_outbox_text_fits(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *content)
+{
+  g_return_val_if_fail(GH_IS_OUTBOX(self), FALSE);
+  if (!content)
+    return TRUE;
+  /* JSON escaping at most sextuples a byte (\u00XX) and the rest of a
+   * one-to-one rumor is well under 1 KB: short texts need no measuring. */
+  gsize length = strlen(content);
+  if (length <= (MAX_RUMOR_JSON - 1024) / 6)
+    return TRUE;
+  if (length > MAX_RUMOR_JSON)
+    return FALSE;
+  g_autofree gchar *rumor = gh_nip17_rumor_new(self->account, recipient_pubkey_hex, content,
+                                               now_unix(self), NULL, NULL);
+  return !rumor || strlen(rumor) <= MAX_RUMOR_JSON;
+}
+
 static gint
 compare_items(gconstpointer a, gconstpointer b)
 {
@@ -1918,6 +1980,20 @@ gh_outbox_item_get_can_retry(GhOutboxItem *self)
   return self->can_retry;
 }
 
+const gchar *
+gh_outbox_item_get_rumor_json(GhOutboxItem *self)
+{
+  g_return_val_if_fail(GH_IS_OUTBOX_ITEM(self), NULL);
+  return self->rumor_json;
+}
+
+const gchar *
+gh_outbox_item_get_rumor_id(GhOutboxItem *self)
+{
+  g_return_val_if_fail(GH_IS_OUTBOX_ITEM(self), NULL);
+  return self->rumor_id;
+}
+
 static void
 gh_outbox_item_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 {
@@ -1927,7 +2003,7 @@ gh_outbox_item_get_property(GObject *object, guint prop_id, GValue *value, GPara
   case ITEM_PROP_MESSAGE_ID:      g_value_set_int64(value, self->message_id); break;
   case ITEM_PROP_CONVERSATION_ID: g_value_set_int64(value, self->conversation_id); break;
   case ITEM_PROP_STATE:           g_value_set_int(value, self->state); break;
-  case ITEM_PROP_STATUS:          g_value_set_int(value, self->status); break;
+  case ITEM_PROP_STATUS:          g_value_set_enum(value, self->status); break;
   case ITEM_PROP_LABEL:
     g_value_set_string(value, gh_message_status_get_label(self->status));
     break;
@@ -1951,6 +2027,8 @@ gh_outbox_item_finalize(GObject *object)
 {
   GhOutboxItem *self = GH_OUTBOX_ITEM(object);
   g_free(self->detail);
+  g_free(self->rumor_json);
+  g_free(self->rumor_id);
   G_OBJECT_CLASS(gh_outbox_item_parent_class)->finalize(object);
 }
 
@@ -1970,10 +2048,10 @@ gh_outbox_item_class_init(GhOutboxItemClass *klass)
   item_props[ITEM_PROP_STATE] =
     g_param_spec_int("state", NULL, NULL, GH_STORE_OUTBOX_QUEUED, GH_STORE_OUTBOX_CANCELLED,
                      GH_STORE_OUTBOX_QUEUED, flags);
-  /* A GhMessageStatus value (no GType of its own yet, see gh-message-status.h). */
+  /* The enum of GhMessage:status (gh-message-status.h). */
   item_props[ITEM_PROP_STATUS] =
-    g_param_spec_int("status", NULL, NULL, GH_MESSAGE_STATUS_WAITING_FOR_SIGNER,
-                     GH_MESSAGE_STATUS_CANCELLED, GH_MESSAGE_STATUS_WAITING_FOR_SIGNER, flags);
+    g_param_spec_enum("status", NULL, NULL, GH_TYPE_MESSAGE_STATUS,
+                      GH_MESSAGE_STATUS_WAITING_FOR_SIGNER, flags);
   item_props[ITEM_PROP_LABEL] = g_param_spec_string("label", NULL, NULL, NULL, flags);
   item_props[ITEM_PROP_ICON_NAME] = g_param_spec_string("icon-name", NULL, NULL, NULL, flags);
   item_props[ITEM_PROP_ACCESSIBLE_DESCRIPTION] =

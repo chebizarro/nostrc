@@ -577,7 +577,7 @@ struct _GhContentPage {
   AdwWindowTitle *window_title;
   GtkStack *content_stack;
   AdwBin *conversation_slot;
-  GtkLabel *read_only_reason;
+  GhComposer *composer;
   gchar *default_title;
 };
 
@@ -604,14 +604,15 @@ gh_content_page_class_init(GhContentPageClass *klass)
 
   G_OBJECT_CLASS(klass)->dispose = gh_content_page_dispose;
   G_OBJECT_CLASS(klass)->finalize = gh_content_page_finalize;
+  g_type_ensure(GH_TYPE_COMPOSER);
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-content-page.ui");
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, window_title);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, content_stack);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, conversation_slot);
-  gtk_widget_class_bind_template_child(widget_class, GhContentPage, read_only_reason);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, composer);
   gtk_widget_class_bind_template_child_full(widget_class, "none_page", FALSE, 0);
-  gtk_widget_class_bind_template_child_full(widget_class, "composer_slot", FALSE, 0);
+  gtk_widget_class_bind_template_child_full(widget_class, "conversation_bin", FALSE, 0);
 }
 
 static void
@@ -670,7 +671,12 @@ gh_content_page_focus_conversation(GhContentPage *self)
 {
   g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), FALSE);
   GtkWidget *view = adw_bin_get_child(self->conversation_slot);
-  return view && gh_content_page_get_conversation_shown(self) && gtk_widget_grab_focus(view);
+  if (!view || !gh_content_page_get_conversation_shown(self))
+    return FALSE;
+  if (!gh_composer_get_disabled_reason(self->composer) &&
+      gtk_widget_grab_focus(GTK_WIDGET(self->composer)))
+    return TRUE;
+  return gtk_widget_grab_focus(view);
 }
 
 void
@@ -683,17 +689,9 @@ gh_content_page_set_title(GhContentPage *self, const gchar *title, const gchar *
   adw_window_title_set_subtitle(self->window_title, subtitle ? subtitle : "");
 }
 
-void
-gh_content_page_set_read_only_reason(GhContentPage *self, const gchar *reason)
-{
-  g_return_if_fail(GH_IS_CONTENT_PAGE(self));
-  gtk_label_set_text(self->read_only_reason, reason ? reason : "");
-  gtk_widget_set_visible(GTK_WIDGET(self->read_only_reason), reason && *reason);
-}
-
-const gchar *
-gh_content_page_get_read_only_reason(GhContentPage *self)
+GhComposer *
+gh_content_page_get_composer(GhContentPage *self)
 {
   g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
-  return gtk_label_get_text(self->read_only_reason);
+  return self->composer;
 }

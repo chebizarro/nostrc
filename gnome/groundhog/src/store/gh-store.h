@@ -557,6 +557,12 @@ GhStoreOutboxEntry *gh_store_outbox_load(GhStore *store, gint64 outbox_id, GErro
 /* The entry an outgoing message was queued with; NOT_FOUND if none. */
 gboolean gh_store_outbox_find_by_message(GhStore *store, gint64 message_id,
                                          gint64 *out_outbox_id, GError **error);
+/* The entry the outgoing message @backend_msg_id (the rumor id) of
+ * @conversation_id was queued with; NOT_FOUND if none (e.g. a self-copy of a
+ * message sent from another device). */
+gboolean gh_store_outbox_find_by_rumor(GhStore *store, gint64 conversation_id,
+                                       const gchar *backend_msg_id, gint64 *out_outbox_id,
+                                       GError **error);
 
 typedef struct {
   GhStoreOutboxState state;

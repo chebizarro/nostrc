@@ -219,6 +219,14 @@ gint64 gh_dm_inbox_get_since(GhDmInbox *self);
 gint64 gh_dm_inbox_get_checkpoint(GhDmInbox *self);
 /* Counters of the current account generation (reset on switch). */
 void gh_dm_inbox_get_counters(GhDmInbox *self, GhDmInboxCounters *counters);
+/* Messages waiting for the signer to unlock them (charter §7.6, §7.15 state
+ * 12): the wraps of this session whose unwrap the signer declined or could
+ * not do. They are not asked about again by themselves until a later
+ * session; gh_dm_inbox_unlock() starts one now (the same REQs, so the relays
+ * deliver them again and the signer is asked once per wrap). FALSE when
+ * nothing is waiting. "changed" is emitted when the count changes. */
+guint gh_dm_inbox_get_locked(GhDmInbox *self);
+gboolean gh_dm_inbox_unlock(GhDmInbox *self);
 
 G_END_DECLS
 #endif

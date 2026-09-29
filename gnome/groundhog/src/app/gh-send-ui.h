@@ -1,0 +1,63 @@
+#ifndef GH_SEND_UI_H
+#define GH_SEND_UI_H
+
+#include <adwaita.h>
+
+#include "gh-account-store.h"
+#include "gh-dm-inbox.h"
+#include "gh-window.h"
+
+G_BEGIN_DECLS
+
+typedef struct {
+  GhAccountController *accounts;       /* required */
+  GhConversationStore *conversations;  /* required: the model the window lists */
+  GhAccountStore *account_store;       /* required: drafts and the account's outbox */
+  GhDmInbox *inbox;                    /* nullable: messages waiting for the signer */
+  GSettings *settings;                 /* nullable: enter-sends, signer-method */
+} GhSendUiConfig;
+
+/*
+ * Sending from the window (charter §3.5, §3.6, §7.6, §7.7, §7.14, §7.15, G13):
+ * connects the content page's GhComposer and the conversation view (which
+ * gh_conversation_list_attach() must have installed) to the active account's
+ * durable outbox (gh-outbox.h, from the account store) and drafts.
+ *
+ *  - Send: gh_outbox_send() to the shown conversation's one other participant,
+ *    or to the account itself in a note to self. T-enqueue is written before
+ *    any signer call and clears the stored draft; the UI never waits for the
+ *    signer or a relay. The message is shown at once (its local echo, from the
+ *    queued rumor) and its status follows the outbox honestly: "Waiting for
+ *    approval", "Sending…", "Sent", "Not sent", ... (GhOutboxItem:status is
+ *    bound to GhMessage:status). A text the store could not queue (e.g.
+ *    storage full) stays in the composer with the reason under it.
+ *  - Status after a restart: the own messages of the shown conversation are
+ *    matched with their outbox entries, settled ones included, so they say
+ *    "Sent" again and have delivery details; a self-copy of a message sent
+ *    from another device has none and shows no status.
+ *  - The view's seams: its delivery details come from the outbox's per-relay
+ *    outcomes, "retry-requested" retries through the outbox,
+ *    "unlock-requested" asks the inbox to offer the messages the signer did
+ *    not unlock again (gh_dm_inbox_unlock()), whose count the view shows
+ *    ("Waiting for Nostr Signer to unlock N messages"), and a recipient
+ *    without a message inbox (the newest own message "Can't send") gets the
+ *    view's banner.
+ *  - Drafts: the composer's text is saved to the conversation's draft 1 s
+ *    after the last edit and when another conversation is shown, and a
+ *    conversation's draft is restored when it is shown (also after a
+ *    restart).
+ *  - Why sending is unavailable, in the composer's place (never a disabled
+ *    button without a reason): no active account, the signer unreachable or
+ *    unsupported (gh_account_describe_limits()), the message store opening,
+ *    locked, unavailable, damaged or failed, a group conversation (only
+ *    one-to-one sending exists yet), or a recipient without a message inbox
+ *    (with "Check Again", which retries that message). Offline is not a
+ *    reason: the outbox waits for the connection.
+ *  - Length: the composer measures texts with gh_outbox_text_fits().
+ *  - Enter sends while the enter-sends setting is on.
+ * Everything is released with window.
+ */
+void gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config);
+
+G_END_DECLS
+#endif

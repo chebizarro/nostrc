@@ -200,7 +200,10 @@ test_focus_and_announce_only_on_transition(void)
   /* The window's status has no account, so no sidebar banner competes with
    * the page; the reason sending is unavailable waits for a conversation. */
   g_assert_false(gh_status_get_banner(gh_window_get_status(window)) != GH_STATUS_BANNER_NONE);
-  g_assert_cmpstr(gh_content_page_get_read_only_reason(gh_window_get_content(window)), !=, "");
+  /* The transitions are announced ("Read-only: ...") to an active window
+   * only; this one was never shown. */
+  guint announced = gh_account_ui_get_announcements(window);
+  g_assert_cmpuint(announced, ==, 0);
 
   /* Simulate the user having since moved focus elsewhere (or nowhere). */
   gtk_window_set_focus(GTK_WINDOW(window), NULL);
@@ -210,6 +213,7 @@ test_focus_and_announce_only_on_transition(void)
   g_object_notify(G_OBJECT(g_network_monitor_get_default()), "network-available");
   g_main_context_iteration(NULL, FALSE);
   g_assert_null(gtk_window_get_focus(GTK_WINDOW(window)));
+  g_assert_cmpuint(gh_account_ui_get_announcements(window), ==, announced);
 
   /* An identity appears but none is chosen: the focus target is named
    * explicitly as the header's account menu, which is not a child of the
@@ -228,6 +232,7 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_nonnull(focus);
   g_assert_true(focus == GTK_WIDGET(account_button) ||
                 gtk_widget_is_ancestor(focus, GTK_WIDGET(account_button)));
+  g_assert_cmpuint(gh_account_ui_get_announcements(window), ==, announced);
 
   /* Destroying the window drops gh-account-ui's own controller reference
    * (see account_ui_free); only after that do we drop ours and wait for

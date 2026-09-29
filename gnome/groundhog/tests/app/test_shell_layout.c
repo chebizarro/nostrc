@@ -294,7 +294,7 @@ test_content_page_structure(void)
 {
   GhContentPage *page = g_object_ref_sink(g_object_new(GH_TYPE_CONTENT_PAGE, NULL));
   GtkStack *stack = gh_content_page_get_stack(page);
-  GtkWidget *reason = template_child(page, GH_TYPE_CONTENT_PAGE, "read_only_reason");
+  GhComposer *composer = gh_content_page_get_composer(page);
 
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(page)), ==, "Messages");
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "none");
@@ -310,21 +310,22 @@ test_content_page_structure(void)
   gh_content_page_set_view(page, view);
   g_assert_true(gh_content_page_get_view(page) == view);
 
-  /* The reason sending is unavailable sits under the conversation, in the
-   * composer's place. */
-  g_assert_false(gtk_widget_get_visible(reason));
-  gh_content_page_set_read_only_reason(page, "Read-only: test");
+  /* The composer (charter G13) sits under the conversation; the reason
+   * sending is unavailable is shown in its place (gh-send-ui.c sets it). */
+  g_assert_true(GH_IS_COMPOSER(composer));
+  g_assert_null(gh_composer_get_disabled_reason(composer));
+  gh_composer_set_disabled_reason(composer, "Read-only: test");
   gh_content_page_set_conversation_shown(page, TRUE);
   g_assert_true(gh_content_page_get_conversation_shown(page));
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "conversation");
   g_assert_true(gtk_widget_is_ancestor(view, gtk_stack_get_visible_child(stack)));
-  g_assert_true(gtk_widget_get_visible(reason));
-  g_assert_true(gtk_widget_is_ancestor(reason, gtk_stack_get_visible_child(stack)));
+  g_assert_true(gtk_widget_is_ancestor(GTK_WIDGET(composer),
+                                       gtk_stack_get_visible_child(stack)));
   g_assert_true(gtk_widget_is_ancestor(
-    reason, template_child(page, GH_TYPE_CONTENT_PAGE, "composer_slot")));
-  g_assert_cmpstr(gh_content_page_get_read_only_reason(page), ==, "Read-only: test");
-  gh_content_page_set_read_only_reason(page, NULL);
-  g_assert_false(gtk_widget_get_visible(reason));
+    GTK_WIDGET(composer), template_child(page, GH_TYPE_CONTENT_PAGE, "conversation_bin")));
+  g_assert_cmpstr(gh_composer_get_disabled_reason(composer), ==, "Read-only: test");
+  gh_composer_set_disabled_reason(composer, NULL);
+  g_assert_null(gh_composer_get_disabled_reason(composer));
 
   gh_content_page_set_title(page, "Alice", "Private · end-to-end encrypted");
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(page)), ==, "Alice");

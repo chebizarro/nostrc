@@ -3101,6 +3101,38 @@ fail:
   return FALSE;
 }
 
+gboolean
+gh_store_outbox_find_by_rumor(GhStore *store, gint64 conversation_id,
+                              const gchar *backend_msg_id, gint64 *out_outbox_id,
+                              GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(backend_msg_id != NULL, FALSE);
+  gboolean has_row = FALSE;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT outbox_id FROM messages WHERE conversation_id = ?1 AND backend_msg_id = ?2 "
+    "AND direction = 1 AND outbox_id IS NOT NULL", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  BIND(bind_text(stmt, 2, backend_msg_id));
+  if (!store_step_row(store, stmt, &has_row, "Looking up a message's outbox entry", error))
+    goto fail;
+  if (!has_row) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND,
+                        "The message has no outbox entry");
+    goto fail;
+  }
+  if (out_outbox_id)
+    *out_outbox_id = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return TRUE;
+
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
 /* The entry's state and whether it has stored events; NOT_FOUND if absent. */
 static gboolean
 outbox_state_locked(GhStore *store, gint64 outbox_id, gint64 *state, gboolean *sealed,

@@ -3,6 +3,9 @@
   <gresource prefix="/org/nostr/Groundhog">
     <file>style.css</file>
     <file>icons/org.nostr.Groundhog.svg</file>
+    <!-- Bundled symbolic icons (the icon theme's resource path). -->
+    <file>icons/scalable/actions/send-symbolic.svg</file>
+    <file>icons/scalable/actions/send-symbolic-rtl.svg</file>
     <!-- Compiled from data/ui/*.blp; see CMakeLists.txt. -->
     <file>ui/gh-window.ui</file>
     <file>ui/gh-sidebar-page.ui</file>
@@ -18,6 +21,7 @@
     <file>ui/gh-delivery-details.ui</file>
     <file>ui/gh-shortcuts-window.ui</file>
     <file>ui/gh-preferences-dialog.ui</file>
+    <file>ui/gh-composer.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
   </gresource>

@@ -65,7 +65,8 @@ G_DECLARE_FINAL_TYPE(GhOutboxItem, gh_outbox_item, GH, OUTBOX_ITEM, GObject)
 
 /* One outgoing message. Every property is read-only and notifies only when
  * it changes: "outbox-id", "message-id", "conversation-id" (gint64),
- * "state" (a GhStoreOutboxState value), "status" (a GhMessageStatus value), "label",
+ * "state" (a GhStoreOutboxState value), "status" (GH_TYPE_MESSAGE_STATUS, the
+ * same enum as GhMessage:status, so one can be bound to the other), "label",
  * "icon-name", "accessible-description", "detail" (strings),
  * "self-copy-missing" (show gh_message_status_get_self_copy_note()),
  * "next-attempt-at" (unix seconds of the next automatic retry, 0 = none)
@@ -82,6 +83,11 @@ const gchar *gh_outbox_item_get_detail(GhOutboxItem *self);
 gboolean gh_outbox_item_get_self_copy_missing(GhOutboxItem *self);
 gint64 gh_outbox_item_get_next_attempt_at(GhOutboxItem *self);
 gboolean gh_outbox_item_get_can_retry(GhOutboxItem *self);
+/* The canonical rumor the message was queued with (T-enqueue) and its id,
+ * which is the rumor id of the GhMessage that shows it (its local echo).
+ * Constant for the item's lifetime. */
+const gchar *gh_outbox_item_get_rumor_json(GhOutboxItem *self);
+const gchar *gh_outbox_item_get_rumor_id(GhOutboxItem *self);
 
 /* Per-relay detail, for "details on demand". */
 typedef struct {
@@ -141,9 +147,22 @@ gboolean gh_outbox_is_active(GhOutbox *self);
  * signed or published before this returns. */
 GhOutboxItem *gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex,
                              const gchar *content, GError **error);
+/* Whether @content is short enough for one gift wrap to @recipient_pubkey_hex:
+ * gh_outbox_send() refuses a text whose rumor is too long (about 40 KB,
+ * less for text that JSON must escape). Measures exactly the rumor it would
+ * queue now; TRUE when no rumor can be built at all (e.g. empty text), since
+ * length is then not what is wrong. */
+gboolean gh_outbox_text_fits(GhOutbox *self, const gchar *recipient_pubkey_hex,
+                             const gchar *content);
 /* The message's item (loaded from the store if needed), or NULL. */
 GhOutboxItem *gh_outbox_lookup(GhOutbox *self, gint64 outbox_id);
 GhOutboxItem *gh_outbox_lookup_message(GhOutbox *self, gint64 message_id);
+/* The item of the own message with rumor id @rumor_id in the NIP-17 room
+ * @room_key (gh_message_get_room_id()), whatever its state, including a
+ * settled one, which is loaded from the store; NULL when the outbox never
+ * held it (e.g. a self-copy of a message sent from another device). */
+GhOutboxItem *gh_outbox_lookup_rumor(GhOutbox *self, const gchar *room_key,
+                                     const gchar *rumor_id);
 /* The items of every message this outbox holds, oldest first. */
 GPtrArray *gh_outbox_dup_items(GhOutbox *self);
 

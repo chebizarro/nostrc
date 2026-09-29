@@ -2,6 +2,7 @@
 #define GH_SHELL_H
 
 #include <adwaita.h>
+#include "gh-composer.h"
 #include "gh-status.h"
 
 G_BEGIN_DECLS
@@ -86,9 +87,10 @@ GtkWidget *gh_sidebar_page_get_focus_target(GhSidebarPage *self);
  * follows the selected conversation, over "No Conversation Selected"
  * ("none") or the conversation ("conversation"). The conversation page holds
  * the conversation view, set by the typed layer (gh_conversation_list_attach()
- * sets a GhConversationView), above the composer slot, which until the
- * composer (charter G13) holds the line stating why sending is
- * unavailable. */
+ * sets a GhConversationView), above the composer (GhComposer, charter G13),
+ * which the send UI (gh-send-ui.h) drives, including the reason sending is
+ * unavailable. Below 480sp the composer is compact, below 360sp high it
+ * shows at most 3 lines (charter §7.12). */
 #define GH_TYPE_CONTENT_PAGE (gh_content_page_get_type())
 G_DECLARE_FINAL_TYPE(GhContentPage, gh_content_page, GH, CONTENT_PAGE, AdwNavigationPage)
 
@@ -100,16 +102,15 @@ GtkWidget *gh_content_page_get_view(GhContentPage *self);
 /* Shows the conversation page (TRUE) or "No Conversation Selected". */
 void gh_content_page_set_conversation_shown(GhContentPage *self, gboolean shown);
 gboolean gh_content_page_get_conversation_shown(GhContentPage *self);
-/* Moves keyboard focus into the conversation view; FALSE when none is
- * shown or it cannot take focus. */
+/* Moves keyboard focus into the shown conversation: the composer's entry
+ * when sending is possible (charter §7.14), else the conversation view;
+ * FALSE when none is shown or nothing can take focus. */
 gboolean gh_content_page_focus_conversation(GhContentPage *self);
 /* The page and header title; NULL restores the template's "Messages". */
 void gh_content_page_set_title(GhContentPage *self, const gchar *title,
                                const gchar *subtitle);
-/* Why sending is unavailable (gh_account_describe_limits()); NULL or ""
- * hides the line. */
-void gh_content_page_set_read_only_reason(GhContentPage *self, const gchar *reason);
-const gchar *gh_content_page_get_read_only_reason(GhContentPage *self);
+/* The composer under the conversation (a template child). */
+GhComposer *gh_content_page_get_composer(GhContentPage *self);
 
 G_END_DECLS
 #endif

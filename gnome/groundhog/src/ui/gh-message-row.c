@@ -580,6 +580,11 @@ static void
 gh_message_row_init(GhMessageRow *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* The row's actions take the message's rumor id: a row set up (or rooted
+   * again, e.g. when the window collapses) before a message is bound names
+   * none, so GTK never meets a target-less "s" action. */
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->preview_button), "s", "");
   self->run_start = TRUE;
   self->run_end = TRUE;
   self->summary = g_strdup("");

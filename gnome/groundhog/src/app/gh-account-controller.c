@@ -564,7 +564,7 @@ gh_account_describe_limits(GhAccountState state, GhSignerAvailability availabili
   case GH_SIGNER_AVAILABILITY_ACTIVATABLE:
   case GH_SIGNER_AVAILABILITY_RUNNING:
   default:
-    return g_strdup("Signer available, but sending is not implemented in this build");
+    return NULL; /* the account can send */
   }
 }
 

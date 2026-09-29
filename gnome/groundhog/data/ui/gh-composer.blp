@@ -1,0 +1,183 @@
+using Gtk 4.0;
+
+// The composer under a conversation (charter §7.4, §7.7, G13), driven by
+// gh-composer.c: the "edit" page is the multiline entry with its
+// "Message" placeholder (GtkTextView has none at GTK 4.14), the emoji
+// button and the Send button; "disabled" says why nothing can be sent right
+// now, with an optional action. An inline error above the entry says when a
+// text is too long to send privately or could not be queued. It sits in a
+// plain box under the message list (gh-content-page.blp), not in a toolbar
+// bottom bar, so a wrapped reason gets the height of every line on
+// libadwaita 1.5 too.
+template $GhComposer: Widget {
+  layout-manager: BinLayout {};
+
+  styles [
+    "groundhog-composer",
+  ]
+
+  Stack composer_stack {
+    hhomogeneous: false;
+    vhomogeneous: false;
+
+    StackPage {
+      name: "edit";
+
+      child: Box {
+        orientation: vertical;
+        spacing: 4;
+
+        Label error_label {
+          visible: false;
+          wrap: true;
+          wrap-mode: word_char;
+          xalign: 0;
+
+          styles [
+            "caption",
+            "error",
+            "groundhog-composer-error",
+          ]
+        }
+
+        Box edit_row {
+          spacing: 6;
+
+          // Attachments (charter G22) show this.
+          Button attach_button {
+            visible: false;
+            valign: end;
+            icon-name: "mail-attachment-symbolic";
+            tooltip-text: _("Attach File");
+
+            accessibility {
+              label: _("Attach File");
+            }
+
+            styles [
+              "flat",
+              "circular",
+            ]
+          }
+
+          // The disappearing-messages timer (charter G07) goes here.
+          Box timer_slot {
+            visible: false;
+            valign: end;
+          }
+
+          Overlay {
+            hexpand: true;
+
+            child: ScrolledWindow scroller {
+              hscrollbar-policy: never;
+              propagate-natural-height: true;
+
+              styles [
+                "groundhog-composer-entry",
+              ]
+
+              child: TextView text_view {
+                wrap-mode: word_char;
+                accepts-tab: false;
+                top-margin: 7;
+                bottom-margin: 7;
+                left-margin: 12;
+                right-margin: 12;
+
+                accessibility {
+                  label: _("Message");
+                }
+
+                styles [
+                  "groundhog-composer-text",
+                ]
+              };
+            };
+
+            [overlay]
+            Label placeholder {
+              label: _("Message");
+              xalign: 0;
+              halign: start;
+              valign: start;
+              margin-start: 13;
+              margin-top: 8;
+              can-target: false;
+              accessible-role: presentation;
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+
+          MenuButton emoji_button {
+            valign: end;
+            icon-name: "face-smile-symbolic";
+            tooltip-text: _("Insert Emoji");
+
+            accessibility {
+              label: _("Insert Emoji");
+            }
+
+            popover: EmojiChooser emoji_chooser {};
+
+            styles [
+              "flat",
+              "circular",
+            ]
+          }
+
+          Button send_button {
+            valign: end;
+            icon-name: "send-symbolic";
+            tooltip-text: _("Send");
+            action-name: "composer.send";
+            focus-on-click: false;
+
+            accessibility {
+              label: _("Send");
+            }
+
+            styles [
+              "circular",
+              "suggested-action",
+              "groundhog-send-button",
+            ]
+          }
+        }
+      };
+    }
+
+    StackPage {
+      name: "disabled";
+
+      child: Box {
+        spacing: 12;
+        halign: center;
+
+        styles [
+          "groundhog-composer-disabled",
+        ]
+
+        Label disabled_reason {
+          wrap: true;
+          wrap-mode: word_char;
+          justify: center;
+          hexpand: true;
+
+          styles [
+            "dim-label",
+          ]
+        }
+
+        Button disabled_button {
+          visible: false;
+          valign: center;
+          use-underline: true;
+        }
+      };
+    }
+  }
+}

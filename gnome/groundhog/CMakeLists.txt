@@ -30,7 +30,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-window gh-sidebar-page gh-content-page gh-onboarding-view gh-onboarding-row gh-account-ui
   gh-conversation-row gh-shortcuts-window
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
-  gh-delivery-details gh-preferences-dialog)
+  gh-delivery-details gh-preferences-dialog gh-composer)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -88,6 +88,8 @@ add_custom_command(
           ${GROUNDHOG_DATA}/style.css
           ${GROUNDHOG_DATA}/icons/org.nostr.Groundhog.svg
           ${GROUNDHOG_DATA}/relay-suggestions.json
+          ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic-rtl.svg
           ${GROUNDHOG_UI_FILES}
   VERBATIM)
 
@@ -1191,3 +1193,64 @@ if (BUILD_TESTING AND TARGET groundhog-store-testhooks AND TARGET groundhog-auth
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
 endif()
 # --- end G10 contact directory ---
+
+# --- G13 composer and send wiring ---
+# The composer (privacy charter §7.4, §7.7, §7.14, §8.2 G13): GhComposer is a
+# template child of the content page, so it joins the GTK-only shell library
+# the GUI tests share. gh-send-ui.c connects it and the conversation view to
+# the account's durable outbox (T-enqueue before any signer call, local echo,
+# honest status, retry, delivery details), drafts, the inbox's messages
+# waiting for the signer and the disabled reasons; the executable attaches it
+# in gh_app_services_attach_window() whenever it has the outbox.
+target_sources(groundhog-ui PRIVATE src/ui/gh-composer.c)
+if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
+    TARGET groundhog-conversation-ui)
+  target_sources(groundhog PRIVATE src/app/gh-send-ui.c)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    set(GROUNDHOG_SEND_TEST_SOURCES src/app/gh-send-ui.c src/app/gh-account-ui.c
+      src/app/gh-app-outbox.c tests/store/fake-secret.c ${GROUNDHOG_OUTBOX_SOURCES}
+      ${GROUNDHOG_DM_SEND_SOURCES} ${GROUNDHOG_EXPIRY_SOURCES} ${GROUNDHOG_DIRECTORY_SOURCES}
+      src/app/gh-nip17-envelope.c)
+    # UX-7, OB-1 (UI side), UX-1/UX-2 for the composer, nostrc-qp24.8.1, and
+    # every G12 seam wired: the widget alone (keys, bounds, compact, disabled
+    # reasons), then the application's wiring on a real account stack (mock
+    # signer bus, FakeSecret, SQLCipher stores, recording relay transports):
+    # local echo and status, retry, delivery details, drafts across switches
+    # and restarts, note to self, locked messages and Unlock, recipient
+    # without an inbox. Needs a display, so it self-skips (77). With
+    # GROUNDHOG_TEST_SCREENSHOTS=<dir> it renders <dir>/groundhog-g13-*.png.
+    add_executable(test-groundhog-composer tests/ui/test_composer.c
+      ${GROUNDHOG_SEND_TEST_SOURCES})
+    target_include_directories(test-groundhog-composer PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(test-groundhog-composer PRIVATE groundhog-account-store
+      groundhog-conversation-ui groundhog-auth-policy nostr_nip17_core nostr_nip59_core
+      nostrc-test-bus)
+    target_compile_options(test-groundhog-composer PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-composer)
+    add_dependencies(test-groundhog-composer groundhog-test-schemas)
+    add_test(NAME groundhog-composer COMMAND test-groundhog-composer)
+    set_tests_properties(groundhog-composer PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      # The whole loop over real sockets: two accounts (one mock signer bus,
+      # two keys), local storing relays as their kind-10050 inboxes, A's
+      # composer -> outbox -> relays -> B's inbox -> B's conversation view,
+      # B's reply, one room each, and both restored from their encrypted
+      # stores after a restart. Needs a display (77 without one).
+      add_executable(test-groundhog-e2e-dm tests/ui/test_e2e_dm.c ${GROUNDHOG_SEND_TEST_SOURCES})
+      target_include_directories(test-groundhog-e2e-dm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+      target_link_libraries(test-groundhog-e2e-dm PRIVATE groundhog-account-store
+        groundhog-conversation-ui groundhog-auth-policy nostr_nip17_core nostr_nip59_core
+        nostrc-test-bus PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_options(test-groundhog-e2e-dm PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-e2e-dm)
+      add_dependencies(test-groundhog-e2e-dm groundhog-test-schemas)
+      add_test(NAME groundhog-e2e-dm COMMAND test-groundhog-e2e-dm)
+      set_tests_properties(groundhog-e2e-dm PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    endif()
+  endif()
+endif()
+# --- end G13 ---

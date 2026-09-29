@@ -98,8 +98,11 @@ void gh_account_controller_nip44_decrypt_with_cancellable_async(GhAccountControl
                                                 gpointer user_data);
 gchar *gh_account_controller_nip44_finish(GAsyncResult *result, GError **error);
 
-/* Why sending is unavailable, for the always-shown banner. No send path
- * exists in this build, so every result is a read-only or offline state. */
+/* Why the account cannot send (a read-only state) or receive (offline),
+ * or NULL when an active account with a reachable signer can: the account
+ * part of the composer's reason (gh-send-ui.h) and the announcement of an
+ * account-page transition. Offline is not a reason to refuse sending: the
+ * outbox queues it ("Waiting for connection"). */
 gchar *gh_account_describe_limits(GhAccountState state,
                                   GhSignerAvailability availability,
                                   const gchar *requested_method,

@@ -32,12 +32,6 @@
   padding: 6px 12px;
 }
 
-/* The interim content page's "why you can't send" line (until G13). */
-.groundhog-read-only-reason {
-  padding: 9px 12px;
-  border-top: 1px solid alpha(currentColor, 0.15);
-}
-
 /* == bubbles (G12) == */
 
 /* The message list sits on the window background so incoming (card)
@@ -176,4 +170,61 @@
 .groundhog-delivery-group {
   padding: 10px 12px 4px 12px;
   opacity: 0.8;
+}
+
+/* == composer (G13) == */
+
+/* Under the message list, separated like a toolbar's bottom bar. */
+.groundhog-composer {
+  padding: 6px 12px 8px 12px;
+  border-top: 1px solid alpha(currentColor, 0.15);
+}
+
+.groundhog-composer.compact {
+  padding: 4px 6px 6px 6px;
+}
+
+/* The entry: a rounded field on the view background, outlined, with the
+ * accent ring while it has keyboard focus. */
+.groundhog-composer-entry {
+  border-radius: 18px;
+  background-color: @view_bg_color;
+  box-shadow: inset 0 0 0 1px alpha(currentColor, 0.15);
+}
+
+.groundhog-composer-entry:focus-within {
+  box-shadow: inset 0 0 0 2px alpha(@accent_color, 0.5);
+}
+
+.groundhog-composer-text,
+.groundhog-composer-text > text {
+  background: none;
+}
+
+/* The overlay scrollbar would otherwise make a one-line entry as tall as its
+ * own minimum length. */
+.groundhog-composer-entry > scrollbar.vertical,
+.groundhog-composer-entry > scrollbar.vertical > range,
+.groundhog-composer-entry > scrollbar.vertical > range > trough {
+  min-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.groundhog-composer-entry > scrollbar.vertical > range > trough > slider {
+  min-height: 12px;
+}
+
+.hc .groundhog-composer-entry {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.groundhog-composer-error {
+  margin: 0 12px;
+}
+
+.groundhog-composer-disabled {
+  padding: 3px 0;
 }

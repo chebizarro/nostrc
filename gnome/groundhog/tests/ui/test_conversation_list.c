@@ -787,8 +787,8 @@ test_collapsed_360x294(Fixture *f, gconstpointer data)
 {
   (void)data;
   AdwNavigationSplitView *split = gh_window_get_split(f->window);
-  gh_content_page_set_read_only_reason(f->content,
-                                       "Signer available, but sending is not implemented in this build");
+  gh_composer_set_disabled_reason(gh_content_page_get_composer(f->content),
+                                  "Read-only: the Nostr signer service is not installed or running");
   gh_status_set_inbox(gh_window_get_status(f->window), GH_STATUS_INBOX_UNREACHABLE, NULL);
   pack_account_button(f->window);
   present(f, 360, 294);
@@ -907,7 +907,6 @@ take_shot(Fixture *f, const char *dir, int width, int height, Scene scene, const
   Shot shot = { gh_window_new(NULL), scene == SCENE_CONVERSATION };
   GhSidebarPage *sidebar = gh_window_get_sidebar(shot.window);
   pack_account_button(shot.window);
-  GhContentPage *content = gh_window_get_content(shot.window);
   GhStatus *status = gh_window_get_status(shot.window);
   gh_conversation_list_attach(shot.window, f->store, NULL);
   gh_status_set_account_active(status, TRUE);
@@ -915,8 +914,6 @@ take_shot(Fixture *f, const char *dir, int width, int height, Scene scene, const
   gh_status_set_inbox(status, scene == SCENE_LIST ? GH_STATUS_INBOX_BACKFILLING
                                                   : GH_STATUS_INBOX_LIVE, NULL);
   gh_sidebar_page_set_show_previews(sidebar, TRUE);
-  gh_content_page_set_read_only_reason(content,
-    "Signer available, but sending is not implemented in this build");
   adw_window_title_set_subtitle(gh_sidebar_page_get_window_title(sidebar), "Test");
   if (scene == SCENE_CONVERSATION)
     g_assert_true(gtk_widget_activate_action(GTK_WIDGET(shot.window), "win.next-conversation",

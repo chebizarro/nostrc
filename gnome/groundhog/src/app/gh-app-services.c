@@ -19,7 +19,9 @@
 #endif
 #if GROUNDHOG_HAVE_OUTBOX
 #include "gh-app-outbox.h"
+#include "gh-send-ui.h"
 #endif
+#include <glib/gi18n.h>
 #if GROUNDHOG_HAVE_EXPIRY
 #include "gh-expiry.h"
 #endif
@@ -689,6 +691,21 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
 #if GROUNDHOG_HAVE_NOTIFIER
   gh_notifier_attach_window(self->notifier, window);
+#endif
+  /* The composer (G13): sending through the account's durable outbox. */
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+  GhSendUiConfig send = {
+    .accounts = self->accounts,
+    .conversations = self->conversations,
+    .account_store = self->account_store,
+    .inbox = self->inbox,
+    .settings = self->settings,
+  };
+  gh_send_ui_attach(window, &send);
+#else
+  gh_composer_set_disabled_reason(
+    gh_content_page_get_composer(gh_window_get_content(window)),
+    _("Sending needs the encrypted message store, which this build doesn't have."));
 #endif
 }
 

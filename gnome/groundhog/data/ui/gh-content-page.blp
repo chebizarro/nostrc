@@ -3,13 +3,15 @@ using Adw 1;
 
 // Content navigation page (charter §7.3, §7.4): the header, whose title
 // follows the selected conversation, over "No Conversation Selected" or the
-// conversation. The conversation page has two slots filled from C: the
-// conversation view (GhConversationView, gh-conversation-view.blp), which
-// gh-conversation-list.c sets because it knows the conversation model, and
-// the composer (charter G13). Until the composer lands, the composer slot
-// holds the line saying why sending is unavailable (kept current by
-// gh-account-ui.c); it is a plain box rather than a toolbar bottom bar, so a
-// wrapped reason gets the height of every line on libadwaita 1.5 too.
+// conversation. The conversation page is the conversation view's slot
+// (GhConversationView, gh-conversation-view.blp, set from C by
+// gh-conversation-list.c, which knows the conversation model) above the
+// composer (gh-composer.blp, charter G13; gh-send-ui.c drives it). The
+// composer sits in a plain box rather than a toolbar bottom bar, so a
+// wrapped "why you can't send" reason gets the height of every line on
+// libadwaita 1.5 too. The page's breakpoints (charter §7.12, UX-2) make the
+// composer compact below 480sp and cap it at 3 lines below 360sp; the
+// minimum size leaves the 360x294 window usable (UX-1).
 template $GhContentPage: Adw.NavigationPage {
   title: _("Messages");
 
@@ -41,26 +43,45 @@ template $GhContentPage: Adw.NavigationPage {
       StackPage {
         name: "conversation";
 
-        child: Box {
-          orientation: vertical;
+        child: Adw.BreakpointBin conversation_bin {
+          width-request: 300;
+          height-request: 200;
 
-          Adw.Bin conversation_slot {
-            vexpand: true;
+          child: Box {
+            orientation: vertical;
+
+            Adw.Bin conversation_slot {
+              vexpand: true;
+            }
+
+            $GhComposer composer {}
+          };
+
+          // Only the last matching breakpoint applies, so both at once is
+          // its own, last.
+          Adw.Breakpoint {
+            condition ("max-width: 480sp")
+
+            setters {
+              composer.compact: true;
+            }
           }
 
-          // The composer (charter G13) replaces the reason line.
-          Adw.Bin composer_slot {
-            child: Label read_only_reason {
-              visible: false;
-              wrap: true;
-              wrap-mode: word_char;
-              justify: center;
+          Adw.Breakpoint {
+            condition ("max-height: 360sp")
 
-              styles [
-                "dim-label",
-                "groundhog-read-only-reason",
-              ]
-            };
+            setters {
+              composer.max-lines: 3;
+            }
+          }
+
+          Adw.Breakpoint {
+            condition ("max-width: 480sp and max-height: 360sp")
+
+            setters {
+              composer.compact: true;
+              composer.max-lines: 3;
+            }
           }
         };
       }
