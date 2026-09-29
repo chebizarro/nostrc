@@ -43,6 +43,17 @@ extern "C" {
  */
 #define SIGNET_CAP_CREDENTIAL_GET_TOKEN   "credential.get_token"
 /**
+ * SIGNET_CAP_CREDENTIAL_DELIVER:
+ *
+ * Capability string for provisioner-mediated encrypted credential delivery.
+ * Unlike credential.get_token this capability is never in the daemon's
+ * wildcard policy.  It is granted through the identity policy store to a
+ * specific requester pubkey for a specific credential owner.
+ *
+ * Since: 1.3
+ */
+#define SIGNET_CAP_CREDENTIAL_DELIVER     "credential.deliver"
+/**
  * SIGNET_CAP_CREDENTIAL_GET_SESSION:
  *
  * Capability string allowing credential-to-session brokering.
@@ -194,6 +205,10 @@ typedef struct SignetPolicyRegistry SignetPolicyRegistry;
  * Since: 1.0
  */
 SignetPolicyRegistry *signet_policy_registry_new(void);
+
+/* Build the daemon's production wildcard registry.  Keeping this in the
+ * policy module lets tests exercise the exact defaults used by signetd. */
+SignetPolicyRegistry *signet_policy_registry_new_daemon_default(void);
 
 /* Free a policy registry. Safe on NULL. */
 /**

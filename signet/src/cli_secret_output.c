@@ -11,6 +11,8 @@
 #include <unistd.h>
 
 #include <glib.h>
+#include <json-glib/json-glib.h>
+#include <sodium.h>
 
 int signet_cli_write_secret_bytes(const char *path,
                                   const uint8_t *secret,
@@ -58,4 +60,39 @@ int signet_cli_write_secret_bytes(const char *path,
   if (!ok) unlink(tmp);
   g_free(tmp);
   return ok ? 0 : -1;
+}
+
+int signet_cli_handle_delivery_result(const char *reply_json,
+                                      const char *out_path) {
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!reply_json || !out_path ||
+      !json_parser_load_from_data(p, reply_json, -1, NULL)) {
+    fprintf(stderr, "signetctl: malformed credential delivery reply\n");
+    return 1;
+  }
+  JsonNode *root = json_parser_get_root(p);
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return 1;
+  JsonObject *res = json_node_get_object(root);
+  if (json_object_has_member(res, "result")) {
+    JsonNode *rn = json_object_get_member(res, "result");
+    if (rn && JSON_NODE_HOLDS_OBJECT(rn)) res = json_node_get_object(rn);
+  }
+  const char *encoded = json_object_has_member(res, "payload_b64")
+      ? json_object_get_string_member(res, "payload_b64") : NULL;
+  if (!encoded || !encoded[0]) {
+    fprintf(stderr, "signetctl: credential delivery carried no payload\n");
+    return 1;
+  }
+  gsize len = 0;
+  guchar *decoded = g_base64_decode(encoded, &len);
+  if (!decoded || len == 0 ||
+      signet_cli_write_secret_bytes(out_path, decoded, len) != 0) {
+    if (decoded) { sodium_memzero(decoded, len); g_free(decoded); }
+    fprintf(stderr, "signetctl: failed to write protected credential output\n");
+    return 1;
+  }
+  sodium_memzero(decoded, len);
+  g_free(decoded);
+  printf("credential: written to %s\n", out_path);
+  return 0;
 }

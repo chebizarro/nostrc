@@ -6,6 +6,7 @@
 #include "signet/capability.h"
 #include "signet/key_store.h"
 #include "signet/mgmt_protocol.h"
+#include "signet/policy_store.h"
 #include "signet/replay_cache.h"
 #include "signet/store.h"
 #include "signet/store_audit.h"
@@ -23,6 +24,7 @@
 
 #include <glib.h>
 #include <sodium.h>
+#include <sqlite3.h>
 
 #define MASTER_KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
@@ -32,6 +34,8 @@ typedef struct {
   SignetKeyStore *keys;
   SignetMgmtHandler *mgmt;
   SignetPolicyRegistry *cap_policy;
+  SignetPolicyStore *identity_policy;
+  char *policy_path;
   char bunker_sk[65];
   char bunker_pk[65];
   char provisioner_sk[65];
@@ -87,6 +91,32 @@ static int handle(Fixture *f, SignetMgmtOp op, const char *json,
   return rc;
 }
 
+static int handle_as(Fixture *f, const char *sender_sk, const char *sender_pk,
+                     SignetMgmtOp op, const char *json, const char *event_id) {
+  char *encrypted = encrypt_request(sender_sk, f->bunker_pk, json);
+  int rc = signet_mgmt_handler_handle_request(
+      f->mgmt, sender_pk, encrypted, op, event_id, 2000000000);
+  free(encrypted);
+  return rc;
+}
+
+static int audit_rows_containing(SignetStore *store, const char *needle) {
+  sqlite3 *db = signet_store_get_db(store);
+  CHECK(db);
+  sqlite3_stmt *stmt = NULL;
+  CHECK(sqlite3_prepare_v2(db,
+      "SELECT COUNT(*) FROM audit_log WHERE "
+      "instr(COALESCE(agent_id,''),?1)>0 OR "
+      "instr(COALESCE(operation,''),?1)>0 OR "
+      "instr(COALESCE(secret_id,''),?1)>0 OR "
+      "instr(COALESCE(detail,''),?1)>0", -1, &stmt, NULL) == SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, needle, -1, SQLITE_TRANSIENT);
+  CHECK(sqlite3_step(stmt) == SQLITE_ROW);
+  int count = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  return count;
+}
+
 static void setup(Fixture *f) {
   memset(f, 0, sizeof(*f));
   keypair(f->bunker_sk, f->bunker_pk);
@@ -103,6 +133,10 @@ static void setup(Fixture *f) {
   f->keys = signet_key_store_new(f->audit, &kcfg);
   CHECK(f->keys);
 
+  f->policy_path = g_strdup_printf("%s.policy", f->db_path);
+  f->identity_policy = signet_policy_store_file_new(f->policy_path);
+  CHECK(f->identity_policy);
+
   const char *const provisioners[] = { f->provisioner_pk };
   SignetMgmtHandlerConfig mcfg = {
     .provisioner_pubkeys = provisioners,
@@ -110,21 +144,33 @@ static void setup(Fixture *f) {
     .bunker_secret_key_hex = f->bunker_sk,
     .bunker_pubkey_hex = f->bunker_pk,
   };
-  f->mgmt = signet_mgmt_handler_new(f->keys, NULL, NULL, NULL, &mcfg);
+  f->mgmt = signet_mgmt_handler_new(f->keys, NULL, NULL,
+                                     f->identity_policy, &mcfg);
   CHECK(f->mgmt);
 
   f->cap_policy = signet_policy_registry_new();
   CHECK(f->cap_policy);
-  char *caps[] = { (char *)SIGNET_CAP_CREDENTIAL_GET_TOKEN };
+  char **caps = NULL;
   SignetAgentPolicy delivery_policy = {
     .name = (char *)"delivery",
     .capabilities = caps,
-    .n_capabilities = 1,
+    .n_capabilities = 0,
     .rate_limit_per_hour = 1000,
   };
   CHECK(signet_policy_registry_add(f->cap_policy, &delivery_policy) == 0);
   CHECK(signet_policy_registry_assign(f->cap_policy, "owner", "delivery") == 0);
   signet_mgmt_handler_set_policy_registry(f->mgmt, f->cap_policy);
+
+  char *delivery_json = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"credential.deliver\"]}",
+      f->provisioner_pk);
+  char *policy_error = NULL;
+  CHECK(signet_policy_store_set_identity_json(
+      f->identity_policy, "owner", delivery_json, 2000000000,
+      &policy_error) == 0);
+  CHECK(policy_error == NULL);
+  g_free(delivery_json);
 
   char agent_sk[65], agent_pk[65], out_pk[65] = {0};
   uint8_t raw[32];
@@ -140,10 +186,13 @@ static void setup(Fixture *f) {
 static void teardown(Fixture *f) {
   signet_mgmt_handler_free(f->mgmt);
   signet_policy_registry_free(f->cap_policy);
+  signet_policy_store_free(f->identity_policy);
   signet_key_store_free(f->keys);
   signet_audit_logger_free(f->audit);
   unlink(f->db_path);
+  unlink(f->policy_path);
   g_free(f->db_path);
+  g_free(f->policy_path);
   sodium_memzero(f->bunker_sk, sizeof(f->bunker_sk));
   sodium_memzero(f->provisioner_sk, sizeof(f->provisioner_sk));
 }
@@ -239,7 +288,8 @@ static void test_encrypted_contextvm_lifecycle(void) {
   int64_t audit_before_delivery = signet_audit_log_count(store);
   CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
                deliver, "deliver-1") == 0);
-  CHECK(signet_audit_log_count(store) == audit_before_delivery + 1);
+  /* One owner access entry plus one requester-attributed management entry. */
+  CHECK(signet_audit_log_count(store) == audit_before_delivery + 2);
   SignetLeaseRecord *leases = NULL;
   size_t lease_count = 0;
   CHECK(signet_store_list_active_leases(
@@ -322,6 +372,141 @@ static void test_expiry_and_unauthorized(void) {
   puts("test_expiry_and_unauthorized: PASS");
 }
 
+static void test_delivery_denials_and_requester_audit(void) {
+  Fixture f;
+  setup(&f);
+  SignetStore *store = signet_key_store_get_store(f.keys);
+  CHECK(store);
+  SignetSecretMetadata metadata;
+  memset(&metadata, 0, sizeof(metadata));
+  CHECK(signet_store_create_secret(
+      store, "owner", SIGNET_SECRET_API_TOKEN, "denials",
+      (const uint8_t *)"delivery-canary-secret", 22, NULL, 0,
+      "created", f.provisioner_pk, 2000000000,
+      &metadata) == SIGNET_SECRET_OK);
+  char *cred_id = g_strdup(metadata.id);
+  signet_secret_metadata_clear(&metadata);
+  char *request = g_strdup_printf(
+      "{\"request_id\":\"r\",\"agent_id\":\"owner\","
+      "\"credential_id\":\"%s\"}", cred_id);
+
+  /* Non-provisioners are rejected before parse/decrypt and attributed by
+   * authenticated sender pubkey in the delivery audit. */
+  char attacker_sk[65], attacker_pk[65];
+  keypair(attacker_sk, attacker_pk);
+  CHECK(handle_as(&f, attacker_sk, attacker_pk,
+                  SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+                  request, "deny-nonprovisioner") == -1);
+  CHECK(audit_rows_containing(store, attacker_pk) > 0);
+  CHECK(audit_rows_containing(store, "credential_deliver") > 0);
+
+  /* Remove the explicit delivery grant. A provisioner still cannot deliver. */
+  char *policy_error = NULL;
+  CHECK(signet_policy_store_set_identity_json(
+      f.identity_policy, "owner", "{\"default\":\"deny\"}",
+      2000000000, &policy_error) == 0);
+  CHECK(policy_error == NULL);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               request, "deny-capability") == -1);
+  CHECK(audit_rows_containing(store, "no_capability") > 0);
+
+  /* Restore the exact provisioner/method grant. */
+  char *allow = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"credential.deliver\"]}", f.provisioner_pk);
+  CHECK(signet_policy_store_set_identity_json(
+      f.identity_policy, "owner", allow, 2000000000,
+      &policy_error) == 0);
+  CHECK(policy_error == NULL);
+
+  /* Wrong owner is denied before payload decrypt. */
+  char other_sk[65], other_pk[65], out_pk[65] = {0};
+  uint8_t raw[32];
+  keypair(other_sk, other_pk);
+  CHECK(hex32(other_sk, raw) == 0);
+  CHECK(signet_key_store_adopt_agent(
+      f.keys, "other", raw, other_pk, "other-secret", f.bunker_pk,
+      NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
+  sodium_memzero(raw, sizeof(raw));
+  char *other_allow = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"credential.deliver\"]}", f.provisioner_pk);
+  CHECK(signet_policy_store_set_identity_json(
+      f.identity_policy, "other", other_allow, 2000000000,
+      &policy_error) == 0);
+  char *wrong_owner = g_strdup_printf(
+      "{\"request_id\":\"r\",\"agent_id\":\"other\","
+      "\"credential_id\":\"%s\"}", cred_id);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               wrong_owner, "deny-owner") == -1);
+  CHECK(audit_rows_containing(store, "not_owner") > 0);
+
+  CHECK(signet_store_create_secret(
+      store, "owner", SIGNET_SECRET_API_TOKEN, "revoked",
+      (const uint8_t *)"revoked-value", 13, NULL, 0,
+      "created", f.provisioner_pk, 2000000000,
+      &metadata) == SIGNET_SECRET_OK);
+  char *revoked_id = g_strdup(metadata.id);
+  signet_secret_metadata_clear(&metadata);
+  CHECK(signet_store_revoke_secret(
+      store, revoked_id, 2000000000, &metadata) == SIGNET_SECRET_OK);
+  signet_secret_metadata_clear(&metadata);
+  char *revoked_req = g_strdup_printf(
+      "{\"request_id\":\"r\",\"agent_id\":\"owner\","
+      "\"credential_id\":\"%s\"}", revoked_id);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               revoked_req, "deny-revoked") == -1);
+  CHECK(audit_rows_containing(store, "\"reason\":\"revoked\"") > 0);
+
+  CHECK(signet_store_create_secret(
+      store, "owner", SIGNET_SECRET_API_TOKEN, "expired",
+      (const uint8_t *)"expired-value", 13, NULL, 1999999999,
+      "created", f.provisioner_pk, 1999999900,
+      &metadata) == SIGNET_SECRET_OK);
+  char *expired_id = g_strdup(metadata.id);
+  signet_secret_metadata_clear(&metadata);
+  char *expired_req = g_strdup_printf(
+      "{\"request_id\":\"r\",\"agent_id\":\"owner\","
+      "\"credential_id\":\"%s\"}", expired_id);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               expired_req, "deny-expired") == -1);
+  CHECK(audit_rows_containing(store, "\"reason\":\"expired\"") > 0);
+
+  /* Corrupt ciphertext after metadata authorization: delivery fails after the
+   * one-use lease has already burned and leaves no reusable active lease. */
+  sqlite3 *db = signet_store_get_db(store);
+  sqlite3_stmt *stmt = NULL;
+  CHECK(sqlite3_prepare_v2(db,
+      "UPDATE secrets SET payload=x'00' WHERE id=?1", -1,
+      &stmt, NULL) == SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, cred_id, -1, SQLITE_TRANSIENT);
+  CHECK(sqlite3_step(stmt) == SQLITE_DONE);
+  sqlite3_finalize(stmt);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               request, "deny-decrypt") == -1);
+  SignetLeaseRecord *leases = NULL;
+  size_t lease_count = 0;
+  CHECK(signet_store_list_active_leases(
+      store, "owner", 2000000000, &leases, &lease_count) == 0);
+  CHECK(lease_count == 0);
+  signet_lease_list_free(leases, lease_count);
+
+  CHECK(audit_rows_containing(store, "delivery-canary-secret") == 0);
+  CHECK(audit_rows_containing(store, "\"requester\"") > 0);
+  CHECK(audit_rows_containing(store, f.provisioner_pk) > 0);
+  int64_t broken_id = 0;
+  CHECK(signet_audit_verify_chain(store, 0, 0, &broken_id) == 0);
+
+  sodium_memzero(attacker_sk, sizeof(attacker_sk));
+  sodium_memzero(other_sk, sizeof(other_sk));
+  g_free(allow); g_free(other_allow); g_free(wrong_owner);
+  g_free(revoked_id); g_free(revoked_req);
+  g_free(expired_id); g_free(expired_req);
+  g_free(request); g_free(cred_id);
+  teardown(&f);
+  puts("test_delivery_denials_and_requester_audit: PASS");
+}
+
 /* Item 4: a PLAINTEXT (non-NIP-44) mutation request must be rejected before
  * parsing — even from an authorized provisioner — and must not mutate state. */
 static void test_plaintext_mutation_rejected(void) {
@@ -399,10 +584,10 @@ static void test_credential_mutation_replay_rejected(void) {
   int64_t audit_before_delivery = signet_audit_log_count(store);
   CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
                deliver, "deliver-replay-1") == 0);
-  CHECK(signet_audit_log_count(store) == audit_before_delivery + 1);
+  CHECK(signet_audit_log_count(store) == audit_before_delivery + 2);
   CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
                deliver, "deliver-replay-1") == -1);
-  CHECK(signet_audit_log_count(store) == audit_before_delivery + 1);
+  CHECK(signet_audit_log_count(store) == audit_before_delivery + 2);
 
   /* A fresh event id still executes. */
   char *b64b = g_base64_encode((const guchar *)"rotated-value",
@@ -429,6 +614,7 @@ int main(void) {
   CHECK(sodium_init() >= 0);
   test_encrypted_contextvm_lifecycle();
   test_expiry_and_unauthorized();
+  test_delivery_denials_and_requester_audit();
   test_plaintext_mutation_rejected();
   test_credential_mutation_replay_rejected();
   puts("credential lifecycle tests: ALL PASS");

@@ -71,6 +71,19 @@ static void test_registry_create_free(void) {
   printf("test_registry_create_free: PASS\n");
 }
 
+static void test_daemon_default_denies_plaintext_credentials(void) {
+  SignetPolicyRegistry *pr = signet_policy_registry_new_daemon_default();
+  CHECK(pr != NULL);
+  CHECK(signet_policy_has_capability(pr, "any-agent", SIGNET_CAP_NOSTR_SIGN));
+  CHECK(!signet_policy_has_capability(
+      pr, "any-agent", SIGNET_CAP_CREDENTIAL_GET_TOKEN));
+  CHECK(!signet_policy_has_capability(
+      pr, "any-agent", SIGNET_CAP_CREDENTIAL_DELIVER));
+  CHECK(!signet_policy_evaluate(pr, "any-agent", "GetToken", -1));
+  signet_policy_registry_free(pr);
+  printf("test_daemon_default_denies_plaintext_credentials: PASS\n");
+}
+
 /* ----------------------------- Capability grants ------------------------- */
 
 static void test_capability_grant(void) {
@@ -364,6 +377,7 @@ static void test_policy_clear(void) {
 
 int main(void) {
   test_registry_create_free();
+  test_daemon_default_denies_plaintext_credentials();
   test_method_to_capability();
   test_capability_grant();
   test_kind_restrictions();

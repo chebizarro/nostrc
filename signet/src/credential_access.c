@@ -15,6 +15,7 @@
 #include "signet/store_audit.h"
 #include "signet/store_leases.h"
 #include "signet/audit_logger.h"
+#include "signet/policy_store.h"
 
 #include <string.h>
 
@@ -46,7 +47,8 @@ const char *signet_cred_access_reason(SignetCredAccessStatus status) {
 static char *signet_cred_access_detail_json(const char *capability,
                                             const char *decision,
                                             const char *reason,
-                                            const char *lease_id) {
+                                            const char *lease_id,
+                                            const char *requester_pubkey) {
   JsonBuilder *b = json_builder_new();
   if (!b) return NULL;
   json_builder_begin_object(b);
@@ -59,6 +61,10 @@ static char *signet_cred_access_detail_json(const char *capability,
   if (lease_id && lease_id[0]) {
     json_builder_set_member_name(b, "lease_id");
     json_builder_add_string_value(b, lease_id);
+  }
+  if (requester_pubkey && requester_pubkey[0]) {
+    json_builder_set_member_name(b, "requester");
+    json_builder_add_string_value(b, requester_pubkey);
   }
   json_builder_end_object(b);
   JsonNode *root = json_builder_get_root(b);
@@ -87,7 +93,8 @@ static int signet_cred_access_audit(const SignetCredentialAccessContext *ctx,
                        : "deny";
   const char *reason = signet_cred_access_reason(status);
   char *detail = signet_cred_access_detail_json(
-      req && req->capability ? req->capability : "", decision, reason, lease_id);
+      req && req->capability ? req->capability : "", decision, reason, lease_id,
+      req ? req->requester_pubkey : NULL);
   const char *agent = (req && req->agent_id && req->agent_id[0])
                           ? req->agent_id : "unknown";
   const char *secret_id = (req && req->credential_id && req->credential_id[0])
@@ -165,9 +172,25 @@ SignetCredAccessStatus signet_credential_access_acquire(
 
   /* 2) Explicit capability. No policy registry means nothing was ever
    * granted: fail closed. */
-  if (!ctx->policy ||
-      !signet_policy_has_capability(ctx->policy, req->agent_id,
-                                    req->capability)) {
+  if (strcmp(req->capability, SIGNET_CAP_CREDENTIAL_DELIVER) == 0) {
+    SignetPolicyValue decision;
+    SignetPolicyKeyView key = {
+      .identity = req->agent_id,
+      .client_pubkey_hex = req->requester_pubkey,
+      .method = SIGNET_CAP_CREDENTIAL_DELIVER,
+      .event_kind = -1,
+    };
+    if (!ctx->identity_policy || !req->requester_pubkey ||
+        signet_policy_store_get(ctx->identity_policy, &key, now, &decision) != 0 ||
+        decision.decision != SIGNET_POLICY_RULE_ALLOW ||
+        !decision.reason_code ||
+        strcmp(decision.reason_code, "policy.allow.match") != 0) {
+      status = SIGNET_CRED_ACCESS_NO_CAPABILITY;
+      goto audited_out;
+    }
+  } else if (!ctx->policy ||
+             !signet_policy_has_capability(ctx->policy, req->agent_id,
+                                           req->capability)) {
     status = SIGNET_CRED_ACCESS_NO_CAPABILITY;
     goto audited_out;
   }
@@ -247,7 +270,8 @@ SignetCredAccessStatus signet_credential_access_acquire(
     if (secret_expires_at > 0 && issued_lease_expires > secret_expires_at)
       issued_lease_expires = secret_expires_at;
     char *meta = signet_cred_access_detail_json(req->capability, "allow",
-                                                "one_use_delivery", NULL);
+                                                "one_use_delivery", NULL,
+                                                req->requester_pubkey);
     int lrc = signet_store_issue_lease(ctx->store, issued_lease,
                                        req->credential_id, req->agent_id,
                                        now, issued_lease_expires, meta);
@@ -297,7 +321,7 @@ SignetCredAccessStatus signet_credential_access_acquire(
     if (secret_expires_at > 0 && lease_expires > secret_expires_at)
       lease_expires = secret_expires_at;
     char *meta = signet_cred_access_detail_json(req->capability, "allow", "ok",
-                                                NULL);
+                                                NULL, req->requester_pubkey);
     int lrc = signet_store_issue_lease(ctx->store, issued_lease,
                                        req->credential_id, req->agent_id,
                                        now, lease_expires, meta);

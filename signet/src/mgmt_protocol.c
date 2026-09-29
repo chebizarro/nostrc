@@ -956,6 +956,7 @@ static const char *signet_mgmt_op_audit_name(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_REVOKE_CLIENT:      return "mgmt_revoke_client";
     case SIGNET_MGMT_OP_CREATE_CREDENTIAL:  return "credential_create";
     case SIGNET_MGMT_OP_IMPORT_CREDENTIAL:  return "credential_import";
+    case SIGNET_MGMT_OP_DELIVER_CREDENTIAL: return "credential_deliver";
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL:  return "credential_rotate";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL:  return "credential_revoke";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL:  return "credential_delete";
@@ -1156,7 +1157,10 @@ static int signet_mgmt_handler_handle_request_ex(
   if (!sender_is_provisioner && op != SIGNET_MGMT_OP_REISSUE_CONNECT) {
     /* Silently drop unauthorized events (no ack — do not confirm the bunker
      * exists) but record the attempt in the tamper-evident audit chain. */
-    signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
+    signet_mgmt_chain_audit(h,
+                            op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL
+                                ? "credential_deliver" : "mgmt_unauthorized",
+                            event_pubkey_hex, NULL,
                             "deny", "not_provisioner", now);
     return -1;
   }
@@ -1944,14 +1948,16 @@ static int signet_mgmt_handler_handle_request_ex(
       SignetCredentialAccessContext access_ctx = {
         .store = base_store,
         .policy = h->cap_policy,
+        .identity_policy = h->policy_store,
         .deny = h->deny,
         .logger = h->audit,
       };
       SignetCredentialAccessRequest access_req = {
         .agent_id = req.agent_id,
         .credential_id = req.credential_id,
-        .capability = SIGNET_CAP_CREDENTIAL_GET_TOKEN,
+        .capability = SIGNET_CAP_CREDENTIAL_DELIVER,
         .transport = "contextvm",
+        .requester_pubkey = event_pubkey_hex,
         .lease_id = NULL,
         .one_use_delivery = true,
         .issue_lease = false,
@@ -2215,7 +2221,10 @@ static int signet_mgmt_handler_handle_request_ex(
     if (audit_op) {
       signet_mgmt_chain_audit(
           h, audit_op,
-          (req.agent_id && req.agent_id[0]) ? req.agent_id : event_pubkey_hex,
+          req.op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL
+              ? event_pubkey_hex
+              : ((req.agent_id && req.agent_id[0]) ? req.agent_id
+                                                    : event_pubkey_hex),
           audit_secret_id ? audit_secret_id :
               (req.credential_id ? req.credential_id : req.provisioner_pubkey),
           ok ? "allow" : "deny", code, now);

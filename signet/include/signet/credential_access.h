@@ -42,6 +42,7 @@ extern "C" {
 
 struct SignetStore;
 struct SignetPolicyRegistry;
+struct SignetPolicyStore;
 struct SignetDenyList;
 struct SignetAuditLogger;
 
@@ -83,6 +84,7 @@ typedef enum {
 typedef struct {
   struct SignetStore *store;
   struct SignetPolicyRegistry *policy;
+  struct SignetPolicyStore *identity_policy;
   struct SignetDenyList *deny;
   struct SignetAuditLogger *logger;
 } SignetCredentialAccessContext;
@@ -94,6 +96,9 @@ typedef struct {
  * @capability: (not nullable): explicit capability being exercised
  *   (e.g. SIGNET_CAP_CREDENTIAL_GET_TOKEN). Empty/NULL fails closed.
  * @transport: (nullable): transport tag for audit ("dbus_unix", "contextvm", ...).
+ * @requester_pubkey: (nullable): authenticated recipient of a mediated
+ *   delivery. Required for credential.deliver and included in every audit
+ *   outcome. It is never accepted as the credential owner.
  * @lease_id: (nullable): pre-issued lease to burn on use (one-use semantics).
  * @one_use_delivery: mint and atomically burn a bounded lease before payload
  *   decryption. Intended for a single encrypted delivery response where the
@@ -111,6 +116,7 @@ typedef struct {
   const char *credential_id;
   const char *capability;
   const char *transport;
+  const char *requester_pubkey;
   const char *lease_id;
   bool one_use_delivery;
   bool issue_lease;
