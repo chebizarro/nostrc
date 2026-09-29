@@ -5,6 +5,8 @@ using Adw 1;
 // GhConversation by gh-conversation-row.c, which also composes the list
 // item's accessible label. The avatar only ever shows initials: no picture
 // is loaded (charter PD-2), and a request never triggers a profile fetch.
+// Its context menu (right click, long press, Shift+F10 or Menu; charter
+// §7.4, §7.13; nostrc-qp24.74) is context_popover.
 template $GhConversationRow: Widget {
   layout-manager: BoxLayout {
     spacing: 12;
@@ -103,6 +105,39 @@ template $GhConversationRow: Widget {
           "numeric",
         ]
       }
+    }
+  }
+
+  // Not laid out by the box layout (a popover is its own surface).
+  PopoverMenu context_popover {
+    menu-model: context_menu;
+    has-arrow: false;
+    halign: start;
+  }
+}
+
+// Row actions (gh-conversation-row.c) forward to the window's
+// win.mute-conversation, win.show-conversation-info and
+// win.delete-conversation with this row's room (gh-conversation-menu.c).
+// Mute is hidden for a message request, which is never notified.
+menu context_menu {
+  section {
+    item {
+      label: _("_Mute…");
+      action: "row.mute";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("Conversation _Info");
+      action: "row.info";
+    }
+  }
+
+  section {
+    item {
+      label: _("_Delete…");
+      action: "row.delete";
     }
   }
 }

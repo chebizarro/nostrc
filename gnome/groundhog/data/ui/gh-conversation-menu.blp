@@ -1,0 +1,34 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The confirmations of a conversation row's context menu (charter §7.4;
+// nostrc-qp24.74), built fresh for each use by gh-conversation-menu.c, which
+// completes their headings and bodies with the conversation's title (plain
+// text, never markup). Response ids are unique across the file:
+// blueprint-compiler 0.12 treats them as object ids.
+
+// "_Unmute" is removed from C unless the conversation is muted.
+Adw.AlertDialog mute_dialog {
+  body: _("Groundhog won't notify you about it for as long as you choose. Muting stays on this device, and nobody is told.");
+  default-response: "mute-cancel";
+  close-response: "mute-cancel";
+
+  responses [
+    mute-cancel: _("_Cancel"),
+    mute-hour: _("For 1 _Hour"),
+    mute-hours: _("For _8 Hours"),
+    mute-week: _("For 1 _Week"),
+    mute-always: _("_Until I Turn It Back On"),
+    mute-off: _("_Unmute") suggested,
+  ]
+}
+
+Adw.AlertDialog delete_dialog {
+  default-response: "delete-cancel";
+  close-response: "delete-cancel";
+
+  responses [
+    delete-cancel: _("_Cancel"),
+    delete-confirm: _("_Delete") destructive,
+  ]
+}

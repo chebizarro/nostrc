@@ -13,6 +13,7 @@ struct _GhConversationRow {
   GtkLabel *preview_label;
   GtkLabel *request_label;
   GtkLabel *unread_badge;
+  GtkPopover *context_popover;
   GhConversation *conversation;
   gchar *summary;
   gboolean show_preview;
@@ -126,6 +127,93 @@ gh_conversation_row_format_time_of_day(gint64 timestamp)
   return when ? g_strstrip(time_of_day(when)) : g_strdup("");
 }
 
+/* ---- context menu (charter §7.4; nostrc-qp24.74) ----------------------------- */
+
+/* Which of the menu's actions apply: all three to a private (NIP-17)
+ * conversation, none to a group (its dialogs are its own). */
+static void
+sync_actions(GhConversationRow *self)
+{
+  GhConversation *conversation = self->conversation;
+  gboolean nip17 = conversation &&
+                   gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP17;
+  /* A message request is never notified: nothing to mute. */
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.mute",
+                                nip17 && !gh_conversation_get_is_request(conversation));
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.info", nip17);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "row.delete", nip17);
+}
+
+static gboolean
+menu_available(GhConversationRow *self)
+{
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  return self->conversation &&
+         gh_conversation_get_backend(self->conversation) == GH_CONVERSATION_BACKEND_NIP17 &&
+         G_IS_ACTION_GROUP(root) &&
+         g_action_group_has_action(G_ACTION_GROUP(root), "delete-conversation");
+}
+
+/* Each row action runs its window action (gh_conversation_menu_attach())
+ * with the row's room id. */
+static void
+row_action(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhConversationRow *self = GH_CONVERSATION_ROW(widget);
+  (void)parameter;
+  if (!self->conversation)
+    return;
+  const gchar *action = g_str_equal(name, "row.mute")   ? "win.mute-conversation"
+                        : g_str_equal(name, "row.info") ? "win.show-conversation-info"
+                                                        : "win.delete-conversation";
+  gtk_widget_activate_action(widget, action, "s",
+                             gh_conversation_get_room_id(self->conversation));
+}
+
+static gboolean
+popup_at(GhConversationRow *self, const GdkRectangle *point)
+{
+  if (!menu_available(self))
+    return FALSE;
+  GdkRectangle whole = { 0, 0, gtk_widget_get_width(GTK_WIDGET(self)),
+                         gtk_widget_get_height(GTK_WIDGET(self)) };
+  gtk_popover_set_pointing_to(self->context_popover, point ? point : &whole);
+  gtk_popover_popup(self->context_popover);
+  return TRUE;
+}
+
+gboolean
+gh_conversation_row_popup_menu(GhConversationRow *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_ROW(self), FALSE);
+  return popup_at(self, NULL);
+}
+
+GtkPopover *
+gh_conversation_row_get_menu(GhConversationRow *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_ROW(self), NULL);
+  return self->context_popover;
+}
+
+static void
+on_secondary_pressed(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y,
+                     GhConversationRow *self)
+{
+  (void)n_press;
+  GdkRectangle point = { (int)x, (int)y, 1, 1 };
+  if (popup_at(self, &point))
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void
+on_long_pressed(GtkGestureLongPress *gesture, gdouble x, gdouble y, GhConversationRow *self)
+{
+  GdkRectangle point = { (int)x, (int)y, 1, 1 };
+  if (popup_at(self, &point))
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
 /* ---- row -------------------------------------------------------------------- */
 
 static void
@@ -144,6 +232,7 @@ static void
 update(GhConversationRow *self)
 {
   GhConversation *conversation = self->conversation;
+  sync_actions(self);
   if (!conversation) {
     adw_avatar_set_text(self->avatar, NULL);
     gtk_label_set_text(self->title_label, "");
@@ -232,6 +321,8 @@ gh_conversation_row_set_conversation(GhConversationRow *self, GhConversation *co
     return;
   if (self->conversation)
     g_signal_handlers_disconnect_by_data(self->conversation, self);
+  /* A recycled row's menu was for the conversation it showed. */
+  gtk_popover_popdown(self->context_popover);
   g_set_object(&self->conversation, conversation);
   if (conversation) {
     static const gchar *const watched[] = {
@@ -362,6 +453,10 @@ gh_conversation_row_class_init(GhConversationRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, preview_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, request_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, unread_badge);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationRow, context_popover);
+  gtk_widget_class_install_action(widget_class, "row.mute", NULL, row_action);
+  gtk_widget_class_install_action(widget_class, "row.info", NULL, row_action);
+  gtk_widget_class_install_action(widget_class, "row.delete", NULL, row_action);
 }
 
 static void
@@ -369,4 +464,15 @@ gh_conversation_row_init(GhConversationRow *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   self->summary = g_strdup("");
+  sync_actions(self);
+  /* The context menu: right click, or a long press on a touchscreen. The
+   * keyboard's Shift+F10 and Menu are the list's (gh-conversation-menu.c). */
+  GtkGesture *click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);
+  g_signal_connect(click, "pressed", G_CALLBACK(on_secondary_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(click));
+  GtkGesture *hold = gtk_gesture_long_press_new();
+  gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(hold), TRUE);
+  g_signal_connect(hold, "pressed", G_CALLBACK(on_long_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(hold));
 }

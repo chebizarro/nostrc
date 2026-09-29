@@ -6,6 +6,9 @@
     <!-- Bundled symbolic icons (the icon theme's resource path). -->
     <file>icons/scalable/actions/send-symbolic.svg</file>
     <file>icons/scalable/actions/send-symbolic-rtl.svg</file>
+    <!-- The account pages' and Preferences' account icon, where the icon
+         theme lacks it (nostrc-qp24.70); a theme's own icon wins. -->
+    <file>icons/scalable/actions/avatar-default-symbolic.svg</file>
     <!-- Compiled from data/ui/*.blp; see CMakeLists.txt. -->
     <file>ui/gh-window.ui</file>
     <file>ui/gh-sidebar-page.ui</file>
@@ -32,6 +35,9 @@
     <file>ui/gh-group-info-dialog.ui</file>
     <file>ui/gh-group-member-row.ui</file>
     <file>ui/gh-new-group-dialog.ui</file>
+    <file>ui/gh-blocked-page.ui</file>
+    <file>ui/gh-blocked-row.ui</file>
+    <file>ui/gh-conversation-menu.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
   </gresource>

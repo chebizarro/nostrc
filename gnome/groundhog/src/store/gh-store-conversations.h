@@ -177,6 +177,25 @@ gboolean gh_store_conversations_set_blocked(GhStoreConversations *self,
                                             const gchar *room_id, gboolean blocked,
                                             GError **error);
 
+/* A blocked room (gh_store_conversations_list_blocked()). */
+typedef struct {
+  gchar *room_id;        /* the NIP-17 room id: its participants, sorted, ","-joined */
+  gint64 last_activity;  /* unix seconds: its newest message, or when it was
+                          * forgotten if that is later (a forgotten room has
+                          * no messages) */
+  gboolean has_messages; /* its history is kept (Block); FALSE after Block on a
+                          * message request, which forgot it */
+} GhStoreBlockedRoom;
+
+void gh_store_blocked_room_free(GhStoreBlockedRoom *room);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhStoreBlockedRoom, gh_store_blocked_room_free)
+
+/* The account's blocked NIP-17 rooms (request_state BLOCKED), latest
+ * last_activity first, for Preferences' Blocked Conversations (nostrc-qp24.72);
+ * unblock one with gh_store_conversations_set_blocked(). Blocks live only in
+ * this store. Array of GhStoreBlockedRoom. */
+GPtrArray *gh_store_conversations_list_blocked(GhStoreConversations *self, GError **error);
+
 /* ---- Legacy seen file (charter §3.2, ST-12) -----------------------------------
  * Before the encrypted store, GhDmInbox kept the account's seen keys in a
  * 0600 flat file: <state_dir>/<account>.seen (Groundhog 0.6.0) or, in a build

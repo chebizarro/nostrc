@@ -30,6 +30,7 @@ struct _GhSidebarPage {
   gchar *account_page;           /* NULL: the conversation pages */
   gchar *error_description;      /* the template's default */
   gchar *title;                  /* the template's window title */
+  gchar *account_title;          /* gh_sidebar_page_set_title(); NULL: title */
   GhStatusBanner banner;         /* last shown */
   gboolean show_requests;
   gboolean show_previews;
@@ -241,6 +242,7 @@ gh_sidebar_page_finalize(GObject *object)
   g_free(self->account_page);
   g_free(self->error_description);
   g_free(self->title);
+  g_free(self->account_title);
   G_OBJECT_CLASS(gh_sidebar_page_parent_class)->finalize(object);
 }
 
@@ -323,6 +325,17 @@ gh_sidebar_page_get_window_title(GhSidebarPage *self)
 {
   g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), NULL);
   return self->window_title;
+}
+
+void
+gh_sidebar_page_set_title(GhSidebarPage *self, const gchar *title)
+{
+  g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
+  g_free(self->account_title);
+  self->account_title = title && *title ? g_strdup(title) : NULL;
+  if (!self->show_requests)
+    adw_window_title_set_title(self->window_title,
+                               self->account_title ? self->account_title : self->title);
 }
 
 GtkStack *
@@ -534,7 +547,10 @@ gh_sidebar_page_set_show_requests(GhSidebarPage *self, gboolean show_requests)
    * New Message, and the title is short. */
   gtk_widget_set_visible(GTK_WIDGET(self->back_button), show_requests);
   gtk_widget_set_visible(GTK_WIDGET(self->new_button), !show_requests);
-  adw_window_title_set_title(self->window_title, show_requests ? _("Requests") : self->title);
+  adw_window_title_set_title(self->window_title,
+                             show_requests ? _("Requests")
+                                           : self->account_title ? self->account_title
+                                                                 : self->title);
   g_object_notify_by_pspec(G_OBJECT(self), sidebar_props[SIDEBAR_PROP_SHOW_REQUESTS]);
   update_page(self);
   /* Keep keyboard focus in the sidebar (the button that was used is gone),

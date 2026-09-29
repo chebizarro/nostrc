@@ -17,8 +17,8 @@ static const struct {
   { "account_store_unavailable", "account-store-unavailable",
     "account_store_unavailable_retry" },
   { "account_none", "account-none", "account_none_refresh" },
-  /* Its action is the account menu in the header. */
-  { "account_unselected", "account-unselected", "account_button" },
+  /* Its action is the account menu, also the main menu's first entry. */
+  { "account_unselected", "account-unselected", "account_choose_button" },
   { "account_missing", "account-missing", "account_missing_refresh" },
 };
 
@@ -234,7 +234,11 @@ update(GhAccountUi *ui)
       subtitle = g_steal_pointer(&label);
   }
   g_simple_action_set_state(ui->select, g_variant_new_string(current));
-  adw_window_title_set_subtitle(ui->title, subtitle ? subtitle : "No account");
+  /* The active account names the sidebar, without a subtitle: the app's
+   * name is the window's own, and a title over a subtitle is cut short in a
+   * narrow sidebar header (nostrc-qp24.70). No account: "Groundhog". */
+  gh_sidebar_page_set_title(ui->sidebar, subtitle);
+  adw_window_title_set_subtitle(ui->title, "");
 }
 
 /* Connected swapped to the window, so the handlers die with it. */
@@ -299,8 +303,13 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
       ui->focus_targets[i] = GTK_WIDGET(gtk_builder_get_object(builder,
                                                                account_pages[i].focus_id));
   }
-  adw_header_bar_pack_start(gh_sidebar_page_get_header(sidebar),
-                            GTK_WIDGET(gtk_builder_get_object(builder, "account_button")));
+  /* The account menu heads the sidebar's main menu instead of taking a
+   * header button of its own: at 360 px and in the narrowest split sidebar
+   * the header's title needs that room (nostrc-qp24.70). */
+  GtkMenuButton *primary = GTK_MENU_BUTTON(
+    gtk_widget_get_template_child(GTK_WIDGET(sidebar), GH_TYPE_SIDEBAR_PAGE, "primary_button"));
+  g_menu_prepend_section(G_MENU(gtk_menu_button_get_menu_model(primary)), NULL,
+                         G_MENU_MODEL(gtk_builder_get_object(builder, "account_section")));
   /* The identity rows are the one dynamic part of the menu. */
   ui->identities_menu = G_MENU(g_object_ref(gtk_builder_get_object(builder, "identities")));
 

@@ -62,6 +62,18 @@ ShortcutsWindow help_overlay {
         title: C_("shortcut window", "New Message");
         accelerator: "<Control>n";
       }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Conversation Info");
+        accelerator: "<Control>i";
+      }
+
+      // The focused conversation's context menu (gh-conversation-menu.c):
+      // the list's own keys, not application accelerators.
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Conversation Menu");
+        accelerator: "<Shift>F10 Menu";
+      }
     }
   }
 }

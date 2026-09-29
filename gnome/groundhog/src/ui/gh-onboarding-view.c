@@ -371,6 +371,7 @@ struct _GhOnboardingView {
   GtkWidget *publish_retry;
   GtkWidget *publish_later;
   AdwStatusPage *done_status;
+  GtkWidget *start_conversation_button;
   GtkWidget *done_button;
 
   GhInboxSetupConfig config; /* accounts, account_relays, settings, auth are owned refs */
@@ -1186,6 +1187,17 @@ publish_action(GtkWidget *widget, const char *name, GVariant *parameter)
 
 /* ---- navigation actions ----------------------------------------------------- */
 
+/* [Start a Conversation] only while the window can open New Message
+ * (win.new-message, charter G18): a read-only account has no way to send. */
+static void
+sync_start_conversation(GhOnboardingView *self)
+{
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  gboolean available = G_IS_ACTION_GROUP(root) &&
+                       g_action_group_get_action_enabled(G_ACTION_GROUP(root), "new-message");
+  gtk_widget_set_visible(self->start_conversation_button, available);
+}
+
 static void
 show_done(GhOnboardingView *self)
 {
@@ -1193,6 +1205,7 @@ show_done(GhOnboardingView *self)
     self->kept_current ? _("Your message relays stay as they were. People can reach you privately.")
                        : _("People can now reach you privately.");
   adw_status_page_set_description(self->done_status, description);
+  sync_start_conversation(self);
   push(self, "done");
 }
 
@@ -1231,8 +1244,13 @@ nav_action(GtkWidget *widget, const char *name, GVariant *parameter)
     show_done(self);
   } else if (g_str_equal(name, "onboarding.later") || g_str_equal(name, "onboarding.finish")) {
     finish(self);
+  } else if (g_str_equal(name, "onboarding.start-conversation")) {
+    /* Back to the conversations first, so New Message opens over them. */
+    finish(self);
+    gtk_widget_activate_action(GTK_WIDGET(self), "win.new-message", NULL);
   }
 }
+
 
 /* Keyboard and screen-reader focus lands on each page's one next step
  * (charter §7.14), never on whatever widget comes first. */
@@ -1252,7 +1270,8 @@ on_page_shown(AdwNavigationPage *page, gpointer data)
   else if (page == self->confirm_page)
     target = self->publish_button;
   else if (page == self->done_page)
-    target = self->done_button;
+    target = gtk_widget_get_visible(self->start_conversation_button)
+               ? self->start_conversation_button : self->done_button;
   if (target && gtk_widget_get_sensitive(target))
     gtk_widget_grab_focus(target);
 }
@@ -1490,6 +1509,7 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   BIND(publish_retry);
   BIND(publish_later);
   BIND(done_status);
+  BIND(start_conversation_button);
   BIND(done_button);
 #undef BIND
   /* Reachable by name (gtk_widget_get_template_child) for tests. */
@@ -1503,7 +1523,7 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
     "onboarding.start", "onboarding.refresh", "onboarding.read-only",
     "onboarding.account-continue", "onboarding.signer-continue", "onboarding.inbox-continue",
     "onboarding.keep-current", "onboarding.retry", "onboarding.publish-continue",
-    "onboarding.later", "onboarding.finish",
+    "onboarding.later", "onboarding.finish", "onboarding.start-conversation",
   };
   for (guint i = 0; i < G_N_ELEMENTS(navigation_actions); i++)
     gtk_widget_class_install_action(widget_class, navigation_actions[i], NULL, nav_action);
@@ -1578,6 +1598,11 @@ gh_onboarding_attach(GhWindow *window, const GhInboxSetupConfig *config)
   GhOnboardingView *view = gh_onboarding_view_new(config);
   gtk_stack_add_named(gh_window_get_root_stack(window), GTK_WIDGET(view), "onboarding");
   g_signal_connect(view, "finished", G_CALLBACK(on_finished), NULL);
+  g_signal_connect_object(window, "action-enabled-changed::new-message",
+                          G_CALLBACK(sync_start_conversation), view, G_CONNECT_SWAPPED);
+  g_signal_connect_object(window, "action-added::new-message",
+                          G_CALLBACK(sync_start_conversation), view, G_CONNECT_SWAPPED);
+  sync_start_conversation(view);
   /* The banners' [Set Up] (GH_STATUS_ACTION_SETUP_INBOX). */
   g_autoptr(GSimpleAction) setup = g_simple_action_new("setup-inbox", NULL);
   g_signal_connect_object(setup, "activate", G_CALLBACK(on_setup_inbox), view, 0);

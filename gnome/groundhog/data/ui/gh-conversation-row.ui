@@ -104,5 +104,31 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
       </object>
     </child>
+    <child>
+      <object class="GtkPopoverMenu" id="context_popover">
+        <property name="menu-model">context_menu</property>
+        <property name="has-arrow">false</property>
+        <property name="halign">1</property>
+      </object>
+    </child>
   </template>
+  <menu id="context_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Mute…</attribute>
+        <attribute name="action">row.mute</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Conversation _Info</attribute>
+        <attribute name="action">row.info</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Delete…</attribute>
+        <attribute name="action">row.delete</attribute>
+      </item>
+    </section>
+  </menu>
 </interface>

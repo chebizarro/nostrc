@@ -473,6 +473,7 @@ test_shortcuts_bound_and_listed(void)
     { "win.previous-conversation", { "<Alt>Up", "<Control>Page_Up", NULL } },
     { "win.next-conversation", { "<Alt>Down", "<Control>Page_Down", NULL } },
     { "win.new-message", { "<Control>n", NULL } },
+    { "win.conversation-info", { "<Control>i", NULL } },
     { "win.show-help-overlay", { "<Control>question", NULL } },
     { "app.preferences", { "<Control>comma", NULL } },
     { "window.close", { "<Control>w", NULL } },
@@ -502,7 +503,8 @@ test_shortcuts_bound_and_listed(void)
   }
 
   /* Every bound accelerator is listed, and every listed one is bound (F10
-   * is the primary menu button's, checked in the sidebar test). */
+   * is the primary menu button's, checked in the sidebar test; Shift+F10
+   * and Menu the conversation list's, in test_conversation_menu.c). */
   g_autoptr(GPtrArray) all_bound = g_ptr_array_new_with_free_func(g_free);
   g_auto(GStrv) actions = gtk_application_list_action_descriptions(app);
   for (guint i = 0; actions[i]; i++) {
@@ -515,9 +517,13 @@ test_shortcuts_bound_and_listed(void)
     }
   }
   g_autofree char *f10 = normalized("F10");
+  g_autofree char *shift_f10 = normalized("<Shift>F10");
+  g_autofree char *menu_key = normalized("Menu");
+  g_assert_true(contains(listed, shift_f10) && contains(listed, menu_key));
   for (guint i = 0; i < listed->len; i++) {
     const char *name = g_ptr_array_index(listed, i);
-    if (!g_str_equal(name, f10) && !contains(all_bound, name))
+    if (!g_str_equal(name, f10) && !g_str_equal(name, shift_f10) &&
+        !g_str_equal(name, menu_key) && !contains(all_bound, name))
       g_error("gh-shortcuts-window lists %s, which nothing binds", name);
   }
 

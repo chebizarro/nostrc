@@ -111,7 +111,8 @@ gchar *gh_contact_directory_dup_conversation_title(GhContactDirectory *self,
                                                    GhConversation *conversation);
 
 /* "profile-changed" (gchar *pubkey): a contact's display name or NIP-05, or
- * whether it may be shown, changed. */
+ * whether it may be shown, changed (a fetch, an accept, or a store bound or
+ * unbound, which restores or drops the cache). */
 
 G_END_DECLS
 #endif

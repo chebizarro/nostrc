@@ -41,6 +41,7 @@ struct _GhConversation {
   gint64 floor_created_at;
   gchar *floor_id;
   gchar *fallback_title;     /* abbreviated npubs of the peers */
+  gchar *contact_title;      /* the peers' cached display names (never a request's) */
   gchar *preview;
   gboolean has_own_message;
   gboolean accepted;
@@ -686,9 +687,27 @@ gh_conversation_get_title(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), NULL);
   /* A request's subject is whatever its sender chose: never its name. */
-  const gchar *subject = gh_conversation_get_is_request(self)
-                           ? NULL : gh_conversation_get_subject(self);
-  return subject ? subject : self->fallback_title;
+  gboolean request = gh_conversation_get_is_request(self);
+  const gchar *subject = request ? NULL : gh_conversation_get_subject(self);
+  if (subject)
+    return subject;
+  /* PT-8: a request is titled by its npubs, whatever is cached. */
+  return self->contact_title && !request ? self->contact_title : self->fallback_title;
+}
+
+void
+gh_conversation_set_contact_title(GhConversation *self, const gchar *title)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  if (title && !*title)
+    title = NULL;
+  if (g_strcmp0(self->contact_title, title) == 0)
+    return;
+  g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
+  g_free(self->contact_title);
+  self->contact_title = g_strdup(title);
+  if (g_strcmp0(old_title, gh_conversation_get_title(self)) != 0)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
 }
 
 const gchar *
@@ -781,6 +800,7 @@ gh_conversation_finalize(GObject *object)
   clear_seen(self);
   g_free(self->floor_id);
   g_free(self->fallback_title);
+  g_free(self->contact_title);
   g_free(self->preview);
   G_OBJECT_CLASS(gh_conversation_parent_class)->finalize(object);
 }

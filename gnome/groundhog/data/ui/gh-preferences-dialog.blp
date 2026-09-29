@@ -103,6 +103,24 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         subtitle: _("The latest message appears under each conversation");
       }
     }
+
+    // Shown when the account's encrypted store can list its blocks
+    // (gh_blocked_page_attach(), nostrc-qp24.72).
+    Adw.PreferencesGroup blocked_group {
+      visible: false;
+
+      Adw.ActionRow blocked_row {
+        title: _("Blocked Conversations");
+        subtitle: _("Blocked on this device only");
+        activatable: true;
+
+        [suffix]
+        Image {
+          icon-name: "go-next-symbolic";
+          accessible-role: presentation;
+        }
+      }
+    }
   }
 
   Adw.PreferencesPage messages_page {
@@ -367,7 +385,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.ActionRow no_account_row {
         title: _("No Account Selected");
-        subtitle: _("Choose an account from the account menu");
+        subtitle: _("Choose an account from the main menu");
       }
 
       // Title (name or short npub) and subtitle (npub) are set from C.

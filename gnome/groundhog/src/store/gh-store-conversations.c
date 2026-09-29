@@ -1403,6 +1403,49 @@ gh_store_conversations_set_blocked(GhStoreConversations *self, const gchar *room
   return change_block(self, room_id, !!blocked, FALSE, error);
 }
 
+void
+gh_store_blocked_room_free(GhStoreBlockedRoom *room)
+{
+  if (!room)
+    return;
+  g_free(room->room_id);
+  g_free(room);
+}
+
+GPtrArray *
+gh_store_conversations_list_blocked(GhStoreConversations *self, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), NULL);
+  if (!check_open(self, error))
+    return NULL;
+  GhStore *store = self->store;
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT backend_key, MAX(last_activity, forgotten_before) AS activity, "
+    "  EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id) "
+    "FROM conversations c WHERE backend = 1 AND request_state = 2 "
+    "ORDER BY activity DESC, backend_key", error);
+  if (!stmt)
+    return NULL;
+  g_autoptr(GPtrArray) rooms =
+    g_ptr_array_new_with_free_func((GDestroyNotify)gh_store_blocked_room_free);
+  gboolean has_row = FALSE;
+  while (TRUE) {
+    if (!step_row(store, stmt, &has_row, "Listing blocked conversations", error)) {
+      sqlite3_finalize(stmt);
+      return NULL;
+    }
+    if (!has_row)
+      break;
+    GhStoreBlockedRoom *room = g_new0(GhStoreBlockedRoom, 1);
+    room->room_id = column_text(stmt, 0);
+    room->last_activity = sqlite3_column_int64(stmt, 1);
+    room->has_messages = sqlite3_column_int(stmt, 2) != 0;
+    g_ptr_array_add(rooms, room);
+  }
+  sqlite3_finalize(stmt);
+  return g_steal_pointer(&rooms);
+}
+
 /* ---- Legacy seen file ------------------------------------------------------------------ */
 
 gchar *

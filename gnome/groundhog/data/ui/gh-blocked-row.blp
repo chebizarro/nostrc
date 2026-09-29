@@ -1,0 +1,19 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One blocked conversation in GhBlockedPage (gh-blocked-page.blp): the other
+// people's npubs, shortened in the title and in full in the subtitle, and
+// Unblock. Title, subtitle, the button's target and its accessible label
+// are set by gh-blocked-page.c.
+Adw.ActionRow row {
+  use-markup: false;
+  subtitle-selectable: true;
+
+  [suffix]
+  Button unblock_button {
+    label: _("_Unblock");
+    use-underline: true;
+    valign: center;
+    action-name: "blocked.unblock";
+  }
+}

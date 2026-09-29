@@ -55,10 +55,22 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <object class="AdwStatusPage" id="account_unselected">
     <property name="icon-name">avatar-default-symbolic</property>
     <property name="title" translatable="yes">Choose an Account</property>
-    <property name="description" translatable="yes">Pick an identity from the account menu. This choice is Groundhog's own and does not change Gnostr.</property>
+    <property name="description" translatable="yes">Pick an identity to use here. This choice is Groundhog's own and does not change Gnostr. You can switch later from the main menu.</property>
     <style>
       <class name="groundhog-shell-status"/>
     </style>
+    <property name="child">
+      <object class="GtkMenuButton" id="account_choose_button">
+        <property name="label" translatable="yes">_Choose Account…</property>
+        <property name="use-underline">true</property>
+        <property name="halign">3</property>
+        <property name="menu-model">account_menu</property>
+        <style>
+          <class name="pill"/>
+          <class name="suggested-action"/>
+        </style>
+      </object>
+    </property>
   </object>
   <object class="AdwStatusPage" id="account_missing">
     <property name="icon-name">dialog-warning-symbolic</property>
@@ -79,26 +91,21 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </property>
   </object>
-  <object class="GtkMenuButton" id="account_button">
-    <property name="icon-name">avatar-default-symbolic</property>
-    <property name="menu-model">account_menu</property>
-    <property name="tooltip-text" translatable="yes">Account</property>
-    <accessibility>
-      <property name="label" translatable="yes">Account</property>
-    </accessibility>
-  </object>
-  <menu id="account_menu">
-    <section id="identities"></section>
-    <section>
-      <item>
-        <attribute name="label" translatable="yes">No Account (Read-Only)</attribute>
-        <attribute name="action">account.select</attribute>
-        <attribute name="target"></attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">_Refresh Accounts</attribute>
-        <attribute name="action">account.refresh</attribute>
-      </item>
-    </section>
+  <menu id="account_section">
+    <submenu id="account_menu">
+      <attribute name="label" translatable="yes">_Account</attribute>
+      <section id="identities"></section>
+      <section>
+        <item>
+          <attribute name="label" translatable="yes">No Account (Read-Only)</attribute>
+          <attribute name="action">account.select</attribute>
+          <attribute name="target"></attribute>
+        </item>
+        <item>
+          <attribute name="label" translatable="yes">_Refresh Accounts</attribute>
+          <attribute name="action">account.refresh</attribute>
+        </item>
+      </section>
+    </submenu>
   </menu>
 </interface>

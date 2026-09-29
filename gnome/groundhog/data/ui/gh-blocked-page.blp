@@ -1,0 +1,62 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Preferences › Privacy › Blocked Conversations (nostrc-qp24.72): the
+// conversations blocked on this device, each with Unblock. Pushed as a
+// subpage of GhPreferencesDialog by gh-blocked-page.c; the rows are
+// gh-blocked-row.blp. Blocks live only in the account's encrypted store:
+// nothing is published and nobody is told. People are shown by npub only;
+// no profile is looked up for them (PT-8).
+template $GhBlockedPage: Adw.NavigationPage {
+  title: _("Blocked Conversations");
+  tag: "blocked";
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Stack stack {
+      StackPage {
+        name: "list";
+
+        child: Adw.PreferencesPage {
+          Adw.PreferencesGroup {
+            description: _("Blocks are kept on this device only, and nobody is told when you block or unblock them. An unblocked conversation returns to Message Requests unless you wrote in it.");
+
+            ListBox list {
+              selection-mode: none;
+
+              styles [
+                "boxed-list",
+              ]
+
+              accessibility {
+                label: _("Blocked conversations");
+              }
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "action-unavailable-symbolic";
+          title: _("No Blocked Conversations");
+          description: _("Conversations you block from Conversation Info or Message Requests are listed here.");
+        };
+      }
+
+      // The description is the reason the list can't be read (set from C).
+      StackPage {
+        name: "error";
+
+        child: Adw.StatusPage error_page {
+          icon-name: "dialog-warning-symbolic";
+          title: _("Blocked Conversations Unavailable");
+        };
+      }
+    };
+  };
+}

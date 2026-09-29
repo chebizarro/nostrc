@@ -73,6 +73,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="accelerator">&lt;Control&gt;n</property>
               </object>
             </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes" context="shortcut window">Conversation Info</property>
+                <property name="accelerator">&lt;Control&gt;i</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes" context="shortcut window">Conversation Menu</property>
+                <property name="accelerator">&lt;Shift&gt;F10 Menu</property>
+              </object>
+            </child>
           </object>
         </child>
       </object>

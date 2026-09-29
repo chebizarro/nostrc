@@ -761,18 +761,6 @@ sidebar_shown(gpointer data)
          !gtk_widget_get_mapped(GTK_WIDGET(f->content));
 }
 
-/* Stands in for gh-account-ui.c's account menu button, which the
- * application packs at the start of the sidebar header, so header widths
- * are those of the real window. */
-static void
-pack_account_button(GhWindow *window)
-{
-  GtkWidget *button = gtk_menu_button_new();
-  gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(button), "avatar-default-symbolic");
-  gtk_widget_set_tooltip_text(button, "Account");
-  adw_header_bar_pack_start(gh_sidebar_page_get_header(gh_window_get_sidebar(window)), button);
-}
-
 static void
 assert_fits(Fixture *f)
 {
@@ -796,7 +784,6 @@ test_collapsed_360x294(Fixture *f, gconstpointer data)
   gh_composer_set_disabled_reason(gh_content_page_get_composer(f->content),
                                   "Read-only: the Nostr signer service is not installed or running");
   gh_status_set_inbox(gh_window_get_status(f->window), GH_STATUS_INBOX_UNREACHABLE, NULL);
-  pack_account_button(f->window);
   present(f, 360, 294);
   spin_until(is_collapsed_with_rows, f);
   drain_idle();
@@ -912,7 +899,6 @@ take_shot(Fixture *f, const char *dir, int width, int height, Scene scene, const
 {
   Shot shot = { gh_window_new(NULL), scene == SCENE_CONVERSATION };
   GhSidebarPage *sidebar = gh_window_get_sidebar(shot.window);
-  pack_account_button(shot.window);
   GhStatus *status = gh_window_get_status(shot.window);
   gh_conversation_list_attach(shot.window, f->store, NULL);
   gh_status_set_account_active(status, TRUE);

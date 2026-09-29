@@ -7,10 +7,12 @@
 
 G_BEGIN_DECLS
 
-/* Adds the account pages and account menu (data/ui/gh-account-ui.blp) to the
- * window's sidebar stack and header, the "account" action group (select,
- * refresh) to window, and keeps the sidebar's account page, the header
- * subtitle and the window GhStatus's account, network and signer inputs in
+/* Adds the account pages (data/ui/gh-account-ui.blp) to the window's
+ * sidebar stack and the account menu as the first entry ("Account") of the
+ * sidebar's main menu, the "account" action group (select, refresh) to
+ * window, and keeps the sidebar's account page, the header title
+ * (the active account's name, else "Groundhog"; no subtitle) and the window
+ * GhStatus's account, network and signer inputs in
  * step with the controller and the network. (Why sending is unavailable is
  * the composer's, gh-send-ui.h.) On a real account-page transition it
  * announces the limit (gh_account_describe_limits()) and moves keyboard

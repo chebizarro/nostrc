@@ -63,7 +63,8 @@ jobs:
             test-groundhog-privacy-summary test-groundhog-conversation-info \
             test-groundhog-nip29-service \
             test-groundhog-net \
-            test-groundhog-group-ui
+            test-groundhog-group-ui \
+            test-groundhog-conversation-menu
 
       - name: Require complete Groundhog test registration
         run: |
@@ -93,6 +94,7 @@ jobs:
               'groundhog-conversation-info-gui', 'groundhog-nip29-service',
               'groundhog-net',
               'groundhog-group-ui', 'groundhog-group-ui-gui',
+              'groundhog-conversation-menu', 'groundhog-conversation-menu-gui',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -174,7 +176,7 @@ jobs:
         groundhog-expiry groundhog-auth-policy groundhog-contact-directory
         groundhog-privacy-e2e groundhog-new-message groundhog-requests
         groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service
-        groundhog-net groundhog-group-ui nostrc-test-bus-selftest
+        groundhog-net groundhog-group-ui groundhog-conversation-menu nostrc-test-bus-selftest
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4

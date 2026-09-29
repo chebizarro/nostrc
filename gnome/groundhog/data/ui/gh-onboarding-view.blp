@@ -800,16 +800,33 @@ template $GhOnboardingView: Adw.Bin {
             "compact",
           ]
 
-          child: Button done_button {
-            label: _("_Start Using Groundhog");
-            use-underline: true;
+          // Charter §7.8 step 6: the first conversation is one click away.
+          // Hidden while win.new-message is unavailable (gh-onboarding-view.c).
+          child: Box {
+            orientation: vertical;
+            spacing: 12;
             halign: center;
-            action-name: "onboarding.finish";
 
-            styles [
-              "pill",
-              "suggested-action",
-            ]
+            Button start_conversation_button {
+              label: _("_Start a Conversation");
+              use-underline: true;
+              action-name: "onboarding.start-conversation";
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            }
+
+            Button done_button {
+              label: _("_Go to Conversations");
+              use-underline: true;
+              action-name: "onboarding.finish";
+
+              styles [
+                "pill",
+              ]
+            }
           };
         };
       };

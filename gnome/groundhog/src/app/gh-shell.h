@@ -31,6 +31,9 @@ G_DECLARE_FINAL_TYPE(GhSidebarPage, gh_sidebar_page, GH, SIDEBAR_PAGE, AdwNaviga
 
 AdwHeaderBar *gh_sidebar_page_get_header(GhSidebarPage *self);
 AdwWindowTitle *gh_sidebar_page_get_window_title(GhSidebarPage *self);
+/* The header's title outside Message Requests (e.g. the active account's
+ * name); NULL or "" restores the template's ("Groundhog"). */
+void gh_sidebar_page_set_title(GhSidebarPage *self, const gchar *title);
 GtkStack *gh_sidebar_page_get_stack(GhSidebarPage *self);
 GtkListView *gh_sidebar_page_get_list(GhSidebarPage *self);
 AdwBanner *gh_sidebar_page_get_banner(GhSidebarPage *self);

@@ -58,6 +58,10 @@ G_BEGIN_DECLS
  * the one list of what this build performs; tests/check_privacy.py requires a
  * consumer outside this dialog for every key whose features that list has.
  *
+ * Privacy › Blocked Conversations (hidden until gh_blocked_page_attach(),
+ * gh-blocked-page.h, gives it the account store's blocks) lists blocked
+ * conversations with Unblock.
+ *
  * The Account page shows the account set with
  * gh_preferences_dialog_set_account(); with a forget function it offers
  * "Delete All Messages on This Device" (the prefs.delete-all action), which

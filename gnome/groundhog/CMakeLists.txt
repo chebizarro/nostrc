@@ -33,7 +33,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
   gh-conversation-info-dialog gh-conversation-info-person
-  gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog)
+  gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
+  gh-blocked-page gh-blocked-row gh-conversation-menu)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -93,6 +94,7 @@ add_custom_command(
           ${GROUNDHOG_DATA}/relay-suggestions.json
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic-rtl.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/avatar-default-symbolic.svg
           ${GROUNDHOG_UI_FILES}
   VERBATIM)
 
@@ -1645,6 +1647,57 @@ else()
                  "conversation UI)")
 endif()
 # --- end G20b NIP-29 group UI ---
+# --- W16 UX polish (nostrc-qp24.66, .70, .71, .72, .74, .80) ---
+# Small UX items on top of G11-G19 (privacy charter §7.4, §7.8, §7.9, §7.13):
+#  - GhBlockedPage (data/ui/gh-blocked-page.blp, gh-blocked-row.blp): Preferences
+#    › Privacy › Blocked Conversations with Unblock (qp24.72), GTK-only in the
+#    preferences library; gh-blocked-conversations.c lists and unblocks through
+#    the encrypted store (gh_store_conversations_list_blocked(),
+#    gh_conversation_actions_block());
+#  - gh-conversation-menu.c (data/ui/gh-conversation-menu.blp): the actions
+#    behind a conversation row's context menu, Mute…, Conversation Info and
+#    Delete… (qp24.74), on GhConversationActions like Conversation Info;
+#  - GhContactTitles: accepted conversations titled with the contact
+#    directory's cached names, live, never a request's (qp24.66, PT-8).
+# Ctrl+I (qp24.71), the header (qp24.70) and onboarding's Start a
+# Conversation (qp24.80) are edits of the G11/G14 files.
+target_sources(groundhog-preferences PRIVATE src/ui/gh-blocked-page.c)
+set(GROUNDHOG_W16_MENU_SOURCES src/ui/gh-conversation-menu.c src/app/gh-blocked-conversations.c)
+if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+  target_sources(groundhog PRIVATE src/app/gh-contact-titles.c)
+endif()
+if (TARGET test-groundhog-contact-directory)
+  target_sources(test-groundhog-contact-directory PRIVATE src/app/gh-contact-titles.c)
+endif()
+if (TARGET groundhog-account-store AND TARGET groundhog-notifier AND GROUNDHOG_EXPIRY_SOURCES AND
+    GROUNDHOG_OUTBOX_SOURCES)
+  target_sources(groundhog PRIVATE ${GROUNDHOG_W16_MENU_SOURCES})
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # Default mode: the blocked list and unblock over a real (in-memory)
+    # SQLCipher store. --gui: the row menu's Mute…, Conversation Info and
+    # Delete… through their confirmations, Shift+F10/Menu, no menu for a
+    # group, the Blocked Conversations page from Preferences, and a row and
+    # header following a contact title; it self-skips (77) without a display.
+    add_executable(test-groundhog-conversation-menu tests/ui/test_conversation_menu.c
+      ${GROUNDHOG_W16_MENU_SOURCES} ${GROUNDHOG_CONVERSATION_INFO_SOURCES}
+      ${GROUNDHOG_EXPIRY_SOURCES})
+    target_include_directories(test-groundhog-conversation-menu PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+    target_link_libraries(test-groundhog-conversation-menu PRIVATE groundhog-notifier
+      groundhog-store-conversations groundhog-conversation-ui groundhog-preferences)
+    target_compile_options(test-groundhog-conversation-menu PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-conversation-menu)
+    add_dependencies(test-groundhog-conversation-menu groundhog-test-schemas)
+    add_test(NAME groundhog-conversation-menu COMMAND test-groundhog-conversation-menu)
+    set_tests_properties(groundhog-conversation-menu PROPERTIES TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+    add_test(NAME groundhog-conversation-menu-gui COMMAND test-groundhog-conversation-menu --gui)
+    set_tests_properties(groundhog-conversation-menu-gui PROPERTIES SKIP_RETURN_CODE 77
+      TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+endif()
+# --- end W16 UX polish ---
 
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from

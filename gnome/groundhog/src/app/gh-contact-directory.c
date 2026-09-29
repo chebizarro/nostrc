@@ -1164,6 +1164,20 @@ gh_contact_directory_set_conversations(GhContactDirectory *self,
   rescan(self, FALSE, FALSE);
 }
 
+/* Accepted contacts whose name or NIP-05 is shown, into shown. */
+static void
+collect_shown(GhContactDirectory *self, GHashTable *shown)
+{
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->contacts);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Contact *contact = value;
+    if (contact->accepted && (contact->name || contact->nip05))
+      g_hash_table_add(shown, g_strdup(contact->pubkey));
+  }
+}
+
 gboolean
 gh_contact_directory_set_store(GhContactDirectory *self, GhStore *store, GError **error)
 {
@@ -1177,14 +1191,24 @@ gh_contact_directory_set_store(GhContactDirectory *self, GhStore *store, GError 
                         "The store does not belong to the active account");
     return FALSE;
   }
+  /* Names that the cache drops or restores change what is shown: say so
+   * (conversation titles follow "profile-changed", nostrc-qp24.66). */
+  g_autoptr(GHashTable) shown = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  collect_shown(self, shown);
   stop_schedule(self);
   clear_cache(self);
   self->store = store;
-  if (!store)
-    return TRUE;
-  restore(self);
-  /* S1: nothing is refreshed right away. */
-  schedule_run_within(self, RUN_MIN_S, RUN_MAX_S);
+  if (store) {
+    restore(self);
+    /* S1: nothing is refreshed right away. */
+    schedule_run_within(self, RUN_MIN_S, RUN_MAX_S);
+    collect_shown(self, shown);
+  }
+  GHashTableIter iter;
+  gpointer pubkey;
+  g_hash_table_iter_init(&iter, shown);
+  while (g_hash_table_iter_next(&iter, &pubkey, NULL))
+    g_signal_emit(self, signals[SIGNAL_PROFILE_CHANGED], 0, pubkey);
   return TRUE;
 }
 

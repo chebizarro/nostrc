@@ -23,6 +23,14 @@ void gh_conversation_row_set_conversation(GhConversationRow *self,
 GhConversation *gh_conversation_row_get_conversation(GhConversationRow *self);
 void gh_conversation_row_set_show_preview(GhConversationRow *self, gboolean show_preview);
 const gchar *gh_conversation_row_get_summary(GhConversationRow *self);
+/* Opens the row's context menu (charter §7.4; nostrc-qp24.74): Mute… (not
+ * for a message request), Conversation Info and Delete…, which run the
+ * window's win.mute-conversation, win.show-conversation-info and
+ * win.delete-conversation for the row's room (gh-conversation-menu.h).
+ * Right click and a touchscreen long press open it too. FALSE (nothing
+ * opens) for a group conversation or a window without those actions. */
+gboolean gh_conversation_row_popup_menu(GhConversationRow *self);
+GtkPopover *gh_conversation_row_get_menu(GhConversationRow *self);
 
 /* The list's time for a unix timestamp relative to now (local time): the
  * time of day today, "Yesterday", the weekday within the last week, else the

@@ -1059,6 +1059,9 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(delete_group);
   BIND(delete_all_dialog);
 #undef BIND
+  /* Privacy › Blocked Conversations, shown by gh_blocked_page_attach(). */
+  gtk_widget_class_bind_template_child_full(widget_class, "blocked_group", FALSE, 0);
+  gtk_widget_class_bind_template_child_full(widget_class, "blocked_row", FALSE, 0);
 }
 
 static void

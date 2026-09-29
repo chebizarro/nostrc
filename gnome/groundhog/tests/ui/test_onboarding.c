@@ -292,6 +292,14 @@ sensitive(Fixture *f, const gchar *button)
   return gtk_widget_get_sensitive(child(f, button));
 }
 
+/* A GhWindowNewMessageFunc that counts how often New Message opened. */
+static void
+count_new_message(GhWindow *window, gpointer data)
+{
+  (void)window;
+  (*(guint *)data)++;
+}
+
 static const gchar *
 root_page(Fixture *f)
 {
@@ -551,10 +559,28 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
   g_auto(GStrv) discovery = g_settings_get_strv(f->settings, "discovery-relays");
   g_assert_cmpuint(g_strv_length(discovery), ==, 2);
 
+  /* Charter §7.8 step 6 (nostrc-qp24.80): [Start a Conversation] finishes
+   * and opens New Message, and is offered only while the window can. */
+  guint new_message = 0;
+  gh_window_set_new_message_handler(f->window, count_new_message, &new_message, NULL);
   act(f, "onboarding.publish-continue");
   g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "done");
-  act(f, "onboarding.finish");
+  GtkWidget *start = child(f, "start_conversation_button");
+  g_assert_true(gtk_widget_get_visible(start));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(start)), ==, "_Start a Conversation");
+  g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(start)), ==,
+                  "onboarding.start-conversation");
+  g_assert_true(gtk_widget_has_css_class(start, "suggested-action"));
+  g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(child(f, "done_button"))), ==,
+                  "onboarding.finish");
+  gh_window_set_new_message_enabled(f->window, FALSE);
+  g_assert_false(gtk_widget_get_visible(start));
+  gh_window_set_new_message_enabled(f->window, TRUE);
+  g_assert_true(gtk_widget_get_visible(start));
+  act(f, "onboarding.start-conversation");
   g_assert_cmpstr(root_page(f), ==, "main");
+  g_assert_cmpuint(new_message, ==, 1);
+  gh_window_set_new_message_handler(f->window, NULL, NULL, NULL);
 }
 
 /* ---- UX-6: skip paths ----------------------------------------------------- */

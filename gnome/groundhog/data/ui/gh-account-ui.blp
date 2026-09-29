@@ -61,12 +61,24 @@ Adw.StatusPage account_none {
 Adw.StatusPage account_unselected {
   icon-name: "avatar-default-symbolic";
   title: _("Choose an Account");
-  // Focus target: the header's account_button, whose menu is the action.
-  description: _("Pick an identity from the account menu. This choice is Groundhog's own and does not change Gnostr.");
+  description: _("Pick an identity to use here. This choice is Groundhog's own and does not change Gnostr. You can switch later from the main menu.");
 
   styles [
     "groundhog-shell-status",
   ]
+
+  // Focus target: the same menu as the main menu's Account entry.
+  child: MenuButton account_choose_button {
+    label: _("_Choose Account…");
+    use-underline: true;
+    halign: center;
+    menu-model: account_menu;
+
+    styles [
+      "pill",
+      "suggested-action",
+    ]
+  };
 }
 
 Adw.StatusPage account_missing {
@@ -90,31 +102,28 @@ Adw.StatusPage account_missing {
   };
 }
 
-// Packed at the start of the sidebar header.
-MenuButton account_button {
-  icon-name: "avatar-default-symbolic";
-  menu-model: account_menu;
-  tooltip-text: _("Account");
+// The first section of the sidebar's main menu (gh-account-ui.c): the
+// account switcher lives there rather than in its own header button, so the
+// sidebar header keeps room for its title down to the 280 px sidebar and the
+// 360 px window (nostrc-qp24.70).
+menu account_section {
+  submenu account_menu {
+    label: _("_Account");
 
-  accessibility {
-    label: _("Account");
-  }
-}
+    // Filled from the signer's identity list by gh-account-ui.c.
+    section identities {}
 
-menu account_menu {
-  // Filled from the signer's identity list by gh-account-ui.c.
-  section identities {}
+    section {
+      item {
+        label: _("No Account (Read-Only)");
+        action: "account.select";
+        target: "";
+      }
 
-  section {
-    item {
-      label: _("No Account (Read-Only)");
-      action: "account.select";
-      target: "";
-    }
-
-    item {
-      label: _("_Refresh Accounts");
-      action: "account.refresh";
+      item {
+        label: _("_Refresh Accounts");
+        action: "account.refresh";
+      }
     }
   }
 }

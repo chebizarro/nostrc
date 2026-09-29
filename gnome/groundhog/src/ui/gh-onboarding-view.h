@@ -38,7 +38,9 @@ const gchar *gh_onboarding_item_get_icon_name(GhOnboardingItem *self);
  *           relays; "Set Up Later" finishes and leaves the banner
  *  confirm  exactly what publishing does and where (GhInboxSetup plan)
  *  publish  GhInboxSetup's progress and each relay's outcome
- *  done
+ *  done     [Start a Conversation] finishes and opens New Message
+ *           (win.new-message; shown only while the window has it enabled),
+ *           or Go to Conversations
  *
  * Nothing on the welcome, account, signer, inbox or confirm pages contacts
  * a relay (PD-13, PT-9): only Publish and Check Privacy do, on the relays

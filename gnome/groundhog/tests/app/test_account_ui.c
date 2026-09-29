@@ -4,9 +4,11 @@
  * narrow/adaptive + accessibility work) only reacts to a real account-state
  * transition, not to every incidental "changed"/network-monitor
  * notification. It registers the compiled GResource and uses a fake identity
- * store instead of the signer, but never maps or presents a window, so it
+ * store instead of the signer. The focus test never maps a window, so it
  * proves construction and focus bookkeeping only; a real screen reader
- * announcement still needs a manual GNOME check.
+ * announcement still needs a manual GNOME check. The header test presents
+ * windows at 360, 620 and 960 px to check that the sidebar title is not
+ * ellipsized (nostrc-qp24.70).
  */
 #include "gh-account-ui.h"
 #include "gh-identity.h"
@@ -122,11 +124,12 @@ assert_account_widgets(GhWindow *window)
     { "account-discovering", NULL },
     { "account-store-unavailable", "_Try Again" },
     { "account-none", "_Refresh" },
-    { "account-unselected", NULL },
+    { "account-unselected", "_Choose Account…" },
     { "account-missing", "_Refresh" },
   };
   GhSidebarPage *sidebar = gh_window_get_sidebar(window);
   GtkStack *stack = gh_sidebar_page_get_stack(sidebar);
+  GMenuModel *account_menu = NULL;
 
   for (guint i = 0; i < G_N_ELEMENTS(pages); i++) {
     GtkWidget *page = gtk_stack_get_child_by_name(stack, pages[i].name);
@@ -135,6 +138,15 @@ assert_account_widgets(GhWindow *window)
     GtkWidget *button = adw_status_page_get_child(ADW_STATUS_PAGE(page));
     if (!pages[i].action_label) {
       g_assert_null(button);
+      continue;
+    }
+    if (GTK_IS_MENU_BUTTON(button)) {
+      /* "Choose an Account" opens the account menu itself. */
+      g_assert_cmpstr(gtk_menu_button_get_label(GTK_MENU_BUTTON(button)), ==,
+                      pages[i].action_label);
+      g_assert_true(gtk_menu_button_get_use_underline(GTK_MENU_BUTTON(button)));
+      g_assert_true(gtk_widget_has_css_class(button, "pill"));
+      account_menu = gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button));
       continue;
     }
     g_assert_true(GTK_IS_BUTTON(button));
@@ -147,15 +159,29 @@ assert_account_widgets(GhWindow *window)
   /* Standalone onboarding is only for builds without account support. */
   g_assert_null(gtk_stack_get_child_by_name(stack, "onboarding"));
 
-  /* AdwHeaderBar nests packed children inside its own boxes. */
+  /* nostrc-qp24.70: no account button in the sidebar header (its title
+   * needs the room); the account menu is the main menu's first entry. The
+   * header's only menu button is the main menu. */
   GtkMenuButton *button = find_menu_button(GTK_WIDGET(gh_sidebar_page_get_header(sidebar)));
   g_assert_nonnull(button);
-  g_assert_cmpstr(gtk_menu_button_get_icon_name(button), ==, "avatar-default-symbolic");
-  g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(button)), ==, "Account");
-  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                      "Account");
-
-  GMenuModel *menu = gtk_menu_button_get_menu_model(button);
+  g_assert_true((GObject *)button == gtk_widget_get_template_child(GTK_WIDGET(sidebar),
+                                                                    GH_TYPE_SIDEBAR_PAGE,
+                                                                    "primary_button"));
+  GMenuModel *primary = gtk_menu_button_get_menu_model(button);
+  g_assert_cmpint(g_menu_model_get_n_items(primary), ==, 3);
+  g_autoptr(GMenuModel) account_section = g_menu_model_get_item_link(primary, 0,
+                                                                     G_MENU_LINK_SECTION);
+  g_assert_nonnull(account_section);
+  g_assert_cmpint(g_menu_model_get_n_items(account_section), ==, 1);
+  g_autofree char *account_label = NULL;
+  g_assert_true(g_menu_model_get_item_attribute(account_section, 0, G_MENU_ATTRIBUTE_LABEL, "s",
+                                                &account_label));
+  g_assert_cmpstr(account_label, ==, "_Account");
+  g_autoptr(GMenuModel) menu = g_menu_model_get_item_link(account_section, 0,
+                                                          G_MENU_LINK_SUBMENU);
+  g_assert_nonnull(menu);
+  /* The same menu as the "Choose an Account" page's button. */
+  g_assert_true(menu == account_menu);
   g_assert_cmpint(g_menu_model_get_n_items(menu), ==, 2);
   GMenuModel *identities = g_menu_model_get_item_link(menu, 0, G_MENU_LINK_SECTION);
   GMenuModel *other = g_menu_model_get_item_link(menu, 1, G_MENU_LINK_SECTION);
@@ -187,9 +213,10 @@ test_focus_and_announce_only_on_transition(void)
 
   spin_until(is_no_identities, controller);
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "account-none");
-  g_assert_cmpstr(adw_window_title_get_subtitle(
-                    gh_sidebar_page_get_window_title(gh_window_get_sidebar(window))), ==,
-                  "No account");
+  /* No account: the template's title, no subtitle (nostrc-qp24.70). */
+  AdwWindowTitle *title = gh_sidebar_page_get_window_title(gh_window_get_sidebar(window));
+  g_assert_cmpstr(adw_window_title_get_title(title), ==, "Groundhog");
+  g_assert_cmpstr(adw_window_title_get_subtitle(title), ==, "");
 
   GtkWidget *visible = gtk_stack_get_child_by_name(stack, "account-none");
   GtkWidget *action = adw_status_page_get_child(ADW_STATUS_PAGE(visible));
@@ -216,8 +243,8 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_cmpuint(gh_account_ui_get_announcements(window), ==, announced);
 
   /* An identity appears but none is chosen: the focus target is named
-   * explicitly as the header's account menu, which is not a child of the
-   * "Choose an Account" page at all (charter §7.14, qp24.8.6). */
+   * explicitly as the page's Choose Account menu (charter §7.14,
+   * qp24.8.6). */
   g_mutex_lock(&store.lock);
   store.empty = FALSE;
   g_mutex_unlock(&store.lock);
@@ -225,9 +252,8 @@ test_focus_and_announce_only_on_transition(void)
   spin_until(is_unselected, controller);
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "account-unselected");
   GtkWidget *unselected = gtk_stack_get_child_by_name(stack, "account-unselected");
-  g_assert_null(adw_status_page_get_child(ADW_STATUS_PAGE(unselected)));
-  GtkMenuButton *account_button =
-    find_menu_button(GTK_WIDGET(gh_sidebar_page_get_header(gh_window_get_sidebar(window))));
+  GtkWidget *account_button = adw_status_page_get_child(ADW_STATUS_PAGE(unselected));
+  g_assert_true(GTK_IS_MENU_BUTTON(account_button));
   GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window));
   g_assert_nonnull(focus);
   g_assert_true(focus == GTK_WIDGET(account_button) ||
@@ -244,6 +270,107 @@ test_focus_and_announce_only_on_transition(void)
   spin_until(is_null, &weak);
 }
 
+/* ---- nostrc-qp24.70: the sidebar header's title ------------------------------- */
+
+static GtkLabel *
+find_label(GtkWidget *widget, const char *text)
+{
+  if (GTK_IS_LABEL(widget) && g_strcmp0(gtk_label_get_text(GTK_LABEL(widget)), text) == 0)
+    return GTK_LABEL(widget);
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkLabel *found = find_label(c, text);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+typedef struct {
+  GtkWidget *window;
+  int width;
+} Sized;
+
+static gboolean
+is_laid_out(gpointer data)
+{
+  Sized *sized = data;
+  return gtk_widget_get_mapped(sized->window) &&
+         gtk_widget_get_width(sized->window) == sized->width;
+}
+
+static gboolean
+is_active_account(gpointer data)
+{
+  return gh_account_controller_get_state(data) == GH_ACCOUNT_STATE_ACTIVE;
+}
+
+/* The account menu lives in the main menu, so the header holds only search,
+ * New Message, the main menu and the window controls, and the active
+ * account's name is the title, without the app's name over it. The title is
+ * shown whole at the 360 px minimum (collapsed) and in the narrowest split
+ * sidebar (280 px) under GNOME's close-only controls, and at 960 px under
+ * three window buttons, as in the bead's screenshots (on macOS GTK always
+ * uses its native buttons). Message Requests mode and back keep it. */
+static void
+test_header_title_fits(void)
+{
+  static const struct {
+    int width;
+    const char *layout;
+  } sizes[] = {
+    { 360, "appmenu:close" },
+    { 620, "appmenu:close" },
+    { 960, "close,minimize,maximize:" },
+  };
+  /* The account icon of the account pages and Preferences resolves from the
+   * application's resource path (GtkApplication adds it; added here by
+   * hand) even where the icon theme has none, e.g. without Adwaita's. */
+  GtkIconTheme *theme = gtk_icon_theme_get_for_display(gdk_display_get_default());
+  gtk_icon_theme_add_resource_path(theme, "/org/nostr/Groundhog/icons");
+  g_assert_true(gtk_icon_theme_has_icon(theme, "avatar-default-symbolic"));
+
+  FakeStore store = { 0 };
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "current-npub", "npub1test");
+  GhAccountController *controller =
+    gh_account_controller_new_full(settings, NULL, fake_list, &store);
+  spin_until(is_active_account, controller);
+
+  for (guint i = 0; i < G_N_ELEMENTS(sizes); i++) {
+    g_object_set(gtk_settings_get_default(), "gtk-decoration-layout", sizes[i].layout, NULL);
+    GhWindow *window = gh_window_new(NULL);
+    gh_account_ui_attach(window, controller, settings);
+    GhSidebarPage *sidebar = gh_window_get_sidebar(window);
+    AdwWindowTitle *title = gh_sidebar_page_get_window_title(sidebar);
+    g_assert_cmpstr(adw_window_title_get_title(title), ==, "Test");
+    g_assert_cmpstr(adw_window_title_get_subtitle(title), ==, "");
+    /* Message Requests (with none, it returns at once) gives it back. */
+    gh_sidebar_page_set_show_requests(sidebar, TRUE);
+    g_assert_cmpstr(adw_window_title_get_title(title), ==, "Test");
+    gtk_window_set_default_size(GTK_WINDOW(window), sizes[i].width, 400);
+    gtk_window_present(GTK_WINDOW(window));
+    Sized sized = { GTK_WIDGET(window), sizes[i].width };
+    spin_until(is_laid_out, &sized);
+    while (g_main_context_iteration(NULL, FALSE))
+      ;
+    g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(sidebar)));
+    GtkLabel *label = find_label(GTK_WIDGET(title), "Test");
+    g_assert_nonnull(label);
+    g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(label)));
+    if (pango_layout_is_ellipsized(gtk_label_get_layout(label)))
+      g_error("the sidebar title is ellipsized at %d px (%s): %d px wide in a %d px sidebar",
+              sizes[i].width, sizes[i].layout, gtk_widget_get_width(GTK_WIDGET(label)),
+              gtk_widget_get_width(GTK_WIDGET(sidebar)));
+    gtk_window_destroy(GTK_WINDOW(window));
+  }
+  g_object_set(gtk_settings_get_default(), "gtk-decoration-layout", "appmenu:close", NULL);
+  g_settings_reset(settings, "current-npub");
+  gpointer weak = controller;
+  g_object_add_weak_pointer(G_OBJECT(controller), &weak);
+  g_object_unref(controller);
+  spin_until(is_null, &weak);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -253,9 +380,18 @@ main(int argc, char **argv)
   }
   adw_init();
   groundhog_register_resource();
+  /* The application's stylesheet, as main.c loads it, and as in the shell
+   * tests: 1sp = 1px, no animations. */
+  g_autoptr(GtkCssProvider) css = gtk_css_provider_new();
+  gtk_css_provider_load_from_resource(css, "/org/nostr/Groundhog/style.css");
+  gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(css),
+                                             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  g_object_set(gtk_settings_get_default(), "gtk-xft-dpi", 96 * 1024,
+               "gtk-enable-animations", FALSE, NULL);
 
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/account-ui/focus-and-announce-only-on-transition",
                   test_focus_and_announce_only_on_transition);
+  g_test_add_func("/groundhog/account-ui/header-title-fits", test_header_title_fits);
   return g_test_run();
 }

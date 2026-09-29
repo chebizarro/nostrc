@@ -63,14 +63,21 @@ guint gh_conversation_get_listed_unread(GhConversation *self, guint *out_first);
  * loads them on request (gh_store_conversations_load_older()). */
 gboolean gh_conversation_get_has_older(GhConversation *self);
 GhConversationBackend gh_conversation_get_backend(GhConversation *self);
-/* The subject when there is one; otherwise the peers' abbreviated npubs
- * (the account's own for a note to self). A request is always titled by the
+/* The subject when there is one; otherwise the peers' names set with
+ * gh_conversation_set_contact_title(), else their abbreviated npubs (the
+ * account's own for a note to self). A request is always titled by the
  * npubs (charter §7.9): its subject is text the sender chose, which the UI
  * shows only as secondary text (gh_conversation_get_subject()) until the
  * request is accepted. Profile names are not fetched here: a request must not
  * trigger a kind-0 lookup (charter PT-8). "title" is notified whenever this
  * value changes, accepting included. */
 const gchar *gh_conversation_get_title(GhConversation *self);
+/* The peers' display names from the contact directory's cache
+ * (GhContactTitles, nostrc-qp24.66): it replaces the abbreviated npubs as the
+ * title of an accepted conversation without a subject, and is never used
+ * while the conversation is a message request (PT-8). NULL or "" clears.
+ * Notifies "title" when the title changes. */
+void gh_conversation_set_contact_title(GhConversation *self, const gchar *title);
 /* First line of the newest message's body, at most 80 characters; the UI
  * decides whether previews are shown at all. NULL while empty. */
 const gchar *gh_conversation_get_preview(GhConversation *self);

@@ -106,6 +106,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
           </object>
         </child>
+        <child>
+          <object class="AdwPreferencesGroup" id="blocked_group">
+            <property name="visible">false</property>
+            <child>
+              <object class="AdwActionRow" id="blocked_row">
+                <property name="title" translatable="yes">Blocked Conversations</property>
+                <property name="subtitle" translatable="yes">Blocked on this device only</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                    <property name="accessible-role">43</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
       </object>
     </child>
     <child>
@@ -380,7 +398,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwActionRow" id="no_account_row">
                 <property name="title" translatable="yes">No Account Selected</property>
-                <property name="subtitle" translatable="yes">Choose an account from the account menu</property>
+                <property name="subtitle" translatable="yes">Choose an account from the main menu</property>
               </object>
             </child>
             <child>

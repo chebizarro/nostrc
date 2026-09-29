@@ -11,6 +11,7 @@
  * with the mock signer on the private test bus. Waits iterate the main
  * context; their deadlines are failure bounds only. */
 #include "gh-contact-directory.h"
+#include "gh-contact-titles.h"
 #include "gh-store-directory.h"
 #include "gh-test-signer.h"
 
@@ -689,6 +690,81 @@ test_pt8_requests(void)
   fixture_down(&f);
 }
 
+/* ---- conversation titles (nostrc-qp24.66) ----------------------------------------- */
+
+static void
+count_notify(GObject *object, GParamSpec *pspec, guint *count)
+{
+  (void)object;
+  (void)pspec;
+  (*count)++;
+}
+
+/* GhContactTitles: an accepted conversation takes its peer's cached name as
+ * soon as the directory has it (and "title" is notified, which the list,
+ * header and search follow); a message request keeps its npub title, and
+ * its sender's kind 0 is not asked for (PT-8) until it is accepted, when the
+ * name arrives and the title follows. Unbinding the store drops the names
+ * and binding it again restores them, both announced, with no new REQ. */
+static void
+test_conversation_titles(void)
+{
+  Fixture f;
+  fixture_up(&f, FALSE);
+  const Person *xavier = &people[0], *yvonne = &people[1];
+  GhConversation *request = room_with(&f, xavier, FALSE, T0 - 100);
+  GhConversation *accepted = room_with(&f, yvonne, TRUE, T0 - 90);
+  g_autofree gchar *request_npubs = g_strdup(gh_conversation_get_title(request));
+  g_autofree gchar *accepted_npubs = g_strdup(gh_conversation_get_title(accepted));
+  g_assert_true(g_str_has_prefix(accepted_npubs, "npub1"));
+  GhContactTitles *titles = gh_contact_titles_new(f.model, f.dir);
+  guint notified = 0;
+  g_signal_connect(accepted, "notify::title", G_CALLBACK(count_notify), &notified);
+
+  bind_store(&f);
+  advance_to_next(&f); /* the first run */
+  g_assert_cmpuint(f.rec.reqs->len, ==, 2);
+  g_autofree gchar *yname = profile(yvonne, T0 - 50, "{\"display_name\":\"Yvonne\"}");
+  for (guint i = 0; i < f.rec.reqs->len; i++)
+    g_assert_false(req_asks(req_at(&f, i), xavier->pk));
+  answer(req_at(&f, 0), yname, NULL);
+  answer(req_at(&f, 1), NULL);
+  drain();
+  g_assert_cmpstr(gh_conversation_get_title(accepted), ==, "Yvonne");
+  g_assert_cmpuint(notified, ==, 1);
+  g_assert_cmpstr(gh_conversation_get_title(request), ==, request_npubs);
+  /* Nothing cached makes a request's title a name. */
+  gh_conversation_set_contact_title(request, "Mallory");
+  g_assert_cmpstr(gh_conversation_get_title(request), ==, request_npubs);
+  gh_conversation_set_contact_title(request, NULL);
+
+  /* Accepted: its name is fetched on its own, and the title follows. */
+  gh_conversation_accept(request);
+  g_assert_cmpstr(gh_conversation_get_title(request), ==, request_npubs);
+  advance_to_next(&f);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 4);
+  g_assert_true(req_at(&f, 2)->profiles && req_asks(req_at(&f, 2), xavier->pk));
+  g_autofree gchar *xname = profile(xavier, T0 - 40, "{\"name\":\"Xavier\"}");
+  answer(req_at(&f, 2), xname, NULL);
+  answer(req_at(&f, 3), NULL);
+  drain();
+  g_assert_cmpstr(gh_conversation_get_title(request), ==, "Xavier");
+
+  /* The names go with the store and come back with it, from the cache. */
+  guint reqs = f.rec.reqs->len;
+  g_assert_true(gh_contact_directory_set_store(f.dir, NULL, NULL));
+  g_assert_cmpstr(gh_conversation_get_title(accepted), ==, accepted_npubs);
+  g_assert_cmpstr(gh_conversation_get_title(request), ==, request_npubs);
+  bind_store(&f);
+  g_assert_cmpstr(gh_conversation_get_title(accepted), ==, "Yvonne");
+  g_assert_cmpstr(gh_conversation_get_title(request), ==, "Xavier");
+  g_assert_cmpuint(f.rec.reqs->len, ==, reqs);
+
+  g_signal_handlers_disconnect_by_func(accepted, count_notify, &notified);
+  gh_test_release(titles);
+  fixture_down(&f);
+}
+
 /* ---- strict admission ------------------------------------------------------------ */
 
 /* Forged, foreign, other-kind, future-dated and older lists never win;
@@ -870,6 +946,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/contact-directory/nt11-cache", test_nt11_cache);
   g_test_add_func("/groundhog/contact-directory/nt12-startup", test_nt12_startup);
   g_test_add_func("/groundhog/contact-directory/pt8-requests", test_pt8_requests);
+  g_test_add_func("/groundhog/contact-directory/conversation-titles", test_conversation_titles);
   g_test_add_func("/groundhog/contact-directory/forged-and-stale", test_forged_and_stale);
   g_test_add_func("/groundhog/contact-directory/restore", test_restore);
   g_test_add_func("/groundhog/contact-directory/account-switch", test_account_switch_and_sources);

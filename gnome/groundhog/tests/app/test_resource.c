@@ -43,6 +43,10 @@ test_resource_registration(void)
   assert_resource("/org/nostr/Groundhog/relay-suggestions.json");
   for (guint i = 0; i < G_N_ELEMENTS(ui); i++)
     assert_resource(ui[i]);
+  /* Bundled symbolic icons for hosts whose icon theme lacks them (the
+   * account icon: nostrc-qp24.70). */
+  assert_resource("/org/nostr/Groundhog/icons/scalable/actions/send-symbolic.svg");
+  assert_resource("/org/nostr/Groundhog/icons/scalable/actions/avatar-default-symbolic.svg");
 
   groundhog_unregister_resource();
 }

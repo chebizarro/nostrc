@@ -887,6 +887,71 @@ test_notify_state(void)
   fixture_clear(&f);
 }
 
+/* nostrc-qp24.72: Preferences' Blocked Conversations lists what
+ * gh_store_conversations_set_blocked() and _block_and_forget() blocked,
+ * newest first, whether the history was kept, across a restart; unblocking
+ * takes a room off the list. */
+static GPtrArray *
+list_blocked(Fixture *f)
+{
+  g_autoptr(GError) error = NULL;
+  GPtrArray *rooms = gh_store_conversations_list_blocked(f->conversations, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(rooms);
+  return rooms;
+}
+
+static void
+test_list_blocked(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *aq = room_of(ACCOUNT_A, PEER_Q, NULL);
+  g_autofree gchar *ar = room_of(ACCOUNT_A, PEER_R, NULL);
+  Rumor p = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 30, .content = "p" };
+  Rumor q = { .author = PEER_Q, .to = { ACCOUNT_A }, .created_at = T0 - 20, .content = "q" };
+  Rumor r = { .author = PEER_R, .to = { ACCOUNT_A }, .created_at = T0 - 10, .content = "r" };
+  g_assert_cmpint(deliver(f.model, &p, "blocked/p"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &q, "blocked/q"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &r, "blocked/r"), ==, GH_CONVERSATION_ADD_NEW);
+  g_autoptr(GPtrArray) none = list_blocked(&f);
+  g_assert_cmpuint(none->len, ==, 0);
+
+  /* Block keeps the history; Block on a request forgets it. */
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_set_blocked(f.conversations, ap, TRUE, &error));
+  g_assert_true(gh_store_conversations_block_and_forget(f.conversations, aq, &error));
+  g_assert_no_error(error);
+  fixture_restart(&f);
+  g_assert_cmpuint(n_items(f.model), ==, 1);
+  g_autoptr(GPtrArray) blocked = list_blocked(&f);
+  g_assert_cmpuint(blocked->len, ==, 2);
+  GhStoreBlockedRoom *first = g_ptr_array_index(blocked, 0);
+  GhStoreBlockedRoom *second = g_ptr_array_index(blocked, 1);
+  /* Forgotten when it was blocked (the clock's T0): that is its activity. */
+  g_assert_cmpstr(first->room_id, ==, aq);
+  g_assert_cmpint(first->last_activity, ==, T0);
+  g_assert_false(first->has_messages);
+  g_assert_cmpstr(second->room_id, ==, ap);
+  g_assert_cmpint(second->last_activity, ==, T0 - 30);
+  g_assert_true(second->has_messages);
+
+  /* Unblocking lists the kept history again and leaves the list. */
+  g_assert_true(gh_store_conversations_set_blocked(f.conversations, ap, FALSE, &error));
+  g_assert_no_error(error);
+  g_assert_nonnull(room(&f, ap));
+  g_autoptr(GPtrArray) left = list_blocked(&f);
+  g_assert_cmpuint(left->len, ==, 1);
+  g_assert_cmpstr(((GhStoreBlockedRoom *)g_ptr_array_index(left, 0))->room_id, ==, aq);
+  g_assert_nonnull(room(&f, ar));
+
+  gh_store_conversations_close(f.conversations);
+  g_assert_null(gh_store_conversations_list_blocked(f.conversations, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE);
+  fixture_clear(&f);
+}
+
 /* ---- EX-4 / EX-6: expiry at admission, no resurrection ------------------------------------------- */
 
 static void
@@ -1365,6 +1430,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/store-conversations/restart/verifies", test_restore_verifies);
   g_test_add_func("/groundhog/store-conversations/st9/forget", test_st9_forget);
   g_test_add_func("/groundhog/store-conversations/notify-state", test_notify_state);
+  g_test_add_func("/groundhog/store-conversations/list-blocked", test_list_blocked);
   g_test_add_func("/groundhog/store-conversations/ex4-ex6/expiry", test_expiry);
   g_test_add_func("/groundhog/store-conversations/st12/legacy-seen", test_st12_legacy_seen);
   g_test_add_func("/groundhog/store-conversations/rejected-namespace", test_rejected_namespace);

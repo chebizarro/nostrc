@@ -18,10 +18,13 @@
 #include "gh-store-status.h"
 #endif
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
+#include "gh-blocked-conversations.h"
 #include "gh-conversation-info-dialog.h"
+#include "gh-conversation-menu.h"
 #endif
 #if GROUNDHOG_HAVE_OUTBOX
 #include "gh-app-outbox.h"
+#include "gh-contact-titles.h"
 #include "gh-send-ui.h"
 #endif
 #include <glib/gi18n.h>
@@ -79,6 +82,9 @@ struct _GhAppServices {
 #if GROUNDHOG_HAVE_INBOX
   GhConversationStore *conversations;
   GhDmInbox *inbox;
+#endif
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+  GhContactTitles *contact_titles; /* names from the directory's cache (qp24.66) */
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   GhStoreKey *store_key;
@@ -247,6 +253,10 @@ conversations_init(GhAppServices *self, GError **error)
 #if GROUNDHOG_HAVE_OUTBOX
   /* The contact directory refreshes the peers of accepted rooms only (G10). */
   gh_app_outbox_set_conversations(self->outbox, self->conversations);
+  /* ... and their cached names title those rooms (nostrc-qp24.66). */
+  GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
+  if (directory)
+    self->contact_titles = gh_contact_titles_new(self->conversations, directory);
 #endif
   return TRUE;
 }
@@ -255,6 +265,7 @@ static void
 conversations_teardown(GhAppServices *self)
 {
 #if GROUNDHOG_HAVE_OUTBOX
+  dispose_object(&self->contact_titles);
   gh_app_outbox_set_conversations(self->outbox, NULL);
 #endif
   g_clear_object(&self->conversations);
@@ -663,6 +674,41 @@ preferences_forget_finish(GObject *target, GAsyncResult *result, GError **error)
 }
 #endif
 
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+/* Privacy › Blocked Conversations (nostrc-qp24.72): the open store's blocks,
+ * data being the GhAccountStore. */
+static GhStoreConversations *
+blocked_store(gpointer data, const gchar **account, GError **error)
+{
+  GhStore *store = gh_account_store_get_store(GH_ACCOUNT_STORE(data));
+  GhStoreConversations *conversations = gh_account_store_get_conversations(GH_ACCOUNT_STORE(data));
+  if (!store || !conversations) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        _("Blocks are kept in the account's encrypted message storage, which "
+                          "is not open."));
+    return NULL;
+  }
+  if (account)
+    *account = gh_store_get_account_pubkey(store);
+  return conversations;
+}
+
+static GPtrArray *
+preferences_blocked_list(gpointer data, GError **error)
+{
+  const gchar *account = NULL;
+  GhStoreConversations *conversations = blocked_store(data, &account, error);
+  return conversations ? gh_blocked_conversations_list(conversations, account, error) : NULL;
+}
+
+static gboolean
+preferences_unblock(gpointer data, const gchar *room_id, GError **error)
+{
+  GhStoreConversations *conversations = blocked_store(data, NULL, error);
+  return conversations && gh_blocked_conversations_unblock(conversations, room_id, error);
+}
+#endif
+
 static void
 sync_preferences_account(GhAccountController *accounts, gpointer dialog)
 {
@@ -708,6 +754,10 @@ present_preferences(GhAppServices *self, const gchar *page)
   gh_preferences_dialog_set_forget_func(dialog, preferences_forget_async,
                                         preferences_forget_finish,
                                         G_OBJECT(self->account_store));
+#endif
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+  static const GhBlockedBackend blocked = { preferences_blocked_list, preferences_unblock };
+  gh_blocked_page_attach(dialog, &blocked, g_object_ref(self->account_store), g_object_unref);
 #endif
   if (page)
     adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(dialog), page);
@@ -1019,6 +1069,8 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
   gh_conversation_info_attach(window, conversation_info_services, self, NULL);
+  /* The conversation rows' context menu (nostrc-qp24.74). */
+  gh_conversation_menu_attach(window, conversation_info_services, self, NULL);
 #endif
 #if GROUNDHOG_HAVE_GROUP_UI
   /* G20b: after the send UI (its composer delegate) and the store's history

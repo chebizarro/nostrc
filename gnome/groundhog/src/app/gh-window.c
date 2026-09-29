@@ -32,6 +32,9 @@ static const struct {
   { "win.previous-conversation", { "<Alt>Up", "<Control>Page_Up", NULL } },
   { "win.next-conversation", { "<Alt>Down", "<Control>Page_Down", NULL } },
   { "win.new-message", { "<Control>n", NULL } },
+  /* Installed by gh_conversation_info_attach() (G19), enabled while a
+   * private conversation is shown. */
+  { "win.conversation-info", { "<Control>i", NULL } },
   { "win.show-help-overlay", { "<Control>question", NULL } },
   /* Installed by gh-app-services.c (G17), which owns the services it shows. */
   { "app.preferences", { "<Control>comma", NULL } },
@@ -126,9 +129,14 @@ on_collapsed(GhWindow *self)
 }
 
 static void
-on_list_pressed(GhWindow *self)
+on_list_pressed(GhWindow *self, gint n_press, gdouble x, gdouble y, GtkGestureClick *gesture)
 {
-  self->open_on_select = TRUE;
+  (void)n_press;
+  (void)x;
+  (void)y;
+  /* A right click opens a row's context menu, not the row. */
+  if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) != GDK_BUTTON_SECONDARY)
+    self->open_on_select = TRUE;
 }
 
 static gboolean
