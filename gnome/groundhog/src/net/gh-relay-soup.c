@@ -152,27 +152,22 @@ static void
 send_req(SoupHandle *handle)
 {
   g_free(handle->sub_id);
-  /* Letters and digits only, so the id needs no JSON escaping. */
   handle->sub_id = g_strdup_printf("gh%08x%u", g_random_int(), ++handle->sub_serial);
-  /* ["REQ",<id>,<filter>...], each filter serialized by libnostr.
-   * (nostr_envelope_serialize_compact() drops a REQ's closing bracket.) */
-  g_autoptr(GString) frame = g_string_new("[\"REQ\",\"");
-  g_string_append(frame, handle->sub_id);
-  g_string_append_c(frame, '"');
-  for (size_t i = 0; i < handle->filters->count; i++) {
-    char *filter = nostr_filter_serialize_compact(&handle->filters->filters[i]);
-    if (!filter) {
-      g_clear_pointer(&handle->sub_id, g_free);
-      gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR, NULL, FALSE,
-                            "REQ serialization failed");
-      return;
-    }
-    g_string_append_c(frame, ',');
-    g_string_append(frame, filter);
-    free(filter);
+  /* ["REQ",<id>,<filter>...] */
+  NostrReqEnvelope req = {
+    .base = { NOSTR_ENVELOPE_REQ },
+    .subscription_id = handle->sub_id,
+    .filters = handle->filters,
+  };
+  char *frame = nostr_envelope_serialize_compact(&req.base);
+  if (!frame) {
+    g_clear_pointer(&handle->sub_id, g_free);
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR, NULL, FALSE,
+                          "REQ serialization failed");
+    return;
   }
-  g_string_append_c(frame, ']');
-  send_text(handle, frame->str);
+  send_text(handle, frame);
+  free(frame);
 }
 
 static void dial(SoupHandle *handle);

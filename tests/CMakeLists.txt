@@ -271,6 +271,28 @@ add_test(NAME test_fuzz_filter_parse COMMAND test_fuzz_filter_parse
   ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_duplicate_hash_tag.json
   ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_partial_search.json)
 
+# Envelope serializer round trips (nostrc-ptwq): every envelope type through
+# serialize -> strict parse -> serialize, with jansson checking the JSON.
+add_executable(test_envelope test_envelope.c)
+target_link_libraries(test_envelope PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_include_directories(test_envelope PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_link_directories(test_envelope PRIVATE ${SECP256K1_LIBRARY_DIRS})
+apply_sanitizers(test_envelope)
+add_test(NAME test_envelope COMMAND test_envelope)
+set_tests_properties(test_envelope PROPERTIES TIMEOUT 60)
+
+# The envelope fuzz target run over its seed corpus in every build: each
+# input that parses must serialize to a frame that parses again and is a
+# fixed point of serialize(parse(.)).
+add_executable(test_fuzz_envelope_roundtrip fuzz_envelope_deserialize.c fuzz_driver_main.c)
+target_link_libraries(test_fuzz_envelope_roundtrip PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_include_directories(test_fuzz_envelope_roundtrip PRIVATE ${SECP256K1_INCLUDE_DIRS})
+target_link_directories(test_fuzz_envelope_roundtrip PRIVATE ${SECP256K1_LIBRARY_DIRS})
+apply_sanitizers(test_fuzz_envelope_roundtrip)
+add_test(NAME test_fuzz_envelope_roundtrip COMMAND test_fuzz_envelope_roundtrip
+  ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/envelopes)
+set_tests_properties(test_fuzz_envelope_roundtrip PROPERTIES TIMEOUT 20)
+
 # Verify wrapper fuzz harness
 if(ENABLE_FUZZING)
   if(ENABLE_FUZZING_RUNTIME)

@@ -11,7 +11,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.0.8 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 1.0.9 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.1 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
@@ -37,6 +37,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.1.0 | No bump: no source, API or ABI change. It links libmarmot statically, so its next (first) 1.1.0 release embeds 0.4.0 and must carry libmarmot's wire-compatibility note. |
 | same | gnostr | 0.1.0 | No bump: 0.1.0 is not yet released (only `gnostr-v0.1.0-preview`), so the statically linked libmarmot 0.4.0 and the mls-groups `group-error` signal/toast ship in 0.1.0. Its release notes must say that 0.1.0 cannot follow path Commits from the 0.1.0-preview (libmarmot 0.1.0). |
 | same | groundhog | 0.9.0 | MINOR in the same wave for G09 Tor and G20b relay groups; the libmarmot change itself only needs a rebuild. Groundhog links libmarmot statically, but its Marmot app integration is not live (nostrc-qp24.13) and `GhStoreMarmot` stores opaque state, so only a rebuild is needed. |
+| libnostr 1.0.8 -> 1.0.9 (PATCH: `nostr_envelope_serialize_compact()` REQ/COUNT frames keep their closing `]`; `event_envelope_marshal_json()` escapes the subscription id; nostrc-ptwq) | libnostr | 1.0.9 | PATCH: bug fix, no API or ABI change. |
+| same | groundhog | 0.9.0 | No bump for this change: the libsoup transport now builds its REQ with the library serializer instead of by hand, which puts the same bytes on the wire. |
 
 ## Maintenance
 

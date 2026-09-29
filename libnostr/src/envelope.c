@@ -238,9 +238,9 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
             if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
             w += n; rem -= (size_t)n;
         }
+        /* snprintf NUL-terminates after the ']'; nothing to overwrite. */
         n = snprintf(w, rem, "]");
         if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
-        *w = '\0';
         for (size_t i=0;i<nparts;++i) free(parts[i]);
         free(parts);
         free(sid);
@@ -289,7 +289,6 @@ char *nostr_envelope_serialize_compact(const NostrEnvelope *base) {
         }
         n = snprintf(w, rem, "]");
         if (n < 0 || (size_t)n >= rem) { for (size_t j=0;j<nparts;++j) free(parts[j]); free(parts); free(sid); free(out); return NULL; }
-        *w = '\0';
         for (size_t i=0;i<nparts;++i) free(parts[i]);
         free(parts);
         free(sid);
@@ -792,27 +791,21 @@ char *event_envelope_marshal_json(NostrEventEnvelope *envelope) {
     if (!serialized_event)
         return NULL;
 
-    // Get the length of the subscription ID (handle NULL)
-    size_t subscription_id_len = envelope->subscription_id ? strlen(envelope->subscription_id) : 0;
-
-    // Calculate the total length of the final JSON string
-    size_t total_len = subscription_id_len + strlen(serialized_event) + 20; // 20 for fixed parts of the string
-
-    // Allocate sufficient space for the final JSON string
-    char *json_str = malloc(total_len + 1); // +1 for the null terminator
-    if (!json_str) {
+    /* The subscription id is JSON-escaped (a NULL id is sent as ""). */
+    char *sid = json_escape_string_min(envelope->subscription_id ? envelope->subscription_id : "");
+    if (!sid) {
         free(serialized_event);
         return NULL;
     }
 
-    // Construct the final JSON array string
-    snprintf(json_str, total_len + 1, "[\"EVENT\",\"%s\",%s]",
-             envelope->subscription_id ? envelope->subscription_id : "",
-             serialized_event);
+    /* ["EVENT",<sid>,<event>] */
+    size_t total_len = strlen("[\"EVENT\",") + strlen(sid) + 1 + strlen(serialized_event) + 1;
+    char *json_str = malloc(total_len + 1);
+    if (json_str)
+        snprintf(json_str, total_len + 1, "[\"EVENT\",%s,%s]", sid, serialized_event);
 
-    // Free the serialized event after usage
+    free(sid);
     free(serialized_event);
-
     return json_str;
 }
 
