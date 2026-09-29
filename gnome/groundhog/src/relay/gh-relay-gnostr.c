@@ -104,6 +104,29 @@ reset_subscription(GhGnostrHandle *handle)
   g_clear_object(&handle->subscription);
 }
 
+/* The filters of one GNostrSubscription, which gnostr_subscription_new()
+ * takes ownership of on success; NULL if copying failed. (GNostrSubscription
+ * drops them unfreed when it finalizes, nostrc-jwj0: the sanitizer job's
+ * tests/lsan.supp names this function, so it stays a frame of its own.) */
+static G_GNUC_NO_INLINE NostrFilters *
+subscription_filters(const NostrFilters *filters)
+{
+  NostrFilters *copy = nostr_filters_new();
+  if (!copy)
+    return NULL;
+  for (size_t i = 0; i < filters->count; i++) {
+    NostrFilter *filter = nostr_filter_copy(&filters->filters[i]);
+    if (!filter || !nostr_filters_add(copy, filter)) {
+      if (filter)
+        nostr_filter_free(filter);
+      nostr_filters_free(copy);
+      return NULL;
+    }
+    nostr_filter_free(filter); /* contents moved into the vector */
+  }
+  return copy;
+}
+
 static void
 ensure_subscription(GhGnostrHandle *handle)
 {
@@ -111,20 +134,11 @@ ensure_subscription(GhGnostrHandle *handle)
       !nostr_relay_is_established(gnostr_relay_get_core_relay(handle->relay)))
     return;
 
-  NostrFilters *copy = nostr_filters_new();
-  if (!copy)
+  NostrFilters *copy = subscription_filters(handle->filters);
+  if (!copy) {
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
+                           NULL, FALSE, "filter copy failed");
     return;
-  for (size_t i = 0; i < handle->filters->count; i++) {
-    NostrFilter *filter = nostr_filter_copy(&handle->filters->filters[i]);
-    if (!filter || !nostr_filters_add(copy, filter)) {
-      if (filter)
-        nostr_filter_free(filter);
-      nostr_filters_free(copy);
-      gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
-                             NULL, FALSE, "filter copy failed");
-      return;
-    }
-    nostr_filter_free(filter); /* contents moved into the vector */
   }
 
   handle->subscription = gnostr_subscription_new(handle->relay, copy);

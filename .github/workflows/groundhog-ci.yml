@@ -57,7 +57,8 @@ jobs:
             test-groundhog-account-store test-groundhog-conversation-view test-groundhog-link-policy test-groundhog-background test-groundhog-preferences test-groundhog-notifier nostrc-test-bus-selftest \
             test-groundhog-inbox-setup test-groundhog-onboarding \
             test-groundhog-composer test-groundhog-e2e-dm test-groundhog-expiry \
-            test-groundhog-auth-policy test-groundhog-contact-directory
+            test-groundhog-auth-policy test-groundhog-contact-directory \
+            test-groundhog-privacy-e2e
 
       - name: Require complete Groundhog test registration
         run: |
@@ -81,6 +82,7 @@ jobs:
               'groundhog-inbox-setup', 'groundhog-onboarding',
               'groundhog-composer', 'groundhog-e2e-dm', 'groundhog-expiry',
               'groundhog-auth-policy', 'groundhog-contact-directory',
+              'groundhog-privacy-e2e',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -140,4 +142,99 @@ jobs:
             build/groundhog-ctest.xml
             build/groundhog-kc6-session.log
             build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
+  groundhog-sanitizers:
+    # nostrc-qp24.15.2: the display-free Groundhog tests, the G24 privacy
+    # harness among them, under AddressSanitizer with leak detection and
+    # UndefinedBehaviorSanitizer; any report fails its test. A leak of a
+    # library outside Groundhog that Groundhog cannot free is suppressed in
+    # gnome/groundhog/tests/lsan.supp, each entry naming its bead; a leak in
+    # Groundhog code is fixed instead. The widget tests stay in the job above.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GROUNDHOG_SANITIZER_TESTS: >-
+        groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send
+        groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire
+        groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key
+        groundhog-store-key-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot
+        groundhog-store-conversations groundhog-outbox groundhog-account-store
+        groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup
+        groundhog-expiry groundhog-auth-policy groundhog-contact-directory
+        groundhog-privacy-e2e nostrc-test-bus-selftest
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
+            dbus-bin blueprint-compiler gnome-keyring
+
+      - name: Configure with ASAN and UBSAN
+        run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=OFF \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+            -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON
+
+      - name: Build the display-free tests
+        run: |
+          # groundhog itself: groundhog-background and groundhog-store-sqlite run it.
+          targets=(groundhog)
+          for test in $GROUNDHOG_SANITIZER_TESTS; do
+            case "$test" in groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
+          done
+          cmake --build build-asan --parallel 2 --target "${targets[@]}"
+
+      - name: Run them under the sanitizers
+        env:
+          # halt_on_error: a UBSAN report fails its test as an ASAN one does.
+          # verify_asan_link_order=0: ST-4's mutation check (groundhog-store-
+          # sqlite) starts a process with plain libsqlite3 preloaded ahead of
+          # the ASAN runtime on purpose.
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:verify_asan_link_order=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          G_SLICE: always-malloc
+        run: |
+          set -euo pipefail
+          export LSAN_OPTIONS="suppressions=$PWD/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+          read -ra tests <<< "$GROUNDHOG_SANITIZER_TESTS"
+          regex="^($(IFS='|'; echo "${tests[*]}"))\$"
+          # Every listed test is registered: none may silently drop out.
+          expected=$(printf '%s\n' "${tests[@]}" | sort)
+          registered=$(ctest --test-dir build-asan -N -R "$regex" |
+                       sed -n 's/^ *Test *#[0-9]*: *//p' | sort)
+          if [ "$registered" != "$expected" ]; then
+            diff <(echo "$expected") <(echo "$registered") || true
+            echo 'The sanitizer test set is incomplete' >&2
+            exit 1
+          fi
+          ctest --test-dir build-asan --parallel 2 --output-on-failure --no-tests=error \
+            --output-junit "$PWD/build-asan/groundhog-asan-ctest.xml" \
+            -R "$regex" | tee build-asan/groundhog-asan-ctest.log
+          if grep -Eq '\*\*\*Skipped|Not Run' build-asan/groundhog-asan-ctest.log; then
+            echo 'A sanitizer test was skipped or did not run' >&2
+            exit 1
+          fi
+
+      - name: Upload sanitizer test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: groundhog-asan-ctest-linux
+          path: |
+            build-asan/groundhog-asan-ctest.log
+            build-asan/groundhog-asan-ctest.xml
+            build-asan/Testing/Temporary/LastTest.log
           if-no-files-found: ignore

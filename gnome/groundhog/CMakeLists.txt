@@ -1266,6 +1266,38 @@ if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
 endif()
 # --- end G13 ---
 
+# --- G24 privacy acceptance harness ---
+# The release gate of privacy charter §8.2 G24: PT-1, PT-2, PT-4, PT-8's "no
+# lookup for a request", PT-10, AT-5 and NO-1 end to end (§9.2). Two accounts,
+# each composed as gh-app-services.c composes a process, talk through the
+# real gnostr transports to local store-and-serve NIP-42 relays (H2), with
+# the mock signer, FakeSecret (H5) and the fake org.gtk.Notifications (H4)
+# on the private bus; the H7 canary scanner then reads every file under the
+# test's XDG directories and TMPDIR, both accounts' GSettings, every relay
+# frame, the captured logs and every notification payload.
+if (BUILD_TESTING AND TARGET groundhog-account-store AND TARGET groundhog-notifier AND
+    TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST AND TARGET groundhog-test-schemas AND
+    GROUNDHOG_OUTBOX_SOURCES AND GROUNDHOG_EXPIRY_SOURCES)
+  add_executable(test-groundhog-privacy-e2e tests/privacy/test_privacy_e2e.c
+    tests/privacy/canary-scan.c tests/app/fake-gtk-notifications.c tests/store/fake-secret.c
+    src/app/gh-app-outbox.c src/app/gh-nip17-envelope.c ${GROUNDHOG_OUTBOX_SOURCES}
+    ${GROUNDHOG_DM_SEND_SOURCES} ${GROUNDHOG_EXPIRY_SOURCES} ${GROUNDHOG_DIRECTORY_SOURCES})
+  target_include_directories(test-groundhog-privacy-e2e PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(test-groundhog-privacy-e2e PRIVATE groundhog-account-store
+    groundhog-notifier groundhog-auth-policy nostr_nip17_core nostr_nip59_core
+    nostrc-test-bus PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+  target_compile_options(test-groundhog-privacy-e2e PRIVATE -Wall -Wextra -Werror)
+  groundhog_store_link_sqlcipher_first(test-groundhog-privacy-e2e)
+  add_dependencies(test-groundhog-privacy-e2e groundhog-test-schemas)
+  add_test(NAME groundhog-privacy-e2e COMMAND test-groundhog-privacy-e2e)
+  set_tests_properties(groundhog-privacy-e2e PROPERTIES TIMEOUT 300
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;G_MESSAGES_DEBUG=all")
+endif()
+# --- end G24 privacy acceptance harness ---
+
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from
 # src/app/gh-features.h, whose features follow the executable's

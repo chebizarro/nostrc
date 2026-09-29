@@ -1,0 +1,38 @@
+# LeakSanitizer suppressions for the Groundhog ASAN/UBSAN job
+# (.github/workflows/groundhog-ci.yml, nostrc-qp24.15.2).
+#
+# Only leaks of libraries outside Groundhog whose objects Groundhog cannot
+# free itself belong here, each with its bead; a leak in Groundhog code is
+# fixed, never suppressed. LSan matches a pattern against every frame of an
+# allocation's stack, so each entry names a function whose allocations are
+# all part of the leak it describes (an indirect leak below a suppressed one
+# carries the same frame). Remove an entry once its bead is fixed.
+
+# nostr-gobject GNostrSubscription (nostrc-jwj0). Groundhog's gnostr scope
+# transport (src/relay/gh-relay-gnostr.c) closes and unrefs every
+# subscription it makes, yet each one leaks:
+#  - the go_context_background() that gnostr_subscription_new() creates for
+#    nostr_relay_prepare_subscription() and never releases;
+leak:go_context_background
+#  - the core NostrSubscription with its contexts and channels, which
+#    gnostr_subscription_finalize() hands to a detached
+#    nostr_subscription_free_async() thread and abandons;
+leak:nostr_relay_prepare_subscription
+#  - the filters gnostr_subscription_new() takes ownership of, which
+#    finalize drops unfreed (the core subscription only borrows them).
+#    Groundhog builds them in one function for this entry alone, so a leaked
+#    GNostrSubscription itself still shows.
+leak:subscription_filters
+
+# libnostr (nostrc-jwj0): the result channel of the CLOSE frame that
+# nostr_subscription_close() writes (nostr_relay_write) is never freed, nor
+# the allocation nostr_subscription_dispatch_closed() makes per CLOSED.
+leak:nostr_subscription_close
+leak:nostr_subscription_dispatch_closed
+
+# libnostr relay writer (nostrc-jwj0): write_operations() answers each write
+# with an Error sent into the caller's answer channel and queues the frame
+# into the connection's send channel; when the caller or the connection is
+# gone first (a relay torn down with a write in flight, e.g. the AUTH or
+# EVENT of a publish that just ended), neither is ever freed.
+leak:write_operations
