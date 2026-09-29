@@ -81,6 +81,7 @@ typedef struct {
 #define GH_BACKGROUND_STATUS_LOCKED N_("Messages are locked. Open Groundhog to unlock them.")
 #define GH_BACKGROUND_STATUS_STOPPED N_("Not receiving messages. Open Groundhog for details.")
 #define GH_BACKGROUND_STATUS_NO_ACCOUNT N_("No account selected")
+#define GH_BACKGROUND_STATUS_OPENING N_("Opening messages…")
 
 #define GH_TYPE_BACKGROUND (gh_background_get_type())
 G_DECLARE_FINAL_TYPE(GhBackground, gh_background, GH, BACKGROUND, GObject)
@@ -103,8 +104,9 @@ gboolean gh_background_get_holding(GhBackground *self);
 /* FILE or PORTAL (AUTO resolved). */
 GhBackgroundMethod gh_background_get_method(GhBackground *self);
 /* What the portal status says (or would say) now; NULL while off, and at
- * start until the account store's state is known (while it opens, the
- * status stays what it was). */
+ * start until the account store's state is known. When the store opens
+ * again later (sign-in, account switch, unlock), GH_BACKGROUND_STATUS_OPENING
+ * until it is known again. */
 const gchar *gh_background_get_status(GhBackground *self);
 /* Whether the one-time explanation was shown (or background mode was
  * explained by the caller of gh_background_set_enabled_async()). */

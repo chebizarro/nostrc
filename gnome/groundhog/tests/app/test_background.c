@@ -858,6 +858,80 @@ test_no11_status_waits_for_store(void)
   fixture_down(&f);
 }
 
+/* Re-entering OPENING (W19 review B1): once a status was sent, the store
+ * opening again (sign-in, then an account switch) says "Opening messages…"
+ * until the key lookup answers, never the stale "No account" or the last
+ * account's "Receiving messages". Each lookup is held while that is
+ * checked. */
+static gboolean
+store_opening_and_waiting(gpointer data)
+{
+  Fixture *f = data;
+  return gh_account_store_get_state(f->store) == GH_ACCOUNT_STORE_OPENING &&
+         fake_secret_pending(f->secret) > 0;
+}
+
+static void
+assert_statuses(const gchar *const *expected)
+{
+  guint n = g_strv_length((gchar **)expected);
+  for (guint i = 0; i < portal.statuses->len; i++)
+    g_test_message("status %u: %s", i, (gchar *)g_ptr_array_index(portal.statuses, i));
+  g_assert_cmpuint(portal.statuses->len, ==, n);
+  for (guint i = 0; i < n; i++)
+    g_assert_cmpstr(g_ptr_array_index(portal.statuses, i), ==, expected[i]);
+}
+
+/* Holds the key lookup of the account npub_key becomes, checks the opening
+ * status, then lets the lookup answer. */
+static void
+open_held(Fixture *f, const gchar *npub_key)
+{
+  fake_secret_set_hold(f->secret, TRUE);
+  g_settings_set_string(f->settings, "current-npub", npub_key);
+  gh_test_spin_until(store_opening_and_waiting, f);
+  gh_test_spin_until(portal_has_status, (gpointer)GH_BACKGROUND_STATUS_OPENING);
+  calls_landed();
+  g_assert_cmpstr(gh_background_get_status(f->background), ==, GH_BACKGROUND_STATUS_OPENING);
+  fake_secret_set_hold(f->secret, FALSE);
+  while (fake_secret_release(f->secret))
+    ;
+  g_assert_cmpint(settle(f), ==, GH_ACCOUNT_STORE_OPEN);
+  calls_landed();
+  g_assert_cmpstr(gh_background_get_status(f->background), ==, GH_BACKGROUND_STATUS_RECEIVING);
+}
+
+static void
+script_reopen(Fixture *f)
+{
+  g_assert_cmpint(settle(f), ==, GH_ACCOUNT_STORE_INACTIVE);
+  gh_test_spin_until(portal_has_status, (gpointer)GH_BACKGROUND_STATUS_NO_ACCOUNT);
+  calls_landed();
+  open_held(f, npub[2]); /* sign-in */
+  open_held(f, npub[1]); /* account switch */
+  const gchar *const expected[] = {
+    GH_BACKGROUND_STATUS_NO_ACCOUNT, GH_BACKGROUND_STATUS_OPENING,
+    GH_BACKGROUND_STATUS_RECEIVING, GH_BACKGROUND_STATUS_OPENING,
+    GH_BACKGROUND_STATUS_RECEIVING, NULL,
+  };
+  assert_statuses(expected);
+  g_action_group_activate_action(G_ACTION_GROUP(f->app), "quit", NULL);
+}
+
+static void
+test_status_while_reopening(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, GH_BACKGROUND_METHOD_PORTAL);
+  portal_reset(2);
+  g_settings_set_string(f.settings, "current-npub", ""); /* signed out */
+  f.with_stack = TRUE;
+  f.script = script_reopen;
+  g_assert_cmpint(run_app(&f, service_app(), TRUE), ==, 0);
+  g_assert_true(f.shut_down);
+  fixture_down(&f);
+}
+
 /* NO-12 on its own: a quiet account after EOSE, host method, no portal. */
 static void
 script_idle(Fixture *f)
@@ -1638,6 +1712,8 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/background/no11-locked-start", test_no11_locked_start);
   nostrc_test_bus_add_func("/groundhog/background/no11-status-waits-for-store",
                            test_no11_status_waits_for_store);
+  nostrc_test_bus_add_func("/groundhog/background/status-while-reopening",
+                           test_status_while_reopening);
   nostrc_test_bus_add_func("/groundhog/background/no12-idle-timers", test_no12_idle_timers);
   status = g_test_run();
   portal_down();

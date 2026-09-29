@@ -109,11 +109,14 @@ compute_status(GhBackground *self)
     case GH_ACCOUNT_STORE_INACTIVE:
       return _(GH_BACKGROUND_STATUS_NO_ACCOUNT);
     case GH_ACCOUNT_STORE_OPENING:
-      /* The key lookup has not answered: nothing new is known. "Receiving"
-       * would be untrue if it finds the keyring locked (NO-11), and the
-       * desktop would show it whenever the portal answers first (under load;
-       * nostrc-yzlp). Keep what was said (nothing, at start). */
-      return self->status;
+      /* The key lookup has not answered. At start nothing was said yet:
+       * say nothing until it does ("Receiving" would be untrue if it finds
+       * the keyring locked, NO-11, and the desktop would show it whenever
+       * the portal answers first; nostrc-yzlp). Once something was said,
+       * it would go stale (the last account's "Receiving", "No account"
+       * while signing in) and the portal cannot take it back: say that
+       * messages are being opened (W19 review B1). */
+      return self->status ? _(GH_BACKGROUND_STATUS_OPENING) : NULL;
     case GH_ACCOUNT_STORE_OPEN:
     case GH_ACCOUNT_STORE_EPHEMERAL:
       return _(GH_BACKGROUND_STATUS_RECEIVING);
