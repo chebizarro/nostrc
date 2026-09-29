@@ -311,7 +311,8 @@ test_out_of_order_window(void)
      * it, [N - 1 - WINDOW, N - 1). */
     CHECK(recv_msg(&p.bob, ct[N - 1], len[N - 1], text[N - 1]) == 0, "newest");
     reload(&p.bob);
-    CHECK(cached_keys(&p.bob, 0) == WINDOW, "cache bounded: %u", cached_keys(&p.bob, 0));
+    const unsigned cached_after_reload = cached_keys(&p.bob, 0);
+    CHECK(cached_after_reload == WINDOW, "cache bounded: %u", cached_after_reload);
     const uint32_t floor = N - 1 - WINDOW;
     for (uint32_t g = 0; g < floor; g++)
         expect_rejected_unchanged(&p.bob, ct[g], len[g], "older than the window");
@@ -439,9 +440,10 @@ test_failed_message_restores_ratchet(void)
     CHECK(sender_of(&p.bob, bad, lb).generation == 5, "the sender data still decrypts");
     const MlsSenderRatchet *r = &p.bob.secret_tree.senders[0];
     expect_rejected_unchanged(&p.bob, bad, lb, "content tag broken");
-    CHECK(r->application_generation == 1 && cached_keys(&p.bob, 0) == 0,
+    const unsigned cached_after_reject = cached_keys(&p.bob, 0);
+    CHECK(r->application_generation == 1 && cached_after_reject == 0,
           "ratchet as before: next %u, %u cached", r->application_generation,
-          cached_keys(&p.bob, 0));
+          cached_after_reject);
 
     CHECK(sender_of(&p.bob, forged5, lf).generation == 5, "forgery at generation 5");
     expect_rejected_unchanged(&p.bob, forged5, lf, "signed by another key");
