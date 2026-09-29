@@ -852,6 +852,7 @@ int main(int argc, char **argv) {
       (char *)SIGNET_CAP_NOSTR_ENCRYPT,
       (char *)SIGNET_CAP_SSH_SIGN,
       (char *)SIGNET_CAP_SSH_LIST_KEYS,
+      (char *)SIGNET_CAP_CREDENTIAL_GET_TOKEN,
     };
     SignetAgentPolicy default_pol = {
       .name = (char *)"default",
@@ -957,6 +958,7 @@ int main(int argc, char **argv) {
    * agent/revoke deny-lists the pubkey, burns leases, and takes
    * effect immediately via deny-list precedence. */
   signet_mgmt_handler_set_deny_list(mgmt, deny);
+  signet_mgmt_handler_set_policy_registry(mgmt, cap_registry);
 
   /* And the NIP-46 server, so suspended (deny-listed) agents are refused on
    * pairing, binding reconnect, and per-request resolution. */

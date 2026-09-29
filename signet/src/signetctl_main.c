@@ -99,6 +99,9 @@ static void signetctl_usage(FILE *out) {
     "                    [--policy-id <id>] [--expires-at <unix>] (--file <path>|--stdin)\n"
     "  list-credentials [agent_id]       List payload-free credential metadata\n"
     "  inspect-credential <id>           Inspect payload-free metadata\n"
+    "  deliver-credential <agent_id> <id> --out <path>\n"
+    "                           Deliver through policy/lease/audit controls;\n"
+    "                           writes atomically as 0600, never prints payload\n"
     "  rotate-credential <id> [--expires-at <unix>] (--file <path>|--stdin)\n"
     "  revoke-credential <id>            Soft-revoke a credential\n"
     "  delete-credential <id> --confirm Delete a previously revoked credential\n"
@@ -153,6 +156,7 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_IMPORT_CREDENTIAL: return "credential/import";
     case SIGNET_MGMT_OP_LIST_CREDENTIALS: return "credential/list";
     case SIGNET_MGMT_OP_INSPECT_CREDENTIAL: return "credential/inspect";
+    case SIGNET_MGMT_OP_DELIVER_CREDENTIAL: return "credential/deliver";
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: return "credential/rotate";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: return "credential/revoke";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "credential/delete";
@@ -340,6 +344,87 @@ static int signetctl_write_secret_file(const char *path, const char *secret) {
   if (!ok) unlink(tmp);
   g_free(tmp);
   return ok ? 0 : -1;
+}
+
+static int signetctl_write_secret_bytes(const char *path,
+                                        const uint8_t *secret,
+                                        size_t len) {
+  if (!path || !path[0] || !secret || len == 0) return -1;
+  struct stat current;
+  if (lstat(path, &current) == 0) {
+    if (!S_ISREG(current.st_mode) || current.st_uid != geteuid()) {
+      fprintf(stderr, "signetctl: refusing unsafe existing output path\n");
+      return -1;
+    }
+  } else if (errno != ENOENT) {
+      fprintf(stderr, "signetctl: cannot inspect protected output path\n");
+      return -1;
+  }
+  char *tmp = g_strdup_printf("%s.tmp.%ld", path, (long)getpid());
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+  if (fd < 0) {
+    fprintf(stderr, "signetctl: failed to create protected output file\n");
+    g_free(tmp);
+    return -1;
+  }
+  size_t off = 0;
+  bool ok = true;
+  while (off < len) {
+    ssize_t wr = write(fd, secret + off, len - off);
+    if (wr < 0) {
+      if (errno == EINTR) continue;
+      ok = false;
+      break;
+    }
+    off += (size_t)wr;
+  }
+  if (ok) ok = (fsync(fd) == 0 && fchmod(fd, 0600) == 0);
+  close(fd);
+  if (ok && rename(tmp, path) != 0) ok = false;
+  if (ok) {
+    char *dir = g_path_get_dirname(path);
+    int dfd = open(dir, O_RDONLY | O_DIRECTORY);
+    if (dfd >= 0) { (void)fsync(dfd); close(dfd); }
+    g_free(dir);
+  }
+  if (!ok) unlink(tmp);
+  g_free(tmp);
+  return ok ? 0 : -1;
+}
+
+static int signetctl_handle_delivery_result(const char *reply_json,
+                                            const char *out_path) {
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!reply_json || !out_path ||
+      !json_parser_load_from_data(p, reply_json, -1, NULL)) {
+    fprintf(stderr, "signetctl: malformed credential delivery reply\n");
+    return 1;
+  }
+  JsonNode *root = json_parser_get_root(p);
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return 1;
+  JsonObject *res = json_node_get_object(root);
+  if (json_object_has_member(res, "result")) {
+    JsonNode *rn = json_object_get_member(res, "result");
+    if (rn && JSON_NODE_HOLDS_OBJECT(rn)) res = json_node_get_object(rn);
+  }
+  const char *encoded = json_object_has_member(res, "payload_b64")
+      ? json_object_get_string_member(res, "payload_b64") : NULL;
+  if (!encoded || !encoded[0]) {
+    fprintf(stderr, "signetctl: credential delivery carried no payload\n");
+    return 1;
+  }
+  gsize len = 0;
+  guchar *decoded = g_base64_decode(encoded, &len);
+  if (!decoded || len == 0 ||
+      signetctl_write_secret_bytes(out_path, decoded, len) != 0) {
+    if (decoded) { sodium_memzero(decoded, len); g_free(decoded); }
+    fprintf(stderr, "signetctl: failed to write protected credential output\n");
+    return 1;
+  }
+  sodium_memzero(decoded, len);
+  g_free(decoded);
+  printf("credential: written to %s\n", out_path);
+  return 0;
 }
 
 /* Handle an agent/reissue-connect JSON-RPC reply. Prints non-secret fields;
@@ -674,6 +759,7 @@ int main(int argc, char **argv) {
   const char *credential_label = NULL;
   const char *credential_policy_id = NULL;
   const char *credential_input_file = NULL;
+  const char *credential_output_file = NULL;
   bool credential_from_stdin = false;
   bool has_credential_expires_at = false;
   int64_t credential_expires_at = 0;
@@ -931,6 +1017,22 @@ int main(int argc, char **argv) {
     credential_id = argv[argi++];
     if (argi != argc) {
       fprintf(stderr, "signetctl: unexpected inspect-credential argument\n");
+      return 2;
+    }
+  } else if (strcmp(cmd, "deliver-credential") == 0) {
+    op = SIGNET_MGMT_OP_DELIVER_CREDENTIAL;
+    if (argi + 1 >= argc) {
+      fprintf(stderr, "signetctl: deliver-credential requires <agent_id> <id> --out <path>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+    credential_id = argv[argi++];
+    if (argi + 1 < argc && strcmp(argv[argi], "--out") == 0) {
+      credential_output_file = argv[argi + 1];
+      argi += 2;
+    }
+    if (!credential_output_file || argi != argc) {
+      fprintf(stderr, "signetctl: deliver-credential requires exactly one --out <path>\n");
       return 2;
     }
   } else if (strcmp(cmd, "rotate-credential") == 0) {
@@ -1463,8 +1565,9 @@ int main(int argc, char **argv) {
     goto cleanup;
   }
 
-  printf("Published %s ContextVM intent (gift-wrapped). Waiting for reply...\n",
-         signet_mgmt_op_to_string(op));
+  fprintf(op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL ? stderr : stdout,
+          "Published %s ContextVM intent (gift-wrapped). Waiting for reply...\n",
+          signet_mgmt_op_to_string(op));
 
   /* Wait for ack with timeout, pumping the GLib main context.
    *
@@ -1501,6 +1604,9 @@ int main(int argc, char **argv) {
         exit_code = signetctl_handle_reissue_result(ack_ctx.response_json,
                                                     reissue_out_path,
                                                     reissue_show_secret);
+      } else if (op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL) {
+        exit_code = signetctl_handle_delivery_result(ack_ctx.response_json,
+                                                     credential_output_file);
       } else {
         printf("Reply received:\n%s\n", ack_ctx.response_json);
         exit_code = 0;

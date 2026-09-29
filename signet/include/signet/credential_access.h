@@ -95,6 +95,9 @@ typedef struct {
  *   (e.g. SIGNET_CAP_CREDENTIAL_GET_TOKEN). Empty/NULL fails closed.
  * @transport: (nullable): transport tag for audit ("dbus_unix", "contextvm", ...).
  * @lease_id: (nullable): pre-issued lease to burn on use (one-use semantics).
+ * @one_use_delivery: mint and atomically burn a bounded lease before payload
+ *   decryption. Intended for a single encrypted delivery response where the
+ *   caller cannot safely perform a separate lease-issuance round trip.
  * @issue_lease: issue a tracking lease recording this grant.
  * @lease_ttl_seconds: lease lifetime; <=0 defaults to 3600. Clamped to the
  *   credential's own expiry when one is set.
@@ -109,6 +112,7 @@ typedef struct {
   const char *capability;
   const char *transport;
   const char *lease_id;
+  bool one_use_delivery;
   bool issue_lease;
   int64_t lease_ttl_seconds;
 } SignetCredentialAccessRequest;
@@ -116,8 +120,9 @@ typedef struct {
 /**
  * SignetCredentialAccessGrant:
  * @record: decrypted credential record (payload mlock'd). Valid only on OK.
- * @lease_id: issued tracking lease id, or NULL when issue_lease was false.
- * @lease_expires_at: expiry of the issued lease (0 if none).
+ * @lease_id: issued lease id, or NULL when neither lease mode was requested.
+ *   A one_use_delivery lease has already been consumed when returned.
+ * @lease_expires_at: expiry bound of the issued lease (0 if none).
  *
  * Result of a successful access. Clear with
  * signet_credential_access_grant_clear() (wipes the payload).

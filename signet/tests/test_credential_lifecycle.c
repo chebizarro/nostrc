@@ -3,10 +3,13 @@
  */
 
 #include "signet/audit_logger.h"
+#include "signet/capability.h"
 #include "signet/key_store.h"
 #include "signet/mgmt_protocol.h"
 #include "signet/replay_cache.h"
 #include "signet/store.h"
+#include "signet/store_audit.h"
+#include "signet/store_leases.h"
 #include "signet/store_secrets.h"
 
 #include <nostr-keys.h>
@@ -28,6 +31,7 @@ typedef struct {
   SignetAuditLogger *audit;
   SignetKeyStore *keys;
   SignetMgmtHandler *mgmt;
+  SignetPolicyRegistry *cap_policy;
   char bunker_sk[65];
   char bunker_pk[65];
   char provisioner_sk[65];
@@ -109,6 +113,19 @@ static void setup(Fixture *f) {
   f->mgmt = signet_mgmt_handler_new(f->keys, NULL, NULL, NULL, &mcfg);
   CHECK(f->mgmt);
 
+  f->cap_policy = signet_policy_registry_new();
+  CHECK(f->cap_policy);
+  char *caps[] = { (char *)SIGNET_CAP_CREDENTIAL_GET_TOKEN };
+  SignetAgentPolicy delivery_policy = {
+    .name = (char *)"delivery",
+    .capabilities = caps,
+    .n_capabilities = 1,
+    .rate_limit_per_hour = 1000,
+  };
+  CHECK(signet_policy_registry_add(f->cap_policy, &delivery_policy) == 0);
+  CHECK(signet_policy_registry_assign(f->cap_policy, "owner", "delivery") == 0);
+  signet_mgmt_handler_set_policy_registry(f->mgmt, f->cap_policy);
+
   char agent_sk[65], agent_pk[65], out_pk[65] = {0};
   uint8_t raw[32];
   keypair(agent_sk, agent_pk);
@@ -122,6 +139,7 @@ static void setup(Fixture *f) {
 
 static void teardown(Fixture *f) {
   signet_mgmt_handler_free(f->mgmt);
+  signet_policy_registry_free(f->cap_policy);
   signet_key_store_free(f->keys);
   signet_audit_logger_free(f->audit);
   unlink(f->db_path);
@@ -213,6 +231,24 @@ static void test_encrypted_contextvm_lifecycle(void) {
                 "{\"request_id\":\"r\",\"agent_id\":\"owner\"}",
                 "list-1") == 0);
 
+  /* Delivery uses the unified policy/lease/audit path and never reads the
+   * encrypted store directly from the CLI. */
+  char *deliver = g_strdup_printf(
+      "{\"request_id\":\"r\",\"agent_id\":\"owner\","
+      "\"credential_id\":\"%s\"}", primary_id);
+  int64_t audit_before_delivery = signet_audit_log_count(store);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               deliver, "deliver-1") == 0);
+  CHECK(signet_audit_log_count(store) == audit_before_delivery + 1);
+  SignetLeaseRecord *leases = NULL;
+  size_t lease_count = 0;
+  CHECK(signet_store_list_active_leases(
+      store, "owner", 2000000000, &leases, &lease_count) == 0);
+  /* The delivery lease is burned before decryption; no reusable active lease
+   * survives the encrypted response. */
+  CHECK(lease_count == 0);
+  signet_lease_list_free(leases, lease_count);
+
   CHECK(handle(&f, SIGNET_MGMT_OP_REVOKE_CREDENTIAL,
                 inspect, "revoke-1") == 0);
   CHECK(signet_store_get_secret_at(
@@ -229,6 +265,7 @@ static void test_encrypted_contextvm_lifecycle(void) {
   g_free(imported);
   g_free(rotate);
   g_free(inspect);
+  g_free(deliver);
   teardown(&f);
   puts("test_encrypted_contextvm_lifecycle: PASS");
 }
@@ -354,6 +391,19 @@ static void test_credential_mutation_replay_rejected(void) {
   signet_secret_record_clear(&record);
   CHECK(signet_store_secret_history_count(store, cred_id) == 0);
 
+  /* Delivery also participates in the same replay domain. A fresh encrypted
+   * intent delivers once; replaying its event id cannot release again. */
+  char *deliver = g_strdup_printf(
+      "{\"request_id\":\"r\",\"agent_id\":\"owner\","
+      "\"credential_id\":\"%s\"}", cred_id);
+  int64_t audit_before_delivery = signet_audit_log_count(store);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               deliver, "deliver-replay-1") == 0);
+  CHECK(signet_audit_log_count(store) == audit_before_delivery + 1);
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+               deliver, "deliver-replay-1") == -1);
+  CHECK(signet_audit_log_count(store) == audit_before_delivery + 1);
+
   /* A fresh event id still executes. */
   char *b64b = g_base64_encode((const guchar *)"rotated-value",
                                strlen("rotated-value"));
@@ -366,6 +416,7 @@ static void test_credential_mutation_replay_rejected(void) {
   CHECK(signet_store_secret_history_count(store, cred_id) == 1);
 
   g_free(create);
+  g_free(deliver);
   g_free(rotate);
   g_free(rotate2);
   signet_mgmt_handler_set_replay_cache(f.mgmt, NULL);

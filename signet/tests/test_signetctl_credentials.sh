@@ -23,6 +23,9 @@ expect_status 2 "$ctl" create-credential
 expect_status 2 "$ctl" create-credential owner --type api_token --label label --stdin --file "$tmpdir/x"
 expect_status 2 "$ctl" rotate-credential id
 expect_status 2 "$ctl" delete-credential id
+expect_status 2 "$ctl" deliver-credential
+expect_status 2 "$ctl" deliver-credential owner id
+expect_status 2 "$ctl" deliver-credential owner id --out "$tmpdir/a" --out "$tmpdir/b"
 expect_status 2 "$ctl" create-credential owner --type ssh_key --label label --stdin
 
 fixture_secret='fixture-secret-must-never-appear'

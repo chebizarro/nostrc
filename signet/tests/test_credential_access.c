@@ -233,6 +233,33 @@ int main(void) {
                                     "foreignlease00000000000000000001",
                                     cred_a, "agent-a", now) == 0);
 
+  /* A single-round-trip delivery mints and burns its own bounded lease before
+   * decrypting. The returned lease id is evidence, never a reusable grant. */
+  SignetCredentialAccessRequest delivery_req = {
+    .agent_id = "agent-a",
+    .credential_id = cred_a,
+    .capability = SIGNET_CAP_CREDENTIAL_GET_TOKEN,
+    .transport = "contextvm",
+    .lease_id = NULL,
+    .one_use_delivery = true,
+    .issue_lease = false,
+    .lease_ttl_seconds = 60,
+  };
+  CHECK(signet_credential_access_acquire(&ctx, &delivery_req, now, &grant) ==
+        SIGNET_CRED_ACCESS_OK);
+  expected_entries++;
+  CHECK(grant.lease_id && strlen(grant.lease_id) == 32);
+  CHECK(grant.lease_expires_at == now + 60);
+  CHECK(signet_store_consume_lease(store, grant.lease_id, cred_a,
+                                   "agent-a", now) == 1);
+  SignetLeaseRecord *active = NULL;
+  size_t n_active = 0;
+  CHECK(signet_store_list_active_leases(store, "agent-a", now,
+                                         &active, &n_active) == 0);
+  CHECK(n_active == 0);
+  signet_lease_list_free(active, n_active);
+  signet_credential_access_grant_clear(&grant);
+
   /* 5. Missing capability grant: deny. */
   CHECK(acquire(&ctx, "agent-c", cred_a, SIGNET_CAP_CREDENTIAL_GET_TOKEN,
                  NULL, false, now, &grant) ==
