@@ -18,7 +18,7 @@ files already declare a version.
 | libmarmot | `libmarmot/` | 0.5.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.2.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
-| groundhog | `gnome/groundhog/` | 0.10.1 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
+| groundhog | `gnome/groundhog/` | 0.11.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | NIP-46 client/provider | `nips/nip46/` | Unversioned | Unreleased | — | None; authoritative version ownership must be established before release |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
@@ -66,6 +66,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | libnostr 1.0.10 -> 1.0.11 (PATCH: the shared libwebsockets client context keeps no TLS session cache and asks for no TLS 1.2 tickets, so no connection offers or resumes another's session, nostrc-0d0d; frames still queued in a released connection's recv_channel are freed, nostrc-lpvj) | libnostr | 1.0.11 | PATCH: privacy and leak fixes, no API/ABI change (the new `nostr_connection_recv_channel_free()` is in the private `connection-private.h`). Every reconnect now makes a full TLS handshake. |
 | same | nostr-gobject, gnostr, groundhog | 2.0.2, 0.1.0, 0.10.0 | No bump: no source or API change (Groundhog's gh-net-tls.h only gains a comment); a rebuild or relink picks the fix up, as it does for signet. |
 | groundhog 0.10.0 -> 0.10.1 (PATCH: attachment downloads refuse non-public addresses including embedded-IPv4 IPv6 forms and names resolving to private addresses, nostrc-qi5e; picks up libnostr 1.0.11 TLS no-resumption) | groundhog | 0.10.1 | PATCH: privacy fixes, no new feature. |
+| groundhog 0.10.1 -> 0.11.0 (MINOR: attachment UI G22 nostrc-qp24.40; pins, mark read/unread, header menu, backfill notifications, timer rows, arrival-order read marker with store schema v4, multi-send follow-ups; W18 polish) | groundhog | 0.11.0 | MINOR: new user-visible features and a store schema migration. |
 
 ## Maintenance
 
