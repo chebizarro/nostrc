@@ -9,16 +9,22 @@ G_BEGIN_DECLS
  * GhNetHttp: Groundhog's HTTP client (privacy charter §2.1, §4.2). libsoup is
  * used here and in src/media/ only (the check_privacy libsoup boundary).
  * Every request is one GET the user asked for, made in the configured
- * network mode:
+ * network mode (gh-net-session.h):
  *   - "system": the desktop proxy settings (GLib's default proxy resolver);
  *   - "none":   a direct connection;
- *   - "tor":    refused (G_IO_ERROR_NOT_SUPPORTED) until Tor support exists
- *               (G09): Groundhog never falls back to a direct connection.
+ *   - "tor":    through the SOCKS5 proxy at tor-socks-address, with the host
+ *               name resolved by the proxy (never locally), fresh SOCKS
+ *               credentials (so a fresh Tor circuit) for every request, and
+ *               never a direct connection: an unusable address or an
+ *               unreachable proxy is an error. The outcome is reported to the
+ *               app's GhNetSession (gh_net_session_dup_default()).
  * The session has no cookie jar, cache, HSTS or authentication store, sends
  * no User-Agent, Referer or Accept-Language, follows no redirect (a 3xx is an
  * error), and waits at most GH_NET_HTTP_TIMEOUT_S for the server. Only
  * https URLs are fetched; plain http only to a loopback address (the test
- * fixtures). The body is read up to max_bytes and refused beyond it.
+ * fixtures) or, in Tor mode, to a .onion host. A .onion host is refused
+ * (G_IO_ERROR_PERMISSION_DENIED) outside Tor mode, so it never reaches the
+ * local DNS. The body is read up to max_bytes and refused beyond it.
  * Main context only.
  */
 
@@ -36,7 +42,8 @@ typedef struct {
 #define GH_TYPE_NET_HTTP (gh_net_http_get_type())
 G_DECLARE_FINAL_TYPE(GhNetHttp, gh_net_http, GH, NET_HTTP, GObject)
 
-/* settings (nullable: "system") supplies network-mode, read at each request. */
+/* settings (nullable: "system") supplies network-mode and tor-socks-address,
+ * read at each request. */
 GhNetHttp *gh_net_http_new(GSettings *settings);
 
 void gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,

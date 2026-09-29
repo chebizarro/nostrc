@@ -129,8 +129,10 @@ static const struct {
     N_("Can't open message storage"), TRUE, N_("Try Again"), GH_STATUS_ACTION_STORE_RETRY },
   { GH_STATUS_BANNER_OFFLINE,
     N_("Offline — new messages will arrive when you're back online"), TRUE, NULL, NULL },
+  /* [Network Settings]: Preferences, Network page (G09). */
   { GH_STATUS_BANNER_TOR_UNREACHABLE,
-    N_("Can't reach Tor — Groundhog won't connect without it"), TRUE, NULL, NULL },
+    N_("Can't reach Tor — Groundhog won't connect without it"), TRUE,
+    N_("Network Settings"), GH_STATUS_ACTION_NETWORK_SETTINGS },
   { GH_STATUS_BANNER_SIGNER_UNAVAILABLE,
     N_("Nostr Signer isn't running — messages can't be unlocked or sent"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_SIGNER_NO_BUS,

@@ -35,8 +35,13 @@ G_BEGIN_DECLS
 #ifndef GROUNDHOG_HAVE_OUTBOX
 #define GROUNDHOG_HAVE_OUTBOX 0
 #endif
+#ifndef GROUNDHOG_HAVE_TOR
+#define GROUNDHOG_HAVE_TOR 0
+#endif
 
-#define GH_FEATURE_TOR              0 /* G09: network modes and the Tor transport */
+/* G09: network modes and the Tor transport (src/net/gh-net-session.c and
+ * gh-relay-net.c, installed by gh-app-services.c before any connection). */
+#define GH_FEATURE_TOR              GROUNDHOG_HAVE_TOR
 /* G16: src/app/gh-notifier.c, run by gh-app-services.c with the store. */
 #define GH_FEATURE_NOTIFICATIONS    GROUNDHOG_HAVE_NOTIFIER
 /* G13: the composer sends through the durable outbox (gh-send-ui.c); a build

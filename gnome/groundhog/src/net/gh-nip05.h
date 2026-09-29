@@ -15,7 +15,9 @@ G_BEGIN_DECLS
  * GH_NIP05_MAX_DOCUMENT bytes, and only its "names" entry for the name is
  * read. The document's "relays" hints are ignored: where a message goes is
  * decided by the person's own signed inbox list (charter P1). Nothing is
- * cached or stored. .onion domains are refused outside Tor mode (NT-8).
+ * cached or stored. In Tor mode the lookup goes through the Tor proxy
+ * (GhNetHttp); a .onion domain is looked up only there, over http (the onion
+ * address authenticates the service), and refused in any other mode (NT-8).
  */
 
 #define GH_NIP05_MAX_DOCUMENT (64 * 1024)

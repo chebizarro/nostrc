@@ -32,8 +32,10 @@ G_BEGIN_DECLS
  * to https (same host, port and path) and "Accept: application/nostr+json".
  * A ws:// relay's document is not fetched: there is no plaintext fallback, so
  * such a relay has no verified key (GH_NIP11_ERROR_PLAINTEXT) and its group
- * state stays unverified. Only loopback ws:// addresses (the test relays)
- * map to http, as GhNetHttp allows for its fixtures. The service fetches only
+ * state stays unverified. Only loopback ws:// addresses (the test relays) and
+ * .onion relays map to http: an onion service is authenticated by its
+ * address, and GhNetHttp reaches it only in Tor mode (through the proxy, like
+ * every NIP-11 fetch in that mode). The service fetches only
  * for a group the user joined or opened, never for others.
  */
 
@@ -49,9 +51,10 @@ typedef enum {
 
 #define GH_NIP11_MAX_RESPONSE (64 * 1024)
 
-/* The document URL of relay_url (wss -> https, loopback ws -> http); NULL
- * with GH_NIP11_ERROR_INVALID_URL for anything but a ws(s) URL with a host
- * and without credentials, GH_NIP11_ERROR_PLAINTEXT for ws:// off loopback. */
+/* The document URL of relay_url (wss -> https, loopback or .onion ws ->
+ * http); NULL with GH_NIP11_ERROR_INVALID_URL for anything but a ws(s) URL
+ * with a host and without credentials, GH_NIP11_ERROR_PLAINTEXT for any
+ * other ws://. */
 gchar *gh_nip11_document_url(const gchar *relay_url, GError **error);
 /* The 64 lowercase hex key of a NIP-11 document's "self". */
 gchar *gh_nip11_parse_relay_key(const gchar *document, gssize length, GError **error);

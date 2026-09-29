@@ -124,6 +124,31 @@ gboolean gh_relay_scope_set_url_auth(GhRelayScope *scope, const gchar *url,
 void gh_relay_scope_set_auth_transport(GhRelayScope *scope,
                                        const GhRelayAuthTransport *auth);
 
+/* The GNostrRelay (libnostr/libwebsockets) transport: direct connections
+ * only, with local DNS. */
+extern const GhRelayTransport gh_relay_gnostr_transport;
+extern const GhRelayAuthTransport gh_relay_gnostr_auth_transport;
+
+/* The transport gh_relay_scope_new() gives every scope. Until an app-wide
+ * default is installed it is the GNostrRelay one; the network session
+ * (src/net/gh-relay-net.h, G09) installs its network-mode dispatcher, which
+ * sends Tor mode through SOCKS5 and never falls back to a direct connection.
+ * transport NULL restores GNostrRelay. auth is optional. Install before any
+ * scope is made; thread-safe. */
+void gh_relay_scope_set_default_transport(const GhRelayTransport *transport,
+                                          const GhRelayAuthTransport *auth,
+                                          gpointer transport_data);
+
+/* Tor stream isolation (privacy charter §4.3, PD-6, NT-6): a label shared by
+ * all of this scope's connections, and only by them. A transport that
+ * proxies derives its SOCKS credentials from it and the generation, so each
+ * scope gets its own Tor circuits while its reconnects keep them. The
+ * default is a random label made with the scope; a caller may set a stable
+ * one (e.g. "inbox") before start. Never a URL or key: it only needs to be
+ * distinct. */
+void gh_relay_scope_set_isolation(GhRelayScope *scope, const gchar *isolation);
+const gchar *gh_relay_scope_get_isolation(const GhRelayScope *scope);
+
 /* Transport-to-scope delivery. Unknown URLs and cancelled generations are
  * discarded. EVENT validates signed NIP-01 JSON and deduplicates 4096 IDs. */
 void gh_relay_scope_event(GhRelayScope *scope, const gchar *url,

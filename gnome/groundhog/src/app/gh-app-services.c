@@ -46,12 +46,19 @@
 #include "gh-identity.h"
 #include "gh-preferences-dialog.h"
 #endif
+#if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
+#include "gh-net-session.h"
+#include "gh-relay-net.h"
+#endif
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 struct _GhAppServices {
   GtkApplication *app; /* borrowed: owns the process's services */
   GSettings *settings;
+#if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
+  GhNetSession *network; /* the network mode of every connection (G09) */
+#endif
 #if GROUNDHOG_HAVE_ACCOUNTS
   GhAccountController *accounts;
 #endif
@@ -84,6 +91,7 @@ struct _GhAppServices {
 #endif
 #if GROUNDHOG_HAVE_ACCOUNTS
   GSimpleAction *preferences_action;
+  GSimpleAction *network_settings_action;
   GhPreferencesDialog *preferences_dialog; /* weak: the one that is open */
 #endif
   guint started; /* services initialized, from the top of the table */
@@ -132,6 +140,52 @@ static void
 accounts_teardown(GhAppServices *self)
 {
   dispose_object(&self->accounts);
+}
+#endif
+
+#if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
+/* The network mode (privacy charter §4.2, G09), installed before any relay
+ * scope or publish exists: from here on every one of them goes through the
+ * network-mode dispatcher (gh-relay-net.h), so Tor mode never connects
+ * directly, and a mode change closes every connection of the old mode. */
+static gboolean
+network_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  self->network = gh_net_session_new(self->settings);
+  gh_relay_net_install(self->network);
+  return TRUE;
+}
+
+/* After every service that connects has stopped. */
+static void
+network_teardown(GhAppServices *self)
+{
+  gh_relay_net_install(NULL);
+  dispose_object(&self->network);
+}
+
+/* "Can't reach Tor — Groundhog won't connect without it" (§7.15 #6). */
+static void
+sync_tor_banner(GhNetSession *network, GParamSpec *pspec, gpointer status)
+{
+  (void)pspec;
+  gh_status_set_tor_unreachable(GH_STATUS(status),
+                                gh_net_session_get_tor_state(network) == GH_NET_TOR_UNREACHABLE);
+}
+
+static void
+sync_preferences_tor(GhNetSession *network, GParamSpec *pspec, gpointer dialog)
+{
+  (void)pspec;
+  static const GhPreferencesTorStatus status[] = {
+    [GH_NET_TOR_OFF] = GH_PREFERENCES_TOR_STATUS_UNKNOWN,
+    [GH_NET_TOR_CHECKING] = GH_PREFERENCES_TOR_STATUS_CHECKING,
+    [GH_NET_TOR_READY] = GH_PREFERENCES_TOR_STATUS_REACHABLE,
+    [GH_NET_TOR_UNREACHABLE] = GH_PREFERENCES_TOR_STATUS_UNREACHABLE,
+  };
+  gh_preferences_dialog_set_tor_status(GH_PREFERENCES_DIALOG(dialog),
+                                       status[gh_net_session_get_tor_state(network)]);
 }
 #endif
 
@@ -615,19 +669,21 @@ sync_preferences_account(GhAccountController *accounts, gpointer dialog)
   gh_preferences_dialog_set_account(GH_PREFERENCES_DIALOG(dialog), npub, label);
 }
 
+/* page: the page to show (NULL: the dialog's first). */
 static void
-on_preferences(GSimpleAction *action, GVariant *parameter, gpointer data)
+present_preferences(GhAppServices *self, const gchar *page)
 {
-  GhAppServices *self = data;
   GtkWindow *window = gtk_application_get_active_window(self->app);
-  (void)action;
-  (void)parameter;
   if (!ADW_IS_APPLICATION_WINDOW(window))
     return;
   /* One at a time, even under its own confirmation dialog: a second one
    * could start a second deletion. */
-  if (self->preferences_dialog && gtk_widget_get_root(GTK_WIDGET(self->preferences_dialog)))
+  if (self->preferences_dialog && gtk_widget_get_root(GTK_WIDGET(self->preferences_dialog))) {
+    if (page)
+      adw_preferences_dialog_set_visible_page_name(
+        ADW_PREFERENCES_DIALOG(self->preferences_dialog), page);
     return;
+  }
   /* Rows whose feature this build lacks say so (src/app/gh-features.h). */
   GhPreferencesDialog *dialog = gh_preferences_dialog_new(self->settings,
                                                           gh_features_for_preferences());
@@ -635,12 +691,36 @@ on_preferences(GSimpleAction *action, GVariant *parameter, gpointer data)
   sync_preferences_account(self->accounts, dialog);
   g_signal_connect_object(self->accounts, "changed", G_CALLBACK(sync_preferences_account),
                           dialog, 0);
+#if GROUNDHOG_HAVE_TOR
+  sync_preferences_tor(self->network, NULL, dialog);
+  g_signal_connect_object(self->network, "notify::tor-state", G_CALLBACK(sync_preferences_tor),
+                          dialog, 0);
+#endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   gh_preferences_dialog_set_forget_func(dialog, preferences_forget_async,
                                         preferences_forget_finish,
                                         G_OBJECT(self->account_store));
 #endif
+  if (page)
+    adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(dialog), page);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
+}
+
+static void
+on_preferences(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  (void)parameter;
+  present_preferences(data, NULL);
+}
+
+/* app.network-settings: the "Can't reach Tor" banner's [Network Settings]. */
+static void
+on_network_settings(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  (void)parameter;
+  present_preferences(data, "network");
 }
 
 static gboolean
@@ -650,12 +730,18 @@ preferences_init(GhAppServices *self, GError **error)
   self->preferences_action = g_simple_action_new("preferences", NULL);
   g_signal_connect(self->preferences_action, "activate", G_CALLBACK(on_preferences), self);
   g_action_map_add_action(G_ACTION_MAP(self->app), G_ACTION(self->preferences_action));
+  self->network_settings_action = g_simple_action_new("network-settings", NULL);
+  g_signal_connect(self->network_settings_action, "activate", G_CALLBACK(on_network_settings),
+                   self);
+  g_action_map_add_action(G_ACTION_MAP(self->app), G_ACTION(self->network_settings_action));
   return TRUE;
 }
 
 static void
 preferences_teardown(GhAppServices *self)
 {
+  g_action_map_remove_action(G_ACTION_MAP(self->app), "network-settings");
+  g_clear_object(&self->network_settings_action);
   g_action_map_remove_action(G_ACTION_MAP(self->app), "preferences");
   g_clear_object(&self->preferences_action);
   g_clear_weak_pointer(&self->preferences_dialog);
@@ -736,6 +822,9 @@ static const GhAppService services[] = {
   { "application", NULL, NULL },
 #if GROUNDHOG_HAVE_ACCOUNTS
   { "settings", settings_init, settings_teardown },
+#if GROUNDHOG_HAVE_TOR
+  { "network", network_init, network_teardown },
+#endif
   { "accounts", accounts_init, accounts_teardown },
 #endif
 #if GROUNDHOG_HAVE_RELAYS
@@ -816,6 +905,12 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #if GROUNDHOG_HAVE_INBOX
   gh_conversation_list_attach(window, self->conversations, self->settings);
   gh_inbox_status_attach(gh_window_get_status(window), self->inbox, self->relays);
+#endif
+#if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
+  GhStatus *status = gh_window_get_status(window);
+  sync_tor_banner(self->network, NULL, status);
+  g_signal_connect_object(self->network, "notify::tor-state", G_CALLBACK(sync_tor_banner),
+                          status, 0);
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   static const GhRequestsBackend requests_backend = { requests_forget, requests_block };

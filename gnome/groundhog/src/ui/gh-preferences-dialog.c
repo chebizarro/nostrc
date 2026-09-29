@@ -55,6 +55,7 @@ struct _GhPreferencesDialog {
   AdwComboRow *network_mode_row;
   AdwEntryRow *tor_address_row;
   GtkLabel *tor_address_error;
+  AdwActionRow *tor_status_row;
   GtkLabel *proxy_note;
   GtkLabel *tor_note;
   GtkListBox *discovery_list;
@@ -73,6 +74,7 @@ struct _GhPreferencesDialog {
 
   GSettings *settings;
   GhPreferencesFeatures features;
+  GhPreferencesTorStatus tor_status;
   GHashTable *key_widgets; /* key -> borrowed widget */
   GPtrArray *bindings;     /* Binding */
   gulong settings_changed;
@@ -561,7 +563,9 @@ bind_address(GhPreferencesDialog *self, const gchar *key, AdwEntryRow *entry, Gt
 
 /* ---- network, account, delete ----------------------------------------------------- */
 
-/* Tor rows exist only with G09 (charter §7.11: no fake support). */
+/* Tor rows exist only with G09 (charter §7.11: no fake support). With it the
+ * page says, for the chosen mode, who can see the IP address (§4.2): relay
+ * connections honour no proxy outside Tor mode (libwebsockets has none). */
 static void
 sync_network(GhPreferencesDialog *self)
 {
@@ -571,8 +575,46 @@ sync_network(GhPreferencesDialog *self)
   gtk_widget_set_visible(GTK_WIDGET(self->tor_address_row), tor);
   if (!tor)
     gtk_widget_set_visible(GTK_WIDGET(self->tor_address_error), FALSE);
-  gtk_widget_set_visible(GTK_WIDGET(self->tor_note), tor_available);
-  gtk_widget_set_visible(GTK_WIDGET(self->proxy_note), !tor_available);
+  gtk_widget_set_visible(GTK_WIDGET(self->tor_note), tor);
+  gtk_widget_set_visible(GTK_WIDGET(self->proxy_note), !tor);
+  if (tor_available && !tor)
+    gtk_label_set_text(self->proxy_note,
+                       g_str_equal(mode, "system")
+                         ? _("Groundhog connects to relays directly, so relays and your "
+                             "network can see your IP address. Only web lookups, such as "
+                             "checking an address, use the system's proxy settings. Choose Tor "
+                             "to hide your IP address.")
+                         : _("Groundhog connects directly, so relays, websites and your "
+                             "network can see your IP address. Choose Tor to hide it."));
+  gboolean status = tor && self->tor_status != GH_PREFERENCES_TOR_STATUS_UNKNOWN;
+  gtk_widget_set_visible(GTK_WIDGET(self->tor_status_row), status);
+  if (!status)
+    return;
+  g_autofree gchar *address = g_settings_get_string(self->settings, "tor-socks-address");
+  g_autofree gchar *subtitle = NULL;
+  switch (self->tor_status) {
+  case GH_PREFERENCES_TOR_STATUS_CHECKING:
+    subtitle = g_strdup(_("Checking…"));
+    break;
+  case GH_PREFERENCES_TOR_STATUS_REACHABLE:
+    subtitle = g_strdup_printf(_("Tor is reachable at %s"), address);
+    break;
+  case GH_PREFERENCES_TOR_STATUS_UNREACHABLE:
+  default:
+    subtitle = g_strdup_printf(_("Can't reach Tor at %s — Groundhog won't connect without it"),
+                               address);
+    break;
+  }
+  adw_action_row_set_subtitle(self->tor_status_row, subtitle);
+}
+
+void
+gh_preferences_dialog_set_tor_status(GhPreferencesDialog *self, GhPreferencesTorStatus status)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  self->tor_status = status;
+  if (!self->disposed)
+    sync_network(self);
 }
 
 /* Content and sound exist only with notifications, and only matter while
@@ -639,7 +681,7 @@ on_settings_changed(GSettings *settings, const gchar *key, GhPreferencesDialog *
       g_assert_not_reached();
     }
   }
-  if (g_str_equal(key, "network-mode"))
+  if (g_str_equal(key, "network-mode") || g_str_equal(key, "tor-socks-address"))
     sync_network(self);
 }
 
@@ -1000,6 +1042,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(network_mode_row);
   BIND(tor_address_row);
   BIND(tor_address_error);
+  BIND(tor_status_row);
   BIND(proxy_note);
   BIND(tor_note);
   BIND(discovery_list);

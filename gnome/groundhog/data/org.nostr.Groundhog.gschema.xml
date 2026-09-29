@@ -75,12 +75,12 @@
       </choices>
       <default>'system'</default>
       <summary>How Groundhog connects</summary>
-      <description>system uses the desktop proxy settings, none connects directly, and tor uses the Tor SOCKS proxy at tor-socks-address and never falls back to a direct connection. Reserved: relay connections do not honour this setting or the desktop proxy settings yet.</description>
+      <description>tor sends every relay connection and web request through the Tor SOCKS5 proxy at tor-socks-address, with host names resolved by Tor, and never falls back to a direct connection; .onion addresses are reached only in this mode. none connects directly. system connects to relays directly and uses the desktop proxy settings for web requests only (relay connections cannot use the desktop proxy settings).</description>
     </key>
     <key name="tor-socks-address" type="s">
       <default>'127.0.0.1:9050'</default>
       <summary>Tor SOCKS proxy address</summary>
-      <description>host:port of the local Tor SOCKS5 proxy used when network-mode is tor. Reserved; not used yet.</description>
+      <description>host:port of the Tor SOCKS5 proxy used when network-mode is tor, e.g. 127.0.0.1:9150 for Tor Browser. If nothing answers there, Groundhog does not connect.</description>
     </key>
 
     <!-- Network / Relays -->

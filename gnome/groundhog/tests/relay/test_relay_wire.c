@@ -1,6 +1,7 @@
 #include "gh-relay-scope.h"
 #include "fake-auth-signer.h"
 #include "wire-relay.h"
+#include "wire-tor.h"
 
 typedef struct {
   guint errors;
@@ -333,13 +334,16 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
-  g_test_add_func("/groundhog/relay/wire-auth/account-serves-req", test_wire_auth_account_serves_req);
-  g_test_add_func("/groundhog/relay/wire-auth/ephemeral-per-connection", test_wire_auth_ephemeral_per_connection);
-  g_test_add_func("/groundhog/relay/wire-auth/failures-surface-closed", test_wire_auth_failures_surface_closed);
-  g_test_add_func("/groundhog/relay/wire-auth/cancel-while-signing", test_wire_auth_cancel_while_signing);
-  g_test_add_func("/groundhog/relay/wire-destinations", test_wire_destinations);
-  g_test_add_func("/groundhog/relay/offline-at-start", test_offline_at_start_reconnect);
-  g_test_add_func("/groundhog/relay/same-url-scopes-isolated", test_same_url_scopes_isolated);
-  g_test_add_func("/groundhog/relay/cancel-closes-subscription", test_cancel_closes_relay_subscription);
+  static const WireCase cases[] = {
+    { "/groundhog/relay/wire-auth/account-serves-req", test_wire_auth_account_serves_req, FALSE },
+    { "/groundhog/relay/wire-auth/ephemeral-per-connection", test_wire_auth_ephemeral_per_connection, FALSE },
+    { "/groundhog/relay/wire-auth/failures-surface-closed", test_wire_auth_failures_surface_closed, FALSE },
+    { "/groundhog/relay/wire-auth/cancel-while-signing", test_wire_auth_cancel_while_signing, FALSE },
+    { "/groundhog/relay/wire-destinations", test_wire_destinations, FALSE },
+    { "/groundhog/relay/offline-at-start", test_offline_at_start_reconnect, FALSE },
+    { "/groundhog/relay/same-url-scopes-isolated", test_same_url_scopes_isolated, FALSE },
+    { "/groundhog/relay/cancel-closes-subscription", test_cancel_closes_relay_subscription, FALSE },
+  };
+  wire_add_tests(cases, G_N_ELEMENTS(cases));
   return g_test_run();
 }

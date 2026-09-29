@@ -1,4 +1,5 @@
 #include "gh-new-message-dialog.h"
+#include "gh-net-session.h"
 
 #include "gh-recipient.h"
 
@@ -639,16 +640,18 @@ lookup_item(GhNewMessageDialog *self, const GhRecipientInput *input)
   item->address = g_strdup(input->nip05);
   item->icon_name = g_strdup("system-search-symbolic");
   g_autofree gchar *mode = settings_string(self->config.settings, "network-mode", "system");
+  gboolean tor = gh_net_mode_from_string(mode) == GH_NET_MODE_TOR;
   g_autofree gchar *subtitle = NULL;
   if (!self->config.nip05) {
     subtitle = g_strdup(_("Looking up addresses isn't available in this version"));
     item->enabled = FALSE;
-  } else if (g_str_equal(mode, "tor")) {
-    subtitle = g_strdup(_("Addresses can't be looked up through Tor yet"));
-    item->enabled = FALSE;
-  } else if (g_str_has_suffix(input->nip05_domain, ".onion")) {
+  } else if (!tor && gh_net_host_is_onion(input->nip05_domain)) {
     subtitle = g_strdup(_(".onion addresses can only be reached through Tor"));
     item->enabled = FALSE;
+  } else if (tor) {
+    /* G09: the lookup goes through Tor (GhNetHttp in Tor mode). */
+    subtitle = g_strdup_printf(_("Connects to %s through Tor, which learns whom you looked up "
+                                 "but not your IP address"), input->nip05_domain);
   } else {
     /* PD-2: the row names who learns what before anything is contacted. */
     subtitle = g_strdup_printf(_("Connects to %s, which learns your IP address and whom you "

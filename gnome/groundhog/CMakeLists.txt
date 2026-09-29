@@ -1518,6 +1518,72 @@ else()
 endif()
 # --- end G20a NIP-29 service ---
 
+# --- G09 network modes and Tor ---
+# Network modes, fail closed (privacy charter §4.1 D3 = A, §4.2, §4.3, §8.2
+# G09; NT-5..NT-10, PT-5):
+#  - gh-net-session.c (in groundhog-net): the network-mode and
+#    tor-socks-address settings, per-purpose SOCKS5 credentials for Tor
+#    stream isolation, the relay URL policy (.onion only in Tor mode, ws://
+#    only for loopback and .onion) and the Tor reachability check. GhNetHttp,
+#    NIP-05 and NIP-11 go through the Tor proxy in Tor mode;
+#  - groundhog-net-relay: the libsoup relay transport (gh-relay-soup.c; src/net
+#    only, check_privacy libsoup-boundary) and the dispatcher (gh-relay-net.c)
+#    that the executable installs as the transport of every relay scope and
+#    publish: Tor mode only ever uses libsoup through SOCKS5 with remote DNS;
+#    System and No Proxy keep the GNostrRelay transport (libwebsockets has no
+#    proxy support). A mode change closes every old connection.
+# GROUNDHOG_HAVE_TOR=1 turns on GH_FEATURE_TOR (src/app/gh-features.h): the
+# Preferences Tor choice and address, and the "Can't reach Tor" banner.
+if (TARGET groundhog-net)
+  target_sources(groundhog-net PRIVATE src/net/gh-net-session.c)
+endif()
+if (TARGET groundhog-net AND TARGET groundhog-relay)
+  message(STATUS "Groundhog network modes and Tor: enabled")
+  add_library(groundhog-net-relay STATIC src/net/gh-relay-soup.c src/net/gh-relay-net.c)
+  target_link_libraries(groundhog-net-relay PUBLIC groundhog-net groundhog-relay)
+  target_compile_options(groundhog-net-relay PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-net-relay)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_TOR=1)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # NT-5..NT-9, PT-5 and the mode switch, on the SOCKS5 fixture (H3,
+    # tests/net/socks5-fixture.c: records method, ATYP, host and credentials),
+    # the local wire relay (H2), a loopback HTTP server, a tripwire listener
+    # that must never be dialled, and a GResolver that records every local DNS
+    # lookup (there must be none for a relay or NIP-05 host in Tor mode).
+    add_executable(test-groundhog-net tests/net/test_relay_soup.c tests/net/socks5-fixture.c)
+    target_include_directories(test-groundhog-net PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/net ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
+    target_link_libraries(test-groundhog-net PRIVATE groundhog-net-relay)
+    target_compile_options(test-groundhog-net PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-net groundhog-test-schemas)
+    add_test(NAME groundhog-net COMMAND test-groundhog-net)
+    set_tests_properties(groundhog-net PROPERTIES TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+  # NT-10 transport parity: the existing wire suites run twice, once on the
+  # GNostrRelay transport and once in Tor mode (the dispatcher, libsoup and
+  # the SOCKS5 fixture in front of the same local relays).
+  foreach (wire test-groundhog-relay-wire test-groundhog-relay-publish-wire)
+    if (TARGET ${wire})
+      target_sources(${wire} PRIVATE tests/net/socks5-fixture.c)
+      target_include_directories(${wire} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/net)
+      target_link_libraries(${wire} PRIVATE groundhog-net-relay)
+      target_compile_definitions(${wire} PRIVATE GROUNDHOG_WIRE_TOR=1)
+    endif()
+  endforeach()
+  if (TEST groundhog-relay-wire)
+    set_tests_properties(groundhog-relay-wire PROPERTIES TIMEOUT 60)
+  endif()
+  if (TEST groundhog-relay-publish-wire)
+    set_tests_properties(groundhog-relay-publish-wire PROPERTIES TIMEOUT 90)
+  endif()
+else()
+  message(STATUS "Groundhog network modes and Tor: disabled (needs groundhog-net and the "
+                 "relay layer)")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_TOR=0)
+endif()
+# --- end G09 network modes and Tor ---
+
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from
 # src/app/gh-features.h, whose features follow the executable's

@@ -45,13 +45,18 @@ struct _GhRelayPublish {
   guint terminal;
   GhRelayAuthSigner *signer;   /* account signer, for ACCOUNT URLs only */
   GhRelayPublishSummary summary;
+  gchar *isolation;      /* Tor stream isolation label, random per publish */
   gboolean started;
   gboolean cancelled;
   gboolean completed;
 };
 
-extern const GhRelayPublishTransport gh_relay_publish_gnostr_transport;
-extern const GhRelayPublishAuthTransport gh_relay_publish_gnostr_auth_transport;
+/* gh_relay_publish_new()'s transport (gh_relay_publish_set_default_transport()). */
+static GMutex default_lock;
+static GhRelayPublishTransport default_transport;
+static GhRelayPublishAuthTransport default_auth;
+static gpointer default_data;
+static gboolean default_set;
 
 static const struct {
   const gchar *prefix;
@@ -167,7 +172,29 @@ gh_relay_publish_new_with_transport(guint64 generation, const gchar *event_json,
   publish->endpoints = g_ptr_array_new_with_free_func(endpoint_free);
   publish->by_url = g_hash_table_new(g_str_hash, g_str_equal);
   publish->deadline_seconds = GH_PUBLISH_DEFAULT_DEADLINE_SECONDS;
+  publish->isolation = g_uuid_string_random();
   return publish;
+}
+
+void
+gh_relay_publish_set_default_transport(const GhRelayPublishTransport *transport,
+                                       const GhRelayPublishAuthTransport *auth,
+                                       gpointer transport_data)
+{
+  g_return_if_fail(!transport || (transport->open && transport->close));
+  g_return_if_fail(!auth || (auth->send_auth && auth->resend));
+  g_mutex_lock(&default_lock);
+  default_set = transport != NULL;
+  memset(&default_transport, 0, sizeof default_transport);
+  memset(&default_auth, 0, sizeof default_auth);
+  default_data = NULL;
+  if (transport) {
+    default_transport = *transport;
+    if (auth)
+      default_auth = *auth;
+    default_data = transport_data;
+  }
+  g_mutex_unlock(&default_lock);
 }
 
 GhRelayPublish *
@@ -175,12 +202,28 @@ gh_relay_publish_new(guint64 generation, const gchar *event_json,
                      GhRelayPublishUpdateFunc update, GhRelayPublishDoneFunc done,
                      gpointer user_data, GError **error)
 {
+  GhRelayPublishTransport transport = gh_relay_publish_gnostr_transport;
+  GhRelayPublishAuthTransport auth = gh_relay_publish_gnostr_auth_transport;
+  gpointer data = NULL;
+  g_mutex_lock(&default_lock);
+  if (default_set) {
+    transport = default_transport;
+    auth = default_auth;
+    data = default_data;
+  }
+  g_mutex_unlock(&default_lock);
   GhRelayPublish *publish = gh_relay_publish_new_with_transport(generation,
-    event_json, &gh_relay_publish_gnostr_transport, NULL, update, done,
-    user_data, error);
-  if (publish)
-    publish->auth_transport = gh_relay_publish_gnostr_auth_transport;
+    event_json, &transport, data, update, done, user_data, error);
+  if (publish && auth.send_auth)
+    publish->auth_transport = auth;
   return publish;
+}
+
+const gchar *
+gh_relay_publish_get_isolation(const GhRelayPublish *publish)
+{
+  g_return_val_if_fail(publish != NULL, NULL);
+  return publish->isolation;
 }
 
 void
@@ -237,6 +280,7 @@ gh_relay_publish_unref(GhRelayPublish *publish)
   g_hash_table_unref(publish->by_url);
   g_main_context_unref(publish->context);
   g_free(publish->event_json);
+  g_free(publish->isolation);
   g_free(publish);
 }
 

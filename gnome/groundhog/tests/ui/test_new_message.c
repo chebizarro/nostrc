@@ -302,12 +302,21 @@ test_nip05_consent(void)
   g_assert_cmpuint(rec.urls->len, ==, 2);
   looked_clear(&looked);
 
-  /* Fail closed: never a direct connection in Tor mode, and .onion needs
-   * Tor. Nothing reaches the transport. */
+  /* Tor mode (G09): the lookup is handed to the transport (GhNetHttp, which
+   * goes through Tor; tests/net), a .onion one over http. Outside Tor a
+   * .onion address never reaches the transport (NT-8). */
   g_settings_set_string(settings, "network-mode", "tor");
   gh_nip05_lookup_async(nip05, "bob@example.com", NULL, on_looked, &looked);
   spin_until(is_done, &looked);
-  g_assert_error(looked.error, GH_NIP05_ERROR, GH_NIP05_ERROR_NETWORK_MODE);
+  g_assert_cmpuint(rec.urls->len, ==, 3);
+  g_assert_cmpstr(g_ptr_array_index(rec.urls, 2), ==,
+                  "https://example.com/.well-known/nostr.json?name=bob");
+  looked_clear(&looked);
+  gh_nip05_lookup_async(nip05, "bob@abcdefghijklmnop.onion", NULL, on_looked, &looked);
+  spin_until(is_done, &looked);
+  g_assert_cmpuint(rec.urls->len, ==, 4);
+  g_assert_cmpstr(g_ptr_array_index(rec.urls, 3), ==,
+                  "http://abcdefghijklmnop.onion/.well-known/nostr.json?name=bob");
   looked_clear(&looked);
   g_settings_set_string(settings, "network-mode", "none");
   gh_nip05_lookup_async(nip05, "bob@abcdefghijklmnop.onion", NULL, on_looked, &looked);
@@ -318,7 +327,7 @@ test_nip05_consent(void)
   spin_until(is_done, &looked);
   g_assert_error(looked.error, GH_NIP05_ERROR, GH_NIP05_ERROR_ADDRESS);
   looked_clear(&looked);
-  g_assert_cmpuint(rec.urls->len, ==, 2);
+  g_assert_cmpuint(rec.urls->len, ==, 4);
   g_settings_reset(settings, "network-mode");
   g_ptr_array_unref(rec.urls);
   g_ptr_array_unref(rec.caps);
@@ -495,12 +504,23 @@ test_net_http(void)
     get(http, refused[i], 1024, &got);
     g_assert_error(got.error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
   }
-  /* Tor mode: refused before any connection. */
+  /* Tor mode with nothing at the Tor address: an error, never a direct
+   * connection (G09; the Tor path itself is tests/net). A .onion host only
+   * in Tor mode. */
   guint hits = server.hits_doc;
+  g_autoptr(GSocketListener) reservation = g_socket_listener_new();
+  guint16 closed_port = g_socket_listener_add_any_inet_port(reservation, NULL, NULL);
+  g_socket_listener_close(reservation);
+  g_autofree gchar *nowhere = g_strdup_printf("127.0.0.1:%u", closed_port);
+  g_settings_set_string(settings, "tor-socks-address", nowhere);
   g_settings_set_string(settings, "network-mode", "tor");
   get(http, doc, GH_NIP05_MAX_DOCUMENT, &got);
-  g_assert_error(got.error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_assert_nonnull(got.error);
   g_assert_cmpuint(server.hits_doc, ==, hits);
+  g_settings_reset(settings, "tor-socks-address");
+  g_settings_set_string(settings, "network-mode", "none");
+  get(http, "https://abcdefghijklmnop.onion/.well-known/nostr.json", 1024, &got);
+  g_assert_error(got.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
   /* The desktop proxy settings (system mode) reach loopback directly. */
   g_settings_set_string(settings, "network-mode", "system");
   get(http, doc, GH_NIP05_MAX_DOCUMENT, &got);

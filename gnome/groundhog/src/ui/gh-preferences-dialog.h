@@ -48,7 +48,11 @@ G_BEGIN_DECLS
  *   TOR               tor-socks-address and the "tor" network mode: without
  *                     it the Tor choice is removed, the Tor address row stays
  *                     hidden and the Network page says that proxy settings
- *                     are not used yet (§4.2)
+ *                     are not used yet (§4.2). With it the page says, for the
+ *                     chosen mode, who can see the IP address: in Tor mode
+ *                     what Tor hides and what it doesn't (§2.2 surface 5),
+ *                     with the Tor address and the Tor status
+ *                     (gh_preferences_dialog_set_tor_status())
  *
  * The application passes gh_features_for_preferences() (src/app/gh-features.h),
  * the one list of what this build performs; tests/check_privacy.py requires a
@@ -80,6 +84,14 @@ typedef enum {
   GH_PREFERENCES_FEATURE_EXPIRY           = 1 << 8, /* G07: the expiry and retention purge */
 } GhPreferencesFeatures;
 #define GH_PREFERENCES_FEATURES_ALL ((GhPreferencesFeatures)((1 << 9) - 1))
+
+/* Whether Tor answers at tor-socks-address (the app's network session). */
+typedef enum {
+  GH_PREFERENCES_TOR_STATUS_UNKNOWN,     /* not known: no status row */
+  GH_PREFERENCES_TOR_STATUS_CHECKING,
+  GH_PREFERENCES_TOR_STATUS_REACHABLE,
+  GH_PREFERENCES_TOR_STATUS_UNREACHABLE, /* Groundhog connects nowhere */
+} GhPreferencesTorStatus;
 
 /* What a forget did. */
 typedef enum {
@@ -114,6 +126,10 @@ gboolean gh_preferences_dialog_get_key_available(GhPreferencesDialog *self, cons
  * name, or NULL to show a shortened npub. */
 void gh_preferences_dialog_set_account(GhPreferencesDialog *self, const gchar *npub,
                                        const gchar *label);
+/* The Tor status row, shown in Tor mode (with the TOR feature) unless the
+ * status is UNKNOWN. */
+void gh_preferences_dialog_set_tor_status(GhPreferencesDialog *self,
+                                          GhPreferencesTorStatus status);
 /* Enables "Delete All Messages on This Device"; target is referenced. */
 void gh_preferences_dialog_set_forget_func(GhPreferencesDialog *self,
                                            GhPreferencesForgetAsyncFunc forget_async,

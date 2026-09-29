@@ -84,6 +84,9 @@ typedef enum {
  * the onboarding inbox step (gh-onboarding-view.h installs it on the
  * window). */
 #define GH_STATUS_ACTION_SETUP_INBOX "win.setup-inbox"
+/* [Network Settings] on "Can't reach Tor" (§7.15 #6): Preferences on its
+ * Network page (gh-app-services.c installs it on the application, G09). */
+#define GH_STATUS_ACTION_NETWORK_SETTINGS "app.network-settings"
 
 GType gh_status_signer_get_type(void);
 GType gh_status_inbox_get_type(void);
@@ -100,8 +103,8 @@ G_DECLARE_FINAL_TYPE(GhStatus, gh_status, GH, STATUS, GObject)
 /* The window's status inputs and the single banner derived from them. It
  * holds no service: account, network and signer inputs are set by
  * gh-account-ui.c, the inbox input by gh-inbox-status.c, the store input by
- * gh-store-status.c, and tor-unreachable
- * is reserved for the Tor transport (charter G09), which nothing sets yet.
+ * gh-store-status.c, and tor-unreachable by gh-app-services.c from the
+ * network session (G09: Tor mode, and nothing answers at the Tor address).
  * Every input is a writable property; "banner" notifies when it changes.
  * No banner is shown without an active account: the sidebar's account pages
  * explain those states. */
@@ -130,9 +133,10 @@ GhStatusBanner gh_status_get_banner(GhStatus *self);
 const gchar *gh_status_banner_get_title(GhStatusBanner banner);
 /* The banner's button and the detailed action it activates, or NULL when the
  * state has none yet. [Set Up] (§7.15 #7, and "no relay is set up yet")
- * opens the onboarding inbox step (GH_STATUS_ACTION_SETUP_INBOX). Charter
- * §7.15 also lists [Network Settings] (#6) and [Details] (#8, preferences
- * G17); those surfaces do not exist, so no button pretends to open them.
+ * opens the onboarding inbox step (GH_STATUS_ACTION_SETUP_INBOX), and
+ * [Network Settings] (#6) the Network page of Preferences
+ * (GH_STATUS_ACTION_NETWORK_SETTINGS). Charter §7.15 also lists [Details]
+ * (#8); that surface does not exist, so no button pretends to open it.
  * The store banners' actions (GH_STATUS_ACTION_STORE_*) are application
  * actions. */
 const gchar *gh_status_banner_get_button_label(GhStatusBanner banner);

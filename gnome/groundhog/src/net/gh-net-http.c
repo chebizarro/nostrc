@@ -1,4 +1,5 @@
 #include "gh-net-http.h"
+#include "gh-net-session.h"
 
 #include <libsoup/soup.h>
 #include <string.h>
@@ -13,7 +14,9 @@ struct _GhNetHttp {
 G_DEFINE_FINAL_TYPE(GhNetHttp, gh_net_http, G_TYPE_OBJECT)
 
 typedef struct {
+  SoupSession *session;
   SoupMessage *message;
+  gboolean tor;           /* made through the Tor proxy */
   GInputStream *stream;
   guint8 *buffer;
   gsize max_bytes;
@@ -24,61 +27,107 @@ request_free(gpointer data)
 {
   Request *request = data;
   g_clear_object(&request->message);
+  g_clear_object(&request->session);
   g_clear_object(&request->stream);
   g_free(request->buffer);
   g_free(request);
 }
 
 static gchar *
-network_mode(GhNetHttp *self)
+setting(GhNetHttp *self, const gchar *key, const gchar *fallback)
 {
   if (!self->settings)
-    return g_strdup("system");
+    return g_strdup(fallback);
   g_autoptr(GSettingsSchema) schema = NULL;
   g_object_get(self->settings, "settings-schema", &schema, NULL);
-  if (!schema || !g_settings_schema_has_key(schema, "network-mode"))
-    return g_strdup("system");
-  return g_settings_get_string(self->settings, "network-mode");
+  if (!schema || !g_settings_schema_has_key(schema, key))
+    return g_strdup(fallback);
+  return g_settings_get_string(self->settings, key);
 }
 
-/* The session for mode, made again when the mode changed. NULL for a mode
- * that has no connection path (Tor, until G09). */
 static SoupSession *
-session_for(GhNetHttp *self, const gchar *mode)
+session_new(GProxyResolver *resolver)
 {
-  if (self->session && g_strcmp0(self->session_mode, mode) == 0)
-    return self->session;
-  g_clear_object(&self->session);
-  g_clear_pointer(&self->session_mode, g_free);
-  if (g_str_equal(mode, "system")) {
-    /* NULL proxy-resolver would disable proxies; the default follows the
-     * desktop settings. */
-    self->session = soup_session_new_with_options(
-      "timeout", GH_NET_HTTP_TIMEOUT_S, "idle-timeout", GH_NET_HTTP_TIMEOUT_S,
-      "proxy-resolver", g_proxy_resolver_get_default(), "user-agent", NULL,
-      "accept-language-auto", FALSE, NULL);
-  } else if (g_str_equal(mode, "none")) {
-    g_autoptr(GProxyResolver) direct = g_simple_proxy_resolver_new(NULL, NULL);
-    self->session = soup_session_new_with_options(
-      "timeout", GH_NET_HTTP_TIMEOUT_S, "idle-timeout", GH_NET_HTTP_TIMEOUT_S,
-      "proxy-resolver", direct, "user-agent", NULL, "accept-language-auto", FALSE, NULL);
-  } else {
-    return NULL;
-  }
+  SoupSession *session = soup_session_new_with_options(
+    "timeout", GH_NET_HTTP_TIMEOUT_S, "idle-timeout", GH_NET_HTTP_TIMEOUT_S,
+    "proxy-resolver", resolver, "user-agent", NULL, "accept-language-auto", FALSE, NULL);
   /* No cookie jar, cache, HSTS or auth store is added; drop any content
    * sniffer a default session may carry (nothing here renders content). */
-  soup_session_remove_feature_by_type(self->session, SOUP_TYPE_CONTENT_SNIFFER);
-  self->session_mode = g_strdup(mode);
-  return self->session;
+  soup_session_remove_feature_by_type(session, SOUP_TYPE_CONTENT_SNIFFER);
+  return session;
+}
+
+/* A new reference to the session for mode. System and No Proxy sessions are
+ * kept (and made again when the mode changed); in Tor mode every request gets
+ * its own session and SOCKS credentials, so its own circuit (charter §4.3:
+ * media and lookups are "random per fetch"). NULL with an error when the Tor
+ * address is unusable. */
+static SoupSession *
+session_for(GhNetHttp *self, GhNetMode mode, GError **error)
+{
+  if (mode == GH_NET_MODE_TOR) {
+    g_autofree gchar *address = setting(self, "tor-socks-address", NULL);
+    g_autoptr(GProxyResolver) resolver = gh_net_proxy_resolver_new(mode, address, NULL, error);
+    return resolver ? session_new(resolver) : NULL;
+  }
+  const gchar *name = mode == GH_NET_MODE_SYSTEM ? "system" : "none";
+  if (!self->session || g_strcmp0(self->session_mode, name) != 0) {
+    if (self->session)
+      soup_session_abort(self->session);
+    g_clear_object(&self->session);
+    g_free(self->session_mode);
+    /* SYSTEM follows the desktop settings (a NULL resolver would disable
+     * proxies); NONE has no proxy. */
+    g_autoptr(GProxyResolver) resolver = gh_net_proxy_resolver_new(mode, NULL, NULL, NULL);
+    self->session = session_new(resolver);
+    self->session_mode = g_strdup(name);
+  }
+  return g_object_ref(self->session);
+}
+
+static void
+report(Request *request, gboolean connected)
+{
+  if (!request->tor)
+    return;
+  g_autoptr(GhNetSession) session = gh_net_session_dup_default();
+  if (session)
+    gh_net_session_report(session, connected);
 }
 
 static gboolean
-loopback_host(const gchar *host)
+loopback_literal(const gchar *host)
 {
-  if (!host)
-    return FALSE;
   g_autoptr(GInetAddress) address = g_inet_address_new_from_string(host);
   return address && g_inet_address_get_is_loopback(address);
+}
+
+/* https anywhere; http only to a loopback address (the fixtures) or, in Tor
+ * mode, a .onion host (the onion address authenticates the service). A
+ * .onion host only in Tor mode: anywhere else it would reach the local DNS. */
+static gboolean
+uri_allowed(GUri *parsed, GhNetMode mode, GError **error)
+{
+  const gchar *scheme = parsed ? g_uri_get_scheme(parsed) : NULL;
+  const gchar *host = parsed ? g_uri_get_host(parsed) : NULL;
+  if (!scheme || !host || !*host || g_uri_get_userinfo(parsed) ||
+      (g_ascii_strcasecmp(scheme, "https") != 0 && g_ascii_strcasecmp(scheme, "http") != 0)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Only https addresses are fetched");
+    return FALSE;
+  }
+  gboolean onion = gh_net_host_is_onion(host);
+  if (onion && mode != GH_NET_MODE_TOR) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        ".onion addresses can only be reached through Tor");
+    return FALSE;
+  }
+  if (g_ascii_strcasecmp(scheme, "http") == 0 && !onion && !loopback_literal(host)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Only https addresses are fetched");
+    return FALSE;
+  }
+  return TRUE;
 }
 
 static void
@@ -111,9 +160,12 @@ on_sent(GObject *source, GAsyncResult *result, gpointer data)
   GError *error = NULL;
   request->stream = soup_session_send_finish(SOUP_SESSION(source), result, &error);
   if (!request->stream) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      report(request, FALSE);
     g_task_return_error(task, error);
     return;
   }
+  report(request, TRUE);
   guint status = soup_message_get_status(request->message);
   if (SOUP_STATUS_IS_REDIRECTION(status)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -161,25 +213,23 @@ gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *acc
   g_autoptr(GTask) task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_net_http_get_async);
   g_autoptr(GUri) parsed = g_uri_parse(uri, G_URI_FLAGS_ENCODED, NULL);
-  const gchar *scheme = parsed ? g_uri_get_scheme(parsed) : NULL;
-  gboolean allowed = scheme && g_uri_get_host(parsed) && !g_uri_get_userinfo(parsed) &&
-                     (g_ascii_strcasecmp(scheme, "https") == 0 ||
-                      (g_ascii_strcasecmp(scheme, "http") == 0 &&
-                       loopback_host(g_uri_get_host(parsed))));
-  if (!allowed) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                            "Only https addresses are fetched");
+  g_autofree gchar *mode_name = setting(self, "network-mode", "system");
+  GhNetMode mode = gh_net_mode_from_string(mode_name);
+  GError *error = NULL;
+  if (!uri_allowed(parsed, mode, &error)) {
+    g_task_return_error(task, error);
     return;
   }
-  g_autofree gchar *mode = network_mode(self);
-  SoupSession *session = session_for(self, mode);
+  g_autoptr(SoupSession) session = session_for(self, mode, &error);
   if (!session) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                            "Groundhog can't connect in the chosen network mode yet");
+    /* Fail closed (P5): an unusable Tor address never means "direct". */
+    g_task_return_error(task, error);
     return;
   }
   Request *request = g_new0(Request, 1);
   request->max_bytes = max_bytes;
+  request->session = g_object_ref(session);
+  request->tor = mode == GH_NET_MODE_TOR;
   request->message = soup_message_new_from_uri(SOUP_METHOD_GET, parsed);
   g_task_set_task_data(task, request, request_free);
   soup_message_add_flags(request->message, SOUP_MESSAGE_NO_REDIRECT);

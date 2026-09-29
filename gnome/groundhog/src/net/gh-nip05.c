@@ -1,4 +1,5 @@
 #include "gh-nip05.h"
+#include "gh-net-session.h"
 
 #include "gh-recipient.h"
 
@@ -132,13 +133,10 @@ gh_nip05_lookup_async(GhNip05 *self, const gchar *address, GCancellable *cancell
     return;
   }
   g_autofree gchar *mode = network_mode(self);
-  if (g_str_equal(mode, "tor")) {
-    /* Fail closed (charter P5): never a direct connection in Tor mode. */
-    g_task_return_new_error(task, GH_NIP05_ERROR, GH_NIP05_ERROR_NETWORK_MODE,
-                            "Addresses can't be looked up through Tor yet");
-    return;
-  }
-  if (g_str_has_suffix(domain, ".onion")) {
+  gboolean tor = gh_net_mode_from_string(mode) == GH_NET_MODE_TOR;
+  gboolean onion = gh_net_host_is_onion(domain);
+  if (onion && !tor) {
+    /* NT-8: never resolved or dialled outside Tor. */
     g_task_return_new_error(task, GH_NIP05_ERROR, GH_NIP05_ERROR_NETWORK_MODE,
                             ".onion addresses can only be reached through Tor");
     return;
@@ -147,6 +145,13 @@ gh_nip05_lookup_async(GhNip05 *self, const gchar *address, GCancellable *cancell
   if (!url) {
     g_task_return_error(task, error);
     return;
+  }
+  if (onion) {
+    /* An onion service is authenticated by its address; most serve plain
+     * http. The transport (GhNetHttp in Tor mode) allows http only there. */
+    gchar *http = g_strconcat("http://", url + strlen("https://"), NULL);
+    g_free(url);
+    url = http;
   }
   g_task_set_task_data(task, g_steal_pointer(&local), g_free);
   self->transport.get_async(self->transport_data, url, GH_NIP05_MAX_DOCUMENT, cancellable,

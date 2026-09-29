@@ -36,12 +36,17 @@ struct _GhRelayScope {
   GHashTable *seen;
   GQueue seen_order;
   GhRelayAuthSigner *signer;   /* account signer, for ACCOUNT URLs only */
+  gchar *isolation;            /* Tor stream isolation label */
   gboolean started;
   gboolean cancelled;
 };
 
-extern const GhRelayTransport gh_relay_gnostr_transport;
-extern const GhRelayAuthTransport gh_relay_gnostr_auth_transport;
+/* gh_relay_scope_new()'s transport (gh_relay_scope_set_default_transport()). */
+static GMutex default_lock;
+static GhRelayTransport default_transport;
+static GhRelayAuthTransport default_auth;
+static gpointer default_data;
+static gboolean default_set;
 
 /* Forgets the connection's NIP-42 state and drops a pending AUTH; a held
  * CLOSED is superseded by whatever ended the connection. */
@@ -95,19 +100,66 @@ gh_relay_scope_new_with_transport(guint64 generation, NostrFilters *filters,
                                             endpoint_free);
   scope->seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   g_queue_init(&scope->seen_order);
+  scope->isolation = g_uuid_string_random();
   return scope;
+}
+
+void
+gh_relay_scope_set_default_transport(const GhRelayTransport *transport,
+                                     const GhRelayAuthTransport *auth,
+                                     gpointer transport_data)
+{
+  g_return_if_fail(!transport || (transport->open && transport->close));
+  g_return_if_fail(!auth || (auth->send_auth && auth->resubscribe));
+  g_mutex_lock(&default_lock);
+  default_set = transport != NULL;
+  memset(&default_transport, 0, sizeof default_transport);
+  memset(&default_auth, 0, sizeof default_auth);
+  default_data = NULL;
+  if (transport) {
+    default_transport = *transport;
+    if (auth)
+      default_auth = *auth;
+    default_data = transport_data;
+  }
+  g_mutex_unlock(&default_lock);
 }
 
 GhRelayScope *
 gh_relay_scope_new(guint64 generation, NostrFilters *filters,
                    GhRelayScopeFunc callback, gpointer user_data)
 {
-  GhRelayScope *scope = gh_relay_scope_new_with_transport(generation, filters,
-                                            &gh_relay_gnostr_transport, NULL,
-                                            callback, user_data);
-  if (scope)
-    scope->auth_transport = gh_relay_gnostr_auth_transport;
+  GhRelayTransport transport = gh_relay_gnostr_transport;
+  GhRelayAuthTransport auth = gh_relay_gnostr_auth_transport;
+  gpointer data = NULL;
+  g_mutex_lock(&default_lock);
+  if (default_set) {
+    transport = default_transport;
+    auth = default_auth;
+    data = default_data;
+  }
+  g_mutex_unlock(&default_lock);
+  GhRelayScope *scope = gh_relay_scope_new_with_transport(generation, filters, &transport,
+                                                          data, callback, user_data);
+  if (scope && auth.send_auth)
+    scope->auth_transport = auth;
   return scope;
+}
+
+void
+gh_relay_scope_set_isolation(GhRelayScope *scope, const gchar *isolation)
+{
+  g_return_if_fail(scope != NULL && !scope->started);
+  g_return_if_fail(isolation != NULL && *isolation);
+  g_free(scope->isolation);
+  scope->isolation = g_strdup(isolation);
+}
+
+const gchar *
+gh_relay_scope_get_isolation(const GhRelayScope *scope)
+{
+  g_return_val_if_fail(scope != NULL, NULL);
+  return scope->isolation;
 }
 
 void
@@ -163,6 +215,7 @@ gh_relay_scope_unref(GhRelayScope *scope)
   g_hash_table_unref(scope->seen);
   g_queue_clear_full(&scope->seen_order, g_free);
   nostr_filters_free(scope->filters);
+  g_free(scope->isolation);
   g_free(scope);
 }
 

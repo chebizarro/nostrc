@@ -1,4 +1,5 @@
 #include "gh-nip11.h"
+#include "gh-net-session.h"
 
 #include <json-glib/json-glib.h>
 #include <string.h>
@@ -26,7 +27,9 @@ gh_nip11_document_url(const gchar *relay_url, GError **error)
                         "Not a relay address with a host");
     return NULL;
   }
-  if (!secure && !loopback_host(host)) {
+  /* An onion service is authenticated by its address (GhNetHttp fetches it
+   * only in Tor mode). */
+  if (!secure && !loopback_host(host) && !gh_net_host_is_onion(host)) {
     g_set_error_literal(error, GH_NIP11_ERROR, GH_NIP11_ERROR_PLAINTEXT,
                         "The relay does not use TLS, so its information is not fetched");
     return NULL;

@@ -540,9 +540,16 @@ assert_banner(GhWindow *window, GhStatusBanner banner, const char *title)
   g_assert_cmpstr(adw_banner_get_title(widget), ==, title);
   g_assert_cmpstr(gh_status_banner_get_title(banner), ==, title);
   /* The "no inbox relays" banners offer [Set Up], the onboarding inbox step
-   * (G14). No other banner here offers a button whose destination does not
-   * exist yet. */
+   * (G14), and "Can't reach Tor" [Network Settings] (G09). No other banner
+   * here offers a button whose destination does not exist yet. */
   const char *button = adw_banner_get_button_label(widget);
+  if (banner == GH_STATUS_BANNER_TOR_UNREACHABLE) {
+    g_assert_cmpstr(button, ==, "Network Settings");
+    g_assert_cmpstr(gh_status_banner_get_action(banner), ==, GH_STATUS_ACTION_NETWORK_SETTINGS);
+    g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(widget)), ==,
+                    "app.network-settings");
+    return;
+  }
   if (banner == GH_STATUS_BANNER_INBOX_MISSING || banner == GH_STATUS_BANNER_NO_RELAYS) {
     g_assert_cmpstr(button, ==, "Set Up");
     g_assert_cmpstr(gh_status_banner_get_action(banner), ==, GH_STATUS_ACTION_SETUP_INBOX);
@@ -578,7 +585,7 @@ test_status_banners(void)
   gh_status_set_signer(status, GH_STATUS_SIGNER_NO_BUS);
   assert_banner(window, GH_STATUS_BANNER_SIGNER_NO_BUS,
                 "No session bus — Nostr Signer can't be reached to unlock messages");
-  /* #6 outranks the signer; reserved for the Tor transport (G09). */
+  /* #6 outranks the signer (G09: Tor mode with nothing at the Tor address). */
   gh_status_set_tor_unreachable(status, TRUE);
   assert_banner(window, GH_STATUS_BANNER_TOR_UNREACHABLE,
                 "Can't reach Tor — Groundhog won't connect without it");

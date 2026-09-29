@@ -15,7 +15,7 @@
       <li>There are no read receipts, typing indicators or online status. Nothing loads from the web unless you ask, and notifications are off by default and hide the sender and text.</li>
       <li>Setup can publish the list of relays where people can reach you. No relay is contacted until you choose one.</li>
     </ul>
-    <p>Not in this version: relay groups (NIP-29) and encrypted groups (MLS), replying in group conversations, attachments, and Tor or proxy support. Connections go directly to relays, which see your IP address.</p>
+    <p>Not in this version: relay groups (NIP-29) and encrypted groups (MLS), replying in group conversations, and attachments. Groundhog can connect through Tor, and then connects to nothing if Tor can't be reached; relays then see Tor instead of your IP address, but still see your account. Otherwise connections go directly to relays, which see your IP address.</p>
     <p>Groundhog does not protect against malware running as you, hide that you use Nostr or which relays you use, hide from your own message relays that you receive messages and when, or guarantee that relays or other people delete disappearing messages.</p>
   </description>
   <launchable type="desktop-id">org.nostr.Groundhog.desktop</launchable>

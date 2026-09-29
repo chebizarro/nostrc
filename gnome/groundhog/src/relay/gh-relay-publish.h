@@ -179,6 +179,22 @@ gboolean gh_relay_publish_set_url_auth(GhRelayPublish *publish, const gchar *url
 /* Internal, before start; both functions or NULL. */
 void gh_relay_publish_set_auth_transport(GhRelayPublish *publish,
                                          const GhRelayPublishAuthTransport *auth);
+
+/* The GNostrRelay (libnostr/libwebsockets) transport: direct only. */
+extern const GhRelayPublishTransport gh_relay_publish_gnostr_transport;
+extern const GhRelayPublishAuthTransport gh_relay_publish_gnostr_auth_transport;
+
+/* The transport gh_relay_publish_new() gives every publish: GNostrRelay
+ * until the network session installs its dispatcher (see
+ * gh_relay_scope_set_default_transport()). transport NULL restores
+ * GNostrRelay; auth is optional. Thread-safe. */
+void gh_relay_publish_set_default_transport(const GhRelayPublishTransport *transport,
+                                            const GhRelayPublishAuthTransport *auth,
+                                            gpointer transport_data);
+
+/* Tor stream isolation (charter §4.3, NT-6): each publish has its own random
+ * label, so each publish gets its own SOCKS credentials and circuit. */
+const gchar *gh_relay_publish_get_isolation(const GhRelayPublish *publish);
 /* Opens every URL. Fails without any URL. Callbacks may run before this
  * returns (e.g. a transport that cannot open a URL). */
 gboolean gh_relay_publish_start(GhRelayPublish *publish, GError **error);

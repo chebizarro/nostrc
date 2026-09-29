@@ -1174,16 +1174,27 @@ test_gui_new_message_refusals_and_note_to_self(void)
                    0);
   type_into(dialog, "");
 
-  /* Tor mode: the address row says why it can't look up. */
+  /* Tor mode (G09): the lookup would go through Tor, and the row says who
+   * learns what; nothing is fetched before the click. */
+  guint fetched = f.http.urls->len;
   g_settings_set_string(f.settings, "network-mode", "tor");
   type_into(dialog, "bob@example.com");
   GhNewMessageItem *lookup = suggestion(dialog, 0);
+  g_assert_true(gh_new_message_item_get_enabled(lookup));
+  g_assert_cmpstr(gh_new_message_item_get_subtitle(lookup), ==,
+                  "Connects to example.com through Tor, which learns whom you looked up but "
+                  "not your IP address");
+  g_assert_cmpuint(f.http.urls->len, ==, fetched);
+  /* Outside Tor a .onion address is never looked up. */
+  type_into(dialog, "");
+  g_settings_set_string(f.settings, "network-mode", "system");
+  type_into(dialog, "bob@groundhogexample.onion");
+  lookup = suggestion(dialog, 0);
   g_assert_false(gh_new_message_item_get_enabled(lookup));
   g_assert_cmpstr(gh_new_message_item_get_subtitle(lookup), ==,
-                  "Addresses can't be looked up through Tor yet");
+                  ".onion addresses can only be reached through Tor");
   choose(dialog, 0);
-  g_assert_cmpuint(f.http.urls->len, ==, 0);
-  g_settings_set_string(f.settings, "network-mode", "system");
+  g_assert_cmpuint(f.http.urls->len, ==, fetched);
 
   /* Note to Self opens the account's own room. */
   type_into(dialog, "");

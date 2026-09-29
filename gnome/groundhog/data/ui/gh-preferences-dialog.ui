@@ -194,6 +194,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="title" translatable="yes">Tor Proxy Address</property>
                 <property name="visible">false</property>
                 <property name="show-apply-button">true</property>
+                <accessibility>
+                  <property name="description" translatable="yes">The host and port of Tor's SOCKS proxy, such as 127.0.0.1:9050. Tor Browser uses 127.0.0.1:9150.</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="AdwActionRow" id="tor_status_row">
+                <property name="title" translatable="yes">Tor Status</property>
+                <property name="visible">false</property>
+                <property name="subtitle-selectable">true</property>
               </object>
             </child>
             <child>
@@ -222,7 +232,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="GtkLabel" id="tor_note">
-                <property name="label" translatable="yes">Tor hides your IP address from relays, and which relays you use from your network. Relays still see your account when you sign in to your own inbox.</property>
+                <property name="label" translatable="yes">Tor hides your IP address from relays and websites, and hides which relays you use from your network. It doesn't hide your account: relays still see what your account publishes and asks for, and they see your account when you sign in to your own inbox. Your network can see that you use Tor. If Tor can't be reached, Groundhog doesn't connect at all.</property>
                 <property name="visible">false</property>
                 <property name="wrap">true</property>
                 <property name="xalign">0</property>

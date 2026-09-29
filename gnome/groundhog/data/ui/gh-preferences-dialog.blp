@@ -167,7 +167,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       Adw.ComboRow network_mode_row {
         title: _("Connection");
 
-        // The last item is removed from C until G09 lands.
+        // The last item is removed from C in a build without G09.
         model: StringList {
           strings [
             _("System Settings"),
@@ -181,6 +181,17 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         title: _("Tor Proxy Address");
         visible: false;
         show-apply-button: true;
+
+        accessibility {
+          description: _("The host and port of Tor's SOCKS proxy, such as 127.0.0.1:9050. Tor Browser uses 127.0.0.1:9150.");
+        }
+      }
+
+      // G09: whether a SOCKS proxy answers at the Tor address; set from C.
+      Adw.ActionRow tor_status_row {
+        title: _("Tor Status");
+        visible: false;
+        subtitle-selectable: true;
       }
 
       Label tor_address_error {
@@ -195,7 +206,9 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         ]
       }
 
-      // Until G09: relay connections ignore every proxy setting (charter §0.3, §4.1).
+      // Outside Tor mode, who sees your IP address; the C code sets the copy for
+      // the chosen mode (charter §0.3, §4.1, §4.2). This text is the one of a
+      // build without G09, where relay connections ignore every proxy setting.
       Label proxy_note {
         label: _("Groundhog doesn't use proxy settings yet: it connects to relays directly, so relays and your network can see your IP address.");
         wrap: true;
@@ -208,9 +221,9 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         ]
       }
 
-      // With G09: what Tor changes and what it doesn't (charter §2.2, surface 5).
+      // Tor mode: what Tor changes and what it doesn't (charter §2.2, surface 5).
       Label tor_note {
-        label: _("Tor hides your IP address from relays, and which relays you use from your network. Relays still see your account when you sign in to your own inbox.");
+        label: _("Tor hides your IP address from relays and websites, and hides which relays you use from your network. It doesn't hide your account: relays still see what your account publishes and asks for, and they see your account when you sign in to your own inbox. Your network can see that you use Tor. If Tor can't be reached, Groundhog doesn't connect at all.");
         visible: false;
         wrap: true;
         xalign: 0;

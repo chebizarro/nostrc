@@ -520,14 +520,21 @@ test_nip11(void)
   g_clear_error(&fetch.error);
   relay.nip11_huge = FALSE;
 
-  /* Tor is not available yet: refused, never a direct connection. */
+  /* Tor mode with no Tor listening: an error, never a direct connection
+   * (G09; the Tor path itself is tested in tests/net). */
   guint gets = relay.nip11_gets;
+  g_autoptr(GSocketListener) reservation = g_socket_listener_new();
+  guint16 closed_port = g_socket_listener_add_any_inet_port(reservation, NULL, NULL);
+  g_socket_listener_close(reservation);
+  g_autofree gchar *nowhere = g_strdup_printf("127.0.0.1:%u", closed_port);
+  g_settings_set_string(settings, "tor-socks-address", nowhere);
   g_settings_set_string(settings, "network-mode", "tor");
   fetch_key(http, relay.url, &fetch);
-  g_assert_error(fetch.error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_assert_nonnull(fetch.error);
   g_clear_error(&fetch.error);
   g_assert_cmpuint(relay.nip11_gets, ==, gets);
   g_settings_reset(settings, "network-mode");
+  g_settings_reset(settings, "tor-socks-address");
 
   /* A ws:// relay off loopback: no plaintext fetch, nothing is sent. */
   fetch_key(http, "ws://groups.example.org/relay", &fetch);

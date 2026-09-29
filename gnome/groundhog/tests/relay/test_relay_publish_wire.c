@@ -1,6 +1,7 @@
 #include "gh-relay-publish.h"
 #include "fake-auth-signer.h"
 #include "wire-relay.h"
+#include "wire-tor.h"
 
 #include <nostr-gobject-1.0/nostr_relay.h>
 
@@ -597,15 +598,18 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
-  g_test_add_func("/groundhog/relay-publish-wire/connection-lost-before-ok", test_wire_connection_lost_before_ok);
-  g_test_add_func("/groundhog/relay-publish-wire/auth/ephemeral-two-relays", test_wire_auth_ephemeral_two_relays);
-  g_test_add_func("/groundhog/relay-publish-wire/auth/account-own-relay", test_wire_auth_account_own_relay);
-  g_test_add_func("/groundhog/relay-publish-wire/auth/failures", test_wire_auth_failures);
-  g_test_add_func("/groundhog/relay-publish-wire/auth/cancel-while-signing", test_wire_auth_cancel_while_signing);
-  g_test_add_func("/groundhog/relay-publish-wire/partial-success", test_wire_partial_success);
-  g_test_add_func("/groundhog/relay-publish-wire/relay-down", test_wire_relay_down);
-  g_test_add_func("/groundhog/relay-publish-wire/cancel-discards-late-ok", test_wire_cancel_discards_late_ok);
-  g_test_add_func("/groundhog/relay-publish-wire/ok-after-cancel", test_wire_ok_arriving_after_cancel);
-  g_test_add_func("/groundhog/relay-publish-wire/owner-context", test_wire_callbacks_on_owner_context);
+  static const WireCase cases[] = {
+    { "/groundhog/relay-publish-wire/connection-lost-before-ok", test_wire_connection_lost_before_ok, FALSE },
+    { "/groundhog/relay-publish-wire/auth/ephemeral-two-relays", test_wire_auth_ephemeral_two_relays, FALSE },
+    { "/groundhog/relay-publish-wire/auth/account-own-relay", test_wire_auth_account_own_relay, FALSE },
+    { "/groundhog/relay-publish-wire/auth/failures", test_wire_auth_failures, FALSE },
+    { "/groundhog/relay-publish-wire/auth/cancel-while-signing", test_wire_auth_cancel_while_signing, FALSE },
+    { "/groundhog/relay-publish-wire/partial-success", test_wire_partial_success, FALSE },
+    { "/groundhog/relay-publish-wire/relay-down", test_wire_relay_down, FALSE },
+    { "/groundhog/relay-publish-wire/cancel-discards-late-ok", test_wire_cancel_discards_late_ok, FALSE },
+    { "/groundhog/relay-publish-wire/ok-after-cancel", test_wire_ok_arriving_after_cancel, TRUE },
+    { "/groundhog/relay-publish-wire/owner-context", test_wire_callbacks_on_owner_context, FALSE },
+  };
+  wire_add_tests(cases, G_N_ELEMENTS(cases));
   return g_test_run();
 }

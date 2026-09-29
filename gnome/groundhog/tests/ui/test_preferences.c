@@ -409,14 +409,43 @@ test_tor_with_g09(Fixture *f, gconstpointer data)
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(items)), ==, 3);
   g_assert_cmpstr(gtk_string_list_get_string(items, 2), ==, "Tor");
   g_assert_false(gtk_widget_get_visible(tor_widget));
-  g_assert_false(gtk_widget_get_visible(child(f, "proxy_note")));
-  g_assert_true(gtk_widget_get_visible(child(f, "tor_note")));
+  /* Outside Tor mode the page says who sees the IP address, honestly for
+   * the mode: relays are reached directly even with system proxy settings. */
+  GtkLabel *proxy_note = GTK_LABEL(child(f, "proxy_note"));
+  GtkWidget *tor_note = child(f, "tor_note");
+  GtkWidget *status = child(f, "tor_status_row");
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(proxy_note)));
+  g_assert_false(gtk_widget_get_visible(tor_note));
+  g_assert_nonnull(strstr(gtk_label_get_text(proxy_note), "relays directly"));
+  g_assert_nonnull(strstr(gtk_label_get_text(proxy_note), "system's proxy settings"));
+  adw_combo_row_set_selected(mode, 1);
+  drain_idle();
+  g_assert_null(strstr(gtk_label_get_text(proxy_note), "proxy settings"));
+  g_assert_nonnull(strstr(gtk_label_get_text(proxy_note), "IP address"));
+  g_assert_false(gtk_widget_get_visible(status));
 
   adw_combo_row_set_selected(mode, 2);
   drain_idle();
   assert_key(f->settings, "network-mode", "'tor'");
   g_assert_true(gtk_widget_get_visible(tor_widget));
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(tor_row)), ==, "127.0.0.1:9050");
+  /* Tor mode: what Tor hides and what it doesn't (charter §2.2 surface 5). */
+  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(proxy_note)));
+  g_assert_true(gtk_widget_get_visible(tor_note));
+  const char *copy = gtk_label_get_text(GTK_LABEL(tor_note));
+  g_assert_nonnull(strstr(copy, "hides your IP address"));
+  g_assert_nonnull(strstr(copy, "doesn't hide your account"));
+  g_assert_nonnull(strstr(copy, "sign in to your own inbox"));
+  g_assert_nonnull(strstr(copy, "doesn't connect at all"));
+  /* The status row appears once the app knows, and says it plainly. */
+  g_assert_false(gtk_widget_get_visible(status));
+  gh_preferences_dialog_set_tor_status(f->dialog, GH_PREFERENCES_TOR_STATUS_UNREACHABLE);
+  g_assert_true(gtk_widget_get_visible(status));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(status)), ==,
+                  "Can't reach Tor at 127.0.0.1:9050 — Groundhog won't connect without it");
+  gh_preferences_dialog_set_tor_status(f->dialog, GH_PREFERENCES_TOR_STATUS_REACHABLE);
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(status)), ==,
+                  "Tor is reachable at 127.0.0.1:9050");
 
   /* key -> row */
   g_settings_set_string(f->settings, "tor-socks-address", "127.0.0.1:9150");
@@ -442,9 +471,14 @@ test_tor_with_g09(Fixture *f, gconstpointer data)
   g_assert_cmpstr(stored, ==, "[::1]:9050");
   g_assert_false(gtk_widget_has_css_class(tor_widget, "error"));
 
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(status)), ==,
+                  "Tor is reachable at [::1]:9050");
+
   adw_combo_row_set_selected(mode, 0);
   drain_idle();
   g_assert_false(gtk_widget_get_visible(tor_widget));
+  g_assert_false(gtk_widget_get_visible(status));
+  g_assert_false(gtk_widget_get_visible(tor_note));
 }
 
 /* ---- URL lists ------------------------------------------------------------------- */
