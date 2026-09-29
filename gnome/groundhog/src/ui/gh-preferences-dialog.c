@@ -57,6 +57,7 @@ struct _GhPreferencesDialog {
   GtkLabel *tor_address_error;
   AdwActionRow *tor_status_row;
   GtkLabel *proxy_note;
+  GtkLabel *tor_unavailable_note;
   GtkLabel *tor_note;
   GtkListBox *discovery_list;
   AdwEntryRow *discovery_entry;
@@ -565,18 +566,23 @@ bind_address(GhPreferencesDialog *self, const gchar *key, AdwEntryRow *entry, Gt
 
 /* Tor rows exist only with G09 (charter §7.11: no fake support). With it the
  * page says, for the chosen mode, who can see the IP address (§4.2): relay
- * connections honour no proxy outside Tor mode (libwebsockets has none). */
+ * connections honour no proxy outside Tor mode (libwebsockets has none).
+ * Without it a stored "tor", or a mode this build does not know, connects
+ * to nothing (gh-relay-guard.h), and the page says so instead. */
 static void
 sync_network(GhPreferencesDialog *self)
 {
   gboolean tor_available = (self->features & GH_PREFERENCES_FEATURE_TOR) != 0;
   g_autofree gchar *mode = g_settings_get_string(self->settings, "network-mode");
   gboolean tor = tor_available && g_str_equal(mode, "tor");
+  gboolean refused = !tor_available && !g_str_equal(mode, "system") &&
+                     !g_str_equal(mode, "none");
   gtk_widget_set_visible(GTK_WIDGET(self->tor_address_row), tor);
   if (!tor)
     gtk_widget_set_visible(GTK_WIDGET(self->tor_address_error), FALSE);
   gtk_widget_set_visible(GTK_WIDGET(self->tor_note), tor);
-  gtk_widget_set_visible(GTK_WIDGET(self->proxy_note), !tor);
+  gtk_widget_set_visible(GTK_WIDGET(self->tor_unavailable_note), refused);
+  gtk_widget_set_visible(GTK_WIDGET(self->proxy_note), !tor && !refused);
   if (tor_available && !tor)
     gtk_label_set_text(self->proxy_note,
                        g_str_equal(mode, "system")
@@ -1044,6 +1050,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(tor_address_error);
   BIND(tor_status_row);
   BIND(proxy_note);
+  BIND(tor_unavailable_note);
   BIND(tor_note);
   BIND(discovery_list);
   BIND(discovery_entry);

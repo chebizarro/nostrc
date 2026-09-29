@@ -55,6 +55,7 @@ typedef enum {
   GH_STATUS_BANNER_STORE_KEY_MISSING,  /* [Start Fresh on This Device…] */
   GH_STATUS_BANNER_STORE_CORRUPT,      /* §7.15 #16 [Reset Storage…] */
   GH_STATUS_BANNER_STORE_ERROR,        /* [Try Again] */
+  GH_STATUS_BANNER_TOR_UNAVAILABLE,    /* network-mode tor in a build without G09 */
   GH_STATUS_BANNER_OFFLINE,            /* §7.15 #5 */
   GH_STATUS_BANNER_TOR_UNREACHABLE,    /* §7.15 #6 */
   GH_STATUS_BANNER_SIGNER_UNAVAILABLE, /* §7.15 #3 */
@@ -84,7 +85,8 @@ typedef enum {
  * the onboarding inbox step (gh-onboarding-view.h installs it on the
  * window). */
 #define GH_STATUS_ACTION_SETUP_INBOX "win.setup-inbox"
-/* [Network Settings] on "Can't reach Tor" (§7.15 #6): Preferences on its
+/* [Network Settings] on "Can't reach Tor" (§7.15 #6) and "Tor isn't
+ * available in this build": Preferences on its
  * Network page (gh-app-services.c installs it on the application, G09). */
 #define GH_STATUS_ACTION_NETWORK_SETTINGS "app.network-settings"
 
@@ -105,6 +107,9 @@ G_DECLARE_FINAL_TYPE(GhStatus, gh_status, GH, STATUS, GObject)
  * gh-account-ui.c, the inbox input by gh-inbox-status.c, the store input by
  * gh-store-status.c, and tor-unreachable by gh-app-services.c from the
  * network session (G09: Tor mode, and nothing answers at the Tor address).
+ * tor-unavailable, set by gh-app-services.c in a build without G09, says the
+ * stored network mode is one this build cannot use (Tor, or a value it does
+ * not know), so nothing connects (gh-relay-guard.h).
  * Every input is a writable property; "banner" notifies when it changes.
  * No banner is shown without an active account: the sidebar's account pages
  * explain those states. */
@@ -113,6 +118,7 @@ GhStatus *gh_status_new(void);
 void gh_status_set_account_active(GhStatus *self, gboolean active);
 void gh_status_set_network_available(GhStatus *self, gboolean available);
 void gh_status_set_tor_unreachable(GhStatus *self, gboolean unreachable);
+void gh_status_set_tor_unavailable(GhStatus *self, gboolean unavailable);
 void gh_status_set_signer(GhStatus *self, GhStatusSigner signer);
 /* error is the inbox's own explanation for GH_STATUS_INBOX_ERROR and
  * GH_STATUS_INBOX_UNREACHABLE; ignored otherwise. */

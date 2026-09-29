@@ -549,7 +549,7 @@ assert_banner(GhWindow *window, GhStatusBanner banner, const char *title)
    * (G14), and "Can't reach Tor" [Network Settings] (G09). No other banner
    * here offers a button whose destination does not exist yet. */
   const char *button = adw_banner_get_button_label(widget);
-  if (banner == GH_STATUS_BANNER_TOR_UNREACHABLE) {
+  if (banner == GH_STATUS_BANNER_TOR_UNREACHABLE || banner == GH_STATUS_BANNER_TOR_UNAVAILABLE) {
     g_assert_cmpstr(button, ==, "Network Settings");
     g_assert_cmpstr(gh_status_banner_get_action(banner), ==, GH_STATUS_ACTION_NETWORK_SETTINGS);
     g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(widget)), ==,
@@ -580,7 +580,15 @@ test_status_banners(void)
   assert_banner(window, GH_STATUS_BANNER_NONE, NULL);
 
   gh_status_set_account_active(status, TRUE);
-  /* #5, highest priority: it explains every relay failure below it. */
+  /* A build without G09 and network-mode tor connects to nothing, online or
+   * not (nostrc-6v0i), so it outranks Offline, whose "when you're back
+   * online" would not come true. */
+  gh_status_set_tor_unavailable(status, TRUE);
+  assert_banner(window, GH_STATUS_BANNER_TOR_UNAVAILABLE,
+                "Tor isn't available in this build — Groundhog won't connect until you "
+                "choose another network setting");
+  gh_status_set_tor_unavailable(status, FALSE);
+  /* #5, then: it explains every relay failure below it. */
   assert_banner(window, GH_STATUS_BANNER_OFFLINE,
                 "Offline — new messages will arrive when you're back online");
   gh_status_set_network_available(status, TRUE);

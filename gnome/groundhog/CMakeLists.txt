@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.9.0 LANGUAGES C)
+project(groundhog VERSION 0.9.1 LANGUAGES C)
 
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -193,7 +193,8 @@ if (TARGET nostr_gobject AND TARGET nostr)
   add_library(groundhog-relay STATIC
     src/relay/gh-relay-scope.c src/relay/gh-relay-gnostr.c
     src/relay/gh-relay-publish.c src/relay/gh-relay-publish-gnostr.c
-    src/relay/gh-relay-auth.c src/relay/gh-relay-gnostr-write.c)
+    src/relay/gh-relay-auth.c src/relay/gh-relay-gnostr-write.c
+    src/relay/gh-relay-guard.c)
   target_include_directories(groundhog-relay PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
   target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr)
@@ -1537,10 +1538,16 @@ endif()
 #    proxy support). A mode change closes every old connection.
 # GROUNDHOG_HAVE_TOR=1 turns on GH_FEATURE_TOR (src/app/gh-features.h): the
 # Preferences Tor choice and address, and the "Can't reach Tor" banner.
+# Without G09 (GROUNDHOG_HAVE_TOR=0) the executable installs the network-mode
+# guard instead (src/relay/gh-relay-guard.h, nostrc-6v0i): network-mode tor,
+# or a mode the build does not know, connects to nothing (charter P5) and
+# the window says "Tor isn't available in this build". GROUNDHOG_WITHOUT_TOR
+# builds that configuration where libsoup is installed, to check it.
+option(GROUNDHOG_WITHOUT_TOR "Build Groundhog without G09 network modes and Tor" OFF)
 if (TARGET groundhog-net)
   target_sources(groundhog-net PRIVATE src/net/gh-net-session.c)
 endif()
-if (TARGET groundhog-net AND TARGET groundhog-relay)
+if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TOR)
   message(STATUS "Groundhog network modes and Tor: enabled")
   add_library(groundhog-net-relay STATIC src/net/gh-relay-soup.c src/net/gh-relay-net.c)
   target_link_libraries(groundhog-net-relay PUBLIC groundhog-net groundhog-relay)
@@ -1600,8 +1607,25 @@ if (TARGET groundhog-net AND TARGET groundhog-relay)
   endif()
 else()
   message(STATUS "Groundhog network modes and Tor: disabled (needs groundhog-net and the "
-                 "relay layer)")
+                 "relay layer); network-mode tor connects to nothing")
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_TOR=0)
+  if (TARGET groundhog-relay)
+    target_link_libraries(groundhog PRIVATE groundhog-relay)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_RELAY_GUARD=1)
+  endif()
+endif()
+# The guard is part of the relay layer, so its test runs in every build: a
+# recording direct transport (no open at all in Tor mode or for .onion) and
+# the real GNostrRelay transport before a tripwire listener that Tor mode
+# must never dial.
+if (BUILD_TESTING AND TARGET groundhog-relay AND TARGET groundhog-test-schemas)
+  add_executable(test-groundhog-relay-guard tests/relay/test_relay_guard.c)
+  target_link_libraries(test-groundhog-relay-guard PRIVATE groundhog-relay)
+  target_compile_options(test-groundhog-relay-guard PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-relay-guard groundhog-test-schemas)
+  add_test(NAME groundhog-relay-guard COMMAND test-groundhog-relay-guard)
+  set_tests_properties(groundhog-relay-guard PROPERTIES TIMEOUT 60
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
 endif()
 # --- end G09 network modes and Tor ---
 # --- G20b NIP-29 group UI ---

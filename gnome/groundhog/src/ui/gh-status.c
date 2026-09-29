@@ -7,6 +7,7 @@ struct _GhStatus {
   gboolean account_active;
   gboolean network_available;
   gboolean tor_unreachable;
+  gboolean tor_unavailable;
   GhStatusSigner signer;
   GhStatusInbox inbox;
   gchar *inbox_error;
@@ -20,6 +21,7 @@ enum {
   PROP_ACCOUNT_ACTIVE,
   PROP_NETWORK_AVAILABLE,
   PROP_TOR_UNREACHABLE,
+  PROP_TOR_UNAVAILABLE,
   PROP_SIGNER,
   PROP_INBOX,
   PROP_STORE,
@@ -80,6 +82,7 @@ DEFINE_ENUM_TYPE(gh_status_banner_get_type, "GhStatusBanner",
     "store-key-missing" },
   { GH_STATUS_BANNER_STORE_CORRUPT, "GH_STATUS_BANNER_STORE_CORRUPT", "store-corrupt" },
   { GH_STATUS_BANNER_STORE_ERROR, "GH_STATUS_BANNER_STORE_ERROR", "store-error" },
+  { GH_STATUS_BANNER_TOR_UNAVAILABLE, "GH_STATUS_BANNER_TOR_UNAVAILABLE", "tor-unavailable" },
   { GH_STATUS_BANNER_OFFLINE, "GH_STATUS_BANNER_OFFLINE", "offline" },
   { GH_STATUS_BANNER_TOR_UNREACHABLE, "GH_STATUS_BANNER_TOR_UNREACHABLE", "tor-unreachable" },
   { GH_STATUS_BANNER_SIGNER_UNAVAILABLE, "GH_STATUS_BANNER_SIGNER_UNAVAILABLE",
@@ -127,6 +130,13 @@ static const struct {
     N_("Reset Storage…"), GH_STATUS_ACTION_STORE_START_FRESH },
   { GH_STATUS_BANNER_STORE_ERROR,
     N_("Can't open message storage"), TRUE, N_("Try Again"), GH_STATUS_ACTION_STORE_RETRY },
+  /* A build without G09 with network-mode tor (or a mode it does not know):
+   * it connects to nothing (charter P5, gh-relay-guard.h). [Network
+   * Settings]: Preferences, Network page. */
+  { GH_STATUS_BANNER_TOR_UNAVAILABLE,
+    N_("Tor isn't available in this build — Groundhog won't connect until you choose "
+       "another network setting"), TRUE,
+    N_("Network Settings"), GH_STATUS_ACTION_NETWORK_SETTINGS },
   { GH_STATUS_BANNER_OFFLINE,
     N_("Offline — new messages will arrive when you're back online"), TRUE, NULL, NULL },
   /* [Network Settings]: Preferences, Network page (G09). */
@@ -246,6 +256,9 @@ compute_banner(GhStatus *self)
   GhStatusBanner store = store_problem_banner(self->store);
   if (store != GH_STATUS_BANNER_NONE)
     return store;
+  /* Above Offline: nothing arrives when the network is back either. */
+  if (self->tor_unavailable)
+    return GH_STATUS_BANNER_TOR_UNAVAILABLE;
   if (!self->network_available)
     return GH_STATUS_BANNER_OFFLINE;
   if (self->tor_unreachable)
@@ -312,6 +325,16 @@ gh_status_set_tor_unreachable(GhStatus *self, gboolean unreachable)
     return;
   self->tor_unreachable = !!unreachable;
   update(self, props[PROP_TOR_UNREACHABLE]);
+}
+
+void
+gh_status_set_tor_unavailable(GhStatus *self, gboolean unavailable)
+{
+  g_return_if_fail(GH_IS_STATUS(self));
+  if (self->tor_unavailable == !!unavailable)
+    return;
+  self->tor_unavailable = !!unavailable;
+  update(self, props[PROP_TOR_UNAVAILABLE]);
 }
 
 void
@@ -407,6 +430,9 @@ gh_status_get_property(GObject *object, guint id, GValue *value, GParamSpec *psp
   case PROP_TOR_UNREACHABLE:
     g_value_set_boolean(value, self->tor_unreachable);
     break;
+  case PROP_TOR_UNAVAILABLE:
+    g_value_set_boolean(value, self->tor_unavailable);
+    break;
   case PROP_SIGNER:
     g_value_set_enum(value, self->signer);
     break;
@@ -437,6 +463,9 @@ gh_status_set_property(GObject *object, guint id, const GValue *value, GParamSpe
     break;
   case PROP_TOR_UNREACHABLE:
     gh_status_set_tor_unreachable(self, g_value_get_boolean(value));
+    break;
+  case PROP_TOR_UNAVAILABLE:
+    gh_status_set_tor_unavailable(self, g_value_get_boolean(value));
     break;
   case PROP_SIGNER:
     gh_status_set_signer(self, g_value_get_enum(value));
@@ -472,6 +501,7 @@ gh_status_class_init(GhStatusClass *klass)
   props[PROP_NETWORK_AVAILABLE] = g_param_spec_boolean("network-available", NULL, NULL,
                                                        TRUE, rw);
   props[PROP_TOR_UNREACHABLE] = g_param_spec_boolean("tor-unreachable", NULL, NULL, FALSE, rw);
+  props[PROP_TOR_UNAVAILABLE] = g_param_spec_boolean("tor-unavailable", NULL, NULL, FALSE, rw);
   props[PROP_SIGNER] = g_param_spec_enum("signer", NULL, NULL, GH_TYPE_STATUS_SIGNER,
                                          GH_STATUS_SIGNER_UNKNOWN, rw);
   props[PROP_INBOX] = g_param_spec_enum("inbox", NULL, NULL, GH_TYPE_STATUS_INBOX,

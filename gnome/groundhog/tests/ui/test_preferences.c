@@ -389,12 +389,28 @@ test_tor_hidden_without_g09(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_get_visible(child(f, "proxy_note")));
   g_assert_false(gtk_widget_get_visible(child(f, "tor_note")));
 
-  /* A stored "tor" (e.g. from dconf) shows the Tor row nowhere. */
+  g_assert_false(gtk_widget_get_visible(child(f, "tor_unavailable_note")));
+
+  /* A stored "tor" (e.g. from dconf) shows the Tor row nowhere, and the
+   * page says that nothing connects (nostrc-6v0i, gh-relay-guard.h). */
   g_settings_set_string(f->settings, "network-mode", "tor");
   drain_idle();
   g_assert_false(gtk_widget_get_visible(tor_row));
   g_assert_false(gtk_widget_get_visible(child(f, "tor_note")));
   g_assert_cmpuint(adw_combo_row_get_selected(mode), ==, 2);
+  GtkWidget *unavailable = child(f, "tor_unavailable_note");
+  g_assert_true(gtk_widget_get_visible(unavailable));
+  g_assert_false(gtk_widget_get_visible(child(f, "proxy_note")));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(unavailable)), ==,
+                  "Tor isn't available in this build, so Groundhog won't connect until you "
+                  "choose another network setting.");
+
+  /* Choosing a mode this build has puts the direct-connection note back. */
+  adw_combo_row_set_selected(mode, 1);
+  drain_idle();
+  assert_key(f->settings, "network-mode", "'none'");
+  g_assert_false(gtk_widget_get_visible(unavailable));
+  g_assert_true(gtk_widget_get_visible(child(f, "proxy_note")));
 }
 
 static void
@@ -416,6 +432,7 @@ test_tor_with_g09(Fixture *f, gconstpointer data)
   GtkWidget *status = child(f, "tor_status_row");
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(proxy_note)));
   g_assert_false(gtk_widget_get_visible(tor_note));
+  g_assert_false(gtk_widget_get_visible(child(f, "tor_unavailable_note")));
   g_assert_nonnull(strstr(gtk_label_get_text(proxy_note), "relays directly"));
   g_assert_nonnull(strstr(gtk_label_get_text(proxy_note), "system's proxy settings"));
   adw_combo_row_set_selected(mode, 1);

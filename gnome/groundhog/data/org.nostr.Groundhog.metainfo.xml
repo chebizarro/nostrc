@@ -23,6 +23,14 @@
   <url type="homepage">https://github.com/chebizarro/nostrc</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.9.1" type="development" date="2026-09-29">
+      <description>
+        <p>Unreleased preview.</p>
+        <ul>
+          <li>A version of Groundhog built without Tor support no longer connects directly when Tor is the chosen network setting: it connects to nothing and says so until you choose another setting, and it never looks up a .onion address</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.9.0" type="development" date="2026-09-29">
       <description>
         <p>Unreleased preview.</p>

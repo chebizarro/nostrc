@@ -62,6 +62,17 @@
 #include "gh-relay-net.h"
 #endif
 
+/* A build without G09 but with the relay layer: the network-mode guard
+ * (gh-relay-guard.h, nostrc-6v0i). */
+#ifndef GROUNDHOG_HAVE_RELAY_GUARD
+#define GROUNDHOG_HAVE_RELAY_GUARD 0
+#endif
+#define GH_APP_RELAY_GUARD \
+  (GROUNDHOG_HAVE_ACCOUNTS && !GROUNDHOG_HAVE_TOR && GROUNDHOG_HAVE_RELAY_GUARD)
+#if GH_APP_RELAY_GUARD
+#include "gh-relay-guard.h"
+#endif
+
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 struct _GhAppServices {
@@ -200,6 +211,37 @@ sync_preferences_tor(GhNetSession *network, GParamSpec *pspec, gpointer dialog)
   };
   gh_preferences_dialog_set_tor_status(GH_PREFERENCES_DIALOG(dialog),
                                        status[gh_net_session_get_tor_state(network)]);
+}
+#endif
+
+#if GH_APP_RELAY_GUARD
+/* Without G09 (charter P5): installed before any relay scope or publish
+ * exists, so network-mode tor, or a mode this build does not know, never
+ * connects directly; a change to it closes every connection. */
+static gboolean
+guard_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  gh_relay_guard_install(self->settings);
+  return TRUE;
+}
+
+/* After every service that connects has stopped. */
+static void
+guard_teardown(GhAppServices *self)
+{
+  (void)self;
+  gh_relay_guard_install(NULL);
+}
+
+/* "Tor isn't available in this build — Groundhog won't connect until you
+ * choose another network setting". */
+static void
+sync_tor_unavailable(GSettings *settings, const gchar *key, gpointer status)
+{
+  (void)key;
+  g_autofree gchar *mode = g_settings_get_string(settings, "network-mode");
+  gh_status_set_tor_unavailable(GH_STATUS(status), !gh_relay_guard_mode_allowed(mode));
 }
 #endif
 
@@ -912,6 +954,8 @@ static const GhAppService services[] = {
   { "settings", settings_init, settings_teardown },
 #if GROUNDHOG_HAVE_TOR
   { "network", network_init, network_teardown },
+#elif GH_APP_RELAY_GUARD
+  { "network", guard_init, guard_teardown },
 #endif
   { "accounts", accounts_init, accounts_teardown },
 #endif
@@ -999,6 +1043,11 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
   sync_tor_banner(self->network, NULL, status);
   g_signal_connect_object(self->network, "notify::tor-state", G_CALLBACK(sync_tor_banner),
                           status, 0);
+#elif GH_APP_RELAY_GUARD
+  GhStatus *status = gh_window_get_status(window);
+  sync_tor_unavailable(self->settings, "network-mode", status);
+  g_signal_connect_object(self->settings, "changed::network-mode",
+                          G_CALLBACK(sync_tor_unavailable), status, 0);
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   static const GhRequestsBackend requests_backend = { requests_forget, requests_block };
