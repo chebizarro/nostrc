@@ -266,3 +266,117 @@ Exceptions found:
   - the stale metainfo, before the 0.9.0 release (#2);
   - the System-mode charter amendment (#3);
   - the Tor-note "websites" scope (#4).
+
+---
+
+## Addendum: W16f remediation confirmation pass (`cd70d443`)
+
+**Scope.** This pass covers `cd70d443` on `groundhog/w16f-remediation` (bead `nostrc-qp24.87`), which answers this review. It checks two things: whether B1 is fully closed, and whether the new code adds defects. File:line references are to `cd70d443`. I changed no code or beads.
+
+### B1: closed
+
+- **The fix.** `gh_net_tls_no_resumption()` (`src/net/gh-net-tls.c`) sets glib-networking's `session-resumption-enabled` to FALSE at `G_SOCKET_CLIENT_TLS_HANDSHAKING`. It is applied to every `SoupMessage` Groundhog makes, in every mode:
+  - the relay WebSocket (`gh-relay-soup.c` `ws_message`);
+  - every `GhNetHttp` request, which covers NIP-05 and NIP-11.
+  Turning resumption off in *all* modes is right: lookups ignore the flag, so the process must never store a ticket.
+- **Remaining TLS clients.** I found none.
+  - Only `gh-net-http.c` and `gh-relay-soup.c` create a `SoupSession` or GIO TLS client in `src/`.
+  - Nothing Groundhog links (nostr-gobject, libnostr, the NIPs it uses) calls `g_tls_client_connection_new`, `soup_session_new` or `g_socket_client_set_tls`.
+  - The executable's TLS stacks are libsoup/GIO and libwebsockets' OpenSSL (`otool -L`).
+  - The Tor probe is plain TCP.
+- **Remaining resumption paths inside libsoup.** Also none, checked against the installed libsoup 3.6.6 sources.
+  - A connection's `event` signal reaches whatever message is attached to it (`soup_message_set_connection`).
+  - Each new `SoupConnection` is created for, and handshaken under, the message that asked for it (`soup_connection_manager_get_connection_locked` → `soup_session_ensure_item_connection`).
+  - A connection passes to another message only through `soup_session_steal_preconnection`, and only from a preconnect item. Groundhog never preconnects.
+  - For HTTPS through an HTTP proxy (System mode), `tunnel_connect` leaves the user's message attached, so it also receives the tunnel's `TLS_HANDSHAKING`.
+  - Reused keep-alive and HTTP/2 connections were set up by a covered message.
+- **The test is genuine.**
+  - `groundhog-tls-resumption` is a plain program (no `g_test_init`) with an OpenSSL server and a positive control. The control reports `pre_shared_key=yes resumed=yes`.
+  - I relinked it against a no-op `gh_net_tls_no_resumption`. All four Tor connections (two GhNetHttp, two relay scopes) then offered and resumed the direct fetch's session, and the test fails at `test_tls_resumption.c:619` (`offered == 0`: 4 ≠ 0).
+  - `check_privacy.py` `tls-resumption` has three mutations, `groundhog-privacy-static` passes, and CI installs `glib-networking` so the test cannot skip.
+- **Paperwork.** `gh-relay-soup.h` and the charter (§4.1) no longer claim a per-session TLS cache.
+
+### `nostrc-0d0d` (libwebsockets resumption, direct mode): acceptable as a follow-up
+
+- **Tor mode is unaffected.**
+  - libwebsockets 4.5.8 here has `LWS_WITH_TLS_SESSIONS`, and libnostr does not disable the client cache, so direct relay connections may resume one another.
+  - But that cache is lws/OpenSSL's own and is never shared with glib-networking.
+  - In Tor mode the dispatcher uses only the libsoup transport, so no lws ticket can ever be presented on a Tor connection.
+- **The direct-mode gap is small.** In direct mode the IP address already links connections to a relay. The residual gap is linkage across accounts on one relay that survives an IP change or a shared NAT (PD-6, P7).
+- **The bead is accurate.** It says what to verify (the same ClientHello fixture) and how to fix it (disable the lws client cache). P2 is proportionate, and it becomes moot with `nostrc-253z`.
+
+### New blocking finding
+
+#### N1. High: use-after-free in `GhNetHttp`'s `request_free` when an in-flight request outlives its owner (`gnome/groundhog/src/net/gh-net-http.c:19`, `:36-37`, `:268`)
+
+- **The defect.**
+  - `Request.owner` is a borrowed pointer, commented "the task's source object, so alive".
+  - But `g_task_finalize` (GLib 2.90 `gio/gtask.c`) clears `source_object` *before* it calls the task-data destroy notify.
+  - When the task holds the last reference, the `GhNetHttp` is disposed and finalized, which frees `requests` and the instance. `request_free` then reads `request->owner->requests` and calls `g_ptr_array_remove_fast` on it.
+- **Reproduced.**
+  - A harness built from the commit's `gh-net-http.c`, `gh-net-session.c` and `gh-net-tls.c` with `-fsanitize=address` runs these steps:
+    1. start a request to a local listener;
+    2. `g_object_unref` the `GhNetHttp`;
+    3. cancel the request;
+    4. run the loop.
+  - Result: `AddressSanitizer: heap-use-after-free … READ of size 8 … in request_free gh-net-http.c:36`. The object was freed by `g_type_free_instance` ← `g_object_unref` ← `g_task_finalize`.
+- **Production path.**
+  - `GhNip29Service` dispose cancels every NIP-11 key fetch (`gh-nip29-service.c:2297`) and then drops `self->http` (`:2317`).
+  - The cancelled fetch completes on a later iteration, because GTask defers a cancelled return to an idle. Its task then drops the last reference.
+  - So an account switch, logout or store close while a group relay's NIP-11 fetch is in flight reads freed memory, and may write to it. Such fetches run at startup and on Join, with a timeout of up to 10 s.
+  - `GhNip05` has the same shape at app teardown (`gh-nip05.c:190`) with a New Message lookup in flight.
+- **Not caught.** No test drops a `GhNetHttp` with a request in flight, so the sanitizer job cannot see it.
+- **Suggested fix.** Either:
+  - `request->owner = g_object_ref(self)` and `g_object_unref(owner)` as the last step of `request_free`, after removing the request (the array doesn't own requests, so this makes no cycle); or
+  - clear each queued request's `owner` in `gh_net_http_finalize` and guard `request_free`.
+- **Suggested test.** A `groundhog-net` case: start a request, unref the `GhNetHttp`, cancel, and spin until the callback. It runs in the sanitizer job, which already lists `groundhog-net`.
+
+### Other remediation items: verified
+
+| Item | Status |
+|---|---|
+| #1 admin-gating flake | Fixed. The test waits for DUPLICATE on the two pre-member joins (`club`, `mods`). `plain` and `review` change only on the relay's answer. Stress over group-ui, net, nip29-service, relay-wire, relay-publish-wire, conversation-menu and tls-resumption with `--repeat until-fail:25 -j8` passed, and so did six full runs |
+| #2 metainfo | Relay groups are described as shipped, not end-to-end encrypted, with the operator able to read everything. "Not in this version" is now MLS and attachments |
+| #3 charter | Dated amendments to D3, §4.2 and NT-9 (System-mode relays ignore the desktop proxy; `nostrc-253z`) |
+| #4 Tor note and links | The note names relays and address checks and says links go to the browser, outside Tor. In Tor mode every web link is confirmed first, with the browser sentence leading. `GH_LINK_ACTION_NOSTR` is untouched |
+| #5 mode-aware copy | Join, New Group and onboarding Check Privacy |
+| #7 session abort | A Tor request aborts its own session in `request_free` |
+| #8 `.onion` outside Tor | Join and New Group refuse with the reason before queueing (`gh_group_relay_reachable`); the GUI test covers it |
+| #10 mode-switch teardown | `on_mode_changed` marks, then cancels, requests of another mode, and they fail with `G_IO_ERROR_CONNECTION_CLOSED`, never CANCELLED. No deadlock is possible: a GTask with a cancelled cancellable always returns from an idle, so `request_free`'s `g_cancellable_disconnect` never runs inside the caller's `cancelled` emission (GLib 2.90 `g_cancellable_disconnect` would wait there) |
+| #6, #9, onboarding Tor-down, nits | Filed as `nostrc-dod2`, `-81ad`, `-jpwe`, `-idz0`. Acceptable |
+
+### New non-blocking notes
+
+1. **Low: the reachability check only guards Join and Create** (`gh-group-join-dialog.c:119`, `gh-new-group-dialog.c:119`).
+   - **Scenario.** A `.onion` group joined in Tor mode, after the user switches to System, still goes through `gh_nip29_service_send` and "ask again" without the check. It retries silently, the #8 case for existing rooms.
+   - **Suggestion.** Map the dispatcher's policy refusal (`G_IO_ERROR_PERMISSION_DENIED`) to NOT_SENT with its message in the NIP-29 outbox.
+
+2. **Nit: the network mode is read from two sources.**
+   - The group dialogs read the installed `GhNetSession` (`gh_group_network_is_tor`).
+   - Onboarding, New Message and links read the `network-mode` setting.
+   - They differ only in a build without the dispatcher. There, onboarding would say "through Tor" while connecting directly. That case is `nostrc-dod2`'s, and should be fixed there.
+
+3. **Nits (copy).**
+   - "Groundhog connects through Tor, so it learns your public key …" (`gh-group-copy.c:85`, `:90`): "it" now reads as Groundhog. Suggested: "The relay learns your public key but not your IP address, because Groundhog connects through Tor."
+   - "…so the website will see your IP address" (`gh-conversation-view.c:1057-1058`) is untrue when the default browser is Tor Browser. "may see" is exact.
+
+### Verification
+
+- **Build.** `cmake -S . -B /tmp/w16f -G Ninja -DBUILD_GROUNDHOG=ON && ninja -C /tmp/w16f` (macOS 15 arm64, submodules initialised) is clean apart from the existing `ld` duplicate-library notices. `gnostr-profile-edit.ui` was not rewritten this time.
+- **Tests.** `ctest --test-dir /tmp/w16f -R 'groundhog-'`:
+  - **59/59 on each of six full runs** (`-j6` once, `-j8` five times), with four platform skips: `groundhog-launch`, `-store-key-keyring`, `-background-gui`, `-notifier-gui`;
+  - the stress run above was clean.
+- **Checks.** `git diff --check cd70d443~1 cd70d443` (excluding `.beads`) is clean.
+- **Reproductions.**
+  - The B1 mutant: `groundhog-tls-resumption` relinked with a no-op `gh_net_tls_no_resumption` fails with four offered sessions.
+  - N1: ASAN harness as above.
+- **Sources read.**
+  - libsoup 3.6.6: `soup-session.c`, `soup-connection.c`, `soup-connection-manager.c`, `soup-message.c`.
+  - GLib 2.90.0: `gtask.c`, `gcancellable.c`.
+- **Not run.** Linux, the ASAN CI job, and a real Tor daemon.
+
+**REQUEST CHANGES** (addendum)
+
+- **B1 is closed.** Every Groundhog TLS connection has resumption off, in all modes. No other GIO TLS client or libsoup hand-off path remains. A genuine ClientHello-level test proves it and fails without the fix.
+- **`nostrc-0d0d` is acceptable as a follow-up.** The lws cache never reaches Tor connections.
+- **Blocking: N1.** The new `Request.owner` borrowed pointer is read after `g_task_finalize` has freed the `GhNetHttp`. That is a heap use-after-free on account switch, logout or store close during a NIP-11 fetch (and at quit during a NIP-05 lookup). The fix is one owned reference plus a sanitizer-visible test. Everything else in `cd70d443` is approved as is.
