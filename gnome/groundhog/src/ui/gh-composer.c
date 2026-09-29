@@ -427,13 +427,8 @@ on_paste_clipboard(GtkTextView *text_view, GhComposer *self)
     g_signal_stop_emission_by_name(text_view, "paste-clipboard");
     gdk_clipboard_read_value_async(clipboard, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT, NULL,
                                    on_files_pasted, g_object_ref(self));
-  } else if (self->clipboard) {
-    /* Text, from the handed-in clipboard, as GtkTextView's own paste does
-     * from the widget's. */
-    g_signal_stop_emission_by_name(text_view, "paste-clipboard");
-    gtk_text_buffer_paste_clipboard(self->buffer, clipboard, NULL,
-                                    gtk_text_view_get_editable(text_view));
   }
+  /* Anything else continues to GtkTextView's own paste, as text. */
 }
 
 /* ---- GObject ------------------------------------------------------------------------- */

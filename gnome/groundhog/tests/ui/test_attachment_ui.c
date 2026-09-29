@@ -670,6 +670,24 @@ assert_accessible_label(GtkWidget *widget, const gchar *label)
                                       label);
 }
 
+/* Stands in for GtkTextView's own paste (its class handler, which would read
+ * the shared system clipboard): a handler connected after the composer's,
+ * so it is reached only when the composer let the paste through as text,
+ * as it does for users. It pastes from the test's private clipboard. */
+typedef struct {
+  GdkClipboard *clipboard;
+  guint reached;
+} TextPaste;
+
+static void
+on_text_paste(GtkTextView *text_view, TextPaste *paste)
+{
+  paste->reached++;
+  g_signal_stop_emission_by_name(text_view, "paste-clipboard");
+  gtk_text_buffer_paste_clipboard(gtk_text_view_get_buffer(text_view), paste->clipboard, NULL,
+                                  gtk_text_view_get_editable(text_view));
+}
+
 static gboolean
 caption_pasted(gpointer data)
 {
@@ -1141,6 +1159,9 @@ test_drop_and_paste(void)
     g_object_new(GDK_TYPE_CLIPBOARD, "display", gtk_widget_get_display(GTK_WIDGET(text_view)),
                  NULL);
   gh_composer_set_clipboard(composer, clipboard);
+  TextPaste text_paste = { clipboard, 0 };
+  gulong text_handler = g_signal_connect(text_view, "paste-clipboard",
+                                         G_CALLBACK(on_text_paste), &text_paste);
   g_autoptr(GBytes) png = make_png(200);
   g_autoptr(GdkTexture) texture = gdk_texture_new_from_bytes(png, NULL);
   g_assert_nonnull(texture);
@@ -1153,13 +1174,17 @@ test_drop_and_paste(void)
                   "Location and camera data removed");
   g_autofree gchar *typed = gh_composer_dup_text(composer);
   g_assert_cmpstr(typed, ==, "");
+  g_assert_cmpuint(text_paste.reached, ==, 0); /* the composer took the image */
   close_sheet(&f);
 
-  /* Text pastes as text. */
+  /* Text pastes as text: the composer lets it through to the text view's
+   * own paste. */
   gdk_clipboard_set_text(clipboard, "a caption");
   gtk_widget_grab_focus(GTK_WIDGET(text_view));
   g_signal_emit_by_name(text_view, "paste-clipboard");
+  g_assert_cmpuint(text_paste.reached, ==, 1);
   gh_test_spin_until(caption_pasted, composer);
+  g_signal_handler_disconnect(text_view, text_handler);
   g_assert_null(gh_attachment_ui_get_sheet(f.s.window));
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
   fixture_clear(&f);
