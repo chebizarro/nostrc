@@ -505,29 +505,36 @@ copies_mark(App *from, App *to)
   return (CopiesMark){ from, to, from_counters.received, to_counters.received };
 }
 
+/* How many of item's wraps a relay accepted for receiver (lowercase hex):
+ * the copies the inbox of that account will be sent. */
+static guint
+accepted_copies_for(GPtrArray *targets, const gchar *receiver)
+{
+  guint n = 0;
+  for (guint i = 0; i < targets->len; i++) {
+    GhOutboxTarget *target = g_ptr_array_index(targets, i);
+    n += target->outcome == GH_RELAY_PUBLISH_ACCEPTED && g_str_equal(target->pubkey, receiver);
+  }
+  return n;
+}
+
 /* Waits until every copy of item's wraps that a relay accepted was taken by
- * the inbox reading that relay: the recipient's for the recipient wraps,
- * the sender's own for the self-copy. item must be done publishing (settled
- * or needing attention): its targets are final. An idle inbox alone is not
- * that: it is idle before a copy has even arrived, and the copy's unwrap
- * (signer calls) then lands in whatever the test counts next (nostrc-vlb4). */
+ * the inbox of the account it is addressed to, per marked inbox: the
+ * recipient's copies by the recipient's, the self-copies by the sender's.
+ * Copies for accounts that are not marked (another room member's) are
+ * not waited for. item must be done publishing (settled or needing
+ * attention): its targets are final. An idle inbox alone is not that: it is
+ * idle before a copy has even arrived, and the copy's unwrap (signer calls)
+ * then lands in whatever the test counts next (nostrc-vlb4). */
 static void
 wait_copies_taken(const CopiesMark *mark, GhOutboxItem *item)
 {
-  guint recipient_copies = 0, self_copies = 0;
   g_autoptr(GPtrArray) targets = gh_outbox_item_dup_targets(item);
-  for (guint i = 0; i < targets->len; i++) {
-    GhOutboxTarget *target = g_ptr_array_index(targets, i);
-    if (target->outcome != GH_RELAY_PUBLISH_ACCEPTED)
-      continue;
-    if (target->role == GH_STORE_OUTBOX_ROLE_SELF_WRAP)
-      self_copies++;
-    else
-      recipient_copies++;
-  }
-  CopiesWait to_copies = { mark->to, mark->to_received + recipient_copies };
+  CopiesWait to_copies = { mark->to,
+                           mark->to_received + accepted_copies_for(targets, hex[mark->to->key]) };
   spin_until(copies_taken, &to_copies, "every copy reaching the recipient's inbox");
-  CopiesWait from_copies = { mark->from, mark->from_received + self_copies };
+  CopiesWait from_copies = { mark->from, mark->from_received +
+                                           accepted_copies_for(targets, hex[mark->from->key]) };
   spin_until(copies_taken, &from_copies, "the self-copy reaching the sender's inbox");
 }
 
