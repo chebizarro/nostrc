@@ -33,7 +33,10 @@ G_BEGIN_DECLS
  * demands AUTH (a private group) gets one signed as the account, on
  * challenge only (§4.4 R1, R6). A relay's scope is rebuilt when its groups
  * change; nothing is opened for a group that is not joined or being joined,
- * and no relay but the group's is ever contacted for it.
+ * and no relay but the group's is ever contacted for it. (A join refused
+ * before its REQ has answered keeps only that group's 39000-39003 in the
+ * REQ until its EOSE: the state that tells DENIED from CLOSED may still be
+ * on its way.)
  *
  * Trust. Group state is only what the relay's own key signed: the key comes
  * from the relay's NIP-11 document ("self" only, never the admin's
@@ -51,7 +54,8 @@ G_BEGIN_DECLS
  * "duplicate:" already-a-member answer, a 9000 for the account, or a 39002
  * that lists it), PENDING (the relay holds it for review; a later 9000 or
  * 39002 listing admits it), DENIED (refused for good, with the relay's
- * reason), CLOSED (refused by a closed group, which needs an invite code) or
+ * reason), CLOSED (refused by a closed group, which needs an invite code;
+ * known from its 39000, whether that comes before or after the refusal) or
  * NOT_SENT (the signer declined, sign-in failed, or the relay stayed
  * unreachable). A 39002 that does not list the account never means "not a
  * member": relays may publish a subset (GH_NIP29_MEMBERS_PARTIAL, "Member

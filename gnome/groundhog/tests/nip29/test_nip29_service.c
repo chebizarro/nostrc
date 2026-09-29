@@ -868,6 +868,131 @@ test_denied_and_closed(void)
   nip29_relay_clear(&relay);
 }
 
+/* How often the quoted group id appears in a REQ frame. */
+static guint
+req_mentions(const gchar *frame, const gchar *group_id)
+{
+  g_autofree gchar *quoted = g_strdup_printf("\"%s\"", group_id);
+  guint n = 0;
+  for (const gchar *at = strstr(frame, quoted); at; at = strstr(at + 1, quoted))
+    n++;
+  return n;
+}
+
+/* The relay's latest answered REQ no longer asks for "club". */
+static gboolean
+club_dropped(gpointer data)
+{
+  Nip29Relay *relay = data;
+  return relay->req_frames->len > 0 &&
+         req_mentions(g_ptr_array_index(relay->req_frames, relay->req_frames->len - 1),
+                      "club") == 0;
+}
+
+/* The held REQ that asks for "pub" (the rebuilt one), or NULL. */
+static Nip29HeldReq *
+held_for_pub(Nip29Relay *relay)
+{
+  for (guint i = 0; i < relay->held_reqs->len; i++) {
+    Nip29HeldReq *held = g_ptr_array_index(relay->held_reqs, i);
+    if (req_mentions(held->text, "pub") > 0)
+      return held;
+  }
+  return NULL;
+}
+
+static gboolean
+pub_asked(gpointer data)
+{
+  return held_for_pub(data) != NULL;
+}
+
+static gboolean
+nothing_subscribed(gpointer data)
+{
+  return ((Nip29Relay *)data)->subs->len == 0;
+}
+
+/* nostrc-kfso: the relay's refusal (OK false, on the publish connection)
+ * comes before the group state that says the group is closed (on the REQ's
+ * connection). The refused room is DENIED at first and reads nothing of the
+ * group but its 39000-39003 until that REQ's answer ends: the state makes it
+ * CLOSED, and after the EOSE the group is no longer asked for. A group
+ * joined meanwhile rebuilds the REQ with the refused group's state only. */
+static void
+test_refused_before_state(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *club = nip29_add_group(&relay, "club", "The Club");
+  club->closed = TRUE;
+  nip29_publish_state(&relay, club);
+  nip29_add_group(&relay, "pub", "The Pub");
+  relay.hold_reqs = TRUE;
+
+  g_autoptr(GhNip29Room) closed = join(&f, &relay, "club", NULL);
+  wait_join(closed, GH_NIP29_JOIN_DENIED);
+  g_assert_false(gh_nip29_room_get_is_closed(closed));
+  g_assert_cmpint(gh_nip29_room_get_read_state(closed), ==, GH_NIP29_READ_IDLE);
+  g_assert_cmpstr(gh_nip29_room_get_detail(closed), ==, "restricted: this group is closed");
+  /* Its REQ stays: the answer to it carries the state. */
+  wait_count(&relay.held_reqs->len, 1);
+
+  g_autoptr(GhNip29Room) open = join(&f, &relay, "pub", NULL);
+  gh_test_spin_until(pub_asked, &relay);
+  Nip29HeldReq *rebuilt = held_for_pub(&relay);
+  g_assert_cmpuint(req_mentions(rebuilt->text, "club"), ==, 1); /* #d of 39000-39003 only */
+  g_assert_cmpuint(req_mentions(rebuilt->text, "pub"), >, 1);   /* state and messages */
+
+  nip29_release_reqs(&relay);
+  wait_join(closed, GH_NIP29_JOIN_CLOSED);
+  g_assert_true(gh_nip29_room_get_is_closed(closed));
+  g_assert_cmpstr(gh_nip29_room_get_detail(closed), ==, "restricted: this group is closed");
+  gh_test_spin_until(club_dropped, &relay);
+  g_assert_cmpint(gh_nip29_room_get_read_state(closed), ==, GH_NIP29_READ_IDLE);
+  wait_join(open, GH_NIP29_JOIN_MEMBER);
+  wait_read(open, GH_NIP29_READ_LIVE);
+  wait_name(open, "The Pub");
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
+/* The relay key comes last (nostrc-kfso): the closed group's 39000 came
+ * before the REQ's EOSE but is held back without a key; the refusal left the
+ * group unread. When the key arrives the held state is admitted all the
+ * same, and the refusal is CLOSED. */
+static void
+test_refused_state_after_eose(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *club = nip29_add_group(&relay, "club", "The Club");
+  club->closed = TRUE;
+  nip29_publish_state(&relay, club);
+  relay.hold_nip11 = TRUE;
+
+  g_autoptr(GhNip29Room) closed = join(&f, &relay, "club", NULL);
+  wait_join(closed, GH_NIP29_JOIN_DENIED);
+  wait_count(&relay.nip11_gets, 1);
+  wait_count(&relay.reqs, 1);
+  /* The REQ answered and closed: nothing of the group is read any more. */
+  gh_test_spin_until(nothing_subscribed, &relay);
+  g_assert_false(gh_nip29_room_get_is_closed(closed));
+  g_assert_cmpint(gh_nip29_room_get_relay_key_state(closed), ==, GH_NIP29_RELAY_KEY_UNKNOWN);
+
+  nip29_release_nip11(&relay);
+  wait_join(closed, GH_NIP29_JOIN_CLOSED);
+  g_assert_true(gh_nip29_room_get_is_closed(closed));
+  g_assert_cmpint(gh_nip29_room_get_relay_key_state(closed), ==, GH_NIP29_RELAY_KEY_PINNED);
+  g_assert_cmpint(gh_nip29_room_get_read_state(closed), ==, GH_NIP29_READ_IDLE);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 /* "duplicate:" is accepted, never an error: a join of a member is MEMBER. */
 static void
 test_duplicate(void)
@@ -1309,6 +1434,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/same-id-two-relays", test_same_id_two_relays_isolated);
   g_test_add_func("/groundhog/nip29-service/pending-then-admission", test_pending_then_admission);
   g_test_add_func("/groundhog/nip29-service/denied-and-closed", test_denied_and_closed);
+  g_test_add_func("/groundhog/nip29-service/refused-before-state", test_refused_before_state);
+  g_test_add_func("/groundhog/nip29-service/refused-state-after-eose",
+                  test_refused_state_after_eose);
   g_test_add_func("/groundhog/nip29-service/duplicate", test_duplicate);
   g_test_add_func("/groundhog/nip29-service/admin-and-non-admin", test_admin_and_non_admin);
   g_test_add_func("/groundhog/nip29-service/partial-member-list", test_partial_member_list);

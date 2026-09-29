@@ -10,7 +10,11 @@
  *    partial_members makes the 39002 list the admins only (a subset).
  *  - REQ: every stored event matching the filters (each filter's limit
  *    honoured, newest first), then EOSE (none with hold_eose: a backfill
- *    cut off before its end); the subscription stays live.
+ *    cut off before its end); the subscription stays live. hold_reqs keeps
+ *    each REQ unanswered (in held_reqs) until nip29_release_reqs() answers
+ *    those still open, so an OK can be made to come before a REQ's answer.
+ *  - hold_nip11 keeps Groundhog's NIP-11 GETs unanswered until
+ *    nip29_release_nip11(), so the relay key can be made to come last.
  *  - EVENT: signed and verified; a known id is OK true "duplicate:". Kinds
  *    9-12 need a member author (OK false "restricted:") and every `previous`
  *    ref must name a stored event of the group ("invalid:"). 9021 follows
@@ -66,6 +70,13 @@ typedef struct {
   NostrFilters *filters;
 } Nip29Sub;
 
+/* A REQ frame not answered yet (hold_reqs). */
+typedef struct {
+  SoupWebsocketConnection *connection;
+  gchar *sub_id;
+  gchar *text;
+} Nip29HeldReq;
+
 typedef struct {
   SoupServer *server;
   gchar *url;
@@ -81,6 +92,10 @@ typedef struct {
   gboolean nip11_redirect;
   gboolean nip11_huge;
   gboolean allow_create;    /* 9007 creates groups (G20b) */
+  gboolean hold_reqs;       /* REQs wait for nip29_release_reqs() */
+  gboolean hold_nip11;      /* Groundhog's NIP-11 GETs wait for nip29_release_nip11() */
+  GPtrArray *held_reqs;     /* Nip29HeldReq, in arrival order */
+  GPtrArray *held_nip11;    /* SoupServerMessage, paused */
   GPtrArray *connections;
   GPtrArray *events;        /* NostrEvent, stored */
   GHashTable *groups;       /* id -> Nip29TestGroup */
@@ -134,6 +149,16 @@ nip29_sub_free(gpointer data)
   g_free(sub->sub_id);
   nostr_filters_free(sub->filters);
   g_free(sub);
+}
+
+static G_GNUC_UNUSED void
+nip29_held_req_free(gpointer data)
+{
+  Nip29HeldReq *held = data;
+  g_object_unref(held->connection);
+  g_free(held->sub_id);
+  g_free(held->text);
+  g_free(held);
 }
 
 /* A frame to a client that may be closing its connection (the service
@@ -624,13 +649,28 @@ nip29_on_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type
   gsize length;
   const gchar *bytes = g_bytes_get_data(message, &length);
   g_autofree gchar *text = g_strndup(bytes, length);
-  if (g_str_has_prefix(text, "[\"REQ\"")) {
+  if (g_str_has_prefix(text, "[\"REQ\"") && relay->hold_reqs) {
+    NostrEnvelope *envelope = nostr_envelope_parse(text);
+    g_assert_nonnull(envelope);
+    Nip29HeldReq *held = g_new0(Nip29HeldReq, 1);
+    held->connection = g_object_ref(connection);
+    held->sub_id = g_strdup(
+      nostr_req_envelope_get_subscription_id((NostrReqEnvelope *)envelope));
+    held->text = g_steal_pointer(&text);
+    g_ptr_array_add(relay->held_reqs, held);
+    nostr_envelope_free(envelope);
+  } else if (g_str_has_prefix(text, "[\"REQ\"")) {
     nip29_on_req(relay, connection, text);
   } else if (g_str_has_prefix(text, "[\"CLOSE\"")) {
     for (guint i = relay->subs->len; i > 0; i--) {
       Nip29Sub *sub = g_ptr_array_index(relay->subs, i - 1);
       if (sub->connection == connection && strstr(text, sub->sub_id))
         g_ptr_array_remove_index(relay->subs, i - 1);
+    }
+    for (guint i = relay->held_reqs->len; i > 0; i--) {
+      Nip29HeldReq *held = g_ptr_array_index(relay->held_reqs, i - 1);
+      if (held->connection == connection && strstr(text, held->sub_id))
+        g_ptr_array_remove_index(relay->held_reqs, i - 1);
     }
   } else if (g_str_has_prefix(text, "[\"EVENT\"")) {
     g_autofree gchar *json = nip29_frame_json(text, "[\"EVENT\",");
@@ -683,6 +723,26 @@ nip29_on_closed(SoupWebsocketConnection *connection, gpointer data)
     if (sub->connection == connection)
       g_ptr_array_remove_index(relay->subs, i - 1);
   }
+  for (guint i = relay->held_reqs->len; i > 0; i--) {
+    Nip29HeldReq *held = g_ptr_array_index(relay->held_reqs, i - 1);
+    if (held->connection == connection)
+      g_ptr_array_remove_index(relay->held_reqs, i - 1);
+  }
+}
+
+/* Answers the held REQs whose connections are still open, in order; later
+ * REQs are answered at once. */
+static G_GNUC_UNUSED void
+nip29_release_reqs(Nip29Relay *relay)
+{
+  relay->hold_reqs = FALSE;
+  g_autoptr(GPtrArray) held = relay->held_reqs;
+  relay->held_reqs = g_ptr_array_new_with_free_func(nip29_held_req_free);
+  for (guint i = 0; i < held->len; i++) {
+    Nip29HeldReq *req = g_ptr_array_index(held, i);
+    if (soup_websocket_connection_get_state(req->connection) == SOUP_WEBSOCKET_STATE_OPEN)
+      nip29_on_req(relay, req->connection, req->text);
+  }
 }
 
 static G_GNUC_UNUSED void
@@ -705,26 +765,9 @@ nip29_on_websocket(SoupServer *server, SoupServerMessage *message, const char *p
   }
 }
 
-/* NIP-11: answered before the WebSocket handler sees a plain GET. */
 static G_GNUC_UNUSED void
-nip29_on_early(SoupServer *server, SoupServerMessage *message, const char *path,
-               GHashTable *query, gpointer data)
+nip29_nip11_answer(Nip29Relay *relay, SoupServerMessage *message)
 {
-  (void)server;
-  (void)path;
-  (void)query;
-  Nip29Relay *relay = data;
-  SoupMessageHeaders *headers = soup_server_message_get_request_headers(message);
-  if (soup_message_headers_get_one(headers, "Upgrade"))
-    return;
-  /* libnostr's relay transport probes NIP-11 too (with its user agent);
-   * Groundhog's own fetch sends no user agent, cookie or referrer. */
-  if (!soup_message_headers_get_one(headers, "User-Agent")) {
-    relay->nip11_gets++;
-    g_assert_null(soup_message_headers_get_one(headers, "Cookie"));
-    g_assert_null(soup_message_headers_get_one(headers, "Referer"));
-    g_assert_cmpstr(soup_message_headers_get_one(headers, "Accept"), ==, "application/nostr+json");
-  }
   if (relay->nip11_redirect) {
     soup_server_message_set_redirect(message, SOUP_STATUS_FOUND, "http://127.0.0.2:9/relay");
     return;
@@ -748,6 +791,47 @@ nip29_on_early(SoupServer *server, SoupServerMessage *message, const char *path,
   soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
   soup_server_message_set_response(message, "application/nostr+json", SOUP_MEMORY_COPY, body,
                                    strlen(body));
+}
+
+/* NIP-11: answered before the WebSocket handler sees a plain GET. */
+static G_GNUC_UNUSED void
+nip29_on_early(SoupServer *server, SoupServerMessage *message, const char *path,
+               GHashTable *query, gpointer data)
+{
+  (void)server;
+  (void)path;
+  (void)query;
+  Nip29Relay *relay = data;
+  SoupMessageHeaders *headers = soup_server_message_get_request_headers(message);
+  if (soup_message_headers_get_one(headers, "Upgrade"))
+    return;
+  /* libnostr's relay transport probes NIP-11 too (with its user agent);
+   * Groundhog's own fetch sends no user agent, cookie or referrer. */
+  if (!soup_message_headers_get_one(headers, "User-Agent")) {
+    relay->nip11_gets++;
+    g_assert_null(soup_message_headers_get_one(headers, "Cookie"));
+    g_assert_null(soup_message_headers_get_one(headers, "Referer"));
+    g_assert_cmpstr(soup_message_headers_get_one(headers, "Accept"), ==, "application/nostr+json");
+    if (relay->hold_nip11) {
+      soup_server_message_pause(message);
+      g_ptr_array_add(relay->held_nip11, g_object_ref(message));
+      return;
+    }
+  }
+  nip29_nip11_answer(relay, message);
+}
+
+/* Answers the held NIP-11 GETs; later ones are answered at once. */
+static G_GNUC_UNUSED void
+nip29_release_nip11(Nip29Relay *relay)
+{
+  relay->hold_nip11 = FALSE;
+  for (guint i = 0; i < relay->held_nip11->len; i++) {
+    SoupServerMessage *message = g_ptr_array_index(relay->held_nip11, i);
+    nip29_nip11_answer(relay, message);
+    soup_server_message_unpause(message);
+  }
+  g_ptr_array_set_size(relay->held_nip11, 0);
 }
 
 /* The local server may accept a connection the code under test has already
@@ -815,6 +899,8 @@ nip29_relay_init(Nip29Relay *relay)
   relay->ok_messages = g_ptr_array_new_with_free_func(g_free);
   relay->auth_pubkeys = g_ptr_array_new_with_free_func(g_free);
   relay->req_frames = g_ptr_array_new_with_free_func(g_free);
+  relay->held_reqs = g_ptr_array_new_with_free_func(nip29_held_req_free);
+  relay->held_nip11 = g_ptr_array_new_with_free_func(g_object_unref);
   nip29_tolerate_accept_race();
   relay->server = soup_server_new(NULL, NULL);
   soup_server_add_early_handler(relay->server, "/relay", nip29_on_early, relay, NULL);
@@ -830,6 +916,7 @@ nip29_relay_init(Nip29Relay *relay)
 static G_GNUC_UNUSED void
 nip29_relay_clear(Nip29Relay *relay)
 {
+  nip29_release_nip11(relay);
   for (guint i = 0; i < relay->connections->len; i++) {
     SoupWebsocketConnection *connection = g_ptr_array_index(relay->connections, i);
     g_signal_handlers_disconnect_by_data(connection, relay);
@@ -844,6 +931,8 @@ nip29_relay_clear(Nip29Relay *relay)
   g_ptr_array_unref(relay->ok_messages);
   g_ptr_array_unref(relay->auth_pubkeys);
   g_ptr_array_unref(relay->req_frames);
+  g_ptr_array_unref(relay->held_reqs);
+  g_ptr_array_unref(relay->held_nip11);
   soup_server_disconnect(relay->server);
   g_object_unref(relay->server);
   g_free(relay->url);

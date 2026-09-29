@@ -108,6 +108,9 @@ struct _GhNip29Room {
   GhNip29JoinState join;
   gint64 evidence_at;          /* relay time of the latest 9000/9001/39002 applied */
   gboolean join_with_code;
+  gboolean awaiting_state;     /* refused before its REQ's answer ended: that REQ still
+                                * brings the group state (a closed group?), so the
+                                * room reads its 39000-39003 until the EOSE */
   gint64 join_op;              /* outbox ids; 0 = none */
   gint64 leave_op;
   gint64 create_op;            /* the create-group request (G20b); 0 = none */
@@ -227,6 +230,14 @@ join_subscribed(GhNip29JoinState join)
   }
 }
 
+/* Whether the relay's REQ carries the room: all of a group the account is
+ * (about to be) in; only the state of one whose refusal waits for it. */
+static gboolean
+room_reads(GhNip29Room *room)
+{
+  return join_subscribed(room->join) || room->awaiting_state;
+}
+
 static const gchar *
 room_relay(GhNip29Room *room)
 {
@@ -276,10 +287,15 @@ room_set_detail(GhNip29Room *room, const gchar *detail)
   room_notify(room, ROOM_PROP_DETAIL);
 }
 
+/* A group the account is in (again) is read in full: its REQ is rebuilt.
+ * One it no longer is in stops being read, unless its refusal still awaits
+ * the group state; then the REQ it is in stays (its answer is on the way)
+ * until on_scope_update() drops the room at that REQ's EOSE. */
 static void
 room_set_join(GhNip29Room *room, GhNip29JoinState join, gint64 at, const gchar *detail)
 {
   gboolean was_subscribed = join_subscribed(room->join);
+  gboolean was_reading = room_reads(room);
   if (at > room->evidence_at)
     room->evidence_at = at;
   room_set_detail(room, detail);
@@ -287,9 +303,11 @@ room_set_join(GhNip29Room *room, GhNip29JoinState join, gint64 at, const gchar *
     room->join = join;
     room_notify(room, ROOM_PROP_JOIN_STATE);
   }
+  if (join_subscribed(join))
+    room->awaiting_state = FALSE;
   room_save(room);
   GhNip29Service *self = room->service;
-  if (self && was_subscribed != join_subscribed(join)) {
+  if (self && (was_reading != room_reads(room) || (!was_subscribed && join_subscribed(join)))) {
     Relay *relay = g_hash_table_lookup(self->relays, room_relay(room)); /* made with the room */
     if (relay)
       relay_resubscribe(relay);
@@ -699,7 +717,7 @@ relay_get(GhNip29Service *self, const gchar *url)
   return relay;
 }
 
-/* The relay's rooms that read it now. */
+/* The relay's rooms that read it now (room_reads()). */
 static GPtrArray *
 relay_rooms(Relay *relay)
 {
@@ -707,20 +725,24 @@ relay_rooms(Relay *relay)
   GhNip29Service *self = relay->service;
   for (guint i = 0; i < self->rooms->len; i++) {
     GhNip29Room *room = g_ptr_array_index(self->rooms, i);
-    if (join_subscribed(room->join) && g_str_equal(room_relay(room), relay->url))
+    if (room_reads(room) && g_str_equal(room_relay(room), relay->url))
       g_ptr_array_add(rooms, room);
   }
   return rooms;
 }
 
+/* The room an event of group_id is for: one that reads its state, or with
+ * everything, one that is (about to be) in the group. */
 static GhNip29Room *
-relay_room(Relay *relay, const gchar *group_id)
+relay_room(Relay *relay, const gchar *group_id, gboolean state_only)
 {
   if (!group_id)
     return NULL;
   g_autoptr(GhNip29GroupKey) key = gh_nip29_group_key_new(relay->url, group_id, NULL);
   GhNip29Room *room = key ? g_hash_table_lookup(relay->service->by_key, key) : NULL;
-  return room && join_subscribed(room->join) ? room : NULL;
+  if (!room)
+    return NULL;
+  return (state_only ? room_reads(room) : join_subscribed(room->join)) ? room : NULL;
 }
 
 static NostrFilters *
@@ -734,7 +756,9 @@ relay_filters(Relay *relay, GPtrArray *rooms)
   g_ptr_array_add(ids, NULL);
   const gchar *const *groups = (const gchar *const *)ids->pdata;
 
-  /* The relay-signed group state of every group. */
+  /* The relay-signed group state of every group, also of one whose refusal
+   * awaits it (room_reads()); the rest only for the groups the account is
+   * (about to be) in. */
   NostrFilter *meta = nostr_filter_new();
   int meta_kinds[] = { NOSTR_KIND_SIMPLE_GROUP_METADATA, NOSTR_KIND_SIMPLE_GROUP_ADMINS,
                        NOSTR_KIND_SIMPLE_GROUP_MEMBERS, NOSTR_KIND_SIMPLE_GROUP_ROLES };
@@ -744,6 +768,13 @@ relay_filters(Relay *relay, GPtrArray *rooms)
     nostr_filter_tags_append(meta, "d", groups[i], NULL);
   nostr_filters_add(filters, meta);
   nostr_filter_free(meta);
+  g_autoptr(GPtrArray) joined = g_ptr_array_new();
+  for (guint i = 0; i < rooms->len; i++)
+    if (join_subscribed(((GhNip29Room *)g_ptr_array_index(rooms, i))->join))
+      g_ptr_array_add(joined, g_ptr_array_index(rooms, i));
+  if (joined->len == 0)
+    return filters;
+  rooms = joined;
 
   /* Each group's messages, from its own cursor. */
   int message_kinds[] = { NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE,
@@ -784,8 +815,8 @@ relay_filters(Relay *relay, GPtrArray *rooms)
   NostrFilter *mine = nostr_filter_new();
   int mine_kinds[] = { NOSTR_KIND_SIMPLE_GROUP_ADD_USER, NOSTR_KIND_SIMPLE_GROUP_REMOVE_USER };
   nostr_filter_set_kinds(mine, mine_kinds, G_N_ELEMENTS(mine_kinds));
-  for (guint i = 0; groups[i]; i++)
-    nostr_filter_tags_append(mine, "h", groups[i], NULL);
+  for (guint i = 0; i < rooms->len; i++)
+    nostr_filter_tags_append(mine, "h", room_group_id(g_ptr_array_index(rooms, i)), NULL);
   nostr_filter_tags_append(mine, "p", self->account, NULL);
   nostr_filters_add(filters, mine);
   nostr_filter_free(mine);
@@ -847,6 +878,8 @@ relay_resubscribe(Relay *relay)
   relay->scope = scope;
   for (guint i = 0; i < rooms->len; i++) {
     GhNip29Room *room = g_ptr_array_index(rooms, i);
+    if (!join_subscribed(room->join))
+      continue; /* only its state is asked: nothing is read (IDLE) */
     /* A new REQ, from the committed cursor: nothing of it is stored yet. */
     room->sync_cursor = 0;
     room->sync_failed = FALSE;
@@ -934,8 +967,7 @@ relay_ensure_key(Relay *relay, gboolean force)
   gboolean needed = force;
   for (guint i = 0; i < self->rooms->len && !needed; i++) {
     GhNip29Room *room = g_ptr_array_index(self->rooms, i);
-    needed = join_subscribed(room->join) && !room->group &&
-             g_str_equal(room_relay(room), relay->url);
+    needed = room_reads(room) && !room->group && g_str_equal(room_relay(room), relay->url);
   }
   if (!needed)
     return;
@@ -1038,7 +1070,7 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
   }
   gint kind = nostr_event_get_kind(event);
   if (kind >= NOSTR_KIND_SIMPLE_GROUP_METADATA && kind <= NOSTR_KIND_SIMPLE_GROUP_ROLES) {
-    GhNip29Room *room = relay_room(relay, first_tag_value(event, "d"));
+    GhNip29Room *room = relay_room(relay, first_tag_value(event, "d"), TRUE);
     if (room) {
       AdmitOutcome outcome = room_admit_snapshot(room, event, json);
       if (outcome == ADMIT_NO_KEY) {
@@ -1049,7 +1081,7 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
       }
     }
   } else {
-    GhNip29Room *room = relay_room(relay, first_tag_value(event, "h"));
+    GhNip29Room *room = relay_room(relay, first_tag_value(event, "h"), FALSE);
     if (room && kind >= NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE &&
         kind <= NOSTR_KIND_SIMPLE_GROUP_REPLY) {
       room_admit_message(room, event, json, backfill);
@@ -1089,8 +1121,20 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
   for (guint i = 0; i < rooms->len; i++)
     g_object_ref(g_ptr_array_index(rooms, i));
   g_ptr_array_set_free_func(rooms, g_object_unref);
+  gboolean settled = FALSE;
   for (guint i = 0; i < rooms->len; i++) {
     GhNip29Room *room = g_ptr_array_index(rooms, i);
+    if (!join_subscribed(room->join)) {
+      /* A refusal awaited the group state: the REQ's answer has ended (the
+       * state the relay has came before its EOSE), or the relay refused the
+       * REQ. The room is no longer read; at an EOSE the REQ is rebuilt
+       * without it (a refused REQ is not asked again). */
+      if (update->notice == GH_RELAY_NOTICE_EOSE || update->notice == GH_RELAY_NOTICE_CLOSED) {
+        room->awaiting_state = FALSE;
+        settled |= update->notice == GH_RELAY_NOTICE_EOSE;
+      }
+      continue;
+    }
     switch (update->notice) {
     case GH_RELAY_NOTICE_EOSE:
       room_set_read(room, GH_NIP29_READ_LIVE, NULL);
@@ -1115,6 +1159,8 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
       break;
     }
   }
+  if (settled)
+    relay_resubscribe(relay);
 }
 
 /* ---- Operations -------------------------------------------------------------------------- */
@@ -1144,9 +1190,21 @@ apply_join_result(GhNip29Room *room, GhNip29Op *op)
     room_set_join(room, GH_NIP29_JOIN_PENDING, 0, message);
     break;
   case GH_NIP29_OP_REJECTED:
+    /* A closed group refuses a request without a code: its 39000 tells
+     * CLOSED from DENIED (room_sync_metadata() moves one to the other). The
+     * answer comes on the publish connection and the group state on the
+     * REQ's, so the refusal can come first, even when the relay sent the
+     * state first (nostrc-kfso). While the REQ has not answered, the room
+     * keeps reading the group state until its EOSE; nothing else of the
+     * group is read. */
+    if (!room->join_with_code &&
+        (room->read == GH_NIP29_READ_SYNCING || room->read == GH_NIP29_READ_DISCONNECTED))
+      room->awaiting_state = TRUE;
     room_set_join(room, room->closed && !room->join_with_code ? GH_NIP29_JOIN_CLOSED
                                                               : GH_NIP29_JOIN_DENIED,
                   0, message);
+    /* Not reading messages, even while its state is still read. */
+    room_set_read(room, GH_NIP29_READ_IDLE, NULL);
     break;
   case GH_NIP29_OP_NOT_SENT:
     room_set_join(room, GH_NIP29_JOIN_NOT_SENT, 0, message);
@@ -2022,6 +2080,9 @@ gh_nip29_service_forget(GhNip29Service *self, GhNip29Room *room, GError **error)
                  !gh_store_forget_conversation(self->store, id, error)))
     return FALSE;
   gh_conversation_store_remove(self->conversations, room->room_id);
+  gboolean was_reading = room->awaiting_state;
+  room->awaiting_state = FALSE;
+  g_autofree gchar *url = g_strdup(room_relay(room));
   guint position = 0;
   if (g_ptr_array_find(self->rooms, room, &position)) {
     g_hash_table_remove(self->by_key, room->key);
@@ -2030,6 +2091,10 @@ gh_nip29_service_forget(GhNip29Service *self, GhNip29Room *room, GError **error)
     g_ptr_array_remove_index(self->rooms, position);
     g_list_model_items_changed(G_LIST_MODEL(self), position, 1, 0);
   }
+  /* Its state is no longer asked for. */
+  Relay *relay = was_reading ? g_hash_table_lookup(self->relays, url) : NULL;
+  if (relay)
+    relay_resubscribe(relay);
   return TRUE;
 }
 
