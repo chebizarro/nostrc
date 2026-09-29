@@ -260,6 +260,7 @@ signet_core_sources = files(
   'src/nip5l_transport.c',
   'src/session_broker.c',
   'src/credential_access.c',
+  'src/cli_secret_output.c',
   'src/git_credential.c',
   'src/ssh_agent.c',
   # NIP-17 gift-wrap DM helpers are a CMake OBJECT library upstream (no static

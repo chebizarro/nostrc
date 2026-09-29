@@ -220,6 +220,15 @@ test_credential_access = executable('test_credential_access',
   install: false,
 )
 
+test_cli_secret_output = executable('test_cli_secret_output',
+  'test_cli_secret_output.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
+  install: false,
+)
+
 test_git_credential = executable('test_git_credential',
   'test_git_credential.c',
   link_with: signet_core,
@@ -281,6 +290,7 @@ test('reissue_self_service', test_reissue_self_service)
 test('client_bindings', test_client_bindings)
 test('credential_lifecycle', test_credential_lifecycle)
 test('credential_access', test_credential_access)
+test('cli_secret_output', test_cli_secret_output)
 test('git_credential', test_git_credential)
 test('signetctl_credentials', find_program('sh'),
   args: [meson.current_source_dir() / 'test_signetctl_credentials.sh',

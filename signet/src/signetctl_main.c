@@ -13,6 +13,7 @@
 #include "signet/store_leases.h"
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
+#include "signet/cli_secret_output.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -346,52 +347,6 @@ static int signetctl_write_secret_file(const char *path, const char *secret) {
   return ok ? 0 : -1;
 }
 
-static int signetctl_write_secret_bytes(const char *path,
-                                        const uint8_t *secret,
-                                        size_t len) {
-  if (!path || !path[0] || !secret || len == 0) return -1;
-  struct stat current;
-  if (lstat(path, &current) == 0) {
-    if (!S_ISREG(current.st_mode) || current.st_uid != geteuid()) {
-      fprintf(stderr, "signetctl: refusing unsafe existing output path\n");
-      return -1;
-    }
-  } else if (errno != ENOENT) {
-      fprintf(stderr, "signetctl: cannot inspect protected output path\n");
-      return -1;
-  }
-  char *tmp = g_strdup_printf("%s.tmp.%ld", path, (long)getpid());
-  int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
-  if (fd < 0) {
-    fprintf(stderr, "signetctl: failed to create protected output file\n");
-    g_free(tmp);
-    return -1;
-  }
-  size_t off = 0;
-  bool ok = true;
-  while (off < len) {
-    ssize_t wr = write(fd, secret + off, len - off);
-    if (wr < 0) {
-      if (errno == EINTR) continue;
-      ok = false;
-      break;
-    }
-    off += (size_t)wr;
-  }
-  if (ok) ok = (fsync(fd) == 0 && fchmod(fd, 0600) == 0);
-  close(fd);
-  if (ok && rename(tmp, path) != 0) ok = false;
-  if (ok) {
-    char *dir = g_path_get_dirname(path);
-    int dfd = open(dir, O_RDONLY | O_DIRECTORY);
-    if (dfd >= 0) { (void)fsync(dfd); close(dfd); }
-    g_free(dir);
-  }
-  if (!ok) unlink(tmp);
-  g_free(tmp);
-  return ok ? 0 : -1;
-}
-
 static int signetctl_handle_delivery_result(const char *reply_json,
                                             const char *out_path) {
   g_autoptr(JsonParser) p = json_parser_new();
@@ -416,7 +371,7 @@ static int signetctl_handle_delivery_result(const char *reply_json,
   gsize len = 0;
   guchar *decoded = g_base64_decode(encoded, &len);
   if (!decoded || len == 0 ||
-      signetctl_write_secret_bytes(out_path, decoded, len) != 0) {
+      signet_cli_write_secret_bytes(out_path, decoded, len) != 0) {
     if (decoded) { sodium_memzero(decoded, len); g_free(decoded); }
     fprintf(stderr, "signetctl: failed to write protected credential output\n");
     return 1;
