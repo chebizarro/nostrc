@@ -686,6 +686,16 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
  * 0.5.0 -- before, the caller had to sign it) and can be published to the
  * group relays as is; marmot_save_created_message() persists it with its id.
  *
+ * Key use (since 0.8.0, nostrc-ai04): every message uses the next generation
+ * of our sender ratchet (RFC 9420 section 9.1: a key and nonce encrypt one
+ * message).  The advanced ratchet is stored in the operation's storage
+ * transaction before the event is returned: on any error, including a failed
+ * commit, no event is returned, so nothing can be published under a
+ * generation that is not stored.  An event returned but never published
+ * (e.g. the process died) only leaves a gap receivers skip.  Before 0.8.0
+ * every call restarted the ratchet: all messages of an epoch reused
+ * generation 0.
+ *
  * Returns: MARMOT_OK on success
  */
 MarmotError marmot_create_message(Marmot *m,
@@ -759,6 +769,16 @@ MarmotError marmot_save_created_message(Marmot *m,
  * epoch that arrives after the next Commit was applied is read with the
  * retained parent state (the state that Commit was built on, kept for one
  * epoch).  Older ones fail with MARMOT_ERR_MLS.
+ *
+ * Replays and reordering (since 0.8.0, nostrc-ai04): each sender's ratchet
+ * is stored with the group state, so a generation decrypts once -- a message
+ * re-published in a new envelope (another event id) fails with
+ * MARMOT_ERR_MLS, in the current epoch and through the retained parent.  A
+ * message's generation may be up to 32 below the newest one read from its
+ * sender (it arrived late: its key was kept) or up to the group's
+ * max_forward_distance (1000) above it; outside that window it fails with
+ * MARMOT_ERR_MLS.  A message that fails to decrypt, or whose storage fails
+ * later in the operation, consumes nothing.
  *
  * MIP-03 messages require MLS PrivateMessage framing by default. The legacy
  * raw-JSON NIP-44 fallback is accepted only when

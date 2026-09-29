@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.7.0',
+  version: '0.8.0',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -190,6 +190,7 @@ if get_option('tests')
     'test_mls_welcome',
     'test_protocol',
     'test_commits',
+    'test_ratchet_persist',
     'test_kp_profile',
     'test_storage_contract',
     'test_media',

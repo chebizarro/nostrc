@@ -193,12 +193,13 @@ group_derive_epoch(MlsGroup *group,
     mls_secret_tree_free(&group->secret_tree);
     memcpy(&group->epoch_secrets, &new_secrets, sizeof(new_secrets));
 
-    if (mls_secret_tree_init(&group->secret_tree,
-                              new_secrets.encryption_secret,
-                              group->tree.n_leaves) != 0)
-        return -1;
-
-    return 0;
+    rc = mls_secret_tree_init(&group->secret_tree, new_secrets.encryption_secret,
+                              group->tree.n_leaves);
+    /* The tree holds every leaf secret now: the root is deleted (RFC 9420
+     * §9.2), so no consumed message key can be derived again from it. */
+    sodium_memzero(group->epoch_secrets.encryption_secret, MLS_HASH_LEN);
+    sodium_memzero(&new_secrets, sizeof(new_secrets));
+    return rc == 0 ? 0 : -1;
 }
 
 /**
@@ -3565,9 +3566,9 @@ mls_group_encrypt(MlsGroup *group,
     uint8_t reuse_guard[4];
     mls_crypto_random(reuse_guard, 4);
 
-    /* Encrypt as PrivateMessage */
+    /* Encrypt as PrivateMessage; the key is used once, then deleted. */
     MlsPrivateMessage msg;
-    if (mls_private_message_encrypt(
+    int enc_rc = mls_private_message_encrypt(
             group->group_id, group->group_id_len,
             group->epoch,
             MLS_CONTENT_TYPE_APPLICATION,
@@ -3575,7 +3576,9 @@ mls_group_encrypt(MlsGroup *group,
             plaintext, plaintext_len,
             group->epoch_secrets.sender_data_secret,
             &keys, group->own_leaf_index,
-            reuse_guard, &msg) != 0)
+            reuse_guard, &msg);
+    sodium_memzero(&keys, sizeof(keys));
+    if (enc_rc != 0)
         return MARMOT_ERR_MLS_CREATE_MESSAGE;
 
     /* Serialize */
@@ -4210,9 +4213,9 @@ fail:
  * serialization primitives for consistency. NOT a wire protocol format —
  * this is internal-only for state persistence.
  *
- * Format:
+ * Format (version 3, nostrc-ai04):
  *   magic "MLSG" (4 bytes)
- *   version u32 (currently 1)
+ *   version u32 (3)
  *   group_id opaque32
  *   epoch u64
  *   n_leaves u32
@@ -4222,7 +4225,9 @@ fail:
  *   own_leaf_index u32
  *   own_signature_key (64 bytes)
  *   own_encryption_key (32 bytes)
- *   epoch_secrets (12 * 32 = 384 bytes, raw)
+ *   epoch secrets, 8 * 32 bytes: sender_data, exporter, external,
+ *     confirmation_key, membership_key, resumption_psk, epoch_authenticator,
+ *     init (next epoch)
  *   confirmed_transcript_hash (32 bytes)
  *   interim_transcript_hash (32 bytes)
  *   extensions opaque32
@@ -4231,10 +4236,26 @@ fail:
  *   repeated: epoch u64 || resumption_psk[32]
  *   own_path_key_count u32
  *   repeated: node u32 || sk[32] || pk[32]
+ *   secret tree (mls_secret_tree_serialize: every sender's handshake and
+ *     application ratchet and its skipped-key cache, or its unused leaf secret)
+ *
+ * Only unconsumed secrets are stored (RFC 9420 §9.2).  The encryption_secret
+ * (the secret tree's root) and the joiner_secret it is derived from (with
+ * the stored GroupContext) are consumed with the epoch's first message key,
+ * and the welcome_secret once the Welcome is built, so version 3 omits them:
+ * a stolen state cannot re-derive a used message key.
+ *
+ * Versions 1 and 2 stored those three secrets and no ratchet (every load
+ * restarted each sender at generation 0: key reuse, nostrc-ai04).  They are
+ * still read: the tree is re-derived, the secrets deleted, and the own
+ * sender moved MLS_SECRET_TREE_LEGACY_OWN_STRIDE generations forward.  The
+ * next save writes version 3.
  * ══════════════════════════════════════════════════════════════════════════ */
 
 #define MLS_GROUP_SERIAL_MAGIC  0x4D4C5347  /* "MLSG" */
-#define MLS_GROUP_SERIAL_VER    2
+#define MLS_GROUP_SERIAL_VER    3
+/* The last version that stored no secret tree. */
+#define MLS_GROUP_SERIAL_VER_LEGACY_MAX 2
 
 int
 mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
@@ -4279,9 +4300,8 @@ mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
     if (mls_tls_buf_append(&buf, group->own_encryption_key, MLS_KEM_SK_LEN) != 0)
         goto fail;
 
-    /* Epoch secrets (all fields, in order) */
+    /* Epoch secrets still in use (not encryption, welcome or joiner) */
     if (mls_tls_buf_append(&buf, group->epoch_secrets.sender_data_secret, MLS_HASH_LEN) != 0) goto fail;
-    if (mls_tls_buf_append(&buf, group->epoch_secrets.encryption_secret, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_buf_append(&buf, group->epoch_secrets.exporter_secret, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_buf_append(&buf, group->epoch_secrets.external_secret, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_buf_append(&buf, group->epoch_secrets.confirmation_key, MLS_HASH_LEN) != 0) goto fail;
@@ -4289,8 +4309,6 @@ mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
     if (mls_tls_buf_append(&buf, group->epoch_secrets.resumption_psk, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_buf_append(&buf, group->epoch_secrets.epoch_authenticator, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_buf_append(&buf, group->epoch_secrets.init_secret, MLS_HASH_LEN) != 0) goto fail;
-    if (mls_tls_buf_append(&buf, group->epoch_secrets.welcome_secret, MLS_HASH_LEN) != 0) goto fail;
-    if (mls_tls_buf_append(&buf, group->epoch_secrets.joiner_secret, MLS_HASH_LEN) != 0) goto fail;
 
     /* Transcript hashes */
     if (mls_tls_buf_append(&buf, group->confirmed_transcript_hash, MLS_HASH_LEN) != 0)
@@ -4340,12 +4358,18 @@ mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
             goto fail;
     }
 
+    /* Secret tree: where every sender ratchet is (nostrc-ai04). */
+    if (group->secret_tree.n_leaves != group->tree.n_leaves ||
+        mls_secret_tree_serialize(&group->secret_tree, &buf) != 0)
+        goto fail;
+
     *out_data = buf.data;
     *out_len = buf.len;
     buf.data = NULL;
     return 0;
 
 fail:
+    if (buf.data) sodium_memzero(buf.data, buf.len);   /* secrets */
     mls_tls_buf_free(&buf);
     return -1;
 }
@@ -4366,6 +4390,7 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
     if (mls_tls_read_u32(&reader, &version) != 0 ||
         version == 0 || version > MLS_GROUP_SERIAL_VER)
         goto fail;
+    bool legacy = version <= MLS_GROUP_SERIAL_VER_LEGACY_MAX;
 
     /* Group ID */
     if (mls_tls_read_opaque32(&reader, &group->group_id, &group->group_id_len) != 0)
@@ -4410,9 +4435,10 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
     if (mls_tls_read_fixed(&reader, group->own_encryption_key, MLS_KEM_SK_LEN) != 0)
         goto fail;
 
-    /* Epoch secrets */
+    /* Epoch secrets (legacy formats also stored encryption, welcome, joiner) */
     if (mls_tls_read_fixed(&reader, group->epoch_secrets.sender_data_secret, MLS_HASH_LEN) != 0) goto fail;
-    if (mls_tls_read_fixed(&reader, group->epoch_secrets.encryption_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (legacy &&
+        mls_tls_read_fixed(&reader, group->epoch_secrets.encryption_secret, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_read_fixed(&reader, group->epoch_secrets.exporter_secret, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_read_fixed(&reader, group->epoch_secrets.external_secret, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_read_fixed(&reader, group->epoch_secrets.confirmation_key, MLS_HASH_LEN) != 0) goto fail;
@@ -4420,8 +4446,13 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
     if (mls_tls_read_fixed(&reader, group->epoch_secrets.resumption_psk, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_read_fixed(&reader, group->epoch_secrets.epoch_authenticator, MLS_HASH_LEN) != 0) goto fail;
     if (mls_tls_read_fixed(&reader, group->epoch_secrets.init_secret, MLS_HASH_LEN) != 0) goto fail;
-    if (mls_tls_read_fixed(&reader, group->epoch_secrets.welcome_secret, MLS_HASH_LEN) != 0) goto fail;
-    if (mls_tls_read_fixed(&reader, group->epoch_secrets.joiner_secret, MLS_HASH_LEN) != 0) goto fail;
+    if (legacy) {
+        /* Consumed long ago: read past, never kept (nor written again). */
+        uint8_t consumed[2 * MLS_HASH_LEN];
+        int rc = mls_tls_read_fixed(&reader, consumed, sizeof(consumed));
+        sodium_memzero(consumed, sizeof(consumed));
+        if (rc != 0) goto fail;
+    }
 
     /* Transcript hashes */
     if (mls_tls_read_fixed(&reader, group->confirmed_transcript_hash, MLS_HASH_LEN) != 0)
@@ -4437,7 +4468,8 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
     /* Config */
     if (mls_tls_read_u32(&reader, &group->max_forward_distance) != 0) goto fail;
 
-    if (mls_tls_reader_remaining(&reader) > 0) {
+    /* Version 3 always has the caches and the secret tree after them. */
+    if (!legacy || mls_tls_reader_remaining(&reader) > 0) {
         uint32_t cache_count = 0;
         if (mls_tls_read_u32(&reader, &cache_count) != 0) goto fail;
         if (cache_count > MLS_RESUMPTION_PSK_CACHE_SIZE) goto fail;
@@ -4451,7 +4483,7 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
             memcpy(group->resumption_psk_cache[i].psk, psk, MLS_HASH_LEN);
             sodium_memzero(psk, sizeof(psk));
         }
-        if (mls_tls_reader_remaining(&reader) > 0) {
+        if (!legacy || mls_tls_reader_remaining(&reader) > 0) {
             uint32_t path_key_count = 0;
             if (mls_tls_read_u32(&reader, &path_key_count) != 0) goto fail;
             if (path_key_count > MLS_OWN_PATH_KEY_CACHE_SIZE) goto fail;
@@ -4466,14 +4498,30 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
                                        MLS_KEM_PK_LEN) != 0) goto fail;
             }
         }
-        if (!mls_tls_reader_done(&reader)) goto fail;
     }
 
-    /* Re-derive the secret tree from the encryption_secret */
-    if (mls_secret_tree_init(&group->secret_tree,
-                              group->epoch_secrets.encryption_secret,
-                              group->tree.n_leaves) != 0)
-        goto fail;
+    if (!legacy) {
+        if (mls_secret_tree_deserialize(&reader, group->tree.n_leaves,
+                                        &group->secret_tree) != 0)
+            goto fail;
+    } else {
+        /* Migration (nostrc-ai04): no ratchet was stored, so re-derive the
+         * tree -- receivers start every other sender at generation 0 again,
+         * a window bounded by max_forward_distance -- and move our own
+         * sender past every generation this state may have sent at. */
+        int rc = mls_secret_tree_init(&group->secret_tree,
+                                      group->epoch_secrets.encryption_secret,
+                                      group->tree.n_leaves);
+        sodium_memzero(group->epoch_secrets.encryption_secret, MLS_HASH_LEN);
+        if (rc != 0) goto fail;
+        /* (An own leaf outside the tree -- e.g. we were removed -- cannot
+         * send in this epoch at all: nothing to move.) */
+        if (group->own_leaf_index < group->tree.n_leaves &&
+            mls_secret_tree_skip(&group->secret_tree, group->own_leaf_index,
+                                 MLS_SECRET_TREE_LEGACY_OWN_STRIDE) != 0)
+            goto fail;
+    }
+    if (!mls_tls_reader_done(&reader)) goto fail;
 
     return 0;
 

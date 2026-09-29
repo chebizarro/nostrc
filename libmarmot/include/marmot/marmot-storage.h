@@ -185,7 +185,16 @@ typedef struct MarmotStorage {
                                     const MarmotGroupId *group_id,
                                     const char *name);
 
-    /** Rollback a group to a named snapshot (consumes the snapshot). */
+    /**
+     * Rollback a group to a named snapshot (consumes the snapshot).
+     *
+     * libmarmot never calls this.  The MLS state holds the sender ratchets
+     * (since 0.8.0, nostrc-ai04): rolling it back within an epoch rewinds
+     * them, so the next send would reuse a generation -- the key and nonce
+     * of a message already sent -- and receivers would read replays again.
+     * Only roll back to a snapshot of an epoch no message has been sent or
+     * read in, or move to a new epoch before sending.
+     */
     MarmotError (*rollback_snapshot)(void *ctx,
                                       const MarmotGroupId *group_id,
                                       const char *name);

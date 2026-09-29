@@ -37,7 +37,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PARENT_LABEL   "mls_group_parent"
+#define PARENT_LABEL   MARMOT_MLS_PARENT_LABEL
 #define PARENT_VERSION 1
 #define PENDING_LABEL   "mls_group_pending"
 #define PENDING_VERSION 2
@@ -274,24 +274,35 @@ MarmotError
 marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
                            const uint8_t *msg, size_t msg_len,
                            uint8_t **out_plaintext, size_t *out_len,
-                           uint32_t *out_sender)
+                           uint32_t *out_sender,
+                           uint8_t **out_replaced, size_t *out_replaced_len)
 {
-    if (!m || !gid || !msg || !out_plaintext || !out_len || !out_sender)
+    if (!m || !gid || !msg || !out_plaintext || !out_len || !out_sender ||
+        !out_replaced || !out_replaced_len)
         return MARMOT_ERR_INVALID_ARG;
     *out_plaintext = NULL;
     *out_len = 0;
+    *out_replaced = NULL;
+    *out_replaced_len = 0;
     MarmotStorage *s = m->storage;
     if (!s || !s->mls_load || !s->mls_store) return MARMOT_ERR_STORAGE;
+    /* The record as it is: handed back once replaced (see commits.h). */
     uint8_t *probe = NULL;
     size_t probe_len = 0;
     MarmotError err = s->mls_load(s->ctx, PARENT_LABEL, gid->data, gid->len,
                                   &probe, &probe_len);
-    free_secret(probe, probe_len);
-    if (err != MARMOT_OK) return err;   /* incl. STORAGE_NOT_FOUND: none retained */
+    if (err != MARMOT_OK || !probe) {
+        free_secret(probe, probe_len);
+        return err != MARMOT_OK ? err : MARMOT_ERR_STORAGE_NOT_FOUND;
+    }
 
     RetainedParent rp;
-    if (retained_load(m, gid->data, gid->len, &rp) != 0) return MARMOT_ERR_DESERIALIZATION;
+    if (retained_load(m, gid->data, gid->len, &rp) != 0) {
+        free_secret(probe, probe_len);
+        return MARMOT_ERR_DESERIALIZATION;
+    }
     if (rp.parent_epoch != epoch) {
+        free_secret(probe, probe_len);
         mls_group_free(&rp.parent);
         return MARMOT_ERR_STORAGE_NOT_FOUND;   /* not the epoch we retain */
     }
@@ -309,10 +320,15 @@ marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
             free_secret(*out_plaintext, *out_len);
             *out_plaintext = NULL;
             *out_len = 0;
+        } else {
+            *out_replaced = probe;
+            *out_replaced_len = probe_len;
+            probe = NULL;
         }
     } else {
         err = rc == MARMOT_ERR_OWN_MESSAGE ? MARMOT_ERR_OWN_MESSAGE : MARMOT_ERR_MLS;
     }
+    free_secret(probe, probe_len);
     mls_group_free(&rp.parent);
     return err;
 }

@@ -15,7 +15,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.7.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.8.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.3.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.11.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
@@ -77,6 +77,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.3.0 | No bump: no source, API or ABI change; a rebuild picks up the new libmarmot behaviour. |
 | same | gnostr | 0.1.0 | No bump (unreleased): rebuild only. Its SQLite-backed store has no transaction hooks yet (nostrc-wf71). |
 | same | groundhog | 0.11.0 | No bump: GhStoreMarmot's transaction hooks and the new GTK-free Commit lifecycle (`gh-mls-commits`) are not linked into the application until nostrc-qp24.13. `gh_store_begin_named()` and the `mls:*` cut points (test builds only) add no behaviour to the executable. |
+| libmarmot 0.7.0 -> 0.8.0 (MINOR, security: the MLS sender ratchets and a bounded skipped-key cache are stored with the group state, serial format 3; consumed secrets are no longer stored; formats 1 and 2 migrate on load; nostrc-ai04) | libmarmot | 0.8.0 | MINOR bump: 0.x incompatible storage-format change (0.7.0 cannot read format 3) and a security fix (per-epoch AES-GCM key reuse, no in-epoch forward secrecy, replays accepted). No public API change. Security advisory and migration notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.3.0 | No bump: no source, API or ABI change (audit: every send and receive goes through `marmot_create_message()`/`marmot_process_message()` under the client lock). A new test covers distinct generations and refused replays through the client; a rebuild picks up the fix. |
+| same | gnostr | 0.1.0 | No bump (unreleased): rebuild only. Audit: the mls-groups plugin sends through the client and holds the client lock for its direct libmarmot calls; MIP-04 media uses random nonces, not a reloaded counter. |
+| same | groundhog | 0.11.0 | No bump: test-only change (a GhStoreMarmot crash case cutting `marmot_create_message()` at every write and commit). GhStoreMarmot stores the state opaquely; the format migrates inside libmarmot. |
 
 ## Maintenance
 

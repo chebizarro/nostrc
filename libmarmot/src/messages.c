@@ -184,6 +184,15 @@ nip44_decrypt_with_secret(const uint8_t exporter_secret[32],
     return rc;
 }
 
+int
+marmot_group_event_decrypt(const uint8_t exporter_secret[32],
+                           const char *base64_payload,
+                           uint8_t **out_plaintext, size_t *out_len)
+{
+    return nip44_decrypt_with_secret(exporter_secret, base64_payload,
+                                     out_plaintext, out_len);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Internal: Load / save MLS group state from storage
  *
@@ -206,6 +215,56 @@ msg_load_mls_group(Marmot *m, const MarmotGroupId *gid, MlsGroup *out)
     sodium_memzero(state_data, state_len);   /* epoch secrets */
     free(state_data);
     return rc;
+}
+
+/* A stored MLS state record as it was before this operation replaced it.  A
+ * received message's ratchet step must not outlive the message: if a later
+ * write of the operation fails, the record is written back (with the
+ * storage transaction hooks the rollback restores it anyway), so the message
+ * can be processed again instead of being lost with its consumed key
+ * (nostrc-ai04). */
+typedef struct {
+    const char *label;   /* NULL: nothing to restore */
+    uint8_t    *blob;
+    size_t      len;
+} StateUndo;
+
+static void
+state_undo_clear(StateUndo *u)
+{
+    if (u->blob) {
+        sodium_memzero(u->blob, u->len);
+        free(u->blob);
+    }
+    memset(u, 0, sizeof(*u));
+}
+
+/* Keep `label`'s record of `gid` as it is now. */
+static void
+state_undo_capture(Marmot *m, const MarmotGroupId *gid, const char *label, StateUndo *u)
+{
+    state_undo_clear(u);
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    if (m->storage->mls_load(m->storage->ctx, label, gid->data, gid->len, &blob,
+                             &len) == MARMOT_OK && blob) {
+        u->label = label;
+        u->blob = blob;
+        u->len = len;
+    } else if (blob) {
+        sodium_memzero(blob, len);
+        free(blob);
+    }
+}
+
+/* The operation failed after replacing the record: put it back. */
+static void
+state_undo_apply(Marmot *m, const MarmotGroupId *gid, StateUndo *u)
+{
+    if (u->label)
+        (void)m->storage->mls_store(m->storage->ctx, u->label, gid->data, gid->len,
+                                    u->blob, u->len);
+    state_undo_clear(u);
 }
 
 static int
@@ -774,6 +833,7 @@ process_group_event(Marmot *m, const char *group_event_json,
     size_t inner_plaintext_len = 0;
     bool used_mls = false;
     bool late = false;   /* decrypted with the retained previous-epoch state */
+    StateUndo undo = { 0 };   /* the ratchet record this message replaced */
 
     /* Only attempt MLS decrypt when the stored MLS epoch matches the epoch
      * whose exporter_secret successfully decrypted the NIP-44 layer. If
@@ -805,10 +865,12 @@ process_group_event(Marmot *m, const char *group_event_json,
         MarmotError lerr = marmot_commit_decrypt_late(m, &group->mls_group_id, used_epoch,
                                                       decrypted, decrypted_len,
                                                       &inner_plaintext,
-                                                      &inner_plaintext_len, &sender_leaf);
+                                                      &inner_plaintext_len, &sender_leaf,
+                                                      &undo.blob, &undo.len);
         if (lerr == MARMOT_OK) {
             used_mls = true;
             late = true;
+            undo.label = MARMOT_MLS_PARENT_LABEL;
         } else if (lerr == MARMOT_ERR_OWN_MESSAGE ||
                    (lerr != MARMOT_ERR_MLS && lerr != MARMOT_ERR_STORAGE_NOT_FOUND)) {
             /* Our own echo, or a storage failure (fail closed). */
@@ -837,6 +899,7 @@ process_group_event(Marmot *m, const char *group_event_json,
             free(inner_plaintext);
             free(decrypted);
             mls_group_free(&mls_group);
+            state_undo_apply(m, &group->mls_group_id, &undo);   /* a late step */
             marmot_group_free(group);
             parsed_group_event_clear(&parsed);
             return MARMOT_ERR_MEMORY;
@@ -874,7 +937,10 @@ process_group_event(Marmot *m, const char *group_event_json,
      * Fail closed: a message whose ratchet step is not stored is not
      * delivered (the transaction rolls everything back, and the event can be
      * processed again). */
+    if (used_mls && !late)
+        state_undo_capture(m, &group->mls_group_id, "mls_group", &undo);
     if (used_mls && !late && msg_save_mls_group(m, &mls_group) != 0) {
+        state_undo_clear(&undo);
         mls_group_free(&mls_group);
         free(inner_json);
         marmot_group_free(group);
@@ -959,6 +1025,7 @@ process_group_event(Marmot *m, const char *group_event_json,
         }
         marmot_message_free(msg);
         if (err != MARMOT_OK) {
+            state_undo_apply(m, &group->mls_group_id, &undo);
             marmot_message_result_free(result);
             marmot_group_free(group);
             parsed_group_event_clear(&parsed);
@@ -975,12 +1042,14 @@ process_group_event(Marmot *m, const char *group_event_json,
     }
     err = m->storage->save_group(m->storage->ctx, group);
     if (err != MARMOT_OK) {
+        state_undo_apply(m, &group->mls_group_id, &undo);
         marmot_message_result_free(result);
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);
         return err;
     }
 
+    state_undo_clear(&undo);
     marmot_group_free(group);
     parsed_group_event_clear(&parsed);
     return MARMOT_OK;

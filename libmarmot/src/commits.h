@@ -21,6 +21,9 @@
 extern "C" {
 #endif
 
+/* mls_kv label of the retained parent state (see marmot_commit_persist()). */
+#define MARMOT_MLS_PARENT_LABEL "mls_group_parent"
+
 /**
  * MarmotCommitKey:
  *
@@ -74,12 +77,19 @@ MarmotError marmot_commit_persist(Marmot *m, const MlsGroup *pre,
  * one-epoch rewind: older messages cannot be read.  MARMOT_ERR_OWN_MESSAGE
  * for our own message; MARMOT_ERR_STORAGE_NOT_FOUND when no state of that
  * epoch is retained; MARMOT_ERR_MLS when it does not decrypt.
+ *
+ * On success *out_replaced holds the retained-parent record as it was
+ * before (caller wipes and frees it): the caller writes it back under
+ * MARMOT_MLS_PARENT_LABEL if a later write of the same operation fails, so
+ * on a storage without transactions the ratchet step does not outlive a
+ * message that was never stored (nostrc-ai04).
  */
 MarmotError marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid,
                                        uint64_t epoch,
                                        const uint8_t *msg, size_t msg_len,
                                        uint8_t **out_plaintext, size_t *out_len,
-                                       uint32_t *out_sender);
+                                       uint32_t *out_sender,
+                                       uint8_t **out_replaced, size_t *out_replaced_len);
 
 /** Mirror the committed GroupData (name, description, admins) into `group`. */
 MarmotError marmot_group_apply_group_data(MarmotGroup *group,
@@ -189,6 +199,9 @@ MarmotError marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
 int marmot_group_event_encrypt(const uint8_t exporter_secret[32],
                                const uint8_t *plaintext, size_t plaintext_len,
                                char **out_base64);
+int marmot_group_event_decrypt(const uint8_t exporter_secret[32],
+                               const char *base64_payload,
+                               uint8_t **out_plaintext, size_t *out_len);
 
 #ifdef __cplusplus
 }

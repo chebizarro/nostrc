@@ -102,8 +102,27 @@ int mls_psk_secret_compute(const MlsPskInput *psks, size_t psk_count,
  * structure as the ratchet tree.
  * ──────────────────────────────────────────────────────────────────────── */
 
-/** Maximum skipped message keys retained per sender ratchet chain. */
+/**
+ * The out-of-order window of every sender ratchet chain (RFC 9420 §15.3
+ * policy, nostrc-ai04).  The keys of skipped generations are retained only
+ * while they are among the MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS
+ * generations just below the newest generation read from that chain, and
+ * only until used: a message older than that, or one whose key was
+ * consumed, fails closed.  The cache holds at most this many keys per chain,
+ * persisted with the group state.
+ */
 #define MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS 32
+
+/**
+ * Generations the group's own sender ratchets are moved forward when a state
+ * persisted without them (MlsGroup serial format 1 or 2) is loaded: past any
+ * generation such a state may already have used, and within the forward
+ * distance receivers accept (libmarmot 0.8.0 and later, OpenMLS and MDK
+ * default to 1000; libmarmot 0.7.0 and earlier read no generation above 32
+ * at all).  Through the public API those formats never sent at a generation
+ * above 0 (the ratchet restarted on every load, nostrc-ai04).
+ */
+#define MLS_SECRET_TREE_LEGACY_OWN_STRIDE 512
 
 /**
  * MlsMessageKeys:
@@ -152,6 +171,10 @@ typedef struct {
     MlsSenderRatchet *senders;             /**< Per-leaf sender ratchets */
     bool *sender_initialized;              /**< Whether sender ratchet is initialized */
 } MlsSecretTree;
+
+/* A sender ratchet chain gives out generations 0 .. MLS_RATCHET_GENERATION_MAX;
+ * then it is exhausted (a generation is never reused, RFC 9420 §9.1). */
+#define MLS_RATCHET_GENERATION_MAX (UINT32_MAX - 1)
 
 /**
  * Initialize a secret tree from the encryption_secret.
@@ -202,6 +225,58 @@ int mls_secret_tree_get_keys_for_generation(MlsSecretTree *st, uint32_t leaf_ind
                                              bool is_handshake, uint32_t generation,
                                              uint32_t max_forward_distance,
                                              MlsMessageKeys *out);
+
+/**
+ * Move both of `leaf_index`'s chains `generations` steps forward, deleting
+ * every key and secret passed (none is cached).  Used to put the own sender
+ * past generations a legacy state may have used.  0 on success.
+ */
+int mls_secret_tree_skip(MlsSecretTree *st, uint32_t leaf_index, uint32_t generations);
+
+/**
+ * A copy of one sender's ratchet state, to undo a key derivation whose
+ * message then fails to authenticate (a failed decryption consumes nothing,
+ * RFC 9420 §9.2).  Holds secrets: always end it with
+ * mls_secret_tree_sender_restore() or mls_secret_tree_sender_discard().
+ */
+typedef struct {
+    uint32_t         leaf_index;
+    bool             initialized;
+    uint8_t          leaf_secret[MLS_HASH_LEN];
+    MlsSenderRatchet ratchet;
+} MlsSenderSnapshot;
+
+int  mls_secret_tree_sender_save(const MlsSecretTree *st, uint32_t leaf_index,
+                                 MlsSenderSnapshot *out);
+void mls_secret_tree_sender_restore(MlsSecretTree *st, MlsSenderSnapshot *snap);
+void mls_secret_tree_sender_discard(MlsSenderSnapshot *snap);
+
+/**
+ * Persisted form of a secret tree (MlsGroup serial format 3, nostrc-ai04):
+ *
+ *   u32 n_leaves
+ *   per leaf:
+ *     u8 0 (ratchets not started): [Nh] leaf secret
+ *     u8 1 (ratchets started):     handshake chain, application chain
+ *   chain: u32 next generation, [Nh] ratchet secret of that generation,
+ *          u8 skipped count (<= MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS),
+ *          per skipped key: u32 generation, [Nk] key, [Nn] nonce
+ *
+ * Only unconsumed values are written (RFC 9420 §9.2): the leaf secret of a
+ * sender whose ratchets started, every ratchet secret below the next
+ * generation and every used key are gone, and cannot be derived from what is
+ * stored.  The encryption_secret and internal node secrets are never stored.
+ */
+int mls_secret_tree_serialize(const MlsSecretTree *st, MlsTlsBuf *buf);
+
+/**
+ * Read a secret tree written by mls_secret_tree_serialize() for a group of
+ * `n_leaves`.  Fails closed (and leaves `st` empty) on anything malformed:
+ * another leaf count, an unknown leaf kind, a skipped key outside its
+ * chain's out-of-order window or given twice.
+ */
+int mls_secret_tree_deserialize(MlsTlsReader *reader, uint32_t n_leaves,
+                                MlsSecretTree *st);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * MLS Exporter (RFC 9420 §8.5)

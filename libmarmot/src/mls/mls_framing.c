@@ -243,7 +243,11 @@ mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
     /* Step 3: Encrypt the content */
     size_t ct_max = plaintext_len + MLS_AEAD_TAG_LEN;
     uint8_t *ciphertext = malloc(ct_max);
-    if (!ciphertext) { free(content_aad); return -1; }
+    if (!ciphertext) {
+        free(content_aad);
+        sodium_memzero(nonce, sizeof(nonce));
+        return -1;
+    }
 
     size_t ct_len = 0;
     int rc = mls_crypto_aead_encrypt(ciphertext, &ct_len,
@@ -251,6 +255,7 @@ mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
                                       plaintext, plaintext_len,
                                       content_aad, content_aad_len);
     free(content_aad);
+    sodium_memzero(nonce, sizeof(nonce));
     if (rc != 0) { free(ciphertext); return -1; }
 
     /* Step 4: Encrypt sender data */
@@ -336,13 +341,22 @@ mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
     bool is_handshake = (msg->content_type == MLS_CONTENT_TYPE_PROPOSAL ||
                          msg->content_type == MLS_CONTENT_TYPE_COMMIT);
 
+    /* Only a successful decryption consumes a key (RFC 9420 §9.2): keep the
+     * sender's ratchet as it is to put it back if this message fails. */
+    MlsSenderSnapshot before;
+    if (mls_secret_tree_sender_save(st, sender_data->leaf_index, &before) != 0)
+        return -1;
+
     MlsMessageKeys keys;
     int rc = mls_secret_tree_get_keys_for_generation(st, sender_data->leaf_index,
                                                       is_handshake,
                                                       sender_data->generation,
                                                       max_forward_distance,
                                                       &keys);
-    if (rc != 0) return rc;
+    if (rc != 0) {
+        mls_secret_tree_sender_restore(st, &before);
+        return rc;
+    }
 
     uint8_t *content_aad = NULL;
     size_t content_aad_len = 0;
@@ -350,7 +364,11 @@ mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
                                 msg->epoch, msg->content_type,
                                 msg->authenticated_data, msg->authenticated_data_len,
                                 &content_aad, &content_aad_len);
-    if (rc != 0) { sodium_memzero(&keys, sizeof(keys)); return -1; }
+    if (rc != 0) {
+        sodium_memzero(&keys, sizeof(keys));
+        mls_secret_tree_sender_restore(st, &before);
+        return -1;
+    }
 
     uint8_t nonce[MLS_AEAD_NONCE_LEN];
     memcpy(nonce, keys.nonce, MLS_AEAD_NONCE_LEN);
@@ -362,6 +380,7 @@ mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
         free(content_aad);
         sodium_memzero(&keys, sizeof(keys));
         sodium_memzero(nonce, sizeof(nonce));
+        mls_secret_tree_sender_restore(st, &before);
         return -1;
     }
 
@@ -376,8 +395,10 @@ mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
 
     if (rc != 0) {
         free(plaintext);
+        mls_secret_tree_sender_restore(st, &before);
         return MARMOT_ERR_CRYPTO;
     }
+    mls_secret_tree_sender_discard(&before);
 
     *out_plaintext = plaintext;
     *out_pt_len = pt_len;

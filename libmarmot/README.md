@@ -225,6 +225,120 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ## Changelog
 
+### 0.8.0 (unreleased): the MLS sender ratchets are stored (nostrc-ai04, security)
+
+**Security fix and state-format change** (MINOR for 0.x: a 0.8.0 state
+cannot be read by 0.7.0).
+
+#### Security advisory
+
+libmarmot 0.7.0 and earlier stored the MLS group state without the secret
+tree's sender ratchets. Every load re-derived them from the epoch's
+`encryption_secret` at generation 0, and `marmot_create_message()` loads
+the state on every call. As a result:
+
+- **All application messages a member sent in one epoch shared one
+  AES-128-GCM key.** Their nonces differed only in the 4-byte random reuse
+  guard. If two reuse guards collide (likely after about 2^16 messages from
+  one sender in one epoch), the key and nonce repeat. Anyone who can open the
+  kind:445 NIP-44 layer (every member, and anyone holding that epoch's
+  exporter secret) then learns the XOR of the two plaintexts and can forge
+  the AEAD layer under that key. The sender's signature inside the MLS
+  content still authenticates the sender.
+- **There was no forward secrecy within an epoch.** The stored state kept the
+  `encryption_secret` and the `joiner_secret` (from which it follows with
+  the stored GroupContext). Whoever obtains a copy of the stored state can
+  therefore decrypt every message of that epoch, including messages already
+  read, and also of the retained parent epoch. This applies to backups and
+  snapshots too.
+- **Replays were accepted.** Anyone could re-sign a kind:445 from a relay
+  with a new ephemeral key (a new event id escapes the processed marker).
+  Members then accepted and stored it again, in the live epoch and through
+  the retained parent.
+
+**Recommended action.** Upgrade every member. Then move each group to a new
+epoch with any Commit: a self-update once available (nostrc-yd0q), or a
+metadata update or member change. The upgrade alone stops key reuse for new
+messages and drops the consumed secrets from the stored state at its next
+save. But a copy of the state taken before the upgrade (a backup, a
+snapshot, a retained parent) still holds that epoch's `encryption_secret`,
+which derives every key of the epoch, including keys used after the
+upgrade. Only a new epoch ends that. Messages sent before the upgrade may
+have shared a key: treat their confidentiality against members and holders
+of the exporter secret as weakened.
+
+#### What changed
+
+- **Sender.** Each `marmot_create_message()` uses the next generation of
+  our sender ratchet. The advanced ratchet is stored in the operation's
+  storage transaction before the event is returned. On any error, including
+  a failed commit, no event is returned, so no event can go out under a
+  generation that is not stored. A crash after the commit only leaves an
+  unused generation, which receivers skip. A chain never wraps: it ends
+  after generation 2^32 - 2.
+- **Receiver.** A generation decrypts once. A message re-published in a new
+  envelope fails with `MARMOT_ERR_MLS`, in the live epoch and through the
+  retained parent. Out-of-order delivery (RFC 9420 section 15.3) works as
+  follows:
+  - a message may name a generation up to the group's
+    `max_forward_distance` (1000) past the newest one read from that
+    sender;
+  - keys of skipped generations are kept only for the 32 generations below
+    that newest one (`MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS`), and only
+    until used;
+  - anything outside that window fails closed.
+
+  A message that fails to decrypt consumes nothing: the ratchet is put back.
+  On a storage without transaction hooks, a message whose later writes fail
+  (message row, processed marker, group record) does not keep its ratchet
+  step. The previous state record is written back, so the event can be
+  processed again rather than being lost with a consumed key. With the hooks,
+  the rollback does the same.
+- **Deletion (RFC 9420 section 9.2).** The stored state holds only
+  unconsumed values:
+  - per sender, its unused leaf secret, or the two ratchet heads and the
+    skipped keys;
+  - not the `encryption_secret`, `joiner_secret` or `welcome_secret`, which
+    are consumed once the epoch starts.
+
+  In memory, the `encryption_secret` is wiped as soon as the secret tree is
+  built. A joiner also wipes its joiner and welcome secrets. A committer
+  keeps them in memory only for the Welcome it builds in that operation, and
+  never stores them. Tests check that no used key, ratchet secret, leaf
+  secret or epoch root appears in the stored bytes.
+
+#### State format and migration
+
+- The MLS group state (`mls_kv` labels `mls_group`, `mls_group_parent`,
+  `mls_group_pending`) is written as format 3:
+  - eight epoch secrets instead of eleven;
+  - the PSK and path-key caches always present;
+  - then the secret tree.
+
+  0.7.0 cannot read it; downgrading loses the group.
+- Formats 1 and 2 are still read, and the next save writes format 3.
+  - **Own sender.** Both chains are moved
+    `MLS_SECRET_TREE_LEGACY_OWN_STRIDE` (512) generations forward, deleting
+    every key passed. Through the public API those formats never sent above
+    generation 0, so 512 is far past anything they used. It is also within
+    the 1000-generation forward distance that libmarmot, OpenMLS and MDK
+    receivers accept, so no one has to wait for a new epoch.
+  - **Why not force a new epoch?** Forcing a self-update before the next
+    send would block sending until a Commit is published, and there is no
+    public self-update yet.
+  - **Receivers.** A migrated receiver cannot know which generations it
+    already read. Every other sender's chain restarts at 0, so a message
+    from before the upgrade is accepted once more: at most
+    `max_forward_distance` generations per sender, in the migrated epoch
+    only. The processed-event markers still catch the same event id.
+- **Mixed versions.** A 0.7.0 receiver only reads generations 0-32 of an
+  epoch, and a 0.8.0 sender that migrated starts at 512. Upgrade every
+  member.
+- **API/ABI.** No public API change. Internal:
+  - `marmot_group_event_decrypt()` (test helper);
+  - `mls_secret_tree_serialize`, `_deserialize`, `_skip` and the
+    sender-snapshot calls.
+
 ### 0.7.0 (unreleased): one storage transaction per operation (nostrc-qp24.7)
 
 **Additive API and storage-interface change** (MINOR). Groundhog's durable
@@ -272,11 +386,11 @@ MLS Commit lifecycle needs every multi-record update to be atomic.
   failure was ignored.
 - **Secrets.** Serialized MLS states and KeyPackage private keys read from
   storage are wiped before they are freed.
-- **Known gap (nostrc-ai04, P1).** The serialized MLS state does not hold
-  the per-sender ratchet: it is re-derived from the epoch's encryption
-  secret on every load. As a result, a message re-wrapped in a new envelope
-  is accepted again, and a sender's messages in one epoch reuse a
-  generation. Fixing this needs a state-format change.
+- **Known gap (nostrc-ai04, fixed in 0.8.0).** The serialized MLS state
+  does not hold the per-sender ratchet: it is re-derived from the epoch's
+  encryption secret on every load. As a result, a message re-wrapped in a
+  new envelope is accepted again, and a sender's messages in one epoch
+  reuse a generation. See the 0.8.0 security advisory.
 
 ### 0.6.0 (unreleased): kind:445 envelopes are authenticated (nostrc-6r6s)
 

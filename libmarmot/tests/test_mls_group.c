@@ -990,6 +990,24 @@ done:
 /* The full persisted state (tree, epoch, transcript hashes, epoch and
  * secret-tree secrets, own keys) plus the fields the ProposalRef regression
  * names explicitly; a rejected Commit must leave all of it untouched. */
+/* Two members are in the same epoch: every epoch secret a group keeps is
+ * equal.  The joiner and welcome secrets are not compared: a member that
+ * joined by Welcome wiped them, a committer keeps them for its Welcome
+ * (nostrc-ai04); the encryption_secret is wiped by every member. */
+static bool
+epoch_secrets_equal_for_test(const MlsEpochSecrets *a, const MlsEpochSecrets *b)
+{
+    return sodium_memcmp(a->sender_data_secret, b->sender_data_secret, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->encryption_secret, b->encryption_secret, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->exporter_secret, b->exporter_secret, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->external_secret, b->external_secret, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->confirmation_key, b->confirmation_key, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->membership_key, b->membership_key, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->resumption_psk, b->resumption_psk, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->epoch_authenticator, b->epoch_authenticator, MLS_HASH_LEN) == 0 &&
+           sodium_memcmp(a->init_secret, b->init_secret, MLS_HASH_LEN) == 0;
+}
+
 typedef struct {
     uint64_t        epoch;
     uint8_t         tree_hash[MLS_HASH_LEN];
@@ -1005,6 +1023,11 @@ snapshot_group_for_test(const MlsGroup *g, GroupSnapshotForTest *s)
     s->epoch = g->epoch;
     assert(mls_group_tree_hash(g, s->tree_hash) == 0);
     memcpy(&s->epoch_secrets, &g->epoch_secrets, sizeof(s->epoch_secrets));
+    /* The state as stored: the joiner and welcome secrets are consumed when
+     * the epoch starts and never persisted (nostrc-ai04), so a reloaded
+     * group has neither. */
+    sodium_memzero(s->epoch_secrets.joiner_secret, MLS_HASH_LEN);
+    sodium_memzero(s->epoch_secrets.welcome_secret, MLS_HASH_LEN);
     assert(mls_group_serialize(g, &s->blob, &s->blob_len) == 0);
 }
 
@@ -1015,11 +1038,29 @@ assert_group_matches_snapshot_for_test(const MlsGroup *g, const GroupSnapshotFor
     snapshot_group_for_test(g, &now);
     assert(now.epoch == s->epoch);
     assert(memcmp(now.tree_hash, s->tree_hash, MLS_HASH_LEN) == 0);
-    assert(sodium_memcmp(&now.epoch_secrets, &s->epoch_secrets,
-                         sizeof(now.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&now.epoch_secrets, &s->epoch_secrets));
     assert(now.blob_len == s->blob_len &&
            memcmp(now.blob, s->blob, s->blob_len) == 0);
     free(now.blob);
+}
+
+/* A group keeps the epoch secrets still in use; the secret tree's root
+ * (encryption_secret) is deleted once the tree is built, and a reloaded
+ * group has no joiner or welcome secret either (RFC 9420 §9.2,
+ * nostrc-ai04).  Compare what it keeps with the full key schedule. */
+static void
+assert_epoch_secrets_kept_for_test(const MlsEpochSecrets *g, const MlsEpochSecrets *e)
+{
+    static const uint8_t zero[MLS_HASH_LEN] = {0};
+    assert(sodium_memcmp(g->encryption_secret, zero, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->sender_data_secret, e->sender_data_secret, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->exporter_secret, e->exporter_secret, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->external_secret, e->external_secret, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->confirmation_key, e->confirmation_key, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->membership_key, e->membership_key, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->resumption_psk, e->resumption_psk, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->epoch_authenticator, e->epoch_authenticator, MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(g->init_secret, e->init_secret, MLS_HASH_LEN) == 0);
 }
 
 static void
@@ -1034,8 +1075,7 @@ assert_group_reached_for_test(const MlsGroup *g, const ExpectedEpochForTest *e)
                   MLS_HASH_LEN) == 0);
     assert(memcmp(g->interim_transcript_hash, e->interim_transcript_hash,
                   MLS_HASH_LEN) == 0);
-    assert(sodium_memcmp(&g->epoch_secrets, &e->epoch_secrets,
-                         sizeof(g->epoch_secrets)) == 0);
+    assert_epoch_secrets_kept_for_test(&g->epoch_secrets, &e->epoch_secrets);
 }
 
 static int
@@ -1328,8 +1368,15 @@ TEST(test_welcome_epoch_secrets_match)
     assert(memcmp(alice_group.epoch_secrets.sender_data_secret,
                   bob_group.epoch_secrets.sender_data_secret,
                   MLS_HASH_LEN) == 0);
-    assert(memcmp(alice_group.epoch_secrets.encryption_secret,
-                  bob_group.epoch_secrets.encryption_secret,
+    /* Both deleted the secret tree's root once the tree was built (RFC 9420
+     * §9.2): it is not kept, so it cannot be compared (nostrc-ai04). */
+    static const uint8_t zero[MLS_HASH_LEN] = {0};
+    assert(sodium_memcmp(alice_group.epoch_secrets.encryption_secret, zero,
+                         MLS_HASH_LEN) == 0);
+    assert(sodium_memcmp(bob_group.epoch_secrets.encryption_secret, zero,
+                         MLS_HASH_LEN) == 0);
+    assert(memcmp(alice_group.epoch_secrets.exporter_secret,
+                  bob_group.epoch_secrets.exporter_secret,
                   MLS_HASH_LEN) == 0);
     assert(memcmp(alice_group.epoch_secrets.confirmation_key,
                   bob_group.epoch_secrets.confirmation_key,
@@ -1715,10 +1762,9 @@ three_member_fixture_init_ext(ThreeMemberFixture *f,
                                &f->charlie_priv, NULL, 0, &f->charlie) == 0);
     assert(f->charlie.own_leaf_index == 2);
     assert(f->bob.epoch == f->alice.epoch && f->charlie.epoch == f->alice.epoch);
-    assert(sodium_memcmp(&f->bob.epoch_secrets, &f->alice.epoch_secrets,
-                         sizeof(f->bob.epoch_secrets)) == 0);
-    assert(sodium_memcmp(&f->charlie.epoch_secrets, &f->alice.epoch_secrets,
-                         sizeof(f->charlie.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f->bob.epoch_secrets, &f->alice.epoch_secrets));
+    /* Charlie joined by Welcome: he wiped the joiner and welcome secrets. */
+    assert_epoch_secrets_kept_for_test(&f->charlie.epoch_secrets, &f->alice.epoch_secrets);
 }
 
 static void
@@ -1958,8 +2004,7 @@ TEST(test_pathless_commit_requiring_path_rejected)
     assert(mls_group_process_commit(&f.bob, update.commit_data,
                                     update.commit_len, 0) == 0);
     assert(f.bob.epoch == parent.epoch + 1 && f.bob.epoch == f.alice.epoch);
-    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
-                         sizeof(f.bob.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f.bob.epoch_secrets, &f.alice.epoch_secrets));
 
     mls_commit_result_clear(&update);
     sodium_memzero(upd_sk, sizeof(upd_sk));
@@ -2045,8 +2090,7 @@ TEST(test_pathless_remove_does_not_exclude_removed_member)
                                     removal.commit_len, 0) == 0);
     assert(f.charlie.epoch == parent.epoch + 1 &&
            f.charlie.epoch == f.alice.epoch);
-    assert(sodium_memcmp(&f.charlie.epoch_secrets, &f.alice.epoch_secrets,
-                         sizeof(f.charlie.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f.charlie.epoch_secrets, &f.alice.epoch_secrets));
 
     mls_tree_free(&removed_view);
     assert(tree_clone_for_test(&f.bob.tree, &removed_view) == 0);
@@ -2211,8 +2255,7 @@ TEST(test_commit_serialize_requires_path)
         mls_commit_clear(&c);
         mls_message_clear(&msg);
     }
-    assert(sodium_memcmp(&f.charlie.epoch_secrets, &f.alice.epoch_secrets,
-                         sizeof(f.charlie.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f.charlie.epoch_secrets, &f.alice.epoch_secrets));
     mls_commit_result_clear(&produced[1]);
     mls_commit_result_clear(&produced[2]);
     mls_add_result_clear(&add_dave);
@@ -2296,8 +2339,7 @@ TEST(test_remove_filters_root_from_committer_path)
     assert(memcmp(alice_hash, bob_hash, MLS_HASH_LEN) == 0);
     assert(memcmp(f.bob.confirmed_transcript_hash, f.alice.confirmed_transcript_hash,
                   MLS_HASH_LEN) == 0);
-    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
-                         sizeof(f.bob.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f.bob.epoch_secrets, &f.alice.epoch_secrets));
 
     /* The removed member is not a recipient of the path and cannot follow. */
     assert(mls_group_process_commit(&f.charlie, removal.commit_data,
@@ -2318,8 +2360,7 @@ TEST(test_remove_filters_root_from_committer_path)
     assert(mls_group_self_update(&f.bob, &bob_update) == 0);
     assert(mls_group_process_commit(&f.alice, bob_update.commit_data,
                                     bob_update.commit_len, 1) == 0);
-    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
-                         sizeof(f.bob.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f.bob.epoch_secrets, &f.alice.epoch_secrets));
     mls_commit_result_clear(&bob_update);
 
     /* Removing the last other member leaves an empty filtered direct path:
@@ -2364,8 +2405,7 @@ assert_converged_for_test(MlsGroup *const *members, size_t n)
         assert(gc_len == gc0_len && memcmp(gc, gc0, gc_len) == 0);
         assert(memcmp(members[i]->interim_transcript_hash,
                       members[0]->interim_transcript_hash, MLS_HASH_LEN) == 0);
-        assert(sodium_memcmp(&members[i]->epoch_secrets, &members[0]->epoch_secrets,
-                             sizeof(members[0]->epoch_secrets)) == 0);
+        assert(epoch_secrets_equal_for_test(&members[i]->epoch_secrets, &members[0]->epoch_secrets));
         free(gc);
     }
     free(gc0);
@@ -3224,8 +3264,7 @@ TEST(test_update_by_ref_leaf_validation)
     MlsCommitResult update;
     assert(mls_group_self_update(&f.alice, &update) == 0);
     assert(mls_group_process_commit(&f.bob, update.commit_data, update.commit_len, 0) == 0);
-    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
-                         sizeof(f.bob.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f.bob.epoch_secrets, &f.alice.epoch_secrets));
     mls_commit_result_clear(&update);
     free(parent.blob);
     three_member_fixture_clear(&f);
@@ -3293,8 +3332,7 @@ TEST(test_update_path_leaf_validation)
     assert(mls_group_self_update(&f.alice, &update) == 0);
     assert(mls_group_process_commit(&f.bob, update.commit_data, update.commit_len, 0) == 0);
     assert(mls_group_process_commit(&f.charlie, update.commit_data, update.commit_len, 0) == 0);
-    assert(sodium_memcmp(&f.bob.epoch_secrets, &f.alice.epoch_secrets,
-                         sizeof(f.bob.epoch_secrets)) == 0);
+    assert(epoch_secrets_equal_for_test(&f.bob.epoch_secrets, &f.alice.epoch_secrets));
     mls_commit_result_clear(&update);
     free(parent.blob);
     three_member_fixture_clear(&f);
@@ -4340,9 +4378,10 @@ TEST(test_epoch_secrets_change_after_update)
     uint8_t sig_sk[MLS_SIG_SK_LEN];
     assert(create_alice_group(&group, sig_sk) == 0);
 
-    /* Capture epoch 0 secrets */
-    uint8_t enc_secret_0[MLS_HASH_LEN];
-    memcpy(enc_secret_0, group.epoch_secrets.encryption_secret, MLS_HASH_LEN);
+    /* Capture epoch 0 secrets (the encryption_secret is deleted once the
+     * secret tree is built, so the exporter secret stands in for it). */
+    uint8_t exp_secret_0[MLS_HASH_LEN];
+    memcpy(exp_secret_0, group.epoch_secrets.exporter_secret, MLS_HASH_LEN);
 
     /* Self-update */
     MlsCommitResult result;
@@ -4350,7 +4389,7 @@ TEST(test_epoch_secrets_change_after_update)
     mls_commit_result_clear(&result);
 
     /* Epoch 1 secrets should differ */
-    assert(memcmp(enc_secret_0, group.epoch_secrets.encryption_secret, MLS_HASH_LEN) != 0);
+    assert(memcmp(exp_secret_0, group.epoch_secrets.exporter_secret, MLS_HASH_LEN) != 0);
 
     mls_group_free(&group);
 }

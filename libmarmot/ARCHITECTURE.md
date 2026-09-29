@@ -99,6 +99,12 @@ commit_secret ┘                                          │
 
 The sender ratchet derives per-message keys using a secret tree indexed by leaf position, with forward secrecy through hash ratcheting.
 
+The ratchets are part of the stored group state (serial format 3 in `mls_group.c`, since 0.8.0, nostrc-ai04). Every operation loads, uses and stores the state, so a sender never reuses a generation and a receiver never decrypts one twice. Only unconsumed values are stored (RFC 9420 §9.2):
+- per sender, its unused leaf secret, or its handshake and application ratchet heads plus a bounded skipped-key cache (the 32 generations below the newest one read);
+- never the `encryption_secret`, `joiner_secret` or `welcome_secret`.
+
+A failed decryption restores the sender's ratchet. States of formats 1 and 2 still load, with the own sender moved 512 generations forward.
+
 ### Group State Machine (`mls_group.c`)
 
 Groups progress through epochs via commits. Each commit:

@@ -14,7 +14,7 @@ option(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
   "Allow marmot_create_key_package_for_profile(ADOPTED) (experimental)" OFF)
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 7)
+set(MARMOT_VERSION_MINOR 8)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
@@ -275,6 +275,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_commits PRIVATE marmot)
   target_include_directories(test_commits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_commits COMMAND test_commits)
+
+  # Test: secret-tree ratchet persistence and format migration (nostrc-ai04)
+  add_executable(test_ratchet_persist ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ratchet_persist.c)
+  target_link_libraries(test_ratchet_persist PRIVATE marmot)
+  target_include_directories(test_ratchet_persist PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_ratchet_persist COMMAND test_ratchet_persist)
 
   # Test: adopted-spec KeyPackage profile (nostrc-prqu.9)
   add_executable(test_kp_profile ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_kp_profile.c)

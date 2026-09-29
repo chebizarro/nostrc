@@ -902,10 +902,16 @@ welcome_process_impl(const MlsWelcome *welcome,
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* Initialize secret tree */
-    if (mls_secret_tree_init(&group_out->secret_tree,
-                              es->encryption_secret,
-                              group_out->tree.n_leaves) != 0) {
+    /* Initialize secret tree; its root is then deleted (RFC 9420 §9.2). */
+    int st_rc = mls_secret_tree_init(&group_out->secret_tree,
+                                     es->encryption_secret,
+                                     group_out->tree.n_leaves);
+    sodium_memzero(es->encryption_secret, MLS_HASH_LEN);
+    /* A joiner has no further use for the joiner and welcome secrets (the
+     * GroupInfo is already open): consumed, deleted (RFC 9420 §9.2). */
+    sodium_memzero(es->joiner_secret, MLS_HASH_LEN);
+    sodium_memzero(es->welcome_secret, MLS_HASH_LEN);
+    if (st_rc != 0) {
         free(gc_data);
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));

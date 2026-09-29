@@ -14,6 +14,7 @@
 #include "marmot-internal.h"
 #include "commits.h"
 #include "mls/mls_group.h"
+#include "mls/mls_framing.h"
 #include "mls/mls-internal.h"
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
@@ -39,7 +40,13 @@
               marmot_error_string(e_));                                     \
     } while (0)
 
-#define RUN(fn) do { printf("  %-58s", #fn); fflush(stdout); fn(); printf("PASS\n"); } while (0)
+/* argv[1], when given, runs only the test of that name. */
+static const char *g_only;
+#define RUN(fn)                                                             \
+    do {                                                                    \
+        if (g_only && strcmp(g_only, #fn) != 0) break;                      \
+        printf("  %-58s", #fn); fflush(stdout); fn(); printf("PASS\n");    \
+    } while (0)
 
 /* ── Members ──────────────────────────────────────────────────────────── */
 
@@ -176,6 +183,40 @@ load_mls(Member *x, const MarmotGroupId *gid, MlsGroup *out)
     CHECK(mls_group_deserialize(blob, len, out) == 0, "deserialize %s", x->name);
     sodium_memzero(blob, len);
     free(blob);
+}
+
+/* The sender data of `x`'s kind:445 application message (RFC 9420 §6.3.2):
+ * which leaf sent it, at which generation, with which reuse guard.  Read
+ * with `x`'s stored state, which must be at the message's epoch. */
+static MlsSenderData
+sent_sender_data(Member *x, const MarmotGroupId *gid, const char *event_json)
+{
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, event_json, NULL), "parse");
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    uint8_t *mls = NULL;
+    size_t mls_len = 0;
+    CHECK(marmot_group_event_decrypt(g.epoch_secrets.exporter_secret, ev->content,
+                                     &mls, &mls_len) == 0, "NIP-44 layer");
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, mls, mls_len);
+    MlsMLSMessage wire;
+    CHECK(mls_message_deserialize(&r, &wire) == 0 &&
+          wire.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE, "a PrivateMessage");
+    const MlsPrivateMessage *pm = &wire.private_message;
+    CHECK(pm->epoch == g.epoch, "the sender's state is at the message's epoch");
+    size_t sample = pm->ciphertext_len < MLS_HASH_LEN ? pm->ciphertext_len : MLS_HASH_LEN;
+    MlsSenderData sd;
+    CHECK(mls_sender_data_decrypt(g.epoch_secrets.sender_data_secret, pm->ciphertext,
+                                  sample, pm->encrypted_sender_data,
+                                  pm->encrypted_sender_data_len, &sd) == 0,
+          "sender data");
+    mls_message_clear(&wire);
+    free(mls);
+    mls_group_free(&g);
+    nostr_event_free(ev);
+    return sd;
 }
 
 /* Everything a Commit writes, for "nothing changed" checks. */
@@ -538,6 +579,7 @@ typedef struct {
     const char *fail_delete_label;/* mls_delete of this label fails (a crash) */
     bool  fail_exporter_load;     /* get_exporter_secret(exporter_epoch) fails */
     uint64_t exporter_epoch;
+    bool  fail_save_message;      /* save_message fails (not counted as a write) */
 } Faults;
 
 static Faults g_faults;
@@ -609,6 +651,13 @@ f_get_exporter(void *ctx, const MarmotGroupId *gid, uint64_t epoch, uint8_t out[
 }
 
 static MarmotError
+f_save_message(void *ctx, const MarmotMessage *msg)
+{
+    if (g_faults.fail_save_message) return MARMOT_ERR_STORAGE_CONSTRAINT;
+    return g_faults.orig.save_message(ctx, msg);
+}
+
+static MarmotError
 f_save_group(void *ctx, const MarmotGroup *group)
 {
     if (g_faults.drop_group_record) return MARMOT_OK;
@@ -630,6 +679,7 @@ faults_arm(Member *x)
     s->delete_exporter_secret = f_delete_exporter;
     s->get_exporter_secret = f_get_exporter;
     s->save_group = f_save_group;
+    s->save_message = f_save_message;
 }
 
 static void
@@ -643,6 +693,7 @@ faults_disarm(Member *x)
     s->delete_exporter_secret = g_faults.orig.delete_exporter_secret;
     s->get_exporter_secret = g_faults.orig.get_exporter_secret;
     s->save_group = g_faults.orig.save_group;
+    s->save_message = g_faults.orig.save_message;
 }
 
 /* ── Tests ────────────────────────────────────────────────────────────── */
@@ -1851,6 +1902,7 @@ typedef struct {
     int  depth;
     int  begins, commits, rollbacks, writes;
     int  fail_write;           /* 1-based index of the write that fails; 0 = none */
+    bool fail_commit;          /* the commit fails (the backend undid it all) */
 } TxnShim;
 
 static TxnShim g_shim;
@@ -1915,6 +1967,10 @@ shim_commit(void *ctx)
     (void)ctx;
     CHECK(g_shim.depth == 1, "commit without begin");
     g_shim.depth = 0;
+    if (g_shim.fail_commit) {
+        g_shim.rollbacks++;
+        return MARMOT_ERR_STORAGE;
+    }
     g_shim.commits++;
     return MARMOT_OK;
 }
@@ -2100,6 +2156,78 @@ test_operations_run_in_one_transaction(void)
     transaction_case(false);   /* the superseded pending Commit is dropped (kept) */
 }
 
+/* A crash between advancing the sender ratchet and sending (nostrc-ai04):
+ * marmot_create_message() stores the step in the operation's transaction
+ * and returns the event only once that committed.  A failed ratchet write
+ * or commit returns no event -- nothing can be published under a step that
+ * may not be stored -- and every event it does return used a generation no
+ * other event used.  (Durability across a real crash: Groundhog's
+ * GhStoreMarmot crash suite.) */
+static void
+test_send_stores_step_before_event(void)
+{
+    Member alice, bob;
+    member_init(&alice, "Alice");
+    marmot_free(alice.m);
+    alice.m = shim_marmot_new();
+    member_init(&bob, "Bob");
+    char *bob_kp = key_package(&bob);
+    const char *kps[] = { bob_kp };
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Crash";
+    cfg.admin_pubkeys = (uint8_t (*)[32])alice.pk;
+    cfg.admin_count = 1;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+    free(bob_kp);
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+
+    char *sent[2];
+    sent[0] = app_message(&alice, &gid, "before the failures");
+    MlsSenderData first = sent_sender_data(&alice, &gid, sent[0]);
+
+    /* The ratchet write fails, then the commit: no event either time. */
+    for (int round = 0; round < 2; round++) {
+        shim_reset_counts();
+        g_shim.fail_write = round == 0 ? 1 : 0;
+        g_shim.fail_commit = round == 1;
+        MarmotOutgoingMessage out;
+        memset(&out, 0, sizeof(out));
+        MarmotError err = marmot_create_message(
+            alice.m, &gid,
+            "{\"kind\":9,\"content\":\"lost\",\"created_at\":1700000000,\"tags\":[]}",
+            &out);
+        CHECK(err != MARMOT_OK, "round %d: the send reported success", round);
+        CHECK(out.event_json == NULL && out.message == NULL,
+              "round %d: an event was handed out without its stored step", round);
+        CHECK(g_shim.rollbacks == 1 && g_shim.commits == 0, "round %d: rolled back", round);
+    }
+    g_shim.fail_write = 0;
+    g_shim.fail_commit = false;
+
+    sent[1] = app_message(&alice, &gid, "after the failures");
+    MlsSenderData next = sent_sender_data(&alice, &gid, sent[1]);
+    CHECK(next.generation > first.generation,
+          "generation %u after %u", next.generation, first.generation);
+    MarmotError err;
+    for (int i = 0; i < 2; i++) {
+        CHECK(deliver(&bob, sent[i], &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+              err == MARMOT_OK, "Bob reads send %d: %d", i, err);
+        char *again = republish(sent[i]);
+        deliver(&bob, again, &err, NULL);
+        CHECK(err == MARMOT_ERR_MLS, "replay of send %d: %d", i, err);
+        free(again);
+        free(sent[i]);
+    }
+    marmot_group_id_free(&gid);
+    marmot_free(bob.m);
+    shim_free(alice.m);
+}
+
 /* ── Late messages (nostrc-qp24.7) ────────────────────────────────────── */
 
 /* Messages Bob sent in epoch E reach Charlie after Charlie applied the Commit
@@ -2124,8 +2252,16 @@ test_late_messages_use_retained_parent(void)
           err == MARMOT_OK, "earlier late message at E+1: %d", err);
     CHECK(deliver(&t.charlie, late2, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
           err == MARMOT_OK, "the same late message again is a duplicate: %d", err);
-    /* (A replay in a new envelope is not refused yet, here or in the live
-     * epoch: the ratchet is not persisted, nostrc-ai04.) */
+    /* A replay in a new envelope (new event id, so no processed marker) is
+     * refused by the retained parent's persisted ratchet (nostrc-ai04): its
+     * generation was consumed and its key deleted. */
+    char *late2_again = republish(late2), *late1_again = republish(late1);
+    expect_rejected(&t.charlie, &t.gid, late2_again, MARMOT_ERR_MLS,
+                    "late message replayed in a new envelope");
+    expect_rejected(&t.charlie, &t.gid, late1_again, MARMOT_ERR_MLS,
+                    "earlier late message replayed in a new envelope");
+    free(late2_again);
+    free(late1_again);
 
     /* The live epoch is untouched: everyone still talks at E+1. */
     expect_commit(&t.bob, commit, "Bob follows");
@@ -2145,11 +2281,132 @@ test_late_messages_use_retained_parent(void)
     trio_clear(&t);
 }
 
+/* ── Secret-tree ratchet persistence (nostrc-ai04) ────────────────────── */
+
+/* On a storage without transaction hooks (the memory backend), a received
+ * message that cannot be stored does not keep its ratchet step: the step is
+ * written back, so the same event is read again later instead of being lost
+ * with a consumed key -- live and through the retained parent.  Once it is
+ * stored, a replay fails (nostrc-ai04). */
+static void
+test_failed_receive_keeps_the_message(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *live = app_message(&t.bob, &t.gid, "live");
+    char *late = app_message(&t.bob, &t.gid, "late");
+    MarmotError err;
+
+    for (int round = 0; round < 2; round++) {
+        const char *ev = round == 0 ? live : late;
+        if (round == 1) {
+            char *commit = rename_group(&t.alice, &t.gid, "Moved");
+            expect_commit(&t.charlie, commit, "Charlie moves on");
+            expect_commit(&t.bob, commit, "Bob follows");
+            free(commit);
+        }
+        Snapshot before;
+        snapshot(&t.charlie, &t.gid, &before);
+        faults_arm(&t.charlie);
+        g_faults.fail_save_message = true;
+        deliver(&t.charlie, ev, &err, NULL);
+        faults_disarm(&t.charlie);
+        CHECK(err == MARMOT_ERR_STORAGE_CONSTRAINT, "round %d: %d", round, err);
+        expect_unchanged(&t.charlie, &t.gid, &before, round ? "late, not stored" : "not stored");
+        snapshot_clear(&before);
+        CHECK(deliver(&t.charlie, ev, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+              err == MARMOT_OK, "round %d: read again: %d", round, err);
+        char *again = republish(ev);
+        expect_rejected(&t.charlie, &t.gid, again, MARMOT_ERR_MLS, "then a replay fails");
+        free(again);
+    }
+    free(live);
+    free(late);
+    trio_clear(&t);
+}
+
+/* A message re-published in a new envelope (new id, so the processed marker
+ * does not catch it) must not decrypt again in the live epoch: its
+ * generation was consumed and its key deleted (RFC 9420 §9.2). */
+static void
+test_live_replay_in_new_envelope_rejected(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *m1 = app_message(&t.bob, &t.gid, "once");
+    MarmotError err;
+    CHECK(deliver(&t.charlie, m1, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "Charlie reads it: %d", err);
+    char *again = republish(m1);
+    expect_rejected(&t.charlie, &t.gid, again, MARMOT_ERR_MLS,
+                    "live-epoch replay in a new envelope");
+    /* A fresh process (a restart) is no different. */
+    MarmotStorage *s = t.charlie.m->storage;
+    t.charlie.m->storage = NULL;
+    marmot_free(t.charlie.m);
+    t.charlie.m = marmot_new(s);
+    CHECK(t.charlie.m, "restart");
+    expect_rejected(&t.charlie, &t.gid, again, MARMOT_ERR_MLS,
+                    "live-epoch replay after a restart");
+    /* The genuine flow goes on. */
+    char *m2 = app_message(&t.bob, &t.gid, "twice");
+    CHECK(deliver(&t.charlie, m2, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "Charlie reads the next one: %d", err);
+    free(m2);
+    free(again);
+    free(m1);
+    trio_clear(&t);
+}
+
+/* marmot_create_message() loads the stored state on every call: each send
+ * in an epoch must still use a new generation (a new AES-GCM key and nonce),
+ * never generation 0 again (nostrc-ai04: the secret tree was re-derived from
+ * encryption_secret on every load). */
+static void
+test_sends_use_distinct_generations(void)
+{
+    Trio t;
+    trio_init(&t);
+    enum { N = 5 };
+    char *sent[N];
+    MlsSenderData sd[N];
+    for (int i = 0; i < N; i++) {
+        char text[32];
+        snprintf(text, sizeof(text), "send %d", i);
+        sent[i] = app_message(&t.bob, &t.gid, text);
+        sd[i] = sent_sender_data(&t.bob, &t.gid, sent[i]);
+    }
+    printf("\n    Bob's sends in epoch %llu: leaf/generation",
+           (unsigned long long)t.epoch);
+    for (int i = 0; i < N; i++) printf(" %u/%u", sd[i].leaf_index, sd[i].generation);
+    printf("\n  %-58s", "");
+    for (int i = 0; i < N; i++) {
+        CHECK(sd[i].leaf_index == sd[0].leaf_index, "one sender");
+        for (int j = 0; j < i; j++)
+            CHECK(sd[i].generation != sd[j].generation,
+                  "sends %d and %d in epoch %llu both used generation %u: the same "
+                  "AES-GCM key, nonces differing only in the reuse guard",
+                  j, i, (unsigned long long)t.epoch, sd[i].generation);
+    }
+    /* Everyone still reads them, in order. */
+    for (int i = 0; i < N; i++) {
+        MarmotError err;
+        CHECK(deliver(&t.charlie, sent[i], &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+              err == MARMOT_OK, "Charlie reads send %d: %d", i, err);
+        free(sent[i]);
+    }
+    trio_clear(&t);
+}
+
 int
-main(void)
+main(int argc, char **argv)
 {
     if (sodium_init() < 0) return 1;
+    g_only = argc > 1 ? argv[1] : NULL;
     printf("libmarmot: Commit publication and ingestion (nostrc-9ata)\n");
+    RUN(test_sends_use_distinct_generations);
+    RUN(test_live_replay_in_new_envelope_rejected);
+    RUN(test_failed_receive_keeps_the_message);
     RUN(test_rename_reaches_every_member);
     RUN(test_events_signed_by_fresh_ephemeral_keys);
     RUN(test_commit_pending_until_merged);
@@ -2172,6 +2429,7 @@ main(void)
     RUN(test_rumor_path_accepts_unsigned);
     RUN(test_late_messages_use_retained_parent);
     RUN(test_operations_run_in_one_transaction);
+    RUN(test_send_stores_step_before_event);
     printf("All commit tests passed\n");
     return 0;
 }
