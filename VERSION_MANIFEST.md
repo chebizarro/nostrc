@@ -11,7 +11,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.0.9 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 1.0.10 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
@@ -43,6 +43,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | libmarmot 0.4.0 -> 0.4.1 (PATCH: Welcome GroupSecrets.path_secret sent and applied, nostrc-il4i) | libmarmot | 0.4.1 | PATCH bump: RFC 9420 conformance fix, no API/ABI or state-format change. Wire-compatible both ways: 0.4.0 joiners ignore the new `path_secret` (and keep the old inability to follow some Commits); 0.4.1 joiners accept 0.4.0 Welcomes without it. |
 | same | marmot-gobject | 1.1.0 | No bump: no source, API or ABI change; rebuild picks up the fix. |
 | same | gnostr, groundhog | 0.1.0, 0.9.1 | No bump: rebuild only (static link, no API change). |
+| libgo 0.1.1 -> 0.1.2, libnostr 1.0.9 -> 1.0.10 (PATCH: MPMC channel slots no longer lose an element claimed but not yet filled, capacity-1 rings get two slots; libnostr re-arms a WebSocket write that raced the pending flag; nostrc-75rv) | libgo, libnostr | 0.1.2, 1.0.10 | PATCH: data-loss bug fixes, no API/ABI change. libnostr takes 1.0.10 because nostrc-ptwq already claimed 1.0.9. |
 
 ## Maintenance
 
