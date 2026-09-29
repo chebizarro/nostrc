@@ -4,6 +4,7 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr/nip19/nip19.h"
+#include "nostrc-test-bus.h"
 #ifdef GROUNDHOG_TEST_NIP17
 #include "gh-nip17-envelope.h"
 #include "gh-nip17-inbox.h"
@@ -94,14 +95,28 @@ deadline_hit(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+static gboolean
+spin_tick(gpointer data)
+{
+  (void)data;
+  return G_SOURCE_CONTINUE;
+}
+
 /* Iterates the main context (no sleeps) until pred holds, failing after 5s. */
 static void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, int line)
 {
   gboolean expired = FALSE;
   guint timer = g_timeout_add_seconds(5, deadline_hit, &expired);
+  /* The tick re-checks pred when nothing else would wake the loop
+   * (nostrc-qp24.8.5): a GTask drops its source object on its worker thread
+   * after queueing the callback, so a ref-count or weak-pointer condition
+   * can turn true with no main-context event, and a condition asked of the
+   * bus synchronously (has a sender disconnected?) has none either. */
+  guint tick = g_timeout_add(10, spin_tick, NULL);
   while (!pred(data) && !expired)
     g_main_context_iteration(NULL, TRUE);
+  g_source_remove(tick);
   if (expired)
     g_error("condition waited for at line %d did not hold within 5s", line);
   g_source_remove(timer);
@@ -447,10 +462,12 @@ test_dispose_in_flight(void)
   release_controller(controller);
 }
 
+/* A private bus per test (tests/common/nostrc-test-bus.h, never GTestDBus:
+ * closing GDBus connections races GDBus worker polls on macOS). */
 typedef struct {
-  GTestDBus *bus;
-  GDBusConnection *client;
-  GDBusConnection *owner;
+  NostrcTestBus *bus;
+  GDBusConnection *client; /* owned by bus: never close or unref */
+  GDBusConnection *owner;  /* owned by bus: never close or unref */
   gchar *service_dir;
 } BusFixture;
 
@@ -458,7 +475,7 @@ static void
 bus_up(BusFixture *fixture, gboolean activatable)
 {
   GError *error = NULL;
-  fixture->bus = g_test_dbus_new(G_TEST_DBUS_NONE);
+  fixture->bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
   if (activatable) {
     fixture->service_dir = g_dir_make_tmp("groundhog-services-XXXXXX", &error);
     g_assert_no_error(error);
@@ -466,27 +483,20 @@ bus_up(BusFixture *fixture, gboolean activatable)
                                               "org.nostr.Signer.service", NULL);
     g_assert_true(g_file_set_contents(path,
       "[D-BUS Service]\nName=org.nostr.Signer\nExec=/usr/bin/false\n", -1, &error));
-    g_test_dbus_add_service_dir(fixture->bus, fixture->service_dir);
+    nostrc_test_bus_add_service_dir(fixture->bus, fixture->service_dir);
   }
-  g_test_dbus_up(fixture->bus);
-  const gchar *address = g_test_dbus_get_bus_address(fixture->bus);
-  GDBusConnectionFlags flags = G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-                               G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION;
-  fixture->client = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
-  g_assert_no_error(error);
-  fixture->owner = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
-  g_assert_no_error(error);
+  nostrc_test_bus_up(fixture->bus);
+  fixture->client = nostrc_test_bus_connect(fixture->bus);
+  fixture->owner = nostrc_test_bus_connect(fixture->bus);
 }
 
 static void
 bus_down(BusFixture *fixture)
 {
-  g_dbus_connection_close_sync(fixture->owner, NULL, NULL);
-  g_dbus_connection_close_sync(fixture->client, NULL, NULL);
-  g_clear_object(&fixture->owner);
-  g_clear_object(&fixture->client);
-  g_test_dbus_down(fixture->bus);
-  g_clear_object(&fixture->bus);
+  /* The connections only see the bus vanish (see nostrc_test_bus_down()). */
+  nostrc_test_bus_down(fixture->bus);
+  fixture->bus = NULL;
+  fixture->client = fixture->owner = NULL;
   if (fixture->service_dir) {
     g_autofree gchar *path = g_build_filename(fixture->service_dir,
                                               "org.nostr.Signer.service", NULL);

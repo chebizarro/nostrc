@@ -106,6 +106,9 @@ target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-ui)
 
 if (BUILD_TESTING)
+  # Private D-Bus buses for the signer, account, DM and keyring tests
+  # (tests/common/nostrc-test-bus.h; never GTestDBus).
+  include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcTestBus.cmake)
   add_executable(test-groundhog-resource tests/app/test_resource.c)
   target_link_libraries(test-groundhog-resource PRIVATE groundhog-ui)
   target_compile_options(test-groundhog-resource PRIVATE -Wall -Wextra -Werror)
@@ -157,7 +160,7 @@ if (TARGET nostr AND TARGET nip19)
   endif()
   if (BUILD_TESTING)
     add_executable(test-groundhog-identity tests/identity/test_identity.c)
-    target_link_libraries(test-groundhog-identity PRIVATE groundhog-identity)
+    target_link_libraries(test-groundhog-identity PRIVATE groundhog-identity nostrc-test-bus)
     target_compile_options(test-groundhog-identity PRIVATE -Wall -Wextra -Werror)
     add_test(NAME groundhog-identity COMMAND test-groundhog-identity)
     set_tests_properties(groundhog-identity PROPERTIES TIMEOUT 20
@@ -313,7 +316,7 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
     VERBATIM)
   add_custom_target(groundhog-test-schemas DEPENDS ${GROUNDHOG_TEST_SCHEMAS}/gschemas.compiled)
   add_executable(test-groundhog-account tests/app/test_account_controller.c)
-  target_link_libraries(test-groundhog-account PRIVATE groundhog-account)
+  target_link_libraries(test-groundhog-account PRIVATE groundhog-account nostrc-test-bus)
   if (TARGET nostr_nip17_core AND TARGET nostr_nip59_core)
     target_sources(test-groundhog-account PRIVATE src/app/gh-nip17-envelope.c
                    src/app/gh-nip17-inbox.c)
@@ -352,7 +355,7 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   if (TARGET groundhog-dm-inbox AND TARGET nostr_nip59_core)
     add_executable(test-groundhog-dm-inbox tests/app/test_dm_inbox.c)
     target_link_libraries(test-groundhog-dm-inbox PRIVATE groundhog-dm-inbox
-                          nostr_nip17_core nostr_nip59_core)
+                          nostr_nip17_core nostr_nip59_core nostrc-test-bus)
     target_compile_options(test-groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
     add_dependencies(test-groundhog-dm-inbox groundhog-test-schemas)
     add_test(NAME groundhog-dm-inbox COMMAND test-groundhog-dm-inbox)
@@ -366,7 +369,7 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
     add_executable(test-groundhog-dm-send tests/app/test_dm_send.c
       ${GROUNDHOG_DM_SEND_SOURCES} src/app/gh-nip17-envelope.c)
     target_link_libraries(test-groundhog-dm-send PRIVATE groundhog-account-relays
-      nostr_nip17_core nostr_nip59_core)
+      nostr_nip17_core nostr_nip59_core nostrc-test-bus)
     if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       target_link_libraries(test-groundhog-dm-send PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       target_compile_definitions(test-groundhog-dm-send PRIVATE GROUNDHOG_TEST_WIRE=1)
@@ -507,7 +510,7 @@ if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
     # when gnome-keyring-daemon or dbus-daemon is not installed.
     add_executable(test-groundhog-store-key-keyring
       tests/store/test_store_key_keyring.c tests/store/fake-secret.c)
-    target_link_libraries(test-groundhog-store-key-keyring PRIVATE groundhog-store-key)
+    target_link_libraries(test-groundhog-store-key-keyring PRIVATE groundhog-store-key nostrc-test-bus)
     target_compile_options(test-groundhog-store-key-keyring PRIVATE -Wall -Wextra -Werror)
     add_test(NAME groundhog-store-key-keyring COMMAND test-groundhog-store-key-keyring)
     set_tests_properties(groundhog-store-key-keyring PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90

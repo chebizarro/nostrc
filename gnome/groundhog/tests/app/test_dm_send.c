@@ -16,6 +16,7 @@
 #include "nostr/nip19/nip19.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr/nip59/nip59.h"
+#include "nostrc-test-bus.h"
 
 #include <glib/gstdio.h>
 #include <stdio.h>
@@ -81,13 +82,27 @@ deadline_hit(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+static gboolean
+spin_tick(gpointer data)
+{
+  (void)data;
+  return G_SOURCE_CONTINUE;
+}
+
 static void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, int line)
 {
   gboolean expired = FALSE;
   guint timer = g_timeout_add_seconds(15, deadline_hit, &expired);
+  /* The tick re-checks pred when nothing else would wake the loop
+   * (nostrc-qp24.8.5): a GTask drops its source object on its worker thread
+   * after queueing the callback, so a ref-count or weak-pointer condition
+   * can turn true with no main-context event, and a condition asked of the
+   * bus synchronously (has a sender disconnected?) has none either. */
+  guint tick = g_timeout_add(10, spin_tick, NULL);
   while (!pred(data) && !expired)
     g_main_context_iteration(NULL, TRUE);
+  g_source_remove(tick);
   if (expired)
     g_error("condition waited for at line %d did not hold within 15s", line);
   g_source_remove(timer);
@@ -190,9 +205,9 @@ nip65_list(const gchar *secret, gint64 created_at, const gchar *read, const gcha
 /* ---- mock org.nostr.Signer ----------------------------------------------- */
 
 typedef struct {
-  GTestDBus *bus;
-  GDBusConnection *client;
-  GDBusConnection *owner;
+  NostrcTestBus *bus;
+  GDBusConnection *client; /* owned by bus */
+  GDBusConnection *owner;  /* owned by bus */
 } BusFixture;
 
 typedef struct {
@@ -262,24 +277,19 @@ mock_signer_call(GDBusConnection *connection, const gchar *sender, const gchar *
 
 static const GDBusInterfaceVTable mock_vtable = { mock_signer_call, NULL, NULL, { 0 } };
 
-/* One private test bus for the whole binary: bringing GTestDBus up and down
- * per test races GDBus worker polls (a fatal "poll(2) failed" warning that
- * also affects groundhog-account); only the mock object is per fixture. */
+/* One private test bus for the whole binary (tests/common/nostrc-test-bus.h:
+ * closing GDBus connections races GDBus worker polls on macOS, a fatal
+ * "poll(2) failed" warning); only the mock object is per fixture. */
 static BusFixture shared_bus;
 
 static void
 shared_bus_up(void)
 {
   g_autoptr(GError) error = NULL;
-  shared_bus.bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(shared_bus.bus);
-  const gchar *address = g_test_dbus_get_bus_address(shared_bus.bus);
-  GDBusConnectionFlags flags = G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-                               G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION;
-  shared_bus.client = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
-  g_assert_no_error(error);
-  shared_bus.owner = g_dbus_connection_new_for_address_sync(address, flags, NULL, NULL, &error);
-  g_assert_no_error(error);
+  shared_bus.bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(shared_bus.bus);
+  shared_bus.client = nostrc_test_bus_connect(shared_bus.bus);
+  shared_bus.owner = nostrc_test_bus_connect(shared_bus.bus);
   g_autoptr(GVariant) reply = g_dbus_connection_call_sync(shared_bus.owner,
     "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
     "RequestName", g_variant_new("(su)", "org.nostr.Signer", 4u),
@@ -290,12 +300,8 @@ shared_bus_up(void)
 static void
 shared_bus_down(void)
 {
-  g_dbus_connection_close_sync(shared_bus.owner, NULL, NULL);
-  g_dbus_connection_close_sync(shared_bus.client, NULL, NULL);
-  g_clear_object(&shared_bus.owner);
-  g_clear_object(&shared_bus.client);
-  g_test_dbus_down(shared_bus.bus);
-  g_clear_object(&shared_bus.bus);
+  nostrc_test_bus_down(shared_bus.bus);
+  shared_bus = (BusFixture){ 0 };
 }
 
 static void

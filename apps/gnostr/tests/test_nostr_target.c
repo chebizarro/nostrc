@@ -10,6 +10,7 @@
  */
 #include "util/gnostr-nostr-target.h"
 #include "ipc/gnostr-handler1.h"
+#include "nostrc-test-bus.h"
 
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <nostr-event.h>
@@ -308,19 +309,12 @@ call_open_event(GDBusConnection *caller, GVariant *params, Call *c)
 static void
 test_handler1_export(void)
 {
-  g_autoptr(GTestDBus) bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(bus);
+  /* tests/common/nostrc-test-bus.h: the bus owns both connections. */
+  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(bus);
   g_autoptr(GError) error = NULL;
-  g_autoptr(GDBusConnection) app_conn =
-      g_dbus_connection_new_for_address_sync(g_test_dbus_get_bus_address(bus),
-          G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-          G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, &error);
-  g_assert_no_error(error);
-  g_autoptr(GDBusConnection) caller =
-      g_dbus_connection_new_for_address_sync(g_test_dbus_get_bus_address(bus),
-          G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-          G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, &error);
-  g_assert_no_error(error);
+  GDBusConnection *app_conn = nostrc_test_bus_connect(bus);
+  GDBusConnection *caller = nostrc_test_bus_connect(bus);
 
   Seen seen = { 0 };
   GnostrHandler1 *h = gnostr_handler1_export(app_conn, fake_open, &seen, &error);
@@ -384,7 +378,7 @@ test_handler1_export(void)
   gnostr_handler1_unexport(h);
   g_free(seen.json);
   g_strfreev(seen.relays);
-  g_test_dbus_down(bus);
+  nostrc_test_bus_down(bus);
 }
 
 int

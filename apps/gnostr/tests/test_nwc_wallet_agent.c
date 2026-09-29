@@ -2,15 +2,16 @@
  * test_nwc_wallet_agent.c — GnostrNwcService as a client of
  * org.nostr.Wallet1 (nostrc-prqu.13).
  *
- * A fake wallet agent on a private GTestDBus bus. Checks that the service
- * migrates a legacy plaintext nwc-connection-uri into the agent with Pair()
- * and resets the key (success, already paired, denied), keeps it when the
- * agent is missing (retry next start), never writes it, and forwards
- * balance / payments / invoices to the agent.
+ * A fake wallet agent on a private test bus (tests/common/nostrc-test-bus.h).
+ * Checks that the service migrates a legacy plaintext nwc-connection-uri
+ * into the agent with Pair() and resets the key (success, already paired,
+ * denied), keeps it when the agent is missing (retry next start), never
+ * writes it, and forwards balance / payments / invoices to the agent.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "util/nwc.h"
+#include "nostrc-test-bus.h"
 
 #include <gio/gio.h>
 #include <string.h>
@@ -119,13 +120,10 @@ fake_method(GDBusConnection *c, const char *sender, const char *path, const char
 static const GDBusInterfaceVTable fake_vtable = { fake_method, fake_get_property, NULL, { 0 } };
 
 static void
-fake_up(GTestDBus *bus)
+fake_up(NostrcTestBus *bus)
 {
   g_autoptr(GError) error = NULL;
-  fake.conn = g_dbus_connection_new_for_address_sync(g_test_dbus_get_bus_address(bus),
-      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
-      NULL, NULL, &error);
-  g_assert_no_error(error);
+  fake.conn = nostrc_test_bus_connect(bus); /* owned by the bus */
   fake.node = g_dbus_node_info_new_for_xml(wallet_xml, &error);
   g_assert_no_error(error);
   fake.reg = g_dbus_connection_register_object(fake.conn, "/org/nostr/Wallet1",
@@ -203,8 +201,8 @@ wait_done(Wait *w)
 static void
 test_wallet_agent_client(void)
 {
-  g_autoptr(GTestDBus) bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(bus);
+  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(bus);
   g_autoptr(GError) error = NULL;
 
   /* 1. No agent on the bus: the stored URI is kept for the next start. */
@@ -318,11 +316,11 @@ test_wallet_agent_client(void)
 
   g_bus_unown_name(fake.own);
   g_dbus_connection_unregister_object(fake.conn, fake.reg);
-  g_clear_object(&fake.conn);
   g_dbus_node_info_unref(fake.node);
   g_free(fake.last_pair_uri);
   g_free(fake.last_bolt11);
-  g_test_dbus_down(bus);
+  nostrc_test_bus_down(bus);
+  fake.conn = NULL;
 }
 
 int

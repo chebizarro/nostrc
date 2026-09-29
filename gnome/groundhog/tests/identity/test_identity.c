@@ -3,6 +3,7 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr/nip19/nip19.h"
+#include "nostrc-test-bus.h"
 
 #include <string.h>
 
@@ -11,8 +12,8 @@ static const gchar *key_one =
 static const gchar *key_two =
   "0000000000000000000000000000000000000000000000000000000000000002";
 static gchar *pub_one, *pub_two, *npub_one, *npub_two, *ciphertext;
-static GTestDBus *test_bus;
-static GDBusConnection *server, *client;
+static NostrcTestBus *test_bus;
+static GDBusConnection *server, *client; /* owned by test_bus */
 static GDBusNodeInfo *node;
 static guint registration;
 static GPtrArray *held_calls;
@@ -136,14 +137,10 @@ setup(void)
   held_calls = g_ptr_array_new_with_free_func(g_object_unref);
   typed_senders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   expected_npub = npub_one;
-  test_bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(test_bus);
+  test_bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(test_bus);
   GError *error = NULL;
-  server = g_dbus_connection_new_for_address_sync(
-    g_test_dbus_get_bus_address(test_bus),
-    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-      G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, &error);
-  g_assert_no_error(error);
+  server = nostrc_test_bus_connect(test_bus);
   node = g_dbus_node_info_new_for_xml(
     "<node><interface name='org.nostr.Signer'>"
     "<method name='EnableTypedApprovalErrors'/>"
@@ -164,11 +161,7 @@ setup(void)
     "RequestName", g_variant_new("(su)", "org.nostr.Signer", 4u),
     G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
   g_assert_no_error(error);
-  client = g_dbus_connection_new_for_address_sync(
-    g_test_dbus_get_bus_address(test_bus),
-    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-      G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, &error);
-  g_assert_no_error(error);
+  client = nostrc_test_bus_connect(test_bus);
 }
 
 static void
@@ -183,11 +176,10 @@ teardown(void)
   g_clear_pointer(&held_calls, g_ptr_array_unref);
   g_clear_pointer(&typed_senders, g_hash_table_unref);
   g_dbus_connection_unregister_object(server, registration);
-  g_clear_object(&client);
-  g_clear_object(&server);
   g_clear_pointer(&node, g_dbus_node_info_unref);
-  g_test_dbus_down(test_bus);
-  g_clear_object(&test_bus);
+  nostrc_test_bus_down(test_bus); /* releases server and client */
+  test_bus = NULL;
+  server = client = NULL;
   g_clear_pointer(&last_sender, g_free);
   free(pub_one); free(pub_two);
   g_free(npub_one); g_free(npub_two); g_free(ciphertext);

@@ -2,10 +2,10 @@
  * test_signer_nip55l_identity.c — GNostr Signer (NIP-55L) session restore
  * and identity selection (nostrc-vuwu).
  *
- * A fake org.nostr.Signer runs on its own thread on a private GTestDBus
- * bus. It holds two identities (A, B), has a switchable DEFAULT identity,
- * records every current_user selector and signs with the key the selector
- * names (docs/dbus-interface.md). Checks that GnostrSignerService:
+ * A fake org.nostr.Signer runs on its own thread on a private test bus
+ * (tests/common/nostrc-test-bus.h). It holds two identities (A, B), has a
+ * switchable DEFAULT identity, records every current_user selector and signs
+ * with the key the selector names (docs/dbus-interface.md). Checks that GnostrSignerService:
  *   - restores a NIP-55L session only when the signer runs and its
  *     GetPublicKey() is the saved account (never auto-starting it);
  *   - passes the selected npub as current_user on SignEvent and NIP-44
@@ -21,6 +21,7 @@
  */
 #include "ipc/gnostr-signer-service.h"
 #include "ipc/signer_ipc.h"
+#include "nostrc-test-bus.h"
 
 #include <gio/gio.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
@@ -117,14 +118,12 @@ on_fake_name(GDBusConnection *c, const char *name, gpointer ud)
 }
 
 static gpointer
-fake_thread(gpointer address)
+fake_thread(gpointer bus)
 {
   g_main_context_push_thread_default(fake.ctx);
   g_autoptr(GError) error = NULL;
-  g_autoptr(GDBusConnection) conn = g_dbus_connection_new_for_address_sync(address,
-      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
-      NULL, NULL, &error);
-  g_assert_no_error(error);
+  /* Owned by the bus, which releases it only after the daemon is gone. */
+  GDBusConnection *conn = nostrc_test_bus_connect(bus);
   guint reg = g_dbus_connection_register_object(conn, "/org/nostr/signer",
       g_dbus_node_info_lookup_interface(fake.node, "org.nostr.Signer"), &fake_vtable,
       NULL, NULL, &error);
@@ -140,7 +139,7 @@ fake_thread(gpointer address)
 }
 
 static void
-fake_start(GTestDBus *bus)
+fake_start(NostrcTestBus *bus)
 {
   g_autofree char *xml = NULL;
   g_assert_true(g_file_get_contents(SIGNER_DBUS_XML, &xml, NULL, NULL));
@@ -149,7 +148,7 @@ fake_start(GTestDBus *bus)
   fake.ctx = g_main_context_new();
   fake.loop = g_main_loop_new(fake.ctx, FALSE);
   fake.selectors = g_ptr_array_new_with_free_func(g_free);
-  fake.thread = g_thread_new("fake-signer", fake_thread, (gpointer)g_test_dbus_get_bus_address(bus));
+  fake.thread = g_thread_new("fake-signer", fake_thread, bus);
   g_mutex_lock(&fake.lock);
   while (!fake.ready)
     g_cond_wait(&fake.cond, &fake.lock);
@@ -259,8 +258,8 @@ signed_pubkey(const char *json)
 static void
 test_nip55l_identity(void)
 {
-  g_autoptr(GTestDBus) bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(bus);
+  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(bus);
   Wait w = { 0 };
   const char *tmpl = "{\"kind\":1,\"created_at\":1700000000,\"tags\":[],\"content\":\"hi\"}";
 
@@ -472,7 +471,7 @@ test_nip55l_identity(void)
 
   gnostr_signer_proxy_shutdown();
   fake_stop();
-  g_test_dbus_down(bus);
+  nostrc_test_bus_down(bus);
 }
 
 /* nostrc-jppi: nip55l 0.4.0 D-Bus errors -> user-facing GNOSTR_SIGNER_ERROR. */
