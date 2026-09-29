@@ -23,6 +23,16 @@
   <url type="homepage">https://github.com/chebizarro/nostrc</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.9.0" type="development" date="2026-09-29">
+      <description>
+        <p>Unreleased preview.</p>
+        <ul>
+          <li>Relay groups (NIP-29): join from an address or invite link, start a group on a relay you choose, read and send, see members and roles, and leave. Relay groups are not end-to-end encrypted, and Groundhog says so.</li>
+          <li>Connect through Tor: every relay and web lookup goes through Tor, with nothing sent directly if Tor can’t be reached, and connections kept apart so relays can’t link them</li>
+          <li>Blocked Conversations in Preferences, a context menu on conversations, Ctrl+I for Conversation Info, and contact names as conversation titles</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.0" type="development" date="2026-09-29">
       <description>
         <p>Unreleased preview.</p>
