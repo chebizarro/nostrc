@@ -382,8 +382,10 @@ free_key_packages(MlsKeyPackage *kps, size_t count)
     free(kps);
 }
 
+/* `pubkeys` (optional, `count` entries) receives each KeyPackage's account. */
 static MarmotError
-parse_key_packages(const char **jsons, size_t count, MlsKeyPackage **out)
+parse_key_packages(const char **jsons, size_t count, MlsKeyPackage **out,
+                   uint8_t (*pubkeys)[32])
 {
     *out = NULL;
     MlsKeyPackage *kps = calloc(count, sizeof(*kps));
@@ -391,7 +393,8 @@ parse_key_packages(const char **jsons, size_t count, MlsKeyPackage **out)
     for (size_t i = 0; i < count; i++) {
         uint8_t member_pubkey[32];
         if (!jsons[i] ||
-            marmot_parse_key_package_event(jsons[i], &kps[i], member_pubkey) != 0) {
+            marmot_parse_key_package_event(jsons[i], &kps[i],
+                                           pubkeys ? pubkeys[i] : member_pubkey) != 0) {
             free_key_packages(kps, i);
             return MARMOT_ERR_VALIDATION;
         }
@@ -495,7 +498,7 @@ marmot_create_group(Marmot *m,
     result->welcome_count = kp_count;
     if (kp_count > 0) {
         MlsKeyPackage *kps = NULL;
-        err = parse_key_packages(key_package_event_jsons, kp_count, &kps);
+        err = parse_key_packages(key_package_event_jsons, kp_count, &kps, NULL);
         if (err != MARMOT_OK) {
             mls_group_free(&mls_group);
             return err;
@@ -671,6 +674,7 @@ static MarmotError
 finish_local_commit(Marmot *m, MarmotGroup *group,
                     const MlsGroup *pre, const MlsGroup *post,
                     const uint8_t *commit, size_t commit_len,
+                    const MarmotUnsentWelcome *welcomes, size_t welcome_count,
                     char **out_commit_json)
 {
     if (!commit || commit_len == 0) return MARMOT_ERR_MLS;
@@ -678,7 +682,10 @@ finish_local_commit(Marmot *m, MarmotGroup *group,
                                            pre->epoch_secrets.exporter_secret,
                                            group->nostr_group_id);
     if (!json) return MARMOT_ERR_EVENT_BUILD;
-    MarmotError err = marmot_commit_stage_pending(m, pre, post, commit, commit_len);
+    /* The pending record keeps the signed event (republish after a restart)
+     * and the Welcomes with their recipients (sent after the merge). */
+    MarmotError err = marmot_commit_stage_pending(m, pre, post, commit, commit_len,
+                                                  json, welcomes, welcome_count);
     if (err != MARMOT_OK) {
         free(json);
         return err;
@@ -712,7 +719,7 @@ load_group_for_commit(Marmot *m, const MarmotGroupId *mls_group_id,
     err = marmot_group_reconcile(m, group);
     /* One Commit at a time: the previous one must be merged or cleared. */
     bool pending = false;
-    if (err == MARMOT_OK) err = marmot_commit_has_pending(m, mls_group_id, &pending);
+    if (err == MARMOT_OK) err = marmot_commit_has_pending(m, group, &pending);
     if (err == MARMOT_OK && pending) err = MARMOT_ERR_OWN_COMMIT_PENDING;
     if (err != MARMOT_OK) {
         marmot_group_free(group);
@@ -781,6 +788,71 @@ marmot_clear_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
     return err;
 }
 
+/* The group record, reconciled, for the pending/outbox queries. */
+static MarmotError
+find_reconciled_group(Marmot *m, const MarmotGroupId *mls_group_id, MarmotGroup **out)
+{
+    *out = NULL;
+    if (!storage_can_commit(m->storage)) return MARMOT_ERR_STORAGE;
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                                         mls_group_id, &group);
+    if (err != MARMOT_OK || !group) return MARMOT_ERR_GROUP_NOT_FOUND;
+    err = marmot_group_reconcile(m, group);
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        return err;
+    }
+    *out = group;
+    return MARMOT_OK;
+}
+
+MarmotError
+marmot_get_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id,
+                          char **out_event_json, bool *out_superseded)
+{
+    if (!m || !mls_group_id || !out_event_json) return MARMOT_ERR_INVALID_ARG;
+    *out_event_json = NULL;
+    if (out_superseded) *out_superseded = false;
+    MarmotGroup *group = NULL;
+    MarmotError err = find_reconciled_group(m, mls_group_id, &group);
+    if (err != MARMOT_OK) return err;
+    bool live = false;
+    err = marmot_commit_get_pending(m, group, out_event_json, &live);
+    if (err == MARMOT_OK && *out_event_json && out_superseded) *out_superseded = !live;
+    marmot_group_free(group);
+    return err;
+}
+
+MarmotError
+marmot_get_unsent_welcomes(Marmot *m, const MarmotGroupId *mls_group_id,
+                           MarmotUnsentWelcome **out_welcomes, size_t *out_count)
+{
+    if (!m || !mls_group_id || !out_welcomes || !out_count) return MARMOT_ERR_INVALID_ARG;
+    *out_welcomes = NULL;
+    *out_count = 0;
+    MarmotGroup *group = NULL;
+    MarmotError err = find_reconciled_group(m, mls_group_id, &group);
+    if (err != MARMOT_OK) return err;
+    /* Finishes a pending Commit that was applied before a crash. */
+    char *ev = NULL;
+    bool live = false;
+    err = marmot_commit_get_pending(m, group, &ev, &live);
+    free(ev);
+    if (err == MARMOT_OK)
+        err = marmot_commit_get_unsent_welcomes(m, mls_group_id, out_welcomes, out_count);
+    marmot_group_free(group);
+    return err;
+}
+
+MarmotError
+marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id)
+{
+    if (!m || !mls_group_id) return MARMOT_ERR_INVALID_ARG;
+    if (!storage_can_commit(m->storage)) return MARMOT_ERR_STORAGE;
+    return marmot_commit_mark_welcomes_sent(m, mls_group_id);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_add_members
  * ──────────────────────────────────────────────────────────────────────── */
@@ -813,11 +885,13 @@ marmot_add_members(Marmot *m,
     memset(&add, 0, sizeof(add));
     char *commit_json = NULL;
     char **welcomes = calloc(kp_count, sizeof(char *));
-    if (!welcomes) {
+    uint8_t (*recipients)[32] = calloc(kp_count, 32);
+    MarmotUnsentWelcome *outbox = calloc(kp_count, sizeof(*outbox));
+    if (!welcomes || !recipients || !outbox) {
         err = MARMOT_ERR_MEMORY;
         goto fail;
     }
-    err = parse_key_packages(key_package_event_jsons, kp_count, &kps);
+    err = parse_key_packages(key_package_event_jsons, kp_count, &kps, recipients);
     if (err != MARMOT_OK) goto fail;
 
     /* Every KeyPackage in one Commit (nostrc-wc6v). */
@@ -836,10 +910,16 @@ marmot_add_members(Marmot *m,
                                group->admin_count, post.tree.n_leaves, NULL, 0,
                                welcomes);
     if (err != MARMOT_OK) goto fail;
+    for (size_t i = 0; i < kp_count; i++) {
+        memcpy(outbox[i].recipient, recipients[i], 32);
+        outbox[i].rumor_json = welcomes[i];   /* borrowed */
+    }
     err = finish_local_commit(m, group, &mls, &post, add.commit_data, add.commit_len,
-                              &commit_json);
+                              outbox, kp_count, &commit_json);
     if (err != MARMOT_OK) goto fail;
 
+    free(recipients);
+    free(outbox);
     free_key_packages(kps, kp_count);
     mls_add_result_clear(&add);
     mls_group_free(&post);
@@ -851,6 +931,8 @@ marmot_add_members(Marmot *m,
     return MARMOT_OK;
 
 fail:
+    free(recipients);
+    free(outbox);
     free_key_packages(kps, kp_count);
     mls_add_result_clear(&add);
     if (welcomes) {
@@ -909,7 +991,7 @@ marmot_remove_members(Marmot *m,
         goto out;
     }
     err = finish_local_commit(m, group, &mls, &post, result.commit_data,
-                              result.commit_len, out_commit_json);
+                              result.commit_len, NULL, 0, out_commit_json);
 out:
     free(leaves);
     mls_commit_result_clear(&result);
@@ -1127,7 +1209,7 @@ marmot_update_group_metadata(Marmot *m,
         goto out;
     }
     err = finish_local_commit(m, group, &pre, &mls, commit_result.commit_data,
-                              commit_result.commit_len, out_commit_json);
+                              commit_result.commit_len, NULL, 0, out_commit_json);
 out:
     free(new_ext);
     mls_commit_result_clear(&commit_result);

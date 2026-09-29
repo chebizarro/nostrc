@@ -468,6 +468,66 @@ gboolean marmot_gobject_client_clear_pending_commit_finish(MarmotGobjectClient *
                                                             GAsyncResult *result,
                                                             GError **error);
 
+/**
+ * marmot_gobject_client_get_pending_commit:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: hex-encoded MLS group ID
+ * @out_superseded: (out) (optional): %TRUE when a competing Commit replaced
+ *   the state the pending one was built on (it can no longer merge)
+ * @error: (nullable): return location for a #GError
+ *
+ * The group's pending Commit (marmot_get_pending_commit()): after a restart,
+ * or when a relay's answer was lost, republish it and merge on the first OK.
+ *
+ * Returns: (transfer full) (nullable): the signed kind:445 event, or %NULL
+ *   when nothing is pending (or on error)
+ *
+ * Since: 1.2
+ */
+gchar *marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
+                                                const gchar *mls_group_id_hex,
+                                                gboolean *out_superseded,
+                                                GError **error);
+
+/**
+ * marmot_gobject_client_get_unsent_welcomes:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: hex-encoded MLS group ID
+ * @out_rumors: (out) (transfer full) (array zero-terminated=1): kind:444
+ *   Welcome rumors of merged Adds not yet sent
+ * @out_recipients_hex: (out) (transfer full) (array zero-terminated=1): the
+ *   matching recipient account keys (hex)
+ * @error: (nullable): return location for a #GError
+ *
+ * Gift-wrap and send each rumor to its recipient, then call
+ * marmot_gobject_client_mark_welcomes_sent().
+ *
+ * Returns: %TRUE on success (the arrays may be empty)
+ *
+ * Since: 1.2
+ */
+gboolean marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
+                                                   const gchar *mls_group_id_hex,
+                                                   gchar ***out_rumors,
+                                                   gchar ***out_recipients_hex,
+                                                   GError **error);
+
+/**
+ * marmot_gobject_client_mark_welcomes_sent:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: hex-encoded MLS group ID
+ * @error: (nullable): return location for a #GError
+ *
+ * Empties the group's unsent-Welcome outbox.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 1.2
+ */
+gboolean marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
+                                                  const gchar *mls_group_id_hex,
+                                                  GError **error);
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-04: Media Encryption (async)
  * ══════════════════════════════════════════════════════════════════════════ */

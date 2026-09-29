@@ -2299,7 +2299,8 @@ free_strings_n(char **strings, size_t n)
 }
 
 /* Every label libmarmot has written must be classified: "mls_group",
- * "mls_group_parent" and "mls_group_pending" are group state (snapshots copy
+ * "mls_group_parent", "mls_group_pending" and "mls_group_welcomes" are group
+ * state (snapshots copy
  * them); the others are
  * account-scoped and must
  * stay out of group snapshots. A new label fails here, to be classified in
@@ -2308,7 +2309,8 @@ static void
 assert_labels_classified(GhStore *store)
 {
   static const gchar *const known[] = {
-    "mls_group", "mls_group_parent", "mls_group_pending", "kp_slot", "kp_priv",
+    "mls_group", "mls_group_parent", "mls_group_pending", "mls_group_welcomes",
+    "kp_slot", "kp_priv",
     "kp_full", "welcome_data", NULL,
   };
   g_autofree gchar *labels = sql_text(store, "SELECT group_concat(label, ',') FROM "

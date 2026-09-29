@@ -41,7 +41,8 @@ G_BEGIN_DECLS
  * transaction: create_snapshot copies the group's mls_group_info row, its
  * mls_group_relays and mls_exporter_secrets rows and its MLS group state (the
  * mls_kv rows with a group-scoped label, i.e. "mls_group",
- * "mls_group_parent" and "mls_group_pending", whose key is the
+ * "mls_group_parent", "mls_group_pending" and "mls_group_welcomes", whose
+ * key is the
  * group id) into mls_snapshot_rows under a header row in mls_snapshots.
  * rollback_snapshot deletes the group's current rows of those tables, copies
  * the snapshot back byte for byte and deletes the snapshot; other snapshots

@@ -946,6 +946,15 @@ test_client_update_metadata_commit_reaches_member(void)
     g_assert_true(nostr_event_check_signature(ev));
     nostr_event_free(ev);
 
+    /* The restart path sees it. */
+    gboolean superseded = TRUE;
+    gchar *pending = marmot_gobject_client_get_pending_commit(inviter, gid, &superseded,
+                                                              &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(pending, ==, commit);
+    g_assert_false(superseded);
+    g_free(pending);
+
     /* The relay accepted it. */
     AsyncFixture *mf = async_fixture_new();
     marmot_gobject_client_merge_pending_commit_async(inviter, gid, NULL, async_callback, mf);
@@ -956,6 +965,16 @@ test_client_update_metadata_commit_reaches_member(void)
     g_assert_no_error(error);
     drain_main_context();
     g_assert_true(inviter_sd.fired);
+    g_assert_null(marmot_gobject_client_get_pending_commit(inviter, gid, NULL, &error));
+    g_assert_no_error(error);
+    gchar **rumors = NULL, **recipients = NULL;
+    g_assert_true(marmot_gobject_client_get_unsent_welcomes(inviter, gid, &rumors,
+                                                            &recipients, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(g_strv_length(rumors), ==, 0);   /* a rename has no Welcomes */
+    g_strfreev(rumors);
+    g_strfreev(recipients);
+    g_assert_true(marmot_gobject_client_mark_welcomes_sent(inviter, gid, &error));
     g_assert_cmpstr(marmot_gobject_group_get_name(MARMOT_GOBJECT_GROUP(inviter_sd.received_object)),
                     ==, "Renamed");
     guint64 epoch = marmot_gobject_group_get_epoch(MARMOT_GOBJECT_GROUP(inviter_sd.received_object));

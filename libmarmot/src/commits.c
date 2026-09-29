@@ -40,7 +40,7 @@
 #define PARENT_LABEL   "mls_group_parent"
 #define PARENT_VERSION 1
 #define PENDING_LABEL   "mls_group_pending"
-#define PENDING_VERSION 1
+#define PENDING_VERSION 2
 /* Losing inbound Commits kept while our own Commit awaits a relay. */
 #define PENDING_MAX_DEFERRED 16
 
@@ -494,12 +494,31 @@ marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
 /* ──────────────────────────────────────────────────────────────────────────
  * Pending local Commit (publish before merge)
  *
- *   u8  version (1)
+ *   u8  version (2)
+ *   u64 parent_epoch, [32] parent confirmed_transcript_hash
+ *                                       -- the exact state it was built on
  *   u8  privileged, [32] committer, [32] digest   -- the Commit's key
  *   opaque post_state<V>                          -- state it produces
+ *   opaque event_json<V>                          -- signed kind:445, to republish
+ *   u8  welcome count, then per Welcome: [32] recipient, opaque rumor<V>
  *   u8  deferred count, then per deferred inbound Commit:
  *       u64 outer epoch, opaque msg<V>, opaque event_id<V> (hex or empty)
+ *
+ * A pending Commit is LIVE while the group is still in the state it was
+ * built on (review R1: the epoch number alone is not enough -- a winning
+ * competitor can replace that state with another of the same epoch), MERGED
+ * once its post-state is installed (a crash between persisting it and
+ * dropping the record), and STALE otherwise.
+ *
+ * Welcomes outlive the pending record: on merge they move to the unsent
+ * Welcome outbox ("mls_group_welcomes") until the application confirms it
+ * sent them (review R2: a merge by relay echo or after a restart must not
+ * lose them).
  * ──────────────────────────────────────────────────────────────────────── */
+
+#define OUTBOX_LABEL   "mls_group_welcomes"
+#define OUTBOX_VERSION 1
+#define PENDING_MAX_WELCOMES 64
 
 typedef struct {
     uint64_t epoch;
@@ -509,21 +528,81 @@ typedef struct {
 } DeferredCommit;
 
 typedef struct {
+    uint64_t        parent_epoch;
+    uint8_t         parent_transcript[MLS_HASH_LEN];
     MarmotCommitKey key;
     MlsGroup        post;
+    char           *event_json;
+    MarmotUnsentWelcome welcomes[PENDING_MAX_WELCOMES];
+    size_t          welcome_count;
     DeferredCommit  deferred[PENDING_MAX_DEFERRED];
     size_t          deferred_count;
 } PendingCommit;
+
+typedef enum { PENDING_LIVE, PENDING_MERGED, PENDING_STALE } PendingStatus;
+
+static PendingStatus
+pending_status(const PendingCommit *p, const MlsGroup *cur)
+{
+    if (p->parent_epoch == cur->epoch &&
+        memcmp(p->parent_transcript, cur->confirmed_transcript_hash, MLS_HASH_LEN) == 0)
+        return PENDING_LIVE;
+    if (p->post.epoch == cur->epoch &&
+        memcmp(p->post.confirmed_transcript_hash, cur->confirmed_transcript_hash,
+               MLS_HASH_LEN) == 0)
+        return PENDING_MERGED;
+    return PENDING_STALE;
+}
 
 static void
 pending_clear(PendingCommit *p)
 {
     mls_group_free(&p->post);
+    free(p->event_json);
+    for (size_t i = 0; i < p->welcome_count; i++) free(p->welcomes[i].rumor_json);
     for (size_t i = 0; i < p->deferred_count; i++) {
         free(p->deferred[i].msg);
         free(p->deferred[i].event_id);
     }
     sodium_memzero(p, sizeof(*p));
+}
+
+static int
+write_welcomes(MlsTlsBuf *buf, const MarmotUnsentWelcome *w, size_t count)
+{
+    if (mls_tls_write_u8(buf, (uint8_t)count) != 0) return -1;
+    for (size_t i = 0; i < count; i++) {
+        const char *r = w[i].rumor_json ? w[i].rumor_json : "";
+        if (mls_tls_buf_append(buf, w[i].recipient, 32) != 0 ||
+            mls_tls_write_opaque32(buf, (const uint8_t *)r, strlen(r)) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* Reads up to `max` Welcomes into `w`; *count covers every slot to free. */
+static int
+read_welcomes(MlsTlsReader *r, MarmotUnsentWelcome *w, size_t max, size_t *count)
+{
+    uint8_t n = 0;
+    *count = 0;
+    if (mls_tls_read_u8(r, &n) != 0 || n > max) return -1;
+    for (uint8_t i = 0; i < n; i++) {
+        *count = (size_t)i + 1;
+        uint8_t *rumor = NULL;
+        size_t rumor_len = 0;
+        if (mls_tls_read_fixed(r, w[i].recipient, 32) != 0 ||
+            mls_tls_read_opaque32(r, &rumor, &rumor_len) != 0)
+            return -1;
+        w[i].rumor_json = calloc(1, rumor_len + 1);
+        if (!w[i].rumor_json) {
+            free(rumor);
+            return -1;
+        }
+        if (rumor_len) memcpy(w[i].rumor_json, rumor, rumor_len);
+        free(rumor);
+    }
+    return 0;
 }
 
 static MarmotError
@@ -535,15 +614,20 @@ pending_store(Marmot *m, const uint8_t *gid, size_t gid_len, const PendingCommit
         return MARMOT_ERR_SERIALIZATION;
     MlsTlsBuf buf;
     MarmotError err = MARMOT_ERR_MEMORY;
-    if (mls_tls_buf_init(&buf, blob_len + 128) != 0) {
+    if (mls_tls_buf_init(&buf, blob_len + 512) != 0) {
         free_secret(blob, blob_len);
         return err;
     }
+    const char *ev = p->event_json ? p->event_json : "";
     bool ok = mls_tls_write_u8(&buf, PENDING_VERSION) == 0 &&
+              mls_tls_write_u64(&buf, p->parent_epoch) == 0 &&
+              mls_tls_buf_append(&buf, p->parent_transcript, MLS_HASH_LEN) == 0 &&
               mls_tls_write_u8(&buf, p->key.privileged ? 1 : 0) == 0 &&
               mls_tls_buf_append(&buf, p->key.committer, 32) == 0 &&
               mls_tls_buf_append(&buf, p->key.digest, 32) == 0 &&
               mls_tls_write_opaque32(&buf, blob, blob_len) == 0 &&
+              mls_tls_write_opaque32(&buf, (const uint8_t *)ev, strlen(ev)) == 0 &&
+              write_welcomes(&buf, p->welcomes, p->welcome_count) == 0 &&
               mls_tls_write_u8(&buf, (uint8_t)p->deferred_count) == 0;
     for (size_t i = 0; ok && i < p->deferred_count; i++) {
         const DeferredCommit *d = &p->deferred[i];
@@ -575,16 +659,22 @@ pending_load(Marmot *m, const uint8_t *gid, size_t gid_len, PendingCommit *out)
     MlsTlsReader r;
     mls_tls_reader_init(&r, data, len);
     uint8_t version = 0, privileged = 0, count = 0;
-    uint8_t *blob = NULL;
-    size_t blob_len = 0;
+    uint8_t *blob = NULL, *ev = NULL;
+    size_t blob_len = 0, ev_len = 0;
     err = MARMOT_ERR_DESERIALIZATION;
     if (mls_tls_read_u8(&r, &version) == 0 && version == PENDING_VERSION &&
+        mls_tls_read_u64(&r, &out->parent_epoch) == 0 &&
+        mls_tls_read_fixed(&r, out->parent_transcript, MLS_HASH_LEN) == 0 &&
         mls_tls_read_u8(&r, &privileged) == 0 && privileged <= 1 &&
         mls_tls_read_fixed(&r, out->key.committer, 32) == 0 &&
         mls_tls_read_fixed(&r, out->key.digest, 32) == 0 &&
         mls_tls_read_opaque32(&r, &blob, &blob_len) == 0 &&
         mls_group_deserialize(blob, blob_len, &out->post) == 0 &&
+        mls_tls_read_opaque32(&r, &ev, &ev_len) == 0 &&
+        (out->event_json = calloc(1, ev_len + 1)) != NULL &&
+        read_welcomes(&r, out->welcomes, PENDING_MAX_WELCOMES, &out->welcome_count) == 0 &&
         mls_tls_read_u8(&r, &count) == 0 && count <= PENDING_MAX_DEFERRED) {
+        if (ev_len) memcpy(out->event_json, ev, ev_len);
         out->key.privileged = privileged == 1;
         bool ok = true;
         for (uint8_t i = 0; ok && i < count; i++) {
@@ -604,32 +694,121 @@ pending_load(Marmot *m, const uint8_t *gid, size_t gid_len, PendingCommit *out)
         }
         if (ok && mls_tls_reader_done(&r)) err = MARMOT_OK;
     }
+    free(ev);
     free_secret(blob, blob_len);
     free_secret(data, len);
     if (err != MARMOT_OK) pending_clear(out);
     return err;
 }
 
-MarmotError
-marmot_commit_has_pending(Marmot *m, const MarmotGroupId *gid, bool *out)
+static MarmotError
+pending_delete(Marmot *m, const uint8_t *gid, size_t gid_len)
 {
-    *out = false;
+    MarmotError err = m->storage->mls_delete(m->storage->ctx, PENDING_LABEL, gid, gid_len);
+    return err == MARMOT_ERR_STORAGE_NOT_FOUND ? MARMOT_OK : err;
+}
+
+static MarmotError
+load_current(Marmot *m, const MarmotGroupId *gid, MlsGroup *cur)
+{
+    memset(cur, 0, sizeof(*cur));
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, "mls_group", gid->data,
+                                           gid->len, &blob, &len);
+    if (err == MARMOT_OK && (!blob || mls_group_deserialize(blob, len, cur) != 0))
+        err = MARMOT_ERR_MLS;
+    free_secret(blob, len);
+    return err;
+}
+
+/* ── Unsent Welcome outbox ─────────────────────────────────────────────── */
+
+static MarmotError
+outbox_store(Marmot *m, const MarmotGroupId *gid, const MarmotUnsentWelcome *w,
+             size_t count)
+{
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, 256) != 0) return MARMOT_ERR_MEMORY;
+    MarmotError err = MARMOT_ERR_MEMORY;
+    if (mls_tls_write_u8(&buf, OUTBOX_VERSION) == 0 && write_welcomes(&buf, w, count) == 0)
+        err = m->storage->mls_store(m->storage->ctx, OUTBOX_LABEL, gid->data, gid->len,
+                                    buf.data, buf.len);
+    mls_tls_buf_free(&buf);
+    return err;
+}
+
+MarmotError
+marmot_commit_get_unsent_welcomes(Marmot *m, const MarmotGroupId *gid,
+                                  MarmotUnsentWelcome **out, size_t *out_count)
+{
+    *out = NULL;
+    *out_count = 0;
     uint8_t *data = NULL;
     size_t len = 0;
-    MarmotError err = m->storage->mls_load(m->storage->ctx, PENDING_LABEL,
-                                           gid->data, gid->len, &data, &len);
-    if (err == MARMOT_ERR_STORAGE_NOT_FOUND) return MARMOT_OK;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, OUTBOX_LABEL, gid->data,
+                                           gid->len, &data, &len);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND || (err == MARMOT_OK && !data)) return MARMOT_OK;
     if (err != MARMOT_OK) return err;
-    *out = data != NULL;
-    free_secret(data, len);
+    MarmotUnsentWelcome *w = calloc(PENDING_MAX_WELCOMES, sizeof(*w));
+    size_t count = 0;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, data, len);
+    uint8_t version = 0;
+    err = MARMOT_ERR_DESERIALIZATION;
+    if (!w) err = MARMOT_ERR_MEMORY;
+    else if (mls_tls_read_u8(&r, &version) == 0 && version == OUTBOX_VERSION &&
+             read_welcomes(&r, w, PENDING_MAX_WELCOMES, &count) == 0 &&
+             mls_tls_reader_done(&r))
+        err = MARMOT_OK;
+    free(data);
+    if (err != MARMOT_OK || count == 0) {
+        marmot_unsent_welcomes_free(w, count);
+        return err;
+    }
+    *out = w;
+    *out_count = count;
+    return MARMOT_OK;
+}
+
+void
+marmot_unsent_welcomes_free(MarmotUnsentWelcome *welcomes, size_t count)
+{
+    if (!welcomes) return;
+    for (size_t i = 0; i < count; i++) free(welcomes[i].rumor_json);
+    free(welcomes);
+}
+
+MarmotError
+marmot_commit_mark_welcomes_sent(Marmot *m, const MarmotGroupId *gid)
+{
+    MarmotError err = m->storage->mls_delete(m->storage->ctx, OUTBOX_LABEL, gid->data,
+                                             gid->len);
+    return err == MARMOT_ERR_STORAGE_NOT_FOUND ? MARMOT_OK : err;
+}
+
+/* The pending Commit is applied: hand its Welcomes to the outbox, then drop
+ * the record.  A failed delete leaves a MERGED record that the next access
+ * finishes the same way. */
+static MarmotError
+pending_finish_merged(Marmot *m, const MarmotGroupId *gid, const PendingCommit *p)
+{
+    if (p->welcome_count > 0) {
+        MarmotError err = outbox_store(m, gid, p->welcomes, p->welcome_count);
+        if (err != MARMOT_OK) return err;
+    }
+    (void)pending_delete(m, gid->data, gid->len);
     return MARMOT_OK;
 }
 
 MarmotError
 marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
-                            const uint8_t *commit, size_t commit_len)
+                            const uint8_t *commit, size_t commit_len,
+                            const char *event_json,
+                            const MarmotUnsentWelcome *welcomes, size_t welcome_count)
 {
-    if (!m || !pre || !post || !commit || commit_len == 0)
+    if (!m || !pre || !post || !commit || commit_len == 0 || !event_json ||
+        welcome_count > PENDING_MAX_WELCOMES || (welcome_count && !welcomes))
         return MARMOT_ERR_INVALID_ARG;
     PendingCommit p;
     memset(&p, 0, sizeof(p));
@@ -641,10 +820,75 @@ marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre, const MlsGroup *post
     marmot_group_data_extension_free(gde);
     if (err != MARMOT_OK) return err;
     if (mls_crypto_hash(p.key.digest, commit, commit_len) != 0) return MARMOT_ERR_CRYPTO;
-    /* pending_store() only reads p.post: a shallow view is enough. */
+    p.parent_epoch = pre->epoch;
+    memcpy(p.parent_transcript, pre->confirmed_transcript_hash, MLS_HASH_LEN);
+    /* pending_store() only reads these: shallow views are enough. */
     p.post = *post;
+    p.event_json = (char *)event_json;
+    memcpy(p.welcomes, welcomes, welcome_count * sizeof(*welcomes));
+    p.welcome_count = welcome_count;
     err = pending_store(m, post->group_id, post->group_id_len, &p);
     sodium_memzero(&p, sizeof(p));
+    return err;
+}
+
+MarmotError
+marmot_commit_get_pending(Marmot *m, MarmotGroup *group, char **out_event_json,
+                          bool *out_live)
+{
+    const MarmotGroupId *gid = &group->mls_group_id;
+    *out_event_json = NULL;
+    *out_live = false;
+    PendingCommit p;
+    MarmotError err = pending_load(m, gid->data, gid->len, &p);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND) return MARMOT_OK;
+    if (err != MARMOT_OK) return err;
+    MlsGroup cur;
+    err = load_current(m, gid, &cur);
+    if (err == MARMOT_OK) {
+        PendingStatus st = pending_status(&p, &cur);
+        if (st == PENDING_MERGED) {
+            err = pending_finish_merged(m, gid, &p);   /* nothing pending any more */
+        } else {
+            *out_live = st == PENDING_LIVE;
+            *out_event_json = p.event_json;
+            p.event_json = NULL;
+        }
+        mls_group_free(&cur);
+    }
+    pending_clear(&p);
+    return err;
+}
+
+MarmotError
+marmot_commit_has_pending(Marmot *m, MarmotGroup *group, bool *out)
+{
+    char *ev = NULL;
+    bool live = false;
+    MarmotError err = marmot_commit_get_pending(m, group, &ev, &live);
+    *out = err == MARMOT_OK && ev != NULL;
+    free(ev);
+    return err;
+}
+
+/* Apply the loaded LIVE pending Commit `p` on top of `cur`. */
+static MarmotError
+pending_apply(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const PendingCommit *p)
+{
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    MarmotError err = marmot_commit_authorize(cur, &p->post, cur->own_leaf_index,
+                                              &key, &gde);
+    if (err != MARMOT_OK) {
+        /* It can never apply: drop it rather than wedge the group. */
+        (void)pending_delete(m, group->mls_group_id.data, group->mls_group_id.len);
+        return err;
+    }
+    memcpy(key.digest, p->key.digest, 32);
+    err = marmot_commit_persist(m, cur, &p->post, &key, gde, group);
+    marmot_group_data_extension_free(gde);
+    /* On a storage error the record stays: merge again or clear it. */
+    if (err == MARMOT_OK) err = pending_finish_merged(m, &group->mls_group_id, p);
     return err;
 }
 
@@ -655,48 +899,26 @@ marmot_commit_merge_pending(Marmot *m, MarmotGroup *group)
     PendingCommit p;
     MarmotError err = pending_load(m, gid->data, gid->len, &p);
     if (err != MARMOT_OK) return err;   /* includes STORAGE_NOT_FOUND */
-
     MlsGroup cur;
-    memset(&cur, 0, sizeof(cur));
-    uint8_t *blob = NULL;
-    size_t len = 0;
-    err = m->storage->mls_load(m->storage->ctx, "mls_group", gid->data, gid->len,
-                               &blob, &len);
-    if (err != MARMOT_OK || !blob || mls_group_deserialize(blob, len, &cur) != 0) {
-        free_secret(blob, len);
-        pending_clear(&p);
-        return err == MARMOT_OK ? MARMOT_ERR_MLS : err;
-    }
-    free_secret(blob, len);
-
-    if (p.post.epoch != cur.epoch + 1) {
-        /* Not the next epoch any more: either this Commit was merged already
-         * (a crash before the pending record was deleted) or a competing
-         * Commit won while ours was pending. */
-        RetainedParent rp;
-        bool have_rp = retained_load(m, gid->data, gid->len, &rp) == 0;
-        bool merged = have_rp && rp.parent_epoch + 1 == p.post.epoch &&
-                      cur.epoch == p.post.epoch &&
-                      memcmp(rp.key.digest, p.key.digest, 32) == 0;
-        if (have_rp) mls_group_free(&rp.parent);
-        err = m->storage->mls_delete(m->storage->ctx, PENDING_LABEL, gid->data, gid->len);
-        if (err == MARMOT_OK) err = merged ? MARMOT_OK : MARMOT_ERR_WRONG_EPOCH;
-    } else {
-        MarmotCommitKey key;
-        MarmotGroupDataExtension *gde = NULL;
-        err = marmot_commit_authorize(&cur, &p.post, cur.own_leaf_index, &key, &gde);
-        if (err == MARMOT_OK) {
-            memcpy(key.digest, p.key.digest, 32);
-            err = marmot_commit_persist(m, &cur, &p.post, &key, gde, group);
+    err = load_current(m, gid, &cur);
+    if (err == MARMOT_OK) {
+        switch (pending_status(&p, &cur)) {
+        case PENDING_LIVE:
+            err = pending_apply(m, group, &cur, &p);
+            break;
+        case PENDING_MERGED:
+            /* Persisted before a crash (or by our relay echo). */
+            err = pending_finish_merged(m, gid, &p);
+            break;
+        case PENDING_STALE:
+            /* The state it was built on was replaced: another member's
+             * Commit won.  Its deferred Commits were built on that state too. */
+            err = pending_delete(m, gid->data, gid->len);
+            if (err == MARMOT_OK) err = MARMOT_ERR_WRONG_EPOCH;
+            break;
         }
-        marmot_group_data_extension_free(gde);
-        /* Once persisted, a leftover pending record is recognised as merged
-         * (above), so a failed delete is not an error. */
-        if (err == MARMOT_OK)
-            (void)m->storage->mls_delete(m->storage->ctx, PENDING_LABEL,
-                                         gid->data, gid->len);
+        mls_group_free(&cur);
     }
-    mls_group_free(&cur);
     pending_clear(&p);
     return err;
 }
@@ -709,10 +931,15 @@ marmot_commit_clear_pending(Marmot *m, MarmotGroup *group)
     MarmotError err = pending_load(m, gid->data, gid->len, &p);
     if (err == MARMOT_ERR_STORAGE_NOT_FOUND) return MARMOT_OK;
     if (err != MARMOT_OK) return err;
-    err = m->storage->mls_delete(m->storage->ctx, PENDING_LABEL, gid->data, gid->len);
-    if (err == MARMOT_OK) {
+    MlsGroup cur;
+    err = load_current(m, gid, &cur);
+    if (err == MARMOT_OK && pending_status(&p, &cur) == PENDING_MERGED) {
+        /* Already applied: there is nothing to discard; keep its Welcomes. */
+        err = pending_finish_merged(m, gid, &p);
+    } else if (err == MARMOT_OK) {
+        err = pending_delete(m, gid->data, gid->len);
         /* Commits that lost only to ours now compete among themselves. */
-        for (size_t i = 0; i < p.deferred_count; i++) {
+        for (size_t i = 0; err == MARMOT_OK && i < p.deferred_count; i++) {
             MarmotMessageResult r;
             memset(&r, 0, sizeof(r));
             (void)marmot_commit_process_inbound(m, group, p.deferred[i].epoch,
@@ -722,6 +949,7 @@ marmot_commit_clear_pending(Marmot *m, MarmotGroup *group)
             marmot_message_result_free(&r);
         }
     }
+    mls_group_free(&cur);   /* zeroed by load_current() even on failure */
     pending_clear(&p);
     return err;
 }
@@ -781,6 +1009,15 @@ defer_inbound(Marmot *m, PendingCommit *p, const uint8_t *gid, size_t gid_len,
     return err == MARMOT_OK ? MARMOT_ERR_OWN_COMMIT_PENDING : err;
 }
 
+static void
+fill_commit_result(Marmot *m, MarmotGroup *group, MarmotMessageResult *result)
+{
+    result->type = MARMOT_RESULT_COMMIT;
+    result->commit.updated_group = NULL;
+    (void)m->storage->find_group_by_mls_id(m->storage->ctx, &group->mls_group_id,
+                                           &result->commit.updated_group);
+}
+
 MarmotError
 marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                               uint64_t outer_epoch,
@@ -823,16 +1060,9 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
 
     const uint8_t *gid = group->mls_group_id.data;
     size_t gid_len = group->mls_group_id.len;
-    uint8_t *cur_blob = NULL;
-    size_t cur_len = 0;
     MlsGroup cur;
-    memset(&cur, 0, sizeof(cur));
-    if (s->mls_load(s->ctx, "mls_group", gid, gid_len, &cur_blob, &cur_len) != MARMOT_OK ||
-        !cur_blob || mls_group_deserialize(cur_blob, cur_len, &cur) != 0) {
-        free_secret(cur_blob, cur_len);
+    if (load_current(m, &group->mls_group_id, &cur) != MARMOT_OK)
         return MARMOT_ERR_MLS;
-    }
-    free_secret(cur_blob, cur_len);
 
     MarmotError err;
     MlsGroup post;
@@ -840,20 +1070,24 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
     MarmotGroupDataExtension *gde = NULL;
 
     if (epoch == cur.epoch) {
-        /* Linear advance of the current epoch -- unless our own Commit for
-         * this epoch awaits a relay: then the two compete now. */
+        /* Linear advance of the current epoch -- unless our own Commit built
+         * on exactly this state awaits a relay: then the two compete now. */
         PendingCommit p;
         MarmotError perr = pending_load(m, gid, gid_len, &p);
         if (perr != MARMOT_OK && perr != MARMOT_ERR_STORAGE_NOT_FOUND) {
             mls_group_free(&cur);
             return perr;   /* unreadable pending state: fail closed */
         }
-        bool live = perr == MARMOT_OK && p.post.epoch == cur.epoch + 1;
-        if (live && memcmp(digest, p.key.digest, 32) == 0) {
-            /* A relay echoed our pending Commit; merging applies it. */
+        bool live = perr == MARMOT_OK && pending_status(&p, &cur) == PENDING_LIVE;
+        if (perr == MARMOT_OK && memcmp(digest, p.key.digest, 32) == 0) {
+            /* Our own pending Commit, back from a relay: a relay stored it,
+             * so it is published -- merge it (review R2; this also recovers
+             * a committer that crashed or lost the relay's OK). */
+            err = live ? pending_apply(m, group, &cur, &p) : MARMOT_ERR_WRONG_EPOCH;
             pending_clear(&p);
             mls_group_free(&cur);
-            result->type = MARMOT_RESULT_OWN_MESSAGE;
+            if (err != MARMOT_OK) return err;
+            fill_commit_result(m, group, result);
             return MARMOT_OK;
         }
         err = stage_inbound(&cur, msg, msg_len, sender, &post, &key, &gde);
@@ -864,6 +1098,8 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                                     digest, event_id_hex);
             else
                 err = marmot_commit_persist(m, &cur, &post, &key, gde, group);
+            /* A winner replaces the state our pending Commit was built on:
+             * from now on it is STALE and merging it fails (review R1). */
         }
         if (perr == MARMOT_OK) pending_clear(&p);
     } else if (cur.epoch > 0 && epoch == cur.epoch - 1) {
@@ -887,6 +1123,9 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                                     &key, &gde);
                 if (err == MARMOT_OK) {
                     memcpy(key.digest, digest, 32);
+                    /* Replacing the applied Commit also replaces the state
+                     * any pending Commit of ours was built on: that one
+                     * becomes STALE (bound to the replaced transcript). */
                     if (commit_key_cmp(&key, &rp.key) < 0)
                         err = marmot_commit_persist(m, &rp.parent, &post, &key,
                                                     gde, group);
@@ -913,10 +1152,6 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                                             &group->mls_group_id,
                                             MARMOT_MSG_STATE_PROCESSED, NULL);
     }
-
-    result->type = MARMOT_RESULT_COMMIT;
-    result->commit.updated_group = NULL;
-    (void)s->find_group_by_mls_id(s->ctx, &group->mls_group_id,
-                                  &result->commit.updated_group);
+    fill_commit_result(m, group, result);
     return MARMOT_OK;
 }

@@ -1695,3 +1695,97 @@ marmot_gobject_client_get_group_relay_urls(MarmotGobjectClient *self,
     if (out_count) *out_count = relay_count;
     return urls;
 }
+
+/* ── Pending Commit / unsent Welcomes (restart path, review R2) ──── */
+
+static gboolean
+parse_group_id_hex(const gchar *hex, MarmotGroupId *out, GError **error)
+{
+    uint8_t bytes[128];
+    size_t hex_len = strlen(hex);
+    size_t byte_len = hex_len / 2;
+    if (hex_len % 2 != 0 || byte_len == 0 || byte_len > sizeof(bytes) ||
+        !hex_to_bytes(hex, bytes, byte_len)) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                    "Invalid MLS group ID hex");
+        return FALSE;
+    }
+    *out = marmot_group_id_new(bytes, byte_len);
+    return TRUE;
+}
+
+gchar *
+marmot_gobject_client_get_pending_commit(MarmotGobjectClient *self,
+                                         const gchar *mls_group_id_hex,
+                                         gboolean *out_superseded,
+                                         GError **error)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), NULL);
+    g_return_val_if_fail(mls_group_id_hex != NULL, NULL);
+    if (out_superseded) *out_superseded = FALSE;
+    MarmotGroupId gid;
+    if (!parse_group_id_hex(mls_group_id_hex, &gid, error)) return NULL;
+    char *ev = NULL;
+    bool superseded = false;
+    MarmotError err = marmot_get_pending_commit(self->marmot, &gid, &ev, &superseded);
+    marmot_group_id_free(&gid);
+    if (err != MARMOT_OK) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, (gint)err, "%s", marmot_error_string(err));
+        return NULL;
+    }
+    if (out_superseded) *out_superseded = superseded;
+    gchar *json = g_strdup(ev);
+    free(ev);
+    return json;
+}
+
+gboolean
+marmot_gobject_client_get_unsent_welcomes(MarmotGobjectClient *self,
+                                          const gchar *mls_group_id_hex,
+                                          gchar ***out_rumors,
+                                          gchar ***out_recipients_hex,
+                                          GError **error)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), FALSE);
+    g_return_val_if_fail(mls_group_id_hex && out_rumors && out_recipients_hex, FALSE);
+    *out_rumors = NULL;
+    *out_recipients_hex = NULL;
+    MarmotGroupId gid;
+    if (!parse_group_id_hex(mls_group_id_hex, &gid, error)) return FALSE;
+    MarmotUnsentWelcome *w = NULL;
+    size_t n = 0;
+    MarmotError err = marmot_get_unsent_welcomes(self->marmot, &gid, &w, &n);
+    marmot_group_id_free(&gid);
+    if (err != MARMOT_OK) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, (gint)err, "%s", marmot_error_string(err));
+        return FALSE;
+    }
+    gchar **rumors = g_new0(gchar *, n + 1);
+    gchar **recipients = g_new0(gchar *, n + 1);
+    for (size_t i = 0; i < n; i++) {
+        rumors[i] = g_strdup(w[i].rumor_json);
+        recipients[i] = bytes_to_hex(w[i].recipient, 32);
+    }
+    marmot_unsent_welcomes_free(w, n);
+    *out_rumors = rumors;
+    *out_recipients_hex = recipients;
+    return TRUE;
+}
+
+gboolean
+marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
+                                         const gchar *mls_group_id_hex,
+                                         GError **error)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_CLIENT(self), FALSE);
+    g_return_val_if_fail(mls_group_id_hex != NULL, FALSE);
+    MarmotGroupId gid;
+    if (!parse_group_id_hex(mls_group_id_hex, &gid, error)) return FALSE;
+    MarmotError err = marmot_mark_welcomes_sent(self->marmot, &gid);
+    marmot_group_id_free(&gid);
+    if (err != MARMOT_OK) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, (gint)err, "%s", marmot_error_string(err));
+        return FALSE;
+    }
+    return TRUE;
+}

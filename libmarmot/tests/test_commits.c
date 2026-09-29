@@ -522,6 +522,7 @@ typedef struct {
     bool  fail_later;             /* ...and every write after it (undo fails) */
     bool  drop_group_record;      /* save_group "succeeds" without writing (crash) */
     const char *fail_load_label;  /* mls_load of this label fails */
+    const char *fail_delete_label;/* mls_delete of this label fails (a crash) */
     bool  fail_exporter_load;     /* get_exporter_secret(exporter_epoch) fails */
     uint64_t exporter_epoch;
 } Faults;
@@ -553,6 +554,8 @@ f_mls_store(void *ctx, const char *label, const uint8_t *key, size_t key_len,
 static MarmotError
 f_mls_delete(void *ctx, const char *label, const uint8_t *key, size_t key_len)
 {
+    if (g_faults.fail_delete_label && strcmp(label, g_faults.fail_delete_label) == 0)
+        return MARMOT_ERR_STORAGE;
     MarmotError ferr = fault_write();
     if (ferr != MARMOT_OK) return ferr;
     return g_faults.orig.mls_delete(ctx, label, key, key_len);
@@ -744,15 +747,18 @@ test_commit_pending_until_merged(void)
     char *none = NULL;
     CHECK(marmot_update_group_metadata(t.alice.m, &t.gid, &cfg, &none) ==
           MARMOT_ERR_OWN_COMMIT_PENDING && !none, "second Commit while pending");
-    /* Our own pending Commit echoed back is not applied by processing. */
-    MarmotError err;
-    CHECK(deliver(&t.alice, failed, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
-          err == MARMOT_OK, "pending echo: %d", err);
-    expect_unchanged(&t.alice, &t.gid, &before, "pending echo");
+    /* The restart path sees it, with the event to republish. */
+    char *ev = NULL;
+    bool superseded = true;
+    OK(marmot_get_pending_commit(t.alice.m, &t.gid, &ev, &superseded));
+    CHECK(ev && strcmp(ev, failed) == 0 && !superseded, "pending event");
+    free(ev);
     /* No relay accepted it. */
     OK(marmot_clear_pending_commit(t.alice.m, &t.gid));
     expect_unchanged(&t.alice, &t.gid, &before, "cleared");
     CHECK(marmot_merge_pending_commit(t.alice.m, &t.gid) == MARMOT_OK, "nothing to merge");
+    OK(marmot_get_pending_commit(t.alice.m, &t.gid, &ev, NULL));
+    CHECK(ev == NULL, "nothing pending after the clear");
     expect_unchanged(&t.alice, &t.gid, &before, "merge without pending");
     snapshot_clear(&before);
     expect_converged(t.all, 3, &t.gid, "Before", t.epoch);
@@ -1278,6 +1284,201 @@ test_multi_member_commits_converge(void)
     marmot_group_id_free(&gid);
 }
 
+
+/* Review R1: a winning competitor replaces the state our pending Commit was
+ * built on -- with another of the same epoch.  The pending Commit must not
+ * defer the group's next Commit, and must not merge. */
+static void
+test_stale_pending_commit_cannot_merge(void)
+{
+    Trio t;
+    trio_init(&t);
+    bool bob_wins = memcmp(t.bob.pk, t.charlie.pk, 32) < 0;
+    Member *w = bob_wins ? &t.bob : &t.charlie;      /* lower key */
+    Member *l = bob_wins ? &t.charlie : &t.bob;      /* higher key */
+
+    char *c_l = self_update(l, &t.gid);
+    char *c_w = self_update(w, &t.gid);
+    expect_commit(&t.alice, c_l, "Alice applies L first");
+    char *rename = rename_pending(&t.alice, &t.gid, "Built on L");
+    expect_commit(&t.alice, c_w, "W wins and replaces L at Alice");
+    expect_commit(l, c_w, "L switches to W");
+    expect_rejected(w, &t.gid, c_l, MARMOT_ERR_WRONG_EPOCH, "W keeps W");
+    expect_converged(t.all, 3, &t.gid, "Before", t.epoch + 1);
+
+    /* The pending rename now reports itself superseded... */
+    char *ev = NULL;
+    bool superseded = false;
+    OK(marmot_get_pending_commit(t.alice.m, &t.gid, &ev, &superseded));
+    CHECK(ev && superseded, "pending rename must be superseded");
+    free(ev);
+    /* ...does not hold back the group's next Commit... */
+    char *c_x = self_update(w, &t.gid);
+    expect_commit(&t.alice, c_x, "W's next Commit applies at Alice");
+    expect_commit(l, c_x, "and at L");
+    expect_converged(t.all, 3, &t.gid, "Before", t.epoch + 2);
+    /* ...and cannot merge when the relay's OK finally arrives. */
+    CHECK(marmot_merge_pending_commit(t.alice.m, &t.gid) == MARMOT_ERR_WRONG_EPOCH,
+          "a stale pending Commit must not merge");
+    expect_converged(t.all, 3, &t.gid, "Before", t.epoch + 2);
+    expect_messages_flow(t.all, 3, &t.gid);
+    /* The record is gone: Alice can commit again. */
+    char *next = rename_group(&t.alice, &t.gid, "After");
+    expect_commit(&t.bob, next, "next rename");
+    expect_commit(&t.charlie, next, "next rename");
+    expect_converged(t.all, 3, &t.gid, "After", t.epoch + 3);
+    free(c_l);
+    free(c_w);
+    free(c_x);
+    free(rename);
+    free(next);
+    trio_clear(&t);
+}
+
+/* Review R2: the committer crashes (or loses the relay's OK) with its Commit
+ * pending while a relay stored it and the others applied it.  Its own echo
+ * from the relay merges it; the restart path offers the event to republish
+ * and merging stays idempotent. */
+static void
+test_pending_commit_recovered_by_echo(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *c = rename_pending(&t.alice, &t.gid, "Stored");
+    expect_commit(&t.bob, c, "Bob applies the stored Commit");
+    expect_commit(&t.charlie, c, "Charlie applies the stored Commit");
+    /* "Restart": everything is in storage; the pending event is there. */
+    char *ev = NULL;
+    OK(marmot_get_pending_commit(t.alice.m, &t.gid, &ev, NULL));
+    CHECK(ev && strcmp(ev, c) == 0, "restart path returns the signed event");
+    free(ev);
+    /* Relay backfill delivers Alice's own Commit: merged. */
+    MarmotError err;
+    MarmotGroup *g = NULL;
+    CHECK(deliver(&t.alice, c, &err, &g) == MARMOT_RESULT_COMMIT && err == MARMOT_OK,
+          "own echo must merge the pending Commit: %d", err);
+    CHECK(g && strcmp(g->name, "Stored") == 0, "echo result");
+    marmot_group_free(g);
+    expect_converged(t.all, 3, &t.gid, "Stored", t.epoch + 1);
+    /* A late relay OK: the merge is already done. */
+    OK(marmot_merge_pending_commit(t.alice.m, &t.gid));
+    /* Alice is not wedged: others' Commits decrypt, hers are allowed. */
+    char *upd = self_update(&t.bob, &t.gid);
+    expect_commit(&t.alice, upd, "Bob's next Commit");
+    expect_commit(&t.charlie, upd, "Bob's next Commit");
+    char *next = rename_group(&t.alice, &t.gid, "Unwedged");
+    expect_commit(&t.bob, next, "Alice's next rename");
+    expect_commit(&t.charlie, next, "Alice's next rename");
+    expect_converged(t.all, 3, &t.gid, "Unwedged", t.epoch + 3);
+    free(c);
+    free(upd);
+    free(next);
+    trio_clear(&t);
+}
+
+/* Review R2/N-a: a crash between persisting the merge and deleting the
+ * pending record.  The leftover is recognised as merged: merging again
+ * succeeds, its Welcomes reach the outbox once, and new Commits proceed. */
+static void
+test_merge_idempotent_after_crash(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member dave;
+    member_init(&dave, "Dave");
+    char *kp = key_package(&dave);
+    const char *kps[] = { kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *commit = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &welcomes, &n, &commit));
+    /* The pending record's delete is lost in the crash. */
+    faults_arm(&t.alice);
+    g_faults.fail_delete_label = "mls_group_pending";
+    OK(marmot_merge_pending_commit(t.alice.m, &t.gid));
+    faults_disarm(&t.alice);
+    uint8_t *left = NULL;
+    size_t left_len = 0;
+    MarmotStorage *st = t.alice.m->storage;
+    OK(st->mls_load(st->ctx, "mls_group_pending", t.gid.data, t.gid.len, &left, &left_len));
+    CHECK(left != NULL, "the pending record survived the crash");
+    free(left);
+    /* Merging again finishes it -- not "superseded". */
+    OK(marmot_merge_pending_commit(t.alice.m, &t.gid));
+    CHECK(st->mls_load(st->ctx, "mls_group_pending", t.gid.data, t.gid.len, &left,
+                       &left_len) == MARMOT_ERR_STORAGE_NOT_FOUND, "record dropped");
+    MarmotUnsentWelcome *out = NULL;
+    size_t out_n = 0;
+    OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &out, &out_n));
+    CHECK(out_n == 1 && memcmp(out[0].recipient, dave.pk, 32) == 0 &&
+          strcmp(out[0].rumor_json, welcomes[0]) == 0, "the Add's Welcome is in the outbox");
+    marmot_unsent_welcomes_free(out, out_n);
+    OK(marmot_mark_welcomes_sent(t.alice.m, &t.gid));
+    OK(marmot_get_unsent_welcomes(t.alice.m, &t.gid, &out, &out_n));
+    CHECK(out == NULL && out_n == 0, "outbox emptied");
+    expect_commit(&t.bob, commit, "Bob");
+    expect_commit(&t.charlie, commit, "Charlie");
+    join(&dave, welcomes[0]);
+    Member *four[] = { &t.alice, &t.bob, &t.charlie, &dave };
+    expect_converged(four, 4, &t.gid, "Before", t.epoch + 1);
+    expect_messages_flow(four, 4, &t.gid);
+
+    /* A crash-leftover is also finished by the next producer. */
+    char *r = rename_pending(&t.alice, &t.gid, "Next");
+    faults_arm(&t.alice);
+    g_faults.fail_delete_label = "mls_group_pending";
+    OK(marmot_merge_pending_commit(t.alice.m, &t.gid));
+    faults_disarm(&t.alice);
+    char *r2 = rename_group(&t.alice, &t.gid, "After leftover");
+    for (int i = 1; i < 4; i++) {
+        expect_commit(four[i], r, "rename");
+        expect_commit(four[i], r2, "rename after leftover");
+    }
+    expect_converged(four, 4, &t.gid, "After leftover", t.epoch + 3);
+
+    for (size_t i = 0; i < n; i++) free(welcomes[i]);
+    free(welcomes);
+    free(commit);
+    free(kp);
+    free(r);
+    free(r2);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
+/* Review R2/N-c: a merge that fails on storage leaves the Commit pending and
+ * clearable; nothing changed. */
+static void
+test_failed_merge_stays_clearable(void)
+{
+    Trio t;
+    trio_init(&t);
+    Snapshot before;
+    snapshot(&t.alice, &t.gid, &before);
+    char *c = rename_pending(&t.alice, &t.gid, "Not yet");
+    faults_arm(&t.alice);
+    g_faults.fail_at = 3;   /* the MLS state write */
+    MarmotError err = marmot_merge_pending_commit(t.alice.m, &t.gid);
+    faults_disarm(&t.alice);
+    CHECK(err == MARMOT_ERR_STORAGE_CONSTRAINT, "merge storage failure: %d", err);
+    expect_unchanged(&t.alice, &t.gid, &before, "failed merge");
+    char *ev = NULL;
+    bool superseded = true;
+    OK(marmot_get_pending_commit(t.alice.m, &t.gid, &ev, &superseded));
+    CHECK(ev && !superseded, "still pending and live");
+    free(ev);
+    OK(marmot_clear_pending_commit(t.alice.m, &t.gid));
+    expect_unchanged(&t.alice, &t.gid, &before, "cleared");
+    snapshot_clear(&before);
+    char *next = rename_group(&t.alice, &t.gid, "Recovered");
+    expect_commit(&t.bob, next, "next rename");
+    expect_commit(&t.charlie, next, "next rename");
+    expect_converged(t.all, 3, &t.gid, "Recovered", t.epoch + 1);
+    free(c);
+    free(next);
+    trio_clear(&t);
+}
+
 int
 main(void)
 {
@@ -1295,6 +1496,10 @@ main(void)
     RUN(test_interrupted_transition_is_repaired);
     RUN(test_same_epoch_race_converges);
     RUN(test_multi_member_commits_converge);
+    RUN(test_stale_pending_commit_cannot_merge);
+    RUN(test_pending_commit_recovered_by_echo);
+    RUN(test_merge_idempotent_after_crash);
+    RUN(test_failed_merge_stays_clearable);
     printf("All commit tests passed\n");
     return 0;
 }

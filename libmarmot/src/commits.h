@@ -98,31 +98,57 @@ MarmotError marmot_group_reconcile(Marmot *m, MarmotGroup *group);
 /**
  * Publish-before-merge (MIP-03): a local Commit is staged, not applied.
  * marmot_commit_stage_pending() authorizes `pre` -> `post` like a receiver
- * and stores `post` and the Commit's ordering key as the group's pending
- * Commit (label "mls_group_pending"); the live state stays at `pre`.
+ * and stores, as the group's pending Commit (label "mls_group_pending"):
+ * the exact parent it was built on (epoch and confirmed transcript hash),
+ * `post`, the ordering key, the signed `event_json` (to republish after a
+ * restart) and the Add's Welcomes with their recipients.  The live state
+ * stays at `pre`.
  */
 MarmotError marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre,
                                         const MlsGroup *post,
-                                        const uint8_t *commit, size_t commit_len);
-
-/** Whether the group has a pending local Commit. */
-MarmotError marmot_commit_has_pending(Marmot *m, const MarmotGroupId *gid, bool *out);
+                                        const uint8_t *commit, size_t commit_len,
+                                        const char *event_json,
+                                        const MarmotUnsentWelcome *welcomes,
+                                        size_t welcome_count);
 
 /**
- * Apply the pending Commit (a relay accepted it): persist it as
- * marmot_commit_persist() does and drop the pending record.
- * MARMOT_ERR_STORAGE_NOT_FOUND without a pending Commit;
- * MARMOT_ERR_WRONG_EPOCH (record dropped) when a competing Commit won while
- * it was pending.  Idempotent after a crash between persisting and dropping.
+ * The group's pending Commit: its signed event (NULL when there is none) and
+ * whether it is still built on the current state (`*out_live`; otherwise a
+ * competing Commit replaced that state and merging will fail).  A record
+ * whose Commit is already applied (crash before its removal) is finished
+ * here and reported as none.
+ */
+MarmotError marmot_commit_get_pending(Marmot *m, MarmotGroup *group,
+                                      char **out_event_json, bool *out_live);
+
+/** Whether the group has a pending local Commit (live or superseded). */
+MarmotError marmot_commit_has_pending(Marmot *m, MarmotGroup *group, bool *out);
+
+/**
+ * Apply the pending Commit (a relay accepted it), move its Welcomes to the
+ * unsent-Welcome outbox and drop the record.
+ * - MARMOT_ERR_STORAGE_NOT_FOUND without a pending Commit.
+ * - MARMOT_ERR_WRONG_EPOCH (record dropped) when the state it was built on
+ *   was replaced by a competing Commit (review R1).
+ * - An already applied Commit (crash, or our relay echo) is finished: OK.
+ * - A Commit that can no longer pass authorization is dropped (its error);
+ *   a storage error keeps it (merge again, or clear).
  */
 MarmotError marmot_commit_merge_pending(Marmot *m, MarmotGroup *group);
 
 /**
  * Discard the pending Commit (no relay accepted it) and re-process the
  * inbound Commits that were deferred because they lost to it.  MARMOT_OK
- * when there is nothing pending.
+ * when there is nothing pending; an already applied Commit is kept (its
+ * Welcomes go to the outbox).
  */
 MarmotError marmot_commit_clear_pending(Marmot *m, MarmotGroup *group);
+
+/** The unsent-Welcome outbox (Welcomes of merged Adds). */
+MarmotError marmot_commit_get_unsent_welcomes(Marmot *m, const MarmotGroupId *gid,
+                                              MarmotUnsentWelcome **out,
+                                              size_t *out_count);
+MarmotError marmot_commit_mark_welcomes_sent(Marmot *m, const MarmotGroupId *gid);
 
 /**
  * Apply a received Commit (`msg`, an MLSMessage PublicMessage already

@@ -379,9 +379,17 @@ MarmotError marmot_create_group(Marmot *m,
  * an Add only after this succeeds.  Without a pending Commit (e.g. after
  * marmot_create_group()) this only records the confirmation.
  *
- * Returns: MARMOT_OK on success; MARMOT_ERR_WRONG_EPOCH when a competing
- *   member's Commit won while ours was pending -- ours is discarded and the
- *   group follows the winner (do not send its Welcomes)
+ * The pending Commit is bound to the exact state it was built on: if a
+ * competing Commit replaced that state -- even with another of the same
+ * epoch -- the pending one can no longer be merged.  An Add's Welcomes move
+ * to the unsent-Welcome outbox on merge (marmot_get_unsent_welcomes()).
+ *
+ * Returns: MARMOT_OK on success (also when the Commit was already applied,
+ *   e.g. by its relay echo or before a crash); MARMOT_ERR_WRONG_EPOCH when a
+ *   competing member's Commit won while ours was pending -- ours is
+ *   discarded and the group follows the winner (do not send its Welcomes);
+ *   an authorization error when the Commit can never apply (it is
+ *   discarded); a storage error leaves it pending (merge again or clear)
  */
 MarmotError marmot_merge_pending_commit(Marmot *m,
                                          const MarmotGroupId *mls_group_id);
@@ -400,6 +408,76 @@ MarmotError marmot_merge_pending_commit(Marmot *m,
  */
 MarmotError marmot_clear_pending_commit(Marmot *m,
                                          const MarmotGroupId *mls_group_id);
+
+/**
+ * marmot_get_pending_commit:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_event_json: (out) (transfer full) (nullable): the pending Commit's
+ *   signed kind:445 event, or NULL when nothing is pending
+ * @out_superseded: (out) (optional): TRUE when a competing Commit replaced
+ *   the state the pending one was built on (merging will return
+ *   MARMOT_ERR_WRONG_EPOCH)
+ *
+ * Restart path for publish-before-merge: after a crash, or when a relay's
+ * answer was lost, republish @out_event_json and merge on the first relay OK.
+ * Receiving our own pending Commit back from a relay also merges it
+ * (marmot_process_message() returns MARMOT_RESULT_COMMIT): the relay stored
+ * it, so it is published.  Free @out_event_json with free().
+ *
+ * Returns: MARMOT_OK (also when nothing is pending)
+ */
+MarmotError marmot_get_pending_commit(Marmot *m,
+                                       const MarmotGroupId *mls_group_id,
+                                       char **out_event_json,
+                                       bool *out_superseded);
+
+/**
+ * MarmotUnsentWelcome:
+ * @recipient: the invitee's Nostr account key (gift-wrap recipient)
+ * @rumor_json: the unsigned kind:444 Welcome rumor to gift-wrap (NIP-59)
+ *
+ * A Welcome of a merged Add that has not been confirmed as sent.
+ */
+typedef struct {
+    uint8_t recipient[32];
+    char   *rumor_json;
+} MarmotUnsentWelcome;
+
+/** Free an array returned by marmot_get_unsent_welcomes(). */
+void marmot_unsent_welcomes_free(MarmotUnsentWelcome *welcomes, size_t count);
+
+/**
+ * marmot_get_unsent_welcomes:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_welcomes: (out) (array length=out_count) (transfer full): the Welcomes
+ *   of this group's merged Adds not yet marked sent (NULL when none)
+ * @out_count: (out): number of Welcomes
+ *
+ * When a pending Add Commit is merged -- by marmot_merge_pending_commit(),
+ * by its relay echo, or after a restart -- its Welcomes move here.  Gift-wrap
+ * and send each to its recipient, then call marmot_mark_welcomes_sent().
+ * (The rumors marmot_add_members() returns are the same Welcomes; send one
+ * copy only.)
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_get_unsent_welcomes(Marmot *m,
+                                        const MarmotGroupId *mls_group_id,
+                                        MarmotUnsentWelcome **out_welcomes,
+                                        size_t *out_count);
+
+/**
+ * marmot_mark_welcomes_sent:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ *
+ * Empty the group's unsent-Welcome outbox.
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id);
 
 /**
  * marmot_add_members:
