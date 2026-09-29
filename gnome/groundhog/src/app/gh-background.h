@@ -102,7 +102,9 @@ gboolean gh_background_get_enabled(GhBackground *self);
 gboolean gh_background_get_holding(GhBackground *self);
 /* FILE or PORTAL (AUTO resolved). */
 GhBackgroundMethod gh_background_get_method(GhBackground *self);
-/* What the portal status says (or would say) now; NULL while off. */
+/* What the portal status says (or would say) now; NULL while off, and at
+ * start until the account store's state is known (while it opens, the
+ * status stays what it was). */
 const gchar *gh_background_get_status(GhBackground *self);
 /* Whether the one-time explanation was shown (or background mode was
  * explained by the caller of gh_background_set_enabled_async()). */

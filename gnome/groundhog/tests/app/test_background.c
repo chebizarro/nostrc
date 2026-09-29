@@ -139,6 +139,7 @@ typedef struct {
   gboolean unknown;       /* answer RequestBackground as an unknown method */
   GPtrArray *requests;    /* GVariant a{sv}: every RequestBackground's options */
   GPtrArray *statuses;    /* gchar*: every SetStatus message */
+  guint version_reads;
 } FakePortal;
 
 static FakePortal portal;
@@ -194,6 +195,7 @@ portal_get_property(GDBusConnection *connection, const gchar *sender, const gcha
 {
   (void)connection; (void)sender; (void)path; (void)interface; (void)error; (void)user_data;
   g_assert_cmpstr(property, ==, "version");
+  portal.version_reads++;
   return g_variant_new_uint32(portal.version);
 }
 
@@ -231,6 +233,7 @@ portal_reset(guint version)
   portal.version = version;
   portal.deny = FALSE;
   portal.unknown = FALSE;
+  portal.version_reads = 0;
   g_ptr_array_set_size(portal.requests, 0);
   g_ptr_array_set_size(portal.statuses, 0);
 }
@@ -567,6 +570,33 @@ first_short_timer(const guint *own, guint n_own, gint64 *due_ms, guint *in_fligh
   return 0;
 }
 
+/* Whether no D-Bus call on the main context waits for its reply. */
+static gboolean
+no_calls_in_flight(gpointer data)
+{
+  (void)data;
+  GMainContext *context = g_main_context_default();
+  GSource *probe = g_idle_source_new();
+  guint last = g_source_attach(probe, context);
+  g_source_destroy(probe);
+  g_source_unref(probe);
+  for (guint id = 1; id < last; id++) {
+    GSource *source = g_main_context_find_source_by_id(context, id);
+    if (source && !g_source_is_destroyed(source) &&
+        g_strcmp0(g_source_get_name(source), DBUS_REPLY_TIMEOUT) == 0)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+/* Every D-Bus call in flight has its reply, and the replies' callbacks ran. */
+static void
+calls_landed(void)
+{
+  gh_test_spin_until(no_calls_in_flight, NULL);
+  gh_test_run_until_idle();
+}
+
 /* Checked after every main-loop turn until it holds: a short timer that is
  * not a call in flight fails at once, named; calls in flight are waited out
  * (their replies may arm timers, so their callbacks run and it is checked
@@ -778,6 +808,53 @@ test_no11_locked_start(void)
   g_assert_true(f.shut_down);
   g_assert_cmpuint(fake_secret_prompts(f.secret), ==, 0);
   g_assert_cmpuint(gh_test_count_files(f.data_dir), ==, 0);
+  fixture_down(&f);
+}
+
+/* NO-11, the start the desktop sees (nostrc-yzlp): while the key lookup
+ * has not answered, the service says nothing, so a portal that answers
+ * first never shows "Receiving messages" for a keyring that turns out to be
+ * locked. The lookup is held until the portal's version was read and every
+ * reply landed. */
+static gboolean
+portal_read_and_lookup_waiting(gpointer data)
+{
+  Fixture *f = data;
+  return portal.version_reads > 0 && fake_secret_pending(f->secret) > 0;
+}
+
+static void
+script_locked_late_lookup(Fixture *f)
+{
+  gh_test_spin_until(portal_read_and_lookup_waiting, f);
+  calls_landed();
+  g_assert_cmpint(gh_account_store_get_state(f->store), ==, GH_ACCOUNT_STORE_OPENING);
+  g_assert_null(gh_background_get_status(f->background));
+  g_assert_cmpuint(portal.statuses->len, ==, 0);
+  fake_secret_set_hold(f->secret, FALSE);
+  while (fake_secret_release(f->secret))
+    ;
+  g_assert_cmpint(settle(f), ==, GH_ACCOUNT_STORE_LOCKED);
+  gh_test_spin_until(portal_has_status, (gpointer)GH_BACKGROUND_STATUS_LOCKED);
+  calls_landed();
+  g_assert_cmpuint(portal.statuses->len, ==, 1);
+  g_assert_false(portal_has_status((gpointer)GH_BACKGROUND_STATUS_RECEIVING));
+  g_action_group_activate_action(G_ACTION_GROUP(f->app), "quit", NULL);
+}
+
+static void
+test_no11_status_waits_for_store(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, GH_BACKGROUND_METHOD_PORTAL);
+  portal_reset(2);
+  fake_secret_set_locked(f.secret, TRUE);
+  fake_secret_set_hold(f.secret, TRUE);
+  f.with_stack = TRUE;
+  f.script = script_locked_late_lookup;
+  g_assert_cmpint(run_app(&f, service_app(), TRUE), ==, 0);
+  g_assert_true(f.shut_down);
+  g_assert_cmpuint(fake_secret_prompts(f.secret), ==, 0);
   fixture_down(&f);
 }
 
@@ -1559,6 +1636,8 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/background/auto-host-uses-file",
                            test_auto_host_uses_file);
   nostrc_test_bus_add_func("/groundhog/background/no11-locked-start", test_no11_locked_start);
+  nostrc_test_bus_add_func("/groundhog/background/no11-status-waits-for-store",
+                           test_no11_status_waits_for_store);
   nostrc_test_bus_add_func("/groundhog/background/no12-idle-timers", test_no12_idle_timers);
   status = g_test_run();
   portal_down();
