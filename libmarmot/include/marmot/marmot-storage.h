@@ -4,7 +4,8 @@
  * Storage interface (vtable pattern).
  * Mirrors MDK's MdkStorageProvider trait for interoperability.
  *
- * Implementations must provide all non-NULL function pointers.
+ * Implementations must provide all non-NULL function pointers; the
+ * transaction hooks at the end are optional (all three or none).
  * Built-in backends: marmot_storage_memory_new(), marmot_storage_sqlite_new().
  *
  * SPDX-License-Identifier: MIT
@@ -228,6 +229,33 @@ typedef struct MarmotStorage {
 
     /** Destroy the storage backend and free all resources. */
     void (*destroy)(void *ctx);
+
+    /* ── Transactions (optional; since 0.7.0, nostrc-qp24.7) ─────────── */
+    /* Set all three or none (marmot_new() refuses a storage with only some).
+     * With them, every libmarmot operation that writes runs as exactly one
+     * transaction: begin, the operation's reads and writes, then commit --
+     * or rollback, which must undo every write since begin.  An epoch
+     * transition (exporter secret, retained parent, MLS state, group
+     * record), a pending Commit and its merge, the Welcome outbox and a
+     * processed message with its ratchet state are then all-or-nothing,
+     * across crashes too.  libmarmot never nests these calls.  A backend
+     * may itself run inside an application transaction (then begin is a
+     * savepoint of it).  Reads between begin and commit must see the
+     * transaction's own writes.  Without the hooks libmarmot restores what
+     * it can after a failed write, but a crash can leave a partial state.
+     * Put them at the end of the struct, as here: a storage built against
+     * an older header must be rebuilt (the struct grew). */
+
+    /** Begin a transaction.  An error aborts the operation before it
+     *  touches anything. */
+    MarmotError (*begin)(void *ctx);
+
+    /** Make every write since begin durable, atomically.  On failure the
+     *  backend must have undone all of them. */
+    MarmotError (*commit)(void *ctx);
+
+    /** Undo every write since begin. */
+    void (*rollback)(void *ctx);
 } MarmotStorage;
 
 /* ──────────────────────────────────────────────────────────────────────────

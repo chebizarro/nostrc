@@ -59,8 +59,8 @@ derive_media_key(const uint8_t exporter_secret[32],
 
 /* ── AEAD encryption/decryption ────────────────────────────────────────── */
 
-MarmotError
-marmot_encrypt_media(Marmot *m,
+static MarmotError
+encrypt_media_impl(Marmot *m,
                       const MarmotGroupId *mls_group_id,
                       const uint8_t *file_data, size_t file_len,
                       const char *mime_type,
@@ -262,4 +262,22 @@ marmot_encrypted_media_clear(MarmotEncryptedMedia *result)
     free(result->imeta.filename);
     free(result->imeta.url);
     memset(result, 0, sizeof(*result));
+}
+
+/* A reconcile of an interrupted transition may write: one transaction. */
+MarmotError
+marmot_encrypt_media(Marmot *m,
+                      const MarmotGroupId *mls_group_id,
+                      const uint8_t *file_data, size_t file_len,
+                      const char *mime_type,
+                      const char *filename,
+                      MarmotEncryptedMedia *result)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = encrypt_media_impl(m, mls_group_id, file_data, file_len, mime_type, filename,
+                             result);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) marmot_encrypted_media_clear(result);
+    return end;
 }

@@ -80,6 +80,57 @@ marmot_now(void)
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Storage transactions (nostrc-qp24.7)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static bool
+txn_supported(const Marmot *m)
+{
+    return m->storage && m->storage->begin && m->storage->commit &&
+           m->storage->rollback;
+}
+
+MarmotError
+marmot_txn_begin(Marmot *m)
+{
+    if (!m) return MARMOT_ERR_INVALID_ARG;
+    if (m->txn_depth++ > 0) return MARMOT_OK;
+    m->txn_keep = false;
+    if (!txn_supported(m)) return MARMOT_OK;
+    MarmotError err = m->storage->begin(m->storage->ctx);
+    if (err != MARMOT_OK) {
+        m->txn_depth = 0;
+        /* Fail closed: nothing runs outside a transaction the backend offers. */
+        return err == MARMOT_ERR_STORAGE_NOT_FOUND ? MARMOT_ERR_STORAGE : err;
+    }
+    return MARMOT_OK;
+}
+
+void
+marmot_txn_keep(Marmot *m)
+{
+    if (m && m->txn_depth > 0) m->txn_keep = true;
+}
+
+MarmotError
+marmot_txn_end(Marmot *m, MarmotError result)
+{
+    if (!m || m->txn_depth == 0) return result;
+    if (--m->txn_depth > 0) return result;
+    bool keep = m->txn_keep;
+    m->txn_keep = false;
+    if (!txn_supported(m)) return result;
+    if (result != MARMOT_OK && !keep) {
+        m->storage->rollback(m->storage->ctx);
+        return result;
+    }
+    MarmotError err = m->storage->commit(m->storage->ctx);
+    if (err != MARMOT_OK)   /* the backend undid it all */
+        return err == MARMOT_ERR_STORAGE_NOT_FOUND ? MARMOT_ERR_STORAGE : err;
+    return result;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Lifecycle
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -94,6 +145,11 @@ Marmot *
 marmot_new_with_config(MarmotStorage *storage, const MarmotConfig *config)
 {
     if (!storage || !config) return NULL;
+    /* Transaction hooks come as a set: a backend that could begin but not
+     * commit (or roll back) would lose or half-apply every operation. */
+    int hooks = (storage->begin != NULL) + (storage->commit != NULL) +
+                (storage->rollback != NULL);
+    if (hooks != 0 && hooks != 3) return NULL;
 
     Marmot *m = calloc(1, sizeof(Marmot));
     if (!m) return NULL;

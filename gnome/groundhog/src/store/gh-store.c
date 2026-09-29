@@ -88,6 +88,9 @@ static const gchar *const store_cut_points[] = {
   "purge:before-commit", "purge:after-commit", "purge:checkpoint",
   "forget:outbox", "forget:messages", "forget:conversation",
   "forget:before-commit", "forget:after-commit",
+  /* GhStoreMarmot (nostrc-qp24.7): after every MLS write, and around the
+   * commit of a libmarmot operation's own transaction. */
+  "mls:write", "mls:before-commit", "mls:after-commit",
   NULL
 };
 
@@ -142,6 +145,12 @@ store_cut(const gchar *label, const gchar *step)
   _exit(137);
 }
 #define STORE_CUT(label, step) store_cut((label), (step))
+
+void
+gh_store_test_cut(const gchar *label, const gchar *step)
+{
+  store_cut(label, step);
+}
 
 static uid_t
 store_uid(void)
@@ -985,6 +994,14 @@ gh_store_begin(GhStore *store, GError **error)
 {
   g_return_val_if_fail(store != NULL, FALSE);
   return store_begin(store, "txn", error);
+}
+
+gboolean
+gh_store_begin_named(GhStore *store, const gchar *label, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(label != NULL, FALSE);
+  return store_begin(store, label, error);
 }
 
 gboolean

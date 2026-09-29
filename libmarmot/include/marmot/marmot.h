@@ -65,6 +65,11 @@ MarmotError marmot_decrypt_media(Marmot *m,
  * Create a new Marmot instance with default configuration.
  * The storage is owned by the Marmot instance and freed on marmot_free().
  *
+ * Transactions (since 0.7.0): when the storage has the begin/commit/
+ * rollback hooks (marmot-storage.h), every operation below that writes is
+ * one storage transaction, all or nothing.  A storage with only some of
+ * them is refused: NULL is returned and @storage is not taken.
+ *
  * Thread safety: a Marmot instance, and the storage it owns, is NOT
  * thread-safe.  Calls on one instance must be serialized by the caller
  * (e.g. one mutex around every call, as marmot-gobject does per client):
@@ -749,6 +754,11 @@ MarmotError marmot_save_created_message(Marmot *m,
  *   epoch cannot be decrypted yet (MARMOT_ERR_NIP44); retry it after the
  *   missing Commits.  Every rejection leaves the group unchanged.
  * - Standalone proposals: MARMOT_ERR_UNSUPPORTED (not queued)
+ *
+ * Late messages (since 0.7.0): an application message of the previous
+ * epoch that arrives after the next Commit was applied is read with the
+ * retained parent state (the state that Commit was built on, kept for one
+ * epoch).  Older ones fail with MARMOT_ERR_MLS.
  *
  * MIP-03 messages require MLS PrivateMessage framing by default. The legacy
  * raw-JSON NIP-44 fallback is accepted only when

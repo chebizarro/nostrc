@@ -40,6 +40,9 @@ void canary_scan_free(CanaryScan *scan);
 
 /* A needle (at least 8 bytes) that must not appear, in any encoding above. */
 void canary_scan_add(CanaryScan *scan, const gchar *label, const gchar *needle);
+/* A binary needle (at least 8 bytes, e.g. a key), in every encoding above. */
+void canary_scan_add_bytes(CanaryScan *scan, const gchar *label, gconstpointer needle,
+                           gsize length);
 /* A needle searched for as its exact bytes only. */
 void canary_scan_add_literal(CanaryScan *scan, const gchar *label, const gchar *needle);
 

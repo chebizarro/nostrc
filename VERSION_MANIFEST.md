@@ -15,7 +15,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.6.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.7.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.3.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.11.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
@@ -73,6 +73,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | marmot-gobject | 1.3.0 | MINOR bump: new `marmot_gobject_client_process_rumor_message_async/_finish` (backward compatible); `process_message_async` now gets the verifying libmarmot path. |
 | same | gnostr | 0.1.0 | No bump (unreleased): the mls-groups gift-wrap route sends kind:445 rumors to the rumor path; the relay route is unchanged (nostrdb already verified). |
 | same | groundhog | 0.11.0 | No bump: the application does not call libmarmot yet (qp24.13); only GhStoreMarmot tests do, with signed events. |
+| libmarmot 0.6.0 -> 0.7.0 (MINOR: optional `MarmotStorage` `begin`/`commit`/`rollback` hooks, every writing operation one transaction; late application messages read with the retained parent; nostrc-qp24.7) | libmarmot | 0.7.0 | MINOR bump: additive storage-interface capability (the struct grew at its end, so custom backends must be rebuilt) plus new behaviour (late messages of the previous epoch are delivered; a received message whose ratchet step cannot be stored fails closed). Built-in backends unchanged. Migration notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.3.0 | No bump: no source, API or ABI change; a rebuild picks up the new libmarmot behaviour. |
+| same | gnostr | 0.1.0 | No bump (unreleased): rebuild only. Its SQLite-backed store has no transaction hooks yet (nostrc-wf71). |
+| same | groundhog | 0.11.0 | No bump: GhStoreMarmot's transaction hooks and the new GTK-free Commit lifecycle (`gh-mls-commits`) are not linked into the application until nostrc-qp24.13. `gh_store_begin_named()` and the `mls:*` cut points (test builds only) add no behaviour to the executable. |
 
 ## Maintenance
 

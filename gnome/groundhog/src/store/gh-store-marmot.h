@@ -21,11 +21,20 @@ G_BEGIN_DECLS
  * mls_snapshot_rows. v1's mls_groups (conversation <-> MLS group link) belongs
  * to the caller and is never written here.
  *
- * Transactions. Every write runs as its own transaction or, inside the
- * caller's gh_store_begin()/gh_store_commit(), as a savepoint of it. A write
- * that fails is undone completely and nothing outside it is touched. To make
- * a libmarmot operation atomic with its snapshot and outbox rows (T-mls), wrap
- * all of it:
+ * Transactions. Every libmarmot operation that writes runs as one
+ * transaction (MarmotStorage.begin/commit/rollback, libmarmot >= 0.7.0,
+ * nostrc-qp24.7): an epoch transition (exporter secret, retained parent, MLS
+ * state, group record), a pending Commit, its merge with the Welcome outbox,
+ * a received message with its ratchet step and processed marker, a Welcome
+ * join -- all of it or none of it, across crashes too (cut points "mls:write"
+ * after every write, "mls:before-commit"/"mls:after-commit" in test builds).
+ * A failed operation is rolled back; its error stays readable with
+ * gh_store_marmot_take_error(). A vtable call outside an operation runs as
+ * its own transaction, and inside the caller's gh_store_begin()/
+ * gh_store_commit() every level is a savepoint of it. A write that fails is
+ * undone completely and nothing outside it is touched. To make a libmarmot
+ * operation atomic with its snapshot and outbox rows (T-mls), wrap all of
+ * it:
  *
  *   gh_store_begin(store, &error);
  *   storage->create_snapshot(storage->ctx, gid, "pending-commit");

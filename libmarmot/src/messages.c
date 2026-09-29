@@ -203,6 +203,7 @@ msg_load_mls_group(Marmot *m, const MarmotGroupId *gid, MlsGroup *out)
     if (err != MARMOT_OK || !state_data) return -1;
 
     int rc = mls_group_deserialize(state_data, state_len, out);
+    sodium_memzero(state_data, state_len);   /* epoch secrets */
     free(state_data);
     return rc;
 }
@@ -220,6 +221,7 @@ msg_save_mls_group(Marmot *m, const MlsGroup *mls)
     MarmotError err = m->storage->mls_store(m->storage->ctx, "mls_group",
                                              mls->group_id, mls->group_id_len,
                                              state_data, state_len);
+    sodium_memzero(state_data, state_len);
     free(state_data);
     return (err == MARMOT_OK) ? 0 : -1;
 }
@@ -378,8 +380,8 @@ parse_group_event(const char *event_json, GroupEventOrigin origin,
  * Public API: marmot_create_message
  * ══════════════════════════════════════════════════════════════════════════ */
 
-MarmotError
-marmot_create_message(Marmot *m,
+static MarmotError
+create_message_impl(Marmot *m,
                        const MarmotGroupId *mls_group_id,
                        const char *inner_event_json,
                        MarmotOutgoingMessage *result)
@@ -556,8 +558,8 @@ marmot_create_message(Marmot *m,
     return MARMOT_OK;
 }
 
-MarmotError
-marmot_save_created_message(Marmot *m,
+static MarmotError
+save_created_message_impl(Marmot *m,
                              const MarmotGroupId *mls_group_id,
                              const char *signed_group_event_json,
                              const char *inner_event_json)
@@ -771,6 +773,7 @@ process_group_event(Marmot *m, const char *group_event_json,
     uint8_t *inner_plaintext = NULL;
     size_t inner_plaintext_len = 0;
     bool used_mls = false;
+    bool late = false;   /* decrypted with the retained previous-epoch state */
 
     /* Only attempt MLS decrypt when the stored MLS epoch matches the epoch
      * whose exporter_secret successfully decrypted the NIP-44 layer. If
@@ -791,6 +794,29 @@ process_group_event(Marmot *m, const char *group_event_json,
             mls_group_free(&mls_group);
             marmot_group_free(group);
             parsed_group_event_clear(&parsed);
+            result->type = MARMOT_RESULT_OWN_MESSAGE;
+            return MARMOT_OK;
+        }
+    } else if (mls_loaded && used_epoch + 1 == mls_group.epoch) {
+        /* A message sent in the previous epoch that arrived after we
+         * applied the next Commit: read it with the retained parent state
+         * (nostrc-qp24.7; one epoch, libmarmot's rewind horizon). */
+        uint32_t sender_leaf = 0;
+        MarmotError lerr = marmot_commit_decrypt_late(m, &group->mls_group_id, used_epoch,
+                                                      decrypted, decrypted_len,
+                                                      &inner_plaintext,
+                                                      &inner_plaintext_len, &sender_leaf);
+        if (lerr == MARMOT_OK) {
+            used_mls = true;
+            late = true;
+        } else if (lerr == MARMOT_ERR_OWN_MESSAGE ||
+                   (lerr != MARMOT_ERR_MLS && lerr != MARMOT_ERR_STORAGE_NOT_FOUND)) {
+            /* Our own echo, or a storage failure (fail closed). */
+            free(decrypted);
+            mls_group_free(&mls_group);
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            if (lerr != MARMOT_ERR_OWN_MESSAGE) return lerr;
             result->type = MARMOT_RESULT_OWN_MESSAGE;
             return MARMOT_OK;
         }
@@ -844,9 +870,16 @@ process_group_event(Marmot *m, const char *group_event_json,
         free(decrypted);
     }
 
-    /* Persist updated MLS state (generation counter advances on decrypt) */
-    if (used_mls) {
-        msg_save_mls_group(m, &mls_group);
+    /* Persist updated MLS state (generation counter advances on decrypt).
+     * Fail closed: a message whose ratchet step is not stored is not
+     * delivered (the transaction rolls everything back, and the event can be
+     * processed again). */
+    if (used_mls && !late && msg_save_mls_group(m, &mls_group) != 0) {
+        mls_group_free(&mls_group);
+        free(inner_json);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_STORAGE;
     }
     if (mls_loaded) {
         mls_group_free(&mls_group);
@@ -953,12 +986,30 @@ process_group_event(Marmot *m, const char *group_event_json,
     return MARMOT_OK;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Public API: one storage transaction per operation (nostrc-qp24.7)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* A received event: its ratchet step, processed marker, message and group
+ * record (or a whole epoch transition) land together or not at all. */
+static MarmotError
+process_group_event_txn(Marmot *m, const char *json, GroupEventOrigin origin,
+                        MarmotMessageResult *result)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = process_group_event(m, json, origin, result);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) marmot_message_result_free(result);
+    return end;
+}
+
 MarmotError
 marmot_process_message(Marmot *m,
                         const char *group_event_json,
                         MarmotMessageResult *result)
 {
-    return process_group_event(m, group_event_json, GROUP_EVENT_SIGNED, result);
+    return process_group_event_txn(m, group_event_json, GROUP_EVENT_SIGNED, result);
 }
 
 MarmotError
@@ -966,5 +1017,34 @@ marmot_process_rumor_message(Marmot *m,
                               const char *rumor_json,
                               MarmotMessageResult *result)
 {
-    return process_group_event(m, rumor_json, GROUP_EVENT_RUMOR, result);
+    return process_group_event_txn(m, rumor_json, GROUP_EVENT_RUMOR, result);
+}
+
+/* The sender's ratchet step is stored before the event is returned: a
+ * rolled-back step would reuse a key. */
+MarmotError
+marmot_create_message(Marmot *m,
+                       const MarmotGroupId *mls_group_id,
+                       const char *inner_event_json,
+                       MarmotOutgoingMessage *result)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = create_message_impl(m, mls_group_id, inner_event_json, result);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) marmot_outgoing_message_free(result);
+    return end;
+}
+
+MarmotError
+marmot_save_created_message(Marmot *m,
+                             const MarmotGroupId *mls_group_id,
+                             const char *signed_group_event_json,
+                             const char *inner_event_json)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    return marmot_txn_end(m, save_created_message_impl(m, mls_group_id,
+                                                       signed_group_event_json,
+                                                       inner_event_json));
 }

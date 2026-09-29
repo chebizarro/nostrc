@@ -499,7 +499,7 @@ leaf_app_components(const MlsLeafNode *leaf, uint16_t **ids, size_t *n)
  * ──────────────────────────────────────────────────────────────────────── */
 
 static MarmotError
-create_key_package_common(Marmot *m,
+create_key_package_common_impl(Marmot *m,
                           MarmotKeyPackageProfile profile,
                           const uint8_t nostr_pubkey[32],
                           const uint8_t nostr_sk[32],
@@ -855,6 +855,28 @@ success:
     mls_key_package_private_clear(&kp_priv);
 
     return MARMOT_OK;
+}
+
+/* The KeyPackage's private keys, its record and the account's slot are
+ * stored in one transaction (nostrc-qp24.7). */
+static MarmotError
+create_key_package_common(Marmot *m,
+                          MarmotKeyPackageProfile profile,
+                          const uint8_t nostr_pubkey[32],
+                          const uint8_t nostr_sk[32],
+                          bool sign_event,
+                          MarmotAccountSignFunc account_sign, void *sign_data,
+                          const char **relay_urls, size_t relay_count,
+                          MarmotKeyPackageResult *result)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = create_key_package_common_impl(m, profile, nostr_pubkey, nostr_sk, sign_event,
+                                         account_sign, sign_data, relay_urls,
+                                         relay_count, result);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) marmot_key_package_result_free(result);
+    return end;
 }
 
 MarmotError

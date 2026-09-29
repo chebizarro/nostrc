@@ -148,13 +148,22 @@ prepare(GhStoreMarmot *self, const char *sql, sqlite3_stmt **stmt)
   return fail_sqlite(self, rc, "Preparing an MLS statement");
 }
 
-/* Steps a statement that returns no rows. */
+/* Test builds: the crash harness can cut after any MLS write (H8). */
+#ifdef GH_STORE_TEST_HOOKS
+#define MLS_CUT(step) gh_store_test_cut("mls", (step))
+#else
+#define MLS_CUT(step) ((void) 0)
+#endif
+
+/* Steps a statement that returns no rows (every write goes through here). */
 static MarmotError
 step_done(GhStoreMarmot *self, sqlite3_stmt *stmt, const gchar *what)
 {
   int rc = sqlite3_step(stmt);
-  if (rc == SQLITE_DONE)
+  if (rc == SQLITE_DONE) {
+    MLS_CUT("write");
     return MARMOT_OK;
+  }
   if (rc == SQLITE_ROW)
     return fail(self, MARMOT_ERR_STORAGE, GH_STORE_ERROR_FAILED, "%s: unexpected row", what);
   return fail_sqlite(self, rc, what);
@@ -1849,6 +1858,42 @@ out:
   return err;
 }
 
+/* ---- libmarmot operation transactions (nostrc-qp24.7) --------------------------------
+ * libmarmot (>= 0.7.0) brackets every operation that writes with these, so
+ * all of its records -- an epoch transition's exporter secret, retained
+ * parent, MLS state and group record, a pending Commit, its merge and the
+ * Welcome outbox, a message with its ratchet step and processed marker --
+ * commit as one SQLCipher transaction or not at all. Inside a caller's
+ * transaction (T-mls) the operation is a savepoint of it. */
+
+static MarmotError
+ghm_begin(void *ctx)
+{
+  GhStoreMarmot *self = ctx;
+  GError *error = NULL;
+  if (gh_store_begin_named(self->store, "mls", &error))
+    return MARMOT_OK;
+  return fail_store(self, error);
+}
+
+/* A failed commit has rolled everything back (gh_store_commit()). */
+static MarmotError
+ghm_commit(void *ctx)
+{
+  GhStoreMarmot *self = ctx;
+  GError *error = NULL;
+  if (gh_store_commit(self->store, &error))
+    return MARMOT_OK;
+  return fail_store(self, error);
+}
+
+static void
+ghm_rollback(void *ctx)
+{
+  GhStoreMarmot *self = ctx;
+  gh_store_rollback(self->store);
+}
+
 /* ---- Lifecycle ----------------------------------------------------------------------- */
 
 /* Only durable stores are accepted (gh_store_marmot_new()). */
@@ -1932,6 +1977,10 @@ gh_store_marmot_new(GhStore *store, GError **error)
 
   storage->is_persistent = ghm_is_persistent;
   storage->destroy = ghm_destroy;
+
+  storage->begin = ghm_begin;
+  storage->commit = ghm_commit;
+  storage->rollback = ghm_rollback;
   return storage;
 }
 

@@ -1839,6 +1839,312 @@ test_rumor_path_accepts_unsigned(void)
     trio_clear(&t);
 }
 
+/* ── Storage transactions (nostrc-qp24.7) ────────────────────────────────
+ *
+ * A shim over the memory backend: it offers begin/commit/rollback, aborts if
+ * libmarmot writes outside a transaction or nests one, counts them, and can
+ * fail the Nth write.  (The memory backend cannot undo anything; real
+ * atomicity is tested in Groundhog's GhStoreMarmot crash tests.) */
+
+typedef struct {
+    MarmotStorage *inner;      /* the memory backend's struct (vtable + ctx) */
+    int  depth;
+    int  begins, commits, rollbacks, writes;
+    int  fail_write;           /* 1-based index of the write that fails; 0 = none */
+} TxnShim;
+
+static TxnShim g_shim;
+
+static MarmotError
+shim_write_gate(void)
+{
+    CHECK(g_shim.depth == 1, "a storage write outside a transaction (depth %d)", g_shim.depth);
+    g_shim.writes++;
+    if (g_shim.fail_write && g_shim.writes == g_shim.fail_write) return MARMOT_ERR_STORAGE;
+    return MARMOT_OK;
+}
+
+#define SHIM_WRITE(name, params, args)                                         \
+    static MarmotError shim_##name params                                      \
+    {                                                                          \
+        MarmotError gate = shim_write_gate();                                  \
+        if (gate != MARMOT_OK) return gate;                                    \
+        return g_shim.inner->name args;                                        \
+    }
+
+SHIM_WRITE(save_group, (void *ctx, const MarmotGroup *g), (ctx, g))
+SHIM_WRITE(delete_group, (void *ctx, const MarmotGroupId *gid), (ctx, gid))
+SHIM_WRITE(save_message, (void *ctx, const MarmotMessage *msg), (ctx, msg))
+SHIM_WRITE(save_processed_message,
+           (void *ctx, const uint8_t w[32], const uint8_t *id, int64_t at, uint64_t ep,
+            const MarmotGroupId *gid, int st, const char *why),
+           (ctx, w, id, at, ep, gid, st, why))
+SHIM_WRITE(save_welcome, (void *ctx, const MarmotWelcome *w), (ctx, w))
+SHIM_WRITE(save_processed_welcome,
+           (void *ctx, const uint8_t w[32], const uint8_t *id, int64_t at, int st,
+            const char *why),
+           (ctx, w, id, at, st, why))
+SHIM_WRITE(save_key_package_info, (void *ctx, const MarmotKeyPackageInfo *i), (ctx, i))
+SHIM_WRITE(deactivate_key_packages, (void *ctx, const uint8_t pk[32]), (ctx, pk))
+SHIM_WRITE(replace_group_relays,
+           (void *ctx, const MarmotGroupId *gid, const char **urls, size_t n),
+           (ctx, gid, urls, n))
+SHIM_WRITE(save_exporter_secret,
+           (void *ctx, const MarmotGroupId *gid, uint64_t ep, const uint8_t sec[32]),
+           (ctx, gid, ep, sec))
+SHIM_WRITE(delete_exporter_secret, (void *ctx, const MarmotGroupId *gid, uint64_t ep),
+           (ctx, gid, ep))
+SHIM_WRITE(mls_store,
+           (void *ctx, const char *l, const uint8_t *k, size_t kl, const uint8_t *v, size_t vl),
+           (ctx, l, k, kl, v, vl))
+SHIM_WRITE(mls_delete, (void *ctx, const char *l, const uint8_t *k, size_t kl), (ctx, l, k, kl))
+
+static MarmotError
+shim_begin(void *ctx)
+{
+    (void)ctx;
+    CHECK(g_shim.depth == 0, "libmarmot nested a transaction");
+    g_shim.depth = 1;
+    g_shim.begins++;
+    return MARMOT_OK;
+}
+
+static MarmotError
+shim_commit(void *ctx)
+{
+    (void)ctx;
+    CHECK(g_shim.depth == 1, "commit without begin");
+    g_shim.depth = 0;
+    g_shim.commits++;
+    return MARMOT_OK;
+}
+
+static void
+shim_rollback(void *ctx)
+{
+    (void)ctx;
+    CHECK(g_shim.depth == 1, "rollback without begin");
+    g_shim.depth = 0;
+    g_shim.rollbacks++;
+}
+
+/* A Marmot on the shim (one at a time); free with shim_free(). */
+static Marmot *
+shim_marmot_new(void)
+{
+    memset(&g_shim, 0, sizeof(g_shim));
+    g_shim.inner = marmot_storage_memory_new();
+    CHECK(g_shim.inner, "memory storage");
+    MarmotStorage *s = malloc(sizeof(*s));
+    CHECK(s, "alloc");
+    *s = *g_shim.inner;   /* reads go straight to the memory backend */
+#define HOOK(name) s->name = shim_##name
+    HOOK(save_group); HOOK(delete_group); HOOK(save_message);
+    HOOK(save_processed_message); HOOK(save_welcome); HOOK(save_processed_welcome);
+    HOOK(save_key_package_info); HOOK(deactivate_key_packages);
+    HOOK(replace_group_relays); HOOK(save_exporter_secret);
+    HOOK(delete_exporter_secret); HOOK(mls_store); HOOK(mls_delete);
+    HOOK(begin); HOOK(commit); HOOK(rollback);
+#undef HOOK
+    Marmot *m = marmot_new(s);
+    CHECK(m, "marmot_new on the shim");
+    return m;
+}
+
+static void
+shim_free(Marmot *m)
+{
+    marmot_free(m);            /* destroys the memory ctx and frees the shim struct */
+    free(g_shim.inner);        /* the memory backend's own struct */
+    memset(&g_shim, 0, sizeof(g_shim));
+}
+
+static void
+shim_reset_counts(void)
+{
+    g_shim.begins = g_shim.commits = g_shim.rollbacks = g_shim.writes = 0;
+}
+
+static void
+expect_txns(int begins, int commits, int rollbacks, const char *what)
+{
+    CHECK(g_shim.depth == 0, "%s: transaction left open", what);
+    CHECK(g_shim.begins == begins && g_shim.commits == commits &&
+          g_shim.rollbacks == rollbacks,
+          "%s: begin/commit/rollback %d/%d/%d, want %d/%d/%d", what, g_shim.begins,
+          g_shim.commits, g_shim.rollbacks, begins, commits, rollbacks);
+    shim_reset_counts();
+}
+
+/* Every write of every operation runs inside exactly one transaction; an
+ * error rolls it back unless its writes are the outcome (a superseded
+ * pending Commit dropped); a failed write rolls back; a storage offering
+ * only some hooks is refused. */
+static void
+transaction_case(bool alice_wins)
+{
+    /* Alice's instance runs on the shim; her keys come from member_init. */
+    Member alice, bob;
+    member_init(&alice, "Alice");
+    marmot_free(alice.m);
+    alice.m = shim_marmot_new();
+    member_init(&bob, "Bob");
+    member_rekey_order(&bob, &alice, alice_wins);   /* Bob above: Alice wins */
+
+    /* create_group: one transaction, committed. */
+    char *bob_kp = key_package(&bob);
+    const char *kps[] = { bob_kp };
+    uint8_t admins[2][32];
+    memcpy(admins[0], alice.pk, 32);
+    memcpy(admins[1], bob.pk, 32);
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Txn";
+    cfg.admin_pubkeys = admins;
+    cfg.admin_count = 2;
+    char *relays[] = { "wss://relay.example" };
+    cfg.relay_urls = relays;
+    cfg.relay_count = 1;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+    free(bob_kp);
+    CHECK(g_shim.writes >= 4, "create_group wrote %d records", g_shim.writes);
+    expect_txns(1, 1, 0, "create_group");
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+
+    /* A pending Commit, merged: two operations, two transactions. */
+    char *c1 = rename_pending(&alice, &gid, "One");
+    expect_txns(1, 1, 0, "update_group_metadata");
+    merge(&alice, &gid);
+    expect_txns(1, 1, 0, "merge_pending_commit");
+    expect_commit(&bob, c1, "Bob");
+
+    /* Messages both ways (the receiving side's ratchet, marker and message). */
+    char *to_alice = app_message(&bob, &gid, "to Alice");
+    MarmotError err;
+    CHECK(deliver(&alice, to_alice, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "Alice reads Bob: %d", err);
+    expect_txns(1, 1, 0, "process_message (application)");
+    free(app_message(&alice, &gid, "to Bob"));
+    expect_txns(1, 1, 0, "create_message");
+
+    /* A rejected event rolls back (nothing of it may stay). */
+    char *forged = tampered(to_alice, TAMPER_FORGED_ID);
+    deliver(&alice, forged, &err, NULL);
+    CHECK(err == MARMOT_ERR_EVENT, "forged: %d", err);
+    expect_txns(1, 0, 1, "rejected event");
+    free(forged);
+    free(to_alice);
+
+    /* A failed write rolls the whole operation back: the Nth write of a
+     * merge (exporter secret, parent, state, group record, ...). */
+    char *c2 = rename_pending(&alice, &gid, "Two");
+    shim_reset_counts();
+    for (int n = 1; n <= 4; n++) {
+        g_shim.fail_write = n;
+        g_shim.writes = 0;
+        CHECK(marmot_merge_pending_commit(alice.m, &gid) != MARMOT_OK,
+              "merge with write %d failing", n);
+        CHECK(g_shim.rollbacks == 1 && g_shim.commits == 0,
+              "write %d failed: rolled back (%d/%d)", n, g_shim.commits, g_shim.rollbacks);
+        shim_reset_counts();
+    }
+    g_shim.fail_write = 0;
+
+    /* Keep: Bob (also an admin) renames while Alice's "Two" is pending.
+     * Both are privileged, so the lower account key wins.  Either Bob's
+     * Commit loses and is deferred (MARMOT_ERR_OWN_COMMIT_PENDING, the
+     * deferral kept), or it wins and Alice's pending Commit is superseded:
+     * her merge drops it (MARMOT_ERR_WRONG_EPOCH, the drop kept). */
+    char *cb = rename_pending(&bob, &gid, "Bob's");
+    MarmotMessageResultType t = deliver(&alice, cb, &err, NULL);
+    if (alice_wins) {
+        CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "Bob's loser deferred: %d", err);
+        expect_txns(1, 1, 0, "deferred inbound Commit (kept)");
+        OK(marmot_clear_pending_commit(alice.m, &gid));   /* re-processes Bob's */
+        expect_txns(1, 1, 0, "clear_pending_commit");
+    } else {
+        CHECK(err == MARMOT_OK && t == MARMOT_RESULT_COMMIT, "Bob's winner applied: %d", err);
+        expect_txns(1, 1, 0, "inbound Commit");
+        CHECK(marmot_merge_pending_commit(alice.m, &gid) == MARMOT_ERR_WRONG_EPOCH,
+              "superseded merge");
+        expect_txns(1, 1, 0, "superseded pending Commit dropped (kept)");
+    }
+    char *ev = NULL;
+    OK(marmot_get_pending_commit(alice.m, &gid, &ev, NULL));
+    CHECK(ev == NULL, "nothing pending any more");
+    expect_txns(1, 1, 0, "get_pending_commit");
+    merge(&bob, &gid);
+    free(cb);
+    free(c2);
+
+    /* A partial set of hooks is refused (fail closed). */
+    MarmotStorage *half = marmot_storage_memory_new();
+    half->begin = shim_begin;
+    CHECK(marmot_new(half) == NULL, "a storage with begin but no commit is refused");
+    marmot_storage_free(half);
+
+    free(c1);
+    marmot_group_id_free(&gid);
+    marmot_free(bob.m);
+    shim_free(alice.m);
+}
+
+static void
+test_operations_run_in_one_transaction(void)
+{
+    transaction_case(true);    /* the losing inbound Commit is deferred (kept) */
+    transaction_case(false);   /* the superseded pending Commit is dropped (kept) */
+}
+
+/* ── Late messages (nostrc-qp24.7) ────────────────────────────────────── */
+
+/* Messages Bob sent in epoch E reach Charlie after Charlie applied the Commit
+ * to E+1: they are read with the retained parent state, out of order, and
+ * the same event again is a duplicate.  A message two epochs back is past
+ * the one-epoch rewind horizon; its rejection changes nothing. */
+static void
+test_late_messages_use_retained_parent(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *late1 = app_message(&t.bob, &t.gid, "late one");
+    char *late2 = app_message(&t.bob, &t.gid, "late two");
+    char *late3 = app_message(&t.bob, &t.gid, "late three");
+    char *commit = rename_group(&t.alice, &t.gid, "Moved");
+    expect_commit(&t.charlie, commit, "Charlie moves to E+1");
+
+    MarmotError err;
+    CHECK(deliver(&t.charlie, late2, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "late message (out of order) at E+1: %d", err);
+    CHECK(deliver(&t.charlie, late1, &err, NULL) == MARMOT_RESULT_APPLICATION_MESSAGE &&
+          err == MARMOT_OK, "earlier late message at E+1: %d", err);
+    CHECK(deliver(&t.charlie, late2, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
+          err == MARMOT_OK, "the same late message again is a duplicate: %d", err);
+    /* (A replay in a new envelope is not refused yet, here or in the live
+     * epoch: the ratchet is not persisted, nostrc-ai04.) */
+
+    /* The live epoch is untouched: everyone still talks at E+1. */
+    expect_commit(&t.bob, commit, "Bob follows");
+    expect_converged(t.all, 3, &t.gid, "Moved", t.epoch + 1);
+    expect_messages_flow(t.all, 3, &t.gid);
+
+    /* E+2: the E message is past the horizon. */
+    char *commit2 = rename_group(&t.alice, &t.gid, "Moved again");
+    expect_commit(&t.charlie, commit2, "Charlie moves to E+2");
+    expect_rejected(&t.charlie, &t.gid, late3, MARMOT_ERR_MLS, "two epochs late");
+    expect_commit(&t.bob, commit2, "Bob follows again");
+    free(commit2);
+    free(commit);
+    free(late1);
+    free(late2);
+    free(late3);
+    trio_clear(&t);
+}
+
 int
 main(void)
 {
@@ -1864,6 +2170,8 @@ main(void)
     RUN(test_duplicate_welcome_does_not_roll_back);
     RUN(test_unauthenticated_events_rejected);
     RUN(test_rumor_path_accepts_unsigned);
+    RUN(test_late_messages_use_retained_parent);
+    RUN(test_operations_run_in_one_transaction);
     printf("All commit tests passed\n");
     return 0;
 }

@@ -268,6 +268,11 @@ gboolean gh_store_exec(GhStore *store, const gchar *sql, GError **error);
  * T-* operations below run inside a caller's transaction as a savepoint, so
  * e.g. MLS state and outbox events (T-mls) can commit together. */
 gboolean gh_store_begin(GhStore *store, GError **error);
+/* gh_store_begin() for a store-layer module whose transactions have their
+ * own crash cut points (test builds): @label (static, e.g. "mls" for
+ * GhStoreMarmot's libmarmot operations) names "<label>:before-commit" and
+ * "<label>:after-commit" when this is the outermost level. */
+gboolean gh_store_begin_named(GhStore *store, const gchar *label, GError **error);
 gboolean gh_store_commit(GhStore *store, GError **error);
 void gh_store_rollback(GhStore *store);
 guint gh_store_get_transaction_depth(GhStore *store);
@@ -745,6 +750,9 @@ const GhStoreMigration *gh_store_schema_get_migrations(gsize *n_migrations);
  * the process SIGKILLs itself: no unwinding, no close, like a crash. NULL
  * disarms. Unknown names abort, so a typo cannot pass silently. */
 void gh_store_test_crash_at(const gchar *cut_point, guint nth);
+/* Reaches cut point "@label:@step" (for store-layer modules, e.g.
+ * GhStoreMarmot's "mls:write"). */
+void gh_store_test_cut(const gchar *label, const gchar *step);
 /* NULL-terminated list of every cut point, optionally filtered by prefix. */
 GStrv gh_store_test_list_cut_points(const gchar *prefix);
 /* Pretend the process runs as @uid for ownership checks (-1 restores). */

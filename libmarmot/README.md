@@ -201,7 +201,8 @@ rc = marmot_decrypt_media(m, group_id, encrypted_data, enc_len, &imeta, &decrypt
 | SQLite | `marmot_storage_sqlite_new(path, key)` | ✅ | Optional encryption via SQLCipher |
 | nostrdb | `marmot_storage_nostrdb_new(ndb, lmdb_env)` | ✅ | LMDB-backed, shares nostrdb instance |
 
-All backends implement the same `MarmotStorage` vtable (25 operations):
+All backends implement the same `MarmotStorage` vtable (optional
+`begin`/`commit`/`rollback` transaction hooks since 0.7.0):
 - Group CRUD (save, find by MLS ID, find by Nostr ID, list all, update relays)
 - Message operations (save, find, pagination, last message, processed tracking)
 - Welcome operations (save, find, pending list, processed tracking)
@@ -223,6 +224,59 @@ libmarmot is designed for byte-level interoperability with the [MDK](https://git
 Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-validation.
 
 ## Changelog
+
+### 0.7.0 (unreleased): one storage transaction per operation (nostrc-qp24.7)
+
+**Additive API and storage-interface change** (MINOR). Groundhog's durable
+MLS Commit lifecycle needs every multi-record update to be atomic.
+
+- **Transaction hooks.** `MarmotStorage` gains three optional function
+  pointers at its end: `begin`, `commit` and `rollback`. Set all three or
+  none; `marmot_new()` refuses a storage with only some of them (it returns
+  `NULL` and does not take the storage). With the hooks, every public
+  operation that writes runs as exactly one transaction. That covers:
+  - an epoch transition (exporter secret, retained parent, MLS state and
+    group record);
+  - a pending Commit, its merge and the Welcome outbox append;
+  - a received message with its ratchet step, message row, processed marker
+    and group record;
+  - a Welcome join, KeyPackage creation, Welcome sent-marks and a reconcile.
+
+  A crash can no longer leave a partial epoch. libmarmot never nests the
+  calls. A backend may run them as savepoints of an application
+  transaction; Groundhog's GhStoreMarmot does.
+- **Outcome of an error.** An operation that fails rolls back. Some errors
+  are deliberate outcomes, and their writes are committed:
+  - a superseded pending Commit dropped by the merge (`WRONG_EPOCH`);
+  - a losing inbound Commit deferred (`OWN_COMMIT_PENDING`);
+  - a duplicate Welcome retired (`WELCOME_ALREADY_ACCEPTED`);
+  - a Commit that can no longer be authorized, dropped;
+  - a Welcome recorded as failed before anything else was written.
+
+  A Welcome join that fails after it started writing is now rolled back
+  (with transactions), so it can be accepted again; before, it was recorded
+  as failed.
+- **ABI.** The struct grew. A storage implementation built against an
+  older header must be rebuilt, and must zero-initialize the struct (e.g.
+  `calloc`). The built-in memory, SQLite and nostrdb backends have no hooks
+  yet (nostrc-wf71) and keep the compensating writes of 0.5.0; they can still leave a
+  partial state on a crash, which `marmot_group_reconcile()` repairs as
+  before.
+- **Late messages.** An application message of the previous epoch that
+  arrives after the next Commit was applied is now read with the retained
+  parent state. Its ratchet step is stored in the same transaction. Before,
+  it failed with `MARMOT_ERR_MLS`. Two epochs back still fails: one epoch is
+  libmarmot's rewind horizon.
+- **Fail closed.** A received application message whose MLS ratchet step
+  cannot be stored is not delivered (`MARMOT_ERR_STORAGE`). Before, the
+  failure was ignored.
+- **Secrets.** Serialized MLS states and KeyPackage private keys read from
+  storage are wiped before they are freed.
+- **Known gap (nostrc-ai04, P1).** The serialized MLS state does not hold
+  the per-sender ratchet: it is re-derived from the epoch's encryption
+  secret on every load. As a result, a message re-wrapped in a new envelope
+  is accepted again, and a sender's messages in one epoch reuse a
+  generation. Fixing this needs a state-format change.
 
 ### 0.6.0 (unreleased): kind:445 envelopes are authenticated (nostrc-6r6s)
 
@@ -442,7 +496,8 @@ described above.
 - **Crash recovery.** A crash between the MLS state and the group record
   leaves the record an epoch behind. The next message, media or Commit
   operation brings it up to the MLS state (`marmot_group_reconcile()`), which
-  is authoritative. Real transactions are nostrc-qp24.7.
+  is authoritative. Since 0.7.0, a storage with the transaction hooks never
+  gets there (nostrc-qp24.7).
 - **Storage labels.** `MarmotStorage` implementations that snapshot a group's
   MLS state must include the new labels `mls_group_parent` and
   `mls_group_pending` (GhStoreMarmot does).

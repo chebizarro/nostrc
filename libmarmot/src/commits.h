@@ -53,16 +53,33 @@ MarmotError marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
 /**
  * Persist an applied epoch transition: the exporter secret of post->epoch,
  * the retained parent (`pre` plus the Commit's ordering key, used to judge a
- * competing Commit for the same epoch), the new MLS state, and `group`
- * (updated from `post_gde` and post->epoch).  Storage has no transactions
- * (nostrc-qp24.7), so a failed write restores every record already written:
- * on error the stored state is as it was.
+ * competing Commit for the same epoch and to read late application messages
+ * of `pre`'s epoch), the new MLS state, and `group` (updated from `post_gde`
+ * and post->epoch).  It runs inside the operation's storage transaction
+ * (nostrc-qp24.7), which makes the four writes atomic; for backends without
+ * transactions a failed write also restores every record already written,
+ * so on error the stored state is as it was.
  */
 MarmotError marmot_commit_persist(Marmot *m, const MlsGroup *pre,
                                   const MlsGroup *post,
                                   const MarmotCommitKey *key,
                                   const MarmotGroupDataExtension *post_gde,
                                   MarmotGroup *group);
+
+/**
+ * A late application message (MLS PrivateMessage `msg`) of `epoch`, the
+ * epoch before the current one: decrypt it with the retained parent state
+ * (the state the last applied Commit was built on, kept for one epoch) and
+ * store that state's advanced ratchet.  The retention horizon is libmarmot's
+ * one-epoch rewind: older messages cannot be read.  MARMOT_ERR_OWN_MESSAGE
+ * for our own message; MARMOT_ERR_STORAGE_NOT_FOUND when no state of that
+ * epoch is retained; MARMOT_ERR_MLS when it does not decrypt.
+ */
+MarmotError marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid,
+                                       uint64_t epoch,
+                                       const uint8_t *msg, size_t msg_len,
+                                       uint8_t **out_plaintext, size_t *out_len,
+                                       uint32_t *out_sender);
 
 /** Mirror the committed GroupData (name, description, admins) into `group`. */
 MarmotError marmot_group_apply_group_data(MarmotGroup *group,
@@ -87,9 +104,10 @@ char *marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
 int marmot_sign_ephemeral(NostrEvent *event);
 
 /**
- * Crash recovery (review N2): marmot_commit_persist() stores the MLS state
- * before the group record, so after an interrupted transition the record's
- * epoch lags the state.  Bring `group` (epoch and GroupData fields) up to
+ * Crash recovery (review N2) for storage without transactions:
+ * marmot_commit_persist() stores the MLS state before the group record, so
+ * after an interrupted transition the record's epoch lags the state (with
+ * the transaction hooks, nostrc-qp24.7, that cannot happen).  Bring `group` (epoch and GroupData fields) up to
  * the stored MLS state and save it.  A no-op when they agree or the group
  * has no MLS state.
  */

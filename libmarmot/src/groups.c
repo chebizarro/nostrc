@@ -62,6 +62,7 @@ load_mls_group(Marmot *m, const MarmotGroupId *gid, MlsGroup *out)
     if (err != MARMOT_OK || !state_data) return -1;
 
     int rc = mls_group_deserialize(state_data, state_len, out);
+    sodium_memzero(state_data, state_len);   /* epoch secrets */
     free(state_data);
     return rc;
 }
@@ -442,8 +443,8 @@ build_welcome_rumors(const MlsAddResult *add, const char **kp_event_jsons,
  * Public API: marmot_create_group
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_create_group(Marmot *m,
+static MarmotError
+create_group_impl(Marmot *m,
                      const uint8_t creator_pubkey[32],
                      const char **key_package_event_jsons, size_t kp_count,
                      const MarmotGroupConfig *config,
@@ -574,6 +575,7 @@ marmot_create_group(Marmot *m,
     err = m->storage->mls_store(m->storage->ctx, "mls_group",
                                 mls_group_id, 32,
                                 state_data, state_len);
+    sodium_memzero(state_data, state_len);
     free(state_data);
     if (err != MARMOT_OK) {
         mls_group_free(&mls_group);
@@ -746,8 +748,8 @@ load_group_for_commit(Marmot *m, const MarmotGroupId *mls_group_id,
  * Public API: marmot_merge_pending_commit / marmot_clear_pending_commit
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_merge_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
+static MarmotError
+merge_pending_commit_impl(Marmot *m, const MarmotGroupId *mls_group_id)
 {
     if (!m || !mls_group_id)
         return MARMOT_ERR_INVALID_ARG;
@@ -771,8 +773,8 @@ marmot_merge_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
     return err;
 }
 
-MarmotError
-marmot_clear_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
+static MarmotError
+clear_pending_commit_impl(Marmot *m, const MarmotGroupId *mls_group_id)
 {
     if (!m || !mls_group_id)
         return MARMOT_ERR_INVALID_ARG;
@@ -807,8 +809,8 @@ find_reconciled_group(Marmot *m, const MarmotGroupId *mls_group_id, MarmotGroup 
     return MARMOT_OK;
 }
 
-MarmotError
-marmot_get_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id,
+static MarmotError
+get_pending_commit_impl(Marmot *m, const MarmotGroupId *mls_group_id,
                           char **out_event_json, bool *out_superseded)
 {
     if (!m || !mls_group_id || !out_event_json) return MARMOT_ERR_INVALID_ARG;
@@ -824,8 +826,8 @@ marmot_get_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id,
     return err;
 }
 
-MarmotError
-marmot_get_unsent_welcomes(Marmot *m, const MarmotGroupId *mls_group_id,
+static MarmotError
+get_unsent_welcomes_impl(Marmot *m, const MarmotGroupId *mls_group_id,
                            MarmotUnsentWelcome **out_welcomes, size_t *out_count)
 {
     if (!m || !mls_group_id || !out_welcomes || !out_count) return MARMOT_ERR_INVALID_ARG;
@@ -845,8 +847,8 @@ marmot_get_unsent_welcomes(Marmot *m, const MarmotGroupId *mls_group_id,
     return err;
 }
 
-MarmotError
-marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id,
+static MarmotError
+mark_welcomes_sent_impl(Marmot *m, const MarmotGroupId *mls_group_id,
                           const uint8_t (*ids)[32], size_t count)
 {
     if (!m || !mls_group_id || (count > 0 && !ids)) return MARMOT_ERR_INVALID_ARG;
@@ -858,8 +860,8 @@ marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id,
  * Public API: marmot_add_members
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_add_members(Marmot *m,
+static MarmotError
+add_members_impl(Marmot *m,
                     const MarmotGroupId *mls_group_id,
                     const char **key_package_event_jsons, size_t kp_count,
                     char ***out_welcome_jsons, size_t *out_welcome_count,
@@ -950,8 +952,8 @@ fail:
  * Public API: marmot_remove_members
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_remove_members(Marmot *m,
+static MarmotError
+remove_members_impl(Marmot *m,
                        const MarmotGroupId *mls_group_id,
                        const uint8_t (*member_pubkeys)[32], size_t count,
                        char **out_commit_json)
@@ -1006,8 +1008,8 @@ out:
  * Public API: marmot_leave_group
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_leave_group(Marmot *m, const MarmotGroupId *mls_group_id)
+static MarmotError
+leave_group_impl(Marmot *m, const MarmotGroupId *mls_group_id)
 {
     if (!m || !mls_group_id)
         return MARMOT_ERR_INVALID_ARG;
@@ -1169,8 +1171,8 @@ fail:
  * Public API: marmot_update_group_metadata
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_update_group_metadata(Marmot *m,
+static MarmotError
+update_group_metadata_impl(Marmot *m,
                               const MarmotGroupId *mls_group_id,
                               const MarmotGroupConfig *config,
                               char **out_commit_json)
@@ -1218,4 +1220,148 @@ out:
     mls_group_free(&mls);
     marmot_group_free(group);
     return err;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Public API: one storage transaction per operation (nostrc-qp24.7)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_create_group(Marmot *m,
+                     const uint8_t creator_pubkey[32],
+                     const char **key_package_event_jsons, size_t kp_count,
+                     const MarmotGroupConfig *config,
+                     MarmotCreateGroupResult *result)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = create_group_impl(m, creator_pubkey, key_package_event_jsons, kp_count,
+                            config, result);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK)
+        marmot_create_group_result_free(result);   /* rolled back */
+    return end;
+}
+
+MarmotError
+marmot_merge_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    return marmot_txn_end(m, merge_pending_commit_impl(m, mls_group_id));
+}
+
+MarmotError
+marmot_clear_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    return marmot_txn_end(m, clear_pending_commit_impl(m, mls_group_id));
+}
+
+/* It may finish a Commit that was merged before a crash: a write. */
+MarmotError
+marmot_get_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id,
+                          char **out_event_json, bool *out_superseded)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = get_pending_commit_impl(m, mls_group_id, out_event_json, out_superseded);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        free(*out_event_json);
+        *out_event_json = NULL;
+        if (out_superseded) *out_superseded = false;
+    }
+    return end;
+}
+
+MarmotError
+marmot_get_unsent_welcomes(Marmot *m, const MarmotGroupId *mls_group_id,
+                           MarmotUnsentWelcome **out_welcomes, size_t *out_count)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = get_unsent_welcomes_impl(m, mls_group_id, out_welcomes, out_count);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        marmot_unsent_welcomes_free(*out_welcomes, *out_count);
+        *out_welcomes = NULL;
+        *out_count = 0;
+    }
+    return end;
+}
+
+MarmotError
+marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_id,
+                          const uint8_t (*ids)[32], size_t count)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    return marmot_txn_end(m, mark_welcomes_sent_impl(m, mls_group_id, ids, count));
+}
+
+MarmotError
+marmot_add_members(Marmot *m,
+                    const MarmotGroupId *mls_group_id,
+                    const char **key_package_event_jsons, size_t kp_count,
+                    char ***out_welcome_jsons, size_t *out_welcome_count,
+                    char **out_commit_json)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = add_members_impl(m, mls_group_id, key_package_event_jsons, kp_count,
+                           out_welcome_jsons, out_welcome_count, out_commit_json);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        for (size_t i = 0; i < *out_welcome_count; i++) free((*out_welcome_jsons)[i]);
+        free(*out_welcome_jsons);
+        free(*out_commit_json);
+        *out_welcome_jsons = NULL;
+        *out_welcome_count = 0;
+        *out_commit_json = NULL;
+    }
+    return end;
+}
+
+MarmotError
+marmot_remove_members(Marmot *m,
+                       const MarmotGroupId *mls_group_id,
+                       const uint8_t (*member_pubkeys)[32], size_t count,
+                       char **out_commit_json)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = remove_members_impl(m, mls_group_id, member_pubkeys, count, out_commit_json);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+    }
+    return end;
+}
+
+MarmotError
+marmot_leave_group(Marmot *m, const MarmotGroupId *mls_group_id)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    return marmot_txn_end(m, leave_group_impl(m, mls_group_id));
+}
+
+MarmotError
+marmot_update_group_metadata(Marmot *m,
+                              const MarmotGroupId *mls_group_id,
+                              const MarmotGroupConfig *config,
+                              char **out_commit_json)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = update_group_metadata_impl(m, mls_group_id, config, out_commit_json);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+    }
+    return end;
 }

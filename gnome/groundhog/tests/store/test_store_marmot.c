@@ -3,7 +3,9 @@
 #endif
 
 #include "gh-store-marmot.h"
+#include "gh-mls-commits.h"
 
+#include "canary-scan.h"
 #include "crash-harness.h"
 
 #include <stdio.h>
@@ -2814,6 +2816,1283 @@ test_no_plaintext_on_disk(void)
   test_account_clear(&account);
 }
 
+/* ==== nostrc-qp24.7: the durable MLS Commit lifecycle ===================================== */
+
+/* ---- Stored state, read the way libmarmot writes it -------------------------------------- */
+
+static gboolean
+kv_load(GhStore *store, const gchar *label, const MarmotGroupId *gid, GBytes **out)
+{
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(store),
+                                     "SELECT value FROM mls_kv WHERE label = ?1 AND key = ?2",
+                                     -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, label, -1, SQLITE_STATIC);
+  sqlite3_bind_blob(stmt, 2, gid->data, (int) gid->len, SQLITE_STATIC);
+  int rc = sqlite3_step(stmt);
+  g_assert_true(rc == SQLITE_ROW || rc == SQLITE_DONE);
+  *out = rc == SQLITE_ROW ? g_bytes_new(sqlite3_column_blob(stmt, 0),
+                                        (gsize) sqlite3_column_bytes(stmt, 0))
+                          : NULL;
+  sqlite3_finalize(stmt);
+  return *out != NULL;
+}
+
+/* An MLS variable-length integer (RFC 9420 §2.1.2): its value, and its size
+ * in *out_size. */
+static guint64
+read_vli(const guint8 *p, gsize avail, gsize *out_size)
+{
+  g_assert_cmpuint(avail, >=, 1);
+  gsize size = (gsize) 1 << (p[0] >> 6);
+  g_assert_cmpuint(size, <=, 4);
+  g_assert_cmpuint(avail, >=, size);
+  guint64 v = p[0] & 0x3f;
+  for (gsize i = 1; i < size; i++)
+    v = v << 8 | p[i];
+  *out_size = size;
+  return v;
+}
+
+static guint64
+be64(const guint8 *p)
+{
+  guint64 v = 0;
+  for (int i = 0; i < 8; i++)
+    v = v << 8 | p[i];
+  return v;
+}
+
+/* The epoch in a libmarmot MLS state blob (mls_group_serialize(): u32 magic,
+ * u32 version, the group id with a variable-length size, u64 epoch). */
+static guint64
+state_epoch(GBytes *state)
+{
+  gsize len = 0;
+  const guint8 *p = g_bytes_get_data(state, &len);
+  g_assert_cmpuint(len, >=, 9);
+  gsize vli_size = 0;
+  guint64 gid_len = read_vli(p + 8, len - 8, &vli_size);
+  gsize at = 8 + vli_size + (gsize) gid_len;
+  g_assert_cmpuint(len, >=, at + 8);
+  return be64(p + at);
+}
+
+/* The parent epoch of a retained-parent record (u8 version, u64 epoch, ...). */
+static guint64
+parent_epoch(GBytes *parent)
+{
+  gsize len = 0;
+  const guint8 *p = g_bytes_get_data(parent, &len);
+  g_assert_cmpuint(len, >=, 9);
+  g_assert_cmpuint(p[0], ==, 1);
+  return be64(p + 1);
+}
+
+/* No partial epoch anywhere: every group's record, MLS state, exporter
+ * secret and retained parent belong to one transition. */
+static void
+assert_groups_consistent(GhStore *store)
+{
+  assert_integrity(store);
+  MarmotStorage *s = storage_new(store);
+  MarmotGroup **groups = NULL;
+  size_t n = 0;
+  assert_marmot_ok(s->all_groups(s->ctx, &groups, &n));
+  for (size_t i = 0; i < n; i++) {
+    const MarmotGroupId *gid = &groups[i]->mls_group_id;
+    g_autoptr(GBytes) state = NULL, parent = NULL;
+    g_assert_true(kv_load(store, "mls_group", gid, &state));
+    guint64 epoch = state_epoch(state);
+    if (epoch != groups[i]->epoch)
+      g_error("Partial epoch: group record at %" G_GUINT64_FORMAT ", MLS state at %"
+              G_GUINT64_FORMAT, groups[i]->epoch, epoch);
+    uint8_t secret[32];
+    assert_marmot_ok(s->get_exporter_secret(s->ctx, gid, epoch, secret));
+    sodium_memzero(secret, sizeof secret);
+    if (kv_load(store, "mls_group_parent", gid, &parent) && parent_epoch(parent) + 1 != epoch)
+      g_error("Partial epoch: retained parent of %" G_GUINT64_FORMAT " under state %"
+              G_GUINT64_FORMAT, parent_epoch(parent), epoch);
+    marmot_group_free(groups[i]);
+  }
+  free(groups);
+  marmot_storage_free(s);
+}
+
+static guint64
+group_epoch(GhStore *store, const MarmotGroupId *gid)
+{
+  MarmotStorage *s = storage_new(store);
+  MarmotGroup *group = NULL;
+  assert_marmot_ok(s->find_group_by_mls_id(s->ctx, gid, &group));
+  g_assert_nonnull(group);
+  guint64 epoch = group->epoch;
+  marmot_group_free(group);
+  marmot_storage_free(s);
+  return epoch;
+}
+
+/* ---- Crash cases: cut an operation at every write and at its commit ----------------------- */
+
+typedef struct _CrashCase CrashCase;
+typedef void (*CrashOpFunc)(GhStore *store, MarmotStorage *storage, Marmot *marmot,
+                            CrashCase *c);
+typedef void (*CrashCheckFunc)(GhStore *store, CrashCase *c);
+
+struct _CrashCase {
+  const gchar *name;
+  TestAccount *account;
+  const gchar *label;          /* the operation's outermost transaction: "mls" or "txn" */
+  CrashOpFunc op;
+  CrashCheckFunc check_after;  /* its effect, once committed */
+  gpointer data;
+  const gchar *const *extra_cuts; /* the store's own cut points inside it (T-enqueue, T-seal) */
+  guint min_writes;            /* MLS writes it must make (marmot_new()'s pruning is one) */
+  guint writes;                /* how many writes it made (set by crash_case_run) */
+};
+
+static void
+script_crash_op(gpointer user_data)
+{
+  CrashCase *c = user_data;
+  GhStore *store = store_open_flags(c->account, NULL, GH_STORE_OPEN_NONE);
+  MarmotStorage *storage = storage_new(store);
+  Marmot *marmot = marmot_new(storage);
+  g_assert_nonnull(marmot);
+  c->op(store, storage, marmot, c);
+  marmot_free(marmot);
+  gh_store_close(store);
+}
+
+typedef struct {
+  gchar *path;
+  GBytes *bytes;   /* NULL: the file did not exist */
+} FileCopy;
+
+static void
+file_copy_free(gpointer p)
+{
+  FileCopy *f = p;
+  g_free(f->path);
+  g_clear_pointer(&f->bytes, g_bytes_unref);
+  g_free(f);
+}
+
+static gchar *
+account_store_path(TestAccount *account)
+{
+  GhStore *store = store_open_flags(account, NULL, GH_STORE_OPEN_NONE);
+  gchar *path = g_strdup(gh_store_get_path(store));
+  gh_store_close(store);
+  return path;
+}
+
+/* The store's files as they are now (closed: the WAL is checkpointed). */
+static GPtrArray *
+files_save(TestAccount *account)
+{
+  g_autofree gchar *path = account_store_path(account);
+  GPtrArray *files = g_ptr_array_new_with_free_func(file_copy_free);
+  const gchar *suffixes[] = { "", "-wal", "-shm", "-journal" };
+  for (guint i = 0; i < G_N_ELEMENTS(suffixes); i++) {
+    FileCopy *f = g_new0(FileCopy, 1);
+    f->path = g_strconcat(path, suffixes[i], NULL);
+    gchar *data = NULL;
+    gsize len = 0;
+    if (g_file_get_contents(f->path, &data, &len, NULL))
+      f->bytes = g_bytes_new_take(data, len);
+    g_ptr_array_add(files, f);
+  }
+  return files;
+}
+
+static void
+files_restore(GPtrArray *files)
+{
+  for (guint i = 0; i < files->len; i++) {
+    FileCopy *f = g_ptr_array_index(files, i);
+    if (!f->bytes) {
+      g_remove(f->path);
+      continue;
+    }
+    gsize len = 0;
+    const gchar *data = g_bytes_get_data(f->bytes, &len);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(g_file_set_contents_full(f->path, data, (gssize) len,
+                                           G_FILE_SET_CONTENTS_NONE, 0600, &error));
+    g_assert_no_error(error);
+  }
+}
+
+static gchar *
+reopen_checked(CrashCase *c)
+{
+  GhStore *store = store_open_flags(c->account, NULL, GH_STORE_OPEN_NONE);
+  assert_groups_consistent(store);
+  gchar *dump = db_dump(store, "%");
+  gh_store_close(store);
+  return dump;
+}
+
+/* Runs @c's operation killed at each cut point in turn, each time from the
+ * same saved store files, then once to completion (the scenario continues
+ * from there):
+ *  - after every write ("mls:write", 1st, 2nd, ... until the operation
+ *    completes without reaching it) and before its commit: the reopened
+ *    database is byte-identical to before (all tables);
+ *  - after its commit: the operation's effect is there (check_after);
+ *  - every time: every group is consistent, no partial epoch. */
+static void
+crash_case_run(CrashCase *c)
+{
+  g_autoptr(GPtrArray) files = files_save(c->account);
+  g_autofree gchar *dump0 = reopen_checked(c);
+  guint n;
+  for (n = 1; n < 1000; n++) {
+    files_restore(files);
+    GhCrashOutcome outcome = gh_crash_harness_run("mls:write", n, script_crash_op, c);
+    if (outcome == GH_CRASH_COMPLETED)
+      break;
+    if (outcome != GH_CRASH_KILLED)
+      g_error("%s, write %u: %s", c->name, n, gh_crash_outcome_to_string(outcome));
+    g_autofree gchar *dump = reopen_checked(c);
+    if (g_strcmp0(dump, dump0) != 0)
+      g_error("%s: a crash after write %u of the operation left part of it behind",
+              c->name, n);
+  }
+  c->writes = n - 1;
+  /* Several records (the point of the transaction), each one cut. */
+  if (c->writes < c->min_writes)
+    g_error("%s made %u MLS writes, expected at least %u", c->name, c->writes, c->min_writes);
+
+  for (guint i = 0; c->extra_cuts && c->extra_cuts[i]; i++) {
+    files_restore(files);
+    GhCrashOutcome outcome = gh_crash_harness_run(c->extra_cuts[i], 1, script_crash_op, c);
+    if (outcome != GH_CRASH_KILLED)
+      g_error("%s, %s: %s", c->name, c->extra_cuts[i], gh_crash_outcome_to_string(outcome));
+    g_autofree gchar *dump = reopen_checked(c);
+    if (g_strcmp0(dump, dump0) != 0)
+      g_error("%s: a crash at %s left part of the operation behind", c->name, c->extra_cuts[i]);
+  }
+
+  g_autofree gchar *before_commit = g_strconcat(c->label, ":before-commit", NULL);
+  g_autofree gchar *after_commit = g_strconcat(c->label, ":after-commit", NULL);
+  guint killed = 0;
+  for (n = 1; n < 100; n++) {
+    files_restore(files);
+    GhCrashOutcome outcome = gh_crash_harness_run(before_commit, n, script_crash_op, c);
+    if (outcome == GH_CRASH_COMPLETED)
+      break;
+    if (outcome != GH_CRASH_KILLED)
+      g_error("%s, %s #%u: %s", c->name, before_commit, n, gh_crash_outcome_to_string(outcome));
+    killed++;
+    g_autofree gchar *dump = reopen_checked(c);
+    if (g_strcmp0(dump, dump0) != 0)
+      g_error("%s: a crash before commit #%u left part of the operation behind", c->name, n);
+  }
+  g_assert_cmpuint(killed, >, 0);
+
+  gboolean applied = FALSE;
+  for (n = 1; n < 100; n++) {
+    files_restore(files);
+    GhCrashOutcome outcome = gh_crash_harness_run(after_commit, n, script_crash_op, c);
+    if (outcome == GH_CRASH_COMPLETED)
+      break;
+    if (outcome != GH_CRASH_KILLED)
+      g_error("%s, %s #%u: %s", c->name, after_commit, n, gh_crash_outcome_to_string(outcome));
+    g_autofree gchar *dump = reopen_checked(c);
+    if (g_strcmp0(dump, dump0) != 0) {
+      /* Our commit: all of the operation is durable. */
+      GhStore *store = store_open_flags(c->account, NULL, GH_STORE_OPEN_NONE);
+      c->check_after(store, c);
+      gh_store_close(store);
+      applied = TRUE;
+    }
+  }
+  if (!applied)
+    g_error("%s: no commit of the operation was cut", c->name);
+
+  /* The real run, from the same start. */
+  files_restore(files);
+  script_crash_op(c);
+  GhStore *store = store_open_flags(c->account, NULL, GH_STORE_OPEN_NONE);
+  assert_groups_consistent(store);
+  c->check_after(store, c);
+  gh_store_close(store);
+  g_test_message("%s: %u writes, each cut", c->name, c->writes);
+}
+
+/* ---- The lifecycle's operations ---------------------------------------------------------- */
+
+typedef struct {
+  const char **kps;
+  size_t n;
+  char **welcomes;
+  size_t n_welcomes;
+} AddArgs;
+
+static MarmotError
+produce_add(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
+{
+  AddArgs *a = data;
+  return marmot_add_members(marmot, gid, a->kps, a->n, &a->welcomes, &a->n_welcomes, out);
+}
+
+static MarmotError
+produce_rename(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
+{
+  MarmotGroupConfig config = { .name = data };
+  return marmot_update_group_metadata(marmot, gid, &config, out);
+}
+
+static MarmotError
+produce_remove(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
+{
+  return marmot_remove_members(marmot, gid, (const uint8_t (*)[32]) data, 1, out);
+}
+
+static GhMlsCommitPublish *
+stage(Actor *actor, const MarmotGroupId *gid, GhMlsCommitProducer producer, gpointer data)
+{
+  g_autoptr(GError) error = NULL;
+  GhMlsCommitPublish *publish = gh_mls_commit_stage(actor->store, actor->marmot,
+                                                    actor->storage, gid,
+                                                    actor->account.pubkey, producer, data,
+                                                    &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(publish);
+  return publish;
+}
+
+static GhMlsCommitState
+answer(Actor *actor, const GhMlsCommitPublish *publish, const gchar *relay, gboolean ok)
+{
+  g_autoptr(GError) error = NULL;
+  GhMlsCommitState state = GH_MLS_COMMIT_PENDING;
+  g_assert_true(gh_mls_commit_record_answer(actor->store, actor->marmot, actor->storage,
+                                            publish, relay, ok, ok ? NULL : "blocked: test",
+                                            &state, &error));
+  g_assert_no_error(error);
+  return state;
+}
+
+static GPtrArray *
+resume(Actor *actor)
+{
+  g_autoptr(GError) error = NULL;
+  GPtrArray *list = gh_mls_commit_resume(actor->store, actor->marmot, actor->storage,
+                                         actor->account.pubkey, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(list);
+  return list;
+}
+
+static GhStoreOutboxEntry *
+outbox_entry(GhStore *store, gint64 outbox_id)
+{
+  g_autoptr(GError) error = NULL;
+  GhStoreOutboxEntry *entry = gh_store_outbox_load(store, outbox_id, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(entry);
+  return entry;
+}
+
+/* Delivers @event_json to @actor; returns the result type. */
+static MarmotMessageResultType
+deliver_to(Actor *actor, const gchar *event_json, MarmotError *out_err)
+{
+  MarmotMessageResult result;
+  memset(&result, 0, sizeof result);
+  MarmotError err = marmot_process_message(actor->marmot, event_json, &result);
+  MarmotMessageResultType type = result.type;
+  marmot_message_result_free(&result);
+  if (out_err)
+    *out_err = err;
+  else if (err != MARMOT_OK)
+    g_error("process_message: %s", marmot_error_string(err));
+  return type;
+}
+
+/* The unsent Welcomes of @gid's merged Adds, marked sent (the app gift-wraps
+ * and sends them; here they are handed over directly). */
+static gchar **
+take_welcomes(Actor *actor, const MarmotGroupId *gid, gsize *out_n)
+{
+  MarmotUnsentWelcome *w = NULL;
+  size_t n = 0;
+  assert_marmot_ok(marmot_get_unsent_welcomes(actor->marmot, gid, &w, &n));
+  gchar **out = g_new0(gchar *, n + 1);
+  for (size_t i = 0; i < n; i++) {
+    out[i] = g_strdup(w[i].rumor_json);
+    assert_marmot_ok(marmot_mark_welcomes_sent(actor->marmot, gid,
+                                               (const uint8_t (*)[32]) w[i].id, 1));
+  }
+  marmot_unsent_welcomes_free(w, n);
+  *out_n = n;
+  return out;
+}
+
+static void
+actor_join(Actor *actor, const gchar *welcome_rumor)
+{
+  uint8_t wrapper[32];
+  randombytes_buf(wrapper, sizeof wrapper);
+  MarmotWelcome *welcome = NULL;
+  assert_marmot_ok(marmot_process_welcome(actor->marmot, wrapper, welcome_rumor, &welcome));
+  assert_marmot_ok(marmot_accept_welcome(actor->marmot, welcome));
+  marmot_welcome_free(welcome);
+}
+
+/* ---- Crash suite: every libmarmot and lifecycle operation --------------------------------- */
+
+typedef struct {
+  MarmotGroupId *gid;
+  AddArgs add;
+  GhMlsCommitPublish *publish;      /* in: the Commit answered; out: the staged one */
+  const gchar *relay;
+  gboolean accepted;
+  gchar *event_json;                /* an event to process */
+  guint64 epoch_before;
+  const gchar *expect_text;         /* in the processed message */
+} OpData;
+
+static void
+op_stage_add(GhStore *store, MarmotStorage *storage, Marmot *marmot, CrashCase *c)
+{
+  OpData *d = c->data;
+  AddArgs args = d->add;
+  g_autoptr(GError) error = NULL;
+  GhMlsCommitPublish *publish = gh_mls_commit_stage(store, marmot, storage, d->gid,
+                                                    c->account->pubkey, produce_add, &args,
+                                                    &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(publish);
+  free_strings_n(args.welcomes, args.n_welcomes);
+  gh_mls_commit_publish_free(d->publish);
+  d->publish = publish;   /* only the final (parent) run keeps it */
+}
+
+static void
+check_staged(GhStore *store, CrashCase *c)
+{
+  OpData *d = c->data;
+  g_autoptr(GBytes) pending = NULL;
+  g_assert_true(kv_load(store, "mls_group_pending", d->gid, &pending));
+  g_assert_cmpuint(group_epoch(store, d->gid), ==, d->epoch_before);   /* nothing applied */
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM outbox WHERE backend = 3 AND "
+                                 "state = 2"), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM outbox_targets"), ==, 2);
+}
+
+static void
+op_answer(GhStore *store, MarmotStorage *storage, Marmot *marmot, CrashCase *c)
+{
+  OpData *d = c->data;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_commit_record_answer(store, marmot, storage, d->publish, d->relay,
+                                            d->accepted, NULL, NULL, &error));
+  g_assert_no_error(error);
+}
+
+static void
+check_merged(GhStore *store, CrashCase *c)
+{
+  OpData *d = c->data;
+  g_autoptr(GBytes) pending = NULL;
+  g_assert_false(kv_load(store, "mls_group_pending", d->gid, &pending));
+  g_assert_cmpuint(group_epoch(store, d->gid), ==, d->epoch_before + 1);
+  g_autofree gchar *sql = g_strdup_printf(
+    "SELECT count(*) FROM outbox_targets WHERE outcome = 1 AND relay_url = '%s'", d->relay);
+  g_assert_cmpint(sql_int(store, sql), ==, 1);
+}
+
+static void
+check_cleared(GhStore *store, CrashCase *c)
+{
+  OpData *d = c->data;
+  g_autoptr(GBytes) pending = NULL;
+  g_assert_false(kv_load(store, "mls_group_pending", d->gid, &pending));
+  g_assert_cmpuint(group_epoch(store, d->gid), ==, d->epoch_before);
+  g_autofree gchar *sql = g_strdup_printf(
+    "SELECT count(*) FROM outbox WHERE id = %" G_GINT64_FORMAT " AND state = 7 AND "
+    "last_error = '" GH_MLS_COMMIT_REFUSED_REASON "'", d->publish->outbox_id);
+  g_assert_cmpint(sql_int(store, sql), ==, 1);
+}
+
+static void
+op_process(GhStore *store, MarmotStorage *storage, Marmot *marmot, CrashCase *c)
+{
+  (void) store;
+  (void) storage;
+  OpData *d = c->data;
+  MarmotMessageResult result;
+  memset(&result, 0, sizeof result);
+  assert_marmot_ok(marmot_process_message(marmot, d->event_json, &result));
+  g_assert_true(result.type == MARMOT_RESULT_COMMIT ||
+                result.type == MARMOT_RESULT_APPLICATION_MESSAGE);
+  marmot_message_result_free(&result);
+}
+
+static void
+check_advanced(GhStore *store, CrashCase *c)
+{
+  OpData *d = c->data;
+  g_assert_cmpuint(group_epoch(store, d->gid), ==, d->epoch_before + 1);
+}
+
+static void
+check_message_stored(GhStore *store, CrashCase *c)
+{
+  OpData *d = c->data;
+  g_autofree gchar *sql = g_strdup_printf(
+    "SELECT count(*) FROM mls_messages WHERE instr(content, '%s') > 0", d->expect_text);
+  g_assert_cmpint(sql_int(store, sql), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM mls_processed_messages"), >=, 1);
+}
+
+#define CRASH_WRAPPER_BYTE 0x5a
+
+/* One operation: accepting the Welcome processed before (the join). */
+static void
+op_accept(GhStore *store, MarmotStorage *storage, Marmot *marmot, CrashCase *c)
+{
+  (void) store;
+  (void) storage;
+  (void) c;
+  uint8_t wrapper[32];
+  memset(wrapper, CRASH_WRAPPER_BYTE, sizeof wrapper);
+  MarmotGroup *group = NULL;
+  assert_marmot_ok(marmot_accept_welcome_by_wrapper_id(marmot, wrapper, &group));
+  marmot_group_free(group);
+}
+
+static void
+check_joined(GhStore *store, CrashCase *c)
+{
+  OpData *d = c->data;
+  g_assert_cmpuint(group_epoch(store, d->gid), ==, d->epoch_before);
+  g_assert_cmpint(sql_int(store, "SELECT state FROM mls_welcomes"), ==,
+                  MARMOT_WELCOME_STATE_ACCEPTED);
+}
+
+static CrashCase
+crash_case(const gchar *name, TestAccount *account, const gchar *label, CrashOpFunc op,
+           CrashCheckFunc check_after, gpointer data, const gchar *const *extra_cuts)
+{
+  CrashCase c = {
+    .name = name, .account = account, .label = label, .op = op,
+    .check_after = check_after, .data = data, .extra_cuts = extra_cuts, .min_writes = 3,
+  };
+  return c;
+}
+
+static const gchar *const module_cuts[] = {
+  "enqueue:outbox", "enqueue:message", "enqueue:seen", "enqueue:draft",
+  "seal:event", "seal:targets", "seal:state", NULL,
+};
+
+/* Acceptance (qp24.7): crash-injection cuts at every record write of the
+ * stage, the first and a later OK, the apply (merge), the rollback (clear),
+ * a received Commit, a received message and a late one, and a join: each
+ * operation is all or nothing, and no group is ever left in a partial epoch. */
+static void
+test_lifecycle_crash_every_write(void)
+{
+  Actor alice, bob, charlie;
+  actor_init(&alice);
+  actor_init(&bob);
+  actor_init(&charlie);
+  const char *relays[] = { RELAY_ONE, RELAY_TWO };
+
+  actor_start(&bob);
+  g_autofree gchar *bob_kp = actor_key_package(&bob);
+  actor_stop(&bob);
+  actor_start(&charlie);
+  g_autofree gchar *charlie_kp = actor_key_package(&charlie);
+  actor_stop(&charlie);
+
+  /* Alice creates the group with Bob. */
+  actor_start(&alice);
+  MarmotGroupConfig config = {
+    .name = (char *) "Crash suite",
+    .admin_pubkeys = (uint8_t (*)[32]) alice.pk,
+    .admin_count = 1,
+    .relay_urls = (char **) relays,
+    .relay_count = 2,
+  };
+  const char *kps0[] = { bob_kp };
+  MarmotCreateGroupResult created;
+  memset(&created, 0, sizeof created);
+  assert_marmot_ok(marmot_create_group(alice.marmot, alice.pk, kps0, 1, &config, &created));
+  MarmotGroupId gid = marmot_group_id_new(created.group->mls_group_id.data,
+                                          created.group->mls_group_id.len);
+  guint64 epoch = created.group->epoch;
+  g_autofree gchar *bob_welcome = g_strdup(created.welcome_rumor_jsons[0]);
+  marmot_create_group_result_free(&created);
+  actor_stop(&alice);
+
+  OpData d = { .gid = &gid };
+  CrashCase c;
+
+  /* Bob joins (a Welcome join writes the state, secret, group, relays, ...). */
+  actor_start(&bob);
+  {
+    uint8_t wrapper[32];
+    memset(wrapper, CRASH_WRAPPER_BYTE, sizeof wrapper);
+    MarmotWelcome *welcome = NULL;
+    assert_marmot_ok(marmot_process_welcome(bob.marmot, wrapper, bob_welcome, &welcome));
+    marmot_welcome_free(welcome);
+  }
+  actor_stop(&bob);
+  d.epoch_before = epoch;
+  c = crash_case("accept Welcome", &bob.account, "mls", op_accept, check_joined, &d, NULL);
+  crash_case_run(&c);
+
+  /* Alice stages an Add of Charlie (T-mls: pending Commit + outbox). */
+  const char *kps1[] = { charlie_kp };
+  d.add = (AddArgs) { .kps = kps1, .n = 1 };
+  c = crash_case("stage Add", &alice.account, "txn", op_stage_add, check_staged, &d, module_cuts);
+  c.min_writes = 2;   /* the pruning and the pending Commit; the outbox rows are cut above */
+  crash_case_run(&c);
+  g_assert_nonnull(d.publish);
+  gchar *add_commit = g_strdup(d.publish->event_json);
+
+  /* The first OK merges it; a later OK is only recorded. */
+  d.relay = RELAY_TWO;
+  d.accepted = TRUE;
+  c = crash_case("first OK (merge)", &alice.account, "txn", op_answer, check_merged, &d, NULL);
+  crash_case_run(&c);
+  d.relay = RELAY_ONE;   /* check_merged still expects one past the staged epoch */
+  c = crash_case("later OK", &alice.account, "txn", op_answer, check_merged, &d, NULL);
+  c.min_writes = 1;   /* only the pruning: a later OK writes outbox rows, no MLS state */
+  crash_case_run(&c);
+  epoch++;
+
+  /* Bob applies Alice's Commit from the relay. */
+  d.event_json = add_commit;
+  d.epoch_before = epoch - 1;
+  c = crash_case("receive Commit", &bob.account, "mls", op_process, check_advanced, &d, NULL);
+  crash_case_run(&c);
+
+  /* Charlie joins through the Welcome outbox. */
+  actor_start(&alice);
+  gsize n_welcomes = 0;
+  g_auto(GStrv) welcomes = take_welcomes(&alice, &gid, &n_welcomes);
+  g_assert_cmpuint(n_welcomes, ==, 1);
+  actor_stop(&alice);
+  actor_start(&charlie);
+  actor_join(&charlie, welcomes[0]);
+  actor_stop(&charlie);
+
+  /* A message Bob sends reaches Charlie: ratchet, message, marker, group. */
+  actor_start(&bob);
+  g_autofree gchar *msg = actor_message(&bob, &gid, "crash-suite live message");
+  g_autofree gchar *late = actor_message(&bob, &gid, "crash-suite late message");
+  actor_stop(&bob);
+  d.event_json = msg;
+  d.expect_text = "crash-suite live message";
+  c = crash_case("receive message", &charlie.account, "mls", op_process, check_message_stored, &d, NULL);
+  crash_case_run(&c);
+
+  /* Alice renames (staged, merged on an OK); Charlie applies it, then reads
+   * Bob's message of the previous epoch with the retained parent. */
+  actor_start(&alice);
+  g_autoptr(GhMlsCommitPublish) rename = stage(&alice, &gid, produce_rename, (gpointer) "Renamed");
+  g_assert_cmpint(answer(&alice, rename, RELAY_ONE, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  actor_stop(&alice);
+  actor_start(&charlie);
+  g_assert_cmpint(deliver_to(&charlie, rename->event_json, NULL), ==, MARMOT_RESULT_COMMIT);
+  actor_stop(&charlie);
+  d.event_json = late;
+  d.expect_text = "crash-suite late message";
+  c = crash_case("receive late message", &charlie.account, "mls", op_process, check_message_stored, &d, NULL);
+  crash_case_run(&c);
+
+  /* Rollback: a Commit every relay refused is cleared with its entry. */
+  actor_start(&alice);
+  epoch = group_epoch(alice.store, &gid);
+  g_autoptr(GhMlsCommitPublish) refused = stage(&alice, &gid, produce_rename,
+                                                (gpointer) "Refused");
+  g_assert_cmpint(answer(&alice, refused, RELAY_ONE, FALSE), ==, GH_MLS_COMMIT_PENDING);
+  actor_stop(&alice);
+  gh_mls_commit_publish_free(d.publish);
+  d.publish = refused;
+  refused = NULL;
+  d.relay = RELAY_TWO;
+  d.accepted = FALSE;
+  d.epoch_before = epoch;
+  c = crash_case("last refusal (clear)", &alice.account, "txn", op_answer, check_cleared, &d, NULL);
+  c.min_writes = 2;   /* the pruning and the pending Commit's removal; plus the outbox */
+  crash_case_run(&c);
+
+  g_free(add_commit);
+  gh_mls_commit_publish_free(d.publish);
+  marmot_group_id_free(&gid);
+  actor_clear(&alice);
+  actor_clear(&bob);
+  actor_clear(&charlie);
+}
+
+/* ---- Restart, answers, echo, supersession -------------------------------------------------- */
+
+/* Alice (admin, and @co_admin when given) creates a group on both relays with
+ * @kps; returns its id and the Welcome rumors. */
+static MarmotGroupId
+create_group_with(Actor *alice, const gchar *name, const char **kps, size_t n_kps,
+                  const uint8_t *co_admin, gchar ***out_welcomes)
+{
+  const char *relays[] = { RELAY_ONE, RELAY_TWO };
+  uint8_t admins[2][32];
+  memcpy(admins[0], alice->pk, 32);
+  if (co_admin)
+    memcpy(admins[1], co_admin, 32);
+  MarmotGroupConfig config = {
+    .name = (char *) name,
+    .admin_pubkeys = admins,
+    .admin_count = co_admin ? 2 : 1,
+    .relay_urls = (char **) relays,
+    .relay_count = 2,
+  };
+  MarmotCreateGroupResult created;
+  memset(&created, 0, sizeof created);
+  assert_marmot_ok(marmot_create_group(alice->marmot, alice->pk, kps, n_kps, &config, &created));
+  MarmotGroupId gid = marmot_group_id_new(created.group->mls_group_id.data,
+                                          created.group->mls_group_id.len);
+  if (out_welcomes) {
+    *out_welcomes = g_new0(gchar *, n_kps + 1);
+    for (size_t i = 0; i < n_kps; i++)
+      (*out_welcomes)[i] = g_strdup(created.welcome_rumor_jsons[i]);
+  }
+  marmot_create_group_result_free(&created);
+  return gid;
+}
+
+static void
+assert_relays(const GhMlsCommitPublish *publish, const gchar *const *want)
+{
+  g_assert_cmpuint(g_strv_length(publish->relay_urls), ==, g_strv_length((GStrv) want));
+  for (guint i = 0; want[i]; i++)
+    g_assert_cmpstr(publish->relay_urls[i], ==, want[i]);
+}
+
+/* Acceptance (qp24.7): restart is idempotent and republishes the same signed
+ * event from the pending record, on the relays that have not answered; a
+ * refusal is not repeated; the relay echo merges; a late OK changes nothing. */
+static void
+test_lifecycle_restart_republishes(void)
+{
+  Actor alice, bob;
+  actor_init(&alice);
+  actor_init(&bob);
+  actor_start(&bob);
+  g_autofree gchar *bob_kp = actor_key_package(&bob);
+  actor_stop(&bob);
+  actor_start(&alice);
+  const char *kps[] = { bob_kp };
+  g_auto(GStrv) welcomes = NULL;
+  MarmotGroupId gid = create_group_with(&alice, "Restart", kps, 1, NULL, &welcomes);
+  guint64 epoch0 = group_epoch(alice.store, &gid);
+  actor_stop(&alice);
+  actor_start(&bob);
+  actor_join(&bob, welcomes[0]);
+  actor_stop(&bob);
+
+  /* Staged; the app is killed before any relay answered (or it timed out). */
+  actor_start(&alice);
+  g_autoptr(GhMlsCommitPublish) staged = stage(&alice, &gid, produce_rename, (gpointer) "Renamed");
+  static const gchar *const both[] = { RELAY_ONE, RELAY_TWO, NULL };
+  assert_relays(staged, both);
+  actor_stop(&alice);
+
+  for (guint round = 0; round < 2; round++) {
+    actor_start(&alice);
+    g_autoptr(GPtrArray) list = resume(&alice);
+    g_assert_cmpuint(list->len, ==, 1);
+    GhMlsCommitPublish *again = g_ptr_array_index(list, 0);
+    /* The same signed event, byte for byte: never re-signed or rebuilt. */
+    g_assert_cmpstr(again->event_json, ==, staged->event_json);
+    g_assert_cmpstr(again->event_id, ==, staged->event_id);
+    g_assert_cmpint(again->outbox_id, ==, staged->outbox_id);
+    g_assert_cmpint(again->outbox_event_id, ==, staged->outbox_event_id);
+    assert_relays(again, both);
+    g_assert_cmpint(sql_int(alice.store, "SELECT count(*) FROM outbox"), ==, 1);
+    g_assert_cmpint(sql_int(alice.store, "SELECT count(*) FROM outbox_events"), ==, 1);
+    g_assert_cmpuint(group_epoch(alice.store, &gid), ==, epoch0);   /* not applied */
+    actor_stop(&alice);
+  }
+
+  /* Relay one refuses: it is not asked again; relay two still is. */
+  actor_start(&alice);
+  g_assert_cmpint(answer(&alice, staged, RELAY_ONE, FALSE), ==, GH_MLS_COMMIT_PENDING);
+  actor_stop(&alice);
+  actor_start(&alice);
+  {
+    g_autoptr(GPtrArray) list = resume(&alice);
+    g_assert_cmpuint(list->len, ==, 1);
+    static const gchar *const two[] = { RELAY_TWO, NULL };
+    assert_relays(g_ptr_array_index(list, 0), two);
+    g_assert_cmpstr(((GhMlsCommitPublish *) g_ptr_array_index(list, 0))->event_json, ==,
+                    staged->event_json);
+  }
+  actor_stop(&alice);
+
+  /* Relay two stored it but its OK was lost: Bob gets it, and so does
+   * Alice, whose own echo merges it. */
+  actor_start(&bob);
+  g_assert_cmpint(deliver_to(&bob, staged->event_json, NULL), ==, MARMOT_RESULT_COMMIT);
+  actor_stop(&bob);
+  actor_start(&alice);
+  g_assert_cmpint(deliver_to(&alice, staged->event_json, NULL), ==, MARMOT_RESULT_COMMIT);
+  g_assert_cmpuint(group_epoch(alice.store, &gid), ==, epoch0 + 1);
+  actor_stop(&alice);
+
+  /* After a restart nothing is left to publish, and the entry settled. */
+  actor_start(&alice);
+  {
+    g_autoptr(GPtrArray) list = resume(&alice);
+    g_assert_cmpuint(list->len, ==, 0);
+    g_autoptr(GhStoreOutboxEntry) entry = outbox_entry(alice.store, staged->outbox_id);
+    g_assert_cmpint(entry->state, ==, GH_STORE_OUTBOX_SETTLED);
+  }
+  /* The lost OK arrives late: recorded, nothing else moves. */
+  g_autofree gchar *before = group_state_dump(alice.store);
+  g_assert_cmpint(answer(&alice, staged, RELAY_TWO, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  g_autofree gchar *after = group_state_dump(alice.store);
+  g_assert_cmpstr(after, ==, before);
+  actor_stop(&alice);
+
+  /* Both are in the same epoch and talk. */
+  actor_start(&alice);
+  actor_start(&bob);
+  g_assert_cmpuint(group_epoch(bob.store, &gid), ==, epoch0 + 1);
+  g_autofree gchar *m1 = actor_message(&alice, &gid, "after the restart");
+  assert_app_message(&bob, m1, "after the restart");
+  g_autofree gchar *m2 = actor_message(&bob, &gid, "and back");
+  assert_app_message(&alice, m2, "and back");
+  actor_stop(&alice);
+  actor_stop(&bob);
+
+  marmot_group_id_free(&gid);
+  actor_clear(&alice);
+  actor_clear(&bob);
+}
+
+/* First OK merges once; a Commit superseded by a competing one is dropped
+ * (on resume, or when an OK comes), its entry cancelled and its Welcomes
+ * never queued; an all-refused one is cleared. */
+static void
+test_lifecycle_superseded_and_refused(void)
+{
+  Actor alice, bob;
+  actor_init(&alice);
+  actor_init(&bob);
+  /* Bob's account key sorts below Alice's: between two privileged Commits
+   * of the same epoch, Bob's wins. */
+  while (memcmp(bob.pk, alice.pk, 32) > 0) {
+    actor_clear(&bob);
+    actor_init(&bob);
+  }
+  actor_start(&bob);
+  g_autofree gchar *bob_kp = actor_key_package(&bob);
+  actor_stop(&bob);
+  actor_start(&alice);
+  const char *kps[] = { bob_kp };
+  g_auto(GStrv) welcomes = NULL;
+  MarmotGroupId gid = create_group_with(&alice, "Race", kps, 1, bob.pk, &welcomes);
+  guint64 epoch0 = group_epoch(alice.store, &gid);
+  actor_stop(&alice);
+  actor_start(&bob);
+  actor_join(&bob, welcomes[0]);
+  actor_stop(&bob);
+
+  /* Both rename at once; Bob's reaches a relay first and wins. */
+  actor_start(&alice);
+  g_autoptr(GhMlsCommitPublish) ours = stage(&alice, &gid, produce_rename, (gpointer) "Alice's");
+  actor_stop(&alice);
+  actor_start(&bob);
+  g_autoptr(GhMlsCommitPublish) theirs = stage(&bob, &gid, produce_rename, (gpointer) "Bob's");
+  g_assert_cmpint(answer(&bob, theirs, RELAY_ONE, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  g_assert_cmpint(answer(&bob, theirs, RELAY_TWO, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  g_autoptr(GhStoreOutboxEntry) settled = outbox_entry(bob.store, theirs->outbox_id);
+  g_assert_cmpint(settled->state, ==, GH_STORE_OUTBOX_SETTLED);
+  actor_stop(&bob);
+
+  actor_start(&alice);
+  g_assert_cmpint(deliver_to(&alice, theirs->event_json, NULL), ==, MARMOT_RESULT_COMMIT);
+  g_assert_cmpuint(group_epoch(alice.store, &gid), ==, epoch0 + 1);
+  actor_stop(&alice);
+
+  /* Restart: the superseded Commit is dropped, its entry cancelled. */
+  actor_start(&alice);
+  {
+    g_autoptr(GPtrArray) list = resume(&alice);
+    g_assert_cmpuint(list->len, ==, 0);
+    g_autoptr(GhStoreOutboxEntry) entry = outbox_entry(alice.store, ours->outbox_id);
+    g_assert_cmpint(entry->state, ==, GH_STORE_OUTBOX_CANCELLED);
+    g_assert_cmpstr(entry->last_error, ==, GH_MLS_COMMIT_SUPERSEDED_REASON);
+    g_autoptr(GBytes) pending = NULL;
+    g_assert_false(kv_load(alice.store, "mls_group_pending", &gid, &pending));
+  }
+  /* An OK for it now changes nothing but its target. */
+  g_autofree gchar *before = group_state_dump(alice.store);
+  g_assert_cmpint(answer(&alice, ours, RELAY_ONE, TRUE), ==, GH_MLS_COMMIT_SUPERSEDED);
+  g_autofree gchar *after = group_state_dump(alice.store);
+  g_assert_cmpstr(after, ==, before);
+
+  /* Without a restart: the next race's OK finds it superseded. */
+  g_autoptr(GhMlsCommitPublish) ours2 = stage(&alice, &gid, produce_rename, (gpointer) "Alice 2");
+  actor_stop(&alice);
+  actor_start(&bob);
+  g_autoptr(GhMlsCommitPublish) theirs2 = stage(&bob, &gid, produce_rename, (gpointer) "Bob 2");
+  g_assert_cmpint(answer(&bob, theirs2, RELAY_TWO, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  actor_stop(&bob);
+  actor_start(&alice);
+  MarmotError err = MARMOT_OK;
+  g_assert_cmpint(deliver_to(&alice, theirs2->event_json, &err), ==, MARMOT_RESULT_COMMIT);
+  g_assert_cmpint(answer(&alice, ours2, RELAY_ONE, TRUE), ==, GH_MLS_COMMIT_SUPERSEDED);
+  g_autoptr(GhStoreOutboxEntry) cancelled = outbox_entry(alice.store, ours2->outbox_id);
+  g_assert_cmpint(cancelled->state, ==, GH_STORE_OUTBOX_CANCELLED);
+  g_assert_cmpuint(group_epoch(alice.store, &gid), ==, epoch0 + 2);
+
+  /* Every relay refuses the next one: cleared, entry cancelled. */
+  g_autoptr(GhMlsCommitPublish) refused = stage(&alice, &gid, produce_rename, (gpointer) "No");
+  g_assert_cmpint(answer(&alice, refused, RELAY_ONE, FALSE), ==, GH_MLS_COMMIT_PENDING);
+  g_assert_cmpint(answer(&alice, refused, RELAY_TWO, FALSE), ==, GH_MLS_COMMIT_CLEARED);
+  g_autoptr(GhStoreOutboxEntry) gone = outbox_entry(alice.store, refused->outbox_id);
+  g_assert_cmpint(gone->state, ==, GH_STORE_OUTBOX_CANCELLED);
+  g_assert_cmpstr(gone->last_error, ==, GH_MLS_COMMIT_REFUSED_REASON);
+  g_assert_cmpuint(group_epoch(alice.store, &gid), ==, epoch0 + 2);
+  {
+    g_autoptr(GPtrArray) list = resume(&alice);
+    g_assert_cmpuint(list->len, ==, 0);
+  }
+  actor_stop(&alice);
+
+  /* They converged on Bob's branch. */
+  actor_start(&alice);
+  actor_start(&bob);
+  g_autofree gchar *m = actor_message(&bob, &gid, "on Bob's branch");
+  assert_app_message(&alice, m, "on Bob's branch");
+  actor_stop(&alice);
+  actor_stop(&bob);
+
+  marmot_group_id_free(&gid);
+  actor_clear(&alice);
+  actor_clear(&bob);
+}
+
+/* Acceptance (qp24.7): third parties converge, and a removed member is
+ * isolated, with every step across restarts through the lifecycle. */
+static void
+test_lifecycle_three_members(void)
+{
+  Actor alice, bob, charlie;
+  actor_init(&alice);
+  actor_init(&bob);
+  actor_init(&charlie);
+  actor_start(&bob);
+  g_autofree gchar *bob_kp = actor_key_package(&bob);
+  actor_stop(&bob);
+  actor_start(&charlie);
+  g_autofree gchar *charlie_kp = actor_key_package(&charlie);
+  actor_stop(&charlie);
+
+  actor_start(&alice);
+  MarmotGroupId gid = create_group_with(&alice, "Three", NULL, 0, NULL, NULL);
+  const char *kps[] = { bob_kp, charlie_kp };
+  AddArgs add = { .kps = kps, .n = 2 };
+  g_autoptr(GhMlsCommitPublish) added = stage(&alice, &gid, produce_add, &add);
+  free_strings_n(add.welcomes, add.n_welcomes);
+  actor_stop(&alice);
+  actor_start(&alice);   /* the OK comes after a restart */
+  g_assert_cmpint(answer(&alice, added, RELAY_ONE, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  gsize n = 0;
+  g_auto(GStrv) welcomes = take_welcomes(&alice, &gid, &n);
+  g_assert_cmpuint(n, ==, 2);
+  actor_stop(&alice);
+  actor_start(&bob);
+  actor_join(&bob, welcomes[0]);
+  actor_stop(&bob);
+  actor_start(&charlie);
+  actor_join(&charlie, welcomes[1]);
+  actor_stop(&charlie);
+
+  Actor *all[] = { &alice, &bob, &charlie };
+  for (guint i = 0; i < 3; i++)
+    actor_start(all[i]);
+  guint64 epoch = group_epoch(alice.store, &gid);
+  for (guint s = 0; s < 3; s++) {
+    g_assert_cmpuint(group_epoch(all[s]->store, &gid), ==, epoch);
+    g_autofree gchar *text = g_strdup_printf("from member %u", s);
+    g_autofree gchar *m = actor_message(all[s], &gid, text);
+    for (guint r = 0; r < 3; r++)
+      if (r != s)
+        assert_app_message(all[r], m, text);
+  }
+  for (guint i = 0; i < 3; i++)
+    actor_stop(all[i]);
+
+  /* Alice removes Charlie. */
+  actor_start(&alice);
+  g_autoptr(GhMlsCommitPublish) removed = stage(&alice, &gid, produce_remove, charlie.pk);
+  g_assert_cmpint(answer(&alice, removed, RELAY_TWO, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  actor_stop(&alice);
+  actor_start(&bob);
+  g_assert_cmpint(deliver_to(&bob, removed->event_json, NULL), ==, MARMOT_RESULT_COMMIT);
+  actor_stop(&bob);
+  actor_start(&charlie);
+  MarmotError err = MARMOT_OK;
+  (void) deliver_to(&charlie, removed->event_json, &err);   /* whatever it makes of it */
+  actor_stop(&charlie);
+
+  actor_start(&alice);
+  actor_start(&bob);
+  actor_start(&charlie);
+  g_assert_cmpuint(group_epoch(bob.store, &gid), ==, epoch + 1);
+  g_autofree gchar *secret = actor_message(&alice, &gid, "Charlie must not read this");
+  assert_app_message(&bob, secret, "Charlie must not read this");
+  MarmotMessageResult result;
+  memset(&result, 0, sizeof result);
+  err = marmot_process_message(charlie.marmot, secret, &result);
+  g_assert_cmpint(err, !=, MARMOT_OK);
+  g_assert_null(result.app_msg.inner_event_json);
+  marmot_message_result_free(&result);
+  g_autofree gchar *reply = actor_message(&bob, &gid, "nor this");
+  assert_app_message(&alice, reply, "nor this");
+  memset(&result, 0, sizeof result);
+  g_assert_cmpint(marmot_process_message(charlie.marmot, reply, &result), !=, MARMOT_OK);
+  marmot_message_result_free(&result);
+  actor_stop(&alice);
+  actor_stop(&bob);
+  actor_stop(&charlie);
+
+  marmot_group_id_free(&gid);
+  actor_clear(&alice);
+  actor_clear(&bob);
+  actor_clear(&charlie);
+}
+
+/* Acceptance (qp24.7): a full disk fails closed (GH_STORE_ERROR_FULL,
+ * nothing of the step stored, the Commit neither staged nor merged), and so
+ * does a wrong or locked key (no store, so no MLS state at all). */
+static void
+test_lifecycle_disk_full_and_key(void)
+{
+  Actor alice, bob;
+  actor_init(&alice);
+  actor_init(&bob);
+  actor_start(&bob);
+  g_autofree gchar *bob_kp = actor_key_package(&bob);
+  actor_stop(&bob);
+  actor_start(&alice);
+  const char *kps[] = { bob_kp };
+  g_auto(GStrv) welcomes = NULL;
+  MarmotGroupId gid = create_group_with(&alice, "Full", kps, 1, NULL, &welcomes);
+  guint64 epoch0 = group_epoch(alice.store, &gid);
+
+  /* No room to grow: staging fails with FULL and stores nothing. */
+  g_autofree gchar *before = db_dump(alice.store, "%");
+  gint64 pages = sql_int(alice.store, "PRAGMA page_count");
+  g_autofree gchar *limit = g_strdup_printf("PRAGMA max_page_count = %" G_GINT64_FORMAT, pages);
+  g_assert_cmpint(sql_int(alice.store, limit), ==, pages);
+  g_autoptr(GError) error = NULL;
+  GhMlsCommitPublish *none = gh_mls_commit_stage(alice.store, alice.marmot, alice.storage, &gid,
+                                                 alice.account.pubkey, produce_rename,
+                                                 (gpointer) "No room", &error);
+  g_assert_null(none);
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_FULL);
+  g_clear_error(&error);
+  g_assert_cmpuint(gh_store_get_transaction_depth(alice.store), ==, 0);
+  g_autofree gchar *after = db_dump(alice.store, "%");
+  g_assert_cmpstr(after, ==, before);
+
+  /* With room, it stages; full again, the first OK cannot merge: nothing of
+   * it is recorded and the Commit stays pending. */
+  g_assert_cmpint(sql_int(alice.store, "PRAGMA max_page_count = 1000000"), >=, 1000000);
+  g_autoptr(GhMlsCommitPublish) staged = stage(&alice, &gid, produce_rename, (gpointer) "Room");
+  g_autofree gchar *staged_dump = db_dump(alice.store, "%");
+  pages = sql_int(alice.store, "PRAGMA page_count");
+  g_free(limit);
+  limit = g_strdup_printf("PRAGMA max_page_count = %" G_GINT64_FORMAT, pages);
+  g_assert_cmpint(sql_int(alice.store, limit), ==, pages);
+  GhMlsCommitState state = GH_MLS_COMMIT_PENDING;
+  if (gh_mls_commit_record_answer(alice.store, alice.marmot, alice.storage, staged, RELAY_ONE,
+                                  TRUE, NULL, &state, &error)) {
+    /* The merge fit into free pages: then it must be complete. */
+    g_assert_no_error(error);
+    g_assert_cmpint(state, ==, GH_MLS_COMMIT_MERGED);
+    g_assert_cmpuint(group_epoch(alice.store, &gid), ==, epoch0 + 1);
+    g_test_message("the merge needed no new page; FULL covered by the stage");
+  } else {
+    g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_FULL);
+    g_clear_error(&error);
+    g_autofree gchar *not_merged = db_dump(alice.store, "%");
+    g_assert_cmpstr(not_merged, ==, staged_dump);
+    g_assert_cmpuint(group_epoch(alice.store, &gid), ==, epoch0);
+    g_assert_cmpint(sql_int(alice.store, "PRAGMA max_page_count = 1000000"), >=, 1000000);
+    g_assert_cmpint(answer(&alice, staged, RELAY_ONE, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  }
+  assert_groups_consistent(alice.store);
+  actor_stop(&alice);
+
+  /* A wrong key (or a locked keyring: no key) opens nothing. */
+  guint8 raw[GH_STORE_KEY_SIZE];
+  randombytes_buf(raw, sizeof raw);
+  g_autoptr(GBytes) wrong = g_bytes_new(raw, sizeof raw);
+  sodium_memzero(raw, sizeof raw);
+  GhStoreConfig config = { .account_pubkey = alice.account.pubkey };
+  GhStore *store = gh_store_open_with_key(&config, wrong, alice.account.store_id,
+                                          GH_STORE_OPEN_NONE, &error);
+  g_assert_null(store);
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_KEY);
+
+  marmot_group_id_free(&gid);
+  actor_clear(&alice);
+  actor_clear(&bob);
+}
+
+/* ---- Privacy: no MLS secret or plaintext outside the encrypted store ---------------------- */
+
+static void
+add_state_needles(CanaryScan *scan, GhStore *store, const MarmotGroupId *gid)
+{
+  static const gchar *const labels[] = { "mls_group", "mls_group_parent", "mls_group_pending",
+                                         "mls_group_welcomes" };
+  for (guint i = 0; i < G_N_ELEMENTS(labels); i++) {
+    g_autoptr(GBytes) value = NULL;
+    if (!kv_load(store, labels[i], gid, &value))
+      continue;
+    gsize len = 0;
+    const guint8 *p = g_bytes_get_data(value, &len);
+    /* Slices of the record: its secrets sit somewhere inside. */
+    for (gsize at = 0; at + 48 <= len; at += len / 6 + 1) {
+      g_autofree gchar *label = g_strdup_printf("%s[%" G_GSIZE_FORMAT "]", labels[i], at);
+      canary_scan_add_bytes(scan, label, p + at, 48);
+    }
+  }
+  MarmotStorage *s = storage_new(store);
+  guint64 epoch = group_epoch(store, gid);
+  for (guint64 e = 0; e <= epoch; e++) {
+    uint8_t secret[32];
+    if (s->get_exporter_secret(s->ctx, gid, e, secret) != MARMOT_OK)
+      continue;
+    g_autofree gchar *label = g_strdup_printf("exporter secret %" G_GUINT64_FORMAT, e);
+    canary_scan_add_bytes(scan, label, secret, sizeof secret);
+    sodium_memzero(secret, sizeof secret);
+  }
+  marmot_storage_free(s);
+}
+
+/* Acceptance (qp24.7): after a full lifecycle -- stage, restart, merge,
+ * Welcome, messages, a late message -- the canary scanner finds no MLS
+ * secret (exporter secrets, MLS state, pending Commit, Welcome outbox) and
+ * no plaintext anywhere under the test's home, cache, config and data
+ * directories (the SQLCipher files included), and nothing but the store. */
+static void
+test_lifecycle_no_secrets_on_disk(void)
+{
+  Actor alice, bob;
+  actor_init(&alice);
+  actor_init(&bob);
+  g_autofree gchar *nonce = gh_store_new_op_id();
+  g_autofree gchar *name_canary = g_strdup_printf("MLS-GROUP-CANARY-%s", nonce);
+  g_autofree gchar *text_canary = g_strdup_printf("MLS-MESSAGE-CANARY-%s", nonce);
+  g_autofree gchar *late_canary = g_strdup_printf("MLS-LATE-CANARY-%s", nonce);
+
+  actor_start(&bob);
+  g_autofree gchar *bob_kp = actor_key_package(&bob);
+  actor_stop(&bob);
+  actor_start(&alice);
+  MarmotGroupId gid = create_group_with(&alice, "canary", NULL, 0, NULL, NULL);
+  const char *kps[] = { bob_kp };
+  AddArgs add = { .kps = kps, .n = 1 };
+  g_autoptr(GhMlsCommitPublish) added = stage(&alice, &gid, produce_add, &add);
+  free_strings_n(add.welcomes, add.n_welcomes);
+  actor_stop(&alice);
+  actor_start(&alice);
+  g_autoptr(GPtrArray) resumed = resume(&alice);
+  g_assert_cmpuint(resumed->len, ==, 1);
+  g_assert_cmpint(answer(&alice, added, RELAY_ONE, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  gsize n = 0;
+  g_auto(GStrv) welcomes = take_welcomes(&alice, &gid, &n);
+  actor_stop(&alice);
+  actor_start(&bob);
+  actor_join(&bob, welcomes[0]);
+  g_autofree gchar *late = actor_message(&bob, &gid, late_canary);
+  actor_stop(&bob);
+
+  actor_start(&alice);
+  g_autoptr(GhMlsCommitPublish) renamed = stage(&alice, &gid, produce_rename, name_canary);
+  g_assert_cmpint(answer(&alice, renamed, RELAY_TWO, TRUE), ==, GH_MLS_COMMIT_MERGED);
+  g_autofree gchar *msg = actor_message(&alice, &gid, text_canary);
+  /* One still pending, so its record is on disk too. */
+  g_autoptr(GhMlsCommitPublish) pending = stage(&alice, &gid, produce_rename, name_canary);
+  actor_stop(&alice);
+  actor_start(&bob);
+  g_assert_cmpint(deliver_to(&bob, renamed->event_json, NULL), ==, MARMOT_RESULT_COMMIT);
+  assert_app_message(&bob, msg, text_canary);
+  actor_stop(&bob);
+  actor_start(&alice);
+  assert_app_message(&alice, late, late_canary);   /* through the retained parent */
+  actor_stop(&alice);
+
+  CanaryScan *scan = canary_scan_new();
+  canary_scan_add(scan, "group name", name_canary);
+  canary_scan_add(scan, "message", text_canary);
+  canary_scan_add(scan, "late message", late_canary);
+  Actor *both[] = { &alice, &bob };
+  for (guint i = 0; i < 2; i++) {
+    actor_start(both[i]);
+    add_state_needles(scan, both[i]->store, &gid);
+    actor_stop(both[i]);
+  }
+  const gchar *roots[] = { g_get_home_dir(), g_get_user_data_dir(), g_get_user_cache_dir(),
+                           g_get_user_config_dir(), g_get_user_state_dir(),
+                           g_get_user_runtime_dir() };
+  guint scanned = 0;
+  for (guint i = 0; i < G_N_ELEMENTS(roots); i++) {
+    guint files = 0;
+    canary_scan_tree(scan, roots[i], &files);
+    scanned += files;
+  }
+  g_assert_cmpuint(scanned, >, 0);
+  canary_scan_check_clean(scan, "MLS secrets and plaintext outside the encrypted store");
+
+  /* The scan is not vacuous: a leaked exporter secret (hex) is found. */
+  {
+    actor_start(&alice);
+    MarmotStorage *s = alice.storage;
+    uint8_t secret[32];
+    assert_marmot_ok(s->get_exporter_secret(s->ctx, &gid, group_epoch(alice.store, &gid),
+                                            secret));
+    actor_stop(&alice);
+    g_autofree gchar *hex = hex32(secret);
+    sodium_memzero(secret, sizeof secret);
+    g_assert_cmpint(g_mkdir_with_parents(g_get_user_cache_dir(), 0700), ==, 0);
+    g_autofree gchar *leak = g_build_filename(g_get_user_cache_dir(), "leak.txt", NULL);
+    g_assert_true(g_file_set_contents(leak, hex, -1, NULL));
+    g_assert_cmpuint(canary_scan_tree(scan, g_get_user_cache_dir(), NULL), >, 0);
+    g_remove(leak);
+    canary_scan_clear_hits(scan);
+  }
+  canary_scan_free(scan);
+
+  /* Nothing but the stores themselves was written. */
+  for (guint i = 0; i < 2; i++) {
+    g_autofree gchar *path = account_store_path(&both[i]->account);
+    g_autofree gchar *dir = g_path_get_dirname(path);
+    g_autoptr(GDir) listing = g_dir_open(dir, 0, NULL);
+    g_assert_nonnull(listing);
+    const gchar *name;
+    while ((name = g_dir_read_name(listing)))
+      g_assert_true(g_str_has_prefix(name, "store.db"));
+  }
+
+  marmot_group_id_free(&gid);
+  actor_clear(&alice);
+  actor_clear(&bob);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2841,5 +4120,13 @@ main(int argc, char **argv)
   g_test_add_func("/store-marmot/t-mls/crash-atomicity", test_tmls_crash_atomicity);
   g_test_add_func("/store-marmot/e2e/persistence", test_e2e_persistence);
   g_test_add_func("/store-marmot/privacy/no-plaintext-on-disk", test_no_plaintext_on_disk);
+  g_test_add_func("/store-marmot/lifecycle/crash-every-write", test_lifecycle_crash_every_write);
+  g_test_add_func("/store-marmot/lifecycle/restart-republishes", test_lifecycle_restart_republishes);
+  g_test_add_func("/store-marmot/lifecycle/superseded-and-refused",
+                  test_lifecycle_superseded_and_refused);
+  g_test_add_func("/store-marmot/lifecycle/three-members", test_lifecycle_three_members);
+  g_test_add_func("/store-marmot/lifecycle/disk-full-and-key", test_lifecycle_disk_full_and_key);
+  g_test_add_func("/store-marmot/privacy/lifecycle-no-secrets-on-disk",
+                  test_lifecycle_no_secrets_on_disk);
   return g_test_run();
 }

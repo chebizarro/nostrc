@@ -2675,18 +2675,11 @@ test_message_epoch_lookback(void)
 {
     TEST("MIP-03: process_message tries previous epochs on mismatch");
 
-    /* This test verifies the epoch lookback mechanism for the NIP-44 layer.
-     *
-     * With MLS PrivateMessage framing active:
-     *   1. Messages are MLS-encrypted then NIP-44-encrypted
-     *   2. NIP-44 epoch lookback can find the right exporter_secret
-     *   3. BUT: MLS state for the old epoch is replaced after advance
-     *   4. So the MLS ciphertext from epoch 0 can't be unwrapped at epoch 1
-     *
-     * This is correct MLS behavior — PrivateMessage keys are epoch-bound.
-     * The NIP-44 lookback works (proven by no NIP-44 error), but the MLS
-     * layer correctly rejects the stale-epoch ciphertext. Applications
-     * should display locally-cached plaintext for their own stale messages. */
+    /* The NIP-44 layer tries the exporter secrets of recent epochs.  The MLS
+     * PrivateMessage keys are epoch-bound: since 0.7.0 (nostrc-qp24.7) a
+     * message of the previous epoch is read with the retained parent state
+     * (here our own, so it is recognised as ours); two epochs back is past
+     * libmarmot's one-epoch rewind horizon and fails in the MLS layer. */
 
     Marmot *m = create_test_instance();
     ASSERT(m != NULL, "failed to create instance");
@@ -2705,16 +2698,21 @@ test_message_epoch_lookback(void)
     MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
     ASSERT_OK(err, "create_group");
 
-    /* Send a message at epoch 0 */
-    MarmotOutgoingMessage msg_out;
+    /* Two messages at epoch 0 */
+    MarmotOutgoingMessage msg_out, msg_old;
     memset(&msg_out, 0, sizeof(msg_out));
-
+    memset(&msg_old, 0, sizeof(msg_old));
     err = marmot_create_message(m, &gresult.group->mls_group_id,
                                  "{\"kind\":9,\"content\":\"epoch0 msg\","
                                  "\"created_at\":1700000000,\"tags\":[]}",
                                  &msg_out);
     ASSERT_OK(err, "create_message at epoch 0");
     ASSERT(msg_out.event_json != NULL, "event_json is NULL");
+    err = marmot_create_message(m, &gresult.group->mls_group_id,
+                                 "{\"kind\":9,\"content\":\"epoch0 again\","
+                                 "\"created_at\":1700000000,\"tags\":[]}",
+                                 &msg_old);
+    ASSERT_OK(err, "second create_message at epoch 0");
 
     /* Advance epoch by updating group metadata */
     MarmotGroupConfig update_config = {0};
@@ -2729,19 +2727,31 @@ test_message_epoch_lookback(void)
     ASSERT_OK(marmot_merge_pending_commit(m, &gresult.group->mls_group_id),
               "merge_pending_commit");
 
-    /* Try to decrypt the epoch-0 message at epoch 1.
-     * NIP-44 lookback finds the exporter_secret, but MLS epoch 0 state
-     * is no longer available. With MLS framing required, this is an MLS
-     * state/framing failure rather than a NIP-44 crypto failure. */
+    /* Epoch 1: the epoch-0 message is read with the retained parent. */
     MarmotMessageResult msg_in;
     memset(&msg_in, 0, sizeof(msg_in));
-
     err = marmot_process_message(m, msg_out.event_json, &msg_in);
+    ASSERT(err == MARMOT_OK && msg_in.type == MARMOT_RESULT_OWN_MESSAGE,
+           "previous-epoch message: read through the retained parent");
+    marmot_message_result_free(&msg_in);
+
+    /* Epoch 2: epoch 0 is beyond the rewind horizon. */
+    update_config.name = "Epoch Lookback Test v3";
+    commit_json = NULL;
+    ASSERT_OK(marmot_update_group_metadata(m, &gresult.group->mls_group_id,
+                                           &update_config, &commit_json),
+              "second update");
+    free(commit_json);
+    ASSERT_OK(marmot_merge_pending_commit(m, &gresult.group->mls_group_id),
+              "second merge");
+    memset(&msg_in, 0, sizeof(msg_in));
+    err = marmot_process_message(m, msg_old.event_json, &msg_in);
     ASSERT(err == MARMOT_ERR_MLS,
-           "should fail: MLS state for old epoch unavailable");
+           "should fail: MLS state two epochs back is not retained");
 
     marmot_message_result_free(&msg_in);
     marmot_outgoing_message_free(&msg_out);
+    marmot_outgoing_message_free(&msg_old);
     marmot_create_group_result_free(&gresult);
     marmot_free(m);
     PASS();

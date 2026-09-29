@@ -88,9 +88,16 @@ void
 canary_scan_add(CanaryScan *scan, const gchar *label, const gchar *needle)
 {
   g_return_if_fail(scan && label && needle);
-  gsize length = strlen(needle);
+  canary_scan_add_bytes(scan, label, needle, strlen(needle));
+}
+
+void
+canary_scan_add_bytes(CanaryScan *scan, const gchar *label, gconstpointer needle,
+                      gsize length)
+{
+  g_return_if_fail(scan && label && needle);
   g_return_if_fail(length >= 8);
-  const guint8 *bytes = (const guint8 *)needle;
+  const guint8 *bytes = needle;
   add_pattern(scan, label, "raw", needle, length);
   g_autofree gchar *lower = hex_of(bytes, length, FALSE);
   add_pattern(scan, label, "hex", lower, strlen(lower));

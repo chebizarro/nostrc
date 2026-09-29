@@ -267,6 +267,57 @@ retained_load(Marmot *m, const uint8_t *gid, size_t gid_len, RetainedParent *out
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Late application messages (nostrc-qp24.7)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
+                           const uint8_t *msg, size_t msg_len,
+                           uint8_t **out_plaintext, size_t *out_len,
+                           uint32_t *out_sender)
+{
+    if (!m || !gid || !msg || !out_plaintext || !out_len || !out_sender)
+        return MARMOT_ERR_INVALID_ARG;
+    *out_plaintext = NULL;
+    *out_len = 0;
+    MarmotStorage *s = m->storage;
+    if (!s || !s->mls_load || !s->mls_store) return MARMOT_ERR_STORAGE;
+    uint8_t *probe = NULL;
+    size_t probe_len = 0;
+    MarmotError err = s->mls_load(s->ctx, PARENT_LABEL, gid->data, gid->len,
+                                  &probe, &probe_len);
+    free_secret(probe, probe_len);
+    if (err != MARMOT_OK) return err;   /* incl. STORAGE_NOT_FOUND: none retained */
+
+    RetainedParent rp;
+    if (retained_load(m, gid->data, gid->len, &rp) != 0) return MARMOT_ERR_DESERIALIZATION;
+    if (rp.parent_epoch != epoch) {
+        mls_group_free(&rp.parent);
+        return MARMOT_ERR_STORAGE_NOT_FOUND;   /* not the epoch we retain */
+    }
+    int rc = mls_group_decrypt(&rp.parent, msg, msg_len, out_plaintext, out_len, out_sender);
+    if (rc == 0) {
+        /* The parent's ratchet moved on (no key is ever used twice): store it
+         * in the same transaction as the message. */
+        uint8_t *blob = NULL;
+        size_t blob_len = 0;
+        err = retained_encode(&rp.parent, &rp.key, &blob, &blob_len) == 0
+                  ? s->mls_store(s->ctx, PARENT_LABEL, gid->data, gid->len, blob, blob_len)
+                  : MARMOT_ERR_SERIALIZATION;
+        free_secret(blob, blob_len);
+        if (err != MARMOT_OK) {
+            free_secret(*out_plaintext, *out_len);
+            *out_plaintext = NULL;
+            *out_len = 0;
+        }
+    } else {
+        err = rc == MARMOT_ERR_OWN_MESSAGE ? MARMOT_ERR_OWN_MESSAGE : MARMOT_ERR_MLS;
+    }
+    mls_group_free(&rp.parent);
+    return err;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Persistence
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -998,7 +1049,8 @@ pending_apply(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const PendingC
                                               &key, &gde);
     if (err != MARMOT_OK) {
         /* It can never apply: drop it rather than wedge the group. */
-        (void)pending_delete(m, group->mls_group_id.data, group->mls_group_id.len);
+        if (pending_delete(m, group->mls_group_id.data, group->mls_group_id.len) == MARMOT_OK)
+            marmot_txn_keep(m);   /* the drop is the outcome, not a failure */
         return err;
     }
     memcpy(key.digest, p->key.digest, 32);
@@ -1031,7 +1083,10 @@ marmot_commit_merge_pending(Marmot *m, MarmotGroup *group)
             /* The state it was built on was replaced: another member's
              * Commit won.  Its deferred Commits were built on that state too. */
             err = pending_delete(m, gid->data, gid->len);
-            if (err == MARMOT_OK) err = MARMOT_ERR_WRONG_EPOCH;
+            if (err == MARMOT_OK) {
+                marmot_txn_keep(m);   /* dropped for good: keep that */
+                err = MARMOT_ERR_WRONG_EPOCH;
+            }
             break;
         }
         mls_group_free(&cur);
@@ -1123,7 +1178,9 @@ defer_inbound(Marmot *m, PendingCommit *p, const uint8_t *gid, size_t gid_len,
     d->epoch = epoch;
     p->deferred_count++;
     MarmotError err = pending_store(m, gid, gid_len, p);
-    return err == MARMOT_OK ? MARMOT_ERR_OWN_COMMIT_PENDING : err;
+    if (err != MARMOT_OK) return err;
+    marmot_txn_keep(m);   /* kept for marmot_clear_pending_commit() */
+    return MARMOT_ERR_OWN_COMMIT_PENDING;
 }
 
 static void
