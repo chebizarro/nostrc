@@ -347,6 +347,26 @@ int mls_group_self_update(MlsGroup *group,
                           MlsCommitResult *result);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * GroupContext extensions update
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Replace the group's GroupContext extensions: commit a
+ * GroupContextExtensions proposal (RFC 9420 §12.1.7) carrying `extensions`
+ * (a serialized Extension list) together with the UpdatePath it requires.
+ * Receivers apply it through mls_group_process_commit().
+ *
+ * The list must be well formed, free of duplicates and of extension types
+ * libmarmot does not apply, and every member must support each extension
+ * (and any required_capabilities); otherwise MARMOT_ERR_UNSUPPORTED (or
+ * MARMOT_ERR_INVALID_ARG for a malformed list) is returned.  On success the
+ * group is advanced to the new epoch; on failure it is unchanged.
+ */
+int mls_group_commit_extensions(MlsGroup *group,
+                                const uint8_t *extensions, size_t extensions_len,
+                                MlsCommitResult *result);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Process incoming Commit
  *
  * Called by non-committing members when they receive a Commit.

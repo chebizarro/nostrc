@@ -1986,6 +1986,7 @@ test_process_message_unknown_group(void)
 
 /* Internal declarations for serialization test */
 #include "../src/mls/mls_group.h"
+#include "../src/kp_profile.h"
 
 static void
 test_mls_group_serialize_roundtrip(void)
@@ -3078,6 +3079,112 @@ test_marmot_config_defaults(void)
  * Main
  * ══════════════════════════════════════════════════════════════════════════ */
 
+
+/* nostrc-8u1k: the committed GroupContext carries the updated GroupData --
+ * the stored GroupData with only the given fields changed -- as the single
+ * marmot_group_data extension, and the local record mirrors it. */
+static void
+test_update_group_metadata_commits_merged_group_data(void)
+{
+    TEST("MIP-01: update_group_metadata commits the merged GroupData");
+
+    Marmot *m = create_test_instance();
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+    MarmotGroupConfig config = {0};
+    config.name = "Original Name";
+    config.description = "Kept Desc";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+    MarmotCreateGroupResult result;
+    memset(&result, 0, sizeof(result));
+    ASSERT_OK(marmot_create_group(m, pk, NULL, 0, &config, &result), "create_group");
+
+    /* Only the name changes. */
+    MarmotGroupConfig rename = {0};
+    rename.name = "Renamed";
+    ASSERT_OK(marmot_update_group_metadata(m, &result.group->mls_group_id, &rename),
+              "update_group_metadata");
+
+    MarmotGroup *updated = NULL;
+    ASSERT_OK(marmot_get_group(m, &result.group->mls_group_id, &updated), "get_group");
+    ASSERT(strcmp(updated->name, "Renamed") == 0, "name not updated");
+    ASSERT(updated->description && strcmp(updated->description, "Kept Desc") == 0,
+           "description must be kept");
+    ASSERT(updated->admin_count == 1 && memcmp(updated->admin_pubkeys[0], pk, 32) == 0,
+           "admins must be kept");
+    ASSERT(updated->epoch == result.group->epoch + 1, "epoch should advance");
+
+    uint8_t *state = NULL;
+    size_t state_len = 0;
+    ASSERT_OK(m->storage->mls_load(m->storage->ctx, "mls_group",
+                                   result.group->mls_group_id.data,
+                                   result.group->mls_group_id.len, &state, &state_len),
+              "mls_load");
+    MlsGroup mls;
+    ASSERT(mls_group_deserialize(state, state_len, &mls) == 0, "mls state");
+    free(state);
+    ASSERT(mls.epoch == updated->epoch, "MLS epoch");
+    const uint8_t *gd = NULL;
+    size_t gd_len = 0, count = 0;
+    ASSERT(marmot_extensions_find(mls.extensions_data, mls.extensions_len,
+                                  MARMOT_EXTENSION_TYPE, &gd, &gd_len, &count) == 0 &&
+           count == 1, "exactly one marmot_group_data extension");
+    MarmotGroupDataExtension *gde = marmot_group_data_extension_deserialize(gd, gd_len);
+    ASSERT(gde != NULL, "GroupData parses");
+    ASSERT(gde->name && strcmp(gde->name, "Renamed") == 0, "GroupContext name");
+    ASSERT(gde->description && strcmp(gde->description, "Kept Desc") == 0,
+           "GroupContext description kept");
+    ASSERT(gde->admin_count == 1 && memcmp(gde->admins[0], pk, 32) == 0,
+           "GroupContext admins kept");
+    ASSERT(memcmp(gde->nostr_group_id, updated->nostr_group_id, 32) == 0,
+           "nostr_group_id unchanged");
+
+    marmot_group_data_extension_free(gde);
+    mls_group_free(&mls);
+    marmot_group_free(updated);
+    marmot_create_group_result_free(&result);
+    marmot_free(m);
+    PASS();
+}
+
+/* Fail closed: metadata that cannot be committed to the MLS group is not
+ * applied locally either (it used to update the record and return OK). */
+static void
+test_update_group_metadata_fails_closed_without_mls_state(void)
+{
+    TEST("MIP-01: update_group_metadata without MLS state changes nothing");
+
+    Marmot *m = create_test_instance();
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+    MarmotGroupConfig config = {0};
+    config.name = "Before";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+    MarmotCreateGroupResult result;
+    memset(&result, 0, sizeof(result));
+    ASSERT_OK(marmot_create_group(m, pk, NULL, 0, &config, &result), "create_group");
+    ASSERT_OK(m->storage->mls_delete(m->storage->ctx, "mls_group",
+                                     result.group->mls_group_id.data,
+                                     result.group->mls_group_id.len), "mls_delete");
+
+    MarmotGroupConfig rename = {0};
+    rename.name = "After";
+    MarmotError err = marmot_update_group_metadata(m, &result.group->mls_group_id,
+                                                   &rename);
+    ASSERT(err == MARMOT_ERR_MLS, "update without MLS state must fail");
+    MarmotGroup *g = NULL;
+    ASSERT_OK(marmot_get_group(m, &result.group->mls_group_id, &g), "get_group");
+    ASSERT(strcmp(g->name, "Before") == 0, "name must be unchanged");
+    ASSERT(g->epoch == result.group->epoch, "epoch must be unchanged");
+
+    marmot_group_free(g);
+    marmot_create_group_result_free(&result);
+    marmot_free(m);
+    PASS();
+}
+
 int
 main(void)
 {
@@ -3127,6 +3234,8 @@ main(void)
     test_add_members_admin_only();
     test_update_group_metadata();
     test_update_group_metadata_non_admin();
+    test_update_group_metadata_commits_merged_group_data();
+    test_update_group_metadata_fails_closed_without_mls_state();
 
     printf("\nMIP-02: Welcome Events\n");
     test_process_welcome_basic();

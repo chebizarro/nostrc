@@ -15,6 +15,7 @@
  */
 
 #include "marmot-internal.h"
+#include "kp_profile.h"
 #include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
 #include "mls/mls_welcome.h"
@@ -1008,6 +1009,172 @@ marmot_leave_group(Marmot *m, const MarmotGroupId *mls_group_id)
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Internal: GroupContext extensions for a metadata update
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* Replace (or append) the marmot_group_data entry of a serialized Extension
+ * list with `gde_bytes`, keeping every other extension and the order. */
+static int
+replace_group_data_extension(const uint8_t *exts, size_t exts_len,
+                             const uint8_t *gde_bytes, size_t gde_len,
+                             uint8_t **out, size_t *out_len)
+{
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, exts_len + gde_len + 8) != 0) return -1;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, exts, exts_len);
+    bool replaced = false;
+    while (!mls_tls_reader_done(&r)) {
+        size_t entry_start = r.pos;
+        uint16_t type;
+        size_t len;
+        if (mls_tls_read_u16(&r, &type) != 0 || mls_tls_read_vli(&r, &len) != 0 ||
+            len > mls_tls_reader_remaining(&r))
+            goto fail;
+        r.pos += len;
+        if (type != MARMOT_EXTENSION_TYPE) {
+            if (mls_tls_buf_append(&buf, exts + entry_start, r.pos - entry_start) != 0)
+                goto fail;
+        } else if (!replaced) {
+            if (mls_tls_write_u16(&buf, MARMOT_EXTENSION_TYPE) != 0 ||
+                mls_tls_write_opaque16(&buf, gde_bytes, gde_len) != 0)
+                goto fail;
+            replaced = true;
+        } else {
+            goto fail; /* two marmot_group_data extensions */
+        }
+    }
+    if (!replaced &&
+        (mls_tls_write_u16(&buf, MARMOT_EXTENSION_TYPE) != 0 ||
+         mls_tls_write_opaque16(&buf, gde_bytes, gde_len) != 0))
+        goto fail;
+    *out = buf.data;
+    *out_len = buf.len;
+    return 0;
+fail:
+    mls_tls_buf_free(&buf);
+    return -1;
+}
+
+/* Free and replace a string field with a copy of `value`. */
+static int
+replace_string(char **field, const char *value)
+{
+    char *copy = strdup(value);
+    if (!copy) return -1;
+    free(*field);
+    *field = copy;
+    return 0;
+}
+
+/**
+ * The GroupData after a metadata update: the group's current
+ * marmot_group_data with the non-NULL fields of `config` applied (MIP-01;
+ * image fields and anything not in the config are kept), and the full
+ * GroupContext extension list carrying it.  A group without GroupData gets
+ * one for its nostr_group_id.
+ */
+static MarmotError
+updated_group_data(const MlsGroup *mls, const MarmotGroupConfig *config,
+                   const uint8_t nostr_group_id[32],
+                   MarmotGroupDataExtension **gde_out,
+                   uint8_t **exts_out, size_t *exts_len_out)
+{
+    const uint8_t *cur = NULL;
+    size_t cur_len = 0, count = 0;
+    if (marmot_extensions_find(mls->extensions_data, mls->extensions_len,
+                               MARMOT_EXTENSION_TYPE, &cur, &cur_len, &count) != 0 ||
+        count > 1)
+        return MARMOT_ERR_MLS;
+
+    MarmotGroupDataExtension *gde = NULL;
+    if (count == 1) {
+        gde = marmot_group_data_extension_deserialize(cur, cur_len);
+        if (!gde) return MARMOT_ERR_MLS;
+    } else {
+        gde = marmot_group_data_extension_new();
+        if (!gde) return MARMOT_ERR_MEMORY;
+        gde->version = MARMOT_EXTENSION_VERSION;
+        memcpy(gde->nostr_group_id, nostr_group_id, 32);
+    }
+
+    MarmotError err = MARMOT_ERR_MEMORY;
+    if ((config->name && replace_string(&gde->name, config->name) != 0) ||
+        (config->description &&
+         replace_string(&gde->description, config->description) != 0))
+        goto fail;
+    if (config->admin_count > 0 && config->admin_pubkeys) {
+        uint8_t (*admins)[32] = malloc(config->admin_count * 32);
+        if (!admins) goto fail;
+        memcpy(admins, config->admin_pubkeys, config->admin_count * 32);
+        free(gde->admins);
+        gde->admins = admins;
+        gde->admin_count = config->admin_count;
+    }
+    if (config->relay_count > 0 && config->relay_urls) {
+        char **relays = calloc(config->relay_count, sizeof(char *));
+        if (!relays) goto fail;
+        for (size_t i = 0; i < config->relay_count; i++) {
+            relays[i] = strdup(config->relay_urls[i]);
+            if (!relays[i]) {
+                for (size_t j = 0; j < i; j++) free(relays[j]);
+                free(relays);
+                goto fail;
+            }
+        }
+        for (size_t i = 0; i < gde->relay_count; i++) free(gde->relays[i]);
+        free(gde->relays);
+        gde->relays = relays;
+        gde->relay_count = config->relay_count;
+    }
+
+    uint8_t *gde_bytes = NULL;
+    size_t gde_len = 0;
+    if (marmot_group_data_extension_serialize(gde, &gde_bytes, &gde_len) != 0) {
+        err = MARMOT_ERR_SERIALIZATION;
+        goto fail;
+    }
+    int rc = replace_group_data_extension(mls->extensions_data, mls->extensions_len,
+                                          gde_bytes, gde_len, exts_out, exts_len_out);
+    free(gde_bytes);
+    if (rc != 0) {
+        err = MARMOT_ERR_MLS;
+        goto fail;
+    }
+    *gde_out = gde;
+    return MARMOT_OK;
+fail:
+    marmot_group_data_extension_free(gde);
+    return err;
+}
+
+/* Mirror the committed GroupData into the stored MarmotGroup. */
+static MarmotError
+group_apply_group_data(MarmotGroup *group, const MarmotGroupDataExtension *gde)
+{
+    char *name = gde->name ? strdup(gde->name) : NULL;
+    char *description = gde->description ? strdup(gde->description) : NULL;
+    uint8_t (*admins)[32] = NULL;
+    if (gde->admin_count > 0 && gde->admins) admins = malloc(gde->admin_count * 32);
+    if ((gde->name && !name) || (gde->description && !description) ||
+        (gde->admin_count > 0 && gde->admins && !admins)) {
+        free(name);
+        free(description);
+        free(admins);
+        return MARMOT_ERR_MEMORY;
+    }
+    if (admins) memcpy(admins, gde->admins, gde->admin_count * 32);
+    free(group->name);
+    free(group->description);
+    free(group->admin_pubkeys);
+    group->name = name;
+    group->description = description;
+    group->admin_pubkeys = admins;
+    group->admin_count = admins ? gde->admin_count : 0;
+    return MARMOT_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_update_group_metadata
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -1018,7 +1185,8 @@ marmot_update_group_metadata(Marmot *m,
 {
     if (!m || !mls_group_id || !config)
         return MARMOT_ERR_INVALID_ARG;
-    if (!m->storage || !m->storage->find_group_by_mls_id || !m->storage->save_group)
+    if (!m->storage || !m->storage->find_group_by_mls_id || !m->storage->save_group ||
+        !m->storage->mls_store || !m->storage->save_exporter_secret)
         return MARMOT_ERR_STORAGE;
 
     if (marmot_ensure_identity(m) != 0)
@@ -1036,89 +1204,73 @@ marmot_update_group_metadata(Marmot *m,
         return MARMOT_ERR_USE_AFTER_EVICTION;
     }
 
-    /* Load MLS group state to get our credential identity for admin check */
+    /* The metadata lives in the MLS GroupContext: without the MLS state the
+     * change cannot be committed, so nothing is changed. */
     MlsGroup mls;
     memset(&mls, 0, sizeof(mls));
-    bool mls_loaded = (load_mls_group(m, mls_group_id, &mls) == 0);
+    if (load_mls_group(m, mls_group_id, &mls) != 0) {
+        marmot_group_free(group);
+        return MARMOT_ERR_MLS;
+    }
 
     /* Admin check using our Nostr pubkey from MLS tree */
-    if (mls_loaded) {
-        if (!m->storage->mls_store || !m->storage->save_exporter_secret) {
-            mls_group_free(&mls);
-            marmot_group_free(group);
-            return MARMOT_ERR_STORAGE;
-        }
-
-        uint8_t our_nostr_pk[32];
-        if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
-            !is_admin(group, our_nostr_pk)) {
-            mls_group_free(&mls);
-            marmot_group_free(group);
-            return MARMOT_ERR_ADMIN_ONLY;
-        }
-    }
-
-    /* Apply metadata updates to the MarmotGroup */
-    if (config->name) {
-        free(group->name);
-        group->name = strdup(config->name);
-    }
-    if (config->description) {
-        free(group->description);
-        group->description = strdup(config->description);
-    }
-    if (config->admin_count > 0 && config->admin_pubkeys) {
-        free(group->admin_pubkeys);
-        group->admin_pubkeys = malloc(config->admin_count * 32);
-        if (group->admin_pubkeys) {
-            memcpy(group->admin_pubkeys, config->admin_pubkeys,
-                   config->admin_count * 32);
-            group->admin_count = config->admin_count;
-        }
-    }
-
-    /* Rebuild the GroupData extension and update MLS group state */
-    if (mls_loaded) {
-        /* Build new extensions from updated config */
-        uint8_t *ext_data = NULL;
-        size_t ext_len = 0;
-        if (build_group_data_extension(config, group->nostr_group_id,
-                                        &ext_data, &ext_len) == 0) {
-            free(mls.extensions_data);
-            mls.extensions_data = ext_data;
-            mls.extensions_len = ext_len;
-        }
-
-        /* Self-update to create a new commit with updated extensions */
-        MlsCommitResult commit_result;
-        memset(&commit_result, 0, sizeof(commit_result));
-        if (mls_group_self_update(&mls, &commit_result) == 0) {
-            /* Save updated MLS state */
-            if (save_mls_group(m, &mls) != 0) {
-                mls_commit_result_clear(&commit_result);
-                mls_group_free(&mls);
-                marmot_group_free(group);
-                return MARMOT_ERR_STORAGE;
-            }
-            group->epoch = mls.epoch;
-
-            /* Store new exporter secret. Mandatory for message encryption. */
-            err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
-                                                   mls.epoch,
-                                                   mls.epoch_secrets.exporter_secret);
-            if (err != MARMOT_OK) {
-                mls_commit_result_clear(&commit_result);
-                mls_group_free(&mls);
-                marmot_group_free(group);
-                return err;
-            }
-        }
-        mls_commit_result_clear(&commit_result);
+    uint8_t our_nostr_pk[32];
+    if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
+        !is_admin(group, our_nostr_pk)) {
         mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_ADMIN_ONLY;
     }
 
-    /* Save updated group metadata */
+    /* Commit the new GroupData as a GroupContextExtensions proposal (RFC 9420
+     * §12.1.7) so every member moves to the same GroupContext.  The local
+     * group record changes only once that Commit exists. */
+    MarmotGroupDataExtension *gde = NULL;
+    uint8_t *new_ext = NULL;
+    size_t new_ext_len = 0;
+    err = updated_group_data(&mls, config, group->nostr_group_id,
+                             &gde, &new_ext, &new_ext_len);
+    if (err != MARMOT_OK) {
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
+    }
+    MlsCommitResult commit_result;
+    memset(&commit_result, 0, sizeof(commit_result));
+    int rc = mls_group_commit_extensions(&mls, new_ext, new_ext_len, &commit_result);
+    free(new_ext);
+    /* This API does not yet return the Commit for publication (nostrc-9ata);
+     * as before, only the local state advances. */
+    mls_commit_result_clear(&commit_result);
+    if (rc != 0) {
+        marmot_group_data_extension_free(gde);
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return rc == MARMOT_ERR_UNSUPPORTED ? MARMOT_ERR_UNSUPPORTED : MARMOT_ERR_MLS;
+    }
+
+    err = group_apply_group_data(group, gde);
+    marmot_group_data_extension_free(gde);
+    if (err != MARMOT_OK) {
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
+    }
+    group->epoch = mls.epoch;
+
+    /* Persist the MLS state first, as add/remove do: the group record and
+     * exporter secret follow the committed epoch. */
+    if (save_mls_group(m, &mls) != 0) {
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_STORAGE;
+    }
     err = m->storage->save_group(m->storage->ctx, group);
+    if (err == MARMOT_OK)
+        err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
+                                               mls.epoch,
+                                               mls.epoch_secrets.exporter_secret);
+    mls_group_free(&mls);
     marmot_group_free(group);
     return err;
 }

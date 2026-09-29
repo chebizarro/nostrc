@@ -74,6 +74,14 @@ remember_own_path_key(MlsGroup *group, uint32_t node,
                       const uint8_t pk[MLS_KEM_PK_LEN]);
 static void
 prune_own_path_keys(MlsGroup *group);
+static int
+apply_group_context_extensions(MlsGroup *group,
+                               const uint8_t *extensions,
+                               size_t extensions_len);
+static int
+group_context_extensions_validate(const MlsGroup *group,
+                                  const uint8_t *extensions, size_t extensions_len,
+                                  uint32_t replaced_leaf);
 
 static int
 child_below_path_node(uint32_t sender_leaf, uint32_t n_leaves,
@@ -1787,8 +1795,17 @@ remove_member_staged(MlsGroup *group,
  * Self-update
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * A Commit carrying `proposals` (borrowed; currently at most
+ * GroupContextExtensions) and an UpdatePath: the self-update Commit when
+ * proposal_count is 0.  The proposals are applied before the path is
+ * generated, as receivers apply them (RFC 9420 §12.4.2), so the UpdatePath's
+ * provisional GroupContext and the new epoch use the resulting extensions.
+ */
 static int
-self_update_staged(MlsGroup *group, MlsCommitResult *result)
+path_commit_staged(MlsGroup *group,
+                   const MlsProposal *proposals, size_t proposal_count,
+                   MlsCommitResult *result)
 {
     /* Capture pre-commit context/keys for PublicMessage authentication. */
     uint8_t *pre_gc = NULL;
@@ -1798,6 +1815,16 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
     memcpy(pre_membership_key, group->epoch_secrets.membership_key, MLS_HASH_LEN);
     if (mls_group_context_build(group, &pre_gc, &pre_gc_len) != 0)
         return MARMOT_ERR_INTERNAL;
+
+    for (size_t i = 0; i < proposal_count; i++) {
+        if (proposals[i].type != MLS_PROPOSAL_GROUP_CONTEXT_EXT ||
+            apply_group_context_extensions(group,
+                proposals[i].group_context_extensions.extensions,
+                proposals[i].group_context_extensions.extensions_len) != 0) {
+            free(pre_gc);
+            return MARMOT_ERR_INTERNAL;
+        }
+    }
 
     /* Generate UpdatePath (which replaces our leaf and path keys) */
     uint8_t root_path_secret[MLS_HASH_LEN];
@@ -1812,11 +1839,11 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* Empty commit (just the path, no proposals) */
+    /* The Commit borrows `proposals`: release only its path. */
     MlsCommit commit;
     memset(&commit, 0, sizeof(commit));
-    commit.proposals = NULL;
-    commit.proposal_count = 0;
+    commit.proposals = (MlsProposal *)proposals;
+    commit.proposal_count = proposal_count;
     commit.has_path = true;
     commit.path = update_path;
 
@@ -1824,13 +1851,13 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
     MlsTlsBuf buf;
     if (mls_tls_buf_init(&buf, 1024) != 0) {
         free(pre_gc);
-        mls_commit_clear(&commit);
+        mls_update_path_clear(&commit.path);
         return MARMOT_ERR_MEMORY;
     }
     if (mls_commit_serialize(&commit, &buf) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
+        mls_update_path_clear(&commit.path);
         return MARMOT_ERR_INTERNAL;
     }
 
@@ -1845,7 +1872,7 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
                                     &wire_msg, &ct_input, &ct_input_len) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
+        mls_update_path_clear(&commit.path);
         return MARMOT_ERR_INTERNAL;
     }
 
@@ -1860,7 +1887,7 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
         mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
+        mls_update_path_clear(&commit.path);
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
@@ -1878,7 +1905,7 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
         mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
+        mls_update_path_clear(&commit.path);
         return MARMOT_ERR_INTERNAL;
     }
 
@@ -1892,7 +1919,7 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
         mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
+        mls_update_path_clear(&commit.path);
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
@@ -1909,7 +1936,7 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
                                      &wire_commit, &wire_commit_len) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
+        mls_update_path_clear(&commit.path);
         sodium_memzero(root_path_secret, sizeof(root_path_secret));
         sodium_memzero(commit_secret, sizeof(commit_secret));
         return MARMOT_ERR_INTERNAL;
@@ -1920,7 +1947,7 @@ self_update_staged(MlsGroup *group, MlsCommitResult *result)
     result->commit_data = wire_commit;
     result->commit_len = wire_commit_len;
 
-    mls_commit_clear(&commit);
+    mls_update_path_clear(&commit.path);
     sodium_memzero(root_path_secret, sizeof(root_path_secret));
     sodium_memzero(commit_secret, sizeof(commit_secret));
 
@@ -1971,7 +1998,36 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
     memset(result, 0, sizeof(*result));
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = self_update_staged(&staged, result);
+    int rc = path_commit_staged(&staged, NULL, 0, result);
+    if (rc == 0) group_install_staged(group, &staged);
+    else mls_group_free(&staged);
+    return rc;
+}
+
+int
+mls_group_commit_extensions(MlsGroup *group,
+                            const uint8_t *extensions, size_t extensions_len,
+                            MlsCommitResult *result)
+{
+    if (!group || !result || (extensions_len > 0 && !extensions))
+        return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    /* Refuse what receivers would reject (RFC 9420 §12.1.7): every current
+     * member, the committer included, must support the new extensions. */
+    int rc = group_context_extensions_validate(group, extensions, extensions_len,
+                                               UINT32_MAX);
+    if (rc != 0) return rc;
+
+    MlsProposal gce;
+    memset(&gce, 0, sizeof(gce));
+    gce.type = MLS_PROPOSAL_GROUP_CONTEXT_EXT;
+    gce.group_context_extensions.extensions = (uint8_t *)extensions;
+    gce.group_context_extensions.extensions_len = extensions_len;
+    gce.update_leaf_index = UINT32_MAX;
+
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    rc = path_commit_staged(&staged, &gce, 1, result);
     if (rc == 0) group_install_staged(group, &staged);
     else mls_group_free(&staged);
     return rc;
@@ -2011,17 +2067,21 @@ commit_path_required(const MlsProposal *proposals, size_t count)
     return false;
 }
 
-/** Validate that all proposals have types this processor understands. */
+/** Validate that all proposals have types this processor understands, and
+ *  that at most one is GroupContextExtensions (RFC 9420 §12.2). */
 static int
 validate_proposal_ordering(const MlsProposal *proposals, size_t count)
 {
+    size_t gce_count = 0;
     for (size_t i = 0; i < count; i++) {
         switch (proposals[i].type) {
+        case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
+            if (++gce_count > 1) return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            break;
         case MLS_PROPOSAL_ADD:
         case MLS_PROPOSAL_UPDATE:
         case MLS_PROPOSAL_REMOVE:
         case MLS_PROPOSAL_PSK:
-        case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
             break;
         default:
             return MARMOT_ERR_MLS_PROCESS_MESSAGE;
@@ -2605,6 +2665,45 @@ group_extension_supported(uint16_t type, const uint8_t *data, size_t len,
     return 0;
 }
 
+static int
+extension_well_formed(uint16_t type, const uint8_t *data, size_t len,
+                      const MlsLeafNode *leaf)
+{
+    (void)type;
+    (void)data;
+    (void)len;
+    (void)leaf;
+    return 0;
+}
+
+/**
+ * A GroupContextExtensions list the group can adopt (RFC 9420 §12.1.7,
+ * §11.1): well formed with no repeated type (MARMOT_ERR_INVALID_ARG), no type
+ * libmarmot does not apply (MARMOT_ERR_UNSUPPORTED), and supported -- each
+ * extension and any required_capabilities -- by every member leaf other than
+ * `replaced_leaf` (UINT32_MAX: none), else MARMOT_ERR_UNSUPPORTED.
+ */
+static int
+group_context_extensions_validate(const MlsGroup *group,
+                                  const uint8_t *extensions, size_t extensions_len,
+                                  uint32_t replaced_leaf)
+{
+    if (!group || (extensions_len > 0 && !extensions)) return MARMOT_ERR_INVALID_ARG;
+    if (extensions_foreach(extensions, extensions_len, extension_well_formed, NULL) != 0)
+        return MARMOT_ERR_INVALID_ARG;
+    if (mls_group_extensions_supported(extensions, extensions_len) != 0)
+        return MARMOT_ERR_UNSUPPORTED;
+    for (uint32_t i = 0; i < group->tree.n_leaves; i++) {
+        if (i == replaced_leaf) continue;
+        const MlsNode *n = &group->tree.nodes[mls_tree_leaf_to_node(i)];
+        if (n->type != MLS_NODE_LEAF) continue;
+        if (extensions_foreach(extensions, extensions_len,
+                               group_extension_supported, &n->leaf) != 0)
+            return MARMOT_ERR_UNSUPPORTED;
+    }
+    return 0;
+}
+
 /**
  * RFC 9420 §7.3 checks that depend on the LeafNode, the group and the member
  * leaf it replaces (`replaced`, the current LeafNode at `leaf_index`).  Key
@@ -2929,6 +3028,7 @@ process_commit_impl(MlsGroup *group,
     size_t added_leaf_count = 0;
     uint32_t updated_leaves[64];
     size_t updated_leaf_count = 0;
+    bool has_gce = false;
 
     /* Apply proposals */
     for (size_t i = 0; i < commit.proposal_count; i++) {
@@ -3038,12 +3138,13 @@ process_commit_impl(MlsGroup *group,
              * epoch key schedule below.  They do not directly mutate the tree. */
             break;
         case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
+            has_gce = true;
             if (apply_group_context_extensions(group,
                     p->group_context_extensions.extensions,
                     p->group_context_extensions.extensions_len) != 0) {
                 mls_commit_clear(&commit);
                 sodium_memzero(psk_secret, sizeof(psk_secret));
-                staged_rc = MARMOT_ERR_INTERNAL;
+                staged_rc = MARMOT_ERR_UNSUPPORTED;
                 goto staged_fail;
             }
             break;
@@ -3062,6 +3163,22 @@ process_commit_impl(MlsGroup *group,
         uint32_t leaf = (i < updated_leaf_count) ? updated_leaves[i]
                                                  : added_leaves[i - updated_leaf_count];
         if (leaf_keys_unique(&group->tree, leaf) != 0) {
+            mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
+            staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
+        }
+    }
+
+    /* RFC 9420 §12.1.7: the new GroupContext extensions must be supported by
+     * every member of the epoch being entered -- including leaves this Commit
+     * adds or updates.  The committer's leaf is replaced by the (path-
+     * required) UpdatePath leaf, which leaf_node_validate() checks against
+     * the new extensions below. */
+    if (has_gce) {
+        if (group_context_extensions_validate(group, group->extensions_data,
+                                              group->extensions_len,
+                                              sender_leaf) != 0) {
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
             staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
@@ -3808,6 +3925,10 @@ proposal_serialize(const MlsProposal *p, MlsTlsBuf *buf)
         return mls_leaf_node_serialize(&p->update.leaf_node, buf);
     case MLS_PROPOSAL_REMOVE:
         return mls_tls_write_u32(buf, p->remove.removed_leaf);
+    case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
+        /* GroupContextExtensions { Extension extensions<V>; } */
+        return mls_tls_write_opaque32(buf, p->group_context_extensions.extensions,
+                                      p->group_context_extensions.extensions_len);
     case MLS_PROPOSAL_APP_DATA_UPDATE:
         return mls_app_data_update_serialize(&p->app_data_update, buf);
     default:

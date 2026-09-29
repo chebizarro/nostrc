@@ -430,11 +430,16 @@ MarmotError marmot_leave_group(Marmot *m,
  * @config: new group configuration (non-NULL fields are applied)
  *
  * Update group metadata (name, description, admins, relays).
- * Only admins can update group metadata. The update modifies the
- * GroupData extension in the MLS GroupContext and creates a new
- * Commit (self-update) to announce the change.
+ * Only admins can update group metadata. The non-NULL fields of @config
+ * (admins/relays when their count is non-zero) replace those of the group's
+ * current GroupData extension; everything else is kept.  The new GroupData
+ * is committed as an MLS GroupContextExtensions proposal (RFC 9420 §12.1.7)
+ * with an UpdatePath, advancing the group to a new epoch.  If the change
+ * cannot be committed (no MLS state, unsupported extensions) nothing is
+ * changed.
  *
- * Returns: MARMOT_OK on success
+ * Returns: MARMOT_OK on success, MARMOT_ERR_ADMIN_ONLY for non-admins,
+ * MARMOT_ERR_MLS / MARMOT_ERR_UNSUPPORTED if the Commit cannot be made
  */
 MarmotError marmot_update_group_metadata(Marmot *m,
                                           const MarmotGroupId *mls_group_id,

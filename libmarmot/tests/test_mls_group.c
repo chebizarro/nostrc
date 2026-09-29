@@ -2643,6 +2643,14 @@ build_update_path_for_test(const MlsGroup *committer,
         memcpy(path->leaf_node.encryption_key, dup_key, MLS_KEM_PK_LEN);
     if (leaf_case == PATH_LEAF_UNSUPPORTED_GROUP_EXTENSION)
         drop_group_data_capability_for_test(&path->leaf_node);
+    if (leaf_case == (PathLeafCase)(PATH_LEAF_CASE_COUNT + 1)) {
+        /* PATH_LEAF_EXTRA_CAPABILITY: also advertise extension 0xBEEF. */
+        uint16_t *caps = realloc(path->leaf_node.cap_extensions,
+            (path->leaf_node.cap_extension_count + 1) * sizeof(uint16_t));
+        assert(caps);
+        caps[path->leaf_node.cap_extension_count++] = 0xBEEF;
+        path->leaf_node.cap_extensions = caps;
+    }
     path->leaf_node.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT;
     path->leaf_node.lifetime_not_before = 0;
     path->leaf_node.lifetime_not_after = 0;
@@ -3252,6 +3260,179 @@ TEST(test_add_unmerged_leaf_off_committer_path)
     for (int i = 0; i < 6; i++) member_clear_for_test(&m[i]);
 }
 
+/* ── GroupContextExtensions Commits (nostrc-8u1k, RFC 9420 §12.1.7) ──────────
+ *
+ * Changing the GroupContext extensions (a Marmot rename rewrites 0xF2EE) is a
+ * GroupContextExtensions proposal committed with a path.  Swapping the
+ * committer's extensions and committing an empty self-update (the old
+ * marmot_update_group_metadata) forks the group: receivers keep the old
+ * extensions, so their provisional GroupContext, key schedule and
+ * confirmation tag all differ. */
+
+static const uint8_t RENAMED_GC_EXT_FOR_TEST[] = {0xF2, 0xEE, 0x03, 0xBE, 0xEF, 0x01};
+
+/* The committer's UpdatePath leaf also advertises extension 0xBEEF. */
+#define PATH_LEAF_EXTRA_CAPABILITY ((PathLeafCase)(PATH_LEAF_CASE_COUNT + 1))
+
+static void
+assert_extensions_for_test(const MlsGroup *g, const uint8_t *ext, size_t ext_len)
+{
+    assert(g->extensions_len == ext_len &&
+           (ext_len == 0 || memcmp(g->extensions_data, ext, ext_len) == 0));
+}
+
+/* Inline ProposalOrRef: proposal(1) || GroupContextExtensions(extensions). */
+static int
+inline_gce_for_test(MlsTlsBuf *v, const uint8_t *ext, size_t ext_len)
+{
+    return (mls_tls_write_u8(v, 1) == 0 &&
+            mls_tls_write_u16(v, MLS_PROPOSAL_GROUP_CONTEXT_EXT) == 0 &&
+            mls_tls_write_opaque32(v, ext, ext_len) == 0) ? 0 : -1;
+}
+
+TEST(test_group_context_extensions_commit_followed)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init_ext(&f, MARMOT_GC_EXT_FOR_TEST,
+                                  sizeof(MARMOT_GC_EXT_FOR_TEST));
+    MlsGroup *all[] = {&f.alice, &f.bob, &f.charlie};
+
+    MlsCommitResult r;
+    assert(mls_group_commit_extensions(&f.alice, RENAMED_GC_EXT_FOR_TEST,
+                                       sizeof(RENAMED_GC_EXT_FOR_TEST), &r) == 0);
+    deliver_commit_for_test(all, 3, &f.alice, r.commit_data, r.commit_len,
+                            "Alice renames");
+    assert_converged_for_test(all, 3);
+    for (size_t i = 0; i < 3; i++)
+        assert_extensions_for_test(all[i], RENAMED_GC_EXT_FOR_TEST,
+                                   sizeof(RENAMED_GC_EXT_FOR_TEST));
+    MlsCommit c;
+    parse_commit_for_test(r.commit_data, r.commit_len, &c);
+    assert(c.has_path && c.proposal_count == 1 &&
+           c.proposals[0].type == MLS_PROPOSAL_GROUP_CONTEXT_EXT &&
+           c.proposals[0].group_context_extensions.extensions_len ==
+               sizeof(RENAMED_GC_EXT_FOR_TEST) &&
+           memcmp(c.proposals[0].group_context_extensions.extensions,
+                  RENAMED_GC_EXT_FOR_TEST, sizeof(RENAMED_GC_EXT_FOR_TEST)) == 0);
+    mls_commit_clear(&c);
+    mls_commit_result_clear(&r);
+
+    /* Another member renames back; everyone follows, then commits once. */
+    assert(mls_group_commit_extensions(&f.charlie, MARMOT_GC_EXT_FOR_TEST,
+                                       sizeof(MARMOT_GC_EXT_FOR_TEST), &r) == 0);
+    deliver_commit_for_test(all, 3, &f.charlie, r.commit_data, r.commit_len,
+                            "Charlie renames back");
+    assert_converged_for_test(all, 3);
+    for (size_t i = 0; i < 3; i++)
+        assert_extensions_for_test(all[i], MARMOT_GC_EXT_FOR_TEST,
+                                   sizeof(MARMOT_GC_EXT_FOR_TEST));
+    mls_commit_result_clear(&r);
+    for (size_t k = 0; k < 3; k++) {
+        assert(mls_group_self_update(all[k], &r) == 0);
+        deliver_commit_for_test(all, 3, all[k], r.commit_data, r.commit_len,
+                                "self-update after renames");
+        assert_converged_for_test(all, 3);
+        mls_commit_result_clear(&r);
+    }
+    three_member_fixture_clear(&f);
+}
+
+/* Sender: extensions the group cannot adopt are refused before anything is
+ * committed.  Receivers: an otherwise valid Commit whose GroupContext-
+ * Extensions proposal a member cannot support, or that carries two such
+ * proposals (RFC 9420 §12.2), is rejected without state change. */
+TEST(test_group_context_extensions_commit_validation)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init_ext(&f, MARMOT_GC_EXT_FOR_TEST,
+                                  sizeof(MARMOT_GC_EXT_FOR_TEST));
+
+    /* marmot_group_data plus 0xBEEF, which no member advertises. */
+    static const uint8_t unsupported[] = {0xF2, 0xEE, 0x01, 0x07, 0xBE, 0xEF, 0x00};
+    /* app_data_dictionary: recognised, but libmarmot does not apply it. */
+    static const uint8_t adopted[] = {0x00, 0x06, 0x00};
+    /* Truncated: extension_data claims 5 bytes, 1 present. */
+    static const uint8_t malformed[] = {0xF2, 0xEE, 0x05, 0x01};
+    /* marmot_group_data twice. */
+    static const uint8_t duplicate[] = {0xF2, 0xEE, 0x01, 0x01, 0xF2, 0xEE, 0x01, 0x02};
+    const struct { const uint8_t *ext; size_t len; const char *what; } bad[] = {
+        {unsupported, sizeof(unsupported), "extension no member supports"},
+        {adopted, sizeof(adopted), "app_data_dictionary"},
+        {malformed, sizeof(malformed), "malformed list"},
+        {duplicate, sizeof(duplicate), "duplicate extension"},
+    };
+    GroupSnapshotForTest alice_before;
+    snapshot_group_for_test(&f.alice, &alice_before);
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        MlsCommitResult r;
+        int rc = mls_group_commit_extensions(&f.alice, bad[i].ext, bad[i].len, &r);
+        if (rc == 0) {
+            fprintf(stderr, "\n    sender COMMITTED %s", bad[i].what);
+            mls_commit_result_clear(&r);
+            mls_group_free(&f.alice);
+            assert(mls_group_deserialize(alice_before.blob, alice_before.blob_len,
+                                         &f.alice) == 0);
+        }
+        assert(rc != 0);
+        assert_group_matches_snapshot_for_test(&f.alice, &alice_before);
+    }
+    free(alice_before.blob);
+
+    /* Receiver side: Bob gets hand-built Commits from Alice. */
+    GroupSnapshotForTest parent;
+    snapshot_group_for_test(&f.bob, &parent);
+    enum { GCE_VALID, GCE_UNSUPPORTED_BY_MEMBERS, GCE_TWICE, GCE_CASES };
+    int accepted = 0;
+    for (int c = 0; c < GCE_CASES; c++) {
+        const uint8_t *ext = c == GCE_UNSUPPORTED_BY_MEMBERS ? unsupported
+                                                             : RENAMED_GC_EXT_FOR_TEST;
+        size_t ext_len = c == GCE_UNSUPPORTED_BY_MEMBERS ? sizeof(unsupported)
+                                                         : sizeof(RENAMED_GC_EXT_FOR_TEST);
+        MlsTlsBuf v;
+        assert(mls_tls_buf_init(&v, 64) == 0);
+        if (c == GCE_TWICE)
+            assert(inline_gce_for_test(&v, MARMOT_GC_EXT_FOR_TEST,
+                                       sizeof(MARMOT_GC_EXT_FOR_TEST)) == 0);
+        assert(inline_gce_for_test(&v, ext, ext_len) == 0);
+        MlsRatchetTree next, provisional;
+        assert(tree_clone_for_test(&f.alice.tree, &next) == 0);
+        MlsUpdatePath path;
+        uint8_t commit_secret[MLS_HASH_LEN];
+        /* Only the committer's new leaf supports 0xBEEF: it passes its own
+         * LeafNode validation, so only the member-support rule can reject. */
+        build_update_path_for_test(&f.alice, &next, ext, ext_len,
+                                   c == GCE_UNSUPPORTED_BY_MEMBERS
+                                       ? PATH_LEAF_EXTRA_CAPABILITY : PATH_LEAF_VALID,
+                                   NULL, &path, &provisional, commit_secret);
+        uint8_t *commit = NULL;
+        size_t commit_len = 0;
+        ExpectedEpochForTest expected;
+        assert(build_commit_for_test(&f.alice, v.data, v.len, &path, commit_secret,
+                                     &provisional, ext, ext_len, NULL,
+                                     &commit, &commit_len, &expected) == 0);
+        if (c == GCE_VALID) {
+            assert(mls_group_process_commit(&f.bob, commit, commit_len, 0) == 0);
+            assert_group_reached_for_test(&f.bob, &expected);
+            assert_extensions_for_test(&f.bob, ext, ext_len);
+            mls_group_free(&f.bob);
+            assert(mls_group_deserialize(parent.blob, parent.blob_len, &f.bob) == 0);
+        } else {
+            accepted += expect_leaf_rejected_for_test(&f.bob, &parent,
+                c == GCE_TWICE ? "two GroupContextExtensions proposals"
+                               : "GroupContextExtensions a member cannot support",
+                commit, commit_len, 0, NULL, NULL, 0, &expected);
+        }
+        free(commit);
+        mls_update_path_clear(&path);
+        mls_tree_free(&provisional);
+        mls_tree_free(&next);
+        mls_tls_buf_free(&v);
+    }
+    assert(accepted == 0);
+    free(parent.blob);
+    three_member_fixture_clear(&f);
+}
+
 TEST(test_group_creator_leaf_signature_bound_to_group)
 {
     MlsGroup group;
@@ -3826,6 +4007,8 @@ int main(void)
     RUN(test_update_path_excludes_leaves_added_by_commit);
     RUN(test_update_path_encrypting_to_added_leaf_rejected);
     RUN(test_add_unmerged_leaf_off_committer_path);
+    RUN(test_group_context_extensions_commit_followed);
+    RUN(test_group_context_extensions_commit_validation);
     RUN(test_group_creator_leaf_signature_bound_to_group);
     RUN(test_update_by_ref_leaf_validation);
     RUN(test_update_path_leaf_validation);
