@@ -829,6 +829,40 @@ test_http_mode_switch(void)
   g_assert_cmpuint(dns_names->len, ==, 0);
 }
 
+/* The owner may go before its request (a service disposed during a NIP-11
+ * or NIP-05 fetch): the request keeps it alive, and cancelling afterwards
+ * frees it cleanly. GTask drops its source object before its task data, so
+ * a borrowed owner pointer was a use-after-free (W16 addendum N1; the
+ * sanitizer job runs this suite). */
+static void
+test_http_owner_dropped_in_flight(void)
+{
+  Http http = { 0 };
+  http_init(&http);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "network-mode", "none");
+  GhNetHttp *net = gh_net_http_new(settings);
+  g_object_add_weak_pointer(G_OBJECT(net), (gpointer *)&net);
+  g_autofree gchar *hold = g_strdup_printf("http://127.0.0.1:%u/hold", http.port);
+  Fetched fetched = { 0 };
+  g_autoptr(GCancellable) cancellable = g_cancellable_new();
+
+  gh_net_http_get_async(net, hold, 1024, cancellable, on_get, &fetched);
+  spin_until(http_holding, &http);
+  g_object_unref(net);
+  g_assert_nonnull(net); /* the request holds it */
+  g_cancellable_cancel(cancellable);
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  fetched_clear(&fetched);
+  run_for(50);
+  g_assert_null(net); /* and lets it go with the request */
+
+  release_held(&http);
+  g_settings_reset(settings, "network-mode");
+  http_clear(&http);
+}
+
 /* ---- NT-7 Tor fail-closed ------------------------------------------------------------ */
 
 /* The SOCKS port is closed: no relay connection, no HTTP connection, no
@@ -1109,6 +1143,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/url-policy", test_url_policy);
   g_test_add_func("/groundhog/net/tor-routing", test_tor_routing);
   g_test_add_func("/groundhog/net/http-mode-switch", test_http_mode_switch);
+  g_test_add_func("/groundhog/net/http-owner-dropped-in-flight", test_http_owner_dropped_in_flight);
   g_test_add_func("/groundhog/net/tor-fail-closed", test_tor_fail_closed);
   g_test_add_func("/groundhog/net/tor-probe", test_tor_probe);
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);

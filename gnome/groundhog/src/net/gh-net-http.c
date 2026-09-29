@@ -16,7 +16,8 @@ struct _GhNetHttp {
 G_DEFINE_FINAL_TYPE(GhNetHttp, gh_net_http, G_TYPE_OBJECT)
 
 typedef struct {
-  GhNetHttp *owner;       /* the task's source object, so alive */
+  GhNetHttp *owner;       /* a strong reference, released last: GTask drops its
+                           * source object before freeing its task data */
   GhNetMode mode;         /* the mode the request was made in */
   SoupSession *session;
   SoupMessage *message;
@@ -33,8 +34,9 @@ static void
 request_free(gpointer data)
 {
   Request *request = data;
-  if (request->owner->requests)
-    g_ptr_array_remove_fast(request->owner->requests, request);
+  GhNetHttp *owner = request->owner;
+  if (owner->requests)
+    g_ptr_array_remove_fast(owner->requests, request);
   if (request->caller)
     g_cancellable_disconnect(request->caller, request->caller_handler);
   g_clear_object(&request->caller);
@@ -48,6 +50,7 @@ request_free(gpointer data)
   g_clear_object(&request->stream);
   g_free(request->buffer);
   g_free(request);
+  g_object_unref(owner);
 }
 
 static void
@@ -265,7 +268,7 @@ gh_net_http_get_accept_async(GhNetHttp *self, const gchar *uri, const gchar *acc
     return;
   }
   Request *request = g_new0(Request, 1);
-  request->owner = self;
+  request->owner = g_object_ref(self);
   request->mode = mode;
   request->max_bytes = max_bytes;
   request->session = g_object_ref(session);
