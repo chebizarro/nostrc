@@ -379,8 +379,10 @@ test_failed_decryption_consumes_nothing(void)
     pair_clear(&p);
 }
 
-/* RFC 9420 section 9.2: the stored state holds no consumed value, so a
- * stolen state cannot decrypt a message already sent or received. */
+/* RFC 9420 section 9.2: the live stored state holds no consumed value, so
+ * it alone cannot decrypt a message already sent or received.  (The
+ * retained parent plus the public Commit can derive the epoch again; that
+ * exposure is documented, review B1, nostrc-yuj2.) */
 static void
 test_consumed_secrets_not_stored(void)
 {

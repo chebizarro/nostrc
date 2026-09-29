@@ -4239,11 +4239,21 @@ fail:
  *   secret tree (mls_secret_tree_serialize: every sender's handshake and
  *     application ratchet and its skipped-key cache, or its unused leaf secret)
  *
- * Only unconsumed secrets are stored (RFC 9420 §9.2).  The encryption_secret
- * (the secret tree's root) and the joiner_secret it is derived from (with
- * the stored GroupContext) are consumed with the epoch's first message key,
- * and the welcome_secret once the Welcome is built, so version 3 omits them:
- * a stolen state cannot re-derive a used message key.
+ * Only unconsumed secrets of this epoch are stored (RFC 9420 §9.2).  The
+ * encryption_secret (the secret tree's root) and the joiner_secret it is
+ * derived from (with the stored GroupContext) are consumed with the epoch's
+ * first message key, and the welcome_secret once the Welcome is built, so
+ * version 3 omits them: this state alone cannot re-derive a used message
+ * key of its epoch.
+ *
+ * NOT covered (review B1, nostrc-yuj2): after a Commit, libmarmot also keeps
+ * the previous epoch's full state as the retained parent
+ * ("mls_group_parent", to judge a competing Commit and read late messages).
+ * With it -- its init secret and the private keys that open the Commit's
+ * UpdatePath -- and the Commit, which relays carry, the current epoch can be
+ * derived again from scratch: every message of the current epoch (and the
+ * parent epoch's unconsumed keys) is exposed to whoever obtains the whole
+ * store, until the next epoch transition replaces the parent.
  *
  * Versions 1 and 2 stored those three secrets and no ratchet (every load
  * restarted each sender at generation 0: key reuse, nostrc-ai04).  They are

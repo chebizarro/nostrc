@@ -694,7 +694,11 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
  * generation that is not stored.  An event returned but never published
  * (e.g. the process died) only leaves a gap receivers skip.  Before 0.8.0
  * every call restarted the ratchet: all messages of an epoch reused
- * generation 0.
+ * generation 0.  "Stored" means committed by the storage: when the storage
+ * runs its transactions as savepoints of an application transaction (as
+ * Groundhog's GhStoreMarmot does inside gh_store_begin()), the step is
+ * durable only once that outer transaction commits -- commit it before
+ * publishing result->event_json, never roll it back afterwards.
  *
  * Returns: MARMOT_OK on success
  */

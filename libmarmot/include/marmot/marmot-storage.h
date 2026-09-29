@@ -249,7 +249,14 @@ typedef struct MarmotStorage {
      * processed message with its ratchet state are then all-or-nothing,
      * across crashes too.  libmarmot never nests these calls.  A backend
      * may itself run inside an application transaction (then begin is a
-     * savepoint of it).  Reads between begin and commit must see the
+     * savepoint of it).  Nested, commit only releases the savepoint: the
+     * operation's writes -- a sender's ratchet step from
+     * marmot_create_message() included -- become durable when the
+     * application commits its own transaction.  The application must commit
+     * it before it publishes an event the operation returned: if it rolls
+     * back or crashes after publishing, the ratchet is rewound and the next
+     * send reuses a generation, the key and nonce of a message already out
+     * (review N1, nostrc-ai04).  Reads between begin and commit must see the
      * transaction's own writes.  Without the hooks libmarmot restores what
      * it can after a failed write, but a crash can leave a partial state.
      * Put them at the end of the struct, as here: a storage built against

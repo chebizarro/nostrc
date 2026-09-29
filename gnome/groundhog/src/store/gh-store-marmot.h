@@ -42,6 +42,15 @@ G_BEGIN_DECLS
  *   gh_store_enqueue(store, ...); gh_store_seal(store, ...);
  *   gh_store_commit(store, &error);            all of it, or none of it
  *
+ * Durability when nested (libmarmot >= 0.8.0 review N1): inside the caller's
+ * transaction, libmarmot's commit only releases a savepoint. Everything the
+ * operation wrote -- the MLS sender ratchet step of marmot_create_message()
+ * included -- is durable only when the caller's gh_store_commit() returns.
+ * Publish an event a libmarmot operation returned only after that commit,
+ * and never roll the transaction back once the event is out: a rewound
+ * ratchet makes the next send reuse a generation (the key and nonce of a
+ * message already published). gh-mls-commits follows this for Commits.
+ *
  * If SQLite abandons the caller's transaction (disk full, I/O error), every
  * later operation fails until the caller rolls back, so no fragment of it can
  * be committed on its own. Reads see the caller's uncommitted writes.

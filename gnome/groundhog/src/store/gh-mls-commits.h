@@ -21,7 +21,12 @@ G_BEGIN_DECLS
  * behind.
  *
  * Publish and answer. The caller publishes the sealed event byte for byte on
- * each relay and reports each NIP-01 OK with gh_mls_commit_record_answer(),
+ * each relay -- only after gh_mls_commit_stage() returned, i.e. after its
+ * T-mls committed: libmarmot's own transaction is a savepoint inside it, so
+ * the pending state is durable only then (gh-store-marmot.h, "Durability when
+ * nested"); a caller that wraps the stage in a transaction of its own must
+ * commit that one first. It reports each NIP-01 OK with
+ * gh_mls_commit_record_answer(),
  * which records it (T-outcome) in one transaction with its effect:
  *  - the first OK true merges the Commit (the epoch transition and the
  *    Welcome outbox). Later OKs are only recorded. The entry settles once

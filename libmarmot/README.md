@@ -243,8 +243,11 @@ the state on every call. As a result:
   one sender in one epoch), the key and nonce repeat. Anyone who can open the
   kind:445 NIP-44 layer (every member, and anyone holding that epoch's
   exporter secret) then learns the XOR of the two plaintexts and can forge
-  the AEAD layer under that key. The sender's signature inside the MLS
-  content still authenticates the sender.
+  the AEAD layer under that key. Nothing else authenticated the sender:
+  before 0.9.0 application messages carried no MLS signature, and receivers
+  took the author from the inner event without checking it against the
+  sender (nostrc-we6g, fixed in 0.9.0). Such a forgery, like any message
+  from a member, could claim any member as its author.
 - **There was no forward secrecy within an epoch.** The stored state kept the
   `encryption_secret` and the `joiner_secret` (from which it follows with
   the stored GroupContext). Whoever obtains a copy of the stored state can
@@ -266,6 +269,20 @@ which derives every key of the epoch, including keys used after the
 upgrade. Only a new epoch ends that. Messages sent before the upgrade may
 have shared a key: treat their confidentiality against members and holders
 of the exporter secret as weakened.
+
+**What 0.8.0 does not protect (review B1).** After every Commit, libmarmot
+keeps the previous epoch's full state as the retained parent
+(`mls_group_parent`), to judge a competing Commit and read late messages.
+That state holds the parent's init secret and the private keys that open
+the Commit's UpdatePath, and relays carry the Commit. Whoever obtains the
+whole store can therefore process the Commit again, derive the current
+epoch from scratch, and decrypt every message of the current epoch,
+including messages already read, plus the parent epoch's unconsumed ones.
+This lasts until the next epoch transition replaces the parent.
+Forward secrecy against a stolen store therefore covers only messages older
+than the previous epoch. Shortening this exposure (retiring the parent once
+the epoch settles) is nostrc-yuj2. A new epoch is also what ends it for
+the current epoch.
 
 #### What changed
 
@@ -294,8 +311,8 @@ of the exporter secret as weakened.
   step. The previous state record is written back, so the event can be
   processed again rather than being lost with a consumed key. With the hooks,
   the rollback does the same.
-- **Deletion (RFC 9420 section 9.2).** The stored state holds only
-  unconsumed values:
+- **Deletion (RFC 9420 section 9.2).** The live group state (`mls_group`)
+  holds only unconsumed values of its epoch:
   - per sender, its unused leaf secret, or the two ratchet heads and the
     skipped keys;
   - not the `encryption_secret`, `joiner_secret` or `welcome_secret`, which
@@ -305,7 +322,9 @@ of the exporter secret as weakened.
   built. A joiner also wipes its joiner and welcome secrets. A committer
   keeps them in memory only for the Welcome it builds in that operation, and
   never stores them. Tests check that no used key, ratchet secret, leaf
-  secret or epoch root appears in the stored bytes.
+  secret or epoch root appears in the stored bytes. That covers the live
+  state only: through the retained parent and the public Commit the epoch
+  can be derived again (see "What 0.8.0 does not protect").
 
 #### State format and migration
 
@@ -331,6 +350,12 @@ of the exporter secret as weakened.
     from before the upgrade is accepted once more: at most
     `max_forward_distance` generations per sender, in the migrated epoch
     only. The processed-event markers still catch the same event id.
+    Since 0.9.0 such old messages are rejected anyway (unsigned), and an
+    inner event already delivered is a duplicate by its id.
+  - **Senders on 0.7.0 or older.** They send every message of an epoch at
+    generation 0. A 0.8.0 receiver reads the first one and drops each later
+    one as a replay of that generation. A 0.9.0 receiver rejects them all:
+    they are unsigned.
 - **Mixed versions.** A 0.7.0 receiver only reads generations 0-32 of an
   epoch, and a 0.8.0 sender that migrated starts at 512. Upgrade every
   member.
