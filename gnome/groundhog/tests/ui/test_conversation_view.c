@@ -237,6 +237,8 @@ item_row(GtkWidget *item)
     return NULL;
   GhMessageRow *row = gh_timeline_row_get_message_row(GH_TIMELINE_ROW(child));
   return gh_message_row_get_message(row) ? row : NULL;
+}
+
 /* Pictures under widget that show an image: a decoded one (PT-2). A file
  * message's card (G22) keeps an empty, hidden picture until its Download. */
 static guint
