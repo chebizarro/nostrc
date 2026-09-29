@@ -29,6 +29,13 @@ G_BEGIN_DECLS
  * passed here. Today that is so: GNostrRelay's libwebsockets has its own
  * TLS, and check_privacy refuses g_tls_client_connection_new and
  * g_socket_client_set_tls in src/.
+ *
+ * GNostrRelay (System and No Proxy relays) goes through libnostr's one
+ * process-wide libwebsockets context, whose own client session cache would
+ * link its connections the same way. libnostr turns that cache off and asks
+ * for no TLS 1.2 tickets, for every user of the library (nostrc-0d0d,
+ * tests/test_connection_tls_no_resumption.c at the repository root), so
+ * Groundhog sets nothing for it.
  */
 void gh_net_tls_no_resumption(SoupMessage *message);
 

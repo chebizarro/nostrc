@@ -1047,6 +1047,21 @@ NostrConnection *nostr_connection_new(const char *url) {
     context_info.uid = -1;
     context_info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT |
                            LWS_SERVER_OPTION_VALIDATE_UTF8;
+    /* nostrc-0d0d (privacy charter PD-6): no TLS session resumption.  lws
+     * built with LWS_WITH_TLS_SESSIONS (Homebrew's 4.5, among others) keeps a
+     * client session cache per vhost, keyed by host and port, and offers the
+     * cached session on the next connection to that relay.  Every libnostr
+     * connection shares this one context, so a relay could link connections
+     * made for different accounts or purposes, even across IP address
+     * changes.  Turn the cache off (lws then neither stores nor offers a
+     * session) and ask for no TLS 1.2 tickets.  The cost is a full handshake
+     * on each reconnect.  (The SSL_CTX settings in websocket_callback's
+     * LOAD_EXTRA_CLIENT_VERIFY_CERTS case never run: nostrc-86xt.)
+     * tests/test_connection_tls_no_resumption. */
+#ifdef LWS_SERVER_OPTION_DISABLE_TLS_SESSION_CACHE
+    context_info.options |= LWS_SERVER_OPTION_DISABLE_TLS_SESSION_CACHE;
+#endif
+    context_info.ssl_client_options_set = SSL_OP_NO_TICKET;
     context_info.fd_limit_per_thread = 4096;
     context_info.pt_serv_buf_size = 32 * 1024;
 

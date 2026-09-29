@@ -11,7 +11,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.0.10 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 1.0.11 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
@@ -63,6 +63,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 | W17b addendum 2 (D1 and low items; still unreleased) | marmot-gobject | 1.2.0 | No further bump: client signals are posted as idle sources to the context captured at construction instead of `g_main_context_invoke()` from workers holding the lock (no API change; documented on `marmot_gobject_client_new()`). |
 | same | libmarmot | 0.5.0 | No further bump: an uncomputable Welcome id fails the outbox operation (`MARMOT_ERR_MEMORY`) instead of using an all-zero id. |
 | same | gnostr | 0.1.0 | No bump (unreleased): failed Welcome sends are retried on their own backoff timer, cancelled on deactivation. |
+| libnostr 1.0.10 -> 1.0.11 (PATCH: the shared libwebsockets client context keeps no TLS session cache and asks for no TLS 1.2 tickets, so no connection offers or resumes another's session; nostrc-0d0d) | libnostr | 1.0.11 | PATCH: privacy fix (charter PD-6), no API/ABI change. Every reconnect now makes a full TLS handshake. |
+| same | nostr-gobject, gnostr, groundhog | 2.0.2, 0.1.0, 0.10.0 | No bump: no source or API change (Groundhog's gh-net-tls.h only gains a comment); a rebuild or relink picks the fix up, as it does for signet. |
 
 ## Maintenance
 
