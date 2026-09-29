@@ -15,6 +15,7 @@
  */
 
 #include "marmot-internal.h"
+#include "commits.h"
 #include "kp_profile.h"
 #include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
@@ -63,23 +64,6 @@ load_mls_group(Marmot *m, const MarmotGroupId *gid, MlsGroup *out)
     int rc = mls_group_deserialize(state_data, state_len, out);
     free(state_data);
     return rc;
-}
-
-static int
-save_mls_group(Marmot *m, const MlsGroup *mls)
-{
-    if (!m->storage || !m->storage->mls_store) return -1;
-
-    uint8_t *state_data = NULL;
-    size_t state_len = 0;
-    if (mls_group_serialize(mls, &state_data, &state_len) != 0)
-        return -1;
-
-    MarmotError err = m->storage->mls_store(m->storage->ctx, "mls_group",
-                                             mls->group_id, mls->group_id_len,
-                                             state_data, state_len);
-    free(state_data);
-    return (err == MARMOT_OK) ? 0 : -1;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -214,58 +198,6 @@ build_group_data_extension(const MarmotGroupConfig *config,
 fail:
     marmot_group_data_extension_free(gde);
     return MARMOT_ERR_MEMORY;
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
- * Internal: Build kind:445 evolution event (commit)
- * ──────────────────────────────────────────────────────────────────────── */
-
-static char *
-build_evolution_event(const uint8_t *commit_data, size_t commit_len,
-                       const uint8_t nostr_group_id[32])
-{
-    /* The evolution event is a kind:445 with:
-     * - content: base64 of the serialized commit (MLSMessage)
-     * - pubkey: ephemeral (generated per-event)
-     * - h tag: hex of the nostr_group_id
-     * - encoding tag: "base64"
-     *
-     * The event is unsigned — caller signs with ephemeral key.
-     */
-    char *b64_content = base64_encode(commit_data, commit_len);
-    if (!b64_content) return NULL;
-
-    /* The evolution event uses an ephemeral pubkey.
-     * The actual signing will be done by the caller. */
-
-    NostrEvent *event = nostr_event_new();
-    if (!event) { free(b64_content); return NULL; }
-
-    nostr_event_set_kind(event, MARMOT_KIND_GROUP_MESSAGE);
-    nostr_event_set_content(event, b64_content);
-    nostr_event_set_created_at(event, (int64_t)time(NULL));
-    free(b64_content);
-
-    NostrTags *tags = nostr_tags_new(0);
-    if (!tags) { nostr_event_free(event); return NULL; }
-
-    /* h tag: nostr_group_id hex */
-    char *gid_hex = marmot_hex_encode(nostr_group_id, 32);
-    NostrTag *tag = nostr_tag_new("h", gid_hex, NULL);
-    free(gid_hex);
-    if (!tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
-    nostr_tags_append(tags, tag);
-
-    /* encoding tag */
-    tag = nostr_tag_new("encoding", "base64", NULL);
-    if (!tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
-    nostr_tags_append(tags, tag);
-
-    nostr_event_set_tags(event, tags);
-
-    char *json = nostr_event_serialize_compact(event);
-    nostr_event_free(event);
-    return json;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -504,6 +436,10 @@ marmot_create_group(Marmot *m,
 
     MlsAddResult last_add_result;
     memset(&last_add_result, 0, sizeof(last_add_result));
+    /* The published Commit is sealed with its source epoch's exporter
+     * secret (MIP-03), like any kind:445 event of that epoch. */
+    uint8_t last_source_exporter[32];
+    memset(last_source_exporter, 0, sizeof(last_source_exporter));
 
     for (size_t i = 0; i < kp_count; i++) {
         /* Parse KeyPackage event */
@@ -513,6 +449,7 @@ marmot_create_group(Marmot *m,
                                              &kp, member_pubkey);
         if (rc != 0) {
             /* Clean up on failure */
+            sodium_memzero(last_source_exporter, sizeof(last_source_exporter));
             mls_add_result_clear(&last_add_result);
             for (size_t j = 0; j < i; j++)
                 free(result->welcome_rumor_jsons[j]);
@@ -525,9 +462,13 @@ marmot_create_group(Marmot *m,
         /* Add member to MLS group */
         MlsAddResult add_result;
         memset(&add_result, 0, sizeof(add_result));
+        uint8_t source_exporter[32];
+        memcpy(source_exporter, mls_group.epoch_secrets.exporter_secret, 32);
         rc = mls_group_add_member(&mls_group, &kp, &add_result);
         mls_key_package_clear(&kp);
         if (rc != 0) {
+            sodium_memzero(source_exporter, sizeof(source_exporter));
+            sodium_memzero(last_source_exporter, sizeof(last_source_exporter));
             mls_add_result_clear(&last_add_result);
             for (size_t j = 0; j < i; j++)
                 free(result->welcome_rumor_jsons[j]);
@@ -555,15 +496,18 @@ marmot_create_group(Marmot *m,
          * publish the final commit) */
         mls_add_result_clear(&last_add_result);
         last_add_result = add_result;
+        memcpy(last_source_exporter, source_exporter, 32);
+        sodium_memzero(source_exporter, sizeof(source_exporter));
         /* Don't clear add_result — ownership transferred to last_add_result */
     }
 
     /* Build evolution event from the last commit */
     if (kp_count > 0 && last_add_result.commit_data) {
-        result->evolution_event_json = build_evolution_event(
+        result->evolution_event_json = marmot_commit_build_event(
             last_add_result.commit_data, last_add_result.commit_len,
-            nostr_group_id);
+            last_source_exporter, nostr_group_id);
     }
+    sodium_memzero(last_source_exporter, sizeof(last_source_exporter));
     mls_add_result_clear(&last_add_result);
 
     /* Build the GroupData extension struct for populating the MarmotGroup */
@@ -695,6 +639,114 @@ marmot_merge_pending_commit(Marmot *m, const MarmotGroupId *mls_group_id)
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Internal: publish and persist a local Commit (nostrc-9ata)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static int
+clone_mls_group(const MlsGroup *src, MlsGroup *dst)
+{
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    memset(dst, 0, sizeof(*dst));
+    int rc = (mls_group_serialize(src, &blob, &len) == 0 &&
+              mls_group_deserialize(blob, len, dst) == 0) ? 0 : -1;
+    if (blob) {
+        sodium_memzero(blob, len);
+        free(blob);
+    }
+    return rc;
+}
+
+static bool
+storage_can_commit(const MarmotStorage *s)
+{
+    return s && s->find_group_by_mls_id && s->save_group && s->mls_store &&
+           s->mls_load && s->mls_delete && s->save_exporter_secret &&
+           s->get_exporter_secret && s->delete_exporter_secret;
+}
+
+/*
+ * Tail shared by the Commit producers.  `pre` is the state the published
+ * Commit was made from and `post` the state it produced.  The Commit must
+ * pass the same Marmot policy every receiver applies (so a member never
+ * publishes what the group rejects); the kind:445 event is sealed with the
+ * source epoch's exporter secret; then post, its exporter secret, the
+ * retained parent and `group` are persisted (all or nothing).  Nothing is
+ * stored on failure.
+ */
+static MarmotError
+finish_local_commit(Marmot *m, MarmotGroup *group,
+                    const MlsGroup *pre, const MlsGroup *post,
+                    const uint8_t *commit, size_t commit_len,
+                    char **out_commit_json)
+{
+    if (!commit || commit_len == 0) return MARMOT_ERR_MLS;
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    MarmotError err = marmot_commit_authorize(pre, post, pre->own_leaf_index,
+                                              &key, &gde);
+    if (err != MARMOT_OK) return err;
+    if (mls_crypto_hash(key.digest, commit, commit_len) != 0) {
+        marmot_group_data_extension_free(gde);
+        return MARMOT_ERR_CRYPTO;
+    }
+    char *json = marmot_commit_build_event(commit, commit_len,
+                                           pre->epoch_secrets.exporter_secret,
+                                           group->nostr_group_id);
+    if (!json) {
+        marmot_group_data_extension_free(gde);
+        return MARMOT_ERR_EVENT_BUILD;
+    }
+    err = marmot_commit_persist(m, pre, post, &key, gde, group);
+    marmot_group_data_extension_free(gde);
+    if (err != MARMOT_OK) {
+        free(json);
+        return err;
+    }
+    *out_commit_json = json;
+    return MARMOT_OK;
+}
+
+/* Load an active group we may commit to as an admin.  On success the caller
+ * owns *group_out and *mls_out. */
+static MarmotError
+load_group_for_commit(Marmot *m, const MarmotGroupId *mls_group_id,
+                      MarmotGroup **group_out, MlsGroup *mls_out)
+{
+    *group_out = NULL;
+    memset(mls_out, 0, sizeof(*mls_out));
+    if (marmot_ensure_identity(m) != 0)
+        return MARMOT_ERR_CRYPTO;
+    if (!storage_can_commit(m->storage))
+        return MARMOT_ERR_STORAGE;
+
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                                        mls_group_id, &group);
+    if (err != MARMOT_OK || !group)
+        return MARMOT_ERR_GROUP_NOT_FOUND;
+    if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
+        marmot_group_free(group);
+        return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+    /* The group's MLS state is required: without it nothing can be committed. */
+    if (load_mls_group(m, mls_group_id, mls_out) != 0) {
+        marmot_group_free(group);
+        return MARMOT_ERR_MLS;
+    }
+    /* Admin check using our Nostr pubkey from our leaf in the MLS tree */
+    uint8_t our_nostr_pk[32];
+    if (get_own_credential_identity(mls_out, our_nostr_pk) != 0 ||
+        !is_admin(group, our_nostr_pk)) {
+        mls_group_free(mls_out);
+        marmot_group_free(group);
+        return MARMOT_ERR_ADMIN_ONLY;
+    }
+    *group_out = group;
+    return MARMOT_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_add_members
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -714,45 +766,11 @@ marmot_add_members(Marmot *m,
     *out_welcome_count = 0;
     *out_commit_json = NULL;
 
-    /* Ensure identity */
-    if (marmot_ensure_identity(m) != 0)
-        return MARMOT_ERR_CRYPTO;
-
-    /* Look up the group metadata for admin check */
-    if (!m->storage || !m->storage->find_group_by_mls_id ||
-        !m->storage->mls_store || !m->storage->save_group ||
-        !m->storage->save_exporter_secret)
-        return MARMOT_ERR_STORAGE;
-
     MarmotGroup *group = NULL;
-    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
-                                                         mls_group_id, &group);
-    if (err != MARMOT_OK || !group)
-        return MARMOT_ERR_GROUP_NOT_FOUND;
-
-    if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
-        marmot_group_free(group);
-        return MARMOT_ERR_USE_AFTER_EVICTION;
-    }
-
-    /* Load MLS group state */
     MlsGroup mls;
-    memset(&mls, 0, sizeof(mls));
-    if (load_mls_group(m, mls_group_id, &mls) != 0) {
-        marmot_group_free(group);
-        return MARMOT_ERR_MLS;
-    }
+    MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
+    if (err != MARMOT_OK) return err;
 
-    /* Admin check: look up our Nostr pubkey from our leaf in the MLS tree */
-    uint8_t our_nostr_pk[32];
-    if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
-        !is_admin(group, our_nostr_pk)) {
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return MARMOT_ERR_ADMIN_ONLY;
-    }
-
-    /* Allocate welcome output */
     char **welcomes = calloc(kp_count, sizeof(char *));
     if (!welcomes) {
         mls_group_free(&mls);
@@ -760,34 +778,36 @@ marmot_add_members(Marmot *m,
         return MARMOT_ERR_MEMORY;
     }
 
+    /* Each KeyPackage is one Commit; only the last one is published
+     * (nostrc-9ata follow-up), so `pre` is the state before that Commit. */
+    MlsGroup pre;
+    memset(&pre, 0, sizeof(pre));
     MlsAddResult last_add_result;
     memset(&last_add_result, 0, sizeof(last_add_result));
+    char *commit_json = NULL;
 
     for (size_t i = 0; i < kp_count; i++) {
         MlsKeyPackage kp;
         uint8_t member_pubkey[32];
-        int rc = marmot_parse_key_package_event(key_package_event_jsons[i],
-                                                 &kp, member_pubkey);
-        if (rc != 0) {
-            mls_add_result_clear(&last_add_result);
-            for (size_t j = 0; j < i; j++) free(welcomes[j]);
-            free(welcomes);
-            mls_group_free(&mls);
-            marmot_group_free(group);
-            return MARMOT_ERR_VALIDATION;
+        if (marmot_parse_key_package_event(key_package_event_jsons[i],
+                                           &kp, member_pubkey) != 0) {
+            err = MARMOT_ERR_VALIDATION;
+            goto fail;
+        }
+        mls_group_free(&pre);
+        if (clone_mls_group(&mls, &pre) != 0) {
+            mls_key_package_clear(&kp);
+            err = MARMOT_ERR_MLS;
+            goto fail;
         }
 
         MlsAddResult add_result;
         memset(&add_result, 0, sizeof(add_result));
-        rc = mls_group_add_member(&mls, &kp, &add_result);
+        int rc = mls_group_add_member(&mls, &kp, &add_result);
         mls_key_package_clear(&kp);
         if (rc != 0) {
-            mls_add_result_clear(&last_add_result);
-            for (size_t j = 0; j < i; j++) free(welcomes[j]);
-            free(welcomes);
-            mls_group_free(&mls);
-            marmot_group_free(group);
-            return MARMOT_ERR_MLS;
+            err = MARMOT_ERR_MLS;
+            goto fail;
         }
 
         /* Build welcome rumor */
@@ -807,57 +827,27 @@ marmot_add_members(Marmot *m,
         last_add_result = add_result;
     }
 
-    /* Build evolution event from final commit */
-    char *commit_json = NULL;
-    if (last_add_result.commit_data) {
-        commit_json = build_evolution_event(
-            last_add_result.commit_data, last_add_result.commit_len,
-            group->nostr_group_id);
-    }
+    err = finish_local_commit(m, group, &pre, &mls, last_add_result.commit_data,
+                              last_add_result.commit_len, &commit_json);
+    if (err != MARMOT_OK) goto fail;
+
     mls_add_result_clear(&last_add_result);
-
-    /* Save updated MLS group state. Mandatory for future operations. */
-    if (save_mls_group(m, &mls) != 0) {
-        for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
-        free(welcomes);
-        free(commit_json);
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return MARMOT_ERR_STORAGE;
-    }
-
-    /* Update group metadata (epoch) */
-    group->epoch = mls.epoch;
-    err = m->storage->save_group(m->storage->ctx, group);
-    if (err != MARMOT_OK) {
-        for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
-        free(welcomes);
-        free(commit_json);
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return err;
-    }
-
-    /* Store new exporter secret. Mandatory for message encryption. */
-    err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
-                                           mls.epoch,
-                                           mls.epoch_secrets.exporter_secret);
-    if (err != MARMOT_OK) {
-        for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
-        free(welcomes);
-        free(commit_json);
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return err;
-    }
-
+    mls_group_free(&pre);
     mls_group_free(&mls);
     marmot_group_free(group);
-
     *out_welcome_jsons = welcomes;
     *out_welcome_count = kp_count;
     *out_commit_json = commit_json;
     return MARMOT_OK;
+
+fail:
+    mls_add_result_clear(&last_add_result);
+    for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
+    free(welcomes);
+    mls_group_free(&pre);
+    mls_group_free(&mls);
+    marmot_group_free(group);
+    return err;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -875,114 +865,45 @@ marmot_remove_members(Marmot *m,
 
     *out_commit_json = NULL;
 
-    /* Ensure identity */
-    if (marmot_ensure_identity(m) != 0)
-        return MARMOT_ERR_CRYPTO;
-
-    /* Look up group metadata for admin check */
-    if (!m->storage || !m->storage->find_group_by_mls_id ||
-        !m->storage->mls_store || !m->storage->save_group ||
-        !m->storage->save_exporter_secret)
-        return MARMOT_ERR_STORAGE;
-
     MarmotGroup *group = NULL;
-    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
-                                                         mls_group_id, &group);
-    if (err != MARMOT_OK || !group)
-        return MARMOT_ERR_GROUP_NOT_FOUND;
-
-    if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
-        marmot_group_free(group);
-        return MARMOT_ERR_USE_AFTER_EVICTION;
-    }
-
-    /* Load MLS group state */
     MlsGroup mls;
-    memset(&mls, 0, sizeof(mls));
-    if (load_mls_group(m, mls_group_id, &mls) != 0) {
-        marmot_group_free(group);
-        return MARMOT_ERR_MLS;
-    }
+    MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
+    if (err != MARMOT_OK) return err;
 
-    /* Admin check using our credential identity from MLS tree */
-    uint8_t our_nostr_pk[32];
-    if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
-        !is_admin(group, our_nostr_pk)) {
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return MARMOT_ERR_ADMIN_ONLY;
-    }
-
-    /* Remove each member by finding their leaf index */
+    MlsGroup pre;
+    memset(&pre, 0, sizeof(pre));
     MlsCommitResult last_result;
     memset(&last_result, 0, sizeof(last_result));
 
     for (size_t i = 0; i < count; i++) {
         uint32_t leaf_idx;
         if (find_leaf_by_pubkey(&mls, member_pubkeys[i], &leaf_idx) != 0) {
-            mls_commit_result_clear(&last_result);
-            mls_group_free(&mls);
-            marmot_group_free(group);
-            return MARMOT_ERR_MEMBER_NOT_FOUND;
+            err = MARMOT_ERR_MEMBER_NOT_FOUND;
+            goto out;
         }
-
+        mls_group_free(&pre);
+        if (clone_mls_group(&mls, &pre) != 0) {
+            err = MARMOT_ERR_MLS;
+            goto out;
+        }
         MlsCommitResult result;
         memset(&result, 0, sizeof(result));
-        int rc = mls_group_remove_member(&mls, leaf_idx, &result);
-        if (rc != 0) {
-            mls_commit_result_clear(&last_result);
-            mls_group_free(&mls);
-            marmot_group_free(group);
-            return MARMOT_ERR_MLS;
+        if (mls_group_remove_member(&mls, leaf_idx, &result) != 0) {
+            err = MARMOT_ERR_MLS;
+            goto out;
         }
-
         mls_commit_result_clear(&last_result);
         last_result = result;
     }
 
-    /* Build evolution event from the final commit */
-    if (last_result.commit_data) {
-        *out_commit_json = build_evolution_event(
-            last_result.commit_data, last_result.commit_len,
-            group->nostr_group_id);
-    }
+    err = finish_local_commit(m, group, &pre, &mls, last_result.commit_data,
+                              last_result.commit_len, out_commit_json);
+out:
     mls_commit_result_clear(&last_result);
-
-    /* Save updated MLS group state. Mandatory for future operations. */
-    if (save_mls_group(m, &mls) != 0) {
-        free(*out_commit_json);
-        *out_commit_json = NULL;
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return MARMOT_ERR_STORAGE;
-    }
-
-    /* Update group metadata */
-    group->epoch = mls.epoch;
-    err = m->storage->save_group(m->storage->ctx, group);
-    if (err != MARMOT_OK) {
-        free(*out_commit_json);
-        *out_commit_json = NULL;
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return err;
-    }
-
-    /* Store new exporter secret. Mandatory for message encryption. */
-    err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
-                                           mls.epoch,
-                                           mls.epoch_secrets.exporter_secret);
-    if (err != MARMOT_OK) {
-        free(*out_commit_json);
-        *out_commit_json = NULL;
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return err;
-    }
-
+    mls_group_free(&pre);
     mls_group_free(&mls);
     marmot_group_free(group);
-    return MARMOT_OK;
+    return err;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1148,32 +1069,6 @@ fail:
     return err;
 }
 
-/* Mirror the committed GroupData into the stored MarmotGroup. */
-static MarmotError
-group_apply_group_data(MarmotGroup *group, const MarmotGroupDataExtension *gde)
-{
-    char *name = gde->name ? strdup(gde->name) : NULL;
-    char *description = gde->description ? strdup(gde->description) : NULL;
-    uint8_t (*admins)[32] = NULL;
-    if (gde->admin_count > 0 && gde->admins) admins = malloc(gde->admin_count * 32);
-    if ((gde->name && !name) || (gde->description && !description) ||
-        (gde->admin_count > 0 && gde->admins && !admins)) {
-        free(name);
-        free(description);
-        free(admins);
-        return MARMOT_ERR_MEMORY;
-    }
-    if (admins) memcpy(admins, gde->admins, gde->admin_count * 32);
-    free(group->name);
-    free(group->description);
-    free(group->admin_pubkeys);
-    group->name = name;
-    group->description = description;
-    group->admin_pubkeys = admins;
-    group->admin_count = admins ? gde->admin_count : 0;
-    return MARMOT_OK;
-}
-
 /* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_update_group_metadata
  * ──────────────────────────────────────────────────────────────────────── */
@@ -1181,95 +1076,49 @@ group_apply_group_data(MarmotGroup *group, const MarmotGroupDataExtension *gde)
 MarmotError
 marmot_update_group_metadata(Marmot *m,
                               const MarmotGroupId *mls_group_id,
-                              const MarmotGroupConfig *config)
+                              const MarmotGroupConfig *config,
+                              char **out_commit_json)
 {
-    if (!m || !mls_group_id || !config)
+    if (!m || !mls_group_id || !config || !out_commit_json)
         return MARMOT_ERR_INVALID_ARG;
-    if (!m->storage || !m->storage->find_group_by_mls_id || !m->storage->save_group ||
-        !m->storage->mls_store || !m->storage->save_exporter_secret)
-        return MARMOT_ERR_STORAGE;
+    *out_commit_json = NULL;
 
-    if (marmot_ensure_identity(m) != 0)
-        return MARMOT_ERR_CRYPTO;
-
-    /* Look up group */
     MarmotGroup *group = NULL;
-    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx,
-                                                         mls_group_id, &group);
-    if (err != MARMOT_OK || !group)
-        return MARMOT_ERR_GROUP_NOT_FOUND;
-
-    if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
-        marmot_group_free(group);
-        return MARMOT_ERR_USE_AFTER_EVICTION;
-    }
-
-    /* The metadata lives in the MLS GroupContext: without the MLS state the
-     * change cannot be committed, so nothing is changed. */
     MlsGroup mls;
-    memset(&mls, 0, sizeof(mls));
-    if (load_mls_group(m, mls_group_id, &mls) != 0) {
-        marmot_group_free(group);
-        return MARMOT_ERR_MLS;
-    }
-
-    /* Admin check using our Nostr pubkey from MLS tree */
-    uint8_t our_nostr_pk[32];
-    if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
-        !is_admin(group, our_nostr_pk)) {
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return MARMOT_ERR_ADMIN_ONLY;
-    }
+    MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
+    if (err != MARMOT_OK) return err;
 
     /* Commit the new GroupData as a GroupContextExtensions proposal (RFC 9420
-     * §12.1.7) so every member moves to the same GroupContext.  The local
-     * group record changes only once that Commit exists. */
+     * §12.1.7) so every member moves to the same GroupContext; the Commit is
+     * returned for publication (nostrc-9ata).  The local group record changes
+     * only once that Commit exists and is persisted. */
     MarmotGroupDataExtension *gde = NULL;
     uint8_t *new_ext = NULL;
     size_t new_ext_len = 0;
-    err = updated_group_data(&mls, config, group->nostr_group_id,
-                             &gde, &new_ext, &new_ext_len);
-    if (err != MARMOT_OK) {
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return err;
-    }
+    MlsGroup pre;
+    memset(&pre, 0, sizeof(pre));
     MlsCommitResult commit_result;
     memset(&commit_result, 0, sizeof(commit_result));
+
+    err = updated_group_data(&mls, config, group->nostr_group_id,
+                             &gde, &new_ext, &new_ext_len);
+    marmot_group_data_extension_free(gde);  /* the committed copy is re-read */
+    if (err != MARMOT_OK) goto out;
+    if (clone_mls_group(&mls, &pre) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto out;
+    }
     int rc = mls_group_commit_extensions(&mls, new_ext, new_ext_len, &commit_result);
-    free(new_ext);
-    /* This API does not yet return the Commit for publication (nostrc-9ata);
-     * as before, only the local state advances. */
-    mls_commit_result_clear(&commit_result);
     if (rc != 0) {
-        marmot_group_data_extension_free(gde);
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return rc == MARMOT_ERR_UNSUPPORTED ? MARMOT_ERR_UNSUPPORTED : MARMOT_ERR_MLS;
+        err = rc == MARMOT_ERR_UNSUPPORTED ? MARMOT_ERR_UNSUPPORTED : MARMOT_ERR_MLS;
+        goto out;
     }
-
-    err = group_apply_group_data(group, gde);
-    marmot_group_data_extension_free(gde);
-    if (err != MARMOT_OK) {
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return err;
-    }
-    group->epoch = mls.epoch;
-
-    /* Persist the MLS state first, as add/remove do: the group record and
-     * exporter secret follow the committed epoch. */
-    if (save_mls_group(m, &mls) != 0) {
-        mls_group_free(&mls);
-        marmot_group_free(group);
-        return MARMOT_ERR_STORAGE;
-    }
-    err = m->storage->save_group(m->storage->ctx, group);
-    if (err == MARMOT_OK)
-        err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
-                                               mls.epoch,
-                                               mls.epoch_secrets.exporter_secret);
+    err = finish_local_commit(m, group, &pre, &mls, commit_result.commit_data,
+                              commit_result.commit_len, out_commit_json);
+out:
+    free(new_ext);
+    mls_commit_result_clear(&commit_result);
+    mls_group_free(&pre);
     mls_group_free(&mls);
     marmot_group_free(group);
     return err;

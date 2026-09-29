@@ -893,6 +893,86 @@ test_client_signal_message_received(void)
 }
 
 static void
+on_group_updated(MarmotGobjectClient *client, MarmotGobjectGroup *group, gpointer data)
+{
+    (void)client;
+    SignalData *sd = data;
+    sd->fired = TRUE;
+    g_clear_object(&sd->received_object);
+    sd->received_object = G_OBJECT(g_object_ref(group));
+}
+
+/* nostrc-9ata: the inviter renames the group; the published Commit moves
+ * the member to the same epoch and name, and both clients announce it with
+ * ::group-updated. */
+static void
+test_client_update_metadata_commit_reaches_member(void)
+{
+    MarmotGobjectClient *inviter = NULL, *member = NULL;
+    MarmotGobjectMemoryStorage *inviter_store = NULL, *member_store = NULL;
+    MarmotGobjectGroup *created = NULL;
+    gchar **welcomes = NULL;
+    MarmotGobjectWelcome *welcome = setup_real_welcome_flow(
+        &inviter, &inviter_store, &member, &member_store, &created, &welcomes);
+    g_assert_true(accept_welcome_sync(member, welcome));
+    const gchar *gid = marmot_gobject_group_get_mls_group_id(created);
+
+    SignalData inviter_sd = { FALSE, NULL }, member_sd = { FALSE, NULL };
+    g_signal_connect(inviter, "group-updated", G_CALLBACK(on_group_updated), &inviter_sd);
+    g_signal_connect(member, "group-updated", G_CALLBACK(on_group_updated), &member_sd);
+
+    AsyncFixture *uf = async_fixture_new();
+    marmot_gobject_client_update_group_metadata_async(inviter, gid, "Renamed", NULL,
+                                                      NULL, async_callback, uf);
+    g_main_loop_run(uf->loop);
+    GError *error = NULL;
+    gchar *commit = marmot_gobject_client_update_group_metadata_finish(inviter, uf->result,
+                                                                      &error);
+    async_fixture_free(uf);
+    g_assert_no_error(error);
+    g_assert_nonnull(commit);
+    drain_main_context();
+    g_assert_true(inviter_sd.fired);
+    g_assert_cmpstr(marmot_gobject_group_get_name(MARMOT_GOBJECT_GROUP(inviter_sd.received_object)),
+                    ==, "Renamed");
+    guint64 epoch = marmot_gobject_group_get_epoch(MARMOT_GOBJECT_GROUP(inviter_sd.received_object));
+    g_assert_cmpuint(epoch, ==, marmot_gobject_group_get_epoch(created) + 1);
+
+    AsyncFixture *pf = async_fixture_new();
+    marmot_gobject_client_process_message_async(member, commit, NULL, async_callback, pf);
+    g_main_loop_run(pf->loop);
+    MarmotGobjectMessageResultType type = MARMOT_GOBJECT_MESSAGE_RESULT_UNPROCESSABLE;
+    gchar *inner = marmot_gobject_client_process_message_finish(member, pf->result, &type,
+                                                                &error);
+    async_fixture_free(pf);
+    g_assert_no_error(error);
+    g_assert_null(inner);
+    g_assert_cmpint(type, ==, MARMOT_GOBJECT_MESSAGE_RESULT_COMMIT);
+    drain_main_context();
+    g_assert_true(member_sd.fired);
+    MarmotGobjectGroup *signaled = MARMOT_GOBJECT_GROUP(member_sd.received_object);
+    g_assert_cmpstr(marmot_gobject_group_get_mls_group_id(signaled), ==, gid);
+    g_assert_cmpstr(marmot_gobject_group_get_name(signaled), ==, "Renamed");
+    g_assert_cmpuint(marmot_gobject_group_get_epoch(signaled), ==, epoch);
+
+    MarmotGobjectGroup *stored = marmot_gobject_client_get_group(member, gid, &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(marmot_gobject_group_get_name(stored), ==, "Renamed");
+    g_object_unref(stored);
+
+    g_free(commit);
+    g_clear_object(&inviter_sd.received_object);
+    g_clear_object(&member_sd.received_object);
+    g_object_unref(welcome);
+    g_object_unref(created);
+    g_strfreev(welcomes);
+    g_object_unref(inviter);
+    g_object_unref(member);
+    g_object_unref(inviter_store);
+    g_object_unref(member_store);
+}
+
+static void
 on_welcome_received(MarmotGobjectClient *client, MarmotGobjectWelcome *welcome, gpointer data)
 {
     SignalData *sd = data;
@@ -1957,6 +2037,8 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/client/signal-group-joined", test_client_signal_group_joined);
     g_test_add_func("/marmot-gobject/client/signal-message-received", test_client_signal_message_received);
     g_test_add_func("/marmot-gobject/client/signal-welcome-received", test_client_signal_welcome_received);
+    g_test_add_func("/marmot-gobject/client/update-metadata-commit-reaches-member",
+                    test_client_update_metadata_commit_reaches_member);
     g_test_add_func("/marmot-gobject/client/group-fields-and-media-metadata", test_client_create_group_fields_and_media_metadata);
 
     /* 8. Synchronous queries */

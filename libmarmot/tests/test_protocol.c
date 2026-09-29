@@ -2342,8 +2342,12 @@ test_update_group_metadata(void)
     new_config.admin_pubkeys = (uint8_t (*)[32])&pk;
     new_config.admin_count = 1;
 
-    err = marmot_update_group_metadata(m, &result.group->mls_group_id, &new_config);
+    char *commit_json = NULL;
+    err = marmot_update_group_metadata(m, &result.group->mls_group_id, &new_config,
+                                       &commit_json);
     ASSERT_OK(err, "update_group_metadata");
+    ASSERT(commit_json != NULL, "update_group_metadata must return the Commit");
+    free(commit_json);
 
     /* Verify the update took effect */
     MarmotGroup *updated = NULL;
@@ -2393,8 +2397,11 @@ test_update_group_metadata_non_admin(void)
     MarmotGroupConfig new_config = {0};
     new_config.name = "Hacked Name";
 
-    err = marmot_update_group_metadata(m, &result.group->mls_group_id, &new_config);
+    char *commit_json = NULL;
+    err = marmot_update_group_metadata(m, &result.group->mls_group_id, &new_config,
+                                       &commit_json);
     ASSERT(err == MARMOT_ERR_ADMIN_ONLY, "should reject non-admin update");
+    ASSERT(commit_json == NULL, "no Commit on rejection");
 
     marmot_create_group_result_free(&result);
     marmot_free(m);
@@ -2668,9 +2675,11 @@ test_message_epoch_lookback(void)
     update_config.name = "Epoch Lookback Test v2";
     update_config.admin_pubkeys = (uint8_t (*)[32])&pk;
     update_config.admin_count = 1;
+    char *commit_json = NULL;
     err = marmot_update_group_metadata(m, &gresult.group->mls_group_id,
-                                        &update_config);
+                                        &update_config, &commit_json);
     ASSERT_OK(err, "update_group_metadata to advance epoch");
+    free(commit_json);
 
     /* Try to decrypt the epoch-0 message at epoch 1.
      * NIP-44 lookback finds the exporter_secret, but MLS epoch 0 state
@@ -2990,8 +2999,10 @@ test_full_protocol_lifecycle(void)
     update_cfg.name = "Renamed Lifecycle Group";
     update_cfg.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
     update_cfg.admin_count = 1;
-    ASSERT_OK(marmot_update_group_metadata(creator, &gid, &update_cfg),
+    char *rename_commit = NULL;
+    ASSERT_OK(marmot_update_group_metadata(creator, &gid, &update_cfg, &rename_commit),
               "update group name");
+    free(rename_commit);
 
     /* Verify updated name */
     MarmotGroup *updated = NULL;
@@ -3103,8 +3114,11 @@ test_update_group_metadata_commits_merged_group_data(void)
     /* Only the name changes. */
     MarmotGroupConfig rename = {0};
     rename.name = "Renamed";
-    ASSERT_OK(marmot_update_group_metadata(m, &result.group->mls_group_id, &rename),
+    char *commit_json = NULL;
+    ASSERT_OK(marmot_update_group_metadata(m, &result.group->mls_group_id, &rename,
+                                           &commit_json),
               "update_group_metadata");
+    free(commit_json);
 
     MarmotGroup *updated = NULL;
     ASSERT_OK(marmot_get_group(m, &result.group->mls_group_id, &updated), "get_group");
@@ -3171,9 +3185,11 @@ test_update_group_metadata_fails_closed_without_mls_state(void)
 
     MarmotGroupConfig rename = {0};
     rename.name = "After";
+    char *commit_json = NULL;
     MarmotError err = marmot_update_group_metadata(m, &result.group->mls_group_id,
-                                                   &rename);
+                                                   &rename, &commit_json);
     ASSERT(err == MARMOT_ERR_MLS, "update without MLS state must fail");
+    ASSERT(commit_json == NULL, "no Commit on failure");
     MarmotGroup *g = NULL;
     ASSERT_OK(marmot_get_group(m, &result.group->mls_group_id, &g), "get_group");
     ASSERT(strcmp(g->name, "Before") == 0, "name must be unchanged");

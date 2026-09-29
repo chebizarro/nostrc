@@ -22,6 +22,7 @@ struct _GnGroupSettingsView
   GnostrPluginContext *plugin_context;   /* borrowed */
 
   /* Info widgets */
+  AdwEntryRow *rename_entry;   /* admin-only */
   GtkImage  *group_icon;
   GtkLabel  *group_name_label;
   GtkLabel  *group_desc_label;
@@ -88,6 +89,7 @@ refresh_group_info(GnGroupSettingsView *self)
 
   gtk_label_set_text(self->group_name_label,
                      (name && *name) ? name : "(Unnamed Group)");
+  gtk_editable_set_text(GTK_EDITABLE(self->rename_entry), name ? name : "");
   gtk_label_set_text(self->group_desc_label,
                      (desc && *desc) ? desc : "No description");
   gtk_widget_set_visible(GTK_WIDGET(self->group_desc_label),
@@ -165,8 +167,9 @@ rebuild_member_list(GnGroupSettingsView *self)
    * isn't fully enumerable. Future: add get_member_pubkeys() to API.
    */
 
-  /* Show/hide add-member controls based on admin status */
+  /* Show/hide admin controls based on admin status */
   gtk_widget_set_visible(GTK_WIDGET(self->add_member_entry), i_am_admin);
+  gtk_widget_set_visible(GTK_WIDGET(self->rename_entry), i_am_admin);
 }
 
 /* ── Add member flow ─────────────────────────────────────────────── */
@@ -419,6 +422,87 @@ on_add_member_entry_activate(GtkEditable *editable, gpointer user_data)
   on_add_member_clicked(NULL, user_data);
 }
 
+/* ── Rename (MIP-01 metadata Commit, nostrc-9ata) ────────────────── */
+
+static void
+on_rename_published(GObject      *source,
+                    GAsyncResult *result,
+                    gpointer      user_data)
+{
+  GnGroupSettingsView *self = user_data;   /* strong */
+  g_autoptr(GError) error = NULL;
+
+  if (self->plugin_context != NULL &&
+      !gnostr_plugin_context_publish_event_finish(self->plugin_context, result, &error))
+    {
+      /* The group already moved on locally; members follow only once the
+       * Commit reaches the group relays. */
+      g_warning("GroupSettings: failed to publish the rename Commit: %s",
+                error ? error->message : "unknown");
+    }
+  g_object_unref(self);
+}
+
+static void
+on_rename_committed(GObject      *source,
+                    GAsyncResult *result,
+                    gpointer      user_data)
+{
+  GnGroupSettingsView *self = user_data;   /* strong */
+  MarmotGobjectClient *client = MARMOT_GOBJECT_CLIENT(source);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *commit_json =
+    marmot_gobject_client_update_group_metadata_finish(client, result, &error);
+
+  gtk_widget_set_sensitive(GTK_WIDGET(self->rename_entry), TRUE);
+  if (commit_json == NULL)
+    {
+      g_warning("GroupSettings: rename failed: %s", error ? error->message : "unknown");
+      refresh_group_info(self);   /* show the unchanged name again */
+      g_object_unref(self);
+      return;
+    }
+
+  /* Publish the Commit (kind:445) to the group relays, as group messages
+   * are; every member applies it through marmot_process_message(). */
+  const gchar *group_id_hex = marmot_gobject_group_get_mls_group_id(self->group);
+  gsize relay_count = 0;
+  g_auto(GStrv) relays = group_id_hex
+    ? marmot_gobject_client_get_group_relay_urls(client, group_id_hex, &relay_count)
+    : NULL;
+  if (self->plugin_context == NULL)
+    {
+      g_object_unref(self);
+      return;
+    }
+  gnostr_plugin_context_publish_event_to_relays_async(self->plugin_context, commit_json,
+                                                       (const char * const *) relays,
+                                                       NULL, on_rename_published,
+                                                       self);   /* ref passed on */
+}
+
+static void
+on_rename_apply(AdwEntryRow *row, gpointer user_data)
+{
+  GnGroupSettingsView *self = GN_GROUP_SETTINGS_VIEW(user_data);
+  g_autofree gchar *name = g_strstrip(g_strdup(gtk_editable_get_text(GTK_EDITABLE(row))));
+  const gchar *current = marmot_gobject_group_get_name(self->group);
+  const gchar *group_id_hex = marmot_gobject_group_get_mls_group_id(self->group);
+  MarmotGobjectClient *client = gn_marmot_service_get_client(self->service);
+
+  if (name[0] == '\0' || g_strcmp0(name, current) == 0 ||
+      client == NULL || group_id_hex == NULL)
+    {
+      refresh_group_info(self);
+      return;
+    }
+
+  gtk_widget_set_sensitive(GTK_WIDGET(self->rename_entry), FALSE);
+  marmot_gobject_client_update_group_metadata_async(client, group_id_hex, name, NULL,
+                                                    NULL, on_rename_committed,
+                                                    g_object_ref(self));
+}
+
 /* ── Leave group ─────────────────────────────────────────────────── */
 
 static void
@@ -576,6 +660,14 @@ gn_group_settings_view_init(GnGroupSettingsView *self)
     adw_preferences_group_new());
   adw_preferences_group_set_title(info_group, "Group Info");
   gtk_box_append(GTK_BOX(content), GTK_WIDGET(info_group));
+
+  /* Group name (admins only; committed and published as a Commit) */
+  self->rename_entry = ADW_ENTRY_ROW(adw_entry_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->rename_entry), "Group Name");
+  adw_entry_row_set_show_apply_button(self->rename_entry, TRUE);
+  gtk_widget_set_visible(GTK_WIDGET(self->rename_entry), FALSE);
+  g_signal_connect(self->rename_entry, "apply", G_CALLBACK(on_rename_apply), self);
+  adw_preferences_group_add(info_group, GTK_WIDGET(self->rename_entry));
 
   /* Group ID row */
   AdwActionRow *id_row = ADW_ACTION_ROW(adw_action_row_new());

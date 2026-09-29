@@ -388,6 +388,14 @@ MarmotError marmot_merge_pending_commit(Marmot *m,
  *
  * Add members to an existing group.
  *
+ * @out_commit_json is an unsigned kind:445 event carrying the Commit,
+ * NIP-44-encrypted with the exporter secret of the epoch it was made in (as
+ * application messages are); sign it with a fresh ephemeral key and publish
+ * it to the group relays so members can apply it with
+ * marmot_process_message().  Each KeyPackage is added by its own Commit and
+ * only the last one is returned, so pass one KeyPackage per call when the
+ * group has other members.
+ *
  * Returns: MARMOT_OK on success
  */
 MarmotError marmot_add_members(Marmot *m,
@@ -402,7 +410,8 @@ MarmotError marmot_add_members(Marmot *m,
  * @mls_group_id: the group to remove members from
  * @member_pubkeys: (array length=count): 32-byte pubkeys of members to remove
  * @count: number of members
- * @out_commit_json: (out) (transfer full): commit event JSON
+ * @out_commit_json: (out) (transfer full): commit event JSON, as for
+ *   marmot_add_members()
  *
  * Returns: MARMOT_OK on success
  */
@@ -428,6 +437,8 @@ MarmotError marmot_leave_group(Marmot *m,
  * @m: Marmot instance
  * @mls_group_id: the group to update
  * @config: new group configuration (non-NULL fields are applied)
+ * @out_commit_json: (out) (transfer full): the kind:445 Commit event to
+ *   publish, as for marmot_add_members()
  *
  * Update group metadata (name, description, admins, relays).
  * Only admins can update group metadata. The non-NULL fields of @config
@@ -438,12 +449,18 @@ MarmotError marmot_leave_group(Marmot *m,
  * cannot be committed (no MLS state, unsupported extensions) nothing is
  * changed.
  *
- * Returns: MARMOT_OK on success, MARMOT_ERR_ADMIN_ONLY for non-admins,
- * MARMOT_ERR_MLS / MARMOT_ERR_UNSUPPORTED if the Commit cannot be made
+ * The caller must publish @out_commit_json: until the other members process
+ * it they stay in the previous epoch (since 0.5.0; before, the Commit was
+ * discarded).
+ *
+ * Returns: MARMOT_OK on success, MARMOT_ERR_INVALID_ARG when @out_commit_json
+ * is NULL, MARMOT_ERR_ADMIN_ONLY for non-admins, MARMOT_ERR_MLS /
+ * MARMOT_ERR_UNSUPPORTED if the Commit cannot be made
  */
 MarmotError marmot_update_group_metadata(Marmot *m,
                                           const MarmotGroupId *mls_group_id,
-                                          const MarmotGroupConfig *config);
+                                          const MarmotGroupConfig *config,
+                                          char **out_commit_json);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-02: Welcome Events
@@ -571,9 +588,26 @@ MarmotError marmot_save_created_message(Marmot *m,
  * @result: (out): processing result
  *
  * Process a received group message. Handles:
- * - Application messages (decrypts content)
- * - Commits (updates group state)
- * - Proposals (queued for commit)
+ * - Application messages (decrypts content): MARMOT_RESULT_APPLICATION_MESSAGE
+ * - Commits (since 0.5.0): the Commit is applied through the same validated
+ *   MLS path the producers use, then checked against MIP-01 (a Commit that
+ *   adds or removes members or changes the GroupData needs a committer who is
+ *   an admin of the pre-Commit GroupData, MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
+ *   nostr_group_id cannot change, MARMOT_ERR_PROTOCOL_GROUP_MISMATCH; the
+ *   committer keeps its account, MARMOT_ERR_IDENTITY_CHANGE).  The new MLS
+ *   state, its exporter secret and the group record are then stored, and
+ *   result->commit.updated_group holds the updated group
+ *   (MARMOT_RESULT_COMMIT).  Epochs: a Commit for the current epoch advances
+ *   the group.  One for the previous epoch competes with the Commit already
+ *   applied from that parent: the same Commit again is
+ *   MARMOT_RESULT_OWN_MESSAGE (e.g. our own, echoed); a different one
+ *   replaces it only if it wins the Marmot same-epoch ordering (privileged
+ *   before ordinary, then lower committer key, then lower SHA-256 of the
+ *   Commit bytes; transport timestamps and ids never count), otherwise, like
+ *   any older Commit, it is MARMOT_ERR_WRONG_EPOCH.  A Commit for a future
+ *   epoch cannot be decrypted yet (MARMOT_ERR_NIP44); retry it after the
+ *   missing Commits.  Every rejection leaves the group unchanged.
+ * - Standalone proposals: MARMOT_ERR_UNSUPPORTED (not queued)
  *
  * MIP-03 messages require MLS PrivateMessage framing by default. The legacy
  * raw-JSON NIP-44 fallback is accepted only when

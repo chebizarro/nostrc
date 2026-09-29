@@ -2298,15 +2298,17 @@ free_strings_n(char **strings, size_t n)
   free(strings);
 }
 
-/* Every label libmarmot has written must be classified: "mls_group" is
- * group state (snapshots copy it); the others are account-scoped and must
+/* Every label libmarmot has written must be classified: "mls_group" and
+ * "mls_group_parent" are group state (snapshots copy them); the others are
+ * account-scoped and must
  * stay out of group snapshots. A new label fails here, to be classified in
  * gh-store-marmot.c before it can silently escape (or join) a snapshot. */
 static void
 assert_labels_classified(GhStore *store)
 {
   static const gchar *const known[] = {
-    "mls_group", "kp_slot", "kp_priv", "kp_full", "welcome_data", NULL,
+    "mls_group", "mls_group_parent", "kp_slot", "kp_priv", "kp_full", "welcome_data",
+    NULL,
   };
   g_autofree gchar *labels = sql_text(store, "SELECT group_concat(label, ',') FROM "
                                              "(SELECT DISTINCT label FROM mls_kv ORDER BY label)");
@@ -2474,7 +2476,9 @@ test_snapshot_libmarmot_state(void)
     .admin_pubkeys = (uint8_t (*)[32]) alice.pk,
     .admin_count = 1,
   };
-  assert_marmot_ok(marmot_update_group_metadata(alice.marmot, &gid, &update));
+  g_autofree gchar *commit_json = NULL;
+  assert_marmot_ok(marmot_update_group_metadata(alice.marmot, &gid, &update, &commit_json));
+  g_assert_nonnull(commit_json);
   MarmotGroup *group = NULL;
   assert_marmot_ok(marmot_get_group(alice.marmot, &gid, &group));
   g_assert_cmpuint(group->epoch, ==, epoch0 + 1);
@@ -2498,7 +2502,8 @@ test_snapshot_libmarmot_state(void)
   actor_start(&alice);
   g_autofree gchar *message = actor_message(&alice, &gid, "after rollback");
   g_assert_nonnull(message);
-  assert_marmot_ok(marmot_update_group_metadata(alice.marmot, &gid, &update));
+  g_autofree gchar *commit_json2 = NULL;
+  assert_marmot_ok(marmot_update_group_metadata(alice.marmot, &gid, &update, &commit_json2));
   assert_marmot_ok(marmot_get_group(alice.marmot, &gid, &group));
   g_assert_cmpuint(group->epoch, ==, epoch0 + 1);
   g_assert_cmpstr(group->name, ==, "After");

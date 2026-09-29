@@ -27,6 +27,7 @@
  */
 
 #include "marmot-internal.h"
+#include "commits.h"
 #include "mls/mls_group.h"
 #include "mls/mls-internal.h"
 #include <nostr/nip44/nip44.h>
@@ -156,6 +157,15 @@ nip44_encrypt_with_secret(const uint8_t exporter_secret[32],
                                                   out_base64);
     sodium_memzero(convkey, sizeof(convkey));
     return rc;
+}
+
+int
+marmot_group_event_encrypt(const uint8_t exporter_secret[32],
+                           const uint8_t *plaintext, size_t plaintext_len,
+                           char **out_base64)
+{
+    return nip44_encrypt_with_secret(exporter_secret, plaintext, plaintext_len,
+                                     out_base64);
 }
 
 static int
@@ -655,6 +665,24 @@ marmot_process_message(Marmot *m,
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);
         return MARMOT_ERR_NIP44;
+    }
+
+    /* ── 5. Commits (nostrc-9ata) ─────────────────────────────────────────
+     *
+     * A handshake message is an MLSMessage PublicMessage (version 1,
+     * wire_format 1); application messages are PrivateMessages (wire_format
+     * 2).  Commits are applied through the validated MLS path; see
+     * marmot_commit_process_inbound() for the epoch rules. */
+    if (decrypted_len >= 4 && decrypted[0] == 0x00 && decrypted[1] == 0x01 &&
+        decrypted[2] == 0x00 && decrypted[3] == MLS_WIRE_FORMAT_PUBLIC_MESSAGE) {
+        err = marmot_commit_process_inbound(m, group, used_epoch,
+                                            decrypted, decrypted_len,
+                                            parsed.event_id, result);
+        free(decrypted);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        if (err != MARMOT_OK) marmot_message_result_free(result);
+        return err;
     }
 
     /* ── 6. Unwrap MLS PrivateMessage ─────────────────────────────────── */

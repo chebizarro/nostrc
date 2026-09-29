@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.4.1',
+  version: '0.5.0',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -104,6 +104,7 @@ marmot_sources = files(
   'src/mls/mls_welcome.c',
   'src/credentials.c',
   'src/kp_profile.c',
+  'src/commits.c',
   'src/groups.c',
   'src/welcome.c',
   'src/messages.c',
@@ -188,6 +189,7 @@ if get_option('tests')
     'test_app_data_update',
     'test_mls_welcome',
     'test_protocol',
+    'test_commits',
     'test_kp_profile',
     'test_storage_contract',
     'test_media',

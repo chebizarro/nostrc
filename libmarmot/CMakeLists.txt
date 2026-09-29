@@ -14,8 +14,8 @@ option(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
   "Allow marmot_create_key_package_for_profile(ADOPTED) (experimental)" OFF)
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 4)
-set(MARMOT_VERSION_PATCH 1)
+set(MARMOT_VERSION_MINOR 5)
+set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
   ${MARMOT_VERSION_MINOR}
@@ -71,6 +71,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/credentials.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/kp_profile.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/messages.c
@@ -268,6 +269,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_protocol PRIVATE marmot)
   target_include_directories(test_protocol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_protocol COMMAND test_protocol)
+
+  # Test: Commit publication and ingestion through the Marmot API (nostrc-9ata)
+  add_executable(test_commits ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_commits.c)
+  target_link_libraries(test_commits PRIVATE marmot)
+  target_include_directories(test_commits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_commits COMMAND test_commits)
 
   # Test: adopted-spec KeyPackage profile (nostrc-prqu.9)
   add_executable(test_kp_profile ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_kp_profile.c)

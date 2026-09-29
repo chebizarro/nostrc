@@ -222,40 +222,15 @@ on_message_processed(GObject      *source,
       break;
 
     case MARMOT_GOBJECT_MESSAGE_RESULT_COMMIT:
-      {
-        g_debug("MLS EventRouter: commit processed, group state updated");
-        /* New epoch: a later divergence is news again. */
-        gn_mls_group_error_gate_reset(data->router->reported_group_errors,
-                                      data->group_id_hex);
-
-        /* Refresh group from storage and notify listeners */
-        if (data->group_id_hex != NULL && data->router->service != NULL)
-          {
-            MarmotGobjectClient *grp_client =
-              gn_marmot_service_get_client(data->router->service);
-            if (grp_client != NULL)
-              {
-                g_autoptr(GError) grp_error = NULL;
-                g_autoptr(MarmotGobjectGroup) updated_group =
-                  marmot_gobject_client_get_group(grp_client,
-                                                   data->group_id_hex,
-                                                   &grp_error);
-                if (updated_group != NULL)
-                  {
-                    g_info("MLS EventRouter: emitting group-updated for %s",
-                           data->group_id_hex);
-                    g_signal_emit_by_name(data->router->service,
-                                          "group-updated", updated_group);
-                  }
-                else
-                  {
-                    g_warning("MLS EventRouter: could not fetch group %s after commit: %s",
-                              data->group_id_hex,
-                              grp_error ? grp_error->message : "unknown");
-                  }
-              }
-          }
-      }
+      /* New epoch: a later divergence is news again (the gate is keyed by
+       * the h tag, like the report).  The updated group reaches views
+       * through the client's ::group-updated, which GnMarmotService
+       * re-emits: the h tag is the nostr_group_id, not the MLS group id a
+       * lookup would need. */
+      g_debug("MLS EventRouter: commit applied for group %s",
+              data->group_id_hex ? data->group_id_hex : "(unknown)");
+      gn_mls_group_error_gate_reset(data->router->reported_group_errors,
+                                    data->group_id_hex);
       break;
 
     case MARMOT_GOBJECT_MESSAGE_RESULT_OWN_MESSAGE:

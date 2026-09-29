@@ -15,8 +15,8 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.4.1 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
-| marmot-gobject | `marmot-gobject/` | 1.1.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
+| libmarmot | `libmarmot/` | 0.5.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| marmot-gobject | `marmot-gobject/` | 1.2.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.10.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
@@ -45,6 +45,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | gnostr, groundhog | 0.1.0, 0.9.1 | No bump: rebuild only (static link, no API change). |
 | libgo 0.1.1 -> 0.1.2, libnostr 1.0.9 -> 1.0.10 (PATCH: MPMC channel slots no longer lose an element claimed but not yet filled, capacity-1 rings get two slots; libnostr re-arms a WebSocket write that raced the pending flag; nostrc-75rv) | libgo, libnostr | 0.1.2, 1.0.10 | PATCH: data-loss bug fixes, no API/ABI change. libnostr takes 1.0.10 because nostrc-ptwq already claimed 1.0.9. |
 | groundhog 0.9.1 -> 0.10.0 (MINOR: NIP-17 multi-recipient send, nostrc-qp24.78; encrypted attachments core with receive, cache binding and purge, G21 nostrc-qp24.39; absorbs 0.9.1) | groundhog | 0.10.0 | MINOR: new user-visible capability (group DMs). 0.9.1 was never pushed on its own. |
+| libmarmot 0.4.1 -> 0.5.0 (MINOR: `marmot_update_group_metadata` gains `out_commit_json`; kind:445 Commits NIP-44-encrypted and ingested by `marmot_process_message`, nostrc-9ata) | libmarmot | 0.5.0 | MINOR bump: 0.x breaking API change (new required parameter) plus a new capability and a wire change of Commit events; migration notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.2.0 | MINOR bump: new `marmot_gobject_client_update_group_metadata_async/_finish` and `MarmotGobjectClient::group-updated` signal (backward compatible). |
+| same | gnostr | 0.1.0 | No bump: 0.1.0 is unreleased. The mls-groups plugin gains an admin-only group rename that publishes its Commit to the group relays, and refreshes views from the client's `group-updated` (the router's post-Commit lookup used the nostr_group_id as an MLS group id and never found the group). |
+| same | groundhog | 0.10.0 | No bump beyond 0.10.0 (unreleased). GhStoreMarmot snapshots now also cover the `mls_group_parent` label; test callers follow the new signature. |
 
 ## Maintenance
 

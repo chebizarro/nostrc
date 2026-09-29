@@ -39,6 +39,7 @@ enum {
     SIGNAL_GROUP_JOINED,
     SIGNAL_MESSAGE_RECEIVED,
     SIGNAL_WELCOME_RECEIVED,
+    SIGNAL_GROUP_UPDATED,
     N_SIGNALS
 };
 
@@ -118,6 +119,26 @@ marmot_gobject_client_class_init(MarmotGobjectClientClass *klass)
                       NULL, NULL, NULL,
                       G_TYPE_NONE, 1,
                       MARMOT_GOBJECT_TYPE_WELCOME);
+
+    /**
+     * MarmotGobjectClient::group-updated:
+     * @client: the client
+     * @group: (transfer none): the group as stored after the change
+     *
+     * Emitted on the main context when a group moved to a new epoch: a
+     * received Commit was applied (marmot_gobject_client_process_message_async()
+     * finished with %MARMOT_GOBJECT_MESSAGE_RESULT_COMMIT) or a local
+     * metadata update was committed.
+     *
+     * Since: 1.2
+     */
+    client_signals[SIGNAL_GROUP_UPDATED] =
+        g_signal_new("group-updated",
+                      G_TYPE_FROM_CLASS(klass),
+                      G_SIGNAL_RUN_LAST, 0,
+                      NULL, NULL, NULL,
+                      G_TYPE_NONE, 1,
+                      MARMOT_GOBJECT_TYPE_GROUP);
 }
 
 static void
@@ -1013,6 +1034,14 @@ process_message_thread(GTask *task, gpointer source_object,
         }
     }
 
+    if (result.type == MARMOT_RESULT_COMMIT && result.commit.updated_group) {
+        MarmotGobjectGroup *group = gobject_group_from_marmot(result.commit.updated_group);
+        if (group) {
+            queue_client_signal(self, client_signals[SIGNAL_GROUP_UPDATED], G_OBJECT(group));
+            g_object_unref(group);
+        }
+    }
+
     marmot_message_result_free(&result);
     g_task_return_pointer(task, inner_json, g_free);
 }
@@ -1051,6 +1080,104 @@ marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
     if (out_result_type)
         *out_result_type = result_type;
     return json;
+}
+
+/* ── Update group metadata ──────────────────────────────────────── */
+
+typedef struct {
+    gchar *mls_group_id_hex;
+    gchar *name;
+    gchar *description;
+} UpdateMetadataData;
+
+static void
+update_metadata_data_free(gpointer data)
+{
+    UpdateMetadataData *d = data;
+    g_free(d->mls_group_id_hex);
+    g_free(d->name);
+    g_free(d->description);
+    g_free(d);
+}
+
+static void
+update_metadata_thread(GTask *task, gpointer source_object,
+                        gpointer task_data, GCancellable *cancellable)
+{
+    MarmotGobjectClient *self = MARMOT_GOBJECT_CLIENT(source_object);
+    UpdateMetadataData *d = task_data;
+    (void)cancellable;
+
+    uint8_t mls_group_id_bytes[128];
+    size_t hex_len = strlen(d->mls_group_id_hex);
+    size_t byte_len = hex_len / 2;
+    if (hex_len % 2 != 0 || byte_len == 0 || byte_len > sizeof(mls_group_id_bytes) ||
+        !hex_to_bytes(d->mls_group_id_hex, mls_group_id_bytes, byte_len)) {
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
+                                MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                                "Invalid MLS group ID hex");
+        return;
+    }
+    MarmotGroupId gid = marmot_group_id_new(mls_group_id_bytes, byte_len);
+
+    MarmotGroupConfig config = { 0 };
+    config.name = d->name;
+    config.description = d->description;
+    char *commit_json = NULL;
+    MarmotError err = marmot_update_group_metadata(self->marmot, &gid, &config,
+                                                   &commit_json);
+    if (err != MARMOT_OK) {
+        marmot_group_id_free(&gid);
+        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
+                                "%s", marmot_error_string(err));
+        return;
+    }
+
+    MarmotGroup *updated = NULL;
+    if (marmot_get_group(self->marmot, &gid, &updated) == MARMOT_OK && updated) {
+        MarmotGobjectGroup *group = gobject_group_from_marmot(updated);
+        if (group) {
+            queue_client_signal(self, client_signals[SIGNAL_GROUP_UPDATED], G_OBJECT(group));
+            g_object_unref(group);
+        }
+        marmot_group_free(updated);
+    }
+    marmot_group_id_free(&gid);
+
+    gchar *json = g_strdup(commit_json);
+    free(commit_json);
+    g_task_return_pointer(task, json, g_free);
+}
+
+void
+marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self,
+                                                   const gchar *mls_group_id_hex,
+                                                   const gchar *name,
+                                                   const gchar *description,
+                                                   GCancellable *cancellable,
+                                                   GAsyncReadyCallback callback,
+                                                   gpointer user_data)
+{
+    g_return_if_fail(MARMOT_GOBJECT_IS_CLIENT(self));
+    g_return_if_fail(mls_group_id_hex != NULL);
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    g_task_set_source_tag(task, marmot_gobject_client_update_group_metadata_async);
+    UpdateMetadataData *d = g_new0(UpdateMetadataData, 1);
+    d->mls_group_id_hex = g_strdup(mls_group_id_hex);
+    d->name = g_strdup(name);
+    d->description = g_strdup(description);
+    g_task_set_task_data(task, d, update_metadata_data_free);
+    g_task_run_in_thread(task, update_metadata_thread);
+    g_object_unref(task);
+}
+
+gchar *
+marmot_gobject_client_update_group_metadata_finish(MarmotGobjectClient *self,
+                                                    GAsyncResult *result,
+                                                    GError **error)
+{
+    g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+    return g_task_propagate_pointer(G_TASK(result), error);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

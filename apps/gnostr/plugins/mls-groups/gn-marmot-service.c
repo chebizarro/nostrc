@@ -175,6 +175,18 @@ gn_marmot_service_init(GnMarmotService *self)
   self->user_secret_key_hex = NULL;
 }
 
+/* The client announces every applied Commit -- received through
+ * marmot_gobject_client_process_message_async() or made locally -- with the
+ * group as stored afterwards; views listen on the service. */
+static void
+on_client_group_updated(MarmotGobjectClient *client,
+                        MarmotGobjectGroup  *group,
+                        gpointer             user_data)
+{
+  (void)client;
+  g_signal_emit(GN_MARMOT_SERVICE(user_data), signals[SIGNAL_GROUP_UPDATED], 0, group);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Public API
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -227,6 +239,9 @@ gn_marmot_service_initialize(const gchar *data_dir,
                   "Failed to create marmot client");
       return NULL;
     }
+
+  g_signal_connect_object(self->client, "group-updated",
+                          G_CALLBACK(on_client_group_updated), self, 0);
 
   g_info("MarmotService: initialized with storage at %s", db_path);
 

@@ -8,12 +8,16 @@
 #include <sqlite3.h>
 
 /* libmarmot keeps a group's MLS state (tree, epoch secrets, ...) in mls_kv
- * under this label, keyed by the MLS group id (groups.c, messages.c,
- * welcome.c). It is the only group-scoped label: the others are keyed by a
- * public key (kp_slot), a KeyPackageRef (kp_priv, kp_full) or a gift-wrap id
- * (welcome_data) and must never be captured or restored by a group snapshot.
- * The e2e test fails if libmarmot starts using an unclassified label. */
+ * under MLS_GROUP_STATE_LABEL, and since libmarmot 0.5.0 the parent state of
+ * the last applied Commit (for same-epoch races, nostrc-9ata) under
+ * MLS_GROUP_PARENT_LABEL, both keyed by the MLS group id (groups.c,
+ * commits.c, messages.c, welcome.c). They are the only group-scoped labels:
+ * the others are keyed by a public key (kp_slot), a KeyPackageRef (kp_priv,
+ * kp_full) or a gift-wrap id (welcome_data) and must never be captured or
+ * restored by a group snapshot. The e2e test fails if libmarmot starts using
+ * an unclassified label. */
 #define MLS_GROUP_STATE_LABEL "mls_group"
+#define MLS_GROUP_PARENT_LABEL "mls_group_parent"
 
 /* mls_snapshots.data: the snapshot format. 1 = row copies in
  * mls_snapshot_rows (schema v2). A rollback refuses any other value. */
@@ -1593,7 +1597,8 @@ typedef struct {
 
 #define SNAPSHOT_INSERT "INSERT INTO mls_snapshot_rows (group_id, name, tbl, "
 #define SNAPSHOT_SOURCE " FROM mls_snapshot_rows WHERE group_id = ?1 AND name = ?2 AND tbl = "
-#define MLS_STATE_SCOPE " WHERE label = '" MLS_GROUP_STATE_LABEL "' AND key = ?1"
+#define MLS_STATE_SCOPE " WHERE label IN ('" MLS_GROUP_STATE_LABEL "', '" \
+                        MLS_GROUP_PARENT_LABEL "') AND key = ?1"
 
 static const SnapshotTable snapshot_tables[] = {
   { SNAPSHOT_INSERT "c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12) "

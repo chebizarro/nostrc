@@ -345,7 +345,8 @@ void marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
  * Finishes async message processing.
  *
  * When *out_result_type is APPLICATION, returns the decrypted inner event JSON.
- * When *out_result_type is COMMIT, returns NULL (group state updated internally).
+ * When *out_result_type is COMMIT, returns NULL (group state updated internally;
+ * #MarmotGobjectClient::group-updated carries the updated group).
  * When *out_result_type is OWN_MESSAGE, returns NULL (skip).
  *
  * Returns: (transfer full) (nullable): decrypted inner event JSON, or NULL
@@ -354,6 +355,48 @@ gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
                                                      GAsyncResult *result,
                                                      MarmotGobjectMessageResultType *out_result_type,
                                                      GError **error);
+
+/**
+ * marmot_gobject_client_update_group_metadata_async:
+ * @self: a #MarmotGobjectClient
+ * @mls_group_id_hex: hex-encoded MLS group ID
+ * @name: (nullable): the new group name, or %NULL to keep it
+ * @description: (nullable): the new description, or %NULL to keep it
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: callback
+ * @user_data: data for @callback
+ *
+ * Asynchronously commits a change of the group's metadata (admins only;
+ * marmot_update_group_metadata()).  On success the group has moved to a new
+ * epoch and #MarmotGobjectClient::group-updated is emitted.
+ *
+ * Since: 1.2
+ */
+void marmot_gobject_client_update_group_metadata_async(MarmotGobjectClient *self,
+                                                        const gchar *mls_group_id_hex,
+                                                        const gchar *name,
+                                                        const gchar *description,
+                                                        GCancellable *cancellable,
+                                                        GAsyncReadyCallback callback,
+                                                        gpointer user_data);
+
+/**
+ * marmot_gobject_client_update_group_metadata_finish:
+ * @self: a #MarmotGobjectClient
+ * @result: a #GAsyncResult
+ * @error: (nullable): return location for a #GError
+ *
+ * Returns the unsigned kind:445 Commit event.  The caller must sign it with
+ * a fresh ephemeral key and publish it to the group relays: until the other
+ * members process it they stay in the previous epoch.
+ *
+ * Returns: (transfer full) (nullable): the Commit event JSON, or %NULL on error
+ *
+ * Since: 1.2
+ */
+gchar *marmot_gobject_client_update_group_metadata_finish(MarmotGobjectClient *self,
+                                                           GAsyncResult *result,
+                                                           GError **error);
 
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-04: Media Encryption (async)
