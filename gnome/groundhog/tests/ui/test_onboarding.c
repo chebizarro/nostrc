@@ -451,6 +451,12 @@ answer_publish(Fixture *f, const gchar *const *chosen, gboolean others_open)
 
 /* ---- UX-6, PT-9: the whole flow ------------------------------------------ */
 
+static gboolean
+signer_probed(gpointer data)
+{
+  return gh_account_controller_get_signer_availability(data) != GH_SIGNER_AVAILABILITY_UNKNOWN;
+}
+
 static void
 test_first_run_publishes(Fixture *f, gconstpointer data)
 {
@@ -476,7 +482,11 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
   g_autofree gchar *gnostr = g_settings_get_string(f->gnostr, "current-npub");
   g_assert_cmpstr(gnostr, ==, npub[2]);
 
-  /* The signer test: one signature and a NIP-44 round trip, no relay. */
+  /* The signer test: one signature and a NIP-44 round trip, no relay. The
+   * status comes from an asynchronous bus probe (NameHasOwner) that nothing
+   * above waited for (nostrc-qp24.85, nostrc-qp24.92): wait for its answer,
+   * then the row must say it. */
+  gh_test_spin_until(signer_probed, f->accounts);
   AdwActionRow *status = child(f, "signer_status");
   g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(status)), ==,
                   "Nostr Signer is running");
