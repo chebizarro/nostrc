@@ -758,3 +758,60 @@ else()
   message(STATUS "Groundhog outbox: disabled (needs the GhStore and the NIP-17 send sources)")
 endif()
 # --- end G06 outbox ---
+
+# --- G04 account store and app services ---
+# The active account's encrypted store over its lifetime (privacy charter
+# §3.4, §3.8, §8.2 G04): key custody without prompting first, open in a
+# worker, legacy seen/checkpoint import, the G05 delegate attached to the
+# conversation model, the G06 outbox per open store, the inbox granted
+# storage only while the store is open (or the in-memory store the user
+# chose), and forget/crypto-shred; an old store always closes before the next
+# opens (PT-6). src/main.c delegates every process-owned service to
+# gh-app-services.c. Without the store (no SQLCipher or libsecret) the
+# executable keeps the pre-store receive path.
+target_sources(groundhog PRIVATE src/app/gh-app-services.c)
+if (TARGET groundhog-store AND TARGET groundhog-store-key AND
+    TARGET groundhog-store-conversations AND TARGET groundhog-dm-inbox AND
+    TARGET groundhog-conversation-ui)
+  message(STATUS "Groundhog account store: enabled")
+  add_library(groundhog-account-store STATIC src/app/gh-account-store.c)
+  target_include_directories(groundhog-account-store PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-account-store PUBLIC groundhog-store-conversations
+    groundhog-store-key groundhog-dm-inbox)
+  target_compile_options(groundhog-account-store PRIVATE -Wall -Wextra -Werror)
+  target_sources(groundhog PRIVATE src/ui/gh-store-status.c)
+  target_link_libraries(groundhog PRIVATE groundhog-account-store)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNT_STORE=1)
+  if (GROUNDHOG_OUTBOX_SOURCES)
+    target_sources(groundhog PRIVATE ${GROUNDHOG_OUTBOX_SOURCES} src/app/gh-app-outbox.c)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_OUTBOX=1)
+  else()
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_OUTBOX=0)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas AND GROUNDHOG_OUTBOX_SOURCES)
+    # ST-8, KC-2/3/4 and PT-6 at app level: a real controller on a private
+    # bus with the mock signer, the FakeSecret key backend (H5), recording
+    # relay transports (H1), the real inbox, delegate and outbox over real
+    # SQLCipher stores in private XDG directories.
+    add_executable(test-groundhog-account-store tests/app/test_account_store.c
+      tests/app/account-store-outbox.c tests/store/fake-secret.c src/ui/gh-store-status.c
+      src/app/gh-app-outbox.c ${GROUNDHOG_OUTBOX_SOURCES} ${GROUNDHOG_DM_SEND_SOURCES}
+      src/app/gh-nip17-envelope.c)
+    target_include_directories(test-groundhog-account-store PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+    target_link_libraries(test-groundhog-account-store PRIVATE groundhog-account-store
+      groundhog-ui nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+    target_compile_options(test-groundhog-account-store PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-account-store)
+    add_dependencies(test-groundhog-account-store groundhog-test-schemas)
+    add_test(NAME groundhog-account-store COMMAND test-groundhog-account-store)
+    set_tests_properties(groundhog-account-store PROPERTIES TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog account store: disabled (needs the GhStore, GhStoreKey, the "
+                 "store delegate and the NIP-17 inbox)")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNT_STORE=0
+    GROUNDHOG_HAVE_OUTBOX=0)
+endif()
+# --- end G04 account store and app services ---

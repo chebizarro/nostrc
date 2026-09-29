@@ -37,6 +37,9 @@ gh_inbox_status_map(GhDmInboxState inbox, GhAccountRelaysState relays,
   case GH_DM_INBOX_LIVE: return GH_STATUS_INBOX_LIVE;
   case GH_DM_INBOX_ERROR:
     return inbox_has_relays ? GH_STATUS_INBOX_UNREACHABLE : GH_STATUS_INBOX_ERROR;
+  /* The account's store is not open: its own status input explains why
+   * (gh-store-status.h), and nothing is subscribed. */
+  case GH_DM_INBOX_NO_STORAGE:
   case GH_DM_INBOX_INACTIVE:
   default:
     return GH_STATUS_INBOX_INACTIVE;

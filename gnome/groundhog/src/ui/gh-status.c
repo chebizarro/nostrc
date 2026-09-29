@@ -10,6 +10,8 @@ struct _GhStatus {
   GhStatusSigner signer;
   GhStatusInbox inbox;
   gchar *inbox_error;
+  GhStatusStore store;
+  gchar *store_error;
   GhStatusBanner banner;
 };
 
@@ -20,6 +22,7 @@ enum {
   PROP_TOR_UNREACHABLE,
   PROP_SIGNER,
   PROP_INBOX,
+  PROP_STORE,
   PROP_BANNER,
   N_PROPS
 };
@@ -57,8 +60,26 @@ DEFINE_ENUM_TYPE(gh_status_inbox_get_type, "GhStatusInbox",
   { GH_STATUS_INBOX_UNREACHABLE, "GH_STATUS_INBOX_UNREACHABLE", "unreachable" },
   { GH_STATUS_INBOX_ERROR, "GH_STATUS_INBOX_ERROR", "error" })
 
+DEFINE_ENUM_TYPE(gh_status_store_get_type, "GhStatusStore",
+  { GH_STATUS_STORE_NONE, "GH_STATUS_STORE_NONE", "none" },
+  { GH_STATUS_STORE_OPENING, "GH_STATUS_STORE_OPENING", "opening" },
+  { GH_STATUS_STORE_OPEN, "GH_STATUS_STORE_OPEN", "open" },
+  { GH_STATUS_STORE_EPHEMERAL, "GH_STATUS_STORE_EPHEMERAL", "ephemeral" },
+  { GH_STATUS_STORE_LOCKED, "GH_STATUS_STORE_LOCKED", "locked" },
+  { GH_STATUS_STORE_UNAVAILABLE, "GH_STATUS_STORE_UNAVAILABLE", "unavailable" },
+  { GH_STATUS_STORE_KEY_MISSING, "GH_STATUS_STORE_KEY_MISSING", "key-missing" },
+  { GH_STATUS_STORE_CORRUPT, "GH_STATUS_STORE_CORRUPT", "corrupt" },
+  { GH_STATUS_STORE_ERROR, "GH_STATUS_STORE_ERROR", "error" })
+
 DEFINE_ENUM_TYPE(gh_status_banner_get_type, "GhStatusBanner",
   { GH_STATUS_BANNER_NONE, "GH_STATUS_BANNER_NONE", "none" },
+  { GH_STATUS_BANNER_STORE_LOCKED, "GH_STATUS_BANNER_STORE_LOCKED", "store-locked" },
+  { GH_STATUS_BANNER_STORE_UNAVAILABLE, "GH_STATUS_BANNER_STORE_UNAVAILABLE",
+    "store-unavailable" },
+  { GH_STATUS_BANNER_STORE_KEY_MISSING, "GH_STATUS_BANNER_STORE_KEY_MISSING",
+    "store-key-missing" },
+  { GH_STATUS_BANNER_STORE_CORRUPT, "GH_STATUS_BANNER_STORE_CORRUPT", "store-corrupt" },
+  { GH_STATUS_BANNER_STORE_ERROR, "GH_STATUS_BANNER_STORE_ERROR", "store-error" },
   { GH_STATUS_BANNER_OFFLINE, "GH_STATUS_BANNER_OFFLINE", "offline" },
   { GH_STATUS_BANNER_TOR_UNREACHABLE, "GH_STATUS_BANNER_TOR_UNREACHABLE", "tor-unreachable" },
   { GH_STATUS_BANNER_SIGNER_UNAVAILABLE, "GH_STATUS_BANNER_SIGNER_UNAVAILABLE",
@@ -70,6 +91,8 @@ DEFINE_ENUM_TYPE(gh_status_banner_get_type, "GhStatusBanner",
   { GH_STATUS_BANNER_INBOX_MISSING, "GH_STATUS_BANNER_INBOX_MISSING", "inbox-missing" },
   { GH_STATUS_BANNER_INBOX_UNREACHABLE, "GH_STATUS_BANNER_INBOX_UNREACHABLE",
     "inbox-unreachable" },
+  { GH_STATUS_BANNER_STORE_EPHEMERAL, "GH_STATUS_BANNER_STORE_EPHEMERAL", "store-ephemeral" },
+  { GH_STATUS_BANNER_STORE_OPENING, "GH_STATUS_BANNER_STORE_OPENING", "store-opening" },
   { GH_STATUS_BANNER_LOOKING, "GH_STATUS_BANNER_LOOKING", "looking" },
   { GH_STATUS_BANNER_CONNECTING, "GH_STATUS_BANNER_CONNECTING", "connecting" },
   { GH_STATUS_BANNER_BACKFILLING, "GH_STATUS_BANNER_BACKFILLING", "backfilling" })
@@ -82,40 +105,63 @@ static const struct {
   GhStatusBanner banner;
   const gchar *title;
   gboolean problem;
+  const gchar *button; /* NULL: no button */
+  const gchar *action;
 } banner_copy[] = {
-  { GH_STATUS_BANNER_NONE, "", FALSE },
+  { GH_STATUS_BANNER_NONE, "", FALSE, NULL, NULL },
+  /* §7.15 #14-#16. Starting fresh or resetting damaged storage deletes
+   * messages, so it needs a confirmation dialog (Preferences, G17), not a
+   * one-click banner button. */
+  { GH_STATUS_BANNER_STORE_LOCKED,
+    N_("Message storage is locked — unlock your keyring to read and receive messages"), TRUE,
+    N_("Unlock"), GH_STATUS_ACTION_STORE_UNLOCK },
+  { GH_STATUS_BANNER_STORE_UNAVAILABLE,
+    N_("Private storage unavailable — no keyring can protect messages on this device"), TRUE,
+    N_("Continue Without Saving Messages"), GH_STATUS_ACTION_STORE_EPHEMERAL },
+  { GH_STATUS_BANNER_STORE_KEY_MISSING,
+    N_("The key to your saved messages is missing from the keyring"), TRUE,
+    N_("Try Again"), GH_STATUS_ACTION_STORE_RETRY },
+  { GH_STATUS_BANNER_STORE_CORRUPT,
+    N_("Message storage is damaged — showing what could be read"), TRUE, NULL, NULL },
+  { GH_STATUS_BANNER_STORE_ERROR,
+    N_("Can't open message storage"), TRUE, N_("Try Again"), GH_STATUS_ACTION_STORE_RETRY },
   { GH_STATUS_BANNER_OFFLINE,
-    N_("Offline — new messages will arrive when you're back online"), TRUE },
+    N_("Offline — new messages will arrive when you're back online"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_TOR_UNREACHABLE,
-    N_("Can't reach Tor — Groundhog won't connect without it"), TRUE },
+    N_("Can't reach Tor — Groundhog won't connect without it"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_SIGNER_UNAVAILABLE,
-    N_("Nostr Signer isn't running — messages can't be unlocked or sent"), TRUE },
+    N_("Nostr Signer isn't running — messages can't be unlocked or sent"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_SIGNER_NO_BUS,
-    N_("No session bus — Nostr Signer can't be reached to unlock messages"), TRUE },
+    N_("No session bus — Nostr Signer can't be reached to unlock messages"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_INBOX_ERROR,
-    N_("Can't receive messages on this device"), TRUE },
+    N_("Can't receive messages on this device"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_NO_RELAYS,
-    N_("No relay is set up yet, so Groundhog can't receive messages"), TRUE },
+    N_("No relay is set up yet, so Groundhog can't receive messages"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_LOOKUP_FAILED,
-    N_("Can't reach your relays to find where your messages arrive"), TRUE },
+    N_("Can't reach your relays to find where your messages arrive"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_INBOX_MISSING,
-    N_("Set up private messaging so people can reach you"), TRUE },
+    N_("Set up private messaging so people can reach you"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_INBOX_UNREACHABLE,
-    N_("Can't reach your message relays"), TRUE },
+    N_("Can't reach your message relays"), TRUE, NULL, NULL },
+  { GH_STATUS_BANNER_STORE_EPHEMERAL,
+    N_("Messages aren't saved on this device — they're gone when Groundhog closes"), FALSE,
+    NULL, NULL },
+  { GH_STATUS_BANNER_STORE_OPENING,
+    N_("Opening your messages…"), FALSE, NULL, NULL },
   { GH_STATUS_BANNER_LOOKING,
-    N_("Looking for your message relays…"), FALSE },
+    N_("Looking for your message relays…"), FALSE, NULL, NULL },
   { GH_STATUS_BANNER_CONNECTING,
-    N_("Connecting to your message relays…"), FALSE },
+    N_("Connecting to your message relays…"), FALSE, NULL, NULL },
   { GH_STATUS_BANNER_BACKFILLING,
-    N_("Checking for new messages…"), FALSE },
+    N_("Checking for new messages…"), FALSE, NULL, NULL },
 };
 
-G_STATIC_ASSERT(G_N_ELEMENTS(banner_copy) == GH_STATUS_BANNER_BACKFILLING + 1);
+G_STATIC_ASSERT(G_N_ELEMENTS(banner_copy) == GH_STATUS_BANNER_LAST + 1);
 
 const gchar *
 gh_status_banner_get_title(GhStatusBanner banner)
 {
-  g_return_val_if_fail(banner <= GH_STATUS_BANNER_BACKFILLING, "");
+  g_return_val_if_fail(banner <= GH_STATUS_BANNER_LAST, "");
   g_assert(banner_copy[banner].banner == banner);
   return *banner_copy[banner].title ? _(banner_copy[banner].title) : "";
 }
@@ -123,21 +169,21 @@ gh_status_banner_get_title(GhStatusBanner banner)
 const gchar *
 gh_status_banner_get_button_label(GhStatusBanner banner)
 {
-  g_return_val_if_fail(banner <= GH_STATUS_BANNER_BACKFILLING, NULL);
-  return NULL;
+  g_return_val_if_fail(banner <= GH_STATUS_BANNER_LAST, NULL);
+  return banner_copy[banner].button ? _(banner_copy[banner].button) : NULL;
 }
 
 const gchar *
 gh_status_banner_get_action(GhStatusBanner banner)
 {
-  g_return_val_if_fail(banner <= GH_STATUS_BANNER_BACKFILLING, NULL);
-  return NULL;
+  g_return_val_if_fail(banner <= GH_STATUS_BANNER_LAST, NULL);
+  return banner_copy[banner].action;
 }
 
 gboolean
 gh_status_banner_is_problem(GhStatusBanner banner)
 {
-  g_return_val_if_fail(banner <= GH_STATUS_BANNER_BACKFILLING, FALSE);
+  g_return_val_if_fail(banner <= GH_STATUS_BANNER_LAST, FALSE);
   return banner_copy[banner].problem;
 }
 
@@ -160,14 +206,38 @@ inbox_banner(GhStatusInbox inbox)
   }
 }
 
-/* Highest priority first: no network explains every relay failure below
- * it; without the signer nothing can be unlocked whatever the relays do; a
- * local inbox failure outranks the relay path; progress comes last. */
+static GhStatusBanner
+store_problem_banner(GhStatusStore store)
+{
+  switch (store) {
+  case GH_STATUS_STORE_LOCKED: return GH_STATUS_BANNER_STORE_LOCKED;
+  case GH_STATUS_STORE_UNAVAILABLE: return GH_STATUS_BANNER_STORE_UNAVAILABLE;
+  case GH_STATUS_STORE_KEY_MISSING: return GH_STATUS_BANNER_STORE_KEY_MISSING;
+  case GH_STATUS_STORE_CORRUPT: return GH_STATUS_BANNER_STORE_CORRUPT;
+  case GH_STATUS_STORE_ERROR: return GH_STATUS_BANNER_STORE_ERROR;
+  case GH_STATUS_STORE_NONE:
+  case GH_STATUS_STORE_OPENING:
+  case GH_STATUS_STORE_OPEN:
+  case GH_STATUS_STORE_EPHEMERAL:
+  default:
+    return GH_STATUS_BANNER_NONE;
+  }
+}
+
+/* Highest priority first: a store that cannot open blocks reading and
+ * receiving whatever the network does, and needs the user; no network
+ * explains every relay failure below it; without the signer nothing can be
+ * unlocked whatever the relays do; a local inbox failure outranks the relay
+ * path; the in-memory choice stays visible over progress; progress comes
+ * last. */
 static GhStatusBanner
 compute_banner(GhStatus *self)
 {
   if (!self->account_active)
     return GH_STATUS_BANNER_NONE;
+  GhStatusBanner store = store_problem_banner(self->store);
+  if (store != GH_STATUS_BANNER_NONE)
+    return store;
   if (!self->network_available)
     return GH_STATUS_BANNER_OFFLINE;
   if (self->tor_unreachable)
@@ -176,7 +246,14 @@ compute_banner(GhStatus *self)
     return GH_STATUS_BANNER_SIGNER_UNAVAILABLE;
   if (self->signer == GH_STATUS_SIGNER_NO_BUS)
     return GH_STATUS_BANNER_SIGNER_NO_BUS;
-  return inbox_banner(self->inbox);
+  GhStatusBanner inbox = inbox_banner(self->inbox);
+  if (gh_status_banner_is_problem(inbox))
+    return inbox;
+  if (self->store == GH_STATUS_STORE_EPHEMERAL)
+    return GH_STATUS_BANNER_STORE_EPHEMERAL;
+  if (self->store == GH_STATUS_STORE_OPENING)
+    return GH_STATUS_BANNER_STORE_OPENING;
+  return inbox;
 }
 
 static void
@@ -257,6 +334,36 @@ gh_status_set_inbox(GhStatus *self, GhStatusInbox inbox, const gchar *error)
   update(self, props[PROP_INBOX]);
 }
 
+void
+gh_status_set_store(GhStatus *self, GhStatusStore store, const gchar *error)
+{
+  g_return_if_fail(GH_IS_STATUS(self));
+  g_return_if_fail(store <= GH_STATUS_STORE_ERROR);
+  if ((store != GH_STATUS_STORE_ERROR && store != GH_STATUS_STORE_KEY_MISSING &&
+       store != GH_STATUS_STORE_CORRUPT) || (error && !*error))
+    error = NULL;
+  if (self->store == store && g_strcmp0(self->store_error, error) == 0)
+    return;
+  self->store = store;
+  g_free(self->store_error);
+  self->store_error = g_strdup(error);
+  update(self, props[PROP_STORE]);
+}
+
+GhStatusStore
+gh_status_get_store(GhStatus *self)
+{
+  g_return_val_if_fail(GH_IS_STATUS(self), GH_STATUS_STORE_NONE);
+  return self->store;
+}
+
+const gchar *
+gh_status_get_store_error(GhStatus *self)
+{
+  g_return_val_if_fail(GH_IS_STATUS(self), NULL);
+  return self->store_error;
+}
+
 GhStatusInbox
 gh_status_get_inbox(GhStatus *self)
 {
@@ -298,6 +405,9 @@ gh_status_get_property(GObject *object, guint id, GValue *value, GParamSpec *psp
   case PROP_INBOX:
     g_value_set_enum(value, self->inbox);
     break;
+  case PROP_STORE:
+    g_value_set_enum(value, self->store);
+    break;
   case PROP_BANNER:
     g_value_set_enum(value, self->banner);
     break;
@@ -326,6 +436,9 @@ gh_status_set_property(GObject *object, guint id, const GValue *value, GParamSpe
   case PROP_INBOX:
     gh_status_set_inbox(self, g_value_get_enum(value), NULL);
     break;
+  case PROP_STORE:
+    gh_status_set_store(self, g_value_get_enum(value), NULL);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -335,6 +448,7 @@ static void
 gh_status_finalize(GObject *object)
 {
   g_free(GH_STATUS(object)->inbox_error);
+  g_free(GH_STATUS(object)->store_error);
   G_OBJECT_CLASS(gh_status_parent_class)->finalize(object);
 }
 
@@ -354,6 +468,8 @@ gh_status_class_init(GhStatusClass *klass)
                                          GH_STATUS_SIGNER_UNKNOWN, rw);
   props[PROP_INBOX] = g_param_spec_enum("inbox", NULL, NULL, GH_TYPE_STATUS_INBOX,
                                         GH_STATUS_INBOX_INACTIVE, rw);
+  props[PROP_STORE] = g_param_spec_enum("store", NULL, NULL, GH_TYPE_STATUS_STORE,
+                                        GH_STATUS_STORE_NONE, rw);
   props[PROP_BANNER] = g_param_spec_enum("banner", NULL, NULL, GH_TYPE_STATUS_BANNER,
                                          GH_STATUS_BANNER_NONE,
                                          G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY |
@@ -367,5 +483,6 @@ gh_status_init(GhStatus *self)
   self->network_available = TRUE;
   self->signer = GH_STATUS_SIGNER_UNKNOWN;
   self->inbox = GH_STATUS_INBOX_INACTIVE;
+  self->store = GH_STATUS_STORE_NONE;
   self->banner = GH_STATUS_BANNER_NONE;
 }

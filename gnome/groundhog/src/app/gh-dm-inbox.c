@@ -75,6 +75,12 @@ struct _GhDmInbox {
   guint max_in_flight;
   guint req_limit;
   guint max_pages;
+  /* Storage mode (gh_dm_inbox_new_with_storage): no files of its own; runs
+   * only with a grant for the current generation. */
+  gboolean storage_mode;
+  gboolean storage_granted;
+  GhDmInboxStorage storage;
+  gpointer storage_data;
 
   /* Account binding: one per account generation. */
   guint64 generation;
@@ -121,6 +127,7 @@ gh_dm_inbox_state_get_type(void)
       { GH_DM_INBOX_BACKFILLING, "GH_DM_INBOX_BACKFILLING", "backfilling" },
       { GH_DM_INBOX_LIVE, "GH_DM_INBOX_LIVE", "live" },
       { GH_DM_INBOX_ERROR, "GH_DM_INBOX_ERROR", "error" },
+      { GH_DM_INBOX_NO_STORAGE, "GH_DM_INBOX_NO_STORAGE", "no-storage" },
       { 0, NULL, NULL }
     };
     g_once_init_leave(&type, g_enum_register_static(
@@ -174,6 +181,8 @@ compute_state(GhDmInbox *self)
     return GH_DM_INBOX_INACTIVE;
   if (self->error)
     return GH_DM_INBOX_ERROR;
+  if (self->storage_mode && !self->storage_granted)
+    return GH_DM_INBOX_NO_STORAGE;
   if (!self->urls)
     return GH_DM_INBOX_NO_INBOX_RELAYS;
   gboolean pending = FALSE, answered = FALSE, eose = FALSE;
@@ -226,6 +235,17 @@ checkpoint_load(const gchar *path, const gchar *pubkey_hex)
 static void
 checkpoint_write(GhDmInbox *self)
 {
+  if (self->storage_mode) {
+    g_autoptr(GError) error = NULL;
+    if (!self->storage_granted)
+      return;
+    if (!self->storage.save_checkpoint(self->storage_data, self->checkpoint, &error)) {
+      g_message("Groundhog could not record the DM inbox checkpoint: %s", error->message);
+      return;
+    }
+    self->checkpoint_written = self->checkpoint;
+    return;
+  }
   g_autofree gchar *contents = g_strdup_printf(CHECKPOINT_MAGIC " %s %" G_GINT64_FORMAT "\n",
                                                self->pubkey_hex, self->checkpoint);
   g_autoptr(GError) error = NULL;
@@ -925,9 +945,26 @@ on_auth_changed(GhDmInbox *self, const gchar *url)
     emit_changed(self); /* a relay state (waiting for approval, declined) */
 }
 
+/* Saves the latest checkpoint through the grant, tears the session down and
+ * drops the grant (storage mode). */
+static void
+withdraw_storage(GhDmInbox *self)
+{
+  if (!self->storage_granted)
+    return;
+  if (self->checkpoint > self->checkpoint_written)
+    checkpoint_write(self);
+  teardown_session(self);
+  self->storage_granted = FALSE;
+  self->storage_data = NULL;
+  self->checkpoint = 0;
+  self->checkpoint_written = 0;
+}
+
 static void
 teardown_account(GhDmInbox *self)
 {
+  withdraw_storage(self);
   teardown_session(self);
   if (self->auth) {
     g_clear_signal_handler(&self->auth_handler, self->auth);
@@ -948,6 +985,19 @@ bind_account(GhDmInbox *self, guint64 generation, const gchar *npub)
 {
   self->generation = generation;
   self->pubkey_hex = gh_identity_pubkey_hex(npub);
+  if (self->storage_mode) {
+    /* Nothing is opened or bound here: the account store grants storage
+     * once the account's store is open (gh_dm_inbox_set_storage). */
+    if (!self->pubkey_hex) {
+      self->error = g_strdup("The active account has no usable public key");
+      return;
+    }
+    self->auth = gh_account_auth_new(self->accounts);
+    if (self->auth)
+      self->auth_handler = g_signal_connect_swapped(self->auth, "relay-changed",
+                                                    G_CALLBACK(on_auth_changed), self);
+    return;
+  }
   GhNip17Seen *seen = NULL;
   g_autoptr(GError) error = NULL;
   if (!self->pubkey_hex) {
@@ -1012,10 +1062,11 @@ sync_binding(GhDmInbox *self)
     teardown_account(self);
     if (generation)
       bind_account(self, generation, npub);
-    else
+    else if (!self->storage_mode)
       gh_conversation_store_set_account(self->store, NULL, NULL, NULL, NULL);
   }
-  if (self->generation && !self->error) {
+  if (self->generation && !self->error &&
+      (!self->storage_mode || self->storage_granted)) {
     g_auto(GStrv) urls = wanted_urls(self);
     if (!strv_equal0((const gchar *const *)urls, (const gchar *const *)self->urls)) {
       teardown_session(self);
@@ -1033,11 +1084,11 @@ sync_binding(GhDmInbox *self)
 
 /* ---- public ---------------------------------------------------------------- */
 
-GhDmInbox *
-gh_dm_inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
-                GhConversationStore *store, const gchar *state_dir,
-                const GhRelayTransport *transport, const GhRelayAuthTransport *auth_transport,
-                gpointer transport_data)
+static GhDmInbox *
+inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
+          GhConversationStore *store, gboolean storage_mode, const gchar *state_dir,
+          const GhRelayTransport *transport, const GhRelayAuthTransport *auth_transport,
+          gpointer transport_data)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts), NULL);
   g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(relays), NULL);
@@ -1049,9 +1100,11 @@ gh_dm_inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
   self->accounts = g_object_ref(accounts);
   self->relays = g_object_ref(relays);
   self->store = g_object_ref(store);
-  self->state_dir = state_dir ? g_strdup(state_dir)
-                              : g_build_filename(g_get_user_state_dir(), "groundhog",
-                                                 "nip17", NULL);
+  self->storage_mode = storage_mode;
+  if (!storage_mode)
+    self->state_dir = state_dir ? g_strdup(state_dir)
+                                : g_build_filename(g_get_user_state_dir(), "groundhog",
+                                                   "nip17", NULL);
   if (transport) {
     self->transport = *transport;
     self->transport_data = transport_data;
@@ -1067,6 +1120,72 @@ gh_dm_inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
                           G_CONNECT_SWAPPED);
   sync_binding(self);
   return self;
+}
+
+GhDmInbox *
+gh_dm_inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
+                GhConversationStore *store, const gchar *state_dir,
+                const GhRelayTransport *transport, const GhRelayAuthTransport *auth_transport,
+                gpointer transport_data)
+{
+  return inbox_new(accounts, relays, store, FALSE, state_dir, transport, auth_transport,
+                   transport_data);
+}
+
+GhDmInbox *
+gh_dm_inbox_new_with_storage(GhAccountController *accounts, GhAccountRelays *relays,
+                             GhConversationStore *store, const GhRelayTransport *transport,
+                             const GhRelayAuthTransport *auth_transport,
+                             gpointer transport_data)
+{
+  return inbox_new(accounts, relays, store, TRUE, NULL, transport, auth_transport,
+                   transport_data);
+}
+
+gboolean
+gh_dm_inbox_set_storage(GhDmInbox *self, guint64 generation, const GhDmInboxStorage *storage,
+                        gpointer data)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), FALSE);
+  g_return_val_if_fail(storage && storage->load_checkpoint && storage->save_checkpoint, FALSE);
+  if (!self->storage_mode || !self->accounts || generation == 0)
+    return FALSE;
+  /* Bind to the controller's generation first, whichever "changed" handler
+   * ran first during a switch. */
+  sync_binding(self);
+  if (self->generation != generation || !current(self) || !self->pubkey_hex)
+    return FALSE;
+  if (self->storage_granted && self->storage_data != data)
+    withdraw_storage(self);
+  self->storage = *storage;
+  self->storage_data = data;
+  if (!self->storage_granted) {
+    gint64 saved = storage->load_checkpoint(data);
+    self->checkpoint = saved > 0 ? saved : 0;
+    self->checkpoint_written = self->checkpoint;
+    self->storage_granted = TRUE;
+  }
+  sync_binding(self);
+  emit_changed(self);
+  return TRUE;
+}
+
+void
+gh_dm_inbox_clear_storage(GhDmInbox *self)
+{
+  g_return_if_fail(GH_IS_DM_INBOX(self));
+  if (!self->storage_granted)
+    return;
+  withdraw_storage(self);
+  update_state(self);
+  emit_changed(self);
+}
+
+gboolean
+gh_dm_inbox_has_storage(GhDmInbox *self)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), FALSE);
+  return self->storage_granted;
 }
 
 void

@@ -16,7 +16,10 @@ typedef enum {
   GH_DM_INBOX_LIVE,            /* every reachable inbox relay sent EOSE and was
                                 * paged (see the relay states for any relay
                                 * whose backfill stayed incomplete) */
-  GH_DM_INBOX_ERROR            /* seen-set unusable, or every relay failed */
+  GH_DM_INBOX_ERROR,           /* seen-set unusable, or every relay failed */
+  GH_DM_INBOX_NO_STORAGE       /* storage mode: the account's store is not open
+                                * (locked, unavailable, opening...), so nothing
+                                * is subscribed; see gh_dm_inbox_set_storage() */
 } GhDmInboxState;
 
 GType gh_dm_inbox_state_get_type(void);
@@ -138,6 +141,45 @@ GhDmInbox *gh_dm_inbox_new(GhAccountController *accounts,
                            const GhRelayTransport *transport,
                            const GhRelayAuthTransport *auth_transport,
                            gpointer transport_data);
+
+/* ---- Storage mode (privacy charter §3.4, §8.2 G04) ----------------------------
+ * An inbox made with gh_dm_inbox_new_with_storage() keeps nothing itself: it
+ * opens no seen file, writes no checkpoint file, creates no state directory
+ * and never binds store to an account. The app's account store
+ * (gh-account-store.h) binds store to the account's encrypted store (or to the
+ * in-memory store the user explicitly chose) and then grants it for that
+ * account generation with gh_dm_inbox_set_storage(). The inbox subscribes
+ * only while it holds a grant for the current generation, so every message it
+ * admits is committed durably, and it is GH_DM_INBOX_NO_STORAGE otherwise
+ * (charter §3.4: a locked keyring means no inbox REQ; the wraps stay on the
+ * relays). The checkpoint (see "Since policy") is read and written through
+ * the grant's callbacks.
+ *
+ * gh_dm_inbox_clear_storage() withdraws the grant: the latest checkpoint is
+ * saved, then the session is torn down at once (scopes closed, queued and
+ * pending unwraps and their signer approvals cancelled), so the caller may
+ * detach and close the store right after it returns. An account switch
+ * withdraws the grant the same way. The storage data is borrowed until then. */
+typedef struct {
+  /* The checkpoint saved for the account (unix seconds), or 0 for none. */
+  gint64 (*load_checkpoint)(gpointer data);
+  gboolean (*save_checkpoint)(gpointer data, gint64 checkpoint, GError **error);
+} GhDmInboxStorage;
+
+GhDmInbox *gh_dm_inbox_new_with_storage(GhAccountController *accounts,
+                                        GhAccountRelays *relays,
+                                        GhConversationStore *store,
+                                        const GhRelayTransport *transport,
+                                        const GhRelayAuthTransport *auth_transport,
+                                        gpointer transport_data);
+/* Grants storage for the account generation @generation; FALSE (and no
+ * grant) unless the inbox is in storage mode and @generation is the active
+ * account's current one. Replaces an earlier grant of the same generation. */
+gboolean gh_dm_inbox_set_storage(GhDmInbox *self, guint64 generation,
+                                 const GhDmInboxStorage *storage, gpointer data);
+void gh_dm_inbox_clear_storage(GhDmInbox *self);
+/* Whether a grant is held (always FALSE outside storage mode). */
+gboolean gh_dm_inbox_has_storage(GhDmInbox *self);
 
 /* 1 (the default) to GH_DM_INBOX_MAX_IN_FLIGHT; applies to the next unwrap. */
 void gh_dm_inbox_set_max_in_flight(GhDmInbox *self, guint max_in_flight);

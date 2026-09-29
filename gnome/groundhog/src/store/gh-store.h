@@ -352,6 +352,21 @@ gboolean gh_store_get_draft(GhStore *store, gint64 conversation_id,
 gboolean gh_store_forget_conversation(GhStore *store, gint64 conversation_id,
                                       GError **error);
 
+/* ---- Cursors (§3.3 `cursors`) -------------------------------------------------------
+ * Sync checkpoints kept inside the encrypted store, e.g. the NIP-17 inbox's
+ * "everything before this time was received" mark (G04), so no plaintext
+ * state file names the account. @scope is a caller-chosen name (1 to
+ * GH_STORE_MAX_CURSOR_SCOPE bytes); @relay_url is a relay URL or "" for a
+ * scope-wide cursor. */
+#define GH_STORE_MAX_CURSOR_SCOPE 64
+
+/* *out_since is the stored value, or 0 when there is none. */
+gboolean gh_store_get_cursor(GhStore *store, const gchar *scope, const gchar *relay_url,
+                             gint64 *out_since, GError **error);
+/* Inserts or replaces the cursor; @since must be >= 0 (0 deletes it). */
+gboolean gh_store_set_cursor(GhStore *store, const gchar *scope, const gchar *relay_url,
+                             gint64 since, GError **error);
+
 /* ---- Seen set ----------------------------------------------------------------------- */
 
 /* The wrap pre-check before any signer prompt (T-admit). */

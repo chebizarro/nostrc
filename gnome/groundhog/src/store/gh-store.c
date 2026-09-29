@@ -2103,6 +2103,79 @@ fail:
   return FALSE;
 }
 
+/* ---- Cursors ---------------------------------------------------------------------- */
+
+static gboolean
+check_cursor_key(const gchar *scope, const gchar *relay_url, GError **error)
+{
+  if (!check_text("The cursor scope", scope, GH_STORE_MAX_CURSOR_SCOPE, FALSE, error))
+    return FALSE;
+  if (!relay_url) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "The cursor relay URL is required (\"\" for the whole scope)");
+    return FALSE;
+  }
+  return check_text("The cursor relay URL", relay_url, GH_STORE_MAX_URL, TRUE, error);
+}
+
+gboolean
+gh_store_get_cursor(GhStore *store, const gchar *scope, const gchar *relay_url,
+                    gint64 *out_since, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(out_since != NULL, FALSE);
+  *out_since = 0;
+  if (!check_cursor_key(scope, relay_url, error))
+    return FALSE;
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT since FROM cursors WHERE scope = ?1 AND relay_url = ?2", error);
+  if (!stmt)
+    return FALSE;
+  BIND(bind_text(stmt, 1, scope));
+  BIND(bind_text(stmt, 2, relay_url));
+  gboolean has_row = FALSE;
+  gboolean ok = store_step_row(store, stmt, &has_row, "Reading a cursor", error);
+  if (ok && has_row)
+    *out_since = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+gboolean
+gh_store_set_cursor(GhStore *store, const gchar *scope, const gchar *relay_url,
+                    gint64 since, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (!check_cursor_key(scope, relay_url, error))
+    return FALSE;
+  if (since < 0) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "A cursor cannot be negative");
+    return FALSE;
+  }
+  if (!store_writable(store, error))
+    return FALSE;
+  sqlite3_stmt *stmt = store_prepare(store, since > 0
+    ? "INSERT INTO cursors (scope, relay_url, since) VALUES (?1, ?2, ?3) "
+      "ON CONFLICT (scope, relay_url) DO UPDATE SET since = excluded.since"
+    : "DELETE FROM cursors WHERE scope = ?1 AND relay_url = ?2", error);
+  if (!stmt)
+    return FALSE;
+  BIND(bind_text(stmt, 1, scope));
+  BIND(bind_text(stmt, 2, relay_url));
+  if (since > 0)
+    BIND(sqlite3_bind_int64(stmt, 3, since));
+  gboolean ok = store_step_done(store, stmt, "Saving a cursor", error);
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
 /* ---- Seen set --------------------------------------------------------------------- */
 
 static gboolean

@@ -2050,6 +2050,70 @@ test_ephemeral_store(void)
   g_assert_no_error(error);
 }
 
+/* ---- Cursors (G04: the inbox checkpoint lives in the store) ------------------------------------ */
+
+static gint64
+cursor_of(GhStore *store, const gchar *scope, const gchar *url)
+{
+  g_autoptr(GError) error = NULL;
+  gint64 since = -1;
+  g_assert_true(gh_store_get_cursor(store, scope, url, &since, &error));
+  g_assert_no_error(error);
+  return since;
+}
+
+static void
+test_cursors(void)
+{
+  g_autoptr(FakeKeys) keys = fake_keys_new();
+  g_autoptr(GError) error = NULL;
+  GhStore *store = open_ok(keys, ACCOUNT_A, NULL, GH_STORE_OPEN_CREATE);
+  g_assert_cmpint(cursor_of(store, "nip17-inbox", ""), ==, 0);
+  g_assert_true(gh_store_set_cursor(store, "nip17-inbox", "", T0, &error));
+  g_assert_true(gh_store_set_cursor(store, "nip17-inbox", "wss://a.test.invalid", T0 + 5, &error));
+  g_assert_true(gh_store_set_cursor(store, "nip17-inbox", "", T0 + 1, &error));
+  g_assert_no_error(error);
+  gh_store_close(store);
+
+  /* Durable, per (scope, relay), replaced in place. */
+  store = open_ok(keys, ACCOUNT_A, NULL, GH_STORE_OPEN_NONE);
+  g_assert_cmpint(cursor_of(store, "nip17-inbox", ""), ==, T0 + 1);
+  g_assert_cmpint(cursor_of(store, "nip17-inbox", "wss://a.test.invalid"), ==, T0 + 5);
+  g_assert_cmpint(cursor_of(store, "other", ""), ==, 0);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM cursors"), ==, 2);
+  /* 0 deletes. */
+  g_assert_true(gh_store_set_cursor(store, "nip17-inbox", "wss://a.test.invalid", 0, &error));
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM cursors"), ==, 1);
+
+  /* Bounds. */
+  gint64 since = 0;
+  g_autofree gchar *long_scope = g_strnfill(GH_STORE_MAX_CURSOR_SCOPE + 1, 's');
+  g_autofree gchar *long_url = g_strnfill(GH_STORE_MAX_URL + 1, 'u');
+  g_assert_false(gh_store_set_cursor(store, long_scope, "", T0, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  g_assert_false(gh_store_set_cursor(store, "", "", T0, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  g_assert_false(gh_store_set_cursor(store, "s", NULL, T0, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  g_assert_false(gh_store_get_cursor(store, "s", long_url, &since, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  g_assert_false(gh_store_set_cursor(store, "s", "", -1, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  gh_store_close(store);
+
+  /* The in-memory store keeps cursors like the others, and nothing after close. */
+  store = gh_store_open_ephemeral(ACCOUNT_A, NULL, &error);
+  g_assert_no_error(error);
+  g_assert_true(gh_store_set_cursor(store, "nip17-inbox", "", T0, &error));
+  g_assert_cmpint(cursor_of(store, "nip17-inbox", ""), ==, T0);
+  gh_store_close(store);
+}
+
 /* ---- Transactions ------------------------------------------------------------------------------ */
 
 static gboolean
@@ -2555,6 +2619,7 @@ register_full_suite(void)
   g_test_add_func("/groundhog/store/open-twice", test_open_twice);
   g_test_add_func("/groundhog/store/no-temp-files", test_no_temp_files);
   g_test_add_func("/groundhog/store/ephemeral", test_ephemeral_store);
+  g_test_add_func("/groundhog/store/cursors", test_cursors);
   g_test_add_func("/groundhog/store/transactions", test_transactions);
   g_test_add_func("/groundhog/store/title-follows-newest", test_title_follows_newest);
   g_test_add_func("/groundhog/store/corrupt-read-only", test_corrupt_read_only);
