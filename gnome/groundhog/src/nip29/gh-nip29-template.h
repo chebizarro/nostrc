@@ -143,6 +143,15 @@ gchar *gh_nip29_template_create_invite(const GhNip29GroupKey *group,
                                        const gchar *reason,
                                        GError **error);
 
+/* kind:9007 create-group (G20b): asks the relay to create a group with the
+ * id of @group (chosen by the client); a relay that lets the account create
+ * it makes the account its admin. Most relays refuse it unless configured
+ * to allow group creation. */
+gchar *gh_nip29_template_create_group(const GhNip29GroupKey *group,
+                                      const GhNip29TemplateContext *context,
+                                      const gchar *reason,
+                                      GError **error);
+
 G_END_DECLS
 
 #endif /* GH_NIP29_TEMPLATE_H */

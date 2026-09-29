@@ -95,5 +95,15 @@ typedef gboolean (*GhConversationInfoServicesFunc)(GhConversationInfoServices *s
 void gh_conversation_info_attach(GhWindow *window, GhConversationInfoServicesFunc services_func,
                                  gpointer user_data, GDestroyNotify destroy);
 
+/* G20b: a relay group (NIP-29) has its own info dialog (GhGroupInfoDialog).
+ * With a handler set, win.conversation-info is enabled for a shown relay
+ * group too and runs func instead of this dialog (FALSE: nothing opened);
+ * without one it stays disabled there (W15 review non-blocking #2). NULL
+ * clears. user_data is borrowed until replaced or the window goes. */
+typedef gboolean (*GhConversationInfoGroupFunc)(GhWindow *window, GhConversation *conversation,
+                                                gpointer user_data);
+void gh_conversation_info_set_group_handler(GhWindow *window, GhConversationInfoGroupFunc func,
+                                            gpointer user_data);
+
 G_END_DECLS
 #endif

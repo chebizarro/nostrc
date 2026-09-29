@@ -77,6 +77,12 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhPrivacySummary, gh_privacy_summary_free)
  * "Encrypted group · 4 members"; NULL for an unknown backend. */
 gchar *gh_privacy_summary_dup_subtitle(const GhPrivacyContext *context);
 
+/* The kind of conversation as a conversation-list row says it (charter
+ * §7.5, its accessible label and the kind glyph's tooltip): "Private
+ * conversation", "Relay group, not end-to-end encrypted" or "Encrypted
+ * group"; NULL for an unknown backend. */
+const gchar *gh_privacy_summary_kind(GhPrivacyBackend backend);
+
 /* Every field of summary as stable plain text, one item per line (snapshot
  * tests; also a complete description for a screen reader). */
 gchar *gh_privacy_summary_to_text(const GhPrivacySummary *summary);

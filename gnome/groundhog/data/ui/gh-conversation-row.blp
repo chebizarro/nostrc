@@ -30,6 +30,19 @@ template $GhConversationRow: Widget {
     Box {
       spacing: 6;
 
+      // Charter §7.5 kind glyph: a relay group (NIP-29) is marked, and says
+      // it is not end-to-end encrypted (tooltip and label set from C, from
+      // gh_privacy_summary_kind()).
+      Image kind_icon {
+        icon-name: "network-workgroup-symbolic";
+        visible: false;
+        valign: center;
+
+        styles [
+          "dim-label",
+        ]
+      }
+
       Label title_label {
         xalign: 0;
         hexpand: true;

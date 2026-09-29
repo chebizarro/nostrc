@@ -28,6 +28,10 @@
     <file>ui/gh-recipient-chip.ui</file>
     <file>ui/gh-conversation-info-dialog.ui</file>
     <file>ui/gh-conversation-info-person.ui</file>
+    <file>ui/gh-group-join-dialog.ui</file>
+    <file>ui/gh-group-info-dialog.ui</file>
+    <file>ui/gh-group-member-row.ui</file>
+    <file>ui/gh-new-group-dialog.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
   </gresource>

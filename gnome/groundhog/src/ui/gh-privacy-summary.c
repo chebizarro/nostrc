@@ -254,6 +254,21 @@ gh_privacy_summary_dup_subtitle(const GhPrivacyContext *context)
   }
 }
 
+const gchar *
+gh_privacy_summary_kind(GhPrivacyBackend backend)
+{
+  switch (backend) {
+  case GH_PRIVACY_BACKEND_NIP17:
+    return tr(N_("Private conversation"));
+  case GH_PRIVACY_BACKEND_NIP29:
+    return tr(N_("Relay group, not end-to-end encrypted"));
+  case GH_PRIVACY_BACKEND_MLS:
+    return tr(N_("Encrypted group"));
+  default:
+    return NULL;
+  }
+}
+
 GhPrivacySummary *
 gh_privacy_summary_new(const GhPrivacyContext *context)
 {

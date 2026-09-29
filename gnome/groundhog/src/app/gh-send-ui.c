@@ -33,6 +33,8 @@ typedef struct {
   gchar *no_inbox_rumor;      /* the shown room's newest own message if "Can't send" */
   GSimpleAction *check_inbox;
   gboolean updating;          /* in update_reason() (a lookup can re-enter it) */
+  GhSendUiDelegate delegate;  /* G20b: relay groups; handles NULL when none */
+  gpointer delegate_data;
 } GhSendUi;
 
 static void update_reason(GhSendUi *ui);
@@ -71,6 +73,21 @@ static void
 toast(GhSendUi *ui, const gchar *text)
 {
   adw_toast_overlay_add_toast(gh_window_get_toasts(GH_WINDOW(ui->window)), adw_toast_new(text));
+}
+
+/* Whether conversation is sent to by the delegate (a relay group). */
+static gboolean
+delegated(GhSendUi *ui, GhConversation *conversation)
+{
+  return conversation && ui->delegate.handles &&
+         ui->delegate.handles(conversation, ui->delegate_data);
+}
+
+static gboolean
+message_delegated(GhSendUi *ui, GhMessage *message)
+{
+  return message &&
+         delegated(ui, gh_conversation_store_lookup(ui->model, gh_message_get_room_id(message)));
 }
 
 /* The one other participant (the account itself in a note to self); NULL
@@ -176,7 +193,7 @@ on_item_removed(GhComposer *composer, GhOutboxItem *item, GhOutbox *outbox)
 static GhOutboxItem *
 find_item(GhSendUi *ui, GhMessage *message)
 {
-  if (!ui->outbox || !gh_message_is_self(message))
+  if (!ui->outbox || !gh_message_is_self(message) || message_delegated(ui, message))
     return NULL;
   const gchar *rumor_id = gh_message_get_rumor_id(message);
   GhOutboxItem *item = g_hash_table_lookup(ui->items, rumor_id);
@@ -353,8 +370,8 @@ load_draft(GhSendUi *ui)
   g_clear_object(&ui->drafts);
   g_clear_pointer(&ui->draft_room, g_free);
   g_clear_pointer(&ui->draft_saved, g_free);
-  GhStoreConversations *drafts = ui->shown ? gh_account_store_get_conversations(ui->store)
-                                           : NULL;
+  GhStoreConversations *drafts = ui->shown && !delegated(ui, ui->shown)
+                                   ? gh_account_store_get_conversations(ui->store) : NULL;
   if (drafts) {
     g_autoptr(GError) error = NULL;
     ui->drafts = g_object_ref(drafts);
@@ -444,7 +461,9 @@ update_reason(GhSendUi *ui)
     reason = store_reason(ui);
   GhMessage *no_inbox = NULL;
   if (!reason && ui->shown) {
-    if (!recipient_of(ui, ui->shown))
+    if (delegated(ui, ui->shown))
+      reason = ui->delegate.reason(ui->shown, ui->delegate_data);
+    else if (!recipient_of(ui, ui->shown))
       reason = g_strdup(_("Replying in group conversations isn't possible yet."));
     else if ((no_inbox = newest_without_inbox(ui)))
       reason = g_strdup_printf(_("%s hasn't set up private messaging yet, so messages "
@@ -490,6 +509,16 @@ static gboolean
 on_send(GhComposer *composer, const gchar *text, gpointer data)
 {
   GhSendUi *ui = data;
+  if (delegated(ui, ui->shown)) {
+    g_autoptr(GError) error = NULL;
+    if (!ui->delegate.send(ui->shown, text, ui->delegate_data, &error)) {
+      gh_composer_set_error(composer, error ? error->message
+                                            : _("This message can't be sent right now. It is "
+                                                "kept here."));
+      return FALSE;
+    }
+    return TRUE;
+  }
   const gchar *recipient = ui->shown ? recipient_of(ui, ui->shown) : NULL;
   if (!ui->outbox || !recipient) {
     gh_composer_set_error(composer, _("This message can't be sent right now. It is kept here."));
@@ -522,8 +551,16 @@ text_fits(const gchar *text, gpointer data)
 static void
 retry(GhSendUi *ui, GhMessage *message)
 {
-  GhOutboxItem *item = message ? find_item(ui, message) : NULL;
   g_autoptr(GError) error = NULL;
+  if (message_delegated(ui, message)) {
+    if (!ui->delegate.retry || !ui->delegate.retry(message, ui->delegate_data, &error)) {
+      g_message("Groundhog could not retry a group message: %s",
+                error ? error->message : "no retry");
+      toast(ui, _("This message can't be sent again right now"));
+    }
+    return;
+  }
+  GhOutboxItem *item = message ? find_item(ui, message) : NULL;
   if (!item) {
     toast(ui, _("This message can't be sent again from this device"));
     return;
@@ -557,6 +594,8 @@ static GhDeliveryReport *
 delivery_report(GhMessage *message, gpointer data)
 {
   GhSendUi *ui = data;
+  if (message_delegated(ui, message))
+    return ui->delegate.report ? ui->delegate.report(message, ui->delegate_data) : NULL;
   GhOutboxItem *item = find_item(ui, message);
   if (!item)
     return NULL;
@@ -674,4 +713,32 @@ gh_send_ui_set_expiry(GhWindow *window, GhExpiry *expiry)
   GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
   if (ui)
     use_expiry(ui, expiry);
+}
+
+void
+gh_send_ui_set_delegate(GhWindow *window, const GhSendUiDelegate *delegate, gpointer data)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  g_return_if_fail(!delegate || (delegate->handles && delegate->reason && delegate->send));
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui)
+    return;
+  if (delegate)
+    ui->delegate = *delegate;
+  else
+    memset(&ui->delegate, 0, sizeof ui->delegate);
+  ui->delegate_data = delegate ? data : NULL;
+  /* The shown conversation may change hands: its draft and reason too. */
+  load_draft(ui);
+  update_reason(ui);
+  gh_composer_revalidate(ui->composer);
+}
+
+void
+gh_send_ui_refresh(GhWindow *window)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (ui)
+    update_reason(ui);
 }

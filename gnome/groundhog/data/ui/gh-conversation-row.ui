@@ -33,6 +33,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkBox">
             <property name="spacing">6</property>
             <child>
+              <object class="GtkImage" id="kind_icon">
+                <property name="icon-name">network-workgroup-symbolic</property>
+                <property name="visible">false</property>
+                <property name="valign">3</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
               <object class="GtkLabel" id="title_label">
                 <property name="xalign">0</property>
                 <property name="hexpand">true</property>

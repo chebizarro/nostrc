@@ -20,6 +20,10 @@
  *    relay-signed 9000 and a new 39002. 9022 removes the author with a
  *    relay-signed 9001. 9000/9001/9002/9005/9009 need an admin whose role
  *    allows them ("admin": all, "moderator": 9005 only) and apply the change.
+ *  - 9007 (allow_create): creates the group named by its h tag with the
+ *    author as its "admin" (OK true); without allow_create "blocked:", for a
+ *    group that exists "invalid:". 9002 sets name, about, private and
+ *    closed as sent (the complete metadata, as NIP-29 edits replace it).
  *  - NIP-42 (require_auth): each connection gets a challenge; until it has
  *    authenticated, a REQ is CLOSED "auth-required:" and an EVENT is OK false
  *    "auth-required:". refuse_auth answers every AUTH with OK false.
@@ -43,6 +47,7 @@ typedef enum { NIP29_JOIN_AUTO, NIP29_JOIN_PENDING, NIP29_JOIN_DENY } Nip29JoinP
 typedef struct {
   gchar *id;
   gchar *name;
+  gchar *about;
   gboolean closed;
   gboolean private_;
   gboolean restricted;
@@ -75,6 +80,7 @@ typedef struct {
   const gchar *nip11_pubkey_only_key; /* that "pubkey" */
   gboolean nip11_redirect;
   gboolean nip11_huge;
+  gboolean allow_create;    /* 9007 creates groups (G20b) */
   GPtrArray *connections;
   GPtrArray *events;        /* NostrEvent, stored */
   GHashTable *groups;       /* id -> Nip29TestGroup */
@@ -112,6 +118,7 @@ nip29_group_free(gpointer data)
   Nip29TestGroup *group = data;
   g_free(group->id);
   g_free(group->name);
+  g_free(group->about);
   g_hash_table_unref(group->members);
   g_hash_table_unref(group->admins);
   g_hash_table_unref(group->pending);
@@ -127,6 +134,15 @@ nip29_sub_free(gpointer data)
   g_free(sub->sub_id);
   nostr_filters_free(sub->filters);
   g_free(sub);
+}
+
+/* A frame to a client that may be closing its connection (the service
+ * rebuilds a relay's REQ when its groups change): dropped unless open. */
+static G_GNUC_UNUSED void
+nip29_send(SoupWebsocketConnection *connection, const gchar *frame)
+{
+  if (soup_websocket_connection_get_state(connection) == SOUP_WEBSOCKET_STATE_OPEN)
+    soup_websocket_connection_send_text(connection, frame);
 }
 
 static G_GNUC_UNUSED gchar *
@@ -241,6 +257,8 @@ nip29_publish_state(Nip29Relay *relay, Nip29TestGroup *group)
   nostr_tags_append(meta, nostr_tag_new("d", group->id, NULL));
   if (group->name)
     nostr_tags_append(meta, nostr_tag_new("name", group->name, NULL));
+  if (group->about)
+    nostr_tags_append(meta, nostr_tag_new("about", group->about, NULL));
   if (group->private_)
     nostr_tags_append(meta, nostr_tag_new("private", NULL));
   if (group->restricted)
@@ -358,7 +376,7 @@ nip29_ok(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEvent *eve
   g_autofree gchar *frame = g_strdup_printf("[\"OK\",\"%s\",%s,\"%s\"]",
                                             nip29_event_id(event),
                                             accepted ? "true" : "false", message);
-  soup_websocket_connection_send_text(connection, frame);
+  nip29_send(connection, frame);
 }
 
 static G_GNUC_UNUSED gboolean
@@ -400,6 +418,22 @@ nip29_on_event(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEven
                                                                ? nip29_tag_value(event, "h") : "");
   if (nip29_stored(relay, nip29_event_id(event))) {
     nip29_ok(relay, connection, event, TRUE, "duplicate: already have this event");
+    nostr_event_free(event);
+    return;
+  }
+  if (kind == 9007) {
+    const gchar *id = nip29_tag_value(event, "h");
+    if (!relay->allow_create) {
+      nip29_ok(relay, connection, event, FALSE, "blocked: group creation is not allowed here");
+    } else if (group) {
+      nip29_ok(relay, connection, event, FALSE, "invalid: group already exists");
+    } else {
+      nip29_store(relay, event);
+      nip29_ok(relay, connection, event, TRUE, "");
+      Nip29TestGroup *created = nip29_add_group(relay, id, NULL);
+      nip29_set_member(relay, created, author, "admin");
+      return;
+    }
     nostr_event_free(event);
     return;
   }
@@ -468,7 +502,10 @@ nip29_on_event(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEven
     } else if (kind == 9002) {
       g_free(group->name);
       group->name = g_strdup(nip29_tag_value(event, "name"));
+      g_free(group->about);
+      group->about = g_strdup(nip29_tag_value(event, "about"));
       group->closed = nip29_tag_find(event, "closed") != NULL;
+      group->private_ = nip29_tag_find(event, "private") != NULL;
       g_ptr_array_set_size(group->extra_tags, 0);
       NostrTags *tags = nostr_event_get_tags(event);
       static const gchar *const known[] = { "h", "previous", "name", "picture", "banner",
@@ -525,7 +562,7 @@ nip29_on_req(Nip29Relay *relay, SoupWebsocketConnection *connection, const gchar
     relay->closed_reqs++;
     g_autofree gchar *frame = g_strdup_printf(
       "[\"CLOSED\",\"%s\",\"auth-required: this group is private\"]", sub_id);
-    soup_websocket_connection_send_text(connection, frame);
+    nip29_send(connection, frame);
     nostr_envelope_free(envelope);
     return;
   }
@@ -557,12 +594,12 @@ nip29_on_req(Nip29Relay *relay, SoupWebsocketConnection *connection, const gchar
         continue;
       g_autofree gchar *json = nip29_event_json(event);
       g_autofree gchar *frame = g_strdup_printf("[\"EVENT\",\"%s\",%s]", sub_id, json);
-      soup_websocket_connection_send_text(connection, frame);
+      nip29_send(connection, frame);
     }
   }
   if (!relay->hold_eose) {
     g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
-    soup_websocket_connection_send_text(connection, eose);
+    nip29_send(connection, eose);
   }
   nostr_envelope_free(envelope);
 }
@@ -632,7 +669,7 @@ nip29_on_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type
       g_object_set_data(G_OBJECT(connection), "authed", GINT_TO_POINTER(1));
       frame = g_strdup_printf("[\"OK\",\"%s\",true,\"\"]", id);
     }
-    soup_websocket_connection_send_text(connection, frame);
+    nip29_send(connection, frame);
     nostr_event_free(event);
   }
 }
@@ -664,7 +701,7 @@ nip29_on_websocket(SoupServer *server, SoupServerMessage *message, const char *p
     gchar *challenge = g_strdup_printf("nip29-challenge-%u", ++counter);
     g_object_set_data_full(G_OBJECT(connection), "challenge", challenge, g_free);
     g_autofree gchar *frame = g_strdup_printf("[\"AUTH\",\"%s\"]", challenge);
-    soup_websocket_connection_send_text(connection, frame);
+    nip29_send(connection, frame);
   }
 }
 

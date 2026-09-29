@@ -1,0 +1,61 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One person the relay lists in a group, in Group Info (charter §7.10;
+// item G20b), filled by gh-group-info-dialog.c: the name Groundhog has
+// cached for them or their short npub (plain text, never markup), the roles
+// the relay-signed admin list (39001) gives them as badges, and, only when
+// the account's permissions allow it (gh_group_gate()), a menu to change
+// their role (9000) or remove them (9001).
+template $GhGroupMemberRow: Adw.ActionRow {
+  use-markup: false;
+  title-lines: 1;
+  subtitle-lines: 1;
+
+  [prefix]
+  Adw.Avatar avatar {
+    size: 32;
+    show-initials: true;
+    accessible-role: presentation;
+  }
+
+  // Role badges ($GhGroupMemberRow adds one label per role).
+  [suffix]
+  Box roles_box {
+    spacing: 4;
+    valign: center;
+  }
+
+  [suffix]
+  MenuButton menu_button {
+    icon-name: "view-more-symbolic";
+    valign: center;
+    visible: false;
+    menu-model: member_menu;
+    tooltip-text: _("Member Actions");
+
+    accessibility {
+      label: _("Member Actions");
+    }
+
+    styles [
+      "flat",
+    ]
+  }
+}
+
+menu member_menu {
+  section {
+    item {
+      label: _("_Change Role…");
+      action: "member.change-role";
+      hidden-when: "action-disabled";
+    }
+
+    item {
+      label: _("_Remove from Group…");
+      action: "member.remove";
+      hidden-when: "action-disabled";
+    }
+  }
+}

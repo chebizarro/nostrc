@@ -1,0 +1,204 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Join Group (charter §7.9, §7.10 "join states have distinct copy", §7.15
+// #18; item G20b), driven by gh-group-join-dialog.c. "entry": the group's
+// address (host'group-id or a nostr: link, gh_group_parse_reference()) and
+// an optional invite code, and what joining means before anything is sent:
+// the group is not end-to-end encrypted and the relay learns who asks.
+// Nothing contacts the network until Join. "status": the relay's answer in
+// honest words (gh_group_join_copy(): asking, waiting for the signer,
+// waiting for an admin, you're in, already a member, declined, invite only,
+// not sent), with Open Group, an invite code to try again, or Try Again.
+// Relay text is plain text.
+template $GhGroupJoinDialog: Adw.Dialog {
+  title: _("Join Group");
+  content-width: 440;
+  content-height: 600;
+
+  child: Adw.NavigationView navigation {
+    Adw.NavigationPage entry_page {
+      tag: "entry";
+      title: _("Join Group");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Adw.PreferencesPage {
+          Adw.PreferencesGroup {
+            description: _("Paste the group’s address, such as groups.example.com'group-id, or a link someone shared with you.");
+
+            Adw.EntryRow address_row {
+              title: _("Group Address");
+              use-markup: false;
+            }
+
+            Adw.EntryRow code_row {
+              title: _("Invite Code (Optional)");
+              use-markup: false;
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Label error_label {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+              use-markup: false;
+
+              styles [
+                "error",
+              ]
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Before You Join");
+
+            Adw.ActionRow {
+              title: _("Not end-to-end encrypted");
+              subtitle: _("The relay’s operators can read every message in the group and see who wrote it.");
+              use-markup: false;
+
+              [prefix]
+              Image {
+                icon-name: "dialog-warning-symbolic";
+                accessible-role: presentation;
+              }
+            }
+
+            Adw.ActionRow {
+              title: _("Joining contacts the group’s relay");
+              subtitle: _("It learns your public key and your IP address. Nothing is sent until you choose Join.");
+              use-markup: false;
+
+              [prefix]
+              Image {
+                icon-name: "network-server-symbolic";
+                accessible-role: presentation;
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Button join_button {
+              label: _("_Join");
+              use-underline: true;
+              halign: center;
+              action-name: "join.join";
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            }
+          }
+        };
+      };
+    }
+
+    Adw.NavigationPage status_page {
+      tag: "status";
+      title: _("Join Group");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 400;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 12;
+            margin-end: 12;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 12;
+              valign: center;
+
+              Image status_icon {
+                pixel-size: 64;
+                halign: center;
+                accessible-role: presentation;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Spinner spinner {
+                visible: false;
+                halign: center;
+                width-request: 32;
+                height-request: 32;
+              }
+
+              Label status_title {
+                wrap: true;
+                justify: center;
+                use-markup: false;
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label status_description {
+                wrap: true;
+                wrap-mode: word_char;
+                justify: center;
+                use-markup: false;
+              }
+
+              ListBox code_list {
+                visible: false;
+                selection-mode: none;
+                margin-top: 12;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.EntryRow retry_code_row {
+                  title: _("Invite Code");
+                  use-markup: false;
+                }
+              }
+
+              Button open_button {
+                visible: false;
+                label: _("_Open Group");
+                use-underline: true;
+                halign: center;
+                margin-top: 12;
+                action-name: "join.open";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+
+              Button retry_button {
+                visible: false;
+                label: _("_Try Again");
+                use-underline: true;
+                halign: center;
+                action-name: "join.retry";
+
+                styles [
+                  "pill",
+                ]
+              }
+            };
+          };
+        };
+      };
+    }
+  };
+}

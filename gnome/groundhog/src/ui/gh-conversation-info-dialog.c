@@ -842,6 +842,8 @@ typedef struct {
   GhConversationInfoServicesFunc services_func;
   gpointer user_data;
   GDestroyNotify destroy;
+  GhConversationInfoGroupFunc group_func; /* G20b: relay groups' own dialog */
+  gpointer group_data;
 } InfoAttach;
 
 static void
@@ -856,16 +858,31 @@ attach_free(gpointer data)
 
 /* The shown conversation, when this dialog is for it: a private (NIP-17)
  * conversation only. Its Block, Forget, Mute and copy are NIP-17's; a relay
- * group gets its own info dialog (G20b, gh-group-info-dialog), and until
- * then none (W15 review non-blocking #2). */
+ * group gets its own info dialog (G20b, gh-group-info-dialog) through the
+ * group handler (W15 review non-blocking #2). */
 static GhConversation *
-shown_conversation(GhWindow *window)
+shown_any(GhWindow *window)
 {
   GhContentPage *content = gh_window_get_content(window);
   GtkWidget *view = gh_content_page_get_view(content);
   if (!gh_content_page_get_conversation_shown(content) || !GH_IS_CONVERSATION_VIEW(view))
     return NULL;
-  GhConversation *conversation = gh_conversation_view_get_conversation(GH_CONVERSATION_VIEW(view));
+  return gh_conversation_view_get_conversation(GH_CONVERSATION_VIEW(view));
+}
+
+static GhConversation *
+shown_group(InfoAttach *attach)
+{
+  GhConversation *conversation = attach->group_func ? shown_any(attach->window) : NULL;
+  return conversation &&
+         gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29
+    ? conversation : NULL;
+}
+
+static GhConversation *
+shown_conversation(GhWindow *window)
+{
+  GhConversation *conversation = shown_any(window);
   return conversation &&
          gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP17
     ? conversation : NULL;
@@ -874,7 +891,8 @@ shown_conversation(GhWindow *window)
 static void
 sync_action(InfoAttach *attach)
 {
-  g_simple_action_set_enabled(attach->action, shown_conversation(attach->window) != NULL);
+  g_simple_action_set_enabled(attach->action, shown_conversation(attach->window) != NULL ||
+                                                shown_group(attach) != NULL);
 }
 
 static void
@@ -883,6 +901,11 @@ on_conversation_info(GSimpleAction *action, GVariant *parameter, gpointer data)
   InfoAttach *attach = data;
   (void)action;
   (void)parameter;
+  GhConversation *group = shown_group(attach);
+  if (group) {
+    attach->group_func(attach->window, group, attach->group_data);
+    return;
+  }
   GhConversation *conversation = shown_conversation(attach->window);
   GhConversationInfoServices services = { 0 };
   if (!conversation || !attach->services_func(&services, attach->user_data) || !services.model ||
@@ -916,5 +939,17 @@ gh_conversation_info_attach(GhWindow *window, GhConversationInfoServicesFunc ser
   GtkWidget *view = gh_content_page_get_view(content);
   if (GH_IS_CONVERSATION_VIEW(view))
     g_signal_connect_swapped(view, "notify::conversation", G_CALLBACK(sync_action), attach);
+  sync_action(attach);
+}
+
+void
+gh_conversation_info_set_group_handler(GhWindow *window, GhConversationInfoGroupFunc func,
+                                       gpointer user_data)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  InfoAttach *attach = g_object_get_data(G_OBJECT(window), ATTACH_DATA);
+  g_return_if_fail(attach != NULL);
+  attach->group_func = func;
+  attach->group_data = func ? user_data : NULL;
   sync_action(attach);
 }

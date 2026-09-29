@@ -1,10 +1,13 @@
 #include "gh-conversation-row.h"
 
+#include "gh-privacy-summary.h"
+
 #include <glib/gi18n.h>
 
 struct _GhConversationRow {
   GtkWidget parent_instance;
   AdwAvatar *avatar;
+  GtkImage *kind_icon;
   GtkLabel *title_label;
   GtkLabel *time_label;
   GtkLabel *preview_label;
@@ -148,6 +151,7 @@ update(GhConversationRow *self)
     gtk_label_set_text(self->preview_label, "");
     gtk_widget_set_visible(GTK_WIDGET(self->request_label), FALSE);
     gtk_widget_set_visible(GTK_WIDGET(self->unread_badge), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->kind_icon), FALSE);
     gtk_widget_remove_css_class(GTK_WIDGET(self->title_label), "groundhog-unread");
     set_summary(self, g_strdup(""));
     return;
@@ -168,6 +172,18 @@ update(GhConversationRow *self)
     ? g_strdup_printf(_("%s — %s"), subject, preview)
     : g_strdup(subject ? subject : preview ? preview : "");
 
+  /* Charter §7.5: a relay group shows a network glyph and says it is not
+   * end-to-end encrypted; the strings table names every kind (G20b). */
+  GhPrivacyBackend backend = (GhPrivacyBackend)gh_conversation_get_backend(conversation);
+  const gchar *kind = gh_privacy_summary_kind(backend);
+  gboolean relay_group = backend == GH_PRIVACY_BACKEND_NIP29;
+  gtk_widget_set_visible(GTK_WIDGET(self->kind_icon), relay_group);
+  if (relay_group) {
+    gtk_widget_set_tooltip_text(GTK_WIDGET(self->kind_icon), kind);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->kind_icon),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, kind, -1);
+  }
+
   adw_avatar_set_text(self->avatar, title);
   gtk_label_set_text(self->title_label, title);
   gtk_label_set_text(self->time_label, time);
@@ -185,7 +201,8 @@ update(GhConversationRow *self)
   /* Charter §7.5: "Alice. Private conversation. 2 unread. 10:42. Hello". */
   g_autoptr(GPtrArray) parts = g_ptr_array_new_with_free_func(g_free);
   g_ptr_array_add(parts, g_strdup(title));
-  g_ptr_array_add(parts, g_strdup(request ? _("Message request") : _("Private conversation")));
+  g_ptr_array_add(parts, g_strdup(request ? _("Message request")
+                                           : kind ? kind : _("Private conversation")));
   if (subject)
     /* TRANSLATORS: a message request's subject, read out after its sender. */
     g_ptr_array_add(parts, g_strdup_printf(_("Subject: %s"), subject));
@@ -339,6 +356,7 @@ gh_conversation_row_class_init(GhConversationRowClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-conversation-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, avatar);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationRow, kind_icon);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, title_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, time_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationRow, preview_label);

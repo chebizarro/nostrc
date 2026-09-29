@@ -5,6 +5,7 @@
 
 #include "gh-account-store.h"
 #include "gh-dm-inbox.h"
+#include "gh-delivery-indicator.h"
 #include "gh-window.h"
 
 G_BEGIN_DECLS
@@ -52,8 +53,9 @@ typedef struct {
  *  - Why sending is unavailable, in the composer's place (never a disabled
  *    button without a reason): no active account, the signer unreachable or
  *    unsupported (gh_account_describe_limits()), the message store opening,
- *    locked, unavailable, damaged or failed, a group conversation (only
- *    one-to-one sending exists yet), or a recipient without a message inbox
+ *    locked, unavailable, damaged or failed, a NIP-17 group conversation
+ *    (only one-to-one sending exists yet; a relay group's reason is its
+ *    delegate's, below), or a recipient without a message inbox
  *    (with "Check Again", which retries that message). Offline is not a
  *    reason: the outbox waits for the connection.
  *  - Length: the composer measures texts with gh_outbox_text_fits().
@@ -74,6 +76,29 @@ void gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config);
  * disconnects from the previous one. Nothing for a window without the send
  * UI. */
 void gh_send_ui_set_expiry(GhWindow *window, struct _GhExpiry *expiry);
+
+/* G20b: another sending engine for some conversations (NIP-29 relay groups,
+ * gh-group-ui.c). For a conversation it handles, the composer's reason,
+ * send, retry and delivery details are the delegate's, never the NIP-17
+ * outbox's, and no draft is stored (drafts are NIP-17 store rows). */
+typedef struct {
+  gboolean (*handles)(GhConversation *conversation, gpointer data);
+  /* Why sending is unavailable, or NULL when it is (transfer full). */
+  gchar *(*reason)(GhConversation *conversation, gpointer data);
+  /* Queues text; FALSE with a user-facing error (it stays in the composer). */
+  gboolean (*send)(GhConversation *conversation, const gchar *text, gpointer data,
+                   GError **error);
+  /* The user's Retry of an own message; FALSE with error. */
+  gboolean (*retry)(GhMessage *message, gpointer data, GError **error);
+  /* Delivery details of an own message (transfer full), or NULL. */
+  GhDeliveryReport *(*report)(GhMessage *message, gpointer data);
+} GhSendUiDelegate;
+
+/* Sets (NULL: clears) window's delegate; delegate is copied, data is borrowed
+ * until replaced. Nothing for a window without the send UI. */
+void gh_send_ui_set_delegate(GhWindow *window, const GhSendUiDelegate *delegate, gpointer data);
+/* Evaluates the composer's reason again (the delegate's state changed). */
+void gh_send_ui_refresh(GhWindow *window);
 
 G_END_DECLS
 #endif

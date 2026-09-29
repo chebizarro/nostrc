@@ -41,6 +41,14 @@
 #include "gh-new-message-dialog.h"
 #endif
 
+/* G20b: NIP-29 relay groups (gh-group-ui.h). */
+#ifndef GROUNDHOG_HAVE_GROUP_UI
+#define GROUNDHOG_HAVE_GROUP_UI 0
+#endif
+#if GROUNDHOG_HAVE_GROUP_UI
+#include "gh-group-ui.h"
+#endif
+
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-features.h"
 #include "gh-identity.h"
@@ -812,6 +820,36 @@ requests_block(gpointer data, GhConversation *request, GError **error)
 }
 #endif
 
+#if GROUNDHOG_HAVE_GROUP_UI
+/* ---- NIP-29 relay groups (G20b) ---------------------------------------------------
+ * The open store's GhNip29Service (made beside its outbox, gh-app-outbox.c);
+ * Group Info names people with the contact directory's cache only. */
+static GhNip29Service *
+group_ui_service(gpointer data)
+{
+  GhAppServices *self = data;
+  GObject *service = gh_app_outbox_get_nip29_service(self->outbox);
+  return GH_IS_NIP29_SERVICE(service) ? GH_NIP29_SERVICE(service) : NULL;
+}
+
+static const gchar *
+group_ui_name(const gchar *pubkey, gpointer data)
+{
+  GhAppServices *self = data;
+  GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
+  return directory ? gh_contact_directory_get_display_name(directory, pubkey) : NULL;
+}
+
+/* Private conversations' older pages, as gh_store_status_attach_history(). */
+static gboolean
+group_ui_load_older(GhConversation *conversation, GError **error, gpointer data)
+{
+  GhAppServices *self = data;
+  return gh_account_store_load_older(self->account_store, conversation,
+                                     GH_STORE_CONVERSATIONS_PAGE_SIZE, NULL, error);
+}
+#endif
+
 typedef struct {
   const gchar *name;
   gboolean (*init)(GhAppServices *self, GError **error);
@@ -981,6 +1019,24 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
   gh_conversation_info_attach(window, conversation_info_services, self, NULL);
+#endif
+#if GROUNDHOG_HAVE_GROUP_UI
+  /* G20b: after the send UI (its composer delegate) and the store's history
+   * source (which it replaces with one that also pages relay groups). */
+  GhGroupUiConfig groups = {
+    .conversations = self->conversations,
+    .service = group_ui_service,
+    .service_data = self,
+    .state_source = G_OBJECT(self->account_store),
+    .display_name = group_ui_name,
+    .names_data = self,
+    .load_older = group_ui_load_older,
+    .load_older_data = self,
+  };
+  gh_group_ui_attach(window, &groups);
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+  gh_conversation_info_set_group_handler(window, gh_group_ui_show_info, NULL);
+#endif
 #endif
 }
 

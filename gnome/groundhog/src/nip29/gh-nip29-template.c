@@ -503,3 +503,15 @@ gh_nip29_template_create_invite(const GhNip29GroupKey *group,
   template_add(&build, nostr_tag_new("code", code, NULL));
   return template_finish(&build, context, NOSTR_KIND_SIMPLE_GROUP_CREATE_INVITE, reason, error);
 }
+
+gchar *
+gh_nip29_template_create_group(const GhNip29GroupKey *group,
+                               const GhNip29TemplateContext *context, const gchar *reason,
+                               GError **error)
+{
+  TemplateBuild build;
+  if (!check_context(group, context, error) || !check_text(reason, FALSE, "reason", error) ||
+      !template_begin(&build, group, context, error))
+    return NULL;
+  return template_finish(&build, context, NOSTR_KIND_SIMPLE_GROUP_CREATE_GROUP, reason, error);
+}

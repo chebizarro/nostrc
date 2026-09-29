@@ -1,0 +1,477 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Group Info for a NIP-29 relay group (charter §7.10, §2.2 surface 2,
+// §7.15 #18; item G20b), driven by gh-group-info-dialog.c over the
+// account's GhNip29Service. Everything about the group comes from what the
+// group's relay signed (39000-39003, verified with its NIP-11 key); nothing
+// is fetched to fill it. Relay text (names, reasons) is plain text.
+// Main page: the group (name, relay host), what the relay group does and
+// doesn't protect (gh-privacy-summary.h: not end-to-end encrypted), the
+// account's membership and the reading state, the shareable address, the
+// members (always "may be incomplete", never a count as if complete; admins
+// with their role badges), the admin actions the account's permissions
+// allow (hidden when the relay's lists say no; "The relay decides" when its
+// role rights are unknown), and Leave or Remove from Conversations.
+// "role", "add" and "edit" pages: change a member's role (9000), add a
+// member (9000) and edit the name and settings (9002, keeping every tag the
+// relay set).
+template $GhGroupInfoDialog: Adw.Dialog {
+  title: _("Group Info");
+  content-width: 460;
+  content-height: 720;
+
+  child: Adw.ToastOverlay toasts {
+    child: Adw.NavigationView navigation {
+      Adw.NavigationPage main_page {
+        tag: "main";
+        title: _("Group Info");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            Adw.PreferencesGroup {
+              Box {
+                orientation: vertical;
+                spacing: 6;
+                margin-bottom: 6;
+
+                Adw.Avatar avatar {
+                  size: 72;
+                  show-initials: true;
+                  halign: center;
+                  accessible-role: presentation;
+                }
+
+                Label title_label {
+                  wrap: true;
+                  wrap-mode: word_char;
+                  justify: center;
+                  use-markup: false;
+
+                  styles [
+                    "title-2",
+                  ]
+                }
+
+                Label host_label {
+                  wrap: true;
+                  wrap-mode: word_char;
+                  justify: center;
+                  use-markup: false;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Label about_label {
+                  wrap: true;
+                  wrap-mode: word_char;
+                  justify: center;
+                  use-markup: false;
+                  visible: false;
+                  margin-top: 6;
+                }
+              }
+            }
+
+            Adw.PreferencesGroup privacy_group {
+              title: _("Privacy");
+
+              Adw.ActionRow privacy_row {
+                use-markup: false;
+
+                [prefix]
+                Image privacy_icon {
+                  icon-name: "dialog-warning-symbolic";
+                  accessible-role: presentation;
+                }
+              }
+
+              // Rows: gh_privacy_summary_new() "visible" (from C).
+              Adw.ExpanderRow visible_row {
+                title: _("What Others Can See");
+                use-markup: false;
+              }
+
+              // Rows: gh_privacy_summary_new() "unprotected" (from C).
+              Adw.ExpanderRow unprotected_row {
+                title: _("What Groundhog Can’t Protect");
+                use-markup: false;
+              }
+            }
+
+            Adw.PreferencesGroup status_group {
+              title: _("Group");
+
+              Adw.ActionRow membership_row {
+                title: _("Membership");
+                use-markup: false;
+                subtitle-selectable: true;
+
+                [prefix]
+                Image membership_icon {
+                  accessible-role: presentation;
+                }
+              }
+
+              Adw.ActionRow messages_row {
+                title: _("Messages");
+                use-markup: false;
+              }
+
+              Adw.ActionRow details_row {
+                title: _("Group Details");
+                use-markup: false;
+              }
+
+              Adw.ActionRow settings_row {
+                title: _("Who Can Join and Read");
+                use-markup: false;
+                visible: false;
+              }
+
+              Adw.ActionRow address_row {
+                title: _("Group Address");
+                use-markup: false;
+                subtitle-selectable: true;
+
+                [suffix]
+                Button address_copy_button {
+                  icon-name: "edit-copy-symbolic";
+                  valign: center;
+                  tooltip-text: _("Copy Group Address");
+                  action-name: "group.copy-address";
+
+                  accessibility {
+                    label: _("Copy Group Address");
+                  }
+
+                  styles [
+                    "flat",
+                  ]
+                }
+              }
+            }
+
+            // One $GhGroupMemberRow per listed person (from C): admins
+            // first, then members; the description always says the list may
+            // be incomplete (gh_group_members_copy()).
+            Adw.PreferencesGroup members_group {
+              title: _("Members");
+
+              header-suffix: Button add_member_button {
+                visible: false;
+                valign: center;
+                action-name: "group.add-member";
+                tooltip-text: _("Add Member");
+
+                child: Adw.ButtonContent {
+                  icon-name: "list-add-symbolic";
+                  label: _("_Add");
+                  use-underline: true;
+                };
+
+                accessibility {
+                  label: _("Add Member");
+                }
+
+                styles [
+                  "flat",
+                ]
+              };
+            }
+
+            // Only what the account's permissions allow (gh_group_gate()).
+            Adw.PreferencesGroup admin_group {
+              title: _("Manage Group");
+              visible: false;
+
+              Adw.ActionRow edit_row {
+                title: _("Name and Settings");
+                use-markup: false;
+                activatable: true;
+                action-name: "group.edit";
+
+                [suffix]
+                Image {
+                  icon-name: "go-next-symbolic";
+                  accessible-role: presentation;
+                }
+              }
+
+              Adw.ActionRow invite_row {
+                title: _("Invite Code");
+                subtitle: _("Anyone with the code can join, even when the group is invite only");
+                use-markup: false;
+                activatable-widget: invite_button;
+
+                [suffix]
+                Button invite_button {
+                  label: _("_Create");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "group.create-invite";
+                }
+              }
+
+              // The newest code this dialog created, once the relay took it.
+              Adw.ActionRow invite_code_row {
+                title: _("Invite Link");
+                use-markup: false;
+                subtitle-selectable: true;
+                visible: false;
+
+                styles [
+                  "monospace",
+                ]
+
+                [suffix]
+                Button invite_copy_button {
+                  icon-name: "edit-copy-symbolic";
+                  valign: center;
+                  tooltip-text: _("Copy Invite Link");
+                  action-name: "group.copy-invite";
+
+                  accessibility {
+                    label: _("Copy Invite Link");
+                  }
+
+                  styles [
+                    "flat",
+                  ]
+                }
+              }
+            }
+
+            Adw.PreferencesGroup actions_group {
+              Adw.ActionRow join_row {
+                title: _("Ask to Join Again");
+                use-markup: false;
+                visible: false;
+                activatable-widget: join_button;
+
+                [suffix]
+                Button join_button {
+                  label: _("_Join");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "group.join";
+                }
+              }
+
+              Adw.ActionRow leave_row {
+                title: _("Leave Group");
+                subtitle: _("The relay removes you from the group. Messages you received stay on this device.");
+                use-markup: false;
+                visible: false;
+                activatable-widget: leave_button;
+
+                [suffix]
+                Button leave_button {
+                  label: _("_Leave…");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "group.leave";
+
+                  styles [
+                    "destructive-action",
+                  ]
+                }
+              }
+
+              Adw.ActionRow forget_row {
+                title: _("Remove from Conversations");
+                subtitle: _("Delete this group’s messages on this device. The relay keeps its copies.");
+                use-markup: false;
+                visible: false;
+                activatable-widget: forget_button;
+
+                [suffix]
+                Button forget_button {
+                  label: _("_Remove…");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "group.forget";
+
+                  styles [
+                    "destructive-action",
+                  ]
+                }
+              }
+            }
+          };
+        };
+      }
+
+      Adw.NavigationPage role_page {
+        tag: "role";
+        title: _("Change Role");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            // One check row per role the relay publishes (39003), from C.
+            Adw.PreferencesGroup roles_group {
+              description: _("The relay defines the roles and what each may do. With no role, they are a regular member.");
+            }
+
+            Adw.PreferencesGroup {
+              Button role_save_button {
+                label: _("_Save Role");
+                use-underline: true;
+                halign: center;
+                action-name: "group.save-role";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            }
+          };
+        };
+      }
+
+      Adw.NavigationPage add_page {
+        tag: "add";
+        title: _("Add Member");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            Adw.PreferencesGroup {
+              description: _("Paste their npub. The relay lets them in if it allows you to add members.");
+
+              Adw.EntryRow add_entry {
+                title: _("Public Key (npub)");
+                use-markup: false;
+              }
+            }
+
+            Adw.PreferencesGroup {
+              Label add_error_label {
+                visible: false;
+                wrap: true;
+                xalign: 0;
+                use-markup: false;
+
+                styles [
+                  "error",
+                ]
+              }
+
+              Button add_button {
+                label: _("_Add Member");
+                use-underline: true;
+                halign: center;
+                action-name: "group.save-member";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            }
+          };
+        };
+      }
+
+      Adw.NavigationPage edit_page {
+        tag: "edit";
+        title: _("Name and Settings");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            Adw.PreferencesGroup {
+              description: _("The relay publishes these to everyone who can see the group.");
+
+              Adw.EntryRow name_entry {
+                title: _("Name");
+                use-markup: false;
+              }
+
+              Adw.EntryRow about_entry {
+                title: _("About");
+                use-markup: false;
+              }
+            }
+
+            Adw.PreferencesGroup {
+              Adw.SwitchRow private_switch {
+                title: _("Only Members Can Read");
+                subtitle: _("Enforced by the relay. Its operators can still read everything.");
+              }
+
+              Adw.SwitchRow closed_switch {
+                title: _("Join by Invite Only");
+                subtitle: _("Join requests without an invite code are refused");
+              }
+            }
+
+            Adw.PreferencesGroup {
+              Button edit_save_button {
+                label: _("_Save");
+                use-underline: true;
+                halign: center;
+                action-name: "group.save-edit";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            }
+          };
+        };
+      }
+    };
+  };
+}
+
+// Response ids are unique across the file: blueprint-compiler 0.12 treats
+// them as object ids. Bodies are completed from C.
+Adw.AlertDialog leave_dialog {
+  heading: _("Leave This Group?");
+  body: _("The relay removes you from the group. To come back you may need to ask again, or have an invite code.");
+  default-response: "leave-cancel";
+  close-response: "leave-cancel";
+
+  responses [
+    leave-cancel: _("_Cancel"),
+    leave-confirm: _("_Leave") destructive,
+  ]
+}
+
+Adw.AlertDialog remove_dialog {
+  heading: _("Remove from Group?");
+  default-response: "remove-cancel";
+  close-response: "remove-cancel";
+
+  responses [
+    remove-cancel: _("_Cancel"),
+    remove-confirm: _("_Remove") destructive,
+  ]
+}
+
+Adw.AlertDialog forget_dialog {
+  heading: _("Remove This Group?");
+  body: _("Its messages are deleted from this device. The relay and the other members keep their copies.");
+  default-response: "forget-cancel";
+  close-response: "forget-cancel";
+
+  responses [
+    forget-cancel: _("_Cancel"),
+    forget-confirm: _("_Remove") destructive,
+  ]
+}

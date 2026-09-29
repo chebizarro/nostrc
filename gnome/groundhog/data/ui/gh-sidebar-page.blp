@@ -226,6 +226,21 @@ template $GhSidebarPage: Adw.NavigationPage {
 }
 
 menu primary_menu {
+  // NIP-29 relay groups (G20b, gh-group-ui.c); absent without them.
+  section {
+    item {
+      label: _("_Join Group…");
+      action: "win.join-group";
+      hidden-when: "action-missing";
+    }
+
+    item {
+      label: _("New _Group…");
+      action: "win.new-group";
+      hidden-when: "action-missing";
+    }
+  }
+
   section {
     item {
       label: _("_Preferences");

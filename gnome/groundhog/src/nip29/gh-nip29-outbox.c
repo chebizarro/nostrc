@@ -814,7 +814,10 @@ publish_start(GhNip29Op *op)
 }
 
 /* Whether a round publishes to the target: not yet answered for good. A
- * user's Retry also republishes a refusal that was not final by nature. */
+ * user's Retry also republishes a refusal that was not final by nature. In a
+ * group "restricted:" is not: it answers who may write or act now, which the
+ * relay changes (an admission, a role), so the user's Retry asks again
+ * (G20b; "blocked:", "invalid:" and a sign-in refusal stay refused). */
 static gboolean
 target_due(GhNip29Op *op, GhStoreOutboxTarget *target)
 {
@@ -827,8 +830,10 @@ target_due(GhNip29Op *op, GhStoreOutboxTarget *target)
   case GH_NIP29_OP_REJECTED:
   case GH_NIP29_OP_NOT_SENT:
     return op->manual &&
-           !gh_target_is_final_refusal((GhRelayPublishOutcome)target->outcome,
-                                       target_prefix(target));
+           ((target->outcome == GH_RELAY_PUBLISH_REJECTED &&
+             target_prefix(target) == GH_RELAY_OK_PREFIX_RESTRICTED) ||
+            !gh_target_is_final_refusal((GhRelayPublishOutcome)target->outcome,
+                                        target_prefix(target)));
   default:
     return FALSE;
   }

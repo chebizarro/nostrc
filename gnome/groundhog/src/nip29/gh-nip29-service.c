@@ -36,6 +36,7 @@ gh_nip29_join_state_get_type(void)
       { GH_NIP29_JOIN_LEAVING, "GH_NIP29_JOIN_LEAVING", "leaving" },
       { GH_NIP29_JOIN_LEFT, "GH_NIP29_JOIN_LEFT", "left" },
       { GH_NIP29_JOIN_REMOVED, "GH_NIP29_JOIN_REMOVED", "removed" },
+      { GH_NIP29_JOIN_CREATING, "GH_NIP29_JOIN_CREATING", "creating" },
       { 0, NULL, NULL }
     };
     g_once_init_leave(&type, g_enum_register_static(g_intern_static_string("GhNip29JoinState"),
@@ -109,6 +110,9 @@ struct _GhNip29Room {
   gboolean join_with_code;
   gint64 join_op;              /* outbox ids; 0 = none */
   gint64 leave_op;
+  gint64 create_op;            /* the create-group request (G20b); 0 = none */
+  gchar *create_meta;          /* its metadata, sent (9002) once the relay created it */
+  guint discard_idle;          /* a group the relay did not create leaves (G20b) */
   gchar *detail;
   GhNip29ReadState read;
   GhNip29RelayKeyState key_state;
@@ -178,6 +182,9 @@ enum {
 };
 static GParamSpec *room_props[ROOM_N_PROPS];
 
+enum { ROOM_SIGNAL_GROUP_CHANGED, ROOM_N_SIGNALS };
+static guint room_signals[ROOM_N_SIGNALS];
+
 static void gh_nip29_service_list_model_init(GListModelInterface *iface);
 
 G_DEFINE_FINAL_TYPE(GhNip29Room, gh_nip29_room, G_TYPE_OBJECT)
@@ -187,6 +194,8 @@ G_DEFINE_FINAL_TYPE_WITH_CODE(GhNip29Service, gh_nip29_service, G_TYPE_OBJECT,
 static void relay_resubscribe(Relay *relay);
 static void relay_ensure_key(Relay *relay, gboolean force);
 static void room_save(GhNip29Room *room);
+static GhNip29Op *room_enqueue(GhNip29Room *room, const gchar *unsigned_json, GError **error);
+static void room_context(GhNip29Room *room, GhNip29TemplateContext *context);
 
 /* ---- Small helpers ------------------------------------------------------------ */
 
@@ -211,6 +220,7 @@ join_subscribed(GhNip29JoinState join)
   case GH_NIP29_JOIN_PENDING:
   case GH_NIP29_JOIN_MEMBER:
   case GH_NIP29_JOIN_LEAVING:
+  case GH_NIP29_JOIN_CREATING: /* its state arrives once the relay created it */
     return TRUE;
   default:
     return FALSE;
@@ -379,6 +389,14 @@ room_record(GhNip29Room *room)
   json_builder_add_int_value(builder, room->join_op);
   json_builder_set_member_name(builder, "leave_op");
   json_builder_add_int_value(builder, room->leave_op);
+  if (room->create_op) {
+    json_builder_set_member_name(builder, "create_op");
+    json_builder_add_int_value(builder, room->create_op);
+  }
+  if (room->create_meta) {
+    json_builder_set_member_name(builder, "create_meta");
+    json_builder_add_string_value(builder, room->create_meta);
+  }
   if (room->detail) {
     json_builder_set_member_name(builder, "detail");
     json_builder_add_string_value(builder, room->detail);
@@ -480,6 +498,7 @@ room_set_relay_key(GhNip29Room *room, const gchar *key)
   room_set_key_state(room, GH_NIP29_RELAY_KEY_PINNED);
   room_sync_metadata(room);
   room_save(room);
+  g_signal_emit(room, room_signals[ROOM_SIGNAL_GROUP_CHANGED], 0);
 }
 
 typedef enum { ADMIT_NO_KEY, ADMIT_DONE, ADMIT_FOREIGN } AdmitOutcome;
@@ -511,6 +530,7 @@ room_admit_snapshot(GhNip29Room *room, NostrEvent *event, const gchar *json)
     if (slot == NOSTR_KIND_SIMPLE_GROUP_MEMBERS - NOSTR_KIND_SIMPLE_GROUP_METADATA)
       room_membership_from_members(room, created_at);
     room_save(room);
+    g_signal_emit(room, room_signals[ROOM_SIGNAL_GROUP_CHANGED], 0);
     return ADMIT_DONE;
   case GH_NIP29_ADMISSION_WRONG_AUTHOR:
     /* Perhaps the relay's key rotated: held until the key is fetched again. */
@@ -1163,6 +1183,95 @@ apply_leave_result(GhNip29Room *room, GhNip29Op *op)
   }
 }
 
+/* A group the relay did not create is not kept: its record, its (empty)
+ * conversation and its room go, from an idle after the answer. */
+static gboolean
+room_discard_now(gpointer data)
+{
+  GhNip29Room *room = data;
+  room->discard_idle = 0;
+  GhNip29Service *self = room->service;
+  if (!self || room->join != GH_NIP29_JOIN_NONE)
+    return G_SOURCE_REMOVE;
+  if (room->save_idle) {
+    g_source_remove(room->save_idle);
+    room->save_idle = 0;
+  }
+  g_autoptr(GError) error = NULL;
+  if (room->conversation_id > 0 && self->store &&
+      (!gh_store_nip29_delete_group(self->store, room->conversation_id, &error) ||
+       !gh_store_forget_conversation(self->store, room->conversation_id, &error)))
+    g_message("Groundhog could not drop a group the relay did not create: %s", error->message);
+  gh_conversation_store_remove(self->conversations, room->room_id);
+  guint position = 0;
+  if (g_ptr_array_find(self->rooms, room, &position)) {
+    g_hash_table_remove(self->by_key, room->key);
+    g_hash_table_remove(self->by_room_id, room->room_id);
+    room->service = NULL;
+    g_ptr_array_remove_index(self->rooms, position);
+    g_list_model_items_changed(G_LIST_MODEL(self), position, 1, 0);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+/* The metadata chosen for a new group, sent as its first edit (9002). */
+static void
+room_send_create_meta(GhNip29Room *room)
+{
+  g_autofree gchar *meta = g_steal_pointer(&room->create_meta);
+  if (!meta)
+    return;
+  room_save(room);
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, meta, -1, NULL) ||
+      !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser)))
+    return;
+  JsonObject *object = json_node_get_object(json_parser_get_root(parser));
+  g_autoptr(GhNip29Metadata) metadata = gh_nip29_metadata_new();
+  metadata->name = g_strdup(json_object_get_string_member_with_default(object, "name", NULL));
+  metadata->about = g_strdup(json_object_get_string_member_with_default(object, "about", NULL));
+  metadata->is_private = json_object_get_boolean_member_with_default(object, "private", FALSE);
+  metadata->is_closed = json_object_get_boolean_member_with_default(object, "closed", FALSE);
+  GhNip29TemplateContext context;
+  g_autoptr(GError) error = NULL;
+  room_context(room, &context);
+  g_autofree gchar *edit = gh_nip29_template_edit_metadata(room->key, &context, metadata, NULL,
+                                                           &error);
+  g_autoptr(GhNip29Op) op = edit ? room_enqueue(room, edit, &error) : NULL;
+  if (!op)
+    g_message("Groundhog could not name a new group: %s", error ? error->message : "unknown");
+}
+
+static void
+apply_create_result(GhNip29Room *room, GhNip29Op *op)
+{
+  if (room->join != GH_NIP29_JOIN_CREATING)
+    return;
+  GhNip29Service *self = room->service;
+  switch (gh_nip29_op_get_result(op)) {
+  case GH_NIP29_OP_ACCEPTED:
+  case GH_NIP29_OP_DUPLICATE: /* the relay already has this very request */
+    /* The relay made the account the group's admin; its snapshots follow. */
+    room_set_join(room, GH_NIP29_JOIN_MEMBER, 0, NULL);
+    if (self)
+      gh_conversation_store_ensure_group(self->conversations, room->room_id, room->name);
+    room_send_create_meta(room);
+    break;
+  case GH_NIP29_OP_REJECTED:
+  case GH_NIP29_OP_NOT_SENT:
+  case GH_NIP29_OP_CANCELLED:
+  case GH_NIP29_OP_PENDING_APPROVAL:
+    g_clear_pointer(&room->create_meta, g_free);
+    room_set_join(room, GH_NIP29_JOIN_NONE, 0, gh_nip29_op_get_relay_message(op));
+    if (!room->discard_idle)
+      room->discard_idle = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, room_discard_now,
+                                           g_object_ref(room), g_object_unref);
+    break;
+  default:
+    break;
+  }
+}
+
 /* The local echo of a chat message shows its honest status. */
 static void
 apply_message_status(GhNip29Service *self, GhNip29Op *op)
@@ -1202,7 +1311,10 @@ on_op_changed(GhNip29Outbox *outbox, GhNip29Op *op, gpointer data)
     }
     nostr_event_free(event);
   }
-  if (kind == NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST &&
+  if (kind == NOSTR_KIND_SIMPLE_GROUP_CREATE_GROUP &&
+      gh_nip29_op_get_outbox_id(op) == room->create_op)
+    apply_create_result(room, op);
+  else if (kind == NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST &&
       gh_nip29_op_get_outbox_id(op) == room->join_op)
     apply_join_result(room, op);
   else if (kind == NOSTR_KIND_SIMPLE_GROUP_LEAVE_REQUEST &&
@@ -1318,6 +1430,9 @@ room_restore(GhNip29Service *self, const GhStoreNip29Group *stored)
     room->join_with_code = json_object_get_boolean_member_with_default(record, "join_code", FALSE);
     room->join_op = json_object_get_int_member_with_default(record, "join_op", 0);
     room->leave_op = json_object_get_int_member_with_default(record, "leave_op", 0);
+    room->create_op = json_object_get_int_member_with_default(record, "create_op", 0);
+    room->create_meta = g_strdup(json_object_get_string_member_with_default(record,
+                                                                            "create_meta", NULL));
     room->detail = g_strdup(json_object_get_string_member_with_default(record, "detail", NULL));
     room->cursor = json_object_get_int_member_with_default(record, "cursor", 0);
     room->backfilled = json_object_get_boolean_member_with_default(record, "backfilled", FALSE);
@@ -1351,8 +1466,10 @@ room_restore(GhNip29Service *self, const GhStoreNip29Group *stored)
       g_clear_pointer(&room->held[i], g_free);
   }
   room_sync_metadata(room);
-  /* Joined (or joining) groups are listed before their first message. */
-  if (join_subscribed(room->join) || room->join == GH_NIP29_JOIN_DENIED ||
+  /* Joined (or joining) groups are listed before their first message; one
+   * the relay has not created yet only once it has. */
+  if ((join_subscribed(room->join) && room->join != GH_NIP29_JOIN_CREATING) ||
+      room->join == GH_NIP29_JOIN_DENIED ||
       room->join == GH_NIP29_JOIN_CLOSED || room->join == GH_NIP29_JOIN_NOT_SENT)
     gh_conversation_store_ensure_group(self->conversations, room->room_id, room->name);
 }
@@ -1490,6 +1607,13 @@ gh_nip29_service_get_outbox(GhNip29Service *self)
   return self->outbox;
 }
 
+const gchar *
+gh_nip29_service_get_account(GhNip29Service *self)
+{
+  g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
+  return self->account;
+}
+
 GhNip29Room *
 gh_nip29_service_lookup(GhNip29Service *self, const gchar *relay_url, const gchar *group_id)
 {
@@ -1567,6 +1691,102 @@ gh_nip29_service_join(GhNip29Service *self, const gchar *relay_url, const gchar 
   return g_object_ref(room);
 }
 
+/* Stores a group record and lists a room for it (not its conversation). */
+static GhNip29Room *
+room_create_stored(GhNip29Service *self, const GhNip29GroupKey *key, GError **error)
+{
+  GhNip29Room *room = room_new(self, key);
+  g_autofree gchar *record = room_record(room);
+  gint64 conversation_id = 0;
+  if (!gh_store_nip29_save_group(self->store, room_relay(room), room_group_id(room),
+                                 room->relay_pubkey, record, room->name, &conversation_id,
+                                 error)) {
+    guint position = self->rooms->len - 1;
+    g_hash_table_remove(self->by_key, room->key);
+    g_hash_table_remove(self->by_room_id, room->room_id);
+    room->service = NULL;
+    g_ptr_array_remove_index(self->rooms, position);
+    g_list_model_items_changed(G_LIST_MODEL(self), position, 1, 0);
+    return NULL;
+  }
+  room->conversation_id = conversation_id;
+  return room;
+}
+
+gchar *
+gh_nip29_new_group_id(void)
+{
+  g_autofree gchar *random = gh_store_new_op_id(); /* 32 lowercase hex, OS CSPRNG */
+  return g_strndup(random, 16);
+}
+
+GhNip29Room *
+gh_nip29_service_create_group(GhNip29Service *self, const gchar *relay_url,
+                              const gchar *group_id, const GhNip29Metadata *metadata,
+                              GError **error)
+{
+  g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
+  if (!check_active(self, error))
+    return NULL;
+  g_autofree gchar *chosen = group_id && *group_id ? g_strdup(group_id) : gh_nip29_new_group_id();
+  g_autoptr(GhNip29GroupKey) key = gh_nip29_group_key_new(relay_url, chosen, error);
+  if (!key)
+    return NULL;
+  if (g_hash_table_contains(self->by_key, key)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                        "This group is already in the list");
+    return NULL;
+  }
+  Relay *relay = g_hash_table_lookup(self->relays, gh_nip29_group_key_get_relay_url(key));
+  if (relay) {
+    g_autoptr(GPtrArray) rooms = relay_rooms(relay);
+    if (rooms->len >= GH_NIP29_SERVICE_MAX_GROUPS_PER_RELAY) {
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_TOO_MANY_OPEN_FILES,
+                  "Groundhog follows at most %d groups on one relay",
+                  GH_NIP29_SERVICE_MAX_GROUPS_PER_RELAY);
+      return NULL;
+    }
+  }
+  GhNip29Room *room = room_create_stored(self, key, error);
+  if (!room)
+    return NULL;
+  if (metadata) {
+    g_autoptr(JsonBuilder) builder = json_builder_new();
+    json_builder_begin_object(builder);
+    if (metadata->name && *metadata->name) {
+      json_builder_set_member_name(builder, "name");
+      json_builder_add_string_value(builder, metadata->name);
+    }
+    if (metadata->about && *metadata->about) {
+      json_builder_set_member_name(builder, "about");
+      json_builder_add_string_value(builder, metadata->about);
+    }
+    json_builder_set_member_name(builder, "private");
+    json_builder_add_boolean_value(builder, metadata->is_private);
+    json_builder_set_member_name(builder, "closed");
+    json_builder_add_boolean_value(builder, metadata->is_closed);
+    json_builder_end_object(builder);
+    g_autoptr(JsonNode) root = json_builder_get_root(builder);
+    room->create_meta = json_to_string(root, FALSE);
+  }
+  GhNip29TemplateContext context;
+  room_context(room, &context);
+  room->joined_at = context.created_at;
+  g_autofree gchar *request = gh_nip29_template_create_group(room->key, &context, NULL, error);
+  g_autoptr(GhNip29Op) op = request ? room_enqueue(room, request, error) : NULL;
+  if (!op) {
+    room->join = GH_NIP29_JOIN_NONE;
+    room->discard_idle = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, room_discard_now,
+                                         g_object_ref(room), g_object_unref);
+    return NULL;
+  }
+  room->create_op = gh_nip29_op_get_outbox_id(op);
+  /* Subscribes to the relay, which publishes the group's state once made. */
+  room_set_join(room, GH_NIP29_JOIN_CREATING, 0, NULL);
+  apply_create_result(room, op); /* it may have been answered already */
+  return g_object_ref(room);
+}
+
 static gboolean
 check_room(GhNip29Service *self, GhNip29Room *room, GError **error)
 {
@@ -1584,7 +1804,8 @@ gh_nip29_service_leave(GhNip29Service *self, GhNip29Room *room, const gchar *rea
   g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
   if (!check_room(self, room, error))
     return NULL;
-  if (!join_subscribed(room->join) || room->join == GH_NIP29_JOIN_LEAVING) {
+  if (!join_subscribed(room->join) || room->join == GH_NIP29_JOIN_LEAVING ||
+      room->join == GH_NIP29_JOIN_CREATING) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                         "The account is not in this group");
     return NULL;
@@ -1905,6 +2126,17 @@ gh_nip29_room_get_group(GhNip29Room *self)
   return self->group;
 }
 
+GhNip29Op *
+gh_nip29_room_dup_request_op(GhNip29Room *self)
+{
+  g_return_val_if_fail(GH_IS_NIP29_ROOM(self), NULL);
+  gint64 id = self->join == GH_NIP29_JOIN_CREATING || (self->create_op && !self->join_op)
+                ? self->create_op : self->join_op;
+  if (!self->service || !self->service->outbox || id <= 0)
+    return NULL;
+  return gh_nip29_outbox_lookup(self->service->outbox, id);
+}
+
 GhNip29Authz
 gh_nip29_room_check_permission(GhNip29Room *self, nostr_permission_t permission)
 {
@@ -1979,6 +2211,7 @@ gh_nip29_room_finalize(GObject *object)
   gh_nip29_timeline_free(self->timeline);
   g_free(self->detail);
   g_free(self->name);
+  g_free(self->create_meta);
   G_OBJECT_CLASS(gh_nip29_room_parent_class)->finalize(object);
 }
 
@@ -2011,6 +2244,8 @@ gh_nip29_room_class_init(GhNip29RoomClass *klass)
                                                              notified);
   room_props[ROOM_PROP_DETAIL] = g_param_spec_string("detail", NULL, NULL, NULL, notified);
   g_object_class_install_properties(object_class, ROOM_N_PROPS, room_props);
+  room_signals[ROOM_SIGNAL_GROUP_CHANGED] = g_signal_new("group-changed",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
 
 static void

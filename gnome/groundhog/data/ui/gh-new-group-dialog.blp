@@ -1,0 +1,208 @@
+using Gtk 4.0;
+using Adw 1;
+
+// New Group, relay part (charter §7.9 "Relay Group"; item G20b), driven by
+// gh-new-group-dialog.c. Encrypted groups are not offered until they ship
+// (qp24.13): no disabled placeholder. "form": the relay the group lives on,
+// its name and about, "Only Members Can Read" (private) and "Join by Invite
+// Only" (closed), with what a relay group means before anything is sent.
+// Nothing contacts the network until Create. "status": the relay's answer
+// (gh_group_create_copy(): waiting for the signer, creating, created and
+// waiting for its details until the relay's own 39000 arrives, or not
+// created with the relay's reason: most relays don't let people create
+// groups). Relay text is plain text.
+template $GhNewGroupDialog: Adw.Dialog {
+  title: _("New Group");
+  content-width: 440;
+  content-height: 640;
+
+  child: Adw.NavigationView navigation {
+    Adw.NavigationPage form_page {
+      tag: "form";
+      title: _("New Relay Group");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Adw.PreferencesPage {
+          Adw.PreferencesGroup {
+            description: _("Hosted on a relay you choose. Not every relay lets people create groups.");
+
+            Adw.EntryRow relay_row {
+              title: _("Relay");
+              use-markup: false;
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Adw.EntryRow name_row {
+              title: _("Name");
+              use-markup: false;
+            }
+
+            Adw.EntryRow about_row {
+              title: _("About (Optional)");
+              use-markup: false;
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Adw.SwitchRow private_switch {
+              title: _("Only Members Can Read");
+              subtitle: _("Enforced by the relay. Its operators can still read everything.");
+            }
+
+            Adw.SwitchRow closed_switch {
+              title: _("Join by Invite Only");
+              subtitle: _("Join requests without an invite code are refused");
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Label error_label {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+              use-markup: false;
+
+              styles [
+                "error",
+              ]
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Before You Create It");
+
+            Adw.ActionRow {
+              title: _("Not end-to-end encrypted");
+              subtitle: _("The relay’s operators can read every message in the group and see who wrote it.");
+              use-markup: false;
+
+              [prefix]
+              Image {
+                icon-name: "dialog-warning-symbolic";
+                accessible-role: presentation;
+              }
+            }
+
+            Adw.ActionRow {
+              title: _("Creating contacts the relay");
+              subtitle: _("It learns your public key and your IP address, and makes you the group’s admin. Nothing is sent until you choose Create.");
+              use-markup: false;
+
+              [prefix]
+              Image {
+                icon-name: "network-server-symbolic";
+                accessible-role: presentation;
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Button create_button {
+              label: _("_Create Group");
+              use-underline: true;
+              halign: center;
+              action-name: "new-group.create";
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            }
+          }
+        };
+      };
+    }
+
+    Adw.NavigationPage status_page {
+      tag: "status";
+      title: _("New Relay Group");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 400;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 12;
+            margin-end: 12;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 12;
+              valign: center;
+
+              Image status_icon {
+                pixel-size: 64;
+                halign: center;
+                accessible-role: presentation;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Spinner spinner {
+                visible: false;
+                halign: center;
+                width-request: 32;
+                height-request: 32;
+              }
+
+              Label status_title {
+                wrap: true;
+                justify: center;
+                use-markup: false;
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label status_description {
+                wrap: true;
+                wrap-mode: word_char;
+                justify: center;
+                use-markup: false;
+              }
+
+              Button open_button {
+                visible: false;
+                label: _("_Open Group");
+                use-underline: true;
+                halign: center;
+                margin-top: 12;
+                action-name: "new-group.open";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+
+              Button back_button {
+                visible: false;
+                label: _("_Change and Try Again");
+                use-underline: true;
+                halign: center;
+                action-name: "new-group.back";
+
+                styles [
+                  "pill",
+                ]
+              }
+            };
+          };
+        };
+      };
+    }
+  };
+}

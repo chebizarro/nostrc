@@ -32,7 +32,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
-  gh-conversation-info-dialog gh-conversation-info-person)
+  gh-conversation-info-dialog gh-conversation-info-person
+  gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1583,6 +1584,67 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_TOR=0)
 endif()
 # --- end G09 network modes and Tor ---
+# --- G20b NIP-29 group UI ---
+# The relay-group UI (privacy charter §7.5, §7.7, §7.9, §7.10, §7.15 #18;
+# §8.2 G20b) over G20a's GhNip29Service: gh-group-copy.c (GTK-free: group
+# references, the honest join/create/read copy, the composer's "closed to
+# you" reason, admin gating from the relay-signed 39001/39003),
+# GhGroupJoinDialog, GhGroupInfoDialog (+ GhGroupMemberRow) and
+# GhNewGroupDialog (the relay part); gh-group-ui.c attaches them to the
+# window (win.join-group, win.new-group, the composer delegate for relay
+# groups, Group Info as the conversation-info group handler, older history
+# from the store). Group rows get their kind glyph in gh-conversation-row.c.
+if (TARGET groundhog-nip29-service AND TARGET groundhog-conversation-ui AND
+    TARGET groundhog-recipient AND TARGET groundhog-privacy-summary)
+  message(STATUS "Groundhog NIP-29 group UI: enabled")
+  set(GROUNDHOG_GROUP_UI_SOURCES src/ui/gh-group-copy.c src/ui/gh-group-join-dialog.c
+    src/ui/gh-group-info-dialog.c src/ui/gh-new-group-dialog.c)
+  add_library(groundhog-group-ui STATIC ${GROUNDHOG_GROUP_UI_SOURCES})
+  target_include_directories(groundhog-group-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-group-ui PUBLIC groundhog-nip29-service
+    groundhog-conversation-ui groundhog-recipient groundhog-privacy-summary)
+  target_compile_options(groundhog-group-ui PRIVATE -Wall -Wextra -Werror)
+  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+    # Beside gh-send-ui.c (G13), whose delegate it sets.
+    target_sources(groundhog PRIVATE src/ui/gh-group-ui.c)
+    target_link_libraries(groundhog PRIVATE groundhog-group-ui)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_GROUP_UI=1)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
+      TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    # Default mode (no display): the group UI's decisions against a local
+    # NIP-29 relay (tests/nip29/nip29-relay.h) with the real service, outbox,
+    # SQLCipher store and mock signer: references, join (pending, admitted,
+    # declined, invite only, duplicate), sending into a group and its
+    # "closed to you" reasons, retry, leave, admin gating from the relay's
+    # 39001/39003 (and the service refusing what is denied), creating a
+    # group (accepted, refused and dropped), older history from the store.
+    # --gui: the dialogs themselves (Join, Group Info, New Group), the group
+    # row's glyph and label, and the window glue (actions, the composer
+    # delegate, Group Info) on a real window; it self-skips (77) without a
+    # display. With GROUNDHOG_TEST_SCREENSHOTS=<dir> it renders the dialogs.
+    add_executable(test-groundhog-group-ui tests/ui/test_group_ui.c
+      tests/ui/group-send-stub.c src/ui/gh-group-ui.c)
+    target_include_directories(test-groundhog-group-ui PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/nip29
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+    target_link_libraries(test-groundhog-group-ui PRIVATE groundhog-group-ui
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST nostrc-test-bus)
+    target_compile_options(test-groundhog-group-ui PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-group-ui)
+    add_dependencies(test-groundhog-group-ui groundhog-test-schemas)
+    add_test(NAME groundhog-group-ui COMMAND test-groundhog-group-ui)
+    set_tests_properties(groundhog-group-ui PROPERTIES TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    add_test(NAME groundhog-group-ui-gui COMMAND test-groundhog-group-ui --gui)
+    set_tests_properties(groundhog-group-ui-gui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog NIP-29 group UI: disabled (needs the NIP-29 service and the "
+                 "conversation UI)")
+endif()
+# --- end G20b NIP-29 group UI ---
 
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from

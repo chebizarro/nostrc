@@ -261,3 +261,11 @@ flowbox.groundhog-recipient-chips > flowboxchild {
 .groundhog-safety-code {
   padding: 12px;
 }
+
+/* == groups (G20b) == */
+/* A member's relay-given role in Group Info (gh-group-member-row.blp). */
+.groundhog-role-badge {
+  padding: 0 0.5em;
+  border-radius: 999px;
+  border: 1px solid alpha(currentColor, 0.3);
+}

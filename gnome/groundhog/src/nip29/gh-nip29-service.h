@@ -96,7 +96,8 @@ typedef enum {
   GH_NIP29_JOIN_NOT_SENT,    /* the request could not be sent; it can be retried */
   GH_NIP29_JOIN_LEAVING,     /* the leave request is being signed or sent */
   GH_NIP29_JOIN_LEFT,        /* the relay accepted the leave request */
-  GH_NIP29_JOIN_REMOVED      /* a 9001 removed the account */
+  GH_NIP29_JOIN_REMOVED,     /* a 9001 removed the account */
+  GH_NIP29_JOIN_CREATING     /* the create-group request (9007) is being signed or sent */
 } GhNip29JoinState;
 
 GType gh_nip29_join_state_get_type(void);
@@ -140,7 +141,10 @@ G_DECLARE_FINAL_TYPE(GhNip29Room, gh_nip29_room, GH, NIP29_ROOM, GObject)
  * without a 39002, PARTIAL with one; either way the UI says "Member list may
  * be incomplete", never "0 members"), "is-closed", "is-private",
  * "is-restricted" (from the admitted 39000) and "detail" (the relay's reason
- * for the last refusal or closed subscription, or a local reason). */
+ * for the last refusal or closed subscription, or a local reason).
+ * Signal "group-changed": a relay-signed snapshot (39000-39003) was admitted
+ * or the relay key changed, so gh_nip29_room_get_group() (admins, roles,
+ * members, metadata) and the permissions may differ (G20b). */
 const gchar *gh_nip29_room_get_relay_url(GhNip29Room *self);
 const gchar *gh_nip29_room_get_group_id(GhNip29Room *self);
 const gchar *gh_nip29_room_get_room_id(GhNip29Room *self);
@@ -160,6 +164,10 @@ const GhNip29Group *gh_nip29_room_get_group(GhNip29Room *self);
  * relay's role policy when one was set. UNKNOWN_NO_ADMINS while no 39001 is
  * known. */
 GhNip29Authz gh_nip29_room_check_permission(GhNip29Room *self, nostr_permission_t permission);
+/* The operation of the room's last join request (or of its create-group
+ * request while CREATING), e.g. to tell "already a member" (DUPLICATE) from
+ * a fresh admission; NULL when there is none. Transfer full. */
+GhNip29Op *gh_nip29_room_dup_request_op(GhNip29Room *self);
 
 typedef struct {
   GhStore *store;                      /* the account's open store; borrowed */
@@ -188,6 +196,8 @@ G_DECLARE_FINAL_TYPE(GhNip29Service, gh_nip29_service, GH, NIP29_SERVICE, GObjec
  * service is a GListModel of GhNip29Room, oldest first. */
 GhNip29Service *gh_nip29_service_new(const GhNip29ServiceConfig *config, GError **error);
 GhNip29Outbox *gh_nip29_service_get_outbox(GhNip29Service *self);
+/* The account's public key (64 lowercase hex): the store's. */
+const gchar *gh_nip29_service_get_account(GhNip29Service *self);
 
 /* The group (relay_url is normalized first), or NULL. Transfer full. */
 GhNip29Room *gh_nip29_service_lookup(GhNip29Service *self, const gchar *relay_url,
@@ -206,6 +216,23 @@ GhNip29Room *gh_nip29_service_lookup_room(GhNip29Service *self, const gchar *roo
 GhNip29Room *gh_nip29_service_join(GhNip29Service *self, const gchar *relay_url,
                                    const gchar *group_id, const gchar *reason,
                                    const gchar *invite_code, GError **error);
+/* A new random group id (16 lowercase hex characters from the OS CSPRNG). */
+gchar *gh_nip29_new_group_id(void);
+
+/* Asks relay_url to create a group (kind 9007, G20b) with group_id (NULL or
+ * empty: gh_nip29_new_group_id()), then, once the relay accepted it, sets
+ * metadata (nullable: name, about, is_private and is_closed are used) with an
+ * edit (9002). The room is CREATING until the relay answers, then MEMBER (the
+ * relay made the account the group's admin; its 39000-39003 follow) and its
+ * conversation is listed. A relay that refuses (most do unless they allow
+ * group creation) leaves the room NONE with the relay's reason as "detail",
+ * and the group is dropped (record, conversation and room) from an idle.
+ * Errors as gh_nip29_service_join(), plus G_IO_ERROR_EXISTS when the group
+ * is already in the list. Transfer full. */
+GhNip29Room *gh_nip29_service_create_group(GhNip29Service *self, const gchar *relay_url,
+                                           const gchar *group_id,
+                                           const GhNip29Metadata *metadata, GError **error);
+
 /* Asks to leave (kind 9022). G_IO_ERROR_INVALID_ARGUMENT when not joined. */
 GhNip29Op *gh_nip29_service_leave(GhNip29Service *self, GhNip29Room *room,
                                   const gchar *reason, GError **error);
