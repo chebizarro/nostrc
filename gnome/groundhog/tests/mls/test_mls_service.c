@@ -785,6 +785,136 @@ test_second_admin_invites(void)
   world_down(&w);
 }
 
+
+/* ---- Account proof (review B2) ---------------------------------------------------------- */
+
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+static gboolean
+identity_is(gpointer data)
+{
+  GroupWait *wait = data;   /* group: the service, value: the state */
+  return (gint)gh_mls_service_get_identity_state((GhMlsService *)wait->group) == wait->value;
+}
+
+#define wait_identity(service_, state_) \
+  G_STMT_START { GroupWait iw_ = { (GhMlsGroup *)(service_), (state_) }; \
+    spin_until(identity_is, &iw_, "the identity state"); } G_STMT_END
+
+static void
+create_attempt(App *app, guint invitee, GError **out_error)
+{
+  const gchar *relays[] = { app->world->g.url, NULL };
+  const gchar *people[] = { hex[invitee], NULL };
+  OpWait wait = { 0 };
+  gh_mls_service_create_group_async(app->service, "Try", NULL, relays, people, NULL, on_created,
+                                    &wait);
+  spin_until(op_done, &wait, "the creation attempt");
+  if (wait.result)
+    g_object_unref(wait.result);
+  *out_error = wait.error;
+}
+
+/* libmarmot 0.10.0: each start enrolls the account proof through the
+ * signer (the kind:450 template, never published); until the signer
+ * answers nothing that needs the proof is made; a decline is honest. */
+static void
+test_account_proof_enrollment(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  g_assert_cmpint(gh_mls_service_get_identity_state(alice->service), ==,
+                  GH_MLS_IDENTITY_ENROLLED);
+  accept_contact(alice, BOB);
+
+  /* A restart: a new instance key, so a new proof; the signer waits. */
+  w.signer.hold = TRUE;
+  app_restart(alice);
+  wait_identity(alice->service, GH_MLS_IDENTITY_WAITING);
+  g_autoptr(GError) error = NULL;
+  create_attempt(alice, BOB, &error);
+  g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NOT_ENROLLED);
+  g_clear_error(&error);
+  g_assert_cmpint(gh_mls_service_get_key_package_state(alice->service), !=,
+                  GH_MLS_KEY_PACKAGE_PUBLISHING);
+  w.signer.hold = FALSE;
+  gh_test_signer_release_all(&w.signer);
+  wait_identity(alice->service, GH_MLS_IDENTITY_ENROLLED);
+  create_group(alice, "Proven", (const guint[]){ BOB }, 1);
+  join(&w.apps[BOB], ALICE);
+
+  /* Declined: honest, nothing made, not asked again this start. */
+  w.signer.deny = TRUE;
+  app_restart(alice);
+  wait_identity(alice->service, GH_MLS_IDENTITY_DECLINED);
+  create_attempt(alice, BOB, &error);
+  g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NOT_ENROLLED);
+  g_clear_error(&error);
+  w.signer.deny = FALSE;
+
+  /* The template is local-only: no relay ever saw a kind 450. */
+  WireRelay *relays[] = { &w.e, &w.w, &w.x, &w.g };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
+    g_autoptr(GPtrArray) templates = published(relays[i], 450);
+    g_assert_cmpuint(templates->len, ==, 0);
+  }
+  world_down(&w);
+}
+
+/* A KeyPackage without the account proof (MDK 0.8, libmarmot <= 0.9.0)
+ * cannot be invited: honest "needs an update", not "no KeyPackage". */
+static void
+test_unproven_invitee_needs_update(void)
+{
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  /* Carol runs an older client: its KeyPackage carries no proof. */
+  MarmotConfig config = marmot_config_default();
+  config.allow_unproven_members = true;
+  Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
+  guint8 carol_key[32];
+  g_assert_true(nostr_hex2bin(carol_key, hex[CAROL], sizeof carol_key));
+  const char *relays[] = { w.w.url };
+  MarmotKeyPackageResult made;
+  memset(&made, 0, sizeof made);
+  g_assert_cmpint(marmot_create_key_package_unsigned(legacy, carol_key, relays, 1, &made), ==,
+                  MARMOT_OK);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, made.event_json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[CAROL]), ==, 0);
+  char *signed_json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  wire_relay_inject(&w.w, signed_json);
+  free(signed_json);
+  marmot_key_package_result_free(&made);
+  marmot_free(legacy);
+
+  accept_contact(alice, CAROL);
+  g_autoptr(GError) error = NULL;
+  create_attempt(alice, CAROL, &error);
+  g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NEEDS_UPDATE);
+  world_down(&w);
+}
+#else
+/* libmarmot < 0.10.0 has no account proof: nothing to enroll. */
+static void
+test_account_proof_enrollment(void)
+{
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  g_assert_cmpint(gh_mls_service_get_identity_state(w.apps[ALICE].service), ==,
+                  GH_MLS_IDENTITY_NOT_REQUIRED);
+  world_down(&w);
+}
+#endif
+
 /* An account switch closes every group connection at once; the account
  * coming back reopens them. */
 static gboolean
@@ -851,6 +981,12 @@ main(int argc, char **argv)
                   test_send_republished_after_restart);
   g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
   g_test_add_func("/groundhog/mls-service/second-admin-invites", test_second_admin_invites);
+  g_test_add_func("/groundhog/mls-service/account-proof-enrollment",
+                  test_account_proof_enrollment);
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+  g_test_add_func("/groundhog/mls-service/unproven-invitee-needs-update",
+                  test_unproven_invitee_needs_update);
+#endif
   gint rc = g_test_run();
   mls_world_finish();
   return rc;

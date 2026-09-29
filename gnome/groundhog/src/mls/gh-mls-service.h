@@ -2,6 +2,11 @@
 #define GH_MLS_SERVICE_H
 
 #include <marmot/marmot.h>
+#if defined(__has_include)
+#if __has_include(<marmot/marmot-version.h>)
+#include <marmot/marmot-version.h>
+#endif
+#endif
 
 #include "gh-account-relays.h"
 #include "gh-conversation-store.h"
@@ -82,6 +87,18 @@ G_BEGIN_DECLS
  * room id gh_message_mls_room_id(), durable through gh-store-mls.h), listed
  * even before their first message and titled with the group's name.
  *
+ * Account proof (libmarmot >= 0.10.0, GH_MLS_SERVICE_ACCOUNT_PROOF). Every
+ * member leaf carries the account's signature over the leaf's MLS key. At
+ * each start (libmarmot's instance key is not stored) the service asks the
+ * account's signer to sign libmarmot's local-only kind:450 template (never
+ * published), checks it is exactly that event by the account, and hands it
+ * to marmot_set_account_proof(). Until then the identity state is WAITING
+ * ("Waiting for approval"), no KeyPackage is made and no group created
+ * (GH_MLS_SERVICE_ERROR_NOT_ENROLLED); a switch cancels the request, and a
+ * declined one is asked again only at the next start or generation. An
+ * invitee (or a group member) whose app cannot prove its account is
+ * GH_MLS_SERVICE_ERROR_NEEDS_UPDATE.
+ *
  * Leaving. marmot_leave_group() marks the group inactive locally and the
  * service stops reading it; an MLS member cannot remove itself from the tree
  * (no self-remove proposal in libmarmot yet), so the others keep counting it
@@ -96,6 +113,17 @@ G_BEGIN_DECLS
  * The store, model, relays, resolver and inbox are borrowed: dispose the
  * service before closing the store.
  */
+
+/* libmarmot >= 0.10.0 binds every member leaf to its account with a proof
+ * the account signs (nostrc-7vyi): the service enrolls it (see "Account
+ * proof" above) before any KeyPackage or group. Older libmarmot has no
+ * proof: the identity state is NOT_REQUIRED. */
+#if defined(MARMOT_VERSION_MAJOR) && \
+    (MARMOT_VERSION_MAJOR > 0 || MARMOT_VERSION_MINOR >= 10)
+#define GH_MLS_SERVICE_ACCOUNT_PROOF 1
+#else
+#define GH_MLS_SERVICE_ACCOUNT_PROOF 0
+#endif
 
 /* Default KeyPackage rotation age (28 days). */
 #define GH_MLS_KEY_PACKAGE_LIFETIME ((gint64)28 * 24 * 3600)
@@ -142,8 +170,22 @@ typedef enum {
   GH_MLS_SERVICE_ERROR_REFUSED,        /* every group relay refused the Commit */
   GH_MLS_SERVICE_ERROR_SUPERSEDED,     /* another member's change won the epoch */
   GH_MLS_SERVICE_ERROR_NO_RELAYS,      /* no group relay (or none usable) */
-  GH_MLS_SERVICE_ERROR_INACTIVE        /* the store's account is not the active one */
+  GH_MLS_SERVICE_ERROR_INACTIVE,       /* the store's account is not the active one */
+  GH_MLS_SERVICE_ERROR_NOT_ENROLLED,   /* the signer has not approved this device's proof */
+  GH_MLS_SERVICE_ERROR_NEEDS_UPDATE    /* someone's app cannot prove their account yet */
 } GhMlsServiceError;
+
+typedef enum {
+  GH_MLS_IDENTITY_NOT_REQUIRED, /* libmarmot < 0.10.0: no account proof */
+  GH_MLS_IDENTITY_NONE,         /* not asked yet (inactive, offline) */
+  GH_MLS_IDENTITY_WAITING,      /* the signer is asking the user */
+  GH_MLS_IDENTITY_ENROLLED,     /* the proof is set for this start */
+  GH_MLS_IDENTITY_DECLINED,     /* the user declined; asked again at the next start */
+  GH_MLS_IDENTITY_FAILED        /* the signer failed or returned something else */
+} GhMlsIdentityState;
+
+GType gh_mls_identity_state_get_type(void);
+#define GH_TYPE_MLS_IDENTITY_STATE (gh_mls_identity_state_get_type())
 
 #define GH_TYPE_MLS_GROUP (gh_mls_group_get_type())
 G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
@@ -224,6 +266,8 @@ const gchar *gh_mls_service_get_account(GhMlsService *self);
 Marmot *gh_mls_service_get_marmot(GhMlsService *self);
 
 GhMlsKeyPackageState gh_mls_service_get_key_package_state(GhMlsService *self);
+/* The account-proof enrollment ("identity-state", notified). */
+GhMlsIdentityState gh_mls_service_get_identity_state(GhMlsService *self);
 /* The id of the KeyPackage event last accepted by a relay, or NULL. */
 const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
 /* Rotates the KeyPackage now (e.g. the user asked); FALSE with

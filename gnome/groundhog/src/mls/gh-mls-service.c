@@ -124,6 +124,10 @@ struct _GhMlsService {
   gulong network_handler;
   gulong relays_handler;
 
+  /* Account proof (libmarmot >= 0.10.0) */
+  GhMlsIdentityState identity;
+  gboolean identity_busy;
+
   /* KeyPackage */
   GhMlsKeyPackageState key_package;
   gchar *key_package_id;
@@ -137,7 +141,7 @@ struct _GhMlsService {
   guint retry_s;
 };
 
-enum { PROP_0, PROP_KEY_PACKAGE_STATE, N_PROPS };
+enum { PROP_0, PROP_KEY_PACKAGE_STATE, PROP_IDENTITY_STATE, N_PROPS };
 static GParamSpec *props[N_PROPS];
 enum { SIGNAL_INVITE_RECEIVED, SIGNAL_GROUP_ADDED, N_SIGNALS };
 static guint signals[N_SIGNALS];
@@ -163,6 +167,26 @@ gh_mls_key_package_state_get_type(void)
     };
     g_once_init_leave(&type, g_enum_register_static(
       g_intern_static_string("GhMlsKeyPackageState"), values));
+  }
+  return type;
+}
+
+GType
+gh_mls_identity_state_get_type(void)
+{
+  static gsize type = 0;
+  if (g_once_init_enter(&type)) {
+    static const GEnumValue values[] = {
+      { GH_MLS_IDENTITY_NOT_REQUIRED, "GH_MLS_IDENTITY_NOT_REQUIRED", "not-required" },
+      { GH_MLS_IDENTITY_NONE, "GH_MLS_IDENTITY_NONE", "none" },
+      { GH_MLS_IDENTITY_WAITING, "GH_MLS_IDENTITY_WAITING", "waiting" },
+      { GH_MLS_IDENTITY_ENROLLED, "GH_MLS_IDENTITY_ENROLLED", "enrolled" },
+      { GH_MLS_IDENTITY_DECLINED, "GH_MLS_IDENTITY_DECLINED", "declined" },
+      { GH_MLS_IDENTITY_FAILED, "GH_MLS_IDENTITY_FAILED", "failed" },
+      { 0, NULL, NULL }
+    };
+    g_once_init_leave(&type, g_enum_register_static(
+      g_intern_static_string("GhMlsIdentityState"), values));
   }
   return type;
 }
@@ -278,6 +302,15 @@ marmot_fail(GhMlsService *self, MarmotError err, const gchar *what, GError **err
   case MARMOT_ERR_OWN_COMMIT_PENDING: code = GH_MLS_SERVICE_ERROR_BUSY; break;
   case MARMOT_ERR_ADMIN_ONLY:
   case MARMOT_ERR_COMMIT_FROM_NON_ADMIN: code = GH_MLS_SERVICE_ERROR_NOT_ADMIN; break;
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+  case MARMOT_ERR_KEY_PACKAGE_IDENTITY:
+    /* An unproven leaf (MDK 0.8, libmarmot <= 0.9.0) in a KeyPackage, a
+     * Commit or a Welcome's tree (nostrc-7vyi). */
+    g_set_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NEEDS_UPDATE,
+                "%s: someone uses an app that can't prove their account yet; they need to "
+                "update it", what);
+    return FALSE;
+#endif
   default: break;
   }
   if (code)
@@ -299,6 +332,8 @@ running(GhMlsService *self)
 {
   return !self->disposed && self->generation != 0 && self->online;
 }
+
+static gboolean identity_ready(GhMlsService *self);
 
 static gint64
 now_s(GhMlsService *self)
@@ -1530,6 +1565,13 @@ gh_mls_service_create_group_async(GhMlsService *self, const gchar *name,
     g_object_unref(task);
     return;
   }
+  if (!identity_ready(self)) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NOT_ENROLLED,
+                            "Encrypted groups on this device wait for your signer to approve "
+                            "them");
+    g_object_unref(task);
+    return;
+  }
   if (!name || !*name || !g_utf8_validate(name, -1, NULL) ||
       (description && !g_utf8_validate(description, -1, NULL))) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -2568,6 +2610,141 @@ gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
   return TRUE;
 }
 
+/* ---- Account proof (libmarmot >= 0.10.0; review B2) --------------------------------------- */
+
+static void key_package_maybe_publish(GhMlsService *self);
+
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+static void
+identity_set_state(GhMlsService *self, GhMlsIdentityState state)
+{
+  if (self->identity == state)
+    return;
+  self->identity = state;
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_IDENTITY_STATE]);
+}
+#endif
+
+/* KeyPackages and new groups need the proof (libmarmot refuses them). */
+static gboolean
+identity_ready(GhMlsService *self)
+{
+  return self->identity == GH_MLS_IDENTITY_NOT_REQUIRED ||
+         self->identity == GH_MLS_IDENTITY_ENROLLED;
+}
+
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+typedef struct {
+  GWeakRef service;
+  guint64 run;
+  gchar *template_json;
+} IdentityJob;
+
+static void
+identity_job_free(IdentityJob *job)
+{
+  g_weak_ref_clear(&job->service);
+  g_free(job->template_json);
+  g_free(job);
+}
+
+/* The signer must return exactly the template, signed by the account. */
+static gboolean
+proof_matches(const gchar *template_json, const gchar *signed_json, const gchar *account)
+{
+  NostrEvent *want = nostr_event_new(), *got = nostr_event_new();
+  gboolean ok = want && got &&
+                nostr_event_deserialize_compact(want, template_json, NULL) == 1 &&
+                nostr_event_deserialize_compact(got, signed_json, NULL) == 1 &&
+                nostr_event_validate(got, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                nostr_event_get_kind(got) == nostr_event_get_kind(want) &&
+                g_strcmp0(nostr_event_get_pubkey(got), account) == 0 &&
+                g_strcmp0(nostr_event_get_content(got), nostr_event_get_content(want)) == 0;
+  if (want)
+    nostr_event_free(want);
+  if (got)
+    nostr_event_free(got);
+  return ok;
+}
+
+static void
+identity_signed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  IdentityJob *job = data;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *signed_json = gh_account_controller_sign_finish(result, &error);
+  g_autoptr(GhMlsService) self = g_weak_ref_get(&job->service);
+  if (!self || self->run != job->run || !running(self)) {
+    identity_job_free(job);
+    return;
+  }
+  self->identity_busy = FALSE;
+  if (!signed_json) {
+    /* Declined (or the signer failed): not asked again until the next start
+     * or generation, so a refusal is not a prompt storm. */
+    g_message("Groundhog's encrypted groups wait for the signer: %s", error->message);
+    identity_set_state(self, g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
+                               ? GH_MLS_IDENTITY_NONE : GH_MLS_IDENTITY_DECLINED);
+    identity_job_free(job);
+    return;
+  }
+  /* libmarmot checks it again; the template is local-only and never
+   * published. */
+  if (!proof_matches(job->template_json, signed_json, self->account) ||
+      marmot_set_account_proof(self->marmot, self->account_key, signed_json) != MARMOT_OK) {
+    drop_stale_error(self);
+    g_message("Groundhog's signer returned something other than the account proof");
+    identity_set_state(self, GH_MLS_IDENTITY_FAILED);
+    identity_job_free(job);
+    return;
+  }
+  identity_set_state(self, GH_MLS_IDENTITY_ENROLLED);
+  identity_job_free(job);
+  key_package_maybe_publish(self);
+}
+#endif
+
+/* Asks the signer for this start's account proof when it is missing. */
+static void
+identity_enroll(GhMlsService *self)
+{
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+  if (!running(self) || self->identity_busy || self->identity == GH_MLS_IDENTITY_ENROLLED)
+    return;
+  if (marmot_has_account_proof(self->marmot, self->account_key)) {
+    identity_set_state(self, GH_MLS_IDENTITY_ENROLLED);
+    return;
+  }
+  char *template_json = NULL;
+  if (marmot_account_proof_template(self->marmot, self->account_key, &template_json) !=
+        MARMOT_OK || !template_json) {
+    free(template_json);
+    drop_stale_error(self);
+    identity_set_state(self, GH_MLS_IDENTITY_FAILED);
+    return;
+  }
+  IdentityJob *job = g_new0(IdentityJob, 1);
+  g_weak_ref_init(&job->service, self);
+  job->run = self->run;
+  job->template_json = g_strdup(template_json);
+  free(template_json);
+  self->identity_busy = TRUE;
+  identity_set_state(self, GH_MLS_IDENTITY_WAITING);
+  gh_account_controller_sign_with_cancellable_async(self->accounts, job->template_json,
+                                                    self->cancellable, identity_signed, job);
+#else
+  (void)self;
+#endif
+}
+
+GhMlsIdentityState
+gh_mls_service_get_identity_state(GhMlsService *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), GH_MLS_IDENTITY_NONE);
+  return self->identity;
+}
+
 /* ---- KeyPackage (MIP-00) --------------------------------------------------------------- */
 
 static void
@@ -2711,7 +2888,7 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
 static void
 key_package_maybe_publish(GhMlsService *self)
 {
-  if (!running(self) || self->key_package_busy)
+  if (!running(self) || self->key_package_busy || !identity_ready(self))
     return;
   g_auto(GStrv) urls = own_relays(self);
   if (!urls[0]) {
@@ -2889,6 +3066,9 @@ stop_generation(GhMlsService *self)
     g_clear_pointer(&self->key_package_publish, gh_relay_publish_unref);
   }
   self->key_package_busy = FALSE;
+  self->identity_busy = FALSE;
+  if (self->identity == GH_MLS_IDENTITY_WAITING)
+    self->identity = GH_MLS_IDENTITY_NONE;   /* the request died with the run */
   g_hash_table_remove_all(self->deliveries);
   g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
                                                     "The account changed; the change stays "
@@ -2928,6 +3108,9 @@ update_activity(GhMlsService *self)
     return;
   }
   self->cancellable = g_cancellable_new();
+  if (self->identity == GH_MLS_IDENTITY_DECLINED || self->identity == GH_MLS_IDENTITY_FAILED)
+    self->identity = GH_MLS_IDENTITY_NONE;   /* a new generation asks again */
+  identity_enroll(self);
   for (guint i = 0; i < self->groups->len; i++)
     group_subscribe(g_ptr_array_index(self->groups, i));
   resume_all(self);
@@ -3143,6 +3326,7 @@ gh_mls_service_get_property(GObject *object, guint id, GValue *value, GParamSpec
   GhMlsService *self = GH_MLS_SERVICE(object);
   switch (id) {
   case PROP_KEY_PACKAGE_STATE: g_value_set_enum(value, self->key_package); break;
+  case PROP_IDENTITY_STATE: g_value_set_enum(value, self->identity); break;
   default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
 }
@@ -3158,6 +3342,10 @@ gh_mls_service_class_init(GhMlsServiceClass *klass)
     g_param_spec_enum("key-package-state", NULL, NULL, GH_TYPE_MLS_KEY_PACKAGE_STATE,
                       GH_MLS_KEY_PACKAGE_NONE,
                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+  props[PROP_IDENTITY_STATE] =
+    g_param_spec_enum("identity-state", NULL, NULL, GH_TYPE_MLS_IDENTITY_STATE,
+                      GH_MLS_IDENTITY_NONE,
+                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
   g_object_class_install_properties(object_class, N_PROPS, props);
   signals[SIGNAL_INVITE_RECEIVED] =
     g_signal_new("invite-received", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
@@ -3170,6 +3358,8 @@ gh_mls_service_class_init(GhMlsServiceClass *klass)
 static void
 gh_mls_service_init(GhMlsService *self)
 {
+  self->identity = GH_MLS_SERVICE_ACCOUNT_PROOF ? GH_MLS_IDENTITY_NONE
+                                                : GH_MLS_IDENTITY_NOT_REQUIRED;
   self->groups = g_ptr_array_new_with_free_func(g_object_unref);
   self->deliveries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, delivery_free);
 }
