@@ -4,7 +4,8 @@
 - **Branch reviewed:** `marmot/w20-identity-parent` at `ddc9dad1`, on `a15489c9` (origin, libmarmot 0.9.0)
 - **Review branch:** `marmot/w20-review`
 - **Date:** 2026-09-29
-- **Verdict:** **REQUEST CHANGES**. Blocking finding: **B1**. The identity binding itself is sound, and so is the retirement of the retained parent. B1 is about what the new join rule does to groups that already contain unproven leaves.
+- **Verdict (initial, at `ddc9dad1`):** **REQUEST CHANGES**. Blocking finding: **B1**. The identity binding itself is sound, and so is the retirement of the retained parent. B1 is about what the new join rule does to groups that already contain unproven leaves.
+- **Verdict (final, at `458f7a28`):** **APPROVED**. See "Final pass" at the end.
 
 **Commits**
 
@@ -232,3 +233,116 @@ The author's own list (six mutations per commit) is consistent with these.
 - file the migration bead (self-update adding a proof).
 
 **Can follow:** N1–N7. N2 needs an explicit product decision on MDK 0.8 interop in Gnostr's default mode.
+
+---
+
+## Final pass (2026-09-29): `71b3b4cf`, `ba18ba31`, `458f7a28`
+
+**Scope**
+- `71b3b4cf` (B1):
+  - the inviter applies the joiner's rule to the whole Welcome tree;
+  - `create_group` requires enrollment;
+  - Gnostr enrolls first;
+  - README corrected;
+  - migration via `marmot_group_account_proof_template()` plus the public `marmot_self_update()` (also nostrc-yd0q).
+- `ba18ba31` (N1): `marmot_process_welcome_from()` and its gobject binding; Gnostr passes the verified seal author.
+- `458f7a28` (N2, N3, N7): tests and documentation; nostrc-77pa filed.
+
+Scratch worktree: `/tmp/rr20f`, with an ASAN build dir. No code or beads changed.
+
+**Verdict: APPROVED.** B1 is closed. The new self-update and the explicit-sender Welcome API are sound. No regressions found.
+
+### B1: closed (repro rerun)
+
+My W20 repro was extended and rerun as a throwaway `test_commits` case. It uses unenrolled members in legacy mode to build a 0.9.0-shaped group of three (unproven creator Alice, admin; unproven Bob and Charlie), then switches everyone to the default.
+
+| Step | Result |
+|---|---|
+| Default mode, unenrolled `marmot_create_group` | `MARMOT_ERR_KEY_PACKAGE_IDENTITY`, no group |
+| Alice adds Dave (proven KeyPackage) to the upgraded group | **`MARMOT_ERR_KEY_PACKAGE_IDENTITY`**: no Commit, no Welcome, nothing pending, stored state byte-for-byte unchanged. **No ghost leaf.** |
+| `marmot_self_update` with a proof signed by Charlie, with Bob's *instance-key* template (another key), and with garbage | each `MARMOT_ERR_VALIDATION`: no Commit, nothing pending, state unchanged |
+| Each member: `marmot_group_account_proof_template` → sign → `marmot_self_update(proof)` | ok. A second `marmot_self_update` while pending → `MARMOT_ERR_OWN_COMMIT_PENDING`. Merged, and the other two apply it |
+| Afterwards | every leaf `MARMOT_LEAF_PROOF_VALID` |
+| Alice adds Dave | ok. Bob and Charlie apply it, Dave joins, messages flow among all four |
+
+**The inviter and joiner rules now agree.**
+- `marmot_tree_members_bound(post, UINT32_MAX, legacy)` in `add_members_impl` and `create_group_impl` requires a proof on every leaf but the inviter's own.
+- The joiner (`welcome_tree_bound`) runs the same function with only the GroupInfo signer exempt, and only when its identity is the Welcome's sender. The inviter is that signer, and the joiner's own leaf is proven by its KeyPackage.
+- So an Add the inviter publishes is always one its joiners accept.
+- The exemption is now a single leaf index, which closes W20's M2 by construction.
+
+**The README "Existing groups" is now accurate:**
+- in default mode the Add is refused;
+- the migration is a per-member proven self-update;
+- legacy mode on every member is the transition or MDK 0.8 option.
+
+**Gnostr** enrolls before `create_group` (`gn_marmot_service_ensure_account_proof_async`):
+- one coalesced signer request, with the waiting tasks failed or completed together;
+- a declined request surfaces as an error instead of creating an unproven group.
+
+### Public `marmot_self_update()`: sound
+
+- **The proof binds the new leaf's key.**
+  - `own_leaf_binding` reads our credential identity and our leaf's `signature_key` from the group tree.
+  - `marmot_account_proof_from_signed` accepts only that exact template, signed by that account.
+  - `path_commit_staged` puts the dictionary on the staged own leaf before `generate_update_path` copies it into the UpdatePath leaf, which is re-signed with the unchanged signature key. So the proof covers exactly the new leaf's key.
+  - The instance-key template (a different key) is refused (repro).
+  - Receivers verify it through `leaf_binding_check`: no proof → valid passes; a bad proof is always rejected.
+  - Mutation S1 (skip proof verification) fails the author's test "Bob's leaf with Charlie's signature".
+- **No state change on failure.**
+  - Every check runs on a loaded copy before `finish_local_commit`.
+  - The one write (`marmot_commit_stage_pending`, which re-runs `marmot_commit_authorize` on our own Commit) is inside `marmot_txn_begin`/`marmot_txn_end`.
+  - The repro confirms byte-identical state and nothing pending after each failure.
+- **Pending Commits.**
+  - `load_group_for_commit_ex` refuses with `MARMOT_ERR_OWN_COMMIT_PENDING` while one is pending.
+  - The self-update itself is staged as pending (publish, then merge or clear) and so goes through the existing race and tie-break logic.
+  - It is an ordinary Commit (no admin needed; `require_admin = false` only skips the admin check), so it cannot beat a privileged one.
+- **Note.** The self-update rotates the leaf encryption key and path keys but keeps the signature key: PCS for HPKE keys, not for the signing key. The API doc says so.
+
+### Explicit-sender Welcome API: safe
+
+- `marmot_process_welcome_from(…, sender_pubkey)` records the caller's seal author as `welcomer`.
+- A rumor naming a different `pubkey` fails with `MARMOT_ERR_AUTHOR_MISMATCH` and is recorded as failed. A rumor without one takes the caller's sender.
+- If a backend loses `welcomer`, the join falls back to the rumor pubkey, which was already checked equal (or is absent, in which case nothing is exempt), so it fails closed.
+- Gnostr now passes `unwrap_result->sender_pubkey` (the verified seal author) and skips the Welcome without it.
+- The gobject binding rejects a malformed sender hex.
+- Mutations A4 (ignore a rumor/seal mismatch) and A5 (trust the rumor over the seal) fail the author's tests.
+- The rumor-trusting `marmot_process_welcome()` remains, documented as second choice. Consider deprecating it.
+
+### Mutations (the author's tests alone, my repro removed)
+
+| # | Mutation | Result |
+|---|---|---|
+| A1 | `add_members` whole-tree check removed | **caught** ("Alice's Add of Dave") |
+| A2 | `create_group` whole-tree check removed | survives: redundant there (every invitee KeyPackage and the creator leaf are already required proven) |
+| A3 | `create_group` allows an unenrolled creator | **caught** |
+| A4 | `welcome_from` ignores a rumor/seal mismatch | **caught** |
+| A5 | `welcome_from` trusts the rumor over the seal | **caught** |
+| M2′ | the exemption covers every unproven leaf | **caught** |
+| M4 / M5 | the witness ignores the signature key / the identity and key (W20 N7) | **caught** ("another leaf key does not witness for Bob") |
+| S1 | self-update skips proof verification | **caught** |
+
+**N3.** The new test shows that two signer-only KeyPackages share the leaf key and that the second Add into one group is refused. It asserts only `!= MARMOT_OK`, so it does not pin *which* check refuses (nit).
+
+### Regressions
+
+None found.
+- The Groundhog store tests now enroll in their setup (test-only).
+- marmot-gobject gains `process_welcome_from_async`, additively.
+- ctest, the MDK and RFC interop vectors, ASAN and leaks are all clean (below).
+- Carried forward from W20, still non-blocking: N4–N6. N6 is the storage-level `secure_delete`/WAL caveat.
+
+### Verification (tip `458f7a28`)
+
+- **Build.** `cmake -S . -B /tmp/rr20f-build -G Ninja -DBUILD_GROUNDHOG=ON && ninja` ok.
+- **Tests.** `ctest -R 'marmot|mls|gnostr|groundhog-store' -j6`: **87 run; 86 passed, 1 skipped** (`groundhog-store-key-keyring`).
+- **ASAN+UBSAN** (RelWithDebInfo, `-fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-macro-redefined`): `ctest -R 'marmot|mls|groundhog-store-marmot'` **26/26 passed, 0 reports**, with my repro included.
+- **`leaks --atExit`: 0 leaks** in `test_commits` (with the repro), `test_ratchet_persist`, `test_mls_framing`, `test_mls_group`, `test_marmot_interop` (MDK vectors loaded), `test_protocol`, `test_storage_contract`, `test_storage`, `test_kp_profile` and `test_marmot_gobject`.
+
+### Recommendation
+
+**APPROVED** for merge. Follow-ups, none blocking:
+- nostrc-77pa: the live MDK 0.8 check;
+- deprecate `marmot_process_welcome()` in favour of `_from`;
+- pin the N3 test's error;
+- W20 N4–N6.
