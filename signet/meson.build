@@ -144,6 +144,11 @@ endif
 
 # External libs the monorepo stack pulls in (dylibs -> order-independent).
 in_tree_ext_deps = []
+# The monorepo's static NIP-46 archive uses Jansson independently of Signet's
+# selected JSON backend; link it when consuming those archives.
+if in_tree_found
+  in_tree_ext_deps += dependency('jansson', required: true)
+endif
 secp_dep = dependency('libsecp256k1', required: false)
 if not secp_dep.found()
   secp_dep = cc.find_library('secp256k1', dirs: extra_lib_dirs, required: false)
