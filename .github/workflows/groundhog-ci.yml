@@ -54,7 +54,7 @@ jobs:
             test-groundhog-relay-publish test-groundhog-relay-publish-wire \
             test-groundhog-nip29 test-groundhog-conversations test-groundhog-dm-inbox test-groundhog-store-key test-groundhog-store-key-keyring test-groundhog-store test-groundhog-store-sqlite \
             test-groundhog-store-marmot test-groundhog-store-conversations test-groundhog-outbox test-groundhog-conversation-list \
-            test-groundhog-account-store test-groundhog-conversation-view test-groundhog-link-policy test-groundhog-background
+            test-groundhog-account-store test-groundhog-conversation-view test-groundhog-link-policy test-groundhog-background test-groundhog-preferences
 
       - name: Require complete Groundhog test registration
         run: |
@@ -74,7 +74,7 @@ jobs:
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
               'groundhog-blueprint', 'groundhog-privacy-static', 'groundhog-store-key', 'groundhog-store-key-keyring', 'groundhog-store', 'groundhog-store-sqlite',
               'groundhog-store-marmot', 'groundhog-store-conversations', 'groundhog-outbox',
-              'groundhog-account-store', 'groundhog-conversation-view', 'groundhog-link-policy', 'groundhog-background', 'groundhog-background-gui', 'groundhog-background-desktop',
+              'groundhog-account-store', 'groundhog-conversation-view', 'groundhog-link-policy', 'groundhog-background', 'groundhog-background-gui', 'groundhog-background-desktop', 'groundhog-preferences',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))

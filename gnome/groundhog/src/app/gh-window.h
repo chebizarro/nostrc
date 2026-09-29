@@ -40,7 +40,8 @@ gboolean gh_window_get_content_visible(GhWindow *self);
 
 /* Adds app.quit and binds every accelerator of the shortcuts window to its
  * action on app (Ctrl+F, Alt+Up/Down and Ctrl+Page Up/Down, Ctrl+N, Ctrl+?,
- * Ctrl+W, Ctrl+Q). Call once, from the application's startup. */
+ * Ctrl+, for app.preferences, which gh-app-services.c adds, Ctrl+W, Ctrl+Q).
+ * Call once, from the application's startup. */
 void gh_window_setup_application(GtkApplication *app);
 
 G_END_DECLS

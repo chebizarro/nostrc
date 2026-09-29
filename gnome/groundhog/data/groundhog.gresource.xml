@@ -16,5 +16,6 @@
     <file>ui/gh-day-separator.ui</file>
     <file>ui/gh-delivery-details.ui</file>
     <file>ui/gh-shortcuts-window.ui</file>
+    <file>ui/gh-preferences-dialog.ui</file>
   </gresource>
 </gresources>

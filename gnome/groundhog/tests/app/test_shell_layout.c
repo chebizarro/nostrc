@@ -452,6 +452,7 @@ test_shortcuts_bound_and_listed(void)
     { "win.next-conversation", { "<Alt>Down", "<Control>Page_Down", NULL } },
     { "win.new-message", { "<Control>n", NULL } },
     { "win.show-help-overlay", { "<Control>question", NULL } },
+    { "app.preferences", { "<Control>comma", NULL } },
     { "window.close", { "<Control>w", NULL } },
     { "app.quit", { "<Control>q", NULL } },
   };

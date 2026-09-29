@@ -1,0 +1,440 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Preferences (privacy charter §7.11, G17), opened by app.preferences (Ctrl+,).
+// Every row is bound to one org.nostr.Groundhog key in gh-preferences-dialog.c,
+// which lists the key behind each row id; the defaults are the schema's
+// privacy-preserving ones (G01), and the copy says who learns what (§2.2, P9).
+// C removes the Tor choice and keeps the Tor address row hidden until G09's
+// transport exists (GROUNDHOG_HAVE_TOR): no fake support. The relay and server
+// rows, the account row's text and the deletion result are filled in from C.
+template $GhPreferencesDialog: Adw.PreferencesDialog {
+  Adw.PreferencesPage privacy_page {
+    name: "privacy";
+    title: _("Privacy");
+    icon-name: "preferences-system-privacy-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Notifications");
+
+      Adw.SwitchRow notifications_row {
+        title: _("Notifications");
+        subtitle: _("Tell me when new messages arrive");
+      }
+
+      // Explanations go in the footer: a subtitle would squeeze the value.
+      Adw.ComboRow notification_privacy_row {
+        title: _("Notification Content");
+        sensitive: bind notifications_row.active;
+
+        model: StringList {
+          strings [
+            _("Hidden"),
+            _("Sender Name"),
+            _("Sender and Message"),
+          ]
+        };
+      }
+
+      Adw.SwitchRow sound_row {
+        title: _("Sound");
+        sensitive: bind notifications_row.active;
+      }
+
+      Label {
+        label: _("Hidden notifications only say how many messages are new, not who sent them. Message requests are always hidden. On the lock screen, GNOME shows message details only if you allow it in Settings → Notifications.");
+        wrap: true;
+        xalign: 0;
+        margin-top: 12;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Web Content");
+      description: _("Nothing is loaded from the web unless you ask for it.");
+
+      Adw.SwitchRow remote_images_row {
+        title: _("Load Images in Messages");
+        subtitle: _("Without asking each time");
+      }
+
+      Adw.SwitchRow link_previews_row {
+        title: _("Link Previews");
+        subtitle: _("Without asking each time");
+      }
+
+      Adw.SwitchRow profile_pictures_row {
+        title: _("Load Profile Pictures");
+      }
+
+      Label {
+        label: _("Loading anything from the web shows your IP address to that website unless you use Tor.");
+        wrap: true;
+        xalign: 0;
+        margin-top: 12;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Conversations");
+
+      Adw.SwitchRow filter_unknown_senders_row {
+        title: _("Filter Unknown Senders");
+        subtitle: _("Messages from people you haven't accepted go to Message Requests, without notifications or profile lookups");
+      }
+
+      Adw.SwitchRow message_previews_row {
+        title: _("Show Message Previews in List");
+        subtitle: _("The latest message appears under each conversation");
+      }
+    }
+  }
+
+  Adw.PreferencesPage messages_page {
+    name: "messages";
+    title: _("Messages");
+    icon-name: "mail-unread-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Sending");
+
+      Adw.SwitchRow enter_sends_row {
+        title: _("Send with Enter");
+        subtitle: _("When off, Ctrl+Enter sends and Enter starts a new line");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Disappearing Messages");
+      description: _("Messages are deleted from this device when they expire, and relays are asked to delete them. Relays and other people's apps may not honour this.");
+
+      Adw.ComboRow disappearing_row {
+        title: _("Default Timer");
+        subtitle: _("For new conversations");
+
+        model: StringList {
+          strings [
+            _("Off"),
+            _("1 Day"),
+            _("1 Week"),
+            _("4 Weeks"),
+          ]
+        };
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("History");
+
+      Adw.ComboRow retention_row {
+        title: _("Keep Messages");
+        subtitle: _("Older messages are deleted from this device only");
+
+        model: StringList {
+          strings [
+            _("Forever"),
+            _("1 Year"),
+            _("30 Days"),
+          ]
+        };
+      }
+    }
+  }
+
+  Adw.PreferencesPage network_page {
+    name: "network";
+    title: _("Network");
+    icon-name: "network-workgroup-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Connection");
+
+      Adw.ComboRow network_mode_row {
+        title: _("Connection");
+
+        // The last item is removed from C until G09 lands.
+        model: StringList {
+          strings [
+            _("System Settings"),
+            _("No Proxy"),
+            _("Tor"),
+          ]
+        };
+      }
+
+      Adw.EntryRow tor_address_row {
+        title: _("Tor Proxy Address");
+        visible: false;
+        show-apply-button: true;
+      }
+
+      Label tor_address_error {
+        visible: false;
+        wrap: true;
+        xalign: 0;
+        margin-top: 12;
+
+        styles [
+          "error",
+          "caption",
+        ]
+      }
+
+      // Until G09: relay connections ignore every proxy setting (charter §0.3, §4.1).
+      Label proxy_note {
+        label: _("Groundhog doesn't use proxy settings yet: it connects to relays directly, so relays and your network can see your IP address.");
+        wrap: true;
+        xalign: 0;
+        margin-top: 12;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+
+      // With G09: what Tor changes and what it doesn't (charter §2.2, surface 5).
+      Label tor_note {
+        label: _("Tor hides your IP address from relays, and which relays you use from your network. Relays still see your account when you sign in to your own inbox.");
+        visible: false;
+        wrap: true;
+        xalign: 0;
+        margin-top: 12;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Discovery Relays");
+      description: _("Groundhog asks these relays for your own relay lists. None are set by default, so Groundhog contacts no relay until you add one. They can see your IP address and which accounts you look up.");
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+
+        ListBox discovery_list {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          accessibility {
+            label: _("Discovery relays");
+          }
+
+          [placeholder]
+          Label {
+            label: _("No discovery relays");
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+
+        ListBox {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          Adw.EntryRow discovery_entry {
+            title: _("Add Relay");
+            show-apply-button: true;
+            input-purpose: url;
+          }
+        }
+
+        Label discovery_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+
+          styles [
+            "error",
+            "caption",
+          ]
+        }
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Attachment Servers");
+      description: _("Encrypted attachments are stored on these servers. None are set by default, and sending attachments isn't available in this version yet. A server can see your IP address, when you upload or download, and the size of each file.");
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+
+        ListBox blossom_list {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          accessibility {
+            label: _("Attachment servers");
+          }
+
+          [placeholder]
+          Label {
+            label: _("No attachment servers");
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+
+        ListBox {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          Adw.EntryRow blossom_entry {
+            title: _("Add Server");
+            show-apply-button: true;
+            input-purpose: url;
+          }
+        }
+
+        Label blossom_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+
+          styles [
+            "error",
+            "caption",
+          ]
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesPage account_page {
+    name: "account";
+    title: _("Account");
+    icon-name: "avatar-default-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Account");
+
+      Adw.ActionRow no_account_row {
+        title: _("No Account Selected");
+        subtitle: _("Choose an account from the account menu");
+      }
+
+      // Title (name or short npub) and subtitle (npub) are set from C.
+      Adw.ActionRow account_row {
+        visible: false;
+        use-markup: false;
+        subtitle-selectable: true;
+
+        [prefix]
+        Adw.Avatar account_avatar {
+          size: 32;
+          show-initials: true;
+        }
+      }
+
+      Adw.ComboRow signer_row {
+        title: _("Signer");
+
+        model: StringList {
+          strings [
+            _("Automatic"),
+            _("Nostr Signer"),
+            _("Nostr Signer (NIP-55L)"),
+            _("Remote Signer (NIP-46)"),
+          ]
+        };
+      }
+
+      Label {
+        label: _("Your private key stays in Nostr Signer. Remote signers (NIP-46) aren't supported yet: choosing one makes Groundhog read-only.");
+        wrap: true;
+        xalign: 0;
+        margin-top: 12;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Background");
+
+      Adw.SwitchRow run_in_background_row {
+        title: _("Receive Messages When Closed");
+        subtitle: _("Groundhog keeps running after its window is closed; Quit stops it");
+      }
+    }
+
+    // Shown only with an active account and the encrypted store (charter §3.8).
+    Adw.PreferencesGroup delete_group {
+      title: _("This Device");
+      description: _("Groundhog keeps your messages on this device only. Private messages can be downloaded again from your relays with your key; encrypted group history can't.");
+      visible: false;
+
+      Adw.ActionRow delete_all_row {
+        title: _("Delete All Messages on This Device");
+        subtitle: _("Also signs out of this account here");
+        activatable-widget: delete_all_button;
+
+        [suffix]
+        Button delete_all_button {
+          label: _("Delete…");
+          valign: center;
+          action-name: "prefs.delete-all";
+
+          styles [
+            "destructive-action",
+          ]
+        }
+      }
+    }
+  }
+}
+
+// Confirmation for prefs.delete-all: the account store's forget (ST-8).
+Adw.AlertDialog delete_all_dialog {
+  heading: _("Delete All Messages on This Device?");
+  body: _("Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Nostr Signer, and Gnostr isn't affected.\n\nCopies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't.");
+  default-response: "cancel";
+  close-response: "cancel";
+
+  responses [
+    cancel: _("_Cancel"),
+    delete: _("_Delete and Sign Out") destructive,
+  ]
+}

@@ -27,6 +27,8 @@ static const struct {
   { "win.next-conversation", { "<Alt>Down", "<Control>Page_Down", NULL } },
   { "win.new-message", { "<Control>n", NULL } },
   { "win.show-help-overlay", { "<Control>question", NULL } },
+  /* Installed by gh-app-services.c (G17), which owns the services it shows. */
+  { "app.preferences", { "<Control>comma", NULL } },
   { "window.close", { "<Control>w", NULL } },
   { "app.quit", { "<Control>q", NULL } },
 };

@@ -1,0 +1,861 @@
+#include "gh-preferences-dialog.h"
+
+#include <glib/gi18n.h>
+#include <string.h>
+
+/* A relay scope takes at most 16 URLs (gh-relay-scope.h); the attachment
+ * server list gets the same bound. */
+#define GH_PREFERENCES_MAX_URLS 16
+
+typedef enum {
+  BINDING_CHOICE,  /* AdwComboRow <-> one of a fixed list of values */
+  BINDING_LIST,    /* GtkListBox of URLs + AdwEntryRow to add one <-> as */
+  BINDING_ADDRESS, /* AdwEntryRow, written on apply <-> s */
+} BindingKind;
+
+typedef struct {
+  BindingKind kind;
+  GhPreferencesDialog *self; /* borrowed: the dialog owns its bindings */
+  const gchar *key;
+  gboolean syncing;
+  /* BINDING_CHOICE */
+  AdwComboRow *row;
+  GtkStringList *model;       /* the row's model: the choices, then any custom item */
+  GPtrArray *values;          /* GVariant, one per choice */
+  gboolean has_custom;        /* the key holds a value no choice has */
+  gchar *(*custom_label)(GVariant *value);
+  /* BINDING_LIST and BINDING_ADDRESS */
+  AdwEntryRow *entry;
+  GtkLabel *error;
+  GtkListBox *list;           /* BINDING_LIST */
+  GtkStringList *urls;        /* BINDING_LIST: the key's value, bound to list */
+  gchar *(*normalize)(const gchar *text, gboolean allow_onion, GError **error);
+} Binding;
+
+struct _GhPreferencesDialog {
+  AdwPreferencesDialog parent_instance;
+
+  AdwSwitchRow *notifications_row;
+  AdwComboRow *notification_privacy_row;
+  AdwSwitchRow *sound_row;
+  AdwSwitchRow *remote_images_row;
+  AdwSwitchRow *link_previews_row;
+  AdwSwitchRow *profile_pictures_row;
+  AdwSwitchRow *filter_unknown_senders_row;
+  AdwSwitchRow *message_previews_row;
+  AdwSwitchRow *enter_sends_row;
+  AdwComboRow *disappearing_row;
+  AdwComboRow *retention_row;
+  AdwComboRow *network_mode_row;
+  AdwEntryRow *tor_address_row;
+  GtkLabel *tor_address_error;
+  GtkLabel *proxy_note;
+  GtkLabel *tor_note;
+  GtkListBox *discovery_list;
+  AdwEntryRow *discovery_entry;
+  GtkLabel *discovery_error;
+  GtkListBox *blossom_list;
+  AdwEntryRow *blossom_entry;
+  GtkLabel *blossom_error;
+  AdwActionRow *no_account_row;
+  AdwActionRow *account_row;
+  AdwAvatar *account_avatar;
+  AdwComboRow *signer_row;
+  AdwSwitchRow *run_in_background_row;
+  AdwPreferencesGroup *delete_group;
+  AdwAlertDialog *delete_all_dialog;
+
+  GSettings *settings;
+  gboolean tor_available;
+  GHashTable *key_widgets; /* key -> borrowed widget */
+  GPtrArray *bindings;     /* Binding */
+  gulong settings_changed;
+  gchar *account_npub;
+  GhPreferencesForgetAsyncFunc forget_async;
+  GhPreferencesForgetFinishFunc forget_finish;
+  GObject *forget_target;
+  gboolean forgetting;
+  gboolean disposed; /* template children are gone; a forget may still finish */
+};
+
+G_DEFINE_FINAL_TYPE(GhPreferencesDialog, gh_preferences_dialog, ADW_TYPE_PREFERENCES_DIALOG)
+
+enum { PROP_0, PROP_SETTINGS, PROP_TOR_AVAILABLE, N_PROPS };
+static GParamSpec *properties[N_PROPS];
+
+/* The boolean keys and their switch rows. */
+static const struct {
+  const gchar *key;
+  gsize offset;
+} switch_rows[] = {
+  { "notifications-enabled", G_STRUCT_OFFSET(GhPreferencesDialog, notifications_row) },
+  { "sound-enabled", G_STRUCT_OFFSET(GhPreferencesDialog, sound_row) },
+  { "load-remote-images", G_STRUCT_OFFSET(GhPreferencesDialog, remote_images_row) },
+  { "link-previews", G_STRUCT_OFFSET(GhPreferencesDialog, link_previews_row) },
+  { "load-profile-pictures", G_STRUCT_OFFSET(GhPreferencesDialog, profile_pictures_row) },
+  { "filter-unknown-senders",
+    G_STRUCT_OFFSET(GhPreferencesDialog, filter_unknown_senders_row) },
+  { "show-message-previews", G_STRUCT_OFFSET(GhPreferencesDialog, message_previews_row) },
+  { "enter-sends", G_STRUCT_OFFSET(GhPreferencesDialog, enter_sends_row) },
+  { "run-in-background", G_STRUCT_OFFSET(GhPreferencesDialog, run_in_background_row) },
+};
+
+/* ---- URL rules ---------------------------------------------------------------- */
+
+static gboolean
+host_is_loopback(const gchar *host)
+{
+  if (g_str_equal(host, "localhost"))
+    return TRUE;
+  g_autoptr(GInetAddress) address = g_inet_address_new_from_string(host);
+  return address && g_inet_address_get_is_loopback(address);
+}
+
+static gpointer
+invalid(GError **error, const gchar *message)
+{
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, message);
+  return NULL;
+}
+
+/* secure is the required scheme; plain (its unencrypted twin) is allowed only
+ * for loopback when plain_loopback, or for a .onion host when allow_onion. */
+static gchar *
+normalize_url(const gchar *text, const gchar *secure, const gchar *plain,
+              gboolean plain_loopback, gboolean allow_onion, const gchar *scheme_message,
+              const gchar *plain_message, GError **error)
+{
+  g_autofree gchar *trimmed = g_strstrip(g_strdup(text ? text : ""));
+  if (!*trimmed)
+    return invalid(error, scheme_message);
+  g_autoptr(GUri) uri = g_uri_parse(trimmed, G_URI_FLAGS_NONE, NULL);
+  const gchar *scheme = uri ? g_uri_get_scheme(uri) : NULL;
+  if (g_strcmp0(scheme, secure) != 0 && g_strcmp0(scheme, plain) != 0)
+    return invalid(error, scheme_message);
+  if (g_uri_get_userinfo(uri))
+    return invalid(error, _("Addresses can't contain a user name or password"));
+  const gchar *raw_host = g_uri_get_host(uri);
+  if (!raw_host || !*raw_host)
+    return invalid(error, _("The address has no host name"));
+  if (g_uri_get_query(uri) || g_uri_get_fragment(uri))
+    return invalid(error, _("Addresses can't contain “?” or “#” parts"));
+  g_autofree gchar *host = g_ascii_strdown(raw_host, -1);
+  if (g_str_equal(scheme, plain) && !(plain_loopback && host_is_loopback(host)) &&
+      !(allow_onion && g_str_has_suffix(host, ".onion")))
+    return invalid(error, plain_message);
+  g_autofree gchar *path = g_strdup(g_uri_get_path(uri));
+  gsize len = strlen(path);
+  while (len > 0 && path[len - 1] == '/')
+    path[--len] = '\0';
+  return g_uri_join(G_URI_FLAGS_NONE, scheme, NULL, host, g_uri_get_port(uri), path, NULL,
+                    NULL);
+}
+
+gchar *
+gh_preferences_normalize_relay_url(const gchar *url, gboolean allow_onion, GError **error)
+{
+  return normalize_url(
+    url, "wss", "ws", TRUE, allow_onion, _("Relay addresses start with wss://"),
+    _("Use a wss:// address: unencrypted ws:// is only allowed for this computer"), error);
+}
+
+gchar *
+gh_preferences_normalize_server_url(const gchar *url, gboolean allow_onion, GError **error)
+{
+  return normalize_url(url, "https", "http", FALSE, allow_onion,
+                       _("Server addresses start with https://"),
+                       _("Use an https:// address: unencrypted http:// isn't allowed"), error);
+}
+
+gboolean
+gh_preferences_validate_socks_address(const gchar *address, GError **error)
+{
+  g_autofree gchar *trimmed = g_strstrip(g_strdup(address ? address : ""));
+  g_autoptr(GSocketConnectable) parsed =
+    *trimmed && !strstr(trimmed, "://") ? g_network_address_parse(trimmed, 0, NULL) : NULL;
+  if (!parsed || g_network_address_get_port(G_NETWORK_ADDRESS(parsed)) == 0 ||
+      !*g_network_address_get_hostname(G_NETWORK_ADDRESS(parsed))) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        _("Enter the Tor proxy as host:port, such as 127.0.0.1:9050"));
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* ---- helpers ---------------------------------------------------------------------- */
+
+/* Sets an apply-button entry's text without offering to apply it. */
+static void
+entry_set_text_quietly(AdwEntryRow *entry, const gchar *text)
+{
+  adw_entry_row_set_show_apply_button(entry, FALSE);
+  gtk_editable_set_text(GTK_EDITABLE(entry), text);
+  adw_entry_row_set_show_apply_button(entry, TRUE);
+}
+
+static void
+show_entry_error(Binding *binding, const gchar *message)
+{
+  gtk_label_set_text(binding->error, message);
+  gtk_widget_set_visible(GTK_WIDGET(binding->error), TRUE);
+  gtk_widget_add_css_class(GTK_WIDGET(binding->entry), "error");
+  gtk_accessible_update_property(GTK_ACCESSIBLE(binding->entry),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, message, -1);
+  gtk_accessible_announce(GTK_ACCESSIBLE(binding->entry), message,
+                          GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+}
+
+static void
+clear_entry_error(Binding *binding)
+{
+  if (!gtk_widget_get_visible(GTK_WIDGET(binding->error)))
+    return;
+  gtk_widget_set_visible(GTK_WIDGET(binding->error), FALSE);
+  gtk_widget_remove_css_class(GTK_WIDGET(binding->entry), "error");
+  gtk_accessible_reset_property(GTK_ACCESSIBLE(binding->entry),
+                                GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
+}
+
+static void
+binding_free(gpointer data)
+{
+  Binding *binding = data;
+  g_clear_pointer(&binding->values, g_ptr_array_unref);
+  g_clear_object(&binding->urls);
+  g_free(binding);
+}
+
+static Binding *
+add_binding(GhPreferencesDialog *self, BindingKind kind, const gchar *key, GtkWidget *widget)
+{
+  Binding *binding = g_new0(Binding, 1);
+  binding->kind = kind;
+  binding->self = self;
+  binding->key = key;
+  g_ptr_array_add(self->bindings, binding);
+  g_hash_table_insert(self->key_widgets, (gpointer)key, widget);
+  return binding;
+}
+
+/* ---- choice rows ------------------------------------------------------------------ */
+
+static void
+choice_sync(Binding *binding)
+{
+  g_autoptr(GVariant) value = g_settings_get_value(binding->self->settings, binding->key);
+  guint n_choices = binding->values->len;
+  guint index = GTK_INVALID_LIST_POSITION;
+  for (guint i = 0; i < n_choices && index == GTK_INVALID_LIST_POSITION; i++)
+    if (g_variant_equal(g_ptr_array_index(binding->values, i), value))
+      index = i;
+  binding->syncing = TRUE;
+  if (index == GTK_INVALID_LIST_POSITION) {
+    g_autofree gchar *label = binding->custom_label(value);
+    const gchar *const additions[] = { label, NULL };
+    gtk_string_list_splice(binding->model, n_choices, binding->has_custom ? 1 : 0, additions);
+    binding->has_custom = TRUE;
+    index = n_choices;
+  } else if (binding->has_custom) {
+    gtk_string_list_remove(binding->model, n_choices);
+    binding->has_custom = FALSE;
+  }
+  adw_combo_row_set_selected(binding->row, index);
+  binding->syncing = FALSE;
+}
+
+static void
+on_choice_selected(AdwComboRow *row, GParamSpec *pspec, Binding *binding)
+{
+  (void)pspec;
+  if (binding->syncing)
+    return;
+  guint index = adw_combo_row_get_selected(row);
+  /* The custom item only shows the key's value; choosing it changes nothing. */
+  if (index >= binding->values->len)
+    return;
+  if (!g_settings_set_value(binding->self->settings, binding->key,
+                            g_ptr_array_index(binding->values, index)))
+    choice_sync(binding); /* not writable: show the value it kept */
+}
+
+/* values: floating or not, one per item of the row's GtkStringList model. */
+static void
+bind_choice(GhPreferencesDialog *self, AdwComboRow *row, const gchar *key,
+            GVariant *const *values, guint n_values, gchar *(*custom_label)(GVariant *value))
+{
+  Binding *binding = add_binding(self, BINDING_CHOICE, key, GTK_WIDGET(row));
+  binding->row = row;
+  binding->model = GTK_STRING_LIST(adw_combo_row_get_model(row));
+  binding->custom_label = custom_label;
+  binding->values = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
+  for (guint i = 0; i < n_values; i++)
+    g_ptr_array_add(binding->values, g_variant_ref_sink(values[i]));
+  g_return_if_fail(g_list_model_get_n_items(G_LIST_MODEL(binding->model)) == n_values);
+  choice_sync(binding);
+  g_signal_connect(row, "notify::selected", G_CALLBACK(on_choice_selected), binding);
+}
+
+/* A value set outside Groundhog that no choice has: shown as it is. */
+static gchar *
+unsupported_label(GVariant *value)
+{
+  if (!g_variant_is_of_type(value, G_VARIANT_TYPE_STRING)) {
+    g_autofree gchar *text = g_variant_print(value, FALSE);
+    return g_strdup_printf(_("Unsupported (%s)"), text);
+  }
+  const gchar *text = g_variant_get_string(value, NULL);
+  if (g_str_equal(text, "tor")) /* network-mode without G09 */
+    return g_strdup(_("Tor (not available in this version)"));
+  return g_strdup_printf(_("Unsupported (“%s”)"), text);
+}
+
+static gchar *
+days_label(GVariant *value)
+{
+  gint32 days = g_variant_get_int32(value);
+  if (days < 0)
+    return unsupported_label(value);
+  return g_strdup_printf(ngettext("%d Day", "%d Days", days), days);
+}
+
+static gchar *
+duration_label(GVariant *value)
+{
+  gint32 seconds = g_variant_get_int32(value);
+  if (seconds <= 0)
+    return unsupported_label(value);
+  if (seconds % 86400 == 0)
+    return g_strdup_printf(ngettext("%d Day", "%d Days", seconds / 86400), seconds / 86400);
+  if (seconds % 3600 == 0)
+    return g_strdup_printf(ngettext("%d Hour", "%d Hours", seconds / 3600), seconds / 3600);
+  if (seconds % 60 == 0)
+    return g_strdup_printf(ngettext("%d Minute", "%d Minutes", seconds / 60), seconds / 60);
+  return g_strdup_printf(ngettext("%d Second", "%d Seconds", seconds), seconds);
+}
+
+/* ---- URL lists ---------------------------------------------------------------------- */
+
+static void
+on_remove_url(GtkButton *button, Binding *binding)
+{
+  const gchar *url = g_object_get_data(G_OBJECT(button), "gh-url");
+  g_auto(GStrv) current = g_settings_get_strv(binding->self->settings, binding->key);
+  g_autoptr(GStrvBuilder) kept = g_strv_builder_new();
+  for (guint i = 0; current[i]; i++)
+    if (!g_str_equal(current[i], url))
+      g_strv_builder_add(kept, current[i]);
+  g_auto(GStrv) urls = g_strv_builder_end(kept);
+  g_settings_set_strv(binding->self->settings, binding->key, (const gchar *const *)urls);
+}
+
+static GtkWidget *
+create_url_row(gpointer item, gpointer data)
+{
+  Binding *binding = data;
+  const gchar *url = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+  GtkWidget *row = adw_action_row_new();
+  adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), url);
+  adw_preferences_row_set_title_selectable(ADW_PREFERENCES_ROW(row), TRUE);
+
+  GtkWidget *remove = gtk_button_new_from_icon_name("user-trash-symbolic");
+  g_autofree gchar *label = g_strdup_printf(_("Remove %s"), url);
+  gtk_widget_set_valign(remove, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class(remove, "flat");
+  gtk_widget_set_tooltip_text(remove, _("Remove"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(remove), GTK_ACCESSIBLE_PROPERTY_LABEL, label,
+                                 -1);
+  g_object_set_data_full(G_OBJECT(remove), "gh-url", g_strdup(url), g_free);
+  g_signal_connect(remove, "clicked", G_CALLBACK(on_remove_url), binding);
+  adw_action_row_add_suffix(ADW_ACTION_ROW(row), remove);
+  return row;
+}
+
+static void
+list_sync(Binding *binding)
+{
+  g_auto(GStrv) urls = g_settings_get_strv(binding->self->settings, binding->key);
+  GListModel *model = G_LIST_MODEL(binding->urls);
+  guint n = g_list_model_get_n_items(model);
+  gboolean same = n == g_strv_length(urls);
+  for (guint i = 0; same && i < n; i++)
+    same = g_str_equal(gtk_string_list_get_string(binding->urls, i), urls[i]);
+  if (!same) /* rebuilding the rows would move keyboard focus for nothing */
+    gtk_string_list_splice(binding->urls, 0, n, (const gchar *const *)urls);
+}
+
+static gboolean
+list_contains(Binding *binding, gchar **urls, const gchar *url)
+{
+  for (guint i = 0; urls[i]; i++) {
+    g_autofree gchar *normalized = binding->normalize(urls[i], TRUE, NULL);
+    if (g_str_equal(normalized ? normalized : urls[i], url))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static void
+on_list_apply(AdwEntryRow *entry, Binding *binding)
+{
+  g_autoptr(GError) error = NULL;
+  GhPreferencesDialog *self = binding->self;
+  g_autofree gchar *url =
+    binding->normalize(gtk_editable_get_text(GTK_EDITABLE(entry)), self->tor_available, &error);
+  if (!url) {
+    show_entry_error(binding, error->message);
+    return;
+  }
+  g_auto(GStrv) current = g_settings_get_strv(self->settings, binding->key);
+  if (list_contains(binding, current, url)) {
+    show_entry_error(binding, _("This address is already in the list"));
+    return;
+  }
+  if (g_strv_length(current) >= GH_PREFERENCES_MAX_URLS) {
+    g_autofree gchar *message =
+      g_strdup_printf(ngettext("Groundhog uses at most %d address here",
+                               "Groundhog uses at most %d addresses here",
+                               GH_PREFERENCES_MAX_URLS), GH_PREFERENCES_MAX_URLS);
+    show_entry_error(binding, message);
+    return;
+  }
+  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+  g_strv_builder_addv(builder, (const gchar **)current);
+  g_strv_builder_add(builder, url);
+  g_auto(GStrv) urls = g_strv_builder_end(builder);
+  if (!g_settings_set_strv(self->settings, binding->key, (const gchar *const *)urls)) {
+    show_entry_error(binding, _("This setting can't be changed"));
+    return;
+  }
+  clear_entry_error(binding);
+  entry_set_text_quietly(entry, "");
+}
+
+static void
+on_entry_changed(GtkEditable *editable, Binding *binding)
+{
+  (void)editable;
+  clear_entry_error(binding);
+}
+
+static void
+bind_list(GhPreferencesDialog *self, const gchar *key, GtkListBox *list, AdwEntryRow *entry,
+          GtkLabel *error, gchar *(*normalize)(const gchar *, gboolean, GError **))
+{
+  Binding *binding = add_binding(self, BINDING_LIST, key, GTK_WIDGET(list));
+  binding->list = list;
+  binding->entry = entry;
+  binding->error = error;
+  binding->normalize = normalize;
+  binding->urls = gtk_string_list_new(NULL);
+  gtk_list_box_bind_model(list, G_LIST_MODEL(binding->urls), create_url_row, binding, NULL);
+  list_sync(binding);
+  g_signal_connect(entry, "apply", G_CALLBACK(on_list_apply), binding);
+  g_signal_connect(entry, "changed", G_CALLBACK(on_entry_changed), binding);
+}
+
+/* ---- Tor address ------------------------------------------------------------------- */
+
+static void
+address_sync(Binding *binding)
+{
+  g_autofree gchar *address = g_settings_get_string(binding->self->settings, binding->key);
+  clear_entry_error(binding);
+  entry_set_text_quietly(binding->entry, address);
+}
+
+static void
+on_address_apply(AdwEntryRow *entry, Binding *binding)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *address = g_strstrip(g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry))));
+  if (!gh_preferences_validate_socks_address(address, &error)) {
+    show_entry_error(binding, error->message);
+    return;
+  }
+  if (!g_settings_set_string(binding->self->settings, binding->key, address))
+    show_entry_error(binding, _("This setting can't be changed"));
+}
+
+static void
+bind_address(GhPreferencesDialog *self, const gchar *key, AdwEntryRow *entry, GtkLabel *error)
+{
+  Binding *binding = add_binding(self, BINDING_ADDRESS, key, GTK_WIDGET(entry));
+  binding->entry = entry;
+  binding->error = error;
+  address_sync(binding);
+  g_signal_connect(entry, "apply", G_CALLBACK(on_address_apply), binding);
+  g_signal_connect(entry, "changed", G_CALLBACK(on_entry_changed), binding);
+}
+
+/* ---- network, account, delete ----------------------------------------------------- */
+
+/* Tor rows exist only with G09 (charter §7.11: no fake support). */
+static void
+sync_network(GhPreferencesDialog *self)
+{
+  g_autofree gchar *mode = g_settings_get_string(self->settings, "network-mode");
+  gboolean tor = self->tor_available && g_str_equal(mode, "tor");
+  gtk_widget_set_visible(GTK_WIDGET(self->tor_address_row), tor);
+  if (!tor)
+    gtk_widget_set_visible(GTK_WIDGET(self->tor_address_error), FALSE);
+  gtk_widget_set_visible(GTK_WIDGET(self->tor_note), self->tor_available);
+  gtk_widget_set_visible(GTK_WIDGET(self->proxy_note), !self->tor_available);
+}
+
+static void
+on_settings_changed(GSettings *settings, const gchar *key, GhPreferencesDialog *self)
+{
+  (void)settings;
+  for (guint i = 0; i < self->bindings->len; i++) {
+    Binding *binding = g_ptr_array_index(self->bindings, i);
+    if (!g_str_equal(binding->key, key))
+      continue;
+    switch (binding->kind) {
+    case BINDING_CHOICE:
+      choice_sync(binding);
+      break;
+    case BINDING_LIST:
+      list_sync(binding);
+      break;
+    case BINDING_ADDRESS:
+      address_sync(binding);
+      break;
+    default:
+      g_assert_not_reached();
+    }
+  }
+  if (g_str_equal(key, "network-mode"))
+    sync_network(self);
+}
+
+static gboolean
+can_delete(GhPreferencesDialog *self)
+{
+  return self->account_npub && self->forget_async && !self->forgetting;
+}
+
+static void
+sync_delete(GhPreferencesDialog *self)
+{
+  gtk_widget_set_visible(GTK_WIDGET(self->delete_group),
+                         self->account_npub && self->forget_async);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.delete-all", can_delete(self));
+}
+
+typedef struct {
+  GhPreferencesDialog *self;
+  GObject *target;
+  GhPreferencesForgetFinishFunc finish;
+} ForgetOp;
+
+static void
+forget_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  ForgetOp *op = data;
+  GhPreferencesDialog *self = op->self;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *message = NULL;
+  (void)source;
+  gboolean done = op->finish(op->target, result, &error);
+  self->forgetting = FALSE;
+  if (self->disposed) { /* e.g. the window was destroyed at quit */
+    if (!done)
+      g_message("Groundhog could not delete all messages: %s", error->message);
+    goto out;
+  }
+  adw_dialog_set_can_close(ADW_DIALOG(self), TRUE);
+  sync_delete(self);
+  message = done ? g_strdup(_("All messages of the account were deleted from this device"))
+                 : g_strdup_printf(_("Couldn't delete all messages: %s"), error->message);
+  adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(message));
+  gtk_accessible_announce(GTK_ACCESSIBLE(self), message,
+                          done ? GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM
+                               : GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
+out:
+  g_object_unref(op->target);
+  g_object_unref(op->self);
+  g_free(op);
+}
+
+static void
+on_delete_all_response(AdwAlertDialog *dialog, const gchar *response, GhPreferencesDialog *self)
+{
+  (void)dialog;
+  if (g_strcmp0(response, "delete") != 0 || !can_delete(self))
+    return;
+  ForgetOp *op = g_new0(ForgetOp, 1);
+  op->self = g_object_ref(self);
+  op->target = g_object_ref(self->forget_target);
+  op->finish = self->forget_finish;
+  self->forgetting = TRUE;
+  /* The user confirmed: the deletion runs to its end, so the dialog stays
+   * open to report it. */
+  adw_dialog_set_can_close(ADW_DIALOG(self), FALSE);
+  sync_delete(self);
+  self->forget_async(op->target, self->account_npub, NULL, forget_done, op);
+}
+
+static void
+delete_all_activated(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(widget);
+  (void)action;
+  (void)parameter;
+  if (can_delete(self))
+    adw_dialog_present(ADW_DIALOG(self->delete_all_dialog), widget);
+}
+
+static gchar *
+short_npub(const gchar *npub)
+{
+  gsize len = strlen(npub);
+  return len > 16 ? g_strdup_printf("%.10s…%s", npub, npub + len - 6) : g_strdup(npub);
+}
+
+/* ---- public ----------------------------------------------------------------------- */
+
+void
+gh_preferences_dialog_set_account(GhPreferencesDialog *self, const gchar *npub,
+                                  const gchar *label)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  if (self->disposed)
+    return;
+  g_free(self->account_npub);
+  self->account_npub = npub && *npub ? g_strdup(npub) : NULL;
+  gboolean active = self->account_npub != NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->no_account_row), !active);
+  gtk_widget_set_visible(GTK_WIDGET(self->account_row), active);
+  if (active) {
+    g_autofree gchar *title = label && *label ? g_strdup(label) : short_npub(npub);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->account_row), title);
+    adw_action_row_set_subtitle(self->account_row, npub);
+    adw_avatar_set_text(self->account_avatar, title);
+  }
+  sync_delete(self);
+}
+
+void
+gh_preferences_dialog_set_forget_func(GhPreferencesDialog *self,
+                                      GhPreferencesForgetAsyncFunc forget_async,
+                                      GhPreferencesForgetFinishFunc forget_finish,
+                                      GObject *target)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  g_return_if_fail((forget_async == NULL) == (forget_finish == NULL));
+  g_return_if_fail(!forget_async || G_IS_OBJECT(target));
+  if (self->disposed)
+    return;
+  self->forget_async = forget_async;
+  self->forget_finish = forget_finish;
+  g_set_object(&self->forget_target, forget_async ? target : NULL);
+  sync_delete(self);
+}
+
+GtkWidget *
+gh_preferences_dialog_get_key_widget(GhPreferencesDialog *self, const gchar *key)
+{
+  g_return_val_if_fail(GH_IS_PREFERENCES_DIALOG(self), NULL);
+  return key && !self->disposed ? g_hash_table_lookup(self->key_widgets, key) : NULL;
+}
+
+GhPreferencesDialog *
+gh_preferences_dialog_new(GSettings *settings, gboolean tor_available)
+{
+  g_return_val_if_fail(G_IS_SETTINGS(settings), NULL);
+  return g_object_new(GH_TYPE_PREFERENCES_DIALOG, "settings", settings, "tor-available",
+                      tor_available, NULL);
+}
+
+/* ---- GObject ---------------------------------------------------------------------- */
+
+static void
+gh_preferences_dialog_constructed(GObject *object)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
+  G_OBJECT_CLASS(gh_preferences_dialog_parent_class)->constructed(object);
+  g_return_if_fail(G_IS_SETTINGS(self->settings));
+
+  /* Writability is not reflected in sensitivity: the Blueprint binds some
+   * rows' sensitivity to the Notifications switch. */
+  for (guint i = 0; i < G_N_ELEMENTS(switch_rows); i++) {
+    GtkWidget *row = G_STRUCT_MEMBER(GtkWidget *, self, switch_rows[i].offset);
+    g_settings_bind(self->settings, switch_rows[i].key, row, "active",
+                    G_SETTINGS_BIND_DEFAULT | G_SETTINGS_BIND_NO_SENSITIVITY);
+    g_hash_table_insert(self->key_widgets, (gpointer)switch_rows[i].key, row);
+  }
+
+  GVariant *levels[] = { g_variant_new_string("hidden"), g_variant_new_string("sender"),
+                         g_variant_new_string("preview") };
+  bind_choice(self, self->notification_privacy_row, "notification-privacy", levels,
+              G_N_ELEMENTS(levels), unsupported_label);
+  /* Charter §3.7: off, 1 day, 1 week, 4 weeks. */
+  GVariant *timers[] = { g_variant_new_int32(0), g_variant_new_int32(86400),
+                         g_variant_new_int32(604800), g_variant_new_int32(2419200) };
+  bind_choice(self, self->disappearing_row, "default-disappearing-seconds", timers,
+              G_N_ELEMENTS(timers), duration_label);
+  /* D10: forever, 1 year, 30 days. */
+  GVariant *retention[] = { g_variant_new_int32(0), g_variant_new_int32(365),
+                            g_variant_new_int32(30) };
+  bind_choice(self, self->retention_row, "retention-days", retention, G_N_ELEMENTS(retention),
+              days_label);
+  GVariant *modes[] = { g_variant_new_string("system"), g_variant_new_string("none"),
+                        g_variant_new_string("tor") };
+  guint n_modes = G_N_ELEMENTS(modes);
+  if (!self->tor_available) {
+    GtkStringList *model = GTK_STRING_LIST(adw_combo_row_get_model(self->network_mode_row));
+    gtk_string_list_remove(model, --n_modes);
+    g_variant_unref(g_variant_ref_sink(modes[n_modes]));
+  }
+  bind_choice(self, self->network_mode_row, "network-mode", modes, n_modes, unsupported_label);
+  GVariant *signers[] = { g_variant_new_string("auto"), g_variant_new_string("local"),
+                          g_variant_new_string("nip55l"), g_variant_new_string("nip46") };
+  bind_choice(self, self->signer_row, "signer-method", signers, G_N_ELEMENTS(signers),
+              unsupported_label);
+
+  bind_address(self, "tor-socks-address", self->tor_address_row, self->tor_address_error);
+  bind_list(self, "discovery-relays", self->discovery_list, self->discovery_entry,
+            self->discovery_error, gh_preferences_normalize_relay_url);
+  bind_list(self, "blossom-servers", self->blossom_list, self->blossom_entry,
+            self->blossom_error, gh_preferences_normalize_server_url);
+
+  self->settings_changed = g_signal_connect(self->settings, "changed",
+                                            G_CALLBACK(on_settings_changed), self);
+  sync_network(self);
+  sync_delete(self);
+}
+
+static void
+gh_preferences_dialog_set_property(GObject *object, guint prop_id, const GValue *value,
+                                   GParamSpec *pspec)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
+  switch (prop_id) {
+  case PROP_SETTINGS:
+    self->settings = g_value_dup_object(value);
+    break;
+  case PROP_TOR_AVAILABLE:
+    self->tor_available = g_value_get_boolean(value);
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+  }
+}
+
+static void
+gh_preferences_dialog_get_property(GObject *object, guint prop_id, GValue *value,
+                                   GParamSpec *pspec)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
+  switch (prop_id) {
+  case PROP_SETTINGS:
+    g_value_set_object(value, self->settings);
+    break;
+  case PROP_TOR_AVAILABLE:
+    g_value_set_boolean(value, self->tor_available);
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+  }
+}
+
+static void
+gh_preferences_dialog_dispose(GObject *object)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
+  self->disposed = TRUE;
+  if (self->settings_changed) {
+    g_signal_handler_disconnect(self->settings, self->settings_changed);
+    self->settings_changed = 0;
+  }
+  if (self->delete_all_dialog)
+    g_signal_handlers_disconnect_by_func(self->delete_all_dialog, on_delete_all_response, self);
+  /* The rows' handlers point into the bindings: drop the rows first. */
+  if (self->discovery_list)
+    gtk_list_box_bind_model(self->discovery_list, NULL, NULL, NULL, NULL);
+  if (self->blossom_list)
+    gtk_list_box_bind_model(self->blossom_list, NULL, NULL, NULL, NULL);
+  gtk_widget_dispose_template(GTK_WIDGET(self), GH_TYPE_PREFERENCES_DIALOG);
+  g_clear_pointer(&self->bindings, g_ptr_array_unref);
+  g_clear_object(&self->forget_target);
+  G_OBJECT_CLASS(gh_preferences_dialog_parent_class)->dispose(object);
+}
+
+static void
+gh_preferences_dialog_finalize(GObject *object)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
+  g_clear_pointer(&self->key_widgets, g_hash_table_unref);
+  g_clear_object(&self->settings);
+  g_free(self->account_npub);
+  G_OBJECT_CLASS(gh_preferences_dialog_parent_class)->finalize(object);
+}
+
+static void
+gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+
+  object_class->constructed = gh_preferences_dialog_constructed;
+  object_class->set_property = gh_preferences_dialog_set_property;
+  object_class->get_property = gh_preferences_dialog_get_property;
+  object_class->dispose = gh_preferences_dialog_dispose;
+  object_class->finalize = gh_preferences_dialog_finalize;
+
+  properties[PROP_SETTINGS] =
+    g_param_spec_object("settings", NULL, NULL, G_TYPE_SETTINGS,
+                        G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
+  properties[PROP_TOR_AVAILABLE] =
+    g_param_spec_boolean("tor-available", NULL, NULL, FALSE,
+                         G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
+  g_object_class_install_properties(object_class, N_PROPS, properties);
+
+  gtk_widget_class_install_action(widget_class, "prefs.delete-all", NULL, delete_all_activated);
+
+  gtk_widget_class_set_template_from_resource(widget_class,
+                                              "/org/nostr/Groundhog/ui/gh-preferences-dialog.ui");
+#define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhPreferencesDialog, name)
+  BIND(notifications_row);
+  BIND(notification_privacy_row);
+  BIND(sound_row);
+  BIND(remote_images_row);
+  BIND(link_previews_row);
+  BIND(profile_pictures_row);
+  BIND(filter_unknown_senders_row);
+  BIND(message_previews_row);
+  BIND(enter_sends_row);
+  BIND(disappearing_row);
+  BIND(retention_row);
+  BIND(network_mode_row);
+  BIND(tor_address_row);
+  BIND(tor_address_error);
+  BIND(proxy_note);
+  BIND(tor_note);
+  BIND(discovery_list);
+  BIND(discovery_entry);
+  BIND(discovery_error);
+  BIND(blossom_list);
+  BIND(blossom_entry);
+  BIND(blossom_error);
+  BIND(no_account_row);
+  BIND(account_row);
+  BIND(account_avatar);
+  BIND(signer_row);
+  BIND(run_in_background_row);
+  BIND(delete_group);
+  BIND(delete_all_dialog);
+#undef BIND
+}
+
+static void
+gh_preferences_dialog_init(GhPreferencesDialog *self)
+{
+  gtk_widget_init_template(GTK_WIDGET(self));
+  self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);
+  self->bindings = g_ptr_array_new_with_free_func(binding_free);
+  g_signal_connect(self->delete_all_dialog, "response", G_CALLBACK(on_delete_all_response),
+                   self);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.delete-all", FALSE);
+}

@@ -24,6 +24,17 @@
 #include "gh-background.h"
 #endif
 
+#if GROUNDHOG_HAVE_ACCOUNTS
+#include "gh-identity.h"
+#include "gh-preferences-dialog.h"
+#endif
+
+/* G09 defines it once network modes and Tor exist; until then Preferences
+ * offers no Tor choice (charter §7.11). */
+#ifndef GROUNDHOG_HAVE_TOR
+#define GROUNDHOG_HAVE_TOR 0
+#endif
+
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 struct _GhAppServices {
@@ -49,6 +60,10 @@ struct _GhAppServices {
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
   GhBackground *background;
+#endif
+#if GROUNDHOG_HAVE_ACCOUNTS
+  GSimpleAction *preferences_action;
+  GhPreferencesDialog *preferences_dialog; /* weak: the one that is open */
 #endif
   guint started; /* services initialized, from the top of the table */
 };
@@ -316,6 +331,87 @@ background_teardown(GhAppServices *self)
 }
 #endif
 
+#if GROUNDHOG_HAVE_ACCOUNTS
+/* app.preferences (Ctrl+, and the primary menu; charter §7.11, G17): the
+ * dialog binds the settings itself; the active account and, with the
+ * encrypted store, its forget (§3.8, ST-8) come from here. */
+#if GROUNDHOG_HAVE_ACCOUNT_STORE
+static void
+preferences_forget_async(GObject *target, const gchar *npub, GCancellable *cancellable,
+                         GAsyncReadyCallback callback, gpointer user_data)
+{
+  /* An npub that does not decode fails as "Not an account public key". */
+  g_autofree gchar *hex = gh_identity_pubkey_hex(npub);
+  gh_account_store_forget_async(GH_ACCOUNT_STORE(target), hex, cancellable, callback,
+                                user_data);
+}
+
+static gboolean
+preferences_forget_finish(GObject *target, GAsyncResult *result, GError **error)
+{
+  return gh_account_store_forget_finish(GH_ACCOUNT_STORE(target), result, error);
+}
+#endif
+
+static void
+sync_preferences_account(GhAccountController *accounts, gpointer dialog)
+{
+  const gchar *npub = gh_account_controller_get_active_npub(accounts);
+  GPtrArray *identities = gh_account_controller_get_identities(accounts);
+  const gchar *label = NULL;
+  for (guint i = 0; npub && identities && i < identities->len; i++) {
+    GhIdentityInfo *info = g_ptr_array_index(identities, i);
+    if (g_strcmp0(info->npub, npub) == 0)
+      label = info->label;
+  }
+  gh_preferences_dialog_set_account(GH_PREFERENCES_DIALOG(dialog), npub, label);
+}
+
+static void
+on_preferences(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  GhAppServices *self = data;
+  GtkWindow *window = gtk_application_get_active_window(self->app);
+  (void)action;
+  (void)parameter;
+  if (!ADW_IS_APPLICATION_WINDOW(window))
+    return;
+  /* One at a time, even under its own confirmation dialog: a second one
+   * could start a second deletion. */
+  if (self->preferences_dialog && gtk_widget_get_root(GTK_WIDGET(self->preferences_dialog)))
+    return;
+  GhPreferencesDialog *dialog = gh_preferences_dialog_new(self->settings, GROUNDHOG_HAVE_TOR);
+  g_set_weak_pointer(&self->preferences_dialog, dialog);
+  sync_preferences_account(self->accounts, dialog);
+  g_signal_connect_object(self->accounts, "changed", G_CALLBACK(sync_preferences_account),
+                          dialog, 0);
+#if GROUNDHOG_HAVE_ACCOUNT_STORE
+  gh_preferences_dialog_set_forget_func(dialog, preferences_forget_async,
+                                        preferences_forget_finish,
+                                        G_OBJECT(self->account_store));
+#endif
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
+}
+
+static gboolean
+preferences_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  self->preferences_action = g_simple_action_new("preferences", NULL);
+  g_signal_connect(self->preferences_action, "activate", G_CALLBACK(on_preferences), self);
+  g_action_map_add_action(G_ACTION_MAP(self->app), G_ACTION(self->preferences_action));
+  return TRUE;
+}
+
+static void
+preferences_teardown(GhAppServices *self)
+{
+  g_action_map_remove_action(G_ACTION_MAP(self->app), "preferences");
+  g_clear_object(&self->preferences_action);
+  g_clear_weak_pointer(&self->preferences_dialog);
+}
+#endif
+
 typedef struct {
   const gchar *name;
   gboolean (*init)(GhAppServices *self, GError **error);
@@ -342,6 +438,9 @@ static const GhAppService services[] = {
   { "store-key", store_key_init, store_key_teardown },
   { "account-store", account_store_init, account_store_teardown },
   { "store-actions", store_actions_init, store_actions_teardown },
+#endif
+#if GROUNDHOG_HAVE_ACCOUNTS
+  { "preferences", preferences_init, preferences_teardown },
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
   { "background", background_init, background_teardown },

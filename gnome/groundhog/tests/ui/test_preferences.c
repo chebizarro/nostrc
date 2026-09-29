@@ -1,0 +1,1056 @@
+/* GhPreferencesDialog (privacy charter §7.11, §8.2 G17) on a memory GSettings
+ * backend: no relay, no signer, no network. Covered: every preference key of
+ * org.nostr.Groundhog has exactly one row, inside the dialog, and each row is
+ * bound both ways (switches, choice rows including a value no choice has, the
+ * Tor address and both URL lists); the Tor choice and Tor address row are
+ * absent until G09's flag (tor_available) is set, and present with it; the URL
+ * rules reject non-ws(s)/https schemes, credentials, plain ws:// off loopback,
+ * query and fragment, duplicates and a 17th entry; "Delete All Messages on This
+ * Device" appears only with an account and a forget function, asks for
+ * confirmation in an AdwAlertDialog and runs the forget function for the
+ * account only after "Delete and Sign Out", keeping the dialog open until it
+ * finished (a fake stands in for GhAccountStore's forget); the 360x294 layout
+ * and the accessible labels of the list rows. Needs a display: it self-skips
+ * (77) without one. Waits iterate the main context against a deadline; they
+ * never sleep. With GROUNDHOG_TEST_SCREENSHOTS=<dir> the screenshots case
+ * renders every page, narrow, light and dark, to <dir>/groundhog-g17-*.png.
+ */
+#include "gh-preferences-dialog.h"
+#include "gh-window.h"
+
+#include <string.h>
+
+void groundhog_register_resource(void);
+
+#define SCHEMA_ID "org.nostr.Groundhog"
+/* The npub of the x-only key 79be667e...16f81798; the dialog only shows it. */
+#define NPUB "npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d"
+
+/* ---- waits ------------------------------------------------------------------- */
+
+static gboolean
+deadline_hit(gpointer data)
+{
+  *(gboolean *)data = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+static void
+spin_until_at(gboolean (*pred)(gpointer), gpointer data, int line)
+{
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(5, deadline_hit, &expired);
+  while (!pred(data) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  if (expired)
+    g_error("condition waited for at line %d did not hold within 5s", line);
+  g_source_remove(timer);
+}
+#define spin_until(pred, data) spin_until_at((pred), (data), __LINE__)
+
+static void
+drain_idle(void)
+{
+  for (int i = 0; i < 200 && g_main_context_iteration(NULL, FALSE); i++)
+    ;
+}
+
+/* ---- fixture ----------------------------------------------------------------- */
+
+/* The schema keys that are not preferences (no row). */
+static const char *const not_preferences[] = {
+  "current-npub", "window-width", "window-height", "window-maximized",
+};
+
+/* Charter §7.11, one row each. */
+static const char *const preference_keys[] = {
+  "notifications-enabled", "notification-privacy", "sound-enabled", "load-remote-images",
+  "link-previews", "load-profile-pictures", "filter-unknown-senders", "show-message-previews",
+  "network-mode", "tor-socks-address", "discovery-relays", "signer-method",
+  "run-in-background", "retention-days", "default-disappearing-seconds", "enter-sends",
+  "blossom-servers",
+};
+
+static const char *const switch_keys[] = {
+  "notifications-enabled", "sound-enabled", "load-remote-images", "link-previews",
+  "load-profile-pictures", "filter-unknown-senders", "show-message-previews", "enter-sends",
+  "run-in-background",
+};
+
+typedef struct {
+  GSettings *settings;
+  GhPreferencesDialog *dialog;
+  GtkWindow *window; /* only when a case presents the dialog */
+} Fixture;
+
+static void
+reset_all(GSettings *settings)
+{
+  g_autoptr(GSettingsSchema) schema = NULL;
+  g_object_get(settings, "settings-schema", &schema, NULL);
+  g_auto(GStrv) keys = g_settings_schema_list_keys(schema);
+  for (guint i = 0; keys[i]; i++)
+    g_settings_reset(settings, keys[i]);
+  drain_idle();
+}
+
+/* data: GINT_TO_POINTER(tor_available). */
+static void
+fixture_setup(Fixture *f, gconstpointer data)
+{
+  f->settings = g_settings_new(SCHEMA_ID);
+  reset_all(f->settings);
+  f->dialog = g_object_ref_sink(gh_preferences_dialog_new(f->settings, GPOINTER_TO_INT(data)));
+}
+
+static void
+fixture_teardown(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  if (f->window) {
+    adw_dialog_force_close(ADW_DIALOG(f->dialog));
+    gtk_window_destroy(f->window);
+    drain_idle();
+  }
+  g_clear_object(&f->dialog);
+  reset_all(f->settings);
+  g_clear_object(&f->settings);
+}
+
+static gpointer
+child(Fixture *f, const char *name)
+{
+  GObject *object = gtk_widget_get_template_child(GTK_WIDGET(f->dialog),
+                                                  GH_TYPE_PREFERENCES_DIALOG, name);
+  g_assert_nonnull(object);
+  return object;
+}
+
+static gboolean
+is_mapped(gpointer widget)
+{
+  return gtk_widget_get_mapped(GTK_WIDGET(widget));
+}
+
+typedef struct {
+  GtkWidget *window;
+  int width, height;
+} SizeWait;
+
+static gboolean
+has_size(gpointer data)
+{
+  SizeWait *wait = data;
+  return gtk_widget_get_width(wait->window) == wait->width &&
+         gtk_widget_get_height(wait->window) == wait->height;
+}
+
+/* Presents window with a width x height content area. A non-composited
+ * display (Xvfb in CI) draws a solid client-side border inside the default
+ * size, which GNOME's compositor draws outside it: grow the default size by
+ * that border so the content is the size the charter means (§7.12). */
+static void
+present_window(GtkWindow *window, int width, int height)
+{
+  gtk_window_set_default_size(window, width, height);
+  gtk_window_present(window);
+  spin_until(is_mapped, window);
+  drain_idle();
+  int border_x = width - gtk_widget_get_width(GTK_WIDGET(window));
+  int border_y = height - gtk_widget_get_height(GTK_WIDGET(window));
+  if (border_x > 0 || border_y > 0) {
+    SizeWait wait = { GTK_WIDGET(window), width, height };
+    gtk_window_set_default_size(window, width + MAX(border_x, 0), height + MAX(border_y, 0));
+    spin_until(has_size, &wait);
+  }
+}
+
+static void
+present(Fixture *f, int width, int height)
+{
+  f->window = GTK_WINDOW(adw_window_new());
+  present_window(f->window, width, height);
+  adw_dialog_present(ADW_DIALOG(f->dialog), GTK_WIDGET(f->window));
+  spin_until(is_mapped, f->dialog);
+  drain_idle();
+}
+
+/* ---- every key has one row --------------------------------------------------- */
+
+static gboolean
+in_list(const char *const *list, gsize n, const char *key)
+{
+  for (gsize i = 0; i < n; i++)
+    if (g_str_equal(list[i], key))
+      return TRUE;
+  return FALSE;
+}
+
+static void
+test_every_key_has_a_row(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_autoptr(GSettingsSchema) schema = NULL;
+  g_object_get(f->settings, "settings-schema", &schema, NULL);
+  g_auto(GStrv) keys = g_settings_schema_list_keys(schema);
+  g_autoptr(GHashTable) widgets = g_hash_table_new(NULL, NULL);
+  guint n_preferences = 0;
+  /* An AdwDialog's content is inside it only while presented. */
+  present(f, 800, 700);
+  for (guint i = 0; keys[i]; i++) {
+    GtkWidget *widget = gh_preferences_dialog_get_key_widget(f->dialog, keys[i]);
+    if (in_list(not_preferences, G_N_ELEMENTS(not_preferences), keys[i])) {
+      g_assert_null(widget);
+      continue;
+    }
+    /* A key the schema gained without a row here fails: G01's allowlist and
+     * this dialog change together (charter §8.4). */
+    if (!in_list(preference_keys, G_N_ELEMENTS(preference_keys), keys[i]))
+      g_error("schema key %s is neither a §7.11 preference nor known state", keys[i]);
+    g_assert_nonnull(widget);
+    g_assert_true(gtk_widget_is_ancestor(widget, GTK_WIDGET(f->dialog)));
+    g_assert_false(g_hash_table_contains(widgets, widget));
+    g_hash_table_add(widgets, widget);
+    n_preferences++;
+  }
+  g_assert_cmpuint(n_preferences, ==, G_N_ELEMENTS(preference_keys));
+  g_assert_null(gh_preferences_dialog_get_key_widget(f->dialog, "no-such-key"));
+}
+
+/* ---- switches ------------------------------------------------------------------ */
+
+static void
+test_switch_rows_bind_both_ways(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  for (guint i = 0; i < G_N_ELEMENTS(switch_keys); i++) {
+    const char *key = switch_keys[i];
+    GtkWidget *widget = gh_preferences_dialog_get_key_widget(f->dialog, key);
+    g_assert_true(ADW_IS_SWITCH_ROW(widget));
+    AdwSwitchRow *row = ADW_SWITCH_ROW(widget);
+    gboolean initial = g_settings_get_boolean(f->settings, key);
+    g_assert_cmpint(adw_switch_row_get_active(row), ==, initial);
+    for (int round = 0; round < 2; round++) {
+      gboolean value = round == 0 ? !initial : initial;
+      g_settings_set_boolean(f->settings, key, value);
+      drain_idle();
+      g_assert_cmpint(adw_switch_row_get_active(row), ==, value);
+      adw_switch_row_set_active(row, !value);
+      drain_idle();
+      g_assert_cmpint(g_settings_get_boolean(f->settings, key), ==, !value);
+    }
+    g_settings_reset(f->settings, key);
+  }
+  /* Notification content and sound follow the Notifications switch. */
+  g_settings_set_boolean(f->settings, "notifications-enabled", FALSE);
+  drain_idle();
+  g_assert_false(gtk_widget_get_sensitive(
+    gh_preferences_dialog_get_key_widget(f->dialog, "notification-privacy")));
+  g_assert_false(gtk_widget_get_sensitive(
+    gh_preferences_dialog_get_key_widget(f->dialog, "sound-enabled")));
+  g_settings_set_boolean(f->settings, "notifications-enabled", TRUE);
+  drain_idle();
+  g_assert_true(gtk_widget_get_sensitive(
+    gh_preferences_dialog_get_key_widget(f->dialog, "notification-privacy")));
+  g_assert_true(gtk_widget_get_sensitive(
+    gh_preferences_dialog_get_key_widget(f->dialog, "sound-enabled")));
+}
+
+/* ---- choices ------------------------------------------------------------------- */
+
+typedef struct {
+  const char *key;
+  const char *items[5];  /* the row's labels, in order */
+  const char *values[5]; /* GVariant text of each item's value */
+  const char *custom;    /* a valid value that no item has */
+  const char *custom_label;
+} Choice;
+
+static const Choice choices[] = {
+  { "notification-privacy", { "Hidden", "Sender Name", "Sender and Message" },
+    { "'hidden'", "'sender'", "'preview'" }, "'everything'", "Unsupported (“everything”)" },
+  { "default-disappearing-seconds", { "Off", "1 Day", "1 Week", "4 Weeks" },
+    { "0", "86400", "604800", "2419200" }, "3600", "1 Hour" },
+  { "retention-days", { "Forever", "1 Year", "30 Days" }, { "0", "365", "30" }, "90",
+    "90 Days" },
+  /* Without G09 there is no Tor item; a stored "tor" is shown, not offered. */
+  { "network-mode", { "System Settings", "No Proxy" }, { "'system'", "'none'" }, "'tor'",
+    "Tor (not available in this version)" },
+  { "signer-method",
+    { "Automatic", "Nostr Signer", "Nostr Signer (NIP-55L)", "Remote Signer (NIP-46)" },
+    { "'auto'", "'local'", "'nip55l'", "'nip46'" }, "'bunker'", "Unsupported (“bunker”)" },
+};
+
+static GVariant *
+parse_value(GSettings *settings, const char *key, const char *text)
+{
+  g_autoptr(GSettingsSchema) schema = NULL;
+  g_object_get(settings, "settings-schema", &schema, NULL);
+  g_autoptr(GSettingsSchemaKey) schema_key = g_settings_schema_get_key(schema, key);
+  g_autoptr(GError) error = NULL;
+  GVariant *value = g_variant_parse(g_settings_schema_key_get_value_type(schema_key), text,
+                                    NULL, NULL, &error);
+  g_assert_no_error(error);
+  return g_variant_ref_sink(value);
+}
+
+static void
+assert_key(GSettings *settings, const char *key, const char *text)
+{
+  g_autoptr(GVariant) want = parse_value(settings, key, text);
+  g_autoptr(GVariant) have = g_settings_get_value(settings, key);
+  if (!g_variant_equal(want, have)) {
+    g_autofree char *printed = g_variant_print(have, FALSE);
+    g_error("%s is %s, expected %s", key, printed, text);
+  }
+}
+
+static void
+assert_items(GtkStringList *model, const Choice *choice, guint n, const char *extra)
+{
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(model)), ==, n + (extra ? 1 : 0));
+  for (guint i = 0; i < n; i++)
+    g_assert_cmpstr(gtk_string_list_get_string(model, i), ==, choice->items[i]);
+  if (extra)
+    g_assert_cmpstr(gtk_string_list_get_string(model, n), ==, extra);
+}
+
+static void
+test_choice_rows_bind_both_ways(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  for (guint c = 0; c < G_N_ELEMENTS(choices); c++) {
+    const Choice *choice = &choices[c];
+    GtkWidget *widget = gh_preferences_dialog_get_key_widget(f->dialog, choice->key);
+    g_assert_true(ADW_IS_COMBO_ROW(widget));
+    AdwComboRow *row = ADW_COMBO_ROW(widget);
+    GtkStringList *model = GTK_STRING_LIST(adw_combo_row_get_model(row));
+    guint n = 0;
+    while (n < G_N_ELEMENTS(choice->items) && choice->items[n])
+      n++;
+    assert_items(model, choice, n, NULL);
+    /* The default is the first item for every choice row. */
+    g_assert_cmpuint(adw_combo_row_get_selected(row), ==, 0);
+    assert_key(f->settings, choice->key, choice->values[0]);
+
+    /* key -> row */
+    for (guint i = n; i-- > 0;) {
+      g_autoptr(GVariant) value = parse_value(f->settings, choice->key, choice->values[i]);
+      g_assert_true(g_settings_set_value(f->settings, choice->key, value));
+      drain_idle();
+      g_assert_cmpuint(adw_combo_row_get_selected(row), ==, i);
+    }
+    /* row -> key */
+    for (guint i = 0; i < n; i++) {
+      adw_combo_row_set_selected(row, (i + 1) % n);
+      drain_idle();
+      assert_key(f->settings, choice->key, choice->values[(i + 1) % n]);
+    }
+    /* A value no item has is shown as it is and never rewritten... */
+    g_autoptr(GVariant) custom = parse_value(f->settings, choice->key, choice->custom);
+    g_assert_true(g_settings_set_value(f->settings, choice->key, custom));
+    drain_idle();
+    assert_items(model, choice, n, choice->custom_label);
+    g_assert_cmpuint(adw_combo_row_get_selected(row), ==, n);
+    assert_key(f->settings, choice->key, choice->custom);
+    /* ...until the user picks an item, which removes it. */
+    adw_combo_row_set_selected(row, n - 1);
+    drain_idle();
+    assert_key(f->settings, choice->key, choice->values[n - 1]);
+    assert_items(model, choice, n, NULL);
+    g_assert_cmpuint(adw_combo_row_get_selected(row), ==, n - 1);
+    g_settings_reset(f->settings, choice->key);
+    drain_idle();
+    g_assert_cmpuint(adw_combo_row_get_selected(row), ==, 0);
+  }
+}
+
+/* ---- network mode and Tor -------------------------------------------------------- */
+
+static void
+test_tor_hidden_without_g09(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GtkWidget *tor_row = gh_preferences_dialog_get_key_widget(f->dialog, "tor-socks-address");
+  AdwComboRow *mode = ADW_COMBO_ROW(gh_preferences_dialog_get_key_widget(f->dialog,
+                                                                          "network-mode"));
+  GListModel *items = adw_combo_row_get_model(mode);
+  g_assert_cmpuint(g_list_model_get_n_items(items), ==, 2);
+  for (guint i = 0; i < 2; i++)
+    g_assert_false(strstr(gtk_string_list_get_string(GTK_STRING_LIST(items), i), "Tor"));
+  g_assert_false(gtk_widget_get_visible(tor_row));
+  g_assert_true(gtk_widget_get_visible(child(f, "proxy_note")));
+  g_assert_false(gtk_widget_get_visible(child(f, "tor_note")));
+
+  /* A stored "tor" (e.g. from dconf) shows the Tor row nowhere. */
+  g_settings_set_string(f->settings, "network-mode", "tor");
+  drain_idle();
+  g_assert_false(gtk_widget_get_visible(tor_row));
+  g_assert_false(gtk_widget_get_visible(child(f, "tor_note")));
+  g_assert_cmpuint(adw_combo_row_get_selected(mode), ==, 2);
+}
+
+static void
+test_tor_with_g09(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GtkWidget *tor_widget = gh_preferences_dialog_get_key_widget(f->dialog, "tor-socks-address");
+  AdwEntryRow *tor_row = ADW_ENTRY_ROW(tor_widget);
+  AdwComboRow *mode = ADW_COMBO_ROW(gh_preferences_dialog_get_key_widget(f->dialog,
+                                                                          "network-mode"));
+  GtkStringList *items = GTK_STRING_LIST(adw_combo_row_get_model(mode));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(items)), ==, 3);
+  g_assert_cmpstr(gtk_string_list_get_string(items, 2), ==, "Tor");
+  g_assert_false(gtk_widget_get_visible(tor_widget));
+  g_assert_false(gtk_widget_get_visible(child(f, "proxy_note")));
+  g_assert_true(gtk_widget_get_visible(child(f, "tor_note")));
+
+  adw_combo_row_set_selected(mode, 2);
+  drain_idle();
+  assert_key(f->settings, "network-mode", "'tor'");
+  g_assert_true(gtk_widget_get_visible(tor_widget));
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(tor_row)), ==, "127.0.0.1:9050");
+
+  /* key -> row */
+  g_settings_set_string(f->settings, "tor-socks-address", "127.0.0.1:9150");
+  drain_idle();
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(tor_row)), ==, "127.0.0.1:9150");
+  /* row -> key, only on apply and only when valid */
+  GtkWidget *error = child(f, "tor_address_error");
+  static const char *const bad[] = { "socks5://127.0.0.1:9050", "127.0.0.1", "", "host:0" };
+  for (guint i = 0; i < G_N_ELEMENTS(bad); i++) {
+    gtk_editable_set_text(GTK_EDITABLE(tor_row), bad[i]);
+    g_signal_emit_by_name(tor_row, "apply");
+    drain_idle();
+    g_assert_cmpstr(g_settings_get_string(f->settings, "tor-socks-address"), ==,
+                    "127.0.0.1:9150");
+    g_assert_true(gtk_widget_get_visible(error));
+    g_assert_true(gtk_widget_has_css_class(tor_widget, "error"));
+  }
+  gtk_editable_set_text(GTK_EDITABLE(tor_row), " [::1]:9050 ");
+  g_assert_false(gtk_widget_get_visible(error)); /* editing clears the error */
+  g_signal_emit_by_name(tor_row, "apply");
+  drain_idle();
+  g_autofree char *stored = g_settings_get_string(f->settings, "tor-socks-address");
+  g_assert_cmpstr(stored, ==, "[::1]:9050");
+  g_assert_false(gtk_widget_has_css_class(tor_widget, "error"));
+
+  adw_combo_row_set_selected(mode, 0);
+  drain_idle();
+  g_assert_false(gtk_widget_get_visible(tor_widget));
+}
+
+/* ---- URL lists ------------------------------------------------------------------- */
+
+static guint
+n_rows(GtkListBox *list)
+{
+  guint n = 0;
+  while (gtk_list_box_get_row_at_index(list, (int)n))
+    n++;
+  return n;
+}
+
+static const char *
+row_title(GtkListBox *list, guint index)
+{
+  GtkListBoxRow *row = gtk_list_box_get_row_at_index(list, (int)index);
+  g_assert_true(ADW_IS_ACTION_ROW(row));
+  return adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row));
+}
+
+/* The first button under widget with this label (any label if NULL); with
+ * mapped_only, only one on screen: libadwaita 1.5's AdwAlertDialog keeps a
+ * second, hidden set of response buttons for its other layout. */
+static GtkWidget *
+find_button_full(GtkWidget *widget, const char *label, gboolean mapped_only)
+{
+  if (GTK_IS_BUTTON(widget) && (!mapped_only || gtk_widget_get_mapped(widget)) &&
+      (!label || g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), label) == 0))
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_button_full(c, label, mapped_only);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static GtkWidget *
+find_button(GtkWidget *widget, const char *label)
+{
+  return find_button_full(widget, label, FALSE);
+}
+
+static void
+assert_strv(GSettings *settings, const char *key, const char *const *want)
+{
+  g_auto(GStrv) have = g_settings_get_strv(settings, key);
+  if (!g_strv_equal((const char *const *)have, want)) {
+    g_autofree char *joined = g_strjoinv(" ", have);
+    g_error("%s is [%s]", key, joined);
+  }
+}
+
+typedef struct {
+  const char *key;
+  const char *entry;
+  const char *error;
+  const char *list;
+  const char *good_in;     /* accepted as typed... */
+  const char *good_out;    /* ...and stored like this */
+  const char *second;      /* another accepted address */
+  const char *bad[12];
+} ListCase;
+
+static const ListCase list_cases[] = {
+  { "discovery-relays", "discovery_entry", "discovery_error", "discovery_list",
+    " WSS://Relay.Example.COM/ ", "wss://relay.example.com", "ws://127.0.0.1:7777",
+    { "https://relay.example.com", "wss://alice:secret@relay.example.com",
+      "wss://alice@relay.example.com", "ws://relay.example.com", "relay.example.com", "wss://",
+      "wss://relay.example.com/?token=1", "wss://relay.example.com/#x", "",
+      "wss://relay.example.com", /* a duplicate of good_out */
+      NULL } },
+  { "blossom-servers", "blossom_entry", "blossom_error", "blossom_list",
+    "https://Blossom.Example.com/", "https://blossom.example.com",
+    "https://files.example.org:8443/media",
+    { "wss://blossom.example.com", "http://blossom.example.com", "http://127.0.0.1:3000",
+      "https://user:pw@blossom.example.com", "blossom.example.com", "https://",
+      "https://blossom.example.com?x=1", "", "https://BLOSSOM.example.com/", NULL } },
+};
+
+static void
+test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  for (guint c = 0; c < G_N_ELEMENTS(list_cases); c++) {
+    const ListCase *lc = &list_cases[c];
+    GtkListBox *list = GTK_LIST_BOX(gh_preferences_dialog_get_key_widget(f->dialog, lc->key));
+    g_assert_true(list == child(f, lc->list));
+    AdwEntryRow *entry = child(f, lc->entry);
+    GtkWidget *error = child(f, lc->error);
+    /* Empty by default (PD-13, D6): nothing to contact. */
+    g_assert_cmpuint(n_rows(list), ==, 0);
+    g_assert_false(gtk_widget_get_visible(error));
+
+    /* row -> key: a valid entry is normalized and appended, then cleared. */
+    gtk_editable_set_text(GTK_EDITABLE(entry), lc->good_in);
+    g_signal_emit_by_name(entry, "apply");
+    drain_idle();
+    assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, NULL });
+    g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, "");
+    g_assert_false(gtk_widget_get_visible(error));
+    g_assert_cmpuint(n_rows(list), ==, 1);
+    g_assert_cmpstr(row_title(list, 0), ==, lc->good_out);
+
+    /* Invalid entries change nothing and say why, in place. */
+    for (guint i = 0; lc->bad[i]; i++) {
+      gtk_editable_set_text(GTK_EDITABLE(entry), lc->bad[i]);
+      g_signal_emit_by_name(entry, "apply");
+      drain_idle();
+      assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, NULL });
+      if (!gtk_widget_get_visible(error))
+        g_error("%s accepted \"%s\"", lc->key, lc->bad[i]);
+      g_assert_nonnull(gtk_label_get_text(GTK_LABEL(error)));
+      g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(error)), !=, "");
+      g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(entry), "error"));
+      g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, lc->bad[i]);
+    }
+    gtk_editable_set_text(GTK_EDITABLE(entry), lc->second);
+    g_assert_false(gtk_widget_get_visible(error));
+    g_signal_emit_by_name(entry, "apply");
+    drain_idle();
+    assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, lc->second, NULL });
+    g_assert_cmpuint(n_rows(list), ==, 2);
+
+    /* key -> rows */
+    const char *const replaced[] = { lc->second, lc->good_out, NULL };
+    g_settings_set_strv(f->settings, lc->key, replaced);
+    drain_idle();
+    g_assert_cmpuint(n_rows(list), ==, 2);
+    g_assert_cmpstr(row_title(list, 0), ==, lc->second);
+    g_assert_cmpstr(row_title(list, 1), ==, lc->good_out);
+
+    /* Each row removes its own address; its button says which. */
+    GtkWidget *remove = find_button(GTK_WIDGET(gtk_list_box_get_row_at_index(list, 0)), NULL);
+    g_assert_nonnull(remove);
+    g_autofree char *label = g_strdup_printf("Remove %s", lc->second);
+    gtk_test_accessible_assert_property(GTK_ACCESSIBLE(remove), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                        label);
+    g_signal_emit_by_name(remove, "clicked");
+    drain_idle();
+    assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, NULL });
+    g_assert_cmpuint(n_rows(list), ==, 1);
+
+    /* At most 16. */
+    g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+    for (guint i = 0; i < 16; i++) {
+      g_autofree char *url = g_strdup_printf("%s/%u", lc->good_out, i);
+      g_strv_builder_add(builder, url);
+    }
+    g_auto(GStrv) full = g_strv_builder_end(builder);
+    g_settings_set_strv(f->settings, lc->key, (const char *const *)full);
+    drain_idle();
+    g_assert_cmpuint(n_rows(list), ==, 16);
+    gtk_editable_set_text(GTK_EDITABLE(entry), lc->second);
+    g_signal_emit_by_name(entry, "apply");
+    drain_idle();
+    g_assert_true(gtk_widget_get_visible(error));
+    g_auto(GStrv) after = g_settings_get_strv(f->settings, lc->key);
+    g_assert_cmpuint(g_strv_length(after), ==, 16);
+    g_settings_reset(f->settings, lc->key);
+    drain_idle();
+    g_assert_cmpuint(n_rows(list), ==, 0);
+  }
+}
+
+static void
+test_url_rules(void)
+{
+  static const struct {
+    gboolean relay;
+    const char *in;
+    gboolean onion;
+    const char *out; /* NULL: rejected */
+  } cases[] = {
+    { TRUE, "wss://relay.example.com", FALSE, "wss://relay.example.com" },
+    { TRUE, "wss://relay.example.com:4443/nostr/", FALSE, "wss://relay.example.com:4443/nostr" },
+    { TRUE, "ws://localhost:7777", FALSE, "ws://localhost:7777" },
+    { TRUE, "ws://127.0.0.2", FALSE, "ws://127.0.0.2" },
+    { TRUE, "ws://[::1]:7777", FALSE, "ws://[::1]:7777" },
+    { TRUE, "ws://relay.example.com", FALSE, NULL },
+    { TRUE, "ws://abcdef.onion", FALSE, NULL },
+    { TRUE, "ws://abcdef.onion", TRUE, "ws://abcdef.onion" },
+    { TRUE, "http://relay.example.com", FALSE, NULL },
+    { TRUE, "https://relay.example.com", FALSE, NULL },
+    { TRUE, "wss://:pw@relay.example.com", FALSE, NULL },
+    { TRUE, "wss://user@relay.example.com", FALSE, NULL },
+    { TRUE, "wss:relay.example.com", FALSE, NULL },
+    { TRUE, "javascript:alert(1)", FALSE, NULL },
+    { TRUE, NULL, FALSE, NULL },
+    { FALSE, "https://cdn.example.com/", FALSE, "https://cdn.example.com" },
+    { FALSE, "http://abcdef.onion", TRUE, "http://abcdef.onion" },
+    { FALSE, "http://abcdef.onion", FALSE, NULL },
+    { FALSE, "http://localhost:3000", FALSE, NULL },
+    { FALSE, "wss://cdn.example.com", FALSE, NULL },
+    { FALSE, "https://u:p@cdn.example.com", FALSE, NULL },
+    { FALSE, "file:///etc/passwd", FALSE, NULL },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_autoptr(GError) error = NULL;
+    g_autofree char *out =
+      cases[i].relay ? gh_preferences_normalize_relay_url(cases[i].in, cases[i].onion, &error)
+                     : gh_preferences_normalize_server_url(cases[i].in, cases[i].onion, &error);
+    if (g_strcmp0(out, cases[i].out) != 0)
+      g_error("\"%s\" (onion %d) gave \"%s\", expected \"%s\"",
+              cases[i].in ? cases[i].in : "(null)", cases[i].onion, out ? out : "(rejected)",
+              cases[i].out ? cases[i].out : "(rejected)");
+    if (!cases[i].out)
+      g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    else
+      g_assert_no_error(error);
+  }
+
+  static const struct {
+    const char *in;
+    gboolean ok;
+  } socks[] = {
+    { "127.0.0.1:9050", TRUE }, { "localhost:9150", TRUE }, { "[::1]:9050", TRUE },
+    { "tor-gateway.lan:9050", TRUE }, { "127.0.0.1", FALSE }, { "socks5://127.0.0.1:9050", FALSE },
+    { "127.0.0.1:0", FALSE }, { "127.0.0.1:70000", FALSE }, { "", FALSE }, { NULL, FALSE },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(socks); i++) {
+    g_autoptr(GError) error = NULL;
+    if (gh_preferences_validate_socks_address(socks[i].in, &error) != socks[i].ok)
+      g_error("SOCKS address \"%s\" was %s", socks[i].in ? socks[i].in : "(null)",
+              socks[i].ok ? "rejected" : "accepted");
+    if (!socks[i].ok)
+      g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  }
+}
+
+/* ---- account and Delete All Messages ------------------------------------------------ */
+
+static struct {
+  guint calls;
+  char *npub;
+  GObject *target;
+  GTask *pending;
+} fake;
+
+static void
+fake_forget_async(GObject *target, const char *npub, GCancellable *cancellable,
+                  GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_assert_true(target == fake.target);
+  g_assert_null(fake.pending);
+  fake.calls++;
+  g_free(fake.npub);
+  fake.npub = g_strdup(npub);
+  fake.pending = g_task_new(target, cancellable, callback, user_data);
+}
+
+static gboolean
+fake_forget_finish(GObject *target, GAsyncResult *result, GError **error)
+{
+  g_assert_true(g_task_is_valid(result, target));
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+static void
+fake_reset(void)
+{
+  g_clear_object(&fake.pending);
+  g_clear_pointer(&fake.npub, g_free);
+  g_clear_object(&fake.target);
+  fake.calls = 0;
+}
+
+static void
+fake_complete(gboolean ok)
+{
+  GTask *task = g_steal_pointer(&fake.pending);
+  g_assert_nonnull(task);
+  if (ok)
+    g_task_return_boolean(task, TRUE);
+  else
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                            "The keyring stayed locked");
+  g_object_unref(task);
+}
+
+static void
+test_account_rows(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GtkWidget *none = child(f, "no_account_row");
+  AdwActionRow *account = child(f, "account_row");
+  GtkWidget *group = child(f, "delete_group");
+  g_assert_true(gtk_widget_get_visible(none));
+  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(account)));
+  g_assert_false(gtk_widget_get_visible(group));
+
+  gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice <b>");
+  g_assert_false(gtk_widget_get_visible(none));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(account)));
+  /* Names are shown as text, never as markup. */
+  g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(account)));
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(account)), ==, "Alice <b>");
+  g_assert_cmpstr(adw_action_row_get_subtitle(account), ==, NPUB);
+  /* No forget function (a build without the encrypted store): nothing offered. */
+  g_assert_false(gtk_widget_get_visible(group));
+
+  gh_preferences_dialog_set_account(f->dialog, NPUB, NULL);
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(account)), ==,
+                  "npub10xlxv…pkge6d");
+
+  fake.target = g_object_new(G_TYPE_OBJECT, NULL);
+  gh_preferences_dialog_set_forget_func(f->dialog, fake_forget_async, fake_forget_finish,
+                                        fake.target);
+  g_assert_true(gtk_widget_get_visible(group));
+  gh_preferences_dialog_set_account(f->dialog, NULL, NULL);
+  g_assert_false(gtk_widget_get_visible(group));
+  g_assert_true(gtk_widget_get_visible(none));
+  /* Nothing to delete: the action does nothing. */
+  gtk_widget_activate_action(GTK_WIDGET(f->dialog), "prefs.delete-all", NULL);
+  drain_idle();
+  g_assert_null(gtk_widget_get_root(GTK_WIDGET(child(f, "delete_all_dialog"))));
+  g_assert_cmpuint(fake.calls, ==, 0);
+  fake_reset();
+}
+
+typedef struct {
+  GtkWidget *widget;
+  GtkWindow *window;
+} RootWait;
+
+static gboolean
+alert_shown(gpointer data)
+{
+  RootWait *wait = data;
+  return gtk_widget_get_root(wait->widget) == GTK_ROOT(wait->window) &&
+         gtk_widget_get_mapped(wait->widget);
+}
+
+static gboolean
+alert_gone(gpointer data)
+{
+  return gtk_widget_get_root(((RootWait *)data)->widget) == NULL;
+}
+
+typedef struct {
+  GtkWidget *alert;
+  const char *label;
+  GtkWidget *button;
+} ButtonWait;
+
+static gboolean
+response_button_shown(gpointer data)
+{
+  ButtonWait *wait = data;
+  wait->button = find_button_full(wait->alert, wait->label, TRUE);
+  return wait->button != NULL;
+}
+
+static gboolean
+dialog_can_close(gpointer data)
+{
+  return adw_dialog_get_can_close(ADW_DIALOG(data));
+}
+
+static void
+confirm(Fixture *f, const char *response_label)
+{
+  RootWait wait = { child(f, "delete_all_dialog"), f->window };
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->dialog), "prefs.delete-all", NULL));
+  spin_until(alert_shown, &wait);
+  /* Its response buttons are laid out (and mapped) after it is. */
+  ButtonWait shown = { wait.widget, response_label, NULL };
+  spin_until(response_button_shown, &shown);
+  g_test_message("responding %s", response_label);
+  g_signal_emit_by_name(shown.button, "clicked");
+  spin_until(alert_gone, &wait);
+  drain_idle();
+}
+
+static void
+test_delete_all_runs_forget(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  AdwAlertDialog *alert = child(f, "delete_all_dialog");
+  GtkWidget *button = find_button(child(f, "delete_group"), "Delete…");
+  g_assert_nonnull(button);
+  present(f, 800, 700);
+  fake.target = g_object_new(G_TYPE_OBJECT, NULL);
+  gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice");
+  gh_preferences_dialog_set_forget_func(f->dialog, fake_forget_async, fake_forget_finish,
+                                        fake.target);
+  g_assert_true(gtk_widget_get_sensitive(button));
+
+  /* The confirmation is destructive, defaults to Cancel and closes as Cancel. */
+  g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==,
+                  "Delete All Messages on This Device?");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(alert), "Copies stay on relays"));
+  g_assert_cmpint(adw_alert_dialog_get_response_appearance(alert, "delete"), ==,
+                  ADW_RESPONSE_DESTRUCTIVE);
+  g_assert_cmpstr(adw_alert_dialog_get_default_response(alert), ==, "cancel");
+  g_assert_cmpstr(adw_alert_dialog_get_close_response(alert), ==, "cancel");
+
+  /* Cancel deletes nothing. */
+  confirm(f, "_Cancel");
+  g_assert_cmpuint(fake.calls, ==, 0);
+
+  /* Confirming runs the account store path for this account, once. */
+  confirm(f, "_Delete and Sign Out");
+  g_assert_cmpuint(fake.calls, ==, 1);
+  g_assert_cmpstr(fake.npub, ==, NPUB);
+  /* It runs to its end: the dialog stays open and offers nothing more. */
+  g_assert_false(adw_dialog_get_can_close(ADW_DIALOG(f->dialog)));
+  g_assert_false(gtk_widget_get_sensitive(button));
+  gtk_widget_activate_action(GTK_WIDGET(f->dialog), "prefs.delete-all", NULL);
+  drain_idle();
+  g_assert_null(gtk_widget_get_root(GTK_WIDGET(alert)));
+  adw_dialog_close(ADW_DIALOG(f->dialog));
+  drain_idle();
+  g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(f->dialog)));
+  g_assert_cmpuint(fake.calls, ==, 1);
+
+  /* The account store signs the account out; the application then clears it. */
+  gh_preferences_dialog_set_account(f->dialog, NULL, NULL);
+  fake_complete(TRUE);
+  spin_until(dialog_can_close, f->dialog);
+  g_assert_false(gtk_widget_get_visible(child(f, "delete_group")));
+
+  /* A failure is reported and the action is offered again. */
+  gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice");
+  confirm(f, "_Delete and Sign Out");
+  g_assert_cmpuint(fake.calls, ==, 2);
+  fake_complete(FALSE);
+  spin_until(dialog_can_close, f->dialog);
+  g_assert_true(gtk_widget_get_sensitive(button));
+  g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(f->dialog)));
+  fake_reset();
+}
+
+/* The deletion outlives the dialog's widgets (e.g. the window is destroyed at
+ * quit): it still finishes, and the account updates that follow are ignored. */
+static void
+test_delete_all_outlives_dialog(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  present(f, 800, 700);
+  fake.target = g_object_new(G_TYPE_OBJECT, NULL);
+  gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice");
+  gh_preferences_dialog_set_forget_func(f->dialog, fake_forget_async, fake_forget_finish,
+                                        fake.target);
+  confirm(f, "_Delete and Sign Out");
+  g_assert_cmpuint(fake.calls, ==, 1);
+  gtk_window_destroy(f->window);
+  f->window = NULL;
+  g_object_run_dispose(G_OBJECT(f->dialog));
+  gh_preferences_dialog_set_account(f->dialog, NULL, NULL);
+  g_assert_null(gh_preferences_dialog_get_key_widget(f->dialog, "enter-sends"));
+  fake_complete(FALSE);
+  drain_idle();
+  /* The finished deletion released the dialog: only the fixture holds it. */
+  g_assert_cmpuint(G_OBJECT(f->dialog)->ref_count, ==, 1);
+  fake_reset();
+}
+
+/* ---- layout -------------------------------------------------------------------------- */
+
+static void
+test_minimum_size_layout(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  static const char *const pages[] = { "privacy", "messages", "network", "account" };
+  gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice");
+  present(f, 360, 294);
+  for (guint i = 0; i < G_N_ELEMENTS(pages); i++) {
+    adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(f->dialog), pages[i]);
+    drain_idle();
+    gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+    /* The dialog is a bottom sheet here; its page must fit the window, which
+     * keeps its minimum size (a larger content minimum would also warn, and
+     * warnings are fatal). */
+    GtkWidget *page = GTK_WIDGET(
+      adw_preferences_dialog_get_visible_page(ADW_PREFERENCES_DIALOG(f->dialog)));
+    g_assert_cmpstr(adw_preferences_page_get_name(ADW_PREFERENCES_PAGE(page)), ==, pages[i]);
+    spin_until(is_mapped, page);
+    int min_width = 0, min_height = 0;
+    gtk_widget_measure(page, GTK_ORIENTATION_HORIZONTAL, -1, &min_width, NULL, NULL, NULL);
+    gtk_widget_measure(page, GTK_ORIENTATION_VERTICAL, -1, &min_height, NULL, NULL, NULL);
+    g_test_message("%s: minimum %dx%d, allocated %dx%d", pages[i], min_width, min_height,
+                   gtk_widget_get_width(page), gtk_widget_get_height(page));
+    g_assert_cmpint(min_width, <=, 360);
+    g_assert_cmpint(min_height, <=, 294);
+    g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(f->window)), ==, 360);
+    g_assert_cmpint(gtk_widget_get_height(GTK_WIDGET(f->window)), ==, 294);
+  }
+}
+
+/* ---- screenshots (opt-in evidence) ------------------------------------------------- */
+
+static void
+save_png(GtkWidget *window, const char *dir, const char *name)
+{
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(window);
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
+                         gdk_paintable_get_intrinsic_height(paintable));
+  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  g_assert_nonnull(node);
+  graphene_rect_t bounds;
+  gsk_render_node_get_bounds(node, &bounds);
+  GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(window));
+  g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &bounds);
+  g_autofree char *path = g_strdup_printf("%s/groundhog-g17-%s.png", dir, name);
+  g_assert_true(gdk_texture_save_to_png(texture, path));
+  g_test_message("saved %s", path);
+}
+
+static void
+take_shot(GSettings *settings, const char *dir, const char *page, gboolean confirm_delete,
+          int width, int height, const char *name)
+{
+  GhWindow *window = gh_window_new(NULL);
+  GhPreferencesDialog *dialog = gh_preferences_dialog_new(settings, FALSE);
+  GObject *target = g_object_new(G_TYPE_OBJECT, NULL);
+  gh_preferences_dialog_set_account(dialog, NPUB, "Alice");
+  gh_preferences_dialog_set_forget_func(dialog, fake_forget_async, fake_forget_finish, target);
+  present_window(GTK_WINDOW(window), width, height);
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
+  adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(dialog), page);
+  spin_until(is_mapped, dialog);
+  if (confirm_delete) {
+    RootWait wait = { GTK_WIDGET(gtk_widget_get_template_child(
+                        GTK_WIDGET(dialog), GH_TYPE_PREFERENCES_DIALOG, "delete_all_dialog")),
+                      GTK_WINDOW(window) };
+    g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "prefs.delete-all", NULL));
+    spin_until(alert_shown, &wait);
+  }
+  drain_idle();
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
+  save_png(GTK_WIDGET(window), dir, name);
+  gtk_window_destroy(GTK_WINDOW(window));
+  drain_idle();
+  g_object_unref(target);
+}
+
+static void
+test_screenshots(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const char *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  if (!dir || !*dir) {
+    g_test_skip("GROUNDHOG_TEST_SCREENSHOTS is not set");
+    return;
+  }
+  /* As in test_conversation_list.c: switching the color scheme may warn about
+   * libadwaita's own CSS on some GTK builds; criticals stay fatal. */
+  GLogLevelFlags fatal = g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+  AdwStyleManager *style = adw_style_manager_get_default();
+  static const struct {
+    AdwColorScheme scheme;
+    const char *name;
+  } schemes[] = {
+    { ADW_COLOR_SCHEME_FORCE_LIGHT, "light" },
+    { ADW_COLOR_SCHEME_FORCE_DARK, "dark" },
+  };
+  static const char *const pages[] = { "privacy", "messages", "network", "account" };
+  const char *const relays[] = { "wss://relay.example.com", NULL };
+  g_settings_set_strv(f->settings, "discovery-relays", relays);
+  for (guint s = 0; s < G_N_ELEMENTS(schemes); s++) {
+    adw_style_manager_set_color_scheme(style, schemes[s].scheme);
+    for (guint p = 0; p < G_N_ELEMENTS(pages); p++) {
+      g_autofree char *narrow = g_strdup_printf("%s-%s-narrow", pages[p], schemes[s].name);
+      take_shot(f->settings, dir, pages[p], FALSE, 360, 720, narrow);
+    }
+    g_autofree char *confirm_name = g_strdup_printf("delete-confirm-%s-narrow", schemes[s].name);
+    take_shot(f->settings, dir, "account", TRUE, 360, 720, confirm_name);
+    g_autofree char *wide = g_strdup_printf("privacy-%s-wide", schemes[s].name);
+    take_shot(f->settings, dir, "privacy", FALSE, 900, 700, wide);
+  }
+  adw_style_manager_set_color_scheme(style, ADW_COLOR_SCHEME_DEFAULT);
+  g_log_set_always_fatal(fatal);
+  fake_reset();
+}
+
+int
+main(int argc, char **argv)
+{
+  if (!gtk_init_check()) {
+    g_printerr("groundhog-preferences test skipped: no graphical display\n");
+    return 77;
+  }
+  adw_init();
+  groundhog_register_resource();
+  g_autoptr(GtkCssProvider) css = gtk_css_provider_new();
+  gtk_css_provider_load_from_resource(css, "/org/nostr/Groundhog/style.css");
+  gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(css),
+                                             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  /* As in test_shell_layout.c: 1sp is one pixel, no animations, and GNOME's
+   * close-only window controls. */
+  g_object_set(gtk_settings_get_default(), "gtk-xft-dpi", 96 * 1024, "gtk-enable-animations",
+               FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
+
+  g_test_init(&argc, &argv, NULL);
+#define ADD(path, func, tor)                                                                  \
+  g_test_add("/groundhog/preferences/" path, Fixture, GINT_TO_POINTER(tor), fixture_setup,    \
+             func, fixture_teardown)
+  ADD("every-key-has-a-row", test_every_key_has_a_row, FALSE);
+  ADD("every-key-has-a-row-with-tor", test_every_key_has_a_row, TRUE);
+  ADD("switch-rows-bind-both-ways", test_switch_rows_bind_both_ways, FALSE);
+  ADD("choice-rows-bind-both-ways", test_choice_rows_bind_both_ways, FALSE);
+  ADD("tor-hidden-without-g09", test_tor_hidden_without_g09, FALSE);
+  ADD("tor-with-g09", test_tor_with_g09, TRUE);
+  ADD("url-lists-bind-both-ways", test_url_lists_bind_both_ways, FALSE);
+  ADD("account-rows", test_account_rows, FALSE);
+  ADD("delete-all-runs-forget", test_delete_all_runs_forget, FALSE);
+  ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, FALSE);
+  ADD("minimum-size-layout", test_minimum_size_layout, FALSE);
+  ADD("screenshots", test_screenshots, FALSE);
+#undef ADD
+  g_test_add_func("/groundhog/preferences/url-rules", test_url_rules);
+  return g_test_run();
+}

@@ -31,6 +31,9 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-row gh-shortcuts-window
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details)
+
+  gh-conversation-row gh-message-item gh-shortcuts-window
+  gh-preferences-dialog)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -933,3 +936,30 @@ if (BUILD_TESTING)
   endif()
 endif()
 # --- end G15 background service lifecycle ---
+
+# --- G17 preferences dialog ---
+# GhPreferencesDialog (privacy charter §7.11, §8.2 G17): an AdwPreferencesDialog
+# whose rows bind every preference key of org.nostr.Groundhog both ways. GTK-only;
+# the application opens it with app.preferences (gh-app-services.c), handing it
+# the active account and GhAccountStore's forget for "Delete All Messages". The
+# Tor rows stay hidden until G09 defines GROUNDHOG_HAVE_TOR=1 for groundhog.
+add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c)
+target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+target_link_libraries(groundhog-preferences PUBLIC groundhog-ui)
+target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(groundhog PRIVATE groundhog-preferences)
+if (BUILD_TESTING)
+  # Every row bound to its key both ways (memory GSettings backend), the Tor
+  # row hidden without G09, the URL rules, and Delete All Messages running the
+  # forget function after confirmation (a fake stands in for GhAccountStore).
+  # Needs a display, so it self-skips (77) like the other GUI tests. With
+  # GROUNDHOG_TEST_SCREENSHOTS=<dir> it also renders each page to PNGs.
+  add_executable(test-groundhog-preferences tests/ui/test_preferences.c)
+  target_link_libraries(test-groundhog-preferences PRIVATE groundhog-preferences)
+  target_compile_options(test-groundhog-preferences PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-preferences groundhog-schema)
+  add_test(NAME groundhog-preferences COMMAND test-groundhog-preferences)
+  set_tests_properties(groundhog-preferences PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+endif()
+# --- end G17 preferences dialog ---
