@@ -205,3 +205,56 @@ These match the branch's own claim of about 3 residual failures in 50. I recomme
 - **Blocking:** R1. The clipboard seam removed the only coverage of users' text paste, and M4 shows a real regression now passes.
 
 **REQUEST CHANGES**
+
+---
+
+## 8. Re-review of the fixes (2026-09-29, later)
+
+- **Branch:** `tests/w19-reliability` now ends at `874a0cce`, 4 new commits on `9c093e32`. This review commit is rebased on top of it: the old tip did not contain it, so a pure fast-forward was not possible.
+
+| Commit | Addresses | Change |
+|---|---|---|
+| `b732b9d9` | R1 | composer's test-only text branch removed; the test pastes text from a handler that runs after the composer's |
+| `7ce4bfdf` | B1 | `OPENING` says nothing at start and "Opening messages…" once a status was sent; new test `status-while-reopening` |
+| `1dff5c4a` | P1 | `wait_copies_taken()` counts accepted copies per receiver (`target->pubkey`) for each marked inbox |
+| `874a0cce` | T1 | refused-port probe: 5 s `g_socket_set_timeout`, named error on `G_IO_ERROR_TIMED_OUT` |
+
+### What I ran
+
+| Check | Result |
+|---|---|
+| Rebuild at `874a0cce` (`ninja -C /tmp/w19rr`) | builds. `gnostr-profile-edit.ui` restored |
+| `ctest -R groundhog- -j6` | first run: 66/67, second run: 65/67. The failures are `groundhog-account` (twice) and `groundhog-blueprint` (once), both as timeouts. **Host load**: load average 74, then 105, on 14 cores, from other sessions' builds and the Docker VM. Neither test is touched by these commits. `test-groundhog-account` run directly with its ctest environment passes all 29 cases, in 48.5 s wall time at 11 % CPU. Its ctest limit is 30 s. |
+| `groundhog-background` | 10/10 run cases pass (2 skipped for no display), including the new `status-while-reopening` |
+| **M4 again**: the composer stops every `paste-clipboard` emission (users' text paste is broken) | **fails**: `test_attachment_ui.c:1185 assertion failed (text_paste.reached == 1): (0 == 1)`. The blocker is fixed |
+| **M4b**: the composer reads the pasted image but no longer stops the emission, so the image also pastes as text | **fails**: `test_attachment_ui.c:1177 assertion failed (text_paste.reached == 0): (1 == 0)` |
+| **M5**: `OPENING` keeps the previous status (the pre-B1 behaviour) | **fails**: `status-while-reopening`, named wait at `test_background.c:893` ("Opening messages…" never sent) |
+| **M6**: `OPENING` always says "Opening messages…", even at start | **fails**: `no11-status-waits-for-store`, `test_background.c:832` (status should be NULL at start) |
+| P1 probe: printed the per-inbox counts in `wait_copies_taken` for every privacy-e2e send | all 18 calls wait for non-zero counts (`to=2 from=1` or `to=1 from=2`), each summing to the item's 3 targets. The lowercase-hex match against `target->pubkey` is not silently 0, so the wait still waits |
+| T1: scratch program outside the repo | pointed at a port whose backlog was full: the probe fails at once, "something listens on 127.0.0.1:… the tests need that port closed", because macOS completed the handshake. A copy of the header dialling a black-holed address: it aborts after **5.16 s**, "a dial to 127.0.0.1:1 got no answer within 5 s (a firewall dropping loopback traffic?)". The message names the header's constant address. The ctest timeout is never reached |
+| `python3 scripts/check-unsequenced-args.py` | clean |
+| `bash scripts/test-linux-gate-smoke.sh` | passes |
+| `scripts/linux-gate.sh .` | **failed on host load, not on the branch**. It ran after waiting for another session's gate to release the volume lock; the host load average was about 100. The parallel run had 11 failures (405/416 passed). 10 of them passed on the rerun alone: relayd_session_relay_storage, adopt_existing, client_bindings, groundhog-store, groundhog-store-conversations, groundhog-preferences, groundhog-e2e-dm, groundhog-nip29-service, groundhog-group-ui-gui and groundhog-attachment-ui. Only `test_nostr_gtk_bind_latency_budget` failed alone too: main-loop heartbeats missed 9 against a budget of 3, in nostr-gtk, which this branch does not touch. The attachment-ui first-run failure was `attach-send`'s 10 s wait (line 825), not the new paste assertions. The e2e-dm first-run abort was a libsoup warning, `soup-server-connection.c:717: could not get remote address`, made fatal, during a relay reconnect. That test runs its own `soup_server_listen_local` relay, uses no held ports, and is unchanged since `f5147aaa`. The earlier gate run on this branch (§1) passed 416/416 with no rerun |
+
+Every mutation and probe was reverted and the tree rebuilt. `git status` is clean.
+
+### Findings on the fixes
+
+- **R1: resolved.**
+  - `on_paste_clipboard` again lets anything that isn't an image or a file list through to `GtkTextView`'s class handler, the users' path.
+  - The test's `on_text_paste` is a normal handler, connected after the composer's (gh-composer.c:630 connects at init). It therefore runs only if the composer let the emission continue, and it stands in for the class handler, so it never touches the system clipboard.
+  - The test asserts both directions: 0 for the image and 1 for the text. M4 and M4b show each direction catches a regression.
+  - **Info:** with a clipboard injected, formats are read from the private clipboard, while the default handler would paste text from the widget's. Only tests inject one, and the header now says so. No action needed.
+- **B1: resolved.**
+  - `self->status ? "Opening messages…" : NULL` keeps the NO-11 guarantee: nothing is sent before the first answer (M6 fails). A reopen can no longer show a stale "No account" or the previous account's "Receiving" (M5 fails).
+  - The new test checks the portal's full `SetStatus` sequence: No account → Opening → Receiving → Opening → Receiving.
+  - Groundhog has no `po/` catalogue, so the new `N_()` string needs no catalogue update.
+- **P1: resolved.** Copies addressed to accounts that aren't marked (another room member) are no longer counted against `to`. The probe shows the counts are real.
+- **T1: resolved.** Both the timeout and the "listens" paths fail with named messages. `GH_TEST_REFUSED_PORT` is overridable only under `#ifndef`, and nothing in the tree overrides it.
+- **Still open, non-blocking, unchanged:** P2, N1, G1, G2, O1 (Info or out of scope).
+- **New observations, out of scope** (O1 class, host-load flakes in untouched tests):
+  - `groundhog-account`'s 30 s limit is too tight under heavy load.
+  - The gate's `test_nostr_gtk_bind_latency_budget` heartbeat budget failed.
+  - A libsoup `could not get remote address` warning is fatal in `groundhog-e2e-dm` when a client drops mid-accept.
+
+**APPROVED**
