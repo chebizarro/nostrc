@@ -337,12 +337,15 @@ fail:
 }
 
 /* The read state after a stored message: an own message moves the marker to
- * itself (replying implies having read what came before) and accepts the
- * room, lifting a block too (writing to someone again is choosing to hear
- * from them, G18); the unread count follows. */
+ * itself (replying implies having read what came before) and accepts a
+ * message request; the unread count follows. It never lifts a block: only
+ * writing from this device does, in T-enqueue (gh_store_enqueue()), which
+ * stored the message before its local echo gets here. A self-copy a relay
+ * delivers (replayed, older, or written on another device, which knows
+ * nothing of this device's block, P8) leaves the room blocked. */
 static gboolean
 admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
-                 GhMessage *message, gboolean fresh, gint64 *out_unread, GError **error)
+                 GhMessage *message, gint64 *out_unread, GError **error)
 {
   gboolean found = FALSE;
   gint64 conversation_id = 0;
@@ -360,13 +363,8 @@ admit_read_state(GhStore *store, const gchar *room_id, gint64 message_row,
     if (after)
       place_set(&marker, message_row, gh_message_get_created_at(message),
                 gh_message_get_rumor_id(message));
-    /* Only a new own message lifts a block: a relay replaying an old
-     * self-copy (a duplicate, or older than the read marker) must not
-     * unblock a room whose history was kept for Undo (G19). */
-    sqlite3_stmt *stmt = prepare(store, fresh && after
-      ? "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state IN (1, 2)"
-      : "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state = 1",
-      error);
+    sqlite3_stmt *stmt = prepare(store,
+      "UPDATE conversations SET request_state = 0 WHERE id = ?1 AND request_state = 1", error);
     ok = stmt && sqlite3_bind_int64(stmt, 1, conversation_id) == SQLITE_OK &&
          step_done(store, stmt, "Accepting a conversation", error);
     sqlite3_finalize(stmt);
@@ -504,13 +502,12 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
       !find_message_row(store, room_id, m.backend_msg_id, &message_row, error))
     goto fail;
   if (message_row > 0) {
-    if (!admit_read_state(store, room_id, message_row, message,
-                          result != GH_STORE_ADMIT_DUPLICATE, &commit->unread, error))
+    if (!admit_read_state(store, room_id, message_row, message, &commit->unread, error))
       goto fail;
-    /* Someone else's message in a blocked room returned above. An own
-     * message lifts the block only when it is new (admit_read_state); a
-     * replayed or older self-copy is stored unlisted and the room stays
-     * out of the list. */
+    /* Someone else's message in a blocked room returned above. An own one
+     * is stored; the local echo of a message this device wrote is listed,
+     * since its T-enqueue lifted the block, while a relay's self-copy in a
+     * room that is still blocked stays unlisted with it. */
     gboolean blocked = FALSE;
     if (!room_blocked(store, room_id, &blocked, error))
       goto fail;
@@ -610,6 +607,29 @@ fail:
   return FALSE;
 }
 
+static gboolean
+delegate_is_blocked(gpointer data, const gchar *room_id)
+{
+  GhStoreConversations *self = data;
+  gboolean blocked = FALSE;
+  g_autoptr(GError) error = NULL;
+  if (!self->store || !check_room(self, room_id, NULL))
+    return FALSE;
+  if (!room_blocked(self->store, room_id, &blocked, &error))
+    g_warning("Groundhog could not read a conversation's block: %s", error->message);
+  return blocked;
+}
+
+static gboolean unblock_room(GhStoreConversations *self, const gchar *room_id, gboolean accept,
+                             GError **error);
+
+/* New Message to someone blocked (G18): starting a conversation accepts it. */
+static gboolean
+delegate_unblock(gpointer data, const gchar *room_id, GError **error)
+{
+  return unblock_room(data, room_id, TRUE, error);
+}
+
 static const GhConversationDelegate store_delegate = {
   .has_wrap = delegate_has_wrap,
   .has_rumor = delegate_has_rumor,
@@ -618,6 +638,8 @@ static const GhConversationDelegate store_delegate = {
   .add_rejected = delegate_add_rejected,
   .mark_read = delegate_mark_read,
   .accept = delegate_accept,
+  .is_blocked = delegate_is_blocked,
+  .unblock = delegate_unblock,
 };
 
 /* ---- Restore ------------------------------------------------------------------------ */
@@ -1309,19 +1331,21 @@ fail:
   return FALSE;
 }
 
-/* Blocked, or back from blocked: a request again unless the account wrote
- * in the room (unblocking is not accepting, charter PT-8). */
+/* Blocked, or back from blocked: accepted when @accept (the user starts a
+ * conversation with them, G18), else a request again unless the account
+ * wrote in the room (unblocking alone is not accepting, charter PT-8). */
 static gboolean
-update_block(GhStore *store, gint64 id, gboolean blocked, GError **error)
+update_block(GhStore *store, gint64 id, gboolean blocked, gboolean accept, GError **error)
 {
   sqlite3_stmt *stmt = prepare(store,
-    "UPDATE conversations SET request_state = CASE WHEN ?2 THEN 2 "
+    "UPDATE conversations SET request_state = CASE WHEN ?2 THEN 2 WHEN ?3 THEN 0 "
     "  WHEN EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND direction = 1) "
     "  THEN 0 ELSE 1 END WHERE id = ?1", error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, id));
   BIND(sqlite3_bind_int(stmt, 2, blocked));
+  BIND(sqlite3_bind_int(stmt, 3, accept));
   gboolean ok = step_done(store, stmt, blocked ? "Blocking a conversation"
                                                 : "Unblocking a conversation", error);
   sqlite3_finalize(stmt);
@@ -1331,11 +1355,14 @@ fail:
   return FALSE;
 }
 
-gboolean
-gh_store_conversations_set_blocked(GhStoreConversations *self, const gchar *room_id,
-                                   gboolean blocked, GError **error)
+/* Sets or lifts the block of a stored room and brings the attached model in
+ * line: a blocked room leaves it, an unblocked one is listed again with its
+ * newest page (none when nothing of it is stored, e.g. after Block on a
+ * request, which forgot it). */
+static gboolean
+change_block(GhStoreConversations *self, const gchar *room_id, gboolean blocked,
+             gboolean accept, GError **error)
 {
-  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
   if (!check_open(self, error) || !check_room(self, room_id, error))
     return FALSE;
   gboolean found = FALSE;
@@ -1347,7 +1374,7 @@ gh_store_conversations_set_blocked(GhStoreConversations *self, const gchar *room
                         "The conversation is not stored");
     return FALSE;
   }
-  if (!update_block(self->store, id, !!blocked, error))
+  if (!update_block(self->store, id, blocked, accept, error))
     return FALSE;
 
   g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
@@ -1357,10 +1384,23 @@ gh_store_conversations_set_blocked(GhStoreConversations *self, const gchar *room
     gh_conversation_store_remove(model, room_id);
     return TRUE;
   }
-  /* Unblocked: listed again with its newest page. */
   guint listed = 0;
   return restore_room(self, model, id, room_id, NULL, GH_STORE_CONVERSATIONS_PAGE_SIZE, &listed,
                       error);
+}
+
+static gboolean
+unblock_room(GhStoreConversations *self, const gchar *room_id, gboolean accept, GError **error)
+{
+  return change_block(self, room_id, FALSE, accept, error);
+}
+
+gboolean
+gh_store_conversations_set_blocked(GhStoreConversations *self, const gchar *room_id,
+                                   gboolean blocked, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  return change_block(self, room_id, !!blocked, FALSE, error);
 }
 
 /* ---- Legacy seen file ------------------------------------------------------------------ */

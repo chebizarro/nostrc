@@ -548,14 +548,16 @@ test_nip11(void)
   g_assert_null(gh_nip11_document_url("wss://user:pw@example.org", &error));
   g_clear_error(&error);
 
-  /* "self" wins; legacy "pubkey" alone is used; a bad "self" is not replaced. */
+  /* "self" only: the admin's "pubkey" is never the relay key (W15 review
+   * non-blocking #4), whether "self" is missing or malformed. */
   g_autofree gchar *self_key = gh_nip11_parse_relay_key(
     "{\"self\":\"AAAA" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
     "\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}", -1, &error);
   g_assert_cmpstr(self_key, ==, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-  g_autofree gchar *legacy = gh_nip11_parse_relay_key(
-    "{\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}", -1, &error);
-  g_assert_cmpstr(legacy, ==, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  g_assert_null(gh_nip11_parse_relay_key(
+    "{\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}", -1, &error));
+  g_assert_error(error, GH_NIP11_ERROR, GH_NIP11_ERROR_NO_KEY);
+  g_clear_error(&error);
   g_assert_null(gh_nip11_parse_relay_key(
     "{\"self\":\"nope\",\"pubkey\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}",
     -1, &error));
@@ -563,6 +565,40 @@ test_nip11(void)
   g_clear_error(&error);
   g_assert_null(gh_nip11_parse_relay_key("[1,2]", -1, &error));
   g_assert_error(error, GH_NIP11_ERROR, GH_NIP11_ERROR_MALFORMED);
+  nip29_relay_clear(&relay);
+}
+
+static gboolean
+key_decided(gpointer data)
+{
+  return gh_nip29_room_get_relay_key_state(data) != GH_NIP29_RELAY_KEY_UNKNOWN;
+}
+
+/* A relay whose NIP-11 names only an administrator's "pubkey" (here Bob, a
+ * member) and no "self": the relay key is unavailable, so nothing is
+ * pinned, Bob cannot speak for the group, and its state stays unverified
+ * (held) rather than trusted to a person (W15 review non-blocking #4). */
+static void
+test_nip11_admin_pubkey_only(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  relay.nip11_pubkey_only = TRUE;
+  relay.nip11_pubkey_only_key = hex_bob;
+  Nip29TestGroup *group = nip29_add_group(&relay, "pizza", "Pizza Lovers");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "pizza", NULL);
+  gh_test_spin_until(key_decided, room);
+  g_assert_cmpint(gh_nip29_room_get_relay_key_state(room), ==, GH_NIP29_RELAY_KEY_UNAVAILABLE);
+  g_assert_null(gh_nip29_room_get_group(room));
+  wait_read(room, GH_NIP29_READ_LIVE);
+  drain();
+  /* The relay's 39000 arrived but was not admitted without a verified key. */
+  g_assert_null(gh_nip29_room_get_group(room));
+  g_assert_cmpstr(gh_nip29_room_get_name(room), !=, "Pizza Lovers");
+  fixture_down(&f);
   nip29_relay_clear(&relay);
 }
 
@@ -1107,6 +1143,76 @@ test_restart_restores(void)
   nip29_relay_clear(&relay);
 }
 
+/* The since of the last REQ's group message filter (0: none). */
+static gint64
+last_since(Nip29Relay *relay)
+{
+  g_assert_cmpuint(relay->req_frames->len, >, 0);
+  const gchar *req = g_ptr_array_index(relay->req_frames, relay->req_frames->len - 1);
+  const gchar *since = strstr(req, "\"since\":");
+  return since ? g_ascii_strtoll(since + strlen("\"since\":"), NULL, 10) : 0;
+}
+
+/* The since-cursor moves only past what is stored with nothing missing
+ * before it (W15 review non-blocking #1): a backfill cut off before its EOSE
+ * (the connection dropped, or the app quit) leaves it where it was, so the
+ * next REQ asks for that stretch again instead of skipping it for good;
+ * the backfill's EOSE then commits it. */
+static void
+test_cursor_waits_for_eose(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "pizza", "Pizza Lovers");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  NostrEvent *first = member_post(&relay, KEY_BOB, "pizza", "an hour ago");
+  const gint64 first_at = nostr_event_get_created_at(first);
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "pizza", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  wait_messages(f.model, room_id, 1);
+  g_clear_object(&room);
+
+  /* A message while the app is away (stored, not pushed live). */
+  NostrEvent *later = nip29_member_event(gh_test_secret[KEY_BOB], 9, nip29_now(&relay), "pizza",
+                                         "while you were away");
+  const gint64 later_at = nostr_event_get_created_at(later);
+  g_ptr_array_add(relay.events, later);
+
+  /* The next REQ asks from the first backfill's EOSE; this backfill stores
+   * the new message but is cut off before its EOSE. */
+  relay.hold_eose = TRUE;
+  guint reqs = relay.reqs;
+  restart(&f);
+  wait_count(&relay.reqs, reqs + 1);
+  g_assert_cmpint(last_since(&relay), ==, first_at - GH_NIP29_SERVICE_CURSOR_OVERLAP);
+  wait_messages(f.model, room_id, 2);
+  g_autoptr(GhNip29Room) cut = gh_nip29_service_lookup(f.service, relay.url, "pizza");
+  g_assert_cmpint(gh_nip29_room_get_read_state(cut), ==, GH_NIP29_READ_SYNCING);
+  g_clear_object(&cut);
+
+  /* So the next REQ still asks from before that stretch. */
+  relay.hold_eose = FALSE;
+  reqs = relay.reqs;
+  restart(&f);
+  wait_count(&relay.reqs, reqs + 1);
+  g_assert_cmpint(last_since(&relay), ==, first_at - GH_NIP29_SERVICE_CURSOR_OVERLAP);
+  g_autoptr(GhNip29Room) whole = gh_nip29_service_lookup(f.service, relay.url, "pizza");
+  wait_read(whole, GH_NIP29_READ_LIVE);
+  g_clear_object(&whole);
+
+  /* That backfill ended with EOSE: the cursor moved to what it stored. */
+  reqs = relay.reqs;
+  restart(&f);
+  wait_count(&relay.reqs, reqs + 1);
+  g_assert_cmpint(last_since(&relay), ==, later_at - GH_NIP29_SERVICE_CURSOR_OVERLAP);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 /* A join queued while the signer waits survives a restart: the signer is
  * asked again (it was never signed) and the request then goes out. */
 static void
@@ -1191,6 +1297,8 @@ main(int argc, char **argv)
   npub_bob = gh_test_npub(KEY_BOB);
   gh_test_bus_up(&shared_bus);
   g_test_add_func("/groundhog/nip29-service/nip11", test_nip11);
+  g_test_add_func("/groundhog/nip29-service/nip11-admin-pubkey-only",
+                  test_nip11_admin_pubkey_only);
   g_test_add_func("/groundhog/nip29-service/classify", test_classify);
   g_test_add_func("/groundhog/nip29-service/join-and-chat", test_join_open_group_and_chat);
   g_test_add_func("/groundhog/nip29-service/same-id-two-relays", test_same_id_two_relays_isolated);
@@ -1202,6 +1310,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/auth-and-closed", test_auth_and_closed);
   g_test_add_func("/groundhog/nip29-service/restart-restores", test_restart_restores);
   g_test_add_func("/groundhog/nip29-service/outbox-resumes", test_outbox_resumes_after_restart);
+  g_test_add_func("/groundhog/nip29-service/cursor-waits-for-eose", test_cursor_waits_for_eose);
   g_test_add_func("/groundhog/nip29-service/leave-and-removed", test_leave_and_removed);
   gint rc = g_test_run();
   gh_test_bus_down(&shared_bus);

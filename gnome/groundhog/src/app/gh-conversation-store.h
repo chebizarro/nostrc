@@ -12,9 +12,10 @@ typedef enum {
   GH_CONVERSATION_ADD_FAILED,    /* the delegate could not commit: nothing
                                   * changed, nothing is marked seen, so a later
                                   * delivery of the wrap retries it */
-  GH_CONVERSATION_ADD_HIDDEN     /* committed as seen only and never shown:
-                                  * expired on arrival (charter §3.7, EX-4) or
-                                  * older than a forgotten room's tombstone */
+  GH_CONVERSATION_ADD_HIDDEN     /* committed but never shown: expired on
+                                  * arrival (charter §3.7, EX-4), older than a
+                                  * forgotten room's tombstone, or in a room
+                                  * the user blocked (G18/G19) */
 } GhConversationAddResult;
 
 /* What one delegate commit did, beyond success. The store initializes it to
@@ -44,7 +45,12 @@ typedef struct {
  *   - mark_read()/accept(): persist gh_conversation_mark_read() (the last
  *     read message) and gh_conversation_accept() of a listed room. They run
  *     after the model changed; a failure is logged and the model keeps the
- *     change for this session.
+ *     change for this session;
+ *   - is_blocked()/unblock(): a room the user blocked (G18/G19), which the
+ *     model does not list although the delegate keeps it. is_blocked() tells
+ *     whether room_id is one; unblock() lifts its block, accepting it, and
+ *     lists what it kept of the room through gh_conversation_store_restore()
+ *     (nothing when it kept no message). Both or neither.
  *
  * A memory-only GhDmInbox installs a delegate that keeps the messages' seen
  * keys in memory with them (only rejected wrap ids reach a file). The
@@ -62,6 +68,8 @@ typedef struct {
   gboolean (*mark_read)(gpointer data, GhConversation *conversation,
                         GhMessage *last_read, GError **error);
   gboolean (*accept)(gpointer data, GhConversation *conversation, GError **error);
+  gboolean (*is_blocked)(gpointer data, const gchar *room_id);
+  gboolean (*unblock)(gpointer data, const gchar *room_id, GError **error);
 } GhConversationDelegate;
 
 #define GH_TYPE_CONVERSATION_STORE (gh_conversation_store_get_type())
@@ -134,15 +142,24 @@ GhConversation *gh_conversation_store_lookup(GhConversationStore *self,
  * pubkeys in any case; duplicates and the account itself are ignored; NULL
  * or none: a note to self), the way New Message starts a conversation
  * (charter §7.9, G18): a listed room is returned (a message request is
- * accepted, since starting a conversation accepts it); otherwise an empty,
- * accepted room is listed at the top of the store order and returned. An
- * empty room is kept in memory only (nothing is sent or stored until a
- * message is) and calls no delegate. Borrowed; NULL with error without a
- * bound account (G_IO_ERROR_NOT_INITIALIZED), for a malformed pubkey or more
- * than GH_CONVERSATION_MAX_PEERS peers (G_IO_ERROR_INVALID_ARGUMENT). */
+ * accepted, since starting a conversation accepts it). A room the user
+ * blocked is unblocked (the delegate's unblock(): starting a conversation
+ * with them again is choosing to hear from them, and New Message says so
+ * first, gh_conversation_store_is_blocked()) and returned with the history
+ * it kept. Otherwise an empty, accepted room is listed at the top of the
+ * store order and returned. An empty room is kept in memory only (nothing
+ * is sent or stored until a message is) and calls no delegate. Borrowed;
+ * NULL with error without a bound account (G_IO_ERROR_NOT_INITIALIZED), for
+ * a malformed pubkey or more than GH_CONVERSATION_MAX_PEERS peers
+ * (G_IO_ERROR_INVALID_ARGUMENT), or when unblocking fails (the delegate's
+ * error). */
 GhConversation *gh_conversation_store_open_room(GhConversationStore *self,
                                                 const gchar *const *peers,
                                                 GError **error);
+/* Whether gh_conversation_store_open_room() with peers would unblock a room
+ * the user blocked. FALSE without such a delegate or for invalid peers. */
+gboolean gh_conversation_store_is_blocked(GhConversationStore *self,
+                                          const gchar *const *peers);
 
 G_END_DECLS
 #endif

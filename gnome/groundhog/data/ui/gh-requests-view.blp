@@ -7,8 +7,10 @@ using Adw 1;
 // is fetched before Accept), how many messages it holds and its first message
 // as plain, selectable text: no markup, no links to open and nothing loaded
 // from the web. Accept, Delete and Block run the "requests.*" actions of
-// gh-requests-view.c; Delete and Block confirm first. Nothing here publishes
-// anything, and the sender is never told.
+// gh-requests-view.c; Delete and Block confirm first (delete_dialog,
+// block_dialog below). Nothing here publishes anything, and the sender is
+// never told. Block is per conversation: the same person writing from
+// another conversation is a new request (per-sender blocking: nostrc-qp24.79).
 template $GhRequestsView: Adw.Bin {
   child: Stack stack {
     StackPage {
@@ -177,4 +179,30 @@ template $GhRequestsView: Adw.Bin {
       };
     }
   };
+}
+
+// Response ids are unique across the file: blueprint-compiler 0.12 treats
+// them as object ids.
+Adw.AlertDialog delete_dialog {
+  heading: _("Delete Request?");
+  body: _("Its messages are removed from this device. The sender isn't told and can write to you again.");
+  default-response: "delete-cancel";
+  close-response: "delete-cancel";
+
+  responses [
+    delete-cancel: _("_Cancel"),
+    delete-confirm: _("_Delete") destructive,
+  ]
+}
+
+// The heading names the sender (from C).
+Adw.AlertDialog block_dialog {
+  body: _("Their messages in this conversation won't be shown or notified on this device, and this request is deleted. They aren't told.\n\nTo hear from them here again, start a new message to them: that unblocks the conversation.");
+  default-response: "block-cancel";
+  close-response: "block-cancel";
+
+  responses [
+    block-cancel: _("_Cancel"),
+    block-confirm: _("_Block") destructive,
+  ]
 }

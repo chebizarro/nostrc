@@ -35,7 +35,10 @@ G_BEGIN_DECLS
  * Self" opens the account's own room. Start Conversation opens (or creates,
  * empty and accepted) the room with gh_conversation_store_open_room(),
  * emits "conversation-started" (GhConversation) and closes; nothing is sent
- * or published. Pending lookups are cancelled when the dialog closes.
+ * or published. A conversation the user blocked is unblocked by starting it,
+ * and the confirm page says so first ("You blocked this conversation.
+ * Starting it unblocks it: …"). Pending lookups are cancelled when the dialog
+ * closes.
  */
 
 typedef struct {

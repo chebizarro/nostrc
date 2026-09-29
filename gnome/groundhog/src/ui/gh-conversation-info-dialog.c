@@ -124,8 +124,6 @@ person_new(const gchar *pubkey, const gchar *name, const gchar *nip05)
 
 /* ---- GhConversationInfoDialog -------------------------------------------------------- */
 
-#define CODE_CELLS GH_PRIVACY_SAFETY_CODE_LENGTH
-
 /* The privacy summary's backends are the conversation model's (and the
  * store schema's) values. */
 G_STATIC_ASSERT((gint)GH_PRIVACY_BACKEND_NIP17 == (gint)GH_CONVERSATION_BACKEND_NIP17);
@@ -159,9 +157,10 @@ struct _GhConversationInfoDialog {
   AdwPreferencesGroup *their_group;
   AdwActionRow *their_key_row;
   GtkButton *their_copy_button;
-  GtkGrid *code_grid;
-  GtkLabel *code_emoji[CODE_CELLS];
-  GtkLabel *code_name[CODE_CELLS];
+  AdwPreferencesGroup *code_group;
+  GtkLabel *their_code_title;
+  GtkLabel *their_code_label;
+  GtkLabel *your_code_label;
   AdwActionRow *your_key_row;
   GtkButton *your_copy_button;
   AdwActionRow *verified_row;
@@ -529,8 +528,10 @@ action_verify(GtkWidget *widget, const char *name, GVariant *parameter)
   const gchar *pubkey = g_variant_get_string(parameter, NULL);
   GhConversationInfoPerson *person = find_person(self, pubkey);
   const gchar *account = gh_conversation_get_account(self->conversation);
-  guint8 code[GH_PRIVACY_SAFETY_CODE_LENGTH];
-  if (!person || !gh_privacy_safety_code(account, pubkey, code))
+  /* One code per person, each from that person's key alone (W15 B2). */
+  g_autofree gchar *their_code = gh_privacy_fingerprint(pubkey);
+  g_autofree gchar *your_code = gh_privacy_fingerprint(account);
+  if (!person || !their_code || !your_code)
     return;
   g_free(self->verify_pubkey);
   self->verify_pubkey = g_strdup(pubkey);
@@ -544,14 +545,21 @@ action_verify(GtkWidget *widget, const char *name, GVariant *parameter)
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->their_key_row), their_key);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->their_copy_button), "s", person->npub);
 
-  g_autofree gchar *code_text = gh_privacy_safety_code_to_text(code);
-  for (guint i = 0; i < CODE_CELLS; i++) {
-    gtk_label_set_text(self->code_emoji[i], gh_privacy_safety_symbol_emoji(code[i]));
-    gtk_label_set_text(self->code_name[i], gh_privacy_safety_symbol_name(code[i]));
-  }
-  g_autofree gchar *code_label = g_strdup_printf(_("Safety code: %s"), code_text);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->code_grid), GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                 code_label, -1);
+  /* Plain text: the name is not markup here. */
+  g_autofree gchar *their_code_title = g_strdup_printf(_("%s’s code"),
+                                                       person->name ? person->name : short_npub);
+  gtk_label_set_text(self->their_code_title, their_code_title);
+  gtk_label_set_text(self->their_code_label, their_code);
+  gtk_label_set_text(self->your_code_label, your_code);
+  /* Read digit by digit, as they are compared. */
+  g_autofree gchar *their_spoken = gh_privacy_fingerprint_spoken(their_code);
+  g_autofree gchar *your_spoken = gh_privacy_fingerprint_spoken(your_code);
+  g_autofree gchar *their_label = g_strdup_printf(_("%s: %s"), their_code_title, their_spoken);
+  g_autofree gchar *your_label = g_strdup_printf(_("Your code: %s"), your_spoken);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->their_code_label),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, their_label, -1);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->your_code_label),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, your_label, -1);
 
   g_autofree gchar *own_npub = npub_of(account, FALSE);
   g_autofree gchar *own_key = gh_privacy_format_key(own_npub);
@@ -675,10 +683,15 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
   g_autofree gchar *block_heading = only ? g_strdup_printf(_("Block %s?"), self->title)
                                          : g_strdup(_("Block This Conversation?"));
   adw_alert_dialog_set_heading(self->block_dialog, block_heading);
-  adw_alert_dialog_set_body(self->block_dialog,
+  g_autofree gchar *unblock = only
+    ? g_strdup_printf(_("To unblock it, choose Undo, or later start a new message to %s."),
+                      self->title)
+    : g_strdup(_("To unblock it, choose Undo, or later start a new message to the same people."));
+  g_autofree gchar *block_body = g_strconcat(
     _("The conversation leaves your list and Groundhog stops notifying you about it. "
-      "Messages sent to it while it is blocked are not saved on this device.\n\nNobody is told. Relays can still "
-      "deliver their messages to your message relays."));
+      "Messages sent to it while it is blocked are not saved on this device.\n\nNobody is told. "
+      "Relays can still deliver their messages to your message relays."), "\n\n", unblock, NULL);
+  adw_alert_dialog_set_body(self->block_dialog, block_body);
   g_autofree gchar *forget_body = only
     ? g_strdup_printf(_("Its messages and draft are deleted from this device, and older messages "
                         "won't come back from relays. A new message starts it again.\n\n%s still "
@@ -785,7 +798,10 @@ gh_conversation_info_dialog_class_init(GhConversationInfoDialogClass *klass)
   BIND(their_group);
   BIND(their_key_row);
   BIND(their_copy_button);
-  BIND(code_grid);
+  BIND(code_group);
+  BIND(their_code_title);
+  BIND(their_code_label);
+  BIND(your_code_label);
   BIND(your_key_row);
   BIND(your_copy_button);
   BIND(verified_row);
@@ -793,16 +809,6 @@ gh_conversation_info_dialog_class_init(GhConversationInfoDialogClass *klass)
   BIND(block_dialog);
   BIND(forget_dialog);
 #undef BIND
-  for (guint i = 0; i < CODE_CELLS; i++) {
-    g_autofree gchar *emoji = g_strdup_printf("code_emoji_%u", i);
-    g_autofree gchar *name = g_strdup_printf("code_name_%u", i);
-    gtk_widget_class_bind_template_child_full(
-      widget_class, emoji, FALSE,
-      G_STRUCT_OFFSET(GhConversationInfoDialog, code_emoji) + i * sizeof(GtkLabel *));
-    gtk_widget_class_bind_template_child_full(
-      widget_class, name, FALSE,
-      G_STRUCT_OFFSET(GhConversationInfoDialog, code_name) + i * sizeof(GtkLabel *));
-  }
   gtk_widget_class_install_action(widget_class, "info.verify", "s", action_verify);
   gtk_widget_class_install_action(widget_class, "info.mark-verified", NULL, action_mark_verified);
   gtk_widget_class_install_action(widget_class, "info.clear-verified", NULL,
@@ -848,6 +854,10 @@ attach_free(gpointer data)
   g_free(attach);
 }
 
+/* The shown conversation, when this dialog is for it: a private (NIP-17)
+ * conversation only. Its Block, Forget, Mute and copy are NIP-17's; a relay
+ * group gets its own info dialog (G20b, gh-group-info-dialog), and until
+ * then none (W15 review non-blocking #2). */
 static GhConversation *
 shown_conversation(GhWindow *window)
 {
@@ -855,7 +865,10 @@ shown_conversation(GhWindow *window)
   GtkWidget *view = gh_content_page_get_view(content);
   if (!gh_content_page_get_conversation_shown(content) || !GH_IS_CONVERSATION_VIEW(view))
     return NULL;
-  return gh_conversation_view_get_conversation(GH_CONVERSATION_VIEW(view));
+  GhConversation *conversation = gh_conversation_view_get_conversation(GH_CONVERSATION_VIEW(view));
+  return conversation &&
+         gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP17
+    ? conversation : NULL;
 }
 
 static void
@@ -896,7 +909,12 @@ gh_conversation_info_attach(GhWindow *window, GhConversationInfoServicesFunc ser
   g_signal_connect(attach->action, "activate", G_CALLBACK(on_conversation_info), attach);
   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(attach->action));
   g_object_set_data_full(G_OBJECT(window), ATTACH_DATA, attach, attach_free);
-  GtkStack *stack = gh_content_page_get_stack(gh_window_get_content(window));
+  GhContentPage *content = gh_window_get_content(window);
+  GtkStack *stack = gh_content_page_get_stack(content);
   g_signal_connect_swapped(stack, "notify::visible-child-name", G_CALLBACK(sync_action), attach);
+  /* Another conversation in the same view (a group after a DM) too. */
+  GtkWidget *view = gh_content_page_get_view(content);
+  if (GH_IS_CONVERSATION_VIEW(view))
+    g_signal_connect_swapped(view, "notify::conversation", G_CALLBACK(sync_action), attach);
   sync_action(attach);
 }

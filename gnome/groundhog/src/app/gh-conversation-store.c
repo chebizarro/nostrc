@@ -145,6 +145,7 @@ gh_conversation_store_set_account(GhConversationStore *self, const gchar *accoun
 {
   g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
   g_return_if_fail(!delegate || (delegate->has_wrap && delegate->has_rumor && delegate->admit));
+  g_return_if_fail(!delegate || !delegate->is_blocked == !delegate->unblock);
   clear_delegate(self);
   if (delegate) {
     self->delegate = *delegate;
@@ -436,11 +437,12 @@ is_pubkey(const gchar *value)
   return TRUE;
 }
 
-GhConversation *
-gh_conversation_store_open_room(GhConversationStore *self, const gchar *const *peers,
-                                GError **error)
+/* The room id of the account with peers (see open_room), its sorted
+ * members (NULL-terminated) in *out_members; NULL with error. */
+static gchar *
+peers_room_id(GhConversationStore *self, const gchar *const *peers, GPtrArray **out_members,
+              GError **error)
 {
-  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), NULL);
   if (!self->account) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "No account is active");
     return NULL;
@@ -464,7 +466,43 @@ gh_conversation_store_open_room(GhConversationStore *self, const gchar *const *p
   }
   g_ptr_array_sort(members, compare_members);
   g_ptr_array_add(members, NULL);
-  g_autofree gchar *room_id = g_strjoinv(",", (gchar **)members->pdata);
+  gchar *room_id = g_strjoinv(",", (gchar **)members->pdata);
+  if (out_members)
+    *out_members = g_steal_pointer(&members);
+  return room_id;
+}
+
+/* A room the delegate keeps blocked, which the model does not list. */
+static gboolean
+room_is_blocked(GhConversationStore *self, const gchar *room_id)
+{
+  return self->has_delegate && self->delegate.is_blocked &&
+         !g_hash_table_contains(self->rooms, room_id) &&
+         self->delegate.is_blocked(self->delegate_data, room_id);
+}
+
+gboolean
+gh_conversation_store_is_blocked(GhConversationStore *self, const gchar *const *peers)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), FALSE);
+  g_autofree gchar *room_id = peers_room_id(self, peers, NULL, NULL);
+  return room_id && room_is_blocked(self, room_id);
+}
+
+GhConversation *
+gh_conversation_store_open_room(GhConversationStore *self, const gchar *const *peers,
+                                GError **error)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(self), NULL);
+  g_autoptr(GPtrArray) members = NULL;
+  g_autofree gchar *room_id = peers_room_id(self, peers, &members, error);
+  if (!room_id)
+    return NULL;
+  /* Starting a conversation with someone blocked unblocks it, with the
+   * history it kept (G18); the delegate lists that through restore. */
+  if (room_is_blocked(self, room_id) &&
+      !self->delegate.unblock(self->delegate_data, room_id, error))
+    return NULL;
   GhConversation *conversation = g_hash_table_lookup(self->rooms, room_id);
   if (conversation) {
     gh_conversation_accept(conversation);

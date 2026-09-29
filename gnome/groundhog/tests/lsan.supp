@@ -27,7 +27,10 @@ leak:subscription_filters
 # libnostr (nostrc-jwj0): the result channel of the CLOSE frame that
 # nostr_subscription_close() writes (nostr_relay_write) is never freed, nor
 # the allocation nostr_subscription_dispatch_closed() makes per CLOSED.
-leak:nostr_subscription_close
+# Anchored: a bare "nostr_subscription_close" is a substring of nostr-gobject's
+# gnostr_subscription_close, whose frames would then hide a leak in any
+# handler reached through that wrapper (W15 review non-blocking #7).
+leak:^nostr_subscription_close$
 leak:nostr_subscription_dispatch_closed
 
 # libnostr relay writer (nostrc-jwj0): write_operations() answers each write

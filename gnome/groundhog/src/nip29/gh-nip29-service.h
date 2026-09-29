@@ -24,15 +24,21 @@ G_BEGIN_DECLS
  * (#h; since the group's sync cursor minus 10 minutes, or its newest 200 the
  * first time), and the 9000/9001 moderation events naming the account
  * (#h, #p). EOSE marks the backfill complete (the group's first one marks the
- * joined history read). NIP-42: GhAuthPolicy purpose GROUP, so a relay that
+ * joined history read). The sync cursor moves only past messages durably
+ * stored (or never storable) with nothing missing before them: a backfill's
+ * at its EOSE, a live one's at once; a backfill cut off before EOSE, or any
+ * failed admission, leaves it, so the next REQ asks for that stretch again.
+ * A relay that caps its answer can still leave older messages unasked
+ * (paging with until: nostrc-x055). NIP-42: GhAuthPolicy purpose GROUP, so a relay that
  * demands AUTH (a private group) gets one signed as the account, on
  * challenge only (§4.4 R1, R6). A relay's scope is rebuilt when its groups
  * change; nothing is opened for a group that is not joined or being joined,
  * and no relay but the group's is ever contacted for it.
  *
  * Trust. Group state is only what the relay's own key signed: the key comes
- * from the relay's NIP-11 document ("self", legacy "pubkey"; gh-nip11.h
- * explains why not trust-on-first-use), is pinned with the group, and is
+ * from the relay's NIP-11 document ("self" only, never the admin's
+ * "pubkey"; gh-nip11.h explains why, and why not trust-on-first-use; a relay
+ * without "self" is RELAY_KEY_UNAVAILABLE), is pinned with the group, and is
  * fetched again (once per session) only when a snapshot arrives signed by
  * another key; a changed key rebuilds the group state. Until the key is known
  * snapshots are held back, not admitted. Snapshots dated more than 10 minutes

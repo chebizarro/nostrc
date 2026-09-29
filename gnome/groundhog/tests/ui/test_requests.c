@@ -8,7 +8,8 @@
  *  - Accept, Delete and Block persist across a store reopen; a deleted
  *    request's older backfill stays gone and a newer message starts it
  *    again; a blocked room's later messages are recorded as seen only (never
- *    listed or notified) until the account writes to it again;
+ *    listed or notified) until the account starts a conversation with them
+ *    again (New Message), which no relay's self-copy does;
  *  - PT-8: the directory never asks for a request's sender (no REQ names
  *    it, no kind 0) through several scheduled runs, nor for a deleted or
  *    blocked one; after Accept, one REQ for the sender alone, with kind 0.
@@ -20,6 +21,8 @@
  *  - New Message: consent rows (no NIP-05 GET and no 10050 REQ before the
  *    user chooses them; Enter never looks anything up), the 10-recipient
  *    limit copy, secrets refused, note to self, Ctrl+N and opening the room;
+ *    a blocked person's room is unblocked by starting it, said beforehand;
+ *    a cancelled check round's late answers don't end the next round;
  *  - with GROUNDHOG_TEST_SCREENSHOTS=<dir>, PNGs of both (wide and 360x294).
  * Waits iterate the main context against a deadline; they never sleep. */
 #include "gh-contact-directory.h"
@@ -529,20 +532,31 @@ test_accept_delete_block_persist(void)
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
   g_clear_error(&error);
 
-  /* Writing to them again lifts the block. */
-  g_assert_cmpint(deliver(&f, z, TRUE, T0 + 40, "ok, what is it?", NULL), ==,
-                  GH_CONVERSATION_ADD_NEW);
+  /* New Message to them again (G18) unblocks the room: said first
+   * (gh_conversation_store_is_blocked), then opened, accepted and empty
+   * (Block forgot it), never hidden. Sending in it is test_outbox.c's
+   * send-lifts-block (T-enqueue). */
+  const gchar *z_peers[] = { z->pk, NULL };
+  g_assert_true(gh_conversation_store_is_blocked(f.model, z_peers));
+  GhConversation *opened = gh_conversation_store_open_room(f.model, z_peers, &error);
+  g_assert_no_error(error);
+  g_assert_true(opened == room_of(&f, z));
   g_assert_false(blocked(&f, z));
-  g_assert_false(gh_conversation_get_is_request(room_of(&f, z)));
+  g_assert_false(gh_conversation_store_is_blocked(f.model, z_peers));
+  g_assert_false(gh_conversation_get_is_request(opened));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(opened)), ==, 0);
   g_assert_cmpint(deliver(&f, z, FALSE, T0 + 50, "thanks", NULL), ==, GH_CONVERSATION_ADD_NEW);
   reopen(&f);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_of(&f, z))), ==, 2);
+  g_assert_false(gh_conversation_get_is_request(room_of(&f, z)));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_of(&f, z))), ==, 1);
   fixture_down(&f);
 }
 
-/* A block kept for Undo (gh_store_conversations_set_blocked) survives a
- * relay replaying an old self-copy, as a duplicate or as an own message older
- * than the read marker; only a new own message lifts it. */
+/* A block kept for Undo (gh_store_conversations_set_blocked) survives every
+ * self-copy a relay delivers: a replayed duplicate, one older than the read
+ * marker, and a new one written on another device (the block is this
+ * device's, P8). Writing from this device lifts it: New Message to them here,
+ * or sending (T-enqueue, test_outbox.c send-lifts-block). */
 static void
 test_replayed_self_copy_keeps_block(void)
 {
@@ -566,11 +580,24 @@ test_replayed_self_copy_keeps_block(void)
   reopen(&f);
   g_assert_true(blocked(&f, w));
 
-  /* Writing to them again does lift it. */
-  g_assert_cmpint(deliver(&f, w, TRUE, T0 + 200, "back again", NULL), ==,
-                  GH_CONVERSATION_ADD_NEW);
+  /* A new self-copy from another device, after the block: kept unlisted. */
+  g_autoptr(GhMessage) elsewhere = rumor(w, TRUE, T0 + 200, "from my phone", NULL);
+  g_autofree gchar *wrap = random_id();
+  g_assert_cmpint(gh_conversation_store_admit(f.model, elsewhere, wrap, &error), ==,
+                  GH_CONVERSATION_ADD_HIDDEN);
+  g_assert_no_error(error);
+  g_assert_true(blocked(&f, w));
+  g_assert_null(room_of(&f, w));
+
+  /* New Message to them lifts it, with the history kept for Undo. */
+  const gchar *peers[] = { w->pk, NULL };
+  GhConversation *opened = gh_conversation_store_open_room(f.model, peers, &error);
+  g_assert_no_error(error);
   g_assert_false(blocked(&f, w));
-  g_assert_nonnull(room_of(&f, w));
+  g_assert_true(opened == room_of(&f, w));
+  g_assert_false(gh_conversation_get_is_request(opened));
+  /* hi, hey, the older self-copy and the one from the phone. */
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(opened)), ==, 4);
   fixture_down(&f);
 }
 
@@ -753,12 +780,14 @@ test_gui_requests_view(void)
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "requests.delete", NULL));
   AdwAlertDialog *confirm = gh_requests_view_get_confirmation(view);
   g_assert_cmpstr(adw_alert_dialog_get_heading(confirm), ==, "Delete Request?");
-  g_assert_cmpint(adw_alert_dialog_get_response_appearance(confirm, "delete"), ==,
+  g_assert_cmpint(adw_alert_dialog_get_response_appearance(confirm, "delete-confirm"), ==,
                   ADW_RESPONSE_DESTRUCTIVE);
-  respond(confirm, "cancel");
+  g_assert_cmpstr(adw_alert_dialog_get_close_response(confirm), ==, "delete-cancel");
+  respond(confirm, "delete-cancel");
+  g_assert_null(gh_requests_view_get_confirmation(view));
   g_assert_nonnull(room_of(&f, x));
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "requests.delete", NULL));
-  respond(gh_requests_view_get_confirmation(view), "delete");
+  respond(gh_requests_view_get_confirmation(view), "delete-confirm");
   g_assert_null(room_of(&f, x));
   g_assert_null(gh_requests_view_get_request(view));
 
@@ -769,7 +798,11 @@ test_gui_requests_view(void)
   g_autofree gchar *y_short = gh_recipient_npub_short(y->pk);
   g_autofree gchar *heading = g_strdup_printf("Block %s?", y_short);
   g_assert_cmpstr(adw_alert_dialog_get_heading(confirm), ==, heading);
-  respond(confirm, "block");
+  /* Honest about what Block does: this conversation, undone by writing. */
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(confirm), "in this conversation"));
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(confirm),
+                          "start a new message to them: that unblocks the conversation"));
+  respond(confirm, "block-confirm");
   g_assert_null(room_of(&f, y));
   g_assert_true(blocked(&f, y));
   g_assert_cmpint(deliver(&f, y, FALSE, T0 + 5, "hello?", NULL), ==, GH_CONVERSATION_ADD_HIDDEN);
@@ -1172,6 +1205,112 @@ test_gui_new_message_refusals_and_note_to_self(void)
   fixture_down(&f);
 }
 
+/* New Message to someone blocked (W15 review B1): the confirm page says that
+ * starting unblocks the conversation, and Start lists it with the history
+ * it kept, accepted and no longer blocked; never an empty room hidden in
+ * front of a blocked one. */
+static void
+test_gui_new_message_unblocks(void)
+{
+  Fixture f;
+  fixture_up(&f, FALSE);
+  const Person *v = &people[9];
+  g_autofree gchar *room = room_id_with(v);
+  g_assert_cmpint(deliver(&f, v, TRUE, T0 - 300, "hi V", NULL), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(&f, v, FALSE, T0 - 200, "hi back", NULL), ==, GH_CONVERSATION_ADD_NEW);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_set_blocked(f.delegate, room, TRUE, &error));
+  g_assert_no_error(error);
+  attach_window(&f, TRUE);
+  GhNewMessageDialog *dialog = open_dialog(&f);
+  type_into(dialog, v->npub);
+  press_enter(dialog);
+  g_assert_cmpuint(n_recipients(dialog), ==, 1);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.next", NULL));
+  drain();
+  GtkLabel *note = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "start_note");
+  g_assert_true(g_str_has_prefix(gtk_label_get_text(note),
+                                 "You blocked this conversation. Starting it unblocks it"));
+  g_assert_true(blocked(&f, v)); /* nothing changes before Start */
+
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.start", NULL));
+  drain();
+  GhConversation *opened = room_of(&f, v);
+  g_assert_nonnull(opened);
+  g_assert_false(blocked(&f, v));
+  g_assert_false(gh_conversation_get_is_request(opened));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(opened)), ==, 2);
+  g_assert_true(gh_sidebar_page_get_selected(gh_window_get_sidebar(f.window)) == opened);
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(f.window)));
+  /* Their next message is listed again. */
+  g_assert_cmpint(deliver(&f, v, FALSE, T0 + 10, "welcome back", NULL), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  fixture_down(&f);
+}
+
+static GtkWidget *
+check_spinner(GhNewMessageDialog *dialog)
+{
+  return template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "check_spinner");
+}
+
+/* The inbox check across rounds (W15 review non-blocking #8): going back and
+ * checking again cancels the first round, whose late (cancelled) answers
+ * must not count against the new one. Before, they did: the spinner stopped
+ * and "Check finished" was announced while a check was still running. */
+static void
+test_gui_new_message_check_rounds(void)
+{
+  Fixture f;
+  fixture_up(&f, TRUE);
+  const Person *bob = &people[10], *carol = &people[11];
+  attach_window(&f, TRUE);
+  GhNewMessageDialog *dialog = open_dialog(&f);
+  type_into(dialog, bob->npub);
+  press_enter(dialog);
+  type_into(dialog, carol->npub);
+  press_enter(dialog);
+  AdwNavigationView *navigation = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG,
+                                                 "navigation");
+  AdwActionRow *check = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "check_row");
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.next", NULL));
+  drain();
+  adw_action_row_activate(check); /* round 1: two checks */
+  drain();
+  g_assert_true(gtk_widget_get_visible(check_spinner(dialog)));
+
+  /* Back, Next, Check again at once: round 1 is cancelled, round 2 runs. */
+  adw_navigation_view_pop(navigation);
+  drain();
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.next", NULL));
+  adw_action_row_activate(check);
+  drain(); /* round 1's cancelled answers arrive */
+
+  /* Only Bob's lookup answers: Carol's check is still running. */
+  g_autofree gchar *bob_inbox = inbox_list(bob, T0 - 10, R1);
+  for (guint i = 0; i < f.rec.reqs->len; i++) {
+    Req *req = g_ptr_array_index(f.rec.reqs, i);
+    if (req->answered || !req_asks(req, bob->pk))
+      continue;
+    req->answered = TRUE;
+    gh_relay_scope_event(req->scope, req->url, bob_inbox);
+    gh_relay_scope_eose(req->scope, req->url);
+  }
+  drain();
+  g_assert_false(gh_new_message_item_get_busy(person(dialog, bob->pk)));
+  g_assert_true(gh_new_message_item_get_busy(person(dialog, carol->pk)));
+  g_assert_true(gtk_widget_get_visible(check_spinner(dialog)));
+  g_assert_false(gtk_widget_get_sensitive(GTK_WIDGET(check)));
+
+  answer_all(&f.rec, NULL);
+  gh_test_spin_until(people_checked, dialog);
+  g_assert_false(gtk_widget_get_visible(check_spinner(dialog)));
+  g_assert_cmpstr(gh_new_message_item_get_status(person(dialog, carol->pk)), ==,
+                  "Hasn't set up private messaging yet");
+  adw_dialog_force_close(ADW_DIALOG(dialog));
+  fixture_down(&f);
+}
+
 /* ---- screenshots (opt-in evidence) ------------------------------------------------ */
 
 static void
@@ -1325,6 +1464,10 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/requests/gui/new-message-limit", test_gui_new_message_limit);
     g_test_add_func("/groundhog/requests/gui/new-message-refusals-and-note-to-self",
                     test_gui_new_message_refusals_and_note_to_self);
+    g_test_add_func("/groundhog/requests/gui/new-message-unblocks",
+                    test_gui_new_message_unblocks);
+    g_test_add_func("/groundhog/requests/gui/new-message-check-rounds",
+                    test_gui_new_message_check_rounds);
     g_test_add_func("/groundhog/requests/gui/screenshots", test_gui_screenshots);
   } else {
     g_test_add_func("/groundhog/requests/accept-delete-block-persist",

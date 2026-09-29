@@ -257,7 +257,7 @@ flowbox.groundhog-recipient-chips > flowboxchild {
 }
 
 /* == conversation info (G19) == */
-/* The safety code's cells (gh-conversation-info-dialog.blp). */
+/* The two safety codes' card (gh-conversation-info-dialog.blp). */
 .groundhog-safety-code {
-  padding: 12px 6px;
+  padding: 12px;
 }

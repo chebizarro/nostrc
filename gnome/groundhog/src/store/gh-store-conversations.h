@@ -19,8 +19,9 @@ G_BEGIN_DECLS
  *     for someone else's message, accepted for an own one), participants,
  *     title and last activity;
  *   - the read state: an own message moves the read marker to itself and
- *     accepts the room; unread_count is recomputed as the messages from
- *     others after the marker.
+ *     accepts a message request (it never lifts a block: only T-enqueue and
+ *     New Message do, see gh_store_conversations_set_blocked()); unread_count
+ *     is recomputed as the messages from others after the marker.
  * A crash anywhere before the commit leaves neither the message nor its seen
  * keys; after it, both (ST-6). A rumor seen before is never stored again, so
  * a second wrap of it only adds its wrap id (ST-7), and purged, forgotten or
@@ -28,8 +29,9 @@ G_BEGIN_DECLS
  * expired on arrival (its expires_at, from gh_message_get_expires_at(), is not
  * in the future by the store's GhClock) and one older than a forgotten room's
  * tombstone are recorded in `seen` only and reported hidden: the model never
- * shows them (charter §3.7, EX-4, ST-9). A message of a blocked room is
- * stored but reported hidden too, so it shows only if the room is unblocked.
+ * shows them (charter §3.7, EX-4, ST-9). In a blocked room someone else's
+ * message is recorded as seen only, and an own self-copy is stored but
+ * reported hidden, so it shows once the room is unblocked.
  * The rejected-wrap namespace is `seen` ns GH_STORE_SEEN_REJECTED_WRAP.
  *
  * Read state. conversations.last_read_msg is the last read message and
@@ -103,7 +105,8 @@ gboolean gh_store_conversations_forget(GhStoreConversations *self, const gchar *
  * PD-8, G18): in one transaction the room's request_state becomes BLOCKED
  * and the room is forgotten as above (its tombstone keeps the block), then
  * it is unlisted from the attached model. Unlike
- * gh_store_conversations_set_blocked() nothing is kept to undo. Local only:
+ * gh_store_conversations_set_blocked() no history is kept: unblocking it
+ * (New Message to them) starts it empty. Local only:
  * nothing is published and the other people are not told. The block itself
  * behaves as described there. NOT_FOUND when the room is not stored. */
 gboolean gh_store_conversations_block_and_forget(GhStoreConversations *self,
@@ -159,12 +162,17 @@ gboolean gh_store_conversations_set_muted_until(GhStoreConversations *self,
  * later restore; its history is kept so the block can be undone. From then
  * on a message from someone else in the room is recorded as seen only and
  * reported hidden: never listed, stored or notified (backfill included), so
- * it does not come back on unblocking. A new own message to the room
- * (writing to them again) lifts the block; a replayed or older self-copy
- * does not. Unblocking (FALSE) lists its newest page again, as a message
- * request unless the account has written in it: unblocking is not
- * accepting (PT-8). Nothing is published: the other side is not told (P8).
- * Mute, timer and draft are kept. NOT_FOUND when the room is not stored. */
+ * it does not come back on unblocking. Writing to them again from this
+ * device lifts the block: New Message to the same people unblocks the room
+ * (the delegate's unblock(), through gh_conversation_store_open_room(), which
+ * accepts it and lists its kept history), and sending in it does too
+ * (T-enqueue, gh_store_enqueue()). A self-copy a relay delivers never does,
+ * whether replayed, older than the read marker or written on another device:
+ * a block belongs to this device (P8). Unblocking (FALSE) lists its newest
+ * page again, as a message request unless the account has written in it:
+ * unblocking is not accepting (PT-8). Nothing is published: the other side
+ * is not told (P8). Mute, timer and draft are kept. NOT_FOUND when the room
+ * is not stored. */
 gboolean gh_store_conversations_set_blocked(GhStoreConversations *self,
                                             const gchar *room_id, gboolean blocked,
                                             GError **error);

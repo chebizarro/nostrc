@@ -2,22 +2,15 @@
 
 #include <string.h>
 
-/* Marks translatable source strings for xgettext (--keyword=N_ and
- * --keyword=NC_:1c,2); tr() and trc() look them up in the application's text
- * domain at run time, as gh-message-status.c does. */
+/* Marks translatable source strings for xgettext (--keyword=N_); tr() looks
+ * them up in the application's text domain at run time, as
+ * gh-message-status.c does. */
 #define N_(text) (text)
-#define NC_(context, text) (text)
 
 static const gchar *
 tr(const gchar *text)
 {
   return g_dgettext(NULL, text);
-}
-
-static const gchar *
-trc(const gchar *context, const gchar *text)
-{
-  return g_dpgettext2(NULL, context, text);
 }
 
 /* ---- Strings table ------------------------------------------------------------------ */
@@ -328,50 +321,14 @@ gh_privacy_summary_to_text(const GhPrivacySummary *summary)
   return g_string_free(text, FALSE);
 }
 
-/* ---- Safety code -------------------------------------------------------------------- */
+/* ---- Safety codes --------------------------------------------------------------------- */
 
-/* 64 symbols that look and sound distinct (the set Matrix's SAS
- * verification uses), each shown with its name so the code reads aloud and
- * works for screen readers and without a colour emoji font. */
-static const struct {
-  const gchar *emoji;
-  const gchar *name;
-} safety_symbols[GH_PRIVACY_SAFETY_SYMBOLS] = {
-  { "🐶", NC_("safety code", "Dog") },        { "🐱", NC_("safety code", "Cat") },
-  { "🦁", NC_("safety code", "Lion") },       { "🐎", NC_("safety code", "Horse") },
-  { "🦄", NC_("safety code", "Unicorn") },    { "🐷", NC_("safety code", "Pig") },
-  { "🐘", NC_("safety code", "Elephant") },   { "🐰", NC_("safety code", "Rabbit") },
-  { "🐼", NC_("safety code", "Panda") },      { "🐓", NC_("safety code", "Rooster") },
-  { "🐧", NC_("safety code", "Penguin") },    { "🐢", NC_("safety code", "Turtle") },
-  { "🐟", NC_("safety code", "Fish") },       { "🐙", NC_("safety code", "Octopus") },
-  { "🦋", NC_("safety code", "Butterfly") },  { "🌷", NC_("safety code", "Flower") },
-  { "🌳", NC_("safety code", "Tree") },       { "🌵", NC_("safety code", "Cactus") },
-  { "🍄", NC_("safety code", "Mushroom") },   { "🌏", NC_("safety code", "Globe") },
-  { "🌙", NC_("safety code", "Moon") },       { "☁️", NC_("safety code", "Cloud") },
-  { "🔥", NC_("safety code", "Fire") },       { "🍌", NC_("safety code", "Banana") },
-  { "🍎", NC_("safety code", "Apple") },      { "🍓", NC_("safety code", "Strawberry") },
-  { "🌽", NC_("safety code", "Corn") },       { "🍕", NC_("safety code", "Pizza") },
-  { "🎂", NC_("safety code", "Cake") },       { "❤️", NC_("safety code", "Heart") },
-  { "😀", NC_("safety code", "Smiley") },     { "🤖", NC_("safety code", "Robot") },
-  { "🎩", NC_("safety code", "Hat") },        { "👓", NC_("safety code", "Glasses") },
-  { "🔧", NC_("safety code", "Spanner") },    { "🎅", NC_("safety code", "Santa") },
-  { "👍", NC_("safety code", "Thumbs Up") },  { "☂️", NC_("safety code", "Umbrella") },
-  { "⌛", NC_("safety code", "Hourglass") },  { "⏰", NC_("safety code", "Clock") },
-  { "🎁", NC_("safety code", "Gift") },       { "💡", NC_("safety code", "Light Bulb") },
-  { "📕", NC_("safety code", "Book") },       { "✏️", NC_("safety code", "Pencil") },
-  { "📎", NC_("safety code", "Paperclip") },  { "✂️", NC_("safety code", "Scissors") },
-  { "🔒", NC_("safety code", "Lock") },       { "🔑", NC_("safety code", "Key") },
-  { "🔨", NC_("safety code", "Hammer") },     { "☎️", NC_("safety code", "Telephone") },
-  { "🏁", NC_("safety code", "Flag") },       { "🚂", NC_("safety code", "Train") },
-  { "🚲", NC_("safety code", "Bicycle") },    { "✈️", NC_("safety code", "Aeroplane") },
-  { "🚀", NC_("safety code", "Rocket") },     { "🏆", NC_("safety code", "Trophy") },
-  { "⚽", NC_("safety code", "Ball") },       { "🎸", NC_("safety code", "Guitar") },
-  { "🎺", NC_("safety code", "Trumpet") },    { "🔔", NC_("safety code", "Bell") },
-  { "⚓", NC_("safety code", "Anchor") },     { "🎧", NC_("safety code", "Headphones") },
-  { "📁", NC_("safety code", "Folder") },     { "📌", NC_("safety code", "Pin") },
-};
+#define FINGERPRINT_DOMAIN "groundhog-fingerprint-v1"
+#define FINGERPRINT_GROUPS (GH_PRIVACY_FINGERPRINT_DIGITS / GH_PRIVACY_FINGERPRINT_GROUP)
 
-#define SAFETY_CODE_DOMAIN "groundhog-safety-code-v1"
+G_STATIC_ASSERT(GH_PRIVACY_FINGERPRINT_DIGITS % GH_PRIVACY_FINGERPRINT_GROUP == 0);
+/* Five digest bytes per group of four digits, from one SHA-512 digest. */
+G_STATIC_ASSERT(GH_PRIVACY_FINGERPRINT_GROUP == 4 && FINGERPRINT_GROUPS * 5 <= 64);
 
 static gboolean
 key_bytes(const gchar *hex, guint8 out[32])
@@ -388,57 +345,52 @@ key_bytes(const gchar *hex, guint8 out[32])
   return TRUE;
 }
 
-gboolean
-gh_privacy_safety_code(const gchar *pubkey_a, const gchar *pubkey_b,
-                       guint8 code[GH_PRIVACY_SAFETY_CODE_LENGTH])
+gchar *
+gh_privacy_fingerprint(const gchar *pubkey)
 {
-  g_return_val_if_fail(code != NULL, FALSE);
-  guint8 a[32], b[32];
-  if (!key_bytes(pubkey_a, a) || !key_bytes(pubkey_b, b))
-    return FALSE;
-  gint order = memcmp(a, b, sizeof a);
-  if (order == 0)
-    return FALSE;
-  g_autoptr(GChecksum) checksum = g_checksum_new(G_CHECKSUM_SHA256);
-  g_checksum_update(checksum, (const guchar *)SAFETY_CODE_DOMAIN, strlen(SAFETY_CODE_DOMAIN));
-  g_checksum_update(checksum, order < 0 ? a : b, 32);
-  g_checksum_update(checksum, order < 0 ? b : a, 32);
-  guint8 digest[32];
+  guint8 key[32];
+  if (!key_bytes(pubkey, key))
+    return NULL;
+  guint8 digest[64];
   gsize length = sizeof digest;
+  g_autoptr(GChecksum) checksum = g_checksum_new(G_CHECKSUM_SHA512);
+  g_checksum_update(checksum, (const guchar *)FINGERPRINT_DOMAIN, strlen(FINGERPRINT_DOMAIN));
+  g_checksum_update(checksum, key, sizeof key);
   g_checksum_get_digest(checksum, digest, &length);
-  /* The first 60 bits, most significant first, six at a time. */
-  guint64 bits = 0;
-  for (guint i = 0; i < 8; i++)
-    bits = bits << 8 | digest[i];
-  for (guint i = 0; i < GH_PRIVACY_SAFETY_CODE_LENGTH; i++)
-    code[i] = (guint8)(bits >> (64 - 6 * (i + 1)) & 0x3f);
-  return TRUE;
-}
-
-const gchar *
-gh_privacy_safety_symbol_emoji(guint index)
-{
-  g_return_val_if_fail(index < GH_PRIVACY_SAFETY_SYMBOLS, NULL);
-  return safety_symbols[index].emoji;
-}
-
-const gchar *
-gh_privacy_safety_symbol_name(guint index)
-{
-  g_return_val_if_fail(index < GH_PRIVACY_SAFETY_SYMBOLS, NULL);
-  return trc("safety code", safety_symbols[index].name);
+  /* Iterated, as Signal's safety numbers are: each try at a look-alike key
+   * costs this many hashes on top of the key itself. */
+  for (guint i = 1; i < GH_PRIVACY_FINGERPRINT_ITERATIONS; i++) {
+    g_checksum_reset(checksum);
+    g_checksum_update(checksum, digest, sizeof digest);
+    g_checksum_update(checksum, key, sizeof key);
+    length = sizeof digest;
+    g_checksum_get_digest(checksum, digest, &length);
+  }
+  GString *text = g_string_sized_new(GH_PRIVACY_FINGERPRINT_DIGITS + FINGERPRINT_GROUPS);
+  for (guint group = 0; group < FINGERPRINT_GROUPS; group++) {
+    guint64 value = 0;
+    for (guint i = 0; i < 5; i++)
+      value = value << 8 | digest[group * 5 + i];
+    if (group)
+      g_string_append_c(text, ' ');
+    g_string_append_printf(text, "%04u", (guint)(value % 10000));
+  }
+  return g_string_free(text, FALSE);
 }
 
 gchar *
-gh_privacy_safety_code_to_text(const guint8 code[GH_PRIVACY_SAFETY_CODE_LENGTH])
+gh_privacy_fingerprint_spoken(const gchar *fingerprint)
 {
-  g_return_val_if_fail(code != NULL, NULL);
+  g_return_val_if_fail(fingerprint != NULL, NULL);
   GString *text = g_string_new(NULL);
-  for (guint i = 0; i < GH_PRIVACY_SAFETY_CODE_LENGTH; i++) {
-    g_return_val_if_fail(code[i] < GH_PRIVACY_SAFETY_SYMBOLS, g_string_free(text, TRUE));
-    if (i)
+  for (const gchar *c = fingerprint; *c; c++) {
+    if (*c == ' ') {
+      g_string_append_c(text, ',');
+      continue;
+    }
+    if (text->len)
       g_string_append_c(text, ' ');
-    g_string_append(text, gh_privacy_safety_symbol_name(code[i]));
+    g_string_append_c(text, *c);
   }
   return g_string_free(text, FALSE);
 }

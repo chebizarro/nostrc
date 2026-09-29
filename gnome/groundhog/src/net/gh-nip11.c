@@ -61,18 +61,16 @@ gh_nip11_parse_relay_key(const gchar *document, gssize length, GError **error)
     return NULL;
   }
   JsonObject *object = json_node_get_object(json_parser_get_root(parser));
-  static const gchar *const fields[] = { "self", "pubkey" };
-  for (guint i = 0; i < G_N_ELEMENTS(fields); i++) {
-    JsonNode *node = json_object_get_member(object, fields[i]);
-    if (!node || !JSON_NODE_HOLDS_VALUE(node) ||
-        json_node_get_value_type(node) != G_TYPE_STRING)
-      continue;
-    const gchar *value = json_node_get_string(node);
-    if (hex_key(value))
-      return g_ascii_strdown(value, -1);
-    if (i == 0) /* a present but malformed "self" is not replaced by "pubkey" */
-      break;
-  }
+  /* "self" only: "pubkey" is the administrator's contact key (NIP-11), and
+   * pinning it would let that person speak for every group on the relay
+   * while the relay's real 39000-39003 were held as foreign (W15 review
+   * non-blocking #4). Without "self" the relay key is unavailable. */
+  JsonNode *node = json_object_get_member(object, "self");
+  const gchar *value = node && JSON_NODE_HOLDS_VALUE(node) &&
+                       json_node_get_value_type(node) == G_TYPE_STRING
+                         ? json_node_get_string(node) : NULL;
+  if (hex_key(value))
+    return g_ascii_strdown(value, -1);
   g_set_error_literal(error, GH_NIP11_ERROR, GH_NIP11_ERROR_NO_KEY,
                       "The relay does not publish its key (NIP-11 self)");
   return NULL;

@@ -16,6 +16,7 @@
 #include "gh-outbox.h"
 #include "gh-auth-policy.h"
 #include "gh-nip17-envelope.h"
+#include "gh-store-conversations.h"
 #include "gh-test-signer.h"
 #include "nostr-tag.h"
 #include "nostr/nip59/nip59.h"
@@ -2344,6 +2345,101 @@ test_note_to_self(void)
   fixture_down(&f);
 }
 
+/* ---- block lifted by writing again (W15 review B1) ------------------------ */
+
+/* A NIP-17 rumor from sender to recipient as the model admits it, with the
+ * wrap that delivered it (NULL: a local echo). */
+static GhConversationAddResult
+admit_rumor(GhConversationStore *model, const gchar *sender, const gchar *recipient,
+            gint64 created_at, const gchar *text, const gchar *wrap_id)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *rumor = gh_nip17_rumor_new(sender, recipient, text, created_at, NULL, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhMessage) message = gh_message_new_from_rumor(hex_alice, rumor, &error);
+  g_assert_no_error(error);
+  GhConversationAddResult result = gh_conversation_store_admit(model, message, wrap_id, &error);
+  g_assert_no_error(error);
+  return result;
+}
+
+static gboolean
+room_blocked(GhStoreConversations *conversations, const gchar *room_id)
+{
+  gboolean blocked = FALSE;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_is_blocked(conversations, room_id, &blocked, &error));
+  g_assert_no_error(error);
+  return blocked;
+}
+
+/* Writing to someone blocked, the way the app sends (T-enqueue through the
+ * durable outbox, then the send UI's local echo of the queued rumor), lifts
+ * the block: the echo is listed and so is their reply. Before, T-enqueue
+ * stored the message first, so its echo was a duplicate that never counted
+ * as "new": the echo was hidden and every reply dropped for good. A
+ * self-copy a relay delivers never lifts it. */
+static void
+test_send_lifts_block(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  fixture_outbox(&f);
+  fake_monitor_set_available(f.network, FALSE); /* only T-enqueue matters here */
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhConversationStore) model = gh_conversation_store_new();
+  g_autoptr(GhStoreConversations) conversations = gh_store_conversations_new(f.store);
+  g_assert_true(gh_store_conversations_attach(conversations, model, 0, &error));
+  g_assert_no_error(error);
+  g_autofree gchar *room_id = strcmp(hex_alice, hex_bob) < 0
+    ? g_strconcat(hex_alice, ",", hex_bob, NULL) : g_strconcat(hex_bob, ",", hex_alice, NULL);
+
+  g_autofree gchar *wrap_hello = hex_of("wrap hello");
+  g_assert_cmpint(admit_rumor(model, hex_bob, hex_alice, T0 - 100, "hello", wrap_hello), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_true(gh_store_conversations_set_blocked(conversations, room_id, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_null(gh_conversation_store_lookup(model, room_id));
+
+  /* A self-copy written on another device after the block: kept, unlisted,
+   * and the room stays blocked (the block is this device's, P8). */
+  g_autofree gchar *wrap_elsewhere = hex_of("wrap elsewhere");
+  g_assert_cmpint(admit_rumor(model, hex_alice, hex_bob, T0 - 50, "from my phone",
+                              wrap_elsewhere), ==, GH_CONVERSATION_ADD_HIDDEN);
+  g_assert_true(room_blocked(conversations, room_id));
+
+  /* Writing again from here: T-enqueue, then the echo (gh-send-ui.c echo()). */
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "sorry, let's talk");
+  g_assert_false(room_blocked(conversations, room_id));
+  g_autoptr(GhMessage) echo = gh_message_new_from_rumor(hex_alice,
+                                                        gh_outbox_item_get_rumor_json(item),
+                                                        &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_conversation_store_add_message(model, echo, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+  GhConversation *room = gh_conversation_store_lookup(model, room_id);
+  g_assert_nonnull(room);
+  g_assert_false(gh_conversation_get_is_request(room));
+  g_assert_nonnull(gh_conversation_store_lookup_message(model, gh_outbox_item_get_rumor_id(item)));
+
+  /* Their reply is stored and listed, not recorded as seen only. */
+  g_autofree gchar *wrap_reply = hex_of("wrap reply");
+  g_assert_cmpint(admit_rumor(model, hex_bob, hex_alice, T0 + 10, "ok", wrap_reply), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
+
+  /* A restart lists the room with everything it kept. */
+  g_autoptr(GhConversationStore) restored = gh_conversation_store_new();
+  g_assert_true(gh_store_conversations_attach(conversations, restored, 0, &error));
+  g_assert_no_error(error);
+  room = gh_conversation_store_lookup(restored, room_id);
+  g_assert_nonnull(room);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, 4);
+  gh_store_conversations_close(conversations);
+  fixture_down(&f);
+}
+
 #ifdef GROUNDHOG_TEST_WIRE
 /* ---- OB-4 on H2: scripted OKs from real local relays, and ephemeral AUTH -- */
 
@@ -2460,6 +2556,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/other-backends", test_other_backends_untouched);
   g_test_add_func("/groundhog/outbox/relays-refused", test_relays_refused);
   g_test_add_func("/groundhog/outbox/size-bound", test_size_bound);
+  g_test_add_func("/groundhog/outbox/send-lifts-block", test_send_lifts_block);
 #ifdef GROUNDHOG_TEST_WIRE
   g_test_add_func("/groundhog/outbox/wire", test_ob4_wire);
 #endif

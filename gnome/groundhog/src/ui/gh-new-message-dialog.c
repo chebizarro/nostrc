@@ -442,6 +442,7 @@ struct _GhNewMessageDialog {
   GListStore *people_items;
   GCancellable *cancellable; /* lookups and checks; cancelled on close */
   guint checks_pending;
+  guint check_round; /* reset_cancellable() starts a new one */
 };
 
 enum { SIGNAL_STARTED, N_SIGNALS };
@@ -775,7 +776,9 @@ start(GhNewMessageDialog *self, gboolean note_to_self)
                                                          (const gchar *const *)peers, &error);
   if (!room) {
     g_message("Groundhog could not start a conversation: %s", error->message);
-    show_error(self, _("The conversation couldn't be started. Choose an account first."));
+    show_error(self, g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED)
+                       ? _("The conversation couldn't be started. Choose an account first.")
+                       : _("The conversation couldn't be started."));
     adw_navigation_view_pop_to_tag(self->navigation, "pick");
     return;
   }
@@ -792,6 +795,7 @@ start(GhNewMessageDialog *self, gboolean note_to_self)
 typedef struct {
   GhNewMessageDialog *self;
   GhNewMessageItem *item;
+  guint round; /* the check round it belongs to */
 } Pending;
 
 static Pending *
@@ -800,6 +804,7 @@ pending_new(GhNewMessageDialog *self, GhNewMessageItem *item)
   Pending *pending = g_new0(Pending, 1);
   pending->self = g_object_ref(self);
   pending->item = g_object_ref(item);
+  pending->round = self->check_round;
   return pending;
 }
 
@@ -915,9 +920,12 @@ on_checked(GObject *source, GAsyncResult *result, gpointer data)
     gh_inbox_resolver_resolve_finish(GH_INBOX_RESOLVER(source), result, &error);
   GhNewMessageDialog *self = pending->self;
   GhNewMessageItem *item = pending->item;
-  if (self->checks_pending)
-    self->checks_pending--;
-  if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+  /* A cancelled round's late answer counts for nothing: the count is the
+   * current round's (reset_cancellable() zeroed it for the next one). */
+  if (pending->round == self->check_round &&
+      !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    if (self->checks_pending)
+      self->checks_pending--;
     item_set_busy(item, FALSE);
     item_set_status(item, inbox ? inbox_status_text(inbox) : _("Couldn't check"));
     if (!self->checks_pending) {
@@ -959,6 +967,7 @@ reset_cancellable(GhNewMessageDialog *self)
   g_clear_object(&self->cancellable);
   self->cancellable = g_cancellable_new();
   self->checks_pending = 0;
+  self->check_round++;
 }
 
 static void
@@ -986,13 +995,27 @@ on_next(GtkWidget *widget, const gchar *action, GVariant *parameter)
                       g_list_model_get_n_items(G_LIST_MODEL(self->people_items)),
                       items->pdata, items->len);
   update_check_row(self, FALSE);
+  /* A conversation the user blocked is unblocked by starting it (G18,
+   * gh_conversation_store_open_room()): said before, not after. */
+  g_autoptr(GStrvBuilder) chosen_keys = g_strv_builder_new();
+  for (guint i = 0; i < items->len; i++)
+    g_strv_builder_add(chosen_keys, ((GhNewMessageItem *)g_ptr_array_index(items, i))->pubkey);
+  g_auto(GStrv) peers = g_strv_builder_end(chosen_keys);
+  gboolean blocked = gh_conversation_store_is_blocked(self->config.conversations,
+                                                      (const gchar *const *)peers);
   /* Honest state (P4): sending reaches one person at a time in this version
    * (the outbox's NIP-17 send), so a group room only receives for now. */
-  gtk_label_set_text(self->start_note,
-    n > 1 ? _("Nothing is sent until you write a message. Sending to more than one person "
-              "isn't possible in this version yet, so for now this conversation can only "
-              "receive messages.")
-          : _("Nothing is sent until you write a message."));
+  const gchar *note = n > 1
+    ? _("Nothing is sent until you write a message. Sending to more than one person "
+        "isn't possible in this version yet, so for now this conversation can only "
+        "receive messages.")
+    : _("Nothing is sent until you write a message.");
+  g_autofree gchar *text = blocked
+    ? g_strconcat(_("You blocked this conversation. Starting it unblocks it: their new "
+                    "messages show and notify again. Messages they sent while it was blocked "
+                    "aren't shown."), "\n\n", note, NULL)
+    : g_strdup(note);
+  gtk_label_set_text(self->start_note, text);
   adw_navigation_view_push(self->navigation, self->confirm_page);
 }
 

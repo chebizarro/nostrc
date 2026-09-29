@@ -3,7 +3,7 @@
  * compared with tests/ui/snapshots/privacy-summary-*.txt, the honesty rules
  * every variant keeps (P4: a relay group is never called encrypted, nothing
  * promises delivery, reading or anonymity, every §1.4 non-goal is said), the
- * conversation header subtitles (§2.2 surface 1) and the safety code. No
+ * conversation header subtitles (§2.2 surface 1) and the per-person safety codes. No
  * display is needed.
  *
  * GROUNDHOG_UPDATE_SNAPSHOTS=1 rewrites the snapshot files instead of
@@ -289,62 +289,80 @@ test_subtitles(void)
   }
 }
 
-/* ---- safety code -------------------------------------------------------------------------- */
+/* ---- safety codes ------------------------------------------------------------------------- */
 
+/* Per-person codes (W15 review B2): each from one key, 32 digits in groups
+ * of four, the same for any spelling of the key, pinned by a vector computed
+ * independently (Python hashlib: SHA-512 over the domain and the raw key,
+ * then 5199 times over digest and key; five bytes per group, mod 10000). */
 static void
-test_safety_code(void)
+test_safety_codes(void)
 {
   g_autofree gchar *alice = hex_of("alice");
   g_autofree gchar *bob = hex_of("bob");
-  g_autofree gchar *carol = hex_of("carol");
-  guint8 ab[GH_PRIVACY_SAFETY_CODE_LENGTH], ba[GH_PRIVACY_SAFETY_CODE_LENGTH];
-  guint8 ac[GH_PRIVACY_SAFETY_CODE_LENGTH];
-  g_assert_true(gh_privacy_safety_code(alice, bob, ab));
-  g_assert_true(gh_privacy_safety_code(bob, alice, ba));
-  g_assert_true(gh_privacy_safety_code(alice, carol, ac));
-  /* Both sides compute the same code; another pair gets another one. */
-  g_assert_cmpmem(ab, sizeof ab, ba, sizeof ba);
-  g_assert_true(memcmp(ab, ac, sizeof ab) != 0);
-  /* A vector computed independently (Python: SHA-256 of the domain string,
-   * the lower key, the higher key; the first 60 bits, 6 at a time). */
-  static const guint8 expected[GH_PRIVACY_SAFETY_CODE_LENGTH] = {
-    40, 40, 11, 10, 57, 62, 55, 6, 61, 62,
-  };
-  g_assert_cmpmem(ab, sizeof ab, expected, sizeof expected);
-  g_autofree gchar *text = gh_privacy_safety_code_to_text(ab);
-  g_assert_cmpstr(text, ==, "Gift Gift Turtle Penguin Guitar Folder Trophy Elephant Headphones "
-                            "Folder");
-  g_autofree gchar *account = hex_of("account-a");
-  g_autofree gchar *peer = hex_of("peer-0");
-  g_assert_true(gh_privacy_safety_code(peer, account, ab));
-  g_autofree gchar *text2 = gh_privacy_safety_code_to_text(ab);
-  g_assert_cmpstr(text2, ==, "Gift Cake Flag Gift Pin Key Glasses Unicorn Trophy Robot");
+  g_autofree gchar *code_a = gh_privacy_fingerprint(alice);
+  g_autofree gchar *code_b = gh_privacy_fingerprint(bob);
+  g_assert_cmpstr(code_a, ==, "5357 3888 9924 0357 2766 6605 5645 8258");
+  g_assert_cmpstr(code_b, ==, "9503 8612 6753 4210 4890 9238 1900 3763");
+  g_assert_cmpuint(strlen(code_a), ==, GH_PRIVACY_FINGERPRINT_DIGITS +
+                   GH_PRIVACY_FINGERPRINT_DIGITS / GH_PRIVACY_FINGERPRINT_GROUP - 1);
+  g_auto(GStrv) groups = g_strsplit(code_a, " ", -1);
+  g_assert_cmpuint(g_strv_length(groups), ==,
+                   GH_PRIVACY_FINGERPRINT_DIGITS / GH_PRIVACY_FINGERPRINT_GROUP);
+  for (guint i = 0; groups[i]; i++) {
+    g_assert_cmpuint(strlen(groups[i]), ==, GH_PRIVACY_FINGERPRINT_GROUP);
+    for (const gchar *c = groups[i]; *c; c++)
+      g_assert_true(g_ascii_isdigit(*c));
+  }
+  /* At least ~100 bits shown: 32 decimal digits are 106. */
+  g_assert_cmpfloat(GH_PRIVACY_FINGERPRINT_DIGITS * G_LN10 / G_LN2, >=, 100.0);
 
-  /* Upper-case hex names the same key. */
+  /* Upper-case hex names the same key; anything else has no code. */
   g_autofree gchar *upper = g_ascii_strup(alice, -1);
-  g_assert_true(gh_privacy_safety_code(upper, bob, ba));
-  g_assert_true(gh_privacy_safety_code(alice, bob, ab));
-  g_assert_cmpmem(ab, sizeof ab, ba, sizeof ba);
-
-  /* Not a key, or the same key twice: no code. */
-  g_assert_false(gh_privacy_safety_code(alice, alice, ab));
-  g_assert_false(gh_privacy_safety_code("abc", bob, ab));
+  g_autofree gchar *code_upper = gh_privacy_fingerprint(upper);
+  g_assert_cmpstr(code_upper, ==, code_a);
+  g_assert_null(gh_privacy_fingerprint("abc"));
+  g_assert_null(gh_privacy_fingerprint(NULL));
   g_autofree gchar *bad = g_strdup(alice);
   bad[10] = 'x';
-  g_assert_false(gh_privacy_safety_code(bad, bob, ab));
-  g_assert_false(gh_privacy_safety_code(NULL, bob, ab));
+  g_assert_null(gh_privacy_fingerprint(bad));
 
-  /* 64 distinct symbols, each with a name. */
-  g_autoptr(GHashTable) emoji = g_hash_table_new(g_str_hash, g_str_equal);
-  g_autoptr(GHashTable) names = g_hash_table_new(g_str_hash, g_str_equal);
-  for (guint i = 0; i < GH_PRIVACY_SAFETY_SYMBOLS; i++) {
-    const gchar *e = gh_privacy_safety_symbol_emoji(i);
-    const gchar *n = gh_privacy_safety_symbol_name(i);
-    g_assert_true(e && *e && g_utf8_validate(e, -1, NULL));
-    g_assert_true(n && *n);
-    g_assert_true(g_hash_table_add(emoji, (gpointer)e));
-    g_assert_true(g_hash_table_add(names, (gpointer)n));
+  /* Read aloud digit by digit, with a pause between groups. */
+  g_autofree gchar *spoken = gh_privacy_fingerprint_spoken("0123 4567");
+  g_assert_cmpstr(spoken, ==, "0 1 2 3, 4 5 6 7");
+}
+
+/* The man in the middle the review describes: Mallory shows Alice K1 as
+ * Bob and Bob K2 as Alice, choosing both freely. Alice's device shows
+ * "their code" F(K1) and "your code" F(A); Bob's shows F(K2) and F(B). Each
+ * comparison pits one code Mallory chooses against one fixed code of a real
+ * key, so matching needs a second preimage (2^106), not a collision between
+ * two sets she generates (2^30 per side for the old 60-bit combined code):
+ * no key of hers matches, and what Alice reads as her own code never depends
+ * on the key she holds for Bob. */
+static void
+test_safety_codes_mitm(void)
+{
+  g_autofree gchar *alice = hex_of("alice");
+  g_autofree gchar *bob = hex_of("bob");
+  g_autofree gchar *code_a = gh_privacy_fingerprint(alice);
+  g_autofree gchar *code_b = gh_privacy_fingerprint(bob);
+  g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_hash_table_add(seen, g_strdup(code_a));
+  g_hash_table_add(seen, g_strdup(code_b));
+  for (guint i = 0; i < 128; i++) {
+    g_autofree gchar *seed = g_strdup_printf("mallory-%u", i);
+    g_autofree gchar *key = hex_of(seed);
+    gchar *code = gh_privacy_fingerprint(key);
+    /* F(K1) against F(B) and F(K2) against F(A): never equal, and no two
+     * of her keys share a code either. */
+    g_assert_cmpstr(code, !=, code_a);
+    g_assert_cmpstr(code, !=, code_b);
+    g_assert_true(g_hash_table_add(seen, code));
   }
+  /* Alice's own code is the same whoever she believes Bob is. */
+  g_autofree gchar *again = gh_privacy_fingerprint(alice);
+  g_assert_cmpstr(again, ==, code_a);
 }
 
 static void
@@ -375,7 +393,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/privacy-summary/backends", test_backends);
   g_test_add_func("/groundhog/privacy-summary/storage", test_storage);
   g_test_add_func("/groundhog/privacy-summary/subtitles", test_subtitles);
-  g_test_add_func("/groundhog/privacy-summary/safety-code", test_safety_code);
+  g_test_add_func("/groundhog/privacy-summary/safety-codes", test_safety_codes);
+  g_test_add_func("/groundhog/privacy-summary/safety-codes-mitm", test_safety_codes_mitm);
   g_test_add_func("/groundhog/privacy-summary/format-key", test_format_key);
   return g_test_run();
 }

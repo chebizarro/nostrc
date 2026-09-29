@@ -3,12 +3,14 @@
  *
  *  - NIP-11: a plain GET of the relay URL (no Upgrade) returns
  *    {"self": <relay key>, ...}; nip11_no_key leaves the key out,
- *    nip11_redirect answers 302 to another host instead.
+ *    nip11_pubkey_only gives only "pubkey" (an administrator's key, here a
+ *    member's), nip11_redirect answers 302 to another host instead.
  *  - Groups: it signs 39000-39003 for each group with the relay key and
  *    replaces them (and pushes them to live subscriptions) on every change.
  *    partial_members makes the 39002 list the admins only (a subset).
  *  - REQ: every stored event matching the filters (each filter's limit
- *    honoured, newest first), then EOSE; the subscription stays live.
+ *    honoured, newest first), then EOSE (none with hold_eose: a backfill
+ *    cut off before its end); the subscription stays live.
  *  - EVENT: signed and verified; a known id is OK true "duplicate:". Kinds
  *    9-12 need a member author (OK false "restricted:") and every `previous`
  *    ref must name a stored event of the group ("invalid:"). 9021 follows
@@ -67,7 +69,10 @@ typedef struct {
   gint64 clock;             /* created_at of the relay's own events */
   gboolean require_auth;
   gboolean refuse_auth;
+  gboolean hold_eose;       /* answer a REQ's stored events but never its EOSE */
   gboolean nip11_no_key;
+  gboolean nip11_pubkey_only; /* "pubkey" (an admin's key) but no "self" */
+  const gchar *nip11_pubkey_only_key; /* that "pubkey" */
   gboolean nip11_redirect;
   gboolean nip11_huge;
   GPtrArray *connections;
@@ -541,8 +546,10 @@ nip29_on_req(Nip29Relay *relay, SoupWebsocketConnection *connection, const gchar
       soup_websocket_connection_send_text(connection, frame);
     }
   }
-  g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
-  soup_websocket_connection_send_text(connection, eose);
+  if (!relay->hold_eose) {
+    g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
+    soup_websocket_connection_send_text(connection, eose);
+  }
   nostr_envelope_free(envelope);
 }
 
@@ -682,6 +689,9 @@ nip29_on_early(SoupServer *server, SoupServerMessage *message, const char *path,
   }
   g_autofree gchar *body = relay->nip11_no_key
     ? g_strdup("{\"name\":\"nip29 test relay\",\"supported_nips\":[1,11,29,42]}")
+    : relay->nip11_pubkey_only
+    ? g_strdup_printf("{\"name\":\"nip29 test relay\",\"pubkey\":\"%s\","
+                      "\"supported_nips\":[1,11,29,42]}", relay->nip11_pubkey_only_key)
     : g_strdup_printf("{\"name\":\"nip29 test relay\",\"self\":\"%s\",\"pubkey\":\"%s\","
                       "\"supported_nips\":[1,11,29,42]}", relay->pk, relay->pk);
   soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);

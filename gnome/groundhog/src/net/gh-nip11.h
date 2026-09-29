@@ -9,9 +9,12 @@ G_BEGIN_DECLS
 
 /*
  * The NIP-11 relay key of a NIP-29 group relay (privacy charter §8.2 G20a,
- * qp24.12.2): the "self" field of the relay information document, or the
- * legacy "pubkey" field when "self" is absent. NIP-29 group metadata
- * (39000-39003) is only trusted when signed by that key.
+ * qp24.12.2): the "self" field of the relay information document. NIP-29
+ * group metadata (39000-39003) is only trusted when signed by that key.
+ * NIP-11's "pubkey" is the administrator's contact key, not the relay's: it
+ * is never used, so a relay without "self" has no key (GH_NIP11_ERROR_NO_KEY,
+ * GH_NIP29_RELAY_KEY_UNAVAILABLE: its group state stays unverified) rather
+ * than letting a person speak for its groups.
  *
  * Why NIP-11 and not trust-on-first-use of a 39000 author: a 39000 carries no
  * proof that its signer is the relay; on a relay that stores foreign 39000s,
@@ -41,7 +44,7 @@ typedef enum {
   GH_NIP11_ERROR_INVALID_URL,  /* not a ws(s) relay URL with a host */
   GH_NIP11_ERROR_PLAINTEXT,    /* a ws:// relay off loopback: nothing is fetched */
   GH_NIP11_ERROR_MALFORMED,    /* not JSON, or not a JSON object */
-  GH_NIP11_ERROR_NO_KEY        /* neither "self" nor "pubkey" is a hex key */
+  GH_NIP11_ERROR_NO_KEY        /* "self" is missing or not a hex key */
 } GhNip11Error;
 
 #define GH_NIP11_MAX_RESPONSE (64 * 1024)
@@ -50,7 +53,7 @@ typedef enum {
  * with GH_NIP11_ERROR_INVALID_URL for anything but a ws(s) URL with a host
  * and without credentials, GH_NIP11_ERROR_PLAINTEXT for ws:// off loopback. */
 gchar *gh_nip11_document_url(const gchar *relay_url, GError **error);
-/* The 64 lowercase hex key of a NIP-11 document ("self", else "pubkey"). */
+/* The 64 lowercase hex key of a NIP-11 document's "self". */
 gchar *gh_nip11_parse_relay_key(const gchar *document, gssize length, GError **error);
 
 /* Fetches relay_url's document through http and returns its key (see

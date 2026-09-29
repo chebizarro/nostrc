@@ -463,9 +463,13 @@ gchar *gh_store_new_op_id(void);
 
 /* T-enqueue, before the first signer call: the outgoing message row
  * (direction OUT), its QUEUED outbox row, the message id in `seen` (so the
- * self-copy coming back is a duplicate) and the cleared draft, in one
- * transaction. On failure the draft is kept. Idempotent on op_id: a repeat
- * returns the existing ids and changes nothing. */
+ * self-copy coming back is a duplicate), the cleared draft and the
+ * conversation accepted (request_state ACCEPTED: a message request is
+ * accepted and a block is lifted, since writing to someone again is choosing
+ * to hear from them, G18), in one transaction. This is the only write that
+ * lifts a block: T-admit of a self-copy never does. On failure the draft is
+ * kept. Idempotent on op_id: a repeat returns the existing ids and changes
+ * nothing. */
 gboolean gh_store_enqueue(GhStore *store, const GhStoreOutgoing *outgoing,
                           gint64 *out_outbox_id, gint64 *out_message_id,
                           GError **error);

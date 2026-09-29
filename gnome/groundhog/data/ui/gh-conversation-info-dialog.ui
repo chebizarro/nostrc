@@ -225,300 +225,60 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="code_group">
-                            <property name="title" translatable="true">Safety Code</property>
-                            <property name="description" translatable="true">If they use Groundhog too, their Conversation Info shows the same code. Matching codes mean you both have each other's real keys.</property>
+                            <property name="title" translatable="true">Safety Codes</property>
+                            <property name="description" translatable="true">Compare both codes with them in person or on a call you trust. Their Groundhog shows the same two codes the other way round. If both match, the key you have for them is the one they use, and they have yours. If either differs, someone may be in between: don't mark the key verified. Other apps don't show these codes; compare the full keys instead.</property>
                             <child>
-                              <object class="GtkGrid" id="code_grid">
-                                <property name="column-homogeneous">true</property>
-                                <property name="row-spacing">12</property>
-                                <property name="column-spacing">6</property>
+                              <object class="GtkBox" id="code_box">
+                                <property name="orientation">1</property>
+                                <property name="spacing">6</property>
                                 <property name="margin-top">6</property>
                                 <property name="margin-bottom">6</property>
                                 <style>
                                   <class name="card"/>
                                   <class name="groundhog-safety-code"/>
                                 </style>
-                                <accessibility>
-                                  <property name="label" translatable="true">Safety code</property>
-                                </accessibility>
                                 <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">0</property>
-                                      <property name="row">0</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_0">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_0">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
+                                  <object class="GtkLabel" id="their_code_title">
+                                    <property name="xalign">0</property>
+                                    <property name="wrap">true</property>
+                                    <property name="wrap-mode">2</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">1</property>
-                                      <property name="row">0</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_1">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_1">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
+                                  <object class="GtkLabel" id="their_code_label">
+                                    <property name="xalign">0</property>
+                                    <property name="selectable">true</property>
+                                    <property name="wrap">true</property>
+                                    <property name="max-width-chars">19</property>
+                                    <style>
+                                      <class name="monospace"/>
+                                      <class name="title-3"/>
+                                    </style>
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">2</property>
-                                      <property name="row">0</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_2">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_2">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
+                                  <object class="GtkLabel" id="your_code_title">
+                                    <property name="label" translatable="true">Your code</property>
+                                    <property name="xalign">0</property>
+                                    <property name="margin-top">6</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">3</property>
-                                      <property name="row">0</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_3">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_3">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">4</property>
-                                      <property name="row">0</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_4">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_4">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">0</property>
-                                      <property name="row">1</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_5">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_5">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">1</property>
-                                      <property name="row">1</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_6">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_6">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">2</property>
-                                      <property name="row">1</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_7">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_7">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">3</property>
-                                      <property name="row">1</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_8">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_8">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">2</property>
-                                    <layout>
-                                      <property name="column">4</property>
-                                      <property name="row">1</property>
-                                    </layout>
-                                    <child>
-                                      <object class="GtkLabel" id="code_emoji_9">
-                                        <property name="accessible-role">43</property>
-                                        <style>
-                                          <class name="title-1"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel" id="code_name_9">
-                                        <property name="wrap">true</property>
-                                        <property name="wrap-mode">2</property>
-                                        <property name="justify">2</property>
-                                        <style>
-                                          <class name="caption"/>
-                                        </style>
-                                      </object>
-                                    </child>
+                                  <object class="GtkLabel" id="your_code_label">
+                                    <property name="xalign">0</property>
+                                    <property name="selectable">true</property>
+                                    <property name="wrap">true</property>
+                                    <property name="max-width-chars">19</property>
+                                    <style>
+                                      <class name="monospace"/>
+                                      <class name="title-3"/>
+                                    </style>
                                   </object>
                                 </child>
                               </object>

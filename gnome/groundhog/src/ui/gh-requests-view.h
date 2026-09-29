@@ -18,8 +18,12 @@ G_BEGIN_DECLS
  *     "accepted" (GhConversation) is emitted so the window can open it.
  *   - Delete…: after an AdwAlertDialog, the backend's forget() (charter §3.8:
  *     messages removed, a tombstone refuses older backfill).
- *   - Block…: after an AdwAlertDialog, the backend's block() (local block:
- *     later messages in the room are never shown or notified).
+ *   - Block…: after an AdwAlertDialog, the backend's block() (local block of
+ *     this conversation: later messages in the room are never shown or
+ *     notified; New Message to the same people unblocks it, G18).
+ * The two confirmations are template objects of the Blueprint
+ * (delete_dialog, block_dialog; responses "delete-confirm"/"delete-cancel"
+ * and "block-confirm"/"block-cancel").
  * Nothing is published and the sender is never told. Without a backend
  * (no private storage) Delete and Block are unavailable and say why. The
  * outcome is acknowledged with a toast when the view is inside an
@@ -46,7 +50,8 @@ GhConversation *gh_requests_view_get_request(GhRequestsView *self);
 void gh_requests_view_set_backend(GhRequestsView *self, const GhRequestsBackend *backend,
                                   gpointer data, GDestroyNotify destroy);
 
-/* The confirmation dialog shown for Delete or Block, if any (tests). */
+/* The confirmation dialog shown for Delete or Block, if any (tests); NULL
+ * once it was answered or dismissed. */
 AdwAlertDialog *gh_requests_view_get_confirmation(GhRequestsView *self);
 
 /* The largest part of the first message shown, in characters. */

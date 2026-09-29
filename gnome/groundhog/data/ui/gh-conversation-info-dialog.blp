@@ -9,8 +9,9 @@ using Adw 1;
 // Groundhog can't protect, where messages are kept), mute (kept in the
 // encrypted store, never in GSettings: NO-7), the disappearing timer (G07),
 // Block and Forget on This Device (ST-9), each behind a confirmation.
-// "verify" page: one person's full npub, the safety code both sides can
-// compare, your own npub, and the local "you marked this verified" record.
+// "verify" page: one person's full npub, the two safety codes (theirs and
+// yours, each from one key) both sides compare, your own npub, and the local
+// "you marked this verified" record.
 // A row that can't act (no message store open) says why in place.
 template $GhConversationInfoDialog: Adw.Dialog {
   title: _("Conversation Info");
@@ -208,16 +209,16 @@ template $GhConversationInfoDialog: Adw.Dialog {
               }
             }
 
+            // One code per person, each from that person's key alone
+            // (gh-privacy-summary.h "Safety codes"); filled from C, with a
+            // digit-by-digit accessible label.
             Adw.PreferencesGroup code_group {
-              title: _("Safety Code");
-              description: _("If they use Groundhog too, their Conversation Info shows the same code. Matching codes mean you both have each other's real keys.");
+              title: _("Safety Codes");
+              description: _("Compare both codes with them in person or on a call you trust. Their Groundhog shows the same two codes the other way round. If both match, the key you have for them is the one they use, and they have yours. If either differs, someone may be in between: don't mark the key verified. Other apps don't show these codes; compare the full keys instead.");
 
-              // Filled from C: an emoji and its name per cell; the names are
-              // what a screen reader reads.
-              Grid code_grid {
-                column-homogeneous: true;
-                row-spacing: 12;
-                column-spacing: 6;
+              Box code_box {
+                orientation: vertical;
+                spacing: 6;
                 margin-top: 6;
                 margin-bottom: 6;
 
@@ -226,288 +227,49 @@ template $GhConversationInfoDialog: Adw.Dialog {
                   "groundhog-safety-code",
                 ]
 
-                accessibility {
-                  label: _("Safety code");
+                // "Alice's code", set from C.
+                Label their_code_title {
+                  xalign: 0;
+                  wrap: true;
+                  wrap-mode: word_char;
+
+                  styles [
+                    "heading",
+                  ]
                 }
 
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
+                Label their_code_label {
+                  xalign: 0;
+                  selectable: true;
+                  wrap: true;
+                  max-width-chars: 19;
 
-                  layout {
-                    column: 0;
-                    row: 0;
-                  }
-
-                  Label code_emoji_0 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_0 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
+                  styles [
+                    "monospace",
+                    "title-3",
+                  ]
                 }
 
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
+                Label your_code_title {
+                  label: _("Your code");
+                  xalign: 0;
+                  margin-top: 6;
 
-                  layout {
-                    column: 1;
-                    row: 0;
-                  }
-
-                  Label code_emoji_1 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_1 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
+                  styles [
+                    "heading",
+                  ]
                 }
 
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
+                Label your_code_label {
+                  xalign: 0;
+                  selectable: true;
+                  wrap: true;
+                  max-width-chars: 19;
 
-                  layout {
-                    column: 2;
-                    row: 0;
-                  }
-
-                  Label code_emoji_2 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_2 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
-                }
-
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
-
-                  layout {
-                    column: 3;
-                    row: 0;
-                  }
-
-                  Label code_emoji_3 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_3 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
-                }
-
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
-
-                  layout {
-                    column: 4;
-                    row: 0;
-                  }
-
-                  Label code_emoji_4 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_4 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
-                }
-
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
-
-                  layout {
-                    column: 0;
-                    row: 1;
-                  }
-
-                  Label code_emoji_5 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_5 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
-                }
-
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
-
-                  layout {
-                    column: 1;
-                    row: 1;
-                  }
-
-                  Label code_emoji_6 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_6 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
-                }
-
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
-
-                  layout {
-                    column: 2;
-                    row: 1;
-                  }
-
-                  Label code_emoji_7 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_7 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
-                }
-
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
-
-                  layout {
-                    column: 3;
-                    row: 1;
-                  }
-
-                  Label code_emoji_8 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_8 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
-                }
-
-                Box {
-                  orientation: vertical;
-                  spacing: 2;
-
-                  layout {
-                    column: 4;
-                    row: 1;
-                  }
-
-                  Label code_emoji_9 {
-                    accessible-role: presentation;
-
-                    styles [
-                      "title-1",
-                    ]
-                  }
-
-                  Label code_name_9 {
-                    wrap: true;
-                    wrap-mode: word_char;
-                    justify: center;
-
-                    styles [
-                      "caption",
-                    ]
-                  }
+                  styles [
+                    "monospace",
+                    "title-3",
+                  ]
                 }
               }
             }

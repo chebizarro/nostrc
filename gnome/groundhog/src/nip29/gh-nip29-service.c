@@ -97,7 +97,10 @@ struct _GhNip29Room {
   gchar *held[SNAPSHOTS];      /* newest received while the key was unknown */
   gint64 held_at[SNAPSHOTS];
   GhNip29Timeline *timeline;
-  gint64 cursor;               /* newest message created_at seen (bounded by now) */
+  gint64 cursor;               /* newest message created_at stored with nothing missing
+                                * before it (bounded by now): the next REQ's since */
+  gint64 sync_cursor;          /* newest stored by this REQ's backfill; committed at EOSE */
+  gboolean sync_failed;        /* an admission of this REQ failed: the cursor stays */
   gboolean backfilled;         /* the group's first EOSE ever came */
   gint64 joined_at;            /* local time of the last join request: older is history */
   gint64 left_at;              /* local time of the last leave request */
@@ -822,8 +825,13 @@ relay_resubscribe(Relay *relay)
     g_clear_error(&error);
   }
   relay->scope = scope;
-  for (guint i = 0; i < rooms->len; i++)
-    room_set_read(g_ptr_array_index(rooms, i), GH_NIP29_READ_SYNCING, NULL);
+  for (guint i = 0; i < rooms->len; i++) {
+    GhNip29Room *room = g_ptr_array_index(rooms, i);
+    /* A new REQ, from the committed cursor: nothing of it is stored yet. */
+    room->sync_cursor = 0;
+    room->sync_failed = FALSE;
+    room_set_read(room, GH_NIP29_READ_SYNCING, NULL);
+  }
   gh_relay_scope_start(scope);
 }
 
@@ -936,8 +944,30 @@ relay_ensure_key(Relay *relay, gboolean force)
 
 /* ---- Relay events ---------------------------------------------------------------------- */
 
+/* The sync cursor after a message was dealt with for good (stored, a
+ * duplicate, hidden, or unusable). The cursor is the since of the next REQ,
+ * so it may only pass what is durably stored with nothing missing before
+ * it: a backfill event only raises this REQ's pending cursor, committed at
+ * EOSE (on_scope_update); a live one (after EOSE) moves it at once. Once an
+ * admission of this REQ failed it moves no more, and the next REQ asks again
+ * from where it was (W15 review non-blocking #1). */
 static void
-room_admit_message(GhNip29Room *room, NostrEvent *event, const gchar *json)
+room_advance_cursor(GhNip29Room *room, gint64 created_at, gboolean backfill)
+{
+  GhNip29Service *self = room->service;
+  gint64 bounded = MIN(created_at, now_unix(self) + GH_NIP29_MAX_FUTURE_SKEW_SECONDS);
+  if (room->sync_failed)
+    return;
+  if (backfill) {
+    room->sync_cursor = MAX(room->sync_cursor, bounded);
+  } else if (bounded > room->cursor) {
+    room->cursor = bounded;
+    room_save(room);
+  }
+}
+
+static void
+room_admit_message(GhNip29Room *room, NostrEvent *event, const gchar *json, gboolean backfill)
 {
   GhNip29Service *self = room->service;
   gint64 created_at = nostr_event_get_created_at(event);
@@ -946,16 +976,13 @@ room_admit_message(GhNip29Room *room, NostrEvent *event, const gchar *json)
     return;
   if (gh_nip29_timeline_add(room->timeline, id, nostr_event_get_pubkey(event), created_at))
     room_save(room);
-  gint64 bounded = MIN(created_at, now_unix(self) + GH_NIP29_MAX_FUTURE_SKEW_SECONDS);
-  if (bounded > room->cursor) {
-    room->cursor = bounded;
-    room_save(room);
-  }
   g_autoptr(GError) error = NULL;
   g_autoptr(GhMessage) message = gh_message_new_from_nip29_event(self->account, room_relay(room),
                                                                   json, &error);
   if (!message) {
+    /* Never storable: asking for it again would not help. */
     g_debug("Groundhog ignored a group message: %s", error->message);
+    room_advance_cursor(room, created_at, backfill);
     return;
   }
   gh_message_add_relay(message, room_relay(room));
@@ -964,8 +991,10 @@ room_admit_message(GhNip29Room *room, NostrEvent *event, const gchar *json)
                                                               &error);
   if (added == GH_CONVERSATION_ADD_FAILED) {
     g_warning("Groundhog could not store a group message: %s", error->message);
+    room->sync_failed = TRUE;
     return;
   }
+  room_advance_cursor(room, created_at, backfill);
   /* The history a join brings in is not "unread": everything dated before
    * the join request is read while nothing newer is listed. (Not at EOSE:
    * the relay layer may report EOSE before the backfill it ends.) */
@@ -980,7 +1009,7 @@ room_admit_message(GhNip29Room *room, NostrEvent *event, const gchar *json)
 }
 
 static void
-relay_event(Relay *relay, const gchar *json)
+relay_event(Relay *relay, const gchar *json, gboolean backfill)
 {
   NostrEvent *event = nostr_event_new();
   if (nostr_event_deserialize_signed(event, json, NULL) != NOSTR_EVENT_VALIDATION_OK) {
@@ -1003,7 +1032,7 @@ relay_event(Relay *relay, const gchar *json)
     GhNip29Room *room = relay_room(relay, first_tag_value(event, "h"));
     if (room && kind >= NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE &&
         kind <= NOSTR_KIND_SIMPLE_GROUP_REPLY) {
-      room_admit_message(room, event, json);
+      room_admit_message(room, event, json, backfill);
     } else if (room && (kind == NOSTR_KIND_SIMPLE_GROUP_ADD_USER ||
                         kind == NOSTR_KIND_SIMPLE_GROUP_REMOVE_USER ||
                         kind == NOSTR_KIND_SIMPLE_GROUP_DELETE_EVENT)) {
@@ -1030,7 +1059,7 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
   g_autoptr(GhNip29Service) self = g_object_ref(relay->service);
   switch (update->notice) {
   case GH_RELAY_NOTICE_EVENT:
-    relay_event(relay, update->event_json);
+    relay_event(relay, update->event_json, update->backfill);
     return;
   default:
     break;
@@ -1046,6 +1075,10 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     case GH_RELAY_NOTICE_EOSE:
       room_set_read(room, GH_NIP29_READ_LIVE, NULL);
       room->backfilled = TRUE;
+      /* The backfill is complete: what it stored has nothing missing before
+       * it (up to the relay's answer, see the header). */
+      if (!room->sync_failed && room->sync_cursor > room->cursor)
+        room->cursor = room->sync_cursor;
       room_save(room);
       break;
     case GH_RELAY_NOTICE_CLOSED:

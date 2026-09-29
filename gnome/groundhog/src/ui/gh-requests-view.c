@@ -17,12 +17,15 @@ struct _GhRequestsView {
   GtkButton *block_button;
   GtkButton *delete_button;
   GtkButton *accept_button;
+  AdwAlertDialog *delete_dialog;
+  AdwAlertDialog *block_dialog;
   GhConversation *request;
   GhRequestsBackend backend;
   gboolean has_backend;
   gpointer backend_data;
   GDestroyNotify backend_destroy;
-  AdwAlertDialog *confirmation; /* weak */
+  AdwAlertDialog *confirmation;  /* delete_dialog or block_dialog while shown */
+  GhConversation *confirm_request; /* the request it was shown for */
 };
 
 enum { PROP_0, PROP_REQUEST, N_PROPS };
@@ -32,6 +35,8 @@ enum { SIGNAL_ACCEPTED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhRequestsView, gh_requests_view, ADW_TYPE_BIN)
+
+static void confirmation_dismiss(GhRequestsView *self);
 
 /* ---- feedback ----------------------------------------------------------------- */
 
@@ -83,7 +88,7 @@ update_actions(GhRequestsView *self)
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->delete_button),
                               self->has_backend ? _("Remove this request from this device") : why);
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->block_button),
-                              self->has_backend ? _("Stop showing messages from them") : why);
+                              self->has_backend ? _("Stop showing this conversation") : why);
 }
 
 static void
@@ -150,8 +155,7 @@ gh_requests_view_set_request(GhRequestsView *self, GhConversation *request)
                             G_CONNECT_SWAPPED);
   }
   /* A confirmation for the previous request must not act on another. */
-  if (self->confirmation)
-    adw_dialog_force_close(ADW_DIALOG(self->confirmation));
+  confirmation_dismiss(self);
   update(self);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_REQUEST]);
 }
@@ -204,91 +208,65 @@ on_accept(GtkWidget *widget, const gchar *action, GVariant *parameter)
   g_signal_emit(self, signals[SIGNAL_ACCEPTED], 0, request);
 }
 
-typedef enum { CONFIRM_DELETE, CONFIRM_BLOCK } Confirm;
-
-typedef struct {
-  GhRequestsView *self;
-  GhConversation *request;
-  Confirm what;
-} Pending;
-
+/* The confirmation (gh-requests-view.blp) is no longer shown. */
 static void
-pending_free(gpointer data)
+confirmation_done(GhRequestsView *self)
 {
-  Pending *pending = data;
-  g_object_unref(pending->self);
-  g_object_unref(pending->request);
-  g_free(pending);
+  self->confirmation = NULL;
+  g_clear_object(&self->confirm_request);
 }
 
 static void
-on_confirmed(AdwAlertDialog *dialog, const gchar *response, gpointer data)
+on_confirmed(AdwAlertDialog *dialog, const gchar *response, GhRequestsView *self)
 {
-  Pending *pending = data;
-  GhRequestsView *self = pending->self;
+  if (dialog != self->confirmation)
+    return;
   /* The dialog is done (it closes itself after answering). */
-  if (self->confirmation == dialog) {
-    g_object_remove_weak_pointer(G_OBJECT(dialog), (gpointer *)&self->confirmation);
-    self->confirmation = NULL;
-  }
-  const gchar *wanted = pending->what == CONFIRM_DELETE ? "delete" : "block";
-  if (g_strcmp0(response, wanted) != 0 || !self->has_backend ||
-      !gh_conversation_get_is_request(pending->request))
+  g_autoptr(GhConversation) request = g_steal_pointer(&self->confirm_request);
+  confirmation_done(self);
+  const gboolean deleting = dialog == self->delete_dialog;
+  if (g_strcmp0(response, deleting ? "delete-confirm" : "block-confirm") != 0 ||
+      !self->has_backend || !request || !gh_conversation_get_is_request(request))
     return;
   g_autoptr(GError) error = NULL;
-  gboolean ok = pending->what == CONFIRM_DELETE
-    ? self->backend.forget(self->backend_data, pending->request, &error)
-    : self->backend.block(self->backend_data, pending->request, &error);
+  gboolean ok = deleting ? self->backend.forget(self->backend_data, request, &error)
+                         : self->backend.block(self->backend_data, request, &error);
   if (!ok) {
-    g_message("Groundhog could not %s a message request: %s",
-              pending->what == CONFIRM_DELETE ? "delete" : "block",
+    g_message("Groundhog could not %s a message request: %s", deleting ? "delete" : "block",
               error ? error->message : "unknown error");
-    tell(self, pending->what == CONFIRM_DELETE ? _("Couldn't delete the request")
-                                               : _("Couldn't block the sender"),
+    tell(self, deleting ? _("Couldn't delete the request") : _("Couldn't block the conversation"),
          GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
     return;
   }
-  if (self->request == pending->request)
+  if (self->request == request)
     gh_requests_view_set_request(self, NULL);
-  tell(self, pending->what == CONFIRM_DELETE ? _("Request deleted") : _("Sender blocked"),
+  tell(self, deleting ? _("Request deleted") : _("Conversation blocked"),
        GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
 }
 
+/* Closes a shown confirmation without acting on it. */
 static void
-confirm(GhRequestsView *self, Confirm what)
+confirmation_dismiss(GhRequestsView *self)
+{
+  AdwAlertDialog *shown = self->confirmation;
+  confirmation_done(self);
+  if (shown)
+    adw_dialog_force_close(ADW_DIALOG(shown));
+}
+
+static void
+confirm(GhRequestsView *self, AdwAlertDialog *dialog)
 {
   if (!self->request || !self->has_backend)
     return;
-  if (self->confirmation)
-    adw_dialog_force_close(ADW_DIALOG(self->confirmation));
-  const gchar *who = gh_conversation_get_title(self->request);
-  g_autofree gchar *heading = NULL;
-  const gchar *body, *label;
-  if (what == CONFIRM_DELETE) {
-    heading = g_strdup(_("Delete Request?"));
-    body = _("Its messages are removed from this device. The sender isn't told and can "
-             "write to you again.");
-    label = _("_Delete");
-  } else {
-    heading = g_strdup_printf(_("Block %s?"), who);
-    body = _("You won't see their messages or get notifications from them on this device. "
-             "They aren't told. Writing to them again unblocks them.");
-    label = _("_Block");
+  confirmation_dismiss(self);
+  if (dialog == self->block_dialog) {
+    g_autofree gchar *heading = g_strdup_printf(_("Block %s?"),
+                                                gh_conversation_get_title(self->request));
+    adw_alert_dialog_set_heading(dialog, heading);
   }
-  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(heading, body));
-  const gchar *id = what == CONFIRM_DELETE ? "delete" : "block";
-  adw_alert_dialog_add_responses(dialog, "cancel", _("_Cancel"), id, label, NULL);
-  adw_alert_dialog_set_response_appearance(dialog, id, ADW_RESPONSE_DESTRUCTIVE);
-  adw_alert_dialog_set_default_response(dialog, "cancel");
-  adw_alert_dialog_set_close_response(dialog, "cancel");
-  Pending *pending = g_new0(Pending, 1);
-  pending->self = g_object_ref(self);
-  pending->request = g_object_ref(self->request);
-  pending->what = what;
-  g_signal_connect_data(dialog, "response", G_CALLBACK(on_confirmed), pending,
-                        (GClosureNotify)(void (*)(void))pending_free, 0);
   self->confirmation = dialog;
-  g_object_add_weak_pointer(G_OBJECT(dialog), (gpointer *)&self->confirmation);
+  g_set_object(&self->confirm_request, self->request);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
 }
 
@@ -297,7 +275,8 @@ on_delete(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  confirm(GH_REQUESTS_VIEW(widget), CONFIRM_DELETE);
+  GhRequestsView *self = GH_REQUESTS_VIEW(widget);
+  confirm(self, self->delete_dialog);
 }
 
 static void
@@ -305,7 +284,8 @@ on_block(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  confirm(GH_REQUESTS_VIEW(widget), CONFIRM_BLOCK);
+  GhRequestsView *self = GH_REQUESTS_VIEW(widget);
+  confirm(self, self->block_dialog);
 }
 
 /* ---- GObject ------------------------------------------------------------------ */
@@ -338,10 +318,11 @@ static void
 gh_requests_view_dispose(GObject *object)
 {
   GhRequestsView *self = GH_REQUESTS_VIEW(object);
-  if (self->confirmation) {
-    g_object_remove_weak_pointer(G_OBJECT(self->confirmation), (gpointer *)&self->confirmation);
-    self->confirmation = NULL;
-  }
+  if (self->delete_dialog)
+    g_signal_handlers_disconnect_by_data(self->delete_dialog, self);
+  if (self->block_dialog)
+    g_signal_handlers_disconnect_by_data(self->block_dialog, self);
+  confirmation_dismiss(self);
   if (self->request)
     g_signal_handlers_disconnect_by_data(self->request, self);
   g_clear_object(&self->request);
@@ -381,6 +362,8 @@ gh_requests_view_class_init(GhRequestsViewClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, block_button);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, delete_button);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, accept_button);
+  gtk_widget_class_bind_template_child(widget_class, GhRequestsView, delete_dialog);
+  gtk_widget_class_bind_template_child(widget_class, GhRequestsView, block_dialog);
   gtk_widget_class_install_action(widget_class, "requests.accept", NULL, on_accept);
   gtk_widget_class_install_action(widget_class, "requests.delete", NULL, on_delete);
   gtk_widget_class_install_action(widget_class, "requests.block", NULL, on_block);
@@ -390,5 +373,8 @@ static void
 gh_requests_view_init(GhRequestsView *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  AdwAlertDialog *dialogs[] = { self->delete_dialog, self->block_dialog };
+  for (guint i = 0; i < G_N_ELEMENTS(dialogs); i++)
+    g_signal_connect(dialogs[i], "response", G_CALLBACK(on_confirmed), self);
   update(self);
 }

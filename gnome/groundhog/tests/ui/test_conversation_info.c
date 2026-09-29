@@ -18,6 +18,7 @@
  * also renders the dialog to <dir>/groundhog-g19-*.png. */
 #include "gh-conversation-actions.h"
 #include "gh-conversation-info-dialog.h"
+#include "gh-conversation-private.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
 #include "gh-expiry.h"
@@ -949,6 +950,9 @@ test_gui_block(void)
   AdwAlertDialog *alert = child(&g, "block_dialog");
   g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, "Block Alice?");
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(alert), "Nobody is told"));
+  /* It says how the block is lifted, and that is what lifts it (G18). */
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(alert),
+                          "To unblock it, choose Undo, or later start a new message to Alice."));
   g_assert_cmpstr(adw_alert_dialog_get_close_response(alert), ==, "block-cancel");
 
   confirm(&g, "info.block", "block_dialog", "_Block");
@@ -1010,15 +1014,19 @@ test_gui_verify(void)
   g_autofree gchar *their_key = gh_privacy_format_key(peer_npub);
   g_assert_cmpstr(adw_preferences_row_get_title(child(&g, "their_key_row")), ==, their_key);
   g_assert_cmpstr(adw_preferences_group_get_title(child(&g, "their_group")), ==, "Alice’s Key");
-  guint8 code[GH_PRIVACY_SAFETY_CODE_LENGTH];
-  g_assert_true(gh_privacy_safety_code(PEER[0], ACCOUNT, code));
-  for (guint i = 0; i < GH_PRIVACY_SAFETY_CODE_LENGTH; i++) {
-    g_autofree gchar *emoji = g_strdup_printf("code_emoji_%u", i);
-    g_autofree gchar *name = g_strdup_printf("code_name_%u", i);
-    g_assert_cmpstr(gtk_label_get_text(child(&g, emoji)), ==,
-                    gh_privacy_safety_symbol_emoji(code[i]));
-    g_assert_cmpstr(gtk_label_get_text(child(&g, name)), ==, gh_privacy_safety_symbol_name(code[i]));
-  }
+  /* Two codes, each from one key (W15 review B2): theirs from the key held
+   * for them, yours from the account's; never one code over both. */
+  g_autofree gchar *their_code = gh_privacy_fingerprint(PEER[0]);
+  g_autofree gchar *your_code = gh_privacy_fingerprint(ACCOUNT);
+  g_assert_cmpstr(gtk_label_get_text(child(&g, "their_code_title")), ==, "Alice’s code");
+  g_assert_cmpstr(gtk_label_get_text(child(&g, "their_code_label")), ==, their_code);
+  g_assert_cmpstr(gtk_label_get_text(child(&g, "your_code_label")), ==, your_code);
+  g_assert_cmpstr(their_code, !=, your_code);
+  /* The copy says what matching proves, and that both are compared. */
+  const gchar *how = adw_preferences_group_get_description(child(&g, "code_group"));
+  g_assert_nonnull(strstr(how, "Compare both codes"));
+  g_assert_nonnull(strstr(how, "the other way round"));
+  g_assert_null(strstr(how, "real keys"));
   g_autofree gchar *own_npub = npub_of(ACCOUNT);
   g_autofree gchar *own_key = gh_privacy_format_key(own_npub);
   g_assert_cmpstr(adw_preferences_row_get_title(child(&g, "your_key_row")), ==, own_key);
@@ -1252,6 +1260,22 @@ test_gui_header_button(void)
                 conversation);
   adw_dialog_force_close(shown);
   drain_idle();
+
+  /* A relay group (G20a): this dialog's Block, Forget, Mute and copy are
+   * NIP-17's, so it is not offered there (its own dialog is G20b's), also
+   * when the group follows a DM in the same view. */
+  g_autofree gchar *group_id = gh_message_nip29_room_id("wss://groups.example.org", "pizza");
+  GhConversation *group = gh_conversation_store_ensure_group(a->model, group_id, "Pizza");
+  g_assert_nonnull(group);
+  g_assert_true(gh_window_open_item(g.window, group));
+  drain_idle();
+  g_assert_false(g_action_get_enabled(action));
+  g_action_activate(action, NULL);
+  drain_idle();
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(g.window)));
+  g_assert_true(gh_window_open_item(g.window, conversation));
+  drain_idle();
+  g_assert_true(g_action_get_enabled(action));
   gui_close(&g);
   account_clear(a);
 }

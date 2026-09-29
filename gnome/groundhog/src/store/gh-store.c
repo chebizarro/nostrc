@@ -2662,9 +2662,14 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
     return FALSE;
   STORE_CUT("enqueue", "seen");
 
+  /* Writing in a conversation accepts it: a message request becomes accepted
+   * and a block is lifted (writing to someone again is choosing to hear from
+   * them, G18). Only here, where a new own message is first stored: a repeat
+   * of this op_id returned above, and a self-copy a relay delivers (T-admit)
+   * never unblocks. */
   stmt = store_prepare(store,
-    "UPDATE conversations SET draft = NULL, last_activity = MAX(last_activity, ?1) "
-    "WHERE id = ?2", error);
+    "UPDATE conversations SET draft = NULL, last_activity = MAX(last_activity, ?1), "
+    "request_state = 0 WHERE id = ?2", error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, o->created_at));

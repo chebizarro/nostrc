@@ -87,7 +87,7 @@ const gchar *gh_nip29_admission_to_string(GhNip29Admission admission);
 typedef struct _GhNip29Group GhNip29Group;
 
 /* relay_pubkey is the hex key the caller read from the relay's NIP-11
- * `self` (or legacy `pubkey`) field. It is fixed for the group's lifetime:
+ * `self` field (never `pubkey`, the admin's contact key). It is fixed for the group's lifetime:
  * if the relay key changes, build a new group so no snapshot signed by the
  * previous key survives. */
 GhNip29Group *gh_nip29_group_new(const GhNip29GroupKey *key,

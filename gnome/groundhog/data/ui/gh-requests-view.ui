@@ -187,4 +187,25 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </property>
   </template>
+  <object class="AdwAlertDialog" id="delete_dialog">
+    <property name="heading" translatable="yes">Delete Request?</property>
+    <property name="body" translatable="yes">Its messages are removed from this device. The sender isn't told and can write to you again.</property>
+    <property name="default-response">delete-cancel</property>
+    <property name="close-response">delete-cancel</property>
+    <responses>
+      <response id="delete-cancel" translatable="yes">_Cancel</response>
+      <response id="delete-confirm" translatable="yes" appearance="destructive">_Delete</response>
+    </responses>
+  </object>
+  <object class="AdwAlertDialog" id="block_dialog">
+    <property name="body" translatable="yes">Their messages in this conversation won't be shown or notified on this device, and this request is deleted. They aren't told.
+
+To hear from them here again, start a new message to them: that unblocks the conversation.</property>
+    <property name="default-response">block-cancel</property>
+    <property name="close-response">block-cancel</property>
+    <responses>
+      <response id="block-cancel" translatable="yes">_Cancel</response>
+      <response id="block-confirm" translatable="yes" appearance="destructive">_Block</response>
+    </responses>
+  </object>
 </interface>

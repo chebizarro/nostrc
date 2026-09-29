@@ -159,16 +159,11 @@ update_title(GhConversationList *list)
     gh_content_page_set_title(list->content, NULL, NULL);
     return;
   }
-  /* A NIP-29 relay group is readable by its relay's operators (charter
-   * §2.2): it never says "encrypted". */
-  if (gh_conversation_get_backend(list->shown) == GH_CONVERSATION_BACKEND_NIP29) {
-    gh_content_page_set_title(list->content, gh_conversation_get_title(list->shown),
-                              _("Relay group · not end-to-end encrypted"));
-    return;
-  }
   /* A request is titled by its sender's npub; the subject the sender chose
    * is only part of the subtitle (charter §7.9), which says what the
-   * conversation protects (charter §2.2 surface 1). */
+   * conversation protects (charter §2.2 surface 1): one strings table for
+   * every backend, so a NIP-29 relay group, readable by its relay's
+   * operators, is never called encrypted here either. */
   GhPrivacyContext context = {
     .backend = (GhPrivacyBackend)gh_conversation_get_backend(list->shown),
     .is_request = gh_conversation_get_is_request(list->shown),

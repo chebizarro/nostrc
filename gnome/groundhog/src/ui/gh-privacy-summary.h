@@ -16,7 +16,7 @@ G_BEGIN_DECLS
  * that you use Nostr or which relays you use (Groundhog has no proxy or Tor
  * support yet, §4.1). Strings are translatable (English source).
  *
- * The safety code below belongs to the same honesty rules: it lets two
+ * The safety codes below belong to the same honesty rules: they let two
  * people compare their keys out of band; Groundhog never checks anything
  * with anyone and only remembers that you marked a key verified.
  */
@@ -81,28 +81,45 @@ gchar *gh_privacy_summary_dup_subtitle(const GhPrivacyContext *context);
  * tests; also a complete description for a screen reader). */
 gchar *gh_privacy_summary_to_text(const GhPrivacySummary *summary);
 
-/* ---- Safety code ----------------------------------------------------------------
- * A short code two people can compare in person or on a call they trust. It
- * is derived from both public keys only, so each side computes the same
- * code: SHA-256("groundhog-safety-code-v1" || lower key || higher key), its
- * first 60 bits read as GH_PRIVACY_SAFETY_CODE_LENGTH 6-bit indices into a
- * table of 64 symbols (an emoji and a name each). Matching codes mean both
- * sides hold each other's real keys; only an app that computes the same code
- * (Groundhog) shows it, so the full npub stays the universal check. 60 bits
- * keep grinding a look-alike key (one secp256k1 key per try) out of reach of
- * a casual attacker; comparing the full npub is the complete check. */
-#define GH_PRIVACY_SAFETY_CODE_LENGTH 10
-#define GH_PRIVACY_SAFETY_SYMBOLS 64
+/* ---- Safety codes (per-person fingerprints) ------------------------------------
+ * Each person's safety code comes from their own public key only, as
+ * Signal's safety numbers do: Verify Key shows "their code" (from the key
+ * this device holds for them) and "your code" (from the account's key), and
+ * the two people compare both, in person or on a call they trust: their
+ * Groundhog shows the same two codes the other way round.
+ *
+ * Why per person (W15 review B2). A code over both keys, as G19 first had,
+ * lets a man in the middle who shows each side a key of their own (K1 as
+ * Bob to Alice, K2 as Alice to Bob) search for a pair with code(A, K1) ==
+ * code(K2, B): a collision between two sets they choose, about 2^(n/2)
+ * work. Per person, the attacker must instead find K1 whose code equals
+ * Bob's and K2 whose code equals Alice's: a second preimage of a fixed code
+ * each, about 2^106 tries (times the iterations) for
+ * GH_PRIVACY_FINGERPRINT_DIGITS decimal digits.
+ *
+ * The code: SHA-512("groundhog-fingerprint-v1" || key), then
+ * GH_PRIVACY_FINGERPRINT_ITERATIONS - 1 more times SHA-512(digest || key)
+ * (key: the 32 raw bytes); group i of GH_PRIVACY_FINGERPRINT_GROUP digits is
+ * bytes 5i..5i+4 of the final digest, big-endian, mod 10000, zero-padded.
+ * Groups are separated by single spaces, for reading aloud.
+ *
+ * What matching proves: that the key each device holds for the other is the
+ * key the other device uses, provided the comparison itself reached the
+ * real person. It says nothing about who they are beyond that, and only
+ * Groundhog shows these codes: with another app, the full npub is the check.
+ * A "verified" mark (gh-store-contacts.h) records a key and a time, never a
+ * code, so it does not depend on this format. */
+#define GH_PRIVACY_FINGERPRINT_DIGITS 32
+#define GH_PRIVACY_FINGERPRINT_GROUP 4
+#define GH_PRIVACY_FINGERPRINT_ITERATIONS 5200
 
-/* Fills code with symbol indices (< GH_PRIVACY_SAFETY_SYMBOLS). FALSE when
- * either key is not 64 hex characters or both are the same key. */
-gboolean gh_privacy_safety_code(const gchar *pubkey_a, const gchar *pubkey_b,
-                                guint8 code[GH_PRIVACY_SAFETY_CODE_LENGTH]);
-/* The emoji of symbol index, and its translated name ("Dog", "Rocket"). */
-const gchar *gh_privacy_safety_symbol_emoji(guint index);
-const gchar *gh_privacy_safety_symbol_name(guint index);
-/* The code as text: "Dog Rocket Key …" (names, space-separated). */
-gchar *gh_privacy_safety_code_to_text(const guint8 code[GH_PRIVACY_SAFETY_CODE_LENGTH]);
+/* The safety code of @pubkey (64 hex characters, any case): e.g. "0123 4567
+ * …" (GH_PRIVACY_FINGERPRINT_DIGITS digits in groups). NULL for anything
+ * that is not a 64-character hex key. */
+gchar *gh_privacy_fingerprint(const gchar *pubkey);
+/* The code as a screen reader should say it: one digit at a time, a pause
+ * (",") between groups: "0 1 2 3, 4 5 6 7, …". */
+gchar *gh_privacy_fingerprint_spoken(const gchar *fingerprint);
 
 /* A bech32 key for reading aloud: the "npub1" prefix, then groups of four
  * characters separated by spaces ("npub1 abcd efgh … xy"). Other text is
