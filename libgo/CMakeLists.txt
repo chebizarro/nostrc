@@ -24,7 +24,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(LIBGO 0 1 1)
+declare_component_version(LIBGO 0 1 2)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
@@ -292,6 +292,7 @@ add_executable(string_array_test tests/string_array_test.c)
 add_executable(long_adder_stress_test tests/long_adder_stress_test.c)
 add_executable(go_select_closed_test tests/go_select_closed_test.c)
 add_executable(go_select_cancel_test tests/go_select_cancel_test.c)
+add_executable(go_channel_mpmc_slot_test tests/go_channel_mpmc_slot_test.c)
 
 # Link the context library to each test
 target_link_libraries(go_context_cancel_test PRIVATE libgo ${NSYNC_LIB} pthread)
@@ -306,6 +307,7 @@ target_link_libraries(go_context_stress_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_channel_close_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_select_closed_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(go_select_cancel_test PRIVATE libgo ${NSYNC_LIB} pthread)
+target_link_libraries(go_channel_mpmc_slot_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(error_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(refptr_test PRIVATE libgo ${NSYNC_LIB} pthread)
 target_link_libraries(hash_map_test2 PRIVATE libgo ${NSYNC_LIB} pthread)
@@ -337,6 +339,7 @@ apply_sanitizers(go_ticker_test)
 apply_sanitizers(go_channel_close_test)
 apply_sanitizers(go_select_closed_test)
 apply_sanitizers(go_select_cancel_test)
+apply_sanitizers(go_channel_mpmc_slot_test)
 apply_warnings(go_context_cancel_test)
 apply_warnings(go_channel_test)
 apply_warnings(go_context_timeout_test)
@@ -349,6 +352,7 @@ apply_warnings(go_ticker_test)
 apply_warnings(go_channel_close_test)
 apply_warnings(go_select_closed_test)
 apply_warnings(go_select_cancel_test)
+apply_warnings(go_channel_mpmc_slot_test)
 
 
 # Ensure usleep is declared on Linux/glibc builds for test targets
@@ -374,6 +378,7 @@ add_test(NAME GoChannelStressTest COMMAND go_channel_stress_test)
 add_test(NAME GoContextStressTest COMMAND go_context_stress_test)
 add_test(NAME GoSelectClosedTest COMMAND go_select_closed_test)
 add_test(NAME GoSelectCancelTest COMMAND go_select_cancel_test)
+add_test(NAME GoChannelMpmcSlotTest COMMAND go_channel_mpmc_slot_test)
 
 # Register utility tests
 add_test(NAME GoErrorTest COMMAND error_test)

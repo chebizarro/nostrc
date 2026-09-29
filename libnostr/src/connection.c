@@ -381,14 +381,31 @@ send_done:
             /* Send queue drained.  Clear writable_pending so the service
              * loop's bounded all-protocol fallback stops arming POLLOUT for
              * this connection (libnostr-idle-writable-busy-poll-20260817).
-             * A concurrent enqueue re-sets the flag after pushing to
-             * send_channel and then calls lws_cancel_service(), so a frame
-             * enqueued in this race window is still drained promptly. */
+             *
+             * nostrc-75rv: then re-check the queue under the same mutex.  A
+             * writer pushes to send_channel and only afterwards sets the flag
+             * under priv->mutex; if that set landed between the empty
+             * try_receive above and this clear (a no-op set: the flag was
+             * still 1), clearing alone stranded the frame — the sweep is
+             * gated on the flag and EVENT_WAIT_CANCELLED carries no
+             * connection — and a REQ never reached the relay.  A push is
+             * counted in the depth from the moment it claims its slot, so
+             * either the writer's set comes after this section and keeps
+             * the flag up, or this check sees the frame.  try_receive also
+             * reports "nothing yet" for a frame whose writer has claimed
+             * the slot but not finished publishing it. */
+            int rearm = 0;
             nsync_mu_lock(&priv->mutex);
             if (priv->wsi == wsi) {
                 conn_set_writable_pending_locked(priv, 0);
+                if (go_channel_get_depth(send_chan) > 0) {
+                    conn_set_writable_pending_locked(priv, 1);
+                    rearm = 1;
+                }
             }
             nsync_mu_unlock(&priv->mutex);
+            if (rearm)
+                lws_callback_on_writable(wsi);
         }
         go_channel_unref(send_chan);
         priv_unref(priv);

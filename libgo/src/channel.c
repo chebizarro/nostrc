@@ -364,6 +364,9 @@ static inline void ensure_histos(void) {
 #undef nostr_metric_timer_stop
 #define nostr_metric_timer_stop(tp, h) ((void)0)
 #endif
+#if !NOSTR_CHANNEL_MPMC_SLOTS
+/* Single-lock ring only: these wrap the indices, which would corrupt the
+ * monotonic MPMC tickets (nostrc-75rv); MPMC paths use mpmc_push/mpmc_pop. */
 static inline void go_channel_inc_in(GoChannel *chan) {
     size_t cur = atomic_load_explicit(&chan->in, memory_order_relaxed);
     size_t i = (cur + 1) & chan->mask;
@@ -375,6 +378,7 @@ static inline void go_channel_inc_out(GoChannel *chan) {
     size_t o = (cur + 1) & chan->mask;
     atomic_store_explicit(&chan->out, o, memory_order_relaxed);
 }
+#endif
 
 typedef struct { GoChannel *c; GoContext *ctx; } channel_wait_arg_t;
 
@@ -382,8 +386,10 @@ typedef struct { GoChannel *c; GoContext *ctx; } channel_wait_arg_t;
 static inline size_t go_channel_occupancy(const GoChannel *c) {
 #if NOSTR_CHANNEL_MPMC_SLOTS
     // In MPMC mode, in/out are absolute monotonic counters. Occupancy is difference.
-    size_t in = atomic_load_explicit(&((GoChannel*)c)->in, memory_order_acquire);
+    // Load out first: out never passes in, so a later in cannot be behind it
+    // (loading in first let a concurrent receive underflow this to ~SIZE_MAX).
     size_t out = atomic_load_explicit(&((GoChannel*)c)->out, memory_order_acquire);
+    size_t in = atomic_load_explicit(&((GoChannel*)c)->in, memory_order_acquire);
     return in - out;
 #else
     size_t in = c->in, out = c->out;
@@ -479,6 +485,100 @@ int go_channel_has_space(const void *chan) {
     );
 }
 
+#if NOSTR_CHANNEL_MPMC_SLOTS
+/* nostrc-75rv: the per-slot sequence protocol, shared by EVERY MPMC path.
+ *
+ * `in` and `out` are monotonic tickets.  Slot (t & mask) is free for ticket t
+ * when slot_seq == t and holds ticket t's value when slot_seq == t + 1.  A
+ * sender claims ticket t by advancing `in`, then stores the value and
+ * publishes slot_seq = t + 1; a receiver claims by advancing `out`, takes the
+ * value and releases the slot with slot_seq = t + capacity.  Between claim
+ * and publish (or release) the slot is BUSY: `in - out` already counts the
+ * element, but it cannot be read yet (or its slot cannot be reused yet).
+ *
+ * The lock-free try paths never take chan->mutex for the transfer, so the
+ * blocking paths (which hold it only to wait and signal) must follow the same
+ * protocol.  They used not to: after 64 spins on a BUSY slot the try paths
+ * fell back to the mutex path, which read buffer[out] without checking
+ * slot_seq and masked the monotonic tickets.  A receiver racing a sender that
+ * was preempted between claim and publish "received" NULL and skipped the
+ * element for good, and once tickets passed the capacity the masking
+ * corrupted in - out so the channel reported itself full forever.  Under
+ * load that lost subscription EVENTs and relay frames (nostrc-75rv).
+ *
+ * Ticket differences are compared signed: a stale `in` loaded before a newer
+ * `out` must read as "retry", not as a huge unsigned occupancy. */
+typedef enum {
+    MPMC_OK = 0,     /* transferred */
+    MPMC_NONE = -1,  /* push: full; pop: empty */
+    MPMC_BUSY = 1,   /* the slot is claimed by a peer that has not finished */
+} MpmcResult;
+
+static inline MpmcResult mpmc_push(GoChannel *chan, void *data, size_t *occ_before) {
+    for (;;) {
+        size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
+        size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
+        if ((intptr_t)(head - tail) >= (intptr_t)chan->capacity)
+            return MPMC_NONE;
+        size_t idx = head & chan->mask;
+        size_t seq = atomic_load_explicit(&chan->slot_seq[idx], memory_order_acquire);
+        intptr_t diff = (intptr_t)(seq - head);
+        if (diff == 0) {
+            size_t expected = head;
+            if (atomic_compare_exchange_weak_explicit(&chan->in, &expected, head + 1,
+                                                      memory_order_acq_rel,
+                                                      memory_order_acquire)) {
+                atomic_store_explicit(&chan->buffer[idx], data, memory_order_release);
+                atomic_store_explicit(&chan->slot_seq[idx], head + 1, memory_order_release);
+                if (occ_before)
+                    *occ_before = ((intptr_t)(head - tail) > 0) ? head - tail : 0;
+                return MPMC_OK;
+            }
+        } else if (diff < 0) {
+            /* The previous lap's element in this slot has been claimed by a
+             * receiver (out moved past it) that has not released it yet. */
+            return MPMC_BUSY;
+        }
+        /* Another sender took this ticket, or head was stale: reload. */
+    }
+}
+
+static inline MpmcResult mpmc_pop(GoChannel *chan, void **data, size_t *occ_before) {
+    for (;;) {
+        size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
+        size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
+        size_t idx = tail & chan->mask;
+        size_t seq = atomic_load_explicit(&chan->slot_seq[idx], memory_order_acquire);
+        intptr_t diff = (intptr_t)(seq - (tail + 1));
+        if (diff == 0) {
+            size_t expected = tail;
+            if (atomic_compare_exchange_weak_explicit(&chan->out, &expected, tail + 1,
+                                                      memory_order_acq_rel,
+                                                      memory_order_acquire)) {
+                void *value = atomic_load_explicit(&chan->buffer[idx], memory_order_acquire);
+                /* nostrc-nft: clear the slot so no stale pointer survives. */
+                atomic_store_explicit(&chan->buffer[idx], NULL, memory_order_relaxed);
+                atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity,
+                                      memory_order_release);
+                if (data) *data = value;
+                if (occ_before)
+                    *occ_before = ((intptr_t)(head - tail) > 0) ? head - tail : 0;
+                return MPMC_OK;
+            }
+        } else if (diff < 0) {
+            /* Ticket `tail` is not published.  Re-read `in`: equal means
+             * empty; ahead means a sender has claimed it and is storing. */
+            head = atomic_load_explicit(&chan->in, memory_order_acquire);
+            return ((intptr_t)(head - tail) > 0) ? MPMC_BUSY : MPMC_NONE;
+        }
+        /* Another receiver took this ticket, or tail was stale: reload. */
+    }
+}
+
+/* Bounded spin for the try paths: a BUSY peer is normally two stores away. */
+#define MPMC_TRY_SPINS 64
+#endif /* NOSTR_CHANNEL_MPMC_SLOTS */
+
 /* Non-blocking send: returns 0 on success, -1 if full or closed */
 int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
     if (NOSTR_UNLIKELY(chan == NULL)) {
@@ -498,70 +598,58 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
     }
-#if NOSTR_CHANNEL_MPMC_SLOTS && NOSTR_CHANNEL_ATOMIC_TRY
-    // Lock-free MPMC try send using per-slot sequence protocol with bounded retries.
-    for (int attempts = 0; attempts < 64; ++attempts) {
-        size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
-        size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
-        if (head - tail >= chan->capacity || atomic_load_explicit(&chan->closed, memory_order_acquire) || NOSTR_UNLIKELY(chan->buffer == NULL)) {
+#if NOSTR_CHANNEL_MPMC_SLOTS
+    // Lock-free MPMC try send (per-slot sequence protocol, see mpmc_push).
+    if (atomic_load_explicit(&chan->closed, memory_order_acquire) ||
+        NOSTR_UNLIKELY(chan->buffer == NULL)) {
+        atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
+        nostr_metric_counter_add("go_chan_try_send_failures", 1);
+        return -1;
+    }
+    {
+        size_t occ_before = 0;
+        MpmcResult pr;
+        int spins = 0;
+        while ((pr = mpmc_push(chan, data, &occ_before)) == MPMC_BUSY &&
+               spins++ < MPMC_TRY_SPINS) {
+            NOSTR_CPU_RELAX();
+        }
+        if (pr != MPMC_OK) {
+            /* Full, or the slot is still being released by a receiver: the
+             * ring has no free slot right now.  Never fall back to a path
+             * that ignores slot_seq (nostrc-75rv). */
             atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
             nostr_metric_counter_add("go_chan_try_send_failures", 1);
             return -1;
         }
-        size_t idx = head & chan->mask;
-        size_t seq = atomic_load_explicit(&chan->slot_seq[idx], memory_order_acquire);
-        if (seq != head) {
-            // Slot not free yet, transient contention
-            NOSTR_CPU_RELAX();
-            continue;
-        }
-        size_t expected = head;
-        if (!atomic_compare_exchange_strong_explicit(&chan->in, &expected, head + 1, memory_order_acq_rel, memory_order_acquire)) {
-            // Lost race to another producer; retry
-            NOSTR_CPU_RELAX();
-            continue;
-        }
-        // We own the slot at idx for sequence 'head'
-        {
-            _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
-            atomic_store_explicit(p, data, memory_order_release);
-        }
-        atomic_store_explicit(&chan->slot_seq[idx], head + 1, memory_order_release);
         nostr_metric_counter_add("go_chan_send_successes", 1);
         nostr_metric_counter_add("go_chan_send_depth_samples", 1);
-        {
-            size_t occ2 = (head + 1) - tail; // post-increment occupancy
-            nostr_metric_counter_add("go_chan_send_depth_sum", occ2);
-        }
+        nostr_metric_counter_add("go_chan_send_depth_sum", occ_before + 1);
         // Wake a receiver that may be blocked waiting for data.
         // With REFINED_SIGNALING, we must always signal because only one
         // waiter wakes per signal, leaving others blocked even when data exists.
-        {
-            int was_empty = (head == tail);
-            NLOCK(&chan->mutex);
+        int was_empty = (occ_before == 0);
+        NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
-            CV_SIGNAL_EMPTY(chan);
+        CV_SIGNAL_EMPTY(chan);
 #else
-            if (was_empty) {
-                CV_BROADCAST_EMPTY(chan);
-            }
+        if (was_empty) {
+            CV_BROADCAST_EMPTY(chan);
+        }
 #endif
-            go_channel_signal_select_waiters(chan);
-            NUNLOCK(&chan->mutex);
+        go_channel_signal_select_waiters(chan);
+        NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
-            NOSTR_EVENT_SEND();
+        NOSTR_EVENT_SEND();
 #endif
-            if (was_empty) {
-                nostr_metric_counter_add("go_chan_signal_empty", 1);
-            }
+        if (was_empty) {
+            nostr_metric_counter_add("go_chan_signal_empty", 1);
         }
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         return 0;
     }
-    atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
-    nostr_metric_counter_add("go_chan_try_send_failures", 1);
-    return -1;
-#elif NOSTR_CHANNEL_ATOMIC_TRY && NOSTR_CHANNEL_DERIVE_SIZE
+#else
+#if NOSTR_CHANNEL_ATOMIC_TRY && NOSTR_CHANNEL_DERIVE_SIZE
     // Lockless full check to avoid mutex on obvious failure
     size_t in_a = atomic_load_explicit(&chan->in, memory_order_acquire);
     size_t out_a = atomic_load_explicit(&chan->out, memory_order_acquire);
@@ -647,6 +735,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
     }
     return rc;
+#endif /* NOSTR_CHANNEL_MPMC_SLOTS */
 }
 
 /* Non-blocking receive: returns 0 on success, -1 if empty (or closed and empty) */
@@ -674,75 +763,57 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
         return -1;
     }
-#if NOSTR_CHANNEL_MPMC_SLOTS && NOSTR_CHANNEL_ATOMIC_TRY
-    // Lock-free MPMC try receive using per-slot sequence protocol with bounded retries.
-    for (int attempts = 0; attempts < 64; ++attempts) {
-        size_t tail = atomic_load_explicit(&chan->out, memory_order_acquire);
-        size_t head = atomic_load_explicit(&chan->in, memory_order_acquire);
-        if (head == tail || NOSTR_UNLIKELY(chan->buffer == NULL)) {
+#if NOSTR_CHANNEL_MPMC_SLOTS
+    // Lock-free MPMC try receive (per-slot sequence protocol, see mpmc_pop).
+    {
+        size_t occ_before = 0;
+        void *tmp = NULL;
+        MpmcResult pr;
+        int spins = 0;
+        while ((pr = mpmc_pop(chan, &tmp, &occ_before)) == MPMC_BUSY &&
+               spins++ < MPMC_TRY_SPINS) {
+            NOSTR_CPU_RELAX();
+        }
+        if (pr != MPMC_OK) {
+            /* Empty, or the head element is claimed by a sender that has not
+             * published it yet.  Report "nothing yet": that sender signals
+             * the channel (select waiters, cond_empty) after it publishes,
+             * so no waiter misses it.  Consuming the unpublished slot here
+             * returned NULL and lost the element (nostrc-75rv). */
             atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
             nostr_metric_counter_add("go_chan_try_recv_failures", 1);
             return -1;
         }
-        size_t idx = tail & chan->mask;
-        size_t seq = atomic_load_explicit(&chan->slot_seq[idx], memory_order_acquire);
-        if (seq != tail + 1) {
-            // Slot not ready yet; transient
-            NOSTR_CPU_RELAX();
-            continue;
-        }
-        size_t expected = tail;
-        if (!atomic_compare_exchange_strong_explicit(&chan->out, &expected, tail + 1, memory_order_acq_rel, memory_order_acquire)) {
-            // Lost race to another consumer
-            NOSTR_CPU_RELAX();
-            continue;
-        }
-        void *tmp = NULL;
-        {
-            _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
-            tmp = atomic_load_explicit(p, memory_order_acquire);
-            // nostrc-nft: Clear slot after receive to prevent stale pointer reads
-            // under race conditions. This is defense-in-depth; the slot_seq protocol
-            // should already prevent invalid reads, but zeroing adds safety margin.
-            atomic_store_explicit(p, NULL, memory_order_release);
-        }
         if (data) *data = tmp;
-        atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity, memory_order_release);
         nostr_metric_counter_add("go_chan_recv_successes", 1);
         nostr_metric_counter_add("go_chan_recv_depth_samples", 1);
-        {
-            size_t occ2 = head - (tail + 1); // post-decrement occupancy
-            nostr_metric_counter_add("go_chan_recv_depth_sum", occ2);
-        }
+        nostr_metric_counter_add("go_chan_recv_depth_sum", occ_before ? occ_before - 1 : 0);
         // Wake a sender that may be blocked waiting for space.
         // With REFINED_SIGNALING, we must always signal because only one
         // waiter wakes per signal, leaving others blocked even when space exists.
-        {
-            int was_full = ((head - tail) == chan->capacity);
-            // Signal under mutex to avoid lost wakeups
-            NLOCK(&chan->mutex);
+        int was_full = (occ_before >= chan->capacity);
+        // Signal under mutex to avoid lost wakeups
+        NLOCK(&chan->mutex);
 #if NOSTR_REFINED_SIGNALING
-            // Always signal to wake one blocked sender
-            CV_SIGNAL_FULL(chan);
+        CV_SIGNAL_FULL(chan);
 #else
-            // Broadcast only needed when transitioning from full
-            if (was_full) {
-                CV_BROADCAST_FULL(chan);
-            }
+        if (was_full) {
+            CV_BROADCAST_FULL(chan);
+        }
 #endif
-            go_channel_signal_select_waiters(chan);
-            NUNLOCK(&chan->mutex);
+        go_channel_signal_select_waiters(chan);
+        NUNLOCK(&chan->mutex);
 #ifdef NOSTR_ARM_WFE
-            NOSTR_EVENT_SEND();
+        NOSTR_EVENT_SEND();
 #endif
-            if (was_full) {
-                nostr_metric_counter_add("go_chan_signal_full", 1);
-            }
+        if (was_full) {
+            nostr_metric_counter_add("go_chan_signal_full", 1);
         }
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         return 0;
     }
-#elif NOSTR_CHANNEL_ATOMIC_TRY && NOSTR_CHANNEL_DERIVE_SIZE
+#else
+#if NOSTR_CHANNEL_ATOMIC_TRY && NOSTR_CHANNEL_DERIVE_SIZE
     // Lockless empty check to avoid mutex on obvious failure
     size_t in_a = atomic_load_explicit(&chan->in, memory_order_acquire);
     size_t out_a = atomic_load_explicit(&chan->out, memory_order_acquire);
@@ -839,6 +910,7 @@ int __attribute__((hot)) go_channel_try_receive(GoChannel *chan, void **data) {
         nostr_metric_counter_add("go_chan_try_recv_failures", 1);
     }
     return rc;
+#endif /* NOSTR_CHANNEL_MPMC_SLOTS */
 }
 
 /* Condition function to check if the channel has data */
@@ -1071,6 +1143,7 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
     }
 
     /* removed wa_send: no predicate waits */
+send_again:
     while (
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_is_full(chan))
@@ -1156,17 +1229,21 @@ int __attribute__((hot)) go_channel_send(GoChannel *chan, void *data) {
 #endif
     );
 #if NOSTR_CHANNEL_MPMC_SLOTS
-    size_t head = atomic_load_explicit(&chan->in, memory_order_relaxed);
-    size_t idx = head & chan->mask;
-    __builtin_prefetch(&chan->buffer[idx], 1, 1);
-    // Slot must be free under the lock
-    atomic_store_explicit(&chan->slot_seq[idx], head, memory_order_relaxed); // ensure expected value
+    /* The mutex does not exclude lock-free try_send/try_receive, so claim a
+     * ticket with the slot protocol (nostrc-75rv).  NONE: lock-free senders
+     * refilled the ring since the wait; BUSY: a receiver has claimed the
+     * slot but not released it yet.  Either way, wait again. */
     {
-        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
-        atomic_store_explicit(p, data, memory_order_release);
+        MpmcResult pr = mpmc_push(chan, data, NULL);
+        if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
+            if (pr == MPMC_BUSY) {
+                NUNLOCK(&chan->mutex);
+                sched_yield();
+                NLOCK(&chan->mutex);
+            }
+            goto send_again;
+        }
     }
-    atomic_store_explicit(&chan->slot_seq[idx], head + 1, memory_order_release);
-    atomic_store_explicit(&chan->in, head + 1, memory_order_release);
 #else
     // Prefetch store and a few producer slots
     __builtin_prefetch(&chan->buffer[chan->in], 1, 1);
@@ -1257,6 +1334,7 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
     }
 
     /* removed wa_recv: no predicate waits */
+recv_again:
     while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
@@ -1362,20 +1440,25 @@ int __attribute__((hot)) go_channel_receive(GoChannel *chan, void **data) {
 #endif
     );
 #if NOSTR_CHANNEL_MPMC_SLOTS
-    size_t tail = atomic_load_explicit(&chan->out, memory_order_relaxed);
-    size_t idx = tail & chan->mask;
-    __builtin_prefetch(&chan->buffer[idx], 0, 1);
-    // Slot must be ready under the lock
+    /* A non-empty ring does not mean the head is readable: a lock-free
+     * sender may have claimed it and not published it yet, and lock-free
+     * receivers do not take this mutex.  Reading buffer[out] regardless
+     * returned NULL and skipped the element (nostrc-75rv).  NONE: a lock-free
+     * receiver took the element since the wait; BUSY: wait for the sender to
+     * publish.  Either way, re-evaluate. */
     void *tmp = NULL;
     {
-        _Atomic(void*) *p = (_Atomic(void*)*)&chan->buffer[idx];
-        tmp = atomic_load_explicit(p, memory_order_acquire);
-        // nostrc-nft: Clear slot after receive to prevent stale pointer reads
-        atomic_store_explicit(p, NULL, memory_order_release);
+        MpmcResult pr = mpmc_pop(chan, &tmp, NULL);
+        if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
+            if (pr == MPMC_BUSY) {
+                NUNLOCK(&chan->mutex);
+                sched_yield();
+                NLOCK(&chan->mutex);
+            }
+            goto recv_again;
+        }
     }
     if (data) *data = tmp;
-    atomic_store_explicit(&chan->slot_seq[idx], tail + chan->capacity, memory_order_release);
-    atomic_store_explicit(&chan->out, tail + 1, memory_order_release);
 #else
     __builtin_prefetch(&chan->buffer[chan->out], 0, 1);
     void *tmp = NULL;
@@ -1465,6 +1548,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
     }
 
     /* no predicate waits: correctness-first */
+send_ctx_again:
     while (
         /* avoid preprocessor inside macro args */
         (/* full? */ (
@@ -1544,7 +1628,23 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
 #else
     was_empty2 = (chan->size == 0);
 #endif
-    // Always mask the index: in MPMC mode in is a monotonic counter
+#if NOSTR_CHANNEL_MPMC_SLOTS
+    /* Same slot protocol as go_channel_send (nostrc-75rv).  This path used
+     * the masked single-lock ring increment in MPMC mode and never published
+     * slot_seq, so a ring filled to capacity read as empty and every
+     * lock-free receive of its elements depended on the broken fallback. */
+    {
+        MpmcResult pr = mpmc_push(chan, data, NULL);
+        if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
+            if (pr == MPMC_BUSY) {
+                NUNLOCK(&chan->mutex);
+                sched_yield();
+                NLOCK(&chan->mutex);
+            }
+            goto send_ctx_again;
+        }
+    }
+#else
     size_t in_idx2 = chan->in & chan->mask;
     __builtin_prefetch(&chan->buffer[in_idx2], 1, 1);
     {
@@ -1552,6 +1652,7 @@ int __attribute__((hot)) go_channel_send_with_context(GoChannel *chan, void *dat
         atomic_store_explicit(p, data, memory_order_release);
     }
     go_channel_inc_in(chan);
+#endif
 #if !NOSTR_CHANNEL_DERIVE_SIZE
     chan->size++;
 #endif
@@ -1622,6 +1723,7 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
     }
 
     /* no predicate waits: correctness-first */
+recv_ctx_again:
     while ((
 #if NOSTR_CHANNEL_DERIVE_SIZE
         NOSTR_UNLIKELY(go_channel_occupancy(chan) == 0)
@@ -1739,17 +1841,20 @@ int __attribute__((hot)) go_channel_receive_with_context(GoChannel *chan, void *
 #endif
     );
 #if NOSTR_CHANNEL_MPMC_SLOTS
-    size_t tail2 = atomic_load_explicit(&chan->out, memory_order_relaxed);
-    size_t idx2 = tail2 & chan->mask;
-    __builtin_prefetch(&chan->buffer[idx2], 0, 1);
+    /* Same slot protocol as go_channel_receive (nostrc-75rv). */
     void *tmp2 = NULL;
     {
-        _Atomic(void*) *p2 = (_Atomic(void*)*)&chan->buffer[idx2];
-        tmp2 = atomic_load_explicit(p2, memory_order_acquire);
+        MpmcResult pr = mpmc_pop(chan, &tmp2, NULL);
+        if (NOSTR_UNLIKELY(pr != MPMC_OK)) {
+            if (pr == MPMC_BUSY) {
+                NUNLOCK(&chan->mutex);
+                sched_yield();
+                NLOCK(&chan->mutex);
+            }
+            goto recv_ctx_again;
+        }
     }
     if (data) *data = tmp2;
-    atomic_store_explicit(&chan->slot_seq[idx2], tail2 + chan->capacity, memory_order_release);
-    atomic_store_explicit(&chan->out, tail2 + 1, memory_order_release);
 #else
     __builtin_prefetch(&chan->buffer[chan->out], 0, 1);
     void *tmp2 = NULL;
@@ -1832,9 +1937,10 @@ size_t go_channel_get_depth(GoChannel *chan) {
         return 0;
     }
 #if NOSTR_CHANNEL_MPMC_SLOTS
-    // In MPMC mode, in/out are absolute monotonic counters
-    size_t in = atomic_load_explicit(&chan->in, memory_order_acquire);
+    // In MPMC mode, in/out are absolute monotonic counters.  out first, as in
+    // go_channel_occupancy(), so a concurrent receive cannot underflow this.
     size_t out = atomic_load_explicit(&chan->out, memory_order_acquire);
+    size_t in = atomic_load_explicit(&chan->in, memory_order_acquire);
     return in - out;
 #elif NOSTR_CHANNEL_DERIVE_SIZE
     return go_channel_occupancy(chan);
