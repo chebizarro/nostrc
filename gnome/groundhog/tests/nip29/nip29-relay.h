@@ -92,6 +92,20 @@ typedef struct {
 
 /* ---- groups ------------------------------------------------------------- */
 
+
+/* An event's canonical id as an interned string: nip29_event_id()
+ * returns a fresh allocation, and the fixture compares ids inline, so the
+ * copy is interned (reachable for LSan, never freed) and the allocation
+ * released. */
+static inline const char *
+nip29_event_id(NostrEvent *event)
+{
+  char *id = nostr_event_get_id(event);
+  const char *interned = id ? g_intern_string(id) : NULL;
+  free(id);
+  return interned;
+}
+
 static G_GNUC_UNUSED void
 nip29_group_free(gpointer data)
 {
@@ -167,7 +181,7 @@ static G_GNUC_UNUSED gboolean
 nip29_stored(Nip29Relay *relay, const gchar *id)
 {
   for (guint i = 0; i < relay->events->len; i++)
-    if (g_strcmp0(nostr_event_get_id(g_ptr_array_index(relay->events, i)), id) == 0)
+    if (g_strcmp0(nip29_event_id(g_ptr_array_index(relay->events, i)), id) == 0)
       return TRUE;
   return FALSE;
 }
@@ -342,7 +356,7 @@ nip29_ok(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEvent *eve
   g_ptr_array_add(relay->ok_messages, g_strdup_printf("%d %s %s", nostr_event_get_kind(event),
                                                       accepted ? "true" : "false", message));
   g_autofree gchar *frame = g_strdup_printf("[\"OK\",\"%s\",%s,\"%s\"]",
-                                            nostr_event_get_id(event),
+                                            nip29_event_id(event),
                                             accepted ? "true" : "false", message);
   soup_websocket_connection_send_text(connection, frame);
 }
@@ -361,7 +375,7 @@ nip29_previous_known(Nip29Relay *relay, NostrEvent *event)
     const gchar *ref = nostr_tag_get(previous, i);
     gboolean found = FALSE;
     for (guint j = 0; j < relay->events->len && !found; j++)
-      found = g_str_has_prefix(nostr_event_get_id(g_ptr_array_index(relay->events, j)), ref);
+      found = g_str_has_prefix(nip29_event_id(g_ptr_array_index(relay->events, j)), ref);
     if (!found || strlen(ref) != 8)
       return FALSE;
   }
@@ -384,7 +398,7 @@ nip29_on_event(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEven
   const gchar *author = nostr_event_get_pubkey(event);
   Nip29TestGroup *group = g_hash_table_lookup(relay->groups, nip29_tag_value(event, "h")
                                                                ? nip29_tag_value(event, "h") : "");
-  if (nip29_stored(relay, nostr_event_get_id(event))) {
+  if (nip29_stored(relay, nip29_event_id(event))) {
     nip29_ok(relay, connection, event, TRUE, "duplicate: already have this event");
     nostr_event_free(event);
     return;
@@ -473,7 +487,7 @@ nip29_on_event(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEven
     } else if (kind == 9005) {
       const gchar *e = nip29_tag_value(event, "e");
       for (guint i = relay->events->len; e && i > 0; i--)
-        if (g_strcmp0(nostr_event_get_id(g_ptr_array_index(relay->events, i - 1)), e) == 0)
+        if (g_strcmp0(nip29_event_id(g_ptr_array_index(relay->events, i - 1)), e) == 0)
           g_ptr_array_remove_index(relay->events, i - 1);
     } else if (kind == 9009) {
       g_ptr_array_add(group->invites, g_strdup(nip29_tag_value(event, "code")));
@@ -539,7 +553,7 @@ nip29_on_req(Nip29Relay *relay, SoupWebsocketConnection *connection, const gchar
       if (limit > 0 && taken >= limit)
         break;
       taken++;
-      if (!g_hash_table_add(sent, (gpointer)nostr_event_get_id(event)))
+      if (!g_hash_table_add(sent, (gpointer)nip29_event_id(event)))
         continue;
       g_autofree gchar *json = nip29_event_json(event);
       g_autofree gchar *frame = g_strdup_printf("[\"EVENT\",\"%s\",%s]", sub_id, json);

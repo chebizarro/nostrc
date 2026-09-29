@@ -714,9 +714,9 @@ test_join_open_group_and_chat(void)
   g_assert_nonnull(previous);
   gboolean cites_hello = FALSE;
   for (size_t i = 1; i < nostr_tag_size(previous); i++)
-    cites_hello |= g_str_has_prefix(nostr_event_get_id(hello), nostr_tag_get(previous, i));
+    cites_hello |= g_str_has_prefix(nip29_event_id(hello), nostr_tag_get(previous, i));
   g_assert_true(cites_hello);
-  g_assert_cmpstr(nostr_event_get_id(sent), ==, gh_nip29_op_get_event_id(op));
+  g_assert_cmpstr(nip29_event_id(sent), ==, gh_nip29_op_get_event_id(op));
   nostr_event_free(sent);
 
   /* A live message after EOSE; our own event comes back without a copy. */
@@ -908,7 +908,7 @@ test_admin_and_non_admin(void)
   nip29_set_member(&relay, cafe, hex_carol, "admin");
   nip29_set_member(&relay, cafe, hex_alice, "moderator");
   NostrEvent *spam = member_post(&relay, KEY_BOB, "kitchen", "buy pineapple");
-  g_autofree gchar *spam_id = g_strdup(nostr_event_get_id(spam));
+  g_autofree gchar *spam_id = g_strdup(nip29_event_id(spam));
 
   g_autoptr(GhNip29Room) kitchen_room = join(&f, &relay, "kitchen", NULL);
   g_autoptr(GhNip29Room) diner_room = join(&f, &relay, "diner", NULL);
@@ -1013,7 +1013,7 @@ test_admin_and_non_admin(void)
   /* The moderator deletes in the cafe (ALLOWED by the policy). */
   NostrEvent *cafe_spam = live_post(&relay, KEY_CAROL, "cafe", "oops");
   g_autoptr(GhNip29Op) moderate = gh_nip29_service_delete_event(
-    f.service, cafe_room, nostr_event_get_id(cafe_spam), NULL, &error);
+    f.service, cafe_room, nip29_event_id(cafe_spam), NULL, &error);
   g_assert_no_error(error);
   wait_relay_ok(&f, moderate);
   fixture_down(&f);
@@ -1244,7 +1244,7 @@ test_outbox_resumes_after_restart(void)
   g_autoptr(GhNip29Room) restored = gh_nip29_service_lookup(f.service, relay.url, "later");
   wait_join(restored, GH_NIP29_JOIN_MEMBER);
   NostrEvent *request = nip29_last_received(&relay, 9021);
-  g_assert_cmpstr(nostr_event_get_id(request), ==, event_id); /* the stored event, not a new one */
+  g_assert_cmpstr(nip29_event_id(request), ==, event_id); /* the stored event, not a new one */
   nostr_event_free(request);
   fixture_down(&f);
   nip29_relay_clear(&relay);
