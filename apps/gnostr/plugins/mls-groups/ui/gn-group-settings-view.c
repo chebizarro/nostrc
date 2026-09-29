@@ -273,6 +273,34 @@ on_member_key_package(GObject *source, GAsyncResult *result, gpointer user_data)
 }
 
 static void
+on_invite_account_proof(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  MemberKpLookup *lookup = user_data;
+  GnGroupSettingsView *self = lookup->self;
+  g_autoptr(GError) error = NULL;
+  if (!gn_marmot_service_ensure_account_proof_finish(GN_MARMOT_SERVICE(source), result, &error))
+    {
+      g_autofree gchar *msg =
+        g_strdup_printf("Your signer did not authorize this device's group key (%s); "
+                        "nobody was invited.", error ? error->message : "no answer");
+      show_status(self->member_status_label, msg);
+      gtk_spinner_stop(self->member_spinner);
+      gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), FALSE);
+      gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), TRUE);
+      g_object_unref(lookup->self);
+      g_free(lookup->pk);
+      g_free(lookup);
+      return;
+    }
+  gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), FALSE);
+  /* nostrc-prqu.11: find the KeyPackage on the invitee's kind:10002 write
+   * relays and choose it with marmot_gobject_select_key_package_event(). */
+  GnKpBackend backend;
+  gn_kp_backend_init_for_plugin(&backend, self->plugin_context);
+  gn_kp_discover_async(&backend, lookup->pk, NULL, on_member_key_package, lookup);
+}
+
+static void
 on_add_member_clicked(GtkButton *button, gpointer user_data)
 {
   GnGroupSettingsView *self = GN_GROUP_SETTINGS_VIEW(user_data);
@@ -308,14 +336,16 @@ on_add_member_clicked(GtkButton *button, gpointer user_data)
   gtk_spinner_start(self->member_spinner);
   gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), TRUE);
 
-  /* nostrc-prqu.11: find the KeyPackage on the invitee's kind:10002 write
-   * relays and choose it with marmot_gobject_select_key_package_event(). */
   MemberKpLookup *lookup = g_new0(MemberKpLookup, 1);
   lookup->self = g_object_ref(self);
   lookup->pk = g_ascii_strdown(pk, -1);
-  GnKpBackend backend;
-  gn_kp_backend_init_for_plugin(&backend, self->plugin_context);
-  gn_kp_discover_async(&backend, lookup->pk, NULL, on_member_key_package, lookup);
+  /* libmarmot 0.10.0 (nostrc-7vyi): invite only once the signer authorized
+   * this device's group key (shared with the KeyPackage manager's request). */
+  if (!gn_marmot_service_has_account_proof(self->service))
+    show_status(self->member_status_label,
+                "Waiting for your signer to authorize this device's group key…");
+  gn_marmot_service_ensure_account_proof_async(self->service, self->plugin_context, NULL,
+                                               on_invite_account_proof, lookup);
 }
 
 typedef struct
@@ -442,7 +472,11 @@ add_member_with_key_package(GnGroupSettingsView *self, const gchar *pk, const gc
     {
       g_warning("GroupSettings: marmot_add_members failed: %d", err);
       gtk_label_set_text(self->member_status_label,
-                         "Failed to add member to MLS group");
+                         err == MARMOT_ERR_KEY_PACKAGE_IDENTITY
+                           ? "Not invited: this key package, or a current member of the "
+                             "group, is not bound to its account (an older or other "
+                             "client). The new member could not join, so nothing was sent."
+                           : "Failed to add member to MLS group");
       gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), TRUE);
       gtk_spinner_stop(self->member_spinner);
       gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), FALSE);

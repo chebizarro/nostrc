@@ -91,6 +91,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | groundhog | 0.11.0 | No bump: rebuild only, no source change. Groundhog's tests create groups without an account proof and admit members only through the creator, whose leaf the Welcome's sender rule accepts. |
 | libmarmot 0.10.0: the retained parent retires once no competing Commit can win (nostrc-yuj2, security; still unreleased 0.10.0) | libmarmot | 0.10.0 | No further bump: folded into the unreleased 0.10.0 MINOR. The `mls_group_parent` record keeps version 1 and gains a trailer (tier, pending leaves); records without it load, and 0.9.0 cannot read records with it (a state-format change, covered by the MINOR). No public API change. Policy and exposure notes in `libmarmot/README.md`. |
 | same | marmot-gobject, gnostr, groundhog | 1.4.0, 0.1.0, 0.11.0 | No bump: rebuild only, no source change. GhStoreMarmot stores the record opaquely; Groundhog's tests read only its unchanged version and epoch prefix. |
+| libmarmot 0.10.0 review fixes (W20 B1: the inviter refuses an Add whose Welcome its joiners must reject; `marmot_create_group()` needs an enrollment outside legacy mode; new `marmot_group_account_proof_template()` and `marmot_self_update()` prove an existing leaf, nostrc-rgb5, nostrc-yd0q; still unreleased 0.10.0) | libmarmot | 0.10.0 | No further bump: folded into the unreleased 0.10.0 MINOR (new API, behaviour change for unenrolled creators and for groups with unproven leaves). Notes in `libmarmot/README.md`. |
+| same | marmot-gobject | 1.4.0 | No further bump: no source change (its tests enroll the creator). |
+| same | gnostr | 0.1.0 | No bump (unreleased): `GnMarmotService` enrolls once through the signer, shared by the KeyPackage manager, DM creation, the create-group dialog and invites, which wait for it and say so. |
+| same | groundhog | 0.11.0 | No bump: test-only change (the store tests' actors enroll their account proof, as the reviewer suggested). |
 
 ## Maintenance
 

@@ -16,6 +16,7 @@
 
 #include "marmot-internal.h"
 #include "kp_profile.h"
+#include "commits.h"
 #include "mls/mls_welcome.h"
 #include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
@@ -203,25 +204,15 @@ welcome_tree_bound(const Marmot *m, const MlsGroup *g, uint32_t signer_leaf,
                    const MarmotWelcome *welcome)
 {
     uint8_t welcomer[32];
-    bool have_sender = welcome_sender(welcome, welcomer);
-    for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
-        const MlsNode *n = &g->tree.nodes[mls_tree_leaf_to_node(i)];
-        if (n->type != MLS_NODE_LEAF || i == g->own_leaf_index) continue;
-        switch (marmot_leaf_proof_status(&n->leaf, MARMOT_CIPHERSUITE)) {
-        case MARMOT_LEAF_PROOF_VALID:
-            continue;
-        case MARMOT_LEAF_PROOF_INVALID:
-            return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
-        case MARMOT_LEAF_PROOF_ABSENT:
-            break;
-        }
-        bool is_sender = i == signer_leaf && have_sender &&
-                         n->leaf.credential_identity_len == 32 && n->leaf.credential_identity &&
-                         memcmp(n->leaf.credential_identity, welcomer, 32) == 0;
-        if (!is_sender && !m->config.allow_unproven_members)
-            return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
-    }
-    return MARMOT_OK;
+    uint8_t id[32];
+    /* Only the GroupInfo signer, and only when its account sent the
+     * Welcome, may lack a proof. */
+    uint32_t exempt = UINT32_MAX;
+    if (welcome_sender(welcome, welcomer) &&
+        marmot_mls_sender_identity(g, signer_leaf, id) == 0 &&
+        memcmp(id, welcomer, 32) == 0)
+        exempt = signer_leaf;
+    return marmot_tree_members_bound(g, exempt, m->config.allow_unproven_members);
 }
 
 static MarmotError

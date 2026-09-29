@@ -182,8 +182,38 @@ on_dm_group_created(GObject      *source,
     }
 }
 
+static void create_dm_group_enrolled(OpenDmData *data);
+
+/* libmarmot 0.10.0 (nostrc-7vyi): the creator's leaf must carry the
+ * account's proof, or the group cannot be created. Wait for the signer. */
+static void
+on_dm_account_proof(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  OpenDmData *data = user_data;
+  g_autoptr(GError) error = NULL;
+  if (!gn_marmot_service_ensure_account_proof_finish(GN_MARMOT_SERVICE(source), result, &error))
+    {
+      g_prefix_error(&error, "Cannot start an encrypted conversation until your "
+                             "signer authorizes this device's group key: ");
+      g_task_return_error(data->task, g_steal_pointer(&error));
+      g_object_unref(data->task);
+      open_dm_data_free(data);
+      return;
+    }
+  create_dm_group_enrolled(data);
+}
+
 static void
 create_dm_group(OpenDmData *data)
+{
+  GnMlsDmManager *self = data->manager;
+  gn_marmot_service_ensure_account_proof_async(self->service, self->plugin_context,
+                                               g_task_get_cancellable(data->task),
+                                               on_dm_account_proof, data);
+}
+
+static void
+create_dm_group_enrolled(OpenDmData *data)
 {
   GnMlsDmManager *self = data->manager;
 

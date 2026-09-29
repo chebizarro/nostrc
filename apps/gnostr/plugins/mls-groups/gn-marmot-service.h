@@ -16,6 +16,7 @@
 #include <glib-object.h>
 #include <gio/gio.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
+#include <gnostr-plugin-api.h>
 
 G_BEGIN_DECLS
 
@@ -141,6 +142,40 @@ void gn_marmot_service_set_user_identity(GnMarmotService *self,
  * emit it, and it fires at most once per group until the group processes a
  * Commit (see gn-mls-group-error.h).
  */
+
+/* ── Account-identity proof (libmarmot 0.10.0, nostrc-7vyi) ─────────── */
+
+/**
+ * gn_marmot_service_has_account_proof:
+ * @self: The service
+ *
+ * Returns: %TRUE when the client holds the user's account-identity proof, so
+ *   it may create groups and signer-only KeyPackages
+ */
+gboolean gn_marmot_service_has_account_proof(GnMarmotService *self);
+
+/**
+ * gn_marmot_service_ensure_account_proof_async:
+ * @self: The service
+ * @context: the plugin context whose signer signs the proof template
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: called when the client is enrolled, or enrollment failed
+ * @user_data: data for @callback
+ *
+ * Enrolls the client once per run: asks the signer to sign the local-only
+ * kind:450 proof template (never published) and hands it to libmarmot.
+ * Concurrent callers share one signer request. Creating a group needs it,
+ * and so do our KeyPackages: every other member checks the proof.
+ */
+void gn_marmot_service_ensure_account_proof_async(GnMarmotService     *self,
+                                                  GnostrPluginContext *context,
+                                                  GCancellable        *cancellable,
+                                                  GAsyncReadyCallback  callback,
+                                                  gpointer             user_data);
+
+gboolean gn_marmot_service_ensure_account_proof_finish(GnMarmotService *self,
+                                                       GAsyncResult    *result,
+                                                       GError         **error);
 
 G_END_DECLS
 

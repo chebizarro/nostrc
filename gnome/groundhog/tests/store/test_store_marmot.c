@@ -16,6 +16,7 @@
 
 #include <glib/gstdio.h>
 #include <marmot/marmot.h>
+#include <nostr-event.h>
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
 #include <sodium.h>
@@ -2240,6 +2241,25 @@ actor_init(Actor *actor)
   test_account_init(&actor->account, pubkey);
 }
 
+/* libmarmot 0.10.0 (nostrc-7vyi): creating a group needs the account's
+ * proof for the instance's MLS leaf key. Sign its template, as a signer would;
+ * nothing is stored. */
+static void
+actor_enroll(Actor *actor)
+{
+  char *tmpl = NULL;
+  assert_marmot_ok(marmot_account_proof_template(actor->marmot, actor->pk, &tmpl));
+  g_autofree gchar *sk = hex32(actor->sk);
+  NostrEvent *ev = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(ev, tmpl, NULL));
+  g_assert_cmpint(nostr_event_sign(ev, sk), ==, 0);
+  char *signed_json = nostr_event_serialize_compact(ev);
+  assert_marmot_ok(marmot_set_account_proof(actor->marmot, actor->pk, signed_json));
+  free(signed_json);
+  nostr_event_free(ev);
+  free(tmpl);
+}
+
 static void
 actor_start(Actor *actor)
 {
@@ -2248,6 +2268,7 @@ actor_start(Actor *actor)
   actor->storage = storage_new(actor->store);
   actor->marmot = marmot_new(actor->storage);
   g_assert_nonnull(actor->marmot);
+  actor_enroll(actor);
 }
 
 /* A quit: the client goes, the store is closed (WAL truncated). */

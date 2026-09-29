@@ -270,8 +270,13 @@ do not trust, as unauthenticated.
     Without an enrollment it fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY`.
   - A member's Commit keeps its leaf's proof: the UpdatePath leaf keeps the
     signature key and credential the proof binds.
-  - The creator's leaf of `marmot_create_group()` carries it when the
-    instance is enrolled for the creator.
+  - The creator's leaf of `marmot_create_group()` carries it: creating a
+    group needs the instance to be enrolled for the creator, else
+    `MARMOT_ERR_KEY_PACKAGE_IDENTITY` (legacy mode creates an unproven
+    creator leaf).
+  - An existing leaf gains one through `marmot_self_update()` with the
+    template of `marmot_group_account_proof_template()` signed by the
+    account: see "Existing groups" below.
 - **Enrollment (new API)** for callers that sign through a signer:
   `marmot_account_proof_template()`, `marmot_set_account_proof()`,
   `marmot_has_account_proof()`.
@@ -281,8 +286,9 @@ do not trust, as unauthenticated.
   - The instance key is generated per `Marmot` and not stored, so enroll after
     every `marmot_new()`. `marmot_create_key_package()` with the account key
     also enrolls.
-  - marmot-gobject 1.4.0 wraps these calls, and Gnostr enrolls before its
-    first KeyPackage.
+  - marmot-gobject 1.4.0 wraps these calls. Gnostr enrolls through its
+    signer before its first KeyPackage and before it creates a group or
+    invites anyone, and says so while it waits.
 - **Every member checks it.** A proof must name the leaf's credential
   identity, sign that leaf's own signature key (a proof replayed from
   another leaf fails) under ciphersuite 0x0001 and Ed25519, and verify
@@ -303,8 +309,13 @@ do not trust, as unauthenticated.
     Otherwise the join fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY`, nothing
     of the group is stored, and the Welcome is recorded as failed.
   - **The inviter.** `marmot_create_group()` and `marmot_add_members()` refuse
-    a KeyPackage without a valid proof. KeyPackage validation rejects a
-    proof that does not verify.
+    a KeyPackage without a valid proof, and they refuse an Add whose Welcome
+    the joiners would reject. They check the whole resulting tree with the
+    joiner's rule: every leaf but our own (the sender's) needs a valid proof.
+    Otherwise the operation fails with `MARMOT_ERR_KEY_PACKAGE_IDENTITY` and
+    changes nothing, instead of publishing an Add whose joiner can never
+    join and whose leaf would stay in the tree as a ghost. KeyPackage
+    validation rejects a proof that does not verify.
 - **Welcome rumors carry their sender's pubkey**, as NIP-59 requires.
   Gnostr's unwrap already rejected rumors whose pubkey is not the seal's.
 - **Legacy mode.** `MarmotConfig.allow_unproven_members` (default `false`)
@@ -342,16 +353,26 @@ groups. There is no adopted peer to test against either.
   member and publish new KeyPackages.
 - **Existing groups.** Leaves from 0.9.0 and older keep their place (a
   Commit re-checks only the leaves it changes), and those members can still
-  commit. A joiner, however, accepts such a leaf only in legacy mode or when
-  it sent the Welcome, so in practice only an unproven member can admit new
-  members. The same holds for a group whose creator never enrolled. There
-  is no in-band way yet to add a proof to an existing leaf (it needs a
-  self-update that carries one).
+  commit and talk.
+  - **Admitting members.** A joiner accepts an unproven leaf only in legacy
+    mode or as the Welcome's own sender. A group with an unproven leaf other
+    than the inviter's therefore cannot admit anyone in the default mode: the
+    inviter refuses the Add (`MARMOT_ERR_KEY_PACKAGE_IDENTITY`).
+  - **Migration.** Every member with an unproven leaf signs
+    `marmot_group_account_proof_template()` (its account over its own group
+    leaf key) and commits `marmot_self_update()` with it. Receivers accept
+    the leaf going from no proof to a valid one. Once every leaf is proven,
+    any admin can admit members again.
+  - **During the transition,** or with members who cannot upgrade (MDK 0.8),
+    `MarmotConfig.allow_unproven_members` on every member keeps the group
+    growing, without the identity guarantee.
 - **API/ABI.**
   - `MarmotConfig` gains a field: rebuild, and start from
     `marmot_config_default()`.
-  - New `marmot_account_proof_template()`, `marmot_set_account_proof()` and
-    `marmot_has_account_proof()`.
+  - New `marmot_account_proof_template()`, `marmot_set_account_proof()`,
+    `marmot_has_account_proof()`, and `marmot_group_account_proof_template()`
+    with `marmot_self_update()` (also the public self-update of nostrc-yd0q).
+  - `marmot_create_group()` fails without an enrollment, outside legacy mode.
   - `marmot_create_key_package_unsigned()` fails without an enrollment, as
     above.
   - Internal: `marmot_commit_authorize()` takes the legacy flag; new

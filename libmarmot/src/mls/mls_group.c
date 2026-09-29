@@ -1722,6 +1722,7 @@ remove_members_staged(MlsGroup *group,
 static int
 path_commit_staged(MlsGroup *group,
                    const MlsProposal *proposals, size_t proposal_count,
+                   const uint8_t *leaf_ext, size_t leaf_ext_len, bool replace_leaf_ext,
                    MlsCommitResult *result)
 {
     /* Capture pre-commit context/keys for PublicMessage authentication. */
@@ -1743,10 +1744,27 @@ path_commit_staged(MlsGroup *group,
         }
     }
 
+    /* New LeafNode extensions for our UpdatePath leaf (a self-update adding
+     * the account proof, nostrc-rgb5).  Only the new leaf carries them: the
+     * pre-Commit GroupContext was captured above, and the UpdatePath replaces
+     * this leaf before anything else hashes it. */
+    uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
+    if (replace_leaf_ext) {
+        MlsLeafNode *own = &group->tree.nodes[own_node].leaf;
+        uint8_t *copy = leaf_ext_len ? malloc(leaf_ext_len) : NULL;
+        if (leaf_ext_len && !copy) {
+            free(pre_gc);
+            return MARMOT_ERR_MEMORY;
+        }
+        if (copy) memcpy(copy, leaf_ext, leaf_ext_len);
+        free(own->extensions_data);
+        own->extensions_data = copy;
+        own->extensions_len = leaf_ext_len;
+    }
+
     /* Generate UpdatePath (which replaces our leaf and path keys) */
     uint8_t root_path_secret[MLS_HASH_LEN];
     MlsUpdatePath update_path;
-    uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
     const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
@@ -1945,7 +1963,22 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
     memset(result, 0, sizeof(*result));
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = path_commit_staged(&staged, NULL, 0, result);
+    int rc = path_commit_staged(&staged, NULL, 0, NULL, 0, false, result);
+    if (rc == 0) group_install_staged(group, &staged);
+    else mls_group_free(&staged);
+    return rc;
+}
+
+int
+mls_group_self_update_with_leaf_extensions(MlsGroup *group,
+                                           const uint8_t *leaf_ext, size_t leaf_ext_len,
+                                           MlsCommitResult *result)
+{
+    if (!group || !result || (leaf_ext_len && !leaf_ext)) return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    int rc = path_commit_staged(&staged, NULL, 0, leaf_ext, leaf_ext_len, true, result);
     if (rc == 0) group_install_staged(group, &staged);
     else mls_group_free(&staged);
     return rc;
@@ -1974,7 +2007,7 @@ mls_group_commit_extensions(MlsGroup *group,
 
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    rc = path_commit_staged(&staged, &gce, 1, result);
+    rc = path_commit_staged(&staged, &gce, 1, NULL, 0, false, result);
     if (rc == 0) group_install_staged(group, &staged);
     else mls_group_free(&staged);
     return rc;

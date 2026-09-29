@@ -503,12 +503,19 @@ create_group_impl(Marmot *m,
                                                   &ext_data, &ext_len);
     if (err != MARMOT_OK) return err;
 
-    /* The creator's leaf carries this instance's account proof when it is
-     * enrolled for the creator (nostrc-7vyi; marmot_set_account_proof()). */
+    /* The creator's leaf carries this instance's account proof
+     * (nostrc-7vyi; marmot_set_account_proof()).  Without one no joiner
+     * would accept the leaf in another admin's Welcome: only legacy mode
+     * creates it unproven. */
     uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
     uint8_t *leaf_ext = NULL;
     size_t leaf_ext_len = 0;
-    if (marmot_account_proof_lookup(m, creator_pubkey, proof)) {
+    bool proven = marmot_account_proof_lookup(m, creator_pubkey, proof);
+    if (!proven && !m->config.allow_unproven_members) {
+        free(ext_data);
+        return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+    }
+    if (proven) {
         err = marmot_leaf_proof_extensions(proof, &leaf_ext, &leaf_ext_len);
         sodium_memzero(proof, sizeof(proof));
         if (err != MARMOT_OK) {
@@ -553,6 +560,17 @@ create_group_impl(Marmot *m,
                  ? add_key_packages(&mls_group, kps, kp_count, &add_result)
                  : MARMOT_ERR_MEMORY;
         free_key_packages(kps, kp_count);
+        /* Every joiner must accept the tree the Welcome carries. */
+        if (rc == 0)
+            rc = marmot_tree_members_bound(&mls_group, UINT32_MAX,
+                                           m->config.allow_unproven_members);
+        if (rc == MARMOT_ERR_KEY_PACKAGE_IDENTITY) {
+            sodium_memzero(source_exporter, sizeof(source_exporter));
+            mls_add_result_clear(&add_result);
+            mls_group_free(&mls_group);
+            marmot_create_group_result_free(result);
+            return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+        }
         if (rc == 0) {
             err = build_welcome_rumors(&add_result, creator_pubkey, key_package_event_jsons,
                                        kp_count,
@@ -738,8 +756,21 @@ finish_local_commit(Marmot *m, MarmotGroup *group,
 /* Load an active group we may commit to as an admin.  On success the caller
  * owns *group_out and *mls_out. */
 static MarmotError
+load_group_for_commit_ex(Marmot *m, const MarmotGroupId *mls_group_id,
+                         MarmotGroup **group_out, MlsGroup *mls_out, bool require_admin);
+
+static MarmotError
 load_group_for_commit(Marmot *m, const MarmotGroupId *mls_group_id,
                       MarmotGroup **group_out, MlsGroup *mls_out)
+{
+    return load_group_for_commit_ex(m, mls_group_id, group_out, mls_out, true);
+}
+
+/* `require_admin` false: an ordinary Commit (a self-update) any member may
+ * make. */
+static MarmotError
+load_group_for_commit_ex(Marmot *m, const MarmotGroupId *mls_group_id,
+                         MarmotGroup **group_out, MlsGroup *mls_out, bool require_admin)
 {
     *group_out = NULL;
     memset(mls_out, 0, sizeof(*mls_out));
@@ -774,7 +805,7 @@ load_group_for_commit(Marmot *m, const MarmotGroupId *mls_group_id,
     /* Admin check using our Nostr pubkey from our leaf in the MLS tree */
     uint8_t our_nostr_pk[32];
     if (get_own_credential_identity(mls_out, our_nostr_pk) != 0 ||
-        !is_admin(group, our_nostr_pk)) {
+        (require_admin && !is_admin(group, our_nostr_pk))) {
         mls_group_free(mls_out);
         marmot_group_free(group);
         return MARMOT_ERR_ADMIN_ONLY;
@@ -951,6 +982,11 @@ add_members_impl(Marmot *m,
         err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
         goto fail;
     }
+    /* Never publish an Add whose Welcome the joiners must reject (review
+     * W20 B1): they accept an unproven leaf only as ours, the sender's.
+     * Otherwise the joiner's leaf would stay in the tree as a ghost. */
+    err = marmot_tree_members_bound(&post, UINT32_MAX, m->config.allow_unproven_members);
+    if (err != MARMOT_OK) goto fail;
     err = build_welcome_rumors(&add, sender, key_package_event_jsons, kp_count,
                                group->nostr_group_id, group->name, group->description,
                                (const uint8_t (*)[32])group->admin_pubkeys,
@@ -1264,6 +1300,113 @@ out:
     mls_group_free(&mls);
     marmot_group_free(group);
     return err;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Public API: self-update, optionally adding the account proof to our leaf
+ * (nostrc-rgb5, nostrc-yd0q)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* Our leaf in `mls`: its account and signature key. */
+static int
+own_leaf_binding(const MlsGroup *mls, uint8_t account[32], uint8_t sig_key[MLS_SIG_PK_LEN])
+{
+    if (get_own_credential_identity(mls, account) != 0) return -1;
+    memcpy(sig_key, mls->tree.nodes[mls_tree_leaf_to_node(mls->own_leaf_index)].leaf.signature_key,
+           MLS_SIG_PK_LEN);
+    return 0;
+}
+
+static MarmotError
+group_account_proof_template_impl(Marmot *m, const MarmotGroupId *mls_group_id,
+                                  char **out_unsigned_event_json)
+{
+    if (!m || !mls_group_id || !out_unsigned_event_json) return MARMOT_ERR_INVALID_ARG;
+    *out_unsigned_event_json = NULL;
+    MlsGroup mls;
+    if (load_mls_group(m, mls_group_id, &mls) != 0) return MARMOT_ERR_GROUP_NOT_FOUND;
+    uint8_t account[32], sig_key[MLS_SIG_PK_LEN];
+    MarmotError err = MARMOT_ERR_OWN_LEAF_NOT_FOUND;
+    if (own_leaf_binding(&mls, account, sig_key) == 0) {
+        int64_t now = marmot_now();
+        *out_unsigned_event_json = marmot_account_proof_template_json(
+            account, (uint64_t)(now > 0 ? now : 1), sig_key, MLS_SIG_PK_LEN);
+        err = *out_unsigned_event_json ? MARMOT_OK : MARMOT_ERR_MEMORY;
+    }
+    mls_group_free(&mls);
+    return err;
+}
+
+MarmotError
+marmot_group_account_proof_template(Marmot *m, const MarmotGroupId *mls_group_id,
+                                    char **out_unsigned_event_json)
+{
+    return group_account_proof_template_impl(m, mls_group_id, out_unsigned_event_json);
+}
+
+static MarmotError
+self_update_impl(Marmot *m, const MarmotGroupId *mls_group_id, const char *signed_proof_json,
+                 char **out_commit_json)
+{
+    if (!m || !mls_group_id || !out_commit_json) return MARMOT_ERR_INVALID_ARG;
+    *out_commit_json = NULL;
+    MarmotGroup *group = NULL;
+    MlsGroup mls;
+    MarmotError err = load_group_for_commit_ex(m, mls_group_id, &group, &mls, false);
+    if (err != MARMOT_OK) return err;
+
+    MlsGroup pre;
+    memset(&pre, 0, sizeof(pre));
+    MlsCommitResult res;
+    memset(&res, 0, sizeof(res));
+    uint8_t *leaf_ext = NULL;
+    size_t leaf_ext_len = 0;
+    if (signed_proof_json) {
+        /* The proof must bind exactly our leaf: our account, our leaf key. */
+        uint8_t account[32], sig_key[MLS_SIG_PK_LEN], proof[MARMOT_ACCOUNT_PROOF_LEN];
+        err = own_leaf_binding(&mls, account, sig_key) == 0
+                  ? marmot_account_proof_from_signed(account, sig_key, MLS_SIG_PK_LEN,
+                                                     signed_proof_json, proof)
+                  : MARMOT_ERR_OWN_LEAF_NOT_FOUND;
+        if (err == MARMOT_OK) err = marmot_leaf_proof_extensions(proof, &leaf_ext, &leaf_ext_len);
+        sodium_memzero(proof, sizeof(proof));
+        if (err != MARMOT_OK) goto out;
+    }
+    if (clone_mls_group(&mls, &pre) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto out;
+    }
+    int rc = signed_proof_json
+                 ? mls_group_self_update_with_leaf_extensions(&mls, leaf_ext, leaf_ext_len, &res)
+                 : mls_group_self_update(&mls, &res);
+    if (rc != 0) {
+        err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
+        goto out;
+    }
+    err = finish_local_commit(m, group, &pre, &mls, res.commit_data, res.commit_len,
+                              NULL, 0, out_commit_json);
+out:
+    free(leaf_ext);
+    mls_commit_result_clear(&res);
+    mls_group_free(&pre);
+    mls_group_free(&mls);
+    marmot_group_free(group);
+    return err;
+}
+
+MarmotError
+marmot_self_update(Marmot *m, const MarmotGroupId *mls_group_id, const char *signed_proof_json,
+                   char **out_commit_json)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = self_update_impl(m, mls_group_id, signed_proof_json, out_commit_json);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+    }
+    return end;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

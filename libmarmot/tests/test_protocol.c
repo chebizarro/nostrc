@@ -12,6 +12,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "test_enroll.h"
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
 #include <nostr/nip44/nip44.h>
@@ -88,6 +89,18 @@ create_test_instance(void)
  * Helper: generate a Nostr keypair (random for testing)
  * ══════════════════════════════════════════════════════════════════════════ */
 
+static struct { uint8_t pk[32], sk[32]; } g_keys[512];
+static size_t g_nkeys;
+
+static void
+remember_keypair(const uint8_t pk[32], const uint8_t sk[32])
+{
+    assert(g_nkeys < sizeof(g_keys) / sizeof(g_keys[0]));
+    memcpy(g_keys[g_nkeys].pk, pk, 32);
+    memcpy(g_keys[g_nkeys].sk, sk, 32);
+    g_nkeys++;
+}
+
 static void
 generate_nostr_keypair(uint8_t sk[32], uint8_t pk[32])
 {
@@ -104,7 +117,25 @@ generate_nostr_keypair(uint8_t sk[32], uint8_t pk[32])
     assert(secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair) == 1);
     assert(secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly) == 1);
     secp256k1_context_destroy(ctx);
+    remember_keypair(pk, sk);
 }
+
+/* nostrc-7vyi: since 0.10.0 marmot_create_group() needs the creator's
+ * account proof.  The tests' creators are keypairs made above: enroll the
+ * instance with the matching key first, as a signer-only client would. */
+static MarmotError
+create_group_enrolled(Marmot *m, const uint8_t *creator_pk, const char **kps, size_t n,
+                      const MarmotGroupConfig *cfg, MarmotCreateGroupResult *res)
+{
+    if (m && creator_pk && !marmot_has_account_proof(m, creator_pk))
+        for (size_t i = 0; i < g_nkeys; i++)
+            if (memcmp(g_keys[i].pk, creator_pk, 32) == 0) {
+                assert(test_enroll(m, creator_pk, g_keys[i].sk) == MARMOT_OK);
+                break;
+            }
+    return marmot_create_group(m, creator_pk, kps, n, cfg, res);
+}
+#define marmot_create_group create_group_enrolled
 
 static int
 test_derive_exporter_convkey(const uint8_t exporter_secret[32],

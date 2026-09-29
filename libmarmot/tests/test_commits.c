@@ -14,6 +14,7 @@
 #include "marmot-internal.h"
 #include "commits.h"
 #include "kp_profile.h"
+#include "test_enroll.h"
 #include "mls/mls_group.h"
 #include "mls/mls_framing.h"
 #include "mls/mls-internal.h"
@@ -58,8 +59,9 @@ typedef struct {
     uint8_t     sk[32], pk[32];
 } Member;
 
+/* A member whose instance holds no account proof yet (nostrc-7vyi). */
 static void
-member_init(Member *x, const char *name)
+member_init_unenrolled(Member *x, const char *name)
 {
     memset(x, 0, sizeof(*x));
     x->name = name;
@@ -73,6 +75,14 @@ member_init(Member *x, const char *name)
           secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &kp) &&
           secp256k1_xonly_pubkey_serialize(ctx, x->pk, &xonly), "keypair");
     secp256k1_context_destroy(ctx);
+}
+
+/* A member enrolled as a signer-only client would be: it can create groups. */
+static void
+member_init(Member *x, const char *name)
+{
+    member_init_unenrolled(x, name);
+    OK(test_enroll(x->m, x->pk, x->sk));
 }
 
 /* Regenerate `x`'s account key until it sorts above (`above` true) or
@@ -2059,6 +2069,7 @@ transaction_case(bool alice_wins)
     member_init(&alice, "Alice");
     marmot_free(alice.m);
     alice.m = shim_marmot_new();
+    OK(test_enroll(alice.m, alice.pk, alice.sk));
     member_init(&bob, "Bob");
     member_rekey_order(&bob, &alice, alice_wins);   /* Bob above: Alice wins */
 
@@ -2185,6 +2196,7 @@ test_send_stores_step_before_event(void)
     member_init(&alice, "Alice");
     marmot_free(alice.m);
     alice.m = shim_marmot_new();
+    OK(test_enroll(alice.m, alice.pk, alice.sk));
     member_init(&bob, "Bob");
     char *bob_kp = key_package(&bob);
     const char *kps[] = { bob_kp };
@@ -3026,7 +3038,7 @@ static void
 test_account_proof_enrollment(void)
 {
     Member alice, bob, charlie;
-    member_init(&alice, "Alice");
+    member_init_unenrolled(&alice, "Alice");
     member_init(&bob, "Bob");
     member_init(&charlie, "Charlie");
 
@@ -3126,55 +3138,271 @@ test_account_proof_enrollment(void)
     marmot_free(charlie.m);
 }
 
-/* A group whose creator never enrolled (as Groundhog's tests create them)
- * still works through the creator: joiners accept its unproven leaf in the
- * Welcomes it sends itself, and refuse it in another admin's. */
-static void
-test_unproven_creator_admits_through_itself(void)
+/* A KeyPackage without the account proof, as libmarmot 0.9.0 made them
+ * (signed by its account): what `x`'s unenrolled legacy-mode instance
+ * still produces. */
+static char *
+legacy_key_package(Member *x)
 {
-    Member alice, bob, charlie;
-    member_init(&alice, "Alice");
-    member_init(&bob, "Bob");
-    member_init(&charlie, "Charlie");
-    char *bob_kp = key_package(&bob);
-    const char *kps[] = { bob_kp };
-    uint8_t admins[2][32];
-    memcpy(admins[0], alice.pk, 32);
-    memcpy(admins[1], bob.pk, 32);
+    CHECK(x->m->config.allow_unproven_members && !marmot_has_account_proof(x->m, x->pk),
+          "an unenrolled legacy instance");
+    MarmotKeyPackageResult r;
+    memset(&r, 0, sizeof(r));
+    OK(marmot_create_key_package_unsigned(x->m, x->pk, NULL, 0, &r));
+    NostrEvent *ev = nostr_event_new();
+    char *sk_hex = marmot_hex_encode(x->sk, 32);
+    CHECK(ev && sk_hex && nostr_event_deserialize_compact(ev, r.event_json, NULL) &&
+          nostr_event_sign(ev, sk_hex) == 0, "sign");
+    char *json = nostr_event_serialize_compact(ev);
+    free(sk_hex);
+    nostr_event_free(ev);
+    marmot_key_package_result_free(&r);
+    return json;
+}
+
+static size_t
+mls_leaf_count(Member *x, const MarmotGroupId *gid)
+{
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    size_t n = 0;
+    for (uint32_t i = 0; i < g.tree.n_leaves; i++)
+        if (g.tree.nodes[mls_tree_leaf_to_node(i)].type == MLS_NODE_LEAF) n++;
+    mls_group_free(&g);
+    return n;
+}
+
+/* Review W20 B1: a group of unproven members (created by 0.9.0, or before
+ * enrollment) upgraded to the default mode.  Adding Dave would produce a
+ * Welcome Dave must reject (Bob's and Charlie's leaves are unproven and not
+ * the sender's), and Dave's leaf would stay as a ghost: the inviter refuses
+ * the Add and nothing changes.  In legacy mode the group still grows. */
+static void
+test_add_refused_when_joiners_would_reject(void)
+{
+    Member alice, bob, charlie, dave;
+    member_init_unenrolled(&alice, "Alice");
+    member_init_unenrolled(&bob, "Bob");
+    member_init_unenrolled(&charlie, "Charlie");
+    member_init(&dave, "Dave");
+    Member *three[] = { &alice, &bob, &charlie };
+    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = true;
+
+    /* The 0.9.0 group: unproven creator, unproven members. */
+    char *bob_kp = legacy_key_package(&bob), *charlie_kp = legacy_key_package(&charlie);
+    const char *kps[] = { bob_kp, charlie_kp };
     MarmotGroupConfig cfg = {0};
-    cfg.name = "Unproven creator";
-    cfg.admin_pubkeys = admins;
-    cfg.admin_count = 2;
+    cfg.name = "Upgraded";
+    cfg.admin_pubkeys = (uint8_t (*)[32])alice.pk;
+    cfg.admin_count = 1;
     MarmotCreateGroupResult cg;
     memset(&cg, 0, sizeof(cg));
-    CHECK(!marmot_has_account_proof(alice.m, alice.pk), "Alice never enrolled");
-    OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+    OK(marmot_create_group(alice.m, alice.pk, kps, 2, &cfg, &cg));
     join(&bob, cg.welcome_rumor_jsons[0]);
+    join(&charlie, cg.welcome_rumor_jsons[1]);
     MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
                                             cg.group->mls_group_id.len);
     marmot_create_group_result_free(&cg);
+    expect_messages_flow(three, 3, &gid);
 
-    /* Bob admits Charlie: Alice's leaf has no proof, and Bob sent it. */
-    char *charlie_kp = key_package(&charlie);
-    const char *kps2[] = { charlie_kp };
+    /* Everyone upgrades to the default mode. */
+    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = false;
+    char *dave_kp = key_package(&dave);
+    const char *kps2[] = { dave_kp };
+    Snapshot before;
+    snapshot(&alice, &gid, &before);
     char **welcomes = NULL;
     size_t n = 0;
     char *add = NULL;
-    OK(marmot_add_members(bob.m, &gid, kps2, 1, &welcomes, &n, &add));
-    merge(&bob, &gid);
-    expect_commit(&alice, add, "Bob adds Charlie");
-    expect_join(&charlie, welcomes[0], MARMOT_ERR_KEY_PACKAGE_IDENTITY,
-                "Alice's unproven leaf in Bob's Welcome");
+    MarmotError err = marmot_add_members(alice.m, &gid, kps2, 1, &welcomes, &n, &add);
+    CHECK(err == MARMOT_ERR_KEY_PACKAGE_IDENTITY && !add && !welcomes,
+          "Alice's Add of Dave: %d", err);
+    expect_unchanged(&alice, &gid, &before, "refused Add");
+    snapshot_clear(&before);
+    char *pending = NULL;
+    bool live = false;
+    OK(marmot_get_pending_commit(alice.m, &gid, &pending, &live));
+    CHECK(!pending, "nothing pending");
+    CHECK(mls_leaf_count(&alice, &gid) == 3, "no ghost leaf");
+    expect_messages_flow(three, 3, &gid);
+
+    /* Legacy mode (the transition) still admits Dave, and he can join. */
+    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = true;
+    dave.m->config.allow_unproven_members = true;
+    OK(marmot_add_members(alice.m, &gid, kps2, 1, &welcomes, &n, &add));
+    merge(&alice, &gid);
+    expect_commit(&bob, add, "Bob, legacy");
+    expect_commit(&charlie, add, "Charlie, legacy");
+    join(&dave, welcomes[0]);
+    CHECK(mls_leaf_count(&alice, &gid) == 4, "Dave joined");
+
     free(add);
     free(welcomes[0]);
     free(welcomes);
+    free(dave_kp);
     free(charlie_kp);
-
-    marmot_group_id_free(&gid);
     free(bob_kp);
+    marmot_group_id_free(&gid);
     marmot_free(alice.m);
     marmot_free(bob.m);
     marmot_free(charlie.m);
+    marmot_free(dave.m);
+}
+
+/* `tmpl` (a kind:450 proof template) signed with `signer`'s account key. */
+static char *
+sign_template(const Member *signer, const char *tmpl)
+{
+    char *sk_hex = marmot_hex_encode(signer->sk, 32);
+    NostrEvent *ev = nostr_event_new();
+    CHECK(sk_hex && ev && nostr_event_deserialize_compact(ev, tmpl, NULL) &&
+          nostr_event_sign(ev, sk_hex) == 0, "sign template");
+    char *json = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    free(sk_hex);
+    return json;
+}
+
+/* `x` proves its existing leaf in `gid` by a self-update (nostrc-rgb5); the
+ * others apply the Commit. */
+static void
+prove_leaf(Member *x, const MarmotGroupId *gid, Member *const *others, size_t n)
+{
+    char *tmpl = NULL;
+    OK(marmot_group_account_proof_template(x->m, gid, &tmpl));
+    char *signed_json = sign_template(x, tmpl);
+    char *commit = NULL;
+    OK(marmot_self_update(x->m, gid, signed_json, &commit));
+    merge(x, gid);
+    for (size_t i = 0; i < n; i++) expect_commit(others[i], commit, "a member proves its leaf");
+    free(commit);
+    free(signed_json);
+    free(tmpl);
+}
+
+/* The migration path (review W20 B1, nostrc-rgb5): an upgraded group whose
+ * members' leaves are unproven cannot admit anyone until they are proven.
+ * Each member signs the template for its own group leaf and self-updates;
+ * receivers accept the new leaf with the proof, reject one signed by another
+ * account, and once every leaf is proven an admin can admit Dave, who joins
+ * in the default mode. */
+static void
+test_members_prove_existing_leaves_by_self_update(void)
+{
+    Member alice, bob, charlie, dave;
+    member_init_unenrolled(&alice, "Alice");
+    member_init_unenrolled(&bob, "Bob");
+    member_init_unenrolled(&charlie, "Charlie");
+    member_init(&dave, "Dave");
+    Member *three[] = { &alice, &bob, &charlie };
+    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = true;
+    char *bob_kp = legacy_key_package(&bob), *charlie_kp = legacy_key_package(&charlie);
+    const char *kps[] = { bob_kp, charlie_kp };
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Migrating";
+    cfg.admin_pubkeys = (uint8_t (*)[32])alice.pk;
+    cfg.admin_count = 1;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(alice.m, alice.pk, kps, 2, &cfg, &cg));
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    join(&charlie, cg.welcome_rumor_jsons[1]);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = false;
+
+    /* A proof signed by another account is refused; nothing is pending. */
+    char *tmpl = NULL;
+    OK(marmot_group_account_proof_template(bob.m, &gid, &tmpl));
+    char *by_charlie = sign_template(&charlie, tmpl);
+    char *commit = NULL;
+    CHECK(marmot_self_update(bob.m, &gid, by_charlie, &commit) == MARMOT_ERR_VALIDATION &&
+              !commit, "Bob's leaf with Charlie's signature");
+    free(by_charlie);
+    free(tmpl);
+
+    /* A self-update without a proof rotates keys and is accepted. */
+    OK(marmot_self_update(charlie.m, &gid, NULL, &commit));
+    merge(&charlie, &gid);
+    expect_commit(&alice, commit, "Charlie rotates");
+    expect_commit(&bob, commit, "Charlie rotates");
+    free(commit);
+
+    char *dave_kp = key_package(&dave);
+    const char *kps2[] = { dave_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    Member *not_alice[] = { &bob, &charlie }, *not_bob[] = { &alice, &charlie },
+           *not_charlie[] = { &alice, &bob };
+    prove_leaf(&alice, &gid, not_alice, 2);
+    prove_leaf(&bob, &gid, not_bob, 2);
+    CHECK(marmot_add_members(alice.m, &gid, kps2, 1, &welcomes, &n, &add) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY, "Charlie's leaf is still unproven");
+    prove_leaf(&charlie, &gid, not_charlie, 2);
+
+    OK(marmot_add_members(alice.m, &gid, kps2, 1, &welcomes, &n, &add));
+    merge(&alice, &gid);
+    expect_commit(&bob, add, "Bob applies the Add");
+    expect_commit(&charlie, add, "Charlie applies the Add");
+    join(&dave, welcomes[0]);
+    Member *four[] = { &alice, &bob, &charlie, &dave };
+    expect_messages_flow(four, 4, &gid);
+
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    free(dave_kp);
+    free(charlie_kp);
+    free(bob_kp);
+    marmot_group_id_free(&gid);
+    for (size_t i = 0; i < 4; i++) marmot_free(four[i]->m);
+}
+
+/* Review W20 B1: without an account proof for the creator, the group would
+ * start with a leaf no joiner accepts in another admin's Welcome.  The
+ * default mode refuses to create it; enrolling (or legacy mode) creates it. */
+static void
+test_create_group_needs_enrollment(void)
+{
+    Member alice, bob;
+    member_init_unenrolled(&alice, "Alice");
+    member_init(&bob, "Bob");
+    char *bob_kp = key_package(&bob);
+    const char *kps[] = { bob_kp };
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Needs enrollment";
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    MarmotGroupId *none = NULL;
+    MarmotGroup **groups = NULL;
+    size_t n = 0;
+    (void)none;
+    CHECK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY && !cg.group && !cg.welcome_rumor_jsons,
+          "create_group without enrollment");
+    CHECK(marmot_create_group(alice.m, alice.pk, NULL, 0, &cfg, &cg) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY && !cg.group, "alone, without enrollment");
+    OK(marmot_get_all_groups(alice.m, &groups, &n));
+    CHECK(n == 0, "nothing stored");
+    groups_free(groups, n);
+
+    OK(test_enroll(alice.m, alice.pk, alice.sk));
+    OK(marmot_create_group(alice.m, alice.pk, kps, 1, &cfg, &cg));
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    marmot_create_group_result_free(&cg);
+
+    /* A different account on the same instance is not enrolled. */
+    Member carol;
+    member_init_unenrolled(&carol, "Carol");
+    CHECK(marmot_create_group(alice.m, carol.pk, NULL, 0, &cfg, &cg) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY, "another account");
+
+    free(bob_kp);
+    marmot_free(carol.m);
+    marmot_free(alice.m);
+    marmot_free(bob.m);
 }
 
 /* ── Retiring the retained parent (nostrc-yuj2) ────────────────────────── */
@@ -3542,7 +3770,9 @@ main(int argc, char **argv)
     RUN(test_forged_member_identity_rejected);
     RUN(test_welcome_with_forged_member_rejected);
     RUN(test_account_proof_enrollment);
-    RUN(test_unproven_creator_admits_through_itself);
+    RUN(test_add_refused_when_joiners_would_reject);
+    RUN(test_create_group_needs_enrollment);
+    RUN(test_members_prove_existing_leaves_by_self_update);
     RUN(test_retained_parent_retires_once_settled);
     RUN(test_competitor_within_window_still_wins);
     RUN(test_retained_parent_retired_at_once);

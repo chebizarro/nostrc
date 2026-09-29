@@ -23,7 +23,10 @@
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /* Fake 32-byte hex strings for boxed/storage-only tests (64 hex chars). */
-#define TEST_HEX_32 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+/* A real account (secret key 1): groups are created for it, and since
+ * libmarmot 0.10.0 that needs its account proof (nostrc-7vyi). */
+#define TEST_CREATOR_SK_HEX "0000000000000000000000000000000000000000000000000000000000000001"
+#define TEST_HEX_32 "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 #define TEST_HEX_32_B "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 #define TEST_HEX_32_C "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
@@ -604,6 +607,32 @@ create_signed_key_package_sync(MarmotGobjectClient *client,
     return json;
 }
 
+/* Enroll @client's account proof for @pubkey_hex, signing the template with
+ * the matching test key, as Gnostr does through its signer. */
+static void
+enroll_sync(MarmotGobjectClient *client, const gchar *pubkey_hex)
+{
+    static const gchar *const sks[] = { TEST_CREATOR_SK_HEX, TEST_MEMBER_SK_HEX, NULL };
+    if (marmot_gobject_client_has_account_proof(client, pubkey_hex)) return;
+    for (guint i = 0; sks[i]; i++) {
+        g_autofree gchar *pk = nostr_key_get_public(sks[i]);
+        if (g_strcmp0(pk, pubkey_hex) != 0) continue;
+        GError *error = NULL;
+        g_autofree gchar *tmpl =
+            marmot_gobject_client_get_account_proof_template(client, pubkey_hex, &error);
+        g_assert_no_error(error);
+        NostrEvent *ev = nostr_event_new();
+        g_assert_true(nostr_event_deserialize_compact(ev, tmpl, NULL));
+        g_assert_cmpint(nostr_event_sign(ev, sks[i]), ==, 0);
+        g_autofree gchar *signed_json = nostr_event_serialize_compact(ev);
+        nostr_event_free(ev);
+        g_assert_true(marmot_gobject_client_set_account_proof(client, pubkey_hex,
+                                                              signed_json, &error));
+        g_assert_no_error(error);
+        return;
+    }
+}
+
 static MarmotGobjectGroup *
 create_group_sync(MarmotGobjectClient *client,
                   const gchar *creator_pubkey_hex,
@@ -614,6 +643,7 @@ create_group_sync(MarmotGobjectClient *client,
                   const gchar * const *relay_urls,
                   gchar ***out_welcomes)
 {
+    enroll_sync(client, creator_pubkey_hex);
     AsyncFixture *f = async_fixture_new();
     marmot_gobject_client_create_group_async(
         client, creator_pubkey_hex, key_package_jsons, name, description,
@@ -979,7 +1009,7 @@ test_client_signal_message_received(void)
     SignalData sd = { FALSE, NULL };
     g_signal_connect(member, "message-received", G_CALLBACK(on_message_received), &sd);
 
-    const gchar *inner = "{\"kind\":9,\"content\":\"hello from inviter\",\"created_at\":1700000000,\"tags\":[],\"pubkey\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}";
+    const gchar *inner = "{\"kind\":9,\"content\":\"hello from inviter\",\"created_at\":1700000000,\"tags\":[],\"pubkey\":\"" TEST_HEX_32 "\"}";
     gchar *group_event = send_message_sync(inviter,
         marmot_gobject_group_get_mls_group_id(created), inner);
 

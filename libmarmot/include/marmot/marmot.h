@@ -445,13 +445,12 @@ MarmotError marmot_select_key_package_event_for_profile(const char **event_jsons
  * 2. Gift-wrap each welcome rumor (NIP-59) and send to the member
  * 3. Publish the evolution event (signed kind:445) to group relays
  *
- * Account binding (nostrc-7vyi): every invitee's KeyPackage leaf must carry
- * a valid account-identity proof (MARMOT_ERR_KEY_PACKAGE_IDENTITY, unless
- * MarmotConfig.allow_unproven_members). The creator's leaf carries one when
- * the instance is enrolled for @creator_pubkey (marmot_set_account_proof()).
- * Without it, joiners accept the creator only in the Welcomes the creator
- * sends itself (the NIP-59 seal authenticates their author), so only the
- * creator could admit members: enroll before creating groups.
+ * Account binding (nostrc-7vyi): the creator's leaf carries the instance's
+ * account proof, so the instance must be enrolled for @creator_pubkey
+ * (marmot_set_account_proof()), and every invitee's KeyPackage leaf must
+ * carry a valid proof.  Otherwise MARMOT_ERR_KEY_PACKAGE_IDENTITY and
+ * nothing is created, unless MarmotConfig.allow_unproven_members (legacy
+ * mode), which creates unproven leaves.
  *
  * Returns: MARMOT_OK on success
  */
@@ -583,6 +582,51 @@ MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_
                                        const uint8_t (*ids)[32], size_t count);
 
 /**
+ * marmot_group_account_proof_template:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_unsigned_event_json: (out) (transfer full): the unsigned kind:450
+ *   signing template (free() it)
+ *
+ * The account-identity proof template for OUR leaf in this group: our
+ * account and this group's leaf signature key (nostrc-rgb5).  For a leaf
+ * that has none (made by libmarmot 0.9.0 or older, or in legacy mode): sign
+ * it with the account key and pass it to marmot_self_update().  Local-only:
+ * never publish it.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND; MARMOT_ERR_MEMORY
+ */
+MarmotError marmot_group_account_proof_template(Marmot *m,
+                                                const MarmotGroupId *mls_group_id,
+                                                char **out_unsigned_event_json);
+
+/**
+ * marmot_self_update:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @signed_proof_json: (nullable): the template of
+ *   marmot_group_account_proof_template(), signed by our account; NULL keeps
+ *   our leaf's extensions as they are
+ * @out_commit_json: (out) (transfer full): the signed kind:445 Commit event
+ *
+ * An ordinary Commit (any member, no admin needed) whose UpdatePath gives
+ * us a new leaf encryption key and new path keys (RFC 9420 post-compromise
+ * security; nostrc-yd0q).  With @signed_proof_json the new leaf also carries
+ * our account-identity proof: this is how a leaf from before 0.10.0 becomes
+ * proven (nostrc-rgb5), after which joiners accept it in anyone's Welcome.
+ * Pending like every Commit: publish it, then marmot_merge_pending_commit()
+ * or marmot_clear_pending_commit().
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_VALIDATION when @signed_proof_json is not
+ *   the template for our leaf signed by our account;
+ *   MARMOT_ERR_OWN_COMMIT_PENDING; other errors as marmot_add_members()
+ */
+MarmotError marmot_self_update(Marmot *m,
+                               const MarmotGroupId *mls_group_id,
+                               const char *signed_proof_json,
+                               char **out_commit_json);
+
+/**
  * marmot_add_members:
  * @m: Marmot instance
  * @mls_group_id: the group to add members to
@@ -603,8 +647,13 @@ MarmotError marmot_mark_welcomes_sent(Marmot *m, const MarmotGroupId *mls_group_
  * one accepted it (and only then send the Welcomes), or
  * marmot_clear_pending_commit() if none did.  MARMOT_ERR_OWN_COMMIT_PENDING
  * while another Commit of ours is pending.  Every KeyPackage leaf must carry
- * a valid account-identity proof, which every member checks
- * (MARMOT_ERR_KEY_PACKAGE_IDENTITY; nostrc-7vyi).
+ * a valid account-identity proof, which every member checks, and every other
+ * current member's leaf must carry one too, since the joiner accepts no
+ * unproven leaf but ours (we send the Welcome).  Otherwise
+ * MARMOT_ERR_KEY_PACKAGE_IDENTITY and nothing changes: no Add whose Welcome
+ * the joiner must reject is ever published (nostrc-7vyi; see
+ * marmot_self_update() to prove existing leaves).  Legacy mode
+ * (MarmotConfig.allow_unproven_members) skips both.
  *
  * Returns: MARMOT_OK on success
  */

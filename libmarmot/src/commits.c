@@ -165,6 +165,26 @@ leaf_binding_check(const MlsLeafNode *before, const MlsLeafNode *after, bool all
     return allow_unproven ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
 }
 
+MarmotError
+marmot_tree_members_bound(const MlsGroup *g, uint32_t exempt, bool allow_unproven)
+{
+    if (!g) return MARMOT_ERR_INVALID_ARG;
+    for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
+        const MlsLeafNode *leaf = leaf_at(g, i);
+        if (!leaf || i == g->own_leaf_index) continue;
+        switch (marmot_leaf_proof_status(leaf, MARMOT_CIPHERSUITE)) {
+        case MARMOT_LEAF_PROOF_VALID:
+            continue;
+        case MARMOT_LEAF_PROOF_INVALID:
+            return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+        case MARMOT_LEAF_PROOF_ABSENT:
+            if (i == exempt || allow_unproven) continue;
+            return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+        }
+    }
+    return MARMOT_OK;
+}
+
 /* Lower wins (CommitOrderingSuffix). */
 static int
 commit_key_cmp(const MarmotCommitKey *a, const MarmotCommitKey *b)

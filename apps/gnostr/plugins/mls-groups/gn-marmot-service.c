@@ -6,6 +6,7 @@
 
 #include "gn-marmot-service.h"
 #include <marmot-gobject-1.0/marmot-gobject.h>
+#include <gnostr-plugin-api.h>
 
 struct _GnMarmotService
 {
@@ -17,6 +18,9 @@ struct _GnMarmotService
   gchar *data_dir;
   gchar *user_pubkey_hex;
   gchar *user_secret_key_hex;
+
+  /* Tasks waiting for the one enrollment signer request in flight. */
+  GPtrArray *proof_waiters;
 };
 
 G_DEFINE_TYPE(GnMarmotService, gn_marmot_service, G_TYPE_OBJECT)
@@ -44,6 +48,7 @@ gn_marmot_service_dispose(GObject *object)
 
   g_clear_object(&self->client);
   g_clear_object(&self->storage);
+  g_clear_pointer(&self->proof_waiters, g_ptr_array_unref);
 
   G_OBJECT_CLASS(gn_marmot_service_parent_class)->dispose(object);
 }
@@ -299,4 +304,111 @@ gn_marmot_service_set_user_identity(GnMarmotService *self,
     self->user_secret_key_hex = g_strdup(secret_key_hex);
 
   g_info("MarmotService: user identity set (pubkey: %.16s…)", pubkey_hex);
+}
+
+/* ── Account-identity proof (libmarmot 0.10.0, nostrc-7vyi) ─────────── */
+
+gboolean
+gn_marmot_service_has_account_proof(GnMarmotService *self)
+{
+  g_return_val_if_fail(GN_IS_MARMOT_SERVICE(self), FALSE);
+  return self->client != NULL && self->user_pubkey_hex != NULL &&
+         marmot_gobject_client_has_account_proof(self->client, self->user_pubkey_hex);
+}
+
+typedef struct
+{
+  GnMarmotService     *service;   /* strong */
+  GnostrPluginContext *context;   /* borrowed: host lifetime */
+  gchar               *pubkey;
+} ProofRequest;
+
+static void
+finish_proof_waiters(GnMarmotService *self, const GError *error)
+{
+  g_autoptr(GPtrArray) waiters = g_steal_pointer(&self->proof_waiters);
+  for (guint i = 0; waiters && i < waiters->len; i++)
+    {
+      GTask *task = g_ptr_array_index(waiters, i);
+      if (error)
+        g_task_return_error(task, g_error_copy(error));
+      else
+        g_task_return_boolean(task, TRUE);
+    }
+}
+
+static void
+on_account_proof_signed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  ProofRequest *req = user_data;
+  GnMarmotService *self = req->service;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(req->context, result, &error);
+  if (signed_json != NULL && self->client != NULL &&
+      marmot_gobject_client_set_account_proof(self->client, req->pubkey, signed_json, &error))
+    g_clear_error(&error);
+  else if (error == NULL)
+    error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                "The signer did not authorize this device's group key");
+  finish_proof_waiters(self, error);
+  g_object_unref(req->service);
+  g_free(req->pubkey);
+  g_free(req);
+}
+
+void
+gn_marmot_service_ensure_account_proof_async(GnMarmotService     *self,
+                                             GnostrPluginContext *context,
+                                             GCancellable        *cancellable,
+                                             GAsyncReadyCallback  callback,
+                                             gpointer             user_data)
+{
+  g_return_if_fail(GN_IS_MARMOT_SERVICE(self));
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  if (self->client == NULL || self->user_pubkey_hex == NULL || context == NULL)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                              "User identity not set");
+      g_object_unref(task);
+      return;
+    }
+  if (gn_marmot_service_has_account_proof(self))
+    {
+      g_task_return_boolean(task, TRUE);
+      g_object_unref(task);
+      return;
+    }
+  gboolean in_flight = self->proof_waiters != NULL;
+  if (!in_flight)
+    self->proof_waiters = g_ptr_array_new_with_free_func(g_object_unref);
+  g_ptr_array_add(self->proof_waiters, task);   /* takes the ref */
+  if (in_flight)
+    return;
+
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *tmpl =
+    marmot_gobject_client_get_account_proof_template(self->client, self->user_pubkey_hex,
+                                                     &error);
+  if (tmpl == NULL)
+    {
+      finish_proof_waiters(self, error);
+      return;
+    }
+  ProofRequest *req = g_new0(ProofRequest, 1);
+  req->service = g_object_ref(self);
+  req->context = context;
+  req->pubkey = g_strdup(self->user_pubkey_hex);
+  /* Not tied to one caller's cancellable: other callers wait on it too. */
+  gnostr_plugin_context_request_sign_event(context, tmpl, NULL, on_account_proof_signed, req);
+}
+
+gboolean
+gn_marmot_service_ensure_account_proof_finish(GnMarmotService *self,
+                                              GAsyncResult    *result,
+                                              GError         **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
 }

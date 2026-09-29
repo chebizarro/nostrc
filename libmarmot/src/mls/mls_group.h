@@ -398,6 +398,16 @@ int mls_group_remove_members(MlsGroup *group,
 int mls_group_self_update(MlsGroup *group,
                           MlsCommitResult *result);
 
+/**
+ * mls_group_self_update() whose UpdatePath leaf carries `leaf_ext` (a
+ * serialized LeafNode Extension list, e.g. the account-identity proof's
+ * app_data_dictionary; nostrc-rgb5) instead of the current leaf's
+ * extensions.  The signature key and credential do not change.
+ */
+int mls_group_self_update_with_leaf_extensions(MlsGroup *group,
+                                               const uint8_t *leaf_ext, size_t leaf_ext_len,
+                                               MlsCommitResult *result);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * GroupContext extensions update
  * ──────────────────────────────────────────────────────────────────────── */

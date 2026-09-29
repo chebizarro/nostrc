@@ -439,7 +439,10 @@ static void test_create_group_reports_save_group_failure(void)
     s->delete_group = test_delete_group_ok;
     s->save_group = test_save_group_fails;
 
-    Marmot *m = marmot_new(s);
+    /* A fake creator key: no account proof, so legacy mode (nostrc-7vyi). */
+    MarmotConfig legacy = marmot_config_default();
+    legacy.allow_unproven_members = true;
+    Marmot *m = marmot_new_with_config(s, &legacy);
     assert(m != NULL);
 
     uint8_t creator_pk[32];
@@ -476,7 +479,10 @@ static void test_create_group_rolls_back_after_relay_failure(void)
     s->delete_group = test_delete_group_ok;
     s->replace_group_relays = test_replace_group_relays_fails;
 
-    Marmot *m = marmot_new(s);
+    /* A fake creator key: no account proof, so legacy mode (nostrc-7vyi). */
+    MarmotConfig legacy = marmot_config_default();
+    legacy.allow_unproven_members = true;
+    Marmot *m = marmot_new_with_config(s, &legacy);
     assert(m != NULL);
 
     uint8_t creator_pk[32];

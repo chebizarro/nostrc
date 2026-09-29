@@ -50,6 +50,10 @@ struct _GnCreateGroupDialog
   /* State */
   GPtrArray       *member_pubkeys;   /* (element-type utf8) */
   gboolean         creating;
+  /* libmarmot 0.10.0 (nostrc-7vyi): a group can only be created once the
+   * signer authorized this device's group key (the account proof). */
+  gboolean         enrolled;
+  gboolean         enrolling;
 };
 
 enum
@@ -84,9 +88,18 @@ is_valid_hex_pubkey(const gchar *str)
 static void
 update_create_button_sensitivity(GnCreateGroupDialog *self)
 {
-  if (self->creating)
+  if (self->creating || self->enrolling)
     {
       gtk_widget_set_sensitive(GTK_WIDGET(self->create_button), FALSE);
+      return;
+    }
+
+  /* Not authorized (the signer refused or failed): the button retries. */
+  gtk_button_set_label(self->create_button,
+                       self->enrolled ? "Create Group" : "Authorize This Device");
+  if (!self->enrolled)
+    {
+      gtk_widget_set_sensitive(GTK_WIDGET(self->create_button), TRUE);
       return;
     }
 
@@ -449,9 +462,56 @@ start_create_group(GnCreateGroupDialog *self)
 }
 
 static void
+on_account_proof_ready(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  GnCreateGroupDialog *self = user_data;   /* strong ref taken at the request */
+  g_autoptr(GError) error = NULL;
+  gboolean ok = gn_marmot_service_ensure_account_proof_finish(GN_MARMOT_SERVICE(source),
+                                                             result, &error);
+  self->enrolling = FALSE;
+  self->enrolled = ok;
+  if (ok)
+    set_status(self, NULL, FALSE);
+  else
+    {
+      g_autofree gchar *msg =
+        g_strdup_printf("Your signer did not authorize this device's group key (%s). "
+                        "Groups cannot be created without it: other members would "
+                        "reject this device.",
+                        error ? error->message : "no answer");
+      set_status(self, msg, FALSE);
+    }
+  update_create_button_sensitivity(self);
+  g_object_unref(self);
+}
+
+/* Ask the signer once (it is shared with the KeyPackage manager's request). */
+static void
+start_enrollment(GnCreateGroupDialog *self)
+{
+  if (self->enrolled || self->enrolling)
+    return;
+  if (gn_marmot_service_has_account_proof(self->service))
+    {
+      self->enrolled = TRUE;
+      update_create_button_sensitivity(self);
+      return;
+    }
+  self->enrolling = TRUE;
+  set_status(self, "Waiting for your signer to authorize this device's group key…", TRUE);
+  update_create_button_sensitivity(self);
+  gn_marmot_service_ensure_account_proof_async(self->service, self->plugin_context, NULL,
+                                               on_account_proof_ready, g_object_ref(self));
+}
+
+static void
 on_create_clicked(GtkButton *button, gpointer user_data)
 {
-  start_create_group(GN_CREATE_GROUP_DIALOG(user_data));
+  GnCreateGroupDialog *self = GN_CREATE_GROUP_DIALOG(user_data);
+  if (!self->enrolled)
+    start_enrollment(self);
+  else
+    start_create_group(self);
 }
 
 /* ── GObject lifecycle ───────────────────────────────────────────── */
@@ -626,6 +686,7 @@ gn_create_group_dialog_new(GnMarmotService     *service,
   self->service        = g_object_ref(service);
   self->router         = g_object_ref(router);
   self->plugin_context = plugin_context;
+  start_enrollment(self);
 
   return self;
 }

@@ -116,6 +116,17 @@ MarmotError marmot_commit_note_witness(Marmot *m, const MlsGroup *cur, uint32_t 
                                        uint8_t **out_replaced, size_t *out_replaced_len);
 
 /**
+ * nostrc-7vyi (joining.md step 5): every member leaf of `g` is bound to the
+ * account its credential names -- by a valid account-identity proof, or it
+ * is `g`'s own leaf or the `exempt` leaf (UINT32_MAX: none).  A leaf without
+ * any proof passes only with `allow_unproven` (legacy mode); a proof that
+ * does not verify never does.  MARMOT_ERR_KEY_PACKAGE_IDENTITY otherwise.
+ * The joiner applies it to a Welcome's tree (exempting the GroupInfo signer
+ * when it sent the Welcome), the inviter to the tree its Welcome carries.
+ */
+MarmotError marmot_tree_members_bound(const MlsGroup *g, uint32_t exempt, bool allow_unproven);
+
+/**
  * The Marmot account identity (32-byte Nostr public key) the credential of
  * `g`'s leaf `leaf` binds, into `out`.  -1 for a blank leaf or a credential
  * that is not a 32-byte identity (nostrc-we6g).
