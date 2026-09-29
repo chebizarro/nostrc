@@ -1,0 +1,703 @@
+/* Shared fixture of the MLS service tests (nostrc-qp24.13 part 1): up to
+ * three Groundhog accounts in one process, each composed as the app composes
+ * one (account controller, own relay lists, the durable store with its
+ * NIP-17 and MLS room delegates, the DM inbox in storage mode, a one-shot
+ * 10050 lookup as the Welcome resolver, and the GhMlsService), against local
+ * store-and-serve relays (wire-relay.h) through the real gnostr transports:
+ *  - E, the discovery relay: everyone's kind 10002 (write: W) and 10050
+ *    (inbox: X), and the discovery-relays setting of every account;
+ *  - W, the write relay of every account: KeyPackages land here (and on X);
+ *  - X, the inbox relay of every account: kind 1059 is served only to its
+ *    authenticated recipient (NIP-17);
+ *  - G, the group relay: demands NIP-42 AUTH for every REQ and EVENT, so
+ *    MLS routing's ephemeral AUTH runs for real.
+ * org.nostr.Signer is the mock signer on the private test bus
+ * (gh-test-signer.h): it holds the test keys; Groundhog holds none. Nothing
+ * sleeps: every wait is for an observable condition, bounded only to turn a
+ * hang into a failure. Header-only: include it once per test executable. */
+#ifndef GH_TEST_MLS_WORLD_H
+#define GH_TEST_MLS_WORLD_H
+
+#define G_SETTINGS_ENABLE_BACKEND
+#include <gio/gsettingsbackend.h>
+
+#include "gh-inbox-lookup.h"
+#include "gh-mls-service.h"
+#include "gh-store-conversations.h"
+#include "gh-store-marmot.h"
+#include "gh-test-signer.h"
+#include "wire-relay.h"
+
+#include <glib/gstdio.h>
+
+enum { ALICE = 1, BOB = 2, CAROL = 3, STRANGER = 4 };
+#define N_APPS 4
+
+/* A failure bound for one awaited condition (sanitizer builds are slow). */
+#define WAIT_SECONDS 90
+
+static gchar *hex[GH_TEST_KEYS];
+static gchar *npub[GH_TEST_KEYS];
+static GhTestBus test_bus;
+
+static G_GNUC_UNUSED void
+spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int line)
+{
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(WAIT_SECONDS, gh_test_deadline_hit, &expired);
+  guint tick = g_timeout_add(10, gh_test_tick, NULL);
+  while (!pred(data) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  g_source_remove(tick);
+  if (expired)
+    g_error("line %d: %s did not happen within %d s", line, what, WAIT_SECONDS);
+  g_source_remove(timer);
+}
+#define spin_until(pred, data, what) spin_until_at((pred), (data), (what), __LINE__)
+
+static G_GNUC_UNUSED void
+drain(void)
+{
+  while (g_main_context_iteration(NULL, FALSE))
+    ;
+}
+
+static G_GNUC_UNUSED void
+rm_rf(const gchar *path)
+{
+  if (g_file_test(path, G_FILE_TEST_IS_DIR) && !g_file_test(path, G_FILE_TEST_IS_SYMLINK)) {
+    GDir *dir = g_dir_open(path, 0, NULL);
+    const gchar *name;
+    while (dir && (name = g_dir_read_name(dir))) {
+      g_autofree gchar *child = g_build_filename(path, name, NULL);
+      rm_rf(child);
+    }
+    if (dir)
+      g_dir_close(dir);
+    g_rmdir(path);
+  } else {
+    g_unlink(path);
+  }
+}
+
+/* ---- fake GNetworkMonitor ------------------------------------------------------ */
+
+#define FAKE_TYPE_MONITOR (fake_monitor_get_type())
+G_DECLARE_FINAL_TYPE(FakeMonitor, fake_monitor, FAKE, MONITOR, GObject)
+
+struct _FakeMonitor {
+  GObject parent_instance;
+  gboolean available;
+};
+
+enum { MONITOR_PROP_0, MONITOR_PROP_AVAILABLE, MONITOR_PROP_METERED, MONITOR_PROP_CONNECTIVITY };
+
+static G_GNUC_UNUSED gboolean
+fake_monitor_initable_init(GInitable *initable, GCancellable *cancellable, GError **error)
+{
+  (void)initable; (void)cancellable; (void)error;
+  return TRUE;
+}
+
+static G_GNUC_UNUSED void
+fake_monitor_initable_iface_init(GInitableIface *iface)
+{
+  iface->init = fake_monitor_initable_init;
+}
+
+static G_GNUC_UNUSED gboolean
+fake_monitor_can_reach(GNetworkMonitor *monitor, GSocketConnectable *connectable,
+                       GCancellable *cancellable, GError **error)
+{
+  (void)monitor; (void)connectable; (void)cancellable; (void)error;
+  return TRUE;
+}
+
+static G_GNUC_UNUSED void
+fake_monitor_iface_init(GNetworkMonitorInterface *iface)
+{
+  iface->can_reach = fake_monitor_can_reach;
+}
+
+G_DEFINE_FINAL_TYPE_WITH_CODE(FakeMonitor, fake_monitor, G_TYPE_OBJECT,
+  G_IMPLEMENT_INTERFACE(G_TYPE_INITABLE, fake_monitor_initable_iface_init)
+  G_IMPLEMENT_INTERFACE(G_TYPE_NETWORK_MONITOR, fake_monitor_iface_init))
+
+static G_GNUC_UNUSED void
+fake_monitor_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
+{
+  FakeMonitor *self = FAKE_MONITOR(object);
+  switch (prop_id) {
+  case MONITOR_PROP_AVAILABLE: g_value_set_boolean(value, self->available); break;
+  case MONITOR_PROP_METERED: g_value_set_boolean(value, FALSE); break;
+  case MONITOR_PROP_CONNECTIVITY: g_value_set_enum(value, G_NETWORK_CONNECTIVITY_FULL); break;
+  default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+  }
+}
+
+static G_GNUC_UNUSED void
+fake_monitor_class_init(FakeMonitorClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  object_class->get_property = fake_monitor_get_property;
+  g_object_class_override_property(object_class, MONITOR_PROP_AVAILABLE, "network-available");
+  g_object_class_override_property(object_class, MONITOR_PROP_METERED, "network-metered");
+  g_object_class_override_property(object_class, MONITOR_PROP_CONNECTIVITY, "connectivity");
+}
+
+static G_GNUC_UNUSED void
+fake_monitor_init(FakeMonitor *self)
+{
+  self->available = TRUE;
+}
+
+/* ---- signed fixtures ------------------------------------------------------------ */
+
+static G_GNUC_UNUSED gchar *
+sign_event(guint key, gint kind, gint64 created_at, const gchar *content, NostrTags *tags)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, kind);
+  nostr_event_set_created_at(event, created_at);
+  nostr_event_set_content(event, content);
+  nostr_event_set_tags(event, tags);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[key]), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gchar *out = g_strdup(json);
+  free(json);
+  return out;
+}
+
+/* A signed kind 10050 (tag "relay") or 10002 (tag "r"), as the account's own
+ * list publication would have put it on the discovery relay. */
+static G_GNUC_UNUSED void
+seed_list(WireRelay *discovery, guint key, gint kind, const gchar *url)
+{
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new(kind == 10050 ? "relay" : "r", url, NULL));
+  g_autofree gchar *json = sign_event(key, kind, g_get_real_time() / G_USEC_PER_SEC - 3600, "",
+                                      tags);
+  wire_relay_inject(discovery, json);
+}
+
+/* ---- the world ------------------------------------------------------------------ */
+
+typedef struct _World World;
+
+typedef struct {
+  World *world;
+  guint key;
+  GSettings *settings;
+  GhTestSigner *signer;
+  GhAccountController *accounts;
+  GhClock *clock;
+  gchar *data_dir;
+  GhStore *store;
+  GhStoreConversations *rooms;
+  GhConversationStore *model;
+  GhAccountRelays *relays;
+  GhInboxLookup *inboxes;
+  GhDmInbox *inbox;
+  FakeMonitor *network;
+  GhMlsService *service;
+  guint invites;      /* "invite-received" emissions */
+} App;
+
+struct _World {
+  GhTestSigner signer;
+  WireRelay e, w, x, g;
+  gchar *root;
+  App apps[N_APPS];
+};
+
+static G_GNUC_UNUSED GPtrArray *
+list_one(gpointer data, GError **error)
+{
+  (void)error;
+  App *app = data;
+  GPtrArray *ids = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+  info->npub = g_strdup(npub[app->key]);
+  info->label = g_strdup_printf("Account %u", app->key);
+  g_ptr_array_add(ids, info);
+  return ids;
+}
+
+static G_GNUC_UNUSED gboolean
+accounts_active(gpointer data)
+{
+  return gh_account_controller_get_state(data) == GH_ACCOUNT_STATE_ACTIVE;
+}
+
+static G_GNUC_UNUSED gboolean
+relays_known(gpointer data)
+{
+  App *app = data;
+  return gh_account_relays_get_inbox_relays(app->relays) &&
+         gh_account_relays_get_write_relays(app->relays);
+}
+
+static gint64
+inbox_load_checkpoint(gpointer data)
+{
+  gint64 since = 0;
+  gh_store_get_cursor(data, "nip17/inbox", "", &since, NULL);
+  return since;
+}
+
+static G_GNUC_UNUSED gboolean
+inbox_save_checkpoint(gpointer data, gint64 checkpoint, GError **error)
+{
+  return gh_store_set_cursor(data, "nip17/inbox", "", checkpoint, error);
+}
+
+static const GhDmInboxStorage inbox_storage = {
+  .load_checkpoint = inbox_load_checkpoint,
+  .save_checkpoint = inbox_save_checkpoint,
+};
+
+static G_GNUC_UNUSED void
+on_invite(GhMlsService *service, const gchar *wrapper_id, gpointer data)
+{
+  (void)service;
+  (void)wrapper_id;
+  ((App *)data)->invites++;
+}
+
+static G_GNUC_UNUSED void
+store_open(App *app)
+{
+  guint8 key[GH_STORE_KEY_SIZE];
+  for (guint i = 0; i < sizeof key; i++)
+    key[i] = (guint8)(0x40 + app->key * 7 + i);
+  g_autoptr(GBytes) bytes = g_bytes_new(key, sizeof key);
+  GhStoreConfig config = { app->data_dir, hex[app->key], NULL, NULL, app->clock };
+  g_autofree gchar *store_id = g_strdup_printf("3c0d2a51-3b8e-4f6a-9c1d-2e4f5a6b7c%02u", app->key);
+  g_autoptr(GError) error = NULL;
+  app->store = gh_store_open_with_key(&config, bytes, store_id, GH_STORE_OPEN_CREATE, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(app->store);
+}
+
+static G_GNUC_UNUSED void
+service_up(App *app)
+{
+  GhMlsServiceConfig config = {
+    .store = app->store,
+    .accounts = app->accounts,
+    .conversations = app->model,
+    .account_relays = app->relays,
+    .inboxes = GH_INBOX_RESOLVER(app->inboxes),
+    .settings = app->settings,
+    .inbox = app->inbox,
+    .network = G_NETWORK_MONITOR(app->network),
+    .publish_deadline = 20,
+    .lookup_deadline = 20,
+  };
+  g_autoptr(GError) error = NULL;
+  app->service = gh_mls_service_new(&config, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(app->service);
+  g_signal_connect(app->service, "invite-received", G_CALLBACK(on_invite), app);
+}
+
+/* The store-bound half of an app: store, rooms, inbox and service. */
+static G_GNUC_UNUSED void
+app_store_up(App *app)
+{
+  store_open(app);
+  app->model = gh_conversation_store_new();
+  app->rooms = gh_store_conversations_new(app->store);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_attach(app->rooms, app->model, 0, &error));
+  g_assert_no_error(error);
+  app->inbox = gh_dm_inbox_new_with_storage(app->accounts, app->relays, app->model, NULL, NULL,
+                                            NULL);
+  g_assert_true(gh_dm_inbox_set_storage(app->inbox,
+                                        gh_account_controller_get_generation(app->accounts),
+                                        &inbox_storage, app->store));
+  service_up(app);
+}
+
+static G_GNUC_UNUSED void
+app_store_down(App *app)
+{
+  if (app->service)
+    gh_test_release(g_steal_pointer(&app->service));
+  if (app->inbox) {
+    gh_dm_inbox_clear_storage(app->inbox);
+    gh_test_release(g_steal_pointer(&app->inbox));
+  }
+  drain();
+  if (app->rooms) {
+    gh_store_conversations_close(app->rooms);
+    g_clear_object(&app->rooms);
+  }
+  g_clear_object(&app->model);
+  if (app->store)
+    gh_store_close(g_steal_pointer(&app->store));
+}
+
+static G_GNUC_UNUSED void
+app_up(World *w, guint key)
+{
+  App *app = &w->apps[key];
+  app->world = w;
+  app->key = key;
+  app->settings = g_settings_new_with_backend("org.nostr.Groundhog",
+                                              g_memory_settings_backend_new());
+  g_settings_set_string(app->settings, "signer-method", "auto");
+  g_settings_set_string(app->settings, "current-npub", npub[key]);
+  const gchar *discovery[] = { w->e.url, NULL };
+  g_settings_set_strv(app->settings, "discovery-relays", discovery);
+  app->accounts = gh_account_controller_new_full(app->settings, test_bus.client, list_one, app);
+  spin_until(accounts_active, app->accounts, "the account becoming active");
+  app->clock = gh_clock_new_system();
+  g_autofree gchar *name = g_strdup_printf("app-%u", key);
+  app->data_dir = g_build_filename(w->root, name, NULL);
+  g_assert_cmpint(g_mkdir_with_parents(app->data_dir, 0700), ==, 0);
+  app->network = g_object_new(FAKE_TYPE_MONITOR, NULL);
+  app->relays = gh_account_relays_new(app->accounts, app->settings, NULL, NULL);
+  spin_until(relays_known, app, "the account's own relay lists");
+  app->inboxes = gh_inbox_lookup_new(app->accounts, app->settings, NULL, NULL);
+  app_store_up(app);
+}
+
+/* A restart: the service, inbox and store go; all come back over the same
+ * files (and a new, empty conversation model). */
+static G_GNUC_UNUSED void
+app_restart(App *app)
+{
+  app_store_down(app);
+  app_store_up(app);
+}
+
+static G_GNUC_UNUSED void
+app_down(App *app)
+{
+  if (!app->accounts)
+    return;
+  app_store_down(app);
+  gh_test_release(g_steal_pointer(&app->inboxes));
+  gh_test_release(g_steal_pointer(&app->relays));
+  gh_test_release(g_steal_pointer(&app->accounts));
+  drain();
+  g_clear_object(&app->network);
+  g_clear_object(&app->settings);
+  gh_clock_unref(app->clock);
+  g_free(app->data_dir);
+  memset(app, 0, sizeof *app);
+}
+
+static G_GNUC_UNUSED void
+world_up(World *w, const guint *keys, guint n_keys)
+{
+  memset(w, 0, sizeof *w);
+  w->root = g_dir_make_tmp("groundhog-mls-XXXXXX", NULL);
+  g_assert_nonnull(w->root);
+  gh_test_signer_up(&test_bus, &w->signer);
+  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
+    relays[i]->serve = TRUE;
+    relays[i]->record = TRUE;
+    relay_init(relays[i]);
+  }
+  w->x.auth_gate_dms = TRUE;   /* kind 1059 only to its signed-in recipient */
+  w->g.require_auth = TRUE;    /* MLS routing: ephemeral AUTH, for real */
+  for (guint key = 1; key < GH_TEST_KEYS; key++) {
+    seed_list(&w->e, key, 10002, w->w.url);
+    seed_list(&w->e, key, 10050, w->x.url);
+  }
+  for (guint i = 0; i < n_keys; i++)
+    app_up(w, keys[i]);
+}
+
+static G_GNUC_UNUSED void
+world_down(World *w)
+{
+  for (guint key = 1; key < N_APPS; key++)
+    app_down(&w->apps[key]);
+  GhTestSenders check = { &test_bus, &w->signer };
+  gh_test_spin_until(gh_test_signer_senders_closed, &check);
+  drain();
+  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
+    relay_clear(relays[i]);
+  drain();
+  gh_test_signer_down(&test_bus, &w->signer);
+  rm_rf(w->root);
+  g_free(w->root);
+}
+
+/* ---- waits and lookups ------------------------------------------------------------ */
+
+static G_GNUC_UNUSED gboolean
+key_package_published(gpointer data)
+{
+  App *app = data;
+  return gh_mls_service_get_key_package_state(app->service) == GH_MLS_KEY_PACKAGE_PUBLISHED;
+}
+
+typedef struct {
+  gboolean done;
+  gpointer result;
+  gboolean ok;
+  GError *error;
+} OpWait;
+
+static G_GNUC_UNUSED gboolean
+op_done(gpointer data)
+{
+  return ((OpWait *)data)->done;
+}
+
+static G_GNUC_UNUSED void
+on_created(GObject *source, GAsyncResult *result, gpointer data)
+{
+  OpWait *wait = data;
+  wait->result = gh_mls_service_create_group_finish(GH_MLS_SERVICE(source), result,
+                                                    &wait->error);
+  wait->done = TRUE;
+}
+
+static G_GNUC_UNUSED void
+on_changed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  OpWait *wait = data;
+  wait->ok = gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &wait->error);
+  wait->done = TRUE;
+}
+
+/* The account's listed message with this text in the room, or NULL. */
+static G_GNUC_UNUSED GhMessage *
+find_message(App *app, const gchar *room_id, const gchar *text)
+{
+  GhConversation *room = gh_conversation_store_lookup(app->model, room_id);
+  guint n = room ? g_list_model_get_n_items(G_LIST_MODEL(room)) : 0;
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(room), i);
+    if (g_strcmp0(gh_message_get_content(message), text) == 0)
+      return message;   /* the room keeps it */
+  }
+  return NULL;
+}
+
+typedef struct {
+  App *app;
+  const gchar *room_id;
+  const gchar *text;
+} MessageWait;
+
+static G_GNUC_UNUSED gboolean
+message_listed(gpointer data)
+{
+  MessageWait *wait = data;
+  return find_message(wait->app, wait->room_id, wait->text) != NULL;
+}
+
+#define wait_message(app_, room_, text_) \
+  G_STMT_START { MessageWait mw_ = { (app_), (room_), (text_) }; \
+    spin_until(message_listed, &mw_, "message \"" text_ "\" listed"); } G_STMT_END
+
+static G_GNUC_UNUSED gboolean
+has_invite(gpointer data)
+{
+  return ((App *)data)->invites > 0;
+}
+
+/* The account's one pending invitation (asserted), its wrapper id. */
+static G_GNUC_UNUSED gchar *
+the_invite(App *app, guint inviter)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) invites = gh_mls_service_list_invites(app->service, &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(invites->len, ==, 1);
+  GhMlsInvite *invite = g_ptr_array_index(invites, 0);
+  g_assert_cmpstr(invite->inviter, ==, hex[inviter]);
+  return g_strdup(invite->wrapper_id);
+}
+
+typedef struct {
+  GhMlsGroup *group;
+  gint value;
+} GroupWait;
+
+static G_GNUC_UNUSED gboolean
+read_is(gpointer data)
+{
+  GroupWait *wait = data;
+  return (gint)gh_mls_group_get_read_state(wait->group) == wait->value;
+}
+
+static G_GNUC_UNUSED gboolean
+epoch_at_least(gpointer data)
+{
+  GroupWait *wait = data;
+  return gh_mls_group_get_epoch(wait->group) >= (guint64)wait->value;
+}
+
+static G_GNUC_UNUSED gboolean
+members_are(gpointer data)
+{
+  GroupWait *wait = data;
+  g_auto(GStrv) members = gh_mls_group_dup_members(wait->group);
+  return g_strv_length(members) == (guint)wait->value;
+}
+
+#define wait_live(group_) \
+  G_STMT_START { GroupWait gw_ = { (group_), GH_MLS_READ_LIVE }; \
+    spin_until(read_is, &gw_, "the group read live"); } G_STMT_END
+#define wait_epoch(group_, epoch_) \
+  G_STMT_START { GroupWait gw_ = { (group_), (epoch_) }; \
+    spin_until(epoch_at_least, &gw_, "the group's epoch"); } G_STMT_END
+#define wait_members(group_, n_) \
+  G_STMT_START { GroupWait gw_ = { (group_), (n_) }; \
+    spin_until(members_are, &gw_, "the member count"); } G_STMT_END
+
+/* Makes account `by` an accepted contact of `app` (an accepted, empty
+ * NIP-17 room: what writing to them does). */
+static G_GNUC_UNUSED void
+accept_contact(App *app, guint other)
+{
+  const gchar *peers[] = { hex[other], NULL };
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(gh_conversation_store_open_room(app->model, peers, &error));
+  g_assert_no_error(error);
+}
+
+/* Creates a group of `app` with `invitees` on G and waits for its Add. */
+static G_GNUC_UNUSED GhMlsGroup *
+create_group(App *app, const gchar *name, const guint *invitees, guint n)
+{
+  g_autoptr(GPtrArray) people = g_ptr_array_new();
+  for (guint i = 0; i < n; i++)
+    g_ptr_array_add(people, hex[invitees[i]]);
+  g_ptr_array_add(people, NULL);
+  const gchar *relays[] = { app->world->g.url, NULL };
+  OpWait wait = { 0 };
+  gh_mls_service_create_group_async(app->service, name, "a test group", relays,
+                                    (const gchar *const *)people->pdata, NULL, on_created,
+                                    &wait);
+  spin_until(op_done, &wait, "the group creation");
+  g_assert_no_error(wait.error);
+  g_assert_nonnull(wait.result);
+  GhMlsGroup *group = wait.result;
+  g_object_unref(group);   /* the service keeps it */
+  return group;
+}
+
+/* `app` accepts its one invitation from `inviter` and reads the group. */
+static G_GNUC_UNUSED GhMlsGroup *
+join(App *app, guint inviter)
+{
+  spin_until(has_invite, app, "an invitation");
+  g_autofree gchar *wrapper = the_invite(app, inviter);
+  g_autoptr(GError) error = NULL;
+  GhMlsGroup *group = gh_mls_service_accept_invite(app->service, wrapper, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(group);
+  app->invites = 0;
+  wait_live(group);
+  return group;
+}
+
+static G_GNUC_UNUSED void
+send_text(App *app, GhMlsGroup *group, const gchar *text)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) message = gh_mls_service_send(app->service, group, text, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(message);
+}
+
+/* ---- relay frames --------------------------------------------------------------------- */
+
+/* The event of an ["EVENT", {...}] (client) or ["EVENT", sub, {...}] (relay)
+ * frame, or NULL. */
+static G_GNUC_UNUSED NostrEvent *
+frame_event(const gchar *text, gboolean inbound)
+{
+  if (!g_str_has_prefix(text, "[\"EVENT\","))
+    return NULL;
+  const gchar *start = text + strlen("[\"EVENT\",");
+  if (!inbound) {
+    start = strchr(start, ',');
+    if (!start)
+      return NULL;
+    start++;
+  }
+  gsize length = strlen(start);
+  if (length < 2 || start[length - 1] != ']')
+    return NULL;
+  g_autofree gchar *json = g_strndup(start, length - 1);
+  NostrEvent *event = nostr_event_new();
+  if (nostr_event_deserialize_compact(event, json, NULL) != 1) {
+    nostr_event_free(event);
+    return NULL;
+  }
+  return event;
+}
+
+static G_GNUC_UNUSED gboolean
+is_account(const gchar *pubkey)
+{
+  for (guint key = 1; key < GH_TEST_KEYS; key++)
+    if (g_strcmp0(pubkey, hex[key]) == 0)
+      return TRUE;
+  return FALSE;
+}
+
+/* Every event a client published to relay, of kind (-1: any). */
+static G_GNUC_UNUSED GPtrArray *
+published(WireRelay *relay, gint kind)
+{
+  GPtrArray *out = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (!frame->inbound)
+      continue;
+    NostrEvent *event = frame_event(frame->text, TRUE);
+    if (event && (kind < 0 || nostr_event_get_kind(event) == kind))
+      g_ptr_array_add(out, event);
+    else if (event)
+      nostr_event_free(event);
+  }
+  return out;
+}
+
+/* Whether any client frame to relay mentions text (e.g. a pubkey in a REQ). */
+static G_GNUC_UNUSED gboolean
+client_frames_mention(WireRelay *relay, const gchar *text)
+{
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
+        strstr(frame->text, text))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static G_GNUC_UNUSED void
+mls_world_init(void)
+{
+  for (guint key = 1; key < GH_TEST_KEYS; key++) {
+    hex[key] = gh_test_pub(key);
+    npub[key] = gh_test_npub(key);
+  }
+  gh_test_bus_up(&test_bus);
+}
+
+static G_GNUC_UNUSED void
+mls_world_finish(void)
+{
+  gh_test_bus_down(&test_bus);
+  for (guint key = 1; key < GH_TEST_KEYS; key++) {
+    g_free(hex[key]);
+    g_free(npub[key]);
+  }
+}
+
+#endif

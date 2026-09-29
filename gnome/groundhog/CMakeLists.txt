@@ -1534,6 +1534,97 @@ else()
 endif()
 # --- end G20a NIP-29 service ---
 
+# --- W20 MLS service (nostrc-qp24.13 part 1) ---
+# GhMlsService: one account's Marmot (MLS) encrypted groups over libmarmot on
+# GhStoreMarmot (all MLS state in the encrypted store): the account's
+# KeyPackage (kind 30443) published to its own relays and rotated, consented
+# KeyPackage lookups (gh-mls-key-packages.c: discovery relays, then the
+# person's 10002 write relays; never for a message request), group creation
+# with one published-then-merged Add Commit (gh-mls-commits), Welcomes
+# gift-wrapped to each invitee's 10050 only and received through the DM
+# inbox's Welcome sink, kind-445 REQs per group on its relays (ephemeral AUTH),
+# sends with the ratchet step stored before publish, add/remove/leave and
+# metadata, and MLS rooms in the conversation model (gh-store-mls.c). The
+# executable wires it (gh-app-outbox.c) only when GH_FEATURE_ENCRYPTED_GROUPS
+# is 1 (part 2, the UI, flips it); until then it is built and tested here.
+if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
+    TARGET groundhog-auth-policy AND TARGET groundhog-conversations AND
+    TARGET groundhog-account-relays AND TARGET nostr_nip17_core AND TARGET nostr_nip59_core
+    AND GROUNDHOG_DM_SEND_SOURCES)
+  message(STATUS "Groundhog MLS service: enabled")
+  set(GROUNDHOG_MLS_SERVICE_SOURCES src/mls/gh-mls-service.c src/mls/gh-mls-key-packages.c
+    src/store/gh-store-mls.c)
+  add_library(groundhog-mls-service STATIC ${GROUNDHOG_MLS_SERVICE_SOURCES})
+  target_include_directories(groundhog-mls-service PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-mls-service PUBLIC groundhog-store-marmot groundhog-dm-inbox
+    groundhog-auth-policy groundhog-conversations groundhog-account-relays
+    nostr_nip17_core nostr_nip59_core)
+  target_compile_options(groundhog-mls-service PRIVATE -Wall -Wextra -Werror)
+  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+    target_link_libraries(groundhog PRIVATE groundhog-mls-service)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS=1)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
+      TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    # The qp24.13 part-1 wire tests: three accounts (real account controllers,
+    # the mock signer on the private test bus, real SQLCipher stores with test
+    # hooks) against local store-and-serve relays (wire-relay.h) through the
+    # real gnostr transports: KeyPackages, create, invite, join via Welcome,
+    # messages both ways, add, remove (the removed member reads nothing
+    # after), leave, metadata, restart recovery mid-Commit (the pending
+    # Commit is republished byte for byte), PT-8 consent, Welcome only as a
+    # gift wrap to the invitee's inbox, and a canary scan of the store files.
+    add_executable(test-groundhog-mls-service tests/mls/test_mls_service.c
+      tests/privacy/canary-scan.c ${GROUNDHOG_MLS_SERVICE_SOURCES}
+      src/store/gh-store-marmot.c src/store/gh-mls-commits.c
+      src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
+      ${GROUNDHOG_DM_SEND_SOURCES})
+    target_include_directories(test-groundhog-mls-service PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy)
+    target_link_libraries(test-groundhog-mls-service PRIVATE groundhog-store-testhooks marmot
+      groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+      groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    target_compile_options(test-groundhog-mls-service PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-mls-service)
+    add_dependencies(test-groundhog-mls-service groundhog-test-schemas)
+    add_test(NAME groundhog-mls-service COMMAND test-groundhog-mls-service)
+    set_tests_properties(groundhog-mls-service PROPERTIES TIMEOUT 300
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # G24 privacy harness, encrypted groups (charter §2.2, §4.3, §4.4, PD-8,
+    # H7): no KeyPackage lookup for a message request or a stranger; Welcomes
+    # only as gift wraps to the invitee's own 10050; kind 445 only under
+    # fresh keys and ephemeral AUTH; no canary outside the encrypted store or
+    # in the logs (G_MESSAGES_DEBUG=all).
+    add_executable(test-groundhog-privacy-mls tests/privacy/test_privacy_mls.c
+      tests/privacy/canary-scan.c ${GROUNDHOG_MLS_SERVICE_SOURCES}
+      src/store/gh-store-marmot.c src/store/gh-mls-commits.c
+      src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
+      ${GROUNDHOG_DM_SEND_SOURCES})
+    target_include_directories(test-groundhog-privacy-mls PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls)
+    target_link_libraries(test-groundhog-privacy-mls PRIVATE groundhog-store-testhooks marmot
+      groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+      groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    target_compile_options(test-groundhog-privacy-mls PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-privacy-mls)
+    add_dependencies(test-groundhog-privacy-mls groundhog-test-schemas)
+    add_test(NAME groundhog-privacy-mls COMMAND test-groundhog-privacy-mls)
+    set_tests_properties(groundhog-privacy-mls PROPERTIES TIMEOUT 300
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;G_MESSAGES_DEBUG=all")
+  endif()
+else()
+  message(STATUS "Groundhog MLS service: disabled (needs GhStoreMarmot, the DM inbox, "
+                 "GhAuthPolicy, the conversation model, the relay lists and NIP-17/59)")
+endif()
+# --- end W20 MLS service ---
+
 # --- G09 network modes and Tor ---
 # Network modes, fail closed (privacy charter §4.1 D3 = A, §4.2, §4.3, §8.2
 # G09; NT-5..NT-10, PT-5):

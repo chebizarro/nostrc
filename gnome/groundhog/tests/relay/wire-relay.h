@@ -61,7 +61,8 @@ struct _WireRelay {
   /* NIP-42 and failure modes */
   gboolean require_auth;
   gboolean refuse_auth;      /* answer every AUTH with OK false */
-  gboolean close_on_event;   /* drop the socket on EVENT, before any OK */
+  gboolean close_on_event;   /* drop the socket on EVENT, before any OK (serve too:
+                              * nothing is kept) */
   gboolean close_on_connect; /* drop the socket right after the upgrade */
   guint challenges_sent;
   guint auth_frames;
@@ -432,6 +433,12 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
   if (g_str_has_prefix(text, "[\"EVENT\"")) {
     g_autofree gchar *event_id = wire_event_frame_id(text);
     g_assert_nonnull(event_id);
+    if (relay->close_on_event) {
+      /* The answer is lost: nothing is kept or answered. */
+      relay->events++;
+      soup_websocket_connection_close(connection, SOUP_WEBSOCKET_CLOSE_GOING_AWAY, NULL);
+      return TRUE;
+    }
     if ((relay->require_auth || relay->auth_writes) && !wire_authed(connection)) {
       relay->refused_events++;
       wire_send_ok(connection, event_id, FALSE, "auth-required: sign in to publish");

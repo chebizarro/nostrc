@@ -10,6 +10,12 @@
 #if GROUNDHOG_HAVE_NIP29
 #include "gh-nip29-service.h"
 #endif
+#ifndef GROUNDHOG_HAVE_MLS
+#define GROUNDHOG_HAVE_MLS 0
+#endif
+#if GROUNDHOG_HAVE_MLS
+#include "gh-mls-service.h"
+#endif
 
 struct _GhAppOutbox {
   GhAccountController *accounts;
@@ -27,6 +33,11 @@ struct _GhAppOutbox {
   GSettings *settings;                /* network-mode for the NIP-11 fetches; nullable */
   GObject *nip29;                     /* GhNip29Service, or NULL */
   GObject *nip29_outbox;              /* the outbox it was made beside (weak) */
+  /* qp24.13: the open store's encrypted groups, likewise. */
+  gboolean encrypted_groups;
+  GObject *inbox;                     /* GhDmInbox for Welcomes; borrowed */
+  GObject *mls;                       /* GhMlsService, or NULL */
+  GObject *mls_outbox;                /* the outbox it was made beside (weak) */
 };
 
 GhAppOutbox *
@@ -53,6 +64,7 @@ gh_app_outbox_new(const GhAppOutboxConfig *config)
     gh_contact_directory_set_conversations(self->directory, config->conversations);
   }
   self->conversations = config->conversations;
+  self->encrypted_groups = config->encrypted_groups;
   self->settings = config->settings ? g_object_ref(config->settings) : NULL;
   if (config->transport) {
     self->transport = *config->transport;
@@ -67,12 +79,17 @@ gh_app_outbox_new(const GhAppOutboxConfig *config)
 
 static void unbind_directory(gpointer data, GObject *outbox);
 static void unbind_nip29(gpointer data, GObject *outbox);
+static void unbind_mls(gpointer data, GObject *outbox);
 
 void
 gh_app_outbox_free(GhAppOutbox *self)
 {
   if (!self)
     return;
+  if (self->mls_outbox) {
+    g_object_weak_unref(self->mls_outbox, unbind_mls, self);
+    unbind_mls(self, self->mls_outbox);
+  }
   if (self->nip29_outbox) {
     g_object_weak_unref(self->nip29_outbox, unbind_nip29, self);
     unbind_nip29(self, self->nip29_outbox);
@@ -142,6 +159,72 @@ unbind_nip29(gpointer data, GObject *outbox)
   }
 }
 
+/* qp24.13: the store's encrypted groups beside its outbox, like NIP-29's;
+ * only while GH_FEATURE_ENCRYPTED_GROUPS is on (part 2 ships the UI). */
+static void
+bind_mls(GhAppOutbox *self, GhStore *store, GObject *outbox)
+{
+#if GROUNDHOG_HAVE_MLS
+  if (self->mls_outbox) {
+    g_object_weak_unref(self->mls_outbox, unbind_mls, self);
+    unbind_mls(self, self->mls_outbox);
+  }
+  if (!self->encrypted_groups || !self->conversations || gh_store_is_ephemeral(store) ||
+      g_strcmp0(gh_conversation_store_get_account(self->conversations),
+                gh_store_get_account_pubkey(store)) != 0)
+    return;
+  GhMlsServiceConfig config = {
+    .store = store,
+    .accounts = self->accounts,
+    .conversations = self->conversations,
+    .account_relays = self->account_relays,
+    .inboxes = self->inboxes,
+    .settings = self->settings,
+    .inbox = self->inbox ? GH_DM_INBOX(self->inbox) : NULL,
+  };
+  g_autoptr(GError) error = NULL;
+  GhMlsService *service = gh_mls_service_new(&config, &error);
+  if (!service) {
+    g_message("Groundhog runs without its encrypted groups: %s", error->message);
+    return;
+  }
+  self->mls = G_OBJECT(service);
+  self->mls_outbox = outbox;
+  g_object_weak_ref(outbox, unbind_mls, self);
+#else
+  (void)self;
+  (void)store;
+  (void)outbox;
+#endif
+}
+
+static void
+unbind_mls(gpointer data, GObject *outbox)
+{
+  GhAppOutbox *self = data;
+  if (self->mls_outbox != outbox)
+    return;
+  self->mls_outbox = NULL;
+  if (self->mls) {
+    g_object_run_dispose(self->mls);
+    g_clear_object(&self->mls);
+  }
+}
+
+GObject *
+gh_app_outbox_get_mls_service(GhAppOutbox *self)
+{
+  g_return_val_if_fail(self != NULL, NULL);
+  return self->mls;
+}
+
+void
+gh_app_outbox_set_inbox(GhAppOutbox *self, GObject *inbox)
+{
+  g_return_if_fail(self != NULL);
+  self->inbox = inbox;
+}
+
 GObject *
 gh_app_outbox_create(GhStore *store, gpointer user_data, GError **error)
 {
@@ -172,8 +255,10 @@ gh_app_outbox_create(GhStore *store, gpointer user_data, GError **error)
       g_message("Groundhog keeps its contact directory in memory only: %s", bind_error->message);
     }
   }
-  if (outbox)
+  if (outbox) {
     bind_nip29(self, store, outbox);
+    bind_mls(self, store, outbox);
+  }
   return outbox;
 }
 

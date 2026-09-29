@@ -25,6 +25,10 @@ typedef struct {
   GhConversationStore *conversations;        /* nullable: the directory's accepted contacts */
   const GhRelayPublishTransport *transport;  /* NULL: gnostr relays (with NIP-42) */
   gpointer transport_data;
+  /* nostrc-qp24.13: run a GhMlsService beside each outbox (gh-app-services.c
+   * passes GH_FEATURE_ENCRYPTED_GROUPS; builds without the MLS service
+   * ignore it). */
+  gboolean encrypted_groups;
 } GhAppOutboxConfig;
 
 typedef struct _GhAppOutbox GhAppOutbox;
@@ -50,6 +54,15 @@ GhContactDirectory *gh_app_outbox_get_directory(GhAppOutbox *self);
  * gh-nip29-service.h), made beside each gh_app_outbox_create() outbox when
  * the build has them and disposed with it; NULL otherwise. Borrowed. */
 GObject *gh_app_outbox_get_nip29_service(GhAppOutbox *self);
+
+/* qp24.13: the open store's encrypted groups (a GhMlsService,
+ * gh-mls-service.h), made beside each gh_app_outbox_create() outbox when the
+ * build has them and encrypted_groups is set, and disposed with it; NULL
+ * otherwise. Borrowed. */
+GObject *gh_app_outbox_get_mls_service(GhAppOutbox *self);
+/* The DM inbox whose Welcome sink the MLS service takes (borrowed; NULL
+ * detaches). Set it before the store opens. */
+void gh_app_outbox_set_inbox(GhAppOutbox *self, GObject *inbox);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhAppOutbox, gh_app_outbox_free)
 

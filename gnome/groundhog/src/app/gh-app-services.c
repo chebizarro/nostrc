@@ -288,6 +288,8 @@ sender_init(GhAppServices *self, GError **error)
     .accounts = self->accounts,
     .account_relays = self->relays,
     .settings = self->settings,
+    /* Encrypted groups run only once their UI ships (qp24.13 part 2). */
+    .encrypted_groups = GH_FEATURE_ENCRYPTED_GROUPS,
   };
   self->outbox = gh_app_outbox_new(&config);
   return TRUE;
@@ -343,6 +345,10 @@ inbox_init(GhAppServices *self, GError **error)
   self->inbox = gh_dm_inbox_new(self->accounts, self->relays, self->conversations, NULL, NULL,
                                 NULL, NULL);
 #endif
+#if GROUNDHOG_HAVE_OUTBOX
+  /* Welcomes arrive in the inbox; the MLS service takes them (qp24.13). */
+  gh_app_outbox_set_inbox(self->outbox, G_OBJECT(self->inbox));
+#endif
   return TRUE;
 }
 
@@ -351,6 +357,9 @@ inbox_init(GhAppServices *self, GError **error)
 static void
 inbox_teardown(GhAppServices *self)
 {
+#if GROUNDHOG_HAVE_OUTBOX
+  gh_app_outbox_set_inbox(self->outbox, NULL);
+#endif
   dispose_object(&self->inbox);
 }
 #endif

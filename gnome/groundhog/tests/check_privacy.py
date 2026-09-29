@@ -257,6 +257,9 @@ ACCOUNT_PURPOSE_FILES = {
                                "probe never authenticates",
     "src/nip29/gh-nip29-service.": "NIP-29 group relays: the one group relay's live REQ",
     "src/nip29/gh-nip29-outbox.": "NIP-29 group relays: publish to exactly the group's relay",
+    "src/mls/gh-mls-service.": "own list publish (the account's KeyPackage, kind 30443) on its "
+                               "own 10002 write and 10050 inbox relays only; group relays, "
+                               "lookups and Welcome wraps are ephemeral",
 }
 FORBIDDEN_STATUS_WORDS = {"DELIVERED", "READ", "SEEN"}
 SUGGESTIONS_FILE = "data/relay-suggestions.json"
