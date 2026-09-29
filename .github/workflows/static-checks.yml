@@ -27,3 +27,7 @@ jobs:
 
       - name: Pre-push gate behaviour
         run: bash scripts/test-pre-push.sh
+
+      - name: Linux gate smoke run keeps and counts reruns
+        # nostrc-16yi: a rerun that passes still prints the first failure.
+        run: bash scripts/test-linux-gate-smoke.sh

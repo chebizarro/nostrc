@@ -131,39 +131,17 @@ if ! cmake --build /work/build --parallel "$JOBS" >/work/build.log 2>&1; then
 fi
 echo "==> Linux gate: built all targets ($(stamp))"
 [ "$RUN_TESTS" = 1 ] || { echo "==> Linux gate: smoke tests skipped (NOSTRC_GATE_LINUX_TESTS=0)"; exit 0; }
-# Widget tests need a display and a session bus, as in groundhog-ci.yml. The
-# tests run in parallel beside the macOS build; a test that fails is run once
-# more on its own, which absorbs a race lost under that load (reported), while
-# a real break fails both times.
-smoke() {
-  dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" \
-    ctest --test-dir /work/build --timeout 120 --no-tests=error "$@"
-}
-if ! smoke --parallel "$JOBS" -E "$SMOKE_EXCLUDE" >/work/ctest.log 2>&1; then
-  first="$(grep -E "tests passed" /work/ctest.log)"
-  failed="$(sed -n "/The following tests FAILED/,/^Errors while running/ s/^[[:space:]]*[0-9]* - \([^ ]*\) (.*/\1/p" /work/ctest.log | paste -sd " " -)"
-  # By name: --rerun-failed goes by test number, and CTest numbers the tests
-  # within the -E selection, so it would rerun different tests.
-  if ! smoke -R "^($(printf "%s" "$failed" | tr " " "|"))\$" --output-on-failure \
-      >/work/ctest-rerun.log 2>&1; then
-    echo "$first"
-    sed -n "/The following tests FAILED/,/^Errors while running/p" /work/ctest-rerun.log
-    echo "==> Linux gate: SMOKE TESTS FAILED ($(stamp)); logs in volume '"$VOLUME"' under /work"
-    exit 1
-  fi
-  rerun="$(grep -cE "^ *[0-9]+/[0-9]+ Test +#" /work/ctest-rerun.log || true)"
-  if [ "$rerun" -lt "$(printf "%s\n" $failed | grep -c .)" ]; then
-    echo "==> Linux gate: SMOKE TESTS FAILED: the rerun ran $rerun test(s) for: $failed"
-    exit 1
-  fi
-  echo "==> Linux gate: $first; passed when rerun alone: $failed"
-fi
-echo "==> Linux gate: smoke tests passed, $(grep -E "tests passed" /work/ctest.log | sed "s/.*out of //") run ($(stamp))"'
+# The smoke run, and a rerun of what failed in it: scripts/linux-gate-smoke.sh
+# (mounted from beside this script, so the two always match). The lock stays
+# held: fd 9 is inherited.
+GATE_SECONDS=$SECONDS exec bash /gate/smoke.sh'
 
 # --init: a signal to this script (the macOS stage failed) stops the container.
 exec docker run --rm --init --platform "linux/$ARCH" \
     -e JOBS="${JOBS:-}" -e RUN_TESTS="${NOSTRC_GATE_LINUX_TESTS:-1}" \
     -e STRICT_CFLAGS="$STRICT_CFLAGS" -e SMOKE_EXCLUDE="$SMOKE_EXCLUDE" \
-    -v "$SOURCE:/src:ro" -v "$VOLUME:/work" "$IMAGE" \
+    -e VOLUME="$VOLUME" \
+    -v "$SOURCE:/src:ro" -v "$SCRIPTS/linux-gate-smoke.sh:/gate/smoke.sh:ro" \
+    -v "$VOLUME:/work" "$IMAGE" \
     bash -c 'JOBS="${JOBS:-$(nproc)}"; '"$CMD"
 }
