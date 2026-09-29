@@ -35,6 +35,7 @@ target_include_directories(nostr_testing
         ${CMAKE_SOURCE_DIR}/libgo/include
         ${LWS_INCLUDE_DIRS}
     PRIVATE
+        ${CMAKE_SOURCE_DIR}/libnostr/src
         ${NSYNC_INCLUDE_DIR}
         ${SECP256K1_INCLUDE_DIRS}
 )

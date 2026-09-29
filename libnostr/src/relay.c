@@ -614,7 +614,7 @@ static void relay_free_impl(NostrRelay *relay) {
             nsync_mu_unlock(&conn->priv->mutex);
         }
         nostr_connection_close(conn);
-        if (recv_ch) go_channel_free(recv_ch);
+        if (recv_ch) nostr_connection_recv_channel_free(recv_ch);
         if (send_ch) go_channel_free(send_ch);
     }
 
@@ -692,7 +692,7 @@ static void relay_discard_failed_connection(NostrRelay *relay) {
     }
 
     nostr_connection_close(conn);
-    if (recv_ch) go_channel_free(recv_ch);
+    if (recv_ch) nostr_connection_recv_channel_free(recv_ch);
     if (send_ch) go_channel_free(send_ch);
 }
 
@@ -1966,7 +1966,7 @@ bool nostr_relay_close(NostrRelay *r, Error **err) {
     // Queue WSI shutdown on the service thread.
     nostr_connection_close(conn);
     // Release the relay's channel refs; callbacks retain their own refs.
-    if (recv_ch) go_channel_free(recv_ch);
+    if (recv_ch) nostr_connection_recv_channel_free(recv_ch);
     if (send_ch) go_channel_free(send_ch);
     return true;
 }

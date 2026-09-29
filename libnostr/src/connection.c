@@ -52,6 +52,56 @@ static void conn_set_writable_pending_locked(NostrConnectionPrivate *priv, int p
     }
 }
 
+/* nostrc-lpvj: Queue a received frame on conn->recv_channel.
+ *
+ * Each try_send runs under priv->mutex, and only while conn->recv_channel
+ * still names a live, open channel.  Owners detach the channel by setting
+ * conn->recv_channel to NULL under the same mutex (relay.c) before they
+ * release it, so once detached no frame can join it: what
+ * nostr_connection_recv_channel_free() drains then is everything that will
+ * ever be queued there, and nothing is left to leak.  (It used to take a
+ * channel ref under the mutex and send after dropping it; a frame sent after
+ * the owner's detach was never freed.)
+ *
+ * Lock order: priv->mutex, then the channel's own.  try_send never blocks,
+ * and nothing takes priv->mutex while holding a channel lock.  Non-blocking:
+ * the lws service thread serves every connection, so a full channel is
+ * retried a few times with brief yields (outside the mutex) and the frame is
+ * then dropped (nostrc-j6h1, nostrc-8zpc).
+ *
+ * Returns 0 when queued, 1 when the channel stayed full, -1 when it is
+ * detached or closed.  The caller frees msg unless it was queued. */
+static int recv_channel_enqueue(NostrConnection *conn, NostrConnectionPrivate *priv,
+                                WebSocketMessage *msg) {
+    for (int attempt = 0; attempt <= 10; attempt++) {
+        if (attempt > 0) sched_yield();
+        int rc;
+        nsync_mu_lock(&priv->mutex);
+        GoChannel *chan = conn->recv_channel;
+        if (!chan || chan->magic != GO_CHANNEL_MAGIC || go_channel_is_closed(chan))
+            rc = -1;
+        else
+            rc = go_channel_try_send(chan, msg) == 0 ? 0 : 1;
+        nsync_mu_unlock(&priv->mutex);
+        if (rc <= 0) return rc;
+    }
+    return 1;
+}
+
+void nostr_connection_recv_channel_free(GoChannel *chan) {
+    if (!chan) return;
+    void *item = NULL;
+    while (go_channel_try_receive(chan, &item) == 0) {
+        WebSocketMessage *msg = item;
+        if (msg) {
+            free(msg->data);
+            free(msg);
+        }
+        item = NULL;
+    }
+    go_channel_free(chan);
+}
+
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
     (void)user; // not used; use opaque user data API
@@ -154,75 +204,28 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         len = priv->rx_reassembly_len;
 
 queue_message:;
-        /* nostrc-uaf-lws: CRITICAL — Acquire recv_channel ref under priv->mutex.
-         *
-         * The relay close path NULLs conn->recv_channel under priv->mutex
-         * before freeing the channel.  By reading the pointer under the same
-         * mutex and taking a reference, we guarantee the channel won't be
-         * freed while we're using it.  After we're done, we unref to release
-         * our hold.  If the relay has already NULLed the pointer, we see NULL
-         * and bail cleanly. */
-        GoChannel *recv_chan = NULL;
-        nsync_mu_lock(&priv->mutex);
-        recv_chan = conn->recv_channel;
-        if (recv_chan && recv_chan->magic == GO_CHANNEL_MAGIC) {
-            go_channel_ref(recv_chan);
-        } else {
-            recv_chan = NULL;
-        }
-        nsync_mu_unlock(&priv->mutex);
-        if (!recv_chan) {
-            priv->rx_reassembly_len = 0;
-            priv_unref(priv);
-            return 0;
-        }
         // Allocate a copy buffer and queue as a WebSocketMessage
         WebSocketMessage *msg = (WebSocketMessage*)malloc(sizeof(WebSocketMessage));
-        if (!msg) { go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; priv_unref(priv); return -1; }
+        if (!msg) { priv->rx_reassembly_len = 0; priv_unref(priv); return -1; }
         msg->length = len;
         msg->data = (char*)malloc(len + 1);
-        if (!msg->data) { free(msg); go_channel_unref(recv_chan); priv->rx_reassembly_len = 0; priv_unref(priv); return -1; }
+        if (!msg->data) { free(msg); priv->rx_reassembly_len = 0; priv_unref(priv); return -1; }
         memcpy(msg->data, in, len);
         msg->data[len] = '\0';
         // Reset reassembly state
         priv->rx_reassembly_len = 0;
-        // Non-blocking send: the lws service thread is shared across ALL
-        // connections. A blocking send here would freeze the entire app if
-        // the consumer (message_loop) falls behind. (nostrc-j6h1)
-        if (go_channel_try_send(recv_chan, msg) != 0) {
-            // Channel full — retry a few times with brief yields before dropping.
-            // With proper reassembly, channel pressure is much lower since we
-            // queue 1 complete message instead of N fragments. (nostrc-8zpc)
-            int retries = 10;
-            while (retries-- > 0) {
-                sched_yield();
-                /* nostrc-uaf-lws: We hold a ref on recv_chan, so the channel
-                 * struct can't be freed.  But if it's been closed (by relay
-                 * teardown), try_send will fail — which is the correct behavior.
-                 * Check closed to bail early without burning retries. */
-                if (go_channel_is_closed(recv_chan)) {
-                    free(msg->data);
-                    free(msg);
-                    goto send_done;
-                }
-                if (go_channel_try_send(recv_chan, msg) == 0) {
-                    goto send_ok;
-                }
+        int queued = recv_channel_enqueue(conn, priv, msg);
+        if (queued == 0) {
+            nostr_metric_counter_add("ws_rx_enqueued_bytes", (uint64_t)len);
+            nostr_metric_counter_add("ws_rx_enqueued_messages", 1);
+        } else {
+            if (queued > 0) {
+                nostr_metric_counter_add("ws_rx_drop_full", 1);
+                nostr_rl_log(NLOG_WARN, "ws", "drop: recv_channel full after retries (len=%zu)", len);
             }
-            nostr_metric_counter_add("ws_rx_drop_full", 1);
-            nostr_rl_log(NLOG_WARN, "ws", "drop: recv_channel full after retries (len=%zu)", len);
             free(msg->data);
             free(msg);
-            go_channel_unref(recv_chan);
-            priv_unref(priv);
-            break;
         }
-send_ok:
-        // Metrics
-        nostr_metric_counter_add("ws_rx_enqueued_bytes", (uint64_t)len);
-        nostr_metric_counter_add("ws_rx_enqueued_messages", 1);
-send_done:
-        go_channel_unref(recv_chan);
         priv_unref(priv);
         break;
     }
@@ -1170,7 +1173,7 @@ NostrConnection *nostr_connection_new(const char *url) {
 
 fail:
     /* The shared context stays up (see g_lws_context). */
-    if (conn->recv_channel) { go_channel_close(conn->recv_channel); go_channel_free(conn->recv_channel); }
+    if (conn->recv_channel) { go_channel_close(conn->recv_channel); nostr_connection_recv_channel_free(conn->recv_channel); }
     if (conn->send_channel) { go_channel_close(conn->send_channel); go_channel_free(conn->send_channel); }
     free(priv);
     free(conn);

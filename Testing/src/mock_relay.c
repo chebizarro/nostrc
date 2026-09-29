@@ -9,6 +9,7 @@
 
 #include "nostr/testing/mock_relay.h"
 #include "nostr-connection.h"
+#include "connection-private.h" /* WebSocketMessage: recv_channel element */
 #include "go.h"
 #include "select.h"
 
@@ -639,12 +640,21 @@ static int send_response(NostrMockRelay *mock, const char *json) {
         usleep(mock->config.response_delay_ms * 1000);
     }
 
-    /* Create a copy of the message for the channel */
-    char *msg_copy = strdup(json);
-    if (!msg_copy) return -1;
+    /* The connection's recv_channel carries WebSocketMessages, as
+     * websocket_callback queues them: nostr_connection_read_message() reads
+     * one, and releasing the channel frees the unread ones (nostrc-lpvj). */
+    WebSocketMessage *msg = malloc(sizeof *msg);
+    if (!msg) return -1;
+    msg->length = strlen(json);
+    msg->data = strdup(json);
+    if (!msg->data) {
+        free(msg);
+        return -1;
+    }
 
-    if (go_channel_try_send(mock->recv_channel, msg_copy) != 0) {
-        free(msg_copy);
+    if (go_channel_try_send(mock->recv_channel, msg) != 0) {
+        free(msg->data);
+        free(msg);
         return -1;
     }
 

@@ -62,4 +62,14 @@ typedef struct WebSocketMessage {
     size_t length;
 } WebSocketMessage;
 
+/* nostrc-lpvj: Frees the WebSocketMessages still queued in a recv_channel,
+ * then releases the caller's reference (go_channel_free).  Only for a channel
+ * already detached from its connection (conn->recv_channel set to NULL under
+ * conn->priv->mutex): the LWS callback queues frames only under that mutex
+ * and only to an attached channel, so nothing can join it afterwards.
+ * Every owner that releases a connection's recv_channel uses this instead of
+ * go_channel_free(), or the frames the relay had not read yet leak. */
+struct GoChannel;
+void nostr_connection_recv_channel_free(struct GoChannel *chan);
+
 #endif // CONNECTION_PRIVATE_H

@@ -39,6 +39,3 @@ leak:nostr_subscription_dispatch_closed
 # gone first (a relay torn down with a write in flight, e.g. the AUTH or
 # EVENT of a publish that just ended), neither is ever freed.
 leak:write_operations
-# libnostr: WebSocketMessages left in a closing connection's recv_channel are
-# never drained (nostrc-lpvj). The only allocations in websocket_callback.
-leak:^websocket_callback$
