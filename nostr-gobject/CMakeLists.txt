@@ -15,7 +15,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 2)
 set(NOSTR_GOBJECT_MINOR_VERSION 0)
-set(NOSTR_GOBJECT_MICRO_VERSION 1)
+set(NOSTR_GOBJECT_MICRO_VERSION 2)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
   ${NOSTR_GOBJECT_MINOR_VERSION}
@@ -422,6 +422,17 @@ if(BUILD_TESTING)
       SOURCES tests/test_relay_connect.c
       LIBS nostr_gobject nostr_testing
       TIMEOUT 60
+    )
+  endif()
+
+  # nostrc-qp24.10.6: every stored EVENT is emitted before EOSE, over a
+  # real socket, many REQs in a row. The relay is a local libsoup server.
+  pkg_check_modules(NOSTR_GOBJECT_TEST_SOUP QUIET IMPORTED_TARGET libsoup-3.0)
+  if(TARGET PkgConfig::NOSTR_GOBJECT_TEST_SOUP)
+    gn_add_gtest(test_nostr_gobject_subscription_eose_order
+      SOURCES tests/test_subscription_eose_order.c
+      LIBS nostr_gobject PkgConfig::NOSTR_GOBJECT_TEST_SOUP
+      TIMEOUT 120
     )
   endif()
 

@@ -84,11 +84,13 @@ struct _GNostrSubscription {
     GThread *monitor_thread;
     gboolean monitor_running;             /* atomic flag */
 
-    /* Batched event delivery to main thread (nostrc-mzab).
-     * The monitor thread appends serialized event JSONs to event_queue
-     * and a single coalescing idle source drains them in chunks. */
+    /* Batched, ordered delivery to main thread (nostrc-mzab,
+     * nostrc-qp24.10.6).  The monitor thread appends EVENT/EOSE/CLOSED
+     * items to event_queue and a single coalescing idle source drains
+     * them in chunks, in order. */
     GMutex event_queue_mutex;
-    GPtrArray *event_queue;               /* pending event JSON strings (char*) */
+    GPtrArray *event_queue;               /* pending SubItem*, in arrival order */
+    guint queued_events;                  /* SUB_ITEM_EVENT entries in event_queue */
     gboolean event_idle_scheduled;        /* TRUE while drain idle is pending */
 };
 
@@ -122,23 +124,70 @@ gnostr_subscription_set_state_internal(GNostrSubscription *self,
         g_object_notify_by_pspec(G_OBJECT(self), obj_properties[PROP_ACTIVE]);
 }
 
-/* --- Monitor thread signal emission data --- */
+/* --- Ordered delivery to the main thread --- */
+
+/* nostrc-qp24.10.6: EVENT, EOSE and CLOSED share one FIFO so they reach the
+ * main loop in the order the relay sent them.  libnostr hands them over on
+ * three separate channels, and they used to be delivered by separate idle
+ * sources at different priorities (EOSE at DEFAULT, events at DEFAULT_IDLE),
+ * so an EOSE could be emitted before stored events received ahead of it —
+ * breaking every one-shot "fetch until EOSE" consumer. */
+typedef enum {
+    SUB_ITEM_EVENT,
+    SUB_ITEM_EOSE,
+    SUB_ITEM_CLOSED,
+} SubItemKind;
 
 typedef struct {
-    GNostrSubscription *self;
-} EoseSignalData;
+    SubItemKind kind;
+    gchar *text;        /* EVENT: serialized event JSON; CLOSED: reason or NULL */
+} SubItem;
 
-typedef struct {
-    GNostrSubscription *self;
-    gchar *reason;
-} ClosedSignalData;
+static void
+sub_item_free(SubItem *item)
+{
+    if (!item) return;
+    g_free(item->text);
+    g_free(item);
+}
 
-/* nostrc-mzab / nostrc-75o3: Batched event drain with adaptive frame-time
- * guard.  Processes up to MAX_EVENTS_PER_TICK events per main loop
- * iteration, but checks elapsed wall-clock time every DRAIN_BATCH_CHECK
- * events and yields early if over DRAIN_TIME_BUDGET_US.  This drains
- * faster than the old fixed-20 limit while respecting GTK's 16.6 ms
+/* Emits one queued item on the main thread.  "closed" is terminal: once the
+ * subscription is CLOSED (the relay's CLOSED, or gnostr_subscription_close()
+ * from a handler), a later EOSE or CLOSED item must not move the state back
+ * or announce a second close. */
+static void
+emit_item(GNostrSubscription *self, SubItem *item)
+{
+    switch (item->kind) {
+    case SUB_ITEM_EVENT:
+        __atomic_add_fetch(&self->event_count, 1, __ATOMIC_SEQ_CST);
+        g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_EVENT], 0, item->text);
+        break;
+    case SUB_ITEM_EOSE:
+        if (self->state == GNOSTR_SUBSCRIPTION_STATE_CLOSED)
+            break;
+        gnostr_subscription_set_state_internal(self, GNOSTR_SUBSCRIPTION_STATE_EOSE_RECEIVED);
+        g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_EOSE], 0);
+        break;
+    case SUB_ITEM_CLOSED:
+        if (self->state == GNOSTR_SUBSCRIPTION_STATE_CLOSED)
+            break;
+        gnostr_subscription_set_state_internal(self, GNOSTR_SUBSCRIPTION_STATE_CLOSED);
+        g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_CLOSED], 0, item->text);
+        break;
+    }
+}
+
+/* nostrc-mzab / nostrc-75o3: Batched drain with adaptive frame-time
+ * guard.  Emits up to MAX_EVENTS_PER_TICK items per main loop iteration,
+ * but checks elapsed wall-clock time every DRAIN_BATCH_CHECK items and
+ * yields early if over DRAIN_TIME_BUDGET_US, respecting GTK's 16.6 ms
  * frame budget.
+ *
+ * Items are popped one at a time and event_idle_scheduled stays TRUE until
+ * this source sees the queue empty, so there is only ever one drain source
+ * per subscription: even a handler that iterates the main context cannot
+ * get a later item emitted ahead of an earlier one (nostrc-qp24.10.6).
  *
  * Uses G_PRIORITY_DEFAULT_IDLE (200) so UI painting (priority 120) and
  * input events (priority 0) always take precedence over event ingestion. */
@@ -146,69 +195,29 @@ static gboolean
 drain_event_queue_on_main(gpointer data)
 {
     GNostrSubscription *self = GNOSTR_SUBSCRIPTION(data);
-
-    /* Steal up to MAX_EVENTS_PER_TICK events from the queue */
-    g_mutex_lock(&self->event_queue_mutex);
-    guint avail = self->event_queue->len;
-    guint n = MIN(avail, MAX_EVENTS_PER_TICK);
-
-    gchar **batch = NULL;
-    if (n > 0) {
-        batch = g_new(gchar *, n);
-        for (guint i = 0; i < n; i++)
-            batch[i] = g_ptr_array_index(self->event_queue, i);
-        g_ptr_array_remove_range(self->event_queue, 0, n);
-    }
-
-    gboolean more = (self->event_queue->len > 0);
-    if (!more)
-        self->event_idle_scheduled = FALSE;
-    g_mutex_unlock(&self->event_queue_mutex);
-
-    /* Emit signals outside lock with frame-time guard (nostrc-75o3).
-     * After every DRAIN_BATCH_CHECK emissions, sample the monotonic
-     * clock.  If we have exceeded DRAIN_TIME_BUDGET_US, stop emitting
-     * and return the un-emitted tail to the queue so the next idle
-     * iteration picks them up. */
     gint64 t_start = g_get_monotonic_time();
-    guint emitted = 0;
 
-    for (guint i = 0; i < n; i++) {
-        __atomic_add_fetch(&self->event_count, 1, __ATOMIC_SEQ_CST);
-        g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_EVENT], 0,
-                      batch[i]);
-        g_free(batch[i]);
-        batch[i] = NULL;
-        emitted++;
-
-        /* Check frame budget every DRAIN_BATCH_CHECK events */
-        if (emitted % DRAIN_BATCH_CHECK == 0 && i + 1 < n) {
-            gint64 elapsed = g_get_monotonic_time() - t_start;
-            if (elapsed > DRAIN_TIME_BUDGET_US) {
-                /* Return un-emitted events to the front of the queue */
-                guint remaining = n - (i + 1);
-                if (remaining > 0) {
-                    g_mutex_lock(&self->event_queue_mutex);
-                    /* Prepend remaining events back to the queue */
-                    for (guint j = 0; j < remaining; j++) {
-                        g_ptr_array_insert(self->event_queue, (gint)j,
-                                           batch[i + 1 + j]);
-                        batch[i + 1 + j] = NULL;
-                    }
-                    more = TRUE;
-                    g_mutex_unlock(&self->event_queue_mutex);
-                }
-                break;
-            }
+    for (guint emitted = 0;; emitted++) {
+        g_mutex_lock(&self->event_queue_mutex);
+        if (self->event_queue->len == 0) {
+            self->event_idle_scheduled = FALSE;
+            g_mutex_unlock(&self->event_queue_mutex);
+            return G_SOURCE_REMOVE; /* destroy notify unrefs self */
         }
+        if (emitted >= MAX_EVENTS_PER_TICK ||
+            (emitted > 0 && emitted % DRAIN_BATCH_CHECK == 0 &&
+             g_get_monotonic_time() - t_start > DRAIN_TIME_BUDGET_US)) {
+            g_mutex_unlock(&self->event_queue_mutex);
+            return G_SOURCE_CONTINUE; /* yield to the main loop */
+        }
+        SubItem *item = g_ptr_array_steal_index(self->event_queue, 0);
+        if (item->kind == SUB_ITEM_EVENT)
+            self->queued_events--;
+        g_mutex_unlock(&self->event_queue_mutex);
+
+        emit_item(self, item);
+        sub_item_free(item);
     }
-    g_free(batch);
-
-    if (more)
-        return G_SOURCE_CONTINUE;
-
-    /* No more events — remove the idle source (destroy notify unrefs self) */
-    return G_SOURCE_REMOVE;
 }
 
 static void
@@ -217,26 +226,31 @@ drain_event_queue_destroy(gpointer data)
     g_object_unref(GNOSTR_SUBSCRIPTION(data));
 }
 
+/* Appends @item to the ordered queue (monitor thread). */
 static void
-queue_event_for_main(GNostrSubscription *self, NostrEvent *ev)
+queue_item_for_main(GNostrSubscription *self, SubItem *item)
 {
-    if (!ev) return;
-    char *json = nostr_event_serialize(ev);
-    nostr_event_free(ev);
-    if (!json) return;
-
     g_mutex_lock(&self->event_queue_mutex);
 
-    /* nostrc-75o3: Bound event queue — drop oldest when at capacity.
-     * NDB persistence already stores all events via the ingest path, so
-     * UI-level drops are safe; the UI will catch up on the next query. */
-    while (self->event_queue->len >= EVENT_QUEUE_CAPACITY) {
-        gchar *oldest = g_ptr_array_index(self->event_queue, 0);
-        g_free(oldest);
-        g_ptr_array_remove_index(self->event_queue, 0);
+    if (item->kind == SUB_ITEM_EVENT) {
+        /* nostrc-75o3: Bound the queue — drop the oldest *event* when at
+         * capacity.  NDB persistence already stores all events via the
+         * ingest path, so UI-level drops are safe; the UI will catch up on
+         * the next query.  EOSE/CLOSED markers are never dropped. */
+        while (self->queued_events >= EVENT_QUEUE_CAPACITY) {
+            guint i = 0;
+            while (i < self->event_queue->len &&
+                   ((SubItem *)g_ptr_array_index(self->event_queue, i))->kind != SUB_ITEM_EVENT)
+                i++;
+            if (i == self->event_queue->len)
+                break; /* unreachable: queued_events counts events in the queue */
+            sub_item_free(g_ptr_array_steal_index(self->event_queue, i));
+            self->queued_events--;
+        }
+        self->queued_events++;
     }
 
-    g_ptr_array_add(self->event_queue, json);
+    g_ptr_array_add(self->event_queue, item);
     if (!self->event_idle_scheduled) {
         self->event_idle_scheduled = TRUE;
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
@@ -247,34 +261,66 @@ queue_event_for_main(GNostrSubscription *self, NostrEvent *ev)
     g_mutex_unlock(&self->event_queue_mutex);
 }
 
-static gboolean
-emit_eose_on_main(gpointer data)
+static void
+queue_event_for_main(GNostrSubscription *self, NostrEvent *ev)
 {
-    EoseSignalData *sdata = data;
-    GNostrSubscription *self = sdata->self;
+    if (!ev) return;
+    char *json = nostr_event_serialize(ev);
+    nostr_event_free(ev);
+    if (!json) return;
 
-    gnostr_subscription_set_state_internal(self, GNOSTR_SUBSCRIPTION_STATE_EOSE_RECEIVED);
-    g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_EOSE], 0);
-
-    g_object_unref(self);
-    g_free(sdata);
-    return G_SOURCE_REMOVE;
+    SubItem *item = g_new(SubItem, 1);
+    item->kind = SUB_ITEM_EVENT;
+    item->text = json; /* g_free-compatible, as before */
+    queue_item_for_main(self, item);
 }
 
-static gboolean
-emit_closed_on_main(gpointer data)
+/* Moves every event already in the core events channel into the queue. */
+static void
+queue_pending_events(GNostrSubscription *self, GoChannel *ch_events)
 {
-    ClosedSignalData *sdata = data;
-    GNostrSubscription *self = sdata->self;
+    void *msg = NULL;
+    while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
+        if (msg)
+            queue_event_for_main(self, (NostrEvent *)msg);
+        msg = NULL;
+    }
+}
 
-    gnostr_subscription_set_state_internal(self, GNOSTR_SUBSCRIPTION_STATE_CLOSED);
-    g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_CLOSED], 0,
-                  sdata->reason);
+/* Queues an EOSE (or CLOSED) received from the core channels.
+ *
+ * Ordering argument (nostrc-qp24.10.6): the relay reader thread dispatches
+ * frames one at a time in wire order, so every EVENT received before this
+ * EOSE was pushed onto ch_events before the EOSE was pushed onto its own
+ * channel.  Having received the EOSE, those events are therefore already in
+ * ch_events (or were taken earlier and are queued); draining ch_events first
+ * puts all of them ahead of the marker.  An event that arrived just after
+ * the EOSE may also be drained ahead of it, which is harmless: it can only
+ * make the stored set look larger, never smaller. */
+static void
+queue_eose_for_main(GNostrSubscription *self, GoChannel *ch_events)
+{
+    queue_pending_events(self, ch_events);
+    SubItem *item = g_new0(SubItem, 1);
+    item->kind = SUB_ITEM_EOSE;
+    queue_item_for_main(self, item);
+}
 
-    g_free(sdata->reason);
-    g_object_unref(self);
-    g_free(sdata);
-    return G_SOURCE_REMOVE;
+/* A CLOSED ends the core subscription: queue the events before it and any
+ * pending EOSE (a relay cannot send EOSE after CLOSED for the same REQ, so a
+ * queued EOSE came first), then the CLOSED itself.  Takes @reason. */
+static void
+queue_closed_for_main(GNostrSubscription *self, GoChannel *ch_events,
+                      GoChannel *ch_eose, char *reason)
+{
+    while (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
+        queue_eose_for_main(self, ch_events);
+    queue_pending_events(self, ch_events);
+    SubItem *item = g_new0(SubItem, 1);
+    item->kind = SUB_ITEM_CLOSED;
+    item->text = reason ? g_strdup(reason) : NULL;
+    free(reason); /* strdup'd by nostr_subscription_dispatch_closed */
+    queue_item_for_main(self, item);
 }
 
 /* --- Monitor thread --- */
@@ -283,7 +329,11 @@ emit_closed_on_main(gpointer data)
  * post-registration double-check, which fixes the historical missed-wakeup
  * race that forced this monitor to poll every 1ms.  Use a blocking select
  * with a bounded timeout so cancellation via monitor_running is still seen
- * promptly even if a channel close is delayed. */
+ * promptly even if a channel close is delayed.
+ *
+ * go_select picks randomly among ready cases, so the case chosen says
+ * nothing about arrival order; queue_eose_for_main() and
+ * queue_closed_for_main() restore it (nostrc-qp24.10.6). */
 static gpointer
 subscription_monitor_thread(gpointer data)
 {
@@ -328,41 +378,23 @@ subscription_monitor_thread(gpointer data)
         case CASE_EVENTS:
             queue_event_for_main(self, (NostrEvent *)selected_event);
             break;
-        case CASE_EOSE: {
-            EoseSignalData *sdata = g_new(EoseSignalData, 1);
-            sdata->self = g_object_ref(self);
-            g_idle_add_full(G_PRIORITY_DEFAULT, emit_eose_on_main, sdata, NULL);
+        case CASE_EOSE:
+            queue_eose_for_main(self, ch_events);
             break;
-        }
-        case CASE_CLOSED: {
-            ClosedSignalData *sdata = g_new(ClosedSignalData, 1);
-            sdata->self = g_object_ref(self);
-            sdata->reason = selected_reason ? g_strdup((const char *)selected_reason) : NULL;
-            g_idle_add_full(G_PRIORITY_DEFAULT, emit_closed_on_main, sdata, NULL);
+        case CASE_CLOSED:
+            queue_closed_for_main(self, ch_events, ch_eose, (char *)selected_reason);
             goto monitor_done;
-        }
         }
 
         /* Drain any burst that arrived with the selected item. */
-        void *msg = NULL;
-        while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-            if (msg)
-                queue_event_for_main(self, (NostrEvent *)msg);
-            msg = NULL;
-        }
+        queue_pending_events(self, ch_events);
 
-        while (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-            EoseSignalData *sdata = g_new(EoseSignalData, 1);
-            sdata->self = g_object_ref(self);
-            g_idle_add_full(G_PRIORITY_DEFAULT, emit_eose_on_main, sdata, NULL);
-        }
+        while (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
+            queue_eose_for_main(self, ch_events);
 
         void *reason = NULL;
         if (ch_closed && go_channel_try_receive(ch_closed, &reason) == 0) {
-            ClosedSignalData *sdata = g_new(ClosedSignalData, 1);
-            sdata->self = g_object_ref(self);
-            sdata->reason = reason ? g_strdup((const char *)reason) : NULL;
-            g_idle_add_full(G_PRIORITY_DEFAULT, emit_closed_on_main, sdata, NULL);
+            queue_closed_for_main(self, ch_events, ch_eose, (char *)reason);
             break;
         }
     }
@@ -508,7 +540,7 @@ gnostr_subscription_finalize(GObject *object)
     g_mutex_lock(&self->event_queue_mutex);
     if (self->event_queue) {
         for (guint i = 0; i < self->event_queue->len; i++)
-            g_free(g_ptr_array_index(self->event_queue, i));
+            sub_item_free(g_ptr_array_index(self->event_queue, i));
         g_ptr_array_free(self->event_queue, TRUE);
         self->event_queue = NULL;
     }
@@ -648,6 +680,7 @@ gnostr_subscription_init(GNostrSubscription *self)
     /* nostrc-mzab: Batched event queue */
     g_mutex_init(&self->event_queue_mutex);
     self->event_queue = g_ptr_array_new();
+    self->queued_events = 0;
     self->event_idle_scheduled = FALSE;
 }
 

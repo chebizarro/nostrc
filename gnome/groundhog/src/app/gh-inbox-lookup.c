@@ -231,18 +231,15 @@ complete_now(gpointer data)
 }
 
 /* Completion is deferred to the owning context so the scope is never torn
- * down from inside one of its own transport callbacks, and runs at low
- * priority: the gnostr transport dispatches EOSE at default priority but
- * stored EVENTs from a default-idle queue, so an EOSE can overtake events that
- * were received before it. Those drain first; a cross-thread window remains
- * until the transport orders them (nostrc-qp24.10.6). */
+ * down from inside one of its own transport callbacks. Every stored EVENT a
+ * source sent before its EOSE has already been admitted by then: the transport
+ * delivers a subscription's EVENTs and EOSE in order (nostrc-qp24.10.6). */
 static void
 schedule_completion(Lookup *lookup)
 {
   if (lookup->completion || !lookup->task)
     return;
   lookup->completion = g_idle_source_new();
-  g_source_set_priority(lookup->completion, G_PRIORITY_LOW);
   g_source_set_callback(lookup->completion, complete_now, lookup, NULL);
   g_source_attach(lookup->completion, lookup->context);
 }

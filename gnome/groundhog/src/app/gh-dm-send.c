@@ -428,9 +428,8 @@ own_inbox_status(GhDmSend *self)
 
 static void on_account_relays_changed(GhAccountRelays *relays, gpointer data);
 
-/* Runs at low priority: the gnostr transport dispatches EOSE at default
- * priority but stored EVENTs from a default-idle queue, so the EOSE that
- * settles the own lists can overtake the own 10050 list (nostrc-qp24.10.6). */
+/* The own lists settle at their EOSE, which the transport delivers after the
+ * stored events before it (nostrc-qp24.10.6), so the own 10050 list is in. */
 static gboolean
 own_relays_ready(gpointer data)
 {
@@ -460,7 +459,7 @@ on_account_relays_changed(GhAccountRelays *relays, gpointer data)
     return;
   g_signal_handler_disconnect(self->sender->account_relays, self->relays_handler);
   self->relays_handler = 0;
-  schedule(self, G_PRIORITY_LOW, own_relays_ready);
+  schedule(self, G_PRIORITY_DEFAULT, own_relays_ready);
 }
 
 /* Continues with next once the own relay lists of this generation have
@@ -470,7 +469,7 @@ await_own_relays(GhDmSend *self, void (*next)(GhDmSend *self))
 {
   self->after_relays = next;
   if (own_relays_settled(self)) {
-    schedule(self, G_PRIORITY_LOW, own_relays_ready);
+    schedule(self, G_PRIORITY_DEFAULT, own_relays_ready);
     return;
   }
   self->relays_handler = g_signal_connect(self->sender->account_relays, "changed",

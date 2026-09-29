@@ -840,16 +840,15 @@ fetch_complete(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
-/* Deferred to a low-priority idle so an EOSE never overtakes stored events
- * still queued behind it (see gh-inbox-lookup.c), and the scope is never torn
- * down from inside its own callback. */
+/* Deferred to an idle so the scope is never torn down from inside its own
+ * callback. The transport delivers each source's stored events before its
+ * EOSE (nostrc-qp24.10.6), so none is still pending at completion. */
 static void
 schedule_completion(Fetch *fetch)
 {
   if (fetch->completion)
     return;
   fetch->completion = g_idle_source_new();
-  g_source_set_priority(fetch->completion, G_PRIORITY_LOW);
   g_source_set_callback(fetch->completion, fetch_complete, fetch, NULL);
   g_source_attach(fetch->completion, g_main_context_get_thread_default());
 }

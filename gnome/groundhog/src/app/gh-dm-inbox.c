@@ -568,18 +568,15 @@ event_created_at(const gchar *event_json)
 
 static gboolean settle_now(gpointer data);
 
-/* EOSEs are judged from a low-priority idle: the gnostr transport dispatches
- * EOSE at default priority but stored EVENTs from a default-idle queue, so an
- * EOSE can overtake events received before it. Those are counted first; a
- * cross-thread window remains until the transport orders them
- * (nostrc-qp24.10.6). */
+/* EOSEs are judged from an idle, outside the transport callback. The
+ * transport delivers a subscription's EVENTs before its EOSE
+ * (nostrc-qp24.10.6), so the page's stored events have all been counted. */
 static void
 schedule_settle(Endpoint *endpoint)
 {
   if (endpoint->settle)
     return;
   endpoint->settle = g_idle_source_new();
-  g_source_set_priority(endpoint->settle, G_PRIORITY_LOW);
   g_source_set_callback(endpoint->settle, settle_now, endpoint, NULL);
   g_source_attach(endpoint->settle, g_main_context_get_thread_default());
 }

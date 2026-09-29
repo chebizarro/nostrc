@@ -1503,11 +1503,8 @@ inbox_accept(WireRelay *relay, SoupWebsocketConnection *connection,
 
 /* Both wraps travel over real WebSockets (GNostrRelay publish transport) to
  * two local relays, each of which must receive exactly its own receiver's
- * wrap. The 10050 REQs use the recording scope transport: over GNostrRelay an
- * EOSE can currently overtake a stored EVENT (nostr-gobject dispatches EOSE
- * at a higher priority, and libgo's select picks ready channels at random),
- * which would make a real-REQ lookup nondeterministic here (nostrc-qp24.10.6).
- * The real REQ path is exercised by groundhog-account-relays' wire test. */
+ * wrap. The 10050 REQs use the recording scope transport so the lookup's
+ * answer is scripted; the real REQ path is test_wire_lookup below. */
 static void
 test_wire_publish(void)
 {
@@ -1566,6 +1563,102 @@ test_wire_publish(void)
   g_ptr_array_unref(bob_log.ids);
   g_ptr_array_unref(alice_log.ids);
 }
+
+typedef struct {
+  GhInboxResult *result;
+  GError *error;
+  gboolean done;
+} LookupWait;
+
+static void
+on_lookup_done(GObject *source, GAsyncResult *res, gpointer data)
+{
+  LookupWait *wait = data;
+  wait->result = gh_inbox_resolver_resolve_finish(GH_INBOX_RESOLVER(source), res,
+                                                  &wait->error);
+  wait->done = TRUE;
+}
+
+static gboolean
+lookup_waited(gpointer data)
+{
+  return ((LookupWait *)data)->done;
+}
+
+#define WIRE_LOOKUP_ROUNDS 100
+
+/* nostrc-qp24.10.6: GhInboxLookup over its real transport (GhRelayScope ->
+ * GNostrSubscription -> libnostr -> a WebSocket) against a store-and-serve
+ * relay that answers the REQ with the recipient's 10050 list and EOSE in one
+ * burst. The lookup completes at EOSE, so every round must find the list:
+ * before the fix nostr-gobject could emit EOSE ahead of the stored event and
+ * real-socket lookups reported NOT_FOUND ("hasn't set up private
+ * messaging"). The list is the whole burst, as for a typical recipient: the
+ * race lost the event just before EOSE. Many rounds, each a fresh REQ on a
+ * fresh socket, since the old failure was a race. */
+static void
+test_wire_lookup(void)
+{
+  WireRelay relay = { .serve = TRUE };
+  relay_init(&relay);
+  gchar *list_id = NULL;
+  g_autofree gchar *list = inbox_list_id(SECRET_BOB, 1000, &list_id, BOB_A, BOB_B, NULL);
+  wire_relay_inject(&relay, list);
+  /* Someone else's list is kept but not served: the REQ names bob. */
+  g_autofree gchar *carol = inbox_list(SECRET_CAROL, 2000, UNRELATED, NULL);
+  wire_relay_inject(&relay, carol);
+
+  BusFixture bus = { 0 };
+  MockSigner mock = { 0 };
+  bus_up(&bus, &mock);
+  GSettings *settings = g_settings_new("org.nostr.Groundhog");
+  const gchar *sources[] = { relay.url, NULL };
+  g_settings_set_strv(settings, "discovery-relays", sources);
+  g_settings_set_string(settings, "signer-method", "auto");
+  g_settings_set_string(settings, "current-npub", npub_alice);
+  GhAccountController *accounts =
+    gh_account_controller_new_full(settings, bus.client, fake_list, NULL);
+  spin_until(listed, accounts);
+  g_assert_cmpint(gh_account_controller_get_state(accounts), ==, GH_ACCOUNT_STATE_ACTIVE);
+  GhInboxLookup *lookup = gh_inbox_lookup_new(accounts, settings, NULL, NULL);
+
+  guint missed = 0;
+  for (guint round = 0; round < WIRE_LOOKUP_ROUNDS; round++) {
+    gh_inbox_resolver_forget(GH_INBOX_RESOLVER(lookup), hex_bob); /* a real REQ each time */
+    LookupWait wait = { 0 };
+    gh_inbox_resolver_resolve_async(GH_INBOX_RESOLVER(lookup), hex_bob, NULL,
+                                    on_lookup_done, &wait);
+    spin_until(lookup_waited, &wait);
+    g_assert_no_error(wait.error);
+    g_assert_nonnull(wait.result);
+    g_assert_false(wait.result->cached);
+    g_assert_cmpuint(wait.result->sources, ==, 1);
+    g_assert_cmpuint(wait.result->answered, ==, 1);
+    if (wait.result->status != GH_INBOX_FOUND ||
+        g_strcmp0(wait.result->event_id, list_id) != 0)
+      missed++;
+    else {
+      g_assert_cmpuint(g_strv_length(wait.result->relays), ==, 2);
+      g_assert_cmpstr(wait.result->relays[0], ==, BOB_A);
+      g_assert_cmpstr(wait.result->relays[1], ==, BOB_B);
+    }
+    gh_inbox_result_free(wait.result);
+  }
+  g_test_message("%u/%u real-REQ lookups missed the stored 10050", missed,
+                 WIRE_LOOKUP_ROUNDS);
+  g_assert_cmpuint(missed, ==, 0);
+  g_assert_cmpuint(relay.reqs, ==, WIRE_LOOKUP_ROUNDS);
+  g_assert_cmpuint(relay.served, ==, WIRE_LOOKUP_ROUNDS);
+
+  release(lookup);
+  release(accounts);
+  SenderCheck check = { &bus, &mock };
+  spin_until(signer_senders_closed, &check);
+  g_object_unref(settings);
+  bus_down(&bus, &mock);
+  relay_clear(&relay);
+  g_free(list_id);
+}
 #endif
 
 int
@@ -1597,6 +1690,7 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/dm-send/publish-interrupted", test_publish_interrupted);
 #ifdef GROUNDHOG_TEST_WIRE
   nostrc_test_bus_add_func("/groundhog/dm-send/wire-publish", test_wire_publish);
+  nostrc_test_bus_add_func("/groundhog/dm-send/wire-lookup", test_wire_lookup);
 #endif
   int status = g_test_run();
   shared_bus_down();
