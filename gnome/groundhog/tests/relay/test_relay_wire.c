@@ -355,6 +355,73 @@ test_held_port(void)
   g_assert_null(held.service);
 }
 
+static gboolean
+count_incoming(GSocketService *service, GSocketConnection *connection, GObject *source,
+               gpointer data)
+{
+  (void)service;
+  (void)source;
+  (*(guint *)data)++;
+  (void)g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+  return TRUE;
+}
+
+/* nostrc-vzls: a test's own listener owns its port for dials to 127.0.0.1.
+ * Another process's listener at 127.0.0.1 on a port it chose (bd starts
+ * `dolt sql-server -H 127.0.0.1 -P <port>` for each beads workspace) never
+ * shares it, and the dial reaches the test's. macOS hands out ephemeral
+ * ports in order, so the ports just after the next one are taken first by
+ * such listeners: a dual-stack [::] listener
+ * (g_socket_listener_add_any_inet_port()) is given the first of them there,
+ * and the dial goes to the holder. */
+static void
+test_loopback_listener(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GInetAddress) loopback = g_inet_address_new_loopback(G_SOCKET_FAMILY_IPV4);
+  g_autoptr(GSocketListener) probe = g_socket_listener_new();
+  guint next = gh_test_listen_loopback(probe);
+  g_socket_listener_close(probe);
+  g_autoptr(GPtrArray) holders = g_ptr_array_new_with_free_func(g_object_unref);
+  g_autoptr(GHashTable) held = g_hash_table_new(NULL, NULL);
+  for (guint i = 1; i <= 64; i++) {
+    guint candidate = next + i;
+    guint16 port = (guint16)(candidate > G_MAXUINT16 ? 49152 + (candidate - 65536) : candidate);
+    GSocket *holder = g_socket_new(G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_STREAM,
+                                   G_SOCKET_PROTOCOL_DEFAULT, &error);
+    g_assert_no_error(error);
+    g_autoptr(GSocketAddress) address = g_inet_socket_address_new(loopback, port);
+    if (g_socket_bind(holder, address, TRUE, NULL) && g_socket_listen(holder, NULL)) {
+      g_hash_table_add(held, GUINT_TO_POINTER((guint)port));
+      g_ptr_array_add(holders, holder);
+    } else {
+      g_object_unref(holder); /* someone else's already */
+    }
+  }
+  g_assert_cmpuint(holders->len, >, 0);
+
+  guint accepted = 0;
+  g_autoptr(GSocketService) service = g_socket_service_new();
+  guint16 port = gh_test_listen_loopback(G_SOCKET_LISTENER(service));
+  g_assert_false(g_hash_table_contains(held, GUINT_TO_POINTER((guint)port)));
+  g_signal_connect(service, "incoming", G_CALLBACK(count_incoming), &accepted);
+  g_socket_service_start(service);
+  g_autoptr(GSocketClient) client = g_socket_client_new();
+  g_autofree gchar *host = g_strdup_printf("127.0.0.1:%u", port);
+  g_autoptr(GSocketConnection) connection = g_socket_client_connect_to_host(client, host, 0, NULL,
+                                                                            &error);
+  g_assert_no_error(error);
+  wait_for_count(&accepted, 1);
+
+  g_signal_handlers_disconnect_by_data(service, &accepted);
+  g_socket_service_stop(service);
+  while (g_main_context_iteration(NULL, FALSE))
+    ;
+  g_socket_listener_close(G_SOCKET_LISTENER(service));
+  for (guint i = 0; i < holders->len; i++)
+    g_socket_close(g_ptr_array_index(holders, i), NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -372,5 +439,6 @@ main(int argc, char **argv)
   wire_add_tests(cases, G_N_ELEMENTS(cases));
   /* The harness itself, no traffic: not a wire case (no Tor variant). */
   g_test_add_func("/groundhog/relay/held-port", test_held_port);
+  g_test_add_func("/groundhog/relay/loopback-listener", test_loopback_listener);
   return g_test_run();
 }

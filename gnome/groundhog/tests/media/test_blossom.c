@@ -10,6 +10,7 @@
 #include "blossom-fixture.h"
 #include "canary-scan.h"
 #include "socks5-fixture.h"
+#include "../gh-test-port.h"
 
 #include <errno.h>
 #include <glib/gstdio.h>
@@ -37,12 +38,27 @@ root_dir(const gchar *name)
 
 typedef gboolean (*Cond)(gpointer data);
 
-static void
-spin_until(Cond cond, gpointer data)
+static gboolean
+spin_expired(gpointer data)
 {
-  while (!cond(data))
-    g_main_context_iteration(NULL, TRUE);
+  *(gboolean *)data = TRUE;
+  return G_SOURCE_REMOVE;
 }
+
+/* The deadline is a failure bound only: it names the wait that never ended
+ * (before the ctest timeout would, unnamed). */
+static void
+spin_until_at(Cond cond, gpointer data, int line)
+{
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(30, spin_expired, &expired);
+  while (!cond(data) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  if (expired)
+    g_error("condition waited for at line %d did not hold within 30s", line);
+  g_source_remove(timer);
+}
+#define spin_until(cond, data) spin_until_at((cond), (data), __LINE__)
 
 static void
 drain(void)
@@ -922,9 +938,9 @@ test_download_rebinding(void)
   g_resolver_set_default(G_RESOLVER(resolver));
   guint accepted = 0;
   g_autoptr(GSocketService) listener = g_socket_service_new();
-  g_autoptr(GError) error = NULL;
-  guint16 port = g_socket_listener_add_any_inet_port(G_SOCKET_LISTENER(listener), NULL, &error);
-  g_assert_no_error(error);
+  /* 127.0.0.1, where the name leads: a wildcard listener's port can be
+   * another process's too (gh-test-port.h, nostrc-vzls). */
+  guint16 port = gh_test_listen_loopback(G_SOCKET_LISTENER(listener));
   g_signal_connect(listener, "incoming", G_CALLBACK(on_incoming), &accepted);
   g_socket_service_start(listener);
 

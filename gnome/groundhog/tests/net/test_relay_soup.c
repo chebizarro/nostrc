@@ -15,6 +15,7 @@
 #include "gh-relay-soup.h"
 #include "socks5-fixture.h"
 #include "wire-relay.h"
+#include "../gh-test-port.h"
 
 #define ONION "groundhogtestrelayqw4yvkpvrbwe5wtamgzhhdrhm5k2ww7m3tgdwbzd.onion"
 #define SECRET "0000000000000000000000000000000000000000000000000000000000000001"
@@ -150,10 +151,9 @@ static void
 tripwire_init(Tripwire *tripwire)
 {
   tripwire->service = g_socket_service_new();
-  g_autoptr(GError) error = NULL;
-  tripwire->port = g_socket_listener_add_any_inet_port(G_SOCKET_LISTENER(tripwire->service),
-                                                       NULL, &error);
-  g_assert_no_error(error);
+  /* 127.0.0.1, which every dial here goes to: a wildcard listener's port can
+   * be another process's too (gh-test-port.h, nostrc-vzls). */
+  tripwire->port = gh_test_listen_loopback(G_SOCKET_LISTENER(tripwire->service));
   g_signal_connect(tripwire->service, "incoming", G_CALLBACK(on_tripped), tripwire);
   g_socket_service_start(tripwire->service);
 }

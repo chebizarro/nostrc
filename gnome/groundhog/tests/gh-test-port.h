@@ -23,6 +23,8 @@
  * fails on macOS: soup_server_listen_socket() asks for SO_ACCEPTCONN, which
  * macOS does not answer.)
  *
+ * gh_test_listen_loopback(): a test's own listener, for dials to 127.0.0.1.
+ *
  * Header-only; the path is relative, for every test directory. */
 #ifndef GH_TEST_PORT_H
 #define GH_TEST_PORT_H
@@ -62,6 +64,31 @@ gh_test_refused_port(void)
   return GH_TEST_REFUSED_PORT;
 }
 
+/* Adds a 127.0.0.1 socket on a port of the kernel's choosing to listener and
+ * returns the port (nostrc-vzls). Never the wildcard: on macOS the port
+ * picked for a dual-stack [::] socket bound with SO_REUSEADDR (what
+ * g_socket_listener_add_any_inet_port() makes) is not checked against IPv4
+ * sockets bound to one address, so it can be one another process already
+ * listens on at 127.0.0.1 (bd's `dolt sql-server -H 127.0.0.1 -P <port>`, one
+ * per beads workspace, did). Every IPv4 dial to 127.0.0.1 on that port then
+ * reaches that listener, the more specific one, and never the test's. The
+ * port of a 127.0.0.1 bind is checked against every 127.0.0.1 socket, and no
+ * listener is more specific for a 127.0.0.1 dial. */
+static G_GNUC_UNUSED guint16
+gh_test_listen_loopback(GSocketListener *listener)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GInetAddress) loopback = g_inet_address_new_loopback(G_SOCKET_FAMILY_IPV4);
+  g_autoptr(GSocketAddress) any_port = g_inet_socket_address_new(loopback, 0);
+  g_autoptr(GSocketAddress) bound = NULL;
+  g_assert_true(g_socket_listener_add_address(listener, any_port, G_SOCKET_TYPE_STREAM,
+                                              G_SOCKET_PROTOCOL_TCP, NULL, &bound, &error));
+  g_assert_no_error(error);
+  guint16 port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(bound));
+  g_assert_cmpuint(port, >, 0);
+  return port;
+}
+
 /* Takes a connection over (the handler's reference is dropped after). */
 typedef void (*GhTestHeldPortServe)(GSocketConnection *connection, gpointer data);
 
@@ -90,18 +117,9 @@ gh_test_held_port_incoming(GSocketService *service, GSocketConnection *connectio
 static G_GNUC_UNUSED void
 gh_test_held_port_init(GhTestHeldPort *held)
 {
-  g_autoptr(GError) error = NULL;
   *held = (GhTestHeldPort){ 0 };
   held->service = g_socket_service_new();
-  g_autoptr(GInetAddress) loopback = g_inet_address_new_loopback(G_SOCKET_FAMILY_IPV4);
-  g_autoptr(GSocketAddress) any_port = g_inet_socket_address_new(loopback, 0);
-  g_autoptr(GSocketAddress) bound = NULL;
-  g_assert_true(g_socket_listener_add_address(G_SOCKET_LISTENER(held->service), any_port,
-                                              G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP,
-                                              NULL, &bound, &error));
-  g_assert_no_error(error);
-  held->port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(bound));
-  g_assert_cmpuint(held->port, >, 0);
+  held->port = gh_test_listen_loopback(G_SOCKET_LISTENER(held->service));
   g_signal_connect(held->service, "incoming", G_CALLBACK(gh_test_held_port_incoming), held);
   g_socket_service_start(held->service);
 }
