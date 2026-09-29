@@ -21,8 +21,8 @@ G_BEGIN_DECLS
  *   gh_dm_sender_send()     both, in one operation
  *
  * RESOLVING waits for the account's own relay lists to settle, then takes the
- * recipient's kind-10050 inbox from a GhInboxResolver (a send-time lookup
- * today; a contact directory later). Kind 10002 is never consulted and there
+ * recipient's kind-10050 inbox from a GhInboxResolver (in the app, the
+ * cached contact directory, gh-contact-directory.h). Kind 10002 is never consulted and there
  * is no default relay: without a usable 10050 nothing is sealed or published
  * (NO_RECIPIENT_INBOX, or INBOX_UNKNOWN when no source could be asked).
  * SEALING runs the signer approvals (NIP-44 encryption, seal signatures) and
@@ -32,10 +32,11 @@ G_BEGIN_DECLS
  * and the self-copy ONLY to the account's own 10050 relays (GhAccountRelays),
  * one GhRelayPublish per wrap, so the two never share a connection. Only
  * targets not already ACCEPTED are published to, so republishing a partially
- * settled status resumes the fanout. No NIP-42 AUTH is performed as the
- * account: AUTH_REQUIRED is reported per relay, and authenticating to a
- * recipient's relays is left to the relay layer's GhAuthPolicy (ephemeral or
- * none, never the account).
+ * settled status resumes the fanout. GhAuthPolicy (gh-auth-policy.h) picks
+ * each URL's NIP-42 identity: a recipient's inbox relay only ever gets an
+ * ephemeral key (never the account, §4.4 R1/R7); the self-copy and a note to
+ * self sign in as the account, on challenge, on the own inbox relays.
+ * AUTH_REQUIRED is reported per relay.
  *
  * Results are reported per recipient and for the self-copy. SENT means every
  * recipient's wrap was accepted (NIP-01 OK true) by at least one of that

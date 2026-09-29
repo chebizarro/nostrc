@@ -2,6 +2,7 @@
 #define GH_APP_OUTBOX_H
 
 #include "gh-account-relays.h"
+#include "gh-contact-directory.h"
 #include "gh-inbox-resolver.h"
 #include "gh-relay-publish.h"
 #include "gh-store.h"
@@ -18,7 +19,10 @@ typedef struct {
   GhAccountController *accounts;             /* required */
   GhAccountRelays *account_relays;           /* required: own 10050 (self-copies) */
   GSettings *settings;                       /* required when inboxes is NULL */
-  GhInboxResolver *inboxes;                  /* NULL: a GhInboxLookup over gnostr relays */
+  /* NULL: the cached GhContactDirectory (G10) over gnostr relays, which
+   * each gh_app_outbox_create() store backs while its outbox runs. */
+  GhInboxResolver *inboxes;
+  GhConversationStore *conversations;        /* nullable: the directory's accepted contacts */
   const GhRelayPublishTransport *transport;  /* NULL: gnostr relays (with NIP-42) */
   gpointer transport_data;
 } GhAppOutboxConfig;
@@ -34,6 +38,13 @@ GObject *gh_app_outbox_create(GhStore *store, gpointer user_data, GError **error
 /* gh_outbox_prune() on a gh_app_outbox_create() object (NULL: nothing to
  * do): the expiry purge deleted entries of disappearing messages (G07). */
 void gh_app_outbox_prune(GObject *outbox);
+/* The conversation model that defines the directory's accepted contacts
+ * (when the directory is the resolver); NULL detaches. */
+void gh_app_outbox_set_conversations(GhAppOutbox *self, GhConversationStore *conversations);
+/* The contact directory made by gh_app_outbox_new(), or NULL when the
+ * config supplied inboxes. Borrowed. Conversation titles may use its cached
+ * display names (gh_contact_directory_dup_conversation_title()). */
+GhContactDirectory *gh_app_outbox_get_directory(GhAppOutbox *self);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhAppOutbox, gh_app_outbox_free)
 

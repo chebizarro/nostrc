@@ -8,9 +8,11 @@
 G_BEGIN_DECLS
 
 /*
- * GhInboxLookup is the send-time GhInboxResolver: it resolves another user's
- * NIP-17 kind-10050 DM inbox relay list with a URL-scoped REQ. It does not
- * authenticate (no NIP-42 AUTH as the account on others' relays).
+ * GhInboxLookup is a one-shot GhInboxResolver: it resolves another user's
+ * NIP-17 kind-10050 DM inbox relay list with a URL-scoped REQ, every time
+ * (the app uses the cached contact directory, gh-contact-directory.h,
+ * instead). NIP-42: GhAuthPolicy's CONTACT_DIRECTORY identity, an ephemeral
+ * key if a source demands AUTH, never the account.
  *
  * Sources (privacy charter §4.3 "Contact directory", PD-12): the Groundhog
  * discovery-relays setting only, deduplicated and bounded to 16 URLs. The

@@ -14,6 +14,7 @@
  * bound to the subprocess's lifetime, so no daemon outlives a test. */
 #include "crash-harness.h"
 #include "gh-outbox.h"
+#include "gh-auth-policy.h"
 #include "gh-nip17-envelope.h"
 #include "gh-test-signer.h"
 #include "nostr-tag.h"
@@ -1925,6 +1926,147 @@ test_ob9_self_copy_jitter(void)
   check_self_copy_timing(FALSE, 0, 0);    /* disjoint: immediately */
 }
 
+/* ---- G08 self-copy AUTH and G10 S2 re-targeting ----------------------------- */
+
+static gchar *
+auth_pubkey(PubOpen *open, guint index)
+{
+  NostrEvent *auth = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(auth, g_ptr_array_index(open->auth, index),
+                                                  NULL), ==, 1);
+  gchar *pubkey = g_strdup(nostr_event_get_pubkey(auth));
+  nostr_event_free(auth);
+  return pubkey;
+}
+
+/* W13 review 7a, decided in G08: an own inbox relay that accepts writes only
+ * from signed-in members gets the self-copy after one AUTH as the account
+ * (the signer asked once); the recipient's relay that demands AUTH only ever
+ * sees a throwaway key. */
+static void
+test_self_copy_account_auth(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  script(&f.transport, BOB_A, ANSWER_OK, TRUE, "");
+  script(&f.transport, BOB_B, ANSWER_AUTH_ACCEPT, TRUE, NULL);
+  script(&f.transport, ALICE_INBOX, ANSWER_AUTH_ACCEPT, TRUE, NULL);
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "members-only inbox");
+  gh_test_spin_until(state_settled, item);
+  PubOpen *self_open = last_open(&f.transport, hex_alice, ALICE_INBOX);
+  PubOpen *bob_open = last_open(&f.transport, hex_bob, BOB_B);
+  g_assert_cmpuint(self_open->auth->len, ==, 1);
+  g_assert_cmpuint(self_open->resends, ==, 1);
+  g_assert_cmpuint(bob_open->auth->len, ==, 1);
+  g_autofree gchar *self_signer = auth_pubkey(self_open, 0);
+  g_autofree gchar *bob_signer = auth_pubkey(bob_open, 0);
+  g_assert_cmpstr(self_signer, ==, hex_alice);
+  g_assert_cmpstr(bob_signer, !=, hex_alice);
+  g_assert_cmpuint(f.mock.calls, ==, 5); /* two encryptions, two seals, one AUTH */
+  g_assert_false(gh_outbox_item_get_self_copy_missing(item));
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpint(gh_auth_policy_get_account_state(gh_auth_policy_get_for_accounts(f.accounts),
+                                                   ALICE_INBOX), ==,
+                  GH_AUTH_ACCOUNT_STATE_APPROVED);
+  fixture_down(&f);
+}
+
+/* A self-copy target that has left the account's own 10050 since sealing is
+ * somebody else's relay now: no account AUTH there. */
+static void
+test_self_copy_former_inbox(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  script(&f.transport, BOB_A, ANSWER_OK, TRUE, "");
+  script(&f.transport, BOB_B, ANSWER_OK, TRUE, "");
+  script(&f.transport, ALICE_INBOX, ANSWER_OK, FALSE, "error: busy");
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "moving house");
+  gh_test_spin_until(round_over, item);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_WAITING_RETRY);
+  /* The account moves its inbox; the stored target stays and is retried. */
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("relay", SHARED, NULL));
+  g_autofree gchar *moved = signed_event(KEY_ALICE, 10050, 200, tags);
+  gh_relay_scope_event(own_scope(&f)->scope, DISC, moved);
+  script(&f.transport, ALICE_INBOX, ANSWER_AUTH_REFUSE, FALSE, NULL);
+  script(&f.transport, SHARED, ANSWER_OK, TRUE, "");
+  guint calls = f.mock.calls;
+  advance_to_next(&f);
+  gh_test_spin_until(round_over, item);
+  PubOpen *old = last_open(&f.transport, hex_alice, ALICE_INBOX);
+  g_assert_cmpuint(old->auth->len, ==, 1);
+  g_autofree gchar *signer = auth_pubkey(old, 0);
+  g_assert_cmpstr(signer, !=, hex_alice);
+  g_assert_cmpuint(f.mock.calls, ==, calls);
+  fixture_down(&f);
+}
+
+/* Charter §4.5 S2 / NT-11 (outbox half): a background directory refresh that
+ * finds a new relay for the recipient (resolver "changed") makes the outbox
+ * publish the same stored wrap there, after the message settled and while it
+ * is being sealed alike; nothing is re-sealed. */
+static void
+test_inbox_changed_signal(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, BOB_A, NULL);
+  script(&f.transport, BOB_A, ANSWER_OK, TRUE, "");
+  script(&f.transport, BOB_D, ANSWER_OK, TRUE, "");
+  script(&f.transport, ALICE_INBOX, ANSWER_OK, TRUE, "");
+  settle_own(&f, ALICE_INBOX, NULL);
+  fixture_outbox(&f);
+
+  /* Settled first, then the refresh reports BOB_D. */
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "settled then moved");
+  gh_test_spin_until(state_settled, item);
+  g_autofree gchar *wrap_id = g_strdup(last_open(&f.transport, hex_bob, BOB_A)->event_id);
+  guint lookups = f.resolver->calls;
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, BOB_A, BOB_D, NULL);
+  gh_inbox_resolver_emit_changed(GH_INBOX_RESOLVER(f.resolver), hex_alice); /* not a recipient */
+  drain();
+  g_assert_cmpuint(f.resolver->calls, ==, lookups);
+  gh_inbox_resolver_emit_changed(GH_INBOX_RESOLVER(f.resolver), hex_bob);
+  wait_opens(&f, 3); /* BOB_A and the self-copy, then BOB_D */
+  gh_test_spin_until(state_settled, item);
+  g_assert_cmpstr(last_open(&f.transport, hex_bob, BOB_D)->event_id, ==, wrap_id);
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_A), ==, 1); /* accepted: never again */
+  g_assert_cmpuint(count_opens(&f.transport, hex_alice, ALICE_INBOX), ==, 1);
+  g_assert_cmpuint(f.resolver->calls, ==, lookups + 1);
+  g_assert_cmpuint(f.mock.calls, ==, 4);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+
+  /* While the signer is still asked to seal: the list is read again before
+   * the first publish, so the new relay gets the wrap right away. */
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, BOB_A, NULL);
+  f.mock.hold = TRUE;
+  g_autoptr(GhOutboxItem) second = send_text(&f, hex_bob, "changed while sealing");
+  HeldWait held = { &f.mock, 1 };
+  gh_test_spin_until(held_reached, &held);
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, BOB_A, BOB_D, NULL);
+  gh_inbox_resolver_emit_changed(GH_INBOX_RESOLVER(f.resolver), hex_bob);
+  f.mock.hold = FALSE;
+  gh_test_signer_release_all(&f.mock);
+  gh_test_spin_until(state_settled, second);
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_D), ==, 2);
+  g_autoptr(GhStoreOutboxEntry) entry = load_entry(&f, gh_outbox_item_get_outbox_id(second));
+  GhStoreOutboxEvent *wrap = entry_event(entry, GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP);
+  g_assert_cmpstr(last_open(&f.transport, hex_bob, BOB_D)->event_id, ==, wrap->event_id);
+
+  /* Outside the retry window a change is ignored. */
+  guint opens = f.transport.opens->len;
+  advance_seconds(&f, 72 * 3600 + 1);
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, BOB_A, BOB_D, BOB_B, NULL);
+  gh_inbox_resolver_emit_changed(GH_INBOX_RESOLVER(f.resolver), hex_bob);
+  drain();
+  g_assert_cmpuint(f.transport.opens->len, ==, opens);
+  fixture_down(&f);
+}
+
 /* ---- OB-10: offline ------------------------------------------------------- */
 
 static void
@@ -2307,6 +2449,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/account-switch", test_ob7_account_switch);
   g_test_add_func("/groundhog/outbox/inbox-changed", test_ob8_new_inbox_relay);
   g_test_add_func("/groundhog/outbox/self-copy-jitter", test_ob9_self_copy_jitter);
+  g_test_add_func("/groundhog/outbox/self-copy-account-auth", test_self_copy_account_auth);
+  g_test_add_func("/groundhog/outbox/self-copy-former-inbox", test_self_copy_former_inbox);
+  g_test_add_func("/groundhog/outbox/inbox-changed-signal", test_inbox_changed_signal);
   g_test_add_func("/groundhog/outbox/offline", test_ob10_offline);
   g_test_add_func("/groundhog/outbox/no-inbox-retry", test_no_inbox_and_retry);
   g_test_add_func("/groundhog/outbox/signer-refusal", test_signer_refusal_and_retry);

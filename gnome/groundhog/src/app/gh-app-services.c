@@ -176,12 +176,19 @@ conversations_init(GhAppServices *self, GError **error)
 {
   (void)error;
   self->conversations = gh_conversation_store_new();
+#if GROUNDHOG_HAVE_OUTBOX
+  /* The contact directory refreshes the peers of accepted rooms only (G10). */
+  gh_app_outbox_set_conversations(self->outbox, self->conversations);
+#endif
   return TRUE;
 }
 
 static void
 conversations_teardown(GhAppServices *self)
 {
+#if GROUNDHOG_HAVE_OUTBOX
+  gh_app_outbox_set_conversations(self->outbox, NULL);
+#endif
   g_clear_object(&self->conversations);
 }
 

@@ -1,4 +1,5 @@
 #include "gh-dm-send.h"
+#include "gh-auth-policy.h"
 #include "gh-identity.h"
 #include "gh-nip17-envelope.h"
 #include "gh-signer.h"
@@ -567,8 +568,10 @@ on_publish_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary,
 }
 
 /* One GhRelayPublish (own connections) per wrap, carrying the stored signed
- * JSON unchanged to exactly the leg's targets that are still pending. No
- * NIP-42 AUTH is performed on these connections. */
+ * JSON unchanged to exactly the leg's targets that are still pending. The
+ * NIP-42 identity of each URL is GhAuthPolicy's: a recipient's inbox relay
+ * is RECIPIENT_WRAP (ephemeral, never the account), the self-copy and a note
+ * to self go to the own inbox as SELF_WRAP (the account, on challenge). */
 static void
 start_leg(GhDmSend *self, GhDmSendLeg *leg)
 {
@@ -594,8 +597,16 @@ start_leg(GhDmSend *self, GhDmSendLeg *leg)
       gh_relay_publish_set_deadline(publish, sender->publish_deadline);
     for (guint i = 0; i < leg->relays->len && !error; i++) {
       GhDmRelayOutcome *target = g_ptr_array_index(leg->relays, i);
-      if (target->outcome == GH_RELAY_PUBLISH_PENDING)
-        gh_relay_publish_add_url(publish, target->url, &error);
+      if (target->outcome != GH_RELAY_PUBLISH_PENDING ||
+          !gh_relay_publish_add_url(publish, target->url, &error))
+        continue;
+      g_autoptr(GError) auth_error = NULL;
+      GhAuthPurpose purpose = leg == self->status.self_copy || self->self_dm
+        ? GH_AUTH_PURPOSE_SELF_WRAP : GH_AUTH_PURPOSE_RECIPIENT_WRAP;
+      if (sender->accounts &&
+          !gh_auth_policy_apply_publish(gh_auth_policy_get_for_accounts(sender->accounts),
+                                        publish, purpose, target->url, &auth_error))
+        g_debug("Groundhog will not sign in to a message relay: %s", auth_error->message);
     }
     if (!error && gh_relay_publish_start(publish, &error))
       return; /* outcomes arrive through the callbacks */

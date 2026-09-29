@@ -263,10 +263,20 @@ endif()
 # those relays only, through GhAccountAuth), seen-set pre-filter, bounded
 # signer unwraps, store admission. It carries the unwrap (gh-nip17-inbox.c);
 # the executable links it through groundhog-conversation-ui (G11 block below).
+# G08: GhAuthPolicy, the single NIP-42 identity decision per (connection
+# purpose, URL) (charter §4.3, §4.4), with GhAccountAuth, the one account
+# signer per generation it hands out (R6). The inbox, the send pipeline, the
+# outbox and the lookups all link it (see the G08 block at the end).
+if (TARGET groundhog-account AND TARGET groundhog-relay)
+  add_library(groundhog-auth-policy STATIC src/app/gh-auth-policy.c src/app/gh-account-auth.c)
+  target_include_directories(groundhog-auth-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-auth-policy PUBLIC groundhog-account groundhog-relay)
+  target_compile_options(groundhog-auth-policy PRIVATE -Wall -Wextra -Werror)
+endif()
+
 if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
-  add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c
-    src/app/gh-account-auth.c)
-  target_link_libraries(groundhog-dm-inbox PUBLIC groundhog-account-relays
+  add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c)
+  target_link_libraries(groundhog-dm-inbox PUBLIC groundhog-auth-policy groundhog-account-relays
                         groundhog-conversations)
   target_compile_options(groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
 endif()
@@ -279,6 +289,7 @@ if (TARGET groundhog-account-relays AND TARGET nostr_nip17_core AND TARGET nostr
   set(GROUNDHOG_DM_SEND_SOURCES src/app/gh-inbox-resolver.c src/app/gh-inbox-lookup.c
     src/app/gh-dm-send.c)
   target_sources(groundhog PRIVATE ${GROUNDHOG_DM_SEND_SOURCES})
+  target_link_libraries(groundhog PRIVATE groundhog-auth-policy)
 endif()
 
 # --- G11 Shell IA: conversation list, inbox status, NIP-17 inbox wiring ---
@@ -1123,3 +1134,60 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NOTIFIER=0)
 endif()
 # --- end G16 private notifications ---
+# --- G08 GhAuthPolicy ---
+# Every executable that compiles the NIP-17 send sources (gh-dm-send.c,
+# gh-inbox-lookup.c) or the outbox asks GhAuthPolicy for each connection's
+# NIP-42 identity, so each links the policy library defined above.
+foreach (groundhog_g08_target test-groundhog-dm-send test-groundhog-outbox
+         test-groundhog-account-store test-groundhog-expiry)
+  if (TARGET ${groundhog_g08_target})
+    target_link_libraries(${groundhog_g08_target} PRIVATE groundhog-auth-policy)
+  endif()
+endforeach()
+if (BUILD_TESTING AND TARGET groundhog-auth-policy AND TARGET groundhog-test-schemas)
+  # NT-1..NT-4 and R6 across callers: recording scope/publish transports with
+  # their NIP-42 halves and a real account controller with the mock signer on
+  # the private test bus.
+  add_executable(test-groundhog-auth-policy tests/app/test_auth_policy.c)
+  target_link_libraries(test-groundhog-auth-policy PRIVATE groundhog-auth-policy nostrc-test-bus)
+  target_compile_options(test-groundhog-auth-policy PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-auth-policy groundhog-test-schemas)
+  add_test(NAME groundhog-auth-policy COMMAND test-groundhog-auth-policy)
+  set_tests_properties(groundhog-auth-policy PROPERTIES TIMEOUT 60
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+endif()
+# --- end G08 GhAuthPolicy ---
+
+# --- G10 contact directory ---
+# Cached kind-10050 inbox relays and kind-0 display names of accepted
+# contacts (privacy charter §4.3, §4.5 S1/S2, PD-12, PT-8), kept in the
+# encrypted store's `directory` table and refreshed off the send path. It is
+# the GhInboxResolver of the app's sender and outbox (gh-app-outbox.c), so it
+# is compiled wherever that file is.
+set(GROUNDHOG_DIRECTORY_SOURCES src/app/gh-contact-directory.c src/store/gh-store-directory.c)
+if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+  target_sources(groundhog PRIVATE ${GROUNDHOG_DIRECTORY_SOURCES})
+  if (TARGET test-groundhog-account-store)
+    target_sources(test-groundhog-account-store PRIVATE ${GROUNDHOG_DIRECTORY_SOURCES})
+  endif()
+endif()
+if (BUILD_TESTING AND TARGET groundhog-store-testhooks AND TARGET groundhog-auth-policy AND
+    TARGET groundhog-conversations AND TARGET groundhog-test-schemas)
+  # NT-11, NT-12, PT-8, S2, forged and stale events and restore across a
+  # restart: recording scope transport (with its NIP-42 half), the fake
+  # GhClock (H6), real SQLCipher stores (test hooks) and a real account
+  # controller with the mock signer on the private test bus.
+  add_executable(test-groundhog-contact-directory tests/app/test_contact_directory.c
+    ${GROUNDHOG_DIRECTORY_SOURCES} src/app/gh-inbox-resolver.c)
+  target_include_directories(test-groundhog-contact-directory PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(test-groundhog-contact-directory PRIVATE groundhog-auth-policy
+    groundhog-conversations groundhog-store-testhooks nostrc-test-bus)
+  target_compile_options(test-groundhog-contact-directory PRIVATE -Wall -Wextra -Werror)
+  groundhog_store_link_sqlcipher_first(test-groundhog-contact-directory)
+  add_dependencies(test-groundhog-contact-directory groundhog-test-schemas)
+  add_test(NAME groundhog-contact-directory COMMAND test-groundhog-contact-directory)
+  set_tests_properties(groundhog-contact-directory PROPERTIES TIMEOUT 60
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+endif()
+# --- end G10 contact directory ---

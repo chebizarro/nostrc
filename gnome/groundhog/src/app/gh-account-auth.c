@@ -26,7 +26,10 @@ struct _Request {
 
 struct _GhAccountAuth {
   GObject parent_instance;
-  GhAccountController *accounts; /* NULL once disposed */
+  /* Weak (NULL once either is disposed): the GhAuthPolicy that holds this
+   * adapter belongs to the controller, so a strong reference would keep the
+   * controller alive. Signing needs usable(), which requires it. */
+  GhAccountController *accounts;
   guint64 generation;
   GhRelayAuthSigner *signer;
   GHashTable *relays; /* url -> Relay */
@@ -302,7 +305,8 @@ gh_account_auth_new(GhAccountController *accounts)
   if (!pubkey || !generation_cancel)
     return NULL;
   GhAccountAuth *self = g_object_new(GH_TYPE_ACCOUNT_AUTH, NULL);
-  self->accounts = g_object_ref(accounts);
+  self->accounts = accounts;
+  g_object_add_weak_pointer(G_OBJECT(accounts), (gpointer *)&self->accounts);
   self->generation = gh_account_controller_get_generation(accounts);
   GWeakRef *ref = g_new0(GWeakRef, 1);
   g_weak_ref_init(ref, self);
@@ -360,7 +364,10 @@ gh_account_auth_dispose(GObject *object)
 {
   GhAccountAuth *self = GH_ACCOUNT_AUTH(object);
   gh_account_auth_revoke(self);
-  g_clear_object(&self->accounts);
+  if (self->accounts) {
+    g_object_remove_weak_pointer(G_OBJECT(self->accounts), (gpointer *)&self->accounts);
+    self->accounts = NULL;
+  }
   G_OBJECT_CLASS(gh_account_auth_parent_class)->dispose(object);
 }
 

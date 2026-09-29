@@ -36,10 +36,15 @@ G_BEGIN_DECLS
  *  - A recipient wrap goes only to that recipient's kind-10050 relays and
  *    the self-copy only to the account's own 10050 relays (no other list,
  *    no default). Before each retry (and on resume) the lists are read again
- *    and new relays become targets of the same stored wrap.
- *  - NIP-42: every publish URL is set to EPHEMERAL, so a relay that demands
- *    AUTH gets one throwaway key per connection; the account never
- *    authenticates a gift-wrap publication here (§4.4 R1, R7).
+ *    and new relays become targets of the same stored wrap. So does a
+ *    resolver "changed" for the recipient (a background directory refresh,
+ *    §4.5 S2), within the retry window, even after the message settled.
+ *  - NIP-42: GhAuthPolicy (gh-auth-policy.h) picks each URL's identity. A
+ *    recipient's inbox relay gets EPHEMERAL: one throwaway key per
+ *    connection, never the account (§4.4 R1, R7). The self-copy and a note
+ *    to self get SELF_WRAP, the account on challenge, on the account's own
+ *    inbox relays only (a stored target that left the own 10050 list is
+ *    treated like a recipient's); W13 review 7a.
  *  - D8: if the own and recipient inbox sets overlap, the self-copy waits
  *    U(5, 90) s (stored as not_before); it always uses its own connection.
  *

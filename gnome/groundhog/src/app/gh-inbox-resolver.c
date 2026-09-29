@@ -2,10 +2,21 @@
 
 G_DEFINE_INTERFACE(GhInboxResolver, gh_inbox_resolver, G_TYPE_OBJECT)
 
+static guint changed_signal;
+
 static void
 gh_inbox_resolver_default_init(GhInboxResolverInterface *iface)
 {
-  (void)iface;
+  changed_signal = g_signal_new("changed", G_TYPE_FROM_INTERFACE(iface), G_SIGNAL_RUN_LAST, 0,
+                                NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+}
+
+void
+gh_inbox_resolver_emit_changed(GhInboxResolver *self, const gchar *pubkey_hex)
+{
+  g_return_if_fail(GH_IS_INBOX_RESOLVER(self));
+  g_return_if_fail(pubkey_hex != NULL);
+  g_signal_emit(self, changed_signal, 0, pubkey_hex);
 }
 
 GhInboxResult *

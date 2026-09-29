@@ -9,9 +9,9 @@ G_BEGIN_DECLS
  * GhInboxResolver: where to deliver a NIP-17 gift wrap for one recipient,
  * i.e. that recipient's kind-10050 DM inbox relay list.
  *
- * The send pipeline takes recipient inboxes only through this interface, so a
- * later contact directory (cached 10050s refreshed off the send path) can back
- * it instead of a send-time lookup. Every implementation must:
+ * The send pipeline takes recipient inboxes only through this interface, so the
+ * contact directory (cached 10050s refreshed off the send path, G10) backs it
+ * in the app instead of a send-time lookup (GhInboxLookup). Every implementation must:
  *  - answer only from a signed kind-10050 authored by that recipient, newest
  *    first (NIP-01); never from kind 10002, home relays or any default;
  *  - report absence honestly (NOT_FOUND/EMPTY) and distinguish it from not
@@ -19,6 +19,13 @@ G_BEGIN_DECLS
  *  - never authenticate as the account while looking others up;
  *  - be bound to the account generation at the call: a switch or the
  *    caller's cancellable finishes the call with G_IO_ERROR_CANCELLED.
+ *
+ * "changed" (gchar *pubkey_hex, lowercase) is emitted on the main context by
+ * an implementation that refreshes lists in the background (the contact
+ * directory, charter §4.5 S2) when what it would now answer for that
+ * recipient differs from an earlier answer. A consumer that already sealed a
+ * wrap for the recipient resolves again and adds the new relays as targets
+ * of the same stored wrap. A send-time lookup never emits it.
  */
 
 typedef enum {
@@ -67,6 +74,8 @@ void gh_inbox_resolver_resolve_async(GhInboxResolver *self, const gchar *pubkey_
 GhInboxResult *gh_inbox_resolver_resolve_finish(GhInboxResolver *self,
                                                 GAsyncResult *result, GError **error);
 void gh_inbox_resolver_forget(GhInboxResolver *self, const gchar *pubkey_hex);
+/* For implementations: emits "changed" for pubkey_hex. */
+void gh_inbox_resolver_emit_changed(GhInboxResolver *self, const gchar *pubkey_hex);
 
 G_END_DECLS
 #endif

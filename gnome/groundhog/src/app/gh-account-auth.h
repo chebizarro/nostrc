@@ -18,10 +18,12 @@ G_BEGIN_DECLS
  * for another account; the signed event must carry the account pubkey.
  *
  * Purpose (privacy charter §4.3, §4.4 R1). It never decides where account
- * AUTH is used. Callers set GH_RELAY_AUTH_ACCOUNT only on connections whose
- * purpose allows it: own inbox read, own list publish, own self-copy publish
- * and NIP-29 group relays; never another user's relay (tests/check_privacy.py
- * rule account-auth-purpose keeps the callers to an allowlist).
+ * AUTH is used: GhAuthPolicy (gh-auth-policy.h) does, and is its only user.
+ * The policy holds one adapter per generation for the whole process and sets
+ * GH_RELAY_AUTH_ACCOUNT only on connections whose purpose allows it: own
+ * inbox read, own list publish, own self-copy publish and NIP-29 group
+ * relays; never another user's relay (tests/check_privacy.py rules
+ * account-auth-purpose and auth-policy). The controller is held weakly.
  *
  * Prompts (§4.4 R6: at most one account-AUTH signer prompt per relay per
  * session). Keyed by the exact relay URL the AUTH event names, for this

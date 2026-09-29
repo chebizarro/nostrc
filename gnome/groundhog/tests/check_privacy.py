@@ -36,10 +36,20 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
                         gh-contact-directory*) never reference the account's
                         own relays: gh_account_relays_get_read_relays,
                         _write_relays or _inbox_relays. (§4.3, PD-12)
-  account-auth-purpose  NIP-42 AUTH as the account (GH_RELAY_AUTH_ACCOUNT,
+  account-auth-purpose  The NIP-42 account-AUTH mechanism (GH_RELAY_AUTH_ACCOUNT,
                         gh_relay_{scope,publish}_set_account_signer,
-                        GhAccountAuth) appears only in ACCOUNT_AUTH_FILES,
-                        each listed with its §4.3 purpose. (§4.4 R1)
+                        GhAccountAuth) appears only in ACCOUNT_AUTH_FILES:
+                        the relay layer, GhAccountAuth, GhAuthPolicy and
+                        (until it moves onto the policy) G14's GhInboxSetup.
+                        (§4.4 R1)
+  auth-policy           GhAuthPolicy is the one NIP-42 identity decision (G08):
+                        gh_relay_{scope,publish}_set_url_auth appears only in
+                        URL_AUTH_FILES (src/relay/, gh-auth-policy*, for now
+                        gh-inbox-setup*), and the purposes that
+                        sign in as the account (GH_AUTH_PURPOSE_OWN_INBOX_READ,
+                        _OWN_LIST_PUBLISH, _SELF_WRAP, _GROUP) only in
+                        ACCOUNT_PURPOSE_FILES, each listed with its §4.3
+                        purpose. (§4.3, §4.4 R1)
   message-status        GhMessageStatus has no DELIVERED, READ or SEEN value.
                         (PD-1, PT-1)
   log-ids               No log call in src/** (g_debug, g_info, g_message,
@@ -102,7 +112,8 @@ SCHEMA_FILE = f"data/{APP_ID}.gschema.xml"
 RULES = (
     "url-literal", "gsettings-allowlist", "blueprint-denylist", "libsoup-boundary",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
-    "lookup-sources", "account-auth-purpose", "message-status", "log-ids", "relay-suggestions",
+    "lookup-sources", "account-auth-purpose", "auth-policy", "message-status", "log-ids",
+    "relay-suggestions",
     "app-id", "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
@@ -173,17 +184,30 @@ BLUEPRINT_DENYLIST = {
 LIBSOUP_DIRS = ("src/net/", "src/media/")
 NIP17_PUBLICATION = re.compile(r"^(?:gh-dm-send|gh-nip17-|gh-inbox-resolver|gh-outbox)")
 LOOKUP_SOURCES = re.compile(r"^(?:gh-inbox-lookup|gh-contact-directory)")
-# The only files that may authenticate as the account (charter §4.4 R1), by
-# path prefix, each with its §4.3 purpose. A new caller needs a purpose the
-# charter allows (own inbox, own list publish, own self-copy publish, NIP-29
-# group relays) and an entry here.
+# The only files that hold the account-AUTH mechanism (charter §4.4 R1), by
+# path prefix. Everything else asks GhAuthPolicy (G08).
 ACCOUNT_AUTH_FILES = {
-    "src/relay/": "the NIP-42 mechanism; callers choose the identity per URL",
+    "src/relay/": "the NIP-42 mechanism; the policy chooses the identity per URL",
     "src/app/gh-account-auth.": "GhAccountAuth, the account's generation-bound AUTH signer",
-    "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
+    "src/app/gh-auth-policy.": "GhAuthPolicy, the single identity decision per purpose",
+    # G14, landed beside G08: not yet on GhAuthPolicy (follow-up bead), so its
+    # prompts are not shared with the policy's per-generation signer (R6).
     "src/app/gh-inbox-setup.": "own list publish (the account's kind 10050) on its chosen inbox, "
                                "own 10002 write and discovery relays only; its private-reads "
                                "probe never authenticates",
+}
+# Where a URL's NIP-42 identity may be set: the mechanism, the policy and
+# (until it moves onto the policy) G14's own list publish.
+URL_AUTH_FILES = ("src/relay/", "src/app/gh-auth-policy.", "src/app/gh-inbox-setup.")
+# The only files that may name a purpose that signs in as the account, each
+# with its §4.3 purpose. A new caller needs a purpose the charter allows (own
+# inbox, own list publish, own self-copy publish, NIP-29 group relays) and an
+# entry here; lookups and the contact directory never get one.
+ACCOUNT_PURPOSE_FILES = {
+    "src/app/gh-auth-policy.": "the purposes' definition",
+    "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
+    "src/app/gh-outbox.": "the self-copy (and a note to self) on the own 10050 relays",
+    "src/app/gh-dm-send.": "the self-copy (and a note to self) on the own 10050 relays",
 }
 FORBIDDEN_STATUS_WORDS = {"DELIVERED", "READ", "SEEN"}
 SUGGESTIONS_FILE = "data/relay-suggestions.json"
@@ -206,6 +230,9 @@ OWN_RELAY_GETTER_RE = re.compile(r"\bgh_account_relays_get_(?:read|write|inbox)_
 ACCOUNT_AUTH_RE = re.compile(
     r"\bGH_RELAY_AUTH_ACCOUNT\b|\bgh_relay_(?:scope|publish)_set_account_signer\b"
     r"|\bgh_account_auth_\w+|\bGhAccountAuth\w*")
+URL_AUTH_RE = re.compile(r"\bgh_relay_(?:scope|publish)_set_url_auth\b")
+ACCOUNT_PURPOSE_RE = re.compile(
+    r"\bGH_AUTH_PURPOSE_(?:OWN_INBOX_READ|OWN_LIST_PUBLISH|SELF_WRAP|GROUP)\b")
 KIND_10002_RE = re.compile(r"\b10002\b|\b\w*KIND_RELAY_LIST\w*|(?i:\b\w*nip_?65\w*)")
 LOG_CALL_RE = re.compile(
     r"\bg_(?:debug|info|message|warning|critical|error|print|printerr|log)\s*\(")
@@ -448,9 +475,19 @@ def check_sources(tree):
                                         "relays, never the account's own relays (§4.3, PD-12)")
         if not rel.startswith(tuple(ACCOUNT_AUTH_FILES)):
             found += find_all("account-auth-purpose", rel, code, ACCOUNT_AUTH_RE,
-                              lambda s: f"{s}: AUTH as the account only for a purpose §4.4 R1 "
-                                        "allows; add the file to ACCOUNT_AUTH_FILES with its "
-                                        "§4.3 purpose")
+                              lambda s: f"{s}: the account-AUTH mechanism belongs to the "
+                                        "relay layer, GhAccountAuth and GhAuthPolicy; ask "
+                                        "GhAuthPolicy for a purpose instead (§4.4 R1)")
+        if not rel.startswith(URL_AUTH_FILES):
+            found += find_all("auth-policy", rel, code, URL_AUTH_RE,
+                              lambda s: f"{s}: a URL's NIP-42 identity is GhAuthPolicy's "
+                                        "decision; call gh_auth_policy_apply_{scope,publish} "
+                                        "with the connection's purpose (§4.3)")
+        if not rel.startswith(tuple(ACCOUNT_PURPOSE_FILES)):
+            found += find_all("auth-policy", rel, code, ACCOUNT_PURPOSE_RE,
+                              lambda s: f"{s} signs in as the account: only for a purpose "
+                                        "§4.4 R1 allows; add the file to ACCOUNT_PURPOSE_FILES "
+                                        "with its §4.3 purpose")
         found += check_log_ids(rel, code)
     return found
 
@@ -747,18 +784,36 @@ def clean_tree():
             "}\n"
             "static const int mode = GH_RELAY_AUTH_NONE;\n"
             "static const char *const why = \"no GH_RELAY_AUTH_ACCOUNT on others' relays\";\n"),
-        # Account AUTH where §4.3 allows it: the mechanism, its adapter, own inbox.
+        # Account AUTH where §4.3 allows it: the mechanism, its adapter and the
+        # policy hold it; the own inbox and the self-copy ask the policy.
         "src/relay/gh-relay-auth.h": (
             "typedef enum { GH_RELAY_AUTH_NONE, GH_RELAY_AUTH_EPHEMERAL,\n"
             "               GH_RELAY_AUTH_ACCOUNT } GhRelayAuthMode;\n"),
         "src/app/gh-account-auth.c": (
             "#include \"gh-account-auth.h\"\n"
             "G_DEFINE_FINAL_TYPE(GhAccountAuth, gh_account_auth, G_TYPE_OBJECT)\n"),
-        "src/app/gh-dm-inbox.c": (
+        "src/app/gh-auth-policy.c": (
             "#include \"gh-account-auth.h\"\n"
+            "static const int modes[] = { [GH_AUTH_PURPOSE_SELF_WRAP] = GH_RELAY_AUTH_ACCOUNT };\n"
             "static int own(GhRelayScope *s, GhAccountAuth *a, const char *u) {\n"
             "  return gh_relay_scope_set_account_signer(s, gh_account_auth_get_signer(a), NULL) &&\n"
             "         gh_relay_scope_set_url_auth(s, u, GH_RELAY_AUTH_ACCOUNT, NULL);\n"
+            "}\n"),
+        "src/app/gh-outbox.c": (
+            "/* Never gh_relay_publish_set_url_auth() here: GhAuthPolicy decides. */\n"
+            "static int p(GhRelayPublish *pub, int self, const char *u) {\n"
+            "  return gh_auth_policy_apply_publish(NULL, pub, self ? GH_AUTH_PURPOSE_SELF_WRAP\n"
+            "                                      : GH_AUTH_PURPOSE_RECIPIENT_WRAP, u, NULL);\n"
+            "}\n"),
+        "src/app/gh-contact-directory.c": (
+            "/* Discovery only: GH_AUTH_PURPOSE_CONTACT_DIRECTORY, never GH_AUTH_PURPOSE_SELF_WRAP. */\n"
+            "static int d(GhRelayScope *s, const char *u) {\n"
+            "  return gh_auth_policy_apply_scope(NULL, s, GH_AUTH_PURPOSE_CONTACT_DIRECTORY, u, NULL);\n"
+            "}\n"),
+        "src/app/gh-dm-inbox.c": (
+            "#include \"gh-auth-policy.h\"\n"
+            "static int own(GhAuthPolicy *p, GhRelayScope *s, const char *u) {\n"
+            "  return gh_auth_policy_apply_scope(p, s, GH_AUTH_PURPOSE_OWN_INBOX_READ, u, NULL);\n"
             "}\n"
             "/* Near misses: ids used outside log calls, and logs about a wrap. */\n"
             "static void deferred(GHashTable *ids, const char *wrap_id, GError *error) {\n"
@@ -933,6 +988,22 @@ MUTATIONS = [
               "static void *s(GhAccountAuth *a) { return gh_account_auth_get_signer(a); }\n")]),
     M("account-auth-publish-signer", {"account-auth-purpose"},
       [append("src/app/gh-outbox.c", "static void *f = (void *)gh_relay_publish_set_account_signer;\n")]),
+    M("account-auth-inbox-adapter", {"account-auth-purpose"},
+      [append("src/app/gh-dm-inbox.c",
+              "static void *s(GhAccountAuth *a) { return gh_account_auth_get_signer(a); }\n")]),
+    M("auth-policy-outbox-bypass", {"auth-policy"},
+      [append("src/app/gh-outbox.c",
+              "static int e(GhRelayPublish *p, const char *u) {\n"
+              "  return gh_relay_publish_set_url_auth(p, u, GH_RELAY_AUTH_EPHEMERAL, NULL);\n}\n")]),
+    M("auth-policy-scope-bypass", {"auth-policy"},
+      [append("src/app/gh-inbox-lookup.c", "static void *f = (void *)gh_relay_scope_set_url_auth;\n")]),
+    M("auth-policy-directory-self-wrap", {"auth-policy"},
+      [append("src/app/gh-contact-directory.c", "static const int purpose = GH_AUTH_PURPOSE_SELF_WRAP;\n")]),
+    M("auth-policy-lookup-own-inbox", {"auth-policy"},
+      [append("src/app/gh-inbox-lookup.c",
+              "static const int purpose = GH_AUTH_PURPOSE_OWN_INBOX_READ;\n")]),
+    M("auth-policy-ui-group", {"auth-policy"},
+      [append("src/ui/gh-group-view.c", "static const int purpose = GH_AUTH_PURPOSE_GROUP;\n")]),
     M("status-delivered", {"message-status"},
       [replace("src/app/gh-message-status.h", "  GH_MESSAGE_STATUS_SENDING,\n",
                "  GH_MESSAGE_STATUS_SENDING,\n  GH_MESSAGE_STATUS_DELIVERED,\n")]),

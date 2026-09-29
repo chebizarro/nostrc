@@ -1,5 +1,5 @@
 #include "gh-dm-inbox.h"
-#include "gh-account-auth.h"
+#include "gh-auth-policy.h"
 #include "gh-identity.h"
 #include "gh-nip17-inbox.h"
 
@@ -88,8 +88,9 @@ struct _GhDmInbox {
   gint64 checkpoint_written; /* last value written this generation */
   gchar *error;
   GhDmInboxCounters counters;
-  GhAccountAuth *auth;       /* NULL: no account AUTH this generation */
-  gulong auth_handler;
+  /* The process's AUTH policy (the accounts' one): own inbox reads sign in
+   * as the account through its per-generation signer (R6). */
+  GhAuthPolicy *policy;
 
   /* Session: one live REQ per relay of one relay set. Bumped on teardown. */
   guint64 session;
@@ -517,8 +518,8 @@ inbox_filters(const gchar *pubkey_hex, gint64 since, gint64 until, guint limit)
 }
 
 /* A scope for exactly endpoint's URL, not started. It authenticates, on
- * challenge, as the account and only on that URL: an own inbox relay
- * (charter §4.3). */
+ * challenge, with the identity GhAuthPolicy gives an own inbox read (the
+ * account, charter §4.3) and only on that URL. */
 static GhRelayScope *
 new_scope(GhDmInbox *self, Endpoint *endpoint, gint64 until, GhRelayScopeFunc callback)
 {
@@ -537,9 +538,8 @@ new_scope(GhDmInbox *self, Endpoint *endpoint, gint64 until, GhRelayScopeFunc ca
     gh_relay_scope_unref(scope);
     return NULL;
   }
-  if (self->auth &&
-      (!gh_relay_scope_set_account_signer(scope, gh_account_auth_get_signer(self->auth), &error) ||
-       !gh_relay_scope_set_url_auth(scope, endpoint->url, GH_RELAY_AUTH_ACCOUNT, &error)))
+  if (!gh_auth_policy_apply_scope(self->policy, scope, GH_AUTH_PURPOSE_OWN_INBOX_READ,
+                                  endpoint->url, &error))
     g_message("Groundhog will not sign in to DM inbox relay \"%s\": %s", endpoint->url,
               error->message);
   return scope;
@@ -955,11 +955,6 @@ teardown_account(GhDmInbox *self)
 {
   withdraw_storage(self);
   teardown_session(self);
-  if (self->auth) {
-    g_clear_signal_handler(&self->auth_handler, self->auth);
-    gh_account_auth_revoke(self->auth);
-    g_clear_object(&self->auth);
-  }
   g_clear_pointer(&self->pubkey_hex, g_free);
   g_clear_pointer(&self->error, g_free);
   self->checkpoint = 0;
@@ -1033,10 +1028,6 @@ bind_account(GhDmInbox *self, guint64 generation, const gchar *npub)
       self->error = g_strdup("The active account has no usable public key");
       return;
     }
-    self->auth = gh_account_auth_new(self->accounts);
-    if (self->auth)
-      self->auth_handler = g_signal_connect_swapped(self->auth, "relay-changed",
-                                                    G_CALLBACK(on_auth_changed), self);
     return;
   }
   GhNip17Seen *rejected = open_rejected(self);
@@ -1058,11 +1049,6 @@ bind_account(GhDmInbox *self, guint64 generation, const gchar *npub)
    * session of each process asks for the initial backfill window. */
   self->checkpoint = 0;
   self->checkpoint_written = 0;
-  /* Own inbox relays may ask for AUTH as the account (charter §4.3). */
-  self->auth = gh_account_auth_new(self->accounts);
-  if (self->auth)
-    self->auth_handler = g_signal_connect_swapped(self->auth, "relay-changed",
-                                                  G_CALLBACK(on_auth_changed), self);
 }
 
 static gboolean
@@ -1144,6 +1130,11 @@ inbox_new(GhAccountController *accounts, GhAccountRelays *relays,
     self->auth_transport = *auth_transport;
     self->custom_auth = TRUE;
   }
+  /* Own inbox relays may ask for AUTH as the account (charter §4.3); their
+   * approval states (waiting, declined) are relay states of the inbox. */
+  self->policy = g_object_ref(gh_auth_policy_get_for_accounts(accounts));
+  g_signal_connect_object(self->policy, "account-state-changed", G_CALLBACK(on_auth_changed),
+                          self, G_CONNECT_SWAPPED);
   g_signal_connect_object(accounts, "changed", G_CALLBACK(sync_binding), self,
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(relays, "changed", G_CALLBACK(sync_binding), self,
@@ -1283,18 +1274,18 @@ gh_dm_inbox_get_relay_state(GhDmInbox *self, const gchar *url, const gchar **det
   Endpoint *endpoint = url ? g_hash_table_lookup(self->endpoints, url) : NULL;
   if (!endpoint)
     return GH_DM_INBOX_RELAY_NONE;
-  GhAccountAuthRelayState auth = self->auth ? gh_account_auth_get_relay_state(self->auth, url)
-                                            : GH_ACCOUNT_AUTH_RELAY_NONE;
+  GhAuthAccountState auth = self->policy ? gh_auth_policy_get_account_state(self->policy, url)
+                                         : GH_AUTH_ACCOUNT_STATE_NONE;
   if (endpoint->status == ENDPOINT_FAILED) {
     if (detail)
-      *detail = endpoint->auth_required && auth == GH_ACCOUNT_AUTH_RELAY_DECLINED
+      *detail = endpoint->auth_required && auth == GH_AUTH_ACCOUNT_STATE_DECLINED
         ? "This relay delivers your messages only after you sign in, and signing in "
           "was declined for this session"
         : endpoint->detail;
     return endpoint->auth_required ? GH_DM_INBOX_RELAY_AUTH_REQUIRED
                                    : GH_DM_INBOX_RELAY_FAILED;
   }
-  if (auth == GH_ACCOUNT_AUTH_RELAY_WAITING &&
+  if (auth == GH_AUTH_ACCOUNT_STATE_WAITING &&
       (endpoint->status == ENDPOINT_PENDING || endpoint->backfill == BACKFILL_PAGING))
     return GH_DM_INBOX_RELAY_WAITING_FOR_APPROVAL;
   if (endpoint->status == ENDPOINT_PENDING)
@@ -1356,6 +1347,10 @@ gh_dm_inbox_dispose(GObject *object)
     g_clear_object(&self->accounts);
     g_clear_object(&self->relays);
     g_clear_object(&self->store);
+  }
+  if (self->policy) {
+    g_signal_handlers_disconnect_by_data(self->policy, self);
+    g_clear_object(&self->policy);
   }
   G_OBJECT_CLASS(gh_dm_inbox_parent_class)->dispose(object);
 }

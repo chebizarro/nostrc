@@ -1,4 +1,5 @@
 #include "gh-outbox.h"
+#include "gh-auth-policy.h"
 #include "gh-expiry.h"
 #include "gh-identity.h"
 #include "gh-nip17-envelope.h"
@@ -70,6 +71,10 @@ struct _Msg {
   gboolean starting;         /* inside round_publish: do not end the round yet */
   gboolean manual;           /* this round is the user's Retry */
   gboolean targets_fresh;    /* the target lists were read in this session */
+  /* The resolver reported a changed list for the recipient (S2 background
+   * refresh) that this message has not re-read yet: one more round adds the
+   * new relays as targets of the same stored wrap. */
+  gboolean inbox_changed;
   gboolean dropped;
 };
 
@@ -81,6 +86,8 @@ struct _GhOutbox {
   GhAccountController *accounts;
   GhAccountRelays *account_relays;
   GhInboxResolver *inboxes;
+  gulong inboxes_handler;
+  GhAuthPolicy *policy;      /* the accounts' NIP-42 identity policy */
   GhDmSender *sender;
   GNetworkMonitor *network;
   GhRelayPublishTransport transport;
@@ -139,6 +146,7 @@ static void msg_eval(Msg *msg);
 static void msg_queue_eval(Msg *msg);
 static void round_check(Msg *msg);
 static void round_publish(Msg *msg);
+static gboolean own_relays_settled(GhOutbox *self);
 
 /* ---- small helpers ------------------------------------------------------- */
 
@@ -798,7 +806,9 @@ store_sealed(Msg *msg, const GhDmSendStatus *status)
   }
   if (!msg_reload(msg))
     return;
-  msg->targets_fresh = TRUE;
+  /* Sealed with the lists as resolved; a list that changed meanwhile is
+   * read again before the first round. */
+  msg->targets_fresh = !msg->inbox_changed;
   item_refresh(msg);
   msg_eval(msg);
 }
@@ -961,8 +971,33 @@ leg_fail(Leg *leg, const gchar *why)
   }
 }
 
+/* The NIP-42 purpose of publishing leg's wrap to url (GhAuthPolicy decides
+ * the identity): a recipient's inbox is RECIPIENT_WRAP (ephemeral, never the
+ * account, §4.4 R1/R7); the self-copy and a note to self go to the own inbox,
+ * SELF_WRAP (the account, on challenge; W13 review 7a). A stored self-copy
+ * target that has since left the account's own 10050 list is somebody
+ * else's relay now and is treated like a recipient's. Before the own lists
+ * are known this generation, the stored targets (taken from them) count as
+ * own. */
+static GhAuthPurpose
+leg_purpose(GhOutbox *self, Leg *leg, const gchar *url)
+{
+  if (g_strcmp0(leg->event->target_pubkey, self->account) != 0)
+    return GH_AUTH_PURPOSE_RECIPIENT_WRAP;
+  if (!own_relays_settled(self))
+    return GH_AUTH_PURPOSE_SELF_WRAP;
+  const gchar *const *own = gh_account_relays_get_inbox_relays(self->account_relays);
+  g_autofree gchar *key = url_key(url);
+  for (guint i = 0; own && own[i]; i++) {
+    g_autofree gchar *mine = url_key(own[i]);
+    if (g_strcmp0(mine, key) == 0)
+      return GH_AUTH_PURPOSE_SELF_WRAP;
+  }
+  return GH_AUTH_PURPOSE_RECIPIENT_WRAP;
+}
+
 /* One GhRelayPublish (its own connections) for the stored wrap, byte-for-byte,
- * to its due targets, each with an ephemeral NIP-42 identity. */
+ * to its due targets, each with the NIP-42 identity of its purpose. */
 static void
 leg_start(Leg *leg)
 {
@@ -989,13 +1024,18 @@ leg_start(Leg *leg)
     if (!target_due(target, msg->manual))
       continue;
     g_autoptr(GError) url_error = NULL;
-    if (gh_relay_publish_add_url(publish, target->relay_url, &url_error) &&
-        gh_relay_publish_set_url_auth(publish, target->relay_url, GH_RELAY_AUTH_EPHEMERAL,
-                                      &url_error))
-      added++;
-    else
+    if (!gh_relay_publish_add_url(publish, target->relay_url, &url_error)) {
       record_outcome(msg, leg, target, GH_RELAY_PUBLISH_REJECTED, GH_RELAY_OK_PREFIX_INVALID,
                      url_error ? url_error->message : "Not a usable relay URL", TRUE);
+      continue;
+    }
+    /* A refused identity (no current account session) leaves the URL
+     * unauthenticated: a relay that demands AUTH then answers AUTH_REQUIRED. */
+    if (!gh_auth_policy_apply_publish(self->policy, publish,
+                                      leg_purpose(self, leg, target->relay_url),
+                                      target->relay_url, &url_error))
+      g_debug("Groundhog will not sign in to a message relay: %s", url_error->message);
+    added++;
   }
   if (added == 0 || msg->dropped) {
     gh_relay_publish_unref(publish);
@@ -1024,6 +1064,16 @@ round_end(Msg *msg)
   msg->in_round = FALSE;
   msg->manual = FALSE;
   gint64 now = now_unix(self);
+  if (msg->inbox_changed && now < deadline(msg->entry)) {
+    /* The recipient's list changed during this round (S2): read it again
+     * and publish the same wrap to any new relay now. */
+    msg->targets_fresh = FALSE;
+    if (msg_persist(msg, GH_STORE_OUTBOX_WAITING_RETRY, now, FALSE, NULL)) {
+      item_refresh(msg);
+      msg_schedule(msg, now);
+    }
+    return;
+  }
   if (!msg_has_due(msg, FALSE)) {
     /* Nothing left to try automatically. Settled only if every recipient
      * has it; otherwise the user decides (Retry reaches "error:" relays). */
@@ -1219,6 +1269,7 @@ round_begin(Msg *msg)
     round_publish(msg);
     return;
   }
+  msg->inbox_changed = FALSE; /* this resolve reads the changed list */
   ResolveCall *call = g_new0(ResolveCall, 1);
   call->outbox = g_object_ref(self);
   call->id = msg->entry->id;
@@ -1275,7 +1326,7 @@ msg_eval(Msg *msg)
     gint64 now = now_unix(msg->outbox);
     if (entry->state == GH_STORE_OUTBOX_WAITING_RETRY && entry->next_attempt_at > now)
       msg_schedule(msg, entry->next_attempt_at);
-    else if (!msg_has_due(msg, msg->manual))
+    else if (!msg_has_due(msg, msg->manual) && !msg->inbox_changed)
       round_end(msg); /* everything answered already (e.g. before a crash) */
     else if (entry->attempts > 0 && now >= deadline(entry) && !msg->manual)
       give_up(msg, REASON_TIMED_OUT);
@@ -1342,6 +1393,54 @@ on_accounts_changed(GhAccountController *accounts, gpointer data)
   update_activity(data);
 }
 
+/* S2: the resolver's background refresh found a changed list for pubkey.
+ * Every message to that recipient still inside its retry window reads it
+ * again and publishes the same stored wrap to any new relay: at once when
+ * idle (a settled message included), after the current round or seal
+ * otherwise. One that needs attention keeps waiting for the user's Retry,
+ * which then reads the list again. */
+static void
+on_inbox_changed(GhInboxResolver *resolver, const gchar *pubkey, gpointer data)
+{
+  GhOutbox *self = data;
+  (void) resolver;
+  if (!pubkey || g_ascii_strcasecmp(pubkey, self->account) == 0)
+    return;
+  gint64 now = now_unix(self);
+  g_autoptr(GList) messages = g_hash_table_get_values(self->messages);
+  for (GList *l = messages; l; l = l->next)
+    msg_ref(l->data);
+  for (GList *l = messages; l; l = l->next) {
+    Msg *msg = l->data;
+    GhStoreOutboxEntry *entry = msg->entry;
+    if (msg->dropped || !msg->recipient || g_ascii_strcasecmp(msg->recipient, pubkey) != 0 ||
+        entry->state == GH_STORE_OUTBOX_CANCELLED)
+      continue;
+    msg->targets_fresh = FALSE;
+    if (entry->state == GH_STORE_OUTBOX_NEEDS_ATTENTION || now >= deadline(entry))
+      continue;
+    if (!msg_sealed(msg)) {
+      /* A seal in flight resolved the old list; one not started yet will
+       * resolve the new one. */
+      msg->inbox_changed = msg->seal != NULL;
+      continue;
+    }
+    msg->inbox_changed = TRUE;
+    if (msg->in_round || msg->resolve || msg->seal)
+      continue; /* round_end() starts the extra round */
+    if (entry->state == GH_STORE_OUTBOX_SETTLED || entry->state == GH_STORE_OUTBOX_WAITING_RETRY) {
+      if (!msg_persist(msg, GH_STORE_OUTBOX_WAITING_RETRY, now, FALSE, NULL))
+        continue;
+      msg_cancel_timer(msg);
+      item_refresh(msg);
+    }
+    if (running(self))
+      msg_queue_eval(msg);
+  }
+  for (GList *l = messages; l; l = l->next)
+    msg_unref(l->data);
+}
+
 static void
 on_network_changed(GNetworkMonitor *monitor, gboolean available, gpointer data)
 {
@@ -1399,6 +1498,7 @@ gh_outbox_new(const GhOutboxConfig *config, GError **error)
   self->accounts = g_object_ref(config->accounts);
   self->account_relays = g_object_ref(config->account_relays);
   self->inboxes = g_object_ref(config->inboxes);
+  self->policy = g_object_ref(gh_auth_policy_get_for_accounts(config->accounts));
   self->sender = g_object_ref(config->sender);
   self->network = g_object_ref(config->network ? config->network
                                                : g_network_monitor_get_default());
@@ -1423,6 +1523,8 @@ gh_outbox_new(const GhOutboxConfig *config, GError **error)
                                             G_CALLBACK(on_accounts_changed), self);
   self->network_handler = g_signal_connect(self->network, "network-changed",
                                            G_CALLBACK(on_network_changed), self);
+  self->inboxes_handler = g_signal_connect(self->inboxes, "changed",
+                                           G_CALLBACK(on_inbox_changed), self);
   update_activity(self);
   return g_steal_pointer(&self);
 }
@@ -1916,6 +2018,11 @@ gh_outbox_dispose(GObject *object)
     g_signal_handler_disconnect(self->network, self->network_handler);
     self->network_handler = 0;
   }
+  if (self->inboxes_handler) {
+    g_signal_handler_disconnect(self->inboxes, self->inboxes_handler);
+    self->inboxes_handler = 0;
+  }
+  g_clear_object(&self->policy);
   self->generation = 0;
   g_clear_object(&self->sender);
   g_clear_object(&self->inboxes);

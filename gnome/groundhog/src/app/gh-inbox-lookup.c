@@ -1,4 +1,5 @@
 #include "gh-inbox-lookup.h"
+#include "gh-auth-policy.h"
 
 #include <nostr-event.h>
 #include <nostr-tag.h>
@@ -427,10 +428,15 @@ start_req(Lookup *lookup)
     ? gh_relay_scope_new_with_transport(lookup->generation, filters, &self->transport,
                                         self->transport_data, on_scope_update, lookup)
     : gh_relay_scope_new(lookup->generation, filters, on_scope_update, lookup);
+  GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(self->accounts);
   for (guint i = 0; i < urls->len; i++) {
     const gchar *url = g_ptr_array_index(urls, i);
-    if (gh_relay_scope_add_url(lookup->scope, url, NULL))
-      g_hash_table_insert(lookup->sources, g_strdup(url), GUINT_TO_POINTER(SOURCE_PENDING));
+    if (!gh_relay_scope_add_url(lookup->scope, url, NULL))
+      continue;
+    /* A contact-directory connection: an ephemeral key if the relay demands
+     * AUTH, never the account (charter §4.3, PD-12). */
+    gh_auth_policy_apply_scope(policy, lookup->scope, GH_AUTH_PURPOSE_CONTACT_DIRECTORY, url, NULL);
+    g_hash_table_insert(lookup->sources, g_strdup(url), GUINT_TO_POINTER(SOURCE_PENDING));
   }
   lookup->deadline = g_timeout_source_new_seconds(self->deadline_seconds);
   g_source_set_callback(lookup->deadline, deadline_expired, lookup, NULL);
