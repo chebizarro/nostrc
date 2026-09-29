@@ -24,17 +24,17 @@
     <key name="notifications-enabled" type="b">
       <default>false</default>
       <summary>Show messaging notifications</summary>
-      <description>Reserved for a future notification service; disabled in this shell.</description>
+      <description>Show a notification for new messages, including while the window is closed. Off until you turn it on.</description>
     </key>
     <key name="notification-privacy" type="s">
       <default>'hidden'</default>
       <summary>Notification content visibility</summary>
-      <description>One of hidden, sender, or preview; hidden is the privacy-preserving default.</description>
+      <description>One of hidden (a count only), sender (who wrote), or preview (who wrote and the start of the message); hidden is the privacy-preserving default. Message requests are always hidden.</description>
     </key>
     <key name="sound-enabled" type="b">
       <default>false</default>
       <summary>Play a notification sound</summary>
-      <description>Reserved for a future notification service.</description>
+      <description>Play the desktop's alert sound with a new-message notification, at most once every ten seconds.</description>
     </key>
 
     <!-- Privacy / Web Content -->

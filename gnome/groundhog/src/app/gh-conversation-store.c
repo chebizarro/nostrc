@@ -18,6 +18,9 @@ struct _GhConversationStore {
 enum { SIGNAL_MESSAGE_ADDED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
+enum { PROP_0, PROP_ACCOUNT, N_PROPS };
+static GParamSpec *props[N_PROPS];
+
 static void gh_conversation_store_list_model_init(GListModelInterface *iface);
 
 G_DEFINE_FINAL_TYPE_WITH_CODE(GhConversationStore, gh_conversation_store, G_TYPE_OBJECT,
@@ -133,6 +136,8 @@ gh_conversation_store_set_account(GhConversationStore *self, const gchar *accoun
   self->conversations = g_ptr_array_new_with_free_func(g_object_unref);
   if (removed)
     g_list_model_items_changed(G_LIST_MODEL(self), 0, removed, 0);
+  /* After the removal: a listener sees the new account's (empty) model. */
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_ACCOUNT]);
 }
 
 const gchar *
@@ -426,10 +431,28 @@ gh_conversation_store_finalize(GObject *object)
 }
 
 static void
+gh_conversation_store_get_property(GObject *object, guint id, GValue *value, GParamSpec *pspec)
+{
+  GhConversationStore *self = GH_CONVERSATION_STORE(object);
+  switch (id) {
+  case PROP_ACCOUNT:
+    g_value_set_string(value, self->account);
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
+  }
+}
+
+static void
 gh_conversation_store_class_init(GhConversationStoreClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   object_class->finalize = gh_conversation_store_finalize;
+  object_class->get_property = gh_conversation_store_get_property;
+  props[PROP_ACCOUNT] = g_param_spec_string("account", NULL, NULL, NULL,
+                                            G_PARAM_READABLE | G_PARAM_STATIC_STRINGS |
+                                            G_PARAM_EXPLICIT_NOTIFY);
+  g_object_class_install_properties(object_class, N_PROPS, props);
   signals[SIGNAL_MESSAGE_ADDED] = g_signal_new("message-added",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, GH_TYPE_CONVERSATION, GH_TYPE_MESSAGE);

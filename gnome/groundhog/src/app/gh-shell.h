@@ -59,6 +59,11 @@ void gh_sidebar_page_unselect(GhSidebarPage *self);
  * last or first when none is selected, and scrolls it into view; keyboard
  * focus follows only if it was in the list. FALSE when there is none. */
 gboolean gh_sidebar_page_select_relative(GhSidebarPage *self, gint delta);
+/* Selects item in whichever list holds it, switching to or from Message
+ * Requests and clearing a search that hides it, and scrolls it into view.
+ * FALSE (nothing changed) when neither list holds it or an account page
+ * shows. */
+gboolean gh_sidebar_page_select_item(GhSidebarPage *self, gpointer item);
 
 /* Reveals the search bar and focuses its entry. */
 void gh_sidebar_page_start_search(GhSidebarPage *self);

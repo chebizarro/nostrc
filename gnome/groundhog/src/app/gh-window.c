@@ -274,6 +274,17 @@ gh_window_get_content_visible(GhWindow *self)
          adw_navigation_split_view_get_show_content(self->split);
 }
 
+gboolean
+gh_window_open_item(GhWindow *self, gpointer item)
+{
+  g_return_val_if_fail(GH_IS_WINDOW(self), FALSE);
+  if (!gh_sidebar_page_select_item(self->sidebar, item))
+    return FALSE;
+  /* Also when it was selected already (no selection change). */
+  adw_navigation_split_view_set_show_content(self->split, TRUE);
+  return TRUE;
+}
+
 static void
 on_quit(GSimpleAction *action, GVariant *parameter, gpointer data)
 {

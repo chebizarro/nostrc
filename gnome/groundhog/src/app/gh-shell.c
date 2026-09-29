@@ -442,6 +442,46 @@ gh_sidebar_page_select_relative(GhSidebarPage *self, gint delta)
   return TRUE;
 }
 
+static gboolean
+find_item(GListModel *model, gpointer item, guint *position)
+{
+  guint n = g_list_model_get_n_items(model);
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GObject) candidate = g_list_model_get_item(model, i);
+    if (candidate == item) {
+      *position = i;
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+gboolean
+gh_sidebar_page_select_item(GhSidebarPage *self, gpointer item)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), FALSE);
+  g_return_val_if_fail(G_IS_OBJECT(item), FALSE);
+  if (!self->conversations || self->account_page)
+    return FALSE;
+  guint position = 0;
+  gboolean request = FALSE;
+  gboolean found = find_item(self->conversations, item, &position) ||
+                   (request = find_item(self->requests, item, &position));
+  if (!found && *self->search_text) {
+    /* A search hides it. Clearing the entry reports "" at once. */
+    gtk_editable_set_text(GTK_EDITABLE(self->search_entry), "");
+    gtk_search_bar_set_search_mode(self->search_bar, FALSE);
+    found = find_item(self->conversations, item, &position) ||
+            (request = find_item(self->requests, item, &position));
+  }
+  if (!found)
+    return FALSE;
+  gh_sidebar_page_set_show_requests(self, request);
+  gtk_single_selection_set_selected(self->selection, position);
+  gtk_list_view_scroll_to(self->list, position, GTK_LIST_SCROLL_NONE, NULL);
+  return TRUE;
+}
+
 void
 gh_sidebar_page_start_search(GhSidebarPage *self)
 {

@@ -800,6 +800,93 @@ test_st9_forget(void)
   fixture_clear(&f);
 }
 
+/* ---- Notification state (G16, NO-7): mute and block live in the store ---------------------------- */
+
+static GhStoreNotifyState
+notify_state(Fixture *f, const gchar *room_id)
+{
+  GhStoreNotifyState state = { -1, TRUE };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_get_notify_state(f->conversations, room_id, &state,
+                                                        &error));
+  g_assert_no_error(error);
+  return state;
+}
+
+static void
+mute(Fixture *f, const gchar *room_id, gint64 until)
+{
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_set_muted_until(f->conversations, room_id, until, &error));
+  g_assert_no_error(error);
+}
+
+static void
+test_notify_state(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *aq = room_of(ACCOUNT_A, PEER_Q, NULL);
+  Rumor one = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 10, .content = "one" };
+  g_assert_cmpint(deliver(f.model, &one, "notify/1"), ==, GH_CONVERSATION_ADD_NEW);
+  GhStoreNotifyState state = notify_state(&f, ap);
+  g_assert_cmpint(state.muted_until, ==, 0);
+  g_assert_false(state.blocked);
+  /* A room that is not stored is neither muted nor blocked, and cannot be
+   * muted. */
+  state = notify_state(&f, aq);
+  g_assert_cmpint(state.muted_until, ==, 0);
+  g_assert_false(state.blocked);
+  g_autoptr(GError) error = NULL;
+  g_assert_false(gh_store_conversations_set_muted_until(f.conversations, aq, T0, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+
+  /* The mute is the row's muted_until, and it survives a restart. */
+  mute(&f, ap, T0 + 3600);
+  g_assert_cmpint(sql_int(f.store, "SELECT muted_until FROM conversations WHERE backend_key = '%s'",
+                          ap), ==, T0 + 3600);
+  fixture_restart(&f);
+  g_assert_cmpint(notify_state(&f, ap).muted_until, ==, T0 + 3600);
+  mute(&f, ap, GH_STORE_CONVERSATIONS_MUTED_ALWAYS);
+  g_assert_cmpint(notify_state(&f, ap).muted_until, ==, GH_STORE_CONVERSATIONS_MUTED_ALWAYS);
+  mute(&f, ap, 0);
+  g_assert_cmpint(notify_state(&f, ap).muted_until, ==, 0);
+  g_assert_false(gh_store_conversations_set_muted_until(f.conversations, ap, -1, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  /* Another account's room is refused. */
+  g_autofree gchar *bp = room_of(ACCOUNT_B, PEER_P, NULL);
+  g_assert_false(gh_store_conversations_get_notify_state(f.conversations, bp, &state, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+
+  /* A block is the room's request state. */
+  g_autofree gchar *block = g_strdup_printf(
+    "UPDATE conversations SET request_state = %d WHERE backend_key = '%s'",
+    GH_STORE_REQUEST_BLOCKED, ap);
+  sql_exec(f.store, block);
+  g_assert_true(notify_state(&f, ap).blocked);
+
+  /* Forget keeps both on the tombstone. */
+  mute(&f, ap, T0 + 60);
+  g_assert_true(gh_store_conversations_forget(f.conversations, ap, &error));
+  g_assert_no_error(error);
+  state = notify_state(&f, ap);
+  g_assert_cmpint(state.muted_until, ==, T0 + 60);
+  g_assert_true(state.blocked);
+  assert_store_consistent(f.store);
+
+  gh_store_conversations_close(f.conversations);
+  g_assert_false(gh_store_conversations_get_notify_state(f.conversations, ap, &state, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE);
+  g_clear_error(&error);
+  g_assert_false(gh_store_conversations_set_muted_until(f.conversations, ap, 0, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE);
+  fixture_clear(&f);
+}
+
 /* ---- EX-4 / EX-6: expiry at admission, no resurrection ------------------------------------------- */
 
 static void
@@ -1277,6 +1364,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/store-conversations/restart/paging", test_paging);
   g_test_add_func("/groundhog/store-conversations/restart/verifies", test_restore_verifies);
   g_test_add_func("/groundhog/store-conversations/st9/forget", test_st9_forget);
+  g_test_add_func("/groundhog/store-conversations/notify-state", test_notify_state);
   g_test_add_func("/groundhog/store-conversations/ex4-ex6/expiry", test_expiry);
   g_test_add_func("/groundhog/store-conversations/st12/legacy-seen", test_st12_legacy_seen);
   g_test_add_func("/groundhog/store-conversations/rejected-namespace", test_rejected_namespace);

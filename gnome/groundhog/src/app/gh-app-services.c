@@ -29,6 +29,9 @@
 #if GROUNDHOG_HAVE_ONBOARDING
 #include "gh-onboarding-view.h"
 #endif
+#if GROUNDHOG_HAVE_NOTIFIER
+#include "gh-notifier.h"
+#endif
 
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-identity.h"
@@ -66,6 +69,9 @@ struct _GhAppServices {
 #endif
 #if GROUNDHOG_HAVE_EXPIRY
   GhExpiry *expiry; /* the open store's, while there is one */
+#endif
+#if GROUNDHOG_HAVE_NOTIFIER
+  GhNotifier *notifier;
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
   GhBackground *background;
@@ -410,6 +416,56 @@ expiry_teardown(GhAppServices *self)
 }
 #endif
 
+#if GROUNDHOG_HAVE_NOTIFIER
+/* Private notifications (charter §5, G16): mutes and blocks are read from
+ * the account's encrypted store; with none open nothing is notified anyway
+ * (the model is empty), and an unreadable state is never notified. */
+static gboolean
+notifier_room_state(gpointer data, const gchar *room_id, GhNotifierRoomState *state)
+{
+  GhStoreConversations *store = gh_account_store_get_conversations(GH_ACCOUNT_STORE(data));
+  GhStoreNotifyState stored = { 0 };
+  if (store && !gh_store_conversations_get_notify_state(store, room_id, &stored, NULL))
+    return FALSE;
+  state->muted_until = stored.muted_until;
+  state->blocked = stored.blocked;
+  return TRUE;
+}
+
+/* NO-11: a locked store gets one hidden notice while no window shows it. */
+static void
+sync_notifier_locked(GhAppServices *self)
+{
+  gh_notifier_set_store_locked(self->notifier, gh_account_store_get_state(self->account_store) ==
+                                                 GH_ACCOUNT_STORE_LOCKED);
+}
+
+static gboolean
+notifier_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  GhNotifierConfig config = {
+    .settings = self->settings,
+    .conversations = self->conversations,
+    .room_state = notifier_room_state,
+    .room_state_data = self->account_store,
+  };
+  self->notifier = gh_notifier_new(G_APPLICATION(self->app), &config);
+  g_signal_connect_swapped(self->account_store, "changed", G_CALLBACK(sync_notifier_locked),
+                           self);
+  sync_notifier_locked(self);
+  return TRUE;
+}
+
+/* Withdraws what it shows and removes app.open-conversation. */
+static void
+notifier_teardown(GhAppServices *self)
+{
+  g_signal_handlers_disconnect_by_func(self->account_store, sync_notifier_locked, self);
+  dispose_object(&self->notifier);
+}
+#endif
+
 #if GROUNDHOG_HAVE_BACKGROUND
 /* Background delivery (charter §5.3, G15): holds the application while
  * run-in-background is on, so the services above outlive the window, and
@@ -552,6 +608,9 @@ static const GhAppService services[] = {
 #if GROUNDHOG_HAVE_ACCOUNTS
   { "preferences", preferences_init, preferences_teardown },
 #endif
+#if GROUNDHOG_HAVE_NOTIFIER
+  { "notifier", notifier_init, notifier_teardown },
+#endif
 #if GROUNDHOG_HAVE_BACKGROUND
   { "background", background_init, background_teardown },
 #endif
@@ -620,6 +679,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .settings = self->settings,
   };
   gh_onboarding_attach(window, &onboarding);
+#endif
+#if GROUNDHOG_HAVE_NOTIFIER
+  gh_notifier_attach_window(self->notifier, window);
 #endif
 }
 

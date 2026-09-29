@@ -1074,3 +1074,52 @@ else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ONBOARDING=0)
 endif()
 # --- end G14 onboarding and inbox setup ---
+
+# --- G16 private notifications ---
+# GhNotifier (privacy charter §5.1, §5.2, §8.2 G16): GNotifications for newly
+# admitted incoming messages at the chosen content level (hidden by default;
+# requests always hidden), coalesced per id on GhClock, withdrawn on read,
+# open, account switch, forget and expiry, with app.open-conversation targets
+# that name neither account nor room, mutes read from the encrypted store, and
+# the locked-store notice (NO-11). gh-app-services.c runs it with the account
+# store; its window glue follows the attached GhWindow.
+if (TARGET groundhog-store AND TARGET groundhog-conversations)
+  message(STATUS "Groundhog notifier: enabled")
+  add_library(groundhog-notifier STATIC src/app/gh-notifier.c)
+  target_include_directories(groundhog-notifier PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-notifier PUBLIC groundhog-ui groundhog-conversations
+    groundhog-store)
+  target_compile_options(groundhog-notifier PRIVATE -Wall -Wextra -Werror)
+  if (TARGET groundhog-account-store)
+    target_link_libraries(groundhog PRIVATE groundhog-notifier)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NOTIFIER=1)
+  else()
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NOTIFIER=0)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-store-conversations AND
+      TARGET groundhog-conversation-ui AND TARGET groundhog-test-schemas)
+    # NO-1…NO-8 (and the NO-11 notice): the fake org.gtk.Notifications (H4)
+    # on the shared private bus with GLib's GTK backend, a fake GhClock, a
+    # real SQLCipher store for the mute (NO-7). --gui: the window glue
+    # (open a conversation, the stale toast); it self-skips (77) without a
+    # display.
+    add_executable(test-groundhog-notifier tests/app/test_notifier.c
+      tests/app/fake-gtk-notifications.c)
+    target_link_libraries(test-groundhog-notifier PRIVATE groundhog-notifier
+      groundhog-store-conversations groundhog-conversation-ui nostrc-test-bus)
+    target_compile_options(test-groundhog-notifier PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-notifier)
+    add_dependencies(test-groundhog-notifier groundhog-test-schemas)
+    add_test(NAME groundhog-notifier COMMAND test-groundhog-notifier)
+    set_tests_properties(groundhog-notifier PROPERTIES TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    add_test(NAME groundhog-notifier-gui COMMAND test-groundhog-notifier --gui)
+    set_tests_properties(groundhog-notifier-gui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog notifier: disabled (needs the GhStore's clock and the "
+                 "conversation model)")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NOTIFIER=0)
+endif()
+# --- end G16 private notifications ---

@@ -116,6 +116,31 @@ gboolean gh_store_conversations_purge(GhStoreConversations *self, gint64 retenti
                                       GhStorePurgeStats *out_stats, GStrv *out_purged,
                                       GError **error);
 
+/* ---- Notification state (charter §5.2 N8, §8.2 G16; NO-7) ---------------------
+ * A room's mute lives in its conversations row (muted_until), inside the
+ * encrypted store and never in GSettings, which is plaintext dconf: the unix
+ * time until which the notifier stays quiet for it, 0 when it is not muted,
+ * GH_STORE_CONVERSATIONS_MUTED_ALWAYS until unmuted. Forget keeps it, as it
+ * keeps a block (request_state BLOCKED), which is never notified at all. */
+#define GH_STORE_CONVERSATIONS_MUTED_ALWAYS G_MAXINT64
+
+typedef struct {
+  gint64 muted_until;  /* unix seconds; 0 = not muted */
+  gboolean blocked;    /* request_state BLOCKED */
+} GhStoreNotifyState;
+
+/* A room that is not stored is neither muted nor blocked. */
+gboolean gh_store_conversations_get_notify_state(GhStoreConversations *self,
+                                                 const gchar *room_id,
+                                                 GhStoreNotifyState *out_state,
+                                                 GError **error);
+/* Mutes a stored room until @muted_until (unix seconds, or
+ * GH_STORE_CONVERSATIONS_MUTED_ALWAYS); 0 unmutes. NOT_FOUND when the room is
+ * not stored; INVALID for a negative time. */
+gboolean gh_store_conversations_set_muted_until(GhStoreConversations *self,
+                                                const gchar *room_id, gint64 muted_until,
+                                                GError **error);
+
 /* ---- Legacy seen file (charter §3.2, ST-12) -----------------------------------
  * Before the encrypted store, GhDmInbox kept the account's seen keys in a
  * 0600 flat file: <state_dir>/<account>.seen (Groundhog 0.6.0) or, in a build

@@ -84,6 +84,8 @@ void gh_conversation_store_set_account(GhConversationStore *self,
                                        const GhConversationDelegate *delegate,
                                        gpointer delegate_data,
                                        GDestroyNotify destroy);
+/* The bound account; the read-only "account" property notifies each change,
+ * after the previous account's rooms were removed. */
 const gchar *gh_conversation_store_get_account(GhConversationStore *self);
 
 /* The single admission call, for inbound messages (with the verified wrap id

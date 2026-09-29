@@ -1120,6 +1120,74 @@ gh_store_conversations_purge(GhStoreConversations *self, gint64 retention_cutoff
   return TRUE;
 }
 
+/* ---- Notification state ---------------------------------------------------------------- */
+
+gboolean
+gh_store_conversations_get_notify_state(GhStoreConversations *self, const gchar *room_id,
+                                        GhStoreNotifyState *out_state, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  g_return_val_if_fail(out_state != NULL, FALSE);
+  *out_state = (GhStoreNotifyState){ 0 };
+  if (!check_open(self, error) || !check_room(self, room_id, error))
+    return FALSE;
+  GhStore *store = self->store;
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT muted_until, request_state FROM conversations "
+    "WHERE backend = 1 AND backend_key = ?1", error);
+  if (!stmt)
+    return FALSE;
+  BIND(bind_text(stmt, 1, room_id));
+  gboolean found = FALSE;
+  gboolean ok = step_row(store, stmt, &found, "Reading a conversation's notification state",
+                         error);
+  if (ok && found) {
+    out_state->muted_until = MAX(sqlite3_column_int64(stmt, 0), 0);
+    out_state->blocked = sqlite3_column_int64(stmt, 1) == GH_STORE_REQUEST_BLOCKED;
+  }
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+gboolean
+gh_store_conversations_set_muted_until(GhStoreConversations *self, const gchar *room_id,
+                                       gint64 muted_until, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  if (!check_open(self, error) || !check_room(self, room_id, error))
+    return FALSE;
+  if (muted_until < 0) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "A mute cannot end before 1970");
+    return FALSE;
+  }
+  GhStore *store = self->store;
+  gboolean found = FALSE;
+  gint64 id = 0;
+  if (!lookup_room(store, room_id, &found, &id, error))
+    return FALSE;
+  if (!found) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND,
+                        "The conversation is not stored");
+    return FALSE;
+  }
+  sqlite3_stmt *stmt = prepare(store, "UPDATE conversations SET muted_until = ?2 WHERE id = ?1",
+                               error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, id));
+  BIND(sqlite3_bind_int64(stmt, 2, muted_until));
+  gboolean ok = step_done(store, stmt, "Muting a conversation", error);
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
 /* ---- Legacy seen file ------------------------------------------------------------------ */
 
 gchar *

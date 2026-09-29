@@ -42,6 +42,11 @@ GhContentPage *gh_window_get_content(GhWindow *self);
 GhStatus *gh_window_get_status(GhWindow *self);
 /* TRUE when the content page is on screen: expanded, or collapsed and shown. */
 gboolean gh_window_get_content_visible(GhWindow *self);
+/* Opens item (a conversation of the attached list) as if chosen from the
+ * sidebar: selected in whichever list holds it (gh_sidebar_page_select_item())
+ * and shown in the content page, collapsed or not. FALSE when no list holds
+ * it. */
+gboolean gh_window_open_item(GhWindow *self, gpointer item);
 
 /* Adds app.quit and binds every accelerator of the shortcuts window to its
  * action on app (Ctrl+F, Alt+Up/Down and Ctrl+Page Up/Down, Ctrl+N, Ctrl+?,
