@@ -469,15 +469,50 @@ inbox_idle(gpointer data)
   return gh_dm_inbox_get_state(app->inbox) == GH_DM_INBOX_LIVE && counters.pending == 0;
 }
 
-/* Sends and waits until both wraps were accepted and the recipient lists it. */
+typedef struct {
+  App *app;
+  guint received; /* the inbox's received counter to reach */
+} CopiesWait;
+
+/* The inbox has taken (unwrapped or skipped) every copy up to received. */
+static gboolean
+copies_taken(gpointer data)
+{
+  CopiesWait *wait = data;
+  GhDmInboxCounters counters;
+  gh_dm_inbox_get_counters(wait->app->inbox, &counters);
+  return counters.received >= wait->received && inbox_idle(wait->app);
+}
+
+/* Sends and waits until every wrap was accepted and every accepted copy was
+ * taken by the inbox reading its relay: the recipient's for the recipient
+ * wraps, the sender's own for the self-copy. An idle inbox alone is not
+ * that: it is idle before a copy has even arrived, and the copy's unwrap
+ * (signer calls) then lands in whatever the test counts next (nostrc-vlb4). */
 static GhOutboxItem *
 send_and_deliver(App *from, App *to, const gchar *text)
 {
+  GhDmInboxCounters to_before, from_before;
+  gh_dm_inbox_get_counters(to->inbox, &to_before);
+  gh_dm_inbox_get_counters(from->inbox, &from_before);
   GhOutboxItem *item = app_send(from, to->key, text);
   spin_until(item_settled, item, "the outbox settling the message");
+  guint recipient_copies = 0, self_copies = 0;
+  g_autoptr(GPtrArray) targets = gh_outbox_item_dup_targets(item);
+  for (guint i = 0; i < targets->len; i++) {
+    GhOutboxTarget *target = g_ptr_array_index(targets, i);
+    if (target->outcome != GH_RELAY_PUBLISH_ACCEPTED)
+      continue;
+    if (target->role == GH_STORE_OUTBOX_ROLE_SELF_WRAP)
+      self_copies++;
+    else
+      recipient_copies++;
+  }
   wait_received(to, text);
-  spin_until(inbox_idle, to, "the recipient's inbox going idle");
-  spin_until(inbox_idle, from, "the sender's inbox taking its self-copy");
+  CopiesWait to_copies = { to, to_before.received + recipient_copies };
+  spin_until(copies_taken, &to_copies, "every copy reaching the recipient's inbox");
+  CopiesWait from_copies = { from, from_before.received + self_copies };
+  spin_until(copies_taken, &from_copies, "the self-copy reaching the sender's inbox");
   return item;
 }
 
