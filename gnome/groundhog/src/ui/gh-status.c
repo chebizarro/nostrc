@@ -110,8 +110,9 @@ static const struct {
 } banner_copy[] = {
   { GH_STATUS_BANNER_NONE, "", FALSE, NULL, NULL },
   /* §7.15 #14-#16. Starting fresh or resetting damaged storage deletes
-   * messages, so it needs a confirmation dialog (Preferences, G17), not a
-   * one-click banner button. */
+   * messages: its button opens a confirmation dialog (charter §3.4,
+   * gh_store_status_confirm_start_fresh()), which also offers Try Again
+   * for a missing key. */
   { GH_STATUS_BANNER_STORE_LOCKED,
     N_("Message storage is locked — unlock your keyring to read and receive messages"), TRUE,
     N_("Unlock"), GH_STATUS_ACTION_STORE_UNLOCK },
@@ -120,9 +121,10 @@ static const struct {
     N_("Continue Without Saving Messages"), GH_STATUS_ACTION_STORE_EPHEMERAL },
   { GH_STATUS_BANNER_STORE_KEY_MISSING,
     N_("The key to your saved messages is missing from the keyring"), TRUE,
-    N_("Try Again"), GH_STATUS_ACTION_STORE_RETRY },
+    N_("Start Fresh on This Device…"), GH_STATUS_ACTION_STORE_START_FRESH },
   { GH_STATUS_BANNER_STORE_CORRUPT,
-    N_("Message storage is damaged — showing what could be read"), TRUE, NULL, NULL },
+    N_("Message storage is damaged — showing what could be read"), TRUE,
+    N_("Reset Storage…"), GH_STATUS_ACTION_STORE_START_FRESH },
   { GH_STATUS_BANNER_STORE_ERROR,
     N_("Can't open message storage"), TRUE, N_("Try Again"), GH_STATUS_ACTION_STORE_RETRY },
   { GH_STATUS_BANNER_OFFLINE,

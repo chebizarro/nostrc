@@ -36,14 +36,9 @@
 #endif
 
 #if GROUNDHOG_HAVE_ACCOUNTS
+#include "gh-features.h"
 #include "gh-identity.h"
 #include "gh-preferences-dialog.h"
-#endif
-
-/* G09 defines it once network modes and Tor exist; until then Preferences
- * offers no Tor choice (charter §7.11). */
-#ifndef GROUNDHOG_HAVE_TOR
-#define GROUNDHOG_HAVE_TOR 0
 #endif
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
@@ -67,7 +62,7 @@ struct _GhAppServices {
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   GhStoreKey *store_key;
   GhAccountStore *account_store;
-  GSimpleAction *store_actions[3];
+  GSimpleAction *store_actions[4];
 #endif
 #if GROUNDHOG_HAVE_EXPIRY
   GhExpiry *expiry; /* the open store's, while there is one */
@@ -266,11 +261,12 @@ account_store_teardown(GhAppServices *self)
 }
 
 /* The store banners' buttons (GH_STATUS_ACTION_STORE_*). */
-enum { ACTION_UNLOCK, ACTION_RETRY, ACTION_EPHEMERAL };
+enum { ACTION_UNLOCK, ACTION_RETRY, ACTION_EPHEMERAL, ACTION_START_FRESH };
 static const gchar *const store_action_names[] = {
   [ACTION_UNLOCK] = "store-unlock",
   [ACTION_RETRY] = "store-retry",
   [ACTION_EPHEMERAL] = "store-continue-without-saving",
+  [ACTION_START_FRESH] = "store-start-fresh",
 };
 
 static void
@@ -286,6 +282,9 @@ sync_store_actions(GhAppServices *self)
                               state == GH_ACCOUNT_STORE_ERROR);
   g_simple_action_set_enabled(self->store_actions[ACTION_EPHEMERAL],
                               state == GH_ACCOUNT_STORE_UNAVAILABLE);
+  g_simple_action_set_enabled(self->store_actions[ACTION_START_FRESH],
+                              state == GH_ACCOUNT_STORE_KEY_MISSING ||
+                              state == GH_ACCOUNT_STORE_CORRUPT);
 }
 
 static void
@@ -299,7 +298,12 @@ on_store_action(GSimpleAction *action, GVariant *parameter, gpointer data)
     gh_account_store_unlock(self->account_store);
   else if (g_str_equal(name, store_action_names[ACTION_RETRY]))
     gh_account_store_retry(self->account_store);
-  else if (!gh_account_store_continue_without_saving(self->account_store, &error))
+  else if (g_str_equal(name, store_action_names[ACTION_START_FRESH])) {
+    /* Deletes messages: only after the dialog's confirmation. */
+    GtkWindow *window = gtk_application_get_active_window(self->app);
+    if (window)
+      gh_store_status_confirm_start_fresh(GTK_WIDGET(window), self->account_store);
+  } else if (!gh_account_store_continue_without_saving(self->account_store, &error))
     g_message("Groundhog could not keep messages in memory: %s", error->message);
 }
 
@@ -518,10 +522,16 @@ preferences_forget_async(GObject *target, const gchar *npub, GCancellable *cance
                                 user_data);
 }
 
-static gboolean
+static GhPreferencesForgetResult
 preferences_forget_finish(GObject *target, GAsyncResult *result, GError **error)
 {
-  return gh_account_store_forget_finish(GH_ACCOUNT_STORE(target), result, error);
+  g_autoptr(GError) local = NULL;
+  if (gh_account_store_forget_finish(GH_ACCOUNT_STORE(target), result, &local))
+    return GH_PREFERENCES_FORGET_DELETED;
+  gboolean key_kept = g_error_matches(local, GH_ACCOUNT_STORE_SHRED_ERROR,
+                                      GH_ACCOUNT_STORE_SHRED_ERROR_KEY_KEPT);
+  g_propagate_error(error, g_steal_pointer(&local));
+  return key_kept ? GH_PREFERENCES_FORGET_KEY_KEPT : GH_PREFERENCES_FORGET_FAILED;
 }
 #endif
 
@@ -552,7 +562,9 @@ on_preferences(GSimpleAction *action, GVariant *parameter, gpointer data)
    * could start a second deletion. */
   if (self->preferences_dialog && gtk_widget_get_root(GTK_WIDGET(self->preferences_dialog)))
     return;
-  GhPreferencesDialog *dialog = gh_preferences_dialog_new(self->settings, GROUNDHOG_HAVE_TOR);
+  /* Rows whose feature this build lacks say so (src/app/gh-features.h). */
+  GhPreferencesDialog *dialog = gh_preferences_dialog_new(self->settings,
+                                                          gh_features_for_preferences());
   g_set_weak_pointer(&self->preferences_dialog, dialog);
   sync_preferences_account(self->accounts, dialog);
   g_signal_connect_object(self->accounts, "changed", G_CALLBACK(sync_preferences_account),
@@ -674,6 +686,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   gh_store_status_attach(gh_window_get_status(window), self->account_store);
+  /* Stored rooms list their newest page; older pages come from the store
+   * when the view asks (W13b review B1). */
+  gh_store_status_attach_history(window, self->account_store);
 #elif GROUNDHOG_HAVE_INBOX
   /* Without the encrypted store every message is in memory only: say so
    * with the in-memory banner (charter §3.4, P4). */

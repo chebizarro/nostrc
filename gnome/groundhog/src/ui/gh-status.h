@@ -52,8 +52,8 @@ typedef enum {
   GH_STATUS_BANNER_NONE,
   GH_STATUS_BANNER_STORE_LOCKED,       /* §7.15 #14 [Unlock] */
   GH_STATUS_BANNER_STORE_UNAVAILABLE,  /* §7.15 #15 [Continue Without Saving Messages] */
-  GH_STATUS_BANNER_STORE_KEY_MISSING,  /* [Try Again] */
-  GH_STATUS_BANNER_STORE_CORRUPT,      /* §7.15 #16 */
+  GH_STATUS_BANNER_STORE_KEY_MISSING,  /* [Start Fresh on This Device…] */
+  GH_STATUS_BANNER_STORE_CORRUPT,      /* §7.15 #16 [Reset Storage…] */
   GH_STATUS_BANNER_STORE_ERROR,        /* [Try Again] */
   GH_STATUS_BANNER_OFFLINE,            /* §7.15 #5 */
   GH_STATUS_BANNER_TOR_UNREACHABLE,    /* §7.15 #6 */
@@ -77,6 +77,9 @@ typedef enum {
 #define GH_STATUS_ACTION_STORE_UNLOCK    "app.store-unlock"
 #define GH_STATUS_ACTION_STORE_RETRY     "app.store-retry"
 #define GH_STATUS_ACTION_STORE_EPHEMERAL "app.store-continue-without-saving"
+/* KEY_MISSING and CORRUPT: a confirmation dialog, then crypto-shred and a new
+ * store (gh_store_status_confirm_start_fresh()). */
+#define GH_STATUS_ACTION_STORE_START_FRESH "app.store-start-fresh"
 /* [Set Up] on the "no inbox relays" banners (§7.15 #7, and no relay at all):
  * the onboarding inbox step (gh-onboarding-view.h installs it on the
  * window). */

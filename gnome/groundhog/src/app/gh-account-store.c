@@ -21,6 +21,7 @@ typedef struct {
   GCancellable *cancellable;
   GTask *task;              /* OP_SHRED: the caller's task */
   gboolean clear_current;   /* OP_SHRED: forget (vs. start fresh) */
+  gboolean keyed;           /* OP_SHRED: a store file existed for a key to protect */
 } Op;
 
 /* A worker-thread open (charter: open in a GTask worker, then hand over). */
@@ -67,6 +68,7 @@ enum { SIGNAL_CHANGED, SIGNAL_STORE_OPENING, SIGNAL_STORE_CLOSED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhAccountStore, gh_account_store, G_TYPE_OBJECT)
+G_DEFINE_QUARK(gh-account-store-shred-error-quark, gh_account_store_shred_error)
 
 GType
 gh_account_store_state_get_type(void)
@@ -486,20 +488,26 @@ delete_legacy_files(GhAccountStore *self, const gchar *account, GError **error)
   return TRUE;
 }
 
+/* key_error: transfer full, NULL when the key step succeeded or was
+ * skipped. */
 static void
-on_key_destroyed(GObject *source, GAsyncResult *result, gpointer data)
+finish_shred(Op *op, GError *key_error)
 {
-  Op *op = data;
   GhAccountStore *self = op->owner;
-  g_assert(op == self->op);
-  g_autoptr(GError) key_error = NULL;
+  g_assert(op && op->kind == OP_SHRED && op == self->op);
+  g_autoptr(GError) owned_key_error = key_error;
   g_autoptr(GError) file_error = NULL;
-  g_assert(op && op->kind == OP_SHRED);
-  gboolean key_ok = gh_store_key_destroy_finish(GH_STORE_KEY(source), result, &key_error);
   /* §3.8 step 3: the key first, then the files, which are unlinked even if
    * the key item could not be deleted (it then no longer opens anything). */
   gboolean files_ok = gh_store_delete_files(self->data_dir, op->account, &file_error) &&
                       delete_legacy_files(self, op->account, &file_error);
+  /* No store file: the key protected nothing, so failing to remove it (no
+   * Secret Service, a locked keyring) fails nothing (W13b review 4a). */
+  if (owned_key_error && !op->keyed) {
+    g_debug("Groundhog left no store file behind; the key step failed harmlessly: %s",
+            owned_key_error->message);
+    g_clear_error(&owned_key_error);
+  }
   GTask *task = g_steal_pointer(&op->task);
   gboolean current = self->accounts && g_strcmp0(op->account, self->account) == 0;
   if (op->clear_current) {
@@ -514,13 +522,31 @@ on_key_destroyed(GObject *source, GAsyncResult *result, gpointer data)
   }
   /* Idle again before the caller hears back. */
   finish_op(self);
-  if (!key_ok)
-    g_task_return_error(task, g_steal_pointer(&key_error));
-  else if (!files_ok)
+  if (!files_ok)
     g_task_return_error(task, g_steal_pointer(&file_error));
+  else if (owned_key_error)
+    g_task_return_new_error(task, GH_ACCOUNT_STORE_SHRED_ERROR,
+                            GH_ACCOUNT_STORE_SHRED_ERROR_KEY_KEPT,
+                            "The storage key couldn't be removed from the keyring: %s",
+                            owned_key_error->message);
   else
     g_task_return_boolean(task, TRUE);
   g_object_unref(task);
+}
+
+static void
+on_key_destroyed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GError *key_error = NULL;
+  gh_store_key_destroy_finish(GH_STORE_KEY(source), result, &key_error);
+  finish_shred(data, key_error);
+}
+
+static gboolean
+skip_key_step(gpointer data)
+{
+  finish_shred(data, NULL);
+  return G_SOURCE_REMOVE;
 }
 
 static void
@@ -528,14 +554,28 @@ start_shred(GhAccountStore *self, Op *op)
 {
   op->owner = g_object_ref(self);
   self->op = op;
-  if (g_strcmp0(op->account, self->account) == 0) {
+  gboolean current = g_strcmp0(op->account, self->account) == 0;
+  gboolean in_memory = current && self->store && gh_store_is_ephemeral(self->store);
+  gboolean exists = TRUE; /* when in doubt, a key may protect a file */
+  if (!gh_store_exists(self->data_dir, op->account, &exists, NULL))
+    exists = TRUE;
+  op->keyed = exists;
+  if (current) {
     unbind_store(self);
     self->want_open = FALSE;
     set_state(self, op->clear_current ? GH_ACCOUNT_STORE_INACTIVE : GH_ACCOUNT_STORE_OPENING,
               NULL);
   }
-  /* User-initiated: the keyring may ask to be unlocked. */
-  gh_store_key_destroy_async(self->store_key, op->account, GH_STORE_KEY_FLAGS_INTERACTIVE,
+  if (in_memory && !exists) {
+    /* "Continue Without Saving Messages": no key was ever made for it, and
+     * there was no keyring to make one in. Nothing to ask the keyring. */
+    g_idle_add(skip_key_step, op);
+    return;
+  }
+  /* User-initiated: the keyring may ask to be unlocked, when a key still
+   * protects a store file. */
+  gh_store_key_destroy_async(self->store_key, op->account,
+                             exists ? GH_STORE_KEY_FLAGS_INTERACTIVE : GH_STORE_KEY_FLAGS_NONE,
                              g_task_get_cancellable(op->task), on_key_destroyed, op);
 }
 
@@ -669,6 +709,23 @@ gh_account_store_get_outbox(GhAccountStore *self)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_STORE(self), NULL);
   return self->outbox;
+}
+
+gboolean
+gh_account_store_load_older(GhAccountStore *self, GhConversation *conversation, guint limit,
+                            guint *out_loaded, GError **error)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_STORE(self), FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation), FALSE);
+  if (out_loaded)
+    *out_loaded = 0;
+  if (!self->conversations) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE,
+                        "No message storage is open");
+    return FALSE;
+  }
+  return gh_store_conversations_load_older(self->conversations, conversation, limit, out_loaded,
+                                           error);
 }
 
 static gboolean

@@ -1,6 +1,7 @@
 #ifndef GH_BACKGROUND_H
 #define GH_BACKGROUND_H
 
+#include <glib/gi18n.h>
 #include <gtk/gtk.h>
 
 G_BEGIN_DECLS
@@ -74,11 +75,12 @@ typedef struct {
 /* The one-time explanation's marker (under state_dir). */
 #define GH_BACKGROUND_EXPLAINED_FILE "background-explained"
 
-/* Portal status texts (at most 96 characters, per the portal). */
-#define GH_BACKGROUND_STATUS_RECEIVING "Receiving messages"
-#define GH_BACKGROUND_STATUS_LOCKED "Messages are locked. Open Groundhog to unlock them."
-#define GH_BACKGROUND_STATUS_STOPPED "Not receiving messages. Open Groundhog for details."
-#define GH_BACKGROUND_STATUS_NO_ACCOUNT "No account selected"
+/* Portal status texts (at most 96 characters, per the portal), marked for
+ * translation; "status" holds the translated text. */
+#define GH_BACKGROUND_STATUS_RECEIVING N_("Receiving messages")
+#define GH_BACKGROUND_STATUS_LOCKED N_("Messages are locked. Open Groundhog to unlock them.")
+#define GH_BACKGROUND_STATUS_STOPPED N_("Not receiving messages. Open Groundhog for details.")
+#define GH_BACKGROUND_STATUS_NO_ACCOUNT N_("No account selected")
 
 #define GH_TYPE_BACKGROUND (gh_background_get_type())
 G_DECLARE_FINAL_TYPE(GhBackground, gh_background, GH, BACKGROUND, GObject)

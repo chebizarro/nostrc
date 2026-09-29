@@ -2,19 +2,25 @@
  * backend: no relay, no signer, no network. Covered: every preference key of
  * org.nostr.Groundhog has exactly one row, inside the dialog, and each row is
  * bound both ways (switches, choice rows including a value no choice has, the
- * Tor address and both URL lists); the Tor choice and Tor address row are
- * absent until G09's flag (tor_available) is set, and present with it; the URL
+ * Tor address and both URL lists) when its feature exists; in this build
+ * (src/app/gh-features.h) every row whose feature is missing is unbound,
+ * insensitive and says why, and flips with its GH_FEATURE_* (W13b review
+ * B2); the copy says only what the build does (disappearing messages,
+ * retention, web content, autostart); the Tor choice and Tor address row are
+ * absent until G09's feature is set, and present with it; the URL
  * rules reject non-ws(s)/https schemes, credentials, plain ws:// off loopback,
  * query and fragment, duplicates and a 17th entry; "Delete All Messages on This
  * Device" appears only with an account and a forget function, asks for
  * confirmation in an AdwAlertDialog and runs the forget function for the
  * account only after "Delete and Sign Out", keeping the dialog open until it
- * finished (a fake stands in for GhAccountStore's forget); the 360x294 layout
+ * finished, and reports deleted, key kept and failed apart (a fake stands in
+ * for GhAccountStore's forget); the 360x294 layout
  * and the accessible labels of the list rows. Needs a display: it self-skips
  * (77) without one. Waits iterate the main context against a deadline; they
  * never sleep. With GROUNDHOG_TEST_SCREENSHOTS=<dir> the screenshots case
  * renders every page, narrow, light and dark, to <dir>/groundhog-g17-*.png.
  */
+#include "gh-features.h"
 #include "gh-preferences-dialog.h"
 #include "gh-window.h"
 
@@ -23,6 +29,7 @@
 void groundhog_register_resource(void);
 
 #define SCHEMA_ID "org.nostr.Groundhog"
+#define NOT_AVAILABLE "Not available in this version yet"
 /* The npub of the x-only key 79be667e...16f81798; the dialog only shows it. */
 #define NPUB "npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d"
 
@@ -94,13 +101,13 @@ reset_all(GSettings *settings)
   drain_idle();
 }
 
-/* data: GINT_TO_POINTER(tor_available). */
+/* data: GUINT_TO_POINTER(GhPreferencesFeatures). */
 static void
 fixture_setup(Fixture *f, gconstpointer data)
 {
   f->settings = g_settings_new(SCHEMA_ID);
   reset_all(f->settings);
-  f->dialog = g_object_ref_sink(gh_preferences_dialog_new(f->settings, GPOINTER_TO_INT(data)));
+  f->dialog = g_object_ref_sink(gh_preferences_dialog_new(f->settings, GPOINTER_TO_UINT(data)));
 }
 
 static void
@@ -690,11 +697,12 @@ fake_forget_async(GObject *target, const char *npub, GCancellable *cancellable,
   fake.pending = g_task_new(target, cancellable, callback, user_data);
 }
 
-static gboolean
+static GhPreferencesForgetResult
 fake_forget_finish(GObject *target, GAsyncResult *result, GError **error)
 {
   g_assert_true(g_task_is_valid(result, target));
-  return g_task_propagate_boolean(G_TASK(result), error);
+  gssize outcome = g_task_propagate_int(G_TASK(result), error);
+  return outcome < 0 ? GH_PREFERENCES_FORGET_FAILED : (GhPreferencesForgetResult)outcome;
 }
 
 static void
@@ -707,15 +715,15 @@ fake_reset(void)
 }
 
 static void
-fake_complete(gboolean ok)
+fake_complete(GhPreferencesForgetResult outcome)
 {
   GTask *task = g_steal_pointer(&fake.pending);
   g_assert_nonnull(task);
-  if (ok)
-    g_task_return_boolean(task, TRUE);
-  else
+  if (outcome == GH_PREFERENCES_FORGET_FAILED)
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
-                            "The keyring stayed locked");
+                            "The disk is read-only");
+  else
+    g_task_return_int(task, outcome);
   g_object_unref(task);
 }
 
@@ -857,16 +865,31 @@ test_delete_all_runs_forget(Fixture *f, gconstpointer data)
 
   /* The account store signs the account out; the application then clears it. */
   gh_preferences_dialog_set_account(f->dialog, NULL, NULL);
-  fake_complete(TRUE);
+  fake_complete(GH_PREFERENCES_FORGET_DELETED);
   spin_until(dialog_can_close, f->dialog);
   g_assert_false(gtk_widget_get_visible(child(f, "delete_group")));
+  g_assert_cmpstr(gh_preferences_dialog_get_last_toast(f->dialog), ==,
+                  "All messages of the account were deleted from this device");
+
+  /* The files are gone but the key item stayed: said as it is (W13b review
+   * 4a), not as a failure to delete the messages. */
+  gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice");
+  confirm(f, "_Delete and Sign Out");
+  g_assert_cmpuint(fake.calls, ==, 2);
+  gh_preferences_dialog_set_account(f->dialog, NULL, NULL);
+  fake_complete(GH_PREFERENCES_FORGET_KEY_KEPT);
+  spin_until(dialog_can_close, f->dialog);
+  g_assert_cmpstr(gh_preferences_dialog_get_last_toast(f->dialog), ==,
+                  "Messages deleted; the storage key couldn't be removed from the keyring");
 
   /* A failure is reported and the action is offered again. */
   gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice");
   confirm(f, "_Delete and Sign Out");
-  g_assert_cmpuint(fake.calls, ==, 2);
-  fake_complete(FALSE);
+  g_assert_cmpuint(fake.calls, ==, 3);
+  fake_complete(GH_PREFERENCES_FORGET_FAILED);
   spin_until(dialog_can_close, f->dialog);
+  g_assert_cmpstr(gh_preferences_dialog_get_last_toast(f->dialog), ==,
+                  "Couldn't delete all messages: The disk is read-only");
   g_assert_true(gtk_widget_get_sensitive(button));
   g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(f->dialog)));
   fake_reset();
@@ -890,11 +913,194 @@ test_delete_all_outlives_dialog(Fixture *f, gconstpointer data)
   g_object_run_dispose(G_OBJECT(f->dialog));
   gh_preferences_dialog_set_account(f->dialog, NULL, NULL);
   g_assert_null(gh_preferences_dialog_get_key_widget(f->dialog, "enter-sends"));
-  fake_complete(FALSE);
+  fake_complete(GH_PREFERENCES_FORGET_FAILED);
   drain_idle();
   /* The finished deletion released the dialog: only the fixture holds it. */
   g_assert_cmpuint(G_OBJECT(f->dialog)->ref_count, ==, 1);
   fake_reset();
+}
+
+/* ---- features this build lacks (W13b review B2) ---------------------------------------- */
+
+/* A row whose feature is missing: unbound, showing what the build does,
+ * insensitive and saying why; its content and sound rows (notifications),
+ * the Tor address and the attachment server editor are not shown at all. */
+static void
+assert_gated(Fixture *f, const char *key)
+{
+  GtkWidget *widget = gh_preferences_dialog_get_key_widget(f->dialog, key);
+  g_assert_nonnull(widget);
+  g_test_message("gated: %s", key);
+  g_assert_false(gh_preferences_dialog_get_key_available(f->dialog, key));
+  if (g_str_equal(key, "notification-privacy") || g_str_equal(key, "sound-enabled") ||
+      g_str_equal(key, "tor-socks-address")) {
+    g_assert_false(gtk_widget_get_visible(widget));
+    return;
+  }
+  if (g_str_equal(key, "blossom-servers")) {
+    g_assert_false(gtk_widget_get_sensitive(widget));
+    g_assert_false(gtk_widget_get_visible(child(f, "blossom_entry")));
+    return;
+  }
+  g_assert_false(gtk_widget_get_sensitive(widget));
+  const char *subtitle = adw_action_row_get_subtitle(ADW_ACTION_ROW(widget));
+  gboolean always_on = g_str_equal(key, "filter-unknown-senders");
+  if (always_on)
+    g_assert_nonnull(strstr(subtitle, "Always on in this version"));
+  else
+    g_assert_cmpstr(subtitle, ==, NOT_AVAILABLE);
+  if (ADW_IS_SWITCH_ROW(widget)) {
+    AdwSwitchRow *row = ADW_SWITCH_ROW(widget);
+    /* What the build does: off, except that requests are always apart. */
+    g_assert_cmpint(adw_switch_row_get_active(row), ==, always_on);
+    /* Unbound both ways. */
+    g_settings_set_boolean(f->settings, key, !g_settings_get_boolean(f->settings, key));
+    drain_idle();
+    g_assert_cmpint(adw_switch_row_get_active(row), ==, always_on);
+    g_settings_reset(f->settings, key);
+    adw_switch_row_set_active(row, !always_on);
+    drain_idle();
+    g_autoptr(GVariant) user = g_settings_get_user_value(f->settings, key);
+    g_assert_null(user);
+    adw_switch_row_set_active(row, always_on);
+  } else {
+    AdwComboRow *row = ADW_COMBO_ROW(widget);
+    /* The first choice: no notifications, no timer, keep everything. */
+    g_assert_cmpuint(adw_combo_row_get_selected(row), ==, 0);
+    adw_combo_row_set_selected(row, 1);
+    drain_idle();
+    g_autoptr(GVariant) user = g_settings_get_user_value(f->settings, key);
+    g_assert_null(user);
+    adw_combo_row_set_selected(row, 0);
+  }
+}
+
+/* Every row of this build (src/app/gh-features.h) is live exactly when its
+ * feature is: flipping a GH_FEATURE_* there flips its rows here. */
+static void
+test_gated_rows_this_build(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  static const struct {
+    const char *key;
+    gboolean available;
+  } expect[] = {
+    { "notifications-enabled", GH_FEATURE_NOTIFICATIONS },
+    { "notification-privacy", GH_FEATURE_NOTIFICATIONS },
+    { "sound-enabled", GH_FEATURE_NOTIFICATIONS },
+    { "load-remote-images", GH_FEATURE_REMOTE_IMAGES },
+    { "link-previews", GH_FEATURE_LINK_PREVIEWS },
+    { "load-profile-pictures", GH_FEATURE_PROFILE_PICTURES },
+    { "filter-unknown-senders", GH_FEATURE_REQUEST_FILTER },
+    { "show-message-previews", TRUE },
+    { "network-mode", TRUE },
+    { "tor-socks-address", GH_FEATURE_TOR },
+    { "discovery-relays", TRUE },
+    { "signer-method", TRUE },
+    { "run-in-background", TRUE },
+    { "retention-days", GH_FEATURE_EXPIRY },
+    { "default-disappearing-seconds", GH_FEATURE_COMPOSER && GH_FEATURE_EXPIRY },
+    { "enter-sends", GH_FEATURE_COMPOSER },
+    { "blossom-servers", GH_FEATURE_ATTACHMENTS },
+  };
+  G_STATIC_ASSERT(G_N_ELEMENTS(expect) == G_N_ELEMENTS(preference_keys));
+  present(f, 800, 700);
+  for (guint i = 0; i < G_N_ELEMENTS(expect); i++) {
+    g_assert_true(in_list(preference_keys, G_N_ELEMENTS(preference_keys), expect[i].key));
+    if (!expect[i].available) {
+      assert_gated(f, expect[i].key);
+      continue;
+    }
+    g_assert_true(gh_preferences_dialog_get_key_available(f->dialog, expect[i].key));
+    GtkWidget *widget = gh_preferences_dialog_get_key_widget(f->dialog, expect[i].key);
+    if (ADW_IS_ACTION_ROW(widget))
+      g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(widget)), !=, NOT_AVAILABLE);
+  }
+  /* W13b B2's claims, for this build: no notification is promised, and no
+   * relay deletion unless something can send. */
+  const char *disappearing = adw_preferences_group_get_description(child(f, "disappearing_group"));
+  if (!GH_FEATURE_COMPOSER)
+    g_assert_true(!disappearing || !strstr(disappearing, "relays"));
+  if (!GH_FEATURE_NOTIFICATIONS) {
+    g_assert_false(gtk_widget_get_visible(child(f, "notifications_note")));
+    g_assert_false(adw_switch_row_get_active(child(f, "notifications_row")));
+  }
+  g_assert_false(gh_preferences_dialog_get_key_available(f->dialog, "no-such-key"));
+}
+
+/* With no feature at all, every gated row is gated at once. */
+static void
+test_gated_rows_none(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  static const char *const gated[] = {
+    "notifications-enabled", "notification-privacy", "sound-enabled", "load-remote-images",
+    "link-previews", "load-profile-pictures", "filter-unknown-senders", "tor-socks-address",
+    "retention-days", "default-disappearing-seconds", "enter-sends", "blossom-servers",
+  };
+  present(f, 800, 700);
+  for (guint i = 0; i < G_N_ELEMENTS(gated); i++)
+    assert_gated(f, gated[i]);
+  g_assert_false(gtk_widget_get_visible(child(f, "web_note")));
+  /* Nothing expires here, so nothing is said about it. */
+  const char *disappearing = adw_preferences_group_get_description(child(f, "disappearing_group"));
+  g_assert_cmpstr(disappearing ? disappearing : "", ==, "");
+}
+
+static GhPreferencesDialog *
+dialog_with(GSettings *settings, GhPreferencesFeatures features)
+{
+  return g_object_ref_sink(gh_preferences_dialog_new(settings, features));
+}
+
+static gpointer
+template_child(GhPreferencesDialog *dialog, const char *name)
+{
+  return gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_PREFERENCES_DIALOG, name);
+}
+
+/* The copy says only what the given build does (charter P4). */
+static void
+test_copy_follows_features(void)
+{
+  g_autoptr(GSettings) settings = g_settings_new(SCHEMA_ID);
+  reset_all(settings);
+
+  /* G07 without anything that sends: expiry deletes here, nothing asks relays. */
+  g_autoptr(GhPreferencesDialog) expiry = dialog_with(settings, GH_PREFERENCES_FEATURE_EXPIRY);
+  g_assert_cmpstr(adw_preferences_group_get_description(template_child(expiry,
+                                                                       "disappearing_group")),
+                  ==, "Messages that carry a timer are deleted from this device when they expire.");
+  g_assert_true(gh_preferences_dialog_get_key_available(expiry, "retention-days"));
+  g_assert_false(gh_preferences_dialog_get_key_available(expiry, "default-disappearing-seconds"));
+  const char *keep = adw_action_row_get_subtitle(template_child(expiry, "retention_row"));
+  g_assert_nonnull(strstr(keep, "deleted from this device only"));
+
+  /* With sending too: sent messages ask relays (NIP-40), up to a day late. */
+  g_autoptr(GhPreferencesDialog) sending =
+    dialog_with(settings, GH_PREFERENCES_FEATURE_EXPIRY | GH_PREFERENCES_FEATURE_COMPOSER);
+  const char *both = adw_preferences_group_get_description(template_child(sending,
+                                                                          "disappearing_group"));
+  g_assert_nonnull(strstr(both, "ask relays to delete them within about a day"));
+  g_assert_nonnull(strstr(both, "may not honour this"));
+  g_assert_true(gh_preferences_dialog_get_key_available(sending, "default-disappearing-seconds"));
+
+  /* Web content: the Tor clause only with Tor. */
+  g_autoptr(GhPreferencesDialog) images =
+    dialog_with(settings, GH_PREFERENCES_FEATURE_REMOTE_IMAGES);
+  GtkLabel *note = template_child(images, "web_note");
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(note)));
+  g_assert_null(strstr(gtk_label_get_text(note), "Tor"));
+  g_autoptr(GhPreferencesDialog) all = dialog_with(settings, GH_PREFERENCES_FEATURES_ALL);
+  g_assert_nonnull(strstr(gtk_label_get_text(template_child(all, "web_note")),
+                          "unless you use Tor"));
+  g_assert_true(gtk_widget_get_visible(template_child(all, "notifications_note")));
+
+  /* G15: switching background delivery on here also starts at login. */
+  const char *background = adw_action_row_get_subtitle(template_child(all,
+                                                                      "run_in_background_row"));
+  g_assert_nonnull(strstr(background, "starts Groundhog when you log in"));
+  reset_all(settings);
 }
 
 /* ---- layout -------------------------------------------------------------------------- */
@@ -954,7 +1160,7 @@ take_shot(GSettings *settings, const char *dir, const char *page, gboolean confi
           int width, int height, const char *name)
 {
   GhWindow *window = gh_window_new(NULL);
-  GhPreferencesDialog *dialog = gh_preferences_dialog_new(settings, FALSE);
+  GhPreferencesDialog *dialog = gh_preferences_dialog_new(settings, gh_features_for_preferences());
   GObject *target = g_object_new(G_TYPE_OBJECT, NULL);
   gh_preferences_dialog_set_account(dialog, NPUB, "Alice");
   gh_preferences_dialog_set_forget_func(dialog, fake_forget_async, fake_forget_finish, target);
@@ -1035,22 +1241,30 @@ main(int argc, char **argv)
                FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
 
   g_test_init(&argc, &argv, NULL);
-#define ADD(path, func, tor)                                                                  \
-  g_test_add("/groundhog/preferences/" path, Fixture, GINT_TO_POINTER(tor), fixture_setup,    \
-             func, fixture_teardown)
-  ADD("every-key-has-a-row", test_every_key_has_a_row, FALSE);
-  ADD("every-key-has-a-row-with-tor", test_every_key_has_a_row, TRUE);
-  ADD("switch-rows-bind-both-ways", test_switch_rows_bind_both_ways, FALSE);
-  ADD("choice-rows-bind-both-ways", test_choice_rows_bind_both_ways, FALSE);
-  ADD("tor-hidden-without-g09", test_tor_hidden_without_g09, FALSE);
-  ADD("tor-with-g09", test_tor_with_g09, TRUE);
-  ADD("url-lists-bind-both-ways", test_url_lists_bind_both_ways, FALSE);
-  ADD("account-rows", test_account_rows, FALSE);
-  ADD("delete-all-runs-forget", test_delete_all_runs_forget, FALSE);
-  ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, FALSE);
-  ADD("minimum-size-layout", test_minimum_size_layout, FALSE);
-  ADD("screenshots", test_screenshots, FALSE);
+  const GhPreferencesFeatures build = gh_features_for_preferences();
+  const GhPreferencesFeatures all = GH_PREFERENCES_FEATURES_ALL;
+  const GhPreferencesFeatures no_tor = all & ~GH_PREFERENCES_FEATURE_TOR;
+#define ADD(path, func, features)                                                             \
+  g_test_add("/groundhog/preferences/" path, Fixture, GUINT_TO_POINTER(features),             \
+             fixture_setup, func, fixture_teardown)
+  ADD("every-key-has-a-row", test_every_key_has_a_row, build);
+  ADD("every-key-has-a-row-every-feature", test_every_key_has_a_row, all);
+  ADD("gated-rows-this-build", test_gated_rows_this_build, build);
+  ADD("gated-rows-no-feature", test_gated_rows_none, 0);
+  /* The bindings themselves, with every feature a row can need. */
+  ADD("switch-rows-bind-both-ways", test_switch_rows_bind_both_ways, all);
+  ADD("choice-rows-bind-both-ways", test_choice_rows_bind_both_ways, no_tor);
+  ADD("tor-hidden-without-g09", test_tor_hidden_without_g09, no_tor);
+  ADD("tor-with-g09", test_tor_with_g09, all);
+  ADD("url-lists-bind-both-ways", test_url_lists_bind_both_ways, no_tor);
+  ADD("account-rows", test_account_rows, build);
+  ADD("delete-all-runs-forget", test_delete_all_runs_forget, build);
+  ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, build);
+  ADD("minimum-size-layout", test_minimum_size_layout, build);
+  ADD("minimum-size-layout-every-feature", test_minimum_size_layout, all);
+  ADD("screenshots", test_screenshots, build);
 #undef ADD
+  g_test_add_func("/groundhog/preferences/copy-follows-features", test_copy_follows_features);
   g_test_add_func("/groundhog/preferences/url-rules", test_url_rules);
   return g_test_run();
 }

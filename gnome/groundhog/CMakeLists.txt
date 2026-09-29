@@ -812,7 +812,9 @@ if (TARGET groundhog-store AND TARGET groundhog-store-key AND
     # ST-8, KC-2/3/4 and PT-6 at app level: a real controller on a private
     # bus with the mock signer, the FakeSecret key backend (H5), recording
     # relay transports (H1), the real inbox, delegate and outbox over real
-    # SQLCipher stores in private XDG directories.
+    # SQLCipher stores in private XDG directories. With a display, also the
+    # window's history paging and the Start Fresh confirmation on that stack
+    # (W13b review B1, non-blocking #3); those cases skip without one.
     add_executable(test-groundhog-account-store tests/app/test_account_store.c
       tests/app/account-store-outbox.c tests/store/fake-secret.c src/ui/gh-store-status.c
       src/app/gh-app-outbox.c ${GROUNDHOG_OUTBOX_SOURCES} ${GROUNDHOG_DM_SEND_SOURCES}
@@ -820,12 +822,17 @@ if (TARGET groundhog-store AND TARGET groundhog-store-key AND
     target_include_directories(test-groundhog-account-store PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
     target_link_libraries(test-groundhog-account-store PRIVATE groundhog-account-store
-      groundhog-ui nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+      groundhog-conversation-ui groundhog-ui nostr_nip17_core nostr_nip59_core nostrc-test-bus)
     target_compile_options(test-groundhog-account-store PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-account-store)
     add_dependencies(test-groundhog-account-store groundhog-test-schemas)
     add_test(NAME groundhog-account-store COMMAND test-groundhog-account-store)
     set_tests_properties(groundhog-account-store PROPERTIES TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # The window half (history paging after a restart, Start Fresh) needs a
+    # display and one bus for the whole process; it self-skips (77) without.
+    add_test(NAME groundhog-account-store-gui COMMAND test-groundhog-account-store --gui)
+    set_tests_properties(groundhog-account-store-gui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
 else()
@@ -952,17 +959,21 @@ endif()
 # GhPreferencesDialog (privacy charter §7.11, §8.2 G17): an AdwPreferencesDialog
 # whose rows bind every preference key of org.nostr.Groundhog both ways. GTK-only;
 # the application opens it with app.preferences (gh-app-services.c), handing it
-# the active account and GhAccountStore's forget for "Delete All Messages". The
-# Tor rows stay hidden until G09 defines GROUNDHOG_HAVE_TOR=1 for groundhog.
+# the active account and GhAccountStore's forget for "Delete All Messages". A row
+# whose feature the build lacks is gated (W13b review B2): src/app/gh-features.h
+# is the one list of what the build performs, flipped one line per feature (G09
+# Tor, G13 composer, G16 notifications, ...), and tests/check_privacy.py
+# requires a consumer for every row it leaves live.
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c)
 target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-preferences PUBLIC groundhog-ui)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-preferences)
 if (BUILD_TESTING)
-  # Every row bound to its key both ways (memory GSettings backend), the Tor
-  # row hidden without G09, the URL rules, and Delete All Messages running the
-  # forget function after confirmation (a fake stands in for GhAccountStore).
+  # Every row bound to its key both ways (memory GSettings backend), the rows
+  # of this build gated as src/app/gh-features.h says, the Tor row hidden
+  # without G09, the URL rules, and Delete All Messages running the forget
+  # function after confirmation (a fake stands in for GhAccountStore).
   # Needs a display, so it self-skips (77) like the other GUI tests. With
   # GROUNDHOG_TEST_SCREENSHOTS=<dir> it also renders each page to PNGs.
   add_executable(test-groundhog-preferences tests/ui/test_preferences.c)
@@ -1254,3 +1265,18 @@ if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
   endif()
 endif()
 # --- end G13 ---
+
+# --- W13c preference gates (keep last) ---
+# test_preferences asserts the Preferences rows of this build from
+# src/app/gh-features.h, whose features follow the executable's
+# GROUNDHOG_HAVE_* definitions: the test gets the same ones, once every block
+# above has set them (W13b review B2).
+if (TARGET test-groundhog-preferences)
+  get_target_property(GROUNDHOG_EXECUTABLE_DEFINITIONS groundhog COMPILE_DEFINITIONS)
+  foreach (definition IN LISTS GROUNDHOG_EXECUTABLE_DEFINITIONS)
+    if (definition MATCHES "^GROUNDHOG_HAVE_[A-Z_]+=")
+      target_compile_definitions(test-groundhog-preferences PRIVATE ${definition})
+    endif()
+  endforeach()
+endif()
+# --- end W13c preference gates ---

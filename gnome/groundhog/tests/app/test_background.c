@@ -1514,14 +1514,19 @@ main(int argc, char **argv)
   gh_test_bus_up(&bus);
   gh_test_signer_up(&bus, &signer);
   portal_up();
-  g_test_add_func("/groundhog/background/no9-service-mode", test_no9_service_mode);
-  g_test_add_func("/groundhog/background/no9-process-service", test_no9_process_service);
-  g_test_add_func("/groundhog/background/no10-host-file", test_no10_host_file);
-  g_test_add_func("/groundhog/background/no10-portal", test_no10_portal);
-  g_test_add_func("/groundhog/background/no10-process-autostart", test_no10_process_autostart);
-  g_test_add_func("/groundhog/background/auto-host-uses-file", test_auto_host_uses_file);
-  g_test_add_func("/groundhog/background/no11-locked-start", test_no11_locked_start);
-  g_test_add_func("/groundhog/background/no12-idle-timers", test_no12_idle_timers);
+  /* The bus outlives every case: each re-arms the macOS EBADF tolerance
+   * (W13 review, non-blocking #1; W13b review, non-blocking #6). */
+  nostrc_test_bus_add_func("/groundhog/background/no9-service-mode", test_no9_service_mode);
+  nostrc_test_bus_add_func("/groundhog/background/no9-process-service",
+                           test_no9_process_service);
+  nostrc_test_bus_add_func("/groundhog/background/no10-host-file", test_no10_host_file);
+  nostrc_test_bus_add_func("/groundhog/background/no10-portal", test_no10_portal);
+  nostrc_test_bus_add_func("/groundhog/background/no10-process-autostart",
+                           test_no10_process_autostart);
+  nostrc_test_bus_add_func("/groundhog/background/auto-host-uses-file",
+                           test_auto_host_uses_file);
+  nostrc_test_bus_add_func("/groundhog/background/no11-locked-start", test_no11_locked_start);
+  nostrc_test_bus_add_func("/groundhog/background/no12-idle-timers", test_no12_idle_timers);
   status = g_test_run();
   portal_down();
   gh_test_signer_down(&bus, &signer);

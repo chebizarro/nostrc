@@ -39,23 +39,28 @@ gchar *gh_conversation_view_format_day(GDateTime *when, GDateTime *now);
  *    has no expiry timer of its own;
  *  - it sticks to the newest message while scrolled to the bottom; otherwise
  *    "Jump to Latest" appears with the number of new messages below. Opening
- *    a conversation with unread messages brings the first of them into view;
- *  - scrolling near the top asks the history loader for older messages
- *    ("Loading earlier messages" shows until it finishes);
+ *    a conversation with unread messages brings the first of them into view,
+ *    or the top when unread ones are still in its unloaded older history;
+ *  - while the conversation has older history that is not listed, an
+ *    "Earlier Messages" button at the top says so (with how many of them are
+ *    unread) and, like scrolling near the top, asks the history loader for
+ *    them (conversation.load-older); "Loading earlier messages…" shows until
+ *    it finishes, and a failure is shown and retried only from the button;
  *  - links follow gh-link-policy.h: https to an ASCII host opens through
  *    "open-uri" (default: GtkUriLauncher, i.e. the portal); http, IDN and
  *    user-name addresses first show the full address in a confirmation; a
  *    nostr: address is copied ("copy-text"), never fetched or opened;
  *  - "Show Preview" (charter §2.1, D13) asks consent naming the host and the
  *    network mode unless the link-previews setting is on ("Don't ask again"
- *    turns it on), then asks the preview fetcher; without one it says that
- *    previews are not available and nothing is loaded;
+ *    turns it on), then asks the preview fetcher. Without a fetcher no
+ *    preview is offered at all: nothing asks consent for a fetch that can't
+ *    happen, and link-previews is never written;
  *  - announcements (charter §7.14): a new incoming message is announced
  *    politely and an own message that becomes "Not sent" assertively, only
  *    while the window is active.
  * Actions (widget actions of the view): conversation.open-link (s: URI),
  * conversation.show-preview (s: rumor id), conversation.retry-message
- * (s: rumor id), conversation.jump-to-latest and
+ * (s: rumor id), conversation.jump-to-latest, conversation.load-older and
  * conversation.unlock-messages. Signals: "retry-requested" (GhMessage) for
  * the outbox (G06/G13), "unlock-requested" for the inbox, "open-uri" (URI,
  * run last) whose default handler launches the URI, "copy-text" (text, run
@@ -90,8 +95,12 @@ gboolean gh_conversation_view_get_at_latest(GhConversationView *self);
 guint gh_conversation_view_get_new_below(GhConversationView *self);
 
 /* Older history (e.g. gh_store_conversations_load_older()): called when the
- * user scrolls near the top of a conversation that has older messages, at
- * most once until gh_conversation_view_finish_loading_older(). */
+ * user scrolls near the top of a conversation that has older messages or
+ * clicks "Earlier Messages", at most once until
+ * gh_conversation_view_finish_loading_older() (listed) or
+ * gh_conversation_view_fail_loading_older() (not: said so, and tried again
+ * only from the button). In the application gh_conversation_list_attach()
+ * installs it (gh_conversation_list_set_history_source()). */
 typedef void (*GhConversationViewLoadOlder)(GhConversationView *view,
                                             GhConversation *conversation,
                                             gpointer user_data);
@@ -99,7 +108,10 @@ void gh_conversation_view_set_history_loader(GhConversationView *self,
                                              GhConversationViewLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);
 void gh_conversation_view_finish_loading_older(GhConversationView *self);
+void gh_conversation_view_fail_loading_older(GhConversationView *self);
 gboolean gh_conversation_view_get_loading_older(GhConversationView *self);
+/* The last load failed (until a new load or conversation). */
+gboolean gh_conversation_view_get_older_failed(GhConversationView *self);
 
 /* Per-relay outcomes of an own message for its delivery details, e.g. from
  * GhOutboxItem (gh-outbox.h). NULL: none known. */
@@ -127,6 +139,8 @@ void gh_conversation_view_set_link_preview_fetcher(GhConversationView *self,
                                                    GhLinkPreviewFetch fetch,
                                                    GhLinkPreviewFinish finish,
                                                    gpointer user_data, GDestroyNotify destroy);
+/* Whether a fetcher is set, i.e. whether any preview is offered. */
+gboolean gh_conversation_view_get_previews_available(GhConversationView *self);
 
 typedef enum {
   GH_LINK_PREVIEW_NONE,        /* not asked for */
@@ -134,7 +148,7 @@ typedef enum {
   GH_LINK_PREVIEW_LOADING,
   GH_LINK_PREVIEW_LOADED,
   GH_LINK_PREVIEW_FAILED,
-  GH_LINK_PREVIEW_UNAVAILABLE  /* no fetcher: nothing was loaded */
+  GH_LINK_PREVIEW_UNAVAILABLE  /* the fetcher was removed while asking: nothing loaded */
 } GhLinkPreviewState;
 
 /* The preview state of @message; title and description (nullable, borrowed)

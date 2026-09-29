@@ -7,6 +7,9 @@
  * server list gets the same bound. */
 #define GH_PREFERENCES_MAX_URLS 16
 
+/* What every gated row says (charter §7.1: every disabled control says why). */
+#define NOT_AVAILABLE N_("Not available in this version yet")
+
 typedef enum {
   BINDING_CHOICE,  /* AdwComboRow <-> one of a fixed list of values */
   BINDING_LIST,    /* GtkListBox of URLs + AdwEntryRow to add one <-> as */
@@ -38,12 +41,15 @@ struct _GhPreferencesDialog {
   AdwSwitchRow *notifications_row;
   AdwComboRow *notification_privacy_row;
   AdwSwitchRow *sound_row;
+  GtkLabel *notifications_note;
   AdwSwitchRow *remote_images_row;
   AdwSwitchRow *link_previews_row;
   AdwSwitchRow *profile_pictures_row;
+  GtkLabel *web_note;
   AdwSwitchRow *filter_unknown_senders_row;
   AdwSwitchRow *message_previews_row;
   AdwSwitchRow *enter_sends_row;
+  AdwPreferencesGroup *disappearing_group;
   AdwComboRow *disappearing_row;
   AdwComboRow *retention_row;
   AdwComboRow *network_mode_row;
@@ -66,7 +72,7 @@ struct _GhPreferencesDialog {
   AdwAlertDialog *delete_all_dialog;
 
   GSettings *settings;
-  gboolean tor_available;
+  GhPreferencesFeatures features;
   GHashTable *key_widgets; /* key -> borrowed widget */
   GPtrArray *bindings;     /* Binding */
   gulong settings_changed;
@@ -76,12 +82,60 @@ struct _GhPreferencesDialog {
   GObject *forget_target;
   gboolean forgetting;
   gboolean disposed; /* template children are gone; a forget may still finish */
+  gchar *last_toast;
 };
 
 G_DEFINE_FINAL_TYPE(GhPreferencesDialog, gh_preferences_dialog, ADW_TYPE_PREFERENCES_DIALOG)
 
-enum { PROP_0, PROP_SETTINGS, PROP_TOR_AVAILABLE, N_PROPS };
+enum { PROP_0, PROP_SETTINGS, PROP_FEATURES, N_PROPS };
 static GParamSpec *properties[N_PROPS];
+
+/* The one table of rows that need a feature this build may lack
+ * (gh-preferences-dialog.h). Every other row is always live.
+ * tests/check_privacy.py (preference-consumers) reads it with
+ * src/app/gh-features.h: a key is gated while one of its features is 0
+ * there, and must have a consumer outside this dialog otherwise. */
+static const struct {
+  const gchar *key;
+  GhPreferencesFeatures needs;
+} key_features[] = {
+  { "notifications-enabled", GH_PREFERENCES_FEATURE_NOTIFICATIONS },
+  { "notification-privacy", GH_PREFERENCES_FEATURE_NOTIFICATIONS },
+  { "sound-enabled", GH_PREFERENCES_FEATURE_NOTIFICATIONS },
+  { "load-remote-images", GH_PREFERENCES_FEATURE_REMOTE_IMAGES },
+  { "link-previews", GH_PREFERENCES_FEATURE_LINK_PREVIEWS },
+  { "load-profile-pictures", GH_PREFERENCES_FEATURE_PROFILE_PICTURES },
+  { "filter-unknown-senders", GH_PREFERENCES_FEATURE_REQUEST_FILTER },
+  { "enter-sends", GH_PREFERENCES_FEATURE_COMPOSER },
+  { "default-disappearing-seconds",
+    GH_PREFERENCES_FEATURE_COMPOSER | GH_PREFERENCES_FEATURE_EXPIRY },
+  { "retention-days", GH_PREFERENCES_FEATURE_EXPIRY },
+  { "blossom-servers", GH_PREFERENCES_FEATURE_ATTACHMENTS },
+  { "tor-socks-address", GH_PREFERENCES_FEATURE_TOR },
+};
+
+static gboolean
+key_available(GhPreferencesDialog *self, const gchar *key)
+{
+  for (guint i = 0; i < G_N_ELEMENTS(key_features); i++)
+    if (g_str_equal(key_features[i].key, key))
+      return (self->features & key_features[i].needs) == key_features[i].needs;
+  return TRUE;
+}
+
+/* A row this build can't honour: unbound, insensitive, and saying why. */
+static void
+gate_row(AdwActionRow *row, const gchar *reason)
+{
+  adw_action_row_set_subtitle(row, reason);
+  gtk_widget_set_sensitive(GTK_WIDGET(row), FALSE);
+}
+
+const gchar *
+gh_preferences_dialog_not_available_text(void)
+{
+  return _(NOT_AVAILABLE);
+}
 
 /* The boolean keys and their switch rows. */
 static const struct {
@@ -278,11 +332,21 @@ on_choice_selected(AdwComboRow *row, GParamSpec *pspec, Binding *binding)
     choice_sync(binding); /* not writable: show the value it kept */
 }
 
-/* values: floating or not, one per item of the row's GtkStringList model. */
+/* values: floating or not, one per item of the row's GtkStringList model. A
+ * row whose feature is missing shows its first choice (what the build does:
+ * no notifications, no timer, keep everything) and binds nothing. */
 static void
 bind_choice(GhPreferencesDialog *self, AdwComboRow *row, const gchar *key,
             GVariant *const *values, guint n_values, gchar *(*custom_label)(GVariant *value))
 {
+  if (!key_available(self, key)) {
+    for (guint i = 0; i < n_values; i++)
+      g_variant_unref(g_variant_ref_sink(values[i]));
+    g_hash_table_insert(self->key_widgets, (gpointer)key, row);
+    adw_combo_row_set_selected(row, 0);
+    gate_row(ADW_ACTION_ROW(row), _(NOT_AVAILABLE));
+    return;
+  }
   Binding *binding = add_binding(self, BINDING_CHOICE, key, GTK_WIDGET(row));
   binding->row = row;
   binding->model = GTK_STRING_LIST(adw_combo_row_get_model(row));
@@ -401,7 +465,8 @@ on_list_apply(AdwEntryRow *entry, Binding *binding)
   g_autoptr(GError) error = NULL;
   GhPreferencesDialog *self = binding->self;
   g_autofree gchar *url =
-    binding->normalize(gtk_editable_get_text(GTK_EDITABLE(entry)), self->tor_available, &error);
+    binding->normalize(gtk_editable_get_text(GTK_EDITABLE(entry)),
+                       (self->features & GH_PREFERENCES_FEATURE_TOR) != 0, &error);
   if (!url) {
     show_entry_error(binding, error->message);
     return;
@@ -452,6 +517,12 @@ bind_list(GhPreferencesDialog *self, const gchar *key, GtkListBox *list, AdwEntr
   list_sync(binding);
   g_signal_connect(entry, "apply", G_CALLBACK(on_list_apply), binding);
   g_signal_connect(entry, "changed", G_CALLBACK(on_entry_changed), binding);
+  /* Without its feature the list shows what is stored and nothing edits it
+   * (its group says why). */
+  if (!key_available(self, key)) {
+    gtk_widget_set_sensitive(GTK_WIDGET(list), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(entry), FALSE);
+  }
 }
 
 /* ---- Tor address ------------------------------------------------------------------- */
@@ -494,13 +565,56 @@ bind_address(GhPreferencesDialog *self, const gchar *key, AdwEntryRow *entry, Gt
 static void
 sync_network(GhPreferencesDialog *self)
 {
+  gboolean tor_available = (self->features & GH_PREFERENCES_FEATURE_TOR) != 0;
   g_autofree gchar *mode = g_settings_get_string(self->settings, "network-mode");
-  gboolean tor = self->tor_available && g_str_equal(mode, "tor");
+  gboolean tor = tor_available && g_str_equal(mode, "tor");
   gtk_widget_set_visible(GTK_WIDGET(self->tor_address_row), tor);
   if (!tor)
     gtk_widget_set_visible(GTK_WIDGET(self->tor_address_error), FALSE);
-  gtk_widget_set_visible(GTK_WIDGET(self->tor_note), self->tor_available);
-  gtk_widget_set_visible(GTK_WIDGET(self->proxy_note), !self->tor_available);
+  gtk_widget_set_visible(GTK_WIDGET(self->tor_note), tor_available);
+  gtk_widget_set_visible(GTK_WIDGET(self->proxy_note), !tor_available);
+}
+
+/* Content and sound exist only with notifications, and only matter while
+ * they are on. */
+static void
+sync_notifications(GhPreferencesDialog *self)
+{
+  gboolean available = key_available(self, "notifications-enabled");
+  gboolean on = available && adw_switch_row_get_active(self->notifications_row);
+  gtk_widget_set_visible(GTK_WIDGET(self->notification_privacy_row), available);
+  gtk_widget_set_visible(GTK_WIDGET(self->sound_row), available);
+  gtk_widget_set_visible(GTK_WIDGET(self->notifications_note), available);
+  if (available) {
+    gtk_widget_set_sensitive(GTK_WIDGET(self->notification_privacy_row), on);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->sound_row), on);
+  }
+}
+
+/* The copy says only what this build does. */
+static void
+sync_copy(GhPreferencesDialog *self)
+{
+  gboolean web = key_available(self, "load-remote-images") ||
+                 key_available(self, "link-previews") ||
+                 key_available(self, "load-profile-pictures");
+  gtk_widget_set_visible(GTK_WIDGET(self->web_note), web);
+  gtk_label_set_text(self->web_note,
+                     self->features & GH_PREFERENCES_FEATURE_TOR
+                       ? _("Loading anything from the web shows your IP address to that "
+                           "website unless you use Tor.")
+                       : _("Loading anything from the web shows your IP address to that "
+                           "website."));
+  /* G07: expired messages leave the store and the model; a sent message's
+   * seal and wrap carry expirations up to a day later (NIP-40, PT-7). */
+  const gchar *disappearing = NULL;
+  if (self->features & GH_PREFERENCES_FEATURE_EXPIRY)
+    disappearing = self->features & GH_PREFERENCES_FEATURE_COMPOSER
+      ? _("Messages that carry a timer are deleted from this device when they expire. "
+          "Messages you send also ask relays to delete them within about a day after that; "
+          "relays and other people's apps may not honour this.")
+      : _("Messages that carry a timer are deleted from this device when they expire.");
+  adw_preferences_group_set_description(self->disappearing_group, disappearing);
 }
 
 static void
@@ -557,21 +671,37 @@ forget_done(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) error = NULL;
   g_autofree gchar *message = NULL;
   (void)source;
-  gboolean done = op->finish(op->target, result, &error);
+  GhPreferencesForgetResult done = op->finish(op->target, result, &error);
   self->forgetting = FALSE;
-  if (self->disposed) { /* e.g. the window was destroyed at quit */
-    if (!done)
-      g_message("Groundhog could not delete all messages: %s", error->message);
+  if (done != GH_PREFERENCES_FORGET_DELETED)
+    g_message("Groundhog could not delete all messages and their key: %s",
+              error ? error->message : "unknown error");
+  if (self->disposed) /* e.g. the window was destroyed at quit */
     goto out;
-  }
   adw_dialog_set_can_close(ADW_DIALOG(self), TRUE);
   sync_delete(self);
-  message = done ? g_strdup(_("All messages of the account were deleted from this device"))
-                 : g_strdup_printf(_("Couldn't delete all messages: %s"), error->message);
+  switch (done) {
+  case GH_PREFERENCES_FORGET_DELETED:
+    message = g_strdup(_("All messages of the account were deleted from this device"));
+    break;
+  case GH_PREFERENCES_FORGET_KEY_KEPT:
+    /* The files are gone; only the (now useless) key item stayed. */
+    message = g_strdup(_("Messages deleted; the storage key couldn't be removed from the "
+                         "keyring"));
+    break;
+  case GH_PREFERENCES_FORGET_FAILED:
+  default:
+    message = g_strdup_printf(_("Couldn't delete all messages: %s"),
+                              error ? error->message : "");
+    break;
+  }
+  g_free(self->last_toast);
+  self->last_toast = g_strdup(message);
   adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(message));
   gtk_accessible_announce(GTK_ACCESSIBLE(self), message,
-                          done ? GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM
-                               : GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
+                          done == GH_PREFERENCES_FORGET_FAILED
+                            ? GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH
+                            : GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
 out:
   g_object_unref(op->target);
   g_object_unref(op->self);
@@ -660,12 +790,26 @@ gh_preferences_dialog_get_key_widget(GhPreferencesDialog *self, const gchar *key
   return key && !self->disposed ? g_hash_table_lookup(self->key_widgets, key) : NULL;
 }
 
+const gchar *
+gh_preferences_dialog_get_last_toast(GhPreferencesDialog *self)
+{
+  g_return_val_if_fail(GH_IS_PREFERENCES_DIALOG(self), NULL);
+  return self->last_toast;
+}
+
+gboolean
+gh_preferences_dialog_get_key_available(GhPreferencesDialog *self, const gchar *key)
+{
+  g_return_val_if_fail(GH_IS_PREFERENCES_DIALOG(self), FALSE);
+  return key && g_hash_table_contains(self->key_widgets, key) && key_available(self, key);
+}
+
 GhPreferencesDialog *
-gh_preferences_dialog_new(GSettings *settings, gboolean tor_available)
+gh_preferences_dialog_new(GSettings *settings, GhPreferencesFeatures features)
 {
   g_return_val_if_fail(G_IS_SETTINGS(settings), NULL);
-  return g_object_new(GH_TYPE_PREFERENCES_DIALOG, "settings", settings, "tor-available",
-                      tor_available, NULL);
+  return g_object_new(GH_TYPE_PREFERENCES_DIALOG, "settings", settings, "features",
+                      (guint)features, NULL);
 }
 
 /* ---- GObject ---------------------------------------------------------------------- */
@@ -677,14 +821,30 @@ gh_preferences_dialog_constructed(GObject *object)
   G_OBJECT_CLASS(gh_preferences_dialog_parent_class)->constructed(object);
   g_return_if_fail(G_IS_SETTINGS(self->settings));
 
-  /* Writability is not reflected in sensitivity: the Blueprint binds some
-   * rows' sensitivity to the Notifications switch. */
+  /* Writability is not reflected in sensitivity: availability and the
+   * Notifications switch decide it. */
   for (guint i = 0; i < G_N_ELEMENTS(switch_rows); i++) {
+    const gchar *key = switch_rows[i].key;
     GtkWidget *row = G_STRUCT_MEMBER(GtkWidget *, self, switch_rows[i].offset);
-    g_settings_bind(self->settings, switch_rows[i].key, row, "active",
-                    G_SETTINGS_BIND_DEFAULT | G_SETTINGS_BIND_NO_SENSITIVITY);
-    g_hash_table_insert(self->key_widgets, (gpointer)switch_rows[i].key, row);
+    g_hash_table_insert(self->key_widgets, (gpointer)key, row);
+    if (key_available(self, key)) {
+      g_settings_bind(self->settings, key, row, "active",
+                      G_SETTINGS_BIND_DEFAULT | G_SETTINGS_BIND_NO_SENSITIVITY);
+      continue;
+    }
+    /* Unbound: the row shows what this build does. Message requests are
+     * always kept apart (charter §7.9), so that filter is simply on. */
+    gboolean always_on = g_str_equal(key, "filter-unknown-senders");
+    adw_switch_row_set_active(ADW_SWITCH_ROW(row), always_on);
+    gate_row(ADW_ACTION_ROW(row),
+             always_on ? _("Always on in this version: messages from people you haven't "
+                           "accepted go to Message Requests, without profile lookups")
+                       : _(NOT_AVAILABLE));
   }
+  /* Scoped to the dialog: a row may outlive it (its settings binding still
+   * following the key) and must never call back into it. */
+  g_signal_connect_object(self->notifications_row, "notify::active",
+                          G_CALLBACK(sync_notifications), self, G_CONNECT_SWAPPED);
 
   GVariant *levels[] = { g_variant_new_string("hidden"), g_variant_new_string("sender"),
                          g_variant_new_string("preview") };
@@ -703,7 +863,7 @@ gh_preferences_dialog_constructed(GObject *object)
   GVariant *modes[] = { g_variant_new_string("system"), g_variant_new_string("none"),
                         g_variant_new_string("tor") };
   guint n_modes = G_N_ELEMENTS(modes);
-  if (!self->tor_available) {
+  if (!(self->features & GH_PREFERENCES_FEATURE_TOR)) {
     GtkStringList *model = GTK_STRING_LIST(adw_combo_row_get_model(self->network_mode_row));
     gtk_string_list_remove(model, --n_modes);
     g_variant_unref(g_variant_ref_sink(modes[n_modes]));
@@ -723,6 +883,8 @@ gh_preferences_dialog_constructed(GObject *object)
   self->settings_changed = g_signal_connect(self->settings, "changed",
                                             G_CALLBACK(on_settings_changed), self);
   sync_network(self);
+  sync_notifications(self);
+  sync_copy(self);
   sync_delete(self);
 }
 
@@ -735,8 +897,8 @@ gh_preferences_dialog_set_property(GObject *object, guint prop_id, const GValue 
   case PROP_SETTINGS:
     self->settings = g_value_dup_object(value);
     break;
-  case PROP_TOR_AVAILABLE:
-    self->tor_available = g_value_get_boolean(value);
+  case PROP_FEATURES:
+    self->features = g_value_get_uint(value) & GH_PREFERENCES_FEATURES_ALL;
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -752,8 +914,8 @@ gh_preferences_dialog_get_property(GObject *object, guint prop_id, GValue *value
   case PROP_SETTINGS:
     g_value_set_object(value, self->settings);
     break;
-  case PROP_TOR_AVAILABLE:
-    g_value_set_boolean(value, self->tor_available);
+  case PROP_FEATURES:
+    g_value_set_uint(value, self->features);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -771,6 +933,8 @@ gh_preferences_dialog_dispose(GObject *object)
   }
   if (self->delete_all_dialog)
     g_signal_handlers_disconnect_by_func(self->delete_all_dialog, on_delete_all_response, self);
+  if (self->notifications_row)
+    g_signal_handlers_disconnect_by_func(self->notifications_row, sync_notifications, self);
   /* The rows' handlers point into the bindings: drop the rows first. */
   if (self->discovery_list)
     gtk_list_box_bind_model(self->discovery_list, NULL, NULL, NULL, NULL);
@@ -789,6 +953,7 @@ gh_preferences_dialog_finalize(GObject *object)
   g_clear_pointer(&self->key_widgets, g_hash_table_unref);
   g_clear_object(&self->settings);
   g_free(self->account_npub);
+  g_free(self->last_toast);
   G_OBJECT_CLASS(gh_preferences_dialog_parent_class)->finalize(object);
 }
 
@@ -807,9 +972,10 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   properties[PROP_SETTINGS] =
     g_param_spec_object("settings", NULL, NULL, G_TYPE_SETTINGS,
                         G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
-  properties[PROP_TOR_AVAILABLE] =
-    g_param_spec_boolean("tor-available", NULL, NULL, FALSE,
-                         G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
+  /* GhPreferencesFeatures. */
+  properties[PROP_FEATURES] =
+    g_param_spec_uint("features", NULL, NULL, 0, GH_PREFERENCES_FEATURES_ALL, 0,
+                      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object_class, N_PROPS, properties);
 
   gtk_widget_class_install_action(widget_class, "prefs.delete-all", NULL, delete_all_activated);
@@ -820,12 +986,15 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(notifications_row);
   BIND(notification_privacy_row);
   BIND(sound_row);
+  BIND(notifications_note);
   BIND(remote_images_row);
   BIND(link_previews_row);
   BIND(profile_pictures_row);
+  BIND(web_note);
   BIND(filter_unknown_senders_row);
   BIND(message_previews_row);
   BIND(enter_sends_row);
+  BIND(disappearing_group);
   BIND(disappearing_row);
   BIND(retention_row);
   BIND(network_mode_row);

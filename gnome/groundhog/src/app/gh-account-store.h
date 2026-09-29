@@ -56,8 +56,23 @@ G_BEGIN_DECLS
  * account's store if it is open (as above), deletes its Secret Service key
  * item (crypto-shred), then unlinks its store directory and legacy state
  * files, and finally clears current-npub only if it names this account. The
- * signer's identity and every other setting are untouched.
+ * signer's identity and every other setting are untouched. When no store
+ * file exists (the in-memory store of "Continue Without Saving Messages",
+ * or an account whose store never opened) no key protects anything: in the
+ * in-memory case the keyring is not asked at all, otherwise without a
+ * prompt, and its failure (no Secret Service, a locked keyring) is no
+ * failure of the forget.
  */
+
+#define GH_ACCOUNT_STORE_SHRED_ERROR (gh_account_store_shred_error_quark())
+GQuark gh_account_store_shred_error_quark(void);
+
+typedef enum {
+  /* Forget or start fresh: the store files were deleted, but the storage key
+   * item could not be removed from the keyring (the message says why). It no
+   * longer opens anything. */
+  GH_ACCOUNT_STORE_SHRED_ERROR_KEY_KEPT,
+} GhAccountStoreShredError;
 
 typedef enum {
   GH_ACCOUNT_STORE_INACTIVE,    /* no active account */
@@ -119,6 +134,13 @@ GhStoreConversations *gh_account_store_get_conversations(GhAccountStore *self);
 /* The create_outbox object, only in OPEN and EPHEMERAL. */
 GObject *gh_account_store_get_outbox(GhAccountStore *self);
 
+/* Lists up to limit older stored messages of conversation (a room of the
+ * model the store backs) into the model: gh_store_conversations_load_older()
+ * on the open store (OPEN, EPHEMERAL or CORRUPT). GH_STORE_ERROR_STATE while
+ * no store is open. */
+gboolean gh_account_store_load_older(GhAccountStore *self, GhConversation *conversation,
+                                     guint limit, guint *out_loaded, GError **error);
+
 /* LOCKED: open again, allowing the keyring's unlock prompt. FALSE when not
  * LOCKED. */
 gboolean gh_account_store_unlock(GhAccountStore *self);
@@ -132,9 +154,10 @@ gboolean gh_account_store_retry(GhAccountStore *self);
 gboolean gh_account_store_continue_without_saving(GhAccountStore *self, GError **error);
 
 /* Forget account (above). Errors: G_IO_ERROR_INVALID_ARGUMENT (not a 64-hex
- * pubkey); the key item's deletion error (e.g. GH_STORE_KEY_ERROR_LOCKED if
- * the keyring stayed locked: the files are unlinked anyway) or the unlink's
- * GH_STORE_ERROR. The keyring's unlock prompt may be shown. */
+ * pubkey); the unlink's error (not everything was deleted); or, with every
+ * file deleted, GH_ACCOUNT_STORE_SHRED_ERROR_KEY_KEPT when the key item could not
+ * be (e.g. the keyring stayed locked). The keyring's unlock prompt may be
+ * shown when a store file existed. */
 void gh_account_store_forget_async(GhAccountStore *self, const gchar *account_pubkey_hex,
                                    GCancellable *cancellable, GAsyncReadyCallback callback,
                                    gpointer user_data);

@@ -407,6 +407,8 @@ struct _GhConversationView {
   GtkScrolledWindow *scroller;
   GtkListView *message_list;
   GtkWidget *loading_box;
+  GtkButton *older_button;
+  AdwButtonContent *older_content;
   GtkButton *jump_button;
   GtkLabel *jump_count;
   GtkWidget *locked_row;
@@ -430,6 +432,7 @@ struct _GhConversationView {
   guint open_target;     /* the first unread message's position */
   guint new_below;
   gboolean loading_older;
+  gboolean older_failed; /* the last load failed: retried only on request */
   GhConversationViewLoadOlder load_older;
   gpointer load_older_data;
   GDestroyNotify load_older_destroy;
@@ -532,19 +535,67 @@ set_sticky(GhConversationView *self, gboolean sticky)
   update_jump(self);
 }
 
+/* The earlier-messages affordance (W13b review B1): while the conversation
+ * holds older history that is not listed, a button at the top says so, with
+ * how many of those messages are unread, and lists them as scrolling to the
+ * top does. "Loading earlier messages…" replaces it while loading; after a
+ * failure it says so and loads again only when clicked. */
 static void
-maybe_load_older(GhConversationView *self)
+update_older(GhConversationView *self)
+{
+  if (!self->older_button)
+    return;
+  gboolean shown = self->conversation && !self->loading_older &&
+                   gh_conversation_get_has_older(self->conversation);
+  gtk_widget_set_visible(GTK_WIDGET(self->older_button), shown);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "conversation.load-older",
+                                shown && self->load_older != NULL);
+  if (!shown)
+    return;
+  guint listed = gh_conversation_get_listed_unread(self->conversation, NULL);
+  guint unread = gh_conversation_get_unread_count(self->conversation);
+  guint older_unread = unread > listed ? unread - listed : 0;
+  g_autofree gchar *label = NULL;
+  if (!self->load_older)
+    label = g_strdup(_("Earlier Messages Can't Be Shown"));
+  else if (self->older_failed)
+    label = g_strdup(_("Couldn't Load Earlier Messages"));
+  else if (older_unread > 0)
+    label = g_strdup_printf(g_dngettext(NULL, "%u Unread Earlier Message",
+                                        "%u Unread Earlier Messages", older_unread),
+                            older_unread);
+  else
+    label = g_strdup(_("Earlier Messages"));
+  adw_button_content_set_label(self->older_content, label);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->older_button),
+                              self->older_failed ? _("Try again")
+                                                 : _("Load earlier messages"));
+}
+
+static void
+request_older(GhConversationView *self)
 {
   if (!self->conversation || !self->load_older || self->loading_older ||
       !gh_conversation_get_has_older(self->conversation))
+    return;
+  self->loading_older = TRUE;
+  self->older_failed = FALSE;
+  gtk_widget_set_visible(self->loading_box, TRUE);
+  update_older(self);
+  self->load_older(self, self->conversation, self->load_older_data);
+}
+
+static void
+maybe_load_older(GhConversationView *self)
+{
+  /* After a failure only the button tries again: scrolling would spin. */
+  if (self->older_failed)
     return;
   GtkAdjustment *adj = vadjustment(self);
   gdouble page = gtk_adjustment_get_page_size(adj);
   if (page <= 0 || gtk_adjustment_get_value(adj) > page / 2)
     return;
-  self->loading_older = TRUE;
-  gtk_widget_set_visible(self->loading_box, TRUE);
-  self->load_older(self, self->conversation, self->load_older_data);
+  request_older(self);
 }
 
 static gboolean
@@ -601,6 +652,9 @@ run_open_scroll(gpointer data)
     set_sticky(self, TRUE);
     queue_pin(self);
   }
+  /* Opened at the top (unread messages still unloaded), or all of it fits:
+   * no scroll may follow to ask for the older history, so ask now. */
+  maybe_load_older(self);
   return G_SOURCE_REMOVE;
 }
 
@@ -739,6 +793,7 @@ on_conversation_changed(GhConversationView *self, guint position, guint removed,
     g_signal_handlers_disconnect_by_data(message, self);
     watch_message(self, message);
   }
+  update_older(self);
 }
 
 /* New messages at the end: stick to them, or count them for "Jump to
@@ -828,6 +883,7 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     self->loading_older = FALSE;
     gtk_widget_set_visible(self->loading_box, FALSE);
   }
+  self->older_failed = FALSE;
   self->new_below = 0;
   self->open_scroll = OPEN_NONE;
   g_set_object(&self->conversation, conversation);
@@ -838,6 +894,8 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
                             G_LIST_MODEL(conversation));
     g_signal_connect_object(conversation, "items-changed", G_CALLBACK(on_conversation_changed),
                             self, G_CONNECT_SWAPPED);
+    g_signal_connect_object(conversation, "notify::unread-count", G_CALLBACK(update_older),
+                            self, G_CONNECT_SWAPPED);
     g_signal_connect_object(self->timeline, "items-changed", G_CALLBACK(on_timeline_changed),
                             self, G_CONNECT_SWAPPED);
     g_autoptr(GtkNoSelection) selection =
@@ -845,16 +903,23 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     gtk_list_view_set_model(self->message_list, GTK_SELECTION_MODEL(selection));
 
     guint n = n_visible(self);
-    guint unread = MIN(gh_conversation_get_unread_count(conversation), n);
-    self->open_scroll = unread > 0 ? OPEN_FIRST_UNREAD : OPEN_LATEST;
-    self->open_target = n - unread;
-    self->new_below = unread;
-    self->sticky = unread == 0;
+    guint first = n;
+    guint listed = gh_conversation_get_listed_unread(conversation, &first);
+    /* Unread messages still in the unloaded older history come before every
+     * listed one: open at the top, where scrolling lists them. */
+    if (gh_conversation_get_unread_count(conversation) > listed)
+      first = 0;
+    gboolean unread = first < n;
+    self->open_scroll = unread ? OPEN_FIRST_UNREAD : OPEN_LATEST;
+    self->open_target = first;
+    self->new_below = listed;
+    self->sticky = !unread;
     schedule_midnight(self);
     queue_open_scroll(self);
   } else {
     self->sticky = TRUE;
   }
+  update_older(self);
   update_jump(self);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_CONVERSATION]);
 }
@@ -893,6 +958,7 @@ gh_conversation_view_set_history_loader(GhConversationView *self,
   self->load_older = load_older;
   self->load_older_data = user_data;
   self->load_older_destroy = destroy;
+  update_older(self);
 }
 
 void
@@ -903,6 +969,27 @@ gh_conversation_view_finish_loading_older(GhConversationView *self)
     return;
   self->loading_older = FALSE;
   gtk_widget_set_visible(self->loading_box, FALSE);
+  update_older(self);
+}
+
+void
+gh_conversation_view_fail_loading_older(GhConversationView *self)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (!self->loading_older)
+    return;
+  self->loading_older = FALSE;
+  self->older_failed = TRUE;
+  gtk_widget_set_visible(self->loading_box, FALSE);
+  update_older(self);
+  announce(self, _("Couldn't load earlier messages"), GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+}
+
+gboolean
+gh_conversation_view_get_older_failed(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  return self->older_failed;
 }
 
 gboolean
@@ -1072,7 +1159,7 @@ fetch_preview(GhConversationView *self, const gchar *rumor_id)
   if (!preview)
     return;
   if (!self->fetch || !self->finish) {
-    /* No fetcher in this build: say so, and load nothing. */
+    /* The fetcher went away while the user was asked: load nothing. */
     set_preview_state(self, rumor_id, GH_LINK_PREVIEW_UNAVAILABLE);
     return;
   }
@@ -1119,7 +1206,9 @@ show_preview(GhConversationView *self, const gchar *rumor_id)
   GhMessage *message = self->conversation
                          ? gh_conversation_lookup_message(self->conversation, rumor_id)
                          : NULL;
-  if (!message)
+  /* No fetcher, no preview: never ask consent for a fetch that can't happen
+   * (W13b review, non-blocking #1). */
+  if (!message || !gh_conversation_view_get_previews_available(self))
     return;
   g_autofree gchar *uri = gh_link_policy_dup_preview_uri(gh_message_get_content(message));
   if (!uri)
@@ -1159,8 +1248,10 @@ on_preview_response(GhConversationView *self, const gchar *response)
     set_preview_state(self, rumor_id, GH_LINK_PREVIEW_NONE);
     return;
   }
+  /* "Don't ask again" is kept only for a fetch that happens. */
   if (gtk_check_button_get_active(self->preview_dont_ask) && self->settings &&
-      settings_has_key(self->settings, LINK_PREVIEWS_KEY))
+      settings_has_key(self->settings, LINK_PREVIEWS_KEY) &&
+      gh_conversation_view_get_previews_available(self))
     g_settings_set_boolean(self->settings, LINK_PREVIEWS_KEY, TRUE);
   fetch_preview(self, rumor_id);
 }
@@ -1186,12 +1277,23 @@ gh_conversation_view_set_link_preview_fetcher(GhConversationView *self, GhLinkPr
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
   g_return_if_fail((fetch == NULL) == (finish == NULL));
+  gboolean was_available = self->fetch != NULL;
   if (self->fetch_destroy)
     self->fetch_destroy(self->fetch_data);
   self->fetch = fetch;
   self->finish = finish;
   self->fetch_data = user_data;
   self->fetch_destroy = destroy;
+  /* Every row offers previews, or stops offering them (a NULL rumor id). */
+  if (was_available != (fetch != NULL) && gtk_widget_get_root(GTK_WIDGET(self)))
+    g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
+gboolean
+gh_conversation_view_get_previews_available(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  return self->fetch != NULL && self->finish != NULL;
 }
 
 /* ---- conversation states ---------------------------------------------------------------- */
@@ -1278,6 +1380,14 @@ action_unlock(GtkWidget *widget, const char *name, GVariant *parameter)
   (void)name;
   (void)parameter;
   g_signal_emit(widget, signals[SIGNAL_UNLOCK_REQUESTED], 0);
+}
+
+static void
+action_load_older(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  request_older(GH_CONVERSATION_VIEW(widget));
 }
 
 /* ---- widget ------------------------------------------------------------------------------ */
@@ -1451,6 +1561,8 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, scroller);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, message_list);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, loading_box);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationView, older_button);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationView, older_content);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, jump_button);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, jump_count);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, locked_row);
@@ -1469,6 +1581,8 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
                                   action_jump);
   gtk_widget_class_install_action(widget_class, "conversation.unlock-messages", NULL,
                                   action_unlock);
+  gtk_widget_class_install_action(widget_class, "conversation.load-older", NULL,
+                                  action_load_older);
 }
 
 static void
@@ -1496,5 +1610,6 @@ gh_conversation_view_init(GhConversationView *self)
   g_signal_connect_object(adw_style_manager_get_default(), "notify::high-contrast",
                           G_CALLBACK(on_high_contrast), self, G_CONNECT_SWAPPED);
   on_high_contrast(self);
+  update_older(self);
   update_jump(self);
 }

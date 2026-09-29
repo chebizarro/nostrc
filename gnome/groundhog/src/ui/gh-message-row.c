@@ -218,7 +218,9 @@ update_expiry(GhMessageRow *self)
 static void
 update_preview(GhMessageRow *self)
 {
-  gboolean offered = self->message && self->preview_uri;
+  /* Only with a fetcher (W13b review, non-blocking #1). */
+  gboolean offered = self->message && self->preview_uri && self->view &&
+                     gh_conversation_view_get_previews_available(self->view);
   gtk_widget_set_visible(GTK_WIDGET(self->preview_box), offered);
   if (!offered)
     return;
@@ -331,10 +333,12 @@ on_activate_link(GhMessageRow *self, const gchar *uri)
   return TRUE;
 }
 
+/* rumor_id NULL: every row (the fetcher came or went). */
 static void
 on_preview_changed(GhMessageRow *self, const gchar *rumor_id)
 {
-  if (self->message && g_strcmp0(gh_message_get_rumor_id(self->message), rumor_id) == 0)
+  if (self->message &&
+      (!rumor_id || g_strcmp0(gh_message_get_rumor_id(self->message), rumor_id) == 0))
     update_preview(self);
 }
 

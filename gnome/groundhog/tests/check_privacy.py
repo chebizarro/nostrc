@@ -70,6 +70,15 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
   app-id                GROUNDHOG_APP_ID in src/, the schema id and path, and
                         GhWindow's icon-name in gh-window.blp and gh-window.ui
                         all agree. (W11 review, non-blocking item 4)
+  preference-consumers  Every preference key the Preferences dialog binds
+                        (src/ui/gh-preferences-dialog.c) is read somewhere in
+                        src/ outside the dialog, unless its row is gated: its
+                        key_features entry names a feature that
+                        src/app/gh-features.h, the one list of what the build
+                        performs, defines as a literal 0. Every feature a
+                        gate names must be in that list. Landing a consumer
+                        and flipping its GH_FEATURE_* is then one change.
+                        (charter §7.11: no fake support; W13b review B2)
   exceptions            Every EXCEPTIONS entry is justified and still matches.
 
 NIP-17 publication sources are the files that build, hold or publish DM wraps
@@ -114,7 +123,7 @@ RULES = (
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
     "lookup-sources", "account-auth-purpose", "auth-policy", "message-status", "log-ids",
     "relay-suggestions",
-    "app-id", "exceptions",
+    "app-id", "preference-consumers", "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
@@ -180,6 +189,16 @@ BLUEPRINT_DENYLIST = {
                      "AdwViewSwitcherSidebar", "AdwNoneAnimationTarget"), "libadwaita 1.9"),
     **dict.fromkeys(("GtkAccessibleHyperlink", "GtkPopoverBin", "GtkSvg"), "GTK 4.22"),
 }
+
+# Schema keys that are state, not preferences: the dialog has no row for them.
+STATE_KEYS = {"current-npub", "window-width", "window-height", "window-maximized"}
+PREFS_DIALOG = "src/ui/gh-preferences-dialog.c"
+PREFS_DIALOG_PREFIX = "src/ui/gh-preferences-dialog."
+FEATURES_FILE = "src/app/gh-features.h"
+KEY_FEATURES_RE = re.compile(r"\bkey_features\s*\[\s*\]\s*=\s*\{(.*?)\n\s*\};", re.S)
+KEY_FEATURE_ENTRY_RE = re.compile(r'\{\s*"([a-z0-9-]+)"\s*,\s*([A-Z0-9_|\s]+?)\s*\}')
+FEATURE_NAME_RE = re.compile(r"\bGH_PREFERENCES_FEATURE_([A-Z0-9_]+)\b")
+FEATURE_DEFINE_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+GH_FEATURE_([A-Z0-9_]+)[ \t]+(\S+)", re.M)
 
 LIBSOUP_DIRS = ("src/net/", "src/media/")
 NIP17_PUBLICATION = re.compile(r"^(?:gh-dm-send|gh-nip17-|gh-inbox-resolver|gh-outbox)")
@@ -696,13 +715,57 @@ def check_app_id(tree):
     return found
 
 
+def check_preference_consumers(tree):
+    """W13b review B2: no Preferences row without an effect in this build."""
+    rule = "preference-consumers"
+    if not tree.exists(PREFS_DIALOG):
+        return []
+    _, keep, _ = tree.views(PREFS_DIALOG)
+    bound = [key for key in GSETTINGS if key not in STATE_KEYS and f'"{key}"' in keep]
+    features = {}
+    if tree.exists(FEATURES_FILE):
+        _, features_keep, _ = tree.views(FEATURES_FILE)
+        features = {m.group(1): m.group(2) for m in FEATURE_DEFINE_RE.finditer(features_keep)}
+    found, needs = [], {}
+    table = KEY_FEATURES_RE.search(keep)
+    for entry in KEY_FEATURE_ENTRY_RE.finditer(table.group(1)) if table else ():
+        key, names = entry.group(1), FEATURE_NAME_RE.findall(entry.group(2))
+        line = line_of(keep, table.start(1) + entry.start())
+        needs[key] = names
+        if key not in GSETTINGS or key in STATE_KEYS:
+            found.append(Violation(rule, PREFS_DIALOG, line, f"key_features gates {key!r}, which "
+                                   "is not a preference key", key))
+        for name in names:
+            if name not in features:
+                found.append(Violation(rule, PREFS_DIALOG, line,
+                                       f"key_features gates {key!r} on GH_PREFERENCES_FEATURE_"
+                                       f"{name}, but {FEATURES_FILE} has no GH_FEATURE_{name}: "
+                                       "the build's features are listed there, once",
+                                       f"{key}:{name}"))
+    consumers = set()
+    for rel in tree.files("src", suffixes={".c", ".h"}):
+        if rel.startswith(PREFS_DIALOG_PREFIX) or rel == FEATURES_FILE:
+            continue
+        _, other, _ = tree.views(rel)
+        consumers |= {key for key in bound if f'"{key}"' in other}
+    for key in bound:
+        if key in consumers or any(features.get(name) == "0" for name in needs.get(key, ())):
+            continue
+        found.append(Violation(rule, PREFS_DIALOG, line_of(keep, keep.find(f'"{key}"')),
+                               f"preference {key!r} has a row in the Preferences dialog but "
+                               "nothing outside it reads it: gate the row (a key_features "
+                               f"entry whose GH_FEATURE_* is 0 in {FEATURES_FILE}) or land its "
+                               "consumer (charter §7.11: no fake support)", key))
+    return found
+
+
 def check(root, exceptions=None):
     """Return the violations in the Groundhog tree at `root`."""
     exceptions = EXCEPTIONS if exceptions is None else exceptions
     tree = Tree(root)
     raw = (check_url_literals(tree) + check_gsettings(tree) + check_blueprint(tree)
            + check_sources(tree) + check_message_status(tree) + check_relay_suggestions(tree)
-           + check_app_id(tree))
+           + check_app_id(tree) + check_preference_consumers(tree))
     used, found = set(), []
     for violation in raw:
         key = (violation.rule, violation.path, violation.match)
@@ -838,6 +901,30 @@ def clean_tree():
             "#include <libsoup/soup.h>\n"
             "static SoupSession *session_new(void) { return soup_session_new(); }\n"),
         "src/media/gh-blossom-client.c": "#include <libsoup/soup.h>\n",
+        # Preferences: one live row with a consumer, one gated row without one
+        # (its only mention elsewhere is a comment), and one row gated on a
+        # feature that is on and a build-dependent one, which needs a consumer.
+        "src/ui/gh-preferences-dialog.c": (
+            "static const struct { const gchar *key; GhPreferencesFeatures needs; } "
+            "key_features[] = {\n"
+            '  { "enter-sends", GH_PREFERENCES_FEATURE_COMPOSER },\n'
+            '  { "link-previews", GH_PREFERENCES_FEATURE_LINK_PREVIEWS | '
+            "GH_PREFERENCES_FEATURE_TOR },\n"
+            "};\n"
+            "static void bind(GSettings *s, GObject *row) {\n"
+            '  g_settings_bind(s, "show-message-previews", row, "active", 0);\n'
+            '  g_settings_bind(s, "enter-sends", row, "active", 0);\n'
+            '  g_settings_bind(s, "link-previews", row, "active", 0);\n'
+            "}\n"),
+        "src/app/gh-features.h": (
+            "#define GH_FEATURE_COMPOSER 0 /* G13 */\n"
+            "#define GH_FEATURE_LINK_PREVIEWS 1\n"
+            "#define GH_FEATURE_TOR GROUNDHOG_HAVE_TOR\n"),
+        "src/ui/gh-conversation-list.h": (
+            '#define GH_CONVERSATION_LIST_PREVIEWS_KEY "show-message-previews"\n'),
+        "src/ui/gh-conversation-view.c": (
+            '/* "enter-sends" is G13\'s composer\'s to read. */\n'
+            'static const char *const previews = "link-previews";\n'),
         SCHEMA_FILE: render_schema(),
         # The banned host is named only in the synthetic AGENTS.md, and the
         # host it recommends instead is not banned.
@@ -1053,6 +1140,30 @@ MUTATIONS = [
       [replace("src/main.c", f'"{APP_ID}"', '"org.example.Groundhog"')]),
     M("app-id-schema", {"app-id"},
       [replace(SCHEMA_FILE, f'path="{SCHEMA_PATH}"', 'path="/org/example/Groundhog/"')]),
+    M("prefs-gate-flipped-without-consumer", {"preference-consumers"},
+      [replace("src/app/gh-features.h", "GH_FEATURE_COMPOSER 0", "GH_FEATURE_COMPOSER 1")]),
+    M("prefs-gate-build-macro-without-consumer", {"preference-consumers"},
+      [replace("src/app/gh-features.h", "GH_FEATURE_COMPOSER 0",
+               "GH_FEATURE_COMPOSER GROUNDHOG_HAVE_COMPOSER")]),
+    M("prefs-consumer-only-in-comment", {"preference-consumers"},
+      [replace("src/ui/gh-conversation-list.h",
+               '#define GH_CONVERSATION_LIST_PREVIEWS_KEY "show-message-previews"',
+               '/* "show-message-previews" is read here one day. */')]),
+    M("prefs-new-row-without-consumer", {"preference-consumers"},
+      [replace("src/ui/gh-preferences-dialog.c", "static void bind(GSettings *s, GObject *row) {\n",
+               "static void bind(GSettings *s, GObject *row) {\n"
+               '  g_settings_bind(s, "load-remote-images", row, "active", 0);\n')]),
+    M("prefs-gate-unknown-feature", {"preference-consumers"},
+      [replace("src/ui/gh-preferences-dialog.c", "GH_PREFERENCES_FEATURE_COMPOSER }",
+               "GH_PREFERENCES_FEATURE_SENDING }")]),
+    M("prefs-new-row-gated", set(),
+      [replace("src/ui/gh-preferences-dialog.c", "static void bind(GSettings *s, GObject *row) {\n",
+               "static void bind(GSettings *s, GObject *row) {\n"
+               '  g_settings_bind(s, "load-remote-images", row, "active", 0);\n'),
+       replace("src/ui/gh-preferences-dialog.c", "};\nstatic void bind",
+               '  { "load-remote-images", GH_PREFERENCES_FEATURE_REMOTE_IMAGES },\n};\n'
+               "static void bind"),
+       append("src/app/gh-features.h", "#define GH_FEATURE_REMOTE_IMAGES 0\n")]),
     M("exception-allows-justified", set(),
       [append("src/app/gh-dm-send.c", f'static const char *fallback = "{URL}";\n')],
       {("url-literal", "src/app/gh-dm-send.c", URL): "synthetic: documented exception"}),

@@ -56,7 +56,8 @@ jobs:
             test-groundhog-store-marmot test-groundhog-store-conversations test-groundhog-outbox test-groundhog-conversation-list \
             test-groundhog-account-store test-groundhog-conversation-view test-groundhog-link-policy test-groundhog-background test-groundhog-preferences test-groundhog-notifier nostrc-test-bus-selftest \
             test-groundhog-inbox-setup test-groundhog-onboarding \
-            test-groundhog-composer test-groundhog-e2e-dm
+            test-groundhog-composer test-groundhog-e2e-dm test-groundhog-expiry \
+            test-groundhog-auth-policy test-groundhog-contact-directory
 
       - name: Require complete Groundhog test registration
         run: |
@@ -76,9 +77,10 @@ jobs:
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
               'groundhog-blueprint', 'groundhog-privacy-static', 'groundhog-store-key', 'groundhog-store-key-keyring', 'groundhog-store', 'groundhog-store-sqlite',
               'groundhog-store-marmot', 'groundhog-store-conversations', 'groundhog-outbox',
-              'groundhog-account-store', 'groundhog-conversation-view', 'groundhog-link-policy', 'groundhog-background', 'groundhog-background-gui', 'groundhog-background-desktop', 'groundhog-preferences', 'groundhog-notifier', 'groundhog-notifier-gui', 'nostrc-test-bus-selftest',
+              'groundhog-account-store', 'groundhog-account-store-gui', 'groundhog-conversation-view', 'groundhog-link-policy', 'groundhog-background', 'groundhog-background-gui', 'groundhog-background-desktop', 'groundhog-preferences', 'groundhog-notifier', 'groundhog-notifier-gui', 'nostrc-test-bus-selftest',
               'groundhog-inbox-setup', 'groundhog-onboarding',
-              'groundhog-composer', 'groundhog-e2e-dm',
+              'groundhog-composer', 'groundhog-e2e-dm', 'groundhog-expiry',
+              'groundhog-auth-policy', 'groundhog-contact-directory',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))

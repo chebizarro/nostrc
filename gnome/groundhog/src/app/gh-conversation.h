@@ -42,9 +42,20 @@ gint64 gh_conversation_get_last_activity(GhConversation *self);
 /* Messages from others after the read marker, including any in the unloaded
  * older history of a durably stored room. The marker moves to the end on
  * mark_read, and to any own message added after it (replying implies having
- * read what came before). With a durable store, mark_read is persisted. */
+ * read what came before). With a durable store, mark_read is persisted.
+ *
+ * Unread messages that are not listed are never marked read (W13b review
+ * B1): while some remain in the unloaded older history, mark_read counts only
+ * the listed messages as read, for this session, and neither moves nor
+ * persists the marker, so the unloaded ones stay unread (after a restart
+ * too) until a later mark_read once they are listed. */
 guint gh_conversation_get_unread_count(GhConversation *self);
 void gh_conversation_mark_read(GhConversation *self);
+/* The unread messages that are listed, and in *out_first (nullable) the
+ * position of the first of them (the number of listed messages when there
+ * is none). The rest of the unread count is in the unloaded older history,
+ * before every listed message. */
+guint gh_conversation_get_listed_unread(GhConversation *self, guint *out_first);
 /* A durable store holds older messages of this room than those listed; it
  * loads them on request (gh_store_conversations_load_older()). */
 gboolean gh_conversation_get_has_older(GhConversation *self);

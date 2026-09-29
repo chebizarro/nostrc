@@ -11,21 +11,33 @@
 #define LIST_DATA "groundhog-conversation-list"
 
 typedef struct {
-  GhSidebarPage *sidebar; /* not owned: the struct is the window's data */
+  GhWindow *window;       /* not owned: the struct is its data */
+  GhSidebarPage *sidebar;
   GhContentPage *content;
-  GhConversationView *view;
+  GhConversationView *view; /* a reference: a queued load may outlive the window's dispose */
   GhConversationStore *store;
   GtkFilter *accepted;        /* not a message request */
   GtkFilter *requests;        /* a message request */
   GtkFilter *accepted_search; /* the sidebar's search text */
   GtkFilter *requests_search;
   GhConversation *shown;
+  /* Older history (gh_conversation_list_set_history_source()). */
+  GhConversationListLoadOlder load_older;
+  gpointer load_older_data;
+  GDestroyNotify load_older_destroy;
+  guint load_idle;
+  GhConversation *loading; /* the room whose older page load_idle lists */
 } GhConversationList;
 
 static void
 list_free(gpointer data)
 {
   GhConversationList *list = data;
+  g_clear_handle_id(&list->load_idle, g_source_remove);
+  g_clear_object(&list->loading);
+  if (list->load_older_destroy)
+    list->load_older_destroy(list->load_older_data);
+  g_clear_object(&list->view);
   g_clear_object(&list->store);
   g_clear_object(&list->accepted);
   g_clear_object(&list->requests);
@@ -202,6 +214,62 @@ on_active_changed(GhWindow *window)
   mark_read_if_seen(window, list_of(window));
 }
 
+/* ---- older history ----------------------------------------------------------- */
+
+/* In an idle: the view asks while it lays out or scrolls, and listing the
+ * page changes its model. */
+static gboolean
+run_load_older(gpointer data)
+{
+  GhConversationList *list = data;
+  list->load_idle = 0;
+  g_autoptr(GhConversation) conversation = g_steal_pointer(&list->loading);
+  /* The view moved on (another room, or it was disposed): nothing waits. */
+  if (!conversation || conversation != gh_conversation_view_get_conversation(list->view) ||
+      !gh_conversation_view_get_loading_older(list->view))
+    return G_SOURCE_REMOVE;
+  g_autoptr(GError) error = NULL;
+  if (!list->load_older || !list->load_older(conversation, &error, list->load_older_data)) {
+    g_message("Groundhog could not list earlier messages: %s",
+              error ? error->message : "no message history is available");
+    gh_conversation_view_fail_loading_older(list->view);
+    return G_SOURCE_REMOVE;
+  }
+  gh_conversation_view_finish_loading_older(list->view);
+  /* What is listed now is read like the rest of the room once it is on
+   * screen; unread messages still unloaded stay unread
+   * (gh_conversation_mark_read()). */
+  if (conversation == list->shown)
+    mark_read_if_visible(list->window, list);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_load_older(GhConversationView *view, GhConversation *conversation, gpointer data)
+{
+  GhConversationList *list = data;
+  (void)view;
+  g_set_object(&list->loading, conversation);
+  if (!list->load_idle)
+    list->load_idle = g_idle_add(run_load_older, list);
+}
+
+void
+gh_conversation_list_set_history_source(GhWindow *window, GhConversationListLoadOlder load_older,
+                                        gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhConversationList *list = list_of(window);
+  g_return_if_fail(list != NULL);
+  if (list->load_older_destroy)
+    list->load_older_destroy(list->load_older_data);
+  list->load_older = load_older;
+  list->load_older_data = user_data;
+  list->load_older_destroy = destroy;
+  gh_conversation_view_set_history_loader(list->view, load_older ? on_load_older : NULL, list,
+                                          NULL);
+}
+
 static void
 on_message_added(GhWindow *window, GhConversation *conversation, GhMessage *message)
 {
@@ -271,11 +339,12 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   g_return_if_fail(list_of(window) == NULL);
 
   GhConversationList *list = g_new0(GhConversationList, 1);
+  list->window = window;
   list->sidebar = gh_window_get_sidebar(window);
   list->content = gh_window_get_content(window);
   list->store = g_object_ref(store);
   g_object_set_data_full(G_OBJECT(window), LIST_DATA, list, list_free);
-  list->view = GH_CONVERSATION_VIEW(gh_conversation_view_new());
+  list->view = g_object_ref_sink(GH_CONVERSATION_VIEW(gh_conversation_view_new()));
   gh_conversation_view_set_settings(list->view, settings);
   gh_content_page_set_view(list->content, GTK_WIDGET(list->view));
 

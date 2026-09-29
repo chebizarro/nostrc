@@ -20,7 +20,7 @@
 #define PORTAL_PATH "/org/freedesktop/portal/desktop"
 #define PORTAL_BACKGROUND "org.freedesktop.portal.Background"
 #define PORTAL_REQUEST "org.freedesktop.portal.Request"
-#define PORTAL_REASON "Receive messages while the window is closed"
+#define PORTAL_REASON N_("Receive messages while the window is closed")
 
 #define RESPONSE_QUIT "quit"
 #define RESPONSE_BACKGROUND "background"
@@ -107,19 +107,19 @@ compute_status(GhBackground *self)
   if (self->account_store) {
     switch (gh_account_store_get_state(GH_ACCOUNT_STORE(self->account_store))) {
     case GH_ACCOUNT_STORE_INACTIVE:
-      return GH_BACKGROUND_STATUS_NO_ACCOUNT;
+      return _(GH_BACKGROUND_STATUS_NO_ACCOUNT);
     case GH_ACCOUNT_STORE_OPENING:
     case GH_ACCOUNT_STORE_OPEN:
     case GH_ACCOUNT_STORE_EPHEMERAL:
-      return GH_BACKGROUND_STATUS_RECEIVING;
+      return _(GH_BACKGROUND_STATUS_RECEIVING);
     case GH_ACCOUNT_STORE_LOCKED:
-      return GH_BACKGROUND_STATUS_LOCKED;
+      return _(GH_BACKGROUND_STATUS_LOCKED);
     default:
-      return GH_BACKGROUND_STATUS_STOPPED;
+      return _(GH_BACKGROUND_STATUS_STOPPED);
     }
   }
 #endif
-  return GH_BACKGROUND_STATUS_RECEIVING;
+  return _(GH_BACKGROUND_STATUS_RECEIVING);
 }
 
 static void
@@ -388,7 +388,7 @@ portal_request(GhBackground *self)
   GVariantBuilder options;
   g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token));
-  g_variant_builder_add(&options, "{sv}", "reason", g_variant_new_string(PORTAL_REASON));
+  g_variant_builder_add(&options, "{sv}", "reason", g_variant_new_string(_(PORTAL_REASON)));
   g_variant_builder_add(&options, "{sv}", "autostart",
                         g_variant_new_boolean(self->requested_autostart));
   g_variant_builder_add(&options, "{sv}", "commandline", g_variant_new_strv(commandline, -1));
@@ -528,15 +528,15 @@ on_close_request(GtkWindow *window, GhBackground *self)
     return TRUE; /* already asking */
   if (!ADW_IS_APPLICATION_WINDOW(window) && !ADW_IS_WINDOW(window))
     return FALSE;
-  AdwDialog *dialog = adw_alert_dialog_new("Groundhog Keeps Running",
-    "Closing the window does not stop Groundhog. It keeps receiving messages, so it stays "
-    "connected to your inbox relays, which can see your IP address and when this device "
-    "is online.\n\n"
-    "To stop it, choose Quit in the main menu or press Ctrl+Q. To turn this off, switch off "
-    "“Receive messages when closed” in Preferences.");
+  AdwDialog *dialog = adw_alert_dialog_new(_("Groundhog Keeps Running"),
+    _("Closing the window does not stop Groundhog. It keeps receiving messages, so it stays "
+      "connected to your inbox relays, which can see your IP address and when this device "
+      "is online.\n\n"
+      "To stop it, choose Quit in the main menu or press Ctrl+Q. To turn this off, switch off "
+      "“Receive Messages When Closed” in Preferences."));
   AdwAlertDialog *alert = ADW_ALERT_DIALOG(dialog);
-  adw_alert_dialog_add_responses(alert, RESPONSE_QUIT, "_Quit Groundhog",
-                                 RESPONSE_BACKGROUND, "_Keep Running", NULL);
+  adw_alert_dialog_add_responses(alert, RESPONSE_QUIT, _("_Quit Groundhog"),
+                                 RESPONSE_BACKGROUND, _("_Keep Running"), NULL);
   adw_alert_dialog_set_response_appearance(alert, RESPONSE_BACKGROUND,
                                            ADW_RESPONSE_SUGGESTED);
   adw_alert_dialog_set_default_response(alert, RESPONSE_BACKGROUND);

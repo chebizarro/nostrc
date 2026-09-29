@@ -24,7 +24,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwComboRow" id="notification_privacy_row">
                 <property name="title" translatable="yes">Notification Content</property>
-                <property name="sensitive" bind-source="notifications_row" bind-property="active" bind-flags="sync-create"/>
                 <property name="model">
                   <object class="GtkStringList">
                     <items>
@@ -39,11 +38,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwSwitchRow" id="sound_row">
                 <property name="title" translatable="yes">Sound</property>
-                <property name="sensitive" bind-source="notifications_row" bind-property="active" bind-flags="sync-create"/>
               </object>
             </child>
             <child>
-              <object class="GtkLabel">
+              <object class="GtkLabel" id="notifications_note">
                 <property name="label" translatable="yes">Hidden notifications only say how many messages are new, not who sent them. Message requests are always hidden. On the lock screen, GNOME shows message details only if you allow it in Settings → Notifications.</property>
                 <property name="wrap">true</property>
                 <property name="xalign">0</property>
@@ -78,7 +76,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
-              <object class="GtkLabel">
+              <object class="GtkLabel" id="web_note">
                 <property name="label" translatable="yes">Loading anything from the web shows your IP address to that website unless you use Tor.</property>
                 <property name="wrap">true</property>
                 <property name="xalign">0</property>
@@ -127,13 +125,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
-          <object class="AdwPreferencesGroup">
+          <object class="AdwPreferencesGroup" id="disappearing_group">
             <property name="title" translatable="yes">Disappearing Messages</property>
-            <property name="description" translatable="yes">Messages are deleted from this device when they expire, and relays are asked to delete them. Relays and other people's apps may not honour this.</property>
             <child>
               <object class="AdwComboRow" id="disappearing_row">
                 <property name="title" translatable="yes">Default Timer</property>
-                <property name="subtitle" translatable="yes">For new conversations</property>
+                <property name="subtitle" translatable="yes">For conversations started from now on</property>
                 <property name="model">
                   <object class="GtkStringList">
                     <items>
@@ -154,7 +151,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwComboRow" id="retention_row">
                 <property name="title" translatable="yes">Keep Messages</property>
-                <property name="subtitle" translatable="yes">Older messages are deleted from this device only</property>
+                <property name="subtitle" translatable="yes">Messages received longer ago are deleted from this device only; relays may still hold encrypted copies</property>
                 <property name="model">
                   <object class="GtkStringList">
                     <items>
@@ -424,7 +421,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwSwitchRow" id="run_in_background_row">
                 <property name="title" translatable="yes">Receive Messages When Closed</property>
-                <property name="subtitle" translatable="yes">Groundhog keeps running after its window is closed; Quit stops it</property>
+                <property name="subtitle" translatable="yes">Groundhog keeps running after its window is closed; Quit stops it. Turning this on here also starts Groundhog when you log in.</property>
               </object>
             </child>
           </object>

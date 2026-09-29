@@ -3,10 +3,18 @@
  * with the mock signer, the FakeSecret key backend (H5, which records every
  * call's flags), recording relay transports (H1), and the real NIP-17 inbox,
  * store delegate (G05), outbox (G06) and SQLCipher stores in private
- * directories. Nothing sleeps: every wait is on an observable condition. */
+ * directories. Nothing sleeps: every wait is on an observable condition.
+ *
+ * Two runs of this binary (two CTest entries): the default one, a bus per
+ * case and no GTK; and --gui, the window's history paging after a restart
+ * and the Start Fresh confirmation (W13b review B1 and non-blocking #3) on
+ * the executable's wiring, with one bus for the process brought up before
+ * GTK (which keeps its session connection); it exits 77 without a display. */
 #include "account-store-outbox.h"
 #include "gh-account-store.h"
 #include "gh-app-outbox.h"
+#include "gh-conversation-list.h"
+#include "gh-conversation-view.h"
 #include "gh-inbox-resolver.h"
 #include "gh-nip17-inbox.h"
 #include "gh-status.h"
@@ -29,6 +37,11 @@
 static gchar *npub[GH_TEST_KEYS];
 static gchar *hex[GH_TEST_KEYS];
 static gchar *xdg_root;
+/* --gui: every case shares the one bus GTK was initialized with. */
+static gboolean gui_mode;
+static GhTestBus shared_bus;
+
+void groundhog_register_resource(void);
 
 /* ---- recording relay transport (H1) ------------------------------------------ */
 
@@ -356,7 +369,10 @@ static void
 fixture_up(Fixture *f, guint active_key)
 {
   g_autoptr(GError) error = NULL;
-  gh_test_bus_up(&f->bus);
+  if (gui_mode)
+    f->bus = shared_bus;
+  else
+    gh_test_bus_up(&f->bus);
   gh_test_signer_up(&f->bus, &f->signer);
   f->rec.reqs = g_ptr_array_new_with_free_func(req_free);
   f->rec.discovery = g_ptr_array_new_with_free_func((GDestroyNotify)gh_relay_scope_unref);
@@ -390,7 +406,8 @@ fixture_down(Fixture *f)
   g_object_unref(f->gnostr);
   g_object_unref(f->settings);
   g_object_unref(f->secret);
-  gh_test_bus_down(&f->bus);
+  if (!gui_mode)
+    gh_test_bus_down(&f->bus);
   gh_test_remove_tree(f->root);
   g_free(f->root);
   g_free(f->data_dir);
@@ -972,6 +989,11 @@ test_kc3_key_missing(void)
   g_assert_cmpstr(before, ==, after);
   g_assert_cmpint(gh_status_get_banner(status), ==, GH_STATUS_BANNER_STORE_KEY_MISSING);
   g_assert_cmpstr(gh_status_get_store_error(status), ==, gh_account_store_get_error(f.store));
+  /* Its button opens the confirmation (W13b review, non-blocking #3). */
+  g_assert_cmpstr(gh_status_banner_get_action(GH_STATUS_BANNER_STORE_KEY_MISSING), ==,
+                  GH_STATUS_ACTION_STORE_START_FRESH);
+  g_assert_cmpstr(gh_status_banner_get_button_label(GH_STATUS_BANNER_STORE_KEY_MISSING), ==,
+                  "Start Fresh on This Device…");
   /* Retry does not invent a key either. */
   g_assert_true(gh_account_store_retry(f.store));
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_KEY_MISSING);
@@ -1226,6 +1248,66 @@ test_st8_forget(void)
   fixture_down(&f);
 }
 
+/* W13b review 4a: forgetting the in-memory account ("Continue Without Saving
+ * Messages") deletes everything and never asks the keyring, which never held
+ * a key for it. */
+static void
+test_forget_in_memory(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, 2);
+  fake_secret_set_available(f.secret, FALSE);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_UNAVAILABLE);
+  g_assert_true(gh_account_store_continue_without_saving(f.store, NULL));
+  publish_inbox_list(&f, 2);
+  receive_message(&f, CANARY " in memory, then forgotten");
+  fake_secret_clear_calls(f.secret);
+  g_autoptr(GAsyncResult) result = NULL;
+  g_autoptr(GError) error = NULL;
+  gh_account_store_forget_async(f.store, hex[2], NULL, gh_test_store_result, &result);
+  g_assert_true(gh_account_store_forget_finish(f.store, gh_test_wait(&result), &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(fake_secret_calls(f.secret)->len, ==, 0);
+  g_assert_cmpuint(fake_secret_prompts(f.secret), ==, 0);
+  gh_test_run_until_idle();
+  g_assert_cmpint(gh_account_store_get_state(f.store), ==, GH_ACCOUNT_STORE_INACTIVE);
+  g_autofree gchar *current = g_settings_get_string(f.settings, "current-npub");
+  g_assert_cmpstr(current, ==, "");
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.model)), ==, 0);
+  g_assert_cmpuint(gh_test_count_files(f.data_dir), ==, 0);
+  fixture_down(&f);
+}
+
+/* W13b review 4a: the store files are deleted but the key item can't be (no
+ * keyring now): KEY_KEPT, which says the messages are gone, not a failure to
+ * delete them. */
+static void
+test_forget_key_kept(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  publish_inbox_list(&f, 2);
+  receive_message(&f, CANARY " forget me, key or not");
+  g_autofree gchar *db = store_db_path(&f, 2);
+  g_autofree gchar *dir = g_path_get_dirname(db);
+  fake_secret_set_available(f.secret, FALSE);
+  g_autoptr(GAsyncResult) result = NULL;
+  g_autoptr(GError) error = NULL;
+  gh_account_store_forget_async(f.store, hex[2], NULL, gh_test_store_result, &result);
+  g_assert_false(gh_account_store_forget_finish(f.store, gh_test_wait(&result), &error));
+  g_assert_error(error, GH_ACCOUNT_STORE_SHRED_ERROR, GH_ACCOUNT_STORE_SHRED_ERROR_KEY_KEPT);
+  g_assert_nonnull(strstr(error->message, "couldn't be removed from the keyring"));
+  gh_test_run_until_idle();
+  g_assert_false(g_file_test(dir, G_FILE_TEST_EXISTS));
+  g_autofree gchar *current = g_settings_get_string(f.settings, "current-npub");
+  g_assert_cmpstr(current, ==, "");
+  g_assert_cmpint(gh_account_store_get_state(f.store), ==, GH_ACCOUNT_STORE_INACTIVE);
+  fixture_down(&f);
+}
+
 /* STORE_CORRUPT: a damaged store opens read-only for what can still be
  * read; nothing is received or sent from it (no inbox grant, no outbox);
  * "Reset Storage" crypto-shreds it and starts a new one. */
@@ -1273,8 +1355,11 @@ test_corrupt_read_only(void)
   publish_inbox_list(&f, 2);
   g_assert_cmpuint(f.rec.reqs->len, ==, 0);
   g_assert_cmpint(gh_status_get_banner(status), ==, GH_STATUS_BANNER_STORE_CORRUPT);
-  /* Resetting needs a confirmation dialog, so the banner has no button. */
-  g_assert_null(gh_status_banner_get_action(GH_STATUS_BANNER_STORE_CORRUPT));
+  /* Its button opens the Reset Storage confirmation (§7.15 #16). */
+  g_assert_cmpstr(gh_status_banner_get_action(GH_STATUS_BANNER_STORE_CORRUPT), ==,
+                  GH_STATUS_ACTION_STORE_START_FRESH);
+  g_assert_cmpstr(gh_status_banner_get_button_label(GH_STATUS_BANNER_STORE_CORRUPT), ==,
+                  "Reset Storage…");
   g_assert_false(gh_account_store_retry(f.store));
 
   g_autoptr(GAsyncResult) result = NULL;
@@ -1286,6 +1371,238 @@ test_corrupt_read_only(void)
   g_assert_true(gh_dm_inbox_has_storage(f.inbox));
   g_assert_nonnull(gh_account_store_get_outbox(f.store));
   g_assert_nonnull(open_req(&f.rec, INBOX_A));
+  fixture_down(&f);
+}
+
+/* ---- the window on the executable's wiring (--gui) ------------------------------ */
+
+static void
+drain(void)
+{
+  for (int i = 0; i < 500 && g_main_context_iteration(NULL, FALSE); i++)
+    ;
+}
+
+static gboolean
+window_mapped(gpointer data)
+{
+  return gtk_widget_get_mapped(GTK_WIDGET(data));
+}
+
+/* A window of the process, attached as gh_app_services_attach_window()
+ * attaches it: the conversation list, the store's status and its history. */
+static GhWindow *
+window_up(Fixture *f)
+{
+  GhWindow *window = gh_window_new(NULL);
+  gh_conversation_list_attach(window, f->model, f->settings);
+  gh_store_status_attach(gh_window_get_status(window), f->store);
+  gh_store_status_attach_history(window, f->store);
+  gtk_window_set_default_size(GTK_WINDOW(window), 1000, 700);
+  gtk_window_present(GTK_WINDOW(window));
+  gh_test_spin_until(window_mapped, window);
+  drain();
+  return window;
+}
+
+static void
+window_down(GhWindow *window)
+{
+  gtk_window_destroy(GTK_WINDOW(window));
+  drain();
+}
+
+static GhConversationView *
+view_of(GhWindow *window)
+{
+  return GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window)));
+}
+
+/* key 1's kind-14 rumor n to the account (key 2), admitted as the inbox
+ * admits an unwrapped one (T-admit through the store's delegate), under a
+ * synthetic wrap id. */
+static void
+admit_from_peer(Fixture *f, gint64 created_at, guint n)
+{
+  NostrEvent *rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, 14);
+  nostr_event_set_pubkey(rumor, hex[1]);
+  nostr_event_set_created_at(rumor, created_at);
+  g_autofree gchar *content = g_strdup_printf(CANARY " message %u", n);
+  nostr_event_set_content(rumor, content);
+  nostr_event_set_tags(rumor, nostr_tags_new(1, nostr_tag_new("p", hex[2], NULL)));
+  rumor->id = nostr_event_get_id(rumor);
+  char *json = nostr_event_serialize_compact(rumor);
+  nostr_event_free(rumor);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) message = gh_message_new_from_rumor(hex[2], json, &error);
+  free(json);
+  g_assert_no_error(error);
+  g_autofree gchar *wrap_id = g_strdup_printf("%064x", n + 1);
+  g_assert_cmpint(gh_conversation_store_admit(f->model, message, wrap_id, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+}
+
+static GhConversation *
+history_room(Fixture *f)
+{
+  g_autofree gchar *room = room_of(1, 2);
+  GhConversation *conversation = gh_conversation_store_lookup(f->model, room);
+  g_assert_nonnull(conversation);
+  return conversation;
+}
+
+typedef struct {
+  GhConversation *room;
+  GhConversationView *view;
+  guint listed;
+} ListedWait;
+
+static gboolean
+listed_and_idle(gpointer data)
+{
+  ListedWait *wait = data;
+  return g_list_model_get_n_items(G_LIST_MODEL(wait->room)) == wait->listed &&
+         !gh_conversation_view_get_loading_older(wait->view);
+}
+
+#define HISTORY_READ   40 /* read in session 1 */
+#define HISTORY_UNREAD 80 /* then received: more than a page of each */
+#define PAGE           GH_STORE_CONVERSATIONS_PAGE_SIZE
+
+/* W13b review B1 on the executable's wiring, over the same directories as a
+ * new process would use: after a restart a room lists its newest page;
+ * opening it reads only what is listed (the unloaded unread stay unread,
+ * after another restart too, since no marker is written past them);
+ * scrolling to the top lists the older page, which is then read and
+ * written; "Earlier Messages" lists the rest. */
+static void
+test_restart_pages_history(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  gint64 start = g_get_real_time() / G_USEC_PER_SEC - 100000;
+  for (guint i = 0; i < HISTORY_READ; i++)
+    admit_from_peer(&f, start + i * 60, i);
+  GhConversation *room = history_room(&f);
+  gh_conversation_accept(room);
+  gh_conversation_mark_read(room);
+  for (guint i = HISTORY_READ; i < HISTORY_READ + HISTORY_UNREAD; i++)
+    admit_from_peer(&f, start + i * 60, i);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, HISTORY_UNREAD);
+  stack_down(&f);
+
+  /* Session 2: the newest page is listed; the count covers the rest. */
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  room = history_room(&f);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, PAGE);
+  g_assert_true(gh_conversation_get_has_older(room));
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, HISTORY_UNREAD);
+
+  /* Opening it reads the listed page and nothing that is not listed. */
+  GhWindow *window = window_up(&f);
+  g_assert_true(gh_sidebar_page_select_relative(gh_window_get_sidebar(window), 1));
+  g_assert_true(gh_conversation_view_get_conversation(view_of(window)) == room);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, PAGE);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, HISTORY_UNREAD - PAGE);
+  /* Nothing of that was written: after a restart all of it is unread. */
+  window_down(window);
+  stack_down(&f);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  room = history_room(&f);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, HISTORY_UNREAD);
+
+  /* Scrolling to the top lists the older page from the store; its unread
+   * messages are read once listed, and now the marker is written. */
+  window = window_up(&f);
+  GhConversationView *view = view_of(window);
+  g_assert_true(gh_sidebar_page_select_relative(gh_window_get_sidebar(window), 1));
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, HISTORY_UNREAD - PAGE);
+  GtkScrolledWindow *scroller = GTK_SCROLLED_WINDOW(
+    gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW, "scroller"));
+  gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(scroller), 0);
+  ListedWait two_pages = { room, view, 2 * PAGE };
+  gh_test_spin_until(listed_and_idle, &two_pages);
+  g_assert_false(gh_conversation_view_get_older_failed(view));
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_assert_true(gh_conversation_get_has_older(room));
+  GtkWidget *older = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(view),
+                                                              GH_TYPE_CONVERSATION_VIEW,
+                                                              "older_button"));
+  g_assert_true(gtk_widget_get_visible(older));
+  AdwButtonContent *content = ADW_BUTTON_CONTENT(
+    gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW, "older_content"));
+  g_assert_cmpstr(adw_button_content_get_label(content), ==, "Earlier Messages");
+  /* "Earlier Messages" lists the rest, and then offers nothing more. */
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "conversation.load-older", NULL));
+  ListedWait everything = { room, view, HISTORY_READ + HISTORY_UNREAD };
+  gh_test_spin_until(listed_and_idle, &everything);
+  g_assert_false(gh_conversation_get_has_older(room));
+  g_assert_false(gtk_widget_get_visible(older));
+  window_down(window);
+  stack_down(&f);
+
+  /* Read for good: the next session starts with nothing unread. */
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  room = history_room(&f);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, PAGE);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_assert_false(g_file_test(f.state_dir, G_FILE_TEST_EXISTS));
+  fixture_down(&f);
+}
+
+/* W13b review, non-blocking #3: KEY_MISSING's "Start Fresh on This Device…"
+ * asks first (charter §3.4 copy, Cancel by default, Try Again offered), and
+ * only its destructive response crypto-shreds the store and opens a new one. */
+static void
+test_start_fresh_dialog(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_autofree gchar *old_id = g_strdup(gh_store_get_store_id(gh_account_store_get_store(f.store)));
+  stack_down(&f);
+  g_autofree gchar *db = store_db_path(&f, 2);
+  g_autofree gchar *before = file_sha256(db);
+  g_object_unref(f.secret);
+  f.secret = fake_secret_new();
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_KEY_MISSING);
+  GhWindow *window = window_up(&f);
+
+  AdwAlertDialog *alert = gh_store_status_confirm_start_fresh(GTK_WIDGET(window), f.store);
+  g_assert_nonnull(alert);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, "Start Fresh on This Device?");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(alert), "encrypted group history can't"));
+  g_assert_true(adw_alert_dialog_has_response(alert, "retry"));
+  g_assert_cmpint(adw_alert_dialog_get_response_appearance(alert, "start-fresh"), ==,
+                  ADW_RESPONSE_DESTRUCTIVE);
+  g_assert_cmpstr(adw_alert_dialog_get_default_response(alert), ==, "cancel");
+  g_assert_cmpstr(adw_alert_dialog_get_close_response(alert), ==, "cancel");
+  g_signal_emit_by_name(alert, "response", "cancel");
+  adw_dialog_force_close(ADW_DIALOG(alert));
+  drain();
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_KEY_MISSING);
+  g_autofree gchar *after = file_sha256(db);
+  g_assert_cmpstr(before, ==, after);
+  g_assert_cmpuint(fake_secret_count(f.secret, hex[2]), ==, 0);
+
+  alert = gh_store_status_confirm_start_fresh(GTK_WIDGET(window), f.store);
+  g_signal_emit_by_name(alert, "response", "start-fresh");
+  adw_dialog_force_close(ADW_DIALOG(alert));
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_cmpstr(gh_store_get_store_id(gh_account_store_get_store(f.store)), !=, old_id);
+  g_assert_cmpuint(fake_secret_count(f.secret, hex[2]), ==, 1);
+  /* Only for a missing key or damaged storage. */
+  g_assert_null(gh_store_status_confirm_start_fresh(GTK_WIDGET(window), f.store));
+  window_down(window);
   fixture_down(&f);
 }
 
@@ -1346,10 +1663,40 @@ main(int argc, char **argv)
     g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
     g_setenv(vars[i], dir, TRUE);
   }
+  gui_mode = argc > 1 && g_str_equal(argv[1], "--gui");
+  if (gui_mode) {
+    argv[1] = argv[0];
+    argv++;
+    argc--;
+    /* One bus for the process, up before GTK: GTK and libadwaita keep their
+     * session connection (the settings portal lookup) for the life of the
+     * process, so it is never brought down; nostrc-test-bus's lifeline
+     * supervisor stops it when this process exits. No accessibility bus.
+     * GTK starts before g_test_init(), as in the other GUI tests: a host
+     * theme's parser warnings are not this test's to fail on. */
+    g_setenv("GTK_A11Y", "none", TRUE);
+    gh_test_bus_up(&shared_bus);
+    if (!gtk_init_check()) {
+      g_printerr("groundhog-account-store GUI tests skipped: no graphical display\n");
+      gh_test_remove_tree(xdg_root);
+      return 77;
+    }
+    adw_init();
+    groundhog_register_resource();
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+  }
   g_test_init(&argc, &argv, NULL);
   for (guint key = 1; key < GH_TEST_KEYS; key++) {
     npub[key] = gh_test_npub(key);
     hex[key] = gh_test_pub(key);
+  }
+  if (gui_mode) {
+    g_test_add_func("/groundhog/account-store-gui/restart-pages-history",
+                    test_restart_pages_history);
+    g_test_add_func("/groundhog/account-store-gui/start-fresh-dialog", test_start_fresh_dialog);
+    int status = g_test_run();
+    gh_test_remove_tree(xdg_root);
+    return status;
   }
   g_test_add_func("/groundhog/account-store/status-mapping", test_status_mapping);
   g_test_add_func("/groundhog/account-store/open-receive-restore", test_open_receive_restore);
@@ -1364,6 +1711,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-store/pt6-switch-order", test_pt6_switch_order);
   g_test_add_func("/groundhog/account-store/pt6-switch-mid-open", test_pt6_switch_mid_open);
   g_test_add_func("/groundhog/account-store/st8-forget", test_st8_forget);
+  g_test_add_func("/groundhog/account-store/forget-in-memory", test_forget_in_memory);
+  g_test_add_func("/groundhog/account-store/forget-key-kept", test_forget_key_kept);
   g_test_add_func("/groundhog/account-store/corrupt-read-only", test_corrupt_read_only);
   int status = g_test_run();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {

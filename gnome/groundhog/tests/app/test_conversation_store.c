@@ -1,5 +1,7 @@
 /* NIP-17 room model: canonical room ids, per-room order and dedup, subject,
- * unread bookkeeping and the account-bound store. No relay or signer. */
+ * unread bookkeeping (including a durable room's unloaded older history)
+ * and the account-bound store. No relay or signer. */
+#include "gh-conversation-private.h"
 #include "gh-conversation-store.h"
 
 #include "nostr-event.h"
@@ -694,6 +696,92 @@ test_delegate_hooks(void)
   fake_clear(&fake);
 }
 
+/* W13b review B1: showing a durably stored room never reads unread messages
+ * that are not listed. mark_read then reads only the listed ones, for this
+ * session, and writes no marker (the unloaded ones stay unread after a
+ * restart too); once the older page is listed, it reads everything and
+ * writes the marker once. */
+static void count_notify(GObject *object, GParamSpec *pspec, gpointer data);
+
+static void
+test_mark_read_keeps_unloaded_unread(void)
+{
+  FakeDelegate fake = { 0 };
+  fake_init(&fake);
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, hex[1], &full_delegate, &fake, NULL);
+  g_autoptr(GPtrArray) older = g_ptr_array_new_with_free_func(g_object_unref);
+  g_autoptr(GPtrArray) newest = g_ptr_array_new_with_free_func(g_object_unref);
+  for (guint i = 0; i < 4; i++) {
+    Rumor r = { .author = 2, .p = { 1 }, .created_at = 100 + i };
+    g_ptr_array_add(older, message_for(1, &r, NULL));
+  }
+  for (guint i = 0; i < 5; i++) {
+    Rumor r = { .author = 2, .p = { 1 }, .created_at = 200 + i };
+    g_ptr_array_add(newest, message_for(1, &r, NULL));
+  }
+  GhMessage *marker = g_ptr_array_index(older, 0);
+  GhMessage *floor = g_ptr_array_index(newest, 0);
+  /* Read up to the first older message: 3 unloaded and 5 listed unread. */
+  GhConversationState state = {
+    .accepted = TRUE,
+    .has_marker = TRUE,
+    .marker_created_at = gh_message_get_created_at(marker),
+    .marker_id = gh_message_get_rumor_id(marker),
+    .unread = 8,
+    .has_older = TRUE,
+    .floor_created_at = gh_message_get_created_at(floor),
+    .floor_id = gh_message_get_rumor_id(floor),
+  };
+  g_autofree gchar *pair = room_id(1, 2, 0);
+  GhConversation *room = gh_conversation_store_restore(store, pair, newest, &state);
+  g_assert_nonnull(room);
+  guint first = 99;
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 8);
+  g_assert_cmpuint(gh_conversation_get_listed_unread(room, &first), ==, 5);
+  g_assert_cmpuint(first, ==, 0);
+
+  /* Shown: the listed five are read, the unloaded three are not, and no
+   * marker is written past them. */
+  guint notified = 0;
+  g_signal_connect(room, "notify::unread-count", G_CALLBACK(count_notify), &notified);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 3);
+  g_assert_cmpuint(gh_conversation_get_listed_unread(room, &first), ==, 0);
+  g_assert_cmpuint(first, ==, 5);
+  g_assert_cmpuint(notified, ==, 1);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 3);
+  g_assert_cmpuint(fake.reads, ==, 0);
+
+  /* A new message while it is shown is unread until read, then read in
+   * the same way. */
+  Rumor fresh = { .author = 2, .p = { 1 }, .created_at = 300 };
+  g_assert_cmpint(add(store, 1, &fresh), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 4);
+  g_assert_cmpuint(gh_conversation_get_listed_unread(room, &first), ==, 1);
+  g_assert_cmpuint(first, ==, 5);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 3);
+  g_assert_cmpuint(fake.reads, ==, 0);
+
+  /* The older page is listed: its three unread are listed now (the store's
+   * count still has all nine, nothing having been written), and reading the
+   * room reads everything and writes the marker once. */
+  state.unread = 9;
+  state.has_older = FALSE;
+  g_assert_true(gh_conversation_store_restore(store, pair, older, &state) == room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 3);
+  g_assert_cmpuint(gh_conversation_get_listed_unread(room, &first), ==, 3);
+  g_assert_cmpuint(first, ==, 1);
+  gh_conversation_mark_read(room);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_assert_cmpuint(gh_conversation_get_listed_unread(room, NULL), ==, 0);
+  g_assert_cmpuint(fake.reads, ==, 1);
+  g_signal_handlers_disconnect_by_data(room, &notified);
+  fake_clear(&fake);
+}
+
 static void
 count_notify(GObject *object, GParamSpec *pspec, gpointer data)
 {
@@ -902,6 +990,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/conversations/message-added", test_message_added_signal);
   g_test_add_func("/groundhog/conversations/persistence-delegate", test_persistence_delegate);
   g_test_add_func("/groundhog/conversations/delegate-hooks", test_delegate_hooks);
+  g_test_add_func("/groundhog/conversations/mark-read-keeps-unloaded-unread",
+                  test_mark_read_keeps_unloaded_unread);
   g_test_add_func("/groundhog/conversations/requests", test_requests);
   g_test_add_func("/groundhog/conversations/template-properties", test_template_properties);
   int status = g_test_run();

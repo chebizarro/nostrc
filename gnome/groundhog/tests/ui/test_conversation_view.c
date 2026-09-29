@@ -6,8 +6,10 @@
  * Covered: bubbles (alignment, classes, literal markup, selectable text),
  * runs and sender names, day separators, the delivery indicator and its
  * details for every GhMessageStatus, retry, links (open, confirm, refuse,
- * nostr: copy), previews behind consent, expiry, scrolling (stick to the
- * newest, "Jump to Latest", first unread), paging older history,
+ * nostr: copy), previews behind consent and none without a fetcher, expiry,
+ * scrolling (stick to the newest, "Jump to Latest", first unread), paging
+ * older history and its "Earlier Messages" affordance (unread count,
+ * failure without automatic retry),
  * announcements, compact width and the §7.15 states 11-13. Needs a display:
  * it self-skips (77) without one. Waits iterate the main context against a
  * deadline; they never sleep. With GROUNDHOG_TEST_SCREENSHOTS=<dir> the
@@ -973,9 +975,22 @@ test_link_previews(Fixture *f, gconstpointer data)
   GtkCheckButton *dont_ask = view_child(f->view, "preview_dont_ask");
   g_assert_false(g_settings_get_boolean(f->settings, "link-previews"));
 
-  /* Offered only for https, never loaded before asked. */
+  /* No fetcher (this build): nothing is offered, and asking anyway neither
+   * asks consent nor keeps any (W13b review, non-blocking #1). */
   GhMessageRow *row = row_for(f->view, news);
   GtkWidget *button = row_child(row, "preview_button");
+  g_assert_false(gh_conversation_view_get_previews_available(f->view));
+  g_assert_false(shown(row_child(row, "preview_box")));
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.show-preview", "s",
+                             gh_message_get_rumor_id(news));
+  drain_idle();
+  g_assert_false(dialog_presented(dialog));
+  g_assert_cmpint(preview_state(f, news), ==, GH_LINK_PREVIEW_NONE);
+  g_assert_false(g_settings_get_boolean(f->settings, "link-previews"));
+  g_assert_cmpuint(f->fetches, ==, 0);
+
+  /* With a fetcher: offered only for https, never loaded before asked. */
+  gh_conversation_view_set_link_preview_fetcher(f->view, fake_fetch, fake_finish, f, NULL);
   g_assert_true(shown(row_child(row, "preview_box")));
   g_assert_true(shown(button));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(button)), ==, "Show Preview");
@@ -994,22 +1009,7 @@ test_link_previews(Fixture *f, gconstpointer data)
   g_assert_cmpint(preview_state(f, news), ==, GH_LINK_PREVIEW_NONE);
   g_assert_cmpuint(f->fetches, ==, 0);
 
-  /* Consent without a fetcher in this build: said honestly, nothing loads. */
-  click(button);
-  spin_until(dialog_presented, dialog);
-  g_signal_emit_by_name(dialog, "response", "preview-show");
-  close_dialog(ADW_DIALOG(dialog));
-  g_assert_cmpint(preview_state(f, news), ==, GH_LINK_PREVIEW_UNAVAILABLE);
-  g_assert_false(shown(button));
-  g_assert_true(shown(row_child(row, "preview_text")));
-  g_assert_cmpstr(text_of(row_child(row, "preview_text")), ==,
-                  "Link previews aren't available in this version of Groundhog. "
-                  "Nothing was loaded.");
-  g_assert_false(g_settings_get_boolean(f->settings, "link-previews"));
-  g_assert_cmpuint(f->fetches, ==, 0);
-
-  /* With a fetcher, in Tor mode: "Don't ask again" turns the setting on. */
-  gh_conversation_view_set_link_preview_fetcher(f->view, fake_fetch, fake_finish, f, NULL);
+  /* In Tor mode: "Don't ask again" turns the setting on. */
   g_settings_set_string(f->settings, "network-mode", "tor");
   row = row_for(f->view, second);
   button = row_child(row, "preview_button");
@@ -1315,6 +1315,117 @@ test_load_older(Fixture *f, gconstpointer data)
   g_assert_cmpuint(f->loads, ==, 1);
 }
 
+/* ---- earlier messages (W13b review B1) ----------------------------------------------- */
+
+static void
+fail_older(GhConversationView *view, GhConversation *conversation, gpointer data)
+{
+  Fixture *f = data;
+  g_assert_true(gh_conversation_view_get_conversation(view) == conversation);
+  f->loads++;
+  gh_conversation_view_fail_loading_older(view);
+}
+
+static gboolean
+older_failed(gpointer data)
+{
+  Fixture *f = data;
+  return f->loads >= 1 && gh_conversation_view_get_older_failed(f->view);
+}
+
+static gboolean
+loading_again(gpointer data)
+{
+  Fixture *f = data;
+  return f->loads == 3 && gh_conversation_view_get_loading_older(f->view);
+}
+
+static const char *
+older_label(Fixture *f)
+{
+  return adw_button_content_get_label(view_child(f->view, "older_content"));
+}
+
+/* Older history that is not listed is said, with how much of it is unread;
+ * the button lists it as scrolling to the top does; a failure is said and
+ * retried only from the button (scrolling would spin). */
+static void
+test_earlier_messages(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gint64 t = noon_today();
+  const guint to_a[] = { 1, 0 };
+  g_autoptr(GPtrArray) older = g_ptr_array_new_with_free_func(g_object_unref);
+  g_autoptr(GPtrArray) newest = g_ptr_array_new_with_free_func(g_object_unref);
+  for (guint i = 0; i < 3; i++) {
+    g_autofree gchar *old_text = g_strdup_printf("older %u", i);
+    g_autofree gchar *new_text = g_strdup_printf("newest %u", i);
+    g_ptr_array_add(older, rumor(2, to_a, t - 3600 + i * 60, old_text, NULL));
+    g_ptr_array_add(newest, rumor(2, to_a, t + i * 60, new_text, NULL));
+  }
+  GhMessage *floor = g_ptr_array_index(newest, 0);
+  /* Nothing read yet: the 3 listed messages and the 3 older ones. */
+  GhConversationState state = {
+    .accepted = TRUE,
+    .unread = 6,
+    .has_older = TRUE,
+    .floor_created_at = gh_message_get_created_at(floor),
+    .floor_id = gh_message_get_rumor_id(floor),
+  };
+  const gchar *room_id = gh_message_get_room_id(floor);
+  GhConversation *conversation = gh_conversation_store_restore(f->store, room_id, newest, &state);
+  g_assert_cmpuint(gh_conversation_get_unread_count(conversation), ==, 6);
+  guint first = 99;
+  g_assert_cmpuint(gh_conversation_get_listed_unread(conversation, &first), ==, 3);
+  g_assert_cmpuint(first, ==, 0);
+  GtkWidget *button = view_child(f->view, "older_button");
+
+  /* Without a loader it is said, not offered. */
+  gh_conversation_view_set_conversation(f->view, conversation);
+  g_assert_true(shown(button));
+  g_assert_false(gtk_widget_get_sensitive(button));
+  g_assert_cmpstr(older_label(f), ==, "Earlier Messages Can't Be Shown");
+  gh_conversation_view_set_conversation(f->view, NULL);
+  g_assert_false(shown(button));
+
+  /* A failing loader (no store): the view opens at the top, where the
+   * unread older messages are, asks once and says it couldn't. */
+  gh_conversation_view_set_history_loader(f->view, fail_older, f, NULL);
+  show(f, conversation, 600, 600);
+  spin_until(older_failed, f);
+  g_assert_cmpuint(f->loads, ==, 1);
+  g_assert_true(shown(button));
+  g_assert_false(shown(view_child(f->view, "loading_box")));
+  g_assert_cmpstr(older_label(f), ==, "Couldn't Load Earlier Messages");
+  gtk_adjustment_set_value(vadjustment(f->view), 1);
+  drain_idle();
+  gtk_adjustment_set_value(vadjustment(f->view), 0);
+  drain_idle();
+  g_assert_cmpuint(f->loads, ==, 1);
+  click(button);
+  g_assert_cmpuint(f->loads, ==, 2);
+  g_assert_true(gh_conversation_view_get_older_failed(f->view));
+
+  /* A working loader: the button counts what is unread up there, and the
+   * view asks for it as it opens at the top. */
+  gh_conversation_view_set_history_loader(f->view, load_older, f, NULL);
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_set_conversation(f->view, conversation);
+  g_assert_false(gh_conversation_view_get_older_failed(f->view));
+  g_assert_cmpstr(older_label(f), ==, "3 Unread Earlier Messages");
+  spin_until(loading_again, f);
+  g_assert_false(shown(button));
+  g_assert_true(shown(view_child(f->view, "loading_box")));
+
+  /* Listed: nothing older remains, so nothing is offered. */
+  state.has_older = FALSE;
+  g_assert_true(gh_conversation_store_restore(f->store, room_id, older, &state) == conversation);
+  gh_conversation_view_finish_loading_older(f->view);
+  g_assert_false(shown(button));
+  g_assert_false(shown(view_child(f->view, "loading_box")));
+  g_assert_cmpuint(gh_conversation_get_listed_unread(conversation, NULL), ==, 6);
+}
+
 /* ---- charter §7.15 states 11-13, compact width, keyboard --------------------------------- */
 
 static void
@@ -1355,7 +1466,8 @@ test_states(Fixture *f, gconstpointer data)
   /* 13: an encrypted-group message that cannot be decrypted yet. */
   GhMessageRow *row = GH_MESSAGE_ROW(g_object_ref_sink(gh_message_row_new()));
   gh_message_row_set_message(row, m);
-  g_assert_true(shown(row_child(row, "preview_box")));
+  /* Outside a view there is no preview fetcher, so no preview either. */
+  g_assert_false(shown(row_child(row, "preview_box")));
   gh_message_row_set_undecryptable(row, TRUE);
   g_assert_cmpstr(text_of(row_child(row, "body_label")), ==, "Unable to decrypt yet");
   g_assert_false(shown(row_child(row, "preview_box")));
@@ -1671,6 +1783,7 @@ main(int argc, char **argv)
   ADD("scrolling", test_scrolling);
   ADD("opens-at-first-unread", test_opens_at_first_unread);
   ADD("load-older", test_load_older);
+  ADD("earlier-messages", test_earlier_messages);
   ADD("states-11-13", test_states);
   ADD("compact-and-keyboard", test_compact_and_keyboard);
   ADD("wide-is-not-compact", test_wide_is_not_compact);

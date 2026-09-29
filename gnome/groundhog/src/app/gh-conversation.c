@@ -26,6 +26,16 @@ struct _GhConversation {
   gchar *marker_id;
   guint unread;
   guint unread_older;        /* unread messages in the unloaded older history */
+  /* Listed messages read on screen while older unread ones were still
+   * unloaded (W13b review B1): [seen_first, seen_last] in the message order.
+   * The marker cannot say "these are read, older ones are not", so it stays
+   * put (and nothing is persisted) until the older unread are listed; the
+   * range only keeps this session's count honest. */
+  gboolean has_seen;
+  gint64 seen_first_created_at;
+  gchar *seen_first_id;
+  gint64 seen_last_created_at;
+  gchar *seen_last_id;
   /* Durable paging: stored messages before the floor are not loaded. */
   gboolean has_older;
   gint64 floor_created_at;
@@ -162,15 +172,23 @@ gh_conversation_new_for_message(GhMessage *message)
   return self;
 }
 
+/* <0, 0 or >0 as place a sorts before, at or after place b of the message
+ * order. */
+static gint
+compare_places(gint64 a_created_at, const gchar *a_id, gint64 b_created_at, const gchar *b_id)
+{
+  if (a_created_at != b_created_at)
+    return a_created_at < b_created_at ? -1 : 1;
+  return strcmp(a_id, b_id);
+}
+
 /* <0, 0 or >0 as message sorts before, at or after the (created_at, id)
  * place of the message order. */
 static gint
 compare_place(GhMessage *message, gint64 created_at, const gchar *id)
 {
-  gint64 own = gh_message_get_created_at(message);
-  if (own != created_at)
-    return own < created_at ? -1 : 1;
-  return strcmp(gh_message_get_rumor_id(message), id);
+  return compare_places(gh_message_get_created_at(message), gh_message_get_rumor_id(message),
+                        created_at, id);
 }
 
 static gboolean
@@ -178,6 +196,22 @@ after_marker(GhConversation *self, GhMessage *message)
 {
   return !self->has_marker ||
          compare_place(message, self->marker_created_at, self->marker_id) > 0;
+}
+
+static gboolean
+in_seen(GhConversation *self, GhMessage *message)
+{
+  return self->has_seen &&
+         compare_place(message, self->seen_first_created_at, self->seen_first_id) >= 0 &&
+         compare_place(message, self->seen_last_created_at, self->seen_last_id) <= 0;
+}
+
+static void
+clear_seen(GhConversation *self)
+{
+  self->has_seen = FALSE;
+  g_clear_pointer(&self->seen_first_id, g_free);
+  g_clear_pointer(&self->seen_last_id, g_free);
 }
 
 static void
@@ -188,6 +222,10 @@ set_marker(GhConversation *self, gint64 created_at, const gchar *id)
   self->marker_id = copy;
   self->marker_created_at = created_at;
   self->has_marker = TRUE;
+  /* Everything the seen range held is now read by the marker itself. */
+  if (self->has_seen &&
+      compare_places(created_at, copy, self->seen_last_created_at, self->seen_last_id) >= 0)
+    clear_seen(self);
 }
 
 static void
@@ -211,24 +249,32 @@ insertion_point(GhConversation *self, GhMessage *message)
   return low;
 }
 
-/* Loaded messages after the marker from someone else. */
+/* Loaded messages after the marker from someone else: all of them (what the
+ * durable count covers), or with skip_seen only those not read on screen
+ * (what the unread count shows). *out_first (nullable) is the position of
+ * the first one counted, the number of loaded messages when none is. */
 static guint
-count_loaded_unread(GhConversation *self)
+count_loaded_unread(GhConversation *self, gboolean skip_seen, guint *out_first)
 {
-  guint unread = 0;
+  guint unread = 0, first = self->messages->len;
   for (guint i = self->messages->len; i-- > 0;) {
     GhMessage *message = g_ptr_array_index(self->messages, i);
     if (!after_marker(self, message))
       break;
-    unread += !gh_message_is_self(message);
+    if (!gh_message_is_self(message) && !(skip_seen && in_seen(self, message))) {
+      unread++;
+      first = i;
+    }
   }
+  if (out_first)
+    *out_first = first;
   return unread;
 }
 
 static void
 update_unread(GhConversation *self)
 {
-  guint unread = self->unread_older + count_loaded_unread(self);
+  guint unread = self->unread_older + count_loaded_unread(self, TRUE, NULL);
   if (unread == self->unread)
     return;
   self->unread = unread;
@@ -390,7 +436,7 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   self->floor_id = state->has_older ? g_strdup(state->floor_id) : NULL;
   self->floor_created_at = state->has_older ? state->floor_created_at : 0;
   self->has_older = state->has_older;
-  guint loaded = count_loaded_unread(self);
+  guint loaded = count_loaded_unread(self, FALSE, NULL);
   self->unread_older = state->unread > loaded ? state->unread - loaded : 0;
 
   if (g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0)
@@ -443,7 +489,7 @@ void
 gh_conversation_sync_unread(GhConversation *self, guint unread)
 {
   g_return_if_fail(GH_IS_CONVERSATION(self));
-  guint loaded = count_loaded_unread(self);
+  guint loaded = count_loaded_unread(self, FALSE, NULL);
   self->unread_older = unread > loaded ? unread - loaded : 0;
   update_unread(self);
 }
@@ -521,13 +567,35 @@ gh_conversation_mark_read(GhConversation *self)
   g_return_if_fail(GH_IS_CONVERSATION(self));
   if (self->messages->len == 0)
     return;
+  GhMessage *first = g_ptr_array_index(self->messages, 0);
   GhMessage *last = g_ptr_array_index(self->messages, self->messages->len - 1);
-  gboolean moved = after_marker(self, last) || self->unread_older > 0;
+  if (self->unread_older > 0) {
+    /* Unread messages are still in the unloaded older history: only what is
+     * listed is read. The marker stays before the unloaded ones, so they stay
+     * unread (here and after a restart) until they are listed too. */
+    gchar *first_id = g_strdup(gh_message_get_rumor_id(first));
+    gchar *last_id = g_strdup(gh_message_get_rumor_id(last));
+    clear_seen(self);
+    self->has_seen = TRUE;
+    self->seen_first_created_at = gh_message_get_created_at(first);
+    self->seen_first_id = first_id;
+    self->seen_last_created_at = gh_message_get_created_at(last);
+    self->seen_last_id = last_id;
+    update_unread(self);
+    return;
+  }
+  gboolean moved = after_marker(self, last);
   set_marker_to(self, last);
-  self->unread_older = 0;
   update_unread(self);
   if (moved && self->store)
     gh_conversation_store_persist_read(self->store, self, last);
+}
+
+guint
+gh_conversation_get_listed_unread(GhConversation *self, guint *out_first)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
+  return count_loaded_unread(self, TRUE, out_first);
 }
 
 gboolean
@@ -638,6 +706,7 @@ gh_conversation_finalize(GObject *object)
   g_strfreev(self->peers);
   g_free(self->stored_subject);
   g_free(self->marker_id);
+  clear_seen(self);
   g_free(self->floor_id);
   g_free(self->fallback_title);
   g_free(self->preview);

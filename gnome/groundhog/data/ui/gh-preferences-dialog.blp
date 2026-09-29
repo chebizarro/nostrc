@@ -5,9 +5,13 @@ using Adw 1;
 // Every row is bound to one org.nostr.Groundhog key in gh-preferences-dialog.c,
 // which lists the key behind each row id; the defaults are the schema's
 // privacy-preserving ones (G01), and the copy says who learns what (§2.2, P9).
-// C removes the Tor choice and keeps the Tor address row hidden until G09's
-// transport exists (GROUNDHOG_HAVE_TOR): no fake support. The relay and server
-// rows, the account row's text and the deletion result are filled in from C.
+// No fake support (W13b review B2): C leaves a row unbound, insensitive and
+// "Not available in this version yet" while the build lacks its feature
+// (gh-preferences-dialog.h), sets the notification rows' sensitivity, and
+// removes the Tor choice and keeps the Tor address row hidden until G09's
+// transport exists. The relay and server rows, the account row's text, the
+// Disappearing Messages description and the deletion result are filled in
+// from C.
 template $GhPreferencesDialog: Adw.PreferencesDialog {
   Adw.PreferencesPage privacy_page {
     name: "privacy";
@@ -23,9 +27,9 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
 
       // Explanations go in the footer: a subtitle would squeeze the value.
+      // Sensitive only while notifications are on (set from C).
       Adw.ComboRow notification_privacy_row {
         title: _("Notification Content");
-        sensitive: bind notifications_row.active;
 
         model: StringList {
           strings [
@@ -38,10 +42,9 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.SwitchRow sound_row {
         title: _("Sound");
-        sensitive: bind notifications_row.active;
       }
 
-      Label {
+      Label notifications_note {
         label: _("Hidden notifications only say how many messages are new, not who sent them. Message requests are always hidden. On the lock screen, GNOME shows message details only if you allow it in Settings → Notifications.");
         wrap: true;
         xalign: 0;
@@ -72,7 +75,9 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         title: _("Load Profile Pictures");
       }
 
-      Label {
+      // Hidden while nothing here can load; without Tor its text drops the
+      // Tor clause (set from C).
+      Label web_note {
         label: _("Loading anything from the web shows your IP address to that website unless you use Tor.");
         wrap: true;
         xalign: 0;
@@ -114,13 +119,13 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
-    Adw.PreferencesGroup {
+    // Its description says what this build does (set from C).
+    Adw.PreferencesGroup disappearing_group {
       title: _("Disappearing Messages");
-      description: _("Messages are deleted from this device when they expire, and relays are asked to delete them. Relays and other people's apps may not honour this.");
 
       Adw.ComboRow disappearing_row {
         title: _("Default Timer");
-        subtitle: _("For new conversations");
+        subtitle: _("For conversations started from now on");
 
         model: StringList {
           strings [
@@ -138,7 +143,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.ComboRow retention_row {
         title: _("Keep Messages");
-        subtitle: _("Older messages are deleted from this device only");
+        subtitle: _("Messages received longer ago are deleted from this device only; relays may still hold encrypted copies");
 
         model: StringList {
           strings [
@@ -394,9 +399,11 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
     Adw.PreferencesGroup {
       title: _("Background");
 
+      // Turning it on here is the confirmed choice that also writes the
+      // autostart entry (G15, P9).
       Adw.SwitchRow run_in_background_row {
         title: _("Receive Messages When Closed");
-        subtitle: _("Groundhog keeps running after its window is closed; Quit stops it");
+        subtitle: _("Groundhog keeps running after its window is closed; Quit stops it. Turning this on here also starts Groundhog when you log in.");
       }
     }
 

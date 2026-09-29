@@ -6,7 +6,9 @@ using Adw 1;
 // a message inbox, charter §7.15 state 11), the message list with a day
 // separator per local day (gh-day-separator.blp, loaded from C because
 // blueprint-compiler 0.12 has no inline ListHeader template) and rows from
-// gh-message-list-item.blp and gh-message-row.blp, "Loading earlier messages", "Jump to Latest" with the
+// gh-message-list-item.blp and gh-message-row.blp, "Earlier Messages" (older
+// history not listed yet; its label is set from C) and "Loading earlier
+// messages…", "Jump to Latest" with the
 // number of new messages, and "Waiting for Nostr Signer to unlock N
 // messages" (state 12). The two alert dialogs confirm a link that is not a
 // plain https address (charter PD-3) and ask before a link preview connects
@@ -72,8 +74,28 @@ template $GhConversationView: Adw.BreakpointBin {
         }
 
         Label {
-          label: _("Loading earlier messages");
+          label: _("Loading earlier messages…");
         }
+      }
+
+      [overlay]
+      Button older_button {
+        visible: false;
+        halign: center;
+        valign: start;
+        margin-top: 12;
+        action-name: "conversation.load-older";
+
+        styles [
+          "osd",
+          "pill",
+          "groundhog-older-button",
+        ]
+
+        child: Adw.ButtonContent older_content {
+          icon-name: "go-up-symbolic";
+          label: _("Earlier Messages");
+        };
       }
 
       [overlay]
