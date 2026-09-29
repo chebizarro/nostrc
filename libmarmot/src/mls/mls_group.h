@@ -295,6 +295,17 @@ int mls_group_add_member(MlsGroup *group,
                          const MlsKeyPackage *kp,
                          MlsAddResult *result);
 
+/**
+ * Add several members in one Commit (RFC 9420 §12.4: one Add proposal per
+ * KeyPackage, applied in order, plus the UpdatePath) and one Welcome carrying
+ * an EncryptedGroupSecrets entry -- with that joiner's LCA path secret -- per
+ * KeyPackage.  At most 64 KeyPackages; the same member twice (duplicate leaf
+ * keys) is MARMOT_ERR_INVALID_ARG.  On failure the group is unchanged.
+ */
+int mls_group_add_members(MlsGroup *group,
+                          const MlsKeyPackage *const *kps, size_t kp_count,
+                          MlsAddResult *result);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Remove member
  * ──────────────────────────────────────────────────────────────────────── */
@@ -327,6 +338,15 @@ void mls_commit_result_clear(MlsCommitResult *r);
 int mls_group_remove_member(MlsGroup *group,
                             uint32_t leaf_index,
                             MlsCommitResult *result);
+
+/**
+ * Remove several members in one Commit (one Remove proposal each, plus the
+ * UpdatePath).  Every leaf must be a current member other than us, named
+ * once; otherwise MARMOT_ERR_INVALID_ARG.  On failure the group is unchanged.
+ */
+int mls_group_remove_members(MlsGroup *group,
+                             const uint32_t *leaves, size_t leaf_count,
+                             MlsCommitResult *result);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Self-update

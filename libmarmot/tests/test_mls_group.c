@@ -2612,6 +2612,67 @@ TEST(test_welcome_path_secret_lets_joiner_follow)
     three_member_fixture_clear(&f);
 }
 
+/* One Commit adding two members (nostrc-wc6v): one Welcome, one
+ * EncryptedGroupSecrets per joiner, each with the path secret of that
+ * joiner's own lowest common ancestor with the committer. */
+TEST(test_multi_add_welcome_each_joiner_follows)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    MlsKeyPackage eve_kp;
+    MlsKeyPackagePrivate eve_priv;
+    static const uint8_t EVE_ID[32] = { [0 ... 31] = 0xEE };
+    assert(mls_key_package_create(&eve_kp, &eve_priv, EVE_ID, 32, NULL, 0) == 0);
+
+    MlsGroup *three[] = {&f.alice, &f.bob, &f.charlie};
+    const MlsKeyPackage *kps[] = {&f.dave_kp, &eve_kp};
+    MlsAddResult add;
+    assert(mls_group_add_members(&f.charlie, kps, 2, &add) == 0);
+    deliver_commit_for_test(three, 3, &f.charlie, add.commit_data, add.commit_len,
+                            "Charlie adds Dave and Eve");
+    MlsGroup dave, eve;
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &f.dave_kp,
+                               &f.dave_priv, NULL, 0, &dave) == 0);
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &eve_kp,
+                               &eve_priv, NULL, 0, &eve) == 0);
+    assert(dave.own_leaf_index == 3 && eve.own_leaf_index == 4);
+    MlsGroup *all[] = {&f.alice, &f.bob, &f.charlie, &dave, &eve};
+    assert_converged_for_test(all, 5);
+    /* Each joiner holds the key of every non-blank node on its direct path
+     * that Charlie's UpdatePath installed. */
+    assert_path_keys_current_for_test(&dave);
+    assert_path_keys_current_for_test(&eve);
+    assert(assert_path_keys_current_for_test(&dave) > 0 &&
+           assert_path_keys_current_for_test(&eve) > 0);
+
+    for (size_t c = 0; c < 5; c++) {
+        MlsCommitResult r;
+        assert(mls_group_self_update(all[c], &r) == 0);
+        deliver_commit_for_test(all, 5, all[c], r.commit_data, r.commit_len,
+                                "five-member self-update round");
+        assert_converged_for_test(all, 5);
+        mls_commit_result_clear(&r);
+    }
+
+    /* Removing two members is one Commit too; duplicates are refused. */
+    uint32_t twice[] = {3, 3};
+    MlsCommitResult rm;
+    assert(mls_group_remove_members(&f.alice, twice, 2, &rm) == MARMOT_ERR_INVALID_ARG);
+    uint32_t out[] = {3, 4};
+    assert(mls_group_remove_members(&f.alice, out, 2, &rm) == 0);
+    deliver_commit_for_test(three, 3, &f.alice, rm.commit_data, rm.commit_len,
+                            "Alice removes Dave and Eve");
+    assert_converged_for_test(three, 3);
+    mls_commit_result_clear(&rm);
+
+    mls_add_result_clear(&add);
+    mls_group_free(&dave);
+    mls_group_free(&eve);
+    mls_key_package_clear(&eve_kp);
+    mls_key_package_private_clear(&eve_priv);
+    three_member_fixture_clear(&f);
+}
+
 enum {
     WELCOME_PATH_SECRET_FLIPPED,     /* one bit of the path secret flipped */
     WELCOME_PATH_SECRET_SHORT,       /* 31-byte path secret */
@@ -4367,6 +4428,7 @@ int main(void)
     RUN(test_committer_keeps_own_path_keys);
     RUN(test_welcome_path_secret_lets_joiner_follow);
     RUN(test_welcome_bad_path_secret_rejected);
+    RUN(test_multi_add_welcome_each_joiner_follows);
     RUN(test_commit_producers_fail_closed);
     RUN(test_update_path_excludes_leaves_added_by_commit);
     RUN(test_update_path_encrypting_to_added_leaf_rejected);

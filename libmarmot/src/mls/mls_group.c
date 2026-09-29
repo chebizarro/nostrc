@@ -208,20 +208,25 @@ group_derive_epoch(MlsGroup *group,
  *     `added_leaves` this Commit adds (RFC 9420 §12.4.2; they learn the
  *     epoch from the Welcome)
  *   - The path_secret at the root (used to derive commit_secret)
- *   - Optionally, the path_secret of `secret_node` (UINT32_MAX for none),
- *     which must lie on the filtered direct path: the lowest common ancestor
- *     a Welcome hands to a joiner (RFC 9420 §12.4.3.1, nostrc-il4i)
+ *   - Optionally, the path_secret of each of `secret_nodes` (which must lie
+ *     on the filtered direct path) into out_node_secrets[i]: the lowest
+ *     common ancestor a Welcome hands to each joiner (RFC 9420 §12.4.3.1,
+ *     nostrc-il4i)
  */
 static int
 generate_update_path(MlsGroup *group,
-                     const uint8_t *credential_identity, size_t cred_len,
                      const uint32_t *added_leaves, size_t added_leaf_count,
-                     uint32_t secret_node,
-                     uint8_t out_node_secret[MLS_HASH_LEN],
+                     const uint32_t *secret_nodes, size_t secret_count,
+                     uint8_t (*out_node_secrets)[MLS_HASH_LEN],
                      MlsUpdatePath *path_out,
                      uint8_t root_path_secret[MLS_HASH_LEN])
 {
-    if (secret_node != UINT32_MAX && !out_node_secret) return -1;
+    if (secret_count > 0 && (!secret_nodes || !out_node_secrets)) return -1;
+    /* The committer's credential is carried over from its current leaf. */
+    const MlsLeafNode *cur_leaf =
+        &group->tree.nodes[mls_tree_leaf_to_node(group->own_leaf_index)].leaf;
+    const uint8_t *credential_identity = cur_leaf->credential_identity;
+    size_t cred_len = cur_leaf->credential_identity_len;
     uint32_t n_leaves = group->tree.n_leaves;
     uint8_t *path_context = NULL;
     size_t path_context_len = 0;
@@ -291,11 +296,11 @@ generate_update_path(MlsGroup *group,
         /* The root path secret is the last one */
         memcpy(root_path_secret, path_secrets[fdp_len - 1], MLS_HASH_LEN);
     }
-    if (secret_node != UINT32_MAX) {
+    for (size_t j = 0; j < secret_count; j++) {
         uint32_t k = 0;
-        while (k < fdp_len && fdp[k] != secret_node) k++;
+        while (k < fdp_len && fdp[k] != secret_nodes[j]) k++;
         if (k == fdp_len) goto fail;
-        memcpy(out_node_secret, path_secrets[k], MLS_HASH_LEN);
+        memcpy(out_node_secrets[j], path_secrets[k], MLS_HASH_LEN);
     }
 
     /* RFC 9420 §7.4/§7.5: blank the whole direct path first, exactly as
@@ -485,7 +490,8 @@ fail:
     free(path_context);
     sodium_memzero(new_enc_sk, sizeof(new_enc_sk));
     sodium_memzero(path_secrets, sizeof(path_secrets));
-    if (out_node_secret) sodium_memzero(out_node_secret, MLS_HASH_LEN);
+    if (out_node_secrets && secret_count > 0)
+        sodium_memzero(out_node_secrets, secret_count * MLS_HASH_LEN);
     mls_update_path_clear(path_out);
     return -1;
 }
@@ -1260,429 +1266,337 @@ fail:
  * Add member
  * ══════════════════════════════════════════════════════════════════════════ */
 
+static int leaf_keys_unique(const MlsRatchetTree *tree, uint32_t leaf_index);
+
+/**
+ * Shared by the Add and Remove producers: `proposals` (ownership taken, their
+ * effect already applied to group->tree) plus an UpdatePath become a signed
+ * Commit PublicMessage, and the group advances to the next epoch.  The path
+ * secret of each of `secret_nodes` is returned in `node_secrets` (Welcome,
+ * RFC 9420 §12.4.3.1) and the new epoch's confirmation tag in
+ * `confirmation_tag` (GroupInfo).  Runs on a staged copy: on failure the
+ * caller discards the group.
+ */
 static int
-add_member_staged(MlsGroup *group,
-                  const MlsKeyPackage *kp,
-                  MlsAddResult *result)
+path_commit_with_proposals(MlsGroup *group,
+                           MlsProposal *proposals, size_t proposal_count,
+                           const uint32_t *added_leaves, size_t added_count,
+                           const uint32_t *secret_nodes,
+                           uint8_t (*node_secrets)[MLS_HASH_LEN],
+                           const uint8_t *pre_gc, size_t pre_gc_len,
+                           uint64_t pre_epoch,
+                           const uint8_t pre_membership_key[MLS_HASH_LEN],
+                           uint8_t confirmation_tag[MLS_HASH_LEN],
+                           uint8_t **out_commit, size_t *out_commit_len)
 {
-    /* Every failure releases pre_gc and wipes these secrets (fail_pre_gc,
-     * fail_wire_msg). */
+    int rc = MARMOT_ERR_INTERNAL;
     uint8_t root_path_secret[MLS_HASH_LEN];
     uint8_t commit_secret[MLS_HASH_LEN];
-    uint8_t lca_path_secret[MLS_HASH_LEN];
     memset(root_path_secret, 0, sizeof(root_path_secret));
     memset(commit_secret, 0, sizeof(commit_secret));
-    memset(lca_path_secret, 0, sizeof(lca_path_secret));
+    MlsCommit commit;
+    memset(&commit, 0, sizeof(commit));
+    commit.proposals = proposals;
+    commit.proposal_count = proposal_count;
+    MlsTlsBuf body = {0};
+    MlsMLSMessage wire_msg;
+    memset(&wire_msg, 0, sizeof(wire_msg));
+    bool have_msg = false;
+    uint8_t *ct_input = NULL;
+    size_t ct_input_len = 0;
 
+    if (generate_update_path(group, added_leaves, added_count,
+                             secret_nodes, secret_nodes ? added_count : 0,
+                             node_secrets, &commit.path, root_path_secret) != 0)
+        goto done;
+    commit.has_path = true;
+
+    if (mls_tls_buf_init(&body, 1024) != 0 ||
+        mls_commit_serialize(&commit, &body) != 0)
+        goto done;
+    /* The confirmed transcript hash input is wire_format || FramedContent ||
+     * signature (RFC 9420 §8.1): sign the framing before advancing. */
+    if (begin_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
+                                    body.data, body.len,
+                                    &wire_msg, &ct_input, &ct_input_len) != 0)
+        goto done;
+    have_msg = true;
+    if (derive_commit_secret(root_path_secret, true, commit_secret) != 0)
+        goto done;
+
+    MlsTlsBuf conf = {0};
+    if (mls_tls_buf_init(&conf, MLS_HASH_LEN + ct_input_len) != 0) {
+        rc = MARMOT_ERR_MEMORY;
+        goto done;
+    }
+    mls_tls_buf_append(&conf, group->interim_transcript_hash, MLS_HASH_LEN);
+    mls_tls_buf_append(&conf, ct_input, ct_input_len);
+    mls_crypto_hash(group->confirmed_transcript_hash, conf.data, conf.len);
+    mls_tls_buf_free(&conf);
+
+    remember_resumption_psk(group, group->epoch, group->epoch_secrets.resumption_psk);
+    group->epoch++;
+    if (group_derive_epoch(group, group->epoch_secrets.init_secret,
+                           commit_secret, NULL) != 0 ||
+        compute_confirmation_tag(group->epoch_secrets.confirmation_key,
+                                 group->confirmed_transcript_hash,
+                                 confirmation_tag) != 0)
+        goto done;
+
+    MlsTlsBuf interim = {0};
+    if (mls_tls_buf_init(&interim, MLS_HASH_LEN * 2) != 0) {
+        rc = MARMOT_ERR_MEMORY;
+        goto done;
+    }
+    mls_tls_buf_append(&interim, group->confirmed_transcript_hash, MLS_HASH_LEN);
+    mls_tls_write_opaque32(&interim, confirmation_tag, MLS_HASH_LEN);
+    mls_crypto_hash(group->interim_transcript_hash, interim.data, interim.len);
+    mls_tls_buf_free(&interim);
+
+    /* finish_commit_public_message() clears wire_msg either way. */
+    have_msg = false;
+    if (finish_commit_public_message(&wire_msg, pre_membership_key,
+                                     pre_gc, pre_gc_len, confirmation_tag,
+                                     out_commit, out_commit_len) != 0)
+        goto done;
+    rc = 0;
+done:
+    if (have_msg) mls_message_clear(&wire_msg);
+    free(ct_input);
+    mls_tls_buf_free(&body);
+    mls_commit_clear(&commit);
+    sodium_memzero(root_path_secret, sizeof(root_path_secret));
+    sodium_memzero(commit_secret, sizeof(commit_secret));
+    return rc;
+}
+
+/* Deep copy of a KeyPackage into an Add proposal. */
+static int
+add_proposal_from_key_package(MlsProposal *p, const MlsKeyPackage *kp)
+{
+    memset(p, 0, sizeof(*p));
+    p->type = MLS_PROPOSAL_ADD;
+    memcpy(&p->add.key_package, kp, sizeof(*kp));
+    p->add.key_package.extensions_data = NULL;
+    p->add.key_package.extensions_len = 0;
+    memset(&p->add.key_package.leaf_node, 0, sizeof(p->add.key_package.leaf_node));
+    if (kp->extensions_data && kp->extensions_len > 0) {
+        p->add.key_package.extensions_data = malloc(kp->extensions_len);
+        if (!p->add.key_package.extensions_data) return MARMOT_ERR_MEMORY;
+        memcpy(p->add.key_package.extensions_data, kp->extensions_data,
+               kp->extensions_len);
+        p->add.key_package.extensions_len = kp->extensions_len;
+    }
+    if (mls_leaf_node_clone(&p->add.key_package.leaf_node, &kp->leaf_node) != 0) {
+        free(p->add.key_package.extensions_data);
+        p->add.key_package.extensions_data = NULL;
+        return MARMOT_ERR_MEMORY;
+    }
+    return 0;
+}
+
+/* One EncryptedGroupSecrets entry for `kp`: GroupSecrets (joiner_secret and
+ * the joiner's LCA path secret) HPKE-sealed to its init_key, bound to the
+ * encrypted GroupInfo (RFC 9420 §12.4.3.1). */
+static int
+write_encrypted_group_secrets(MlsTlsBuf *vec, const MlsKeyPackage *kp,
+                              const uint8_t joiner_secret[MLS_HASH_LEN],
+                              const uint8_t path_secret[MLS_HASH_LEN],
+                              const uint8_t *enc_gi, size_t enc_gi_len)
+{
+    uint8_t *gs = NULL;
+    size_t gs_len = 0;
+    if (serialize_group_secrets(joiner_secret, path_secret, &gs, &gs_len) != 0)
+        return -1;
+    int rc = -1;
+    uint8_t kem_enc[MLS_KEM_ENC_LEN];
+    uint8_t kp_ref[MLS_HASH_LEN];
+    uint8_t *ct = malloc(gs_len + MLS_AEAD_TAG_LEN);
+    size_t ct_len = 0;
+    if (ct &&
+        hpke_encrypt_with_label(kem_enc, ct, &ct_len, kp->init_key, "Welcome",
+                                enc_gi, enc_gi_len, gs, gs_len) == 0 &&
+        mls_key_package_ref(kp, kp_ref) == 0 &&
+        mls_tls_write_opaque16(vec, kp_ref, MLS_HASH_LEN) == 0 &&
+        mls_tls_write_opaque16(vec, kem_enc, MLS_KEM_ENC_LEN) == 0 &&
+        mls_tls_write_opaque16(vec, ct, ct_len) == 0)
+        rc = 0;
+    free(ct);
+    sodium_memzero(gs, gs_len);
+    free(gs);
+    return rc;
+}
+
+/* Welcome for the joiners (RFC 9420 §12.4.3.1): the signed GroupInfo of the
+ * new epoch, encrypted with the welcome secret, and one
+ * EncryptedGroupSecrets per KeyPackage. */
+static int
+build_welcome(const MlsGroup *group, const uint8_t confirmation_tag[MLS_HASH_LEN],
+              const MlsKeyPackage *const *kps, size_t kp_count,
+              uint8_t (*path_secrets)[MLS_HASH_LEN],
+              uint8_t **out, size_t *out_len)
+{
+    int rc = MARMOT_ERR_INTERNAL;
+    MlsGroupInfo gi;
+    bool have_gi = false;
+    MlsTlsBuf gi_buf = {0}, secrets = {0}, welcome = {0};
+    uint8_t *enc_gi = NULL;
+    size_t enc_gi_len = 0;
+    uint8_t key[MLS_AEAD_KEY_LEN], nonce[MLS_AEAD_NONCE_LEN];
+
+    if (mls_group_info_build(group, &gi) != 0) goto done;
+    have_gi = true;
+    memcpy(gi.confirmation_tag, confirmation_tag, MLS_HASH_LEN);
+    if (mls_group_info_sign_local(&gi, group->own_signature_key) != 0 ||
+        mls_tls_buf_init(&gi_buf, 512) != 0 ||
+        mls_group_info_serialize(&gi, &gi_buf) != 0 ||
+        mls_crypto_expand_with_label(key, MLS_AEAD_KEY_LEN,
+                                     group->epoch_secrets.welcome_secret,
+                                     "key", NULL, 0) != 0 ||
+        mls_crypto_expand_with_label(nonce, MLS_AEAD_NONCE_LEN,
+                                     group->epoch_secrets.welcome_secret,
+                                     "nonce", NULL, 0) != 0)
+        goto done;
+    enc_gi = malloc(gi_buf.len + MLS_AEAD_TAG_LEN);
+    if (!enc_gi) {
+        rc = MARMOT_ERR_MEMORY;
+        goto done;
+    }
+    if (mls_crypto_aead_encrypt(enc_gi, &enc_gi_len, key, nonce,
+                                gi_buf.data, gi_buf.len, NULL, 0) != 0 ||
+        mls_tls_buf_init(&secrets, 128 * kp_count) != 0)
+        goto done;
+    for (size_t i = 0; i < kp_count; i++)
+        if (write_encrypted_group_secrets(&secrets, kps[i],
+                                          group->epoch_secrets.joiner_secret,
+                                          path_secrets[i], enc_gi, enc_gi_len) != 0)
+            goto done;
+    /* MLSMessage { version, wire_format welcome, Welcome } */
+    if (mls_tls_buf_init(&welcome, 256 + secrets.len + enc_gi_len) != 0 ||
+        mls_tls_write_u16(&welcome, 1) != 0 ||
+        mls_tls_write_u16(&welcome, MLS_WIRE_FORMAT_WELCOME) != 0 ||
+        mls_tls_write_u16(&welcome, MARMOT_CIPHERSUITE) != 0 ||
+        mls_tls_write_opaque32(&welcome, secrets.data, secrets.len) != 0 ||
+        mls_tls_write_opaque32(&welcome, enc_gi, enc_gi_len) != 0)
+        goto done;
+    *out = welcome.data;
+    *out_len = welcome.len;
+    welcome.data = NULL;
+    rc = 0;
+done:
+    sodium_memzero(key, sizeof(key));
+    sodium_memzero(nonce, sizeof(nonce));
+    if (have_gi) mls_group_info_clear(&gi);
+    free(enc_gi);
+    mls_tls_buf_free(&gi_buf);
+    mls_tls_buf_free(&secrets);
+    mls_tls_buf_free(&welcome);
+    return rc;
+}
+
+/* The limit receivers apply to Adds per Commit (process_commit_impl). */
+#define MLS_MAX_ADDS_PER_COMMIT 64
+
+static int
+add_members_staged(MlsGroup *group,
+                   const MlsKeyPackage *const *kps, size_t kp_count,
+                   MlsAddResult *result)
+{
+    int rc = MARMOT_ERR_INTERNAL;
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
     uint64_t pre_epoch = group->epoch;
     uint8_t pre_membership_key[MLS_HASH_LEN];
-    memcpy(pre_membership_key, group->epoch_secrets.membership_key, MLS_HASH_LEN);
-    if (mls_group_context_build(group, &pre_gc, &pre_gc_len) != 0)
-        return MARMOT_ERR_INTERNAL;
-
-    /* Validate the key package */
-    int rc = mls_key_package_validate(kp);
-    if (rc != 0) goto fail_pre_gc;
-
-    /* Add a new leaf to the tree */
-    uint32_t new_leaf_node_idx;
-    if (mls_tree_add_leaf(&group->tree, &new_leaf_node_idx) != 0) {
-        rc = MARMOT_ERR_INTERNAL;
-        goto fail_pre_gc;
-    }
-
-    /* Copy the key package's leaf node into the new position */
-    MlsNode *new_node = &group->tree.nodes[new_leaf_node_idx];
-    new_node->type = MLS_NODE_LEAF;
-    if (mls_leaf_node_clone(&new_node->leaf, &kp->leaf_node) != 0) {
-        rc = MARMOT_ERR_INTERNAL;
-        goto fail_pre_gc;
-    }
-    /* RFC 9420 §12.1.1, exactly as receivers apply the Add: the new leaf is
-     * unmerged at every non-blank parent on its direct path.  The UpdatePath
-     * below re-keys (and so clears) the ones on our own path; any others --
-     * above a blank leaf another member's path re-keyed -- keep it, and the
-     * tree hash covers them. */
-    if (tree_add_unmerged_leaf(&group->tree, new_leaf_node_idx) != 0) {
-        rc = MARMOT_ERR_INTERNAL;
-        goto fail_pre_gc;
-    }
-
-    /* Build the Add proposal */
-    MlsProposal add_prop;
-    memset(&add_prop, 0, sizeof(add_prop));
-    add_prop.type = MLS_PROPOSAL_ADD;
-    /* Deep-copy the key package into the proposal */
-    memcpy(&add_prop.add.key_package, kp, sizeof(MlsKeyPackage));
-    /* Clone the heap-allocated parts */
-    add_prop.add.key_package.extensions_data = NULL;
-    add_prop.add.key_package.extensions_len = 0;
-    if (kp->extensions_data && kp->extensions_len > 0) {
-        add_prop.add.key_package.extensions_data = malloc(kp->extensions_len);
-        if (!add_prop.add.key_package.extensions_data) {
-            rc = MARMOT_ERR_MEMORY;
-            goto fail_pre_gc;
-        }
-        memcpy(add_prop.add.key_package.extensions_data,
-               kp->extensions_data, kp->extensions_len);
-        add_prop.add.key_package.extensions_len = kp->extensions_len;
-    }
-    if (mls_leaf_node_clone(&add_prop.add.key_package.leaf_node, &kp->leaf_node) != 0) {
-        free(add_prop.add.key_package.extensions_data);
-        rc = MARMOT_ERR_MEMORY;
-        goto fail_pre_gc;
-    }
-
-    /* Generate UpdatePath */
-    MlsUpdatePath update_path;
-    uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
-    const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
-    size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
-
-    const uint32_t added_leaf = mls_tree_node_to_leaf(new_leaf_node_idx);
-    /* The Welcome gives the joiner the path secret of its lowest common
-     * ancestor with us (RFC 9420 §12.4.3.1): a later Commit may encrypt to
-     * that node rather than to the joiner's leaf (nostrc-il4i).  The joiner
-     * is a non-blank leaf below it, so the node is on our filtered path. */
-    uint32_t lca_node = mls_tree_common_ancestor(own_node, new_leaf_node_idx,
-                                                 group->tree.n_leaves);
-    if (lca_node == UINT32_MAX ||
-        generate_update_path(group, own_cred, own_cred_len, &added_leaf, 1,
-                             lca_node, lca_path_secret,
-                             &update_path, root_path_secret) != 0) {
-        mls_proposal_clear(&add_prop);
-        rc = MARMOT_ERR_INTERNAL;
-        goto fail_pre_gc;
-    }
-
-    /* Build the Commit */
-    MlsCommit commit;
-    memset(&commit, 0, sizeof(commit));
-    commit.proposals = malloc(sizeof(MlsProposal));
-    if (!commit.proposals) {
-        mls_proposal_clear(&add_prop);
-        mls_update_path_clear(&update_path);
-        rc = MARMOT_ERR_MEMORY;
-        goto fail_pre_gc;
-    }
-    commit.proposals[0] = add_prop;
-    commit.proposal_count = 1;
-    commit.has_path = true;
-    commit.path = update_path;
-
-    /* Serialize the commit */
-    MlsTlsBuf commit_buf;
-    if (mls_tls_buf_init(&commit_buf, 1024) != 0) {
-        mls_commit_clear(&commit);
-        rc = MARMOT_ERR_MEMORY;
-        goto fail_pre_gc;
-    }
-    if (mls_commit_serialize(&commit, &commit_buf) != 0) {
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        rc = MARMOT_ERR_INTERNAL;
-        goto fail_pre_gc;
-    }
-
-    /* Build and sign the PublicMessage framing now: the confirmed transcript
-     * hash input is wire_format || FramedContent || signature (RFC 9420 §8.1). */
-    MlsMLSMessage wire_msg;
-    uint8_t *ct_input = NULL;
-    size_t ct_input_len = 0;
-    if (begin_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
-                                    commit_buf.data, commit_buf.len,
-                                    &wire_msg, &ct_input, &ct_input_len) != 0) {
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        rc = MARMOT_ERR_INTERNAL;
-        goto fail_pre_gc;
-    }
-
-    /* Advance epoch */
-    if (derive_commit_secret(root_path_secret, true, commit_secret) != 0) {
-        free(ct_input);
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        goto fail_wire_msg_internal;
-    }
-
-    /* Update confirmed transcript hash: H(interim_old || transcript_input) */
-    MlsTlsBuf conf_buf;
-    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + ct_input_len) != 0) {
-        free(ct_input);
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        goto fail_wire_msg_memory;
-    }
-    mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&conf_buf, ct_input, ct_input_len);
-    mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
-    mls_tls_buf_free(&conf_buf);
-    free(ct_input);
-
-    uint64_t previous_epoch = group->epoch;
-    remember_resumption_psk(group, previous_epoch,
-                            group->epoch_secrets.resumption_psk);
-    group->epoch++;
-
-    /* Derive new epoch secrets */
-    const uint8_t *prev_init = group->epoch_secrets.init_secret;
-    if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        goto fail_wire_msg_internal;
-    }
-
-    /* Compute confirmation tag */
     uint8_t confirmation_tag[MLS_HASH_LEN];
-    if (compute_confirmation_tag(group->epoch_secrets.confirmation_key,
-                                 group->confirmed_transcript_hash,
-                                 confirmation_tag) != 0) {
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        goto fail_wire_msg_internal;
+    uint8_t (*lca_secrets)[MLS_HASH_LEN] = calloc(kp_count, MLS_HASH_LEN);
+    uint32_t *added = calloc(kp_count, sizeof(uint32_t));
+    uint32_t *lca_nodes = calloc(kp_count, sizeof(uint32_t));
+    MlsProposal *proposals = calloc(kp_count, sizeof(MlsProposal));
+    size_t proposals_made = 0;
+    uint8_t *commit = NULL, *welcome = NULL;
+    size_t commit_len = 0, welcome_len = 0;
+    memcpy(pre_membership_key, group->epoch_secrets.membership_key, MLS_HASH_LEN);
+
+    if (!lca_secrets || !added || !lca_nodes || !proposals) {
+        rc = MARMOT_ERR_MEMORY;
+        goto done;
+    }
+    if (mls_group_context_build(group, &pre_gc, &pre_gc_len) != 0) goto done;
+
+    /* Apply the Adds as receivers do (RFC 9420 §12.1.1, in proposal order):
+     * each new leaf takes the leftmost blank slot and is unmerged at every
+     * non-blank parent on its direct path; the UpdatePath below re-keys (and
+     * so clears) the ones on our own path. */
+    uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
+    for (size_t i = 0; i < kp_count; i++) {
+        rc = mls_key_package_validate(kps[i]);
+        if (rc != 0) goto done;
+        uint32_t node;
+        if (mls_tree_add_leaf(&group->tree, &node) != 0) {
+            rc = MARMOT_ERR_INTERNAL;
+            goto done;
+        }
+        group->tree.nodes[node].type = MLS_NODE_LEAF;
+        if (mls_leaf_node_clone(&group->tree.nodes[node].leaf, &kps[i]->leaf_node) != 0 ||
+            tree_add_unmerged_leaf(&group->tree, node) != 0) {
+            rc = MARMOT_ERR_MEMORY;
+            goto done;
+        }
+        added[i] = mls_tree_node_to_leaf(node);
+        rc = add_proposal_from_key_package(&proposals[i], kps[i]);
+        if (rc != 0) goto done;
+        proposals_made++;
+    }
+    /* Refuse what receivers reject (§7.3 step 8): every new leaf's keys are
+     * unique in the resulting tree -- no member added twice. */
+    for (size_t i = 0; i < kp_count; i++) {
+        if (leaf_keys_unique(&group->tree, added[i]) != 0) {
+            rc = MARMOT_ERR_INVALID_ARG;
+            goto done;
+        }
+        /* The Welcome gives each joiner the path secret of its lowest common
+         * ancestor with us (RFC 9420 §12.4.3.1, nostrc-il4i); the joiner is a
+         * non-blank leaf below it, so the node is on our filtered path. */
+        lca_nodes[i] = mls_tree_common_ancestor(own_node,
+                                                mls_tree_leaf_to_node(added[i]),
+                                                group->tree.n_leaves);
+        if (lca_nodes[i] == UINT32_MAX) {
+            rc = MARMOT_ERR_INTERNAL;
+            goto done;
+        }
     }
 
-    /* Update interim transcript hash: H(confirmed || confirmation_tag) */
-    MlsTlsBuf int_buf;
-    if (mls_tls_buf_init(&int_buf, MLS_HASH_LEN * 2) != 0) {
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        goto fail_wire_msg_memory;
+    rc = path_commit_with_proposals(group, proposals, kp_count, added, kp_count,
+                                    lca_nodes, lca_secrets, pre_gc, pre_gc_len,
+                                    pre_epoch, pre_membership_key, confirmation_tag,
+                                    &commit, &commit_len);
+    proposals = NULL;   /* owned by the helper */
+    proposals_made = 0;
+    if (rc != 0) goto done;
+    rc = build_welcome(group, confirmation_tag, kps, kp_count, lca_secrets,
+                       &welcome, &welcome_len);
+    if (rc != 0) goto done;
+
+    result->commit_data = commit;
+    result->commit_len = commit_len;
+    result->welcome_data = welcome;
+    result->welcome_len = welcome_len;
+    commit = welcome = NULL;
+    rc = 0;
+done:
+    if (proposals) {
+        for (size_t i = 0; i < proposals_made; i++) mls_proposal_clear(&proposals[i]);
+        free(proposals);
     }
-    mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
-    mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
-    mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
-    mls_tls_buf_free(&int_buf);
-
-    /* Build Welcome for the new member */
-    MlsTlsBuf welcome_buf;
-    if (mls_tls_buf_init(&welcome_buf, 2048) != 0) {
-        mls_tls_buf_free(&commit_buf);
-        mls_commit_clear(&commit);
-        goto fail_wire_msg_memory;
-    }
-
-    /* Welcome = GroupInfo encrypted to joiner's init_key */
-    {
-        /* Build GroupInfo */
-        MlsGroupInfo gi;
-        if (mls_group_info_build(group, &gi) != 0) {
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-        memcpy(gi.confirmation_tag, confirmation_tag, MLS_HASH_LEN);
-        if (mls_group_info_sign_local(&gi, group->own_signature_key) != 0) {
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-
-        /* Serialize the signed GroupInfo */
-        MlsTlsBuf gi_buf;
-        if (mls_tls_buf_init(&gi_buf, 512) != 0) {
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-        if (mls_group_info_serialize(&gi, &gi_buf) != 0) {
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&gi_buf);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-
-        /* Encrypt GroupInfo using welcome_secret derived from joiner_secret */
-        uint8_t welcome_key[MLS_AEAD_KEY_LEN];
-        uint8_t welcome_nonce[MLS_AEAD_NONCE_LEN];
-        if (mls_crypto_expand_with_label(welcome_key, MLS_AEAD_KEY_LEN,
-                                          group->epoch_secrets.welcome_secret,
-                                          "key", NULL, 0) != 0 ||
-            mls_crypto_expand_with_label(welcome_nonce, MLS_AEAD_NONCE_LEN,
-                                          group->epoch_secrets.welcome_secret,
-                                          "nonce", NULL, 0) != 0) {
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&gi_buf);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-
-        uint8_t *enc_gi = malloc(gi_buf.len + MLS_AEAD_TAG_LEN);
-        if (!enc_gi) {
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&gi_buf);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_memory;
-        }
-        size_t enc_gi_len = 0;
-        if (mls_crypto_aead_encrypt(enc_gi, &enc_gi_len, welcome_key, welcome_nonce,
-                                     gi_buf.data, gi_buf.len, NULL, 0) != 0) {
-            free(enc_gi);
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&gi_buf);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-
-        uint8_t *group_secrets = NULL;
-        size_t group_secrets_len = 0;
-        if (serialize_group_secrets(group->epoch_secrets.joiner_secret,
-                                    lca_path_secret,
-                                    &group_secrets, &group_secrets_len) != 0) {
-            free(enc_gi);
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&gi_buf);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-
-        uint8_t kem_enc[MLS_KEM_ENC_LEN];
-        uint8_t *enc_js = malloc(group_secrets_len + MLS_AEAD_TAG_LEN);
-        if (!enc_js) {
-            sodium_memzero(group_secrets, group_secrets_len);
-            free(group_secrets);
-            free(enc_gi);
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&gi_buf);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_memory;
-        }
-        size_t enc_js_len = 0;
-        if (hpke_encrypt_with_label(kem_enc, enc_js, &enc_js_len, kp->init_key,
-                                    "Welcome", enc_gi, enc_gi_len,
-                                    group_secrets, group_secrets_len) != 0) {
-            free(enc_js);
-            sodium_memzero(group_secrets, group_secrets_len);
-            free(group_secrets);
-            free(enc_gi);
-            mls_group_info_clear(&gi);
-            mls_tls_buf_free(&gi_buf);
-            mls_tls_buf_free(&commit_buf);
-            mls_tls_buf_free(&welcome_buf);
-            mls_commit_clear(&commit);
-            goto fail_wire_msg_internal;
-        }
-        sodium_memzero(group_secrets, group_secrets_len);
-        free(group_secrets);
-
-        /* Assemble Welcome message:
-         * Welcome = cipher_suite || encrypted_group_secrets || encrypted_group_info
-         * encrypted_group_secrets = kp_ref || HPKECiphertext(enc, encrypted_joiner_secret)
-         */
-        /* cipher_suite */
-        mls_tls_write_u16(&welcome_buf, 1);
-        mls_tls_write_u16(&welcome_buf, MLS_WIRE_FORMAT_WELCOME);
-        mls_tls_write_u16(&welcome_buf, MARMOT_CIPHERSUITE);
-        /* encrypted_group_secrets: EncryptedGroupSecrets<V> */
-        {
-            MlsTlsBuf secrets_vec;
-            if (mls_tls_buf_init(&secrets_vec, 128) != 0) {
-                free(enc_js);
-                free(enc_gi);
-                mls_group_info_clear(&gi);
-                mls_tls_buf_free(&gi_buf);
-                mls_tls_buf_free(&commit_buf);
-                mls_tls_buf_free(&welcome_buf);
-                mls_commit_clear(&commit);
-                goto fail_wire_msg_internal;
-            }
-            uint8_t kp_ref[MLS_HASH_LEN];
-            if (mls_key_package_ref(kp, kp_ref) != 0) {
-                free(enc_js);
-                free(enc_gi);
-                mls_group_info_clear(&gi);
-                mls_tls_buf_free(&gi_buf);
-                mls_tls_buf_free(&commit_buf);
-                mls_tls_buf_free(&welcome_buf);
-                mls_tls_buf_free(&secrets_vec);
-                mls_commit_clear(&commit);
-                goto fail_wire_msg_internal;
-            }
-            if (mls_tls_write_opaque16(&secrets_vec, kp_ref, MLS_HASH_LEN) != 0 ||
-                mls_tls_write_opaque16(&secrets_vec, kem_enc, MLS_KEM_ENC_LEN) != 0 ||
-                mls_tls_write_opaque16(&secrets_vec, enc_js, enc_js_len) != 0 ||
-                mls_tls_write_opaque32(&welcome_buf, secrets_vec.data, secrets_vec.len) != 0) {
-                free(enc_js);
-                free(enc_gi);
-                mls_group_info_clear(&gi);
-                mls_tls_buf_free(&gi_buf);
-                mls_tls_buf_free(&commit_buf);
-                mls_tls_buf_free(&welcome_buf);
-                mls_tls_buf_free(&secrets_vec);
-                mls_commit_clear(&commit);
-                goto fail_wire_msg_internal;
-            }
-            mls_tls_buf_free(&secrets_vec);
-        }
-        /* encrypted_group_info */
-        mls_tls_write_opaque32(&welcome_buf, enc_gi, enc_gi_len);
-
-        free(enc_js);
-        free(enc_gi);
-        mls_group_info_clear(&gi);
-        mls_tls_buf_free(&gi_buf);
-    }
-
-    uint8_t *wire_commit = NULL;
-    size_t wire_commit_len = 0;
-    if (finish_commit_public_message(&wire_msg, pre_membership_key,
-                                     pre_gc, pre_gc_len, confirmation_tag,
-                                     &wire_commit, &wire_commit_len) != 0) {
-        /* finish_commit_public_message() already cleared wire_msg. */
-        mls_tls_buf_free(&commit_buf);
-        mls_tls_buf_free(&welcome_buf);
-        mls_commit_clear(&commit);
-        rc = MARMOT_ERR_INTERNAL;
-        goto fail_pre_gc;
-    }
+    free(commit);
+    free(welcome);
     free(pre_gc);
-    mls_tls_buf_free(&commit_buf);
-
-    /* Transfer ownership to result */
-    result->commit_data = wire_commit;
-    result->commit_len = wire_commit_len;
-    result->welcome_data = welcome_buf.data;
-    result->welcome_len = welcome_buf.len;
-
-    mls_commit_clear(&commit);
-    sodium_memzero(root_path_secret, sizeof(root_path_secret));
-    sodium_memzero(commit_secret, sizeof(commit_secret));
-    sodium_memzero(lca_path_secret, sizeof(lca_path_secret));
-
-    return 0;
-
-fail_wire_msg_memory:
-    rc = MARMOT_ERR_MEMORY;
-    goto fail_wire_msg;
-fail_wire_msg_internal:
-    rc = MARMOT_ERR_INTERNAL;
-fail_wire_msg:
-    mls_message_clear(&wire_msg);
-fail_pre_gc:
-    free(pre_gc);
-    sodium_memzero(root_path_secret, sizeof(root_path_secret));
-    sodium_memzero(commit_secret, sizeof(commit_secret));
-    sodium_memzero(lca_path_secret, sizeof(lca_path_secret));
+    free(added);
+    free(lca_nodes);
+    if (lca_secrets) {
+        sodium_memzero(lca_secrets, kp_count * MLS_HASH_LEN);
+        free(lca_secrets);
+    }
     return rc;
 }
 
@@ -1691,173 +1605,50 @@ fail_pre_gc:
  * ══════════════════════════════════════════════════════════════════════════ */
 
 static int
-remove_member_staged(MlsGroup *group,
-                     uint32_t leaf_index,
-                     MlsCommitResult *result)
+remove_members_staged(MlsGroup *group,
+                      const uint32_t *leaves, size_t leaf_count,
+                      MlsCommitResult *result)
 {
+    int rc = MARMOT_ERR_INTERNAL;
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
     uint64_t pre_epoch = group->epoch;
     uint8_t pre_membership_key[MLS_HASH_LEN];
-    memcpy(pre_membership_key, group->epoch_secrets.membership_key, MLS_HASH_LEN);
-    if (mls_group_context_build(group, &pre_gc, &pre_gc_len) != 0)
-        return MARMOT_ERR_INTERNAL;
-
-    /* Blank the removed member's leaf and path to root */
-    uint32_t removed_node = mls_tree_leaf_to_node(leaf_index);
-    mls_tree_blank_node(&group->tree.nodes[removed_node]);
-
-    /* Blank nodes on the direct path */
-    uint32_t path[64];
-    uint32_t path_len = 0;
-    if (mls_tree_direct_path(removed_node, group->tree.n_leaves,
-                             path, 64, &path_len) != 0) {
-        free(pre_gc);
-        return MARMOT_ERR_INTERNAL;
-    }
-    
-    for (uint32_t i = 0; i < path_len; i++) {
-        mls_tree_blank_node(&group->tree.nodes[path[i]]);
-    }
-
-    /* Build Remove proposal */
-    MlsProposal remove_prop;
-    memset(&remove_prop, 0, sizeof(remove_prop));
-    remove_prop.type = MLS_PROPOSAL_REMOVE;
-    remove_prop.remove.removed_leaf = leaf_index;
-
-    /* Generate UpdatePath */
-    uint8_t root_path_secret[MLS_HASH_LEN];
-    MlsUpdatePath update_path;
-    uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
-    const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
-    size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
-
-    if (generate_update_path(group, own_cred, own_cred_len, NULL, 0,
-                             UINT32_MAX, NULL,
-                             &update_path, root_path_secret) != 0) {
-        free(pre_gc);
-        return MARMOT_ERR_INTERNAL;
-    }
-
-    /* Build Commit */
-    MlsCommit commit;
-    memset(&commit, 0, sizeof(commit));
-    commit.proposals = malloc(sizeof(MlsProposal));
-    if (!commit.proposals) {
-        free(pre_gc);
-        mls_update_path_clear(&update_path);
-        return MARMOT_ERR_MEMORY;
-    }
-    commit.proposals[0] = remove_prop;
-    commit.proposal_count = 1;
-    commit.has_path = true;
-    commit.path = update_path;
-
-    /* Serialize */
-    MlsTlsBuf buf;
-    if (mls_tls_buf_init(&buf, 1024) != 0) {
-        free(pre_gc);
-        mls_commit_clear(&commit);
-        return MARMOT_ERR_MEMORY;
-    }
-    if (mls_commit_serialize(&commit, &buf) != 0) {
-        free(pre_gc);
-        mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
-    }
-
-    /* Build and sign the PublicMessage framing now: the confirmed transcript
-     * hash input is wire_format || FramedContent || signature (RFC 9420 §8.1). */
-    MlsMLSMessage wire_msg;
-    uint8_t *ct_input = NULL;
-    size_t ct_input_len = 0;
-    if (begin_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
-                                    buf.data, buf.len,
-                                    &wire_msg, &ct_input, &ct_input_len) != 0) {
-        free(pre_gc);
-        mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
-    }
-
-    /* Advance epoch */
-    uint8_t commit_secret[MLS_HASH_LEN];
-    derive_commit_secret(root_path_secret, true, commit_secret);
-
-    /* Update confirmed transcript hash */
-    MlsTlsBuf conf_buf;
-    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + ct_input_len) != 0) {
-        free(ct_input);
-        mls_message_clear(&wire_msg);
-        free(pre_gc);
-        mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
-        return MARMOT_ERR_MEMORY;
-    }
-    mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&conf_buf, ct_input, ct_input_len);
-    mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
-    mls_tls_buf_free(&conf_buf);
-    free(ct_input);
-
-    uint64_t previous_epoch = group->epoch;
-    remember_resumption_psk(group, previous_epoch,
-                            group->epoch_secrets.resumption_psk);
-    group->epoch++;
-    const uint8_t *prev_init = group->epoch_secrets.init_secret;
-    if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
-        mls_message_clear(&wire_msg);
-        free(pre_gc);
-        mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
-    }
-
     uint8_t confirmation_tag[MLS_HASH_LEN];
-    compute_confirmation_tag(group->epoch_secrets.confirmation_key,
-                             group->confirmed_transcript_hash,
-                             confirmation_tag);
-
-    /* Update interim transcript hash */
-    MlsTlsBuf int_buf;
-    if (mls_tls_buf_init(&int_buf, MLS_HASH_LEN * 2) != 0) {
-        mls_message_clear(&wire_msg);
-        free(pre_gc);
-        mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
-        return MARMOT_ERR_MEMORY;
-    }
-    mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
-    mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
-    mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
-    mls_tls_buf_free(&int_buf);
-
-    /* Finish the PublicMessage: confirmation tag + membership tag using the
-     * pre-commit group context and membership key (RFC 9420 §6.2). */
-    uint8_t *wire_commit = NULL;
-    size_t wire_commit_len = 0;
-    if (finish_commit_public_message(&wire_msg, pre_membership_key,
-                                     pre_gc, pre_gc_len, confirmation_tag,
-                                     &wire_commit, &wire_commit_len) != 0) {
-        free(pre_gc);
-        mls_tls_buf_free(&buf);
-        mls_commit_clear(&commit);
-        sodium_memzero(root_path_secret, sizeof(root_path_secret));
-        sodium_memzero(commit_secret, sizeof(commit_secret));
+    memcpy(pre_membership_key, group->epoch_secrets.membership_key, MLS_HASH_LEN);
+    MlsProposal *proposals = calloc(leaf_count, sizeof(MlsProposal));
+    if (!proposals) return MARMOT_ERR_MEMORY;
+    if (mls_group_context_build(group, &pre_gc, &pre_gc_len) != 0) {
+        free(proposals);
         return MARMOT_ERR_INTERNAL;
     }
+
+    /* Blank each removed leaf and its direct path, as receivers do. */
+    for (size_t i = 0; i < leaf_count; i++) {
+        uint32_t node = mls_tree_leaf_to_node(leaves[i]);
+        mls_tree_blank_node(&group->tree.nodes[node]);
+        uint32_t path[64];
+        uint32_t path_len = 0;
+        if (mls_tree_direct_path(node, group->tree.n_leaves, path, 64, &path_len) != 0) {
+            free(proposals);
+            free(pre_gc);
+            return MARMOT_ERR_INTERNAL;
+        }
+        for (uint32_t j = 0; j < path_len; j++)
+            mls_tree_blank_node(&group->tree.nodes[path[j]]);
+        proposals[i].type = MLS_PROPOSAL_REMOVE;
+        proposals[i].remove.removed_leaf = leaves[i];
+    }
+
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    rc = path_commit_with_proposals(group, proposals, leaf_count, NULL, 0, NULL, NULL,
+                                    pre_gc, pre_gc_len, pre_epoch, pre_membership_key,
+                                    confirmation_tag, &commit, &commit_len);
     free(pre_gc);
-    mls_tls_buf_free(&buf);
-
-    result->commit_data = wire_commit;
-    result->commit_len = wire_commit_len;
-
-    mls_commit_clear(&commit);
-    sodium_memzero(root_path_secret, sizeof(root_path_secret));
-    sodium_memzero(commit_secret, sizeof(commit_secret));
-
+    if (rc != 0) return rc;
+    result->commit_data = commit;
+    result->commit_len = commit_len;
     return 0;
 }
 
@@ -1903,8 +1694,9 @@ path_commit_staged(MlsGroup *group,
     const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
     size_t own_cred_len = group->tree.nodes[own_node].leaf.credential_identity_len;
 
-    if (generate_update_path(group, own_cred, own_cred_len, NULL, 0,
-                             UINT32_MAX, NULL,
+    (void)own_cred;
+    (void)own_cred_len;
+    if (generate_update_path(group, NULL, 0, NULL, 0, NULL,
                              &update_path, root_path_secret) != 0) {
         free(pre_gc);
         return MARMOT_ERR_INTERNAL;
@@ -2030,16 +1822,53 @@ path_commit_staged(MlsGroup *group,
  * ══════════════════════════════════════════════════════════════════════════ */
 
 int
+mls_group_add_members(MlsGroup *group,
+                      const MlsKeyPackage *const *kps, size_t kp_count,
+                      MlsAddResult *result)
+{
+    if (!group || !kps || kp_count == 0 || !result)
+        return MARMOT_ERR_INVALID_ARG;
+    if (kp_count > MLS_MAX_ADDS_PER_COMMIT) return MARMOT_ERR_INVALID_ARG;
+    for (size_t i = 0; i < kp_count; i++)
+        if (!kps[i]) return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    int rc = add_members_staged(&staged, kps, kp_count, result);
+    if (rc == 0) group_install_staged(group, &staged);
+    else mls_group_free(&staged);
+    return rc;
+}
+
+int
 mls_group_add_member(MlsGroup *group,
                      const MlsKeyPackage *kp,
                      MlsAddResult *result)
 {
-    if (!group || !kp || !result)
-        return MARMOT_ERR_INVALID_ARG;
+    if (!kp) return MARMOT_ERR_INVALID_ARG;
+    const MlsKeyPackage *kps[1] = { kp };
+    return mls_group_add_members(group, kps, 1, result);
+}
+
+int
+mls_group_remove_members(MlsGroup *group,
+                         const uint32_t *leaves, size_t leaf_count,
+                         MlsCommitResult *result)
+{
+    if (!group || !leaves || leaf_count == 0 || !result) return MARMOT_ERR_INVALID_ARG;
+    /* Each target is a current member other than us, named once (RFC 9420
+     * §12.2: no two Removes of one leaf). */
+    for (size_t i = 0; i < leaf_count; i++) {
+        if (leaves[i] == group->own_leaf_index || leaves[i] >= group->tree.n_leaves ||
+            group->tree.nodes[mls_tree_leaf_to_node(leaves[i])].type != MLS_NODE_LEAF)
+            return MARMOT_ERR_INVALID_ARG;
+        for (size_t j = 0; j < i; j++)
+            if (leaves[j] == leaves[i]) return MARMOT_ERR_INVALID_ARG;
+    }
     memset(result, 0, sizeof(*result));
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = add_member_staged(&staged, kp, result);
+    int rc = remove_members_staged(&staged, leaves, leaf_count, result);
     if (rc == 0) group_install_staged(group, &staged);
     else mls_group_free(&staged);
     return rc;
@@ -2050,16 +1879,7 @@ mls_group_remove_member(MlsGroup *group,
                         uint32_t leaf_index,
                         MlsCommitResult *result)
 {
-    if (!group || !result) return MARMOT_ERR_INVALID_ARG;
-    if (leaf_index == group->own_leaf_index) return MARMOT_ERR_INVALID_ARG;
-    if (leaf_index >= group->tree.n_leaves) return MARMOT_ERR_INVALID_ARG;
-    memset(result, 0, sizeof(*result));
-    MlsGroup staged;
-    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = remove_member_staged(&staged, leaf_index, result);
-    if (rc == 0) group_install_staged(group, &staged);
-    else mls_group_free(&staged);
-    return rc;
+    return mls_group_remove_members(group, &leaf_index, 1, result);
 }
 
 int
