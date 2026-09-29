@@ -575,7 +575,10 @@ were never able to post: that needs the epoch's secrets.
   A caller that sends inner events authored by another key now gets
   `MARMOT_ERR_AUTHOR_MISMATCH`.
 - **State.** Unchanged (format 3).
-- **API/ABI.** No public API change.
+- **API/ABI.** No change to existing functions. Additive:
+  `marmot_get_group_members()` lists the account keys of the group's current
+  members (the stored epoch's leaf credentials), for Groundhog's member list
+  (nostrc-qp24.13).
   - Internal changes: `mls_sender_data_encrypt`/`_decrypt` take an
     `MlsSenderDataAAD`; new `mls_application_content_encode`/`_decode` and
     `marmot_mls_sender_identity`.

@@ -3904,6 +3904,58 @@ test_settling_write_failure_keeps_everything(void)
     trio_clear(&t);
 }
 
+/* marmot_get_group_members(): the leaf identities of our stored epoch, each
+ * once; a pending Remove changes nothing until it is merged or applied. */
+static bool
+has_member(const uint8_t (*members)[32], size_t n, const uint8_t pk[32])
+{
+    for (size_t i = 0; i < n; i++)
+        if (memcmp(members[i], pk, 32) == 0) return true;
+    return false;
+}
+
+static void
+test_group_members_follow_the_epoch(void)
+{
+    Trio t;
+    trio_init(&t);
+    for (size_t i = 0; i < 3; i++) {
+        uint8_t (*members)[32] = NULL;
+        size_t n = 0;
+        OK(marmot_get_group_members(t.all[i]->m, &t.gid, &members, &n));
+        CHECK(n == 3 && has_member((const uint8_t (*)[32])members, n, t.alice.pk) &&
+              has_member((const uint8_t (*)[32])members, n, t.bob.pk) &&
+              has_member((const uint8_t (*)[32])members, n, t.charlie.pk),
+              "%s sees %zu members", t.all[i]->name, n);
+        free(members);
+    }
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    uint8_t (*members)[32] = NULL;
+    size_t n = 0;
+    OK(marmot_get_group_members(t.alice.m, &t.gid, &members, &n));
+    CHECK(n == 3, "a pending Remove is not applied: %zu", n);
+    free(members);
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, rm, "Bob");
+    for (size_t i = 0; i < 2; i++) {
+        members = NULL;
+        OK(marmot_get_group_members(t.all[i]->m, &t.gid, &members, &n));
+        CHECK(n == 2 && !has_member((const uint8_t (*)[32])members, n, t.charlie.pk),
+              "%s still counts Charlie (%zu members)", t.all[i]->name, n);
+        free(members);
+    }
+    MarmotGroupId unknown = marmot_group_id_new((const uint8_t *)"no such group", 13);
+    members = (uint8_t (*)[32])1;
+    CHECK(marmot_get_group_members(t.alice.m, &unknown, &members, &n) ==
+          MARMOT_ERR_GROUP_NOT_FOUND && members == NULL && n == 0, "unknown group");
+    CHECK(marmot_get_group_members(t.alice.m, &t.gid, NULL, &n) == MARMOT_ERR_INVALID_ARG,
+          "out_members is required");
+    marmot_group_id_free(&unknown);
+    free(rm);
+    trio_clear(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -3952,6 +4004,7 @@ main(int argc, char **argv)
     RUN(test_settling_write_failure_keeps_everything);
     RUN(test_witness_must_be_the_listed_member);
     RUN(test_signer_only_key_packages_share_one_leaf_key);
+    RUN(test_group_members_follow_the_epoch);
     printf("All commit tests passed\n");
     return 0;
 }

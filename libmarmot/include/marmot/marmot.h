@@ -1063,6 +1063,28 @@ MarmotError marmot_get_group_relay_urls(Marmot *m,
                                          size_t *out_count);
 
 /**
+ * marmot_get_group_members:
+ * @m: Marmot instance
+ * @mls_group_id: group to query
+ * @out_members: (out) (array length=out_count) (transfer full): the account
+ *   keys (32-byte x-only Nostr pubkeys, the leaf credentials' identities) of
+ *   the group's current members in our stored MLS state, in leaf order, each
+ *   once; NULL when there are none. Free with free().
+ * @out_count: (out): number of members
+ *
+ * The membership of the epoch we are in: an Add or Remove is counted only
+ * once its Commit was merged or applied.  Read-only; nothing is written.
+ *
+ * Since: 0.9.0 (additive)
+ * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND when we hold no MLS state
+ *   for the group; MARMOT_ERR_MEMORY
+ */
+MarmotError marmot_get_group_members(Marmot *m,
+                                      const MarmotGroupId *mls_group_id,
+                                      uint8_t (**out_members)[32],
+                                      size_t *out_count);
+
+/**
  * marmot_get_messages:
  * @m: Marmot instance
  * @mls_group_id: group to query

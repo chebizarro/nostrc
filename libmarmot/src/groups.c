@@ -1552,3 +1552,51 @@ marmot_update_group_metadata(Marmot *m,
     }
     return end;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Public API: marmot_get_group_members
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_get_group_members(Marmot *m, const MarmotGroupId *mls_group_id,
+                         uint8_t (**out_members)[32], size_t *out_count)
+{
+    if (!m || !mls_group_id || !mls_group_id->data || !out_members || !out_count)
+        return MARMOT_ERR_INVALID_ARG;
+    *out_members = NULL;
+    *out_count = 0;
+
+    MlsGroup mls;
+    memset(&mls, 0, sizeof(mls));
+    if (load_mls_group(m, mls_group_id, &mls) != 0)
+        return MARMOT_ERR_GROUP_NOT_FOUND;
+
+    uint8_t (*members)[32] = mls.tree.n_leaves ? calloc(mls.tree.n_leaves, 32) : NULL;
+    if (mls.tree.n_leaves && !members) {
+        mls_group_free(&mls);
+        return MARMOT_ERR_MEMORY;
+    }
+    size_t n = 0;
+    for (uint32_t i = 0; i < mls.tree.n_leaves; i++) {
+        uint32_t node_idx = mls_tree_leaf_to_node(i);
+        if (node_idx >= mls.tree.n_nodes) continue;
+        const MlsNode *node = &mls.tree.nodes[node_idx];
+        /* A blank leaf is a removed member's slot. */
+        if (node->type != MLS_NODE_LEAF || node->leaf.credential_identity_len != 32 ||
+            !node->leaf.credential_identity)
+            continue;
+        bool seen = false;
+        for (size_t j = 0; j < n && !seen; j++)
+            seen = memcmp(members[j], node->leaf.credential_identity, 32) == 0;
+        if (!seen)
+            memcpy(members[n++], node->leaf.credential_identity, 32);
+    }
+    mls_group_free(&mls);
+    if (n == 0) {
+        free(members);
+        members = NULL;
+    }
+    *out_members = members;
+    *out_count = n;
+    return MARMOT_OK;
+}
