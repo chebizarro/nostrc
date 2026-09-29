@@ -448,6 +448,8 @@ A failed integrity check puts the store in `STORE_CORRUPT`, read-only with a "Re
 
 A self-copy failure never changes the status. It adds the secondary note "Not saved to your other devices". There is **no** `DELIVERED` or `READ` value (UX-5).
 
+*(Amended 2026-09-29, W19, nostrc-qp24.68: `WAITING_FOR_SIGNER` also covers a sealed message while Nostr Signer asks the user to approve signing in to an own inbox relay for its self-copy or a note to self (§4.4 R6), as long as no recipient has it yet. Once one has, the status says so, and that relay's details read "Waiting for your approval in Nostr Signer.". A relay's publish deadline does not run while the signer asks, so the time the user takes to decide never ends the self-copy as "requires sign-in".)*
+
 *(Amended 2026-09-29, W18: in a room of several people the copy speaks of everyone, not "the recipient": `CANNOT_SEND_NO_INBOX` reads "Can't send. No one in this conversation has set up private messaging yet." and the conversation banner says the same (nostrc-lff5; §7.15 state 11). Whether a room recipient had no 10050 when last looked up is kept with their stored wrap (`outbox_events.no_inbox`), so after a restart a message that needs attention still says "hasn't set up private messaging" for them, not "Not sent" (nostrc-9cho).)*
 
 ### 3.7 Disappearing messages and retention (NIP-40)
@@ -567,7 +569,7 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 - **R3.** The AUTH event binds `relay` to the exact normalized URL and `challenge` to the received value. `created_at` is now (not randomized; NIP-42 requires recency).
 - **R4.** Account AUTH requires the current generation. A stale challenge callback sends nothing. The Relay Status UI shows "Signed in as you" on those relays.
 - **R5.** One AUTH per challenge. A second `auth-required` for the same attempt is terminal.
-- **R6.** Account AUTH goes through the signer at most once per relay per session. A pending account AUTH appears as "Waiting for approval" on the affected action. Groundhog cannot tell whether the signer prompts for every signature, so `GhAccountAuth` keeps one signer request per relay open at a time. After an approval, a later challenge on that relay (a reconnect, an older-page REQ) is signed again. After a denial, the relay is not asked again for the rest of the account generation.
+- **R6.** Account AUTH goes through the signer at most once per relay per session. A pending account AUTH appears as "Waiting for approval" on the affected action. Groundhog cannot tell whether the signer prompts for every signature, so `GhAccountAuth` keeps one signer request per relay open at a time. After an approval, a later challenge on that relay (a reconnect, an older-page REQ) is signed again. After a denial, the relay is not asked again for the rest of the account generation. *(Amended 2026-09-29, W19: every account sign-in goes through `GhAuthPolicy`'s one `GhAccountAuth` per generation, own list publish (`GhInboxSetup`, nostrc-qp24.65) included; own list discovery asks it for an ephemeral key (nostrc-qp24.67); `tests/check_privacy.py` rule `account-auth-setter` keeps any other file from setting account AUTH.)*
 - **R7.** If a recipient relay refuses ephemeral AUTH (`restricted:`), the target is terminal with "This relay only accepts messages from signed-in users". Groundhog never escalates to account AUTH automatically. A per-relay manual override is a later owner decision.
 
 ### 4.5 Connection scheduling (anti-correlation)

@@ -21,10 +21,13 @@ G_DECLARE_FINAL_TYPE(GhAccountRelays, gh_account_relays, GH, ACCOUNT_RELAYS, GOb
 
 /* Binds one URL-scoped live REQ (kinds 10002 and 10050, authored by the
  * active account) to the account controller's generation. The REQ goes only
- * to the Groundhog discovery-relays setting. An account switch or loss
- * cancels the scope before any state for the next account is built, and a
- * callback from an older scope or generation is discarded. Only signed events
- * authored by the active account update the lists; newest wins (NIP-01).
+ * to the Groundhog discovery-relays setting. A source that demands NIP-42
+ * AUTH for it gets a throwaway key, never the account (GhAuthPolicy,
+ * OWN_LIST_DISCOVERY); a custom transport never authenticates. An account
+ * switch or loss cancels the scope before any state for the next account is
+ * built, and a callback from an older scope or generation is discarded. Only
+ * signed events authored by the active account update the lists; newest wins
+ * (NIP-01).
  * Emits "changed" on the main context. transport NULL uses gnostr relays. */
 GhAccountRelays *gh_account_relays_new(GhAccountController *accounts,
                                        GSettings *settings,

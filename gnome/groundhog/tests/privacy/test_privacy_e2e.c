@@ -22,10 +22,9 @@
  * accounts, hold everyone's lists. A, B and C serve kind 1059 only to its
  * authenticated recipient and take EVENTs only from authenticated
  * connections. E answers any REQ (after sending a NIP-42 challenge that
- * nothing needs to answer); G demands AUTH for every REQ, so the contact
- * directory's ephemeral AUTH runs for real there, while own-list discovery,
- * which authenticates with nothing yet (charter §4.3 allows "none, or
- * ephemeral"; nostrc-qp24.67), is refused by G and served by E. D is Bob's
+ * nothing needs to answer); G demands AUTH for every REQ, so the ephemeral
+ * AUTH of the contact directory and of own-list discovery (charter §4.3:
+ * "none, or ephemeral"; nostrc-qp24.67) runs for real there. D is Bob's
  * (and Carol's) kind-10002 relay, F a stranger's nprofile relay hint and M
  * the host of every URL in a message: bare TCP listeners that count
  * connection attempts and must count none. Carol (key 3) runs no Groundhog: she has a 10002 but
@@ -823,6 +822,58 @@ check_discovery_shape(const ReqShape *shape, gpointer data)
     check->lookups++;
 }
 
+/* Whether relay sent a frame starting with prefix on connection serial. */
+static gboolean
+relay_sent(WireRelay *relay, guint serial, const gchar *prefix)
+{
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (!frame->inbound && frame->connection == serial && g_str_has_prefix(frame->text, prefix))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+typedef struct {
+  const gchar *author;
+  gboolean own_lists; /* a REQ for author's own 10002 and 10050 */
+} OwnListCheck;
+
+static void
+check_own_lists(const ReqShape *shape, gpointer data)
+{
+  OwnListCheck *check = data;
+  check->own_lists |= shape->kinds->len == 2 && shape_has_kind(shape, 10002) &&
+                      shape_has_kind(shape, 10050) && g_strcmp0(shape->author, check->author) == 0;
+}
+
+/* nostrc-qp24.67 (OWN_LIST_DISCOVERY): the connections on which relay was
+ * asked for author's own lists. Each signed in exactly once, with a key that
+ * is no account's (never the account on a discovery relay), and was then
+ * served. */
+static guint
+own_list_sign_ins(WireRelay *relay, const gchar *author)
+{
+  guint connections = 0;
+  g_autoptr(GHashTable) conns = conns_since(relay, 0);
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, conns);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Conn *conn = value;
+    OwnListCheck check = { author, FALSE };
+    for (guint i = 0; i < conn->reqs_text->len; i++)
+      req_shapes(g_ptr_array_index(conn->reqs_text, i), check_own_lists, &check);
+    if (!check.own_lists)
+      continue;
+    g_assert_cmpuint(conn->auth_keys->len, ==, 1);
+    g_assert_false(is_account(g_ptr_array_index(conn->auth_keys, 0)));
+    g_assert_true(relay_sent(relay, conn->serial, "[\"EOSE\""));
+    connections++;
+  }
+  return connections;
+}
+
 /* Every REQ a discovery relay saw is own-list discovery or a directory
  * lookup; returns the connections that looked `author` up in the
  * directory. */
@@ -1226,8 +1277,8 @@ test_pt4_relay_minimization(void)
   g_assert_false(any_frames_mention(&net->c, hex[BOB]));
   /* Discovery: one directory lookup of Bob on each discovery relay. The
    * open one saw no AUTH at all (AUTH is lazy); the gated one only fresh
-   * ephemeral keys, one per connection, and the account's own-list REQ
-   * there was refused rather than signed in as the account. */
+   * ephemeral keys, one per connection: the lookups' and each account's
+   * own-list discovery (refused until signed in, then served). */
   g_assert_cmpuint(discovery_lookups(&net->e, hex[BOB]), ==, 1);
   g_assert_cmpuint(discovery_lookups(&net->g, hex[BOB]), ==, 1);
   g_assert_cmpuint(net->e.auth_frames, ==, 0);
@@ -1238,7 +1289,9 @@ test_pt4_relay_minimization(void)
     for (guint j = 0; j < i; j++)
       g_assert_cmpstr(key, !=, g_ptr_array_index(net->g.auth_pubkeys, j));
   }
-  g_assert_cmpuint(net->g.closed_reqs, >=, 2); /* both accounts' own lists */
+  g_assert_cmpuint(net->g.closed_reqs, >=, 2); /* both accounts' own lists, before AUTH */
+  g_assert_cmpuint(own_list_sign_ins(&net->g, hex[ALICE]), ==, 1);
+  g_assert_cmpuint(own_list_sign_ins(&net->g, hex[BOB]), ==, 1);
   g_assert_cmpuint(event_frames(&net->e), ==, 0);
   g_assert_cmpuint(event_frames(&net->g), ==, 0);
   g_assert_cmpuint(net->d.attempts, ==, 0);

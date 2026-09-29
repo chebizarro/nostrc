@@ -257,6 +257,10 @@ gh_message_status_derive(const GhMessageStatusInput *input)
     return GH_MESSAGE_STATUS_PARTIALLY_SENT;
   if (input->gave_up || (!pending && !transient))
     return GH_MESSAGE_STATUS_NOT_SENT;
+  /* Nobody has it yet, and the signer is asking the user about it (§4.4
+   * R6): say so rather than "Sending…". */
+  if (input->approval_pending)
+    return GH_MESSAGE_STATUS_WAITING_FOR_SIGNER;
   if (!input->online)
     return GH_MESSAGE_STATUS_QUEUED_OFFLINE;
   return pending ? GH_MESSAGE_STATUS_SENDING : GH_MESSAGE_STATUS_RETRYING;
@@ -267,6 +271,12 @@ gh_message_status_self_copy_missing(GhTargetClass self_copy, gboolean gave_up)
 {
   return self_copy == GH_TARGET_CLASS_TERMINAL ||
          (gave_up && self_copy != GH_TARGET_CLASS_ACCEPTED);
+}
+
+const gchar *
+gh_message_status_describe_approval(void)
+{
+  return tr(N_("Waiting for your approval in Nostr Signer."));
 }
 
 const gchar *

@@ -10,7 +10,7 @@
 #include <string.h>
 
 #ifdef GROUNDHOG_TEST_WIRE
-#include <libsoup/soup.h>
+#include "../relay/wire-relay.h"
 #endif
 
 #define SECRET_ONE "0000000000000000000000000000000000000000000000000000000000000001"
@@ -522,13 +522,13 @@ typedef struct {
   gchar *list_one;
   gchar *list_two;
   guint reqs;
-} WireRelay;
+} ListRelay;
 
 static void
-on_wire_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
+on_list_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
                 GBytes *message, gpointer data)
 {
-  WireRelay *relay = data;
+  ListRelay *relay = data;
   gsize length;
   const gchar *bytes = g_bytes_get_data(message, &length);
   if (type != SOUP_WEBSOCKET_DATA_TEXT)
@@ -553,15 +553,15 @@ on_wire_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
 }
 
 static void
-on_wire_socket(SoupServer *server, SoupServerMessage *message, const char *path,
+on_list_socket(SoupServer *server, SoupServerMessage *message, const char *path,
                SoupWebsocketConnection *connection, gpointer data)
 {
   (void)server;
   (void)message;
   (void)path;
-  WireRelay *relay = data;
+  ListRelay *relay = data;
   g_ptr_array_add(relay->connections, g_object_ref(connection));
-  g_signal_connect(connection, "message", G_CALLBACK(on_wire_message), relay);
+  g_signal_connect(connection, "message", G_CALLBACK(on_list_message), relay);
 }
 
 typedef struct {
@@ -581,11 +581,11 @@ has_read_list(gpointer data)
 static void
 test_wire_account_switch(void)
 {
-  WireRelay relay = { 0 };
+  ListRelay relay = { 0 };
   relay.server = soup_server_new(NULL, NULL);
   relay.connections = g_ptr_array_new_with_free_func(g_object_unref);
   soup_server_add_websocket_handler(relay.server, "/relay", NULL, NULL,
-                                    on_wire_socket, &relay, NULL);
+                                    on_list_socket, &relay, NULL);
   g_autoptr(GError) error = NULL;
   g_assert_true(soup_server_listen_local(relay.server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY,
                                          &error));
@@ -630,6 +630,55 @@ test_wire_account_switch(void)
   g_free(relay.list_one);
   g_free(relay.list_two);
 }
+
+typedef struct {
+  GhAccountRelays *relays;
+  const gchar *inbox;
+} InboxWait;
+
+static gboolean
+has_inbox_list(gpointer data)
+{
+  InboxWait *wait = data;
+  const gchar *const *inbox = gh_account_relays_get_inbox_relays(wait->relays);
+  return gh_account_relays_get_state(wait->relays) == GH_ACCOUNT_RELAYS_COMPLETE &&
+         inbox && g_strcmp0(inbox[0], wait->inbox) == 0;
+}
+
+/* nostrc-qp24.67, charter §4.3: own list discovery on a discovery relay that
+ * demands NIP-42 AUTH for every REQ (wire-relay.h, store-and-serve). The
+ * first REQ is refused "auth-required:"; GhAccountRelays signs in with a
+ * throwaway key (GhAuthPolicy, OWN_LIST_DISCOVERY), never as the account,
+ * and the REQ issued again is served, so the account's lists are found. */
+static void
+test_wire_auth_gated_source(void)
+{
+  WireRelay gated = { 0 };
+  gated.serve = gated.require_auth = gated.record = TRUE;
+  relay_init(&gated);
+  g_autofree gchar *inbox = signed_list(SECRET_ONE, 10050, 100, "relay",
+                                        "wss://one-inbox.test.invalid", NULL, NULL);
+  wire_relay_inject(&gated, inbox);
+
+  const gchar *sources[] = { gated.url, NULL };
+  g_autoptr(GSettings) settings = fresh_settings(npub_one, sources);
+  GhAccountController *controller = listed_controller(settings);
+  GhAccountRelays *relays = gh_account_relays_new(controller, settings, NULL, NULL);
+  InboxWait wait = { relays, "wss://one-inbox.test.invalid" };
+  spin_until(has_inbox_list, &wait);
+  /* Refused once, one AUTH with a key that is no account's, then served. */
+  g_assert_cmpuint(gated.closed_reqs, ==, 1);
+  g_assert_cmpuint(gated.auth_pubkeys->len, ==, 1);
+  const gchar *key = g_ptr_array_index(gated.auth_pubkeys, 0);
+  g_assert_cmpstr(key, !=, hex_one);
+  g_assert_cmpstr(key, !=, hex_two);
+  g_assert_cmpuint(gated.auth_ok, ==, 1);
+  g_assert_cmpuint(gated.served, ==, 1);
+
+  release(relays);
+  release(controller);
+  relay_clear(&gated);
+}
 #endif
 
 int
@@ -648,6 +697,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-relays/dispose-closes", test_dispose_closes);
 #ifdef GROUNDHOG_TEST_WIRE
   g_test_add_func("/groundhog/account-relays/wire-account-switch", test_wire_account_switch);
+  g_test_add_func("/groundhog/account-relays/wire-auth-gated-source",
+                  test_wire_auth_gated_source);
 #endif
   int status = g_test_run();
   g_free(npub_one);

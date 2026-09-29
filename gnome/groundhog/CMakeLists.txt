@@ -233,11 +233,26 @@ if (TARGET nostr_gobject AND TARGET nostr)
   endif()
 endif()
 
+# G08: GhAuthPolicy, the single NIP-42 identity decision per (connection
+# purpose, URL) (charter §4.3, §4.4), with GhAccountAuth, the one account
+# signer per generation it hands out (R6). The inbox, the send pipeline, the
+# outbox, the lookups and own-list discovery and publish all link it (see the
+# G08 block at the end).
+if (TARGET groundhog-account AND TARGET groundhog-relay)
+  add_library(groundhog-auth-policy STATIC src/app/gh-auth-policy.c src/app/gh-account-auth.c)
+  target_include_directories(groundhog-auth-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-auth-policy PUBLIC groundhog-account groundhog-relay)
+  target_compile_options(groundhog-auth-policy PRIVATE -Wall -Wextra -Werror)
+endif()
+
 # Account-bound relay-list discovery: one URL-scoped live REQ per active
-# account generation, cancelled on switch. Needs the account and relay layers.
+# account generation, cancelled on switch; a discovery relay that demands
+# AUTH gets GhAuthPolicy's ephemeral identity. Needs the account and relay
+# layers.
 if (TARGET groundhog-account AND TARGET groundhog-relay)
   add_library(groundhog-account-relays STATIC src/app/gh-account-relays.c)
-  target_link_libraries(groundhog-account-relays PUBLIC groundhog-account groundhog-relay)
+  target_link_libraries(groundhog-account-relays PUBLIC groundhog-account groundhog-relay
+                        groundhog-auth-policy)
   target_compile_options(groundhog-account-relays PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-account-relays)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_RELAYS=1)
@@ -273,17 +288,6 @@ endif()
 # those relays only, through GhAccountAuth), seen-set pre-filter, bounded
 # signer unwraps, store admission. It carries the unwrap (gh-nip17-inbox.c);
 # the executable links it through groundhog-conversation-ui (G11 block below).
-# G08: GhAuthPolicy, the single NIP-42 identity decision per (connection
-# purpose, URL) (charter §4.3, §4.4), with GhAccountAuth, the one account
-# signer per generation it hands out (R6). The inbox, the send pipeline, the
-# outbox and the lookups all link it (see the G08 block at the end).
-if (TARGET groundhog-account AND TARGET groundhog-relay)
-  add_library(groundhog-auth-policy STATIC src/app/gh-auth-policy.c src/app/gh-account-auth.c)
-  target_include_directories(groundhog-auth-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
-  target_link_libraries(groundhog-auth-policy PUBLIC groundhog-account groundhog-relay)
-  target_compile_options(groundhog-auth-policy PRIVATE -Wall -Wextra -Werror)
-endif()
-
 if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
   add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c)
   target_link_libraries(groundhog-dm-inbox PUBLIC groundhog-auth-policy groundhog-account-relays

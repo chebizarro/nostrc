@@ -913,6 +913,55 @@ test_auth_no_challenge_until_deadline(void)
   auth_fixture_clear(&fixture);
 }
 
+/* nostrc-qp24.68: the deadline bounds the relay, not the signer (charter
+ * §4.4 R6). While an account AUTH waits for the user it does not run, not
+ * even past the moment a relay opened after it is given up; once the AUTH is
+ * sent it runs again, in full, and a relay that then never answers the AUTH
+ * ends AUTH_REQUIRED. */
+static void
+test_auth_deadline_waits_for_signer(void)
+{
+  g_autofree gchar *json = signed_json("auth deadline waits");
+  AuthFixture fixture;
+  GhRelayPublish *publish = auth_publish_prepare(&fixture, json, FAKE_SIGN_HOLD);
+  gh_relay_publish_set_deadline(publish, 1);
+  /* AUTH_URL opens first, so its deadline would fire no later than the
+   * silent OTHER_URL's (GLib dispatches ready timeouts in attach order). */
+  g_assert_true(gh_relay_publish_add_url(publish, AUTH_URL, NULL));
+  g_assert_true(gh_relay_publish_add_url(publish, OTHER_URL, NULL));
+  g_assert_true(gh_relay_publish_set_url_auth(publish, AUTH_URL, GH_RELAY_AUTH_ACCOUNT, NULL));
+  g_assert_true(gh_relay_publish_start(publish, NULL));
+  g_assert_false(gh_relay_publish_is_signing_in(publish, AUTH_URL));
+  gh_relay_publish_auth_challenge(publish, AUTH_URL, "challenge");
+  ok_auth_required(publish);
+  iterate_until(&fixture.signer.calls, 1); /* the signer is asking the user */
+  g_assert_true(gh_relay_publish_is_signing_in(publish, AUTH_URL));
+  g_assert_false(gh_relay_publish_is_signing_in(publish, OTHER_URL));
+
+  /* The barrier: OTHER_URL reaches its failure bound. */
+  iterate_until(&fixture.base.results->len, 1);
+  g_assert_cmpstr(result_at(&fixture.base, 0)->url, ==, OTHER_URL);
+  g_assert_cmpint(result_at(&fixture.base, 0)->outcome, ==, GH_RELAY_PUBLISH_CONNECTION_FAILED);
+  drain_pending();
+  g_assert_cmpuint(fixture.base.results->len, ==, 1);
+  g_assert_cmpint(gh_relay_publish_get_outcome(publish, AUTH_URL), ==, GH_RELAY_PUBLISH_PENDING);
+  g_assert_true(gh_relay_publish_is_signing_in(publish, AUTH_URL));
+
+  /* The user approves; the AUTH goes out, and the relay's deadline runs. */
+  g_assert_false(fake_signer_release(&fixture.signer));
+  iterate_until(&fixture.sent_auth->len, 1);
+  g_assert_false(gh_relay_publish_is_signing_in(publish, AUTH_URL));
+  iterate_until(&fixture.base.results->len, 2);
+  ResultCopy *result = result_at(&fixture.base, 1);
+  g_assert_cmpstr(result->url, ==, AUTH_URL);
+  g_assert_cmpint(result->outcome, ==, GH_RELAY_PUBLISH_AUTH_REQUIRED);
+  g_assert_nonnull(strstr(result->message, "no AUTH completed within 1 s"));
+  g_assert_cmpuint(fixture.base.done, ==, 1);
+  g_assert_cmpuint(fixture.signer.calls, ==, 1);
+  gh_relay_publish_unref(publish);
+  auth_fixture_clear(&fixture);
+}
+
 /* Only a live signer of the publish's own generation is accepted, and
  * ACCOUNT cannot be chosen without it. */
 static void
@@ -964,6 +1013,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/relay-publish/auth/ephemeral-two-relays", test_auth_ephemeral_two_relays);
   g_test_add_func("/groundhog/relay-publish/auth/cancel-while-signing", test_auth_cancel_while_signing);
   g_test_add_func("/groundhog/relay-publish/auth/no-challenge-until-deadline", test_auth_no_challenge_until_deadline);
+  g_test_add_func("/groundhog/relay-publish/auth/deadline-waits-for-signer",
+                  test_auth_deadline_waits_for_signer);
   g_test_add_func("/groundhog/relay-publish/auth/generation-bound", test_auth_generation_bound);
   g_test_add_func("/groundhog/relay-publish/requires-signed-event", test_requires_signed_event);
   g_test_add_func("/groundhog/relay-publish/url-set", test_url_set_is_explicit_and_bounded);

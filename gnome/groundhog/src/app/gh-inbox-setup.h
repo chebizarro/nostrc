@@ -1,7 +1,6 @@
 #ifndef GH_INBOX_SETUP_H
 #define GH_INBOX_SETUP_H
 
-#include "gh-account-auth.h"
 #include "gh-account-relays.h"
 #include "gh-relay-publish.h"
 #include "gh-relay-scope.h"
@@ -159,7 +158,6 @@ typedef struct {
   GhAccountController *accounts;   /* required; must have an active account to start */
   GhAccountRelays *account_relays; /* nullable: supplies the account's 10002 write relays */
   GSettings *settings;             /* nullable: discovery-relays */
-  GhAccountAuth *auth;             /* nullable: shares R6 prompts; else one of its own */
   /* NULL transports use gnostr relays; custom ones are for tests. */
   const GhRelayTransport *probe_transport;
   const GhRelayAuthTransport *probe_auth_transport;
@@ -181,8 +179,10 @@ typedef struct {
  *     the chosen message relays, the account's own 10002 write relays and
  *     the discovery-relays sources: the "own list publish" purpose of
  *     charter §4.3, the only one here allowed NIP-42 AUTH as the account
- *     (§4.4 R1). Each target reports its own outcome; a relay OK is
- *     relay-local acceptance only. Read-only 10002 relays are never used.
+ *     (§4.4 R1). GhAuthPolicy (GH_AUTH_PURPOSE_OWN_LIST_PUBLISH) sets that
+ *     identity, with the generation's one account signer that the inbox and
+ *     the outbox share (R6). Each target reports its own outcome; a relay OK
+ *     is relay-local acceptance only. Read-only 10002 relays are never used.
  *  3. At the same time the message relays are checked with a GhInboxProbe
  *     (separate connections, never authenticated).
  *

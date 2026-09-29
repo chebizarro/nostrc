@@ -375,7 +375,7 @@ struct _GhOnboardingView {
   GtkWidget *done_button;
   GtkLabel *check_note;
 
-  GhInboxSetupConfig config; /* accounts, account_relays, settings, auth are owned refs */
+  GhInboxSetupConfig config; /* accounts, account_relays, settings are owned refs */
   GListStore *identities;    /* GhOnboardingItem, key npub */
   GListStore *relays;        /* GhOnboardingItem, key URL */
   GListStore *results;       /* GhOnboardingItem, key URL */
@@ -1393,8 +1393,6 @@ gh_onboarding_view_new(const GhInboxSetupConfig *config)
   g_object_ref(self->config.settings);
   if (self->config.account_relays)
     g_object_ref(self->config.account_relays);
-  if (self->config.auth)
-    g_object_ref(self->config.auth);
   g_signal_connect_object(self->config.settings, "changed::network-mode",
                           G_CALLBACK(sync_check_note), self, G_CONNECT_SWAPPED);
   sync_check_note(self);
@@ -1460,7 +1458,6 @@ gh_onboarding_view_dispose(GObject *object)
   g_clear_object(&self->identities);
   g_clear_object(&self->relays);
   g_clear_object(&self->results);
-  g_clear_object(&self->config.auth);
   g_clear_object(&self->config.account_relays);
   g_clear_object(&self->config.settings);
   g_clear_object(&self->config.accounts);

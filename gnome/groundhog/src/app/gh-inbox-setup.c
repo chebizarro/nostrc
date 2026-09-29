@@ -1,4 +1,5 @@
 #include "gh-inbox-setup.h"
+#include "gh-auth-policy.h"
 #include "gh-identity.h"
 
 #include <glib/gi18n.h>
@@ -591,8 +592,7 @@ target_add(GPtrArray *targets, const gchar *url, GhInboxSetupRole role)
 
 struct _GhInboxSetup {
   GObject parent_instance;
-  GhInboxSetupConfig config; /* accounts, account_relays, settings, auth are owned refs */
-  GhAccountAuth *own_auth;
+  GhInboxSetupConfig config; /* accounts, account_relays, settings are owned refs */
   GhInboxSetupState state;
   GError *error;
   guint64 generation;
@@ -799,20 +799,6 @@ on_probe_result(GhInboxProbe *probe, const gchar *url, GhInboxProbeResult result
   maybe_finish(self);
 }
 
-/* The account's generation-bound AUTH signer: the shared one when it is
- * still current, else one of this setup's own (charter §4.4 R6). */
-static GhRelayAuthSigner *
-account_auth_signer(GhInboxSetup *self)
-{
-  if (self->config.auth && gh_account_auth_get_generation(self->config.auth) == self->generation)
-    return gh_account_auth_get_signer(self->config.auth);
-  if (!self->own_auth)
-    self->own_auth = gh_account_auth_new(self->config.accounts);
-  if (!self->own_auth || gh_account_auth_get_generation(self->own_auth) != self->generation)
-    return NULL;
-  return gh_account_auth_get_signer(self->own_auth);
-}
-
 static gboolean
 start_publish(GhInboxSetup *self, const gchar *signed_json, GError **error)
 {
@@ -829,20 +815,25 @@ start_publish(GhInboxSetup *self, const gchar *signed_json, GError **error)
   self->event_id = g_strdup(gh_relay_publish_get_event_id(self->publish));
   if (config->publish_transport && config->publish_auth_transport)
     gh_relay_publish_set_auth_transport(self->publish, config->publish_auth_transport);
-  GhRelayAuthSigner *signer = account_auth_signer(self);
-  if (!signer) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED, _("The account changed."));
-    return FALSE;
-  }
-  if (!gh_relay_publish_set_account_signer(self->publish, signer, error))
-    return FALSE;
   /* Own list publish (charter §4.3): the one purpose here that may sign in
-   * as the account, and only on these publication connections. */
+   * as the account, and only on these publication connections. GhAuthPolicy
+   * signs through its one GhAccountAuth of this generation, so the inbox,
+   * the self-copy and this setup ask the signer at most once per relay at a
+   * time, and a relay the user declined is not asked again (§4.4 R6). */
+  GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(config->accounts);
   for (guint i = 0; i < self->targets->len; i++) {
     Target *target = g_ptr_array_index(self->targets, i);
-    if (!gh_relay_publish_add_url(self->publish, target->url, error) ||
-        !gh_relay_publish_set_url_auth(self->publish, target->url, GH_RELAY_AUTH_ACCOUNT, error))
+    if (!gh_relay_publish_add_url(self->publish, target->url, error))
       return FALSE;
+    g_autoptr(GError) auth_error = NULL;
+    if (!gh_auth_policy_apply_publish(policy, self->publish, GH_AUTH_PURPOSE_OWN_LIST_PUBLISH,
+                                      target->url, &auth_error)) {
+      /* Only a stale generation is refused (the signed list is current). */
+      g_debug("Groundhog will not sign in to publish its message relays: %s",
+              auth_error->message);
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED, _("The account changed."));
+      return FALSE;
+    }
   }
   /* The message relays are checked on separate, never-authenticated
    * connections (§4.3 isolation). */
@@ -1012,7 +1003,6 @@ gh_inbox_setup_new(const GhInboxSetupConfig *config)
   g_return_val_if_fail(!config->account_relays || GH_IS_ACCOUNT_RELAYS(config->account_relays),
                        NULL);
   g_return_val_if_fail(!config->settings || G_IS_SETTINGS(config->settings), NULL);
-  g_return_val_if_fail(!config->auth || GH_IS_ACCOUNT_AUTH(config->auth), NULL);
   GhInboxSetup *self = g_object_new(GH_TYPE_INBOX_SETUP, NULL);
   self->config = *config;
   g_object_ref(self->config.accounts);
@@ -1020,8 +1010,6 @@ gh_inbox_setup_new(const GhInboxSetupConfig *config)
     g_object_ref(self->config.account_relays);
   if (self->config.settings)
     g_object_ref(self->config.settings);
-  if (self->config.auth)
-    g_object_ref(self->config.auth);
   g_signal_connect_object(self->config.accounts, "changed", G_CALLBACK(on_accounts_changed), self,
                           G_CONNECT_SWAPPED);
   return self;
@@ -1039,11 +1027,6 @@ gh_inbox_setup_dispose(GObject *object)
   stop_network(self);
   g_clear_pointer(&self->publish, gh_relay_publish_unref);
   g_clear_pointer(&self->probe, gh_inbox_probe_unref);
-  if (self->own_auth) {
-    gh_account_auth_revoke(self->own_auth);
-    g_clear_object(&self->own_auth);
-  }
-  g_clear_object(&self->config.auth);
   g_clear_object(&self->config.settings);
   g_clear_object(&self->config.account_relays);
   g_clear_object(&self->config.accounts);

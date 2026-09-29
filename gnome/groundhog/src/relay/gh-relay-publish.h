@@ -49,6 +49,9 @@ G_BEGIN_DECLS
  * verification, the relay answers the AUTH with OK false, the re-sent EVENT
  * is refused as auth-required again, or no challenge arrives before the
  * deadline. A refused EPHEMERAL AUTH is never retried as the account.
+ * While the AUTH is being signed (an account AUTH may wait for the user in
+ * Nostr Signer, charter §4.4 R6) the URL's deadline does not run; it starts
+ * again, in full, once the AUTH is sent.
  * Cancellation and signer revocation drop a pending AUTH; nothing is ever
  * signed as the account for a stale generation.
  *
@@ -161,8 +164,11 @@ void gh_relay_publish_unref(GhRelayPublish *publish);
 gboolean gh_relay_publish_add_url(GhRelayPublish *publish, const gchar *url,
                                   GError **error);
 /* Per-relay failure deadline in seconds (default 30, clamped to 1..300),
- * measured from that relay's open. It only ever produces CONNECTION_FAILED:
- * it is a bound on waiting, never a success signal. Set before start. */
+ * measured from that relay's open and paused while its AUTH is being signed
+ * (see NIP-42 above). It only ever produces CONNECTION_FAILED, or
+ * AUTH_REQUIRED for an EVENT still waiting to be authenticated: it bounds
+ * waiting for the relay, never the signer, and is never a success signal.
+ * Set before start. */
 void gh_relay_publish_set_deadline(GhRelayPublish *publish, guint seconds);
 /* The account signer used by ACCOUNT URLs only. Before start. Refuses
  * (G_IO_ERROR_PERMISSION_DENIED) a signer bound to another account
@@ -208,6 +214,9 @@ const gchar *gh_relay_publish_get_event_id(const GhRelayPublish *publish);
 GhRelayPublishOutcome gh_relay_publish_get_outcome(const GhRelayPublish *publish,
                                                    const gchar *url);
 gboolean gh_relay_publish_is_complete(const GhRelayPublish *publish);
+/* TRUE while url's EVENT, refused as auth-required, waits for its AUTH to be
+ * signed: for an ACCOUNT URL, while the account's signer is asked. */
+gboolean gh_relay_publish_is_signing_in(const GhRelayPublish *publish, const gchar *url);
 
 GhRelayOkPrefix gh_relay_ok_prefix_classify(const gchar *message);
 

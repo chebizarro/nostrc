@@ -579,6 +579,7 @@ typedef struct {
   GhStore *store;
   FakeMonitor *network;
   Transport transport;
+  guint publish_deadline;  /* fixture_outbox()'s; 0: the default */
   GhOutbox *outbox;
 } Fixture;
 
@@ -686,6 +687,7 @@ fixture_outbox(Fixture *f)
     .transport = &pub_transport,
     .auth_transport = &pub_auth_transport,
     .transport_data = &f->transport,
+    .publish_deadline = f->publish_deadline,
   };
   g_autoptr(GError) error = NULL;
   f->outbox = gh_outbox_new(&config, &error);
@@ -834,6 +836,50 @@ held_reached(gpointer data)
 {
   HeldWait *want = data;
   return want->mock->held->len >= want->count;
+}
+
+/* With the signer holding every call: approves the next n as they arrive
+ * (the seal's encryptions and signatures), leaving later ones held. */
+static void
+approve_calls(Fixture *f, guint n)
+{
+  for (guint i = 0; i < n; i++) {
+    HeldWait one = { &f->mock, 1 };
+    gh_test_spin_until(held_reached, &one);
+    gh_test_signer_release_one(&f->mock);
+  }
+}
+
+static gboolean
+flag_set(gpointer data)
+{
+  return *(gboolean *) data;
+}
+
+/* A barrier for "the publish deadline would have fired by now": a timer of
+ * the deadline's length started after the publish opened. GLib's seconds
+ * timeouts round to the same whole seconds and ready ones run in the order
+ * they were attached, so an armed deadline runs first. */
+static void
+wait_past_deadline(guint seconds)
+{
+  gboolean passed = FALSE;
+  g_timeout_add_seconds(seconds, gh_test_deadline_hit, &passed);
+  gh_test_spin_until(flag_set, &passed);
+}
+
+/* The item's per-relay detail for url's copy of the wrap for pubkey (a
+ * static string of gh-message-status.c). */
+static const gchar *
+target_description(GhOutboxItem *item, const gchar *pubkey, const gchar *url)
+{
+  g_autoptr(GPtrArray) targets = gh_outbox_item_dup_targets(item);
+  for (guint i = 0; i < targets->len; i++) {
+    GhOutboxTarget *target = g_ptr_array_index(targets, i);
+    if (g_str_equal(target->pubkey, pubkey) && g_str_equal(target->url, url))
+      return target->description;
+  }
+  g_error("%s is not a target of the wrap for %s", url, pubkey);
 }
 
 static GhStoreOutboxEntry *
@@ -1145,6 +1191,18 @@ test_status_truth_table(void)
                                 expect == GH_MESSAGE_STATUS_PARTIALLY_SENT
                                   ? expect : GH_MESSAGE_STATUS_NOT_SENT;
       g_assert_cmpint(gh_message_status_derive(&input), ==, gave_up);
+      /* nostrc-qp24.68: an approval the signer is asking the user for (the
+       * self-copy's or a note to self's sign-in) is "Waiting for approval"
+       * while nobody has the message and it is still going out, online or
+       * not; it never hides that someone has it, or that it is not sent. */
+      input.gave_up = FALSE;
+      input.approval_pending = TRUE;
+      GhMessageStatus waiting = expect == GH_MESSAGE_STATUS_SENDING ||
+                                expect == GH_MESSAGE_STATUS_RETRYING
+                                  ? GH_MESSAGE_STATUS_WAITING_FOR_SIGNER : expect;
+      g_assert_cmpint(gh_message_status_derive(&input), ==, waiting);
+      input.online = FALSE;
+      g_assert_cmpint(gh_message_status_derive(&input), ==, waiting);
     }
   }
   /* The self-copy note, over every self class. */
@@ -1270,6 +1328,8 @@ test_status_copy(void)
   g_assert_cmpstr(gh_message_status_get_label(GH_MESSAGE_STATUS_WAITING_FOR_SIGNER), ==,
                   "Waiting for approval");
   g_assert_cmpstr(gh_message_status_get_self_copy_note(), ==, "Not saved to your other devices");
+  g_assert_cmpstr(gh_message_status_describe_approval(), ==,
+                  "Waiting for your approval in Nostr Signer.");
 }
 
 /* ---- the outbox over the store ------------------------------------------- */
@@ -2008,6 +2068,99 @@ test_self_copy_former_inbox(void)
   fixture_down(&f);
 }
 
+/* nostrc-qp24.68, charter §4.4 R6: while Nostr Signer asks the user to
+ * approve signing in to the own inbox for the self-copy, the item says
+ * "Waiting for approval" as long as nobody has the message, and the
+ * self-copy's relay reads "Waiting for your approval in Nostr Signer." in
+ * the details. Bob's relay accepting it meanwhile is reported as "Sent" at
+ * once: the approval never hides that the message went out. */
+static void
+test_self_copy_waiting_for_approval(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  script(&f.transport, ALICE_INBOX, ANSWER_AUTH_ACCEPT, TRUE, NULL);
+  fixture_outbox(&f);
+  GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(f.accounts);
+  f.mock.hold = TRUE;
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "members-only inbox, slowly");
+  approve_calls(&f, 4); /* two encryptions, two seals */
+  HeldWait auth = { &f.mock, 1 };
+  gh_test_spin_until(held_reached, &auth); /* the self-copy's sign-in */
+  g_assert_cmpuint(f.mock.calls, ==, 5);
+  g_assert_cmpint(gh_auth_policy_get_account_state(policy, ALICE_INBOX), ==,
+                  GH_AUTH_ACCOUNT_STATE_WAITING);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_PUBLISHING);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_WAITING_FOR_SIGNER);
+  g_assert_cmpstr(gh_outbox_item_get_label(item), ==, "Waiting for approval");
+  g_assert_cmpstr(gh_outbox_item_get_detail(item), ==,
+                  "Approve signing in to your message relay in Nostr Signer.");
+  g_assert_cmpstr(target_description(item, hex_alice, ALICE_INBOX), ==,
+                  gh_message_status_describe_approval());
+  g_assert_cmpstr(target_description(item, hex_bob, BOB_A), ==, "Not answered yet.");
+
+  /* Bob's relay accepts: sent, while the self-copy still waits. */
+  relay_ok(&f.transport, hex_bob, BOB_A, TRUE, "");
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpstr(target_description(item, hex_alice, ALICE_INBOX), ==,
+                  gh_message_status_describe_approval());
+  g_assert_false(gh_outbox_item_get_self_copy_missing(item));
+  relay_ok(&f.transport, hex_bob, BOB_B, TRUE, "");
+
+  /* The user approves: the self-copy is signed in as Alice and stored. */
+  f.mock.hold = FALSE;
+  gh_test_signer_release_all(&f.mock);
+  gh_test_spin_until(state_settled, item);
+  PubOpen *self_open = last_open(&f.transport, hex_alice, ALICE_INBOX);
+  g_assert_cmpuint(self_open->auth->len, ==, 1);
+  g_autofree gchar *signer = auth_pubkey(self_open, 0);
+  g_assert_cmpstr(signer, ==, hex_alice);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+  g_assert_false(gh_outbox_item_get_self_copy_missing(item));
+  g_assert_cmpstr(target_description(item, hex_alice, ALICE_INBOX), ==, "Accepted by this relay.");
+  g_assert_cmpint(gh_auth_policy_get_account_state(policy, ALICE_INBOX), ==,
+                  GH_AUTH_ACCOUNT_STATE_APPROVED);
+  fixture_down(&f);
+}
+
+/* nostrc-qp24.68: the relay's publish deadline bounds the relay, never the
+ * user. A note to self to an own inbox that demands sign-in waits for the
+ * approval past the deadline (1 s here, 30 s by default), as "Waiting for
+ * approval", and is stored once the user approves. Before, the deadline
+ * ended it as "requires sign-in" (Not sent) while the user was deciding. */
+static void
+test_approval_outlives_publish_deadline(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  script(&f.transport, ALICE_INBOX, ANSWER_AUTH_ACCEPT, TRUE, NULL);
+  f.publish_deadline = 1;
+  fixture_outbox(&f);
+  f.mock.hold = TRUE;
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_alice, "remember the milk");
+  approve_calls(&f, 2); /* the note's encryption and seal */
+  HeldWait auth = { &f.mock, 1 };
+  gh_test_spin_until(held_reached, &auth);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_WAITING_FOR_SIGNER);
+  wait_past_deadline(1);
+  PubOpen *open = last_open(&f.transport, hex_alice, ALICE_INBOX);
+  g_assert_false(open->closed);
+  g_assert_cmpuint(open->auth->len, ==, 0);
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_PUBLISHING);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_WAITING_FOR_SIGNER);
+
+  f.mock.hold = FALSE;
+  gh_test_signer_release_all(&f.mock);
+  gh_test_spin_until(state_settled, item);
+  g_assert_cmpuint(open->auth->len, ==, 1);
+  g_assert_cmpuint(open->resends, ==, 1);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpuint(f.mock.calls, ==, 3);
+  fixture_down(&f);
+}
+
 /* Charter §4.5 S2 / NT-11 (outbox half): a background directory refresh that
  * finds a new relay for the recipient (resolver "changed") makes the outbox
  * publish the same stored wrap there, after the message settled and while it
@@ -2520,6 +2673,64 @@ test_ob4_wire(void)
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
     relay_clear(relays[i]);
 }
+
+/* nostrc-qp24.68 on H2: the real transports, an own inbox relay that takes
+ * EVENTs only from signed-in connections, a 3 s publish deadline and a user
+ * who takes longer than that to approve the self-copy's sign-in. The
+ * self-copy's relay waits for the approval ("Waiting for your approval in
+ * Nostr Signer."), then the self-copy is signed in as Alice and stored. */
+static void
+test_wire_approval_outlives_deadline(void)
+{
+  WireRelay bob = { 0 }, own = { 0 };
+  relay_init(&bob);
+  relay_init(&own);
+  bob.on_event = wire_scripted_ok;
+  bob.on_event_data = (gpointer) "";
+  own.require_auth = TRUE;
+  own.on_event = wire_scripted_ok;
+  own.on_event_data = (gpointer) "";
+
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  fake_resolver_set(f.resolver, hex_bob, GH_INBOX_FOUND, bob.url, NULL);
+  settle_own(&f, own.url, NULL);
+  GhOutboxConfig config = {
+    .store = f.store, .accounts = f.accounts, .account_relays = f.relays,
+    .inboxes = GH_INBOX_RESOLVER(f.resolver), .sender = f.sender,
+    .network = G_NETWORK_MONITOR(f.network), .publish_deadline = 3,
+  };
+  g_autoptr(GError) error = NULL;
+  f.outbox = gh_outbox_new(&config, &error); /* the real gnostr transport */
+  g_assert_no_error(error);
+  f.mock.hold = TRUE;
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "held at the door");
+  approve_calls(&f, 4); /* two encryptions, two seals */
+  HeldWait auth = { &f.mock, 1 };
+  gh_test_spin_until(held_reached, &auth); /* the self-copy's sign-in */
+  g_assert_cmpstr(target_description(item, hex_alice, own.url), ==,
+                  gh_message_status_describe_approval());
+  wait_past_deadline(3);
+  g_assert_cmpstr(target_description(item, hex_alice, own.url), ==,
+                  gh_message_status_describe_approval());
+  g_assert_cmpuint(own.auth_frames, ==, 0);
+  g_assert_cmpuint(own.events, ==, 0);
+
+  f.mock.hold = FALSE;
+  gh_test_signer_release_all(&f.mock);
+  gh_test_spin_until(state_settled, item);
+  g_assert_cmpuint(own.events, ==, 1);
+  g_assert_cmpuint(own.auth_pubkeys->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(own.auth_pubkeys, 0), ==, hex_alice);
+  g_assert_cmpuint(bob.events, ==, 1);
+  g_assert_cmpuint(bob.auth_frames, ==, 0);
+  g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_SENT);
+  g_assert_false(gh_outbox_item_get_self_copy_missing(item));
+  g_assert_cmpuint(f.mock.calls, ==, 5);
+  fixture_down(&f);
+  relay_clear(&bob);
+  relay_clear(&own);
+}
 #endif
 
 int
@@ -2549,6 +2760,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/self-copy-jitter", test_ob9_self_copy_jitter);
   g_test_add_func("/groundhog/outbox/self-copy-account-auth", test_self_copy_account_auth);
   g_test_add_func("/groundhog/outbox/self-copy-former-inbox", test_self_copy_former_inbox);
+  g_test_add_func("/groundhog/outbox/self-copy-waiting-for-approval",
+                  test_self_copy_waiting_for_approval);
+  g_test_add_func("/groundhog/outbox/approval-outlives-publish-deadline",
+                  test_approval_outlives_publish_deadline);
   g_test_add_func("/groundhog/outbox/inbox-changed-signal", test_inbox_changed_signal);
   g_test_add_func("/groundhog/outbox/offline", test_ob10_offline);
   g_test_add_func("/groundhog/outbox/no-inbox-retry", test_no_inbox_and_retry);
@@ -2561,6 +2776,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/send-lifts-block", test_send_lifts_block);
 #ifdef GROUNDHOG_TEST_WIRE
   g_test_add_func("/groundhog/outbox/wire", test_ob4_wire);
+  g_test_add_func("/groundhog/outbox/wire-approval-outlives-deadline",
+                  test_wire_approval_outlives_deadline);
 #endif
   int result = g_test_run();
   if (!g_test_subprocess())

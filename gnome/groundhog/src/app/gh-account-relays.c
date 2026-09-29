@@ -1,4 +1,5 @@
 #include "gh-account-relays.h"
+#include "gh-auth-policy.h"
 #include "gh-identity.h"
 
 #include <nostr-event.h>
@@ -226,13 +227,18 @@ start_discovery(GhAccountRelays *self, const gchar *npub)
     ? gh_relay_scope_new_with_transport(self->generation, filters, &self->transport,
                                         self->transport_data, on_scope_update, self)
     : gh_relay_scope_new(self->generation, filters, on_scope_update, self);
+  GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(self->accounts);
   for (guint i = 0; urls[i]; i++) {
     g_autoptr(GError) error = NULL;
-    if (gh_relay_scope_add_url(self->scope, urls[i], &error))
-      g_hash_table_insert(self->sources, g_strdup(urls[i]),
-                          GUINT_TO_POINTER(SOURCE_PENDING));
-    else
+    if (!gh_relay_scope_add_url(self->scope, urls[i], &error)) {
       g_message("Groundhog ignores discovery relay \"%s\": %s", urls[i], error->message);
+      continue;
+    }
+    /* Own list discovery (charter §4.3): a throwaway key, and only if the
+     * relay demands AUTH for the REQ; never the account. */
+    gh_auth_policy_apply_scope(policy, self->scope, GH_AUTH_PURPOSE_OWN_LIST_DISCOVERY, urls[i],
+                               NULL);
+    g_hash_table_insert(self->sources, g_strdup(urls[i]), GUINT_TO_POINTER(SOURCE_PENDING));
   }
   if (g_hash_table_size(self->sources) == 0) {
     gh_relay_scope_cancel(self->scope);

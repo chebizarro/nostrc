@@ -101,6 +101,7 @@ struct _GhOutbox {
   GhInboxResolver *inboxes;
   gulong inboxes_handler;
   GhAuthPolicy *policy;      /* the accounts' NIP-42 identity policy */
+  gulong policy_handler;
   GhDmSender *sender;
   GNetworkMonitor *network;
   GhRelayPublishTransport transport;
@@ -163,6 +164,7 @@ static void msg_queue_eval(Msg *msg);
 static void round_check(Msg *msg);
 static void round_publish(Msg *msg);
 static gboolean own_relays_settled(GhOutbox *self);
+static GhAuthPurpose leg_purpose(GhOutbox *self, Leg *leg, const gchar *url);
 
 /* ---- small helpers ------------------------------------------------------- */
 
@@ -303,6 +305,44 @@ static gboolean
 msg_sealed(const Msg *msg)
 {
   return msg->entry->events->len > 0;
+}
+
+/* Whether leg's publish to url waits for the user to approve, in Nostr
+ * Signer, signing in to the relay as the account (§4.4 R6): the relay
+ * refused the self-copy (or a note to self) until it is signed in, and the
+ * policy's account signer is asking the user. */
+static gboolean
+leg_awaits_approval(Leg *leg, const gchar *url)
+{
+  GhOutbox *self = leg->msg->outbox;
+  return leg->publish && gh_relay_publish_is_signing_in(leg->publish, url) &&
+         leg_purpose(self, leg, url) == GH_AUTH_PURPOSE_SELF_WRAP &&
+         gh_auth_policy_get_account_state(self->policy, url) == GH_AUTH_ACCOUNT_STATE_WAITING;
+}
+
+static gboolean
+msg_awaits_approval(Msg *msg)
+{
+  for (guint i = 0; i < msg->legs->len; i++) {
+    Leg *leg = g_ptr_array_index(msg->legs, i);
+    for (guint j = 0; leg->publish && j < leg->event->targets->len; j++) {
+      GhStoreOutboxTarget *target = g_ptr_array_index(leg->event->targets, j);
+      if (leg_awaits_approval(leg, target->relay_url))
+        return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+static Leg *
+msg_leg(Msg *msg, const GhStoreOutboxEvent *event)
+{
+  for (guint i = 0; i < msg->legs->len; i++) {
+    Leg *leg = g_ptr_array_index(msg->legs, i);
+    if (leg->event == event)
+      return leg;
+  }
+  return NULL;
 }
 
 static gboolean
@@ -496,7 +536,10 @@ detail_for(Msg *msg, GhMessageStatus status)
   gboolean room = msg_n_recipients(msg) > 1;
   switch (status) {
   case GH_MESSAGE_STATUS_WAITING_FOR_SIGNER:
-    return g_strdup(tr(N_("Approve sending in Nostr Signer.")));
+    /* Sealed: a relay of the own inbox waits for the account's sign-in. */
+    return g_strdup(msg_sealed(msg)
+                      ? tr(N_("Approve signing in to your message relay in Nostr Signer."))
+                      : tr(N_("Approve sending in Nostr Signer.")));
   case GH_MESSAGE_STATUS_QUEUED_OFFLINE:
     return g_strdup(tr(N_("Groundhog will send it when you're back online.")));
   case GH_MESSAGE_STATUS_SENDING:
@@ -554,6 +597,7 @@ item_refresh(Msg *msg)
     .signer_pending = msg->signer_pending,
     .no_inbox = gave_up && g_strcmp0(entry->last_error, REASON_NO_INBOX) == 0,
     .retry_scheduled = !sealed && entry->next_attempt_at > 0,
+    .approval_pending = sealed && msg_awaits_approval(msg),
     .recipients = (const GhTargetClass *) recipients->data,
     .n_recipients = recipients->len,
   };
@@ -1722,6 +1766,36 @@ on_network_changed(GNetworkMonitor *monitor, gboolean available, gpointer data)
   update_activity(data);
 }
 
+static gboolean
+msg_publishes_to(Msg *msg, const gchar *url)
+{
+  for (guint i = 0; i < msg->legs->len; i++) {
+    Leg *leg = g_ptr_array_index(msg->legs, i);
+    if (leg->publish && event_target(leg->event, url))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+/* §4.4 R6: the policy's account signer started or stopped asking the user
+ * about url; a message publishing there says so ("Waiting for approval"). */
+static void
+on_account_state_changed(GhAuthPolicy *policy, const gchar *url, gpointer data)
+{
+  GhOutbox *self = data;
+  (void) policy;
+  g_autoptr(GList) messages = g_hash_table_get_values(self->messages);
+  for (GList *l = messages; l; l = l->next)
+    msg_ref(l->data);
+  for (GList *l = messages; l; l = l->next) {
+    Msg *msg = l->data;
+    if (!msg->dropped && msg_publishes_to(msg, url))
+      item_refresh(msg);
+  }
+  for (GList *l = messages; l; l = l->next)
+    msg_unref(l->data);
+}
+
 /* ---- public API ---------------------------------------------------------- */
 
 static Msg *
@@ -1798,6 +1872,8 @@ gh_outbox_new(const GhOutboxConfig *config, GError **error)
                                            G_CALLBACK(on_network_changed), self);
   self->inboxes_handler = g_signal_connect(self->inboxes, "changed",
                                            G_CALLBACK(on_inbox_changed), self);
+  self->policy_handler = g_signal_connect(self->policy, "account-state-changed",
+                                          G_CALLBACK(on_account_state_changed), self);
   update_activity(self);
   return g_steal_pointer(&self);
 }
@@ -2277,7 +2353,10 @@ gh_outbox_item_dup_targets(GhOutboxItem *self)
         target->message = g_strdup(stored->ok_message);
         target->attempts = stored->attempts;
         target->target_class = target_class(stored);
-        target->description = gh_message_status_describe_target(target->outcome, target->prefix);
+        Leg *leg = msg_leg(self->msg, event);
+        target->description = leg && leg_awaits_approval(leg, stored->relay_url)
+          ? gh_message_status_describe_approval()
+          : gh_message_status_describe_target(target->outcome, target->prefix);
         g_ptr_array_add(targets, target);
       }
     }
@@ -2489,6 +2568,10 @@ gh_outbox_dispose(GObject *object)
   if (self->inboxes_handler) {
     g_signal_handler_disconnect(self->inboxes, self->inboxes_handler);
     self->inboxes_handler = 0;
+  }
+  if (self->policy_handler) {
+    g_signal_handler_disconnect(self->policy, self->policy_handler);
+    self->policy_handler = 0;
   }
   g_clear_object(&self->policy);
   self->generation = 0;

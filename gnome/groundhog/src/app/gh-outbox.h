@@ -45,7 +45,10 @@ G_BEGIN_DECLS
  *    connection, never the account (§4.4 R1, R7). The self-copy and a note
  *    to self get SELF_WRAP, the account on challenge, on the account's own
  *    inbox relays only (a stored target that left the own 10050 list is
- *    treated like a recipient's); W13 review 7a.
+ *    treated like a recipient's); W13 review 7a. While Nostr Signer asks the
+ *    user to approve that sign-in (§4.4 R6), the relay's publish deadline
+ *    does not run, the status is WAITING_FOR_SIGNER as long as no recipient
+ *    has the message, and that relay's detail says it waits for approval.
  *  - D8: if the own and recipient inbox sets overlap, the self-copy waits
  *    U(5, 90) s (stored as not_before); it always uses its own connection.
  *
@@ -114,7 +117,8 @@ typedef struct {
   gchar *message;                /* relay text (bounded), or NULL */
   guint attempts;
   GhTargetClass target_class;
-  const gchar *description;      /* gh_message_status_describe_target() */
+  const gchar *description;      /* gh_message_status_describe_target(), or
+                                  * gh_message_status_describe_approval() */
 } GhOutboxTarget;
 
 void gh_outbox_target_free(GhOutboxTarget *target);

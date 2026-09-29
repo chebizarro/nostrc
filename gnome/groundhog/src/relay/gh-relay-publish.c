@@ -310,6 +310,15 @@ gh_relay_publish_is_complete(const GhRelayPublish *publish)
   return publish && publish->completed;
 }
 
+gboolean
+gh_relay_publish_is_signing_in(const GhRelayPublish *publish, const gchar *url)
+{
+  GhPublishEndpoint *endpoint =
+    publish && url ? g_hash_table_lookup(publish->by_url, url) : NULL;
+  return endpoint && !publish->cancelled && endpoint->outcome == GH_RELAY_PUBLISH_PENDING &&
+         endpoint->attempt != NULL;
+}
+
 void
 gh_relay_publish_set_deadline(GhRelayPublish *publish, guint seconds)
 {
@@ -482,6 +491,37 @@ fail_auth(GhRelayPublish *publish, GhPublishEndpoint *endpoint, const gchar *why
                   GH_RELAY_OK_PREFIX_AUTH_REQUIRED, message);
 }
 
+static gboolean
+deadline_expired(gpointer data)
+{
+  GhPublishEndpoint *endpoint = data;
+  GSource *source = g_steal_pointer(&endpoint->deadline);
+  if (endpoint->auth_needed) {
+    g_autofree gchar *why = g_strdup_printf("no AUTH completed within %u s",
+                                            endpoint->publish->deadline_seconds);
+    fail_auth(endpoint->publish, endpoint, why);
+  } else {
+    g_autofree gchar *detail = g_strdup_printf(
+      "no relay OK within %u s (failure bound; relay state unknown)",
+      endpoint->publish->deadline_seconds);
+    finish_endpoint(endpoint->publish, endpoint,
+                    GH_RELAY_PUBLISH_CONNECTION_FAILED, GH_RELAY_OK_PREFIX_NONE,
+                    detail);
+  }
+  g_source_unref(source);
+  return G_SOURCE_REMOVE;
+}
+
+/* (Re)starts url's failure deadline: deadline_seconds from now. */
+static void
+arm_deadline(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
+{
+  clear_deadline(endpoint);
+  endpoint->deadline = g_timeout_source_new_seconds(publish->deadline_seconds);
+  g_source_set_callback(endpoint->deadline, deadline_expired, endpoint, NULL);
+  g_source_attach(endpoint->deadline, publish->context);
+}
+
 static void
 on_auth_signed(gpointer owner, const gchar *signed_json, const gchar *event_id,
                const GError *error)
@@ -499,8 +539,12 @@ on_auth_signed(gpointer owner, const gchar *signed_json, const gchar *event_id,
   g_autoptr(GError) send_error = NULL;
   g_strlcpy(endpoint->auth_event_id, event_id, sizeof endpoint->auth_event_id);
   if (!publish->auth_transport.send_auth(endpoint->handle, signed_json,
-                                         publish->transport_data, &send_error))
+                                         publish->transport_data, &send_error)) {
     fail_auth(publish, endpoint, send_error ? send_error->message : "AUTH not sent");
+    return;
+  }
+  /* The relay's turn again: its OK for the AUTH, then for the re-sent EVENT. */
+  arm_deadline(publish, endpoint);
 }
 
 /* One AUTH per challenge, only after the relay refused the EVENT. */
@@ -521,29 +565,14 @@ maybe_auth(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
                                                   publish->generation, endpoint->url,
                                                   endpoint->challenge, on_auth_signed,
                                                   endpoint, &error);
-  if (!endpoint->attempt)
+  if (!endpoint->attempt) {
     fail_auth(publish, endpoint, error ? error->message : "AUTH not started");
-}
-
-static gboolean
-deadline_expired(gpointer data)
-{
-  GhPublishEndpoint *endpoint = data;
-  GSource *source = g_steal_pointer(&endpoint->deadline);
-  if (endpoint->auth_needed) {
-    g_autofree gchar *why = g_strdup_printf("no AUTH completed within %u s",
-                                            endpoint->publish->deadline_seconds);
-    fail_auth(endpoint->publish, endpoint, why);
-  } else {
-    g_autofree gchar *detail = g_strdup_printf(
-      "no relay OK within %u s (failure bound; relay state unknown)",
-      endpoint->publish->deadline_seconds);
-    finish_endpoint(endpoint->publish, endpoint,
-                    GH_RELAY_PUBLISH_CONNECTION_FAILED, GH_RELAY_OK_PREFIX_NONE,
-                    detail);
+    return;
   }
-  g_source_unref(source);
-  return G_SOURCE_REMOVE;
+  /* The deadline bounds the relay, not the signer: an account AUTH may wait
+   * for the user in Nostr Signer (charter §4.4 R6), whose own call timeout
+   * bounds it. on_auth_signed() starts the deadline again. */
+  clear_deadline(endpoint);
 }
 
 static void
@@ -566,9 +595,7 @@ open_endpoint(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
   }
   endpoint->handle = handle;
   endpoint->opened = TRUE;
-  endpoint->deadline = g_timeout_source_new_seconds(publish->deadline_seconds);
-  g_source_set_callback(endpoint->deadline, deadline_expired, endpoint, NULL);
-  g_source_attach(endpoint->deadline, publish->context);
+  arm_deadline(publish, endpoint);
 }
 
 gboolean

@@ -5,10 +5,13 @@
  * (tests/app/gh-test-signer.h). Covered: PT-9 (nothing is contacted before
  * the signer approved; nothing at all after a denial), each relay's outcome
  * recorded, NIP-42 AUTH as the account only on the list's publication
- * connections (never on the check), the discovery hand-over and account
- * switches. Waits iterate the main context; their deadline is a failure
- * bound, never a source of progress. */
+ * connections (never on the check), through GhAuthPolicy's one account
+ * signer of the generation (R6: its approvals and refusals are the
+ * policy's), the discovery hand-over and account switches. Waits iterate the
+ * main context; their deadline is a failure bound, never a source of
+ * progress. */
 #include "gh-inbox-setup.h"
+#include "gh-auth-policy.h"
 #include "gh-signer.h"
 #include "gh-test-signer.h"
 #include "nostr-tag.h"
@@ -766,6 +769,10 @@ test_publish_outcomes_and_auth(Fixture *f, gconstpointer data)
   gh_relay_publish_ok(a->publish, DISC_D, auth_id, TRUE, "");
   g_assert_cmpuint(f->rec.resends, ==, 1);
   gh_relay_publish_ok(a->publish, DISC_D, id, TRUE, "");
+  /* Signed by the policy's account signer: the inbox and the outbox see the
+   * approval too (R6). */
+  g_assert_cmpint(gh_auth_policy_get_account_state(gh_auth_policy_get_for_accounts(f->accounts),
+                                                   DISC_D), ==, GH_AUTH_ACCOUNT_STATE_APPROVED);
 
   /* The check: A refuses unauthenticated reads (after a challenge that
    * nobody answers), B serves them. */
@@ -866,6 +873,120 @@ test_nothing_accepted(Fixture *f, gconstpointer data)
   g_assert_null(discovery[0]);
 }
 
+typedef struct {
+  GhInboxSetup *setup;
+  const gchar *url;
+} OutcomeWait;
+
+static gboolean
+outcome_known(gpointer data)
+{
+  OutcomeWait *wait = data;
+  return gh_inbox_setup_lookup(wait->setup, wait->url)->outcome != GH_RELAY_PUBLISH_PENDING;
+}
+
+typedef struct {
+  GhAuthPolicy *policy;
+  const gchar *url;
+} DeclinedWait;
+
+static gboolean
+declined(gpointer data)
+{
+  DeclinedWait *wait = data;
+  return gh_auth_policy_get_account_state(wait->policy, wait->url) ==
+         GH_AUTH_ACCOUNT_STATE_DECLINED;
+}
+
+/* Signs the list and opens the publication (INBOX_A, INBOX_B) and the check.
+ * Returns A's publish connection. */
+static PubOpen *
+start_publishing(Fixture *f)
+{
+  const gchar *chosen[] = { INBOX_A, INBOX_B, NULL };
+  new_setup(f);
+  g_assert_true(gh_inbox_setup_start(f->setup, chosen, FALSE, NULL));
+  gh_test_spin_until(pubs_opened, f);
+  return pub_find(f, INBOX_A);
+}
+
+/* A refuses the list until signed in: a challenge, then OK false
+ * "auth-required:". */
+static void
+demand_auth_on_a(Fixture *f, PubOpen *a, const gchar *challenge)
+{
+  gh_relay_publish_auth_challenge(a->publish, INBOX_A, challenge);
+  gh_relay_publish_ok(a->publish, INBOX_A, gh_inbox_setup_get_event_id(f->setup), FALSE,
+                      "auth-required: members only");
+}
+
+static void
+wait_outcome_of_a(Fixture *f)
+{
+  OutcomeWait wait = { f->setup, INBOX_A };
+  gh_test_spin_until(outcome_known, &wait);
+}
+
+/* B keeps the list and both check REQs answer: the setup finishes DONE. */
+static void
+finish_with_b(Fixture *f, PubOpen *a)
+{
+  gh_relay_publish_ok(a->publish, INBOX_B, gh_inbox_setup_get_event_id(f->setup), TRUE, "");
+  GhRelayScope *probe = probe_open(f, INBOX_A)->scope;
+  gh_relay_scope_eose(probe, INBOX_A);
+  gh_relay_scope_eose(probe, INBOX_B);
+  gh_test_spin_until(setup_finished, f->setup);
+  g_assert_cmpint(gh_inbox_setup_get_state(f->setup), ==, GH_INBOX_SETUP_DONE);
+}
+
+/* nostrc-qp24.65, charter §4.4 R6: the own list publish signs in through
+ * GhAuthPolicy (OWN_LIST_PUBLISH), with the one account signer of the
+ * generation that the inbox and the self-copy use. The prompt is the
+ * policy's (WAITING there while the user decides), and a relay the user
+ * declined is not asked again this generation: publishing the list again
+ * (the onboarding's Retry, a new GhInboxSetup) asks the signer for the list
+ * only, and that relay ends "requires sign-in" without any AUTH. */
+static void
+test_auth_shared_with_policy(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(f->accounts);
+  PubOpen *a = start_publishing(f);
+  f->mock.hold = TRUE;
+  demand_auth_on_a(f, a, "challenge-a");
+  gh_test_spin_until(held_one, &f->mock);
+  g_assert_cmpint(gh_auth_policy_get_account_state(policy, INBOX_A), ==,
+                  GH_AUTH_ACCOUNT_STATE_WAITING);
+  /* The user declines signing in to A. */
+  f->mock.deny = TRUE;
+  gh_test_signer_release_all(&f->mock);
+  DeclinedWait refused = { policy, INBOX_A };
+  gh_test_spin_until(declined, &refused);
+  f->mock.deny = FALSE;
+  f->mock.hold = FALSE;
+  wait_outcome_of_a(f);
+  g_assert_cmpint(gh_inbox_setup_lookup(f->setup, INBOX_A)->outcome, ==,
+                  GH_RELAY_PUBLISH_AUTH_REQUIRED);
+  finish_with_b(f, a);
+  g_assert_cmpuint(f->mock.calls, ==, 2); /* the list and A's AUTH */
+  g_assert_cmpuint(f->rec.sent_auth->len, ==, 0);
+
+  /* Publishing again: only the list goes to the signer; A is not asked. */
+  gh_test_release(g_steal_pointer(&f->setup));
+  g_ptr_array_set_size(f->rec.pubs, 0);
+  a = start_publishing(f);
+  demand_auth_on_a(f, a, "challenge-a2");
+  wait_outcome_of_a(f);
+  g_assert_cmpint(gh_inbox_setup_lookup(f->setup, INBOX_A)->outcome, ==,
+                  GH_RELAY_PUBLISH_AUTH_REQUIRED);
+  finish_with_b(f, a);
+  g_assert_cmpuint(f->mock.calls, ==, 3);
+  g_assert_cmpuint(f->rec.sent_auth->len, ==, 0);
+  g_assert_cmpint(gh_auth_policy_get_account_state(policy, INBOX_A), ==,
+                  GH_AUTH_ACCOUNT_STATE_DECLINED);
+  gh_test_spin_until(probe_scopes_closed, f);
+}
+
 static gboolean
 all_pubs_closed(gpointer data)
 {
@@ -929,6 +1050,7 @@ main(int argc, char **argv)
   ADD("adopt-discovery", test_adopt_discovery);
   ADD("nothing-accepted", test_nothing_accepted);
   ADD("account-switch", test_account_switch);
+  ADD("auth-shared-with-policy", test_auth_shared_with_policy);
 #undef ADD
   int status = g_test_run();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {

@@ -15,8 +15,8 @@ G_BEGIN_DECLS
  *
  *   purpose               identity   connection
  *   OWN_INBOX_READ        ACCOUNT    kind-1059 #p=me REQs on the own 10050 (GhDmInbox)
- *   OWN_LIST_DISCOVERY    EPHEMERAL  own 10002/10050 on discovery-relays
- *   OWN_LIST_PUBLISH      ACCOUNT    own 10050/10002/KeyPackage publish
+ *   OWN_LIST_DISCOVERY    EPHEMERAL  own 10002/10050 on discovery-relays (GhAccountRelays)
+ *   OWN_LIST_PUBLISH      ACCOUNT    own 10050/10002/KeyPackage publish (GhInboxSetup)
  *   CONTACT_DIRECTORY     EPHEMERAL  others' 10050/kind 0 on discovery-relays
  *                                    (GhContactDirectory, GhInboxLookup)
  *   RECIPIENT_WRAP        EPHEMERAL  a gift wrap (DM, Welcome) to a recipient's 10050
@@ -50,9 +50,12 @@ G_BEGIN_DECLS
  *  - R5/R7: one AUTH per challenge, never escalated: a relay that refuses an
  *    EPHEMERAL AUTH ends as AUTH_REQUIRED (relay layer).
  *  - R6: one GhAccountAuth per account generation, shared by every caller of
- *    the policy, so the inbox and the outbox together ask the signer at most
- *    once per relay at a time, and a relay the user declined is not asked
- *    again this generation.
+ *    the policy, so the inbox, the outbox and the own-list publish together
+ *    ask the signer at most once per relay at a time, and a relay the user
+ *    declined is not asked again this generation. While the signer asks, a
+ *    relay publish's deadline does not run (gh-relay-publish.h), and
+ *    gh_auth_policy_get_account_state() is WAITING for "Waiting for
+ *    approval" on the affected action.
  *
  * One policy per GhAccountController (gh_auth_policy_get_for_accounts()): it
  * lives as long as the controller and holds it weakly. Main context only.

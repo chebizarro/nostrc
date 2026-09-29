@@ -90,11 +90,18 @@ typedef struct {
   gboolean signer_pending;   /* UNSEALED: a signer approval is being asked */
   gboolean no_inbox;         /* UNSEALED: a recipient has no usable kind-10050 */
   gboolean retry_scheduled;  /* UNSEALED: the inbox lookup failed, retrying */
+  /* SEALED: a relay of this message waits for the user to approve signing
+   * in to it as the account in Nostr Signer (charter §4.4 R6): the
+   * self-copy's own inbox relay, or a note to self's. */
+  gboolean approval_pending;
   const GhTargetClass *recipients; /* SEALED: one combined class per recipient */
   gsize n_recipients;
 } GhMessageStatusInput;
 
-/* The status of one outgoing message. The self-copy is not an input. */
+/* The status of one outgoing message. The self-copy's outcome is not an
+ * input. A pending approval (approval_pending) is WAITING_FOR_SIGNER while
+ * no recipient has the message yet and it is still going out; once one
+ * does, the status says so. */
 GhMessageStatus gh_message_status_derive(const GhMessageStatusInput *input);
 /* Whether to show the self-copy note: the self-copy can no longer be stored
  * (TERMINAL, e.g. no own inbox relay), or the message gave up without it. */
@@ -102,6 +109,9 @@ gboolean gh_message_status_self_copy_missing(GhTargetClass self_copy, gboolean g
 /* One plain-language sentence for a relay's outcome (details on demand). */
 const gchar *gh_message_status_describe_target(GhRelayPublishOutcome outcome,
                                                GhRelayOkPrefix prefix);
+/* The sentence for a relay that has not answered because signing in to it
+ * waits for the user's approval in Nostr Signer (see approval_pending). */
+const gchar *gh_message_status_describe_approval(void);
 
 G_END_DECLS
 #endif
