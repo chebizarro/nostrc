@@ -680,9 +680,23 @@ client_frames_mention(WireRelay *relay, const gchar *text)
   return FALSE;
 }
 
+/* The local relays' libsoup server warns when a client closed its socket
+ * before the server read the peer address (a one-shot lookup that got its
+ * EOSE and left, on Linux): the test relay's race, not Groundhog's. Every
+ * other warning stays fatal (g_test_init()). */
+static gboolean
+tolerate_relay_race(const gchar *log_domain, GLogLevelFlags log_level, const gchar *message,
+                    gpointer data)
+{
+  (void)data;
+  return !((log_level & G_LOG_LEVEL_WARNING) && g_strcmp0(log_domain, "libsoup") == 0 &&
+           message && strstr(message, "could not get remote address"));
+}
+
 static G_GNUC_UNUSED void
 mls_world_init(void)
 {
+  g_test_log_set_fatal_handler(tolerate_relay_race, NULL);
   for (guint key = 1; key < GH_TEST_KEYS; key++) {
     hex[key] = gh_test_pub(key);
     npub[key] = gh_test_npub(key);
