@@ -28,6 +28,7 @@ test_resource_registration(void)
     "/org/nostr/Groundhog/ui/gh-shortcuts-window.ui",
     "/org/nostr/Groundhog/ui/gh-conversation-view.ui",
     "/org/nostr/Groundhog/ui/gh-message-row.ui",
+    "/org/nostr/Groundhog/ui/gh-message-list-item.ui",
     "/org/nostr/Groundhog/ui/gh-day-separator.ui",
     "/org/nostr/Groundhog/ui/gh-delivery-details.ui",
   };

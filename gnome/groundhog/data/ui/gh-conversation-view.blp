@@ -6,7 +6,7 @@ using Adw 1;
 // a message inbox, charter §7.15 state 11), the message list with a day
 // separator per local day (gh-day-separator.blp, loaded from C because
 // blueprint-compiler 0.12 has no inline ListHeader template) and rows from
-// gh-message-row.blp, "Loading earlier messages", "Jump to Latest" with the
+// gh-message-list-item.blp and gh-message-row.blp, "Loading earlier messages", "Jump to Latest" with the
 // number of new messages, and "Waiting for Nostr Signer to unlock N
 // messages" (state 12). The two alert dialogs confirm a link that is not a
 // plain https address (charter PD-3) and ask before a link preview connects
@@ -46,19 +46,9 @@ template $GhConversationView: Adw.BreakpointBin {
               label: _("Messages");
             }
 
+            // Rows: gh-message-list-item.blp.
             factory: BuilderListItemFactory {
-              template ListItem {
-                activatable: false;
-                selectable: false;
-                accessible-label: bind template.child as <$GhMessageRow>.summary;
-
-                child: $GhMessageRow {
-                  message: bind template.item as <$GhTimelineItem>.message;
-                  run-start: bind template.item as <$GhTimelineItem>.run-start;
-                  run-end: bind template.item as <$GhTimelineItem>.run-end;
-                  show-sender: bind template.item as <$GhTimelineItem>.show-sender;
-                };
-              }
+              resource: "/org/nostr/Groundhog/ui/gh-message-list-item.ui";
             };
           };
         };

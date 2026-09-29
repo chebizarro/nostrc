@@ -462,8 +462,8 @@ struct _GhConversationView {
 enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
-enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_PREVIEW_CHANGED,
-       N_SIGNALS };
+enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_COPY_TEXT,
+       SIGNAL_PREVIEW_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhConversationView, gh_conversation_view, ADW_TYPE_BREAKPOINT_BIN)
@@ -1023,6 +1023,12 @@ gh_conversation_view_real_open_uri(GhConversationView *self, const gchar *uri)
 }
 
 static void
+gh_conversation_view_real_copy_text(GhConversationView *self, const gchar *text)
+{
+  gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(self)), text);
+}
+
+static void
 show_toast(GhConversationView *self, const gchar *title)
 {
   GtkWidget *overlay = gtk_widget_get_ancestor(GTK_WIDGET(self), ADW_TYPE_TOAST_OVERLAY);
@@ -1066,7 +1072,7 @@ open_link(GhConversationView *self, const gchar *uri)
   }
   case GH_LINK_ACTION_NOSTR:
     /* Never fetched or handed to another app: the address is copied. */
-    gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(self)), uri);
+    g_signal_emit(self, signals[SIGNAL_COPY_TEXT], 0, uri);
     show_toast(self, _("Nostr address copied"));
     announce(self, _("Nostr address copied"), GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
     break;
@@ -1290,6 +1296,13 @@ gh_conversation_view_set_locked_messages(GhConversationView *self, guint count)
   gtk_widget_set_visible(self->locked_row, count > 0);
 }
 
+gint64
+gh_conversation_view_get_next_expiry(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), 0);
+  return self->expiry_source ? self->expiry_at : 0;
+}
+
 guint
 gh_conversation_view_get_announcements(GhConversationView *self,
                                        GtkAccessibleAnnouncementPriority priority)
@@ -1506,6 +1519,9 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   signals[SIGNAL_OPEN_URI] = g_signal_new_class_handler("open-uri", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, G_CALLBACK(gh_conversation_view_real_open_uri), NULL, NULL, NULL,
+    G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_COPY_TEXT] = g_signal_new_class_handler("copy-text", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, G_CALLBACK(gh_conversation_view_real_copy_text), NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[SIGNAL_PREVIEW_CHANGED] = g_signal_new("preview-changed", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);

@@ -29,7 +29,8 @@ set(GROUNDHOG_DATA ${CMAKE_CURRENT_SOURCE_DIR}/data)
 set(GROUNDHOG_BLUEPRINTS
   gh-window gh-sidebar-page gh-content-page gh-onboarding-page gh-account-ui
   gh-conversation-row gh-shortcuts-window
-  gh-conversation-view gh-message-row gh-day-separator gh-delivery-details)
+  gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
+  gh-delivery-details)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")

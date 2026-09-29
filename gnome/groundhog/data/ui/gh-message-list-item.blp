@@ -1,0 +1,20 @@
+using Gtk 4.0;
+
+// One item of the conversation's message list (gh-conversation-view.blp,
+// charter §7.4): a GhMessageRow bound to its GhTimelineItem, whose composed
+// text is the item's accessible label. A file of its own, loaded by the
+// list's factory from the resource, so no Blueprint output nests inside
+// another (blueprint-compiler 0.12 and newer write nested templates
+// differently).
+template ListItem {
+  activatable: false;
+  selectable: false;
+  accessible-label: bind template.child as <$GhMessageRow>.summary;
+
+  child: $GhMessageRow {
+    message: bind template.item as <$GhTimelineItem>.message;
+    run-start: bind template.item as <$GhTimelineItem>.run-start;
+    run-end: bind template.item as <$GhTimelineItem>.run-end;
+    show-sender: bind template.item as <$GhTimelineItem>.show-sender;
+  };
+}

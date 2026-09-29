@@ -43,7 +43,7 @@ gchar *gh_conversation_view_format_day(GDateTime *when, GDateTime *now);
  *  - links follow gh-link-policy.h: https to an ASCII host opens through
  *    "open-uri" (default: GtkUriLauncher, i.e. the portal); http, IDN and
  *    user-name addresses first show the full address in a confirmation; a
- *    nostr: address is copied, never fetched or opened;
+ *    nostr: address is copied ("copy-text"), never fetched or opened;
  *  - "Show Preview" (charter §2.1, D13) asks consent naming the host and the
  *    network mode unless the link-previews setting is on ("Don't ask again"
  *    turns it on), then asks the preview fetcher; without one it says that
@@ -56,8 +56,9 @@ gchar *gh_conversation_view_format_day(GDateTime *when, GDateTime *now);
  * (s: rumor id), conversation.jump-to-latest and
  * conversation.unlock-messages. Signals: "retry-requested" (GhMessage) for
  * the outbox (G06/G13), "unlock-requested" for the inbox, "open-uri" (URI,
- * run last) whose default handler launches the URI, and "preview-changed"
- * (rumor id) when a message's link preview state changes.
+ * run last) whose default handler launches the URI, "copy-text" (text, run
+ * last) whose default handler puts it on the clipboard, and
+ * "preview-changed" (rumor id) when a message's link preview state changes.
  * Properties: "conversation", "compact" (below 480sp: narrower bubbles) and
  * "settings" (nullable GSettings of org.nostr.Groundhog for link-previews and
  * network-mode). Nothing here publishes, fetches or marks anything read.
@@ -148,6 +149,10 @@ void gh_conversation_view_set_recipient_without_inbox(GhConversationView *self,
 /* Charter §7.15 state 12: "Waiting for Nostr Signer to unlock N messages"
  * with Unlock (conversation.unlock-messages); 0 hides it. */
 void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count);
+
+/* When the view next hides an expiring message it shows (unix seconds; 0:
+ * none is due). */
+gint64 gh_conversation_view_get_next_expiry(GhConversationView *self);
 
 /* The view's accessibility announcements (charter §7.14), for tests: how
  * many were made at @priority, and the last text. */
