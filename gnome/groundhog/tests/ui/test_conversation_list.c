@@ -506,7 +506,7 @@ test_request_subject_secondary(Fixture *f, gconstpointer data)
 
   /* The header: the npub as the title, the quoted subject in the subtitle. */
   g_assert_true(gh_sidebar_page_select_relative(f->sidebar, 1));
-  g_assert_true(gh_content_page_get_messages(f->content) == G_LIST_MODEL(f->ae));
+  g_assert_true(shown_messages(f->content) == G_LIST_MODEL(f->ae));
   AdwWindowTitle *header = gh_content_page_get_window_title(f->content);
   g_assert_cmpstr(adw_window_title_get_title(header), ==, title);
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(f->content)), ==, title);
