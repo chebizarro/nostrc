@@ -5,6 +5,7 @@
  */
 
 #include "gn-mls-event-router.h"
+#include "gn-mls-group-error.h"
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
@@ -20,6 +21,7 @@ struct _GnMlsEventRouter
 
   GnMarmotService     *service;    /* strong ref */
   GnostrPluginContext *context;    /* borrowed — only accessed on main thread */
+  GHashTable          *reported_group_errors; /* group ids already reported out of sync */
 };
 
 G_DEFINE_TYPE(GnMlsEventRouter, gn_mls_event_router, G_TYPE_OBJECT)
@@ -30,6 +32,7 @@ gn_mls_event_router_dispose(GObject *object)
   GnMlsEventRouter *self = GN_MLS_EVENT_ROUTER(object);
   g_clear_object(&self->service);
   self->context = NULL;
+  g_clear_pointer(&self->reported_group_errors, g_hash_table_unref);
   G_OBJECT_CLASS(gn_mls_event_router_parent_class)->dispose(object);
 }
 
@@ -45,6 +48,8 @@ gn_mls_event_router_init(GnMlsEventRouter *self)
 {
   self->service = NULL;
   self->context = NULL;
+  self->reported_group_errors =
+    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -166,15 +171,32 @@ on_message_processed(GObject      *source,
 
   if (error != NULL)
     {
-      /* A rejected Commit leaves this client behind the group's epoch; say
-       * so instead of dropping it silently. */
-      g_warning("MLS EventRouter: failed to process group message for group %s: %s",
-                data->group_id_hex ? data->group_id_hex : "(unknown)",
-                error->message);
-      if (data->router->service != NULL)
-        g_signal_emit_by_name(data->router->service, "group-error",
-                              data->group_id_hex ? data->group_id_hex : "",
-                              error->message);
+      /* Only an MLS-level failure -- past the member-keyed NIP-44 layer --
+       * means we may have fallen behind (e.g. a member's Commit we could not
+       * apply); report it once per group until the group moves on.  Relay
+       * backfill from before we joined and junk anyone can publish under the
+       * public h tag fail earlier and stay debug-level noise. */
+      if (!gn_mls_group_error_is_divergence(error))
+        {
+          g_debug("MLS EventRouter: ignoring group event for %s: %s",
+                  data->group_id_hex ? data->group_id_hex : "(unknown)",
+                  error->message);
+        }
+      else if (gn_mls_group_error_gate_admit(data->router->reported_group_errors,
+                                             data->group_id_hex))
+        {
+          g_warning("MLS EventRouter: group %s may be out of sync: %s",
+                    data->group_id_hex, error->message);
+          if (data->router->service != NULL)
+            g_signal_emit_by_name(data->router->service, "group-error",
+                                  data->group_id_hex, error->message);
+        }
+      else
+        {
+          g_debug("MLS EventRouter: group %s still out of sync: %s",
+                  data->group_id_hex ? data->group_id_hex : "(unknown)",
+                  error->message);
+        }
       process_msg_data_free(data);
       return;
     }
@@ -202,6 +224,9 @@ on_message_processed(GObject      *source,
     case MARMOT_GOBJECT_MESSAGE_RESULT_COMMIT:
       {
         g_debug("MLS EventRouter: commit processed, group state updated");
+        /* New epoch: a later divergence is news again. */
+        gn_mls_group_error_gate_reset(data->router->reported_group_errors,
+                                      data->group_id_hex);
 
         /* Refresh group from storage and notify listeners */
         if (data->group_id_hex != NULL && data->router->service != NULL)

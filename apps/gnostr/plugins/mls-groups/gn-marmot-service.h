@@ -134,9 +134,12 @@ void gn_marmot_service_set_user_identity(GnMarmotService *self,
  * @group_id_hex: Group ID hex from the event's h tag ("" if unknown)
  * @message: Why the incoming group event could not be processed
  *
- * Emitted when an incoming group event is rejected (for example a Commit
- * from a peer on an incompatible libmarmot version), so the group may be
- * out of sync instead of silently falling behind.
+ * Emitted when a member's group event fails at the MLS layer (for example
+ * a Commit from a peer on an incompatible libmarmot version), so the group
+ * may be out of sync instead of silently falling behind.  Events that fail
+ * before the member-keyed NIP-44 layer (relay backfill, outsider junk) never
+ * emit it, and it fires at most once per group until the group processes a
+ * Commit (see gn-mls-group-error.h).
  */
 
 G_END_DECLS

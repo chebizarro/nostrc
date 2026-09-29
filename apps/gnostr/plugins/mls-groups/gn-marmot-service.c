@@ -151,8 +151,9 @@ gn_marmot_service_class_init(GnMarmotServiceClass *klass)
    * @group_id_hex: group ID hex from the event's h tag ("" if unknown)
    * @message: why the group event could not be processed
    *
-   * An incoming group event (e.g. a Commit) was rejected: this client may
-   * have fallen behind the group's epoch.
+   * A member's group event (e.g. a Commit) failed at the MLS layer: this
+   * client may have fallen behind the group's epoch.  At most once per group
+   * until it processes a Commit; see gn-mls-group-error.h.
    */
   signals[SIGNAL_GROUP_ERROR] =
     g_signal_new("group-error",

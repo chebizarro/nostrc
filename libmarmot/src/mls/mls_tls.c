@@ -10,6 +10,7 @@
 #include "mls-internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <sodium.h>
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Write buffer
@@ -26,10 +27,14 @@ mls_tls_buf_init(MlsTlsBuf *buf, size_t initial_cap)
     return 0;
 }
 
+/* Write buffers routinely hold secrets (serialized group state with private
+ * keys and epoch secrets, GroupSecrets, key material), so their memory is
+ * wiped before it is released -- on free and on every growth step. */
 void
 mls_tls_buf_free(MlsTlsBuf *buf)
 {
     if (!buf) return;
+    if (buf->data) sodium_memzero(buf->data, buf->cap);
     free(buf->data);
     buf->data = NULL;
     buf->len = 0;
@@ -49,8 +54,13 @@ buf_ensure(MlsTlsBuf *buf, size_t additional)
         new_cap *= 2;
     }
 
-    uint8_t *new_data = realloc(buf->data, new_cap);
+    /* Not realloc(): it may move the data and leave the old block, secrets
+     * included, unwiped in the heap. */
+    uint8_t *new_data = malloc(new_cap);
     if (!new_data) return -1;
+    if (buf->len > 0) memcpy(new_data, buf->data, buf->len);
+    sodium_memzero(buf->data, buf->cap);
+    free(buf->data);
     buf->data = new_data;
     buf->cap = new_cap;
     return 0;

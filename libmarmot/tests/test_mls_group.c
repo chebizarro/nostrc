@@ -2506,6 +2506,11 @@ TEST(test_committer_keeps_own_path_keys)
     deliver_commit_for_test(remaining, 2, &f.bob, rm.commit_data, rm.commit_len,
                             "Bob removes Charlie");
     assert_converged_for_test(remaining, 2);
+    /* Bob's filtered path is [1]: the Remove leaves root node 3 blank, so the
+     * receiver must drop its node-3 private key now, not when a later Commit
+     * happens to re-key node 3 (forward secrecy; review W16b N2). */
+    assert(f.alice.tree.nodes[3].type == MLS_NODE_BLANK);
+    for (size_t i = 0; i < 2; i++) assert_path_keys_current_for_test(remaining[i]);
     mls_commit_result_clear(&rm);
     MlsAddResult add;
     assert(mls_group_add_member(&f.bob, &f.dave_kp, &add) == 0);

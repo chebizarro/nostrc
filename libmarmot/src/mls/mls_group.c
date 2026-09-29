@@ -1246,6 +1246,13 @@ add_member_staged(MlsGroup *group,
                   const MlsKeyPackage *kp,
                   MlsAddResult *result)
 {
+    /* Every failure releases pre_gc and wipes these secrets (fail_pre_gc,
+     * fail_wire_msg). */
+    uint8_t root_path_secret[MLS_HASH_LEN];
+    uint8_t commit_secret[MLS_HASH_LEN];
+    memset(root_path_secret, 0, sizeof(root_path_secret));
+    memset(commit_secret, 0, sizeof(commit_secret));
+
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
     uint64_t pre_epoch = group->epoch;
@@ -1256,19 +1263,21 @@ add_member_staged(MlsGroup *group,
 
     /* Validate the key package */
     int rc = mls_key_package_validate(kp);
-    if (rc != 0) { free(pre_gc); return rc; }
+    if (rc != 0) goto fail_pre_gc;
 
     /* Add a new leaf to the tree */
     uint32_t new_leaf_node_idx;
-    if (mls_tree_add_leaf(&group->tree, &new_leaf_node_idx) != 0)
-        return MARMOT_ERR_INTERNAL;
+    if (mls_tree_add_leaf(&group->tree, &new_leaf_node_idx) != 0) {
+        rc = MARMOT_ERR_INTERNAL;
+        goto fail_pre_gc;
+    }
 
     /* Copy the key package's leaf node into the new position */
     MlsNode *new_node = &group->tree.nodes[new_leaf_node_idx];
     new_node->type = MLS_NODE_LEAF;
     if (mls_leaf_node_clone(&new_node->leaf, &kp->leaf_node) != 0) {
-        free(pre_gc);
-        return MARMOT_ERR_INTERNAL;
+        rc = MARMOT_ERR_INTERNAL;
+        goto fail_pre_gc;
     }
     /* RFC 9420 §12.1.1, exactly as receivers apply the Add: the new leaf is
      * unmerged at every non-blank parent on its direct path.  The UpdatePath
@@ -1276,8 +1285,8 @@ add_member_staged(MlsGroup *group,
      * above a blank leaf another member's path re-keyed -- keep it, and the
      * tree hash covers them. */
     if (tree_add_unmerged_leaf(&group->tree, new_leaf_node_idx) != 0) {
-        free(pre_gc);
-        return MARMOT_ERR_INTERNAL;
+        rc = MARMOT_ERR_INTERNAL;
+        goto fail_pre_gc;
     }
 
     /* Build the Add proposal */
@@ -1291,19 +1300,21 @@ add_member_staged(MlsGroup *group,
     add_prop.add.key_package.extensions_len = 0;
     if (kp->extensions_data && kp->extensions_len > 0) {
         add_prop.add.key_package.extensions_data = malloc(kp->extensions_len);
-        if (!add_prop.add.key_package.extensions_data)
-            return MARMOT_ERR_MEMORY;
+        if (!add_prop.add.key_package.extensions_data) {
+            rc = MARMOT_ERR_MEMORY;
+            goto fail_pre_gc;
+        }
         memcpy(add_prop.add.key_package.extensions_data,
                kp->extensions_data, kp->extensions_len);
         add_prop.add.key_package.extensions_len = kp->extensions_len;
     }
     if (mls_leaf_node_clone(&add_prop.add.key_package.leaf_node, &kp->leaf_node) != 0) {
         free(add_prop.add.key_package.extensions_data);
-        return MARMOT_ERR_MEMORY;
+        rc = MARMOT_ERR_MEMORY;
+        goto fail_pre_gc;
     }
 
     /* Generate UpdatePath */
-    uint8_t root_path_secret[MLS_HASH_LEN];
     MlsUpdatePath update_path;
     uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
     const uint8_t *own_cred = group->tree.nodes[own_node].leaf.credential_identity;
@@ -1313,7 +1324,8 @@ add_member_staged(MlsGroup *group,
     if (generate_update_path(group, own_cred, own_cred_len, &added_leaf, 1,
                              &update_path, root_path_secret) != 0) {
         mls_proposal_clear(&add_prop);
-        return MARMOT_ERR_INTERNAL;
+        rc = MARMOT_ERR_INTERNAL;
+        goto fail_pre_gc;
     }
 
     /* Build the Commit */
@@ -1323,7 +1335,8 @@ add_member_staged(MlsGroup *group,
     if (!commit.proposals) {
         mls_proposal_clear(&add_prop);
         mls_update_path_clear(&update_path);
-        return MARMOT_ERR_MEMORY;
+        rc = MARMOT_ERR_MEMORY;
+        goto fail_pre_gc;
     }
     commit.proposals[0] = add_prop;
     commit.proposal_count = 1;
@@ -1334,12 +1347,14 @@ add_member_staged(MlsGroup *group,
     MlsTlsBuf commit_buf;
     if (mls_tls_buf_init(&commit_buf, 1024) != 0) {
         mls_commit_clear(&commit);
-        return MARMOT_ERR_MEMORY;
+        rc = MARMOT_ERR_MEMORY;
+        goto fail_pre_gc;
     }
     if (mls_commit_serialize(&commit, &commit_buf) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
+        rc = MARMOT_ERR_INTERNAL;
+        goto fail_pre_gc;
     }
 
     /* Build and sign the PublicMessage framing now: the confirmed transcript
@@ -1352,11 +1367,11 @@ add_member_staged(MlsGroup *group,
                                     &wire_msg, &ct_input, &ct_input_len) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
+        rc = MARMOT_ERR_INTERNAL;
+        goto fail_pre_gc;
     }
 
     /* Advance epoch */
-    uint8_t commit_secret[MLS_HASH_LEN];
     if (derive_commit_secret(root_path_secret, true, commit_secret) != 0) {
         free(ct_input);
         mls_tls_buf_free(&commit_buf);
@@ -1600,11 +1615,12 @@ add_member_staged(MlsGroup *group,
     if (finish_commit_public_message(&wire_msg, pre_membership_key,
                                      pre_gc, pre_gc_len, confirmation_tag,
                                      &wire_commit, &wire_commit_len) != 0) {
-        free(pre_gc);
+        /* finish_commit_public_message() already cleared wire_msg. */
         mls_tls_buf_free(&commit_buf);
         mls_tls_buf_free(&welcome_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
+        rc = MARMOT_ERR_INTERNAL;
+        goto fail_pre_gc;
     }
     free(pre_gc);
     mls_tls_buf_free(&commit_buf);
@@ -1628,7 +1644,10 @@ fail_wire_msg_internal:
     rc = MARMOT_ERR_INTERNAL;
 fail_wire_msg:
     mls_message_clear(&wire_msg);
+fail_pre_gc:
     free(pre_gc);
+    sodium_memzero(root_path_secret, sizeof(root_path_secret));
+    sodium_memzero(commit_secret, sizeof(commit_secret));
     return rc;
 }
 
