@@ -842,6 +842,7 @@ test_account_proof_enrollment(void)
   w.signer.hold = FALSE;
   gh_test_signer_release_all(&w.signer);
   wait_identity(alice->service, GH_MLS_IDENTITY_ENROLLED);
+  accept_contact(alice, BOB);   /* an empty room is not stored: the restart forgot it */
   create_group(alice, "Proven", (const guint[]){ BOB }, 1);
   join(&w.apps[BOB], ALICE);
 
