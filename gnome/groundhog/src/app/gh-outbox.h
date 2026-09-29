@@ -48,6 +48,19 @@ G_BEGIN_DECLS
  *  - D8: if the own and recipient inbox sets overlap, the self-copy waits
  *    U(5, 90) s (stored as not_before); it always uses its own connection.
  *
+ * Rooms (W17, gh_outbox_send_room()): one rumor with a "p" tag per
+ * recipient, sealed and gift-wrapped separately for each recipient (own
+ * ephemeral key, own randomized created_at) plus the one self-copy, all in
+ * one T-seal. Each wrap has its own connections, even to a relay on several
+ * recipients' lists, and the wraps go out in a random order U(0, 3) s apart
+ * (§4.5 S4, stored as not_before). Retries, relay-list refreshes and every
+ * outcome are per recipient. A recipient without a kind-10050 still has a
+ * stored wrap, but no target: nothing is published for them on any relay;
+ * "Retry" (or, while their lookup fails, the automatic retry) looks their
+ * list up again and publishes that same wrap once one exists. "Sent" needs
+ * every recipient; otherwise the status is "Sent to some people", and
+ * gh_outbox_item_dup_recipients() says who has it and who does not.
+ *
  * Generation binding: the outbox runs only while its store's account is the
  * active account. A switch (or loss) cancels every seal and publish in
  * flight at once (no late OK is recorded) and leaves the rows resumable;
@@ -107,6 +120,29 @@ void gh_outbox_target_free(GhOutboxTarget *target);
 /* GhOutboxTarget, recipient wraps first; empty once the message is gone. */
 GPtrArray *gh_outbox_item_dup_targets(GhOutboxItem *self);
 
+/* Where the message stands for one recipient (W17: per-recipient status). */
+typedef enum {
+  GH_OUTBOX_RECIPIENT_WAITING,  /* not sealed yet, or their relays have not answered */
+  GH_OUTBOX_RECIPIENT_SENT,     /* >= 1 of their message relays accepted it */
+  GH_OUTBOX_RECIPIENT_RETRYING, /* not yet; Groundhog tries again automatically */
+  GH_OUTBOX_RECIPIENT_NOT_SENT, /* refused, or the outbox gave up; Retry may help */
+  GH_OUTBOX_RECIPIENT_NO_INBOX  /* no kind-10050 list: nothing was sent to them */
+} GhOutboxRecipientState;
+
+typedef struct {
+  gchar *pubkey;                /* lowercase hex */
+  GhOutboxRecipientState state;
+  guint accepted;               /* their message relays that accepted it */
+  guint relays;                 /* their message relays it was (or is) sent to */
+} GhOutboxRecipient;
+
+void gh_outbox_recipient_free(GhOutboxRecipient *recipient);
+/* GhOutboxRecipient for every recipient of the message, in the rumor's "p"
+ * order (the account alone for a note to self); empty once it is gone or
+ * cancelled. NO_INBOX is known only once a lookup this session found no
+ * list; before that a recipient without targets is RETRYING. */
+GPtrArray *gh_outbox_item_dup_recipients(GhOutboxItem *self);
+
 typedef struct {
   GhStore *store;                      /* the account's open store; borrowed */
   GhAccountController *accounts;
@@ -147,6 +183,15 @@ gboolean gh_outbox_is_active(GhOutbox *self);
  * signed or published before this returns. */
 GhOutboxItem *gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex,
                              const gchar *content, GError **error);
+/* gh_outbox_send() to a NIP-17 room (W17): @recipients holds 1 to
+ * GH_NIP17_MAX_SEND_RECIPIENTS distinct hex pubkeys besides the account (the
+ * account alone is a note to self); the conversation is the room of the
+ * account and them (charter §3.3 backend key). One recipient is exactly
+ * gh_outbox_send(). The disappearing timer, T-enqueue before any signer
+ * call, and the block lifted by writing apply as there. Errors as there,
+ * G_IO_ERROR_INVALID_ARGUMENT also for too many or repeated recipients. */
+GhOutboxItem *gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients,
+                                  const gchar *content, GError **error);
 /* Whether @content is short enough for one gift wrap to @recipient_pubkey_hex:
  * gh_outbox_send() refuses a text whose rumor is too long (about 40 KB,
  * less for text that JSON must escape). Measures exactly the rumor it would
@@ -154,6 +199,9 @@ GhOutboxItem *gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex,
  * length is then not what is wrong. */
 gboolean gh_outbox_text_fits(GhOutbox *self, const gchar *recipient_pubkey_hex,
                              const gchar *content);
+/* gh_outbox_text_fits() for gh_outbox_send_room(): the room's "p" tags count. */
+gboolean gh_outbox_text_fits_room(GhOutbox *self, const gchar *const *recipients,
+                                  const gchar *content);
 /* The message's item (loaded from the store if needed), or NULL. */
 GhOutboxItem *gh_outbox_lookup(GhOutbox *self, gint64 outbox_id);
 GhOutboxItem *gh_outbox_lookup_message(GhOutbox *self, gint64 message_id);

@@ -29,7 +29,7 @@ gh_delivery_report_add(GhDeliveryReport *report, const gchar *recipient, const g
                        gboolean accepted, const gchar *outcome)
 {
   g_return_if_fail(report != NULL);
-  g_return_if_fail(relay_url != NULL);
+  g_return_if_fail(relay_url != NULL || recipient != NULL);
   GhDeliveryTarget *target = g_new0(GhDeliveryTarget, 1);
   target->recipient = g_strdup(recipient);
   target->relay_url = g_strdup(relay_url);
@@ -149,6 +149,10 @@ group_title(const gchar *recipient, guint accepted, guint total)
 {
   g_autofree gchar *who = recipient ? gh_message_row_display_name(recipient)
                                     : g_strdup(_("Your other devices"));
+  if (total == 0)
+    /* TRANSLATORS: a recipient the message could not be sent to at all,
+     * e.g. "npub1abcde…wxyz · No message relays". */
+    return g_strdup_printf(_("%s · No message relays"), who);
   g_autofree gchar *count = g_strdup_printf(
     g_dngettext(NULL, "%u of %u relay accepted", "%u of %u relays accepted", total), accepted,
     total);
@@ -167,6 +171,8 @@ fill_relays(GhDeliveryIndicator *self, GhDeliveryReport *report)
   for (guint i = 0; i < report->targets->len; i++) {
     GhDeliveryTarget *target = g_ptr_array_index(report->targets, i);
     const gchar *key = target->recipient ? target->recipient : "";
+    if (!target->relay_url)
+      continue; /* a recipient without message relays: counts none */
     g_hash_table_insert(totals, (gpointer)key,
                         GUINT_TO_POINTER(GPOINTER_TO_UINT(g_hash_table_lookup(totals, key)) + 1));
     if (target->accepted)
@@ -177,7 +183,8 @@ fill_relays(GhDeliveryIndicator *self, GhDeliveryReport *report)
     GhDeliveryTarget *target = g_ptr_array_index(report->targets, i);
     const gchar *key = target->recipient ? target->recipient : "";
     GtkWidget *row = adw_action_row_new();
-    g_autofree gchar *host = relay_host(target->relay_url);
+    g_autofree gchar *host = target->relay_url ? relay_host(target->relay_url)
+                                               : g_strdup(_("Not sent to them"));
     /* Relay hosts and outcomes are shown as text, never as markup. */
     adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), host);
@@ -185,7 +192,8 @@ fill_relays(GhDeliveryIndicator *self, GhDeliveryReport *report)
                                 target->outcome ? target->outcome
                                                 : (target->accepted ? _("Accepted by this relay.")
                                                                     : _("Not answered yet.")));
-    gtk_widget_set_tooltip_text(row, target->relay_url);
+    if (target->relay_url)
+      gtk_widget_set_tooltip_text(row, target->relay_url);
     g_object_set_data_full(G_OBJECT(row), "groundhog-group", g_strdup(key), g_free);
     g_object_set_data_full(G_OBJECT(row), "groundhog-header",
                            group_title(target->recipient,

@@ -1007,12 +1007,12 @@ on_next(GtkWidget *widget, const gchar *action, GVariant *parameter)
   g_auto(GStrv) peers = g_strv_builder_end(chosen_keys);
   gboolean blocked = gh_conversation_store_is_blocked(self->config.conversations,
                                                       (const gchar *const *)peers);
-  /* Honest state (P4): sending reaches one person at a time in this version
-   * (the outbox's NIP-17 send), so a group room only receives for now. */
+  /* Honest state (P4, W17): a room message is encrypted separately for each
+   * person, and each of them sees who else is in the conversation (the
+   * rumor names everyone). */
   const gchar *note = n > 1
-    ? _("Nothing is sent until you write a message. Sending to more than one person "
-        "isn't possible in this version yet, so for now this conversation can only "
-        "receive messages.")
+    ? _("Nothing is sent until you write a message. Each message is encrypted separately "
+        "for each person, and everyone in the conversation can see who else is in it.")
     : _("Nothing is sent until you write a message.");
   g_autofree gchar *text = blocked
     ? g_strconcat(_("You blocked this conversation. Starting it unblocks it: their new "

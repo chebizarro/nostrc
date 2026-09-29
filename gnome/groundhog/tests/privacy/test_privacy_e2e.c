@@ -662,6 +662,13 @@ p_tag_of(NostrEvent *event)
   return NULL;
 }
 
+/* For g_ptr_array_sort() of hex keys. */
+static gint
+compare_hex(gconstpointer a, gconstpointer b)
+{
+  return strcmp(*(const gchar *const *)a, *(const gchar *const *)b);
+}
+
 static gboolean
 is_account(const gchar *pubkey)
 {
@@ -1280,6 +1287,95 @@ test_pt4_relay_minimization(void)
   g_assert_cmpuint(net->d.attempts, ==, 0);
 
   world_scan(&w, "PT-4");
+  world_down(&w);
+}
+
+/* PT-4 for a NIP-17 room (W17, nostrc-qp24.78): Alice writes to Bob and
+ * Carol together. One rumor names both; Bob's own wrap goes to exactly his
+ * inbox relays A and B, each on its own connection with a fresh ephemeral
+ * AUTH, the self-copy to C as Alice, and nothing at all is published for
+ * Carol, who has no kind 10050 (her 10002 relay D is never tried). No relay
+ * frame names a room member other than the wrap's receiver, so A and B
+ * cannot tell who else is in the room. Alice's status is "Sent to some
+ * people", Carol's state "no inbox"; Bob lists the message in the
+ * three-person room. H7 then finds the text nowhere in plaintext. */
+static void
+test_pt4_room(void)
+{
+  World w;
+  world_up(&w);
+  Net *net = &w.net;
+  guint from_a = net->a.frames->len, from_b = net->b.frames->len, from_c = net->c.frames->len;
+  WireRelay *relays[N_WIRE];
+  net_relays(net, relays);
+  guint events[N_WIRE];
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
+    events[i] = event_frames(relays[i]);
+
+  const gchar *text = world_canary(&w, "pt4-room", FALSE);
+  const gchar *const room[] = { hex[BOB], hex[CAROL], NULL };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhOutboxItem) item = gh_outbox_send_room(app_outbox(&w.alice), room, text, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(item);
+  StatusWait partial = { item, GH_MESSAGE_STATUS_PARTIALLY_SENT };
+  spin_until(status_is, &partial, "the room message reaching Bob only");
+  wait_received(&w.bob, text);
+  spin_until(inbox_idle, &w.bob, "Bob's inbox going idle");
+  spin_until(inbox_idle, &w.alice, "Alice's inbox taking its self-copy");
+  gh_test_run_until_idle();
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_NEEDS_ATTENTION);
+  assert_honest_status(item);
+  g_autoptr(GPtrArray) recipients = gh_outbox_item_dup_recipients(item);
+  g_assert_cmpuint(recipients->len, ==, 2);
+  for (guint i = 0; i < recipients->len; i++) {
+    GhOutboxRecipient *recipient = g_ptr_array_index(recipients, i);
+    g_assert_cmpint(recipient->state, ==, g_str_equal(recipient->pubkey, hex[BOB])
+                                            ? GH_OUTBOX_RECIPIENT_SENT
+                                            : GH_OUTBOX_RECIPIENT_NO_INBOX);
+  }
+
+  /* Bob's wrap: once on each of his relays, fresh keys; the self-copy as
+   * Alice on her own; nothing anywhere else. */
+  g_autofree gchar *key_a = NULL, *key_b = NULL;
+  g_autofree gchar *wrap_a = assert_one_publish(&net->a, from_a, hex[BOB], NULL, &key_a);
+  g_autofree gchar *wrap_b = assert_one_publish(&net->b, from_b, hex[BOB], NULL, &key_b);
+  g_assert_cmpstr(wrap_a, ==, wrap_b);
+  g_assert_cmpstr(key_a, !=, key_b);
+  g_autofree gchar *self_wrap = assert_one_publish(&net->c, from_c, hex[ALICE], hex[ALICE],
+                                                   NULL);
+  g_assert_cmpstr(self_wrap, !=, wrap_a);
+  g_assert_cmpuint(event_frames(&net->e), ==, events[3]);
+  g_assert_cmpuint(event_frames(&net->g), ==, events[4]);
+  g_assert_cmpuint(net->d.attempts, ==, 0);
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
+    for (guint j = 0; j < relays[i]->stored->len; j++) {
+      WireStored *stored = g_ptr_array_index(relays[i]->stored, j);
+      if (nostr_event_get_kind(stored->event) == 1059)
+        g_assert_cmpstr(p_tag_of(stored->event), !=, hex[CAROL]);
+    }
+  }
+  /* Who else is in the room stays inside the encryption. */
+  g_assert_false(any_frames_mention(&net->a, hex[ALICE]));
+  g_assert_false(any_frames_mention(&net->b, hex[ALICE]));
+  g_assert_false(any_frames_mention(&net->a, hex[CAROL]));
+  g_assert_false(any_frames_mention(&net->b, hex[CAROL]));
+  g_assert_false(any_frames_mention(&net->c, hex[BOB]));
+  g_assert_false(any_frames_mention(&net->c, hex[CAROL]));
+
+  /* Bob has it in the room of all three. */
+  GhMessage *received = find_content(w.bob.model, text);
+  g_assert_nonnull(received);
+  g_autoptr(GPtrArray) members = g_ptr_array_new();
+  g_ptr_array_add(members, hex[ALICE]);
+  g_ptr_array_add(members, hex[BOB]);
+  g_ptr_array_add(members, hex[CAROL]);
+  g_ptr_array_sort(members, compare_hex);
+  g_ptr_array_add(members, NULL);
+  g_autofree gchar *room_id = g_strjoinv(",", (gchar **)members->pdata);
+  g_assert_cmpstr(gh_message_get_room_id(received), ==, room_id);
+
+  world_scan(&w, "PT-4 room");
   world_down(&w);
 }
 
@@ -1920,6 +2016,7 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/privacy/h7-scanner", test_h7_scanner);
   nostrc_test_bus_add_func("/groundhog/privacy/pt4-relay-minimization",
                            test_pt4_relay_minimization);
+  nostrc_test_bus_add_func("/groundhog/privacy/pt4-room", test_pt4_room);
   nostrc_test_bus_add_func("/groundhog/privacy/pt1-no-receipts", test_pt1_no_receipts);
   nostrc_test_bus_add_func("/groundhog/privacy/pt2-no-remote-fetch", test_pt2_no_remote_fetch);
   nostrc_test_bus_add_func("/groundhog/privacy/pt8-request-no-lookup",

@@ -1050,10 +1050,13 @@ test_gui_new_message_consent(void)
                   "discovery-b.test.invalid) for their message relays. Those relays learn "
                   "whom you asked about.");
   g_assert_cmpuint(f.rec.reqs->len, ==, reqs);
-  /* Honest about what a group room can do in this version (P4). */
+  /* Honest about what a room means (P4, W17): it sends, one wrap per
+   * person, and everyone sees who else is in it. */
   GtkLabel *note = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "start_note");
   g_assert_nonnull(strstr(gtk_label_get_text(note),
-                          "Sending to more than one person isn't possible in this version yet"));
+                          "Each message is encrypted separately for each person"));
+  g_assert_nonnull(strstr(gtk_label_get_text(note), "can see who else is in it"));
+  g_assert_null(strstr(gtk_label_get_text(note), "isn't possible"));
 
   /* Chosen: each person's 10050 only (no kind 0), from discovery relays. */
   adw_action_row_activate(check);

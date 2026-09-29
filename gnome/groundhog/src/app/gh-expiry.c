@@ -80,6 +80,26 @@ gh_expiry_draw_outer(GhClock *clock, gint64 sent_at, gint64 expires_at,
   return TRUE;
 }
 
+gboolean
+gh_expiry_draw_room(GhClock *clock, gint64 sent_at, gint64 expires_at, guint n_recipients,
+                    GhNip17RoomExpiration *out)
+{
+  g_return_val_if_fail(clock != NULL && out != NULL, FALSE);
+  if (sent_at <= 0 || expires_at <= sent_at || n_recipients > GH_NIP17_MAX_SEND_RECIPIENTS)
+    return FALSE;
+  const gint64 jitter_max = gh_expiry_outer_jitter_max(sent_at, expires_at);
+  memset(out, 0, sizeof *out);
+  out->n_recipients = n_recipients;
+  for (guint i = 0; i <= n_recipients; i++) {
+    GhNip17LayerExpiration *layer = i < n_recipients ? &out->recipients[i] : &out->self_copy;
+    layer->seal = gh_expiry_outer_expiration(sent_at, expires_at,
+                                             gh_clock_random_range(clock, 0, jitter_max));
+    layer->wrap = gh_expiry_outer_expiration(sent_at, expires_at,
+                                             gh_clock_random_range(clock, 0, jitter_max));
+  }
+  return TRUE;
+}
+
 gint64
 gh_expiry_retention_cutoff(gint64 now, gint days)
 {

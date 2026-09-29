@@ -13,7 +13,8 @@ G_BEGIN_DECLS
 typedef struct {
   gchar *recipient;    /* lowercase hex pubkey of the wrap's receiver; NULL
                         * for the self-copy (your other devices) */
-  gchar *relay_url;
+  gchar *relay_url;    /* NULL: the recipient has no message relay to send to
+                        * (W17: nothing went out for them; outcome says why) */
   gboolean accepted;   /* the relay answered OK true (or "duplicate:") */
   gchar *outcome;      /* one plain-language sentence, e.g.
                         * gh_message_status_describe_target() */
@@ -29,7 +30,9 @@ typedef struct {
 } GhDeliveryReport;
 
 GhDeliveryReport *gh_delivery_report_new(void);
-/* Appends a target (copies the strings). recipient NULL: the self-copy. */
+/* Appends a target (copies the strings). recipient NULL: the self-copy.
+ * relay_url NULL (a recipient only): that recipient has no message relay,
+ * shown as one row saying so with outcome as its explanation. */
 void gh_delivery_report_add(GhDeliveryReport *report, const gchar *recipient,
                             const gchar *relay_url, gboolean accepted, const gchar *outcome);
 void gh_delivery_report_free(GhDeliveryReport *report);

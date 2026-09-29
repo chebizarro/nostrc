@@ -27,8 +27,10 @@ typedef struct {
  * gh_conversation_list_attach() must have installed) to the active account's
  * durable outbox (gh-outbox.h, from the account store) and drafts.
  *
- *  - Send: gh_outbox_send() to the shown conversation's one other participant,
- *    or to the account itself in a note to self. T-enqueue is written before
+ *  - Send: gh_outbox_send_room() to the shown conversation's other
+ *    participants, one person or a NIP-17 room of up to 10 (W17: one rumor,
+ *    a gift wrap per person), or to the account itself in a note to self.
+ *    T-enqueue is written before
  *    any signer call and clears the stored draft; the UI never waits for the
  *    signer or a relay. The message is shown at once (its local echo, from the
  *    queued rumor) and its status follows the outbox honestly: "Waiting for
@@ -53,11 +55,14 @@ typedef struct {
  *  - Why sending is unavailable, in the composer's place (never a disabled
  *    button without a reason): no active account, the signer unreachable or
  *    unsupported (gh_account_describe_limits()), the message store opening,
- *    locked, unavailable, damaged or failed, a NIP-17 group conversation
- *    (only one-to-one sending exists yet; a relay group's reason is its
- *    delegate's, below), or a recipient without a message inbox
- *    (with "Check Again", which retries that message). Offline is not a
- *    reason: the outbox waits for the connection.
+ *    locked, unavailable, damaged or failed, a NIP-17 room of more than 10
+ *    other people (NIP-17's limit; it only receives; a relay group's reason
+ *    is its delegate's, below), or a recipient without a message inbox, in
+ *    a room no one with one (with "Check Again", which retries that
+ *    message). Offline is not a reason: the outbox waits for the connection.
+ *  - Delivery details of a room message name each person: the relays of
+ *    each, a row for anyone without message relays (nothing was sent to
+ *    them), and for "Sent to some people" who has it and who does not.
  *  - Length: the composer measures texts with gh_outbox_text_fits().
  *  - Enter sends while the enter-sends setting is on.
  *  - The disappearing timer before sending (charter §3.7, W14 review B1):

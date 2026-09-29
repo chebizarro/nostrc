@@ -10,7 +10,8 @@
 G_BEGIN_DECLS
 
 /*
- * NIP-17 one-to-one text send pipeline (GTK-free).
+ * NIP-17 text send pipeline (GTK-free): one-to-one, a note to self, or a
+ * room of up to GH_NIP17_MAX_SEND_RECIPIENTS other people (W17).
  *
  * Sealing and publishing are separate steps, so that a durable outbox can
  * persist the sealed status between them and later republish the stored
@@ -28,9 +29,19 @@ G_BEGIN_DECLS
  * SEALING runs the signer approvals (NIP-44 encryption, seal signatures) and
  * yields one rumor, one gift wrap per recipient and one self-copy wrap.
  *
+ * Rooms (W17): the one rumor carries a "p" tag per recipient; every
+ * recipient's 10050 is looked up (concurrently), and each gets its own seal
+ * and wrap with its own ephemeral key and randomized created_at, so relays
+ * cannot link one recipient's wrap to another's. A recipient without a
+ * usable 10050 still gets a sealed wrap, but it has no targets: nothing is
+ * published for them, anywhere (FLAG_RECIPIENT_NO_INBOX, PARTIALLY_SENT at
+ * best). Only when no recipient has one does the send stop before sealing
+ * (NO_RECIPIENT_INBOX, or INBOX_UNKNOWN when a lookup could not be made).
+ *
  * PUBLISHING sends each recipient's wrap ONLY to that recipient's 10050 relays
  * and the self-copy ONLY to the account's own 10050 relays (GhAccountRelays),
- * one GhRelayPublish per wrap, so the two never share a connection. Only
+ * one GhRelayPublish per wrap, so no two wraps share a connection (a relay
+ * on several recipients' lists gets each wrap separately). Only
  * targets not already ACCEPTED are published to, so republishing a partially
  * settled status resumes the fanout. GhAuthPolicy (gh-auth-policy.h) picks
  * each URL's NIP-42 identity: a recipient's inbox relay only ever gets an
@@ -91,7 +102,9 @@ typedef enum {
   GH_DM_SEND_FLAG_NO_OWN_INBOX      = 1 << 2, /* no own 10050: self-copy has no target */
   GH_DM_SEND_FLAG_SELF_COPY_PARTIAL = 1 << 3, /* some own inbox relays did not accept */
   GH_DM_SEND_FLAG_SELF_COPY_FAILED  = 1 << 4, /* no own inbox relay accepted */
-  GH_DM_SEND_FLAG_AUTH_REQUIRED     = 1 << 5  /* a relay answered auth-required: */
+  GH_DM_SEND_FLAG_AUTH_REQUIRED     = 1 << 5, /* a relay answered auth-required: */
+  GH_DM_SEND_FLAG_RECIPIENT_NO_INBOX = 1 << 6 /* a room recipient has no usable 10050:
+                                               * their wrap has no target */
 } GhDmSendFlags;
 
 typedef struct {
@@ -124,7 +137,7 @@ typedef struct {
   gchar *sender;              /* hex pubkey */
   gchar *rumor_id;            /* for local display and dedup; NULL until sealed */
   gchar *rumor_json;          /* unsigned kind-14; never published in clear */
-  GPtrArray *recipients;      /* GhDmSendLeg*, one per recipient (one today) */
+  GPtrArray *recipients;      /* GhDmSendLeg*, one per recipient, in rumor "p" order */
   GhDmSendLeg *self_copy;     /* NULL for a note to self */
 } GhDmSendStatus;
 
@@ -169,6 +182,11 @@ GhDmSend *gh_dm_sender_send(GhDmSender *self, const gchar *recipient_pubkey_hex,
                             const gchar *content, GCancellable *cancellable);
 GhDmSend *gh_dm_sender_seal(GhDmSender *self, const gchar *recipient_pubkey_hex,
                             const gchar *content, GCancellable *cancellable);
+/* gh_dm_sender_send() to a room: @recipients holds 1 to
+ * GH_NIP17_MAX_SEND_RECIPIENTS distinct hex pubkeys, never the account
+ * among others (the account alone is a note to self). */
+GhDmSend *gh_dm_sender_send_room(GhDmSender *self, const gchar *const *recipients,
+                                 const gchar *content, GCancellable *cancellable);
 /* Like gh_dm_sender_seal(), for a rumor the caller already stored (see
  * gh_nip17_rumor_new(); a durable outbox persists it before any signer
  * call): the recipient is its single "p" tag (the account itself for a note
@@ -184,6 +202,12 @@ GhDmSend *gh_dm_sender_seal_rumor(GhDmSender *self, const gchar *rumor_json,
 GhDmSend *gh_dm_sender_seal_rumor_expiring(GhDmSender *self, const gchar *rumor_json,
                                            const GhNip17OuterExpiration *outer,
                                            GCancellable *cancellable);
+/* gh_dm_sender_seal_rumor_expiring() for a rumor to any number of
+ * recipients (gh_nip17_rumor_new_room()): its "p" tags are the recipients.
+ * @outer (copied, nullable) as for gh_nip17_envelope_seal_room_async(). */
+GhDmSend *gh_dm_sender_seal_room_rumor(GhDmSender *self, const gchar *rumor_json,
+                                       const GhNip17RoomExpiration *outer,
+                                       GCancellable *cancellable);
 /* Republishes the stored wraps of a sealed (or partially published) status to
  * every target that has not ACCEPTED, byte-for-byte and without any signer
  * call. The status must belong to the active account; it is copied. */

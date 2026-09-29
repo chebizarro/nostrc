@@ -15,12 +15,14 @@
 
 #include "gh-delivery-indicator.h"
 #include "gh-expiry.h"
+#include "gh-message-row.h"
 
 #include <string.h>
 
 #define DISCOVERY "wss://discovery.test.invalid"
 #define INBOX_A   "wss://inbox-a.test.invalid"   /* the account's own (key 1) */
 #define INBOX_B   "wss://inbox-b.test.invalid"   /* key 2's */
+#define INBOX_C   "wss://inbox-c.test.invalid"   /* key 3's, once set up */
 
 static GhTestBus bus;
 static GhTestSigner signer;
@@ -1276,8 +1278,8 @@ banner_hidden(gpointer data)
   return !adw_banner_get_revealed(ADW_BANNER(data));
 }
 
-/* A group conversation only receives for now; a recipient without a
- * message inbox (§7.15 state 11) gets the banner and the composer's reason
+/* A NIP-17 room sends (W17): no reason in its composer; a recipient without
+ * a message inbox (§7.15 state 11) gets the banner and the composer's reason
  * with Check Again, which tries the message again. */
 static void
 test_reasons_group_and_no_inbox(void)
@@ -1292,7 +1294,7 @@ test_reasons_group_and_no_inbox(void)
   const guint carol[] = { 3, 0 };
   GhConversation *group = receive(&f, 2, carol, "Hike on Saturday?");
   send_stack_select(&f.s, group);
-  wait_reason(composer, "group");
+  wait_reason(composer, NULL); /* W17: a room sends */
 
   GhConversation *dave = receive(&f, 3, NULL, "Hello, it's Carol");
   send_stack_select(&f.s, dave);
@@ -1342,6 +1344,97 @@ test_reasons_group_and_no_inbox(void)
   wait_reason(composer, NULL);
   gh_test_spin_until(banner_hidden, banner);
   g_assert_cmpuint(pubs_to("wss://inbox-c.test.invalid", stack_hex[3]), ==, 1);
+  fixture_clear(&f);
+}
+
+typedef struct {
+  Fixture *f;
+  GhMessage *message;
+  GhMessageStatus status;
+} AdvanceWait;
+
+/* Approves the signer and lets the fake clock run (a room's wraps go out
+ * U(0, 3) s apart, charter §4.5 S4) until the message has status. */
+static gboolean
+advance_until_status(gpointer data)
+{
+  AdvanceWait *wait = data;
+  if (signer.held->len)
+    gh_test_signer_release_all(&signer);
+  if (gh_message_get_status(wait->message) == wait->status)
+    return TRUE;
+  gh_clock_fake_advance(wait->f->s.clock, G_USEC_PER_SEC);
+  return FALSE;
+}
+
+static void
+approve_advancing(Fixture *f, GhMessage *message, GhMessageStatus status)
+{
+  AdvanceWait wait = { f, message, status };
+  gh_test_spin_until(advance_until_status, &wait);
+}
+
+/* W17: a message in a NIP-17 room is one rumor sealed and gift-wrapped for
+ * each person, each wrap only to that person's inbox relays, and the
+ * self-copy to the account's own. Carol has no message inbox: nothing is
+ * sent for her anywhere, her row in the delivery details says so, and the
+ * message is "Sent to some people" naming who has it. Once she sets one
+ * up, Try Again sends her the same stored wrap (no signer call) and the
+ * message is Sent; Bob's wrap is not sent again. */
+static void
+test_room_send(void)
+{
+  Fixture f = { 0 };
+  fixture_init(&f, bus.client);
+  f.s.clock = gh_clock_new_fake(g_get_real_time());
+  fixture_up(&f, 960, 680);
+  const guint carol[] = { 3, 0 };
+  GhConversation *room = receive(&f, 2, carol, "Hike on Saturday?");
+  send_stack_select(&f.s, room);
+  GhComposer *composer = send_stack_composer(&f.s);
+  GhConversationView *view = send_stack_view(&f.s);
+  wait_reason(composer, NULL);
+
+  stack_type(composer, "Count me in");
+  g_assert_true(gh_composer_send(composer));
+  GhMessage *mine = stack_find(room, "Count me in");
+  approve_advancing(&f, mine, GH_MESSAGE_STATUS_PARTIALLY_SENT);
+  gh_test_run_until_idle();
+  g_assert_cmpuint(pubs_to(INBOX_B, stack_hex[2]), ==, 1);
+  g_assert_cmpuint(pubs_to(INBOX_A, stack_hex[1]), ==, 1);
+  g_assert_cmpuint(pubs.opens->len, ==, 2); /* nothing for Carol, anywhere */
+  {
+    g_autoptr(GhDeliveryReport) report = report_of(&f, mine);
+    g_assert_nonnull(report);
+    g_assert_cmpuint(report->targets->len, ==, 3);
+    GhDeliveryTarget *to_bob = g_ptr_array_index(report->targets, 0);
+    GhDeliveryTarget *to_carol = g_ptr_array_index(report->targets, 1);
+    GhDeliveryTarget *to_self = g_ptr_array_index(report->targets, 2);
+    g_assert_cmpstr(to_bob->recipient, ==, stack_hex[2]);
+    g_assert_cmpstr(to_bob->relay_url, ==, INBOX_B);
+    g_assert_true(to_bob->accepted);
+    g_assert_cmpstr(to_carol->recipient, ==, stack_hex[3]);
+    g_assert_null(to_carol->relay_url);
+    g_assert_false(to_carol->accepted);
+    g_assert_nonnull(strstr(to_carol->outcome, "haven't set up private messaging"));
+    g_assert_null(to_self->recipient);
+    g_assert_cmpstr(to_self->relay_url, ==, INBOX_A);
+    g_autofree gchar *bob = gh_message_row_display_name(stack_hex[2]);
+    g_autofree gchar *carol_name = gh_message_row_display_name(stack_hex[3]);
+    g_autofree gchar *expected = g_strdup_printf("Sent to %s. Not sent to %s.", bob, carol_name);
+    g_assert_cmpstr(report->detail, ==, expected);
+  }
+  /* Someone has it: the composer stays usable, with no banner. */
+  g_assert_null(gh_composer_get_disabled_reason(composer));
+
+  g_hash_table_insert(f.directory->inboxes, g_strdup(stack_hex[3]), g_strdup(INBOX_C));
+  guint calls = signer.calls;
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "conversation.retry-message", "s",
+                                           gh_message_get_rumor_id(mine)));
+  approve_advancing(&f, mine, GH_MESSAGE_STATUS_SENT);
+  g_assert_cmpuint(pubs_to(INBOX_C, stack_hex[3]), ==, 1);
+  g_assert_cmpuint(pubs_to(INBOX_B, stack_hex[2]), ==, 1);
+  g_assert_cmpuint(signer.calls, ==, calls); /* the stored wrap, not re-sealed */
   fixture_clear(&f);
 }
 
@@ -1915,6 +2008,7 @@ main(int argc, char **argv)
   ADD("reasons-account-signer-store", test_reasons_account_signer_store);
   ADD("reason-no-signer-bus", test_reason_no_signer_bus);
   ADD("reasons-group-and-no-inbox", test_reasons_group_and_no_inbox);
+  ADD("room-send", test_room_send);
   ADD("locked-messages", test_locked_messages);
   ADD("focus-guard", test_focus_guard);
   ADD("timer-indicator", test_timer_indicator);

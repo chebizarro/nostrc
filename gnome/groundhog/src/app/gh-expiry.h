@@ -73,6 +73,11 @@ gint64 gh_expiry_outer_expiration(gint64 sent_at, gint64 expires_at, gint64 jitt
  * (nothing drawn) unless 0 < sent_at < expires_at. */
 gboolean gh_expiry_draw_outer(GhClock *clock, gint64 sent_at, gint64 expires_at,
                               GhNip17OuterExpiration *out);
+/* The same for a message to @n_recipients people (W17; 0: a note to self,
+ * at most GH_NIP17_MAX_SEND_RECIPIENTS): every recipient's seal and wrap and
+ * the self-copy's, each drawn independently. */
+gboolean gh_expiry_draw_room(GhClock *clock, gint64 sent_at, gint64 expires_at,
+                             guint n_recipients, GhNip17RoomExpiration *out);
 
 /* Retention: messages received before the returned cutoff are purged; 0
  * (keep everything) when @days is 0 or less. */

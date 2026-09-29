@@ -199,7 +199,15 @@ update_meta(GhMessageRow *self)
   gboolean expiring = gh_message_get_expires_at(message) > 0;
   gboolean noteworthy = status != GH_MESSAGE_STATUS_NONE && status != GH_MESSAGE_STATUS_SENT;
   gtk_widget_set_visible(GTK_WIDGET(self->meta_box), self->run_end || expiring || noteworthy);
-  gtk_widget_set_visible(GTK_WIDGET(self->retry_button), status == GH_MESSAGE_STATUS_NOT_SENT);
+  /* W17: a room message that reached only some people can be tried again
+   * for the others (the same stored wraps; those who have it are skipped). */
+  gboolean partial = status == GH_MESSAGE_STATUS_PARTIALLY_SENT;
+  gtk_widget_set_visible(GTK_WIDGET(self->retry_button),
+                         status == GH_MESSAGE_STATUS_NOT_SENT || partial);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->retry_button),
+                              partial ? _("Send this message again to the people who don't "
+                                          "have it yet")
+                                      : _("Send this message again"));
 }
 
 static void

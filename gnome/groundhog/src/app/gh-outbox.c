@@ -11,6 +11,7 @@
 #define RETRY_WINDOW_S        (72 * 3600)
 #define SELF_COPY_DELAY_MIN_S 5
 #define SELF_COPY_DELAY_MAX_S 90
+#define ROOM_SPACING_MAX_S    3     /* §4.5 S4: room wraps U(0, 3) s apart */
 #define MAX_TARGETS           16    /* one GhRelayPublish's URL bound */
 #define MAX_RELAY_TEXT        1024  /* as the store keeps it */
 #define STORE_RETRY_S         30    /* re-check after a failed store write */
@@ -59,13 +60,20 @@ struct _Msg {
   GhOutbox *outbox;          /* borrowed: the outbox stops every message first */
   GhStoreOutboxEntry *entry; /* the persisted state, kept in step with the store */
   GhOutboxItem *item;
-  gchar *recipient;          /* the rumor's recipient (the account for a note to self) */
+  /* The rumor's recipients ("p" order; the account alone for a note to
+   * self), NULL when the stored rumor is unusable. */
+  GStrv recipients;
+  /* What this session learned of each recipient's 10050 (pubkey ->
+   * GhInboxStatus + 1): a wrap without targets is "no inbox" only when
+   * known absent; otherwise its lookup is retried. */
+  GHashTable *inboxes;
+  guint resolving;           /* recipient lookups of this round still out */
   GPtrArray *legs;           /* Leg, one per stored event */
   GhDmSend *seal;
   gulong seal_handler;
   gboolean signer_pending;
   guint seal_tries;          /* this session; paces inbox lookups that failed */
-  GCancellable *resolve;     /* re-reading the recipient's 10050 after sealing */
+  GCancellable *resolve;     /* re-reading the recipients' 10050 after sealing */
   guint timer;
   gint64 timer_at;
   GSource *idle;
@@ -293,6 +301,74 @@ msg_sealed(const Msg *msg)
   return msg->entry->events->len > 0;
 }
 
+static gboolean
+msg_note_to_self(const Msg *msg)
+{
+  return msg->recipients && msg->recipients[0] && !msg->recipients[1] &&
+         g_strcmp0(msg->recipients[0], msg->outbox->account) == 0;
+}
+
+static guint
+msg_n_recipients(const Msg *msg)
+{
+  return msg->recipients ? g_strv_length(msg->recipients) : 0;
+}
+
+static void
+msg_set_inbox(Msg *msg, const gchar *pubkey, GhInboxStatus status)
+{
+  g_hash_table_replace(msg->inboxes, g_ascii_strdown(pubkey, -1), GINT_TO_POINTER(status + 1));
+}
+
+/* Known this session to have no usable kind-10050 (NOT_FOUND or EMPTY). */
+static gboolean
+msg_inbox_absent(Msg *msg, const gchar *pubkey)
+{
+  gint known = GPOINTER_TO_INT(g_hash_table_lookup(msg->inboxes, pubkey));
+  return known == GH_INBOX_NOT_FOUND + 1 || known == GH_INBOX_EMPTY + 1;
+}
+
+/* A recipient's stored wrap that has nowhere to go: nothing was ever
+ * published for that recipient (no 10050 when it was sealed or since). */
+static gboolean
+event_targetless(const GhStoreOutboxEvent *event)
+{
+  return event->role == GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP && event->targets->len == 0;
+}
+
+static gboolean
+msg_has_targetless(Msg *msg)
+{
+  for (guint i = 0; i < msg->entry->events->len; i++)
+    if (event_targetless(g_ptr_array_index(msg->entry->events, i)))
+      return TRUE;
+  return FALSE;
+}
+
+/* A targetless recipient whose inbox is not known to be absent (its lookup
+ * failed, or was not made this session): the outbox looks again on retry. */
+static gboolean
+msg_lookup_pending(Msg *msg)
+{
+  for (guint i = 0; i < msg->entry->events->len; i++) {
+    GhStoreOutboxEvent *event = g_ptr_array_index(msg->entry->events, i);
+    if (event_targetless(event) && !msg_inbox_absent(msg, event->target_pubkey))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+/* One recipient's combined class. A wrap without targets is TERMINAL when
+ * the recipient has no inbox, TRANSIENT while the lookup is to be retried. */
+static GhTargetClass
+recipient_class(Msg *msg, const GhStoreOutboxEvent *event)
+{
+  if (event_targetless(event))
+    return msg_inbox_absent(msg, event->target_pubkey) ? GH_TARGET_CLASS_TERMINAL
+                                                       : GH_TARGET_CLASS_TRANSIENT;
+  return event_class(event);
+}
+
 /* Whether every recipient's wrap was accepted by at least one relay. */
 static gboolean
 all_recipients_reached(Msg *msg)
@@ -334,7 +410,10 @@ detail_not_sent(Msg *msg)
     if (g_strcmp0(reason, REASON_STORAGE) == 0)
       return g_strdup(tr(N_("There wasn't enough storage space to prepare this message.")));
     if (g_strcmp0(reason, REASON_INBOX_UNKNOWN) == 0 || g_strcmp0(reason, REASON_TIMED_OUT) == 0)
-      return g_strdup(tr(N_("Groundhog couldn't look up the recipient's message relays.")));
+      return g_strdup(msg_n_recipients(msg) > 1
+        ? tr(N_("Groundhog couldn't look up the message relays of the people in this "
+                "conversation."))
+        : tr(N_("Groundhog couldn't look up the recipient's message relays.")));
     return g_strdup(tr(N_("This message couldn't be prepared for sending.")));
   }
   GString *text = g_string_new(NULL);
@@ -364,20 +443,25 @@ detail_for(Msg *msg, GhMessageStatus status)
     if (event->role == GH_STORE_OUTBOX_ROLE_SELF_WRAP)
       continue;
     recipients++;
-    reached += event_class(event) == GH_TARGET_CLASS_ACCEPTED;
+    reached += recipient_class(msg, event) == GH_TARGET_CLASS_ACCEPTED;
     for (guint j = 0; j < event->targets->len; j++) {
       total++;
       accepted += target_class(g_ptr_array_index(event->targets, j)) == GH_TARGET_CLASS_ACCEPTED;
     }
   }
+  gboolean room = msg_n_recipients(msg) > 1;
   switch (status) {
   case GH_MESSAGE_STATUS_WAITING_FOR_SIGNER:
     return g_strdup(tr(N_("Approve sending in Nostr Signer.")));
   case GH_MESSAGE_STATUS_QUEUED_OFFLINE:
     return g_strdup(tr(N_("Groundhog will send it when you're back online.")));
   case GH_MESSAGE_STATUS_SENDING:
-    return g_strdup(tr(N_("Sending to the recipient's message relays.")));
+    return g_strdup(room ? tr(N_("Sending to each person's message relays."))
+                         : tr(N_("Sending to the recipient's message relays.")));
   case GH_MESSAGE_STATUS_SENT:
+    if (room)
+      return g_strdup(tr(N_("Accepted by at least one message relay of each person. "
+                            "Groundhog can't tell when they receive or read it.")));
     return g_strdup_printf(tr(N_("Accepted by %u of %u of the recipient's message relays. "
                                  "Groundhog can't tell when they receive or read it.")),
                            accepted, total);
@@ -388,7 +472,9 @@ detail_for(Msg *msg, GhMessageStatus status)
   case GH_MESSAGE_STATUS_NOT_SENT:
     return detail_not_sent(msg);
   case GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX:
-    return g_strdup(tr(N_("The recipient hasn't set up private messaging yet.")));
+    return g_strdup(room ? tr(N_("No one in this conversation has set up private messaging "
+                                 "yet."))
+                         : tr(N_("The recipient hasn't set up private messaging yet.")));
   case GH_MESSAGE_STATUS_CANCELLED:
   default:
     return g_strdup(tr(N_("Cancelled before it was sent.")));
@@ -407,7 +493,7 @@ item_refresh(Msg *msg)
   gboolean has_self_copy = FALSE;
   for (guint i = 0; i < entry->events->len; i++) {
     GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, i);
-    GhTargetClass klass = event_class(event);
+    GhTargetClass klass = recipient_class(msg, event);
     if (event->role == GH_STORE_OUTBOX_ROLE_SELF_WRAP) {
       self_copy = klass;
       has_self_copy = TRUE;
@@ -503,7 +589,8 @@ msg_unref(Msg *msg)
   g_clear_object(&msg->item);
   g_ptr_array_unref(msg->legs);
   gh_store_outbox_entry_free(msg->entry);
-  g_free(msg->recipient);
+  g_strfreev(msg->recipients);
+  g_hash_table_unref(msg->inboxes);
   g_free(msg);
 }
 
@@ -546,7 +633,8 @@ msg_new(GhOutbox *self, GhStoreOutboxEntry *entry)
   msg->outbox = self;
   msg->legs = g_ptr_array_new_with_free_func(leg_free);
   msg_set_entry(msg, entry);
-  msg->recipient = gh_nip17_rumor_get_recipient(entry->rumor_json, self->account);
+  msg->recipients = gh_nip17_rumor_dup_recipients(entry->rumor_json, self->account);
+  msg->inboxes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   msg->item = g_object_new(GH_TYPE_OUTBOX_ITEM, NULL);
   msg->item->msg = msg;
   msg->item->outbox_id = entry->id;
@@ -596,6 +684,7 @@ msg_stop(Msg *msg)
     g_cancellable_cancel(msg->resolve);
     g_clear_object(&msg->resolve);
   }
+  msg->resolving = 0;
   msg_cancel_timer(msg);
   if (msg->idle) {
     GSource *idle = g_steal_pointer(&msg->idle);
@@ -793,16 +882,54 @@ inbox_sets_overlap(const GhDmSendStatus *status)
   return FALSE;
 }
 
+/* What the seal's lookups found for each recipient. */
+static void
+record_inboxes(Msg *msg, const GhDmSendStatus *status)
+{
+  for (guint i = 0; status->recipients && i < status->recipients->len; i++) {
+    GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
+    msg_set_inbox(msg, leg->pubkey, leg->relays->len ? GH_INBOX_FOUND : leg->inbox);
+  }
+}
+
+/* §4.5 S4: a room's recipient wraps go out in a random order, U(0, 3) s
+ * apart (not_before; the first at once), so that a relay on several
+ * recipients' lists does not get them back to back in "p" order. A
+ * one-to-one message has one wrap and no delay. */
+static void
+room_schedule(GhOutbox *self, guint n, gint64 *not_before)
+{
+  if (n < 2)
+    return;
+  g_autofree guint *order = g_new(guint, n);
+  for (guint i = 0; i < n; i++)
+    order[i] = i;
+  for (guint i = n - 1; i > 0; i--) {
+    guint j = gh_clock_random_uniform(self->clock, i + 1);
+    guint swap = order[i];
+    order[i] = order[j];
+    order[j] = swap;
+  }
+  gint64 at = now_unix(self);
+  for (guint k = 1; k < n; k++) {
+    at += gh_clock_random_range(self->clock, 0, ROOM_SPACING_MAX_S);
+    not_before[order[k]] = at;
+  }
+}
+
 /* T-seal: every signed wrap and its targets, before any publish. */
 static void
 store_sealed(Msg *msg, const GhDmSendStatus *status)
 {
   GhOutbox *self = msg->outbox;
+  record_inboxes(msg, status);
   g_autoptr(GArray) events = g_array_new(FALSE, TRUE, sizeof(GhStoreSealedEvent));
   g_autoptr(GPtrArray) url_lists = g_ptr_array_new_with_free_func((GDestroyNotify) g_ptr_array_unref);
+  g_autofree gint64 *spacing = g_new0(gint64, MAX(status->recipients->len, 1));
+  room_schedule(self, status->recipients->len, spacing);
   for (guint i = 0; i < status->recipients->len; i++)
     add_sealed_event(events, url_lists, GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP,
-                     g_ptr_array_index(status->recipients, i), 0);
+                     g_ptr_array_index(status->recipients, i), spacing[i]);
   if (status->self_copy) {
     gint64 not_before = inbox_sets_overlap(status)
       ? now_unix(self) + gh_clock_random_range(self->clock, SELF_COPY_DELAY_MIN_S,
@@ -866,6 +993,7 @@ seal_finished(Msg *msg)
     store_sealed(msg, status);
     break;
   case GH_DM_SEND_RESULT_NO_RECIPIENT_INBOX:
+    record_inboxes(msg, status);
     give_up(msg, REASON_NO_INBOX);
     break;
   case GH_DM_SEND_RESULT_INBOX_UNKNOWN:
@@ -909,15 +1037,17 @@ start_seal(Msg *msg)
 {
   msg->seal_tries++;
   /* A disappearing message's seals and wraps get their own later
-   * expirations (charter §3.7, PT-7), drawn again at every seal. Without
-   * them the envelope refuses an expiring rumor. */
-  GhNip17OuterExpiration outer;
+   * expirations (charter §3.7, PT-7), drawn again at every seal: each
+   * recipient's and the self-copy's independently. Without them the
+   * envelope refuses an expiring rumor. */
+  GhNip17RoomExpiration outer;
   gint64 created_at = 0, expires_at = 0;
+  guint n = msg_note_to_self(msg) ? 0 : msg_n_recipients(msg);
   gboolean expiring =
     gh_nip17_rumor_get_expiration(msg->entry->rumor_json, &created_at, &expires_at) &&
-    expires_at > 0 && gh_expiry_draw_outer(msg->outbox->clock, created_at, expires_at, &outer);
-  GhDmSend *seal = gh_dm_sender_seal_rumor_expiring(msg->outbox->sender, msg->entry->rumor_json,
-                                                    expiring ? &outer : NULL, NULL);
+    expires_at > 0 && gh_expiry_draw_room(msg->outbox->clock, created_at, expires_at, n, &outer);
+  GhDmSend *seal = gh_dm_sender_seal_room_rumor(msg->outbox->sender, msg->entry->rumor_json,
+                                                expiring ? &outer : NULL, NULL);
   msg->seal = seal;
   msg->seal_handler = g_signal_connect(seal, "changed", G_CALLBACK(on_seal_changed), msg);
   if (gh_dm_send_is_done(seal))
@@ -1097,9 +1227,10 @@ round_end(Msg *msg)
     }
     return;
   }
-  if (!msg_has_due(msg, FALSE)) {
+  if (!msg_has_due(msg, FALSE) && !msg_lookup_pending(msg)) {
     /* Nothing left to try automatically. Settled only if every recipient
-     * has it; otherwise the user decides (Retry reaches "error:" relays). */
+     * has it; otherwise the user decides (Retry reaches "error:" relays,
+     * and looks up again a recipient without message relays). */
     if (!all_recipients_reached(msg))
       give_up(msg, REASON_REFUSED);
     else if (msg_persist(msg, GH_STORE_OUTBOX_SETTLED, 0, FALSE, NULL))
@@ -1243,6 +1374,7 @@ typedef struct {
   GhOutbox *outbox;
   gint64 id;
   GCancellable *cancel;
+  gchar *pubkey;       /* the recipient looked up */
 } ResolveCall;
 
 static void
@@ -1255,26 +1387,37 @@ on_resolved(GObject *source, GAsyncResult *result, gpointer data)
                ? NULL : g_hash_table_lookup(call->outbox->messages, &call->id);
   if (msg && msg->resolve == call->cancel) {
     msg_ref(msg);
-    g_clear_object(&msg->resolve);
-    msg->targets_fresh = TRUE;
-    for (guint i = 0; inbox && inbox->status == GH_INBOX_FOUND && i < msg->entry->events->len &&
-                      !msg->dropped; i++) {
+    for (guint i = 0; inbox && i < msg->entry->events->len && !msg->dropped; i++) {
       GhStoreOutboxEvent *event = g_ptr_array_index(msg->entry->events, i);
-      if (event->role == GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP &&
-          g_strcmp0(event->target_pubkey, msg->recipient) == 0)
+      if (event->role != GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP ||
+          g_strcmp0(event->target_pubkey, call->pubkey) != 0)
+        continue;
+      if (inbox->status == GH_INBOX_FOUND)
         add_targets(msg, event, (const gchar *const *) inbox->relays);
+      /* A list naming no usable relay is as good as none. */
+      msg_set_inbox(msg, call->pubkey, inbox->status == GH_INBOX_FOUND && event_targetless(event)
+                                         ? GH_INBOX_EMPTY : inbox->status);
     }
-    if (!msg->dropped && msg->in_round)
-      round_publish(msg);
+    if (msg->resolving > 0 && --msg->resolving == 0) {
+      g_clear_object(&msg->resolve);
+      msg->targets_fresh = TRUE;
+      if (!msg->dropped) {
+        item_refresh(msg);
+        if (msg->in_round)
+          round_publish(msg);
+      }
+    }
     msg_unref(msg);
   }
   g_object_unref(call->cancel);
   g_object_unref(call->outbox);
+  g_free(call->pubkey);
   g_free(call);
 }
 
 /* Once per session and message, before its first round: the target lists
- * may have changed since sealing. A failed lookup never blocks publishing. */
+ * may have changed since sealing, so every recipient's is read again (one
+ * lookup each, concurrently). A failed lookup never blocks publishing. */
 static void
 round_begin(Msg *msg)
 {
@@ -1287,18 +1430,24 @@ round_begin(Msg *msg)
   add_own_inbox_targets(msg);
   if (msg->dropped)
     return;
-  if (!msg->recipient || g_strcmp0(msg->recipient, self->account) == 0) {
+  if (!msg->recipients || msg_note_to_self(msg)) {
     msg->targets_fresh = TRUE;
     round_publish(msg);
     return;
   }
-  msg->inbox_changed = FALSE; /* this resolve reads the changed list */
-  ResolveCall *call = g_new0(ResolveCall, 1);
-  call->outbox = g_object_ref(self);
-  call->id = msg->entry->id;
-  call->cancel = g_cancellable_new();
-  msg->resolve = g_object_ref(call->cancel);
-  gh_inbox_resolver_resolve_async(self->inboxes, msg->recipient, call->cancel, on_resolved, call);
+  msg->inbox_changed = FALSE; /* this resolve reads the changed lists */
+  GCancellable *cancel = g_cancellable_new();
+  msg->resolve = cancel;
+  msg->resolving = msg_n_recipients(msg);
+  for (guint i = 0; msg->recipients[i]; i++) {
+    ResolveCall *call = g_new0(ResolveCall, 1);
+    call->outbox = g_object_ref(self);
+    call->id = msg->entry->id;
+    call->cancel = g_object_ref(cancel);
+    call->pubkey = g_strdup(msg->recipients[i]);
+    gh_inbox_resolver_resolve_async(self->inboxes, call->pubkey, call->cancel, on_resolved,
+                                    call);
+  }
 }
 
 /* ---- the state machine --------------------------------------------------- */
@@ -1347,9 +1496,12 @@ msg_eval(Msg *msg)
       round_start_legs(msg, FALSE); /* a leg's not_before came */
   } else {
     gint64 now = now_unix(msg->outbox);
+    /* A recipient without message relays is looked up again on a retry
+     * (automatic while its lookup failed, the user's when it had none). */
+    gboolean lookup = msg_lookup_pending(msg) || (msg->manual && msg_has_targetless(msg));
     if (entry->state == GH_STORE_OUTBOX_WAITING_RETRY && entry->next_attempt_at > now)
       msg_schedule(msg, entry->next_attempt_at);
-    else if (!msg_has_due(msg, msg->manual) && !msg->inbox_changed)
+    else if (!msg_has_due(msg, msg->manual) && !msg->inbox_changed && !lookup)
       round_end(msg); /* everything answered already (e.g. before a crash) */
     else if (entry->attempts > 0 && now >= deadline(entry) && !msg->manual)
       give_up(msg, REASON_TIMED_OUT);
@@ -1430,13 +1582,15 @@ on_inbox_changed(GhInboxResolver *resolver, const gchar *pubkey, gpointer data)
   if (!pubkey || g_ascii_strcasecmp(pubkey, self->account) == 0)
     return;
   gint64 now = now_unix(self);
+  g_autofree gchar *lower = g_ascii_strdown(pubkey, -1);
   g_autoptr(GList) messages = g_hash_table_get_values(self->messages);
   for (GList *l = messages; l; l = l->next)
     msg_ref(l->data);
   for (GList *l = messages; l; l = l->next) {
     Msg *msg = l->data;
     GhStoreOutboxEntry *entry = msg->entry;
-    if (msg->dropped || !msg->recipient || g_ascii_strcasecmp(msg->recipient, pubkey) != 0 ||
+    if (msg->dropped || !msg->recipients ||
+        !g_strv_contains((const gchar *const *) msg->recipients, lower) ||
         entry->state == GH_STORE_OUTBOX_CANCELLED)
       continue;
     msg->targets_fresh = FALSE;
@@ -1559,19 +1713,43 @@ gh_outbox_is_active(GhOutbox *self)
   return self->generation != 0;
 }
 
-/* NIP-17 conversation key (charter §3.3): the sorted participant set. */
-static gchar *
-nip17_backend_key(const gchar *account, const gchar *recipient)
+static gint
+compare_strings(gconstpointer a, gconstpointer b)
 {
-  if (g_strcmp0(account, recipient) == 0)
-    return g_strdup(account);
-  return strcmp(account, recipient) < 0 ? g_strconcat(account, ",", recipient, NULL)
-                                        : g_strconcat(recipient, ",", account, NULL);
+  return strcmp(*(const gchar *const *) a, *(const gchar *const *) b);
+}
+
+/* NIP-17 conversation key (charter §3.3): the sorted participant set, the
+ * account included, lowercase and ','-joined (the account alone for a note
+ * to self). The recipients are valid (the rumor was built from them). */
+static gchar *
+nip17_backend_key(const gchar *account, const gchar *const *recipients)
+{
+  g_autoptr(GPtrArray) members = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_add(members, g_strdup(account));
+  for (guint i = 0; recipients[i]; i++) {
+    gchar *lower = g_ascii_strdown(recipients[i], -1);
+    if (g_strcmp0(lower, account) == 0)
+      g_free(lower);
+    else
+      g_ptr_array_add(members, lower);
+  }
+  g_ptr_array_sort(members, compare_strings);
+  g_ptr_array_add(members, NULL);
+  return g_strjoinv(",", (gchar **) members->pdata);
 }
 
 GhOutboxItem *
 gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *content,
                GError **error)
+{
+  const gchar *const recipients[] = { recipient_pubkey_hex, NULL };
+  return gh_outbox_send_room(self, recipient_pubkey_hex ? recipients : NULL, content, error);
+}
+
+GhOutboxItem *
+gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar *content,
+                    GError **error)
 {
   g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
   if (!self->generation) {
@@ -1579,11 +1757,12 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
                         "This outbox's account is not the active account");
     return NULL;
   }
-  /* Validates the recipient key and the text (non-empty UTF-8). */
+  /* Validates the recipient keys (1 to 10, distinct) and the text
+   * (non-empty UTF-8): one rumor, whatever the number of recipients. */
   g_autofree gchar *rumor_id = NULL;
   const gint64 created_at = now_unix(self);
-  g_autofree gchar *rumor = gh_nip17_rumor_new(self->account, recipient_pubkey_hex, content,
-                                               created_at, &rumor_id, error);
+  g_autofree gchar *rumor = gh_nip17_rumor_new_room(self->account, recipients, content,
+                                                    created_at, 0, &rumor_id, error);
   if (!rumor)
     return NULL;
   if (strlen(rumor) > MAX_RUMOR_JSON) {
@@ -1591,8 +1770,7 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
                         "The message is too long to send privately");
     return NULL;
   }
-  g_autofree gchar *recipient = g_ascii_strdown(recipient_pubkey_hex, -1);
-  g_autofree gchar *key = nip17_backend_key(self->account, recipient);
+  g_autofree gchar *key = nip17_backend_key(self->account, recipients);
   g_autofree gchar *op_id = gh_store_new_op_id();
   gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
   /* The conversation and T-enqueue commit together, with the conversation's
@@ -1610,8 +1788,8 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
   if (expires_at) {
     g_clear_pointer(&rumor_id, g_free);
     g_free(rumor);
-    rumor = gh_nip17_rumor_new_expiring(self->account, recipient_pubkey_hex, content, created_at,
-                                        expires_at, &rumor_id, error);
+    rumor = gh_nip17_rumor_new_room(self->account, recipients, content, created_at,
+                                    expires_at, &rumor_id, error);
     if (rumor && strlen(rumor) > MAX_RUMOR_JSON) {
       g_clear_pointer(&rumor, g_free);
       g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -1702,18 +1880,26 @@ gh_outbox_lookup_rumor(GhOutbox *self, const gchar *room_key, const gchar *rumor
 gboolean
 gh_outbox_text_fits(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *content)
 {
+  const gchar *const recipients[] = { recipient_pubkey_hex, NULL };
+  return gh_outbox_text_fits_room(self, recipient_pubkey_hex ? recipients : NULL, content);
+}
+
+gboolean
+gh_outbox_text_fits_room(GhOutbox *self, const gchar *const *recipients, const gchar *content)
+{
   g_return_val_if_fail(GH_IS_OUTBOX(self), FALSE);
   if (!content)
     return TRUE;
-  /* JSON escaping at most sextuples a byte (\u00XX) and the rest of a
-   * one-to-one rumor is well under 1 KB: short texts need no measuring. */
+  /* JSON escaping at most sextuples a byte (\u00XX) and the rest of a rumor
+   * (ten "p" tags and an expiration included) is under 2 KB: short texts
+   * need no measuring. */
   gsize length = strlen(content);
-  if (length <= (MAX_RUMOR_JSON - 1024) / 6)
+  if (length <= (MAX_RUMOR_JSON - 2048) / 6)
     return TRUE;
   if (length > MAX_RUMOR_JSON)
     return FALSE;
-  g_autofree gchar *rumor = gh_nip17_rumor_new(self->account, recipient_pubkey_hex, content,
-                                               now_unix(self), NULL, NULL);
+  g_autofree gchar *rumor = gh_nip17_rumor_new_room(self->account, recipients, content,
+                                                    now_unix(self), 0, NULL, NULL);
   return !rumor || strlen(rumor) <= MAX_RUMOR_JSON;
 }
 
@@ -1861,6 +2047,68 @@ gh_outbox_target_free(GhOutboxTarget *target)
   g_free(target->url);
   g_free(target->message);
   g_free(target);
+}
+
+void
+gh_outbox_recipient_free(GhOutboxRecipient *recipient)
+{
+  if (!recipient)
+    return;
+  g_free(recipient->pubkey);
+  g_free(recipient);
+}
+
+/* One recipient's state from its stored wrap (NULL: not sealed yet). */
+static GhOutboxRecipientState
+recipient_state(Msg *msg, const gchar *pubkey, const GhStoreOutboxEvent *event)
+{
+  gboolean gave_up = msg->entry->state == GH_STORE_OUTBOX_NEEDS_ATTENTION;
+  if (msg_inbox_absent(msg, pubkey) && (!event || event_targetless(event)))
+    return GH_OUTBOX_RECIPIENT_NO_INBOX;
+  if (!event)
+    return gave_up ? GH_OUTBOX_RECIPIENT_NOT_SENT : GH_OUTBOX_RECIPIENT_WAITING;
+  switch (recipient_class(msg, event)) {
+  case GH_TARGET_CLASS_ACCEPTED:
+    return GH_OUTBOX_RECIPIENT_SENT;
+  case GH_TARGET_CLASS_PENDING:
+  case GH_TARGET_CLASS_RESUMABLE:
+    return gave_up ? GH_OUTBOX_RECIPIENT_NOT_SENT : GH_OUTBOX_RECIPIENT_WAITING;
+  case GH_TARGET_CLASS_TRANSIENT:
+    return gave_up ? GH_OUTBOX_RECIPIENT_NOT_SENT : GH_OUTBOX_RECIPIENT_RETRYING;
+  case GH_TARGET_CLASS_TERMINAL:
+  default:
+    return GH_OUTBOX_RECIPIENT_NOT_SENT;
+  }
+}
+
+GPtrArray *
+gh_outbox_item_dup_recipients(GhOutboxItem *self)
+{
+  g_return_val_if_fail(GH_IS_OUTBOX_ITEM(self), NULL);
+  GPtrArray *recipients =
+    g_ptr_array_new_with_free_func((GDestroyNotify) gh_outbox_recipient_free);
+  Msg *msg = self->msg;
+  if (!msg || !msg->recipients || msg->entry->state == GH_STORE_OUTBOX_CANCELLED)
+    return recipients;
+  for (guint i = 0; msg->recipients[i]; i++) {
+    const gchar *pubkey = msg->recipients[i];
+    const GhStoreOutboxEvent *event = NULL;
+    for (guint j = 0; j < msg->entry->events->len && !event; j++) {
+      const GhStoreOutboxEvent *candidate = g_ptr_array_index(msg->entry->events, j);
+      if (candidate->role == GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP &&
+          g_strcmp0(candidate->target_pubkey, pubkey) == 0)
+        event = candidate;
+    }
+    GhOutboxRecipient *recipient = g_new0(GhOutboxRecipient, 1);
+    recipient->pubkey = g_strdup(pubkey);
+    recipient->state = recipient_state(msg, pubkey, event);
+    for (guint j = 0; event && j < event->targets->len; j++)
+      recipient->accepted +=
+        target_class(g_ptr_array_index(event->targets, j)) == GH_TARGET_CLASS_ACCEPTED;
+    recipient->relays = event ? event->targets->len : 0;
+    g_ptr_array_add(recipients, recipient);
+  }
+  return recipients;
 }
 
 GPtrArray *

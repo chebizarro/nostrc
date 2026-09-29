@@ -725,7 +725,8 @@ test_delivery_indicator(Fixture *f, gconstpointer data)
     gtk_test_accessible_assert_property(GTK_ACCESSIBLE(indicator_child(indicator, "button")),
                                         GTK_ACCESSIBLE_PROPERTY_LABEL,
                                         gh_message_status_get_label(status));
-    g_assert_cmpint(shown(retry), ==, status == GH_MESSAGE_STATUS_NOT_SENT);
+    g_assert_cmpint(shown(retry), ==, status == GH_MESSAGE_STATUS_NOT_SENT ||
+                                      status == GH_MESSAGE_STATUS_PARTIALLY_SENT);
     g_autoptr(GDateTime) now = g_date_time_new_now_local();
     g_autofree gchar *label = gh_message_row_compose_summary(mine, now);
     gtk_test_accessible_assert_property(GTK_ACCESSIBLE(item), GTK_ACCESSIBLE_PROPERTY_LABEL,

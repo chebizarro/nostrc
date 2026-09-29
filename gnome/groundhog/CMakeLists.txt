@@ -1741,6 +1741,38 @@ if (TARGET groundhog-account-store AND TARGET groundhog-notifier AND GROUNDHOG_E
 endif()
 # --- end W16 UX polish ---
 
+# --- W17 NIP-17 multi-recipient send (nostrc-qp24.78) ---
+# One rumor per message to a NIP-17 room of up to 10 people: one seal and
+# gift wrap per recipient plus the self-copy (fresh ephemeral key and
+# created_at each), per-recipient outbox state, retries and status, nothing
+# published for a recipient without a 10050, the disappearing timer, AUTH
+# policy and blocks. With libsoup, three accounts over real local
+# store-and-serve relays (H2); otherwise the rumor, limit and block cases.
+if (TARGET test-groundhog-outbox AND GROUNDHOG_EXPIRY_SOURCES AND TARGET groundhog-auth-policy)
+  add_executable(test-groundhog-multi-send tests/app/test_multi_send.c
+    ${GROUNDHOG_OUTBOX_SOURCES} ${GROUNDHOG_DM_SEND_SOURCES} ${GROUNDHOG_EXPIRY_SOURCES}
+    src/app/gh-nip17-envelope.c src/store/gh-store-conversations.c)
+  target_include_directories(test-groundhog-multi-send PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(test-groundhog-multi-send PRIVATE groundhog-account-relays
+    groundhog-auth-policy groundhog-conversations groundhog-store-testhooks nostr_nip17_core
+    nostr_nip59_core nostrc-test-bus)
+  if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    target_link_libraries(test-groundhog-multi-send PRIVATE PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    target_compile_definitions(test-groundhog-multi-send PRIVATE GROUNDHOG_TEST_WIRE=1)
+  endif()
+  target_compile_options(test-groundhog-multi-send PRIVATE -Wall -Wextra -Werror)
+  groundhog_store_link_sqlcipher_first(test-groundhog-multi-send)
+  add_dependencies(test-groundhog-multi-send groundhog-test-schemas)
+  add_test(NAME groundhog-multi-send COMMAND test-groundhog-multi-send)
+  set_tests_properties(groundhog-multi-send PROPERTIES TIMEOUT 180
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  message(STATUS "Groundhog multi-recipient send tests: enabled")
+else()
+  message(STATUS "Groundhog multi-recipient send tests: disabled (needs the outbox and expiry)")
+endif()
+# --- end W17 NIP-17 multi-recipient send ---
+
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from
 # src/app/gh-features.h, whose features follow the executable's

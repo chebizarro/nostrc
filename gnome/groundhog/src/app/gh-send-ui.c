@@ -4,6 +4,7 @@
 #include "gh-conversation-view.h"
 #include "gh-delivery-indicator.h"
 #include "gh-expiry.h"
+#include "gh-message-row.h"
 #include "gh-outbox.h"
 
 #include <glib/gi18n.h>
@@ -90,19 +91,35 @@ message_delegated(GhSendUi *ui, GhMessage *message)
          delegated(ui, gh_conversation_store_lookup(ui->model, gh_message_get_room_id(message)));
 }
 
-/* The one other participant (the account itself in a note to self); NULL
- * in a group conversation, which only receives for now. A NIP-29 relay group
- * has no peers but is not a note to self: its messages go to its relay
- * through GhNip29Service, never through the NIP-17 outbox (G20b). */
-static const gchar *
-recipient_of(GhSendUi *ui, GhConversation *conversation)
+/* Whom a message in conversation goes to (transfer full): its other
+ * participants, one or a NIP-17 room of up to GH_NIP17_MAX_SEND_RECIPIENTS
+ * (W17), or the account itself in a note to self. NULL for a room larger
+ * than NIP-17 allows (it can only receive) and for a NIP-29 relay group,
+ * which has no peers but is not a note to self: its messages go to its
+ * relay through GhNip29Service, never through the NIP-17 outbox (G20b). */
+static GStrv
+recipients_of(GhSendUi *ui, GhConversation *conversation)
 {
-  if (gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29)
+  if (!conversation || gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29)
     return NULL;
   const gchar *const *peers = gh_conversation_get_peers(conversation);
-  if (!peers || !peers[0])
-    return gh_conversation_store_get_account(ui->model);
-  return peers[1] ? NULL : peers[0];
+  if (!peers || !peers[0]) {
+    const gchar *account = gh_conversation_store_get_account(ui->model);
+    if (!account)
+      return NULL;
+    const gchar *const self[] = { account, NULL };
+    return g_strdupv((gchar **)self);
+  }
+  if (g_strv_length((gchar **)peers) > GH_NIP17_MAX_SEND_RECIPIENTS)
+    return NULL;
+  return g_strdupv((gchar **)peers);
+}
+
+static gboolean
+is_room(GhConversation *conversation)
+{
+  const gchar *const *peers = conversation ? gh_conversation_get_peers(conversation) : NULL;
+  return peers && peers[0] && peers[1];
 }
 
 /* ---- outbox items and message status -------------------------------------------- */
@@ -460,15 +477,24 @@ update_reason(GhSendUi *ui)
   if (!reason)
     reason = store_reason(ui);
   GhMessage *no_inbox = NULL;
+  gboolean room = is_room(ui->shown);
   if (!reason && ui->shown) {
+    g_auto(GStrv) recipients = delegated(ui, ui->shown) ? NULL : recipients_of(ui, ui->shown);
     if (delegated(ui, ui->shown))
       reason = ui->delegate.reason(ui->shown, ui->delegate_data);
-    else if (!recipient_of(ui, ui->shown))
+    else if (gh_conversation_get_backend(ui->shown) == GH_CONVERSATION_BACKEND_NIP29)
+      /* A relay group without its sending engine (G20b's delegate). */
       reason = g_strdup(_("Replying in group conversations isn't possible yet."));
+    else if (!recipients)
+      reason = g_strdup(_("Messages can't be sent in private conversations with more than "
+                          "10 people."));
     else if ((no_inbox = newest_without_inbox(ui)))
-      reason = g_strdup_printf(_("%s hasn't set up private messaging yet, so messages "
-                                 "can't be sent to them."),
-                               gh_conversation_get_title(ui->shown));
+      reason = room
+        ? g_strdup(_("No one in this conversation has set up private messaging yet, so "
+                     "messages can't be sent."))
+        : g_strdup_printf(_("%s hasn't set up private messaging yet, so messages "
+                            "can't be sent to them."),
+                          gh_conversation_get_title(ui->shown));
   }
 
   g_free(ui->no_inbox_rumor);
@@ -478,7 +504,8 @@ update_reason(GhSendUi *ui)
   gh_composer_set_disabled_reason(ui->composer, reason);
   gh_composer_set_disabled_action(ui->composer, no_inbox ? _("_Check Again") : NULL,
                                   "send.check-inbox");
-  gh_conversation_view_set_recipient_without_inbox(ui->view, no_inbox
+  /* The banner names one person; a room's reason is the composer's. */
+  gh_conversation_view_set_recipient_without_inbox(ui->view, no_inbox && !room
                                                      ? gh_conversation_get_title(ui->shown)
                                                      : NULL);
   ui->updating = FALSE;
@@ -519,15 +546,17 @@ on_send(GhComposer *composer, const gchar *text, gpointer data)
     }
     return TRUE;
   }
-  const gchar *recipient = ui->shown ? recipient_of(ui, ui->shown) : NULL;
-  if (!ui->outbox || !recipient) {
+  g_auto(GStrv) recipients = recipients_of(ui, ui->shown);
+  if (!ui->outbox || !recipients) {
     gh_composer_set_error(composer, _("This message can't be sent right now. It is kept here."));
     return FALSE;
   }
   g_autoptr(GError) error = NULL;
-  /* T-enqueue: stored with the draft cleared before any signer call. Its
-   * "item-added" already showed and bound the message. */
-  g_autoptr(GhOutboxItem) item = gh_outbox_send(ui->outbox, recipient, text, &error);
+  /* T-enqueue: stored with the draft cleared before any signer call, one
+   * rumor for everyone in the room (W17). Its "item-added" already showed
+   * and bound the message. */
+  g_autoptr(GhOutboxItem) item =
+    gh_outbox_send_room(ui->outbox, (const gchar *const *)recipients, text, &error);
   if (!item) {
     g_message("Groundhog could not queue a message: %s", error->message);
     gh_composer_set_error(composer, send_error(error));
@@ -542,10 +571,10 @@ static gboolean
 text_fits(const gchar *text, gpointer data)
 {
   GhSendUi *ui = data;
-  const gchar *recipient = ui->shown ? recipient_of(ui, ui->shown) : NULL;
-  if (!ui->outbox || !recipient)
+  g_auto(GStrv) recipients = recipients_of(ui, ui->shown);
+  if (!ui->outbox || !recipients)
     return strlen(text) <= GH_COMPOSER_DEFAULT_MAX_BYTES;
-  return gh_outbox_text_fits(ui->outbox, recipient, text);
+  return gh_outbox_text_fits_room(ui->outbox, (const gchar *const *)recipients, text);
 }
 
 static void
@@ -589,7 +618,79 @@ on_check_inbox(GSimpleAction *action, GVariant *parameter, gpointer data)
   retry(ui, message);
 }
 
-/* Delivery details (charter §3.6 "details on demand"). */
+/* "Bob", "Bob and Carol", "Bob, Carol and Dave": display names. */
+static gchar *
+join_names(GPtrArray *pubkeys)
+{
+  if (pubkeys->len == 0)
+    return NULL;
+  g_autofree gchar *last = gh_message_row_display_name(g_ptr_array_index(pubkeys, pubkeys->len - 1));
+  if (pubkeys->len == 1)
+    return g_steal_pointer(&last);
+  GString *head = g_string_new(NULL);
+  for (guint i = 0; i + 1 < pubkeys->len; i++) {
+    g_autofree gchar *name = gh_message_row_display_name(g_ptr_array_index(pubkeys, i));
+    if (i > 0)
+      /* TRANSLATORS: separates names in a list, "Bob, Carol and Dave". */
+      g_string_append(head, _(", "));
+    g_string_append(head, name);
+  }
+  g_autofree gchar *first = g_string_free(head, FALSE);
+  /* TRANSLATORS: the end of a list of names, "Bob, Carol and Dave". */
+  return g_strdup_printf(_("%s and %s"), first, last);
+}
+
+/* A room message that reached some people: who has it and who doesn't
+ * (W17, charter §3.6 "Sent to some people ... per recipient"). */
+static gchar *
+room_detail(GPtrArray *recipients)
+{
+  g_autoptr(GPtrArray) sent = g_ptr_array_new();
+  g_autoptr(GPtrArray) pending = g_ptr_array_new();
+  g_autoptr(GPtrArray) missing = g_ptr_array_new();
+  for (guint i = 0; i < recipients->len; i++) {
+    const GhOutboxRecipient *recipient = g_ptr_array_index(recipients, i);
+    switch (recipient->state) {
+    case GH_OUTBOX_RECIPIENT_SENT:
+      g_ptr_array_add(sent, recipient->pubkey);
+      break;
+    case GH_OUTBOX_RECIPIENT_WAITING:
+    case GH_OUTBOX_RECIPIENT_RETRYING:
+      g_ptr_array_add(pending, recipient->pubkey);
+      break;
+    case GH_OUTBOX_RECIPIENT_NOT_SENT:
+    case GH_OUTBOX_RECIPIENT_NO_INBOX:
+    default:
+      g_ptr_array_add(missing, recipient->pubkey);
+      break;
+    }
+  }
+  g_autofree gchar *sent_names = join_names(sent);
+  g_autofree gchar *pending_names = join_names(pending);
+  g_autofree gchar *missing_names = join_names(missing);
+  /* "Sent" is relay acceptance, as everywhere (UX-5). */
+  g_autoptr(GPtrArray) parts = g_ptr_array_new_with_free_func(g_free);
+  if (sent_names)
+    g_ptr_array_add(parts, g_strdup_printf(_("Sent to %s."), sent_names));
+  if (pending_names)
+    g_ptr_array_add(parts, g_strdup_printf(_("Still sending to %s."), pending_names));
+  if (missing_names)
+    g_ptr_array_add(parts, g_strdup_printf(_("Not sent to %s."), missing_names));
+  g_ptr_array_add(parts, NULL);
+  return g_strjoinv(" ", (gchar **)parts->pdata);
+}
+
+/* The description of a recipient without message relays. */
+static const gchar *
+no_relays_outcome(GhOutboxRecipientState state)
+{
+  return state == GH_OUTBOX_RECIPIENT_NO_INBOX
+    ? _("They haven't set up private messaging yet, so nothing was sent to them.")
+    : _("Groundhog couldn't look up their message relays yet.");
+}
+
+/* Delivery details (charter §3.6 "details on demand"): every recipient's
+ * relays, in a room also those without any (nothing went out for them). */
 static GhDeliveryReport *
 delivery_report(GhMessage *message, gpointer data)
 {
@@ -601,15 +702,30 @@ delivery_report(GhMessage *message, gpointer data)
     return NULL;
   GhDeliveryReport *report = gh_delivery_report_new();
   g_autoptr(GPtrArray) targets = gh_outbox_item_dup_targets(item);
-  for (guint i = 0; i < targets->len; i++) {
-    const GhOutboxTarget *target = g_ptr_array_index(targets, i);
-    gh_delivery_report_add(report,
-                           target->role == GH_STORE_OUTBOX_ROLE_SELF_WRAP ? NULL
-                                                                          : target->pubkey,
-                           target->url, target->target_class == GH_TARGET_CLASS_ACCEPTED,
-                           target->description);
+  g_autoptr(GPtrArray) recipients = gh_outbox_item_dup_recipients(item);
+  gboolean room = recipients->len > 1;
+  gboolean targetless_added = !room;
+  for (guint i = 0; i <= targets->len; i++) {
+    const GhOutboxTarget *target = i < targets->len ? g_ptr_array_index(targets, i) : NULL;
+    gboolean self_copy = target && target->role == GH_STORE_OUTBOX_ROLE_SELF_WRAP;
+    /* Recipients come first; those without relays close their part. */
+    if (!targetless_added && (!target || self_copy)) {
+      targetless_added = TRUE;
+      for (guint j = 0; j < recipients->len; j++) {
+        const GhOutboxRecipient *recipient = g_ptr_array_index(recipients, j);
+        if (recipient->relays == 0 && recipient->state != GH_OUTBOX_RECIPIENT_WAITING)
+          gh_delivery_report_add(report, recipient->pubkey, NULL, FALSE,
+                                 no_relays_outcome(recipient->state));
+      }
+    }
+    if (target)
+      gh_delivery_report_add(report, self_copy ? NULL : target->pubkey, target->url,
+                             target->target_class == GH_TARGET_CLASS_ACCEPTED,
+                             target->description);
   }
-  report->detail = g_strdup(gh_outbox_item_get_detail(item));
+  report->detail = room && gh_outbox_item_get_status(item) == GH_MESSAGE_STATUS_PARTIALLY_SENT
+                     ? room_detail(recipients)
+                     : g_strdup(gh_outbox_item_get_detail(item));
   report->next_attempt_at = gh_outbox_item_get_next_attempt_at(item);
   report->self_copy_missing = gh_outbox_item_get_self_copy_missing(item);
   return report;

@@ -33,8 +33,9 @@ struct _GhDmSend {
   gchar *content;     /* wiped once sealed */
   gchar *rumor;       /* seal_rumor: the caller's stored rumor; wiped once sealed */
   gboolean has_outer; /* the rumor expires: outer holds its layers' expirations */
-  GhNip17OuterExpiration outer;
+  GhNip17RoomExpiration outer;
   gboolean self_dm;
+  guint resolving;    /* recipient inbox lookups still out */
   GMainContext *context;
   GCancellable *cancel; /* revokes the inbox lookup and signer approvals */
   GSource *start;       /* pending low-priority continuation */
@@ -242,6 +243,16 @@ static GhDmSendLeg *
 first_recipient(GhDmSend *self)
 {
   return g_ptr_array_index(self->status.recipients, 0);
+}
+
+/* Room recipients whose inbox gave no target: nothing goes out for them. */
+static gboolean
+any_recipient_without_targets(const GhDmSendStatus *status)
+{
+  for (guint i = 0; i < status->recipients->len; i++)
+    if (((GhDmSendLeg *)g_ptr_array_index(status->recipients, i))->relays->len == 0)
+      return TRUE;
+  return FALSE;
 }
 
 /* ---- operation lifecycle ------------------------------------------------- */
@@ -679,19 +690,35 @@ envelope_done(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   GhDmSendStatus *status = &self->status;
-  GhDmSendLeg *recipient = first_recipient(self);
   status->rumor_json = g_strdup(envelope->rumor_json);
   status->rumor_id = event_id(envelope->rumor_json);
   if (self->self_dm) {
-    recipient->wrap_json = g_strdup(envelope->sender_wrap_json);
+    first_recipient(self)->wrap_json = g_strdup(envelope->sender_wrap_json);
   } else {
-    recipient->wrap_json = g_strdup(envelope->recipient_wrap_json);
+    /* Each recipient's own wrap, matched by receiver. */
+    for (guint i = 0; i < status->recipients->len; i++) {
+      GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
+      for (guint j = 0; envelope->recipients && envelope->recipients[j] && !leg->wrap_json; j++)
+        if (g_strcmp0(envelope->recipients[j], leg->pubkey) == 0)
+          leg->wrap_json = g_strdup(envelope->recipient_wraps[j]);
+    }
     /* Kept even without an own inbox, so an outbox can publish it later. */
     status->self_copy->wrap_json = g_strdup(envelope->sender_wrap_json);
     status->self_copy->wrap_id = event_id(status->self_copy->wrap_json);
   }
-  recipient->wrap_id = event_id(recipient->wrap_json);
+  gboolean complete = TRUE;
+  for (guint i = 0; i < status->recipients->len; i++) {
+    GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
+    leg->wrap_id = event_id(leg->wrap_json);
+    complete &= leg->wrap_id != NULL;
+  }
   gh_nip17_envelope_free(envelope);
+  if (!complete) {
+    finish(self, GH_DM_SEND_RESULT_FAILED, GH_DM_SEND_FAILURE_ENVELOPE,
+           "The envelope has no gift wrap for a recipient", TRUE);
+    g_object_unref(self);
+    return;
+  }
   wipe_content(self);
   if (self->mode == MODE_SEAL)
     finish(self, GH_DM_SEND_RESULT_SEALED, GH_DM_SEND_FAILURE_NONE, NULL, TRUE);
@@ -721,9 +748,9 @@ begin_seal(GhDmSend *self)
   if (is_done(self))
     return;
   if (self->rumor)
-    gh_nip17_envelope_seal_expiring_async(self->sender->accounts, self->rumor,
-                                          self->has_outer ? &self->outer : NULL, self->cancel,
-                                          envelope_done, g_object_ref(self));
+    gh_nip17_envelope_seal_room_async(self->sender->accounts, self->rumor,
+                                      self->has_outer ? &self->outer : NULL, self->cancel,
+                                      envelope_done, g_object_ref(self));
   else if (self->self_dm)
     gh_nip17_envelope_build_self_async(self->sender->accounts, self->content, self->cancel,
                                        envelope_done, g_object_ref(self));
@@ -735,22 +762,66 @@ begin_seal(GhDmSend *self)
 
 /* ---- recipient inbox ----------------------------------------------------- */
 
+static gboolean
+inbox_absent(GhInboxStatus inbox)
+{
+  return inbox == GH_INBOX_EMPTY || inbox == GH_INBOX_NOT_FOUND;
+}
+
 static void
 finish_without_inbox(GhDmSend *self, GhInboxStatus inbox)
 {
-  if (inbox == GH_INBOX_EMPTY || inbox == GH_INBOX_NOT_FOUND)
+  gboolean room = self->status.recipients->len > 1;
+  if (inbox_absent(inbox))
     finish(self, GH_DM_SEND_RESULT_NO_RECIPIENT_INBOX, GH_DM_SEND_FAILURE_NONE,
-           "The recipient has not set up private messaging (no kind-10050 inbox relays)",
+           room ? "No recipient has set up private messaging (no kind-10050 inbox relays)"
+                : "The recipient has not set up private messaging (no kind-10050 inbox relays)",
            TRUE);
   else
     finish(self, GH_DM_SEND_RESULT_INBOX_UNKNOWN, GH_DM_SEND_FAILURE_NONE,
-           "No relay could be asked for the recipient's inbox relays", TRUE);
+           room ? "No relay could be asked for the recipients' inbox relays"
+                : "No relay could be asked for the recipient's inbox relays", TRUE);
 }
+
+/* Every recipient's lookup answered: seal if anyone can be reached. A
+ * recipient without targets keeps its (absent or unknown) inbox status and
+ * gets a wrap that is never published. */
+static void
+inboxes_resolved(GhDmSend *self)
+{
+  GhDmSendStatus *status = &self->status;
+  guint reachable = 0;
+  gboolean unknown = FALSE;
+  for (guint i = 0; i < status->recipients->len; i++) {
+    GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
+    if (leg->relays->len > 0)
+      reachable++;
+    else if (!inbox_absent(leg->inbox))
+      unknown = TRUE;
+  }
+  if (reachable == 0) {
+    finish_without_inbox(self, unknown ? GH_INBOX_UNREACHABLE : GH_INBOX_NOT_FOUND);
+    return;
+  }
+  if (reachable < status->recipients->len)
+    status->flags |= GH_DM_SEND_FLAG_RECIPIENT_NO_INBOX;
+  emit_changed(self);
+  if (!is_done(self))
+    await_own_relays(self, begin_seal); /* they may be re-discovering */
+}
+
+typedef struct {
+  GhDmSend *self; /* a reference */
+  guint index;    /* its recipient leg */
+} Lookup;
 
 static void
 inbox_resolved(GObject *source, GAsyncResult *result, gpointer data)
 {
-  GhDmSend *self = data;
+  Lookup *lookup = data;
+  GhDmSend *self = lookup->self;
+  guint index = lookup->index;
+  g_free(lookup);
   g_autoptr(GError) error = NULL;
   g_autoptr(GhInboxResult) inbox =
     gh_inbox_resolver_resolve_finish(GH_INBOX_RESOLVER(source), result, &error);
@@ -767,20 +838,14 @@ inbox_resolved(GObject *source, GAsyncResult *result, gpointer data)
     g_object_unref(self);
     return;
   }
-  GhDmSendLeg *leg = first_recipient(self);
+  GhDmSendLeg *leg = g_ptr_array_index(self->status.recipients, index);
   leg->inbox = inbox->status;
   leg->inbox_event_id = g_strdup(inbox->event_id);
-  if (inbox->status != GH_INBOX_FOUND ||
-      !leg_set_targets(leg, (const gchar *const *)inbox->relays)) {
-    if (inbox->status == GH_INBOX_FOUND)
-      leg->inbox = GH_INBOX_EMPTY;
-    finish_without_inbox(self, leg->inbox);
-    g_object_unref(self);
-    return;
-  }
-  emit_changed(self);
-  if (!is_done(self))
-    await_own_relays(self, begin_seal); /* they may be re-discovering */
+  if (inbox->status == GH_INBOX_FOUND &&
+      !leg_set_targets(leg, (const gchar *const *)inbox->relays))
+    leg->inbox = GH_INBOX_EMPTY;
+  if (--self->resolving == 0)
+    inboxes_resolved(self);
   g_object_unref(self);
 }
 
@@ -789,8 +854,16 @@ resolve(GhDmSend *self)
 {
   GhDmSendLeg *leg = first_recipient(self);
   if (!self->self_dm) {
-    gh_inbox_resolver_resolve_async(self->sender->inboxes, leg->pubkey, self->cancel,
-                                    inbox_resolved, g_object_ref(self));
+    GPtrArray *recipients = self->status.recipients;
+    self->resolving = recipients->len;
+    for (guint i = 0; i < recipients->len && !is_done(self); i++) {
+      Lookup *lookup = g_new0(Lookup, 1);
+      lookup->self = g_object_ref(self);
+      lookup->index = i;
+      gh_inbox_resolver_resolve_async(self->sender->inboxes,
+                                      ((GhDmSendLeg *)g_ptr_array_index(recipients, i))->pubkey,
+                                      self->cancel, inbox_resolved, lookup);
+    }
     return;
   }
   /* Note to self: the recipient's inbox is the account's own 10050 list. */
@@ -826,10 +899,39 @@ active_sender(GhDmSender *sender)
   return npub ? gh_identity_pubkey_hex(npub) : NULL;
 }
 
-/* One of content or rumor (seal_rumor) is set; outer only with a rumor. */
+/* The recipients as legs (lowercase, distinct), or a reason they are not
+ * usable: 1 to GH_NIP17_MAX_SEND_RECIPIENTS hex keys, the account only
+ * alone (a note to self). */
+static const gchar *
+add_recipients(GhDmSend *self, const gchar *const *recipients)
+{
+  GhDmSendStatus *status = &self->status;
+  guint n = recipients ? g_strv_length((gchar **)recipients) : 0;
+  if (n == 0 || n > GH_NIP17_MAX_SEND_RECIPIENTS)
+    return n ? "A NIP-17 message goes to at most 10 other people"
+             : "A hex recipient pubkey and UTF-8 text are required";
+  g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  gboolean has_self = FALSE;
+  for (guint i = 0; i < n; i++) {
+    if (!hex64(recipients[i]))
+      return "A hex recipient pubkey and UTF-8 text are required";
+    gchar *recipient = g_ascii_strdown(recipients[i], -1);
+    has_self |= g_strcmp0(status->sender, recipient) == 0;
+    g_ptr_array_add(status->recipients, leg_new(recipient));
+    if (!g_hash_table_add(seen, recipient))
+      return "A NIP-17 message names each recipient once";
+  }
+  if (has_self && n > 1)
+    return "A message to others cannot also be a note to self";
+  self->self_dm = has_self;
+  return NULL;
+}
+
+/* One of content or rumor (seal_rumor) is set; outer only with a rumor. A
+ * text to a room becomes its rumor at once (one rumor per message). */
 static GhDmSend *
-compose(GhDmSender *sender, const gchar *recipient_pubkey_hex, const gchar *content,
-        const gchar *rumor, const GhNip17OuterExpiration *outer, GCancellable *cancellable,
+compose(GhDmSender *sender, const gchar *const *recipients, const gchar *content,
+        const gchar *rumor, const GhNip17RoomExpiration *outer, GCancellable *cancellable,
         Mode mode)
 {
   GhDmSend *self = g_object_new(GH_TYPE_DM_SEND, NULL);
@@ -840,21 +942,31 @@ compose(GhDmSender *sender, const gchar *recipient_pubkey_hex, const gchar *cont
     self->outer = *outer;
   status->sender = active_sender(sender);
   gboolean text_ok = rumor || (content && *content && g_utf8_validate(content, -1, NULL));
-  if (!status->sender || !hex64(recipient_pubkey_hex) || !text_ok) {
-    finish_invalid(self, !status->sender ? "No active Groundhog account"
-                         : rumor ? "Not a canonical NIP-17 rumor of the active account"
-                                 : "A hex recipient pubkey and UTF-8 text are required");
+  const gchar *invalid = !status->sender ? "No active Groundhog account"
+                         : rumor && !recipients
+                           ? "Not a canonical NIP-17 rumor of the active account"
+                         : !text_ok ? "A hex recipient pubkey and UTF-8 text are required"
+                                    : add_recipients(self, recipients);
+  if (invalid) {
+    finish_invalid(self, invalid);
     return self;
   }
-  g_autofree gchar *recipient = g_ascii_strdown(recipient_pubkey_hex, -1);
-  self->self_dm = g_strcmp0(status->sender, recipient) == 0;
-  g_ptr_array_add(status->recipients, leg_new(recipient));
   if (self->self_dm)
     status->flags |= GH_DM_SEND_FLAG_SELF_DM;
   else
     status->self_copy = leg_new(status->sender);
-  self->content = g_strdup(content);
-  self->rumor = g_strdup(rumor);
+  if (!rumor && status->recipients->len > 1) {
+    g_autoptr(GError) error = NULL;
+    self->rumor = gh_nip17_rumor_new_room(status->sender, recipients, content,
+                                          g_get_real_time() / G_USEC_PER_SEC, 0, NULL, &error);
+    if (!self->rumor) {
+      finish_invalid(self, error->message);
+      return self;
+    }
+  } else {
+    self->content = g_strdup(content);
+    self->rumor = g_strdup(rumor);
+  }
   if (!track(self, sender, cancellable))
     return self;
   await_own_relays(self, resolve);
@@ -866,7 +978,16 @@ gh_dm_sender_send(GhDmSender *self, const gchar *recipient_pubkey_hex,
                   const gchar *content, GCancellable *cancellable)
 {
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  return compose(self, recipient_pubkey_hex, content, NULL, NULL, cancellable, MODE_SEND);
+  const gchar *const recipients[] = { recipient_pubkey_hex, NULL };
+  return compose(self, recipients, content, NULL, NULL, cancellable, MODE_SEND);
+}
+
+GhDmSend *
+gh_dm_sender_send_room(GhDmSender *self, const gchar *const *recipients,
+                       const gchar *content, GCancellable *cancellable)
+{
+  g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
+  return compose(self, recipients, content, NULL, NULL, cancellable, MODE_SEND);
 }
 
 GhDmSend *
@@ -874,7 +995,8 @@ gh_dm_sender_seal(GhDmSender *self, const gchar *recipient_pubkey_hex,
                   const gchar *content, GCancellable *cancellable)
 {
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
-  return compose(self, recipient_pubkey_hex, content, NULL, NULL, cancellable, MODE_SEAL);
+  const gchar *const recipients[] = { recipient_pubkey_hex, NULL };
+  return compose(self, recipients, content, NULL, NULL, cancellable, MODE_SEAL);
 }
 
 GhDmSend *
@@ -891,8 +1013,27 @@ gh_dm_sender_seal_rumor_expiring(GhDmSender *self, const gchar *rumor_json,
   g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
   g_autofree gchar *sender = active_sender(self);
   g_autofree gchar *recipient = sender ? gh_nip17_rumor_get_recipient(rumor_json, sender) : NULL;
+  const gchar *const recipients[] = { recipient, NULL };
+  GhNip17RoomExpiration room = { 0 };
+  if (outer) {
+    room.n_recipients = recipient && g_strcmp0(recipient, sender) != 0 ? 1 : 0;
+    room.recipients[0] = outer->recipient;
+    room.self_copy = outer->self_copy;
+  }
   /* An unusable rumor fails like an invalid recipient, before any lookup. */
-  return compose(self, recipient, NULL, rumor_json, outer, cancellable, MODE_SEAL);
+  return compose(self, recipient ? recipients : NULL, NULL, rumor_json, outer ? &room : NULL,
+                 cancellable, MODE_SEAL);
+}
+
+GhDmSend *
+gh_dm_sender_seal_room_rumor(GhDmSender *self, const gchar *rumor_json,
+                             const GhNip17RoomExpiration *outer, GCancellable *cancellable)
+{
+  g_return_val_if_fail(GH_IS_DM_SENDER(self), NULL);
+  g_autofree gchar *sender = active_sender(self);
+  g_auto(GStrv) recipients = sender ? gh_nip17_rumor_dup_recipients(rumor_json, sender) : NULL;
+  return compose(self, (const gchar *const *)recipients, NULL, rumor_json, outer, cancellable,
+                 MODE_SEAL);
 }
 
 /* A stored wrap must be a signed gift wrap to exactly this leg's receiver,
@@ -968,12 +1109,19 @@ gh_dm_sender_publish(GhDmSender *sender, const GhDmSendStatus *sealed,
   status->flags &= GH_DM_SEND_FLAG_SELF_DM;
   g_autofree gchar *active = active_sender(sender);
   gboolean valid = active && g_strcmp0(active, status->sender) == 0 &&
-                   status->recipients->len > 0;
+                   status->recipients->len > 0 &&
+                   status->recipients->len <= GH_NIP17_MAX_SEND_RECIPIENTS;
+  guint reachable = 0;
   for (guint i = 0; valid && i < status->recipients->len; i++) {
     GhDmSendLeg *leg = g_ptr_array_index(status->recipients, i);
-    valid = valid_wrap(leg) && leg->relays->len > 0;
+    valid = valid_wrap(leg);
+    reachable += leg->relays->len > 0;
     leg_reset_for_publish(leg);
   }
+  /* A room recipient may have no target; someone must have one. */
+  valid = valid && reachable > 0;
+  if (valid && any_recipient_without_targets(status))
+    status->flags |= GH_DM_SEND_FLAG_RECIPIENT_NO_INBOX;
   if (valid && status->self_copy) {
     valid = valid_wrap(status->self_copy) &&
             g_strcmp0(status->self_copy->pubkey, status->sender) == 0;
