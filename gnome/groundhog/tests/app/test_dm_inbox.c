@@ -3,6 +3,7 @@
  * scopes the inbox opened; nothing sleeps. */
 #include "gh-account-auth.h"
 #include "gh-dm-inbox.h"
+#include "gh-nip17-inbox.h"
 #include "gh-signer.h"
 #include "gh-test-signer.h"
 
@@ -541,25 +542,36 @@ go_live(Fixture *f)
 
 /* ---- tests -------------------------------------------------------------------- */
 
+/* A state file of Groundhog 0.6.0, named by the pubkey. */
 static gchar *
-state_file(Fixture *f, guint key, const gchar *suffix)
+legacy_file(Fixture *f, guint key, const gchar *suffix)
 {
   g_autofree gchar *name = g_strconcat(hex[key], suffix, NULL);
   return g_build_filename(f->state_dir, name, NULL);
 }
 
-static gboolean
-has_checkpoint(Fixture *f, guint key)
+/* The account's pseudonymous rejected-wrap file. */
+static gchar *
+rejected_file(Fixture *f, guint key)
 {
-  g_autofree gchar *path = state_file(f, key, ".checkpoint");
-  return g_file_test(path, G_FILE_TEST_EXISTS);
+  g_autofree gchar *name = gh_nip17_seen_file_name(hex[key]);
+  g_assert_nonnull(name);
+  g_assert_null(strstr(name, hex[key]));
+  return g_build_filename(f->state_dir, name, NULL);
 }
 
-/* Seen-set lines of one kind: "w ", "r " or "x " (rejected). */
+/* The settled checkpoint: memory-only, it lives in this process only. */
+static gboolean
+has_checkpoint(Fixture *f)
+{
+  return gh_dm_inbox_get_checkpoint(f->inbox) > 0;
+}
+
+/* Rejected-file lines of one kind: "w ", "r " or "x " (rejected). */
 static guint
 seen_lines(Fixture *f, guint key, const gchar *prefix)
 {
-  g_autofree gchar *path = state_file(f, key, ".seen");
+  g_autofree gchar *path = rejected_file(f, key);
   g_autofree gchar *contents = NULL;
   if (!g_file_get_contents(path, &contents, NULL, NULL))
     return 0;
@@ -570,17 +582,38 @@ seen_lines(Fixture *f, guint key, const gchar *prefix)
   return count;
 }
 
-static gint64
-read_checkpoint(Fixture *f, guint key)
+/* B1: the memory-only inbox leaves at most the account's rejected-wrap file
+ * (no "w"/"r" key, no checkpoint, nothing named by a pubkey). */
+static void
+assert_state_files(Fixture *f, guint key)
 {
-  g_autofree gchar *path = state_file(f, key, ".checkpoint");
-  g_autofree gchar *contents = NULL;
-  g_assert_true(g_file_get_contents(path, &contents, NULL, NULL));
-  g_auto(GStrv) fields = g_strsplit(g_strstrip(contents), " ", -1);
-  g_assert_cmpuint(g_strv_length(fields), ==, 4);
-  g_assert_cmpstr(fields[0], ==, "groundhog-dm-inbox-checkpoint");
-  g_assert_cmpstr(fields[2], ==, hex[key]);
-  return g_ascii_strtoll(fields[3], NULL, 10);
+  g_autofree gchar *allowed = gh_nip17_seen_file_name(hex[key]);
+  GDir *dir = g_dir_open(f->state_dir, 0, NULL);
+  g_assert_nonnull(dir);
+  for (const gchar *name; (name = g_dir_read_name(dir));)
+    g_assert_cmpstr(name, ==, allowed);
+  g_dir_close(dir);
+  g_assert_cmpuint(seen_lines(f, key, "w ") + seen_lines(f, key, "r "), ==, 0);
+}
+
+/* The since of a first session: nothing carried over, the initial window. */
+static void
+assert_initial_since(gint64 since, gint64 before, gint64 after)
+{
+  g_assert_cmpint(since, >=, before - GH_DM_INBOX_INITIAL_BACKFILL);
+  g_assert_cmpint(since, <=, after - GH_DM_INBOX_INITIAL_BACKFILL);
+}
+
+static gchar *
+wrap_id_of(const gchar *wrap_json)
+{
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, wrap_json, NULL), ==, 1);
+  char *id = nostr_event_get_id(event);
+  nostr_event_free(event);
+  gchar *out = g_strdup(id);
+  free(id);
+  return out;
 }
 
 static void
@@ -638,22 +671,29 @@ test_req_exact(void)
   g_assert_cmpuint(f.rec.reqs->len, ==, 2); /* no older page was needed */
   g_assert_cmpuint(counters(f.inbox).pages, ==, 0);
 
-  /* Settled and live: the checkpoint is recorded, and the next session asks
-   * for since = checkpoint - two days (plus slack) to cover randomized
-   * NIP-59 timestamps. */
-  gint64 checkpoint = read_checkpoint(&f, 2);
+  /* Settled and live: the checkpoint advances (a relay-set change in this
+   * process asks for since = checkpoint - two days plus slack, see
+   * relay-change-reopens). */
+  gint64 checkpoint = gh_dm_inbox_get_checkpoint(f.inbox);
   g_assert_cmpint(checkpoint, >=, after);
   g_assert_cmpint(checkpoint, <=, g_get_real_time() / G_USEC_PER_SEC);
   gh_test_release(f.inbox);
   g_assert_cmpuint(f.rec.reqs->len, ==, 2);
   g_autoptr(GPtrArray) none = open_reqs(&f.rec);
   g_assert_cmpuint(none->len, ==, 0); /* disposal closed both */
+  /* A restart does not start from it: the messages it covered were kept in
+   * memory only (W13 review B1), so the next process fetches the initial
+   * window again. No checkpoint was written anywhere. */
+  assert_state_files(&f, 2);
+  gint64 restart_before = g_get_real_time() / G_USEC_PER_SEC;
   f.inbox = new_inbox(&f);
+  gint64 restart_after = g_get_real_time() / G_USEC_PER_SEC;
+  g_assert_cmpint(gh_dm_inbox_get_checkpoint(f.inbox), ==, 0);
   g_autoptr(GPtrArray) reopened = open_reqs(&f.rec);
   g_assert_cmpuint(reopened->len, ==, 2);
   for (guint i = 0; i < reopened->len; i++)
-    g_assert_cmpint(((Req *)g_ptr_array_index(reopened, i))->since, ==,
-                    checkpoint - GH_DM_INBOX_WRAP_SKEW);
+    assert_initial_since(((Req *)g_ptr_array_index(reopened, i))->since, restart_before,
+                         restart_after);
 
   /* All inbox relays failing is an error state, not "live". An auth-required
    * CLOSED before any challenge has nothing to answer: reported at once. */
@@ -796,30 +836,110 @@ test_seen_restart(void)
   g_assert_cmpuint(counters(f.inbox).admitted, ==, 2);
   g_assert_cmpuint(f.signer.calls, ==, 4);
 
+  /* In this process a replay costs nothing. */
+  deliver(&f, INBOX_B, one_wrap);
+  g_assert_cmpuint(counters(f.inbox).skipped, ==, 1);
+  g_assert_cmpuint(f.signer.calls, ==, 4);
+  /* W13 review B1: the messages were only in memory, so nothing that would
+   * make them count as seen was written, and no checkpoint either. */
+  assert_state_files(&f, 2);
+
   /* Restart: a fresh inbox and store over the same state directory. The
-   * persisted seen-set skips both wraps before any signer call. */
+   * messages are gone with the old process; the relays still hold them, so
+   * the new session asks for the initial window, unwraps them again and
+   * lists them again (never hides them for good). */
   gh_test_release(f.inbox);
   g_object_unref(f.store);
   f.store = gh_conversation_store_new();
+  gint64 before = g_get_real_time() / G_USEC_PER_SEC;
   f.inbox = new_inbox(&f);
+  gint64 after = g_get_real_time() / G_USEC_PER_SEC;
   g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_CONNECTING);
+  assert_initial_since(open_req(&f.rec, INBOX_A)->since, before, after);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 0);
   deliver(&f, INBOX_B, one_wrap);
   deliver(&f, INBOX_A, two_wrap);
   gh_test_spin_until(settled, f.inbox);
   GhDmInboxCounters c = counters(f.inbox);
-  g_assert_cmpuint(c.skipped, ==, 2);
-  g_assert_cmpuint(c.admitted, ==, 0);
-  g_assert_cmpuint(f.signer.calls, ==, 4);
-  /* The in-memory store does not survive a restart (see the store seam). */
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 0);
+  g_assert_cmpuint(c.skipped, ==, 0);
+  g_assert_cmpuint(c.admitted, ==, 2);
+  g_assert_cmpuint(f.signer.calls, ==, 8);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 2);
+  g_autofree gchar *pair = room_id(1, 2, 0);
+  g_autofree gchar *other = room_id(3, 2, 0);
+  g_assert_nonnull(gh_conversation_store_lookup(f.store, pair));
+  g_assert_nonnull(gh_conversation_store_lookup(f.store, other));
 
-  /* A new message is still unwrapped and admitted. */
+  /* A new message is unwrapped and admitted like any other. */
   Craft three = { .author = 1, .to = 2, .p = { 2 }, .created_at = 1002, .content = "three" };
   g_autofree gchar *three_wrap = craft_wrap(&three, NULL);
   deliver(&f, INBOX_A, three_wrap);
   gh_test_spin_until(settled, f.inbox);
-  g_assert_cmpuint(counters(f.inbox).admitted, ==, 1);
-  g_assert_cmpuint(f.signer.calls, ==, 6);
+  g_assert_cmpuint(counters(f.inbox).admitted, ==, 3);
+  g_assert_cmpuint(f.signer.calls, ==, 10);
+  assert_state_files(&f, 2);
+  fixture_down(&f);
+}
+
+/* Groundhog 0.6.0 left <pubkey>.seen ("w"/"r" keys of messages it held only
+ * in memory, and "x" rejected wraps) and <pubkey>.checkpoint. The memory-only
+ * inbox keeps only the rejected ids, under the pseudonymous name, deletes
+ * both files, and ignores the checkpoint: the relays' copies of those
+ * messages are fetched and listed again. */
+static void
+test_legacy_state_files(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  gh_test_release(f.inbox);
+  g_autofree gchar *rumor = NULL;
+  Craft shown = { .author = 1, .to = 2, .p = { 2 }, .created_at = 1000, .content = "old" };
+  g_autofree gchar *shown_wrap = craft_wrap(&shown, &rumor);
+  g_autofree gchar *shown_id = wrap_id_of(shown_wrap);
+  Craft forged = { .author = 1, .seal_signer = 3, .to = 2, .p = { 2 }, .created_at = 1001,
+                   .content = "impostor" };
+  g_autofree gchar *forged_wrap = craft_wrap(&forged, NULL);
+  g_autofree gchar *forged_id = wrap_id_of(forged_wrap);
+  g_autofree gchar *seen = g_strdup_printf("groundhog-nip17-seen 1 %s\nw %s\nr %s\nx %s\n",
+                                           hex[2], shown_id, rumor, forged_id);
+  gint64 old_checkpoint = g_get_real_time() / G_USEC_PER_SEC - HOUR;
+  g_autofree gchar *mark = g_strdup_printf("groundhog-dm-inbox-checkpoint 1 %s %" G_GINT64_FORMAT
+                                           "\n", hex[2], old_checkpoint);
+  g_autofree gchar *seen_path = legacy_file(&f, 2, ".seen");
+  g_autofree gchar *mark_path = legacy_file(&f, 2, ".checkpoint");
+  g_assert_true(g_file_set_contents_full(seen_path, seen, -1, G_FILE_SET_CONTENTS_CONSISTENT,
+                                         0600, NULL));
+  g_assert_true(g_file_set_contents_full(mark_path, mark, -1, G_FILE_SET_CONTENTS_CONSISTENT,
+                                         0600, NULL));
+  /* Another account's 0.6.0 file is not this account's to touch. */
+  g_autofree gchar *other_path = legacy_file(&f, 1, ".seen");
+  g_autofree gchar *other = g_strdup_printf("groundhog-nip17-seen 1 %s\nx %s\n", hex[1],
+                                            forged_id);
+  g_assert_true(g_file_set_contents(other_path, other, -1, NULL));
+
+  gint64 before = g_get_real_time() / G_USEC_PER_SEC;
+  f.inbox = new_inbox(&f);
+  publish_list(&f, 2, 10050, INBOX_A, NULL);
+  gint64 after = g_get_real_time() / G_USEC_PER_SEC;
+  g_assert_false(g_file_test(seen_path, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(mark_path, G_FILE_TEST_EXISTS));
+  g_assert_true(g_file_test(other_path, G_FILE_TEST_EXISTS));
+  g_assert_cmpint(g_unlink(other_path), ==, 0);
+  assert_state_files(&f, 2);
+  g_assert_cmpuint(seen_lines(&f, 2, "x "), ==, 1);
+  /* The old checkpoint is not trusted: the initial window. */
+  assert_initial_since(open_req(&f.rec, INBOX_A)->since, before, after);
+
+  /* The rejected wrap stays skipped before any signer call; the message the
+   * old process showed once is unwrapped and listed again. */
+  deliver(&f, INBOX_A, forged_wrap);
+  deliver(&f, INBOX_A, shown_wrap);
+  gh_test_spin_until(settled, f.inbox);
+  GhDmInboxCounters c = counters(f.inbox);
+  g_assert_cmpuint(c.skipped, ==, 1);
+  g_assert_cmpuint(c.admitted, ==, 1);
+  g_assert_cmpuint(f.signer.calls, ==, 2);
+  g_assert_true(gh_conversation_store_has_message(f.store, rumor));
   fixture_down(&f);
 }
 
@@ -938,7 +1058,8 @@ test_relay_change_reopens(void)
   Fixture f = { 0 };
   fixture_up(&f);
   go_live(&f);
-  gint64 checkpoint = read_checkpoint(&f, 2);
+  gint64 checkpoint = gh_dm_inbox_get_checkpoint(f.inbox);
+  g_assert_cmpint(checkpoint, >, 0);
   f.signer.hold = TRUE;
   Craft craft = { .author = 1, .to = 2, .p = { 2 }, .created_at = 1000, .content = "moved" };
   g_autofree gchar *wrap = craft_wrap(&craft, NULL);
@@ -994,7 +1115,8 @@ test_signer_denied_defers(void)
   Fixture f = { 0 };
   fixture_up(&f);
   go_live(&f);
-  gint64 checkpoint = read_checkpoint(&f, 2);
+  gint64 checkpoint = gh_dm_inbox_get_checkpoint(f.inbox);
+  g_assert_cmpint(checkpoint, >, 0);
   f.signer.deny = TRUE;
   Craft craft = { .author = 1, .to = 2, .p = { 2 }, .created_at = 1000, .content = "no" };
   g_autofree gchar *wrap = craft_wrap(&craft, NULL);
@@ -1010,14 +1132,18 @@ test_signer_denied_defers(void)
   g_assert_cmpuint(counters(f.inbox).skipped, ==, 1);
   drain();
   g_assert_cmpuint(f.signer.calls, ==, 1);
-  /* A denial is transient, never recorded as rejected: a later session
-   * offers the wrap again (a new signer prompt), from a checkpoint that did
-   * not move past it. */
+  /* A denial is transient, never recorded as rejected, and holds the
+   * checkpoint: a later session offers the wrap again (a new signer prompt).
+   * Memory-only, that later session is the next process, which starts from
+   * the initial window. */
+  g_assert_cmpint(gh_dm_inbox_get_checkpoint(f.inbox), ==, checkpoint);
   g_assert_cmpuint(seen_lines(&f, 2, "x "), ==, 0);
   f.signer.deny = FALSE;
   gh_test_release(f.inbox);
+  gint64 before = g_get_real_time() / G_USEC_PER_SEC;
   f.inbox = new_inbox(&f);
-  g_assert_cmpint(gh_dm_inbox_get_since(f.inbox), ==, checkpoint - GH_DM_INBOX_WRAP_SKEW);
+  gint64 after = g_get_real_time() / G_USEC_PER_SEC;
+  assert_initial_since(gh_dm_inbox_get_since(f.inbox), before, after);
   deliver(&f, INBOX_A, wrap);
   gh_test_spin_until(settled, f.inbox);
   g_assert_cmpuint(counters(f.inbox).admitted, ==, 1);
@@ -1069,7 +1195,7 @@ test_backfill_paging(void)
   g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_BACKFILLING);
   g_assert_cmpint(relay_state(f.inbox, INBOX_B, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
   gh_test_spin_until(settled, f.inbox);
-  g_assert_false(has_checkpoint(&f, 2)); /* older wraps may be unfetched */
+  g_assert_false(has_checkpoint(&f)); /* older wraps may be unfetched */
 
   /* until is inclusive: the boundary wrap comes again and is skipped. The
    * page is full, so the next one starts at its oldest. */
@@ -1082,7 +1208,7 @@ test_backfill_paging(void)
   g_assert_cmpint(next->until, ==, now - 50 * HOUR);
   g_assert_cmpint(next->since, ==, gh_dm_inbox_get_since(f.inbox));
   gh_test_spin_until(settled, f.inbox);
-  g_assert_false(has_checkpoint(&f, 2));
+  g_assert_false(has_checkpoint(&f));
 
   /* A short page: the relay is fully fetched and the checkpoint moves. */
   deliver_page(&f, INBOX_A, wraps[4]);
@@ -1098,7 +1224,7 @@ test_backfill_paging(void)
   g_assert_cmpuint(c.pages, ==, 2);
   g_assert_cmpuint(c.backfill_incomplete, ==, 0);
   g_assert_cmpuint(f.signer.calls, ==, 12);
-  g_assert_true(has_checkpoint(&f, 2));
+  g_assert_true(has_checkpoint(&f));
   for (guint i = 0; i < G_N_ELEMENTS(wraps); i++)
     g_free(wraps[i]);
   fixture_down(&f);
@@ -1140,7 +1266,7 @@ test_backfill_page_bound(void)
   g_assert_cmpuint(c.backfill_incomplete, ==, 1);
   g_assert_cmpuint(c.rejected, ==, 6);
   g_assert_cmpuint(f.signer.calls, ==, 0);
-  g_assert_false(has_checkpoint(&f, 2));
+  g_assert_false(has_checkpoint(&f));
 
   /* A reconnect: the relay has delivered a page's worth, so its EOSE pages
    * it again, from now (nothing new was delivered on this connection). This
@@ -1157,7 +1283,7 @@ test_backfill_page_bound(void)
   RelayWait incomplete = { f.inbox, INBOX_A, GH_DM_INBOX_RELAY_INCOMPLETE };
   gh_test_spin_until(relay_reached, &incomplete);
   g_assert_cmpuint(counters(f.inbox).backfill_incomplete, ==, 2);
-  g_assert_false(has_checkpoint(&f, 2));
+  g_assert_false(has_checkpoint(&f));
 
   /* The next reconnect's page comes back short: complete at last. */
   gh_relay_scope_notice(live->scope, INBOX_A, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
@@ -1166,7 +1292,7 @@ test_backfill_page_bound(void)
   gh_relay_scope_eose(page->scope, INBOX_A);
   RelayWait live_again = { f.inbox, INBOX_A, GH_DM_INBOX_RELAY_LIVE };
   gh_test_spin_until(relay_reached, &live_again);
-  g_assert_true(has_checkpoint(&f, 2));
+  g_assert_true(has_checkpoint(&f));
   fixture_down(&f);
 }
 
@@ -1199,7 +1325,7 @@ test_backfill_tied_second(void)
   g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_LIVE);
   g_assert_cmpuint(counters(f.inbox).backfill_incomplete, ==, 1);
   gh_test_spin_until(settled, f.inbox);
-  g_assert_false(has_checkpoint(&f, 2));
+  g_assert_false(has_checkpoint(&f));
   fixture_down(&f);
 }
 
@@ -1232,7 +1358,13 @@ test_rejected_not_reprompted(void)
    * cost two signer calls; the wrong outer p none. */
   g_assert_cmpuint(counters(f.inbox).rejected, ==, 4);
   g_assert_cmpuint(f.signer.calls, ==, 6);
+  /* Kept on disk under the pseudonymous name, and nothing else is. */
   g_assert_cmpuint(seen_lines(&f, 2, "x "), ==, 3);
+  assert_state_files(&f, 2);
+  g_autofree gchar *path = rejected_file(&f, 2);
+  GStatBuf st;
+  g_assert_cmpint(g_stat(path, &st), ==, 0);
+  g_assert_cmpint(st.st_mode & 0777, ==, 0600);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 0);
 
   /* Restart: the rejected wraps are skipped before any signer call. */
@@ -1532,8 +1664,7 @@ test_unusable_seen_set(void)
   Fixture f = { 0 };
   fixture_up(&f);
   gh_test_release(f.inbox);
-  g_autofree gchar *name = g_strconcat(hex[2], ".seen", NULL);
-  g_autofree gchar *path = g_build_filename(f.state_dir, name, NULL);
+  g_autofree gchar *path = rejected_file(&f, 2);
   g_assert_true(g_file_set_contents(path, "not a seen-set\n", -1, NULL));
   f.inbox = new_inbox(&f);
   publish_list(&f, 2, 10050, INBOX_A, NULL);
@@ -1555,6 +1686,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/dm-inbox/req-exact", test_req_exact);
   g_test_add_func("/groundhog/dm-inbox/rooms-and-dedup", test_rooms_and_dedup);
   g_test_add_func("/groundhog/dm-inbox/seen-restart", test_seen_restart);
+  g_test_add_func("/groundhog/dm-inbox/legacy-state-files", test_legacy_state_files);
   g_test_add_func("/groundhog/dm-inbox/bounded-concurrency", test_bounded_concurrency);
   g_test_add_func("/groundhog/dm-inbox/switch-mid-unwrap", test_switch_mid_unwrap);
   g_test_add_func("/groundhog/dm-inbox/relay-change-reopens", test_relay_change_reopens);

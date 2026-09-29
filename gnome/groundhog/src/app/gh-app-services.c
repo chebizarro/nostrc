@@ -180,8 +180,9 @@ inbox_init(GhAppServices *self, GError **error)
   self->inbox = gh_dm_inbox_new_with_storage(self->accounts, self->relays, self->conversations,
                                              NULL, NULL, NULL);
 #else
-  /* No encrypted store in this build: messages stay in memory and the
-   * seen-set in $XDG_STATE_HOME/groundhog/nip17. */
+  /* No encrypted store in this build: messages and their seen keys stay in
+   * memory (a restart fetches them again); only rejected wrap ids are kept,
+   * under a pseudonymous name in $XDG_STATE_HOME/groundhog/nip17. */
   self->inbox = gh_dm_inbox_new(self->accounts, self->relays, self->conversations, NULL, NULL,
                                 NULL, NULL);
 #endif
@@ -496,6 +497,10 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   gh_store_status_attach(gh_window_get_status(window), self->account_store);
+#elif GROUNDHOG_HAVE_INBOX
+  /* Without the encrypted store every message is in memory only: say so
+   * with the in-memory banner (charter §3.4, P4). */
+  gh_status_set_store(gh_window_get_status(window), GH_STATUS_STORE_EPHEMERAL, NULL);
 #endif
 }
 

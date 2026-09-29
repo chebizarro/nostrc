@@ -46,8 +46,9 @@ typedef struct {
  *     after the model changed; a failure is logged and the model keeps the
  *     change for this session.
  *
- * GhDmInbox installs its per-account GhNip17Seen file (messages in memory
- * only) as the default delegate. The encrypted store's delegate
+ * A memory-only GhDmInbox installs a delegate that keeps the messages' seen
+ * keys in memory with them (only rejected wrap ids reach a file). The
+ * encrypted store's delegate
  * (gh-store-conversations.h, G05) commits everything to the account's
  * GhStore and restores the rooms when it is attached. Without a delegate the
  * store is purely in-memory. */

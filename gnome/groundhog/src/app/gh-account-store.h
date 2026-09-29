@@ -22,8 +22,12 @@ G_BEGIN_DECLS
  *     otherwise, which stores the item before any file is created);
  *  2. opens (or creates) the SQLCipher store in a worker thread; a damaged
  *     store is reopened read-only (CORRUPT);
- *  3. imports the legacy plaintext NIP-17 seen file and inbox checkpoint of
- *     the account once, then deletes them (ST-12);
+ *  3. imports the rejected-wrap ids of the memory-only inbox's plaintext seen
+ *     files (<pubkey>.seen of Groundhog 0.6.0, <acct>.seen of a build without
+ *     the store) and deletes them with its <pubkey>.checkpoint, unread
+ *     (ST-12): their message keys and checkpoint covered messages that were
+ *     only ever in memory, so the first session fetches whatever the relays
+ *     still hold (W13 review B1);
  *  4. attaches GhStoreConversations as the conversation model's persistence
  *     delegate, restoring the stored rooms;
  *  5. makes the account's per-store service (the durable outbox, G06) with
@@ -84,7 +88,7 @@ typedef struct {
   GhDmInbox *inbox;                    /* nullable; from gh_dm_inbox_new_with_storage() */
   GSettings *settings;                 /* required: current-npub (forget) */
   const gchar *data_dir;               /* absolute; NULL = g_get_user_data_dir() */
-  const gchar *legacy_state_dir;       /* pre-store GhDmInbox state; NULL = its default */
+  const gchar *legacy_state_dir;       /* memory-only GhDmInbox state; NULL = its default */
   GhClock *clock;                      /* NULL = system clock */
   GhAccountStoreOutboxFunc create_outbox; /* nullable */
   gpointer outbox_data;

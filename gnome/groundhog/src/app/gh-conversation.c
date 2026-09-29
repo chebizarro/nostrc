@@ -272,6 +272,7 @@ gh_conversation_insert(GhConversation *self, GhMessage *message)
     return FALSE;
   gint64 last_activity = gh_conversation_get_last_activity(self);
   g_autofree gchar *old_subject = g_strdup(gh_conversation_get_subject(self));
+  g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
   gboolean was_request = gh_conversation_get_is_request(self);
   guint position = place_message(self, message);
   /* Replying implies having read what came before. */
@@ -282,10 +283,10 @@ gh_conversation_insert(GhConversation *self, GhMessage *message)
 
   g_object_freeze_notify(G_OBJECT(self));
   g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
-  if (subject_changed) {
+  if (subject_changed)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
+  if (g_strcmp0(old_title, gh_conversation_get_title(self)) != 0)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
-  }
   if (newest)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PREVIEW]);
   if (gh_conversation_get_last_activity(self) != last_activity)
@@ -314,6 +315,7 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   g_return_if_fail(!state->has_older || state->floor_id);
   gint64 last_activity = gh_conversation_get_last_activity(self);
   g_autofree gchar *old_subject = g_strdup(gh_conversation_get_subject(self));
+  g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
   g_autofree gchar *old_preview = g_strdup(self->preview);
   gboolean was_request = gh_conversation_get_is_request(self);
 
@@ -342,10 +344,10 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   guint loaded = count_loaded_unread(self);
   self->unread_older = state->unread > loaded ? state->unread - loaded : 0;
 
-  if (g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0) {
+  if (g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
+  if (g_strcmp0(old_title, gh_conversation_get_title(self)) != 0)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
-  }
   if (g_strcmp0(old_preview, self->preview) != 0)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PREVIEW]);
   if (gh_conversation_get_last_activity(self) != last_activity)
@@ -497,7 +499,9 @@ const gchar *
 gh_conversation_get_title(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), NULL);
-  const gchar *subject = gh_conversation_get_subject(self);
+  /* A request's subject is whatever its sender chose: never its name. */
+  const gchar *subject = gh_conversation_get_is_request(self)
+                           ? NULL : gh_conversation_get_subject(self);
   return subject ? subject : self->fallback_title;
 }
 
@@ -523,7 +527,11 @@ gh_conversation_accept(GhConversation *self)
   self->accepted = TRUE;
   if (!was_request)
     return;
+  g_object_freeze_notify(G_OBJECT(self));
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_IS_REQUEST]);
+  if (gh_conversation_get_subject(self))
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
+  g_object_thaw_notify(G_OBJECT(self));
   if (self->store)
     gh_conversation_store_persist_accept(self->store, self);
 }

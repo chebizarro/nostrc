@@ -662,7 +662,9 @@ test_paging(void)
   GhConversation *c = room(&f, ap);
   assert_room(&f, ap, 10, 60, TRUE);
   g_assert_true(gh_conversation_get_has_older(c));
-  g_assert_cmpstr(gh_conversation_get_title(c), ==, "Old name");
+  /* A request: the stored name is its subject, never its title (§7.9). */
+  g_assert_cmpstr(gh_conversation_get_subject(c), ==, "Old name");
+  g_assert_true(g_str_has_prefix(gh_conversation_get_title(c), "npub1"));
   g_assert_cmpstr(gh_conversation_get_preview(c), ==, "message 59");
   guint loaded = 0;
   g_autoptr(GError) error = NULL;
@@ -895,15 +897,14 @@ write_private(const gchar *path, const gchar *contents)
 }
 
 static void
-import_ok(Fixture *f, const gchar *path, guint wraps, guint rumors, guint rejected)
+import_ok(Fixture *f, const gchar *path, guint rejected, guint dropped)
 {
-  GhStoreSeenImport stats = { 99, 99, 99 };
+  GhStoreSeenImport stats = { 99, 99 };
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_store_conversations_import_seen_file(f->conversations, path, &stats, &error));
   g_assert_no_error(error);
-  g_assert_cmpuint(stats.wraps, ==, wraps);
-  g_assert_cmpuint(stats.rumors, ==, rumors);
   g_assert_cmpuint(stats.rejected, ==, rejected);
+  g_assert_cmpuint(stats.dropped, ==, dropped);
   g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
 }
 
@@ -914,7 +915,7 @@ import_refused(Fixture *f, const gchar *path, gint code)
   GhStoreSeenImport stats;
   g_assert_false(gh_store_conversations_import_seen_file(f->conversations, path, &stats, &error));
   g_assert_error(error, GH_STORE_ERROR, code);
-  g_assert_cmpuint(stats.wraps + stats.rumors + stats.rejected, ==, 0);
+  g_assert_cmpuint(stats.rejected + stats.dropped, ==, 0);
   g_assert_true(g_file_test(path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_SYMLINK));
 }
 
@@ -942,20 +943,28 @@ test_st12_legacy_seen(void)
   /* The torn final append of a crash is ignored, as GhNip17Seen did. */
   g_autofree gchar *contents = seen_file(ACCOUNT_A, lines, "w 12ab");
   write_private(path, contents);
-  import_ok(&f, path, 2, 1, 1);
-  g_assert_true(gh_conversation_store_has_wrap(f.model, w1));
-  g_assert_true(gh_conversation_store_has_wrap(f.model, w2));
+  /* Only the rejected id is imported (W13 review B1): the file's inbox kept
+   * its messages in memory only, so its "w"/"r" keys would hide messages no
+   * store holds although the relays still have them. */
+  import_ok(&f, path, 1, 4);
   g_assert_true(gh_conversation_store_has_rejected(f.model, x1));
   g_assert_false(gh_conversation_store_has_wrap(f.model, x1));
+  g_assert_false(gh_conversation_store_has_wrap(f.model, w1));
+  g_assert_false(gh_conversation_store_has_wrap(f.model, w2));
   g_assert_false(gh_conversation_store_has_rejected(f.model, w1));
-  /* The imported rumor is seen: another wrap of it shows nothing. */
-  g_assert_cmpint(deliver(f.model, &known, "legacy/rewrap"), ==, GH_CONVERSATION_ADD_DUPLICATE);
-  g_assert_cmpuint(n_items(f.model), ==, 0);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM seen WHERE ns IN (1, 2)"), ==, 0);
+  /* So the relays' copy of that very message, fetched again, is stored and
+   * listed; the rejected wrap stays skipped before any signer call. */
+  g_assert_cmpint(deliver(f.model, &known, "legacy/w1"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(n_items(f.model), ==, 1);
+  g_assert_nonnull(gh_conversation_store_lookup_message(f.model, r1));
+  g_assert_true(gh_conversation_store_has_wrap(f.model, w1));
 
   /* Idempotent: nothing left to import, and a re-created file adds nothing. */
-  import_ok(&f, path, 0, 0, 0);
+  import_ok(&f, path, 0, 0);
   write_private(path, contents);
-  import_ok(&f, path, 0, 0, 0);
+  import_ok(&f, path, 0, 4);
+  g_assert_cmpuint(n_items(f.model), ==, 1);
 
   /* Refused and kept: another account's file, a malformed one, a symlink. */
   g_autofree gchar *x2 = hex_of("legacy/x2");
@@ -979,9 +988,12 @@ test_st12_legacy_seen(void)
   g_assert_true(g_file_test(elsewhere, G_FILE_TEST_IS_REGULAR));
   g_assert_cmpint(g_unlink(path), ==, 0);
 
+  /* Durable from here on: the stored message comes back, w2 still not seen. */
   fixture_restart(&f);
   g_assert_true(gh_conversation_store_has_wrap(f.model, w1));
+  g_assert_false(gh_conversation_store_has_wrap(f.model, w2));
   g_assert_true(gh_conversation_store_has_rejected(f.model, x1));
+  g_assert_nonnull(gh_conversation_store_lookup_message(f.model, r1));
   fixture_clear(&f);
 }
 
@@ -1221,14 +1233,15 @@ test_canary_scan(void)
   g_autofree gchar *rejected = hex_of("canary/rejected");
   g_assert_true(gh_conversation_store_record_rejected(f.model, rejected, NULL));
   g_ptr_array_add(needles, g_strdup(rejected));
-  /* The legacy plaintext seen file is imported and removed. */
+  /* The legacy plaintext seen file's rejected ids are imported, and the file
+   * is removed. */
   g_autofree gchar *legacy_wrap = hex_of("canary/legacy");
-  g_autofree gchar *line = g_strconcat("w ", legacy_wrap, NULL);
+  g_autofree gchar *line = g_strconcat("x ", legacy_wrap, NULL);
   const gchar *const lines[] = { line, NULL };
   g_autofree gchar *contents = seen_file(ACCOUNT_A, lines, NULL);
   g_autofree gchar *legacy = gh_store_conversations_legacy_seen_path(NULL, ACCOUNT_A);
   write_private(legacy, contents);
-  import_ok(&f, legacy, 1, 0, 0);
+  import_ok(&f, legacy, 1, 0);
   g_ptr_array_add(needles, g_strdup(legacy_wrap));
   g_ptr_array_add(needles, NULL);
 

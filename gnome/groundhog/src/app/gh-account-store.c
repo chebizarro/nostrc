@@ -1,13 +1,11 @@
 #include "gh-account-store.h"
 
 #include "gh-identity.h"
+#include "gh-nip17-inbox.h"
 
 #include <errno.h>
 #include <glib/gstdio.h>
 #include <string.h>
-
-/* The pre-store GhDmInbox checkpoint file (<state_dir>/<pubkey>.checkpoint). */
-#define LEGACY_CHECKPOINT_MAGIC "groundhog-dm-inbox-checkpoint 1"
 
 typedef enum { OP_OPEN, OP_SHRED } OpKind;
 
@@ -230,60 +228,59 @@ unbind_store(GhAccountStore *self)
 
 /* ---- legacy import (ST-12) -------------------------------------------------- */
 
+/* <legacy state dir>/<name>, the memory-only GhDmInbox's directory. */
 static gchar *
-legacy_path(GhAccountStore *self, const gchar *account, const gchar *suffix)
+legacy_file(GhAccountStore *self, const gchar *name)
 {
-  g_autofree gchar *name = g_strconcat(account, suffix, NULL);
   return self->legacy_state_dir ? g_build_filename(self->legacy_state_dir, name, NULL)
                                 : g_build_filename(g_get_user_state_dir(), "groundhog",
                                                    "nip17", name, NULL);
 }
 
-/* The old inbox's plaintext checkpoint becomes the store's cursor (unless
- * the store already has one), then the file is deleted. */
-static void
-import_legacy_checkpoint(GhAccountStore *self)
+/* The memory-only inbox's state files of an account: Groundhog 0.6.0's
+ * <pubkey>.seen and <pubkey>.checkpoint, and the pseudonymous rejected set
+ * <acct>.seen of a build without the store. */
+static GPtrArray *
+legacy_paths(GhAccountStore *self, const gchar *account)
 {
-  g_autofree gchar *path = legacy_path(self, self->account, ".checkpoint");
-  g_autofree gchar *contents = NULL;
-  gsize length = 0;
-  if (!g_file_get_contents(path, &contents, &length, NULL))
-    return;
-  g_autofree gchar *prefix = g_strdup_printf(LEGACY_CHECKPOINT_MAGIC " %s ", self->account);
-  gint64 value = 0;
-  if (length <= 256 && g_str_has_prefix(contents, prefix) && g_str_has_suffix(contents, "\n")) {
-    g_autofree gchar *number = g_strndup(contents + strlen(prefix),
-                                         length - strlen(prefix) - 1);
-    if (!g_ascii_string_to_signed(number, 10, 1, G_MAXINT64, &value, NULL))
-      value = 0;
-  }
-  g_autoptr(GError) error = NULL;
-  gint64 current = 0;
-  if (!gh_store_get_cursor(self->store, GH_ACCOUNT_STORE_INBOX_CURSOR, "", &current, &error) ||
-      (value > 0 && current == 0 &&
-       !gh_store_set_cursor(self->store, GH_ACCOUNT_STORE_INBOX_CURSOR, "", value, &error))) {
-    g_message("Groundhog could not import the old DM inbox checkpoint: %s", error->message);
-    return;
-  }
-  if (g_unlink(path) != 0 && errno != ENOENT)
-    g_message("Groundhog could not delete the old DM inbox checkpoint: %s", g_strerror(errno));
+  GPtrArray *paths = g_ptr_array_new_with_free_func(g_free);
+  g_autofree gchar *seen = g_strconcat(account, ".seen", NULL);
+  g_autofree gchar *checkpoint = g_strconcat(account, ".checkpoint", NULL);
+  g_autofree gchar *pseudonymous = gh_nip17_seen_file_name(account);
+  g_ptr_array_add(paths, legacy_file(self, seen));
+  g_ptr_array_add(paths, legacy_file(self, checkpoint));
+  if (pseudonymous)
+    g_ptr_array_add(paths, legacy_file(self, pseudonymous));
+  return paths;
 }
 
+/* ST-12. Only the rejected-wrap ids of the memory-only inbox's seen files are
+ * imported, and its checkpoint is deleted unread: both covered messages that
+ * inbox kept in memory only, so trusting them would hide messages the relays
+ * still hold (W13 review B1). The store's first session asks for the initial
+ * backfill window and stores whatever the relays still have. */
 static void
 import_legacy(GhAccountStore *self)
 {
-  g_autofree gchar *seen = gh_store_conversations_legacy_seen_path(self->legacy_state_dir,
-                                                                   self->account);
-  g_autoptr(GError) error = NULL;
-  GhStoreSeenImport stats = { 0 };
-  /* A refused file (planted, foreign, malformed) stays where it is; the
-   * inbox then only asks the signer again about wraps it held. */
-  if (!gh_store_conversations_import_seen_file(self->conversations, seen, &stats, &error))
-    g_message("Groundhog did not import the old DM seen file: %s", error->message);
-  else if (stats.wraps || stats.rumors || stats.rejected)
-    g_debug("Groundhog imported %u wrap, %u rumor and %u rejected ids from the old seen file",
-            stats.wraps, stats.rumors, stats.rejected);
-  import_legacy_checkpoint(self);
+  g_autoptr(GPtrArray) paths = legacy_paths(self, self->account);
+  for (guint i = 0; i < paths->len; i++) {
+    const gchar *path = g_ptr_array_index(paths, i);
+    g_autoptr(GError) error = NULL;
+    GhStoreSeenImport stats = { 0 };
+    if (g_str_has_suffix(path, ".checkpoint")) {
+      if (g_unlink(path) != 0 && errno != ENOENT)
+        g_message("Groundhog could not delete the old DM inbox checkpoint: %s",
+                  g_strerror(errno));
+    } else if (!gh_store_conversations_import_seen_file(self->conversations, path, &stats,
+                                                        &error)) {
+      /* A refused file (planted, foreign, malformed) stays where it is; the
+       * inbox then only asks the signer again about wraps it rejected. */
+      g_message("Groundhog did not import an old DM seen file: %s", error->message);
+    } else if (stats.rejected || stats.dropped) {
+      g_debug("Groundhog imported %u rejected wrap ids from an old seen file and dropped "
+              "%u message keys", stats.rejected, stats.dropped);
+    }
+  }
 }
 
 /* ---- bind ------------------------------------------------------------------ */
@@ -476,9 +473,9 @@ start_open(GhAccountStore *self)
 static gboolean
 delete_legacy_files(GhAccountStore *self, const gchar *account, GError **error)
 {
-  static const gchar *const suffixes[] = { ".seen", ".checkpoint" };
-  for (guint i = 0; i < G_N_ELEMENTS(suffixes); i++) {
-    g_autofree gchar *path = legacy_path(self, account, suffixes[i]);
+  g_autoptr(GPtrArray) paths = legacy_paths(self, account);
+  for (guint i = 0; i < paths->len; i++) {
+    const gchar *path = g_ptr_array_index(paths, i);
     if (g_unlink(path) != 0 && errno != ENOENT) {
       int saved = errno;
       g_set_error(error, G_IO_ERROR, g_io_error_from_errno(saved),

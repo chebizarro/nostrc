@@ -63,9 +63,12 @@ static const gchar LIFELINE_SH[] =
  * and removed; Linux's poll() reports POLLNVAL for that fd instead, which
  * GLib handles silently. Only the warning's being fatal in tests makes it an
  * abort. So exactly that GLib warning is logged as a plain warning and not
- * treated as fatal, a bounded number of times: repeated EBADF would mean a
- * closed fd stuck in the poll set, a real bug, and is fatal again. */
-#define NOSTRC_TEST_BUS_EBADF_TOLERANCE 64
+ * treated as fatal, a bounded number of times per test case: repeated EBADF
+ * would mean a closed fd stuck in the poll set, a real bug, and is fatal
+ * again. GTest clears the fatal handler before every test case, so it is
+ * armed again (and the count reset) by nostrc_test_bus_tolerate_ebadf(),
+ * which nostrc_test_bus_up() and nostrc_test_bus_add_func() call. The bound
+ * is NOSTRC_TEST_BUS_EBADF_TOLERANCE. */
 static gint ebadf_tolerated;
 
 static gboolean
@@ -102,17 +105,39 @@ fatal_unless_forgiven(const gchar *domain, GLogLevelFlags level, const gchar *me
            g_atomic_int_get(&ebadf_tolerated) <= NOSTRC_TEST_BUS_EBADF_TOLERANCE);
 }
 
-static void
-tolerate_select_ebadf(void)
-{
-  static gsize installed;
-  if (!g_once_init_enter(&installed))
-    return;
-  previous_default_handler = g_log_set_default_handler(log_forgiven_as_warning, NULL);
-  g_test_log_set_fatal_handler(fatal_unless_forgiven, NULL);
-  g_once_init_leave(&installed, 1);
-}
 #endif
+
+void
+nostrc_test_bus_tolerate_ebadf(void)
+{
+#ifdef __APPLE__
+  static gsize installed;
+  /* The default handler wrap is process-wide and stays. */
+  if (g_once_init_enter(&installed)) {
+    previous_default_handler = g_log_set_default_handler(log_forgiven_as_warning, NULL);
+    g_once_init_leave(&installed, 1);
+  }
+  /* The fatal handler lasts only until the next test case starts. */
+  g_atomic_int_set(&ebadf_tolerated, 0);
+  g_test_log_set_fatal_handler(fatal_unless_forgiven, NULL);
+#endif
+}
+
+static void
+run_tolerant(gconstpointer data)
+{
+  nostrc_test_bus_tolerate_ebadf();
+  (*(const GTestFunc *)data)();
+}
+
+void
+nostrc_test_bus_add_func(const gchar *testpath, GTestFunc test_func)
+{
+  g_return_if_fail(testpath != NULL && test_func != NULL);
+  GTestFunc *boxed = g_new(GTestFunc, 1);
+  *boxed = test_func;
+  g_test_add_data_func_full(testpath, boxed, run_tolerant, g_free);
+}
 
 gboolean
 nostrc_test_bus_available(void)
@@ -223,9 +248,8 @@ nostrc_test_bus_up(NostrcTestBus *bus)
 {
   g_return_if_fail(bus != NULL && !bus->up);
   GError *error = NULL;
-#ifdef __APPLE__
-  tolerate_select_ebadf();
-#endif
+  /* For the test case running now (see nostrc_test_bus_tolerate_ebadf()). */
+  nostrc_test_bus_tolerate_ebadf();
   g_autofree gchar *daemon = g_find_program_in_path("dbus-daemon");
   if (!daemon)
     g_error("nostrc-test-bus: dbus-daemon is not installed "

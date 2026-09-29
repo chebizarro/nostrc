@@ -67,7 +67,7 @@ typedef enum {
 #define GH_DM_INBOX_REQ_LIMIT        1000
 /* Older-page REQs per relay and paging run. */
 #define GH_DM_INBOX_MAX_PAGES        16
-/* Seen-set keys (two per message: wrap id and rumor id; one per rejected wrap). */
+/* Rejected-wrap ids kept by a memory-only inbox (gh_dm_inbox_new). */
 #define GH_DM_INBOX_SEEN_CAPACITY    16384
 /* Wraps waiting for the signer; more are deferred to a later REQ. */
 #define GH_DM_INBOX_QUEUE_LIMIT      1024
@@ -93,11 +93,21 @@ typedef struct {
 #define GH_TYPE_DM_INBOX (gh_dm_inbox_get_type())
 G_DECLARE_FINAL_TYPE(GhDmInbox, gh_dm_inbox, GH, DM_INBOX, GObject)
 
-/* The active account's NIP-17 receive pipeline. Per account generation it
- * binds store to the account (clearing the previous one's conversations) and
- * opens the per-account seen-set <state_dir>/<pubkey>.seen and checkpoint
- * <state_dir>/<pubkey>.checkpoint (both 0600; state_dir NULL means
- * $XDG_STATE_HOME/groundhog/nip17). It then keeps one URL-scoped live REQ
+/* The active account's NIP-17 receive pipeline, memory-only (a build without
+ * the encrypted store). Per account generation it binds store to the account
+ * (clearing the previous one's conversations) with a delegate that keeps the
+ * messages and their seen keys (wrap id, rumor id) in memory only, and the
+ * checkpoint too: nothing that would make a message count as seen outlives
+ * the message itself (W13 review B1). The first session of every process
+ * therefore asks for the initial backfill window, and wraps the relays still
+ * hold are unwrapped (signer calls) and listed again after a restart. Only
+ * the rejected-wrap namespace is kept on disk, in the account's pseudonymous
+ * <state_dir>/<acct>.seen (0600; gh_nip17_seen_file_name(); state_dir NULL
+ * means $XDG_STATE_HOME/groundhog/nip17): a rejected wrap never hides a
+ * message. On binding, the rejected ids of the files Groundhog 0.6.0 named by
+ * the pubkey (<pubkey>.seen, <pubkey>.checkpoint) are moved into it and both files
+ * are deleted; their other keys and the old checkpoint are dropped. It then
+ * keeps one URL-scoped live REQ
  * {kinds:[1059], #p:[account], since, limit} open on each of exactly the
  * account's own kind-10050 relays from relays, and on nothing else; older
  * pages go to the same relays only.
@@ -111,7 +121,7 @@ G_DECLARE_FINAL_TYPE(GhDmInbox, gh_dm_inbox, GH, DM_INBOX, GObject)
  * reported as GH_DM_INBOX_RELAY_AUTH_REQUIRED. No other URL is ever
  * authenticated as the account by the inbox.
  *
- * The seen-set becomes store's persistence delegate for the account (see
+ * The memory delegate is store's persistence delegate for the account (see
  * GhConversationDelegate; the encrypted store replaces it). Each delivered
  * wrap is checked with gh_conversation_store_has_wrap(), the delegate's
  * rejected namespace (gh_conversation_store_has_rejected()) and the wraps
@@ -202,6 +212,11 @@ GhDmInboxRelayState gh_dm_inbox_get_relay_state(GhDmInbox *self, const gchar *ur
                                                 const gchar **detail);
 /* The since of the current REQs; 0 without them. */
 gint64 gh_dm_inbox_get_since(GhDmInbox *self);
+/* The settled checkpoint of the current account generation (see "Since
+ * policy"; unix seconds), 0 for none. In storage mode it is loaded from and
+ * saved through the grant; memory-only it lasts for this process only (a
+ * change of the relay set reuses it). */
+gint64 gh_dm_inbox_get_checkpoint(GhDmInbox *self);
 /* Counters of the current account generation (reset on switch). */
 void gh_dm_inbox_get_counters(GhDmInbox *self, GhDmInboxCounters *counters);
 

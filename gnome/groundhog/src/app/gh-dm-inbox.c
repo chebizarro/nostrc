@@ -10,9 +10,8 @@
 #include <string.h>
 
 #define KIND_GIFT_WRAP 1059
-#define CHECKPOINT_MAGIC "groundhog-dm-inbox-checkpoint 1"
-/* A settled checkpoint is written at most this often; the in-memory value
- * (used by a same-process reopen) advances every time. */
+/* A settled checkpoint is saved through the storage grant at most this often;
+ * the in-memory value (used by a same-process reopen) advances every time. */
 #define CHECKPOINT_WRITE_INTERVAL 60
 #define MAX_SCOPE_URLS 16
 
@@ -85,7 +84,6 @@ struct _GhDmInbox {
   /* Account binding: one per account generation. */
   guint64 generation;
   gchar *pubkey_hex;
-  gchar *checkpoint_path;
   gint64 checkpoint;         /* 0: none */
   gint64 checkpoint_written; /* last value written this generation */
   gchar *error;
@@ -213,44 +211,20 @@ update_state(GhDmInbox *self)
 
 /* ---- checkpoint ------------------------------------------------------------ */
 
-static gint64
-checkpoint_load(const gchar *path, const gchar *pubkey_hex)
-{
-  g_autofree gchar *contents = NULL;
-  gsize length = 0;
-  if (!g_file_get_contents(path, &contents, &length, NULL) || length > 256)
-    return 0;
-  g_autofree gchar *prefix = g_strdup_printf(CHECKPOINT_MAGIC " %s ", pubkey_hex);
-  if (!g_str_has_prefix(contents, prefix) || !g_str_has_suffix(contents, "\n"))
-    return 0;
-  g_autofree gchar *number = g_strndup(contents + strlen(prefix),
-                                       length - strlen(prefix) - 1);
-  gint64 value = 0;
-  /* A foreign or malformed file only widens the window: start without one. */
-  if (!g_ascii_string_to_signed(number, 10, 1, G_MAXINT64, &value, NULL))
-    return 0;
-  return value;
-}
-
+/* Saves the checkpoint through the storage grant. Memory-only, it is never
+ * saved: the messages it covers are gone after a restart, so the next
+ * process must fetch them again (W13 review B1). */
 static void
 checkpoint_write(GhDmInbox *self)
 {
-  if (self->storage_mode) {
-    g_autoptr(GError) error = NULL;
-    if (!self->storage_granted)
-      return;
-    if (!self->storage.save_checkpoint(self->storage_data, self->checkpoint, &error)) {
-      g_message("Groundhog could not record the DM inbox checkpoint: %s", error->message);
-      return;
-    }
+  if (!self->storage_mode) {
     self->checkpoint_written = self->checkpoint;
     return;
   }
-  g_autofree gchar *contents = g_strdup_printf(CHECKPOINT_MAGIC " %s %" G_GINT64_FORMAT "\n",
-                                               self->pubkey_hex, self->checkpoint);
   g_autoptr(GError) error = NULL;
-  if (!g_file_set_contents_full(self->checkpoint_path, contents, -1,
-                                G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error)) {
+  if (!self->storage_granted)
+    return;
+  if (!self->storage.save_checkpoint(self->storage_data, self->checkpoint, &error)) {
     g_message("Groundhog could not record the DM inbox checkpoint: %s", error->message);
     return;
   }
@@ -310,74 +284,87 @@ pump(GhDmInbox *self)
   }
 }
 
-/* The default persistence delegate: messages live in the store's memory only
- * and the per-account GhNip17Seen file (the delegate data, owned by the
- * store) holds the seen keys and the rejected namespace. The encrypted
- * store's delegate (gh-store-conversations.h) replaces this table with its
- * T-admit transaction and imports the file. */
-static gboolean
-seen_has_wrap(gpointer data, const gchar *wrap_id)
+/* The memory-only persistence delegate (gh_dm_inbox_new): the messages live
+ * in the store's memory only, and so do their seen keys, which must never
+ * outlive them (the GhNip17Seen contract: record a message only once it is
+ * durably stored). A restart therefore unwraps again whatever the inbox
+ * relays still hold (W13 review B1). Only the rejected namespace is kept on
+ * disk, in the account's pseudonymous GhNip17Seen file ("x" lines only): a
+ * rejected wrap is never a message, and keeping it spares the user a signer
+ * approval per restart. The encrypted store's delegate
+ * (gh-store-conversations.h) is the durable alternative. */
+typedef struct {
+  GHashTable *wraps;     /* wrap ids of this process's admissions */
+  GHashTable *rumors;    /* their rumor ids */
+  GhNip17Seen *rejected; /* <state_dir>/<acct>.seen; only "x" is ever written */
+} MemorySeen;
+
+static void
+memory_seen_free(gpointer data)
 {
-  return gh_nip17_seen_has_wrap(data, wrap_id);
+  MemorySeen *seen = data;
+  g_hash_table_unref(seen->wraps);
+  g_hash_table_unref(seen->rumors);
+  gh_nip17_seen_free(seen->rejected);
+  g_free(seen);
 }
 
 static gboolean
-seen_has_rumor(gpointer data, const gchar *rumor_id)
+memory_has_wrap(gpointer data, const gchar *wrap_id)
 {
-  return gh_nip17_seen_has_rumor(data, rumor_id);
+  return g_hash_table_contains(((MemorySeen *)data)->wraps, wrap_id);
 }
 
 static gboolean
-seen_has_rejected(gpointer data, const gchar *wrap_id)
+memory_has_rumor(gpointer data, const gchar *rumor_id)
 {
-  return gh_nip17_seen_has_rejected(data, wrap_id);
+  return g_hash_table_contains(((MemorySeen *)data)->rumors, rumor_id);
 }
 
 static gboolean
-seen_add_rejected(gpointer data, const gchar *wrap_id, GError **error)
+memory_has_rejected(gpointer data, const gchar *wrap_id)
 {
-  return gh_nip17_seen_record_rejected(data, wrap_id, error);
+  return gh_nip17_seen_has_rejected(((MemorySeen *)data)->rejected, wrap_id);
+}
+
+/* On an I/O error the id stays rejected for this process only. */
+static gboolean
+memory_add_rejected(gpointer data, const gchar *wrap_id, GError **error)
+{
+  return gh_nip17_seen_record_rejected(((MemorySeen *)data)->rejected, wrap_id, error);
 }
 
 static gboolean
-seen_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
-           GhConversationCommit *commit, GError **error)
+memory_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
+             GhConversationCommit *commit, GError **error)
 {
+  MemorySeen *seen = data;
   (void)commit;
   (void)error;
   if (!wrap_id)
     return TRUE; /* a local echo; its self-copy wrap is recorded on arrival */
-  GhNip17Message record = {
-    .account_pubkey = (gchar *)gh_message_get_account(message),
-    .wrap_id = (gchar *)wrap_id,
-    .rumor_id = (gchar *)gh_message_get_rumor_id(message),
-  };
-  g_autoptr(GError) local = NULL;
-  /* The message itself is only in memory, so a failed append must not hide
-   * it: GhNip17Seen keeps the keys for this process, and a restart (which
-   * loses the in-memory message anyway) fetches the wrap again. */
-  if (!gh_nip17_seen_record(data, &record, &local))
-    g_warning("Groundhog could not record NIP-17 wrap %s as seen: %s", wrap_id,
-              local->message);
+  g_hash_table_add(seen->wraps, g_strdup(wrap_id));
+  g_hash_table_add(seen->rumors, g_strdup(gh_message_get_rumor_id(message)));
   return TRUE;
 }
 
-static const GhConversationDelegate seen_delegate = {
-  .has_wrap = seen_has_wrap,
-  .has_rumor = seen_has_rumor,
-  .admit = seen_admit,
-  .has_rejected = seen_has_rejected,
-  .add_rejected = seen_add_rejected,
+static const GhConversationDelegate memory_delegate = {
+  .has_wrap = memory_has_wrap,
+  .has_rumor = memory_has_rumor,
+  .admit = memory_admit,
+  .has_rejected = memory_has_rejected,
+  .add_rejected = memory_add_rejected,
 };
 
 /* A final verdict reached after a signer call: no later session asks the
- * signer about this wrap again (the delegate's rejected namespace). */
+ * signer about this wrap again (the delegate's rejected namespace). Failure
+ * logs carry no wrap or rumor id (PD-10). */
 static void
 record_rejected(GhDmInbox *self, const gchar *wrap_id)
 {
   g_autoptr(GError) error = NULL;
   if (!gh_conversation_store_record_rejected(self->store, wrap_id, &error))
-    g_warning("Groundhog could not record rejected NIP-17 wrap %s: %s", wrap_id,
+    g_warning("Groundhog could not record a rejected NIP-17 wrap: %s",
               error ? error->message : "unknown error");
 }
 
@@ -408,8 +395,7 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
     break;
   case GH_CONVERSATION_ADD_FAILED:
     /* Not committed, so not seen: a later session retries it. */
-    g_message("Groundhog could not store NIP-17 message %s: %s", message->rumor_id,
-              error->message);
+    g_message("Groundhog could not store a NIP-17 message: %s", error->message);
     self->counters.deferred++;
     self->hold_checkpoint = TRUE;
     break;
@@ -417,7 +403,7 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
   default:
     /* The unwrap already validated it; this only guards the invariant. The
      * verdict still followed signer calls, so it is recorded like one. */
-    g_warning("Groundhog refused NIP-17 message %s: %s", message->rumor_id,
+    g_warning("Groundhog refused a NIP-17 message: %s",
               error ? error->message : "unknown error");
     self->counters.rejected++;
     record_rejected(self, message->wrap_id);
@@ -457,7 +443,7 @@ unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
     /* Signer denial or failure: not recorded, so a later session offers it
      * again from a checkpoint held before it. Not asked again this session,
      * whichever relay or page delivers it next. */
-    g_debug("Groundhog deferred NIP-17 wrap %s: %s", call->job->wrap_id, error->message);
+    g_debug("Groundhog deferred a NIP-17 wrap: %s", error->message);
     self->counters.deferred++;
     self->hold_checkpoint = TRUE;
     g_hash_table_add(self->deferred_ids, g_strdup(call->job->wrap_id));
@@ -972,12 +958,64 @@ teardown_account(GhDmInbox *self)
     g_clear_object(&self->auth);
   }
   g_clear_pointer(&self->pubkey_hex, g_free);
-  g_clear_pointer(&self->checkpoint_path, g_free);
   g_clear_pointer(&self->error, g_free);
   self->checkpoint = 0;
   self->checkpoint_written = 0;
   self->generation = 0;
   memset(&self->counters, 0, sizeof self->counters);
+}
+
+/* Removes a state file of an older build; a failure is only logged (without
+ * the path, which names the account). */
+static void
+remove_legacy_file(const gchar *path)
+{
+  if (g_unlink(path) != 0 && errno != ENOENT)
+    g_message("Groundhog could not delete an old DM inbox state file: %s", g_strerror(errno));
+}
+
+/* Memory-only mode: the account's rejected-wrap set <state_dir>/<acct>.seen
+ * (pseudonymous, charter §3.2), after moving in the rejected ids of the
+ * files Groundhog 0.6.0 named by the pubkey and deleting them: their "w"/"r" keys
+ * and checkpoint covered messages that were only ever in memory (W13 review
+ * B1), so they are dropped. NULL with self->error set: fail closed, since
+ * without a trustworthy rejected set every replayed rejected wrap would be a
+ * fresh signer prompt. */
+static GhNip17Seen *
+open_rejected(GhDmInbox *self)
+{
+  g_autoptr(GError) error = NULL;
+  if (!self->pubkey_hex) {
+    self->error = g_strdup("The active account has no usable public key");
+    return NULL;
+  }
+  if (g_mkdir_with_parents(self->state_dir, 0700) != 0) {
+    self->error = g_strdup_printf("Could not create the DM inbox state directory: %s",
+                                  g_strerror(errno));
+    return NULL;
+  }
+  g_autofree gchar *name = gh_nip17_seen_file_name(self->pubkey_hex);
+  g_autofree gchar *path = g_build_filename(self->state_dir, name, NULL);
+  GhNip17Seen *rejected = gh_nip17_seen_open(path, self->pubkey_hex, GH_DM_INBOX_SEEN_CAPACITY,
+                                             &error);
+  if (!rejected) {
+    self->error = g_strdup("The DM rejected-wrap set is unusable");
+    g_message("Groundhog: %s: %s", self->error, error->message);
+    return NULL;
+  }
+  g_autofree gchar *legacy_seen_name = g_strconcat(self->pubkey_hex, ".seen", NULL);
+  g_autofree gchar *legacy_seen = g_build_filename(self->state_dir, legacy_seen_name, NULL);
+  /* A foreign, malformed or unreadable file stays; it is never read as a
+   * seen-set. Read and parse errors name the path, so they are not logged. */
+  if (!gh_nip17_seen_import_rejected(rejected, legacy_seen, NULL, &error))
+    g_message("Groundhog did not import an old DM seen file: %s",
+              error->domain == G_IO_ERROR && error->code != G_IO_ERROR_INVALID_DATA
+                ? error->message : "it is not a readable seen-set of this account");
+  g_autofree gchar *legacy_checkpoint_name = g_strconcat(self->pubkey_hex, ".checkpoint", NULL);
+  g_autofree gchar *legacy_checkpoint = g_build_filename(self->state_dir,
+                                                         legacy_checkpoint_name, NULL);
+  remove_legacy_file(legacy_checkpoint);
+  return rejected;
 }
 
 static void
@@ -998,36 +1036,25 @@ bind_account(GhDmInbox *self, guint64 generation, const gchar *npub)
                                                     G_CALLBACK(on_auth_changed), self);
     return;
   }
-  GhNip17Seen *seen = NULL;
-  g_autoptr(GError) error = NULL;
-  if (!self->pubkey_hex) {
-    self->error = g_strdup("The active account has no usable public key");
-  } else if (g_mkdir_with_parents(self->state_dir, 0700) != 0) {
-    self->error = g_strdup_printf("Could not create %s: %s", self->state_dir,
-                                  g_strerror(errno));
-  } else {
-    g_autofree gchar *seen_name = g_strconcat(self->pubkey_hex, ".seen", NULL);
-    g_autofree gchar *seen_path = g_build_filename(self->state_dir, seen_name, NULL);
-    seen = gh_nip17_seen_open(seen_path, self->pubkey_hex, GH_DM_INBOX_SEEN_CAPACITY, &error);
-    /* Fail closed: without a trustworthy seen-set every replayed wrap would
-     * be a fresh signer prompt. */
-    if (!seen)
-      self->error = g_strdup_printf("The DM seen-set is unusable: %s", error->message);
-  }
+  GhNip17Seen *rejected = open_rejected(self);
   /* The store drops the previous account's rooms before this one's appear
-   * and owns the seen-set from here on; the inbox reaches it (including the
-   * rejected namespace) through the store. */
-  if (seen) {
-    gh_conversation_store_set_account(self->store, self->pubkey_hex, &seen_delegate,
-                                      seen, (GDestroyNotify)gh_nip17_seen_free);
+   * and owns the delegate data from here on; the inbox reaches the seen keys
+   * (including the rejected namespace) through the store. */
+  if (rejected) {
+    MemorySeen *seen = g_new0(MemorySeen, 1);
+    seen->wraps = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    seen->rumors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    seen->rejected = rejected;
+    gh_conversation_store_set_account(self->store, self->pubkey_hex, &memory_delegate,
+                                      seen, memory_seen_free);
   } else {
     gh_conversation_store_set_account(self->store, self->pubkey_hex, NULL, NULL, NULL);
     return;
   }
-  g_autofree gchar *checkpoint_name = g_strconcat(self->pubkey_hex, ".checkpoint", NULL);
-  self->checkpoint_path = g_build_filename(self->state_dir, checkpoint_name, NULL);
-  self->checkpoint = checkpoint_load(self->checkpoint_path, self->pubkey_hex);
-  self->checkpoint_written = self->checkpoint;
+  /* No checkpoint survives a restart (see checkpoint_write): the first
+   * session of each process asks for the initial backfill window. */
+  self->checkpoint = 0;
+  self->checkpoint_written = 0;
   /* Own inbox relays may ask for AUTH as the account (charter §4.3). */
   self->auth = gh_account_auth_new(self->accounts);
   if (self->auth)
@@ -1284,6 +1311,13 @@ gh_dm_inbox_get_since(GhDmInbox *self)
 {
   g_return_val_if_fail(GH_IS_DM_INBOX(self), 0);
   return self->since;
+}
+
+gint64
+gh_dm_inbox_get_checkpoint(GhDmInbox *self)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), 0);
+  return self->checkpoint;
 }
 
 void

@@ -8,6 +8,7 @@
 #include "gh-account-store.h"
 #include "gh-app-outbox.h"
 #include "gh-inbox-resolver.h"
+#include "gh-nip17-inbox.h"
 #include "gh-status.h"
 #include "gh-store-status.h"
 #include "gh-test-signer.h"
@@ -431,9 +432,10 @@ publish_inbox_list(Fixture *f, guint key)
   gh_test_run_until_idle();
 }
 
-/* A NIP-17 message from key `from` to key `to`, gift-wrapped (NIP-59). */
+/* A NIP-17 message from key `from` to key `to`, gift-wrapped (NIP-59);
+ * *rumor_id (nullable) is its rumor's id. */
 static gchar *
-craft_wrap(guint from, guint to, gint64 created_at, const gchar *content)
+craft_wrap(guint from, guint to, gint64 created_at, const gchar *content, gchar **rumor_id)
 {
   NostrEvent *rumor = nostr_event_new();
   nostr_event_set_kind(rumor, 14);
@@ -442,6 +444,8 @@ craft_wrap(guint from, guint to, gint64 created_at, const gchar *content)
   nostr_event_set_content(rumor, content);
   nostr_event_set_tags(rumor, nostr_tags_new(1, nostr_tag_new("p", hex[to], NULL)));
   rumor->id = nostr_event_get_id(rumor);
+  if (rumor_id)
+    *rumor_id = g_strdup(rumor->id);
   char *rumor_json = nostr_event_serialize_compact(rumor);
   nostr_event_free(rumor);
 
@@ -474,6 +478,18 @@ craft_wrap(guint from, guint to, gint64 created_at, const gchar *content)
 }
 
 static gchar *
+wrap_id_of(const gchar *wrap_json)
+{
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, wrap_json, NULL), ==, 1);
+  char *id = nostr_event_get_id(event);
+  nostr_event_free(event);
+  gchar *out = g_strdup(id);
+  free(id);
+  return out;
+}
+
+static gchar *
 room_of(guint a, guint b)
 {
   return strcmp(hex[a], hex[b]) < 0 ? g_strconcat(hex[a], ",", hex[b], NULL)
@@ -498,7 +514,8 @@ receive_message(Fixture *f, const gchar *content)
 {
   Req *req = open_req(&f->rec, INBOX_A);
   g_assert_nonnull(req);
-  g_autofree gchar *wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 60, content);
+  g_autofree gchar *wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 60, content,
+                                      NULL);
   gh_relay_scope_event(req->scope, INBOX_A, wrap);
   g_autofree gchar *room = room_of(1, 2);
   RoomWait wait = { f->model, room };
@@ -606,40 +623,255 @@ test_open_receive_restore(void)
   fixture_down(&f);
 }
 
-/* ST-12 via the app: the old plaintext seen file and checkpoint are imported
- * into the store once and deleted; the inbox's since comes from the store. */
+static gboolean
+store_seen(Fixture *f, GhStoreSeenNs ns, const gchar *id)
+{
+  gboolean has = FALSE;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_seen_contains(gh_account_store_get_store(f->store), ns, id, &has,
+                                       &error));
+  g_assert_no_error(error);
+  return has;
+}
+
+static void
+write_private(const gchar *path, const gchar *contents)
+{
+  g_autofree gchar *dir = g_path_get_dirname(path);
+  g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
+  g_assert_true(g_file_set_contents_full(path, contents, -1, G_FILE_SET_CONTENTS_CONSISTENT,
+                                         0600, NULL));
+}
+
+/* The since of a first session: nothing carried over, the initial window. */
+static void
+assert_initial_since(gint64 since, gint64 before, gint64 after)
+{
+  g_assert_cmpint(since, >=, before - GH_DM_INBOX_INITIAL_BACKFILL);
+  g_assert_cmpint(since, <=, after - GH_DM_INBOX_INITIAL_BACKFILL);
+}
+
+typedef struct {
+  GhConversationStore *model;
+  const gchar *rumor_id;
+} MessageWait;
+
+static gboolean
+message_listed(gpointer data)
+{
+  MessageWait *wait = data;
+  return gh_conversation_store_has_message(wait->model, wait->rumor_id);
+}
+
+static gboolean
+inbox_live_and_settled(gpointer data)
+{
+  GhDmInboxCounters counters;
+  gh_dm_inbox_get_counters(data, &counters);
+  return gh_dm_inbox_get_state(data) == GH_DM_INBOX_LIVE && counters.pending == 0;
+}
+
+/* The relay delivers wrap on INBOX_A and then its EOSE; waits until the
+ * inbox settled and the message is listed. */
+static void
+deliver_and_settle(Fixture *f, const gchar *wrap, const gchar *rumor_id)
+{
+  Req *req = open_req(&f->rec, INBOX_A);
+  g_assert_nonnull(req);
+  gh_relay_scope_event(req->scope, INBOX_A, wrap);
+  gh_relay_scope_eose(req->scope, INBOX_A);
+  gh_test_spin_until(inbox_live_and_settled, f->inbox);
+  MessageWait wait = { f->model, rumor_id };
+  gh_test_spin_until(message_listed, &wait);
+}
+
+/* The memory-only inbox names its file like the store's directory (§3.2). */
+static void
+test_pseudonymous_names(void)
+{
+  for (guint key = 1; key <= 2; key++) {
+    g_autofree gchar *dir = gh_store_account_dir_name(hex[key]);
+    g_autofree gchar *expected = g_strconcat(dir, ".seen", NULL);
+    g_autofree gchar *name = gh_nip17_seen_file_name(hex[key]);
+    g_assert_cmpstr(name, ==, expected);
+    g_assert_null(strstr(name, hex[key]));
+  }
+  g_assert_null(gh_nip17_seen_file_name("npub1nope"));
+}
+
+/* ST-12 via the app (W13 review B1). The memory-only inbox's plaintext files
+ * (Groundhog 0.6.0's <pubkey>.seen and .checkpoint; a store-less build's
+ * <acct>.seen) held keys of messages it kept in memory only. Only their
+ * rejected ids are imported; the "w"/"r" keys and the checkpoint are
+ * dropped and every file is deleted, so the first encrypted-store session
+ * asks for the initial window and stores what the relays still hold: the
+ * message 0.6.0 showed once is listed again, and kept from then on. */
 static void
 test_legacy_import(void)
 {
   Fixture f = { 0 };
   fixture_up(&f, 2);
-  g_autofree gchar *wrap_id = g_strnfill(64, 'a');
-  g_autofree gchar *seen = g_strdup_printf("groundhog-nip17-seen 1 %s\nw %s\n", hex[2], wrap_id);
-  gint64 checkpoint = g_get_real_time() / G_USEC_PER_SEC - 3600;
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *rumor_id = NULL;
+  g_autofree gchar *wrap = craft_wrap(1, 2, now - 120, CANARY " shown once by 0.6.0", &rumor_id);
+  g_autofree gchar *wrap_id = wrap_id_of(wrap);
+  g_autofree gchar *rejected = g_strnfill(64, 'a');
+  g_autofree gchar *rejected2 = g_strnfill(64, 'b');
+  g_autofree gchar *seen = g_strdup_printf("groundhog-nip17-seen 1 %s\nw %s\nr %s\nx %s\n",
+                                           hex[2], wrap_id, rumor_id, rejected);
+  g_autofree gchar *pseudonymous = g_strdup_printf("groundhog-nip17-seen 1 %s\nx %s\n", hex[2],
+                                                   rejected2);
   g_autofree gchar *mark = g_strdup_printf("groundhog-dm-inbox-checkpoint 1 %s %" G_GINT64_FORMAT
-                                           "\n", hex[2], checkpoint);
+                                           "\n", hex[2], now - 3600);
   g_autofree gchar *seen_path = g_strdup_printf("%s/%s.seen", f.state_dir, hex[2]);
   g_autofree gchar *mark_path = g_strdup_printf("%s/%s.checkpoint", f.state_dir, hex[2]);
-  g_assert_cmpint(g_mkdir(f.state_dir, 0700), ==, 0);
-  g_assert_true(g_file_set_contents_full(seen_path, seen, -1, G_FILE_SET_CONTENTS_CONSISTENT,
-                                         0600, NULL));
-  g_assert_true(g_file_set_contents_full(mark_path, mark, -1, G_FILE_SET_CONTENTS_CONSISTENT,
-                                         0600, NULL));
+  g_autofree gchar *name = gh_nip17_seen_file_name(hex[2]);
+  g_autofree gchar *pseudonymous_path = g_build_filename(f.state_dir, name, NULL);
+  write_private(seen_path, seen);
+  write_private(mark_path, mark);
+  write_private(pseudonymous_path, pseudonymous);
+
   stack_up(&f);
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
-  g_assert_false(g_file_test(seen_path, G_FILE_TEST_EXISTS));
-  g_assert_false(g_file_test(mark_path, G_FILE_TEST_EXISTS));
-  GhStore *store = gh_account_store_get_store(f.store);
-  gboolean has = FALSE;
-  g_assert_true(gh_store_seen_contains(store, GH_STORE_SEEN_WRAP, wrap_id, &has, NULL));
-  g_assert_true(has);
-  gint64 since = 0;
-  g_assert_true(gh_store_get_cursor(store, GH_ACCOUNT_STORE_INBOX_CURSOR, "", &since, NULL));
-  g_assert_cmpint(since, ==, checkpoint);
+  g_assert_cmpuint(gh_test_count_files(f.state_dir), ==, 0);
+  g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected));
+  g_assert_true(store_seen(&f, GH_STORE_SEEN_REJECTED_WRAP, rejected2));
+  g_assert_false(store_seen(&f, GH_STORE_SEEN_WRAP, wrap_id));
+  g_assert_false(store_seen(&f, GH_STORE_SEEN_RUMOR, rumor_id));
+  gint64 since = -1;
+  g_assert_true(gh_store_get_cursor(gh_account_store_get_store(f.store),
+                                    GH_ACCOUNT_STORE_INBOX_CURSOR, "", &since, NULL));
+  g_assert_cmpint(since, ==, 0);
+  gint64 before = g_get_real_time() / G_USEC_PER_SEC;
   publish_inbox_list(&f, 2);
+  gint64 after = g_get_real_time() / G_USEC_PER_SEC;
   Req *req = open_req(&f.rec, INBOX_A);
   g_assert_nonnull(req);
-  g_assert_cmpint(req->since, ==, checkpoint - GH_DM_INBOX_WRAP_SKEW);
+  assert_initial_since(req->since, before, after);
+
+  /* The relays' copy is unwrapped and stored this time. */
+  guint calls = f.signer.calls;
+  deliver_and_settle(&f, wrap, rumor_id);
+  g_assert_cmpuint(f.signer.calls, ==, calls + 2);
+  g_assert_true(store_seen(&f, GH_STORE_SEEN_WRAP, wrap_id));
+  stack_down(&f);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_true(gh_conversation_store_has_message(f.model, rumor_id));
+  fixture_down(&f);
+}
+
+/* W13 review B1, on the executable's wiring (gh-app-services.c's controller,
+ * relays, model, storage-mode inbox, store key, outbox and account store),
+ * rebuilt over the same data and state directories as a new process would:
+ *  - nothing subscribes before the account's store is open;
+ *  - a message admitted in session 1 is listed again in session 2, from the
+ *    store, before any relay answers;
+ *  - the relays' copy then costs no signer call, and the inbox starts from
+ *    the checkpoint the store kept;
+ *  - nothing is written outside the encrypted store. */
+static void
+test_restart_relists(void)
+{
+  Fixture f = { 0 };
+  f.with_outbox = TRUE;
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  publish_inbox_list(&f, 2);
+  g_autofree gchar *rumor_id = NULL;
+  g_autofree gchar *wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 60,
+                                      CANARY " session one", &rumor_id);
+  deliver_and_settle(&f, wrap, rumor_id);
+  guint calls = f.signer.calls;
+  g_assert_cmpuint(calls, >=, 2);
+  gint64 checkpoint = gh_dm_inbox_get_checkpoint(f.inbox);
+  g_assert_cmpint(checkpoint, >, 0);
+  stack_down(&f);
+
+  /* Session 2, with the key lookup held: no inbox REQ until the store is
+   * open, even though the inbox list is known. */
+  fake_secret_set_hold(f.secret, TRUE);
+  stack_up(&f);
+  gh_test_run_until_idle();
+  g_assert_cmpint(gh_account_store_get_state(f.store), ==, GH_ACCOUNT_STORE_OPENING);
+  publish_inbox_list(&f, 2);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 0);
+  g_assert_cmpint(gh_dm_inbox_get_state(f.inbox), ==, GH_DM_INBOX_NO_STORAGE);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.model)), ==, 0);
+  fake_secret_set_hold(f.secret, FALSE);
+  while (fake_secret_release(f.secret))
+    gh_test_run_until_idle();
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_true(gh_conversation_store_has_message(f.model, rumor_id));
+  g_autofree gchar *room = room_of(1, 2);
+  g_assert_nonnull(gh_conversation_store_lookup(f.model, room));
+  /* The checkpoint was saved in the store (not in a file) at shutdown. */
+  gint64 saved = 0;
+  g_assert_true(gh_store_get_cursor(gh_account_store_get_store(f.store),
+                                    GH_ACCOUNT_STORE_INBOX_CURSOR, "", &saved, NULL));
+  g_assert_cmpint(saved, >=, checkpoint);
+  Req *req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  g_assert_cmpint(req->since, ==, saved - GH_DM_INBOX_WRAP_SKEW);
+  gh_relay_scope_event(req->scope, INBOX_A, wrap);
+  gh_relay_scope_eose(req->scope, INBOX_A);
+  gh_test_spin_until(inbox_live_and_settled, f.inbox);
+  GhDmInboxCounters counters;
+  gh_dm_inbox_get_counters(f.inbox, &counters);
+  g_assert_cmpuint(counters.skipped, ==, 1);
+  g_assert_cmpuint(counters.admitted, ==, 0);
+  g_assert_cmpuint(f.signer.calls, ==, calls);
+  g_assert_true(gh_conversation_store_has_message(f.model, rumor_id));
+  g_assert_false(g_file_test(f.state_dir, G_FILE_TEST_EXISTS));
+  fixture_down(&f);
+}
+
+/* W13 review B1 in "Continue Without Saving Messages" (charter §3.4, KC-4):
+ * the session writes nothing (no seen key, no checkpoint, no file at all),
+ * and after a restart, the same choice made again, the relays' copy is
+ * unwrapped again from the initial window and listed again. */
+static void
+test_ephemeral_restart_refetches(void)
+{
+  Fixture f = { 0 };
+  f.with_outbox = TRUE;
+  fixture_up(&f, 2);
+  fake_secret_set_available(f.secret, FALSE);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_UNAVAILABLE);
+  g_assert_true(gh_account_store_continue_without_saving(f.store, NULL));
+  publish_inbox_list(&f, 2);
+  g_autofree gchar *rumor_id = NULL;
+  g_autofree gchar *wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 60,
+                                      CANARY " in memory", &rumor_id);
+  deliver_and_settle(&f, wrap, rumor_id);
+  guint calls = f.signer.calls;
+  g_assert_cmpint(gh_dm_inbox_get_checkpoint(f.inbox), >, 0);
+  g_assert_cmpuint(gh_test_count_files(f.data_dir), ==, 0);
+  g_assert_false(g_file_test(f.state_dir, G_FILE_TEST_EXISTS));
+  g_assert_cmpuint(gh_test_count_files(xdg_root), ==, 0);
+  stack_down(&f);
+  g_assert_cmpuint(gh_test_count_files(f.data_dir), ==, 0);
+  g_assert_cmpuint(gh_test_count_files(xdg_root), ==, 0);
+
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_UNAVAILABLE);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.model)), ==, 0);
+  g_assert_true(gh_account_store_continue_without_saving(f.store, NULL));
+  gint64 before = g_get_real_time() / G_USEC_PER_SEC;
+  publish_inbox_list(&f, 2);
+  gint64 after = g_get_real_time() / G_USEC_PER_SEC;
+  Req *req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  assert_initial_since(req->since, before, after);
+  deliver_and_settle(&f, wrap, rumor_id);
+  g_assert_cmpuint(f.signer.calls, ==, calls + 2);
+  g_autofree gchar *room = room_of(1, 2);
+  g_assert_nonnull(gh_conversation_store_lookup(f.model, room));
+  g_assert_cmpuint(gh_test_count_files(f.data_dir), ==, 0);
+  g_assert_false(g_file_test(f.state_dir, G_FILE_TEST_EXISTS));
+  g_assert_cmpuint(gh_test_count_files(xdg_root), ==, 0);
   fixture_down(&f);
 }
 
@@ -932,8 +1164,13 @@ test_st8_forget(void)
   g_autofree gchar *db2 = store_db_path(&f, 2);
   g_autofree gchar *dir2 = g_path_get_dirname(db2);
   g_autofree gchar *legacy2 = g_strdup_printf("%s/%s.seen", f.state_dir, hex[2]);
+  g_autofree gchar *legacy2_mark = g_strdup_printf("%s/%s.checkpoint", f.state_dir, hex[2]);
+  g_autofree gchar *name2 = gh_nip17_seen_file_name(hex[2]);
+  g_autofree gchar *pseudonymous2 = g_build_filename(f.state_dir, name2, NULL);
   g_assert_cmpint(g_mkdir_with_parents(f.state_dir, 0700), ==, 0);
   g_assert_true(g_file_set_contents(legacy2, "stale", -1, NULL));
+  g_assert_true(g_file_set_contents(legacy2_mark, "stale", -1, NULL));
+  g_assert_true(g_file_set_contents(pseudonymous2, "stale", -1, NULL));
   g_autofree gchar *gnostr_before = dump_settings(f.gnostr);
   g_autofree gchar *groundhog_before = dump_settings(f.settings);
 
@@ -961,6 +1198,8 @@ test_st8_forget(void)
   g_assert_cmpstr(g_ptr_array_index(f.events, 0), ==, closed2);
   g_assert_false(g_file_test(dir2, G_FILE_TEST_EXISTS));
   g_assert_false(g_file_test(legacy2, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(legacy2_mark, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(pseudonymous2, G_FILE_TEST_EXISTS));
   g_assert_cmpuint(fake_secret_count(f.secret, hex[2]), ==, 0);
   g_autofree gchar *current = g_settings_get_string(f.settings, "current-npub");
   g_assert_cmpstr(current, ==, "");
@@ -1114,7 +1353,11 @@ main(int argc, char **argv)
   }
   g_test_add_func("/groundhog/account-store/status-mapping", test_status_mapping);
   g_test_add_func("/groundhog/account-store/open-receive-restore", test_open_receive_restore);
+  g_test_add_func("/groundhog/account-store/pseudonymous-names", test_pseudonymous_names);
   g_test_add_func("/groundhog/account-store/legacy-import", test_legacy_import);
+  g_test_add_func("/groundhog/account-store/restart-relists", test_restart_relists);
+  g_test_add_func("/groundhog/account-store/ephemeral-restart-refetches",
+                  test_ephemeral_restart_refetches);
   g_test_add_func("/groundhog/account-store/kc2-locked", test_kc2_locked);
   g_test_add_func("/groundhog/account-store/kc3-key-missing", test_kc3_key_missing);
   g_test_add_func("/groundhog/account-store/kc4-unavailable", test_kc4_unavailable);

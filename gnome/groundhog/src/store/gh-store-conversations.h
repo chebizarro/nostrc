@@ -100,30 +100,35 @@ gboolean gh_store_conversations_forget(GhStoreConversations *self, const gchar *
 
 /* ---- Legacy seen file (charter §3.2, ST-12) -----------------------------------
  * Before the encrypted store, GhDmInbox kept the account's seen keys in a
- * 0600 flat file <state_dir>/<account>.seen: a header line
- * "groundhog-nip17-seen 1 <account>", then one "w <wrap id>", "r <rumor id>"
- * or "x <rejected wrap id>" line each. */
+ * 0600 flat file: <state_dir>/<account>.seen (Groundhog 0.6.0) or, in a build
+ * without the store, <state_dir>/<acct>.seen (gh_nip17_seen_file_name()). A
+ * header line "groundhog-nip17-seen 1 <account>", then one "w <wrap id>",
+ * "r <rumor id>" or "x <rejected wrap id>" line each. */
 typedef struct {
-  guint wraps;     /* "w" ids newly added to seen ns GH_STORE_SEEN_WRAP */
-  guint rumors;    /* "r" ids newly added to GH_STORE_SEEN_RUMOR */
   guint rejected;  /* "x" ids newly added to GH_STORE_SEEN_REJECTED_WRAP */
+  guint dropped;   /* "w" and "r" lines, never imported (see below) */
 } GhStoreSeenImport;
 
 /* <state_dir>/<account_pubkey>.seen; NULL state_dir means GhDmInbox's
  * default, $XDG_STATE_HOME/groundhog/nip17. */
 gchar *gh_store_conversations_legacy_seen_path(const gchar *state_dir,
                                                const gchar *account_pubkey);
-/* Imports every key of the legacy file at @path into `seen` in one
- * transaction, then deletes the file. Idempotent: keys already present are
- * kept, and a crash between the commit and the unlink imports nothing new
- * next time. A missing file is success with nothing imported. A symlink, a
- * file of another user or not a regular file (PERMISSIONS), another
- * account's file (FOREIGN), and a malformed or oversized one (INVALID) are
- * refused and left in place; a torn final line is ignored, as GhDmInbox
- * did. Rumor ids import as seen without a message, so those messages are
- * not shown again (the old inbox held them in memory only). If only the
- * deletion fails, the keys stay imported, *out_stats counts them and the
- * error (GH_STORE_ERROR_FAILED) says so; calling again deletes the file. */
+/* Imports the rejected-wrap ids ("x") of the legacy file at @path into
+ * `seen` in one transaction, then deletes the file. Its "w" and "r" keys are
+ * dropped: the inbox that wrote them kept the messages in memory only, so
+ * importing them would record as seen messages that no store holds and hide
+ * them for good although the relays still have them (W13 review B1). Left
+ * out, those wraps are fetched, unwrapped and stored again by the first
+ * encrypted-store session (whatever the relays still hold); a rejected id
+ * never hides a message and spares a signer approval. Idempotent: keys
+ * already present are kept, and a crash between the commit and the unlink
+ * imports nothing new next time. A missing file is success with nothing
+ * imported. A symlink, a file of another user or not a regular file
+ * (PERMISSIONS), another account's file (FOREIGN), and a malformed or
+ * oversized one (INVALID) are refused and left in place; a torn final line
+ * is ignored, as GhDmInbox did. If only the deletion fails, the keys stay
+ * imported, *out_stats counts them and the error (GH_STORE_ERROR_FAILED)
+ * says so; calling again deletes the file. */
 gboolean gh_store_conversations_import_seen_file(GhStoreConversations *self,
                                                  const gchar *path,
                                                  GhStoreSeenImport *out_stats,

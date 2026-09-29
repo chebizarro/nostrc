@@ -463,6 +463,79 @@ test_requests_are_separate(Fixture *f, gconstpointer data)
   g_assert_cmpuint(g_list_model_get_n_items(list_model(f->sidebar)), ==, 4);
 }
 
+static void search(Fixture *f, const char *text);
+
+/* Charter §7.9 (W13 review #4): a request is titled, in its row, avatar,
+ * accessible label and header, by its sender's npub. The subject it carries
+ * is text the sender chose: shown only as secondary text until accepted,
+ * and still found by search. */
+static void
+test_request_subject_secondary(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  present(f, 900, 600);
+  spin_until(has_rows, f);
+  add(f->store, 5, 1, f->now - 30, "claim it now", "You won a prize");
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->sidebar), "sidebar.show-requests",
+                                           "b", TRUE));
+  spin_until(has_rows, f);
+  g_autoptr(GDateTime) now = g_date_time_new_now_local();
+  GhConversationRow *ae = row_for(f->sidebar, f->ae);
+  const char *title = gh_conversation_get_title(f->ae);
+  g_assert_true(g_str_has_prefix(title, "npub1"));
+  g_assert_cmpstr(row_text(ae, "title_label"), ==, title);
+  AdwAvatar *avatar = template_child(ae, GH_TYPE_CONVERSATION_ROW, "avatar");
+  g_assert_cmpstr(adw_avatar_get_text(avatar), ==, title);
+  /* Secondary text even with previews off (it is not the message body). */
+  g_assert_cmpstr(row_text(ae, "preview_label"), ==, "You won a prize");
+  g_autofree char *time = gh_conversation_row_format_time(f->now - 30, now);
+  g_autofree char *label = g_strdup_printf(
+    "%s. Message request. Subject: You won a prize. 2 unread. %s", title, time);
+  g_assert_cmpstr(gh_conversation_row_get_summary(ae), ==, label);
+  GtkWidget *item = gtk_widget_get_parent(GTK_WIDGET(ae));
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(item), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                      label);
+  /* With previews: the subject, then the newest message, in both. */
+  gh_sidebar_page_set_show_previews(f->sidebar, TRUE);
+  g_assert_cmpstr(row_text(ae, "preview_label"), ==, "You won a prize — claim it now");
+  g_autofree char *with_preview = g_strdup_printf("%s. claim it now", label);
+  g_assert_cmpstr(gh_conversation_row_get_summary(ae), ==, with_preview);
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(item), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                      with_preview);
+  gh_sidebar_page_set_show_previews(f->sidebar, FALSE);
+
+  /* The header: the npub as the title, the quoted subject in the subtitle. */
+  g_assert_true(gh_sidebar_page_select_relative(f->sidebar, 1));
+  g_assert_true(gh_content_page_get_messages(f->content) == G_LIST_MODEL(f->ae));
+  AdwWindowTitle *header = gh_content_page_get_window_title(f->content);
+  g_assert_cmpstr(adw_window_title_get_title(header), ==, title);
+  g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(f->content)), ==, title);
+  g_assert_cmpstr(adw_window_title_get_subtitle(header), ==,
+                  "“You won a prize” · Message request · end-to-end encrypted");
+  /* A later subject changes the secondary text, never the title. */
+  add(f->store, 5, 1, f->now - 20, "last chance", "Final notice");
+  g_assert_cmpstr(adw_window_title_get_title(header), ==, title);
+  g_assert_cmpstr(adw_window_title_get_subtitle(header), ==,
+                  "“Final notice” · Message request · end-to-end encrypted");
+  g_assert_cmpstr(row_text(ae, "title_label"), ==, title);
+  g_assert_cmpstr(row_text(ae, "preview_label"), ==, "Final notice");
+  search(f, "final NOTICE");
+  GhConversation *const found[] = { f->ae };
+  assert_list(f, found, 1);
+  search(f, "");
+
+  /* Accepted, the subject names the conversation. */
+  gh_conversation_accept(f->ae);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->sidebar), "sidebar.show-requests",
+                                           "b", FALSE));
+  spin_until(has_rows, f);
+  GhConversationRow *accepted = row_for(f->sidebar, f->ae);
+  g_assert_cmpstr(row_text(accepted, "title_label"), ==, "Final notice");
+  g_assert_cmpstr(row_text(accepted, "preview_label"), ==, "");
+  g_assert_true(g_str_has_prefix(gh_conversation_row_get_summary(accepted),
+                                 "Final notice. Private conversation. "));
+}
+
 static gboolean
 search_text_is(gpointer data)
 {
@@ -1088,6 +1161,7 @@ main(int argc, char **argv)
              fixture_teardown)
   ADD("rows-order-and-badges", test_rows_order_and_badges);
   ADD("requests-are-separate", test_requests_are_separate);
+  ADD("request-subject-secondary", test_request_subject_secondary);
   ADD("search", test_search);
   ADD("selection-shows-messages", test_selection_shows_messages);
   ADD("empty-and-banner", test_empty_and_banner);

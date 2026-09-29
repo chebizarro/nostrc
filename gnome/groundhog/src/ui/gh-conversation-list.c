@@ -90,7 +90,8 @@ unbind_row(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data)
 
 /* ---- filters ---------------------------------------------------------------- */
 
-/* What a search matches: the title and every participant's full npub. */
+/* What a search matches: the title, the subject (a request's secondary
+ * text) and every participant's full npub. */
 static gchar *
 search_key(GObject *item, gpointer data)
 {
@@ -99,6 +100,11 @@ search_key(GObject *item, gpointer data)
     return NULL;
   GhConversation *conversation = GH_CONVERSATION(item);
   g_autoptr(GString) key = g_string_new(gh_conversation_get_title(conversation));
+  const gchar *subject = gh_conversation_get_subject(conversation);
+  if (subject) {
+    g_string_append_c(key, '\n');
+    g_string_append(key, subject);
+  }
   for (const gchar *const *p = gh_conversation_get_participants(conversation); *p; p++) {
     g_autofree gchar *npub = npub_of(*p, FALSE);
     g_string_append_c(key, '\n');
@@ -138,10 +144,16 @@ update_title(GhConversationList *list)
     gh_content_page_set_title(list->content, NULL, NULL);
     return;
   }
-  gh_content_page_set_title(list->content, gh_conversation_get_title(list->shown),
-                            gh_conversation_get_is_request(list->shown)
-                              ? _("Message request · end-to-end encrypted")
-                              : _("Private · end-to-end encrypted"));
+  /* A request is titled by its sender's npub; the subject the sender chose
+   * is only part of the subtitle (charter §7.9). */
+  const gchar *subject = gh_conversation_get_is_request(list->shown)
+                           ? gh_conversation_get_subject(list->shown) : NULL;
+  g_autofree gchar *subtitle =
+    subject ? g_strdup_printf(_("“%s” · Message request · end-to-end encrypted"), subject)
+    : g_strdup(gh_conversation_get_is_request(list->shown)
+                 ? _("Message request · end-to-end encrypted")
+                 : _("Private · end-to-end encrypted"));
+  gh_content_page_set_title(list->content, gh_conversation_get_title(list->shown), subtitle);
 }
 
 /* Local only (charter P8): nothing is published. The shown conversation is
@@ -234,6 +246,8 @@ watch(GhWindow *window, GhConversation *conversation)
   g_signal_connect_object(conversation, "notify::is-request", G_CALLBACK(on_request_changed),
                           window, G_CONNECT_SWAPPED);
   g_signal_connect_object(conversation, "notify::title", G_CALLBACK(on_title_changed),
+                          window, G_CONNECT_SWAPPED);
+  g_signal_connect_object(conversation, "notify::subject", G_CALLBACK(on_title_changed),
                           window, G_CONNECT_SWAPPED);
 }
 

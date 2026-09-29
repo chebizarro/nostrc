@@ -279,7 +279,9 @@ static const GDBusInterfaceVTable mock_vtable = { mock_signer_call, NULL, NULL, 
 
 /* One private test bus for the whole binary (tests/common/nostrc-test-bus.h:
  * closing GDBus connections races GDBus worker polls on macOS, a fatal
- * "poll(2) failed" warning); only the mock object is per fixture. */
+ * "poll(2) failed" warning); only the mock object is per fixture. Every case
+ * is added with nostrc_test_bus_add_func(), which arms that tolerance for
+ * the case (GTest clears it between cases). */
 static BusFixture shared_bus;
 
 static void
@@ -1576,23 +1578,25 @@ main(int argc, char **argv)
   hex_bob = gh_identity_pubkey_hex(npub_bob);
   hex_carol = nostr_key_get_public(SECRET_CAROL);
   shared_bus_up();
-  g_test_add_func("/groundhog/dm-send/happy-path", test_happy_path);
-  g_test_add_func("/groundhog/dm-send/no-recipient-inbox", test_no_recipient_inbox);
-  g_test_add_func("/groundhog/dm-send/forged-inbox-ignored", test_forged_inbox_ignored);
-  g_test_add_func("/groundhog/dm-send/newest-wins", test_newest_wins);
-  g_test_add_func("/groundhog/dm-send/partial-rejected-auth", test_partial_rejected_auth);
-  g_test_add_func("/groundhog/dm-send/no-own-inbox", test_no_own_inbox);
-  g_test_add_func("/groundhog/dm-send/lookup-unreachable", test_lookup_unreachable);
-  g_test_add_func("/groundhog/dm-send/signer-denial", test_signer_denial);
-  g_test_add_func("/groundhog/dm-send/invalid-input", test_invalid_input);
-  g_test_add_func("/groundhog/dm-send/self-dm", test_self_dm);
-  g_test_add_func("/groundhog/dm-send/interrupts", test_interrupts);
-  g_test_add_func("/groundhog/dm-send/sender-dispose", test_sender_dispose);
-  g_test_add_func("/groundhog/dm-send/seal-then-publish", test_seal_then_publish);
-  g_test_add_func("/groundhog/dm-send/publish-rejects-foreign", test_publish_rejects_foreign);
-  g_test_add_func("/groundhog/dm-send/publish-interrupted", test_publish_interrupted);
+  nostrc_test_bus_add_func("/groundhog/dm-send/happy-path", test_happy_path);
+  nostrc_test_bus_add_func("/groundhog/dm-send/no-recipient-inbox", test_no_recipient_inbox);
+  nostrc_test_bus_add_func("/groundhog/dm-send/forged-inbox-ignored", test_forged_inbox_ignored);
+  nostrc_test_bus_add_func("/groundhog/dm-send/newest-wins", test_newest_wins);
+  nostrc_test_bus_add_func("/groundhog/dm-send/partial-rejected-auth",
+                           test_partial_rejected_auth);
+  nostrc_test_bus_add_func("/groundhog/dm-send/no-own-inbox", test_no_own_inbox);
+  nostrc_test_bus_add_func("/groundhog/dm-send/lookup-unreachable", test_lookup_unreachable);
+  nostrc_test_bus_add_func("/groundhog/dm-send/signer-denial", test_signer_denial);
+  nostrc_test_bus_add_func("/groundhog/dm-send/invalid-input", test_invalid_input);
+  nostrc_test_bus_add_func("/groundhog/dm-send/self-dm", test_self_dm);
+  nostrc_test_bus_add_func("/groundhog/dm-send/interrupts", test_interrupts);
+  nostrc_test_bus_add_func("/groundhog/dm-send/sender-dispose", test_sender_dispose);
+  nostrc_test_bus_add_func("/groundhog/dm-send/seal-then-publish", test_seal_then_publish);
+  nostrc_test_bus_add_func("/groundhog/dm-send/publish-rejects-foreign",
+                           test_publish_rejects_foreign);
+  nostrc_test_bus_add_func("/groundhog/dm-send/publish-interrupted", test_publish_interrupted);
 #ifdef GROUNDHOG_TEST_WIRE
-  g_test_add_func("/groundhog/dm-send/wire-publish", test_wire_publish);
+  nostrc_test_bus_add_func("/groundhog/dm-send/wire-publish", test_wire_publish);
 #endif
   int status = g_test_run();
   shared_bus_down();

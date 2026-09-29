@@ -139,6 +139,21 @@ gboolean gh_nip17_seen_has_rejected(GhNip17Seen *seen, const gchar *wrap_id);
 /* Records a finally rejected wrap id (lowercase hex), durably like _record. */
 gboolean gh_nip17_seen_record_rejected(GhNip17Seen *seen, const gchar *wrap_id,
                                        GError **error);
+/* Moves only the rejected keys ("x" lines) of the seen file at @path, which
+ * must be the same account's, into @seen, then deletes the file; its "w" and
+ * "r" keys are dropped. A file written by an inbox that kept its messages in
+ * memory only must never make those messages count as seen: the relays
+ * still hold them, and they are fetched again (W13 review B1). A missing file
+ * is success with nothing moved. A foreign, malformed or oversized file is
+ * refused and left in place. *out_moved (nullable): rejected keys new to
+ * @seen. */
+gboolean gh_nip17_seen_import_rejected(GhNip17Seen *seen, const gchar *path,
+                                       guint *out_moved, GError **error);
+/* "<acct>.seen", the pseudonymous file name of an account's seen file
+ * (charter §3.2): <acct> = hex(SHA-256("groundhog/v1/account-dir" ||
+ * pubkey))[0:32], the same name as the account's store directory. NULL for
+ * anything but a lowercase 64-hex pubkey. */
+gchar *gh_nip17_seen_file_name(const gchar *account_pubkey_hex);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhNip17Seen, gh_nip17_seen_free)
 
 G_END_DECLS

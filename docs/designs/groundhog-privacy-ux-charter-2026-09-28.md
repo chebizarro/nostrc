@@ -235,9 +235,15 @@ Each default has an ID, a rationale and a test. Test IDs are defined in §9.
 $XDG_DATA_HOME/groundhog/                    0700
   accounts/<acct>/                           0700   <acct> = hex(SHA-256("groundhog/v1/account-dir" || pubkey))[0:32]
     store.db, store.db-wal, store.db-shm     0600   (SQLite gives -wal/-shm the db file's mode)
-$XDG_STATE_HOME/groundhog/nip17/*.seen       legacy; imported into `seen`, then deleted (ST-12)
+$XDG_STATE_HOME/groundhog/nip17/*.seen       legacy; only rejected ids imported into `seen`, then deleted (ST-12)
+$XDG_STATE_HOME/groundhog/nip17/*.checkpoint legacy; deleted unread (ST-12)
 $XDG_CACHE_HOME                              never used for message data (AT-5)
 ```
+
+- **Legacy inbox files (W13 review B1).**
+  - **What they are.** Before the store, the memory-only inbox kept the seen keys (`w` wrap id, `r` rumor id, `x` rejected wrap id) in `<pubkey>.seen` and its since-checkpoint in `<pubkey>.checkpoint` (Groundhog 0.6.0). A build without the store keeps such an inbox, which now keeps `w`/`r` keys and the checkpoint in memory only and writes just `x` lines, to `<acct>.seen` with the same pseudonymous `<acct>` as the store directory.
+  - **Why only `x` is imported.** The messages behind `w`/`r` keys and the checkpoint were only ever in memory. Importing them would record as seen messages that no store holds, so they would never be shown again although the relays still have them. So ST-12 takes only the `x` lines (a rejected wrap never hides a message, and keeping it spares a signer approval) and drops the rest. The first store session asks for the initial backfill window and stores whatever the relays still hold (at the cost of unwrapping it again).
+  - **Deletion.** Every such file is deleted after import, and on forget.
 
 - **Creation.** Directories are created with `g_mkdir_with_parents(…, 0700)` and then verified with `lstat`: our UID, not a symlink, mode & 077 == 0. `store.db` is pre-created with `open(O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600)` before `sqlite3_open_v2(…, SQLITE_OPEN_NOFOLLOW)`.
 - **Permission failures.** An existing file with group or other bits set, a foreign owner, or a symlink is **refused** with `GH_STORE_ERROR_PERMISSIONS`. It is not silently chmod-ed, because it may be a planted file.
@@ -356,14 +362,23 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(body, content='messages', content_r
   - Interactive: `SecretService` search with `SECRET_SEARCH_UNLOCK` shows the system unlock prompt.
   - Background or windowless: search **without** `SECRET_SEARCH_UNLOCK`. State becomes `STORE_LOCKED`, the inbox is not subscribed (wraps stay on the relays, nothing is lost), and one hidden-level notification says "Unlock to receive messages".
 - **Key missing but database present.** State `STORE_KEY_MISSING`. The database is untouched. Offer "Start Fresh on This Device", which crypto-shreds the directory after confirmation. The copy explains that DMs can be re-downloaded from relays and encrypted-group history cannot.
-- **No Secret Service on the bus.** State `STORE_UNAVAILABLE`. Offer "Continue Without Saving Messages" (in-memory only, zero files written, MLS disabled). Never a plaintext store.
+- **No Secret Service on the bus.** State `STORE_UNAVAILABLE`. Offer "Continue Without Saving Messages" (in-memory only, zero files written, MLS disabled). Never a plaintext store. Seen keys and the inbox checkpoint live in that in-memory store too, so they vanish with the messages: after a restart the inbox fetches the backfill window again (W13 review B1).
 - **Key hygiene.** The key buffer lives in `sodium_malloc` memory and is `sodium_memzero`ed right after `PRAGMA key`.
+- **SQLCipher's own memory (W13 review, item 3).** Right after keying, every store (the in-memory one included) sets `PRAGMA cipher_memory_security = ON` and reads it back:
+  - **Effect.** SQLCipher then zeroes every SQLite allocation when it is freed and `mlock()`s it where `RLIMIT_MEMLOCK` allows. That covers its own copy of the key, the decrypted page cache and statement buffers, which would otherwise linger in freed heap or reach swap (A5 memory forensics, a crash dump). A failed `mlock` is not an error.
+  - **Scope.** The setting is process-wide and cannot be turned off again. ST-4 guarantees SQLCipher is the process's only SQLite.
+  - **Read-back.** Anything but 1 fails the open with `GH_STORE_ERROR_NO_CIPHER`. There is no fallback: every SQLCipher 4 release has the pragma (4.0.0 added it), and SQLCipher 4 is required. Both targeted versions (4.5.6 on Ubuntu 24.04, 4.17.0 on Homebrew) default it to off and accept it.
+  - **Cost** (measured 2026-09-28).
+    - macOS (4.17.0): bulk inserts are about 1.2× slower; small transactions and scans are unchanged; the store test suites are unchanged within noise.
+    - Ubuntu (4.5.6, 64 KiB `RLIMIT_MEMLOCK`): bulk inserts are about 4× slower, and a T-admit-sized transaction costs about 40 µs more; scans are unchanged.
+    - Messaging volumes make this negligible.
+  - **Limit.** It does not help against A4 (a same-user process can read the unlocked keyring anyway).
 
 ### 3.5 Crash safety and transaction boundaries
 
 **Pragmas at open, in this order:**
 
-1. `PRAGMA key` (**first**, before any other statement);
+1. `PRAGMA key` (**first**, before any other statement), then at once `cipher_memory_security=ON` (§3.4; read back after the version check);
 2. `cipher_version` check;
 3. `journal_mode=WAL`;
 4. `synchronous=FULL` (a user-visible "Sent" or admitted message must survive power loss);
@@ -1079,7 +1094,7 @@ UX-1 and UX-2 (§9) test these layouts.
 **G05 — Persist conversations and messages with seen-set in one transaction** · P1 · M
 
 - **Depends:** G04, `qp24.10.5` merged.
-- **Owns:** `src/store/gh-store-conversations.{c,h}` (persistence delegate for `GhConversationStore`, including `.seen` file import of its `w`, `r` and `x` (rejected wrap, `seen` ns 5) lines), `tests/store/test_store_conversations.c`.
+- **Owns:** `src/store/gh-store-conversations.{c,h}` (persistence delegate for `GhConversationStore`, including the `.seen` file import of its `x` (rejected wrap, `seen` ns 5) lines only; its `w` and `r` lines are dropped, see §3.2), `tests/store/test_store_conversations.c`.
 - **Accept:** ST-6 (admit cut points), ST-7, ST-9, ST-12, EX-6; restart restores list order, unread counts and drafts.
 - **Beads:** new. **Supersedes `qp24.10.3`** together with `qp24.10.5`. Makes W10 non-blocking #1 (seen append after failure) moot in store mode.
 
@@ -1383,7 +1398,9 @@ flowchart LR
 - **ST-9 Forget conversation.** Backfill of old wraps does not recreate it. A new message recreates it with only that message.
 - **ST-10 Disk full.** Forced with `max_page_count`: an admission is not seen-recorded and succeeds after space is freed; an enqueue keeps the draft and shows the error.
 - **ST-11 Schema version.** v1 creation is idempotent, and `user_version` = 2 is refused with "Created by a newer Groundhog".
-- **ST-12 Legacy seen import.** The legacy `.seen` file is imported, then deleted.
+- **ST-12 Legacy seen import.**
+  - **Import.** Only the `x` (rejected wrap) lines of a legacy `.seen` file are imported. Its `w`/`r` lines and the `.checkpoint` are dropped (§3.2, W13 review B1), and every file is then deleted.
+  - **Outcome.** A message the memory-only inbox showed once is fetched, stored and listed again by the first store session, and its rejected wraps stay skipped with no signer call.
 - **KC-1 First open.**
   - The item uses the schema and attributes in §3.4, and the secret is 32 random bytes.
   - A failed item store creates no database.

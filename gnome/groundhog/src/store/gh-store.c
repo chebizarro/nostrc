@@ -1032,11 +1032,30 @@ store_configure(GhStore *store, gboolean file_backed, GError **error)
   sqlite3_db_config(db, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, (int *) NULL);
   sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, (int *) NULL);
 
+  /* Right after keying (§3.4): SQLCipher zeroes every SQLite allocation on
+   * free and mlock()s it where RLIMIT_MEMLOCK allows, so its own copy of the
+   * key, the decrypted pages and statement buffers do not linger in freed
+   * heap or reach swap. Process-wide; once on, it stays on ("OFF" is
+   * ignored). Read back below: fail closed, like every other setting. */
+  if (!gh_store_exec(store, "PRAGMA cipher_memory_security = ON", error))
+    return FALSE;
   if (!store_query_text(store, "PRAGMA cipher_version", &store->cipher_version, error))
     return FALSE;
   if (!store->cipher_version || !*store->cipher_version) {
     g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NO_CIPHER,
                         "PRAGMA cipher_version is empty: the store would not be encrypted");
+    return FALSE;
+  }
+  /* Every SQLCipher 4 has it (4.0.0 added it); an older one answers
+   * nothing, which reads as 0. */
+  gint64 memory_security = -1;
+  if (!store_query_int64(store, "PRAGMA cipher_memory_security", &memory_security, error))
+    return FALSE;
+  if (memory_security != 1) {
+    g_set_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NO_CIPHER,
+                "SQLCipher %s cannot guard its memory (PRAGMA cipher_memory_security is %"
+                G_GINT64_FORMAT "); SQLCipher 4 is required", store->cipher_version,
+                memory_security);
     return FALSE;
   }
 

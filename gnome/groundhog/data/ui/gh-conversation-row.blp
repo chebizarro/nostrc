@@ -55,8 +55,10 @@ template $GhConversationRow: Widget {
     Box {
       spacing: 6;
 
-      // Empty unless message previews are shown (see GhSidebarPage
-      // show-previews); keeps its line so rows stay one height.
+      // The newest message's first line when previews are shown (see
+      // GhSidebarPage show-previews), after a request's subject, which is
+      // only ever secondary text here (charter §7.9); else empty. Keeps its
+      // line so rows stay one height.
       Label preview_label {
         xalign: 0;
         hexpand: true;

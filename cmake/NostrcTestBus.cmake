@@ -20,5 +20,17 @@ if(NOT TARGET nostrc-test-bus)
   if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(nostrc-test-bus PRIVATE -Wall -Wextra -Werror)
   endif()
+  # The helper's own test: the macOS EBADF tolerance is armed per test case,
+  # bounded and exact (fatal elsewhere). Needs dbus-daemon.
+  if(BUILD_TESTING)
+    add_executable(nostrc-test-bus-selftest "${_nostrc_test_bus_dir}/nostrc-test-bus-selftest.c")
+    target_link_libraries(nostrc-test-bus-selftest PRIVATE nostrc-test-bus)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(nostrc-test-bus-selftest PRIVATE -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME nostrc-test-bus-selftest COMMAND nostrc-test-bus-selftest)
+    set_tests_properties(nostrc-test-bus-selftest PROPERTIES TIMEOUT 60
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+  endif()
   unset(_nostrc_test_bus_dir)
 endif()

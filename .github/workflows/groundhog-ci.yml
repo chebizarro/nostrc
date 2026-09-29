@@ -54,7 +54,7 @@ jobs:
             test-groundhog-relay-publish test-groundhog-relay-publish-wire \
             test-groundhog-nip29 test-groundhog-conversations test-groundhog-dm-inbox test-groundhog-store-key test-groundhog-store-key-keyring test-groundhog-store test-groundhog-store-sqlite \
             test-groundhog-store-marmot test-groundhog-store-conversations test-groundhog-outbox test-groundhog-conversation-list \
-            test-groundhog-account-store test-groundhog-conversation-view test-groundhog-link-policy test-groundhog-background test-groundhog-preferences
+            test-groundhog-account-store test-groundhog-conversation-view test-groundhog-link-policy test-groundhog-background test-groundhog-preferences nostrc-test-bus-selftest
 
       - name: Require complete Groundhog test registration
         run: |
@@ -74,7 +74,7 @@ jobs:
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
               'groundhog-blueprint', 'groundhog-privacy-static', 'groundhog-store-key', 'groundhog-store-key-keyring', 'groundhog-store', 'groundhog-store-sqlite',
               'groundhog-store-marmot', 'groundhog-store-conversations', 'groundhog-outbox',
-              'groundhog-account-store', 'groundhog-conversation-view', 'groundhog-link-policy', 'groundhog-background', 'groundhog-background-gui', 'groundhog-background-desktop', 'groundhog-preferences',
+              'groundhog-account-store', 'groundhog-conversation-view', 'groundhog-link-policy', 'groundhog-background', 'groundhog-background-gui', 'groundhog-background-desktop', 'groundhog-preferences', 'nostrc-test-bus-selftest',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -90,7 +90,7 @@ jobs:
           dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
             ctest --test-dir build --output-on-failure \
               --output-junit "$PWD/build/groundhog-ctest.xml" \
-              -R '^groundhog-' | tee build/groundhog-ctest.log
+              -R '^(groundhog-|nostrc-test-bus-selftest$)' | tee build/groundhog-ctest.log
           if grep -Eq '\*\*\*Skipped|Not Run' build/groundhog-ctest.log; then
             echo 'Groundhog test unexpectedly skipped or did not run' >&2
             exit 1

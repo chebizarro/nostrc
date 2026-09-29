@@ -44,17 +44,26 @@
  *  - Get bus connections from nostrc_test_bus_connect() (or g_bus_get() in
  *    session mode). Never g_dbus_connection_close() them and never drop the
  *    last reference while the bus is up; the bus owns them.
- *  - Prefer one bus per test binary (up before g_test_run(), down after).
- *    A bus per test case also works, but the session-bus singleton must not
- *    be referenced from anywhere else across cases: nostrc_test_bus_up()
- *    fails if a stale one from an earlier bus is still alive.
+ *  - Prefer one bus per test binary (up before g_test_run(), down after),
+ *    with every test case registered through nostrc_test_bus_add_func() (see
+ *    the next rule). A bus per test case also works, but the session-bus
+ *    singleton must not be referenced from anywhere else across cases:
+ *    nostrc_test_bus_up() fails if a stale one from an earlier bus is still
+ *    alive.
  *  - Code under test that closes its own connections still exercises the
  *    GDBus close path. On macOS that can produce one transient
  *    "poll(2) failed due to: Bad file descriptor" warning per close (Linux's
- *    poll() reports POLLNVAL instead and GLib stays silent), so from the first
- *    nostrc_test_bus_up() on, a bounded number of exactly that GLib warning
- *    are logged but not fatal. This wraps the default log handler and installs
- *    g_test_log_set_fatal_handler(); a test must not install its own.
+ *    poll() reports POLLNVAL instead and GLib stays silent), so on macOS at
+ *    most NOSTRC_TEST_BUS_EBADF_TOLERANCE (64) of exactly that GLib warning
+ *    per test case are logged but not fatal. This wraps the default log
+ *    handler and installs g_test_log_set_fatal_handler(); a test must not
+ *    install its own. GTest clears that handler before every test case, so
+ *    it is armed per case: by nostrc_test_bus_up() for a bus brought up
+ *    inside the case, and by nostrc_test_bus_add_func() (or a call to
+ *    nostrc_test_bus_tolerate_ebadf() at the start of the case, e.g. from a
+ *    fixture setup) for a bus brought up before g_test_run(). Other
+ *    platforms keep the warning fatal. tests/common/nostrc-test-bus-selftest.c
+ *    checks all of this.
  *
  * Typical use:
  *
@@ -63,7 +72,7 @@
  *     NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
  *     nostrc_test_bus_up(bus);            // exports DBUS_SESSION_BUS_ADDRESS
  *     GDBusConnection *service = nostrc_test_bus_connect(bus);
- *     ... register objects on service, g_test_add_func(...) ...
+ *     ... register objects on service, nostrc_test_bus_add_func(...) ...
  *     int status = g_test_run();
  *     nostrc_test_bus_down(bus);
  *     return status;
@@ -82,6 +91,9 @@
 G_BEGIN_DECLS
 
 typedef struct _NostrcTestBus NostrcTestBus;
+
+/* EBADF warnings forgiven per test case on macOS (see the rules above). */
+#define NOSTRC_TEST_BUS_EBADF_TOLERANCE 64
 
 typedef enum {
   NOSTRC_TEST_BUS_FLAGS_NONE = 0,
@@ -133,6 +145,16 @@ GSubprocess *nostrc_test_bus_spawn_supervised(NostrcTestBus *bus, const gchar *l
 
 /* Prints a log from the bus directory to stderr (for failure diagnostics). */
 void nostrc_test_bus_dump_log(NostrcTestBus *bus, const gchar *log_name);
+
+/* Arms the macOS EBADF tolerance (see the rules above) for the test case
+ * running now, with a fresh count; a no-op on other platforms. Call it at
+ * the start of each case of a binary whose bus outlives its cases, unless
+ * the case was added with nostrc_test_bus_add_func(). */
+void nostrc_test_bus_tolerate_ebadf(void);
+
+/* g_test_add_func(), with nostrc_test_bus_tolerate_ebadf() run first in the
+ * test case. */
+void nostrc_test_bus_add_func(const gchar *testpath, GTestFunc test_func);
 
 /* Flushes every connection the bus owns, stops all supervised daemons and
  * the bus, waits (bounded) until those connections report closed, releases

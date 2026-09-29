@@ -647,3 +647,57 @@ gh_nip17_seen_record_rejected(GhNip17Seen *seen, const gchar *wrap_id, GError **
   const gchar *const keys[] = { key, NULL };
   return seen_commit(seen, keys, error);
 }
+
+gboolean
+gh_nip17_seen_import_rejected(GhNip17Seen *seen, const gchar *path, guint *out_moved,
+                              GError **error)
+{
+  g_return_val_if_fail(seen != NULL && path != NULL, FALSE);
+  if (out_moved)
+    *out_moved = 0;
+  /* Validated like any seen file (account header, entries, size); missing
+   * reads as empty. */
+  g_autoptr(GhNip17Seen) other = gh_nip17_seen_open(path, seen->account, seen->capacity, error);
+  if (!other)
+    return FALSE;
+  g_autoptr(GPtrArray) keys = g_ptr_array_new();
+  guint moved = 0;
+  for (GList *l = other->order.head; l; l = l->next) {
+    const gchar *key = l->data;
+    if (key[0] != 'x')
+      continue; /* w/r: the messages behind them were never stored */
+    moved += !seen_has(seen, 'x', key + 1);
+    g_ptr_array_add(keys, (gpointer)key);
+  }
+  g_ptr_array_add(keys, NULL);
+  if (!seen_commit(seen, (const gchar *const *)keys->pdata, error))
+    return FALSE;
+  if (g_unlink(path) != 0 && errno != ENOENT) {
+    int saved = errno;
+    g_set_error(error, G_IO_ERROR, g_io_error_from_errno(saved),
+                "Could not delete the old NIP-17 seen file: %s", g_strerror(saved));
+    return FALSE;
+  }
+  if (out_moved)
+    *out_moved = moved;
+  return TRUE;
+}
+
+/* The store's directory name (gh_store_account_dir_name, charter §3.2); the
+ * two must stay equal (tests/app/test_account_store.c checks it). */
+gchar *
+gh_nip17_seen_file_name(const gchar *account_pubkey_hex)
+{
+  static const gchar domain[] = "groundhog/v1/account-dir";
+  if (!lower_hex64(account_pubkey_hex))
+    return NULL;
+  guint8 raw[32];
+  for (guint i = 0; i < sizeof raw; i++)
+    raw[i] = (guint8)((g_ascii_xdigit_value(account_pubkey_hex[2 * i]) << 4) |
+                      g_ascii_xdigit_value(account_pubkey_hex[2 * i + 1]));
+  g_autoptr(GChecksum) checksum = g_checksum_new(G_CHECKSUM_SHA256);
+  g_checksum_update(checksum, (const guchar *)domain, sizeof domain - 1);
+  g_checksum_update(checksum, raw, sizeof raw);
+  g_autofree gchar *acct = g_strndup(g_checksum_get_string(checksum), 32);
+  return g_strconcat(acct, ".seen", NULL);
+}

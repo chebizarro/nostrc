@@ -50,8 +50,12 @@ void gh_conversation_mark_read(GhConversation *self);
 gboolean gh_conversation_get_has_older(GhConversation *self);
 GhConversationBackend gh_conversation_get_backend(GhConversation *self);
 /* The subject when there is one; otherwise the peers' abbreviated npubs
- * (the account's own for a note to self). Profile names are not fetched here:
- * a request must not trigger a kind-0 lookup (charter PT-8). */
+ * (the account's own for a note to self). A request is always titled by the
+ * npubs (charter §7.9): its subject is text the sender chose, which the UI
+ * shows only as secondary text (gh_conversation_get_subject()) until the
+ * request is accepted. Profile names are not fetched here: a request must not
+ * trigger a kind-0 lookup (charter PT-8). "title" is notified whenever this
+ * value changes, accepting included. */
 const gchar *gh_conversation_get_title(GhConversation *self);
 /* First line of the newest message's body, at most 80 characters; the UI
  * decides whether previews are shown at all. NULL while empty. */

@@ -42,6 +42,12 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
                         each listed with its §4.3 purpose. (§4.4 R1)
   message-status        GhMessageStatus has no DELIVERED, READ or SEEN value.
                         (PD-1, PT-1)
+  log-ids               No log call in src/** (g_debug, g_info, g_message,
+                        g_warning, g_critical, g_error, g_print, g_printerr,
+                        g_log) is passed a wrap, rumor or event id (an
+                        identifier ending in wrap_id, rumor_id or event_id):
+                        a rumor id commits to the plaintext and a wrap id
+                        names a relay event. (PD-10; W13 review, item 5)
   app-id                GROUNDHOG_APP_ID in src/, the schema id and path, and
                         GhWindow's icon-name in gh-window.blp and gh-window.ui
                         all agree. (W11 review, non-blocking item 4)
@@ -86,7 +92,8 @@ SCHEMA_FILE = f"data/{APP_ID}.gschema.xml"
 RULES = (
     "url-literal", "gsettings-allowlist", "blueprint-denylist", "libsoup-boundary",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
-    "lookup-sources", "account-auth-purpose", "message-status", "app-id", "exceptions",
+    "lookup-sources", "account-auth-purpose", "message-status", "log-ids", "app-id",
+    "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "exceptions"}
@@ -182,6 +189,9 @@ ACCOUNT_AUTH_RE = re.compile(
     r"\bGH_RELAY_AUTH_ACCOUNT\b|\bgh_relay_(?:scope|publish)_set_account_signer\b"
     r"|\bgh_account_auth_\w+|\bGhAccountAuth\w*")
 KIND_10002_RE = re.compile(r"\b10002\b|\b\w*KIND_RELAY_LIST\w*|(?i:\b\w*nip_?65\w*)")
+LOG_CALL_RE = re.compile(
+    r"\bg_(?:debug|info|message|warning|critical|error|print|printerr|log)\s*\(")
+LOG_ID_RE = re.compile(r"\b\w*(?:wrap_id|rumor_id|event_id)\b")
 APP_ID_DEFINE_RE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+GROUNDHOG_APP_ID[ \t]+\"([^\"]*)\"", re.M)
 XML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 LEX_SPECIAL_RE = re.compile(r"//|/\*|[\"']")
@@ -423,6 +433,22 @@ def check_sources(tree):
                               lambda s: f"{s}: AUTH as the account only for a purpose §4.4 R1 "
                                         "allows; add the file to ACCOUNT_AUTH_FILES with its "
                                         "§4.3 purpose")
+        found += check_log_ids(rel, code)
+    return found
+
+
+def check_log_ids(rel, code):
+    """log-ids: the arguments of every log call (balanced parentheses)."""
+    found = []
+    for call in LOG_CALL_RE.finditer(code):
+        depth, end = 1, call.end()
+        while end < len(code) and depth:
+            depth += {"(": 1, ")": -1}.get(code[end], 0)
+            end += 1
+        for m in LOG_ID_RE.finditer(code, call.end(), end):
+            found.append(Violation("log-ids", rel, line_of(code, m.start()),
+                                   f"{m.group(0)} in a log call: logs never name a wrap, rumor "
+                                   "or event (PD-10)", m.group(0)))
     return found
 
 
@@ -621,6 +647,12 @@ def clean_tree():
             "static int own(GhRelayScope *s, GhAccountAuth *a, const char *u) {\n"
             "  return gh_relay_scope_set_account_signer(s, gh_account_auth_get_signer(a), NULL) &&\n"
             "         gh_relay_scope_set_url_auth(s, u, GH_RELAY_AUTH_ACCOUNT, NULL);\n"
+            "}\n"
+            "/* Near misses: ids used outside log calls, and logs about a wrap. */\n"
+            "static void deferred(GHashTable *ids, const char *wrap_id, GError *error) {\n"
+            "  g_hash_table_add(ids, g_strdup(wrap_id));\n"
+            "  g_debug(\"Groundhog deferred a NIP-17 wrap (event_id elided): %s\", error->message);\n"
+            "  g_log_set_default_handler(NULL, NULL);\n"
             "}\n"),
         "src/app/gh-message-status.h": (
             "/* Honest status: there is deliberately no DELIVERED or READ value. */\n"
@@ -778,6 +810,13 @@ MUTATIONS = [
                "  GH_MESSAGE_STATUS_SENDING,\n  GH_MESSAGE_STATUS_DELIVERED,\n")]),
     M("status-read", {"message-status"},
       [replace("src/app/gh-message-status.h", "NO_INBOX\n", "NO_INBOX,\n  GH_MESSAGE_STATUS_READ = 9\n")]),
+    M("log-rumor-id", {"log-ids"},
+      [append("src/app/gh-dm-inbox.c",
+              'static void f(GhNip17Message *m) { g_message("cannot store %s", m->rumor_id); }\n')]),
+    M("log-wrap-id-nested", {"log-ids"},
+      [append("src/app/gh-outbox.c",
+              'static void w(Job *j, GError *e) {\n'
+              '  g_warning("wrap %s: %s", g_strdup(j->wrap_id), e ? e->message : "?");\n}\n')]),
     M("app-id-blueprint", {"app-id"},
       [replace("data/ui/gh-window.blp", f'icon-name: "{APP_ID}"', f'icon-name: "{APP_ID}.Devel"')]),
     M("app-id-ui", {"app-id"},

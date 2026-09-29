@@ -23,8 +23,9 @@ G_BEGIN_DECLS
  * macros of the executable); the getters return NULL for absent ones. With
  * the encrypted store, the inbox runs only while the account's store is open
  * or the user chose "Continue Without Saving Messages" (gh-account-store.h).
- * A build without SQLCipher and libsecret keeps the pre-store receive path:
- * messages in memory, the seen-set in GhDmInbox's own state file.
+ * A build without SQLCipher and libsecret keeps the memory-only receive path
+ * (gh_dm_inbox_new): messages and their seen keys in memory, fetched again
+ * after a restart, and the in-memory banner shown.
  */
 
 typedef struct _GhAppServices GhAppServices;

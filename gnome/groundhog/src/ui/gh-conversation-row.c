@@ -153,18 +153,25 @@ update(GhConversationRow *self)
     return;
   }
 
+  /* A request is titled by the sender's npub (gh_conversation_get_title());
+   * the subject it carries is only secondary text, before any preview. */
   const gchar *title = gh_conversation_get_title(conversation);
   guint unread = gh_conversation_get_unread_count(conversation);
   gboolean request = gh_conversation_get_is_request(conversation);
+  const gchar *subject = request ? gh_conversation_get_subject(conversation) : NULL;
   const gchar *preview = self->show_preview ? gh_conversation_get_preview(conversation) : NULL;
   g_autoptr(GDateTime) now = g_date_time_new_now_local();
   g_autofree gchar *time = gh_conversation_row_format_time(
     gh_conversation_get_last_activity(conversation), now);
+  /* TRANSLATORS: a message request's subject, then its newest message. */
+  g_autofree gchar *secondary = subject && preview && *preview
+    ? g_strdup_printf(_("%s — %s"), subject, preview)
+    : g_strdup(subject ? subject : preview ? preview : "");
 
   adw_avatar_set_text(self->avatar, title);
   gtk_label_set_text(self->title_label, title);
   gtk_label_set_text(self->time_label, time);
-  gtk_label_set_text(self->preview_label, preview ? preview : "");
+  gtk_label_set_text(self->preview_label, secondary);
   gtk_widget_set_visible(GTK_WIDGET(self->request_label), request);
   gtk_widget_set_visible(GTK_WIDGET(self->unread_badge), unread > 0);
   if (unread > 0) {
@@ -179,6 +186,9 @@ update(GhConversationRow *self)
   g_autoptr(GPtrArray) parts = g_ptr_array_new_with_free_func(g_free);
   g_ptr_array_add(parts, g_strdup(title));
   g_ptr_array_add(parts, g_strdup(request ? _("Message request") : _("Private conversation")));
+  if (subject)
+    /* TRANSLATORS: a message request's subject, read out after its sender. */
+    g_ptr_array_add(parts, g_strdup_printf(_("Subject: %s"), subject));
   if (unread > 0)
     g_ptr_array_add(parts, g_strdup_printf(g_dngettext(NULL, "%u unread", "%u unread", unread),
                                            unread));
@@ -208,7 +218,7 @@ gh_conversation_row_set_conversation(GhConversationRow *self, GhConversation *co
   g_set_object(&self->conversation, conversation);
   if (conversation) {
     static const gchar *const watched[] = {
-      "notify::title", "notify::preview", "notify::last-activity",
+      "notify::title", "notify::subject", "notify::preview", "notify::last-activity",
       "notify::unread-count", "notify::is-request",
     };
     for (guint i = 0; i < G_N_ELEMENTS(watched); i++)

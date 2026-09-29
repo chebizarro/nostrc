@@ -1009,23 +1009,20 @@ gh_store_conversations_import_seen_file(GhStoreConversations *self, const gchar 
     goto fail;
   for (gsize off = entries; off < end; off += SEEN_LINE) {
     const gchar *line = contents + off;
-    GhStoreSeenNs ns = line[0] == 'w' ? GH_STORE_SEEN_WRAP
-                     : line[0] == 'r' ? GH_STORE_SEEN_RUMOR
-                                      : GH_STORE_SEEN_REJECTED_WRAP;
+    /* Only the rejected namespace: "w"/"r" keys of a memory-only inbox
+     * would hide messages no store holds (see the header). */
+    if (line[0] != 'x') {
+      stats.dropped++;
+      continue;
+    }
     sqlite3_reset(stmt);
-    BIND(sqlite3_bind_int64(stmt, 1, ns));
+    BIND(sqlite3_bind_int64(stmt, 1, GH_STORE_SEEN_REJECTED_WRAP));
     BIND(sqlite3_bind_text(stmt, 2, line + 2, 64, SQLITE_STATIC));
     BIND(sqlite3_bind_int64(stmt, 3, now));
-    if (!step_done(store, stmt, "Importing a seen id", error))
+    if (!step_done(store, stmt, "Importing a rejected wrap id", error))
       goto fail;
-    if (sqlite3_changes(gh_store_get_db(store)) > 0) {
-      if (ns == GH_STORE_SEEN_WRAP)
-        stats.wraps++;
-      else if (ns == GH_STORE_SEEN_RUMOR)
-        stats.rumors++;
-      else
-        stats.rejected++;
-    }
+    if (sqlite3_changes(gh_store_get_db(store)) > 0)
+      stats.rejected++;
   }
   g_clear_pointer(&stmt, sqlite3_finalize);
   if (!gh_store_commit(store, error))

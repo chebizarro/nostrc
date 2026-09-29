@@ -1078,6 +1078,7 @@ test_st5_pragmas(void)
   g_assert_cmpint(sql_int(store, "PRAGMA temp_store"), ==, 2);
   g_assert_cmpint(sql_int(store, "PRAGMA foreign_keys"), ==, 1);
   g_assert_cmpint(sql_int(store, "PRAGMA trusted_schema"), ==, 0);
+  g_assert_cmpint(sql_int(store, "PRAGMA cipher_memory_security"), ==, 1);
   g_assert_nonnull(cipher);
   g_assert_cmpstr(cipher, !=, "");
   g_assert_cmpstr(cipher, ==, gh_store_get_cipher_version(store));
@@ -1087,8 +1088,48 @@ test_st5_pragmas(void)
   g_assert_cmpint(sqlite3_exec(db, "ATTACH DATABASE ':memory:' AS other", NULL, NULL, NULL),
                   !=, SQLITE_OK);
   g_test_message("ST-5: SQLCipher %s, journal_mode=%s synchronous=2 secure_delete=1 "
-                 "temp_store=2 foreign_keys=1", cipher, mode);
+                 "temp_store=2 foreign_keys=1 cipher_memory_security=1", cipher, mode);
   gh_store_close(store);
+}
+
+static gint64
+probe_int(sqlite3 *db, const char *sql)
+{
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(db, sql, -1, &stmt, NULL), ==, SQLITE_OK);
+  gint64 value = sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int64(stmt, 0) : -1;
+  sqlite3_finalize(stmt);
+  return value;
+}
+
+/* §3.4: opening a store, the in-memory one of "Continue Without Saving
+ * Messages" included, turns SQLCipher's memory security on (process-wide:
+ * every connection, SQLCipher's copy of the key and its page buffers). A
+ * fresh process shows it; SQLCipher 4.5.6 and 4.17.0 default to off. */
+static void
+test_st5_memory_security(void)
+{
+  if (g_test_subprocess()) {
+    sqlite3 *probe = NULL;
+    g_assert_cmpint(sqlite3_open_v2(":memory:", &probe, SQLITE_OPEN_READWRITE, NULL), ==,
+                    SQLITE_OK);
+    g_test_message("cipher_memory_security before any store: %" G_GINT64_FORMAT,
+                   probe_int(probe, "PRAGMA cipher_memory_security"));
+    GError *error = NULL;
+    GhStore *store = gh_store_open_ephemeral(ACCOUNT_A, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(sql_int(store, "PRAGMA cipher_memory_security"), ==, 1);
+    g_assert_cmpint(probe_int(probe, "PRAGMA cipher_memory_security"), ==, 1);
+    /* It cannot be turned off again behind the store's back. */
+    g_assert_cmpint(sqlite3_exec(probe, "PRAGMA cipher_memory_security = OFF", NULL, NULL,
+                                 NULL), ==, SQLITE_OK);
+    g_assert_cmpint(sql_int(store, "PRAGMA cipher_memory_security"), ==, 1);
+    gh_store_close(store);
+    sqlite3_close(probe);
+    return;
+  }
+  g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_DEFAULT);
+  g_test_trap_assert_passed();
 }
 
 /* ---- ST-6 crash harness (H8) ---------------------------------------------------------------- */
@@ -2599,6 +2640,7 @@ register_full_suite(void)
   g_test_add_func("/groundhog/store/st3/modes", test_st3_modes);
   g_test_add_func("/groundhog/store/st3/refuse-unsafe", test_st3_refuse_unsafe);
   g_test_add_func("/groundhog/store/st5/pragmas", test_st5_pragmas);
+  g_test_add_func("/groundhog/store/st5/memory-security", test_st5_memory_security);
   g_test_add_func("/groundhog/store/st6/crash-create", test_st6_crash_create);
   g_test_add_func("/groundhog/store/st6/crash-admit", test_st6_crash_admit);
   g_test_add_func("/groundhog/store/st6/crash-enqueue", test_st6_crash_enqueue);

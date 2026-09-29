@@ -830,6 +830,62 @@ test_template_properties(void)
     gh_conversation_get_title(gh_conversation_store_lookup(store, self_room)), "npub1"));
 }
 
+/* Charter §7.9 (W13 review #4): a request's subject is text its sender
+ * chose, so until the request is accepted the room is titled by the
+ * sender's npub and the subject stays available as secondary text. The
+ * title notifies when accepting or replying makes the subject the name. */
+static void
+test_request_title(void)
+{
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, hex[1], NULL, NULL, NULL);
+  Rumor offer = { .author = 2, .p = { 1 }, .created_at = 10, .content = "hi",
+                  .subject = "You won a prize" };
+  g_assert_cmpint(add(store, 1, &offer), ==, GH_CONVERSATION_ADD_NEW);
+  g_autofree gchar *pair = room_id(1, 2, 0);
+  GhConversation *room = gh_conversation_store_lookup(store, pair);
+  g_assert_true(gh_conversation_get_is_request(room));
+  g_assert_cmpstr(gh_conversation_get_subject(room), ==, "You won a prize");
+  const gchar *title = gh_conversation_get_title(room);
+  g_assert_true(g_str_has_prefix(title, "npub1"));
+  g_assert_nonnull(strstr(title, "…"));
+  g_autofree gchar *property = NULL;
+  g_object_get(room, "title", &property, NULL);
+  g_assert_cmpstr(property, ==, title);
+  /* A later subject renames nothing while it is a request. */
+  guint title_notified = 0, subject_notified = 0;
+  g_signal_connect(room, "notify::title", G_CALLBACK(count_notify), &title_notified);
+  g_signal_connect(room, "notify::subject", G_CALLBACK(count_notify), &subject_notified);
+  Rumor again = { .author = 2, .p = { 1 }, .created_at = 20, .content = "hurry",
+                  .subject = "Claim it now" };
+  g_assert_cmpint(add(store, 1, &again), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(subject_notified, ==, 1);
+  g_assert_cmpuint(title_notified, ==, 0);
+  g_assert_true(g_str_has_prefix(gh_conversation_get_title(room), "npub1"));
+  /* Accepted: the subject names it, and the title says so once. */
+  gh_conversation_accept(room);
+  g_assert_cmpstr(gh_conversation_get_title(room), ==, "Claim it now");
+  g_assert_cmpuint(title_notified, ==, 1);
+  g_signal_handlers_disconnect_by_data(room, &title_notified);
+  g_signal_handlers_disconnect_by_data(room, &subject_notified);
+
+  /* Replying accepts too. */
+  Rumor other = { .author = 3, .p = { 1 }, .created_at = 30, .content = "hey",
+                  .subject = "Party" };
+  g_assert_cmpint(add(store, 1, &other), ==, GH_CONVERSATION_ADD_NEW);
+  g_autofree gchar *trio = room_id(1, 3, 0);
+  GhConversation *party = gh_conversation_store_lookup(store, trio);
+  g_assert_true(g_str_has_prefix(gh_conversation_get_title(party), "npub1"));
+  title_notified = 0;
+  g_signal_connect(party, "notify::title", G_CALLBACK(count_notify), &title_notified);
+  Rumor reply = { .author = 1, .p = { 3 }, .created_at = 40, .content = "coming" };
+  g_assert_cmpint(add(store, 1, &reply), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_false(gh_conversation_get_is_request(party));
+  g_assert_cmpstr(gh_conversation_get_title(party), ==, "Party");
+  g_assert_cmpuint(title_notified, ==, 1);
+  g_signal_handlers_disconnect_by_data(party, &title_notified);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -839,6 +895,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/conversations/room-canonicalization", test_room_canonicalization);
   g_test_add_func("/groundhog/conversations/order-and-dedup", test_order_and_dedup);
   g_test_add_func("/groundhog/conversations/subject", test_subject);
+  g_test_add_func("/groundhog/conversations/request-title", test_request_title);
   g_test_add_func("/groundhog/conversations/unread", test_unread);
   g_test_add_func("/groundhog/conversations/store-order-and-account",
                   test_store_order_and_account);
