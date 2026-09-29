@@ -213,3 +213,53 @@ The interop and protocol tests stayed green under every mutation above.
 - **N4:** hardening that can be filed separately.
 
 With N1 addressed, the libmarmot work is ready to approve. F1 and F2 are resolved, and va60, 5q55 and 8u1k are RFC-faithful, fail closed and well pinned.
+
+---
+
+## Addendum: confirmation pass on `a152b005` (2026-09-29)
+
+This is a focused re-check of the fix commit `a152b005` on `marmot/w16b-commit-fixes`, which stacks on `00c701c8`. It was built in a throwaway worktree, since removed. No code or beads were changed.
+
+| Finding | Status | Evidence |
+|---|---|---|
+| **N1** (blocking): toast on any error, uncoalesced | **Resolved** | See below. |
+| **N2**: receiver-side prune untested | **Resolved** | See below. |
+| **N3**: `pre_gc` leak in `add_member_staged` | **Resolved** | See below. |
+| **N4**: secrets left in freed serializer buffers | **Resolved** | See below. |
+
+### N1: resolved
+
+- **Filter.** `gn_mls_group_error_is_divergence()` admits only MLS-level codes in the `"marmot-gobject-client-error"` domain. That domain string matches `marmot_gobject_client_error_quark()` (`marmot-gobject-client.c:31-34`), so the filter does not silently drop everything. Inside `marmot_process_message`, `MARMOT_ERR_MLS` is returned only after the member-keyed NIP-44 layer has decrypted. Pre-join backfill and junk published under the public `h` tag fail with `MARMOT_ERR_NIP44`, `GROUP_NOT_FOUND` or parse errors, and are now debug-level only.
+- **Gate.** A per-router gate reports at most once per group and is re-armed on a Commit result.
+- **Test.** `gnostr-test-mls-group-error` passes. It covers the noise codes vs MLS codes, a foreign error domain, 500 failures producing one report per group, and a reset that re-arms only that group.
+- **Informational residue:**
+  - A member's message from a previous epoch still inside the lookback window also yields `MARMOT_ERR_MLS`, so one toast per group is still possible without real divergence.
+  - The gate is only re-armed on `MARMOT_GOBJECT_MESSAGE_RESULT_COMMIT`, which is never produced until nostrc-9ata lands. In practice that means at most one toast per group per session.
+
+  Both are bounded and acceptable.
+
+### N2: resolved
+
+`test_committer_keeps_own_path_keys` now checks both receivers' caches right after Bob's Remove. With the receiver-side `prune_own_path_keys()` removed from `process_commit_impl`, `test_mls_group` aborts (rc 134) in `assert_path_keys_current_for_test`, on the stale node-3 key.
+
+### N3: resolved
+
+- Every failure in `add_member_staged` now leaves through `fail_wire_msg` / `fail_pre_gc`. That path frees `pre_gc` and wipes `root_path_secret` and `commit_secret`.
+- The success path frees `pre_gc` only after the last `goto` (`:1623-1625`), so there is no double free.
+- **`leaks --atExit -- test_mls_group`: 0 leaks for 0 total leaked bytes**, with all 58 cases passing. It was 1 leak of 272 bytes on `00c701c8`.
+
+### N4: resolved
+
+- `buf_ensure` now allocates, copies, `sodium_memzero`s and frees the old block instead of calling `realloc`.
+- `mls_tls_buf_free` wipes `cap` bytes before freeing.
+- No `MlsTlsBuf` is built by hand anywhere in `libmarmot/src`. The ownership transfers (`extension.c:203`, `credentials.c:339`, `groups.c:211`, `mls_group.c:4416`) null out `data` and leave `cap` alone, so `cap` is always accurate.
+
+### Runs on `a152b005`
+
+- Full build with `BUILD_GROUNDHOG=ON`: ok.
+- `ctest -R 'marmot|mls' -j6`: **23/23 passed**, including `gnostr-test-mls-group-error`.
+- ASAN+UBSAN (`^marmot_test`): **20/20 passed**, no reports.
+
+### Final verdict
+
+**APPROVED.** Every finding from both reviews is resolved and pinned by a test that fails without its fix. The remaining gaps are tracked beads (nostrc-il4i, nostrc-9ata, nostrc-3hzu, nostrc-11r1, nostrc-nh0r) and are documented in the libmarmot 0.4.0 README entry.
