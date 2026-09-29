@@ -43,15 +43,20 @@ template $GhComposer: Widget {
         Box edit_row {
           spacing: 6;
 
-          // Attachments (charter G22) show this.
+          // Attachments (charter G22): shown while the owner can send a
+          // file here ("can-attach"); it opens the file chooser. Dropping a
+          // file or pasting an image does the same.
           Button attach_button {
             visible: false;
             valign: end;
             icon-name: "mail-attachment-symbolic";
             tooltip-text: _("Attach File");
+            action-name: "composer.attach";
+            focus-on-click: false;
 
             accessibility {
               label: _("Attach File");
+              description: _("Choose a file to send encrypted. You can also drop a file here or paste an image.");
             }
 
             styles [

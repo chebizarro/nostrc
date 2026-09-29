@@ -36,6 +36,7 @@ struct _GhComposer {
   gboolean can_send;
   gboolean setting_text; /* a programmatic change: no draft report */
   gboolean preedit;      /* an input method is composing text (a preedit) */
+  gboolean can_attach;   /* the owner can send a file here (G22) */
   gboolean draft_pending;
   guint draft_timer;
   GhComposerLengthFunc length_func;
@@ -50,13 +51,21 @@ enum {
   PROP_ENTER_SENDS,
   PROP_DISABLED_REASON,
   PROP_DISAPPEARING_TIMER,
+  PROP_CAN_ATTACH,
   PROP_CAN_SEND,
   PROP_TOO_LONG,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
 
-enum { SIGNAL_SEND, SIGNAL_DRAFT_CHANGED, N_SIGNALS };
+enum {
+  SIGNAL_SEND,
+  SIGNAL_DRAFT_CHANGED,
+  SIGNAL_ATTACH_REQUESTED,
+  SIGNAL_ATTACH_FILE,
+  SIGNAL_ATTACH_TEXTURE,
+  N_SIGNALS
+};
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhComposer, gh_composer, GTK_TYPE_WIDGET)
@@ -305,6 +314,121 @@ action_send(GtkWidget *widget, const char *name, GVariant *parameter)
   gh_composer_send(GH_COMPOSER(widget));
 }
 
+/* ---- attachments (G22) -------------------------------------------------------------- */
+
+/* Files are offered to the owner only while the entry is shown and the
+ * owner said a file can be sent here. */
+static gboolean
+attach_possible(GhComposer *self)
+{
+  return self->can_attach && editable(self);
+}
+
+static void
+action_attach(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhComposer *self = GH_COMPOSER(widget);
+  (void)name;
+  (void)parameter;
+  if (attach_possible(self))
+    g_signal_emit(self, signals[SIGNAL_ATTACH_REQUESTED], 0);
+}
+
+static void
+update_attach(GhComposer *self)
+{
+  gboolean possible = attach_possible(self);
+  gtk_widget_set_visible(GTK_WIDGET(self->attach_button), self->can_attach);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "composer.attach", possible);
+}
+
+/* A dropped file (the first of several) or image. */
+static gboolean
+on_drop(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, GhComposer *self)
+{
+  (void)target;
+  (void)x;
+  (void)y;
+  if (!attach_possible(self))
+    return FALSE;
+  if (G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) {
+    GSList *files = gdk_file_list_get_files(g_value_get_boxed(value));
+    GFile *file = files ? files->data : NULL;
+    if (file)
+      g_signal_emit(self, signals[SIGNAL_ATTACH_FILE], 0, file);
+    g_slist_free(files);
+    return file != NULL;
+  }
+  if (G_VALUE_HOLDS(value, G_TYPE_FILE)) {
+    g_signal_emit(self, signals[SIGNAL_ATTACH_FILE], 0, g_value_get_object(value));
+    return TRUE;
+  }
+  if (G_VALUE_HOLDS(value, GDK_TYPE_TEXTURE)) {
+    g_signal_emit(self, signals[SIGNAL_ATTACH_TEXTURE], 0, g_value_get_object(value));
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static GdkDragAction
+on_drop_accept(GtkDropTarget *target, GdkDrop *drop, GhComposer *self)
+{
+  (void)target;
+  (void)drop;
+  return attach_possible(self) ? GDK_ACTION_COPY : 0;
+}
+
+static void
+on_texture_pasted(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GhComposer *self = data; /* a reference */
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GdkTexture) texture = gdk_clipboard_read_texture_finish(GDK_CLIPBOARD(source),
+                                                                    result, &error);
+  if (texture && attach_possible(self))
+    g_signal_emit(self, signals[SIGNAL_ATTACH_TEXTURE], 0, texture);
+  else if (!texture)
+    g_debug("Composer: a pasted image could not be read: %s", error->message);
+  g_object_unref(self);
+}
+
+static void
+on_files_pasted(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GhComposer *self = data; /* a reference */
+  g_autoptr(GError) error = NULL;
+  const GValue *value = gdk_clipboard_read_value_finish(GDK_CLIPBOARD(source), result, &error);
+  if (value && G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST) && attach_possible(self)) {
+    GSList *files = gdk_file_list_get_files(g_value_get_boxed(value));
+    if (files)
+      g_signal_emit(self, signals[SIGNAL_ATTACH_FILE], 0, files->data);
+    g_slist_free(files);
+  } else if (!value) {
+    g_debug("Composer: pasted files could not be read: %s", error->message);
+  }
+  g_object_unref(self);
+}
+
+/* Paste (Ctrl+V, the context menu) of an image, or of copied files without
+ * text, offers them as an attachment; text pastes as always. */
+static void
+on_paste_clipboard(GtkTextView *text_view, GhComposer *self)
+{
+  if (!attach_possible(self))
+    return;
+  GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(text_view));
+  GdkContentFormats *formats = gdk_clipboard_get_formats(clipboard);
+  if (gdk_content_formats_contain_gtype(formats, GDK_TYPE_TEXTURE)) {
+    g_signal_stop_emission_by_name(text_view, "paste-clipboard");
+    gdk_clipboard_read_texture_async(clipboard, NULL, on_texture_pasted, g_object_ref(self));
+  } else if (gdk_content_formats_contain_gtype(formats, GDK_TYPE_FILE_LIST) &&
+             !gdk_content_formats_contain_gtype(formats, G_TYPE_STRING)) {
+    g_signal_stop_emission_by_name(text_view, "paste-clipboard");
+    gdk_clipboard_read_value_async(clipboard, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT, NULL,
+                                   on_files_pasted, g_object_ref(self));
+  }
+}
+
 /* ---- GObject ------------------------------------------------------------------------- */
 
 static gboolean
@@ -335,6 +459,7 @@ gh_composer_get_property(GObject *object, guint prop_id, GValue *value, GParamSp
   case PROP_ENTER_SENDS:     g_value_set_boolean(value, self->enter_sends); break;
   case PROP_DISABLED_REASON: g_value_set_string(value, self->reason); break;
   case PROP_DISAPPEARING_TIMER: g_value_set_int64(value, self->timer); break;
+  case PROP_CAN_ATTACH:      g_value_set_boolean(value, self->can_attach); break;
   case PROP_CAN_SEND:        g_value_set_boolean(value, self->can_send); break;
   case PROP_TOO_LONG:        g_value_set_boolean(value, self->too_long); break;
   default:
@@ -356,6 +481,9 @@ gh_composer_set_property(GObject *object, guint prop_id, const GValue *value,
     break;
   case PROP_DISAPPEARING_TIMER:
     gh_composer_set_disappearing_timer(self, g_value_get_int64(value));
+    break;
+  case PROP_CAN_ATTACH:
+    gh_composer_set_can_attach(self, g_value_get_boolean(value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -424,6 +552,7 @@ gh_composer_class_init(GhComposerClass *klass)
   props[PROP_DISABLED_REASON] = g_param_spec_string("disabled-reason", NULL, NULL, NULL, rw);
   props[PROP_DISAPPEARING_TIMER] = g_param_spec_int64("disappearing-timer", NULL, NULL, 0,
                                                       G_MAXINT64, 0, rw);
+  props[PROP_CAN_ATTACH] = g_param_spec_boolean("can-attach", NULL, NULL, FALSE, rw);
   props[PROP_CAN_SEND] = g_param_spec_boolean("can-send", NULL, NULL, FALSE, ro);
   props[PROP_TOO_LONG] = g_param_spec_boolean("too-long", NULL, NULL, FALSE, ro);
   g_object_class_install_properties(object_class, N_PROPS, props);
@@ -435,6 +564,15 @@ gh_composer_class_init(GhComposerClass *klass)
   signals[SIGNAL_DRAFT_CHANGED] =
     g_signal_new("draft-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_ATTACH_REQUESTED] =
+    g_signal_new("attach-requested", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 0);
+  signals[SIGNAL_ATTACH_FILE] =
+    g_signal_new("attach-file", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 1, G_TYPE_FILE);
+  signals[SIGNAL_ATTACH_TEXTURE] =
+    g_signal_new("attach-texture", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 1, GDK_TYPE_TEXTURE);
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-composer.ui");
@@ -453,6 +591,7 @@ gh_composer_class_init(GhComposerClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhComposer, disabled_reason);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, disabled_button);
   gtk_widget_class_install_action(widget_class, "composer.send", NULL, action_send);
+  gtk_widget_class_install_action(widget_class, "composer.attach", NULL, action_attach);
   gtk_widget_class_set_css_name(widget_class, "composer");
   add_icon_path();
 }
@@ -476,9 +615,21 @@ gh_composer_init(GhComposer *self)
   g_signal_connect(keys, "key-pressed", G_CALLBACK(on_key_pressed), self);
   gtk_widget_add_controller(GTK_WIDGET(self->text_view), keys);
 
+  /* G22: a file or an image dropped on the composer, or an image pasted
+   * into it, is offered for sending (the owner shows what will be sent). */
+  GtkDropTarget *drop = gtk_drop_target_new(G_TYPE_INVALID, GDK_ACTION_COPY);
+  GType types[] = { GDK_TYPE_FILE_LIST, G_TYPE_FILE, GDK_TYPE_TEXTURE };
+  gtk_drop_target_set_gtypes(drop, types, G_N_ELEMENTS(types));
+  gtk_event_controller_set_name(GTK_EVENT_CONTROLLER(drop), "groundhog-composer-drop");
+  g_signal_connect(drop, "accept", G_CALLBACK(on_drop_accept), self);
+  g_signal_connect(drop, "drop", G_CALLBACK(on_drop), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(drop));
+  g_signal_connect(self->text_view, "paste-clipboard", G_CALLBACK(on_paste_clipboard), self);
+
   gtk_stack_set_visible_child_name(self->composer_stack, "edit");
   update_state(self);
   update_timer(self);
+  update_attach(self);
 }
 
 /* ---- public ------------------------------------------------------------------------ */
@@ -613,6 +764,7 @@ gh_composer_set_disabled_reason(GhComposer *self, const gchar *reason)
   gtk_label_set_text(self->disabled_reason, reason ? reason : "");
   gtk_stack_set_visible_child_name(self->composer_stack, reason ? "disabled" : "edit");
   update_state(self);
+  update_attach(self);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_DISABLED_REASON]);
 }
 
@@ -731,4 +883,30 @@ gh_composer_get_timer_slot(GhComposer *self)
 {
   g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
   return self->timer_slot;
+}
+
+void
+gh_composer_set_can_attach(GhComposer *self, gboolean can_attach)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  can_attach = !!can_attach;
+  if (self->can_attach == can_attach)
+    return;
+  self->can_attach = can_attach;
+  update_attach(self);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_CAN_ATTACH]);
+}
+
+gboolean
+gh_composer_get_can_attach(GhComposer *self)
+{
+  g_return_val_if_fail(GH_IS_COMPOSER(self), FALSE);
+  return self->can_attach;
+}
+
+GtkButton *
+gh_composer_get_attach_button(GhComposer *self)
+{
+  g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
+  return self->attach_button;
 }

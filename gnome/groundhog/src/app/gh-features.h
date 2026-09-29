@@ -38,6 +38,9 @@ G_BEGIN_DECLS
 #ifndef GROUNDHOG_HAVE_TOR
 #define GROUNDHOG_HAVE_TOR 0
 #endif
+#ifndef GROUNDHOG_HAVE_ATTACHMENTS
+#define GROUNDHOG_HAVE_ATTACHMENTS 0
+#endif
 
 /* G09: network modes and the Tor transport (src/net/gh-net-session.c and
  * gh-relay-net.c, installed by gh-app-services.c before any connection). */
@@ -51,7 +54,10 @@ G_BEGIN_DECLS
 #define GH_FEATURE_PROFILE_PICTURES 0 /* no profile picture fetcher */
 #define GH_FEATURE_LINK_PREVIEWS    0 /* no link preview fetcher */
 #define GH_FEATURE_REQUEST_FILTER   0 /* message requests are always kept apart */
-#define GH_FEATURE_ATTACHMENTS      0 /* G21/G22: Blossom attachments */
+/* G21/G22: encrypted Blossom attachments (src/media/gh-attachments.c,
+ * src/app/gh-attachment-ui.c, run by gh-app-services.c with the store); a
+ * build without OpenSSL or libsoup has none. */
+#define GH_FEATURE_ATTACHMENTS      GROUNDHOG_HAVE_ATTACHMENTS
 #define GH_FEATURE_EXPIRY           GROUNDHOG_HAVE_EXPIRY /* G07: gh-expiry.c, gh-app-services.c */
 /* Not a preference: New Message's 10-recipient limit points to encrypted
  * groups only when they exist (charter §7.9; Marmot MLS, nostrc-qp24.13).

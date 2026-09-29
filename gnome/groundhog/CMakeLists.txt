@@ -35,7 +35,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
   gh-conversation-info-dialog gh-conversation-info-person
   gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
-  gh-blocked-page gh-blocked-row gh-conversation-menu)
+  gh-blocked-page gh-blocked-row gh-conversation-menu
+  gh-attachment-card gh-attachment-sheet)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1940,6 +1941,90 @@ if (TARGET groundhog-conversation-ui)
   target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-timeline-row.c)
 endif()
 # --- end W18 messaging polish ---
+# --- G22 attachment UI ---
+# Encrypted attachments in the app (privacy charter §6, D6, §7.4, §7.14,
+# §8.2 G22; AT-7 in the UI, a cancel test, Save through the Save dialog;
+# nostrc-dnsc folded in):
+#  - GhAttachmentTransfer (src/app/gh-attachment-transfer.c, GTK-free, in
+#    groundhog-conversations): one file message's download state, shared by
+#    every recycled row that shows it;
+#  - GhAttachmentCard and GhAttachmentSheet (src/ui/, data/ui/*.blp, in the
+#    conversation UI): the card in a file message's bubble (Download, Cancel,
+#    the photo after the decode guard, Save As…) and the sheet between
+#    choosing a file and sending it (server choice, preview, consent);
+#  - GhAttachments (src/media/gh-attachments.c, in groundhog-media): the
+#    open store's Blossom client, downloads only on request, cancel, honest
+#    errors, uploads, the cache's size and Clear, and the per-server upload
+#    consent kept in the encrypted store (src/store/gh-store-blossom.c,
+#    nostrc-dnsc);
+#  - gh-attachment-ui.c (the executable, beside gh-send-ui.c): the
+#    composer's attach button, drop and paste, the sheet, the outbox
+#    (gh_outbox_send_file_room), the cards' provider and Save As.
+# GROUNDHOG_HAVE_ATTACHMENTS=1 turns on GH_FEATURE_ATTACHMENTS
+# (src/app/gh-features.h): Preferences › Attachments becomes editable.
+if (TARGET groundhog-conversations)
+  target_sources(groundhog-conversations PRIVATE src/app/gh-attachment-transfer.c)
+endif()
+if (TARGET groundhog-conversation-ui)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-attachment-card.c
+    src/ui/gh-attachment-sheet.c)
+endif()
+if (TARGET groundhog-media)
+  target_sources(groundhog-media PRIVATE src/media/gh-attachments.c src/store/gh-store-blossom.c)
+endif()
+if (TARGET groundhog-media AND TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
+    TARGET groundhog-conversation-ui)
+  message(STATUS "Groundhog attachment UI: enabled")
+  target_sources(groundhog PRIVATE src/app/gh-attachment-ui.c)
+  target_link_libraries(groundhog PRIVATE groundhog-media)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ATTACHMENTS=1)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # Display-free: the server list rules (add, remove, order), the upload
+    # consent kept per account in the encrypted store and loaded into the
+    # client (a restart keeps it for that account only; revoked means no
+    # signer call), downloads only on request, from the cache or the local
+    # Blossom fixture, cancel, the held-bytes bound, Clear, the sender's
+    # own file, the upload's server, and the error words.
+    add_executable(test-groundhog-attachments tests/media/test_attachments.c
+      tests/media/blossom-fixture.c)
+    target_include_directories(test-groundhog-attachments PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
+    target_link_libraries(test-groundhog-attachments PRIVATE groundhog-media
+      groundhog-preferences groundhog-conversation-ui)
+    target_compile_options(test-groundhog-attachments PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-attachments)
+    add_dependencies(test-groundhog-attachments groundhog-test-schemas)
+    add_test(NAME groundhog-attachments COMMAND test-groundhog-attachments)
+    set_tests_properties(groundhog-attachments PROPERTIES TIMEOUT 90
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # The window (needs a display, self-skips with 77): the account stack of
+    # the composer tests (mock signer bus, FakeSecret, SQLCipher, recording
+    # relays) with the local Blossom fixture. Attach -> sheet -> upload ->
+    # outbox -> wrap published, the first-use server choice, consent,
+    # drop and paste, a received file's card fetching nothing until
+    # Download, Cancel, Save As writing only the chosen file, the damaged
+    # and unreachable errors, and Preferences › Attachments.
+    add_executable(test-groundhog-attachment-ui tests/ui/test_attachment_ui.c
+      ${GROUNDHOG_SEND_TEST_SOURCES} src/app/gh-attachment-ui.c tests/media/blossom-fixture.c)
+    target_include_directories(test-groundhog-attachment-ui PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
+    target_link_libraries(test-groundhog-attachment-ui PRIVATE groundhog-account-store
+      groundhog-conversation-ui groundhog-auth-policy groundhog-media groundhog-preferences
+      nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+    target_compile_options(test-groundhog-attachment-ui PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-attachment-ui)
+    add_dependencies(test-groundhog-attachment-ui groundhog-test-schemas)
+    add_test(NAME groundhog-attachment-ui COMMAND test-groundhog-attachment-ui)
+    set_tests_properties(groundhog-attachment-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog attachment UI: disabled (needs the attachments core, the account "
+                 "store and the outbox)")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ATTACHMENTS=0)
+endif()
+# --- end G22 attachment UI ---
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from
 # src/app/gh-features.h, whose features follow the executable's

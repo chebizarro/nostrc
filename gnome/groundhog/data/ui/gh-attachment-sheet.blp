@@ -1,0 +1,313 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Sending a file (charter §6 "Send", D6, G22), driven by
+// gh-attachment-sheet.c and gh-attachment-ui.c. Pages:
+//  - "servers": the first use, with no attachment server chosen. Groundhog
+//    never picks one: the user types the address of a server they choose;
+//  - "preview": what will be sent (name, size, the photo), whether its
+//    hidden details were removed, and what the server learns;
+//  - "sending": encrypting and uploading, with Cancel;
+//  - "consent": the server accepts uploads only from accounts it knows, so
+//    uploading there would tell it the file is yours (charter §6 step 4).
+// Text that depends on the file, the server or the network mode is set from
+// C. An AdwDialog: floating or a bottom sheet (§7.12, 360×294).
+template $GhAttachmentSheet: Adw.Dialog {
+  title: _("Send File");
+  content-width: 420;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Stack stack {
+      vhomogeneous: false;
+      transition-type: crossfade;
+
+      StackPage {
+        name: "servers";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          propagate-natural-height: true;
+
+          child: Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 6;
+            margin-bottom: 18;
+            margin-start: 18;
+            margin-end: 18;
+
+            Label {
+              label: _("Choose an Attachment Server");
+              wrap: true;
+              justify: center;
+
+              styles [
+                "title-2",
+              ]
+            }
+
+            Label {
+              label: _("Files you send are encrypted on this device, then stored on a Blossom server you choose. Groundhog doesn't choose one for you.");
+              wrap: true;
+              xalign: 0;
+            }
+
+            Label {
+              label: _("The server keeps the encrypted file. It can see the file's size and when it's uploaded and downloaded, and your IP address unless you use Tor. It can't see what the file contains or whom it's for.");
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            ListBox {
+              selection-mode: none;
+
+              styles [
+                "boxed-list",
+              ]
+
+              Adw.EntryRow server_entry {
+                title: _("Server Address");
+                input-purpose: url;
+                activates-default: true;
+              }
+            }
+
+            Label server_error {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "error",
+                "caption",
+              ]
+            }
+
+            Button server_button {
+              label: _("_Use This Server");
+              use-underline: true;
+              halign: center;
+              action-name: "sheet.use-server";
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            }
+          };
+        };
+      }
+
+      StackPage {
+        name: "preview";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          propagate-natural-height: true;
+
+          child: Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 6;
+            margin-bottom: 18;
+            margin-start: 18;
+            margin-end: 18;
+
+            // The photo, shown only after the decode guard (set from C).
+            Picture thumbnail {
+              visible: false;
+              halign: center;
+              can-shrink: true;
+              content-fit: contain;
+
+              styles [
+                "groundhog-attachment-preview",
+              ]
+            }
+
+            ListBox {
+              selection-mode: none;
+
+              styles [
+                "boxed-list",
+              ]
+
+              Adw.ActionRow file_row {
+                use-markup: false;
+                title-lines: 2;
+                title-selectable: true;
+              }
+
+              Adw.ActionRow metadata_row {
+                use-markup: false;
+
+                [prefix]
+                Image metadata_icon {
+                  icon-name: "emblem-ok-symbolic";
+                  accessible-role: presentation;
+                }
+              }
+            }
+
+            Label server_note {
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Label timer_note {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Label error_label {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "error",
+              ]
+            }
+
+            Button send_button {
+              label: _("_Send");
+              use-underline: true;
+              halign: center;
+              action-name: "sheet.send";
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            }
+          };
+        };
+      }
+
+      StackPage {
+        name: "sending";
+
+        child: Box {
+          orientation: vertical;
+          spacing: 12;
+          valign: center;
+          margin-top: 18;
+          margin-bottom: 18;
+          margin-start: 18;
+          margin-end: 18;
+
+          Spinner sending_spinner {
+            halign: center;
+            width-request: 32;
+            height-request: 32;
+          }
+
+          Label sending_label {
+            wrap: true;
+            justify: center;
+          }
+
+          Button sending_cancel {
+            label: _("_Cancel");
+            use-underline: true;
+            halign: center;
+            action-name: "sheet.cancel";
+
+            styles [
+              "pill",
+            ]
+          }
+        };
+      }
+
+      StackPage {
+        name: "consent";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+          propagate-natural-height: true;
+
+          child: Box {
+            orientation: vertical;
+            spacing: 12;
+            margin-top: 6;
+            margin-bottom: 18;
+            margin-start: 18;
+            margin-end: 18;
+
+            Label consent_title {
+              wrap: true;
+              justify: center;
+
+              styles [
+                "title-2",
+              ]
+            }
+
+            Label consent_body {
+              wrap: true;
+              xalign: 0;
+            }
+
+            Label {
+              label: _("Groundhog remembers your choice for this server and this account. You can take it back in Preferences.");
+              wrap: true;
+              xalign: 0;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Box {
+              orientation: vertical;
+              spacing: 6;
+              halign: center;
+
+              Button consent_button {
+                label: _("_Upload as My Account");
+                use-underline: true;
+                action-name: "sheet.consent";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+
+              Button consent_decline {
+                label: _("_Don't Upload");
+                use-underline: true;
+                action-name: "sheet.cancel";
+
+                styles [
+                  "pill",
+                ]
+              }
+            }
+          };
+        };
+      }
+    };
+  };
+}

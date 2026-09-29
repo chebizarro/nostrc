@@ -14,9 +14,9 @@ G_BEGIN_DECLS
  *   Privacy   notifications-enabled, notification-privacy, sound-enabled,
  *             load-remote-images, link-previews, load-profile-pictures,
  *             filter-unknown-senders, show-message-previews
- *   Messages  enter-sends, default-disappearing-seconds, retention-days
- *   Network   network-mode, tor-socks-address, discovery-relays,
- *             blossom-servers
+ *   Messages  enter-sends, default-disappearing-seconds, retention-days,
+ *             blossom-servers (the Attachments group, G22)
+ *   Network   network-mode, tor-socks-address, discovery-relays
  *   Account   signer-method, run-in-background
  *
  * Switches follow their key directly. A choice row shows the key's value; a
@@ -57,6 +57,14 @@ G_BEGIN_DECLS
  * The application passes gh_features_for_preferences() (src/app/gh-features.h),
  * the one list of what this build performs; tests/check_privacy.py requires a
  * consumer outside this dialog for every key whose features that list has.
+ *
+ * Messages › Attachments (charter §6, §7.11, G22): the attachment servers in
+ * the order they are tried, each with Move Up, Move Down and Remove; with
+ * gh_preferences_dialog_set_attachments() also the largest file, the size of
+ * the decrypted copies on this device with "Clear…" (after a confirmation),
+ * and, on a server the account consented to upload to as itself (nostrc-dnsc),
+ * a note and "Revoke". The group's description says what a server learns,
+ * with or without the Tor clause as the build has Tor.
  *
  * Privacy › Blocked Conversations (hidden until gh_blocked_page_attach(),
  * gh-blocked-page.h, gives it the account store's blocks) lists blocked
@@ -160,6 +168,42 @@ gchar *gh_preferences_normalize_server_url(const gchar *url, gboolean allow_onio
                                            GError **error);
 /* host:port with a port in 1-65535, e.g. the default 127.0.0.1:9050. */
 gboolean gh_preferences_validate_socks_address(const gchar *address, GError **error);
+
+/* The attachment server list's rules (the Attachments group and the first
+ * use's server choice, G22), GTK-free. add: url normalized
+ * (gh_preferences_normalize_server_url()) and appended, unless it is
+ * invalid (G_IO_ERROR_INVALID_ARGUMENT), already listed in any spelling
+ * (G_IO_ERROR_EXISTS) or the list holds 16 (G_IO_ERROR_NO_SPACE); errors
+ * are translated. remove: every entry equal to url dropped. move: the entry
+ * at index swapped with its neighbour delta places away (a copy, unchanged
+ * when either is out of range). Each returns a new list. */
+GStrv gh_preferences_server_list_add(const gchar *const *servers, const gchar *url,
+                                     gboolean allow_onion, GError **error);
+GStrv gh_preferences_server_list_remove(const gchar *const *servers, const gchar *url);
+GStrv gh_preferences_server_list_move(const gchar *const *servers, guint index, gint delta);
+
+/* The account's attachments, for the Attachments group (G22). */
+typedef struct {
+  guint64 max_file_size; /* the largest file that can be sent (0: not shown) */
+  /* The bytes of decrypted files kept on this device; FALSE (with error)
+   * while no account's storage is open. */
+  gboolean (*get_cache_size)(gpointer data, gint64 *out_bytes, GError **error);
+  /* Deletes them. */
+  gboolean (*clear_cache)(gpointer data, GError **error);
+  /* Whether the account consented to upload to server as itself, and taking
+   * that back (both nullable). */
+  gboolean (*get_consent)(gpointer data, const gchar *server);
+  gboolean (*revoke_consent)(gpointer data, const gchar *server, GError **error);
+} GhPreferencesAttachments;
+
+/* attachments (copied; NULL removes them) with data, freed with destroy
+ * (nullable) when replaced or the dialog goes. */
+void gh_preferences_dialog_set_attachments(GhPreferencesDialog *self,
+                                           const GhPreferencesAttachments *attachments,
+                                           gpointer data, GDestroyNotify destroy);
+/* Reads the cache size and the consents again (e.g. another account's
+ * storage opened). */
+void gh_preferences_dialog_refresh_attachments(GhPreferencesDialog *self);
 
 G_END_DECLS
 #endif

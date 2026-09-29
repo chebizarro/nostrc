@@ -80,6 +80,14 @@ normalize_server(const gchar *server, gchar **out_host)
                          ipv6 ? "]" : "", port_part, path);
 }
 
+gchar *
+gh_blossom_client_normalize_server(const gchar *server, gchar **out_host)
+{
+  if (out_host)
+    *out_host = NULL;
+  return normalize_server(server, out_host);
+}
+
 GStrv
 gh_blossom_client_dup_servers(GhBlossomClient *self)
 {
@@ -527,11 +535,18 @@ gh_blossom_client_upload_finish(GhBlossomClient *self, GAsyncResult *result, gch
                                 GError **error)
 {
   g_return_val_if_fail(g_task_is_valid(result, self), NULL);
-  gchar *url = g_task_propagate_pointer(G_TASK(result), error);
+  GError *local = NULL;
+  gchar *url = g_task_propagate_pointer(G_TASK(result), &local);
   if (out_server) {
-    Upload *upload = url ? g_task_get_task_data(G_TASK(result)) : NULL;
+    /* The server used, or the one that asked for a known account (the
+     * user's consent is per server). */
+    gboolean named = url || g_error_matches(local, GH_BLOSSOM_ERROR,
+                                            GH_BLOSSOM_ERROR_AUTH_REQUIRED);
+    Upload *upload = named ? g_task_get_task_data(G_TASK(result)) : NULL;
     *out_server = upload ? g_strdup(upload->server) : NULL;
   }
+  if (local)
+    g_propagate_error(error, local);
   return url;
 }
 

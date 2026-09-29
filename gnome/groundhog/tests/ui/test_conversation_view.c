@@ -16,6 +16,7 @@
  * screenshots case renders <dir>/groundhog-g12-*.png (wide and narrow, light
  * and dark, a three-person room and a failed message with its details).
  */
+#include "gh-attachment-card.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-private.h"
 #include "gh-conversation-row.h"
@@ -236,6 +237,17 @@ item_row(GtkWidget *item)
     return NULL;
   GhMessageRow *row = gh_timeline_row_get_message_row(GH_TIMELINE_ROW(child));
   return gh_message_row_get_message(row) ? row : NULL;
+/* Pictures under widget that show an image: a decoded one (PT-2). A file
+ * message's card (G22) keeps an empty, hidden picture until its Download. */
+static guint
+decoded_pictures(GtkWidget *widget)
+{
+  g_autoptr(GPtrArray) pictures = g_ptr_array_new();
+  collect(widget, GTK_TYPE_PICTURE, pictures);
+  guint decoded = 0;
+  for (guint i = 0; i < pictures->len; i++)
+    decoded += gtk_picture_get_paintable(g_ptr_array_index(pictures, i)) != NULL;
+  return decoded;
 }
 
 /* The list item widgets holding a bound GhMessageRow, in list order. */
@@ -877,9 +889,14 @@ test_file_message(Fixture *f, gconstpointer data)
   g_assert_null(strstr(gtk_label_get_label(body), "blossom.example.com"));
   g_assert_false(shown(row_child(row, "preview_box")));
   g_assert_cmpuint(f->fetches, ==, 0);
-  g_autoptr(GPtrArray) pictures = g_ptr_array_new();
-  collect(GTK_WIDGET(f->view), GTK_TYPE_PICTURE, pictures);
-  g_assert_cmpuint(pictures->len, ==, 0);
+  g_assert_cmpuint(decoded_pictures(GTK_WIDGET(f->view)), ==, 0);
+  /* G22: the card says what the file is in place of the body; with no
+   * attachment service in this window it offers no Download. */
+  g_assert_false(shown(GTK_WIDGET(body)));
+  g_assert_true(shown(row_child(row, "attachment_slot")));
+  GhAttachmentCard *card = row_child(row, "attachment_card");
+  g_assert_nonnull(strstr(gh_attachment_card_get_summary(card), "Photo"));
+  g_assert_null(gh_attachment_card_get_transfer(card));
   g_settings_reset(f->settings, "link-previews");
 }
 
@@ -926,9 +943,7 @@ test_links(Fixture *f, gconstpointer data)
 
   /* PT-2: rendering fetches nothing and decodes no image. */
   g_assert_cmpuint(f->fetches, ==, 0);
-  g_autoptr(GPtrArray) pictures = g_ptr_array_new();
-  collect(GTK_WIDGET(f->view), GTK_TYPE_PICTURE, pictures);
-  g_assert_cmpuint(pictures->len, ==, 0);
+  g_assert_cmpuint(decoded_pictures(GTK_WIDGET(f->view)), ==, 0);
   g_assert_false(shown(row_child(row, "attachment_slot")));
   g_assert_true(shown(row_child(row, "preview_box")));
 

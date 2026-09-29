@@ -52,6 +52,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkBox" id="attachment_slot">
             <property name="visible">false</property>
             <property name="orientation">1</property>
+            <child>
+              <object class="GhAttachmentCard" id="attachment_card"></object>
+            </child>
           </object>
         </child>
       </object>
@@ -66,7 +69,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </style>
         <child>
           <object class="GtkButton" id="preview_button">
-            <property name="label" translatable="true">Show Preview</property>
+            <property name="label" translatable="yes">Show Preview</property>
             <property name="halign">1</property>
             <property name="action-name">conversation.show-preview</property>
             <style>
@@ -138,11 +141,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <child>
           <object class="GtkButton" id="retry_button">
             <property name="visible">false</property>
-            <property name="label" translatable="true">_Try Again</property>
+            <property name="label" translatable="yes">_Try Again</property>
             <property name="use-underline">true</property>
             <property name="valign">3</property>
             <property name="action-name">conversation.retry-message</property>
-            <property name="tooltip-text" translatable="true">Send this message again</property>
+            <property name="tooltip-text" translatable="yes">Send this message again</property>
             <style>
               <class name="flat"/>
               <class name="groundhog-retry-button"/>

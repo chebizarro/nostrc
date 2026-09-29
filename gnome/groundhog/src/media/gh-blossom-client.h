@@ -83,6 +83,13 @@ G_DECLARE_FINAL_TYPE(GhBlossomClient, gh_blossom_client, GH, BLOSSOM_CLIENT, GOb
  * the app's GhNetHttp (a reference is kept). */
 GhBlossomClient *gh_blossom_client_new(GSettings *settings, GhNetHttp *http);
 
+/* The form in which servers are compared, and consents kept (G22,
+ * nostrc-dnsc): scheme://host[:port][/path], scheme and host lowercased,
+ * without a trailing slash; NULL for anything but an http(s) URL with a host
+ * and without user info, query or fragment. out_host (nullable) receives the
+ * host. */
+gchar *gh_blossom_client_normalize_server(const gchar *server, gchar **out_host);
+
 /* The configured servers (a copy): the override if set, else blossom-servers,
  * without blanks. */
 GStrv gh_blossom_client_dup_servers(GhBlossomClient *self);
@@ -113,8 +120,10 @@ gsize gh_blossom_client_get_max_file_size(GhBlossomClient *self);
 
 /* Uploads ciphertext, whose SHA-256 is sha256_hex, to the first server that
  * takes it. Finishes with the file URL (<server>/<sha256>) and, in
- * out_server (nullable), the server used. Errors: GH_BLOSSOM_ERROR_*, the
- * network's G_IO_ERROR_*, G_IO_ERROR_CANCELLED. */
+ * out_server (nullable), the server used (normalized). Errors:
+ * GH_BLOSSOM_ERROR_*, the network's G_IO_ERROR_*, G_IO_ERROR_CANCELLED; with
+ * GH_BLOSSOM_ERROR_AUTH_REQUIRED out_server names the server that asked for
+ * an account it knows, the one to ask the user's consent for. */
 void gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext,
                                     const gchar *sha256_hex, GCancellable *cancellable,
                                     GAsyncReadyCallback callback, gpointer user_data);

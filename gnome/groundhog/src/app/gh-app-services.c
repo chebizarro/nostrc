@@ -57,6 +57,16 @@
 #include "gh-identity.h"
 #include "gh-preferences-dialog.h"
 #endif
+
+/* G22: encrypted attachments (gh-attachments.h, gh-attachment-ui.h). */
+#ifndef GROUNDHOG_HAVE_ATTACHMENTS
+#define GROUNDHOG_HAVE_ATTACHMENTS 0
+#endif
+#if GROUNDHOG_HAVE_ATTACHMENTS
+#include "gh-attachment-ui.h"
+#include "gh-attachments.h"
+#include "gh-net-http.h"
+#endif
 #if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
 #include "gh-net-session.h"
 #include "gh-relay-net.h"
@@ -104,6 +114,10 @@ struct _GhAppServices {
 #endif
 #if GROUNDHOG_HAVE_EXPIRY
   GhExpiry *expiry; /* the open store's, while there is one */
+#endif
+#if GROUNDHOG_HAVE_ATTACHMENTS
+  GhNetHttp *attachments_http;  /* attachment transfers, in the network mode */
+  GhAttachments *attachments;   /* the open store's files (G22) */
 #endif
 #if GROUNDHOG_HAVE_NOTIFIER
   GhNotifier *notifier;
@@ -576,6 +590,101 @@ expiry_teardown(GhAppServices *self)
 }
 #endif
 
+#if GROUNDHOG_HAVE_ATTACHMENTS
+/* Encrypted attachments (charter §6, G22): one GhAttachments following the
+ * open store (saved, in memory or damaged), whose downloads and uploads are
+ * cancelled when the store goes, over its own GhNetHttp in the network mode.
+ * The account signs an upload only for a server it consented to. Nothing
+ * is fetched or uploaded but on the user's action. */
+static void
+attachments_sign_async(gpointer data, const gchar *unsigned_event_json,
+                       GCancellable *cancellable, GAsyncReadyCallback callback,
+                       gpointer callback_data)
+{
+  gh_account_controller_sign_with_cancellable_async(GH_ACCOUNT_CONTROLLER(data),
+                                                    unsigned_event_json, cancellable, callback,
+                                                    callback_data);
+}
+
+static void
+attachments_sync(GhAppServices *self)
+{
+  GhAccountStoreState state = gh_account_store_get_state(self->account_store);
+  GhStore *store = state == GH_ACCOUNT_STORE_OPEN || state == GH_ACCOUNT_STORE_EPHEMERAL ||
+                       state == GH_ACCOUNT_STORE_CORRUPT
+                     ? gh_account_store_get_store(self->account_store)
+                     : NULL;
+  if (store == gh_attachments_get_store(self->attachments))
+    return;
+  gh_attachments_set_store(self->attachments, store);
+  if (self->preferences_dialog)
+    gh_preferences_dialog_refresh_attachments(self->preferences_dialog);
+}
+
+/* Right after a close, before any other store can open (the downloads
+ * borrowed it). */
+static void
+attachments_store_closed(GhAppServices *self)
+{
+  gh_attachments_set_store(self->attachments, NULL);
+}
+
+static gboolean
+attachments_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  self->attachments_http = gh_net_http_new(self->settings);
+  GhAttachmentsConfig config = {
+    .settings = self->settings,
+    .http = self->attachments_http,
+    .sign_async = attachments_sign_async,
+    .sign_finish = gh_account_controller_sign_finish,
+    .sign_data = self->accounts,
+  };
+  self->attachments = gh_attachments_new(&config);
+  g_signal_connect_swapped(self->account_store, "changed", G_CALLBACK(attachments_sync), self);
+  g_signal_connect_swapped(self->account_store, "store-closed",
+                           G_CALLBACK(attachments_store_closed), self);
+  attachments_sync(self);
+  return TRUE;
+}
+
+static void
+attachments_teardown(GhAppServices *self)
+{
+  g_signal_handlers_disconnect_by_func(self->account_store, attachments_sync, self);
+  g_signal_handlers_disconnect_by_func(self->account_store, attachments_store_closed, self);
+  gh_attachments_set_store(self->attachments, NULL);
+  dispose_object(&self->attachments);
+  dispose_object(&self->attachments_http);
+}
+
+/* Preferences › Attachments: the cache and the consents of the open store. */
+static gboolean
+preferences_cache_size(gpointer data, gint64 *out_bytes, GError **error)
+{
+  return gh_attachments_get_cache_size(GH_ATTACHMENTS(data), out_bytes, error);
+}
+
+static gboolean
+preferences_clear_cache(gpointer data, GError **error)
+{
+  return gh_attachments_clear_cache(GH_ATTACHMENTS(data), error);
+}
+
+static gboolean
+preferences_get_consent(gpointer data, const gchar *server)
+{
+  return gh_attachments_get_consent(GH_ATTACHMENTS(data), server);
+}
+
+static gboolean
+preferences_revoke_consent(gpointer data, const gchar *server, GError **error)
+{
+  return gh_attachments_set_consent(GH_ATTACHMENTS(data), server, FALSE, error);
+}
+#endif
+
 #if GROUNDHOG_HAVE_NOTIFIER
 /* Private notifications (charter §5, G16): mutes and blocks are read from
  * the account's encrypted store; with none open nothing is notified anyway
@@ -823,6 +932,17 @@ present_preferences(GhAppServices *self, const gchar *page)
   static const GhBlockedBackend blocked = { preferences_blocked_list, preferences_unblock };
   gh_blocked_page_attach(dialog, &blocked, g_object_ref(self->account_store), g_object_unref);
 #endif
+#if GROUNDHOG_HAVE_ATTACHMENTS
+  static const GhPreferencesAttachments attachments = {
+    .max_file_size = GH_BLOSSOM_MAX_FILE_SIZE,
+    .get_cache_size = preferences_cache_size,
+    .clear_cache = preferences_clear_cache,
+    .get_consent = preferences_get_consent,
+    .revoke_consent = preferences_revoke_consent,
+  };
+  gh_preferences_dialog_set_attachments(dialog, &attachments, g_object_ref(self->attachments),
+                                        g_object_unref);
+#endif
   if (page)
     adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(dialog), page);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
@@ -999,6 +1119,9 @@ static const GhAppService services[] = {
 #if GROUNDHOG_HAVE_EXPIRY
   { "expiry", expiry_init, expiry_teardown },
 #endif
+#if GROUNDHOG_HAVE_ATTACHMENTS
+  { "attachments", attachments_init, attachments_teardown },
+#endif
 #if GROUNDHOG_HAVE_ACCOUNTS
   { "preferences", preferences_init, preferences_teardown },
 #endif
@@ -1133,6 +1256,17 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
   };
   gh_send_ui_attach(window, &send);
+#if GROUNDHOG_HAVE_ATTACHMENTS
+  /* G22: the attach button, the sheet and the attachment cards. */
+  GhAttachmentUiConfig attachments = {
+    .account_store = self->account_store,
+    .conversations = self->conversations,
+    .attachments = self->attachments,
+    .settings = self->settings,
+    .allow_onion = GH_FEATURE_TOR,
+  };
+  gh_attachment_ui_attach(window, &attachments);
+#endif
 #else
   gh_composer_set_disabled_reason(
     gh_content_page_get_composer(gh_window_get_content(window)),

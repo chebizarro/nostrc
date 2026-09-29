@@ -544,6 +544,21 @@ find_button(GtkWidget *widget, const char *label)
   return find_button_full(widget, label, FALSE);
 }
 
+/* The first button under widget with this tooltip (G22: an attachment
+ * server's row also has Move Up and Move Down before Remove). */
+static GtkWidget *
+find_tooltip_button(GtkWidget *widget, const char *tooltip)
+{
+  if (GTK_IS_BUTTON(widget) && g_strcmp0(gtk_widget_get_tooltip_text(widget), tooltip) == 0)
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_tooltip_button(c, tooltip);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
 static void
 assert_strv(GSettings *settings, const char *key, const char *const *want)
 {
@@ -634,7 +649,8 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
     g_assert_cmpstr(row_title(list, 1), ==, lc->good_out);
 
     /* Each row removes its own address; its button says which. */
-    GtkWidget *remove = find_button(GTK_WIDGET(gtk_list_box_get_row_at_index(list, 0)), NULL);
+    GtkWidget *remove = find_tooltip_button(GTK_WIDGET(gtk_list_box_get_row_at_index(list, 0)),
+                                            "Remove");
     g_assert_nonnull(remove);
     g_autofree char *label = g_strdup_printf("Remove %s", lc->second);
     gtk_test_accessible_assert_property(GTK_ACCESSIBLE(remove), GTK_ACCESSIBLE_PROPERTY_LABEL,

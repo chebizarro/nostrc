@@ -33,6 +33,7 @@ typedef struct {
   GtkListBox *list;           /* BINDING_LIST */
   GtkStringList *urls;        /* BINDING_LIST: the key's value, bound to list */
   gchar *(*normalize)(const gchar *text, gboolean allow_onion, GError **error);
+  gboolean ordered;           /* BINDING_LIST: rows move up and down (attachment servers) */
 } Binding;
 
 struct _GhPreferencesDialog {
@@ -62,9 +63,15 @@ struct _GhPreferencesDialog {
   GtkListBox *discovery_list;
   AdwEntryRow *discovery_entry;
   GtkLabel *discovery_error;
+  AdwPreferencesGroup *attachments_group;
   GtkListBox *blossom_list;
   AdwEntryRow *blossom_entry;
   GtkLabel *blossom_error;
+  GtkListBox *attachment_info_list;
+  AdwActionRow *attachment_limit_row;
+  AdwActionRow *attachment_cache_row;
+  GtkButton *attachment_clear_button;
+  AdwAlertDialog *clear_attachments_dialog;
   AdwActionRow *no_account_row;
   AdwActionRow *account_row;
   AdwAvatar *account_avatar;
@@ -86,6 +93,12 @@ struct _GhPreferencesDialog {
   gboolean forgetting;
   gboolean disposed; /* template children are gone; a forget may still finish */
   gchar *last_toast;
+  /* G22: the account's attachment cache and upload consents. */
+  GhPreferencesAttachments attachments;
+  gboolean has_attachments;
+  gpointer attachments_data;
+  GDestroyNotify attachments_destroy;
+  Binding *blossom_binding;
 };
 
 G_DEFINE_FINAL_TYPE(GhPreferencesDialog, gh_preferences_dialog, ADW_TYPE_PREFERENCES_DIALOG)
@@ -402,44 +415,198 @@ duration_label(GVariant *value)
 
 /* ---- URL lists ---------------------------------------------------------------------- */
 
+/* The list rules shared by both editors and gh_preferences_server_list_add(). */
+static GStrv
+url_list_add(const gchar *const *current, const gchar *text,
+             gchar *(*normalize)(const gchar *, gboolean, GError **), gboolean allow_onion,
+             GError **error)
+{
+  g_autofree gchar *url = normalize(text, allow_onion, error);
+  if (!url)
+    return NULL;
+  guint n = 0;
+  for (; current && current[n]; n++) {
+    g_autofree gchar *normalized = normalize(current[n], TRUE, NULL);
+    if (g_str_equal(normalized ? normalized : current[n], url)) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                          _("This address is already in the list"));
+      return NULL;
+    }
+  }
+  if (n >= GH_PREFERENCES_MAX_URLS) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                ngettext("Groundhog uses at most %d address here",
+                         "Groundhog uses at most %d addresses here", GH_PREFERENCES_MAX_URLS),
+                GH_PREFERENCES_MAX_URLS);
+    return NULL;
+  }
+  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+  if (current)
+    g_strv_builder_addv(builder, (const gchar **)current);
+  g_strv_builder_add(builder, url);
+  return g_strv_builder_end(builder);
+}
+
+GStrv
+gh_preferences_server_list_add(const gchar *const *servers, const gchar *url,
+                               gboolean allow_onion, GError **error)
+{
+  return url_list_add(servers, url, gh_preferences_normalize_server_url, allow_onion, error);
+}
+
+GStrv
+gh_preferences_server_list_remove(const gchar *const *servers, const gchar *url)
+{
+  g_autoptr(GStrvBuilder) kept = g_strv_builder_new();
+  for (guint i = 0; servers && servers[i]; i++)
+    if (g_strcmp0(servers[i], url) != 0)
+      g_strv_builder_add(kept, servers[i]);
+  return g_strv_builder_end(kept);
+}
+
+GStrv
+gh_preferences_server_list_move(const gchar *const *servers, guint index, gint delta)
+{
+  GStrv moved = g_strdupv((gchar **)servers);
+  if (!moved)
+    return g_new0(gchar *, 1);
+  guint n = g_strv_length(moved);
+  gint64 to = (gint64)index + delta;
+  if (index < n && to >= 0 && to < n) {
+    gchar *item = moved[index];
+    moved[index] = moved[to];
+    moved[to] = item;
+  }
+  return moved;
+}
+
 static void
 on_remove_url(GtkButton *button, Binding *binding)
 {
   const gchar *url = g_object_get_data(G_OBJECT(button), "gh-url");
   g_auto(GStrv) current = g_settings_get_strv(binding->self->settings, binding->key);
-  g_autoptr(GStrvBuilder) kept = g_strv_builder_new();
-  for (guint i = 0; current[i]; i++)
-    if (!g_str_equal(current[i], url))
-      g_strv_builder_add(kept, current[i]);
-  g_auto(GStrv) urls = g_strv_builder_end(kept);
+  g_auto(GStrv) urls = gh_preferences_server_list_remove((const gchar *const *)current, url);
   g_settings_set_strv(binding->self->settings, binding->key, (const gchar *const *)urls);
+}
+
+/* The position of url in the key's list, or -1. */
+static gint
+url_index(const gchar *url, gchar **urls)
+{
+  for (guint i = 0; urls[i]; i++)
+    if (g_str_equal(urls[i], url))
+      return (gint)i;
+  return -1;
+}
+
+static void
+on_move_url(GtkButton *button, Binding *binding)
+{
+  const gchar *url = g_object_get_data(G_OBJECT(button), "gh-url");
+  gint delta = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "gh-delta"));
+  g_auto(GStrv) current = g_settings_get_strv(binding->self->settings, binding->key);
+  gint index = url_index(url, current);
+  if (index < 0)
+    return;
+  g_auto(GStrv) urls = gh_preferences_server_list_move((const gchar *const *)current,
+                                                       (guint)index, delta);
+  g_settings_set_strv(binding->self->settings, binding->key, (const gchar *const *)urls);
+  /* The rows are made again: keyboard focus follows the moved server. */
+  GtkListBoxRow *row = gtk_list_box_get_row_at_index(binding->list, index + delta);
+  if (row)
+    gtk_widget_grab_focus(GTK_WIDGET(row));
+}
+
+static void
+on_revoke_consent(GtkButton *button, Binding *binding)
+{
+  GhPreferencesDialog *self = binding->self;
+  const gchar *url = g_object_get_data(G_OBJECT(button), "gh-url");
+  g_autoptr(GError) error = NULL;
+  if (!self->has_attachments || !self->attachments.revoke_consent)
+    return;
+  if (!self->attachments.revoke_consent(self->attachments_data, url, &error)) {
+    g_message("Groundhog could not take back an upload consent: %s", error->message);
+    show_entry_error(binding, _("This can't be changed while the account's message storage "
+                                "isn't open"));
+    return;
+  }
+  /* The row loses its note and button. */
+  gh_preferences_dialog_refresh_attachments(self);
+}
+
+static GtkWidget *
+icon_button(const gchar *icon, const gchar *tooltip, const gchar *label, const gchar *url)
+{
+  GtkWidget *button = gtk_button_new_from_icon_name(icon);
+  gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class(button, "flat");
+  gtk_widget_set_tooltip_text(button, tooltip);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL, label,
+                                 -1);
+  g_object_set_data_full(G_OBJECT(button), "gh-url", g_strdup(url), g_free);
+  return button;
 }
 
 static GtkWidget *
 create_url_row(gpointer item, gpointer data)
 {
   Binding *binding = data;
+  GhPreferencesDialog *self = binding->self;
   const gchar *url = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
   GtkWidget *row = adw_action_row_new();
   adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), url);
   adw_preferences_row_set_title_selectable(ADW_PREFERENCES_ROW(row), TRUE);
+  gboolean editable = key_available(self, binding->key);
 
-  GtkWidget *remove = gtk_button_new_from_icon_name("user-trash-symbolic");
+  if (binding->ordered && editable) {
+    /* Attachment servers are tried in this order (G22). */
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(binding->urls));
+    gint index = -1;
+    for (guint i = 0; i < n && index < 0; i++)
+      if (g_str_equal(gtk_string_list_get_string(binding->urls, i), url))
+        index = (gint)i;
+    if (self->has_attachments && self->attachments.get_consent &&
+        self->attachments.get_consent(self->attachments_data, url)) {
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row),
+                                  _("Uploads here are signed by your account"));
+      g_autofree gchar *label = g_strdup_printf(_("Stop uploading to %s as your account"), url);
+      GtkWidget *revoke = gtk_button_new_with_mnemonic(_("_Revoke"));
+      gtk_widget_set_valign(revoke, GTK_ALIGN_CENTER);
+      gtk_widget_add_css_class(revoke, "flat");
+      gtk_widget_set_tooltip_text(revoke, _("Stop uploading here as your account"));
+      gtk_accessible_update_property(GTK_ACCESSIBLE(revoke), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                     label, -1);
+      g_object_set_data_full(G_OBJECT(revoke), "gh-url", g_strdup(url), g_free);
+      g_signal_connect(revoke, "clicked", G_CALLBACK(on_revoke_consent), binding);
+      adw_action_row_add_suffix(ADW_ACTION_ROW(row), revoke);
+    }
+    g_autofree gchar *up_label = g_strdup_printf(_("Move %s up"), url);
+    GtkWidget *up = icon_button("go-up-symbolic", _("Move Up"), up_label, url);
+    g_object_set_data(G_OBJECT(up), "gh-delta", GINT_TO_POINTER(-1));
+    gtk_widget_set_sensitive(up, index > 0);
+    g_signal_connect(up, "clicked", G_CALLBACK(on_move_url), binding);
+    adw_action_row_add_suffix(ADW_ACTION_ROW(row), up);
+    g_autofree gchar *down_label = g_strdup_printf(_("Move %s down"), url);
+    GtkWidget *down = icon_button("go-down-symbolic", _("Move Down"), down_label, url);
+    g_object_set_data(G_OBJECT(down), "gh-delta", GINT_TO_POINTER(1));
+    gtk_widget_set_sensitive(down, index >= 0 && (guint)index + 1 < n);
+    g_signal_connect(down, "clicked", G_CALLBACK(on_move_url), binding);
+    adw_action_row_add_suffix(ADW_ACTION_ROW(row), down);
+  }
+
   g_autofree gchar *label = g_strdup_printf(_("Remove %s"), url);
-  gtk_widget_set_valign(remove, GTK_ALIGN_CENTER);
-  gtk_widget_add_css_class(remove, "flat");
-  gtk_widget_set_tooltip_text(remove, _("Remove"));
-  gtk_accessible_update_property(GTK_ACCESSIBLE(remove), GTK_ACCESSIBLE_PROPERTY_LABEL, label,
-                                 -1);
-  g_object_set_data_full(G_OBJECT(remove), "gh-url", g_strdup(url), g_free);
+  GtkWidget *remove = icon_button("user-trash-symbolic", _("Remove"), label, url);
   g_signal_connect(remove, "clicked", G_CALLBACK(on_remove_url), binding);
   adw_action_row_add_suffix(ADW_ACTION_ROW(row), remove);
   return row;
 }
 
+/* force: make every row again (e.g. a consent changed), keyboard focus or
+ * not. */
 static void
-list_sync(Binding *binding)
+list_sync_full(Binding *binding, gboolean force)
 {
   g_auto(GStrv) urls = g_settings_get_strv(binding->self->settings, binding->key);
   GListModel *model = G_LIST_MODEL(binding->urls);
@@ -447,19 +614,14 @@ list_sync(Binding *binding)
   gboolean same = n == g_strv_length(urls);
   for (guint i = 0; same && i < n; i++)
     same = g_str_equal(gtk_string_list_get_string(binding->urls, i), urls[i]);
-  if (!same) /* rebuilding the rows would move keyboard focus for nothing */
+  if (!same || force) /* rebuilding the rows would move keyboard focus for nothing */
     gtk_string_list_splice(binding->urls, 0, n, (const gchar *const *)urls);
 }
 
-static gboolean
-list_contains(Binding *binding, gchar **urls, const gchar *url)
+static void
+list_sync(Binding *binding)
 {
-  for (guint i = 0; urls[i]; i++) {
-    g_autofree gchar *normalized = binding->normalize(urls[i], TRUE, NULL);
-    if (g_str_equal(normalized ? normalized : urls[i], url))
-      return TRUE;
-  }
-  return FALSE;
+  list_sync_full(binding, FALSE);
 }
 
 static void
@@ -467,30 +629,14 @@ on_list_apply(AdwEntryRow *entry, Binding *binding)
 {
   g_autoptr(GError) error = NULL;
   GhPreferencesDialog *self = binding->self;
-  g_autofree gchar *url =
-    binding->normalize(gtk_editable_get_text(GTK_EDITABLE(entry)),
-                       (self->features & GH_PREFERENCES_FEATURE_TOR) != 0, &error);
-  if (!url) {
+  g_auto(GStrv) current = g_settings_get_strv(self->settings, binding->key);
+  g_auto(GStrv) urls =
+    url_list_add((const gchar *const *)current, gtk_editable_get_text(GTK_EDITABLE(entry)),
+                 binding->normalize, (self->features & GH_PREFERENCES_FEATURE_TOR) != 0, &error);
+  if (!urls) {
     show_entry_error(binding, error->message);
     return;
   }
-  g_auto(GStrv) current = g_settings_get_strv(self->settings, binding->key);
-  if (list_contains(binding, current, url)) {
-    show_entry_error(binding, _("This address is already in the list"));
-    return;
-  }
-  if (g_strv_length(current) >= GH_PREFERENCES_MAX_URLS) {
-    g_autofree gchar *message =
-      g_strdup_printf(ngettext("Groundhog uses at most %d address here",
-                               "Groundhog uses at most %d addresses here",
-                               GH_PREFERENCES_MAX_URLS), GH_PREFERENCES_MAX_URLS);
-    show_entry_error(binding, message);
-    return;
-  }
-  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
-  g_strv_builder_addv(builder, (const gchar **)current);
-  g_strv_builder_add(builder, url);
-  g_auto(GStrv) urls = g_strv_builder_end(builder);
   if (!g_settings_set_strv(self->settings, binding->key, (const gchar *const *)urls)) {
     show_entry_error(binding, _("This setting can't be changed"));
     return;
@@ -506,15 +652,17 @@ on_entry_changed(GtkEditable *editable, Binding *binding)
   clear_entry_error(binding);
 }
 
-static void
+static Binding *
 bind_list(GhPreferencesDialog *self, const gchar *key, GtkListBox *list, AdwEntryRow *entry,
-          GtkLabel *error, gchar *(*normalize)(const gchar *, gboolean, GError **))
+          GtkLabel *error, gchar *(*normalize)(const gchar *, gboolean, GError **),
+          gboolean ordered)
 {
   Binding *binding = add_binding(self, BINDING_LIST, key, GTK_WIDGET(list));
   binding->list = list;
   binding->entry = entry;
   binding->error = error;
   binding->normalize = normalize;
+  binding->ordered = ordered;
   binding->urls = gtk_string_list_new(NULL);
   gtk_list_box_bind_model(list, G_LIST_MODEL(binding->urls), create_url_row, binding, NULL);
   list_sync(binding);
@@ -526,6 +674,7 @@ bind_list(GhPreferencesDialog *self, const gchar *key, GtkListBox *list, AdwEntr
     gtk_widget_set_sensitive(GTK_WIDGET(list), FALSE);
     gtk_widget_set_visible(GTK_WIDGET(entry), FALSE);
   }
+  return binding;
 }
 
 /* ---- Tor address ------------------------------------------------------------------- */
@@ -663,6 +812,128 @@ sync_copy(GhPreferencesDialog *self)
           "relays and other people's apps may not honour this.")
       : _("Messages that carry a timer are deleted from this device when they expire.");
   adw_preferences_group_set_description(self->disappearing_group, disappearing);
+  /* G22: what an attachment server learns, as this build does it. */
+  const gchar *attachments;
+  if (!key_available(self, "blossom-servers"))
+    attachments = _("Encrypted attachments are stored on these servers. None are set by "
+                    "default, and sending attachments isn't available in this version yet. A "
+                    "server can see your IP address, when you upload or download, and the size "
+                    "of each file.");
+  else if (self->features & GH_PREFERENCES_FEATURE_TOR)
+    attachments = _("Files are encrypted on this device, then uploaded to the first server in "
+                    "this list that accepts them. None is set by default: Groundhog asks when "
+                    "you first send a file. A server can see when you upload or download and "
+                    "the size of each file, and your IP address unless you use Tor.");
+  else
+    attachments = _("Files are encrypted on this device, then uploaded to the first server in "
+                    "this list that accepts them. None is set by default: Groundhog asks when "
+                    "you first send a file. A server can see your IP address, when you upload "
+                    "or download, and the size of each file.");
+  adw_preferences_group_set_description(self->attachments_group, attachments);
+}
+
+/* ---- attachments (G22) -------------------------------------------------------------- */
+
+static void
+sync_attachment_rows(GhPreferencesDialog *self)
+{
+  gboolean shown = self->has_attachments && key_available(self, "blossom-servers");
+  gtk_widget_set_visible(GTK_WIDGET(self->attachment_info_list), shown);
+  if (!shown) {
+    gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.clear-attachments", FALSE);
+    return;
+  }
+  guint64 max = self->attachments.max_file_size;
+  gtk_widget_set_visible(GTK_WIDGET(self->attachment_limit_row), max > 0);
+  if (max > 0) {
+    g_autofree gchar *size = g_format_size(max);
+    adw_action_row_set_subtitle(self->attachment_limit_row, size);
+  }
+  gint64 bytes = 0;
+  g_autoptr(GError) error = NULL;
+  gboolean known = self->attachments.get_cache_size &&
+                   self->attachments.get_cache_size(self->attachments_data, &bytes, &error);
+  g_autofree gchar *subtitle = NULL;
+  if (!known)
+    subtitle = g_strdup(_("Shown while an account's message storage is open"));
+  else if (bytes == 0)
+    subtitle = g_strdup(_("None on this device"));
+  else {
+    g_autofree gchar *size = g_format_size((guint64)bytes);
+    /* TRANSLATORS: e.g. "12.3 MB, encrypted on this device". */
+    subtitle = g_strdup_printf(_("%s, encrypted on this device"), size);
+  }
+  adw_action_row_set_subtitle(self->attachment_cache_row, subtitle);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.clear-attachments",
+                                known && bytes > 0 && self->attachments.clear_cache);
+}
+
+static void
+on_clear_attachments_response(AdwAlertDialog *dialog, const gchar *response,
+                              GhPreferencesDialog *self)
+{
+  (void)dialog;
+  if (g_strcmp0(response, "clear") != 0 || !self->has_attachments ||
+      !self->attachments.clear_cache)
+    return;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *message = NULL;
+  if (self->attachments.clear_cache(self->attachments_data, &error))
+    message = g_strdup(_("Downloaded files were deleted from this device"));
+  else
+    message = g_strdup_printf(_("Couldn't delete the downloaded files: %s"), error->message);
+  g_free(self->last_toast);
+  self->last_toast = g_strdup(message);
+  adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(message));
+  sync_attachment_rows(self);
+}
+
+static void
+clear_attachments_activated(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(widget);
+  (void)action;
+  (void)parameter;
+  if (self->has_attachments && self->attachments.clear_cache)
+    adw_dialog_present(ADW_DIALOG(self->clear_attachments_dialog), widget);
+}
+
+void
+gh_preferences_dialog_set_attachments(GhPreferencesDialog *self,
+                                      const GhPreferencesAttachments *attachments,
+                                      gpointer data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  if (self->attachments_destroy)
+    self->attachments_destroy(self->attachments_data);
+  self->attachments_destroy = NULL;
+  self->attachments_data = NULL;
+  memset(&self->attachments, 0, sizeof self->attachments);
+  self->has_attachments = attachments != NULL;
+  if (attachments) {
+    self->attachments = *attachments;
+    self->attachments_data = data;
+    self->attachments_destroy = destroy;
+  }
+  if (self->disposed) {
+    if (self->attachments_destroy)
+      self->attachments_destroy(self->attachments_data);
+    self->attachments_destroy = NULL;
+    self->has_attachments = FALSE;
+    return;
+  }
+  gh_preferences_dialog_refresh_attachments(self);
+}
+
+void
+gh_preferences_dialog_refresh_attachments(GhPreferencesDialog *self)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  if (self->disposed)
+    return;
+  sync_attachment_rows(self);
+  if (self->blossom_binding)
+    list_sync_full(self->blossom_binding, TRUE);
 }
 
 static void
@@ -924,9 +1195,10 @@ gh_preferences_dialog_constructed(GObject *object)
 
   bind_address(self, "tor-socks-address", self->tor_address_row, self->tor_address_error);
   bind_list(self, "discovery-relays", self->discovery_list, self->discovery_entry,
-            self->discovery_error, gh_preferences_normalize_relay_url);
-  bind_list(self, "blossom-servers", self->blossom_list, self->blossom_entry,
-            self->blossom_error, gh_preferences_normalize_server_url);
+            self->discovery_error, gh_preferences_normalize_relay_url, FALSE);
+  self->blossom_binding = bind_list(self, "blossom-servers", self->blossom_list,
+                                    self->blossom_entry, self->blossom_error,
+                                    gh_preferences_normalize_server_url, TRUE);
 
   self->settings_changed = g_signal_connect(self->settings, "changed",
                                             G_CALLBACK(on_settings_changed), self);
@@ -934,6 +1206,7 @@ gh_preferences_dialog_constructed(GObject *object)
   sync_notifications(self);
   sync_copy(self);
   sync_delete(self);
+  sync_attachment_rows(self);
 }
 
 static void
@@ -981,6 +1254,9 @@ gh_preferences_dialog_dispose(GObject *object)
   }
   if (self->delete_all_dialog)
     g_signal_handlers_disconnect_by_func(self->delete_all_dialog, on_delete_all_response, self);
+  if (self->clear_attachments_dialog)
+    g_signal_handlers_disconnect_by_func(self->clear_attachments_dialog,
+                                         on_clear_attachments_response, self);
   if (self->notifications_row)
     g_signal_handlers_disconnect_by_func(self->notifications_row, sync_notifications, self);
   /* The rows' handlers point into the bindings: drop the rows first. */
@@ -989,8 +1265,14 @@ gh_preferences_dialog_dispose(GObject *object)
   if (self->blossom_list)
     gtk_list_box_bind_model(self->blossom_list, NULL, NULL, NULL, NULL);
   gtk_widget_dispose_template(GTK_WIDGET(self), GH_TYPE_PREFERENCES_DIALOG);
+  self->blossom_binding = NULL;
   g_clear_pointer(&self->bindings, g_ptr_array_unref);
   g_clear_object(&self->forget_target);
+  if (self->attachments_destroy)
+    self->attachments_destroy(self->attachments_data);
+  self->attachments_destroy = NULL;
+  self->attachments_data = NULL;
+  self->has_attachments = FALSE;
   G_OBJECT_CLASS(gh_preferences_dialog_parent_class)->dispose(object);
 }
 
@@ -1027,6 +1309,8 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   g_object_class_install_properties(object_class, N_PROPS, properties);
 
   gtk_widget_class_install_action(widget_class, "prefs.delete-all", NULL, delete_all_activated);
+  gtk_widget_class_install_action(widget_class, "prefs.clear-attachments", NULL,
+                                  clear_attachments_activated);
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-preferences-dialog.ui");
@@ -1055,9 +1339,15 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(discovery_list);
   BIND(discovery_entry);
   BIND(discovery_error);
+  BIND(attachments_group);
   BIND(blossom_list);
   BIND(blossom_entry);
   BIND(blossom_error);
+  BIND(attachment_info_list);
+  BIND(attachment_limit_row);
+  BIND(attachment_cache_row);
+  BIND(attachment_clear_button);
+  BIND(clear_attachments_dialog);
   BIND(no_account_row);
   BIND(account_row);
   BIND(account_avatar);
@@ -1079,5 +1369,8 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
   self->bindings = g_ptr_array_new_with_free_func(binding_free);
   g_signal_connect(self->delete_all_dialog, "response", G_CALLBACK(on_delete_all_response),
                    self);
+  g_signal_connect(self->clear_attachments_dialog, "response",
+                   G_CALLBACK(on_clear_attachments_response), self);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.delete-all", FALSE);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.clear-attachments", FALSE);
 }

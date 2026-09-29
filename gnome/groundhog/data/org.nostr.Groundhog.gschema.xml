@@ -123,7 +123,7 @@
     <key name="blossom-servers" type="as">
       <default>[]</default>
       <summary>Attachment servers</summary>
-      <description>Blossom servers that store encrypted attachments. Empty by default: attachments stay disabled until you choose a server. Reserved; not used yet.</description>
+      <description>Blossom servers that store encrypted attachments, tried in this order. Empty by default: nothing is uploaded until you choose a server, which Groundhog asks for when you first send a file.</description>
     </key>
     <!-- === end Preferences (§7.11) === -->
 

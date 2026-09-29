@@ -274,13 +274,29 @@ gh_attachment_check_preview(GBytes *plaintext, GhMediaFormat *out_format, guint 
 
 /* ---- upload ---------------------------------------------------------------------- */
 
+typedef struct {
+  GhAttachmentSealed *sealed;
+  gchar *server; /* the server used, or the one that asked for consent */
+} Upload;
+
+static void
+upload_free(gpointer data)
+{
+  Upload *upload = data;
+  gh_attachment_sealed_free(upload->sealed);
+  g_free(upload->server);
+  g_free(upload);
+}
+
 static void
 on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
 {
   GTask *task = data;
-  GhAttachmentSealed *sealed = g_task_get_task_data(task);
+  Upload *upload = g_task_get_task_data(task);
+  GhAttachmentSealed *sealed = upload->sealed;
   GError *error = NULL;
-  gchar *url = gh_blossom_client_upload_finish(GH_BLOSSOM_CLIENT(source), result, NULL, &error);
+  gchar *url = gh_blossom_client_upload_finish(GH_BLOSSOM_CLIENT(source), result,
+                                               &upload->server, &error);
   if (!url) {
     g_task_return_error(task, error);
     g_object_unref(task);
@@ -311,7 +327,9 @@ gh_attachment_upload_async(GhBlossomClient *client, GBytes *file, const gchar *m
     g_object_unref(task);
     return;
   }
-  g_task_set_task_data(task, sealed, (GDestroyNotify)gh_attachment_sealed_free);
+  Upload *upload = g_new0(Upload, 1);
+  upload->sealed = sealed;
+  g_task_set_task_data(task, upload, upload_free);
   gh_blossom_client_upload_async(client, sealed->ciphertext, sealed->file->x, cancellable,
                                  on_uploaded, task);
 }
@@ -319,7 +337,17 @@ gh_attachment_upload_async(GhBlossomClient *client, GBytes *file, const gchar *m
 GhNip17File *
 gh_attachment_upload_finish(GAsyncResult *result, GError **error)
 {
+  return gh_attachment_upload_finish_full(result, NULL, error);
+}
+
+GhNip17File *
+gh_attachment_upload_finish_full(GAsyncResult *result, gchar **out_server, GError **error)
+{
   g_return_val_if_fail(g_task_is_valid(result, NULL), NULL);
+  if (out_server) {
+    Upload *upload = g_task_get_task_data(G_TASK(result));
+    *out_server = upload ? g_strdup(upload->server) : NULL;
+  }
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 

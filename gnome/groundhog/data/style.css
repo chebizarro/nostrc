@@ -269,3 +269,34 @@ flowbox.groundhog-recipient-chips > flowboxchild {
   border-radius: 999px;
   border: 1px solid alpha(currentColor, 0.3);
 }
+
+/* == attachments (G22) == */
+/* A file message's card inside its bubble (gh-attachment-card.blp): its
+ * buttons take the bubble's own text colour, so they read on the accent
+ * (own) and card (others') backgrounds alike, and the photo has the
+ * bubble's rounding. */
+.groundhog-attachment-card {
+  min-width: 180px;
+  margin: 2px 0;
+}
+
+.groundhog-attachment-card .groundhog-attachment-detail {
+  color: alpha(currentColor, 0.75);
+}
+
+.message-bubble .groundhog-attachment-button {
+  color: inherit;
+  background-color: alpha(currentColor, 0.12);
+}
+
+.message-bubble .groundhog-attachment-button:hover {
+  background-color: alpha(currentColor, 0.18);
+}
+
+.message-bubble .groundhog-attachment-button:active {
+  background-color: alpha(currentColor, 0.24);
+}
+
+.groundhog-attachment-preview {
+  border-radius: 12px;
+}

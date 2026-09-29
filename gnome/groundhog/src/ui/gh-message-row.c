@@ -1,4 +1,5 @@
 #include "gh-message-row.h"
+#include "gh-attachment-card.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
 #include "gh-delivery-indicator.h"
@@ -19,6 +20,8 @@ struct _GhMessageRow {
   GtkLabel *sender_label;
   GtkBox *bubble;
   GtkLabel *body_label;
+  GtkBox *attachment_slot;
+  GhAttachmentCard *attachment_card;
   GtkBox *preview_box;
   GtkButton *preview_button;
   GtkLabel *preview_title;
@@ -106,11 +109,11 @@ append_sentence(GString *out, const gchar *sentence)
     g_string_append_c(out, '.');
 }
 
-/* G21 hook until G22's attachment card: a kind-15 file message is shown as
- * what it is, in plain text (gh_message_dup_display_text()), never as its
- * URL. The URL names encrypted bytes on a Blossom server: as a link it could
- * open in a browser outside the network mode (Tor) and would be a preview
- * candidate. NULL for any other message. */
+/* A kind-15 file message is "Photo" or "File" in text
+ * (gh_message_dup_display_text()), never its URL, and its bubble holds the
+ * attachment card (G22). The URL names encrypted bytes on a Blossom server:
+ * as a link it could open in a browser outside the network mode (Tor) and
+ * would be a preview candidate. NULL for any other message. */
 static gchar *
 file_text(GhMessage *message)
 {
@@ -185,6 +188,7 @@ update_width(GhMessageRow *self)
 {
   gint chars = self->compact ? BODY_CHARS_COMPACT : BODY_CHARS;
   gtk_label_set_max_width_chars(self->body_label, chars);
+  gh_attachment_card_set_compact(self->attachment_card, self->compact);
   gtk_label_set_max_width_chars(self->preview_title, chars);
   gtk_label_set_max_width_chars(self->preview_text, chars);
 }
@@ -308,6 +312,12 @@ update_all(GhMessageRow *self)
 
   g_clear_pointer(&self->preview_uri, g_free);
   set_class(GTK_WIDGET(self->body_label), "groundhog-undecryptable", self->undecryptable);
+  gboolean file_message = message && !self->undecryptable &&
+                          gh_message_get_kind(message) == GH_NIP17_FILE_KIND;
+  /* The card replaces the body; it fetches nothing by being shown. */
+  gh_attachment_card_set_message(self->attachment_card, file_message ? message : NULL);
+  gtk_widget_set_visible(GTK_WIDGET(self->attachment_slot), file_message);
+  gtk_widget_set_visible(GTK_WIDGET(self->body_label), !file_message);
   if (!message) {
     gtk_label_set_text(self->body_label, "");
     gtk_label_set_text(self->sender_label, "");
@@ -588,6 +598,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   g_object_class_install_properties(object_class, N_PROPS, props);
 
   g_type_ensure(GH_TYPE_DELIVERY_INDICATOR);
+  g_type_ensure(GH_TYPE_ATTACHMENT_CARD);
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-message-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, sender_label);
@@ -602,7 +613,8 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, time_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, delivery);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, retry_button);
-  gtk_widget_class_bind_template_child_full(widget_class, "attachment_slot", FALSE, 0);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_slot);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_card);
   gtk_widget_class_set_css_name(widget_class, "groundhog-message");
 }
 

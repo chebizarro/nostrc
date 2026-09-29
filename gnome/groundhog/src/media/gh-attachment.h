@@ -109,6 +109,11 @@ void gh_attachment_upload_async(GhBlossomClient *client, GBytes *file, const gch
                                 GCancellable *cancellable, GAsyncReadyCallback callback,
                                 gpointer user_data);
 GhNip17File *gh_attachment_upload_finish(GAsyncResult *result, GError **error);
+/* As gh_attachment_upload_finish(), and in out_server (nullable) the server
+ * used, or with GH_BLOSSOM_ERROR_AUTH_REQUIRED the server that asked for an
+ * account it knows (gh_blossom_client_upload_finish()); NULL otherwise. */
+GhNip17File *gh_attachment_upload_finish_full(GAsyncResult *result, gchar **out_server,
+                                              GError **error);
 
 /* The user's "Download" (PD-2: never automatic). cache (nullable) is the
  * account's open store: a file already there is returned without any

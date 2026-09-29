@@ -172,6 +172,102 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         };
       }
     }
+
+    // Attachments (charter §6, §7.11, G22): the Blossom servers in the order
+    // they are tried, each with Move Up, Move Down and Remove (and, where the
+    // account consented to upload as itself, Revoke), the largest file, and
+    // the decrypted copies kept on this device with Clear. The description
+    // (what a server learns, for this build) and the rows' text are set from
+    // C; without the feature the list is shown and not editable.
+    Adw.PreferencesGroup attachments_group {
+      title: _("Attachments");
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+
+        ListBox blossom_list {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          accessibility {
+            label: _("Attachment servers");
+          }
+
+          [placeholder]
+          Label {
+            label: _("No attachment servers");
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+
+        ListBox {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          Adw.EntryRow blossom_entry {
+            title: _("Add Server");
+            show-apply-button: true;
+            input-purpose: url;
+          }
+        }
+
+        Label blossom_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+
+          styles [
+            "error",
+            "caption",
+          ]
+        }
+
+        // Shown with gh_preferences_dialog_set_attachments().
+        ListBox attachment_info_list {
+          visible: false;
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          Adw.ActionRow attachment_limit_row {
+            title: _("Largest File");
+            subtitle-selectable: true;
+          }
+
+          Adw.ActionRow attachment_cache_row {
+            title: _("Downloaded Files");
+
+            [suffix]
+            Button attachment_clear_button {
+              label: _("_Clear…");
+              use-underline: true;
+              valign: center;
+              action-name: "prefs.clear-attachments";
+
+              accessibility {
+                description: _("Deletes the decrypted copies of downloaded and sent files from this device");
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   Adw.PreferencesPage network_page {
@@ -330,65 +426,6 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
-    Adw.PreferencesGroup {
-      title: _("Attachment Servers");
-      description: _("Encrypted attachments are stored on these servers. None are set by default, and sending attachments isn't available in this version yet. A server can see your IP address, when you upload or download, and the size of each file.");
-
-      Box {
-        orientation: vertical;
-        spacing: 12;
-
-        ListBox blossom_list {
-          selection-mode: none;
-
-          styles [
-            "boxed-list",
-          ]
-
-          accessibility {
-            label: _("Attachment servers");
-          }
-
-          [placeholder]
-          Label {
-            label: _("No attachment servers");
-            margin-top: 12;
-            margin-bottom: 12;
-            margin-start: 12;
-            margin-end: 12;
-
-            styles [
-              "dim-label",
-            ]
-          }
-        }
-
-        ListBox {
-          selection-mode: none;
-
-          styles [
-            "boxed-list",
-          ]
-
-          Adw.EntryRow blossom_entry {
-            title: _("Add Server");
-            show-apply-button: true;
-            input-purpose: url;
-          }
-        }
-
-        Label blossom_error {
-          visible: false;
-          wrap: true;
-          xalign: 0;
-
-          styles [
-            "error",
-            "caption",
-          ]
-        }
-      }
-    }
   }
 
   Adw.PreferencesPage account_page {
@@ -478,6 +515,21 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
   }
+}
+
+// Confirmation for prefs.clear-attachments (G22): the encrypted cache of
+// decrypted files, emptied. Response ids are file-wide object ids for
+// blueprint-compiler 0.12, so they differ from delete_all_dialog's.
+Adw.AlertDialog clear_attachments_dialog {
+  heading: _("Clear Downloaded Files?");
+  body: _("Groundhog deletes its decrypted copies of the files you downloaded or sent from this device. The messages stay. Downloading a file again needs the server that holds it, which may have deleted it.");
+  default-response: "keep";
+  close-response: "keep";
+
+  responses [
+    keep: _("_Cancel"),
+    clear: _("_Clear") destructive,
+  ]
 }
 
 // Confirmation for prefs.delete-all: the account store's forget (ST-8).

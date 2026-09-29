@@ -183,6 +183,97 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
           </object>
         </child>
+        <child>
+          <object class="AdwPreferencesGroup" id="attachments_group">
+            <property name="title" translatable="yes">Attachments</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkListBox" id="blossom_list">
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <accessibility>
+                      <property name="label" translatable="yes">Attachment servers</property>
+                    </accessibility>
+                    <child type="placeholder">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">No attachment servers</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-bottom">12</property>
+                        <property name="margin-start">12</property>
+                        <property name="margin-end">12</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkListBox">
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <child>
+                      <object class="AdwEntryRow" id="blossom_entry">
+                        <property name="title" translatable="yes">Add Server</property>
+                        <property name="show-apply-button">true</property>
+                        <property name="input-purpose">5</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="blossom_error">
+                    <property name="visible">false</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="error"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkListBox" id="attachment_info_list">
+                    <property name="visible">false</property>
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <child>
+                      <object class="AdwActionRow" id="attachment_limit_row">
+                        <property name="title" translatable="yes">Largest File</property>
+                        <property name="subtitle-selectable">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow" id="attachment_cache_row">
+                        <property name="title" translatable="yes">Downloaded Files</property>
+                        <child type="suffix">
+                          <object class="GtkButton" id="attachment_clear_button">
+                            <property name="label" translatable="yes">_Clear…</property>
+                            <property name="use-underline">true</property>
+                            <property name="valign">3</property>
+                            <property name="action-name">prefs.clear-attachments</property>
+                            <accessibility>
+                              <property name="description" translatable="yes">Deletes the decrypted copies of downloaded and sent files from this device</property>
+                            </accessibility>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
       </object>
     </child>
     <child>
@@ -337,67 +428,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
           </object>
         </child>
-        <child>
-          <object class="AdwPreferencesGroup">
-            <property name="title" translatable="yes">Attachment Servers</property>
-            <property name="description" translatable="yes">Encrypted attachments are stored on these servers. None are set by default, and sending attachments isn't available in this version yet. A server can see your IP address, when you upload or download, and the size of each file.</property>
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">1</property>
-                <property name="spacing">12</property>
-                <child>
-                  <object class="GtkListBox" id="blossom_list">
-                    <property name="selection-mode">0</property>
-                    <style>
-                      <class name="boxed-list"/>
-                    </style>
-                    <accessibility>
-                      <property name="label" translatable="yes">Attachment servers</property>
-                    </accessibility>
-                    <child type="placeholder">
-                      <object class="GtkLabel">
-                        <property name="label" translatable="yes">No attachment servers</property>
-                        <property name="margin-top">12</property>
-                        <property name="margin-bottom">12</property>
-                        <property name="margin-start">12</property>
-                        <property name="margin-end">12</property>
-                        <style>
-                          <class name="dim-label"/>
-                        </style>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkListBox">
-                    <property name="selection-mode">0</property>
-                    <style>
-                      <class name="boxed-list"/>
-                    </style>
-                    <child>
-                      <object class="AdwEntryRow" id="blossom_entry">
-                        <property name="title" translatable="yes">Add Server</property>
-                        <property name="show-apply-button">true</property>
-                        <property name="input-purpose">5</property>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="blossom_error">
-                    <property name="visible">false</property>
-                    <property name="wrap">true</property>
-                    <property name="xalign">0</property>
-                    <style>
-                      <class name="error"/>
-                      <class name="caption"/>
-                    </style>
-                  </object>
-                </child>
-              </object>
-            </child>
-          </object>
-        </child>
       </object>
     </child>
     <child>
@@ -494,6 +524,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
   </template>
+  <object class="AdwAlertDialog" id="clear_attachments_dialog">
+    <property name="heading" translatable="yes">Clear Downloaded Files?</property>
+    <property name="body" translatable="yes">Groundhog deletes its decrypted copies of the files you downloaded or sent from this device. The messages stay. Downloading a file again needs the server that holds it, which may have deleted it.</property>
+    <property name="default-response">keep</property>
+    <property name="close-response">keep</property>
+    <responses>
+      <response id="keep" translatable="yes">_Cancel</response>
+      <response id="clear" translatable="yes" appearance="destructive">_Clear</response>
+    </responses>
+  </object>
   <object class="AdwAlertDialog" id="delete_all_dialog">
     <property name="heading" translatable="yes">Delete All Messages on This Device?</property>
     <property name="body" translatable="yes">Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Nostr Signer, and Gnostr isn't affected.

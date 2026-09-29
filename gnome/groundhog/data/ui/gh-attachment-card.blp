@@ -1,0 +1,157 @@
+using Gtk 4.0;
+
+// A kind-15 file message inside its bubble (charter §6 "Receive", §7.4,
+// G22), driven by gh-attachment-card.c: the type icon, "Photo" or
+// "File (PDF)", the size and the sender; nothing is fetched until Download.
+// C shows one of the action buttons for the transfer's state, the spinner
+// while downloading, the transfer's error, and the photo once it passed the
+// decode guard. Every button is focusable and says what it does.
+template $GhAttachmentCard: Widget {
+  layout-manager: BoxLayout {
+    orientation: vertical;
+    spacing: 8;
+  };
+
+  styles [
+    "groundhog-attachment-card",
+  ]
+
+  Box {
+    spacing: 10;
+
+    Image type_icon {
+      icon-name: "text-x-generic-symbolic";
+      pixel-size: 32;
+      valign: center;
+      accessible-role: presentation;
+
+      styles [
+        "groundhog-attachment-icon",
+      ]
+    }
+
+    Box {
+      orientation: vertical;
+      valign: center;
+      spacing: 2;
+      hexpand: true;
+
+      Label title_label {
+        xalign: 0;
+        ellipsize: end;
+        accessible-role: presentation;
+
+        styles [
+          "heading",
+        ]
+      }
+
+      Label detail_label {
+        xalign: 0;
+        wrap: true;
+        wrap-mode: word_char;
+        accessible-role: presentation;
+
+        styles [
+          "caption",
+          "groundhog-attachment-detail",
+        ]
+      }
+    }
+  }
+
+  // The downloaded photo (charter §6 step 5: after the decode guard only).
+  Picture preview {
+    visible: false;
+    halign: start;
+    can-shrink: true;
+    content-fit: contain;
+
+    styles [
+      "groundhog-attachment-preview",
+    ]
+  }
+
+  Box status_box {
+    visible: false;
+    spacing: 6;
+
+    Spinner spinner {
+      visible: false;
+      valign: center;
+    }
+
+    Image status_icon {
+      visible: false;
+      icon-name: "dialog-warning-symbolic";
+      valign: start;
+      accessible-role: presentation;
+    }
+
+    Label status_label {
+      xalign: 0;
+      hexpand: true;
+      wrap: true;
+      wrap-mode: word_char;
+
+      styles [
+        "caption",
+      ]
+    }
+  }
+
+  Box actions {
+    spacing: 6;
+    halign: start;
+
+    Button download_button {
+      label: _("_Download");
+      use-underline: true;
+      action-name: "attachment.download";
+
+      styles [
+        "groundhog-attachment-button",
+      ]
+    }
+
+    Button cancel_button {
+      visible: false;
+      label: _("_Cancel");
+      use-underline: true;
+      action-name: "attachment.cancel";
+      tooltip-text: _("Stop downloading this file");
+
+      styles [
+        "groundhog-attachment-button",
+      ]
+    }
+
+    Button retry_button {
+      visible: false;
+      label: _("_Try Again");
+      use-underline: true;
+      action-name: "attachment.download";
+      tooltip-text: _("Download this file again");
+
+      styles [
+        "groundhog-attachment-button",
+      ]
+    }
+
+    Button save_button {
+      visible: false;
+      label: _("_Save As…");
+      use-underline: true;
+      action-name: "attachment.save";
+      tooltip-text: _("Save a copy outside Groundhog. Saved files aren't protected by Groundhog.");
+
+      accessibility {
+        description: _("Saved files aren't protected by Groundhog.");
+      }
+
+      styles [
+        "groundhog-attachment-button",
+      ]
+    }
+  }
+}

@@ -46,8 +46,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="valign">2</property>
                         <property name="icon-name">mail-attachment-symbolic</property>
                         <property name="tooltip-text" translatable="yes">Attach File</property>
+                        <property name="action-name">composer.attach</property>
+                        <property name="focus-on-click">false</property>
                         <accessibility>
                           <property name="label" translatable="yes">Attach File</property>
+                          <property name="description" translatable="yes">Choose a file to send encrypted. You can also drop a file here or paste an image.</property>
                         </accessibility>
                         <style>
                           <class name="flat"/>

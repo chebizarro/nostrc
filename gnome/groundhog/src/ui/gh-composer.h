@@ -65,11 +65,20 @@ G_BEGIN_DECLS
  * (gh_conversation_info_attach()), where the timer is changed; the owner
  * keeps the property in step with the conversation (gh-send-ui.c).
  *
- * Slot for a later item: "attach_button" (hidden until attachments, G22).
+ * Attachments (charter §6, G22): while "can-attach" is set (the owner can
+ * send a file in the shown conversation) the attach button is shown; it
+ * ("composer.attach") emits "attach-requested", for the owner's file
+ * chooser. A file dropped on the composer (the first, when several) emits
+ * "attach-file" (GFile), a dropped image "attach-texture" (GdkTexture); a
+ * paste of an image, or of copied files without text, emits the same
+ * instead of pasting text. Nothing is offered while the composer is
+ * disabled. The composer only hands the file over; the owner shows what
+ * will be sent before anything leaves.
  *
  * Properties: "compact" (hides the emoji button, tighter padding), "max-lines"
  * (lines shown before scrolling), "enter-sends", "disabled-reason" (nullable),
- * "disappearing-timer", and the read-only "can-send" and "too-long".
+ * "disappearing-timer", "can-attach", and the read-only "can-send" and
+ * "too-long".
  */
 #define GH_TYPE_COMPOSER (gh_composer_get_type())
 G_DECLARE_FINAL_TYPE(GhComposer, gh_composer, GH, COMPOSER, GtkWidget)
@@ -127,6 +136,10 @@ void gh_composer_set_disappearing_timer(GhComposer *self, gint64 seconds);
 gint64 gh_composer_get_disappearing_timer(GhComposer *self);
 /* The box holding the timer indicator (visible while the timer is on). */
 GtkBox *gh_composer_get_timer_slot(GhComposer *self);
+/* Whether a file can be sent in the shown conversation (see above). */
+void gh_composer_set_can_attach(GhComposer *self, gboolean can_attach);
+gboolean gh_composer_get_can_attach(GhComposer *self);
+GtkButton *gh_composer_get_attach_button(GhComposer *self);
 
 G_END_DECLS
 #endif

@@ -51,10 +51,13 @@ template $GhMessageRow: Widget {
       ]
     }
 
-    // Attachment cards (charter G22).
+    // A kind-15 file message's card (charter G22), in place of the body:
+    // nothing is fetched until its Download button.
     Box attachment_slot {
       visible: false;
       orientation: vertical;
+
+      $GhAttachmentCard attachment_card {}
     }
   }
 
