@@ -1272,6 +1272,261 @@ test_public_only(void)
   g_ptr_array_set_size(dns_names, 0); /* the rebinding name's lookups, on purpose */
 }
 
+/* ---- nostrc-qp24.91: the public-only enumerator, lookup order by lookup order ------ */
+
+/* A resolver that holds every asynchronous lookup until the test releases
+ * it, so the IPv6 and IPv4 answers of a GNetworkAddress enumeration arrive
+ * in the order the test chooses. IPv6 lookups fail; IPv4 lookups of
+ * MIXED_HOST give private and public addresses, of LOCAL_HOST only
+ * 127.0.0.1. Synchronous lookups answer at once. */
+#define MIXED_HOST "mixed.groundhog.test"
+#define LOCAL_HOST "local.groundhog.test"
+
+#define HELD_TYPE_RESOLVER (held_resolver_get_type())
+G_DECLARE_FINAL_TYPE(HeldResolver, held_resolver, HELD, RESOLVER, GResolver)
+struct _HeldResolver {
+  GResolver parent_instance;
+  GPtrArray *pending;  /* GTask, a held lookup; its task data: the flags */
+  guint completed;     /* held lookups whose callbacks have run */
+};
+G_DEFINE_FINAL_TYPE(HeldResolver, held_resolver, G_TYPE_RESOLVER)
+
+static GList *
+held_answer(const gchar *name, GResolverNameLookupFlags flags, GError **error)
+{
+  if (flags & G_RESOLVER_NAME_LOOKUP_FLAGS_IPV6_ONLY) {
+    g_set_error(error, G_RESOLVER_ERROR, G_RESOLVER_ERROR_NOT_FOUND, "no IPv6 for %s", name);
+    return NULL;
+  }
+  static const gchar *const mixed[] = { "127.0.0.1", "8.8.8.8", "10.1.2.3", "1.1.1.1" };
+  guint count = g_str_equal(name, MIXED_HOST) ? G_N_ELEMENTS(mixed)
+                : g_str_equal(name, LOCAL_HOST) ? 1 : 0;
+  if (!count) {
+    g_set_error(error, G_RESOLVER_ERROR, G_RESOLVER_ERROR_NOT_FOUND, "no address for %s", name);
+    return NULL;
+  }
+  GList *addresses = NULL;
+  for (guint i = 0; i < count; i++)
+    addresses = g_list_append(addresses, g_inet_address_new_from_string(mixed[i]));
+  return addresses;
+}
+
+static GList *
+held_lookup_flags(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
+                  GCancellable *cancellable, GError **error)
+{
+  (void)resolver;
+  (void)cancellable;
+  return held_answer(name, flags, error);
+}
+
+static GList *
+held_lookup(GResolver *resolver, const gchar *name, GCancellable *cancellable, GError **error)
+{
+  return held_lookup_flags(resolver, name, G_RESOLVER_NAME_LOOKUP_FLAGS_DEFAULT, cancellable,
+                           error);
+}
+
+static void
+held_lookup_flags_async(GResolver *resolver, const gchar *name, GResolverNameLookupFlags flags,
+                        GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data)
+{
+  GTask *task = g_task_new(resolver, cancellable, callback, data);
+  g_task_set_task_data(task, GUINT_TO_POINTER(flags), NULL);
+  g_object_set_data_full(G_OBJECT(task), "name", g_strdup(name), g_free);
+  g_ptr_array_add(HELD_RESOLVER(resolver)->pending, task);
+}
+
+static void
+held_lookup_async(GResolver *resolver, const gchar *name, GCancellable *cancellable,
+                  GAsyncReadyCallback callback, gpointer data)
+{
+  held_lookup_flags_async(resolver, name, G_RESOLVER_NAME_LOOKUP_FLAGS_DEFAULT, cancellable,
+                          callback, data);
+}
+
+static GList *
+held_lookup_finish(GResolver *resolver, GAsyncResult *result, GError **error)
+{
+  (void)resolver;
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+static void
+on_held_completed(GObject *task, GParamSpec *pspec, gpointer data)
+{
+  (void)task;
+  (void)pspec;
+  HELD_RESOLVER(data)->completed++;
+}
+
+/* Answers the held lookup for IPv6 (or else for IPv4); FALSE when none is
+ * held. */
+static gboolean
+held_release(HeldResolver *self, gboolean ipv6)
+{
+  for (guint i = 0; i < self->pending->len; i++) {
+    GTask *task = g_ptr_array_index(self->pending, i);
+    GResolverNameLookupFlags flags = GPOINTER_TO_UINT(g_task_get_task_data(task));
+    if (!!(flags & G_RESOLVER_NAME_LOOKUP_FLAGS_IPV6_ONLY) != !!ipv6)
+      continue;
+    g_ptr_array_remove_index(self->pending, i);
+    g_signal_connect(task, "notify::completed", G_CALLBACK(on_held_completed), self);
+    GError *error = NULL;
+    GList *addresses = held_answer(g_object_get_data(G_OBJECT(task), "name"), flags, &error);
+    if (addresses)
+      g_task_return_pointer(task, addresses, (GDestroyNotify)g_resolver_free_addresses);
+    else
+      g_task_return_error(task, error);
+    g_object_unref(task);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static void
+held_resolver_finalize(GObject *object)
+{
+  g_assert_cmpuint(HELD_RESOLVER(object)->pending->len, ==, 0);
+  g_ptr_array_unref(HELD_RESOLVER(object)->pending);
+  G_OBJECT_CLASS(held_resolver_parent_class)->finalize(object);
+}
+
+static void
+held_resolver_class_init(HeldResolverClass *klass)
+{
+  G_OBJECT_CLASS(klass)->finalize = held_resolver_finalize;
+  GResolverClass *resolver = G_RESOLVER_CLASS(klass);
+  resolver->lookup_by_name = held_lookup;
+  resolver->lookup_by_name_async = held_lookup_async;
+  resolver->lookup_by_name_finish = held_lookup_finish;
+  resolver->lookup_by_name_with_flags = held_lookup_flags;
+  resolver->lookup_by_name_with_flags_async = held_lookup_flags_async;
+  resolver->lookup_by_name_with_flags_finish = held_lookup_finish;
+}
+
+static void
+held_resolver_init(HeldResolver *self)
+{
+  self->pending = g_ptr_array_new();
+}
+
+typedef struct {
+  gboolean done;
+  GSocketAddress *address;
+  GError *error;
+} Next;
+
+static void
+on_next(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Next *next = data;
+  next->address = g_socket_address_enumerator_next_finish(G_SOCKET_ADDRESS_ENUMERATOR(source),
+                                                          result, &next->error);
+  next->done = TRUE;
+}
+
+typedef struct {
+  HeldResolver *resolver;
+  gboolean ipv6_first;
+  guint released;
+  Next *next;
+} Pump;
+
+/* Releases the held lookups one at a time, in the chosen order, each only
+ * after the previous one's callback has run; TRUE once next is done. */
+static gboolean
+pump(gpointer data)
+{
+  Pump *p = data;
+  if (!p->next->done && p->released < 2 && p->resolver->completed == p->released &&
+      held_release(p->resolver, p->released == 0 ? p->ipv6_first : !p->ipv6_first))
+    p->released++;
+  return p->next->done;
+}
+
+/* Every address the asynchronous enumeration of host yields, as text, and
+ * the error it ends with. */
+static gchar *
+enumerate_async(HeldResolver *resolver, const gchar *host, gboolean ipv6_first, GError **error)
+{
+  g_autoptr(GSocketConnectable) address = gh_net_public_address_new(host, 443, "https");
+  g_autoptr(GSocketAddressEnumerator) enumerator = g_socket_connectable_enumerate(address);
+  Pump p = { resolver, ipv6_first, 0, NULL };
+  resolver->completed = 0;
+  g_autoptr(GString) out = g_string_new(NULL);
+  for (;;) {
+    Next next = { 0 };
+    p.next = &next;
+    g_socket_address_enumerator_next_async(enumerator, NULL, on_next, &next);
+    spin_until(pump, &p);
+    if (!next.address) {
+      if (next.error)
+        g_propagate_error(error, next.error);
+      break;
+    }
+    g_autofree gchar *text = g_inet_address_to_string(
+      g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(next.address)));
+    g_string_append_printf(out, "%s%s", out->len ? " " : "", text);
+    g_object_unref(next.address);
+  }
+  /* Both lookups were made and answered, in the chosen order. */
+  g_assert_cmpuint(p.released, ==, 2);
+  return g_strdup(out->str);
+}
+
+/* The public-only enumerator (gh_net_public_address_new()) refuses a private
+ * address and asks its GNetworkAddress enumerator for the next one. Here that
+ * happens with the IPv6 lookup failing before the IPv4 one answers, and after,
+ * for a name with public addresses among private ones and for a name with
+ * only 127.0.0.1. The refusal's continuation crashed on x86_64 Linux: it
+ * passed g_steal_pointer(&task) and g_task_get_cancellable(task) in one
+ * argument list, and GCC evaluated the steal first (nostrc-qp24.91). */
+static void
+test_public_enumerator(void)
+{
+  g_autoptr(GResolver) previous = g_resolver_get_default();
+  g_autoptr(HeldResolver) resolver = g_object_new(HELD_TYPE_RESOLVER, NULL);
+  g_resolver_set_default(G_RESOLVER(resolver));
+
+  for (guint order = 0; order < 2; order++) {
+    gboolean ipv6_first = order == 0;
+    g_test_message("IPv6 answer %s the IPv4 one", ipv6_first ? "before" : "after");
+    GError *error = NULL;
+    g_autofree gchar *mixed = enumerate_async(resolver, MIXED_HOST, ipv6_first, &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(mixed, ==, "8.8.8.8 1.1.1.1");
+    g_autofree gchar *local = enumerate_async(resolver, LOCAL_HOST, ipv6_first, &error);
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+    g_clear_error(&error);
+    g_assert_cmpstr(local, ==, "");
+  }
+
+  /* The synchronous enumeration filters the same way. */
+  const gchar *const hosts[] = { MIXED_HOST, LOCAL_HOST };
+  const gchar *const expected[] = { "8.8.8.8 1.1.1.1", "" };
+  for (guint i = 0; i < G_N_ELEMENTS(hosts); i++) {
+    g_autoptr(GSocketConnectable) address = gh_net_public_address_new(hosts[i], 443, "https");
+    g_autoptr(GSocketAddressEnumerator) enumerator = g_socket_connectable_enumerate(address);
+    g_autoptr(GString) out = g_string_new(NULL);
+    g_autoptr(GError) error = NULL;
+    GSocketAddress *next;
+    while ((next = g_socket_address_enumerator_next(enumerator, NULL, &error))) {
+      g_autofree gchar *text = g_inet_address_to_string(
+        g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(next)));
+      g_string_append_printf(out, "%s%s", out->len ? " " : "", text);
+      g_object_unref(next);
+    }
+    g_assert_cmpstr(out->str, ==, expected[i]);
+    if (i == 0)
+      g_assert_no_error(error);
+    else
+      g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  }
+
+  g_resolver_set_default(previous);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1291,6 +1546,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
   g_test_add_func("/groundhog/net/public-address", test_public_address);
   g_test_add_func("/groundhog/net/public-only", test_public_only);
+  g_test_add_func("/groundhog/net/public-enumerator", test_public_enumerator);
   int status = g_test_run();
   g_ptr_array_unref(dns_names);
   return status;

@@ -92,6 +92,14 @@ void gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar
  * 6to4 2002::/16, and Teredo 2001::/32 (server and client). */
 gboolean gh_net_address_is_public(GInetAddress *address);
 
+/* The connectable a public-only request connects through (a GNetworkAddress
+ * for hostname, port and scheme): its enumerate() yields only the resolved
+ * or literal addresses gh_net_address_is_public() accepts, and ends with
+ * G_IO_ERROR_PERMISSION_DENIED when it refused every one. Exposed for its
+ * tests. */
+GSocketConnectable *gh_net_public_address_new(const gchar *hostname, guint16 port,
+                                              const gchar *scheme);
+
 /* G21 (Blossom, charter §6): one request with a method, headers and a body,
  * made exactly like a GET above (network mode, Tor isolation, URL policy, no
  * redirect, cookie, cache or TLS resumption, max_bytes on the answer's body).

@@ -317,8 +317,13 @@ on_inner_next(GObject *source, GAsyncResult *result, gpointer data)
     g_task_return_pointer(task, address, g_object_unref);
     return;
   }
-  g_socket_address_enumerator_next_async(self->inner, g_task_get_cancellable(task),
-                                         on_inner_next, g_steal_pointer(&task));
+  /* Read the cancellable before handing the task on: in one call's argument
+   * list the order is unspecified, and GCC on x86_64 evaluated
+   * g_steal_pointer() first, passing NULL to g_task_get_cancellable()
+   * (nostrc-qp24.91). */
+  GCancellable *cancellable = g_task_get_cancellable(task);
+  g_socket_address_enumerator_next_async(self->inner, cancellable, on_inner_next,
+                                         g_steal_pointer(&task));
 }
 
 static void
@@ -412,16 +417,23 @@ gh_public_address_init(GhPublicAddress *self)
  * host through a GhPublicAddress: the addresses checked are the addresses
  * connected to, so a DNS answer cannot change between the check and the
  * connection, and no connection kept from an earlier request is reused. */
+GSocketConnectable *
+gh_net_public_address_new(const gchar *hostname, guint16 port, const gchar *scheme)
+{
+  g_return_val_if_fail(hostname != NULL && scheme != NULL, NULL);
+  g_autofree gchar *lower_scheme = g_ascii_strdown(scheme, -1);
+  return g_object_new(GH_TYPE_PUBLIC_ADDRESS, "hostname", hostname, "port", (guint)port, "scheme",
+                      lower_scheme, NULL);
+}
+
 static SoupSession *
 public_session_new(GhNetMode mode, GUri *parsed)
 {
   const gchar *scheme = g_uri_get_scheme(parsed);
   gboolean https = g_ascii_strcasecmp(scheme, "https") == 0;
   gint port = g_uri_get_port(parsed);
-  g_autofree gchar *lower_scheme = g_ascii_strdown(scheme, -1);
-  g_autoptr(GSocketConnectable) remote = g_object_new(
-    GH_TYPE_PUBLIC_ADDRESS, "hostname", g_uri_get_host(parsed), "port",
-    (guint)(port > 0 ? port : https ? 443 : 80), "scheme", lower_scheme, NULL);
+  g_autoptr(GSocketConnectable) remote = gh_net_public_address_new(
+    g_uri_get_host(parsed), (guint16)(port > 0 ? port : https ? 443 : 80), scheme);
   g_autoptr(GProxyResolver) resolver = gh_net_proxy_resolver_new(mode, NULL, NULL, NULL);
   return session_new(resolver, remote);
 }
