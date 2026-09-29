@@ -448,6 +448,12 @@ item_settled(gpointer data)
   return gh_outbox_item_get_state(data) == GH_STORE_OUTBOX_SETTLED;
 }
 
+static gboolean
+item_needs_attention(gpointer data)
+{
+  return gh_outbox_item_get_state(data) == GH_STORE_OUTBOX_NEEDS_ATTENTION;
+}
+
 typedef struct {
   GhOutboxItem *item;
   GhMessageStatus status;
@@ -484,19 +490,30 @@ copies_taken(gpointer data)
   return counters.received >= wait->received && inbox_idle(wait->app);
 }
 
-/* Sends and waits until every wrap was accepted and every accepted copy was
- * taken by the inbox reading its relay: the recipient's for the recipient
- * wraps, the sender's own for the self-copy. An idle inbox alone is not
+/* The inboxes' received counters before a send. */
+typedef struct {
+  App *from, *to;
+  guint from_received, to_received;
+} CopiesMark;
+
+static CopiesMark
+copies_mark(App *from, App *to)
+{
+  GhDmInboxCounters from_counters, to_counters;
+  gh_dm_inbox_get_counters(from->inbox, &from_counters);
+  gh_dm_inbox_get_counters(to->inbox, &to_counters);
+  return (CopiesMark){ from, to, from_counters.received, to_counters.received };
+}
+
+/* Waits until every copy of item's wraps that a relay accepted was taken by
+ * the inbox reading that relay: the recipient's for the recipient wraps,
+ * the sender's own for the self-copy. item must be done publishing (settled
+ * or needing attention): its targets are final. An idle inbox alone is not
  * that: it is idle before a copy has even arrived, and the copy's unwrap
  * (signer calls) then lands in whatever the test counts next (nostrc-vlb4). */
-static GhOutboxItem *
-send_and_deliver(App *from, App *to, const gchar *text)
+static void
+wait_copies_taken(const CopiesMark *mark, GhOutboxItem *item)
 {
-  GhDmInboxCounters to_before, from_before;
-  gh_dm_inbox_get_counters(to->inbox, &to_before);
-  gh_dm_inbox_get_counters(from->inbox, &from_before);
-  GhOutboxItem *item = app_send(from, to->key, text);
-  spin_until(item_settled, item, "the outbox settling the message");
   guint recipient_copies = 0, self_copies = 0;
   g_autoptr(GPtrArray) targets = gh_outbox_item_dup_targets(item);
   for (guint i = 0; i < targets->len; i++) {
@@ -508,11 +525,22 @@ send_and_deliver(App *from, App *to, const gchar *text)
     else
       recipient_copies++;
   }
-  wait_received(to, text);
-  CopiesWait to_copies = { to, to_before.received + recipient_copies };
+  CopiesWait to_copies = { mark->to, mark->to_received + recipient_copies };
   spin_until(copies_taken, &to_copies, "every copy reaching the recipient's inbox");
-  CopiesWait from_copies = { from, from_before.received + self_copies };
+  CopiesWait from_copies = { mark->from, mark->from_received + self_copies };
   spin_until(copies_taken, &from_copies, "the self-copy reaching the sender's inbox");
+}
+
+/* Sends and waits until every wrap was accepted, the recipient lists it and
+ * every accepted copy was taken. */
+static GhOutboxItem *
+send_and_deliver(App *from, App *to, const gchar *text)
+{
+  CopiesMark mark = copies_mark(from, to);
+  GhOutboxItem *item = app_send(from, to->key, text);
+  spin_until(item_settled, item, "the outbox settling the message");
+  wait_received(to, text);
+  wait_copies_taken(&mark, item);
   return item;
 }
 
@@ -1375,7 +1403,7 @@ test_pt4_relay_minimization(void)
   assert_honest_status(stuck);
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
     g_assert_cmpuint(event_frames(relays[i]), ==, events[i]);
-  g_assert_cmpuint(signer.calls, ==, signer_calls);
+  gh_test_signer_assert_no_calls_since(&signer, signer_calls);
   g_assert_cmpuint(discovery_lookups(&net->e, hex[CAROL]), ==, 1);
   g_assert_cmpuint(discovery_lookups(&net->g, hex[CAROL]), ==, 1);
   g_assert_cmpuint(net->d.attempts, ==, 0);
@@ -1409,14 +1437,18 @@ test_pt4_room(void)
   const gchar *text = world_canary(&w, "pt4-room", FALSE);
   const gchar *const room[] = { hex[BOB], hex[CAROL], NULL };
   g_autoptr(GError) error = NULL;
+  CopiesMark mark = copies_mark(&w.alice, &w.bob);
   g_autoptr(GhOutboxItem) item = gh_outbox_send_room(app_outbox(&w.alice), room, text, &error);
   g_assert_no_error(error);
   g_assert_nonnull(item);
   StatusWait partial = { item, GH_MESSAGE_STATUS_PARTIALLY_SENT };
   spin_until(status_is, &partial, "the room message reaching Bob only");
+  /* "Sent to some people" shows as soon as Bob's relays accept; the
+   * self-copy may still be publishing (nostrc-vlb4): wait for the item to
+   * be done, then for every accepted copy to be taken. */
+  spin_until(item_needs_attention, item, "the room message needing attention");
   wait_received(&w.bob, text);
-  spin_until(inbox_idle, &w.bob, "Bob's inbox going idle");
-  spin_until(inbox_idle, &w.alice, "Alice's inbox taking its self-copy");
+  wait_copies_taken(&mark, item);
   gh_test_run_until_idle();
   g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_NEEDS_ATTENTION);
   assert_honest_status(item);
@@ -1628,7 +1660,7 @@ run_pt1(World *w)
   g_assert_cmpint(state.muted_until, ==, GH_STORE_CONVERSATIONS_MUTED_ALWAYS);
   g_assert_cmpuint(gh_conversation_get_unread_count(with_alice), ==, 0);
   g_assert_cmpuint(gh_conversation_get_unread_count(with_carol), ==, 0);
-  g_assert_cmpuint(signer.calls, ==, signer_calls);
+  gh_test_signer_assert_no_calls_since(&signer, signer_calls);
 
   /* The barrier: Bob replies, and it is accepted and received. */
   const gchar *reply = world_canary(w, "pt1-reply", FALSE);
@@ -2154,6 +2186,7 @@ test_at5_attachments(void)
   g_assert_no_error(t.error);
   g_autoptr(GhNip17File) sent = g_steal_pointer(&t.file);
   g_autoptr(GError) error = NULL;
+  CopiesMark mark = copies_mark(&w.alice, &w.bob);
   g_autoptr(GhOutboxItem) item = gh_outbox_send_file(app_outbox(&w.alice), hex[BOB], sent, &error);
   g_assert_no_error(error);
   spin_until(item_settled, item, "the outbox settling the file message");
@@ -2161,8 +2194,7 @@ test_at5_attachments(void)
 
   /* Receive: a kind-15 message, and not one request for its file. */
   wait_received(&w.bob, sent->url);
-  spin_until(inbox_idle, &w.bob, "Bob's inbox going idle");
-  spin_until(inbox_idle, &w.alice, "Alice's inbox taking her self-copy");
+  wait_copies_taken(&mark, item);
   notify_settle(&w.bob);
   GhMessage *message = find_content(w.bob.model, sent->url);
   g_assert_cmpint(gh_message_get_kind(message), ==, 15);

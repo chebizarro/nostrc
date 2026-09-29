@@ -152,6 +152,7 @@ typedef struct {
   guint registration;
   GPtrArray *held;    /* GDBusMethodInvocation, oldest first */
   GPtrArray *senders; /* unique name of every caller */
+  GPtrArray *methods; /* "Method from :sender" of every counted call, in order */
   gchar *npubs[GH_TEST_KEYS];
   guint calls;
   guint max_held;
@@ -228,6 +229,7 @@ gh_test_signer_call(GDBusConnection *connection, const gchar *sender, const gcha
   }
   mock->calls++;
   g_ptr_array_add(mock->senders, g_strdup(sender));
+  g_ptr_array_add(mock->methods, g_strdup_printf("%s from %s", method, sender));
   if (mock->hold) {
     g_ptr_array_add(mock->held, g_object_ref(invocation));
     mock->max_held = MAX(mock->max_held, mock->held->len);
@@ -246,6 +248,7 @@ gh_test_signer_up(GhTestBus *fixture, GhTestSigner *mock)
   g_autoptr(GError) error = NULL;
   mock->held = g_ptr_array_new_with_free_func(g_object_unref);
   mock->senders = g_ptr_array_new_with_free_func(g_free);
+  mock->methods = g_ptr_array_new_with_free_func(g_free);
   for (guint key = 1; key < GH_TEST_KEYS; key++)
     mock->npubs[key] = gh_test_npub(key);
   mock->node = g_dbus_node_info_new_for_xml(
@@ -269,6 +272,21 @@ gh_test_signer_up(GhTestBus *fixture, GhTestSigner *mock)
     G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
   g_assert_no_error(error);
 }
+
+/* Fails, naming them, unless no call was counted since the count since. */
+static G_GNUC_UNUSED void
+gh_test_signer_assert_no_calls_since_at(GhTestSigner *mock, guint since, int line)
+{
+  if (mock->calls == since)
+    return;
+  g_autoptr(GString) calls = g_string_new(NULL);
+  for (guint i = since; i < mock->methods->len; i++)
+    g_string_append_printf(calls, "%s%s", i > since ? "; " : "", (gchar *)mock->methods->pdata[i]);
+  g_error("line %d: %u signer call(s) where none was expected: %s", line, mock->calls - since,
+          calls->str);
+}
+#define gh_test_signer_assert_no_calls_since(mock, since) \
+  gh_test_signer_assert_no_calls_since_at((mock), (since), __LINE__)
 
 /* Answers the oldest parked call as if the user approved it now. */
 static G_GNUC_UNUSED void
@@ -322,6 +340,7 @@ gh_test_signer_down(GhTestBus *fixture, GhTestSigner *mock)
   g_dbus_connection_unregister_object(fixture->owner, mock->registration);
   g_ptr_array_unref(mock->held);
   g_ptr_array_unref(mock->senders);
+  g_ptr_array_unref(mock->methods);
   for (guint key = 1; key < GH_TEST_KEYS; key++)
     g_free(mock->npubs[key]);
   g_dbus_node_info_unref(mock->node);
