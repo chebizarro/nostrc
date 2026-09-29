@@ -1120,6 +1120,15 @@ test_drop_and_paste(void)
                   "Location and camera data removed");
   close_sheet(&f);
 
+  /* A dropped web address (W18 review B1): refused before any I/O, since
+   * GVfs would fetch it directly, outside GhNetHttp and Tor. No sheet. */
+  g_autoptr(GFile) web = g_file_new_for_uri("https://127.0.0.1:9/photo.jpg");
+  g_assert_false(g_file_is_native(web));
+  gh_attachment_ui_offer_file(GH_WINDOW(f.s.window), web);
+  g_assert_cmpstr(gh_attachment_ui_get_last_toast(GH_WINDOW(f.s.window)), ==,
+                  "Only files on this device can be sent");
+  g_assert_false(sheet_open(&f));
+
   /* A pasted image: a fresh PNG of its pixels, the photo shown; nothing
    * pasted as text. */
   GtkTextView *text_view = gh_composer_get_text_view(composer);

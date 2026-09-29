@@ -514,6 +514,15 @@ gh_attachment_ui_offer_file(GhWindow *window, GFile *file)
   GhAttachmentUi *ui = ui_of(GTK_WIDGET(window));
   if (!ui)
     return;
+  /* Only a file on this device (charter §4.2): a dropped or pasted web
+   * address arrives as an https:// GFile, and GVfs would fetch it directly
+   * from the user's IP address, outside GhNetHttp and Tor, before the send
+   * sheet even opens (W18 review B1). Remote GVfs locations (smb://, sftp://)
+   * are refused the same way; nothing is queried or read. */
+  if (!g_file_is_native(file)) {
+    toast(ui, _("Only files on this device can be sent"));
+    return;
+  }
   if (ui->loading)
     g_cancellable_cancel(ui->loading);
   g_clear_object(&ui->loading);
