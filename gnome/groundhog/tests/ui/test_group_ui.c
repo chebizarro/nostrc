@@ -1482,6 +1482,19 @@ test_gui_new_group(void)
   GhNewGroupDialog *dialog = g_object_ref_sink(gh_new_group_dialog_new(f.service));
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
   gh_test_spin_until(gh_test_dialog_shown, dialog);
+  /* Without an encrypted page (review M1, charter §7.9): the relay form
+   * first and alone, no chooser, and choosing an encrypted group does
+   * nothing. */
+  AdwNavigationView *navigation = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "navigation");
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
+                  ==, "form");
+  g_autoptr(GListModel) pages = adw_navigation_view_get_navigation_stack(navigation);
+  g_assert_cmpuint(g_list_model_get_n_items(pages), ==, 1);
+  g_assert_null(gh_new_group_dialog_get_encrypted_page(dialog));
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
+  drain();
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
+                  ==, "form");
   AdwEntryRow *relay_row = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "relay_row");
   AdwEntryRow *name_row = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "name_row");
   gtk_editable_set_text(GTK_EDITABLE(relay_row), "ws://groups.example.com");

@@ -2,6 +2,7 @@
 
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
+#include "gh-features.h"
 #include "gh-mls-copy.h"
 #include "gh-mls-group-info-dialog.h"
 #include "gh-mls-invites-dialog.h"
@@ -342,6 +343,21 @@ gh_mls_ui_get_service(GhWindow *window)
 }
 
 /* ---- attach ------------------------------------------------------------------------------ */
+
+gboolean
+gh_mls_ui_enabled(void)
+{
+  return GH_FEATURE_ENCRYPTED_GROUPS != 0;
+}
+
+gboolean
+gh_mls_ui_attach_if_enabled(GhWindow *window, const GhMlsUiConfig *config)
+{
+  if (!gh_mls_ui_enabled())
+    return FALSE;
+  gh_mls_ui_attach(window, config);
+  return TRUE;
+}
 
 static void
 mls_ui_free(gpointer data)

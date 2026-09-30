@@ -1321,8 +1321,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
   gh_group_ui_attach(window, &groups);
 #if GROUNDHOG_HAVE_MLS_UI
   /* Encrypted groups (qp24.13 part 2), only while the flag is on
-   * (gh-features.h): after the group UI, whose New Group it extends. */
-  if (GH_FEATURE_ENCRYPTED_GROUPS) {
+   * (gh-features.h; the guard is gh_mls_ui_attach_if_enabled(), tested):
+   * after the group UI, whose New Group it extends. */
+  {
     GhMlsUiConfig mls = {
       .conversations = self->conversations,
       .accounts = self->accounts,
@@ -1334,9 +1335,11 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
       .names_data = self,
       .account_relays = self->relays,
     };
-    gh_mls_ui_attach(window, &mls);
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
-    gh_conversation_info_set_encrypted_group_handler(window, gh_mls_ui_show_info, NULL);
+    if (gh_mls_ui_attach_if_enabled(window, &mls))
+      gh_conversation_info_set_encrypted_group_handler(window, gh_mls_ui_show_info, NULL);
+#else
+    gh_mls_ui_attach_if_enabled(window, &mls);
 #endif
   }
 #endif

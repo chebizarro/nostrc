@@ -60,6 +60,15 @@ typedef struct {
  * groups' and extends New Group). */
 void gh_mls_ui_attach(GhWindow *window, const GhMlsUiConfig *config);
 
+/* Whether this build runs encrypted groups: GH_FEATURE_ENCRYPTED_GROUPS
+ * (gh-features.h) as compiled into this file, never a test's choice. */
+gboolean gh_mls_ui_enabled(void);
+/* The application's attach, and the flag's guard: gh_mls_ui_attach() when
+ * gh_mls_ui_enabled(), else nothing (FALSE), so New Group opens on the relay
+ * form with no chooser and no disabled encrypted placeholder (charter
+ * §7.9). */
+gboolean gh_mls_ui_attach_if_enabled(GhWindow *window, const GhMlsUiConfig *config);
+
 /* A GhConversationInfoGroupFunc for encrypted groups: presents Group Info
  * for conversation; FALSE when it is not a group of the window's service. */
 gboolean gh_mls_ui_show_info(GhWindow *window, GhConversation *conversation,

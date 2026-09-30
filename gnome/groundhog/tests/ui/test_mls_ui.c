@@ -30,6 +30,7 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
+#include "gh-features.h"
 #include "gh-group-ui.h"
 #include "gh-mls-copy.h"
 #include "gh-mls-group-info-dialog.h"
@@ -828,6 +829,90 @@ test_gui_new_group(void)
   world_down(&w);
 }
 
+/* ---- --gui: the build's own flag --------------------------------------------------------- */
+
+/* A widget of type titled title that is on screen, or NULL. */
+static GtkWidget *
+find_mapped(GtkWidget *widget, GType type, const gchar *title)
+{
+  if (!gtk_widget_get_mapped(widget))
+    return NULL;
+  if (G_TYPE_CHECK_INSTANCE_TYPE(widget, type) && ADW_IS_PREFERENCES_ROW(widget) &&
+      g_strcmp0(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(widget)), title) == 0)
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_mapped(c, type, title);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+/* Review M1 (charter §7.9: no disabled placeholders in release builds): the
+ * window glued as gh-app-services.c glues it, with GH_FEATURE_ENCRYPTED_GROUPS
+ * as this build compiled it (gh_mls_ui_attach_if_enabled(); this test never
+ * overrides it). At 0 New Group opens on the relay form: no chooser, no
+ * "Encrypted Group" row, nothing to choose. At 1, the chooser. */
+static void
+test_gui_flag_new_group(void)
+{
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  GhNip29Service *nip29 = nip29_up(alice);
+  GhWindow *window = test_window();
+  gh_conversation_list_attach(window, alice->model, NULL);
+  GhGroupUiConfig groups = { .conversations = alice->model, .service = the_nip29,
+                             .service_data = nip29 };
+  gh_group_ui_attach(window, &groups);
+  GhMlsUiConfig mls = {
+    .conversations = alice->model,
+    .accounts = alice->accounts,
+    .settings = alice->settings,
+    .service = app_service,
+    .service_data = alice,
+    .account_relays = alice->relays,
+  };
+  gboolean attached = gh_mls_ui_attach_if_enabled(window, &mls);
+  g_assert_cmpint(attached, ==, GH_FEATURE_ENCRYPTED_GROUPS != 0);
+  g_assert_cmpint(gh_mls_ui_enabled(), ==, GH_FEATURE_ENCRYPTED_GROUPS != 0);
+  g_assert_cmpint(g_action_group_has_action(G_ACTION_GROUP(window), "group-invitations"), ==,
+                  attached);
+
+  g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
+  AdwDialog *dialog = visible_dialog(window);
+  g_assert_true(GH_IS_NEW_GROUP_DIALOG(dialog));
+  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(
+    gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_NEW_GROUP_DIALOG, "navigation"));
+  const gchar *first = adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation));
+  g_autoptr(GListModel) stack = adw_navigation_view_get_navigation_stack(navigation);
+  g_assert_cmpuint(g_list_model_get_n_items(stack), ==, 1);   /* nothing to go back to */
+#if GH_FEATURE_ENCRYPTED_GROUPS
+  g_assert_cmpstr(first, ==, "type");
+  g_assert_nonnull(gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+  g_assert_nonnull(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group"));
+#else
+  g_assert_cmpstr(first, ==, "form");
+  g_assert_null(gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+  g_assert_null(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group"));
+  g_assert_null(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Relay Group"));
+  /* Choosing an encrypted group leads nowhere: the action is disabled. */
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
+  drain();
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
+                  ==, "form");
+  /* The relay form itself is what shows. */
+  g_assert_nonnull(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ENTRY_ROW, "Relay"));
+#endif
+  adw_dialog_force_close(dialog);
+  drain();
+  close_window(window);
+  gh_test_release(nip29);
+  world_down(&w);
+}
+
 /* ---- --gui: Group Info ------------------------------------------------------------------ */
 
 static void
@@ -1151,6 +1236,7 @@ main(int argc, char **argv)
       npub[key] = gh_test_npub(key);
     }
     gh_test_bus_up_beside_gtk(&test_bus);
+    g_test_add_func("/groundhog/mls-ui-gui/flag-new-group", test_gui_flag_new_group);
     g_test_add_func("/groundhog/mls-ui-gui/new-group", test_gui_new_group);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
