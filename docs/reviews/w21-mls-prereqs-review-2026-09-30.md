@@ -187,3 +187,112 @@ Encrypted groups are behind `GH_FEATURE_ENCRYPTED_GROUPS=0`, so none of this is 
   - **B2:** a false `incomplete` becomes a permanent MLS cursor stall (reproduced).
   - **B3:** oldest-first fails with more than one relay.
   - **B4:** unbounded MLS backfill buffering.
+
+---
+
+# Final pass — review fixes (2026-09-30)
+
+**Branch:** `groundhog/w21-mls-prereqs`, rebased onto master. The review branch was moved to its tip `d4ffa896`, and this review commit was cherry-picked on top. `git range-diff` shows the original three commits unchanged by the rebase (`782e78f9`, `b86e0539`, `aa22e608`), apart from VERSION_MANIFEST context. The new commits:
+
+| Commit | Addresses | Subject |
+|---|---|---|
+| `ab09848e` | B1 | an incomplete NIP-29 backfill holds the room cursor for the whole REQ |
+| `15e16745` | B2 | a relay's own cap is judged from its answers, not a fixed count |
+| `8dd07dcb` | B3 | MLS applies the backfill of all group relays as one oldest-first set |
+| `c2182e05` | B4 | bound the MLS backfill store; a page that ignores its limit fails |
+| `d4ffa896` | — | CMake policy fix for the preview-guard script test (already on master) |
+
+**Verdict of the final pass:** **REQUEST CHANGES.** B1 and B4 are fixed, and B2 and B3 are fixed for the cases I reported. The fixes bring two new blocking defects, both reproduced:
+- **N1:** one stalled relay freezes the whole group, live messages included.
+- **N2:** the B2 rule can now declare a cut answer *complete*.
+
+## Verification performed (final pass)
+
+| # | What | Result |
+|---|---|---|
+| F1 | macOS build at `d4ffa896` + `ctest -j6 --timeout 300` | Build clean. **447/447 passed**, 5 skipped (the same 5 as before) |
+| F2 | `scripts/linux-gate.sh .` (arm64) | Built all targets; **smoke tests passed, 438 run** |
+| F3 | `python3 scripts/check-unsequenced-args.py` | Clean (exit 0) |
+| F4 | macOS ASan+UBSan (`-DGNOSTR_ENABLE_ASAN=ON`, `detect_leaks=0`): `groundhog-relay`, `-relay-wire`, `-mls-service` (with `catch-up-two-relays-partial`, `backfill-store-bounded`), `-nip29-service`, `-dm-inbox`, `subscription_eose_order` | **6/6 pass, no reports** |
+| F5 | **P1 rerun verbatim** (5 events at 6000, 25 at 5000, all sent) | **Fixed:** one page, EOSE complete, 30 events |
+| F6 | **P2 rerun verbatim** (NIP-29, 30 in one second behind a 25 cap, then a live message) | **Fixed:** the next REQ's `since` (1790738510) is before the burst second (1790742723), so the unfetched messages are asked for again |
+| F7 | **P3, new** (`test_relay_scope.c` scratch): a relay capped at 20 holds 60 stored events at 3001–3060; one live event (t=9000) arrives before the live REQ's EOSE; every answer honest | **EOSE complete with 40 of 61 events.** The 21 oldest are never fetched, and a consumer moves its cursor past them (N2) |
+| F8 | P3 with the rule narrowed as recommended under N2 (local patch, reverted) | P1, P3 and all 14 `groundhog-relay` tests pass, including the author's `paging/same-second` and `paging/overrun-and-end` |
+| F9 | **P4, new** (`test_mls_service.c` scratch plus a `stall_pages` knob in `wire-relay.h`, both reverted): a group on relays g and h; Bob misses 60 messages; h serves all but the newest; g (capped at 50) is the only one serving the newest, then never answers an `until` page | **h's complete backlog is not shown within 90 s.** In a variant, a live message Alice sends after g's page is out (delivered by h) **is not shown within 90 s** either. The control (same setup, g answers its pages) passes: backlog and live message read (N1) |
+
+All scratch changes are reverted; `git status` is clean.
+
+## B1 — fixed
+
+An incomplete EOSE now sets `room->sync_failed`, so the cursor holds for the rest of that REQ, live messages included. `relay_resubscribe()` clears it for the next REQ. P2 passes, and the author's `incomplete-backfill-holds-cursor` pins it.
+- **Side effect, acceptable.** A reconnect inside the same scope, whose next round completes, still holds the cursor until the next resubscribe (or restart). That matches how a failed admission already behaves. It costs a re-fetch, never a loss.
+
+## B2 — fixed for P1, but the rule now errs toward loss (N2, blocking)
+
+The fix remembers `max_count`, the largest answer this round, and treats any answer with `count < max_count` as "not cut", so the filter closes complete. That is the rule I recommended. Applied to **every** answer, it has a failure mode I missed: an answer's count can exceed the relay's real per-query cap.
+- **Live events before EOSE.** Some relays register the live listener before running the stored query and send EOSE after it (khatru does, and relay29 is built on it). A live event arriving in between is counted in the live answer: cap + 1.
+- **Variable caps.** Relays that cut answers by time or byte budget cap at a different count each time.
+
+A later page that is genuinely cut at the relay's cap then has `count < max_count`, and the filter closes as **complete**. The EOSE is complete, the MLS cursor saves (settled 1), and the NIP-29 cursor commits. The unfetched older events are passed silently (P3: 21 of 61 lost). The old rule erred toward "incomplete", a re-fetch; this one errs toward loss. `GhDmInbox::finish_page()` has the same rule (`events < most`, `run_max` seeded from `round_events`, which counts live events that arrive before EOSE).
+
+**Fix (verified locally, F8):** use `max_count` only for a page that made **no progress**, the case B2 was about. A page whose oldest event is older than its `until` keeps the old threshold rule and pages on.
+```c
+gboolean stuck = p->oldest >= p->until;
+gboolean cut = p->count >= gh_relay_page_threshold(scope->page_limit) &&
+               (!stuck || p->count >= p->max_count);
+```
+- **What remains.** A false complete now needs more than the relay's cap in one second *and* an inflated earlier answer. Optionally clamp `max_count` to `page_limit` as well.
+- **DM inbox.** Apply the same narrowing to `finish_page()`.
+- **Test.** Add P3 as a regression test.
+
+## B3 — fixed; the deviation is sound, but the wait needs a bound (N1, blocking)
+
+**The deviation, "flush once no relay is mid-backfill" instead of "at any relay's EOSE", is correct.** My any-EOSE suggestion assumed every relay holds the whole window. The author's `catch-up-two-relays-partial` (a third of the events only on g, a third only on h) shows it does not, and the test fails 5/5 with the any-EOSE rule. Letting a relay that has sent nothing hold nothing up is a reasonable way to keep silent relays from blocking.
+- **Residual race (Low, L3).** A relay that starts late, for example still in its AUTH round trip when the others finish, and holds unique older events will apply them after newer ones.
+
+**N1 — a stalled relay freezes the group (blocking).** A relay that has delivered one backfill event first and then stalls holds the whole flush:
+- **How it stalls.** Its live REQ or a page never gets EOSE: the relay drops the REQ silently (some relays ignore REQs over a rate or concurrency limit without CLOSED), a query hangs, or a relay does it on purpose.
+- **What is held.** Everything, including **live events from healthy relays**, because the store takes every event while `backfilling` is non-empty. Nothing releases it except the B4 cap (32,500 events or 64 MiB). A normal group never reaches that, so **the group shows nothing new indefinitely** (P4).
+- **Blast radius.** One group relay out of N is enough, it needs no misbehaviour beyond silence, and the scope correctly has no timeouts, so nothing else ends it.
+
+**Is it acceptable?** No, and it needs a bound. The bound does not need a timeout-driven close, so it doesn't conflict with the protocol lens:
+- **The rule.** Once every *other* relay has ended its round (or has sent nothing), a relay still in `backfilling` that has delivered **nothing new for a quiet period** (for example 30 s on the service's `GhClock`) is given up exactly as `backfill_full()` does it for that URL.
+  - Call `gh_relay_scope_end_backfill()`.
+  - Mark it settled 4, so it is not answered, the cursor holds, and `history-incomplete` is set.
+  - Flush the store oldest first.
+- **Why this is not a timeout close.** The relay's subscription stays open and is never treated as answered. Its later events are applied live. Only the local wait for ordering is bounded.
+- **Test.** P4 is the regression test: the live message must be read within the bound.
+
+## B4 — fixed; the deviation is acceptable
+
+- **The bound.** 65 × 500 events or 64 MiB per group, checked on every stored event.
+- **When it trips.** `backfill_full()` ends the round for the relays still delivering (`gh_relay_scope_end_backfill()`, settled 4, cursor held, `history-incomplete`) and applies the store oldest first. Later events of those connections are live.
+- **Overrun guard.** A page that delivers more than 2× its limit per filter now fails (incomplete) and its excess is dropped.
+- **Reentrancy.** `end_backfill` can run inside the page's own event callback: a page event goes to `deliver_event`, then MLS `keep_backfill`, then `backfill_full`, which cancels the page. `emit_update()` holds refs on both the page and the parent scope, and GNostrRelay's `close_relay()` only disconnects handlers and drops refs, with nothing touching `handle` after `on_event` returns. ASan is clean on the tests that trip the bound.
+- **The deviation (on overflow, the store keeps the newest part of the backlog, so some older messages can end up outside libmarmot's 32-key window) is acceptable.**
+  - The bound is sized to one honest round's page budget, and exceeding it already means the round is incomplete.
+  - The limitation is documented at `backfill_full()` and in the header, and it is surfaced through `history-incomplete`.
+  - The cursor holds, so nothing is passed silently.
+- **L4 (Low).** The bound is per group across relays, but the scope's `seen` set evicts after 4,096 ids. With two relays at different speeds and a large backlog (more than about 16 k events), the slow relay's copies are re-delivered and stored twice, so the cap trips at about half an honest round. Deduplicate by id in the store, or scale the cap by relay count.
+
+## New findings summary (final pass)
+
+| ID | Severity | Blocking | Location | Summary |
+|---|---|---|---|---|
+| N1 | **High** | **Yes** | `gh-mls-service.c` `on_group_update` / `backfilling` (8dd07dcb) | A relay that delivers one backfill event and then stalls holds every stored and live event of the group until the 32,500-event cap. The group shows nothing new (P4). It needs a quiet-period bound that gives the relay up as incomplete, without closing anything |
+| N2 | **High** | **Yes** | `gh-relay-scope.c` `judge_filter`; `gh-dm-inbox.c` `finish_page` (15e16745) | `count < max_count` on a page that made progress closes a genuinely cut answer as complete (live events before EOSE, variable caps). The cursor passes unfetched events (P3). Restrict the rule to no-progress pages |
+| L3 | Low | No | `8dd07dcb` | A relay that starts late (for example mid-AUTH) with unique older events is applied after the others' flush. This is the documented tradeoff of "sent nothing holds nothing up" |
+| L4 | Low | No | `c2182e05` | Seen-set eviction (4,096) re-delivers a slow relay's copies, which count toward the per-group cap twice |
+
+Findings L1 and L2 of the first pass remain open as non-blocking follow-ups.
+
+## Final verdict
+
+**REQUEST CHANGES.**
+- **Fixed:** B1 (P2 passes); B4, including the documented newest-part deviation, which is acceptable.
+- **Fixed for the reported cases:** B2 (P1 passes) and B3 (the all-relays deviation is correct).
+- **Still blocking:**
+  - **N1:** a stalled relay must not freeze a group's messages. Bound the wait with a quiet period that gives the relay up as incomplete, and add P4.
+  - **N2:** restrict the largest-answer rule to pages that made no progress, in both the scope and the DM inbox, and add P3.
+
+Both fixes are small. With them, and P3 and P4 as regression tests, I expect to approve.
