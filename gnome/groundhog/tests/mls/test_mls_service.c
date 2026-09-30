@@ -2035,8 +2035,13 @@ test_unproven_invitee_needs_update(void)
 
   accept_contact(alice, CAROL);
   g_autoptr(GError) error = NULL;
+  guint g_events = w.g.events;
   create_attempt(alice, CAROL, &error);
   g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NEEDS_UPDATE);
+  /* Nothing was changed, as the UI says: no group of one is left behind
+   * and no group relay saw anything (nostrc-7gx7). */
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
+  g_assert_cmpuint(w.g.events, ==, g_events);
   world_down(&w);
 }
 #else

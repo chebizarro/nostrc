@@ -1,0 +1,64 @@
+name: Marmot MDK interop
+
+# Third-party Marmot interop evidence for the encrypted-groups release gate
+# (nostrc-7gx7, nostrc-77pa; charter section 7.9): Groundhog's GhMlsService
+# (libmarmot) against MDK v0.8.0 (575ae29d, the pinned JSON-lines driver of
+# tests/interop/mdk/driver, built as a Docker image), on the test's own local
+# relays only. On demand and nightly: the image build compiles MDK (minutes).
+# Report: docs/analysis/marmot-mdk-interop-2026-09-30.md.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+jobs:
+  mdk-interop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
+            desktop-file-utils appstream blueprint-compiler
+          docker version
+
+      - name: Configure with the MDK interop test
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON -DBUILD_MDK_INTEROP=ON \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=OFF \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF
+
+      - name: Build libmarmot's tests and the interop test
+        run: |
+          cmake --build build --parallel 2 --target \
+            test-groundhog-mdk-interop test_marmot_interop test_commits test_protocol
+
+      - name: libmarmot cross-implementation vectors
+        run: ctest --test-dir build -R '^marmot_test_(interop|commits|protocol)$' --output-on-failure
+
+      - name: Groundhog <-> MDK 0.8 (builds the driver image first)
+        env:
+          MDK_DRIVER_LOG: warn
+        run: |
+          set -o pipefail
+          ctest --test-dir build -R '^groundhog-mdk-interop' -V 2>&1 | tee mdk-interop.log
+
+      - name: Keep the run as evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marmot-mdk-interop-log
+          path: mdk-interop.log
+          if-no-files-found: ignore

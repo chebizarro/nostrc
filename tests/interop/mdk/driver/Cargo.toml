@@ -1,0 +1,31 @@
+[package]
+name = "mdk-interop-driver"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Line-protocol MDK 0.8 peer for nostrc's Marmot interop tests (nostrc-7gx7, nostrc-77pa)"
+license = "MIT"
+
+# The third-party peer, pinned: MDK v0.8.0 (the last release of the legacy
+# 0xF2EE profile, mdk-core; White Noise 0.8 builds on it). MDK 0.9.0 and later
+# are a different engine (cgka-engine, the adopted profile).
+[dependencies]
+# debug-examples only makes MDK::load_mls_group public (the 0xF2EE vector).
+mdk-core = { git = "https://github.com/marmot-protocol/mdk", rev = "575ae29d25d58494135058d9e46affec7174e79a", features = ["debug-examples"] }
+mdk-memory-storage = { git = "https://github.com/marmot-protocol/mdk", rev = "575ae29d25d58494135058d9e46affec7174e79a" }
+mdk-storage-traits = { git = "https://github.com/marmot-protocol/mdk", rev = "575ae29d25d58494135058d9e46affec7174e79a" }
+nostr = { version = "0.44", default-features = false, features = ["std", "nip44", "nip59"] }
+openmls = { git = "https://github.com/openmls/openmls", rev = "04c50d7fb12d52f4f9aee26de5f5234f3df29fa8", default-features = false }
+tls_codec = "0.4"
+chacha20poly1305 = "0.10"   # MIP-03 kind:445 content, for diagnose() only
+serde_json = "1"
+hex = "0.4"
+base64 = "0.22"
+tokio = { version = "1", features = ["rt", "macros", "net", "io-std", "io-util", "time"] }
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# MDK's own diagnostics on stderr (MDK_DRIVER_LOG, an EnvFilter; default warn).
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
+
+[profile.release]
+debug = 1

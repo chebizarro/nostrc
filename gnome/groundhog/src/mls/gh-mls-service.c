@@ -118,6 +118,7 @@ struct _GhMlsService {
   GhStore *store;                  /* borrowed */
   MarmotStorage *storage;          /* owned by marmot */
   Marmot *marmot;
+  gboolean allow_unproven;         /* libmarmot's legacy mode: tests only */
   GhStoreMls *rooms;
   gchar *account;
   guint8 account_key[32];
@@ -2020,6 +2021,26 @@ invitees_ready(GTask *task)
     g_object_unref(task);
     return;
   }
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+  /* An invitee whose app cannot prove their account (MDK 0.8, libmarmot
+   * <= 0.9.0) is refused before anything is made: libmarmot refuses the Add
+   * too, but only after a creation stored the account's group of one, which
+   * then stayed listed although the UI says nothing was changed
+   * (nostrc-7gx7). libmarmot still judges the whole tree of an Add. */
+  for (guint i = 0; !self->allow_unproven && i < op->key_packages->len; i++) {
+    bool proven = false;
+    MarmotError err =
+      marmot_key_package_event_has_account_proof(op->key_packages->pdata[i], &proven);
+    if (err != MARMOT_OK || !proven) {
+      GError *error = NULL;
+      marmot_fail(self, err == MARMOT_OK ? MARMOT_ERR_KEY_PACKAGE_IDENTITY : err,
+                  "Nobody was invited", &error);
+      g_task_return_error(task, error);
+      g_object_unref(task);
+      return;
+    }
+  }
+#endif
   if (op->kind == OP_CREATE) {
     create_group_now(task);
     return;
@@ -3831,6 +3852,16 @@ on_relays_changed(GhAccountRelays *relays, gpointer data)
 
 /* ---- Object --------------------------------------------------------------------------- */
 
+#if defined(GH_MLS_TEST_HOOKS) && GH_MLS_SERVICE_ACCOUNT_PROOF
+static gboolean test_allow_unproven_members;
+
+void
+gh_mls_service_test_allow_unproven_members(gboolean allow)
+{
+  test_allow_unproven_members = allow;
+}
+#endif
+
 GhMlsService *
 gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
 {
@@ -3850,7 +3881,13 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   MarmotStorage *storage = gh_store_marmot_new(config->store, error);
   if (!storage)
     return NULL;   /* an ephemeral store: MLS needs durable state (KC-4) */
+#if defined(GH_MLS_TEST_HOOKS) && GH_MLS_SERVICE_ACCOUNT_PROOF
+  MarmotConfig marmot_config = marmot_config_default();
+  marmot_config.allow_unproven_members = test_allow_unproven_members;
+  Marmot *marmot = marmot_new_with_config(storage, &marmot_config);
+#else
   Marmot *marmot = marmot_new(storage);
+#endif
   if (!marmot) {
     marmot_storage_free(storage);
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "libmarmot did not start");
@@ -3860,6 +3897,9 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   self->store = config->store;
   self->storage = storage;
   self->marmot = marmot;
+#if defined(GH_MLS_TEST_HOOKS) && GH_MLS_SERVICE_ACCOUNT_PROOF
+  self->allow_unproven = test_allow_unproven_members;
+#endif
   self->account = g_strdup(account);
   nostr_hex2bin(self->account_key, account, sizeof self->account_key);
   self->clock = gh_clock_ref(gh_store_get_clock(config->store));

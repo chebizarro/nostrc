@@ -346,6 +346,13 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * first. Signals: "invite-received" (gchar *wrapper_id), "group-added"
  * (GhMlsGroup). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
+#if defined(GH_MLS_TEST_HOOKS) && GH_MLS_SERVICE_ACCOUNT_PROOF
+/* Test hook, compiled only into test executables (the MDK 0.8 interop
+ * harness, nostrc-7gx7): services created from now on run libmarmot in
+ * legacy mode (MarmotConfig.allow_unproven_members), accepting member leaves
+ * without the account proof. Groundhog itself never sets it. */
+void gh_mls_service_test_allow_unproven_members(gboolean allow);
+#endif
 const gchar *gh_mls_service_get_account(GhMlsService *self);
 /* libmarmot, for tests and diagnostics (borrowed; one thread). */
 Marmot *gh_mls_service_get_marmot(GhMlsService *self);

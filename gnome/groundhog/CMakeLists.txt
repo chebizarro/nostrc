@@ -1627,6 +1627,73 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     set_tests_properties(groundhog-privacy-mls PROPERTIES TIMEOUT 300
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;G_MESSAGES_DEBUG=all")
   endif()
+  # Third-party interop, opt-in (nostrc-7gx7, nostrc-77pa; W23): GhMlsService
+  # (the mls-world.h accounts on local relays) with MDK v0.8.0 peers, the
+  # JSON-lines driver of tests/interop/mdk/driver, run as a Docker container
+  # so no host Rust toolchain is needed. groundhog-mdk-interop-image builds
+  # the image (a CTest fixture); MDK_INTEROP_DRIVER replaces it with another
+  # command line, e.g. a natively built driver. The legacy-mode cases use the
+  # GH_MLS_TEST_HOOKS switch of gh-mls-service.h, compiled into this test
+  # only. Evidence: docs/analysis/marmot-mdk-interop-2026-09-30.md.
+  option(BUILD_MDK_INTEROP "Build and run the Groundhog/MDK 0.8 interop test (needs Docker)"
+         OFF)
+  set(MDK_INTEROP_DRIVER "" CACHE STRING
+      "MDK interop driver command line; empty: the Docker image the test builds")
+  if (BUILD_MDK_INTEROP)
+    if (NOT (BUILD_TESTING AND TARGET groundhog-test-schemas AND
+             TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST AND TARGET PkgConfig::GROUNDHOG_JSON))
+      message(FATAL_ERROR "BUILD_MDK_INTEROP needs BUILD_TESTING, libsoup-3.0 and json-glib-1.0")
+    endif()
+    add_executable(test-groundhog-mdk-interop tests/mls/test_mdk_interop.c
+      ${GROUNDHOG_MLS_SERVICE_SOURCES} src/mls/gh-mls-invitee.c src/ui/gh-mls-copy.c
+      src/store/gh-store-marmot.c src/store/gh-mls-commits.c
+      src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
+      ${GROUNDHOG_DM_SEND_SOURCES})
+    target_include_directories(test-groundhog-mdk-interop PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls)
+    target_link_libraries(test-groundhog-mdk-interop PRIVATE groundhog-store-testhooks marmot
+      groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+      groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_JSON)
+    target_compile_definitions(test-groundhog-mdk-interop PRIVATE GH_MLS_TEST_HOOKS=1)
+    target_compile_options(test-groundhog-mdk-interop PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-mdk-interop)
+    add_dependencies(test-groundhog-mdk-interop groundhog-test-schemas)
+    if (MDK_INTEROP_DRIVER)
+      set(groundhog_mdk_driver "${MDK_INTEROP_DRIVER}")
+      set(groundhog_mdk_fixture)
+    else()
+      # The docker CLI, never an app bundle: on macOS find_program() prefers
+      # /Applications/Docker.app, whose executable is the backend daemon.
+      set(groundhog_saved_appbundle "${CMAKE_FIND_APPBUNDLE}")
+      set(CMAKE_FIND_APPBUNDLE NEVER)
+      find_program(GROUNDHOG_DOCKER docker REQUIRED)
+      set(CMAKE_FIND_APPBUNDLE "${groundhog_saved_appbundle}")
+      set(groundhog_mdk_image nostrc-mdk-interop:0.8.0)
+      add_test(NAME groundhog-mdk-interop-image
+        COMMAND ${GROUNDHOG_DOCKER} build -t ${groundhog_mdk_image}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/interop/mdk/driver)
+      set_tests_properties(groundhog-mdk-interop-image PROPERTIES TIMEOUT 3600
+        FIXTURES_SETUP groundhog-mdk-image)
+      set(groundhog_mdk_fixture FIXTURES_REQUIRED groundhog-mdk-image)
+      # The driver dials the test's relays on the host's 127.0.0.1: the
+      # host's network on Linux, Docker Desktop's host.docker.internal on
+      # macOS (the URLs, and the NIP-42 relay tag, stay 127.0.0.1).
+      # MDK_DRIVER_LOG (MDK's tracing) and MDK_DRIVER_DEADLINE_S pass
+      # through from the environment when set.
+      set(groundhog_mdk_run "${GROUNDHOG_DOCKER} run --rm -i -e MDK_DRIVER_LOG -e MDK_DRIVER_DEADLINE_S")
+      if (APPLE)
+        set(groundhog_mdk_driver "${groundhog_mdk_run} -e MDK_DRIVER_DIAL_HOST=host.docker.internal ${groundhog_mdk_image}")
+      else()
+        set(groundhog_mdk_driver "${groundhog_mdk_run} --network host ${groundhog_mdk_image}")
+      endif()
+    endif()
+    add_test(NAME groundhog-mdk-interop COMMAND test-groundhog-mdk-interop)
+    set_tests_properties(groundhog-mdk-interop PROPERTIES TIMEOUT 1200 ${groundhog_mdk_fixture}
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;GH_MDK_DRIVER=${groundhog_mdk_driver}")
+  endif()
 else()
   message(STATUS "Groundhog MLS service: disabled (needs GhStoreMarmot, the DM inbox, "
                  "GhAuthPolicy, the conversation model, the relay lists and NIP-17/59)")
