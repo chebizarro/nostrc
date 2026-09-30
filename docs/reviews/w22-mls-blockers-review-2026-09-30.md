@@ -6,6 +6,7 @@
 - **Date:** 2026-09-30
 - **Verdict (initial, at `e73d1528`):** **REQUEST CHANGES**. Blocking finding: **B1**, a removal that loses the tie-break ends the group permanently if it arrives first.
 - **Verdict (final pass, at `1d9af674`):** **REQUEST CHANGES**. B1 and C1 are closed; new blocking finding **B2**. See "Final pass" at the end.
+- **Verdict (B2 pass, at `4d3ddf50`):** **REQUEST CHANGES**, documentation only. B2 is closed. **B3**: the documented residual risk of the new finality rule is wrong. See "B2 pass" at the end.
 - **Also found:** **C1**, a pre-existing heap-use-after-free in the encrypted-group UI, found by ASAN. It is outside the diff, but should be fixed before the flip.
 
 **Commits**
@@ -355,3 +356,123 @@ This applies to every group where the remover is not the lowest-keyed admin, and
 - test that, and F2, F3, F6 and H3.
 
 B1, C1, N1 (when final), N3–N6: done.
+
+---
+
+## B2 pass (2026-09-30): `bf6fec97`, `4d3ddf50`
+
+**Scope**
+- `bf6fec97` (libmarmot): a contested removal becomes final after `MARMOT_REMOVAL_FINAL_AFTER` (5) distinct kind:445 events of the group that none of our kept exporter secrets opens. Their ids are kept in a v3 removal record; finality runs `forget_keys`.
+- `4d3ddf50` (Groundhog): stop listening once final, not resubscribed after a restart; the cursor pin is removed.
+
+Scratch worktree: `/tmp/rr22g`, with an ASAN build dir. No code or beads changed.
+
+**Verdict: REQUEST CHANGES, documentation only.**
+- **B2 is closed:** verified, and the code is sound.
+- **B3:** the README and `marmot.h` describe the rule's residual risk wrongly, and understate it.
+- **No code change is required.**
+
+### B2: closed
+
+My B2 repro, rerun as a throwaway `test_commits` case: Alice, the higher-keyed admin, removes Charlie with no race, then the group goes on.
+
+| Distinct later events at Charlie | Result |
+|---|---|
+| 1–4 (the first also delivered twice, as from a second relay) | not final; `mls_group` kept; each refused `USE_AFTER_EVICTION`; the copy is not counted again |
+| 5 | **final**. `mls_group` gone, the retained parent gone, **every exporter secret** (epochs 0 … current+2 probed) gone |
+
+In Groundhog, `contested-removal-stops-listening` shows the rest: after `MARMOT_REMOVAL_FINAL_AFTER` messages, Carol stops listening and holds nothing, and after a restart she sends no kind:445 REQ.
+
+- **The re-fetch while contested is bounded.** Dedup is by id and at most 4 distinct events are pending before finality, so a session re-fetches at most those plus the subscription overlap.
+- **Persistence.** The count is written with `marmot_txn_keep` inside the refused operation. Groundhog commits its outer store transaction on this path (it rolls back only when the conversation store refuses a message), so the count persists. Mutation N4 below confirms this.
+
+### Is the rule sound?
+
+**A competing Commit for a judged epoch is never counted.** `process_group_event` trial-decrypts with the exporter secrets of the record's epoch and the 5 before it (`MAX_EPOCH_LOOKBACK`), and the removed member's record never advances. So the Commits `inbound_removed` can judge all open and are never counted:
+- the removal's own epoch E;
+- the parent epoch E−1;
+- the removal epoch when the record is one ahead (the from-parent case).
+
+The removal Commit itself, re-delivered, opens and is refused by digest. Epoch-E application messages open and are refused without counting.
+
+**But the winner's own branch is counted (B3).**
+- Unopenable does not mean "the group moved on without us". Once Bob's winning Commit is merged, Alice, Bob and everyone else talk *in the winner's epoch*, which the removed member cannot open either.
+- **Verified (throwaway test).** Alice's removal and Bob's winning rename race as in B1. Charlie gets the removal first, then n messages of the winner's epoch, then the winner:
+
+| n | Charlie's outcome |
+|---|---|
+| 4 | winner → `COMMIT`, **re-activated**; reads Bob's next message |
+| 5 | winner → **`USE_AFTER_EVICTION`**, removal **final**, keys deleted, "removed by Alice" for good, while Alice and Bob are *on the winner* with Charlie's leaf in their tree |
+
+- **So the rule tolerates the winner lagging at most 4 events of its own branch.** At 5 it produces exactly B1's outcome (ended while still a member).
+- **Narrower in Groundhog, still possible.** Groundhog processes a relay's pending stored answer in `created_at` order, winner first, and parks live traffic behind a backfill. So the window there is a winner absent from every relay's answered data while 5 of its branch's messages arrive, for example when it was published to a relay the member reads late.
+
+**Junk-accelerated finality.**
+- `rr_junk`, 5 kind:445 events with the group's public `h` and random content, finalizes a contested removal: verified.
+- **Acceptable,** as the author says: it hurts only while a real winning competitor is still in flight to the victim, and the outcome equals N2's (ended while still in the tree).
+- Most contested removals have no real competitor, and there early finality only deletes the keys sooner.
+- A malicious relay could withhold the winner anyway.
+
+**Liveness.** A group that goes quiet after the removal (fewer than 5 later events, ever) stays contested: listening, keys kept, and re-fetching at most 4 events per session. That is bounded, and acceptable.
+
+### B3 (Medium, blocking; documentation only): the residual risk is described wrongly
+
+**The text.**
+- README, "Final once the group moved on": "The residual risk is a winner withheld from us while the group went several epochs past it, which the one-epoch horizon refuses for every member anyway."
+- `marmot.h` (`marmot_get_group_removal`): "so a Commit that could still undo the removal was withheld from us; the one-epoch horizon refuses such a late winner for every member anyway."
+
+**Both halves are wrong.**
+- **Not epochs:** five *events* suffice, and they can all be messages of one epoch, the winner's own.
+- **Not refused by everyone:** in the case that matters, every other member *is on* the winner. Only the removed member refuses it, so the group diverges, as in the n = 5 row above.
+- The text states a known convergence failure as harmless.
+
+**Required.** State it as it is, for example:
+
+> A winning Commit that reaches us only after `MARMOT_REMOVAL_FINAL_AFTER` unopenable events -- which may be the winner's own later messages, or junk anyone can post with the group's `h` -- is refused: we then stay ended while the group keeps our leaf (as in N2). Groundhog narrows this by processing each relay's stored answer oldest first.
+
+**Optional:**
+- a test pinning the tolerance (winner behind `MARMOT_REMOVAL_FINAL_AFTER - 1` re-activates, behind `MARMOT_REMOVAL_FINAL_AFTER` does not), so a later change of the constant is a visible decision;
+- in Groundhog, counting toward finality only while every group relay has answered.
+
+### Key deletion: complete
+
+- At count finality, `marmot_commit_removal_note_later` stores the final record (dropping the kept ids) and runs `forget_keys` in the same transaction: the live `mls_group`, the retained parent, and `delete_exporter_secret` for epochs 0 … `group->epoch + 1`. Verified empty, above.
+- The pending Commit was already dropped at eviction.
+- The removal record keeps only the remover, the epoch and the digest; the group record and history stay.
+- A v2 record reads as "none counted".
+- **Mutations** (throwaway, the author's tests only):
+  - N1 (never counted), N2 (copies counted), N3 (count finality keeps the keys) and N5 (final after 4) fail `contested-removal-becomes-final`;
+  - N4 (no `txn_keep`) survives `test_commits`, whose memory backend has no transaction hooks, but fails `groundhog-mls-service` (`contested-removal-stops-listening`) on GhStoreMarmot's savepoints;
+  - G1 (no finality refresh in Groundhog) fails the same test.
+
+### Other checks
+
+- **No new defect in the code.**
+  - The finality refresh runs after Groundhog's store commit, and closes the subscription from inside an event callback, as the removal Commit already did.
+  - `flush_backfill` checks `listening()` per event.
+  - ASAN is clean on the test that does this.
+- **Re-activation without the pin.** The cursor stays at the removal Commit, the last accepted event, because nothing else is accepted while ended and the EOSE path saves only `group->newest`. A winner re-reads its branch from there, overlap included.
+  - Edge case: a winner-branch message created *before* the removal Commit's `created_at`, by more than the overlap, is not re-fetched after re-activation.
+  - The removed pin could not have helped either (`save_cursor` never moves the cursor back). Info only.
+
+### Verification (tip `4d3ddf50`)
+
+- **Build.** `cmake -S . -B /tmp/rr22g-build -G Ninja -DBUILD_GROUNDHOG=ON && ninja` ok.
+- **Tests.** `ctest -R 'marmot|mls|groundhog-' -j6`: **97 run; 93 passed, 4 skipped** (as on base).
+- **ASAN+UBSAN** (RelWithDebInfo, `-fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-macro-redefined`, polled synchronously): the same regex, **93 passed, 4 skipped, 0 reports**, with my repros included.
+- **`leaks --atExit`:**
+  - **0 leaks** in `test_commits` (with the repros), `test_protocol`, `test_ratchet_persist`, `test_mls_group`, `test_storage_contract` and `test_marmot_gobject`;
+  - `test-groundhog-mls-service`: 28 subtests ok, and every leak root is in the libnostr/libgo transport (nostrc-jw23), none in gh-mls or libmarmot.
+- **Repros** (throwaway, not committed):
+  - B2 (final at 5, a relay copy counted once, all keys gone);
+  - junk finality;
+  - the winner behind 4 and behind 5 of its own branch's messages;
+  - plus mutations N1–N5 and G1.
+
+### Recommendation
+
+**REQUEST CHANGES** for **B3** only:
+- correct the residual-risk text in the README ("Final once the group moved on") and in `marmot_get_group_removal()`'s doc (`marmot.h`);
+- the pinning test is optional.
+
+Once that text is corrected, I have nothing further on W22: B1, B2, C1, N1 and N3–N6 are closed, and N2 and N7 are filed.
