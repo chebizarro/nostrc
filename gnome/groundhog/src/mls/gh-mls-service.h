@@ -152,6 +152,11 @@ G_BEGIN_DECLS
 /* A group relay's backfill: REQ limit, and older pages per subscription. */
 #define GH_MLS_SERVICE_PAGE_LIMIT 500
 #define GH_MLS_SERVICE_MAX_PAGES 64
+/* Backfill kept per group until it is applied (review B4): what an honest
+ * relay's paging can deliver in one round, and 64 MiB. Past either, the
+ * relays still delivering stop paging and count as incomplete. */
+#define GH_MLS_SERVICE_MAX_BACKFILL_EVENTS ((GH_MLS_SERVICE_MAX_PAGES + 1) * GH_MLS_SERVICE_PAGE_LIMIT)
+#define GH_MLS_SERVICE_MAX_BACKFILL_BYTES ((gsize)64 * 1024 * 1024)
 /* A held event still unreadable after this many applied Commits is junk. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
@@ -217,8 +222,11 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * invitee's inbox relay) and "unreadable" (kind-445 events received this
  * session that cannot be decrypted yet: of an epoch the account has not
  * reached, or, after a removal, never; charter §7.15 state 13 "Unable to
- * decrypt yet"). Signal "members-changed": the member list or the admins may
- * differ. */
+ * decrypt yet") and "history-incomplete" (a group relay's backfill could
+ * not be fetched completely this subscription: paging failed or ran out, or
+ * more was delivered than the service keeps at once; the read cursor holds,
+ * and the next subscription asks again). Signal "members-changed": the
+ * member list or the admins may differ. */
 const gchar *gh_mls_group_get_group_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_room_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_name(GhMlsGroup *self);
@@ -230,6 +238,7 @@ gboolean gh_mls_group_get_is_admin(GhMlsGroup *self);
 gboolean gh_mls_group_get_pending_commit(GhMlsGroup *self);
 guint gh_mls_group_get_unsent_welcomes(GhMlsGroup *self);
 guint gh_mls_group_get_unreadable(GhMlsGroup *self);
+gboolean gh_mls_group_get_history_incomplete(GhMlsGroup *self);
 /* The read cursor (unix seconds; 0: none): the group's next REQ asks from
  * it minus GH_MLS_SERVICE_CURSOR_OVERLAP. For diagnostics and tests. */
 gint64 gh_mls_group_get_cursor(GhMlsGroup *self);
@@ -294,6 +303,10 @@ GhMlsIdentityState gh_mls_service_get_identity_state(GhMlsService *self);
  * generation changes, never on a network reconnect. FALSE with
  * GH_MLS_SERVICE_ERROR_INACTIVE when the service is not running. */
 gboolean gh_mls_service_retry_identity(GhMlsService *self, GError **error);
+/* The most backfill kept per group before it is applied (0: the default,
+ * GH_MLS_SERVICE_MAX_BACKFILL_EVENTS / _BYTES); from the next event on.
+ * For tests and tuning. */
+void gh_mls_service_set_backfill_limit(GhMlsService *self, guint max_events, gsize max_bytes);
 /* The id of the KeyPackage event last accepted by a relay, or NULL. */
 const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
 /* Rotates the KeyPackage now (e.g. the user asked); FALSE with

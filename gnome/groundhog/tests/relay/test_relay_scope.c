@@ -839,6 +839,63 @@ test_paging_same_second(void)
   fixture_clear(&capped);
 }
 
+/* Review B4, in the scope. A page answered with more than
+ * GH_RELAY_PAGE_OVERRUN times its limit ignores the limit: it ends as a
+ * failed page (incomplete), and what it sends afterwards is dropped. A
+ * caller that ends a URL's backfill (gh_relay_scope_end_backfill()) cancels
+ * the page in flight, gets no EOSE for the round, later events are live,
+ * and the live REQ's own late EOSE is ignored. */
+static void
+test_paging_overrun_and_end(void)
+{
+  Fixture fixture = { .opened = g_ptr_array_new_with_free_func(g_free),
+                      .closed = g_ptr_array_new_with_free_func(g_free),
+                      .scopes = g_ptr_array_new() };
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+  const int kinds[] = { 1 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_set_since_i64(filter, 1000);
+  g_assert_true(nostr_filters_add(filters, filter));
+  nostr_filter_free(filter);
+  GhRelayScope *scope = gh_relay_scope_new_with_transport(1, filters, &fake_transport, &fixture,
+                                                          on_update, &fixture);
+  gh_relay_scope_set_backfill_paging(scope, 10, 8);
+  g_assert_true(gh_relay_scope_add_url(scope, PAGED_URL, NULL));
+  gh_relay_scope_start(scope);
+  guint serial = 0;
+  deliver_n(scope, 10, 9000, &serial);
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(fixture.scopes->len, ==, 2);
+  GhRelayScope *page = g_ptr_array_index(fixture.scopes, 1);
+  deliver_n(page, GH_RELAY_PAGE_OVERRUN * 10 + 5, 8000, &serial);
+  g_assert_cmpuint(fixture.events, ==, 10 + GH_RELAY_PAGE_OVERRUN * 10);
+  drain_pending();
+  g_assert_cmpuint(fixture.eose, ==, 1);
+  g_assert_true(fixture.last_incomplete);
+
+  /* A new round (reconnect); the caller ends it while a page is in flight. */
+  gh_relay_scope_notice(scope, PAGED_URL, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  deliver_n(scope, 10, 7000, &serial);
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(fixture.scopes->len, ==, 3);
+  guint closed = fixture.closed->len;
+  gh_relay_scope_end_backfill(scope, PAGED_URL);
+  g_assert_cmpuint(fixture.closed->len, ==, closed + 1);   /* the page is cancelled */
+  deliver_n(scope, 1, 9500, &serial);
+  g_assert_false(fixture.last_backfill);                  /* live from now on */
+  gh_relay_scope_eose(scope, PAGED_URL);                  /* late: ignored */
+  drain_pending();
+  g_assert_cmpuint(fixture.eose, ==, 1);
+  g_assert_cmpuint(fixture.scopes->len, ==, 3);
+
+  gh_relay_scope_unref(scope);
+  g_ptr_array_unref(fixture.scopes);
+  fixture_clear(&fixture);
+}
+
 /* ---- Overflow (nostrc-5rfp) ---- */
 
 #define OVERFLOW_DETAIL GH_RELAY_CLOSED_OVERFLOW_PREFIX " too many events waiting to be read"
@@ -927,6 +984,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/relay/paging/failure-and-disconnect",
                   test_paging_failure_and_disconnect);
   g_test_add_func("/groundhog/relay/paging/same-second", test_paging_same_second);
+  g_test_add_func("/groundhog/relay/paging/overrun-and-end", test_paging_overrun_and_end);
   g_test_add_func("/groundhog/relay/overflow/reported-then-retried-once",
                   test_overflow_reported_then_retried_once);
   return g_test_run();

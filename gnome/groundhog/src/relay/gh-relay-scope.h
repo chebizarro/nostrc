@@ -87,6 +87,9 @@ G_BEGIN_DECLS
  * newest N") are never paged.
  */
 #define GH_RELAY_PAGE_MIN_CAP 20
+/* A page that delivers more than this many times its limit (per filter)
+ * ignores the limit: it ends as a failed page (incomplete). */
+#define GH_RELAY_PAGE_OVERRUN 2
 /* An answer (or page) of at least this many events for one filter may have
  * been cut short by the relay: page further. */
 static inline guint
@@ -171,6 +174,12 @@ void gh_relay_scope_start(GhRelayScope *scope);
  * round (>= 1). Filters without a limit of their own get @limit on the live
  * REQ too. */
 void gh_relay_scope_set_backfill_paging(GhRelayScope *scope, guint limit, guint max_pages);
+/* A paging scope's caller gives up on url's backfill round (e.g. it keeps
+ * no more, review B4): the page in flight is cancelled, no EOSE is reported
+ * for this round (the caller treats it as incomplete itself), and later
+ * events of the connection are live (backfill FALSE). The next connection's
+ * REQ starts a new round. Safe from inside the scope's callback. */
+void gh_relay_scope_end_backfill(GhRelayScope *scope, const gchar *url);
 /* Revoke generation before closing transports; no later callback is admitted. */
 void gh_relay_scope_cancel(GhRelayScope *scope);
 guint64 gh_relay_scope_get_generation(const GhRelayScope *scope);

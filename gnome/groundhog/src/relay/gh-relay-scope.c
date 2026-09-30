@@ -40,6 +40,7 @@ typedef struct {
   GhRelayScope *page;          /* the older page in flight */
   guint *page_map;             /* page filter index -> scope filter index */
   guint pages;                 /* older pages of this round */
+  guint page_events;           /* events the page in flight delivered */
   gboolean page_ended;         /* its EOSE or failure seen; judged by the idle */
   gboolean page_failed;
   gboolean incomplete;         /* older events of this round could not be fetched */
@@ -624,6 +625,7 @@ start_page(GhRelayScope *scope, GhEndpoint *endpoint)
   endpoint->page_ended = FALSE;
   endpoint->page_failed = FALSE;
   endpoint->pages++;
+  endpoint->page_events = 0;
   gh_relay_scope_start(page);
   return TRUE;
 }
@@ -680,6 +682,16 @@ on_page_update(GhRelayScope *page, const GhRelayUpdate *update, gpointer data)
     return;
   switch (update->notice) {
   case GH_RELAY_NOTICE_EVENT: {
+    /* limit is advisory: a relay that answers a page with far more than it
+     * asked for is treated as a failed page (review B4) instead of being
+     * paged on without bound. */
+    if (++endpoint->page_events > GH_RELAY_PAGE_OVERRUN * scope->page_limit * page->filters->count) {
+      g_debug("relay scope: an older page from %s ignores its limit", endpoint->url);
+      endpoint->page_ended = TRUE;
+      endpoint->page_failed = TRUE;
+      schedule_settle(endpoint);
+      break;
+    }
     /* The page verified it; count it against the page's filters. */
     NostrEvent *event = nostr_event_new();
     if (event && nostr_event_deserialize_compact(event, update->event_json, NULL) == 1)
@@ -706,6 +718,17 @@ on_page_update(GhRelayScope *page, const GhRelayUpdate *update, gpointer data)
   case GH_RELAY_NOTICE_OK:
     break;   /* the page's own NIP-42; the live REQ reports AUTH */
   }
+}
+
+void
+gh_relay_scope_end_backfill(GhRelayScope *scope, const gchar *url)
+{
+  GhEndpoint *endpoint = active_endpoint(scope, url);
+  if (!endpoint || endpoint->eose)
+    return;
+  reset_paging(endpoint);
+  endpoint->live_eose = TRUE;   /* this REQ's own EOSE, if it still comes, is ignored */
+  endpoint->eose = TRUE;
 }
 
 void

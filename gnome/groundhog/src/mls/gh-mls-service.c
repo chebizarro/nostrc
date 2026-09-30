@@ -65,6 +65,8 @@ struct _GhMlsGroup {
   GQueue backfill;           /* Stored: backfill of every relay, applied oldest first */
   guint backfill_seq;
   GHashTable *backfilling;   /* urls delivering a backfill round that has not ended */
+  gsize backfill_bytes;      /* JSON bytes in backfill (review B4 bound) */
+  gboolean history_incomplete; /* a relay's backfill ended incomplete (settled 4) */
   GQueue held;               /* Held: kind 445 of a later epoch, oldest first */
   GHashTable *held_ids;      /* their event ids (owned by the Held records) */
   gint64 pinned;             /* oldest created_at dropped unread this session; 0: none */
@@ -90,6 +92,7 @@ enum {
   GROUP_PROP_PENDING_COMMIT,
   GROUP_PROP_UNSENT_WELCOMES,
   GROUP_PROP_UNREADABLE,
+  GROUP_PROP_HISTORY_INCOMPLETE,
   N_GROUP_PROPS
 };
 static GParamSpec *group_props[N_GROUP_PROPS];
@@ -110,6 +113,8 @@ struct _GhMlsService {
   GhAccountController *accounts;
   GhAuthPolicy *policy;
   GhConversationStore *conversations;
+  guint max_backfill_events;       /* per group (review B4) */
+  gsize max_backfill_bytes;
   GhAccountRelays *account_relays;
   GhInboxResolver *inboxes;
   GSettings *settings;
@@ -501,6 +506,13 @@ gh_mls_group_get_unreadable(GhMlsGroup *self)
   return g_queue_get_length(&self->held);
 }
 
+gboolean
+gh_mls_group_get_history_incomplete(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
+  return self->history_incomplete;
+}
+
 GStrv
 gh_mls_group_dup_members(GhMlsGroup *self)
 {
@@ -547,6 +559,7 @@ gh_mls_group_get_property(GObject *object, guint id, GValue *value, GParamSpec *
   case GROUP_PROP_PENDING_COMMIT: g_value_set_boolean(value, self->pending_commit); break;
   case GROUP_PROP_UNSENT_WELCOMES: g_value_set_uint(value, self->unsent_welcomes); break;
   case GROUP_PROP_UNREADABLE: g_value_set_uint(value, g_queue_get_length(&self->held)); break;
+  case GROUP_PROP_HISTORY_INCOMPLETE: g_value_set_boolean(value, self->history_incomplete); break;
   default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
 }
@@ -596,6 +609,8 @@ gh_mls_group_class_init(GhMlsGroupClass *klass)
                                                               G_MAXUINT, 0, ro);
   group_props[GROUP_PROP_UNREADABLE] = g_param_spec_uint("unreadable", NULL, NULL, 0, G_MAXUINT, 0,
                                                          ro);
+  group_props[GROUP_PROP_HISTORY_INCOMPLETE] =
+    g_param_spec_boolean("history-incomplete", NULL, NULL, FALSE, ro);
   g_object_class_install_properties(object_class, N_GROUP_PROPS, group_props);
   group_signals[GROUP_SIGNAL_MEMBERS_CHANGED] =
     g_signal_new("members-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
@@ -631,6 +646,7 @@ gh_mls_invite_free(GhMlsInvite *invite)
 /* ---- Groups: state from libmarmot ------------------------------------------------------ */
 
 static void group_subscribe(GhMlsGroup *group);
+static void update_history_incomplete(GhMlsGroup *group);
 static void group_unsubscribe(GhMlsGroup *group);
 static void welcomes_pump(GhMlsGroup *group);
 
@@ -850,8 +866,10 @@ group_unsubscribe(GhMlsGroup *group)
   /* Not read yet, so nothing moved the cursor past them: the next
    * subscription fetches them again. */
   g_queue_clear_full(&group->backfill, stored_free);
+  group->backfill_bytes = 0;
   g_hash_table_remove_all(group->backfilling);
   g_hash_table_remove_all(group->settled);
+  update_history_incomplete(group);
   group_set_read(group, GH_MLS_READ_IDLE);
 }
 
@@ -1158,6 +1176,7 @@ flush_backfill(GhMlsGroup *group)
 {
   GList *mine = group->backfill.head;
   g_queue_init(&group->backfill);
+  group->backfill_bytes = 0;
   mine = g_list_sort(mine, stored_older_first);
   g_object_ref(group);   /* a Commit may change the subscription meanwhile */
   for (GList *l = mine; l; l = l->next) {
@@ -1167,6 +1186,54 @@ flush_backfill(GhMlsGroup *group)
   }
   g_list_free_full(mine, stored_free);
   g_object_unref(group);
+}
+
+/* history-incomplete: some relay of this subscription ended its backfill
+ * incomplete (settled 4): paging failed, ran out, or the store was full. */
+static void
+update_history_incomplete(GhMlsGroup *group)
+{
+  gboolean incomplete = FALSE;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, group->settled);
+  while (g_hash_table_iter_next(&iter, NULL, &value))
+    incomplete |= GPOINTER_TO_INT(value) == 4;
+  if (incomplete == group->history_incomplete)
+    return;
+  group->history_incomplete = incomplete;
+  g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_HISTORY_INCOMPLETE]);
+}
+
+/* The store is full (review B4): a relay ignoring limit, a page that never
+ * ends, or live traffic during a long backfill. Every relay still delivering
+ * a backfill round stops paging and counts as answered-incomplete (the
+ * cursor holds, history-incomplete), and what is stored is applied oldest
+ * first; later events of those connections are applied as they come. What
+ * is stored is the newest part of the backlog (relays answer newest first),
+ * so a sender's older messages may then lie outside libmarmot's window and
+ * stay unreadable although they are fetched again. The bound is what one
+ * honest paging round can deliver: reaching it means a relay ignoring its
+ * limits, or a backlog beyond the page budget. */
+static void
+backfill_full(GhMlsGroup *group)
+{
+  g_message("Groundhog stopped reading an encrypted group's history after %u events: it keeps "
+            "no more at once; the group's read cursor stays where it was",
+            g_queue_get_length(&group->backfill));
+  GHashTableIter iter;
+  gpointer url;
+  g_hash_table_iter_init(&iter, group->backfilling);
+  while (g_hash_table_iter_next(&iter, &url, NULL)) {
+    if (group->scope)
+      gh_relay_scope_end_backfill(group->scope, url);
+    g_hash_table_insert(group->settled, g_strdup(url), GINT_TO_POINTER(4));
+  }
+  g_hash_table_remove_all(group->backfilling);
+  update_history_incomplete(group);
+  if (group->relays && g_hash_table_size(group->settled) >= g_strv_length(group->relays))
+    group_set_read(group, GH_MLS_READ_LIVE);
+  flush_backfill(group);
 }
 
 static void
@@ -1183,6 +1250,11 @@ keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
   if (event)
     nostr_event_free(event);
   g_queue_push_tail(&group->backfill, stored);
+  group->backfill_bytes += strlen(stored->json) + 1;
+  GhMlsService *self = group->service;
+  if (g_queue_get_length(&group->backfill) >= self->max_backfill_events ||
+      group->backfill_bytes >= self->max_backfill_bytes)
+    backfill_full(group);
 }
 
 static void
@@ -1214,6 +1286,7 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
                 "the group's read cursor stays where it was");
     g_hash_table_insert(group->settled, g_strdup(update->url),
                         GINT_TO_POINTER(update->incomplete ? 4 : 1));
+    update_history_incomplete(group);
     guint n = g_strv_length(group->relays);
     if (g_hash_table_size(group->settled) >= n) {
       group_set_read(group, GH_MLS_READ_LIVE);
@@ -1233,6 +1306,7 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     if (scope != group->scope)
       break;
     g_hash_table_insert(group->settled, g_strdup(update->url), GINT_TO_POINTER(2));
+    update_history_incomplete(group);
     gboolean any_live = FALSE;
     GHashTableIter iter;
     gpointer value;
@@ -3000,6 +3074,14 @@ gh_mls_service_get_identity_state(GhMlsService *self)
   return self->identity;
 }
 
+void
+gh_mls_service_set_backfill_limit(GhMlsService *self, guint max_events, gsize max_bytes)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  self->max_backfill_events = max_events ? max_events : GH_MLS_SERVICE_MAX_BACKFILL_EVENTS;
+  self->max_backfill_bytes = max_bytes ? max_bytes : GH_MLS_SERVICE_MAX_BACKFILL_BYTES;
+}
+
 gboolean
 gh_mls_service_retry_identity(GhMlsService *self, GError **error)
 {
@@ -3458,6 +3540,8 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   self->clock = gh_clock_ref(gh_store_get_clock(config->store));
   self->accounts = g_object_ref(config->accounts);
   self->policy = g_object_ref(gh_auth_policy_get_for_accounts(config->accounts));
+  self->max_backfill_events = GH_MLS_SERVICE_MAX_BACKFILL_EVENTS;
+  self->max_backfill_bytes = GH_MLS_SERVICE_MAX_BACKFILL_BYTES;
   self->conversations = g_object_ref(config->conversations);
   self->account_relays = config->account_relays ? g_object_ref(config->account_relays) : NULL;
   self->inboxes = config->inboxes ? g_object_ref(config->inboxes) : NULL;

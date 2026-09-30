@@ -900,6 +900,12 @@ typedef struct {
 } TextsWait;
 
 static gboolean
+history_incomplete(gpointer data)
+{
+  return gh_mls_group_get_history_incomplete(data);
+}
+
+static gboolean
 texts_listed(gpointer data)
 {
   TextsWait *wait = data;
@@ -1143,6 +1149,72 @@ test_catch_up_two_relays_partial(void)
   g_assert_cmpuint(paged_reqs(&w.h), >=, 3);
   send_text(alice, ga, "after the two-relay catch-up");
   wait_message(bob, room, "after the two-relay catch-up");
+  backlog_clear(&backlog);
+  world_down(&w);
+}
+
+/* Review B4: the stored backfill is bounded. Bob keeps at most 60 events
+ * at once and comes back to 100: at the 60th his relay stops paging and
+ * counts as answered-incomplete ("history-incomplete", reported honestly),
+ * what is stored is applied, the rest of that connection is read as it
+ * comes, the read cursor does not move past the gap, and the group keeps
+ * reading live messages. The next subscription with room enough completes
+ * and only then moves the cursor. (Messages older than the part applied may
+ * stay unreadable: the sender's ratchet has moved past libmarmot's window.
+ * The default bound is what one honest paging round can deliver.) Dates are
+ * re-signed three per second, Bob's clock a day ahead, as in
+ * catch-up-past-relay-cap. */
+static void
+test_backfill_store_bounded(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Bounded", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  g_autofree gchar *h = g_strdup(h_of(last_stored_445(&w.g)));
+  join(bob, ALICE);
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+  g_assert_false(gh_mls_group_get_history_incomplete(gb));
+  gint64 before = gh_mls_group_get_cursor(gb);
+
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;                  /* served only as re-signed below */
+  Backlog backlog;
+  make_backlog(&w, alice, ga, h, 100, 0, 0, &backlog);
+  w.g.withhold_new = FALSE;
+  gint64 start = real_now() + 5, newest = 0;
+  for (guint i = 0; i < backlog.ids->len; i++) {
+    newest = start + i / 3;
+    g_autofree gchar *copy = resigned(stored_by_id(&w.g, g_ptr_array_index(backlog.ids, i))->json,
+                                      newest);
+    wire_relay_inject(&w.g, copy);
+  }
+  gh_mls_service_set_backfill_limit(bob->service, 60, 0);
+  set_online(bob, TRUE);
+  spin_until(history_incomplete, gb, "the backfill reported incomplete");
+  wait_live(gb);
+  send_text(alice, ga, "live after the bounded backfill");
+  wait_message(bob, room, "live after the bounded backfill");
+  g_assert_true(gh_mls_group_get_history_incomplete(gb));
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, before);   /* the gap is asked again */
+  g_assert_nonnull(find_message(bob, room, "backlog 99"));     /* the newest were applied */
+
+  /* The next subscription, with room enough, completes, and only then does
+   * the cursor move (past the backlog). */
+  gh_mls_service_set_backfill_limit(bob->service, 0, 0);
+  set_online(bob, FALSE);
+  set_online(bob, TRUE);
+  CursorWait moved = { gb, newest };
+  spin_until(cursor_reached, &moved, "the cursor moving after a complete backfill");
+  g_assert_false(gh_mls_group_get_history_incomplete(gb));
   backlog_clear(&backlog);
   world_down(&w);
 }
@@ -1607,6 +1679,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/catch-up-past-relay-cap", test_catch_up_past_relay_cap);
   g_test_add_func("/groundhog/mls-service/catch-up-two-relays-partial",
                   test_catch_up_two_relays_partial);
+  g_test_add_func("/groundhog/mls-service/backfill-store-bounded", test_backfill_store_bounded);
   g_test_add_func("/groundhog/mls-service/catch-up-over-200", test_catch_up_over_200);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);
