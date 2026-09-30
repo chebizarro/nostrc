@@ -1,5 +1,8 @@
 # groundhog-mls-preview-guard (review M5): the cases of
 # cmake/GroundhogPreviewGuard.cmake, in script mode (cmake -P).
+# Script mode sets no policies: without this, CMake 3.x (Ubuntu 24.04, the
+# Linux gate) reads the guard's if(... IN_LIST ...) with CMP0057 OLD and fails.
+cmake_minimum_required(VERSION 3.16)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/GroundhogPreviewGuard.cmake)
 
 foreach (name IN LISTS GROUNDHOG_PREVIEW_PACKAGING_ENV)
