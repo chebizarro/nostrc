@@ -73,6 +73,9 @@ struct _GhMlsGroup {
   gboolean history_incomplete; /* a relay's backfill ended incomplete (settled 4) */
   GQueue held;               /* Held: kind 445 of a later epoch, oldest first */
   GHashTable *held_ids;      /* their event ids (owned by the Held records) */
+  gboolean decrypt_pending;  /* a shown Held is waiting (nostrc-oya4) */
+  GHashTable *junk_ids;      /* ids dropped as junk, not held again (bounded) */
+  GQueue junk_order;         /* the same ids, oldest first (owned here) */
   gint64 pinned;             /* oldest created_at dropped unread this session; 0: none */
   gint64 floor;              /* when the account joined (or made) the group; 0: unknown */
   gboolean retrying;         /* retry_held() runs: a nested Commit only asks again */
@@ -98,6 +101,7 @@ enum {
   GROUP_PROP_PENDING_COMMIT,
   GROUP_PROP_UNSENT_WELCOMES,
   GROUP_PROP_UNREADABLE,
+  GROUP_PROP_DECRYPT_PENDING,
   GROUP_PROP_HISTORY_INCOMPLETE,
   N_GROUP_PROPS
 };
@@ -255,6 +259,7 @@ typedef struct {
   gchar *json;
   gint64 created_at;   /* bounded to now + skew */
   guint misses;        /* Commits applied since, without it becoming readable */
+  gboolean shown;      /* makes decrypt-pending (not the join second's stored answer) */
 } Held;
 
 static void
@@ -273,6 +278,7 @@ typedef struct {
   gchar *url;
   gint64 created_at;
   guint seq;           /* arrival order */
+  gboolean stored;     /* of a stored answer or a page, not live (GhRelayUpdate.backfill) */
 } Stored;
 
 static void
@@ -544,6 +550,20 @@ gh_mls_group_get_unreadable(GhMlsGroup *self)
 }
 
 gboolean
+gh_mls_group_get_decrypt_pending(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
+  return self->decrypt_pending;
+}
+
+gint64
+gh_mls_group_get_join_time(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), 0);
+  return self->floor;
+}
+
+gboolean
 gh_mls_group_get_history_incomplete(GhMlsGroup *self)
 {
   g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
@@ -598,6 +618,7 @@ gh_mls_group_get_property(GObject *object, guint id, GValue *value, GParamSpec *
   case GROUP_PROP_PENDING_COMMIT: g_value_set_boolean(value, self->pending_commit); break;
   case GROUP_PROP_UNSENT_WELCOMES: g_value_set_uint(value, self->unsent_welcomes); break;
   case GROUP_PROP_UNREADABLE: g_value_set_uint(value, g_queue_get_length(&self->held)); break;
+  case GROUP_PROP_DECRYPT_PENDING: g_value_set_boolean(value, self->decrypt_pending); break;
   case GROUP_PROP_HISTORY_INCOMPLETE: g_value_set_boolean(value, self->history_incomplete); break;
   default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -620,6 +641,8 @@ gh_mls_group_finalize(GObject *object)
   g_hash_table_unref(self->settled);
   g_hash_table_unref(self->held_ids);
   g_queue_clear_full(&self->held, held_free);
+  g_hash_table_unref(self->junk_ids);
+  g_queue_clear_full(&self->junk_order, g_free);
   g_queue_clear_full(&self->backfill, stored_free);
   if (self->quiet_source)
     g_source_remove(self->quiet_source);
@@ -654,6 +677,8 @@ gh_mls_group_class_init(GhMlsGroupClass *klass)
                                                               G_MAXUINT, 0, ro);
   group_props[GROUP_PROP_UNREADABLE] = g_param_spec_uint("unreadable", NULL, NULL, 0, G_MAXUINT, 0,
                                                          ro);
+  group_props[GROUP_PROP_DECRYPT_PENDING] =
+    g_param_spec_boolean("decrypt-pending", NULL, NULL, FALSE, ro);
   group_props[GROUP_PROP_HISTORY_INCOMPLETE] =
     g_param_spec_boolean("history-incomplete", NULL, NULL, FALSE, ro);
   g_object_class_install_properties(object_class, N_GROUP_PROPS, group_props);
@@ -671,6 +696,8 @@ gh_mls_group_init(GhMlsGroup *self)
   g_queue_init(&self->backfill);
   self->backfilling = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->held_ids = g_hash_table_new(g_str_hash, g_str_equal);
+  self->junk_ids = g_hash_table_new(g_str_hash, g_str_equal);
+  g_queue_init(&self->junk_order);
   self->members = g_new0(gchar *, 1);
   self->admins = g_new0(gchar *, 1);
   self->relays = g_new0(gchar *, 1);
@@ -695,17 +722,54 @@ static void update_history_incomplete(GhMlsGroup *group);
 static void group_unsubscribe(GhMlsGroup *group);
 static void welcomes_pump(GhMlsGroup *group);
 
+/* decrypt-pending (nostrc-oya4): an active group holds an event that is
+ * really waiting for a Commit. A held event's type is sealed under an epoch
+ * the account has not reached, so no count of them is a count of messages;
+ * this says only that something is waiting. Not shown: an event dated in
+ * the join's own second that came in a stored answer -- where the joiner's
+ * own Add Commit, sealed in an epoch it never had, always lands (W20
+ * re-review N4) -- and nothing of an ended group. */
+static void
+sync_decrypt_pending(GhMlsGroup *group)
+{
+  gboolean pending = FALSE;
+  for (GList *l = group->held.head; group->active && !pending && l; l = l->next)
+    pending = ((Held *)l->data)->shown;
+  if (pending == group->decrypt_pending)
+    return;
+  group->decrypt_pending = pending;
+  g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_DECRYPT_PENDING]);
+}
+
 /* An ended group (left or removed) holds nothing: none of it can ever be
  * read, so none of it is "unreadable yet" (nostrc-xrya). */
 static void
 drop_held(GhMlsGroup *group)
 {
   group->pinned = 0;
-  if (g_queue_is_empty(&group->held))
+  if (!g_queue_is_empty(&group->held)) {
+    g_hash_table_remove_all(group->held_ids);
+    g_queue_clear_full(&group->held, held_free);
+    g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
+  }
+  sync_decrypt_pending(group);
+}
+
+/* An event dropped as junk is not held again when a later REQ's overlap
+ * fetches it once more (nostrc-oya4): it was judged already. */
+static void
+remember_junk(GhMlsGroup *group, const gchar *id)
+{
+  if (g_hash_table_contains(group->junk_ids, id))
     return;
-  g_hash_table_remove_all(group->held_ids);
-  g_queue_clear_full(&group->held, held_free);
-  g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
+  if (g_queue_get_length(&group->junk_order) >= GH_MLS_SERVICE_MAX_HELD) {
+    gchar *oldest = g_queue_pop_head(&group->junk_order);
+    g_hash_table_remove(group->junk_ids, oldest);
+    g_free(oldest);
+  }
+  gchar *copy = g_strdup(id);
+  g_queue_push_tail(&group->junk_order, copy);
+  g_hash_table_add(group->junk_ids, copy);
 }
 
 static gboolean
@@ -1014,13 +1078,14 @@ typedef enum {
 } EventOutcome;
 
 static EventOutcome process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url,
-                                  Held *retry);
+                                  gboolean stored, Held *retry);
 
 /* Keeps a kind 445 for a later epoch: once per event id; when the queue is
  * full the oldest one goes (never the new arrival silently), and the cursor
  * stays behind it so the next subscription fetches it again (review M1). */
 static void
-hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created_at)
+hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created_at,
+           gboolean shown)
 {
   if (!id || g_hash_table_contains(group->held_ids, id))
     return;
@@ -1035,9 +1100,11 @@ hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created
   held->id = g_strdup(id);
   held->json = g_strdup(json);
   held->created_at = MIN(created_at, now_s(group->service));
+  held->shown = shown;
   g_queue_push_tail(&group->held, held);
   g_hash_table_add(group->held_ids, held->id);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
+  sync_decrypt_pending(group);
 }
 
 static gint
@@ -1092,7 +1159,7 @@ retry_held(GhMlsGroup *group)
       gint64 at = held->created_at;
       if (at <= pass_ends && group->active) {
         gboolean before = group->retry_again;
-        if (process_event(group, held->json, NULL, held) != EVENT_HELD) {
+        if (process_event(group, held->json, NULL, FALSE, held) != EVENT_HELD) {
           if (!before && group->retry_again)
             pass_ends = at;
           held_free(held);
@@ -1112,6 +1179,7 @@ retry_held(GhMlsGroup *group)
     Held *held = l->data;
     held->misses += fresh;
     if (held->misses >= GH_MLS_SERVICE_JUNK_AFTER_COMMITS) {
+      remember_junk(group, held->id);
       g_hash_table_remove(group->held_ids, held->id);
       g_queue_delete_link(&group->held, l);
       held_free(held);
@@ -1122,6 +1190,7 @@ retry_held(GhMlsGroup *group)
   group->retrying = FALSE;
   if (touched)
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
+  sync_decrypt_pending(group);
 }
 
 static void after_commit(GhMlsGroup *group, gboolean fresh);
@@ -1149,7 +1218,8 @@ all_relays_answered(GhMlsGroup *group)
  * transaction. @retry: the held record when this is a retry (it is not held
  * again here; the caller decides). */
 static EventOutcome
-process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, Held *retry)
+process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboolean stored,
+              Held *retry)
 {
   GhMlsService *self = group->service;
   g_autoptr(GError) error = NULL;
@@ -1224,8 +1294,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, Held
      * never holds the cursor back (save_cursor()). */
     if (group->floor > 0 && created_at < group->floor)
       return EVENT_OTHER;
+    if (envelope_id && g_hash_table_contains(group->junk_ids, envelope_id))
+      return EVENT_OTHER;   /* judged junk before (nostrc-oya4) */
     if (!retry)
-      hold_event(group, envelope_id, event_json, created_at);
+      hold_event(group, envelope_id, event_json, created_at,
+                 !(stored && group->floor > 0 && created_at <= group->floor));
     return EVENT_HELD;
   }
   if (!accepted)
@@ -1278,7 +1351,7 @@ flush_backfill(GhMlsGroup *group)
   for (GList *l = mine; l; l = l->next) {
     Stored *stored = l->data;
     if (group->active)
-      process_event(group, stored->json, stored->url, NULL);
+      process_event(group, stored->json, stored->url, stored->stored, NULL);
   }
   g_list_free_full(mine, stored_free);
   g_object_unref(group);
@@ -1399,6 +1472,7 @@ keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
   stored->url = g_strdup(update->url);
   stored->created_at = G_MAXINT64;
   stored->seq = group->backfill_seq++;
+  stored->stored = update->backfill;
   NostrEvent *event = nostr_event_new();
   if (event && nostr_event_deserialize_compact(event, update->event_json, NULL) == 1)
     stored->created_at = nostr_event_get_created_at(event);
@@ -1427,7 +1501,7 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     if (g_hash_table_size(group->backfilling) > 0 || !g_queue_is_empty(&group->backfill))
       keep_backfill(group, update);
     else
-      process_event(group, update->event_json, update->url, NULL);
+      process_event(group, update->event_json, update->url, update->backfill, NULL);
     break;
   case GH_RELAY_NOTICE_EOSE: {
     g_hash_table_remove(group->backfilling, update->url);

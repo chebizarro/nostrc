@@ -83,7 +83,7 @@ open_group(GhWindow *window, GhMlsGroup *group)
                                 adw_toast_new(_("The group is listed in a moment")));
 }
 
-/* ---- the shown group: its header count and undecryptable messages ------------------- */
+/* ---- the shown group: its header count and what waits for a Commit ------------------- */
 
 static GhConversationView *
 view_of(MlsUi *ui)
@@ -96,8 +96,8 @@ sync_unreadable(MlsUi *ui)
 {
   GhConversationView *view = view_of(ui);
   if (view)
-    gh_conversation_view_set_undecryptable_messages(
-      view, ui->shown ? gh_mls_group_get_unreadable(ui->shown) : 0);
+    gh_conversation_view_set_decrypt_pending(
+      view, ui->shown && gh_mls_group_get_decrypt_pending(ui->shown));
 }
 
 static void
@@ -123,7 +123,7 @@ set_shown(MlsUi *ui, GhMlsGroup *group)
   g_set_object(&ui->shown, group);
   if (group) {
     g_signal_connect_swapped(group, "members-changed", G_CALLBACK(on_shown_members), ui);
-    g_signal_connect_swapped(group, "notify::unreadable", G_CALLBACK(on_shown_state), ui);
+    g_signal_connect_swapped(group, "notify::decrypt-pending", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::active", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::end", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::read-state", G_CALLBACK(on_shown_state), ui);

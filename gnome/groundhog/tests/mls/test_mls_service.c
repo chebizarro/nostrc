@@ -432,12 +432,6 @@ test_restart_mid_commit(void)
 
 /* ---- Read cursor and held events (review B1, M1, M3, M4) ------------------------------ */
 
-static gint64
-real_now(void)
-{
-  return g_get_real_time() / G_USEC_PER_SEC;
-}
-
 static void
 wait_text(App *app, const gchar *room, const gchar *text)
 {
@@ -454,46 +448,7 @@ rename_group(App *alice, GhMlsGroup *ga, const gchar *name)
   change(alice, &renamed);
 }
 
-/* The envelope json re-signed under a fresh key with another created_at:
- * what a relay replay, or anyone copying a group event, can publish. */
-static gchar *
-resigned(const gchar *json, gint64 created_at)
-{
-  NostrEvent *event = nostr_event_new();
-  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
-  nostr_event_set_created_at(event, created_at);
-  char *key = nostr_key_generate_private();
-  g_assert_cmpint(nostr_event_sign(event, key), ==, 0);
-  free(key);
-  char *out = nostr_event_serialize_compact(event);
-  nostr_event_free(event);
-  gchar *copy = g_strdup(out);
-  free(out);
-  return copy;
-}
 
-/* A validly signed kind 445 with the group's routing h that is nothing:
- * anyone can publish one. */
-static gchar *
-junk_445(const gchar *h, guint n, gint64 created_at)
-{
-  NostrEvent *event = nostr_event_new();
-  nostr_event_set_kind(event, 445);
-  nostr_event_set_created_at(event, created_at);
-  g_autofree gchar *content = g_strdup_printf("AjunkjunkjunkjunkjunkjunkjunkjunkjunkjunkjunkjunkA%u", n);
-  nostr_event_set_content(event, content);
-  NostrTags *tags = nostr_tags_new(0);
-  nostr_tags_append(tags, nostr_tag_new("h", h, NULL));
-  nostr_event_set_tags(event, tags);
-  char *key = nostr_key_generate_private();
-  g_assert_cmpint(nostr_event_sign(event, key), ==, 0);
-  free(key);
-  char *out = nostr_event_serialize_compact(event);
-  nostr_event_free(event);
-  gchar *copy = g_strdup(out);
-  free(out);
-  return copy;
-}
 
 static void
 track_max(GObject *group, GParamSpec *pspec, gpointer data)
@@ -686,6 +641,72 @@ test_junk_does_not_evict(void)
   g_assert_cmpuint(max, ==, GH_MLS_SERVICE_MAX_HELD);          /* full, never over */
   g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, 0);    /* the junk is gone */
   g_signal_handlers_disconnect_by_data(gb, &max);
+  world_down(&w);
+}
+
+/* nostrc-oya4: what the UI shows is "decrypt-pending", not the number of
+ * held events: a held event's type (message or Commit) is sealed until its
+ * epoch opens. An undecryptable event dated in the join's own second, from
+ * a stored answer -- where the joiner's own Add Commit lands -- is held but
+ * not shown; a later one is. Junk dropped after the Commits is not held
+ * again when a reconnect's overlap fetches it once more. */
+static gboolean
+decrypt_pending_is(gpointer data)
+{
+  GroupWait *wait = data;
+  return gh_mls_group_get_decrypt_pending(wait->group) == (gboolean)wait->value;
+}
+
+static void
+test_decrypt_pending_honest(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Pending", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(gb);
+  gint64 joined = gh_mls_group_get_join_time(gb);
+  g_assert_cmpint(joined, >, 0);
+  g_autofree gchar *h = g_strdup(h_of(last_stored_445(&w.g)));
+  gint base = (gint)gh_mls_group_get_unreadable(gb);
+  g_assert_false(gh_mls_group_get_decrypt_pending(gb));
+
+  /* In the join's second, from the stored answer: held, not shown. */
+  set_online(bob, FALSE);
+  g_autofree gchar *at_join = junk_445(h, 0, joined);
+  wire_relay_inject(&w.g, at_join);
+  set_online(bob, TRUE);
+  wait_live(gb);
+  wait_unreadable(gb, base + 1);
+  g_assert_false(gh_mls_group_get_decrypt_pending(gb));
+
+  /* Dated later: something is waiting. */
+  g_autofree gchar *later = junk_445(h, 1, real_now() + 30);
+  wire_relay_inject(&w.g, later);
+  wait_unreadable(gb, base + 2);
+  GroupWait shown = { gb, TRUE };
+  spin_until(decrypt_pending_is, &shown, "decrypt-pending");
+
+  /* Three Commits later both are junk, dropped. */
+  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
+    g_autofree gchar *name = g_strdup_printf("Pending %u", i);
+    rename_group(alice, ga, name);
+    NameWait seen = { gb, name };
+    spin_until(name_is, &seen, "Bob applying the next Commit");
+  }
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, 0);
+  g_assert_false(gh_mls_group_get_decrypt_pending(gb));
+
+  /* A reconnect's overlap fetches them again: judged already, not held. */
+  set_online(bob, FALSE);
+  set_online(bob, TRUE);
+  wait_live(gb);
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, 0);
+  g_assert_false(gh_mls_group_get_decrypt_pending(gb));
   world_down(&w);
 }
 
@@ -1754,6 +1775,7 @@ main(int argc, char **argv)
                   test_future_replay_moves_no_cursor);
   g_test_add_func("/groundhog/mls-service/held-until-commit", test_held_until_commit);
   g_test_add_func("/groundhog/mls-service/junk-does-not-evict", test_junk_does_not_evict);
+  g_test_add_func("/groundhog/mls-service/decrypt-pending-honest", test_decrypt_pending_honest);
   g_test_add_func("/groundhog/mls-service/join-reads-from-welcome",
                   test_join_reads_from_welcome);
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",

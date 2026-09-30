@@ -22,8 +22,10 @@
  * and dialog (nothing joins before Accept; a stranger shows as one), reading
  * the answer; Group Info (badges, admin Add with a fresh check, Rename,
  * Remove with its confirmation, a member seeing no admin action, Leave whose
- * copy says the others keep counting you); "Unable to decrypt N messages
- * yet" while a Commit is withheld; the enrollment states with Try Again. It
+ * copy says the others keep counting you); a removed member's composer and
+ * Group Info naming who removed them; "Waiting for an earlier change to
+ * this group…" while a Commit is withheld, never just after joining; the
+ * enrollment states with Try Again. It
  * exits 77 without a display.
  *
  * Waits iterate the main context; their deadlines are failure bounds only. */
@@ -178,20 +180,6 @@ key_package_asked(WireRelay *relay, const gchar *pubkey)
       return TRUE;
   }
   return FALSE;
-}
-
-static gboolean
-unreadable_above(gpointer data)
-{
-  GroupWait *wait = data;
-  return gh_mls_group_get_unreadable(wait->group) > (guint)wait->value;
-}
-
-static gboolean
-unreadable_below(gpointer data)
-{
-  GroupWait *wait = data;
-  return gh_mls_group_get_unreadable(wait->group) < (guint)wait->value;
 }
 
 static gboolean
@@ -594,8 +582,8 @@ view_of(GhWindow *window)
 
 typedef struct {
   GhConversationView *view;
-  guint count;
-} UndecryptableWait;
+  gboolean pending;
+} PendingWait;
 
 static gboolean
 group_removed(gpointer data)
@@ -604,10 +592,10 @@ group_removed(gpointer data)
 }
 
 static gboolean
-undecryptable_is(gpointer data)
+pending_is(gpointer data)
 {
-  UndecryptableWait *wait = data;
-  return gh_conversation_view_get_undecryptable_messages(wait->view) == wait->count;
+  PendingWait *wait = data;
+  return gh_conversation_view_get_decrypt_pending(wait->view) == wait->pending;
 }
 
 /* ---- --gui: New Group, the invitee, the composer ---------------------------------------- */
@@ -1065,7 +1053,8 @@ test_gui_group_info(void)
   wait_message(bob, room, "after carol");
   drain();
   g_assert_cmpuint(gh_mls_group_get_unreadable(gc), ==, 0);
-  g_assert_cmpuint(gh_conversation_view_get_undecryptable_messages(view_of(carol_window)), ==, 0);
+  g_assert_false(gh_mls_group_get_decrypt_pending(gc));
+  g_assert_false(gh_conversation_view_get_decrypt_pending(view_of(carol_window)));
   close_window(carol_window);
 
   /* Bob, a member: the Owner badge, no admin action anywhere. */
@@ -1087,11 +1076,13 @@ test_gui_group_info(void)
   adw_dialog_force_close(ADW_DIALOG(bob_info));
   drain();
 
-  /* "Unable to decrypt N messages yet": a message whose Commit Bob hasn't
-   * got, then the Commit. */
-  UndecryptableWait view_wait = { view_of(bob_window), gh_mls_group_get_unreadable(gb) };
-  spin_until(undecryptable_is, &view_wait, "the view's count as the group's");
-  guint base = view_wait.count;
+  /* "Waiting for an earlier change…" (nostrc-oya4): not after the join,
+   * although Bob may hold his own Add Commit; then a message whose Commit
+   * Bob hasn't got (served dated a minute later, outside the join's own
+   * second), then the Commit. No number: held events may be group changes. */
+  PendingWait view_wait = { view_of(bob_window), FALSE };
+  spin_until(pending_is, &view_wait, "no banner after the join");
+  g_assert_false(gh_mls_group_get_decrypt_pending(gb));
   set_online(bob, FALSE);
   OpWait renamed = { 0 };
   gh_mls_service_update_metadata_async(alice->service, ga, "Next", NULL, NULL, on_changed,
@@ -1103,28 +1094,29 @@ test_gui_group_info(void)
   send_text(alice, ga, "next epoch");
   MessageWait next = { alice, room, "next epoch" };
   spin_until(sent, &next, "the next epoch's message sent");
+  WireStored *original = last_stored_445(&w.g);
+  g_autofree gchar *later = resigned(original->json, real_now() + 60);
+  wire_relay_withhold(&w.g, original->id);
+  wire_relay_inject(&w.g, later);
   set_online(bob, TRUE);
-  GroupWait above = { gb, (gint)base };
-  spin_until(unreadable_above, &above, "Bob failing to read the next epoch");
-  guint held = gh_mls_group_get_unreadable(gb);
-  view_wait.count = held;
-  spin_until(undecryptable_is, &view_wait, "the view's \"Unable to decrypt\" count");
+  view_wait.pending = TRUE;
+  spin_until(pending_is, &view_wait, "the view's banner");
+  g_assert_true(gh_mls_group_get_decrypt_pending(gb));
   GtkLabel *label = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(view_of(bob_window)),
                                                             GH_TYPE_CONVERSATION_VIEW,
                                                             "undecryptable_label"));
-  g_autofree gchar *expected = g_strdup_printf(
-    held == 1 ? "Unable to decrypt %u message yet" : "Unable to decrypt %u messages yet", held);
-  g_assert_cmpstr(gtk_label_get_text(label), ==, expected);
+  g_assert_cmpstr(gtk_label_get_text(label), ==,
+                  "Waiting for an earlier change to this group. Some messages may not show "
+                  "until it arrives.");
   GtkWidget *undecryptable = GTK_WIDGET(gtk_widget_get_template_child(
     GTK_WIDGET(view_of(bob_window)), GH_TYPE_CONVERSATION_VIEW, "undecryptable_row"));
   g_assert_true(gtk_widget_get_visible(undecryptable));
   g_assert_null(find_message(bob, room, "next epoch"));
   wire_relay_release(&w.g, commit);
   wait_message(bob, room, "next epoch");
-  GroupWait below = { gb, (gint)held };
-  spin_until(unreadable_below, &below, "the message read");
-  view_wait.count = gh_mls_group_get_unreadable(gb);
-  spin_until(undecryptable_is, &view_wait, "the view's count follows");
+  view_wait.pending = FALSE;
+  spin_until(pending_is, &view_wait, "the banner gone");
+  g_assert_false(gtk_widget_get_visible(undecryptable));
 
   /* Bob leaves: the copy says the others keep counting him. */
   bob_info = show_info(bob_window, bob_conversation);

@@ -248,10 +248,16 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * "is-admin" (the account is a GroupData admin), "pending-commit" (a change
  * of the account's is published but not merged yet) and
  * "unsent-welcomes" (Welcomes of merged Adds not yet accepted by an
- * invitee's inbox relay) and "unreadable" (kind-445 events received this
- * session that cannot be decrypted yet: of an epoch the account has not
- * reached, or, after a removal, never; charter §7.15 state 13 "Unable to
- * decrypt yet") and "history-incomplete" (a group relay's backfill could
+ * invitee's inbox relay) and "unreadable" (kind-445 events held this
+ * session because they cannot be decrypted yet -- application messages
+ * and Commits alike, whose type is sealed until their epoch opens, and
+ * junk anyone posted with the group's h; 0 once the group ended; for
+ * diagnostics and tests) and "decrypt-pending" (what the UI shows, charter
+ * §7.15 state 13, nostrc-oya4: the active group holds an event that is
+ * waiting for a Commit this device hasn't got -- not one dated in the
+ * join's own second from a stored answer, where the joiner's own Add
+ * Commit lands, and not one dropped as junk before) and
+ * "history-incomplete" (a group relay's backfill could
  * not be fetched completely this subscription: paging failed or ran out, or
  * more was delivered than the service keeps at once; the read cursor holds,
  * and the next subscription asks again). Signal "members-changed": the
@@ -269,6 +275,10 @@ gboolean gh_mls_group_get_is_admin(GhMlsGroup *self);
 gboolean gh_mls_group_get_pending_commit(GhMlsGroup *self);
 guint gh_mls_group_get_unsent_welcomes(GhMlsGroup *self);
 guint gh_mls_group_get_unreadable(GhMlsGroup *self);
+gboolean gh_mls_group_get_decrypt_pending(GhMlsGroup *self);
+/* When the account joined (or made) the group, unix seconds; 0: unknown.
+ * For diagnostics and tests. */
+gint64 gh_mls_group_get_join_time(GhMlsGroup *self);
 gboolean gh_mls_group_get_history_incomplete(GhMlsGroup *self);
 /* The read cursor (unix seconds; 0: none): the group's next REQ asks from
  * it minus GH_MLS_SERVICE_CURSOR_OVERLAP. For diagnostics and tests. */

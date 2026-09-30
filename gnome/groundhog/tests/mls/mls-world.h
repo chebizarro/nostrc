@@ -28,6 +28,8 @@
 #include "gh-test-signer.h"
 #include "wire-relay.h"
 
+#include <nostr-keys.h>
+
 #include <glib/gstdio.h>
 
 enum { ALICE = 1, BOB = 2, CAROL = 3, STRANGER = 4 };
@@ -679,6 +681,54 @@ unreadable_is(gpointer data)
 #define wait_unreadable(group_, n_) \
   G_STMT_START { GroupWait gw_ = { (group_), (n_) }; \
     spin_until(unreadable_is, &gw_, "the unreadable count"); } G_STMT_END
+
+static G_GNUC_UNUSED gint64
+real_now(void)
+{
+  return g_get_real_time() / G_USEC_PER_SEC;
+}
+
+
+/* The envelope json re-signed under a fresh key with another created_at:
+ * what a relay replay, or anyone copying a group event, can publish. */
+static G_GNUC_UNUSED gchar *
+resigned(const gchar *json, gint64 created_at)
+{
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
+  nostr_event_set_created_at(event, created_at);
+  char *key = nostr_key_generate_private();
+  g_assert_cmpint(nostr_event_sign(event, key), ==, 0);
+  free(key);
+  char *out = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gchar *copy = g_strdup(out);
+  free(out);
+  return copy;
+}
+
+/* A validly signed kind 445 with the group's routing h that is nothing:
+ * anyone can publish one. */
+static G_GNUC_UNUSED gchar *
+junk_445(const gchar *h, guint n, gint64 created_at)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 445);
+  nostr_event_set_created_at(event, created_at);
+  g_autofree gchar *content = g_strdup_printf("AjunkjunkjunkjunkjunkjunkjunkjunkjunkjunkjunkjunkA%u", n);
+  nostr_event_set_content(event, content);
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("h", h, NULL));
+  nostr_event_set_tags(event, tags);
+  char *key = nostr_key_generate_private();
+  g_assert_cmpint(nostr_event_sign(event, key), ==, 0);
+  free(key);
+  char *out = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gchar *copy = g_strdup(out);
+  free(out);
+  return copy;
+}
 
 /* The newest kind 445 the relay stored (arrival order), or NULL. */
 static G_GNUC_UNUSED WireStored *

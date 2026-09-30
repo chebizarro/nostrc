@@ -596,7 +596,7 @@ struct _GhConversationView {
   GtkLabel *locked_label;
   GtkWidget *undecryptable_row;
   GtkLabel *undecryptable_label;
-  guint undecryptable;
+  gboolean decrypt_pending;
   AdwBreakpoint *compact_breakpoint;
   AdwAlertDialog *link_dialog;
   AdwAlertDialog *preview_dialog;
@@ -1559,24 +1559,23 @@ gh_conversation_view_set_locked_messages(GhConversationView *self, guint count)
 }
 
 void
-gh_conversation_view_set_undecryptable_messages(GhConversationView *self, guint count)
+gh_conversation_view_set_decrypt_pending(GhConversationView *self, gboolean pending)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
-  self->undecryptable = count;
-  if (count > 0) {
-    g_autofree gchar *text = g_strdup_printf(
-      g_dngettext(NULL, "Unable to decrypt %u message yet",
-                  "Unable to decrypt %u messages yet", count), count);
-    gtk_label_set_text(self->undecryptable_label, text);
-  }
-  gtk_widget_set_visible(self->undecryptable_row, count > 0);
+  self->decrypt_pending = !!pending;
+  /* No number (nostrc-oya4): what waits may be messages or group changes,
+   * sealed until the change that opens them arrives. */
+  gtk_label_set_text(self->undecryptable_label,
+                     _("Waiting for an earlier change to this group. Some messages may not "
+                       "show until it arrives."));
+  gtk_widget_set_visible(self->undecryptable_row, self->decrypt_pending);
 }
 
-guint
-gh_conversation_view_get_undecryptable_messages(GhConversationView *self)
+gboolean
+gh_conversation_view_get_decrypt_pending(GhConversationView *self)
 {
-  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), 0);
-  return self->undecryptable;
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  return self->decrypt_pending;
 }
 
 guint

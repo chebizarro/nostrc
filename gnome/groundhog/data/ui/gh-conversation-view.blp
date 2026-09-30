@@ -10,9 +10,9 @@ using Adw 1;
 // history not listed yet; its label is set from C) and "Loading earlier
 // messages…", "Jump to Latest" with the
 // number of new messages, "Waiting for Nostr Signer to unlock N
-// messages" (state 12) and, in an encrypted group, "Unable to decrypt N
-// messages yet" (state 13: events of an epoch this device has not reached,
-// or never after a removal; the count is GhMlsGroup:unreadable). The two alert dialogs confirm a link that is not a
+// messages" (state 12) and, in an encrypted group, "Waiting for an earlier
+// change to this group…" (state 13: GhMlsGroup:decrypt-pending; no number,
+// since what waits may be messages or group changes). The two alert dialogs confirm a link that is not a
 // plain https address (charter PD-3) and ask before a link preview connects
 // anywhere (charter §2.1, D13). Below 480sp the compact breakpoint narrows
 // the bubbles (charter §7.12). The minimum height leaves room for the
