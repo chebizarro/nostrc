@@ -230,7 +230,9 @@ void gnostr_pool_disconnect_all(GNostrPool *self);
 /**
  * gnostr_pool_subscribe:
  * @self: a #GNostrPool
- * @filters: (transfer none): filters for the subscription
+ * @filters: (transfer full): filters for the subscription, taken by the
+ *   returned subscription (see gnostr_subscription_new()); on failure (%NULL
+ *   returned) the caller keeps them
  * @error: (nullable): return location for a #GError
  *
  * Creates and fires a subscription across a connected relay in the pool.

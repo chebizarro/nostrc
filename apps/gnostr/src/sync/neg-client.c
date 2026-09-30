@@ -114,6 +114,25 @@ append_authors_json(GString *json, const char * const *authors, size_t author_co
  * specified kinds. This is the "local state fingerprint" that the
  * negentropy protocol will compare against the relay's event set.
  */
+/* Sends @frame (nostr_relay_write() copies it) without waiting for the
+ * answer, and lets go of the answer channel as nostr-relay.h says: close,
+ * free an Error already in it (a closing relay answers at once), unref. */
+static void
+neg_write(NostrRelay *relay, const char *frame)
+{
+  GoChannel *answer = nostr_relay_write(relay, (char *)frame);
+  if (!answer)
+    return;
+  go_channel_close(answer);
+  void *late = NULL;
+  while (go_channel_try_receive(answer, &late) == 0) {
+    if (late)
+      free_error((Error *)late);
+    late = NULL;
+  }
+  go_channel_unref(answer);
+}
+
 static gboolean
 build_kind_datasource(const int *kinds, size_t kind_count,
                       const char * const *authors, size_t author_count,
@@ -724,12 +743,8 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
     free(initial_hex);
     initial_hex = NULL;
 
-    /* nostr_relay_write takes ownership of a malloc'd string */
-    GoChannel *wch = nostr_relay_write(relay, strdup(neg_open));
+    neg_write(relay, neg_open);
     g_free(neg_open);
-    /* hq-e3ach: close + unref to drop our reference; write_operations
-     * holds the other ref and will free when done. */
-    if (wch) { go_channel_close(wch); go_channel_unref(wch); }
   }
 
   /* === Phase 5: Protocol loop === */
@@ -767,9 +782,8 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
       gchar *neg_msg = g_strdup_printf("[\"NEG-MSG\",\"%s\",\"%s\"]",
                                         sub_id, next_hex);
       free(next_hex);
-      GoChannel *wch = nostr_relay_write(relay, strdup(neg_msg));
+      neg_write(relay, neg_msg);
       g_free(neg_msg);
-      if (wch) { go_channel_close(wch); go_channel_unref(wch); }  /* hq-e3ach */
     }
 
     /* === Phase 5.5: Fetch missing events (NEED IDs) === */
@@ -783,9 +797,8 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
     /* Send NEG-CLOSE regardless of outcome */
     {
       gchar *neg_close = g_strdup_printf("[\"NEG-CLOSE\",\"%s\"]", sub_id);
-      GoChannel *wch = nostr_relay_write(relay, strdup(neg_close));
+      neg_write(relay, neg_close);
       g_free(neg_close);
-      if (wch) { go_channel_close(wch); go_channel_unref(wch); }  /* hq-e3ach */
     }
 
     if (proto_err) {

@@ -243,9 +243,16 @@ GoChannel *nostr_relay_get_write_channel(const NostrRelay *relay);
 /**
  * nostr_relay_write:
  * @relay: (nullable): relay
- * @msg: (transfer full): JSON string to send; will be freed by callee
+ * @msg: (transfer none): JSON string to send; copied, the caller keeps it
  *
  * Enqueue a JSON message for sending. Returns a channel that yields an Error* (or NULL) once written.
+ *
+ * The channel holds at most one answer, and an Error* may already be in it on
+ * return (a relay that is closing answers at once). A caller that stops
+ * waiting lets go of it in this order: go_channel_close(), then receive with
+ * go_channel_try_receive() until it fails and free_error() each non-NULL
+ * Error*, then go_channel_unref(). Closing first means no answer can arrive
+ * after the drain; closing and unreffing alone leaks an answer already there.
  *
  * Returns: (transfer full) (nullable): channel of Error* result
  */

@@ -70,7 +70,9 @@ enum {
 /**
  * gnostr_subscription_new:
  * @relay: a #GNostrRelay to subscribe on
- * @filters: (transfer none): core NostrFilters for the subscription
+ * @filters: (transfer full): core NostrFilters for the subscription. The
+ *   subscription takes them and frees them (through its core subscription)
+ *   when it is finalized; on failure (%NULL returned) the caller keeps them.
  *
  * Creates a new subscription in PENDING state. Call gnostr_subscription_fire()
  * to activate it and start receiving events.
