@@ -397,3 +397,79 @@ Separately: hosted `groundhog-sanitizers` runs the same set at the same `-j2` wi
 All four original blockers are closed, and the libnostr fixes are correct and race-free with the writer thread. One blocking item remains: as it stands, the sanitizer stage falsely blocks about one clean push in six (nostrc-vpha). Land it together with the library-leak rerun rule specified above. The rule is small, keeps every deterministic leak blocking, and leaves hosted CI strict. Fixing nostrc-vpha first is not required.
 
 **REQUEST CHANGES**
+
+---
+
+# Final pass 2: library-leak rerun rule (3fa0be54) and R1 (483d82ef)
+
+## Checks
+
+- Ran `check-unsequenced-args.py`, `test-linux-gate-smoke.sh` ("ok: the library-leak rerun rule (nostrc-vpha)"), `test-sanitizer-gate.sh` and `test-pre-push.sh` at 3fa0be54. All pass.
+- Classified the real per-test outputs I kept from the earlier passes, taken from the ctest logs of the unsuppressed and rate runs:
+
+| Failed test's output | Class | Correct? |
+|---|---|---|
+| dm-send: `new_error ← write_error ← go_wrapper_func` | library | yes |
+| privacy-e2e: `nostr_subscription_free_async ← gnostr_subscription_finalize …` | library | yes |
+| relay-wire: `go_channel_create ← nostr_connection_new ← … connect_async_thread` (×2 logs) | library | yes (the vpha class) |
+| mls-service: `go_channel_create ← nostr_relay_write ← write_thread gnome/groundhog/…` | implicating | yes: a Groundhog frame, so it blocks |
+| privacy-e2e: OpenSSL `CRYPTO_zalloc … ← gh-store.c ← gh-account-store.c` | implicating | yes, as specified |
+| account-store / nip29-service / group-ui (SIGTRAP, timeout) | none | yes: an ordinary rerun as before |
+
+## Is the classifier correct and fail-closed?
+
+I crafted outputs to try to sneak a Groundhog frame through. These fail closed correctly:
+- `hard`:
+  - a library record beside a UBSAN `runtime error:`;
+  - a library record beside `ERROR: AddressSanitizer: heap-use-after-free`;
+  - a record not ended by a blank line (the SUMMARY line is read as an unrecognised frame);
+  - a header with no record, a record cut off at the end of the output, and records without the LSan header.
+- `implicating`:
+  - a Groundhog function in a build-tree module (`(…/gnome/groundhog/test-…+0x10)`);
+  - a Groundhog path given without the source root;
+  - a lookalike prefix (`libnostr-extra/`);
+  - an inline glib header frame (`/usr/include/…`), which is stricter than the spec, harmlessly.
+
+**Holes.** Three inputs get through as `library`. None is reachable in today's build. All are cheap to close:
+
+- **H1. `..` in a frame path is not normalised.** `/work/src/libnostr/../gnome/groundhog/src/relay/x.c` and `/work/src/nostr-gobject/src/../../gnome/groundhog/include/gh.h` both classify as library, as does a module `/usr/lib/../../work/build/gnome/groundhog/libgh.so`.
+  - The real build does spell include directories that climb out of an allowed prefix: `-I/work/src/libgo/../libnostr/include`, 1702 uses. But every one of them lands in another allowed prefix, and the deps log holds no header path escaping an allowed prefix.
+  - So a Groundhog frame could only arrive this way if libnostr, libgo, nostr-gobject or libjson included Groundhog code: a dependency inversion.
+  - Fix: apply `os.path.normpath` to the path (and to module paths) before the prefix test, and treat any result that still starts with `../` as implicating.
+- **H2. `/libsanitizer/` matches anywhere in the path.** So `/work/src/gnome/groundhog/libsanitizer/x.c` is a library frame. This is contrived. Fix: accept it only for paths outside the source root, e.g. starting with `../../../../src/libsanitizer/` as GCC's runtime is spelled.
+- **H3. `FRAME` is not anchored at the end.** A line holding a library frame followed by a second, Groundhog, location is read as the library frame alone. Real ASan output prints one frame per line, so this is not reachable. Fix: add `(?:\s+\(BuildId: [0-9a-f]+\))?\s*$`.
+
+In every case the damage is bounded by the rule's design:
+- only a leak that is *also* racy slips through, since a deterministic one reproduces in the rerun and blocks;
+- hosted CI never reruns.
+
+I recommend closing H1–H3 in a small follow-up. They do not block.
+
+## The deviation (one or more spaces before `(`)
+
+Right. Real symbolizer output for a frame with no source info has two spaces between the address and the module, as in my captured logs: `#6 0xffffb56c2810  (/lib/aarch64-linux-gnu/libgio-2.0.so.0+0xc2810)`. Frames with source info have one space before `in`. Accepting ` +` covers both, and admits no frame that would change a classification.
+
+## Does the policy match the spec?
+
+Yes, point by point:
+1. **Hard reports** (non-LSan ERROR, `runtime error:`, a non-leak SUMMARY, an LSan ERROR other than "detected memory leaks") block with no rerun.
+2. **Parsing:** records run from `Direct|Indirect leak of` to a blank line, and the source root is stripped. The allow-list is the single constant `LIBRARY_LEAK_ALLOW`, plus the sanitizer runtime and modules under `/lib/` or `/usr/lib/`. Any other frame, or an unrecognised line, implicates.
+3. **Classification:** zero records, an empty record, or a record cut off makes the test hard.
+4. **Decision:**
+   - any hard or implicating test blocks with no rerun, and the classifications are printed;
+   - more than `LIBRARY_LEAK_MAX=2` library-leak tests block;
+   - otherwise there is one serial rerun under the held locks and the same env, and any failure of the rerun blocks.
+5. **Visibility:** reruns are announced as `!! LIBRARY LEAK RERUN (nostrc-vpha)` with their records and the first run's whole output. They are tagged `lib-leak` in gate-history and counted separately.
+6. **Sunset:** marked for removal in the script header, AGENTS.md and scripts/README.md.
+7. **Tests:** every case I listed is covered, including a repeated leak in the rerun, a Groundhog frame, library beside Groundhog, UAF, OpenSSL via store, libmarmot, an unsymbolized project module, a header without a record, and three library-leak tests. They also cover two library leaks plus a report-free flake, and the smoke run being unaffected.
+8. **Hosted CI** is unchanged.
+
+A classifier crash (a Python exception) aborts the stage under `set -e`: it blocks without a message, so it fails closed.
+
+**R1 (483d82ef).** Correct. `nostr_subscription_close()` and `fire()` now `free_error()` a received Error when there is no `err` to take it. I agree that a deterministic test isn't feasible, since there is no seam to order `write_error()`'s thread against a 0-ms select.
+
+## Final verdict
+
+The rule is correct on every real leak shape seen in this review. It fails closed on every realistic malformed or mixed output I could construct, and it matches the specification. Both planted leaks still block; the author reports 12/12 clean passes. The three classifier holes (H1 path normalisation, H2 sanitizer-path anchoring, H3 end-anchoring) are unreachable in today's build and are recommended as a follow-up, not a condition.
+
+**APPROVED**
