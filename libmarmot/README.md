@@ -451,7 +451,8 @@ kind:445 failed as undecryptable.
   result is `MARMOT_RESULT_COMMIT` with the inactive group.
   `marmot_get_group_removal()` says who removed us, from which epoch, and
   whether it is final. It is kept in `mls_kv` under `mls_group_removed`
-  (version 2: epoch, flags, the removal's committer and digest) in the same
+  (version 3: epoch, flags, the removal's committer and digest, later-epoch
+  event ids) in the same
   transaction as the inactive state; a later Welcome into the group clears
   it; a record that does not parse is `MARMOT_ERR_DESERIALIZATION`, never
   "not removed".
@@ -463,6 +464,19 @@ kind:445 failed as undecryptable.
   removal that beats it replaces it. The same holds, against the Commit that
   led there, for Commits of the parent epoch while the retained parent is
   kept in full.
+- **Final once the group moved on** (review B2). Finality judged only at
+  eviction would never come in a common group: the removed member cannot
+  read later epochs, so neither the retained parent retires nor does a
+  lower-keyed admin stop counting. So a removal is also final after
+  `MARMOT_REMOVAL_FINAL_AFTER` (5) distinct kind:445 events of the group that
+  none of our exporter secrets opens. Those are of later epochs, and a
+  Commit that could still beat the removal is of the removal's epoch and
+  would open. Their ids are kept in the removal record (version 3) so a copy
+  from another relay counts once. The residual risk is a winner withheld
+  from us while the group went several epochs past it, which the one-epoch
+  horizon refuses for every member anyway; anyone can post undecryptable
+  junk with the group's `h`, so junk can make a contested removal final
+  early (the same outcome as N2 below).
 - **Final: the keys go** (review N1). A removal nobody can beat deletes the
   removed epoch's MLS state, the retained parent and the group's exporter
   secrets, so a stolen store no longer opens them. The group record stays.

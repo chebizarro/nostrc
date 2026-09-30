@@ -26,6 +26,26 @@ extern "C" {
 /* mls_kv label of who removed our leaf (marmot_get_group_removal()). */
 #define MARMOT_MLS_REMOVED_LABEL "mls_group_removed"
 
+/**
+ * W22 review B2: an event of the removed group that none of our exporter
+ * secrets opens is of a later epoch -- the group moved on without us.  A
+ * Commit that could still beat the removal is of the removal's epoch and
+ * would open, so it is never counted.  Each such event (by id, once) is
+ * counted in the removal record; after MARMOT_REMOVAL_FINAL_AFTER the removal
+ * is final and the removed epoch's keys are deleted.  *out_final: final now.
+ * In the caller's transaction.
+ */
+MarmotError marmot_commit_removal_note_later(Marmot *m, MarmotGroup *group,
+                                             const char *event_id_hex, bool *out_final);
+
+/**
+ * The order in which marmot_clear_pending_commit() would replay the stored
+ * pending Commit's deferred Commits (indices in arrival order), winner
+ * first.  For tests.
+ */
+MarmotError marmot_commit_deferred_replay_order(Marmot *m, const MarmotGroupId *gid,
+                                                size_t *order, size_t max, size_t *out_count);
+
 /** A Welcome made us a member again: forget an earlier removal. */
 MarmotError marmot_commit_clear_removal(Marmot *m, const MarmotGroupId *gid);
 

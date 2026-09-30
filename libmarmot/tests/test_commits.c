@@ -4384,6 +4384,12 @@ test_deferred_replay_winner_first(void)
     CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "the removal deferred: %d", err);
     deliver(&t.charlie, ren, &err, NULL);
     CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "Bob's rename deferred: %d", err);
+    /* The winner (Bob's rename, which arrived second) is replayed first
+     * (review F3). */
+    size_t order[16], n = 0;
+    OK(marmot_commit_deferred_replay_order(t.charlie.m, &t.gid, order, 16, &n));
+    CHECK(n == 2 && order[0] == 1 && order[1] == 0, "replay order %zu: %zu, %zu", n,
+          order[0], order[1]);
     OK(marmot_clear_pending_commit(t.charlie.m, &t.gid));   /* no relay took Charlie's */
     CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "the removal lost");
     MarmotGroup *g = NULL;
@@ -4448,6 +4454,109 @@ test_corrupt_removal_record(void)
     trio_clear(&t);
 }
 
+/* The group moves on after a removal that stays contested (Alice removes
+ * Charlie; Bob's key sorts lower): later-epoch events Charlie cannot open
+ * make it final after MARMOT_REMOVAL_FINAL_AFTER of them -- each counted
+ * once -- and the removed epoch's keys go (W22 review B2). */
+static char *
+later_event(Trio *t, int i)
+{
+    if (i % 2 == 0) {
+        char name[32];
+        snprintf(name, sizeof(name), "Later %d", i);
+        char *commit = rename_group(&t->bob, &t->gid, name);
+        expect_commit(&t->alice, commit, "Alice follows Bob");
+        return commit;
+    }
+    return app_message(&t->bob, &t->gid, "later");
+}
+
+static void
+test_contested_removal_becomes_final(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, rm, "Bob applies the removal");
+    MarmotError err;
+    CHECK(deliver_state(&t.charlie, rm, &err, NULL) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "removed: err=%d", err);
+    CHECK(!removal_final(&t.charlie, &t.gid), "contested: Bob could still win");
+    for (int i = 0; i < MARMOT_REMOVAL_FINAL_AFTER; i++) {
+        char *later = later_event(&t, i);
+        deliver(&t.charlie, later, &err, NULL);
+        CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "later event %d: %d", i, err);
+        if (i == 0) {
+            deliver(&t.charlie, later, &err, NULL);   /* another relay's copy */
+            CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "the copy: %d", err);
+        }
+        bool last = i + 1 == MARMOT_REMOVAL_FINAL_AFTER;
+        CHECK(removal_final(&t.charlie, &t.gid) == last, "final after %d later events: %d",
+              i + 1, !last);
+        CHECK(has_state(&t.charlie, &t.gid, "mls_group") == !last, "keys after %d", i + 1);
+        free(later);
+    }
+    uint8_t secret[32];
+    CHECK(t.charlie.m->storage->get_exporter_secret(t.charlie.m->storage->ctx, &t.gid, t.epoch,
+                                                    secret) != MARMOT_OK,
+          "the removed epoch's exporter secret is gone");
+    free(rm);
+    trio_clear(&t);
+}
+
+/* Finality also waits for the retained parent (review F2): Charlie applied
+ * Alice's rename, which Bob could still beat, and then Bob -- whom no admin
+ * can beat -- removes him: not final while that parent is kept in full. */
+static void
+test_removal_final_waits_for_parent(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *ren = rename_group(&t.alice, &t.gid, "Alice's");
+    expect_commit(&t.bob, ren, "Bob follows Alice");
+    expect_commit(&t.charlie, ren, "Charlie follows Alice");
+    char *rm = NULL;
+    OK(marmot_remove_members(t.bob.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    MarmotError err;
+    CHECK(deliver_state(&t.charlie, rm, &err, NULL) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "removed: err=%d", err);
+    CHECK(!removal_final(&t.charlie, &t.gid), "the parent could still be replaced");
+    CHECK(has_state(&t.charlie, &t.gid, MARMOT_MLS_PARENT_LABEL), "the parent is kept");
+    free(rm);
+    free(ren);
+    trio_clear(&t);
+}
+
+/* A rival removal that beats the stored one replaces it (review F6):
+ * Alice's removal first (contested by Bob), then Bob's of the same epoch. */
+static void
+test_rival_removal_replaces(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *by_alice = NULL, *by_bob = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1,
+                             &by_alice));
+    OK(marmot_remove_members(t.bob.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &by_bob));
+    MarmotError err;
+    CHECK(deliver_state(&t.charlie, by_alice, &err, NULL) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "Alice's removal: err=%d", err);
+    uint8_t by[32];
+    CHECK(removal_of(&t.charlie, &t.gid, by, NULL) && memcmp(by, t.alice.pk, 32) == 0,
+          "by Alice first");
+    CHECK(deliver_state(&t.charlie, by_bob, &err, NULL) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "Bob's removal: err=%d", err);
+    CHECK(removal_of(&t.charlie, &t.gid, by, NULL) && memcmp(by, t.bob.pk, 32) == 0,
+          "Bob's removal replaced it");
+    CHECK(removal_final(&t.charlie, &t.gid), "nobody can beat Bob's");
+    CHECK(!has_state(&t.charlie, &t.gid, "mls_group"), "the keys are gone");
+    free(by_alice);
+    free(by_bob);
+    trio_clear(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -4507,6 +4616,9 @@ main(int argc, char **argv)
     RUN(test_deferred_replay_winner_first);
     RUN(test_removal_drops_own_pending);
     RUN(test_corrupt_removal_record);
+    RUN(test_contested_removal_becomes_final);
+    RUN(test_removal_final_waits_for_parent);
+    RUN(test_rival_removal_replaces);
     printf("All commit tests passed\n");
     return 0;
 }

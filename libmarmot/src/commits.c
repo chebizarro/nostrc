@@ -47,10 +47,12 @@
 #define PENDING_MAX_DEFERRED 16
 /* Who removed our leaf (nostrc-xrya): u8 version, u64 epoch (the one the
  * removing Commit left), u8 flags (1 from the retained parent, 2 final),
- * [32] committer, [32] digest.  The key is privileged (a Remove). */
+ * [32] committer, [32] digest; since version 3, u8 n and n event ids ([32]
+ * each) of later-epoch events seen (W22 review B2).  The key is privileged
+ * (a Remove).  Version 2 (this branch's first record) reads as n = 0. */
 #define REMOVED_LABEL   MARMOT_MLS_REMOVED_LABEL
-#define REMOVED_VERSION 2
-#define REMOVED_LEN     (1 + 8 + 1 + 32 + 32)
+#define REMOVED_VERSION 3
+#define REMOVED_V2_LEN  (1 + 8 + 1 + 32 + 32)
 #define REMOVED_FROM_PARENT 1
 #define REMOVED_FINAL       2
 
@@ -1584,19 +1586,24 @@ typedef struct {
     bool            from_parent;  /* judged on the retained parent (it beat our Commit) */
     bool            final;        /* nobody can beat it any more */
     MarmotCommitKey key;          /* privileged */
+    uint8_t         n_later;      /* later-epoch events seen (distinct ids) */
+    uint8_t         later[MARMOT_REMOVAL_FINAL_AFTER][32];
 } Removal;
 
 static MarmotError
 removal_store(Marmot *m, const uint8_t *gid, size_t gid_len, const Removal *rm)
 {
-    uint8_t rec[REMOVED_LEN];
+    uint8_t rec[REMOVED_V2_LEN + 1 + MARMOT_REMOVAL_FINAL_AFTER * 32];
     rec[0] = REMOVED_VERSION;
     for (int i = 0; i < 8; i++) rec[1 + i] = (uint8_t)(rm->epoch >> (56 - 8 * i));
     rec[9] = (uint8_t)((rm->from_parent ? REMOVED_FROM_PARENT : 0) |
                        (rm->final ? REMOVED_FINAL : 0));
     memcpy(rec + 10, rm->key.committer, 32);
     memcpy(rec + 42, rm->key.digest, 32);
-    return m->storage->mls_store(m->storage->ctx, REMOVED_LABEL, gid, gid_len, rec, sizeof(rec));
+    rec[REMOVED_V2_LEN] = rm->n_later;
+    memcpy(rec + REMOVED_V2_LEN + 1, rm->later, (size_t)rm->n_later * 32);
+    size_t len = REMOVED_V2_LEN + 1 + (size_t)rm->n_later * 32;
+    return m->storage->mls_store(m->storage->ctx, REMOVED_LABEL, gid, gid_len, rec, len);
 }
 
 /* MARMOT_ERR_STORAGE_NOT_FOUND when there is none; MARMOT_ERR_DESERIALIZATION
@@ -1611,9 +1618,23 @@ removal_load(Marmot *m, const uint8_t *gid, size_t gid_len, Removal *out)
     MarmotError err = m->storage->mls_load(m->storage->ctx, REMOVED_LABEL, gid, gid_len,
                                            &rec, &len);
     if (err != MARMOT_OK) return err;
-    if (!rec || len != REMOVED_LEN || rec[0] != REMOVED_VERSION ||
-        (rec[9] & ~(REMOVED_FROM_PARENT | REMOVED_FINAL)) != 0) {
+    bool ok = rec && len >= REMOVED_V2_LEN &&
+              (rec[9] & ~(REMOVED_FROM_PARENT | REMOVED_FINAL)) == 0;
+    if (ok && rec[0] == 2) {
+        ok = len == REMOVED_V2_LEN;
+    } else if (ok && rec[0] == REMOVED_VERSION) {
+        ok = len > REMOVED_V2_LEN && rec[REMOVED_V2_LEN] <= MARMOT_REMOVAL_FINAL_AFTER &&
+             len == REMOVED_V2_LEN + 1 + (size_t)rec[REMOVED_V2_LEN] * 32;
+        if (ok) {
+            out->n_later = rec[REMOVED_V2_LEN];
+            memcpy(out->later, rec + REMOVED_V2_LEN + 1, (size_t)out->n_later * 32);
+        }
+    } else {
+        ok = false;
+    }
+    if (!ok) {
         free(rec);
+        memset(out, 0, sizeof(*out));
         return MARMOT_ERR_DESERIALIZATION;
     }
     for (int i = 0; i < 8; i++) out->epoch = (out->epoch << 8) | rec[1 + i];
@@ -1748,6 +1769,35 @@ marmot_get_group_removal(Marmot *m, const MarmotGroupId *mls_group_id, bool *out
     return MARMOT_OK;
 }
 
+MarmotError
+marmot_commit_removal_note_later(Marmot *m, MarmotGroup *group, const char *event_id_hex,
+                                 bool *out_final)
+{
+    if (out_final) *out_final = false;
+    if (!m || !group || !event_id_hex || strlen(event_id_hex) != 64)
+        return MARMOT_ERR_INVALID_ARG;
+    uint8_t id[32];
+    if (marmot_hex_decode(event_id_hex, id, 32) != 0) return MARMOT_ERR_INVALID_ARG;
+    const uint8_t *gid = group->mls_group_id.data;
+    size_t gid_len = group->mls_group_id.len;
+    Removal rm;
+    MarmotError err = removal_load(m, gid, gid_len, &rm);
+    if (err != MARMOT_OK) return err;
+    if (rm.final) {
+        if (out_final) *out_final = true;
+        return MARMOT_OK;
+    }
+    for (uint8_t i = 0; i < rm.n_later; i++)
+        if (memcmp(rm.later[i], id, 32) == 0) return MARMOT_OK;   /* counted already */
+    memcpy(rm.later[rm.n_later++], id, 32);
+    rm.final = rm.n_later >= MARMOT_REMOVAL_FINAL_AFTER;
+    if (rm.final) rm.n_later = 0;   /* no longer needed */
+    err = removal_store(m, gid, gid_len, &rm);
+    if (err == MARMOT_OK && rm.final) err = forget_keys(m, group);
+    if (err == MARMOT_OK && out_final) *out_final = rm.final;
+    return err;
+}
+
 /* The routing header of a Commit MLSMessage: FALSE when it is not one. */
 static bool
 commit_header(const uint8_t *msg, size_t msg_len, uint64_t *epoch, uint32_t *sender)
@@ -1824,6 +1874,27 @@ deferred_order(const Marmot *m, const MlsGroup *cur, const PendingCommit *p, siz
     }
     qsort(rank, p->deferred_count, sizeof(rank[0]), deferred_rank_cmp);
     for (size_t i = 0; i < p->deferred_count; i++) order[i] = rank[i].index;
+}
+
+MarmotError
+marmot_commit_deferred_replay_order(Marmot *m, const MarmotGroupId *gid, size_t *order,
+                                    size_t max, size_t *out_count)
+{
+    *out_count = 0;
+    PendingCommit p;
+    MarmotError err = pending_load(m, gid->data, gid->len, &p);
+    if (err != MARMOT_OK) return err;
+    MlsGroup cur;
+    err = load_current(m, gid, &cur);
+    if (err == MARMOT_OK && p.deferred_count <= max) {
+        deferred_order(m, &cur, &p, order);
+        *out_count = p.deferred_count;
+    } else if (err == MARMOT_OK) {
+        err = MARMOT_ERR_INVALID_ARG;
+    }
+    mls_group_free(&cur);
+    pending_clear(&p);
+    return err;
 }
 
 /* A Commit processed: marked (best effort: the digest checks catch a

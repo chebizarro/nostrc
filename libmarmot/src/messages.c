@@ -909,9 +909,13 @@ process_group_event(Marmot *m, const char *group_event_json,
     sodium_memzero(exporter_secret, sizeof(exporter_secret));
 
     if (!decrypted_ok) {
+        if (contested_removal && parsed.event_id &&
+            marmot_commit_removal_note_later(m, group, parsed.event_id, NULL) == MARMOT_OK)
+            marmot_txn_keep(m);   /* counted, though the event is refused */
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);
-        /* A removed member reads nothing of later epochs. */
+        /* A removed member reads nothing of later epochs -- and each one it
+         * cannot open says the group moved on without it (review B2). */
         return contested_removal ? MARMOT_ERR_USE_AFTER_EVICTION : MARMOT_ERR_NIP44;
     }
 

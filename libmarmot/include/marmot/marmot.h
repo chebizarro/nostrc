@@ -745,13 +745,22 @@ MarmotError marmot_leave_group(Marmot *m,
  * else is MARMOT_ERR_USE_AFTER_EVICTION.  A Commit that beats the removal
  * and keeps our leaf re-activates the group in its epoch (the removal is
  * forgotten; the result is MARMOT_RESULT_COMMIT, the group active); a
- * removal that beats it replaces it.  Once final, the removed epoch's
- * secrets are deleted.  A later Welcome into the same group clears it.
+ * removal that beats it replaces it.  The removal also becomes final once
+ * MARMOT_REMOVAL_FINAL_AFTER distinct kind:445 events of the group arrived
+ * that none of our epochs' secrets opens: the group has moved on without us
+ * (a winner of the removal's epoch would open), so a Commit that could still
+ * undo the removal was withheld from us; the one-epoch horizon refuses such
+ * a late winner for every member anyway (W22 review B2).  Once final, the
+ * removed epoch's secrets are deleted.  A later Welcome into the same group
+ * clears it.
  * Without a removal (never removed, or left), *out_removed is FALSE.
  *
  * Returns: MARMOT_OK; MARMOT_ERR_DESERIALIZATION for a record that does
  * not parse (the group is inactive: say that it ended, not why)
  */
+/** Later-epoch events after which a removal is final (see below). */
+#define MARMOT_REMOVAL_FINAL_AFTER 5
+
 MarmotError marmot_get_group_removal(Marmot *m,
                                      const MarmotGroupId *mls_group_id,
                                      bool *out_removed, uint8_t out_remover[32],
