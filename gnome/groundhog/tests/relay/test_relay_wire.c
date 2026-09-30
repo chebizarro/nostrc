@@ -180,6 +180,46 @@ test_cancel_closes_relay_subscription(void)
   relay_clear(&relay);
 }
 
+/* nostrc-2opq: a peer that went away before its stored answer was sent (an
+ * app restarting mid-catch-up) gets nothing more from the relay: sending on a
+ * connection that is no longer open is a libsoup critical, fatal in these
+ * tests (groundhog-mls-service's send-republished-after-restart hit it in a
+ * parallel Linux gate). Deterministic: the answer is sent after the close. */
+static void
+test_no_answer_to_a_closed_peer(void)
+{
+  WireRelay relay = { .serve = TRUE };   /* stores and answers from what it keeps */
+  relay_init(&relay);
+  GhRelayScope *scope = gh_relay_scope_new(1, any_filters(), NULL, NULL);
+  g_assert_true(gh_relay_scope_add_url(scope, relay.url, NULL));
+  gh_relay_scope_start(scope);
+  wait_for_reqs(&relay, 1);
+  gh_relay_scope_cancel(scope);
+  wait_for_close(&relay, 1);
+  g_assert_cmpuint(relay.connections->len, ==, 1);
+  SoupWebsocketConnection *gone = g_ptr_array_index(relay.connections, 0);
+  g_assert_cmpint(soup_websocket_connection_get_state(gone), !=, SOUP_WEBSOCKET_STATE_OPEN);
+
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 1);
+  nostr_event_set_created_at(event, 1700000000);
+  nostr_event_set_content(event, "stored before the answer");
+  g_assert_cmpint(nostr_event_sign(event,
+    "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  wire_relay_inject(&relay, json);
+  free(json);
+  guint frames = relay.frames->len, served = relay.served;
+  NostrFilters *filters = any_filters();
+  wire_answer_req(&relay, gone, "late", filters);   /* the answer, after the peer left */
+  nostr_filters_free(filters);
+  g_assert_cmpuint(relay.frames->len, ==, frames);
+  g_assert_cmpuint(relay.served, ==, served);
+  gh_relay_scope_unref(scope);
+  relay_clear(&relay);
+}
+
 /* ---- NIP-42 against a real relay that requires AUTH for REQ ---- */
 
 /* The scope always has the account signer; @mode is the URL's identity. */
@@ -594,6 +634,7 @@ main(int argc, char **argv)
   };
   wire_add_tests(cases, G_N_ELEMENTS(cases));
   /* The harness itself, no traffic: not a wire case (no Tor variant). */
+  g_test_add_func("/groundhog/relay/no-answer-to-a-closed-peer", test_no_answer_to_a_closed_peer);
   g_test_add_func("/groundhog/relay/held-port", test_held_port);
   g_test_add_func("/groundhog/relay/loopback-listener", test_loopback_listener);
   return g_test_run();

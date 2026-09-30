@@ -176,10 +176,21 @@ wire_record(WireRelay *relay, SoupWebsocketConnection *connection, gboolean inbo
   g_ptr_array_add(relay->frames, frame);
 }
 
-/* Every frame the relay sends goes through here, so it can be recorded. */
+/* Every frame the relay sends goes through here, so it can be recorded. A
+ * peer that went away (libsoup closed the connection, e.g. on a write error
+ * in the middle of a stored answer) gets nothing more: sending on a
+ * connection that is not open is a critical (nostrc-2opq). */
+static G_GNUC_UNUSED gboolean
+wire_open(SoupWebsocketConnection *connection)
+{
+  return soup_websocket_connection_get_state(connection) == SOUP_WEBSOCKET_STATE_OPEN;
+}
+
 static G_GNUC_UNUSED void
 wire_send(SoupWebsocketConnection *connection, const gchar *text)
 {
+  if (!wire_open(connection))
+    return;
   wire_record(wire_relay_of(connection), connection, FALSE, text);
   soup_websocket_connection_send_text(connection, text);
 }
@@ -291,6 +302,8 @@ static G_GNUC_UNUSED void
 wire_send_event(SoupWebsocketConnection *connection, const gchar *sub_id, WireStored *stored)
 {
   WireRelay *relay = wire_relay_of(connection);
+  if (!wire_open(connection))
+    return;   /* not served: nobody is there */
   g_autofree gchar *frame = g_strdup_printf("[\"EVENT\",\"%s\",%s]", sub_id, stored->json);
   if (relay)
     relay->served++;
