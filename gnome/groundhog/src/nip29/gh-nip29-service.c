@@ -101,7 +101,8 @@ struct _GhNip29Room {
   gint64 cursor;               /* newest message created_at stored with nothing missing
                                 * before it (bounded by now): the next REQ's since */
   gint64 sync_cursor;          /* newest stored by this REQ's backfill; committed at EOSE */
-  gboolean sync_failed;        /* an admission of this REQ failed: the cursor stays */
+  gboolean sync_failed;        /* an admission of this REQ failed, or its backfill came
+                                * back incomplete: the cursor stays */
   gboolean backfilled;         /* the group's first EOSE ever came */
   gint64 joined_at;            /* local time of the last join request: older is history */
   gint64 left_at;              /* local time of the last leave request */
@@ -1144,11 +1145,14 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
       room->backfilled = TRUE;
       /* The backfill is complete (paged past the relay's cap): what it
        * stored has nothing missing before it. An incomplete one keeps the
-       * cursor, so the next REQ asks for that stretch again. */
-      if (update->incomplete)
+       * cursor for as long as this REQ lives -- live messages included, or
+       * the first one would move it past the unfetched stretch (review B1)
+       * -- so the next REQ asks for that stretch again. */
+      if (update->incomplete) {
+        room->sync_failed = TRUE;
         g_message("Groundhog could not fetch every older message of a group; its read "
                   "cursor stays where it was");
-      else if (!room->sync_failed && room->sync_cursor > room->cursor)
+      } else if (!room->sync_failed && room->sync_cursor > room->cursor)
         room->cursor = room->sync_cursor;
       room_save(room);
       break;

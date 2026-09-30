@@ -1439,6 +1439,60 @@ test_backfill_paged_past_relay_cap(void)
   nip29_relay_clear(&relay);
 }
 
+/* Review B1 (probe P2): a relay caps every answer at 25 and holds 30 group
+ * messages in one second, so paging cannot fetch them all and the EOSE is
+ * incomplete. The cursor must then hold for the rest of that REQ: a live
+ * message afterwards must not move it past the unfetched stretch, and the
+ * next REQ asks from where the last complete backfill ended. */
+static void
+test_incomplete_backfill_holds_cursor(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "pizza", "Pizza Lovers");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  NostrEvent *first = member_post(&relay, KEY_BOB, "pizza", "before");
+  const gint64 first_at = nostr_event_get_created_at(first);
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "pizza", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  wait_messages(f.model, room_id, 1);
+  g_clear_object(&room);
+
+  const gint64 burst = nip29_now(&relay);
+  for (guint i = 0; i < 30; i++) {
+    g_autofree gchar *text = g_strdup_printf("burst %u", i);
+    g_ptr_array_add(relay.events,
+                    nip29_member_event(gh_test_secret[KEY_BOB], 9, burst, "pizza", text));
+  }
+  relay.max_limit = 25;
+  restart(&f);
+  g_autoptr(GhNip29Room) back = gh_nip29_service_lookup(f.service, relay.url, "pizza");
+  wait_read(back, GH_NIP29_READ_LIVE);
+  wait_messages(f.model, room_id, 1 + 25);
+  GhConversation *conversation = gh_conversation_store_lookup(f.model, room_id);
+  guint stored = g_list_model_get_n_items(G_LIST_MODEL(conversation));
+  g_assert_cmpuint(stored, <, 1 + 30);                 /* genuinely incomplete */
+  live_post(&relay, KEY_BOB, "pizza", "live after the gap");
+  wait_messages(f.model, room_id, stored + 1);
+  g_clear_object(&back);
+
+  guint frames = relay.req_frames->len;
+  restart(&f);
+  wait_count(&relay.req_frames->len, frames + 1);
+  const gchar *req = g_ptr_array_index(relay.req_frames, frames);
+  const gchar *since = strstr(req, "\"since\":");
+  g_assert_nonnull(since);
+  gint64 asked = g_ascii_strtoll(since + strlen("\"since\":"), NULL, 10);
+  g_assert_cmpint(asked, ==, first_at - GH_NIP29_SERVICE_CURSOR_OVERLAP);
+  g_assert_cmpint(asked, <=, burst);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 static void
 test_leave_and_removed(void)
 {
@@ -1505,6 +1559,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/cursor-waits-for-eose", test_cursor_waits_for_eose);
   g_test_add_func("/groundhog/nip29-service/backfill-paged-past-relay-cap",
                   test_backfill_paged_past_relay_cap);
+  g_test_add_func("/groundhog/nip29-service/incomplete-backfill-holds-cursor",
+                  test_incomplete_backfill_holds_cursor);
   g_test_add_func("/groundhog/nip29-service/leave-and-removed", test_leave_and_removed);
   gint rc = g_test_run();
   gh_test_bus_down(&shared_bus);
