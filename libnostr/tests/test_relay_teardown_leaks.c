@@ -24,6 +24,12 @@
  *              (nostrc-xbso R3).
  *  destroy     A CLOSED reason and a COUNT result nobody read are freed with
  *              the subscription (nostrc-jwj0's dispatch_closed allocation).
+ *  contexts    A background context's last unref frees it, and a
+ *              subscription releases its own context (nostrc-jw23: neither
+ *              was ever freed; every subscription leaked one).
+ *  filters     Filters handed over with nostr_subscription_set_filters() are
+ *              freed with the subscription, after an async cleanup too
+ *              (GNostrSubscription's finalize dropped them, nostrc-jw23).
  *
  * Leaks themselves are visible to LeakSanitizer only (the Linux ASAN build:
  * groundhog-ci.yml's groundhog-sanitizers job runs this test); without it the
@@ -370,6 +376,41 @@ static void test_destroy_frees_unread_results(void) {
     printf("  [ok] a subscription frees the CLOSED reason and COUNT nobody read\n");
 }
 
+/* nostrc-jw23: contexts. A background context used to be kept forever (no
+ * vtable, so go_context_free() did nothing), and a subscription never let
+ * go of its own context. */
+static void test_contexts_are_released(void) {
+    GoContext *bg = go_context_background();
+    CHECK(bg && go_context_done(bg) == NULL); /* vtable-less, as before */
+    go_context_unref(bg);
+
+    NostrRelay *relay = relay_for_port(1); /* never connected */
+    NostrFilters *filters = any_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub && sub->context);
+    nostr_subscription_free(sub); /* destroys it and its context */
+    nostr_filters_free(filters);
+    nostr_relay_free(relay);
+    printf("  [ok] background and subscription contexts are released\n");
+}
+
+/* nostrc-jw23: filters handed to the subscription go with it, also when an
+ * abandoned async cleanup destroys it (GNostrSubscription's finalize). */
+static void test_set_filters_owned_by_subscription(void) {
+    NostrRelay *relay = relay_for_port(1); /* never connected */
+    NostrFilters *filters = any_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub);
+    nostr_subscription_set_filters(sub, filters); /* same pointer: now owned */
+    CHECK(nostr_subscription_get_filters(sub) == filters);
+    AsyncCleanupHandle *handle = nostr_subscription_free_async(sub, 1000);
+    CHECK(handle);
+    nostr_subscription_cleanup_abandon(handle);
+    /* No wait: libnostr finishes the cleanup at exit if it is still running. */
+    nostr_relay_free(relay); /* the subscription keeps its own reference */
+    printf("  [ok] set filters are freed with the subscription\n");
+}
+
 int main(void) {
     unsetenv("NOSTR_TEST_MODE"); /* the real network path */
     lws_set_log_level(LLL_ERR, NULL);
@@ -381,6 +422,8 @@ int main(void) {
     test_late_answer_is_freed();
     test_close_answers_queued_writes();
     test_destroy_frees_unread_results();
+    test_contexts_are_released();
+    test_set_filters_owned_by_subscription();
 
     server_stop();
 

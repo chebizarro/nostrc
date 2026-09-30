@@ -97,9 +97,16 @@ void base_context_wait(void *ctx) {
 
 // Wrapper functions to avoid direct vtable access
 void go_context_free(GoContext *ctx) {
-    if (ctx && ctx->vtable && ctx->vtable->free) {
-        ctx->vtable->free(ctx);
+    if (!ctx) return;
+    if (ctx->vtable) {
+        if (ctx->vtable->free) ctx->vtable->free(ctx);
+        return;
     }
+    /* nostrc-jw23: go_context_background() sets no vtable, so neither its
+     * last go_context_unref() nor go_context_free() ever freed it (nor its
+     * done channel): every background context leaked. It is a plain base
+     * context; free it as one. */
+    base_context_free(ctx);
 }
 
 // Wrapper functions

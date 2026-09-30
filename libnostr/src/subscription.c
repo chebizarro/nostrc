@@ -191,6 +191,7 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     sub->priv->seen_cursor_events = NULL;
     sub->priv->replay_boundary_created_at = 0;
     sub->priv->replay_boundary_events = NULL;
+    sub->priv->owns_filters = false;
 
     // Initialize queue metrics (nostrc-sjv)
     QueueMetrics *m = &sub->priv->metrics;
@@ -310,6 +311,17 @@ static void subscription_destroy(NostrSubscription *sub) {
         }
         go_channel_free(sub->priv->count_result);
         sub->priv->count_result = NULL;
+    }
+    /* nostrc-jw23: the subscription's own context (go_context_with_cancel in
+     * nostr_subscription_new) was canceled and never released. Nothing reads
+     * it any more: the lifecycle worker has exited. */
+    go_context_unref(sub->context);
+    sub->context = NULL;
+    /* Filters handed over with nostr_subscription_set_filters(). This is the
+     * last reference, so no refire can still be reading them. */
+    if (sub->priv->owns_filters && sub->filters) {
+        nostr_filters_free(sub->filters);
+        sub->filters = NULL;
     }
     free(sub->priv->id);
     free(sub->priv->seen_cursor_events);
@@ -757,8 +769,13 @@ bool nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters,
         return false;
     }
 
-    // Set the filters for the subscription
+    // Set the filters for the subscription (borrowed, as in _new())
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    NostrFilters *owned = sub->priv->owns_filters && sub->filters != filters ? sub->filters : NULL;
     sub->filters = filters;
+    sub->priv->owns_filters = false;
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    if (owned) nostr_filters_free(owned);
 
     // Fire the subscription (send the "REQ" command to the relay)
     bool ok = nostr_subscription_fire(sub, err);
@@ -1005,10 +1022,16 @@ NostrFilters *nostr_subscription_get_filters(const NostrSubscription *sub) {
 }
 
 void nostr_subscription_set_filters(NostrSubscription *sub, NostrFilters *filters) {
-    if (!sub) return;
-    if (sub->filters == filters) return;
-    if (sub->filters) nostr_filters_free(sub->filters);
+    if (!sub || !sub->priv) return;
+    /* Takes full ownership of @filters (nostr-subscription.h), including of
+     * the filters the subscription already borrows: they are now freed with
+     * it. Before nostrc-jw23 set filters were never freed at all. */
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    NostrFilters *old = sub->filters != filters ? sub->filters : NULL;
     sub->filters = filters;
+    sub->priv->owns_filters = filters != NULL;
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    if (old) nostr_filters_free(old);
 }
 
 GoChannel *nostr_subscription_get_events_channel(const NostrSubscription *sub) {

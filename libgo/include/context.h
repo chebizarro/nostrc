@@ -29,6 +29,9 @@ typedef struct GoContext {
     struct timespec timeout;
 } GoContext;
 
+/* A new root context (refcount 1). Release it with go_context_unref() once
+ * no context derived from it (go_context_with_cancel) is still in use: a
+ * child reads its parent. */
 GoContext *go_context_background(void);
 
 // GoContext wrapper functions

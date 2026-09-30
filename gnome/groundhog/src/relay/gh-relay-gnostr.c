@@ -110,10 +110,9 @@ reset_subscription(GhGnostrHandle *handle)
 }
 
 /* The filters of one GNostrSubscription, which gnostr_subscription_new()
- * takes ownership of on success; NULL if copying failed. (GNostrSubscription
- * drops them unfreed when it finalizes, nostrc-jwj0: the sanitizer job's
- * tests/lsan.supp names this function, so it stays a frame of its own.) */
-static G_GNUC_NO_INLINE NostrFilters *
+ * takes ownership of on success (and frees with its core subscription,
+ * nostrc-jw23); NULL if copying failed. */
+static NostrFilters *
 subscription_filters(const NostrFilters *filters)
 {
   NostrFilters *copy = nostr_filters_new();

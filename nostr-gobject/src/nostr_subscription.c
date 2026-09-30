@@ -644,34 +644,30 @@ gnostr_subscription_finalize(GObject *object)
     /* Close core subscription */
     if (self->subscription) {
         nostr_subscription_close(self->subscription, NULL);
+
+        /* nostrc-jw23: the core subscription borrows our filters, and a
+         * reconnect's refire may still hold it (and read them) after the
+         * cleanup below lets go. Hand them over: the core subscription frees
+         * them with itself, on its last reference (libnostr >= 1.1.2). They
+         * used to be dropped here unfreed. */
+        if (self->owned_filters) {
+            nostr_subscription_set_filters(self->subscription, self->owned_filters);
+            self->owned_filters = NULL;
+        }
+
         /* nostrc-ws3: Use async cleanup to avoid blocking the main thread.
          * nostr_subscription_wait() and nostr_subscription_free() both call
          * go_wait_group_wait() which blocks until worker goroutines exit.
          * If finalize runs on the GTK main thread, this freezes the app.
          *
          * nostr_subscription_free_async() spawns a background thread that
-         * handles the blocking wait. We abandon the handle since we don't
-         * need to track completion — the background thread will free
-         * everything including the filters (which the subscription borrows).
-         *
-         * NOTE: owned_filters must be freed by the async cleanup thread
-         * AFTER the subscription is fully destroyed, so we transfer ownership
-         * to the async cleanup by NOT freeing them here. The subscription
-         * holds a borrowed pointer to filters, so the async thread must
-         * ensure filters outlive the subscription. Since we're abandoning
-         * the handle, we accept that filters may leak in edge cases — this
-         * is preferable to blocking the main thread or use-after-free. */
+         * handles the blocking wait; abandoning the handle leaves it to that
+         * thread (libnostr waits for such cleanups at exit). */
         AsyncCleanupHandle *handle = nostr_subscription_free_async(self->subscription, 0);
         if (handle) {
             nostr_subscription_cleanup_abandon(handle);
         }
         self->subscription = NULL;
-
-        /* Transfer filter ownership to async cleanup — do NOT free here.
-         * The async cleanup thread will handle filter lifetime. In practice,
-         * filters are typically owned by the caller (e.g., GNostrPool) and
-         * outlive the subscription anyway. */
-        self->owned_filters = NULL;
     } else if (self->owned_filters) {
         /* No subscription to clean up — safe to free filters synchronously */
         nostr_filters_free(self->owned_filters);
@@ -905,9 +901,11 @@ gnostr_subscription_new(GNostrRelay *relay, NostrFilters *filters)
      * so we must keep them alive for the subscription's lifetime (nostrc-aaf0). */
     self->owned_filters = filters;
 
-    /* Prepare the core subscription (allocates channels, generates ID) */
-    GoContext *bg = go_context_background();
-    self->subscription = nostr_relay_prepare_subscription(core_relay, bg, filters);
+    /* Prepare the core subscription (allocates channels, generates ID). Its
+     * lifetime is bound to the relay's connection context; the context
+     * argument is unused, so none is made (a go_context_background() made
+     * here was never released, nostrc-jw23). */
+    self->subscription = nostr_relay_prepare_subscription(core_relay, NULL, filters);
 
     if (!self->subscription) {
         g_warning("Failed to prepare subscription on relay %s",

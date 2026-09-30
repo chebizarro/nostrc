@@ -107,6 +107,11 @@ typedef struct _SubscriptionPrivate {
      * from). Registration is one-shot: once nostr_subscription_free() or the
      * async cleanup removes the entry, a late refire must not resurrect it. */
     _Atomic bool registered;
+
+    /* nostrc-jw23: sub->filters came through nostr_subscription_set_filters()
+     * ("takes full ownership") and are freed with the subscription. Filters
+     * given to nostr_subscription_new() are borrowed. Guarded by sub_mutex. */
+    bool owns_filters;
 } SubscriptionPrivate;
 
 struct NostrSubscription; /* forward */
