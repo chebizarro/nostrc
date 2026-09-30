@@ -124,8 +124,17 @@ G_BEGIN_DECLS
  * Leaving. marmot_leave_group() marks the group inactive locally and the
  * service stops reading it; an MLS member cannot remove itself from the tree
  * (no self-remove proposal in libmarmot yet), so the others keep counting it
- * until an admin removes it. A member an admin removed can no longer decrypt
- * anything of the following epochs.
+ * until an admin removes it.
+ *
+ * Removal (nostrc-xrya). A member an admin removed cannot enter the next
+ * epoch (the Commit's UpdatePath is encrypted to the others). libmarmot
+ * recognises the authenticated admin Commit that removes the account's leaf
+ * and turns the group inactive (marmot_get_group_removal() names who), and
+ * the service shows it: "end" REMOVED with "removed-by". As a backstop, an
+ * applied Commit after which the account is no longer among the members
+ * ends it too (removed-by unknown). Either way, as after leaving, the group
+ * is not read any more (its subscription closed), sends are refused,
+ * nothing is held and "unreadable" is 0; its room and history stay.
  *
  * Generation. The service runs only while its store's account is the active
  * account: a switch cancels every subscription, lookup, signer request and
@@ -191,6 +200,16 @@ typedef enum {
 GType gh_mls_read_state_get_type(void);
 #define GH_TYPE_MLS_READ_STATE (gh_mls_read_state_get_type())
 
+/* Why a group is no longer active for the account (nostrc-xrya). */
+typedef enum {
+  GH_MLS_GROUP_END_NONE,     /* active */
+  GH_MLS_GROUP_END_LEFT,     /* the account left (gh_mls_service_leave()), on this device */
+  GH_MLS_GROUP_END_REMOVED   /* an admin's Commit removed the account's leaf */
+} GhMlsGroupEnd;
+
+GType gh_mls_group_end_get_type(void);
+#define GH_TYPE_MLS_GROUP_END (gh_mls_group_end_get_type())
+
 #define GH_MLS_SERVICE_ERROR (gh_mls_service_error_quark())
 GQuark gh_mls_service_error_quark(void);
 typedef enum {
@@ -223,7 +242,9 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
 
 /* One joined (or left) group of the account. Read-only properties, notified
  * on change: "group-id" (hex MLS group id), "room-id", "name",
- * "description", "epoch", "active" (FALSE once left), "read-state",
+ * "description", "epoch", "active" (FALSE once left or removed), "end" (why
+ * not: GhMlsGroupEnd), "removed-by" (hex: the admin whose Commit removed the
+ * account, or NULL: not removed, or not known), "read-state",
  * "is-admin" (the account is a GroupData admin), "pending-commit" (a change
  * of the account's is published but not merged yet) and
  * "unsent-welcomes" (Welcomes of merged Adds not yet accepted by an
@@ -241,6 +262,8 @@ const gchar *gh_mls_group_get_name(GhMlsGroup *self);
 const gchar *gh_mls_group_get_description(GhMlsGroup *self);
 guint64 gh_mls_group_get_epoch(GhMlsGroup *self);
 gboolean gh_mls_group_get_active(GhMlsGroup *self);
+GhMlsGroupEnd gh_mls_group_get_end(GhMlsGroup *self);
+const gchar *gh_mls_group_get_removed_by(GhMlsGroup *self);
 GhMlsReadState gh_mls_group_get_read_state(GhMlsGroup *self);
 gboolean gh_mls_group_get_is_admin(GhMlsGroup *self);
 gboolean gh_mls_group_get_pending_commit(GhMlsGroup *self);

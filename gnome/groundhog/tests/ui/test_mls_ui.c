@@ -42,6 +42,7 @@
 #include "gh-shell.h"
 #include "gh-test-dialog.h"
 #include "group-send-stub.h"
+#include "gh-recipient.h"
 #include "mls-world.h"
 
 #include <glib/gi18n.h>
@@ -204,6 +205,16 @@ strv_has(const gchar *const *strv, const gchar *value)
 static void
 test_copy(void)
 {
+  /* nostrc-xrya: an ended group says why. */
+  g_assert_null(gh_mls_end_copy(GH_MLS_GROUP_END_NONE, NULL));
+  g_autofree gchar *left = gh_mls_end_copy(GH_MLS_GROUP_END_LEFT, "Alice");
+  g_assert_cmpstr(left, ==, "You left this group. Its messages stay on this device.");
+  g_autofree gchar *removed_by = gh_mls_end_copy(GH_MLS_GROUP_END_REMOVED, "Alice");
+  g_assert_cmpstr(removed_by, ==,
+                  "You were removed from this group by Alice. Its messages stay on this device.");
+  g_autofree gchar *removed = gh_mls_end_copy(GH_MLS_GROUP_END_REMOVED, NULL);
+  g_assert_cmpstr(removed, ==, "You were removed from this group. Its messages stay on this device.");
+
   g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
   for (gint state = GH_MLS_INVITEE_CHECKING; state <= GH_MLS_INVITEE_FAILED; state++) {
     const gchar *words = gh_mls_invitee_copy(state);
@@ -371,18 +382,18 @@ test_view_model(void)
 
   /* The composer's reasons follow the group. */
   wait_live(ga);
-  g_autofree gchar *live = gh_mls_send_reason(alice->service, ga);
+  g_autofree gchar *live = gh_mls_send_reason(alice->service, ga, NULL);
   g_assert_null(live);
-  g_autofree gchar *no_service = gh_mls_send_reason(NULL, ga);
+  g_autofree gchar *no_service = gh_mls_send_reason(NULL, ga, NULL);
   g_assert_nonnull(strstr(no_service, "aren’t running"));
   set_online(alice, FALSE);
-  g_autofree gchar *offline = gh_mls_send_reason(alice->service, ga);
+  g_autofree gchar *offline = gh_mls_send_reason(alice->service, ga, NULL);
   g_assert_nonnull(strstr(offline, "only while you’re online"));
   set_online(alice, TRUE);
   wait_live(ga);
   g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
   g_assert_no_error(error);
-  g_autofree gchar *left = gh_mls_send_reason(bob->service, gb);
+  g_autofree gchar *left = gh_mls_send_reason(bob->service, gb, NULL);
   g_assert_cmpstr(left, ==, "You left this group.");
   world_down(&w);
 }
@@ -585,6 +596,12 @@ typedef struct {
   GhConversationView *view;
   guint count;
 } UndecryptableWait;
+
+static gboolean
+group_removed(gpointer data)
+{
+  return gh_mls_group_get_end(data) == GH_MLS_GROUP_END_REMOVED;
+}
 
 static gboolean
 undecryptable_is(gpointer data)
@@ -953,7 +970,7 @@ test_gui_group_info(void)
   World w;
   const guint keys[] = { ALICE, BOB, CAROL };
   world_up(&w, keys, G_N_ELEMENTS(keys));
-  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
   wait_published(&w, keys, G_N_ELEMENTS(keys));
   accept_contact(alice, BOB);
   accept_contact(alice, CAROL);
@@ -993,6 +1010,7 @@ test_gui_group_info(void)
   SubtitleWait three = { window, "Encrypted group · 3 members" };
   spin_until(subtitle_is, &three, "the header's member count");
   g_assert_cmpstr(gh_mls_group_info_dialog_get_member(info, hex[CAROL], &removable), ==, "");
+  GhMlsGroup *gc = join(carol, ALICE);
 
   /* Rename. */
   gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.rename", NULL);
@@ -1015,6 +1033,40 @@ test_gui_group_info(void)
   g_assert_null(gh_mls_group_info_dialog_get_member(info, hex[CAROL], NULL));
   adw_dialog_force_close(ADW_DIALOG(info));
   drain();
+
+  /* Carol, removed (nostrc-xrya): the composer says so and by whom, Group
+   * Info too, and nothing is "unable to decrypt". */
+  spin_until(group_removed, gc, "Carol's group ending");
+  GhWindow *carol_window = app_window(carol, NULL);
+  GhConversation *carol_conversation = gh_conversation_store_lookup(carol->model, room);
+  g_assert_true(gh_window_open_item(carol_window, carol_conversation));
+  g_autofree gchar *alice_npub = gh_recipient_npub_short(hex[ALICE]);
+  g_autofree gchar *removed_reason =
+    g_strdup_printf("You were removed from this group by %s.", alice_npub);
+  gpointer carol_data = NULL;
+  const GhSendUiDelegate *carol_delegate =
+    group_send_stub_delegate_for(carol_conversation, &carol_data);
+  g_autofree gchar *carol_reason = carol_delegate->reason(carol_conversation, carol_data);
+  g_assert_cmpstr(carol_reason, ==, removed_reason);
+  g_autoptr(GError) carol_error = NULL;
+  g_assert_false(carol_delegate->send(carol_conversation, "still here", carol_data,
+                                      &carol_error));
+  g_assert_cmpstr(carol_error->message, ==,
+                  "You were removed from this group, so the message was not sent. It is kept "
+                  "here.");
+  GhMlsGroupInfoDialog *carol_info = show_info(carol_window, carol_conversation);
+  AdwActionRow *carol_status = ADW_ACTION_ROW(gtk_widget_get_template_child(
+    GTK_WIDGET(carol_info), GH_TYPE_MLS_GROUP_INFO_DIALOG, "messages_row"));
+  g_autofree gchar *removed_status = g_strdup_printf(
+    "You were removed from this group by %s. Its messages stay on this device.", alice_npub);
+  g_assert_cmpstr(adw_action_row_get_subtitle(carol_status), ==, removed_status);
+  adw_dialog_force_close(ADW_DIALOG(carol_info));
+  send_text(alice, ga, "after carol");
+  wait_message(bob, room, "after carol");
+  drain();
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gc), ==, 0);
+  g_assert_cmpuint(gh_conversation_view_get_undecryptable_messages(view_of(carol_window)), ==, 0);
+  close_window(carol_window);
 
   /* Bob, a member: the Owner badge, no admin action anywhere. */
   GhWindow *bob_window = app_window(bob, NULL);

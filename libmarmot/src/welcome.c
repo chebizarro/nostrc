@@ -698,6 +698,10 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     err = m->storage->save_group(m->storage->ctx, group);
     if (err != MARMOT_OK)
         goto fail;
+    /* Members again: an earlier removal (nostrc-xrya) no longer holds. */
+    err = marmot_commit_clear_removal(m, &group->mls_group_id);
+    if (err != MARMOT_OK)
+        goto fail;
 
     /* Store group relays when the welcome carries them. */
     if (gde_relays && gde_relay_count > 0) {

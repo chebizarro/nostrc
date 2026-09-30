@@ -2926,6 +2926,105 @@ update_path_keys_fresh(const MlsRatchetTree *tree, uint32_t sender_leaf,
     return 0;
 }
 
+/* The authenticated part of processing a Commit (RFC 9420 §6.1-§6.2): a
+ * PublicMessage Commit of this group and epoch from member @sender_leaf,
+ * whose signature (by that leaf's key over the pre-Commit GroupContext) and
+ * membership tag verify, and its Commit body.  On success the caller owns
+ * *wire (the Commit body points into it), *commit and *pre_gc. */
+static int
+commit_authenticate(const MlsGroup *group, const uint8_t *commit_data, size_t commit_len,
+                    uint32_t sender_leaf, MlsMLSMessage *wire, MlsCommit *commit,
+                    uint8_t **pre_gc, size_t *pre_gc_len)
+{
+    memset(wire, 0, sizeof(*wire));
+    *pre_gc = NULL;
+    *pre_gc_len = 0;
+    if (mls_group_context_build(group, pre_gc, pre_gc_len) != 0)
+        return MARMOT_ERR_INTERNAL;
+
+    MlsTlsReader wire_reader;
+    mls_tls_reader_init(&wire_reader, commit_data, commit_len);
+    if (mls_message_deserialize(&wire_reader, wire) != 0 ||
+        !mls_tls_reader_done(&wire_reader) ||
+        wire->wire_format != MLS_WIRE_FORMAT_PUBLIC_MESSAGE)
+        goto fail;
+    MlsPublicMessage *pm = &wire->public_message;
+    if (pm->content.sender.sender_type != MLS_SENDER_TYPE_MEMBER ||
+        pm->content.sender.leaf_index != sender_leaf ||
+        pm->content.content_type != MLS_CONTENT_TYPE_COMMIT ||
+        pm->content.group_id_len != group->group_id_len ||
+        memcmp(pm->content.group_id, group->group_id, group->group_id_len) != 0 ||
+        pm->content.epoch != group->epoch ||
+        !pm->auth.has_confirmation_tag ||
+        pm->auth.confirmation_tag_len != MLS_HASH_LEN)
+        goto fail;
+    uint32_t sender_node_for_sig = mls_tree_leaf_to_node(sender_leaf);
+    if (group->tree.nodes[sender_node_for_sig].type != MLS_NODE_LEAF ||
+        mls_framed_content_verify(&pm->content, &pm->auth,
+                                  MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                  *pre_gc, *pre_gc_len,
+                                  group->tree.nodes[sender_node_for_sig].leaf.signature_key) != 0 ||
+        mls_public_message_verify_membership_tag(pm,
+                                                 group->epoch_secrets.membership_key,
+                                                 *pre_gc, *pre_gc_len) != 0)
+        goto fail;
+
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, pm->content.content, pm->content.content_len);
+    if (mls_commit_deserialize(&reader, commit) != 0 || !mls_tls_reader_done(&reader))
+        goto fail;
+    return 0;
+
+fail:
+    free(*pre_gc);
+    *pre_gc = NULL;
+    mls_message_clear(wire);
+    return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+}
+
+int
+mls_group_commit_removes_self(const MlsGroup *group,
+                              const uint8_t *commit_data, size_t commit_len,
+                              uint32_t sender_leaf, bool *out_removed)
+{
+    if (!group || !commit_data || !out_removed) return MARMOT_ERR_INVALID_ARG;
+    *out_removed = false;
+    if (sender_leaf >= group->tree.n_leaves ||
+        group->own_leaf_index >= group->tree.n_leaves)
+        return MARMOT_ERR_INVALID_ARG;
+    if (sender_leaf == group->own_leaf_index) return MARMOT_ERR_OWN_COMMIT_PENDING;
+    MlsMLSMessage wire;
+    MlsCommit commit;
+    uint8_t *pre_gc = NULL;
+    size_t pre_gc_len = 0;
+    int rc = commit_authenticate(group, commit_data, commit_len, sender_leaf, &wire, &commit,
+                                 &pre_gc, &pre_gc_len);
+    if (rc != 0) return rc;
+    free(pre_gc);
+    if (validate_proposal_ordering(commit.proposals, commit.proposal_count) != 0 ||
+        !commit.has_path)
+        rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;   /* a Remove needs an UpdatePath */
+    for (size_t i = 0; rc == 0 && i < commit.proposal_count; i++) {
+        const MlsProposal *p = &commit.proposals[i];
+        /* By reference: Marmot Commits carry their proposals inline, and an
+         * unresolved reference proves nothing. */
+        if (p->is_ref || p->type != MLS_PROPOSAL_REMOVE) continue;
+        if (p->remove.removed_leaf >= group->tree.n_leaves ||
+            group->tree.nodes[mls_tree_leaf_to_node(p->remove.removed_leaf)].type !=
+              MLS_NODE_LEAF ||
+            p->remove.removed_leaf == sender_leaf) {
+            rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;   /* not a valid Remove (§12.1.3) */
+            break;
+        }
+        if (p->remove.removed_leaf == group->own_leaf_index)
+            *out_removed = true;
+    }
+    if (rc != 0) *out_removed = false;
+    mls_commit_clear(&commit);
+    mls_message_clear(&wire);
+    return rc;
+}
+
 static int
 process_commit_impl(MlsGroup *group,
                     const uint8_t *commit_data, size_t commit_len,
@@ -2940,58 +3039,12 @@ process_commit_impl(MlsGroup *group,
 
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
-    if (mls_group_context_build(group, &pre_gc, &pre_gc_len) != 0)
-        return MARMOT_ERR_INTERNAL;
-
     MlsMLSMessage wire_msg;
-    memset(&wire_msg, 0, sizeof(wire_msg));
-    MlsTlsReader wire_reader;
-    mls_tls_reader_init(&wire_reader, commit_data, commit_len);
-    if (mls_message_deserialize(&wire_reader, &wire_msg) != 0 ||
-        !mls_tls_reader_done(&wire_reader) ||
-        wire_msg.wire_format != MLS_WIRE_FORMAT_PUBLIC_MESSAGE) {
-        free(pre_gc);
-        mls_message_clear(&wire_msg);
-        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
-    }
-    MlsPublicMessage *pm = &wire_msg.public_message;
-    if (pm->content.sender.sender_type != MLS_SENDER_TYPE_MEMBER ||
-        pm->content.sender.leaf_index != sender_leaf ||
-        pm->content.content_type != MLS_CONTENT_TYPE_COMMIT ||
-        pm->content.group_id_len != group->group_id_len ||
-        memcmp(pm->content.group_id, group->group_id, group->group_id_len) != 0 ||
-        pm->content.epoch != group->epoch ||
-        !pm->auth.has_confirmation_tag ||
-        pm->auth.confirmation_tag_len != MLS_HASH_LEN) {
-        free(pre_gc);
-        mls_message_clear(&wire_msg);
-        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
-    }
-    uint32_t sender_node_for_sig = mls_tree_leaf_to_node(sender_leaf);
-    if (group->tree.nodes[sender_node_for_sig].type != MLS_NODE_LEAF ||
-        mls_framed_content_verify(&pm->content, &pm->auth,
-                                  MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
-                                  pre_gc, pre_gc_len,
-                                  group->tree.nodes[sender_node_for_sig].leaf.signature_key) != 0 ||
-        mls_public_message_verify_membership_tag(pm,
-                                                 group->epoch_secrets.membership_key,
-                                                 pre_gc, pre_gc_len) != 0) {
-        free(pre_gc);
-        mls_message_clear(&wire_msg);
-        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
-    }
-
-    const uint8_t *commit_body = pm->content.content;
-    size_t commit_body_len = pm->content.content_len;
     MlsCommit commit;
-    MlsTlsReader reader;
-    mls_tls_reader_init(&reader, commit_body, commit_body_len);
-    if (mls_commit_deserialize(&reader, &commit) != 0 || !mls_tls_reader_done(&reader)) {
-        free(pre_gc);
-        mls_message_clear(&wire_msg);
-        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
-    }
-
+    int auth_rc = commit_authenticate(group, commit_data, commit_len, sender_leaf,
+                                      &wire_msg, &commit, &pre_gc, &pre_gc_len);
+    if (auth_rc != 0) return auth_rc;
+    MlsPublicMessage *pm = &wire_msg.public_message;
 
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) {

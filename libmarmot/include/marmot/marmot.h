@@ -720,6 +720,32 @@ MarmotError marmot_leave_group(Marmot *m,
                                 const MarmotGroupId *mls_group_id);
 
 /**
+ * marmot_get_group_removal:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_removed: (out): TRUE when an admin's Commit removed our own leaf
+ * @out_remover: (out) (optional): the account (32-byte key) that committed it
+ * @out_epoch: (out) (optional): the epoch that Commit left
+ *
+ * A member removed by an admin cannot enter the next epoch: the Commit's
+ * UpdatePath is encrypted to the remaining members only.  When
+ * marmot_process_message() receives an authenticated Commit (framing,
+ * committer signature, membership tag) from an admin of the current
+ * GroupData that removes our leaf, and no pending Commit of ours wins the
+ * epoch (nor, for a competing Commit of the previous epoch, the Commit we
+ * applied), it returns MARMOT_RESULT_COMMIT, the group turns inactive as
+ * after marmot_leave_group(), our pending Commit is dropped and the removal
+ * is kept here (nostrc-xrya).  A later Welcome into the same group clears
+ * it.  Without a removal (never removed, or left), *out_removed is FALSE.
+ *
+ * Returns: MARMOT_OK
+ */
+MarmotError marmot_get_group_removal(Marmot *m,
+                                     const MarmotGroupId *mls_group_id,
+                                     bool *out_removed, uint8_t out_remover[32],
+                                     uint64_t *out_epoch);
+
+/**
  * marmot_update_group_metadata:
  * @m: Marmot instance
  * @mls_group_id: the group to update

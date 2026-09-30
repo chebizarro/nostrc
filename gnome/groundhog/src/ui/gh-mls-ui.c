@@ -7,6 +7,7 @@
 #include "gh-mls-group-info-dialog.h"
 #include "gh-mls-invites-dialog.h"
 #include "gh-mls-new-group-page.h"
+#include "gh-recipient.h"
 #include "gh-send-ui.h"
 #include "gh-store.h"
 
@@ -124,6 +125,7 @@ set_shown(MlsUi *ui, GhMlsGroup *group)
     g_signal_connect_swapped(group, "members-changed", G_CALLBACK(on_shown_members), ui);
     g_signal_connect_swapped(group, "notify::unreadable", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::active", G_CALLBACK(on_shown_state), ui);
+    g_signal_connect_swapped(group, "notify::end", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::read-state", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::name", G_CALLBACK(on_shown_members), ui);
   }
@@ -245,12 +247,26 @@ delegate_handles(GhConversation *conversation, gpointer data)
   return gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_MLS;
 }
 
+/* Who removed the account from group: a contact's cached name, else the
+ * short npub; NULL when not removed or not known (transfer full). */
+static gchar *
+remover_label(MlsUi *ui, GhMlsGroup *group)
+{
+  const gchar *by = group ? gh_mls_group_get_removed_by(group) : NULL;
+  if (!by)
+    return NULL;
+  const gchar *name = ui->display_name ? ui->display_name(by, ui->names_data) : NULL;
+  return name && *name ? g_strdup(name) : gh_recipient_npub_short(by);
+}
+
 static gchar *
 delegate_reason(GhConversation *conversation, gpointer data)
 {
   MlsUi *ui = data;
   GhMlsService *service = current(ui);
-  return gh_mls_send_reason(service, group_of(ui, conversation));
+  GhMlsGroup *group = group_of(ui, conversation);
+  g_autofree gchar *remover = remover_label(ui, group);
+  return gh_mls_send_reason(service, group, remover);
 }
 
 static gboolean
@@ -279,7 +295,11 @@ delegate_send(GhConversation *conversation, const gchar *text, gpointer data, GE
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         _("Encrypted groups send only while you’re online. The message is kept "
                           "here."));
-  else if (g_error_matches(local, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT))
+  else if (gh_mls_group_get_end(group) == GH_MLS_GROUP_END_REMOVED)
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        _("You were removed from this group, so the message was not sent. It "
+                          "is kept here."));
+  else if (!gh_mls_group_get_active(group))
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         _("You left this group, so the message was not sent. It is kept here."));
   else

@@ -435,6 +435,24 @@ int mls_group_commit_extensions(MlsGroup *group,
  * ──────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Whether the Commit @commit_data from member @sender_leaf in @group's epoch
+ * removes @group's own leaf (RFC 9420 §12.4.2; OpenMLS's self_removed).  A
+ * removed member cannot process such a Commit: its UpdatePath is encrypted
+ * to the remaining members only.  What it can check is checked: the
+ * PublicMessage framing for this group and epoch, the committer's signature
+ * and the membership tag (the same checks mls_group_process_commit() makes
+ * first), then that the proposal list is well formed, carries an UpdatePath
+ * and that every inline Remove names an occupied leaf other than the
+ * committer's.  Proposals by reference are not resolved and never count.
+ *
+ * @return 0 with *out_removed set; MARMOT_ERR_MLS_PROCESS_MESSAGE for a
+ *   Commit that does not authenticate or is malformed (*out_removed false)
+ */
+int mls_group_commit_removes_self(const MlsGroup *group,
+                                  const uint8_t *commit_data, size_t commit_len,
+                                  uint32_t sender_leaf, bool *out_removed);
+
+/**
  * Process an incoming Commit message.
  *
  * Validates the commit, applies proposals, decrypts the UpdatePath

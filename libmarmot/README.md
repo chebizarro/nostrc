@@ -424,6 +424,36 @@ groups. There is no adopted peer to test against either.
 - **State.** Unchanged by the binding: the proof lives in the leaf and is
   stored with the tree. (The retained-parent record changes; see below.)
 
+#### A removed member learns it was removed (nostrc-xrya)
+
+A member an admin removes cannot enter the next epoch: the removing Commit's
+UpdatePath is encrypted to the remaining members only. Before, its Commit
+failed with `MARMOT_ERR_MLS_PROCESS_MESSAGE`, the group stayed active, the
+member could still send (nobody could read it), and every later kind:445
+failed as undecryptable.
+
+- `marmot_process_message()` now checks such a Commit as far as a removed
+  member can, as OpenMLS does for `self_removed`: the PublicMessage framing
+  for the group and epoch, the committer's signature and the membership tag
+  (the same checks as full processing, now one internal helper), a
+  well-formed proposal list with an UpdatePath, and an inline Remove of our
+  own leaf. The committer must be an admin of the current GroupData, as for
+  any Commit that changes membership. A pending Commit of ours that wins the
+  epoch by the usual ordering still wins (the removal is deferred), and a
+  removal that competes with a Commit we already applied must beat it.
+- Then the group turns inactive, as after `marmot_leave_group()`, any
+  pending Commit of ours is dropped, and the result is
+  `MARMOT_RESULT_COMMIT` with the inactive group. Later events of the group
+  return `MARMOT_ERR_USE_AFTER_EVICTION`, including late messages of the
+  last epoch.
+- New `marmot_get_group_removal()` says whether and by whom (the
+  committer's account) and from which epoch. It is kept in `mls_kv` under
+  `mls_group_removed` in the same transaction as the inactive state; a later
+  Welcome into the same group clears it.
+- A removal forged by a non-admin member now fails with
+  `MARMOT_ERR_COMMIT_FROM_NON_ADMIN` (it was `MARMOT_ERR_MLS_PROCESS_MESSAGE`)
+  and changes nothing.
+
 #### The retained parent retires once no competing Commit can win (nostrc-yuj2, security)
 
 **What was exposed.** Before 0.10.0, after every Commit the store kept the

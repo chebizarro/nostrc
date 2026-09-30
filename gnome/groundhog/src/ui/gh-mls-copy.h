@@ -38,10 +38,15 @@ GhMlsIdentityCopy gh_mls_identity_copy(GhMlsIdentityState state);
 gchar *gh_mls_error_copy(const GError *error);
 
 /* Why the composer can't send to group (transfer full), or NULL when it can:
- * no service (encrypted groups aren't running for this account), left, or
- * not read (offline or not the active account: the service refuses sends
- * then). */
-gchar *gh_mls_send_reason(GhMlsService *service, GhMlsGroup *group);
+ * no service (encrypted groups aren't running for this account), left,
+ * removed by an admin (nostrc-xrya; remover: the admin's cached name or
+ * short npub, NULL when not known), or not read (offline or not the active
+ * account: the service refuses sends then). */
+gchar *gh_mls_send_reason(GhMlsService *service, GhMlsGroup *group, const gchar *remover);
+
+/* An ended group's state for Group Info (transfer full): "You left…" or
+ * "You were removed from this group by …", with where its messages are. */
+gchar *gh_mls_end_copy(GhMlsGroupEnd end, const gchar *remover);
 
 /* "Owner" / "Admin" badge text, NULL for a member. */
 const gchar *gh_mls_role_copy(GhMlsRole role);

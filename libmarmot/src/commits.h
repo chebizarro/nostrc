@@ -23,6 +23,11 @@ extern "C" {
 
 /* mls_kv label of the retained parent state (see marmot_commit_persist()). */
 #define MARMOT_MLS_PARENT_LABEL "mls_group_parent"
+/* mls_kv label of who removed our leaf (marmot_get_group_removal()). */
+#define MARMOT_MLS_REMOVED_LABEL "mls_group_removed"
+
+/** A Welcome made us a member again: forget an earlier removal. */
+MarmotError marmot_commit_clear_removal(Marmot *m, const MarmotGroupId *gid);
 
 /**
  * MarmotCommitKey:

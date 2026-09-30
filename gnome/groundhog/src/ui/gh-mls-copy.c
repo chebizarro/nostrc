@@ -112,15 +112,38 @@ gh_mls_error_copy(const GError *error)
 }
 
 gchar *
-gh_mls_send_reason(GhMlsService *service, GhMlsGroup *group)
+gh_mls_send_reason(GhMlsService *service, GhMlsGroup *group, const gchar *remover)
 {
   if (!service || !group)
     return g_strdup(_("Encrypted groups aren’t running for this account."));
+  if (gh_mls_group_get_end(group) == GH_MLS_GROUP_END_REMOVED)
+    return remover && *remover
+             /* TRANSLATORS: %s is the group admin's name or short npub. */
+             ? g_strdup_printf(_("You were removed from this group by %s."), remover)
+             : g_strdup(_("You were removed from this group."));
   if (!gh_mls_group_get_active(group))
     return g_strdup(_("You left this group."));
   if (gh_mls_group_get_read_state(group) == GH_MLS_READ_IDLE)
     return g_strdup(_("Encrypted groups send only while you’re online."));
   return NULL;
+}
+
+gchar *
+gh_mls_end_copy(GhMlsGroupEnd end, const gchar *remover)
+{
+  switch (end) {
+  case GH_MLS_GROUP_END_REMOVED:
+    if (remover && *remover)
+      /* TRANSLATORS: %s is the group admin's name or short npub. */
+      return g_strdup_printf(_("You were removed from this group by %s. Its messages stay on "
+                               "this device."), remover);
+    return g_strdup(_("You were removed from this group. Its messages stay on this device."));
+  case GH_MLS_GROUP_END_LEFT:
+    return g_strdup(_("You left this group. Its messages stay on this device."));
+  case GH_MLS_GROUP_END_NONE:
+  default:
+    return NULL;
+  }
 }
 
 const gchar *

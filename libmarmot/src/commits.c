@@ -45,6 +45,9 @@
 #define PENDING_VERSION 2
 /* Losing inbound Commits kept while our own Commit awaits a relay. */
 #define PENDING_MAX_DEFERRED 16
+/* Who removed our leaf (nostrc-xrya): u8 version, [32] committer, u64 epoch. */
+#define REMOVED_LABEL   MARMOT_MLS_REMOVED_LABEL
+#define REMOVED_VERSION 1
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Helpers
@@ -1502,6 +1505,96 @@ defer_inbound(Marmot *m, PendingCommit *p, const uint8_t *gid, size_t gid_len,
     return MARMOT_ERR_OWN_COMMIT_PENDING;
 }
 
+/* nostrc-xrya: the ordering key and authority of an authenticated Commit that
+ * removes our leaf (mls_group_commit_removes_self()).  A Remove is
+ * privileged: the committer must be an admin of the pre-Commit GroupData,
+ * exactly as marmot_commit_authorize() demands of a Commit we could apply. */
+static MarmotError
+removal_key(const MlsGroup *pre, uint32_t committer_leaf, const uint8_t digest[32],
+            MarmotCommitKey *key)
+{
+    memset(key, 0, sizeof(*key));
+    const MlsLeafNode *committer = leaf_at(pre, committer_leaf);
+    if (!committer || committer->credential_identity_len != 32 ||
+        !committer->credential_identity)
+        return MARMOT_ERR_FROM_NON_MEMBER;
+    memcpy(key->committer, committer->credential_identity, 32);
+    key->committer_leaf = committer_leaf;
+    key->privileged = true;
+    memcpy(key->digest, digest, 32);
+    MarmotGroupDataExtension *gde = NULL;
+    MarmotError err = group_data_of(pre, &gde);
+    if (err == MARMOT_OK && !gde_is_admin(gde, key->committer))
+        err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
+    marmot_group_data_extension_free(gde);
+    return err;
+}
+
+/* Our leaf was removed by `key`'s Commit, which left `epoch`: the group turns
+ * inactive (as marmot_leave_group() makes it), our pending Commit, if any,
+ * is dropped (it can never merge), and who removed us is kept for
+ * marmot_get_group_removal().  One transaction with the caller's. */
+static MarmotError
+evict(Marmot *m, MarmotGroup *group, const MarmotCommitKey *key, uint64_t epoch)
+{
+    MarmotStorage *s = m->storage;
+    if (!s->mls_store || !s->mls_delete || !s->save_group) return MARMOT_ERR_STORAGE;
+    const uint8_t *gid = group->mls_group_id.data;
+    size_t gid_len = group->mls_group_id.len;
+    uint8_t rec[1 + 32 + 8];
+    rec[0] = REMOVED_VERSION;
+    memcpy(rec + 1, key->committer, 32);
+    for (int i = 0; i < 8; i++) rec[33 + i] = (uint8_t)(epoch >> (56 - 8 * i));
+    MarmotError err = s->mls_store(s->ctx, REMOVED_LABEL, gid, gid_len, rec, sizeof(rec));
+    if (err == MARMOT_OK) {
+        err = s->mls_delete(s->ctx, PENDING_LABEL, gid, gid_len);
+        if (err == MARMOT_ERR_STORAGE_NOT_FOUND) err = MARMOT_OK;
+    }
+    if (err == MARMOT_OK) {
+        group->state = MARMOT_GROUP_STATE_INACTIVE;
+        err = s->save_group(s->ctx, group);
+    }
+    return err;
+}
+
+MarmotError
+marmot_commit_clear_removal(Marmot *m, const MarmotGroupId *gid)
+{
+    if (!m || !gid || !m->storage) return MARMOT_ERR_STORAGE;
+    if (!m->storage->mls_delete) return MARMOT_OK;   /* nothing could have been kept */
+    MarmotError err = m->storage->mls_delete(m->storage->ctx, REMOVED_LABEL, gid->data, gid->len);
+    return err == MARMOT_ERR_STORAGE_NOT_FOUND ? MARMOT_OK : err;
+}
+
+MarmotError
+marmot_get_group_removal(Marmot *m, const MarmotGroupId *mls_group_id, bool *out_removed,
+                         uint8_t out_remover[32], uint64_t *out_epoch)
+{
+    if (!m || !mls_group_id || !out_removed) return MARMOT_ERR_INVALID_ARG;
+    *out_removed = false;
+    if (out_epoch) *out_epoch = 0;
+    if (!m->storage || !m->storage->mls_load) return MARMOT_ERR_STORAGE;
+    uint8_t *rec = NULL;
+    size_t len = 0;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, REMOVED_LABEL, mls_group_id->data,
+                                           mls_group_id->len, &rec, &len);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND) return MARMOT_OK;
+    if (err != MARMOT_OK) return err;
+    if (len != 41 || rec[0] != REMOVED_VERSION) {
+        free(rec);
+        return MARMOT_ERR_DESERIALIZATION;
+    }
+    *out_removed = true;
+    if (out_remover) memcpy(out_remover, rec + 1, 32);
+    if (out_epoch) {
+        uint64_t e = 0;
+        for (int i = 0; i < 8; i++) e = (e << 8) | rec[33 + i];
+        *out_epoch = e;
+    }
+    free(rec);
+    return MARMOT_OK;
+}
+
 static void
 fill_commit_result(Marmot *m, MarmotGroup *group, MarmotMessageResult *result)
 {
@@ -1584,7 +1677,21 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
             return MARMOT_OK;
         }
         err = stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde);
-        if (err == MARMOT_OK) {
+        bool removed = false;
+        if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE &&
+            mls_group_commit_removes_self(&cur, msg, msg_len, sender, &removed) == 0 &&
+            removed) {
+            /* nostrc-xrya: a Commit that removes us cannot be applied (its
+             * UpdatePath is encrypted to the others), but an admin's
+             * authenticated one ends the group for us -- unless our own
+             * pending Commit wins the epoch. */
+            err = removal_key(&cur, sender, digest, &key);
+            if (err == MARMOT_OK && live && commit_key_cmp(&key, &p.key) >= 0)
+                err = defer_inbound(m, &p, gid, gid_len, epoch, msg, msg_len, digest,
+                                    event_id_hex);
+            else if (err == MARMOT_OK)
+                err = evict(m, group, &key, epoch);
+        } else if (err == MARMOT_OK) {
             memcpy(key.digest, digest, 32);
             if (live && commit_key_cmp(&key, &p.key) >= 0)
                 err = defer_inbound(m, &p, gid, gid_len, epoch, msg, msg_len,
@@ -1618,7 +1725,18 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
             } else {
                 err = stage_inbound(m, &rp.parent, msg, msg_len, sender, &post,
                                     &key, &gde);
-                if (err == MARMOT_OK) {
+                bool removed = false;
+                if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE &&
+                    mls_group_commit_removes_self(&rp.parent, msg, msg_len, sender,
+                                                  &removed) == 0 && removed) {
+                    /* A competing Commit that removes us (nostrc-xrya): if it
+                     * beats the one we applied, the group ends for us. */
+                    err = removal_key(&rp.parent, sender, digest, &key);
+                    if (err == MARMOT_OK)
+                        err = commit_key_cmp(&key, &rp.key) < 0
+                                  ? evict(m, group, &key, epoch)
+                                  : MARMOT_ERR_WRONG_EPOCH;   /* the applied Commit wins */
+                } else if (err == MARMOT_OK) {
                     memcpy(key.digest, digest, 32);
                     /* Replacing the applied Commit also replaces the state
                      * any pending Commit of ours was built on: that one

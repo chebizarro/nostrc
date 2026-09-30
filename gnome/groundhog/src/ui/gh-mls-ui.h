@@ -27,7 +27,8 @@ G_BEGIN_DECLS
  *    go to gh_mls_service_send() (stored and ratcheted in one transaction,
  *    listed at once, status honest: SENT once a group relay accepted it; a
  *    restart republishes), never the NIP-17 outbox; the disabled reason is
- *    gh_mls_send_reason() and follows the group (left, offline).
+ *    gh_mls_send_reason() and follows the group (left, removed by whom,
+ *    offline; nostrc-xrya).
  *  - Group Info: gh_mls_ui_show_info() (GhMlsGroupInfoDialog).
  *  - The conversation header's "Encrypted group · N members"
  *    (gh_conversation_list_set_member_count_func(), refreshed on

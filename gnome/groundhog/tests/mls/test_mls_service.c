@@ -130,10 +130,9 @@ name_is(gpointer data)
 }
 
 static gboolean
-unreadable_above(gpointer data)
+group_ended(gpointer data)
 {
-  GroupWait *wait = data;
-  return gh_mls_group_get_unreadable(wait->group) > (guint)wait->value;
+  return gh_mls_group_get_end(data) != GH_MLS_GROUP_END_NONE;
 }
 
 typedef struct {
@@ -247,7 +246,10 @@ test_group_lifecycle(void)
   g_assert_cmpstr(gh_conversation_get_title(bob_room), ==, "Renamed");
   g_assert_cmpstr(gh_mls_group_get_description(gb), ==, "a test group");
 
-  /* Remove Carol: she can read nothing of the next epoch. */
+  /* Remove Carol (nostrc-xrya): her group ends, says who removed her, stops
+   * reading and sending, and counts nothing as "unreadable yet"; her
+   * history stays. */
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_NONE);
   OpWait removed = { 0 };
   gh_mls_service_remove_members_async(alice->service, ga, carol_only, NULL, on_changed,
                                       &removed);
@@ -255,22 +257,40 @@ test_group_lifecycle(void)
   wait_members(gb, 2);
   g_auto(GStrv) after = gh_mls_group_dup_members(ga);
   g_assert_false(g_strv_contains((const gchar *const *)after, hex[CAROL]));
-  GroupWait carol_unreadable = { gc, (gint)gh_mls_group_get_unreadable(gc) };
+  spin_until(group_ended, gc, "Carol's group ending");
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_REMOVED);
+  g_assert_cmpstr(gh_mls_group_get_removed_by(gc), ==, hex[ALICE]);
+  g_assert_false(gh_mls_group_get_active(gc));
+  g_assert_cmpint(gh_mls_group_get_read_state(gc), ==, GH_MLS_READ_IDLE);
+  g_assert_cmpint(gh_mls_group_get_end(gb), ==, GH_MLS_GROUP_END_NONE);
+  g_assert_nonnull(find_message(carol, room, "welcome carol"));
+  g_autoptr(GError) send_error = NULL;
+  g_assert_null(gh_mls_service_send(carol->service, gc, "still here?", &send_error));
+  g_assert_error(send_error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
   send_text(alice, ga, "after removal");
   wait_message(bob, room, "after removal");
-  spin_until(unreadable_above, &carol_unreadable, "Carol failing to read the next epoch");
-  g_assert_null(find_message(carol, room, "after removal"));
   send_text(bob, gb, "bob after removal");
   wait_message(alice, room, "bob after removal");
-  carol_unreadable.value = (gint)gh_mls_group_get_unreadable(gc);
-  g_assert_cmpint(carol_unreadable.value, >=, 1);
+  drain();
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gc), ==, 0);
+  g_assert_null(find_message(carol, room, "after removal"));
   g_assert_null(find_message(carol, room, "bob after removal"));
+  /* A restart keeps the end and who caused it. */
+  app_restart(carol);
+  gc = gh_mls_service_lookup(carol->service, room);
+  g_assert_nonnull(gc);
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_REMOVED);
+  g_assert_cmpstr(gh_mls_group_get_removed_by(gc), ==, hex[ALICE]);
+  g_assert_false(gh_mls_group_get_active(gc));
+  g_assert_nonnull(find_message(carol, room, "welcome carol"));
 
   /* Bob leaves: he stops reading; his room and history stay. */
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
   g_assert_no_error(error);
   g_assert_false(gh_mls_group_get_active(gb));
+  g_assert_cmpint(gh_mls_group_get_end(gb), ==, GH_MLS_GROUP_END_LEFT);
+  g_assert_null(gh_mls_group_get_removed_by(gb));
   g_assert_cmpint(gh_mls_group_get_read_state(gb), ==, GH_MLS_READ_IDLE);
   g_assert_nonnull(find_message(bob, room, "hello bob"));
   g_assert_null(gh_mls_service_send(bob->service, gb, "after leaving", &error));

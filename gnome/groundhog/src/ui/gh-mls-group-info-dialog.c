@@ -195,10 +195,15 @@ static void
 sync_status(GhMlsGroupInfoDialog *self)
 {
   gboolean active = gh_mls_group_get_active(self->group);
+  const gchar *by = gh_mls_group_get_removed_by(self->group);
+  g_autofree gchar *by_npub = by ? gh_recipient_npub_short(by) : NULL;
+  const gchar *by_name = by ? display_name(self, by) : NULL;
+  g_autofree gchar *ended = gh_mls_end_copy(gh_mls_group_get_end(self->group),
+                                            by_name && *by_name ? by_name : by_npub);
   adw_action_row_set_subtitle(self->messages_row,
-                              active ? gh_mls_read_copy(gh_mls_group_get_read_state(self->group))
-                                     : _("You left this group. Its messages stay on this "
-                                         "device."));
+                              active || !ended
+                                ? gh_mls_read_copy(gh_mls_group_get_read_state(self->group))
+                                : ended);
   gboolean pending = gh_mls_group_get_pending_commit(self->group);
   guint unsent = gh_mls_group_get_unsent_welcomes(self->group);
   g_autofree gchar *words = NULL;

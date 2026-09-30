@@ -21,6 +21,7 @@
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
 #include <sodium.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3956,6 +3957,96 @@ test_group_members_follow_the_epoch(void)
     trio_clear(&t);
 }
 
+/* nostrc-xrya: a member an admin removes cannot enter the next epoch, but
+ * learns it was removed and by whom; its group turns inactive.  A removal
+ * forged by a non-admin changes nothing, and a Welcome back clears it. */
+static bool
+removal_of(Member *x, const MarmotGroupId *gid, uint8_t by[32], uint64_t *epoch)
+{
+    bool removed = true;
+    OK(marmot_get_group_removal(x->m, gid, &removed, by, epoch));
+    return removed;
+}
+
+static MarmotGroupState
+state_of(Member *x, const MarmotGroupId *gid)
+{
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(x->m, gid, &g));
+    CHECK(g != NULL, "%s: group", x->name);
+    MarmotGroupState state = g->state;
+    marmot_group_free(g);
+    return state;
+}
+
+static void
+test_removed_member_learns_it(void)
+{
+    Trio t;
+    trio_init(&t);
+    uint8_t by[32];
+    uint64_t epoch = 0;
+    for (size_t i = 0; i < 3; i++)
+        CHECK(!removal_of(t.all[i], &t.gid, by, &epoch), "%s not removed", t.all[i]->name);
+
+    /* Charlie (no admin) forges a Commit removing Bob: Bob keeps his group. */
+    {
+        MlsGroup bob_state, g;
+        load_mls(&t.bob, &t.gid, &bob_state);
+        load_mls(&t.charlie, &t.gid, &g);
+        uint8_t exporter[32];
+        memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+        MlsCommitResult r;
+        memset(&r, 0, sizeof(r));
+        CHECK(mls_group_remove_member(&g, bob_state.own_leaf_index, &r) == 0, "remove");
+        char *forged = event_for_commit(&r, exporter, t.nostr_gid);
+        expect_rejected(&t.bob, &t.gid, forged, MARMOT_ERR_COMMIT_FROM_NON_ADMIN,
+                        "a non-admin's removal of Bob");
+        CHECK(!removal_of(&t.bob, &t.gid, by, NULL), "a forged removal is not kept");
+        CHECK(state_of(&t.bob, &t.gid) == MARMOT_GROUP_STATE_ACTIVE, "Bob stays active");
+        free(forged);
+        mls_commit_result_clear(&r);
+        mls_group_free(&g);
+        mls_group_free(&bob_state);
+        sodium_memzero(exporter, sizeof(exporter));
+    }
+
+    /* Alice (the admin) removes Charlie. */
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, rm, "Bob applies the removal");
+    CHECK(!removal_of(&t.bob, &t.gid, by, NULL), "Bob was not removed");
+    MarmotError err;
+    MarmotGroup *updated = NULL;
+    MarmotMessageResultType type = deliver(&t.charlie, rm, &err, &updated);
+    CHECK(err == MARMOT_OK && type == MARMOT_RESULT_COMMIT,
+          "Charlie gets the removal as a Commit: err=%d (%s) type=%d", err,
+          marmot_error_string(err), type);
+    CHECK(updated && updated->state == MARMOT_GROUP_STATE_INACTIVE, "the result says inactive");
+    marmot_group_free(updated);
+    CHECK(removal_of(&t.charlie, &t.gid, by, &epoch), "Charlie learns he was removed");
+    CHECK(memcmp(by, t.alice.pk, 32) == 0, "by Alice");
+    CHECK(epoch == t.epoch, "from epoch %" PRIu64 " (got %" PRIu64 ")", t.epoch, epoch);
+    CHECK(state_of(&t.charlie, &t.gid) == MARMOT_GROUP_STATE_INACTIVE, "inactive");
+    /* The same Commit again (another relay) changes nothing. */
+    deliver(&t.charlie, rm, &err, NULL);
+    CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "a copy: %d", err);
+
+    /* Nothing of the next epoch, and no sending. */
+    char *next = app_message(&t.bob, &t.gid, "after Charlie");
+    expect_app(&t.alice, next, "Alice reads Bob");
+    deliver(&t.charlie, next, &err, NULL);
+    CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "Charlie reads nothing more: %d", err);
+    MarmotOutgoingMessage out;
+    memset(&out, 0, sizeof(out));
+    CHECK(marmot_create_message(t.charlie.m, &t.gid, "{}", &out) != MARMOT_OK,
+          "Charlie cannot send");
+    free(next);
+    free(rm);
+    trio_clear(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -4005,6 +4096,7 @@ main(int argc, char **argv)
     RUN(test_witness_must_be_the_listed_member);
     RUN(test_signer_only_key_packages_share_one_leaf_key);
     RUN(test_group_members_follow_the_epoch);
+    RUN(test_removed_member_learns_it);
     printf("All commit tests passed\n");
     return 0;
 }

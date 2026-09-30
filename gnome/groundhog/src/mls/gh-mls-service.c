@@ -49,6 +49,8 @@ struct _GhMlsGroup {
   gchar *description;
   guint64 epoch;
   gboolean active;
+  GhMlsGroupEnd end;
+  gchar *removed_by;         /* hex, or NULL */
   GhMlsReadState read;
   gboolean is_admin;
   gboolean pending_commit;
@@ -89,6 +91,8 @@ enum {
   GROUP_PROP_DESCRIPTION,
   GROUP_PROP_EPOCH,
   GROUP_PROP_ACTIVE,
+  GROUP_PROP_END,
+  GROUP_PROP_REMOVED_BY,
   GROUP_PROP_READ_STATE,
   GROUP_PROP_IS_ADMIN,
   GROUP_PROP_PENDING_COMMIT,
@@ -205,6 +209,22 @@ gh_mls_identity_state_get_type(void)
     };
     g_once_init_leave(&type, g_enum_register_static(
       g_intern_static_string("GhMlsIdentityState"), values));
+  }
+  return type;
+}
+
+GType
+gh_mls_group_end_get_type(void)
+{
+  static gsize type = 0;
+  if (g_once_init_enter(&type)) {
+    static const GEnumValue values[] = {
+      { GH_MLS_GROUP_END_NONE, "GH_MLS_GROUP_END_NONE", "none" },
+      { GH_MLS_GROUP_END_LEFT, "GH_MLS_GROUP_END_LEFT", "left" },
+      { GH_MLS_GROUP_END_REMOVED, "GH_MLS_GROUP_END_REMOVED", "removed" },
+      { 0, NULL, NULL }
+    };
+    g_once_init_leave(&type, g_enum_register_static("GhMlsGroupEnd", values));
   }
   return type;
 }
@@ -467,6 +487,20 @@ gh_mls_group_get_active(GhMlsGroup *self)
   return self->active;
 }
 
+GhMlsGroupEnd
+gh_mls_group_get_end(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), GH_MLS_GROUP_END_NONE);
+  return self->end;
+}
+
+const gchar *
+gh_mls_group_get_removed_by(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), NULL);
+  return self->removed_by;
+}
+
 GhMlsReadState
 gh_mls_group_get_read_state(GhMlsGroup *self)
 {
@@ -557,6 +591,8 @@ gh_mls_group_get_property(GObject *object, guint id, GValue *value, GParamSpec *
   case GROUP_PROP_DESCRIPTION: g_value_set_string(value, self->description); break;
   case GROUP_PROP_EPOCH: g_value_set_uint64(value, self->epoch); break;
   case GROUP_PROP_ACTIVE: g_value_set_boolean(value, self->active); break;
+  case GROUP_PROP_END: g_value_set_enum(value, self->end); break;
+  case GROUP_PROP_REMOVED_BY: g_value_set_string(value, self->removed_by); break;
   case GROUP_PROP_READ_STATE: g_value_set_enum(value, self->read); break;
   case GROUP_PROP_IS_ADMIN: g_value_set_boolean(value, self->is_admin); break;
   case GROUP_PROP_PENDING_COMMIT: g_value_set_boolean(value, self->pending_commit); break;
@@ -577,6 +613,7 @@ gh_mls_group_finalize(GObject *object)
   g_free(self->room_id);
   g_free(self->name);
   g_free(self->description);
+  g_free(self->removed_by);
   g_strfreev(self->members);
   g_strfreev(self->admins);
   g_strfreev(self->relays);
@@ -604,6 +641,9 @@ gh_mls_group_class_init(GhMlsGroupClass *klass)
   group_props[GROUP_PROP_DESCRIPTION] = g_param_spec_string("description", NULL, NULL, NULL, ro);
   group_props[GROUP_PROP_EPOCH] = g_param_spec_uint64("epoch", NULL, NULL, 0, G_MAXUINT64, 0, ro);
   group_props[GROUP_PROP_ACTIVE] = g_param_spec_boolean("active", NULL, NULL, FALSE, ro);
+  group_props[GROUP_PROP_END] = g_param_spec_enum("end", NULL, NULL, GH_TYPE_MLS_GROUP_END,
+                                                  GH_MLS_GROUP_END_NONE, ro);
+  group_props[GROUP_PROP_REMOVED_BY] = g_param_spec_string("removed-by", NULL, NULL, NULL, ro);
   group_props[GROUP_PROP_READ_STATE] = g_param_spec_enum("read-state", NULL, NULL,
                                                          GH_TYPE_MLS_READ_STATE,
                                                          GH_MLS_READ_IDLE, ro);
@@ -654,6 +694,19 @@ static void group_subscribe(GhMlsGroup *group);
 static void update_history_incomplete(GhMlsGroup *group);
 static void group_unsubscribe(GhMlsGroup *group);
 static void welcomes_pump(GhMlsGroup *group);
+
+/* An ended group (left or removed) holds nothing: none of it can ever be
+ * read, so none of it is "unreadable yet" (nostrc-xrya). */
+static void
+drop_held(GhMlsGroup *group)
+{
+  group->pinned = 0;
+  if (g_queue_is_empty(&group->held))
+    return;
+  g_hash_table_remove_all(group->held_ids);
+  g_queue_clear_full(&group->held, held_free);
+  g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
+}
 
 static gboolean
 account_matches_model(GhMlsService *self)
@@ -710,10 +763,6 @@ group_refresh(GhMlsGroup *group)
     g_object_notify_by_pspec(object, group_props[GROUP_PROP_EPOCH]);
   }
   gboolean active = g->state == MARMOT_GROUP_STATE_ACTIVE;
-  if (group->active != active) {
-    group->active = active;
-    g_object_notify_by_pspec(object, group_props[GROUP_PROP_ACTIVE]);
-  }
   GPtrArray *admins = g_ptr_array_new();
   gboolean admin = g->admin_count == 0; /* libmarmot: no admins, anyone */
   for (size_t i = 0; i < g->admin_count; i++) {
@@ -737,7 +786,9 @@ group_refresh(GhMlsGroup *group)
 
   uint8_t (*keys)[32] = NULL;
   size_t n_keys = 0;
+  gboolean members_known = FALSE;
   if (marmot_get_group_members(m, &group->gid, &keys, &n_keys) == MARMOT_OK) {
+    members_known = TRUE;
     GPtrArray *members = g_ptr_array_new();
     for (size_t i = 0; i < n_keys; i++)
       g_ptr_array_add(members, to_hex(keys[i], 32));
@@ -751,6 +802,39 @@ group_refresh(GhMlsGroup *group)
     }
   }
   free(keys);
+
+  /* nostrc-xrya: why the group is not active. libmarmot keeps who removed
+   * the account; an applied Commit that left the account out of the
+   * members removed it too (by someone the service can't name). */
+  GhMlsGroupEnd end = GH_MLS_GROUP_END_NONE;
+  g_autofree gchar *removed_by = NULL;
+  if (!active) {
+    bool removed = false;
+    uint8_t by[32];
+    if (marmot_get_group_removal(m, &group->gid, &removed, by, NULL) == MARMOT_OK && removed) {
+      end = GH_MLS_GROUP_END_REMOVED;
+      removed_by = to_hex(by, 32);
+    } else {
+      end = GH_MLS_GROUP_END_LEFT;
+    }
+  } else if (members_known && group->members[0] &&
+             !g_strv_contains((const gchar *const *)group->members, self->account)) {
+    active = FALSE;
+    end = GH_MLS_GROUP_END_REMOVED;
+  }
+  if (group->active != active) {
+    group->active = active;
+    g_object_notify_by_pspec(object, group_props[GROUP_PROP_ACTIVE]);
+  }
+  if (group->end != end) {
+    group->end = end;
+    g_object_notify_by_pspec(object, group_props[GROUP_PROP_END]);
+  }
+  if (g_strcmp0(group->removed_by, removed_by) != 0) {
+    g_free(group->removed_by);
+    group->removed_by = g_steal_pointer(&removed_by);
+    g_object_notify_by_pspec(object, group_props[GROUP_PROP_REMOVED_BY]);
+  }
 
   MarmotGroupRelay *relays = NULL;
   size_t n_relays = 0;
@@ -797,9 +881,10 @@ group_refresh(GhMlsGroup *group)
     g_signal_emit(group, group_signals[GROUP_SIGNAL_MEMBERS_CHANGED], 0);
   if (name_changed && group->active)
     group_list_room(group);
-  if (!group->active)
+  if (!group->active) {
     group_unsubscribe(group);
-  else if (routing_changed && group->scope)
+    drop_held(group);
+  } else if (routing_changed && group->scope)
     group_subscribe(group);
 }
 
