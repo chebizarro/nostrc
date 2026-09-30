@@ -117,6 +117,38 @@ typedef struct {
   int index;
 } AppendArg;
 
+typedef struct {
+  const SignetCredentialAccessContext *ctx;
+  const char *credential_id;
+  int64_t now;
+  SignetCredAccessStatus status;
+} DeliveryArg;
+
+static gpointer delivery_thread(gpointer data) {
+  DeliveryArg *arg = (DeliveryArg *)data;
+  SignetCredentialAccessRequest req = {
+    .agent_id = "agent-a",
+    .credential_id = arg->credential_id,
+    .capability = SIGNET_CAP_CREDENTIAL_GET_TOKEN,
+    .transport = "contextvm",
+    .one_use_delivery = true,
+    .issue_lease = false,
+    .lease_ttl_seconds = 60,
+  };
+  SignetCredentialAccessGrant grant;
+  memset(&grant, 0, sizeof(grant));
+  arg->status = signet_credential_access_acquire(arg->ctx, &req, arg->now,
+                                                  &grant);
+  if (arg->status == SIGNET_CRED_ACCESS_OK) {
+    CHECK(grant.record.payload_len == strlen(PAYLOAD_CANARY));
+    CHECK(memcmp(grant.record.payload, PAYLOAD_CANARY,
+                 grant.record.payload_len) == 0);
+    CHECK(grant.lease_id && strlen(grant.lease_id) == 32);
+  }
+  signet_credential_access_grant_clear(&grant);
+  return NULL;
+}
+
 static gpointer append_thread(gpointer data) {
   AppendArg *arg = (AppendArg *)data;
   for (int i = 0; i < arg->rounds; i++) {
@@ -232,6 +264,59 @@ int main(void) {
   CHECK(signet_store_consume_lease(store,
                                     "foreignlease00000000000000000001",
                                     cred_a, "agent-a", now) == 0);
+
+  /* A single-round-trip delivery mints and burns its own bounded lease before
+   * decrypting. The returned lease id is evidence, never a reusable grant. */
+  SignetCredentialAccessRequest delivery_req = {
+    .agent_id = "agent-a",
+    .credential_id = cred_a,
+    .capability = SIGNET_CAP_CREDENTIAL_GET_TOKEN,
+    .transport = "contextvm",
+    .lease_id = NULL,
+    .one_use_delivery = true,
+    .issue_lease = false,
+    .lease_ttl_seconds = 60,
+  };
+  CHECK(signet_credential_access_acquire(&ctx, &delivery_req, now, &grant) ==
+        SIGNET_CRED_ACCESS_OK);
+  expected_entries++;
+  CHECK(grant.lease_id && strlen(grant.lease_id) == 32);
+  CHECK(grant.lease_expires_at == now + 60);
+  CHECK(signet_store_consume_lease(store, grant.lease_id, cred_a,
+                                   "agent-a", now) == 1);
+  SignetLeaseRecord *active = NULL;
+  size_t n_active = 0;
+  CHECK(signet_store_list_active_leases(store, "agent-a", now,
+                                         &active, &n_active) == 0);
+  CHECK(n_active == 0);
+  signet_lease_list_free(active, n_active);
+  signet_credential_access_grant_clear(&grant);
+
+  /* Concurrent encrypted deliveries each get an independent lease which is
+   * burned before release. They serialize safely through the store and leave
+   * neither reusable leases nor a broken audit chain. */
+  enum { N_DELIVERIES = 8 };
+  GThread *delivery_threads[N_DELIVERIES];
+  DeliveryArg delivery_args[N_DELIVERIES];
+  for (int i = 0; i < N_DELIVERIES; i++) {
+    delivery_args[i] = (DeliveryArg){
+      .ctx = &ctx, .credential_id = cred_a, .now = now + i,
+      .status = SIGNET_CRED_ACCESS_ERROR,
+    };
+    delivery_threads[i] = g_thread_new("credential-delivery",
+                                        delivery_thread, &delivery_args[i]);
+  }
+  for (int i = 0; i < N_DELIVERIES; i++) {
+    g_thread_join(delivery_threads[i]);
+    CHECK(delivery_args[i].status == SIGNET_CRED_ACCESS_OK);
+    expected_entries++;
+  }
+  active = NULL;
+  n_active = 0;
+  CHECK(signet_store_list_active_leases(store, "agent-a", now + N_DELIVERIES,
+                                         &active, &n_active) == 0);
+  CHECK(n_active == 0);
+  signet_lease_list_free(active, n_active);
 
   /* 5. Missing capability grant: deny. */
   CHECK(acquire(&ctx, "agent-c", cred_a, SIGNET_CAP_CREDENTIAL_GET_TOKEN,

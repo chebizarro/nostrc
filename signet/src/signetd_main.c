@@ -844,27 +844,11 @@ int main(int argc, char **argv) {
    * and rate limits. A default policy is registered with core capabilities
    * and assigned via wildcard ("*") so all agents get baseline enforcement.
    * Provisioned agents can later be assigned more specific policies. */
-  SignetPolicyRegistry *cap_registry = signet_policy_registry_new();
-  {
-    /* Default policy: allow signing and encryption with rate limiting. */
-    char *default_caps[] = {
-      (char *)SIGNET_CAP_NOSTR_SIGN,
-      (char *)SIGNET_CAP_NOSTR_ENCRYPT,
-      (char *)SIGNET_CAP_SSH_SIGN,
-      (char *)SIGNET_CAP_SSH_LIST_KEYS,
-    };
-    SignetAgentPolicy default_pol = {
-      .name = (char *)"default",
-      .capabilities = default_caps,
-      .n_capabilities = G_N_ELEMENTS(default_caps),
-      .allowed_event_kinds = NULL,   /* all kinds allowed */
-      .n_allowed_kinds = 0,
-      .disallowed_credential_types = NULL,
-      .n_disallowed_types = 0,
-      .rate_limit_per_hour = 1000,
-    };
-    signet_policy_registry_add(cap_registry, &default_pol);
-    signet_policy_registry_assign(cap_registry, "*", "default");
+  SignetPolicyRegistry *cap_registry =
+      signet_policy_registry_new_daemon_default();
+  if (!cap_registry) {
+    g_critical("[signetd] failed to initialize capability registry");
+    return 1;
   }
 #ifdef SIGNET_ENABLE_TEST_HOOKS
   if (test_uid_map.agent_id[0] && test_dbus_grant_passkeys) {
@@ -957,6 +941,7 @@ int main(int argc, char **argv) {
    * agent/revoke deny-lists the pubkey, burns leases, and takes
    * effect immediately via deny-list precedence. */
   signet_mgmt_handler_set_deny_list(mgmt, deny);
+  signet_mgmt_handler_set_policy_registry(mgmt, cap_registry);
 
   /* And the NIP-46 server, so suspended (deny-listed) agents are refused on
    * pairing, binding reconnect, and per-request resolution. */

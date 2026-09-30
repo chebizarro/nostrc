@@ -345,6 +345,11 @@ signetctl import-credential <agent-id> --type credential --label <label> [--poli
 signetctl list-credentials [agent-id]
 signetctl inspect-credential <credential-id>
 
+# Deliver one credential through the same owner/capability/revocation/expiry
+# checks used by D-Bus. The encrypted ContextVM reply is decoded directly into
+# an atomic owner-only file; the payload is never printed.
+signetctl deliver-credential <agent-id> <credential-id> --out /run/consumer/credential
+
 # Replace the payload atomically; the prior version is archived
 signetctl rotate-credential <credential-id> [--expires-at <unix>] --stdin
 

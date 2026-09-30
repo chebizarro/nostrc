@@ -13,6 +13,7 @@
 #include "signet/store_leases.h"
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
+#include "signet/cli_secret_output.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -99,6 +100,9 @@ static void signetctl_usage(FILE *out) {
     "                    [--policy-id <id>] [--expires-at <unix>] (--file <path>|--stdin)\n"
     "  list-credentials [agent_id]       List payload-free credential metadata\n"
     "  inspect-credential <id>           Inspect payload-free metadata\n"
+    "  deliver-credential <agent_id> <id> --out <path>\n"
+    "                           Deliver through policy/lease/audit controls;\n"
+    "                           writes atomically as 0600, never prints payload\n"
     "  rotate-credential <id> [--expires-at <unix>] (--file <path>|--stdin)\n"
     "  revoke-credential <id>            Soft-revoke a credential\n"
     "  delete-credential <id> --confirm Delete a previously revoked credential\n"
@@ -153,6 +157,7 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_IMPORT_CREDENTIAL: return "credential/import";
     case SIGNET_MGMT_OP_LIST_CREDENTIALS: return "credential/list";
     case SIGNET_MGMT_OP_INSPECT_CREDENTIAL: return "credential/inspect";
+    case SIGNET_MGMT_OP_DELIVER_CREDENTIAL: return "credential/deliver";
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: return "credential/rotate";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: return "credential/revoke";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "credential/delete";
@@ -674,6 +679,7 @@ int main(int argc, char **argv) {
   const char *credential_label = NULL;
   const char *credential_policy_id = NULL;
   const char *credential_input_file = NULL;
+  const char *credential_output_file = NULL;
   bool credential_from_stdin = false;
   bool has_credential_expires_at = false;
   int64_t credential_expires_at = 0;
@@ -931,6 +937,22 @@ int main(int argc, char **argv) {
     credential_id = argv[argi++];
     if (argi != argc) {
       fprintf(stderr, "signetctl: unexpected inspect-credential argument\n");
+      return 2;
+    }
+  } else if (strcmp(cmd, "deliver-credential") == 0) {
+    op = SIGNET_MGMT_OP_DELIVER_CREDENTIAL;
+    if (argi + 1 >= argc) {
+      fprintf(stderr, "signetctl: deliver-credential requires <agent_id> <id> --out <path>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+    credential_id = argv[argi++];
+    if (argi + 1 < argc && strcmp(argv[argi], "--out") == 0) {
+      credential_output_file = argv[argi + 1];
+      argi += 2;
+    }
+    if (!credential_output_file || argi != argc) {
+      fprintf(stderr, "signetctl: deliver-credential requires exactly one --out <path>\n");
       return 2;
     }
   } else if (strcmp(cmd, "rotate-credential") == 0) {
@@ -1463,8 +1485,9 @@ int main(int argc, char **argv) {
     goto cleanup;
   }
 
-  printf("Published %s ContextVM intent (gift-wrapped). Waiting for reply...\n",
-         signet_mgmt_op_to_string(op));
+  fprintf(op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL ? stderr : stdout,
+          "Published %s ContextVM intent (gift-wrapped). Waiting for reply...\n",
+          signet_mgmt_op_to_string(op));
 
   /* Wait for ack with timeout, pumping the GLib main context.
    *
@@ -1501,6 +1524,9 @@ int main(int argc, char **argv) {
         exit_code = signetctl_handle_reissue_result(ack_ctx.response_json,
                                                     reissue_out_path,
                                                     reissue_show_secret);
+      } else if (op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL) {
+        exit_code = signet_cli_handle_delivery_result(ack_ctx.response_json,
+                                                      credential_output_file);
       } else {
         printf("Reply received:\n%s\n", ack_ctx.response_json);
         exit_code = 0;

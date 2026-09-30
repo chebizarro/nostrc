@@ -77,6 +77,29 @@ SignetPolicyRegistry *signet_policy_registry_new(void) {
   return pr;
 }
 
+SignetPolicyRegistry *signet_policy_registry_new_daemon_default(void) {
+  SignetPolicyRegistry *pr = signet_policy_registry_new();
+  if (!pr) return NULL;
+  char *caps[] = {
+    (char *)SIGNET_CAP_NOSTR_SIGN,
+    (char *)SIGNET_CAP_NOSTR_ENCRYPT,
+    (char *)SIGNET_CAP_SSH_SIGN,
+    (char *)SIGNET_CAP_SSH_LIST_KEYS,
+  };
+  SignetAgentPolicy policy = {
+    .name = (char *)"default",
+    .capabilities = caps,
+    .n_capabilities = G_N_ELEMENTS(caps),
+    .rate_limit_per_hour = 1000,
+  };
+  if (signet_policy_registry_add(pr, &policy) != 0 ||
+      signet_policy_registry_assign(pr, "*", "default") != 0) {
+    signet_policy_registry_free(pr);
+    return NULL;
+  }
+  return pr;
+}
+
 void signet_policy_registry_free(SignetPolicyRegistry *pr) {
   if (!pr) return;
   g_mutex_lock(&pr->mu);

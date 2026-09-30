@@ -72,6 +72,7 @@ signet_add_test_executable(test_reissue_self_service)
 signet_add_test_executable(test_client_bindings)          # persistent NIP-46 bindings
 signet_add_test_executable(test_credential_lifecycle)
 signet_add_test_executable(test_credential_access)
+signet_add_test_executable(test_cli_secret_output)
 signet_add_test_executable(test_git_credential)
 signet_add_test_executable(test_backup_restore)
 signet_add_test_executable(test_item3_concurrency)        # connection/port robustness
@@ -196,6 +197,7 @@ add_test(NAME reissue_self_service COMMAND test_reissue_self_service)
 add_test(NAME client_bindings COMMAND test_client_bindings)
 add_test(NAME credential_lifecycle COMMAND test_credential_lifecycle)
 add_test(NAME credential_access COMMAND test_credential_access)
+add_test(NAME cli_secret_output COMMAND test_cli_secret_output)
 add_test(NAME git_credential COMMAND test_git_credential)
 add_test(NAME signetctl_credentials
   COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh $<TARGET_FILE:signetctl>)

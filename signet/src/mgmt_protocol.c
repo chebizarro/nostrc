@@ -19,6 +19,8 @@
 #include "signet/store.h"
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
+#include "signet/credential_access.h"
+#include "signet/capability.h"
 #include "signet/bootstrap_delivery.h"
 #include "signet/util.h"
 
@@ -71,6 +73,7 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_IMPORT_CREDENTIAL: return "import_credential";
     case SIGNET_MGMT_OP_LIST_CREDENTIALS: return "list_credentials";
     case SIGNET_MGMT_OP_INSPECT_CREDENTIAL: return "inspect_credential";
+    case SIGNET_MGMT_OP_DELIVER_CREDENTIAL: return "deliver_credential";
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: return "rotate_credential";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: return "revoke_credential";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "delete_credential";
@@ -250,7 +253,8 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
                          out_req->op == SIGNET_MGMT_OP_REISSUE_CONNECT ||
                          out_req->op == SIGNET_MGMT_OP_LIST_CLIENTS ||
                          out_req->op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
-                         out_req->op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL);
+                         out_req->op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL ||
+                         out_req->op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL);
 
   if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
     if (out_error) *out_error = g_strdup("agent_id is required");
@@ -312,6 +316,7 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
 
   bool needs_credential_id =
       out_req->op == SIGNET_MGMT_OP_INSPECT_CREDENTIAL ||
+      out_req->op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL ||
       out_req->op == SIGNET_MGMT_OP_ROTATE_CREDENTIAL ||
       out_req->op == SIGNET_MGMT_OP_REVOKE_CREDENTIAL ||
       out_req->op == SIGNET_MGMT_OP_DELETE_CREDENTIAL;
@@ -396,6 +401,7 @@ struct SignetMgmtHandler {
   SignetAuditLogger *audit;
   SignetPolicyStore *policy_store;
   SignetDenyList *deny;   /* shared live deny list (owned by daemon) */
+  SignetPolicyRegistry *cap_policy; /* shared live capability registry */
   SignetReplayCache *replay;      /* provisioner replay cache (owned by daemon) */
   SignetReplayCache *replay_self; /* self-service replay cache (owned by daemon) */
 
@@ -550,6 +556,12 @@ void signet_mgmt_handler_set_self_replay_cache(SignetMgmtHandler *h,
 void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h, SignetDenyList *deny) {
   if (!h) return;
   h->deny = deny;
+}
+
+void signet_mgmt_handler_set_policy_registry(
+    SignetMgmtHandler *h, SignetPolicyRegistry *policy) {
+  if (!h) return;
+  h->cap_policy = policy;
 }
 
 static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content) {
@@ -713,6 +725,7 @@ static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   if (strcmp(method, "credential/import") == 0) return SIGNET_MGMT_OP_IMPORT_CREDENTIAL;
   if (strcmp(method, "credential/list") == 0) return SIGNET_MGMT_OP_LIST_CREDENTIALS;
   if (strcmp(method, "credential/inspect") == 0) return SIGNET_MGMT_OP_INSPECT_CREDENTIAL;
+  if (strcmp(method, "credential/deliver") == 0) return SIGNET_MGMT_OP_DELIVER_CREDENTIAL;
   if (strcmp(method, "credential/rotate") == 0) return SIGNET_MGMT_OP_ROTATE_CREDENTIAL;
   if (strcmp(method, "credential/revoke") == 0) return SIGNET_MGMT_OP_REVOKE_CREDENTIAL;
   if (strcmp(method, "credential/delete") == 0) return SIGNET_MGMT_OP_DELETE_CREDENTIAL;
@@ -943,6 +956,7 @@ static const char *signet_mgmt_op_audit_name(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_REVOKE_CLIENT:      return "mgmt_revoke_client";
     case SIGNET_MGMT_OP_CREATE_CREDENTIAL:  return "credential_create";
     case SIGNET_MGMT_OP_IMPORT_CREDENTIAL:  return "credential_import";
+    case SIGNET_MGMT_OP_DELIVER_CREDENTIAL: return "credential_deliver";
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL:  return "credential_rotate";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL:  return "credential_revoke";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL:  return "credential_delete";
@@ -1143,7 +1157,10 @@ static int signet_mgmt_handler_handle_request_ex(
   if (!sender_is_provisioner && op != SIGNET_MGMT_OP_REISSUE_CONNECT) {
     /* Silently drop unauthorized events (no ack — do not confirm the bunker
      * exists) but record the attempt in the tamper-evident audit chain. */
-    signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
+    signet_mgmt_chain_audit(h,
+                            op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL
+                                ? "credential_deliver" : "mgmt_unauthorized",
+                            event_pubkey_hex, NULL,
                             "deny", "not_provisioner", now);
     return -1;
   }
@@ -1920,6 +1937,85 @@ static int signet_mgmt_handler_handle_request_ex(
       break;
     }
 
+    case SIGNET_MGMT_OP_DELIVER_CREDENTIAL: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      if (!base_store || !h->cap_policy || !req.agent_id || !req.agent_id[0]) {
+        code = "credential_access_unavailable";
+        message = g_strdup("credential delivery policy is unavailable");
+        break;
+      }
+
+      SignetCredentialAccessContext access_ctx = {
+        .store = base_store,
+        .policy = h->cap_policy,
+        .identity_policy = h->policy_store,
+        .deny = h->deny,
+        .logger = h->audit,
+      };
+      SignetCredentialAccessRequest access_req = {
+        .agent_id = req.agent_id,
+        .credential_id = req.credential_id,
+        .capability = SIGNET_CAP_CREDENTIAL_DELIVER,
+        .transport = "contextvm",
+        .requester_pubkey = event_pubkey_hex,
+        .lease_id = NULL,
+        .one_use_delivery = true,
+        .issue_lease = false,
+        .lease_ttl_seconds = 60,
+      };
+      SignetCredentialAccessGrant grant;
+      memset(&grant, 0, sizeof(grant));
+      SignetCredAccessStatus arc = signet_credential_access_acquire(
+          &access_ctx, &access_req, now, &grant);
+      if (arc != SIGNET_CRED_ACCESS_OK) {
+        code = signet_cred_access_reason(arc);
+        message = g_strdup("credential delivery denied");
+        signet_credential_access_grant_clear(&grant);
+        break;
+      }
+
+      char *payload_b64 = g_base64_encode(grant.record.payload,
+                                          grant.record.payload_len);
+      JsonBuilder *db = json_builder_new();
+      if (payload_b64 && db) {
+        json_builder_begin_object(db);
+        json_builder_set_member_name(db, "credential_id");
+        json_builder_add_string_value(db, req.credential_id);
+        json_builder_set_member_name(db, "agent_id");
+        json_builder_add_string_value(db, req.agent_id);
+        json_builder_set_member_name(db, "payload_b64");
+        json_builder_add_string_value(db, payload_b64);
+        json_builder_set_member_name(db, "lease_id");
+        json_builder_add_string_value(db, grant.lease_id ? grant.lease_id : "");
+        json_builder_set_member_name(db, "lease_expires_at");
+        json_builder_add_int_value(db, grant.lease_expires_at);
+        json_builder_end_object(db);
+        JsonNode *root = json_builder_get_root(db);
+        JsonGenerator *gen = json_generator_new();
+        if (root && gen) {
+          json_generator_set_root(gen, root);
+          result = json_generator_to_data(gen, NULL);
+        }
+        if (gen) g_object_unref(gen);
+        if (root) json_node_free(root);
+      }
+      if (db) g_object_unref(db);
+      if (payload_b64) {
+        secure_wipe(payload_b64, strlen(payload_b64));
+        g_free(payload_b64);
+      }
+      signet_credential_access_grant_clear(&grant);
+      if (result) {
+        ok = true;
+        code = "credential_delivered";
+        message = g_strdup("credential delivered through encrypted ContextVM");
+      } else {
+        code = "internal_error";
+        message = g_strdup("failed to build encrypted credential delivery");
+      }
+      break;
+    }
+
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: {
       SignetStore *base_store = signet_key_store_get_store(h->keys);
       uint8_t *payload = NULL;
@@ -2125,7 +2221,10 @@ static int signet_mgmt_handler_handle_request_ex(
     if (audit_op) {
       signet_mgmt_chain_audit(
           h, audit_op,
-          (req.agent_id && req.agent_id[0]) ? req.agent_id : event_pubkey_hex,
+          req.op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL
+              ? event_pubkey_hex
+              : ((req.agent_id && req.agent_id[0]) ? req.agent_id
+                                                    : event_pubkey_hex),
           audit_secret_id ? audit_secret_id :
               (req.credential_id ? req.credential_id : req.provisioner_pubkey),
           ok ? "allow" : "deny", code, now);

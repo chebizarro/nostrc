@@ -80,6 +80,7 @@ typedef enum {
   SIGNET_MGMT_OP_IMPORT_CREDENTIAL,
   SIGNET_MGMT_OP_LIST_CREDENTIALS,
   SIGNET_MGMT_OP_INSPECT_CREDENTIAL,
+  SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
   SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
   SIGNET_MGMT_OP_REVOKE_CREDENTIAL,
   SIGNET_MGMT_OP_DELETE_CREDENTIAL,
@@ -221,6 +222,7 @@ struct SignetAuditLogger;
 struct SignetPolicyStore;
 struct SignetDenyList;
 struct SignetReplayCache;
+struct SignetPolicyRegistry;
 
 /**
  * SignetMgmtHandler:
@@ -300,6 +302,12 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h);
  */
 void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h,
                                        struct SignetDenyList *deny);
+
+/* Attach the daemon's live capability registry. Credential delivery fails
+ * closed until this is set; the management plane must use the same policy
+ * object as D-Bus/NIP-5L rather than bypassing credential-access controls. */
+void signet_mgmt_handler_set_policy_registry(
+    SignetMgmtHandler *h, struct SignetPolicyRegistry *policy);
 
 /* Attach a replay cache so each DELIVERED EVENT ID executes at most once per
  * cache TTL. This suppresses relay redelivery, republishing of the same
