@@ -896,6 +896,74 @@ test_paging_overrun_and_end(void)
   fixture_clear(&fixture);
 }
 
+/* Final review N2 (probe P3): a relay capped at 20 holds 60 stored events
+ * (3001-3060) and sends one live event (9000) before its EOSE, as khatru
+ * does, so the live answer has 21. The first page {until 3041} brings the
+ * cap's 20: fewer than 21, but it got older, so it may be cut and paging
+ * goes on. If the next page fails, the answer is incomplete (40 of 61
+ * delivered); if the relay answers, all 61 arrive and it is complete. */
+static void
+deliver_range(GhRelayScope *scope, gint64 from, gint64 to)
+{
+  for (gint64 t = to; t >= from; t--) {    /* newest first, as relays send */
+    g_autofree gchar *content = g_strdup_printf("stored %" G_GINT64_FORMAT, t);
+    g_autofree gchar *json = signed_json_at(content, t);
+    gh_relay_scope_event(scope, PAGED_URL, json);
+  }
+}
+
+static void
+run_live_before_eose(gboolean last_page_fails)
+{
+  Fixture fixture = { .opened = g_ptr_array_new_with_free_func(g_free),
+                      .closed = g_ptr_array_new_with_free_func(g_free),
+                      .scopes = g_ptr_array_new() };
+  GhRelayScope *scope = paging_scope(&fixture);
+  deliver_range(scope, 3041, 3060);                 /* the cap's newest 20 */
+  g_autofree gchar *live = signed_json_at("live", 9000);
+  gh_relay_scope_event(scope, PAGED_URL, live);     /* before EOSE: 21 */
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(fixture.scopes->len, ==, 2);
+  deliver_range(g_ptr_array_index(fixture.scopes, 1), 3022, 3041);   /* {until 3041}: 20 */
+  gh_relay_scope_eose(g_ptr_array_index(fixture.scopes, 1), PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(fixture.events, ==, 40);
+  g_assert_cmpuint(fixture.eose, ==, 0);            /* not "complete" at 40 of 61 */
+  g_assert_cmpuint(fixture.scopes->len, ==, 3);     /* it pages on */
+  GhRelayScope *page = g_ptr_array_index(fixture.scopes, 2);
+  if (last_page_fails) {
+    gh_relay_scope_notice(page, PAGED_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE,
+                          "error: shutting down");
+    drain_pending();
+    g_assert_cmpuint(fixture.eose, ==, 1);
+    g_assert_true(fixture.last_incomplete);
+    g_assert_cmpuint(fixture.events, ==, 40);
+  } else {
+    deliver_range(page, 3003, 3022);                /* {until 3022}: 20 */
+    gh_relay_scope_eose(page, PAGED_URL);
+    drain_pending();
+    g_assert_cmpuint(fixture.scopes->len, ==, 4);
+    page = g_ptr_array_index(fixture.scopes, 3);
+    deliver_range(page, 3001, 3003);                /* {until 3003}: 3, short */
+    gh_relay_scope_eose(page, PAGED_URL);
+    drain_pending();
+    g_assert_cmpuint(fixture.eose, ==, 1);
+    g_assert_false(fixture.last_incomplete);
+    g_assert_cmpuint(fixture.events, ==, 61);
+  }
+  gh_relay_scope_unref(scope);
+  g_ptr_array_unref(fixture.scopes);
+  fixture_clear(&fixture);
+}
+
+static void
+test_paging_live_before_eose(void)
+{
+  run_live_before_eose(TRUE);
+  run_live_before_eose(FALSE);
+}
+
 /* ---- Overflow (nostrc-5rfp) ---- */
 
 #define OVERFLOW_DETAIL GH_RELAY_CLOSED_OVERFLOW_PREFIX " too many events waiting to be read"
@@ -985,6 +1053,7 @@ main(int argc, char **argv)
                   test_paging_failure_and_disconnect);
   g_test_add_func("/groundhog/relay/paging/same-second", test_paging_same_second);
   g_test_add_func("/groundhog/relay/paging/overrun-and-end", test_paging_overrun_and_end);
+  g_test_add_func("/groundhog/relay/paging/live-before-eose", test_paging_live_before_eose);
   g_test_add_func("/groundhog/relay/overflow/reported-then-retried-once",
                   test_overflow_reported_then_retried_once);
   return g_test_run();

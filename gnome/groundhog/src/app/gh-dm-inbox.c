@@ -693,12 +693,16 @@ finish_page(GhDmInbox *self, Endpoint *endpoint)
     return;
   }
   /* Short against the relay's own cap too, which may be far below the REQ
-   * limit (strfry's 500 against 1000; nostrc-cpwf), and against any earlier
-   * answer of this run: the relay's cap is at least that, so a page with
-   * fewer held all it had (review B2). */
+   * limit (strfry's 500 against 1000; nostrc-cpwf). A page that got no older
+   * than its until is also short when smaller than the largest answer of
+   * this run: the relay's cap is at least that, so it held all it had in
+   * that second (review B2). Only then (final review N2): an answer may
+   * exceed the relay's real cap (live wraps before EOSE, caps by time), and
+   * a page that made progress but is smaller than that may still be cut. */
   guint most = endpoint->run_max;
-  endpoint->run_max = MAX(most, events);
-  if (events < gh_relay_page_threshold(self->limit) || events < most) {
+  endpoint->run_max = MIN(MAX(most, events), self->limit);
+  gboolean stuck = oldest >= until;
+  if (events < gh_relay_page_threshold(self->limit) || (stuck && events < most)) {
     end_run(self, endpoint, TRUE); /* nothing older remains */
     return;
   }

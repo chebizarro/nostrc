@@ -547,15 +547,21 @@ judge_filter(GhRelayScope *scope, GhEndpoint *endpoint, size_t i)
 {
   PageFilter *p = &endpoint->pf[i];
   p->open = FALSE;
-  /* Perhaps cut short by the relay: at least the threshold, and no fewer
-   * than any earlier answer of this round brought (review B2). The relay
-   * returned max_count events at once before, so its cap is at least that:
-   * a page with fewer holds everything the relay has there. Without this,
-   * 20 or more events in the window's oldest second looked like a cut page
-   * forever (the step page returns them again, and nothing older exists). */
+  /* Perhaps cut short by the relay: at least the threshold. A page that got
+   * no older than its until (stuck in one second) is cut only if it is no
+   * smaller than the largest answer of this round (review B2): that relay's
+   * cap is at least max_count, so a smaller stuck page holds everything the
+   * relay has there -- 20 or more events in the window's oldest second must
+   * not look like a cut page forever. The largest-answer rule is for stuck
+   * pages only (final review N2): an answer can exceed the relay's real cap
+   * (a live event before EOSE, as khatru sends; caps by time or bytes), and
+   * a page that made progress but came back smaller than that inflated
+   * count may still be cut: it pages on. max_count is clamped to the page
+   * limit for the same reason. */
+  gboolean stuck = p->oldest >= p->until;
   gboolean cut = p->count >= gh_relay_page_threshold(scope->page_limit) &&
-                 p->count >= p->max_count;
-  p->max_count = MAX(p->max_count, p->count);
+                 (!stuck || p->count >= p->max_count);
+  p->max_count = MIN(MAX(p->max_count, p->count), scope->page_limit);
   if (cut) {
     /* until is inclusive, so the next page repeats the boundary second (the
      * relay may have cut inside it); a page that got no older holds more
