@@ -1,9 +1,12 @@
 using Gtk 4.0;
 using Adw 1;
 
-// New Group, relay part (charter §7.9 "Relay Group"; item G20b), driven by
-// gh-new-group-dialog.c. Encrypted groups are not offered until they ship
-// (qp24.13): no disabled placeholder. "form": the relay the group lives on,
+// New Group (charter §7.9; item G20b, qp24.13 part 2), driven by
+// gh-new-group-dialog.c. "type": the chooser, stating the difference up
+// front (§2.2 surface 3); it is the first page only when the encrypted page
+// (gh-mls-new-group-page.blp, tag "encrypted") was added, else the dialog
+// starts at "form": encrypted groups are never a disabled placeholder.
+// "form": the relay the group lives on,
 // its name and about, "Only Members Can Read" (private) and "Join by Invite
 // Only" (closed), with what a relay group means before anything is sent.
 // Nothing contacts the network until Create. "status": the relay's answer
@@ -17,6 +20,60 @@ template $GhNewGroupDialog: Adw.Dialog {
   content-height: 640;
 
   child: Adw.NavigationView navigation {
+    Adw.NavigationPage type_page {
+      tag: "type";
+      title: _("New Group");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Adw.PreferencesPage {
+          Adw.PreferencesGroup {
+            Adw.ActionRow encrypted_choice {
+              title: _("Encrypted Group");
+              subtitle: _("Only members can read messages. Everyone needs an app that supports encrypted groups.");
+              use-markup: false;
+              activatable: true;
+              action-name: "new-group.choose-encrypted";
+
+              [prefix]
+              Image {
+                icon-name: "channel-secure-symbolic";
+                accessible-role: presentation;
+              }
+
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+                accessible-role: presentation;
+              }
+            }
+
+            Adw.ActionRow relay_choice {
+              title: _("Relay Group");
+              subtitle: _("Hosted on a relay you choose. The relay’s operators can read messages.");
+              use-markup: false;
+              activatable: true;
+              action-name: "new-group.choose-relay";
+
+              [prefix]
+              Image {
+                icon-name: "network-workgroup-symbolic";
+                accessible-role: presentation;
+              }
+
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+                accessible-role: presentation;
+              }
+            }
+          }
+        };
+      };
+    }
+
     Adw.NavigationPage form_page {
       tag: "form";
       title: _("New Relay Group");

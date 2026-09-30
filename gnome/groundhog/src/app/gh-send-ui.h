@@ -83,7 +83,7 @@ void gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config);
 void gh_send_ui_set_expiry(GhWindow *window, struct _GhExpiry *expiry);
 
 /* G20b: another sending engine for some conversations (NIP-29 relay groups,
- * gh-group-ui.c). For a conversation it handles, the composer's reason,
+ * gh-group-ui.c; encrypted groups, gh-mls-ui.c). For a conversation it handles, the composer's reason,
  * send, retry and delivery details are the delegate's, never the NIP-17
  * outbox's, and no draft is stored (drafts are NIP-17 store rows). */
 typedef struct {
@@ -99,9 +99,15 @@ typedef struct {
   GhDeliveryReport *(*report)(GhMessage *message, gpointer data);
 } GhSendUiDelegate;
 
-/* Sets (NULL: clears) window's delegate; delegate is copied, data is borrowed
- * until replaced. Nothing for a window without the send UI. */
+/* Sets (NULL: clears) window's delegate, replacing every one;
+ * delegate is copied, data is borrowed until replaced. Nothing for a window
+ * without the send UI. */
 void gh_send_ui_set_delegate(GhWindow *window, const GhSendUiDelegate *delegate, gpointer data);
+/* qp24.13 part 2: one more delegate beside those set (e.g. encrypted groups
+ * beside relay groups; up to 4), or a new data for the one with the same
+ * handles function. The first whose handles() is TRUE sends a conversation.
+ * Call it after gh_send_ui_set_delegate(). */
+void gh_send_ui_add_delegate(GhWindow *window, const GhSendUiDelegate *delegate, gpointer data);
 /* Evaluates the composer's reason again (the delegate's state changed). */
 void gh_send_ui_refresh(GhWindow *window);
 

@@ -137,6 +137,49 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
+                      <object class="GtkButton" id="invitations_button">
+                        <property name="visible">false</property>
+                        <property name="action-name">win.group-invitations</property>
+                        <style>
+                          <class name="flat"/>
+                          <class name="groundhog-requests-button"/>
+                        </style>
+                        <property name="child">
+                          <object class="GtkBox">
+                            <property name="spacing">12</property>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">channel-secure-symbolic</property>
+                                <property name="accessible-role">43</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Group Invitations</property>
+                                <property name="xalign">0</property>
+                                <property name="hexpand">true</property>
+                                <property name="ellipsize">3</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="invitations_count">
+                                <style>
+                                  <class name="dim-label"/>
+                                  <class name="numeric"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkImage">
+                                <property name="icon-name">go-next-symbolic</property>
+                                <property name="accessible-role">43</property>
+                              </object>
+                            </child>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="GtkScrolledWindow">
                         <property name="vexpand">true</property>
                         <property name="hscrollbar-policy">2</property>

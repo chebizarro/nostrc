@@ -107,6 +107,12 @@ typedef gboolean (*GhConversationInfoGroupFunc)(GhWindow *window, GhConversation
                                                 gpointer user_data);
 void gh_conversation_info_set_group_handler(GhWindow *window, GhConversationInfoGroupFunc func,
                                             gpointer user_data);
+/* The same for an encrypted group (MLS, GhMlsGroupInfoDialog; qp24.13 part
+ * 2): set only where the encrypted-group UI is attached, so an encrypted
+ * conversation's Conversation Info is otherwise disabled. */
+void gh_conversation_info_set_encrypted_group_handler(GhWindow *window,
+                                                      GhConversationInfoGroupFunc func,
+                                                      gpointer user_data);
 
 G_END_DECLS
 #endif

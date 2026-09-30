@@ -1,0 +1,57 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One accepted contact in an encrypted-group member picker (charter §7.9,
+// §7.10; nostrc-9xf5), filled by gh-mls-invitee-picker.c: the cached name
+// or short npub (plain text, never markup), a check to choose them, and
+// once chosen their KeyPackage check (gh_mls_invitee_copy(): checking,
+// ready, hasn't set up encrypted groups, needs to update their app, no
+// relay answered) with Check Again where another try can help.
+template $GhMlsInviteeRow: Adw.ActionRow {
+  use-markup: false;
+  title-lines: 1;
+  subtitle-lines: 2;
+  activatable-widget: check;
+
+  [prefix]
+  CheckButton check {
+    valign: center;
+  }
+
+  [prefix]
+  Adw.Avatar avatar {
+    size: 32;
+    show-initials: true;
+    accessible-role: presentation;
+  }
+
+  [suffix]
+  Spinner spinner {
+    visible: false;
+    valign: center;
+  }
+
+  [suffix]
+  Image state_icon {
+    visible: false;
+    valign: center;
+    accessible-role: presentation;
+  }
+
+  [suffix]
+  Button retry_button {
+    visible: false;
+    valign: center;
+    icon-name: "view-refresh-symbolic";
+    tooltip-text: _("Check Again");
+    action-name: "invitee.retry";
+
+    accessibility {
+      label: _("Check Again");
+    }
+
+    styles [
+      "flat",
+    ]
+  }
+}

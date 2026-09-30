@@ -23,6 +23,7 @@ struct _GhNewGroupDialog {
   AdwActionRow *contact_row;
 
   GhNip29Service *service; /* weak */
+  AdwNavigationPage *encrypted_page; /* qp24.13 part 2: added, or NULL */
   GhNip29Room *room;
   gchar *relay_url;        /* the room's, kept after the service drops a refused one */
   gchar *announced;
@@ -176,6 +177,46 @@ action_back(GtkWidget *widget, const gchar *action, GVariant *parameter)
 }
 
 static void
+action_choose_relay(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(widget);
+  adw_navigation_view_push_by_tag(self->navigation, "form");
+}
+
+static void
+action_choose_encrypted(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(widget);
+  if (self->encrypted_page)
+    adw_navigation_view_push(self->navigation, self->encrypted_page);
+}
+
+void
+gh_new_group_dialog_add_encrypted_page(GhNewGroupDialog *self, AdwNavigationPage *page)
+{
+  g_return_if_fail(GH_IS_NEW_GROUP_DIALOG(self));
+  g_return_if_fail(ADW_IS_NAVIGATION_PAGE(page));
+  g_return_if_fail(self->encrypted_page == NULL);
+  self->encrypted_page = page;
+  adw_navigation_page_set_tag(page, "encrypted");
+  adw_navigation_view_add(self->navigation, page);
+  static const gchar *const root[] = { "type" };
+  adw_navigation_view_replace_with_tags(self->navigation, root, 1);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-group.choose-encrypted", TRUE);
+}
+
+AdwNavigationPage *
+gh_new_group_dialog_get_encrypted_page(GhNewGroupDialog *self)
+{
+  g_return_val_if_fail(GH_IS_NEW_GROUP_DIALOG(self), NULL);
+  return self->encrypted_page;
+}
+
+static void
 on_op_changed(GhNewGroupDialog *self)
 {
   sync_status(self);
@@ -277,6 +318,10 @@ gh_new_group_dialog_class_init(GhNewGroupDialogClass *klass)
   gtk_widget_class_install_action(widget_class, "new-group.create", NULL, action_create);
   gtk_widget_class_install_action(widget_class, "new-group.open", NULL, action_open);
   gtk_widget_class_install_action(widget_class, "new-group.back", NULL, action_back);
+  gtk_widget_class_install_action(widget_class, "new-group.choose-relay", NULL,
+                                  action_choose_relay);
+  gtk_widget_class_install_action(widget_class, "new-group.choose-encrypted", NULL,
+                                  action_choose_encrypted);
 }
 
 static void
@@ -297,6 +342,11 @@ gh_new_group_dialog_init(GhNewGroupDialog *self)
                             G_CONNECT_SWAPPED);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-group.open", FALSE);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-group.back", FALSE);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-group.choose-encrypted", FALSE);
+  /* Relay groups only until an encrypted page is added: no chooser, no
+   * placeholder (charter §7.9). */
+  static const gchar *const root[] = { "form" };
+  adw_navigation_view_replace_with_tags(self->navigation, root, 1);
   g_signal_connect_swapped(self->relay_row, "entry-activated", G_CALLBACK(on_activated), self);
   g_signal_connect_swapped(self->name_row, "entry-activated", G_CALLBACK(on_activated), self);
   g_signal_connect_swapped(self->about_row, "entry-activated", G_CALLBACK(on_activated), self);

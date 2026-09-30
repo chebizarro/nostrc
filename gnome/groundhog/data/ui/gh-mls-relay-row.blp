@@ -1,0 +1,37 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One relay of an encrypted group (charter §7.9 "group relays", §7.10;
+// nostrc-9xf5), filled by gh-mls-new-group-page.c: its address as plain
+// text and, while a new group's relays are being chosen, Remove.
+template $GhMlsRelayRow: Adw.ActionRow {
+  use-markup: false;
+  title-lines: 1;
+
+  styles [
+    "monospace",
+  ]
+
+  [prefix]
+  Image {
+    icon-name: "network-server-symbolic";
+    accessible-role: presentation;
+  }
+
+  [suffix]
+  Button remove_button {
+    visible: false;
+    valign: center;
+    icon-name: "list-remove-symbolic";
+    tooltip-text: _("Remove Relay");
+    action-name: "relay.remove";
+
+    accessibility {
+      label: _("Remove Relay");
+    }
+
+    styles [
+      "flat",
+    ]
+  }
+}

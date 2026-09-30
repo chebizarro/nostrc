@@ -290,12 +290,16 @@ update(GhConversationRow *self)
     : g_strdup(subject ? subject : preview ? preview : "");
 
   /* Charter §7.5: a relay group shows a network glyph and says it is not
-   * end-to-end encrypted; the strings table names every kind (G20b). */
+   * end-to-end encrypted, an encrypted group a lock (qp24.13 part 2); the
+   * strings table names every kind (G20b). */
   GhPrivacyBackend backend = (GhPrivacyBackend)gh_conversation_get_backend(conversation);
   const gchar *kind = gh_privacy_summary_kind(backend);
   gboolean relay_group = backend == GH_PRIVACY_BACKEND_NIP29;
-  gtk_widget_set_visible(GTK_WIDGET(self->kind_icon), relay_group);
-  if (relay_group) {
+  gboolean encrypted_group = backend == GH_PRIVACY_BACKEND_MLS;
+  gtk_widget_set_visible(GTK_WIDGET(self->kind_icon), relay_group || encrypted_group);
+  if (relay_group || encrypted_group) {
+    gtk_image_set_from_icon_name(self->kind_icon, encrypted_group ? "channel-secure-symbolic"
+                                                                  : "network-workgroup-symbolic");
     gtk_widget_set_tooltip_text(GTK_WIDGET(self->kind_icon), kind);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->kind_icon),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, kind, -1);

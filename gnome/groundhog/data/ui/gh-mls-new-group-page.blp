@@ -1,0 +1,247 @@
+using Gtk 4.0;
+using Adw 1;
+
+// New Group, encrypted part (charter §7.9 "Encrypted Group", §2.2 surface 3;
+// nostrc-9xf5, qp24.13 part 2), driven by gh-mls-new-group-page.c and pushed
+// from the chooser of gh-new-group-dialog.blp. "form": what an encrypted
+// group is, this device's approval in Nostr Signer (the account proof:
+// waiting, or declined with Try Again), the name, the members (accepted
+// contacts only, each with its KeyPackage check), the group relays (the
+// account's own write relays to start with) and the single-device note
+// (D7). Create stays insensitive with the reason under it until everything
+// is ready. "status": creating (one Add Commit to the group relays, then
+// the invitations), created with Open Group, or not created in plain words
+// with Change and Try Again. Nothing contacts the network before a person
+// is chosen (their check) or Create.
+template $GhMlsNewGroupPage: Adw.NavigationPage {
+  title: _("New Encrypted Group");
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Stack stack {
+      transition-type: crossfade;
+
+      StackPage {
+        name: "form";
+
+        child: Adw.PreferencesPage {
+          Adw.PreferencesGroup {
+            description: _("Only members can read messages. Everyone needs an app that supports encrypted groups.");
+          }
+
+          // This device's approval (gh_mls_identity_copy()); hidden once
+          // approved.
+          Adw.PreferencesGroup identity_group {
+            visible: false;
+
+            Adw.ActionRow identity_row {
+              use-markup: false;
+              title-lines: 2;
+
+              [prefix]
+              Spinner identity_spinner {
+                visible: false;
+                valign: center;
+              }
+
+              [prefix]
+              Image identity_icon {
+                visible: false;
+                icon-name: "dialog-warning-symbolic";
+                valign: center;
+                accessible-role: presentation;
+              }
+
+              [suffix]
+              Button retry_identity_button {
+                visible: false;
+                label: _("_Try Again");
+                use-underline: true;
+                valign: center;
+                action-name: "mls-new.retry-identity";
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Adw.EntryRow name_row {
+              title: _("Name");
+              use-markup: false;
+            }
+
+            Adw.EntryRow about_row {
+              title: _("Description (Optional)");
+              use-markup: false;
+            }
+          }
+
+          $GhMlsInviteePicker picker {}
+
+          // One $GhMlsRelayRow per relay (from C).
+          Adw.PreferencesGroup relays_group {
+            title: _("Group Relays");
+            description: _("Where the group’s encrypted messages are kept. They see when the group is active, but not who is in it or what is said.");
+          }
+
+          Adw.PreferencesGroup {
+            Adw.EntryRow relay_entry {
+              title: _("Add Relay");
+              use-markup: false;
+              show-apply-button: true;
+            }
+
+            Label relay_error {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+              margin-top: 6;
+              use-markup: false;
+
+              styles [
+                "error",
+              ]
+            }
+          }
+
+          Adw.PreferencesGroup {
+            title: _("Before You Create It");
+
+            Adw.ActionRow {
+              title: _("On this device only");
+              subtitle: _("Messages are kept only on this device; history can’t be restored.");
+              use-markup: false;
+              subtitle-lines: 3;
+
+              [prefix]
+              Image {
+                icon-name: "computer-symbolic";
+                accessible-role: presentation;
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
+            Label error_label {
+              visible: false;
+              wrap: true;
+              xalign: 0;
+              use-markup: false;
+
+              styles [
+                "error",
+              ]
+            }
+
+            // Why Create is insensitive (charter §7.1).
+            Label create_reason {
+              wrap: true;
+              justify: center;
+              margin-bottom: 12;
+              use-markup: false;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Button create_button {
+              label: _("_Create Group");
+              use-underline: true;
+              halign: center;
+              action-name: "mls-new.create";
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            }
+          }
+        };
+      }
+
+      StackPage {
+        name: "status";
+
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 400;
+            margin-top: 24;
+            margin-bottom: 24;
+            margin-start: 12;
+            margin-end: 12;
+
+            child: Box {
+              orientation: vertical;
+              spacing: 12;
+              valign: center;
+
+              Image status_icon {
+                pixel-size: 64;
+                halign: center;
+                accessible-role: presentation;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Spinner status_spinner {
+                visible: false;
+                halign: center;
+                width-request: 32;
+                height-request: 32;
+              }
+
+              Label status_title {
+                wrap: true;
+                justify: center;
+                use-markup: false;
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label status_description {
+                wrap: true;
+                wrap-mode: word_char;
+                justify: center;
+                use-markup: false;
+              }
+
+              Button open_button {
+                visible: false;
+                label: _("_Open Group");
+                use-underline: true;
+                halign: center;
+                margin-top: 12;
+                action-name: "mls-new.open";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+
+              Button back_button {
+                visible: false;
+                label: _("_Change and Try Again");
+                use-underline: true;
+                halign: center;
+                action-name: "mls-new.back";
+
+                styles [
+                  "pill",
+                ]
+              }
+            };
+          };
+        };
+      }
+    };
+  };
+}

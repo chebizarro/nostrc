@@ -142,6 +142,46 @@ template $GhSidebarPage: Adw.NavigationPage {
             };
           }
 
+          // Shown when encrypted-group invitations wait (qp24.13 part 2):
+          // like requests, nothing is joined until one is accepted there.
+          Button invitations_button {
+            visible: false;
+            action-name: "win.group-invitations";
+
+            styles [
+              "flat",
+              "groundhog-requests-button",
+            ]
+
+            child: Box {
+              spacing: 12;
+
+              Image {
+                icon-name: "channel-secure-symbolic";
+                accessible-role: presentation;
+              }
+
+              Label {
+                label: _("Group Invitations");
+                xalign: 0;
+                hexpand: true;
+                ellipsize: end;
+              }
+
+              Label invitations_count {
+                styles [
+                  "dim-label",
+                  "numeric",
+                ]
+              }
+
+              Image {
+                icon-name: "go-next-symbolic";
+                accessible-role: presentation;
+              }
+            };
+          }
+
           ScrolledWindow {
             vexpand: true;
             hscrollbar-policy: never;

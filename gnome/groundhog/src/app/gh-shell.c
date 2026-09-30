@@ -18,6 +18,8 @@ struct _GhSidebarPage {
   GtkStack *stack;
   GtkButton *requests_button;
   GtkLabel *requests_count;
+  GtkButton *invitations_button;
+  GtkLabel *invitations_count;
   GtkListView *list;
   AdwStatusPage *error_page;
   AdwStatusPage *onboarding_unavailable; /* not in the stack unless added */
@@ -34,6 +36,7 @@ struct _GhSidebarPage {
   GhStatusBanner banner;         /* last shown */
   gboolean show_requests;
   gboolean show_previews;
+  guint invitations;             /* pending encrypted-group invitations */
 };
 
 enum {
@@ -60,7 +63,8 @@ conversation_page(GhSidebarPage *self)
 {
   guint conversations = model_n_items(self->conversations);
   guint requests = model_n_items(self->requests);
-  gboolean listed = self->show_requests ? requests > 0 : conversations + requests > 0;
+  gboolean listed = self->show_requests
+    ? requests > 0 : conversations + requests + self->invitations > 0;
   if (listed)
     return "conversations";
   if (*self->search_text)
@@ -89,6 +93,15 @@ update_page(GhSidebarPage *self)
                 requests), requests);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->requests_button),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+  gtk_widget_set_visible(GTK_WIDGET(self->invitations_button),
+                         !self->show_requests && self->invitations > 0);
+  g_autofree gchar *invitations = g_strdup_printf("%u", self->invitations);
+  gtk_label_set_text(self->invitations_count, invitations);
+  g_autofree gchar *invitations_label = g_strdup_printf(
+    g_dngettext(NULL, "Group Invitations, %u invitation", "Group Invitations, %u invitations",
+                self->invitations), self->invitations);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->invitations_button),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, invitations_label, -1);
   gtk_stack_set_visible_child_name(self->stack,
                                    self->account_page ? self->account_page
                                                       : conversation_page(self));
@@ -279,6 +292,8 @@ gh_sidebar_page_class_init(GhSidebarPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, stack);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, requests_button);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, requests_count);
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, invitations_button);
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, invitations_count);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, list);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, error_page);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, onboarding_unavailable);
@@ -416,6 +431,23 @@ gh_sidebar_page_set_models(GhSidebarPage *self, GListModel *conversations,
   gtk_single_selection_set_model(self->selection,
                                  self->show_requests ? requests : conversations);
   update_page(self);
+}
+
+void
+gh_sidebar_page_set_invitations(GhSidebarPage *self, guint count)
+{
+  g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
+  if (self->invitations == count)
+    return;
+  self->invitations = count;
+  update_page(self);
+}
+
+guint
+gh_sidebar_page_get_invitations(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), 0);
+  return self->invitations;
 }
 
 gpointer

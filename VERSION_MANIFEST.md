@@ -109,6 +109,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same (nd-fetch's handshake wait: the relay holds its own reference to the wait channel) | nostr-dispatcher | unversioned | No bump possible: nostr-dispatcher has no version source. |
 | same (`nostr_nip46_client_start()`: each relay holds its own reference to the connect channel) | NIP-46 client/provider | Unversioned | No bump possible: unversioned (see the component table). |
 | same (the negentropy client's AUTH callback context is refcounted and its handshake channel referenced by the relay; W20 review L1) | gnostr | 0.1.0 | No bump (unreleased): the fix ships in 0.1.0. |
+| libmarmot 0.10.0: additive `marmot_key_package_event_has_account_proof()` (whether a KeyPackage can be invited outside legacy mode, before any Commit) for Groundhog's encrypted-group UI (nostrc-9xf5, qp24.13 part 2) | libmarmot | 0.10.0 | No further bump: additive API folded into unreleased 0.10.0. |
+| same | groundhog | 0.11.1 | No bump: the encrypted-group UI (New Group's encrypted page, invitations, Group Info, the composer, the conversation surfaces) ships behind GH_FEATURE_ENCRYPTED_GROUPS=0, so no user-visible change until nostrc-5rfp, nostrc-cpwf and nostrc-kzun close and the flag is flipped. |
 
 ## Maintenance
 

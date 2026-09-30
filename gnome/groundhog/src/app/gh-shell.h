@@ -56,6 +56,12 @@ void gh_sidebar_page_set_status(GhSidebarPage *self, GhStatus *status);
  * items. Set once; the page takes references. */
 void gh_sidebar_page_set_models(GhSidebarPage *self, GListModel *conversations,
                                 GListModel *requests);
+/* Pending encrypted-group invitations (qp24.13 part 2): the "Group
+ * Invitations" entry beside Message Requests shows the count and runs
+ * win.group-invitations; 0 hides it. Like a request, nothing is joined from
+ * the list itself. */
+void gh_sidebar_page_set_invitations(GhSidebarPage *self, guint count);
+guint gh_sidebar_page_get_invitations(GhSidebarPage *self);
 /* The selected item of the visible list; borrowed, NULL for none. */
 gpointer gh_sidebar_page_get_selected(GhSidebarPage *self);
 void gh_sidebar_page_unselect(GhSidebarPage *self);

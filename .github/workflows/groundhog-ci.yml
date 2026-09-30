@@ -70,7 +70,7 @@ jobs:
             test-groundhog-nip29-service \
             test-groundhog-mls-service test-groundhog-privacy-mls \
             test-groundhog-net test-groundhog-tls-resumption \
-            test-groundhog-group-ui \
+            test-groundhog-group-ui test-groundhog-mls-ui \
             test-groundhog-conversation-menu \
             test-groundhog-multi-send \
             test-groundhog-media test-groundhog-blossom test-groundhog-media-purge \
@@ -107,6 +107,7 @@ jobs:
               'groundhog-mls-service', 'groundhog-privacy-mls',
               'groundhog-net', 'groundhog-tls-resumption',
               'groundhog-group-ui', 'groundhog-group-ui-gui',
+              'groundhog-mls-ui', 'groundhog-mls-ui-gui',
               'groundhog-conversation-menu', 'groundhog-conversation-menu-gui',
               'groundhog-multi-send',
               'groundhog-media', 'groundhog-blossom', 'groundhog-media-purge', 'groundhog-relay-guard',
@@ -194,7 +195,8 @@ jobs:
         groundhog-privacy-e2e groundhog-new-message groundhog-requests
         groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service
         groundhog-mls-service groundhog-privacy-mls
-        groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-conversation-menu
+        groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui
+        groundhog-conversation-menu
         groundhog-multi-send
         groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard
         groundhog-media-cache-binding groundhog-attachments

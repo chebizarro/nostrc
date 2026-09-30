@@ -1,0 +1,685 @@
+#include "gh-mls-group-info-dialog.h"
+
+#include "gh-mls-copy.h"
+#include "gh-mls-invitee-picker.h"
+#include "gh-mls-new-group-page.h"
+#include "gh-privacy-summary.h"
+#include "gh-recipient.h"
+
+#include <glib/gi18n.h>
+
+/* ---- GhMlsMemberRow (data/ui/gh-mls-member-row.blp) ---------------------------------------- */
+
+#define GH_TYPE_MLS_MEMBER_ROW (gh_mls_member_row_get_type())
+G_DECLARE_FINAL_TYPE(GhMlsMemberRow, gh_mls_member_row, GH, MLS_MEMBER_ROW, AdwActionRow)
+
+struct _GhMlsMemberRow {
+  AdwActionRow parent_instance;
+  AdwAvatar *avatar;
+  GtkLabel *role_badge;
+  GtkWidget *remove_button;
+  gchar *pubkey;
+  GhMlsRole role;
+};
+
+G_DEFINE_FINAL_TYPE(GhMlsMemberRow, gh_mls_member_row, ADW_TYPE_ACTION_ROW)
+
+static void
+member_remove(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsMemberRow *self = GH_MLS_MEMBER_ROW(widget);
+  gtk_widget_activate_action(widget, "mls-group.remove", "s", self->pubkey);
+}
+
+static void
+gh_mls_member_row_finalize(GObject *object)
+{
+  g_free(GH_MLS_MEMBER_ROW(object)->pubkey);
+  G_OBJECT_CLASS(gh_mls_member_row_parent_class)->finalize(object);
+}
+
+static void
+gh_mls_member_row_class_init(GhMlsMemberRowClass *klass)
+{
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  G_OBJECT_CLASS(klass)->finalize = gh_mls_member_row_finalize;
+  gtk_widget_class_set_template_from_resource(widget_class,
+                                              "/org/nostr/Groundhog/ui/gh-mls-member-row.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, avatar);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, role_badge);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, remove_button);
+  gtk_widget_class_install_action(widget_class, "member.remove", NULL, member_remove);
+}
+
+static void
+gh_mls_member_row_init(GhMlsMemberRow *self)
+{
+  gtk_widget_init_template(GTK_WIDGET(self));
+}
+
+static GhMlsMemberRow *
+member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRole role,
+               gboolean removable)
+{
+  GhMlsMemberRow *self = g_object_new(GH_TYPE_MLS_MEMBER_ROW, NULL);
+  self->pubkey = g_strdup(pubkey);
+  self->role = role;
+  g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
+  const gchar *shown = name && *name ? name : npub;
+  g_autofree gchar *title = is_you ? g_strdup_printf(_("%s (You)"), shown) : g_strdup(shown);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self), title);
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(self), name && *name ? npub : "");
+  adw_avatar_set_text(self->avatar, shown);
+  const gchar *badge = gh_mls_role_copy(role);
+  gtk_label_set_text(self->role_badge, badge ? badge : "");
+  gtk_widget_set_visible(GTK_WIDGET(self->role_badge), badge != NULL);
+  gtk_widget_set_visible(self->remove_button, removable);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.remove", removable);
+  if (removable) {
+    g_autofree gchar *label = g_strdup_printf(_("Remove %s from Group"), shown);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->remove_button),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+  }
+  return self;
+}
+
+/* ---- GhMlsGroupInfoDialog --------------------------------------------------------------- */
+
+struct _GhMlsGroupInfoDialog {
+  AdwDialog parent_instance;
+  AdwToastOverlay *toasts;
+  AdwNavigationView *navigation;
+  AdwAvatar *avatar;
+  GtkLabel *title_label;
+  GtkLabel *subtitle_label;
+  GtkLabel *about_label;
+  AdwActionRow *privacy_row;
+  AdwExpanderRow *visible_row;
+  AdwExpanderRow *unprotected_row;
+  AdwActionRow *messages_row;
+  AdwActionRow *pending_row;
+  GtkSpinner *pending_spinner;
+  AdwPreferencesGroup *members_group;
+  GtkWidget *add_member_button;
+  AdwPreferencesGroup *admin_group;
+  AdwPreferencesGroup *relays_group;
+  GtkWidget *leave_button;
+  GhMlsInviteePicker *add_picker;
+  GtkLabel *add_reason;
+  AdwEntryRow *name_row;
+  AdwEntryRow *description_row;
+  AdwAlertDialog *leave_dialog;
+  AdwAlertDialog *remove_dialog;
+
+  GhMlsGroup *group;
+  GhMlsUiContext context;   /* objects referenced; service weak-watched */
+  GPtrArray *member_rows;   /* GtkWidget in members_group */
+  GPtrArray *relay_rows;    /* GtkWidget in relays_group */
+  gchar *removing;          /* the pubkey the remove confirmation asks about */
+  gchar *last_toast;
+  guint pending;            /* changes started, not finished */
+};
+
+G_DEFINE_FINAL_TYPE(GhMlsGroupInfoDialog, gh_mls_group_info_dialog, ADW_TYPE_DIALOG)
+
+static void
+toast(GhMlsGroupInfoDialog *self, const gchar *text)
+{
+  g_free(self->last_toast);
+  self->last_toast = g_strdup(text);
+  adw_toast_overlay_add_toast(self->toasts, adw_toast_new(text));
+}
+
+static const gchar *
+display_name(GhMlsGroupInfoDialog *self, const gchar *pubkey)
+{
+  return self->context.display_name ? self->context.display_name(pubkey,
+                                                                  self->context.names_data)
+                                    : NULL;
+}
+
+static gboolean
+can_manage(GhMlsGroupInfoDialog *self)
+{
+  return self->context.service && gh_mls_group_get_active(self->group) &&
+         gh_mls_group_get_is_admin(self->group);
+}
+
+static void
+sync_header(GhMlsGroupInfoDialog *self)
+{
+  const gchar *name = gh_mls_group_get_name(self->group);
+  const gchar *title = name && *name ? name : _("Unnamed Group");
+  gtk_label_set_text(self->title_label, title);
+  adw_avatar_set_text(self->avatar, title);
+  g_auto(GStrv) members = gh_mls_group_dup_members(self->group);
+  GhPrivacyContext context = { .backend = GH_PRIVACY_BACKEND_MLS,
+                               .n_people = members ? g_strv_length(members) : 0 };
+  g_autofree gchar *subtitle = gh_privacy_summary_dup_subtitle(&context);
+  gtk_label_set_text(self->subtitle_label, subtitle);
+  const gchar *about = gh_mls_group_get_description(self->group);
+  gtk_label_set_text(self->about_label, about ? about : "");
+  gtk_widget_set_visible(GTK_WIDGET(self->about_label), about && *about);
+}
+
+static void
+add_privacy_rows(AdwExpanderRow *expander, const gchar *const *lines)
+{
+  for (guint i = 0; lines && lines[i]; i++) {
+    GtkWidget *row = adw_action_row_new();
+    adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), lines[i]);
+    adw_action_row_set_title_lines(ADW_ACTION_ROW(row), 0);
+    adw_expander_row_add_row(expander, row);
+  }
+}
+
+static void
+fill_privacy(GhMlsGroupInfoDialog *self)
+{
+  g_auto(GStrv) members = gh_mls_group_dup_members(self->group);
+  GhPrivacyContext context = { .backend = GH_PRIVACY_BACKEND_MLS,
+                               .n_people = members ? g_strv_length(members) : 0 };
+  g_autoptr(GhPrivacySummary) summary = gh_privacy_summary_new(&context);
+  if (!summary)
+    return;
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->privacy_row), summary->heading);
+  adw_action_row_set_subtitle(self->privacy_row, summary->encrypted);
+  add_privacy_rows(self->visible_row, (const gchar *const *)summary->visible);
+  add_privacy_rows(self->unprotected_row, (const gchar *const *)summary->unprotected);
+}
+
+static void
+sync_status(GhMlsGroupInfoDialog *self)
+{
+  gboolean active = gh_mls_group_get_active(self->group);
+  adw_action_row_set_subtitle(self->messages_row,
+                              active ? gh_mls_read_copy(gh_mls_group_get_read_state(self->group))
+                                     : _("You left this group. Its messages stay on this "
+                                         "device."));
+  gboolean pending = gh_mls_group_get_pending_commit(self->group);
+  guint unsent = gh_mls_group_get_unsent_welcomes(self->group);
+  g_autofree gchar *words = NULL;
+  if (pending)
+    words = g_strdup(_("A change to the group is waiting for a relay to accept it."));
+  else if (unsent > 0)
+    words = g_strdup_printf(g_dngettext(NULL,
+                                        "%u invitation hasn’t reached its person’s inbox yet.",
+                                        "%u invitations haven’t reached their people’s inboxes "
+                                        "yet.", unsent), unsent);
+  gtk_widget_set_visible(GTK_WIDGET(self->pending_row), words != NULL);
+  gtk_spinner_set_spinning(self->pending_spinner, words != NULL);
+  adw_action_row_set_subtitle(self->pending_row, words ? words : "");
+  gboolean manage = can_manage(self);
+  gtk_widget_set_visible(self->add_member_button, manage);
+  gtk_widget_set_visible(GTK_WIDGET(self->admin_group), manage);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.add-members", manage);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.rename", manage);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.save-rename", manage);
+  gtk_widget_set_visible(self->leave_button, active);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.leave", active);
+}
+
+static void
+clear_rows(AdwPreferencesGroup *group, GPtrArray *rows)
+{
+  for (guint i = 0; i < rows->len; i++)
+    adw_preferences_group_remove(group, g_ptr_array_index(rows, i));
+  g_ptr_array_set_size(rows, 0);
+}
+
+static gint
+role_rank(GhMlsRole role)
+{
+  return role == GH_MLS_ROLE_OWNER ? 0 : role == GH_MLS_ROLE_ADMIN ? 1 : 2;
+}
+
+static void
+sync_members(GhMlsGroupInfoDialog *self)
+{
+  if (!self->context.service)   /* going: the account switched */
+    return;
+  clear_rows(self->members_group, self->member_rows);
+  g_auto(GStrv) members = gh_mls_group_dup_members(self->group);
+  g_auto(GStrv) admins = gh_mls_group_dup_ordered_admins(self->context.service, self->group);
+  const gchar *account = gh_mls_service_get_account(self->context.service);
+  gboolean manage = can_manage(self);
+  for (gint rank = 0; rank < 3; rank++) {
+    for (guint i = 0; members && members[i]; i++) {
+      GhMlsRole role = gh_mls_role_of((const gchar *const *)admins, members[i]);
+      if (role_rank(role) != rank)
+        continue;
+      gboolean you = g_strcmp0(members[i], account) == 0;
+      GhMlsMemberRow *row = member_row_new(members[i], display_name(self, members[i]), you,
+                                           role, manage && !you);
+      adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
+      g_ptr_array_add(self->member_rows, row);
+    }
+  }
+  sync_header(self);
+}
+
+static void
+sync_relays(GhMlsGroupInfoDialog *self)
+{
+  clear_rows(self->relays_group, self->relay_rows);
+  g_auto(GStrv) relays = gh_mls_group_dup_relays(self->group);
+  for (guint i = 0; relays && relays[i]; i++) {
+    GhMlsRelayRow *row = gh_mls_relay_row_new(relays[i], FALSE);
+    adw_preferences_group_add(self->relays_group, GTK_WIDGET(row));
+    g_ptr_array_add(self->relay_rows, row);
+  }
+}
+
+static void
+sync_all(GhMlsGroupInfoDialog *self)
+{
+  sync_header(self);
+  sync_status(self);
+  sync_members(self);
+  sync_relays(self);
+}
+
+/* ---- changes ----------------------------------------------------------------------------- */
+
+typedef struct {
+  GhMlsGroupInfoDialog *self; /* a reference */
+  gchar *done;                /* the toast when it worked */
+} Change;
+
+static void
+change_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Change *change = data;
+  GhMlsGroupInfoDialog *self = change->self;
+  g_autoptr(GError) error = NULL;
+  gboolean ok = gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error);
+  self->pending--;
+  if (!gtk_widget_in_destruction(GTK_WIDGET(self))) {
+    if (ok) {
+      toast(self, change->done);
+    } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_message("Groundhog could not change an encrypted group: %s", error->message);
+      g_autofree gchar *words = gh_mls_error_copy(error);
+      toast(self, words);
+    }
+    sync_all(self);
+  }
+  g_object_unref(self);
+  g_free(change->done);
+  g_free(change);
+}
+
+static Change *
+change_new(GhMlsGroupInfoDialog *self, const gchar *done)
+{
+  Change *change = g_new0(Change, 1);
+  change->self = g_object_ref(self);
+  change->done = g_strdup(done);
+  self->pending++;
+  return change;
+}
+
+static void
+sync_add_reason(GhMlsGroupInfoDialog *self)
+{
+  const gchar *reason = NULL;
+  if (gh_mls_invitee_picker_get_n_selected(self->add_picker) == 0)
+    reason = gh_mls_invitee_picker_get_n_listed(self->add_picker) == 0
+      ? _("Every accepted contact is already in the group.")
+      : _("Choose at least one person.");
+  else if (gh_mls_invitee_picker_get_checking(self->add_picker))
+    reason = _("Checking whether everyone you chose can join…");
+  else if (!gh_mls_invitee_picker_get_ready(self->add_picker))
+    reason = _("Someone you chose can’t be invited yet. Remove them to continue.");
+  gtk_label_set_text(self->add_reason, reason ? reason : "");
+  gtk_widget_set_visible(GTK_WIDGET(self->add_reason), reason != NULL);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.save-add",
+                                reason == NULL && can_manage(self));
+}
+
+static void
+action_add_members(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  if (!can_manage(self))
+    return;
+  g_auto(GStrv) members = gh_mls_group_dup_members(self->group);
+  gh_mls_invitee_picker_setup(self->add_picker, &self->context,
+                              (const gchar *const *)members);
+  sync_add_reason(self);
+  adw_navigation_view_push_by_tag(self->navigation, "add");
+}
+
+static void
+action_save_add(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  if (!can_manage(self) || !gh_mls_invitee_picker_get_ready(self->add_picker))
+    return;
+  g_auto(GStrv) people = gh_mls_invitee_picker_dup_selected(self->add_picker);
+  guint n = g_strv_length(people);
+  g_autofree gchar *done = g_strdup_printf(
+    g_dngettext(NULL, "Invited %u person. They join once they accept.",
+                "Invited %u people. They join once they accept.", n), n);
+  gh_mls_service_add_members_async(self->context.service, self->group,
+                                   (const gchar *const *)people, NULL, change_done,
+                                   change_new(self, done));
+  toast(self, _("Sending the invitation…"));
+  adw_navigation_view_pop_to_tag(self->navigation, "main");
+  sync_status(self);
+}
+
+static void
+action_remove(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  const gchar *pubkey = g_variant_get_string(parameter, NULL);
+  if (!self->context.service || !can_manage(self) || g_strcmp0(pubkey, gh_mls_service_get_account(self->context.service)) == 0)
+    return;
+  g_free(self->removing);
+  self->removing = g_strdup(pubkey);
+  g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
+  const gchar *name = display_name(self, pubkey);
+  g_autofree gchar *body = g_strdup_printf(
+    _("%s can’t read anything sent to the group after this. What they already have stays "
+      "with them."), name && *name ? name : npub);
+  adw_alert_dialog_set_body(self->remove_dialog, body);
+  adw_dialog_present(ADW_DIALOG(self->remove_dialog), GTK_WIDGET(self));
+}
+
+static void
+on_remove_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
+{
+  (void)dialog;
+  GhMlsGroupInfoDialog *self = data;
+  g_autofree gchar *pubkey = g_steal_pointer(&self->removing);
+  if (!pubkey || g_strcmp0(response, "remove-confirm") != 0 || !can_manage(self))
+    return;
+  const gchar *members[] = { pubkey, NULL };
+  gh_mls_service_remove_members_async(self->context.service, self->group, members,
+                                      NULL, change_done,
+                                      change_new(self, _("Removed from the group")));
+  toast(self, _("Removing…"));
+  sync_status(self);
+}
+
+static void
+action_rename(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  if (!can_manage(self))
+    return;
+  const gchar *name = gh_mls_group_get_name(self->group);
+  const gchar *about = gh_mls_group_get_description(self->group);
+  gtk_editable_set_text(GTK_EDITABLE(self->name_row), name ? name : "");
+  gtk_editable_set_text(GTK_EDITABLE(self->description_row), about ? about : "");
+  adw_navigation_view_push_by_tag(self->navigation, "rename");
+}
+
+static void
+action_save_rename(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  if (!can_manage(self))
+    return;
+  g_autofree gchar *name = g_strstrip(g_strdup(gtk_editable_get_text(GTK_EDITABLE(self->name_row))));
+  g_autofree gchar *about = g_strstrip(
+    g_strdup(gtk_editable_get_text(GTK_EDITABLE(self->description_row))));
+  if (!*name) {
+    toast(self, _("Give the group a name."));
+    gtk_widget_grab_focus(GTK_WIDGET(self->name_row));
+    return;
+  }
+  gh_mls_service_update_metadata_async(self->context.service, self->group, name, about,
+                                       NULL, change_done,
+                                       change_new(self, _("Name and description saved")));
+  toast(self, _("Saving…"));
+  adw_navigation_view_pop_to_tag(self->navigation, "main");
+  sync_status(self);
+}
+
+static void
+action_leave(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  if (gh_mls_group_get_active(self->group))
+    adw_dialog_present(ADW_DIALOG(self->leave_dialog), GTK_WIDGET(self));
+}
+
+static void
+on_leave_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
+{
+  (void)dialog;
+  GhMlsGroupInfoDialog *self = data;
+  if (g_strcmp0(response, "leave-confirm") != 0 || !self->context.service ||
+      !gh_mls_group_get_active(self->group))
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!gh_mls_service_leave(self->context.service, self->group, &error)) {
+    g_message("Groundhog could not leave an encrypted group: %s", error->message);
+    g_autofree gchar *words = gh_mls_error_copy(error);
+    toast(self, words);
+    return;
+  }
+  toast(self, _("You left the group on this device"));
+  sync_all(self);
+}
+
+static void
+on_rename_activated(GhMlsGroupInfoDialog *self)
+{
+  gtk_widget_activate_action(GTK_WIDGET(self), "mls-group.save-rename", NULL);
+}
+
+/* ---- lifetime ----------------------------------------------------------------------------- */
+
+static void
+on_service_gone(gpointer data, GObject *where)
+{
+  GhMlsGroupInfoDialog *self = data;
+  (void)where;
+  self->context.service = NULL;
+  adw_dialog_force_close(ADW_DIALOG(self));
+}
+
+GhMlsGroupInfoDialog *
+gh_mls_group_info_dialog_new(GhMlsGroup *group, const GhMlsUiContext *context)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(group), NULL);
+  g_return_val_if_fail(context != NULL && GH_IS_MLS_SERVICE(context->service), NULL);
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(context->accounts), NULL);
+  g_return_val_if_fail(GH_IS_CONVERSATION_STORE(context->model), NULL);
+  GhMlsGroupInfoDialog *self = g_object_new(GH_TYPE_MLS_GROUP_INFO_DIALOG, NULL);
+  self->group = g_object_ref(group);
+  self->context = *context;
+  self->context.default_relays = NULL;
+  /* The service is watched, not held: an account switch disposes it. */
+  g_object_weak_ref(G_OBJECT(context->service), on_service_gone, self);
+  g_object_ref(context->accounts);
+  g_object_ref(context->model);
+  if (context->settings)
+    g_object_ref(context->settings);
+  g_signal_connect_object(group, "notify", G_CALLBACK(sync_status), self, G_CONNECT_SWAPPED);
+  g_signal_connect_object(group, "notify::name", G_CALLBACK(sync_header), self,
+                          G_CONNECT_SWAPPED);
+  g_signal_connect_object(group, "notify::description", G_CALLBACK(sync_header), self,
+                          G_CONNECT_SWAPPED);
+  g_signal_connect_object(group, "notify::is-admin", G_CALLBACK(sync_members), self,
+                          G_CONNECT_SWAPPED);
+  g_signal_connect_object(group, "notify::active", G_CALLBACK(sync_members), self,
+                          G_CONNECT_SWAPPED);
+  g_signal_connect_object(group, "members-changed", G_CALLBACK(sync_all), self,
+                          G_CONNECT_SWAPPED);
+  fill_privacy(self);
+  sync_all(self);
+  return self;
+}
+
+GhMlsGroup *
+gh_mls_group_info_dialog_get_group(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->group;
+}
+
+guint
+gh_mls_group_info_dialog_get_pending(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), 0);
+  return self->pending;
+}
+
+const gchar *
+gh_mls_group_info_dialog_get_last_toast(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->last_toast;
+}
+
+GhMlsInviteePicker *
+gh_mls_group_info_dialog_get_add_picker(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->add_picker;
+}
+
+const gchar *
+gh_mls_group_info_dialog_get_member(GhMlsGroupInfoDialog *self, const gchar *pubkey,
+                                    gboolean *removable)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  for (guint i = 0; i < self->member_rows->len; i++) {
+    GhMlsMemberRow *row = g_ptr_array_index(self->member_rows, i);
+    if (g_strcmp0(row->pubkey, pubkey) != 0)
+      continue;
+    if (removable)
+      *removable = gtk_widget_get_visible(row->remove_button);
+    return gtk_label_get_text(row->role_badge);
+  }
+  return NULL;
+}
+
+AdwAlertDialog *
+gh_mls_group_info_dialog_get_leave_dialog(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->leave_dialog;
+}
+
+AdwAlertDialog *
+gh_mls_group_info_dialog_get_remove_dialog(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->remove_dialog;
+}
+
+void
+gh_mls_group_info_dialog_set_rename(GhMlsGroupInfoDialog *self, const gchar *name,
+                                    const gchar *description)
+{
+  g_return_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self));
+  gtk_editable_set_text(GTK_EDITABLE(self->name_row), name ? name : "");
+  gtk_editable_set_text(GTK_EDITABLE(self->description_row), description ? description : "");
+}
+
+static void
+gh_mls_group_info_dialog_dispose(GObject *object)
+{
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(object);
+  if (self->context.service) {
+    g_object_weak_unref(G_OBJECT(self->context.service), on_service_gone, self);
+    self->context.service = NULL;
+  }
+  g_clear_object(&self->context.accounts);
+  g_clear_object(&self->context.model);
+  g_clear_object(&self->context.settings);
+  g_clear_object(&self->group);
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MLS_GROUP_INFO_DIALOG);
+  G_OBJECT_CLASS(gh_mls_group_info_dialog_parent_class)->dispose(object);
+}
+
+static void
+gh_mls_group_info_dialog_finalize(GObject *object)
+{
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(object);
+  g_ptr_array_unref(self->member_rows);
+  g_ptr_array_unref(self->relay_rows);
+  g_free(self->removing);
+  g_free(self->last_toast);
+  G_OBJECT_CLASS(gh_mls_group_info_dialog_parent_class)->finalize(object);
+}
+
+static void
+gh_mls_group_info_dialog_class_init(GhMlsGroupInfoDialogClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  object_class->dispose = gh_mls_group_info_dialog_dispose;
+  object_class->finalize = gh_mls_group_info_dialog_finalize;
+  g_type_ensure(GH_TYPE_MLS_INVITEE_PICKER);
+  gtk_widget_class_set_template_from_resource(
+    widget_class, "/org/nostr/Groundhog/ui/gh-mls-group-info-dialog.ui");
+#define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhMlsGroupInfoDialog, name)
+  BIND(toasts);
+  BIND(navigation);
+  BIND(avatar);
+  BIND(title_label);
+  BIND(subtitle_label);
+  BIND(about_label);
+  BIND(privacy_row);
+  BIND(visible_row);
+  BIND(unprotected_row);
+  BIND(messages_row);
+  BIND(pending_row);
+  BIND(pending_spinner);
+  BIND(members_group);
+  BIND(add_member_button);
+  BIND(admin_group);
+  BIND(relays_group);
+  BIND(leave_button);
+  BIND(add_picker);
+  BIND(add_reason);
+  BIND(name_row);
+  BIND(description_row);
+  BIND(leave_dialog);
+  BIND(remove_dialog);
+#undef BIND
+  gtk_widget_class_install_action(widget_class, "mls-group.add-members", NULL,
+                                  action_add_members);
+  gtk_widget_class_install_action(widget_class, "mls-group.save-add", NULL, action_save_add);
+  gtk_widget_class_install_action(widget_class, "mls-group.remove", "s", action_remove);
+  gtk_widget_class_install_action(widget_class, "mls-group.rename", NULL, action_rename);
+  gtk_widget_class_install_action(widget_class, "mls-group.save-rename", NULL,
+                                  action_save_rename);
+  gtk_widget_class_install_action(widget_class, "mls-group.leave", NULL, action_leave);
+}
+
+static void
+gh_mls_group_info_dialog_init(GhMlsGroupInfoDialog *self)
+{
+  self->member_rows = g_ptr_array_new();
+  self->relay_rows = g_ptr_array_new();
+  gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect(self->leave_dialog, "response", G_CALLBACK(on_leave_response), self);
+  g_signal_connect(self->remove_dialog, "response", G_CALLBACK(on_remove_response), self);
+  g_signal_connect_swapped(self->add_picker, "changed", G_CALLBACK(sync_add_reason), self);
+  g_signal_connect_swapped(self->name_row, "entry-activated", G_CALLBACK(on_rename_activated),
+                           self);
+  g_signal_connect_swapped(self->description_row, "entry-activated",
+                           G_CALLBACK(on_rename_activated), self);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.save-add", FALSE);
+}

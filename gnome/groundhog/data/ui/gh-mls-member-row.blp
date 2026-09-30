@@ -1,0 +1,48 @@
+using Gtk 4.0;
+using Adw 1;
+
+// One member of an encrypted group in Group Info (charter §7.10; nostrc-9xf5),
+// filled by gh-mls-group-info-dialog.c: the name Groundhog has cached for
+// them or their short npub (plain text, never markup), an Owner or Admin
+// badge from the group's own admin list, and, only for an admin and never
+// for oneself, Remove from Group (confirmed first).
+template $GhMlsMemberRow: Adw.ActionRow {
+  use-markup: false;
+  title-lines: 1;
+  subtitle-lines: 1;
+
+  [prefix]
+  Adw.Avatar avatar {
+    size: 32;
+    show-initials: true;
+    accessible-role: presentation;
+  }
+
+  [suffix]
+  Label role_badge {
+    visible: false;
+    valign: center;
+
+    styles [
+      "caption",
+      "groundhog-role-badge",
+    ]
+  }
+
+  [suffix]
+  Button remove_button {
+    visible: false;
+    valign: center;
+    icon-name: "list-remove-symbolic";
+    tooltip-text: _("Remove from Group");
+    action-name: "member.remove";
+
+    accessibility {
+      label: _("Remove from Group");
+    }
+
+    styles [
+      "flat",
+    ]
+  }
+}

@@ -34,7 +34,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <class name="groundhog-message-list"/>
                         </style>
                         <accessibility>
-                          <property name="label" translatable="true">Messages</property>
+                          <property name="label" translatable="yes">Messages</property>
                         </accessibility>
                         <property name="factory">
                           <object class="GtkBuilderListItemFactory">
@@ -65,7 +65,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkLabel">
-                    <property name="label" translatable="true">Loading earlier messages…</property>
+                    <property name="label" translatable="yes">Loading earlier messages…</property>
                   </object>
                 </child>
               </object>
@@ -85,7 +85,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="child">
                   <object class="AdwButtonContent" id="older_content">
                     <property name="icon-name">go-up-symbolic</property>
-                    <property name="label" translatable="true">Earlier Messages</property>
+                    <property name="label" translatable="yes">Earlier Messages</property>
                   </object>
                 </property>
               </object>
@@ -98,7 +98,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="margin-end">18</property>
                 <property name="margin-bottom">12</property>
                 <property name="action-name">conversation.jump-to-latest</property>
-                <property name="tooltip-text" translatable="true">Jump to Latest</property>
+                <property name="tooltip-text" translatable="yes">Jump to Latest</property>
                 <style>
                   <class name="osd"/>
                   <class name="groundhog-jump-button"/>
@@ -127,6 +127,35 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </property>
         <child type="bottom">
+          <object class="GtkBox" id="undecryptable_row">
+            <property name="visible">false</property>
+            <property name="halign">3</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <style>
+              <class name="groundhog-undecryptable-messages"/>
+            </style>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">dialog-question-symbolic</property>
+                <property name="accessible-role">43</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="undecryptable_label">
+                <property name="wrap">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child type="bottom">
           <object class="GtkBox" id="locked_row">
             <property name="visible">false</property>
             <property name="halign">3</property>
@@ -152,11 +181,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="GtkButton" id="unlock_button">
-                <property name="label" translatable="true">_Unlock</property>
+                <property name="label" translatable="yes">_Unlock</property>
                 <property name="use-underline">true</property>
                 <property name="valign">3</property>
                 <property name="action-name">conversation.unlock-messages</property>
-                <property name="tooltip-text" translatable="true">Ask Nostr Signer to unlock these messages</property>
+                <property name="tooltip-text" translatable="yes">Ask Nostr Signer to unlock these messages</property>
               </object>
             </child>
           </object>
@@ -170,27 +199,27 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     </child>
   </template>
   <object class="AdwAlertDialog" id="link_dialog">
-    <property name="heading" translatable="true">Open Link?</property>
+    <property name="heading" translatable="yes">Open Link?</property>
     <property name="default-response">link-cancel</property>
     <property name="close-response">link-cancel</property>
     <responses>
-      <response id="link-cancel" translatable="true">_Cancel</response>
-      <response id="link-open" translatable="true">_Open Link</response>
+      <response id="link-cancel" translatable="yes">_Cancel</response>
+      <response id="link-open" translatable="yes">_Open Link</response>
     </responses>
   </object>
   <object class="AdwAlertDialog" id="preview_dialog">
-    <property name="heading" translatable="true">Show Link Preview?</property>
+    <property name="heading" translatable="yes">Show Link Preview?</property>
     <property name="default-response">preview-cancel</property>
     <property name="close-response">preview-cancel</property>
     <property name="extra-child">
       <object class="GtkCheckButton" id="preview_dont_ask">
-        <property name="label" translatable="true">_Don't ask again</property>
+        <property name="label" translatable="yes">_Don't ask again</property>
         <property name="use-underline">true</property>
       </object>
     </property>
     <responses>
-      <response id="preview-cancel" translatable="true">_Cancel</response>
-      <response id="preview-show" translatable="true" appearance="suggested">_Show Preview</response>
+      <response id="preview-cancel" translatable="yes">_Cancel</response>
+      <response id="preview-show" translatable="yes" appearance="suggested">_Show Preview</response>
     </responses>
   </object>
 </interface>

@@ -23,6 +23,8 @@ typedef struct {
   GSimpleAction *join_action;
   GSimpleAction *new_action;
   GhNip29Service *watched; /* weak: whose rooms refresh the composer */
+  GhGroupUiNewGroupFunc extend_new; /* qp24.13 part 2: the encrypted page */
+  gpointer extend_new_data;
 } GroupUi;
 
 static GhNip29Service *
@@ -264,6 +266,8 @@ on_new(GSimpleAction *action, GVariant *parameter, gpointer data)
   GhNewGroupDialog *dialog = gh_new_group_dialog_new(service);
   g_signal_connect_object(dialog, "open-group", G_CALLBACK(open_room), ui->window,
                           G_CONNECT_SWAPPED);
+  if (ui->extend_new)
+    ui->extend_new(ui->window, dialog, ui->extend_new_data);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(ui->window));
 }
 
@@ -288,6 +292,17 @@ gh_group_ui_show_info(GhWindow *window, GhConversation *conversation, gpointer u
   GhGroupInfoDialog *dialog = gh_group_info_dialog_new(room, &config);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
   return TRUE;
+}
+
+void
+gh_group_ui_set_new_group_extension(GhWindow *window, GhGroupUiNewGroupFunc func,
+                                    gpointer user_data)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GroupUi *ui = ui_of(window);
+  g_return_if_fail(ui != NULL);
+  ui->extend_new = func;
+  ui->extend_new_data = func ? user_data : NULL;
 }
 
 /* ---- attach -------------------------------------------------------------------------------- */

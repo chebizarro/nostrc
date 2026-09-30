@@ -50,6 +50,18 @@ void gh_conversation_list_set_history_source(GhWindow *window,
                                              GhConversationListLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);
 
+/* An encrypted group's member count, the account included (qp24.13 part 2:
+ * the header's "Encrypted group · N members", charter §2.2 surface 1), or 0
+ * when unknown ("Encrypted group"). Asked for MLS conversations only;
+ * user_data is released with destroy when replaced or with window.
+ * gh_conversation_list_refresh_title() asks again (the members changed). */
+typedef guint (*GhConversationListMemberCount)(GhConversation *conversation,
+                                               gpointer user_data);
+void gh_conversation_list_set_member_count_func(GhWindow *window,
+                                                GhConversationListMemberCount member_count,
+                                                gpointer user_data, GDestroyNotify destroy);
+void gh_conversation_list_refresh_title(GhWindow *window);
+
 /* The Message Requests page installed by gh_conversation_list_attach(); its
  * Delete/Block backend is set by the owner of the store (gh-app-services.c).
  * NULL before attaching. */

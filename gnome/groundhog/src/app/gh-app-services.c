@@ -51,6 +51,12 @@
 #if GROUNDHOG_HAVE_GROUP_UI
 #include "gh-group-ui.h"
 #endif
+#ifndef GROUNDHOG_HAVE_MLS_UI
+#define GROUNDHOG_HAVE_MLS_UI 0
+#endif
+#if GROUNDHOG_HAVE_MLS_UI
+#include "gh-mls-ui.h"
+#endif
 
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-features.h"
@@ -1083,6 +1089,19 @@ group_ui_name(const gchar *pubkey, gpointer data)
   return directory ? gh_contact_directory_get_display_name(directory, pubkey) : NULL;
 }
 
+#if GROUNDHOG_HAVE_MLS_UI
+/* ---- encrypted groups (qp24.13 part 2) -------------------------------------------------
+ * The open store's GhMlsService (made beside its outbox while
+ * GH_FEATURE_ENCRYPTED_GROUPS is on, gh-app-outbox.c). */
+static GhMlsService *
+mls_ui_service(gpointer data)
+{
+  GhAppServices *self = data;
+  GObject *service = gh_app_outbox_get_mls_service(self->outbox);
+  return GH_IS_MLS_SERVICE(service) ? GH_MLS_SERVICE(service) : NULL;
+}
+#endif
+
 /* Private conversations' older pages, as gh_store_status_attach_history(). */
 static gboolean
 group_ui_load_older(GhConversation *conversation, GError **error, gpointer data)
@@ -1300,6 +1319,27 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .load_older_data = self,
   };
   gh_group_ui_attach(window, &groups);
+#if GROUNDHOG_HAVE_MLS_UI
+  /* Encrypted groups (qp24.13 part 2), only while the flag is on
+   * (gh-features.h): after the group UI, whose New Group it extends. */
+  if (GH_FEATURE_ENCRYPTED_GROUPS) {
+    GhMlsUiConfig mls = {
+      .conversations = self->conversations,
+      .accounts = self->accounts,
+      .settings = self->settings,
+      .service = mls_ui_service,
+      .service_data = self,
+      .state_source = G_OBJECT(self->account_store),
+      .display_name = group_ui_name,
+      .names_data = self,
+      .account_relays = self->relays,
+    };
+    gh_mls_ui_attach(window, &mls);
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+    gh_conversation_info_set_encrypted_group_handler(window, gh_mls_ui_show_info, NULL);
+#endif
+  }
+#endif
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
   gh_conversation_info_set_group_handler(window, gh_group_ui_show_info, NULL);
 #endif

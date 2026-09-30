@@ -1,0 +1,25 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The people to invite to an encrypted group (charter §7.9 "members
+// (contacts, each with a KeyPackage check row)", §7.10 "add member (fresh
+// 30443 check)"; nostrc-9xf5), driven by gh-mls-invitee-picker.c: only
+// accepted contacts are listed (a message request is never looked up,
+// PD-8), one $GhMlsInviteeRow each, and choosing one checks their
+// KeyPackage through the discovery relays, which the description says.
+template $GhMlsInviteePicker: Adw.PreferencesGroup {
+  title: _("Members");
+  description: _("Choose from people you’ve accepted as contacts. Choosing someone asks your discovery relays whether they can join, which tells those relays whom you looked up.");
+
+  Adw.ActionRow empty_row {
+    title: _("No Contacts Yet");
+    subtitle: _("Only people you’ve accepted can be invited. Start a private conversation with someone first.");
+    use-markup: false;
+
+    [prefix]
+    Image {
+      icon-name: "avatar-default-symbolic";
+      accessible-role: presentation;
+    }
+  }
+}

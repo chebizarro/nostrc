@@ -32,6 +32,10 @@ typedef struct {
   GDestroyNotify load_older_destroy;
   guint load_idle;
   GhConversation *loading; /* the room whose older page load_idle lists */
+  /* An encrypted group's member count (gh_conversation_list_set_member_count_func()). */
+  GhConversationListMemberCount member_count;
+  gpointer member_count_data;
+  GDestroyNotify member_count_destroy;
 } GhConversationList;
 
 static void
@@ -42,6 +46,8 @@ list_free(gpointer data)
   g_clear_object(&list->loading);
   if (list->load_older_destroy)
     list->load_older_destroy(list->load_older_data);
+  if (list->member_count_destroy)
+    list->member_count_destroy(list->member_count_data);
   g_clear_object(&list->view);
   g_clear_object(&list->store);
   g_clear_object(&list->accepted);
@@ -230,6 +236,10 @@ update_title(GhConversationList *list)
     .is_request = gh_conversation_get_is_request(list->shown),
     .subject = gh_conversation_get_subject(list->shown),
   };
+  /* "Encrypted group · N members" (§2.2 surface 1): the group's own count,
+   * the account included; a room has no peers to count. */
+  if (context.backend == GH_PRIVACY_BACKEND_MLS && list->member_count)
+    context.n_people = list->member_count(list->shown, list->member_count_data);
   g_autofree gchar *subtitle = gh_privacy_summary_dup_subtitle(&context);
   gh_content_page_set_title(list->content, gh_conversation_get_title(list->shown), subtitle);
 }
@@ -483,6 +493,31 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   g_signal_connect_object(gh_window_get_split(window), "notify::show-content",
                           G_CALLBACK(on_content_shown), window, G_CONNECT_SWAPPED);
   on_selected(window);
+}
+
+void
+gh_conversation_list_set_member_count_func(GhWindow *window,
+                                           GhConversationListMemberCount member_count,
+                                           gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhConversationList *list = list_of(window);
+  g_return_if_fail(list != NULL);
+  if (list->member_count_destroy)
+    list->member_count_destroy(list->member_count_data);
+  list->member_count = member_count;
+  list->member_count_data = user_data;
+  list->member_count_destroy = destroy;
+  update_title(list);
+}
+
+void
+gh_conversation_list_refresh_title(GhWindow *window)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhConversationList *list = list_of(window);
+  if (list)
+    update_title(list);
 }
 
 GhRequestsView *

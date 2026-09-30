@@ -178,6 +178,13 @@ void gh_conversation_view_set_room_without_inbox(GhConversationView *self, gbool
 /* Charter §7.15 state 12: "Waiting for Nostr Signer to unlock N messages"
  * with Unlock (conversation.unlock-messages); 0 hides it. */
 void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count);
+/* Charter §7.15 state 13, encrypted groups: "Unable to decrypt N messages
+ * yet" (GhMlsGroup:unreadable: events of an epoch the account hasn't
+ * reached, or, after a removal, never); 0 hides it. No action: nothing the
+ * user can do makes them readable. The getter reads the shown count (0
+ * hidden), for tests. */
+void gh_conversation_view_set_undecryptable_messages(GhConversationView *self, guint count);
+guint gh_conversation_view_get_undecryptable_messages(GhConversationView *self);
 
 /* The view's accessibility announcements (charter §7.14), for tests: how
  * many were made at @priority, and the last text. */

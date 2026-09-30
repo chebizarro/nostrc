@@ -1,0 +1,69 @@
+#ifndef GH_MLS_GROUP_INFO_DIALOG_H
+#define GH_MLS_GROUP_INFO_DIALOG_H
+
+#include <adwaita.h>
+
+#include "gh-mls-context.h"
+
+G_BEGIN_DECLS
+
+/*
+ * GhMlsGroupInfoDialog (data/ui/gh-mls-group-info-dialog.blp,
+ * gh-mls-member-row.blp; privacy charter §7.10 "MLS", §2.2, §1.4, D7;
+ * nostrc-9xf5): Group Info for one encrypted group of the account's
+ * GhMlsService.
+ *
+ *  - The group: its name and description (from the group's own state),
+ *    "Encrypted group · N members".
+ *  - Privacy: gh_privacy_summary_new() for an encrypted group.
+ *  - Group: how it is read (GhMlsGroup:read-state), a change of the
+ *    account's still being sent or invitations not delivered yet, and "On
+ *    this device only: messages are kept only on this device; history can't
+ *    be restored" (D7).
+ *  - Members (gh_mls_group_dup_members()): the Owner first, then Admins
+ *    (badges from the GroupData admins, gh_mls_group_dup_ordered_admins()),
+ *    then members; names are the cached ones, else short npubs; nothing is
+ *    fetched. Only an admin sees Add Members (an "add" page with
+ *    GhMlsInviteePicker: accepted contacts not in the group, each with a
+ *    fresh KeyPackage check; gh_mls_service_add_members_async()) and, on
+ *    every member but themself, Remove from Group (confirmed;
+ *    gh_mls_service_remove_members_async()), and Name and Description
+ *    (gh_mls_service_update_metadata_async()).
+ *  - Group relays (read-only).
+ *  - Leave (confirmed; gh_mls_service_leave()): local only, and the
+ *    confirmation says so: the other members keep counting the account until
+ *    an admin removes it. A left group says so and offers nothing else.
+ * Every change is one Commit; the dialog says it is being sent and toasts
+ * its outcome (gh_mls_error_copy() on failure). The dialog follows the
+ * group live and closes when its service goes (account switch).
+ *
+ * Actions (widget actions of the dialog): mls-group.add-members,
+ * mls-group.save-add, mls-group.remove (s: pubkey hex; presents its
+ * confirmation), mls-group.rename, mls-group.save-rename, mls-group.leave
+ * (presents its confirmation).
+ */
+#define GH_TYPE_MLS_GROUP_INFO_DIALOG (gh_mls_group_info_dialog_get_type())
+G_DECLARE_FINAL_TYPE(GhMlsGroupInfoDialog, gh_mls_group_info_dialog, GH, MLS_GROUP_INFO_DIALOG,
+                     AdwDialog)
+
+GhMlsGroupInfoDialog *gh_mls_group_info_dialog_new(GhMlsGroup *group,
+                                                   const GhMlsUiContext *context);
+GhMlsGroup *gh_mls_group_info_dialog_get_group(GhMlsGroupInfoDialog *self);
+
+/* For tests: the changes this dialog started that have not finished, the
+ * last toast's text, the add page's picker, the member rows' (title,
+ * badge) and the alert dialogs. */
+guint gh_mls_group_info_dialog_get_pending(GhMlsGroupInfoDialog *self);
+const gchar *gh_mls_group_info_dialog_get_last_toast(GhMlsGroupInfoDialog *self);
+struct _GhMlsInviteePicker *gh_mls_group_info_dialog_get_add_picker(GhMlsGroupInfoDialog *self);
+/* The badge of pubkey's row ("Owner", "Admin", "" for a member), NULL when
+ * not listed; *removable: whether its Remove is offered. */
+const gchar *gh_mls_group_info_dialog_get_member(GhMlsGroupInfoDialog *self,
+                                                 const gchar *pubkey, gboolean *removable);
+AdwAlertDialog *gh_mls_group_info_dialog_get_leave_dialog(GhMlsGroupInfoDialog *self);
+AdwAlertDialog *gh_mls_group_info_dialog_get_remove_dialog(GhMlsGroupInfoDialog *self);
+void gh_mls_group_info_dialog_set_rename(GhMlsGroupInfoDialog *self, const gchar *name,
+                                         const gchar *description);
+
+G_END_DECLS
+#endif

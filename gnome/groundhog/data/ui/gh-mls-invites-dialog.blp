@@ -1,0 +1,47 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Pending invitations to encrypted groups (charter §7.9, PD-8, PT-8;
+// nostrc-9xf5, qp24.13 part 2), driven by gh-mls-invites-dialog.c over
+// the account's GhMlsService: one $GhMlsInviteRow per invitation, oldest
+// first, following "invite-received". Like a message request, nothing is
+// joined, fetched or looked up until the user accepts: Accept joins the
+// group (its conversation is listed and read), Decline forgets the
+// invitation.
+template $GhMlsInvitesDialog: Adw.Dialog {
+  title: _("Group Invitations");
+  content-width: 460;
+  content-height: 560;
+
+  child: Adw.ToastOverlay toasts {
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {}
+
+      content: Stack stack {
+        transition-type: crossfade;
+
+        StackPage {
+          name: "list";
+
+          child: Adw.PreferencesPage {
+            // Rows from C.
+            Adw.PreferencesGroup invites_group {
+              description: _("Nothing is joined until you accept. For someone you haven’t accepted as a contact, only their public key is shown and nothing is looked up about them.");
+            }
+          };
+        }
+
+        StackPage {
+          name: "empty";
+
+          child: Adw.StatusPage {
+            icon-name: "channel-secure-symbolic";
+            title: _("No Invitations");
+            description: _("When someone invites you to an encrypted group, the invitation waits here until you accept or decline it.");
+          };
+        }
+      };
+    };
+  };
+}

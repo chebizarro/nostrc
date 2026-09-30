@@ -1,0 +1,1168 @@
+/* Encrypted-group UI (Marmot MLS; privacy charter §7.5, §7.6, §7.7, §7.9,
+ * §7.10, §7.15 #13, §1.4, D7, PD-8; nostrc-9xf5, qp24.13 part 2), with
+ * GH_FEATURE_ENCRYPTED_GROUPS still 0: the UI is attached directly.
+ *
+ * Every test runs against the three-account world of the MLS service tests
+ * (tests/mls/mls-world.h): real account controllers with the mock
+ * org.nostr.Signer on the private test bus, real SQLCipher stores, the real
+ * GhMlsService, and local store-and-serve relays through the real gnostr
+ * transports (E discovery, W write, X inbox, G group relay with AUTH).
+ *
+ * Default mode (no display): the view model and its words. Every state's
+ * copy; accepted contacts only (never a message request, never the account);
+ * the KeyPackage check: ready, not set up, needs an update (a legacy
+ * KeyPackage without the account proof), no relay answered, no discovery
+ * relay, cancelled; Owner and Admin from the group's admin order; the
+ * composer's reasons (live, offline, left).
+ *
+ * --gui: on real windows. New Group's chooser and encrypted page end to end
+ * (relays, a contact's check, create, Open Group), the lock glyph, the
+ * header's "Encrypted group · N members", sending through the composer
+ * delegate with an honest status, the invitee's "Group Invitations" entry
+ * and dialog (nothing joins before Accept; a stranger shows as one), reading
+ * the answer; Group Info (badges, admin Add with a fresh check, Rename,
+ * Remove with its confirmation, a member seeing no admin action, Leave whose
+ * copy says the others keep counting you); "Unable to decrypt N messages
+ * yet" while a Commit is withheld; the enrollment states with Try Again. It
+ * exits 77 without a display.
+ *
+ * Waits iterate the main context; their deadlines are failure bounds only. */
+#include "gh-conversation-list.h"
+#include "gh-conversation-row.h"
+#include "gh-conversation-view.h"
+#include "gh-group-ui.h"
+#include "gh-mls-copy.h"
+#include "gh-mls-group-info-dialog.h"
+#include "gh-mls-invitee-picker.h"
+#include "gh-mls-invites-dialog.h"
+#include "gh-mls-new-group-page.h"
+#include "gh-mls-ui.h"
+#include "gh-nip29-service.h"
+#include "gh-shell.h"
+#include "gh-test-dialog.h"
+#include "group-send-stub.h"
+#include "mls-world.h"
+
+#include <glib/gi18n.h>
+
+extern void groundhog_register_resource(void);
+
+/* ---- helpers ------------------------------------------------------------------------ */
+
+static void
+wait_published(World *w, const guint *keys, guint n)
+{
+  for (guint i = 0; i < n; i++)
+    spin_until(key_package_published, &w->apps[keys[i]], "a KeyPackage published");
+}
+
+/* A message request: an incoming rumor from someone the account never
+ * accepted. */
+static GhConversation *
+admit_request(App *app, guint from)
+{
+  /* An unsigned kind-14 rumor, as a gift wrap carries it. */
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 14);
+  nostr_event_set_pubkey(event, hex[from]);
+  nostr_event_set_created_at(event, g_get_real_time() / G_USEC_PER_SEC - 60);
+  nostr_event_set_content(event, "hello from a stranger");
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("p", hex[app->key], NULL));
+  nostr_event_set_tags(event, tags);
+  event->id = nostr_event_get_id(event);
+  char *serialized = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  g_autofree gchar *json = g_strdup(serialized);
+  free(serialized);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) message = gh_message_new_from_rumor(hex[app->key], json, &error);
+  g_assert_no_error(error);
+  gh_conversation_store_admit(app->model, message, NULL, &error);
+  g_assert_no_error(error);
+  GhConversation *room = gh_conversation_store_lookup(app->model,
+                                                      gh_message_get_room_id(message));
+  g_assert_nonnull(room);
+  g_assert_true(gh_conversation_get_is_request(room));
+  return room;
+}
+
+/* Carol runs an older client: a KeyPackage without the account proof on W. */
+static void
+inject_legacy_key_package(World *w, guint key)
+{
+  MarmotConfig config = marmot_config_default();
+  config.allow_unproven_members = true;
+  Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
+  guint8 pubkey[32];
+  g_assert_true(nostr_hex2bin(pubkey, hex[key], sizeof pubkey));
+  const char *relays[] = { w->w.url };
+  MarmotKeyPackageResult made;
+  memset(&made, 0, sizeof made);
+  g_assert_cmpint(marmot_create_key_package_unsigned(legacy, pubkey, relays, 1, &made), ==,
+                  MARMOT_OK);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, made.event_json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[key]), ==, 0);
+  char *signed_json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  wire_relay_inject(&w->w, signed_json);
+  free(signed_json);
+  marmot_key_package_result_free(&made);
+  marmot_free(legacy);
+}
+
+typedef struct {
+  gboolean done;
+  GhMlsInviteeState state;
+  GError *error;
+} CheckWait;
+
+static gboolean
+check_done(gpointer data)
+{
+  return ((CheckWait *)data)->done;
+}
+
+static void
+on_checked(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  CheckWait *wait = data;
+  wait->state = gh_mls_invitee_check_finish(result, &wait->error);
+  wait->done = TRUE;
+}
+
+static GhMlsInviteeState
+check_with(App *app, GSettings *settings, guint key, GCancellable *cancellable, GError **error)
+{
+  CheckWait wait = { 0 };
+  gh_mls_invitee_check_async(app->accounts, settings, hex[key], 20, cancellable, on_checked,
+                             &wait);
+  spin_until(check_done, &wait, "the KeyPackage check");
+  if (wait.error)
+    g_propagate_error(error, wait.error);
+  return wait.state;
+}
+
+static GhMlsInviteeState
+check(App *app, guint key)
+{
+  g_autoptr(GError) error = NULL;
+  GhMlsInviteeState state = check_with(app, app->settings, key, NULL, &error);
+  g_assert_no_error(error);
+  return state;
+}
+
+static GSettings *
+settings_with_discovery(const gchar *url)
+{
+  GSettings *settings = g_settings_new_with_backend("org.nostr.Groundhog",
+                                                    g_memory_settings_backend_new());
+  const gchar *urls[] = { url, NULL };
+  g_settings_set_strv(settings, "discovery-relays", url ? urls : (const gchar *[]){ NULL });
+  return settings;
+}
+
+/* Whether anyone asked relay for pubkey's KeyPackages (a REQ naming kind
+ * 30443 and the person: only a lookup does). */
+static gboolean
+key_package_asked(WireRelay *relay, const gchar *pubkey)
+{
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
+        strstr(frame->text, "30443") && strstr(frame->text, pubkey))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean
+unreadable_above(gpointer data)
+{
+  GroupWait *wait = data;
+  return gh_mls_group_get_unreadable(wait->group) > (guint)wait->value;
+}
+
+static gboolean
+unreadable_below(gpointer data)
+{
+  GroupWait *wait = data;
+  return gh_mls_group_get_unreadable(wait->group) < (guint)wait->value;
+}
+
+static gboolean
+strv_has(const gchar *const *strv, const gchar *value)
+{
+  return strv && g_strv_contains(strv, value);
+}
+
+/* ---- default mode: the words ------------------------------------------------------ */
+
+static void
+test_copy(void)
+{
+  g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
+  for (gint state = GH_MLS_INVITEE_CHECKING; state <= GH_MLS_INVITEE_FAILED; state++) {
+    const gchar *words = gh_mls_invitee_copy(state);
+    g_assert_nonnull(words);
+    g_assert_cmpuint(strlen(words), >, 0);
+    g_assert_false(g_hash_table_contains(seen, words));   /* every state its own */
+    g_hash_table_add(seen, (gpointer)words);
+    g_assert_cmpint(gh_mls_invitee_can_invite(state), ==, state == GH_MLS_INVITEE_READY);
+  }
+  g_assert_cmpstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NOT_SET_UP), ==,
+                  "Hasn’t set up encrypted groups");
+  g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NEEDS_UPDATE),
+                          "can’t prove their account"));
+
+  GhMlsIdentityCopy ready = gh_mls_identity_copy(GH_MLS_IDENTITY_ENROLLED);
+  g_assert_true(ready.ready);
+  g_assert_null(ready.title);
+  g_assert_true(gh_mls_identity_copy(GH_MLS_IDENTITY_NOT_REQUIRED).ready);
+  GhMlsIdentityCopy waiting = gh_mls_identity_copy(GH_MLS_IDENTITY_WAITING);
+  g_assert_false(waiting.ready);
+  g_assert_true(waiting.busy);
+  g_assert_false(waiting.can_retry);
+  g_assert_cmpstr(waiting.title, ==, "Waiting for approval in Nostr Signer…");
+  GhMlsIdentityCopy declined = gh_mls_identity_copy(GH_MLS_IDENTITY_DECLINED);
+  g_assert_cmpstr(declined.title, ==, "Declined in Nostr Signer");
+  g_assert_true(declined.can_retry);
+  g_assert_false(declined.busy);
+  g_assert_true(gh_mls_identity_copy(GH_MLS_IDENTITY_FAILED).can_retry);
+  GhMlsIdentityCopy none = gh_mls_identity_copy(GH_MLS_IDENTITY_NONE);
+  g_assert_false(none.ready);
+  g_assert_false(none.can_retry);
+  g_assert_nonnull(none.title);
+
+  g_autoptr(GHashTable) errors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  for (gint code = GH_MLS_SERVICE_ERROR_NO_CONSENT; code <= GH_MLS_SERVICE_ERROR_NEEDS_UPDATE;
+       code++) {
+    g_autoptr(GError) error = g_error_new(GH_MLS_SERVICE_ERROR, code, "internal detail %d", code);
+    gchar *words = gh_mls_error_copy(error);
+    g_assert_null(strstr(words, "internal detail"));   /* plain words, not the log's */
+    g_assert_false(g_hash_table_contains(errors, words));
+    g_hash_table_add(errors, words);
+  }
+  g_autoptr(GError) update = g_error_new_literal(GH_MLS_SERVICE_ERROR,
+                                                 GH_MLS_SERVICE_ERROR_NEEDS_UPDATE, "x");
+  g_autofree gchar *update_words = gh_mls_error_copy(update);
+  g_assert_nonnull(strstr(update_words, "update it"));
+  g_assert_nonnull(strstr(update_words, "Nothing was changed"));
+
+  g_autofree gchar *from_contact = gh_mls_invite_subtitle("npub1abcd…wxyz", "Bob", TRUE, 3);
+  g_assert_cmpstr(from_contact, ==, "From Bob · 3 members");
+  g_autofree gchar *from_npub = gh_mls_invite_subtitle("npub1abcd…wxyz", NULL, TRUE, 1);
+  g_assert_cmpstr(from_npub, ==, "From npub1abcd…wxyz · 1 member");
+  /* PD-8: a stranger's name is never shown, even if one were cached. */
+  g_autofree gchar *stranger = gh_mls_invite_subtitle("npub1abcd…wxyz", "Mallory", FALSE, 2);
+  g_assert_null(strstr(stranger, "Mallory"));
+  g_assert_nonnull(strstr(stranger, "not in your contacts"));
+
+  g_assert_cmpstr(gh_mls_role_copy(GH_MLS_ROLE_OWNER), ==, "Owner");
+  g_assert_cmpstr(gh_mls_role_copy(GH_MLS_ROLE_ADMIN), ==, "Admin");
+  g_assert_null(gh_mls_role_copy(GH_MLS_ROLE_MEMBER));
+  const gchar *admins[] = { "bb", "aa", NULL };
+  g_assert_cmpint(gh_mls_role_of(admins, "bb"), ==, GH_MLS_ROLE_OWNER);
+  g_assert_cmpint(gh_mls_role_of(admins, "AA"), ==, GH_MLS_ROLE_ADMIN);
+  g_assert_cmpint(gh_mls_role_of(admins, "cc"), ==, GH_MLS_ROLE_MEMBER);
+  g_assert_cmpint(gh_mls_role_of(NULL, "aa"), ==, GH_MLS_ROLE_MEMBER);
+
+  for (gint read = GH_MLS_READ_IDLE; read <= GH_MLS_READ_DISCONNECTED; read++)
+    g_assert_cmpuint(strlen(gh_mls_read_copy(read)), >, 0);
+
+  g_autofree gchar *bare = gh_mls_parse_relay("  relay.example.com ", NULL);
+  g_assert_cmpstr(bare, ==, "wss://relay.example.com");
+  g_autofree gchar *local = gh_mls_parse_relay("ws://127.0.0.1:7777", NULL);
+  g_assert_cmpstr(local, ==, "ws://127.0.0.1:7777");
+  const gchar *bad[] = { "", "ws://relay.example.com", "https://relay.example.com",
+                         "wss://user@relay.example.com" };
+  for (guint i = 0; i < G_N_ELEMENTS(bad); i++) {
+    g_autoptr(GError) error = NULL;
+    g_assert_null(gh_mls_parse_relay(bad[i], &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  }
+
+  /* The pure classification of a lookup's answer. */
+  g_autoptr(GError) not_found = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "x");
+  g_autoptr(GError) unreachable = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE,
+                                                      "x");
+  g_autoptr(GError) no_relays = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "x");
+  g_autoptr(GError) other = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED, "x");
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, not_found), ==, GH_MLS_INVITEE_NOT_SET_UP);
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, unreachable), ==, GH_MLS_INVITEE_UNREACHABLE);
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, no_relays), ==, GH_MLS_INVITEE_NO_RELAYS);
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, other), ==, GH_MLS_INVITEE_FAILED);
+}
+
+/* ---- default mode: people, checks, roles, reasons ----------------------------------- */
+
+static void
+test_view_model(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+
+  /* Contacts: accepted conversations' people only; a message request, a
+   * note to self and the account never. */
+  g_auto(GStrv) nobody = gh_mls_contacts_dup(alice->model);
+  g_assert_cmpuint(g_strv_length(nobody), ==, 0);
+  admit_request(alice, STRANGER);
+  const gchar *self_only[] = { hex[ALICE], NULL };
+  g_autoptr(GError) error = NULL;
+  gh_conversation_store_open_room(alice->model, self_only, &error);
+  g_assert_no_error(error);
+  accept_contact(alice, BOB);
+  const gchar *pair[] = { hex[BOB], hex[CAROL], NULL };
+  g_assert_nonnull(gh_conversation_store_open_room(alice->model, pair, &error));
+  g_assert_no_error(error);
+  g_auto(GStrv) contacts = gh_mls_contacts_dup(alice->model);
+  g_assert_cmpuint(g_strv_length(contacts), ==, 2);
+  g_assert_true(strv_has((const gchar *const *)contacts, hex[BOB]));
+  g_assert_true(strv_has((const gchar *const *)contacts, hex[CAROL]));
+  g_assert_false(strv_has((const gchar *const *)contacts, hex[STRANGER]));
+  g_assert_false(strv_has((const gchar *const *)contacts, hex[ALICE]));
+  g_autofree gchar *upper = g_ascii_strup(hex[BOB], -1);
+  g_assert_true(gh_mls_is_contact(alice->model, upper));
+  g_assert_false(gh_mls_is_contact(alice->model, hex[STRANGER]));
+
+  /* The KeyPackage check, each honest state. */
+  g_assert_cmpint(check(alice, BOB), ==, GH_MLS_INVITEE_READY);
+  g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_NOT_SET_UP);
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+  inject_legacy_key_package(&w, CAROL);
+  g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_NEEDS_UPDATE);
+#endif
+  g_autoptr(GSettings) none = settings_with_discovery(NULL);
+  g_assert_cmpint(check_with(alice, none, BOB, NULL, NULL), ==, GH_MLS_INVITEE_NO_RELAYS);
+  g_autoptr(GSettings) closed = settings_with_discovery("ws://127.0.0.1:1");
+  g_assert_cmpint(check_with(alice, closed, BOB, NULL, NULL), ==, GH_MLS_INVITEE_UNREACHABLE);
+  g_autoptr(GCancellable) cancelled = g_cancellable_new();
+  g_cancellable_cancel(cancelled);
+  check_with(alice, alice->settings, BOB, cancelled, &error);
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&error);
+
+  /* Roles: the creator is the Owner; a second admin is an Admin. */
+  GhMlsGroup *ga = create_group(alice, "Roles", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_auto(GStrv) admins = gh_mls_group_dup_ordered_admins(alice->service, ga);
+  g_assert_cmpuint(g_strv_length(admins), ==, 1);
+  g_assert_cmpint(gh_mls_role_of((const gchar *const *)admins, hex[ALICE]), ==,
+                  GH_MLS_ROLE_OWNER);
+  g_assert_cmpint(gh_mls_role_of((const gchar *const *)admins, hex[BOB]), ==,
+                  GH_MLS_ROLE_MEMBER);
+  const gchar *both[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, both, NULL, on_changed, &promoted);
+  spin_until(op_done, &promoted, "the admin change");
+  g_assert_no_error(promoted.error);
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_auto(GStrv) seen_by_bob = gh_mls_group_dup_ordered_admins(bob->service, gb);
+  g_assert_cmpint(gh_mls_role_of((const gchar *const *)seen_by_bob, hex[ALICE]), ==,
+                  GH_MLS_ROLE_OWNER);
+  g_assert_cmpint(gh_mls_role_of((const gchar *const *)seen_by_bob, hex[BOB]), ==,
+                  GH_MLS_ROLE_ADMIN);
+
+  /* The composer's reasons follow the group. */
+  wait_live(ga);
+  g_autofree gchar *live = gh_mls_send_reason(alice->service, ga);
+  g_assert_null(live);
+  g_autofree gchar *no_service = gh_mls_send_reason(NULL, ga);
+  g_assert_nonnull(strstr(no_service, "aren’t running"));
+  set_online(alice, FALSE);
+  g_autofree gchar *offline = gh_mls_send_reason(alice->service, ga);
+  g_assert_nonnull(strstr(offline, "only while you’re online"));
+  set_online(alice, TRUE);
+  wait_live(ga);
+  g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+  g_assert_no_error(error);
+  g_autofree gchar *left = gh_mls_send_reason(bob->service, gb);
+  g_assert_cmpstr(left, ==, "You left this group.");
+  world_down(&w);
+}
+
+/* ---- --gui helpers ------------------------------------------------------------------- */
+
+static gboolean
+is_mapped(gpointer widget)
+{
+  return gtk_widget_get_mapped(GTK_WIDGET(widget));
+}
+
+static GhWindow *
+test_window(void)
+{
+  GtkWindow *window = GTK_WINDOW(gh_window_new(NULL));
+  gtk_window_set_default_size(window, 900, 720);
+  gtk_window_present(window);
+  spin_until(is_mapped, window, "the window mapped");
+  drain();
+  return GH_WINDOW(window);
+}
+
+static GhNip29Service *
+null_nip29(gpointer data)
+{
+  (void)data;
+  return NULL;
+}
+
+static GhNip29Service *
+the_nip29(gpointer data)
+{
+  return data;
+}
+
+static GhMlsService *
+app_service(gpointer data)
+{
+  return ((App *)data)->service;
+}
+
+/* The window glue as gh-app-services.c attaches it. nip29: New Group needs
+ * the relay-group service (the dialog's relay part), or NULL. */
+static GhWindow *
+app_window(App *app, GhNip29Service *nip29)
+{
+  GhWindow *window = test_window();
+  gh_conversation_list_attach(window, app->model, NULL);
+  GhGroupUiConfig groups = { .conversations = app->model,
+                             .service = nip29 ? the_nip29 : null_nip29,
+                             .service_data = nip29 };
+  gh_group_ui_attach(window, &groups);
+  GhMlsUiConfig mls = {
+    .conversations = app->model,
+    .accounts = app->accounts,
+    .settings = app->settings,
+    .service = app_service,
+    .service_data = app,
+    .account_relays = app->relays,
+    .lookup_deadline = 20,
+  };
+  gh_mls_ui_attach(window, &mls);
+  return window;
+}
+
+static GhNip29Service *
+nip29_up(App *app)
+{
+  GhNip29ServiceConfig config = {
+    .store = app->store,
+    .accounts = app->accounts,
+    .conversations = app->model,
+    .network = G_NETWORK_MONITOR(app->network),
+    .settings = app->settings,
+  };
+  g_autoptr(GError) error = NULL;
+  GhNip29Service *service = gh_nip29_service_new(&config, &error);
+  g_assert_no_error(error);
+  return service;
+}
+
+static void
+close_window(GhWindow *window)
+{
+  gtk_window_destroy(GTK_WINDOW(window));
+  drain();
+}
+
+static AdwDialog *
+visible_dialog(GhWindow *window)
+{
+  return adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+}
+
+static gboolean
+no_dialog(gpointer window)
+{
+  return visible_dialog(window) == NULL;
+}
+
+static const gchar *
+header_subtitle(GhWindow *window)
+{
+  return adw_window_title_get_subtitle(
+    gh_content_page_get_window_title(gh_window_get_content(window)));
+}
+
+typedef struct {
+  const gchar *(*get)(gpointer);
+  gpointer object;
+  const gchar *text;
+} TextWait;
+
+static gboolean
+text_is(gpointer data)
+{
+  TextWait *wait = data;
+  return g_strcmp0(wait->get(wait->object), wait->text) == 0;
+}
+
+#define wait_text(get_, object_, text_) \
+  G_STMT_START { TextWait tw_ = { (const gchar *(*)(gpointer))(get_), (object_), (text_) }; \
+    spin_until(text_is, &tw_, "\"" text_ "\""); } G_STMT_END
+
+typedef struct {
+  GhMlsInviteePicker *picker;
+  const gchar *pubkey;
+  GhMlsInviteeState state;
+} PickWait;
+
+static gboolean
+pick_is(gpointer data)
+{
+  PickWait *wait = data;
+  return gh_mls_invitee_picker_get_state(wait->picker, wait->pubkey) == wait->state;
+}
+
+#define wait_pick(picker_, pubkey_, state_) \
+  G_STMT_START { PickWait pw_ = { (picker_), (pubkey_), (state_) }; \
+    spin_until(pick_is, &pw_, "the person's KeyPackage check"); } G_STMT_END
+
+static gboolean
+nothing_pending(gpointer dialog)
+{
+  return gh_mls_group_info_dialog_get_pending(dialog) == 0;
+}
+
+static const gchar *
+last_info_toast(gpointer dialog)
+{
+  return gh_mls_group_info_dialog_get_last_toast(dialog);
+}
+
+static GtkWidget *
+row_for(GtkWidget *widget, GhConversation *conversation)
+{
+  if (GH_IS_CONVERSATION_ROW(widget) &&
+      gh_conversation_row_get_conversation(GH_CONVERSATION_ROW(widget)) == conversation)
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = row_for(c, conversation);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static GtkWidget *
+find_type(GtkWidget *widget, GType type, const gchar *title)
+{
+  if (G_TYPE_CHECK_INSTANCE_TYPE(widget, type) &&
+      (!title || (ADW_IS_PREFERENCES_ROW(widget) &&
+                  g_strcmp0(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(widget)),
+                            title) == 0)))
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_type(c, type, title);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static gboolean
+sent(gpointer data)
+{
+  MessageWait *wait = data;
+  GhMessage *message = find_message(wait->app, wait->room_id, wait->text);
+  return message && gh_message_get_status(message) == GH_MESSAGE_STATUS_SENT;
+}
+
+static GhConversationView *
+view_of(GhWindow *window)
+{
+  return GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window)));
+}
+
+typedef struct {
+  GhConversationView *view;
+  guint count;
+} UndecryptableWait;
+
+static gboolean
+undecryptable_is(gpointer data)
+{
+  UndecryptableWait *wait = data;
+  return gh_conversation_view_get_undecryptable_messages(wait->view) == wait->count;
+}
+
+/* ---- --gui: New Group, the invitee, the composer ---------------------------------------- */
+
+static const gchar *
+create_reason(gpointer page)
+{
+  return gh_mls_new_group_page_get_create_reason(page);
+}
+
+static gboolean
+reason_cleared(gpointer page)
+{
+  return gh_mls_new_group_page_get_create_reason(page) == NULL;
+}
+
+static const gchar *
+status_title(gpointer page)
+{
+  return gh_mls_new_group_page_get_status_title(page);
+}
+
+static const gchar *
+invites_toast(gpointer dialog)
+{
+  return gh_mls_invites_dialog_get_last_toast(dialog);
+}
+
+typedef struct {
+  GhWindow *window;
+  guint count;
+} InvitationsWait;
+
+static gboolean
+invitations_are(gpointer data)
+{
+  InvitationsWait *wait = data;
+  return gh_sidebar_page_get_invitations(gh_window_get_sidebar(wait->window)) == wait->count;
+}
+
+static gboolean
+shows(GhWindow *window, GhConversation *conversation)
+{
+  return gh_content_page_get_conversation_shown(gh_window_get_content(window)) &&
+         gh_conversation_view_get_conversation(view_of(window)) == conversation;
+}
+
+typedef struct {
+  GhWindow *window;
+  GhConversation *conversation;
+} ShownWait;
+
+static gboolean
+is_shown(gpointer data)
+{
+  ShownWait *wait = data;
+  return shows(wait->window, wait->conversation);
+}
+
+static void
+test_gui_new_group(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);         /* a contact without a KeyPackage */
+  admit_request(alice, STRANGER);       /* never offered, never looked up */
+  GhNip29Service *nip29 = nip29_up(alice);
+  group_send_stub_reset();
+  GhWindow *window = app_window(alice, nip29);
+
+  /* New Group opens on the chooser, both kinds explained. */
+  g_assert_true(g_action_group_get_action_enabled(G_ACTION_GROUP(window), "new-group"));
+  g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
+  AdwDialog *dialog = visible_dialog(window);
+  g_assert_true(GH_IS_NEW_GROUP_DIALOG(dialog));
+  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(
+    gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_NEW_GROUP_DIALOG, "navigation"));
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
+                  ==, "type");
+  GtkWidget *encrypted = find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group");
+  g_assert_nonnull(encrypted);
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(encrypted)), ==,
+                  "Only members can read messages. Everyone needs an app that supports "
+                  "encrypted groups.");
+  g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Relay Group"));
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
+  GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
+    gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+  g_assert_true(ADW_NAVIGATION_PAGE(page) == adw_navigation_view_get_visible_page(navigation));
+  g_assert_null(gh_mls_new_group_page_get_identity_title(page));   /* approved */
+
+  /* Relays: the account's own write relay to start with; typed ones are
+   * checked; the group relay G replaces W. */
+  g_auto(GStrv) start = gh_mls_new_group_page_dup_relays(page);
+  g_assert_cmpuint(g_strv_length(start), ==, 1);
+  g_assert_cmpstr(start[0], ==, w.w.url);
+  g_assert_false(gh_mls_new_group_page_add_relay(page, "https://relay.example.com"));
+  g_assert_false(gh_mls_new_group_page_add_relay(page, w.w.url));   /* already listed */
+  g_assert_true(gh_mls_new_group_page_add_relay(page, w.g.url));
+  GtkWidget *w_row = find_type(GTK_WIDGET(page), GH_TYPE_MLS_RELAY_ROW, w.w.url);
+  g_assert_nonnull(w_row);
+  gtk_widget_activate_action(w_row, "relay.remove", NULL);
+  g_auto(GStrv) relays = gh_mls_new_group_page_dup_relays(page);
+  g_assert_cmpuint(g_strv_length(relays), ==, 1);
+  g_assert_cmpstr(relays[0], ==, w.g.url);
+
+  /* Create waits, saying why, for a name and a person who can join. */
+  g_assert_cmpstr(create_reason(page), ==, "Give the group a name.");
+  gh_mls_new_group_page_set_name(page, "Book Club");
+  g_assert_cmpstr(create_reason(page), ==, "Choose at least one person.");
+  GhMlsInviteePicker *picker = gh_mls_new_group_page_get_picker(page);
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_listed(picker), ==, 2);
+  g_assert_null(gh_mls_invitee_picker_get_row(picker, hex[STRANGER]));   /* a request */
+  g_assert_false(key_package_asked(&w.e, hex[BOB]));   /* nothing looked up yet */
+  g_assert_true(gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE));
+  wait_pick(picker, hex[CAROL], GH_MLS_INVITEE_NOT_SET_UP);
+  AdwActionRow *carol_row = gh_mls_invitee_picker_get_row(picker, hex[CAROL]);
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(carol_row),
+                          "Hasn’t set up encrypted groups"));
+  g_assert_cmpstr(create_reason(page), ==,
+                  "Someone you chose can’t be invited yet. Remove them to continue.");
+  gh_mls_invitee_picker_set_selected(picker, hex[CAROL], FALSE);
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
+  wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY);
+  g_assert_true(key_package_asked(&w.e, hex[BOB]));
+  g_assert_false(key_package_asked(&w.e, hex[STRANGER]));   /* PD-8 */
+  g_assert_null(create_reason(page));
+
+  /* An account generation change ends the lookups: whoever is chosen is
+   * checked again, and Create waits for this device's approval again. */
+  g_settings_set_string(alice->settings, "current-npub", npub[STRANGER]);
+  gh_account_controller_refresh(alice->accounts);
+  g_settings_set_string(alice->settings, "current-npub", npub[ALICE]);
+  gh_account_controller_refresh(alice->accounts);
+  spin_until(accounts_active, alice->accounts, "Alice active again");
+  wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY);
+  spin_until(reason_cleared, page, "Create ready again");
+
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.create", NULL);
+  wait_text(status_title, page, "Group Created");
+  GhMlsGroup *ga = gh_mls_new_group_page_get_group(page);
+  g_assert_nonnull(ga);
+  g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "Book Club");
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
+  g_assert_nonnull(conversation);
+
+  /* Open Group closes the dialog and shows the conversation. */
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.open", NULL);
+  spin_until(no_dialog, window, "New Group closed");
+  ShownWait shown = { window, conversation };
+  spin_until(is_shown, &shown, "the new group shown");
+  g_assert_cmpstr(header_subtitle(window), ==, "Encrypted group · 2 members");
+
+  /* The row: a lock, "Encrypted group". */
+  drain();
+  GtkWidget *row = row_for(GTK_WIDGET(window), conversation);
+  g_assert_nonnull(row);
+  GtkWidget *kind = GTK_WIDGET(gtk_widget_get_template_child(row, GH_TYPE_CONVERSATION_ROW,
+                                                             "kind_icon"));
+  g_assert_true(gtk_widget_get_visible(kind));
+  g_assert_cmpstr(gtk_image_get_icon_name(GTK_IMAGE(kind)), ==, "channel-secure-symbolic");
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(kind), ==, "Encrypted group");
+  g_autoptr(GtkATContext) at = gtk_accessible_get_at_context(GTK_ACCESSIBLE(kind));
+  if (at)
+    gtk_test_accessible_assert_property(GTK_ACCESSIBLE(kind), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                        "Encrypted group");
+  g_assert_nonnull(strstr(gh_conversation_row_get_summary(GH_CONVERSATION_ROW(row)),
+                          "Book Club. Encrypted group"));
+
+  /* The composer: the encrypted group's delegate sends; the status is the
+   * service's, honest. */
+  wait_live(ga);
+  gpointer data = NULL;
+  const GhSendUiDelegate *delegate = group_send_stub_delegate_for(conversation, &data);
+  g_assert_nonnull(delegate);
+  g_autofree gchar *reason = delegate->reason(conversation, data);
+  g_assert_null(reason);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(delegate->send(conversation, "Hello, Book Club", data, &error));
+  g_assert_no_error(error);
+  GhMessage *mine = find_message(alice, room, "Hello, Book Club");
+  g_assert_nonnull(mine);
+  g_assert_true(gh_message_is_self(mine));
+  MessageWait delivered = { alice, room, "Hello, Book Club" };
+  spin_until(sent, &delivered, "the message sent");
+
+  /* Bob: the invitation waits in "Group Invitations"; nothing is joined. */
+  spin_until(has_invite, bob, "Bob's invitation");
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
+  GhWindow *bob_window = app_window(bob, NULL);
+  InvitationsWait one = { bob_window, 1 };
+  spin_until(invitations_are, &one, "Bob's invitations entry");
+  g_action_group_activate_action(G_ACTION_GROUP(bob_window), "group-invitations", NULL);
+  AdwDialog *invites = visible_dialog(bob_window);
+  g_assert_true(GH_IS_MLS_INVITES_DIALOG(invites));
+  spin_until(gh_test_dialog_shown, invites, "the invitations shown");
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(GH_MLS_INVITES_DIALOG(invites)), ==, 1);
+  g_autofree gchar *wrapper = the_invite(bob, ALICE);
+  const gchar *title = NULL, *subtitle = NULL;
+  g_assert_true(gh_mls_invites_dialog_describe(GH_MLS_INVITES_DIALOG(invites), wrapper, &title,
+                                               &subtitle));
+  g_assert_cmpstr(title, ==, "Book Club");
+  g_assert_nonnull(strstr(subtitle, "not in your contacts"));   /* Bob never wrote Alice */
+  g_assert_nonnull(strstr(subtitle, "2 members"));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
+  gtk_widget_activate_action(GTK_WIDGET(invites), "mls-invites.accept", "s", wrapper);
+  wait_text(invites_toast, invites, "You joined “Book Club”");
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(GH_MLS_INVITES_DIALOG(invites)), ==, 0);
+  InvitationsWait zero = { bob_window, 0 };
+  spin_until(invitations_are, &zero, "Bob's invitations entry gone");
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  g_assert_nonnull(gb);
+  wait_live(gb);
+  wait_message(bob, room, "Hello, Book Club");
+
+  /* The toast's Open shows Bob the group; Bob answers, Alice reads it. */
+  gtk_widget_activate_action(GTK_WIDGET(invites), "mls-invites.open", "s",
+                             gh_mls_group_get_group_id(gb));
+  spin_until(no_dialog, bob_window, "the invitations closed");
+  GhConversation *bob_conversation = gh_conversation_store_lookup(bob->model, room);
+  ShownWait bob_shown = { bob_window, bob_conversation };
+  spin_until(is_shown, &bob_shown, "Bob's group shown");
+  g_assert_cmpstr(header_subtitle(bob_window), ==, "Encrypted group · 2 members");
+  send_text(bob, gb, "Hi Alice");
+  wait_message(alice, room, "Hi Alice");
+
+  close_window(bob_window);
+  close_window(window);
+  gh_test_release(nip29);
+  world_down(&w);
+}
+
+/* ---- --gui: Group Info ------------------------------------------------------------------ */
+
+static void
+confirm(AdwAlertDialog *alert, GtkWidget *parent, const gchar *response)
+{
+  spin_until(gh_test_dialog_shown, alert, "the confirmation shown");
+  (void)parent;
+  g_signal_emit_by_name(alert, "response", response);
+  adw_dialog_force_close(ADW_DIALOG(alert));
+  drain();
+}
+
+static GhMlsGroupInfoDialog *
+show_info(GhWindow *window, GhConversation *conversation)
+{
+  g_assert_true(gh_mls_ui_show_info(window, conversation, NULL));
+  AdwDialog *dialog = visible_dialog(window);
+  g_assert_true(GH_IS_MLS_GROUP_INFO_DIALOG(dialog));
+  spin_until(gh_test_dialog_shown, dialog, "Group Info shown");
+  return GH_MLS_GROUP_INFO_DIALOG(dialog);
+}
+
+typedef struct {
+  GhWindow *window;
+  const gchar *text;
+} SubtitleWait;
+
+static gboolean
+subtitle_is(gpointer data)
+{
+  SubtitleWait *wait = data;
+  return g_strcmp0(header_subtitle(wait->window), wait->text) == 0;
+}
+
+static void
+test_gui_group_info(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB, CAROL };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Info", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  group_send_stub_reset();
+  GhWindow *window = app_window(alice, NULL);
+  GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
+  g_assert_true(gh_window_open_item(window, conversation));
+  g_assert_cmpstr(header_subtitle(window), ==, "Encrypted group · 2 members");
+
+  /* The owner: badges, Remove on everyone else, Add. */
+  GhMlsGroupInfoDialog *info = show_info(window, conversation);
+  gboolean removable = TRUE;
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member(info, hex[ALICE], &removable), ==,
+                  "Owner");
+  g_assert_false(removable);
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member(info, hex[BOB], &removable), ==, "");
+  g_assert_true(removable);
+  GtkWidget *device = find_type(GTK_WIDGET(info), ADW_TYPE_ACTION_ROW, "On this device only");
+  g_assert_nonnull(device);
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(device)), ==,
+                  "Messages are kept only on this device; history can’t be restored.");
+
+  /* Add Carol: accepted contacts not in the group, a fresh check. */
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.add-members", NULL);
+  GhMlsInviteePicker *picker = gh_mls_group_info_dialog_get_add_picker(info);
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_listed(picker), ==, 1);
+  g_assert_null(gh_mls_invitee_picker_get_row(picker, hex[BOB]));   /* a member already */
+  gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE);
+  wait_pick(picker, hex[CAROL], GH_MLS_INVITEE_READY);
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.save-add", NULL);
+  spin_until(nothing_pending, info, "the Add merged");
+  wait_text(last_info_toast, info, "Invited 1 person. They join once they accept.");
+  wait_members(ga, 3);
+  SubtitleWait three = { window, "Encrypted group · 3 members" };
+  spin_until(subtitle_is, &three, "the header's member count");
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member(info, hex[CAROL], &removable), ==, "");
+
+  /* Rename. */
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.rename", NULL);
+  gh_mls_group_info_dialog_set_rename(info, "Renamed Club", "Books, mostly");
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.save-rename", NULL);
+  spin_until(nothing_pending, info, "the rename merged");
+  wait_text(last_info_toast, info, "Name and description saved");
+  wait_text(gh_mls_group_get_name, gb, "Renamed Club");
+  g_assert_cmpstr(gh_mls_group_get_description(gb), ==, "Books, mostly");
+
+  /* Remove Carol, after the confirmation naming what it does. */
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.remove", "s", hex[CAROL]);
+  AdwAlertDialog *remove = gh_mls_group_info_dialog_get_remove_dialog(info);
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(remove),
+                          "can’t read anything sent to the group after this"));
+  confirm(remove, GTK_WIDGET(info), "remove-confirm");
+  spin_until(nothing_pending, info, "the removal merged");
+  wait_text(last_info_toast, info, "Removed from the group");
+  wait_members(ga, 2);
+  g_assert_null(gh_mls_group_info_dialog_get_member(info, hex[CAROL], NULL));
+  adw_dialog_force_close(ADW_DIALOG(info));
+  drain();
+
+  /* Bob, a member: the Owner badge, no admin action anywhere. */
+  GhWindow *bob_window = app_window(bob, NULL);
+  GhConversation *bob_conversation = gh_conversation_store_lookup(bob->model, room);
+  g_assert_true(gh_window_open_item(bob_window, bob_conversation));
+  GhMlsGroupInfoDialog *bob_info = show_info(bob_window, bob_conversation);
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member(bob_info, hex[ALICE], &removable), ==,
+                  "Owner");
+  g_assert_false(removable);
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member(bob_info, hex[BOB], &removable), ==, "");
+  g_assert_false(removable);
+  GtkWidget *add = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(bob_info),
+                                                            GH_TYPE_MLS_GROUP_INFO_DIALOG,
+                                                            "add_member_button"));
+  g_assert_false(gtk_widget_get_visible(add));
+  gtk_widget_activate_action(GTK_WIDGET(bob_info), "mls-group.add-members", NULL);
+  g_assert_cmpuint(gh_mls_group_info_dialog_get_pending(bob_info), ==, 0);
+  adw_dialog_force_close(ADW_DIALOG(bob_info));
+  drain();
+
+  /* "Unable to decrypt N messages yet": a message whose Commit Bob hasn't
+   * got, then the Commit. */
+  UndecryptableWait view_wait = { view_of(bob_window), gh_mls_group_get_unreadable(gb) };
+  spin_until(undecryptable_is, &view_wait, "the view's count as the group's");
+  guint base = view_wait.count;
+  set_online(bob, FALSE);
+  OpWait renamed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "Next", NULL, NULL, on_changed,
+                                       &renamed);
+  spin_until(op_done, &renamed, "the rename");
+  g_assert_no_error(renamed.error);
+  g_autofree gchar *commit = g_strdup(last_stored_445(&w.g)->id);
+  wire_relay_withhold(&w.g, commit);
+  send_text(alice, ga, "next epoch");
+  MessageWait next = { alice, room, "next epoch" };
+  spin_until(sent, &next, "the next epoch's message sent");
+  set_online(bob, TRUE);
+  GroupWait above = { gb, (gint)base };
+  spin_until(unreadable_above, &above, "Bob failing to read the next epoch");
+  guint held = gh_mls_group_get_unreadable(gb);
+  view_wait.count = held;
+  spin_until(undecryptable_is, &view_wait, "the view's \"Unable to decrypt\" count");
+  GtkLabel *label = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(view_of(bob_window)),
+                                                            GH_TYPE_CONVERSATION_VIEW,
+                                                            "undecryptable_label"));
+  g_autofree gchar *expected = g_strdup_printf(
+    held == 1 ? "Unable to decrypt %u message yet" : "Unable to decrypt %u messages yet", held);
+  g_assert_cmpstr(gtk_label_get_text(label), ==, expected);
+  GtkWidget *undecryptable = GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(view_of(bob_window)), GH_TYPE_CONVERSATION_VIEW, "undecryptable_row"));
+  g_assert_true(gtk_widget_get_visible(undecryptable));
+  g_assert_null(find_message(bob, room, "next epoch"));
+  wire_relay_release(&w.g, commit);
+  wait_message(bob, room, "next epoch");
+  GroupWait below = { gb, (gint)held };
+  spin_until(unreadable_below, &below, "the message read");
+  view_wait.count = gh_mls_group_get_unreadable(gb);
+  spin_until(undecryptable_is, &view_wait, "the view's count follows");
+
+  /* Bob leaves: the copy says the others keep counting him. */
+  bob_info = show_info(bob_window, bob_conversation);
+  gtk_widget_activate_action(GTK_WIDGET(bob_info), "mls-group.leave", NULL);
+  AdwAlertDialog *leave = gh_mls_group_info_dialog_get_leave_dialog(bob_info);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(leave), ==, "Leave Group?");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(leave),
+                          "keep counting you as a member until an admin removes you"));
+  confirm(leave, GTK_WIDGET(bob_info), "leave-confirm");
+  g_assert_false(gh_mls_group_get_active(gb));
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_last_toast(bob_info), ==,
+                  "You left the group on this device");
+  gpointer data = NULL;
+  const GhSendUiDelegate *delegate = group_send_stub_delegate_for(bob_conversation, &data);
+  g_autofree gchar *reason = delegate->reason(bob_conversation, data);
+  g_assert_cmpstr(reason, ==, "You left this group.");
+  g_auto(GStrv) members = gh_mls_group_dup_members(ga);
+  g_assert_true(strv_has((const gchar *const *)members, hex[BOB]));   /* still counted */
+  adw_dialog_force_close(ADW_DIALOG(bob_info));
+  drain();
+
+  close_window(bob_window);
+  close_window(window);
+  world_down(&w);
+}
+
+/* ---- --gui: enrollment ------------------------------------------------------------------ */
+
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+static guint
+held_proofs(GhTestSigner *signer)
+{
+  guint n = 0;
+  for (guint i = 0; i < signer->held->len; i++) {
+    GDBusMethodInvocation *call = g_ptr_array_index(signer->held, i);
+    const gchar *input = NULL, *account = NULL, *app = NULL;
+    if (!g_str_equal(g_dbus_method_invocation_get_method_name(call), "SignEvent"))
+      continue;
+    g_variant_get(g_dbus_method_invocation_get_parameters(call), "(&s&s&s)", &input, &account,
+                  &app);
+    NostrEvent *event = nostr_event_new();
+    if (nostr_event_deserialize_compact(event, input, NULL) == 1 &&
+        nostr_event_get_kind(event) == 450)
+      n++;
+    nostr_event_free(event);
+  }
+  return n;
+}
+
+static gboolean
+a_proof_held(gpointer data)
+{
+  return held_proofs(data) > 0;
+}
+
+static const gchar *
+identity_title(gpointer page)
+{
+  return gh_mls_new_group_page_get_identity_title(page);
+}
+
+static gboolean
+identity_hidden(gpointer page)
+{
+  return gh_mls_new_group_page_get_identity_title(page) == NULL;
+}
+
+static void
+test_gui_enrollment(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+
+  /* A start whose approval the signer holds. */
+  w.signer.hold = TRUE;
+  app_restart(alice);
+  accept_contact(alice, BOB);
+  spin_until(a_proof_held, &w.signer, "the proof request");
+  GhWindow *window = app_window(alice, NULL);
+  GhMlsUiContext context = {
+    .service = alice->service,
+    .accounts = alice->accounts,
+    .model = alice->model,
+    .settings = alice->settings,
+    .lookup_deadline = 20,
+  };
+  GhMlsNewGroupPage *page = gh_mls_new_group_page_new(&context);
+  AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(adw_navigation_view_new());
+  adw_navigation_view_add(navigation, ADW_NAVIGATION_PAGE(page));
+  AdwDialog *dialog = adw_dialog_new();
+  adw_dialog_set_child(dialog, GTK_WIDGET(navigation));
+  adw_dialog_present(dialog, GTK_WIDGET(window));
+  spin_until(gh_test_dialog_shown, dialog, "the page shown");
+  wait_text(identity_title, page, "Waiting for approval in Nostr Signer…");
+  GtkWidget *retry = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(page),
+                                                              GH_TYPE_MLS_NEW_GROUP_PAGE,
+                                                              "retry_identity_button"));
+  g_assert_false(gtk_widget_get_visible(retry));
+  gh_mls_new_group_page_set_name(page, "Waiting");
+  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Nostr Signer first.");
+
+  /* Declined: said so, with Try Again. */
+  w.signer.deny = TRUE;
+  gh_test_signer_release_all(&w.signer);
+  wait_text(identity_title, page, "Declined in Nostr Signer");
+  g_assert_true(gtk_widget_get_visible(retry));
+  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Nostr Signer first.");
+
+  /* Try Again asks once more; approved, the row goes and Create only needs
+   * people. */
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.retry-identity", NULL);
+  wait_text(identity_title, page, "Waiting for approval in Nostr Signer…");
+  spin_until(a_proof_held, &w.signer, "the new proof request");
+  w.signer.deny = FALSE;
+  w.signer.hold = FALSE;
+  gh_test_signer_release_all(&w.signer);
+  spin_until(identity_hidden, page, "the approval");
+  g_assert_cmpstr(create_reason(page), ==, "Choose at least one person.");
+
+  adw_dialog_force_close(dialog);
+  drain();
+  close_window(window);
+  world_down(&w);
+}
+#endif
+
+/* ---- main ------------------------------------------------------------------------------- */
+
+int
+main(int argc, char **argv)
+{
+  gboolean gui_mode = argc > 1 && g_str_equal(argv[1], "--gui");
+  if (gui_mode) {
+    argv[1] = argv[0];
+    argv++;
+    argc--;
+  }
+#ifdef __APPLE__
+  /* As test_group_ui.c: GTK's macOS accessibility backend has no announce. */
+  g_setenv("GTK_A11Y", "none", FALSE);
+#endif
+  int status;
+  if (gui_mode) {
+    /* Before g_test_init(), as the other GUI tests. */
+    if (!gtk_init_check()) {
+      g_printerr("groundhog-mls-ui GUI test skipped: no graphical display\n");
+      return 77;
+    }
+    adw_init();
+    groundhog_register_resource();
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+    g_test_init(&argc, &argv, NULL);
+    /* mls_world_init() beside GTK: GTK keeps the session bus it was given. */
+    g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+    g_log_set_fatal_mask(NULL, G_LOG_FATAL_MASK | G_LOG_LEVEL_WARNING | G_LOG_LEVEL_CRITICAL);
+    for (guint key = 1; key < GH_TEST_KEYS; key++) {
+      hex[key] = gh_test_pub(key);
+      npub[key] = gh_test_npub(key);
+    }
+    gh_test_bus_up_beside_gtk(&test_bus);
+    g_test_add_func("/groundhog/mls-ui-gui/new-group", test_gui_new_group);
+    g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+    g_test_add_func("/groundhog/mls-ui-gui/enrollment", test_gui_enrollment);
+#endif
+  } else {
+    g_test_init(&argc, &argv, NULL);
+    mls_world_init();
+    g_test_add_func("/groundhog/mls-ui/copy", test_copy);
+    g_test_add_func("/groundhog/mls-ui/view-model", test_view_model);
+  }
+  status = g_test_run();
+  mls_world_finish();
+  return status;
+}

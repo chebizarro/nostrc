@@ -59,13 +59,25 @@ G_BEGIN_DECLS
  * build without OpenSSL or libsoup has none. */
 #define GH_FEATURE_ATTACHMENTS      GROUNDHOG_HAVE_ATTACHMENTS
 #define GH_FEATURE_EXPIRY           GROUNDHOG_HAVE_EXPIRY /* G07: gh-expiry.c, gh-app-services.c */
-/* Not a preference: New Message's 10-recipient limit points to encrypted
- * groups only when they exist (charter §7.9; Marmot MLS, nostrc-qp24.13).
- * gh-app-services.c passes it as GhNewMessageConfig.encrypted_groups.
- * Stays 0 until the UI (nostrc-9xf5) and a complete group backfill: the
- * 200-event subscription queue (nostrc-dha5), paging past a relay's result
- * limit (nostrc-cpwf) and the >200-event backlog test (nostrc-kzun). */
+/* Not a preference: encrypted groups (Marmot MLS, nostrc-qp24.13). When 1,
+ * gh-app-outbox.c runs GhMlsService beside each outbox, gh-app-services.c
+ * attaches their UI (gh-mls-ui.c, nostrc-9xf5: New Group's encrypted page,
+ * invitations, Group Info, the composer, the header count, "Unable to
+ * decrypt yet") and New Message's 10-recipient limit points to encrypted
+ * groups (GhNewMessageConfig.encrypted_groups; charter §7.9).
+ *
+ * The UI has landed (nostrc-9xf5) and is tested with the flag at 0: its
+ * tests attach it directly (tests/ui/test_mls_ui.c). What flips it to 1, in
+ * one line here, is a complete, bounded group backfill: nostrc-5rfp (the
+ * lossless subscription's hard cap closes with an explicit error instead of
+ * growing), nostrc-cpwf (until-based paging past a relay's result limit)
+ * and nostrc-kzun (the >200-event backlog test); nostrc-dha5 (the 200-event
+ * queue) came first. To try the UI before then, configure with
+ * -DGROUNDHOG_ENCRYPTED_GROUPS_PREVIEW=ON: CMake defines it to 1 for the
+ * executable only, with a warning; never in a release build. */
+#ifndef GH_FEATURE_ENCRYPTED_GROUPS
 #define GH_FEATURE_ENCRYPTED_GROUPS 0
+#endif
 
 static inline GhPreferencesFeatures
 gh_features_for_preferences(void)

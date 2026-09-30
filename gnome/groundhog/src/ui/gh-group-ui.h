@@ -3,6 +3,7 @@
 
 #include "gh-conversation-list.h"
 #include "gh-group-info-dialog.h"
+#include "gh-new-group-dialog.h"
 #include "gh-window.h"
 
 G_BEGIN_DECLS
@@ -50,6 +51,14 @@ typedef struct {
 /* After gh_conversation_list_attach() and, when present, gh_send_ui_attach()
  * (it replaces the window's history source). */
 void gh_group_ui_attach(GhWindow *window, const GhGroupUiConfig *config);
+
+/* qp24.13 part 2: called with each New Group dialog before it is presented,
+ * e.g. to add the encrypted page (gh_new_group_dialog_add_encrypted_page()).
+ * NULL clears; user_data is borrowed until replaced or the window goes. */
+typedef void (*GhGroupUiNewGroupFunc)(GhWindow *window, GhNewGroupDialog *dialog,
+                                      gpointer user_data);
+void gh_group_ui_set_new_group_extension(GhWindow *window, GhGroupUiNewGroupFunc func,
+                                         gpointer user_data);
 
 /* A GhConversationInfoGroupFunc: presents Group Info for conversation (a
  * relay group of the window's service). FALSE when there is none. */

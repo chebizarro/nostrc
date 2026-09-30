@@ -594,6 +594,9 @@ struct _GhConversationView {
   GtkLabel *jump_count;
   GtkWidget *locked_row;
   GtkLabel *locked_label;
+  GtkWidget *undecryptable_row;
+  GtkLabel *undecryptable_label;
+  guint undecryptable;
   AdwBreakpoint *compact_breakpoint;
   AdwAlertDialog *link_dialog;
   AdwAlertDialog *preview_dialog;
@@ -1555,6 +1558,27 @@ gh_conversation_view_set_locked_messages(GhConversationView *self, guint count)
   gtk_widget_set_visible(self->locked_row, count > 0);
 }
 
+void
+gh_conversation_view_set_undecryptable_messages(GhConversationView *self, guint count)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  self->undecryptable = count;
+  if (count > 0) {
+    g_autofree gchar *text = g_strdup_printf(
+      g_dngettext(NULL, "Unable to decrypt %u message yet",
+                  "Unable to decrypt %u messages yet", count), count);
+    gtk_label_set_text(self->undecryptable_label, text);
+  }
+  gtk_widget_set_visible(self->undecryptable_row, count > 0);
+}
+
+guint
+gh_conversation_view_get_undecryptable_messages(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), 0);
+  return self->undecryptable;
+}
+
 guint
 gh_conversation_view_get_announcements(GhConversationView *self,
                                        GtkAccessibleAnnouncementPriority priority)
@@ -1802,6 +1826,8 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, jump_count);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, locked_row);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, locked_label);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationView, undecryptable_row);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationView, undecryptable_label);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, compact_breakpoint);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, link_dialog);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, preview_dialog);

@@ -35,6 +35,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
   gh-conversation-info-dialog gh-conversation-info-person
   gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
+  gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
+  gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-dialog
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
@@ -1792,6 +1794,81 @@ else()
                  "conversation UI)")
 endif()
 # --- end G20b NIP-29 group UI ---
+# --- W21 encrypted-group UI (nostrc-9xf5, qp24.13 part 2) ---
+# The UI over GhMlsService (privacy charter §7.5, §7.6, §7.7, §7.9, §7.10,
+# §7.15 #13): gh-mls-invitee.c and gh-mls-copy.c (GTK-free: accepted
+# contacts, the per-person KeyPackage check with libmarmot's account-proof
+# test, Owner/Admin roles, the honest words), GhMlsInviteePicker, the
+# "Encrypted Group" page of New Group (GhMlsNewGroupPage), GhMlsGroupInfoDialog
+# and GhMlsInvitesDialog; gh-mls-ui.c attaches them to the window (the
+# composer delegate, win.group-invitations and the sidebar entry, Group Info,
+# the header's member count, "Unable to decrypt N messages yet"). The
+# executable attaches it only while GH_FEATURE_ENCRYPTED_GROUPS is 1
+# (gh-features.h); the tests attach it directly, so it is tested at 0.
+if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
+  message(STATUS "Groundhog encrypted-group UI: enabled")
+  set(GROUNDHOG_MLS_UI_SOURCES src/mls/gh-mls-invitee.c src/ui/gh-mls-copy.c
+    src/ui/gh-mls-invitee-picker.c src/ui/gh-mls-new-group-page.c
+    src/ui/gh-mls-group-info-dialog.c src/ui/gh-mls-invites-dialog.c)
+  add_library(groundhog-mls-ui STATIC ${GROUNDHOG_MLS_UI_SOURCES})
+  target_include_directories(groundhog-mls-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mls)
+  target_link_libraries(groundhog-mls-ui PUBLIC groundhog-mls-service groundhog-group-ui)
+  target_compile_options(groundhog-mls-ui PRIVATE -Wall -Wextra -Werror)
+  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+    # Beside gh-send-ui.c and gh-group-ui.c, whose hooks it uses.
+    target_sources(groundhog PRIVATE src/ui/gh-mls-ui.c)
+    target_link_libraries(groundhog PRIVATE groundhog-mls-ui)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS_UI=1)
+  endif()
+  # Trying encrypted groups before their backfill blockers close (see
+  # gh-features.h): the executable only, never a release build.
+  option(GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW
+         "Build Groundhog with GH_FEATURE_ENCRYPTED_GROUPS=1 (development only)" OFF)
+  if (GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW)
+    message(WARNING "Groundhog: encrypted groups are ON (GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW); "
+                    "their backfill is not complete yet (nostrc-5rfp, nostrc-cpwf, "
+                    "nostrc-kzun). Not for release.")
+    target_compile_definitions(groundhog PRIVATE GH_FEATURE_ENCRYPTED_GROUPS=1)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
+      TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    # Default mode (no display): the view model against the three-account
+    # local-relay world of the MLS service tests (tests/mls/mls-world.h): the
+    # words of every state, accepted contacts only (never a request), the
+    # KeyPackage check (ready, not set up, needs an update: a legacy
+    # KeyPackage without the account proof, no discovery relay), Owner and
+    # Admin from the group's admin order, and the composer's reasons.
+    # --gui: on a real window, New Group's encrypted page end to end (checks,
+    # the enrollment states with Try Again, create, the invitee accepts in
+    # the invitations dialog), sending and receiving through the composer
+    # delegate, Group Info (badges, admin add and remove, rename, leave with
+    # its copy), the header's member count, "Unable to decrypt N messages
+    # yet", the row's lock glyph; it self-skips (77) without a display.
+    add_executable(test-groundhog-mls-ui tests/ui/test_mls_ui.c tests/ui/group-send-stub.c
+      src/ui/gh-group-ui.c src/ui/gh-mls-ui.c src/store/gh-store-conversations.c
+      src/app/gh-nip17-envelope.c ${GROUNDHOG_DM_SEND_SOURCES})
+    target_include_directories(test-groundhog-mls-ui PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+    target_link_libraries(test-groundhog-mls-ui PRIVATE groundhog-mls-ui marmot
+      nostr_nip17_core nostr_nip59_core nostrc-test-bus PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    target_compile_options(test-groundhog-mls-ui PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-mls-ui)
+    add_dependencies(test-groundhog-mls-ui groundhog-test-schemas)
+    add_test(NAME groundhog-mls-ui COMMAND test-groundhog-mls-ui)
+    set_tests_properties(groundhog-mls-ui PROPERTIES TIMEOUT 300
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    add_test(NAME groundhog-mls-ui-gui COMMAND test-groundhog-mls-ui --gui)
+    set_tests_properties(groundhog-mls-ui-gui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+else()
+  message(STATUS "Groundhog encrypted-group UI: disabled (needs the MLS service and the "
+                 "group UI)")
+endif()
+# --- end W21 encrypted-group UI ---
 # --- W16 UX polish (nostrc-qp24.66, .70, .71, .72, .74, .80) ---
 # Small UX items on top of G11-G19 (privacy charter §7.4, §7.8, §7.9, §7.13):
 #  - GhBlockedPage (data/ui/gh-blocked-page.blp, gh-blocked-row.blp): Preferences

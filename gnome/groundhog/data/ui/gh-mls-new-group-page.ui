@@ -6,93 +6,56 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GhNewGroupDialog" parent="AdwDialog">
-    <property name="title" translatable="yes">New Group</property>
-    <property name="content-width">440</property>
-    <property name="content-height">640</property>
+  <template class="GhMlsNewGroupPage" parent="AdwNavigationPage">
+    <property name="title" translatable="yes">New Encrypted Group</property>
     <property name="child">
-      <object class="AdwNavigationView" id="navigation">
-        <child>
-          <object class="AdwNavigationPage" id="type_page">
-            <property name="tag">type</property>
-            <property name="title" translatable="yes">New Group</property>
-            <property name="child">
-              <object class="AdwToolbarView">
-                <child type="top">
-                  <object class="AdwHeaderBar"></object>
-                </child>
-                <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar"></object>
+        </child>
+        <property name="content">
+          <object class="GtkStack" id="stack">
+            <property name="transition-type">1</property>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">form</property>
+                <property name="child">
                   <object class="AdwPreferencesPage">
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <child>
-                          <object class="AdwActionRow" id="encrypted_choice">
-                            <property name="title" translatable="yes">Encrypted Group</property>
-                            <property name="subtitle" translatable="yes">Only members can read messages. Everyone needs an app that supports encrypted groups.</property>
-                            <property name="use-markup">false</property>
-                            <property name="activatable">true</property>
-                            <property name="action-name">new-group.choose-encrypted</property>
-                            <child type="prefix">
-                              <object class="GtkImage">
-                                <property name="icon-name">channel-secure-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                            <child type="suffix">
-                              <object class="GtkImage">
-                                <property name="icon-name">go-next-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwActionRow" id="relay_choice">
-                            <property name="title" translatable="yes">Relay Group</property>
-                            <property name="subtitle" translatable="yes">Hosted on a relay you choose. The relay’s operators can read messages.</property>
-                            <property name="use-markup">false</property>
-                            <property name="activatable">true</property>
-                            <property name="action-name">new-group.choose-relay</property>
-                            <child type="prefix">
-                              <object class="GtkImage">
-                                <property name="icon-name">network-workgroup-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                            <child type="suffix">
-                              <object class="GtkImage">
-                                <property name="icon-name">go-next-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
+                        <property name="description" translatable="yes">Only members can read messages. Everyone needs an app that supports encrypted groups.</property>
                       </object>
                     </child>
-                  </object>
-                </property>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="AdwNavigationPage" id="form_page">
-            <property name="tag">form</property>
-            <property name="title" translatable="yes">New Relay Group</property>
-            <property name="child">
-              <object class="AdwToolbarView">
-                <child type="top">
-                  <object class="AdwHeaderBar"></object>
-                </child>
-                <property name="content">
-                  <object class="AdwPreferencesPage">
                     <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="description" translatable="yes">Hosted on a relay you choose. Not every relay lets people create groups.</property>
+                      <object class="AdwPreferencesGroup" id="identity_group">
+                        <property name="visible">false</property>
                         <child>
-                          <object class="AdwEntryRow" id="relay_row">
-                            <property name="title" translatable="yes">Relay</property>
+                          <object class="AdwActionRow" id="identity_row">
                             <property name="use-markup">false</property>
+                            <property name="title-lines">2</property>
+                            <child type="prefix">
+                              <object class="GtkSpinner" id="identity_spinner">
+                                <property name="visible">false</property>
+                                <property name="valign">3</property>
+                              </object>
+                            </child>
+                            <child type="prefix">
+                              <object class="GtkImage" id="identity_icon">
+                                <property name="visible">false</property>
+                                <property name="icon-name">dialog-warning-symbolic</property>
+                                <property name="valign">3</property>
+                                <property name="accessible-role">43</property>
+                              </object>
+                            </child>
+                            <child type="suffix">
+                              <object class="GtkButton" id="retry_identity_button">
+                                <property name="visible">false</property>
+                                <property name="label" translatable="yes">_Try Again</property>
+                                <property name="use-underline">true</property>
+                                <property name="valign">3</property>
+                                <property name="action-name">mls-new.retry-identity</property>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>
@@ -107,24 +70,59 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwEntryRow" id="about_row">
-                            <property name="title" translatable="yes">About (Optional)</property>
+                            <property name="title" translatable="yes">Description (Optional)</property>
                             <property name="use-markup">false</property>
                           </object>
                         </child>
                       </object>
                     </child>
                     <child>
+                      <object class="GhMlsInviteePicker" id="picker"></object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup" id="relays_group">
+                        <property name="title" translatable="yes">Group Relays</property>
+                        <property name="description" translatable="yes">Where the group’s encrypted messages are kept. They see when the group is active, but not who is in it or what is said.</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwPreferencesGroup">
                         <child>
-                          <object class="AdwSwitchRow" id="private_switch">
-                            <property name="title" translatable="yes">Only Members Can Read</property>
-                            <property name="subtitle" translatable="yes">Enforced by the relay. Its operators can still read everything.</property>
+                          <object class="AdwEntryRow" id="relay_entry">
+                            <property name="title" translatable="yes">Add Relay</property>
+                            <property name="use-markup">false</property>
+                            <property name="show-apply-button">true</property>
                           </object>
                         </child>
                         <child>
-                          <object class="AdwSwitchRow" id="closed_switch">
-                            <property name="title" translatable="yes">Join by Invite Only</property>
-                            <property name="subtitle" translatable="yes">Join requests without an invite code are refused</property>
+                          <object class="GtkLabel" id="relay_error">
+                            <property name="visible">false</property>
+                            <property name="wrap">true</property>
+                            <property name="xalign">0</property>
+                            <property name="margin-top">6</property>
+                            <property name="use-markup">false</property>
+                            <style>
+                              <class name="error"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Before You Create It</property>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">On this device only</property>
+                            <property name="subtitle" translatable="yes">Messages are kept only on this device; history can’t be restored.</property>
+                            <property name="use-markup">false</property>
+                            <property name="subtitle-lines">3</property>
+                            <child type="prefix">
+                              <object class="GtkImage">
+                                <property name="icon-name">computer-symbolic</property>
+                                <property name="accessible-role">43</property>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>
@@ -142,47 +140,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </style>
                           </object>
                         </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Before You Create It</property>
                         <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">Not end-to-end encrypted</property>
-                            <property name="subtitle" translatable="yes">The relay’s operators can read every message in the group and see who wrote it.</property>
+                          <object class="GtkLabel" id="create_reason">
+                            <property name="wrap">true</property>
+                            <property name="justify">2</property>
+                            <property name="margin-bottom">12</property>
                             <property name="use-markup">false</property>
-                            <child type="prefix">
-                              <object class="GtkImage">
-                                <property name="icon-name">dialog-warning-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
                           </object>
                         </child>
-                        <child>
-                          <object class="AdwActionRow" id="contact_row">
-                            <property name="title" translatable="yes">Creating contacts the relay</property>
-                            <property name="subtitle" translatable="yes">It learns your public key and your IP address, and makes you the group’s admin. Nothing is sent until you choose Create.</property>
-                            <property name="use-markup">false</property>
-                            <child type="prefix">
-                              <object class="GtkImage">
-                                <property name="icon-name">network-server-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
                         <child>
                           <object class="GtkButton" id="create_button">
                             <property name="label" translatable="yes">_Create Group</property>
                             <property name="use-underline">true</property>
                             <property name="halign">3</property>
-                            <property name="action-name">new-group.create</property>
+                            <property name="action-name">mls-new.create</property>
                             <style>
                               <class name="pill"/>
                               <class name="suggested-action"/>
@@ -194,19 +168,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   </object>
                 </property>
               </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="AdwNavigationPage" id="status_page">
-            <property name="tag">status</property>
-            <property name="title" translatable="yes">New Relay Group</property>
-            <property name="child">
-              <object class="AdwToolbarView">
-                <child type="top">
-                  <object class="AdwHeaderBar"></object>
-                </child>
-                <property name="content">
+            </child>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">status</property>
+                <property name="child">
                   <object class="GtkScrolledWindow">
                     <property name="hscrollbar-policy">2</property>
                     <property name="child">
@@ -232,7 +198,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
-                              <object class="GtkSpinner" id="spinner">
+                              <object class="GtkSpinner" id="status_spinner">
                                 <property name="visible">false</property>
                                 <property name="halign">3</property>
                                 <property name="width-request">32</property>
@@ -264,7 +230,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="use-underline">true</property>
                                 <property name="halign">3</property>
                                 <property name="margin-top">12</property>
-                                <property name="action-name">new-group.open</property>
+                                <property name="action-name">mls-new.open</property>
                                 <style>
                                   <class name="pill"/>
                                   <class name="suggested-action"/>
@@ -277,7 +243,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="label" translatable="yes">_Change and Try Again</property>
                                 <property name="use-underline">true</property>
                                 <property name="halign">3</property>
-                                <property name="action-name">new-group.back</property>
+                                <property name="action-name">mls-new.back</property>
                                 <style>
                                   <class name="pill"/>
                                 </style>
@@ -290,9 +256,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   </object>
                 </property>
               </object>
-            </property>
+            </child>
           </object>
-        </child>
+        </property>
       </object>
     </property>
   </template>

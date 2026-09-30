@@ -1,0 +1,314 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Group Info for an encrypted group (charter §7.10 "MLS", §2.2 surface 2,
+// §1.4, D7; nostrc-9xf5, qp24.13 part 2), driven by
+// gh-mls-group-info-dialog.c over the account's GhMlsService. Everything
+// comes from the group's own MLS state; nothing is fetched to fill it.
+// Main page: the group (name, "Encrypted group · N members", description),
+// what an encrypted group does and doesn't protect (gh-privacy-summary.h),
+// how it is read and any change still being sent, the members (Owner and
+// Admin badges; Add and Remove for admins only), Rename (admins), the group
+// relays, the single-device note, and Leave, whose confirmation says the
+// others keep counting the account until an admin removes it. "add": the
+// accepted contacts to invite, each with a fresh KeyPackage check.
+// "rename": the name and description.
+template $GhMlsGroupInfoDialog: Adw.Dialog {
+  title: _("Group Info");
+  content-width: 460;
+  content-height: 720;
+
+  child: Adw.ToastOverlay toasts {
+    child: Adw.NavigationView navigation {
+      Adw.NavigationPage main_page {
+        tag: "main";
+        title: _("Group Info");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            Adw.PreferencesGroup {
+              Box {
+                orientation: vertical;
+                spacing: 6;
+                margin-bottom: 6;
+
+                Adw.Avatar avatar {
+                  size: 72;
+                  show-initials: true;
+                  halign: center;
+                  accessible-role: presentation;
+                }
+
+                Label title_label {
+                  wrap: true;
+                  wrap-mode: word_char;
+                  justify: center;
+                  use-markup: false;
+
+                  styles [
+                    "title-2",
+                  ]
+                }
+
+                Label subtitle_label {
+                  wrap: true;
+                  justify: center;
+                  use-markup: false;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
+
+                Label about_label {
+                  visible: false;
+                  wrap: true;
+                  wrap-mode: word_char;
+                  justify: center;
+                  use-markup: false;
+                  margin-top: 6;
+                }
+              }
+            }
+
+            Adw.PreferencesGroup {
+              title: _("Privacy");
+
+              Adw.ActionRow privacy_row {
+                use-markup: false;
+
+                [prefix]
+                Image {
+                  icon-name: "channel-secure-symbolic";
+                  accessible-role: presentation;
+                }
+              }
+
+              // Rows: gh_privacy_summary_new() "visible" (from C).
+              Adw.ExpanderRow visible_row {
+                title: _("What Others Can See");
+                use-markup: false;
+              }
+
+              // Rows: gh_privacy_summary_new() "unprotected" (from C).
+              Adw.ExpanderRow unprotected_row {
+                title: _("What Groundhog Can’t Protect");
+                use-markup: false;
+              }
+            }
+
+            Adw.PreferencesGroup {
+              title: _("Group");
+
+              Adw.ActionRow messages_row {
+                title: _("Messages");
+                use-markup: false;
+              }
+
+              // A change of this account's not merged yet, or invitations
+              // not delivered yet; hidden when neither.
+              Adw.ActionRow pending_row {
+                visible: false;
+                title: _("Still Sending");
+                use-markup: false;
+
+                [prefix]
+                Spinner pending_spinner {
+                  valign: center;
+                }
+              }
+
+              Adw.ActionRow device_row {
+                title: _("On this device only");
+                subtitle: _("Messages are kept only on this device; history can’t be restored.");
+                use-markup: false;
+                subtitle-lines: 3;
+
+                [prefix]
+                Image {
+                  icon-name: "computer-symbolic";
+                  accessible-role: presentation;
+                }
+              }
+            }
+
+            // One $GhMlsMemberRow per member (from C): the owner first, then
+            // admins, then members.
+            Adw.PreferencesGroup members_group {
+              title: _("Members");
+
+              header-suffix: Button add_member_button {
+                visible: false;
+                valign: center;
+                action-name: "mls-group.add-members";
+                tooltip-text: _("Add Members");
+
+                child: Adw.ButtonContent {
+                  icon-name: "list-add-symbolic";
+                  label: _("_Add");
+                  use-underline: true;
+                };
+
+                accessibility {
+                  label: _("Add Members");
+                }
+
+                styles [
+                  "flat",
+                ]
+              };
+            }
+
+            Adw.PreferencesGroup admin_group {
+              visible: false;
+              title: _("Manage Group");
+
+              Adw.ActionRow rename_row {
+                title: _("Name and Description");
+                use-markup: false;
+                activatable: true;
+                action-name: "mls-group.rename";
+
+                [suffix]
+                Image {
+                  icon-name: "go-next-symbolic";
+                  accessible-role: presentation;
+                }
+              }
+            }
+
+            // One $GhMlsRelayRow per group relay (from C).
+            Adw.PreferencesGroup relays_group {
+              title: _("Group Relays");
+              description: _("They keep the group’s encrypted messages. They see when the group is active, but not who is in it or what is said.");
+            }
+
+            Adw.PreferencesGroup {
+              Button leave_button {
+                label: _("_Leave Group…");
+                use-underline: true;
+                halign: center;
+                action-name: "mls-group.leave";
+
+                styles [
+                  "pill",
+                  "destructive-action",
+                ]
+              }
+            }
+          };
+        };
+      }
+
+      Adw.NavigationPage add_page {
+        tag: "add";
+        title: _("Add Members");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            $GhMlsInviteePicker add_picker {}
+
+            Adw.PreferencesGroup {
+              Label add_reason {
+                wrap: true;
+                justify: center;
+                margin-bottom: 12;
+                use-markup: false;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+
+              Button add_button {
+                label: _("_Invite");
+                use-underline: true;
+                halign: center;
+                action-name: "mls-group.save-add";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            }
+          };
+        };
+      }
+
+      Adw.NavigationPage rename_page {
+        tag: "rename";
+        title: _("Name and Description");
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.PreferencesPage {
+            Adw.PreferencesGroup {
+              description: _("Every member sees the new name and description.");
+
+              Adw.EntryRow name_row {
+                title: _("Name");
+                use-markup: false;
+              }
+
+              Adw.EntryRow description_row {
+                title: _("Description (Optional)");
+                use-markup: false;
+              }
+            }
+
+            Adw.PreferencesGroup {
+              Button save_button {
+                label: _("_Save");
+                use-underline: true;
+                halign: center;
+                action-name: "mls-group.save-rename";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+            }
+          };
+        };
+      }
+    };
+  };
+}
+
+// Response ids are unique across the file: blueprint-compiler 0.12 treats
+// them as object ids.
+// Leaving is local (gh-mls-service.h "Leaving"): an MLS member can't take
+// itself out of the group, so the copy says the others keep counting you.
+Adw.AlertDialog leave_dialog {
+  heading: _("Leave Group?");
+  body: _("You’ll stop receiving this group’s messages on this device. The other members keep counting you as a member until an admin removes you.");
+  default-response: "leave-cancel";
+  close-response: "leave-cancel";
+
+  responses [
+    leave-cancel: _("_Cancel"),
+    leave-confirm: _("_Leave") destructive,
+  ]
+}
+
+// The body names the person (from C).
+Adw.AlertDialog remove_dialog {
+  heading: _("Remove from Group?");
+  default-response: "remove-cancel";
+  close-response: "remove-cancel";
+
+  responses [
+    remove-cancel: _("_Cancel"),
+    remove-confirm: _("_Remove") destructive,
+  ]
+}

@@ -851,6 +851,8 @@ typedef struct {
   GDestroyNotify destroy;
   GhConversationInfoGroupFunc group_func; /* G20b: relay groups' own dialog */
   gpointer group_data;
+  GhConversationInfoGroupFunc encrypted_func; /* qp24.13 part 2: encrypted groups' */
+  gpointer encrypted_data;
 } InfoAttach;
 
 static void
@@ -880,10 +882,15 @@ shown_any(GhWindow *window)
 static GhConversation *
 shown_group(InfoAttach *attach)
 {
-  GhConversation *conversation = attach->group_func ? shown_any(attach->window) : NULL;
-  return conversation &&
-         gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29
-    ? conversation : NULL;
+  GhConversation *conversation = shown_any(attach->window);
+  GhConversationBackend backend = conversation ? gh_conversation_get_backend(conversation)
+                                               : GH_CONVERSATION_BACKEND_NIP17;
+  /* A group has Group Info only from the handler of its kind. */
+  if (backend == GH_CONVERSATION_BACKEND_NIP29 && attach->group_func)
+    return conversation;
+  if (backend == GH_CONVERSATION_BACKEND_MLS && attach->encrypted_func)
+    return conversation;
+  return NULL;
 }
 
 static GhConversation *
@@ -910,7 +917,10 @@ on_conversation_info(GSimpleAction *action, GVariant *parameter, gpointer data)
   (void)parameter;
   GhConversation *group = shown_group(attach);
   if (group) {
-    attach->group_func(attach->window, group, attach->group_data);
+    if (gh_conversation_get_backend(group) == GH_CONVERSATION_BACKEND_MLS)
+      attach->encrypted_func(attach->window, group, attach->encrypted_data);
+    else
+      attach->group_func(attach->window, group, attach->group_data);
     return;
   }
   GhConversation *conversation = shown_conversation(attach->window);
@@ -958,5 +968,18 @@ gh_conversation_info_set_group_handler(GhWindow *window, GhConversationInfoGroup
   g_return_if_fail(attach != NULL);
   attach->group_func = func;
   attach->group_data = func ? user_data : NULL;
+  sync_action(attach);
+}
+
+void
+gh_conversation_info_set_encrypted_group_handler(GhWindow *window,
+                                                 GhConversationInfoGroupFunc func,
+                                                 gpointer user_data)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  InfoAttach *attach = g_object_get_data(G_OBJECT(window), ATTACH_DATA);
+  g_return_if_fail(attach != NULL);
+  attach->encrypted_func = func;
+  attach->encrypted_data = func ? user_data : NULL;
   sync_action(attach);
 }
