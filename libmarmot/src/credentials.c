@@ -1398,6 +1398,25 @@ marmot_parse_key_package_event(const char *event_json,
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Public API: marmot_key_package_event_has_account_proof
+ * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_key_package_event_has_account_proof(const char *event_json, bool *out_proven)
+{
+    if (!event_json || !out_proven) return MARMOT_ERR_INVALID_ARG;
+    *out_proven = false;
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    MarmotError err = marmot_parse_key_package_event(event_json, &kp, NULL);
+    if (err != MARMOT_OK) return err;
+    *out_proven = marmot_leaf_proof_status(&kp.leaf_node, kp.cipher_suite) ==
+                  MARMOT_LEAF_PROOF_VALID;
+    mls_key_package_clear(&kp);
+    return MARMOT_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_select_key_package_event
  * ──────────────────────────────────────────────────────────────────────── */
 

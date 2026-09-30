@@ -412,7 +412,9 @@ groups. There is no adopted peer to test against either.
   - New `marmot_account_proof_template()`, `marmot_set_account_proof()`,
     `marmot_has_account_proof()`, and `marmot_group_account_proof_template()`
     with `marmot_self_update()` (also the public self-update of nostrc-yd0q),
-    and `marmot_process_welcome_from()`.
+    `marmot_process_welcome_from()`, and
+    `marmot_key_package_event_has_account_proof()` (an inviter tells a
+    KeyPackage it would refuse, before any Commit).
   - `marmot_create_group()` fails without an enrollment, outside legacy mode.
   - `marmot_create_key_package_unsigned()` fails without an enrollment, as
     above.

@@ -273,6 +273,28 @@ MarmotError marmot_select_key_package_event(const char **event_jsons,
                                              const uint8_t owner_pubkey[32],
                                              size_t *out_index);
 
+/**
+ * marmot_key_package_event_has_account_proof:
+ * @event_json: a signed kind:30443 event (the MDK_0_8 profile, e.g. the
+ *   event marmot_select_key_package_event() chose)
+ * @out_proven: (out): whether its LeafNode carries a verified
+ *   marmot.member.account-identity-proof.v2 for its author
+ *
+ * Tells, before any Commit, whether this KeyPackage can be invited outside
+ * legacy mode: since 0.10.0 marmot_create_group() and marmot_add_members()
+ * refuse a KeyPackage whose leaf has no proof (MDK 0.8, libmarmot 0.9.0 and
+ * older) with MARMOT_ERR_KEY_PACKAGE_IDENTITY. Validation is that of
+ * marmot_select_key_package_event() (id, signature, tags, KeyPackage,
+ * author binding, KeyPackageRef); a proof that is present but does not
+ * verify fails it. Nothing is stored.
+ *
+ * Returns: MARMOT_OK (with @out_proven set), MARMOT_ERR_INVALID_ARG, or the
+ *   KeyPackage's validation failure (e.g. MARMOT_ERR_VALIDATION,
+ *   MARMOT_ERR_KEY_PACKAGE_IDENTITY for a proof that does not verify)
+ */
+MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
+                                                        bool *out_proven);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * KeyPackage profiles (nostrc-prqu.9) — opt-in; the functions above always
  * use MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8.

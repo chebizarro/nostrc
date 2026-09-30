@@ -849,6 +849,63 @@ test_key_package_parse_rejects_legacy_443(void)
     PASS();
 }
 
+/* 0.10.0: whether a KeyPackage can be invited outside legacy mode is known
+ * before any Commit (Groundhog's "needs to update their app"). */
+static void
+test_key_package_account_proof_check(void)
+{
+    TEST("30443: has_account_proof tells proven from legacy leaves");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+    MarmotKeyPackageResult proven;
+    memset(&proven, 0, sizeof(proven));
+    ASSERT_OK(marmot_create_key_package(m, pk, sk, NULL, 0, &proven), "create proven");
+    bool has = false;
+    ASSERT_OK(marmot_key_package_event_has_account_proof(proven.event_json, &has), "check");
+    ASSERT(has, "a 0.10.0 KeyPackage carries the proof");
+
+    /* A legacy leaf (MDK 0.8, libmarmot <= 0.9.0): valid, selectable, unproven. */
+    MarmotConfig config = marmot_config_default();
+    config.allow_unproven_members = true;
+    Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
+    ASSERT(legacy != NULL, "legacy instance");
+    uint8_t sk2[32], pk2[32];
+    generate_nostr_keypair(sk2, pk2);
+    MarmotKeyPackageResult old;
+    memset(&old, 0, sizeof(old));
+    ASSERT_OK(marmot_create_key_package_unsigned(legacy, pk2, NULL, 0, &old), "create legacy");
+    char *old_signed = kp_resign(old.event_json, sk2, 0, 0, KP_MUT_NONE, NULL, NULL);
+    ASSERT(old_signed != NULL, "sign legacy");
+    has = true;
+    ASSERT_OK(marmot_key_package_event_has_account_proof(old_signed, &has), "check legacy");
+    ASSERT(!has, "a legacy KeyPackage has no proof");
+    const char *candidates[] = { old_signed };
+    size_t index = 99;
+    ASSERT_OK(marmot_select_key_package_event(candidates, 1, pk2, &index), "still selectable");
+
+    /* Anything that is not a valid KeyPackage is its validation failure. */
+    char *forged = kp_resign(proven.event_json, sk2, 0, 0, KP_MUT_NONE, NULL, NULL);
+    ASSERT(forged != NULL, "re-sign by another author");
+    ASSERT(marmot_key_package_event_has_account_proof(forged, &has) != MARMOT_OK,
+           "an author mismatch is not a KeyPackage");
+    ASSERT(marmot_key_package_event_has_account_proof("{}", &has) != MARMOT_OK, "not an event");
+    ASSERT(marmot_key_package_event_has_account_proof(NULL, &has) == MARMOT_ERR_INVALID_ARG,
+           "NULL event");
+    ASSERT(marmot_key_package_event_has_account_proof(proven.event_json, NULL) ==
+           MARMOT_ERR_INVALID_ARG, "NULL out");
+
+    free(forged);
+    free(old_signed);
+    marmot_key_package_result_free(&old);
+    marmot_key_package_result_free(&proven);
+    marmot_free(legacy);
+    marmot_free(m);
+    PASS();
+}
+
 static void
 test_key_package_parse_enforces_tag_rules(void)
 {
@@ -3331,6 +3388,7 @@ main(void)
     test_key_package_slot_stable_across_rotation();
     test_key_package_slot_persists_across_restart();
     test_key_package_parse_rejects_legacy_443();
+    test_key_package_account_proof_check();
     test_key_package_parse_enforces_tag_rules();
     test_select_key_package_newest_in_slot();
     test_select_key_package_invalid_winner_empties_slot();
