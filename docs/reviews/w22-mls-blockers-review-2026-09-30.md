@@ -4,7 +4,8 @@
 - **Branch reviewed:** `groundhog/w22-enable-encrypted-groups` at `e73d1528`, 4 commits on `15954a4f` (origin/master)
 - **Review branch:** `groundhog/w22-review`
 - **Date:** 2026-09-30
-- **Verdict:** **REQUEST CHANGES**. Blocking finding: **B1**, a removal that loses the tie-break ends the group permanently if it arrives first.
+- **Verdict (initial, at `e73d1528`):** **REQUEST CHANGES**. Blocking finding: **B1**, a removal that loses the tie-break ends the group permanently if it arrives first.
+- **Verdict (final pass, at `1d9af674`):** **REQUEST CHANGES**. B1 and C1 are closed; new blocking finding **B2**. See "Final pass" at the end.
 - **Also found:** **C1**, a pre-existing heap-use-after-free in the encrypted-group UI, found by ASAN. It is outside the diff, but should be fixed before the flip.
 
 **Commits**
@@ -214,3 +215,143 @@ The second is exactly my second repro's case (`WRONG_EPOCH`), and no author test
 **Before the flip:** fix **C1**, a one-line `g_strdup`. It is pre-existing, but it is in the encrypted-group UI.
 
 **Can follow:** N1–N7.
+
+---
+
+## Final pass (2026-09-30): `488eb031`, `ced4d3a6`, `ab223646`, `1d9af674`
+
+**Scope**
+- `488eb031`: the wire relay sends nothing on a closed connection (nostrc-2opq).
+- `ced4d3a6`: C1.
+- `ab223646`: B1, N1 and N3 in libmarmot:
+  - the removal record v2 (epoch, flags, committer, digest);
+  - a non-final removal still judges its epoch;
+  - winner-first deferred replay;
+  - a final removal forgets the keys.
+- `1d9af674`: B1 in Groundhog (listen while not final; re-activate and resubscribe; the cursor held), plus N4–N6.
+- N2 is filed as nostrc-lvdp and N7 as nostrc-jw23.
+
+Scratch worktree: `/tmp/rr22f`, with an ASAN build dir. No code or beads changed.
+
+**Verdict: REQUEST CHANGES.**
+- **B1 is closed:** both orders, and L3/L4/L5/L7 are now caught.
+- **C1 is closed.**
+- **New blocking finding B2:** the finality rule is safe but never becomes true in common groups. There, the removed epoch's keys are never deleted, and Groundhog keeps listening with its cursor pinned at the removal, so it re-fetches all later traffic every session.
+
+### B1: closed (repro rerun)
+
+My throwaway repro (trio: Alice and Bob admins, Bob's key lower; Alice removes Charlie while Bob renames in the same epoch):
+
+| Order at Charlie | Result |
+|---|---|
+| removal, then Bob's rename | removal → inactive, **not final**; Bob's rename → `MARMOT_RESULT_COMMIT`, **group active again, removal record gone** |
+| Bob's rename, then removal | rename applied; removal → `MARMOT_ERR_WRONG_EPOCH`, active |
+| both, afterwards | Alice follows Bob's rename; Charlie reads Bob in the canonical epoch; all three exchange messages |
+
+**Mutations (the author's tests alone).** All four W22 survivors are now caught:
+- L3 ("the removal waits behind ours");
+- L4 ("the losing removal");
+- L5 ("re-invited: not removed");
+- L7 (our pending Commit dropped).
+
+**New guards:**
+- caught:
+  - F1, contested ignores admins, so every removal is final ("Bob could still win the epoch");
+  - F4, a final removal keeps the exporter secrets ("exporter secret of epoch 2 kept");
+  - F5, a winner does not re-activate;
+- survive:
+  - **F2**, finality ignores a full retained parent;
+  - **F3**, deferred Commits replayed in arrival order (my B1 required item 2, implemented but untested);
+  - **F6**, a rival removal never replaces the stored one.
+
+**Groundhog:**
+- H1 (re-activation without resubscribing) and H2 (not listening while non-final) fail `losing-removal-reactivates`;
+- **H3** (the cursor not pinned while contested) survives.
+
+**C1:** `before` is now a `g_strdup` copy. ASAN is clean on `groundhog-mls-ui-gui /enrollment`.
+
+### Finality condition: correct, but not live (B2)
+
+- **Correctness.** `removal_contested()` is yuj2's `could_win` for a privileged key: any admin of the judged state's GroupData with a key at or below the remover's, other than us and the remover's account.
+  - Same-account devices of the remover are excluded, as the committer's are elsewhere.
+  - For a removal of the current epoch, `removal_final()` also requires the retained parent to be absent or READER, so the Commit that led there can no longer be replaced.
+  - **A removal is never final while a lower-keyed admin exists or the parent is full. That is the right safety condition.**
+- **Liveness.** Nothing ever re-evaluates it. Finality is computed only in `evict` and when a rival removal replaces the stored one.
+  - After eviction the removed member processes no application messages (`USE_AFTER_EVICTION`), so the parent never retires.
+  - A lower-keyed admin never stops counting: the removed member can never observe that admin reaching the next epoch.
+
+### B2 (High, blocking): a contested removal stays non-final forever: keys kept, and Groundhog re-fetches everything since the removal
+
+**Verified (throwaway test).** The ordinary case: Alice, the higher-keyed of two admins, removes Charlie with no race. Bob applies it, then the group carries on with 5 renames and 5 messages. At Charlie, after all of that:
+- `removal_final` is **still FALSE**;
+- the removed epoch's `mls_group` state is **still stored**, so N1 is not achieved in this case;
+- all 10 later events return `MARMOT_ERR_USE_AFTER_EVICTION`.
+
+This applies to every group where the remover is not the lowest-keyed admin, and to every removal whose retained parent was still full at eviction. That is not an edge case.
+
+**Groundhog consequence** (`gh-mls-service.c`):
+- `listening()` keeps a non-final removal subscribed.
+- `process_event` sets `pinned` for every `USE_AFTER_EVICTION` event of it, which is every event of every later epoch.
+- `save_cursor` never passes `pinned`. So the persisted cursor stays at the first post-removal event **indefinitely**.
+- Every session, reconnect or resubscribe re-fetches and trial-decrypts the group's entire post-removal traffic, growing with the group's activity. Relays keep receiving REQs for the group's `h` from an account that was removed.
+- The pin is what H3 removes, and nothing tests it.
+- This is the "resubscribe storm" asked about: not repeated subscribes (a re-activation subscribes once), but an unbounded re-fetch per subscription.
+
+**Required.** A path to finality that does not need to read later epochs, plus bounded listening:
+1. **Finality that eventually holds.**
+   - A winner for the removal's epoch is NIP-44-openable with that epoch's exporter secret, which we keep.
+   - Events we cannot open at all are of later epochs: evidence the group moved on.
+   - Finalizing after a bounded number of such events (compare `GH_MLS_SERVICE_JUNK_AFTER_COMMITS`) through a libmarmot call that marks the removal final and runs `forget_keys` bounds the exposure. Its residual risk is a winner arriving after the group was already several epochs past it, which the one-epoch horizon refuses for everyone else anyway.
+   - Any equivalent epoch-based rule works. A wall-clock bound does not, for the same reasons as yuj2.
+2. **Bounded listening.** Do not pin the cursor for events that cannot open under the removed epoch, or cap the pin with the same bound, so that a non-final removal cannot hold the cursor for ever.
+3. **Tests:**
+   - a contested removal becoming final (and its keys going) under the new rule;
+   - Groundhog's cursor, pinned while contested and released once final (H3);
+   - F2, F3 and F6.
+
+### Key deletion: complete and safe when it runs
+
+- `forget_keys` deletes, in the removal's transaction:
+  - the live `mls_group`;
+  - the retained parent;
+  - `delete_exporter_secret` for epochs 0 through `group->epoch + 1`.
+- The exporter secrets are the ones that open the group's kind:445 envelopes. The last removed epoch is `group->epoch`; `+1` covers a transition interrupted before the record was updated.
+- The group record, history and the removal record stay.
+- After this, a final removal judges nothing (`USE_AFTER_EVICTION`, tested), and a re-invite's Welcome builds fresh state and clears the record (tested).
+- `marmot_leave_group` still keeps its keys, as documented (the member may be re-added).
+- **Safe:** nothing reads those records for an ended, final group, and `forget_keys` runs only on final.
+- **The gap is B2:** it runs too rarely.
+
+### Other checks
+
+- **Re-activation racing a later Commit.**
+  - A winner is applied through `marmot_commit_persist` from the judged base: the current state, or the full retained parent for a parent-epoch winner. The group enters the winner's epoch, active.
+  - Commits of the winner's branch then take the normal path. Groundhog resubscribes once, from the held cursor, and orders stored events as usual.
+  - A late winner, arriving after the others went two epochs past it, re-activates Charlie on the winner's side. That matches the one-epoch horizon's existing split behaviour for every member (W17), not a new defect.
+- **Deferred replay.** `deferred_order` ranks the deferred Commits of the current epoch by their ordering key judged on the current state, removals included (via `removal_key`); the others follow in arrival order. That is correct, but untested (F3).
+- **The corrupted record** reads `GH_MLS_GROUP_END_UNKNOWN`, "ended on this device" (N3 closed).
+- **N4:** a shown Held counts for 15 minutes at most (`GH_MLS_SERVICE_PENDING_SHOWN_S`), and the join-second rule now uses `update->stored`. Its timer is removed in finalize.
+- **N5:** an ended mid-pass group frees the rest of the pass.
+- **N6:** the backstop is removed.
+- **Resubscribe storms:** none from re-activation (one `group_subscribe`), and a non-final group stays subscribed rather than cycling. The unbounded re-fetch is B2.
+
+### Verification (tip `1d9af674`)
+
+- **Build.** `cmake -S . -B /tmp/rr22f-build -G Ninja -DBUILD_GROUNDHOG=ON && ninja` ok.
+- **Tests.** `ctest -R 'marmot|mls|groundhog-' -j6`: **97 run; 93 passed, 4 skipped** (as on base).
+- **ASAN+UBSAN** (RelWithDebInfo, `-fsanitize=address,undefined -fno-sanitize-recover=undefined -Wno-macro-redefined`, polled synchronously): the same regex, **93 passed, 4 skipped, 0 reports**. This includes `groundhog-mls-ui-gui` with `/enrollment` (C1) and my repros.
+- **`leaks --atExit`:**
+  - **0 leaks** in `test_commits` (with the repros), `test_protocol`, `test_ratchet_persist`, `test_mls_group`, `test_storage_contract` and `test_marmot_gobject`;
+  - `test-groundhog-mls-service`: 27 subtests ok, and every leak root is in the libnostr/libgo transport (`nostr_filters_new`, `go_context_*`, `nostr_relay_write`, `new_error`, `nostr_connection_write_message`, `nostr_subscription_free_async`), i.e. nostrc-jw23.
+- **Repros and mutations** (throwaway, not committed):
+  - B1 in both orders, and the never-final removal (B2);
+  - mutations L3/L4/L5/L7, F1–F6 and H1–H3, as above.
+
+### Recommendation
+
+**REQUEST CHANGES** for **B2**:
+- give a contested removal an epoch-based path to finality, so its keys go;
+- bound Groundhog's listening and cursor pin for it;
+- test that, and F2, F3, F6 and H3.
+
+B1, C1, N1 (when final), N3–N6: done.
