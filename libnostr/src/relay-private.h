@@ -124,6 +124,10 @@ typedef struct _NostrRelayOkWaiter {
  * hold two dials there and force their race. NULL (the default) otherwise. */
 typedef void (*NostrRelayDialHook)(struct NostrRelay *relay, void *data);
 void nostr_relay_test_set_dial_hook(NostrRelayDialHook hook, void *data);
+/* nostrc-vpha B1: test seam. When set, the message loop's reconnect calls
+ * @hook after its own dial succeeds and before it installs (or, when a
+ * nostr_relay_connect() published one meanwhile, adopts) a connection. */
+void nostr_relay_test_set_reconnect_hook(NostrRelayDialHook hook, void *data);
 
 /* nostrc-xbso: releases the caller's reference on an answer channel of
  * nostr_relay_write() it will not read (any more): closes it, so the writer's

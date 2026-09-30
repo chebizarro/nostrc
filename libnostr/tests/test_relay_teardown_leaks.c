@@ -36,6 +36,14 @@
  *              and exactly one connection may survive (nostrc-vpha: both were
  *              stored unlocked, the first lost with its channels and a second
  *              pair of workers).
+ *  adopt       The loop's reconnect finds that a nostr_relay_connect() published
+ *              a connection during its own dial, and adopts it: its own dial
+ *              is released at once, although the writer holds a lease on the
+ *              adopted connection, blocked on its full send channel (its
+ *              handshake is held). It used to wait for that lease: a
+ *              deadlock once the adopted handshake failed (nostrc-vpha B1).
+ *  close idle  Writes queued on a relay that is not connected are answered
+ *              by nostr_relay_close(), not only by the free (nostrc-vpha N6).
  *
  * Leaks themselves are visible to LeakSanitizer only (the Linux ASAN build:
  * groundhog-ci.yml's groundhog-sanitizers job runs this test); without it the
@@ -92,6 +100,7 @@ static struct {
     atomic_int connections;   /* ESTABLISHED so far */
     atomic_int open;          /* currently open */
     atomic_bool drop;         /* close every open connection */
+    atomic_bool paused;       /* service nothing: handshakes stay pending */
     int port;
 } srv;
 
@@ -129,7 +138,10 @@ static const struct lws_protocols srv_protocols[] = {
 
 static void *server_thread(void *arg) {
     (void)arg;
-    while (atomic_load(&srv.running)) lws_service(srv.ctx, 50);
+    while (atomic_load(&srv.running)) {
+        if (atomic_load(&srv.paused)) usleep(1000);
+        else lws_service(srv.ctx, 50);
+    }
     return NULL;
 }
 
@@ -459,6 +471,104 @@ static void test_racing_dials_publish_one_connection(void) {
     printf("  [ok] racing dials publish one connection\n");
 }
 
+/* nostrc-vpha B1: the loop's reconnect adopts a connection published during
+ * its dial without waiting for the lease the writer holds on it. */
+static atomic_bool g_loop_dialled, g_loop_go;
+
+static void hold_reconnect(NostrRelay *relay, void *data) {
+    (void)relay;
+    (void)data;
+    atomic_store(&g_loop_dialled, true);
+    double deadline = now_s() + 20.0; /* a failure bound */
+    while (!atomic_load(&g_loop_go) && now_s() < deadline) usleep(1000);
+}
+
+static void test_reconnect_adopts_without_lease_wait(void) {
+    enum { SEND_CAPACITY = 16, N = SEND_CAPACITY + 8 };
+    int base = nostr_connection_unreleased_count();
+    NostrRelay *relay = relay_for_port(srv.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    atomic_store(&g_loop_dialled, false);
+    atomic_store(&g_loop_go, false);
+    nostr_relay_test_set_reconnect_hook(hold_reconnect, NULL);
+
+    /* The server drops the connection; the loop reconnects at once and is
+     * held right after its own dial (C), with relay->connection NULL. */
+    server_drop();
+    WAIT_FOR(nostr_relay_get_connection_state(relay) == NOSTR_RELAY_STATE_BACKOFF);
+    nostr_relay_reconnect_now(relay);
+    WAIT_FOR(atomic_load(&g_loop_dialled));
+
+    /* A connect publishes B, whose handshake the paused server holds; no
+     * second loop. The writer fills B's send channel and blocks on the next
+     * frame, holding a lease on B. */
+    atomic_store(&srv.paused, true);
+    CHECK(nostr_relay_connect(relay, &err));
+    nsync_mu_lock(&relay->priv->mutex);
+    NostrConnection *b = relay->connection;
+    nsync_mu_unlock(&relay->priv->mutex);
+    CHECK(b);
+    GoChannel *answers[N];
+    char frame[] = "[\"REQ\",\"q\",{}]";
+    for (int i = 0; i < N; i++) CHECK((answers[i] = nostr_relay_write(relay, frame)));
+    WAIT_FOR(relay->priv->conn_leases == 1 &&
+             go_channel_get_depth(b->send_channel) == SEND_CAPACITY);
+
+    /* The loop adopts B and releases C without waiting for B's writer. */
+    int before = nostr_connection_unreleased_count();
+    atomic_store(&g_loop_go, true);
+    WAIT_FOR(nostr_connection_unreleased_count() == before - 1); /* hung here */
+    nsync_mu_lock(&relay->priv->mutex);
+    CHECK(relay->connection == b);
+    nsync_mu_unlock(&relay->priv->mutex);
+
+    /* B's handshake completes: the writer drains and every write is answered. */
+    atomic_store(&srv.paused, false);
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    WAIT_FOR(relay->priv->conn_leases == 0 &&
+             go_channel_get_depth(relay->priv->write_queue) == 0);
+    for (int i = 0; i < N; i++) {
+        void *got = (void *)1;
+        WAIT_FOR(go_channel_get_depth(answers[i]) == 1 || go_channel_is_closed(answers[i]));
+        CHECK(go_channel_try_receive(answers[i], &got) == 0 && got == NULL);
+        nostr_relay_write_answer_release(answers[i]);
+    }
+    nostr_relay_test_set_reconnect_hook(NULL, NULL);
+    nostr_relay_free(relay);
+    CHECK(nostr_connection_unreleased_count() == base);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    printf("  [ok] a reconnect adopts a published connection without a lease wait\n");
+}
+
+/* nostrc-vpha N6: writes queued on a relay that is not connected (never
+ * here; also between a lost connection and its reconnect) are answered by
+ * the close. It returned early, and they waited for the free. */
+static void test_close_answers_writes_when_not_connected(void) {
+    enum { N = 8 };
+    NostrRelay *relay = relay_for_port(srv.port); /* never connected */
+    GoChannel *answers[N];
+    char frame[] = "[\"REQ\",\"q\",{}]";
+    for (int i = 0; i < N; i++) CHECK((answers[i] = nostr_relay_write(relay, frame)));
+    CHECK(go_channel_get_depth(relay->priv->write_queue) == N);
+    Error *err = NULL;
+    CHECK(!nostr_relay_close(relay, &err)); /* "relay not connected" */
+    if (err) free_error(err);
+    int answered = 0;
+    for (int i = 0; i < N; i++) {
+        void *got = NULL;
+        if (go_channel_try_receive(answers[i], &got) == 0 && got) {
+            answered++;
+            free_error((Error *)got);
+        }
+        nostr_relay_write_answer_release(answers[i]);
+    }
+    CHECK(answered == N);
+    nostr_relay_free(relay);
+    printf("  [ok] closing a relay that is not connected answers its queued writes\n");
+}
+
 int main(void) {
     unsetenv("NOSTR_TEST_MODE"); /* the real network path */
     lws_set_log_level(LLL_ERR, NULL);
@@ -473,6 +583,8 @@ int main(void) {
     test_contexts_are_released();
     test_set_filters_owned_by_subscription();
     test_racing_dials_publish_one_connection();
+    test_reconnect_adopts_without_lease_wait();
+    test_close_answers_writes_when_not_connected();
 
     server_stop();
 

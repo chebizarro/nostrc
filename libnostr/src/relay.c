@@ -634,13 +634,21 @@ static void relay_connection_unlease(NostrRelay *r) {
 }
 
 /* nostrc-xfjg: releases @conn, which the caller has taken out of
- * relay->connection under the mutex (or never published). Closing its
- * channels wakes a writer blocked on a full send channel and a reader waiting
- * for a frame; once no writer holds a lease, nostr_connection_release()
- * detaches, drains and frees both channels and hands the WSI to the service
- * thread. Every path that drops a connection comes here: nostr_relay_close(),
- * relay_free_impl(), a failed dial and a reconnect (which used to only close
- * the old connection and leave its channels to nobody). NULL-safe. */
+ * relay->connection under the mutex. Closing its channels wakes a writer
+ * blocked on a full send channel and a reader waiting for a frame; once no
+ * writer holds a lease, nostr_connection_release() detaches, drains and frees
+ * both channels and hands the WSI to the service thread. Every path that drops
+ * a published connection comes here: nostr_relay_close(), relay_free_impl()
+ * and a reconnect (which used to only close the old connection and leave its
+ * channels to nobody). NULL-safe.
+ *
+ * Not for a connection that was never stored in relay->connection (a dial
+ * that failed, lost a race, or found the relay closing): nostrc-vpha B1. No
+ * writer can hold a lease on one (relay_connection_lease() hands out
+ * relay->connection only), and conn_leases counts leases on whatever the relay
+ * does hold, so waiting here would wait for another connection's writer: one
+ * blocked on that connection's full send channel, which only this thread would
+ * close. Those go to nostr_connection_release() directly. */
 static void relay_retire_connection(NostrRelay *r, NostrConnection *conn) {
     if (!conn) return;
     /* Only the owner changes these pointers, and the owner is now us. */
@@ -805,10 +813,17 @@ void nostr_relay_free(NostrRelay *relay) {
 /* nostrc-vpha: see nostr_relay_test_set_dial_hook() in relay-private.h. */
 static _Atomic(NostrRelayDialHook) g_dial_hook = NULL;
 static _Atomic(void *) g_dial_hook_data = NULL;
+static _Atomic(NostrRelayDialHook) g_reconnect_hook = NULL;
+static _Atomic(void *) g_reconnect_hook_data = NULL;
 
 void nostr_relay_test_set_dial_hook(NostrRelayDialHook hook, void *data) {
     atomic_store(&g_dial_hook_data, data);
     atomic_store(&g_dial_hook, hook);
+}
+
+void nostr_relay_test_set_reconnect_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_reconnect_hook_data, data);
+    atomic_store(&g_reconnect_hook, hook);
 }
 
 bool nostr_relay_connect(NostrRelay *relay, Error **err) {
@@ -851,7 +866,7 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     if (!ctx || !write_arg || !loop_arg) {
         free(write_arg);
         free(loop_arg);
-        relay_retire_connection(relay, conn);
+        nostr_connection_release(conn); /* never published: no lease wait (B1) */
         relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
         if (err) *err = new_error(1, ctx ? "failed to allocate worker args" : "no connection context");
         return false;
@@ -883,7 +898,9 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     if (lost) {
         free(write_arg);
         free(loop_arg);
-        relay_retire_connection(relay, conn);
+        /* Never published: released without waiting for the winner's writer
+         * (nostrc-vpha B1/N1). */
+        nostr_connection_release(conn);
         return true;
     }
     relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
@@ -1175,6 +1192,8 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
         relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
         return false;
     }
+    NostrRelayDialHook hook = atomic_load(&g_reconnect_hook);
+    if (hook) hook(r, atomic_load(&g_reconnect_hook_data));
 
     /* Install new connection, unless the relay was closed or freed during the
      * dial: nostr_relay_close() and relay_free_impl() cancel the context
@@ -1191,7 +1210,10 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
         r->priv->backoff_ms = 0;
     }
     nsync_mu_unlock(&r->priv->mutex);
-    if (closing || adopted) relay_retire_connection(r, new_conn);
+    /* Never published, so released without the lease wait: the writer may hold
+     * a lease on the adopted connection, blocked on its full send channel,
+     * which only this loop would close (nostrc-vpha B1). */
+    if (closing || adopted) nostr_connection_release(new_conn);
     if (closing) {
         relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
         return false;
@@ -2104,6 +2126,12 @@ bool nostr_relay_close(NostrRelay *r, Error **err) {
     nsync_mu_unlock(&r->priv->mutex);
 
     if (!conn) {
+        /* nostrc-vpha N6: not connected (never, or between a lost connection
+         * and its reconnect), but writes may be queued: answer them now, not
+         * at free. The queue is closed, so none can join; a writer that takes
+         * one meanwhile answers it itself. No join: nothing here waits on a
+         * worker. */
+        relay_write_queue_drain(r->priv->write_queue);
         if (err) *err = new_error(ERR_RELAY_CLOSE_FAILED, "relay not connected");
         return false;
     }
