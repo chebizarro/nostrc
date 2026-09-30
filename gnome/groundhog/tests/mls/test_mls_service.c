@@ -335,7 +335,7 @@ pending_commit_id(App *app, GhMlsGroup *group)
   g_assert_nonnull(json);
   NostrEvent *event = nostr_event_new();
   g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
-  gchar *id = g_strdup(nostr_event_get_id(event));
+  gchar *id = event_id_dup(event);
   nostr_event_free(event);
   free(json);
   return id;
@@ -392,8 +392,10 @@ test_restart_mid_commit(void)
     /* Every kind 445 published since the add is that one Commit. */
     g_autoptr(GPtrArray) since_add = published(&w.g, 445);
     g_assert_cmpuint(since_add->len, >, published_before);
-    for (guint i = published_before; i < since_add->len; i++)
-      g_assert_cmpstr(nostr_event_get_id(g_ptr_array_index(since_add, i)), ==, commit_id);
+    for (guint i = published_before; i < since_add->len; i++) {
+      g_autofree gchar *id = event_id_dup(g_ptr_array_index(since_add, i));
+      g_assert_cmpstr(id, ==, commit_id);
+    }
   }
   send_text(carol, gc, "joined after the crash");
   wait_message(alice, room_id, "joined after the crash");
@@ -402,7 +404,7 @@ test_restart_mid_commit(void)
   g_autoptr(GPtrArray) commits = published(&w.g, 445);
   g_autoptr(GHashTable) ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (guint i = 0; i < commits->len; i++)
-    g_hash_table_add(ids, g_strdup(nostr_event_get_id(g_ptr_array_index(commits, i))));
+    g_hash_table_add(ids, event_id_dup(g_ptr_array_index(commits, i)));
   g_assert_true(g_hash_table_contains(ids, commit_id));
   world_down(&w);
 }
@@ -734,8 +736,7 @@ test_send_republished_after_restart(void)
   spin_until(retrying_status, &retrying, "the send left for a retry");
   g_assert_cmpuint(w.g.events, >, tried);
   g_autoptr(GPtrArray) attempts = published(&w.g, 445);
-  g_autofree gchar *attempt = g_strdup(nostr_event_get_id(g_ptr_array_index(attempts,
-                                                                            attempts->len - 1)));
+  g_autofree gchar *attempt = event_id_dup(g_ptr_array_index(attempts, attempts->len - 1));
   w.g.close_on_event = FALSE;
   app_restart(alice);
   StoredWait stored = { &w.g, attempt };

@@ -175,16 +175,16 @@ test_welcome_only_as_gift_wrap(void)
   /* Group messages and Commits: G only, each under its own fresh key. */
   g_autoptr(GPtrArray) group_events = published(&w.g, 445);
   g_assert_cmpuint(group_events->len, >=, 3);   /* the Add, "one", "two" */
-  g_autoptr(GHashTable) keys_seen = g_hash_table_new(g_str_hash, g_str_equal);
+  g_autoptr(GHashTable) keys_seen = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
   for (guint i = 0; i < group_events->len; i++) {
     NostrEvent *event = g_ptr_array_index(group_events, i);
     const gchar *pubkey = nostr_event_get_pubkey(event);
     g_assert_false(is_account(pubkey));
     /* A republished event is the same event; a new one never reuses a key. */
-    const gchar *id = nostr_event_get_id(event);
+    gchar *id = event_id_dup(event);
     const gchar *earlier = g_hash_table_lookup(keys_seen, pubkey);
     g_assert_true(!earlier || g_str_equal(earlier, id));
-    g_hash_table_insert(keys_seen, (gpointer)pubkey, (gpointer)id);
+    g_hash_table_insert(keys_seen, (gpointer)pubkey, id);   /* the table frees it */
   }
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
     if (relays[i] == &w.g)

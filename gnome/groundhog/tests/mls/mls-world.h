@@ -58,6 +58,16 @@ spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int 
 }
 #define spin_until(pred, data, what) spin_until_at((pred), (data), (what), __LINE__)
 
+/* nostr_event_get_id() returns a malloc'd string: this is a GLib copy. */
+static G_GNUC_UNUSED gchar *
+event_id_dup(NostrEvent *event)
+{
+  char *id = nostr_event_get_id(event);
+  gchar *copy = g_strdup(id);
+  free(id);
+  return copy;
+}
+
 static G_GNUC_UNUSED void
 drain(void)
 {
@@ -349,8 +359,9 @@ app_up(World *w, guint key)
   App *app = &w->apps[key];
   app->world = w;
   app->key = key;
-  app->settings = g_settings_new_with_backend("org.nostr.Groundhog",
-                                              g_memory_settings_backend_new());
+  /* g_settings_new_with_backend() takes its own reference. */
+  g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
+  app->settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
   g_settings_set_string(app->settings, "signer-method", "auto");
   g_settings_set_string(app->settings, "current-npub", npub[key]);
   const gchar *discovery[] = { w->e.url, NULL };
