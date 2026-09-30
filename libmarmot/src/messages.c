@@ -2,26 +2,24 @@
  * libmarmot - MIP-03: Group Messages
  *
  * Creates and processes kind:445 group events. Group events contain
- * MLS-encrypted content (application messages, proposals, commits)
- * further encrypted with NIP-44 using the MLS exporter_secret.
+ * MLS messages (application messages, proposals, commits) encrypted with
+ * ChaCha20-Poly1305 under MLS-Exporter("marmot", "group-event", 32) of their
+ * epoch (MIP-03; see marmot_group_event_encrypt() below).
  *
  * Encryption flow (MIP-03):
- *   1. Wrap inner event (unsigned Nostr event) as application plaintext
- *   2. NIP-44-encrypt: derive conversation_key from exporter_secret
- *      treated as a secp256k1 private key (sk = exporter_secret,
- *      pk = sk*G, convkey = NIP44_convkey(sk, pk))
- *   3. Build kind:445 event with ephemeral pubkey & NIP-44 ciphertext
+ *   1. Wrap inner event (unsigned Nostr event) as an MLS PrivateMessage
+ *   2. Encrypt it: base64(nonce || ChaCha20-Poly1305(key, nonce, msg, ""))
+ *   3. Build kind:445 event with a fresh ephemeral pubkey
  *   4. h-tag carries nostr_group_id for routing
  *
  * Decryption flow:
  *   1. Parse kind:445 event, extract "h" tag → find group
- *   2. NIP-44-decrypt using same conversation_key derivation
- *   3. Extract inner event JSON from decrypted plaintext
+ *   2. Decrypt with the key of the current or a recent epoch
+ *   3. Extract inner event JSON from the MLS PrivateMessage
  *   4. Validate sender identity
  *
- * MLS PrivateMessage framing (mls_group_encrypt/decrypt) wraps the
- * plaintext before NIP-44 encryption. Raw inner JSON compatibility is
- * accepted only when MarmotConfig.allow_legacy_raw_messages is enabled.
+ * Raw inner JSON (no MLS framing) is accepted only when
+ * MarmotConfig.allow_legacy_raw_messages is enabled.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -30,11 +28,8 @@
 #include "commits.h"
 #include "mls/mls_group.h"
 #include "mls/mls-internal.h"
-#include <nostr/nip44/nip44.h>
 #include <nostr-event.h>
 #include <nostr-tag.h>
-#include <secp256k1.h>
-#include <secp256k1_extrakeys.h>
 #include <sodium.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,82 +76,54 @@ msg_base64_decode(const char *b64, size_t *out_len)
     return out;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
- * Internal: derive NIP-44 conversation key from exporter_secret
- *
- * Per MIP-03: treat exporter_secret as a secp256k1 private key.
- *   sk = exporter_secret (32 bytes)
- *   pk = x_only_pubkey(sk * G)
- *   conversation_key = nostr_nip44_convkey(sk, pk)
- *
- * Both sender and receiver derive the same conversation_key because
- * they share the exporter_secret for the same epoch.
- * ──────────────────────────────────────────────────────────────────────── */
-
-static int
-derive_nip44_convkey(const uint8_t exporter_secret[32],
-                     uint8_t out_convkey[32])
+/* Whether a decrypted kind:445 holds a handshake MLSMessage (a Commit or a
+ * Proposal) rather than an application message: any PublicMessage (RFC 9420
+ * section 6.2 carries no application data), or a PrivateMessage whose
+ * content_type -- in its clear header, section 6.3 -- is one. libmarmot
+ * sends Commits as PublicMessages; MDK 0.8 as PrivateMessages (OpenMLS
+ * MIXED_CIPHERTEXT, nostrc-7gx7). Routing only: nothing here is
+ * authenticated. */
+static bool
+is_handshake(const uint8_t *msg, size_t len)
 {
-    int ret = -1;
-
-    /* Create secp256k1 context */
-    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-    if (!ctx) return -1;
-
-    /* Verify the exporter_secret is a valid secp256k1 private key */
-    if (!secp256k1_ec_seckey_verify(ctx, exporter_secret)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-
-    /* Create keypair from the exporter_secret */
-    secp256k1_keypair keypair;
-    if (!secp256k1_keypair_create(ctx, &keypair, exporter_secret)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-
-    /* Extract x-only public key */
-    secp256k1_xonly_pubkey xonly_pk;
-    if (!secp256k1_keypair_xonly_pub(ctx, &xonly_pk, NULL, &keypair)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-
-    /* Serialize x-only public key to 32 bytes */
-    uint8_t pk_bytes[32];
-    if (!secp256k1_xonly_pubkey_serialize(ctx, pk_bytes, &xonly_pk)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-
-    secp256k1_context_destroy(ctx);
-
-    /* Now derive the NIP-44 conversation key using ECDH(sk, pk) */
-    ret = nostr_nip44_convkey(exporter_secret, pk_bytes, out_convkey);
-
-    sodium_memzero(pk_bytes, sizeof(pk_bytes));
-    return ret;
+    if (len < 4 || msg[0] != 0x00 || msg[1] != 0x01 || msg[2] != 0x00) return false;
+    if (msg[3] == MLS_WIRE_FORMAT_PUBLIC_MESSAGE) return true;
+    if (msg[3] != MLS_WIRE_FORMAT_PRIVATE_MESSAGE) return false;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, msg + 4, len - 4);
+    size_t gid_len = 0;
+    uint64_t epoch = 0;
+    uint8_t content_type = 0;
+    if (mls_tls_read_vli(&r, &gid_len) != 0 || mls_tls_reader_remaining(&r) < gid_len)
+        return false;
+    r.pos += gid_len;
+    if (mls_tls_read_u64(&r, &epoch) != 0 || mls_tls_read_u8(&r, &content_type) != 0)
+        return false;
+    return content_type == MLS_CONTENT_TYPE_COMMIT || content_type == MLS_CONTENT_TYPE_PROPOSAL;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- * Internal: NIP-44 encrypt/decrypt using exporter_secret-derived convkey
+ * kind:445 content encryption (MIP-03, marmot-protocol/marmot #48)
+ *
+ *   key     = MLS-Exporter("marmot", "group-event", 32) of the event's epoch
+ *   content = base64(nonce || ChaCha20-Poly1305(key, nonce, MLSMessage, aad ""))
+ *
+ * with a fresh random 12-byte nonce per event. `exporter_secret` is the
+ * epoch's RFC 9420 exporter_secret (what storage keeps per epoch); the key is
+ * derived from it here. libmarmot 0.10.0 and older NIP-44-encrypted with that
+ * raw exporter_secret as a secp256k1 key, which no other implementation reads
+ * (nostrc-7gx7); that format is neither written nor read any more.
  * ──────────────────────────────────────────────────────────────────────── */
 
-static int
-nip44_encrypt_with_secret(const uint8_t exporter_secret[32],
-                           const uint8_t *plaintext, size_t plaintext_len,
-                           char **out_base64)
-{
-    uint8_t convkey[32];
-    if (derive_nip44_convkey(exporter_secret, convkey) != 0)
-        return -1;
+#define GROUP_EVENT_NONCE_LEN 12u
+#define GROUP_EVENT_MIN_LEN   (GROUP_EVENT_NONCE_LEN + crypto_aead_chacha20poly1305_ietf_ABYTES)
 
-    int rc = nostr_nip44_encrypt_v2_with_convkey(convkey,
-                                                  plaintext, plaintext_len,
-                                                  out_base64);
-    sodium_memzero(convkey, sizeof(convkey));
-    return rc;
+static int
+group_event_key(const uint8_t exporter_secret[32], uint8_t key[32])
+{
+    static const char context[] = "group-event";
+    return mls_exporter(exporter_secret, "marmot", (const uint8_t *)context,
+                        sizeof context - 1, key, 32);
 }
 
 int
@@ -164,24 +131,35 @@ marmot_group_event_encrypt(const uint8_t exporter_secret[32],
                            const uint8_t *plaintext, size_t plaintext_len,
                            char **out_base64)
 {
-    return nip44_encrypt_with_secret(exporter_secret, plaintext, plaintext_len,
-                                     out_base64);
+    if (!exporter_secret || !out_base64) return -1;
+    *out_base64 = NULL;
+    uint8_t key[32];
+    if (group_event_key(exporter_secret, key) != 0) return -1;
+    int rc = marmot_group_event_encrypt_with_key(key, plaintext, plaintext_len, out_base64);
+    sodium_memzero(key, sizeof key);
+    return rc;
 }
 
-static int
-nip44_decrypt_with_secret(const uint8_t exporter_secret[32],
-                           const char *base64_payload,
-                           uint8_t **out_plaintext, size_t *out_len)
+int
+marmot_group_event_encrypt_with_key(const uint8_t key[32],
+                                    const uint8_t *plaintext, size_t plaintext_len,
+                                    char **out_base64)
 {
-    uint8_t convkey[32];
-    if (derive_nip44_convkey(exporter_secret, convkey) != 0)
-        return -1;
-
-    int rc = nostr_nip44_decrypt_v2_with_convkey(convkey,
-                                                  base64_payload,
-                                                  out_plaintext, out_len);
-    sodium_memzero(convkey, sizeof(convkey));
-    return rc;
+    if (!key || (!plaintext && plaintext_len) || !out_base64) return -1;
+    *out_base64 = NULL;
+    if (plaintext_len > SIZE_MAX - GROUP_EVENT_MIN_LEN) return -1;
+    size_t combined_len = GROUP_EVENT_MIN_LEN + plaintext_len;
+    uint8_t *combined = malloc(combined_len);
+    if (!combined) return -1;
+    randombytes_buf(combined, GROUP_EVENT_NONCE_LEN);
+    unsigned long long ct_len = 0;
+    int rc = crypto_aead_chacha20poly1305_ietf_encrypt(
+        combined + GROUP_EVENT_NONCE_LEN, &ct_len, plaintext, plaintext_len,
+        NULL, 0, NULL, combined, key);
+    if (rc == 0)
+        *out_base64 = msg_base64_encode(combined, GROUP_EVENT_NONCE_LEN + (size_t)ct_len);
+    free(combined);
+    return *out_base64 ? 0 : -1;
 }
 
 int
@@ -189,8 +167,43 @@ marmot_group_event_decrypt(const uint8_t exporter_secret[32],
                            const char *base64_payload,
                            uint8_t **out_plaintext, size_t *out_len)
 {
-    return nip44_decrypt_with_secret(exporter_secret, base64_payload,
-                                     out_plaintext, out_len);
+    if (!exporter_secret) return -1;
+    uint8_t key[32];
+    if (group_event_key(exporter_secret, key) != 0) return -1;
+    int rc = marmot_group_event_decrypt_with_key(key, base64_payload, out_plaintext, out_len);
+    sodium_memzero(key, sizeof key);
+    return rc;
+}
+
+int
+marmot_group_event_decrypt_with_key(const uint8_t key[32], const char *base64_payload,
+                                    uint8_t **out_plaintext, size_t *out_len)
+{
+    if (!key || !base64_payload || !out_plaintext || !out_len) return -1;
+    *out_plaintext = NULL;
+    *out_len = 0;
+    size_t combined_len = 0;
+    uint8_t *combined = msg_base64_decode(base64_payload, &combined_len);
+    if (!combined) return -1;                       /* invalid base64: dropped */
+    if (combined_len < GROUP_EVENT_MIN_LEN) {       /* no room for nonce and tag */
+        free(combined);
+        return -1;
+    }
+    size_t pt_max = combined_len - GROUP_EVENT_MIN_LEN;
+    uint8_t *pt = malloc(pt_max ? pt_max : 1);
+    unsigned long long pt_len = 0;
+    int rc = pt ? crypto_aead_chacha20poly1305_ietf_decrypt(
+                      pt, &pt_len, NULL, combined + GROUP_EVENT_NONCE_LEN,
+                      combined_len - GROUP_EVENT_NONCE_LEN, NULL, 0, combined, key)
+                : -1;
+    free(combined);
+    if (rc != 0) {   /* authentication failed: nothing of it is exposed */
+        free(pt);
+        return -1;
+    }
+    *out_plaintext = pt;
+    *out_len = (size_t)pt_len;
+    return 0;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -305,7 +318,7 @@ free_stack_event(NostrEvent *ev)
  * ──────────────────────────────────────────────────────────────────────── */
 
 typedef struct {
-    char    *content;             /* NIP-44 encrypted content (base64/raw) */
+    char    *content;             /* MIP-03 encrypted content (base64) */
     uint8_t  nostr_group_id[32]; /* from "h" tag */
     bool     has_group_id;
     int64_t  created_at;
@@ -564,10 +577,10 @@ create_message_impl(Marmot *m,
      *
      * Per MIP-03, the inner event JSON is:
      *   1. Wrapped as MLS PrivateMessage via mls_group_encrypt()
-     *   2. Then NIP-44-encrypted with the exporter_secret-derived convkey
+     *   2. Then encrypted with the epoch's group-event key
      *
      * Missing MLS group state is an MLS error by default. Legacy raw JSON
-     * NIP-44 encryption is only available through the explicit config opt-in.
+     * is only available through the explicit config opt-in.
      */
     const uint8_t *plaintext = (const uint8_t *)inner_event_json;
     size_t plaintext_len = strlen(inner_event_json);
@@ -619,7 +632,7 @@ create_message_impl(Marmot *m,
     }
 
     char *nip44_ciphertext = NULL;
-    if (nip44_encrypt_with_secret(exporter_secret, nip44_plaintext,
+    if (marmot_group_event_encrypt(exporter_secret, nip44_plaintext,
                                    nip44_plaintext_len,
                                    &nip44_ciphertext) != 0) {
         free(mls_ciphertext);
@@ -897,8 +910,8 @@ process_group_event(Marmot *m, const char *group_event_json,
                                              exporter_secret) != MARMOT_OK)
             continue;
 
-        /* Attempt NIP-44 decrypt with this epoch's secret */
-        if (nip44_decrypt_with_secret(exporter_secret, parsed.content,
+        /* Attempt MIP-03 decryption with this epoch's secret */
+        if (marmot_group_event_decrypt(exporter_secret, parsed.content,
                                        &decrypted, &decrypted_len) == 0) {
             used_epoch = ep;
             decrypted_ok = true;
@@ -921,12 +934,12 @@ process_group_event(Marmot *m, const char *group_event_json,
 
     /* ── 5. Commits (nostrc-9ata) ─────────────────────────────────────────
      *
-     * A handshake message is an MLSMessage PublicMessage (version 1,
-     * wire_format 1); application messages are PrivateMessages (wire_format
-     * 2).  Commits are applied through the validated MLS path; see
+     * A handshake message (Commit, Proposal) is an MLSMessage PublicMessage,
+     * or a PrivateMessage whose content_type says so (MDK's; see
+     * is_handshake()); application messages are PrivateMessages.  Commits
+     * are applied through the validated MLS path; see
      * marmot_commit_process_inbound() for the epoch rules. */
-    bool is_commit = decrypted_len >= 4 && decrypted[0] == 0x00 && decrypted[1] == 0x01 &&
-                     decrypted[2] == 0x00 && decrypted[3] == MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    bool is_commit = is_handshake(decrypted, decrypted_len);
     if (contested_removal && !is_commit) {
         free(decrypted);
         marmot_group_free(group);
@@ -946,7 +959,7 @@ process_group_event(Marmot *m, const char *group_event_json,
 
     /* ── 6. Unwrap MLS PrivateMessage ─────────────────────────────────── */
     /*
-     * MIP-03 requires the NIP-44 decrypted content to be an MLS
+     * MIP-03 requires the decrypted content to be an MLS
      * PrivateMessage. Raw inner-event JSON is accepted only for explicitly
      * opted-in legacy deployments.
      */

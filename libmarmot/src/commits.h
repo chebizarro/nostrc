@@ -261,14 +261,20 @@ MarmotError marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                                           const char *event_id_hex,
                                           MarmotMessageResult *result);
 
-/* NIP-44 layer of kind:445 events keyed by an epoch exporter secret
- * (messages.c). */
+/* The content encryption of kind:445 events (MIP-03, messages.c): keyed by
+ * an epoch's RFC 9420 exporter_secret (the key is MLS-Exporter("marmot",
+ * "group-event", 32) of it), or by that key itself. */
 int marmot_group_event_encrypt(const uint8_t exporter_secret[32],
                                const uint8_t *plaintext, size_t plaintext_len,
                                char **out_base64);
 int marmot_group_event_decrypt(const uint8_t exporter_secret[32],
                                const char *base64_payload,
                                uint8_t **out_plaintext, size_t *out_len);
+int marmot_group_event_encrypt_with_key(const uint8_t key[32],
+                                        const uint8_t *plaintext, size_t plaintext_len,
+                                        char **out_base64);
+int marmot_group_event_decrypt_with_key(const uint8_t key[32], const char *base64_payload,
+                                        uint8_t **out_plaintext, size_t *out_len);
 
 #ifdef __cplusplus
 }

@@ -1312,6 +1312,8 @@ application_framed_content(MlsFramedContent *fc,
     fc->content_len = app_len;
 }
 
+static size_t padded_content_len(size_t len);
+
 int
 mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
                                 uint64_t epoch, uint32_t sender_leaf,
@@ -1337,16 +1339,36 @@ mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
 
     MlsTlsBuf buf;
     if (mls_tls_buf_init(&buf, app_len + MLS_SIG_LEN + 16) != 0) return -1;
-    /* No padding: the NIP-44 layer pads the whole kind:445 content. */
     if (mls_tls_write_opaque32(&buf, application_data, app_len) != 0 ||
         mls_tls_write_opaque32(&buf, auth.signature, MLS_SIG_LEN) != 0) {
         if (buf.data) sodium_memzero(buf.data, buf.len);
         mls_tls_buf_free(&buf);
         return -1;
     }
+    /* Zero padding (RFC 9420 section 6.3.1) to NIP-44's length buckets: the
+     * kind:445 AEAD of MIP-03 pads nothing, and NIP-44 used to. */
+    size_t padded = padded_content_len(buf.len);
+    while (buf.len < padded) {
+        if (mls_tls_write_u8(&buf, 0) != 0) {
+            sodium_memzero(buf.data, buf.len);
+            mls_tls_buf_free(&buf);
+            return -1;
+        }
+    }
     *out = buf.data;
     *out_len = buf.len;
     return 0;
+}
+
+/* NIP-44's calc_padded_len (32 bytes at least, then power-of-two chunks). */
+static size_t
+padded_content_len(size_t len)
+{
+    if (len <= 32) return 32;
+    size_t next_power = 1;
+    while (next_power < len) next_power <<= 1;   /* the smallest >= len */
+    size_t chunk = next_power <= 256 ? 32 : next_power / 8;
+    return chunk * ((len - 1) / chunk + 1);
 }
 
 int
@@ -1403,4 +1425,52 @@ done:
     }
     free(sig);
     return rc;
+}
+
+int
+mls_handshake_content_decode(const MlsPrivateMessage *msg, uint32_t sender_leaf,
+                             const uint8_t *content, size_t content_len,
+                             MlsFramedContent *out_fc, MlsFramedContentAuthData *out_auth)
+{
+    if (!msg || !content || !out_fc || !out_auth) return -1;
+    memset(out_fc, 0, sizeof(*out_fc));
+    memset(out_auth, 0, sizeof(*out_auth));
+    if (msg->content_type != MLS_CONTENT_TYPE_PROPOSAL &&
+        msg->content_type != MLS_CONTENT_TYPE_COMMIT)
+        return -1;
+
+    out_fc->content_type = msg->content_type;
+    out_fc->epoch = msg->epoch;
+    out_fc->sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    out_fc->sender.leaf_index = sender_leaf;
+    out_fc->group_id = malloc(msg->group_id_len ? msg->group_id_len : 1);
+    out_fc->authenticated_data =
+        malloc(msg->authenticated_data_len ? msg->authenticated_data_len : 1);
+    if (!out_fc->group_id || !out_fc->authenticated_data) goto fail;
+    if (msg->group_id_len) memcpy(out_fc->group_id, msg->group_id, msg->group_id_len);
+    out_fc->group_id_len = msg->group_id_len;
+    if (msg->authenticated_data_len)
+        memcpy(out_fc->authenticated_data, msg->authenticated_data,
+               msg->authenticated_data_len);
+    out_fc->authenticated_data_len = msg->authenticated_data_len;
+
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, content, content_len);
+    if (framed_content_body_deserialize(&r, out_fc) != 0 ||
+        auth_data_deserialize(&r, msg->content_type, out_auth) != 0)
+        goto fail;
+    /* Padding: zero bytes only (RFC 9420 section 6.3.1). */
+    uint8_t nonzero = 0;
+    while (mls_tls_reader_remaining(&r) > 0) {
+        uint8_t b = 0;
+        if (mls_tls_read_u8(&r, &b) != 0) goto fail;
+        nonzero |= b;
+    }
+    if (nonzero) goto fail;
+    return 0;
+
+fail:
+    mls_framed_content_clear(out_fc);
+    auth_data_clear(out_auth);
+    return -1;
 }

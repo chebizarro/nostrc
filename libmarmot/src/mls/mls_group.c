@@ -777,14 +777,17 @@ compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
     return mls_compute_confirmation_tag(confirmation_key, confirmed_transcript_hash, out);
 }
 
+/* AuthenticatedContent up to the signature: wire_format || FramedContent ||
+ * signature, with the wire format the content arrived in (a Commit may come
+ * as a PrivateMessage, RFC 9420 section 8.2). */
 static int
-public_message_confirmed_transcript_input(const MlsPublicMessage *pm,
+public_message_confirmed_transcript_input(const MlsPublicMessage *pm, uint16_t wire_format,
                                           uint8_t **out, size_t *out_len)
 {
     if (!pm || !out || !out_len) return -1;
     MlsTlsBuf buf;
     if (mls_tls_buf_init(&buf, 512) != 0) return -1;
-    if (mls_tls_write_u16(&buf, MLS_WIRE_FORMAT_PUBLIC_MESSAGE) != 0 ||
+    if (mls_tls_write_u16(&buf, wire_format) != 0 ||
         mls_framed_content_serialize(&pm->content, &buf) != 0) {
         mls_tls_buf_free(&buf);
         return -1;
@@ -993,7 +996,8 @@ begin_commit_public_message(const MlsGroup *group,
                                 group_context, group_context_len,
                                 group->own_signature_key, &pm->auth) != 0)
         goto fail;
-    if (public_message_confirmed_transcript_input(pm, transcript_input,
+    if (public_message_confirmed_transcript_input(pm, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                                  transcript_input,
                                                   transcript_input_len) != 0)
         goto fail;
     return 0;
@@ -2131,7 +2135,8 @@ proposal_msg_ref(const MlsPublicMessage *pm, uint8_t out[MLS_HASH_LEN])
      * exactly the bytes produced for the confirmed-transcript input. */
     uint8_t *ac = NULL;
     size_t ac_len = 0;
-    if (public_message_confirmed_transcript_input(pm, &ac, &ac_len) != 0)
+    if (public_message_confirmed_transcript_input(pm, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                                  &ac, &ac_len) != 0)
         return -1;
     int rc = mls_crypto_ref_hash(out, "MLS 1.0 Proposal Reference", ac, ac_len);
     free(ac);
@@ -2926,15 +2931,105 @@ update_path_keys_fresh(const MlsRatchetTree *tree, uint32_t sender_leaf,
     return 0;
 }
 
-/* The authenticated part of processing a Commit (RFC 9420 §6.1-§6.2): a
- * PublicMessage Commit of this group and epoch from member @sender_leaf,
- * whose signature (by that leaf's key over the pre-Commit GroupContext) and
- * membership tag verify, and its Commit body.  On success the caller owns
- * *wire (the Commit body points into it), *commit and *pre_gc. */
+/* A handshake PrivateMessage's sender (RFC 9420 section 6.3.2): the member
+ * leaf its sender data names, decrypted with `group`'s sender_data_secret. */
+static int
+private_message_sender(const MlsGroup *group, const MlsPrivateMessage *pm,
+                       MlsSenderData *out)
+{
+    if (pm->group_id_len != group->group_id_len ||
+        memcmp(pm->group_id, group->group_id, group->group_id_len) != 0 ||
+        pm->epoch != group->epoch ||
+        (pm->content_type != MLS_CONTENT_TYPE_PROPOSAL &&
+         pm->content_type != MLS_CONTENT_TYPE_COMMIT))
+        return -1;
+    size_t sample_len = pm->ciphertext_len < MLS_HASH_LEN ? pm->ciphertext_len : MLS_HASH_LEN;
+    const MlsSenderDataAAD aad = { pm->group_id, pm->group_id_len, pm->epoch,
+                                   pm->content_type };
+    if (mls_sender_data_decrypt(group->epoch_secrets.sender_data_secret, &aad, pm->ciphertext,
+                                sample_len, pm->encrypted_sender_data,
+                                pm->encrypted_sender_data_len, out) != 0)
+        return -1;
+    if (out->leaf_index >= group->tree.n_leaves ||
+        group->tree.nodes[mls_tree_leaf_to_node(out->leaf_index)].type != MLS_NODE_LEAF)
+        return -1;
+    return 0;
+}
+
+/* A Commit sent as a PrivateMessage (MDK's default: OpenMLS
+ * MIXED_CIPHERTEXT): decrypted with its sender's handshake ratchet into the
+ * FramedContent and auth data a PublicMessage would carry. The ratchet is
+ * left exactly as it was: the Commit ends the epoch, and one refused later
+ * must not have consumed a key. The caller verifies the signature (wire
+ * format mls_private_message); there is no membership tag. */
+static int
+private_commit_open(const MlsGroup *group, const MlsPrivateMessage *pm, uint32_t *out_sender,
+                    MlsPublicMessage *out)
+{
+    memset(out, 0, sizeof(*out));
+    MlsSenderData sd;
+    if (pm->content_type != MLS_CONTENT_TYPE_COMMIT || private_message_sender(group, pm, &sd) != 0)
+        return -1;
+    /* The tree is the caller's (const here): borrowed and put back as it was. */
+    MlsSecretTree *st = (MlsSecretTree *)&group->secret_tree;
+    MlsSenderSnapshot before;
+    if (mls_secret_tree_sender_save(st, sd.leaf_index, &before) != 0) return -1;
+    uint8_t *content = NULL;
+    size_t content_len = 0;
+    MlsSenderData used;
+    int rc = mls_private_message_decrypt_with_sender_data(pm, &sd, st, group->max_forward_distance,
+                                                          &content, &content_len, &used);
+    mls_secret_tree_sender_restore(st, &before);
+    if (rc != 0) return -1;
+    rc = mls_handshake_content_decode(pm, sd.leaf_index, content, content_len, &out->content,
+                                      &out->auth);
+    sodium_memzero(content, content_len);
+    free(content);
+    if (rc != 0) return -1;
+    *out_sender = sd.leaf_index;
+    return 0;
+}
+
+int
+mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t msg_len,
+                           uint32_t *out_leaf)
+{
+    if (!group || !msg || !out_leaf) return MARMOT_ERR_INVALID_ARG;
+    MlsMLSMessage wire;
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, msg, msg_len);
+    if (mls_message_deserialize(&reader, &wire) != 0) return MARMOT_ERR_MLS_FRAMING;
+    int rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+    if (!mls_tls_reader_done(&reader)) {
+        rc = MARMOT_ERR_MLS_FRAMING;
+    } else if (wire.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE) {
+        if (wire.public_message.content.sender.sender_type == MLS_SENDER_TYPE_MEMBER) {
+            *out_leaf = wire.public_message.content.sender.leaf_index;
+            rc = 0;
+        }
+    } else if (wire.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE) {
+        MlsSenderData sd;
+        if (private_message_sender(group, &wire.private_message, &sd) == 0) {
+            *out_leaf = sd.leaf_index;
+            rc = 0;
+        }
+        sodium_memzero(&sd, sizeof(sd));
+    }
+    mls_message_clear(&wire);
+    return rc;
+}
+
+/* The authenticated part of processing a Commit (RFC 9420 sections 6.1-6.3):
+ * a Commit of this group and epoch from member `sender_leaf`, as a
+ * PublicMessage (signature over the pre-Commit GroupContext and membership
+ * tag) or a PrivateMessage (decrypted, then its signature), and its Commit
+ * body. On success the caller owns *wire -- a PublicMessage holding the
+ * Commit's FramedContent and auth data either way -- (the Commit body points
+ * into it), *commit and *pre_gc; *wire_format is the one it arrived in. */
 static int
 commit_authenticate(const MlsGroup *group, const uint8_t *commit_data, size_t commit_len,
                     uint32_t sender_leaf, MlsMLSMessage *wire, MlsCommit *commit,
-                    uint8_t **pre_gc, size_t *pre_gc_len)
+                    uint8_t **pre_gc, size_t *pre_gc_len, uint16_t *wire_format)
 {
     memset(wire, 0, sizeof(*wire));
     *pre_gc = NULL;
@@ -2945,9 +3040,21 @@ commit_authenticate(const MlsGroup *group, const uint8_t *commit_data, size_t co
     MlsTlsReader wire_reader;
     mls_tls_reader_init(&wire_reader, commit_data, commit_len);
     if (mls_message_deserialize(&wire_reader, wire) != 0 ||
-        !mls_tls_reader_done(&wire_reader) ||
-        wire->wire_format != MLS_WIRE_FORMAT_PUBLIC_MESSAGE)
+        !mls_tls_reader_done(&wire_reader))
         goto fail;
+    *wire_format = wire->wire_format;
+    if (wire->wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE) {
+        MlsPublicMessage opened;
+        uint32_t from = UINT32_MAX;
+        int open_rc = private_commit_open(group, &wire->private_message, &from, &opened);
+        mls_message_clear(wire);
+        if (open_rc != 0) goto fail;
+        wire->wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;   /* owns the opened content */
+        wire->public_message = opened;
+        if (from != sender_leaf) goto fail;
+    } else if (wire->wire_format != MLS_WIRE_FORMAT_PUBLIC_MESSAGE) {
+        goto fail;
+    }
     MlsPublicMessage *pm = &wire->public_message;
     if (pm->content.sender.sender_type != MLS_SENDER_TYPE_MEMBER ||
         pm->content.sender.leaf_index != sender_leaf ||
@@ -2960,10 +3067,11 @@ commit_authenticate(const MlsGroup *group, const uint8_t *commit_data, size_t co
         goto fail;
     uint32_t sender_node_for_sig = mls_tree_leaf_to_node(sender_leaf);
     if (group->tree.nodes[sender_node_for_sig].type != MLS_NODE_LEAF ||
-        mls_framed_content_verify(&pm->content, &pm->auth,
-                                  MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+        mls_framed_content_verify(&pm->content, &pm->auth, *wire_format,
                                   *pre_gc, *pre_gc_len,
-                                  group->tree.nodes[sender_node_for_sig].leaf.signature_key) != 0 ||
+                                  group->tree.nodes[sender_node_for_sig].leaf.signature_key) != 0)
+        goto fail;
+    if (*wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE &&
         mls_public_message_verify_membership_tag(pm,
                                                  group->epoch_secrets.membership_key,
                                                  *pre_gc, *pre_gc_len) != 0)
@@ -2997,8 +3105,9 @@ mls_group_commit_removes_self(const MlsGroup *group,
     MlsCommit commit;
     uint8_t *pre_gc = NULL;
     size_t pre_gc_len = 0;
+    uint16_t wire_format = 0;
     int rc = commit_authenticate(group, commit_data, commit_len, sender_leaf, &wire, &commit,
-                                 &pre_gc, &pre_gc_len);
+                                 &pre_gc, &pre_gc_len, &wire_format);
     if (rc != 0) return rc;
     free(pre_gc);
     if (validate_proposal_ordering(commit.proposals, commit.proposal_count) != 0 ||
@@ -3041,8 +3150,9 @@ process_commit_impl(MlsGroup *group,
     size_t pre_gc_len = 0;
     MlsMLSMessage wire_msg;
     MlsCommit commit;
+    uint16_t wire_format = 0;
     int auth_rc = commit_authenticate(group, commit_data, commit_len, sender_leaf,
-                                      &wire_msg, &commit, &pre_gc, &pre_gc_len);
+                                      &wire_msg, &commit, &pre_gc, &pre_gc_len, &wire_format);
     if (auth_rc != 0) return auth_rc;
     MlsPublicMessage *pm = &wire_msg.public_message;
 
@@ -3548,7 +3658,7 @@ process_commit_impl(MlsGroup *group,
     uint8_t *confirmed_input = NULL;
     size_t confirmed_input_len = 0;
     int transcript_rc =
-        public_message_confirmed_transcript_input(pm,
+        public_message_confirmed_transcript_input(pm, wire_format,
                                                   &confirmed_input,
                                                   &confirmed_input_len);
     if (transcript_rc != 0) {

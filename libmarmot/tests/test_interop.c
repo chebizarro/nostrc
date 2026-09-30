@@ -27,6 +27,7 @@
 #include "mls/mls_framing.h"
 #include "mls/mls_welcome.h"
 #include "mls/mls_group.h"
+#include "commits.h"
 #include "mdk_vector_loader.h"
 #include <assert.h>
 #include <stdio.h>
@@ -1173,6 +1174,236 @@ test_group_data_extension_with_image(void)
     marmot_group_data_extension_free(parsed);
 }
 
+/* ── 3b. marmot_group_data as MDK 0.8 encodes it (nostrc-7gx7) ─────────
+ *
+ * Captured from MDK v0.8.0 (575ae29d, the tests/interop/mdk/driver
+ * "group_extension" command): MIP-01 v2, every vector QUIC-varint prefixed.
+ * libmarmot 0.10.0 read none of them and MDK read none of libmarmot's. */
+
+static const char MDK_GDE_TWO_ADMINS[] =
+    "0002c70f3d74e1606dd7985488d7f22316fcbadbaa8b4d67fec455b1a2782b3572b60b4d6164652062"
+    "79204d444b07696e7465726f70404079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2"
+    "815b16f81798f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9260d77"
+    "73733a2f2f6e6f732e6c6f6c177773733a2f2f72656c61792e6578616d706c652e636f6d00000000";
+static const char MDK_GDE_WITH_IMAGE[] =
+    "0002c70f3d74e1606dd7985488d7f22316fcbadbaa8b4d67fec455b1a2782b3572b60b4d6164652062"
+    "79204d444b07696e7465726f70404079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2"
+    "815b16f81798f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9260d77"
+    "73733a2f2f6e6f732e6c6f6c177773733a2f2f72656c61792e6578616d706c652e636f6d2011111111"
+    "1111111111111111111111111111111111111111111111111111111120222222222222222222222222"
+    "22222222222222222222222222222222222222220c3333333333333333333333332044444444444444"
+    "44444444444444444444444444444444444444444444444444";
+static const char MDK_GDE_ONE_ADMIN_EMPTY[] =
+    "00028231f7e1bff6057b663f53fc5c352b20ef11619e94723f801ffe27e05161d235000020f9308a01"
+    "9258c31049344f85f89d5229b531c845836f99b08601f113bce036f918177773733a2f2f72656c6179"
+    "2e6578616d706c652e636f6d00000000";
+
+static uint8_t *
+hex_dup(const char *hex, size_t *len)
+{
+    *len = strlen(hex) / 2;
+    uint8_t *out = malloc(*len);
+    assert(out && hex_decode(out, hex, *len));
+    return out;
+}
+
+/* Decodes an MDK vector and re-encodes it byte for byte. */
+static MarmotGroupDataExtension *
+mdk_gde_roundtrip(const char *hex)
+{
+    size_t len = 0;
+    uint8_t *bytes = hex_dup(hex, &len);
+    MarmotGroupDataExtension *ext = marmot_group_data_extension_deserialize(bytes, len);
+    assert(ext != NULL && "MDK 0.8 marmot_group_data must decode");
+    uint8_t *again = NULL;
+    size_t again_len = 0;
+    assert(marmot_group_data_extension_serialize(ext, &again, &again_len) == MARMOT_OK);
+    assert(again_len == len && memcmp(again, bytes, len) == 0 &&
+           "libmarmot must encode marmot_group_data exactly as MDK does");
+    free(again);
+    free(bytes);
+    return ext;
+}
+
+static void
+test_group_data_extension_mdk_vectors(void)
+{
+    static const char alice[] = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    static const char carol[] = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+    uint8_t alice_pk[32], carol_pk[32], gid[32];
+    assert(hex_decode(alice_pk, alice, 32) && hex_decode(carol_pk, carol, 32));
+    assert(hex_decode(gid, "c70f3d74e1606dd7985488d7f22316fcbadbaa8b4d67fec455b1a2782b3572b6", 32));
+
+    MarmotGroupDataExtension *ext = mdk_gde_roundtrip(MDK_GDE_TWO_ADMINS);
+    assert(ext->version == 2);
+    assert(memcmp(ext->nostr_group_id, gid, 32) == 0);
+    assert(strcmp(ext->name, "Made by MDK") == 0);
+    assert(strcmp(ext->description, "interop") == 0);
+    assert(ext->admin_count == 2);
+    assert(memcmp(ext->admins[0], alice_pk, 32) == 0);
+    assert(memcmp(ext->admins[1], carol_pk, 32) == 0);
+    assert(ext->relay_count == 2);
+    assert(strcmp(ext->relays[0], "wss://nos.lol") == 0);
+    assert(strcmp(ext->relays[1], "wss://relay.example.com") == 0);
+    assert(!ext->image_hash && !ext->image_key && !ext->image_nonce && !ext->image_upload_key);
+    assert(ext->extra == NULL && ext->extra_len == 0);
+    marmot_group_data_extension_free(ext);
+
+    ext = mdk_gde_roundtrip(MDK_GDE_WITH_IMAGE);
+    uint8_t fill[32];
+    memset(fill, 0x11, 32);
+    assert(ext->image_hash && memcmp(ext->image_hash, fill, 32) == 0);
+    memset(fill, 0x22, 32);
+    assert(ext->image_key && memcmp(ext->image_key, fill, 32) == 0);
+    memset(fill, 0x33, 12);
+    assert(ext->image_nonce && memcmp(ext->image_nonce, fill, 12) == 0);
+    memset(fill, 0x44, 32);
+    assert(ext->image_upload_key && memcmp(ext->image_upload_key, fill, 32) == 0);
+    marmot_group_data_extension_free(ext);
+
+    ext = mdk_gde_roundtrip(MDK_GDE_ONE_ADMIN_EMPTY);
+    assert(ext->name == NULL && ext->description == NULL);
+    assert(ext->admin_count == 1 && memcmp(ext->admins[0], carol_pk, 32) == 0);
+    assert(ext->relay_count == 1);
+    marmot_group_data_extension_free(ext);
+}
+
+/* What libmarmot 0.10.0 and older wrote still loads (groups they made), and
+ * is written back as MIP-01. */
+static void
+test_group_data_extension_libmarmot_0_10_layout(void)
+{
+    MlsTlsBuf old;
+    assert(mls_tls_buf_init(&old, 256) == 0);
+    uint8_t gid[32], admin[32], img[32];
+    memset(gid, 0xab, 32);
+    memset(admin, 0x5a, 32);
+    memset(img, 0x77, 32);
+    static const char url[] = "wss://relay.example.com";
+    MlsTlsBuf relays;
+    assert(mls_tls_buf_init(&relays, 64) == 0);
+    assert(mls_tls_write_opaque16(&relays, (const uint8_t *)url, strlen(url)) == 0);
+    assert(mls_tls_write_u16(&old, 2) == 0);
+    assert(mls_tls_buf_append(&old, gid, 32) == 0);
+    assert(mls_tls_write_opaque16(&old, (const uint8_t *)"Old", 3) == 0);
+    assert(mls_tls_write_opaque16(&old, NULL, 0) == 0);
+    assert(mls_tls_write_u32(&old, 32) == 0);                /* admins: fixed uint32 */
+    assert(mls_tls_buf_append(&old, admin, 32) == 0);
+    assert(mls_tls_write_opaque32(&old, relays.data, relays.len) == 0);
+    assert(mls_tls_write_u8(&old, 1) == 0);                  /* has_image */
+    assert(mls_tls_buf_append(&old, img, 32) == 0);
+    assert(mls_tls_buf_append(&old, img, 32) == 0);
+    assert(mls_tls_buf_append(&old, img, 12) == 0);
+    assert(mls_tls_write_u8(&old, 0) == 0);                  /* no upload key */
+
+    MarmotGroupDataExtension *ext = marmot_group_data_extension_deserialize(old.data, old.len);
+    assert(ext != NULL);
+    assert(strcmp(ext->name, "Old") == 0 && ext->description == NULL);
+    assert(ext->admin_count == 1 && memcmp(ext->admins[0], admin, 32) == 0);
+    assert(ext->relay_count == 1 && strcmp(ext->relays[0], url) == 0);
+    assert(ext->image_hash && ext->image_key && ext->image_nonce && !ext->image_upload_key);
+
+    uint8_t *now = NULL;
+    size_t now_len = 0;
+    assert(marmot_group_data_extension_serialize(ext, &now, &now_len) == MARMOT_OK);
+    assert(now_len != old.len || memcmp(now, old.data, old.len) != 0);
+    MarmotGroupDataExtension *again = marmot_group_data_extension_deserialize(now, now_len);
+    assert(again && again->admin_count == 1 && again->image_hash && !again->image_upload_key);
+    marmot_group_data_extension_free(again);
+    free(now);
+    marmot_group_data_extension_free(ext);
+    mls_tls_buf_free(&relays);
+    mls_tls_buf_free(&old);
+}
+
+/* A later version's appended fields are kept and written back (MIP-01
+ * forward compatibility); the same bytes after a version-2 header, and
+ * half an image, are refused. */
+static void
+test_group_data_extension_later_version(void)
+{
+    size_t len = 0;
+    uint8_t *v2 = hex_dup(MDK_GDE_ONE_ADMIN_EMPTY, &len);
+    /* v3 disappearing_message_secs<0..8> = 3600 */
+    static const uint8_t tail[] = { 0x08, 0, 0, 0, 0, 0, 0, 0x0e, 0x10 };
+    uint8_t *v3 = malloc(len + sizeof tail);
+    assert(v3);
+    memcpy(v3, v2, len);
+    memcpy(v3 + len, tail, sizeof tail);
+    v3[1] = 3;
+    MarmotGroupDataExtension *ext = marmot_group_data_extension_deserialize(v3, len + sizeof tail);
+    assert(ext && ext->version == 3 && ext->admin_count == 1);
+    assert(ext->extra_len == sizeof tail && memcmp(ext->extra, tail, sizeof tail) == 0);
+    uint8_t *out = NULL;
+    size_t out_len = 0;
+    assert(marmot_group_data_extension_serialize(ext, &out, &out_len) == MARMOT_OK);
+    assert(out_len == len + sizeof tail && memcmp(out, v3, out_len) == 0);
+    free(out);
+    marmot_group_data_extension_free(ext);
+
+    v3[1] = 2;   /* trailing bytes after a version-2 extension */
+    assert(marmot_group_data_extension_deserialize(v3, len + sizeof tail) == NULL);
+
+    /* Half an image: a hash with an empty key and nonce. */
+    uint8_t *half = malloc(len + 32);
+    assert(half);
+    memcpy(half, v2, len - 4);
+    half[len - 4] = 0x20;
+    memset(half + len - 3, 0x11, 32);
+    memset(half + len + 29, 0, 3);
+    assert(marmot_group_data_extension_deserialize(half, len + 32) == NULL);
+    free(half);
+    free(v3);
+    free(v2);
+}
+
+/* ── 3c. kind:445 content as MDK 0.8 encrypts it (MIP-03, nostrc-7gx7) ──
+ *
+ * An MDK v0.8.0 kind:445 content and its epoch's MLS-Exporter("marmot",
+ * "group-event", 32), captured with the driver's "send" (publish false) and
+ * "export_secret" commands: base64(nonce || ChaCha20-Poly1305(key, nonce,
+ * MLSMessage, aad "")). libmarmot 0.10.0 NIP-44-encrypted instead. */
+
+static const char MDK_445_CONTENT[] =
+    "VNW5AHWHU5YEtsmS3glNq39NCsOd/Y0JCbNVtQ/HoaXYfNHl1Qg0FdK7Vvt3ESw9JTgpZPrpGPwHs/8/nKdH"
+    "FxW5lEDxVmo7gbRxZNxS3hSdIS8K6ze9NJYAgd8ESIpeRmEk0kB34ImvXxCvfQhqhsuM8Sk6MdkW5K0mRskU"
+    "YJ9TgBjhqBONkPICUveWHVjY/7u53Abi24cqTsrh0hJMxpWIcMkkmAl6b8BPenj2q+JIBQ8EFpZgAIke/6S5"
+    "jHma+aqTc0Fim7KMx4kItsWvOkmaEIUMHQEl+qmjplGy8quIBLMkRUIWz/+IedcpH+CPx2ywZb8ctNwp8xT0"
+    "5Bj8OFYDnlPzvKuZin4gXdO//jErPW+ABXktlugR7QBiHgtT6wK0HmH70I89ROt7QEIwomK598Hh/ayVQLPH"
+    "P/MjY9cFvqfyGiSUn7DtfMUh6IZ46v4+T9TLShPO5c+68h8PQ4uHPMibwW9u99LirQyQPrhGvFn3AM+WWS08"
+    "qwSrrVw0bp7OjMEOd81i";
+static const char MDK_445_KEY[] =
+    "2070bd1436d44c4e24a6f893f2f0adea6fe61afe2acf3e635e2874af4d141107";
+
+static void
+test_group_event_mdk_vector(void)
+{
+    uint8_t key[32];
+    assert(hex_decode(key, MDK_445_KEY, 32));
+    uint8_t *msg = NULL;
+    size_t msg_len = 0;
+    assert(marmot_group_event_decrypt_with_key(key, MDK_445_CONTENT, &msg, &msg_len) == 0 &&
+           "MDK 0.8 kind:445 content must decrypt");
+    /* MLSMessage { version mls10, wire_format mls_private_message } */
+    assert(msg_len > 4 && msg[0] == 0 && msg[1] == 1 && msg[2] == 0 && msg[3] == 2);
+    free(msg);
+
+    /* Ours decrypts with the same key; a flipped bit, a short payload and
+     * bad base64 are refused. */
+    static const uint8_t text[] = "an MLSMessage";
+    char *b64 = NULL;
+    assert(marmot_group_event_encrypt_with_key(key, text, sizeof text, &b64) == 0);
+    assert(marmot_group_event_decrypt_with_key(key, b64, &msg, &msg_len) == 0);
+    assert(msg_len == sizeof text && memcmp(msg, text, sizeof text) == 0);
+    free(msg);
+    b64[20] = b64[20] == 'A' ? 'B' : 'A';
+    assert(marmot_group_event_decrypt_with_key(key, b64, &msg, &msg_len) != 0 && msg == NULL);
+    free(b64);
+    assert(marmot_group_event_decrypt_with_key(key, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==", &msg,
+                                               &msg_len) != 0);   /* 25 bytes < 28 */
+    assert(marmot_group_event_decrypt_with_key(key, "not base64!", &msg, &msg_len) != 0);
+}
+
 /* ── 4. Exporter secret derivation ────────────────────────────────────── */
 
 static void
@@ -1853,7 +2084,9 @@ assert_application_priv_unprotects(const MdkMessageProtectionVector *v)
                                           pm->authenticated_data_len, content, content_len,
                                           gc, gc_len, other, &bad, &bad_len) != 0);
 
-    /* Our encoder produces the same content (padding aside). */
+    /* Our encoder produces the same content, then zero padding to NIP-44's
+     * length buckets (RFC 9420 section 6.3.1; since 0.11.0 the kind:445 AEAD
+     * of MIP-03 pads nothing). The vector itself carries no padding. */
     uint8_t pk[crypto_sign_PUBLICKEYBYTES], sk[crypto_sign_SECRETKEYBYTES];
     assert(crypto_sign_seed_keypair(pk, sk, v->signature_priv) == 0);
     assert(memcmp(pk, v->signature_pub, sizeof(pk)) == 0);
@@ -1864,9 +2097,11 @@ assert_application_priv_unprotects(const MdkMessageProtectionVector *v)
                                           pm->authenticated_data_len, v->application,
                                           v->application_len, gc, gc_len, sk,
                                           &ours, &ours_len) == 0);
-    assert(ours_len <= content_len);
-    assert_bytes_eq("message-protection.PrivateMessageContent", ours, content, ours_len);
-    for (size_t i = ours_len; i < content_len; i++) assert(content[i] == 0);   /* padding */
+    size_t unpadded = content_len;
+    while (unpadded > 0 && content[unpadded - 1] == 0) unpadded--;
+    assert(ours_len >= unpadded && ours_len >= 32);
+    assert_bytes_eq("message-protection.PrivateMessageContent", ours, content, unpadded);
+    for (size_t i = unpadded; i < ours_len; i++) assert(ours[i] == 0);   /* padding */
 
     sodium_memzero(sk, sizeof(sk));
     free(ours);
@@ -2770,6 +3005,10 @@ int main(void)
     printf("\n─ Extension Serialization ─\n");
     TEST(test_group_data_extension_roundtrip);
     TEST(test_group_data_extension_with_image);
+    TEST(test_group_data_extension_mdk_vectors);
+    TEST(test_group_data_extension_libmarmot_0_10_layout);
+    TEST(test_group_data_extension_later_version);
+    TEST(test_group_event_mdk_vector);
 
     printf("\n─ Key Derivation Consistency ─\n");
     TEST(test_exporter_nip44_consistency);

@@ -1798,21 +1798,74 @@ marmot_commit_removal_note_later(Marmot *m, MarmotGroup *group, const char *even
     return err;
 }
 
-/* The routing header of a Commit MLSMessage: FALSE when it is not one. */
+/* The routing header of a handshake MLSMessage; nothing in it is
+ * authenticated yet. A Commit comes as a PublicMessage, or as a
+ * PrivateMessage (RFC 9420 section 6.3; OpenMLS MIXED_CIPHERTEXT, how MDK
+ * sends them, nostrc-7gx7): a PublicMessage names its sender, a
+ * PrivateMessage's is resolved on the state that judges it
+ * (commit_sender_on()). */
+typedef struct {
+    bool     commit;     /* one whole MLSMessage: a Commit by a member */
+    bool     proposal;   /* a standalone Proposal */
+    bool     group_ok;   /* of the group routed to */
+    uint64_t epoch;
+    uint32_t named;      /* a PublicMessage's sender leaf, else UINT32_MAX */
+} CommitRoute;
+
 static bool
-commit_header(const uint8_t *msg, size_t msg_len, uint64_t *epoch, uint32_t *sender)
+commit_route(const uint8_t *msg, size_t msg_len, const uint8_t *gid, size_t gid_len,
+             CommitRoute *out)
 {
+    memset(out, 0, sizeof(*out));
+    out->named = UINT32_MAX;
     MlsMLSMessage wm;
     MlsTlsReader r;
     mls_tls_reader_init(&r, msg, msg_len);
     if (mls_message_deserialize(&r, &wm) != 0) return false;
-    bool ok = mls_tls_reader_done(&r) && wm.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE &&
-              wm.public_message.content.content_type == MLS_CONTENT_TYPE_COMMIT &&
-              wm.public_message.content.sender.sender_type == MLS_SENDER_TYPE_MEMBER;
-    *epoch = wm.public_message.content.epoch;
-    *sender = wm.public_message.content.sender.leaf_index;
+    bool routable = mls_tls_reader_done(&r);
+    const uint8_t *g = NULL;
+    size_t g_len = 0;
+    uint8_t content_type = 0;
+    if (wm.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE) {
+        const MlsFramedContent *fc = &wm.public_message.content;
+        g = fc->group_id;
+        g_len = fc->group_id_len;
+        content_type = fc->content_type;
+        out->epoch = fc->epoch;
+        if (fc->sender.sender_type == MLS_SENDER_TYPE_MEMBER)
+            out->named = fc->sender.leaf_index;
+        else
+            routable = false;
+    } else if (wm.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE) {
+        /* Always from a member (section 6.3). */
+        g = wm.private_message.group_id;
+        g_len = wm.private_message.group_id_len;
+        content_type = wm.private_message.content_type;
+        out->epoch = wm.private_message.epoch;
+    } else {
+        routable = false;
+    }
+    out->proposal = content_type == MLS_CONTENT_TYPE_PROPOSAL;
+    out->commit = routable && content_type == MLS_CONTENT_TYPE_COMMIT;
+    out->group_ok = g && g_len == gid_len && memcmp(g, gid, gid_len) == 0;
     mls_message_clear(&wm);
-    return ok;
+    return true;
+}
+
+/* The routed Commit's sender leaf as `base` sees it: a PublicMessage's named
+ * one, a PrivateMessage's sender data opened with base's sender_data_secret.
+ * FALSE when base cannot tell (another epoch, junk): the Commit is not
+ * base's. The Commit is authenticated when it is staged. */
+static bool
+commit_sender_on(const MlsGroup *base, const uint8_t *msg, size_t msg_len,
+                 const CommitRoute *route, uint32_t *out)
+{
+    *out = UINT32_MAX;
+    if (route->named != UINT32_MAX) {
+        *out = route->named;
+        return true;
+    }
+    return mls_group_handshake_sender(base, msg, msg_len, out) == 0;
 }
 
 /* The ordering key of a Commit judged on `base`: one that applies, or an
@@ -1865,11 +1918,13 @@ deferred_order(const Marmot *m, const MlsGroup *cur, const PendingCommit *p, siz
     DeferredRank rank[PENDING_MAX_DEFERRED];
     for (size_t i = 0; i < p->deferred_count; i++) {
         const DeferredCommit *d = &p->deferred[i];
-        uint64_t epoch = 0;
-        uint32_t sender = 0;
+        CommitRoute route;
+        uint32_t sender = UINT32_MAX;
         rank[i].index = i;
-        rank[i].known = commit_header(d->msg, d->msg_len, &epoch, &sender) &&
-                        epoch == cur->epoch &&
+        rank[i].known = commit_route(d->msg, d->msg_len, cur->group_id, cur->group_id_len,
+                                     &route) &&
+                        route.commit && route.epoch == cur->epoch &&
+                        commit_sender_on(cur, d->msg, d->msg_len, &route, &sender) &&
                         inbound_order_key(m, cur, d->msg, d->msg_len, sender, &rank[i].key);
     }
     qsort(rank, p->deferred_count, sizeof(rank[0]), deferred_rank_cmp);
@@ -1918,7 +1973,7 @@ inbound_done(Marmot *m, MarmotGroup *group, uint64_t epoch, const char *event_id
  * Commit of the removal's epoch (or, for a removal of the current epoch, of
  * its parent's, against the Commit that led there) is judged. */
 static MarmotError
-inbound_removed(Marmot *m, MarmotGroup *group, uint64_t epoch, uint32_t sender,
+inbound_removed(Marmot *m, MarmotGroup *group, uint64_t epoch, const CommitRoute *route,
                 const uint8_t *msg, size_t msg_len, const uint8_t digest[32])
 {
     const uint8_t *gid = group->mls_group_id.data;
@@ -1954,7 +2009,10 @@ inbound_removed(Marmot *m, MarmotGroup *group, uint64_t epoch, uint32_t sender,
         on_parent = true;
     }
     err = MARMOT_ERR_USE_AFTER_EVICTION;
-    if (base) {
+    uint32_t sender = UINT32_MAX;
+    if (base && !commit_sender_on(base, msg, msg_len, route, &sender)) {
+        err = MARMOT_ERR_MLS_PROCESS_MESSAGE;   /* not a Commit of that epoch */
+    } else if (base) {
         MlsGroup post;
         memset(&post, 0, sizeof(post));
         MarmotCommitKey key;
@@ -2009,26 +2067,15 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
 
     /* Authenticated header fields are checked by mls_group_process_commit;
      * here they only route the Commit. */
-    MlsMLSMessage wm;
-    MlsTlsReader r;
-    mls_tls_reader_init(&r, msg, msg_len);
-    if (mls_message_deserialize(&r, &wm) != 0) return MARMOT_ERR_MLS_FRAMING;
-    bool is_proposal = wm.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE &&
-                       wm.public_message.content.content_type == MLS_CONTENT_TYPE_PROPOSAL;
-    bool shape_ok = mls_tls_reader_done(&r) &&
-                    wm.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE &&
-                    wm.public_message.content.content_type == MLS_CONTENT_TYPE_COMMIT &&
-                    wm.public_message.content.sender.sender_type == MLS_SENDER_TYPE_MEMBER;
-    bool group_ok = wm.public_message.content.group_id_len == group->mls_group_id.len &&
-                    memcmp(wm.public_message.content.group_id, group->mls_group_id.data,
-                           group->mls_group_id.len) == 0;
-    uint64_t epoch = wm.public_message.content.epoch;
-    uint32_t sender = wm.public_message.content.sender.leaf_index;
-    mls_message_clear(&wm);
+    CommitRoute route;
+    if (!commit_route(msg, msg_len, group->mls_group_id.data, group->mls_group_id.len, &route))
+        return MARMOT_ERR_MLS_FRAMING;
     /* Standalone proposals are not queued yet: Commits carry them inline. */
-    if (is_proposal) return MARMOT_ERR_UNSUPPORTED;
-    if (!shape_ok) return MARMOT_ERR_MLS_FRAMING;
-    if (!group_ok) return MARMOT_ERR_WRONG_GROUP_ID;
+    if (route.proposal) return MARMOT_ERR_UNSUPPORTED;
+    if (!route.commit) return MARMOT_ERR_MLS_FRAMING;
+    if (!route.group_ok) return MARMOT_ERR_WRONG_GROUP_ID;
+    uint64_t epoch = route.epoch;
+    uint32_t sender = UINT32_MAX;   /* resolved on the state that judges it */
     /* The Commit is sealed under its own epoch's exporter secret. */
     if (epoch != outer_epoch) return MARMOT_ERR_WRONG_EPOCH;
 
@@ -2038,7 +2085,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
 
     /* Removed by a Commit that may still lose its epoch (B1). */
     if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
-        MarmotError rerr = inbound_removed(m, group, epoch, sender, msg, msg_len, digest);
+        MarmotError rerr = inbound_removed(m, group, epoch, &route, msg, msg_len, digest);
         if (rerr != MARMOT_OK) return rerr;
         inbound_done(m, group, epoch, event_id_hex, result);
         return MARMOT_OK;
@@ -2076,9 +2123,11 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
             fill_commit_result(m, group, result);
             return MARMOT_OK;
         }
-        err = stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde);
+        bool known = commit_sender_on(&cur, msg, msg_len, &route, &sender);
+        err = known ? stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde)
+                    : MARMOT_ERR_MLS_PROCESS_MESSAGE;
         bool removed = false;
-        if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE &&
+        if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE && known &&
             mls_group_commit_removes_self(&cur, msg, msg_len, sender, &removed) == 0 &&
             removed) {
             /* nostrc-xrya: a Commit that removes us cannot be applied (its
@@ -2116,6 +2165,8 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                 mls_group_free(&cur);
                 result->type = MARMOT_RESULT_OWN_MESSAGE;
                 return MARMOT_OK;
+            } else if (!commit_sender_on(&rp.parent, msg, msg_len, &route, &sender)) {
+                err = MARMOT_ERR_MLS_PROCESS_MESSAGE;
             } else if (sender == rp.parent.own_leaf_index) {
                 err = MARMOT_ERR_WRONG_EPOCH;   /* not the Commit we made */
             } else if (rp.tier == PARENT_TIER_READER) {

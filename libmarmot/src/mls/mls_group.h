@@ -439,9 +439,9 @@ int mls_group_commit_extensions(MlsGroup *group,
  * removes @group's own leaf (RFC 9420 §12.4.2; OpenMLS's self_removed).  A
  * removed member cannot process such a Commit: its UpdatePath is encrypted
  * to the remaining members only.  What it can check is checked: the
- * PublicMessage framing for this group and epoch, the committer's signature
- * and the membership tag (the same checks mls_group_process_commit() makes
- * first), then that the proposal list is well formed, carries an UpdatePath
+ * framing for this group and epoch, the committer's signature and, for a
+ * PublicMessage, the membership tag (the same checks mls_group_process_commit()
+ * makes first; a PrivateMessage is decrypted first, since 0.11.0), then that the proposal list is well formed, carries an UpdatePath
  * and that every inline Remove names an occupied leaf other than the
  * committer's.  Proposals by reference are not resolved and never count.
  *
@@ -451,6 +451,21 @@ int mls_group_commit_extensions(MlsGroup *group,
 int mls_group_commit_removes_self(const MlsGroup *group,
                                   const uint8_t *commit_data, size_t commit_len,
                                   uint32_t sender_leaf, bool *out_removed);
+
+/**
+ * The member leaf that sent the handshake MLSMessage @msg (a Proposal or
+ * Commit) in @group's epoch: a PublicMessage names it in its FramedContent; a
+ * PrivateMessage (RFC 9420 section 6.3.2, OpenMLS MIXED_CIPHERTEXT: how MDK
+ * sends Commits) in its sender data, decrypted with @group's
+ * sender_data_secret. No ratchet key is used. Only routes: the Commit is
+ * authenticated when it is processed. Since 0.11.0.
+ *
+ * @return 0 with *out_leaf set; MARMOT_ERR_MLS_FRAMING or
+ *   MARMOT_ERR_MLS_PROCESS_MESSAGE otherwise (another group or epoch, a
+ *   sender data that does not decrypt, an empty leaf)
+ */
+int mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t msg_len,
+                               uint32_t *out_leaf);
 
 /**
  * Process an incoming Commit message.

@@ -444,6 +444,12 @@ typedef struct {
 
     /** Optional: image upload key/seed (32 bytes, v2 only) */
     uint8_t *image_upload_key; /* [32] or NULL */
+
+    /** The fields a later version (> MARMOT_EXTENSION_VERSION) appends, kept
+     *  verbatim and written back unchanged (MIP-01 forward compatibility), or
+     *  NULL. Since 0.11.0. */
+    uint8_t *extra;
+    size_t   extra_len;
 } MarmotGroupDataExtension;
 
 /** Allocate and zero-initialize a MarmotGroupDataExtension */

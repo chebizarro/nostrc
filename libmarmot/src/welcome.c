@@ -126,6 +126,20 @@ record_welcome_failure(Marmot *m, const uint8_t wrapper_event_id[32],
     }
 }
 
+/* A Welcome that can never be accepted (a final failure of the accept
+ * path): recorded as failed, and its own record leaves the pending list as a
+ * declined one does. Before 0.11.0 it stayed pending, listed as an
+ * invitation that fails again on every attempt (nostrc-7gx7: an MDK 0.8
+ * group with a second unproven member). */
+static void
+refuse_welcome(Marmot *m, const MarmotWelcome *welcome, const char *reason)
+{
+    MarmotWelcome failed = *welcome;
+    failed.state = MARMOT_WELCOME_STATE_FAILED;
+    (void)m->storage->save_welcome(m->storage->ctx, &failed);
+    record_welcome_failure(m, welcome->wrapper_event_id, reason, true);
+}
+
 /*
  * W17b addendum N1: TRUE when this Welcome is a copy of one we already
  * joined through: we hold MLS state for the group at the Welcome's epoch or
@@ -458,7 +472,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     if (m->storage->mls_load(m->storage->ctx, "welcome_data",
                               welcome->wrapper_event_id, 32,
                               &welcome_data, &welcome_len) != 0) {
-        record_welcome_failure(m, welcome->wrapper_event_id, "stored welcome data not found", true);
+        refuse_welcome(m, welcome, "stored welcome data not found");
         return MARMOT_ERR_STORAGE;
     }
 
@@ -474,7 +488,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     if (mls_welcome_deserialize(&reader, &mls_welcome) != 0) {
         free(welcome_data);
-        record_welcome_failure(m, welcome->wrapper_event_id, "MLS Welcome deserialize failed", true);
+        refuse_welcome(m, welcome, "MLS Welcome deserialize failed");
         return MARMOT_ERR_MLS;
     }
     free(welcome_data);
@@ -546,7 +560,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     if (!found) {
         mls_welcome_clear(&mls_welcome);
-        record_welcome_failure(m, welcome->wrapper_event_id, "matching KeyPackage private key not found", true);
+        refuse_welcome(m, welcome, "matching KeyPackage private key not found");
         return MARMOT_ERR_KEY_NOT_FOUND;
     }
 
@@ -562,7 +576,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     sodium_memzero(&matched_priv, sizeof(matched_priv));
 
     if (rc != 0) {
-        record_welcome_failure(m, welcome->wrapper_event_id, "MLS Welcome processing failed", true);
+        refuse_welcome(m, welcome, "MLS Welcome processing failed");
         return MARMOT_ERR_MLS;
     }
 
@@ -571,8 +585,8 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     MarmotError bind_err = welcome_tree_bound(m, &mls_group, signer_leaf, welcome);
     if (bind_err != MARMOT_OK) {
         mls_group_free(&mls_group);
-        record_welcome_failure(m, welcome->wrapper_event_id,
-                               "member leaf without a valid account-identity proof", true);
+        refuse_welcome(m, welcome,
+                               "member leaf without a valid account-identity proof");
         return bind_err;
     }
 
@@ -593,30 +607,24 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
         return MARMOT_ERR_WELCOME_ALREADY_ACCEPTED;
     }
 
-    /* Extract GroupData extension from the group's extensions */
+    /* MIP-01: every Marmot group carries exactly one marmot_group_data
+     * (0xF2EE), and the joiner verifies it (MIP-02, step 3). A group with
+     * none, several, or one that does not decode is refused: it used to be
+     * joined without its nostr_group_id, name, relays and admins (nostrc-7gx7:
+     * every MDK 0.8 Welcome, before 0.11.0 read MIP-01's encoding). */
     MarmotGroupDataExtension *gde = NULL;
-    if (mls_group.extensions_data && mls_group.extensions_len > 0) {
-        /* Extensions are TLS-serialized. Find the 0xF2EE extension. */
-        MlsTlsReader ext_reader;
-        mls_tls_reader_init(&ext_reader, mls_group.extensions_data,
-                            mls_group.extensions_len);
-
-        while (!mls_tls_reader_done(&ext_reader)) {
-            uint16_t ext_type;
-            if (mls_tls_read_u16(&ext_reader, &ext_type) != 0) break;
-
-            uint8_t *ext_data = NULL;
-            size_t ext_data_len = 0;
-            if (mls_tls_read_opaque16(&ext_reader, &ext_data, &ext_data_len) != 0)
-                break;
-
-            if (ext_type == MARMOT_EXTENSION_TYPE) {
-                gde = marmot_group_data_extension_deserialize(ext_data, ext_data_len);
-            }
-            free(ext_data);
-
-            if (gde) break;
-        }
+    const uint8_t *gde_data = NULL;
+    size_t gde_data_len = 0, gde_count = 0;
+    if (marmot_extensions_find(mls_group.extensions_data, mls_group.extensions_len,
+                               MARMOT_EXTENSION_TYPE, &gde_data, &gde_data_len,
+                               &gde_count) == 0 &&
+        gde_count == 1)
+        gde = marmot_group_data_extension_deserialize(gde_data, gde_data_len);
+    if (!gde) {
+        mls_group_free(&mls_group);
+        refuse_welcome(m, welcome,
+                               "missing or malformed marmot_group_data (0xF2EE)");
+        return MARMOT_ERR_EXTENSION_FORMAT;
     }
 
     /* Create the MarmotGroup */

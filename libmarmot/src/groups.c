@@ -128,6 +128,37 @@ find_leaf_by_pubkey(const MlsGroup *mls, const uint8_t pubkey[32],
  * Internal: Build GroupData extension from MarmotGroupConfig
  * ──────────────────────────────────────────────────────────────────────── */
 
+#define MLS_EXTENSION_REQUIRED_CAPABILITIES 0x0003
+
+/* MIP-01 "Required MLS Extensions": every group's GroupContext carries
+ * required_capabilities (RFC 9420 section 7.2) next to marmot_group_data,
+ * requiring 0xF2EE of every member:
+ *
+ *   struct { ExtensionType extension_types<V>;   = [0xF2EE]
+ *            ProposalType proposal_types<V>;     = []
+ *            CredentialType credential_types<V>; = [] } RequiredCapabilities;
+ *
+ * No proposal type: MIP-01 also wants self_remove (0x000a) there, but
+ * libmarmot does not implement SelfRemove, and MDK 0.8 requires it only when
+ * every invitee advertises it (its "LCD" rule), so for a group with a
+ * libmarmot member it computes exactly this. libmarmot 0.10.0 and older
+ * omitted the extension, and OpenMLS (valn1001) then refuses every
+ * GroupContextExtensions proposal, which lists 0xF2EE without it: MDK could
+ * not follow a rename (nostrc-7gx7). */
+static int
+write_required_capabilities(MlsTlsBuf *buf)
+{
+    static const uint8_t data[] = {
+        0x02, (uint8_t)(MARMOT_EXTENSION_TYPE >> 8), (uint8_t)(MARMOT_EXTENSION_TYPE & 0xff),
+        0x00,   /* proposal_types */
+        0x00,   /* credential_types */
+    };
+    return mls_tls_write_u16(buf, MLS_EXTENSION_REQUIRED_CAPABILITIES) != 0 ||
+                   mls_tls_write_opaque16(buf, data, sizeof data) != 0
+               ? -1
+               : 0;
+}
+
 static int
 build_group_data_extension(const MarmotGroupConfig *config,
                             const uint8_t nostr_group_id[32],
@@ -182,9 +213,10 @@ build_group_data_extension(const MarmotGroupConfig *config,
         free(gde_bytes);
         return -1;
     }
-    /* Extension type: 0xF2EE */
+    /* Extension type: 0xF2EE, then required_capabilities (MIP-01). */
     if (mls_tls_write_u16(&buf, MARMOT_EXTENSION_TYPE) != 0 ||
-        mls_tls_write_opaque16(&buf, gde_bytes, gde_len) != 0) {
+        mls_tls_write_opaque16(&buf, gde_bytes, gde_len) != 0 ||
+        write_required_capabilities(&buf) != 0) {
         free(gde_bytes);
         mls_tls_buf_free(&buf);
         return -1;
@@ -987,11 +1019,26 @@ add_members_impl(Marmot *m,
      * Otherwise the joiner's leaf would stay in the tree as a ghost. */
     err = marmot_tree_members_bound(&post, UINT32_MAX, m->config.allow_unproven_members);
     if (err != MARMOT_OK) goto fail;
+    /* MIP-02: the rumor's relays tag names the group's relays, from its
+     * marmot_group_data. Before 0.11.0 an Add's Welcome had none, and MDK 0.8
+     * refuses such a Welcome (nostrc-7gx7). A group without the extension
+     * (legacy) still gets none. */
+    MarmotGroupDataExtension *gde = NULL;
+    {
+        const uint8_t *data = NULL;
+        size_t data_len = 0, n_gde = 0;
+        if (marmot_extensions_find(post.extensions_data, post.extensions_len,
+                                   MARMOT_EXTENSION_TYPE, &data, &data_len, &n_gde) == 0 &&
+            n_gde == 1)
+            gde = marmot_group_data_extension_deserialize(data, data_len);
+    }
     err = build_welcome_rumors(&add, sender, key_package_event_jsons, kp_count,
                                group->nostr_group_id, group->name, group->description,
                                (const uint8_t (*)[32])group->admin_pubkeys,
-                               group->admin_count, post.tree.n_leaves, NULL, 0,
-                               welcomes);
+                               group->admin_count, post.tree.n_leaves,
+                               gde ? (const char **)gde->relays : NULL,
+                               gde ? gde->relay_count : 0, welcomes);
+    marmot_group_data_extension_free(gde);
     if (err != MARMOT_OK) goto fail;
     for (size_t i = 0; i < kp_count; i++) {
         memcpy(outbox[i].recipient, recipients[i], 32);
@@ -1112,7 +1159,10 @@ leave_group_impl(Marmot *m, const MarmotGroupId *mls_group_id)
  * ──────────────────────────────────────────────────────────────────────── */
 
 /* Replace (or append) the marmot_group_data entry of a serialized Extension
- * list with `gde_bytes`, keeping every other extension and the order. */
+ * list with `gde_bytes`, keeping every other extension and the order. A list
+ * without required_capabilities (a group of libmarmot <= 0.10.0) gains
+ * MIP-01's: the GroupContextExtensions proposal carrying this list must
+ * list 0xF2EE there (see write_required_capabilities()). */
 static int
 replace_group_data_extension(const uint8_t *exts, size_t exts_len,
                              const uint8_t *gde_bytes, size_t gde_len,
@@ -1122,7 +1172,7 @@ replace_group_data_extension(const uint8_t *exts, size_t exts_len,
     if (mls_tls_buf_init(&buf, exts_len + gde_len + 8) != 0) return -1;
     MlsTlsReader r;
     mls_tls_reader_init(&r, exts, exts_len);
-    bool replaced = false;
+    bool replaced = false, has_required = false;
     while (!mls_tls_reader_done(&r)) {
         size_t entry_start = r.pos;
         uint16_t type;
@@ -1131,6 +1181,7 @@ replace_group_data_extension(const uint8_t *exts, size_t exts_len,
             len > mls_tls_reader_remaining(&r))
             goto fail;
         r.pos += len;
+        if (type == MLS_EXTENSION_REQUIRED_CAPABILITIES) has_required = true;
         if (type != MARMOT_EXTENSION_TYPE) {
             if (mls_tls_buf_append(&buf, exts + entry_start, r.pos - entry_start) != 0)
                 goto fail;
@@ -1147,6 +1198,7 @@ replace_group_data_extension(const uint8_t *exts, size_t exts_len,
         (mls_tls_write_u16(&buf, MARMOT_EXTENSION_TYPE) != 0 ||
          mls_tls_write_opaque16(&buf, gde_bytes, gde_len) != 0))
         goto fail;
+    if (!has_required && write_required_capabilities(&buf) != 0) goto fail;
     *out = buf.data;
     *out_len = buf.len;
     return 0;

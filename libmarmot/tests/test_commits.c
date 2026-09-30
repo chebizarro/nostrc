@@ -1301,6 +1301,61 @@ test_same_epoch_race_converges(void)
     trio_clear(&t);
 }
 
+/* MIP-01 "Required MLS Extensions": the GroupContext carries
+ * required_capabilities requiring 0xF2EE (no proposal type: exactly what
+ * MDK 0.8 computes for a group with a member without SelfRemove), and a
+ * metadata Commit keeps exactly one. Without it OpenMLS refused every
+ * GroupContextExtensions proposal of ours (nostrc-7gx7). */
+static void
+expect_required_capabilities(Member *x, const MarmotGroupId *gid, const char *what)
+{
+    static const uint8_t want[] = { 0x02, 0xf2, 0xee, 0x00, 0x00 };
+    MlsGroup mls;
+    load_mls(x, gid, &mls);
+    const uint8_t *data = NULL;
+    size_t len = 0, count = 0;
+    int found = marmot_extensions_find(mls.extensions_data, mls.extensions_len, 0x0003, &data,
+                                       &len, &count);
+    CHECK(found == 0 && count == 1, "%s: %s has %zu required_capabilities", what, x->name,
+          count);
+    CHECK(len == sizeof want && memcmp(data, want, len) == 0,
+          "%s: required_capabilities of %s", what, x->name);
+    mls_group_free(&mls);
+}
+
+static void
+test_group_context_required_capabilities(void)
+{
+    Trio t;
+    trio_init(&t);
+    for (int i = 0; i < 3; i++) expect_required_capabilities(t.all[i], &t.gid, "joined");
+    char *commit = rename_group(&t.alice, &t.gid, "Renamed");
+    expect_commit(&t.bob, commit, "rename");
+    expect_commit(&t.charlie, commit, "rename");
+    free(commit);
+    for (int i = 0; i < 3; i++) expect_required_capabilities(t.all[i], &t.gid, "renamed");
+    trio_clear(&t);
+}
+
+/* Whether a Welcome rumor's relays tag (MIP-02) lists exactly `relays`. */
+static bool
+rumor_relays_are(const char *rumor_json, const char *const *relays, size_t n)
+{
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, rumor_json, NULL), "parse rumor");
+    const NostrTags *tags = nostr_event_get_tags(ev);
+    bool ok = false;
+    for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (strcmp(nostr_tag_get_key(tag), "relays") != 0) continue;
+        ok = nostr_tag_size(tag) == n + 1;
+        for (size_t j = 0; ok && j < n; j++) ok = strcmp(nostr_tag_get(tag, j + 1), relays[j]) == 0;
+        break;
+    }
+    nostr_event_free(ev);
+    return ok;
+}
+
 /* Several invitees or members per call are one Commit (review B2,
  * nostrc-wc6v): a three-invitee group, a two-member add and a two-member
  * remove leave every member on the same epoch. */
@@ -1320,11 +1375,16 @@ test_multi_member_commits_converge(void)
     cfg.name = "Many";
     cfg.admin_pubkeys = (uint8_t (*)[32])alice.pk;
     cfg.admin_count = 1;
+    char *relays[] = { "wss://relay.example", "wss://nos.lol" };
+    cfg.relay_urls = relays;
+    cfg.relay_count = 2;
     MarmotCreateGroupResult cg;
     memset(&cg, 0, sizeof(cg));
     OK(marmot_create_group(alice.m, alice.pk, (const char **)kp, 3, &cfg, &cg));
     CHECK(cg.welcome_count == 3 && cg.group->epoch == 1,
           "three invitees, one Commit: epoch %llu", (unsigned long long)cg.group->epoch);
+    CHECK(rumor_relays_are(cg.welcome_rumor_jsons[0], (const char *const *)relays, 2),
+          "a creation's Welcome names the group relays");
     MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
                                             cg.group->mls_group_id.len);
     join(&bob, cg.welcome_rumor_jsons[0]);
@@ -1343,6 +1403,11 @@ test_multi_member_commits_converge(void)
     char *commit = NULL;
     OK(marmot_add_members(alice.m, &gid, (const char **)kp2, 2, &welcomes, &n_welcomes,
                           &commit));
+    /* MIP-02: an Add's Welcome names them too (none before 0.11.0: MDK 0.8
+     * refused it, nostrc-7gx7). */
+    for (size_t i = 0; i < n_welcomes; i++)
+        CHECK(rumor_relays_are(welcomes[i], (const char *const *)relays, 2),
+              "an Add's Welcome names the group relays");
     merge(&alice, &gid);
     for (int i = 1; i < 4; i++) expect_commit(four[i], commit, "two Adds in one Commit");
     join(&eve, welcomes[0]);
@@ -2953,6 +3018,19 @@ expect_join_ex(Member *x, const char *rumor, MarmotError want, const char *what,
           "%s: %s has %zu groups, had %zu", what, x->name, n_after, n_before);
     groups_free(before, n_before);
     groups_free(after, n_after);
+    /* Accepted or refused, it is no longer an invitation (a refusal is final:
+     * since 0.11.0 it leaves the pending list, nostrc-7gx7). */
+    MarmotPagination page = marmot_pagination_default();
+    MarmotWelcome **pending = NULL;
+    size_t n_pending = 0;
+    OK(marmot_get_pending_welcomes(x->m, &page, &pending, &n_pending));
+    for (size_t i = 0; i < n_pending; i++) {
+        CHECK(memcmp(pending[i]->wrapper_event_id, wrapper, 32) != 0 ||
+                  pending[i]->state != MARMOT_WELCOME_STATE_PENDING,
+              "%s: %s still lists the Welcome as pending", what, x->name);
+        marmot_welcome_free(pending[i]);
+    }
+    free(pending);
     marmot_welcome_free(w);
 }
 
@@ -4630,6 +4708,7 @@ main(int argc, char **argv)
     RUN(test_interrupted_transition_is_repaired);
     RUN(test_same_epoch_race_converges);
     RUN(test_multi_member_commits_converge);
+    RUN(test_group_context_required_capabilities);
     RUN(test_stale_pending_commit_cannot_merge);
     RUN(test_pending_commit_recovered_by_echo);
     RUN(test_merge_idempotent_after_crash);

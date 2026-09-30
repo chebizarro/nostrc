@@ -14,7 +14,7 @@ option(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
   "Allow marmot_create_key_package_for_profile(ADOPTED) (experimental)" OFF)
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 10)
+set(MARMOT_VERSION_MINOR 11)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}

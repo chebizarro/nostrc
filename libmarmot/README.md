@@ -212,18 +212,136 @@ All backends implement the same `MarmotStorage` vtable (optional
 
 ## MDK Interoperability
 
-libmarmot is designed for byte-level interoperability with the [MDK](https://github.com/marmot-org/mdk) reference implementation:
+libmarmot targets wire interoperability with [MDK](https://github.com/marmot-protocol/mdk)
+0.8 (the legacy 0xF2EE profile White Noise 0.8 builds on).
+Until 0.11.0 this was a design goal, not a tested fact: the first live test
+found five wire deviations (see the 0.11.0 changelog).
 
-- **Type mapping**: All C types mirror MDK's Rust structs field-for-field
-- **Config defaults**: `MarmotConfig` defaults match `MdkConfig` exactly
-- **Storage interface**: `MarmotStorage` vtable maps 1:1 to MDK's `MdkStorageProvider` trait
-- **Extension format**: TLS serialization of `NostrGroupDataExtension` (0xF2EE) is byte-identical
-- **Error codes**: `MarmotError` enum mirrors MDK's `MdkError` variants
-- **Protocol constants**: kind:30443/444/445, extension type 0xF2EE
+What is tested now:
 
-Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-validation.
+- **Live, both directions.** `gnome/groundhog/tests/mls/test_mdk_interop.c`
+  runs Groundhog's `GhMlsService` against MDK v0.8.0 (`575ae29d`) on local
+  relays. It is opt-in (`-DBUILD_MDK_INTEROP=ON`, Docker), and runs on demand
+  and nightly in CI. See `tests/interop/mdk/README.md`.
+- **Vectors.** `tests/test_interop.c` checks libmarmot against MDK:
+  - marmot_group_data exactly as MDK encodes it (decoded and re-encoded byte
+    for byte);
+  - an MDK kind:445 content with its epoch key;
+  - OpenMLS message-protection and tree vectors in `tests/vectors/mdk/`.
+- **Protocol constants**: kind:30443/444/445, extension type 0xF2EE.
+
+What does not hold yet:
+
+- **Default mode.** Without `MarmotConfig.allow_unproven_members`, MDK 0.8
+  members are refused (0.10.0, below).
+- **Standalone proposals.** They are not processed, so an MDK member's
+  SelfRemove is not seen (nostrc-2um6).
+- **The adopted profile.** MDK 0.9 and later use it; libmarmot does not speak
+  it yet (nostrc-qp24.5.1).
 
 ## Changelog
+
+### 0.11.0 (unreleased): Marmot wire conformance, found by the first live MDK 0.8 test (nostrc-7gx7, nostrc-77pa)
+
+**Wire change** (MINOR for 0.x). 0.11.0 and 0.10.0 or older cannot read each
+other's kind:445 events: upgrade whole groups together.
+
+Before this release libmarmot was never run against another Marmot
+implementation. Its self-tests passed because both sides were libmarmot.
+Against MDK v0.8.0 (`575ae29d`), each deviation below broke the exchange.
+Each is cited against the legacy Marmot text (marmot-protocol/marmot
+`cc73aa8`) or RFC 9420, and each has a test.
+
+#### What changed
+
+- **kind:445 content (MIP-03).**
+  - Now: `base64(nonce || ChaCha20-Poly1305(key, nonce, MLSMessage, aad ""))`,
+    where `key = MLS-Exporter("marmot", "group-event", 32)` of the epoch.
+    `marmot_group_event_encrypt()` and `marmot_group_event_decrypt()`
+    (internal) keep taking the epoch's exporter_secret; `_with_key`
+    variants take the derived key.
+  - Before: NIP-44 with the raw exporter_secret as a secp256k1 key. That is
+    MIP-03's text before marmot #48. MDK 0.8 still read it as a legacy
+    fallback, but only until 2026-05-15 (its
+    `LEGACY_EXPORTER_SECRET_MIGRATION_DEADLINE`), so MDK read none of our
+    messages or Commits.
+  - The old format is neither written nor read any more.
+  - Application messages are zero-padded inside the MLS PrivateMessageContent
+    to NIP-44's length buckets (RFC 9420 section 6.3.1), since the new AEAD
+    pads nothing.
+- **marmot_group_data (0xF2EE, MIP-01 version 2).**
+  - Now encoded as MIP-01 specifies: every vector QUIC-varint prefixed
+    (admins included), and the image fields as `opaque<V>` (empty or exact
+    size) instead of a `has_image` byte and fixed fields.
+  - Neither side decoded the other's extension: MDK could not read the
+    group data of our Welcomes, and we joined MDK's groups without name,
+    relays or admins (vectors captured from MDK in `tests/test_interop.c`).
+  - The 0.10.0 layout is still read (strictly, and only when the MIP-01
+    layout does not parse), so existing groups load. It is never written.
+  - A later version's appended fields (v3 `disappearing_message_secs`) are
+    kept verbatim in the new `extra`/`extra_len` fields and written back
+    (MIP-01 forward compatibility).
+- **Joining needs exactly one marmot_group_data** (MIP-01, MIP-02 step 3).
+  A Welcome whose group has none, several, or one that does not decode is
+  refused (`MARMOT_ERR_EXTENSION_FORMAT`). Such groups used to be joined
+  without a nostr_group_id.
+- **required_capabilities (MIP-01 "Required MLS Extensions").**
+  - New groups carry `required_capabilities {extension_types [0xF2EE],
+    proposal_types [], credential_types []}`. That is byte for byte what
+    MDK 0.8 computes for a group with a member without SelfRemove.
+  - A metadata Commit adds it to a group that lacks it.
+  - Without it OpenMLS (check valn1001) refuses every GroupContextExtensions
+    proposal that carries 0xF2EE, so MDK could not follow a rename.
+  - MIP-01 also asks for `self_remove`. libmarmot does not implement
+    SelfRemove (nostrc-2um6), so it cannot require it.
+- **Commits as PrivateMessages (RFC 9420 section 6.3).**
+  - MDK sends Commits encrypted (OpenMLS `MIXED_CIPHERTEXT`), which RFC 9420
+    allows and MIP-03 does not restrict. libmarmot routed them to the
+    application decryptor, and every MDK Commit failed (`MARMOT_ERR_MLS`).
+  - Handshake PrivateMessages are now routed by their clear `content_type`.
+    The sender is resolved from the sender data against the state that
+    judges the Commit (current epoch, retained parent, contested removal,
+    deferred replay).
+  - The Commit is decrypted with the sender's handshake ratchet, left
+    untouched, and verified with `wire_format mls_private_message`. There is
+    no membership tag.
+  - New internal `mls_group_handshake_sender()` and
+    `mls_handshake_content_decode()`.
+  - Standalone proposals, either wire format, are still
+    `MARMOT_ERR_UNSUPPORTED`.
+- **An Add's Welcome names the group relays (MIP-02).**
+  `marmot_add_members()` put no `relays` tag on the kind:444 rumor, and MDK
+  refuses such a Welcome (`validate_welcome_event`). The tag now comes from
+  the group's marmot_group_data.
+- **A Welcome refused for good leaves the pending list.** The accept path's
+  final failures (an unproven Welcome-tree leaf, a missing KeyPackage key, an
+  MLS failure) now save the Welcome as `MARMOT_WELCOME_STATE_FAILED`, as
+  `marmot_decline_welcome()` saves `DECLINED`. Before, it stayed pending: an
+  invitation that fails on every attempt. Storage failures still roll back
+  and can be retried.
+
+#### Compatibility
+
+- **Wire.**
+  - kind:445 is incompatible both ways with 0.10.0 and older.
+  - marmot_group_data: 0.11.0 reads 0.10.0's layout, but 0.10.0 cannot read
+    0.11.0's.
+  - A 0.11.0 member's first metadata Commit in an old group adds
+    required_capabilities.
+  - Upgrade every member together, then rejoin or commit.
+- **API/ABI.**
+  - `MarmotGroupDataExtension` gains `extra` and `extra_len` at its end.
+    Zero them, or start from `marmot_group_data_extension_new()`, which
+    does.
+  - No function signature changes.
+- **State.** Unchanged. Stored groups keep their extension bytes until their
+  next metadata Commit.
+- **MDK 0.8.**
+  - With `allow_unproven_members`, every tested flow works both ways
+    (`tests/interop/mdk/README.md`).
+  - By default, MDK 0.8 members are still refused (0.10.0's proof rule).
+    MDK 0.8 reads 0.10.0+ KeyPackages, with the proof in the leaf's
+    app_data_dictionary (nostrc-77pa: tested, below).
 
 ### 0.10.0 (unreleased): member leaves are bound to their accounts; the retained parent retires (nostrc-7vyi, nostrc-yuj2, security)
 
@@ -359,9 +477,13 @@ instance, without the guarantee (a bad proof is still refused). MDK master
 emits the proof in its adopted profile, which libmarmot's group engine does
 not support yet (nostrc-qp24.5.1).
 
-Untested: whether MDK 0.8 parses a 0.10.0 KeyPackage's leaf dictionary and
-adds it to its groups. Its `mls_extensions` check accepts the tag, per
-source. Tracked as nostrc-77pa.
+Tested in W23 (nostrc-77pa), against MDK v0.8.0 `575ae29d` with OpenMLS
+`04c50d7`:
+- MDK parses a libmarmot KeyPackage. It sees the leaf's 0x0006
+  app_data_dictionary and capabilities 0x0006, 0x000a, 0xf2ee.
+- It adds that KeyPackage to its groups, and the libmarmot member joins
+  through MDK's Welcome.
+- Rejoin, messages and Commits both ways needed the 0.11.0 wire fixes.
 
 #### Why a proof in the leaf, and what stays separate
 

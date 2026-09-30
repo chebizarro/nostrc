@@ -415,6 +415,20 @@ int mls_application_content_encode(const uint8_t *group_id, size_t group_id_len,
  * or non-zero padding.  On success *out_app (caller frees) is the
  * application data.
  */
+/**
+ * Parse the decrypted PrivateMessageContent of a handshake message (RFC 9420
+ * section 6.3.1: the inline Proposal or Commit, its FramedContentAuthData --
+ * with the confirmation tag for a Commit -- and zero padding) into the
+ * FramedContent that `msg` carries from member `sender_leaf`, and its auth
+ * data. The signature is not verified here: the caller verifies it with
+ * wire_format mls_private_message, as it does a PublicMessage's. On success
+ * the caller owns both (e.g. as an MlsPublicMessage's content and auth, freed
+ * by mls_public_message_clear()); on failure nothing is left to free.
+ */
+int mls_handshake_content_decode(const MlsPrivateMessage *msg, uint32_t sender_leaf,
+                                 const uint8_t *content, size_t content_len,
+                                 MlsFramedContent *out_fc, MlsFramedContentAuthData *out_auth);
+
 int mls_application_content_decode(const uint8_t *group_id, size_t group_id_len,
                                    uint64_t epoch, uint32_t sender_leaf,
                                    const uint8_t *authenticated_data, size_t aad_len,

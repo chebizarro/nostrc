@@ -15,6 +15,7 @@
 #include "test_enroll.h"
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
+#include "commits.h"
 #include <nostr/nip44/nip44.h>
 #include <sodium.h>
 #include <stdio.h>
@@ -137,57 +138,15 @@ create_group_enrolled(Marmot *m, const uint8_t *creator_pk, const char **kps, si
 }
 #define marmot_create_group create_group_enrolled
 
-static int
-test_derive_exporter_convkey(const uint8_t exporter_secret[32],
-                              uint8_t out_convkey[32])
-{
-    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-    if (!ctx) return -1;
-
-    if (!secp256k1_ec_seckey_verify(ctx, exporter_secret)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-
-    secp256k1_keypair keypair;
-    if (!secp256k1_keypair_create(ctx, &keypair, exporter_secret)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-
-    secp256k1_xonly_pubkey xonly;
-    if (!secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-
-    uint8_t pk[32];
-    if (!secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly)) {
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-    secp256k1_context_destroy(ctx);
-
-    int rc = nostr_nip44_convkey(exporter_secret, pk, out_convkey);
-    sodium_memzero(pk, sizeof(pk));
-    return rc;
-}
-
+/* Raw inner JSON (no MLS framing) under the group's real MIP-03 encryption:
+ * only the framing is wrong. */
 static int
 test_encrypt_raw_legacy_payload(const uint8_t exporter_secret[32],
                                 const char *plaintext,
                                 char **out_b64)
 {
-    uint8_t convkey[32];
-    if (test_derive_exporter_convkey(exporter_secret, convkey) != 0)
-        return -1;
-
-    int rc = nostr_nip44_encrypt_v2_with_convkey(convkey,
-                                                  (const uint8_t *)plaintext,
-                                                  strlen(plaintext),
-                                                  out_b64);
-    sodium_memzero(convkey, sizeof(convkey));
-    return rc;
+    return marmot_group_event_encrypt(exporter_secret, (const uint8_t *)plaintext,
+                                      strlen(plaintext), out_b64);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
