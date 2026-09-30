@@ -107,7 +107,7 @@ jobs:
               'groundhog-mls-service', 'groundhog-privacy-mls',
               'groundhog-net', 'groundhog-tls-resumption',
               'groundhog-group-ui', 'groundhog-group-ui-gui',
-              'groundhog-mls-ui', 'groundhog-mls-ui-gui',
+              'groundhog-mls-ui', 'groundhog-mls-ui-gui', 'groundhog-mls-preview-guard',
               'groundhog-conversation-menu', 'groundhog-conversation-menu-gui',
               'groundhog-multi-send',
               'groundhog-media', 'groundhog-blossom', 'groundhog-media-purge', 'groundhog-relay-guard',

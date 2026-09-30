@@ -74,7 +74,9 @@ G_BEGIN_DECLS
  * and nostrc-kzun (the >200-event backlog test); nostrc-dha5 (the 200-event
  * queue) came first. To try the UI before then, configure with
  * -DGROUNDHOG_ENCRYPTED_GROUPS_PREVIEW=ON: CMake defines it to 1 for the
- * executable only, with a warning; never in a release build. */
+ * executable only, with a warning, and refuses it for a release build type,
+ * CPack, a distribution prefix or a packaging environment, and refuses to
+ * install such a build (cmake/GroundhogPreviewGuard.cmake). */
 #ifndef GH_FEATURE_ENCRYPTED_GROUPS
 #define GH_FEATURE_ENCRYPTED_GROUPS 0
 #endif
