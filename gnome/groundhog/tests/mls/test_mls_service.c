@@ -1003,6 +1003,58 @@ create_attempt(App *app, guint invitee, GError **out_error)
   *out_error = wait.error;
 }
 
+static void
+count_notify(guint *count)
+{
+  (*count)++;
+}
+
+/* Proof requests (the kind:450 template) the signer holds unanswered. */
+static guint
+held_proofs(GhTestSigner *signer)
+{
+  guint n = 0;
+  for (guint i = 0; i < signer->held->len; i++) {
+    GDBusMethodInvocation *call = g_ptr_array_index(signer->held, i);
+    const gchar *input = NULL, *account = NULL, *app = NULL;
+    if (!g_str_equal(g_dbus_method_invocation_get_method_name(call), "SignEvent"))
+      continue;
+    g_variant_get(g_dbus_method_invocation_get_parameters(call), "(&s&s&s)", &input, &account,
+                  &app);
+    NostrEvent *event = nostr_event_new();
+    if (nostr_event_deserialize_compact(event, input, NULL) == 1 &&
+        nostr_event_get_kind(event) == 450)
+      n++;
+    nostr_event_free(event);
+  }
+  return n;
+}
+
+typedef struct {
+  GhTestSigner *signer;
+  guint n;
+} ProofWait;
+
+static gboolean
+proofs_held(gpointer data)
+{
+  ProofWait *wait = data;
+  return held_proofs(wait->signer) == wait->n;
+}
+
+#define wait_proofs(signer_, n_) \
+  G_STMT_START { ProofWait pw_ = { (signer_), (n_) }; \
+    spin_until(proofs_held, &pw_, "the proof requests the signer holds"); } G_STMT_END
+
+static GhMlsGroup *
+only_group(App *app)
+{
+  GListModel *groups = G_LIST_MODEL(app->service);
+  g_assert_cmpuint(g_list_model_get_n_items(groups), ==, 1);
+  g_autoptr(GhMlsGroup) group = g_list_model_get_item(groups, 0);
+  return group;   /* the service keeps it */
+}
+
 /* libmarmot 0.10.0: each start enrolls the account proof through the
  * signer (the kind:450 template, never published); until the signer
  * answers nothing that needs the proof is made; a decline is honest. */
@@ -1042,7 +1094,56 @@ test_account_proof_enrollment(void)
   create_attempt(alice, BOB, &error);
   g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NOT_ENROLLED);
   g_clear_error(&error);
+
+  /* A reconnect is not a reason to ask again (review N7): two network flaps
+   * leave the decline standing, with no new proof request (the signer holds
+   * every call, so what was asked can be read; relays still ask for AUTH). */
+  guint changes = 0;
+  gulong watch = g_signal_connect_swapped(alice->service, "notify::identity-state",
+                                          G_CALLBACK(count_notify), &changes);
+  w.signer.hold = TRUE;
+  GhMlsGroup *proven = only_group(alice);
+  for (guint i = 0; i < 2; i++) {
+    set_online(alice, FALSE);
+    set_online(alice, TRUE);
+    wait_live(proven);
+  }
+  drain();
+  g_assert_cmpuint(changes, ==, 0);
+  g_assert_cmpuint(held_proofs(&w.signer), ==, 0);
+  g_assert_cmpint(gh_mls_service_get_identity_state(alice->service), ==,
+                  GH_MLS_IDENTITY_DECLINED);
+  /* An explicit retry asks again, once: declined once more, then allowed. */
+  g_assert_true(gh_mls_service_retry_identity(alice->service, NULL));
+  wait_identity(alice->service, GH_MLS_IDENTITY_WAITING);
+  wait_proofs(&w.signer, 1);
+  gh_test_signer_release_all(&w.signer);
+  wait_identity(alice->service, GH_MLS_IDENTITY_DECLINED);
   w.signer.deny = FALSE;
+  g_assert_true(gh_mls_service_retry_identity(alice->service, NULL));
+  wait_identity(alice->service, GH_MLS_IDENTITY_WAITING);
+  wait_proofs(&w.signer, 1);
+  gh_test_signer_release_all(&w.signer);
+  wait_identity(alice->service, GH_MLS_IDENTITY_ENROLLED);
+  w.signer.hold = FALSE;
+  g_signal_handler_disconnect(alice->service, watch);
+
+  /* A switch while the signer waits: the request dies with the account's
+   * generation; coming back asks once more for the new one. */
+  w.signer.hold = TRUE;
+  app_restart(alice);
+  wait_identity(alice->service, GH_MLS_IDENTITY_WAITING);
+  wait_proofs(&w.signer, 1);
+  g_settings_set_string(alice->settings, "current-npub", npub[STRANGER]);
+  gh_account_controller_refresh(alice->accounts);
+  wait_identity(alice->service, GH_MLS_IDENTITY_NONE);
+  g_settings_set_string(alice->settings, "current-npub", npub[ALICE]);
+  gh_account_controller_refresh(alice->accounts);
+  wait_identity(alice->service, GH_MLS_IDENTITY_WAITING);
+  wait_proofs(&w.signer, 2);
+  w.signer.hold = FALSE;
+  gh_test_signer_release_all(&w.signer);
+  wait_identity(alice->service, GH_MLS_IDENTITY_ENROLLED);
 
   /* The template is local-only: no relay ever saw a kind 450. */
   WireRelay *relays[] = { &w.e, &w.w, &w.x, &w.g };

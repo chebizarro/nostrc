@@ -131,6 +131,8 @@ struct _GhMlsService {
   /* Account proof (libmarmot >= 0.10.0) */
   GhMlsIdentityState identity;
   gboolean identity_busy;
+  guint64 identity_generation;     /* the account generation the state belongs to */
+  GCancellable *identity_cancellable; /* the signer request: per account generation */
 
   /* KeyPackage */
   GhMlsKeyPackageState key_package;
@@ -2734,7 +2736,6 @@ gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
 
 static void key_package_maybe_publish(GhMlsService *self);
 
-#if GH_MLS_SERVICE_ACCOUNT_PROOF
 static void
 identity_set_state(GhMlsService *self, GhMlsIdentityState state)
 {
@@ -2743,7 +2744,6 @@ identity_set_state(GhMlsService *self, GhMlsIdentityState state)
   self->identity = state;
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_IDENTITY_STATE]);
 }
-#endif
 
 /* KeyPackages and new groups need the proof (libmarmot refuses them). */
 static gboolean
@@ -2756,7 +2756,7 @@ identity_ready(GhMlsService *self)
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
 typedef struct {
   GWeakRef service;
-  guint64 run;
+  guint64 generation;
   gchar *template_json;
 } IdentityJob;
 
@@ -2795,14 +2795,17 @@ identity_signed(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) error = NULL;
   g_autofree gchar *signed_json = gh_account_controller_sign_finish(result, &error);
   g_autoptr(GhMlsService) self = g_weak_ref_get(&job->service);
-  if (!self || self->run != job->run || !running(self)) {
+  /* The request belongs to the account generation, not to a connection: a
+   * network flap neither cancels it nor asks again (review N7). */
+  if (!self || self->identity_generation != job->generation) {
     identity_job_free(job);
     return;
   }
   self->identity_busy = FALSE;
   if (!signed_json) {
-    /* Declined (or the signer failed): not asked again until the next start
-     * or generation, so a refusal is not a prompt storm. */
+    /* Declined (or the signer failed): not asked again until the account's
+     * next generation or gh_mls_service_retry_identity(), so a refusal is
+     * not a prompt per reconnect. */
     g_message("Groundhog's encrypted groups wait for the signer: %s", error->message);
     identity_set_state(self, g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
                                ? GH_MLS_IDENTITY_NONE : GH_MLS_IDENTITY_DECLINED);
@@ -2830,7 +2833,7 @@ static void
 identity_enroll(GhMlsService *self)
 {
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
-  if (!running(self) || self->identity_busy || self->identity == GH_MLS_IDENTITY_ENROLLED)
+  if (!running(self) || self->identity_busy || self->identity != GH_MLS_IDENTITY_NONE)
     return;
   if (marmot_has_account_proof(self->marmot, self->account_key)) {
     identity_set_state(self, GH_MLS_IDENTITY_ENROLLED);
@@ -2846,13 +2849,14 @@ identity_enroll(GhMlsService *self)
   }
   IdentityJob *job = g_new0(IdentityJob, 1);
   g_weak_ref_init(&job->service, self);
-  job->run = self->run;
+  job->generation = self->identity_generation;
   job->template_json = g_strdup(template_json);
   free(template_json);
   self->identity_busy = TRUE;
   identity_set_state(self, GH_MLS_IDENTITY_WAITING);
   gh_account_controller_sign_with_cancellable_async(self->accounts, job->template_json,
-                                                    self->cancellable, identity_signed, job);
+                                                    self->identity_cancellable,
+                                                    identity_signed, job);
 #else
   (void)self;
 #endif
@@ -2863,6 +2867,39 @@ gh_mls_service_get_identity_state(GhMlsService *self)
 {
   g_return_val_if_fail(GH_IS_MLS_SERVICE(self), GH_MLS_IDENTITY_NONE);
   return self->identity;
+}
+
+gboolean
+gh_mls_service_retry_identity(GhMlsService *self, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  if (!check_running(self, error))
+    return FALSE;
+  if (self->identity == GH_MLS_IDENTITY_DECLINED || self->identity == GH_MLS_IDENTITY_FAILED)
+    identity_set_state(self, GH_MLS_IDENTITY_NONE);
+  identity_enroll(self);
+  return TRUE;
+}
+
+/* The account generation changed (a switch, or the account activated
+ * again): a pending request dies with the old one, and a decline is asked
+ * again once, for the new one. */
+static void
+identity_new_generation(GhMlsService *self, guint64 generation)
+{
+  if (self->identity_generation == generation)
+    return;
+  if (self->identity_cancellable) {
+    g_cancellable_cancel(self->identity_cancellable);
+    g_clear_object(&self->identity_cancellable);
+  }
+  self->identity_generation = generation;
+  self->identity_busy = FALSE;
+  if (generation)
+    self->identity_cancellable = g_cancellable_new();
+  if (self->identity == GH_MLS_IDENTITY_WAITING || self->identity == GH_MLS_IDENTITY_DECLINED ||
+      self->identity == GH_MLS_IDENTITY_FAILED)
+    identity_set_state(self, GH_MLS_IDENTITY_NONE);
 }
 
 /* ---- KeyPackage (MIP-00) --------------------------------------------------------------- */
@@ -3186,9 +3223,6 @@ stop_generation(GhMlsService *self)
     g_clear_pointer(&self->key_package_publish, gh_relay_publish_unref);
   }
   self->key_package_busy = FALSE;
-  self->identity_busy = FALSE;
-  if (self->identity == GH_MLS_IDENTITY_WAITING)
-    self->identity = GH_MLS_IDENTITY_NONE;   /* the request died with the run */
   g_hash_table_remove_all(self->deliveries);
   g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
                                                     "The account changed; the change stays "
@@ -3221,6 +3255,7 @@ update_activity(GhMlsService *self)
     return;
   /* Nothing of the old generation (or connection) may complete in the new. */
   stop_generation(self);
+  identity_new_generation(self, generation);
   self->generation = generation;
   self->online = online;
   if (!running(self)) {
@@ -3228,8 +3263,6 @@ update_activity(GhMlsService *self)
     return;
   }
   self->cancellable = g_cancellable_new();
-  if (self->identity == GH_MLS_IDENTITY_DECLINED || self->identity == GH_MLS_IDENTITY_FAILED)
-    self->identity = GH_MLS_IDENTITY_NONE;   /* a new generation asks again */
   identity_enroll(self);
   for (guint i = 0; i < self->groups->len; i++)
     group_subscribe(g_ptr_array_index(self->groups, i));
@@ -3407,6 +3440,7 @@ gh_mls_service_dispose(GObject *object)
     if (self->relays_handler)
       g_clear_signal_handler(&self->relays_handler, self->account_relays);
     stop_generation(self);
+    identity_new_generation(self, 0);
     self->generation = 0;
     if (self->rooms)
       gh_store_mls_close(self->rooms);
@@ -3426,6 +3460,7 @@ gh_mls_service_finalize(GObject *object)
     marmot_free(self->marmot);   /* and its storage */
   g_clear_object(&self->rooms);
   g_clear_object(&self->inbox);
+  g_clear_object(&self->identity_cancellable);
   g_clear_object(&self->accounts);
   g_clear_object(&self->policy);
   g_clear_object(&self->conversations);

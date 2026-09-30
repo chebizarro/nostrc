@@ -96,8 +96,10 @@ G_BEGIN_DECLS
  * published), checks it is exactly that event by the account, and hands it
  * to marmot_set_account_proof(). Until then the identity state is WAITING
  * ("Waiting for approval"), no KeyPackage is made and no group created
- * (GH_MLS_SERVICE_ERROR_NOT_ENROLLED); a switch cancels the request, and a
- * declined one is asked again only at the next start or generation. An
+ * (GH_MLS_SERVICE_ERROR_NOT_ENROLLED). The request belongs to the account
+ * generation: a switch cancels it, a network flap does not; a declined one
+ * is asked again only for a new account generation, at the next start, or
+ * through gh_mls_service_retry_identity(). An
  * invitee (or a group member) whose app cannot prove its account is
  * GH_MLS_SERVICE_ERROR_NEEDS_UPDATE.
  *
@@ -270,6 +272,11 @@ Marmot *gh_mls_service_get_marmot(GhMlsService *self);
 GhMlsKeyPackageState gh_mls_service_get_key_package_state(GhMlsService *self);
 /* The account-proof enrollment ("identity-state", notified). */
 GhMlsIdentityState gh_mls_service_get_identity_state(GhMlsService *self);
+/* The user asks again after a decline or failure ("Try Again"): a
+ * declined request is otherwise asked again only when the account's
+ * generation changes, never on a network reconnect. FALSE with
+ * GH_MLS_SERVICE_ERROR_INACTIVE when the service is not running. */
+gboolean gh_mls_service_retry_identity(GhMlsService *self, GError **error);
 /* The id of the KeyPackage event last accepted by a relay, or NULL. */
 const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
 /* Rotates the KeyPackage now (e.g. the user asked); FALSE with
