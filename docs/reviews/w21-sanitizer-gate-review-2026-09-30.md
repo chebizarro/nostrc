@@ -233,3 +233,167 @@ The four changes needed:
 4. Make the job reader reject `env`/step keys it does not reproduce.
 
 `^nostr_subscription_free_async$` can stay, with its comment corrected.
+
+---
+
+# Final pass: branch rebased onto 15954a4f, tip 797b339a
+
+New commits:
+
+- `67dbbdcd` fix(libnostr): a write the relay cannot queue releases its answer channel (libnostr 1.1.1)
+- `cdae6bd7` test(groundhog): drop the `nostr_relay_write` and `write_error` LSan entries
+- `24be6e0b` infra(gate): complete fail-closed filter plus `check-inputs`, job env, the stage runs alone
+- `797b339a` fix(libnostr): answer and free the writes still queued when a relay is freed
+
+## What I ran on 797b339a
+
+| Check | Result |
+|---|---|
+| `check-unsequenced-args.py` | exit 0 |
+| `test-sanitizer-gate.sh` (now with "the input list against ninja") | passed |
+| `test-pre-push.sh` | passed |
+| `test-linux-gate-smoke.sh` | passed |
+| `libnostr/test_relay_write_unsent` under the job's ASAN/UBSAN/LSan options | 5/5 "ok", no report |
+| Real gate, clean tip, run 1 | **falsely blocked**: `groundhog-relay-wire`, `nostr_connection_new` channels (nostrc-vpha) |
+| Real gate, clean tip, run 2 | passed, 48 run |
+| `check-inputs` in both gate runs | "all 844 source inputs of the job's build are under SANITIZER_BUILD_PATHS" |
+| `check-inputs` with `libjson/` removed from the list, same real build graph | exit 1, naming `libjson/CMakeLists.txt`, `libjson/include/nostr_jansson.h`, … |
+| Real gate, planted P2 (Groundhog forgets `go_channel_unref(answer)`) | **blocked**: 10 tests with reports at `nostr_relay_write (relay.c:1580) ← write_thread (gh-relay-gnostr-write.c:48)`, no rerun |
+| The set, `-j2`, 10×, each run holding the gate's `build.lock` exclusive and `tests.lock` (host load average ≈ 20 from other agents) | 9 pass, 1 fail: `groundhog-relay-wire`, `nostr_connection_new`, library-only stack |
+| `groundhog-relay-wire` alone, 20× (same locks) | 0/20 fail |
+| My B4 mutations, rerun | job-level `UBSAN_OPTIONS` now reaches the tests; workflow env and configure-step `CC`/`CFLAGS` are applied; `working-directory`, a job `container`, another `runs-on` and a `$GITHUB_ENV` write are rejected (exit 2, named) |
+
+## Blockers 1–4: all closed
+
+**B1 (suppressions): closed.**
+- `^nostr_relay_write$` and `^write_error$` are gone.
+- My P2 plant, which passed the gate at 61eb2453, now blocks 10 tests.
+- The `free_async` comment is corrected, including the returned-handle blind spot.
+
+**B2 (path filter): closed.**
+- `SANITIZER_BUILD_PATHS` covers every input I listed.
+- `SANITIZER_PATHS` adds the workflow, the Dockerfile and the gate's own scripts.
+- `check-inputs` proves the list against the candidate's real ninja graph, in the gate after every sanitizer build and in the hosted job.
+
+**Is check-inputs sound?** Yes, for what it claims:
+- It unions three views of the graph: `ninja -t inputs <job targets>` (recursive, so the sources of generated files are included), every header in the deps log, and `ninja -t inputs build.ninja` (the configure inputs).
+- It discards generated and system paths, and fails with exit 2 if it finds no Groundhog input, so it cannot pass vacuously.
+- I proved the negative case on the real graph, not only the fake ninja in the test.
+- It does not see run-time-only inputs. None exist in this set: the only programs its tests spawn are the `groundhog` target and the test binary itself.
+- A push that makes a new directory an input must edit a covered build file (Groundhog's or the root CMake, or `cmake/`). So such a push runs the stage, and `check-inputs` then names the new directory.
+
+**B3 (fail closed): closed.** `git diff` runs on its own. On failure the stage runs and prints why. `test-pre-push.sh` covers an unknown remote oid.
+
+**B4 (job env): closed.** Env is applied per phase with Actions' precedence, and every key it does not reproduce is rejected, as tabled above.
+
+## libnostr fixes: correctness and threading
+
+**67dbbdcd (enqueue failure).** Correct.
+- `write_error()` now owns the writer's reference: it sends, frees the Error if the send fails, then closes and unrefs, exactly as `write_operations()` does.
+- The out-of-memory branch no longer drops that reference early. Before, the caller's unref could free the channel under `write_error`'s send, a latent use-after-free.
+- Double close is safe: `go_channel_close` is idempotent under the channel mutex.
+- A buffered send cannot block: capacity 1, and exactly one value is ever sent.
+
+**797b339a (drain at free). It does not race the writer thread.** In `relay_free_impl` the order is:
+
+1. Cancel the connection context.
+2. Close `write_queue`.
+3. Null out and close the connection's channels.
+4. `go_wait_group_wait(&workers)`. `write_operations` calls `go_wait_group_done` as its very last statement, so the writer has exited.
+5. Only then `relay_write_queue_drain()`, then `go_channel_free`.
+
+On the producer side:
+- `nostr_relay_write` after step 2 fails to enqueue and takes the (now fixed) `write_error` path, so nothing new lands in the queue.
+- `go_channel_try_receive` does not check `closed`, so it drains the items still buffered in a closed channel. That is what the drain relies on.
+- The only way to race the drain would be a caller writing through a relay pointer it holds no reference to. That is already a use-after-free of the relay, not something the drain introduces.
+
+The test covers all three paths deterministically and offline: unqueued with the caller waiting, unqueued with the caller gone first (×50), and queued at free (×3). Each path checks the refcount returns to the caller's.
+
+**Non-blocking residue**, all libnostr-only and all rare:
+
+- **R1.** `nostr_subscription_close()` and `nostr_subscription_fire()` receive a `write_err` in their 0-ms select but store it only `if (err)`. `gnostr_subscription_finalize` passes `NULL`, so a received Error leaks. This was hidden by `^write_error$` before; now it would surface as `new_error ← write_error`, a library-only stack. Fix: free it when `err == NULL`.
+- **R2.** `write_error`, the drain and `write_operations` all have the same window: the send succeeds just before the caller closes after its own timeout. The Error then sits in the buffer of a channel whose last unref does not free its items. That is a small race, not a regression.
+- **R3.** `nostr_relay_close()` leaves queued writes for `nostr_relay_free()` to answer. Callers wait their own timeout, 5 s in Groundhog. Answering at close too, once the workers have exited, would be friendlier.
+
+## Locks and the host-build signal
+
+The locks cannot deadlock:
+- **Order.** Each container takes its volume lock (fd 9), then for a build `build.lock` shared (fd 7), which it releases after the build. The smoke stage then takes `tests.lock` (fd 8). The sanitizer stage waits for the host signal while holding only fd 9, then takes fd 7 exclusive, then fd 8.
+- **No cycle.** Nobody holds fd 8 while waiting for fd 7, and fd 9 is per volume.
+- **Exits.**
+  - A failed host build exits the hook, whose `kill` stops the waiting container (`--init`, signal proxy).
+  - A standalone `linux-gate.sh` run has no signal and does not wait.
+- **Remaining risk.** A continuous stream of shared build holders could postpone the exclusive test phase. That would need many concurrent gates: acceptable.
+
+One cost to note: job-level env is also configure env. Changing a job-level sanitizer option therefore restarts the build tree from scratch. It is correct, just slow.
+
+## The false-block rate, and what to do about it
+
+**Measured.** 2 false blocks in 12 clean runs of the set (≈17%). Both were `groundhog-relay-wire` leaking `nostr_connection_new`'s `recv_channel`/`send_channel`.
+
+The stacks are library-only:
+
+```
+go_channel_create ← nostr_connection_new ← nostr_relay_connect ← gnostr_relay_connect ← connect_async_thread ← gio/glib ← asan_thread_start
+```
+
+The leaked objects are Direct leaks of the channels without the connection. That points to a refcount left above zero on some teardown path in libnostr, not merely a thread alive at exit. Alone, the test leaked 0 of 20 times. The author's other class, OpenSSL per-thread RNG/ERR state, is rarer.
+
+**Why landing as-is is not acceptable.** At about one clean push in six blocked, `NOSTRC_SKIP_SANITIZER_GATE=1` becomes habit, or new suppressions creep back. Both undo exactly what this branch is for.
+
+**Why vpha need not be fixed first.** The `nostr_connection_new` leak needs a libnostr teardown investigation. The OpenSSL class is per-thread state of GLib pool threads alive at exit. Neither is small, and neither should hold the gate hostage.
+
+**Recommendation: the library-leak rerun rule, precisely as follows.** It is gate-only; hosted CI stays unchanged and strict.
+
+1. **Hard reports: block, never rerun (as now).** A failed test is hard if its first-run output contains any of:
+   - `ERROR: AddressSanitizer:` (use-after-free, overflow, SEGV, double free, …);
+   - `: runtime error:` (UBSAN);
+   - a `SUMMARY:` that is not LSan's `SUMMARY: AddressSanitizer: <n> byte(s) leaked in <m> allocation(s).`;
+   - `ERROR: LeakSanitizer:` followed by anything other than `detected memory leaks`.
+2. **Parsing an LSan-only failure.**
+   - Split the output into leak records, each from `^(Direct|Indirect) leak of` to the next blank line.
+   - Frame lines are `^\s+#\d+ 0x[0-9a-f]+ (in (\S+) (\S+)|\((\S+)\+0x[0-9a-f]+\))`.
+   - Strip the build's source root (`/work/src/`) from source paths.
+   - A frame is **library** if and only if one of these holds:
+     - (a) its source path starts with `libnostr/`, `libgo/`, `nostr-gobject/` or `libjson/`;
+     - (b) its path contains `/libsanitizer/`;
+     - (c) it has no project source path and its module is under `/lib/` or `/usr/lib/` (glib, gio, libc, libcrypto, libsqlcipher, …).
+   - Every other frame **implicates** the push. That includes any `gnome/groundhog/` path (application or tests), any other project directory (`libmarmot/`, `marmot-gobject/`, `nips/`, `tests/`, …), a project module without a source path, and any line that is not a recognised frame.
+3. **Classification.**
+   - A record is library-only if all its frames are library frames.
+   - A test is a **library leak** if it has at least one record, every record is library-only, and it is not hard.
+   - Zero parsed records, a truncated record, or any parse surprise makes the test hard. Parsing fails closed.
+4. **Decision.**
+   - If any failed test is hard, or has an implicating record, block with no rerun, as now.
+   - If more than 2 distinct tests are library leaks in one run, block: that is a regression, not a race.
+   - Otherwise, rerun the library-leak tests (and any report-free failures, as now) once, serially, under the same locks and env. Any failure in the rerun, of any kind, blocks.
+5. **Visibility.**
+   - A pass after such a rerun prints `!! LIBRARY LEAK RERUN (nostrc-vpha): <test>`.
+   - It also prints the first run's whole output and the first three non-allocator frames of each record.
+   - It records the rerun in `gate-history/reruns` tagged `lib-leak`, and reports "needed a library-leak rerun in N of the last 20 gates".
+6. **Sunset.** The allow-list lives in one named constant in `linux-gate-smoke.sh`, referenced from AGENTS.md and nostrc-vpha. It is removed when vpha closes.
+7. **Tests in `test-linux-gate-smoke.sh`:**
+   - a library-only record reruns and passes;
+   - the same leaking again in the rerun blocks;
+   - a record with a `gnome/groundhog/` frame blocks without a rerun;
+   - a library-only record beside a Groundhog record blocks;
+   - library-only leaks plus a UAF report block;
+   - a `libmarmot/` frame blocks;
+   - an unsymbolized project-module frame blocks;
+   - an LSan header with no parsable record blocks;
+   - three library-leak tests block.
+
+**What the rule preserves and what it gives up.**
+- A **deterministic** leak reproduces in the rerun and still blocks, whatever its frames. So a Groundhog bug whose leak is allocated on a library thread (an object handed to a Groundhog callback and never freed) is still caught.
+- What it gives up is only a leak that is both racy and library-only, which is the vpha class. CI, which never reruns, still reports those.
+- The OpenSSL class keeps blocking, deliberately: its stacks run through Groundhog's store (`… sqlcipher_codec_key_derive … sqlite3_finalize ← store_query_text gh-store.c:925 ← … gh_store_open_with_key ← open_worker gh-account-store.c:358`), so the rule sees a Groundhog frame. It is rare. Fix it under vpha rather than widening the rule.
+
+**Expected rate.** Roughly 17% × P(`relay-wire` leaks again alone): 0 of 20 here, so well under 1%, plus the rare OpenSSL class.
+
+Separately: hosted `groundhog-sanitizers` runs the same set at the same `-j2` without reruns, so it should show the vpha flake too. That argues for giving nostrc-vpha real priority. I have not modified beads.
+
+## Final verdict
+
+All four original blockers are closed, and the libnostr fixes are correct and race-free with the writer thread. One blocking item remains: as it stands, the sanitizer stage falsely blocks about one clean push in six (nostrc-vpha). Land it together with the library-leak rerun rule specified above. The rule is small, keeps every deterministic leak blocking, and leaves hosted CI strict. Fixing nostrc-vpha first is not required.
+
+**REQUEST CHANGES**
