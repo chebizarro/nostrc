@@ -1009,7 +1009,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, Held
   g_autofree gchar *envelope_id = NULL;
   if (envelope && nostr_event_deserialize_compact(envelope, event_json, NULL) == 1) {
     created_at = nostr_event_get_created_at(envelope);
-    envelope_id = g_strdup(nostr_event_get_id(envelope));
+    {
+      char *raw_id = nostr_event_get_id(envelope); /* malloc'd; nostrc-kdxe */
+      envelope_id = raw_id ? g_strdup(raw_id) : NULL;
+      free(raw_id);
+    }
   }
   if (envelope)
     nostr_event_free(envelope);

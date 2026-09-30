@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "gh-mls-key-packages.h"
 
 #include "gh-auth-policy.h"
@@ -160,7 +161,11 @@ finish(GTask *task)
   result->event_json = g_strdup(g_ptr_array_index(lookup->candidates, index));
   NostrEvent *event = nostr_event_new();
   if (event && nostr_event_deserialize_compact(event, result->event_json, NULL) == 1)
-    result->event_id = g_strdup(nostr_event_get_id(event));
+    {
+      char *raw_id = nostr_event_get_id(event); /* malloc'd; nostrc-kdxe */
+      result->event_id = raw_id ? g_strdup(raw_id) : NULL;
+      free(raw_id);
+    }
   if (event)
     nostr_event_free(event);
   result->sources = lookup->sources;
