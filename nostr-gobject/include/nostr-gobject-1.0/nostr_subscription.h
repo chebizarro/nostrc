@@ -131,6 +131,11 @@ void gnostr_subscription_close(GNostrSubscription *self);
  * and "closed" are emitted in the order the relay sent them. May be called at
  * any time; it applies to events queued afterwards. (nostrc-dha5)
  *
+ * Lossless mode still has a hard ceiling, far above any legitimate backfill
+ * (see gnostr_subscription_set_backlog_limit()): a relay that outpaces the
+ * main loop past it ends the subscription with an explicit
+ * #GNOSTR_SUBSCRIPTION_OVERFLOW_REASON "closed", never a silent drop.
+ *
  * Since: 2.1
  */
 void gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossless);
@@ -145,6 +150,95 @@ void gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossles
  * Since: 2.1
  */
 gboolean gnostr_subscription_get_lossless(GNostrSubscription *self);
+
+/**
+ * GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS:
+ *
+ * The default ceiling on events waiting for the main loop in lossless mode.
+ *
+ * Since: 2.2
+ */
+#define GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS 100000u
+
+/**
+ * GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_BYTES:
+ *
+ * The default ceiling on the serialized size of the events waiting for the
+ * main loop in lossless mode (64 MiB).
+ *
+ * Since: 2.2
+ */
+#define GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_BYTES ((guint64)64 * 1024 * 1024)
+
+/**
+ * GNOSTR_SUBSCRIPTION_OVERFLOW_PREFIX:
+ *
+ * The machine-readable prefix (NIP-01 CLOSED style) of the reason a
+ * subscription reports when its backlog ceiling ended it. A relay never
+ * sends it; see #GNOSTR_SUBSCRIPTION_OVERFLOW_REASON.
+ *
+ * Since: 2.2
+ */
+#define GNOSTR_SUBSCRIPTION_OVERFLOW_PREFIX "overflow:"
+
+/**
+ * GNOSTR_SUBSCRIPTION_OVERFLOW_REASON:
+ *
+ * The "closed" reason of a lossless subscription whose backlog ceiling was
+ * reached (nostrc-5rfp).
+ *
+ * Since: 2.2
+ */
+#define GNOSTR_SUBSCRIPTION_OVERFLOW_REASON \
+    GNOSTR_SUBSCRIPTION_OVERFLOW_PREFIX " event backlog exceeded the subscription's limit"
+
+/**
+ * gnostr_subscription_set_backlog_limit:
+ * @self: a #GNostrSubscription
+ * @max_events: most events that may wait for the main loop, or 0 for
+ *   #GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS
+ * @max_bytes: most bytes of serialized event JSON that may wait, or 0 for
+ *   #GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_BYTES
+ *
+ * The hard ceiling of lossless mode (nostrc-5rfp). An event that would take
+ * the backlog past either limit is not queued. Instead the subscription
+ * stops reading, sends CLOSE to the relay, logs a warning, and queues a
+ * "closed" with the reason #GNOSTR_SUBSCRIPTION_OVERFLOW_REASON. That
+ * "closed" is emitted in order, after every event queued before it, and
+ * nothing follows it: the handler knows exactly what it received and that
+ * the rest of the answer is missing, and can subscribe again (for instance
+ * paging older events with `until`). Bounded mode is not affected (it keeps
+ * at most 200 events). May be called at any time; it applies to events
+ * queued afterwards.
+ *
+ * Since: 2.2
+ */
+void gnostr_subscription_set_backlog_limit(GNostrSubscription *self,
+                                           guint max_events, guint64 max_bytes);
+
+/**
+ * gnostr_subscription_get_backlog_limit:
+ * @self: a #GNostrSubscription
+ * @max_events: (out) (optional): the event ceiling
+ * @max_bytes: (out) (optional): the byte ceiling
+ *
+ * See gnostr_subscription_set_backlog_limit().
+ *
+ * Since: 2.2
+ */
+void gnostr_subscription_get_backlog_limit(GNostrSubscription *self,
+                                           guint *max_events, guint64 *max_bytes);
+
+/**
+ * gnostr_subscription_get_overflowed:
+ * @self: a #GNostrSubscription
+ *
+ * Returns: whether the backlog ceiling ended @self (its "closed" carries
+ *   #GNOSTR_SUBSCRIPTION_OVERFLOW_REASON, or is still queued)
+ *
+ * Since: 2.2
+ */
+gboolean gnostr_subscription_get_overflowed(GNostrSubscription *self);
 
 /* --- Property Accessors --- */
 

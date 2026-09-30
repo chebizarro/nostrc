@@ -13,7 +13,7 @@ files already declare a version.
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 1.1.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.1.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 2.2.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.10.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.4.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
@@ -111,6 +111,9 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same (the negentropy client's AUTH callback context is refcounted and its handshake channel referenced by the relay; W20 review L1) | gnostr | 0.1.0 | No bump (unreleased): the fix ships in 0.1.0. |
 | libmarmot 0.10.0: additive `marmot_key_package_event_has_account_proof()` (whether a KeyPackage can be invited outside legacy mode, before any Commit) for Groundhog's encrypted-group UI (nostrc-9xf5, qp24.13 part 2) | libmarmot | 0.10.0 | No further bump: additive API folded into unreleased 0.10.0. |
 | same | groundhog | 0.11.1 | No bump: the encrypted-group UI (New Group's encrypted page, invitations, Group Info, the composer, the conversation surfaces) ships behind GH_FEATURE_ENCRYPTED_GROUPS=0, so no user-visible change until nostrc-5rfp, nostrc-cpwf and nostrc-kzun close and the flag is flipped. |
+| nostr-gobject 2.1.0 -> 2.2.0 (MINOR: lossless GNostrSubscription gets a hard backlog ceiling, 100,000 events or 64 MiB of queued JSON by default; `GNostrSubscription:max-backlog-events`, `:max-backlog-bytes`, `gnostr_subscription_set_backlog_limit()` / `_get_backlog_limit()`, `gnostr_subscription_get_overflowed()`, `GNOSTR_SUBSCRIPTION_OVERFLOW_PREFIX` / `_REASON` / `_DEFAULT_MAX_BACKLOG_*`; reaching it stops reading, sends CLOSE and emits an in-order "closed" with the overflow reason instead of growing without bound; nostrc-5rfp) | nostr-gobject | 2.2.0 | MINOR: new public API. Behaviour change only for a lossless subscription whose main loop falls more than the ceiling behind (it used to grow until OOM). Bounded mode and GNostrPool subscriptions are unchanged. |
+| same | groundhog | 0.11.1 | No further bump: folded into the unreleased PATCH 0.11.1. GhRelayScope reports an overflow CLOSED like any other and re-issues that REQ once per connection (`gh_relay_closed_is_overflow()`, internal). |
+| same | gnostr | 0.1.0 | No bump: it subscribes through GNostrPool (bounded mode), which the ceiling does not affect. |
 
 ## Maintenance
 

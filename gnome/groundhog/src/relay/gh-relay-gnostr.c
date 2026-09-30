@@ -61,14 +61,19 @@ on_eose(GNostrSubscription *subscription, gpointer data)
     gh_relay_scope_eose(handle->scope, handle->url);
 }
 
+/* A relay's CLOSED, or the subscription's own backlog ceiling (nostrc-5rfp),
+ * reported with the scope's overflow prefix whatever GNostrSubscription's
+ * wording. */
 static void
 on_closed(GNostrSubscription *subscription, const gchar *reason, gpointer data)
 {
-  (void)subscription;
   GhGnostrHandle *handle = data;
-  if (!handle->closed)
-    gh_relay_scope_notice(handle->scope, handle->url,
-                           GH_RELAY_NOTICE_CLOSED, NULL, FALSE, reason);
+  if (handle->closed)
+    return;
+  if (gnostr_subscription_get_overflowed(subscription))
+    reason = GH_RELAY_CLOSED_OVERFLOW_PREFIX " too many events waiting to be read";
+  gh_relay_scope_notice(handle->scope, handle->url,
+                         GH_RELAY_NOTICE_CLOSED, NULL, FALSE, reason);
 }
 
 static void
@@ -149,7 +154,9 @@ ensure_subscription(GhGnostrHandle *handle)
     return;
   }
   /* The scope keeps only what "event" hands it; no event may be dropped
-   * (nostrc-dha5). Lossless is the default; say so. */
+   * (nostrc-dha5). Lossless is the default; say so. Its backlog ceiling
+   * (the default) ends a runaway REQ with an overflow CLOSED instead of
+   * growing without bound (nostrc-5rfp; see gh-relay-scope.h). */
   gnostr_subscription_set_lossless(handle->subscription, TRUE);
   g_signal_connect(handle->subscription, "event", G_CALLBACK(on_event), handle);
   g_signal_connect(handle->subscription, "eose", G_CALLBACK(on_eose), handle);

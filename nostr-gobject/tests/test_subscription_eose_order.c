@@ -22,6 +22,12 @@
  * order, although the main loop is not run until all of them are queued; in
  * bounded mode (Gnostr) the newest 200 do, still in order, then EOSE.
  *
+ * nostrc-5rfp: lossless mode's hard ceiling. A backfill exactly at the
+ * event ceiling still arrives complete; a flood past the event ceiling, or
+ * past the byte ceiling, ends the subscription: the events queued before it
+ * are emitted in order, then "closed" with the overflow reason (no EOSE),
+ * and the relay receives a CLOSE.
+ *
  * SPDX-License-Identifier: MIT
  */
 #include <nostr-gobject-1.0/nostr_relay.h>
@@ -122,6 +128,7 @@ typedef struct {
   GMutex lock;
   GCond ready;
   guint reqs;             /* atomic */
+  guint closes;           /* atomic: CLOSE frames received */
 } BurstRelay;
 
 /* The subscription id of a ["REQ","<id>",...] frame, or NULL. */
@@ -149,6 +156,8 @@ on_relay_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type
   const gchar *raw = g_bytes_get_data(message, &len);
   g_autofree gchar *text = g_strndup(raw, len);
   g_autofree gchar *sub_id = req_sub_id(text);
+  if (g_str_has_prefix(text, "[\"CLOSE\""))
+    g_atomic_int_inc(&relay->closes);
   if (!sub_id)
     return; /* CLOSE and anything else */
   g_atomic_int_inc(&relay->reqs);
@@ -339,6 +348,8 @@ typedef struct {
   gboolean eose;
   guint events_at_eose;
   gboolean closed;
+  gchar *closed_reason;
+  guint events_at_close;
 } Backfill;
 
 static void
@@ -361,23 +372,21 @@ on_backfill_eose(GNostrSubscription *sub G_GNUC_UNUSED, gpointer data)
 }
 
 static void
-on_backfill_closed(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *reason G_GNUC_UNUSED,
+on_backfill_closed(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *reason,
                    gpointer data)
 {
-  ((Backfill *)data)->closed = TRUE;
+  Backfill *b = data;
+  if (!b->closed) {
+    b->closed_reason = g_strdup(reason);
+    b->events_at_close = b->indices->len;
+  }
+  b->closed = TRUE;
 }
 
-/* Fires a REQ answered by N_BACKFILL stored events and EOSE, keeps the main
- * loop still until the monitor thread has queued all of it (so the queue in
- * front of the main loop is far over the bound), then runs the main loop
- * until EOSE. Returns the emitted indices. */
-static GArray *
-run_backfill(gboolean lossless, guint expect_queued)
+static GNostrRelay *
+connect_relay(BurstRelay *server)
 {
-  BurstRelay server = { .stored = stored_events_n(N_BACKFILL) };
-  relay_start(&server);
-
-  GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url", server.url, NULL);
+  GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url", server->url, NULL);
   nostr_relay_set_auto_reconnect(gnostr_relay_get_core_relay(relay), false);
   ConnectWait cw = { .loop = g_main_loop_new(NULL, FALSE) };
   gnostr_relay_connect_async(relay, NULL, on_connected, &cw);
@@ -385,12 +394,27 @@ run_backfill(gboolean lossless, guint expect_queued)
   g_main_loop_unref(cw.loop);
   g_assert_no_error(cw.error);
   g_assert_true(cw.ok);
+  return relay;
+}
+
+/* Fires a REQ answered by N_BACKFILL stored events and EOSE, keeps the main
+ * loop still until the monitor thread has queued all of it (so the queue in
+ * front of the main loop is far over the bound), then runs the main loop
+ * until EOSE. Returns the emitted indices. */
+static GArray *
+run_backfill(gboolean lossless, guint max_events, guint expect_queued)
+{
+  BurstRelay server = { .stored = stored_events_n(N_BACKFILL) };
+  relay_start(&server);
+  GNostrRelay *relay = connect_relay(&server);
 
   Backfill b = { .indices = g_array_new(FALSE, FALSE, sizeof(guint)) };
   GNostrSubscription *sub = gnostr_subscription_new(relay, kind1_filters());
   g_assert_nonnull(sub);
   g_assert_true(gnostr_subscription_get_lossless(sub)); /* the default */
   gnostr_subscription_set_lossless(sub, lossless);
+  if (max_events)
+    gnostr_subscription_set_backlog_limit(sub, max_events, 0);
   g_signal_connect(sub, "event", G_CALLBACK(on_backfill_event), &b);
   g_signal_connect(sub, "eose", G_CALLBACK(on_backfill_eose), &b);
   g_signal_connect(sub, "closed", G_CALLBACK(on_backfill_closed), &b);
@@ -421,6 +445,7 @@ run_backfill(gboolean lossless, guint expect_queued)
     g_source_remove(bound);
   g_assert_false(timed_out);
   g_assert_false(b.closed);
+  g_assert_false(gnostr_subscription_get_overflowed(sub));
   g_assert_cmpuint(b.events_at_eose, ==, b.indices->len); /* nothing after EOSE */
 
   g_signal_handlers_disconnect_by_data(sub, &b);
@@ -437,18 +462,136 @@ run_backfill(gboolean lossless, guint expect_queued)
 static void
 test_lossless_backfill_complete(void)
 {
-  GArray *indices = run_backfill(TRUE, N_BACKFILL);
+  guint events = 0;
+  guint64 bytes = 0;
+  GNostrSubscription *probe = g_object_new(GNOSTR_TYPE_SUBSCRIPTION, NULL);
+  gnostr_subscription_get_backlog_limit(probe, &events, &bytes);
+  g_assert_cmpuint(events, ==, GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS);
+  g_assert_cmpuint(bytes, ==, GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_BYTES);
+  g_object_unref(probe);
+
+  GArray *indices = run_backfill(TRUE, 0, N_BACKFILL);
   g_assert_cmpuint(indices->len, ==, N_BACKFILL);
   for (guint i = 0; i < indices->len; i++)
     g_assert_cmpuint(g_array_index(indices, guint, i), ==, i);
   g_array_unref(indices);
 }
 
+/* nostrc-5rfp: a legitimate backfill that fills the backlog exactly up to
+ * the event ceiling is not cut: all 1,000 events, then EOSE. */
+static void
+test_lossless_backfill_at_ceiling(void)
+{
+  GArray *indices = run_backfill(TRUE, N_BACKFILL, N_BACKFILL);
+  g_assert_cmpuint(indices->len, ==, N_BACKFILL);
+  for (guint i = 0; i < indices->len; i++)
+    g_assert_cmpuint(g_array_index(indices, guint, i), ==, i);
+  g_array_unref(indices);
+}
+
+/* nostrc-5rfp: a flood past the ceiling while the main loop does not run.
+ * Returns how many events were emitted before the explicit close. */
+static guint
+run_flood(guint max_events, guint64 max_bytes)
+{
+  BurstRelay server = { .stored = stored_events_n(N_BACKFILL) };
+  relay_start(&server);
+  GNostrRelay *relay = connect_relay(&server);
+
+  Backfill b = { .indices = g_array_new(FALSE, FALSE, sizeof(guint)) };
+  GNostrSubscription *sub = gnostr_subscription_new(relay, kind1_filters());
+  g_assert_nonnull(sub);
+  gnostr_subscription_set_backlog_limit(sub, max_events, max_bytes);
+  g_signal_connect(sub, "event", G_CALLBACK(on_backfill_event), &b);
+  g_signal_connect(sub, "eose", G_CALLBACK(on_backfill_eose), &b);
+  g_signal_connect(sub, "closed", G_CALLBACK(on_backfill_closed), &b);
+  g_test_expect_message("gnostr-subscription", G_LOG_LEVEL_WARNING, "*over its limit*");
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gnostr_subscription_fire(sub, &error));
+  g_assert_no_error(error);
+
+  /* The main loop does not run: the backlog grows until the ceiling. */
+  gint64 deadline = g_get_monotonic_time() + WAIT_BOUND_S * G_USEC_PER_SEC;
+  while (!gnostr_subscription_get_overflowed(sub) && g_get_monotonic_time() < deadline)
+    g_usleep(1000);
+  g_assert_true(gnostr_subscription_get_overflowed(sub));
+  gboolean eose_queued = TRUE;
+  guint queued = gnostr_subscription_test_queued(sub, &eose_queued);
+  g_assert_false(eose_queued);   /* the flood never reached its EOSE */
+  g_assert_cmpuint(queued, >, 0);
+  g_assert_cmpuint(queued, <, N_BACKFILL);
+  if (!max_bytes)   /* the event ceiling alone */
+    g_assert_cmpuint(queued, ==, max_events);
+
+  /* The relay is asked to stop sending, before the main loop runs. */
+  while (g_atomic_int_get(&server.closes) == 0 && g_get_monotonic_time() < deadline)
+    g_usleep(1000);
+  g_assert_cmpuint(g_atomic_int_get(&server.closes), ==, 1);
+
+  gboolean timed_out = FALSE;
+  guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+  while (!b.closed && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!timed_out)
+    g_source_remove(bound);
+  g_assert_false(timed_out);
+  g_test_assert_expected_messages();
+
+  /* Every queued event, in order, then the explicit close; no EOSE. */
+  g_assert_cmpstr(b.closed_reason, ==, GNOSTR_SUBSCRIPTION_OVERFLOW_REASON);
+  g_assert_true(g_str_has_prefix(b.closed_reason, GNOSTR_SUBSCRIPTION_OVERFLOW_PREFIX));
+  g_assert_false(b.eose);
+  g_assert_cmpuint(b.events_at_close, ==, queued);
+  g_assert_cmpuint(b.indices->len, ==, queued);
+  for (guint i = 0; i < b.indices->len; i++)
+    g_assert_cmpuint(g_array_index(b.indices, guint, i), ==, i);
+  g_assert_cmpint(gnostr_subscription_get_state(sub), ==, GNOSTR_SUBSCRIPTION_STATE_CLOSED);
+
+  /* Nothing follows the close, even with the main loop running a while. */
+  gboolean settled = FALSE;
+  bound = g_timeout_add(200, on_bound, &settled);
+  while (!settled)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_cmpuint(b.indices->len, ==, queued);
+  g_assert_false(b.eose);
+
+  /* Closing again sends no second CLOSE. */
+  gnostr_subscription_close(sub);
+  g_assert_cmpuint(g_atomic_int_get(&server.closes), ==, 1);
+
+  g_signal_handlers_disconnect_by_data(sub, &b);
+  g_object_unref(sub);
+  gnostr_relay_disconnect(relay);
+  g_object_unref(relay);
+  relay_stop(&server);
+  g_ptr_array_unref(server.stored);
+  g_array_unref(b.indices);
+  g_free(b.closed_reason);
+  return queued;
+}
+
+static void
+test_lossless_flood_event_ceiling(void)
+{
+  g_assert_cmpuint(run_flood(300, 0), ==, 300);
+}
+
+/* The byte ceiling alone: about 100 events' worth of JSON. */
+static void
+test_lossless_flood_byte_ceiling(void)
+{
+  g_autoptr(GPtrArray) sample = stored_events_n(1);
+  guint64 one = strlen(g_ptr_array_index(sample, 0));
+  guint emitted = run_flood(G_MAXUINT, 100 * one);
+  g_assert_cmpuint(emitted, >=, 90);
+  g_assert_cmpuint(emitted, <=, 110);
+}
+
 /* Gnostr's case: the queue stays bounded, keeps the newest events, in order. */
 static void
 test_bounded_backfill_keeps_newest(void)
 {
-  GArray *indices = run_backfill(FALSE, BOUNDED_CAPACITY);
+  GArray *indices = run_backfill(FALSE, 0, BOUNDED_CAPACITY);
   g_assert_cmpuint(indices->len, ==, BOUNDED_CAPACITY);
   for (guint i = 0; i < indices->len; i++)
     g_assert_cmpuint(g_array_index(indices, guint, i), ==, N_BACKFILL - BOUNDED_CAPACITY + i);
@@ -463,6 +606,12 @@ main(int argc, char **argv)
                   test_stored_events_precede_eose);
   g_test_add_func("/nostr-gobject/subscription/lossless-backfill-complete",
                   test_lossless_backfill_complete);
+  g_test_add_func("/nostr-gobject/subscription/lossless-backfill-at-ceiling",
+                  test_lossless_backfill_at_ceiling);
+  g_test_add_func("/nostr-gobject/subscription/lossless-flood-event-ceiling",
+                  test_lossless_flood_event_ceiling);
+  g_test_add_func("/nostr-gobject/subscription/lossless-flood-byte-ceiling",
+                  test_lossless_flood_byte_ceiling);
   g_test_add_func("/nostr-gobject/subscription/bounded-backfill-keeps-newest",
                   test_bounded_backfill_keeps_newest);
   return g_test_run();

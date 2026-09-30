@@ -34,6 +34,7 @@
 #endif
 
 #include <glib.h>
+#include <string.h>
 
 #ifdef GNOSTR_TESTING
 #include "nostr_subscription_test_hooks.h"
@@ -46,6 +47,8 @@ enum {
     PROP_ACTIVE,
     PROP_STATE,
     PROP_LOSSLESS,
+    PROP_MAX_BACKLOG_EVENTS,
+    PROP_MAX_BACKLOG_BYTES,
     N_PROPERTIES
 };
 
@@ -105,6 +108,13 @@ struct _GNostrSubscription {
     gboolean event_idle_scheduled;        /* TRUE while drain idle is pending */
     gboolean lossless;                    /* never drop events (nostrc-dha5);
                                            * under event_queue_mutex */
+    /* Lossless mode's hard ceiling (nostrc-5rfp), under event_queue_mutex:
+     * reaching it ends the subscription with an explicit overflow CLOSED. */
+    guint max_backlog_events;
+    guint64 max_backlog_bytes;
+    guint64 queued_bytes;                 /* JSON bytes of the queued events */
+    gboolean overflowed;                  /* the ceiling ended it; nothing more is queued */
+    gint core_close_sent;                 /* atomic: CLOSE sent to the relay */
 };
 
 G_DEFINE_TYPE(GNostrSubscription, gnostr_subscription, G_TYPE_OBJECT)
@@ -224,8 +234,10 @@ drain_event_queue_on_main(gpointer data)
             return G_SOURCE_CONTINUE; /* yield to the main loop */
         }
         SubItem *item = g_ptr_array_steal_index(self->event_queue, 0);
-        if (item->kind == SUB_ITEM_EVENT)
+        if (item->kind == SUB_ITEM_EVENT) {
             self->queued_events--;
+            self->queued_bytes -= strlen(item->text) + 1;
+        }
         g_mutex_unlock(&self->event_queue_mutex);
 
         emit_item(self, item);
@@ -239,11 +251,57 @@ drain_event_queue_destroy(gpointer data)
     g_object_unref(GNOSTR_SUBSCRIPTION(data));
 }
 
-/* Appends @item to the ordered queue (monitor thread). */
+/* Sends CLOSE for the core subscription once, whichever of the overflow
+ * path (monitor thread) and gnostr_subscription_close() gets there first.
+ * nostr_subscription_close() only queues the frame on the relay's write
+ * channel and never blocks. */
 static void
+send_core_close(GNostrSubscription *self, NostrSubscription *sub)
+{
+    if (sub && g_atomic_int_compare_and_exchange(&self->core_close_sent, 0, 1))
+        nostr_subscription_close(sub, NULL);
+}
+
+/* Appends @item to the ordered queue (monitor thread).  Returns FALSE once
+ * the backlog ceiling has ended the subscription (nostrc-5rfp): @item was
+ * not queued (it is freed), and the monitor must stop reading. */
+static gboolean
 queue_item_for_main(GNostrSubscription *self, SubItem *item)
 {
     g_mutex_lock(&self->event_queue_mutex);
+
+    /* After an overflow the queued CLOSED is the last item: whatever the
+     * relay sent later is covered by it. */
+    if (self->overflowed) {
+        g_mutex_unlock(&self->event_queue_mutex);
+        sub_item_free(item);
+        return FALSE;
+    }
+
+    if (item->kind == SUB_ITEM_EVENT) {
+        gsize bytes = strlen(item->text) + 1;
+        /* nostrc-5rfp: lossless mode is unbounded only up to a ceiling far
+         * above any legitimate backfill. A relay that outpaces the main loop
+         * past it would otherwise grow the process until it is killed; the
+         * subscription ends instead, with an explicit CLOSED queued behind the
+         * events already waiting, so nothing is lost silently. */
+        if (self->lossless &&
+            (self->queued_events >= self->max_backlog_events ||
+             self->queued_bytes + bytes > self->max_backlog_bytes)) {
+            self->overflowed = TRUE;
+            g_warning("subscription %s on %s: %u events (%" G_GUINT64_FORMAT
+                      " bytes) wait for the main loop, over its limit of %u events or %"
+                      G_GUINT64_FORMAT " bytes; closing it",
+                      self->subscription ? nostr_subscription_get_id_const(self->subscription) : "?",
+                      self->relay ? gnostr_relay_get_url(self->relay) : "?",
+                      self->queued_events, self->queued_bytes,
+                      self->max_backlog_events, self->max_backlog_bytes);
+            sub_item_free(item);
+            item = g_new0(SubItem, 1);
+            item->kind = SUB_ITEM_CLOSED;
+            item->text = g_strdup(GNOSTR_SUBSCRIPTION_OVERFLOW_REASON);
+        }
+    }
 
     if (item->kind == SUB_ITEM_EVENT) {
         /* nostrc-75o3: in bounded mode, drop the oldest *event* when at
@@ -262,12 +320,16 @@ queue_item_for_main(GNostrSubscription *self, SubItem *item)
                 i++;
             if (i == self->event_queue->len)
                 break; /* unreachable: queued_events counts events in the queue */
-            sub_item_free(g_ptr_array_steal_index(self->event_queue, i));
+            SubItem *dropped = g_ptr_array_steal_index(self->event_queue, i);
+            self->queued_bytes -= strlen(dropped->text) + 1;
+            sub_item_free(dropped);
             self->queued_events--;
         }
         self->queued_events++;
+        self->queued_bytes += strlen(item->text) + 1;
     }
 
+    gboolean overflowed = self->overflowed;
     g_ptr_array_add(self->event_queue, item);
     if (!self->event_idle_scheduled) {
         self->event_idle_scheduled = TRUE;
@@ -277,32 +339,36 @@ queue_item_for_main(GNostrSubscription *self, SubItem *item)
                         drain_event_queue_destroy);
     }
     g_mutex_unlock(&self->event_queue_mutex);
+    return !overflowed;
 }
 
-static void
+/* FALSE once the backlog ceiling ended the subscription. */
+static gboolean
 queue_event_for_main(GNostrSubscription *self, NostrEvent *ev)
 {
-    if (!ev) return;
+    if (!ev) return TRUE;
     char *json = nostr_event_serialize(ev);
     nostr_event_free(ev);
-    if (!json) return;
+    if (!json) return TRUE;
 
     SubItem *item = g_new(SubItem, 1);
     item->kind = SUB_ITEM_EVENT;
     item->text = json; /* g_free-compatible, as before */
-    queue_item_for_main(self, item);
+    return queue_item_for_main(self, item);
 }
 
-/* Moves every event already in the core events channel into the queue. */
-static void
+/* Moves every event already in the core events channel into the queue;
+ * FALSE once the backlog ceiling ended the subscription. */
+static gboolean
 queue_pending_events(GNostrSubscription *self, GoChannel *ch_events)
 {
     void *msg = NULL;
     while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-        if (msg)
-            queue_event_for_main(self, (NostrEvent *)msg);
+        if (msg && !queue_event_for_main(self, (NostrEvent *)msg))
+            return FALSE;
         msg = NULL;
     }
+    return TRUE;
 }
 
 /* Queues an EOSE (or CLOSED) received from the core channels.
@@ -315,13 +381,14 @@ queue_pending_events(GNostrSubscription *self, GoChannel *ch_events)
  * puts all of them ahead of the marker.  An event that arrived just after
  * the EOSE may also be drained ahead of it, which is harmless: it can only
  * make the stored set look larger, never smaller. */
-static void
+static gboolean
 queue_eose_for_main(GNostrSubscription *self, GoChannel *ch_events)
 {
-    queue_pending_events(self, ch_events);
+    if (!queue_pending_events(self, ch_events))
+        return FALSE;
     SubItem *item = g_new0(SubItem, 1);
     item->kind = SUB_ITEM_EOSE;
-    queue_item_for_main(self, item);
+    return queue_item_for_main(self, item);
 }
 
 /* A CLOSED ends the core subscription: queue the events before it and any
@@ -331,14 +398,19 @@ static void
 queue_closed_for_main(GNostrSubscription *self, GoChannel *ch_events,
                       GoChannel *ch_eose, char *reason)
 {
-    while (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
-        queue_eose_for_main(self, ch_events);
-    queue_pending_events(self, ch_events);
+    gboolean open = TRUE;
+    while (open && ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
+        open = queue_eose_for_main(self, ch_events);
+    if (open)
+        open = queue_pending_events(self, ch_events);
     SubItem *item = g_new0(SubItem, 1);
     item->kind = SUB_ITEM_CLOSED;
     item->text = reason ? g_strdup(reason) : NULL;
     free(reason); /* strdup'd by nostr_subscription_dispatch_closed */
-    queue_item_for_main(self, item);
+    if (open)
+        queue_item_for_main(self, item);
+    else
+        sub_item_free(item);
 }
 
 /* --- Monitor thread --- */
@@ -392,12 +464,13 @@ subscription_monitor_thread(gpointer data)
         if (sel.selected_case < 0)
             continue; /* timeout: re-check monitor_running */
 
+        gboolean open = TRUE;
         switch (case_kinds[sel.selected_case]) {
         case CASE_EVENTS:
-            queue_event_for_main(self, (NostrEvent *)selected_event);
+            open = queue_event_for_main(self, (NostrEvent *)selected_event);
             break;
         case CASE_EOSE:
-            queue_eose_for_main(self, ch_events);
+            open = queue_eose_for_main(self, ch_events);
             break;
         case CASE_CLOSED:
             queue_closed_for_main(self, ch_events, ch_eose, (char *)selected_reason);
@@ -405,10 +478,19 @@ subscription_monitor_thread(gpointer data)
         }
 
         /* Drain any burst that arrived with the selected item. */
-        queue_pending_events(self, ch_events);
+        if (open)
+            open = queue_pending_events(self, ch_events);
 
-        while (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
-            queue_eose_for_main(self, ch_events);
+        while (open && ch_eose && go_channel_try_receive(ch_eose, NULL) == 0)
+            open = queue_eose_for_main(self, ch_events);
+
+        if (!open) {
+            /* nostrc-5rfp: the backlog ceiling ended the subscription. Stop
+             * reading (libnostr's channel is bounded and drops what no one
+             * reads) and ask the relay to stop sending. */
+            send_core_close(self, sub);
+            break;
+        }
 
         void *reason = NULL;
         if (ch_closed && go_channel_try_receive(ch_closed, &reason) == 0) {
@@ -503,6 +585,18 @@ gnostr_subscription_get_property(GObject    *object,
     case PROP_LOSSLESS:
         g_value_set_boolean(value, gnostr_subscription_get_lossless(self));
         break;
+    case PROP_MAX_BACKLOG_EVENTS: {
+        guint events = 0;
+        gnostr_subscription_get_backlog_limit(self, &events, NULL);
+        g_value_set_uint(value, events);
+        break;
+    }
+    case PROP_MAX_BACKLOG_BYTES: {
+        guint64 bytes = 0;
+        gnostr_subscription_get_backlog_limit(self, NULL, &bytes);
+        g_value_set_uint64(value, bytes);
+        break;
+    }
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -521,6 +615,18 @@ gnostr_subscription_set_property(GObject      *object,
     case PROP_LOSSLESS:
         gnostr_subscription_set_lossless(self, g_value_get_boolean(value));
         break;
+    case PROP_MAX_BACKLOG_EVENTS: {
+        guint64 bytes = 0;
+        gnostr_subscription_get_backlog_limit(self, NULL, &bytes);
+        gnostr_subscription_set_backlog_limit(self, g_value_get_uint(value), bytes);
+        break;
+    }
+    case PROP_MAX_BACKLOG_BYTES: {
+        guint events = 0;
+        gnostr_subscription_get_backlog_limit(self, &events, NULL);
+        gnostr_subscription_set_backlog_limit(self, events, g_value_get_uint64(value));
+        break;
+    }
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -658,6 +764,39 @@ gnostr_subscription_class_init(GNostrSubscriptionClass *klass)
                              G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
                              G_PARAM_STATIC_STRINGS);
 
+    /**
+     * GNostrSubscription:max-backlog-events:
+     *
+     * Lossless mode's ceiling on events waiting for the main loop; 0 sets
+     * the default. See gnostr_subscription_set_backlog_limit().
+     *
+     * Since: 2.2
+     */
+    obj_properties[PROP_MAX_BACKLOG_EVENTS] =
+        g_param_spec_uint("max-backlog-events",
+                          "Max backlog events",
+                          "Events that may wait for the main loop before the subscription closes",
+                          0, G_MAXUINT, GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS,
+                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
+                          G_PARAM_STATIC_STRINGS);
+
+    /**
+     * GNostrSubscription:max-backlog-bytes:
+     *
+     * Lossless mode's ceiling on the serialized bytes of the events waiting
+     * for the main loop; 0 sets the default. See
+     * gnostr_subscription_set_backlog_limit().
+     *
+     * Since: 2.2
+     */
+    obj_properties[PROP_MAX_BACKLOG_BYTES] =
+        g_param_spec_uint64("max-backlog-bytes",
+                            "Max backlog bytes",
+                            "Event bytes that may wait for the main loop before the subscription closes",
+                            0, G_MAXUINT64, GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_BYTES,
+                            G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
+                            G_PARAM_STATIC_STRINGS);
+
     g_object_class_install_properties(object_class, N_PROPERTIES, obj_properties);
 
     /* Signals */
@@ -740,6 +879,11 @@ gnostr_subscription_init(GNostrSubscription *self)
     self->queued_events = 0;
     self->event_idle_scheduled = FALSE;
     self->lossless = TRUE;
+    self->max_backlog_events = GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS;
+    self->max_backlog_bytes = GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_BYTES;
+    self->queued_bytes = 0;
+    self->overflowed = FALSE;
+    self->core_close_sent = 0;
 }
 
 /* --- Public API --- */
@@ -885,9 +1029,7 @@ gnostr_subscription_close(GNostrSubscription *self)
     stop_monitor(self);
 
     /* Close core subscription */
-    if (self->subscription) {
-        nostr_subscription_close(self->subscription, NULL);
-    }
+    send_core_close(self, self->subscription);
 
     gnostr_subscription_set_state_internal(self, GNOSTR_SUBSCRIPTION_STATE_CLOSED);
     g_signal_emit(self, sub_signals[GNOSTR_SUBSCRIPTION_SIGNAL_CLOSED], 0, NULL);
@@ -951,6 +1093,53 @@ gnostr_subscription_get_lossless(GNostrSubscription *self)
     gboolean lossless = self->lossless;
     g_mutex_unlock(&self->event_queue_mutex);
     return lossless;
+}
+
+void
+gnostr_subscription_set_backlog_limit(GNostrSubscription *self,
+                                      guint max_events, guint64 max_bytes)
+{
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION(self));
+
+    if (max_events == 0)
+        max_events = GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_EVENTS;
+    if (max_bytes == 0)
+        max_bytes = GNOSTR_SUBSCRIPTION_DEFAULT_MAX_BACKLOG_BYTES;
+    g_mutex_lock(&self->event_queue_mutex);
+    gboolean events_changed = self->max_backlog_events != max_events;
+    gboolean bytes_changed = self->max_backlog_bytes != max_bytes;
+    self->max_backlog_events = max_events;
+    self->max_backlog_bytes = max_bytes;
+    g_mutex_unlock(&self->event_queue_mutex);
+    if (events_changed)
+        g_object_notify_by_pspec(G_OBJECT(self), obj_properties[PROP_MAX_BACKLOG_EVENTS]);
+    if (bytes_changed)
+        g_object_notify_by_pspec(G_OBJECT(self), obj_properties[PROP_MAX_BACKLOG_BYTES]);
+}
+
+void
+gnostr_subscription_get_backlog_limit(GNostrSubscription *self,
+                                      guint *max_events, guint64 *max_bytes)
+{
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION(self));
+
+    g_mutex_lock(&self->event_queue_mutex);
+    if (max_events)
+        *max_events = self->max_backlog_events;
+    if (max_bytes)
+        *max_bytes = self->max_backlog_bytes;
+    g_mutex_unlock(&self->event_queue_mutex);
+}
+
+gboolean
+gnostr_subscription_get_overflowed(GNostrSubscription *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION(self), FALSE);
+
+    g_mutex_lock(&self->event_queue_mutex);
+    gboolean overflowed = self->overflowed;
+    g_mutex_unlock(&self->event_queue_mutex);
+    return overflowed;
 }
 
 #ifdef GNOSTR_TESTING

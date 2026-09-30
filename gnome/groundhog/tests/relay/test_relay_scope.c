@@ -634,6 +634,77 @@ test_auth_generation_bound(void)
   fake_signer_clear(&fake);
 }
 
+/* ---- Overflow (nostrc-5rfp) ---- */
+
+#define OVERFLOW_DETAIL GH_RELAY_CLOSED_OVERFLOW_PREFIX " too many events waiting to be read"
+
+/* A REQ ended by its backlog ceiling is reported as CLOSED at once (the
+ * caller surfaces it; no EOSE for that REQ), then re-issued once per
+ * connection from an idle. A second overflow on the same connection, a relay's
+ * own CLOSED, a cancelled scope and a scope that cannot resubscribe are only
+ * reported; a new connection may retry again. */
+static void
+test_overflow_reported_then_retried_once(void)
+{
+  AuthFixture fixture;
+  GhRelayScope *scope = auth_scope_new(&fixture, FAKE_SIGN_OK, GH_RELAY_AUTH_NONE, TRUE);
+  g_autofree gchar *json = signed_json("before the overflow");
+  gh_relay_scope_event(scope, AUTH_URL, json);
+  g_assert_true(gh_relay_closed_is_overflow(OVERFLOW_DETAIL));
+  g_assert_false(gh_relay_closed_is_overflow("error: shutting down"));
+  g_assert_false(gh_relay_closed_is_overflow(NULL));
+
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE, OVERFLOW_DETAIL);
+  g_assert_cmpuint(fixture.base.closed_notices, ==, 1);
+  g_assert_cmpstr(fixture.base.last_detail, ==, OVERFLOW_DETAIL);
+  g_assert_cmpuint(fixture.resubscribes, ==, 0);   /* never inside the callback */
+  drain_pending();
+  g_assert_cmpuint(fixture.resubscribes, ==, 1);
+  gh_relay_scope_eose(scope, AUTH_URL);            /* the re-issued REQ's boundary */
+  g_assert_cmpuint(fixture.base.eose, ==, 1);
+
+  /* Again on the same connection: reported only. */
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE, OVERFLOW_DETAIL);
+  drain_pending();
+  g_assert_cmpuint(fixture.base.closed_notices, ==, 2);
+  g_assert_cmpuint(fixture.resubscribes, ==, 1);
+  /* A relay's CLOSED never triggers it. */
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE,
+                        "error: shutting down");
+  drain_pending();
+  g_assert_cmpuint(fixture.resubscribes, ==, 1);
+  /* The next connection may retry once. */
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE, OVERFLOW_DETAIL);
+  drain_pending();
+  g_assert_cmpuint(fixture.resubscribes, ==, 2);
+
+  /* A cancel drops a retry not yet run. */
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE, OVERFLOW_DETAIL);
+  gh_relay_scope_cancel(scope);
+  drain_pending();
+  g_assert_cmpuint(fixture.resubscribes, ==, 2);
+  gh_relay_scope_unref(scope);
+  auth_fixture_clear(&fixture);
+
+  /* Without a transport that can resubscribe it is reported only. */
+  scope = auth_scope_new(&fixture, FAKE_SIGN_OK, GH_RELAY_AUTH_NONE, FALSE);
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE, OVERFLOW_DETAIL);
+  drain_pending();
+  g_assert_cmpuint(fixture.base.closed_notices, ==, 1);
+  g_assert_cmpuint(fixture.resubscribes, ==, 0);
+  /* A pending retry is dropped when the scope goes away. */
+  gh_relay_scope_unref(scope);
+  auth_fixture_clear(&fixture);
+  scope = auth_scope_new(&fixture, FAKE_SIGN_OK, GH_RELAY_AUTH_NONE, TRUE);
+  gh_relay_scope_notice(scope, AUTH_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE, OVERFLOW_DETAIL);
+  gh_relay_scope_unref(scope);
+  drain_pending();
+  g_assert_cmpuint(fixture.resubscribes, ==, 0);
+  auth_fixture_clear(&fixture);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -648,5 +719,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/relay/auth/ephemeral-fresh-per-connection", test_auth_ephemeral_fresh_per_connection);
   g_test_add_func("/groundhog/relay/auth/dropped-while-signing", test_auth_dropped_while_signing);
   g_test_add_func("/groundhog/relay/auth/generation-bound", test_auth_generation_bound);
+  g_test_add_func("/groundhog/relay/overflow/reported-then-retried-once",
+                  test_overflow_reported_then_retried_once);
   return g_test_run();
 }

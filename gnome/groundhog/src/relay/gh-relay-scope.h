@@ -38,6 +38,22 @@ G_BEGIN_DECLS
  * as the account for a stale generation.
  */
 
+/*
+ * Overflow (nostrc-5rfp). The GNostrRelay transport's subscriptions deliver
+ * every event, up to a hard backlog ceiling far above any legitimate
+ * backfill (GNostrSubscription:max-backlog-events). A relay that outpaces
+ * the main loop past it ends that REQ with a CLOSED whose detail starts
+ * with GH_RELAY_CLOSED_OVERFLOW_PREFIX, after every event received before
+ * it. The scope reports that CLOSED like any other (the URL's backfill is
+ * incomplete: no EOSE follows for that REQ), then re-issues the REQ once on
+ * the same connection, from an idle, when the transport can resubscribe:
+ * the answer starts again from the caller's filters (its durable cursor),
+ * with a fresh EOSE boundary. A second overflow on the same connection is
+ * only reported; the next connection may retry once again.
+ */
+#define GH_RELAY_CLOSED_OVERFLOW_PREFIX "overflow:"
+#define GH_RELAY_SCOPE_OVERFLOW_RETRIES 1
+
 typedef struct _GhRelayScope GhRelayScope;
 
 typedef enum {
@@ -97,6 +113,9 @@ GhRelayScope *gh_relay_scope_new_with_transport(guint64 account_generation,
                                                 gpointer user_data);
 GhRelayScope *gh_relay_scope_ref(GhRelayScope *scope);
 void gh_relay_scope_unref(GhRelayScope *scope);
+/* Whether a CLOSED detail reports a subscription ended by its backlog
+ * ceiling (see "Overflow" above), not by the relay. */
+gboolean gh_relay_closed_is_overflow(const gchar *detail);
 /* The relay URL rule shared by scopes and publishes: ws or wss, a non-empty
  * host, no userinfo. Sets G_IO_ERROR_INVALID_ARGUMENT otherwise. */
 gboolean gh_relay_url_validate(const gchar *url, GError **error);

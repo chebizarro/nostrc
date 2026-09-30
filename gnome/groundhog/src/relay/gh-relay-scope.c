@@ -21,6 +21,9 @@ typedef struct {
   gchar auth_event_id[65];     /* AUTH sent, its OK pending; "" otherwise */
   gchar *held_closed;          /* auth-required CLOSED held during AUTH */
   gboolean auth_needed;        /* the REQ awaits an authenticated retry */
+  /* Overflow recovery (nostrc-5rfp), per connection. */
+  guint overflow_retries;
+  guint recover_source;        /* idle re-issuing the REQ */
 } GhEndpoint;
 
 struct _GhRelayScope {
@@ -62,9 +65,19 @@ reset_auth(GhEndpoint *endpoint)
 }
 
 static void
+stop_recovery(GhEndpoint *endpoint)
+{
+  if (endpoint->recover_source) {
+    g_source_remove(endpoint->recover_source);
+    endpoint->recover_source = 0;
+  }
+}
+
+static void
 endpoint_free(gpointer data)
 {
   GhEndpoint *endpoint = data;
+  stop_recovery(endpoint);
   reset_auth(endpoint);
   g_free(endpoint->url);
   g_free(endpoint);
@@ -195,6 +208,7 @@ gh_relay_scope_cancel(GhRelayScope *scope)
   g_hash_table_iter_init(&iter, scope->endpoints);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     GhEndpoint *endpoint = value;
+    stop_recovery(endpoint);
     reset_auth(endpoint); /* the revoked generation signs nothing more */
     if (endpoint->opened) {
       endpoint->opened = FALSE;
@@ -523,6 +537,39 @@ auth_notice(GhRelayScope *scope, GhEndpoint *endpoint, GhRelayNotice notice,
   return FALSE;
 }
 
+gboolean
+gh_relay_closed_is_overflow(const gchar *detail)
+{
+  return detail && g_str_has_prefix(detail, GH_RELAY_CLOSED_OVERFLOW_PREFIX);
+}
+
+/* The overflow retry: a fresh REQ on the same connection. From an idle, never
+ * from inside the transport's own CLOSED callback. */
+static gboolean
+recover_now(gpointer data)
+{
+  GhEndpoint *endpoint = data;
+  GhRelayScope *scope = endpoint->scope;
+  endpoint->recover_source = 0;
+  if (!scope->cancelled && endpoint->opened && scope->auth_transport.resubscribe) {
+    g_debug("relay scope: re-issuing the REQ to %s after an overflow", endpoint->url);
+    endpoint->eose = FALSE;
+    scope->auth_transport.resubscribe(endpoint->handle, scope->transport_data);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void
+maybe_recover(GhRelayScope *scope, GhEndpoint *endpoint, const gchar *detail)
+{
+  if (scope->cancelled || !endpoint->opened || !gh_relay_closed_is_overflow(detail) ||
+      !scope->auth_transport.resubscribe || endpoint->recover_source ||
+      endpoint->overflow_retries >= GH_RELAY_SCOPE_OVERFLOW_RETRIES)
+    return;
+  endpoint->overflow_retries++;
+  endpoint->recover_source = g_idle_add(recover_now, endpoint);
+}
+
 void
 gh_relay_scope_notice(GhRelayScope *scope, const gchar *url,
                       GhRelayNotice notice, const gchar *event_id,
@@ -532,8 +579,11 @@ gh_relay_scope_notice(GhRelayScope *scope, const gchar *url,
   if (!endpoint || notice == GH_RELAY_NOTICE_EVENT ||
       notice == GH_RELAY_NOTICE_EOSE)
     return;
-  if (notice == GH_RELAY_NOTICE_DISCONNECTED)
+  if (notice == GH_RELAY_NOTICE_DISCONNECTED) {
     endpoint->eose = FALSE;
+    endpoint->overflow_retries = 0;   /* the next connection's REQ is new anyway */
+    stop_recovery(endpoint);
+  }
   gh_relay_scope_ref(scope);
   if (!auth_notice(scope, endpoint, notice, event_id, accepted, detail) &&
       !scope->cancelled) {
@@ -541,6 +591,8 @@ gh_relay_scope_notice(GhRelayScope *scope, const gchar *url,
                              .event_id = event_id, .detail = detail,
                              .accepted = accepted };
     emit_update(scope, &update);
+    if (notice == GH_RELAY_NOTICE_CLOSED)
+      maybe_recover(scope, endpoint, detail);
   }
   gh_relay_scope_unref(scope);
 }
