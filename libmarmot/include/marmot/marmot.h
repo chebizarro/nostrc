@@ -726,6 +726,7 @@ MarmotError marmot_leave_group(Marmot *m,
  * @out_removed: (out): TRUE when an admin's Commit removed our own leaf
  * @out_remover: (out) (optional): the account (32-byte key) that committed it
  * @out_epoch: (out) (optional): the epoch that Commit left
+ * @out_final: (out) (optional): TRUE once no competing Commit can undo it
  *
  * A member removed by an admin cannot enter the next epoch: the Commit's
  * UpdatePath is encrypted to the remaining members only.  When
@@ -735,15 +736,26 @@ MarmotError marmot_leave_group(Marmot *m,
  * epoch (nor, for a competing Commit of the previous epoch, the Commit we
  * applied), it returns MARMOT_RESULT_COMMIT, the group turns inactive as
  * after marmot_leave_group(), our pending Commit is dropped and the removal
- * is kept here (nostrc-xrya).  A later Welcome into the same group clears
- * it.  Without a removal (never removed, or left), *out_removed is FALSE.
+ * is kept here (nostrc-xrya).
  *
- * Returns: MARMOT_OK
+ * The removal is judged by the Commit ordering, not by arrival: while
+ * another admin whose key sorts below the remover's could still publish a
+ * winning Commit of that epoch (@out_final FALSE), marmot_process_message()
+ * still judges that epoch's Commits of the inactive group -- everything
+ * else is MARMOT_ERR_USE_AFTER_EVICTION.  A Commit that beats the removal
+ * and keeps our leaf re-activates the group in its epoch (the removal is
+ * forgotten; the result is MARMOT_RESULT_COMMIT, the group active); a
+ * removal that beats it replaces it.  Once final, the removed epoch's
+ * secrets are deleted.  A later Welcome into the same group clears it.
+ * Without a removal (never removed, or left), *out_removed is FALSE.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_DESERIALIZATION for a record that does
+ * not parse (the group is inactive: say that it ended, not why)
  */
 MarmotError marmot_get_group_removal(Marmot *m,
                                      const MarmotGroupId *mls_group_id,
                                      bool *out_removed, uint8_t out_remover[32],
-                                     uint64_t *out_epoch);
+                                     uint64_t *out_epoch, bool *out_final);
 
 /**
  * marmot_update_group_metadata:

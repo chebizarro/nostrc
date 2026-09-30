@@ -393,6 +393,9 @@ typedef struct {
     uint64_t      epoch;
 } Trio;
 
+/* trio_init(): Charlie's key sorts below Bob's too (Charlie < Bob < Alice). */
+static bool g_charlie_lowest;
+
 static void
 trio_init(Trio *t)
 {
@@ -403,6 +406,7 @@ trio_init(Trio *t)
      * equal priority Bob wins, so a test in which Alice's privileged Commit
      * beats Bob's ordinary one depends on the privileged step alone. */
     member_rekey_order(&t->alice, &t->bob, true);
+    if (g_charlie_lowest) member_rekey_order(&t->charlie, &t->bob, false);
     t->all[0] = &t->alice;
     t->all[1] = &t->bob;
     t->all[2] = &t->charlie;
@@ -3964,8 +3968,17 @@ static bool
 removal_of(Member *x, const MarmotGroupId *gid, uint8_t by[32], uint64_t *epoch)
 {
     bool removed = true;
-    OK(marmot_get_group_removal(x->m, gid, &removed, by, epoch));
+    OK(marmot_get_group_removal(x->m, gid, &removed, by, epoch, NULL));
     return removed;
+}
+
+static bool
+removal_final(Member *x, const MarmotGroupId *gid)
+{
+    bool removed = false, final = false;
+    OK(marmot_get_group_removal(x->m, gid, &removed, NULL, NULL, &final));
+    CHECK(removed, "%s: no removal", x->name);
+    return final;
 }
 
 static MarmotGroupState
@@ -4029,9 +4042,11 @@ test_removed_member_learns_it(void)
     CHECK(memcmp(by, t.alice.pk, 32) == 0, "by Alice");
     CHECK(epoch == t.epoch, "from epoch %" PRIu64 " (got %" PRIu64 ")", t.epoch, epoch);
     CHECK(state_of(&t.charlie, &t.gid) == MARMOT_GROUP_STATE_INACTIVE, "inactive");
-    /* The same Commit again (another relay) changes nothing. */
-    deliver(&t.charlie, rm, &err, NULL);
-    CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "a copy: %d", err);
+    /* The same Commit again (another relay) changes nothing: a duplicate. */
+    type = deliver(&t.charlie, rm, &err, NULL);
+    CHECK((err == MARMOT_OK && type == MARMOT_RESULT_OWN_MESSAGE) ||
+          err == MARMOT_ERR_USE_AFTER_EVICTION, "a copy: %d/%d", err, type);
+    CHECK(removal_of(&t.charlie, &t.gid, NULL, NULL), "still removed");
 
     /* Nothing of the next epoch, and no sending. */
     char *next = app_message(&t.bob, &t.gid, "after Charlie");
@@ -4043,6 +4058,392 @@ test_removed_member_learns_it(void)
     CHECK(marmot_create_message(t.charlie.m, &t.gid, "{}", &out) != MARMOT_OK,
           "Charlie cannot send");
     free(next);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* ── W22 review B1: a removal is judged by the Commit ordering, not by
+ * arrival.  In the trio Alice and Bob are admins and Bob's key sorts below
+ * Alice's, so Bob's privileged Commit beats Alice's removal of Charlie. ── */
+
+static MarmotGroupState
+deliver_state(Member *x, const char *event_json, MarmotError *err, uint64_t *epoch)
+{
+    MarmotGroup *g = NULL;
+    MarmotMessageResultType type = deliver(x, event_json, err, &g);
+    MarmotGroupState state = g ? g->state : (MarmotGroupState)-1;
+    if (epoch) *epoch = g ? g->epoch : 0;
+    CHECK(*err != MARMOT_OK || type == MARMOT_RESULT_COMMIT, "%s: type %d", x->name, type);
+    marmot_group_free(g);
+    return state;
+}
+
+static bool
+has_state(Member *x, const MarmotGroupId *gid, const char *label)
+{
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    MarmotError err = x->m->storage->mls_load(x->m->storage->ctx, label, gid->data, gid->len,
+                                              &blob, &len);
+    free(blob);
+    CHECK(err == MARMOT_OK || err == MARMOT_ERR_STORAGE_NOT_FOUND, "%s: %s load %d", x->name,
+          label, err);
+    return err == MARMOT_OK;
+}
+
+static void
+test_losing_removal_first_is_undone(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    char *ren = rename_pending(&t.bob, &t.gid, "Bob's");
+
+    /* The losing removal first: Charlie is removed, but not for good. */
+    MarmotError err;
+    uint64_t epoch = 0;
+    CHECK(deliver_state(&t.charlie, rm, &err, &epoch) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "the removal: err=%d", err);
+    CHECK(removal_of(&t.charlie, &t.gid, NULL, NULL), "removed");
+    CHECK(!removal_final(&t.charlie, &t.gid), "Bob could still win the epoch");
+    CHECK(has_state(&t.charlie, &t.gid, "mls_group"), "the epoch's state is kept");
+    char *early = app_message(&t.alice, &t.gid, "not for Charlie");
+    deliver(&t.charlie, early, &err, NULL);
+    CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "a message is not read: %d", err);
+    free(early);
+
+    /* Then Bob's winning rename: Charlie is a member of that epoch again. */
+    CHECK(deliver_state(&t.charlie, ren, &err, &epoch) == MARMOT_GROUP_STATE_ACTIVE &&
+          err == MARMOT_OK && epoch == t.epoch + 1, "the winner re-activates: err=%d", err);
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "the removal is forgotten");
+    merge(&t.bob, &t.gid);
+    expect_commit(&t.alice, ren, "Alice applies Bob's winning rename");
+    expect_converged(t.all, 3, &t.gid, "Bob's", t.epoch + 1);
+    char *msg = app_message(&t.bob, &t.gid, "Charlie still here");
+    expect_app(&t.charlie, msg, "Charlie reads the winning epoch");
+    /* The losing removal again, in a new envelope: it loses to the Commit
+     * applied (the same envelope is a processed duplicate). */
+    char *again = republish(rm);
+    deliver(&t.charlie, again, &err, NULL);
+    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "the loser again: %d", err);
+    free(again);
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "still a member");
+    free(msg);
+    free(ren);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* The winner first: the losing removal of the previous epoch is WRONG_EPOCH
+ * (review L4). */
+static void
+test_losing_removal_after_winner(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    char *ren = rename_pending(&t.bob, &t.gid, "Bob's");
+    MarmotError err;
+    uint64_t epoch = 0;
+    CHECK(deliver_state(&t.charlie, ren, &err, &epoch) == MARMOT_GROUP_STATE_ACTIVE &&
+          err == MARMOT_OK, "the winner: err=%d", err);
+    deliver(&t.charlie, rm, &err, NULL);
+    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "the losing removal: %d", err);
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "not removed");
+    merge(&t.bob, &t.gid);
+    char *msg = app_message(&t.bob, &t.gid, "hello Charlie");
+    expect_app(&t.charlie, msg, "Charlie reads Bob");
+    free(msg);
+    free(ren);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* A removal of the previous epoch that beats the Commit applied (Bob's
+ * ordinary self-update loses to any privileged Commit) ends the group, judged
+ * on the retained parent; Alice's key sorts above Bob's, so it stays open to
+ * a winner from Bob, and the parent state is kept. */
+static void
+test_previous_epoch_removal_wins(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    char *upd = self_update(&t.bob, &t.gid);
+    expect_commit(&t.charlie, upd, "Charlie applies Bob's self-update");
+    MarmotError err;
+    uint64_t epoch = 0;
+    CHECK(deliver_state(&t.charlie, rm, &err, &epoch) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "the removal beats it: err=%d", err);
+    uint8_t by[32];
+    uint64_t removed_epoch = 0;
+    CHECK(removal_of(&t.charlie, &t.gid, by, &removed_epoch) &&
+          memcmp(by, t.alice.pk, 32) == 0 && removed_epoch == t.epoch, "by Alice, epoch");
+    CHECK(!removal_final(&t.charlie, &t.gid), "Bob could still win");
+    CHECK(has_state(&t.charlie, &t.gid, MARMOT_MLS_PARENT_LABEL), "the parent is kept");
+    free(upd);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* Alice's rename and Alice's removal of Charlie, both of the current epoch
+ * and made from her state (neither applied there), the removal's digest
+ * sorting above the rename's: one committer, so the digest decides. */
+static void
+forge_rename_and_removal(Trio *t, char **rename_json, char **removal_json)
+{
+    MlsGroup c;
+    load_mls(&t->charlie, &t->gid, &c);
+    uint32_t charlie_leaf = c.own_leaf_index;
+    mls_group_free(&c);
+    for (int attempt = 0; attempt < 64; attempt++) {
+        MlsGroup a, b;
+        load_mls(&t->alice, &t->gid, &a);
+        load_mls(&t->alice, &t->gid, &b);
+        uint8_t exporter[32];
+        memcpy(exporter, a.epoch_secrets.exporter_secret, 32);
+        MarmotGroupDataExtension *gde = group_data_with(&t->alice, &t->gid, "Alice's", NULL);
+        uint8_t *bytes = NULL;
+        size_t len = 0;
+        CHECK(marmot_group_data_extension_serialize(gde, &bytes, &len) == 0, "serialize");
+        marmot_group_data_extension_free(gde);
+        MlsTlsBuf ext;
+        CHECK(mls_tls_buf_init(&ext, len + 8) == 0 &&
+              mls_tls_write_u16(&ext, MARMOT_EXTENSION_TYPE) == 0 &&
+              mls_tls_write_opaque16(&ext, bytes, len) == 0, "extension list");
+        free(bytes);
+        MlsCommitResult rn, rv;
+        memset(&rn, 0, sizeof(rn));
+        memset(&rv, 0, sizeof(rv));
+        CHECK(mls_group_commit_extensions(&a, ext.data, ext.len, &rn) == 0, "rename");
+        CHECK(mls_group_remove_member(&b, charlie_leaf, &rv) == 0, "removal");
+        mls_tls_buf_free(&ext);
+        uint8_t dn[32], dv[32];
+        CHECK(mls_crypto_hash(dn, rn.commit_data, rn.commit_len) == 0 &&
+              mls_crypto_hash(dv, rv.commit_data, rv.commit_len) == 0, "digests");
+        bool ok = memcmp(dv, dn, 32) > 0;
+        if (ok) {
+            *rename_json = event_for_commit(&rn, exporter, t->nostr_gid);
+            *removal_json = event_for_commit(&rv, exporter, t->nostr_gid);
+        }
+        mls_commit_result_clear(&rn);
+        mls_commit_result_clear(&rv);
+        mls_group_free(&a);
+        mls_group_free(&b);
+        sodium_memzero(exporter, sizeof(exporter));
+        if (ok) return;
+    }
+    CHECK(false, "no digest order in 64 attempts");
+}
+
+/* A removal of the previous epoch that loses to the Commit applied (review
+ * L4): Charlie applied Alice's rename, which Bob could still beat (so the
+ * parent is kept in full); Alice's removal sorts after her rename. */
+static void
+test_previous_epoch_removal_loses(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *ren = NULL, *rm = NULL;
+    forge_rename_and_removal(&t, &ren, &rm);
+    expect_commit(&t.charlie, ren, "Charlie applies Alice's rename");
+    MarmotError err;
+    deliver(&t.charlie, rm, &err, NULL);
+    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "the losing removal: %d", err);
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "not removed");
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(t.charlie.m, &t.gid, &g));
+    CHECK(g->state == MARMOT_GROUP_STATE_ACTIVE && g->name &&
+          strcmp(g->name, "Alice's") == 0, "active in the rename's epoch");
+    marmot_group_free(g);
+    free(ren);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* A removal no other admin can beat (Bob's key is the lowest) is final at
+ * once: the removed epoch's secrets are deleted (review N1), and nothing of
+ * the group is judged any more. */
+static void
+test_final_removal_forgets_keys(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.bob.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    MarmotError err;
+    CHECK(deliver_state(&t.charlie, rm, &err, NULL) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "the removal: err=%d", err);
+    CHECK(removal_final(&t.charlie, &t.gid), "nobody can beat Bob");
+    CHECK(!has_state(&t.charlie, &t.gid, "mls_group"), "the MLS state is gone");
+    CHECK(!has_state(&t.charlie, &t.gid, MARMOT_MLS_PARENT_LABEL), "the parent is gone");
+    uint8_t secret[32];
+    for (uint64_t e = 0; e <= t.epoch + 1; e++)
+        CHECK(t.charlie.m->storage->get_exporter_secret(t.charlie.m->storage->ctx, &t.gid, e,
+                                                        secret) != MARMOT_OK,
+              "exporter secret of epoch %llu kept", (unsigned long long)e);
+    char *ren = rename_pending(&t.alice, &t.gid, "Alice's");
+    deliver(&t.charlie, ren, &err, NULL);
+    CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "a final removal judges nothing: %d", err);
+
+    /* Invited again: a new Welcome clears it (review L5). */
+    merge(&t.bob, &t.gid);   /* Bob's removal was published and won */
+    char *kp = key_package(&t.charlie);
+    const char *kps[] = { kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(t.bob.m, &t.gid, kps, 1, &welcomes, &n, &add));
+    merge(&t.bob, &t.gid);
+    join(&t.charlie, welcomes[0]);
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "re-invited: not removed");
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(t.charlie.m, &t.gid, &g));
+    CHECK(g->state == MARMOT_GROUP_STATE_ACTIVE, "active again");
+    marmot_group_free(g);
+    free(welcomes[0]);
+    free(welcomes);
+    free(add);
+    free(kp);
+    free(ren);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* Charlie made admin by Alice (Charlie < Bob < Alice). */
+static void
+make_charlie_admin(Trio *t)
+{
+    uint8_t admins[3][32];
+    memcpy(admins[0], t->alice.pk, 32);
+    memcpy(admins[1], t->bob.pk, 32);
+    memcpy(admins[2], t->charlie.pk, 32);
+    MarmotGroupConfig cfg = {0};
+    cfg.admin_pubkeys = admins;
+    cfg.admin_count = 3;
+    char *commit = NULL;
+    OK(marmot_update_group_metadata(t->alice.m, &t->gid, &cfg, &commit));
+    merge(&t->alice, &t->gid);
+    expect_commit(&t->bob, commit, "Bob: Charlie an admin");
+    expect_commit(&t->charlie, commit, "Charlie: an admin");
+    free(commit);
+    t->epoch++;
+}
+
+/* Our own pending Commit beats a removal (review L3): Charlie's pending
+ * rename sorts before Alice's removal, so the removal waits behind it and
+ * loses once Charlie's Commit is merged. */
+static void
+test_own_pending_beats_removal(void)
+{
+    g_charlie_lowest = true;
+    Trio t;
+    trio_init(&t);
+    g_charlie_lowest = false;
+    make_charlie_admin(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    char *mine = rename_pending(&t.charlie, &t.gid, "Charlie's");
+    MarmotError err;
+    deliver(&t.charlie, rm, &err, NULL);
+    CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "the removal waits behind ours: %d", err);
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "not removed");
+    merge(&t.charlie, &t.gid);
+    deliver(&t.charlie, rm, &err, NULL);
+    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "then it loses: %d", err);
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "still not removed");
+    expect_commit(&t.bob, mine, "Bob applies Charlie's rename");
+    char *msg = app_message(&t.bob, &t.gid, "hi Charlie");
+    expect_app(&t.charlie, msg, "Charlie reads");
+    free(msg);
+    free(mine);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* Deferred Commits are replayed winner first: a losing removal and the
+ * Commit that beats it both wait behind Charlie's pending one; clearing it
+ * applies Bob's rename and the removal loses. */
+static void
+test_deferred_replay_winner_first(void)
+{
+    g_charlie_lowest = true;
+    Trio t;
+    trio_init(&t);
+    g_charlie_lowest = false;
+    make_charlie_admin(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    char *ren = rename_pending(&t.bob, &t.gid, "Bob's");
+    char *mine = rename_pending(&t.charlie, &t.gid, "Charlie's");
+    MarmotError err;
+    deliver(&t.charlie, rm, &err, NULL);
+    CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "the removal deferred: %d", err);
+    deliver(&t.charlie, ren, &err, NULL);
+    CHECK(err == MARMOT_ERR_OWN_COMMIT_PENDING, "Bob's rename deferred: %d", err);
+    OK(marmot_clear_pending_commit(t.charlie.m, &t.gid));   /* no relay took Charlie's */
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "the removal lost");
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(t.charlie.m, &t.gid, &g));
+    CHECK(g->state == MARMOT_GROUP_STATE_ACTIVE && g->epoch == t.epoch + 1 &&
+          g->name && strcmp(g->name, "Bob's") == 0, "in Bob's epoch");
+    marmot_group_free(g);
+    merge(&t.bob, &t.gid);
+    char *msg = app_message(&t.bob, &t.gid, "hi Charlie");
+    expect_app(&t.charlie, msg, "Charlie reads Bob's epoch");
+    free(msg);
+    free(mine);
+    free(ren);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* A removal drops our pending Commit (review L7): it can never merge. */
+static void
+test_removal_drops_own_pending(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.bob.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    char *upd = NULL;
+    OK(marmot_self_update(t.charlie.m, &t.gid, NULL, &upd));   /* ordinary: loses */
+    MarmotError err;
+    CHECK(deliver_state(&t.charlie, rm, &err, NULL) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "removed: err=%d", err);
+    char *pending = NULL;
+    OK(marmot_get_pending_commit(t.charlie.m, &t.gid, &pending, NULL));
+    CHECK(pending == NULL, "our pending Commit is dropped");
+    free(upd);
+    free(rm);
+    trio_clear(&t);
+}
+
+/* A record that does not parse is reported as such, never as "left", and
+ * the group judges nothing (review N3). */
+static void
+test_corrupt_removal_record(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    MarmotError err;
+    deliver(&t.charlie, rm, &err, NULL);
+    OK(err);
+    const uint8_t junk[5] = { 2, 0, 0, 0, 0 };
+    OK(t.charlie.m->storage->mls_store(t.charlie.m->storage->ctx, "mls_group_removed",
+                                       t.gid.data, t.gid.len, junk, sizeof(junk)));
+    bool removed = true;
+    CHECK(marmot_get_group_removal(t.charlie.m, &t.gid, &removed, NULL, NULL, NULL) ==
+          MARMOT_ERR_DESERIALIZATION && !removed, "a corrupt record");
+    char *ren = rename_pending(&t.bob, &t.gid, "Bob's");
+    deliver(&t.charlie, ren, &err, NULL);
+    CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "nothing is judged: %d", err);
+    free(ren);
     free(rm);
     trio_clear(&t);
 }
@@ -4097,6 +4498,15 @@ main(int argc, char **argv)
     RUN(test_signer_only_key_packages_share_one_leaf_key);
     RUN(test_group_members_follow_the_epoch);
     RUN(test_removed_member_learns_it);
+    RUN(test_losing_removal_first_is_undone);
+    RUN(test_losing_removal_after_winner);
+    RUN(test_previous_epoch_removal_wins);
+    RUN(test_previous_epoch_removal_loses);
+    RUN(test_final_removal_forgets_keys);
+    RUN(test_own_pending_beats_removal);
+    RUN(test_deferred_replay_winner_first);
+    RUN(test_removal_drops_own_pending);
+    RUN(test_corrupt_removal_record);
     printf("All commit tests passed\n");
     return 0;
 }

@@ -817,10 +817,20 @@ process_group_event(Marmot *m, const char *group_event_json,
         return MARMOT_ERR_GROUP_NOT_FOUND;
     }
 
+    /* An inactive group is read no more -- except that one removed by a
+     * Commit that may still lose its epoch judges that epoch's Commits
+     * (nostrc-xrya, W22 review B1; see commits.c "Removal of our own leaf"). */
+    bool contested_removal = false;
     if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
-        marmot_group_free(group);
-        parsed_group_event_clear(&parsed);
-        return MARMOT_ERR_USE_AFTER_EVICTION;
+        bool removed = false, final = true;
+        contested_removal =
+            marmot_get_group_removal(m, &group->mls_group_id, &removed, NULL, NULL,
+                                     &final) == MARMOT_OK && removed && !final;
+        if (!contested_removal) {
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return MARMOT_ERR_USE_AFTER_EVICTION;
+        }
     }
     /* Trial decryption starts at the record's epoch: repair it first if a
      * crash interrupted the last epoch transition (review N2). */
@@ -901,7 +911,8 @@ process_group_event(Marmot *m, const char *group_event_json,
     if (!decrypted_ok) {
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);
-        return MARMOT_ERR_NIP44;
+        /* A removed member reads nothing of later epochs. */
+        return contested_removal ? MARMOT_ERR_USE_AFTER_EVICTION : MARMOT_ERR_NIP44;
     }
 
     /* ── 5. Commits (nostrc-9ata) ─────────────────────────────────────────
@@ -910,8 +921,15 @@ process_group_event(Marmot *m, const char *group_event_json,
      * wire_format 1); application messages are PrivateMessages (wire_format
      * 2).  Commits are applied through the validated MLS path; see
      * marmot_commit_process_inbound() for the epoch rules. */
-    if (decrypted_len >= 4 && decrypted[0] == 0x00 && decrypted[1] == 0x01 &&
-        decrypted[2] == 0x00 && decrypted[3] == MLS_WIRE_FORMAT_PUBLIC_MESSAGE) {
+    bool is_commit = decrypted_len >= 4 && decrypted[0] == 0x00 && decrypted[1] == 0x01 &&
+                     decrypted[2] == 0x00 && decrypted[3] == MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    if (contested_removal && !is_commit) {
+        free(decrypted);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+    if (is_commit) {
         err = marmot_commit_process_inbound(m, group, used_epoch,
                                             decrypted, decrypted_len,
                                             parsed.event_id, result);

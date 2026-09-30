@@ -875,7 +875,7 @@ group_refresh(GhMlsGroup *group)
   if (!active) {
     bool removed = false;
     uint8_t by[32];
-    if (marmot_get_group_removal(m, &group->gid, &removed, by, NULL) == MARMOT_OK && removed) {
+    if (marmot_get_group_removal(m, &group->gid, &removed, by, NULL, NULL) == MARMOT_OK && removed) {
       end = GH_MLS_GROUP_END_REMOVED;
       removed_by = to_hex(by, 32);
     } else {

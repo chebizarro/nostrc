@@ -426,33 +426,53 @@ groups. There is no adopted peer to test against either.
 
 #### A removed member learns it was removed (nostrc-xrya)
 
-A member an admin removes cannot enter the next epoch: the removing Commit's
-UpdatePath is encrypted to the remaining members only. Before, its Commit
-failed with `MARMOT_ERR_MLS_PROCESS_MESSAGE`, the group stayed active, the
-member could still send (nobody could read it), and every later kind:445
-failed as undecryptable.
+A member an admin removes cannot enter the next epoch: the removing
+Commit's UpdatePath is encrypted to the remaining members only. Before, its
+Commit failed with `MARMOT_ERR_MLS_PROCESS_MESSAGE`, the group stayed
+active, the member could still send (nobody could read it), and every later
+kind:445 failed as undecryptable.
 
-- `marmot_process_message()` now checks such a Commit as far as a removed
-  member can, as OpenMLS does for `self_removed`: the PublicMessage framing
-  for the group and epoch, the committer's signature and the membership tag
-  (the same checks as full processing, now one internal helper), a
-  well-formed proposal list with an UpdatePath, and an inline Remove of our
-  own leaf. The committer must be an admin of the current GroupData, as for
-  any Commit that changes membership. A pending Commit of ours that wins the
-  epoch by the usual ordering still wins (the removal is deferred), and a
-  removal that competes with a Commit we already applied must beat it.
-- Then the group turns inactive, as after `marmot_leave_group()`, any
-  pending Commit of ours is dropped, and the result is
-  `MARMOT_RESULT_COMMIT` with the inactive group. Later events of the group
-  return `MARMOT_ERR_USE_AFTER_EVICTION`, including late messages of the
-  last epoch.
-- New `marmot_get_group_removal()` says whether and by whom (the
-  committer's account) and from which epoch. It is kept in `mls_kv` under
-  `mls_group_removed` in the same transaction as the inactive state; a later
-  Welcome into the same group clears it.
-- A removal forged by a non-admin member now fails with
-  `MARMOT_ERR_COMMIT_FROM_NON_ADMIN` (it was `MARMOT_ERR_MLS_PROCESS_MESSAGE`)
-  and changes nothing.
+- **Recognised.** When a Commit fails to apply, `marmot_process_message()`
+  checks it as far as a removed member can, as OpenMLS does for
+  `self_removed`: the PublicMessage framing for the group and epoch, the
+  committer's signature and the membership tag (the same checks as full
+  processing, now one internal helper), a well-formed proposal list with an
+  UpdatePath, and an inline Remove of our own leaf. The committer must be an
+  admin of the current GroupData, as for any Commit that changes membership.
+  A removal forged by a non-admin fails with
+  `MARMOT_ERR_COMMIT_FROM_NON_ADMIN` and changes nothing.
+- **Judged by the Commit ordering, not by arrival** (W22 review B1). A
+  pending Commit of ours that sorts first still wins (the removal is
+  deferred), and a removal competing with a Commit we already applied must
+  beat it. Deferred Commits are replayed winner first once our pending one is
+  cleared.
+- **Ended, with who and how.** The group turns inactive, as after
+  `marmot_leave_group()`, any pending Commit of ours is dropped, and the
+  result is `MARMOT_RESULT_COMMIT` with the inactive group.
+  `marmot_get_group_removal()` says who removed us, from which epoch, and
+  whether it is final. It is kept in `mls_kv` under `mls_group_removed`
+  (version 2: epoch, flags, the removal's committer and digest) in the same
+  transaction as the inactive state; a later Welcome into the group clears
+  it; a record that does not parse is `MARMOT_ERR_DESERIALIZATION`, never
+  "not removed".
+- **Not final while it could still lose.** Another admin whose key sorts
+  below the remover's could publish a Commit of that epoch that wins. Until
+  none can, the inactive group still judges that epoch's Commits (everything
+  else is `MARMOT_ERR_USE_AFTER_EVICTION`): one that keeps our leaf and beats
+  the removal re-activates the group in its epoch and forgets the removal; a
+  removal that beats it replaces it. The same holds, against the Commit that
+  led there, for Commits of the parent epoch while the retained parent is
+  kept in full.
+- **Final: the keys go** (review N1). A removal nobody can beat deletes the
+  removed epoch's MLS state, the retained parent and the group's exporter
+  secrets, so a stolen store no longer opens them. The group record stays.
+  (`marmot_leave_group()` still keeps them; the member may be re-added.)
+- **Limits** (review N2). The removed member cannot check what needs the new
+  epoch -- the confirmation tag, the UpdatePath, the post-Commit policy --
+  so an admin can end the group for us alone with a removal the others
+  reject (our leaf then stays in their tree until an admin removes it).
+  An admin can remove us anyway. Late application messages of the last
+  epoch we were in are not read after the removal.
 
 #### The retained parent retires once no competing Commit can win (nostrc-yuj2, security)
 
