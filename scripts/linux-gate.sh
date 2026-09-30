@@ -15,8 +15,9 @@
 # under its ASAN/UBSAN/LSAN options and gnome/groundhog/tests/lsan.supp. All of
 # it is read from SOURCE_DIR's workflow at run time (scripts/sanitizer-gate-ci.py),
 # so the stage and CI cannot drift apart. A failed test whose output holds a
-# sanitizer report blocks without a rerun; any other failure is rerun once as
-# in the smoke run. The MLS leaks of nostrc-kdxe reached master because only
+# sanitizer report blocks without a rerun (but for the temporary library-leak
+# rule of nostrc-vpha, see scripts/linux-gate-smoke.sh); any other failure is
+# rerun once as in the smoke run. The MLS leaks of nostrc-kdxe reached master because only
 # CI ran this job. scripts/pre-push runs it beside the other two stages when
 # the pushed range touches what the job tests (sanitizer-gate-ci.py affected).
 # It always runs on the host architecture (ASAN does not run under emulation).
