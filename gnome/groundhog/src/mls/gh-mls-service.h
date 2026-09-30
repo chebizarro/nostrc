@@ -137,9 +137,12 @@ G_BEGIN_DECLS
  * removal is judged by the Commit ordering, not by arrival (W22 review B1):
  * while another admin could still publish a winning Commit of that epoch,
  * the group's subscription stays open and libmarmot judges that epoch's
- * Commits (nothing else is read; the cursor holds); a winner re-activates
- * the group ("end" NONE) and it is read again from the cursor. A final
- * removal closes the subscription. A removal record libmarmot cannot read
+ * Commits (nothing else is read; the cursor does not move); a winner
+ * re-activates the group ("end" NONE) and it is read again from the
+ * cursor. The removal turns final when nobody can beat it, or once the
+ * group has visibly moved on without the account (MARMOT_REMOVAL_FINAL_AFTER
+ * later-epoch events, review B2); a final removal closes the subscription,
+ * for good. A removal record libmarmot cannot read
  * ends the group as UNKNOWN, never as LEFT (review N3).
  *
  * Generation. The service runs only while its store's account is the active

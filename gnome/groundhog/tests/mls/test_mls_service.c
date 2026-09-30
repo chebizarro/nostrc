@@ -839,6 +839,74 @@ test_losing_removal_reactivates(void)
   world_down(&w);
 }
 
+/* W22 review B2: a removal that stays contested (Bob removes Carol; Alice's
+ * key sorts lower, so she could still win) turns final once the group has
+ * moved on without Carol -- MARMOT_REMOVAL_FINAL_AFTER events she cannot
+ * open -- and then Carol stops listening: no subscription, and none after
+ * a restart, so nothing since the removal is fetched again. */
+static GArray *req_sinces(WireRelay *relay);
+
+static gboolean
+group_not_read(gpointer data)
+{
+  return gh_mls_group_get_read_state(data) == GH_MLS_READ_IDLE;
+}
+
+static void
+test_contested_removal_stops_listening(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Moves on", (const guint[]){ BOB, CAROL }, 2);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(became_admin, gb, "Bob becoming an admin");
+  GroupWait carol_epoch = { gc, (gint)gh_mls_group_get_epoch(ga) };
+  spin_until(epoch_is, &carol_epoch, "Carol in Alice's epoch");
+  wait_live(gc);
+
+  const gchar *carol_only[] = { hex[CAROL], NULL };
+  OpWait removed = { 0 };
+  gh_mls_service_remove_members_async(bob->service, gb, carol_only, NULL, on_changed, &removed);
+  change(bob, &removed);
+  GroupWait ended = { gc, GH_MLS_GROUP_END_REMOVED };
+  spin_until(group_end_is, &ended, "Carol removed");
+  wait_members(ga, 2);
+  g_assert_cmpint(gh_mls_group_get_read_state(gc), !=, GH_MLS_READ_IDLE);   /* contested */
+
+  for (guint i = 0; i < MARMOT_REMOVAL_FINAL_AFTER; i++) {
+    g_autofree gchar *text = g_strdup_printf("moving on %u", i);
+    send_text(alice, ga, text);
+    MessageWait listed = { bob, room, text };
+    spin_until(message_listed, &listed, "Bob reading Alice");
+  }
+  spin_until(group_not_read, gc, "Carol no longer listening");
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_REMOVED);
+  g_assert_cmpstr(gh_mls_group_get_removed_by(gc), ==, hex[BOB]);
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gc), ==, 0);
+
+  /* A restart does not subscribe again. */
+  g_autoptr(GArray) before = req_sinces(&w.g);
+  app_restart(carol);
+  spin_until(key_package_published, carol, "Carol's service running");
+  drain();
+  gc = gh_mls_service_lookup(carol->service, room);
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_REMOVED);
+  g_assert_cmpint(gh_mls_group_get_read_state(gc), ==, GH_MLS_READ_IDLE);
+  g_autoptr(GArray) after = req_sinces(&w.g);
+  g_assert_cmpuint(after->len, ==, before->len);
+  world_down(&w);
+}
+
 /* W22 review N5: a removal applied out of the held queue (Carol missed the
  * Commit before it) ends the group mid-pass; the rest of the pass is not
  * held again. */
@@ -2050,6 +2118,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/losing-removal-reactivates",
                   test_losing_removal_reactivates);
   g_test_add_func("/groundhog/mls-service/removal-from-held-queue", test_removal_from_held_queue);
+  g_test_add_func("/groundhog/mls-service/contested-removal-stops-listening",
+                  test_contested_removal_stops_listening);
   g_test_add_func("/groundhog/mls-service/join-reads-from-welcome",
                   test_join_reads_from_welcome);
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",

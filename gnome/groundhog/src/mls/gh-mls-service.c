@@ -1290,7 +1290,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   MarmotMessageResult result;
   memset(&result, 0, sizeof result);
   MarmotError err = marmot_process_message(self->marmot, event_json, &result);
-  gboolean commit = FALSE, held = FALSE, accepted = FALSE;
+  gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE;
   gint64 created_at = 0;
   NostrEvent *envelope = nostr_event_new();
   g_autofree gchar *envelope_id = NULL;
@@ -1336,10 +1336,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     /* A later epoch's (or not for us): wait for the Commit that opens it. */
     held = group->active;   /* an ended group holds nothing (review N5) */
   } else if (err == MARMOT_ERR_USE_AFTER_EVICTION && listening(group)) {
-    /* Removed by a Commit that may still lose: if a winner re-activates the
-     * group, this is read again; the cursor must not pass it. */
-    if (created_at > 0)
-      group->pinned = group->pinned ? MIN(group->pinned, created_at) : created_at;
+    /* Removed by a Commit that may still lose: nothing but that epoch's
+     * Commits is read. libmarmot counts the later-epoch events it cannot
+     * open and makes the removal final after a few (W22 review B2): then
+     * the group stops listening. The cursor does not move while the group
+     * is ended (nothing is accepted), and is not pinned either: once
+     * final, nothing is fetched again. */
+    check_final = TRUE;
   } else if (err != MARMOT_OK) {
     g_debug("Groundhog skipped an encrypted group event: %s", marmot_error_string(err));
   }
@@ -1348,6 +1351,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
    * outcomes (a deferred competing Commit) are kept. */
   if (!gh_store_commit(self->store, &error)) {
     g_message("Groundhog could not store an encrypted group event: %s", error->message);
+    return EVENT_OTHER;
+  }
+  if (check_final) {
+    bool removed = false, final = false;
+    if (marmot_get_group_removal(self->marmot, &group->gid, &removed, NULL, NULL, &final) ==
+          MARMOT_OK && removed && final)
+      group_refresh(group);   /* final: the subscription closes */
     return EVENT_OTHER;
   }
   if (held) {
