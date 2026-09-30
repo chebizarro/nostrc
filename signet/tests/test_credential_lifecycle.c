@@ -420,6 +420,8 @@ static void test_delivery_denials_and_requester_audit(void) {
       "\"allow_methods\":[\"credential.deliver\"]}",
     NULL, /* exact client plus wildcard/mixed NIP-46 methods */
     NULL, /* exact client plus mixed delivery/signing methods */
+    NULL, /* exact grant plus deny_methods wildcard */
+    NULL, /* exact grant plus requester in deny_clients */
   };
   char *client_only = g_strdup_printf(
       "{\"default\":\"deny\",\"allow_clients\":[\"%s\"]}",
@@ -432,9 +434,20 @@ static void test_delivery_denials_and_requester_audit(void) {
       "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
       "\"allow_methods\":[\"credential.deliver\",\"sign_event\"]}",
       f.provisioner_pk);
+  char *denied_method = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"credential.deliver\"],"
+      "\"deny_methods\":[\"*\"]}", f.provisioner_pk);
+  char *denied_client = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"credential.deliver\"],"
+      "\"deny_clients\":[\"%s\"]}",
+      f.provisioner_pk, f.provisioner_pk);
   implicit_policies[1] = client_only;
   implicit_policies[3] = wildcard_methods;
   implicit_policies[4] = mixed_methods;
+  implicit_policies[5] = denied_method;
+  implicit_policies[6] = denied_client;
   for (size_t i = 0; i < G_N_ELEMENTS(implicit_policies); i++) {
     CHECK(signet_policy_store_set_identity_json(
         f.identity_policy, "owner", implicit_policies[i],
@@ -448,6 +461,8 @@ static void test_delivery_denials_and_requester_audit(void) {
   g_free(client_only);
   g_free(wildcard_methods);
   g_free(mixed_methods);
+  g_free(denied_method);
+  g_free(denied_client);
 
   /* Restore the exact provisioner/method grant. */
   char *allow = g_strdup_printf(

@@ -756,6 +756,8 @@ bool signet_policy_store_has_exact_delivery_grant(
       ? (SignetIdentityPolicy *)g_hash_table_lookup(ps->identities, identity)
       : NULL;
   bool allowed = p && !p->default_allow &&
+      !signet_list_has_any_strings(p->deny_clients) &&
+      !signet_list_has_any_strings(p->deny_methods) &&
       p->allow_clients && p->allow_clients->len == 1 &&
       p->allow_methods && p->allow_methods->len == 1 &&
       strcmp((const char *)g_ptr_array_index(p->allow_clients, 0), requester) == 0 &&
