@@ -15,7 +15,8 @@
  * EVENT is validated, kept once per id and answered OK true itself (a
  * repeat gets "duplicate:"); on_event still runs after that OK. A REQ is
  * answered with every kept event matching one of its filters (newest
- * first, each filter's limit applied), then EOSE, and stays live: a later
+ * first, each filter's limit applied, and at most max_limit per filter when
+ * set: a relay's own cap such as strfry's 500), then EOSE, and stays live: a later
  * matching event is sent to it until CLOSE or the socket closes. Two
  * NIP-42 gates, each of which also sends every connection a challenge as it
  * opens (as require_auth does, which keeps its meaning and precedence):
@@ -81,6 +82,7 @@ struct _WireRelay {
   GhTestHeldPort *held;      /* relay_init_held(): the port it serves on */
   GHashTable *withheld;      /* ids kept but served to nobody until released */
   gboolean withhold_new;     /* every event kept from now on is withheld */
+  guint max_limit;           /* serve: a REQ's stored answer per filter, at most; 0: none */
 };
 
 /* One text frame on one of the relay's connections. */
@@ -321,7 +323,10 @@ wire_answer_req(WireRelay *relay, SoupWebsocketConnection *connection, const gch
     for (size_t i = 0; i < filters->count; i++) {
       NostrFilter *filter = &filters->filters[i];
       gint limit = nostr_filter_get_limit(filter);
-      if (nostr_filter_get_limit_zero(filter) || (limit > 0 && sent[i] >= (guint)limit) ||
+      guint cap = limit > 0 ? (guint)limit : G_MAXUINT;
+      if (relay->max_limit)
+        cap = MIN(cap, relay->max_limit);   /* the relay's own cap, whatever was asked */
+      if (nostr_filter_get_limit_zero(filter) || sent[i] >= cap ||
           !nostr_filter_matches(filter, stored->event))
         continue;
       sent[i]++;

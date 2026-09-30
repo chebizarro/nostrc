@@ -58,9 +58,12 @@ struct _GhMlsGroup {
   GStrv relays;
   /* Reading: one scope on the group relays. */
   GhRelayScope *scope;
-  GHashTable *settled;       /* url -> GINT_TO_POINTER(1 eose / 2 failed) */
+  GHashTable *settled;       /* url -> GINT_TO_POINTER(1 eose / 2 failed / 3 never
+                              * subscribed / 4 eose, older events missing) */
   gint64 cursor;             /* everything before it was processed */
   gint64 newest;             /* newest accepted created_at this session (bounded) */
+  GQueue backfill;           /* Stored: a relay's backfill, applied oldest first at its EOSE */
+  guint backfill_seq;
   GQueue held;               /* Held: kind 445 of a later epoch, oldest first */
   GHashTable *held_ids;      /* their event ids (owned by the Held records) */
   gint64 pinned;             /* oldest created_at dropped unread this session; 0: none */
@@ -232,6 +235,24 @@ held_free(gpointer data)
   g_free(held->id);
   g_free(held->json);
   g_free(held);
+}
+
+/* A kind 445 of a relay's stored answer (or an older page), waiting for that
+ * relay's EOSE (nostrc-cpwf). */
+typedef struct {
+  gchar *json;
+  gchar *url;
+  gint64 created_at;
+  guint seq;           /* arrival order */
+} Stored;
+
+static void
+stored_free(gpointer data)
+{
+  Stored *stored = data;
+  g_free(stored->json);
+  g_free(stored->url);
+  g_free(stored);
 }
 
 /* ---- Small helpers ------------------------------------------------------------------ */
@@ -545,6 +566,7 @@ gh_mls_group_finalize(GObject *object)
   g_hash_table_unref(self->settled);
   g_hash_table_unref(self->held_ids);
   g_queue_clear_full(&self->held, held_free);
+  g_queue_clear_full(&self->backfill, stored_free);
   g_ptr_array_unref(self->waiters);
   G_OBJECT_CLASS(gh_mls_group_parent_class)->finalize(object);
 }
@@ -584,6 +606,7 @@ gh_mls_group_init(GhMlsGroup *self)
   self->settled = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->waiters = g_ptr_array_new_with_free_func(g_object_unref);
   g_queue_init(&self->held);
+  g_queue_init(&self->backfill);
   self->held_ids = g_hash_table_new(g_str_hash, g_str_equal);
   self->members = g_new0(gchar *, 1);
   self->admins = g_new0(gchar *, 1);
@@ -821,6 +844,9 @@ group_unsubscribe(GhMlsGroup *group)
     gh_relay_scope_cancel(group->scope);
     g_clear_pointer(&group->scope, gh_relay_scope_unref);
   }
+  /* Not read yet, so nothing moved the cursor past them: the next
+   * subscription fetches them again. */
+  g_queue_clear_full(&group->backfill, stored_free);
   g_hash_table_remove_all(group->settled);
   group_set_read(group, GH_MLS_READ_IDLE);
 }
@@ -969,10 +995,11 @@ retry_held(GhMlsGroup *group)
 
 static void after_commit(GhMlsGroup *group, gboolean fresh);
 
-/* Every relay of the subscription sent its EOSE and is still connected
- * (value 1), apart from URLs that could never be subscribed (value 3). A
- * relay that failed during the catch-up may hold events the others lack:
- * the cursor must not pass them. */
+/* Every relay of the subscription sent its EOSE, fully paged, and is still
+ * connected (value 1), apart from URLs that could never be subscribed
+ * (value 3). A relay that failed during the catch-up, or whose paging could
+ * not fetch everything (value 4, nostrc-cpwf), may hold events the others
+ * lack: the cursor must not pass them. */
 static gboolean
 all_relays_answered(GhMlsGroup *group)
 {
@@ -1084,6 +1111,61 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, Held
   return EVENT_ACCEPTED;
 }
 
+static gint
+stored_older_first(gconstpointer a, gconstpointer b)
+{
+  const Stored *x = a, *y = b;
+  if (x->created_at != y->created_at)
+    return x->created_at < y->created_at ? -1 : 1;
+  /* Within a second the relay sent newest first: undo its order. */
+  return x->seq > y->seq ? -1 : x->seq < y->seq;
+}
+
+/* Relays answer newest first, and libmarmot keeps only a few skipped
+ * message keys per sender (MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS): a
+ * backlog of more than that from one sender, applied newest first, would
+ * leave the older messages undecryptable for good. A relay's stored answer
+ * and its older pages are therefore kept until its EOSE (or its failure)
+ * and applied oldest first, as the held queue is (nostrc-cpwf). */
+static void
+flush_backfill(GhMlsGroup *group, const gchar *url)
+{
+  GList *mine = NULL;
+  for (GList *l = group->backfill.head; l;) {
+    GList *next = l->next;
+    if (g_strcmp0(((Stored *)l->data)->url, url) == 0) {
+      mine = g_list_prepend(mine, l->data);
+      g_queue_delete_link(&group->backfill, l);
+    }
+    l = next;
+  }
+  mine = g_list_sort(mine, stored_older_first);
+  g_object_ref(group);   /* a Commit may change the subscription meanwhile */
+  for (GList *l = mine; l; l = l->next) {
+    Stored *stored = l->data;
+    if (group->active)
+      process_event(group, stored->json, stored->url, NULL);
+  }
+  g_list_free_full(mine, stored_free);
+  g_object_unref(group);
+}
+
+static void
+keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
+{
+  Stored *stored = g_new0(Stored, 1);
+  stored->json = g_strdup(update->event_json);
+  stored->url = g_strdup(update->url);
+  stored->created_at = G_MAXINT64;
+  stored->seq = group->backfill_seq++;
+  NostrEvent *event = nostr_event_new();
+  if (event && nostr_event_deserialize_compact(event, update->event_json, NULL) == 1)
+    stored->created_at = nostr_event_get_created_at(event);
+  if (event)
+    nostr_event_free(event);
+  g_queue_push_tail(&group->backfill, stored);
+}
+
 static void
 on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
 {
@@ -1092,10 +1174,21 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     return;
   switch (update->notice) {
   case GH_RELAY_NOTICE_EVENT:
-    process_event(group, update->event_json, update->url, NULL);
+    if (update->backfill)
+      keep_backfill(group, update);
+    else
+      process_event(group, update->event_json, update->url, NULL);
     break;
   case GH_RELAY_NOTICE_EOSE: {
-    g_hash_table_insert(group->settled, g_strdup(update->url), GINT_TO_POINTER(1));
+    flush_backfill(group, update->url);
+    if (scope != group->scope)
+      break;   /* a Commit in it re-subscribed the group */
+    /* The scope reports it once the backfill has been paged (nostrc-cpwf). */
+    if (update->incomplete)
+      g_message("Groundhog could not fetch every older encrypted group event from a relay; "
+                "the group's read cursor stays where it was");
+    g_hash_table_insert(group->settled, g_strdup(update->url),
+                        GINT_TO_POINTER(update->incomplete ? 4 : 1));
     guint n = g_strv_length(group->relays);
     if (g_hash_table_size(group->settled) >= n) {
       group_set_read(group, GH_MLS_READ_LIVE);
@@ -1107,13 +1200,18 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
   case GH_RELAY_NOTICE_CLOSED:
   case GH_RELAY_NOTICE_DISCONNECTED:
   case GH_RELAY_NOTICE_ERROR: {
+    /* What the relay sent before failing is still worth reading (it moves
+     * no cursor: the relay has not answered). */
+    flush_backfill(group, update->url);
+    if (scope != group->scope)
+      break;
     g_hash_table_insert(group->settled, g_strdup(update->url), GINT_TO_POINTER(2));
     gboolean any_live = FALSE;
     GHashTableIter iter;
     gpointer value;
     g_hash_table_iter_init(&iter, group->settled);
     while (g_hash_table_iter_next(&iter, NULL, &value))
-      any_live |= GPOINTER_TO_INT(value) == 1;
+      any_live |= GPOINTER_TO_INT(value) == 1 || GPOINTER_TO_INT(value) == 4;
     if (!any_live && g_hash_table_size(group->settled) >= g_strv_length(group->relays))
       group_set_read(group, GH_MLS_READ_DISCONNECTED);
     break;
@@ -1123,8 +1221,9 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
   }
 }
 
-/* One live REQ {kinds:[445], #h:[nostr group id], since} on exactly the
- * group relays (§4.3 MLS routing: ephemeral AUTH only). */
+/* One live REQ {kinds:[445], #h:[nostr group id], since, limit} on exactly
+ * the group relays (§4.3 MLS routing: ephemeral AUTH only), each relay's
+ * backfill paged past its result cap (nostrc-cpwf). */
 static void
 group_subscribe(GhMlsGroup *group)
 {
@@ -1142,6 +1241,7 @@ group_subscribe(GhMlsGroup *group)
   nostr_filters_add(filters, filter);
   nostr_filter_free(filter);
   GhRelayScope *scope = gh_relay_scope_new(self->generation, filters, on_group_update, group);
+  gh_relay_scope_set_backfill_paging(scope, GH_MLS_SERVICE_PAGE_LIMIT, GH_MLS_SERVICE_MAX_PAGES);
   g_autofree gchar *isolation = isolation_label(group);
   gh_relay_scope_set_isolation(scope, isolation);
   guint added = 0;

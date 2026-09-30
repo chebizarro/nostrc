@@ -28,8 +28,14 @@ G_BEGIN_DECLS
  * stored (or never storable) with nothing missing before them: a backfill's
  * at its EOSE, a live one's at once; a backfill cut off before EOSE, or any
  * failed admission, leaves it, so the next REQ asks for that stretch again.
- * A relay that caps its answer can still leave older messages unasked
- * (paging with until: nostrc-x055). NIP-42: GhAuthPolicy purpose GROUP, so a relay that
+ * Relays cap a REQ's stored answer and answer newest first: every filter
+ * without a limit of its own (the cursor-based ones) is paged backwards with
+ * until past that cap, down to its since, while the live REQ stays open
+ * (GhRelayScope backfill paging, nostrc-cpwf; REQ limit
+ * GH_NIP29_SERVICE_PAGE_LIMIT, at most GH_NIP29_SERVICE_MAX_PAGES older
+ * pages), and the EOSE comes only after that; an EOSE whose paging could not
+ * fetch everything moves no cursor. A first read ("its newest 200") is not
+ * paged. NIP-42: GhAuthPolicy purpose GROUP, so a relay that
  * demands AUTH (a private group) gets one signed as the account, on
  * challenge only (§4.4 R1, R6). A relay's scope is rebuilt when its groups
  * change; nothing is opened for a group that is not joined or being joined,
@@ -134,6 +140,9 @@ GType gh_nip29_relay_key_state_get_type(void);
 #define GH_NIP29_SERVICE_INITIAL_HISTORY 200
 /* The overlap subtracted from a group's sync cursor. */
 #define GH_NIP29_SERVICE_CURSOR_OVERLAP 600
+/* A group relay's backfill: REQ limit, and older pages per subscription. */
+#define GH_NIP29_SERVICE_PAGE_LIMIT 500
+#define GH_NIP29_SERVICE_MAX_PAGES 16
 
 #define GH_TYPE_NIP29_ROOM (gh_nip29_room_get_type())
 G_DECLARE_FINAL_TYPE(GhNip29Room, gh_nip29_room, GH, NIP29_ROOM, GObject)

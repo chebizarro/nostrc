@@ -893,6 +893,194 @@ static void test_catch_up_2(void) { run_catch_up(2); }
 static void test_catch_up_4(void) { run_catch_up(4); }
 static void test_catch_up_5(void) { run_catch_up(5); }
 
+/* ---- Large backlogs (nostrc-cpwf, nostrc-kzun) ------------------------------------------ */
+
+typedef struct {
+  App *app;
+  const gchar *room;
+  GPtrArray *texts;
+  guint next;            /* texts[0..next) are listed */
+} TextsWait;
+
+static gboolean
+texts_listed(gpointer data)
+{
+  TextsWait *wait = data;
+  while (wait->next < wait->texts->len &&
+         find_message(wait->app, wait->room, g_ptr_array_index(wait->texts, wait->next)))
+    wait->next++;
+  return wait->next == wait->texts->len;
+}
+
+typedef struct {
+  WireRelay *relay;
+  const gchar *h;
+  guint from;            /* relay->stored index the count starts at */
+  guint count;
+} StoredCount;
+
+static guint
+group_stored(WireRelay *relay, const gchar *h, guint from)
+{
+  guint n = 0;
+  for (guint i = from; i < relay->stored->len; i++) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i);
+    if (nostr_event_get_kind(stored->event) == 445 && g_strcmp0(h_of(stored), h) == 0)
+      n++;
+  }
+  return n;
+}
+
+static gboolean
+stored_reached(gpointer data)
+{
+  StoredCount *wait = data;
+  return group_stored(wait->relay, wait->h, wait->from) >= wait->count;
+}
+
+typedef struct {
+  GPtrArray *texts;      /* every message of the backlog */
+  GPtrArray *ids;        /* its kind 445s on the relay, in the order they were made */
+  gchar *first_commit;
+} Backlog;
+
+static void
+backlog_clear(Backlog *backlog)
+{
+  g_ptr_array_unref(backlog->texts);
+  g_ptr_array_unref(backlog->ids);
+  g_free(backlog->first_commit);
+}
+
+/* While Bob is offline, Alice sends @before messages in the current epoch,
+ * then @commits Commits (renames) each followed by @per_epoch messages. Each
+ * event is stored by the relay before the next is made, so ids is in the
+ * order the events were made. */
+static void
+make_backlog(World *w, App *alice, GhMlsGroup *ga, const gchar *h, guint before,
+             guint commits, guint per_epoch, Backlog *out)
+{
+  out->texts = g_ptr_array_new_with_free_func(g_free);
+  out->ids = g_ptr_array_new_with_free_func(g_free);
+  out->first_commit = NULL;
+  StoredCount wait = { &w->g, h, w->g.stored->len, 0 };
+  guint n = 0;
+  for (guint c = 0; c <= commits; c++) {
+    if (c > 0) {
+      g_autofree gchar *name = g_strdup_printf("Backlog %u", c);
+      rename_group(alice, ga, name);
+      wait.count++;
+      spin_until(stored_reached, &wait, "the Commit stored");
+      if (c == 1)
+        out->first_commit = g_strdup(last_stored_445(&w->g)->id);
+    }
+    for (guint i = 0; i < (c == 0 ? before : per_epoch); i++) {
+      gchar *text = g_strdup_printf("backlog %u", n++);
+      send_text(alice, ga, text);
+      g_ptr_array_add(out->texts, text);
+      /* One at a time: publishes are asynchronous, and the relay's arrival
+       * order must be the sender's ratchet order (re-signed dates follow it). */
+      wait.count++;
+      spin_until(stored_reached, &wait, "the message stored");
+    }
+  }
+  for (guint i = wait.from; i < w->g.stored->len; i++) {
+    WireStored *stored = g_ptr_array_index(w->g.stored, i);
+    if (nostr_event_get_kind(stored->event) == 445 && g_strcmp0(h_of(stored), h) == 0)
+      g_ptr_array_add(out->ids, g_strdup(stored->id));
+  }
+  g_assert_cmpuint(out->ids->len, ==, before + commits * (per_epoch + 1));
+}
+
+static WireStored *
+stored_by_id(WireRelay *relay, const gchar *id)
+{
+  for (guint i = 0; i < relay->stored->len; i++)
+    if (g_str_equal(((WireStored *)g_ptr_array_index(relay->stored, i))->id, id))
+      return g_ptr_array_index(relay->stored, i);
+  g_assert_not_reached();
+}
+
+/* REQs for kind 445 that page backwards (carry until). */
+static guint
+paged_reqs(WireRelay *relay)
+{
+  guint n = 0;
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
+        strstr(frame->text, "445") && strstr(frame->text, "\"until\":"))
+      n++;
+  }
+  return n;
+}
+
+/* nostrc-cpwf: the group relay caps every REQ's stored answer at 50 (strfry
+ * does at 500, whatever the REQ's limit) and Bob, offline, missed 303
+ * events: 100 messages of his epoch, then 3 Commits spread over 200 more
+ * messages. The relay answers newest first, so the Commit that opens the
+ * next epoch is in the oldest part, which a single REQ never gets. Bob's
+ * catch-up pages backwards with until, per relay, while the live REQ stays
+ * open: every message read, Alice's epoch, nothing held, the cursor past the
+ * backlog, and a live message after it. (The backlog is re-signed three
+ * events per second, oldest first, so that a relay page never fits in one
+ * second; Bob's clock runs a day ahead so those dates are in his past.) */
+static void
+test_catch_up_past_relay_cap(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  w.g.max_limit = 50;
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Capped", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  g_autofree gchar *h = g_strdup(h_of(last_stored_445(&w.g)));
+  join(bob, ALICE);
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+  gint base = (gint)gh_mls_group_get_unreadable(gb);
+
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;                  /* served only as re-signed below */
+  Backlog backlog;
+  make_backlog(&w, alice, ga, h, 100, 3, 66, &backlog);
+  w.g.withhold_new = FALSE;
+  gint64 start = real_now() + 5, newest = 0;
+  for (guint i = 0; i < backlog.ids->len; i++) {
+    newest = start + i / 3;
+    g_autofree gchar *copy = resigned(stored_by_id(&w.g, g_ptr_array_index(backlog.ids, i))->json,
+                                      newest);
+    wire_relay_inject(&w.g, copy);
+  }
+  guint paged_before = paged_reqs(&w.g);
+
+  set_online(bob, TRUE);
+  TextsWait all = { bob, room, backlog.texts, 0 };
+  spin_until(texts_listed, &all, "every message of the backlog");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
+  wait_live(gb);
+  /* Nothing of the backlog is held; applied oldest first, its three Commits
+   * are fresh ones, which also age out the join's own Add Commit. */
+  g_assert_cmpint(gh_mls_group_get_unreadable(gb), ==, 0);
+  g_assert_cmpint(base, <=, 1);
+  CursorWait moved = { gb, newest };
+  spin_until(cursor_reached, &moved, "the cursor past the backlog");
+  /* 303 events at 50 a page: the live answer and at least five older pages. */
+  g_assert_cmpuint(paged_reqs(&w.g) - paged_before, >=, 5);
+  send_text(alice, ga, "after the capped catch-up");
+  wait_message(bob, room, "after the capped catch-up");   /* the live REQ */
+  backlog_clear(&backlog);
+  world_down(&w);
+}
+
+
 /* A group relay that fails during a catch-up may hold what the others lack:
  * until every relay answered, nothing moves the cursor. (Bob's store clock
  * runs a day ahead so that the cursor would visibly move.) */
@@ -922,8 +1110,12 @@ test_failed_relay_holds_the_cursor(void)
   StatusWait on_g = { alice, room, "while h is down" };
   spin_until(sent, &on_g, "the message accepted by g");
   /* The same message under a later envelope date (the outer created_at is
-   * not covered by MLS): accepted, and it would move the cursor. */
-  g_autofree gchar *later = resigned(last_stored_445(&w.g)->json, real_now() + 200);
+   * not covered by MLS): accepted, and it would move the cursor. It is the
+   * copy g serves (a backfill is applied oldest first, so with the original
+   * served too the original would be read and this copy be a duplicate). */
+  WireStored *original = last_stored_445(&w.g);
+  g_autofree gchar *later = resigned(original->json, real_now() + 200);
+  wire_relay_withhold(&w.g, original->id);
   wire_relay_inject(&w.g, later);
   set_online(bob, TRUE);
   wait_text(bob, room, "while h is down");
@@ -960,13 +1152,15 @@ test_join_commit_pins_no_cursor(void)
   GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
   wait_live(gb);
 
-  /* The same message under a later envelope date (as in the test below),
-   * fetched first by a catch-up (the relay answers newest first). */
+  /* The same message under a later envelope date (as in the test above),
+   * the only copy the relay serves to the catch-up. */
   set_online(bob, FALSE);
   send_text(alice, ga, "after the join");
   StatusWait done = { alice, room, "after the join" };
   spin_until(sent, &done, "the message sent");
-  g_autofree gchar *later = resigned(last_stored_445(&w.g)->json, real_now() + 200);
+  WireStored *original = last_stored_445(&w.g);
+  g_autofree gchar *later = resigned(original->json, real_now() + 200);
+  wire_relay_withhold(&w.g, original->id);
   wire_relay_inject(&w.g, later);
   set_online(bob, TRUE);
   wait_text(bob, room, "after the join");
@@ -1276,6 +1470,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/catch-up-2-commits", test_catch_up_2);
   g_test_add_func("/groundhog/mls-service/catch-up-4-commits", test_catch_up_4);
   g_test_add_func("/groundhog/mls-service/catch-up-5-commits", test_catch_up_5);
+  g_test_add_func("/groundhog/mls-service/catch-up-past-relay-cap", test_catch_up_past_relay_cap);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);
   g_test_add_func("/groundhog/mls-service/failed-relay-holds-the-cursor",

@@ -1380,6 +1380,65 @@ test_outbox_resumes_after_restart(void)
   nip29_relay_clear(&relay);
 }
 
+/* nostrc-cpwf (nostrc-x055): a relay that caps every REQ's stored answer (at
+ * 25 here; strfry at 500) and answers newest first. Back after 120 messages,
+ * the room's backfill is paged backwards with until, per filter, while the
+ * live REQ stays open: every message arrives, the room is LIVE only after
+ * the paging, and the cursor then moves past all of it. */
+static void
+test_backfill_paged_past_relay_cap(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "pizza", "Pizza Lovers");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  member_post(&relay, KEY_BOB, "pizza", "before");
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "pizza", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  wait_messages(f.model, room_id, 1);
+  g_clear_object(&room);
+
+  const guint away = 120;
+  gint64 newest = 0;
+  for (guint i = 0; i < away; i++) {
+    g_autofree gchar *text = g_strdup_printf("while away %u", i);
+    NostrEvent *event = nip29_member_event(gh_test_secret[KEY_BOB], 9, nip29_now(&relay),
+                                           "pizza", text);
+    newest = nostr_event_get_created_at(event);
+    g_ptr_array_add(relay.events, event);
+  }
+  relay.max_limit = 25;
+  guint frames = relay.req_frames->len;
+  restart(&f);
+  wait_messages(f.model, room_id, 1 + away);
+  g_autoptr(GhNip29Room) back = gh_nip29_service_lookup(f.service, relay.url, "pizza");
+  wait_read(back, GH_NIP29_READ_LIVE);
+  guint paged = 0;
+  for (guint i = frames; i < relay.req_frames->len; i++)
+    paged += strstr(g_ptr_array_index(relay.req_frames, i), "\"until\":") != NULL;
+  g_assert_cmpuint(paged, >=, away / 25);
+  /* Still live on the REQ that was open throughout. */
+  live_post(&relay, KEY_BOB, "pizza", "live again");
+  wait_messages(f.model, room_id, 2 + away);
+  g_clear_object(&back);
+
+  /* That backfill was complete: the next REQ asks from its newest. */
+  frames = relay.req_frames->len;
+  restart(&f);
+  wait_count(&relay.req_frames->len, frames + 1);
+  const gchar *req = g_ptr_array_index(relay.req_frames, frames);
+  const gchar *since = strstr(req, "\"since\":");
+  g_assert_nonnull(since);
+  g_assert_cmpint(g_ascii_strtoll(since + strlen("\"since\":"), NULL, 10), >=,
+                  newest - GH_NIP29_SERVICE_CURSOR_OVERLAP);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 static void
 test_leave_and_removed(void)
 {
@@ -1444,6 +1503,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/restart-restores", test_restart_restores);
   g_test_add_func("/groundhog/nip29-service/outbox-resumes", test_outbox_resumes_after_restart);
   g_test_add_func("/groundhog/nip29-service/cursor-waits-for-eose", test_cursor_waits_for_eose);
+  g_test_add_func("/groundhog/nip29-service/backfill-paged-past-relay-cap",
+                  test_backfill_paged_past_relay_cap);
   g_test_add_func("/groundhog/nip29-service/leave-and-removed", test_leave_and_removed);
   gint rc = g_test_run();
   gh_test_bus_down(&shared_bus);

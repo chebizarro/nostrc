@@ -53,10 +53,12 @@ typedef enum {
  * and without a checkpoint for since = now - INITIAL_BACKFILL.
  *
  * Paging (charter §4.5 S6). A relay answers a REQ with its newest REQ_LIMIT
- * wraps at most, so a relay that has delivered REQ_LIMIT distinct wraps by
- * its EOSE may hold older ones. It is paged backwards with one-shot REQs
+ * wraps at most, or fewer under its own cap (strfry's 500), so a relay that
+ * has delivered gh_relay_page_threshold(REQ_LIMIT) (20) distinct wraps by its
+ * EOSE may hold older ones. It is paged backwards with one-shot REQs
  * {since, until = the oldest created_at seen, limit} (until is inclusive;
- * repeats are skipped by id) until a page returns fewer than REQ_LIMIT. A
+ * repeats are skipped by id) until a page returns fewer than that threshold
+ * (nostrc-cpwf: "fewer than REQ_LIMIT" missed every relay capped below it). A
  * page that cannot get older (more than a page of wraps in one second) steps
  * over that second and leaves the relay INCOMPLETE; so does a failed page or
  * a run of MAX_PAGES pages. An INCOMPLETE relay holds the checkpoint for the

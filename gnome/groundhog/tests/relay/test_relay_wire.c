@@ -422,6 +422,160 @@ test_loopback_listener(void)
     g_socket_close(g_ptr_array_index(holders, i), NULL);
 }
 
+/* ---- Backfill paging past a relay's cap (nostrc-cpwf) ---------------------------- */
+
+#define PAGED_BACKLOG 300
+#define PAGED_CAP 50
+
+typedef struct {
+  GHashTable *ids;         /* distinct event ids delivered */
+  guint events;            /* EVENT notices, repeats included */
+  guint live;              /* EVENT notices with backfill FALSE */
+  guint at_eose;           /* distinct ids when the EOSE came */
+  guint eoses;
+  gboolean incomplete;
+} PagedUpdates;
+
+static void
+on_paged_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
+{
+  (void)scope;
+  PagedUpdates *updates = data;
+  switch (update->notice) {
+  case GH_RELAY_NOTICE_EVENT:
+    updates->events++;
+    if (!update->backfill)
+      updates->live++;
+    g_hash_table_add(updates->ids, g_strdup(update->event_id));
+    break;
+  case GH_RELAY_NOTICE_EOSE:
+    updates->eoses++;
+    updates->incomplete = update->incomplete;
+    updates->at_eose = g_hash_table_size(updates->ids);
+    break;
+  default:
+    break;
+  }
+}
+
+/* A signed kind 1, three to a second (so relay pages end inside a second). */
+static gchar *
+backlog_event(const gchar *key, guint i, gint64 base)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 1);
+  nostr_event_set_created_at(event, base + i / 3);
+  g_autofree gchar *content = g_strdup_printf("backlog %u", i);
+  nostr_event_set_content(event, content);
+  g_assert_cmpint(nostr_event_sign(event, key), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gchar *copy = g_strdup(json);
+  free(json);
+  return copy;
+}
+
+/* The relay holds PAGED_BACKLOG events since `since` and answers any REQ with
+ * at most PAGED_CAP of them per filter (newest first), whatever it asks.
+ * @page_limit 0: no paging. Returns the scope, started and at its EOSE. */
+static GhRelayScope *
+paged_scope(WireRelay *relay, PagedUpdates *updates, guint page_limit, guint max_pages)
+{
+  relay->serve = TRUE;
+  relay->max_limit = PAGED_CAP;
+  relay_init(relay);
+  char *key = nostr_key_generate_private();
+  gint64 base = g_get_real_time() / G_USEC_PER_SEC - 3600;
+  for (guint i = 0; i < PAGED_BACKLOG; i++) {
+    g_autofree gchar *json = backlog_event(key, i, base);
+    wire_relay_inject(relay, json);
+  }
+  free(key);
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+  const int kinds[] = { 1 };
+  nostr_filter_set_kinds(filter, kinds, G_N_ELEMENTS(kinds));
+  nostr_filter_set_since_i64(filter, base - 60);
+  g_assert_true(nostr_filters_add(filters, filter));
+  nostr_filter_free(filter);
+  updates->ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GhRelayScope *scope = gh_relay_scope_new(7, filters, on_paged_update, updates);
+  if (page_limit)
+    gh_relay_scope_set_backfill_paging(scope, page_limit, max_pages);
+  g_assert_true(gh_relay_scope_add_url(scope, relay->url, NULL));
+  gh_relay_scope_start(scope);
+  wait_for_count(&updates->eoses, 1);
+  return scope;
+}
+
+/* Paging reads the whole backlog behind a relay whose cap (50) is far below
+ * the REQ limit (500), reports one EOSE after all of it (complete), keeps the
+ * live REQ open, and every paged REQ keeps the filter's since. */
+static void
+test_paging_past_relay_cap(void)
+{
+  WireRelay relay = { .record = TRUE };
+  PagedUpdates updates = { 0 };
+  GhRelayScope *scope = paged_scope(&relay, &updates, 500, 64);
+  g_assert_cmpuint(updates.at_eose, ==, PAGED_BACKLOG);
+  g_assert_false(updates.incomplete);
+  g_assert_cmpuint(updates.live, ==, 0);
+  /* Six full pages and a short one; the first REQ is the live one. */
+  g_assert_cmpuint(relay.reqs, >=, 1 + PAGED_BACKLOG / PAGED_CAP);
+  g_assert_cmpuint(relay.reqs, <=, 2 + PAGED_BACKLOG / PAGED_CAP + 1);
+  guint with_until = 0;
+  for (guint i = 0; i < relay.frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay.frames, i);
+    if (!frame->inbound || !g_str_has_prefix(frame->text, "[\"REQ\""))
+      continue;
+    g_assert_nonnull(strstr(frame->text, "\"since\":"));
+    g_assert_nonnull(strstr(frame->text, "\"limit\":500"));
+    with_until += strstr(frame->text, "\"until\":") != NULL;
+  }
+  g_assert_cmpuint(with_until, ==, relay.reqs - 1);
+
+  /* The live REQ is still open: a new event arrives, not as backfill. */
+  char *key = nostr_key_generate_private();
+  g_autofree gchar *json = backlog_event(key, 0, g_get_real_time() / G_USEC_PER_SEC);
+  free(key);
+  wire_relay_inject(&relay, json);
+  wait_for_count(&updates.live, 1);
+  g_assert_cmpuint(g_hash_table_size(updates.ids), ==, PAGED_BACKLOG + 1);
+  g_assert_cmpuint(updates.eoses, ==, 1);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  relay_clear(&relay);
+  g_hash_table_unref(updates.ids);
+}
+
+/* Without paging the same relay gives only its newest 50 (the bug), and a
+ * page budget too small for the backlog ends with an incomplete EOSE. */
+static void
+test_paging_off_or_exhausted(void)
+{
+  WireRelay relay = { 0 };
+  PagedUpdates updates = { 0 };
+  GhRelayScope *scope = paged_scope(&relay, &updates, 0, 0);
+  g_assert_cmpuint(updates.at_eose, ==, PAGED_CAP);
+  g_assert_false(updates.incomplete);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  relay_clear(&relay);
+  g_hash_table_unref(updates.ids);
+
+  WireRelay budget = { 0 };
+  PagedUpdates short_updates = { 0 };
+  scope = paged_scope(&budget, &short_updates, 500, 2);
+  g_assert_true(short_updates.incomplete);
+  g_assert_cmpuint(budget.reqs, ==, 3);
+  g_assert_cmpuint(short_updates.at_eose, >, 2 * PAGED_CAP);
+  g_assert_cmpuint(short_updates.at_eose, <=, 3 * PAGED_CAP);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  relay_clear(&budget);
+  g_hash_table_unref(short_updates.ids);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -435,6 +589,8 @@ main(int argc, char **argv)
     { "/groundhog/relay/offline-at-start", test_offline_at_start_reconnect, FALSE },
     { "/groundhog/relay/same-url-scopes-isolated", test_same_url_scopes_isolated, FALSE },
     { "/groundhog/relay/cancel-closes-subscription", test_cancel_closes_relay_subscription, FALSE },
+    { "/groundhog/relay/paging/past-relay-cap", test_paging_past_relay_cap, FALSE },
+    { "/groundhog/relay/paging/off-or-exhausted", test_paging_off_or_exhausted, FALSE },
   };
   wire_add_tests(cases, G_N_ELEMENTS(cases));
   /* The harness itself, no traffic: not a wire case (no Tor variant). */

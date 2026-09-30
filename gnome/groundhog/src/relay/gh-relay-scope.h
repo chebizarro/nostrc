@@ -54,6 +54,45 @@ G_BEGIN_DECLS
 #define GH_RELAY_CLOSED_OVERFLOW_PREFIX "overflow:"
 #define GH_RELAY_SCOPE_OVERFLOW_RETRIES 1
 
+/*
+ * Backfill paging (nostrc-cpwf; opt-in, gh_relay_scope_set_backfill_paging()).
+ * Relays cap a REQ's stored answer (strfry 500, others 100) and answer newest
+ * first, so after a long absence the oldest part of [since, now] -- for MLS
+ * the Commits that open later epochs -- is simply not sent, and asking again
+ * returns the same newest page. A paging scope, per URL and per filter that
+ * has no limit of its own:
+ *  - sends the live REQ with limit = the page limit;
+ *  - at that REQ's EOSE, pages each filter whose answer may have been cut
+ *    short backwards with one-shot REQs {filter, until = the oldest
+ *    created_at received for it (inclusive; repeats are deduplicated by id),
+ *    limit}, on a fresh connection to the same URL with the same AUTH
+ *    identity and Tor isolation, one page at a time, while the live REQ stays
+ *    open;
+ *  - stops paging a filter when a page brings fewer than
+ *    gh_relay_page_threshold(limit) events (so a relay whose own cap is below
+ *    the limit is still paged), or its until would pass the filter's since;
+ *  - reports the URL's EOSE only once paging has ended. Every event before
+ *    it, live ones included, is flagged backfill, so a caller that moves a
+ *    cursor at EOSE never passes an unfetched gap. The EOSE carries
+ *    incomplete = TRUE when some older events could not be fetched: a page
+ *    failed (CLOSED, error, disconnect), more than a page shared one second
+ *    (that second is stepped over), or the page budget ran out. The caller
+ *    must then not move a durable cursor past what it has; the next
+ *    subscription asks again.
+ * Paged events are EVENT notices of the URL like any other (backfill TRUE).
+ * A disconnect, an overflow retry or an authenticated retry restarts the
+ * round with the new REQ's answer. Filters with their own limit ("only the
+ * newest N") are never paged.
+ */
+#define GH_RELAY_PAGE_MIN_CAP 20
+/* An answer (or page) of at least this many events for one filter may have
+ * been cut short by the relay: page further. */
+static inline guint
+gh_relay_page_threshold(guint limit)
+{
+  return limit ? MIN(limit, GH_RELAY_PAGE_MIN_CAP) : GH_RELAY_PAGE_MIN_CAP;
+}
+
 typedef struct _GhRelayScope GhRelayScope;
 
 typedef enum {
@@ -74,6 +113,7 @@ typedef struct {
   const gchar *detail;     /* CLOSED, AUTH, OK or ERROR */
   gboolean accepted;       /* relay-local OK, never upstream delivery */
   gboolean backfill;       /* EVENT received before this URL's EOSE */
+  gboolean incomplete;     /* EOSE of a paging scope: older events are missing */
 } GhRelayUpdate;
 
 typedef void (*GhRelayScopeFunc)(GhRelayScope *scope,
@@ -124,6 +164,11 @@ gboolean gh_relay_url_validate(const gchar *url, GError **error);
 gboolean gh_relay_scope_add_url(GhRelayScope *scope, const gchar *url,
                                 GError **error);
 void gh_relay_scope_start(GhRelayScope *scope);
+/* Before start: page each URL's backfill (see "Backfill paging" above) with
+ * REQ limit @limit (>= 1) and at most @max_pages older pages per URL and
+ * round (>= 1). Filters without a limit of their own get @limit on the live
+ * REQ too. */
+void gh_relay_scope_set_backfill_paging(GhRelayScope *scope, guint limit, guint max_pages);
 /* Revoke generation before closing transports; no later callback is admitted. */
 void gh_relay_scope_cancel(GhRelayScope *scope);
 guint64 gh_relay_scope_get_generation(const GhRelayScope *scope);

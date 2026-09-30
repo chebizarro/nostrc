@@ -1329,6 +1329,50 @@ test_backfill_tied_second(void)
   fixture_down(&f);
 }
 
+/* nostrc-cpwf: a relay whose own cap is below the REQ limit (strfry answers
+ * at most 500 whatever the limit, and the inbox asks for 1000) answers the
+ * live REQ with fewer than the limit although it holds more. At least
+ * gh_relay_page_threshold() wraps mean "maybe cut short": it is paged, and
+ * only a page below that threshold completes it. Fewer is complete at once. */
+static void
+test_backfill_relay_cap_below_limit(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  publish_list(&f, 2, 10050, INBOX_A, INBOX_B, NULL);
+  g_assert_cmpint(open_req(&f.rec, INBOX_A)->limit, ==, GH_DM_INBOX_REQ_LIMIT);
+  const guint cap = GH_RELAY_PAGE_MIN_CAP + 5;
+  g_assert_cmpuint(cap, <, GH_DM_INBOX_REQ_LIMIT);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  guint salt = 0;
+  for (guint i = 1; i <= cap; i++) {
+    g_autofree gchar *junk = junk_wrap(now - i * HOUR, salt++);
+    deliver(&f, INBOX_A, junk);
+  }
+  for (guint i = 1; i < GH_RELAY_PAGE_MIN_CAP; i++) {
+    g_autofree gchar *junk = junk_wrap(now - i * HOUR, salt++);
+    deliver(&f, INBOX_B, junk);
+  }
+  eose(&f, INBOX_A);
+  eose(&f, INBOX_B);
+  Req *page = wait_page(&f.rec, INBOX_A, 1);
+  g_assert_cmpint(page->until, ==, now - (gint64)cap * HOUR);
+  g_assert_null(find_req(&f.rec, INBOX_B, TRUE));   /* below the threshold: complete */
+  gh_test_spin_until(settled, f.inbox);
+  g_assert_false(has_checkpoint(&f));
+  for (guint i = 1; i <= 3; i++) {
+    g_autofree gchar *junk = junk_wrap(now - (gint64)(cap + i) * HOUR, salt++);
+    gh_relay_scope_event(page->scope, INBOX_A, junk);
+  }
+  gh_relay_scope_eose(page->scope, INBOX_A);
+  gh_test_spin_until(live_and_settled, f.inbox);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
+  g_assert_cmpuint(count_pages(&f.rec, INBOX_A), ==, 1);
+  g_assert_cmpuint(counters(f.inbox).backfill_incomplete, ==, 0);
+  g_assert_true(has_checkpoint(&f));
+  fixture_down(&f);
+}
+
 /* ---- rejected wraps (nostrc-qp24.10.11) -------------------------------------- */
 
 /* A wrap finally rejected after a signer call is recorded, so a restart
@@ -1685,6 +1729,8 @@ main(int argc, char **argv)
     hex[key] = gh_test_pub(key);
   }
   g_test_add_func("/groundhog/dm-inbox/req-exact", test_req_exact);
+  g_test_add_func("/groundhog/dm-inbox/backfill-relay-cap-below-limit",
+                  test_backfill_relay_cap_below_limit);
   g_test_add_func("/groundhog/dm-inbox/rooms-and-dedup", test_rooms_and_dedup);
   g_test_add_func("/groundhog/dm-inbox/seen-restart", test_seen_restart);
   g_test_add_func("/groundhog/dm-inbox/legacy-state-files", test_legacy_state_files);

@@ -9,7 +9,8 @@
  *    replaces them (and pushes them to live subscriptions) on every change.
  *    partial_members makes the 39002 list the admins only (a subset).
  *  - REQ: every stored event matching the filters (each filter's limit
- *    honoured, newest first), then EOSE (none with hold_eose: a backfill
+ *    honoured, and max_limit when set: the relay's own cap, whatever the
+ *    REQ asks; newest first), then EOSE (none with hold_eose: a backfill
  *    cut off before its end); the subscription stays live. hold_reqs keeps
  *    each REQ unanswered (in held_reqs) until nip29_release_reqs() answers
  *    those still open, so an OK can be made to come before a REQ's answer.
@@ -86,6 +87,7 @@ typedef struct {
   gboolean require_auth;
   gboolean refuse_auth;
   gboolean hold_eose;       /* answer a REQ's stored events but never its EOSE */
+  guint max_limit;          /* stored events per filter of a REQ's answer, at most; 0: none */
   gboolean nip11_no_key;
   gboolean nip11_pubkey_only; /* "pubkey" (an admin's key) but no "self" */
   const gchar *nip11_pubkey_only_key; /* that "pubkey" */
@@ -607,6 +609,8 @@ nip29_on_req(Nip29Relay *relay, SoupWebsocketConnection *connection, const gchar
   for (size_t f = 0; f < sub->filters->count; f++) {
     NostrFilter *filter = &sub->filters->filters[f];
     int limit = nostr_filter_get_limit(filter);
+    if (relay->max_limit && (limit <= 0 || (guint)limit > relay->max_limit))
+      limit = (int)relay->max_limit;
     int taken = 0;
     for (guint i = relay->events->len; i > 0; i--) {
       NostrEvent *event = g_ptr_array_index(relay->events, i - 1);

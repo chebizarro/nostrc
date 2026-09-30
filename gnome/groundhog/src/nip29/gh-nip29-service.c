@@ -861,6 +861,9 @@ relay_resubscribe(Relay *relay)
     : gh_relay_scope_new(self->generation, filters, on_scope_update, relay);
   if (self->custom_scope && self->has_scope_auth)
     gh_relay_scope_set_auth_transport(scope, &self->scope_auth);
+  /* Past the relay's result cap (nostrc-cpwf, nostrc-x055). */
+  gh_relay_scope_set_backfill_paging(scope, GH_NIP29_SERVICE_PAGE_LIMIT,
+                                     GH_NIP29_SERVICE_MAX_PAGES);
   g_autoptr(GError) error = NULL;
   if (!gh_relay_scope_add_url(scope, relay->url, &error)) {
     g_warning("Groundhog cannot read a group relay: %s", error->message);
@@ -1139,9 +1142,13 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     case GH_RELAY_NOTICE_EOSE:
       room_set_read(room, GH_NIP29_READ_LIVE, NULL);
       room->backfilled = TRUE;
-      /* The backfill is complete: what it stored has nothing missing before
-       * it (up to the relay's answer, see the header). */
-      if (!room->sync_failed && room->sync_cursor > room->cursor)
+      /* The backfill is complete (paged past the relay's cap): what it
+       * stored has nothing missing before it. An incomplete one keeps the
+       * cursor, so the next REQ asks for that stretch again. */
+      if (update->incomplete)
+        g_message("Groundhog could not fetch every older message of a group; its read "
+                  "cursor stays where it was");
+      else if (!room->sync_failed && room->sync_cursor > room->cursor)
         room->cursor = room->sync_cursor;
       room_save(room);
       break;

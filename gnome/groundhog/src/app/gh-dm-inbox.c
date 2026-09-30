@@ -689,7 +689,9 @@ finish_page(GhDmInbox *self, Endpoint *endpoint)
     end_run(self, endpoint, FALSE);
     return;
   }
-  if (events < self->limit) {
+  /* Short against the relay's own cap too, which may be far below the
+   * REQ limit (strfry's 500 against 1000; nostrc-cpwf). */
+  if (events < gh_relay_page_threshold(self->limit)) {
     end_run(self, endpoint, TRUE); /* nothing older remains */
     return;
   }
@@ -709,15 +711,16 @@ finish_page(GhDmInbox *self, Endpoint *endpoint)
   start_page(self, endpoint, next);
 }
 
-/* The live REQ reached EOSE: the relay answered with its newest limit wraps
- * in [since, now]. If it has delivered fewer distinct wraps than that during
- * this whole session, it holds fewer, and its window is complete. Otherwise
- * older ones may be cut off; every backfill event of this connection is among
- * the newest, so paging from the oldest of them misses nothing. */
+/* The live REQ reached EOSE: the relay answered with its newest wraps in
+ * [since, now], at most the REQ limit or its own smaller cap. If it has
+ * delivered fewer distinct wraps than gh_relay_page_threshold() during this
+ * whole session, it holds fewer, and its window is complete. Otherwise older
+ * ones may be cut off; every backfill event of this connection is among the
+ * newest, so paging from the oldest of them misses nothing. */
 static void
 judge_live(GhDmInbox *self, Endpoint *endpoint)
 {
-  if (endpoint->live_events < self->limit) {
+  if (endpoint->live_events < gh_relay_page_threshold(self->limit)) {
     endpoint->backfill = BACKFILL_COMPLETE;
     return;
   }

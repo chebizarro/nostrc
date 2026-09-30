@@ -7,6 +7,14 @@
 #define GH_MAX_RELAYS 16
 #define GH_SEEN_LIMIT 4096
 
+/* One filter's part of the current answer, while paging (nostrc-cpwf). */
+typedef struct {
+  guint count;                 /* events of the answer matching it */
+  gint64 oldest;               /* their oldest created_at; G_MAXINT64: none */
+  gint64 until;                /* the answer's until; G_MAXINT64: the live REQ */
+  gboolean open;               /* older events may remain: page it */
+} PageFilter;
+
 typedef struct {
   GhRelayScope *scope;         /* owner; endpoints never outlive it */
   gchar *url;
@@ -24,6 +32,16 @@ typedef struct {
   /* Overflow recovery (nostrc-5rfp), per connection. */
   guint overflow_retries;
   guint recover_source;        /* idle re-issuing the REQ */
+  /* Backfill paging (nostrc-cpwf), per round (one live REQ's answer). */
+  gboolean live_eose;          /* the live REQ's own EOSE arrived */
+  PageFilter *pf;              /* per scope filter; NULL until needed */
+  GhRelayScope *page;          /* the older page in flight */
+  guint *page_map;             /* page filter index -> scope filter index */
+  guint pages;                 /* older pages of this round */
+  gboolean page_ended;         /* its EOSE or failure seen; judged by the idle */
+  gboolean page_failed;
+  gboolean incomplete;         /* older events of this round could not be fetched */
+  guint settle_source;         /* idle judging an answer */
 } GhEndpoint;
 
 struct _GhRelayScope {
@@ -42,6 +60,10 @@ struct _GhRelayScope {
   gchar *isolation;            /* Tor stream isolation label */
   gboolean started;
   gboolean cancelled;
+  /* Backfill paging (nostrc-cpwf); page_limit 0: off. */
+  guint page_limit;
+  guint max_pages;
+  gboolean *pageable;          /* per filter: no limit of its own */
 };
 
 /* gh_relay_scope_new()'s transport (gh_relay_scope_set_default_transport()). */
@@ -73,12 +95,44 @@ stop_recovery(GhEndpoint *endpoint)
   }
 }
 
+/* Ends this round's paging: the page in flight is cancelled, the answer
+ * forgotten. The next live REQ's EOSE starts a new round. */
+static void
+reset_paging(GhEndpoint *endpoint)
+{
+  if (endpoint->settle_source) {
+    g_source_remove(endpoint->settle_source);
+    endpoint->settle_source = 0;
+  }
+  if (endpoint->page) {
+    GhRelayScope *page = g_steal_pointer(&endpoint->page);
+    gh_relay_scope_cancel(page);
+    gh_relay_scope_unref(page);
+  }
+  g_clear_pointer(&endpoint->page_map, g_free);
+  endpoint->live_eose = FALSE;
+  endpoint->pages = 0;
+  endpoint->page_ended = FALSE;
+  endpoint->page_failed = FALSE;
+  endpoint->incomplete = FALSE;
+  if (endpoint->scope->pageable) {
+    for (size_t i = 0; endpoint->pf && i < endpoint->scope->filters->count; i++) {
+      endpoint->pf[i].count = 0;
+      endpoint->pf[i].oldest = G_MAXINT64;
+      endpoint->pf[i].until = G_MAXINT64;
+      endpoint->pf[i].open = FALSE;
+    }
+  }
+}
+
 static void
 endpoint_free(gpointer data)
 {
   GhEndpoint *endpoint = data;
   stop_recovery(endpoint);
+  reset_paging(endpoint);
   reset_auth(endpoint);
+  g_free(endpoint->pf);
   g_free(endpoint->url);
   g_free(endpoint);
 }
@@ -209,6 +263,7 @@ gh_relay_scope_cancel(GhRelayScope *scope)
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     GhEndpoint *endpoint = value;
     stop_recovery(endpoint);
+    reset_paging(endpoint);
     reset_auth(endpoint); /* the revoked generation signs nothing more */
     if (endpoint->opened) {
       endpoint->opened = FALSE;
@@ -229,8 +284,27 @@ gh_relay_scope_unref(GhRelayScope *scope)
   g_hash_table_unref(scope->seen);
   g_queue_clear_full(&scope->seen_order, g_free);
   nostr_filters_free(scope->filters);
+  g_free(scope->pageable);
   g_free(scope->isolation);
   g_free(scope);
+}
+
+void
+gh_relay_scope_set_backfill_paging(GhRelayScope *scope, guint limit, guint max_pages)
+{
+  g_return_if_fail(scope != NULL && !scope->started);
+  g_return_if_fail(limit >= 1 && limit <= G_MAXINT && max_pages >= 1);
+  scope->page_limit = limit;
+  scope->max_pages = max_pages;
+  g_free(scope->pageable);
+  scope->pageable = g_new0(gboolean, scope->filters->count + 1);
+  for (size_t i = 0; i < scope->filters->count; i++) {
+    NostrFilter *filter = &scope->filters->filters[i];
+    if (nostr_filter_get_limit_zero(filter) || nostr_filter_get_limit(filter) > 0)
+      continue;   /* "only the newest N": never paged */
+    scope->pageable[i] = TRUE;
+    nostr_filter_set_limit(filter, (int)limit);
+  }
 }
 
 guint64
@@ -368,6 +442,55 @@ active_endpoint(GhRelayScope *scope, const gchar *url)
   return endpoint && endpoint->opened ? endpoint : NULL;
 }
 
+/* Counts @event into this round's answer for every pageable scope filter
+ * that @filters (the scope's own, or a page's, through @map) matches. */
+static void
+ensure_page_filters(GhRelayScope *scope, GhEndpoint *endpoint)
+{
+  if (endpoint->pf)
+    return;
+  endpoint->pf = g_new0(PageFilter, scope->filters->count + 1);
+  for (size_t i = 0; i < scope->filters->count; i++) {
+    endpoint->pf[i].oldest = G_MAXINT64;
+    endpoint->pf[i].until = G_MAXINT64;
+  }
+}
+
+static void
+count_answer(GhRelayScope *scope, GhEndpoint *endpoint, NostrEvent *event,
+             NostrFilters *filters, const guint *map)
+{
+  ensure_page_filters(scope, endpoint);
+  gint64 created_at = nostr_event_get_created_at(event);
+  for (size_t j = 0; j < filters->count; j++) {
+    size_t i = map ? map[j] : j;
+    if (!scope->pageable[i] || !nostr_filter_matches(&filters->filters[j], event))
+      continue;
+    endpoint->pf[i].count++;
+    endpoint->pf[i].oldest = MIN(endpoint->pf[i].oldest, created_at);
+  }
+}
+
+/* A verified event of @url's answer: once per id, to the caller. */
+static void
+deliver_event(GhRelayScope *scope, GhEndpoint *endpoint, const gchar *event_json,
+              const gchar *id)
+{
+  if (g_hash_table_contains(scope->seen, id))
+    return;
+  g_hash_table_add(scope->seen, g_strdup(id));
+  g_queue_push_tail(&scope->seen_order, g_strdup(id));
+  if (g_queue_get_length(&scope->seen_order) > GH_SEEN_LIMIT) {
+    gchar *oldest = g_queue_pop_head(&scope->seen_order);
+    g_hash_table_remove(scope->seen, oldest);
+    g_free(oldest);
+  }
+  GhRelayUpdate update = { .notice = GH_RELAY_NOTICE_EVENT, .url = endpoint->url,
+                           .event_json = event_json, .event_id = id,
+                           .backfill = !endpoint->eose };
+  emit_update(scope, &update);
+}
+
 void
 gh_relay_scope_event(GhRelayScope *scope, const gchar *url,
                      const gchar *event_json)
@@ -382,20 +505,195 @@ gh_relay_scope_event(GhRelayScope *scope, const gchar *url,
   gboolean valid = nostr_event_deserialize_signed(event, event_json, NULL) ==
                      NOSTR_EVENT_VALIDATION_OK &&
                    nostr_event_validate(event, id) == NOSTR_EVENT_VALIDATION_OK;
+  /* The live REQ's stored answer, counted before deduplication: another
+   * relay's copy does not make this relay's answer shorter. */
+  if (valid && scope->pageable && !endpoint->live_eose)
+    count_answer(scope, endpoint, event, scope->filters, NULL);
   nostr_event_free(event);
-  if (!valid || g_hash_table_contains(scope->seen, id))
-    return;
-  g_hash_table_add(scope->seen, g_strdup(id));
-  g_queue_push_tail(&scope->seen_order, g_strdup(id));
-  if (g_queue_get_length(&scope->seen_order) > GH_SEEN_LIMIT) {
-    gchar *oldest = g_queue_pop_head(&scope->seen_order);
-    g_hash_table_remove(scope->seen, oldest);
-    g_free(oldest);
-  }
-  GhRelayUpdate update = { .notice = GH_RELAY_NOTICE_EVENT, .url = url,
-                           .event_json = event_json, .event_id = id,
-                           .backfill = !endpoint->eose };
+  if (valid)
+    deliver_event(scope, endpoint, event_json, id);
+}
+
+static void
+finish_backfill(GhRelayScope *scope, GhEndpoint *endpoint)
+{
+  endpoint->eose = TRUE;
+  if (endpoint->incomplete)
+    g_debug("relay scope: %s's backfill is incomplete after %u older pages",
+            endpoint->url, endpoint->pages);
+  GhRelayUpdate update = { .notice = GH_RELAY_NOTICE_EOSE, .url = endpoint->url,
+                           .incomplete = endpoint->incomplete };
   emit_update(scope, &update);
+}
+
+static gboolean settle_now(gpointer data);
+
+/* Answers are judged from an idle: never inside a transport callback, where
+ * a page's own connection cannot be torn down. */
+static void
+schedule_settle(GhEndpoint *endpoint)
+{
+  if (!endpoint->settle_source)
+    endpoint->settle_source = g_idle_add(settle_now, endpoint);
+}
+
+/* The answer for scope filter @i has ended: may older events remain? */
+static void
+judge_filter(GhRelayScope *scope, GhEndpoint *endpoint, size_t i)
+{
+  PageFilter *p = &endpoint->pf[i];
+  p->open = FALSE;
+  if (p->count >= gh_relay_page_threshold(scope->page_limit)) {
+    /* Perhaps cut short by the relay. until is inclusive, so the next page
+     * repeats the boundary second (the relay may have cut inside it); a
+     * page that got no older holds more than a page in that one second:
+     * step over it, and the answer is incomplete. */
+    gint64 next = p->oldest;
+    if (next >= p->until) {
+      next = p->until - 1;
+      endpoint->incomplete = TRUE;
+    }
+    gint64 since = nostr_filter_get_since_i64(&scope->filters->filters[i]);
+    if (next >= 0 && next >= since) {
+      p->until = next;
+      p->open = TRUE;
+    }
+  }
+  p->count = 0;
+  p->oldest = G_MAXINT64;
+}
+
+static void on_page_update(GhRelayScope *page, const GhRelayUpdate *update, gpointer data);
+
+/* One older page for every open filter, on a fresh connection to the same
+ * URL with the same AUTH identity and Tor isolation. */
+static gboolean
+start_page(GhRelayScope *scope, GhEndpoint *endpoint)
+{
+  NostrFilters *filters = nostr_filters_new();
+  if (!filters)
+    return FALSE;
+  g_clear_pointer(&endpoint->page_map, g_free);
+  endpoint->page_map = g_new0(guint, scope->filters->count + 1);
+  guint n = 0;
+  for (size_t i = 0; i < scope->filters->count; i++) {
+    if (!scope->pageable[i] || !endpoint->pf[i].open)
+      continue;
+    NostrFilter *filter = nostr_filter_copy(&scope->filters->filters[i]);
+    if (!filter) {
+      nostr_filters_free(filters);
+      return FALSE;
+    }
+    nostr_filter_set_until_i64(filter, endpoint->pf[i].until);
+    nostr_filter_set_limit(filter, (int)scope->page_limit);
+    gboolean added = nostr_filters_add(filters, filter);
+    nostr_filter_free(filter); /* contents moved into the vector */
+    if (!added) {
+      nostr_filters_free(filters);
+      return FALSE;
+    }
+    endpoint->page_map[n++] = (guint)i;
+  }
+  GhRelayScope *page = gh_relay_scope_new_with_transport(scope->generation, filters,
+                                                         &scope->transport,
+                                                         scope->transport_data,
+                                                         on_page_update, endpoint);
+  page->auth_transport = scope->auth_transport;
+  g_free(page->isolation);
+  page->isolation = g_strdup(scope->isolation);
+  if (scope->signer)
+    page->signer = gh_relay_auth_signer_ref(scope->signer);
+  if (!gh_relay_scope_add_url(page, endpoint->url, NULL) ||
+      !gh_relay_scope_set_url_auth(page, endpoint->url, endpoint->auth_mode, NULL)) {
+    gh_relay_scope_unref(page);
+    return FALSE;
+  }
+  endpoint->page = page;
+  endpoint->page_ended = FALSE;
+  endpoint->page_failed = FALSE;
+  endpoint->pages++;
+  gh_relay_scope_start(page);
+  return TRUE;
+}
+
+static gboolean
+settle_now(gpointer data)
+{
+  GhEndpoint *endpoint = data;
+  GhRelayScope *scope = endpoint->scope;
+  endpoint->settle_source = 0;
+  if (scope->cancelled || !endpoint->opened || endpoint->eose || !endpoint->live_eose)
+    return G_SOURCE_REMOVE;
+  gh_relay_scope_ref(scope);
+  if (endpoint->page) {
+    if (!endpoint->page_ended)
+      goto out;
+    GhRelayScope *page = g_steal_pointer(&endpoint->page);
+    gh_relay_scope_cancel(page);
+    for (size_t j = 0; !endpoint->page_failed && j < page->filters->count; j++)
+      judge_filter(scope, endpoint, endpoint->page_map[j]);
+    gh_relay_scope_unref(page);
+    if (endpoint->page_failed) {
+      endpoint->incomplete = TRUE;
+      finish_backfill(scope, endpoint);
+      goto out;
+    }
+  } else {
+    ensure_page_filters(scope, endpoint);   /* the live answer may have been empty */
+    for (size_t i = 0; i < scope->filters->count; i++)
+      if (scope->pageable[i])
+        judge_filter(scope, endpoint, i);
+  }
+  gboolean open = FALSE;
+  for (size_t i = 0; i < scope->filters->count; i++)
+    open |= scope->pageable[i] && endpoint->pf[i].open;
+  if (!open) {
+    finish_backfill(scope, endpoint);
+  } else if (endpoint->pages >= scope->max_pages || !start_page(scope, endpoint)) {
+    endpoint->incomplete = TRUE;   /* the page budget ran out, or no page could start */
+    finish_backfill(scope, endpoint);
+  }
+out:
+  gh_relay_scope_unref(scope);
+  return G_SOURCE_REMOVE;
+}
+
+/* The older page's answer, as the URL's own backfill. */
+static void
+on_page_update(GhRelayScope *page, const GhRelayUpdate *update, gpointer data)
+{
+  GhEndpoint *endpoint = data;
+  GhRelayScope *scope = endpoint->scope;
+  if (page != endpoint->page || endpoint->page_ended || scope->cancelled || !endpoint->opened)
+    return;
+  switch (update->notice) {
+  case GH_RELAY_NOTICE_EVENT: {
+    /* The page verified it; count it against the page's filters. */
+    NostrEvent *event = nostr_event_new();
+    if (event && nostr_event_deserialize_compact(event, update->event_json, NULL) == 1)
+      count_answer(scope, endpoint, event, page->filters, endpoint->page_map);
+    if (event)
+      nostr_event_free(event);
+    deliver_event(scope, endpoint, update->event_json, update->event_id);
+    break;
+  }
+  case GH_RELAY_NOTICE_EOSE:
+    endpoint->page_ended = TRUE;
+    schedule_settle(endpoint);
+    break;
+  case GH_RELAY_NOTICE_CLOSED:
+  case GH_RELAY_NOTICE_ERROR:
+  case GH_RELAY_NOTICE_DISCONNECTED:
+    g_debug("relay scope: an older page from %s failed: %s", endpoint->url,
+            update->detail ? update->detail : "connection lost");
+    endpoint->page_ended = TRUE;
+    endpoint->page_failed = TRUE;
+    schedule_settle(endpoint);
+    break;
+  case GH_RELAY_NOTICE_AUTH:
+  case GH_RELAY_NOTICE_OK:
+    break;   /* the page's own NIP-42; the live REQ reports AUTH */
+  }
 }
 
 void
@@ -404,6 +702,14 @@ gh_relay_scope_eose(GhRelayScope *scope, const gchar *url)
   GhEndpoint *endpoint = active_endpoint(scope, url);
   if (!endpoint || endpoint->eose)
     return;
+  if (scope->pageable) {
+    /* Paging: the URL's EOSE waits until its backfill has been paged. */
+    if (endpoint->live_eose)
+      return;
+    endpoint->live_eose = TRUE;
+    schedule_settle(endpoint);
+    return;
+  }
   endpoint->eose = TRUE;
   GhRelayUpdate update = { .notice = GH_RELAY_NOTICE_EOSE, .url = url };
   emit_update(scope, &update);
@@ -505,6 +811,7 @@ auth_notice(GhRelayScope *scope, GhEndpoint *endpoint, GhRelayNotice notice,
     endpoint->auth_needed = FALSE;
     g_clear_pointer(&endpoint->held_closed, g_free);
     endpoint->eose = FALSE;
+    reset_paging(endpoint);
     scope->auth_transport.resubscribe(endpoint->handle, scope->transport_data);
     return TRUE;
   case GH_RELAY_NOTICE_CLOSED:
@@ -554,6 +861,7 @@ recover_now(gpointer data)
   if (!scope->cancelled && endpoint->opened && scope->auth_transport.resubscribe) {
     g_debug("relay scope: re-issuing the REQ to %s after an overflow", endpoint->url);
     endpoint->eose = FALSE;
+    reset_paging(endpoint);
     scope->auth_transport.resubscribe(endpoint->handle, scope->transport_data);
   }
   return G_SOURCE_REMOVE;
@@ -583,6 +891,7 @@ gh_relay_scope_notice(GhRelayScope *scope, const gchar *url,
     endpoint->eose = FALSE;
     endpoint->overflow_retries = 0;   /* the next connection's REQ is new anyway */
     stop_recovery(endpoint);
+    reset_paging(endpoint);           /* the next REQ's answer starts a new round */
   }
   gh_relay_scope_ref(scope);
   if (!auth_notice(scope, endpoint, notice, event_id, accepted, detail) &&
@@ -590,6 +899,8 @@ gh_relay_scope_notice(GhRelayScope *scope, const gchar *url,
     GhRelayUpdate update = { .notice = notice, .url = url,
                              .event_id = event_id, .detail = detail,
                              .accepted = accepted };
+    if (notice == GH_RELAY_NOTICE_CLOSED && !endpoint->eose)
+      reset_paging(endpoint);         /* no EOSE follows for this REQ */
     emit_update(scope, &update);
     if (notice == GH_RELAY_NOTICE_CLOSED)
       maybe_recover(scope, endpoint, detail);

@@ -17,8 +17,10 @@ typedef struct {
   guint disconnected;
   gboolean last_backfill;
   gboolean last_accepted;
+  gboolean last_incomplete;
   gchar *last_url;
   gchar *last_detail;
+  GPtrArray *scopes;         /* optional: every scope opened (borrowed) */
 } Fixture;
 
 #define OTHER_AUTH_ID "1111111111111111111111111111111111111111111111111111111111111111"
@@ -32,6 +34,8 @@ fake_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
   (void)error;
   Fixture *fixture = data;
   g_ptr_array_add(fixture->opened, g_strdup(url));
+  if (fixture->scopes)
+    g_ptr_array_add(fixture->scopes, scope);
   return g_strdup(url); /* one simulated REQ destination per open */
 }
 
@@ -63,7 +67,10 @@ on_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     fixture->last_backfill = update->backfill;
     g_assert_nonnull(update->event_id);
     break;
-  case GH_RELAY_NOTICE_EOSE: fixture->eose++; break;
+  case GH_RELAY_NOTICE_EOSE:
+    fixture->eose++;
+    fixture->last_incomplete = update->incomplete;
+    break;
   case GH_RELAY_NOTICE_AUTH: fixture->auth++; break;
   case GH_RELAY_NOTICE_CLOSED: fixture->closed_notices++; break;
   case GH_RELAY_NOTICE_OK:
@@ -76,11 +83,11 @@ on_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
 }
 
 static gchar *
-signed_json(const gchar *content)
+signed_json_at(const gchar *content, gint64 created_at)
 {
   NostrEvent *event = nostr_event_new();
   g_assert_nonnull(event);
-  nostr_event_set_created_at(event, 1700000000);
+  nostr_event_set_created_at(event, created_at);
   nostr_event_set_kind(event, 1);
   nostr_event_set_content(event, content);
   g_assert_cmpint(nostr_event_sign(event,
@@ -91,6 +98,12 @@ signed_json(const gchar *content)
   free(json);
   nostr_event_free(event);
   return copy;
+}
+
+static gchar *
+signed_json(const gchar *content)
+{
+  return signed_json_at(content, 1700000000);
 }
 
 static void
@@ -634,6 +647,114 @@ test_auth_generation_bound(void)
   fake_signer_clear(&fake);
 }
 
+/* ---- Backfill paging (nostrc-cpwf) ---- */
+
+#define PAGED_URL "wss://paged.example"
+
+static void
+deliver_n(GhRelayScope *scope, guint n, gint64 newest, guint *serial)
+{
+  for (guint i = 0; i < n; i++) {
+    g_autofree gchar *content = g_strdup_printf("event %u", (*serial)++);
+    g_autofree gchar *json = signed_json_at(content, newest - i);
+    gh_relay_scope_event(scope, PAGED_URL, json);
+  }
+}
+
+/* The URL's EOSE waits for its older pages; a page that fails ends paging
+ * with an incomplete EOSE; a disconnect cancels the page in flight and
+ * reports no EOSE (the next REQ starts a new round); a short answer is
+ * complete at once; a filter with its own limit is never paged. */
+static void
+test_paging_failure_and_disconnect(void)
+{
+  Fixture fixture = { .opened = g_ptr_array_new_with_free_func(g_free),
+                      .closed = g_ptr_array_new_with_free_func(g_free),
+                      .scopes = g_ptr_array_new() };
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *open_filter = nostr_filter_new();
+  const int kinds[] = { 1 };
+  nostr_filter_set_kinds(open_filter, kinds, 1);
+  nostr_filter_set_since_i64(open_filter, 1000);
+  g_assert_true(nostr_filters_add(filters, open_filter));
+  nostr_filter_free(open_filter);
+  NostrFilter *newest_only = nostr_filter_new();
+  const int other[] = { 7 };
+  nostr_filter_set_kinds(newest_only, other, 1);
+  nostr_filter_set_limit(newest_only, 5);
+  g_assert_true(nostr_filters_add(filters, newest_only));
+  nostr_filter_free(newest_only);
+  GhRelayScope *scope = gh_relay_scope_new_with_transport(1, filters, &fake_transport, &fixture,
+                                                          on_update, &fixture);
+  gh_relay_scope_set_backfill_paging(scope, 100, 8);
+  g_assert_cmpint(nostr_filter_get_limit(&filters->filters[0]), ==, 100);  /* the live REQ */
+  g_assert_cmpint(nostr_filter_get_limit(&filters->filters[1]), ==, 5);    /* its own */
+  g_assert_true(gh_relay_scope_add_url(scope, PAGED_URL, NULL));
+  gh_relay_scope_start(scope);
+  guint serial = 0;
+
+  /* A full-looking answer: EOSE held back, one older page opened. */
+  deliver_n(scope, GH_RELAY_PAGE_MIN_CAP, 5000, &serial);
+  gh_relay_scope_eose(scope, PAGED_URL);
+  g_assert_cmpuint(fixture.eose, ==, 0);
+  drain_pending();
+  g_assert_cmpuint(fixture.eose, ==, 0);
+  g_assert_cmpuint(fixture.scopes->len, ==, 2);
+  GhRelayScope *page = g_ptr_array_index(fixture.scopes, 1);
+  deliver_n(page, 1, 4000, &serial);
+  g_assert_cmpuint(fixture.events, ==, GH_RELAY_PAGE_MIN_CAP + 1);
+  g_assert_true(fixture.last_backfill);
+  gh_relay_scope_notice(page, PAGED_URL, GH_RELAY_NOTICE_CLOSED, NULL, FALSE, "error: gone");
+  g_assert_cmpuint(fixture.closed_notices, ==, 0);   /* a page's, not the URL's */
+  drain_pending();
+  g_assert_cmpuint(fixture.eose, ==, 1);
+  g_assert_true(fixture.last_incomplete);
+  g_assert_cmpuint(fixture.closed->len, ==, 1);       /* the page's connection */
+
+  /* Reconnect, short answer: complete at once, no page. */
+  gh_relay_scope_notice(scope, PAGED_URL, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  deliver_n(scope, GH_RELAY_PAGE_MIN_CAP - 1, 6000, &serial);
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(fixture.eose, ==, 2);
+  g_assert_false(fixture.last_incomplete);
+  g_assert_cmpuint(fixture.scopes->len, ==, 2);
+
+  /* Reconnect, full answer, then the connection drops mid-paging. */
+  gh_relay_scope_notice(scope, PAGED_URL, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  deliver_n(scope, GH_RELAY_PAGE_MIN_CAP, 7000, &serial);
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(fixture.scopes->len, ==, 3);
+  gh_relay_scope_notice(scope, PAGED_URL, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+  g_assert_cmpuint(fixture.closed->len, ==, 2);       /* that page is cancelled */
+  drain_pending();
+  g_assert_cmpuint(fixture.eose, ==, 2);
+
+  /* A filter with its own limit is never paged, however full. */
+  for (guint i = 0; i < GH_RELAY_PAGE_MIN_CAP; i++) {
+    NostrEvent *event = nostr_event_new();
+    nostr_event_set_created_at(event, 8000 - i);
+    nostr_event_set_kind(event, 7);
+    g_autofree gchar *content = g_strdup_printf("reaction %u", i);
+    nostr_event_set_content(event, content);
+    g_assert_cmpint(nostr_event_sign(event,
+      "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
+    char *json = nostr_event_serialize_compact(event);
+    gh_relay_scope_event(scope, PAGED_URL, json);
+    free(json);
+    nostr_event_free(event);
+  }
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(fixture.eose, ==, 3);
+  g_assert_cmpuint(fixture.scopes->len, ==, 3);
+
+  gh_relay_scope_unref(scope);
+  g_ptr_array_unref(fixture.scopes);
+  fixture_clear(&fixture);
+}
+
 /* ---- Overflow (nostrc-5rfp) ---- */
 
 #define OVERFLOW_DETAIL GH_RELAY_CLOSED_OVERFLOW_PREFIX " too many events waiting to be read"
@@ -719,6 +840,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/relay/auth/ephemeral-fresh-per-connection", test_auth_ephemeral_fresh_per_connection);
   g_test_add_func("/groundhog/relay/auth/dropped-while-signing", test_auth_dropped_while_signing);
   g_test_add_func("/groundhog/relay/auth/generation-bound", test_auth_generation_bound);
+  g_test_add_func("/groundhog/relay/paging/failure-and-disconnect",
+                  test_paging_failure_and_disconnect);
   g_test_add_func("/groundhog/relay/overflow/reported-then-retried-once",
                   test_overflow_reported_then_retried_once);
   return g_test_run();

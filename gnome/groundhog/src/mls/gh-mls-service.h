@@ -69,7 +69,17 @@ G_BEGIN_DECLS
  * admission to the conversation model (T-admit), so a ratchet step and its
  * message commit together. Events of a later epoch wait (bounded) for the
  * Commit that makes them readable; duplicates are dropped by the scope, by
- * libmarmot's processed markers and by the seen set. The read cursor (the
+ * libmarmot's processed markers and by the seen set. Relays cap a REQ's
+ * stored answer (strfry 500, some 100) and answer newest first, so the
+ * backfill is paged per relay (GhRelayScope backfill paging, nostrc-cpwf):
+ * REQ limit GH_MLS_SERVICE_PAGE_LIMIT, then older pages with until = the
+ * oldest received, down to since, at most GH_MLS_SERVICE_MAX_PAGES, while
+ * the live REQ stays open; a relay has answered only once its paging ended
+ * complete. A relay's backfill (its stored answer and older pages) is kept
+ * until that EOSE, or until the relay fails, and then applied oldest first:
+ * libmarmot keeps only a few skipped message keys per sender, so a long
+ * backlog applied newest first would leave its older messages unreadable.
+ * Live events are applied as they come. The read cursor (the
  * REQ's since, minus an overlap) moves only for events libmarmot accepted
  * and the store kept, only while every group relay has answered, never past
  * now and never past an event held or dropped unread. Held events are kept
@@ -135,6 +145,9 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_MAX_HELD 256
 /* Overlap subtracted from a group's read cursor (seconds). */
 #define GH_MLS_SERVICE_CURSOR_OVERLAP 600
+/* A group relay's backfill: REQ limit, and older pages per subscription. */
+#define GH_MLS_SERVICE_PAGE_LIMIT 500
+#define GH_MLS_SERVICE_MAX_PAGES 64
 /* A held event still unreadable after this many applied Commits is junk. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
