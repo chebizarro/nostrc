@@ -65,6 +65,7 @@
 #include <glib/gstdio.h>
 
 #include <errno.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,6 +75,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <nostr-event.h>
@@ -223,6 +225,59 @@ typedef struct {
   gboolean attested; /* the bus reports our PID (Linux); FALSE on macOS */
 } Ctx;
 
+/* ---------------------------------------------------------------------------
+ * Exit cleanup (nostrc-oauv)
+ * ------------------------------------------------------------------------- */
+
+#ifdef __APPLE__
+/* GTestDBus's first g_test_dbus_up() forks a watcher: a copy of this process
+ * that reads commands from a pipe and, when this process exits, should kill
+ * the bus daemons still registered with it. On macOS GLib's g_poll() is
+ * select() based and never reports G_IO_HUP, so the watcher takes the pipe's
+ * end for a command, reads a NULL line and crashes in sscanf(NULL): the
+ * strlen(NULL) SEGV under g_test_dbus_up in hosted ASan logs, at every exit,
+ * and it never cleans up. Once every fixture is down it has nothing to do:
+ * kill it before this process's exit closes the pipe. It is the only child
+ * running this executable (the daemons, keyring and shell are exec'd). */
+static void watcher_kill(void) {
+  char self[PROC_PIDPATHINFO_MAXSIZE], path[PROC_PIDPATHINFO_MAXSIZE];
+  if (proc_pidpath(getpid(), self, sizeof self) <= 0) return;
+  pid_t kids[256];
+  memset(kids, 0, sizeof kids);
+  (void)proc_listchildpids(getpid(), kids, (int)sizeof kids);
+  for (size_t i = 0; i < G_N_ELEMENTS(kids); i++) {
+    if (kids[i] <= 0) continue;
+    if (proc_pidpath(kids[i], path, sizeof path) > 0 && strcmp(path, self) == 0) {
+      kill(kids[i], SIGKILL);
+      (void)waitpid(kids[i], NULL, 0);
+    }
+  }
+}
+#else
+/* Elsewhere g_poll() reports the hang-up and the watcher exits cleanly. */
+static void watcher_kill(void) {}
+#endif
+
+/* The fixture that is up, if any. */
+static Ctx *live_ctx;
+
+/* A failed CHECK exits with the fixture up. Stop the daemon and the private
+ * bus then, or they outlive the test: GTestDBus's dbus-daemon shares this
+ * process's stdout and stderr, so ctest keeps reading until its timeout (the
+ * "Timeout" of nostrc-oauv). The watcher that should kill it does not work on
+ * macOS (watcher_kill()). */
+static void teardown_at_exit(void) {
+  Ctx *ctx = live_ctx;
+  live_ctx = NULL;
+  if (ctx) {
+    if (ctx->daemon) g_subprocess_force_exit(ctx->daemon);
+    if (ctx->keyring) g_subprocess_force_exit(ctx->keyring);
+    if (ctx->bus) g_dbus_connection_set_exit_on_close(ctx->bus, FALSE);
+    if (ctx->tbus) g_test_dbus_stop(ctx->tbus);
+  }
+  watcher_kill();
+}
+
 /* Principal the daemon assigns to a call from this process naming @app. */
 static char *pr_buf[16];
 static guint pr_next;
@@ -333,8 +388,14 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
 
   /* Private session bus. g_test_dbus_up sets DBUS_SESSION_BUS_ADDRESS in
    * this process's env, which g_subprocess_new inherits. */
+  static gboolean at_exit_registered;
+  if (!at_exit_registered) {
+    CHECK(atexit(teardown_at_exit) == 0);
+    at_exit_registered = TRUE;
+  }
   ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
   g_test_dbus_up(ctx->tbus);
+  live_ctx = ctx;
 
   /* Does the bus attest our PID? (Linux dbus-daemon: yes; macOS: no.) */
   ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
@@ -418,6 +479,7 @@ static void ctx_setup(Ctx *ctx, gboolean allow_mutations, gboolean write_relays)
 }
 
 static void ctx_teardown(Ctx *ctx) {
+  if (live_ctx == ctx) live_ctx = NULL;
   if (ctx->daemon) {
     g_subprocess_force_exit(ctx->daemon);
     (void)g_subprocess_wait(ctx->daemon, NULL, NULL);
@@ -906,6 +968,7 @@ static int grants_has(Ctx *ctx, const char *section, const char *key, const char
 
 static GDBusConnection *open_conn(void);
 static void close_conn(GDBusConnection *c);
+static void expect_approval_error(GError *err, const char *name, const char *msg);
 
 /* A cancelled Groundhog-style private bus sender must be revoked by the
  * actual daemon, not just lose the local D-Bus reply. */
@@ -1198,7 +1261,12 @@ static void test_gating(Ctx *ctx) {
   /* One application cannot park more than 8 requests (the table is shared
    * with every other app); the 9th is refused, the 8 still answerable.
    * Forget the grants remembered above first (the daemon reloads the file
-   * when it changes). */
+   * when it changes).
+   * The daemon also allows one new prompt per 100 ms per sender. Each call
+   * goes out 120 ms after the previous prompt was seen, which is after the
+   * daemon took its time: paced by the test's clock alone, a daemon that fell
+   * behind handled two calls back to back and refused the second as rate
+   * limited instead (nostrc-oauv). */
   {
     write_file(ctx->grants_path, "");
     Watch w;
@@ -1208,11 +1276,13 @@ static void test_gating(Ctx *ctx) {
       gchar *ev = g_strdup_printf("{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"cap %u\"}", i);
       watch_call(ctx, &w, "SignEvent", g_variant_new("(sss)", ev, "", "contract-cap"));
       g_free(ev);
+      if (i < 8) watch_wait_request(&w, i + 1);
     }
-    while (w.a.n_requests < 8 || w.a.replies->len < 1) g_main_loop_run(w.a.loop);
+    while (w.a.replies->len < 1) g_main_loop_run(w.a.loop);
     CHECK(w.a.n_requests == 8);
     CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
-    expect_remote_error(w.a.errors->pdata[0], "org.nostr.Signer.Error.RateLimited");
+    expect_approval_error(w.a.errors->pdata[0], "org.nostr.Signer.Error.RateLimited",
+                          "too many of this application's requests are awaiting approval");
     g_free(w.a.req_id); w.a.req_id = NULL;
     /* Deny the parked eight by id: ids are req-N, consecutive. */
     GVariant *info = NULL;
@@ -1246,8 +1316,11 @@ static void test_gating(Ctx *ctx) {
     g_variant_unref(ok);
   }
 
-  /* No approval agent on the bus: a call that needs a prompt fails fast. */
+  /* No approval agent on the bus: a call that needs a prompt fails fast.
+   * The daemon checks its prompt rate limit before the agent, so this call
+   * too must come 100 ms after the last prompt (nostrc-oauv). */
   {
+    g_usleep(120 * 1000);
     GVariant *rel = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
         "org.freedesktop.DBus", "ReleaseName", g_variant_new("(s)", APPROVER_NAME),
         G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
@@ -2302,6 +2375,11 @@ int main(void) {
   {
     Ctx ctx;
     ctx_setup(&ctx, /*allow_mutations=*/FALSE, /*write_relays=*/FALSE);
+    /* nip55l_dbus_contract_fail_teardown (nostrc-oauv): a failure with the
+     * daemon and private bus up must end the test at once, leaving nothing
+     * running and no crashed GTestDBus watcher. */
+    if (g_getenv("NIP55L_TEST_FAIL_WITH_FIXTURE_UP"))
+      CHECK(!"injected failure with the fixture up");
     test_get_public_key(&ctx);
     test_sign_event_ok(&ctx);
     test_sign_event_bad_json(&ctx);

@@ -294,6 +294,18 @@ if (BUILD_TESTING)
     set_tests_properties(nip55l_dbus_contract PROPERTIES
       LABELS "nip55l;signer;integration;dbus"
       TIMEOUT 120)
+    # nostrc-oauv: a check that fails with the daemon and private bus up ends
+    # the test at once. Without the test's exit teardown the orphaned
+    # dbus-daemon kept ctest's output open until the timeout, and on macOS
+    # GTestDBus's watcher crashed in strlen(NULL) instead of killing it (on
+    # Linux the watcher kills it and says "cleaning up pid").
+    add_test(NAME nip55l_dbus_contract_fail_teardown COMMAND test_nip55l_dbus_contract)
+    set_tests_properties(nip55l_dbus_contract_fail_teardown PROPERTIES
+      ENVIRONMENT "NIP55L_TEST_FAIL_WITH_FIXTURE_UP=1"
+      PASS_REGULAR_EXPRESSION "injected failure with the fixture up"
+      FAIL_REGULAR_EXPRESSION "AddressSanitizer|cleaning up pid"
+      LABELS "nip55l;signer;integration;dbus"
+      TIMEOUT 30)
   endif()
 
   # --- libFuzzer harnesses + corpus replay (nostrc-tf3b) --------------------
