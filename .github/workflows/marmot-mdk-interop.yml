@@ -11,6 +11,10 @@ on:
   schedule:
     - cron: '17 3 * * *'
 
+# Builds and runs third-party code (MDK, OpenMLS crates): read-only token.
+permissions:
+  contents: read
+
 jobs:
   mdk-interop:
     runs-on: ubuntu-24.04
