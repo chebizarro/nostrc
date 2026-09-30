@@ -13,6 +13,17 @@
  *  queued      A frame the writer queued on a connection whose handshake
  *              never completes is still in its send channel when the relay is
  *              freed; the release frees it (it leaked with the channel).
+ *  abandon     nostr_subscription_free_async()'s worker finishes before the
+ *              caller abandons the handle (nostrc-xbso: the worker checked
+ *              'abandoned' once, so the handle and its done channel leaked).
+ *  late answer The writer's Error lands in the answer channel after the
+ *              caller stopped waiting and before it lets go (nostrc-xbso R2:
+ *              the channel's last unref frees no items).
+ *  close       Writes queued behind a blocked writer are answered by
+ *              nostr_relay_close(), not left until the relay is freed
+ *              (nostrc-xbso R3).
+ *  destroy     A CLOSED reason and a COUNT result nobody read are freed with
+ *              the subscription (nostrc-jwj0's dispatch_closed allocation).
  *
  * Leaks themselves are visible to LeakSanitizer only (the Linux ASAN build:
  * groundhog-ci.yml's groundhog-sanitizers job runs this test); without it the
@@ -34,10 +45,13 @@
 
 #include "channel.h"
 #include "error.h"
+#include "nostr-filter.h"
 #include "nostr-relay.h"
+#include "nostr-subscription.h"
 #include "select.h"
 #include "../src/connection-private.h"
 #include "../src/relay-private.h"
+#include "../src/subscription-private.h"
 
 #define CHECK(expr) do { if (!(expr)) { \
     fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #expr); \
@@ -107,6 +121,9 @@ static void *server_thread(void *arg) {
     return NULL;
 }
 
+/* Started once for the whole run: with Homebrew's libwebsockets plugins a
+ * context teardown closes fd 0 (see nostrc-jc2o in connection.c), and the
+ * next context then logs "ZERO RANDOM FD". */
 static void server_start(void) {
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof info);
@@ -183,15 +200,15 @@ static NostrRelayConnectionState state_of(NostrRelay *relay) {
 
 /* nostrc-xfjg / nostrc-vpha (1). */
 static void test_reconnect_releases_replaced_connection(void) {
-    server_start();
     int base = nostr_connection_unreleased_count();
+    int seen = atomic_load(&srv.connections);
 
     NostrRelay *relay = relay_for_port(srv.port);
     Error *err = NULL;
     CHECK(nostr_relay_connect(relay, &err));
     CHECK(nostr_relay_wait_established(relay, 10000, &err));
     CHECK(!err);
-    WAIT_FOR(atomic_load(&srv.connections) == 1);
+    WAIT_FOR(atomic_load(&srv.connections) == seen + 1);
     CHECK(nostr_connection_unreleased_count() == base + 1);
 
     /* The server drops the connection; the relay's loop notices, backs off,
@@ -200,7 +217,7 @@ static void test_reconnect_releases_replaced_connection(void) {
     WAIT_FOR(atomic_load(&srv.open) == 0);
     WAIT_FOR(state_of(relay) == NOSTR_RELAY_STATE_BACKOFF);
     nostr_relay_reconnect_now(relay);
-    WAIT_FOR(atomic_load(&srv.connections) == 2 && nostr_relay_is_established(relay));
+    WAIT_FOR(atomic_load(&srv.connections) == seen + 2 && nostr_relay_is_established(relay));
 
     /* The replaced connection went through nostr_connection_release(): the
      * only one left unreleased is the live one. (It stayed at base + 2.) */
@@ -213,7 +230,7 @@ static void test_reconnect_releases_replaced_connection(void) {
 
     nostr_relay_free(relay);
     CHECK(nostr_connection_unreleased_count() == base);
-    server_stop();
+    WAIT_FOR(atomic_load(&srv.open) == 0);
     printf("  [ok] reconnect releases the replaced connection\n");
 }
 
@@ -251,12 +268,121 @@ static void test_release_frees_frames_never_written(void) {
     printf("  [ok] a released connection frees the frames it never wrote\n");
 }
 
+static NostrFilters *any_filters(void) {
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter *filter = nostr_filter_new();
+    CHECK(filters && filter && nostr_filters_add(filters, filter));
+    nostr_filter_free(filter); /* contents moved into the vector */
+    return filters;
+}
+
+/* nostrc-xbso: the worker is done before the caller abandons the handle. */
+static void test_abandon_after_cleanup_completed(void) {
+    NostrRelay *relay = relay_for_port(1); /* never connected */
+    NostrFilters *filters = any_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub);
+    AsyncCleanupHandle *handle = nostr_subscription_free_async(sub, 1000);
+    CHECK(handle);
+    WAIT_FOR(nostr_subscription_cleanup_is_complete(handle));
+    usleep(20000); /* past the worker's last touch of the handle */
+    nostr_subscription_cleanup_abandon(handle); /* frees it now */
+    nostr_filters_free(filters);
+    nostr_relay_free(relay);
+    printf("  [ok] a handle abandoned after its cleanup finished is freed\n");
+}
+
+/* nostrc-xbso R2: an Error the writer sent after the caller gave up. The
+ * relay loses its connection and does not reconnect, so every write fails. */
+static void test_late_answer_is_freed(void) {
+    NostrRelay *relay = relay_for_port(srv.port);
+    nostr_relay_set_auto_reconnect(relay, false);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    server_drop();
+    WAIT_FOR(atomic_load(&srv.open) == 0 && !nostr_relay_is_connected(relay));
+
+    char frame[] = "[\"CLOSE\",\"x\"]";
+    GoChannel *answer = nostr_relay_write(relay, frame);
+    CHECK(answer);
+    /* The caller stopped waiting (a zero-timeout check, a timed-out publish);
+     * then the writer's Error arrives, before the caller lets go. */
+    WAIT_FOR(go_channel_get_depth(answer) == 1);
+    nostr_relay_write_answer_release(answer);
+
+    nostr_relay_free(relay);
+    printf("  [ok] an answer that arrives after the caller gave up is freed\n");
+}
+
+/* nostrc-xbso R3: writes still queued when the relay is closed are answered
+ * by the close. The writer is blocked: the connection's handshake never
+ * completes, so its send channel (16 frames) fills and stays full. */
+static void test_close_answers_queued_writes(void) {
+    enum { SEND_CAPACITY = 16, EXTRA = 8, N = SEND_CAPACITY + 1 + EXTRA };
+    mute_start();
+    NostrRelay *relay = relay_for_port(mute.port);
+    Error *err = NULL;
+    CHECK(nostr_relay_connect(relay, &err));
+    GoChannel *answers[N];
+    char frame[] = "[\"REQ\",\"q\",{}]";
+    for (int i = 0; i < N; i++) {
+        answers[i] = nostr_relay_write(relay, frame);
+        CHECK(answers[i]);
+    }
+    /* 16 frames queued on the connection, the writer blocked on the 17th,
+     * the rest waiting in the relay's write queue. */
+    WAIT_FOR(go_channel_get_depth(relay->priv->write_queue) == EXTRA);
+
+    nostr_relay_close(relay, NULL);
+    int answered = 0;
+    for (int i = 0; i < N; i++) {
+        void *got = (void *)1;
+        if (go_channel_try_receive(answers[i], &got) == 0) {
+            answered++;
+            if (got) free_error((Error *)got);
+        }
+        nostr_relay_write_answer_release(answers[i]);
+    }
+    CHECK(answered == N); /* the queued ones used to wait for the free */
+    nostr_relay_free(relay);
+    mute_stop();
+    printf("  [ok] closing the relay answers the writes still queued\n");
+}
+
+/* A CLOSED reason and a COUNT result nobody received are freed with the
+ * subscription. */
+static void test_destroy_frees_unread_results(void) {
+    NostrRelay *relay = relay_for_port(1); /* never connected */
+    NostrFilters *filters = any_filters();
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    CHECK(sub);
+    nostr_subscription_dispatch_closed(sub, "auth-required: nobody reads this");
+    CHECK(go_channel_get_depth(sub->closed_reason) == 1);
+    sub->priv->count_result = go_channel_create(1);
+    int64_t *count = malloc(sizeof *count);
+    CHECK(count);
+    *count = 7;
+    CHECK(go_channel_send(sub->priv->count_result, count) == 0);
+    nostr_subscription_free(sub);
+    nostr_filters_free(filters);
+    nostr_relay_free(relay);
+    printf("  [ok] a subscription frees the CLOSED reason and COUNT nobody read\n");
+}
+
 int main(void) {
     unsetenv("NOSTR_TEST_MODE"); /* the real network path */
     lws_set_log_level(LLL_ERR, NULL);
+    server_start();
 
     test_reconnect_releases_replaced_connection();
     test_release_frees_frames_never_written();
+    test_abandon_after_cleanup_completed();
+    test_late_answer_is_freed();
+    test_close_answers_queued_writes();
+    test_destroy_frees_unread_results();
+
+    server_stop();
 
     puts("test_relay_teardown_leaks: OK");
     return 0;

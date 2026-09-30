@@ -119,6 +119,13 @@ typedef struct _NostrRelayOkWaiter {
     GoChannel *done; /* carries NostrRelayOkResult* */
 } NostrRelayOkWaiter;
 
+/* nostrc-xbso: releases the caller's reference on an answer channel of
+ * nostr_relay_write() it will not read (any more): closes it, so the writer's
+ * answer fails to send and the writer frees it, frees an answer the writer
+ * sent before the close (an Error left in the channel was never freed: its
+ * last unref frees no items), and unrefs. */
+void nostr_relay_write_answer_release(GoChannel *answer);
+
 /* Shared relay control-frame dispatch used by relay.c and relay_optimized.c.
  * Handles NOTICE, EOSE, AUTH, CLOSED, OK, and COUNT. EVENT remains on each
  * receive path so optimized event verification/batching can stay local. */

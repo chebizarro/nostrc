@@ -148,7 +148,7 @@ void nostr_invalidsig_record_fail(NostrRelay *r, const char *pk) {
 }
 
 // Forward declarations for workers and helpers used before their definition
-static void *write_error(void *arg);
+static void write_error(GoChannel *chan);
 static void *write_operations(void *arg);
 static void *message_loop(void *arg);
 
@@ -895,18 +895,33 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     return true;
 }
 
-/* Answers a write that never reached the writer. @arg is the answer channel
- * with the writer's reference, which this thread now owns (nostrc-xbso): it
- * answers, closes and unrefs as write_operations() does. A caller that closed
- * the channel first gets no answer, so the Error is freed here. */
-static void *write_error(void *arg) {
-    GoChannel *chan = (GoChannel *)arg;
+/* Answers a write that never reached the writer, taking the writer's
+ * reference on @chan (nostrc-xbso): answers, closes and unrefs as
+ * write_operations() does. Inline: the channel holds one answer and nothing
+ * else is ever sent into it, so the send cannot block. (A detached thread did
+ * this; one not yet started when the process exited left the channel
+ * reachable from nothing LeakSanitizer scans.) A caller that closed the
+ * channel first gets no answer, so the Error is freed here. */
+static void write_error(GoChannel *chan) {
     Error *err = new_error(0, "connection closed");
     if (go_channel_send(chan, err) != 0)
         free_error(err);
     go_channel_close(chan);
     go_channel_unref(chan);
-    return NULL;
+}
+
+void nostr_relay_write_answer_release(GoChannel *answer) {
+    if (!answer) return;
+    /* A blocking send checks the closed flag under the channel's mutex, as
+     * go_channel_close() sets it: an answer is either in the channel now or
+     * never will be. */
+    go_channel_close(answer);
+    void *late = NULL;
+    while (go_channel_try_receive(answer, &late) == 0) {
+        if (late) free_error((Error *)late);
+        late = NULL;
+    }
+    go_channel_unref(answer);
 }
 
 // Worker: processes relay->priv->write_queue and writes frames to the connection.
@@ -1611,7 +1626,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     if (!req || !msg_copy) {
         if (req) free(req);
         if (msg_copy) free(msg_copy);
-        go_fiber_compat(write_error, chan);
+        write_error(chan);
         return chan;
     }
     req->msg = msg_copy;
@@ -1620,7 +1635,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     // Enqueue request (non-blocking); if fails and context canceled, return error
     if (go_channel_send(r->priv->write_queue, req) != 0) {
         // Fallback: if cannot enqueue, surface error
-        go_fiber_compat(write_error, chan);
+        write_error(chan);
         free(req->msg);
         free(req);
         return chan;
@@ -1709,9 +1724,9 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
                     relay->url ? relay->url : "(null)");
         }
         /* hq-e3ach: Close signals disinterest, unref drops our reference.
-         * write_operations holds the other ref and will free when done. */
-        go_channel_close(write_ch);
-        go_channel_unref(write_ch);
+         * write_operations holds the other ref and will free when done;
+         * an answer it sent after the timeout is freed here (nostrc-xbso). */
+        nostr_relay_write_answer_release(write_ch);
     }
 }
 
@@ -2091,6 +2106,11 @@ bool nostr_relay_close(NostrRelay *r, Error **err) {
      * ref, so an in-flight callback retains the channel until it finishes.
      * The WSI is detached later on the LWS service thread. */
     relay_retire_connection(r, conn);
+
+    /* nostrc-xbso R3: the writer is gone; answer the writes it never took
+     * now, rather than leave their callers to their own timeouts until the
+     * relay is freed. The queue is closed, so none can join. */
+    relay_write_queue_drain(r->priv->write_queue);
     return true;
 }
 

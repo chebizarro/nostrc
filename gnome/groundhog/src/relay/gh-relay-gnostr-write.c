@@ -56,8 +56,16 @@ write_thread(GTask *task, gpointer source, gpointer task_data,
     { .op = GO_SELECT_RECEIVE, .chan = answer, .recv_buf = (void **)&write_error },
   };
   GoSelectResult result = go_select_timeout(cases, 1, GH_RELAY_WRITE_CONFIRM_MS);
-  /* Closing signals disinterest; the writer holds the other reference. */
+  /* Closing signals disinterest; the writer holds the other reference. An
+   * answer it sent after the timeout, before the close, stays in the channel,
+   * whose last unref frees no items: free it here (nostrc-xbso). */
   go_channel_close(answer);
+  void *late = NULL;
+  while (go_channel_try_receive(answer, &late) == 0) {
+    if (late)
+      free_error(late);
+    late = NULL;
+  }
   go_channel_unref(answer);
   if (result.selected_case < 0) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,

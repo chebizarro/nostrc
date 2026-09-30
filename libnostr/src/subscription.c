@@ -11,6 +11,8 @@
 #include "nostr_log.h"
 #include "select.h"
 #include <openssl/ssl.h>
+#include <pthread.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
@@ -285,11 +287,27 @@ static void subscription_destroy(NostrSubscription *sub) {
         }
     }
 
+    /* nostrc-xbso: a CLOSED reason (strdup'd by dispatch_closed) and a COUNT
+     * result (malloc'd by the relay) nobody received are ours to free. Both
+     * producers send only while the subscription is registered and alive;
+     * the channels are closed and the lifecycle worker has exited. */
+    if (sub->closed_reason) {
+        void *reason = NULL;
+        while (go_channel_try_receive(sub->closed_reason, &reason) == 0) {
+            free(reason);
+            reason = NULL;
+        }
+    }
     go_channel_free(sub->events);
     go_channel_free(sub->end_of_stored_events);
     go_channel_free(sub->closed_reason);
     if (sub->priv->count_result) {
         go_channel_close(sub->priv->count_result);
+        void *count = NULL;
+        while (go_channel_try_receive(sub->priv->count_result, &count) == 0) {
+            free(count);
+            count = NULL;
+        }
         go_channel_free(sub->priv->count_result);
         sub->priv->count_result = NULL;
     }
@@ -712,10 +730,10 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
                 fprintf(stderr, "[sub %s] close: write queued (err=%p)\n",
                         sub->priv->id, (void *)write_err);
             }
-            /* hq-e3ach: close to signal fire-and-forget; unref drops our
-             * reference.  write_operations holds the other ref. */
-            go_channel_close(write_channel);
-            go_channel_unref(write_channel);
+            /* hq-e3ach: close to signal fire-and-forget; drop our reference
+             * (the writer holds the other), freeing an answer sent after the
+             * check above (nostrc-xbso). */
+            nostr_relay_write_answer_release(write_channel);
         }
     }
 }
@@ -898,15 +916,14 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
             atomic_store(&subscription->priv->live, was_live);
             if (err) *err = write_err;
             else free_error(write_err); /* nostrc-vpha R1: nobody else owns it */
-            /* hq-e3ach: close + unref to drop our reference. */
-            go_channel_close(write_channel);
-            go_channel_unref(write_channel);
+            /* hq-e3ach: drop our reference. */
+            nostr_relay_write_answer_release(write_channel);
             return false;
         }
-        /* hq-e3ach: close + unref to drop our reference.
-         * write_operations holds the other ref. */
-        go_channel_close(write_channel);
-        go_channel_unref(write_channel);
+        /* hq-e3ach: drop our reference; write_operations holds the other.
+         * An Error it sends after the check above is freed here, not left
+         * in the channel (nostrc-xbso R2). */
+        nostr_relay_write_answer_release(write_channel);
     }
 
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
@@ -1128,10 +1145,54 @@ struct AsyncCleanupHandle {
     GoChannel *done;         // Signals when cleanup completes (closed on completion)
     _Atomic bool completed;  // True when cleanup finished
     _Atomic bool timed_out;  // True if cleanup timed out (subscription leaked)
-    _Atomic bool abandoned;  // True if caller abandoned this handle (thread should free it)
+    /* nostrc-xbso: the caller's and the worker's references; the last one
+     * frees the handle. (An 'abandoned' flag the worker checked once, after
+     * finishing, leaked the handle and its done channel for good whenever
+     * the caller abandoned it after that check: a worker faster than the
+     * caller's own abandon.) */
+    _Atomic int refs;
     uint64_t timeout_ms;
     pthread_t cleanup_thread;
 };
+
+static void async_cleanup_handle_unref(AsyncCleanupHandle *handle) {
+    if (atomic_fetch_sub(&handle->refs, 1) != 1) return;
+    go_channel_free(handle->done);
+    free(handle);
+}
+
+/* nostrc-xbso: cleanups still running. The process waits for them at exit
+ * (bounded), so a subscription handed to nostr_subscription_free_async()
+ * just before exit is freed rather than abandoned to a detached thread that
+ * may not even have started. */
+#define ASYNC_CLEANUP_EXIT_WAIT_S 5
+static pthread_mutex_t g_async_cleanup_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_async_cleanup_cv = PTHREAD_COND_INITIALIZER;
+static int g_async_cleanups_running = 0;
+static pthread_once_t g_async_cleanup_exit_once = PTHREAD_ONCE_INIT;
+
+static void async_cleanup_wait_at_exit(void) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += ASYNC_CLEANUP_EXIT_WAIT_S;
+    pthread_mutex_lock(&g_async_cleanup_mu);
+    while (g_async_cleanups_running > 0) {
+        if (pthread_cond_timedwait(&g_async_cleanup_cv, &g_async_cleanup_mu, &deadline) != 0)
+            break; /* timed out: exit anyway */
+    }
+    pthread_mutex_unlock(&g_async_cleanup_mu);
+}
+
+static void async_cleanup_register_exit_wait(void) {
+    (void)atexit(async_cleanup_wait_at_exit);
+}
+
+static void async_cleanup_running_add(int delta) {
+    pthread_mutex_lock(&g_async_cleanup_mu);
+    g_async_cleanups_running += delta;
+    if (g_async_cleanups_running == 0) pthread_cond_broadcast(&g_async_cleanup_cv);
+    pthread_mutex_unlock(&g_async_cleanup_mu);
+}
 
 /* Background cleanup worker thread */
 static void *async_cleanup_worker(void *arg) {
@@ -1191,16 +1252,8 @@ static void *async_cleanup_worker(void *arg) {
     
     atomic_store(&handle->completed, true);
     go_channel_close(handle->done);
-    
-    /* If the handle was abandoned, free it now that we're done with it */
-    if (atomic_load(&handle->abandoned)) {
-        if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
-            fprintf(stderr, "[sub] async_cleanup: abandoned handle, freeing\n");
-        }
-        go_channel_free(handle->done);
-        free(handle);
-    }
-    
+    async_cleanup_handle_unref(handle); /* the caller may hold the other */
+    async_cleanup_running_add(-1);
     return NULL;
 }
 
@@ -1214,11 +1267,14 @@ AsyncCleanupHandle *nostr_subscription_free_async(NostrSubscription *sub, uint64
     handle->done = go_channel_create(1);
     atomic_store(&handle->completed, false);
     atomic_store(&handle->timed_out, false);
-    atomic_store(&handle->abandoned, false);
+    atomic_store(&handle->refs, 2); /* the caller's and the worker's */
     handle->timeout_ms = timeout_ms;
-    
+
+    (void)pthread_once(&g_async_cleanup_exit_once, async_cleanup_register_exit_wait);
+    async_cleanup_running_add(1);
     /* Start cleanup thread */
     if (pthread_create(&handle->cleanup_thread, NULL, async_cleanup_worker, handle) != 0) {
+        async_cleanup_running_add(-1);
         go_channel_free(handle->done);
         free(handle);
         return NULL;
@@ -1258,11 +1314,10 @@ bool nostr_subscription_cleanup_wait(AsyncCleanupHandle *handle, uint64_t timeou
 
 void nostr_subscription_cleanup_abandon(AsyncCleanupHandle *handle) {
     if (!handle) return;
-    
-    /* DON'T free the handle here! The background thread is still using it.
-     * The background thread will free it when it completes.
-     * We just mark it as abandoned so the thread knows to free everything. */
-    atomic_store(&handle->abandoned, true);
+
+    /* Drops the caller's reference. The background thread holds its own and
+     * frees the handle when it finishes; if it already has, this frees it. */
+    async_cleanup_handle_unref(handle);
 }
 
 bool nostr_subscription_cleanup_is_complete(AsyncCleanupHandle *handle) {
