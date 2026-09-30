@@ -62,17 +62,29 @@ G_BEGIN_DECLS
 /* Not a preference: encrypted groups (Marmot MLS, nostrc-qp24.13). When 1,
  * gh-app-outbox.c runs GhMlsService beside each outbox, gh-app-services.c
  * attaches their UI (gh-mls-ui.c, nostrc-9xf5: New Group's encrypted page,
- * invitations, Group Info, the composer, the header count, "Unable to
- * decrypt yet") and New Message's 10-recipient limit points to encrypted
- * groups (GhNewMessageConfig.encrypted_groups; charter §7.9).
+ * invitations, Group Info, the composer, the header count, "Waiting for an
+ * earlier change to this group") and New Message's 10-recipient limit
+ * points to encrypted groups (GhNewMessageConfig.encrypted_groups; charter
+ * §7.9).
  *
  * The UI has landed (nostrc-9xf5) and is tested with the flag at 0: its
  * tests attach it directly (tests/ui/test_mls_ui.c). What flips it to 1, in
- * one line here, is a complete, bounded group backfill: nostrc-5rfp (the
- * lossless subscription's hard cap closes with an explicit error instead of
- * growing), nostrc-cpwf (until-based paging past a relay's result limit)
- * and nostrc-kzun (the >200-event backlog test); nostrc-dha5 (the 200-event
- * queue) came first. To try the UI before then, configure with
+ * one line here (nostrc-9xf5 depends on each bead):
+ *  - a complete, bounded group backfill: nostrc-dha5 (the 200-event queue),
+ *    nostrc-5rfp (the lossless subscription's hard cap), nostrc-cpwf
+ *    (until-based paging), nostrc-kzun (the >200-event backlog test) and
+ *    nostrc-iihf (a stalled relay's live traffic doesn't hold a busy group);
+ *  - honest group state: nostrc-xrya (a removed member sees the group end)
+ *    and nostrc-oya4 (no "N messages" count of held events);
+ *  - nostrc-8kb2 (these conditions; the real multi-engine composer routing
+ *    tested: groundhog-composer /delegates);
+ *  - and, per the privacy charter §7.9 ("compiled and shown only when
+ *    qp24.13 passes acceptance"), nostrc-qp24.13's acceptance: two-device
+ *    and third-party adopted-spec interop (nostrc-77pa, nostrc-7gx7).
+ *    libmarmot 0.10.0 refuses MDK 0.8 (White Noise) members by default and
+ *    has no adopted-profile group engine yet (nostrc-qp24.5.1), so "groups
+ *    with people who use apps that support Marmot" is not yet true.
+ * To try the UI before then, configure with
  * -DGROUNDHOG_ENCRYPTED_GROUPS_PREVIEW=ON: CMake defines it to 1 for the
  * executable only, with a warning, and refuses it for a release build type,
  * CPack, a distribution prefix or a packaging environment, and refuses to

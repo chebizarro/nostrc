@@ -13,6 +13,7 @@
 #include "gh-test-signer.h"
 #include "send-stack.h"
 
+#include "gh-conversation-private.h"
 #include "gh-delivery-indicator.h"
 #include "gh-expiry.h"
 #include "gh-message-row.h"
@@ -1355,6 +1356,211 @@ test_reasons_group_and_no_inbox(void)
   fixture_clear(&f);
 }
 
+/* nostrc-8kb2 (W21 review M4): the real gh-send-ui.c routing with two
+ * sending engines beside the NIP-17 outbox (G20b relay groups, qp24.13
+ * encrypted groups), as gh-group-ui.c and gh-mls-ui.c attach them: each
+ * conversation's reason, send, retry and delivery details come from the
+ * delegate whose handles() is TRUE and no other; a NIP-17 room still goes
+ * through the outbox; no draft is stored for a delegated room; a second
+ * add of the same engine replaces it; set_delegate() replaces every one. */
+typedef struct {
+  const gchar *refusal;   /* the reason while set */
+  guint reasons, sends, retries, reports;
+  gchar *last_text;
+} FakeEngine;
+
+static gboolean
+fake_handles_relay(GhConversation *conversation, gpointer data)
+{
+  (void)data;
+  return gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29;
+}
+
+static gboolean
+fake_handles_mls(GhConversation *conversation, gpointer data)
+{
+  (void)data;
+  return gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_MLS;
+}
+
+static gchar *
+fake_reason(GhConversation *conversation, gpointer data)
+{
+  (void)conversation;
+  FakeEngine *engine = data;
+  engine->reasons++;
+  return g_strdup(engine->refusal);
+}
+
+static gboolean
+fake_send(GhConversation *conversation, const gchar *text, gpointer data, GError **error)
+{
+  (void)conversation;
+  (void)error;
+  FakeEngine *engine = data;
+  engine->sends++;
+  g_free(engine->last_text);
+  engine->last_text = g_strdup(text);
+  return TRUE;
+}
+
+static gboolean
+fake_retry(GhMessage *message, gpointer data, GError **error)
+{
+  (void)message;
+  (void)error;
+  ((FakeEngine *)data)->retries++;
+  return TRUE;
+}
+
+static GhDeliveryReport *
+fake_report(GhMessage *message, gpointer data)
+{
+  (void)message;
+  ((FakeEngine *)data)->reports++;
+  return gh_delivery_report_new();
+}
+
+static const GhSendUiDelegate relay_engine = {
+  fake_handles_relay, fake_reason, fake_send, fake_retry, fake_report,
+};
+static const GhSendUiDelegate mls_engine = {
+  fake_handles_mls, fake_reason, fake_send, fake_retry, fake_report,
+};
+
+static void
+test_delegates(void)
+{
+  Fixture f = { 0 };
+  fixture_init(&f, bus.client);
+  fixture_up(&f, 960, 680);
+  GhComposer *composer = send_stack_composer(&f.s);
+  GhConversationView *view = send_stack_view(&f.s);
+  const gchar *me = stack_hex[f.s.key];
+  g_autoptr(GError) error = NULL;
+
+  /* A NIP-17 room, a relay group and an encrypted group, each with an own
+   * message. */
+  GhConversation *dave = receive(&f, 3, NULL, "Hello, it's Carol");
+  g_autofree gchar *dave_room = g_strdup(gh_conversation_get_room_id(dave));
+  g_autofree gchar *relay_event = g_strdup_printf(
+    "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+    "\"tags\":[[\"h\",\"hikers\"]],\"content\":\"Trail report\"}",
+    me, g_get_real_time() / G_USEC_PER_SEC - 300);
+  g_autoptr(GhMessage) relay_message = gh_message_new_from_nip29_event(
+    me, "wss://groups.test.invalid", relay_event, &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_conversation_store_add_message(f.s.model, relay_message, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+  const gchar *relay_room = gh_message_get_room_id(relay_message);
+  GhConversation *relay_group = gh_conversation_store_lookup(f.s.model, relay_room);
+  g_assert_nonnull(relay_group);
+  const gchar *gid = "0123456789abcdef0123456789abcdef";
+  g_autofree gchar *mls_room = gh_message_mls_room_id(gid);
+  GhConversation *secret = gh_conversation_store_ensure_group(f.s.model, mls_room, "Secret");
+  g_assert_nonnull(secret);
+  g_autofree gchar *inner = g_strdup_printf(
+    "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+    "\"tags\":[],\"content\":\"Sealed\"}", me, g_get_real_time() / G_USEC_PER_SEC - 200);
+  g_autoptr(GhMessage) mls_message = gh_message_new_from_mls(me, gid, inner, &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_conversation_store_add_message(f.s.model, mls_message, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+
+  /* Attached as the application does: G20b sets its delegate, then the
+   * encrypted-group UI adds its own (twice: the second replaces the first). */
+  FakeEngine relay = { 0 }, mls = { 0 }, stale = { 0 };
+  gh_send_ui_set_delegate(f.s.window, &relay_engine, &relay);
+  gh_send_ui_add_delegate(f.s.window, &mls_engine, &stale);
+  gh_send_ui_add_delegate(f.s.window, &mls_engine, &mls);
+
+  /* The encrypted group: its engine's reason and send, nothing else's. */
+  send_stack_select(&f.s, secret);
+  wait_reason(composer, NULL);
+  g_assert_cmpuint(mls.reasons, >, 0);
+  stack_type(composer, "to the group");
+  g_assert_true(gh_composer_send(composer));
+  g_assert_cmpuint(mls.sends, ==, 1);
+  g_assert_cmpstr(mls.last_text, ==, "to the group");
+  g_assert_cmpuint(relay.sends + stale.sends + stale.reasons, ==, 0);
+  g_assert_cmpuint(pubs.opens->len, ==, 0);   /* never through the NIP-17 outbox */
+  /* No draft for it (drafts are NIP-17 store rows): a switch saves the
+   * shown NIP-17 room's draft at once, so the text would leak into one. */
+  stack_type(composer, "unsent group text");
+  send_stack_select(&f.s, dave);
+  assert_composer_text(composer, "");
+  g_autofree gchar *after_mls = send_stack_draft(&f.s, dave_room);
+  g_assert_null(after_mls);
+  send_stack_select(&f.s, secret);
+  assert_composer_text(composer, "");         /* nothing restored */
+
+  /* The relay group: its reason (refusing), no send. */
+  relay.refusal = "Relay says no";
+  send_stack_select(&f.s, relay_group);
+  wait_reason(composer, "Relay says no");
+  guint mls_reasons = mls.reasons;
+  relay.refusal = NULL;
+  gh_send_ui_refresh(f.s.window);
+  wait_reason(composer, NULL);
+  g_assert_cmpuint(mls.reasons, ==, mls_reasons);
+  stack_type(composer, "to the relay group");
+  g_assert_true(gh_composer_send(composer));
+  g_assert_cmpuint(relay.sends, ==, 1);
+  g_assert_cmpstr(relay.last_text, ==, "to the relay group");
+  g_assert_cmpuint(mls.sends, ==, 1);
+  stack_type(composer, "unsent relay text");
+  send_stack_select(&f.s, dave);
+  assert_composer_text(composer, "");
+  g_autofree gchar *after_relay = send_stack_draft(&f.s, dave_room);
+  g_assert_null(after_relay);
+  send_stack_select(&f.s, relay_group);
+  assert_composer_text(composer, "");
+
+  /* Retry and delivery details go to the message's own engine. */
+  g_signal_emit_by_name(view, "retry-requested", mls_message);
+  g_assert_cmpuint(mls.retries, ==, 1);
+  g_assert_cmpuint(relay.retries, ==, 0);
+  g_signal_emit_by_name(view, "retry-requested", relay_message);
+  g_assert_cmpuint(relay.retries, ==, 1);
+  g_assert_cmpuint(mls.retries, ==, 1);
+  g_autoptr(GhDeliveryReport) mls_report = gh_conversation_view_dup_delivery_report(view,
+                                                                                    mls_message);
+  g_assert_nonnull(mls_report);
+  g_assert_cmpuint(mls.reports, ==, 1);
+  g_assert_cmpuint(relay.reports, ==, 0);
+  g_autoptr(GhDeliveryReport) relay_report =
+    gh_conversation_view_dup_delivery_report(view, relay_message);
+  g_assert_nonnull(relay_report);
+  g_assert_cmpuint(relay.reports, ==, 1);
+  g_assert_cmpuint(stale.retries + stale.reports, ==, 0);
+
+  /* A NIP-17 room is still the outbox's: no engine is asked, a draft is kept. */
+  send_stack_select(&f.s, dave);
+  wait_reason(composer, NULL);
+  stack_type(composer, "Draft for Carol");
+  send_stack_select(&f.s, secret);
+  g_autofree gchar *dave_draft = send_stack_draft(&f.s, dave_room);
+  g_assert_cmpstr(dave_draft, ==, "Draft for Carol");
+  assert_composer_text(composer, "");
+  send_stack_select(&f.s, dave);
+  gh_composer_set_text(composer, "");
+  stack_type(composer, "Hi Carol");
+  g_assert_true(gh_composer_send(composer));
+  g_assert_nonnull(stack_find(dave, "Hi Carol"));
+  g_assert_cmpuint(relay.sends, ==, 1);
+  g_assert_cmpuint(mls.sends, ==, 1);
+
+  /* set_delegate() replaces every delegate: the encrypted group has none. */
+  gh_send_ui_set_delegate(f.s.window, &relay_engine, &relay);
+  send_stack_select(&f.s, secret);
+  wait_reason(composer, "Encrypted groups aren't available in this version yet.");
+  g_free(relay.last_text);
+  g_free(mls.last_text);
+  fixture_clear(&f);
+}
+
 typedef struct {
   Fixture *f;
   GhMessage *message;
@@ -2061,6 +2267,7 @@ main(int argc, char **argv)
   ADD("reasons-account-signer-store", test_reasons_account_signer_store);
   ADD("reason-no-signer-bus", test_reason_no_signer_bus);
   ADD("reasons-group-and-no-inbox", test_reasons_group_and_no_inbox);
+  ADD("delegates", test_delegates);
   ADD("room-send", test_room_send);
   ADD("room-nobody-has-inbox", test_room_nobody_has_inbox);
   ADD("locked-messages", test_locked_messages);
