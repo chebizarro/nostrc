@@ -83,6 +83,8 @@ struct _WireRelay {
   GHashTable *withheld;      /* ids kept but served to nobody until released */
   gboolean withhold_new;     /* every event kept from now on is withheld */
   guint max_limit;           /* serve: a REQ's stored answer per filter, at most; 0: none */
+  gboolean stall_pages;      /* serve: a REQ with an until is never answered (no EOSE) */
+  guint stalled_reqs;
 };
 
 /* One text frame on one of the relay's connections. */
@@ -448,6 +450,9 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
       g_autofree gchar *closed = g_strdup_printf(
         "[\"CLOSED\",\"%s\",\"auth-required: sign in to read this\"]", sub_id);
       wire_send(connection, closed);
+    } else if (relay->stall_pages && req->filters->count > 0 &&
+               nostr_filter_get_until_i64(&req->filters->filters[0]) > 0) {
+      relay->stalled_reqs++;   /* a relay that silently drops the page */
     } else {
       NostrFilters *filters = g_steal_pointer(&req->filters);
       g_hash_table_replace(wire_subs(connection), g_strdup(sub_id), filters);

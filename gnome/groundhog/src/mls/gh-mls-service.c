@@ -64,7 +64,9 @@ struct _GhMlsGroup {
   gint64 newest;             /* newest accepted created_at this session (bounded) */
   GQueue backfill;           /* Stored: backfill of every relay, applied oldest first */
   guint backfill_seq;
-  GHashTable *backfilling;   /* urls delivering a backfill round that has not ended */
+  GHashTable *backfilling;   /* url -> gint64*: relays delivering a backfill round that has
+                              * not ended, and when each last delivered (monotonic) */
+  guint quiet_source;        /* gives up relays silent too long (final review N1) */
   gsize backfill_bytes;      /* JSON bytes in backfill (review B4 bound) */
   gboolean history_incomplete; /* a relay's backfill ended incomplete (settled 4) */
   GQueue held;               /* Held: kind 445 of a later epoch, oldest first */
@@ -115,6 +117,7 @@ struct _GhMlsService {
   GhConversationStore *conversations;
   guint max_backfill_events;       /* per group (review B4) */
   gsize max_backfill_bytes;
+  gint64 backfill_quiet_us;        /* a relay silent this long stops holding a flush */
   GhAccountRelays *account_relays;
   GhInboxResolver *inboxes;
   GSettings *settings;
@@ -581,6 +584,8 @@ gh_mls_group_finalize(GObject *object)
   g_hash_table_unref(self->held_ids);
   g_queue_clear_full(&self->held, held_free);
   g_queue_clear_full(&self->backfill, stored_free);
+  if (self->quiet_source)
+    g_source_remove(self->quiet_source);
   g_hash_table_unref(self->backfilling);
   g_ptr_array_unref(self->waiters);
   G_OBJECT_CLASS(gh_mls_group_parent_class)->finalize(object);
@@ -624,7 +629,7 @@ gh_mls_group_init(GhMlsGroup *self)
   self->waiters = g_ptr_array_new_with_free_func(g_object_unref);
   g_queue_init(&self->held);
   g_queue_init(&self->backfill);
-  self->backfilling = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->backfilling = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->held_ids = g_hash_table_new(g_str_hash, g_str_equal);
   self->members = g_new0(gchar *, 1);
   self->admins = g_new0(gchar *, 1);
@@ -868,6 +873,10 @@ group_unsubscribe(GhMlsGroup *group)
   g_queue_clear_full(&group->backfill, stored_free);
   group->backfill_bytes = 0;
   g_hash_table_remove_all(group->backfilling);
+  if (group->quiet_source) {
+    g_source_remove(group->quiet_source);
+    group->quiet_source = 0;
+  }
   g_hash_table_remove_all(group->settled);
   update_history_incomplete(group);
   group_set_read(group, GH_MLS_READ_IDLE);
@@ -1170,7 +1179,9 @@ stored_older_first(gconstpointer a, gconstpointer b)
  * stored is applied as one set, from every relay, and only once no relay is
  * still delivering a backfill round (group->backfilling): a relay may hold
  * older events the others lack, and applying the rest first would push the
- * ratchet past them. A relay that has sent nothing yet holds nothing up. */
+ * ratchet past them. A relay that has sent nothing yet holds nothing up,
+ * and one that went silent holds it only for the quiet period
+ * (backfill_quiet()). */
 static void
 flush_backfill(GhMlsGroup *group)
 {
@@ -1216,11 +1227,8 @@ update_history_incomplete(GhMlsGroup *group)
  * honest paging round can deliver: reaching it means a relay ignoring its
  * limits, or a backlog beyond the page budget. */
 static void
-backfill_full(GhMlsGroup *group)
+give_up_backfill(GhMlsGroup *group)
 {
-  g_message("Groundhog stopped reading an encrypted group's history after %u events: it keeps "
-            "no more at once; the group's read cursor stays where it was",
-            g_queue_get_length(&group->backfill));
   GHashTableIter iter;
   gpointer url;
   g_hash_table_iter_init(&iter, group->backfilling);
@@ -1234,6 +1242,68 @@ backfill_full(GhMlsGroup *group)
   if (group->relays && g_hash_table_size(group->settled) >= g_strv_length(group->relays))
     group_set_read(group, GH_MLS_READ_LIVE);
   flush_backfill(group);
+}
+
+static void
+backfill_full(GhMlsGroup *group)
+{
+  g_message("Groundhog stopped reading an encrypted group's history after %u events: it keeps "
+            "no more at once; the group's read cursor stays where it was",
+            g_queue_get_length(&group->backfill));
+  give_up_backfill(group);
+}
+
+/* Final review N1: a relay that delivered some of a backfill round and then
+ * went silent (a page or the live REQ never answered: a relay dropping REQs
+ * over a limit without CLOSED, a hung query, on purpose) would hold every
+ * stored and live event of the group for good, since the scope has no
+ * timeouts. Once every relay still holding the flush has been silent for
+ * the quiet period -- so any relay still delivering is waited for, and a
+ * silent one is given up only when the others have finished -- they are
+ * given up as backfill_full() does: end_backfill, answered-incomplete
+ * (cursor held, history-incomplete), the store applied. Nothing is closed:
+ * their subscriptions stay open and later events are applied live. Only the
+ * local wait for ordering is bounded. */
+static gboolean
+backfill_quiet(gpointer data)
+{
+  GhMlsGroup *group = data;
+  group->quiet_source = 0;
+  if (g_hash_table_size(group->backfilling) == 0)
+    return G_SOURCE_REMOVE;
+  gint64 now = g_get_monotonic_time(), last = G_MININT64;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, group->backfilling);
+  while (g_hash_table_iter_next(&iter, NULL, &value))
+    last = MAX(last, *(gint64 *)value);
+  gint64 quiet = group->service->backfill_quiet_us;
+  if (now - last < quiet) {    /* someone is still delivering: wait for them */
+    group->quiet_source = g_timeout_add(MAX((quiet - (now - last)) / 1000, 1), backfill_quiet,
+                                        group);
+    return G_SOURCE_REMOVE;
+  }
+  g_message("Groundhog stopped waiting for a group relay that went silent during the group's "
+            "history; the group's read cursor stays where it was");
+  g_object_ref(group);
+  give_up_backfill(group);
+  g_object_unref(group);
+  return G_SOURCE_REMOVE;
+}
+
+/* @url delivered a backfill event now: it holds the flush, for a while. */
+static void
+touch_backfilling(GhMlsGroup *group, const gchar *url)
+{
+  gint64 *last = g_hash_table_lookup(group->backfilling, url);
+  if (!last) {
+    last = g_new(gint64, 1);
+    g_hash_table_insert(group->backfilling, g_strdup(url), last);
+  }
+  *last = g_get_monotonic_time();
+  if (!group->quiet_source)
+    group->quiet_source = g_timeout_add(MAX(group->service->backfill_quiet_us / 1000, 1),
+                                        backfill_quiet, group);
 }
 
 static void
@@ -1268,7 +1338,7 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     /* A live event waits too while a backfill is pending: applied first it
      * would move the sender's ratchet past the stored older ones. */
     if (update->backfill)
-      g_hash_table_add(group->backfilling, g_strdup(update->url));
+      touch_backfilling(group, update->url);
     if (g_hash_table_size(group->backfilling) > 0 || !g_queue_is_empty(&group->backfill))
       keep_backfill(group, update);
     else
@@ -3075,6 +3145,14 @@ gh_mls_service_get_identity_state(GhMlsService *self)
 }
 
 void
+gh_mls_service_set_backfill_quiet(GhMlsService *self, guint quiet_ms)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  self->backfill_quiet_us = quiet_ms ? (gint64)quiet_ms * 1000
+                                     : (gint64)GH_MLS_SERVICE_BACKFILL_QUIET_S * G_USEC_PER_SEC;
+}
+
+void
 gh_mls_service_set_backfill_limit(GhMlsService *self, guint max_events, gsize max_bytes)
 {
   g_return_if_fail(GH_IS_MLS_SERVICE(self));
@@ -3542,6 +3620,7 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   self->policy = g_object_ref(gh_auth_policy_get_for_accounts(config->accounts));
   self->max_backfill_events = GH_MLS_SERVICE_MAX_BACKFILL_EVENTS;
   self->max_backfill_bytes = GH_MLS_SERVICE_MAX_BACKFILL_BYTES;
+  self->backfill_quiet_us = (gint64)GH_MLS_SERVICE_BACKFILL_QUIET_S * G_USEC_PER_SEC;
   self->conversations = g_object_ref(config->conversations);
   self->account_relays = config->account_relays ? g_object_ref(config->account_relays) : NULL;
   self->inboxes = config->inboxes ? g_object_ref(config->inboxes) : NULL;

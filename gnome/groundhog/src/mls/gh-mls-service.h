@@ -82,7 +82,11 @@ G_BEGIN_DECLS
  * message keys per sender, so a long backlog applied newest first -- or in
  * one relay's share at a time, since events are deduplicated across relays
  * -- would leave older messages unreadable. Live events wait with it while
- * a backfill is pending, and are applied as they come otherwise. The read
+ * a backfill is pending, and are applied as they come otherwise. The wait is
+ * bounded: relays that delivered part of a round and then stay silent for
+ * GH_MLS_SERVICE_BACKFILL_QUIET_S (once every other relay has finished) are
+ * given up as answered-incomplete, and so is every relay still delivering
+ * when the store reaches its bound; the store is then applied. The read
  * cursor (the
  * REQ's since, minus an overlap) moves only for events libmarmot accepted
  * and the store kept, only while every group relay has answered, never past
@@ -157,6 +161,10 @@ G_BEGIN_DECLS
  * relays still delivering stop paging and count as incomplete. */
 #define GH_MLS_SERVICE_MAX_BACKFILL_EVENTS ((GH_MLS_SERVICE_MAX_PAGES + 1) * GH_MLS_SERVICE_PAGE_LIMIT)
 #define GH_MLS_SERVICE_MAX_BACKFILL_BYTES ((gsize)64 * 1024 * 1024)
+/* Relays that delivered part of a backfill round and have all been silent
+ * this long stop holding the others' backfill (final review N1): given up
+ * as incomplete, their subscriptions left open. Seconds. */
+#define GH_MLS_SERVICE_BACKFILL_QUIET_S 30
 /* A held event still unreadable after this many applied Commits is junk. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
@@ -307,6 +315,9 @@ gboolean gh_mls_service_retry_identity(GhMlsService *self, GError **error);
  * GH_MLS_SERVICE_MAX_BACKFILL_EVENTS / _BYTES); from the next event on.
  * For tests and tuning. */
 void gh_mls_service_set_backfill_limit(GhMlsService *self, guint max_events, gsize max_bytes);
+/* The quiet period after which silent relays stop holding the backfill
+ * (milliseconds; 0: GH_MLS_SERVICE_BACKFILL_QUIET_S). For tests and tuning. */
+void gh_mls_service_set_backfill_quiet(GhMlsService *self, guint quiet_ms);
 /* The id of the KeyPackage event last accepted by a relay, or NULL. */
 const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
 /* Rotates the KeyPackage now (e.g. the user asked); FALSE with

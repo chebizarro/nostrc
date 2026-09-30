@@ -1219,6 +1219,73 @@ test_backfill_store_bounded(void)
   world_down(&w);
 }
 
+/* Final review N1 (probe P4): a group on relays g and h; Bob misses 60
+ * messages. h serves all but the newest; g, capped at 50, is the only one
+ * serving the newest, and then never answers its until page. (Re-signed
+ * three per second in the recent past, in the sender's order.) Once h has
+ * finished and g has been silent for the quiet period (1 s here), g is
+ * given up as incomplete: the stored backlog of both is applied, a live
+ * message Alice sends while g's page is out is read, the cursor holds (g
+ * never answered) and history-incomplete says so. */
+static void
+test_stalled_relay_given_up(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  w.g.max_limit = 50;
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  const gchar *relays[] = { w.g.url, w.h.url, NULL };
+  GhMlsGroup *ga = create_group_on(alice, "Stalled", relays, (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  join(bob, ALICE);
+  WireStored *any = last_stored_445(&w.g) ? last_stored_445(&w.g) : last_stored_445(&w.h);
+  g_assert_nonnull(any);
+  g_autofree gchar *h = g_strdup(h_of(any));
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+  gint64 before = gh_mls_group_get_cursor(gb);
+  gh_mls_service_set_backfill_quiet(bob->service, 1000);
+
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;                  /* served only as re-signed below */
+  w.h.withhold_new = TRUE;
+  StoredCount on_h = { &w.h, h, w.h.stored->len, 0 };
+  Backlog backlog;
+  make_backlog(&w, alice, ga, h, 60, 0, 0, &backlog);
+  on_h.count = backlog.ids->len;
+  spin_until(stored_reached, &on_h, "the backlog stored on h");
+  w.g.withhold_new = FALSE;
+  w.h.withhold_new = FALSE;
+  /* In the recent past, inside Bob's overlap: the live message below must
+   * not be dated before the backlog it follows. */
+  gint64 start = real_now() - 25;
+  for (guint i = 0; i < backlog.ids->len; i++) {
+    g_autofree gchar *copy = resigned(stored_by_id(&w.g, g_ptr_array_index(backlog.ids, i))->json,
+                                      start + i / 3);
+    wire_relay_inject(&w.g, copy);
+    if (i + 1 < backlog.ids->len)
+      wire_relay_inject(&w.h, copy);          /* the newest only on g */
+  }
+  w.g.stall_pages = TRUE;
+
+  set_online(bob, TRUE);
+  wait_for_count(&w.g.stalled_reqs, 1);      /* g's page is out, and never answered */
+  send_text(alice, ga, "live while g stalls");
+  TextsWait all = { bob, room, backlog.texts, 0 };
+  spin_until(texts_listed, &all, "every message of the backlog");
+  wait_message(bob, room, "live while g stalls");
+  spin_until(history_incomplete, gb, "g given up as incomplete");
+  wait_live(gb);
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, before);   /* g never answered */
+  send_text(alice, ga, "live after g was given up");
+  wait_message(bob, room, "live after g was given up");
+  backlog_clear(&backlog);
+  world_down(&w);
+}
+
 /* nostrc-kzun (after nostrc-dha5): a backlog of more than 200 kind 445s in
  * one stored answer -- 249 messages across 3 Commits, the first Commit
  * withheld and released last, as run_catch_up() does -- reaches the service
@@ -1680,6 +1747,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/catch-up-two-relays-partial",
                   test_catch_up_two_relays_partial);
   g_test_add_func("/groundhog/mls-service/backfill-store-bounded", test_backfill_store_bounded);
+  g_test_add_func("/groundhog/mls-service/stalled-relay-given-up", test_stalled_relay_given_up);
   g_test_add_func("/groundhog/mls-service/catch-up-over-200", test_catch_up_over_200);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);
