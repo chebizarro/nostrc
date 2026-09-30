@@ -296,3 +296,79 @@ Findings L1 and L2 of the first pass remain open as non-blocking follow-ups.
   - **N2:** restrict the largest-answer rule to pages that made no progress, in both the scope and the DM inbox, and add P3.
 
 Both fixes are small. With them, and P3 and P4 as regression tests, I expect to approve.
+
+---
+
+# Closing pass — N1/N2 fixes (2026-09-30)
+
+**Branch:** `groundhog/w21-mls-prereqs` at `82f6afdf`: `d4ffa896` plus two commits. The review commits were rebased onto it.
+
+| Commit | Addresses | Subject |
+|---|---|---|
+| `07326e84` | N2 | the largest-answer rule applies only to a page stuck in one second |
+| `82f6afdf` | N1 | a silent group relay stops holding the MLS backfill after a quiet period |
+
+**Verdict:** **APPROVED.**
+- **Both blockers fixed.** N1 and N2 are fixed, and my repros pass.
+- **No regressions.** None in any gate.
+- **Low findings tracked.** All four have beads.
+- **One Medium follow-up (M1)**, a residual of N1 in busy groups (P5). It must land before `GH_FEATURE_ENCRYPTED_GROUPS` is flipped, but it does not block this merge: encrypted groups ship disabled, and M1 is a bounded delay, not a loss.
+
+## Verification performed (closing pass)
+
+| # | What | Result |
+|---|---|---|
+| C1 | macOS build at `82f6afdf` + `ctest -j6 --timeout 300` | Build clean. **447/447 passed**, the same 5 skipped |
+| C2 | `scripts/linux-gate.sh .` (arm64) | **Smoke tests passed, 438 run, after one rerun.** Three tests failed only in the parallel run and passed alone: `test_nostr_gtk_bind_latency_budget`, `groundhog-conversation-info-gui`, and `groundhog-relay-wire /groundhog/relay/offline-at-start`. That last test predates this branch (`c04e2be9`, on master) and belongs to the parallel-load flake class tracked in **nostrc-xdg9**. It passes 5/5 alone here. None of the three touches the changed code paths |
+| C3 | `python3 scripts/check-unsequenced-args.py` | Clean |
+| C4 | macOS ASan+UBSan: `groundhog-relay`, `-relay-wire`, `-mls-service` (with `stalled-relay-given-up`), `-nip29-service`, `-dm-inbox` (with `backfill-inflated-live-answer`), `subscription_eose_order` | **6/6 pass, no reports** |
+| C5 | **P3 rerun (N2)**: a relay capped at 20 with 60 stored events and one live event before EOSE | **Fixed:** 3 pages, **61/61 events, EOSE complete** (it was 40/61, complete). All 15 `groundhog-relay` tests pass, including the author's `paging/live-before-eose` |
+| C6 | **P4 rerun (N1)**: g the only relay with the newest message, its page stalled; default 30 s quiet period | **Fixed:** the live message sent during the stall and h's whole backlog are read after **30.0 s**, the quiet period. It used to be never (the probe hit its 90 s timeout) |
+| C7 | **P5, new** (scratch, reverted): the same stall, quiet period 1 s, but g carries the group's live traffic (h withholds new events): one message every 300 ms for 8.3 s | **Nothing is read for the whole 8.3 s burst.** Everything is read **0.8 s after the burst stops** (M1) |
+| C8 | 5× repeated runs: `stalled-relay-given-up`, `catch-up-two-relays-partial`, `backfill-inflated-live-answer` | 5/5 each |
+
+All scratch changes are reverted; `git status` is clean.
+
+## N2 — fixed
+
+`judge_filter()` now applies the largest-answer rule only to a page that got no older than its `until` (`stuck`). A page that made progress keeps the threshold rule and pages on, and `max_count` is clamped to the page limit. This is exactly the narrowing recommended in the final pass, with the clamp added. `GhDmInbox::finish_page()` gets the same rule, with `run_max` clamped to the REQ limit (the variables `oldest`/`until` are the page's own).
+- **P1 (B2) passes**, still complete after one page.
+- **P3 passes:** complete with all 61 events.
+- **A genuine same-second overflow** (`paging/same-second`, `backfill-tied-second`) is still stepped over and marked incomplete.
+
+## N1 — fixed; one residual (M1, Medium, non-blocking for merge)
+
+`group->backfilling` now records when each relay last delivered a backfill event. A monotonic quiet timer (30 s, `gh_mls_service_set_backfill_quiet()`) gives up relays that are all silent for the period, as `backfill_full()` does: `end_backfill`, settled 4 (the cursor holds), `history-incomplete`, and the store applied oldest first. Nothing is closed.
+- **Relays still delivering** keep the timer waiting, so a silent relay is given up only after the others finish.
+- **Cleanup.** The timer is removed on unsubscribe and finalize.
+- **Reentrancy.** `give_up_backfill()` runs under a group ref.
+- **The protocol lens holds:** this is a bound on a local ordering wait, not a timeout-driven close.
+- **Testability (Info).** The timer uses `g_timeout_add` and `g_get_monotonic_time()`, not the service's `GhClock`, so tests need a real short quiet period (1 s). Acceptable.
+
+**M1: the quiet timer is refreshed by the stalled relay's live traffic.**
+- **The cause.** The scope flags every event before a URL's final EOSE as `backfill`, including live events arriving on the still-open live REQ while that URL's page is stalled. Each one the stalled relay delivers *first* (scope-wide dedup) calls `touch_backfilling()` and restarts its quiet period.
+- **The effect.** In a busy group whose stalled relay wins some of the live-delivery races, the group shows nothing new until there is a 30 s gap in that relay's first deliveries (or the store reaches its bound). P5 shows it: with a 1 s quiet period, nothing was read during an 8.3 s burst, and all of it was read 0.8 s after the burst ended.
+- **What limits it.** It is a delay, not a loss: the cursor holds and nothing is skipped. The trigger is also narrow: a relay that drops or hangs its `until` pages while serving live events faster than the other group relays.
+- **Why it still matters.** It freezes a group exactly when it is busy, so it should land before encrypted groups are enabled.
+
+**Suggested fix:** count only stored-answer progress as "delivering". The scope knows which events are which (`endpoint->live_eose`). Events of the live REQ's stored answer (before `live_eose`) and page events are progress; events arriving on the live REQ after its own EOSE are live traffic. Expose that on `GhRelayUpdate` (for example `.stored`), and have `touch_backfilling()` refresh a relay's timestamp only for stored events, while those events still go to the store. Add P5 (a stalled relay carrying live traffic, a quiet period of 1 s, the first live message read within a few quiet periods) as its test.
+
+## L1–L4 — tracked
+
+The low findings are not addressed in code, and none of them blocks. Each has an open bead:
+- **L1**, reuse one page connection: **nostrc-wdlz**.
+- **L2**, a relay's CLOSED reason masked by the ceiling: **nostrc-5595** (related: nostrc-ue8f).
+- **L3**, a late-starting relay applied after the flush: **nostrc-f7s7**.
+- **L4**, the store deduplicated by id against seen-set eviction: **nostrc-jjyz**.
+
+## Final verdict
+
+**APPROVED.**
+- **All first-pass and final-pass blockers are fixed** and pinned by tests that fail without them: B1–B4, N1 and N2.
+- **The repros confirm it:** P1–P4 now pass (B1, B2, N1, N2).
+- **The gates are clean:** full suite, Linux gate (one known parallel-load flake class), ASan+UBSan and the unsequenced-args check.
+- **The design holds** on the protocol and privacy axes:
+  - backfill is EOSE-driven, bounded, with no polling and no timeout-driven closes;
+  - pages use the same circuit and AUTH mode;
+  - cursors hold on every incomplete path.
+- **Condition for enabling encrypted groups (not for this merge):** file and fix **M1** before `GH_FEATURE_ENCRYPTED_GROUPS` is flipped.
