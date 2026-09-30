@@ -314,3 +314,79 @@ Before enabling `GH_FEATURE_ENCRYPTED_GROUPS`, fix or file beads for:
 No service-side workaround is needed for nostrc-dha5 beyond that dependency.
 
 **REQUEST CHANGES**
+
+---
+
+## Final pass: `0e8efe19` (b674059e, 0e8efe19)
+
+The review branch was rebased onto `0e8efe19`.
+
+**Verification:**
+
+| Check | Result |
+|---|---|
+| Build (`/tmp/w20mr2`, libmarmot 0.10.0) | clean; `gnostr-profile-edit.ui` restored |
+| `ctest -R 'groundhog-\|marmot\|mls' -j6` | 94/94 passed, 4 skipped as on base |
+| `check-unsequenced-args.py` | clean |
+| `scripts/linux-gate.sh` (arm64, GCC) on a clean snapshot | build ok; 419 smoke tests pass |
+
+**My re-review repros**, re-inserted unchanged (no NULL guard) and reverted afterwards:
+
+| Repro | Result |
+|---|---|
+| `x-nested-retry` | passes (it crashed at `27ffdb23`) |
+| `x-catch-up-2`, `-4`, `-5`, `-8` (newest-first backlog, first Commit last) | every message read; final epoch reached; `unreadable = 0` |
+
+**Mutations** (applied, rebuilt, run, restored):
+
+| Mutation | Result |
+|---|---|
+| whole B1 fix reverted | caught: future-replay-moves-no-cursor (N5 closed) |
+| `retry_held()` recursive again (no `retrying` guard) | caught: catch-up-4-commits |
+| a junk miss per queued Commit (N2 reverted) | caught: catch-up-4-commits |
+| the floor ignored in `save_cursor()` / the floor removed entirely | caught / caught: join-commit-pins-no-cursor |
+| the floor's "drop before the join" removed alone | survives (the `save_cursor()` exclusion covers the test) |
+| the failed-relay gate removed | caught: failed-relay-holds-the-cursor |
+| N7: a reconnect resets DECLINED | caught: account-proof-enrollment |
+| N7: a reconnect cancels a WAITING request | survives (no test flaps while the signer waits) |
+| N6: the +600 s allowance restored | survives (tests assert `cursor <= now` only on the B1 path) |
+
+### Item by item
+
+- **N1: closed.** `retry_held()` is a fixpoint with a `retrying` guard. A nested call only sets `retry_again`, and the pass list is detached, so the loop never walks what a nested call freed. Each pass sorts oldest first.
+  - **It terminates.** Another pass runs only when a Commit was applied out of the queue during the previous one. That Commit is freed, so every repeat strictly shrinks the finite queue. Nothing is added during a pass: `process_event(…, retry)` never holds, and relay callbacks are asynchronous. The bound is |held| + 1 passes.
+  - While a pass has the list detached, `save_cursor()` sees only re-queued items. That is safe because the pass is oldest first: an accepted event's date is ≤ every item still waiting in the pass.
+- **N2: closed.** Misses are added once after the fixpoint, one per fresh Commit (from a relay, or our own merged). Commits applied out of the queue don't count. A backlog of any depth resolves in one call.
+  - Residual: a message four or more epochs ahead, whose three intermediate Commits arrive *separately and live*, still ages out. That is rare, and bounded by the session.
+- **N4: closed, with a Low residual.**
+  - A held event dated before the join floor is dropped. One in the join's own second is kept but never holds the cursor back.
+  - A legitimate event is affected only if it is (a) undecryptable on arrival (a later epoch than the joiner's current one) and (b) dated before the floor.
+  - The floor is the inviter's rumor time, clamped to the joiner's now. So (b) needs an inviter clock ahead of another member's by more than the time from the join to the next Commit.
+  - If that happens, the event is dropped unpinned, and a newer accepted event can then move the cursor past it.
+  - Suggest a small margin: drop only below floor − 60 s, and exclude [floor − 60 s, floor] from the clamp. Low; for the paging work.
+- **N5: closed.** The test ages the Add Commit out, asserts `unreadable == 0`, and asserts the cursor directly. It fails on the B1 revert.
+- **N6: closed.** The cursor and held dates are bounded by now, and `GH_MLS_SERVICE_MAX_FUTURE_SKEW` is gone, so an accepted future-dated event leaves the full 600 s overlap. Only the re-added allowance is unpinned (above).
+- **Failed-relay rule: correct, but not bounded in time.**
+  - The cursor moves only while every group relay is EOSE-and-connected (1) or could never be subscribed (3).
+  - It does not stall delivery: live events from the other relays are still read.
+  - But a relay that stays down freezes the cursor for as long as it is down, across restarts. Every start then refetches everything since the relay died. That makes nostrc-cpwf's paging carry the load, and it makes a relay-cap truncation (N3b) likelier after an offline period.
+  - **Pre-existing sibling:** a group listing more than 16 relays, possible when another client made it (`group_refresh()` takes libmarmot's list uncapped), never reaches LIVE. Relays past the 16th never enter `settled`, so its cursor never moves.
+  - Neither needs to block this branch. Both should be tracked before the flag: let a relay that has failed for longer than a bound (say 24 h, or N consecutive subscriptions) stop holding the cursor; and cap or subscribe the relay list consistently.
+- **N7: closed.**
+  - The proof request runs under `identity_cancellable`, per *account* generation (`identity_new_generation()`). A flap neither cancels it nor resets DECLINED; a switch or reactivation cancels it and resets to NONE, with notify, so the new generation asks once.
+  - Late answers are matched by `identity_generation`. An answer that arrives while offline enrolls, and the KeyPackage follows on reconnect via `resume_all()`.
+  - `gh_mls_service_retry_identity()` gives part 2 its "Try Again".
+  - Dispose cancels.
+  - Residual (Low): a signer *transport* failure is also recorded as DECLINED, and after this change it waits for "Try Again" rather than the next reconnect. Distinguishing a denial from a failure (FAILED → re-ask on reconnect) would be kinder to NIP-46 users.
+- **N3: recorded correctly.** nostrc-9xf5 depends on nostrc-cpwf, nostrc-dha5 and nostrc-kzun (`blocks`), and its notes say not to set the flag until all three close. `gh-features.h` names the three next to `GH_FEATURE_ENCRYPTED_GROUPS 0`.
+
+### Follow-ups (non-blocking; file before enabling the flag)
+
+1. Bound how long a failed group relay can hold the cursor, and handle groups with more than 16 relays (Medium; fits nostrc-cpwf or a sibling bead).
+2. Add a clock-skew margin to the N4 join floor (Low).
+3. Tell a signer failure apart from a user's decline (Low).
+4. Tests: a flap while WAITING; the future bound on the non-B1 path (Info).
+
+The blocking findings N1 and N2 are fixed, and each fix is pinned by a test that fails on its revert. N4–N7 are fixed, and N3 is gated on the right beads.
+
+**APPROVED**
