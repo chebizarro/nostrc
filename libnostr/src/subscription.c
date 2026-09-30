@@ -703,7 +703,10 @@ void nostr_subscription_close(NostrSubscription *sub, Error **err) {
             GoSelectResult result = go_select_timeout(cases, 1, 0);
 
             if (result.selected_case >= 0 && write_err) {
+                /* nostrc-vpha R1: a caller passing no err (GNostrSubscription
+                 * finalize) still owns the received Error. */
                 if (err) *err = write_err;
+                else free_error(write_err);
             }
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] close: write queued (err=%p)\n",
@@ -894,6 +897,7 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
                     write_err->message ? write_err->message : "unknown");
             atomic_store(&subscription->priv->live, was_live);
             if (err) *err = write_err;
+            else free_error(write_err); /* nostrc-vpha R1: nobody else owns it */
             /* hq-e3ach: close + unref to drop our reference. */
             go_channel_close(write_channel);
             go_channel_unref(write_channel);
