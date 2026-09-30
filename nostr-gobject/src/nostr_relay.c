@@ -27,6 +27,10 @@
 #include <glib.h>
 #include <gio/gio.h>
 
+#ifdef GNOSTR_TESTING
+#include "nostr_relay_test_hooks.h"
+#endif
+
 /* Property IDs */
 enum {
     PROP_0,
@@ -49,16 +53,76 @@ static guint nostr_relay_signals[NOSTR_RELAY_SIGNALS_COUNT] = { 0 };
 /* nostrc-kw9r: Shared relay registry — deduplicates WebSocket connections.
  * Multiple GNostrPool instances that connect to the same relay URL share a
  * single GNostrRelay (and thus a single NostrRelay / NostrConnection).
- * The registry stores STRONG references to keep relays alive across pool
- * removals, ensuring websocket connections are reused for subsequent subscriptions. */
+ *
+ * The registry does not keep relays alive: each entry is a weak reference
+ * (nostrc-flp7). It used to hold the bare pointer, and a lookup on another
+ * thread in the window between the last unref and finalize's removal
+ * g_object_ref()ed a relay being finalized and returned it. g_weak_ref_get()
+ * returns NULL for such a relay; the lookup then registers a new one, and
+ * `owner` (compared, never dereferenced) keeps the dying relay's finalize
+ * from removing its successor's entry. */
 G_LOCK_DEFINE_STATIC(relay_registry);
-static GHashTable *g_relay_registry = NULL; /* URL → GNostrRelay* (strong ref via destroy notify) */
+static GHashTable *g_relay_registry = NULL; /* URL → RelayRegistryEntry* (owned) */
+
+typedef struct {
+    GWeakRef relay;
+    gconstpointer owner;
+} RelayRegistryEntry;
+
+static void
+relay_registry_entry_free(gpointer p)
+{
+    RelayRegistryEntry *entry = p;
+    g_weak_ref_clear(&entry->relay);
+    g_free(entry);
+}
+
+#ifdef GNOSTR_TESTING
+/* Test seams, see nostr_relay_test_hooks.h. */
+G_LOCK_DEFINE_STATIC(relay_test_hook);
+static GNostrRelayTestHook relay_test_hook;
+static gpointer relay_test_hook_data;
+static gint relay_test_live_callback_data;
+
+void
+gnostr_relay_test_set_hook(GNostrRelayTestHook hook, gpointer hook_data)
+{
+    G_LOCK(relay_test_hook);
+    relay_test_hook = hook;
+    relay_test_hook_data = hook_data;
+    G_UNLOCK(relay_test_hook);
+}
+
+gint
+gnostr_relay_test_live_callback_data(void)
+{
+    return g_atomic_int_get(&relay_test_live_callback_data);
+}
+
+static void
+relay_test_point(GNostrRelayTestPoint point)
+{
+    G_LOCK(relay_test_hook);
+    GNostrRelayTestHook hook = relay_test_hook;
+    gpointer hook_data = relay_test_hook_data;
+    G_UNLOCK(relay_test_hook);
+    if (hook)
+        hook(point, hook_data);
+}
+#define RELAY_TEST_POINT(point) relay_test_point(GNOSTR_RELAY_TEST_POINT_##point)
+#else
+#define RELAY_TEST_POINT(point) ((void)0)
+#endif
 
 /* Ref-counted weak-ref container passed as user_data to worker-thread
- * callbacks (state-changed, auth-challenge).  Because the callback can
+ * callbacks (state-changed, auth-challenge, ok).  Because the callback can
  * fire AFTER the GNostrRelay has been finalized, we cannot pass `self`
  * directly — g_object_ref() on freed memory is UB.  Instead we pass
- * this tiny struct whose lifetime is managed by g_atomic_ref_count. */
+ * this tiny struct whose lifetime is managed by g_atomic_ref_count.
+ *
+ * nostrc-flp7: each core callback registration owns a reference, released by
+ * libnostr (the _full setters' destroy notify) only once the callback is
+ * removed and no worker is still inside it; each queued idle owns another. */
 typedef struct {
     GWeakRef weak_relay;
     gatomicrefcount ref_count;
@@ -70,6 +134,9 @@ relay_callback_data_new(GNostrRelay *self)
     RelayCallbackData *d = g_new(RelayCallbackData, 1);
     g_weak_ref_init(&d->weak_relay, self);
     g_atomic_ref_count_init(&d->ref_count);
+#ifdef GNOSTR_TESTING
+    g_atomic_int_inc(&relay_test_live_callback_data);
+#endif
     return d;
 }
 
@@ -86,6 +153,41 @@ relay_callback_data_unref(RelayCallbackData *d)
     if (g_atomic_ref_count_dec(&d->ref_count)) {
         g_weak_ref_clear(&d->weak_relay);
         g_free(d);
+#ifdef GNOSTR_TESTING
+        g_atomic_int_add(&relay_test_live_callback_data, -1);
+#endif
+    }
+}
+
+/* NostrRelayDestroyNotify for a core callback registration's reference. */
+static void
+relay_callback_data_release(void *d)
+{
+    relay_callback_data_unref(d);
+}
+
+/* NIP-42 sign handler (nostrc-7og). Refcounted (nostrc-flp7):
+ * gnostr_relay_authenticate() can run on a worker thread (a publish from
+ * nostr_relay_publish_async()) and holds a reference while it signs, so a
+ * gnostr_relay_set_auth_handler() on another thread cannot destroy the user
+ * data that call is still using. The relay's pointer is read and replaced
+ * only under the relay_auth_handler lock. */
+typedef struct {
+    gatomicrefcount ref_count;
+    GNostrRelayAuthSignFunc func;
+    gpointer user_data;
+    GDestroyNotify destroy;
+} RelayAuthHandler;
+
+G_LOCK_DEFINE_STATIC(relay_auth_handler);
+
+static void
+relay_auth_handler_unref(RelayAuthHandler *handler)
+{
+    if (handler && g_atomic_ref_count_dec(&handler->ref_count)) {
+        if (handler->destroy && handler->user_data)
+            handler->destroy(handler->user_data);
+        g_free(handler);
     }
 }
 
@@ -104,17 +206,35 @@ struct _GNostrRelay {
     guint64 state_serial;        /* atomic: serial of the last queued core transition */
     guint64 state_barrier;       /* atomic: transitions queued at or before this
                                   * serial predate an explicit disconnect */
-    RelayCallbackData *cb_data;  /* Weak-ref wrapper for worker-thread callbacks */
 #ifdef ENABLE_NIP11
     RelayInformationDocument *nip11_info;  /* Cached NIP-11 info (owned) */
     GCancellable *nip11_cancellable;       /* Cancel in-flight NIP-11 fetch */
 #endif
     /* NIP-42 authentication (nostrc-7og) */
-    GNostrRelayAuthSignFunc auth_sign_func;
-    gpointer auth_sign_data;
-    GDestroyNotify auth_sign_destroy;
+    RelayAuthHandler *auth_handler; /* NULL when unset; see relay_auth_handler lock */
     gboolean authenticated;      /* TRUE after successful AUTH response */
 };
+
+/* Returns a reference on the current sign handler, or NULL. */
+static RelayAuthHandler *
+relay_dup_auth_handler(GNostrRelay *self)
+{
+    G_LOCK(relay_auth_handler);
+    RelayAuthHandler *handler = self->auth_handler;
+    if (handler)
+        g_atomic_ref_count_inc(&handler->ref_count);
+    G_UNLOCK(relay_auth_handler);
+    return handler;
+}
+
+static gboolean
+relay_has_auth_handler(GNostrRelay *self)
+{
+    G_LOCK(relay_auth_handler);
+    gboolean has = self->auth_handler != NULL;
+    G_UNLOCK(relay_auth_handler);
+    return has;
+}
 
 G_DEFINE_TYPE(GNostrRelay, gnostr_relay, G_TYPE_OBJECT)
 
@@ -238,7 +358,8 @@ on_core_state_changed(NostrRelay *relay G_GNUC_UNUSED,
                       NostrRelayConnectionState new_state,
                       void *user_data)
 {
-    RelayCallbackData *cb_data = user_data;
+    RELAY_TEST_POINT(CORE_STATE);
+    RelayCallbackData *cb_data = user_data; /* kept alive by libnostr for this call */
     GNostrRelay *self = g_weak_ref_get(&cb_data->weak_relay);
     if (!self)
         return; /* relay already finalized */
@@ -285,7 +406,7 @@ auth_challenge_on_main_thread(gpointer user_data)
                       data->challenge);
 
         /* Auto-authenticate if handler is configured */
-        if (self->auth_sign_func) {
+        if (relay_has_auth_handler(self)) {
             g_autoptr(GError) error = NULL;
             if (!gnostr_relay_authenticate(self, &error)) {
                 g_warning("NIP-42 auto-auth failed for %s: %s",
@@ -336,7 +457,8 @@ on_core_auth_challenge(NostrRelay *relay G_GNUC_UNUSED,
                        const char *challenge,
                        void *user_data)
 {
-    RelayCallbackData *cb_data = user_data;
+    RELAY_TEST_POINT(CORE_AUTH);
+    RelayCallbackData *cb_data = user_data; /* kept alive by libnostr for this call */
     GNostrRelay *self = g_weak_ref_get(&cb_data->weak_relay);
     if (!self)
         return; /* relay already finalized */
@@ -353,7 +475,8 @@ on_core_auth_challenge(NostrRelay *relay G_GNUC_UNUSED,
 static void
 on_core_ok_response(const char *event_id, bool ok, const char *reason, void *user_data)
 {
-    RelayCallbackData *cb_data = user_data;
+    RELAY_TEST_POINT(CORE_OK);
+    RelayCallbackData *cb_data = user_data; /* kept alive by libnostr for this call */
     GNostrRelay *self = g_weak_ref_get(&cb_data->weak_relay);
     if (!self)
         return;
@@ -433,17 +556,28 @@ gnostr_relay_constructed(GObject *object)
             /* Skip signature verification - nostrdb handles this during ingestion */
             self->relay->assume_valid = true;
 
-            /* Allocate weak-ref wrapper for worker-thread callbacks */
-            self->cb_data = relay_callback_data_new(self);
+            /* Weak-ref wrapper for the worker-thread callbacks. Each
+             * registration below owns a reference that libnostr releases
+             * only after the callback is removed and no worker is inside it
+             * any more (nostrc-flp7), so the relay keeps none of its own. */
+            RelayCallbackData *cb_data = relay_callback_data_new(self);
 
-            /* Set up state callback to receive connection state changes */
-            nostr_relay_set_state_callback(self->relay, on_core_state_changed, self->cb_data);
+            /* Connection state changes */
+            nostr_relay_set_state_callback_full(self->relay, on_core_state_changed,
+                                                relay_callback_data_ref(cb_data),
+                                                relay_callback_data_release);
 
-            /* Set up auth callback for NIP-42 challenges (nostrc-7og) */
-            nostr_relay_set_auth_callback(self->relay, on_core_auth_challenge, self->cb_data);
+            /* NIP-42 challenges (nostrc-7og) */
+            nostr_relay_set_auth_callback_full(self->relay, on_core_auth_challenge,
+                                               relay_callback_data_ref(cb_data),
+                                               relay_callback_data_release);
 
-            /* Bridge OK publish responses onto the GObject signal surface */
-            nostr_relay_set_ok_callback(self->relay, on_core_ok_response, self->cb_data);
+            /* OK publish responses, bridged onto the GObject signal surface */
+            nostr_relay_set_ok_callback_full(self->relay, on_core_ok_response,
+                                             relay_callback_data_ref(cb_data),
+                                             relay_callback_data_release);
+
+            relay_callback_data_unref(cb_data);
         }
     }
 }
@@ -465,14 +599,15 @@ gnostr_relay_finalize(GObject *object)
 {
     GNostrRelay *self = GNOSTR_RELAY(object);
 
-    /* nostrc-kw9r: Remove from registry when finalized. With weak references,
-     * this happens when all pools release the relay. Clean removal prevents
-     * stale pointers in the registry. */
+    RELAY_TEST_POINT(FINALIZE);
+
+    /* nostrc-kw9r: Remove from registry when finalized, unless a lookup has
+     * already replaced this dying relay's entry with a new relay. */
     if (self->url) {
         G_LOCK(relay_registry);
         if (g_relay_registry) {
-            GNostrRelay *registered = g_hash_table_lookup(g_relay_registry, self->url);
-            if (registered == self) {
+            RelayRegistryEntry *entry = g_hash_table_lookup(g_relay_registry, self->url);
+            if (entry && entry->owner == self) {
                 g_hash_table_remove(g_relay_registry, self->url);
             }
         }
@@ -493,15 +628,16 @@ gnostr_relay_finalize(GObject *object)
     }
 #endif
 
-    /* Release weak-ref callback data — pending idle callbacks will
-     * see g_weak_ref_get() return NULL and safely no-op. */
-    if (self->cb_data) {
-        relay_callback_data_unref(self->cb_data);
-        self->cb_data = NULL;
-    }
-
-    /* Remove callbacks before freeing relay */
     if (self->relay) {
+        /* nostrc-flp7: detach the core callbacks first. This does not wait
+         * for a worker that is inside one of them right now: libnostr holds
+         * that registration's reference on the callback data until the call
+         * returns, so the worker reads live memory, and its g_weak_ref_get()
+         * returns NULL from here on. The callback data used to be freed here,
+         * before the callbacks were detached, and a worker already past
+         * libnostr's lock then read it after the free (message_loop ->
+         * relay_set_state -> on_core_state_changed -> g_weak_ref_get). Pending
+         * idles hold references of their own and see NULL too. */
         nostr_relay_set_state_callback(self->relay, NULL, NULL);
         nostr_relay_set_auth_callback(self->relay, NULL, NULL);
         nostr_relay_set_ok_callback(self->relay, NULL, NULL);
@@ -512,20 +648,15 @@ gnostr_relay_finalize(GObject *object)
          * (e.g., sync_relays → remove_relay → last unref → finalize),
          * this blocks the main loop and freezes the app.
          *
-         * CRITICAL: Close send/recv channels BEFORE dispatching free.
-         * If we free while libsoup is still doing I/O, g_weak_ref_get crashes
-         * with double-free. Closing channels is non-blocking and signals
-         * workers to stop I/O. The blocking go_wait_group_wait() happens
-         * in relay_free_impl on the background thread.
+         * relay_free_impl cancels the connection context and closes the
+         * connection's channels itself (nostrc-ws1), under the relay mutex.
+         * This function used to close them first by reading
+         * relay->connection without that mutex, racing message_loop's
+         * reconnect, which swaps the connection and hands the old one to the
+         * LWS thread to free (nostrc-flp7).
          *
          * NOTE: Do NOT call nostr_relay_close() here - it blocks waiting for
          * workers, which would freeze the main thread. */
-        if (self->relay->connection) {
-            NostrConnection *conn = self->relay->connection;
-            if (conn->recv_channel) go_channel_close(conn->recv_channel);
-            if (conn->send_channel) go_channel_close(conn->send_channel);
-        }
-
         NostrRelay *relay = self->relay;
         self->relay = NULL;
 
@@ -535,13 +666,8 @@ gnostr_relay_finalize(GObject *object)
         g_object_unref(task);
     }
 
-    /* Free auth handler user data */
-    if (self->auth_sign_destroy && self->auth_sign_data) {
-        self->auth_sign_destroy(self->auth_sign_data);
-    }
-    self->auth_sign_func = NULL;
-    self->auth_sign_data = NULL;
-    self->auth_sign_destroy = NULL;
+    /* Drop the sign handler (a worker still signing holds its own ref). */
+    g_clear_pointer(&self->auth_handler, relay_auth_handler_unref);
 
     g_free(self->url);
     self->url = NULL;
@@ -784,9 +910,7 @@ gnostr_relay_init(GNostrRelay *self)
     self->nip11_info = NULL;
     self->nip11_cancellable = NULL;
 #endif
-    self->auth_sign_func = NULL;
-    self->auth_sign_data = NULL;
-    self->auth_sign_destroy = NULL;
+    self->auth_handler = NULL;
     self->authenticated = FALSE;
 }
 
@@ -801,11 +925,12 @@ gnostr_relay_new(const gchar *url)
      * constructed() only allocates the core relay struct (no I/O), so this is safe. */
     G_LOCK(relay_registry);
 
-    /* Check registry for existing relay */
+    /* Check registry for a live relay. NULL from g_weak_ref_get() means the
+     * registered relay is being finalized; replace it (nostrc-flp7). */
     if (g_relay_registry) {
-        GNostrRelay *existing = g_hash_table_lookup(g_relay_registry, url);
+        RelayRegistryEntry *entry = g_hash_table_lookup(g_relay_registry, url);
+        GNostrRelay *existing = entry ? g_weak_ref_get(&entry->relay) : NULL;
         if (existing) {
-            g_object_ref(existing);
             G_UNLOCK(relay_registry);
             return existing;
         }
@@ -816,9 +941,12 @@ gnostr_relay_new(const gchar *url)
 
     if (!g_relay_registry) {
         g_relay_registry = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                                  g_free, NULL);
+                                                  g_free, relay_registry_entry_free);
     }
-    g_hash_table_insert(g_relay_registry, g_strdup(url), relay);
+    RelayRegistryEntry *entry = g_new0(RelayRegistryEntry, 1);
+    g_weak_ref_init(&entry->relay, relay);
+    entry->owner = relay;
+    g_hash_table_replace(g_relay_registry, g_strdup(url), entry);
     G_UNLOCK(relay_registry);
 
     return relay;
@@ -1002,7 +1130,7 @@ gnostr_relay_publish(GNostrRelay *self, NostrEvent *event, GError **error)
 
         if (lim->auth_required && !self->authenticated) {
             /* Try auto-auth if handler is configured (nostrc-7og) */
-            if (self->auth_sign_func) {
+            if (relay_has_auth_handler(self)) {
                 g_autoptr(GError) auth_err = NULL;
                 if (!gnostr_relay_authenticate(self, &auth_err)) {
                     g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
@@ -1133,14 +1261,25 @@ gnostr_relay_set_auth_handler(GNostrRelay *self,
 {
     g_return_if_fail(GNOSTR_IS_RELAY(self));
 
-    /* Free old handler data */
-    if (self->auth_sign_destroy && self->auth_sign_data) {
-        self->auth_sign_destroy(self->auth_sign_data);
+    RelayAuthHandler *handler = NULL;
+    if (sign_func) {
+        handler = g_new0(RelayAuthHandler, 1);
+        g_atomic_ref_count_init(&handler->ref_count);
+        handler->func = sign_func;
+        handler->user_data = user_data;
+        handler->destroy = destroy;
+    } else if (destroy && user_data) {
+        destroy(user_data); /* nothing will call a cleared handler */
     }
 
-    self->auth_sign_func = sign_func;
-    self->auth_sign_data = user_data;
-    self->auth_sign_destroy = destroy;
+    G_LOCK(relay_auth_handler);
+    RelayAuthHandler *old = self->auth_handler;
+    self->auth_handler = handler;
+    G_UNLOCK(relay_auth_handler);
+
+    /* The old user data is destroyed now, or when a gnostr_relay_authenticate()
+     * still signing with it returns (nostrc-flp7). */
+    relay_auth_handler_unref(old);
     self->authenticated = FALSE;
 }
 
@@ -1155,13 +1294,17 @@ gnostr_relay_authenticate(GNostrRelay *self, GError **error)
         return FALSE;
     }
 
-    if (!self->auth_sign_func) {
+    /* Held until signing is done, so a concurrent
+     * gnostr_relay_set_auth_handler() cannot free its user data (nostrc-flp7). */
+    RelayAuthHandler *handler = relay_dup_auth_handler(self);
+    if (!handler) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
                             "no auth handler configured; call gnostr_relay_set_auth_handler() first");
         return FALSE;
     }
 
     if (self->state != GNOSTR_RELAY_STATE_CONNECTED) {
+        relay_auth_handler_unref(handler);
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
                             "not connected");
         return FALSE;
@@ -1169,8 +1312,8 @@ gnostr_relay_authenticate(GNostrRelay *self, GError **error)
 
     /* Set up thread-local bridge adapter */
     AuthSignAdapter adapter = {
-        .func = self->auth_sign_func,
-        .user_data = self->auth_sign_data,
+        .func = handler->func,
+        .user_data = handler->user_data,
         .g_error = NULL
     };
     _auth_sign_adapter = &adapter;
@@ -1179,6 +1322,7 @@ gnostr_relay_authenticate(GNostrRelay *self, GError **error)
     nostr_relay_auth(self->relay, auth_sign_bridge, &core_err);
 
     _auth_sign_adapter = NULL;
+    relay_auth_handler_unref(handler);
 
     if (adapter.g_error) {
         if (error) {

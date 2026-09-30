@@ -18,6 +18,7 @@
 #include "channel.h"
 #include "select.h"
 #include "context.h"
+#include <stdatomic.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,6 +167,77 @@ relay_get_subscription_ref(NostrRelay *r, int serial)
     nsync_mu_unlock(&r->priv->mutex);
     return sub;
 }
+/* === Registered callbacks (nostrc-flp7) ===
+ *
+ * A callback used to be two fields, function and user data, copied under the
+ * mutex and called after unlocking it. Removing the callback could not reach
+ * a copy already taken, so an owner that freed its user data after removing
+ * the callback could still have that data read by a worker thread
+ * (GNostrRelay: SIGSEGV in on_core_state_changed -> g_weak_ref_get on freed
+ * memory). Each registration is now a slot with a reference count; see
+ * NostrRelayPrivate for the protocol. */
+struct NostrRelayCallbackSlot {
+    atomic_int refs;
+    union {
+        NostrRelayStateCallback state;
+        NostrRelayAuthCallback auth;
+        NostrRelayOkResponseCallback ok;
+    } fn;
+    void *user_data;
+    NostrRelayDestroyNotify destroy;
+};
+
+/* A slot holding the registration's (the relay's) reference. */
+static struct NostrRelayCallbackSlot *relay_callback_slot_new(void *user_data,
+                                                              NostrRelayDestroyNotify destroy) {
+    struct NostrRelayCallbackSlot *slot = calloc(1, sizeof(*slot));
+    if (!slot) return NULL;
+    atomic_init(&slot->refs, 1);
+    slot->user_data = user_data;
+    slot->destroy = destroy;
+    return slot;
+}
+
+/* Takes an invocation reference. The caller holds relay->priv->mutex and read
+ * @slot from the relay under it, so the registration reference cannot be
+ * dropped underneath us. NULL-safe. */
+static struct NostrRelayCallbackSlot *relay_callback_slot_ref_locked(struct NostrRelayCallbackSlot *slot) {
+    if (slot) atomic_fetch_add_explicit(&slot->refs, 1, memory_order_relaxed);
+    return slot;
+}
+
+/* Drops a reference; the last one runs the owner's destroy notify. Never call
+ * with relay->priv->mutex held. NULL-safe. */
+static void relay_callback_slot_unref(struct NostrRelayCallbackSlot *slot) {
+    if (!slot) return;
+    if (atomic_fetch_sub_explicit(&slot->refs, 1, memory_order_acq_rel) != 1) return;
+    if (slot->destroy) slot->destroy(slot->user_data);
+    free(slot);
+}
+
+/* Registers @slot (NULL removes) in *@field and drops the relay's reference
+ * on the slot it replaces. An invocation still inside the old callback holds
+ * its own reference, so the old user data lives until that call returns. */
+static void relay_callback_slot_swap(NostrRelay *relay,
+                                     struct NostrRelayCallbackSlot **field,
+                                     struct NostrRelayCallbackSlot *slot) {
+    nsync_mu_lock(&relay->priv->mutex);
+    struct NostrRelayCallbackSlot *old = *field;
+    *field = slot;
+    nsync_mu_unlock(&relay->priv->mutex);
+    relay_callback_slot_unref(old);
+}
+
+/* Calls a state slot referenced under the mutex, then drops that reference. */
+static void relay_callback_slot_call_state(NostrRelay *relay,
+                                           struct NostrRelayCallbackSlot *slot,
+                                           NostrRelayConnectionState old_state,
+                                           NostrRelayConnectionState new_state) {
+    if (!slot) return;
+    slot->fn.state(relay, old_state, new_state, slot->user_data);
+    relay_callback_slot_unref(slot);
+}
+
 static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_state);
 static uint64_t get_monotonic_time_ms(void);
 static uint64_t calculate_backoff_with_jitter(int attempt);
@@ -282,21 +354,22 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
         break; }
     case NOSTR_ENVELOPE_AUTH: {
         const char *ch = ((NostrAuthEnvelope *)envelope)->challenge;
-        NostrRelayAuthCallback auth_cb = NULL;
-        void *auth_cb_data = NULL;
+        struct NostrRelayCallbackSlot *auth_slot = NULL;
         char *challenge_copy = ch ? strdup(ch) : NULL;
 
         nsync_mu_lock(&r->priv->mutex);
         if (r->priv->challenge) free(r->priv->challenge);
         r->priv->challenge = challenge_copy;
         challenge_copy = NULL;
-        auth_cb = r->priv->auth_callback;
-        auth_cb_data = r->priv->auth_callback_user_data;
+        auth_slot = relay_callback_slot_ref_locked(r->priv->auth_slot);
         nsync_mu_unlock(&r->priv->mutex);
 
-        char tmp[256]; snprintf(tmp, sizeof(tmp), "AUTH challenge=%s", r->priv->challenge ? r->priv->challenge : "");
+        /* Report and pass the envelope's own copy: r->priv->challenge may be
+         * replaced (and freed) under the mutex once it is released. */
+        char tmp[256]; snprintf(tmp, sizeof(tmp), "AUTH challenge=%s", ch ? ch : "");
         relay_debug_emit(r, tmp);
-        if (auth_cb && r->priv->challenge) auth_cb(r, r->priv->challenge, auth_cb_data);
+        if (auth_slot && ch) auth_slot->fn.auth(r, ch, auth_slot->user_data);
+        relay_callback_slot_unref(auth_slot);
         break; }
     case NOSTR_ENVELOPE_CLOSED: {
         NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
@@ -316,8 +389,7 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
         break; }
     case NOSTR_ENVELOPE_OK: {
         NostrOKEnvelope *oe = (NostrOKEnvelope *)envelope;
-        void (*ok_cb)(const char *, bool, const char *, void *) = NULL;
-        void *ok_cb_data = NULL;
+        struct NostrRelayCallbackSlot *ok_slot = NULL;
 
         if (!oe->ok) {
             fprintf(stderr, "[RELAY_OK_FAIL] relay=%s event=%s reason=\"%s\"\n",
@@ -334,15 +406,15 @@ void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelop
             if (res) (void)go_channel_send(waiter->done, res);
             go_hash_map_remove_str(r->priv->ok_callbacks, oe->event_id);
         }
-        ok_cb = r->priv->ok_response_callback;
-        ok_cb_data = r->priv->ok_response_callback_user_data;
+        ok_slot = relay_callback_slot_ref_locked(r->priv->ok_slot);
         nsync_mu_unlock(&r->priv->mutex);
 
-        if (ok_cb) {
-            ok_cb(oe->event_id ? oe->event_id : "",
-                  oe->ok,
-                  oe->reason ? oe->reason : "",
-                  ok_cb_data);
+        if (ok_slot) {
+            ok_slot->fn.ok(oe->event_id ? oe->event_id : "",
+                           oe->ok,
+                           oe->reason ? oe->reason : "",
+                           ok_slot->user_data);
+            relay_callback_slot_unref(ok_slot);
         }
         char tmp[256]; snprintf(tmp, sizeof(tmp), "OK id=%s ok=%s reason=%s",
                                oe->event_id ? oe->event_id : "",
@@ -450,19 +522,16 @@ bool nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error 
      * relay's and nothing has moved the state on, say what happened now;
      * the message loop otherwise notices the dead connection only later. */
     if (outcome < 0 && conn) {
-        NostrRelayStateCallback callback = NULL;
-        void *user_data = NULL;
+        struct NostrRelayCallbackSlot *slot = NULL;
         nsync_mu_lock(&relay->priv->mutex);
         if (relay->connection == conn &&
             relay->priv->connection_state == NOSTR_RELAY_STATE_CONNECTED) {
             relay->priv->connection_state = NOSTR_RELAY_STATE_DISCONNECTED;
-            callback = relay->priv->state_callback;
-            user_data = relay->priv->state_callback_user_data;
+            slot = relay_callback_slot_ref_locked(relay->priv->state_slot);
         }
         nsync_mu_unlock(&relay->priv->mutex);
-        if (callback)
-            callback(relay, NOSTR_RELAY_STATE_CONNECTED, NOSTR_RELAY_STATE_DISCONNECTED,
-                     user_data);
+        relay_callback_slot_call_state(relay, slot, NOSTR_RELAY_STATE_CONNECTED,
+                                       NOSTR_RELAY_STATE_DISCONNECTED);
     }
     if (err) {
         *err = outcome == 0
@@ -522,8 +591,9 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
 
     relay->priv->notice_handler = NULL;
     relay->priv->custom_handler = NULL;
-    relay->priv->ok_response_callback = NULL;
-    relay->priv->ok_response_callback_user_data = NULL;
+    relay->priv->state_slot = NULL;
+    relay->priv->auth_slot = NULL;
+    relay->priv->ok_slot = NULL;
 
     /* Initialize reconnection state (nostrc-4du) */
     relay->priv->connection_state = NOSTR_RELAY_STATE_DISCONNECTED;
@@ -532,8 +602,6 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     relay->priv->next_reconnect_time_ms = 0;
     relay->priv->auto_reconnect = true;  /* Enabled by default */
     relay->priv->reconnect_requested = false;
-    relay->priv->state_callback = NULL;
-    relay->priv->state_callback_user_data = NULL;
 
     return (NostrRelay *)relay;
 }
@@ -620,6 +688,20 @@ static void relay_free_impl(NostrRelay *relay) {
 
     // Free resources
     if (relay->priv) {
+        /* nostrc-flp7: release the callbacks still registered. The workers
+         * have exited, so each owner's destroy notify normally runs right
+         * here (or else when a call still in progress returns). */
+        nsync_mu_lock(&relay->priv->mutex);
+        struct NostrRelayCallbackSlot *slots[] = {
+            relay->priv->state_slot, relay->priv->auth_slot, relay->priv->ok_slot
+        };
+        relay->priv->state_slot = NULL;
+        relay->priv->auth_slot = NULL;
+        relay->priv->ok_slot = NULL;
+        nsync_mu_unlock(&relay->priv->mutex);
+        for (size_t i = 0; i < sizeof(slots) / sizeof(slots[0]); i++)
+            relay_callback_slot_unref(slots[i]);
+
         if (relay->priv->write_queue) { go_channel_free(relay->priv->write_queue); relay->priv->write_queue = NULL; }
         if (relay->priv->subscription_channel_close_queue) { go_channel_free(relay->priv->subscription_channel_close_queue); relay->priv->subscription_channel_close_queue = NULL; }
         if (relay->priv->debug_raw) { go_channel_free(relay->priv->debug_raw); relay->priv->debug_raw = NULL; }
@@ -2028,22 +2110,19 @@ static void relay_set_state(NostrRelay *relay, NostrRelayConnectionState new_sta
     if (!relay || !relay->priv) return;
 
     NostrRelayConnectionState old_state;
-    NostrRelayStateCallback callback = NULL;
-    void *user_data = NULL;
+    struct NostrRelayCallbackSlot *slot = NULL;
 
     nsync_mu_lock(&relay->priv->mutex);
     old_state = relay->priv->connection_state;
     if (old_state != new_state) {
         relay->priv->connection_state = new_state;
-        callback = relay->priv->state_callback;
-        user_data = relay->priv->state_callback_user_data;
+        slot = relay_callback_slot_ref_locked(relay->priv->state_slot);
     }
     nsync_mu_unlock(&relay->priv->mutex);
 
-    /* Invoke callback outside the lock */
-    if (callback && old_state != new_state) {
-        callback(relay, old_state, new_state, user_data);
-    }
+    /* Invoke outside the lock. The reference keeps the callback's user data
+     * alive even if the callback is replaced or removed meanwhile. */
+    relay_callback_slot_call_state(relay, slot, old_state, new_state);
 }
 
 const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState state) {
@@ -2079,24 +2158,55 @@ NostrRelayConnectionState nostr_relay_get_connection_state(NostrRelay *relay) {
     return state;
 }
 
+/* Shared by the nostr_relay_set_*_callback_full() setters: @slot is the new
+ * registration (NULL for a removal or if it could not be allocated). */
+static void relay_callback_register(NostrRelay *relay,
+                                    struct NostrRelayCallbackSlot **field,
+                                    struct NostrRelayCallbackSlot *slot,
+                                    void *user_data,
+                                    NostrRelayDestroyNotify destroy) {
+    relay_callback_slot_swap(relay, field, slot);
+    /* Nothing keeps @user_data without a slot. Out of memory also removes
+     * the old callback: its owner may free that one's data next. */
+    if (!slot && destroy) destroy(user_data);
+}
+
+void nostr_relay_set_state_callback_full(NostrRelay *relay,
+                                         NostrRelayStateCallback callback,
+                                         void *user_data,
+                                         NostrRelayDestroyNotify destroy) {
+    if (!relay || !relay->priv) {
+        if (destroy) destroy(user_data);
+        return;
+    }
+    struct NostrRelayCallbackSlot *slot = callback ? relay_callback_slot_new(user_data, destroy) : NULL;
+    if (slot) slot->fn.state = callback;
+    relay_callback_register(relay, &relay->priv->state_slot, slot, user_data, destroy);
+}
+
 void nostr_relay_set_state_callback(NostrRelay *relay,
                                     NostrRelayStateCallback callback,
                                     void *user_data) {
-    if (!relay || !relay->priv) return;
-    nsync_mu_lock(&relay->priv->mutex);
-    relay->priv->state_callback = callback;
-    relay->priv->state_callback_user_data = user_data;
-    nsync_mu_unlock(&relay->priv->mutex);
+    nostr_relay_set_state_callback_full(relay, callback, user_data, NULL);
+}
+
+void nostr_relay_set_auth_callback_full(NostrRelay *relay,
+                                        NostrRelayAuthCallback callback,
+                                        void *user_data,
+                                        NostrRelayDestroyNotify destroy) {
+    if (!relay || !relay->priv) {
+        if (destroy) destroy(user_data);
+        return;
+    }
+    struct NostrRelayCallbackSlot *slot = callback ? relay_callback_slot_new(user_data, destroy) : NULL;
+    if (slot) slot->fn.auth = callback;
+    relay_callback_register(relay, &relay->priv->auth_slot, slot, user_data, destroy);
 }
 
 void nostr_relay_set_auth_callback(NostrRelay *relay,
                                    NostrRelayAuthCallback callback,
                                    void *user_data) {
-    if (!relay || !relay->priv) return;
-    nsync_mu_lock(&relay->priv->mutex);
-    relay->priv->auth_callback = callback;
-    relay->priv->auth_callback_user_data = user_data;
-    nsync_mu_unlock(&relay->priv->mutex);
+    nostr_relay_set_auth_callback_full(relay, callback, user_data, NULL);
 }
 
 int nostr_relay_get_reconnect_attempt(NostrRelay *relay) {
@@ -2219,10 +2329,23 @@ void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const cha
     relay->priv->custom_handler = handler;
 }
 
+void nostr_relay_set_ok_callback_full(NostrRelay *relay,
+                                      NostrRelayOkResponseCallback callback,
+                                      void *user_data,
+                                      NostrRelayDestroyNotify destroy) {
+    if (!relay || !relay->priv) {
+        if (destroy) destroy(user_data);
+        return;
+    }
+    struct NostrRelayCallbackSlot *slot = callback ? relay_callback_slot_new(user_data, destroy) : NULL;
+    if (slot) slot->fn.ok = callback;
+    /* Under the mutex like the other callbacks; this setter used to write the
+     * fields unlocked while the reader held the mutex. */
+    relay_callback_register(relay, &relay->priv->ok_slot, slot, user_data, destroy);
+}
+
 void nostr_relay_set_ok_callback(NostrRelay *relay,
-                                  void (*callback)(const char *event_id, bool ok, const char *reason, void *user_data),
+                                  NostrRelayOkResponseCallback callback,
                                   void *user_data) {
-    if (!relay || !relay->priv) return;
-    relay->priv->ok_response_callback = callback;
-    relay->priv->ok_response_callback_user_data = user_data;
+    nostr_relay_set_ok_callback_full(relay, callback, user_data, NULL);
 }

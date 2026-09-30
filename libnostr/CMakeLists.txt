@@ -5,7 +5,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR 1 0 11)
+declare_component_version(NOSTR 1 1 0)
 
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
@@ -367,6 +367,14 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_reconnect_same_second PRIVATE include src)
   add_test(NAME libnostr_reconnect_same_second COMMAND test_reconnect_same_second)
   set_tests_properties(libnostr_reconnect_same_second PROPERTIES TIMEOUT 60)
+
+  # nostrc-flp7: a callback's user data outlives every call already in
+  # progress when the callback is replaced or removed. Offline.
+  add_executable(test_relay_callback_lifetime tests/test_relay_callback_lifetime.c)
+  target_link_libraries(test_relay_callback_lifetime PRIVATE nostr Threads::Threads)
+  target_include_directories(test_relay_callback_lifetime PRIVATE include src)
+  add_test(NAME libnostr_relay_callback_lifetime COMMAND test_relay_callback_lifetime)
+  set_tests_properties(libnostr_relay_callback_lifetime PROPERTIES TIMEOUT 60)
 
   # nostrc-pnc7: explicit "limit":0 is preserved through parse/serialize/REQ.
   add_executable(test_filter_limit_zero tests/test_filter_limit_zero.c)

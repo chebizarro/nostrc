@@ -11,9 +11,9 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.0.11 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 1.1.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 2.0.3 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.10.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.4.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
@@ -96,6 +96,9 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | gnostr | 0.1.0 | No bump (unreleased): `GnMarmotService` enrolls once through the signer, shared by the KeyPackage manager, DM creation, the create-group dialog and invites, which wait for it and say so. |
 | same | groundhog | 0.11.0 | No bump: test-only change (the store tests' actors enroll their account proof, as the reviewer suggested). |
 | libmarmot 0.10.0 review fix W20 N1 (`marmot_process_welcome_from()`: the Welcome's sender is the caller-verified NIP-59 seal author; still unreleased 0.10.0) | libmarmot, marmot-gobject | 0.10.0, 1.4.0 | No further bump: additive API folded into the unreleased MINORs (marmot-gobject adds `process_welcome_from_async`). Gnostr (unreleased 0.1.0) passes the seal author from its unwrap. |
+| libnostr 1.0.11 -> 1.1.0 (MINOR: new `nostr_relay_set_state_callback_full()`, `nostr_relay_set_auth_callback_full()`, `nostr_relay_set_ok_callback_full()` and the `NostrRelayDestroyNotify` / `NostrRelayOkResponseCallback` typedefs; registered callbacks are refcounted slots, so a callback's user data outlives any call already in progress when it is replaced or removed; the OK setter now takes the relay mutex; nostrc-flp7) | libnostr | 1.1.0 | MINOR: backward-compatible new public API. The existing setters keep their signatures and semantics (the relay never owns their user data); the private `NostrRelayPrivate` callback fields changed, which is not ABI. |
+| same (nostrc-flp7: GNostrRelay finalize no longer frees its core-callback data before detaching the callbacks; the relay registry holds weak references; finalize no longer reads the core relay's connection unlocked; GNostrRelay and GNostrPool auth handlers, event sink and cache query user data are refcounted so a worker or relay still using them keeps them alive) | nostr-gobject | 2.0.3 | PATCH: use-after-free fixes, no API change. Requires libnostr >= 1.1.0. User data given to `gnostr_pool_set_auth_handler()`, `_set_event_sink()`, `_set_cache_query()` and `gnostr_relay_set_auth_handler()` may now be destroyed later (once the last relay or running query lets go) and on that thread; every in-tree caller passes NULL. |
+| same | gnostr, groundhog, signet | 0.1.0, 0.11.0, unversioned | No bump: no source change; a rebuild picks up the fix. The same detach-then-free pattern in signet's relay pool, nostr-dispatcher's nd-fetch and nip46's client_start is left to follow-up beads (they can move to the `_full` setters). |
 
 ## Maintenance
 

@@ -76,17 +76,21 @@ struct _NostrRelayPrivate {
     bool message_loop_active;
     bool dial_in_progress;
 
-    /* State change callback */
-    NostrRelayStateCallback state_callback;
-    void *state_callback_user_data;
-
-    /* NIP-42 AUTH challenge callback (nostrc-7og) */
-    NostrRelayAuthCallback auth_callback;
-    void *auth_callback_user_data;
-
-    /* OK response callback — fires for every ["OK","id",ok,"reason"] message */
-    void (*ok_response_callback)(const char *event_id, bool ok, const char *reason, void *user_data);
-    void *ok_response_callback_user_data;
+    /* Registered callbacks: connection state, NIP-42 AUTH challenge
+     * (nostrc-7og), and every ["OK","id",ok,"reason"] message.
+     *
+     * nostrc-flp7: each is a refcounted slot (relay.c) holding the function,
+     * its user data and the owner's destroy notify. The relay holds one
+     * reference while the slot is registered. An invocation takes another
+     * under @mutex, in the same critical section that reads the pointer, and
+     * drops it after the call returns. So an invocation that started before a
+     * replace or remove keeps the slot and its user data alive until it
+     * returns, and the destroy notify runs only after that. Read and swap
+     * these pointers only under @mutex; never call into a slot with @mutex
+     * held. */
+    struct NostrRelayCallbackSlot *state_slot;
+    struct NostrRelayCallbackSlot *auth_slot;
+    struct NostrRelayCallbackSlot *ok_slot;
 };
 
 typedef struct _NostrRelayWriteRequest {

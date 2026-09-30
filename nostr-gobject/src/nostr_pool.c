@@ -61,6 +61,61 @@ enum {
 
 static guint pool_signals[POOL_N_SIGNALS] = { 0 };
 
+/* A caller's callback and user data, shared by the pool and by everyone that
+ * may still call it after the pool lets go: query worker threads (event sink,
+ * cache query) and relays (auth handler). The user data is destroyed when the
+ * last holder lets go, never while one of them may still call it; the setters
+ * used to destroy it at once (nostrc-flp7). */
+typedef struct {
+    gatomicrefcount ref_count;
+    union {
+        GNostrPoolEventSinkFunc event_sink;
+        GNostrPoolCacheQueryFunc cache_query;
+        GNostrRelayAuthSignFunc auth_sign;
+    } func;
+    gpointer user_data;
+    GDestroyNotify destroy;
+} PoolHook;
+
+static PoolHook *
+pool_hook_new(gpointer user_data, GDestroyNotify destroy)
+{
+    PoolHook *hook = g_new0(PoolHook, 1);
+    g_atomic_ref_count_init(&hook->ref_count);
+    hook->user_data = user_data;
+    hook->destroy = destroy;
+    return hook;
+}
+
+static PoolHook *
+pool_hook_ref(PoolHook *hook)
+{
+    g_atomic_ref_count_inc(&hook->ref_count);
+    return hook;
+}
+
+/* GDestroyNotify-compatible. NULL-safe. */
+static void
+pool_hook_unref(gpointer data)
+{
+    PoolHook *hook = data;
+    if (hook && g_atomic_ref_count_dec(&hook->ref_count)) {
+        if (hook->destroy && hook->user_data)
+            hook->destroy(hook->user_data);
+        g_free(hook);
+    }
+}
+
+/* The sign function each relay gets: its user data is a reference on the
+ * pool's auth hook, which the relay drops when its handler is replaced or
+ * the relay is finalized. */
+static void
+pool_auth_sign_trampoline(NostrEvent *event, GError **error, gpointer user_data)
+{
+    PoolHook *hook = user_data;
+    hook->func.auth_sign(event, error, hook->user_data);
+}
+
 struct _GNostrPool {
     GObject parent_instance;
 
@@ -70,20 +125,27 @@ struct _GNostrPool {
     GHashTable *relay_handler_ids; /* url -> GSIZE_TO_POINTER(handler_id) */
 
     /* NIP-42 AUTH: pool-wide auth handler applied to all relays (nostrc-kn38) */
-    GNostrRelayAuthSignFunc auth_sign_func;
-    gpointer auth_sign_data;
-    GDestroyNotify auth_sign_destroy;
+    PoolHook *auth_handler;      /* NULL when unset */
 
     /* Event sink: callback for persisting fetched events (e.g. nostrdb) */
-    GNostrPoolEventSinkFunc event_sink_func;
-    gpointer event_sink_data;
-    GDestroyNotify event_sink_destroy;
+    PoolHook *event_sink;        /* NULL when unset */
 
     /* Cache query: check local store before hitting the network */
-    GNostrPoolCacheQueryFunc cache_query_func;
-    gpointer cache_query_data;
-    GDestroyNotify cache_query_destroy;
+    PoolHook *cache_query;       /* NULL when unset */
 };
+
+/* Gives @relay the pool's auth handler (a reference of its own on the hook),
+ * or clears the relay's handler when the pool has none. */
+static void
+pool_apply_auth_handler(GNostrPool *self, GNostrRelay *relay)
+{
+    if (self->auth_handler)
+        gnostr_relay_set_auth_handler(relay, pool_auth_sign_trampoline,
+                                      pool_hook_ref(self->auth_handler),
+                                      pool_hook_unref);
+    else
+        gnostr_relay_set_auth_handler(relay, NULL, NULL, NULL);
+}
 
 G_DEFINE_TYPE(GNostrPool, gnostr_pool, G_TYPE_OBJECT)
 
@@ -202,29 +264,11 @@ gnostr_pool_finalize(GObject *object)
         unwatch_relay(self, relay);
     }
 
-    /* Clean up NIP-42 auth handler (nostrc-kn38) */
-    if (self->auth_sign_destroy && self->auth_sign_data) {
-        self->auth_sign_destroy(self->auth_sign_data);
-    }
-    self->auth_sign_func = NULL;
-    self->auth_sign_data = NULL;
-    self->auth_sign_destroy = NULL;
-
-    /* Clean up event sink */
-    if (self->event_sink_destroy && self->event_sink_data) {
-        self->event_sink_destroy(self->event_sink_data);
-    }
-    self->event_sink_func = NULL;
-    self->event_sink_data = NULL;
-    self->event_sink_destroy = NULL;
-
-    /* Clean up cache query */
-    if (self->cache_query_destroy && self->cache_query_data) {
-        self->cache_query_destroy(self->cache_query_data);
-    }
-    self->cache_query_func = NULL;
-    self->cache_query_data = NULL;
-    self->cache_query_destroy = NULL;
+    /* Drop the pool's references on its hooks. Relays that were given the
+     * auth handler, and queries still running, keep theirs (nostrc-flp7). */
+    g_clear_pointer(&self->auth_handler, pool_hook_unref);
+    g_clear_pointer(&self->event_sink, pool_hook_unref);
+    g_clear_pointer(&self->cache_query, pool_hook_unref);
 
     g_clear_pointer(&self->relay_handler_ids, g_hash_table_destroy);
     g_clear_object(&self->relays);
@@ -341,10 +385,8 @@ gnostr_pool_add_relay(GNostrPool *self, const gchar *url)
         return NULL;
 
     /* NIP-42: Apply pool-wide auth handler to new relay (nostrc-kn38) */
-    if (self->auth_sign_func) {
-        gnostr_relay_set_auth_handler(relay, self->auth_sign_func,
-                                      self->auth_sign_data, NULL);
-    }
+    if (self->auth_handler)
+        pool_apply_auth_handler(self, relay);
 
     g_list_store_append(self->relays, relay);
     watch_relay(self, relay);
@@ -380,10 +422,8 @@ gnostr_pool_add_relay_object(GNostrPool *self, GNostrRelay *relay)
         return FALSE;
 
     /* Apply pool-wide NIP-42 AUTH handler if set (nostrc-kn38) */
-    if (self->auth_sign_func) {
-        gnostr_relay_set_auth_handler(relay, self->auth_sign_func,
-                                      self->auth_sign_data, NULL);
-    }
+    if (self->auth_handler)
+        pool_apply_auth_handler(self, relay);
 
     g_list_store_append(self->relays, relay);
     watch_relay(self, relay);
@@ -500,12 +540,11 @@ typedef struct {
     GPtrArray *relay_snapshots; /* RelaySnapshotEntry* (owned) */
     gchar **query_urls;         /* owned, NULL-terminated for worker-built snapshots */
     gsize n_query_urls;
-    /* Event sink: snapshot of pool's sink callback for worker thread */
-    GNostrPoolEventSinkFunc event_sink_func;
-    gpointer event_sink_data;
-    /* Cache query: snapshot of pool's cache callback for worker thread */
-    GNostrPoolCacheQueryFunc cache_query_func;
-    gpointer cache_query_data;
+    /* The pool's event sink and cache query when the query started, each a
+     * reference of the query's own: replacing either on the pool cannot
+     * destroy user data this worker is still calling (nostrc-flp7). */
+    PoolHook *event_sink;       /* nullable */
+    PoolHook *cache_query;      /* nullable */
 } QueryAsyncData;
 
 static void
@@ -515,7 +554,11 @@ query_async_data_free(QueryAsyncData *data)
     g_clear_pointer(&data->seen_ids, g_hash_table_destroy);
     g_clear_pointer(&data->relay_snapshots, g_ptr_array_unref);
     g_clear_pointer(&data->query_urls, g_strfreev);
-    /* Don't free results - ownership transferred to GTask */
+    g_clear_pointer(&data->event_sink, pool_hook_unref);
+    g_clear_pointer(&data->cache_query, pool_hook_unref);
+    /* NULL once handed to the GTask; still ours after an early return (a
+     * cache hit or no relays), which used to leak it. */
+    g_clear_pointer(&data->results, g_ptr_array_unref);
     g_free(data);
 }
 
@@ -569,8 +612,9 @@ query_thread_func(GTask         *task,
     }
 
     /* Check local cache first — avoid network round-trip if data exists */
-    if (data->cache_query_func && filters) {
-        GPtrArray *cached = data->cache_query_func(filters, data->cache_query_data);
+    if (data->cache_query && filters) {
+        GPtrArray *cached = data->cache_query->func.cache_query(filters,
+                                                                data->cache_query->user_data);
         if (cached && cached->len > 0) {
             POOL_QUERY_DEBUG("[POOL_QUERY] cache HIT — %u results, skipping network", cached->len);
             g_task_return_pointer(task, cached, (GDestroyNotify)g_ptr_array_unref);
@@ -581,7 +625,7 @@ query_thread_func(GTask         *task,
         if (cached) g_ptr_array_unref(cached);
     } else {
         POOL_QUERY_DEBUG("[POOL_QUERY] no cache func or no filters (cache=%p filters=%p)",
-                         (void *)data->cache_query_func, (void *)filters);
+                         (void *)data->cache_query, (void *)filters);
     }
 
     /* nostrc-snap: Use snapshot captured on main thread, NOT self->relays */
@@ -668,7 +712,7 @@ query_thread_func(GTask         *task,
         POOL_QUERY_DEBUG("[POOL_QUERY] 0 subscriptions - returning %u results", data->results->len);
         g_ptr_array_unref(items);
         g_task_return_pointer(task,
-                              data->results,
+                              g_steal_pointer(&data->results),
                               (GDestroyNotify)g_ptr_array_unref);
         return;
     }
@@ -846,14 +890,14 @@ query_thread_func(GTask         *task,
 
     /* 1. Persist fetched events via the event sink (e.g. nostrdb).
      * Build a copy of the JSON strings since the sink takes ownership. */
-    if (data->event_sink_func && data->results->len > 0) {
+    if (data->event_sink && data->results->len > 0) {
         GPtrArray *copy = g_ptr_array_new_with_free_func(g_free);
         for (guint i = 0; i < data->results->len; i++) {
             const char *json = g_ptr_array_index(data->results, i);
             if (json)
                 g_ptr_array_add(copy, g_strdup(json));
         }
-        data->event_sink_func(copy, data->event_sink_data);
+        data->event_sink->func.event_sink(copy, data->event_sink->user_data);
     }
 
     /* 2. Return results to the caller immediately */
@@ -944,10 +988,8 @@ gnostr_pool_query_async(GNostrPool          *self,
     }
 
     /* Snapshot event sink and cache query for worker thread */
-    data->event_sink_func = self->event_sink_func;
-    data->event_sink_data = self->event_sink_data;
-    data->cache_query_func = self->cache_query_func;
-    data->cache_query_data = self->cache_query_data;
+    data->event_sink = self->event_sink ? pool_hook_ref(self->event_sink) : NULL;
+    data->cache_query = self->cache_query ? pool_hook_ref(self->cache_query) : NULL;
 
     g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
 
@@ -988,10 +1030,8 @@ gnostr_pool_query_urls_async(GNostrPool          *self,
     data->n_query_urls = url_count;
     for (gsize i = 0; i < url_count; i++)
         data->query_urls[i] = g_strdup(urls[i]);
-    data->event_sink_func = self->event_sink_func;
-    data->event_sink_data = self->event_sink_data;
-    data->cache_query_func = self->cache_query_func;
-    data->cache_query_data = self->cache_query_data;
+    data->event_sink = self->event_sink ? pool_hook_ref(self->event_sink) : NULL;
+    data->cache_query = self->cache_query ? pool_hook_ref(self->cache_query) : NULL;
 
     g_task_set_task_data(task, data, (GDestroyNotify)query_async_data_free);
     g_object_set_data_full(G_OBJECT(task), "filters", filters,
@@ -1521,21 +1561,27 @@ gnostr_pool_set_auth_handler(GNostrPool              *self,
 {
     g_return_if_fail(GNOSTR_IS_POOL(self));
 
-    /* Clean up old handler */
-    if (self->auth_sign_destroy && self->auth_sign_data) {
-        self->auth_sign_destroy(self->auth_sign_data);
+    /* The old handler's user data is destroyed once no relay holds it any
+     * more: every relay given it keeps a reference until its handler is
+     * replaced (below, for this pool's relays) or it is finalized. It used
+     * to be destroyed here while relays still held the bare pointer
+     * (nostrc-flp7). */
+    PoolHook *old = self->auth_handler;
+    self->auth_handler = NULL;
+    if (sign_func) {
+        self->auth_handler = pool_hook_new(user_data, destroy);
+        self->auth_handler->func.auth_sign = sign_func;
+    } else if (destroy && user_data) {
+        destroy(user_data); /* nothing will call a cleared handler */
     }
-
-    self->auth_sign_func = sign_func;
-    self->auth_sign_data = user_data;
-    self->auth_sign_destroy = destroy;
 
     /* Apply to all existing relays */
     guint n = g_list_model_get_n_items(G_LIST_MODEL(self->relays));
     for (guint i = 0; i < n; i++) {
         g_autoptr(GNostrRelay) relay = g_list_model_get_item(G_LIST_MODEL(self->relays), i);
-        gnostr_relay_set_auth_handler(relay, sign_func, user_data, NULL);
+        pool_apply_auth_handler(self, relay);
     }
+    pool_hook_unref(old);
 
     g_debug("NIP-42: auth handler %s for pool (%u relays)",
             sign_func ? "set" : "cleared", n);
@@ -1551,13 +1597,16 @@ gnostr_pool_set_event_sink(GNostrPool              *self,
 {
     g_return_if_fail(GNOSTR_IS_POOL(self));
 
-    if (self->event_sink_destroy && self->event_sink_data) {
-        self->event_sink_destroy(self->event_sink_data);
+    /* A query still running keeps the old sink until it finishes. */
+    PoolHook *old = self->event_sink;
+    self->event_sink = NULL;
+    if (sink_func) {
+        self->event_sink = pool_hook_new(user_data, destroy);
+        self->event_sink->func.event_sink = sink_func;
+    } else if (destroy && user_data) {
+        destroy(user_data);
     }
-
-    self->event_sink_func = sink_func;
-    self->event_sink_data = user_data;
-    self->event_sink_destroy = destroy;
+    pool_hook_unref(old);
 }
 
 /* --- Cache Query API --- */
@@ -1570,11 +1619,14 @@ gnostr_pool_set_cache_query(GNostrPool                *self,
 {
     g_return_if_fail(GNOSTR_IS_POOL(self));
 
-    if (self->cache_query_destroy && self->cache_query_data) {
-        self->cache_query_destroy(self->cache_query_data);
+    /* A query still running keeps the old cache query until it finishes. */
+    PoolHook *old = self->cache_query;
+    self->cache_query = NULL;
+    if (query_func) {
+        self->cache_query = pool_hook_new(user_data, destroy);
+        self->cache_query->func.cache_query = query_func;
+    } else if (destroy && user_data) {
+        destroy(user_data);
     }
-
-    self->cache_query_func = query_func;
-    self->cache_query_data = user_data;
-    self->cache_query_destroy = destroy;
+    pool_hook_unref(old);
 }

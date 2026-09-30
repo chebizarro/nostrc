@@ -268,6 +268,10 @@ typedef void (*GNostrRelayAuthSignFunc)(NostrEvent *event,
  *
  * If no handler is set, AUTH challenges are still emitted via the
  * "auth-challenge" signal but no automatic response is sent.
+ *
+ * @destroy runs when the handler is replaced or the relay finalized, or,
+ * if gnostr_relay_authenticate() is signing with it on another thread at
+ * that moment, when that call returns (on that thread).
  */
 void gnostr_relay_set_auth_handler(GNostrRelay *self,
                                     GNostrRelayAuthSignFunc sign_func,

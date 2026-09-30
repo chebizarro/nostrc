@@ -370,6 +370,10 @@ typedef GPtrArray *(*GNostrPoolCacheQueryFunc)(NostrFilters *filters, gpointer u
  *
  * Pass %NULL for @query_func to disable cache lookup.
  *
+ * @destroy runs once nothing can call @query_func with @user_data any more: after
+ * it is replaced or the pool is finalized, and after every query already running has finished. It may therefore
+ * run later than that call, on whichever thread lets go last.
+ *
  * Since: 1.0
  */
 void gnostr_pool_set_cache_query(GNostrPool                *self,
@@ -406,6 +410,10 @@ typedef void (*GNostrPoolEventSinkFunc)(GPtrArray *jsons, gpointer user_data);
  *
  * Pass %NULL for @sink_func to disable.
  *
+ * @destroy runs once nothing can call @sink_func with @user_data any more: after
+ * it is replaced or the pool is finalized, and after every query already running has finished. It may therefore
+ * run later than that call, on whichever thread lets go last.
+ *
  * Since: 1.0
  */
 void gnostr_pool_set_event_sink(GNostrPool              *self,
@@ -428,6 +436,11 @@ void gnostr_pool_set_event_sink(GNostrPool              *self,
  * any relays added in the future.
  *
  * Pass %NULL for @sign_func to disable automatic authentication.
+ *
+ * @destroy runs once nothing can call @sign_func with @user_data any more: after
+ * it is replaced or the pool is finalized, and after every relay it was given has let go of it (their handlers
+ * are replaced, or they are finalized). It may therefore
+ * run later than that call, on whichever thread lets go last.
  *
  * Since: 1.0
  */

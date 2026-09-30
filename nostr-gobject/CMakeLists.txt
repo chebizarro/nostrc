@@ -15,7 +15,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 2)
 set(NOSTR_GOBJECT_MINOR_VERSION 0)
-set(NOSTR_GOBJECT_MICRO_VERSION 2)
+set(NOSTR_GOBJECT_MICRO_VERSION 3)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
   ${NOSTR_GOBJECT_MINOR_VERSION}
@@ -25,12 +25,13 @@ declare_component_version(NOSTR_GOBJECT
 # The root build already provides libnostr as a sibling target. Standalone
 # consumers must resolve a compatible installed CMake package instead.
 if(TARGET nostr)
-  if(NOT DEFINED NOSTR_VERSION OR NOSTR_VERSION VERSION_LESS "1.0.0")
+  # 1.1.0: nostr_relay_set_*_callback_full() (nostrc-flp7).
+  if(NOT DEFINED NOSTR_VERSION OR NOSTR_VERSION VERSION_LESS "1.1.0")
     message(FATAL_ERROR
-      "nostr-gobject requires NOSTR >= 1.0.0 (found ${NOSTR_VERSION})")
+      "nostr-gobject requires NOSTR >= 1.1.0 (found ${NOSTR_VERSION})")
   endif()
 else()
-  find_package(NOSTR 1.0.0 REQUIRED CONFIG)
+  find_package(NOSTR 1.1.0 REQUIRED CONFIG)
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -423,6 +424,18 @@ if(BUILD_TESTING)
       LIBS nostr_gobject nostr_testing
       TIMEOUT 60
     )
+
+    # nostrc-flp7: a GNostrRelay finalized while a libnostr worker is inside
+    # one of its core callbacks; the relay registry and GNostrPool hook user
+    # data under the same race. Uses the GNOSTR_TESTING seams in
+    # src/nostr_relay_test_hooks.h.
+    gn_add_gtest(test_nostr_gobject_relay_teardown
+      SOURCES tests/test_relay_teardown_race.c
+      LIBS nostr_gobject nostr_testing
+      TIMEOUT 60
+    )
+    target_include_directories(test_nostr_gobject_relay_teardown PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
   endif()
 
   # nostrc-qp24.10.6: every stored EVENT is emitted before EOSE, over a

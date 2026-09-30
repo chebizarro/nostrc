@@ -327,6 +327,15 @@ NostrRelayConnectionState nostr_relay_get_connection_state(NostrRelay *relay);
 const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState state);
 
 /**
+ * NostrRelayDestroyNotify:
+ * @user_data: the user data registered with a callback
+ *
+ * Releases the user data of a callback registered with one of the
+ * nostr_relay_set_*_callback_full() functions.
+ */
+typedef void (*NostrRelayDestroyNotify)(void *user_data);
+
+/**
  * nostr_relay_set_state_callback:
  * @relay: (nullable): relay
  * @callback: (nullable): Callback function, or NULL to remove
@@ -334,10 +343,44 @@ const char *nostr_relay_get_connection_state_name(NostrRelayConnectionState stat
  *
  * Set a callback to be notified of connection state changes.
  * The callback is invoked from the relay worker thread.
+ *
+ * The relay does not own @user_data. A call that replaces or removes the
+ * callback does not wait for an invocation that has already started on
+ * another thread, and that invocation still uses @user_data. An owner that
+ * frees @user_data after removing the callback should register it with
+ * nostr_relay_set_state_callback_full() instead.
  */
 void nostr_relay_set_state_callback(NostrRelay *relay,
                                     NostrRelayStateCallback callback,
                                     void *user_data);
+
+/**
+ * nostr_relay_set_state_callback_full:
+ * @relay: (nullable): relay
+ * @callback: (nullable): Callback function, or NULL to remove
+ * @user_data: (nullable): User data passed to callback; owned by the relay
+ * @destroy: (nullable): Releases @user_data
+ *
+ * Like nostr_relay_set_state_callback(), but the relay owns @user_data and
+ * calls @destroy on it exactly once, when both of these hold: this callback
+ * has been replaced or removed (or the relay freed), and every invocation of
+ * it that had already started has returned. So an owner can remove the
+ * callback and drop its own references right away, even while a worker thread
+ * is inside the callback. Nothing waits for that worker, and it never sees
+ * freed @user_data. (nostrc-flp7)
+ *
+ * @destroy runs on whichever thread lets go last: the caller that replaced or
+ * removed the callback, the thread whose invocation returned last, or the
+ * thread freeing the relay. It must not use @relay, which may be being freed.
+ * If @callback or @relay is NULL, @destroy is called on @user_data before
+ * this function returns.
+ *
+ * Since: 1.1
+ */
+void nostr_relay_set_state_callback_full(NostrRelay *relay,
+                                         NostrRelayStateCallback callback,
+                                         void *user_data,
+                                         NostrRelayDestroyNotify destroy);
 
 /**
  * NostrRelayAuthCallback:
@@ -360,10 +403,31 @@ typedef void (*NostrRelayAuthCallback)(NostrRelay *relay,
  *
  * Set a callback to be notified of NIP-42 AUTH challenges.
  * The callback is invoked from the relay worker thread.
+ *
+ * The relay does not own @user_data; see nostr_relay_set_state_callback()
+ * and use nostr_relay_set_auth_callback_full() when the data is freed after
+ * the callback is removed.
  */
 void nostr_relay_set_auth_callback(NostrRelay *relay,
                                    NostrRelayAuthCallback callback,
                                    void *user_data);
+
+/**
+ * nostr_relay_set_auth_callback_full:
+ * @relay: (nullable): relay
+ * @callback: (nullable): Callback function, or NULL to remove
+ * @user_data: (nullable): User data passed to callback; owned by the relay
+ * @destroy: (nullable): Releases @user_data
+ *
+ * Like nostr_relay_set_auth_callback(), with the ownership rules of
+ * nostr_relay_set_state_callback_full().
+ *
+ * Since: 1.1
+ */
+void nostr_relay_set_auth_callback_full(NostrRelay *relay,
+                                        NostrRelayAuthCallback callback,
+                                        void *user_data,
+                                        NostrRelayDestroyNotify destroy);
 
 /**
  * nostr_relay_get_reconnect_attempt:
@@ -409,6 +473,21 @@ void nostr_relay_reconnect_now(NostrRelay *relay);
 void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *));
 
 /**
+ * NostrRelayOkResponseCallback:
+ * @event_id: id of the event the relay answered
+ * @ok: whether the relay accepted the event
+ * @reason: the relay's message, "" if it gave none
+ * @user_data: user data passed to nostr_relay_set_ok_callback()
+ *
+ * Callback invoked for every ["OK","id",ok,"reason"] received from a relay.
+ * Called from relay worker thread - use thread-safe operations.
+ */
+typedef void (*NostrRelayOkResponseCallback)(const char *event_id,
+                                             bool ok,
+                                             const char *reason,
+                                             void *user_data);
+
+/**
  * nostr_relay_set_ok_callback:
  * @relay: relay instance
  * @callback: called for every ["OK","id",ok,"reason"] received from the relay
@@ -417,10 +496,31 @@ void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const cha
  * Register a callback that fires whenever an OK response is received.
  * Used by NIP-42 to subscribe only after auth is confirmed.
  * Called from relay worker thread - use thread-safe operations (e.g. g_idle_add).
+ *
+ * The relay does not own @user_data; see nostr_relay_set_state_callback()
+ * and use nostr_relay_set_ok_callback_full() when the data is freed after
+ * the callback is removed.
  */
 void nostr_relay_set_ok_callback(NostrRelay *relay,
-                                  void (*callback)(const char *event_id, bool ok, const char *reason, void *user_data),
+                                  NostrRelayOkResponseCallback callback,
                                   void *user_data);
+
+/**
+ * nostr_relay_set_ok_callback_full:
+ * @relay: (nullable): relay
+ * @callback: (nullable): Callback function, or NULL to remove
+ * @user_data: (nullable): User data passed to callback; owned by the relay
+ * @destroy: (nullable): Releases @user_data
+ *
+ * Like nostr_relay_set_ok_callback(), with the ownership rules of
+ * nostr_relay_set_state_callback_full().
+ *
+ * Since: 1.1
+ */
+void nostr_relay_set_ok_callback_full(NostrRelay *relay,
+                                      NostrRelayOkResponseCallback callback,
+                                      void *user_data,
+                                      NostrRelayDestroyNotify destroy);
 
 #ifdef __cplusplus
 }
