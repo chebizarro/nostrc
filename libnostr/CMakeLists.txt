@@ -376,13 +376,14 @@ if(LIBNOSTR_BUILD_TESTS)
   add_test(NAME libnostr_relay_callback_lifetime COMMAND test_relay_callback_lifetime)
   set_tests_properties(libnostr_relay_callback_lifetime PROPERTIES TIMEOUT 60)
 
-  # nostrc-xbso: a write the relay cannot queue (it is closing) releases the
+  # nostrc-xbso: a write the relay never sends (it could not queue, or was
+  # still queued when the relay was freed) is answered and releases the
   # writer's reference on its answer channel. Offline.
-  add_executable(test_relay_write_unqueued tests/test_relay_write_unqueued.c)
-  target_link_libraries(test_relay_write_unqueued PRIVATE nostr Threads::Threads)
-  target_include_directories(test_relay_write_unqueued PRIVATE include src)
-  add_test(NAME libnostr_relay_write_unqueued COMMAND test_relay_write_unqueued)
-  set_tests_properties(libnostr_relay_write_unqueued PROPERTIES TIMEOUT 60)
+  add_executable(test_relay_write_unsent tests/test_relay_write_unsent.c)
+  target_link_libraries(test_relay_write_unsent PRIVATE nostr Threads::Threads)
+  target_include_directories(test_relay_write_unsent PRIVATE include src)
+  add_test(NAME libnostr_relay_write_unsent COMMAND test_relay_write_unsent)
+  set_tests_properties(libnostr_relay_write_unsent PROPERTIES TIMEOUT 60)
 
   # nostrc-flp7: concurrent failing dials and teardowns on the libwebsockets
   # service thread (hosted crash in __lws_sul_insert <- lws_service).

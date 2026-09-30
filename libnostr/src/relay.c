@@ -614,6 +614,27 @@ NostrRelay *nostr_relay_ref(NostrRelay *relay) {
     return relay;
 }
 
+/* nostrc-xbso: answers and frees the writes still queued when the relay is
+ * freed (never taken by a writer: not connected, or it had exited). Each owns
+ * its frame copy and the writer's reference on its answer channel, whose
+ * caller may be waiting: it gets an Error, as when the write cannot queue. */
+static void relay_write_queue_drain(GoChannel *queue) {
+    void *item = NULL;
+    while (go_channel_try_receive(queue, &item) == 0) {
+        NostrRelayWriteRequest *req = (NostrRelayWriteRequest *)item;
+        item = NULL;
+        if (!req) continue;
+        free(req->msg);
+        if (req->answer) {
+            Error *err = new_error(0, "connection closed");
+            if (go_channel_send(req->answer, err) != 0) free_error(err);
+            go_channel_close(req->answer);
+            go_channel_unref(req->answer);
+        }
+        free(req);
+    }
+}
+
 static void relay_free_impl(NostrRelay *relay) {
     if (!relay) return;
     // Signal background loops to stop
@@ -702,7 +723,11 @@ static void relay_free_impl(NostrRelay *relay) {
         for (size_t i = 0; i < sizeof(slots) / sizeof(slots[0]); i++)
             relay_callback_slot_unref(slots[i]);
 
-        if (relay->priv->write_queue) { go_channel_free(relay->priv->write_queue); relay->priv->write_queue = NULL; }
+        if (relay->priv->write_queue) {
+            relay_write_queue_drain(relay->priv->write_queue);
+            go_channel_free(relay->priv->write_queue);
+            relay->priv->write_queue = NULL;
+        }
         if (relay->priv->subscription_channel_close_queue) { go_channel_free(relay->priv->subscription_channel_close_queue); relay->priv->subscription_channel_close_queue = NULL; }
         if (relay->priv->debug_raw) { go_channel_free(relay->priv->debug_raw); relay->priv->debug_raw = NULL; }
         if (relay->priv->reconnect_now) { go_channel_free(relay->priv->reconnect_now); relay->priv->reconnect_now = NULL; }
