@@ -347,3 +347,108 @@ nostr_relay_close(relay, NULL);                            /* cancels ctx: the o
 ```
 
 As a regression test, assert `nostr_connection_unreleased_count() == cnt0 - 1` shortly after `loop_go`, with no dependence on B.
+
+## Addendum: re-review at `b5663b3f` (2026-09-30)
+
+- **Scope:** `543ac6c2` (B1, N1, N6) and `b5663b3f` (N2, N3). The review branch is rebased onto `b5663b3f`.
+- **Final verdict:** **APPROVED**, with one follow-up. That follow-up, **R1**, is Medium and not blocking, but should be fixed soon.
+  - B1 as filed is fixed, and a meaningful test now pins it.
+  - N1, N2, N3 and N6 are addressed.
+  - R1: one path still waits on the relay-wide lease count, the reconnect's release of its *old* connection. I could force the same circular wait there only by stalling the loop thread between two adjacent statements, with instrumentation. That is orders of magnitude narrower than B1, whose window was the loop's whole dial.
+  - If the owner prefers to close the class entirely before merging, the fix is small (per-connection lease counts, below). In that case treat this as REQUEST CHANGES.
+
+### 1. Does B1 hold in every path?
+
+It holds in every path that releases a connection that was **never published**, and those are the paths B1 was about.
+
+At the tip, `relay_retire_connection()` (with its lease wait) is left only for connections taken out of `relay->connection`:
+- `relay_free_impl()` (`relay.c:740`): workers are joined first, so there are no leases.
+- `nostr_relay_close()` (`relay.c:2154`): workers are joined first, so there are no leases.
+- The reconnect's `old_conn` (`relay.c:1187`).
+
+**R1 (Medium, follow-up): the `old_conn` release can still wait on another connection's writer.**
+
+The sequence at `relay.c:1183-1187`:
+1. The loop takes `old_conn` (A) and sets `relay->connection` to NULL.
+2. `relay_retire_connection(r, A)` closes A's channels, then waits for `conn_leases == 0`.
+
+The count is still relay-wide. Suppose a `nostr_relay_connect()` that *started after step 1* completes its dial and publishes B before the loop reaches that wait. Then the writer can lease B and block on B's full send channel, and the loop is back in B1's circular wait: only the loop would ever close B's send channel.
+
+Forced 3 of 3 in the gate image, using reviewer instrumentation: a hook inside `relay_retire_connection()`, after the channel closes and before the wait. The hook held the loop while a connect published B against a server holding handshakes, and 24 writes filled B's send channel. The tip's own reconnect hook was the progress marker.
+
+```
+after 3 s: loop reached its dial=no leases=1 B send depth=16 -> BLOCKED in relay_retire_connection(old_conn) on B's lease
+B's socket gone (recv closed); 13.0 s after release: loop reached its dial=no leases=1 -> WEDGED
+nostr_relay_close returned after 0.001 s
+```
+
+**Why it is not blocking.** Without the hook, the window is two `go_channel_close()` calls between an unlock and a lock. A writer blocked on A wakes as soon as A's send channel closes, and nothing else keeps a lease on A. So a connect would have to start after step 1 *and* finish a whole dial inside that window: the loop thread must be descheduled for a dial's duration exactly there. It also needs 17 or more writes in flight during B's handshake, and that handshake to fail.
+
+**Why it should still be fixed.** The consequence matches B1: the relay is wedged until close.
+
+**Fix.** Count leases per connection instead of per relay, for example a counter guarded by the relay mutex on `NostrConnectionPrivate`, incremented by `relay_connection_lease()` on the connection it returns. `relay_retire_connection(conn)` then waits only for leases on `conn`. That removes the whole class, and the never-published special case becomes an optimisation instead of a correctness rule.
+
+`nostr_relay_close()` and `relay_free_impl()` are not exposed to R1. Both cancel the relay context before anything else, and the writer's send (`go_channel_send_with_context`) returns at once on a cancelled context, so a lease on a republished connection cannot block.
+
+**The original B1, re-run against the tip.** The Appendix A demo, ported to the tip's `nostr_relay_test_set_reconnect_hook()`, 3 of 3:
+
+```
+after 3 s: unreleased=1 (was 2) leases=1 B send depth=16 -> loop progressed
+B's socket gone (recv closed); 13.0 s after release: unreleased=1 leases=0 -> recovered
+```
+
+The loop releases its own dial at once, keeps B, and reconnects when B dies.
+
+### 2. Can the direct `nostr_connection_release()` run on a connection the writer could have leased?
+
+No. The three direct releases are exactly the branches where the store into `relay->connection` did not happen, and each is decided in the same critical section as the store:
+- `relay.c:869`: before publishing (no context, or allocation failure).
+- `relay.c:903`: the dial found `relay->connection` already set (`lost`), so it did not store.
+- `relay.c:1216`: the relay is closing, or the dial was adopted, so it did not store.
+
+`relay_connection_lease()` (`relay.c:1011`) is the only place a writer gets a connection, and it reads `relay->connection` under the same mutex. Until the store, the connection pointer is a local of the dialing thread; no other thread can have it. The two stores (`relay.c:890` and `1208`) and the three direct releases are therefore mutually exclusive per connection. Nothing outside `relay.c` writes `relay->connection`.
+
+### 3. Does the new N6 drain on an unconnected close race with a writer thread?
+
+No harmful race. `nostr_relay_close()` cancels the context and closes `write_queue` under the relay mutex before draining (`relay.c:2134`). From then on:
+- **Each request is dequeued exactly once.** Either the drain's `go_channel_try_receive()` or the writer's select takes it, and whoever dequeues it answers it once and frees it.
+- **The drain cannot stop early.** The queue was closed under its channel mutex, so no sender can be mid-publish, and an MPMC `try_receive` can only report BUSY for an unpublished send.
+- **A request the writer took is answered by the writer.** With no connection it answers "no connection"; if a connect republished one, the context is cancelled and the send returns at once. That answer may land just after `close()` returns, as the new comment says.
+- **The drain in `relay_free_impl()`** runs after the join and finds the queue empty.
+
+The new test covers only a never-connected relay, which has no writer thread. The concurrent case rests on the reasoning above.
+
+### 4. Is the test meaningful?
+
+Yes, for B1 and N6. Mutations against the tip, run under the gate image's ASAN+UBSAN+LSan (baseline 3 of 3 pass, about 3 s):
+
+| Reverted | Result |
+|---|---|
+| adopted/closing path back to `relay_retire_connection()` | `CHECK failed: nostr_connection_unreleased_count() == before - 1`, abort after 13 s |
+| N6 drain removed | `CHECK failed: answered == N` |
+| lost-dial path back to `relay_retire_connection()` (N1) | **passes**: N1 is not pinned. `test_racing_dials_publish_one_connection` has no writer holding a lease when the loser releases. A writer blocked on the winner, as in the N1 demo, would pin it |
+
+The adopt test asserts the right thing: the loop's own dial is released *while* the writer holds a lease on B and blocks. It then checks that B is kept and that every write is answered once B's handshake completes. It does not exercise B's handshake failing, but the assertion before that point is the one the deadlock broke.
+
+The idle-close test pins N6 on a never-connected relay.
+
+### N2 / N3 (`b5663b3f`)
+
+- **neg-client.** `neg_write()` does close → drain → unref, and passes the frame without strdup. That fixes both the late-Error leak and the copied-frame leak.
+  - `free_error` is declared through `nostr-relay.h` → `error.h`.
+  - Confirmed built: the Linux gate's all-targets build has `neg-client.c.o` built from this source with the gate's strict flags.
+- **`nostr-relay.h`.** `@msg` is now `(transfer none)`, and the release protocol is documented.
+- **`gnostr_subscription_new()` and `gnostr_pool_subscribe()`.** Now `(transfer full)`, and the docs say the caller keeps the filters on failure. That matches both failure paths (prepare failure, and fire failure with detach).
+- **Not addressed, and out of this pair's scope:** signet's `relay_pool.c:296` still strdups and never releases its answer channel (N2's pre-existing note).
+
+### Runs at `b5663b3f`
+
+- `scripts/linux-gate.sh --sanitizers`, 2 runs: 49/49 passed first time both times, no reruns (test phase 1m48s and 1m12s).
+- `NOSTRC_GATE_LINUX_TESTS=0 scripts/linux-gate.sh`: all targets built.
+- Private ASAN build (the job's configure arguments):
+  - `test_relay_teardown_leaks` 3/3;
+  - the 3 mutations above;
+  - the B1 demo 3/3 fixed;
+  - the R1 demo 3/3 wedged.
+
+The private volume was removed afterwards.
