@@ -103,6 +103,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | groundhog | 0.11.1 | PATCH: GhRelayScope selects lossless explicitly; backfills over 200 events (DM inbox, NIP-29 history, MLS kind 445) no longer lose events. |
 | same | gnostr | 0.1.0 | No bump (unreleased) and no behaviour change: it subscribes through GNostrPool, which keeps the bounded queue. |
 | libnostr 1.1.0 service-thread fix (nostrc-flp7, hosted run 36647380306: SEGV in `__lws_sul_insert` <- `lws_service`): a dial that connects but is hung up on before the upgrade gets only CLOSED_CLIENT_HTTP and WSI_DESTROY from lws 4.3; both now clear the connection's wsi and fail its handshake, so the owner's close no longer calls `lws_wsi_close()` on a freed wsi; no `ci.pwsi`; the close handler no longer arms a timer with `lws_set_timer_usecs(wsi, 0)` | libnostr | 1.1.0 | No further bump: folded into the unreleased 1.1.0 (a PATCH-level fix, no API change). Such a dial now fails at once instead of after the handshake timeout. |
+| libmarmot 0.10.0: additive `marmot_get_group_members()` for Groundhog's MLS service (nostrc-qp24.13 part 1) | libmarmot | 0.10.0 | No further bump: additive API folded into unreleased 0.10.0. Groundhog 0.11.1 ships GhMlsService behind GH_FEATURE_ENCRYPTED_GROUPS=0 (no user-visible change). |
 
 ## Maintenance
 
