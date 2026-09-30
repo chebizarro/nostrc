@@ -283,6 +283,28 @@ test_group_lifecycle(void)
   g_assert_cmpstr(gh_mls_group_get_removed_by(gc), ==, hex[ALICE]);
   g_assert_false(gh_mls_group_get_active(gc));
   g_assert_nonnull(find_message(carol, room, "welcome carol"));
+  /* A damaged removal record says only that the group ended, never "You
+   * left" (W22 review N3). */
+  {
+    g_autoptr(GError) serror = NULL;
+    MarmotStorage *storage = gh_store_marmot_new(carol->store, &serror);
+    g_assert_no_error(serror);
+    const gchar *gid_hex = gh_mls_group_get_group_id(gc);
+    gsize gid_len = strlen(gid_hex) / 2;
+    g_autofree guint8 *gid = g_malloc(gid_len);
+    g_assert_true(nostr_hex2bin(gid, gid_hex, gid_len));
+    const guint8 junk[3] = { 9, 9, 9 };
+    g_assert_true(gh_store_begin(carol->store, &serror));
+    g_assert_cmpint(storage->mls_store(storage->ctx, "mls_group_removed", gid, gid_len, junk,
+                                       sizeof junk), ==, MARMOT_OK);
+    g_assert_true(gh_store_commit(carol->store, &serror));
+    marmot_storage_free(storage);
+  }
+  app_restart(carol);
+  gc = gh_mls_service_lookup(carol->service, room);
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_UNKNOWN);
+  g_assert_null(gh_mls_group_get_removed_by(gc));
+  g_assert_false(gh_mls_group_get_active(gc));
 
   /* Bob leaves: he stops reading; his room and history stay. */
   g_autoptr(GError) error = NULL;
@@ -684,12 +706,18 @@ test_decrypt_pending_honest(void)
   wait_unreadable(gb, base + 1);
   g_assert_false(gh_mls_group_get_decrypt_pending(gb));
 
-  /* Dated later: something is waiting. */
+  /* Dated later: something is waiting -- for a while (W22 review N4:
+   * junk would otherwise keep it up for good in a quiet group). */
+  gh_mls_service_set_pending_shown(bob->service, 1000);
   g_autofree gchar *later = junk_445(h, 1, real_now() + 30);
   wire_relay_inject(&w.g, later);
   wait_unreadable(gb, base + 2);
   GroupWait shown = { gb, TRUE };
   spin_until(decrypt_pending_is, &shown, "decrypt-pending");
+  GroupWait aged = { gb, FALSE };
+  spin_until(decrypt_pending_is, &aged, "decrypt-pending gone after its bound");
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, (guint)base + 2);   /* still held */
+  gh_mls_service_set_pending_shown(bob->service, 0);
 
   /* Three Commits later both are junk, dropped. */
   for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
@@ -707,6 +735,164 @@ test_decrypt_pending_honest(void)
   wait_live(gb);
   g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, 0);
   g_assert_false(gh_mls_group_get_decrypt_pending(gb));
+  world_down(&w);
+}
+
+/* W22 review B1: a removal is judged by the Commit ordering, not by
+ * arrival. Alice and Bob are admins, and Alice's key sorts below Bob's, so
+ * her rename beats Bob's removal of Carol made in the same epoch. Carol gets
+ * the removal first: she is removed, but keeps listening; the winning rename
+ * then re-activates the group, which is read again, and the removed copy is
+ * gone. */
+static gboolean
+group_end_is(gpointer data)
+{
+  GroupWait *wait = data;
+  return (gint)gh_mls_group_get_end(wait->group) == wait->value;
+}
+
+static gboolean
+became_admin(gpointer data)
+{
+  return gh_mls_group_get_is_admin(data);
+}
+
+static gboolean
+epoch_is(gpointer data)
+{
+  GroupWait *wait = data;
+  return gh_mls_group_get_epoch(wait->group) == (guint64)wait->value;
+}
+
+static void
+test_losing_removal_reactivates(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  g_assert_cmpint(strcmp(hex[ALICE], hex[BOB]), <, 0);   /* the order this relies on */
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Race", (const guint[]){ BOB, CAROL }, 2);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(became_admin, gb, "Bob becoming an admin");
+  GroupWait carol_epoch = { gc, (gint)gh_mls_group_get_epoch(ga) };
+  spin_until(epoch_is, &carol_epoch, "Carol in Alice's epoch");
+  wait_live(gc);
+
+  /* One epoch, neither seeing the other's: Bob removes Carol, Alice renames. */
+  w.g.withhold_new = TRUE;
+  const gchar *carol_only[] = { hex[CAROL], NULL };
+  OpWait removed = { 0 };
+  gh_mls_service_remove_members_async(bob->service, gb, carol_only, NULL, on_changed, &removed);
+  change(bob, &removed);
+  g_autofree gchar *removal = g_strdup(last_stored_445(&w.g)->id);
+  OpWait renamed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "Race won", NULL, NULL, on_changed,
+                                       &renamed);
+  change(alice, &renamed);
+  g_autofree gchar *rename = g_strdup(last_stored_445(&w.g)->id);
+  w.g.withhold_new = FALSE;
+
+  /* The losing removal first: removed, still listening. */
+  wire_relay_release(&w.g, removal);
+  GroupWait ended = { gc, GH_MLS_GROUP_END_REMOVED };
+  spin_until(group_end_is, &ended, "Carol removed");
+  g_assert_cmpstr(gh_mls_group_get_removed_by(gc), ==, hex[BOB]);
+  g_assert_false(gh_mls_group_get_active(gc));
+  g_assert_cmpint(gh_mls_group_get_read_state(gc), !=, GH_MLS_READ_IDLE);
+  g_autoptr(GError) send_error = NULL;
+  g_assert_null(gh_mls_service_send(carol->service, gc, "removed?", &send_error));
+  /* Alice writes in her (winning) epoch meanwhile: Carol cannot read it now,
+   * and must not skip it. */
+  send_text(alice, ga, "sent during the race");
+  StatusWait during = { alice, room, "sent during the race" };
+  spin_until(sent, &during, "Alice's message sent");
+  g_assert_null(find_message(carol, room, "sent during the race"));
+
+  /* Then Alice's winning rename: Carol is a member of that epoch, and reads
+   * it again from her cursor. */
+  wire_relay_release(&w.g, rename);
+  GroupWait back = { gc, GH_MLS_GROUP_END_NONE };
+  spin_until(group_end_is, &back, "Carol back in the group");
+  g_assert_true(gh_mls_group_get_active(gc));
+  g_assert_null(gh_mls_group_get_removed_by(gc));
+  NameWait carol_name = { gc, "Race won" }, bob_name = { gb, "Race won" };
+  spin_until(name_is, &carol_name, "Carol in the winning epoch");
+  spin_until(name_is, &bob_name, "Bob converging on the winning epoch");
+  wait_live(gc);
+  wait_message(carol, room, "sent during the race");
+  send_text(alice, ga, "carol still here");
+  wait_message(carol, room, "carol still here");
+  send_text(carol, gc, "yes I am");
+  wait_message(alice, room, "yes I am");
+  wait_message(bob, room, "yes I am");
+  g_auto(GStrv) members = gh_mls_group_dup_members(ga);
+  g_assert_true(g_strv_contains((const gchar *const *)members, hex[CAROL]));
+  world_down(&w);
+}
+
+/* W22 review N5: a removal applied out of the held queue (Carol missed the
+ * Commit before it) ends the group mid-pass; the rest of the pass is not
+ * held again. */
+static void
+test_removal_from_held_queue(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Held", (const guint[]){ BOB, CAROL }, 2);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  join(&w.apps[BOB], ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  wait_live(gc);
+  /* Carol's clock a day ahead: held times are bounded by her now, and the
+   * message below must stay a minute after the removal. */
+  gh_clock_unref(carol->clock);
+  carol->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(carol);
+  gc = gh_mls_service_lookup(carol->service, room);
+  wait_live(gc);
+  gint base = (gint)gh_mls_group_get_unreadable(gc);
+
+  set_online(carol, FALSE);
+  w.g.withhold_new = TRUE;
+  rename_group(alice, ga, "Missed");
+  g_autofree gchar *missed = g_strdup(last_stored_445(&w.g)->id);
+  w.g.withhold_new = FALSE;
+  const gchar *carol_only[] = { hex[CAROL], NULL };
+  OpWait removed = { 0 };
+  gh_mls_service_remove_members_async(alice->service, ga, carol_only, NULL, on_changed,
+                                      &removed);
+  change(alice, &removed);
+  send_text(alice, ga, "after carol");
+  StatusWait sent_wait = { alice, room, "after carol" };
+  spin_until(sent, &sent_wait, "the message sent");
+  /* Served dated a minute later: it is left for the retry pass after the
+   * one that applies the removal (a pass ends with a Commit's second). */
+  WireStored *message = last_stored_445(&w.g);
+  g_autofree gchar *later = resigned(message->json, real_now() + 60);
+  wire_relay_withhold(&w.g, message->id);
+  wire_relay_inject(&w.g, later);
+  set_online(carol, TRUE);
+  wait_unreadable(gc, base + 2);              /* the removal and the message, held */
+
+  wire_relay_release(&w.g, missed);
+  GroupWait ended = { gc, GH_MLS_GROUP_END_REMOVED };
+  spin_until(group_end_is, &ended, "the held removal applied");
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gc), ==, 0);
+  g_assert_false(gh_mls_group_get_decrypt_pending(gc));
+  g_assert_null(find_message(carol, room, "after carol"));
   world_down(&w);
 }
 
@@ -1861,6 +2047,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/held-until-commit", test_held_until_commit);
   g_test_add_func("/groundhog/mls-service/junk-does-not-evict", test_junk_does_not_evict);
   g_test_add_func("/groundhog/mls-service/decrypt-pending-honest", test_decrypt_pending_honest);
+  g_test_add_func("/groundhog/mls-service/losing-removal-reactivates",
+                  test_losing_removal_reactivates);
+  g_test_add_func("/groundhog/mls-service/removal-from-held-queue", test_removal_from_held_queue);
   g_test_add_func("/groundhog/mls-service/join-reads-from-welcome",
                   test_join_reads_from_welcome);
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",

@@ -178,12 +178,12 @@ void gh_conversation_view_set_room_without_inbox(GhConversationView *self, gbool
 /* Charter §7.15 state 12: "Waiting for Nostr Signer to unlock N messages"
  * with Unlock (conversation.unlock-messages); 0 hides it. */
 void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count);
-/* Charter §7.15 state 13, encrypted groups (nostrc-oya4): "Waiting for an
- * earlier change to this group. Some messages may not show until it
- * arrives." while GhMlsGroup:decrypt-pending; FALSE hides it. No number: a
- * held event's type (message or group change) is sealed until the change
- * that opens its epoch arrives. No action: nothing the user can do makes
- * them readable. The getter reads what is shown, for tests. */
+/* Charter §7.15 state 13, encrypted groups (nostrc-oya4): "Some messages in
+ * this group can't be read yet." while GhMlsGroup:decrypt-pending; FALSE
+ * hides it. No number and no cause: a held event's type (message or group
+ * change) is sealed until its epoch opens, and junk anyone posts looks the
+ * same (W22 review N4). No action: nothing the user can do makes them
+ * readable. The getter reads what is shown, for tests. */
 void gh_conversation_view_set_decrypt_pending(GhConversationView *self, gboolean pending);
 gboolean gh_conversation_view_get_decrypt_pending(GhConversationView *self);
 

@@ -1563,11 +1563,10 @@ gh_conversation_view_set_decrypt_pending(GhConversationView *self, gboolean pend
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
   self->decrypt_pending = !!pending;
-  /* No number (nostrc-oya4): what waits may be messages or group changes,
-   * sealed until the change that opens them arrives. */
+  /* No number and no cause (nostrc-oya4, W22 review N4): what can't be
+   * read may be messages, group changes or junk anyone posted. */
   gtk_label_set_text(self->undecryptable_label,
-                     _("Waiting for an earlier change to this group. Some messages may not "
-                       "show until it arrives."));
+                     _("Some messages in this group can't be read yet."));
   gtk_widget_set_visible(self->undecryptable_row, self->decrypt_pending);
 }
 

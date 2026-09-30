@@ -121,6 +121,8 @@ gh_mls_send_reason(GhMlsService *service, GhMlsGroup *group, const gchar *remove
              /* TRANSLATORS: %s is the group admin's name or short npub. */
              ? g_strdup_printf(_("You were removed from this group by %s."), remover)
              : g_strdup(_("You were removed from this group."));
+  if (gh_mls_group_get_end(group) == GH_MLS_GROUP_END_UNKNOWN)
+    return g_strdup(_("This group has ended on this device."));
   if (!gh_mls_group_get_active(group))
     return g_strdup(_("You left this group."));
   if (gh_mls_group_get_read_state(group) == GH_MLS_READ_IDLE)
@@ -140,6 +142,10 @@ gh_mls_end_copy(GhMlsGroupEnd end, const gchar *remover)
     return g_strdup(_("You were removed from this group. Its messages stay on this device."));
   case GH_MLS_GROUP_END_LEFT:
     return g_strdup(_("You left this group. Its messages stay on this device."));
+  case GH_MLS_GROUP_END_UNKNOWN:
+    /* Its record can't be read: say that it ended, not why (review N3). */
+    return g_strdup(_("This group has ended on this device. Its messages stay on this "
+                      "device."));
   case GH_MLS_GROUP_END_NONE:
   default:
     return NULL;

@@ -299,9 +299,13 @@ delegate_send(GhConversation *conversation, const gchar *text, gpointer data, GE
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         _("You were removed from this group, so the message was not sent. It "
                           "is kept here."));
-  else if (!gh_mls_group_get_active(group))
+  else if (gh_mls_group_get_end(group) == GH_MLS_GROUP_END_LEFT)
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         _("You left this group, so the message was not sent. It is kept here."));
+  else if (!gh_mls_group_get_active(group))
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        _("This group has ended, so the message was not sent. It is kept "
+                          "here."));
   else
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                         _("This message couldn’t be sent. It is kept here."));

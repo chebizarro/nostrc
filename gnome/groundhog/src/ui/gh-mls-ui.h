@@ -32,9 +32,10 @@ G_BEGIN_DECLS
  *  - Group Info: gh_mls_ui_show_info() (GhMlsGroupInfoDialog).
  *  - The conversation header's "Encrypted group · N members"
  *    (gh_conversation_list_set_member_count_func(), refreshed on
- *    "members-changed") and the view's "Waiting for an earlier change to
- *    this group…" (GhMlsGroup:decrypt-pending of the shown group; no
- *    number: held events may be messages or group changes, nostrc-oya4).
+ *    "members-changed") and the view's "Some messages in this group can't be
+ *    read yet" (GhMlsGroup:decrypt-pending of the shown group; no number
+ *    and no cause: held events may be messages, group changes or junk,
+ *    nostrc-oya4, W22 review N4).
  * Nothing here contacts the network before the user acts. Everything is
  * released with window.
  */

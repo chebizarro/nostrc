@@ -23,8 +23,8 @@
  * the answer; Group Info (badges, admin Add with a fresh check, Rename,
  * Remove with its confirmation, a member seeing no admin action, Leave whose
  * copy says the others keep counting you); a removed member's composer and
- * Group Info naming who removed them; "Waiting for an earlier change to
- * this group…" while a Commit is withheld, never just after joining; the
+ * Group Info naming who removed them; "Some messages in this group can't
+ * be read yet" while a Commit is withheld, never just after joining; the
  * enrollment states with Try Again. It
  * exits 77 without a display.
  *
@@ -202,6 +202,10 @@ test_copy(void)
                   "You were removed from this group by Alice. Its messages stay on this device.");
   g_autofree gchar *removed = gh_mls_end_copy(GH_MLS_GROUP_END_REMOVED, NULL);
   g_assert_cmpstr(removed, ==, "You were removed from this group. Its messages stay on this device.");
+  /* A damaged record: that it ended, never "You left" (W22 review N3). */
+  g_autofree gchar *unknown = gh_mls_end_copy(GH_MLS_GROUP_END_UNKNOWN, "Alice");
+  g_assert_cmpstr(unknown, ==,
+                  "This group has ended on this device. Its messages stay on this device.");
 
   g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
   for (gint state = GH_MLS_INVITEE_CHECKING; state <= GH_MLS_INVITEE_FAILED; state++) {
@@ -1076,7 +1080,7 @@ test_gui_group_info(void)
   adw_dialog_force_close(ADW_DIALOG(bob_info));
   drain();
 
-  /* "Waiting for an earlier change…" (nostrc-oya4): not after the join,
+  /* "Some messages … can't be read yet" (nostrc-oya4): not after the join,
    * although Bob may hold his own Add Commit; then a message whose Commit
    * Bob hasn't got (served dated a minute later, outside the join's own
    * second), then the Commit. No number: held events may be group changes. */
@@ -1106,8 +1110,7 @@ test_gui_group_info(void)
                                                             GH_TYPE_CONVERSATION_VIEW,
                                                             "undecryptable_label"));
   g_assert_cmpstr(gtk_label_get_text(label), ==,
-                  "Waiting for an earlier change to this group. Some messages may not show "
-                  "until it arrives.");
+                  "Some messages in this group can't be read yet.");
   GtkWidget *undecryptable = GTK_WIDGET(gtk_widget_get_template_child(
     GTK_WIDGET(view_of(bob_window)), GH_TYPE_CONVERSATION_VIEW, "undecryptable_row"));
   g_assert_true(gtk_widget_get_visible(undecryptable));

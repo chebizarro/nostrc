@@ -62,8 +62,8 @@ G_BEGIN_DECLS
 /* Not a preference: encrypted groups (Marmot MLS, nostrc-qp24.13). When 1,
  * gh-app-outbox.c runs GhMlsService beside each outbox, gh-app-services.c
  * attaches their UI (gh-mls-ui.c, nostrc-9xf5: New Group's encrypted page,
- * invitations, Group Info, the composer, the header count, "Waiting for an
- * earlier change to this group") and New Message's 10-recipient limit
+ * invitations, Group Info, the composer, the header count, "Some messages
+ * in this group can't be read yet") and New Message's 10-recipient limit
  * points to encrypted groups (GhNewMessageConfig.encrypted_groups; charter
  * §7.9).
  *

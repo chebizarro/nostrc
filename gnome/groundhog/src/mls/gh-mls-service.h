@@ -132,11 +132,15 @@ G_BEGIN_DECLS
  * epoch (the Commit's UpdatePath is encrypted to the others). libmarmot
  * recognises the authenticated admin Commit that removes the account's leaf
  * and turns the group inactive (marmot_get_group_removal() names who), and
- * the service shows it: "end" REMOVED with "removed-by". As a backstop, an
- * applied Commit after which the account is no longer among the members
- * ends it too (removed-by unknown). Either way, as after leaving, the group
- * is not read any more (its subscription closed), sends are refused,
- * nothing is held and "unreadable" is 0; its room and history stay.
+ * the service shows it: "end" REMOVED with "removed-by"; nothing is held,
+ * sends are refused and "unreadable" is 0; its room and history stay. The
+ * removal is judged by the Commit ordering, not by arrival (W22 review B1):
+ * while another admin could still publish a winning Commit of that epoch,
+ * the group's subscription stays open and libmarmot judges that epoch's
+ * Commits (nothing else is read; the cursor holds); a winner re-activates
+ * the group ("end" NONE) and it is read again from the cursor. A final
+ * removal closes the subscription. A removal record libmarmot cannot read
+ * ends the group as UNKNOWN, never as LEFT (review N3).
  *
  * Generation. The service runs only while its store's account is the active
  * account: a switch cancels every subscription, lookup, signer request and
@@ -176,6 +180,10 @@ G_BEGIN_DECLS
  * this long stop holding the others' backfill (final review N1): given up
  * as incomplete, their subscriptions left open. Seconds. */
 #define GH_MLS_SERVICE_BACKFILL_QUIET_S 30
+/* A held event keeps decrypt-pending up this long at most (seconds): junk
+ * anyone posts with the group's h would otherwise show it for good in a
+ * quiet group (W22 review N4). It stays held and is retried. */
+#define GH_MLS_SERVICE_PENDING_SHOWN_S (15 * 60)
 /* A held event still unreadable after this many applied Commits is junk. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
@@ -206,7 +214,8 @@ GType gh_mls_read_state_get_type(void);
 typedef enum {
   GH_MLS_GROUP_END_NONE,     /* active */
   GH_MLS_GROUP_END_LEFT,     /* the account left (gh_mls_service_leave()), on this device */
-  GH_MLS_GROUP_END_REMOVED   /* an admin's Commit removed the account's leaf */
+  GH_MLS_GROUP_END_REMOVED,  /* an admin's Commit removed the account's leaf */
+  GH_MLS_GROUP_END_UNKNOWN   /* inactive, and why can't be read (a damaged record) */
 } GhMlsGroupEnd;
 
 GType gh_mls_group_end_get_type(void);
@@ -246,7 +255,7 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * on change: "group-id" (hex MLS group id), "room-id", "name",
  * "description", "epoch", "active" (FALSE once left or removed), "end" (why
  * not: GhMlsGroupEnd), "removed-by" (hex: the admin whose Commit removed the
- * account, or NULL: not removed, or not known), "read-state",
+ * account, or NULL), "read-state",
  * "is-admin" (the account is a GroupData admin), "pending-commit" (a change
  * of the account's is published but not merged yet) and
  * "unsent-welcomes" (Welcomes of merged Adds not yet accepted by an
@@ -255,10 +264,10 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * and Commits alike, whose type is sealed until their epoch opens, and
  * junk anyone posted with the group's h; 0 once the group ended; for
  * diagnostics and tests) and "decrypt-pending" (what the UI shows, charter
- * §7.15 state 13, nostrc-oya4: the active group holds an event that is
- * waiting for a Commit this device hasn't got -- not one dated in the
- * join's own second from a stored answer, where the joiner's own Add
- * Commit lands, and not one dropped as junk before) and
+ * §7.15 state 13, nostrc-oya4: the active group holds an event it cannot
+ * read yet -- not one dated in the join's own second from a stored answer,
+ * where the joiner's own Add Commit lands, not one dropped as junk before,
+ * and none held longer than GH_MLS_SERVICE_PENDING_SHOWN_S) and
  * "history-incomplete" (a group relay's backfill could
  * not be fetched completely this subscription: paging failed or ran out, or
  * more was delivered than the service keeps at once; the read cursor holds,
@@ -353,6 +362,9 @@ void gh_mls_service_set_backfill_limit(GhMlsService *self, guint max_events, gsi
 /* The quiet period after which silent relays stop holding the backfill
  * (milliseconds; 0: GH_MLS_SERVICE_BACKFILL_QUIET_S). For tests and tuning. */
 void gh_mls_service_set_backfill_quiet(GhMlsService *self, guint quiet_ms);
+/* How long a held event keeps "decrypt-pending" up (milliseconds; 0:
+ * GH_MLS_SERVICE_PENDING_SHOWN_S). For tests and tuning. */
+void gh_mls_service_set_pending_shown(GhMlsService *self, guint shown_ms);
 /* The id of the KeyPackage event last accepted by a relay, or NULL. */
 const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
 /* Rotates the KeyPackage now (e.g. the user asked); FALSE with

@@ -51,6 +51,7 @@ struct _GhMlsGroup {
   gboolean active;
   GhMlsGroupEnd end;
   gchar *removed_by;         /* hex, or NULL */
+  gboolean removal_final;    /* REMOVED and no competing Commit can undo it */
   GhMlsReadState read;
   gboolean is_admin;
   gboolean pending_commit;
@@ -74,6 +75,7 @@ struct _GhMlsGroup {
   GQueue held;               /* Held: kind 445 of a later epoch, oldest first */
   GHashTable *held_ids;      /* their event ids (owned by the Held records) */
   gboolean decrypt_pending;  /* a shown Held is waiting (nostrc-oya4) */
+  guint pending_source;      /* re-judges decrypt-pending when a Held ages out */
   GHashTable *junk_ids;      /* ids dropped as junk, not held again (bounded) */
   GQueue junk_order;         /* the same ids, oldest first (owned here) */
   gint64 pinned;             /* oldest created_at dropped unread this session; 0: none */
@@ -126,6 +128,7 @@ struct _GhMlsService {
   guint max_backfill_events;       /* per group (review B4) */
   gsize max_backfill_bytes;
   gint64 backfill_quiet_us;        /* a relay silent this long stops holding a flush */
+  gint64 pending_shown_us;         /* a Held keeps decrypt-pending this long at most */
   GhAccountRelays *account_relays;
   GhInboxResolver *inboxes;
   GSettings *settings;
@@ -226,6 +229,7 @@ gh_mls_group_end_get_type(void)
       { GH_MLS_GROUP_END_NONE, "GH_MLS_GROUP_END_NONE", "none" },
       { GH_MLS_GROUP_END_LEFT, "GH_MLS_GROUP_END_LEFT", "left" },
       { GH_MLS_GROUP_END_REMOVED, "GH_MLS_GROUP_END_REMOVED", "removed" },
+      { GH_MLS_GROUP_END_UNKNOWN, "GH_MLS_GROUP_END_UNKNOWN", "unknown" },
       { 0, NULL, NULL }
     };
     g_once_init_leave(&type, g_enum_register_static("GhMlsGroupEnd", values));
@@ -260,6 +264,7 @@ typedef struct {
   gint64 created_at;   /* bounded to now + skew */
   guint misses;        /* Commits applied since, without it becoming readable */
   gboolean shown;      /* makes decrypt-pending (not the join second's stored answer) */
+  gint64 held_us;      /* when it was first held (monotonic) */
 } Held;
 
 static void
@@ -643,6 +648,8 @@ gh_mls_group_finalize(GObject *object)
   g_queue_clear_full(&self->held, held_free);
   g_hash_table_unref(self->junk_ids);
   g_queue_clear_full(&self->junk_order, g_free);
+  if (self->pending_source)
+    g_source_remove(self->pending_source);
   g_queue_clear_full(&self->backfill, stored_free);
   if (self->quiet_source)
     g_source_remove(self->quiet_source);
@@ -725,20 +732,48 @@ static void welcomes_pump(GhMlsGroup *group);
 /* decrypt-pending (nostrc-oya4): an active group holds an event that is
  * really waiting for a Commit. A held event's type is sealed under an epoch
  * the account has not reached, so no count of them is a count of messages;
- * this says only that something is waiting. Not shown: an event dated in
- * the join's own second that came in a stored answer -- where the joiner's
- * own Add Commit, sealed in an epoch it never had, always lands (W20
- * re-review N4) -- and nothing of an ended group. */
+ * this says only that something can't be read yet. Not shown: an event
+ * dated in the join's own second that came in a stored answer -- where the
+ * joiner's own Add Commit, sealed in an epoch it never had, always lands
+ * (W20 re-review N4) -- nothing of an ended group, and nothing held longer
+ * than GH_MLS_SERVICE_PENDING_SHOWN_S: anyone can post undecryptable junk
+ * with the group's h, which a quiet group would otherwise show for good
+ * (W22 review N4); it stays held and is retried. */
+static gboolean pending_expired(gpointer data);
+
 static void
 sync_decrypt_pending(GhMlsGroup *group)
 {
+  gint64 now = g_get_monotonic_time(), limit = group->service->pending_shown_us;
+  gint64 next = G_MAXINT64;   /* when the next shown Held ages out */
   gboolean pending = FALSE;
-  for (GList *l = group->held.head; group->active && !pending && l; l = l->next)
-    pending = ((Held *)l->data)->shown;
+  for (GList *l = group->held.head; group->active && l; l = l->next) {
+    Held *held = l->data;
+    if (!held->shown || now - held->held_us >= limit)
+      continue;
+    pending = TRUE;
+    next = MIN(next, held->held_us + limit);
+  }
+  if (group->pending_source) {
+    g_source_remove(group->pending_source);
+    group->pending_source = 0;
+  }
+  if (pending)
+    group->pending_source = g_timeout_add(MAX((next - now) / 1000, 1) + 1, pending_expired,
+                                          group);
   if (pending == group->decrypt_pending)
     return;
   group->decrypt_pending = pending;
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_DECRYPT_PENDING]);
+}
+
+static gboolean
+pending_expired(gpointer data)
+{
+  GhMlsGroup *group = data;
+  group->pending_source = 0;
+  sync_decrypt_pending(group);
+  return G_SOURCE_REMOVE;
 }
 
 /* An ended group (left or removed) holds nothing: none of it can ever be
@@ -753,6 +788,16 @@ drop_held(GhMlsGroup *group)
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
   }
   sync_decrypt_pending(group);
+}
+
+/* A group is read while active, and while a removal of the account may
+ * still lose its epoch (W22 review B1): libmarmot then judges that epoch's
+ * Commits, and a winner re-activates the group. Nothing else of it is read
+ * or held. */
+static gboolean
+listening(GhMlsGroup *group)
+{
+  return group->active || (group->end == GH_MLS_GROUP_END_REMOVED && !group->removal_final);
 }
 
 /* An event dropped as junk is not held again when a later REQ's overlap
@@ -850,9 +895,7 @@ group_refresh(GhMlsGroup *group)
 
   uint8_t (*keys)[32] = NULL;
   size_t n_keys = 0;
-  gboolean members_known = FALSE;
   if (marmot_get_group_members(m, &group->gid, &keys, &n_keys) == MARMOT_OK) {
-    members_known = TRUE;
     GPtrArray *members = g_ptr_array_new();
     for (size_t i = 0; i < n_keys; i++)
       g_ptr_array_add(members, to_hex(keys[i], 32));
@@ -868,24 +911,27 @@ group_refresh(GhMlsGroup *group)
   free(keys);
 
   /* nostrc-xrya: why the group is not active. libmarmot keeps who removed
-   * the account; an applied Commit that left the account out of the
-   * members removed it too (by someone the service can't name). */
+   * the account, and whether a competing Commit could still undo it; a
+   * record it cannot read says only that the group ended (review N3). */
   GhMlsGroupEnd end = GH_MLS_GROUP_END_NONE;
   g_autofree gchar *removed_by = NULL;
+  gboolean removal_final = FALSE;
   if (!active) {
-    bool removed = false;
+    bool removed = false, final = false;
     uint8_t by[32];
-    if (marmot_get_group_removal(m, &group->gid, &removed, by, NULL, NULL) == MARMOT_OK && removed) {
+    MarmotError rerr = marmot_get_group_removal(m, &group->gid, &removed, by, NULL, &final);
+    if (rerr != MARMOT_OK) {
+      end = GH_MLS_GROUP_END_UNKNOWN;
+    } else if (removed) {
       end = GH_MLS_GROUP_END_REMOVED;
       removed_by = to_hex(by, 32);
+      removal_final = final;
     } else {
       end = GH_MLS_GROUP_END_LEFT;
     }
-  } else if (members_known && group->members[0] &&
-             !g_strv_contains((const gchar *const *)group->members, self->account)) {
-    active = FALSE;
-    end = GH_MLS_GROUP_END_REMOVED;
   }
+  gboolean reactivated = active && !group->active && group->end == GH_MLS_GROUP_END_REMOVED;
+  group->removal_final = removal_final;
   if (group->active != active) {
     group->active = active;
     g_object_notify_by_pspec(object, group_props[GROUP_PROP_ACTIVE]);
@@ -946,10 +992,17 @@ group_refresh(GhMlsGroup *group)
   if (name_changed && group->active)
     group_list_room(group);
   if (!group->active) {
-    group_unsubscribe(group);
     drop_held(group);
-  } else if (routing_changed && group->scope)
+    /* A removal that may still lose keeps listening for the winner. */
+    if (!listening(group))
+      group_unsubscribe(group);
+  } else if (reactivated) {
+    /* A winning Commit undid the removal (review B1): read again from the
+     * cursor, which held while the group was ended. */
     group_subscribe(group);
+  } else if (routing_changed && group->scope) {
+    group_subscribe(group);
+  }
 }
 
 static GhMlsGroup *
@@ -1101,6 +1154,7 @@ hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created
   held->json = g_strdup(json);
   held->created_at = MIN(created_at, now_s(group->service));
   held->shown = shown;
+  held->held_us = g_get_monotonic_time();
   g_queue_push_tail(&group->held, held);
   g_hash_table_add(group->held_ids, held->id);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
@@ -1157,7 +1211,12 @@ retry_held(GhMlsGroup *group)
     for (GList *l = pass; l; l = l->next) {
       Held *held = l->data;
       gint64 at = held->created_at;
-      if (at <= pass_ends && group->active) {
+      if (!group->active) {
+        /* Ended mid-pass (a removal applied): nothing of it is held (N5). */
+        held_free(held);
+        continue;
+      }
+      if (at <= pass_ends) {
         gboolean before = group->retry_again;
         if (process_event(group, held->json, NULL, FALSE, held) != EVENT_HELD) {
           if (!before && group->retry_again)
@@ -1275,7 +1334,12 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     commit = accepted = TRUE;
   } else if (err == MARMOT_ERR_NIP44) {
     /* A later epoch's (or not for us): wait for the Commit that opens it. */
-    held = TRUE;
+    held = group->active;   /* an ended group holds nothing (review N5) */
+  } else if (err == MARMOT_ERR_USE_AFTER_EVICTION && listening(group)) {
+    /* Removed by a Commit that may still lose: if a winner re-activates the
+     * group, this is read again; the cursor must not pass it. */
+    if (created_at > 0)
+      group->pinned = group->pinned ? MIN(group->pinned, created_at) : created_at;
   } else if (err != MARMOT_OK) {
     g_debug("Groundhog skipped an encrypted group event: %s", marmot_error_string(err));
   }
@@ -1350,7 +1414,7 @@ flush_backfill(GhMlsGroup *group)
   g_object_ref(group);   /* a Commit may change the subscription meanwhile */
   for (GList *l = mine; l; l = l->next) {
     Stored *stored = l->data;
-    if (group->active)
+    if (listening(group))
       process_event(group, stored->json, stored->url, stored->stored, NULL);
   }
   g_list_free_full(mine, stored_free);
@@ -1472,7 +1536,7 @@ keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
   stored->url = g_strdup(update->url);
   stored->created_at = G_MAXINT64;
   stored->seq = group->backfill_seq++;
-  stored->stored = update->backfill;
+  stored->stored = update->stored;   /* a stored answer, not live traffic (review N4) */
   NostrEvent *event = nostr_event_new();
   if (event && nostr_event_deserialize_compact(event, update->event_json, NULL) == 1)
     stored->created_at = nostr_event_get_created_at(event);
@@ -1505,7 +1569,7 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     if (g_hash_table_size(group->backfilling) > 0 || !g_queue_is_empty(&group->backfill))
       keep_backfill(group, update);
     else
-      process_event(group, update->event_json, update->url, update->backfill, NULL);
+      process_event(group, update->event_json, update->url, update->stored, NULL);
     break;
   case GH_RELAY_NOTICE_EOSE: {
     g_hash_table_remove(group->backfilling, update->url);
@@ -1563,7 +1627,7 @@ group_subscribe(GhMlsGroup *group)
 {
   GhMlsService *self = group->service;
   group_unsubscribe(group);
-  if (!running(self) || !group->active || !group->relays[0] || !group->nostr_hex[0])
+  if (!running(self) || !listening(group) || !group->relays[0] || !group->nostr_hex[0])
     return;
   NostrFilters *filters = nostr_filters_new();
   NostrFilter *filter = nostr_filter_new();
@@ -3316,6 +3380,16 @@ gh_mls_service_set_backfill_quiet(GhMlsService *self, guint quiet_ms)
 }
 
 void
+gh_mls_service_set_pending_shown(GhMlsService *self, guint shown_ms)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  self->pending_shown_us = shown_ms ? (gint64)shown_ms * 1000
+                                    : (gint64)GH_MLS_SERVICE_PENDING_SHOWN_S * G_USEC_PER_SEC;
+  for (guint i = 0; i < self->groups->len; i++)
+    sync_decrypt_pending(g_ptr_array_index(self->groups, i));
+}
+
+void
 gh_mls_service_set_backfill_limit(GhMlsService *self, guint max_events, gsize max_bytes)
 {
   g_return_if_fail(GH_IS_MLS_SERVICE(self));
@@ -3784,6 +3858,7 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   self->max_backfill_events = GH_MLS_SERVICE_MAX_BACKFILL_EVENTS;
   self->max_backfill_bytes = GH_MLS_SERVICE_MAX_BACKFILL_BYTES;
   self->backfill_quiet_us = (gint64)GH_MLS_SERVICE_BACKFILL_QUIET_S * G_USEC_PER_SEC;
+  self->pending_shown_us = (gint64)GH_MLS_SERVICE_PENDING_SHOWN_S * G_USEC_PER_SEC;
   self->conversations = g_object_ref(config->conversations);
   self->account_relays = config->account_relays ? g_object_ref(config->account_relays) : NULL;
   self->inboxes = config->inboxes ? g_object_ref(config->inboxes) : NULL;
