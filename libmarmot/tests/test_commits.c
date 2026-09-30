@@ -4557,6 +4557,56 @@ test_rival_removal_replaces(void)
     trio_clear(&t);
 }
 
+/* The residual risk of count finality, pinned (W22 review B3; nostrc-6njv):
+ * the winner of the removal's epoch arrives after `behind` messages of its
+ * own branch, which Charlie cannot open.  Behind 4 (MARMOT_REMOVAL_FINAL_AFTER
+ * - 1) it still re-activates him; behind 5 the
+ * removal is final first and the winner is refused -- Charlie stays ended
+ * while the group, on the winner, keeps his leaf.  Changing the constant
+ * must be a visible decision. */
+static void
+winner_after_its_branch(int behind, bool reactivates)
+{
+    Trio t;
+    trio_init(&t);
+    char *rm = NULL;
+    OK(marmot_remove_members(t.alice.m, &t.gid, (const uint8_t (*)[32]) t.charlie.pk, 1, &rm));
+    char *ren = rename_pending(&t.bob, &t.gid, "Bob's");
+    merge(&t.bob, &t.gid);                  /* Bob's rename wins; Bob writes in its epoch */
+    MarmotError err;
+    CHECK(deliver_state(&t.charlie, rm, &err, NULL) == MARMOT_GROUP_STATE_INACTIVE &&
+          err == MARMOT_OK, "the losing removal first: err=%d", err);
+    for (int i = 0; i < behind; i++) {
+        char *msg = app_message(&t.bob, &t.gid, "on the winner");
+        deliver(&t.charlie, msg, &err, NULL);
+        CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION, "branch message %d: %d", i, err);
+        free(msg);
+    }
+    uint64_t epoch = 0;
+    MarmotGroupState state = deliver_state(&t.charlie, ren, &err, &epoch);
+    if (reactivates) {
+        CHECK(err == MARMOT_OK && state == MARMOT_GROUP_STATE_ACTIVE && epoch == t.epoch + 1,
+              "behind %d: the winner re-activates (err=%d)", behind, err);
+        CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "behind %d: not removed", behind);
+    } else {
+        CHECK(err == MARMOT_ERR_USE_AFTER_EVICTION,
+              "behind %d: the winner is refused (err=%d)", behind, err);
+        CHECK(removal_of(&t.charlie, &t.gid, NULL, NULL) && removal_final(&t.charlie, &t.gid),
+              "behind %d: removed for good", behind);
+    }
+    free(ren);
+    free(rm);
+    trio_clear(&t);
+}
+
+static void
+test_winner_after_its_branch(void)
+{
+    /* Literal on purpose: the tolerance the README states. */
+    winner_after_its_branch(4, true);
+    winner_after_its_branch(5, false);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -4619,6 +4669,7 @@ main(int argc, char **argv)
     RUN(test_contested_removal_becomes_final);
     RUN(test_removal_final_waits_for_parent);
     RUN(test_rival_removal_replaces);
+    RUN(test_winner_after_its_branch);
     printf("All commit tests passed\n");
     return 0;
 }

@@ -469,14 +469,21 @@ kind:445 failed as undecryptable.
   read later epochs, so neither the retained parent retires nor does a
   lower-keyed admin stop counting. So a removal is also final after
   `MARMOT_REMOVAL_FINAL_AFTER` (5) distinct kind:445 events of the group that
-  none of our exporter secrets opens. Those are of later epochs, and a
-  Commit that could still beat the removal is of the removal's epoch and
-  would open. Their ids are kept in the removal record (version 3) so a copy
-  from another relay counts once. The residual risk is a winner withheld
-  from us while the group went several epochs past it, which the one-epoch
-  horizon refuses for every member anyway; anyone can post undecryptable
-  junk with the group's `h`, so junk can make a contested removal final
-  early (the same outcome as N2 below).
+  none of our exporter secrets opens. A Commit that could still beat the
+  removal is of the removal's epoch (or its parent's) and opens, so it is
+  never counted itself; their ids are kept in the removal record (version 3)
+  so a copy from another relay counts once.
+  **Residual risk** (W22 review B3): a winning Commit that reaches us only
+  after `MARMOT_REMOVAL_FINAL_AFTER` unopenable events -- which may be the
+  winner's own later messages, all of one epoch, or junk anyone can post
+  with the group's `h` -- is refused: we then stay ended while the group,
+  which is on the winner, keeps our leaf (as in N2 below). Only the removed
+  member refuses it, so this is a divergence, not a case the one-epoch
+  horizon covers for everyone. A winner behind 4 of its branch's messages
+  still re-activates us; behind 5 it does not (tested). Groundhog narrows
+  the window by applying each relay's stored answer oldest first, so a
+  winner a relay holds is applied before its branch's later messages.
+  Tracked as nostrc-6njv.
 - **Final: the keys go** (review N1). A removal nobody can beat deletes the
   removed epoch's MLS state, the retained parent and the group's exporter
   secrets, so a stolen store no longer opens them. The group record stays.

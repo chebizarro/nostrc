@@ -747,11 +747,14 @@ MarmotError marmot_leave_group(Marmot *m,
  * forgotten; the result is MARMOT_RESULT_COMMIT, the group active); a
  * removal that beats it replaces it.  The removal also becomes final once
  * MARMOT_REMOVAL_FINAL_AFTER distinct kind:445 events of the group arrived
- * that none of our epochs' secrets opens: the group has moved on without us
- * (a winner of the removal's epoch would open), so a Commit that could still
- * undo the removal was withheld from us; the one-epoch horizon refuses such
- * a late winner for every member anyway (W22 review B2).  Once final, the
- * removed epoch's secrets are deleted.  A later Welcome into the same group
+ * that none of our epochs' secrets opens (W22 review B2); a Commit that
+ * could still beat the removal opens and is never counted itself.  A
+ * winning Commit that reaches us only after MARMOT_REMOVAL_FINAL_AFTER such
+ * events -- which may be the winner's own later messages, or junk anyone
+ * can post with the group's h -- is refused: we then stay ended while the
+ * group keeps our leaf (review B3; an application processing each relay's
+ * stored answer oldest first narrows this).  Once final, the removed
+ * epoch's secrets are deleted.  A later Welcome into the same group
  * clears it.
  * Without a removal (never removed, or left), *out_removed is FALSE.
  *
