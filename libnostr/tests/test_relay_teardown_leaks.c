@@ -30,6 +30,12 @@
  *  filters     Filters handed over with nostr_subscription_set_filters() are
  *              freed with the subscription, after an async cleanup too
  *              (GNostrSubscription's finalize dropped them, nostrc-jw23).
+ *  dials       Two nostr_relay_connect() calls race on one relay (a shared
+ *              relay connected from two pools): both pass the "already
+ *              connected?" check, a hook holds both until both have dialled,
+ *              and exactly one connection may survive (nostrc-vpha: both were
+ *              stored unlocked, the first lost with its channels and a second
+ *              pair of workers).
  *
  * Leaks themselves are visible to LeakSanitizer only (the Linux ASAN build:
  * groundhog-ci.yml's groundhog-sanitizers job runs this test); without it the
@@ -411,6 +417,48 @@ static void test_set_filters_owned_by_subscription(void) {
     printf("  [ok] set filters are freed with the subscription\n");
 }
 
+/* nostrc-vpha: racing dials publish one connection. */
+static atomic_int g_dials;
+
+static void hold_dial(NostrRelay *relay, void *data) {
+    (void)relay;
+    (void)data;
+    atomic_fetch_add(&g_dials, 1);
+    double deadline = now_s() + 10.0; /* a failure bound: both dial at once */
+    while (atomic_load(&g_dials) < 2 && now_s() < deadline) usleep(1000);
+}
+
+static void *dial_thread(void *arg) {
+    Error *err = NULL;
+    bool ok = nostr_relay_connect((NostrRelay *)arg, &err);
+    if (err) free_error(err);
+    return ok ? arg : NULL;
+}
+
+static void test_racing_dials_publish_one_connection(void) {
+    int base = nostr_connection_unreleased_count();
+    NostrRelay *relay = relay_for_port(srv.port);
+    atomic_store(&g_dials, 0);
+    nostr_relay_test_set_dial_hook(hold_dial, NULL);
+    pthread_t a, b;
+    CHECK(pthread_create(&a, NULL, dial_thread, relay) == 0);
+    CHECK(pthread_create(&b, NULL, dial_thread, relay) == 0);
+    void *ra = NULL, *rb = NULL;
+    pthread_join(a, &ra);
+    pthread_join(b, &rb);
+    nostr_relay_test_set_dial_hook(NULL, NULL);
+    CHECK(atomic_load(&g_dials) == 2); /* both dialled: the race happened */
+    CHECK(ra && rb);                   /* and the relay is connected for both */
+    CHECK(nostr_connection_unreleased_count() == base + 1); /* was base + 2 */
+    Error *err = NULL;
+    CHECK(nostr_relay_wait_established(relay, 10000, &err));
+    WAIT_FOR(atomic_load(&srv.open) == 1); /* the loser's socket is closed */
+    nostr_relay_free(relay);
+    CHECK(nostr_connection_unreleased_count() == base);
+    WAIT_FOR(atomic_load(&srv.open) == 0);
+    printf("  [ok] racing dials publish one connection\n");
+}
+
 int main(void) {
     unsetenv("NOSTR_TEST_MODE"); /* the real network path */
     lws_set_log_level(LLL_ERR, NULL);
@@ -424,6 +472,7 @@ int main(void) {
     test_destroy_frees_unread_results();
     test_contexts_are_released();
     test_set_filters_owned_by_subscription();
+    test_racing_dials_publish_one_connection();
 
     server_stop();
 

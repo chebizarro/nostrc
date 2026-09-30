@@ -119,6 +119,12 @@ typedef struct _NostrRelayOkWaiter {
     GoChannel *done; /* carries NostrRelayOkResult* */
 } NostrRelayOkWaiter;
 
+/* nostrc-vpha: test seam. When set, nostr_relay_connect() calls @hook after
+ * its dial succeeds and before it publishes the connection, so a test can
+ * hold two dials there and force their race. NULL (the default) otherwise. */
+typedef void (*NostrRelayDialHook)(struct NostrRelay *relay, void *data);
+void nostr_relay_test_set_dial_hook(NostrRelayDialHook hook, void *data);
+
 /* nostrc-xbso: releases the caller's reference on an answer channel of
  * nostr_relay_write() it will not read (any more): closes it, so the writer's
  * answer fails to send and the writer frees it, frees an answer the writer

@@ -802,14 +802,13 @@ void nostr_relay_free(NostrRelay *relay) {
     nostr_relay_unref(relay);
 }
 
-static void relay_discard_failed_connection(NostrRelay *relay) {
-    if (!relay) return;
+/* nostrc-vpha: see nostr_relay_test_set_dial_hook() in relay-private.h. */
+static _Atomic(NostrRelayDialHook) g_dial_hook = NULL;
+static _Atomic(void *) g_dial_hook_data = NULL;
 
-    nsync_mu_lock(&relay->priv->mutex);
-    NostrConnection *conn = relay->connection;
-    relay->connection = NULL;
-    nsync_mu_unlock(&relay->priv->mutex);
-    relay_retire_connection(relay, conn);
+void nostr_relay_test_set_dial_hook(NostrRelayDialHook hook, void *data) {
+    atomic_store(&g_dial_hook_data, data);
+    atomic_store(&g_dial_hook, hook);
 }
 
 bool nostr_relay_connect(NostrRelay *relay, Error **err) {
@@ -820,7 +819,10 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
 
     /* nostrc-kw9r: Shared relay registry may cause multiple pools to try
      * connecting the same NostrRelay — if already connected, skip. */
-    if (relay->connection != NULL) {
+    nsync_mu_lock(&relay->priv->mutex);
+    bool connected = relay->connection != NULL;
+    nsync_mu_unlock(&relay->priv->mutex);
+    if (connected) {
         return true;
     }
 
@@ -833,60 +835,73 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
         if (err) *err = new_error(1, "error opening websocket to '%s'\n", relay->url);
         return false;
     }
-    relay->connection = conn;
 
-    /* Reset reconnect state on successful connection (nostrc-4du) */
-    nsync_mu_lock(&relay->priv->mutex);
-    relay->priv->reconnect_attempt = 0;
-    relay->priv->backoff_ms = 0;
-    nsync_mu_unlock(&relay->priv->mutex);
-    relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
-
-    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] relay_connect: starting workers\n");
+    NostrRelayDialHook hook = atomic_load(&g_dial_hook);
+    if (hook) hook(relay, atomic_load(&g_dial_hook_data));
 
     /* nostrc-o56: Pass pre-ref'd context to workers to eliminate startup race.
      * We ref the context TWICE here (once per worker) BEFORE spawning threads.
      * This ensures each worker owns a valid reference from the moment it starts,
      * eliminating the race where the worker reads connection_context and then
-     * the context gets freed before the worker can ref it. */
+     * the context gets freed before the worker can ref it. Allocated before the
+     * connection is published, so a failure has nothing to undo but itself. */
     GoContext *ctx = relay->priv->connection_context;
-    if (!ctx) {
-        relay_discard_failed_connection(relay);
+    NostrRelayWorkerArg *write_arg = ctx ? malloc(sizeof(NostrRelayWorkerArg)) : NULL;
+    NostrRelayWorkerArg *loop_arg = ctx ? malloc(sizeof(NostrRelayWorkerArg)) : NULL;
+    if (!ctx || !write_arg || !loop_arg) {
+        free(write_arg);
+        free(loop_arg);
+        relay_retire_connection(relay, conn);
         relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
-        if (err) *err = new_error(1, "no connection context");
+        if (err) *err = new_error(1, ctx ? "failed to allocate worker args" : "no connection context");
         return false;
     }
+
+    /* nostrc-vpha: publish the connection under the mutex, and only if no
+     * other dial published one meanwhile. The check above and this store used
+     * to run unlocked: two dials that both passed the check both stored, and
+     * the first connection was lost with its channels and a second pair of
+     * workers. The loser releases its own connection; the relay is connected
+     * either way. A relay whose loop is alive (a dial landing while it
+     * reconnects) gets the connection but no second loop: the loop adopts it.
+     * fp-ieg8: message_loop_active is set before the loop exists, so a pool
+     * redial worker that looks between pthread_create and the loop's first
+     * instruction still sees the relay as self-managed and stays out;
+     * message_loop clears it on exit. */
+    nsync_mu_lock(&relay->priv->mutex);
+    bool lost = relay->connection != NULL;
+    bool spawn = false;
+    if (!lost) {
+        relay->connection = conn;
+        /* Reset reconnect state on successful connection (nostrc-4du) */
+        relay->priv->reconnect_attempt = 0;
+        relay->priv->backoff_ms = 0;
+        spawn = !relay->priv->message_loop_active;
+        if (spawn) relay->priv->message_loop_active = true;
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+    if (lost) {
+        free(write_arg);
+        free(loop_arg);
+        relay_retire_connection(relay, conn);
+        return true;
+    }
+    relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
+    if (!spawn) {
+        free(write_arg);
+        free(loop_arg);
+        return true;
+    }
+
+    if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] relay_connect: starting workers\n");
 
     /* Pre-ref for each worker (they will unref when done) */
     go_context_ref(ctx);
     go_context_ref(ctx);
-
-    /* Allocate worker args - workers free these when done */
-    NostrRelayWorkerArg *write_arg = malloc(sizeof(NostrRelayWorkerArg));
-    NostrRelayWorkerArg *loop_arg = malloc(sizeof(NostrRelayWorkerArg));
-    if (!write_arg || !loop_arg) {
-        go_context_unref(ctx);
-        go_context_unref(ctx);
-        free(write_arg);
-        free(loop_arg);
-        relay_discard_failed_connection(relay);
-        relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
-        if (err) *err = new_error(1, "failed to allocate worker args");
-        return false;
-    }
-
     write_arg->relay = relay;
     write_arg->ctx = ctx;
     loop_arg->relay = relay;
     loop_arg->ctx = ctx;
-
-    /* fp-ieg8: from here on this relay reconnects itself. Publish that before
-     * the loop exists rather than from inside it, so a pool redial worker that
-     * looks between pthread_create and the loop's first instruction still sees
-     * the relay as self-managed and stays out. message_loop clears it on exit. */
-    nsync_mu_lock(&relay->priv->mutex);
-    relay->priv->message_loop_active = true;
-    nsync_mu_unlock(&relay->priv->mutex);
 
     go_wait_group_add(&relay->priv->workers, 2);
     go_fiber_compat(write_operations, write_arg);
@@ -1164,17 +1179,20 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     /* Install new connection, unless the relay was closed or freed during the
      * dial: nostr_relay_close() and relay_free_impl() cancel the context
      * before they take relay->connection under this mutex, so a connection
-     * installed after that would be released by nobody. */
+     * installed after that would be released by nobody. A nostr_relay_connect()
+     * that dialled meanwhile may have installed one already (nostrc-vpha):
+     * keep that one, it is as new as ours. */
     nsync_mu_lock(&r->priv->mutex);
     bool closing = go_context_is_canceled(r->priv->connection_context);
-    if (!closing) {
+    bool adopted = !closing && r->connection != NULL;
+    if (!closing && !adopted) {
         r->connection = new_conn;
         r->priv->reconnect_attempt = 0;
         r->priv->backoff_ms = 0;
     }
     nsync_mu_unlock(&r->priv->mutex);
+    if (closing || adopted) relay_retire_connection(r, new_conn);
     if (closing) {
-        relay_retire_connection(r, new_conn);
         relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
         return false;
     }

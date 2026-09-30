@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include <glib/gstdio.h>
+#include <openssl/crypto.h>
 #include <sodium.h>
 #include <sqlite3.h>
 
@@ -1785,6 +1786,12 @@ gh_store_open_ephemeral(const gchar *account_pubkey, GhClock *clock, GError **er
     return NULL;
   }
   return store;
+}
+
+void
+gh_store_thread_release_crypto(void)
+{
+  OPENSSL_thread_stop();
 }
 
 void

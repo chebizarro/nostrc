@@ -29,6 +29,11 @@
 #include <glib/gstdio.h>
 #include <limits.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <pthread.h>
+#include <semaphore.h>
+#include <sys/syscall.h>
+#endif
 
 #define DISCOVERY "wss://discovery.test.invalid"
 #define INBOX_A "wss://inbox-a.test.invalid"
@@ -222,6 +227,7 @@ typedef struct {
   FakeResolver *resolver;
   GhAppOutbox *sender;
   GhAccountStore *store;
+  GhClock *clock;           /* NULL = the system clock */
   GPtrArray *events;        /* "opening <acct>", "closed <acct>", "outbox-gone <acct>" */
   gchar *other_store_path;  /* PT-6: must have no open fd when a store opens */
   gboolean fd_checked;
@@ -341,6 +347,7 @@ stack_up(Fixture *f)
     .legacy_state_dir = f->state_dir,
     .create_outbox = f->with_outbox ? make_outbox : NULL,
     .outbox_data = f,
+    .clock = f->clock,
   };
   f->store = gh_account_store_new(&config);
   g_signal_connect(f->store, "store-opening", G_CALLBACK(on_store_opening), f);
@@ -413,6 +420,7 @@ fixture_down(Fixture *f)
   g_free(f->data_dir);
   g_free(f->state_dir);
   g_free(f->other_store_path);
+  g_clear_pointer(&f->clock, gh_clock_unref);
 }
 
 static gboolean
@@ -1649,9 +1657,118 @@ test_status_mapping(void)
   g_assert_cmpint(gh_status_get_banner(status), ==, GH_STATUS_BANNER_NONE);
 }
 
+#ifdef __linux__
+/* ---- the open worker's OpenSSL state (nostrc-vpha) ------------------------------------
+ * SQLCipher's key derivation and page cipher leave OpenSSL state on the thread
+ * that opens a store (its random generators and error queue); OpenSSL frees it
+ * from a thread-local key's destructor when the thread ends. The open worker
+ * is a GTask pool thread, which may end after exit() has run OPENSSL_cleanup():
+ * that deletes the key, nothing frees the state, and LeakSanitizer reports it
+ * (EVP_RAND_CTX_new / ERR_set_mark <- libsqlcipher, groundhog-privacy-e2e under
+ * load). The last case forces that order. hold_key, made first thing in
+ * main() before OpenSSL makes its keys, has its destructor run first when the
+ * worker ends and holds the worker there until release_held_worker(), which
+ * atexit() runs after OPENSSL_cleanup() (registered before it). */
+static pthread_key_t hold_key;
+static sem_t hold_release;
+static GThread *main_thread;
+static gint held_tid; /* atomic: the held worker, 0 until one is */
+
+static void
+hold_worker_exit(gpointer value)
+{
+  (void)value;
+  sem_wait(&hold_release);
+}
+
+static void
+release_held_worker(void)
+{
+  const gint tid = g_atomic_int_get(&held_tid);
+  if (!tid)
+    return;
+  sem_post(&hold_release);
+  /* LeakSanitizer scans a live thread's thread-local storage (and would find
+   * the state there): wait until the worker is gone. */
+  char path[64];
+  g_snprintf(path, sizeof path, "/proc/self/task/%d", tid);
+  const gint64 deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+  while (access(path, F_OK) == 0 && g_get_monotonic_time() < deadline)
+    g_usleep(1000);
+}
+
+/* The system clock, but its first call off the main thread marks that thread
+ * (the open worker: creating the schema reads the time, after SQLCipher keyed
+ * the store) to be held when it ends. */
+static gint64
+marking_real_time(gpointer data)
+{
+  if (g_thread_self() != main_thread) {
+    const gint tid = (gint)syscall(SYS_gettid);
+    if (g_atomic_int_compare_and_exchange(&held_tid, 0, tid))
+      g_assert_cmpint(pthread_setspecific(hold_key, GINT_TO_POINTER(1)), ==, 0);
+  }
+  return gh_clock_get_real_time(data);
+}
+
+static gint64
+marking_monotonic_time(gpointer data)
+{
+  return gh_clock_get_monotonic_time(data);
+}
+
+static guint
+marking_timeout_add(gpointer data, guint64 interval_ms, GSourceFunc func, gpointer func_data,
+                    GDestroyNotify notify)
+{
+  return gh_clock_timeout_add(data, interval_ms, func, func_data, notify);
+}
+
+static gboolean
+marking_source_remove(gpointer data, guint id)
+{
+  return gh_clock_source_remove(data, id);
+}
+
+static guint32
+marking_random_uniform(gpointer data, guint32 upper_bound)
+{
+  return gh_clock_random_uniform(data, upper_bound);
+}
+
+/* The open worker frees its OpenSSL state before it reports the store open:
+ * once the owner has the result it may exit, and the worker may end after. */
+static void
+test_open_worker_frees_openssl_state(void)
+{
+  static const GhClockVTable marking = {
+    marking_real_time, marking_monotonic_time, marking_timeout_add,
+    marking_source_remove, marking_random_uniform,
+  };
+  Fixture f = { 0 };
+  fixture_up(&f, 2);
+  f.clock = gh_clock_new(&marking, gh_clock_new_system(), (GDestroyNotify)gh_clock_unref);
+  /* Pool threads end as soon as they are idle: the worker ends (and is held)
+   * right after the open, not whenever the pool retires it. */
+  g_thread_pool_set_max_unused_threads(0);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  /* A worker created the schema, so it is the one held. */
+  g_assert_cmpint(g_atomic_int_get(&held_tid), !=, 0);
+  fixture_down(&f);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
+#ifdef __linux__
+  /* Before anything initializes OpenSSL: see test_open_worker_frees_openssl_state. */
+  main_thread = g_thread_self();
+  g_assert_cmpint(pthread_key_create(&hold_key, hold_worker_exit), ==, 0);
+  g_assert_cmpint(sem_init(&hold_release, 0, 0), ==, 0);
+  g_assert_cmpint(atexit(release_held_worker), ==, 0);
+#endif
   /* Private XDG homes before anything asks GLib for them: KC-4 proves no
    * file lands in any of them. */
   xdg_root = g_dir_make_tmp("groundhog-account-store-xdg-XXXXXX", NULL);
@@ -1714,6 +1831,11 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-store/forget-in-memory", test_forget_in_memory);
   g_test_add_func("/groundhog/account-store/forget-key-kept", test_forget_key_kept);
   g_test_add_func("/groundhog/account-store/corrupt-read-only", test_corrupt_read_only);
+#ifdef __linux__
+  /* Last: its worker ends at exit. */
+  g_test_add_func("/groundhog/account-store/open-worker-frees-openssl-state",
+                  test_open_worker_frees_openssl_state);
+#endif
   int status = g_test_run();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {
     g_free(npub[key]);

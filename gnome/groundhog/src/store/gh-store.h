@@ -214,6 +214,13 @@ gboolean gh_store_exists(const gchar *data_dir, const gchar *account_pubkey,
 GhStore *gh_store_open_with_key(const GhStoreConfig *config, GBytes *key,
                                 const gchar *store_id, GhStoreOpenFlags flags,
                                 GError **error);
+/* Frees the calling thread's OpenSSL state, which SQLCipher's key
+ * derivation and page cipher leave (its random generators and error queue;
+ * nostrc-vpha). A worker task that opened a store calls it before it reports
+ * done: its thread (a GTask pool thread) may end after OPENSSL_cleanup() has
+ * run at exit, and a thread that ends then leaks that state. The thread may
+ * use OpenSSL again afterwards. */
+void gh_store_thread_release_crypto(void);
 /* In-memory store with the same schema and API for "Continue Without Saving
  * Messages" (KC-4): no file, no key, nothing survives gh_store_close(). */
 GhStore *gh_store_open_ephemeral(const gchar *account_pubkey, GhClock *clock,

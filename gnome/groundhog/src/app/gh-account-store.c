@@ -368,6 +368,8 @@ open_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancellab
   }
   /* The key leaves memory as soon as the store is keyed. */
   g_clear_pointer(&job->key, g_bytes_unref);
+  /* Before the result reaches the owner, who may then exit (nostrc-vpha). */
+  gh_store_thread_release_crypto();
   if (job->store)
     g_task_return_boolean(task, TRUE);
   else

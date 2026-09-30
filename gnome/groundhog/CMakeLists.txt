@@ -635,13 +635,18 @@ if (TARGET PkgConfig::GROUNDHOG_SQLCIPHER AND TARGET PkgConfig::GROUNDHOG_STORE_
     endforeach()
   endfunction()
 
+  # gh_store_thread_release_crypto() frees the OpenSSL thread state SQLCipher
+  # leaves (nostrc-vpha): the libcrypto SQLCipher itself links.
+  if (NOT TARGET OpenSSL::Crypto)
+    find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+  endif()
   function(groundhog_store_library name)
     add_library(${name} STATIC ${GROUNDHOG_STORE_SOURCES})
     target_include_directories(${name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
     # sqlite3_key_v2 is declared by SQLCipher's sqlite3.h only with this set.
     target_compile_definitions(${name} PUBLIC SQLITE_HAS_CODEC=1)
     target_link_libraries(${name} PUBLIC PkgConfig::GROUNDHOG_SQLCIPHER
-      PkgConfig::GROUNDHOG_STORE_DEPS ${CMAKE_DL_LIBS})
+      PkgConfig::GROUNDHOG_STORE_DEPS OpenSSL::Crypto ${CMAKE_DL_LIBS})
     target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
   endfunction()
 
