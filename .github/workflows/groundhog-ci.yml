@@ -235,6 +235,12 @@ jobs:
           done
           cmake --build build-asan --parallel 2 --target "${targets[@]}"
 
+      - name: The pre-push path filter covers every input of this build
+        # nostrc-3han: scripts/pre-push runs this job's set only for pushes
+        # touching SANITIZER_PATHS (scripts/sanitizer-gate-ci.py); every
+        # source file this build reads, by ninja, must be under them.
+        run: python3 scripts/sanitizer-gate-ci.py check-inputs --build-dir build-asan
+
       - name: Run them under the sanitizers
         env:
           # halt_on_error: a UBSAN report fails its test as an ASAN one does.

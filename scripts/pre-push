@@ -11,7 +11,8 @@
 # groundhog-ci.yml's groundhog-sanitizers job, ASAN+UBSAN+LSan, read from the
 # candidate's workflow) on that checkout too, when the pushed range touches
 # what that job tests (scripts/sanitizer-gate-ci.py affected). All three run at
-# once; any failure blocks the push.
+# once (the sanitizer tests themselves after the macOS build); any failure
+# blocks the push.
 #
 # The Linux stages need Docker. Without it the push is blocked; on a machine
 # that cannot run Docker, set NOSTRC_SKIP_LINUX_GATE=1 to validate on the host
@@ -124,8 +125,14 @@ sanitizer_gate_wanted() {
         echo "Pre-push: sanitizer stage runs: no known base for $local_ref, so the whole commit counts"
         return 0
     fi
-    why="$(git -C "$repo_root" diff --name-only --no-renames "$1" "$2" |
-           python3 "$repo_root/scripts/sanitizer-gate-ci.py" affected)" || status=$?
+    # Fail closed: a range git cannot compute (a force push over a remote tip
+    # never fetched) runs the stage rather than reading as "no files".
+    local changed
+    if ! changed="$(git -C "$repo_root" diff --name-only --no-renames "$1" "$2" 2>"$tmp/diff.err")"; then
+        echo "Pre-push: sanitizer stage runs: git cannot list what $local_ref changes since $1 ($(head -1 "$tmp/diff.err")), so the whole commit counts"
+        return 0
+    fi
+    why="$(printf '%s\n' "$changed" | python3 "$repo_root/scripts/sanitizer-gate-ci.py" affected)" || status=$?
     case "$status" in
         0) echo "Pre-push: sanitizer stage runs: $why"; return 0 ;;
         1) echo "Pre-push: sanitizer stage skipped for $local_ref: $why"; return 1 ;;
@@ -176,9 +183,15 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         "$repo_root/scripts/linux-gate.sh" "$linux_src" < /dev/null > "$linux_log" 2>&1 &
         linux_pid=$!
     fi
+    # The sanitizer tests wait for this file, so they run after the macOS
+    # build: under a build's load their exit races lose into leak reports.
+    host_build_done="$tmp/host-build/done"
+    mkdir -p "$tmp/host-build"
+    rm -f "$host_build_done"
     if sanitizer_gate_wanted "$base" "$local_oid"; then
         echo "Pre-push verification (Linux ASAN+UBSAN+LSan, in background): $local_ref ($local_oid)"
-        "$repo_root/scripts/linux-gate.sh" --sanitizers "$linux_src" < /dev/null > "$sanitizer_log" 2>&1 &
+        NOSTRC_GATE_HOST_BUILD_SIGNAL="$host_build_done" \
+            "$repo_root/scripts/linux-gate.sh" --sanitizers "$linux_src" < /dev/null > "$sanitizer_log" 2>&1 &
         sanitizer_pid=$!
     fi
 
@@ -202,6 +215,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     echo "Pre-push verification: $local_ref ($local_oid), BUILD_GROUNDHOG=$groundhog"
     cmake -S "$checkout" -B "$build" -DCMAKE_BUILD_TYPE=Debug -DBUILD_GROUNDHOG="$groundhog"
     cmake --build "$build"
+    : > "$host_build_done"
     finish_stages if-done
     test_count="$(ctest --test-dir "$build" -N | awk '/^Total Tests: [0-9]+$/ { print $3 }')"
     if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then

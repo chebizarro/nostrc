@@ -120,24 +120,29 @@ bugs at run time (slow). Run the Linux stage alone with
 
 A third stage, in parallel with the other two, runs hosted CI's
 `groundhog-sanitizers` job (ASAN+UBSAN+LSan) in the same container
-(`scripts/linux-gate.sh --sanitizers`). Its configure flags, test list, sanitizer
-options, `gnome/groundhog/tests/lsan.supp` and "every test registered, none
-skipped" checks are read from the candidate's `groundhog-ci.yml` at run time
-(`scripts/sanitizer-gate-ci.py`), so the gate and CI cannot drift apart. It runs
-only when the pushed range touches `gnome/groundhog/`, `libnostr/`,
-`nostr-gobject/`, `libmarmot/`, `marmot-gobject/`, `libgo/`, `nips/`, `tests/` or
-the workflow; otherwise the hook says it was skipped and why. It builds
-incrementally in its own volume (`nostrc-linux-gate-asan-<arch>`) and runs the
-tests at the job's own parallelism, never beside the smoke run's tests (the two
-stages' test runs take turns): under more load its ASAN tests time out and lose
-exit races into leak reports CI does not see. A test that
-fails with a sanitizer report (a leak, UB, a memory error) blocks the push with
-its whole output and is never rerun; any other failure is rerun once, as in the
-smoke run. Leaks in Groundhog are fixed, not suppressed; `lsan.supp` is only for
-leaks in other libraries that Groundhog cannot free, each naming its bead.
-`NOSTRC_SKIP_SANITIZER_GATE=1` skips this stage alone, with a loud banner; a leak
-pushed past it turns `groundhog-sanitizers` red on master (nostrc-kdxe). Run the
-stage alone with `scripts/linux-gate.sh --sanitizers <clean checkout>`.
+(`scripts/linux-gate.sh --sanitizers`). Its configure flags, env (of the
+workflow, the job and each step), test list, sanitizer options,
+`gnome/groundhog/tests/lsan.supp` and "every test registered, none skipped"
+checks are read from the candidate's `groundhog-ci.yml` at run time
+(`scripts/sanitizer-gate-ci.py`), so the gate and CI cannot drift apart; a job
+shape the reader cannot reproduce fails the push rather than run weaker. It runs
+only when the pushed range touches `SANITIZER_PATHS` in
+`scripts/sanitizer-gate-ci.py` (every input of the job's build, which the gate
+and the job itself check against ninja's graph, plus the workflow, the image and
+the gate), or when git cannot compute the range; otherwise the hook says it was
+skipped and why. It builds incrementally in its own volume
+(`nostrc-linux-gate-asan-<arch>`) and runs the tests at the job's own
+parallelism, alone: after the macOS build, with no Linux build of any gate and
+no smoke test run beside them (locks in the volume `nostrc-linux-gate-tests`).
+Under a build's load its ASAN tests time out and lose exit races into leak
+reports CI does not see. A test that fails with a sanitizer report (a leak, UB,
+a memory error) blocks the push with its whole output and is never rerun; any
+other failure is rerun once, as in the smoke run. Leaks in Groundhog are fixed,
+not suppressed; `lsan.supp` is only for leaks in other libraries that Groundhog
+cannot free, each naming its bead, and none may cover an allocation Groundhog
+owns. `NOSTRC_SKIP_SANITIZER_GATE=1` skips this stage alone, with a loud banner;
+a leak pushed past it turns `groundhog-sanitizers` red on master (nostrc-kdxe).
+Run the stage alone with `scripts/linux-gate.sh --sanitizers <clean checkout>`.
 
 ### 2. Unit Tests
 

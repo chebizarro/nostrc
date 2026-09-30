@@ -102,6 +102,18 @@ case "$1" in
             # ... and the job as read from that checkout's workflow.
             case " $* " in *" GATE_CONFIG=GH_SAN_TESTS=(groundhog-identity "*) ;; *) exit 1 ;; esac
             case " $* " in *" MODE=sanitizers "*) ;; *) exit 1 ;; esac
+            # Its tests wait for the host build's signal (a mounted file).
+            signal_dir="" wait_file=""
+            for arg; do
+                case "$arg" in
+                    *:/gate-signal:ro) signal_dir="${arg%:/gate-signal:ro}" ;;
+                    GATE_WAIT_FILE=/gate-signal/*) wait_file="${arg#GATE_WAIT_FILE=/gate-signal/}" ;;
+                esac
+            done
+            [ -n "$signal_dir" ] && [ -n "$wait_file" ] || { echo NO_SIGNAL_MOUNT >> "$TRACE"; exit 1; }
+            for _ in $(seq 1 200); do [ -e "$signal_dir/$wait_file" ] && break; sleep 0.1; done
+            [ -e "$signal_dir/$wait_file" ] || { echo NO_SIGNAL >> "$TRACE"; exit 1; }
+            printf 'SANITIZER_TESTS\n' >> "$TRACE"
         fi
         sleep "${LINUX_SLEEP:-0}"
         [ "${FAIL_STAGE:-}" != "$stage" ] ;;
@@ -143,6 +155,8 @@ grep -q '^DOCKER_RUN linux .*/linux-src:/src:ro' "$tmp/trace"
 # The candidate touches gnome/groundhog: the sanitizer stage runs beside it.
 grep -q '^DOCKER_RUN sanitizer .*nostrc-linux-gate-asan-arm64:/work' "$tmp/trace"
 grep -q 'sanitizer stage runs: the range touches gnome/groundhog/' "$tmp/output"
+# Its tests start only after the host (macOS) build.
+awk '/^BUILD /{b=NR} /^SANITIZER_TESTS$/{t=NR} END{exit !(b && t && b < t)}' "$tmp/trace"
 absent 'SKIPPED' "$tmp/output"
 assert_clean
 
@@ -201,13 +215,14 @@ grep -q 'Linux build failed' "$tmp/linux-output"
 absent '^CTEST ' "$tmp/trace"
 assert_clean
 
-# So does a sanitizer failure (a leak report), named as one.
+# So does a sanitizer failure (a leak report), named as one; its tests ran
+# after the host build.
 if BUILD_SLEEP=3 run_hook sanitizer > "$tmp/sanitizer-output" 2>&1; then
     echo 'Sanitizer failure did not block the push' >&2
     exit 1
 fi
 grep -q 'Sanitizer gate failed' "$tmp/sanitizer-output"
-absent '^CTEST ' "$tmp/trace"
+awk '/^BUILD /{b=NR} /^SANITIZER_TESTS$/{t=NR} END{exit !(b && t && b < t)}' "$tmp/trace"
 assert_clean
 
 # A host failure stops the Linux stage instead of waiting for it.
@@ -278,7 +293,8 @@ absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
 assert_clean
 
 # Each new commit changes only a Groundhog dependency/config input, not
-# Groundhog itself; the sanitizer stage runs for those its job tests.
+# Groundhog itself. Every one is also an input of the sanitizer build (or the
+# job, or its image), so the sanitizer stage runs for each.
 for path in CMakeLists.txt cmake/BuildConfig.cmake gnome/seahorse/secret_store.c \
     libnostr/src/nostr-event.c nostr-gobject/src/nostr_relay.c \
     nips/nip19/src/nip19.c nips/nip55l/dbus/org.nostr.Signer.xml \
@@ -293,15 +309,38 @@ for path in CMakeLists.txt cmake/BuildConfig.cmake gnome/seahorse/secret_store.c
     candidate="$(git -C "$branch" rev-parse HEAD)"
     run_hook > "$tmp/dep-output" 2>&1
     grep -q 'BUILD_GROUNDHOG=ON' "$tmp/trace"
-    case "$path" in
-        libnostr/*|nostr-gobject/*|nips/*|.github/workflows/groundhog-ci.yml)
-            grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace" ;;
-        *)
-            absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
-            grep -q 'sanitizer stage skipped' "$tmp/dep-output" ;;
-    esac
+    grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace"
+    grep -q 'sanitizer stage runs: the range touches' "$tmp/dep-output"
     assert_clean
 done
+# Inputs of the sanitizer build that are not Groundhog's own inputs, and its
+# image: the sanitizer stage runs for them too.
+for path in libjson/src/json.c components/nostrdb/src/nostrdb_storage.c \
+    third_party/nsync/internal/mu.c NipOptions.cmake scripts/linux-ci.Dockerfile; do
+    mkdir -p "$branch/$(dirname "$path")"
+    printf '# dependency change\n' >> "$branch/$path"
+    git -C "$branch" add "$path"
+    git -C "$branch" commit -qm "change $path"
+    base="$candidate"
+    candidate="$(git -C "$branch" rev-parse HEAD)"
+    run_hook > "$tmp/dep-output" 2>&1
+    grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace"
+    assert_clean
+done
+
+# A range git cannot compute (a force push over a remote tip never fetched)
+# runs the stage: it must not read as "no files changed".
+printf 'unrelated 2\n' > "$branch/unrelated"
+git -C "$branch" add unrelated
+git -C "$branch" commit -qm "unrelated 2"
+candidate="$(git -C "$branch" rev-parse HEAD)"
+base=1234567890123456789012345678901234567890
+run_hook > "$tmp/unknown-output" 2>&1
+grep -q 'sanitizer stage runs: git cannot list what refs/heads/candidate changes since 1234567890123456789012345678901234567890' "$tmp/unknown-output"
+grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace"
+absent 'sanitizer stage skipped' "$tmp/unknown-output"
+assert_clean
+base="$(git -C "$branch" rev-parse HEAD~1)"
 
 # A new branch (no remote oid) is filtered against its merge base with
 # origin/master: a docs-only branch skips the sanitizer stage.

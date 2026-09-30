@@ -37,6 +37,9 @@
 #   NOSTRC_SANITIZER_TEST_JOBS --sanitizers test parallelism (default: the job's
 #                              ctest --parallel; under more load its ASAN tests
 #                              pass their timeouts and race into leak reports).
+#   NOSTRC_GATE_HOST_BUILD_SIGNAL  --sanitizers: a host file whose creation
+#                              says the host's own build is done; the tests wait
+#                              for it (scripts/pre-push sets it for the macOS build).
 # scripts/pre-push also honours NOSTRC_SKIP_LINUX_GATE=1 (no Docker) and
 # NOSTRC_SKIP_SANITIZER_GATE=1.
 #
@@ -44,10 +47,16 @@
 # nostrc-linux-gate-asan-<arch>): the synced source (unchanged files keep their
 # timestamps, so rebuilds are incremental) and the build tree. A lock inside it
 # serialises concurrent gates. A change of configure arguments starts the build
-# tree afresh, so no cached option outlives its removal from CI. The two stages
-# build at once, but their test runs take turns (a lock in the volume
-# nostrc-linux-gate-tests): beside the 14-way smoke run, ASAN tests pass their
-# timeouts and lose exit races into leak reports that CI never sees.
+# tree afresh, so no cached option outlives its removal from CI (nor its
+# configure env: CC, CFLAGS).
+#
+# Load: beside a build or the 14-way smoke run, ASAN tests pass their timeouts
+# and lose exit races into leak reports that CI never sees. So the sanitizer
+# tests run alone, by two locks in the volume nostrc-linux-gate-tests shared by
+# every gate: each Linux build holds build.lock shared and the sanitizer tests
+# hold it exclusive (no Linux build of any gate runs beside them), and the test
+# runs of both stages take turns on tests.lock. The host's build is outside the
+# VM: the sanitizer tests first wait for NOSTRC_GATE_HOST_BUILD_SIGNAL.
 # `docker volume rm nostrc-linux-gate-arm64` resets it.
 set -euo pipefail
 # Bash reads a script while running it: parse all of it first, so a checkout
@@ -152,6 +161,8 @@ if [ "$MODE" = sanitizers ]; then
   # GH_SAN_SKIP_PATTERN, from the job (scripts/sanitizer-gate-ci.py).
   eval "$GATE_CONFIG"
   CONFIGURE_ARGS=("${GH_SAN_CONFIGURE[@]}")
+  CONFIGURE_ENV=("${GH_SAN_CONFIGURE_ENV[@]}")
+  BUILD_ENV=("${GH_SAN_BUILD_ENV[@]}")
   BUILD_ARGS=(--target "${GH_SAN_TARGETS[@]}")
   BUILT="groundhog and the sanitizer tests"
 else
@@ -162,33 +173,51 @@ else
   # groundhog-ci still compile it.
   CONFIGURE_ARGS=(-G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_GROUNDHOG=ON -DBUILD_TESTING=ON
     -DBLUEPRINT_COMPILER=OFF "-DCMAKE_C_FLAGS=$STRICT_CFLAGS")
+  CONFIGURE_ENV=()
+  BUILD_ENV=()
   BUILD_ARGS=()
   BUILT="all targets"
 fi
-# A cache keeps an option CI no longer passes: other arguments, a fresh tree.
-# (A volume from before this record adopts its tree.)
-if [ -f /work/configure.args ] &&
-   [ "$(printf "%s\n" "${CONFIGURE_ARGS[@]}")" != "$(cat /work/configure.args)" ]; then
+# A cache keeps an option (or a compiler) CI no longer passes: other arguments
+# or configure env, a fresh tree. (A volume from before this record adopts it.)
+CONFIGURE_RECORD="$(printf "%s\n" "${CONFIGURE_ARGS[@]}"; [ ${#CONFIGURE_ENV[@]} -eq 0 ] ||
+                    printf "env %s\n" "${CONFIGURE_ENV[@]}")"
+if [ -f /work/configure.args ] && [ "$CONFIGURE_RECORD" != "$(cat /work/configure.args)" ]; then
   echo "==> $GATE: configure arguments changed; starting the build tree afresh"
   rm -rf /work/build
 fi
 configure() {
-  cmake -S /work/src -B /work/build "${CONFIGURE_ARGS[@]}" >/work/configure.log 2>&1
+  env "${CONFIGURE_ENV[@]}" cmake -S /work/src -B /work/build "${CONFIGURE_ARGS[@]}" \
+    >/work/configure.log 2>&1
 }
 if ! configure; then
   echo "==> $GATE: configure failed on the cached build tree; retrying from scratch"
   rm -rf /work/build
   configure || { tail -60 /work/configure.log; echo "==> $GATE: CONFIGURE FAILED"; exit 1; }
 fi
-printf "%s\n" "${CONFIGURE_ARGS[@]}" > /work/configure.args
+printf "%s\n" "$CONFIGURE_RECORD" > /work/configure.args
 echo "==> $GATE: configured ($(stamp))"
-if ! cmake --build /work/build --parallel "$JOBS" "${BUILD_ARGS[@]}" >/work/build.log 2>&1; then
+# Builds share build.lock; the sanitizer tests hold it alone (see above).
+exec 7>/gate-lock/build.lock
+if ! flock -n -s 7; then
+  echo "==> $GATE: waiting for the sanitizer tests of a gate to finish before building ($(stamp))"
+  flock -s 7
+fi
+if ! env "${BUILD_ENV[@]}" cmake --build /work/build --parallel "$JOBS" "${BUILD_ARGS[@]}" \
+    >/work/build.log 2>&1; then
   show_errors /work/build.log
   echo "==> $GATE: BUILD FAILED ($(stamp))"
   exit 1
 fi
+exec 7>&-
 echo "==> $GATE: built $BUILT ($(stamp))"
 if [ "$MODE" = sanitizers ]; then
+  # The path filter scripts/pre-push runs this stage by must cover every
+  # source input of this build (scripts/sanitizer-gate-ci.py check-inputs).
+  if ! (cd /work/src && python3 /gate/sanitizer-gate-ci.py check-inputs --build-dir /work/build); then
+    echo "==> $GATE: THE PATH FILTER MISSES INPUTS OF THIS BUILD ($(stamp))"
+    exit 1
+  fi
   # As the job does: every listed test is registered, none silently dropped.
   TEST_REGEX="^($(IFS="|"; echo "${GH_SAN_TESTS[*]}"))\$"
   expected="$(printf "%s\n" "${GH_SAN_TESTS[@]}" | sort)"
@@ -207,7 +236,18 @@ if [ "$MODE" = sanitizers ]; then
   export TEST_REGEX DISPLAY_WRAP=0 CTEST_TIMEOUT= TAIL_LINES=all \
     FORBID_PATTERN="$GH_SAN_SKIP_PATTERN" SANITIZER_REPORTS=block \
     GATE SUITE="sanitizer tests" JOBS="${SANITIZER_TEST_JOBS:-$GH_SAN_TEST_JOBS}"
-  echo "==> $GATE: running ${#GH_SAN_TESTS[@]} tests, $JOBS at a time"
+  # Alone: after the host'"'"'s build, and with no Linux build running (fd 7,
+  # exclusive, held through the run and its rerun).
+  if [ -n "${GATE_WAIT_FILE:-}" ] && [ ! -e "$GATE_WAIT_FILE" ]; then
+    echo "==> $GATE: waiting for the host build to finish ($(stamp))"
+    until [ -e "$GATE_WAIT_FILE" ]; do sleep 1; done
+  fi
+  exec 7>/gate-lock/build.lock
+  if ! flock -n -x 7; then
+    echo "==> $GATE: waiting for Linux builds to finish ($(stamp))"
+    flock -x 7
+  fi
+  echo "==> $GATE: running ${#GH_SAN_TESTS[@]} tests, $JOBS at a time ($(stamp))"
 else
   [ "$RUN_TESTS" = 1 ] || { echo "==> $GATE: smoke tests skipped (NOSTRC_GATE_LINUX_TESTS=0)"; exit 0; }
 fi
@@ -219,16 +259,24 @@ if ! flock -n 8; then
 fi
 # The test run, and a rerun of what failed in it: scripts/linux-gate-smoke.sh
 # (mounted from beside this script, so the two always match). The locks stay
-# held: fds 8 and 9 are inherited.
+# held: fds 7 (sanitizers), 8 and 9 are inherited.
 GATE_SECONDS=$SECONDS exec bash /gate/smoke.sh'
 
+SIGNAL_MOUNT=()
+if [ "$MODE" = sanitizers ] && [ -n "${NOSTRC_GATE_HOST_BUILD_SIGNAL:-}" ]; then
+    SIGNAL_MOUNT=(-v "$(dirname "$NOSTRC_GATE_HOST_BUILD_SIGNAL"):/gate-signal:ro"
+                  -e "GATE_WAIT_FILE=/gate-signal/$(basename "$NOSTRC_GATE_HOST_BUILD_SIGNAL")")
+fi
+
 # --init: a signal to this script (the macOS stage failed) stops the container.
-exec docker run --rm --init --platform "linux/$ARCH" \
+# (${SIGNAL_MOUNT[@]+...}: bash 3.2 calls an empty array unbound under set -u.)
+exec docker run --rm --init --platform "linux/$ARCH" ${SIGNAL_MOUNT[@]+"${SIGNAL_MOUNT[@]}"} \
     -e JOBS="${JOBS:-}" -e RUN_TESTS="${NOSTRC_GATE_LINUX_TESTS:-1}" \
     -e STRICT_CFLAGS="$STRICT_CFLAGS" -e SMOKE_EXCLUDE="$SMOKE_EXCLUDE" \
     -e VOLUME="$VOLUME" -e MODE="$MODE" -e GATE="$GATE" -e GATE_CONFIG="$GATE_CONFIG" \
     -e SANITIZER_TEST_JOBS="${NOSTRC_SANITIZER_TEST_JOBS:-}" \
     -v "$SOURCE:/src:ro" -v "$SCRIPTS/linux-gate-smoke.sh:/gate/smoke.sh:ro" \
+    -v "$SCRIPTS/sanitizer-gate-ci.py:/gate/sanitizer-gate-ci.py:ro" \
     -v "$VOLUME:/work" -v nostrc-linux-gate-tests:/gate-lock "$IMAGE" \
     bash -c 'JOBS="${JOBS:-$(nproc)}"; '"$CMD"
 }

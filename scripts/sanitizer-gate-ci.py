@@ -3,24 +3,39 @@
 
 usage: sanitizer-gate-ci.py config [--workflow FILE] [--source-root DIR]
        sanitizer-gate-ci.py affected < CHANGED_PATHS
+       sanitizer-gate-ci.py check-inputs --build-dir DIR [--source-root DIR]
+                                         [--workflow FILE]
 
 config: read the `groundhog-sanitizers` job of groundhog-ci.yml and print, as
 bash assignments, what the gate needs to run that job exactly:
   GH_SAN_TESTS          the job's GROUNDHOG_SANITIZER_TESTS
   GH_SAN_TARGETS        what its build step builds for them
   GH_SAN_CONFIGURE      its configure step's cmake arguments after -S/-B
-  GH_SAN_ENV            NAME=VALUE for its test step's env and exports
-                        (ASAN/UBSAN/LSAN options; $PWD becomes --source-root)
+  GH_SAN_CONFIGURE_ENV  NAME=VALUE the configure step runs with: the
+                        workflow's, the job's and the step's env (CC, CFLAGS;
+                        not the test list, which only the step scripts read)
+  GH_SAN_BUILD_ENV      the same for the build step
+  GH_SAN_ENV            the same for the test step, then its run script's
+                        exports (ASAN/UBSAN/LSAN options; $PWD becomes
+                        --source-root)
   GH_SAN_SKIP_PATTERN   the ERE its test step rejects in the ctest log
   GH_SAN_TEST_JOBS      its ctest --parallel (1 without one): ASAN tests
                         time out and race under more load than CI gives them
 The gate reads these at run time, so CI and the gate cannot drift apart. When
 a step changes in a way this reader does not understand (another command in
-the configure step, a new ctest option, a different target mapping), it fails
-instead of guessing: update the reader and scripts/linux-gate.sh with the job.
+the configure step, a new ctest option, a different target mapping, a step
+key such as working-directory, `defaults`, a job container or services, an
+expression in an env value, a step writing $GITHUB_ENV), it fails instead of
+guessing: update the reader and scripts/linux-gate.sh with the job.
 
 affected: exit 0 when one of the changed paths (one per line on stdin) is
 under SANITIZER_PATHS, 1 when none is; print why either way.
+
+check-inputs: every source file the job's build reads (ninja's inputs of its
+targets, the deps log's headers, the configure inputs of build.ninja) must be
+under SANITIZER_BUILD_PATHS, or `affected` could skip a push that changes the
+job's result; exit 1 naming each one that is not. Run by the gate after each
+sanitizer build and by the job itself.
 
 No PyYAML: the macOS host that runs the pre-push hook has no yaml module, so
 this reads the subset of YAML the workflows use (block mappings, sequences,
@@ -28,27 +43,57 @@ this reads the subset of YAML the workflows use (block mappings, sequences,
 """
 
 import argparse
+import os
 import re
 import shlex
+import subprocess
 import sys
 
 WORKFLOW = ".github/workflows/groundhog-ci.yml"
 JOB = "groundhog-sanitizers"
 TESTS_VAR = "GROUNDHOG_SANITIZER_TESTS"
 
-# What the sanitizer tests link or run, and the job itself. A push touching
-# none of these cannot change the job's result.
-SANITIZER_PATHS = (
+# Every source input of the job's build: what its targets compile, include
+# and link, and what the configure reads. `check-inputs` proves the list
+# against the build's ninja graph (a directory ends in "/"; third_party/ also
+# matches a submodule pointer change, which git reports as the bare path).
+SANITIZER_BUILD_PATHS = (
+    "CMakeLists.txt",                 # the sanitizer switches, apply_sanitizers
+    "NipOptions.cmake",
+    "cmake/",                         # NostrcTestBus.cmake defines a test of the set
+    "Testing/CMakeLists.txt",         # configure-only: the root adds these
+    "benchmark/CMakeLists.txt",
+    "libhanami/CMakeLists.txt",
+    "libhanami/hanami.pc.in",
+    "tools/CMakeLists.txt",
     "gnome/groundhog/",
+    "gnome/seahorse/",                # gnostr-secret, linked by groundhog-identity
+    "apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml",  # Groundhog's test schemas
     "libnostr/",
+    "libjson/",
+    "libgo/",
     "nostr-gobject/",
     "libmarmot/",
     "marmot-gobject/",
-    "libgo/",
     "nips/",
+    "components/nostrdb/",
+    "third_party/",
     "tests/",
-    WORKFLOW,
 )
+# ... and what is not a build input but changes how the job runs here.
+SANITIZER_PATHS = SANITIZER_BUILD_PATHS + (
+    WORKFLOW,
+    "scripts/linux-ci.Dockerfile",    # the compiler, sanitizer runtime and libraries
+    "scripts/linux-gate.sh",          # the stage itself
+    "scripts/linux-gate-smoke.sh",
+    "scripts/sanitizer-gate-ci.py",
+)
+
+# Keys the gate reproduces: of the job, and of its configure, build and test
+# steps. Anything else fails `config`.
+JOB_KEYS = {"name", "runs-on", "timeout-minutes", "env", "steps", "needs", "permissions", "if"}
+STEP_KEYS = {"name", "run", "env"}
+RUNS_ON = "ubuntu-24.04"              # scripts/linux-ci.Dockerfile's base image
 
 # ctest options of the job's test step that the gate reproduces (the gate
 # passes --output-on-failure, --no-tests=error and -R itself, and its own
@@ -225,21 +270,73 @@ BUILD_SHAPE = [
 ]
 
 
+def _env(mapping, where):
+    """(name, value) pairs of an env: mapping; expressions are not reproduced."""
+    if mapping is None:
+        return []
+    if not isinstance(mapping, dict):
+        raise WorkflowError("%s env is not a mapping" % where)
+    pairs = []
+    for name, value in mapping.items():
+        value = "" if value is None else str(value)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)):
+            raise WorkflowError("%s env name %r" % (where, name))
+        if "${{" in value or "\n" in value:
+            raise WorkflowError("%s env %s is not a plain value: %r" % (where, name, value))
+        pairs.append((str(name), value))
+    return pairs
+
+
+def _merge(*envs):
+    """Later envs override earlier ones, as a step's env overrides its job's."""
+    merged = {}
+    for env in envs:
+        for name, value in env:
+            merged.pop(name, None)
+            merged[name] = value
+    return list(merged.items())
+
+
+def _check_step(step, what):
+    extra = sorted(set(step) - STEP_KEYS)
+    if extra:
+        raise WorkflowError("the %s step has %s, which the gate does not reproduce"
+                            % (what, ", ".join(extra)))
+
+
 def job_config(text, source_root):
     doc = parse_yaml(text)
+    if not isinstance(doc, dict):
+        raise WorkflowError("not a workflow")
+    if "defaults" in doc:
+        raise WorkflowError("workflow-level defaults, which the gate does not reproduce")
     try:
         job = doc["jobs"][JOB]
     except (KeyError, TypeError):
         raise WorkflowError("no job %s" % JOB)
+    extra = sorted(set(job) - JOB_KEYS)
+    if extra:
+        raise WorkflowError("job %s has %s, which the gate does not reproduce"
+                            % (JOB, ", ".join(extra)))
+    if job.get("runs-on") != RUNS_ON:
+        raise WorkflowError("job %s runs on %r; the gate's image is %s"
+                            % (JOB, job.get("runs-on"), RUNS_ON))
+    common = _merge(_env(doc.get("env"), "workflow"), _env(job.get("env"), "job"))
     tests = str((job.get("env") or {}).get(TESTS_VAR, "")).split()
     if not tests:
         raise WorkflowError("job %s has no %s" % (JOB, TESTS_VAR))
     if len(set(tests)) != len(tests):
         raise WorkflowError("%s lists a test twice" % TESTS_VAR)
     steps = job.get("steps") or []
+    for step in steps:
+        if isinstance(step, dict) and re.search(r"GITHUB_(ENV|PATH)", str(step.get("run", ""))):
+            raise WorkflowError("step %r writes $GITHUB_ENV/$GITHUB_PATH, which the gate "
+                                "does not reproduce" % step.get("name"))
 
     # Configure: one cmake command, whose arguments the gate passes as they are.
-    configure = _commands(_step(steps, "cmake -S", "configure")["run"])
+    configure_step = _step(steps, "cmake -S", "configure")
+    _check_step(configure_step, "configure")
+    configure = _commands(configure_step["run"])
     if len(configure) != 1:
         raise WorkflowError("the configure step runs %d commands, not one cmake: %r"
                             % (len(configure), configure))
@@ -252,7 +349,9 @@ def job_config(text, source_root):
         raise WorkflowError("configure arguments expand variables: %r" % configure_args)
 
     # Build: groundhog plus one target per test, mapped as the step maps them.
-    build = _commands(_step(steps, "cmake --build", "build")["run"])
+    build_step = _step(steps, "cmake --build", "build")
+    _check_step(build_step, "build")
+    build = _commands(build_step["run"])
     if len(build) != len(BUILD_SHAPE):
         raise WorkflowError("the build step changed shape: %r" % build)
     initial = None
@@ -269,11 +368,8 @@ def job_config(text, source_root):
 
     # Test run: the step's env, its exports, its ctest options, its skip check.
     run_step = _step(steps, "ctest", "test")
+    _check_step(run_step, "test")
     env = []
-    for name, value in (run_step.get("env") or {}).items():
-        if "${{" in str(value):
-            raise WorkflowError("test step env %s uses an expression: %s" % (name, value))
-        env.append((name, str(value)))
     script = run_step["run"]
     for command in _commands(script):
         m = re.fullmatch(r"export (\w+)=(.*)", command)
@@ -309,11 +405,19 @@ def job_config(text, source_root):
     skip = re.search(r"grep -Eq '([^']+)' \S*ctest\.log", script)
     if not skip:
         raise WorkflowError("the test step no longer rejects skipped tests (grep -Eq '...')")
+    env = _merge(common, _env(run_step.get("env"), "test step"), env)
+    pairs = lambda e: ["%s=%s" % pair for pair in e]
+    # The test list reaches CMake only through the build step's script, which
+    # GH_SAN_TARGETS reproduces; kept out of the configure record, a change to
+    # the list does not start the build tree afresh.
+    common = [(n, v) for n, v in common if n != TESTS_VAR]
     return {
         "GH_SAN_TESTS": tests,
         "GH_SAN_TARGETS": targets,
         "GH_SAN_CONFIGURE": configure_args,
-        "GH_SAN_ENV": ["%s=%s" % pair for pair in env],
+        "GH_SAN_CONFIGURE_ENV": pairs(_merge(common, _env(configure_step.get("env"), "configure step"))),
+        "GH_SAN_BUILD_ENV": pairs(_merge(common, _env(build_step.get("env"), "build step"))),
+        "GH_SAN_ENV": pairs(env),
         "GH_SAN_SKIP_PATTERN": skip.group(1),
         "GH_SAN_TEST_JOBS": test_jobs,
     }
@@ -331,12 +435,17 @@ def as_bash(config):
 
 # ---- the path filter ----------------------------------------------------------
 
+def _under(path, prefix):
+    return path == prefix or (prefix.endswith("/") and
+                              (path.startswith(prefix) or path == prefix[:-1]))
+
+
 def affected(paths):
     """(True, why) when a path is under SANITIZER_PATHS, else (False, why)."""
     hits = {}
     for path in paths:
         for prefix in SANITIZER_PATHS:
-            if path == prefix or (prefix.endswith("/") and path.startswith(prefix)):
+            if _under(path, prefix):
                 hits.setdefault(prefix, []).append(path)
     if hits:
         return True, "the range touches " + ", ".join(
@@ -348,6 +457,35 @@ def affected(paths):
         len(paths), " ".join(SANITIZER_PATHS))
 
 
+def build_inputs(build_dir, source_root, targets):
+    """The source files (relative to source_root) that building targets in
+    build_dir reads, by ninja: the targets' inputs, recursively; the headers
+    of every object in the deps log; the configure's inputs (build.ninja's)."""
+    def ninja(*args):
+        return subprocess.run(["ninja", "-C", build_dir] + list(args), check=True,
+                              stdout=subprocess.PIPE, universal_newlines=True).stdout
+    raw = set()
+    for out in (ninja("-t", "inputs", *targets), ninja("-t", "inputs", "build.ninja")):
+        raw.update(line.strip() for line in out.splitlines() if line.strip())
+    raw.update(line.strip() for line in ninja("-t", "deps").splitlines()
+               if line[:1] in (" ", "\t") and line.strip())
+    src = os.path.realpath(source_root)
+    build = os.path.realpath(build_dir)
+    found = set()
+    for path in raw:
+        path = os.path.realpath(path if os.path.isabs(path) else os.path.join(build, path))
+        if path == build or path.startswith(build + os.sep):
+            continue  # generated
+        if path.startswith(src + os.sep):
+            found.add(os.path.relpath(path, src))
+    return sorted(found)
+
+
+def check_inputs(inputs):
+    """The inputs no SANITIZER_BUILD_PATHS entry covers."""
+    return [p for p in inputs if not any(_under(p, prefix) for prefix in SANITIZER_BUILD_PATHS)]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -355,7 +493,36 @@ def main(argv=None):
     cfg.add_argument("--workflow", default=WORKFLOW)
     cfg.add_argument("--source-root", default=".")
     sub.add_parser("affected")
+    chk = sub.add_parser("check-inputs")
+    chk.add_argument("--build-dir", required=True)
+    chk.add_argument("--source-root", default=".")
+    chk.add_argument("--workflow")
     args = parser.parse_args(argv)
+    if args.command == "check-inputs":
+        workflow = args.workflow or os.path.join(args.source_root, WORKFLOW)
+        try:
+            with open(workflow, encoding="utf-8") as f:
+                targets = job_config(f.read(), args.source_root)["GH_SAN_TARGETS"]
+            inputs = build_inputs(args.build_dir, args.source_root, targets)
+        except (OSError, WorkflowError, ValueError, subprocess.CalledProcessError) as e:
+            print("sanitizer-gate-ci: check-inputs: %s" % e, file=sys.stderr)
+            return 2
+        if not any(p.startswith("gnome/groundhog/") for p in inputs):
+            print("sanitizer-gate-ci: check-inputs: no Groundhog input among %d: is %s the "
+                  "job's build?" % (len(inputs), args.build_dir), file=sys.stderr)
+            return 2
+        missing = check_inputs(inputs)
+        if missing:
+            print("sanitizer-gate-ci: %d input(s) of the job's build are outside "
+                  "SANITIZER_BUILD_PATHS, so a push changing only them would skip the "
+                  "sanitizer stage; add them to scripts/sanitizer-gate-ci.py:" % len(missing),
+                  file=sys.stderr)
+            for path in missing:
+                print("  " + path, file=sys.stderr)
+            return 1
+        print("check-inputs: all %d source inputs of the job's build are under "
+              "SANITIZER_BUILD_PATHS" % len(inputs))
+        return 0
     if args.command == "affected":
         paths = [line.rstrip("\n") for line in sys.stdin if line.strip()]
         run, why = affected(paths)
