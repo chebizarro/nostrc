@@ -19,9 +19,12 @@ leak:go_context_background
 #    nostr_subscription_free_async() thread and abandons;
 leak:nostr_relay_prepare_subscription
 #  - and what nostr_subscription_free_async() itself allocates for that
-#    thread (its cleanup handle and done channel), leaked when the thread
-#    has not run by exit: a race, seen under load (nostrc-xbso). Anchored:
-#    it allocates nothing on behalf of Groundhog.
+#    thread (its cleanup handle and done channel), which finalize abandons
+#    at once: leaked when the thread has not finished by exit, a race
+#    (nostrc-xbso). Anchored. Groundhog never calls it; its callers are
+#    nostr-gobject's subscription finalize and simple pool and libnostr's
+#    simple pool, so a caller that keeps the returned handle and never
+#    abandons or waits on it is hidden too.
 leak:^nostr_subscription_free_async$
 #  - the filters gnostr_subscription_new() takes ownership of, which
 #    finalize drops unfreed (the core subscription only borrows them).
@@ -44,15 +47,3 @@ leak:nostr_subscription_dispatch_closed
 # gone first (a relay torn down with a write in flight, e.g. the AUTH or
 # EVENT of a publish that just ended), neither is ever freed.
 leak:write_operations
-# ... and one step earlier (nostrc-xbso): nostr_relay_write() allocates the
-# request, its frame copy and the answer channel, keeps a channel reference
-# for the writer, and queues the request; a relay torn down with the request
-# still queued never frees it (Groundhog's gh-relay-gnostr-write.c releases
-# its own reference). A race, seen under load. Blind spot: a caller that
-# forgets to unref its answer channel is hidden too.
-leak:^nostr_relay_write$
-# ... and its error path (nostrc-xbso): when the request cannot be queued,
-# write_error() sends a new Error into the answer channel from its own
-# thread; a caller that has closed the channel by then (Groundhog's write
-# confirmation timed out) never receives it, and the failed send drops it.
-leak:^write_error$
