@@ -157,8 +157,8 @@ check(App *app, guint key)
 static GSettings *
 settings_with_discovery(const gchar *url)
 {
-  GSettings *settings = g_settings_new_with_backend("org.nostr.Groundhog",
-                                                    g_memory_settings_backend_new());
+  g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
+  GSettings *settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
   const gchar *urls[] = { url, NULL };
   g_settings_set_strv(settings, "discovery-relays", url ? urls : (const gchar *[]){ NULL });
   return settings;
