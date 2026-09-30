@@ -1078,6 +1078,75 @@ test_catch_up_past_relay_cap(void)
 }
 
 
+/* Review B3: two group relays, each capped at 50 and each holding part of
+ * a 303-event backlog: a third only on g, a third only on h, a third on
+ * both. The scope deduplicates across relays, so neither relay's share is
+ * the whole backlog nor a contiguous part of it. Applied oldest first as one
+ * set once both relays have paged it (not one relay's share at a time),
+ * every message is read, and the cursor passes the backlog. */
+static void
+test_catch_up_two_relays_partial(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  w.g.max_limit = 50;
+  w.h.max_limit = 50;
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  const gchar *relays[] = { w.g.url, w.h.url, NULL };
+  GhMlsGroup *ga = create_group_on(alice, "Two relays", relays, (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  join(bob, ALICE);
+  /* g asks for AUTH before it stores a publish: the Add Commit may be on h first. */
+  WireStored *any = last_stored_445(&w.g) ? last_stored_445(&w.g) : last_stored_445(&w.h);
+  g_assert_nonnull(any);
+  g_autofree gchar *h = g_strdup(h_of(any));
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;                  /* served only as re-signed below */
+  w.h.withhold_new = TRUE;
+  StoredCount on_h = { &w.h, h, w.h.stored->len, 0 };
+  Backlog backlog;
+  make_backlog(&w, alice, ga, h, 100, 3, 66, &backlog);
+  on_h.count = backlog.ids->len;            /* h has every original too, withheld */
+  spin_until(stored_reached, &on_h, "the backlog stored on h");
+  w.g.withhold_new = FALSE;
+  w.h.withhold_new = FALSE;
+  gint64 start = real_now() + 5, newest = 0;
+  for (guint i = 0; i < backlog.ids->len; i++) {
+    newest = start + i / 3;
+    g_autofree gchar *copy = resigned(stored_by_id(&w.g, g_ptr_array_index(backlog.ids, i))->json,
+                                      newest);
+    if (i % 3 != 1)
+      wire_relay_inject(&w.g, copy);
+    if (i % 3 != 0)
+      wire_relay_inject(&w.h, copy);
+  }
+
+  set_online(bob, TRUE);
+  TextsWait all = { bob, room, backlog.texts, 0 };
+  spin_until(texts_listed, &all, "every message of the backlog");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
+  wait_live(gb);
+  g_assert_cmpint(gh_mls_group_get_unreadable(gb), ==, 0);
+  CursorWait moved = { gb, newest };
+  spin_until(cursor_reached, &moved, "the cursor past the backlog");
+  g_assert_cmpuint(paged_reqs(&w.g), >=, 3);   /* each relay held about 200: paged */
+  g_assert_cmpuint(paged_reqs(&w.h), >=, 3);
+  send_text(alice, ga, "after the two-relay catch-up");
+  wait_message(bob, room, "after the two-relay catch-up");
+  backlog_clear(&backlog);
+  world_down(&w);
+}
+
 /* nostrc-kzun (after nostrc-dha5): a backlog of more than 200 kind 445s in
  * one stored answer -- 249 messages across 3 Commits, the first Commit
  * withheld and released last, as run_catch_up() does -- reaches the service
@@ -1536,6 +1605,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/catch-up-4-commits", test_catch_up_4);
   g_test_add_func("/groundhog/mls-service/catch-up-5-commits", test_catch_up_5);
   g_test_add_func("/groundhog/mls-service/catch-up-past-relay-cap", test_catch_up_past_relay_cap);
+  g_test_add_func("/groundhog/mls-service/catch-up-two-relays-partial",
+                  test_catch_up_two_relays_partial);
   g_test_add_func("/groundhog/mls-service/catch-up-over-200", test_catch_up_over_200);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);

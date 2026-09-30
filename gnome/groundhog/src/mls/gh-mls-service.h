@@ -75,11 +75,15 @@ G_BEGIN_DECLS
  * REQ limit GH_MLS_SERVICE_PAGE_LIMIT, then older pages with until = the
  * oldest received, down to since, at most GH_MLS_SERVICE_MAX_PAGES, while
  * the live REQ stays open; a relay has answered only once its paging ended
- * complete. A relay's backfill (its stored answer and older pages) is kept
- * until that EOSE, or until the relay fails, and then applied oldest first:
- * libmarmot keeps only a few skipped message keys per sender, so a long
- * backlog applied newest first would leave its older messages unreadable.
- * Live events are applied as they come. The read cursor (the
+ * complete. Backfill (stored answers and older pages) is kept, from every
+ * group relay together, until no relay is still delivering a backfill
+ * round (each has sent its EOSE or failed, or has sent nothing), and then
+ * applied oldest first as one set: libmarmot keeps only a few skipped
+ * message keys per sender, so a long backlog applied newest first -- or in
+ * one relay's share at a time, since events are deduplicated across relays
+ * -- would leave older messages unreadable. Live events wait with it while
+ * a backfill is pending, and are applied as they come otherwise. The read
+ * cursor (the
  * REQ's since, minus an overlap) moves only for events libmarmot accepted
  * and the store kept, only while every group relay has answered, never past
  * now and never past an event held or dropped unread. Held events are kept
