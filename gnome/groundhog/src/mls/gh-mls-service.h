@@ -83,8 +83,10 @@ G_BEGIN_DECLS
  * one relay's share at a time, since events are deduplicated across relays
  * -- would leave older messages unreadable. Live events wait with it while
  * a backfill is pending, and are applied as they come otherwise. The wait is
- * bounded: relays that delivered part of a round and then stay silent for
- * GH_MLS_SERVICE_BACKFILL_QUIET_S (once every other relay has finished) are
+ * bounded: relays that delivered part of a round and then deliver nothing
+ * more of their stored answers for GH_MLS_SERVICE_BACKFILL_QUIET_S -- their
+ * live traffic does not count (nostrc-iihf) -- (once every other relay has
+ * finished) are
  * given up as answered-incomplete, and so is every relay still delivering
  * when the store reaches its bound; the store is then applied. The read
  * cursor (the

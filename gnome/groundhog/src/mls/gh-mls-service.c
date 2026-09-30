@@ -1496,7 +1496,11 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
   case GH_RELAY_NOTICE_EVENT:
     /* A live event waits too while a backfill is pending: applied first it
      * would move the sender's ratchet past the stored older ones. */
-    if (update->backfill)
+    /* Only stored-answer progress holds the flush for @url: live traffic of a
+     * relay whose older page stalled must not restart its quiet period, or a
+     * busy group would show nothing until that relay went quiet (nostrc-iihf,
+     * w21-mls-prereqs closing review M1). It still waits in the store. */
+    if (update->backfill && update->stored)
       touch_backfilling(group, update->url);
     if (g_hash_table_size(group->backfilling) > 0 || !g_queue_is_empty(&group->backfill))
       keep_backfill(group, update);

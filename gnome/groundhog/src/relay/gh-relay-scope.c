@@ -478,7 +478,7 @@ count_answer(GhRelayScope *scope, GhEndpoint *endpoint, NostrEvent *event,
 /* A verified event of @url's answer: once per id, to the caller. */
 static void
 deliver_event(GhRelayScope *scope, GhEndpoint *endpoint, const gchar *event_json,
-              const gchar *id)
+              const gchar *id, gboolean stored)
 {
   if (g_hash_table_contains(scope->seen, id))
     return;
@@ -491,7 +491,7 @@ deliver_event(GhRelayScope *scope, GhEndpoint *endpoint, const gchar *event_json
   }
   GhRelayUpdate update = { .notice = GH_RELAY_NOTICE_EVENT, .url = endpoint->url,
                            .event_json = event_json, .event_id = id,
-                           .backfill = !endpoint->eose };
+                           .backfill = !endpoint->eose, .stored = stored };
   emit_update(scope, &update);
 }
 
@@ -514,8 +514,10 @@ gh_relay_scope_event(GhRelayScope *scope, const gchar *url,
   if (valid && scope->pageable && !endpoint->live_eose)
     count_answer(scope, endpoint, event, scope->filters, NULL);
   nostr_event_free(event);
+  /* Stored: the live REQ's answer before its own EOSE; after it, live
+   * traffic, even while the URL's older pages are still coming (iihf). */
   if (valid)
-    deliver_event(scope, endpoint, event_json, id);
+    deliver_event(scope, endpoint, event_json, id, !endpoint->live_eose && !endpoint->eose);
 }
 
 static void
@@ -704,7 +706,7 @@ on_page_update(GhRelayScope *page, const GhRelayUpdate *update, gpointer data)
       count_answer(scope, endpoint, event, page->filters, endpoint->page_map);
     if (event)
       nostr_event_free(event);
-    deliver_event(scope, endpoint, update->event_json, update->event_id);
+    deliver_event(scope, endpoint, update->event_json, update->event_id, TRUE);
     break;
   }
   case GH_RELAY_NOTICE_EOSE:

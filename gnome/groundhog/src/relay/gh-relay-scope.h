@@ -84,7 +84,9 @@ G_BEGIN_DECLS
  *    (that second is stepped over), or the page budget ran out. The caller
  *    must then not move a durable cursor past what it has; the next
  *    subscription asks again.
- * Paged events are EVENT notices of the URL like any other (backfill TRUE).
+ * Paged events are EVENT notices of the URL like any other (backfill TRUE,
+ * stored TRUE). Events of the live REQ after its own EOSE are live traffic
+ * (stored FALSE) even while they are still flagged backfill.
  * A disconnect, an overflow retry or an authenticated retry restarts the
  * round with the new REQ's answer. Filters with their own limit ("only the
  * newest N") are never paged.
@@ -121,6 +123,9 @@ typedef struct {
   const gchar *detail;     /* CLOSED, AUTH, OK or ERROR */
   gboolean accepted;       /* relay-local OK, never upstream delivery */
   gboolean backfill;       /* EVENT received before this URL's EOSE */
+  gboolean stored;         /* EVENT of a stored answer: the live REQ's before its own
+                            * EOSE, or an older page's; FALSE for live traffic, which
+                            * can still be backfill while older pages come (iihf) */
   gboolean incomplete;     /* EOSE of a paging scope: older events are missing */
 } GhRelayUpdate;
 
