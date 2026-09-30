@@ -937,7 +937,14 @@ held_older_first(gconstpointer a, gconstpointer b)
  * (process_event() -> after_commit() -> here) only asks for another pass,
  * and passes repeat until one applies no Commit. Each pass takes the held
  * events oldest first, so an epoch's messages are tried before the Commit
- * that closes it; a whole newest-first backlog resolves in one call.
+ * that closes it; a whole newest-first backlog resolves in one call. Once a
+ * Commit applied, a pass ends with that Commit's own second (the rest waits
+ * for the next pass, oldest first again). Inside one second the order is
+ * the relay's, not the sender's: a message of the new epoch may have come
+ * before the Commit, and reading the epoch's later seconds first would move
+ * the sender's ratchet past libmarmot's window of skipped keys (32) before
+ * it is tried again (nostrc-kzun); the rest of that second is still tried,
+ * as it may hold the closing epoch's messages.
  *
  * Junk: anyone can post a kind 445 with the group's public h. Once the
  * fixpoint ends, every event still unreadable counts one miss per Commit
@@ -963,12 +970,20 @@ retry_held(GhMlsGroup *group)
     g_queue_init(&group->held);
     g_hash_table_remove_all(group->held_ids);
     pass = g_list_sort(pass, held_older_first);   /* stable: arrival order within a second */
+    gint64 pass_ends = G_MAXINT64;                /* the second of a Commit applied */
     for (GList *l = pass; l; l = l->next) {
       Held *held = l->data;
-      if (group->active && process_event(group, held->json, NULL, held) != EVENT_HELD) {
-        held_free(held);
-        continue;
+      gint64 at = held->created_at;
+      if (at <= pass_ends && group->active) {
+        gboolean before = group->retry_again;
+        if (process_event(group, held->json, NULL, held) != EVENT_HELD) {
+          if (!before && group->retry_again)
+            pass_ends = at;
+          held_free(held);
+          continue;
+        }
       }
+      /* Still held, or left for the next pass. */
       g_queue_push_tail(&group->held, held);
       g_hash_table_add(group->held_ids, held->id);
     }

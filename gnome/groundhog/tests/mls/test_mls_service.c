@@ -615,9 +615,8 @@ test_held_until_commit(void)
  * later-epoch message that arrives after it (the oldest held goes first),
  * the queue never grows past its cap, and junk that stays unreadable
  * through GH_MLS_SERVICE_JUNK_AFTER_COMMITS Commits is dropped. The junk
- * comes live in batches: GNostrSubscription keeps at most 200 queued events
- * per subscription (nostrc-75o3), so one larger burst would lose events
- * before Groundhog saw them. */
+ * comes live in one burst of 300: GNostrSubscription no longer drops events
+ * past 200 queued (nostrc-dha5, nostrc-kzun). */
 static void
 test_junk_does_not_evict(void)
 {
@@ -637,13 +636,11 @@ test_junk_does_not_evict(void)
 
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   guint base = gh_mls_group_get_unreadable(gb), injected = 0;
-  for (guint batch = 0; batch < 3; batch++) {
-    for (guint i = 0; i < 100; i++) {
-      g_autofree gchar *junk = junk_445(h, injected++, now);
-      wire_relay_inject(&w.g, junk);
-    }
-    wait_unreadable(gb, (gint)MIN(base + injected, GH_MLS_SERVICE_MAX_HELD));
+  for (guint i = 0; i < 300; i++) {
+    g_autofree gchar *junk = junk_445(h, injected++, now);
+    wire_relay_inject(&w.g, junk);
   }
+  wait_unreadable(gb, (gint)MIN(base + injected, GH_MLS_SERVICE_MAX_HELD));
   /* The next epoch's Commit, withheld; then its message, live. */
   w.g.withhold_new = TRUE;
   OpWait renamed = { 0 };
@@ -1081,6 +1078,74 @@ test_catch_up_past_relay_cap(void)
 }
 
 
+/* nostrc-kzun (after nostrc-dha5): a backlog of more than 200 kind 445s in
+ * one stored answer -- 249 messages across 3 Commits, the first Commit
+ * withheld and released last, as run_catch_up() does -- reaches the service
+ * complete: all 251 served events are held at once (GNostrSubscription's old
+ * 200-event queue dropped the oldest of such a burst), then every message
+ * is read, the epochs match, nothing is left unreadable and the cursor
+ * passes the backlog. (Re-signed three per second, oldest first, with Bob's
+ * clock a day ahead, as in catch-up-past-relay-cap: libmarmot keeps 32
+ * skipped keys per sender, and a relay's order inside one second is not the
+ * sender's, so more than that in one second cannot be read in any order.) */
+static void
+test_catch_up_over_200(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Over 200", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  g_autofree gchar *h = g_strdup(h_of(last_stored_445(&w.g)));
+  join(bob, ALICE);
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+  gint base = (gint)gh_mls_group_get_unreadable(gb);
+
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;                  /* served only as re-signed below */
+  Backlog backlog;
+  make_backlog(&w, alice, ga, h, 0, 3, 83, &backlog);
+  gint64 start = real_now() + 5, newest = 0;
+  g_autofree gchar *first_commit = NULL;
+  for (guint i = 0; i < backlog.ids->len; i++) {
+    const gchar *id = g_ptr_array_index(backlog.ids, i);
+    gboolean first = g_str_equal(id, backlog.first_commit);
+    newest = start + i / 3;
+    g_autofree gchar *copy = resigned(stored_by_id(&w.g, id)->json, newest);
+    w.g.withhold_new = first;               /* the first Commit comes last */
+    wire_relay_inject(&w.g, copy);
+    if (first)
+      first_commit = g_strdup(last_stored_445(&w.g)->id);
+  }
+  w.g.withhold_new = FALSE;
+  guint served = backlog.ids->len - 1;
+  g_assert_cmpuint(served, >, 200);
+  g_assert_cmpuint(base + served, <=, GH_MLS_SERVICE_MAX_HELD);
+
+  set_online(bob, TRUE);
+  wait_live(gb);
+  wait_unreadable(gb, base + (gint)served);          /* all of it arrived */
+  wire_relay_release(&w.g, first_commit);           /* the first Commit, last */
+  TextsWait all = { bob, room, backlog.texts, 0 };
+  spin_until(texts_listed, &all, "every message of the backlog");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
+  g_assert_cmpint(gh_mls_group_get_unreadable(gb), ==, base);   /* none of the backlog */
+  send_text(alice, ga, "after the backlog");
+  wait_message(bob, room, "after the backlog");
+  CursorWait moved = { gb, newest };
+  spin_until(cursor_reached, &moved, "the cursor past the backlog");
+  backlog_clear(&backlog);
+  world_down(&w);
+}
+
 /* A group relay that fails during a catch-up may hold what the others lack:
  * until every relay answered, nothing moves the cursor. (Bob's store clock
  * runs a day ahead so that the cursor would visibly move.) */
@@ -1471,6 +1536,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/catch-up-4-commits", test_catch_up_4);
   g_test_add_func("/groundhog/mls-service/catch-up-5-commits", test_catch_up_5);
   g_test_add_func("/groundhog/mls-service/catch-up-past-relay-cap", test_catch_up_past_relay_cap);
+  g_test_add_func("/groundhog/mls-service/catch-up-over-200", test_catch_up_over_200);
   g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
                   test_join_commit_pins_no_cursor);
   g_test_add_func("/groundhog/mls-service/failed-relay-holds-the-cursor",
