@@ -175,8 +175,9 @@ sync_identity(GhMlsNewGroupPage *self)
 {
   GhMlsIdentityCopy copy = gh_mls_identity_copy(identity_state(self));
   gboolean shown = copy.title != NULL;
-  const gchar *before = gtk_widget_get_visible(GTK_WIDGET(self->identity_group))
-    ? adw_preferences_row_get_title(ADW_PREFERENCES_ROW(self->identity_row)) : NULL;
+  /* A copy: setting the title frees the row's old string (W22 review C1). */
+  g_autofree gchar *before = gtk_widget_get_visible(GTK_WIDGET(self->identity_group))
+    ? g_strdup(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(self->identity_row))) : NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->identity_group), shown);
   if (shown) {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->identity_row), copy.title);
