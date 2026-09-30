@@ -148,6 +148,9 @@ ensure_subscription(GhGnostrHandle *handle)
                            NULL, FALSE, "subscription creation failed");
     return;
   }
+  /* The scope keeps only what "event" hands it; no event may be dropped
+   * (nostrc-dha5). Lossless is the default; say so. */
+  gnostr_subscription_set_lossless(handle->subscription, TRUE);
   g_signal_connect(handle->subscription, "event", G_CALLBACK(on_event), handle);
   g_signal_connect(handle->subscription, "eose", G_CALLBACK(on_eose), handle);
   g_signal_connect(handle->subscription, "closed", G_CALLBACK(on_closed), handle);

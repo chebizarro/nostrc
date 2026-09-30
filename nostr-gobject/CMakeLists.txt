@@ -14,8 +14,8 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 2)
-set(NOSTR_GOBJECT_MINOR_VERSION 0)
-set(NOSTR_GOBJECT_MICRO_VERSION 3)
+set(NOSTR_GOBJECT_MINOR_VERSION 1)
+set(NOSTR_GOBJECT_MICRO_VERSION 0)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
   ${NOSTR_GOBJECT_MINOR_VERSION}
@@ -447,6 +447,9 @@ if(BUILD_TESTING)
       LIBS nostr_gobject PkgConfig::NOSTR_GOBJECT_TEST_SOUP
       TIMEOUT 120
     )
+    # nostrc-dha5: GNOSTR_TESTING seam in src/nostr_subscription_test_hooks.h
+    target_include_directories(test_nostr_gobject_subscription_eose_order PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
   endif()
 
   # ── New tests (require testkit) ──────────────────────────────────

@@ -36,6 +36,7 @@ GNostrSubscription *gnostr_subscription_new(GNostrRelay *relay, NostrFilters *fi
 gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
 void gnostr_subscription_close(GNostrSubscription *self);
 void gnostr_subscription_detach_filters(GNostrSubscription *self); /* nostrc-aaf0 */
+void gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossless);
 
 
 #include <glib.h>
@@ -1190,6 +1191,9 @@ gnostr_pool_subscribe(GNostrPool   *self,
                             "failed to create subscription");
         return NULL;
     }
+    /* Gnostr's UI subscription: bounded, as before nostrc-dha5 made
+     * lossless the default (its events are persisted by the NDB ingest). */
+    gnostr_subscription_set_lossless(sub, FALSE);
 
     if (!gnostr_subscription_fire(sub, error)) {
         /* Detach filters before unref so caller retains ownership on failure (nostrc-aaf0) */
@@ -1363,6 +1367,10 @@ multi_sub_subscribe_to_relay(GNostrPoolMultiSub *multi_sub, GNostrRelay *relay)
         return FALSE;
     }
     
+    /* Gnostr's UI subscriptions stay bounded (nostrc-dha5, see
+     * gnostr_pool_subscribe()). */
+    gnostr_subscription_set_lossless(sub, FALSE);
+
     /* Store multi-sub reference in subscription for callbacks */
     g_object_set_data(G_OBJECT(sub), "multi-sub", multi_sub);
     

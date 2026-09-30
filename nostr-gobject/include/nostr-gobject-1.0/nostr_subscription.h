@@ -108,6 +108,44 @@ gboolean gnostr_subscription_fire(GNostrSubscription *self, GError **error);
  */
 void gnostr_subscription_close(GNostrSubscription *self);
 
+/**
+ * gnostr_subscription_set_lossless:
+ * @self: a #GNostrSubscription
+ * @lossless: %TRUE to deliver every event, %FALSE to bound the queue
+ *
+ * Chooses how events wait between the relay and the main loop, where the
+ * "event" signal is emitted in small time-sliced batches.
+ *
+ * Lossless (the default): no event is ever dropped. The monitor thread keeps
+ * libnostr's subscription channel drained (libnostr itself drops events when
+ * that channel is full), so a burst the main loop has not caught up with
+ * waits in memory. Use this whenever the "event" handler is where events are
+ * kept, e.g. a DM inbox or group history backfill.
+ *
+ * Bounded (%FALSE): at most 200 events wait; when full, the oldest waiting
+ * event is dropped. Only for UIs whose events are also persisted by another
+ * path (Gnostr ingests relay events into nostrdb), where a stale backlog is
+ * worth less than a responsive main loop.
+ *
+ * In both modes "eose" and "closed" are never dropped, and "event", "eose"
+ * and "closed" are emitted in the order the relay sent them. May be called at
+ * any time; it applies to events queued afterwards. (nostrc-dha5)
+ *
+ * Since: 2.1
+ */
+void gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossless);
+
+/**
+ * gnostr_subscription_get_lossless:
+ * @self: a #GNostrSubscription
+ *
+ * Returns: whether @self delivers every event; see
+ *   gnostr_subscription_set_lossless()
+ *
+ * Since: 2.1
+ */
+gboolean gnostr_subscription_get_lossless(GNostrSubscription *self);
+
 /* --- Property Accessors --- */
 
 /**

@@ -24,6 +24,14 @@
   <url type="homepage">https://github.com/chebizarro/nostrc</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.11.1" type="development" date="2026-09-30">
+      <description>
+        <p>Unreleased preview.</p>
+        <ul>
+          <li>Loading a long conversation or group history no longer silently skips messages when more than 200 arrive at once</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.0" type="development" date="2026-09-29">
       <description>
         <p>Unreleased preview.</p>

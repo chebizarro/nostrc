@@ -13,12 +13,12 @@ files already declare a version.
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 1.1.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.2 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 2.0.3 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 2.1.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.10.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.4.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
-| groundhog | `gnome/groundhog/` | 0.11.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
+| groundhog | `gnome/groundhog/` | 0.11.1 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | NIP-46 client/provider | `nips/nip46/` | Unversioned | Unreleased | — | None; authoritative version ownership must be established before release |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
@@ -99,6 +99,9 @@ Decisions for components affected by another component's change (AGENTS.md,
 | libnostr 1.0.11 -> 1.1.0 (MINOR: new `nostr_relay_set_state_callback_full()`, `nostr_relay_set_auth_callback_full()`, `nostr_relay_set_ok_callback_full()` and the `NostrRelayDestroyNotify` / `NostrRelayOkResponseCallback` typedefs; registered callbacks are refcounted slots, so a callback's user data outlives any call already in progress when it is replaced or removed; the OK setter now takes the relay mutex; nostrc-flp7) | libnostr | 1.1.0 | MINOR: backward-compatible new public API. The existing setters keep their signatures and semantics (the relay never owns their user data); the private `NostrRelayPrivate` callback fields changed, which is not ABI. |
 | same (nostrc-flp7: GNostrRelay finalize no longer frees its core-callback data before detaching the callbacks; the relay registry holds weak references; finalize no longer reads the core relay's connection unlocked; GNostrRelay and GNostrPool auth handlers, event sink and cache query user data are refcounted so a worker or relay still using them keeps them alive) | nostr-gobject | 2.0.3 | PATCH: use-after-free fixes, no API change. Requires libnostr >= 1.1.0. User data given to `gnostr_pool_set_auth_handler()`, `_set_event_sink()`, `_set_cache_query()` and `gnostr_relay_set_auth_handler()` may now be destroyed later (once the last relay or running query lets go) and on that thread; every in-tree caller passes NULL. |
 | same | gnostr, groundhog, signet | 0.1.0, 0.11.0, unversioned | No bump: no source change; a rebuild picks up the fix. The same detach-then-free pattern in signet's relay pool, nostr-dispatcher's nd-fetch and nip46's client_start is left to follow-up beads (they can move to the `_full` setters). |
+| nostr-gobject 2.0.3 -> 2.1.0 (MINOR: `GNostrSubscription:lossless`, `gnostr_subscription_set_lossless()` / `_get_lossless()`; lossless is the default and never drops an event, the nostrc-75o3 200-event drop-oldest queue becomes the opt-in bounded mode; GNostrPool's `gnostr_pool_subscribe()` and `gnostr_pool_subscribe_multi()` select bounded; nostrc-dha5) | nostr-gobject | 2.1.0 | MINOR: new public API. Behaviour change for direct `gnostr_subscription_new()` users (no more drops; a burst waits in memory); pool subscriptions behave as before. 2.0.3 (nostrc-flp7) was never released, so both ship in 2.1.0. |
+| same | groundhog | 0.11.1 | PATCH: GhRelayScope selects lossless explicitly; backfills over 200 events (DM inbox, NIP-29 history, MLS kind 445) no longer lose events. |
+| same | gnostr | 0.1.0 | No bump (unreleased) and no behaviour change: it subscribes through GNostrPool, which keeps the bounded queue. |
 
 ## Maintenance
 

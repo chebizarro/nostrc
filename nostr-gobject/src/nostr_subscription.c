@@ -35,12 +35,17 @@
 
 #include <glib.h>
 
+#ifdef GNOSTR_TESTING
+#include "nostr_subscription_test_hooks.h"
+#endif
+
 /* Property IDs */
 enum {
     PROP_0,
     PROP_ID,
     PROP_ACTIVE,
     PROP_STATE,
+    PROP_LOSSLESS,
     N_PROPERTIES
 };
 
@@ -65,10 +70,16 @@ static guint sub_signals[GNOSTR_SUBSCRIPTION_SIGNALS_COUNT] = { 0 };
 #define DRAIN_BATCH_CHECK    10
 #define DRAIN_TIME_BUDGET_US 8000   /* 8 ms in microseconds */
 
-/* nostrc-75o3: Bound event queue capacity.  At startup 10 relays x 100
- * events = 1000 events backlog.  NDB persistence stores all events via
- * the ingest path, so dropping oldest UI-queue entries is safe — they
- * are already persisted and the UI will catch up on the next query. */
+/* nostrc-75o3: Bound event queue capacity in bounded mode.  At startup
+ * 10 relays x 100 events = 1000 events backlog.  In Gnostr, NDB
+ * persistence stores all events via the ingest path, so dropping oldest
+ * UI-queue entries is safe there — they are already persisted and the UI
+ * will catch up on the next query.
+ *
+ * nostrc-dha5: that holds only for such a caller. Groundhog's relay scope
+ * keeps what the "event" handler receives and nothing else, and lost every
+ * event of a backfill past 200. Dropping is therefore opt-in (lossless =
+ * FALSE); by default nothing is dropped. */
 #define EVENT_QUEUE_CAPACITY 200
 
 struct _GNostrSubscription {
@@ -92,6 +103,8 @@ struct _GNostrSubscription {
     GPtrArray *event_queue;               /* pending SubItem*, in arrival order */
     guint queued_events;                  /* SUB_ITEM_EVENT entries in event_queue */
     gboolean event_idle_scheduled;        /* TRUE while drain idle is pending */
+    gboolean lossless;                    /* never drop events (nostrc-dha5);
+                                           * under event_queue_mutex */
 };
 
 G_DEFINE_TYPE(GNostrSubscription, gnostr_subscription, G_TYPE_OBJECT)
@@ -233,11 +246,16 @@ queue_item_for_main(GNostrSubscription *self, SubItem *item)
     g_mutex_lock(&self->event_queue_mutex);
 
     if (item->kind == SUB_ITEM_EVENT) {
-        /* nostrc-75o3: Bound the queue — drop the oldest *event* when at
-         * capacity.  NDB persistence already stores all events via the
-         * ingest path, so UI-level drops are safe; the UI will catch up on
-         * the next query.  EOSE/CLOSED markers are never dropped. */
-        while (self->queued_events >= EVENT_QUEUE_CAPACITY) {
+        /* nostrc-75o3: in bounded mode, drop the oldest *event* when at
+         * capacity; the caller persists events elsewhere.  EOSE/CLOSED
+         * markers are never dropped.
+         *
+         * nostrc-dha5: lossless mode queues everything. It does not stop
+         * reading the core channel when the queue is long instead: libnostr
+         * hands events to that channel with a non-blocking send and drops
+         * them when it is full (its capacity adapts down to 256), so
+         * backpressure here would only move the loss into libnostr. */
+        while (!self->lossless && self->queued_events >= EVENT_QUEUE_CAPACITY) {
             guint i = 0;
             while (i < self->event_queue->len &&
                    ((SubItem *)g_ptr_array_index(self->event_queue, i))->kind != SUB_ITEM_EVENT)
@@ -482,6 +500,27 @@ gnostr_subscription_get_property(GObject    *object,
     case PROP_STATE:
         g_value_set_enum(value, self->state);
         break;
+    case PROP_LOSSLESS:
+        g_value_set_boolean(value, gnostr_subscription_get_lossless(self));
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
+        break;
+    }
+}
+
+static void
+gnostr_subscription_set_property(GObject      *object,
+                                 guint         property_id,
+                                 const GValue *value,
+                                 GParamSpec   *pspec)
+{
+    GNostrSubscription *self = GNOSTR_SUBSCRIPTION(object);
+
+    switch (property_id) {
+    case PROP_LOSSLESS:
+        gnostr_subscription_set_lossless(self, g_value_get_boolean(value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
         break;
@@ -559,6 +598,7 @@ gnostr_subscription_class_init(GNostrSubscriptionClass *klass)
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
 
     object_class->get_property = gnostr_subscription_get_property;
+    object_class->set_property = gnostr_subscription_set_property;
     object_class->finalize = gnostr_subscription_finalize;
 
     /**
@@ -600,6 +640,23 @@ gnostr_subscription_class_init(GNostrSubscriptionClass *klass)
                           GNOSTR_SUBSCRIPTION_STATE_PENDING,
                           G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY |
                           G_PARAM_STATIC_STRINGS);
+
+    /**
+     * GNostrSubscription:lossless:
+     *
+     * Whether every event reaches the "event" signal (the default), or the
+     * queue in front of the main loop is bounded to 200 events and drops the
+     * oldest when full. See gnostr_subscription_set_lossless().
+     *
+     * Since: 2.1
+     */
+    obj_properties[PROP_LOSSLESS] =
+        g_param_spec_boolean("lossless",
+                             "Lossless",
+                             "Deliver every event instead of bounding the queue",
+                             TRUE,
+                             G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
+                             G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties(object_class, N_PROPERTIES, obj_properties);
 
@@ -682,6 +739,7 @@ gnostr_subscription_init(GNostrSubscription *self)
     self->event_queue = g_ptr_array_new();
     self->queued_events = 0;
     self->event_idle_scheduled = FALSE;
+    self->lossless = TRUE;
 }
 
 /* --- Public API --- */
@@ -869,6 +927,48 @@ gnostr_subscription_get_relay(GNostrSubscription *self)
     g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION(self), NULL);
     return self->relay;
 }
+
+void
+gnostr_subscription_set_lossless(GNostrSubscription *self, gboolean lossless)
+{
+    g_return_if_fail(GNOSTR_IS_SUBSCRIPTION(self));
+
+    lossless = !!lossless;
+    g_mutex_lock(&self->event_queue_mutex);
+    gboolean changed = self->lossless != lossless;
+    self->lossless = lossless;
+    g_mutex_unlock(&self->event_queue_mutex);
+    if (changed)
+        g_object_notify_by_pspec(G_OBJECT(self), obj_properties[PROP_LOSSLESS]);
+}
+
+gboolean
+gnostr_subscription_get_lossless(GNostrSubscription *self)
+{
+    g_return_val_if_fail(GNOSTR_IS_SUBSCRIPTION(self), TRUE);
+
+    g_mutex_lock(&self->event_queue_mutex);
+    gboolean lossless = self->lossless;
+    g_mutex_unlock(&self->event_queue_mutex);
+    return lossless;
+}
+
+#ifdef GNOSTR_TESTING
+guint
+gnostr_subscription_test_queued(GNostrSubscription *self, gboolean *eose_queued)
+{
+    g_mutex_lock(&self->event_queue_mutex);
+    guint events = self->queued_events;
+    gboolean eose = FALSE;
+    for (guint i = 0; self->event_queue && i < self->event_queue->len; i++)
+        if (((SubItem *)g_ptr_array_index(self->event_queue, i))->kind == SUB_ITEM_EOSE)
+            eose = TRUE;
+    g_mutex_unlock(&self->event_queue_mutex);
+    if (eose_queued)
+        *eose_queued = eose;
+    return events;
+}
+#endif
 
 guint
 gnostr_subscription_get_event_count(GNostrSubscription *self)

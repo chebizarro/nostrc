@@ -17,6 +17,11 @@
  * json-glib's json_object_iter_next.) Waits iterate the default main
  * context; their deadlines are failure bounds only.
  *
+ * nostrc-dha5: a backfill larger than the 200-event bound. In lossless mode
+ * (the default) all 1,000 stored events and then EOSE reach the handlers, in
+ * order, although the main loop is not run until all of them are queued; in
+ * bounded mode (Gnostr) the newest 200 do, still in order, then EOSE.
+ *
  * SPDX-License-Identifier: MIT
  */
 #include <nostr-gobject-1.0/nostr_relay.h>
@@ -26,6 +31,7 @@
 #include <nostr-keys.h>
 #include <nostr-relay.h>
 #include <json.h>
+#include "nostr_subscription_test_hooks.h"
 
 #include <gio/gio.h>
 #include <glib.h>
@@ -34,6 +40,8 @@
 #include <string.h>
 
 #define N_STORED 24
+#define N_BACKFILL 1000
+#define BOUNDED_CAPACITY 200 /* EVENT_QUEUE_CAPACITY */
 #define N_ROUNDS 200
 #define WAIT_BOUND_S 10
 
@@ -233,14 +241,14 @@ relay_stop(BurstRelay *relay)
   g_cond_clear(&relay->ready);
 }
 
-/* N_STORED signed kind-1 events. */
+/* @n signed kind-1 events, content "stored <i>" in order. */
 static GPtrArray *
-stored_events(void)
+stored_events_n(guint n)
 {
   GPtrArray *stored = g_ptr_array_new_with_free_func(g_free);
   char *sk = nostr_key_generate_private();
   g_assert_nonnull(sk);
-  for (guint i = 0; i < N_STORED; i++) {
+  for (guint i = 0; i < n; i++) {
     NostrEvent *ev = nostr_event_new();
     nostr_event_set_kind(ev, 1);
     nostr_event_set_created_at(ev, 1700000000 + i);
@@ -255,6 +263,12 @@ stored_events(void)
   }
   free(sk);
   return stored;
+}
+
+static GPtrArray *
+stored_events(void)
+{
+  return stored_events_n(N_STORED);
 }
 
 static void
@@ -318,11 +332,138 @@ test_stored_events_precede_eose(void)
   g_ptr_array_unref(server.stored);
 }
 
+/* ---- backfill larger than the bounded queue (nostrc-dha5) -------------- */
+
+typedef struct {
+  GArray *indices;   /* "stored <i>" of each emitted event, in order */
+  gboolean eose;
+  guint events_at_eose;
+  gboolean closed;
+} Backfill;
+
+static void
+on_backfill_event(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *json, gpointer data)
+{
+  Backfill *b = data;
+  const gchar *content = strstr(json, "\"stored ");
+  g_assert_nonnull(content);
+  guint index = (guint)g_ascii_strtoull(content + strlen("\"stored "), NULL, 10);
+  g_array_append_val(b->indices, index);
+}
+
+static void
+on_backfill_eose(GNostrSubscription *sub G_GNUC_UNUSED, gpointer data)
+{
+  Backfill *b = data;
+  if (!b->eose)
+    b->events_at_eose = b->indices->len;
+  b->eose = TRUE;
+}
+
+static void
+on_backfill_closed(GNostrSubscription *sub G_GNUC_UNUSED, const gchar *reason G_GNUC_UNUSED,
+                   gpointer data)
+{
+  ((Backfill *)data)->closed = TRUE;
+}
+
+/* Fires a REQ answered by N_BACKFILL stored events and EOSE, keeps the main
+ * loop still until the monitor thread has queued all of it (so the queue in
+ * front of the main loop is far over the bound), then runs the main loop
+ * until EOSE. Returns the emitted indices. */
+static GArray *
+run_backfill(gboolean lossless, guint expect_queued)
+{
+  BurstRelay server = { .stored = stored_events_n(N_BACKFILL) };
+  relay_start(&server);
+
+  GNostrRelay *relay = g_object_new(GNOSTR_TYPE_RELAY, "url", server.url, NULL);
+  nostr_relay_set_auto_reconnect(gnostr_relay_get_core_relay(relay), false);
+  ConnectWait cw = { .loop = g_main_loop_new(NULL, FALSE) };
+  gnostr_relay_connect_async(relay, NULL, on_connected, &cw);
+  g_main_loop_run(cw.loop);
+  g_main_loop_unref(cw.loop);
+  g_assert_no_error(cw.error);
+  g_assert_true(cw.ok);
+
+  Backfill b = { .indices = g_array_new(FALSE, FALSE, sizeof(guint)) };
+  GNostrSubscription *sub = gnostr_subscription_new(relay, kind1_filters());
+  g_assert_nonnull(sub);
+  g_assert_true(gnostr_subscription_get_lossless(sub)); /* the default */
+  gnostr_subscription_set_lossless(sub, lossless);
+  g_signal_connect(sub, "event", G_CALLBACK(on_backfill_event), &b);
+  g_signal_connect(sub, "eose", G_CALLBACK(on_backfill_eose), &b);
+  g_signal_connect(sub, "closed", G_CALLBACK(on_backfill_closed), &b);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gnostr_subscription_fire(sub, &error));
+  g_assert_no_error(error);
+
+  /* The main loop does not run here: nothing is emitted, everything the
+   * relay sent piles up in front of it. */
+  gint64 deadline = g_get_monotonic_time() + WAIT_BOUND_S * G_USEC_PER_SEC;
+  gboolean eose_queued = FALSE;
+  guint queued = 0;
+  while (g_get_monotonic_time() < deadline) {
+    queued = gnostr_subscription_test_queued(sub, &eose_queued);
+    if (eose_queued)
+      break;
+    g_usleep(1000);
+  }
+  g_assert_true(eose_queued);
+  g_assert_cmpuint(queued, ==, expect_queued);
+  g_assert_cmpuint(b.indices->len, ==, 0);
+
+  gboolean timed_out = FALSE;
+  guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+  while (!b.eose && !b.closed && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!timed_out)
+    g_source_remove(bound);
+  g_assert_false(timed_out);
+  g_assert_false(b.closed);
+  g_assert_cmpuint(b.events_at_eose, ==, b.indices->len); /* nothing after EOSE */
+
+  g_signal_handlers_disconnect_by_data(sub, &b);
+  gnostr_subscription_close(sub);
+  g_object_unref(sub);
+  gnostr_relay_disconnect(relay);
+  g_object_unref(relay);
+  relay_stop(&server);
+  g_ptr_array_unref(server.stored);
+  return b.indices;
+}
+
+/* Groundhog's case: every stored event reaches the handler, in order. */
+static void
+test_lossless_backfill_complete(void)
+{
+  GArray *indices = run_backfill(TRUE, N_BACKFILL);
+  g_assert_cmpuint(indices->len, ==, N_BACKFILL);
+  for (guint i = 0; i < indices->len; i++)
+    g_assert_cmpuint(g_array_index(indices, guint, i), ==, i);
+  g_array_unref(indices);
+}
+
+/* Gnostr's case: the queue stays bounded, keeps the newest events, in order. */
+static void
+test_bounded_backfill_keeps_newest(void)
+{
+  GArray *indices = run_backfill(FALSE, BOUNDED_CAPACITY);
+  g_assert_cmpuint(indices->len, ==, BOUNDED_CAPACITY);
+  for (guint i = 0; i < indices->len; i++)
+    g_assert_cmpuint(g_array_index(indices, guint, i), ==, N_BACKFILL - BOUNDED_CAPACITY + i);
+  g_array_unref(indices);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/nostr-gobject/subscription/stored-events-precede-eose",
                   test_stored_events_precede_eose);
+  g_test_add_func("/nostr-gobject/subscription/lossless-backfill-complete",
+                  test_lossless_backfill_complete);
+  g_test_add_func("/nostr-gobject/subscription/bounded-backfill-keeps-newest",
+                  test_bounded_backfill_keeps_newest);
   return g_test_run();
 }

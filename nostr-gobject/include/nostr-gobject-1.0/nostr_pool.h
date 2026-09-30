@@ -239,6 +239,12 @@ void gnostr_pool_disconnect_all(GNostrPool *self);
  *
  * Uses the first connected relay in the pool.
  *
+ * The subscription is bounded (gnostr_subscription_set_lossless() %FALSE):
+ * with more than 200 events waiting for the main loop, the oldest waiting
+ * event is dropped. Pass %TRUE to gnostr_subscription_set_lossless() on the
+ * result, or use gnostr_subscription_new(), if the "event" handler is the
+ * only place events are kept.
+ *
  * Returns: (transfer full) (nullable): a new #GNostrSubscription, or %NULL on error
  *
  * Since: 1.0
@@ -303,6 +309,10 @@ typedef void (*GNostrPoolMultiSubEoseFunc)(GNostrPoolMultiSub *multi_sub,
  * in the pool. Events from any relay are delivered via @event_func on the main
  * thread. The subscription automatically tracks relay connections and subscribes
  * to new relays as they connect.
+ *
+ * Its per-relay subscriptions are bounded like gnostr_pool_subscribe()'s:
+ * under a burst the main loop has not caught up with, older events may be
+ * dropped (nostrc-dha5).
  *
  * Returns: (transfer full) (nullable): a new #GNostrPoolMultiSub, or %NULL on error.
  *   Close with gnostr_pool_multi_sub_close() when done.
