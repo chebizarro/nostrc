@@ -50,7 +50,10 @@ RelayIngressDecision relay_ingress_validate_and_reserve(
     const char *event_json, size_t event_json_len, time_t now_wall,
     uint64_t now_mono_ms, RelayIngressResult *result);
 
-/* Commit the replay reservation only after durable storage succeeds. */
+/* Commit the replay reservation only after durable storage succeeds. The
+ * replay TTL runs from the reservation's now_mono_ms (the clock the caller
+ * passed to relay_ingress_validate_and_reserve()), so reserve, commit and
+ * expiry always share one time base (nostrc-3y8q). */
 int relay_ingress_finish(RelayPolicy *policy, RelayIngressResult *result,
                          int storage_succeeded);
 void relay_ingress_result_clear(RelayIngressResult *result);

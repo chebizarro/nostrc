@@ -119,7 +119,7 @@ int relay_ingress_finish(RelayPolicy *policy, RelayIngressResult *result,
   if (!result || !result->replay_reserved) return 1;
   int ok = storage_succeeded
                ? relay_policy_commit(policy, result->binary_id,
-                                     rate_limit_now_ms())
+                                     result->reservation_now_ms)
                : relay_policy_rollback(policy, result->binary_id);
   result->replay_reserved = 0;
   return ok;
