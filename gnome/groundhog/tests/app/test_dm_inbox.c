@@ -1373,6 +1373,43 @@ test_backfill_relay_cap_below_limit(void)
   fixture_down(&f);
 }
 
+/* Review B2: 25 wraps share the oldest second of what the relay holds, and
+ * the relay sent everything. The step page {until: that second} brings the
+ * same 25, fewer than the live answer's 30: complete, not a stepped-over
+ * second, and the checkpoint may move. (backfill-tied-second is the genuine
+ * case: every page as full as the most any answer brought.) */
+static void
+test_backfill_honest_tied_second(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  publish_list(&f, 2, 10050, INBOX_A, NULL);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  gint64 tied = now - 5 * HOUR;
+  GPtrArray *wraps = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < 25; i++)
+    g_ptr_array_add(wraps, junk_wrap(tied, i));
+  for (guint i = 1; i <= 5; i++) {
+    g_autofree gchar *newer = junk_wrap(now - i * HOUR, 100 + i);
+    deliver(&f, INBOX_A, newer);
+  }
+  for (guint i = 0; i < wraps->len; i++)
+    deliver(&f, INBOX_A, g_ptr_array_index(wraps, i));
+  eose(&f, INBOX_A);
+  Req *page = wait_page(&f.rec, INBOX_A, 1);
+  g_assert_cmpint(page->until, ==, tied);
+  for (guint i = 0; i < wraps->len; i++)
+    gh_relay_scope_event(page->scope, INBOX_A, g_ptr_array_index(wraps, i));
+  gh_relay_scope_eose(page->scope, INBOX_A);
+  gh_test_spin_until(live_and_settled, f.inbox);
+  g_assert_cmpint(relay_state(f.inbox, INBOX_A, NULL), ==, GH_DM_INBOX_RELAY_LIVE);
+  g_assert_cmpuint(count_pages(&f.rec, INBOX_A), ==, 1);
+  g_assert_cmpuint(counters(f.inbox).backfill_incomplete, ==, 0);
+  g_assert_true(has_checkpoint(&f));
+  g_ptr_array_unref(wraps);
+  fixture_down(&f);
+}
+
 /* ---- rejected wraps (nostrc-qp24.10.11) -------------------------------------- */
 
 /* A wrap finally rejected after a signer call is recorded, so a restart
@@ -1731,6 +1768,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/dm-inbox/req-exact", test_req_exact);
   g_test_add_func("/groundhog/dm-inbox/backfill-relay-cap-below-limit",
                   test_backfill_relay_cap_below_limit);
+  g_test_add_func("/groundhog/dm-inbox/backfill-honest-tied-second",
+                  test_backfill_honest_tied_second);
   g_test_add_func("/groundhog/dm-inbox/rooms-and-dedup", test_rooms_and_dedup);
   g_test_add_func("/groundhog/dm-inbox/seen-restart", test_seen_restart);
   g_test_add_func("/groundhog/dm-inbox/legacy-state-files", test_legacy_state_files);

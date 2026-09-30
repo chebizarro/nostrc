@@ -12,6 +12,8 @@ typedef struct {
   guint count;                 /* events of the answer matching it */
   gint64 oldest;               /* their oldest created_at; G_MAXINT64: none */
   gint64 until;                /* the answer's until; G_MAXINT64: the live REQ */
+  guint max_count;             /* most events one answer of this round brought: a
+                                * lower bound on the relay's cap (review B2) */
   gboolean open;               /* older events may remain: page it */
 } PageFilter;
 
@@ -120,6 +122,7 @@ reset_paging(GhEndpoint *endpoint)
       endpoint->pf[i].count = 0;
       endpoint->pf[i].oldest = G_MAXINT64;
       endpoint->pf[i].until = G_MAXINT64;
+      endpoint->pf[i].max_count = 0;
       endpoint->pf[i].open = FALSE;
     }
   }
@@ -543,11 +546,20 @@ judge_filter(GhRelayScope *scope, GhEndpoint *endpoint, size_t i)
 {
   PageFilter *p = &endpoint->pf[i];
   p->open = FALSE;
-  if (p->count >= gh_relay_page_threshold(scope->page_limit)) {
-    /* Perhaps cut short by the relay. until is inclusive, so the next page
-     * repeats the boundary second (the relay may have cut inside it); a
-     * page that got no older holds more than a page in that one second:
-     * step over it, and the answer is incomplete. */
+  /* Perhaps cut short by the relay: at least the threshold, and no fewer
+   * than any earlier answer of this round brought (review B2). The relay
+   * returned max_count events at once before, so its cap is at least that:
+   * a page with fewer holds everything the relay has there. Without this,
+   * 20 or more events in the window's oldest second looked like a cut page
+   * forever (the step page returns them again, and nothing older exists). */
+  gboolean cut = p->count >= gh_relay_page_threshold(scope->page_limit) &&
+                 p->count >= p->max_count;
+  p->max_count = MAX(p->max_count, p->count);
+  if (cut) {
+    /* until is inclusive, so the next page repeats the boundary second (the
+     * relay may have cut inside it); a page that got no older holds more
+     * than a page in that one second: step over it, and the answer is
+     * incomplete. */
     gint64 next = p->oldest;
     if (next >= p->until) {
       next = p->until - 1;

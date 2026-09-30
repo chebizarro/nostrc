@@ -46,6 +46,8 @@ typedef struct {
   gboolean page_failed;
   guint run_pages;        /* pages of the current paging run */
   gboolean run_skipped;   /* the run stepped over an unpageable second */
+  guint run_max;          /* most wraps one answer of the run brought: a lower
+                           * bound on the relay's cap (review B2) */
   GSource *settle;        /* low-priority idle that judges EOSEs */
 } Endpoint;
 
@@ -633,6 +635,7 @@ start_run(GhDmInbox *self, Endpoint *endpoint, gint64 until)
   endpoint->rerun = FALSE;
   endpoint->run_pages = 0;
   endpoint->run_skipped = FALSE;
+  endpoint->run_max = endpoint->round_events;   /* the live answer's */
   start_page(self, endpoint, until);
 }
 
@@ -689,9 +692,13 @@ finish_page(GhDmInbox *self, Endpoint *endpoint)
     end_run(self, endpoint, FALSE);
     return;
   }
-  /* Short against the relay's own cap too, which may be far below the
-   * REQ limit (strfry's 500 against 1000; nostrc-cpwf). */
-  if (events < gh_relay_page_threshold(self->limit)) {
+  /* Short against the relay's own cap too, which may be far below the REQ
+   * limit (strfry's 500 against 1000; nostrc-cpwf), and against any earlier
+   * answer of this run: the relay's cap is at least that, so a page with
+   * fewer held all it had (review B2). */
+  guint most = endpoint->run_max;
+  endpoint->run_max = MAX(most, events);
+  if (events < gh_relay_page_threshold(self->limit) || events < most) {
     end_run(self, endpoint, TRUE); /* nothing older remains */
     return;
   }

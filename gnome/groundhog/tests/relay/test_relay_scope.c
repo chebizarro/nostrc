@@ -755,6 +755,90 @@ test_paging_failure_and_disconnect(void)
   fixture_clear(&fixture);
 }
 
+/* Review B2. An honest relay (probe P1): since 1000, it holds 5 events at
+ * t=6000 and 25 at t=5000 and sends all of them. The step page {until 5000}
+ * brings the same 25 again, fewer than the 30 of the live answer: complete,
+ * not a stepped-over second. A relay capped at 25 holding 30 events in one
+ * second returns 25 on every page: still stepped over, still incomplete. */
+static void
+deliver_at(GhRelayScope *scope, guint n, gint64 at, guint first)
+{
+  for (guint i = 0; i < n; i++) {
+    g_autofree gchar *content = g_strdup_printf("event %u", first + i);
+    g_autofree gchar *json = signed_json_at(content, at);
+    gh_relay_scope_event(scope, PAGED_URL, json);
+  }
+}
+
+static GhRelayScope *
+paging_scope(Fixture *fixture)
+{
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+  const int kinds[] = { 1 };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_set_since_i64(filter, 1000);
+  g_assert_true(nostr_filters_add(filters, filter));
+  nostr_filter_free(filter);
+  GhRelayScope *scope = gh_relay_scope_new_with_transport(1, filters, &fake_transport, fixture,
+                                                          on_update, fixture);
+  gh_relay_scope_set_backfill_paging(scope, 500, 64);
+  g_assert_true(gh_relay_scope_add_url(scope, PAGED_URL, NULL));
+  gh_relay_scope_start(scope);
+  return scope;
+}
+
+static void
+test_paging_same_second(void)
+{
+  /* Honest: everything held, 25 of it in the window's oldest second. */
+  Fixture honest = { .opened = g_ptr_array_new_with_free_func(g_free),
+                     .closed = g_ptr_array_new_with_free_func(g_free),
+                     .scopes = g_ptr_array_new() };
+  GhRelayScope *scope = paging_scope(&honest);
+  deliver_at(scope, 5, 6000, 0);
+  deliver_at(scope, 25, 5000, 5);
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(honest.scopes->len, ==, 2);
+  GhRelayScope *page = g_ptr_array_index(honest.scopes, 1);
+  deliver_at(page, 25, 5000, 5);                      /* {until 5000}: the same 25 */
+  gh_relay_scope_eose(page, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(honest.eose, ==, 1);
+  g_assert_false(honest.last_incomplete);
+  g_assert_cmpuint(honest.scopes->len, ==, 2);         /* no stepped-over page */
+  g_assert_cmpuint(honest.events, ==, 30);
+  gh_relay_scope_unref(scope);
+  g_ptr_array_unref(honest.scopes);
+  fixture_clear(&honest);
+
+  /* Capped at 25 with 30 in one second: every page brings 25, the most any
+   * answer brought, and gets no older: stepped over, incomplete. */
+  Fixture capped = { .opened = g_ptr_array_new_with_free_func(g_free),
+                     .closed = g_ptr_array_new_with_free_func(g_free),
+                     .scopes = g_ptr_array_new() };
+  scope = paging_scope(&capped);
+  deliver_at(scope, 25, 5000, 0);
+  gh_relay_scope_eose(scope, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(capped.scopes->len, ==, 2);
+  page = g_ptr_array_index(capped.scopes, 1);
+  deliver_at(page, 25, 5000, 0);
+  gh_relay_scope_eose(page, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(capped.eose, ==, 0);                /* stepped: one more page */
+  g_assert_cmpuint(capped.scopes->len, ==, 3);
+  page = g_ptr_array_index(capped.scopes, 2);          /* {until 4999}: nothing */
+  gh_relay_scope_eose(page, PAGED_URL);
+  drain_pending();
+  g_assert_cmpuint(capped.eose, ==, 1);
+  g_assert_true(capped.last_incomplete);
+  gh_relay_scope_unref(scope);
+  g_ptr_array_unref(capped.scopes);
+  fixture_clear(&capped);
+}
+
 /* ---- Overflow (nostrc-5rfp) ---- */
 
 #define OVERFLOW_DETAIL GH_RELAY_CLOSED_OVERFLOW_PREFIX " too many events waiting to be read"
@@ -842,6 +926,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/relay/auth/generation-bound", test_auth_generation_bound);
   g_test_add_func("/groundhog/relay/paging/failure-and-disconnect",
                   test_paging_failure_and_disconnect);
+  g_test_add_func("/groundhog/relay/paging/same-second", test_paging_same_second);
   g_test_add_func("/groundhog/relay/overflow/reported-then-retried-once",
                   test_overflow_reported_then_retried_once);
   return g_test_run();

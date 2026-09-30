@@ -70,7 +70,9 @@ G_BEGIN_DECLS
  *    open;
  *  - stops paging a filter when a page brings fewer than
  *    gh_relay_page_threshold(limit) events (so a relay whose own cap is below
- *    the limit is still paged), or its until would pass the filter's since;
+ *    the limit is still paged), or fewer than the most any answer of this
+ *    round brought (the relay's cap is at least that, so it held no more),
+ *    or its until would pass the filter's since;
  *  - reports the URL's EOSE only once paging has ended. Every event before
  *    it, live ones included, is flagged backfill, so a caller that moves a
  *    cursor at EOSE never passes an unfetched gap. The EOSE carries
