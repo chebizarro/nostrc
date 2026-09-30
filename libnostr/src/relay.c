@@ -585,6 +585,8 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
     relay->priv->debug_raw = NULL;
     relay->priv->reconnect_now = go_channel_create(1);
+    relay->priv->conn_leases = 0;
+    nsync_cv_init(&relay->priv->conn_leases_cv);
     go_wait_group_init(&relay->priv->workers);
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_new: initialized workers and queues for %s\n", relay->url);
     // request_header
@@ -612,6 +614,43 @@ NostrRelay *nostr_relay_ref(NostrRelay *relay) {
     relay->refcount++;
     nsync_mu_unlock(&relay->priv->mutex);
     return relay;
+}
+
+/* nostrc-xfjg: a writer's lease on relay->connection (see
+ * NostrRelayPrivate.conn_leases). NULL when not connected; otherwise the
+ * connection stays usable until relay_connection_unlease(). */
+static NostrConnection *relay_connection_lease(NostrRelay *r) {
+    nsync_mu_lock(&r->priv->mutex);
+    NostrConnection *conn = r->connection;
+    if (conn) r->priv->conn_leases++;
+    nsync_mu_unlock(&r->priv->mutex);
+    return conn;
+}
+
+static void relay_connection_unlease(NostrRelay *r) {
+    nsync_mu_lock(&r->priv->mutex);
+    if (--r->priv->conn_leases == 0) nsync_cv_broadcast(&r->priv->conn_leases_cv);
+    nsync_mu_unlock(&r->priv->mutex);
+}
+
+/* nostrc-xfjg: releases @conn, which the caller has taken out of
+ * relay->connection under the mutex (or never published). Closing its
+ * channels wakes a writer blocked on a full send channel and a reader waiting
+ * for a frame; once no writer holds a lease, nostr_connection_release()
+ * detaches, drains and frees both channels and hands the WSI to the service
+ * thread. Every path that drops a connection comes here: nostr_relay_close(),
+ * relay_free_impl(), a failed dial and a reconnect (which used to only close
+ * the old connection and leave its channels to nobody). NULL-safe. */
+static void relay_retire_connection(NostrRelay *r, NostrConnection *conn) {
+    if (!conn) return;
+    /* Only the owner changes these pointers, and the owner is now us. */
+    if (conn->recv_channel) go_channel_close(conn->recv_channel);
+    if (conn->send_channel) go_channel_close(conn->send_channel);
+    nsync_mu_lock(&r->priv->mutex);
+    while (r->priv->conn_leases > 0)
+        nsync_cv_wait(&r->priv->conn_leases_cv, &r->priv->mutex);
+    nsync_mu_unlock(&r->priv->mutex);
+    nostr_connection_release(conn);
 }
 
 /* nostrc-xbso: answers and frees the writes still queued when the relay is
@@ -686,25 +725,11 @@ static void relay_free_impl(NostrRelay *relay) {
         go_wait_group_destroy(&relay->priv->workers);
     }
     // NOW safe to free connection — all workers have exited.
-    // nostrc-uaf-lws: CRITICAL — detach WSI BEFORE freeing channels.
-    // Same rationale as nostr_relay_close: the LWS service thread callback
-    // may have captured conn->recv_channel. We must NULL the channel pointers
-    // under priv->mutex, then detach the WSI, then free the channels.
+    // nostrc-uaf-lws: channels are detached under conn->priv->mutex before
+    // the WSI goes and before they are freed (nostr_connection_release).
     if (conn) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: closing network connection\n");
-        GoChannel *recv_ch = NULL;
-        GoChannel *send_ch = NULL;
-        if (conn->priv) {
-            nsync_mu_lock(&conn->priv->mutex);
-            recv_ch = conn->recv_channel;
-            send_ch = conn->send_channel;
-            conn->recv_channel = NULL;
-            conn->send_channel = NULL;
-            nsync_mu_unlock(&conn->priv->mutex);
-        }
-        nostr_connection_close(conn);
-        if (recv_ch) nostr_connection_recv_channel_free(recv_ch);
-        if (send_ch) go_channel_free(send_ch);
+        relay_retire_connection(relay, conn);
     }
 
     // Free resources
@@ -780,27 +805,11 @@ void nostr_relay_free(NostrRelay *relay) {
 static void relay_discard_failed_connection(NostrRelay *relay) {
     if (!relay) return;
 
+    nsync_mu_lock(&relay->priv->mutex);
     NostrConnection *conn = relay->connection;
     relay->connection = NULL;
-    if (!conn) return;
-
-    if (conn->recv_channel) go_channel_close(conn->recv_channel);
-    if (conn->send_channel) go_channel_close(conn->send_channel);
-
-    GoChannel *recv_ch = NULL;
-    GoChannel *send_ch = NULL;
-    if (conn->priv) {
-        nsync_mu_lock(&conn->priv->mutex);
-        recv_ch = conn->recv_channel;
-        send_ch = conn->send_channel;
-        conn->recv_channel = NULL;
-        conn->send_channel = NULL;
-        nsync_mu_unlock(&conn->priv->mutex);
-    }
-
-    nostr_connection_close(conn);
-    if (recv_ch) nostr_connection_recv_channel_free(recv_ch);
-    if (send_ch) go_channel_free(send_ch);
+    nsync_mu_unlock(&relay->priv->mutex);
+    relay_retire_connection(relay, conn);
 }
 
 bool nostr_relay_connect(NostrRelay *relay, Error **err) {
@@ -950,9 +959,9 @@ static void *write_operations(void *arg) {
         }
 
         Error *werr = NULL;
-        nsync_mu_lock(&r->priv->mutex);
-        NostrConnection *conn = r->connection;
-        nsync_mu_unlock(&r->priv->mutex);
+        /* nostrc-xfjg: leased, so a reconnect waits for this write before it
+         * releases the connection's channels. */
+        NostrConnection *conn = relay_connection_lease(r);
         if (!conn) {
             werr = new_error(1, "no connection");
         } else {
@@ -967,6 +976,7 @@ static void *write_operations(void *arg) {
                 nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(req->msg));
                 nostr_metric_counter_add("ws_tx_messages", 1);
             }
+            relay_connection_unlease(r);
         }
         // The writer owns req->msg copy
         if (req->msg) free(req->msg);
@@ -1120,15 +1130,14 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
 
     relay_set_state(r, NOSTR_RELAY_STATE_CONNECTING);
 
-    /* Close old connection if it exists */
+    /* nostrc-xfjg: release the lost connection, channels and all. Only
+     * closing it (as this did) left both channels to nobody: the service
+     * thread frees the connection struct, never its channels. */
     nsync_mu_lock(&r->priv->mutex);
     NostrConnection *old_conn = r->connection;
     r->connection = NULL;
     nsync_mu_unlock(&r->priv->mutex);
-
-    if (old_conn) {
-        nostr_connection_close(old_conn);
-    }
+    relay_retire_connection(r, old_conn);
 
     /* Create new connection */
     NostrConnection *new_conn = nostr_connection_new(r->url);
@@ -1137,12 +1146,23 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
         return false;
     }
 
-    /* Install new connection */
+    /* Install new connection, unless the relay was closed or freed during the
+     * dial: nostr_relay_close() and relay_free_impl() cancel the context
+     * before they take relay->connection under this mutex, so a connection
+     * installed after that would be released by nobody. */
     nsync_mu_lock(&r->priv->mutex);
-    r->connection = new_conn;
-    r->priv->reconnect_attempt = 0;
-    r->priv->backoff_ms = 0;
+    bool closing = go_context_is_canceled(r->priv->connection_context);
+    if (!closing) {
+        r->connection = new_conn;
+        r->priv->reconnect_attempt = 0;
+        r->priv->backoff_ms = 0;
+    }
     nsync_mu_unlock(&r->priv->mutex);
+    if (closing) {
+        relay_retire_connection(r, new_conn);
+        relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+        return false;
+    }
 
     relay_set_state(r, NOSTR_RELAY_STATE_CONNECTED);
 
@@ -2067,24 +2087,10 @@ bool nostr_relay_close(NostrRelay *r, Error **err) {
 
     /* Callback channel acquisition and pointer removal share priv->mutex.
      * A callback that acquired a channel before removal holds its own ref;
-     * one arriving afterward sees NULL. go_channel_free below releases only
-     * the relay's ref, so an in-flight callback retains the channel until it
-     * finishes. The WSI is detached later on the LWS service thread. */
-    GoChannel *recv_ch = NULL;
-    GoChannel *send_ch = NULL;
-    if (conn->priv) {
-        nsync_mu_lock(&conn->priv->mutex);
-        recv_ch = conn->recv_channel;
-        send_ch = conn->send_channel;
-        conn->recv_channel = NULL;
-        conn->send_channel = NULL;
-        nsync_mu_unlock(&conn->priv->mutex);
-    }
-    // Queue WSI shutdown on the service thread.
-    nostr_connection_close(conn);
-    // Release the relay's channel refs; callbacks retain their own refs.
-    if (recv_ch) nostr_connection_recv_channel_free(recv_ch);
-    if (send_ch) go_channel_free(send_ch);
+     * one arriving afterward sees NULL. The release drops only the relay's
+     * ref, so an in-flight callback retains the channel until it finishes.
+     * The WSI is detached later on the LWS service thread. */
+    relay_retire_connection(r, conn);
     return true;
 }
 

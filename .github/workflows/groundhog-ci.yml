@@ -200,7 +200,7 @@ jobs:
         groundhog-multi-send
         groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard
         groundhog-media-cache-binding groundhog-attachments
-        nostrc-test-bus-selftest test_connection_recv_drain
+        nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4

@@ -5,7 +5,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR 1 1 1)
+declare_component_version(NOSTR 1 1 2)
 
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
@@ -384,6 +384,16 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_relay_write_unsent PRIVATE include src)
   add_test(NAME libnostr_relay_write_unsent COMMAND test_relay_write_unsent)
   set_tests_properties(libnostr_relay_write_unsent PROPERTIES TIMEOUT 60)
+
+  # nostrc-xfjg, nostrc-vpha, nostrc-xbso, nostrc-jw23: what a relay leaves
+  # behind in each teardown order (a reconnect, frames never written, ...),
+  # against loopback servers. Its leaks show under LeakSanitizer: the target
+  # and test share one name so groundhog-ci.yml's sanitizer job can list it.
+  add_executable(test_relay_teardown_leaks tests/test_relay_teardown_leaks.c)
+  target_link_libraries(test_relay_teardown_leaks PRIVATE nostr Threads::Threads)
+  target_include_directories(test_relay_teardown_leaks PRIVATE include src)
+  add_test(NAME test_relay_teardown_leaks COMMAND test_relay_teardown_leaks)
+  set_tests_properties(test_relay_teardown_leaks PROPERTIES TIMEOUT 60)
 
   # nostrc-flp7: concurrent failing dials and teardowns on the libwebsockets
   # service thread (hosted crash in __lws_sul_insert <- lws_service).

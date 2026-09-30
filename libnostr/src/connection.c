@@ -102,6 +102,39 @@ void nostr_connection_recv_channel_free(GoChannel *chan) {
     go_channel_free(chan);
 }
 
+/* nostrc-xfjg: see connection-private.h. */
+static atomic_int g_unreleased_connections = 0;
+
+int nostr_connection_unreleased_count(void) {
+    return atomic_load(&g_unreleased_connections);
+}
+
+void nostr_connection_release(NostrConnection *conn) {
+    if (!conn) return;
+    GoChannel *recv_ch = NULL;
+    GoChannel *send_ch = NULL;
+    if (conn->priv) {
+        nsync_mu_lock(&conn->priv->mutex);
+        recv_ch = conn->recv_channel;
+        send_ch = conn->send_channel;
+        conn->recv_channel = NULL;
+        conn->send_channel = NULL;
+        nsync_mu_unlock(&conn->priv->mutex);
+    }
+    /* A frame is only queued to an attached, open channel (recv: the LWS
+     * callback under priv->mutex; send: a blocking send, which checks the
+     * closed flag under the channel's own mutex), so after the close below
+     * nothing joins either channel and the drains free all that is left. */
+    if (recv_ch) go_channel_close(recv_ch);
+    if (send_ch) go_channel_close(send_ch);
+    nostr_connection_close(conn);
+    /* Both carry WebSocketMessages: received and not read, or queued and
+     * never written (the relay was torn down with a write in flight). */
+    nostr_connection_recv_channel_free(recv_ch);
+    nostr_connection_recv_channel_free(send_ch);
+    atomic_fetch_sub(&g_unreleased_connections, 1);
+}
+
 /* The wsi of @conn is closed or about to be freed by lws (service thread).
  * Idempotent: acts only while priv->wsi still names @wsi. Never touches
  * @wsi itself: lws cancels a wsi's timers when it frees it. (This used to
@@ -1055,6 +1088,7 @@ NostrConnection *nostr_connection_new(const char *url) {
         conn->priv->test_mode = 1;
         conn->recv_channel = go_channel_create(256);
         conn->send_channel = go_channel_create(16);
+        atomic_fetch_add(&g_unreleased_connections, 1);
         // No context / thread in test mode
         return conn;
     }
@@ -1199,6 +1233,7 @@ NostrConnection *nostr_connection_new(const char *url) {
 
     if (!ok) goto fail;
 
+    atomic_fetch_add(&g_unreleased_connections, 1);
     return conn;
 
 fail:

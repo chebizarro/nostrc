@@ -76,6 +76,16 @@ struct _NostrRelayPrivate {
     bool message_loop_active;
     bool dial_in_progress;
 
+    /* nostrc-xfjg: leases on relay->connection. write_operations takes one
+     * under @mutex in the same critical section that reads the pointer and
+     * drops it once its write returns; a connection taken out of
+     * relay->connection (a reconnect, close, free) is released only after
+     * conn_leases has fallen to zero, so no writer still holds it. (A
+     * reconnect used to leave the old connection's channels to nobody,
+     * because the writer might still be using them.) */
+    int conn_leases;
+    nsync_cv conn_leases_cv;
+
     /* Registered callbacks: connection state, NIP-42 AUTH challenge
      * (nostrc-7og), and every ["OK","id",ok,"reason"] message.
      *

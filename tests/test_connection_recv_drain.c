@@ -11,7 +11,8 @@
  * drains and frees them, and the callback queues only under priv->mutex to a
  * channel still attached, so none can arrive after the drain.
  *
- * The test does what relay.c does, white-box, around a local lws server:
+ * The test releases a connection as relay.c does (nostr_connection_release,
+ * nostrc-xfjg), around a local lws server:
  *  1. The server sends 64 frames; nothing reads them; the channel holds all
  *     64 when it is released.
  *  2. On a second connection the server floods frames without pause, and the
@@ -140,20 +141,12 @@ static void wait_queued(NostrConnection *conn, size_t count) {
     CHECK(queued(conn) >= count, "frames never reached recv_channel");
 }
 
-/* What relay.c does when it lets a connection go (nostr_relay_close,
- * relay_free_impl, relay_discard_failed_connection), with no reader left. */
+/* How relay.c lets every connection go (close, free, a failed dial, a
+ * reconnect: relay_retire_connection), with no reader left. */
 static void release_connection(NostrConnection *conn) {
-    go_channel_close(conn->recv_channel);
-    go_channel_close(conn->send_channel);
-    nsync_mu_lock(&conn->priv->mutex);
-    GoChannel *recv_ch = conn->recv_channel;
-    GoChannel *send_ch = conn->send_channel;
-    conn->recv_channel = NULL;
-    conn->send_channel = NULL;
-    nsync_mu_unlock(&conn->priv->mutex);
-    nostr_connection_close(conn);
-    nostr_connection_recv_channel_free(recv_ch);
-    go_channel_free(send_ch);
+    int before = nostr_connection_unreleased_count();
+    nostr_connection_release(conn);
+    CHECK(nostr_connection_unreleased_count() == before - 1, "release not counted");
 }
 
 int main(void) {

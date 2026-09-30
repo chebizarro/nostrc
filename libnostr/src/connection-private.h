@@ -72,4 +72,23 @@ typedef struct WebSocketMessage {
 struct GoChannel;
 void nostr_connection_recv_channel_free(struct GoChannel *chan);
 
+/* nostrc-xfjg: Lets a connection go for good, the one way every owner does it
+ * (relay.c: close, free, a failed dial, a reconnect).  Detaches both channels
+ * under conn->priv->mutex (the LWS callback then queues nothing more and takes
+ * no new reference), closes them (waking a blocked reader or writer), hands
+ * the WSI to the service thread (nostr_connection_close) and frees what is
+ * still queued in each channel -- received frames and frames never written --
+ * before releasing the owner's references.  The caller must ensure nobody
+ * else still uses @conn's channels through the owner's pointer (relay.c: the
+ * workers have exited, or hold no lease on it).  NULL-safe; @conn must not be
+ * used afterwards. */
+void nostr_connection_release(struct _NostrConnection *conn);
+
+/* nostrc-xfjg: Connections made by nostr_connection_new() that have not been
+ * through nostr_connection_release() yet.  For tests: a released connection
+ * leaks nothing, so this returning to its earlier value shows every
+ * connection was let go (the old one of a reconnect used to keep its channels
+ * forever). */
+int nostr_connection_unreleased_count(void);
+
 #endif // CONNECTION_PRIVATE_H
