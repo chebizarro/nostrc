@@ -94,6 +94,18 @@ test_relay_pool = executable('test_relay_pool_protocol',
   install: false,
 )
 
+# nostrc-tw7f: relay_pool_private.h, and libnostr's relay-private.h for its
+# control-frame hook.
+test_relay_pool_ok_lifetime = executable('test_relay_pool_ok_lifetime',
+  'test_relay_pool_ok_lifetime.c',
+  link_with: signet_core,
+  include_directories: [signet_includes,
+                        include_directories('../src', '../../libnostr/src')],
+  dependencies: signet_deps + [in_tree_dep, dependency('threads')],
+  c_args: signet_test_c_args,
+  install: false,
+)
+
 test_signing_crypto = executable('test_signing_crypto',
   'test_signing_crypto.c',
   link_with: signet_core,
@@ -275,6 +287,10 @@ test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)
 test('capability', test_capability)
 test('relay_pool_protocol', test_relay_pool)
+# Freed memory is scribbled (macOS) or perturbed (glibc), so reading an OK
+# callback's freed data fails without ASan too.
+test('relay_pool_ok_lifetime', test_relay_pool_ok_lifetime, timeout: 60,
+  env: ['MallocScribble=1', 'MALLOC_PERTURB_=165'])
 test('config_reload', test_config_reload, timeout: 60)
 test('signing_crypto', test_signing_crypto)
 test('nostr_auth', test_nostr_auth)

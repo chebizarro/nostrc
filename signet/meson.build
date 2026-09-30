@@ -14,7 +14,7 @@
 #   set -Dnostrc_build_dir=../build (default) and ensure those libs are present.
 
 project('signet', 'c',
-  version: '0.1.0',
+  version: '0.1.1',
   default_options: [
     'c_std=c11',
     'warning_level=2',

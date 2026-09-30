@@ -205,23 +205,37 @@ typedef struct {
 static GMutex g_neg_sessions_mu;
 static GHashTable *g_neg_sessions_by_sub_id;
 
-static void
-neg_session_context_init(NegSessionContext *ctx, const char *sub_id)
+/* A session context is refcounted (g_atomic_rc_box): the sync task holds one
+ * reference and the relay's AUTH callback registration another, because
+ * removing that callback does not wait for a neg_auth_callback() already
+ * running on a libnostr worker (nostrc-tw7f, as nostrc-flp7). The sub-id
+ * registry borrows it: neg_handler() uses a context only under
+ * g_neg_sessions_mu, and the task unregisters before dropping its reference. */
+static NegSessionContext *
+neg_session_context_new(const char *sub_id)
 {
+  NegSessionContext *ctx = g_atomic_rc_box_new0(NegSessionContext);
   g_mutex_init(&ctx->mu);
   g_cond_init(&ctx->cond);
   ctx->sub_id = g_strdup(sub_id);
+  return ctx;
 }
 
 static void
-neg_session_context_clear(NegSessionContext *ctx)
+neg_session_context_clear(gpointer data)
 {
-  if (!ctx) return;
+  NegSessionContext *ctx = data;
   g_clear_pointer(&ctx->sub_id, g_free);
   g_clear_pointer(&ctx->hex, g_free);
   g_clear_pointer(&ctx->err_reason, g_free);
   g_cond_clear(&ctx->cond);
   g_mutex_clear(&ctx->mu);
+}
+
+static void
+neg_session_context_unref(void *ctx)
+{
+  g_atomic_rc_box_release_full(ctx, neg_session_context_clear);
 }
 
 static void
@@ -543,6 +557,14 @@ neg_relay_state_cb(NostrRelay *relay,
   }
 }
 
+/* The relay's reference to the handshake channel: a neg_relay_state_cb()
+ * already running when the callback is removed still sends on it. */
+static void
+neg_ready_channel_unref(void *ch)
+{
+  go_channel_unref((GoChannel *)ch);
+}
+
 static void
 sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
 {
@@ -644,11 +666,12 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
 
   /* Set up per-session NEG-MSG/AUTH handlers and subscription ID */
   gchar *sub_id = g_strdup_printf("neg-%04x", g_random_int_range(0, 0xFFFF));
-  NegSessionContext neg_ctx = {0};
-  neg_session_context_init(&neg_ctx, sub_id);
-  neg_sessions_register(&neg_ctx);
+  NegSessionContext *neg_ctx = neg_session_context_new(sub_id);
+  neg_sessions_register(neg_ctx);
   nostr_relay_set_custom_handler(relay, neg_handler);
-  nostr_relay_set_auth_callback(relay, neg_auth_callback, &neg_ctx);
+  nostr_relay_set_auth_callback_full(relay, neg_auth_callback,
+                                     g_atomic_rc_box_acquire(neg_ctx),
+                                     neg_session_context_unref);
 
   if (!nostr_relay_connect(relay, &relay_err)) {
     g_task_return_new_error(task, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_CONNECTION,
@@ -663,7 +686,9 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
    * connection transitions to CONNECTED or DISCONNECTED. */
   if (!nostr_relay_is_established(relay)) {
     GoChannel *ready_ch = go_channel_create(1);
-    nostr_relay_set_state_callback(relay, neg_relay_state_cb, ready_ch);
+    nostr_relay_set_state_callback_full(relay, neg_relay_state_cb,
+                                        go_channel_ref(ready_ch),
+                                        neg_ready_channel_unref);
 
     /* Check again after setting callback to avoid race */
     if (!nostr_relay_is_established(relay)) {
@@ -674,7 +699,7 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
     }
 
     nostr_relay_set_state_callback(relay, NULL, NULL);
-    go_channel_free(ready_ch);
+    go_channel_unref(ready_ch);
   }
   if (!nostr_relay_is_established(relay)) {
     g_task_return_new_error(task, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_CONNECTION,
@@ -714,7 +739,7 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
 
     while (!g_cancellable_is_cancelled(cancel)) {
       gchar *response_hex = NULL;
-      if (!wait_neg_response(&neg_ctx, &response_hex, deadline, &proto_err))
+      if (!wait_neg_response(neg_ctx, &response_hex, deadline, &proto_err))
         break;
       if (!response_hex) {
         g_set_error_literal(&proto_err, GNOSTR_NEG_ERROR,
@@ -795,8 +820,8 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
   nostr_neg_session_free(neg);
   g_free(ds_ctx.items);
   g_free(sub_id);
-  neg_sessions_unregister(&neg_ctx);
-  neg_session_context_clear(&neg_ctx);
+  neg_sessions_unregister(neg_ctx);
+  neg_session_context_unref(neg_ctx);
 
   g_task_return_pointer(task, stats, g_free);
   return;
@@ -805,8 +830,9 @@ cleanup:
   free(initial_hex);
   nostr_relay_set_auth_callback(relay, NULL, NULL);
   nostr_relay_set_custom_handler(relay, NULL);
-  neg_sessions_unregister(&neg_ctx);
-  neg_session_context_clear(&neg_ctx);
+  neg_sessions_unregister(neg_ctx);
+  /* An AUTH callback still running keeps its own reference. */
+  neg_session_context_unref(neg_ctx);
   nostr_relay_disconnect(relay);
   nostr_relay_free(relay);
   nostr_neg_session_free(neg);

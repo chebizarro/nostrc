@@ -8,6 +8,7 @@
  */
 
 #include "signet/relay_pool.h"
+#include "relay_pool_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -47,9 +48,6 @@ struct SignetRelayPool {
   /* NIP-42: override relay URL for AUTH event tag (optional, may be empty) */
   char auth_relay_tag_url[256];
 
-  /* Per-relay auth callback data — tracked for cleanup on pool_free */
-  GPtrArray *auth_cb_data;
-
   /* Last subscribed kinds — stored so post-auth re-subscribe can replay them */
   int   *active_kinds;
   size_t n_active_kinds;
@@ -83,7 +81,6 @@ typedef struct {
   SignetRelayPool *rp;
   NostrSimplePool *fresh;             /* pool to bring up (rp->pool at spawn) */
   NostrSimplePool *old_pool;          /* superseded pool, to stop and free */
-  GPtrArray       *old_auth_cb_data;  /* auth data belonging to @old_pool */
   char           **urls;              /* private copy of the target URL set */
   size_t           n_urls;
   guint            gen;
@@ -97,7 +94,6 @@ typedef struct {
 
 /* Forward declarations — defined after public API section */
 static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp);
-static void signet_relay_pool_clear_auth_cb_data(SignetRelayPool *rp);
 
 /* ----------------------- event middleware bridge -------------------------- */
 
@@ -144,22 +140,40 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
 
 /* ----------------------- NIP-42 auth callback ----------------------------- */
 
-/* Data shared between the AUTH idle callback and the OK-triggered re-subscribe. */
+/* One NIP-42 AUTH to send, handed from the relay's AUTH callback to the GLib
+ * main loop. Owned by signet_send_auth_idle(), which wipes and frees it. */
 typedef struct {
   NostrRelay      *relay;
   SignetRelayPool *pool;
   char             sk_hex[65];       /* signing key */
   char             challenge[64];    /* AUTH challenge */
   char             relay_url[256];   /* relay URL for relay tag */
-  char             auth_event_id[65];/* event ID of sent AUTH — for OK matching */
 } PostAuthResubData;
+
+static void post_auth_data_free(PostAuthResubData *rd) {
+  if (!rd) return;
+  memset(rd->sk_hex, 0, sizeof(rd->sk_hex));
+  g_free(rd);
+}
+
+/* What the OK for a sent AUTH event needs. The relay's OK callback
+ * registration owns it (nostr_relay_set_ok_callback_full()): removing the
+ * callback does not wait for a call already running on a libnostr worker,
+ * which still reads it, so the relay frees it after that call returns
+ * (nostrc-tw7f, as nostrc-flp7). The post-AUTH re-subscribe gets a copy. */
+typedef struct {
+  NostrRelay      *relay;
+  SignetRelayPool *pool;
+  char             relay_url[256];
+  char             auth_event_id[65];
+} AuthOkWatch;
 
 /* GLib idle callback: fires from the GLib main loop after Khatru confirms auth.
  * Called via g_idle_add from the OK response callback when OK true is received
  * for our AUTH event. This ensures REQ is never sent until Khatru has
  * authenticated the connection (no more race condition). */
 static gboolean signet_post_auth_resubscribe(gpointer data) {
-  PostAuthResubData *rd = (PostAuthResubData *)data;
+  AuthOkWatch     *rd = (AuthOkWatch *)data;
   SignetRelayPool *rp  = rd->pool;
   const char      *rurl = rd->relay_url[0] ? rd->relay_url
                                             : nostr_relay_get_url_const(rd->relay);
@@ -176,8 +190,6 @@ static gboolean signet_post_auth_resubscribe(gpointer data) {
   }
   g_mutex_unlock(&rp->mu);
 
-  g_free(rd);   /* ownership transferred — free before subscribe to avoid leak */
-
   if (kinds && n_kinds > 0) {
     if (signet_relay_pool_subscribe_kinds(rp, kinds, n_kinds) == 0) {
       g_message("[signetd] post-AUTH re-subscribed on %s", rurl);
@@ -189,6 +201,7 @@ static gboolean signet_post_auth_resubscribe(gpointer data) {
     g_warning("[signetd] post-AUTH re-subscribe skipped on %s: no active kinds", rurl);
   }
 
+  g_free(rd);
   return G_SOURCE_REMOVE;  /* one-shot */
 }
 
@@ -197,7 +210,7 @@ static gboolean signet_post_auth_resubscribe(gpointer data) {
  * re-subscribe via g_idle_add (GLib main loop thread-safe). */
 static void signet_ok_response_callback(const char *event_id, bool ok,
                                          const char *reason, void *user_data) {
-  PostAuthResubData *rd = (PostAuthResubData *)user_data;
+  AuthOkWatch *rd = (AuthOkWatch *)user_data;
   if (!rd || !event_id) return;
 
   /* Only act on the OK for our specific AUTH event */
@@ -207,17 +220,29 @@ static void signet_ok_response_callback(const char *event_id, bool ok,
 
   if (ok) {
     g_message("[signetd] auth-ok: relay=%s event=%s OK=true — scheduling re-subscribe", rurl, event_id);
-    /* Deregister the OK callback to avoid firing again */
-    nostr_relay_set_ok_callback(rd->relay, NULL, NULL);
-    /* Schedule resubscribe from GLib main loop (not from relay worker thread) */
-    g_idle_add(signet_post_auth_resubscribe, rd);
+    /* Schedule resubscribe from GLib main loop (not from relay worker thread),
+     * with its own copy: the relay frees @rd. */
+    AuthOkWatch *resub = g_new(AuthOkWatch, 1);
+    *resub = *rd;
+    g_idle_add(signet_post_auth_resubscribe, resub);
   } else {
     g_warning("[signetd] auth-ok: relay=%s event=%s OK=false reason=\"%s\" — auth REJECTED",
               rurl, event_id, reason ? reason : "");
-    /* Auth rejected. Clear pending state; auth_sent will be reset on next challenge. */
-    nostr_relay_set_ok_callback(rd->relay, NULL, NULL);
-    g_free(rd);
+    /* Auth rejected; auth_sent will be reset on next challenge. */
   }
+  /* One-shot: deregister. @rd stays valid until this call returns. */
+  nostr_relay_set_ok_callback(rd->relay, NULL, NULL);
+}
+
+void signet_relay_pool_watch_auth_ok(SignetRelayPool *rp, NostrRelay *relay,
+                                     const char *auth_event_id,
+                                     const char *relay_url) {
+  AuthOkWatch *w = g_new0(AuthOkWatch, 1);
+  w->relay = relay;
+  w->pool  = rp;
+  g_strlcpy(w->relay_url, relay_url ? relay_url : "", sizeof(w->relay_url));
+  g_strlcpy(w->auth_event_id, auth_event_id ? auth_event_id : "", sizeof(w->auth_event_id));
+  nostr_relay_set_ok_callback_full(relay, signet_ok_response_callback, w, g_free);
 }
 
 /* GLib idle callback: runs from the GLib main loop (NOT the LWS callback chain).
@@ -250,18 +275,19 @@ static gboolean signet_send_auth_idle(gpointer data) {
         char *event_json = nostr_event_serialize_compact(evt);
         if (event_json) {
           /* Store the AUTH event ID so the OK callback can match the response */
+          char auth_event_id[65] = "";
           char *id_start = strstr(event_json, "\"id\":\"");
           if (id_start) {
             id_start += 6; /* skip `"id":"` */
             size_t copy_len = 0;
             while (id_start[copy_len] && id_start[copy_len] != '"' && copy_len < 64)
               copy_len++;
-            memcpy(rd->auth_event_id, id_start, copy_len);
-            rd->auth_event_id[copy_len] = '\0';
+            memcpy(auth_event_id, id_start, copy_len);
+            auth_event_id[copy_len] = '\0';
           }
 
           /* Register OK callback BEFORE sending AUTH so we don't miss the response */
-          nostr_relay_set_ok_callback(r, signet_ok_response_callback, rd);
+          signet_relay_pool_watch_auth_ok(rd->pool, r, auth_event_id, rd->relay_url);
 
           char *auth_envelope = g_strdup_printf("[\"AUTH\",%s]", event_json);
           free(event_json);
@@ -279,23 +305,21 @@ static gboolean signet_send_auth_idle(gpointer data) {
                * by write_operations after it sends the result. */
             } else {
               g_warning("[signetd] auth-idle: nostr_relay_write returned NULL for %s", rurl);
+              /* The relay frees the watch once no OK callback is using it. */
               nostr_relay_set_ok_callback(r, NULL, NULL);
-              g_free(rd);
-              nostr_event_free(evt);
-              return G_SOURCE_REMOVE;
             }
           }
         }
       } else {
         g_warning("[signetd] auth-idle: sign failed for %s", rurl);
-        g_free(rd);
       }
       nostr_event_free(evt);
     }
   }
 
-  /* rd is now owned by the OK callback (signet_ok_response_callback).
-   * Do NOT free rd or schedule a timer here — subscribe happens only after OK true. */
+  /* The OK callback owns what it needs (AuthOkWatch); the re-subscribe
+   * happens only after OK true. */
+  post_auth_data_free(rd);
   return G_SOURCE_REMOVE;  /* one-shot */
 }
 
@@ -375,16 +399,22 @@ static void signet_relay_auth_callback(NostrRelay *relay,
   g_idle_add(signet_send_auth_idle, rd);
 }
 
+/* Destroy notify of a relay's auth callback data (the relay owns it). */
+static void signet_auth_callback_data_free(void *data) {
+  SignetAuthCallbackData *d = (SignetAuthCallbackData *)data;
+  memset(d->sk_hex, 0, sizeof(d->sk_hex));
+  g_mutex_clear(&d->challenge_mu);
+  free(d);
+}
+
 /* Register the auth callback on every relay in the pool.
- * Must be called after relays have been added via ensure_relay. */
+ * Must be called after relays have been added via ensure_relay. Each relay
+ * owns its callback data and wipes and frees it when the callback is replaced
+ * or the relay freed, once no call is still using it (nostrc-tw7f). */
 static void signet_relay_pool_register_auth(SignetRelayPool *rp) {
   if (!rp->auth_sk_hex[0]) return;
 
-  /* Allocate one callback-data struct per relay, tracked in auth_cb_data
-   * for cleanup in signet_relay_pool_free(). */
   NostrSimplePool *pool = rp->pool;
-  if (!rp->auth_cb_data)
-    rp->auth_cb_data = g_ptr_array_new();
   for (size_t i = 0; i < pool->relay_count; i++) {
     NostrRelay *relay = pool->relays[i];
     if (!relay) continue;
@@ -394,8 +424,8 @@ static void signet_relay_pool_register_auth(SignetRelayPool *rp) {
     d->pool = rp;
     d->last_challenge[0] = '\0';
     g_mutex_init(&d->challenge_mu);
-    nostr_relay_set_auth_callback(relay, signet_relay_auth_callback, d);
-    g_ptr_array_add(rp->auth_cb_data, d);
+    nostr_relay_set_auth_callback_full(relay, signet_relay_auth_callback, d,
+                                       signet_auth_callback_data_free);
   }
 }
 
@@ -475,8 +505,8 @@ void signet_relay_pool_free(SignetRelayPool *rp) {
   if (!rp) return;
 
   /* fp-e08y: a reconfigure worker may still be dialling relays and will touch
-   * rp->pool, rp->auth_cb_data and the filter cache. Refuse new reconfigures
-   * and wait the in-flight ones out before tearing any of that down. */
+   * rp->pool and the filter cache. Refuse new reconfigures and wait the
+   * in-flight ones out before tearing any of that down. */
   g_mutex_lock(&rp->mu);
   rp->disposing = TRUE;
   while (rp->reconfig_pending > 0)
@@ -497,9 +527,6 @@ void signet_relay_pool_free(SignetRelayPool *rp) {
     free(rp->urls);
     rp->urls = NULL;
   }
-
-  /* Free per-relay auth callback data. */
-  signet_relay_pool_clear_auth_cb_data(rp);
 
   free(rp->active_kinds);
   rp->active_kinds = NULL;
@@ -723,40 +750,42 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
 
 /* NPA-02: Publish OK tracking.
  * We install a temporary OK callback per-relay that matches a specific
- * event ID and forwards to the user callback, then restores the AUTH callback. */
+ * event ID and forwards to the user callback, then removes itself. The
+ * relay owns the context (nostr_relay_set_ok_callback_full()): an OK callback
+ * already running on a libnostr worker when the context's registration is
+ * removed or replaced still reads it (nostrc-tw7f, as nostrc-flp7). */
 typedef struct {
   char event_id[65];
   SignetPublishOkCallback user_cb;
   void *user_data;
-  /* Saved AUTH callback to restore after our publish OK fires. */
-  void (*saved_ok_cb)(const char *, bool, const char *, void *);
-  void *saved_ok_data;
   NostrRelay *relay;
 } PublishOkCtx;
 
 static void signet_publish_ok_handler(const char *event_id, bool ok,
                                        const char *reason, void *user_data) {
   PublishOkCtx *ctx = (PublishOkCtx *)user_data;
-  if (!ctx) return;
+  if (!ctx || !event_id || strcmp(event_id, ctx->event_id) != 0) return;
 
-  if (event_id && strcmp(event_id, ctx->event_id) == 0) {
-    /* This OK is for our published event — fire user callback */
-    if (ctx->user_cb) {
-      ctx->user_cb(event_id, ok, reason, ctx->user_data);
-    }
-    if (!ok) {
-      g_warning("[signetd] publish-ok: relay rejected event %s: %s",
-                event_id, reason ? reason : "(no reason)");
-    }
-    /* Restore saved AUTH OK callback */
-    nostr_relay_set_ok_callback(ctx->relay, ctx->saved_ok_cb, ctx->saved_ok_data);
-    g_free(ctx);
-  } else {
-    /* Not our event — forward to saved callback (AUTH handler) */
-    if (ctx->saved_ok_cb) {
-      ctx->saved_ok_cb(event_id, ok, reason, ctx->saved_ok_data);
-    }
+  /* This OK is for our published event — fire user callback */
+  if (ctx->user_cb) {
+    ctx->user_cb(event_id, ok, reason, ctx->user_data);
   }
+  if (!ok) {
+    g_warning("[signetd] publish-ok: relay rejected event %s: %s",
+              event_id, reason ? reason : "(no reason)");
+  }
+  /* One-shot: deregister. @ctx stays valid until this call returns. */
+  nostr_relay_set_ok_callback(ctx->relay, NULL, NULL);
+}
+
+void signet_relay_pool_watch_publish_ok(NostrRelay *relay, const char *event_id,
+                                        SignetPublishOkCallback cb, void *user_data) {
+  PublishOkCtx *ctx = g_new0(PublishOkCtx, 1);
+  g_strlcpy(ctx->event_id, event_id, sizeof(ctx->event_id));
+  ctx->user_cb = cb;
+  ctx->user_data = user_data;
+  ctx->relay = relay;
+  nostr_relay_set_ok_callback_full(relay, signet_publish_ok_handler, ctx, g_free);
 }
 
 int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
@@ -792,18 +821,9 @@ int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
     NostrRelay *relay = pool->relays[i];
     if (relay && nostr_relay_is_connected(relay)) {
       if (cb && eid) {
-        /* Install per-event OK tracker that chains to existing callback */
-        PublishOkCtx *ctx = g_new0(PublishOkCtx, 1);
-        g_strlcpy(ctx->event_id, eid, sizeof(ctx->event_id));
-        ctx->user_cb = cb;
-        ctx->user_data = user_data;
-        ctx->relay = relay;
-        /* NOTE: We don't have a getter for the existing ok_callback/user_data.
-         * The saved pointers will be NULL, which is fine — the AUTH path
-         * re-registers its own callback before sending AUTH. */
-        ctx->saved_ok_cb = NULL;
-        ctx->saved_ok_data = NULL;
-        nostr_relay_set_ok_callback(relay, signet_publish_ok_handler, ctx);
+        /* Install per-event OK tracker. It replaces any other OK callback on
+         * this relay (the AUTH path re-registers its own before sending AUTH). */
+        signet_relay_pool_watch_publish_ok(relay, eid, cb, user_data);
       }
       nostr_relay_publish(relay, evt);
       sent++;
@@ -887,22 +907,6 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
   return 0;
 }
 
-/* Free the per-relay NIP-42 callback data owned by the pool. Caller must hold
- * rp->mu (or otherwise guarantee no relay is still using the callbacks). */
-static void signet_relay_pool_clear_auth_cb_data(SignetRelayPool *rp) {
-  if (!rp->auth_cb_data) return;
-  for (guint i = 0; i < rp->auth_cb_data->len; i++) {
-    SignetAuthCallbackData *d =
-        (SignetAuthCallbackData *)g_ptr_array_index(rp->auth_cb_data, i);
-    if (!d) continue;
-    memset(d->sk_hex, 0, sizeof(d->sk_hex));
-    g_mutex_clear(&d->challenge_mu);
-    free(d);
-  }
-  g_ptr_array_free(rp->auth_cb_data, TRUE);
-  rp->auth_cb_data = NULL;
-}
-
 /* True when the pool is already serving exactly this URL set (order-
  * insensitive). Caller must hold rp->mu. */
 static bool signet_relay_pool_urls_equal_locked(SignetRelayPool *rp,
@@ -943,23 +947,11 @@ static gpointer signet_relay_pool_reconfigure_worker(gpointer data) {
 
   /* Tear the superseded pool down first, and without rp->mu held: stopping
    * joins libnostr workers, and a worker may be inside
-   * signet_pool_event_middleware waiting on rp->mu. */
+   * signet_pool_event_middleware waiting on rp->mu. Freeing its relays also
+   * releases their auth callback data. */
   if (job->old_pool) {
     if (job->old_started) nostr_simple_pool_stop(job->old_pool);
     nostr_simple_pool_free(job->old_pool);
-  }
-  /* Only safe once the old pool's relays (and therefore its callbacks) are
-   * gone: this data was handed to those relays. */
-  if (job->old_auth_cb_data) {
-    for (guint i = 0; i < job->old_auth_cb_data->len; i++) {
-      SignetAuthCallbackData *d =
-          (SignetAuthCallbackData *)g_ptr_array_index(job->old_auth_cb_data, i);
-      if (!d) continue;
-      memset(d->sk_hex, 0, sizeof(d->sk_hex));
-      g_mutex_clear(&d->challenge_mu);
-      free(d);
-    }
-    g_ptr_array_free(job->old_auth_cb_data, TRUE);
   }
 
   /* A newer reconfigure (or a shutdown) may have landed while we waited. It
@@ -1101,14 +1093,12 @@ int signet_relay_pool_set_relays(SignetRelayPool *rp,
   job->rp = rp;
   job->fresh = fresh;
   job->old_pool = rp->pool;
-  job->old_auth_cb_data = rp->auth_cb_data;
   job->old_started = was_started;
   job->restart_after = was_started;
   job->urls = job_urls;
   job->n_urls = n_urls;
 
   rp->pool = fresh;
-  rp->auth_cb_data = NULL;
   /* The replacement pool is not running yet. Leaving started TRUE would make
    * publish paths iterate a pool with no relays; FALSE makes them return the
    * existing not-started error instead, and lets the worker (or the health

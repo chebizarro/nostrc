@@ -229,6 +229,30 @@ static void on_state(NostrRelay *relay, NostrRelayConnectionState old_state,
   }
 }
 
+/* The handshake wait gives the relay its own reference to @ready: removing
+ * the state callback does not wait for an on_state() already running on a
+ * libnostr worker, which still sends on the channel, so the relay drops its
+ * reference only after that call returns (nostrc-tw7f, as nostrc-flp7). */
+static void ready_channel_unref(void *chan) {
+  go_channel_unref((GoChannel *)chan);
+}
+
+/* Waits (bounded by @deadline and the handshake timeout) until @relay is
+ * established or its connection fails. */
+static void wait_established(NostrRelay *relay, gint64 deadline) {
+  if (nostr_relay_is_established(relay)) return;
+  GoChannel *ready = go_channel_create(1);
+  nostr_relay_set_state_callback_full(relay, on_state, go_channel_ref(ready),
+                                      ready_channel_unref);
+  if (!nostr_relay_is_established(relay)) {
+    gint64 left = (deadline - g_get_monotonic_time()) / 1000;
+    GoSelectCase c[1] = {{.op = GO_SELECT_RECEIVE, .chan = ready, .recv_buf = NULL}};
+    if (left > 0) go_select_timeout(c, 1, (uint64_t)MIN(left, HANDSHAKE_TIMEOUT_MS));
+  }
+  nostr_relay_set_state_callback(relay, NULL, NULL);
+  go_channel_unref(ready);
+}
+
 static NostrFilters *build_filters(const NdTarget *t) {
   NostrFilter *f = nostr_filter_new();
   if (t->entity == ND_ENTITY_EVENT) {
@@ -263,17 +287,7 @@ static NdEvent *fetch_from_relay(const char *url, const NdTarget *t, gint64 dead
     if (err) free_error(err);
     goto out;
   }
-  if (!nostr_relay_is_established(relay)) {
-    GoChannel *ready = go_channel_create(1);
-    nostr_relay_set_state_callback(relay, on_state, ready);
-    if (!nostr_relay_is_established(relay)) {
-      gint64 left = (deadline - g_get_monotonic_time()) / 1000;
-      GoSelectCase c[1] = {{.op = GO_SELECT_RECEIVE, .chan = ready, .recv_buf = NULL}};
-      if (left > 0) go_select_timeout(c, 1, (uint64_t)MIN(left, HANDSHAKE_TIMEOUT_MS));
-    }
-    nostr_relay_set_state_callback(relay, NULL, NULL);
-    go_channel_free(ready);
-  }
+  wait_established(relay, deadline);
   if (!nostr_relay_is_established(relay)) goto out;
 
   /* prepare_subscription registers the sub for dispatch; it requires a
@@ -506,17 +520,7 @@ static void collect_from_relay(Collector *c, const char *url, const char *filter
     nostr_filters_free(fs);
     goto out;
   }
-  if (!nostr_relay_is_established(relay)) {
-    GoChannel *ready = go_channel_create(1);
-    nostr_relay_set_state_callback(relay, on_state, ready);
-    if (!nostr_relay_is_established(relay)) {
-      gint64 left = (deadline - g_get_monotonic_time()) / 1000;
-      GoSelectCase cs[1] = {{.op = GO_SELECT_RECEIVE, .chan = ready, .recv_buf = NULL}};
-      if (left > 0) go_select_timeout(cs, 1, (uint64_t)MIN(left, HANDSHAKE_TIMEOUT_MS));
-    }
-    nostr_relay_set_state_callback(relay, NULL, NULL);
-    go_channel_free(ready);
-  }
+  wait_established(relay, deadline);
   if (!nostr_relay_is_established(relay)) {
     nostr_filters_free(fs);
     goto out;

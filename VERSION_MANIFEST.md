@@ -25,6 +25,7 @@ files already declare a version.
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.5.1 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
+| signet | `signet/` | 0.1.1 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
 
@@ -104,6 +105,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | gnostr | 0.1.0 | No bump (unreleased) and no behaviour change: it subscribes through GNostrPool, which keeps the bounded queue. |
 | libnostr 1.1.0 service-thread fix (nostrc-flp7, hosted run 36647380306: SEGV in `__lws_sul_insert` <- `lws_service`): a dial that connects but is hung up on before the upgrade gets only CLOSED_CLIENT_HTTP and WSI_DESTROY from lws 4.3; both now clear the connection's wsi and fail its handshake, so the owner's close no longer calls `lws_wsi_close()` on a freed wsi; no `ci.pwsi`; the close handler no longer arms a timer with `lws_set_timer_usecs(wsi, 0)` | libnostr | 1.1.0 | No further bump: folded into the unreleased 1.1.0 (a PATCH-level fix, no API change). Such a dial now fails at once instead of after the handshake timeout. |
 | libmarmot 0.10.0: additive `marmot_get_group_members()` for Groundhog's MLS service (nostrc-qp24.13 part 1) | libmarmot | 0.10.0 | No further bump: additive API folded into unreleased 0.10.0. Groundhog 0.11.1 ships GhMlsService behind GH_FEATURE_ENCRYPTED_GROUPS=0 (no user-visible change). |
+| signet 0.1.0 -> 0.1.1 (PATCH: the relay pool's publish-ack and NIP-42 AUTH OK callbacks, and its per-relay AUTH callback data, move to libnostr 1.1.0's `nostr_relay_set_{ok,auth}_callback_full()`: the relay frees their data after any call still running returns, instead of signet freeing it right after removing the callback, a use-after-free and double free on a duplicate or concurrent OK; nostrc-tw7f) | signet | 0.1.1 | PATCH: use-after-free fix, no API, CLI or config change. Requires libnostr >= 1.1.0. First manifest entry for signet, whose meson and source versions already said 0.1.0. |
+| same (nd-fetch's handshake wait: the relay holds its own reference to the wait channel) | nostr-dispatcher | unversioned | No bump possible: nostr-dispatcher has no version source. |
+| same (`nostr_nip46_client_start()`: each relay holds its own reference to the connect channel) | NIP-46 client/provider | Unversioned | No bump possible: unversioned (see the component table). |
+| same (the negentropy client's AUTH callback context is refcounted and its handshake channel referenced by the relay; W20 review L1) | gnostr | 0.1.0 | No bump (unreleased): the fix ships in 0.1.0. |
 
 ## Maintenance
 

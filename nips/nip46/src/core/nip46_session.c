@@ -995,6 +995,14 @@ static void nip46_relay_state_cb(NostrRelay *relay,
     }
 }
 
+/* Destroy notify for the connect channel: every relay's state callback holds
+ * its own reference, because removing the callback does not wait for a
+ * nip46_relay_state_cb() already running on a libnostr worker, which still
+ * sends on the channel (nostrc-tw7f, as nostrc-flp7). */
+static void nip46_connect_chan_unref(void *chan) {
+    go_channel_unref((GoChannel *)chan);
+}
+
 /* nostrc-32yf: Query session state (internal) */
 static Nip46SessionState nip46_get_state(const NostrNip46Session *s) {
     if (!s) return NIP46_STATE_DISCONNECTED;
@@ -1060,7 +1068,9 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
     for (size_t i = 0; i < s->client_pool->relay_count; i++) {
         NostrRelay *relay = s->client_pool->relays[i];
         if (!relay) continue;
-        nostr_relay_set_state_callback(relay, nip46_relay_state_cb, connect_chan);
+        nostr_relay_set_state_callback_full(relay, nip46_relay_state_cb,
+                                            go_channel_ref(connect_chan),
+                                            nip46_connect_chan_unref);
         if (nostr_relay_is_connected(relay)) {
             go_channel_try_send(connect_chan, (void *)(intptr_t)1);
         }
@@ -1115,7 +1125,7 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
         }
     }
     go_channel_close(connect_chan);
-    go_channel_free(connect_chan);
+    go_channel_unref(connect_chan); /* a relay may still hold its reference */
 
     if (!connected) {
         fprintf(stderr, "[nip46] client_start: ERROR: relay connection timeout\n");

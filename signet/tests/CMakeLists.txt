@@ -60,6 +60,14 @@ signet_add_test_executable(test_key_store)
 signet_add_test_executable(test_nostr_auth)               # challenge store
 signet_add_test_executable(test_capability)               # policy registry
 signet_add_test_executable(test_relay_pool_protocol)      # NPA-11
+signet_add_test_executable(test_relay_pool_ok_lifetime)   # nostrc-tw7f
+# relay_pool_private.h, and libnostr's relay-private.h for its control-frame
+# hook (nostr_relay_dispatch_control_envelope).
+target_include_directories(test_relay_pool_ok_lifetime PRIVATE
+  ${CMAKE_SOURCE_DIR}/signet/src ${CMAKE_SOURCE_DIR}/libnostr/src)
+if (TARGET Threads::Threads)
+  target_link_libraries(test_relay_pool_ok_lifetime PRIVATE Threads::Threads)
+endif()
 signet_add_test_executable(test_config_reload)            # SIGHUP reload (fp-56t)
 signet_add_test_executable(test_signing_crypto)           # NIP-44 round-trip
 signet_add_test_executable(test_store_lifecycle)          # audit chain, revoke precedence
@@ -185,6 +193,11 @@ add_test(NAME key_store COMMAND test_key_store)
 add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
 add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
+add_test(NAME relay_pool_ok_lifetime COMMAND test_relay_pool_ok_lifetime)
+# Freed memory is scribbled (macOS) or perturbed (glibc), so reading an OK
+# callback's freed data fails without ASan too.
+set_tests_properties(relay_pool_ok_lifetime PROPERTIES
+  TIMEOUT 60 ENVIRONMENT "MallocScribble=1;MALLOC_PERTURB_=165")
 add_test(NAME config_reload COMMAND test_config_reload)
 add_test(NAME signing_crypto COMMAND test_signing_crypto)
 add_test(NAME store_lifecycle COMMAND test_store_lifecycle)
