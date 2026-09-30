@@ -7,43 +7,6 @@
 # allocation's stack, so each entry names a function whose allocations are
 # all part of the leak it describes (an indirect leak below a suppressed one
 # carries the same frame). Remove an entry once its bead is fixed.
-
-# nostr-gobject GNostrSubscription (nostrc-jwj0). Groundhog's gnostr scope
-# transport (src/relay/gh-relay-gnostr.c) closes and unrefs every
-# subscription it makes, yet each one leaks:
-#  - the go_context_background() that gnostr_subscription_new() creates for
-#    nostr_relay_prepare_subscription() and never releases;
-leak:go_context_background
-#  - the core NostrSubscription with its contexts and channels, which
-#    gnostr_subscription_finalize() hands to a detached
-#    nostr_subscription_free_async() thread and abandons;
-leak:nostr_relay_prepare_subscription
-#  - and what nostr_subscription_free_async() itself allocates for that
-#    thread (its cleanup handle and done channel), which finalize abandons
-#    at once: leaked when the thread has not finished by exit, a race
-#    (nostrc-xbso). Anchored. Groundhog never calls it; its callers are
-#    nostr-gobject's subscription finalize and simple pool and libnostr's
-#    simple pool, so a caller that keeps the returned handle and never
-#    abandons or waits on it is hidden too.
-leak:^nostr_subscription_free_async$
-#  - the filters gnostr_subscription_new() takes ownership of, which
-#    finalize drops unfreed (the core subscription only borrows them).
-#    Groundhog builds them in one function for this entry alone, so a leaked
-#    GNostrSubscription itself still shows.
-leak:subscription_filters
-
-# libnostr (nostrc-jwj0): the result channel of the CLOSE frame that
-# nostr_subscription_close() writes (nostr_relay_write) is never freed, nor
-# the allocation nostr_subscription_dispatch_closed() makes per CLOSED.
-# Anchored: a bare "nostr_subscription_close" is a substring of nostr-gobject's
-# gnostr_subscription_close, whose frames would then hide a leak in any
-# handler reached through that wrapper (W15 review non-blocking #7).
-leak:^nostr_subscription_close$
-leak:nostr_subscription_dispatch_closed
-
-# libnostr relay writer (nostrc-jwj0): write_operations() answers each write
-# with an Error sent into the caller's answer channel and queues the frame
-# into the connection's send channel; when the caller or the connection is
-# gone first (a relay torn down with a write in flight, e.g. the AUTH or
-# EVENT of a publish that just ended), neither is ever freed.
-leak:write_operations
+#
+# No entries: the libnostr/libgo/nostr-gobject leaks listed here before
+# (nostrc-jwj0, -jw23, -xbso, -xfjg, -vpha) are fixed at their source.

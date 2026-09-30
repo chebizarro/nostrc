@@ -137,15 +137,7 @@ no smoke test run beside them (locks in the volume `nostrc-linux-gate-tests`).
 Under a build's load its ASAN tests time out and lose exit races into leak
 reports CI does not see. A test that fails with a sanitizer report (a leak, UB,
 a memory error) blocks the push with its whole output and is never rerun; any
-other failure is rerun once, as in the smoke run. **Temporary exception
-(gate only; remove when nostrc-vpha closes):** a test whose only report is
-LeakSanitizer records every frame of which lies in `libnostr/`, `libgo/`,
-`nostr-gobject/`, `libjson/`, the sanitizer runtime or a system library
-(`LIBRARY_LEAK_ALLOW` in `scripts/linux-gate-smoke.sh`) is rerun once,
-serially, if no other test's report implicates the push and at most two tests
-leak that way; any failure of the rerun blocks, and every such rerun is
-announced as `!! LIBRARY LEAK RERUN (nostrc-vpha)` and counted in gate-history.
-It absorbs libnostr's exit races only; hosted CI never reruns. Leaks in Groundhog are fixed,
+other failure is rerun once, as in the smoke run. Leaks in Groundhog are fixed,
 not suppressed; `lsan.supp` is only for leaks in other libraries that Groundhog
 cannot free, each naming its bead, and none may cover an allocation Groundhog
 owns. `NOSTRC_SKIP_SANITIZER_GATE=1` skips this stage alone, with a loud banner;

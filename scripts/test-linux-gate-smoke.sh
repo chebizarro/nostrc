@@ -57,8 +57,6 @@ for t in $selected; do
         echo "$n/$total Test #$n: $t .........***Failed    0.10 sec"
         echo "early line of $t"
         echo "OUTPUT-OF-$t-$run"
-        # A fixture of this test's run, e.g. an LSan report (nostrc-vpha rule).
-        if [ -f "${FIX:-/nonexistent}/$t.$run" ]; then cat "$FIX/$t.$run"; fi
         if [[ " $report " == *" $t "* ]]; then
             # Stacks follow the first line of a real report, often thousands
             # of lines: its reader must not stop at that line.
@@ -89,7 +87,7 @@ chmod +x "$tmp/bin/"*
 gate() {
     : > "$tmp/trace"
     PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" JOBS=4 SMOKE_EXCLUDE='^slow$' \
-        BUILD_DIR="$tmp/build" STATE_DIR="$tmp/state" VOLUME=test-volume HISTORY_KEEP=3 FIX="$tmp/fix" \
+        BUILD_DIR="$tmp/build" STATE_DIR="$tmp/state" VOLUME=test-volume HISTORY_KEEP=3 \
         TAIL_LINES="${TAIL_LINES:-1}" bash "$scripts/linux-gate-smoke.sh"
 }
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -199,171 +197,5 @@ fi
 grep -q 'a test was skipped or did not run' "$tmp/out" || fail "the skip is not named"
 # The smoke run allows skips (FORBID_PATTERN unset).
 FIRST_FAIL="" RERUN_FAIL="" SKIP="alpha" gate > "$tmp/out" 2>&1 || fail "a smoke skip failed the gate"
-
-
-# ---- the library-leak rerun rule (nostrc-vpha; remove with it) ----
-# Fixtures in the real LSan format (frames from the gate's container).
-mkdir -p "$tmp/fix" "$tmp/cls"
-lsan_header() { printf '==7==ERROR: LeakSanitizer: detected memory leaks\n\n'; }
-lsan_summary() { printf 'SUMMARY: AddressSanitizer: 512 byte(s) leaked in 2 allocation(s).\n'; }
-# The nostrc-vpha stack: libnostr's connection channels, on a GIO worker.
-# $1 replaces frame #5 (default: nostr-gobject's connect thread).
-lib_record() {
-    cat <<REC
-Direct leak of 448 byte(s) in 1 object(s) allocated from:
-    #0 0xffffa42e76d0 in malloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:69
-    #1 0xaaaadf6fb1d8 in go_channel_create /work/src/libgo/src/channel.c:978
-    #2 0xaaaadf6cb804 in nostr_connection_new /work/src/libnostr/src/connection.c:1070
-    #3 0xaaaadf6cb900 in nostr_relay_connect /work/src/libnostr/src/relay.c:821
-    #4 0xaaaadf6656dc in gnostr_relay_connect /work/src/nostr-gobject/src/nostr_relay.c:990
-    ${1:-#5 0xaaaadf6657aa in nostr_relay_connect_async_thread /work/src/nostr-gobject/src/nostr_async.c:45}
-    #6 0xffff88ec2810  (/lib/aarch64-linux-gnu/libgio-2.0.so.0+0xc2810) (BuildId: 9ee169d35bbdc7d1)
-    #7 0xffff8acf59ac  (/lib/aarch64-linux-gnu/libglib-2.0.so.0+0x959ac) (BuildId: c1a3727b895b1c60)
-    #8 0xffff8b25f3d0 in asan_thread_start ../../../../src/libsanitizer/asan/asan_interceptors.cpp:234
-    #9 0xffffa2685828  (/lib/aarch64-linux-gnu/libc.so.6+0x85828) (BuildId: 27027b96e5b8c475)
-
-REC
-}
-lib_report() { lsan_header; lib_record; lib_record; lsan_summary; }
-gh_report() {
-    lsan_header; lib_record
-    lib_record "#5 0xaaaac503bf98 in on_connected /work/src/gnome/groundhog/src/relay/gh-relay-gnostr.c:241"
-    lsan_summary
-}
-# OpenSSL per-thread state through Groundhog's store (seen in the gate):
-# its stack runs through gh-store.c, so it implicates the push.
-openssl_report() {
-    lsan_header
-    cat <<'REC'
-Direct leak of 2712 byte(s) in 3 object(s) allocated from:
-    #0 0xffff8b2e76d0 in malloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:69
-    #1 0xffff8940c884 in CRYPTO_zalloc (/lib/aarch64-linux-gnu/libcrypto.so.3+0x20c884) (BuildId: fc8e675a4a75f005)
-    #2 0xffff893bd2b4  (/lib/aarch64-linux-gnu/libcrypto.so.3+0x1bd2b4) (BuildId: fc8e675a4a75f005)
-    #3 0xffff893be1e0 in ERR_set_mark (/lib/aarch64-linux-gnu/libcrypto.so.3+0x1be1e0) (BuildId: fc8e675a4a75f005)
-    #9 0xffff893efa98 in PKCS5_PBKDF2_HMAC (/lib/aarch64-linux-gnu/libcrypto.so.3+0x1efa98) (BuildId: fc8e675a4a75f005)
-    #12 0xffff8b0f87f0 in sqlcipher_codec_key_derive (/lib/aarch64-linux-gnu/libsqlcipher.so.1+0x587f0) (BuildId: 2d9e9a276aa63daf)
-    #19 0xffff8b0e36f0 in sqlite3_finalize (/lib/aarch64-linux-gnu/libsqlcipher.so.1+0x436f0) (BuildId: 2d9e9a276aa63daf)
-    #20 0xaaaac5147cf8 in store_query_text /work/src/gnome/groundhog/src/store/gh-store.c:925
-    #25 0xaaaac503bf98 in open_worker /work/src/gnome/groundhog/src/app/gh-account-store.c:358
-    #26 0xffff88ec2810  (/lib/aarch64-linux-gnu/libgio-2.0.so.0+0xc2810) (BuildId: 9ee169d35bbdc7d1)
-    #29 0xffff8b25f3d0 in asan_thread_start ../../../../src/libsanitizer/asan/asan_interceptors.cpp:234
-
-REC
-    lsan_summary
-}
-classifies() {  # classifies NAME EXPECTED: stdin through --classify
-    local got
-    got="$(bash "$scripts/linux-gate-smoke.sh" --classify | tee "$tmp/cls/$1")"
-    [ "$(printf '%s\n' "$got" | head -1)" = "$2" ] ||
-        fail "classifier, $1: $(printf '%s' "$got" | tr '\n' ' '), expected $2"
-}
-
-# The frame classifier.
-lib_report | classifies library-only library
-grep -q '^  library record: go_channel_create libgo/src/channel.c <- nostr_connection_new libnostr/src/connection.c <- nostr_relay_connect libnostr/src/relay.c$' \
-    "$tmp/cls/library-only" || fail "library record summary: $(cat "$tmp/cls/library-only")"
-gh_report | classifies groundhog-frame implicating
-grep -q 'not a library frame: on_connected gnome/groundhog/src/relay/gh-relay-gnostr.c' "$tmp/cls/groundhog-frame" ||
-    fail "the implicating frame is not named"
-{ lsan_header; lib_record "#5 0xffffdeadbeef  (<unknown module>)"; lsan_summary; } |
-    classifies unknown-module implicating
-{ lsan_header; lib_record "#5 0xaaaadf6657aa in some_function"; lsan_summary; } |
-    classifies unrecognised-frame implicating
-{ lsan_header; lib_record "Thread T3 created by T0 here:"; lsan_summary; } |
-    classifies non-frame-line implicating
-openssl_report | classifies openssl-via-store implicating
-{ lsan_header; lib_record "#5 0xaaaadf6657aa in marmot_group_add /work/src/libmarmot/src/group.c:77"; lsan_summary; } |
-    classifies libmarmot-frame implicating
-{ lsan_header; lib_record "#5 0xaaaadf48182c in _start (/work/build/gnome/groundhog/test-groundhog-relay-wire+0x3b182c)"; lsan_summary; } |
-    classifies project-module implicating
-{ lsan_header; lsan_summary; } | classifies header-no-record hard
-{ lsan_header; lib_record | sed '$d'; } | classifies truncated-record hard
-{ printf '==9==ERROR: AddressSanitizer: heap-use-after-free on address 0x6020 at pc 0xaaaa\n'; lib_report; } |
-    classifies uaf-and-leak hard
-{ lib_report; printf 'gh-store.c:12:3: runtime error: signed integer overflow\n'; } | classifies ubsan hard
-{ printf '==7==ERROR: LeakSanitizer: tracer caught signal 11\n'; lib_record; } | classifies lsan-internal-error hard
-{ lib_report; printf 'SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior x.c:1:2\n'; } |
-    classifies other-summary hard
-{ lib_record; lsan_summary; } | classifies records-without-header hard
-printf 'not ok 3 /groundhog/relay/x - timed out\n' | classifies no-report none
-# Another source root (hosted CI's) is stripped too.
-lib_report | sed 's|/work/src/|/home/runner/work/nostrc/nostrc/|' |
-    SOURCE_ROOT=/home/runner/work/nostrc/nostrc/ classifies other-root library
-
-# The rerun policy, in the sanitizer mode.
-fixture() { rm -f "$tmp/fix/"*; }
-: > "$tmp/state/gate-history/gates"
-: > "$tmp/state/gate-history/reruns"
-
-# A library-only leak is rerun once, serially, and passes, loudly and counted.
-fixture; lib_report > "$tmp/fix/beta.first"
-FIRST_FAIL="beta" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1 || fail "a library-only leak blocked: $(tail -5 "$tmp/out")"
-[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 2 ] || fail "a library-only leak was not rerun exactly once"
-grep -qF -- '-R ^(beta)$' "$tmp/trace" || fail "the library leak was not rerun by name"
-[ "$(grep '^CTEST' "$tmp/trace" | tail -1 | grep -c -- '--parallel')" -eq 0 ] || fail "the rerun was not serial"
-grep -q '^!! LIBRARY LEAK RERUN (nostrc-vpha): beta$' "$tmp/out" || fail "the library-leak rerun was not announced"
-grep -q '^!!     library record: go_channel_create libgo' "$tmp/out" || fail "the records were not printed"
-grep -q 'early line of beta' "$tmp/out" || fail "the first run's whole output was not printed"
-grep -q 'beta needed a library-leak rerun in 1 of the last 1 gate(s)' "$tmp/out" || fail "the library-leak rerun was not counted"
-awk -F '\t' '$2 == "beta" && $3 == "lib-leak" { found = 1 } END { exit !found }' \
-    "$tmp/state/gate-history/reruns" || fail "no lib-leak tag in gate-history"
-grep -q 'sanitizer tests passed after a rerun' "$tmp/out" || fail "no pass line after the library-leak rerun"
-FIRST_FAIL="beta" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1 || fail "second library-leak gate blocked"
-grep -q 'beta needed a library-leak rerun in 2 of the last 2 gate(s)' "$tmp/out" || fail "library-leak reruns not counted across gates"
-
-# The same leak again in the rerun blocks.
-fixture; lib_report > "$tmp/fix/beta.first"; lib_report > "$tmp/fix/beta.rerun"
-if FIRST_FAIL="beta" RERUN_FAIL="beta" sanitizers > "$tmp/out" 2>&1; then fail "a library leak repeated in the rerun passed"; fi
-grep -q 'the rerun alone failed too' "$tmp/out" || fail "no rerun failure line"
-absent_line() { if grep -q "$1" "$2"; then fail "$3"; fi; }
-absent_line 'LIBRARY LEAK RERUN (nostrc-vpha)' "$tmp/out" "a failed library-leak rerun was announced as passed"
-
-# A record with a Groundhog frame blocks at once.
-fixture; gh_report > "$tmp/fix/beta.first"
-if FIRST_FAIL="beta" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1; then fail "a Groundhog-frame leak passed"; fi
-[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "a Groundhog-frame leak was rerun"
-grep -q 'sanitizer report in: beta' "$tmp/out" || fail "the implicating test is not named"
-
-# A library-only leak beside another test's Groundhog leak: nothing is rerun.
-fixture; lib_report > "$tmp/fix/alpha.first"; gh_report > "$tmp/fix/beta.first"
-if FIRST_FAIL="alpha beta" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1; then fail "a library leak beside a Groundhog leak passed"; fi
-[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "rerun beside a Groundhog leak"
-
-# Library-only leaks plus a use-after-free, the OpenSSL-via-store leak, a
-# libmarmot frame, an unsymbolized project module, a header with no record:
-# each blocks without a rerun.
-for case in uaf openssl marmot module header; do
-    fixture
-    case "$case" in
-        uaf) { printf '==9==ERROR: AddressSanitizer: heap-use-after-free on address 0x6020\n'; lib_report; } ;;
-        openssl) openssl_report ;;
-        marmot) { lsan_header; lib_record "#5 0xaaaa in marmot_group_add /work/src/libmarmot/src/group.c:77"; lsan_summary; } ;;
-        module) { lsan_header; lib_record "#5 0xaaaa in _start (/work/build/gnome/groundhog/test-groundhog-relay-wire+0x3b182c)"; lsan_summary; } ;;
-        header) { lsan_header; lsan_summary; } ;;
-    esac > "$tmp/fix/beta.first"
-    if FIRST_FAIL="beta" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1; then fail "$case: passed"; fi
-    [ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "$case: rerun"
-    absent_line 'LIBRARY LEAK RERUN' "$tmp/out" "$case: announced a library-leak rerun"
-done
-
-# Three library-leak tests in one run: a regression, not a race.
-fixture; for t in alpha beta gamma; do lib_report > "$tmp/fix/$t.first"; done
-if FIRST_FAIL="alpha beta gamma" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1; then fail "three library-leak tests passed"; fi
-[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "three library-leak tests were rerun"
-grep -q '3 tests leak in libraries only: alpha beta gamma; more than 2' "$tmp/out" || fail "no regression message"
-
-# Two are rerun, and with them a failure that has no report at all.
-fixture; for t in alpha beta; do lib_report > "$tmp/fix/$t.first"; done
-FIRST_FAIL="alpha beta gamma" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1 || fail "two library leaks and a flake blocked"
-grep -qF -- '-R ^(alpha|beta|gamma)$' "$tmp/trace" || fail "not all three were rerun"
-grep -q '^!! LIBRARY LEAK RERUN (nostrc-vpha): alpha$' "$tmp/out" && grep -q '^!! LIBRARY LEAK RERUN (nostrc-vpha): beta$' "$tmp/out" ||
-    fail "both library-leak reruns must be announced"
-absent_line 'LIBRARY LEAK RERUN (nostrc-vpha): gamma' "$tmp/out" "a report-free flake was announced as a library leak"
-
-# The smoke run (no SANITIZER_REPORTS) never classifies: a report there is
-# just a failure, rerun as before.
-fixture; gh_report > "$tmp/fix/beta.first"
-FIRST_FAIL="beta" RERUN_FAIL="" gate > "$tmp/out" 2>&1 || fail "the smoke run applied the sanitizer rule"
-echo 'ok: the library-leak rerun rule (nostrc-vpha)'
 
 echo 'linux gate smoke tests passed'

@@ -124,21 +124,3 @@ This script is the **baseline scaffold** (plan Execution-Index #21a). The
 subsequent track lands, plus an installed-artifact check on the lab — is
 separate follow-up work and does not require any change to this script or
 its CMake wiring; #21b rides this test as-is.
-
-## `linux-gate-smoke.sh` — the library-leak rerun rule (temporary, nostrc-vpha)
-
-The pre-push sanitizer stage (`linux-gate.sh --sanitizers`) never reruns a
-test with a sanitizer report, with one temporary exception: a test whose only
-report is LeakSanitizer records whose every frame is in `LIBRARY_LEAK_ALLOW`
-(`libnostr/ libgo/ nostr-gobject/ libjson/`), the sanitizer runtime or a system
-library gets one serial rerun, if no other failed test has a report that
-implicates the push and at most `LIBRARY_LEAK_MAX` (2) tests leak that way. Any
-failure of the rerun blocks; a record with any other frame, or one the
-classifier does not fully parse, blocks at once. Every such rerun prints
-`!! LIBRARY LEAK RERUN (nostrc-vpha): <test>` with its records and is counted
-in `gate-history/reruns` (tag `lib-leak`). It exists only because libnostr's
-exit races (nostrc-vpha) falsely blocked about one clean push in six; hosted
-`groundhog-sanitizers` never reruns. **Remove `LIBRARY_LEAK_ALLOW`, the
-classifier and their tests when nostrc-vpha closes.** `bash
-scripts/linux-gate-smoke.sh --classify < output` shows how a failed test's
-output is classified.
