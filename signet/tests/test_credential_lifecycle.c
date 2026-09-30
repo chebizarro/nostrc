@@ -410,6 +410,45 @@ static void test_delivery_denials_and_requester_audit(void) {
                request, "deny-capability") == -1);
   CHECK(audit_rows_containing(store, "no_capability") > 0);
 
+  /* S1b: ordinary NIP-46 policy matching is deliberately insufficient for
+   * plaintext delivery. Missing dimensions, wildcards, and mixed policies
+   * must all fail closed even if policy_store_get() would otherwise match. */
+  const char *implicit_policies[] = {
+    "{\"default\":\"deny\",\"allow_methods\":[\"*\"]}",
+    NULL, /* exact client only, filled below */
+    "{\"default\":\"deny\",\"allow_clients\":[\"*\"],"
+      "\"allow_methods\":[\"credential.deliver\"]}",
+    NULL, /* exact client plus wildcard/mixed NIP-46 methods */
+    NULL, /* exact client plus mixed delivery/signing methods */
+  };
+  char *client_only = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"]}",
+      f.provisioner_pk);
+  char *wildcard_methods = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"sign_event\",\"nip44_encrypt\",\"*\"]}",
+      f.provisioner_pk);
+  char *mixed_methods = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"credential.deliver\",\"sign_event\"]}",
+      f.provisioner_pk);
+  implicit_policies[1] = client_only;
+  implicit_policies[3] = wildcard_methods;
+  implicit_policies[4] = mixed_methods;
+  for (size_t i = 0; i < G_N_ELEMENTS(implicit_policies); i++) {
+    CHECK(signet_policy_store_set_identity_json(
+        f.identity_policy, "owner", implicit_policies[i],
+        2000000000, &policy_error) == 0);
+    CHECK(policy_error == NULL);
+    char event_id[40];
+    g_snprintf(event_id, sizeof(event_id), "deny-implicit-%zu", i);
+    CHECK(handle(&f, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+                 request, event_id) == -1);
+  }
+  g_free(client_only);
+  g_free(wildcard_methods);
+  g_free(mixed_methods);
+
   /* Restore the exact provisioner/method grant. */
   char *allow = g_strdup_printf(
       "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
@@ -418,6 +457,18 @@ static void test_delivery_denials_and_requester_audit(void) {
       f.identity_policy, "owner", allow, 2000000000,
       &policy_error) == 0);
   CHECK(policy_error == NULL);
+
+  /* A dedicated delivery grant cannot widen NIP-46 signing authority. */
+  SignetPolicyKeyView sign_key = {
+    .identity = "owner",
+    .client_pubkey_hex = f.provisioner_pk,
+    .method = "sign_event",
+    .event_kind = 1,
+  };
+  SignetPolicyValue sign_decision;
+  CHECK(signet_policy_store_get(
+      f.identity_policy, &sign_key, 2000000000, &sign_decision) == 0);
+  CHECK(sign_decision.decision == SIGNET_POLICY_RULE_DENY);
 
   /* Wrong owner is denied before payload decrypt. */
   char other_sk[65], other_pk[65], out_pk[65] = {0};

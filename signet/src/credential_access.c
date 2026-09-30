@@ -173,18 +173,9 @@ SignetCredAccessStatus signet_credential_access_acquire(
   /* 2) Explicit capability. No policy registry means nothing was ever
    * granted: fail closed. */
   if (strcmp(req->capability, SIGNET_CAP_CREDENTIAL_DELIVER) == 0) {
-    SignetPolicyValue decision;
-    SignetPolicyKeyView key = {
-      .identity = req->agent_id,
-      .client_pubkey_hex = req->requester_pubkey,
-      .method = SIGNET_CAP_CREDENTIAL_DELIVER,
-      .event_kind = -1,
-    };
     if (!ctx->identity_policy || !req->requester_pubkey ||
-        signet_policy_store_get(ctx->identity_policy, &key, now, &decision) != 0 ||
-        decision.decision != SIGNET_POLICY_RULE_ALLOW ||
-        !decision.reason_code ||
-        strcmp(decision.reason_code, "policy.allow.match") != 0) {
+        !signet_policy_store_has_exact_delivery_grant(
+            ctx->identity_policy, req->agent_id, req->requester_pubkey, now)) {
       status = SIGNET_CRED_ACCESS_NO_CAPABILITY;
       goto audited_out;
     }

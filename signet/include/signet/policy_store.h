@@ -17,6 +17,7 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /**
@@ -111,6 +112,18 @@ int signet_policy_store_get(SignetPolicyStore *ps,
                             const SignetPolicyKeyView *key,
                             int64_t now,
                             SignetPolicyValue *out_val);
+
+/* Check the dedicated credential-delivery grant for an identity.
+ *
+ * Delivery is intentionally stricter than ordinary NIP-46 policy matching:
+ * the identity policy must contain exactly one allow_clients entry matching
+ * requester_pubkey_hex and exactly one allow_methods entry equal to
+ * "credential.deliver".  Missing dimensions, wildcards, default-allow, and
+ * mixed signing/delivery policies all fail closed.
+ */
+bool signet_policy_store_has_exact_delivery_grant(
+    SignetPolicyStore *ps, const char *identity,
+    const char *requester_pubkey_hex, int64_t now);
 
 /* Put/overwrite a policy value. Returns 0 on success, -1 on error.
  * NOTE: File backend is currently read-only and returns -1. */

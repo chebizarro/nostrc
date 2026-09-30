@@ -5,6 +5,7 @@
 
 #include "signet/policy_store.h"
 #include "signet/audit_logger.h"
+#include "signet/capability.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -735,6 +736,34 @@ int signet_policy_store_get(SignetPolicyStore *ps,
 
   g_mutex_unlock(&ps->mu);
   return 0;
+}
+
+bool signet_policy_store_has_exact_delivery_grant(
+    SignetPolicyStore *ps, const char *identity,
+    const char *requester_pubkey_hex, int64_t now) {
+  if (!ps || !identity || !identity[0] || !requester_pubkey_hex ||
+      !requester_pubkey_hex[0] ||
+      ps->backend != SIGNET_POLICY_STORE_BACKEND_FILE)
+    return false;
+
+  g_autofree char *requester = signet_pubkey_canon_dup(requester_pubkey_hex);
+  if (!requester || strcmp(requester, "*") == 0) return false;
+
+  g_mutex_lock(&ps->mu);
+  signet_policy_store_maybe_reload_locked(ps, now);
+
+  SignetIdentityPolicy *p = ps->identities
+      ? (SignetIdentityPolicy *)g_hash_table_lookup(ps->identities, identity)
+      : NULL;
+  bool allowed = p && !p->default_allow &&
+      p->allow_clients && p->allow_clients->len == 1 &&
+      p->allow_methods && p->allow_methods->len == 1 &&
+      strcmp((const char *)g_ptr_array_index(p->allow_clients, 0), requester) == 0 &&
+      strcmp((const char *)g_ptr_array_index(p->allow_methods, 0),
+             SIGNET_CAP_CREDENTIAL_DELIVER) == 0;
+
+  g_mutex_unlock(&ps->mu);
+  return allowed;
 }
 
 /* ---- set_identity_json: parse JSON → SignetIdentityPolicy, persist ---- */
