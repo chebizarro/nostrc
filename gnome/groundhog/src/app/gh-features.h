@@ -61,7 +61,10 @@ G_BEGIN_DECLS
 #define GH_FEATURE_EXPIRY           GROUNDHOG_HAVE_EXPIRY /* G07: gh-expiry.c, gh-app-services.c */
 /* Not a preference: New Message's 10-recipient limit points to encrypted
  * groups only when they exist (charter §7.9; Marmot MLS, nostrc-qp24.13).
- * gh-app-services.c passes it as GhNewMessageConfig.encrypted_groups. */
+ * gh-app-services.c passes it as GhNewMessageConfig.encrypted_groups.
+ * Stays 0 until the UI (nostrc-9xf5) and a complete group backfill: the
+ * 200-event subscription queue (nostrc-dha5), paging past a relay's result
+ * limit (nostrc-cpwf) and the >200-event backlog test (nostrc-kzun). */
 #define GH_FEATURE_ENCRYPTED_GROUPS 0
 
 static inline GhPreferencesFeatures

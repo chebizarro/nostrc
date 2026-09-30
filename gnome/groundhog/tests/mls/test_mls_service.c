@@ -410,6 +410,28 @@ test_restart_mid_commit(void)
 
 /* ---- Read cursor and held events (review B1, M1, M3, M4) ------------------------------ */
 
+static gint64
+real_now(void)
+{
+  return g_get_real_time() / G_USEC_PER_SEC;
+}
+
+static void
+wait_text(App *app, const gchar *room, const gchar *text)
+{
+  MessageWait wait = { app, room, text };
+  spin_until(message_listed, &wait, "a message listed");
+}
+
+static void
+rename_group(App *alice, GhMlsGroup *ga, const gchar *name)
+{
+  OpWait renamed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, name, NULL, NULL, on_changed,
+                                       &renamed);
+  change(alice, &renamed);
+}
+
 /* The envelope json re-signed under a fresh key with another created_at:
  * what a relay replay, or anyone copying a group event, can publish. */
 static gchar *
@@ -459,6 +481,18 @@ track_max(GObject *group, GParamSpec *pspec, gpointer data)
   *max = MAX(*max, gh_mls_group_get_unreadable(GH_MLS_GROUP(group)));
 }
 
+typedef struct {
+  GhMlsGroup *group;
+  gint64 at_least;
+} CursorWait;
+
+static gboolean
+cursor_reached(gpointer data)
+{
+  CursorWait *wait = data;
+  return gh_mls_group_get_cursor(wait->group) >= wait->at_least;
+}
+
 static const gchar *
 h_of(WireStored *stored)
 {
@@ -486,6 +520,15 @@ test_future_replay_moves_no_cursor(void)
   GhMlsGroup *ga = create_group(alice, "Clock", (const guint[]){ BOB }, 1);
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   GhMlsGroup *gb = join(bob, ALICE);
+  /* Nothing held may mask the cursor (re-review N5): any Add Commit of
+   * Bob's join second ages out over three Commits. */
+  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
+    g_autofree gchar *name = g_strdup_printf("Clock %u", i);
+    rename_group(alice, ga, name);
+    NameWait seen = { gb, name };
+    spin_until(name_is, &seen, "Bob applying the rename");
+  }
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, 0);
   send_text(alice, ga, "first");
   wait_message(bob, room, "first");
 
@@ -495,6 +538,7 @@ test_future_replay_moves_no_cursor(void)
   wire_relay_inject(&w.g, forged);
   send_text(alice, ga, "barrier");            /* delivered after the forgery */
   wait_message(bob, room, "barrier");
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), <=, real_now());   /* B1 */
 
   set_online(bob, FALSE);
   send_text(alice, ga, "while away");
@@ -502,6 +546,7 @@ test_future_replay_moves_no_cursor(void)
   spin_until(sent, &away, "the message sent while Bob was away");
   set_online(bob, TRUE);
   wait_message(bob, room, "while away");      /* history */
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), <=, real_now());
   send_text(alice, ga, "live after");
   wait_message(bob, room, "live after");      /* live */
 
@@ -786,6 +831,150 @@ test_second_admin_invites(void)
 }
 
 
+
+/* ---- Catch-up across missed Commits (re-review N1, N2) ------------------------------- */
+
+/* Bob misses k Commits with a message in each new epoch; the relay then
+ * gives him that backlog newest first (every event withheld and released in
+ * that order, the first Commit last, so the order does not depend on
+ * events sharing a second): one catch-up must read every message and end at
+ * Alice's epoch. Before re-review N1 the nested retry crashed; before N2
+ * events four or more epochs ahead were dropped as junk. */
+static void
+run_catch_up(guint k)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Catch-up", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(gb);
+  gint base = (gint)gh_mls_group_get_unreadable(gb);
+
+  set_online(bob, FALSE);
+  w.g.withhold_new = TRUE;
+  g_autoptr(GPtrArray) backlog = g_ptr_array_new_with_free_func(g_free);  /* c1 m1 c2 m2 ... */
+  g_autoptr(GPtrArray) texts = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 1; i <= k; i++) {
+    g_autofree gchar *name = g_strdup_printf("Epoch %u", i);
+    rename_group(alice, ga, name);
+    g_ptr_array_add(backlog, g_strdup(last_stored_445(&w.g)->id));
+    gchar *text = g_strdup_printf("in epoch %u", i);
+    send_text(alice, ga, text);
+    StatusWait done = { alice, room, text };
+    spin_until(sent, &done, "a message of the next epoch sent");
+    g_ptr_array_add(backlog, g_strdup(last_stored_445(&w.g)->id));
+    g_ptr_array_add(texts, text);
+  }
+  w.g.withhold_new = FALSE;
+  set_online(bob, TRUE);
+  wait_live(gb);
+  for (guint i = backlog->len; i > 1; i--)
+    wire_relay_release(&w.g, g_ptr_array_index(backlog, i - 1));   /* newest first */
+  wait_unreadable(gb, base + (gint)(2 * k - 1));   /* k-1 Commits, k messages */
+  wire_relay_release(&w.g, g_ptr_array_index(backlog, 0));        /* the first Commit */
+  for (guint i = 0; i < texts->len; i++)
+    wait_text(bob, room, g_ptr_array_index(texts, i));
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_autofree gchar *last = g_strdup_printf("Epoch %u", k);
+  g_assert_cmpstr(gh_mls_group_get_name(gb), ==, last);
+  g_assert_cmpint(gh_mls_group_get_unreadable(gb), ==, base);
+  send_text(alice, ga, "after the catch-up");
+  wait_message(bob, room, "after the catch-up");
+  world_down(&w);
+}
+
+static void test_catch_up_2(void) { run_catch_up(2); }
+static void test_catch_up_4(void) { run_catch_up(4); }
+static void test_catch_up_5(void) { run_catch_up(5); }
+
+/* A group relay that fails during a catch-up may hold what the others lack:
+ * until every relay answered, nothing moves the cursor. (Bob's store clock
+ * runs a day ahead so that the cursor would visibly move.) */
+static void
+test_failed_relay_holds_the_cursor(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  const gchar *relays[] = { w.g.url, w.h.url, NULL };
+  GhMlsGroup *ga = create_group_on(alice, "Two relays", relays, (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  join(bob, ALICE);
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+  gint64 before = gh_mls_group_get_cursor(gb);
+
+  set_online(bob, FALSE);
+  w.h.close_on_connect = TRUE;
+  send_text(alice, ga, "while h is down");
+  StatusWait on_g = { alice, room, "while h is down" };
+  spin_until(sent, &on_g, "the message accepted by g");
+  /* The same message under a later envelope date (the outer created_at is
+   * not covered by MLS): accepted, and it would move the cursor. */
+  g_autofree gchar *later = resigned(last_stored_445(&w.g)->json, real_now() + 200);
+  wire_relay_inject(&w.g, later);
+  set_online(bob, TRUE);
+  wait_text(bob, room, "while h is down");
+  wait_live(gb);
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, before);    /* h has not answered */
+
+  w.h.close_on_connect = FALSE;
+  set_online(bob, FALSE);
+  set_online(bob, TRUE);
+  CursorWait moved = { gb, real_now() + 190 };
+  spin_until(cursor_reached, &moved, "the cursor moving once every relay answered");
+  world_down(&w);
+}
+
+/* The Commit that added Bob is on the relay, but Bob joined after it and
+ * can never apply it: held, it must not pin his cursor at the join (review
+ * N4). Bob's store clock runs a day ahead so that the cursor can move. */
+static void
+test_join_commit_pins_no_cursor(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Joined", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  gint64 added = real_now();   /* the Add Commit is no later */
+  join(bob, ALICE);
+  gh_clock_unref(bob->clock);
+  bob->clock = gh_clock_new_fake(g_get_real_time() + (gint64)24 * 3600 * G_USEC_PER_SEC);
+  app_restart(bob);
+  GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
+  wait_live(gb);
+
+  /* The same message under a later envelope date (as in the test below),
+   * fetched first by a catch-up (the relay answers newest first). */
+  set_online(bob, FALSE);
+  send_text(alice, ga, "after the join");
+  StatusWait done = { alice, room, "after the join" };
+  spin_until(sent, &done, "the message sent");
+  g_autofree gchar *later = resigned(last_stored_445(&w.g)->json, real_now() + 200);
+  wire_relay_inject(&w.g, later);
+  set_online(bob, TRUE);
+  wait_text(bob, room, "after the join");
+  CursorWait moved = { gb, real_now() + 190 };
+  spin_until(cursor_reached, &moved, "the cursor moving past the join");
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), >, added);
+  world_down(&w);
+}
+
 /* ---- Account proof (review B2) ---------------------------------------------------------- */
 
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
@@ -982,6 +1171,13 @@ main(int argc, char **argv)
                   test_send_republished_after_restart);
   g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
   g_test_add_func("/groundhog/mls-service/second-admin-invites", test_second_admin_invites);
+  g_test_add_func("/groundhog/mls-service/catch-up-2-commits", test_catch_up_2);
+  g_test_add_func("/groundhog/mls-service/catch-up-4-commits", test_catch_up_4);
+  g_test_add_func("/groundhog/mls-service/catch-up-5-commits", test_catch_up_5);
+  g_test_add_func("/groundhog/mls-service/join-commit-pins-no-cursor",
+                  test_join_commit_pins_no_cursor);
+  g_test_add_func("/groundhog/mls-service/failed-relay-holds-the-cursor",
+                  test_failed_relay_holds_the_cursor);
   g_test_add_func("/groundhog/mls-service/account-proof-enrollment",
                   test_account_proof_enrollment);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF

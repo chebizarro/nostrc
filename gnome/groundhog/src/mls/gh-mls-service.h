@@ -71,11 +71,13 @@ G_BEGIN_DECLS
  * Commit that makes them readable; duplicates are dropped by the scope, by
  * libmarmot's processed markers and by the seen set. The read cursor (the
  * REQ's since, minus an overlap) moves only for events libmarmot accepted
- * and the store kept, never past now + GH_MLS_SERVICE_MAX_FUTURE_SKEW and
- * never past an event held or dropped unread; held events are kept once per
- * id (oldest dropped first when full, junk dropped after
- * GH_MLS_SERVICE_JUNK_AFTER_COMMITS Commits) across network flaps. A
- * joined group is read from its Welcome's time. A sent message is one
+ * and the store kept, only while every group relay has answered, never past
+ * now and never past an event held or dropped unread. Held events are kept
+ * once per id (oldest dropped first when full) across network flaps and
+ * retried as a fixpoint after every Commit (a whole backlog at once); one
+ * still unreadable after GH_MLS_SERVICE_JUNK_AFTER_COMMITS new Commits is
+ * junk. Nothing from before the account joined is held. A joined group is
+ * read from its Welcome's time. A sent message is one
  * transaction -- the outgoing message row, marmot_create_message() (the
  * sender ratchet step) and its sealed kind 445 -- committed before anything
  * is published (libmarmot 0.8.0 review N1), then published to the group
@@ -131,9 +133,6 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_MAX_HELD 256
 /* Overlap subtracted from a group's read cursor (seconds). */
 #define GH_MLS_SERVICE_CURSOR_OVERLAP 600
-/* A group's read cursor never moves past now plus this (seconds), whatever
- * created_at an event claims (as GH_NIP29_MAX_FUTURE_SKEW_SECONDS). */
-#define GH_MLS_SERVICE_MAX_FUTURE_SKEW 600
 /* A held event still unreadable after this many applied Commits is junk. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
@@ -212,6 +211,9 @@ gboolean gh_mls_group_get_is_admin(GhMlsGroup *self);
 gboolean gh_mls_group_get_pending_commit(GhMlsGroup *self);
 guint gh_mls_group_get_unsent_welcomes(GhMlsGroup *self);
 guint gh_mls_group_get_unreadable(GhMlsGroup *self);
+/* The read cursor (unix seconds; 0: none): the group's next REQ asks from
+ * it minus GH_MLS_SERVICE_CURSOR_OVERLAP. For diagnostics and tests. */
+gint64 gh_mls_group_get_cursor(GhMlsGroup *self);
 /* The members' account keys (lowercase hex, sorted; the account included):
  * what every member can see (charter §2.2). Transfer full. */
 GStrv gh_mls_group_dup_members(GhMlsGroup *self);

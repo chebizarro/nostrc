@@ -64,6 +64,10 @@ struct _GhMlsGroup {
   GQueue held;               /* Held: kind 445 of a later epoch, oldest first */
   GHashTable *held_ids;      /* their event ids (owned by the Held records) */
   gint64 pinned;             /* oldest created_at dropped unread this session; 0: none */
+  gint64 floor;              /* when the account joined (or made) the group; 0: unknown */
+  gboolean retrying;         /* retry_held() runs: a nested Commit only asks again */
+  gboolean retry_again;
+  guint fresh_commits;       /* Commits applied not out of the queue, since the last aging */
   /* Changes: the Commit being published, and who waits for it. */
   Round *round;
   GPtrArray *waiters;        /* GTask */
@@ -364,6 +368,18 @@ welcome_time_scope(const guint8 wrapper[32])
   return g_strdup_printf("mls/w/%.32s", g_checksum_get_string(sum));
 }
 
+/* Where the group's join floor is kept: "mls/j/" + 32 hex of
+ * SHA-256(domain || group id). */
+static gchar *
+floor_scope(GhMlsGroup *group)
+{
+  g_autoptr(GChecksum) sum = g_checksum_new(G_CHECKSUM_SHA256);
+  static const guchar domain[] = "groundhog/mls-join-floor/v1";
+  g_checksum_update(sum, domain, sizeof domain);
+  g_checksum_update(sum, group->gid.data, (gssize)group->gid.len);
+  return g_strdup_printf("mls/j/%.32s", g_checksum_get_string(sum));
+}
+
 /* The per-group Tor isolation label (charter §4.3 acct/mls/<hash(group)>). */
 static gchar *
 isolation_label(GhMlsGroup *group)
@@ -445,6 +461,13 @@ gh_mls_group_get_unsent_welcomes(GhMlsGroup *self)
 {
   g_return_val_if_fail(GH_IS_MLS_GROUP(self), 0);
   return self->unsent_welcomes;
+}
+
+gint64
+gh_mls_group_get_cursor(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), 0);
+  return self->cursor;
 }
 
 guint
@@ -781,6 +804,8 @@ ensure_group(GhMlsService *self, const MarmotGroupId *gid)
   g_autofree gchar *scope = cursor_scope(group);
   if (!gh_store_get_cursor(self->store, scope, "", &group->cursor, &error))
     g_message("Groundhog could not read an encrypted group's cursor: %s", error->message);
+  g_autofree gchar *floor = floor_scope(group);
+  gh_store_get_cursor(self->store, floor, "", &group->floor, NULL);
   g_signal_emit(self, signals[SIGNAL_GROUP_ADDED], 0, group);
   return group;
 }
@@ -799,17 +824,21 @@ group_unsubscribe(GhMlsGroup *group)
 }
 
 /* Sets the read cursor to @cursor if that moves it forward, bounded
- * (review B1, M1): never past now + skew (a relay's or a member's clock is
- * no authority: a far-future cursor would put every later REQ's `since`
- * past everything), never past an event held unread or dropped unread this
- * session (so a re-subscribe fetches it again). */
+ * (review B1, M1, N6): never past now (a relay's or a member's clock is no
+ * authority: a far-future cursor would put every later REQ's `since` past
+ * everything, and any allowance ahead of now would eat into the overlap),
+ * never past an event held unread or dropped unread this session (so a
+ * re-subscribe fetches it again). */
 static void
 save_cursor(GhMlsGroup *group, gint64 cursor)
 {
   gint64 now = now_s(group->service);
-  cursor = MIN(cursor, now + GH_MLS_SERVICE_MAX_FUTURE_SKEW);
-  for (GList *l = group->held.head; l; l = l->next)
-    cursor = MIN(cursor, ((Held *)l->data)->created_at);
+  cursor = MIN(cursor, now);
+  for (GList *l = group->held.head; l; l = l->next) {
+    gint64 at = ((Held *)l->data)->created_at;
+    if (at > group->floor)   /* the join's own second is behind the cursor anyway */
+      cursor = MIN(cursor, at);
+  }
   if (group->pinned > 0)
     cursor = MIN(cursor, group->pinned);
   if (cursor <= group->cursor)
@@ -820,6 +849,18 @@ save_cursor(GhMlsGroup *group, gint64 cursor)
     group->cursor = cursor;
   else
     g_message("Groundhog could not save an encrypted group's cursor: %s", error->message);
+}
+
+/* When the account joined (or made) the group: nothing before it can be of
+ * a later epoch (review N4). Kept with the cursor. */
+static void
+set_floor(GhMlsGroup *group, gint64 floor)
+{
+  g_autofree gchar *scope = floor_scope(group);
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_set_cursor(group->service->store, scope, "", MAX(floor, 1), &error))
+    g_message("Groundhog could not save an encrypted group's join time: %s", error->message);
+  group->floor = MAX(floor, 1);
 }
 
 typedef enum {
@@ -849,36 +890,99 @@ hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created
   Held *held = g_new0(Held, 1);
   held->id = g_strdup(id);
   held->json = g_strdup(json);
-  held->created_at = MIN(created_at, now_s(group->service) + GH_MLS_SERVICE_MAX_FUTURE_SKEW);
+  held->created_at = MIN(created_at, now_s(group->service));
   g_queue_push_tail(&group->held, held);
   g_hash_table_add(group->held_ids, held->id);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
 }
 
-/* Held events, again after a Commit moved the group on. One that stays
- * unreadable through GH_MLS_SERVICE_JUNK_AFTER_COMMITS Commits is not for
- * this group's epochs (anyone can post a kind 445 with its public h): it is
- * discarded, and no longer holds the cursor back. */
+static gint
+held_older_first(gconstpointer a, gconstpointer b)
+{
+  const Held *x = a, *y = b;
+  return x->created_at < y->created_at ? -1 : x->created_at > y->created_at;
+}
+
+/* Held events, again after a Commit moved the group on (review N1, N2).
+ *
+ * A fixpoint, never recursion: a held Commit that applies during a pass
+ * (process_event() -> after_commit() -> here) only asks for another pass,
+ * and passes repeat until one applies no Commit. Each pass takes the held
+ * events oldest first, so an epoch's messages are tried before the Commit
+ * that closes it; a whole newest-first backlog resolves in one call.
+ *
+ * Junk: anyone can post a kind 445 with the group's public h. Once the
+ * fixpoint ends, every event still unreadable counts one miss per Commit
+ * that came from a relay (or was our own, merged) since the last count --
+ * never per Commit applied out of this queue -- and one that reaches
+ * GH_MLS_SERVICE_JUNK_AFTER_COMMITS misses is dropped (and no longer holds
+ * the cursor back). */
 static void
 retry_held(GhMlsGroup *group)
 {
-  guint n = g_queue_get_length(&group->held);
-  for (guint i = 0; i < n && group->active; i++) {
-    Held *held = g_queue_pop_head(&group->held);
-    g_hash_table_remove(group->held_ids, held->id);
-    if (process_event(group, held->json, NULL, held) == EVENT_HELD &&
-        ++held->misses < GH_MLS_SERVICE_JUNK_AFTER_COMMITS) {
+  if (group->retrying) {
+    group->retry_again = TRUE;
+    return;
+  }
+  group->retrying = TRUE;
+  gboolean touched = FALSE;
+  do {
+    group->retry_again = FALSE;
+    if (g_queue_is_empty(&group->held) || !group->active)
+      break;
+    touched = TRUE;
+    GList *pass = group->held.head;
+    g_queue_init(&group->held);
+    g_hash_table_remove_all(group->held_ids);
+    pass = g_list_sort(pass, held_older_first);   /* stable: arrival order within a second */
+    for (GList *l = pass; l; l = l->next) {
+      Held *held = l->data;
+      if (group->active && process_event(group, held->json, NULL, held) != EVENT_HELD) {
+        held_free(held);
+        continue;
+      }
       g_queue_push_tail(&group->held, held);
       g_hash_table_add(group->held_ids, held->id);
-      continue;
     }
-    held_free(held);
+    g_list_free(pass);
+  } while (group->retry_again);
+  guint fresh = group->fresh_commits;
+  group->fresh_commits = 0;
+  for (GList *l = group->held.head; fresh && l;) {
+    GList *next = l->next;
+    Held *held = l->data;
+    held->misses += fresh;
+    if (held->misses >= GH_MLS_SERVICE_JUNK_AFTER_COMMITS) {
+      g_hash_table_remove(group->held_ids, held->id);
+      g_queue_delete_link(&group->held, l);
+      held_free(held);
+      touched = TRUE;
+    }
+    l = next;
   }
-  if (n)
+  group->retrying = FALSE;
+  if (touched)
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
 }
 
-static void after_commit(GhMlsGroup *group);
+static void after_commit(GhMlsGroup *group, gboolean fresh);
+
+/* Every relay of the subscription sent its EOSE and is still connected
+ * (value 1), apart from URLs that could never be subscribed (value 3). A
+ * relay that failed during the catch-up may hold events the others lack:
+ * the cursor must not pass them. */
+static gboolean
+all_relays_answered(GhMlsGroup *group)
+{
+  if (!group->relays || !group->relays[0])
+    return FALSE;
+  for (guint i = 0; group->relays[i]; i++) {
+    gint state = GPOINTER_TO_INT(g_hash_table_lookup(group->settled, group->relays[i]));
+    if (state != 1 && state != 3)
+      return FALSE;
+  }
+  return TRUE;
+}
 
 /* One kind-445 envelope from a group relay: libmarmot's relay path (id and
  * signature first) and, for a chat message, its admission, in one
@@ -949,6 +1053,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, Held
     return EVENT_OTHER;
   }
   if (held) {
+    /* Before the account joined, nothing can be of a later epoch: it is of
+     * one the account never had (the Add Commit that admitted it, say), and
+     * is not kept (review N4). One in the join's own second may be either
+     * (the Add Commit, or a later epoch's in a fast group): it is kept, but
+     * never holds the cursor back (save_cursor()). */
+    if (group->floor > 0 && created_at < group->floor)
+      return EVENT_OTHER;
     if (!retry)
       hold_event(group, envelope_id, event_json, created_at);
     return EVENT_HELD;
@@ -956,13 +1067,14 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, Held
   if (!accepted)
     return EVENT_OTHER;   /* rejected, duplicate, own echo: no clock of ours */
   /* Only what libmarmot accepted and the store kept moves the cursor, and
-   * never past now + skew (review B1). */
-  gint64 bounded = MIN(created_at, now_s(self) + GH_MLS_SERVICE_MAX_FUTURE_SKEW);
+   * never past now (review B1, N6), and only while every group relay has
+   * answered (a relay that failed may hold what the others lack). */
+  gint64 bounded = MIN(created_at, now_s(self));
   group->newest = MAX(group->newest, bounded);
-  if (group->read == GH_MLS_READ_LIVE)
+  if (group->read == GH_MLS_READ_LIVE && all_relays_answered(group))
     save_cursor(group, bounded);
   if (commit)
-    after_commit(group);
+    after_commit(group, retry == NULL);
   return EVENT_ACCEPTED;
 }
 
@@ -981,7 +1093,8 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     guint n = g_strv_length(group->relays);
     if (g_hash_table_size(group->settled) >= n) {
       group_set_read(group, GH_MLS_READ_LIVE);
-      save_cursor(group, group->newest);
+      if (all_relays_answered(group))
+        save_cursor(group, group->newest);
     }
     break;
   }
@@ -1030,7 +1143,7 @@ group_subscribe(GhMlsGroup *group)
     g_autoptr(GError) error = NULL;
     if (!gh_relay_scope_add_url(scope, group->relays[i], &error)) {
       g_debug("Groundhog skips a group relay: %s", error->message);
-      g_hash_table_insert(group->settled, g_strdup(group->relays[i]), GINT_TO_POINTER(2));
+      g_hash_table_insert(group->settled, g_strdup(group->relays[i]), GINT_TO_POINTER(3));
       continue;
     }
     if (!gh_auth_policy_apply_scope(self->policy, scope, GH_AUTH_PURPOSE_MLS_ROUTING,
@@ -1155,10 +1268,14 @@ complete_waiters(GhMlsGroup *group, const GError *error)
   }
 }
 
+/* @fresh: the Commit came from a relay or was our own merged, not out of
+ * the held queue (it ages the queue's junk; review N2). */
 static void
-after_commit(GhMlsGroup *group)
+after_commit(GhMlsGroup *group, gboolean fresh)
 {
   group_refresh(group);
+  if (fresh)
+    group->fresh_commits++;
   retry_held(group);
   welcomes_pump(group);
 }
@@ -1178,7 +1295,7 @@ round_report(Round *round)
                                 "The group relays refused the change");
   if (round->state == GH_MLS_COMMIT_MERGED)
     retry_succeeded(group->service);
-  after_commit(group);
+  after_commit(group, TRUE);
   complete_waiters(group, error);
 }
 
@@ -1529,6 +1646,7 @@ create_group_now(GTask *task)
   GhMlsGroup *group = ensure_group(self, &created.group->mls_group_id);
   marmot_create_group_result_free(&created);
   op->group = g_object_ref(group);
+  set_floor(group, now_s(self));
   save_cursor(group, now_s(self));
   group_subscribe(group);
   stage_change(task, group, produce_add, op->key_packages);
@@ -2571,6 +2689,8 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
   gh_store_set_cursor(self->store, time_scope, "", 0, NULL);
   if (group->cursor == 0)
     save_cursor(group, MAX(made, 1));
+  if (group->floor == 0)
+    set_floor(group, made);
   group_subscribe(group);
   /* MIP-00: the KeyPackage the Welcome used is spent; publish a new one. */
   key_package_rotate(self);

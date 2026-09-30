@@ -210,6 +210,7 @@ typedef struct {
 struct _World {
   GhTestSigner signer;
   WireRelay e, w, x, g;
+  WireRelay h;              /* a second group relay, for tests that name it */
   gchar *root;
   App apps[N_APPS];
 };
@@ -400,7 +401,7 @@ world_up(World *w, const guint *keys, guint n_keys)
   w->root = g_dir_make_tmp("groundhog-mls-XXXXXX", NULL);
   g_assert_nonnull(w->root);
   gh_test_signer_up(&test_bus, &w->signer);
-  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g };
+  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g, &w->h };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
     relays[i]->serve = TRUE;
     relays[i]->record = TRUE;
@@ -424,7 +425,7 @@ world_down(World *w)
   GhTestSenders check = { &test_bus, &w->signer };
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   drain();
-  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g };
+  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g, &w->h };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
     relay_clear(relays[i]);
   drain();
@@ -581,6 +582,27 @@ accept_contact(App *app, guint other)
   g_autoptr(GError) error = NULL;
   g_assert_nonnull(gh_conversation_store_open_room(app->model, peers, &error));
   g_assert_no_error(error);
+}
+
+/* Creates a group of `app` on `relays` with `invitees` and waits for its Add. */
+static G_GNUC_UNUSED GhMlsGroup *
+create_group_on(App *app, const gchar *name, const gchar *const *relays, const guint *invitees,
+                guint n)
+{
+  g_autoptr(GPtrArray) people = g_ptr_array_new();
+  for (guint i = 0; i < n; i++)
+    g_ptr_array_add(people, hex[invitees[i]]);
+  g_ptr_array_add(people, NULL);
+  OpWait wait = { 0 };
+  gh_mls_service_create_group_async(app->service, name, "a test group", relays,
+                                    (const gchar *const *)people->pdata, NULL, on_created,
+                                    &wait);
+  spin_until(op_done, &wait, "the group creation");
+  g_assert_no_error(wait.error);
+  g_assert_nonnull(wait.result);
+  GhMlsGroup *group = wait.result;
+  g_object_unref(group);   /* the service keeps it */
+  return group;
 }
 
 /* Creates a group of `app` with `invitees` on G and waits for its Add. */
