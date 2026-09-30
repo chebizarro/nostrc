@@ -376,6 +376,14 @@ if(LIBNOSTR_BUILD_TESTS)
   add_test(NAME libnostr_relay_callback_lifetime COMMAND test_relay_callback_lifetime)
   set_tests_properties(libnostr_relay_callback_lifetime PROPERTIES TIMEOUT 60)
 
+  # nostrc-flp7: concurrent failing dials and teardowns on the libwebsockets
+  # service thread (hosted crash in __lws_sul_insert <- lws_service).
+  add_executable(test_connection_teardown_stress tests/test_connection_teardown_stress.c)
+  target_link_libraries(test_connection_teardown_stress PRIVATE nostr Threads::Threads)
+  target_include_directories(test_connection_teardown_stress PRIVATE include src)
+  add_test(NAME libnostr_connection_teardown_stress COMMAND test_connection_teardown_stress)
+  set_tests_properties(libnostr_connection_teardown_stress PROPERTIES TIMEOUT 120)
+
   # nostrc-pnc7: explicit "limit":0 is preserved through parse/serialize/REQ.
   add_executable(test_filter_limit_zero tests/test_filter_limit_zero.c)
   target_link_libraries(test_filter_limit_zero PRIVATE nostr)

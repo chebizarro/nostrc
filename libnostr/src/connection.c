@@ -102,6 +102,58 @@ void nostr_connection_recv_channel_free(GoChannel *chan) {
     go_channel_free(chan);
 }
 
+/* The wsi of @conn is closed or about to be freed by lws (service thread).
+ * Idempotent: acts only while priv->wsi still names @wsi. Never touches
+ * @wsi itself: lws cancels a wsi's timers when it frees it. (This used to
+ * call lws_set_timer_usecs(wsi, 0) meaning "cancel"; 0 schedules a timer due
+ * now, on a wsi being destroyed. Cancel is LWS_SET_TIMER_USEC_CANCEL.) */
+static void conn_wsi_gone(NostrConnection *conn, struct lws *wsi) {
+    /* A close request can race a peer close before the service loop drains
+     * it. The owner keeps priv alive until then; clear the WSI so the
+     * queued request never acts on a destroyed socket. */
+    NostrConnectionPrivate *closing_priv = conn->priv;
+    if (closing_priv && atomic_load_explicit(&closing_priv->closing, memory_order_acquire)) {
+        nsync_mu_lock(&closing_priv->mutex);
+        if (closing_priv->wsi == wsi) closing_priv->wsi = NULL;
+        nsync_mu_unlock(&closing_priv->mutex);
+        return;
+    }
+    NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+    if (!priv) return;
+    GoChannel *recv_chan = NULL;
+    nsync_mu_lock(&priv->mutex);
+    if (priv->wsi != wsi) {
+        /* Already handled, or a wsi this connection never adopted (a dial
+         * that failed inside lws_client_connect_via_info()). */
+        nsync_mu_unlock(&priv->mutex);
+        priv_unref(priv);
+        return;
+    }
+    priv->wsi = NULL;
+    conn_set_writable_pending_locked(priv, 0);
+    priv->established = 0;  /* Mark handshake as incomplete */
+    if (priv->handshake == 0) {
+        /* nostrc-oz77: refused / failed before ESTABLISHED. */
+        priv->handshake = -1;
+        nsync_cv_broadcast(&priv->handshake_cv);
+    }
+    /* Reset reassembly state to prevent stale partial data from
+     * being prepended to the first message on reconnect. */
+    priv->rx_reassembly_len = 0;
+    if (conn->recv_channel) {
+        recv_chan = conn->recv_channel;
+        go_channel_ref(recv_chan);
+    }
+    nsync_mu_unlock(&priv->mutex);
+    /* Wake the relay reader after it drains queued EVENT/EOSE frames.
+     * Otherwise a remote close leaves it blocked and no re-REQ occurs. */
+    if (recv_chan) {
+        go_channel_close(recv_chan);
+        go_channel_unref(recv_chan);
+    }
+    priv_unref(priv);
+}
+
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
     (void)user; // not used; use opaque user data API
@@ -415,48 +467,19 @@ queue_message:;
         break;
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
-    case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
-        /* A close request can race a peer close before the service loop drains
-         * it. The owner keeps priv alive until then; clear the WSI so the
-         * queued request never acts on a destroyed socket. */
-        NostrConnectionPrivate *closing_priv = conn->priv;
-        if (closing_priv && atomic_load_explicit(&closing_priv->closing, memory_order_acquire)) {
-            nsync_mu_lock(&closing_priv->mutex);
-            if (closing_priv->wsi == wsi) closing_priv->wsi = NULL;
-            nsync_mu_unlock(&closing_priv->mutex);
-            break;
-        }
-        NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
-        if (priv) {
-            lws_set_timer_usecs(wsi, 0);
-            GoChannel *recv_chan = NULL;
-            nsync_mu_lock(&priv->mutex);
-            priv->wsi = NULL;
-            conn_set_writable_pending_locked(priv, 0);
-            priv->established = 0;  /* Mark handshake as incomplete */
-            if (priv->handshake == 0) {
-                /* nostrc-oz77: refused / failed before ESTABLISHED. */
-                priv->handshake = -1;
-                nsync_cv_broadcast(&priv->handshake_cv);
-            }
-            /* Reset reassembly state to prevent stale partial data from
-             * being prepended to the first message on reconnect. */
-            priv->rx_reassembly_len = 0;
-            if (conn->recv_channel) {
-                recv_chan = conn->recv_channel;
-                go_channel_ref(recv_chan);
-            }
-            nsync_mu_unlock(&priv->mutex);
-            /* Wake the relay reader after it drains queued EVENT/EOSE frames.
-             * Otherwise a remote close leaves it blocked and no re-REQ occurs. */
-            if (recv_chan) {
-                go_channel_close(recv_chan);
-                go_channel_unref(recv_chan);
-            }
-            priv_unref(priv);
-        }
+    case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
+    /* nostrc-flp7: a dial whose TCP connect succeeds but whose upgrade fails
+     * (the peer hangs up first) gets only CLOSED_CLIENT_HTTP and WSI_DESTROY
+     * from lws 4.3, never the two above. priv->wsi then kept naming the freed
+     * wsi, and the owner's close made the service thread call
+     * lws_wsi_close() on it, linking the freed wsi's timer into lws's sorted
+     * timer list (SEGV in __lws_sul_insert / lws_dll2_remove on this
+     * thread). WSI_DESTROY is the one callback lws always delivers when it
+     * frees a wsi; whichever of these comes first does the work. */
+    case LWS_CALLBACK_CLOSED_CLIENT_HTTP:
+    case LWS_CALLBACK_WSI_DESTROY:
+        conn_wsi_gone(conn, wsi);
         break;
-    }
     case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
 #if defined(LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS) && \
     (LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS != LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS)
@@ -817,7 +840,12 @@ static void service_loop_process_connect_request(ConnectionRequest *req,
     ci.origin = req->conn->priv->connect_host;
     ci.ssl_connection = req->conn->priv->connect_use_ssl ? LCCSCF_USE_SSL : 0;
     ci.protocol = "wss";
-    ci.pwsi = &req->conn->priv->wsi;
+    /* nostrc-flp7: no ci.pwsi. lws writes through it (the wsi, and NULL on a
+     * failed dial) outside priv->mutex, and can do so after the close path
+     * has released priv. priv->wsi is set below, on this thread, before any
+     * later callback for the wsi can run; the opaque pointer is set here so
+     * even callbacks during the connect call find the connection. */
+    ci.opaque_user_data = req->conn;
     ci.userdata = req->conn;
     /* nostrc-ping: Apply keepalive policy to each client connection.
      * Without this, LWS only uses the policy at context level (server).
@@ -828,7 +856,9 @@ static void service_loop_process_connect_request(ConnectionRequest *req,
 
     intptr_t ok = (wsi != NULL) ? 1 : 0;
     if (wsi) {
-        lws_set_opaque_user_data(wsi, req->conn);
+        nsync_mu_lock(&req->conn->priv->mutex);
+        req->conn->priv->wsi = wsi;
+        nsync_mu_unlock(&req->conn->priv->mutex);
         tb_init(&req->conn->priv->tb_bytes,
                 (double)nostr_limit_max_bytes_per_sec(),
                 (double)nostr_limit_max_bytes_per_sec());
