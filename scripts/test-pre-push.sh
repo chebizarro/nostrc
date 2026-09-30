@@ -13,6 +13,10 @@ git -C "$repo" config user.email test@example.invalid
 cp "$scripts/pre-push" "$repo/scripts/pre-push"
 cp "$scripts/install-hooks.sh" "$repo/scripts/install-hooks.sh"
 cp "$scripts/linux-gate.sh" "$repo/scripts/linux-gate.sh"
+cp "$scripts/sanitizer-gate-ci.py" "$repo/scripts/sanitizer-gate-ci.py"
+# The sanitizer stage reads the candidate's groundhog-sanitizers job.
+mkdir -p "$repo/.github/workflows"
+cp "$scripts/../.github/workflows/groundhog-ci.yml" "$repo/.github/workflows/groundhog-ci.yml"
 printf 'FROM scratch\n' > "$repo/scripts/linux-ci.Dockerfile"
 cat > "$repo/.beads/hooks/pre-push" <<'HOOK'
 #!/bin/sh
@@ -84,19 +88,36 @@ case "$1" in
         [ "${2:-}" != --format ] || echo aarch64 ;;
     build) ;;
     run)
-        printf 'DOCKER_RUN %s\n' "$*" >> "$TRACE"
+        stage=linux
+        case " $* " in *" nostrc-linux-gate-asan-"*) stage=sanitizer ;; esac
+        # One trace line: GATE_CONFIG spans several.
+        printf 'DOCKER_RUN %s %s\n' "$stage" "$(printf '%s' "$*" | tr '\n' ' ')" >> "$TRACE"
         src=""
         for arg; do case "$arg" in *:/src:ro) src="${arg%:/src:ro}" ;; esac; done
         # The container gets its own read-only checkout of the candidate.
         [ -n "$src" ] && [ "$src" != "$MAIN" ]
         case "$src" in */checkout) exit 1 ;; esac
         grep -qx candidate "$src/marker"
+        if [ "$stage" = sanitizer ]; then
+            # ... and the job as read from that checkout's workflow.
+            case " $* " in *" GATE_CONFIG=GH_SAN_TESTS=(groundhog-identity "*) ;; *) exit 1 ;; esac
+            case " $* " in *" MODE=sanitizers "*) ;; *) exit 1 ;; esac
+        fi
         sleep "${LINUX_SLEEP:-0}"
-        [ "${FAIL_STAGE:-}" != linux ] ;;
+        [ "${FAIL_STAGE:-}" != "$stage" ] ;;
     *) exit 1 ;;
 esac
 MOCK
 chmod +x "$tmp/bin/cmake" "$tmp/bin/ctest" "$tmp/docker-bin/docker"
+
+# A bare "! grep" never fails a set -e script (bash exempts negated
+# commands); this does.
+absent() {
+    if grep -q "$@"; then
+        echo "unexpectedly found: $*" >&2
+        exit 1
+    fi
+}
 
 run_hook() {
     local fail_stage="${1:-}"
@@ -118,8 +139,11 @@ grep -q '^BEADS$' "$tmp/trace"
 grep -q 'BUILD_GROUNDHOG=ON' "$tmp/trace"
 grep -q '^BUILD ' "$tmp/trace"
 grep -q '^CTEST ' "$tmp/trace"
-grep -q '^DOCKER_RUN .*/linux-src:/src:ro' "$tmp/trace"
-! grep -q 'SKIPPED' "$tmp/output"
+grep -q '^DOCKER_RUN linux .*/linux-src:/src:ro' "$tmp/trace"
+# The candidate touches gnome/groundhog: the sanitizer stage runs beside it.
+grep -q '^DOCKER_RUN sanitizer .*nostrc-linux-gate-asan-arm64:/work' "$tmp/trace"
+grep -q 'sanitizer stage runs: the range touches gnome/groundhog/' "$tmp/output"
+absent 'SKIPPED' "$tmp/output"
 assert_clean
 
 # An upstream hook may consume all of stdin; the build gate must still see the ref.
@@ -137,7 +161,7 @@ if (cd "$branch" && PATH="$tmp/bin:$tmp/docker-bin:$PATH" TRACE="$tmp/trace" MAI
     exit 1
 fi
 grep -q 'No pre-push refs received' "$tmp/no-refs-output"
-! grep -q '^CONFIGURE ' "$tmp/trace"
+absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 
 # Real CMake/CTest with no add_test calls returns success; the gate must reject it.
@@ -148,13 +172,13 @@ fi
 grep -q 'No registered CTest tests.*count=0' "$tmp/no-tests-output"
 assert_clean
 
-for stage in beads configure build test linux; do
+for stage in beads configure build test linux sanitizer; do
     if run_hook "$stage"; then
         echo "$stage failure did not block the push" >&2
         exit 1
     fi
     if [ "$stage" = beads ]; then
-        ! grep -q '^CONFIGURE ' "$tmp/trace"
+        absent '^CONFIGURE ' "$tmp/trace"
     fi
     assert_clean
 done
@@ -162,7 +186,7 @@ done
 # A checkout that rewrites the running hook mid-push must not change what runs.
 cp "$branch/scripts/pre-push" "$tmp/pre-push.orig"
 SPLICE="$branch/scripts/pre-push" run_hook
-! grep -q '^SPLICED$' "$tmp/trace"
+absent '^SPLICED$' "$tmp/trace"
 grep -q 'SPLICED' "$branch/scripts/pre-push"
 cp "$tmp/pre-push.orig" "$branch/scripts/pre-push"
 assert_clean
@@ -174,7 +198,16 @@ if BUILD_SLEEP=3 run_hook linux > "$tmp/linux-output" 2>&1; then
     exit 1
 fi
 grep -q 'Linux build failed' "$tmp/linux-output"
-! grep -q '^CTEST ' "$tmp/trace"
+absent '^CTEST ' "$tmp/trace"
+assert_clean
+
+# So does a sanitizer failure (a leak report), named as one.
+if BUILD_SLEEP=3 run_hook sanitizer > "$tmp/sanitizer-output" 2>&1; then
+    echo 'Sanitizer failure did not block the push' >&2
+    exit 1
+fi
+grep -q 'Sanitizer gate failed' "$tmp/sanitizer-output"
+absent '^CTEST ' "$tmp/trace"
 assert_clean
 
 # A host failure stops the Linux stage instead of waiting for it.
@@ -194,12 +227,21 @@ if DOCKER_DOWN=1 run_hook > "$tmp/no-docker-output" 2>&1; then
 fi
 grep -q 'needs Docker' "$tmp/no-docker-output"
 grep -q 'NOSTRC_SKIP_LINUX_GATE=1' "$tmp/no-docker-output"
-! grep -q '^CONFIGURE ' "$tmp/trace"
+absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 DOCKER_DOWN=1 NOSTRC_SKIP_LINUX_GATE=1 run_hook > "$tmp/skip-output" 2>&1
 grep -q 'Linux build SKIPPED (NOSTRC_SKIP_LINUX_GATE=1)' "$tmp/skip-output"
+grep -q 'sanitizer stage SKIPPED too' "$tmp/skip-output"
 grep -q '^CTEST ' "$tmp/trace"
-! grep -q '^DOCKER_RUN ' "$tmp/trace"
+absent '^DOCKER_RUN ' "$tmp/trace"
+assert_clean
+
+# NOSTRC_SKIP_SANITIZER_GATE=1 skips the sanitizer stage alone, loudly.
+NOSTRC_SKIP_SANITIZER_GATE=1 run_hook > "$tmp/skip-san-output" 2>&1
+grep -q 'SANITIZER STAGE SKIPPED (NOSTRC_SKIP_SANITIZER_GATE=1)' "$tmp/skip-san-output"
+grep -q '^DOCKER_RUN linux ' "$tmp/trace"
+absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
+grep -q '^CTEST ' "$tmp/trace"
 assert_clean
 
 # The candidate's own static checks run first and block the push.
@@ -219,7 +261,7 @@ if run_hook check; then
     echo 'static check failure did not block the push' >&2
     exit 1
 fi
-! grep -q '^CONFIGURE ' "$tmp/trace"
+absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 
 printf 'unrelated\n' > "$branch/unrelated"
@@ -227,25 +269,52 @@ git -C "$branch" add unrelated
 git -C "$branch" commit -qm unrelated
 base="$candidate"
 candidate="$(git -C "$branch" rev-parse HEAD)"
-run_hook
+run_hook > "$tmp/unrelated-output" 2>&1
 grep -q 'BUILD_GROUNDHOG=OFF' "$tmp/trace"
+# Nothing the sanitizer job tests changed: that stage is skipped, and says why.
+grep -q 'sanitizer stage skipped for refs/heads/candidate: none of its 1 changed file(s) is under' "$tmp/unrelated-output"
+grep -q '^DOCKER_RUN linux ' "$tmp/trace"
+absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
 assert_clean
 
-# Each new commit changes only a Groundhog dependency/config input, not Groundhog itself.
+# Each new commit changes only a Groundhog dependency/config input, not
+# Groundhog itself; the sanitizer stage runs for those its job tests.
 for path in CMakeLists.txt cmake/BuildConfig.cmake gnome/seahorse/secret_store.c \
     libnostr/src/nostr-event.c nostr-gobject/src/nostr_relay.c \
     nips/nip19/src/nip19.c nips/nip55l/dbus/org.nostr.Signer.xml \
     apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml \
     .github/workflows/groundhog-ci.yml; do
     mkdir -p "$branch/$(dirname "$path")"
-    printf 'dependency change\n' > "$branch/$path"
+    # Appended: the workflow stays readable by the sanitizer stage.
+    printf '# dependency change\n' >> "$branch/$path"
     git -C "$branch" add "$path"
     git -C "$branch" commit -qm "change $path"
     base="$candidate"
     candidate="$(git -C "$branch" rev-parse HEAD)"
-    run_hook
+    run_hook > "$tmp/dep-output" 2>&1
     grep -q 'BUILD_GROUNDHOG=ON' "$tmp/trace"
+    case "$path" in
+        libnostr/*|nostr-gobject/*|nips/*|.github/workflows/groundhog-ci.yml)
+            grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace" ;;
+        *)
+            absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
+            grep -q 'sanitizer stage skipped' "$tmp/dep-output" ;;
+    esac
     assert_clean
 done
+
+# A new branch (no remote oid) is filtered against its merge base with
+# origin/master: a docs-only branch skips the sanitizer stage.
+git -C "$repo" update-ref refs/remotes/origin/master "$candidate"
+mkdir -p "$branch/docs"
+printf 'notes\n' > "$branch/docs/notes.md"
+git -C "$branch" add docs/notes.md
+git -C "$branch" commit -qm docs
+candidate="$(git -C "$branch" rev-parse HEAD)"
+base=0000000000000000000000000000000000000000
+run_hook > "$tmp/docs-output" 2>&1
+grep -q 'sanitizer stage skipped for refs/heads/candidate: none of its 1 changed file(s)' "$tmp/docs-output"
+absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
+assert_clean
 
 echo 'pre-push tests passed'

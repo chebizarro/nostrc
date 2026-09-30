@@ -25,5 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*
-RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work
+# /gate-lock: scripts/linux-gate.sh mounts a volume there whose lock lets one
+# gate test run (smoke or sanitizer) at a time.
+RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work /gate-lock
 USER ci

@@ -31,3 +31,9 @@ jobs:
       - name: Linux gate smoke run keeps and counts reruns
         # nostrc-16yi: a rerun that passes still prints the first failure.
         run: bash scripts/test-linux-gate-smoke.sh
+
+      - name: Sanitizer gate reads the CI job and filters pushes
+        # nostrc-3han: the pre-push sanitizer stage runs groundhog-sanitizers
+        # as read from groundhog-ci.yml, so a change to that job the stage
+        # cannot reproduce fails here; and only for pushes touching its paths.
+        run: bash scripts/test-sanitizer-gate.sh
