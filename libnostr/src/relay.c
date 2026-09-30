@@ -861,9 +861,17 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     return true;
 }
 
+/* Answers a write that never reached the writer. @arg is the answer channel
+ * with the writer's reference, which this thread now owns (nostrc-xbso): it
+ * answers, closes and unrefs as write_operations() does. A caller that closed
+ * the channel first gets no answer, so the Error is freed here. */
 static void *write_error(void *arg) {
     GoChannel *chan = (GoChannel *)arg;
-    go_channel_send(chan, new_error(0, "connection closed"));
+    Error *err = new_error(0, "connection closed");
+    if (go_channel_send(chan, err) != 0)
+        free_error(err);
+    go_channel_close(chan);
+    go_channel_unref(chan);
     return NULL;
 }
 
@@ -942,7 +950,8 @@ static void *write_operations(void *arg) {
         // We close to signal completion, then unref to drop our reference.
         // The caller's unref will trigger the actual free.
         if (werr) {
-            go_channel_send(req->answer, werr);
+            // A caller that closed the channel first never receives it.
+            if (go_channel_send(req->answer, werr) != 0) free_error(werr);
         } else {
             go_channel_send(req->answer, NULL);
         }
@@ -1552,10 +1561,11 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     // Copy message so caller can free its own buffer safely
     char *msg_copy = strdup(msg ? msg : "");
     NostrRelayWriteRequest *req = (NostrRelayWriteRequest *)malloc(sizeof(NostrRelayWriteRequest));
+    // Unqueued writes: write_error() answers and takes the writer's reference
+    // (dropping it here first let the caller free the channel under it).
     if (!req || !msg_copy) {
         if (req) free(req);
         if (msg_copy) free(msg_copy);
-        go_channel_unref(chan); // drop the extra ref we just took
         go_fiber_compat(write_error, chan);
         return chan;
     }
