@@ -4,7 +4,9 @@ build*/
 */build*/
 _build/
 _build_asan/
-Testing
+# CTest output from an in-source run. Not a bare "Testing": /Testing/ holds
+# the mock relay framework sources (nostrc-ig0z).
+**/Testing/Temporary/
 tmp*/
 out/
 /bin/
@@ -14,7 +16,6 @@ CMakeCache.txt
 Makefile
 cmake_install.cmake
 CTestTestfile.cmake
-Testing
 .cache/
 
 # Ignore IDE and editor-specific files

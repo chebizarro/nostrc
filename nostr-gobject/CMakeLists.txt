@@ -417,7 +417,7 @@ if(BUILD_TESTING)
   endif()
 
   # GNostrRelay against real sockets: refused connect fails (nostrc-oz77),
-  # teardown leaves fd 0 alone (nostrc-jc2o). Mock relay from testing/.
+  # teardown leaves fd 0 alone (nostrc-jc2o). Mock relay from Testing/.
   if(TARGET nostr_testing)
     gn_add_gtest(test_nostr_gobject_relay_connect
       SOURCES tests/test_relay_connect.c

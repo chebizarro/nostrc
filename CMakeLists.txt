@@ -350,10 +350,14 @@ endif()
 # libhanami option (subdirectory added after NipOptions so nip34 target is available)
 option(BUILD_LIBHANAMI "Build libhanami (Blossom + libgit2 integration)" ON)
 
-# Mock relay testing framework (optional, for unit tests)
+# Mock relay testing framework (optional, for unit tests). The directory is
+# Testing/, capital T: a lowercase path only resolves on a case-insensitive
+# file system, so Linux silently skipped it (nostrc-ig0z). No EXISTS guard:
+# with the option on, a missing directory must fail configure, not drop
+# nostr_testing and every test gated on TARGET nostr_testing.
 option(BUILD_TESTING_FRAMEWORK "Build the mock relay testing framework" ON)
-if(BUILD_TESTING_FRAMEWORK AND EXISTS ${CMAKE_SOURCE_DIR}/testing/CMakeLists.txt)
-  add_subdirectory(testing)
+if(BUILD_TESTING_FRAMEWORK)
+  add_subdirectory(Testing)
 endif()
 
 # NIPs are added via NipOptions.cmake per-NIP toggles; avoid adding nips/ twice.

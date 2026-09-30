@@ -996,8 +996,13 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "profile;privacy;cache;unit;gnostr")
 
+  # tests/plugin_api_app_stubs.c defines the app-shell symbols that
+  # gnostr-plugin-api.c references and these tests never reach, so they link
+  # completely: left undefined, the tree-wide -z now stopped them loading on
+  # Linux (nostrc-taue, nostrc-ig0z).
   add_executable(gnostr-test-plugin-raw-relay-api
     tests/test_plugin_raw_relay_api.c
+    tests/plugin_api_app_stubs.c
     src/gnostr-plugin-api.c)
   target_compile_features(gnostr-test-plugin-raw-relay-api PRIVATE c_std_11)
   target_include_directories(gnostr-test-plugin-raw-relay-api PRIVATE
@@ -1013,29 +1018,20 @@ if (BUILD_TESTING)
   if (TARGET nostr_json)
     target_link_libraries(gnostr-test-plugin-raw-relay-api PRIVATE nostr_json)
   endif()
-  if (APPLE)
-    target_link_options(gnostr-test-plugin-raw-relay-api PRIVATE -Wl,-undefined,dynamic_lookup)
-  else()
-    target_link_options(gnostr-test-plugin-raw-relay-api PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
-  endif()
   _gnostr_apply_sanitizers(gnostr-test-plugin-raw-relay-api)
 
   # Plugin publish that completes on the relay's OK (nostrc-4gf4), against
-  # the libwebsockets mock relay from testing/.
+  # the libwebsockets mock relay from Testing/.
   if (TARGET nostr_testing)
     add_executable(gnostr-test-plugin-publish-ack
       tests/test_plugin_publish_ack.c
+      tests/plugin_api_app_stubs.c
       src/gnostr-plugin-api.c)
     target_compile_features(gnostr-test-plugin-publish-ack PRIVATE c_std_11)
     target_include_directories(gnostr-test-plugin-publish-ack PRIVATE
       $<TARGET_PROPERTY:gnostr-test-plugin-raw-relay-api,INCLUDE_DIRECTORIES>)
     target_link_libraries(gnostr-test-plugin-publish-ack PRIVATE
       $<TARGET_PROPERTY:gnostr-test-plugin-raw-relay-api,LINK_LIBRARIES> nostr_testing)
-    if (APPLE)
-      target_link_options(gnostr-test-plugin-publish-ack PRIVATE -Wl,-undefined,dynamic_lookup)
-    else()
-      target_link_options(gnostr-test-plugin-publish-ack PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
-    endif()
     _gnostr_apply_sanitizers(gnostr-test-plugin-publish-ack)
     add_test(NAME gnostr-test-plugin-publish-ack COMMAND gnostr-test-plugin-publish-ack)
     set_tests_properties(gnostr-test-plugin-publish-ack PROPERTIES

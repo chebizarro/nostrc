@@ -1,4 +1,4 @@
-# testing/CMakeLists.txt
+# Testing/CMakeLists.txt (capital T: see the root CMakeLists.txt, nostrc-ig0z)
 #
 # Build the nostr_testing library - provides test harness utilities,
 # event factories, deterministic keypairs, assertion macros, and mock relay server.
@@ -465,18 +465,24 @@ set_tests_properties(Nip46QRSocket PROPERTIES
 # Install Rules
 # ============================================================================
 
-include(GNUInstallDirs)
+# Test infrastructure is installed only on request, so a package built with
+# the default options does not ship a mock relay. Linux builds only reach this
+# directory since nostrc-ig0z, and several Linux recipes install the whole tree.
+option(NOSTR_TESTING_INSTALL "Install the mock relay testing framework" OFF)
+if(NOSTR_TESTING_INSTALL)
+    include(GNUInstallDirs)
 
-install(TARGETS nostr_testing
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
+    install(TARGETS nostr_testing
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
 
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING PATTERN "*.h"
-)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING PATTERN "*.h"
+    )
 
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/nostr/testing
-)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/nostr/testing
+    )
+endif()

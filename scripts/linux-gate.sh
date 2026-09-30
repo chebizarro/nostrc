@@ -67,7 +67,7 @@ STRICT_CFLAGS='-Werror=implicit-function-declaration -Werror=implicit-int -Werro
 #  - gnostr tests that cannot load on Linux yet (nostrc-taue: they link with
 #    unresolved symbols, and -z now rejects them). Drop them here when fixed.
 SLOW_TESTS='test_nip49_roundtrip|profile_fetch_stress|signer/crypto|gnostr-test-event-model-windowing|nip55l_dbus_contract|libnostr_reconnect_same_second'
-BROKEN_ON_LINUX='gnostr-test-plugin-raw-relay-api|gnostr-test-image-viewer-remote-media|gnostr-test-delete-authorization|gnostr-test-ndb-main-thread-violations|gnostr-test-real-bind-latency'
+BROKEN_ON_LINUX='gnostr-test-image-viewer-remote-media|gnostr-test-delete-authorization|gnostr-test-ndb-main-thread-violations|gnostr-test-real-bind-latency'
 # Under emulation (Rosetta, qemu), left out of the NOSTRC_GATE_AMD64=1 run:
 #  - nostr_signer_webext_host_e2e: /proc/<pid>/exe of another process names the
 #    emulator (/run/rosetta/rosetta), so the signer cannot attest the webext

@@ -588,7 +588,7 @@ char *nostr_test_fixture_path(const char *filename) {
 #ifdef NOSTR_TEST_FIXTURES_DIR_DEFAULT
         fixtures_dir = NOSTR_TEST_FIXTURES_DIR_DEFAULT;
 #else
-        fixtures_dir = "testing/fixtures";
+        fixtures_dir = "Testing/fixtures";
 #endif
     }
 
