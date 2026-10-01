@@ -431,6 +431,28 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
+    // Whether people can invite the account to encrypted groups: its
+    // KeyPackage state (nostrc-f8a5, nostrc-0bdg); shown with the
+    // ENCRYPTED_GROUPS feature once the state is known
+    // (gh_preferences_dialog_set_key_package_state()).
+    Adw.PreferencesGroup key_package_group {
+      visible: false;
+      title: _("Encrypted Groups");
+
+      Adw.ActionRow key_package_row {
+        title: _("Invitations");
+        subtitle-lines: 0;
+
+        [suffix]
+        Button key_package_setup {
+          visible: false;
+          label: _("_Set Up");
+          use-underline: true;
+          valign: center;
+          action-name: "prefs.setup-relays";
+        }
+      }
+    }
   }
 
   Adw.PreferencesPage account_page {

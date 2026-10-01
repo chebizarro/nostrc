@@ -1650,6 +1650,11 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
         target_include_directories(test-${groundhog_kp_name} PRIVATE
           ${CMAKE_CURRENT_SOURCE_DIR}/../../libmarmot/src)
       endif()
+      # Two fresh accounts set their lists up as onboarding does (H2).
+      if (TARGET groundhog-inbox-setup)
+        target_link_libraries(test-${groundhog_kp_name} PRIVATE groundhog-inbox-setup)
+        target_compile_definitions(test-${groundhog_kp_name} PRIVATE GH_TEST_HAVE_INBOX_SETUP=1)
+      endif()
       groundhog_store_link_sqlcipher_first(test-${groundhog_kp_name})
       add_dependencies(test-${groundhog_kp_name} groundhog-test-schemas)
       add_test(NAME ${groundhog_kp_name} COMMAND test-${groundhog_kp_name})

@@ -689,6 +689,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
+                              <object class="GtkListBox" id="relay_list_group">
+                                <property name="visible">false</property>
+                                <property name="selection-mode">0</property>
+                                <style>
+                                  <class name="boxed-list"/>
+                                </style>
+                                <child>
+                                  <object class="AdwSwitchRow" id="relay_list_switch">
+                                    <property name="active">true</property>
+                                    <property name="title" translatable="yes">Let People Invite You to Encrypted Groups</property>
+                                    <property name="subtitle" translatable="yes">Also publishes a relay list naming these relays as where you publish, so people can find your encrypted-group keys there. Nostr Signer asks once more. Anyone can see this list. Groundhog never changes a relay list you already have.</property>
+                                    <property name="title-lines">0</property>
+                                    <property name="subtitle-lines">0</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
                               <object class="GtkButton" id="publish_button">
                                 <property name="label" translatable="yes">_Publish</property>
                                 <property name="use-underline">true</property>

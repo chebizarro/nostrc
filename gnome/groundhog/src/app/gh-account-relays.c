@@ -129,14 +129,17 @@ admit_event(GhAccountRelays *self, const GhRelayUpdate *update)
     return;
 
   if (kind == KIND_RELAY_LIST) {
+    /* A signed 10002 that does not parse still exists: it has no usable
+     * relay, but nothing may publish over it (nostrc-0bdg). */
     GPtrArray *parsed = gnostr_nip65_parse_event(update->event_json, NULL);
-    if (!parsed)
-      return;
     g_strfreev(self->read);
     g_strfreev(self->write);
-    self->read = steal_strv(gnostr_nip65_get_read_relays(parsed));
-    self->write = steal_strv(gnostr_nip65_get_write_relays(parsed));
-    g_ptr_array_unref(parsed);
+    self->read = steal_strv(parsed ? gnostr_nip65_get_read_relays(parsed)
+                                   : g_ptr_array_new_with_free_func(g_free));
+    self->write = steal_strv(parsed ? gnostr_nip65_get_write_relays(parsed)
+                                    : g_ptr_array_new_with_free_func(g_free));
+    if (parsed)
+      g_ptr_array_unref(parsed);
   } else {
     GPtrArray *parsed = gnostr_nip17_parse_dm_relays_event(update->event_json, NULL);
     if (!parsed)
@@ -324,6 +327,13 @@ gh_account_relays_get_read_relays(GhAccountRelays *self)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(self), NULL);
   return (const gchar *const *)self->read;
+}
+
+gboolean
+gh_account_relays_has_relay_list(GhAccountRelays *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(self), FALSE);
+  return self->relay_list.id != NULL;
 }
 
 const gchar *const *

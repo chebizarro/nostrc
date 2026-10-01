@@ -911,6 +911,29 @@ sync_preferences_account(GhAccountController *accounts, gpointer dialog)
   gh_preferences_dialog_set_account(GH_PREFERENCES_DIALOG(dialog), npub, label);
 }
 
+#if GROUNDHOG_HAVE_GROUP_UI && GROUNDHOG_HAVE_MLS_UI
+static GhMlsService *mls_ui_service(gpointer data);
+
+/* Network › Encrypted Groups (nostrc-f8a5): the open store's KeyPackage
+ * state, live while the dialog is shown. */
+static void
+sync_preferences_key_package(GObject *service, GParamSpec *pspec, gpointer dialog)
+{
+  (void)pspec;
+  GhPreferencesKeyPackage state = GH_PREFERENCES_KEY_PACKAGE_UNKNOWN;
+  switch (service ? gh_mls_service_get_key_package_state(GH_MLS_SERVICE(service))
+                  : GH_MLS_KEY_PACKAGE_NONE) {
+  case GH_MLS_KEY_PACKAGE_NO_RELAYS: state = GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS; break;
+  case GH_MLS_KEY_PACKAGE_PUBLISHING: state = GH_PREFERENCES_KEY_PACKAGE_PUBLISHING; break;
+  case GH_MLS_KEY_PACKAGE_PUBLISHED: state = GH_PREFERENCES_KEY_PACKAGE_PUBLISHED; break;
+  case GH_MLS_KEY_PACKAGE_FAILED: state = GH_PREFERENCES_KEY_PACKAGE_FAILED; break;
+  case GH_MLS_KEY_PACKAGE_NONE:
+  default: break;
+  }
+  gh_preferences_dialog_set_key_package_state(GH_PREFERENCES_DIALOG(dialog), state);
+}
+#endif
+
 /* page: the page to show (NULL: the dialog's first). */
 static void
 present_preferences(GhAppServices *self, const gchar *page)
@@ -957,6 +980,13 @@ present_preferences(GhAppServices *self, const gchar *page)
   };
   gh_preferences_dialog_set_attachments(dialog, &attachments, g_object_ref(self->attachments),
                                         g_object_unref);
+#endif
+#if GROUNDHOG_HAVE_GROUP_UI && GROUNDHOG_HAVE_MLS_UI
+  GhMlsService *mls = mls_ui_service(self);
+  sync_preferences_key_package(mls ? G_OBJECT(mls) : NULL, NULL, dialog);
+  if (mls)
+    g_signal_connect_object(mls, "notify::key-package-state",
+                            G_CALLBACK(sync_preferences_key_package), dialog, 0);
 #endif
   if (page)
     adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(dialog), page);
@@ -1265,6 +1295,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .accounts = self->accounts,
     .account_relays = self->relays,
     .settings = self->settings,
+    /* Encrypted groups find people through their kind 10002 (nostrc-0bdg):
+     * offered, with consent, only when they run and the account has none. */
+    .offer_relay_list = GH_FEATURE_ENCRYPTED_GROUPS,
   };
   gh_onboarding_attach(window, &onboarding);
 #endif

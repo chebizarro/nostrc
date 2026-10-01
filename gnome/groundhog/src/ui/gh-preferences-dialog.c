@@ -64,6 +64,10 @@ struct _GhPreferencesDialog {
   GtkListBox *discovery_list;
   AdwEntryRow *discovery_entry;
   GtkLabel *discovery_error;
+  GtkWidget *key_package_group;
+  AdwActionRow *key_package_row;
+  GtkWidget *key_package_setup;
+  GhPreferencesKeyPackage key_package;
   AdwPreferencesGroup *attachments_group;
   GtkListBox *blossom_list;
   AdwEntryRow *blossom_entry;
@@ -767,6 +771,72 @@ sync_network(GhPreferencesDialog *self)
   adw_action_row_set_subtitle(self->tor_status_row, subtitle);
 }
 
+/* Network › Encrypted Groups (nostrc-f8a5, nostrc-0bdg): whether people can
+ * invite the account, in plain words; [Set Up] when they can't because the
+ * account has no relay list to be found through. */
+static void
+sync_key_package(GhPreferencesDialog *self)
+{
+  gboolean shown = (self->features & GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS) &&
+                   self->key_package != GH_PREFERENCES_KEY_PACKAGE_UNKNOWN;
+  gtk_widget_set_visible(self->key_package_group, shown);
+  const gchar *subtitle = NULL;
+  switch (self->key_package) {
+  case GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS:
+    subtitle = _("People can't invite you to encrypted groups yet: your account has no relay "
+                 "list saying where you publish, so nobody can find your invitation key. "
+                 "Set up your relays to fix this.");
+    break;
+  case GH_PREFERENCES_KEY_PACKAGE_PUBLISHING:
+    subtitle = _("Publishing your invitation key…");
+    break;
+  case GH_PREFERENCES_KEY_PACKAGE_PUBLISHED:
+    subtitle = _("People can invite you to encrypted groups.");
+    break;
+  case GH_PREFERENCES_KEY_PACKAGE_FAILED:
+    subtitle = _("Your invitation key couldn't be published right now, so people may not be "
+                 "able to invite you. Groundhog tries again.");
+    break;
+  case GH_PREFERENCES_KEY_PACKAGE_UNKNOWN:
+  default:
+    break;
+  }
+  if (subtitle)
+    adw_action_row_set_subtitle(self->key_package_row, subtitle);
+  gtk_widget_set_visible(self->key_package_setup,
+                         shown && self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS);
+}
+
+void
+gh_preferences_dialog_set_key_package_state(GhPreferencesDialog *self,
+                                            GhPreferencesKeyPackage state)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  self->key_package = state;
+  if (!self->disposed)
+    sync_key_package(self);
+}
+
+GhPreferencesKeyPackage
+gh_preferences_dialog_get_key_package_state(GhPreferencesDialog *self)
+{
+  g_return_val_if_fail(GH_IS_PREFERENCES_DIALOG(self), GH_PREFERENCES_KEY_PACKAGE_UNKNOWN);
+  return self->key_package;
+}
+
+/* [Set Up]: the onboarding relay step (GH_STATUS_ACTION_SETUP_INBOX on the
+ * window), which offers the relay list; the dialog closes first. */
+static void
+setup_relays_activated(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  GtkRoot *root = gtk_widget_get_root(widget);
+  if (root)
+    gtk_widget_activate_action(GTK_WIDGET(root), "win.setup-inbox", NULL);
+  adw_dialog_close(ADW_DIALOG(widget));
+}
+
 void
 gh_preferences_dialog_set_tor_status(GhPreferencesDialog *self, GhPreferencesTorStatus status)
 {
@@ -1207,6 +1277,7 @@ gh_preferences_dialog_constructed(GObject *object)
   self->settings_changed = g_signal_connect(self->settings, "changed",
                                             G_CALLBACK(on_settings_changed), self);
   sync_network(self);
+  sync_key_package(self);
   sync_notifications(self);
   sync_copy(self);
   sync_delete(self);
@@ -1313,6 +1384,8 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   g_object_class_install_properties(object_class, N_PROPS, properties);
 
   gtk_widget_class_install_action(widget_class, "prefs.delete-all", NULL, delete_all_activated);
+  gtk_widget_class_install_action(widget_class, "prefs.setup-relays", NULL,
+                                  setup_relays_activated);
   gtk_widget_class_install_action(widget_class, "prefs.clear-attachments", NULL,
                                   clear_attachments_activated);
 
@@ -1344,6 +1417,9 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(discovery_list);
   BIND(discovery_entry);
   BIND(discovery_error);
+  BIND(key_package_group);
+  BIND(key_package_row);
+  BIND(key_package_setup);
   BIND(attachments_group);
   BIND(blossom_list);
   BIND(blossom_entry);

@@ -654,6 +654,25 @@ template $GhOnboardingView: Adw.Bin {
                 }
               }
 
+              // Only when the account has no kind-10002 relay list at all
+              // (gh_inbox_setup_relay_list_needed(), nostrc-0bdg).
+              ListBox relay_list_group {
+                visible: false;
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.SwitchRow relay_list_switch {
+                  active: true;
+                  title: _("Let People Invite You to Encrypted Groups");
+                  subtitle: _("Also publishes a relay list naming these relays as where you publish, so people can find your encrypted-group keys there. Nostr Signer asks once more. Anyone can see this list. Groundhog never changes a relay list you already have.");
+                  title-lines: 0;
+                  subtitle-lines: 0;
+                }
+              }
+
               Button publish_button {
                 label: _("_Publish");
                 use-underline: true;

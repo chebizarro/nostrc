@@ -144,6 +144,25 @@ void gh_preferences_dialog_set_account(GhPreferencesDialog *self, const gchar *n
  * status is UNKNOWN. */
 void gh_preferences_dialog_set_tor_status(GhPreferencesDialog *self,
                                           GhPreferencesTorStatus status);
+/* Whether people can invite the account to encrypted groups (its
+ * GhMlsService KeyPackage state; nostrc-f8a5, nostrc-0bdg). */
+typedef enum {
+  GH_PREFERENCES_KEY_PACKAGE_UNKNOWN,   /* not known (no running service): no row */
+  GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS, /* no relay list to be found through: [Set Up] */
+  GH_PREFERENCES_KEY_PACKAGE_PUBLISHING,
+  GH_PREFERENCES_KEY_PACKAGE_PUBLISHED,
+  GH_PREFERENCES_KEY_PACKAGE_FAILED,
+} GhPreferencesKeyPackage;
+
+/* Network › Encrypted Groups, shown with the ENCRYPTED_GROUPS feature unless
+ * the state is UNKNOWN. NO_RELAYS says, honestly, that nobody can invite the
+ * account and why, with [Set Up]: it closes the dialog and activates
+ * win.setup-inbox (GH_STATUS_ACTION_SETUP_INBOX), the onboarding relay step,
+ * which offers the account's kind-10002 relay list. */
+void gh_preferences_dialog_set_key_package_state(GhPreferencesDialog *self,
+                                                 GhPreferencesKeyPackage state);
+GhPreferencesKeyPackage gh_preferences_dialog_get_key_package_state(GhPreferencesDialog *self);
+
 /* Enables "Delete All Messages on This Device"; target is referenced. */
 void gh_preferences_dialog_set_forget_func(GhPreferencesDialog *self,
                                            GhPreferencesForgetAsyncFunc forget_async,

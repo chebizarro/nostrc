@@ -198,6 +198,7 @@ config_of(Fixture *f)
     .probe_transport_data = &f->rec,
     .publish_transport = &pub_transport,
     .publish_transport_data = &f->rec,
+    .offer_relay_list = TRUE,   /* as with GH_FEATURE_ENCRYPTED_GROUPS (nostrc-0bdg) */
   };
 }
 
@@ -546,6 +547,9 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
   /* Confirm lists exactly what publishing will contact. */
   g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "confirm");
   g_assert_true(gtk_widget_get_visible(child(f, "discovery_group")));
+  /* No finished discovery, so no knowing whether a relay list exists: none
+   * is offered (nostrc-0bdg). */
+  g_assert_false(gtk_widget_get_visible(child(f, "relay_list_group")));
   const gchar *targets = adw_action_row_get_subtitle(child(f, "confirm_targets"));
   g_assert_nonnull(strstr(targets, suggested + strlen("wss://")));
   g_assert_nonnull(strstr(targets, "inbox.example.org"));
@@ -673,6 +677,91 @@ test_returning_user(Fixture *f, gconstpointer data)
   g_assert_null(adw_navigation_view_get_previous_page(
     navigation, adw_navigation_view_get_visible_page(navigation)));
   g_assert_cmpuint(connections(f), ==, 0);
+}
+
+static ScopeOpen *
+discovery_scope(Fixture *f, const gchar *url)
+{
+  for (guint i = 0; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (!open->probe && !open->closed && g_str_equal(open->url, url))
+      return open;
+  }
+  return NULL;
+}
+
+typedef struct {
+  Fixture *f;
+  const gchar *url;
+} DiscoveryWait;
+
+static gboolean
+discovery_asked(gpointer data)
+{
+  DiscoveryWait *wait = data;
+  return discovery_scope(wait->f, wait->url) != NULL;
+}
+
+static gboolean
+discovery_complete(gpointer data)
+{
+  return gh_account_relays_get_state(data) == GH_ACCOUNT_RELAYS_COMPLETE;
+}
+
+/* nostrc-0bdg review H2: an account whose discovery finished without any
+ * kind 10002 is offered one on the confirm page (consent, PD-13); Publish
+ * then signs and publishes it too, to the same relays, and the result page
+ * says that people can now invite it to encrypted groups. */
+static void
+test_relay_list_offered(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gh_test_spin_until(is_active, f->accounts);
+  const gchar *find = "wss://find.example.org";
+  const gchar *const discovery[] = { find, NULL };
+  g_settings_set_strv(f->settings, "discovery-relays", discovery);
+  DiscoveryWait asked = { f, find };
+  gh_test_spin_until(discovery_asked, &asked);
+  /* The discovery relay answers: no 10002, no 10050. */
+  gh_relay_scope_eose(discovery_scope(f, find)->scope, find);
+  gh_test_spin_until(discovery_complete, f->relays);
+  g_assert_false(gh_account_relays_has_relay_list(f->relays));
+
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), GH_STATUS_ACTION_SETUP_INBOX,
+                                           NULL));
+  g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "inbox");
+  activate_row(f, "relay_list", 0);
+  act(f, "onboarding.inbox-continue");
+  g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "confirm");
+  g_assert_true(gtk_widget_get_visible(child(f, "relay_list_group")));
+  g_assert_true(adw_switch_row_get_active(child(f, "relay_list_switch")));
+
+  act(f, "onboarding.publish");
+  /* The message list and the relay list, each to the chosen relay and the
+   * discovery relay. */
+  OpenCount four = { f, 4 };
+  gh_test_spin_until(pubs_live, &four);
+  g_assert_cmpuint(f->rec.pubs->len, ==, 4);
+  GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
+  guint relay_lists = 0;
+  for (guint i = 0; i < f->rec.pubs->len; i++) {
+    PubOpen *open = g_ptr_array_index(f->rec.pubs, i);
+    const gchar *id = gh_relay_publish_get_event_id(open->publish);
+    relay_lists += g_strcmp0(id, gh_inbox_setup_get_event_id(setup)) != 0;
+    gh_relay_publish_ok(open->publish, open->url, id, TRUE, "");
+  }
+  g_assert_cmpuint(relay_lists, ==, 2);
+  for (guint i = 0; i < gh_inbox_setup_get_n_relays(setup); i++) {
+    const GhInboxSetupRelay *relay = gh_inbox_setup_get_relay(setup, i);
+    if (relay->probed)
+      gh_relay_scope_eose(live_probe(f, relay->url)->scope, relay->url);
+  }
+  gh_test_spin_until(setup_finished, f);
+  g_assert_cmpint(gh_inbox_setup_get_state(setup), ==, GH_INBOX_SETUP_DONE);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_DONE);
+  g_assert_nonnull(strstr(gtk_label_get_text(child(f, "publish_description")),
+                          "People can now invite you to encrypted groups."));
 }
 
 /* A declined signature: the signer test says so, and Publish sends
@@ -933,6 +1022,7 @@ main(int argc, char **argv)
   ADD("signer-denied", test_signer_denied, NULL);
   ADD("minimum-size", test_minimum_size, NULL);
   ADD("returning-user", test_returning_user, npub[1]);
+  ADD("relay-list-offered", test_relay_list_offered, npub[1]);
   ADD("screenshots", test_screenshots, NULL);
 #undef ADD
   int status = g_test_run();

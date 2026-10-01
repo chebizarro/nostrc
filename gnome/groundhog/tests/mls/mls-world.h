@@ -51,6 +51,9 @@ static gboolean world_split_lists;
 /* The next world's services: KeyPackage rotation age and the longest a due
  * replacement waits for pending invitations (seconds; 0: the defaults). */
 static gint64 world_key_package_lifetime;
+/* The next world's accounts are fresh: no kind 10002 or 10050 seeded (they
+ * set them up through GhInboxSetup, as onboarding does). */
+static gboolean world_fresh_lists;
 static gint64 world_key_package_max_hold;
 
 static G_GNUC_UNUSED void
@@ -275,6 +278,8 @@ static G_GNUC_UNUSED gboolean
 relays_known(gpointer data)
 {
   App *app = data;
+  if (world_fresh_lists)   /* nothing to find: the lookup has finished */
+    return gh_account_relays_get_state(app->relays) == GH_ACCOUNT_RELAYS_COMPLETE;
   return gh_account_relays_get_inbox_relays(app->relays) &&
          gh_account_relays_get_write_relays(app->relays);
 }
@@ -449,7 +454,7 @@ world_up(World *w, const guint *keys, guint n_keys)
   }
   w->x.auth_gate_dms = TRUE;   /* kind 1059 only to its signed-in recipient */
   w->g.require_auth = TRUE;    /* MLS routing: ephemeral AUTH, for real */
-  for (guint key = 1; key < GH_TEST_KEYS; key++) {
+  for (guint key = 1; key < GH_TEST_KEYS && !world_fresh_lists; key++) {
     if (world_split_lists)
       seed_split_list(&w->e, key, w->w.url, w->h.url, w->r.url);
     else
@@ -476,6 +481,7 @@ world_down(World *w)
   world_fake_clock = FALSE;
   world_split_lists = FALSE;
   world_key_package_lifetime = 0;
+  world_fresh_lists = FALSE;
   world_key_package_max_hold = 0;
   rm_rf(w->root);
   g_free(w->root);

@@ -36,7 +36,11 @@ const gchar *gh_onboarding_item_get_icon_name(GhOnboardingItem *self);
  *           addresses the user types (checked with
  *           gh_inbox_setup_normalize_url); "Check Privacy" probes the ticked
  *           relays; "Set Up Later" finishes and leaves the banner
- *  confirm  exactly what publishing does and where (GhInboxSetup plan)
+ *  confirm  exactly what publishing does and where (GhInboxSetup plan);
+ *           when the account has no kind-10002 relay list at all
+ *           (gh_inbox_setup_relay_list_needed()), a switch to publish one
+ *           naming these relays, so people can invite it to encrypted
+ *           groups (nostrc-0bdg)
  *  publish  GhInboxSetup's progress and each relay's outcome
  *  done     [Start a Conversation] finishes and opens New Message
  *           (win.new-message; shown only while the window has it enabled),

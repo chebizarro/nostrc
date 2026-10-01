@@ -1,9 +1,10 @@
 /* GhMlsService KeyPackage transport lifecycle (nostrc-0bdg; Marmot
  * foundation/key-packages.md, transports/nostr.md "KeyPackage publication"),
- * on the mls-world.h accounts and local relays. Every account's kind 10002
- * splits its relays: W marked "write", R marked "read".
- * Every account's kind 10002
- * splits its relays: W marked "write", H unmarked, R marked "read".
+ * on the mls-world.h accounts and local relays. Unless a case says
+ * otherwise, every account's kind 10002 splits its relays: W marked "write",
+ * H unmarked, R marked "read" (world_split_lists).
+ *
+ *  - write-relays-only: the KeyPackage goes to the write-capable set, W
  *    ("write") and H (unmarked), never R ("read"), the 10050 inbox X, the
  *    group relay G or the discovery relay, in the strict shape of the
  *    producer's profile.
@@ -18,19 +19,26 @@
  *    accepted the replacement, a Welcome delayed in transit fails -- and
  *    that failure rotates nothing.
  *  - pending-invitations-defer-rotation (MDK 0.8 producer): a join's
- *    replacement waits while other received invitations are pending (made
+ *    replacement is held while other received invitations are pending (made
  *    with the same last-resort KeyPackage), across a restart; the last one
  *    joins, then the replacement retires the old key.
+ *  - rotation-held-for-pending-invitation, lifetime-rotation-held (review
+ *    H1): the user's rotate and the lifetime rotation are held the same way.
+ *  - hold-cap-expires (review H1/M1): the hold ends at its cap, by its timer.
  *  - failed-welcome-preserves (MDK 0.8 producer): a Welcome that fails keeps
  *    the key and rotates nothing; the inviter's next Welcome to the same
  *    KeyPackage joins.
+ *  - fresh-accounts-invite-each-other, relay-list-never-replaced (review H2):
+ *    two accounts with no lists at all set them up as onboarding does (the
+ *    consented kind 10002 included) and invite each other; an existing 10002
+ *    is never offered for replacement nor replaced.
  *
  * Built twice: with the MDK 0.8 producer, and with the adopted producer
  * (GH_MLS_ADOPTED_KEY_PACKAGES=1, the compile gate a release flips, with
  * libmarmot's ungated internal producer standing in for its own build gate).
  * Groundhog's groups are legacy-profile, which cannot add an adopted
- * KeyPackage yet (adopted Commits): the Welcome cases run with the MDK 0.8
- * producer only. */
+ * KeyPackage yet (adopted Commits, nostrc-lf62): the Welcome cases run with
+ * the MDK 0.8 producer only. */
 #include "mls-world.h"
 
 #include <nostr-keys.h>
@@ -808,6 +816,128 @@ test_failed_welcome_preserves(void)
 }
 #endif
 
+#if GH_TEST_HAVE_INBOX_SETUP && !GH_MLS_ADOPTED_KEY_PACKAGES
+#include "gh-inbox-setup.h"
+
+static gboolean
+setup_finished(gpointer data)
+{
+  GhInboxSetupState state = gh_inbox_setup_get_state(data);
+  return state == GH_INBOX_SETUP_DONE || state == GH_INBOX_SETUP_FAILED;
+}
+
+/* What onboarding's Publish does (GhOnboardingView): the message relays and,
+ * when offered and agreed to, the relay list. The setup (transfer full). */
+static GhInboxSetup *
+onboard(App *app, const gchar *relay, gboolean relay_list)
+{
+  GhInboxSetupConfig config = {
+    .accounts = app->accounts,
+    .account_relays = app->relays,
+    .settings = app->settings,
+    .offer_relay_list = TRUE,
+  };
+  GhInboxSetup *setup = gh_inbox_setup_new(&config);
+  const gchar *chosen[] = { relay, NULL };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_inbox_setup_start_full(setup, chosen, FALSE, relay_list, &error));
+  g_assert_no_error(error);
+  spin_until(setup_finished, setup, "the onboarding publication");
+  g_assert_cmpint(gh_inbox_setup_get_state(setup), ==, GH_INBOX_SETUP_DONE);
+  return setup;
+}
+
+/* Review H2: two Groundhog users onboarded from nothing (no kind 10002 or
+ * 10050 anywhere) can invite each other: onboarding's consented relay list
+ * names their message relay as their write relay, their KeyPackages go
+ * there, and each finds the other's through it. */
+static void
+test_fresh_accounts_invite_each_other(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  /* Nobody can invite them yet, and the service says so. */
+  wait_state(alice, GH_MLS_KEY_PACKAGE_NO_RELAYS);
+  wait_state(bob, GH_MLS_KEY_PACKAGE_NO_RELAYS);
+  App *both[] = { alice, bob };
+  for (guint i = 0; i < G_N_ELEMENTS(both); i++) {
+    GhInboxSetupConfig config = { .accounts = both[i]->accounts,
+                                  .account_relays = both[i]->relays,
+                                  .settings = both[i]->settings, .offer_relay_list = TRUE };
+    g_autoptr(GhInboxSetup) probe = gh_inbox_setup_new(&config);
+    g_assert_true(gh_inbox_setup_relay_list_needed(probe));
+    g_object_run_dispose(G_OBJECT(probe));
+    g_autoptr(GhInboxSetup) setup = onboard(both[i], w.x.url, TRUE);
+    g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                    GH_INBOX_SETUP_RELAY_LIST_DONE);
+    g_assert_cmpuint(gh_inbox_setup_get_relay_list_n_accepted(setup), >=, 1);
+    g_object_run_dispose(G_OBJECT(setup));
+  }
+  /* The relay list is on the discovery relay: X marked "write". */
+  g_autoptr(GPtrArray) lists = published(&w.e, 10002);
+  g_assert_cmpuint(lists->len, ==, 2);
+  for (guint i = 0; i < lists->len; i++) {
+    NostrEvent *list = g_ptr_array_index(lists, i);
+    g_assert_cmpuint(tag_count(list, "r"), ==, 1);
+    NostrTag *r = nostr_tags_get(nostr_event_get_tags(list), 0);
+    g_assert_cmpuint(nostr_tag_size(r), ==, 3);
+    g_assert_cmpstr(nostr_tag_get(r, 1), ==, w.x.url);
+    g_assert_cmpstr(nostr_tag_get(r, 2), ==, "write");
+  }
+  /* Each account's KeyPackage goes to its write relay X. */
+  CountWait alice_kp = { &w.x, ALICE, 1 }, bob_kp = { &w.x, BOB, 1 };
+  spin_until(key_packages_reached, &alice_kp, "Alice's KeyPackage on X");
+  spin_until(key_packages_reached, &bob_kp, "Bob's KeyPackage on X");
+  wait_state(alice, GH_MLS_KEY_PACKAGE_PUBLISHED);
+  wait_state(bob, GH_MLS_KEY_PACKAGE_PUBLISHED);
+
+  /* And they invite each other. */
+  accept_contact(alice, BOB);
+  accept_contact(bob, ALICE);
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(create_attempt(alice, "From Alice", (const guint[]){ BOB }, 1, &error));
+  g_assert_no_error(error);
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_assert_nonnull(gb);
+  g_assert_nonnull(create_attempt(bob, "From Bob", (const guint[]){ ALICE }, 1, &error));
+  g_assert_no_error(error);
+  GhMlsGroup *ga = join(alice, BOB);
+  g_assert_nonnull(ga);
+  world_down(&w);
+}
+
+/* Review H2: an account that already has a kind 10002 is never offered one,
+ * and asking anyway publishes none (it would replace the user's list). */
+static void
+test_relay_list_never_replaced(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  GhInboxSetupConfig config = { .accounts = alice->accounts, .account_relays = alice->relays,
+                                .settings = alice->settings, .offer_relay_list = TRUE };
+  g_autoptr(GhInboxSetup) probe = gh_inbox_setup_new(&config);
+  g_assert_false(gh_inbox_setup_relay_list_needed(probe));
+  g_object_run_dispose(G_OBJECT(probe));
+  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_NONE);
+  g_object_run_dispose(G_OBJECT(setup));
+  WireRelay *relays[] = { &w.e, &w.w, &w.x, &w.h, &w.r, &w.g };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
+    g_autoptr(GPtrArray) lists = published(relays[i], 10002);
+    g_assert_cmpuint(lists->len, ==, 0);
+  }
+  world_down(&w);
+}
+#endif
+
 #if GH_MLS_ADOPTED_KEY_PACKAGES
 /* libmarmot's own build gate refuses the public ADOPTED producer in a
  * default build; its ungated internal producer, signer-only (the enrolled
@@ -842,6 +972,11 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("lifetime-rotation-held"), test_lifetime_rotation_held);
   g_test_add_func(KP_TEST("hold-cap-expires"), test_hold_cap_expires);
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
+#endif
+#if GH_TEST_HAVE_INBOX_SETUP && !GH_MLS_ADOPTED_KEY_PACKAGES
+  g_test_add_func(KP_TEST("fresh-accounts-invite-each-other"),
+                  test_fresh_accounts_invite_each_other);
+  g_test_add_func(KP_TEST("relay-list-never-replaced"), test_relay_list_never_replaced);
 #endif
   gint rc = g_test_run();
   mls_world_finish();

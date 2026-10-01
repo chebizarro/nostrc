@@ -74,6 +74,18 @@ GPtrArray *gh_inbox_setup_load_suggestions(GError **error);
 gchar *gh_inbox_setup_build_unsigned(const gchar *pubkey_hex, const gchar *const *relays,
                                      gint64 created_at);
 
+/* ---- the kind-10002 relay list (nostrc-0bdg) --------------------------------- */
+
+#define GH_INBOX_SETUP_RELAY_LIST_KIND 10002
+
+/* The unsigned event for the account's signer: kind 10002, one
+ * ["r", url, "write"] tag per relay in order, empty content. "write": the
+ * account publishes there (its KeyPackages, transports/nostr.md); Groundhog
+ * reads nothing from them, so it does not ask others to deliver there. */
+gchar *gh_inbox_setup_build_relay_list_unsigned(const gchar *pubkey_hex,
+                                                const gchar *const *relays,
+                                                gint64 created_at);
+
 /* ---- the private-reads check ---------------------------------------------- */
 
 typedef enum {
@@ -165,7 +177,23 @@ typedef struct {
   const GhRelayPublishTransport *publish_transport;
   const GhRelayPublishAuthTransport *publish_auth_transport;
   gpointer publish_transport_data;
+  /* Offer to publish a kind-10002 relay list when the account has none
+   * (gh_inbox_setup_relay_list_needed()): encrypted groups find a person's
+   * KeyPackages only through it (nostrc-0bdg). The application sets it
+   * with GH_FEATURE_ENCRYPTED_GROUPS. */
+  gboolean offer_relay_list;
 } GhInboxSetupConfig;
+
+/* Where the optional kind-10002 relay list stands. */
+typedef enum {
+  GH_INBOX_SETUP_RELAY_LIST_NONE,       /* not requested */
+  GH_INBOX_SETUP_RELAY_LIST_WAITING,    /* requested; signed after the message list */
+  GH_INBOX_SETUP_RELAY_LIST_SIGNING,    /* waiting for Nostr Signer */
+  GH_INBOX_SETUP_RELAY_LIST_PUBLISHING,
+  GH_INBOX_SETUP_RELAY_LIST_DONE,       /* at least one relay accepted it */
+  GH_INBOX_SETUP_RELAY_LIST_FAILED,     /* declined, or no relay accepted it */
+  GH_INBOX_SETUP_RELAY_LIST_SKIPPED     /* a relay list appeared meanwhile: never overwritten */
+} GhInboxSetupRelayList;
 
 /*
  * GhInboxSetup publishes one kind-10050 list for the account that is active
@@ -185,6 +213,10 @@ typedef struct {
  *     is relay-local acceptance only. Read-only 10002 relays are never used.
  *  3. At the same time the message relays are checked with a GhInboxProbe
  *     (separate connections, never authenticated).
+ *
+ * With gh_inbox_setup_start_full() and the user's consent it also signs
+ * and publishes the account's first kind-10002 relay list (the chosen
+ * relays as write relays; nostrc-0bdg), never over an existing one.
  *
  * It finishes DONE when at least one relay accepted the list, else FAILED.
  * With adopt_discovery and an empty discovery-relays setting, the message
@@ -206,6 +238,26 @@ GPtrArray *gh_inbox_setup_plan(GhInboxSetup *self, const gchar *const *inbox_rel
                                gboolean adopt_discovery, GError **error);
 gboolean gh_inbox_setup_start(GhInboxSetup *self, const gchar *const *inbox_relays,
                               gboolean adopt_discovery, GError **error);
+
+/* Whether this setup would offer the kind-10002 relay list: offer_relay_list
+ * is set, an account is active, and its own-list discovery (GhAccountRelays)
+ * COMPLETED for the active generation without finding any kind 10002. A
+ * list that exists -- even one Groundhog cannot use -- is never replaced. */
+gboolean gh_inbox_setup_relay_list_needed(GhInboxSetup *self);
+/* gh_inbox_setup_start(), plus, with relay_list (the user's consent on the
+ * confirm page, PD-13) and gh_inbox_setup_relay_list_needed(), a kind 10002
+ * naming the chosen message relays as the account's write relays: signed
+ * after the message list (a second Nostr Signer request; declining it does
+ * not stop the message list) and published, under the same "own list
+ * publish" purpose (§4.3), to the same relays. If a relay list was found
+ * by the time the signer answers, it is SKIPPED. The setup finishes when
+ * both are done; it is DONE when the message list was kept. */
+gboolean gh_inbox_setup_start_full(GhInboxSetup *self, const gchar *const *inbox_relays,
+                                   gboolean adopt_discovery, gboolean relay_list,
+                                   GError **error);
+GhInboxSetupRelayList gh_inbox_setup_get_relay_list_state(GhInboxSetup *self);
+/* Relays that accepted the relay list. */
+guint gh_inbox_setup_get_relay_list_n_accepted(GhInboxSetup *self);
 /* Stops signing, publishing and checking (FAILED, G_IO_ERROR_CANCELLED). */
 void gh_inbox_setup_cancel(GhInboxSetup *self);
 

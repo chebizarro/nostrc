@@ -362,6 +362,8 @@ struct _GhOnboardingView {
   AdwActionRow *confirm_targets;
   GtkWidget *discovery_group;
   AdwSwitchRow *discovery_switch;
+  GtkWidget *relay_list_group;
+  AdwSwitchRow *relay_list_switch;
   GtkWidget *publish_button;
   GtkImage *publish_icon;
   GtkLabel *publish_title;
@@ -1010,6 +1012,9 @@ prepare_confirm(GhOnboardingView *self)
   gboolean ask_discovery = discovery_is_empty(self);
   gtk_widget_set_visible(self->discovery_group, ask_discovery);
   replace_setup(self);
+  /* Encrypted groups find people through their kind-10002 relay list
+   * (nostrc-0bdg): offered only when the account has none at all. */
+  gtk_widget_set_visible(self->relay_list_group, gh_inbox_setup_relay_list_needed(self->setup));
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) plan = gh_inbox_setup_plan(self->setup, (const gchar *const *)chosen,
     ask_discovery && adw_switch_row_get_active(self->discovery_switch), &error);
@@ -1099,6 +1104,29 @@ update_results(GhOnboardingView *self)
                       items->pdata, items->len);
 }
 
+/* What became of the encrypted-groups relay list, as a sentence ("" when it
+ * was not asked for). Honest about a failure: nobody can invite
+ * the account to encrypted groups then (nostrc-0bdg). */
+static const gchar *
+relay_list_text(GhInboxSetup *setup)
+{
+  switch (gh_inbox_setup_get_relay_list_state(setup)) {
+  case GH_INBOX_SETUP_RELAY_LIST_DONE:
+    return _("People can now invite you to encrypted groups.");
+  case GH_INBOX_SETUP_RELAY_LIST_FAILED:
+    return _("Your relay list wasn't published, so people can't invite you to encrypted "
+             "groups yet. You can try again from Preferences.");
+  case GH_INBOX_SETUP_RELAY_LIST_SKIPPED:
+    return _("You already have a relay list, so it was left as it is.");
+  case GH_INBOX_SETUP_RELAY_LIST_NONE:
+  case GH_INBOX_SETUP_RELAY_LIST_WAITING:
+  case GH_INBOX_SETUP_RELAY_LIST_SIGNING:
+  case GH_INBOX_SETUP_RELAY_LIST_PUBLISHING:
+  default:
+    return "";
+  }
+}
+
 static void
 on_setup_changed(GhOnboardingView *self)
 {
@@ -1118,9 +1146,12 @@ on_setup_changed(GhOnboardingView *self)
     guint total = gh_inbox_setup_get_n_relays(setup);
     icon = "emblem-ok-symbolic";
     title = _("Your Message Relays Are Set Up");
-    description = g_strdup_printf(g_dngettext(NULL, "%u of %u relay kept your list.",
-                                              "%u of %u relays kept your list.", total),
-                                  accepted, total);
+    g_autofree gchar *kept = g_strdup_printf(g_dngettext(NULL, "%u of %u relay kept your list.",
+                                                         "%u of %u relays kept your list.",
+                                                         total),
+                                             accepted, total);
+    const gchar *relay_list = relay_list_text(setup);
+    description = *relay_list ? g_strjoin(" ", kept, relay_list, NULL) : g_strdup(kept);
     break;
   }
   case GH_INBOX_SETUP_FAILED: {
@@ -1176,8 +1207,11 @@ publish_action(GtkWidget *widget, const char *name, GVariant *parameter)
                    adw_switch_row_get_active(self->discovery_switch);
   g_signal_connect_object(self->setup, "changed", G_CALLBACK(on_setup_changed), self,
                           G_CONNECT_SWAPPED);
+  gboolean relay_list = gtk_widget_get_visible(self->relay_list_group) &&
+                        adw_switch_row_get_active(self->relay_list_switch);
   g_autoptr(GError) error = NULL;
-  if (!gh_inbox_setup_start(self->setup, (const gchar *const *)chosen, adopt, &error)) {
+  if (!gh_inbox_setup_start_full(self->setup, (const gchar *const *)chosen, adopt, relay_list,
+                                 &error)) {
     toast(self, error->message);
     return;
   }
@@ -1515,6 +1549,8 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   BIND(confirm_targets);
   BIND(discovery_group);
   BIND(discovery_switch);
+  BIND(relay_list_group);
+  BIND(relay_list_switch);
   BIND(publish_button);
   BIND(publish_icon);
   BIND(publish_title);

@@ -41,6 +41,10 @@ guint64 gh_account_relays_get_generation(GhAccountRelays *self);
 const gchar *const *gh_account_relays_get_read_relays(GhAccountRelays *self);
 const gchar *const *gh_account_relays_get_write_relays(GhAccountRelays *self);
 const gchar *const *gh_account_relays_get_inbox_relays(GhAccountRelays *self);
+/* Whether a kind 10002 by the account was admitted (in any form, even one
+ * without a usable write relay): Groundhog never publishes over it
+ * (nostrc-0bdg). */
+gboolean gh_account_relays_has_relay_list(GhAccountRelays *self);
 
 G_END_DECLS
 #endif

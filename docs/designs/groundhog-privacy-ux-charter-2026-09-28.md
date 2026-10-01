@@ -554,13 +554,15 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 |---|---|---|---|---|
 | Own inbox read (`1059 #p=me`) | own 10050 | account (on challenge) | live REQ, per account generation | `acct/inbox` |
 | Own list discovery (10002/10050 authored by me; existing `GhAccountRelays`) | `discovery-relays` | none, or ephemeral | live, per generation | `acct/self-discovery` |
-| Own list publish (10050, 10002, KeyPackage 30443) | own write + inbox relays | account (on challenge) | per publish | random |
+| Own list publish (10050, 10002, KeyPackage 30443) | 10050 and 10002: own write + inbox relays + `discovery-relays`; KeyPackage 30443: own 10002 write-capable relays only (amended, see below) | account (on challenge) | per publish | random |
 | Contact directory (others' 10050, kind 0) | `discovery-relays` (+ that contact's 10002 write relays if set) | none, or ephemeral | per batch | random per batch |
 | DM recipient wrap / Welcome wrap | recipient's 10050 | **ephemeral only** | per publish | random per publish |
 | DM self wrap | own 10050 | account (on challenge) | per publish, separate socket | random |
 | NIP-29 group read/write | group relay | account | live per group | `acct/group/<hash(url)>` |
 | MLS 445 read/write | group routing relays | **ephemeral only** | live per group | `acct/mls/<hash(group)>` |
 | Media (Blossom/HTTP) | user action | Blossom auth ephemeral (D6) | per fetch | random |
+
+*(Amended 2026-10-01, nostrc-0bdg, W24b slice J review H2. Decision: a KeyPackage (kind 30443) is published only to the account's kind-10002 write-capable relays (`r` entries marked `write` or unmarked; never read-only ones), and an inviter looks it up only there (after the person's 10002 from `discovery-relays`), never on a group's relays: Marmot transports/nostr.md "KeyPackage publication", where MDK 0.11 and White Noise look. The 10050 inbox relays carry Welcomes (gift wraps), not KeyPackages; Groundhog does not fall back to them, which would re-widen this egress set. Kind 10051 is never published or read. So that a Groundhog account is findable at all, onboarding's confirm page offers, with the same consent (PD-13) and under this purpose, a kind 10002 naming the chosen message relays as `write` relays, only when own-list discovery completed and found no 10002; an existing 10002 is never replaced or narrowed. Preferences › Network › Encrypted Groups says when nobody can invite the account, with [Set Up] (nostrc-f8a5).)*
 
 ### 4.4 NIP-42 AUTH exposure policy (`GhAuthPolicy`)
 

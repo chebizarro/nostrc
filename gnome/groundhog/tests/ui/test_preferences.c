@@ -893,6 +893,58 @@ confirm(Fixture *f, const char *response_label)
 }
 
 static void
+setup_inbox_activated(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  (void)parameter;
+  (*(guint *)data)++;
+}
+
+/* Network › Encrypted Groups (nostrc-f8a5, nostrc-0bdg review H2): honest
+ * about whether people can invite the account; [Set Up] when it has no relay
+ * list, which opens the relay step (win.setup-inbox) and closes the dialog. */
+static void
+test_key_package_row(Fixture *f, gconstpointer data)
+{
+  gboolean groups = (GPOINTER_TO_UINT(data) & GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS) != 0;
+  GtkWidget *group = child(f, "key_package_group");
+  GtkWidget *setup = child(f, "key_package_setup");
+  AdwActionRow *row = child(f, "key_package_row");
+  g_assert_false(gtk_widget_get_visible(group));   /* not known yet: no row */
+  gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS);
+  g_assert_cmpint(gh_preferences_dialog_get_key_package_state(f->dialog), ==,
+                  GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS);
+  g_assert_cmpint(gtk_widget_get_visible(group), ==, groups);
+  if (!groups) {
+    g_assert_false(gtk_widget_get_visible(setup));
+    return;
+  }
+  g_assert_true(gtk_widget_get_visible(setup));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(row),
+                          "People can't invite you to encrypted groups yet"));
+  gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_PUBLISHED);
+  g_assert_false(gtk_widget_get_visible(setup));
+  g_assert_cmpstr(adw_action_row_get_subtitle(row), ==,
+                  "People can invite you to encrypted groups.");
+  gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_UNKNOWN);
+  g_assert_false(gtk_widget_get_visible(group));
+
+  /* [Set Up] runs the window's relay step and closes the dialog. */
+  gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS);
+  present(f, 800, 700);
+  guint opened = 0;
+  g_autoptr(GSimpleActionGroup) win = g_simple_action_group_new();
+  g_autoptr(GSimpleAction) action = g_simple_action_new("setup-inbox", NULL);
+  g_signal_connect(action, "activate", G_CALLBACK(setup_inbox_activated), &opened);
+  g_action_map_add_action(G_ACTION_MAP(win), G_ACTION(action));
+  gtk_widget_insert_action_group(GTK_WIDGET(f->window), "win", G_ACTION_GROUP(win));
+  g_signal_emit_by_name(setup, "clicked");
+  drain_idle();
+  g_assert_cmpuint(opened, ==, 1);
+  g_assert_false(gtk_widget_get_mapped(GTK_WIDGET(f->dialog)));
+}
+
+static void
 test_delete_all_runs_forget(Fixture *f, gconstpointer data)
 {
   (void)data;
@@ -1338,6 +1390,9 @@ main(int argc, char **argv)
   ADD("tor-with-g09", test_tor_with_g09, all);
   ADD("url-lists-bind-both-ways", test_url_lists_bind_both_ways, no_tor);
   ADD("account-rows", test_account_rows, build);
+  ADD("key-package-row", test_key_package_row, all);
+  ADD("key-package-row-no-feature", test_key_package_row,
+      all & ~GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS);
   ADD("delete-all-runs-forget", test_delete_all_runs_forget, build);
   ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, build);
   ADD("minimum-size-layout", test_minimum_size_layout, build);
