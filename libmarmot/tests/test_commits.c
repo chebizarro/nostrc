@@ -2209,6 +2209,30 @@ transaction_case(bool alice_wins)
     expect_txns(1, 1, 0, "merge_pending_commit");
     expect_commit(&bob, c1, "Bob");
 
+    /* nostrc-m6tp: a legacy (0xF2EE) group has no image component to
+     * update; refused inside one transaction, rolled back, nothing staged. */
+    {
+        const uint8_t pixels[] = { 0x89, 'P', 'N', 'G', 1, 2, 3 };
+        MarmotGroupBlossomImage image = {0};
+        uint8_t *ct = NULL;
+        size_t ct_len = 0;
+        OK(marmot_group_image_encrypt(pixels, sizeof pixels, "image/png", &image, &ct, &ct_len));
+        shim_reset_counts();
+        char *none = NULL;
+        CHECK(marmot_update_group_blossom_image(alice.m, &gid, &image, &none) ==
+              MARMOT_ERR_UNSUPPORTED && none == NULL, "legacy group image refused");
+        expect_txns(1, 0, 1, "update_group_blossom_image (legacy)");
+        MarmotGroupAvatarUrl avatar = { .url = "https://example.com/a.png" };
+        CHECK(marmot_update_group_avatar_url(alice.m, &gid, &avatar, &none) ==
+              MARMOT_ERR_UNSUPPORTED && none == NULL, "legacy group avatar refused");
+        expect_txns(1, 0, 1, "update_group_avatar_url (legacy)");
+        CHECK(marmot_update_group_blossom_image(alice.m, &gid, NULL, NULL) ==
+              MARMOT_ERR_INVALID_ARG, "out_commit_json is required");
+        expect_txns(0, 0, 0, "no transaction without an out argument");
+        marmot_group_blossom_image_clear(&image);
+        free(ct);
+    }
+
     /* Messages both ways (the receiving side's ratchet, marker and message). */
     char *to_alice = app_message(&bob, &gid, "to Alice");
     MarmotError err;

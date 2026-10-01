@@ -206,13 +206,68 @@ typedef struct {
  * group, whose metadata is in MarmotGroup; a stored state that no longer
  * validates is MARMOT_ERR_DESERIALIZATION.
  *
- * Writing them (AppDataUpdate) is not this API (nostrc-qp24.5.1 live
- * Commits).
+ * Writing the image and avatar: marmot_update_group_blossom_image() and
+ * marmot_update_group_avatar_url() below; name, description, admins and
+ * relays: marmot_update_group_metadata().
  */
 MarmotError marmot_get_group_components(Marmot *m, const MarmotGroupId *mls_group_id,
                                         MarmotGroupComponents *out);
 
 void marmot_group_components_clear(MarmotGroupComponents *components);
+
+/* ── Write side: the group image and URL avatar (nostrc-m6tp) ──────────── */
+
+/**
+ * marmot_update_group_blossom_image:
+ * @m: Marmot instance
+ * @mls_group_id: an adopted group
+ * @image: (nullable): the new 0x8002 state, from marmot_group_image_encrypt()
+ *   once its ciphertext is uploaded (signed with image->image_upload_key);
+ *   NULL clears the image
+ * @out_commit_json: (out) (transfer full): the kind:445 Commit to publish
+ *
+ * Replaces the group's 0x8002 marmot.group.blossom.image.v1 state with one
+ * inline AppDataUpdate (full replacement), as MDK's update_group_image.
+ * Clearing writes the canonical empty state (MDK: an empty
+ * AppGroupImageInput), never a Remove, so it is valid whether or not the
+ * group lists 0x8002 as required.  The state is checked with the receivers'
+ * validator (mls_adopted_component_state_valid) before anything is built,
+ * and the Commit is checked as a receiver checks it.  One libmarmot
+ * transaction; the Commit is pending, exactly as for
+ * marmot_update_group_metadata(): publish, then
+ * marmot_merge_pending_commit() or marmot_clear_pending_commit().
+ *
+ * The 0x8007 URL avatar is independent and, when present, wins rendering
+ * (marmot_group_avatar_select()).
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG for a NULL argument or a state
+ *   equal to the current one (no Commit); MARMOT_ERR_MEDIA_INVALID_REFERENCE
+ *   (or the codec's error) for an invalid state; MARMOT_ERR_ADMIN_ONLY for
+ *   a non-admin; MARMOT_ERR_UNSUPPORTED for a legacy (0xF2EE) group --
+ *   libmarmot produces no MIP-01 image fields; MARMOT_ERR_GROUP_NOT_FOUND,
+ *   MARMOT_ERR_OWN_COMMIT_PENDING and the other errors of
+ *   marmot_update_group_metadata()
+ */
+MarmotError marmot_update_group_blossom_image(Marmot *m, const MarmotGroupId *mls_group_id,
+                                              const MarmotGroupBlossomImage *image,
+                                              char **out_commit_json);
+
+/**
+ * marmot_update_group_avatar_url:
+ * @m: Marmot instance
+ * @mls_group_id: an adopted group
+ * @avatar: (nullable): the new 0x8007 state (its url is normalized by the
+ *   encoder; one libmarmot cannot verify is refused); NULL clears it
+ * @out_commit_json: (out) (transfer full): the kind:445 Commit to publish
+ *
+ * marmot_update_group_blossom_image() for the 0x8007
+ * marmot.group.avatar-url.v1 component.  libmarmot never fetches the URL.
+ *
+ * Returns: as marmot_update_group_blossom_image()
+ */
+MarmotError marmot_update_group_avatar_url(Marmot *m, const MarmotGroupId *mls_group_id,
+                                           const MarmotGroupAvatarUrl *avatar,
+                                           char **out_commit_json);
 
 #ifdef __cplusplus
 }

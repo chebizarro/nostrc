@@ -2048,6 +2048,106 @@ test_refused_commit_draws_no_time(void)
     trio_free(&t);
 }
 
+static void
+test_group_image_component_updates(void)
+{
+    Trio t;
+    trio_create(&t);
+    Member *receivers[] = { &t.bob, &t.carol };
+    char *event = NULL;
+    const uint8_t pixels[] = { 0x89, 'P', 'N', 'G', 1, 2, 3 };
+    MarmotGroupBlossomImage image = {0};
+    uint8_t *ciphertext = NULL;
+    size_t ciphertext_len = 0;
+    OK(marmot_group_image_encrypt(pixels, sizeof pixels, "image/png", &image,
+                                  &ciphertext, &ciphertext_len));
+    CHECK(ciphertext_len > sizeof pixels, "image encrypted before component update");
+    EXPECT_ERR(marmot_update_group_blossom_image(t.bob.m, &t.gid, &image, &event),
+               MARMOT_ERR_ADMIN_ONLY);
+    CHECK(event == NULL, "non-admin produced no image Commit");
+    /* An invalid state is refused before any Commit is staged. */
+    MarmotGroupBlossomImage bad = image;
+    bad.media_type = "Image/PNG";   /* not canonical */
+    CHECK(marmot_update_group_blossom_image(t.alice.m, &t.gid, &bad, &event) != MARMOT_OK &&
+          event == NULL, "non-canonical image state refused");
+    MarmotGroupAvatarUrl http = { .url = "http://example.com/a.png" };
+    CHECK(marmot_update_group_avatar_url(t.alice.m, &t.gid, &http, &event) != MARMOT_OK &&
+          event == NULL, "an avatar URL libmarmot cannot produce is refused");
+    /* The Commit is pending until published: one at a time, and clearing it
+     * leaves the group as it was. */
+    Snapshot before;
+    snapshot(&t.alice, &t.gid, &before);
+    OK(marmot_update_group_blossom_image(t.alice.m, &t.gid, &image, &event));
+    CHECK(event != NULL, "a Commit to publish");
+    free(event);
+    event = NULL;
+    EXPECT_ERR(marmot_update_group_blossom_image(t.alice.m, &t.gid, NULL, &event),
+               MARMOT_ERR_OWN_COMMIT_PENDING);
+    OK(marmot_clear_pending_commit(t.alice.m, &t.gid));
+    MarmotGroupComponents unchanged;
+    OK(marmot_get_group_components(t.alice.m, &t.gid, &unchanged));
+    CHECK(!unchanged.image.present, "an unpublished image Commit changed nothing");
+    marmot_group_components_clear(&unchanged);
+    {
+        /* The dated floor may move (a built Commit reserves its time, as
+         * for metadata); the epoch and MLS state must not. */
+        Snapshot after;
+        snapshot(&t.alice, &t.gid, &after);
+        CHECK(after.epoch == before.epoch && after.state_len == before.state_len &&
+              memcmp(after.state, before.state, after.state_len) == 0,
+              "cleared image Commit left the MLS state as it was");
+        snapshot_clear(&after);
+    }
+    snapshot_clear(&before);
+    OK(marmot_update_group_blossom_image(t.alice.m, &t.gid, &image, &event));
+    publish(&t.alice, &t.gid, event, receivers, 2);
+    free(event);
+    event = NULL;
+    MarmotGroupComponents parts;
+    OK(marmot_get_group_components(t.bob.m, &t.gid, &parts));
+    CHECK(parts.image.present &&
+          memcmp(parts.image.image_hash, image.image_hash, 32) == 0 &&
+          parts.avatar_source == MARMOT_GROUP_AVATAR_BLOSSOM,
+          "image component applied by receiver");
+    marmot_group_components_clear(&parts);
+    EXPECT_ERR(marmot_update_group_blossom_image(t.alice.m, &t.gid, &image, &event),
+               MARMOT_ERR_INVALID_ARG);
+
+    MarmotGroupAvatarUrl avatar = { .url = "https://example.com/avatar.png" };
+    EXPECT_ERR(marmot_update_group_avatar_url(t.bob.m, &t.gid, &avatar, &event),
+               MARMOT_ERR_ADMIN_ONLY);
+    OK(marmot_update_group_avatar_url(t.alice.m, &t.gid, &avatar, &event));
+    publish(&t.alice, &t.gid, event, receivers, 2);
+    free(event);
+    event = NULL;
+    OK(marmot_get_group_components(t.carol.m, &t.gid, &parts));
+    CHECK(parts.avatar_source == MARMOT_GROUP_AVATAR_URL &&
+          strcmp(parts.avatar_url.url, avatar.url) == 0,
+          "URL avatar takes precedence after Commit");
+    marmot_group_components_clear(&parts);
+
+    OK(marmot_update_group_avatar_url(t.alice.m, &t.gid, NULL, &event));
+    publish(&t.alice, &t.gid, event, receivers, 2);
+    free(event);
+    event = NULL;
+    OK(marmot_get_group_components(t.bob.m, &t.gid, &parts));
+    CHECK(parts.avatar_source == MARMOT_GROUP_AVATAR_BLOSSOM && parts.avatar_url.url == NULL,
+          "clearing URL restores Blossom image");
+    marmot_group_components_clear(&parts);
+
+    OK(marmot_update_group_blossom_image(t.alice.m, &t.gid, NULL, &event));
+    publish(&t.alice, &t.gid, event, receivers, 2);
+    free(event);
+    OK(marmot_get_group_components(t.bob.m, &t.gid, &parts));
+    CHECK(!parts.image.present && parts.avatar_source == MARMOT_GROUP_AVATAR_NONE,
+          "clearing image is replicated");
+    marmot_group_components_clear(&parts);
+    marmot_group_blossom_image_clear(&image);
+    sodium_memzero(ciphertext, ciphertext_len);
+    free(ciphertext);
+    trio_free(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2065,6 +2165,7 @@ main(int argc, char **argv)
     RUN(test_authorize_by_reference_rules);
     RUN(test_partial_write_rollback);
     RUN(test_own_commits);
+    RUN(test_group_image_component_updates);
     RUN(test_self_update_with_new_proof);
     RUN(test_rotation_onto_another_group_refused);
     RUN(test_rotation_back_to_old_address);

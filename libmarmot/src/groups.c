@@ -1814,6 +1814,119 @@ first_add_requires_self_remove(const Marmot *m, const MlsGroup *mls, const MlsKe
     return kp_count > 0;
 }
 
+/* 0x8002 and 0x8007 are independent, full-replacement states. Do not
+ * remove a dictionary entry to clear one: the codecs' empty state is the
+ * interoperable value and preserves a group's component capability. */
+static MarmotError
+update_adopted_image_component(Marmot *m, const MarmotGroupId *gid, uint16_t id,
+                               const uint8_t *state, size_t state_len,
+                               char **out_commit_json)
+{
+    if (!state) return MARMOT_ERR_INVALID_ARG;
+    int valid = mls_adopted_component_state_valid(id, state, state_len);
+    if (valid != 0) return (MarmotError)valid;
+
+    MarmotGroup *group = NULL;
+    MlsGroup mls;
+    MarmotError err = load_group_for_commit(m, gid, &group, &mls);
+    if (err != MARMOT_OK) return err;
+    if (mls.profile != MARMOT_GROUP_PROFILE_ADOPTED) {
+        err = MARMOT_ERR_UNSUPPORTED;
+        goto out;
+    }
+    MlsAdoptedGroupContext gc;
+    err = adopted_context(&mls, &gc);
+    if (err != MARMOT_OK) goto out;
+    const uint8_t *old = id == MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1
+        ? gc.image : gc.avatar;
+    size_t old_len = id == MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1
+        ? gc.image_len : gc.avatar_len;
+    if (old && old_len == state_len && memcmp(old, state, state_len) == 0) {
+        err = MARMOT_ERR_INVALID_ARG; /* no change, no Commit */
+        goto out;
+    }
+
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MlsAddResult res;
+    memset(&res, 0, sizeof(res));
+    MlsAppDataUpdate op;
+    adu_update(&op, id, (uint8_t *)state, state_len);
+    if (clone_mls_group(&mls, &post) != 0) {
+        err = MARMOT_ERR_MLS;
+    } else {
+        int rc = mls_group_commit_adopted(&post, NULL, 0, NULL, 0, &op, 1, &res);
+        err = rc == 0 ? MARMOT_OK
+              : rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG
+              : rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY
+              : rc == MARMOT_ERR_VALIDATION ? MARMOT_ERR_VALIDATION : MARMOT_ERR_MLS;
+    }
+    if (err == MARMOT_OK)
+        err = finish_adopted_commit(m, group, &mls, &post, &res, NULL, 0, NULL, NULL,
+                                    out_commit_json);
+    mls_add_result_clear(&res);
+    mls_group_free(&post);
+out:
+    mls_group_free(&mls);
+    marmot_group_free(group);
+    return err;
+}
+
+/* One libmarmot transaction, as marmot_update_group_metadata(): the pending
+ * Commit, the dated group floor and the staged state commit together or not
+ * at all. */
+static MarmotError
+update_image_component_txn(Marmot *m, const MarmotGroupId *gid, uint16_t id,
+                           const uint8_t *state, size_t state_len, char **out_commit_json)
+{
+    if (!m || !gid || !out_commit_json) return MARMOT_ERR_INVALID_ARG;
+    *out_commit_json = NULL;
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = update_adopted_image_component(m, gid, id, state, state_len, out_commit_json);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+    }
+    return end;
+}
+
+MarmotError
+marmot_update_group_blossom_image(Marmot *m, const MarmotGroupId *gid,
+                                   const MarmotGroupBlossomImage *image,
+                                   char **out_commit_json)
+{
+    MarmotGroupBlossomImage empty = {0};
+    uint8_t *state = NULL;
+    size_t state_len = 0;
+    MarmotError err = marmot_group_blossom_image_encode(image ? image : &empty,
+                                                        &state, &state_len);
+    if (err != MARMOT_OK) return err;
+    err = update_image_component_txn(m, gid, MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1,
+                                     state, state_len, out_commit_json);
+    sodium_memzero(state, state_len);   /* the image key and upload key */
+    free(state);
+    return err;
+}
+
+MarmotError
+marmot_update_group_avatar_url(Marmot *m, const MarmotGroupId *gid,
+                               const MarmotGroupAvatarUrl *avatar,
+                               char **out_commit_json)
+{
+    MarmotGroupAvatarUrl empty = {0};
+    uint8_t *state = NULL;
+    size_t state_len = 0;
+    MarmotError err = marmot_group_avatar_url_encode(avatar ? avatar : &empty,
+                                                     &state, &state_len);
+    if (err != MARMOT_OK) return err;
+    err = update_image_component_txn(m, gid, MARMOT_COMPONENT_GROUP_AVATAR_URL_V1,
+                                     state, state_len, out_commit_json);
+    free(state);
+    return err;
+}
+
 static MarmotError
 add_members_impl(Marmot *m,
                     const MarmotGroupId *mls_group_id,
