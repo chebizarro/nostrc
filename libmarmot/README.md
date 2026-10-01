@@ -335,7 +335,8 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
 `MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION`.
 ### 0.12.0 (unreleased): hardening after the W23 MDK review (nostrc-c7ho, nostrc-w285, nostrc-2lrz, nostrc-dkiq)
 
-**API behaviour change** (MINOR for 0.x); no wire or state-format change.
+**API behaviour change** (MINOR for 0.x) and a new error code,
+`MARMOT_ERR_EVENT_RATE`; no wire or state-format change.
 
 #### What changed
 
