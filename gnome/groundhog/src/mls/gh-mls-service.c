@@ -2471,6 +2471,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   } else if (err != MARMOT_OK) {
     g_debug("Groundhog skipped an encrypted group event: %s", marmot_error_string(err));
   }
+  /* nostrc-w1m0: libmarmot made another branch of the group canonical while
+   * processing this event -- a competing Commit, or a message witnessing a
+   * competing branch: the group changed as after a Commit. */
+  if (err == MARMOT_OK && result.convergence.branch_recovered)
+    commit = TRUE;
   marmot_message_result_free(&result);
   /* libmarmot rolled a failed operation back itself; its deliberate
    * outcomes (a deferred competing Commit) are kept. */

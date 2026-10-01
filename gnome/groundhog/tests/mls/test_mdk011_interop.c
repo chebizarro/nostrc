@@ -37,6 +37,10 @@
  *  adopted-commits: Groundhog creates an adopted group with an engine-default
  *    MDK 0.11 peer through New Group's own path and the two exchange
  *    messages and Commits both ways (nostrc-qp24.5.1.3).
+ *  concurrent-commits: Groundhog and MDK 0.11 commit from the same epoch
+ *    and converge on one branch: MDK's by the key (Groundhog switches),
+ *    then Groundhog's by a witness against the key (MDK switches), then
+ *    the key again between two witnessed branches (nostrc-w1m0).
  *
  * mdk09-probe: MDK 0.9.0 (the dictionary engine, v1 proof) is expected
  * incompatible: the case asserts the refusal precisely (the failure class,
@@ -1586,6 +1590,107 @@ test_white_noise_media(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- concurrent Commits: Groundhog and MDK 0.11 converge (nostrc-w1m0) -------------- */
+
+/* Groundhog (Carol's account) and MDK 0.11 (Alice's), both admins of one
+ * adopted group, commit from the same epoch -- each before it has the
+ * other's Commit -- and both converge on one branch by the adopted rules
+ * (protocol-core/convergence.md, as MDK runs them).  First, unwitnessed, the
+ * lower committer key wins: MDK's (secret 1 sorts below secret 3), and
+ * Groundhog switches to it.  Then Groundhog's rename is witnessed by its own
+ * message at its epoch, and wins despite the key: MDK switches to it.
+ * Messages flow both ways after each. */
+static void
+test_concurrent_commits(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { CAROL };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *carol = &w.apps[CAROL];
+  spin_until(key_package_published, carol, "Carol's KeyPackage (her proof enrolled)");
+  accept_contact(carol, ALICE);
+  mdk_peer_engine_default("alice", ALICE);
+  g_autofree gchar *alice_kp = mdk_publish_key_package("alice", "");
+  g_autofree gchar *alice_kp_id = event_id_of(alice_kp);
+  /* The key order this case relies on (secret 1 sorts below secret 3). */
+  g_assert_cmpint(strcmp(hex[ALICE], hex[CAROL]), <, 0);
+
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *kps[] = { alice_kp, NULL };
+  OpWait created = { 0 };
+  gh_mls_service_test_create_adopted_group_async(carol->service, "Concurrent", relays, kps,
+                                                 NULL, on_created, &created);
+  spin_until(op_done, &created, "the adopted group creation");
+  g_assert_no_error(created.error);
+  GhMlsGroup *gc = created.result;
+  g_object_unref(gc);   /* the service keeps it */
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(gc));
+  spin_until(welcomes_sent, gc, "the Welcome accepted by Alice's inbox");
+  g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
+  g_autoptr(JsonObject) joined = mdk_join(&w, "alice", CAROL, alice_kp_id);
+  const gchar *group = json_object_get_string_member(joined, "group");
+  {
+    OpWait admins = { 0 };
+    const gchar *both[] = { hex[ALICE], hex[CAROL], NULL };
+    gh_mls_service_set_admins_async(carol->service, gc, both, NULL, on_changed, &admins);
+    change_done(&admins);
+    g_autoptr(JsonObject) synced = mdk_sync_joined("alice", group, before_join);
+    assert_gh_converged(gc, sync_state(synced));
+  }
+
+  /* 1. Unwitnessed: the lower committer key (MDK's) wins; Groundhog
+   *    switches to it when it arrives. */
+  {
+    guint64 base = gh_mls_group_get_epoch(gc);
+    OpWait renamed = { 0 };
+    gh_mls_service_update_metadata_async(carol->service, gc, "Groundhog's concurrent", NULL,
+                                         NULL, on_changed, &renamed);
+    change_done(&renamed);
+    /* MDK has not seen it: its rename is from the same epoch. */
+    g_autoptr(JsonObject) theirs = mdk_call(&driver,
+      "\"cmd\":\"update_group_data\",\"peer\":\"alice\",\"group\":\"%s\","
+      "\"name\":\"MDK's concurrent\"", group);
+    g_assert_cmpuint(state_epoch(theirs), ==, base + 1);
+    wait_name(gc, "MDK's concurrent");
+    g_autoptr(JsonObject) synced = mdk_sync_joined("alice", group, before_join);
+    assert_gh_converged(gc, sync_state(synced));
+    mdk_send("alice", group, "mdk after the first race");
+    wait_message(carol, room, "mdk after the first race");
+    send_accepted(carol, gc, "groundhog after the first race");
+    g_autoptr(JsonObject) read = mdk_sync_joined("alice", group, before_join);
+    g_assert_true(synced_message(read, hex[CAROL], "groundhog after the first race"));
+  }
+
+  /* 2. Groundhog's rename, witnessed by its own message at its epoch, beats
+   *    MDK's despite the key: MDK switches to it when it syncs. */
+  {
+    OpWait renamed = { 0 };
+    gh_mls_service_update_metadata_async(carol->service, gc, "Groundhog's witnessed", NULL,
+                                         NULL, on_changed, &renamed);
+    change_done(&renamed);
+    send_accepted(carol, gc, "witness from groundhog");
+    g_autoptr(JsonObject) theirs = mdk_call(&driver,
+      "\"cmd\":\"update_group_data\",\"peer\":\"alice\",\"group\":\"%s\","
+      "\"name\":\"MDK's second\"", group);
+    g_assert_cmpuint(state_epoch(theirs), ==, gh_mls_group_get_epoch(gc));
+    g_autoptr(JsonObject) synced = mdk_sync_joined("alice", group, before_join);
+    g_assert_true(synced_message(synced, hex[CAROL], "witness from groundhog"));
+    assert_gh_converged(gc, sync_state(synced));
+    g_assert_cmpstr(gh_mls_group_get_name(gc), ==, "Groundhog's witnessed");
+    mdk_send("alice", group, "mdk after the second race");
+    wait_message(carol, room, "mdk after the second race");
+    send_accepted(carol, gc, "groundhog after the second race");
+    g_autoptr(JsonObject) read = mdk_sync_joined("alice", group, before_join);
+    g_assert_true(synced_message(read, hex[CAROL], "groundhog after the second race"));
+  }
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 /* ---- MDK 0.9.0, expected incompatible ------------------------------------------------ */
 
 static void
@@ -1716,6 +1821,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/white-noise-media", test_white_noise_media);
   g_test_add_func("/groundhog/mdk011-interop/adopted-commits", test_adopted_commits);
   g_test_add_func("/groundhog/mdk011-interop/routing-rotation", test_routing_rotation);
+  g_test_add_func("/groundhog/mdk011-interop/concurrent-commits", test_concurrent_commits);
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);
   gint rc = g_test_run();
   mls_world_finish();

@@ -1877,7 +1877,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     endif()
     foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
             mdk-invites-groundhog-gui adopted-welcome white-noise-welcome white-noise-media
-            adopted-commits routing-rotation mdk09-probe)
+            adopted-commits routing-rotation concurrent-commits mdk09-probe)
       if (groundhog_mdk011_case STREQUAL "mdk-invites-groundhog-gui")
         set(groundhog_mdk011_command test-groundhog-mdk011-interop --gui
             -p /groundhog/mdk011-interop-gui/mdk-invites-groundhog)
