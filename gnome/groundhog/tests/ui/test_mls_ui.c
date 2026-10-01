@@ -1154,6 +1154,23 @@ subtitle_is(gpointer data)
   return g_strcmp0(header_subtitle(wait->window), wait->text) == 0;
 }
 
+typedef struct {
+  App *bob;
+  GhMlsGroup *ga, *gb;
+} UpgradeWait;
+
+/* nostrc-8ndz: Alice's service requires SelfRemove on its own once Bob
+ * joined (both apps support it); settled when Bob follows and nothing of
+ * Alice's is pending. */
+static gboolean
+self_remove_settled(gpointer data)
+{
+  UpgradeWait *wait = data;
+  return gh_mls_service_leave_kind(wait->bob->service, wait->gb) == GH_MLS_LEAVE_EVERYONE &&
+         !gh_mls_group_get_pending_commit(wait->ga) &&
+         gh_mls_group_get_epoch(wait->ga) == gh_mls_group_get_epoch(wait->gb);
+}
+
 static void
 test_gui_group_info(void)
 {
@@ -1167,6 +1184,8 @@ test_gui_group_info(void)
   GhMlsGroup *ga = create_group(alice, "Info", (const guint[]){ BOB }, 1);
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   GhMlsGroup *gb = join(bob, ALICE);
+  UpgradeWait upgraded = { bob, ga, gb };
+  spin_until(self_remove_settled, &upgraded, "the group requiring SelfRemove");
   group_send_stub_reset();
   GhWindow *window = app_window(alice, NULL);
   GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
@@ -1320,21 +1339,20 @@ test_gui_group_info(void)
   g_assert_false(gtk_widget_get_visible(undecryptable));
 
   /* Bob (not an admin) leaves for everyone (nostrc-2um6): the copy says how;
-   * he is "leaving" until Alice's service commits his leave, and her Group
-   * Info toasts that he left. */
+   * he is "leaving" until a member's service commits his leave, and Alice's
+   * Group Info toasts that he left. */
   GhMlsGroupInfoDialog *alice_info = show_info(window, conversation);
   bob_info = show_info(bob_window, bob_conversation);
   gtk_widget_activate_action(GTK_WIDGET(bob_info), "mls-group.leave", NULL);
   AdwAlertDialog *leave = gh_mls_group_info_dialog_get_leave_dialog(bob_info);
   g_assert_cmpstr(adw_alert_dialog_get_heading(leave), ==, "Leave Group?");
-  /* Between Groundhog accounts the group is adopted (nostrc-lf62), and every
-   * member supports SelfRemove: Bob's own leave proposal, the others told.
-   * An MDK 0.8 group Groundhog made (a build without the adopted producer)
-   * does not require it: there the admins are asked (review M1). */
+  /* Between Groundhog accounts the group is adopted (nostrc-lf62); in a build
+   * without the adopted producer it is an MDK 0.8 group whose first Add
+   * required SelfRemove (nostrc-8ndz), as every member supports it. Either
+   * way: Bob's own leave, the others told. */
   g_assert_cmpint(gh_mls_group_get_adopted(gb), ==, GH_MLS_ADOPTED_KEY_PACKAGES);
   g_assert_cmpstr(adw_alert_dialog_get_body(leave), ==,
-                  gh_mls_leave_copy(GH_MLS_ADOPTED_KEY_PACKAGES ? GH_MLS_LEAVE_EVERYONE
-                                                                : GH_MLS_LEAVE_ADMINS));
+                  gh_mls_leave_copy(GH_MLS_LEAVE_EVERYONE));
   confirm(leave, GTK_WIDGET(bob_info), "leave-confirm");
   g_assert_cmpstr(gh_mls_group_info_dialog_get_last_toast(bob_info), ==, "Leaving the group…");
   gpointer data = NULL;

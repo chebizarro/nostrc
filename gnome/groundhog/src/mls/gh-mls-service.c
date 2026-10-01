@@ -2852,8 +2852,14 @@ group_subscribe(GhMlsGroup *group)
     const gchar *key = g_ptr_array_index(order, c);
     GPtrArray *urls = g_hash_table_lookup(classes, key);
     GHashTable *wants = g_hash_table_lookup(class_wants, key);
-    if (g_hash_table_size(wants) == 0)
-      continue;   /* never: every relay read carries an address (a REQ without filters is not sent) */
+    if (g_hash_table_size(wants) == 0) {
+      /* Never: every relay read carries an address. A REQ without filters
+       * is not sent, and the relay does not hold the group back. */
+      for (guint i = 0; i < urls->len; i++)
+        g_hash_table_insert(group->settled, g_strdup(g_ptr_array_index(urls, i)),
+                            GINT_TO_POINTER(3));
+      continue;
+    }
     NostrFilters *filters = nostr_filters_new();
     int kinds[] = { MARMOT_KIND_GROUP_MESSAGE };
     gboolean current = FALSE;
@@ -2880,11 +2886,14 @@ group_subscribe(GhMlsGroup *group)
                                       : g_strdup_printf("%s-%u", isolation, c);
     gh_relay_scope_set_isolation(scope, label);
     guint in_scope = 0;
-    for (guint i = 0; i < urls->len && in_scope < MAX_GROUP_RELAYS; i++) {
+    for (guint i = 0; i < urls->len; i++) {
       const gchar *url = g_ptr_array_index(urls, i);
       g_autoptr(GError) error = NULL;
-      if (!gh_relay_scope_add_url(scope, url, &error)) {
-        g_debug("Groundhog skips a group relay: %s", error->message);
+      /* A scope takes 16 URLs; an address set's relays are one routing
+       * state's (at most 16), so this holds -- but a relay never asked must
+       * not keep the group from going live. */
+      if (in_scope >= MAX_GROUP_RELAYS || !gh_relay_scope_add_url(scope, url, &error)) {
+        g_debug("Groundhog skips a group relay: %s", error ? error->message : "too many");
         g_hash_table_insert(group->settled, g_strdup(url), GINT_TO_POINTER(3));
         continue;
       }
