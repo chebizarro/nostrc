@@ -187,12 +187,13 @@ typedef struct {
 /* Where the optional kind-10002 relay list stands. */
 typedef enum {
   GH_INBOX_SETUP_RELAY_LIST_NONE,       /* not requested */
-  GH_INBOX_SETUP_RELAY_LIST_WAITING,    /* requested; signed after the message list */
+  GH_INBOX_SETUP_RELAY_LIST_WAITING,    /* requested; started after the message list */
+  GH_INBOX_SETUP_RELAY_LIST_CHECKING,   /* asking every target for an existing list */
   GH_INBOX_SETUP_RELAY_LIST_SIGNING,    /* waiting for Nostr Signer */
   GH_INBOX_SETUP_RELAY_LIST_PUBLISHING,
   GH_INBOX_SETUP_RELAY_LIST_DONE,       /* at least one relay accepted it */
-  GH_INBOX_SETUP_RELAY_LIST_FAILED,     /* declined, or no relay accepted it */
-  GH_INBOX_SETUP_RELAY_LIST_SKIPPED     /* a relay list appeared meanwhile: never overwritten */
+  GH_INBOX_SETUP_RELAY_LIST_FAILED,     /* declined, unconfirmed, or no relay accepted it */
+  GH_INBOX_SETUP_RELAY_LIST_SKIPPED     /* a target holds the user's list: never overwritten */
 } GhInboxSetupRelayList;
 
 /*
@@ -239,18 +240,17 @@ GPtrArray *gh_inbox_setup_plan(GhInboxSetup *self, const gchar *const *inbox_rel
 gboolean gh_inbox_setup_start(GhInboxSetup *self, const gchar *const *inbox_relays,
                               gboolean adopt_discovery, GError **error);
 
-/* Whether this setup would offer the kind-10002 relay list: offer_relay_list
- * is set, an account is active, and its own-list discovery (GhAccountRelays)
- * COMPLETED for the active generation without finding any kind 10002. A
- * list that exists -- even one Groundhog cannot use -- is never replaced. */
+/* Whether this setup would offer the kind-10002 relay list
+ * (gh_relay_list_offer(), gh-relay-list-setup.h: a new list when every
+ * discovery relay answered without one, or write relays added to a list
+ * that has none). An existing list is never replaced. */
 gboolean gh_inbox_setup_relay_list_needed(GhInboxSetup *self);
 /* gh_inbox_setup_start(), plus, with relay_list (the user's consent on the
- * confirm page, PD-13) and gh_inbox_setup_relay_list_needed(), a kind 10002
- * naming the chosen message relays as the account's write relays: signed
- * after the message list (a second Nostr Signer request; declining it does
- * not stop the message list) and published, under the same "own list
- * publish" purpose (§4.3), to the same relays. If a relay list was found
- * by the time the signer answers, it is SKIPPED. The setup finishes when
+ * confirm page, PD-13) and gh_inbox_setup_relay_list_needed(), the relay
+ * list of gh-relay-list-setup.h naming the chosen message relays as the
+ * account's write relays, to the same relays: started once the message list
+ * is out, checked on every target first, then a second Nostr Signer request
+ * (declining it does not stop the message list). The setup finishes when
  * both are done; it is DONE when the message list was kept. */
 gboolean gh_inbox_setup_start_full(GhInboxSetup *self, const gchar *const *inbox_relays,
                                    gboolean adopt_discovery, gboolean relay_list,

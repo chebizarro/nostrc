@@ -261,6 +261,9 @@ ACCOUNT_PURPOSE_FILES = {
     "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
     "src/app/gh-outbox.": "the self-copy (and a note to self) on the own 10050 relays",
     "src/app/gh-dm-send.": "the self-copy (and a note to self) on the own 10050 relays",
+    "src/app/gh-relay-list-setup.": "own list publish (the account's kind 10002, nostrc-0bdg) "
+                                    "on the relays the user chose and its discovery relays, "
+                                    "after own-list discovery (ephemeral AUTH only) on the same",
     "src/app/gh-inbox-setup.": "own list publish (the account's kind 10050) on its chosen inbox, "
                                "own 10002 write and discovery relays only; its private-reads "
                                "probe never authenticates",

@@ -555,6 +555,9 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * (GhMlsGroup). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
 #ifdef GH_MLS_TEST_HOOKS
+/* Test hook (nostrc-0bdg re-review A3): the received-invitation list cannot
+ * be read (as with a storage error) while fail is TRUE. */
+void gh_mls_service_test_fail_invitation_listing(gboolean fail);
 /* Test hook (nostrc-0bdg): whether libmarmot still holds the private init
  * key of the KeyPackage whose ref (`i` tag) is @ref_hex. */
 gboolean gh_mls_service_test_has_init_key(GhMlsService *self, const gchar *ref_hex);
@@ -607,7 +610,8 @@ const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
  * (gh_mls_service_get_key_package_held()). */
 gboolean gh_mls_service_rotate_key_package(GhMlsService *self, GError **error);
 /* Whether a due KeyPackage replacement is held back because an invitation
- * is pending (the current KeyPackage stays published meanwhile). */
+ * is pending (the current KeyPackage stays published meanwhile); the
+ * "key-package-held" property, with notify. */
 gboolean gh_mls_service_get_key_package_held(GhMlsService *self);
 
 /* The group of a hex MLS group id or of a room id, or NULL. Transfer none. */

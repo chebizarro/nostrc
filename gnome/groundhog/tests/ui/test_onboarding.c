@@ -43,6 +43,7 @@ typedef struct {
   GhRelayScope *scope;
   gchar *url;
   gboolean probe;
+  gboolean check;   /* a relay list's pre-publish check: {kinds:[10002]} */
   gboolean closed;
 } ScopeOpen;
 
@@ -78,6 +79,8 @@ scope_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters, g
   open->url = g_strdup(url);
   open->probe = nostr_filter_kinds_len(filter) == 1 && nostr_filter_kinds_get(filter, 0) == 1059 &&
                 nostr_filter_authors_len(filter) == 0;
+  open->check = nostr_filter_kinds_len(filter) == 1 &&
+                nostr_filter_kinds_get(filter, 0) == 10002;
   g_ptr_array_add(rec->scopes, open);
   return open;
 }
@@ -684,10 +687,46 @@ discovery_scope(Fixture *f, const gchar *url)
 {
   for (guint i = 0; i < f->rec.scopes->len; i++) {
     ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
-    if (!open->probe && !open->closed && g_str_equal(open->url, url))
+    if (!open->probe && !open->check && !open->closed && g_str_equal(open->url, url))
       return open;
   }
   return NULL;
+}
+
+static ScopeOpen *
+check_scope(Fixture *f, const gchar *url)
+{
+  for (guint i = 0; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (open->check && !open->closed && g_str_equal(open->url, url))
+      return open;
+  }
+  return NULL;
+}
+
+typedef struct {
+  Fixture *f;
+  const gchar *const *urls;
+} ChecksWait;
+
+static gboolean
+checks_open(gpointer data)
+{
+  ChecksWait *wait = data;
+  for (guint i = 0; wait->urls[i]; i++)
+    if (!check_scope(wait->f, wait->urls[i]))
+      return FALSE;
+  return TRUE;
+}
+
+/* Every target of the relay list's pre-publish check answers "none". */
+static void
+answer_checks(Fixture *f, const gchar *const *urls)
+{
+  ChecksWait wait = { f, urls };
+  gh_test_spin_until(checks_open, &wait);
+  for (guint i = 0; urls[i]; i++)
+    gh_relay_scope_eose(check_scope(f, urls[i])->scope, urls[i]);
 }
 
 typedef struct {
@@ -737,6 +776,12 @@ test_relay_list_offered(Fixture *f, gconstpointer data)
   g_assert_true(adw_switch_row_get_active(child(f, "relay_list_switch")));
 
   act(f, "onboarding.publish");
+  /* Before the relay list is signed, each target is asked whether it holds
+   * one of the account's (re-review R1); both say no. */
+  const gchar *chosen_url =
+    gh_inbox_setup_get_relay(gh_onboarding_view_get_setup(f->view), 0)->url;
+  const gchar *const both[] = { chosen_url, find, NULL };
+  answer_checks(f, both);
   /* The message list and the relay list, each to the chosen relay and the
    * discovery relay. */
   OpenCount four = { f, 4 };
@@ -762,6 +807,69 @@ test_relay_list_offered(Fixture *f, gconstpointer data)
                   GH_INBOX_SETUP_RELAY_LIST_DONE);
   g_assert_nonnull(strstr(gtk_label_get_text(child(f, "publish_description")),
                           "People can now invite you to encrypted groups."));
+}
+
+static gboolean
+later_offered(gpointer data)
+{
+  Fixture *f = data;
+  return gtk_widget_get_visible(child(f, "relay_list_later_button"));
+}
+
+static gboolean
+later_done(gpointer data)
+{
+  Fixture *f = data;
+  const gchar *text = adw_action_row_get_subtitle(child(f, "relay_list_later_row"));
+  return text && strstr(text, "People can now invite you to encrypted groups.");
+}
+
+/* nostrc-0bdg re-review R2: a real first run (discovery-relays empty, the
+ * default) is offered the relay list on the result page, once Groundhog
+ * looked on the relays it just adopted to find settings and found none;
+ * accepting publishes it (after the check of every relay) and says the
+ * account can now be invited. */
+static void
+test_first_run_offers_relay_list(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_auto(GStrv) none = g_settings_get_strv(f->settings, "discovery-relays");
+  g_assert_null(none[0]);
+  choose_account(f);
+  act(f, "onboarding.signer-continue");
+  activate_row(f, "relay_list", 0);
+  act(f, "onboarding.inbox-continue");
+  g_assert_false(gtk_widget_get_visible(child(f, "relay_list_group")));   /* not known yet */
+  g_assert_true(adw_switch_row_get_active(child(f, "discovery_switch")));
+  act(f, "onboarding.publish");
+  OpenCount one = { f, 1 };
+  gh_test_spin_until(pubs_live, &one);
+  GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
+  const gchar *chosen = gh_inbox_setup_get_relay(setup, 0)->url;
+  const gchar *const chosen_list[] = { chosen, NULL };
+  answer_publish(f, chosen_list, FALSE);
+  g_assert_cmpint(gh_inbox_setup_get_state(setup), ==, GH_INBOX_SETUP_DONE);
+  g_assert_true(gh_inbox_setup_get_adopted_discovery(setup));
+  g_assert_false(later_offered(f));
+
+  /* Groundhog now looks on the adopted relay: no relay list there. */
+  DiscoveryWait asked = { f, chosen };
+  gh_test_spin_until(discovery_asked, &asked);
+  gh_relay_scope_eose(discovery_scope(f, chosen)->scope, chosen);
+  gh_test_spin_until(later_offered, f);
+  g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "publish");
+
+  act(f, "onboarding.publish-relay-list");
+  answer_checks(f, chosen_list);
+  gh_test_spin_until(pubs_live, &one);
+  for (guint i = 0; i < f->rec.pubs->len; i++) {
+    PubOpen *open = g_ptr_array_index(f->rec.pubs, i);
+    if (!open->closed)
+      gh_relay_publish_ok(open->publish, open->url, gh_relay_publish_get_event_id(open->publish),
+                          TRUE, "");
+  }
+  gh_test_spin_until(later_done, f);
+  g_assert_false(later_offered(f));
 }
 
 /* A declined signature: the signer test says so, and Publish sends
@@ -1023,6 +1131,7 @@ main(int argc, char **argv)
   ADD("minimum-size", test_minimum_size, NULL);
   ADD("returning-user", test_returning_user, npub[1]);
   ADD("relay-list-offered", test_relay_list_offered, npub[1]);
+  ADD("first-run-offers-relay-list", test_first_run_offers_relay_list, NULL);
   ADD("screenshots", test_screenshots, NULL);
 #undef ADD
   int status = g_test_run();

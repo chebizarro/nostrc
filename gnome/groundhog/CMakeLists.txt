@@ -1085,7 +1085,7 @@ pkg_check_modules(GROUNDHOG_JSON QUIET IMPORTED_TARGET json-glib-1.0>=1.6)
 if (TARGET groundhog-dm-inbox AND TARGET groundhog-conversation-ui AND
     TARGET PkgConfig::GROUNDHOG_JSON)
   message(STATUS "Groundhog onboarding: enabled")
-  add_library(groundhog-inbox-setup STATIC src/app/gh-inbox-setup.c)
+  add_library(groundhog-inbox-setup STATIC src/app/gh-inbox-setup.c src/app/gh-relay-list-setup.c)
   target_include_directories(groundhog-inbox-setup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
   target_link_libraries(groundhog-inbox-setup PUBLIC groundhog-dm-inbox PkgConfig::GROUNDHOG_JSON)
   target_compile_options(groundhog-inbox-setup PRIVATE -Wall -Wextra -Werror)

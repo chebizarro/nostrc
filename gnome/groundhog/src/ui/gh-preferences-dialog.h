@@ -152,13 +152,21 @@ typedef enum {
   GH_PREFERENCES_KEY_PACKAGE_PUBLISHING,
   GH_PREFERENCES_KEY_PACKAGE_PUBLISHED,
   GH_PREFERENCES_KEY_PACKAGE_FAILED,
+  /* The account's relay list exists but names no relay it publishes to
+   * (nostrc-0bdg re-review R3): [Add Relays], which the relay step offers
+   * to add to that list. */
+  GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS,
+  /* Published; its due replacement waits for pending invitations (A5). */
+  GH_PREFERENCES_KEY_PACKAGE_HELD,
 } GhPreferencesKeyPackage;
 
 /* Network › Encrypted Groups, shown with the ENCRYPTED_GROUPS feature unless
- * the state is UNKNOWN. NO_RELAYS says, honestly, that nobody can invite the
- * account and why, with [Set Up]: it closes the dialog and activates
- * win.setup-inbox (GH_STATUS_ACTION_SETUP_INBOX), the onboarding relay step,
- * which offers the account's kind-10002 relay list. */
+ * the state is UNKNOWN. NO_RELAYS and NO_WRITE_RELAYS say, honestly, that
+ * nobody can invite the account and why, with [Set Up] / [Add Relays]: it
+ * closes the dialog and activates win.setup-inbox
+ * (GH_STATUS_ACTION_SETUP_INBOX), the onboarding relay step, which offers a
+ * new kind-10002 relay list, or adding the chosen relays to the existing one
+ * as write relays (so it never leads back here unchanged). */
 void gh_preferences_dialog_set_key_package_state(GhPreferencesDialog *self,
                                                  GhPreferencesKeyPackage state);
 GhPreferencesKeyPackage gh_preferences_dialog_get_key_package_state(GhPreferencesDialog *self);

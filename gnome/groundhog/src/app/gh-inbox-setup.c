@@ -1,4 +1,5 @@
 #include "gh-inbox-setup.h"
+#include "gh-relay-list-setup.h"
 #include "gh-auth-policy.h"
 #include "gh-identity.h"
 
@@ -620,10 +621,8 @@ struct _GhInboxSetup {
   gboolean publish_done;
   GhInboxProbe *probe;
   /* The optional kind-10002 relay list (nostrc-0bdg). */
-  GhInboxSetupRelayList relay_list;
-  gchar *relay_list_unsigned;
-  GhRelayPublish *relay_list_publish;
-  guint relay_list_accepted;
+  gboolean relay_list_requested;
+  GhRelayListSetup *relay_list;
 };
 
 enum { SIGNAL_CHANGED, N_SIGNALS };
@@ -722,8 +721,8 @@ stop_network(GhInboxSetup *self)
     g_cancellable_cancel(self->cancellable);
   if (self->publish)
     gh_relay_publish_cancel(self->publish);
-  if (self->relay_list_publish)
-    gh_relay_publish_cancel(self->relay_list_publish);
+  if (self->relay_list)
+    gh_relay_list_setup_cancel(self->relay_list);
   if (self->probe)
     gh_inbox_probe_cancel(self->probe);
 }
@@ -739,10 +738,6 @@ fail(GhInboxSetup *self, GError *error)
   g_clear_error(&self->error);
   self->error = error;
   self->state = GH_INBOX_SETUP_FAILED;
-  if (self->relay_list == GH_INBOX_SETUP_RELAY_LIST_WAITING ||
-      self->relay_list == GH_INBOX_SETUP_RELAY_LIST_SIGNING ||
-      self->relay_list == GH_INBOX_SETUP_RELAY_LIST_PUBLISHING)
-    self->relay_list = GH_INBOX_SETUP_RELAY_LIST_FAILED;
   emit_changed(self);
 }
 
@@ -771,11 +766,17 @@ static void
 maybe_finish(GhInboxSetup *self)
 {
   if (self->state != GH_INBOX_SETUP_PUBLISHING || !self->publish_done ||
-      !gh_inbox_probe_is_complete(self->probe) ||
-      self->relay_list == GH_INBOX_SETUP_RELAY_LIST_WAITING ||
-      self->relay_list == GH_INBOX_SETUP_RELAY_LIST_SIGNING ||
-      self->relay_list == GH_INBOX_SETUP_RELAY_LIST_PUBLISHING)
+      !gh_inbox_probe_is_complete(self->probe))
     return;
+  switch (gh_inbox_setup_get_relay_list_state(self)) {
+  case GH_INBOX_SETUP_RELAY_LIST_WAITING:
+  case GH_INBOX_SETUP_RELAY_LIST_CHECKING:
+  case GH_INBOX_SETUP_RELAY_LIST_SIGNING:
+  case GH_INBOX_SETUP_RELAY_LIST_PUBLISHING:
+    return;
+  default:
+    break;
+  }
   if (gh_inbox_setup_get_n_accepted(self) == 0) {
     fail(self, g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
                                    _("No relay accepted your list.")));
@@ -887,103 +888,40 @@ start_publish(GhInboxSetup *self, const gchar *signed_json, GError **error)
   return TRUE;
 }
 
-/* ---- the relay list -------------------------------------------------------- */
+/* ---- the relay list (nostrc-0bdg; gh-relay-list-setup.h) -------------------- */
 
 static void
-on_relay_list_update(GhRelayPublish *publish, const GhRelayPublishResult *result,
-                     gpointer data)
+on_relay_list_changed(GhInboxSetup *self)
 {
-  GhInboxSetup *self = data;
-  if (publish != self->relay_list_publish)
-    return;
-  if (result->outcome == GH_RELAY_PUBLISH_ACCEPTED)
-    self->relay_list_accepted++;
-  emit_changed(self);
-}
-
-static void
-on_relay_list_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, gpointer data)
-{
-  GhInboxSetup *self = data;
-  if (publish != self->relay_list_publish ||
-      self->relay_list != GH_INBOX_SETUP_RELAY_LIST_PUBLISHING)
-    return;
-  self->relay_list = summary->any_accepted ? GH_INBOX_SETUP_RELAY_LIST_DONE
-                                           : GH_INBOX_SETUP_RELAY_LIST_FAILED;
   emit_changed(self);
   maybe_finish(self);
 }
 
-/* The signed relay list to the same relays as the message list, with the
- * same own-list-publish identity (charter §4.3). */
-static gboolean
-start_relay_list_publish(GhInboxSetup *self, const gchar *signed_json, GError **error)
+/* After the message list is out: the pre-publish check of every target,
+ * then one more signer request (gh-relay-list-setup.h). */
+static void
+start_relay_list(GhInboxSetup *self)
 {
-  const GhInboxSetupConfig *config = &self->config;
-  self->relay_list_publish = config->publish_transport
-    ? gh_relay_publish_new_with_transport(self->generation, signed_json,
-                                          config->publish_transport,
-                                          config->publish_transport_data, on_relay_list_update,
-                                          on_relay_list_done, self, error)
-    : gh_relay_publish_new(self->generation, signed_json, on_relay_list_update,
-                           on_relay_list_done, self, error);
-  if (!self->relay_list_publish)
-    return FALSE;
-  if (config->publish_transport && config->publish_auth_transport)
-    gh_relay_publish_set_auth_transport(self->relay_list_publish, config->publish_auth_transport);
-  GhAuthPolicy *policy = gh_auth_policy_get_for_accounts(config->accounts);
+  if (!self->relay_list_requested)
+    return;
+  g_autoptr(GPtrArray) write = g_ptr_array_new();
+  g_autoptr(GPtrArray) all = g_ptr_array_new();
   for (guint i = 0; i < self->targets->len; i++) {
     Target *target = g_ptr_array_index(self->targets, i);
-    if (!gh_relay_publish_add_url(self->relay_list_publish, target->url, error) ||
-        !gh_auth_policy_apply_publish(policy, self->relay_list_publish,
-                                      GH_AUTH_PURPOSE_OWN_LIST_PUBLISH, target->url, error))
-      return FALSE;
+    if (target->pub.roles & GH_INBOX_SETUP_ROLE_INBOX)
+      g_ptr_array_add(write, target->url);
+    g_ptr_array_add(all, target->url);
   }
-  self->relay_list = GH_INBOX_SETUP_RELAY_LIST_PUBLISHING;
-  emit_changed(self);
-  return gh_relay_publish_start(self->relay_list_publish, error);
-}
-
-static void
-on_relay_list_signed(GObject *source, GAsyncResult *result, gpointer data)
-{
-  GhInboxSetup *self = data; /* a reference held for this call */
-  (void)source;
+  g_ptr_array_add(write, NULL);
+  g_ptr_array_add(all, NULL);
+  self->relay_list = gh_relay_list_setup_new(&self->config);
+  g_signal_connect_object(self->relay_list, "changed", G_CALLBACK(on_relay_list_changed), self,
+                          G_CONNECT_SWAPPED);
   g_autoptr(GError) error = NULL;
-  g_autofree gchar *signed_json = gh_account_controller_sign_finish(result, &error);
-  if (self->relay_list != GH_INBOX_SETUP_RELAY_LIST_SIGNING) {
-    g_object_unref(self);
-    return;
-  }
-  if (!signed_json || !gh_account_controller_is_current(self->config.accounts, self->generation)) {
-    g_debug("Groundhog's relay list was not signed: %s", error ? error->message : "stale");
-    self->relay_list = GH_INBOX_SETUP_RELAY_LIST_FAILED;
-  } else if (!gh_inbox_setup_relay_list_needed(self)) {
-    /* One was found meanwhile: never published over. */
-    self->relay_list = GH_INBOX_SETUP_RELAY_LIST_SKIPPED;
-  } else if (!start_relay_list_publish(self, signed_json, &error)) {
-    g_debug("Groundhog could not publish its relay list: %s", error->message);
-    if (self->relay_list_publish)
-      gh_relay_publish_cancel(self->relay_list_publish);
-    self->relay_list = GH_INBOX_SETUP_RELAY_LIST_FAILED;
-  }
+  if (!gh_relay_list_setup_start(self->relay_list, (const gchar *const *)write->pdata,
+                                 (const gchar *const *)all->pdata, &error))
+    g_debug("Groundhog's relay list was not set up: %s", error->message);
   emit_changed(self);
-  maybe_finish(self);
-  g_object_unref(self);
-}
-
-/* After the message list: one signer request at a time. */
-static void
-sign_relay_list(GhInboxSetup *self)
-{
-  if (self->relay_list != GH_INBOX_SETUP_RELAY_LIST_WAITING)
-    return;
-  self->relay_list = GH_INBOX_SETUP_RELAY_LIST_SIGNING;
-  emit_changed(self);
-  gh_account_controller_sign_with_cancellable_async(self->config.accounts,
-                                                    self->relay_list_unsigned,
-                                                    self->cancellable, on_relay_list_signed,
-                                                    g_object_ref(self));
 }
 
 static void
@@ -1004,7 +942,7 @@ on_signed(GObject *source, GAsyncResult *result, gpointer data)
   else if (!start_publish(self, signed_json, &error))
     fail(self, g_steal_pointer(&error));
   else
-    sign_relay_list(self);
+    start_relay_list(self);
   g_object_unref(self);
 }
 
@@ -1021,14 +959,14 @@ gboolean
 gh_inbox_setup_relay_list_needed(GhInboxSetup *self)
 {
   g_return_val_if_fail(GH_IS_INBOX_SETUP(self), FALSE);
-  GhAccountRelays *relays = self->config.account_relays;
-  GhAccountController *accounts = self->config.accounts;
-  return self->config.offer_relay_list && relays && accounts &&
-         gh_account_controller_get_state(accounts) == GH_ACCOUNT_STATE_ACTIVE &&
-         gh_account_relays_get_generation(relays) ==
-           gh_account_controller_get_generation(accounts) &&
-         gh_account_relays_get_state(relays) == GH_ACCOUNT_RELAYS_COMPLETE &&
-         !gh_account_relays_has_relay_list(relays);
+  return gh_relay_list_offer(&self->config) != GH_RELAY_LIST_OFFER_NONE;
+}
+
+GhRelayListOffer
+gh_inbox_setup_get_relay_list_offer(GhInboxSetup *self)
+{
+  g_return_val_if_fail(GH_IS_INBOX_SETUP(self), GH_RELAY_LIST_OFFER_NONE);
+  return gh_relay_list_offer(&self->config);
 }
 
 gboolean
@@ -1065,12 +1003,7 @@ gh_inbox_setup_start_full(GhInboxSetup *self, const gchar *const *inbox_relays, 
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "could not build the relay list");
     return FALSE;
   }
-  if (relay_list && gh_inbox_setup_relay_list_needed(self)) {
-    self->relay_list_unsigned = gh_inbox_setup_build_relay_list_unsigned(pubkey,
-      (const gchar *const *)inbox->pdata, g_get_real_time() / G_USEC_PER_SEC);
-    if (self->relay_list_unsigned)
-      self->relay_list = GH_INBOX_SETUP_RELAY_LIST_WAITING;
-  }
+  self->relay_list_requested = relay_list && gh_inbox_setup_relay_list_needed(self);
   self->targets = g_steal_pointer(&targets);
   self->adopt_discovery = adopt;
   self->generation = gh_account_controller_get_generation(accounts);
@@ -1149,14 +1082,37 @@ GhInboxSetupRelayList
 gh_inbox_setup_get_relay_list_state(GhInboxSetup *self)
 {
   g_return_val_if_fail(GH_IS_INBOX_SETUP(self), GH_INBOX_SETUP_RELAY_LIST_NONE);
-  return self->relay_list;
+  if (!self->relay_list_requested)
+    return GH_INBOX_SETUP_RELAY_LIST_NONE;
+  if (!self->relay_list)
+    return self->state == GH_INBOX_SETUP_FAILED ? GH_INBOX_SETUP_RELAY_LIST_FAILED
+                                                : GH_INBOX_SETUP_RELAY_LIST_WAITING;
+  switch (gh_relay_list_setup_get_state(self->relay_list)) {
+  case GH_RELAY_LIST_SETUP_CHECKING: return GH_INBOX_SETUP_RELAY_LIST_CHECKING;
+  case GH_RELAY_LIST_SETUP_SIGNING: return GH_INBOX_SETUP_RELAY_LIST_SIGNING;
+  case GH_RELAY_LIST_SETUP_PUBLISHING: return GH_INBOX_SETUP_RELAY_LIST_PUBLISHING;
+  case GH_RELAY_LIST_SETUP_DONE: return GH_INBOX_SETUP_RELAY_LIST_DONE;
+  case GH_RELAY_LIST_SETUP_SKIPPED: return GH_INBOX_SETUP_RELAY_LIST_SKIPPED;
+  case GH_RELAY_LIST_SETUP_IDLE:   /* start refused it: nothing to offer any more */
+    return GH_INBOX_SETUP_RELAY_LIST_SKIPPED;
+  case GH_RELAY_LIST_SETUP_FAILED:
+  default:
+    return GH_INBOX_SETUP_RELAY_LIST_FAILED;
+  }
 }
 
 guint
 gh_inbox_setup_get_relay_list_n_accepted(GhInboxSetup *self)
 {
   g_return_val_if_fail(GH_IS_INBOX_SETUP(self), 0);
-  return self->relay_list_accepted;
+  return self->relay_list ? gh_relay_list_setup_get_n_accepted(self->relay_list) : 0;
+}
+
+GhRelayListSetup *
+gh_inbox_setup_get_relay_list(GhInboxSetup *self)
+{
+  g_return_val_if_fail(GH_IS_INBOX_SETUP(self), NULL);
+  return self->relay_list;
 }
 
 gboolean
@@ -1197,7 +1153,9 @@ gh_inbox_setup_dispose(GObject *object)
     self->state = GH_INBOX_SETUP_FAILED;
   stop_network(self);
   g_clear_pointer(&self->publish, gh_relay_publish_unref);
-  g_clear_pointer(&self->relay_list_publish, gh_relay_publish_unref);
+  if (self->relay_list)
+    g_signal_handlers_disconnect_by_data(self->relay_list, self);
+  g_clear_object(&self->relay_list);
   g_clear_pointer(&self->probe, gh_inbox_probe_unref);
   g_clear_object(&self->config.settings);
   g_clear_object(&self->config.account_relays);
@@ -1213,7 +1171,6 @@ gh_inbox_setup_finalize(GObject *object)
   g_clear_pointer(&self->targets, g_ptr_array_unref);
   g_clear_error(&self->error);
   g_free(self->event_id);
-  g_free(self->relay_list_unsigned);
   G_OBJECT_CLASS(gh_inbox_setup_parent_class)->finalize(object);
 }
 

@@ -1,4 +1,5 @@
 #include "gh-onboarding-view.h"
+#include "gh-relay-list-setup.h"
 #include "gh-identity.h"
 #include "gh-signer.h"
 
@@ -364,6 +365,10 @@ struct _GhOnboardingView {
   AdwSwitchRow *discovery_switch;
   GtkWidget *relay_list_group;
   AdwSwitchRow *relay_list_switch;
+  GtkWidget *relay_list_later_group;
+  AdwActionRow *relay_list_later_row;
+  GtkWidget *relay_list_later_button;
+  GhRelayListSetup *later;   /* the relay list offered on the result page (R2) */
   GtkWidget *publish_button;
   GtkImage *publish_icon;
   GtkLabel *publish_title;
@@ -992,9 +997,12 @@ discovery_is_empty(GhOnboardingView *self)
   return urls[0] == NULL;
 }
 
+static void clear_later(GhOnboardingView *self);
+
 static void
 replace_setup(GhOnboardingView *self)
 {
+  clear_later(self);
   if (self->setup) {
     g_signal_handlers_disconnect_by_data(self->setup, self);
     g_object_run_dispose(G_OBJECT(self->setup));
@@ -1013,8 +1021,26 @@ prepare_confirm(GhOnboardingView *self)
   gtk_widget_set_visible(self->discovery_group, ask_discovery);
   replace_setup(self);
   /* Encrypted groups find people through their kind-10002 relay list
-   * (nostrc-0bdg): offered only when the account has none at all. */
-  gtk_widget_set_visible(self->relay_list_group, gh_inbox_setup_relay_list_needed(self->setup));
+   * (nostrc-0bdg): offered only when the account has none at all, or one
+   * without a relay it publishes to (then extended, not replaced). */
+  GhRelayListOffer offer = gh_inbox_setup_get_relay_list_offer(self->setup);
+  gtk_widget_set_visible(self->relay_list_group, offer != GH_RELAY_LIST_OFFER_NONE);
+  if (offer == GH_RELAY_LIST_OFFER_ADD_WRITE) {
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->relay_list_switch),
+                                  _("Add These Relays to Your Relay List"));
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(self->relay_list_switch),
+      _("Your relay list names no relay you publish to, so people can't find your "
+        "encrypted-group keys. This adds these relays to it as relays you publish to and keeps "
+        "everything else in it. Nostr Signer asks once more."));
+  } else {
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->relay_list_switch),
+                                  _("Let People Invite You to Encrypted Groups"));
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(self->relay_list_switch),
+      _("Also publishes a relay list naming these relays as where you publish, so people can "
+        "find your encrypted-group keys there. Nostr Signer asks once more. Anyone can see this "
+        "list. Groundhog first checks that none of these relays holds a relay list of yours, and "
+        "never changes one you already have."));
+  }
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) plan = gh_inbox_setup_plan(self->setup, (const gchar *const *)chosen,
     ask_discovery && adw_switch_row_get_active(self->discovery_switch), &error);
@@ -1104,6 +1130,124 @@ update_results(GhOnboardingView *self)
                       items->pdata, items->len);
 }
 
+/* ---- the relay list on the result page (nostrc-0bdg R2) ---------------------- */
+
+/* A first run has no discovery relay (PD-13): only once Publish adopted the
+ * message relays as discovery relays and Groundhog looked there does it
+ * know whether the account has a relay list. Then the result page offers
+ * it, with the same consent and the same check of every relay. */
+static void
+update_later_offer(GhOnboardingView *self)
+{
+  if (!self->relay_list_later_group)
+    return;
+  gboolean show = FALSE, button = FALSE;
+  const gchar *subtitle = NULL;
+  g_autofree gchar *failure = NULL;
+  GhInboxSetup *setup = self->setup;
+  if (self->later) {
+    show = TRUE;
+    switch (gh_relay_list_setup_get_state(self->later)) {
+    case GH_RELAY_LIST_SETUP_CHECKING:
+      subtitle = _("Checking that these relays hold no relay list of yours…");
+      break;
+    case GH_RELAY_LIST_SETUP_SIGNING:
+      subtitle = _("Approve the request in Nostr Signer to publish your relay list.");
+      break;
+    case GH_RELAY_LIST_SETUP_PUBLISHING:
+      subtitle = _("Publishing your relay list…");
+      break;
+    case GH_RELAY_LIST_SETUP_DONE:
+      subtitle = _("People can now invite you to encrypted groups.");
+      break;
+    case GH_RELAY_LIST_SETUP_SKIPPED:
+      subtitle = _("You already have a relay list, so it was left as it is.");
+      break;
+    case GH_RELAY_LIST_SETUP_FAILED:
+    case GH_RELAY_LIST_SETUP_IDLE:
+    default: {
+      const GError *error = gh_relay_list_setup_get_error(self->later);
+      failure = g_strdup_printf(_("Your relay list wasn't published, so people can't invite you "
+                                  "to encrypted groups yet. %s"),
+                                error ? error->message : "");
+      subtitle = failure;
+      break;
+    }
+    }
+  } else if (setup && self->config.offer_relay_list &&
+             gh_inbox_setup_get_state(setup) == GH_INBOX_SETUP_DONE &&
+             gh_inbox_setup_get_relay_list_state(setup) == GH_INBOX_SETUP_RELAY_LIST_NONE) {
+    GhRelayListOffer offer = gh_inbox_setup_get_relay_list_offer(setup);
+    GhAccountRelays *relays = self->config.account_relays;
+    if (offer == GH_RELAY_LIST_OFFER_CREATE) {
+      show = button = TRUE;
+      subtitle = _("People can't invite you to encrypted groups yet: you have no relay list "
+                   "saying where you publish. Publish one naming your message relays? Nostr "
+                   "Signer asks once more. Anyone can see this list.");
+      gtk_button_set_label(GTK_BUTTON(self->relay_list_later_button), _("_Publish Relay List"));
+    } else if (offer == GH_RELAY_LIST_OFFER_ADD_WRITE) {
+      show = button = TRUE;
+      subtitle = _("Your relay list names no relay you publish to, so people can't invite you "
+                   "to encrypted groups. Add your message relays to it as relays you publish "
+                   "to? Everything else in it is kept. Nostr Signer asks once more.");
+      gtk_button_set_label(GTK_BUTTON(self->relay_list_later_button), _("_Add My Relays"));
+    } else if (relays &&
+               gh_account_relays_get_state(relays) == GH_ACCOUNT_RELAYS_DISCOVERING) {
+      show = TRUE;
+      subtitle = _("Checking whether you already have a relay list…");
+    }
+  }
+  gtk_widget_set_visible(self->relay_list_later_group, show);
+  gtk_widget_set_visible(self->relay_list_later_button, button);
+  if (subtitle)
+    adw_action_row_set_subtitle(self->relay_list_later_row, subtitle);
+}
+
+static void
+publish_relay_list_action(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhOnboardingView *self = GH_ONBOARDING_VIEW(widget);
+  (void)name;
+  (void)parameter;
+  GhInboxSetup *setup = self->setup;
+  if (self->later || !setup)
+    return;
+  g_autoptr(GPtrArray) write = g_ptr_array_new();
+  g_autoptr(GPtrArray) targets = g_ptr_array_new();
+  for (guint i = 0; i < gh_inbox_setup_get_n_relays(setup); i++) {
+    const GhInboxSetupRelay *relay = gh_inbox_setup_get_relay(setup, i);
+    if (relay->roles & GH_INBOX_SETUP_ROLE_INBOX)
+      g_ptr_array_add(write, (gpointer)relay->url);
+    g_ptr_array_add(targets, (gpointer)relay->url);
+  }
+  g_auto(GStrv) discovery = g_settings_get_strv(self->config.settings, "discovery-relays");
+  for (guint i = 0; discovery[i]; i++)
+    g_ptr_array_add(targets, discovery[i]);
+  g_ptr_array_add(write, NULL);
+  g_ptr_array_add(targets, NULL);
+  self->later = gh_relay_list_setup_new(&self->config);
+  g_signal_connect_object(self->later, "changed", G_CALLBACK(update_later_offer), self,
+                          G_CONNECT_SWAPPED);
+  g_autoptr(GError) error = NULL;
+  if (!gh_relay_list_setup_start(self->later, (const gchar *const *)write->pdata,
+                                 (const gchar *const *)targets->pdata, &error)) {
+    g_signal_handlers_disconnect_by_data(self->later, self);
+    g_clear_object(&self->later);
+    toast(self, error->message);
+  }
+  update_later_offer(self);
+}
+
+static void
+clear_later(GhOnboardingView *self)
+{
+  if (!self->later)
+    return;
+  g_signal_handlers_disconnect_by_data(self->later, self);
+  g_object_run_dispose(G_OBJECT(self->later));
+  g_clear_object(&self->later);
+}
+
 /* What became of the encrypted-groups relay list, as a sentence ("" when it
  * was not asked for). Honest about a failure: nobody can invite
  * the account to encrypted groups then (nostrc-0bdg). */
@@ -1120,6 +1264,7 @@ relay_list_text(GhInboxSetup *setup)
     return _("You already have a relay list, so it was left as it is.");
   case GH_INBOX_SETUP_RELAY_LIST_NONE:
   case GH_INBOX_SETUP_RELAY_LIST_WAITING:
+  case GH_INBOX_SETUP_RELAY_LIST_CHECKING:
   case GH_INBOX_SETUP_RELAY_LIST_SIGNING:
   case GH_INBOX_SETUP_RELAY_LIST_PUBLISHING:
   default:
@@ -1182,6 +1327,7 @@ on_setup_changed(GhOnboardingView *self)
   gtk_label_set_text(self->publish_title, title);
   gtk_label_set_text(self->publish_description, description);
   update_results(self);
+  update_later_offer(self);
   gboolean done = state == GH_INBOX_SETUP_DONE, failed = state == GH_INBOX_SETUP_FAILED;
   gtk_widget_set_visible(self->publish_continue, done);
   gtk_widget_set_visible(self->publish_retry, failed);
@@ -1329,6 +1475,7 @@ on_account_relays_changed(GhOnboardingView *self)
 {
   if (self->relay_list)
     update_current_inbox(self);
+  update_later_offer(self);
 }
 
 static void
@@ -1474,6 +1621,7 @@ gh_onboarding_view_dispose(GObject *object)
     gh_inbox_probe_cancel(self->probe);
     g_clear_pointer(&self->probe, gh_inbox_probe_unref);
   }
+  clear_later(self);
   if (self->setup) {
     g_signal_handlers_disconnect_by_data(self->setup, self);
     g_object_run_dispose(G_OBJECT(self->setup));
@@ -1551,6 +1699,9 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   BIND(discovery_switch);
   BIND(relay_list_group);
   BIND(relay_list_switch);
+  BIND(relay_list_later_group);
+  BIND(relay_list_later_row);
+  BIND(relay_list_later_button);
   BIND(publish_button);
   BIND(publish_icon);
   BIND(publish_title);
@@ -1583,6 +1734,8 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   gtk_widget_class_install_action(widget_class, "onboarding.check-relays", NULL,
                                   check_relays_action);
   gtk_widget_class_install_action(widget_class, "onboarding.publish", NULL, publish_action);
+  gtk_widget_class_install_action(widget_class, "onboarding.publish-relay-list", NULL,
+                                  publish_relay_list_action);
 }
 
 static void

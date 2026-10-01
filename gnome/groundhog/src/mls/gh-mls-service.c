@@ -219,7 +219,7 @@ struct _GhMlsService {
   guint retry_s;
 };
 
-enum { PROP_0, PROP_KEY_PACKAGE_STATE, PROP_IDENTITY_STATE, N_PROPS };
+enum { PROP_0, PROP_KEY_PACKAGE_STATE, PROP_IDENTITY_STATE, PROP_KEY_PACKAGE_HELD, N_PROPS };
 static GParamSpec *props[N_PROPS];
 enum { SIGNAL_INVITE_RECEIVED, SIGNAL_GROUP_ADDED, N_SIGNALS };
 static guint signals[N_SIGNALS];
@@ -4257,6 +4257,16 @@ typedef enum { INVITES_NONE, INVITES_PENDING, INVITES_UNKNOWN } InvitesPending;
 /* Whether a received invitation is still pending (neither accepted nor
  * declined nor refused). A listing that fails is UNKNOWN: callers treat it
  * as pending (review L1), never as "none". */
+#ifdef GH_MLS_TEST_HOOKS
+static gboolean test_fail_invitation_listing;
+
+void
+gh_mls_service_test_fail_invitation_listing(gboolean fail)
+{
+  test_fail_invitation_listing = fail;
+}
+#endif
+
 static InvitesPending
 invitations_pending(GhMlsService *self)
 {
@@ -4265,7 +4275,18 @@ invitations_pending(GhMlsService *self)
   MarmotPagination page = marmot_pagination_default();
   page.limit = 1000;
   drop_stale_error(self);
-  if (marmot_get_pending_welcomes(self->marmot, &page, &welcomes, &n) != MARMOT_OK) {
+  MarmotError listed = marmot_get_pending_welcomes(self->marmot, &page, &welcomes, &n);
+#ifdef GH_MLS_TEST_HOOKS
+  if (test_fail_invitation_listing && listed == MARMOT_OK) {
+    for (size_t i = 0; i < n; i++)
+      marmot_welcome_free(welcomes[i]);
+    free(welcomes);
+    welcomes = NULL;
+    n = 0;
+    listed = MARMOT_ERR_STORAGE;   /* as a storage that cannot be read */
+  }
+#endif
+  if (listed != MARMOT_OK) {
     drop_stale_error(self);
     return INVITES_UNKNOWN;
   }
@@ -4966,13 +4987,22 @@ key_package_hold_fired(gpointer data)
 }
 
 static void
+key_package_set_held(GhMlsService *self, gboolean held)
+{
+  if (self->key_package_held == held)
+    return;
+  self->key_package_held = held;
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_KEY_PACKAGE_HELD]);
+}
+
+static void
 key_package_hold_stop(GhMlsService *self, gboolean forget)
 {
   if (self->key_package_hold_timer) {
     gh_clock_source_remove(self->clock, self->key_package_hold_timer);
     self->key_package_hold_timer = 0;
   }
-  self->key_package_held = FALSE;
+  key_package_set_held(self, FALSE);
   gint64 since = 0;
   if (forget && self->store &&
       gh_store_get_cursor(self->store, KEY_PACKAGE_HELD_CURSOR, "", &since, NULL) && since > 0)
@@ -5022,7 +5052,7 @@ key_package_hold(GhMlsService *self)
     key_package_hold_stop(self, FALSE);
     return FALSE;
   }
-  self->key_package_held = TRUE;
+  key_package_set_held(self, TRUE);
   if (!self->key_package_hold_timer) {
     gint64 wait_s = MIN(deadline - now, (gint64)GH_MLS_KEY_PACKAGE_HOLD_RECHECK_S);
     self->key_package_hold_timer =
@@ -5722,6 +5752,7 @@ gh_mls_service_get_property(GObject *object, guint id, GValue *value, GParamSpec
   GhMlsService *self = GH_MLS_SERVICE(object);
   switch (id) {
   case PROP_KEY_PACKAGE_STATE: g_value_set_enum(value, self->key_package); break;
+  case PROP_KEY_PACKAGE_HELD: g_value_set_boolean(value, self->key_package_held); break;
   case PROP_IDENTITY_STATE: g_value_set_enum(value, self->identity); break;
   default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -5738,6 +5769,10 @@ gh_mls_service_class_init(GhMlsServiceClass *klass)
     g_param_spec_enum("key-package-state", NULL, NULL, GH_TYPE_MLS_KEY_PACKAGE_STATE,
                       GH_MLS_KEY_PACKAGE_NONE,
                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+  /* gh_mls_service_get_key_package_held() (nostrc-0bdg re-review A5). */
+  props[PROP_KEY_PACKAGE_HELD] =
+    g_param_spec_boolean("key-package-held", NULL, NULL, FALSE,
+                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
   props[PROP_IDENTITY_STATE] =
     g_param_spec_enum("identity-state", NULL, NULL, GH_TYPE_MLS_IDENTITY_STATE,
                       GH_MLS_IDENTITY_NONE,

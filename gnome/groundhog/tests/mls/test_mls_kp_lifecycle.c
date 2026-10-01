@@ -733,6 +733,49 @@ test_hold_cap_expires(void)
   world_down(&w);
 }
 
+typedef struct {
+  App *app;
+  const gchar *old_id;
+} HeldOrNew;
+
+static gboolean
+held_or_new(gpointer data)
+{
+  HeldOrNew *wait = data;
+  const gchar *id = gh_mls_service_get_key_package_id(wait->app->service);
+  return gh_mls_service_get_key_package_held(wait->app->service) ||
+         (id && g_strcmp0(id, wait->old_id) != 0);
+}
+
+/* Re-review A3 (review L1): an invitation list that cannot be read counts
+ * as pending, never as "none": the rotation is held; once it can be read
+ * again (and none is pending) the replacement goes out. */
+static void
+test_invitation_listing_error_holds(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  g_autofree gchar *ref1 = NULL;
+  newest_key_package(&w.w, ALICE, &ref1, NULL, NULL);
+  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(alice->service));
+  gh_mls_service_test_fail_invitation_listing(TRUE);
+  rotate(alice);
+  /* The first publish may still be in flight (its other relay): the
+   * rotation is looked at when it ends. */
+  HeldOrNew outcome = { alice, id1 };
+  spin_until(held_or_new, &outcome, "the rotation held or published");
+  assert_held(&w, alice, ref1, id1);
+  gh_mls_service_test_fail_invitation_listing(FALSE);
+  rotate(alice);   /* looked at again */
+  wait_settled(alice, id1);
+  g_assert_false(gh_mls_service_get_key_package_held(alice->service));
+  world_down(&w);
+}
+
 /* `key` runs an older client: a KeyPackage without the account proof on W. */
 static void
 inject_unproven_key_package(World *w, guint key)
@@ -818,6 +861,7 @@ test_failed_welcome_preserves(void)
 
 #if GH_TEST_HAVE_INBOX_SETUP && !GH_MLS_ADOPTED_KEY_PACKAGES
 #include "gh-inbox-setup.h"
+#include "gh-relay-list-setup.h"
 
 static gboolean
 setup_finished(gpointer data)
@@ -829,7 +873,7 @@ setup_finished(gpointer data)
 /* What onboarding's Publish does (GhOnboardingView): the message relays and,
  * when offered and agreed to, the relay list. The setup (transfer full). */
 static GhInboxSetup *
-onboard(App *app, const gchar *relay, gboolean relay_list)
+onboard_full(App *app, const gchar *const *chosen, gboolean adopt, gboolean relay_list)
 {
   GhInboxSetupConfig config = {
     .accounts = app->accounts,
@@ -838,13 +882,241 @@ onboard(App *app, const gchar *relay, gboolean relay_list)
     .offer_relay_list = TRUE,
   };
   GhInboxSetup *setup = gh_inbox_setup_new(&config);
-  const gchar *chosen[] = { relay, NULL };
   g_autoptr(GError) error = NULL;
-  g_assert_true(gh_inbox_setup_start_full(setup, chosen, FALSE, relay_list, &error));
+  g_assert_true(gh_inbox_setup_start_full(setup, chosen, adopt, relay_list, &error));
   g_assert_no_error(error);
   spin_until(setup_finished, setup, "the onboarding publication");
   g_assert_cmpint(gh_inbox_setup_get_state(setup), ==, GH_INBOX_SETUP_DONE);
   return setup;
+}
+
+static GhInboxSetup *
+onboard_on(App *app, const gchar *const *chosen, gboolean relay_list)
+{
+  return onboard_full(app, chosen, FALSE, relay_list);
+}
+
+static GhInboxSetup *
+onboard(App *app, const gchar *relay, gboolean relay_list)
+{
+  const gchar *chosen[] = { relay, NULL };
+  return onboard_on(app, chosen, relay_list);
+}
+
+static GhRelayListOffer
+offer_of(App *app)
+{
+  GhInboxSetupConfig config = { .accounts = app->accounts, .account_relays = app->relays,
+                                .settings = app->settings, .offer_relay_list = TRUE };
+  return gh_relay_list_offer(&config);
+}
+
+/* A signed kind 10002 by `key` with the given ["r", url(, marker)] pairs. */
+static void
+seed_relay_list(WireRelay *relay, guint key, const gchar *url, const gchar *marker)
+{
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, marker ? nostr_tag_new("r", url, marker, NULL)
+                                 : nostr_tag_new("r", url, NULL));
+  nostr_tags_append(tags, nostr_tag_new("client", "another-app", NULL));
+  g_autofree gchar *json = sign_event(key, 10002, g_get_real_time() / G_USEC_PER_SEC - 3600,
+                                      "kept as it is", tags);
+  wire_relay_inject(relay, json);
+}
+
+static gboolean
+offer_create(gpointer data)
+{
+  return offer_of(data) == GH_RELAY_LIST_OFFER_CREATE;
+}
+
+static gboolean
+list_setup_finished(gpointer data)
+{
+  GhRelayListSetupState state = gh_relay_list_setup_get_state(data);
+  return state == GH_RELAY_LIST_SETUP_DONE || state == GH_RELAY_LIST_SETUP_FAILED ||
+         state == GH_RELAY_LIST_SETUP_SKIPPED;
+}
+
+/* Re-review R2, end to end: a real first run has no discovery relay. The
+ * message list is published to the chosen relay, which becomes the
+ * discovery relay; once Groundhog looked there and found no relay list, the
+ * result page's offer publishes one (after checking the relay); then the
+ * two accounts invite each other. */
+static void
+test_first_run_accounts_invite_each_other(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  world_no_discovery = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  App *both[] = { alice, bob };
+  for (guint i = 0; i < G_N_ELEMENTS(both); i++) {
+    const gchar *chosen[] = { w.x.url, NULL };
+    g_autoptr(GhInboxSetup) setup = onboard_full(both[i], chosen, TRUE, TRUE);
+    /* Nothing was known about a relay list when Publish was pressed. */
+    g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                    GH_INBOX_SETUP_RELAY_LIST_NONE);
+    g_assert_true(gh_inbox_setup_get_adopted_discovery(setup));
+    g_object_run_dispose(G_OBJECT(setup));
+    spin_until(offer_create, both[i], "the relay-list offer after the adopted discovery");
+    GhInboxSetupConfig config = { .accounts = both[i]->accounts,
+                                  .account_relays = both[i]->relays,
+                                  .settings = both[i]->settings, .offer_relay_list = TRUE };
+    g_autoptr(GhRelayListSetup) list = gh_relay_list_setup_new(&config);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(gh_relay_list_setup_start(list, chosen, chosen, &error));
+    g_assert_no_error(error);
+    spin_until(list_setup_finished, list, "the relay list");
+    g_assert_cmpint(gh_relay_list_setup_get_state(list), ==, GH_RELAY_LIST_SETUP_DONE);
+    g_object_run_dispose(G_OBJECT(list));
+  }
+  CountWait alice_kp = { &w.x, ALICE, 1 }, bob_kp = { &w.x, BOB, 1 };
+  spin_until(key_packages_reached, &alice_kp, "Alice's KeyPackage on X");
+  spin_until(key_packages_reached, &bob_kp, "Bob's KeyPackage on X");
+  wait_state(alice, GH_MLS_KEY_PACKAGE_PUBLISHED);
+  wait_state(bob, GH_MLS_KEY_PACKAGE_PUBLISHED);
+  accept_contact(alice, BOB);
+  accept_contact(bob, ALICE);
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(create_attempt(alice, "From Alice", (const guint[]){ BOB }, 1, &error));
+  g_assert_no_error(error);
+  g_assert_nonnull(join(bob, ALICE));
+  g_assert_nonnull(create_attempt(bob, "From Bob", (const guint[]){ ALICE }, 1, &error));
+  g_assert_no_error(error);
+  g_assert_nonnull(join(alice, BOB));
+  world_down(&w);
+}
+
+/* Review R1, the re-review's probe P3: the user's real 10002 is only on the
+ * chosen message relay X, not on the discovery relay E. Discovery finds
+ * none, but the check of every target finds it there: nothing is
+ * published over it. */
+static void
+test_relay_list_on_a_message_relay_kept(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  seed_relay_list(&w.x, ALICE, "wss://my-real-outbox.example", NULL);
+  g_assert_cmpint(offer_of(alice), ==, GH_RELAY_LIST_OFFER_CREATE);   /* E has none */
+  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_SKIPPED);
+  g_object_run_dispose(G_OBJECT(setup));
+  WireRelay *relays[] = { &w.e, &w.x, &w.w, &w.h, &w.r, &w.g };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
+    g_autoptr(GPtrArray) lists = published(relays[i], 10002);
+    g_assert_cmpuint(lists->len, ==, 0);   /* no client published one */
+  }
+  world_down(&w);
+}
+
+/* Review R1: a target that does not answer is "unknown", never "none":
+ * nothing is published. */
+static void
+test_relay_list_unconfirmed_not_published(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  w.h.close_on_connect = TRUE;   /* a chosen relay that is down */
+  const gchar *chosen[] = { w.x.url, w.h.url, NULL };
+  g_autoptr(GhInboxSetup) setup = onboard_on(alice, chosen, TRUE);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_FAILED);
+  GhRelayListSetup *list = gh_inbox_setup_get_relay_list(setup);
+  g_assert_nonnull(list);
+  g_assert_nonnull(gh_relay_list_setup_get_error(list));
+  g_object_run_dispose(G_OBJECT(setup));
+  WireRelay *relays[] = { &w.e, &w.x };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
+    g_autoptr(GPtrArray) lists = published(relays[i], 10002);
+    g_assert_cmpuint(lists->len, ==, 0);
+  }
+  world_down(&w);
+}
+
+static gboolean
+discovery_settled(gpointer data)
+{
+  App *app = data;
+  GhAccountRelaysState state = gh_account_relays_get_state(app->relays);
+  return state == GH_ACCOUNT_RELAYS_COMPLETE || state == GH_ACCOUNT_RELAYS_UNREACHABLE;
+}
+
+/* Review R1: discovery that heard "none" from one relay while another
+ * failed has not shown there is none: nothing is offered. */
+static void
+test_relay_list_not_offered_on_partial_discovery(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  g_assert_cmpint(offer_of(alice), ==, GH_RELAY_LIST_OFFER_CREATE);
+  /* H closes the REQ (it demands a sign-in it then refuses): failed. */
+  w.h.require_auth = TRUE;
+  w.h.refuse_auth = TRUE;
+  const gchar *discovery[] = { w.e.url, w.h.url, NULL };
+  g_settings_set_strv(alice->settings, "discovery-relays", discovery);
+  spin_until(discovery_settled, alice, "discovery on E and the failing H");
+  g_assert_cmpint(gh_account_relays_get_state(alice->relays), ==, GH_ACCOUNT_RELAYS_COMPLETE);
+  g_assert_false(gh_account_relays_get_all_answered(alice->relays));
+  g_assert_cmpint(offer_of(alice), ==, GH_RELAY_LIST_OFFER_NONE);
+  world_down(&w);
+}
+
+static gboolean
+has_relay_list(gpointer data)
+{
+  return gh_account_relays_has_relay_list(((App *)data)->relays);
+}
+
+/* Review R3: a relay list naming only a read relay leaves the account
+ * uninvitable; the offer adds the chosen relay as a write relay and keeps
+ * every other tag and the content; then the KeyPackage is published. */
+static void
+test_relay_list_write_relay_added(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  seed_relay_list(&w.e, ALICE, w.r.url, "read");
+  spin_until(has_relay_list, alice, "Alice's read-only relay list");
+  wait_state(alice, GH_MLS_KEY_PACKAGE_NO_RELAYS);
+  g_assert_cmpint(offer_of(alice), ==, GH_RELAY_LIST_OFFER_ADD_WRITE);
+  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_DONE);
+  g_object_run_dispose(G_OBJECT(setup));
+  g_autoptr(GPtrArray) lists = published(&w.e, 10002);
+  g_assert_cmpuint(lists->len, ==, 1);
+  NostrEvent *list = g_ptr_array_index(lists, 0);
+  g_assert_cmpstr(nostr_event_get_content(list), ==, "kept as it is");
+  NostrTags *tags = nostr_event_get_tags(list);
+  g_assert_cmpuint(nostr_tags_size(tags), ==, 3);
+  NostrTag *read = nostr_tags_get(tags, 0), *client = nostr_tags_get(tags, 1),
+           *added = nostr_tags_get(tags, 2);
+  g_assert_cmpstr(nostr_tag_get(read, 1), ==, w.r.url);
+  g_assert_cmpstr(nostr_tag_get(read, 2), ==, "read");
+  g_assert_cmpstr(nostr_tag_get(client, 0), ==, "client");
+  g_assert_cmpstr(nostr_tag_get(added, 1), ==, w.x.url);
+  g_assert_cmpstr(nostr_tag_get(added, 2), ==, "write");
+  /* Invitable now: the KeyPackage goes to X. */
+  CountWait on_x = { &w.x, ALICE, 1 };
+  spin_until(key_packages_reached, &on_x, "Alice's KeyPackage on X");
+  wait_state(alice, GH_MLS_KEY_PACKAGE_PUBLISHED);
+  world_down(&w);
 }
 
 /* Review H2: two Groundhog users onboarded from nothing (no kind 10002 or
@@ -971,12 +1243,23 @@ main(int argc, char **argv)
                   test_rotation_held_for_pending_invitation);
   g_test_add_func(KP_TEST("lifetime-rotation-held"), test_lifetime_rotation_held);
   g_test_add_func(KP_TEST("hold-cap-expires"), test_hold_cap_expires);
+  g_test_add_func(KP_TEST("invitation-listing-error-holds"),
+                  test_invitation_listing_error_holds);
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
 #endif
 #if GH_TEST_HAVE_INBOX_SETUP && !GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func(KP_TEST("fresh-accounts-invite-each-other"),
                   test_fresh_accounts_invite_each_other);
   g_test_add_func(KP_TEST("relay-list-never-replaced"), test_relay_list_never_replaced);
+  g_test_add_func(KP_TEST("relay-list-on-a-message-relay-kept"),
+                  test_relay_list_on_a_message_relay_kept);
+  g_test_add_func(KP_TEST("relay-list-unconfirmed-not-published"),
+                  test_relay_list_unconfirmed_not_published);
+  g_test_add_func(KP_TEST("relay-list-not-offered-on-partial-discovery"),
+                  test_relay_list_not_offered_on_partial_discovery);
+  g_test_add_func(KP_TEST("relay-list-write-relay-added"), test_relay_list_write_relay_added);
+  g_test_add_func(KP_TEST("first-run-accounts-invite-each-other"),
+                  test_first_run_accounts_invite_each_other);
 #endif
   gint rc = g_test_run();
   mls_world_finish();

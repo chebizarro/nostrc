@@ -793,6 +793,15 @@ sync_key_package(GhPreferencesDialog *self)
   case GH_PREFERENCES_KEY_PACKAGE_PUBLISHED:
     subtitle = _("People can invite you to encrypted groups.");
     break;
+  case GH_PREFERENCES_KEY_PACKAGE_HELD:
+    subtitle = _("People can invite you to encrypted groups. A new invitation key waits until "
+                 "you accept or decline your pending invitations, so they still work.");
+    break;
+  case GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS:
+    subtitle = _("People can't invite you to encrypted groups: your relay list names no relay "
+                 "you publish to, so nobody can find your invitation key. Add your message "
+                 "relays to it as relays you publish to.");
+    break;
   case GH_PREFERENCES_KEY_PACKAGE_FAILED:
     subtitle = _("Your invitation key couldn't be published right now, so people may not be "
                  "able to invite you. Groundhog tries again.");
@@ -803,8 +812,12 @@ sync_key_package(GhPreferencesDialog *self)
   }
   if (subtitle)
     adw_action_row_set_subtitle(self->key_package_row, subtitle);
-  gtk_widget_set_visible(self->key_package_setup,
-                         shown && self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS);
+  gboolean fix = self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS ||
+                 self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS;
+  gtk_button_set_label(GTK_BUTTON(self->key_package_setup),
+                       self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS
+                         ? _("_Add Relays") : _("_Set Up"));
+  gtk_widget_set_visible(self->key_package_setup, shown && fix);
 }
 
 void

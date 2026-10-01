@@ -45,6 +45,11 @@ const gchar *const *gh_account_relays_get_inbox_relays(GhAccountRelays *self);
  * without a usable write relay): Groundhog never publishes over it
  * (nostrc-0bdg). */
 gboolean gh_account_relays_has_relay_list(GhAccountRelays *self);
+/* That signed kind 10002 (borrowed), or NULL. */
+const gchar *gh_account_relays_get_relay_list_json(GhAccountRelays *self);
+/* Whether every discovery relay answered (EOSE) and none failed: only then
+ * is "no relay list found" evidence that there is none (nostrc-0bdg R1). */
+gboolean gh_account_relays_get_all_answered(GhAccountRelays *self);
 
 G_END_DECLS
 #endif

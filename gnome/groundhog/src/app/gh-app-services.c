@@ -916,21 +916,66 @@ static GhMlsService *mls_ui_service(gpointer data);
 
 /* Network › Encrypted Groups (nostrc-f8a5): the open store's KeyPackage
  * state, live while the dialog is shown. */
-static void
-sync_preferences_key_package(GObject *service, GParamSpec *pspec, gpointer dialog)
+static GhPreferencesKeyPackage
+preferences_key_package(GhMlsService *service, GhAccountRelays *relays)
 {
-  (void)pspec;
   GhPreferencesKeyPackage state = GH_PREFERENCES_KEY_PACKAGE_UNKNOWN;
-  switch (service ? gh_mls_service_get_key_package_state(GH_MLS_SERVICE(service))
-                  : GH_MLS_KEY_PACKAGE_NONE) {
-  case GH_MLS_KEY_PACKAGE_NO_RELAYS: state = GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS; break;
+  switch (service ? gh_mls_service_get_key_package_state(service) : GH_MLS_KEY_PACKAGE_NONE) {
+  case GH_MLS_KEY_PACKAGE_NO_RELAYS:
+    /* A list without a relay the account publishes to is not "no list"
+     * (re-review R3): the fix is adding relays to it. */
+    state = relays && gh_account_relays_has_relay_list(relays)
+              ? GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS
+              : GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS;
+    break;
   case GH_MLS_KEY_PACKAGE_PUBLISHING: state = GH_PREFERENCES_KEY_PACKAGE_PUBLISHING; break;
-  case GH_MLS_KEY_PACKAGE_PUBLISHED: state = GH_PREFERENCES_KEY_PACKAGE_PUBLISHED; break;
+  case GH_MLS_KEY_PACKAGE_PUBLISHED:
+    state = gh_mls_service_get_key_package_held(service) ? GH_PREFERENCES_KEY_PACKAGE_HELD
+                                                         : GH_PREFERENCES_KEY_PACKAGE_PUBLISHED;
+    break;
   case GH_MLS_KEY_PACKAGE_FAILED: state = GH_PREFERENCES_KEY_PACKAGE_FAILED; break;
   case GH_MLS_KEY_PACKAGE_NONE:
   default: break;
   }
-  gh_preferences_dialog_set_key_package_state(GH_PREFERENCES_DIALOG(dialog), state);
+  return state;
+}
+
+/* Live while the dialog exists: the service's state and hold, and whether
+ * the account has a relay list (handlers go with the dialog). */
+static void
+sync_preferences_key_package(GObject *source, GParamSpec *pspec, gpointer dialog)
+{
+  (void)source;
+  (void)pspec;
+  GhAppServices *self = g_object_get_data(G_OBJECT(dialog), "gh-app-services");
+  if (!self)
+    return;
+  gh_preferences_dialog_set_key_package_state(GH_PREFERENCES_DIALOG(dialog),
+                                              preferences_key_package(mls_ui_service(self),
+                                                                      self->relays));
+}
+
+static void
+sync_preferences_relays(GhAccountRelays *relays, gpointer dialog)
+{
+  sync_preferences_key_package(G_OBJECT(relays), NULL, dialog);
+}
+
+static void
+key_package_sync_attach(GhAppServices *self, GhPreferencesDialog *dialog)
+{
+  g_object_set_data(G_OBJECT(dialog), "gh-app-services", self);
+  sync_preferences_key_package(NULL, NULL, dialog);
+  GhMlsService *mls = mls_ui_service(self);
+  if (mls) {
+    g_signal_connect_object(mls, "notify::key-package-state",
+                            G_CALLBACK(sync_preferences_key_package), dialog, 0);
+    g_signal_connect_object(mls, "notify::key-package-held",
+                            G_CALLBACK(sync_preferences_key_package), dialog, 0);
+  }
+  if (self->relays)
+    g_signal_connect_object(self->relays, "changed", G_CALLBACK(sync_preferences_relays), dialog,
+                            0);
 }
 #endif
 
@@ -982,11 +1027,7 @@ present_preferences(GhAppServices *self, const gchar *page)
                                         g_object_unref);
 #endif
 #if GROUNDHOG_HAVE_GROUP_UI && GROUNDHOG_HAVE_MLS_UI
-  GhMlsService *mls = mls_ui_service(self);
-  sync_preferences_key_package(mls ? G_OBJECT(mls) : NULL, NULL, dialog);
-  if (mls)
-    g_signal_connect_object(mls, "notify::key-package-state",
-                            G_CALLBACK(sync_preferences_key_package), dialog, 0);
+  key_package_sync_attach(self, dialog);
 #endif
   if (page)
     adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(dialog), page);

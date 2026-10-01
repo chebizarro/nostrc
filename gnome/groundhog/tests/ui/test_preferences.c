@@ -926,6 +926,20 @@ test_key_package_row(Fixture *f, gconstpointer data)
   g_assert_false(gtk_widget_get_visible(setup));
   g_assert_cmpstr(adw_action_row_get_subtitle(row), ==,
                   "People can invite you to encrypted groups.");
+  /* Held for pending invitations (re-review A5): said, nothing to do. */
+  gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_HELD);
+  g_assert_false(gtk_widget_get_visible(setup));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(row), "waits until you accept or decline"));
+  /* A relay list without a relay the account publishes to (R3): honest, and
+   * [Add Relays] (the relay step adds them to that list). */
+  gh_preferences_dialog_set_key_package_state(f->dialog,
+                                              GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS);
+  g_assert_true(gtk_widget_get_visible(setup));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup)), ==, "_Add Relays");
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(row),
+                          "your relay list names no relay you publish to"));
+  gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS);
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup)), ==, "_Set Up");
   gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_UNKNOWN);
   g_assert_false(gtk_widget_get_visible(group));
 

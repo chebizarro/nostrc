@@ -31,6 +31,7 @@ struct _GhAccountRelays {
   GhAccountRelaysState state;
 
   Revision relay_list;
+  gchar *relay_list_json;   /* the admitted kind 10002, signed */
   Revision inbox;
   GStrv read;
   GStrv write;
@@ -60,6 +61,7 @@ teardown(GhAccountRelays *self)
   }
   g_hash_table_remove_all(self->sources);
   revision_clear(&self->relay_list);
+  g_clear_pointer(&self->relay_list_json, g_free);
   revision_clear(&self->inbox);
   g_clear_pointer(&self->read, g_strfreev);
   g_clear_pointer(&self->write, g_strfreev);
@@ -140,6 +142,8 @@ admit_event(GhAccountRelays *self, const GhRelayUpdate *update)
                                     : g_ptr_array_new_with_free_func(g_free));
     if (parsed)
       g_ptr_array_unref(parsed);
+    g_free(self->relay_list_json);
+    self->relay_list_json = g_strdup(update->event_json);
   } else {
     GPtrArray *parsed = gnostr_nip17_parse_dm_relays_event(update->event_json, NULL);
     if (!parsed)
@@ -327,6 +331,28 @@ gh_account_relays_get_read_relays(GhAccountRelays *self)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(self), NULL);
   return (const gchar *const *)self->read;
+}
+
+gboolean
+gh_account_relays_get_all_answered(GhAccountRelays *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(self), FALSE);
+  if (!self->generation || g_hash_table_size(self->sources) == 0)
+    return FALSE;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->sources);
+  while (g_hash_table_iter_next(&iter, NULL, &value))
+    if (GPOINTER_TO_UINT(value) != SOURCE_EOSE)
+      return FALSE;
+  return TRUE;
+}
+
+const gchar *
+gh_account_relays_get_relay_list_json(GhAccountRelays *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(self), NULL);
+  return self->relay_list_json;
 }
 
 gboolean

@@ -754,6 +754,33 @@ template $GhOnboardingView: Adw.Bin {
                   }
                 }
 
+                // Once the list is out and Groundhog found (or found no)
+                // relay list on the relays it now looks on (nostrc-0bdg R2):
+                // the encrypted-groups relay list, offered here with consent.
+                ListBox relay_list_later_group {
+                  visible: false;
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  Adw.ActionRow relay_list_later_row {
+                    title: _("Encrypted Groups");
+                    title-lines: 0;
+                    subtitle-lines: 0;
+
+                    [suffix]
+                    Button relay_list_later_button {
+                      visible: false;
+                      label: _("_Let People Invite You");
+                      use-underline: true;
+                      valign: center;
+                      action-name: "onboarding.publish-relay-list";
+                    }
+                  }
+                }
+
                 Box {
                   orientation: vertical;
                   spacing: 6;

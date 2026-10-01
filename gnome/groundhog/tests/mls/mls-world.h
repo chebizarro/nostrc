@@ -54,6 +54,8 @@ static gint64 world_key_package_lifetime;
 /* The next world's accounts are fresh: no kind 10002 or 10050 seeded (they
  * set them up through GhInboxSetup, as onboarding does). */
 static gboolean world_fresh_lists;
+/* ...and set no discovery relay either: a real first run (PD-13). */
+static gboolean world_no_discovery;
 static gint64 world_key_package_max_hold;
 
 static G_GNUC_UNUSED void
@@ -278,6 +280,8 @@ static G_GNUC_UNUSED gboolean
 relays_known(gpointer data)
 {
   App *app = data;
+  if (world_no_discovery)  /* nowhere to look yet */
+    return gh_account_relays_get_state(app->relays) == GH_ACCOUNT_RELAYS_NO_SOURCES;
   if (world_fresh_lists)   /* nothing to find: the lookup has finished */
     return gh_account_relays_get_state(app->relays) == GH_ACCOUNT_RELAYS_COMPLETE;
   return gh_account_relays_get_inbox_relays(app->relays) &&
@@ -399,7 +403,8 @@ app_up(World *w, guint key)
   g_settings_set_string(app->settings, "signer-method", "auto");
   g_settings_set_string(app->settings, "current-npub", npub[key]);
   const gchar *discovery[] = { w->e.url, NULL };
-  g_settings_set_strv(app->settings, "discovery-relays", discovery);
+  if (!world_no_discovery)
+    g_settings_set_strv(app->settings, "discovery-relays", discovery);
   app->accounts = gh_account_controller_new_full(app->settings, test_bus.client, list_one, app);
   spin_until(accounts_active, app->accounts, "the account becoming active");
   app->clock = world_fake_clock ? gh_clock_new_fake(g_get_real_time()) : gh_clock_new_system();
@@ -482,6 +487,7 @@ world_down(World *w)
   world_split_lists = FALSE;
   world_key_package_lifetime = 0;
   world_fresh_lists = FALSE;
+  world_no_discovery = FALSE;
   world_key_package_max_hold = 0;
   rm_rf(w->root);
   g_free(w->root);
