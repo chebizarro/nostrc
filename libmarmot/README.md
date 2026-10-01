@@ -368,6 +368,19 @@ does); the Welcome rumor carries only `e` and `relays`.
 Fixtures: `tests/vectors/mdk-0.11/` (real MDK v0.11.0 and pinned-OpenMLS
 captures, with provenance).
 
+**For integrators and new code (W24 review L4).** Every MLS-layer Commit
+producer must install its staged group through `group_install_checked()`
+(`src/mls/mls_group.c`), never `group_install_staged()` directly; only the
+Commit processor installs directly, after its own entered-epoch check.
+Otherwise a producer can make an adopted group enter an epoch that breaks
+its invariants. W24 slice A's `mls_group_replace_members()` and slice B's
+`mls_group_commit_by_ref()` were written against plain
+`group_install_staged()`: switch both when merging (`test_install_checked`
+pins the add path). Every Marmot-layer Commit judgement of a non-legacy group
+must be refused before any MIP-01 rule, as `marmot_commit_process_inbound()`
+and `marmot_commit_authorize()` do. Serial format 4's profile byte is a
+private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
+
 ## Changelog
 
 ### 0.12.0 (unreleased): adopted-profile admission and creation (nostrc-qp24.5.1, nostrc-qp24.5.1.1)

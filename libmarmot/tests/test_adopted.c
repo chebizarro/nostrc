@@ -1059,7 +1059,7 @@ test_persist_load_clone(void)
     load_mls(&bob, &gid, &blob, &len);
     /* Version 4: the profile is persisted. */
     CHECK(len > 9 && blob[4] == 0 && blob[5] == 0 && blob[6] == 0 && blob[7] == 4 &&
-          blob[len - 1] == MARMOT_GROUP_PROFILE_ADOPTED, "serial version 4 + profile");
+          blob[len - 1] == 0x01, "serial version 4 + its on-disk adopted byte 0x01");
     MlsGroup g;
     CHECK(mls_group_deserialize(blob, len, &g) == 0, "load");
     CHECK(g.profile == MARMOT_GROUP_PROFILE_ADOPTED && g.extensions_len == g_fixture_exts_len &&
@@ -1080,7 +1080,7 @@ test_persist_load_clone(void)
     /* Tampered state fails closed: no fallback to legacy. */
     uint8_t *t = malloc(len);
     memcpy(t, blob, len);
-    t[len - 1] = MARMOT_GROUP_PROFILE_LEGACY; /* v4 claiming legacy */
+    t[len - 1] = 0x00; /* v4 with any other profile byte */
     CHECK(mls_group_deserialize(t, len, &clone) != 0, "v4 legacy profile refused");
     memcpy(t, blob, len);
     t[7] = 3; /* an adopted GroupContext in a v3 (legacy) blob */
@@ -1110,7 +1110,7 @@ test_persist_load_clone(void)
     /* Through the API: a stored state that no longer validates. */
     t = malloc(len);
     memcpy(t, blob, len);
-    t[len - 1] = MARMOT_GROUP_PROFILE_LEGACY;
+    t[len - 1] = 0x02;
     OK(bob.m->storage->mls_store(bob.m->storage->ctx, "mls_group", gid.data, gid.len, t, len));
     MarmotGroupProfile profile;
     EXPECT_ERR(marmot_get_group_profile(bob.m, &gid, &profile), MARMOT_ERR_DESERIALIZATION);

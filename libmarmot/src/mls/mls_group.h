@@ -228,9 +228,12 @@ typedef struct {
 
     /* ── Wire profile (nostrc-qp24.5.1) ───────────────────────────────── */
     /** Classified from the GroupContext when the group is created, joined
-     *  or loaded, persisted with the state (serial version 4) and never
-     *  changed: an ADOPTED state must always pass
-     *  mls_group_profile_check(). */
+     *  or loaded, persisted with the state (serial version 4, as a private
+     *  format constant, not this enum's value) and never changed: an
+     *  ADOPTED state must always pass mls_group_profile_check(), and every
+     *  epoch it enters mls_group_profile_check_entered() -- which is why
+     *  every Commit producer in mls_group.c installs its stage through
+     *  group_install_checked(). */
     MarmotGroupProfile profile;
 
     /* ── Configuration ────────────────────────────────────────────────── */

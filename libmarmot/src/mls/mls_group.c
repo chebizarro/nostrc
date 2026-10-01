@@ -1083,7 +1083,15 @@ group_install_staged(MlsGroup *live, MlsGroup *staged)
 /* group_install_staged() for a stage a local Commit producer built: the
  * epoch it enters keeps the group's profile and, for an adopted group, its
  * invariants (nostrc-qp24.5.1).  On failure the stage is freed, the live
- * group is unchanged. */
+ * group is unchanged.
+ *
+ * EVERY Commit producer installs through this function, never through
+ * group_install_staged() directly (only the Commit processor does, after its
+ * own mls_group_profile_check_entered()): a producer that skips it can make
+ * an adopted group enter an epoch that breaks its invariants.  New producers
+ * (e.g. W24 slice A's mls_group_replace_members(), slice B's
+ * mls_group_commit_by_ref()) must use it -- test_install_checked pins it
+ * (W24 review L4). */
 static int
 group_install_checked(MlsGroup *live, MlsGroup *staged)
 {
@@ -5442,6 +5450,11 @@ fail:
  * adopted-profile group is written as version 4.  Versions 1 to 3 load as
  * legacy. */
 #define MLS_GROUP_SERIAL_VER_NO_PROFILE 3
+/* The profile byte of format 4: a storage format constant, mapped
+ * explicitly -- never the public MarmotGroupProfile value, whose numbering
+ * may change without changing what is on disk (W24 review L4).  0x01 is the
+ * only value written (legacy states are format 3). */
+#define MLS_GROUP_SERIAL_PROFILE_ADOPTED 0x01
 
 int
 mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
@@ -5554,7 +5567,7 @@ mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
         goto fail;
 
     /* Version 4: the profile (only adopted groups are written as 4). */
-    if (adopted && mls_tls_write_u8(&buf, (uint8_t)group->profile) != 0) goto fail;
+    if (adopted && mls_tls_write_u8(&buf, MLS_GROUP_SERIAL_PROFILE_ADOPTED) != 0) goto fail;
 
     *out_data = buf.data;
     *out_len = buf.len;
@@ -5722,7 +5735,7 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
     if (version > MLS_GROUP_SERIAL_VER_NO_PROFILE) {
         uint8_t profile = 0;
         if (mls_tls_read_u8(&reader, &profile) != 0 ||
-            profile != MARMOT_GROUP_PROFILE_ADOPTED)
+            profile != MLS_GROUP_SERIAL_PROFILE_ADOPTED)
             goto fail;
         group->profile = MARMOT_GROUP_PROFILE_ADOPTED;
     }
