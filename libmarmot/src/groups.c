@@ -2323,6 +2323,182 @@ out:
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Public API: requiring SelfRemove in an existing group (nostrc-8ndz)
+ *
+ * A legacy group created with no invitee, or with one whose KeyPackage
+ * lacked SelfRemove, does not require it (write_required_capabilities():
+ * MDK 0.8's LCD rule), so its members leave by a Remove of themselves that
+ * only an admin commits.  Once every member's leaf advertises SelfRemove an
+ * admin may add it to required_capabilities by a GroupContextExtensions
+ * Commit (RFC 9420 §12.1.7; changing the GroupContext is privileged in
+ * MIP-01, commits.c), as MDK 0.11's upgrade_group_capabilities() does.
+ * Then any member commits a leave.  The cost is MDK's at creation: a later
+ * invitee's KeyPackage must advertise SelfRemove too.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* `exts` (a legacy GroupContext's extension list) with SelfRemove added to
+ * required_capabilities' proposal_types in ascending order, every other
+ * byte kept; a list without required_capabilities gains MIP-01's, with
+ * SelfRemove. */
+static int
+exts_with_self_remove_required(const uint8_t *exts, size_t exts_len,
+                               uint8_t **out, size_t *out_len)
+{
+    MlsTlsBuf buf, rc = {0};
+    if (mls_tls_buf_init(&buf, exts_len + 16) != 0) return -1;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, exts, exts_len);
+    bool found = false;
+    while (!mls_tls_reader_done(&r)) {
+        size_t entry_start = r.pos;
+        uint16_t type;
+        size_t len;
+        if (mls_tls_read_u16(&r, &type) != 0 || mls_tls_read_vli(&r, &len) != 0 ||
+            len > mls_tls_reader_remaining(&r))
+            goto fail;
+        const uint8_t *data = exts + r.pos;
+        r.pos += len;
+        if (type != MLS_EXTENSION_REQUIRED_CAPABILITIES) {
+            if (mls_tls_buf_append(&buf, exts + entry_start, r.pos - entry_start) != 0)
+                goto fail;
+            continue;
+        }
+        if (found) goto fail;   /* two required_capabilities */
+        found = true;
+        /* { extension_types<V>; proposal_types<V>; credential_types<V> } */
+        MlsTlsReader in;
+        mls_tls_reader_init(&in, data, len);
+        size_t ext_bytes, prop_bytes;
+        if (mls_tls_read_vli(&in, &ext_bytes) != 0 ||
+            ext_bytes > mls_tls_reader_remaining(&in))
+            goto fail;
+        const uint8_t *ext_types = data + in.pos;
+        in.pos += ext_bytes;
+        if (mls_tls_read_vli(&in, &prop_bytes) != 0 || prop_bytes % 2 != 0 ||
+            prop_bytes > mls_tls_reader_remaining(&in))
+            goto fail;
+        const uint8_t *props = data + in.pos;
+        in.pos += prop_bytes;
+        bool has = false;
+        size_t at = prop_bytes;   /* where 0x000a goes */
+        for (size_t k = 0; k < prop_bytes; k += 2) {
+            uint16_t t = (uint16_t)((props[k] << 8) | props[k + 1]);
+            if (t == MLS_PROPOSAL_SELF_REMOVE) has = true;
+            if (t > MLS_PROPOSAL_SELF_REMOVE && at == prop_bytes) at = k;
+        }
+        static const uint8_t sr[2] = { (uint8_t)(MLS_PROPOSAL_SELF_REMOVE >> 8),
+                                       (uint8_t)(MLS_PROPOSAL_SELF_REMOVE & 0xff) };
+        if (mls_tls_buf_init(&rc, len + 4) != 0 ||
+            mls_tls_write_vli(&rc, ext_bytes) != 0 ||
+            mls_tls_buf_append(&rc, ext_types, ext_bytes) != 0 ||
+            mls_tls_write_vli(&rc, prop_bytes + (has ? 0 : 2)) != 0 ||
+            mls_tls_buf_append(&rc, props, has ? prop_bytes : at) != 0 ||
+            (!has && (mls_tls_buf_append(&rc, sr, 2) != 0 ||
+                      mls_tls_buf_append(&rc, props + at, prop_bytes - at) != 0)) ||
+            mls_tls_buf_append(&rc, data + in.pos, len - in.pos) != 0 ||   /* credentials */
+            mls_tls_write_u16(&buf, MLS_EXTENSION_REQUIRED_CAPABILITIES) != 0 ||
+            mls_tls_write_opaque16(&buf, rc.data, rc.len) != 0)
+            goto fail;
+        mls_tls_buf_free(&rc);
+    }
+    if (!found && write_required_capabilities(&buf, true) != 0) goto fail;
+    *out = buf.data;
+    *out_len = buf.len;
+    return 0;
+fail:
+    mls_tls_buf_free(&rc);
+    mls_tls_buf_free(&buf);
+    return -1;
+}
+
+MarmotError
+marmot_get_self_remove_requirement(Marmot *m, const MarmotGroupId *mls_group_id,
+                                   bool *out_required, bool *out_upgradable)
+{
+    if (!m || !mls_group_id || !mls_group_id->data || !out_required)
+        return MARMOT_ERR_INVALID_ARG;
+    *out_required = false;
+    if (out_upgradable) *out_upgradable = false;
+    MlsGroup mls;
+    if (load_mls_group(m, mls_group_id, &mls) != 0) return MARMOT_ERR_GROUP_NOT_FOUND;
+    *out_required = mls_group_requires_proposal(&mls, MLS_PROPOSAL_SELF_REMOVE);
+    if (out_upgradable)
+        *out_upgradable = mls.profile != MARMOT_GROUP_PROFILE_ADOPTED && !*out_required &&
+                          mls_group_members_support_proposal(&mls, MLS_PROPOSAL_SELF_REMOVE);
+    mls_group_free(&mls);
+    return MARMOT_OK;
+}
+
+static MarmotError
+require_self_remove_impl(Marmot *m, const MarmotGroupId *mls_group_id, char **out_commit_json)
+{
+    if (!m || !mls_group_id || !out_commit_json) return MARMOT_ERR_INVALID_ARG;
+    *out_commit_json = NULL;
+    MarmotGroup *group = NULL;
+    MlsGroup mls;
+    MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
+    if (err != MARMOT_OK) return err;
+    MlsGroup pre;
+    memset(&pre, 0, sizeof(pre));
+    MlsCommitResult res;
+    memset(&res, 0, sizeof(res));
+    uint8_t *exts = NULL;
+    size_t exts_len = 0;
+    if (mls.profile == MARMOT_GROUP_PROFILE_ADOPTED) {
+        err = MARMOT_ERR_UNSUPPORTED;   /* see marmot.h */
+        goto out;
+    }
+    if (mls_group_requires_proposal(&mls, MLS_PROPOSAL_SELF_REMOVE)) {
+        err = MARMOT_ERR_VALIDATION;    /* nothing to commit */
+        goto out;
+    }
+    /* A member whose leaf lacks it could no longer stay (RFC 9420 §11.1);
+     * the MLS layer checks every leaf again. */
+    if (!mls_group_members_support_proposal(&mls, MLS_PROPOSAL_SELF_REMOVE)) {
+        err = MARMOT_ERR_UNSUPPORTED;
+        goto out;
+    }
+    if (exts_with_self_remove_required(mls.extensions_data, mls.extensions_len, &exts,
+                                       &exts_len) != 0) {
+        err = MARMOT_ERR_EXTENSION_FORMAT;
+        goto out;
+    }
+    if (clone_mls_group(&mls, &pre) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto out;
+    }
+    int rc = mls_group_commit_extensions(&mls, exts, exts_len, &res);
+    if (rc != 0) {
+        err = rc == MARMOT_ERR_UNSUPPORTED ? MARMOT_ERR_UNSUPPORTED : MARMOT_ERR_MLS;
+        goto out;
+    }
+    err = finish_local_commit_now(m, group, &pre, &mls, res.commit_data, res.commit_len,
+                                  out_commit_json);
+out:
+    free(exts);
+    mls_commit_result_clear(&res);
+    mls_group_free(&pre);
+    mls_group_free(&mls);
+    marmot_group_free(group);
+    return err;
+}
+
+MarmotError
+marmot_require_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
+                           char **out_commit_json)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = require_self_remove_impl(m, mls_group_id, out_commit_json);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+    }
+    return end;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Public API: self-update, optionally adding the account proof to our leaf
  * (nostrc-rgb5, nostrc-yd0q)
  * ──────────────────────────────────────────────────────────────────────── */

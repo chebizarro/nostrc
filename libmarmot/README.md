@@ -551,6 +551,41 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   KeyPackage made so far, and every later one is later still), so a NIP-09
   deletion request by address is never older than the newest version it
   must delete, and a KeyPackage published after it is never covered by it.
+### 0.12.0 (unreleased): routing safety and the SelfRemove requirement (nostrc-scki, nostrc-8ndz)
+
+**New API** (MINOR, folded into 0.12.0): `marmot_get_self_remove_requirement()`,
+`marmot_require_self_remove()`.
+
+- **A Welcome may not take another group's address (nostrc-scki).** A
+  `nostr_group_id` is a public h tag, and libmarmot routes a kind:445 by it
+  (the record's, then a routing alias). A Welcome whose group has the
+  current address of another group we hold, or one such a group had before
+  a routing rotation, is refused for good with
+  `MARMOT_ERR_PROTOCOL_GROUP_MISMATCH` ("nostr group routing id already held
+  by another group") before anything of it is stored: on accept, and
+  already in `marmot_process_welcome()` for an adopted Welcome, whose
+  address is signed (it is then never listed). Otherwise an inviter who saw
+  another group's h tag could break that group for us. A re-invite to the
+  same MLS group is no collision; an ended group's record still counts.
+- **Requiring SelfRemove in an existing legacy group (nostrc-8ndz).** A
+  group created with no invitee (Groundhog makes every group so) does not
+  require SelfRemove, so a member's leave is a Remove request an admin
+  commits. `marmot_require_self_remove()` makes the admin's
+  GroupContextExtensions Commit that adds 0x000a to required_capabilities
+  (every other extension and byte kept), refused unless every leaf
+  advertises SelfRemove; MDK 0.11's `upgrade_group_capabilities()` is the
+  same Commit. Afterwards any member commits a member's SelfRemove; a later
+  invitee must advertise SelfRemove, MDK's rule for groups created with it.
+  Receivers need nothing new: a GroupContext change is privileged in MIP-01
+  and the MLS layer checks every leaf (MDK 0.8 follows it too).
+- **Adopted groups.** `marmot_require_self_remove()` refuses them
+  (`MARMOT_ERR_UNSUPPORTED`): libmarmot creates them with SelfRemove
+  required, its members always leave by SelfRemove, and it applies no
+  GroupContextExtensions Commit in an adopted group (only AppDataUpdate
+  changes its GroupContext). MDK 0.11 permits an admin's
+  GroupContextExtensions upgrade there whose resulting GroupContext keeps
+  the dictionary; libmarmot refusing such an inbound Commit is tracked
+  separately.
 
 ### 0.12.0 (unreleased): Commits in adopted groups (nostrc-qp24.5.1.3)
 

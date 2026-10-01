@@ -7300,6 +7300,85 @@ test_remove_request_where_self_remove_not_required(void)
     quad_clear(&q);
 }
 
+/* nostrc-8ndz: a group that does not require SelfRemove (created alone)
+ * gains the requirement by an admin's GroupContextExtensions Commit once
+ * every leaf advertises it; every member follows, the rest of the
+ * GroupContext is kept, and from then on a non-admin commits a member's
+ * leave (no admin needed). A non-admin cannot make the Commit; a second
+ * one has nothing to commit. */
+static void
+test_require_self_remove_upgrade(void)
+{
+    g_trio_alone = true;
+    Quad q;
+    quad_init(&q);
+    g_trio_alone = false;
+    Trio *t = &q.t;
+    expect_required_capabilities_of(&t->alice, &t->gid, "alone, then Add", false);
+    bool required = true, upgradable = false;
+    OK(marmot_get_self_remove_requirement(t->charlie.m, &t->gid, &required, &upgradable));
+    CHECK(!required && upgradable, "every leaf has it: upgradable");
+    char *ev = NULL;
+    CHECK(marmot_require_self_remove(q.dave.m, &t->gid, &ev) == MARMOT_ERR_ADMIN_ONLY,
+          "admin-only");
+    CHECK(ev == NULL, "nothing from a non-admin");
+    MarmotGroup *before = NULL;
+    OK(marmot_get_group(t->alice.m, &t->gid, &before));
+
+    OK(marmot_require_self_remove(t->alice.m, &t->gid, &ev));
+    CHECK(ev != NULL, "Alice's Commit");
+    merge(&t->alice, &t->gid);
+    expect_commit(&t->bob, ev, "Bob follows");
+    expect_commit(&t->charlie, ev, "Charlie follows");
+    expect_commit(&q.dave, ev, "Dave follows");
+    Member *all[4] = { &t->alice, &t->bob, &t->charlie, &q.dave };
+    expect_converged(all, 4, &t->gid, "Before", t->epoch + 1);
+    for (int i = 0; i < 4; i++) {
+        expect_required_capabilities_of(all[i], &t->gid, "after the upgrade", true);
+        OK(marmot_get_self_remove_requirement(all[i]->m, &t->gid, &required, &upgradable));
+        CHECK(required && !upgradable, "required now");
+    }
+    MarmotGroup *after = NULL;
+    OK(marmot_get_group(q.dave.m, &t->gid, &after));
+    CHECK(memcmp(after->nostr_group_id, before->nostr_group_id, 32) == 0 &&
+              after->admin_count == before->admin_count && after->name && before->name &&
+              strcmp(after->name, before->name) == 0,
+          "the GroupData is kept");
+    marmot_group_free(after);
+    marmot_group_free(before);
+    free(ev);
+    ev = NULL;
+    CHECK(marmot_require_self_remove(t->bob.m, &t->gid, &ev) == MARMOT_ERR_VALIDATION && !ev,
+          "nothing more to commit");
+
+    /* Charlie leaves by SelfRemove; Dave, no admin, commits it. */
+    MarmotLeaveKind kind = MARMOT_LEAVE_REMOVE_REQUEST;
+    OK(marmot_can_self_remove(t->charlie.m, &t->gid, &kind));
+    CHECK(kind == MARMOT_LEAVE_SELF_REMOVE, "required: SelfRemove (%d)", kind);
+    char *leave = NULL;
+    OK(marmot_self_remove(t->charlie.m, &t->gid, &leave));
+    expect_proposal(&q.dave, leave, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true, "Dave");
+    expect_proposal(&t->bob, leave, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true, "Bob");
+    expect_proposal(&t->alice, leave, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true,
+                    "Alice");
+    char *commit = NULL;
+    OK(marmot_commit_pending_proposals(q.dave.m, &t->gid, &commit));
+    CHECK(commit, "Dave commits Charlie's leave");
+    merge(&q.dave, &t->gid);
+    expect_commit(&t->alice, commit, "Alice");
+    expect_commit(&t->bob, commit, "Bob");
+    MarmotError err;
+    CHECK(deliver(&t->charlie, commit, &err, NULL) == MARMOT_RESULT_COMMIT && err == MARMOT_OK,
+          "Charlie sees it: %d", err);
+    expect_group_ended(&t->charlie, &t->gid, &q.dave, true, "Charlie left");
+    Member *rest[3] = { &t->alice, &t->bob, &q.dave };
+    expect_converged(rest, 3, &t->gid, "Before", t->epoch + 2);
+    expect_messages_flow(rest, 3, &t->gid);
+    free(commit);
+    free(leave);
+    quad_clear(&q);
+}
+
 /* The slot of `sender` in `epoch` as stored (NULL: none). */
 static uint8_t *
 stored_slot(Member *x, const MarmotGroupId *gid, uint64_t epoch, uint32_t sender, size_t *len)
@@ -7671,6 +7750,7 @@ main(int argc, char **argv)
     RUN(test_alone_group_requires_nothing);
     RUN(test_commit_before_proposal_is_kept);
     RUN(test_remove_request_where_self_remove_not_required);
+    RUN(test_require_self_remove_upgrade);
     RUN(test_proposal_store_bounded_per_sender);
     RUN(test_departures_ignore_removed_leaves);
     RUN(test_cancel_leave);

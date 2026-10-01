@@ -1413,6 +1413,57 @@ faulty_mls_load(void *ctx, const char *label, const uint8_t *key, size_t key_len
     return g_real_mls_load(ctx, label, key, key_len, out, out_len);
 }
 
+/* nostrc-scki: an adopted Welcome whose signed address (0x8004) another held
+ * group has -- as its current id, or as an earlier one (a routing alias) --
+ * is refused on arrival with its reason, never listed as an invitation:
+ * joining it would take that group's traffic. */
+static void
+test_adopted_welcome_address_held(void)
+{
+    const AdoptedMdkFixture *f = &MDK011_ENGINE_DEFAULT;
+    for (int alias = 0; alias < 2; alias++) {
+        Member bob;
+        member_init(&bob, "bob");
+        install_mdk_joiner(&bob, f);
+        uint8_t ngid[32], other_id[32];
+        unhex_into(f->nostr_group_id, ngid, 32);
+        randombytes_buf(other_id, sizeof other_id);
+        MarmotGroup *held = marmot_group_new();
+        CHECK(held != NULL, "record");
+        held->mls_group_id = marmot_group_id_new(other_id, sizeof other_id);
+        held->state = MARMOT_GROUP_STATE_ACTIVE;
+        if (alias)
+            randombytes_buf(held->nostr_group_id, 32);
+        else
+            memcpy(held->nostr_group_id, ngid, 32);
+        OK(bob.m->storage->save_group(bob.m->storage->ctx, held));
+        if (alias)
+            OK(bob.m->storage->mls_store(bob.m->storage->ctx, "nostr_group_id_alias", ngid, 32,
+                                         other_id, sizeof other_id));
+        marmot_group_free(held);
+
+        uint8_t wrapper[32];
+        randombytes_buf(wrapper, sizeof(wrapper));
+        MarmotWelcome *w = NULL;
+        EXPECT_ERR(marmot_process_welcome(bob.m, wrapper, f->rumor_json, &w),
+                   MARMOT_ERR_PROTOCOL_GROUP_MISMATCH);
+        CHECK(w == NULL, "no invitation");
+        MarmotWelcome **pending = NULL;
+        size_t n_pending = 0;
+        MarmotPagination page = marmot_pagination_default();
+        OK(marmot_get_pending_welcomes(bob.m, &page, &pending, &n_pending));
+        CHECK(n_pending == 0, "nothing listed (%s)", alias ? "alias" : "current id");
+        welcomes_free(pending, n_pending);
+        /* Refused for good: the same gift wrap again is the recorded failure. */
+        EXPECT_ERR(marmot_process_welcome(bob.m, wrapper, f->rumor_json, &w),
+                   MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED);
+        MarmotGroupId gid = fixture_gid(f);
+        CHECK(!group_stored(&bob, &gid), "not joined");
+        marmot_group_id_free(&gid);
+        member_free(&bob);
+    }
+}
+
 static void
 test_welcome_transient_storage_error(void)
 {
@@ -2754,6 +2805,7 @@ main(int argc, char **argv)
     RUN(test_white_noise_member_roles);
     RUN(test_component_state_validator);
     RUN(test_welcome_transient_storage_error);
+    RUN(test_adopted_welcome_address_held);
     RUN(test_openmls_welcome_negatives);
     RUN(test_adopted_rumor_shape);
     RUN(test_mdk_key_package_event_validates);

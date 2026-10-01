@@ -1960,6 +1960,72 @@ test_welcome_end_to_end(void)
 }
 
 static void
+test_welcome_routing_collision_case(bool alias)
+{
+    Marmot *creator = create_test_instance();
+    Marmot *member = create_test_instance();
+    ASSERT(creator && member, "instances");
+    uint8_t creator_sk[32], creator_pk[32], member_sk[32], member_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+    generate_nostr_keypair(member_sk, member_pk);
+    MarmotKeyPackageResult kp = {0};
+    ASSERT_OK(marmot_create_key_package(member, member_pk, member_sk, NULL, 0, &kp),
+              "KeyPackage");
+    const char *packages[] = { kp.event_json };
+    MarmotGroupConfig config = { .name = "Collision" };
+    MarmotCreateGroupResult made = {0};
+    ASSERT_OK(marmot_create_group(creator, creator_pk, packages, 1, &config, &made),
+              "create group");
+    ASSERT(made.welcome_count == 1, "one Welcome");
+
+    /* A different held group's current id or earlier routing alias owns the
+     * Welcome's h tag. The collision must not persist the invited MLS state. */
+    uint8_t other_id[32];
+    randombytes_buf(other_id, sizeof other_id);
+    MarmotGroup held = *made.group;
+    held.mls_group_id = marmot_group_id_new(other_id, sizeof other_id);
+    ASSERT(held.mls_group_id.data, "held group id");
+    if (alias)
+        randombytes_buf(held.nostr_group_id, sizeof held.nostr_group_id);
+    ASSERT_OK(member->storage->save_group(member->storage->ctx, &held), "held group");
+    if (alias)
+        ASSERT_OK(member->storage->mls_store(member->storage->ctx, "nostr_group_id_alias",
+                                             made.group->nostr_group_id, 32,
+                                             other_id, sizeof other_id), "held alias");
+    marmot_group_id_free(&held.mls_group_id);
+
+    uint8_t wrapper[32];
+    randombytes_buf(wrapper, sizeof wrapper);
+    MarmotWelcome *welcome = NULL;
+    ASSERT_OK(marmot_process_welcome(member, wrapper, made.welcome_rumor_jsons[0], &welcome),
+              "process Welcome");
+    MarmotError err = marmot_accept_welcome(member, welcome);
+    ASSERT(err == MARMOT_ERR_PROTOCOL_GROUP_MISMATCH,
+           "colliding current/alias routing id must be refused");
+    uint8_t *state = NULL;
+    size_t state_len = 0;
+    err = member->storage->mls_load(member->storage->ctx, "mls_group",
+                                    made.group->mls_group_id.data,
+                                    made.group->mls_group_id.len, &state, &state_len);
+    ASSERT(err == MARMOT_ERR_STORAGE_NOT_FOUND, "refused Welcome stored MLS state");
+    free(state);
+    marmot_welcome_free(welcome);
+    marmot_create_group_result_free(&made);
+    marmot_key_package_result_free(&kp);
+    marmot_free(member);
+    marmot_free(creator);
+}
+
+static void
+test_welcome_routing_collision(void)
+{
+    TEST("MIP-02: Welcome refuses held current and alias routing ids");
+    test_welcome_routing_collision_case(false);
+    test_welcome_routing_collision_case(true);
+    PASS();
+}
+
+static void
 test_welcome_duplicate_detection(void)
 {
     TEST("MIP-02: duplicate welcome is rejected");
@@ -3720,6 +3786,7 @@ main(void)
     test_accept_welcome_storage_failures();
     test_accept_welcome_keypackage_storage_failures();
     test_welcome_end_to_end();
+    test_welcome_routing_collision();
     test_welcome_duplicate_detection();
     test_accept_welcome_null_args();
 

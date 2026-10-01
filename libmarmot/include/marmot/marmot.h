@@ -1282,6 +1282,55 @@ MarmotError marmot_update_group_metadata(Marmot *m,
                                           const MarmotGroupConfig *config,
                                           char **out_commit_json);
 
+/**
+ * marmot_get_self_remove_requirement:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_required: (out): its GroupContext required_capabilities list
+ *   SelfRemove (0x000a): any member may commit a member's leave
+ *   (marmot_self_remove())
+ * @out_upgradable: (out) (optional): a legacy group that does not require it
+ *   yet, and every member's leaf advertises it: an admin can require it with
+ *   marmot_require_self_remove()
+ *
+ * Since 0.12.0 (nostrc-8ndz).  Reads only.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND without MLS state
+ */
+MarmotError marmot_get_self_remove_requirement(Marmot *m, const MarmotGroupId *mls_group_id,
+                                               bool *out_required, bool *out_upgradable);
+
+/**
+ * marmot_require_self_remove:
+ * @m: Marmot instance
+ * @mls_group_id: a legacy-profile group
+ * @out_commit_json: (out) (transfer full): the kind:445 Commit event to
+ *   publish, as for marmot_update_group_metadata()
+ *
+ * Add SelfRemove (0x000a) to the group's required_capabilities: a
+ * GroupContextExtensions Commit with an UpdatePath (RFC 9420 §12.1.7) that
+ * keeps every other extension, as MDK 0.11's upgrade_group_capabilities()
+ * does (since 0.12.0, nostrc-8ndz).  Afterwards members leave by SelfRemove,
+ * which any member commits, instead of a Remove request only an admin
+ * commits; a later invitee's KeyPackage must advertise SelfRemove (MDK's
+ * rule for groups created with it).  Admin-only, like every GroupContext
+ * change.  Pending like any Commit: publish, then
+ * marmot_merge_pending_commit() or marmot_clear_pending_commit().
+ *
+ * Adopted-profile groups are refused (MARMOT_ERR_UNSUPPORTED): libmarmot
+ * makes them with SelfRemove required, its members always leave by it, and
+ * it applies no GroupContextExtensions Commit in them (only AppDataUpdate
+ * changes their GroupContext).
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_ADMIN_ONLY for a non-admin;
+ *   MARMOT_ERR_VALIDATION when SelfRemove is already required;
+ *   MARMOT_ERR_UNSUPPORTED for an adopted group or when a member's leaf does
+ *   not advertise SelfRemove; MARMOT_ERR_OWN_COMMIT_PENDING,
+ *   MARMOT_ERR_LEAVING, MARMOT_ERR_USE_AFTER_EVICTION as for any Commit
+ */
+MarmotError marmot_require_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
+                                       char **out_commit_json);
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-02: Welcome Events
  * ══════════════════════════════════════════════════════════════════════════ */

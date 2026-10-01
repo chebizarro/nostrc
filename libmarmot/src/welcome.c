@@ -263,6 +263,36 @@ refuse_welcome(Marmot *m, const MarmotWelcome *welcome, const char *reason,
     return refusal;
 }
 
+#define ROUTING_ID_HELD_REASON "nostr group routing id already held by another group"
+
+/* nostrc-scki: whether `nostr_group_id` is already the address of a held
+ * group other than `mls_group_id` -- its current one, or one it had before
+ * a routing rotation (an alias, nostrc-qp24.5.1.3).  nostr_group_id is a
+ * public h tag and libmarmot routes an event by it (first match, then the
+ * aliases): a second group at the same address would take the first one's
+ * traffic, which then never decrypts for either.  A malicious inviter who
+ * saw another group's h tag could break that group for us.  The group
+ * itself (a re-invite after a removal) is no collision.  Any group record
+ * counts, an ended one too: its address stays routed to it. */
+static MarmotError
+routing_id_held_elsewhere(Marmot *m, const uint8_t nostr_group_id[32],
+                          const MarmotGroupId *mls_group_id, bool *out_held)
+{
+    *out_held = false;
+    if (!m->storage->find_group_by_nostr_id) return MARMOT_ERR_STORAGE;
+    MarmotGroup *owner = NULL;
+    MarmotError err = m->storage->find_group_by_nostr_id(m->storage->ctx, nostr_group_id,
+                                                         &owner);
+    if (err == MARMOT_OK && !owner) err = MARMOT_ERR_GROUP_NOT_FOUND;
+    if (err == MARMOT_ERR_GROUP_NOT_FOUND || err == MARMOT_ERR_STORAGE_NOT_FOUND)
+        err = marmot_commit_find_group_by_alias(m, nostr_group_id, &owner);
+    if (err == MARMOT_OK && owner)
+        *out_held = !marmot_group_id_equal(&owner->mls_group_id, mls_group_id);
+    marmot_group_free(owner);
+    return err == MARMOT_ERR_GROUP_NOT_FOUND || err == MARMOT_ERR_STORAGE_NOT_FOUND
+               ? MARMOT_OK : err;
+}
+
 /*
  * W17b addendum N1: TRUE when this Welcome is a copy of one we already
  * joined through: we hold MLS state for the group at the Welcome's epoch or
@@ -654,6 +684,18 @@ process_welcome_impl(Marmot *m,
         else if (oerr == MARMOT_OK) {
             if (opened.profile == MARMOT_GROUP_PROFILE_ADOPTED)
                 oerr = adopted_preview(welcome, &opened);
+            /* nostrc-scki: the address is signed here, so a Welcome that
+             * can only be refused on accept is refused now, never listed.
+             * A storage error leaves the check to accept. */
+            bool held = false;
+            MarmotGroupId opened_id = { opened.group_id, opened.group_id_len };
+            if (oerr == MARMOT_OK &&
+                routing_id_held_elsewhere(m, welcome->nostr_group_id, &opened_id, &held) ==
+                    MARMOT_OK &&
+                held) {
+                oerr = MARMOT_ERR_PROTOCOL_GROUP_MISMATCH;
+                why = ROUTING_ID_HELD_REASON;
+            }
             mls_group_free(&opened);
         }
         if (oerr != MARMOT_OK) {
@@ -954,6 +996,21 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
                                           : "missing or malformed marmot_group_data (0xF2EE)",
                                   group_err);
         return group_err;
+    }
+
+    /* nostrc-scki: before anything of this Welcome is stored, its address
+     * must be no other held group's (routing_id_held_elsewhere()). */
+    bool collision = false;
+    MarmotError address_err = routing_id_held_elsewhere(m, group->nostr_group_id,
+                                                        &group->mls_group_id, &collision);
+    if (address_err != MARMOT_OK || collision) {
+        mls_group_free(&mls_group);
+        marmot_group_free(group);
+        marmot_adopted_relays_free(gde_relays, gde_relay_count);
+        return address_err != MARMOT_OK
+                   ? address_err
+                   : refuse_welcome(m, welcome, ROUTING_ID_HELD_REASON,
+                                    MARMOT_ERR_PROTOCOL_GROUP_MISMATCH);
     }
 
     /* Store exporter secret. Mandatory for message encryption after accept. */
