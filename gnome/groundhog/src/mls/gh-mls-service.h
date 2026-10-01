@@ -601,7 +601,10 @@ gboolean gh_mls_service_change_finish(GhMlsService *self, GAsyncResult *result,
  * identity afterwards (UNVERIFIED: relays answered, nothing matched), or
  * FALSE-ish with error: G_IO_ERROR_HOST_UNREACHABLE (no relay answered;
  * nothing recorded), G_IO_ERROR_INVALID_ARGUMENT (not such a member, no
- * discovery relay), GH_MLS_SERVICE_ERROR_INACTIVE. */
+ * discovery relay), G_IO_ERROR_PERMISSION_DENIED (every relay to ask is one
+ * of the group's relays: asking would reveal the group; W24 review A1),
+ * GH_MLS_SERVICE_ERROR_INACTIVE. Group relays are never asked, in either
+ * phase. */
 void gh_mls_service_verify_member_async(GhMlsService *self, GhMlsGroup *group,
                                         const gchar *member, GCancellable *cancellable,
                                         GAsyncReadyCallback callback, gpointer user_data);

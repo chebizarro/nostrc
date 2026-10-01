@@ -297,6 +297,12 @@ test_copy(void)
   g_autoptr(GError) silent = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "x");
   g_autofree gchar *nobody = gh_mls_verify_result_copy(GH_MLS_MEMBER_UNVERIFIED, silent, "Dave");
   g_assert_cmpstr(nobody, ==, "No relay answered, so nothing was checked.");
+  g_autoptr(GError) reveal = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "x");
+  g_autofree gchar *group_only = gh_mls_verify_result_copy(GH_MLS_MEMBER_UNVERIFIED, reveal,
+                                                           "Dave");
+  g_assert_cmpstr(group_only, ==,
+                  "This person’s relays are the group’s relays, so checking would reveal this "
+                  "group.");
 
   GhMlsIdentityCopy ready = gh_mls_identity_copy(GH_MLS_IDENTITY_ENROLLED);
   g_assert_true(ready.ready);

@@ -4435,11 +4435,30 @@ gh_mls_service_verify_member_async(GhMlsService *self, GhMlsGroup *group, const 
     return;
   }
   /* The discovery relays, then the person's own write relays: never the
-   * group's relays, the one place a lookup could be tied to the group. */
-  g_auto(GStrv) relays = discovery_relays(self);
-  if (!relays[0]) {
+   * group's relays, the one place a lookup could be tied to the group --
+   * not even when a discovery or write relay is one of them (W24 review
+   * A1; the lookup drops them in both phases). */
+  g_auto(GStrv) all = discovery_relays(self);
+  if (!all[0]) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                             "No discovery relay to look KeyPackages up on");
+    g_object_unref(task);
+    return;
+  }
+  g_autoptr(GHashTable) group_relays = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                                             NULL);
+  for (guint i = 0; group->relays && group->relays[i]; i++)
+    g_hash_table_add(group_relays, gh_mls_relay_key(group->relays[i]));
+  g_autoptr(GStrvBuilder) usable = g_strv_builder_new();
+  for (guint i = 0; all[i]; i++) {
+    g_autofree gchar *key = gh_mls_relay_key(all[i]);
+    if (!g_hash_table_contains(group_relays, key))
+      g_strv_builder_add(usable, all[i]);
+  }
+  g_auto(GStrv) relays = g_strv_builder_end(usable);
+  if (!relays[0]) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                            "Every relay to ask is one of this group's relays");
     g_object_unref(task);
     return;
   }
@@ -4451,7 +4470,8 @@ gh_mls_service_verify_member_async(GhMlsService *self, GhMlsGroup *group, const 
   g_hash_table_add(self->verifying, g_strdup(account));
   verify_mark(self, account, GH_MLS_MEMBER_UNVERIFIED, GH_MLS_MEMBER_CHECKING);
   gh_mls_key_package_evidence_lookup_async(self->accounts, (const gchar *const *)relays,
-                                           account, self->lookup_deadline, self->cancellable,
+                                           (const gchar *const *)group->relays, account,
+                                           self->lookup_deadline, self->cancellable,
                                            verify_done, task);
 }
 

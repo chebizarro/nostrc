@@ -353,6 +353,9 @@ gh_mls_verify_result_copy(GhMlsMemberIdentity identity, const GError *error, con
       return g_strdup(_("No relay answered, so nothing was checked."));
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT))
       return g_strdup(_("Add a discovery relay in Preferences to verify identities."));
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED))
+      return g_strdup(_("This person’s relays are the group’s relays, so checking would "
+                        "reveal this group."));
     return gh_mls_error_copy(error);
   }
   if (identity == GH_MLS_MEMBER_VERIFIED || identity == GH_MLS_MEMBER_PROVEN)

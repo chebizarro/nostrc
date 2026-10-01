@@ -28,6 +28,7 @@ typedef struct {
   guint timer;
   guint phase;            /* 1: discovery relays, 2: the person's write relays */
   gboolean evidence;      /* a verification lookup: kind 443 too, every candidate back */
+  GHashTable *excluded;   /* relay keys (gh_mls_relay_key()) never asked, both phases */
   GPtrArray *candidates;  /* kind-30443 (and, for evidence, 443) JSON */
   GHashTable *candidate_ids;
   gchar *relay_list;      /* the newest kind 10002 by the person */
@@ -75,12 +76,44 @@ lookup_free(gpointer data)
   g_clear_object(&lookup->accounts);
   g_free(lookup->pubkey);
   g_hash_table_unref(lookup->asked);
+  if (lookup->excluded)
+    g_hash_table_unref(lookup->excluded);
   g_hash_table_unref(lookup->pending);
   g_ptr_array_unref(lookup->candidates);
   g_hash_table_unref(lookup->candidate_ids);
   g_free(lookup->relay_list);
   g_free(lookup->relay_list_id);
   g_free(lookup);
+}
+
+gchar *
+gh_mls_relay_key(const gchar *url)
+{
+  g_autoptr(GUri) uri = url ? g_uri_parse(url, G_URI_FLAGS_NONE, NULL) : NULL;
+  if (!uri || !g_uri_get_host(uri))
+    return url ? g_ascii_strdown(url, -1) : NULL;
+  g_autofree gchar *scheme = g_ascii_strdown(g_uri_get_scheme(uri), -1);
+  g_autofree gchar *host = g_ascii_strdown(g_uri_get_host(uri), -1);
+  gint port = g_uri_get_port(uri);
+  if ((port == 443 && g_str_equal(scheme, "wss")) || (port == 80 && g_str_equal(scheme, "ws")))
+    port = -1;
+  g_autofree gchar *path = g_strdup(g_uri_get_path(uri));
+  gsize n = strlen(path);
+  while (n > 0 && path[n - 1] == '/')
+    path[--n] = '\0';
+  const gchar *query = g_uri_get_query(uri);
+  g_autofree gchar *port_text = port > 0 ? g_strdup_printf(":%d", port) : g_strdup("");
+  return g_strconcat(scheme, "://", host, port_text, path, query ? "?" : "", query ? query : "",
+                     NULL);
+}
+
+static gboolean
+excluded(Lookup *lookup, const gchar *url)
+{
+  if (!lookup->excluded || !url)
+    return FALSE;
+  g_autofree gchar *key = gh_mls_relay_key(url);
+  return key && g_hash_table_contains(lookup->excluded, key);
 }
 
 static gboolean
@@ -352,7 +385,8 @@ start_phase(GTask *task, const gchar *const *urls, gint phase)
   for (guint i = 0; urls[i]; i++) {
     g_autoptr(GError) error = NULL;
     if (g_hash_table_size(lookup->pending) >= MAX_SOURCES ||
-        g_hash_table_contains(lookup->pending, urls[i]) ||
+        /* Never an excluded relay, in either phase (W24 review A1). */
+        g_hash_table_contains(lookup->pending, urls[i]) || excluded(lookup, urls[i]) ||
         !gh_relay_scope_add_url(scope, urls[i], &error))
       continue;
     /* §4.3: a lookup relay learns whom you look up, never who you are. */
@@ -398,7 +432,8 @@ on_cancelled(GCancellable *cancellable, gpointer data)
 
 static void
 lookup_start(GTask *task, GhAccountController *accounts, const gchar *const *discovery_relays,
-             const gchar *pubkey, guint deadline, gboolean evidence, GCancellable *cancellable)
+             const gchar *const *exclude, const gchar *pubkey, guint deadline,
+             gboolean evidence, GCancellable *cancellable)
 {
   g_autofree gchar *lower = pubkey ? g_ascii_strdown(pubkey, -1) : NULL;
   if (!lower_hex64(lower)) {
@@ -409,6 +444,13 @@ lookup_start(GTask *task, GhAccountController *accounts, const gchar *const *dis
   }
   Lookup *lookup = g_new0(Lookup, 1);
   lookup->evidence = evidence;
+  for (guint i = 0; exclude && exclude[i]; i++) {
+    if (!lookup->excluded)
+      lookup->excluded = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    gchar *key = gh_mls_relay_key(exclude[i]);
+    if (key)
+      g_hash_table_add(lookup->excluded, key);
+  }
   lookup->accounts = g_object_ref(accounts);
   lookup->generation = gh_account_controller_get_generation(accounts);
   lookup->pubkey = g_steal_pointer(&lower);
@@ -439,19 +481,20 @@ gh_mls_key_package_lookup_async(GhAccountController *accounts,
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_key_package_lookup_async);
-  lookup_start(task, accounts, discovery_relays, pubkey, deadline, FALSE, cancellable);
+  lookup_start(task, accounts, discovery_relays, NULL, pubkey, deadline, FALSE, cancellable);
 }
 
 void
 gh_mls_key_package_evidence_lookup_async(GhAccountController *accounts,
-                                         const gchar *const *relays, const gchar *pubkey,
+                                         const gchar *const *relays,
+                                         const gchar *const *exclude, const gchar *pubkey,
                                          guint deadline, GCancellable *cancellable,
                                          GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_key_package_evidence_lookup_async);
-  lookup_start(task, accounts, relays, pubkey, deadline, TRUE, cancellable);
+  lookup_start(task, accounts, relays, exclude, pubkey, deadline, TRUE, cancellable);
 }
 
 GPtrArray *
