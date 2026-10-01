@@ -666,8 +666,10 @@ for both profiles; it replaces the one-parent subset.
   state is decrypted on that state rebuilt by replay, recorded, and is
   `MARMOT_ERR_NIP44` (offer it again later) until its branch wins; then it
   is delivered. Offered again, it costs little: the rebuilt states are
-  cached for the stored record and tip, and a message whose sender leaf
-  (read from its sender data alone) witnesses its state already rebuilds
+  cached for the tip, retained states and candidates they came from (a
+  late message, which rewrites the record, keeps them; a new tip or a
+  changed candidate set drops them), and a message whose sender leaf (read
+  from its sender data alone) witnesses its state already rebuilds
   nothing. The witnesses of a branch that lost a reorg stay (MDK 0.11 no
   longer re-admits withdrawn messages as witnesses, so a later contest of
   the same old branch can score differently there).
@@ -701,7 +703,9 @@ for both profiles; it replaces the one-parent subset.
   0.12 SONAME covers it). `MARMOT_ERR_RESOURCE_REFUSED` (-54),
   `MARMOT_ERR_COMMIT_RETAINED` (-55). `MarmotStorage` grows at its end
   (`messages_in_epochs`, optional): a storage built against an older header
-  must be rebuilt (and zero-initialized, as libmarmot's own are).
+  must be rebuilt (and zero-initialized, as libmarmot's own are). A storage
+  may keep less of a saved message than all of it: libmarmot reads back
+  only its id, group, epoch and state (Groundhog keeps no plaintext).
 - **Storage.** The retained-parent record gains the W25 trailer (marker
   0xC2: witnesses carry their leaf, branch secrets their sender-data
   secret); libmarmot
