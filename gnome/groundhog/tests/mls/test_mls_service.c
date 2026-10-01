@@ -1071,6 +1071,43 @@ test_same_text_two_groups(void)
 }
 
 
+/* nostrc-2lrz, review W24 M2: libmarmot dates a group's events strictly
+ * after each other, within a bounded lead over the clock. A burst of
+ * messages, then a Commit, through a group relay that refuses events dated
+ * more than a minute ahead (relays do: strfry past 900 s, relayd past 600
+ * s): every one is accepted, and Bob reads them all and follows the Commit. */
+static void
+test_burst_then_commit_accepted(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  w.g.max_future_seconds = 60;
+  GhMlsGroup *ga = create_group(alice, "Burst", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  enum { BURST = 90 };
+  for (guint i = 0; i < BURST; i++) {
+    g_autofree gchar *text = g_strdup_printf("burst %u", i);
+    send_text(alice, ga, text);
+  }
+  StatusWait last = { alice, room, "burst 89" };
+  spin_until(sent, &last, "the last message of the burst sent");
+  OpWait renamed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "After the burst", NULL, NULL,
+                                       on_changed, &renamed);
+  change(alice, &renamed);
+  g_assert_cmpuint(w.g.future_refused, ==, 0);
+  NameWait bob_name = { gb, "After the burst" };
+  spin_until(name_is, &bob_name, "Bob follows the Commit");
+  wait_message(bob, room, "burst 0");
+  wait_message(bob, room, "burst 89");
+  world_down(&w);
+}
+
 static gboolean
 is_admin(gpointer data)
 {
@@ -2130,6 +2167,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",
                   test_send_republished_after_restart);
   g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
+  g_test_add_func("/groundhog/mls-service/burst-then-commit-accepted",
+                  test_burst_then_commit_accepted);
   g_test_add_func("/groundhog/mls-service/second-admin-invites", test_second_admin_invites);
   g_test_add_func("/groundhog/mls-service/catch-up-2-commits", test_catch_up_2);
   g_test_add_func("/groundhog/mls-service/catch-up-4-commits", test_catch_up_4);

@@ -85,6 +85,9 @@ struct _WireRelay {
   guint max_limit;           /* serve: a REQ's stored answer per filter, at most; 0: none */
   gboolean stall_pages;      /* serve: a REQ with an until is never answered (no EOSE) */
   guint stalled_reqs;
+  gint64 max_future_seconds; /* serve: an EVENT dated further ahead of the clock is
+                              * refused, as relays do (strfry, relayd); 0: none */
+  guint future_refused;      /* EVENTs refused for it */
 };
 
 /* One text frame on one of the relay's connections. */
@@ -497,8 +500,22 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
       wire_send_ok(connection, event_id, FALSE, "auth-required: sign in to publish");
       return TRUE;
     }
-    relay->events++;
     g_autofree gchar *json = wire_frame_payload(text, "[\"EVENT\",");
+    if (relay->max_future_seconds > 0) {
+      NostrEvent *event = nostr_event_new();
+      gboolean ahead =
+        nostr_event_deserialize_signed(event, json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+        nostr_event_get_created_at(event) >
+          g_get_real_time() / G_USEC_PER_SEC + relay->max_future_seconds;
+      nostr_event_free(event);
+      if (ahead) {
+        relay->future_refused++;
+        wire_send_ok(connection, event_id, FALSE,
+                     "invalid: created_at is too far in the future");
+        return TRUE;
+      }
+    }
+    relay->events++;
     WireStored *stored = wire_keep(relay, json);
     wire_send_ok(connection, event_id, TRUE, stored ? "" : "duplicate: already have it");
     if (relay->on_event)

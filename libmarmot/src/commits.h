@@ -167,14 +167,12 @@ MarmotError marmot_group_apply_group_data(MarmotGroup *group,
  * NIP-44-encrypted with the exporter secret of the epoch the Commit was
  * created in (`source_exporter`), exactly like application messages
  * (MIP-03), routed by the `h` tag, and signed by a fresh ephemeral key.
- * Returns NULL on failure.
+ * Dated `created_at`, which the caller reserves with
+ * marmot_next_group_event_time() (nostrc-2lrz).  Returns NULL on failure.
  */
 char *marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
                                 const uint8_t source_exporter[32],
-                                const uint8_t nostr_group_id[32]);
-char *marmot_commit_build_event_at(const uint8_t *commit_msg, size_t commit_len,
-                                   const uint8_t source_exporter[32],
-                                   const uint8_t nostr_group_id[32], int64_t created_at);
+                                const uint8_t nostr_group_id[32], int64_t created_at);
 
 /**
  * Sign `event` with a freshly generated secp256k1 key that is wiped

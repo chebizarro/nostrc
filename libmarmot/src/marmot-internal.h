@@ -64,14 +64,18 @@ int marmot_constant_time_eq(const uint8_t *a, const uint8_t *b, size_t n);
 int64_t marmot_now(void);
 
 /** The created_at of the next kind:445 event we publish to this group: now,
- * or one second after the newest we published or applied, whichever is later
- * (nostrc-2lrz).  Reserved in storage: call it inside the operation's
- * storage transaction, which undoes the reservation if the operation fails. */
+ * or a second after the group's newest event we published or applied,
+ * within a bounded lead over our clock (nostrc-2lrz; see marmot.c).  An
+ * application message (`commit` false) is never dated at or before a
+ * Commit; a Commit, after every event.  Reserved in storage: call it inside
+ * the operation's storage transaction, which undoes the reservation if the
+ * operation fails.  MARMOT_ERR_EVENT_RATE (Commits only): the bound is
+ * reached, retry in a second. */
 MarmotError marmot_next_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
-                                         int64_t *created_at);
+                                         bool commit, int64_t *created_at);
 
-/** Another member's Commit with this created_at was applied: our next event
- * follows it (as far as a minute ahead of our clock). */
+/** Another member's Commit, or the Welcome that added us, has this
+ * created_at: our next event follows it (up to a minute ahead of our clock). */
 MarmotError marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
                                             int64_t created_at);
 

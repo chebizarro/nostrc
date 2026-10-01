@@ -79,36 +79,73 @@ marmot_now(void)
     return (int64_t)time(NULL);
 }
 
-/* The newest created_at of the group's kind:445 events we published, or of
- * Commits we applied, per nostr_group_id (nostrc-2lrz).  MDK 0.8 never
- * retries a kind:445 it once failed, so a Commit of epoch n+1 it reads
- * before the one of epoch n strands it for good; created_at is the only
- * order relays and clients give events, and a tie falls back to the id. */
+/* created_at of a group's kind:445 events (nostrc-2lrz).
+ *
+ * MDK 0.8 never retries a kind:445 it once failed, so an event of epoch n+1
+ * it reads before the Commit that opens epoch n+1 strands it for good, and
+ * created_at is the only order relays and clients give events (a tie falls
+ * back to the id).  So what we publish to a group is dated after the
+ * group's previous event, and after every Commit we applied.
+ *
+ * Kept per nostr_group_id (immutable, MIP-01) in mls_kv: two big-endian
+ * int64, `last`, the newest created_at we published or applied, and
+ * `commit`, the newest of a Commit we published or applied or of the
+ * Welcome that added us.  A row of another shape is treated as absent and
+ * overwritten (review W24 N2).
+ *
+ * The lead over our clock is bounded (review W24 M2): relays refuse events
+ * dated too far ahead (strfry by default past 900 s, nostrc's relayd past
+ * 600 s), and a lead is public timing metadata (README, "Timing").
+ *   - Nothing is dated more than GROUP_EVENT_MAX_LEAD ahead, and another
+ *     member's Commit (or the Welcome that added us) moves us at most that
+ *     far: we follow Commits as far ahead as anyone may date them.
+ *   - An application message runs at most GROUP_EVENT_SOFT_LEAD ahead on
+ *     its own: past it, messages share a second.  They are of one epoch,
+ *     which MDK reads in any order; a message is never dated at or before a
+ *     Commit.  So a Commit always finds a second after a burst of messages.
+ *   - A Commit that cannot be dated within the bound is refused with
+ *     MARMOT_ERR_EVENT_RATE (retry in a second): Commits made back to back
+ *     for half a minute, or ours right after another member's Commit dated
+ *     at the bound.  A message is never refused: past the bound it is dated
+ *     at it, sharing a second only with a Commit dated there (a member far
+ *     ahead of our clock, or such a run of Commits). */
 static const char GROUP_EVENT_TIME_LABEL[] = "group_event_created_at";
+#define GROUP_EVENT_SOFT_LEAD 30
+#define GROUP_EVENT_MAX_LEAD  60
+
+typedef struct {
+    int64_t last, commit;
+} GroupEventTimes;
 
 static MarmotError
-group_event_time_load(Marmot *m, const uint8_t nostr_group_id[32], int64_t *last)
+group_event_times_load(Marmot *m, const uint8_t nostr_group_id[32], GroupEventTimes *t)
 {
-    *last = 0;
+    t->last = t->commit = 0;
     uint8_t *data = NULL;
     size_t len = 0;
     MarmotError err = m->storage->mls_load(m->storage->ctx, GROUP_EVENT_TIME_LABEL,
                                            nostr_group_id, 32, &data, &len);
     if (err == MARMOT_ERR_STORAGE_NOT_FOUND) return MARMOT_OK;
     if (err != MARMOT_OK) return err;
-    uint64_t v = 0;
-    for (size_t i = 0; data && len == 8 && i < 8; i++) v = (v << 8) | data[i];
+    uint64_t v[2] = { 0, 0 };
+    for (size_t i = 0; data && len == 16 && i < 16; i++)
+        v[i / 8] = (v[i / 8] << 8) | data[i];
     free(data);
-    if (len != 8 || v > (uint64_t)INT64_MAX) return MARMOT_ERR_STORAGE;
-    *last = (int64_t)v;
+    if (len == 16 && v[0] <= (uint64_t)INT64_MAX && v[1] <= v[0]) {
+        t->last = (int64_t)v[0];
+        t->commit = (int64_t)v[1];
+    }
     return MARMOT_OK;
 }
 
 static MarmotError
-group_event_time_store(Marmot *m, const uint8_t nostr_group_id[32], int64_t t)
+group_event_times_store(Marmot *m, const uint8_t nostr_group_id[32], const GroupEventTimes *t)
 {
-    uint8_t encoded[8];
-    for (size_t i = 0; i < 8; i++) encoded[i] = (uint8_t)((uint64_t)t >> (56 - 8 * i));
+    uint8_t encoded[16];
+    for (size_t i = 0; i < 8; i++) {
+        encoded[i] = (uint8_t)((uint64_t)t->last >> (56 - 8 * i));
+        encoded[8 + i] = (uint8_t)((uint64_t)t->commit >> (56 - 8 * i));
+    }
     return m->storage->mls_store(m->storage->ctx, GROUP_EVENT_TIME_LABEL, nostr_group_id, 32,
                                  encoded, sizeof(encoded));
 }
@@ -121,26 +158,29 @@ group_event_time_usable(const Marmot *m, const uint8_t *nostr_group_id)
 }
 
 MarmotError
-marmot_next_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
+marmot_next_group_event_time(Marmot *m, const uint8_t nostr_group_id[32], bool commit,
                              int64_t *created_at)
 {
     if (!created_at || !group_event_time_usable(m, nostr_group_id))
         return MARMOT_ERR_INVALID_ARG;
-    int64_t last = 0;
-    MarmotError err = group_event_time_load(m, nostr_group_id, &last);
+    GroupEventTimes t;
+    MarmotError err = group_event_times_load(m, nostr_group_id, &t);
     if (err != MARMOT_OK) return err;
-    if (last == INT64_MAX) return MARMOT_ERR_STORAGE;
-    int64_t next = marmot_now();
-    if (next <= last) next = last + 1;
-    err = group_event_time_store(m, nostr_group_id, next);
+    int64_t now = marmot_now();
+    int64_t next = t.last < now ? now : t.last + 1;
+    if (!commit && next > now + GROUP_EVENT_SOFT_LEAD)
+        next = t.commit < now + GROUP_EVENT_SOFT_LEAD ? now + GROUP_EVENT_SOFT_LEAD
+                                                       : t.commit + 1;
+    if (next > now + GROUP_EVENT_MAX_LEAD) {
+        if (commit) return MARMOT_ERR_EVENT_RATE;
+        next = now + GROUP_EVENT_MAX_LEAD;
+    }
+    if (next > t.last) t.last = next;
+    if (commit) t.commit = next;
+    err = group_event_times_store(m, nostr_group_id, &t);
     if (err == MARMOT_OK) *created_at = next;
     return err;
 }
-
-/* How far ahead of our clock another member's Commit may lift our next
- * event: a burst of events in one second runs ahead one second per event,
- * and a peer's clock must not push ours past what relays accept. */
-#define GROUP_EVENT_MAX_LEAD 60
 
 MarmotError
 marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
@@ -149,10 +189,12 @@ marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
     if (!group_event_time_usable(m, nostr_group_id)) return MARMOT_ERR_INVALID_ARG;
     int64_t cap = marmot_now() + GROUP_EVENT_MAX_LEAD;
     if (created_at > cap) created_at = cap;
-    int64_t last = 0;
-    MarmotError err = group_event_time_load(m, nostr_group_id, &last);
-    if (err != MARMOT_OK || created_at <= last) return err;
-    return group_event_time_store(m, nostr_group_id, created_at);
+    GroupEventTimes t;
+    MarmotError err = group_event_times_load(m, nostr_group_id, &t);
+    if (err != MARMOT_OK || created_at <= t.commit) return err;
+    t.commit = created_at;
+    if (created_at > t.last) t.last = created_at;
+    return group_event_times_store(m, nostr_group_id, &t);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

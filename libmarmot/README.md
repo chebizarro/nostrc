@@ -180,6 +180,47 @@ else
     rc = marmot_clear_pending_commit(m, group_id);
 ```
 
+#### Timing of kind:445 events
+
+MDK 0.8 reads a group's kind:445 in created_at order and never retries
+one it failed, so libmarmot dates them in order (nostrc-2lrz):
+
+- Each event we publish to a group is dated after the group's previous
+  one, and a Commit after every event. An application message is never
+  dated at or before a Commit: not ours, not one of another member we
+  applied, not the one that added us.
+- Nothing is dated more than 60 s ahead of our clock. Application messages
+  run at most 30 s ahead on their own; past that, messages share a second
+  (of one epoch, which MDK reads in any order). So a Commit always finds a
+  later second after a burst of messages, well inside what relays accept
+  (strfry refuses events more than 900 s ahead by default, nostrc's relayd
+  600 s).
+- Another member's Commit moves us at most 60 s ahead. One dated further
+  ahead (a member whose clock runs fast) is followed only that far: our
+  events after it may be dated before it.
+- A Commit that cannot be dated within the bound is refused with
+  `MARMOT_ERR_EVENT_RATE`; retry in a second.
+
+**What this reveals (review W24 L4).** created_at is public: relays, and
+anyone fetching the group's kind:445 by its `h` tag, see it. Per-event
+ephemeral keys (MIP-03) keep observers from linking a sender's events, but
+the dating adds two signals, both bounded by the 60 s lead:
+
+- *Sender chains.* While a member's events run ahead of the clock after a
+  burst (up to 30 s), its later events carry consecutive seconds ahead of
+  their arrival, while other members' carry about the arrival time. An
+  observer can link that member's events until the lead runs out (1 s per
+  second).
+- *Epoch markers.* After a Commit dated ahead, the members that applied
+  it date their next events after it: an observer learns which events
+  were sent after that Commit, and roughly when each member caught up.
+
+A relay usually links events by connection anyway, and created_at already
+carried each device's clock offset. A member can learn nothing this way it
+does not know as a member. We accept the trade-off for interoperability with
+MDK 0.8; publishing at a jittered or coarser created_at would not keep the
+order MDK needs.
+
 ### MIP-04: Encrypted Media
 
 ```c
@@ -316,15 +357,23 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   stays pending (W23 review L1). A refusal whose failed state cannot be
   saved records nothing, leaves the Welcome pending and returns the save's
   error (L2).
-- **A group's kind:445 events carry strictly increasing created_at
-  (nostrc-2lrz).** MDK 0.8 never retries a kind:445 it failed once, so a
-  Commit of epoch n+1 it reads before the one of epoch n strands it, and
-  created_at is the only order relays give. Every Commit and application
-  message we publish to a group is dated after the previous one, and after
-  the newest Commit of another member we applied (at most a minute ahead of
-  our clock). The floor is kept per `nostr_group_id` in `mls_kv`, label
-  `group_event_created_at`; group snapshots leave it alone, since a Commit
-  rolled back was still published.
+- **A group's kind:445 events are dated in order (nostrc-2lrz).** MDK 0.8
+  never retries a kind:445 it failed once, so an event of epoch n+1 it
+  reads before the Commit that opens epoch n+1 strands it, and created_at
+  is the only order relays give. What we publish to a group is dated after
+  the group's previous event, after every Commit of another member we
+  applied, and, for a new member, after the Commit that added it (the
+  Welcome rumor carries that Commit's created_at). The lead over our clock
+  is bounded (review W24 M2); see "Timing of kind:445 events" above for
+  the rules and what they reveal.
+  - New error `MARMOT_ERR_EVENT_RATE`: a Commit that would be dated more
+    than a minute ahead (Commits back to back for half a minute, or right
+    after another member's Commit dated that far ahead). Retry in a
+    second; nothing was created. Messages are never refused.
+  - `mls_kv` label `group_event_created_at`, keyed by `nostr_group_id`:
+    the newest event and the newest Commit. A row of another shape is
+    rewritten. Group snapshots leave it alone, since a Commit rolled back
+    was still published.
 - **Tests for Commits sent as PrivateMessages (nostrc-dkiq, W23 review
   M1).** OpenMLS's message-protection `commit_priv` vector is opened as
   `private_commit_open()` does. Through `marmot_process_message()`, a

@@ -503,7 +503,7 @@ self_update(Member *x, const MarmotGroupId *gid)
     OK(marmot_get_group(x->m, gid, &g));
     char *json = marmot_commit_build_event(r.commit_data, r.commit_len,
                                            pre.epoch_secrets.exporter_secret,
-                                           g->nostr_group_id);
+                                           g->nostr_group_id, marmot_now());
     CHECK(json, "build event");
     OK(marmot_commit_persist(x->m, &pre, &post, &key, gde, g));
     marmot_group_free(g);
@@ -520,7 +520,7 @@ event_for_commit(const MlsCommitResult *r, const uint8_t exporter[32],
                  const uint8_t nostr_gid[32])
 {
     char *json = marmot_commit_build_event(r->commit_data, r->commit_len, exporter,
-                                           nostr_gid);
+                                           nostr_gid, marmot_now());
     CHECK(json, "build event");
     return json;
 }
@@ -2869,7 +2869,7 @@ forge_add_commit(Member *x, const MarmotGroupId *gid, const MlsKeyPackage *kp,
     memset(&add, 0, sizeof(add));
     CHECK(mls_group_add_member(&g, kp, &add) == 0, "MLS Add");
     char *json = marmot_commit_build_event(add.commit_data, add.commit_len, exporter,
-                                           nostr_gid);
+                                           nostr_gid, marmot_now());
     CHECK(json, "Commit event");
     mls_add_result_clear(&add);
     mls_group_free(&g);
@@ -4963,7 +4963,7 @@ private_commit(Member *x, const MarmotGroupId *gid, const uint8_t nostr_gid[32],
     uint8_t exporter[32];
     size_t len = 0;
     uint8_t *msg = private_commit_bytes(x, gid, kp, o, &len, exporter);
-    char *json = marmot_commit_build_event(msg, len, exporter, nostr_gid);
+    char *json = marmot_commit_build_event(msg, len, exporter, nostr_gid, marmot_now());
     CHECK(json, "Commit event");
     sodium_memzero(exporter, sizeof(exporter));
     free(msg);
@@ -5292,6 +5292,154 @@ test_group_events_have_strictly_increasing_created_at(void)
     trio_clear(&t);
 }
 
+/* The lead over our clock is bounded (review W24 M2): a burst of messages
+ * runs at most 30 s ahead, then shares a second; the Commit after it still
+ * finds a later second within a minute, which relays take; only Commits
+ * made faster than that are refused (MARMOT_ERR_EVENT_RATE), creating
+ * nothing.  Another member applying the Commit dates its own events after
+ * it, and so does a member the Commit adds (review W24 L3). */
+static void
+test_group_event_lead_is_bounded(void)
+{
+    Trio t;
+    trio_init(&t);
+    enum { BURST = 120 };
+    int64_t prev = 0;
+    size_t increasing = 0;
+    for (int i = 0; i < BURST; i++) {
+        char text[32];
+        snprintf(text, sizeof(text), "burst %d", i);
+        char *ev = app_message(&t.alice, &t.gid, text);
+        int64_t at = created_at_of(ev);
+        CHECK(at <= marmot_now() + 30, "message %d dated %" PRId64 " s ahead", i,
+              at - marmot_now());
+        CHECK(at >= prev, "message %d before message %d", i, i - 1);
+        if (at > prev) increasing++;
+        prev = at;
+        free(ev);
+    }
+    /* Strictly increasing up to the soft lead (the trio's Commits already
+     * moved the floor a second or two). */
+    CHECK(increasing >= 25, "the first messages are strictly increasing: %zu", increasing);
+
+    /* Dave's KeyPackage, then the Commit after the burst: one adding him. */
+    Member dave;
+    member_init(&dave, "Dave");
+    char *dave_kp = key_package(&dave);
+    const char *kps[] = { dave_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &welcomes, &n, &add));
+    merge(&t.alice, &t.gid);
+    int64_t add_at = created_at_of(add);
+    CHECK(add_at > prev && add_at <= marmot_now() + 60,
+          "the Commit after the burst: %" PRId64 " s after its last message, %" PRId64
+          " s ahead", add_at - prev, add_at - marmot_now());
+    NostrEvent *rumor = nostr_event_new();
+    CHECK(rumor && nostr_event_deserialize_compact(rumor, welcomes[0], NULL) == 1, "rumor");
+    CHECK(nostr_event_get_created_at(rumor) == add_at, "the Welcome is dated as its Commit");
+    nostr_event_free(rumor);
+
+    expect_commit(&t.bob, add, "the Add after the burst");
+    char *bob_message = app_message(&t.bob, &t.gid, "after the Add");
+    CHECK(created_at_of(bob_message) > add_at, "Bob's message after the Add");
+    join(&dave, welcomes[0]);
+    char *dave_message = app_message(&dave, &t.gid, "hi");
+    CHECK(created_at_of(dave_message) > add_at, "Dave's first message after his Add");
+
+    /* Commits back to back reach the bound and are refused, nothing made. */
+    MarmotError err = MARMOT_OK;
+    int64_t last_commit = add_at;
+    for (int i = 0; i < 1000 && err == MARMOT_OK; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "Rename %d", i);
+        MarmotGroupConfig cfg = {0};
+        cfg.name = name;
+        char *commit = NULL;
+        err = marmot_update_group_metadata(t.alice.m, &t.gid, &cfg, &commit);
+        if (err != MARMOT_OK) {
+            CHECK(!commit, "no Commit when refused");
+            break;
+        }
+        merge(&t.alice, &t.gid);
+        int64_t at = created_at_of(commit);
+        CHECK(at > last_commit && at <= marmot_now() + 60, "Commit %d in order and bound", i);
+        last_commit = at;
+        free(commit);
+    }
+    CHECK(err == MARMOT_ERR_EVENT_RATE, "Commits back to back: %d (%s)", err,
+          marmot_error_string(err));
+    char *pending = NULL;
+    bool live = false;
+    CHECK(marmot_get_pending_commit(t.alice.m, &t.gid, &pending, &live) == MARMOT_OK &&
+          !pending, "the refused Commit left nothing pending");
+
+    free(bob_message);
+    free(dave_message);
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    free(dave_kp);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
+/* A member dating its Commit far ahead moves the others at most a minute
+ * ahead of their clocks (review W24 M2): their messages stay within the
+ * bound, and their own Commit waits for it rather than leaving it. */
+static void
+test_group_event_peer_lead_capped(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *commit = rename_group(&t.alice, &t.gid, "Ahead");
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, commit, NULL) == 1, "parse");
+    nostr_event_set_created_at(ev, marmot_now() + 100000);
+    CHECK(marmot_sign_ephemeral(ev) == 0, "re-sign");
+    char *ahead = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    expect_commit(&t.bob, ahead, "a Commit dated a day ahead");
+    for (int i = 0; i < 3; i++) {
+        char *msg = app_message(&t.bob, &t.gid, "after it");
+        CHECK(created_at_of(msg) <= marmot_now() + 60, "Bob's message %d within the bound", i);
+        free(msg);
+    }
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Bob's";
+    char *bob_commit = NULL;
+    MarmotError err = marmot_update_group_metadata(t.bob.m, &t.gid, &cfg, &bob_commit);
+    CHECK(err == MARMOT_ERR_EVENT_RATE ||
+          (err == MARMOT_OK && created_at_of(bob_commit) <= marmot_now() + 60),
+          "Bob's Commit waits for the bound: %d", err);
+    free(bob_commit);
+    free(ahead);
+    free(commit);
+    trio_clear(&t);
+}
+
+/* A floor row of another shape (an earlier format, a torn write) does not
+ * block the group: it is read as absent and rewritten (review W24 N2). */
+static void
+test_group_event_floor_repairs(void)
+{
+    Trio t;
+    trio_init(&t);
+    static const uint8_t junk[] = { 0x01, 0x02, 0x03 };
+    MarmotStorage *s = t.alice.m->storage;
+    OK(s->mls_store(s->ctx, "group_event_created_at", t.nostr_gid, 32, junk, sizeof(junk)));
+    char *ev = app_message(&t.alice, &t.gid, "after junk");
+    CHECK(created_at_of(ev) >= marmot_now() - 1, "dated now");
+    uint8_t *row = NULL;
+    size_t len = 0;
+    OK(s->mls_load(s->ctx, "group_event_created_at", t.nostr_gid, 32, &row, &len));
+    CHECK(len == 16, "the row is rewritten");
+    free(row);
+    free(ev);
+    trio_clear(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -5306,6 +5454,9 @@ main(int argc, char **argv)
     RUN(test_rename_reaches_every_member);
     RUN(test_events_signed_by_fresh_ephemeral_keys);
     RUN(test_group_events_have_strictly_increasing_created_at);
+    RUN(test_group_event_lead_is_bounded);
+    RUN(test_group_event_peer_lead_capped);
+    RUN(test_group_event_floor_repairs);
     RUN(test_private_message_commit_applies);
     RUN(test_private_message_commit_forgeries_rejected);
     RUN(test_private_message_commit_epoch_and_generation);

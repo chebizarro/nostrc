@@ -842,9 +842,9 @@ marmot_sign_ephemeral(NostrEvent *event)
 }
 
 char *
-marmot_commit_build_event_at(const uint8_t *commit_msg, size_t commit_len,
-                             const uint8_t source_exporter[32],
-                             const uint8_t nostr_group_id[32], int64_t created_at)
+marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
+                          const uint8_t source_exporter[32],
+                          const uint8_t nostr_group_id[32], int64_t created_at)
 {
     if (!commit_msg || commit_len == 0 || !source_exporter || !nostr_group_id)
         return NULL;
@@ -876,15 +876,6 @@ marmot_commit_build_event_at(const uint8_t *commit_msg, size_t commit_len,
     if (event) nostr_event_free(event);
     free(content);
     return json;
-}
-
-char *
-marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
-                          const uint8_t source_exporter[32],
-                          const uint8_t nostr_group_id[32])
-{
-    return marmot_commit_build_event_at(commit_msg, commit_len, source_exporter,
-                                         nostr_group_id, marmot_now());
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

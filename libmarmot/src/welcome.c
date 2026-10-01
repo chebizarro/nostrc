@@ -219,6 +219,21 @@ welcome_sender(const MarmotWelcome *w, uint8_t out[32])
     return ok;
 }
 
+/* The Welcome rumor's created_at: the inviter dates it as the Commit that
+ * adds us (nostrc-2lrz, review W24 L3); 0 when unknown. */
+static int64_t
+welcome_created_at(const MarmotWelcome *w)
+{
+    if (!w->event_json) return 0;
+    NostrEvent rumor;
+    memset(&rumor, 0, sizeof(rumor));
+    int64_t t = nostr_event_deserialize_compact(&rumor, w->event_json, NULL)
+                    ? rumor.created_at : 0;
+    free(rumor.id); free(rumor.pubkey); free(rumor.content);
+    free(rumor.sig); nostr_tags_free(rumor.tags);
+    return t;
+}
+
 static MarmotError
 welcome_tree_bound(const Marmot *m, const MlsGroup *g, uint32_t signer_leaf,
                    const MarmotWelcome *welcome)
@@ -712,6 +727,10 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
         goto fail;
     /* Members again: an earlier removal (nostrc-xrya) no longer holds. */
     err = marmot_commit_clear_removal(m, &group->mls_group_id);
+    if (err != MARMOT_OK)
+        goto fail;
+    /* Our first events follow the Commit that added us. */
+    err = marmot_observe_group_event_time(m, group->nostr_group_id, welcome_created_at(welcome));
     if (err != MARMOT_OK)
         goto fail;
 

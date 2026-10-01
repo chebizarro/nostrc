@@ -39,6 +39,7 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_MISSING_RUMOR_EVENT_ID:  return "missing rumor event ID";
     case MARMOT_ERR_AUTHOR_MISMATCH:        return "author mismatch";
     case MARMOT_ERR_INVALID_TIMESTAMP:       return "invalid event timestamp";
+    case MARMOT_ERR_EVENT_RATE:              return "too many group events too fast; retry later";
 
     /* Group */
     case MARMOT_ERR_GROUP:                   return "group error";

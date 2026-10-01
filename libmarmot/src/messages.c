@@ -660,7 +660,7 @@ create_message_impl(Marmot *m,
     /* ── 4. Build kind:445 event ──────────────────────────────────────── */
     /* Dated after the group's previous event (nostrc-2lrz). */
     int64_t created_at = 0;
-    MarmotError time_err = marmot_next_group_event_time(m, group->nostr_group_id,
+    MarmotError time_err = marmot_next_group_event_time(m, group->nostr_group_id, false,
                                                         &created_at);
     if (time_err != MARMOT_OK) {
         free(nip44_ciphertext);

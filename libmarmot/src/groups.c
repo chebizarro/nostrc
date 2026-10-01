@@ -269,7 +269,8 @@ build_welcome_rumor(const uint8_t *welcome_data, size_t welcome_len,
                      const char *group_description,
                      const uint8_t (*admin_pubkeys)[32], size_t admin_count,
                      size_t member_count,
-                     const char **relay_urls, size_t relay_count)
+                     const char **relay_urls, size_t relay_count,
+                     int64_t created_at)
 {
     /* Welcome rumor is a kind:444 unsigned event with:
      * - pubkey: the sender's account (NIP-59: the seal's author). The joiner
@@ -293,7 +294,9 @@ build_welcome_rumor(const uint8_t *welcome_data, size_t welcome_len,
     free(sender_hex);
     nostr_event_set_kind(event, MARMOT_KIND_WELCOME);
     nostr_event_set_content(event, b64_content);
-    nostr_event_set_created_at(event, (int64_t)time(NULL));
+    /* Dated as the Commit that adds the joiner, whose first events follow it
+     * (nostrc-2lrz, review W24 L3). */
+    nostr_event_set_created_at(event, created_at);
     free(b64_content);
 
     NostrTags *tags = nostr_tags_new(0);
@@ -479,14 +482,15 @@ build_welcome_rumors(const MlsAddResult *add, const uint8_t sender_pubkey[32],
                      const char *name, const char *description,
                      const uint8_t (*admins)[32], size_t admin_count,
                      size_t member_count, const char **relay_urls,
-                     size_t relay_count, char **out)
+                     size_t relay_count, int64_t created_at, char **out)
 {
     for (size_t i = 0; i < count; i++) {
         char *kp_event_id = extract_event_id_hex(kp_event_jsons[i]);
         out[i] = build_welcome_rumor(add->welcome_data, add->welcome_len, sender_pubkey,
                                      kp_event_id,
                                      nostr_group_id, name, description, admins,
-                                     admin_count, member_count, relay_urls, relay_count);
+                                     admin_count, member_count, relay_urls, relay_count,
+                                     created_at);
         free(kp_event_id);
         if (!out[i]) return MARMOT_ERR_EVENT_BUILD;
     }
@@ -604,18 +608,19 @@ create_group_impl(Marmot *m,
             return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
         }
         if (rc == 0) {
-            err = build_welcome_rumors(&add_result, creator_pubkey, key_package_event_jsons,
-                                       kp_count,
-                                       nostr_group_id, config->name, config->description,
-                                       (const uint8_t (*)[32])config->admin_pubkeys,
-                                       config->admin_count, mls_group.tree.n_leaves,
-                                       (const char **)config->relay_urls,
-                                       config->relay_count, result->welcome_rumor_jsons);
             int64_t created_at = 0;
+            err = marmot_next_group_event_time(m, nostr_group_id, true, &created_at);
             if (err == MARMOT_OK)
-                err = marmot_next_group_event_time(m, nostr_group_id, &created_at);
+                err = build_welcome_rumors(&add_result, creator_pubkey,
+                                           key_package_event_jsons, kp_count,
+                                           nostr_group_id, config->name, config->description,
+                                           (const uint8_t (*)[32])config->admin_pubkeys,
+                                           config->admin_count, mls_group.tree.n_leaves,
+                                           (const char **)config->relay_urls,
+                                           config->relay_count, created_at,
+                                           result->welcome_rumor_jsons);
             if (err == MARMOT_OK)
-                result->evolution_event_json = marmot_commit_build_event_at(
+                result->evolution_event_json = marmot_commit_build_event(
                     add_result.commit_data, add_result.commit_len,
                     source_exporter, nostr_group_id, created_at);
             if (err == MARMOT_OK && !result->evolution_event_json)
@@ -767,28 +772,38 @@ storage_can_commit(const MarmotStorage *s)
 static MarmotError
 finish_local_commit(Marmot *m, MarmotGroup *group,
                     const MlsGroup *pre, const MlsGroup *post,
-                    const uint8_t *commit, size_t commit_len,
+                    const uint8_t *commit, size_t commit_len, int64_t created_at,
                     const MarmotUnsentWelcome *welcomes, size_t welcome_count,
                     char **out_commit_json)
 {
     if (!commit || commit_len == 0) return MARMOT_ERR_MLS;
-    int64_t created_at = 0;
-    MarmotError err = marmot_next_group_event_time(m, group->nostr_group_id, &created_at);
-    if (err != MARMOT_OK) return err;
-    char *json = marmot_commit_build_event_at(commit, commit_len,
-                                              pre->epoch_secrets.exporter_secret,
-                                              group->nostr_group_id, created_at);
+    char *json = marmot_commit_build_event(commit, commit_len,
+                                           pre->epoch_secrets.exporter_secret,
+                                           group->nostr_group_id, created_at);
     if (!json) return MARMOT_ERR_EVENT_BUILD;
     /* The pending record keeps the signed event (republish after a restart)
      * and the Welcomes with their recipients (sent after the merge). */
-    err = marmot_commit_stage_pending(m, pre, post, commit, commit_len,
-                                      json, welcomes, welcome_count);
+    MarmotError err = marmot_commit_stage_pending(m, pre, post, commit, commit_len,
+                                                  json, welcomes, welcome_count);
     if (err != MARMOT_OK) {
         free(json);
         return err;
     }
     *out_commit_json = json;
     return MARMOT_OK;
+}
+
+/* finish_local_commit() for a Commit dated now (nostrc-2lrz). */
+static MarmotError
+finish_local_commit_now(Marmot *m, MarmotGroup *group,
+                        const MlsGroup *pre, const MlsGroup *post,
+                        const uint8_t *commit, size_t commit_len, char **out_commit_json)
+{
+    int64_t created_at = 0;
+    MarmotError err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
+    if (err != MARMOT_OK) return err;
+    return finish_local_commit(m, group, pre, post, commit, commit_len, created_at, NULL, 0,
+                               out_commit_json);
 }
 
 /* Load an active group we may commit to as an admin.  On success the caller
@@ -1038,12 +1053,15 @@ add_members_impl(Marmot *m,
             n_gde == 1)   /* our own state: a 0.10.0 group's layout too */
             gde = marmot_group_data_extension_deserialize_stored(data, data_len);
     }
-    err = build_welcome_rumors(&add, sender, key_package_event_jsons, kp_count,
-                               group->nostr_group_id, group->name, group->description,
-                               (const uint8_t (*)[32])group->admin_pubkeys,
-                               group->admin_count, post.tree.n_leaves,
-                               gde ? (const char **)gde->relays : NULL,
-                               gde ? gde->relay_count : 0, welcomes);
+    int64_t created_at = 0;
+    err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
+    if (err == MARMOT_OK)
+        err = build_welcome_rumors(&add, sender, key_package_event_jsons, kp_count,
+                                   group->nostr_group_id, group->name, group->description,
+                                   (const uint8_t (*)[32])group->admin_pubkeys,
+                                   group->admin_count, post.tree.n_leaves,
+                                   gde ? (const char **)gde->relays : NULL,
+                                   gde ? gde->relay_count : 0, created_at, welcomes);
     marmot_group_data_extension_free(gde);
     if (err != MARMOT_OK) goto fail;
     for (size_t i = 0; i < kp_count; i++) {
@@ -1051,7 +1069,7 @@ add_members_impl(Marmot *m,
         outbox[i].rumor_json = welcomes[i];   /* borrowed */
     }
     err = finish_local_commit(m, group, &mls, &post, add.commit_data, add.commit_len,
-                              outbox, kp_count, &commit_json);
+                              created_at, outbox, kp_count, &commit_json);
     if (err != MARMOT_OK) goto fail;
 
     free(recipients);
@@ -1126,8 +1144,8 @@ remove_members_impl(Marmot *m,
         err = rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG : MARMOT_ERR_MLS;
         goto out;
     }
-    err = finish_local_commit(m, group, &mls, &post, result.commit_data,
-                              result.commit_len, NULL, 0, out_commit_json);
+    err = finish_local_commit_now(m, group, &mls, &post, result.commit_data,
+                                  result.commit_len, out_commit_json);
 out:
     free(leaves);
     mls_commit_result_clear(&result);
@@ -1349,8 +1367,8 @@ update_group_metadata_impl(Marmot *m,
         err = rc == MARMOT_ERR_UNSUPPORTED ? MARMOT_ERR_UNSUPPORTED : MARMOT_ERR_MLS;
         goto out;
     }
-    err = finish_local_commit(m, group, &pre, &mls, commit_result.commit_data,
-                              commit_result.commit_len, NULL, 0, out_commit_json);
+    err = finish_local_commit_now(m, group, &pre, &mls, commit_result.commit_data,
+                                  commit_result.commit_len, out_commit_json);
 out:
     free(new_ext);
     mls_commit_result_clear(&commit_result);
@@ -1441,8 +1459,8 @@ self_update_impl(Marmot *m, const MarmotGroupId *mls_group_id, const char *signe
         err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
         goto out;
     }
-    err = finish_local_commit(m, group, &pre, &mls, res.commit_data, res.commit_len,
-                              NULL, 0, out_commit_json);
+    err = finish_local_commit_now(m, group, &pre, &mls, res.commit_data, res.commit_len,
+                                  out_commit_json);
 out:
     free(leaf_ext);
     mls_commit_result_clear(&res);

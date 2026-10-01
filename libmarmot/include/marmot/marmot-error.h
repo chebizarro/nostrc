@@ -51,6 +51,11 @@ typedef enum {
     MARMOT_ERR_MISSING_RUMOR_EVENT_ID   = -33,
     MARMOT_ERR_AUTHOR_MISMATCH         = -34,
     MARMOT_ERR_INVALID_TIMESTAMP        = -35,
+    /** Since 0.12.0: a Commit would be dated more than a minute ahead of
+     *  our clock (Commits made back to back, or right after another
+     *  member's Commit dated that far ahead); retry in a second.  Nothing
+     *  was created. */
+    MARMOT_ERR_EVENT_RATE               = -36,
 
     /* Group errors */
     MARMOT_ERR_GROUP                    = -40,
