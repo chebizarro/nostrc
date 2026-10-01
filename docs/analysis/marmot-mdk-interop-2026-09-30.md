@@ -27,6 +27,23 @@ implementation.
 Recommendation: **do not flip `GH_FEATURE_ENCRYPTED_GROUPS` yet** (see the
 end).
 
+> **W24 addendum (nostrc-6ukh, nostrc-prrl; libmarmot 0.12.0, Groundhog
+> 0.12.0).** The "default" column below describes W23.
+> - **The new default** admits MDK 0.8 members without the proof in
+>   legacy-profile groups. Every adopted or unrecognised group still fails
+>   closed, and a proof that does not verify is refused everywhere.
+> - **What Groundhog does with them.** Groundhog confirms each such device
+>   from a KeyPackage its account signed and marks the rest "Identity not
+>   verified".
+> - **The old refusals** are now the opt-in preference
+>   `only-join-verified-mls-groups`.
+> - **Cases 1b, 1c and 2a/2b** pass in default mode, and their refusals pass
+>   with the preference on. Rerun against MDK v0.8.0 `575ae29d`: 7/7.
+> - **1c (prrl) is honest now.** A refused Commit is `change-refused`, never
+>   decrypt-pending, and it applies once the preference is turned off.
+> - **One finding: an MDK group's creator stays "Identity not verified".**
+>   Her leaf key appears in no KeyPackage she published (nostrc-owkh).
+
 ## Setup
 
 - **Groundhog side.** The real `GhMlsService`: real stores, transports,
