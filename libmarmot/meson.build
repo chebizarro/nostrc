@@ -146,7 +146,9 @@ libmarmot = library('marmot',
   dependencies: marmot_deps,
   install: true,
   version: marmot_version,
-  soversion: marmot_version_parts[0],
+  # MAJOR from 1.0; 0.MINOR while 0.x, where a MINOR may break the ABI (as
+  # CMakeLists.txt; 0.12 changed the MarmotMessageResult layout).
+  soversion: marmot_version_parts[0] == '0' ? '0.' + marmot_version_parts[1] : marmot_version_parts[0],
 )
 
 # Dependency object for consumers
@@ -195,7 +197,6 @@ if get_option('tests')
     'test_ratchet_persist',
     'test_kp_profile',
     'test_storage_contract',
-    'test_media',
     'test_mls_tree_vectors',
     'test_rfc9420_vectors',
   ]
@@ -206,6 +207,16 @@ if get_option('tests')
       dependencies: marmot_deps,
     ))
   endforeach
+
+  # The MDK v0.11.0 media fixtures (tests/vectors/media/) are read with
+  # jansson from the source tree, as in CMakeLists.txt.
+  test('marmot_test_media', executable('test_media', 'tests/test_media.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: marmot_deps + [dependency('jansson')],
+    c_args: ['-DMARMOT_MEDIA_VECTORS_DIR="@0@"'.format(
+      meson.current_source_dir() / 'tests' / 'vectors' / 'media')],
+  ))
 
   # MDK interoperability. The suite locates tests/vectors/mdk relative to its
   # working directory; pin it so out-of-tree builds do not silently skip the
