@@ -92,11 +92,23 @@ typedef enum {
     MARMOT_ERR_KEY_PACKAGE_CAPABILITIES = -54,
 
     /** Since 0.12.0 (nostrc-w1m0; Marmot inbound-processing.md
-     *  "resource_refused"): a Commit off the canonical branch that the
-     *  group's bounded convergence state has no room for (too many retained
-     *  competing Commits, or too many of one committer's).  Nothing was
-     *  kept and it is not invalid: it may be offered again. */
+     *  "resource_refused"): a Commit that lost the group's branch selection
+     *  and that the bounded convergence state has no room for (over the
+     *  retained competing Commits, or one committer's share, it is the
+     *  least likely to win).  A Commit the selection makes canonical is
+     *  never refused for capacity.  Nothing was kept and it is not invalid:
+     *  RETRYABLE -- never record it as processed or seen; offer it again
+     *  later (transports/nostr.md: another delivery opportunity, e.g. a
+     *  refetch of an overlapping range). */
     MARMOT_ERR_RESOURCE_REFUSED         = -55,
+    /** Since 0.12.0 (nostrc-w1m0; convergence.md "Candidate branches"): the
+     *  Commit is valid and retained, as a losing candidate -- the canonical
+     *  branch stays, the group record is unchanged, and the Commit is
+     *  processed (do not offer it again).  Its state's exporter secret can
+     *  open kind:445 events of that branch now
+     *  (inbound-processing.md "transport_deferred": the candidate-key set
+     *  changed), so offer the events held as undecryptable again. */
+    MARMOT_ERR_COMMIT_RETAINED          = -56,
 
     /* Message errors */
     MARMOT_ERR_MESSAGE                  = -60,

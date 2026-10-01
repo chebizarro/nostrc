@@ -584,6 +584,54 @@ oom:
 }
 
 static MarmotError
+sql_messages_in_epochs(void *ctx, const MarmotGroupId *gid, uint64_t from_epoch,
+                       uint64_t to_epoch, MarmotMessage ***out, size_t *out_count)
+{
+    SqliteCtx *sc = ctx;
+    *out = NULL;
+    *out_count = 0;
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(sc->db,
+                           "SELECT * FROM messages WHERE mls_group_id = ? AND epoch >= ? "
+                           "AND epoch <= ?", -1, &stmt, NULL) != SQLITE_OK)
+        return MARMOT_ERR_STORAGE;
+    bind_group_id(stmt, 1, gid);
+    sqlite3_bind_int64(stmt, 2, (int64_t)from_epoch);
+    sqlite3_bind_int64(stmt, 3, (int64_t)to_epoch);
+    size_t cap = 16, count = 0;
+    MarmotMessage **arr = calloc(cap, sizeof(*arr));
+    if (!arr) {
+        sqlite3_finalize(stmt);
+        return MARMOT_ERR_MEMORY;
+    }
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (count >= cap) {
+            MarmotMessage **bigger = realloc(arr, cap * 2 * sizeof(*arr));
+            if (!bigger) goto oom;
+            arr = bigger;
+            cap *= 2;
+        }
+        if (!(arr[count] = message_from_row(stmt))) goto oom;
+        count++;
+    }
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        for (size_t i = 0; i < count; i++) marmot_message_free(arr[i]);
+        free(arr);
+        return MARMOT_ERR_STORAGE;
+    }
+    *out = arr;
+    *out_count = count;
+    return MARMOT_OK;
+oom:
+    for (size_t i = 0; i < count; i++) marmot_message_free(arr[i]);
+    free(arr);
+    sqlite3_finalize(stmt);
+    return MARMOT_ERR_MEMORY;
+}
+
+static MarmotError
 sql_last_message(void *ctx, const MarmotGroupId *gid,
                   MarmotSortOrder order, MarmotMessage **out)
 {
@@ -1461,6 +1509,7 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
     s->save_group = sql_save_group;
     s->delete_group = sql_delete_group;
     s->messages = sql_messages;
+    s->messages_in_epochs = sql_messages_in_epochs;
     s->last_message = sql_last_message;
 
     /* Message ops */

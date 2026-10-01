@@ -327,6 +327,8 @@ marmot_free(Marmot *m)
     sodium_memzero(m->hpke_sk, sizeof(m->hpke_sk));
     sodium_memzero(m->account_proof, sizeof(m->account_proof));
 
+    marmot_branch_cache_free(m);
+
     /* Free storage backend */
     marmot_storage_free(m->storage);
 

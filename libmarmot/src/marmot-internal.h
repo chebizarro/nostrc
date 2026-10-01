@@ -45,7 +45,16 @@ struct Marmot {
     /* One storage transaction per public operation (nostrc-qp24.7). */
     unsigned txn_depth;         /* public calls in progress (never > 1 in practice) */
     bool     txn_keep;          /* commit even though the operation returns an error */
+
+    /* The candidate states last rebuilt to read a competing branch's
+     * message, for the record and tip they were built from (commits.c,
+     * nostrc-w1m0 review M1).  Freed by marmot_free(). */
+    void    *branch_cache;
+    unsigned long branch_builds;   /* candidate trees built for it (tests) */
 };
+
+/** Free (and wipe) m->branch_cache (commits.c). */
+void marmot_branch_cache_free(Marmot *m);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Internal helpers

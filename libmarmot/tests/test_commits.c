@@ -312,7 +312,7 @@ expect_rejected(Member *x, const MarmotGroupId *gid, const char *event_json,
 }
 
 /* nostrc-w1m0: a Commit that loses its branch selection
- * (MARMOT_ERR_WRONG_EPOCH) changes nothing canonical -- epoch, name, MLS
+ * (MARMOT_ERR_COMMIT_RETAINED) changes nothing canonical -- epoch, name, MLS
  * state, exporter secrets -- but is retained as a candidate (its branch may
  * still win a later pass), so the retained-parent record changes. */
 static void
@@ -342,7 +342,7 @@ expect_kept(Member *x, const MarmotGroupId *gid, const char *event_json, MarmotE
 static void
 expect_lost(Member *x, const MarmotGroupId *gid, const char *event_json, const char *what)
 {
-    expect_kept(x, gid, event_json, MARMOT_ERR_WRONG_EPOCH, what);
+    expect_kept(x, gid, event_json, MARMOT_ERR_COMMIT_RETAINED, what);
 }
 
 /* Same metadata, epoch, epoch secrets, tree hash, GroupContext (confirmed
@@ -1347,17 +1347,17 @@ test_same_epoch_race_converges(void)
             CHECK(e2 == MARMOT_OK && ty == MARMOT_RESULT_COMMIT,
                   "Alice: the winning second Commit must replace the first: %d", e2);
         else
-            CHECK(e2 == MARMOT_ERR_WRONG_EPOCH,
-                  "Alice: the losing second Commit must be rejected: %d", e2);
+            CHECK(e2 == MARMOT_ERR_COMMIT_RETAINED,
+                  "Alice: the losing second Commit is retained: %d", e2);
         MarmotError eb, ec;
         MarmotMessageResultType tb = deliver(&t.bob, cc, &eb, NULL);
         MarmotMessageResultType tc = deliver(&t.charlie, cb, &ec, NULL);
         if (bob_wins) {
-            CHECK(eb == MARMOT_ERR_WRONG_EPOCH, "Bob keeps his winning Commit: %d", eb);
+            CHECK(eb == MARMOT_ERR_COMMIT_RETAINED, "Bob keeps his winning Commit: %d", eb);
             CHECK(ec == MARMOT_OK && tc == MARMOT_RESULT_COMMIT,
                   "Charlie switches to Bob's Commit: %d", ec);
         } else {
-            CHECK(ec == MARMOT_ERR_WRONG_EPOCH, "Charlie keeps his winning Commit: %d", ec);
+            CHECK(ec == MARMOT_ERR_COMMIT_RETAINED, "Charlie keeps his winning Commit: %d", ec);
             CHECK(eb == MARMOT_OK && tb == MARMOT_RESULT_COMMIT,
                   "Bob switches to Charlie's Commit: %d", eb);
         }
@@ -5375,10 +5375,10 @@ test_losing_removal_first_is_undone(void)
     char *msg = app_message(&t.bob, &t.gid, "Charlie still here");
     expect_app(&t.charlie, msg, "Charlie reads the winning epoch");
     /* The losing removal again, in a new envelope: it loses to the Commit
-     * applied (the same envelope is a processed duplicate). */
+     * applied and is retained (the same envelope is a processed duplicate). */
     char *again = republish(rm);
     deliver(&t.charlie, again, &err, NULL);
-    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "the loser again: %d", err);
+    CHECK(err == MARMOT_ERR_COMMIT_RETAINED, "the loser again, retained: %d", err);
     free(again);
     CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "still a member");
     free(msg);
@@ -5387,8 +5387,8 @@ test_losing_removal_first_is_undone(void)
     trio_clear(&t);
 }
 
-/* The winner first: the losing removal of the previous epoch is WRONG_EPOCH
- * (review L4). */
+/* The winner first: the losing removal of the previous epoch is retained
+ * as a losing candidate, MARMOT_ERR_COMMIT_RETAINED (review L4). */
 static void
 test_losing_removal_after_winner(void)
 {
@@ -5402,7 +5402,7 @@ test_losing_removal_after_winner(void)
     CHECK(deliver_state(&t.charlie, ren, &err, &epoch) == MARMOT_GROUP_STATE_ACTIVE &&
           err == MARMOT_OK, "the winner: err=%d", err);
     deliver(&t.charlie, rm, &err, NULL);
-    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "the losing removal: %d", err);
+    CHECK(err == MARMOT_ERR_COMMIT_RETAINED, "the losing removal, retained: %d", err);
     CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "not removed");
     merge(&t.bob, &t.gid);
     char *msg = app_message(&t.bob, &t.gid, "hello Charlie");
@@ -5504,7 +5504,7 @@ test_previous_epoch_removal_loses(void)
     expect_commit(&t.charlie, ren, "Charlie applies Alice's rename");
     MarmotError err;
     deliver(&t.charlie, rm, &err, NULL);
-    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "the losing removal: %d", err);
+    CHECK(err == MARMOT_ERR_COMMIT_RETAINED, "the losing removal, retained: %d", err);
     CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "not removed");
     MarmotGroup *g = NULL;
     OK(marmot_get_group(t.charlie.m, &t.gid, &g));
@@ -8051,6 +8051,224 @@ test_depth2_branch_child_first(void)
     trio_clear(&t);
 }
 
+/* The kind:445 `event` of `epoch` (as `sealer` holds it) with its MLS bytes
+ * changed by `edit` (NULL: unchanged) and sealed again under `exporter`. */
+static char *
+reseal(Member *sealer, const MarmotGroupId *gid, uint64_t epoch, const char *event,
+       const uint8_t exporter[32], const uint8_t nostr_gid[32], bool corrupt)
+{
+    MarmotStorage *st = sealer->m->storage;
+    uint8_t mine[32];
+    OK(st->get_exporter_secret(st->ctx, gid, epoch, mine));
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, event, NULL), "event");
+    uint8_t *msg = NULL;
+    size_t len = 0;
+    CHECK(marmot_group_event_decrypt(mine, ev->content, &msg, &len) == 0 && len > 0, "peel");
+    nostr_event_free(ev);
+    sodium_memzero(mine, sizeof(mine));
+    if (corrupt) msg[len - 1] ^= 0x01;   /* the AEAD tag of its content */
+    char *json = marmot_commit_build_event(msg, len, exporter, nostr_gid, marmot_now());
+    CHECK(json, "seal");
+    free(msg);
+    return json;
+}
+
+/* W25 review L1 (convergence.md "Candidate branches"): a Commit's parent is
+ * the retained state its MLS authentication succeeds against; transport
+ * metadata never identifies it.  Alice's and Bob's same-epoch renames: at
+ * Charlie one is canonical, the other a candidate.  The loser's member
+ * commits on top of its own rename; that Commit, sealed again (by anyone)
+ * under the exporter secret of the canonical state of the same epoch, is the
+ * same Commit: it authenticates against the candidate state only, extends
+ * that branch to depth 2 and wins -- as the honest copy does elsewhere. */
+static void
+test_parent_found_by_authentication(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *ra = rename_group(&t.alice, &t.gid, "Alice's");
+    char *rb = rename_group(&t.bob, &t.gid, "Bob's");
+    expect_commit(&t.charlie, ra, "Charlie: Alice's rename first");
+    MarmotMessageResult r;
+    MarmotError err = deliver_result(&t.charlie, rb, &r);
+    bool bob_lost = err == MARMOT_ERR_COMMIT_RETAINED;
+    CHECK(bob_lost || (err == MARMOT_OK && r.convergence.branch_recovered),
+          "Charlie: Bob's rename, retained or winning: %d", err);
+    marmot_message_result_free(&r);
+    Member *loser = bob_lost ? &t.bob : &t.alice;
+    Member *winner = bob_lost ? &t.alice : &t.bob;
+    const char *loser_name = bob_lost ? "Bob's" : "Alice's";
+    char *child = self_update(loser, &t.gid);   /* on the losing rename, E+1 */
+    uint8_t canonical[32];
+    MarmotStorage *cst = t.charlie.m->storage;
+    OK(cst->get_exporter_secret(cst->ctx, &t.gid, t.epoch + 1, canonical));
+    char *resealed = reseal(loser, &t.gid, t.epoch + 1, child, canonical, t.nostr_gid, false);
+    sodium_memzero(canonical, sizeof(canonical));
+    err = deliver_result(&t.charlie, resealed, &r);
+    CHECK(err == MARMOT_OK && r.type == MARMOT_RESULT_COMMIT && r.convergence.branch_recovered,
+          "Charlie: the child, sealed under the canonical state, finds its parent: %d", err);
+    marmot_message_result_free(&r);
+    expect_lost(winner, &t.gid, bob_lost ? rb : ra, "the winner: the losing rename");
+    err = deliver_result(winner, child, &r);
+    CHECK(err == MARMOT_OK && r.convergence.branch_recovered, "the winner: the honest child: %d",
+          err);
+    marmot_message_result_free(&r);
+    expect_converged(t.all, 3, &t.gid, loser_name, t.epoch + 2);
+    expect_messages_flow(t.all, 3, &t.gid);
+    free(resealed);
+    free(child);
+    free(ra);
+    free(rb);
+    trio_clear(&t);
+}
+
+/* W25 review M1: a held message of a candidate branch costs little when it
+ * is offered again.  The candidate states are rebuilt once for the stored
+ * record and tip (cached: a message that does not decrypt, offered again,
+ * rebuilds nothing), and a message whose sender leaf witnesses its state
+ * already is answered from its sender data alone -- no state rebuilt. */
+static void
+test_held_branch_message_cost_bounded(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *ra = rename_group(&t.alice, &t.gid, "Alice's");
+    expect_commit(&t.bob, ra, "Bob applies Alice's rename");
+    /* Alice's branch has a witness too: Charlie's alone ties it, and the
+     * privileged rename wins. */
+    char *ma = app_message(&t.alice, &t.gid, "Alice at E+1");
+    expect_app(&t.bob, ma, "Bob reads Alice");
+    char *c1 = self_update(&t.charlie, &t.gid);
+    char *m1 = app_message(&t.charlie, &t.gid, "Charlie at E+1' (1)");
+    char *m2 = app_message(&t.charlie, &t.gid, "Charlie at E+1' (2)");
+    expect_lost(&t.bob, &t.gid, c1, "Bob: Charlie's self-update loses");
+    /* Sealed under the candidate state's exporter, but its content broken. */
+    uint8_t branch[32];
+    MarmotStorage *chst = t.charlie.m->storage;
+    OK(chst->get_exporter_secret(chst->ctx, &t.gid, t.epoch + 1, branch));
+    char *bad = reseal(&t.charlie, &t.gid, t.epoch + 1, m1, branch, t.nostr_gid, true);
+    sodium_memzero(branch, sizeof(branch));
+    unsigned long b0 = t.bob.m->branch_builds;
+    expect_rejected(&t.bob, &t.gid, bad, MARMOT_ERR_NIP44, "a broken branch message: held");
+    unsigned long b1 = t.bob.m->branch_builds;
+    CHECK(b1 == b0 + 1, "its branch rebuilt once: %lu", b1 - b0);
+    for (int i = 0; i < 5; i++)
+        expect_rejected(&t.bob, &t.gid, bad, MARMOT_ERR_NIP44, "offered again: held");
+    CHECK(t.bob.m->branch_builds == b1, "offered again: nothing rebuilt (cached): %lu",
+          t.bob.m->branch_builds - b1);
+    expect_kept(&t.bob, &t.gid, m1, MARMOT_ERR_NIP44, "Charlie's message: a witness, held");
+    unsigned long b2 = t.bob.m->branch_builds;
+    for (int i = 0; i < 5; i++) {
+        expect_rejected(&t.bob, &t.gid, m2, MARMOT_ERR_NIP44,
+                        "his next message: his leaf witnesses already, held");
+        expect_rejected(&t.bob, &t.gid, m1, MARMOT_ERR_NIP44, "the first, offered again");
+    }
+    CHECK(t.bob.m->branch_builds == b2,
+          "a sender that witnesses already: nothing rebuilt: %lu", t.bob.m->branch_builds - b2);
+    /* Charlie: his own message witnesses his branch; Alice's witness ties
+     * it, and her privileged rename wins. */
+    expect_lost(&t.charlie, &t.gid, ra, "Charlie: Alice's rename, his branch witnessed");
+    MarmotMessageResult r;
+    MarmotError err = deliver_result(&t.charlie, ma, &r);
+    CHECK(err == MARMOT_OK && r.type == MARMOT_RESULT_APPLICATION_MESSAGE &&
+              r.convergence.branch_recovered,
+          "Charlie: Alice's message ties the witnesses, her rename wins: %d", err);
+    marmot_message_result_free(&r);
+    expect_converged(t.all, 3, &t.gid, "Alice's", t.epoch + 1);
+    expect_messages_flow(t.all, 3, &t.gid);
+    free(ma);
+    free(bad);
+    free(m1);
+    free(m2);
+    free(c1);
+    free(ra);
+    trio_clear(&t);
+}
+
+/* W25 review M2: a reorg reads the messages of the epochs it withdraws, not
+ * the group's history.  With the storage's messages_in_epochs() only that
+ * range is read; without it, the history is paged and only the matching
+ * messages are kept.  Either way the losing branch's message is withdrawn
+ * and an earlier epoch's is untouched. */
+static struct {
+    MarmotError (*messages)(void *, const MarmotGroupId *, const MarmotPagination *,
+                            MarmotMessage ***, size_t *);
+    MarmotError (*in_epochs)(void *, const MarmotGroupId *, uint64_t, uint64_t,
+                             MarmotMessage ***, size_t *);
+    int pages, ranges;
+    uint64_t from, to;
+} g_reads;
+
+static MarmotError
+counting_messages(void *ctx, const MarmotGroupId *gid, const MarmotPagination *pg,
+                  MarmotMessage ***out, size_t *n)
+{
+    g_reads.pages++;
+    return g_reads.messages(ctx, gid, pg, out, n);
+}
+
+static MarmotError
+counting_in_epochs(void *ctx, const MarmotGroupId *gid, uint64_t from, uint64_t to,
+                   MarmotMessage ***out, size_t *n)
+{
+    g_reads.ranges++;
+    g_reads.from = from;
+    g_reads.to = to;
+    return g_reads.in_epochs(ctx, gid, from, to, out, n);
+}
+
+static void
+test_reorg_reads_only_affected_epochs(void)
+{
+    for (int with_query = 1; with_query >= 0; with_query--) {
+        Trio t;
+        trio_init(&t);
+        char *m0 = app_message(&t.alice, &t.gid, "Alice at E");
+        expect_app(&t.bob, m0, "Bob reads Alice's E message");
+        char *rename = rename_group(&t.alice, &t.gid, "Alice's");
+        char *c1 = self_update(&t.charlie, &t.gid);
+        char *c2 = self_update(&t.charlie, &t.gid);
+        expect_commit(&t.bob, rename, "Bob applies Alice's rename");
+        char *ma = app_message(&t.alice, &t.gid, "Alice at E+1");
+        expect_app(&t.bob, ma, "Bob reads Alice's E+1 message");
+        expect_lost(&t.bob, &t.gid, c1, "the parent");
+        MarmotStorage *st = t.bob.m->storage;
+        memset(&g_reads, 0, sizeof(g_reads));
+        g_reads.messages = st->messages;
+        g_reads.in_epochs = st->messages_in_epochs;
+        CHECK(g_reads.in_epochs, "the memory storage has the epoch query");
+        st->messages = counting_messages;
+        st->messages_in_epochs = with_query ? counting_in_epochs : NULL;
+        MarmotMessageResult r;
+        MarmotError err = deliver_result(&t.bob, c2, &r);
+        st->messages = g_reads.messages;
+        st->messages_in_epochs = g_reads.in_epochs;
+        CHECK(err == MARMOT_OK && r.convergence.branch_recovered && result_invalidates(&r, ma) &&
+                  !result_invalidates(&r, m0) && r.convergence.invalidated_count == 1,
+              "the reorg withdraws the E+1 message only: %d", err);
+        marmot_message_result_free(&r);
+        if (with_query)
+            CHECK(g_reads.ranges == 1 && g_reads.pages == 0 && g_reads.from == t.epoch + 1 &&
+                      g_reads.to == t.epoch + 1,
+                  "one range read, epochs %llu..%llu (%d ranges, %d pages)",
+                  (unsigned long long)g_reads.from, (unsigned long long)g_reads.to,
+                  g_reads.ranges, g_reads.pages);
+        else
+            CHECK(g_reads.pages >= 1 && g_reads.ranges == 0, "paged: %d", g_reads.pages);
+        CHECK(stored_message_state(&t.bob, ma) == MARMOT_MSG_STATE_EPOCH_INVALIDATED,
+              "the E+1 message is withdrawn");
+        CHECK(stored_message_state(&t.bob, m0) != MARMOT_MSG_STATE_EPOCH_INVALIDATED,
+              "the E message is not");
+        free(m0);
+        free(ma);
+        free(rename);
+        free(c1);
+        free(c2);
+        trio_clear(&t);
+    }
+}
+
 /* Lost ACK (durability.md "Publish interruption boundaries"): Alice's rename
  * reached a relay, but its OK never reached her.  Charlie applied it and
  * committed on top of it.  Bob's competing rename beats it by key at Alice,
@@ -8128,36 +8346,47 @@ test_lost_ack_recovered_by_branch(void)
     trio_clear(&t);
 }
 
-/* A member floods competing branches (DoS): each is a valid self-update
- * from the same epoch.  One committer gets CONV_MAX_PER_COMMITTER retained
- * Commits, the rest are MARMOT_ERR_RESOURCE_REFUSED (nothing kept, not
- * marked processed); with the whole bound full, any further competitor is
- * refused too.  The group itself is untouched and keeps working. */
+/* SHA-256 of the Commit in the kind:445 `event` of `epoch`, peeled with
+ * `reader`'s exporter secret of that epoch. */
 static void
-test_branch_flood_is_bounded(void)
+commit_digest(Member *reader, const MarmotGroupId *gid, uint64_t epoch, const char *event,
+              uint8_t out[32])
 {
-    Trio t;
-    trio_init(&t);
-    char *ra = rename_group(&t.alice, &t.gid, "Alice's");
-    expect_commit(&t.bob, ra, "Bob applies Alice's rename");
-    for (int i = 0; i < CONV_MAX_PER_COMMITTER + 4; i++) {
-        char *c = self_update_unapplied(&t.charlie, &t.gid, t.nostr_gid);
-        if (i < CONV_MAX_PER_COMMITTER)
-            expect_lost(&t.bob, &t.gid, c, "a flooded branch, retained");
-        else
-            expect_rejected(&t.bob, &t.gid, c, MARMOT_ERR_RESOURCE_REFUSED,
-                            "over the committer's bound");
-        free(c);
-    }
-    ConvHistory *h = stored_history(&t.bob, &t.gid);
-    CHECK(h && h->n_cands == CONV_MAX_PER_COMMITTER, "bounded: %zu", h ? h->n_cands : 0);
-    /* The whole bound: fill it, then one more competitor is refused. */
+    MarmotStorage *st = reader->m->storage;
+    uint8_t exporter[32];
+    OK(st->get_exporter_secret(st->ctx, gid, epoch, exporter));
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, event, NULL), "event");
+    uint8_t *msg = NULL;
+    size_t len = 0;
+    CHECK(marmot_group_event_decrypt(exporter, ev->content, &msg, &len) == 0, "peel");
+    nostr_event_free(ev);
+    sodium_memzero(exporter, sizeof(exporter));
+    CHECK(mls_crypto_hash(out, msg, len) == 0, "digest");
+    free(msg);
+}
+
+static bool
+history_has(const ConvHistory *h, const uint8_t digest[32])
+{
+    for (size_t i = 0; h && i < h->n_cands; i++)
+        if (memcmp(h->cands[i].digest, digest, 32) == 0) return true;
+    return false;
+}
+
+/* Fill the stored candidates of `x` up to CONV_MAX_CANDIDATES with Commits
+ * whose parent is no state we hold (they attach nowhere). */
+static void
+fill_unattached(Member *x, const MarmotGroupId *gid, uint64_t epoch)
+{
+    ConvHistory *h = stored_history(x, gid);
+    CHECK(h, "history");
     for (size_t i = h->n_cands; i < CONV_MAX_CANDIDATES; i++) {
         ConvCandidate *c = &h->cands[h->n_cands++];
         memset(c, 0, sizeof(*c));
-        c->source_epoch = t.epoch;
+        c->source_epoch = epoch;
         randombytes_buf(c->digest, 32);
-        randombytes_buf(c->parent_tag, 32);   /* attaches nowhere */
+        randombytes_buf(c->parent_tag, 32);
         c->msg = malloc(1);
         c->msg_len = 1;
         c->msg[0] = 0;
@@ -8165,23 +8394,191 @@ test_branch_flood_is_bounded(void)
     uint8_t *rec = NULL;
     size_t rec_len = 0;
     CHECK(conv_history_encode(h, &rec, &rec_len) == 0, "encode");
-    OK(t.bob.m->storage->mls_store(t.bob.m->storage->ctx, "mls_group_parent", t.gid.data,
-                                   t.gid.len, rec, rec_len));
+    OK(x->m->storage->mls_store(x->m->storage->ctx, "mls_group_parent", gid->data, gid->len,
+                                rec, rec_len));
     free(rec);
     history_drop(h);
-    char *one_more = self_update_unapplied(&t.alice, &t.gid, t.nostr_gid);
-    MarmotError err;
-    deliver(&t.bob, one_more, &err, NULL);
-    CHECK(err == MARMOT_ERR_WRONG_EPOCH || err == MARMOT_ERR_RESOURCE_REFUSED,
-          "a Commit of Alice's (her own epoch moved on) or refused: %d", err);
-    free(one_more);
-    char *other = self_update_unapplied(&t.bob, &t.gid, t.nostr_gid);   /* Bob, from E+1 */
-    free(other);
+}
+
+/* A member floods competing branches (DoS): valid self-updates from the
+ * same epoch, each losing to Alice's privileged rename.  Every one is
+ * admitted and resolved first; the losers are bounded afterwards (W25
+ * review H1): one committer keeps CONV_MAX_PER_COMMITTER, the most likely to
+ * win -- equal scores otherwise, so the lowest digests.  One that ranks
+ * below all of them is MARMOT_ERR_RESOURCE_REFUSED (nothing kept, never
+ * processed: offered again it is judged again); one that ranks better is
+ * retained and evicts the worst.  With the whole bound full, a competitor
+ * evicts the least likely -- a Commit that attaches nowhere first -- rather
+ * than being refused.  The group is untouched and keeps working. */
+static void
+test_branch_flood_is_bounded(void)
+{
+    enum { FLOOD = CONV_MAX_PER_COMMITTER * 3 };
+    Trio t;
+    trio_init(&t);
+    char *a0 = self_update_unapplied(&t.alice, &t.gid, t.nostr_gid);   /* Alice, from E */
+    char *ra = rename_group(&t.alice, &t.gid, "Alice's");
+    expect_commit(&t.bob, ra, "Bob applies Alice's rename");
+    char *c[FLOOD];
+    uint8_t d[FLOOD][32];
+    for (int i = 0; i < FLOOD; i++) {
+        c[i] = self_update_unapplied(&t.charlie, &t.gid, t.nostr_gid);
+        commit_digest(&t.bob, &t.gid, t.epoch, c[i], d[i]);
+    }
+    /* By digest, lowest (most likely) first. */
+    for (int i = 0; i < FLOOD; i++)
+        for (int j = i + 1; j < FLOOD; j++)
+            if (memcmp(d[j], d[i], 32) < 0) {
+                char *tc = c[i];
+                c[i] = c[j];
+                c[j] = tc;
+                uint8_t td[32];
+                memcpy(td, d[i], 32);
+                memcpy(d[i], d[j], 32);
+                memcpy(d[j], td, 32);
+            }
+    /* The middle four, retained; the worst, refused; then the best ones
+     * each evict the worst retained; the rest refused. */
+    const int order[] = { 4, 5, 6, 7, FLOOD - 1, 0, FLOOD - 2, 1, 2, 3, 9, 8 };
+    const bool kept[] = { 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 0 };
+    _Static_assert(sizeof(order) / sizeof(order[0]) == FLOOD, "every Commit");
+    for (int k = 0; k < FLOOD; k++) {
+        if (kept[k])
+            expect_lost(&t.bob, &t.gid, c[order[k]], "a flooded branch, retained");
+        else
+            expect_rejected(&t.bob, &t.gid, c[order[k]], MARMOT_ERR_RESOURCE_REFUSED,
+                            "the least likely over the committer's bound: refused");
+    }
+    ConvHistory *h = stored_history(&t.bob, &t.gid);
+    CHECK(h && h->n_cands == CONV_MAX_PER_COMMITTER, "bounded: %zu", h ? h->n_cands : 0);
+    for (int i = 0; i < FLOOD; i++)
+        CHECK(history_has(h, d[i]) == (i < CONV_MAX_PER_COMMITTER),
+              "the %d-th lowest digest %s", i, i < CONV_MAX_PER_COMMITTER ? "kept" : "gone");
+    history_drop(h);
+    /* Refused or evicted, nothing was marked: offered again, judged again. */
+    expect_rejected(&t.bob, &t.gid, c[FLOOD - 1], MARMOT_ERR_RESOURCE_REFUSED,
+                    "a refused Commit, offered again");
+    expect_rejected(&t.bob, &t.gid, c[7], MARMOT_ERR_RESOURCE_REFUSED,
+                    "an evicted Commit, offered again");
+    /* The whole bound full: Alice's own competitor from E is retained, and
+     * a Commit that attaches nowhere goes. */
+    fill_unattached(&t.bob, &t.gid, t.epoch);
+    uint8_t da[32];
+    commit_digest(&t.bob, &t.gid, t.epoch, a0, da);
+    expect_lost(&t.bob, &t.gid, a0, "a competitor with the bound full: retained");
+    h = stored_history(&t.bob, &t.gid);
+    CHECK(h && h->n_cands == CONV_MAX_CANDIDATES && history_has(h, da),
+          "bounded at %d, Alice's kept: %zu", CONV_MAX_CANDIDATES, h ? h->n_cands : 0);
+    for (int i = 0; i < CONV_MAX_PER_COMMITTER; i++)
+        CHECK(history_has(h, d[i]), "Charlie's best %d kept", i);
+    history_drop(h);
     expect_commit(&t.charlie, ra, "Charlie follows");
     expect_converged(t.all, 3, &t.gid, "Alice's", t.epoch + 1);
     expect_messages_flow(t.all, 3, &t.gid);
+    for (int i = 0; i < FLOOD; i++) free(c[i]);
+    free(a0);
     free(ra);
     trio_clear(&t);
+}
+
+/* W25 review H1, probe P1: the bound is on losers.  Charlie has
+ * CONV_MAX_PER_COMMITTER losing Commits retained at Bob; his next Commit,
+ * honest and linear on the tip, is applied like at Alice (who retains
+ * nothing) -- and the group goes on from there. */
+static void
+test_linear_commit_after_committer_cap(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *ra = rename_group(&t.alice, &t.gid, "Alice's");
+    expect_commit(&t.bob, ra, "Bob applies Alice's rename");
+    for (int i = 0; i < CONV_MAX_PER_COMMITTER; i++) {
+        char *c = self_update_unapplied(&t.charlie, &t.gid, t.nostr_gid);
+        expect_lost(&t.bob, &t.gid, c, "a losing Charlie Commit");
+        free(c);
+    }
+    expect_commit(&t.charlie, ra, "Charlie follows");
+    char *lin = self_update(&t.charlie, &t.gid);   /* from E+1 */
+    expect_commit(&t.bob, lin, "Bob: Charlie's linear Commit on the tip");
+    expect_commit(&t.alice, lin, "Alice: the same Commit");
+    char *next = self_update(&t.charlie, &t.gid);
+    expect_commit(&t.bob, next, "Bob: and the next one");
+    expect_commit(&t.alice, next, "Alice: and the next one");
+    expect_converged(t.all, 3, &t.gid, "Alice's", t.epoch + 3);
+    expect_messages_flow(t.all, 3, &t.gid);
+    free(next);
+    free(lin);
+    free(ra);
+    trio_clear(&t);
+}
+
+/* W25 review H1, probe P2: with CONV_MAX_CANDIDATES retained, an honest
+ * linear Commit on the tip is applied. */
+static void
+test_linear_commit_with_store_full(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *ra = rename_group(&t.alice, &t.gid, "Alice's");
+    expect_commit(&t.bob, ra, "Bob applies Alice's rename");
+    expect_commit(&t.charlie, ra, "Charlie follows");
+    fill_unattached(&t.bob, &t.gid, t.epoch);
+    char *lin = self_update(&t.charlie, &t.gid);
+    expect_commit(&t.bob, lin, "Bob (bound full): Charlie's linear Commit on the tip");
+    expect_commit(&t.alice, lin, "Alice: the same Commit");
+    ConvHistory *h = stored_history(&t.bob, &t.gid);
+    CHECK(h && h->n_cands <= CONV_MAX_CANDIDATES, "still bounded: %zu", h ? h->n_cands : 0);
+    history_drop(h);
+    expect_converged(t.all, 3, &t.gid, "Alice's", t.epoch + 2);
+    expect_messages_flow(t.all, 3, &t.gid);
+    free(lin);
+    free(ra);
+    trio_clear(&t);
+}
+
+/* W25 review L2: a witness counts only inside the app-payload window of the
+ * branch's own tip (retained-history.md: tip - epoch <= 5), wherever the
+ * branch forks. */
+static void
+test_witness_window_bounds_score(void)
+{
+    ConvHistory *h = calloc(1, sizeof(*h));
+    CHECK(h, "history");
+    enum { DEPTH = CONV_APP_PAYLOAD_PAST_EPOCH_LIMIT + 2 };
+    uint8_t tags[DEPTH][32];
+    ConvPathState path[DEPTH];
+    for (int i = 0; i < DEPTH; i++) {
+        randombytes_buf(tags[i], 32);
+        path[i].epoch = 10 + 1 + (uint64_t)i;   /* fork at 10, tip at 10 + DEPTH */
+        path[i].tag = tags[i];
+    }
+    uint8_t s1[32], s2[32];
+    randombytes_buf(s1, 32);
+    randombytes_buf(s2, 32);
+    /* Two senders witness the first branch epoch: one past the window. */
+    CHECK(conv_witness_add(h, path[0].epoch, tags[0], s1, 0) == 1 &&
+              conv_witness_add(h, path[0].epoch, tags[0], s2, 1) == 1, "witnesses");
+    ConvBranchScore sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.fork_epoch = 10;
+    sc.tip_epoch = 10 + DEPTH;
+    CHECK(sc.tip_epoch - path[0].epoch == CONV_APP_PAYLOAD_PAST_EPOCH_LIMIT + 1, "outside");
+    conv_score_witnesses(h, path, DEPTH, &sc);
+    CHECK(sc.witness_score == 0 && !sc.quorum,
+          "a witness outside the window counts nothing: score %zu quorum %d", sc.witness_score,
+          sc.quorum);
+    /* The next epoch is just inside it. */
+    CHECK(conv_witness_add(h, path[1].epoch, tags[1], s1, 0) == 1 &&
+              conv_witness_add(h, path[1].epoch, tags[1], s2, 1) == 1, "witnesses");
+    conv_score_witnesses(h, path, DEPTH, &sc);
+    CHECK(sc.witness_score == 2 && sc.quorum, "at the window's edge: score %zu quorum %d",
+          sc.witness_score, sc.quorum);
+    /* Not the fork, and not a state we cannot hold. */
+    path[1].tag = NULL;
+    conv_score_witnesses(h, path, DEPTH, &sc);
+    CHECK(sc.witness_score == 0, "a removal's state scores nothing: %zu", sc.witness_score);
+    conv_history_clear(h);
+    free(h);
 }
 
 /* Witness quorum (convergence.md "App-payload witnesses"): Alice's rename
@@ -8217,6 +8614,15 @@ test_witness_quorum_beats_longer_branch(void)
           err);
     marmot_message_result_free(&r);
     expect_app(&t.charlie, ma, "the first witness, offered again, reads now");
+    /* His tip went down to E+1: the exporter secret of his E+2 is gone (it
+     * is a candidate state's now, kept only in the retained record). */
+    uint8_t secret[32];
+    MarmotStorage *cst = t.charlie.m->storage;
+    CHECK(cst->get_exporter_secret(cst->ctx, &t.gid, t.epoch + 2, secret) ==
+              MARMOT_ERR_STORAGE_NOT_FOUND,
+          "no exporter secret above the lowered tip");
+    OK(cst->get_exporter_secret(cst->ctx, &t.gid, t.epoch + 1, secret));
+    sodium_memzero(secret, sizeof(secret));
     /* Alice and Bob: Charlie's branch never wins. */
     for (int i = 0; i < 2; i++) {
         Member *x = i == 0 ? &t.alice : &t.bob;
@@ -8396,6 +8802,12 @@ main(int argc, char **argv)
     RUN(test_depth2_branch_child_first);
     RUN(test_lost_ack_recovered_by_branch);
     RUN(test_branch_flood_is_bounded);
+    RUN(test_linear_commit_after_committer_cap);
+    RUN(test_linear_commit_with_store_full);
+    RUN(test_witness_window_bounds_score);
+    RUN(test_parent_found_by_authentication);
+    RUN(test_held_branch_message_cost_bounded);
+    RUN(test_reorg_reads_only_affected_epochs);
     RUN(test_witness_quorum_beats_longer_branch);
     RUN(test_same_epoch_witness_decides);
     RUN(test_reorg_write_failure_keeps_everything);

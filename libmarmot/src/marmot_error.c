@@ -62,6 +62,7 @@ marmot_error_string(MarmotError error)
         return "key package does not support what the group requires";
 
     case MARMOT_ERR_RESOURCE_REFUSED:        return "no room to retain this competing commit now";
+    case MARMOT_ERR_COMMIT_RETAINED:         return "commit retained on a competing branch";
 
     /* Message */
     case MARMOT_ERR_MESSAGE:                 return "message error";

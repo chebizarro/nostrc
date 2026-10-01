@@ -1573,14 +1573,23 @@ MarmotError marmot_save_created_message(Marmot *m,
  *   two members' messages at one of its epochs), then the witnessed one,
  *   then privileged before ordinary, the lower committer key, the lower
  *   SHA-256 of the tip Commit; transport timestamps and ids never count.  A
- *   Commit that loses (or ties to lose) is MARMOT_ERR_WRONG_EPOCH, and stays
- *   retained (it may win later); the same Commit as one applied is
+ *   Commit that loses (or ties to lose) is MARMOT_ERR_COMMIT_RETAINED: it
+ *   is processed and stays retained (it may win later), and its state's
+ *   exporter secret can open held kind:445 events -- offer the events held
+ *   as undecryptable (MARMOT_ERR_NIP44) again.  Offered again, a retained
+ *   Commit is MARMOT_ERR_WRONG_EPOCH; the same Commit as one applied is
  *   MARMOT_RESULT_OWN_MESSAGE (e.g. our own, echoed).  When another branch
  *   becomes canonical, result->convergence says which Commits it superseded
  *   and which delivered messages it withdrew (see MarmotMessageResult); the
- *   group's epoch may then go down.  A Commit older than the retained
- *   epochs is MARMOT_ERR_WRONG_EPOCH; one this group's bounded convergence
- *   state has no room for is MARMOT_ERR_RESOURCE_REFUSED.  A Commit for an
+ *   group's epoch may then go down -- offer held events again then too.  A
+ *   Commit older than the retained epochs is MARMOT_ERR_WRONG_EPOCH.  The
+ *   retained competing Commits are bounded (32, 4 per committer), the
+ *   losers only: a Commit the selection makes canonical is never refused
+ *   for capacity; over a bound the losers least likely to win are dropped,
+ *   and when that is the arriving Commit it is MARMOT_ERR_RESOURCE_REFUSED
+ *   -- retryable: never record it as processed, offer it again later.  A
+ *   Commit that no retained state authenticates is
+ *   MARMOT_ERR_MLS_PROCESS_MESSAGE.  A Commit for an
  *   epoch we hold no state of cannot be decrypted yet (MARMOT_ERR_NIP44);
  *   retry it after the missing Commits.  Every rejection leaves the group
  *   unchanged.  Each input resolves at once: the pass timers of

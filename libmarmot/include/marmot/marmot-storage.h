@@ -289,6 +289,19 @@ typedef struct MarmotStorage {
      *  at the end: a storage built against an older header must be
      *  rebuilt. */
     MarmotError (*delete_key_package_info)(void *ctx, const uint8_t ref[32]);
+
+    /* ── Messages by epoch (optional; since 0.12.0, nostrc-w1m0) ─────── */
+
+    /** Every stored message of @group_id whose epoch is in
+     *  [@from_epoch, @to_epoch], in any order (caller frees the array and
+     *  the messages).  A reorg withdraws the messages of the epochs it
+     *  supersedes (MARMOT_MSG_STATE_EPOCH_INVALIDATED) and reads only
+     *  those.  NULL: libmarmot pages through messages() and keeps only the
+     *  matching ones.  Appended at the end: a storage built against an
+     *  older header must be rebuilt. */
+    MarmotError (*messages_in_epochs)(void *ctx, const MarmotGroupId *group_id,
+                                      uint64_t from_epoch, uint64_t to_epoch,
+                                      MarmotMessage ***out_msgs, size_t *out_count);
 } MarmotStorage;
 
 /* ──────────────────────────────────────────────────────────────────────────

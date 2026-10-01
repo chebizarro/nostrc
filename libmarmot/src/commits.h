@@ -164,7 +164,8 @@ MarmotError marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid,
 
 /**
  * nostrc-w1m0 (convergence.md "App-payload witnesses"): an application
- * message of `epoch`, from the account `sender`, decrypted on the state
+ * message of `epoch`, from the account `sender` (its leaf `sender_leaf`),
+ * decrypted on the state
  * whose confirmed transcript hash is `tag` and passed every payload check
  * (the inner author is the MLS sender); `canonical`: that state is the
  * canonical one of its epoch.  The witness is recorded once per
@@ -178,7 +179,7 @@ MarmotError marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid,
  */
 MarmotError marmot_commit_note_witness(Marmot *m, MarmotGroup *group, uint64_t epoch,
                                        const uint8_t tag[32], const uint8_t sender[32],
-                                       bool canonical,
+                                       uint32_t sender_leaf, bool canonical,
                                        uint8_t **out_replaced, size_t *out_replaced_len,
                                        MarmotMessageResult *result);
 
@@ -209,14 +210,21 @@ bool marmot_commit_state_canonical(Marmot *m, const MarmotGroupId *gid, uint64_t
 /**
  * An application message `msg` of the candidate state `tag` of `epoch`
  * (peeled with its branch secret): decrypt it on that state, rebuilt by
- * replaying its branch (nothing kept is spent).  *out_sender_identity: the
- * sender leaf's account.  MARMOT_ERR_STORAGE_NOT_FOUND when that state is
- * no longer a candidate; MARMOT_ERR_OWN_MESSAGE; MARMOT_ERR_MLS.
+ * replaying its branch (nothing kept is spent).  *out_sender_identity and
+ * *out_sender_leaf: the sender leaf's account and index.
+ * MARMOT_ERR_STORAGE_NOT_FOUND when that state is no longer a candidate;
+ * MARMOT_ERR_NIP44 when the message can teach nothing now -- its state's
+ * witness quorum is met, or its sender leaf (from its sender data alone,
+ * before any state is rebuilt) witnesses it already -- (review M1: a held
+ * branch message costs a sender-data decryption when offered again);
+ * MARMOT_ERR_OWN_MESSAGE; MARMOT_ERR_MLS.  The rebuilt states are cached
+ * on `m` for the stored record and tip they came from.
  */
 MarmotError marmot_commit_branch_decrypt(Marmot *m, MarmotGroup *group, uint64_t epoch,
                                          const uint8_t tag[32], const uint8_t *msg,
                                          size_t msg_len, uint8_t **out_plaintext,
-                                         size_t *out_len, uint8_t out_sender_identity[32]);
+                                         size_t *out_len, uint8_t out_sender_identity[32],
+                                         uint32_t *out_sender_leaf);
 
 /**
  * nostrc-7vyi (joining.md step 5): every member leaf of `g` is bound to the

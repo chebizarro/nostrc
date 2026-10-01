@@ -38,11 +38,27 @@ extern "C" {
 #define CONV_MAX_WITNESS_OVERRIDE_DEPTH  1
 
 /* ── Local resource bounds (inbound-processing.md "resource_refused") ────
- * A Commit beyond them is refused, not retained: it is not marked
- * processed and may be offered again. */
+ * They bound the Commits retained off the canonical branch -- the losers
+ * only: a Commit the selection makes canonical (a linear advance of the tip
+ * included) is never refused for capacity.  Every input is admitted and
+ * resolved first; then, over a bound, the losers least likely to win are
+ * evicted (the lowest-scoring branch tip first: commits.c,
+ * "conv_retained()").  When that is the arriving Commit itself it is
+ * MARMOT_ERR_RESOURCE_REFUSED: not kept, never marked processed, eligible
+ * again when offered again (transports/nostr.md). */
 #define CONV_MAX_CANDIDATES       32   /* Commits retained off the canonical branch */
 #define CONV_MAX_PER_COMMITTER     4   /* ...by one authenticated committer */
-#define CONV_MAX_ORPHANS           8   /* ...whose parent state is not known (yet) */
+/* Room for the Commits admitted to one pass before the bounds run: the
+ * arriving one, or -- our pending Commit merged -- the Commits that waited
+ * on it (commits.c PENDING_MAX_DEFERRED, 16).  They are bounded with the
+ * others afterwards; a stored record holds CONV_MAX_CANDIDATES at most. */
+#define CONV_CANDIDATE_SLOTS (CONV_MAX_CANDIDATES + 17)
+/* A Commit that no retained state authenticates (convergence.md "Candidate
+ * branches": its parent identified by MLS authentication alone) is not
+ * retained: its kind:445 opened only with an exporter secret we hold, so no
+ * state we could still learn authenticates it.  MDK v0.11.0 drops such a
+ * Commit too (InvalidAgainstCandidateState once every reachable parent was
+ * tried, openmls_projection.rs). */
 /* Each (epoch state, sender) pair counts once, and a state's score stops at
  * CONV_WITNESS_QUORUM_SENDERS: no more are ever needed. */
 #define CONV_MAX_WITNESSES (CONV_WITNESS_QUORUM_SENDERS * \
@@ -66,19 +82,21 @@ typedef struct {
 
 /* A Commit retained off the canonical branch: one that lost a selection
  * (deferred while its branch can still win) or the losing side of a reorg.
- * Its parent is the state whose exporter secret sealed its kind:445 event
- * (MIP-03), named by that state's confirmed transcript hash; the Commit is
- * staged (authenticated and validated) against it at every pass.  Our own
- * Commit cannot be processed by us (its UpdatePath is not encrypted to its
- * sender): its resulting state and priority are kept instead. */
+ * Its parent is the retained state its MLS authentication succeeds against
+ * (membership tag, sender data: convergence.md "Candidate branches"); the
+ * state whose exporter secret sealed its kind:445 event, named by its
+ * confirmed transcript hash, is only tried first.  It is staged
+ * (authenticated and validated) at every pass.  Our own Commit cannot be
+ * processed by us (its UpdatePath is not encrypted to its sender): its
+ * resulting state and priority are kept instead, and its parent is named. */
 typedef struct {
     uint64_t  source_epoch;      /* authenticated epoch of the MLSMessage */
     uint8_t   digest[32];        /* SHA-256 of the MLSMessage bytes */
     uint8_t  *msg;
     size_t    msg_len;
     char     *event_id;          /* hex, or NULL */
-    uint8_t   parent_tag[32];    /* the parent's confirmed transcript hash:
-                                    the state whose exporter secret sealed it */
+    uint8_t   parent_tag[32];    /* the state whose exporter secret sealed it
+                                    (its confirmed transcript hash): tried first */
     bool      own;
     bool      own_privileged;    /* own: its ordering priority, as authorized */
     bool      own_unconfirmed;   /* own: a pending Commit superseded before any
@@ -91,12 +109,17 @@ typedef struct {
 
 /* An app-payload witness (convergence.md, "App-payload witnesses"): an
  * application message of `epoch` that decrypted on the state whose confirmed
- * transcript hash is `tag`, sent by the account `sender`, and passed every
- * payload check. */
+ * transcript hash is `tag`, sent by the account `sender` from its leaf
+ * `leaf`, and passed every payload check.  The witnesses of a branch that
+ * lost a reorg stay (they are retained authenticated input, and that branch
+ * may be contested again); MDK v0.11.0 no longer re-admits the messages it
+ * invalidated as witnesses, so a later contest of the same old branch can
+ * score differently there. */
 typedef struct {
     uint64_t epoch;
     uint8_t  tag[32];
     uint8_t  sender[32];
+    uint32_t leaf;
 } ConvWitness;
 
 /* The exporter secret of a candidate (non-canonical) epoch state, so its
@@ -106,13 +129,15 @@ typedef struct {
     uint64_t epoch;
     uint8_t  tag[32];
     uint8_t  exporter[32];
+    uint8_t  sender_data[32];   /* its sender-data secret: who sent a message
+                                   of it, without rebuilding it (M1) */
 } ConvBranchSecret;
 
 /* The retained-parent record, whole. */
 typedef struct {
     ConvEntry        entries[CONV_MAX_REWIND_COMMITS];  /* [0]: tip-1, [1]: tip-2, ... */
     size_t           n_entries;
-    ConvCandidate    cands[CONV_MAX_CANDIDATES];
+    ConvCandidate    cands[CONV_CANDIDATE_SLOTS];   /* stored: CONV_MAX_CANDIDATES */
     size_t           n_cands;
     ConvWitness      wits[CONV_MAX_WITNESSES];
     size_t           n_wits;
@@ -143,9 +168,12 @@ ConvEntry *conv_history_entry(ConvHistory *h, uint64_t epoch);
 bool conv_witness_known(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
                         const uint8_t sender[32]);
 bool conv_witness_full(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32]);
+/* Whether the leaf `leaf` already witnesses (epoch, tag). */
+bool conv_witness_leaf_known(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
+                             uint32_t leaf);
 /* Add a witness: 1 added, 0 known or not needed, -1 no room. */
 int conv_witness_add(ConvHistory *h, uint64_t epoch, const uint8_t tag[32],
-                     const uint8_t sender[32]);
+                     const uint8_t sender[32], uint32_t leaf);
 /* Distinct senders recorded for (epoch, tag), capped at the quorum. */
 size_t conv_witness_count(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32]);
 
@@ -160,6 +188,23 @@ typedef struct {
     uint8_t  committer[32];           /* tip_committer */
     uint8_t  digest[32];              /* tip_digest */
 } ConvBranchScore;
+
+/* One state of a branch, for its witness score: its epoch and confirmed
+ * transcript hash (`tag` NULL: a state we cannot hold, a removal of our
+ * leaf). */
+typedef struct {
+    uint64_t       epoch;
+    const uint8_t *tag;
+} ConvPathState;
+
+/* The witness part of the score of the branch whose states are `path`
+ * (any order) from `s->fork_epoch` to `s->tip_epoch`: per branch epoch after
+ * the fork and inside the app-payload window of the branch's own tip
+ * (retained-history.md: tip - epoch <= app_payload_past_epoch_limit),
+ * min(distinct senders, quorum senders) summed; quorum when
+ * CONV_WITNESS_QUORUM_EPOCHS epochs reach it. */
+void conv_score_witnesses(const ConvHistory *h, const ConvPathState *path, size_t n_path,
+                          ConvBranchScore *s);
 
 /* effective_commit_depth: raw depth plus the bounded witness boost. */
 uint64_t conv_effective_depth(const ConvBranchScore *s);

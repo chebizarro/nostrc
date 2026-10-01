@@ -3043,17 +3043,18 @@ typedef struct {
     bool            removal_left;  /* a removal of our leaf: our own departure */
 } ConvNode;
 
-#define CONV_MAX_NODES (CONV_MAX_REWIND_COMMITS + 1 + CONV_MAX_CANDIDATES)
+#define CONV_MAX_NODES (CONV_MAX_REWIND_COMMITS + 1 + CONV_CANDIDATE_SLOTS)
 
 typedef struct {
     ConvNode       *nodes;
     size_t          n_nodes;
     uint64_t        root_epoch;    /* replay start: the fork_epoch of every branch */
     int             tip;           /* the canonical tip */
-    CandStatus      status[CONV_MAX_CANDIDATES];
-    MarmotError     err[CONV_MAX_CANDIDATES];       /* a dead or held one's refusal */
-    MarmotCommitKey key[CONV_MAX_CANDIDATES];       /* authorize()'s, also when refused */
-    int             node_of[CONV_MAX_CANDIDATES];
+    CandStatus      status[CONV_CANDIDATE_SLOTS];
+    MarmotError     err[CONV_CANDIDATE_SLOTS];      /* a dead or held one's refusal */
+    MarmotCommitKey key[CONV_CANDIDATE_SLOTS];      /* authorize()'s, also when refused */
+    int             node_of[CONV_CANDIDATE_SLOTS];
+    size_t          probed[CONV_CANDIDATE_SLOTS];   /* nodes tried as its parent so far */
 } ConvTree;
 
 typedef enum { CONV_UNCHANGED, CONV_ADVANCED, CONV_REMOVED } ConvOutcome;
@@ -3066,8 +3067,8 @@ tree_clear(ConvTree *t)
     memset(t, 0, sizeof(*t));
 }
 
-/* Candidate `i` failed against node `p`, its parent, for good (`held`: it
- * waits for a proposal). */
+/* Candidate `i` failed against its parent for good (`held`: it waits for a
+ * proposal). */
 static void
 cand_refused(ConvTree *t, size_t i, MarmotError err, bool held)
 {
@@ -3075,11 +3076,49 @@ cand_refused(ConvTree *t, size_t i, MarmotError err, bool held)
     t->err[i] = err;
 }
 
-/* Stage candidate `i` of `h` on node `p`.  Only an allocation failure fails
- * the pass; a Commit invalid against its parent is dead (terminal:
- * convergence.md "Candidate branches", authorization_failed). */
+/* convergence.md "Candidate branches": the parent of candidate `i` is the
+ * retained state its parent-dependent MLS authentication succeeds against
+ * (a PublicMessage's membership tag and signature, a PrivateMessage's
+ * sender data and signature: mls_group_commit_authentic()), never the
+ * transport's word for it; a state that does not authenticate it can
+ * neither be its parent nor refuse it.  The nodes created since the last
+ * try are tried, the one whose exporter secret sealed it first.  Our own
+ * Commit (kept with its result) names its parent.  -1: none (yet). */
+static int
+conv_parent_of(const ConvTree *t, const ConvHistory *h, size_t i, uint32_t *sender)
+{
+    const ConvCandidate *c = &h->cands[i];
+    size_t from = t->probed[i];
+    int order[CONV_MAX_NODES];
+    size_t n = 0;
+    for (size_t pass = 0; pass < 2; pass++)
+        for (size_t k = from; k < t->n_nodes; k++) {
+            const ConvNode *nd = &t->nodes[k];
+            if (!nd->state || nd->epoch != c->source_epoch) continue;
+            bool hinted = memcmp(nd->tag, c->parent_tag, 32) == 0;
+            if ((pass == 0) == hinted) order[n++] = (int)k;
+        }
+    if (c->own)
+        return n > 0 && memcmp(t->nodes[order[0]].tag, c->parent_tag, 32) == 0 ? order[0] : -1;
+    for (size_t j = 0; j < n; j++) {
+        const MlsGroup *g = t->nodes[order[j]].state;
+        CommitRoute route;
+        if (!commit_route(c->msg, c->msg_len, g->group_id, g->group_id_len, &route) ||
+            !route.commit || !route.group_ok || route.epoch != c->source_epoch)
+            return -1;
+        if (commit_sender_on(g, c->msg, c->msg_len, &route, sender) &&
+            mls_group_commit_authentic(g, c->msg, c->msg_len, *sender) == 0)
+            return order[j];
+    }
+    return -1;
+}
+
+/* Stage candidate `i` of `h` on node `p`, the state it authenticates
+ * against (from `sender`).  Only an allocation failure fails the pass; a
+ * Commit invalid against its parent is dead (terminal: convergence.md
+ * "Candidate branches", authorization_failed). */
 static MarmotError
-conv_attach(const Marmot *m, ConvTree *t, const ConvHistory *h, size_t i, int p)
+conv_attach(const Marmot *m, ConvTree *t, const ConvHistory *h, size_t i, int p, uint32_t sender)
 {
     const ConvCandidate *c = &h->cands[i];
     const MlsGroup *parent = t->nodes[p].state;
@@ -3104,14 +3143,6 @@ conv_attach(const Marmot *m, ConvTree *t, const ConvHistory *h, size_t i, int p)
         n->key.privileged = c->own_privileged;
         n->key.committer_leaf = parent->own_leaf_index;
     } else {
-        CommitRoute route;
-        uint32_t sender = UINT32_MAX;
-        if (!commit_route(c->msg, c->msg_len, parent->group_id, parent->group_id_len, &route) ||
-            !route.commit || !route.group_ok || route.epoch != c->source_epoch ||
-            !commit_sender_on(parent, c->msg, c->msg_len, &route, &sender)) {
-            cand_refused(t, i, MARMOT_ERR_MLS_PROCESS_MESSAGE, false);
-            return MARMOT_OK;
-        }
         MarmotGroupDataExtension *gde = NULL;
         MarmotError err = stage_inbound(m, parent, c->msg, c->msg_len, sender, &n->own_state,
                                         &n->key, &gde, &n->departures);
@@ -3163,10 +3194,11 @@ conv_attach(const Marmot *m, ConvTree *t, const ConvHistory *h, size_t i, int p)
 }
 
 /* convergence.md "Candidate branches": the canonical path from the replay
- * start to the tip `cur`, then every retained candidate whose parent is a
- * node, staged against it (a Commit authenticates against one state only,
- * so it enters one node at most, and is staged once per pass).  The
- * candidates of `h` must be inside the horizon. */
+ * start to the tip `cur`, then every retained candidate whose parent --
+ * the state it authenticates against -- is a node, staged against it (a
+ * Commit authenticates against one state only, so it enters one node at
+ * most, and is staged once per pass).  The candidates of `h` must be inside
+ * the horizon. */
 static MarmotError
 conv_build(const Marmot *m, const MlsGroup *cur, ConvHistory *h, ConvTree *t)
 {
@@ -3205,15 +3237,12 @@ conv_build(const Marmot *m, const MlsGroup *cur, ConvHistory *h, ConvTree *t)
         progress = false;
         for (size_t i = 0; i < h->n_cands; i++) {
             if (t->status[i] != CAND_WAITING) continue;
-            const ConvCandidate *c = &h->cands[i];
-            int p = -1;
-            for (size_t k = 0; k < t->n_nodes && p < 0; k++)
-                if (t->nodes[k].state && t->nodes[k].epoch == c->source_epoch &&
-                    memcmp(t->nodes[k].tag, c->parent_tag, 32) == 0)
-                    p = (int)k;
+            uint32_t sender = UINT32_MAX;
+            int p = conv_parent_of(t, h, i, &sender);
+            t->probed[i] = t->n_nodes;
             if (p < 0) continue;
             progress = true;
-            MarmotError err = conv_attach(m, t, h, i, p);
+            MarmotError err = conv_attach(m, t, h, i, p, sender);
             if (err != MARMOT_OK) {
                 tree_clear(t);
                 return err;
@@ -3223,7 +3252,8 @@ conv_build(const Marmot *m, const MlsGroup *cur, ConvHistory *h, ConvTree *t)
     return MARMOT_OK;
 }
 
-/* convergence.md "App-payload witnesses": the branch ending at `leaf`. */
+/* convergence.md "App-payload witnesses" and "Branch selection": the branch
+ * ending at `leaf`. */
 static void
 conv_score(const ConvTree *t, const ConvHistory *h, int leaf, ConvBranchScore *s)
 {
@@ -3231,17 +3261,15 @@ conv_score(const ConvTree *t, const ConvHistory *h, int leaf, ConvBranchScore *s
     memset(s, 0, sizeof(*s));
     s->fork_epoch = t->root_epoch;
     s->tip_epoch = tipn->epoch;
-    size_t quorum_epochs = 0;
-    for (int i = leaf; i >= 0; i = t->nodes[i].parent) {
-        const ConvNode *n = &t->nodes[i];
-        if (n->epoch <= t->root_epoch) break;          /* at or before fork_epoch */
-        if (!n->state) continue;                       /* a removal: unreadable for us */
-        if (tipn->epoch - n->epoch > CONV_APP_PAYLOAD_PAST_EPOCH_LIMIT) continue;
-        size_t c = conv_witness_count(h, n->epoch, n->tag);
-        s->witness_score += c;
-        if (c >= CONV_WITNESS_QUORUM_SENDERS) quorum_epochs++;
+    ConvPathState path[CONV_MAX_NODES];
+    size_t n = 0;
+    for (int i = leaf; i >= 0 && n < CONV_MAX_NODES; i = t->nodes[i].parent) {
+        const ConvNode *nd = &t->nodes[i];
+        path[n].epoch = nd->epoch;
+        path[n].tag = nd->state ? nd->tag : NULL;   /* a removal: unreadable for us */
+        n++;
     }
-    s->quorum = quorum_epochs >= CONV_WITNESS_QUORUM_EPOCHS;
+    conv_score_witnesses(h, path, n, s);
     s->privileged = tipn->key.privileged;
     memcpy(s->committer, tipn->key.committer, 32);
     memcpy(s->digest, tipn->key.digest, 32);
@@ -3300,32 +3328,88 @@ dup_bytes(const uint8_t *p, size_t len, uint8_t **out, size_t *out_len)
     return 0;
 }
 
-/* Candidate order for the bound: oldest source epoch first (the nearest to
- * expiry), then digest. */
-static int
-cand_age_cmp(const ConvCandidate *a, const ConvCandidate *b)
+/* The best score of a branch through each node: its subtree's best leaf
+ * (`ranked[k]` false: no branch through it scores, e.g. nothing below). */
+static void
+conv_node_ranks(const ConvTree *t, const ConvHistory *h, ConvBranchScore *best, bool *ranked)
 {
-    if (a->source_epoch != b->source_epoch) return a->source_epoch < b->source_epoch ? -1 : 1;
-    return memcmp(a->digest, b->digest, 32);
+    for (size_t k = 0; k < t->n_nodes; k++) ranked[k] = false;
+    for (size_t k = 0; k < t->n_nodes; k++) {
+        if (t->nodes[k].has_child || t->nodes[k].parent < 0) continue;
+        ConvBranchScore s;
+        conv_score(t, h, (int)k, &s);
+        for (int i = (int)k; i >= 0; i = t->nodes[i].parent)
+            if (!ranked[i] || conv_branch_cmp(&s, &best[i]) > 0) {
+                best[i] = s;
+                ranked[i] = true;
+            }
+    }
+}
+
+/* The retained losers under a bound, in the order they go (the least
+ * likely to win first): `a` before `b` (< 0) when `a` is less likely. */
+typedef struct {
+    const ConvTree        *t;
+    const ConvBranchScore *best;
+    const bool            *ranked;
+    const int             *node_for;
+    const ConvCandidate   *all;
+    size_t                 n;
+} EvictOrder;
+
+static bool
+has_retained_child(const EvictOrder *o, size_t i)
+{
+    int k = o->node_for[i];
+    for (size_t j = 0; k >= 0 && j < o->n; j++)
+        if (j != i && o->node_for[j] >= 0 && o->t->nodes[o->node_for[j]].parent == k) return true;
+    return false;
+}
+
+static int
+evict_cmp(const EvictOrder *o, size_t a, size_t b)
+{
+    int ka = o->node_for[a], kb = o->node_for[b];
+    bool ra = ka >= 0 && o->ranked[ka], rb = kb >= 0 && o->ranked[kb];
+    /* Unattached first: its parent is not (or no longer) a state we hold. */
+    if (ra != rb) return ra ? 1 : -1;
+    if (ra) {
+        int c = conv_branch_cmp(&o->best[ka], &o->best[kb]);
+        if (c != 0) return c;
+        /* Equal: a branch tip before a candidate others build on. */
+        bool ca = has_retained_child(o, a), cb = has_retained_child(o, b);
+        if (ca != cb) return ca ? 1 : -1;
+    }
+    const ConvCandidate *x = &o->all[a], *y = &o->all[b];
+    if (x->source_epoch != y->source_epoch) return x->source_epoch < y->source_epoch ? -1 : 1;
+    return -memcmp(x->digest, y->digest, 32);
 }
 
 /* The retained state once the branch ending at node `sel` of `t` is
- * canonical (with `tip_epoch`, its tip): candidates that are not on it,
- * still attach and are inside the horizon -- plus, `demote` set, the
- * canonical Commits above node `fork` that it supersedes -- the witnesses
- * of states still retained, and the exporter secrets of every retained
- * candidate state.  `entries` of the result are not filled. */
+ * canonical (with `tip_epoch`, its tip): candidates that are not on it and
+ * are inside the horizon -- plus, `demote` set, the canonical Commits above
+ * node `fork` that it supersedes -- the witnesses of states still retained,
+ * and the exporter and sender-data secrets of every retained candidate
+ * state.  Every retained candidate is a loser of this selection, and only
+ * losers are bounded (H1): over CONV_MAX_PER_COMMITTER for one committer,
+ * or CONV_MAX_CANDIDATES in all, the least likely to win go -- unattached
+ * ones first, then by the best branch through each, a branch tip before
+ * what it builds on (inbound-processing.md "resource_refused": a local
+ * bound, never a validity judgement).  `evicted` (may be NULL; indexed like
+ * h->cands) marks those of `h` that went.  `entries` of the result are not
+ * filled. */
 static MarmotError
-conv_retained(const ConvTree *t, const ConvHistory *h, const MlsGroup *cur, int sel,
-              int fork, bool demote, uint64_t anchor, uint64_t tip_epoch, ConvHistory *out)
+conv_retained(const ConvTree *t, const ConvHistory *h, int sel, int fork, bool demote,
+              uint64_t anchor, uint64_t tip_epoch, ConvHistory *out, bool *evicted)
 {
-    /* Each node's candidate (index into out->cands), or -1. */
-    int kept_as[CONV_MAX_NODES];
-    for (size_t k = 0; k < CONV_MAX_NODES; k++) kept_as[k] = -1;
-    ConvCandidate all[CONV_MAX_CANDIDATES + CONV_MAX_REWIND_COMMITS];
-    int node_for[CONV_MAX_CANDIDATES + CONV_MAX_REWIND_COMMITS];
+    enum { MAX_ALL = CONV_CANDIDATE_SLOTS + CONV_MAX_REWIND_COMMITS };
+    ConvCandidate all[MAX_ALL];
+    int node_for[MAX_ALL];
+    int from_cand[MAX_ALL];   /* its index in h->cands, -1: demoted */
     size_t n = 0;
     memset(all, 0, sizeof(all));
+    if (evicted)
+        for (size_t i = 0; i < CONV_CANDIDATE_SLOTS; i++) evicted[i] = false;
     MarmotError err = MARMOT_OK;
     for (size_t i = 0; i < h->n_cands && err == MARMOT_OK; i++) {
         const ConvCandidate *c = &h->cands[i];
@@ -3345,7 +3429,8 @@ conv_retained(const ConvTree *t, const ConvHistory *h, const MlsGroup *cur, int 
             dup_bytes(c->own_post, c->own_post_len, &d->own_post, &d->own_post_len) != 0 ||
             (c->event_id && !(d->event_id = strdup(c->event_id))))
             err = MARMOT_ERR_MEMORY;
-        node_for[n++] = k;
+        node_for[n] = k;
+        from_cand[n++] = (int)i;
     }
     /* The canonical Commits the selected branch supersedes, epochs
      * fork..tip-1 of the old path, stay retained: their branch can still
@@ -3369,27 +3454,53 @@ conv_retained(const ConvTree *t, const ConvHistory *h, const MlsGroup *cur, int 
         if (err == MARMOT_OK && e->own &&
             mls_group_serialize(child->state, &d->own_post, &d->own_post_len) != 0)
             err = MARMOT_ERR_SERIALIZATION;
-        node_for[n++] = k;
+        node_for[n] = k;
+        from_cand[n++] = -1;
     }
-    (void)cur;
-    /* Over the bound (a reorg demotes up to five): the oldest go first. */
-    while (err == MARMOT_OK && n > CONV_MAX_CANDIDATES) {
-        size_t oldest = 0;
-        for (size_t i = 1; i < n; i++)
-            if (cand_age_cmp(&all[i], &all[oldest]) < 0) oldest = i;
-        conv_candidate_clear(&all[oldest]);
-        all[oldest] = all[n - 1];
-        node_for[oldest] = node_for[n - 1];
-        n--;
+    /* The bounds, on these losers. */
+    if (err == MARMOT_OK) {
+        ConvBranchScore *best = calloc(CONV_MAX_NODES, sizeof(*best));
+        bool ranked[CONV_MAX_NODES];
+        if (!best) err = MARMOT_ERR_MEMORY;
+        if (err == MARMOT_OK) conv_node_ranks(t, h, best, ranked);
+        while (err == MARMOT_OK) {
+            EvictOrder o = { t, best, ranked, node_for, all, n };
+            /* A committer over its share: its least likely loser goes. */
+            int over = -1;
+            for (size_t i = 0; i < n && over < 0; i++) {
+                if (node_for[i] < 0) continue;
+                const uint8_t *who = t->nodes[node_for[i]].key.committer;
+                size_t count = 0;
+                for (size_t j = 0; j < n; j++)
+                    if (node_for[j] >= 0 &&
+                        memcmp(t->nodes[node_for[j]].key.committer, who, 32) == 0)
+                        count++;
+                if (count > CONV_MAX_PER_COMMITTER) over = (int)i;
+            }
+            if (over < 0 && n <= CONV_MAX_CANDIDATES) break;
+            size_t victim = n;
+            for (size_t i = 0; i < n; i++) {
+                if (over >= 0 && (node_for[i] < 0 ||
+                                  memcmp(t->nodes[node_for[i]].key.committer,
+                                         t->nodes[node_for[over]].key.committer, 32) != 0))
+                    continue;
+                if (victim == n || evict_cmp(&o, i, victim) < 0) victim = i;
+            }
+            if (evicted && from_cand[victim] >= 0) evicted[from_cand[victim]] = true;
+            conv_candidate_clear(&all[victim]);
+            all[victim] = all[n - 1];
+            node_for[victim] = node_for[n - 1];
+            from_cand[victim] = from_cand[n - 1];
+            memset(&all[n - 1], 0, sizeof(all[n - 1]));
+            n--;
+        }
+        free(best);
     }
     if (err != MARMOT_OK) {
         for (size_t i = 0; i < n; i++) conv_candidate_clear(&all[i]);
         return err;
     }
-    for (size_t i = 0; i < n; i++) {
-        out->cands[i] = all[i];
-        if (node_for[i] >= 0) kept_as[node_for[i]] = (int)i;
-    }
+    for (size_t i = 0; i < n; i++) out->cands[i] = all[i];
     out->n_cands = n;
     /* Witnesses of states still retained: a node of the tree, or a
      * canonical epoch at or before the replay start, inside the horizon. */
@@ -3403,15 +3514,19 @@ conv_retained(const ConvTree *t, const ConvHistory *h, const MlsGroup *cur, int 
                     memcmp(t->nodes[k].tag, w->tag, 32) == 0;
         if (found) out->wits[out->n_wits++] = *w;
     }
-    /* The exporter secrets of the retained candidate states. */
+    /* The exporter and sender-data secrets of the retained candidate
+     * states, in the candidates' order (stable from pass to pass: the same
+     * retained state encodes the same). */
     out->n_secrets = 0;
-    for (size_t k = 0; k < t->n_nodes && out->n_secrets < CONV_MAX_CANDIDATES; k++) {
-        const ConvNode *nd = &t->nodes[k];
-        if (!nd->state || kept_as[k] < 0) continue;
+    for (size_t i = 0; i < n && out->n_secrets < CONV_MAX_CANDIDATES; i++) {
+        if (node_for[i] < 0) continue;
+        const ConvNode *nd = &t->nodes[node_for[i]];
+        if (!nd->state) continue;
         ConvBranchSecret *s = &out->secrets[out->n_secrets++];
         s->epoch = nd->epoch;
         memcpy(s->tag, nd->tag, 32);
         memcpy(s->exporter, nd->state->epoch_secrets.exporter_secret, 32);
+        memcpy(s->sender_data, nd->state->epoch_secrets.sender_data_secret, 32);
     }
     return MARMOT_OK;
 }
@@ -3561,10 +3676,32 @@ list_add(char ***list, size_t *n, char *hex)
     return 0;
 }
 
+/* Keep `msgs` (`count`, freed by the caller through `pages`). */
+static MarmotError
+page_keep(MarmotMessage **msgs, size_t count, MarmotMessage ****pages, size_t **page_lens,
+          size_t *n_pages)
+{
+    MarmotMessage ***pp = realloc(*pages, (*n_pages + 1) * sizeof(*pp));
+    if (pp) *pages = pp;
+    size_t *pl = pp ? realloc(*page_lens, (*n_pages + 1) * sizeof(*pl)) : NULL;
+    if (pl) *page_lens = pl;
+    if (!pp || !pl) {
+        for (size_t i = 0; i < count; i++) marmot_message_free(msgs[i]);
+        free(msgs);
+        return MARMOT_ERR_MEMORY;
+    }
+    (*pages)[*n_pages] = msgs;
+    (*page_lens)[*n_pages] = count;
+    (*n_pages)++;
+    return MARMOT_OK;
+}
+
 /* The stored messages of `gid` received or sent in epochs after..upto of
  * the losing branch: their payloads decrypt only there (inbound-
  * processing.md "Delivered app payloads"), so they are withdrawn
- * (MARMOT_MSG_STATE_EPOCH_INVALIDATED) and reported.  `pages` keeps the
+ * (MARMOT_MSG_STATE_EPOCH_INVALIDATED) and reported.  Only those epochs are
+ * read (storage messages_in_epochs(); without it, the history is paged and
+ * only the matching messages are kept in memory).  `pages` keeps the
  * messages the undo log points to. */
 static MarmotError
 invalidate_messages(Marmot *m, const MarmotGroupId *gid, uint64_t after, uint64_t upto,
@@ -3572,28 +3709,49 @@ invalidate_messages(Marmot *m, const MarmotGroupId *gid, uint64_t after, uint64_
                     char ***ids, size_t *n_ids)
 {
     MarmotStorage *s = m->storage;
-    if (!s->messages || !s->save_message) return MARMOT_OK;
-    MarmotPagination pg = marmot_pagination_default();
-    for (;;) {
+    if (!s->save_message || upto <= after) return MARMOT_OK;
+    size_t first = *n_pages;
+    if (s->messages_in_epochs) {
         MarmotMessage **msgs = NULL;
         size_t count = 0;
-        MarmotError err = s->messages(s->ctx, gid, &pg, &msgs, &count);
+        MarmotError err = s->messages_in_epochs(s->ctx, gid, after + 1, upto, &msgs, &count);
         if (err == MARMOT_ERR_STORAGE_NOT_FOUND) return MARMOT_OK;
         if (err != MARMOT_OK) return err;
-        MarmotMessage ***pp = realloc(*pages, (*n_pages + 1) * sizeof(*pp));
-        size_t *pl = realloc(*page_lens, (*n_pages + 1) * sizeof(*pl));
-        if (pp) *pages = pp;
-        if (pl) *page_lens = pl;
-        if (!pp || !pl) {
-            for (size_t i = 0; i < count; i++) marmot_message_free(msgs[i]);
+        if (count == 0) {
             free(msgs);
-            return MARMOT_ERR_MEMORY;
+            return MARMOT_OK;
         }
-        (*pages)[*n_pages] = msgs;
-        (*page_lens)[*n_pages] = count;
-        (*n_pages)++;
-        for (size_t i = 0; i < count; i++) {
-            MarmotMessage *msg = msgs[i];
+        err = page_keep(msgs, count, pages, page_lens, n_pages);
+        if (err != MARMOT_OK) return err;
+    } else if (s->messages) {
+        MarmotPagination pg = marmot_pagination_default();
+        for (;;) {
+            MarmotMessage **msgs = NULL;
+            size_t count = 0;
+            MarmotError err = s->messages(s->ctx, gid, &pg, &msgs, &count);
+            if (err == MARMOT_ERR_STORAGE_NOT_FOUND) break;
+            if (err != MARMOT_OK) return err;
+            size_t kept = 0;
+            for (size_t i = 0; i < count; i++) {
+                MarmotMessage *msg = msgs[i];
+                if (msg && msg->epoch > after && msg->epoch <= upto)
+                    msgs[kept++] = msg;
+                else
+                    marmot_message_free(msg);
+            }
+            if (kept > 0) {
+                err = page_keep(msgs, kept, pages, page_lens, n_pages);
+                if (err != MARMOT_OK) return err;
+            } else {
+                free(msgs);
+            }
+            if (count < pg.limit) break;
+            pg.offset += count;
+        }
+    }
+    for (size_t p = first; p < *n_pages; p++)
+        for (size_t i = 0; i < (*page_lens)[p]; i++) {
+            MarmotMessage *msg = (*pages)[p][i];
             if (!msg || msg->epoch <= after || msg->epoch > upto ||
                 msg->state == MARMOT_MSG_STATE_EPOCH_INVALIDATED ||
                 msg->state == MARMOT_MSG_STATE_DELETED)
@@ -3604,7 +3762,7 @@ invalidate_messages(Marmot *m, const MarmotGroupId *gid, uint64_t after, uint64_
             r->msg = msg;
             r->state = msg->state;
             msg->state = MARMOT_MSG_STATE_EPOCH_INVALIDATED;
-            err = s->save_message(s->ctx, msg);
+            MarmotError err = s->save_message(s->ctx, msg);
             if (err != MARMOT_OK) {
                 msg->state = r->state;
                 u->n--;
@@ -3613,9 +3771,7 @@ invalidate_messages(Marmot *m, const MarmotGroupId *gid, uint64_t after, uint64_
             if (list_add(ids, n_ids, marmot_hex_encode(msg->id, 32)) != 0)
                 return MARMOT_ERR_MEMORY;
         }
-        if (count < pg.limit) return MARMOT_OK;
-        pg.offset += count;
-    }
+    return MARMOT_OK;
 }
 
 /* convergence.md "Applying the selected branch": make the branch ending at
@@ -3625,7 +3781,8 @@ invalidate_messages(Marmot *m, const MarmotGroupId *gid, uint64_t after, uint64_
  * `result` (MARMOT_RESULT_COMMIT). */
 static MarmotError
 conv_install(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const ConvHistory *h,
-             const ConvTree *t, int sel, bool as_commit, MarmotMessageResult *result)
+             const ConvTree *t, int sel, bool as_commit, MarmotMessageResult *result,
+             bool *evicted)
 {
     MarmotStorage *s = m->storage;
     const ConvNode *best = &t->nodes[sel];
@@ -3702,7 +3859,7 @@ conv_install(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const ConvHisto
         }
     }
     uint64_t anchor = nh->entries[nh->n_entries - 1].epoch;
-    err = conv_retained(t, h, cur, sel, fork, reorg, anchor, new_tip, nh);
+    err = conv_retained(t, h, sel, fork, reorg, anchor, new_tip, nh, evicted);
     if (err != MARMOT_OK) goto out;
     if (conv_history_encode(nh, &rec_blob, &rec_len) != 0 ||
         mls_group_serialize(best->state, &state_blob, &state_len) != 0) {
@@ -3840,16 +3997,17 @@ out:
 }
 
 /* The canonical branch stays: `h` keeps what still matters (candidates that
- * attach and are inside the horizon, their states' exporter secrets, live
- * witnesses) and is stored. */
+ * attach and are inside the horizon, under the bounds, their states'
+ * exporter secrets, live witnesses) and is stored.  `evicted`: as
+ * conv_retained(). */
 static MarmotError
 conv_keep(Marmot *m, const MarmotGroupId *gid, const MlsGroup *cur, ConvHistory *h,
-          const ConvTree *t)
+          const ConvTree *t, bool *evicted)
 {
     ConvHistory *nh = calloc(1, sizeof(*nh));
     if (!nh) return MARMOT_ERR_MEMORY;
     uint64_t anchor = history_anchor(h, cur->epoch);
-    MarmotError err = conv_retained(t, h, cur, t->tip, t->tip, false, anchor, cur->epoch, nh);
+    MarmotError err = conv_retained(t, h, t->tip, t->tip, false, anchor, cur->epoch, nh, evicted);
     if (err == MARMOT_OK) {
         /* Swap in the retained parts; the entries stay as they are. */
         for (size_t i = 0; i < h->n_cands; i++) conv_candidate_clear(&h->cands[i]);
@@ -3872,18 +4030,19 @@ static MarmotError pending_retain(Marmot *m, MarmotGroup *group, uint64_t old_ep
 /* Select among the branches of `t` (built from `h` and `cur`) and apply the
  * selection: the canonical branch stays (`h` refreshed and stored), another
  * becomes canonical, or a branch that removes our leaf wins (the group ends
- * for us, nostrc-xrya). */
+ * for us, nostrc-xrya).  The losers are bounded afterwards: `evicted` (may
+ * be NULL) marks the candidates of `h` that went (conv_retained()). */
 static MarmotError
 conv_apply(Marmot *m, MarmotGroup *group, const MlsGroup *cur, ConvHistory *h, ConvTree *t,
-           bool as_commit, MarmotMessageResult *result, ConvOutcome *out)
+           bool as_commit, MarmotMessageResult *result, ConvOutcome *out, bool *evicted)
 {
     *out = CONV_UNCHANGED;
     int sel = conv_select(t, h);
-    if (sel < 0 || sel == t->tip) return conv_keep(m, &group->mls_group_id, cur, h, t);
+    if (sel < 0 || sel == t->tip) return conv_keep(m, &group->mls_group_id, cur, h, t, evicted);
     const ConvNode *best = &t->nodes[sel];
     if (!best->state) {
         const ConvNode *par = &t->nodes[best->parent];
-        MarmotError err = conv_keep(m, &group->mls_group_id, cur, h, t);
+        MarmotError err = conv_keep(m, &group->mls_group_id, cur, h, t, evicted);
         if (err == MARMOT_OK)
             err = evict(m, group, par->state, best->parent != t->tip, &best->key, par->epoch,
                         best->removal_left);
@@ -3893,7 +4052,7 @@ conv_apply(Marmot *m, MarmotGroup *group, const MlsGroup *cur, ConvHistory *h, C
         }
         return err;
     }
-    MarmotError err = conv_install(m, group, cur, h, t, sel, as_commit, result);
+    MarmotError err = conv_install(m, group, cur, h, t, sel, as_commit, result, evicted);
     if (err == MARMOT_OK) {
         *out = CONV_ADVANCED;
         err = pending_retain(m, group, cur->epoch, cur->confirmed_transcript_hash);
@@ -3944,7 +4103,7 @@ conv_rerun(Marmot *m, MarmotGroup *group, ConvHistory *h, bool as_commit,
     conv_prune_stale(h, cur.epoch);
     ConvTree t;
     err = conv_build(m, &cur, h, &t);
-    if (err == MARMOT_OK) err = conv_apply(m, group, &cur, h, &t, as_commit, result, out);
+    if (err == MARMOT_OK) err = conv_apply(m, group, &cur, h, &t, as_commit, result, out, NULL);
     tree_clear(&t);
     mls_group_free(&cur);
     return err;
@@ -3953,10 +4112,16 @@ conv_rerun(Marmot *m, MarmotGroup *group, ConvHistory *h, bool as_commit,
 /* Admit the received Commit `msg` (`digest`) of `epoch`, sealed under the
  * exporter secret of the state `parent_tag` (NULL: the canonical state of
  * `epoch`), into the retained candidates of `*hp` (created when NULL) and
- * resolve (convergence.md).  The canonical tip `cur` is the group's.  On
- * MARMOT_OK the selection changed (result filled); MARMOT_ERR_WRONG_EPOCH:
- * it is retained but the canonical branch stays (kept: marmot_txn_keep());
- * otherwise its refusal, and nothing is kept. */
+ * resolve (convergence.md).  The canonical tip `cur` is the group's.  Every
+ * Commit is admitted and resolved before the resource bounds apply, and
+ * they apply to the losers only (conv_retained()): one that becomes
+ * canonical is never refused for capacity.  On MARMOT_OK the selection
+ * changed (result filled).  MARMOT_ERR_COMMIT_RETAINED: it is retained as a
+ * losing candidate (kept: marmot_txn_keep()) -- its state's exporter secret
+ * can open held events.  MARMOT_ERR_RESOURCE_REFUSED: it lost and was the
+ * least likely to win over a bound: not kept, never processed, eligible
+ * again (inbound-processing.md "resource_refused").  Otherwise its refusal
+ * (`*out_stage_err` set when a state judged it), and nothing is kept. */
 static MarmotError
 conv_admit(Marmot *m, MarmotGroup *group, const MlsGroup *cur, ConvHistory **hp,
            uint64_t epoch, const uint8_t *parent_tag, const uint8_t *msg, size_t msg_len,
@@ -3982,7 +4147,9 @@ conv_admit(Marmot *m, MarmotGroup *group, const MlsGroup *cur, ConvHistory **hp,
         if (memcmp(h->cands[i].digest, digest, 32) == 0)
             return MARMOT_ERR_WRONG_EPOCH;           /* retained already */
     conv_prune_stale(h, tip);
-    if (h->n_cands >= CONV_MAX_CANDIDATES) return MARMOT_ERR_RESOURCE_REFUSED;
+    /* Stored records hold CONV_MAX_CANDIDATES at most; the extra slot is
+     * this Commit's, until the bounds run. */
+    if (h->n_cands >= CONV_CANDIDATE_SLOTS) return MARMOT_ERR_STORAGE;
     size_t x = h->n_cands;
     ConvCandidate *c = &h->cands[x];
     memset(c, 0, sizeof(*c));
@@ -3997,6 +4164,7 @@ conv_admit(Marmot *m, MarmotGroup *group, const MlsGroup *cur, ConvHistory **hp,
     h->n_cands++;
 
     ConvTree t;
+    bool evicted[CONV_CANDIDATE_SLOTS] = { false };
     MarmotError err = conv_build(m, cur, h, &t);
     if (err == MARMOT_OK) {
         if (out_key) *out_key = t.key[x];
@@ -4006,26 +4174,24 @@ conv_admit(Marmot *m, MarmotGroup *group, const MlsGroup *cur, ConvHistory **hp,
             err = *out_stage_err = t.err[x];
             break;
         case CAND_WAITING:
-            err = MARMOT_ERR_WRONG_EPOCH;   /* its parent is no longer a candidate state */
+            /* No retained state authenticates it (convergence.md "Candidate
+             * branches"): its sealing state does not, and no state we can
+             * still learn shares that exporter secret.  MDK v0.11.0 drops it
+             * too (InvalidAgainstCandidateState). */
+            err = *out_stage_err = MARMOT_ERR_MLS_PROCESS_MESSAGE;
             break;
-        case CAND_ATTACHED: {
-            /* DoS bound: one committer's retained Commits. */
-            size_t mine = 0;
-            for (size_t i = 0; i < h->n_cands; i++)
-                if (t.status[i] == CAND_ATTACHED &&
-                    memcmp(t.key[i].committer, t.key[x].committer, 32) == 0)
-                    mine++;
-            if (mine > CONV_MAX_PER_COMMITTER) err = MARMOT_ERR_RESOURCE_REFUSED;
+        case CAND_ATTACHED:
             break;
-        }
         }
     }
     if (err == MARMOT_OK) {
         ConvOutcome out;
-        err = conv_apply(m, group, cur, h, &t, true, result, &out);
+        err = conv_apply(m, group, cur, h, &t, true, result, &out, evicted);
         if (err == MARMOT_OK && out == CONV_UNCHANGED) {
-            marmot_txn_keep(m);   /* retained: its branch may still win */
-            err = MARMOT_ERR_WRONG_EPOCH;
+            /* Retained (or, over a bound, this one went): either way the
+             * record stored is consistent, and kept. */
+            marmot_txn_keep(m);
+            err = evicted[x] ? MARMOT_ERR_RESOURCE_REFUSED : MARMOT_ERR_COMMIT_RETAINED;
         }
     } else {
         /* Not retained. */
@@ -4040,7 +4206,8 @@ conv_admit(Marmot *m, MarmotGroup *group, const MlsGroup *cur, ConvHistory **hp,
 
 MarmotError
 marmot_commit_note_witness(Marmot *m, MarmotGroup *group, uint64_t epoch,
-                           const uint8_t tag[32], const uint8_t sender[32], bool canonical,
+                           const uint8_t tag[32], const uint8_t sender[32],
+                           uint32_t sender_leaf, bool canonical,
                            uint8_t **out_replaced, size_t *out_replaced_len,
                            MarmotMessageResult *result)
 {
@@ -4071,7 +4238,7 @@ marmot_commit_note_witness(Marmot *m, MarmotGroup *group, uint64_t epoch,
         free_secret(probe, probe_len);
         return MARMOT_OK;
     }
-    int added = conv_witness_add(h, epoch, tag, sender);
+    int added = conv_witness_add(h, epoch, tag, sender, sender_leaf);
     if (added <= 0) {   /* known, the epoch's quorum full, or no room */
         history_free(h);
         free_secret(probe, probe_len);
@@ -4159,60 +4326,175 @@ marmot_commit_state_canonical(Marmot *m, const MarmotGroupId *gid, uint64_t epoc
     return yes;
 }
 
+/* The candidate states last rebuilt for marmot_commit_branch_decrypt():
+ * the tree of the stored record and tip whose bytes hash to `key` (review
+ * M1: a held branch message offered again rebuilds nothing).  A tree with a
+ * candidate held for a proposal is not cached: the proposal may come. */
+typedef struct {
+    uint8_t      key[32];
+    ConvHistory *h;
+    MlsGroup     cur;
+    ConvTree     t;
+    bool         built;
+} BranchCache;
+
+static void
+branch_cache_drop(BranchCache *bc)
+{
+    if (!bc) return;
+    tree_clear(&bc->t);
+    history_free(bc->h);
+    mls_group_free(&bc->cur);
+    sodium_memzero(bc, sizeof(*bc));
+    free(bc);
+}
+
+void
+marmot_branch_cache_free(Marmot *m)
+{
+    if (!m) return;
+    branch_cache_drop(m->branch_cache);
+    m->branch_cache = NULL;
+}
+
+/* The cache for `gid` as stored now (rebuilt when the record or the tip
+ * changed); the tree is not built yet when `built` is false.  NULL with
+ * MARMOT_OK: no retained record. */
+static MarmotError
+branch_cache_get(Marmot *m, const MarmotGroupId *gid, BranchCache **out)
+{
+    *out = NULL;
+    MarmotStorage *s = m->storage;
+    uint8_t *rec = NULL, *tip = NULL;
+    size_t rec_len = 0, tip_len = 0;
+    MarmotError err = s->mls_load(s->ctx, PARENT_LABEL, gid->data, gid->len, &rec, &rec_len);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND || (err == MARMOT_OK && !rec)) {
+        free_secret(rec, rec_len);
+        return MARMOT_OK;
+    }
+    if (err != MARMOT_OK) return err;
+    err = s->mls_load(s->ctx, "mls_group", gid->data, gid->len, &tip, &tip_len);
+    if (err == MARMOT_OK && !tip) err = MARMOT_ERR_MLS;
+    uint8_t key[32];
+    crypto_hash_sha256_state hs;
+    if (err == MARMOT_OK) {
+        uint8_t lens[24];
+        uint64_t l[3] = { gid->len, rec_len, tip_len };
+        for (size_t i = 0; i < 3; i++)
+            for (size_t b = 0; b < 8; b++) lens[i * 8 + b] = (uint8_t)(l[i] >> (8 * b));
+        crypto_hash_sha256_init(&hs);
+        crypto_hash_sha256_update(&hs, lens, sizeof(lens));
+        crypto_hash_sha256_update(&hs, gid->data, gid->len);
+        crypto_hash_sha256_update(&hs, rec, rec_len);
+        crypto_hash_sha256_update(&hs, tip, tip_len);
+        crypto_hash_sha256_final(&hs, key);
+    }
+    BranchCache *bc = m->branch_cache;
+    if (err == MARMOT_OK && bc && sodium_memcmp(bc->key, key, 32) == 0) {
+        *out = bc;
+    } else if (err == MARMOT_OK) {
+        marmot_branch_cache_free(m);
+        bc = calloc(1, sizeof(*bc));
+        if (!bc) err = MARMOT_ERR_MEMORY;
+        if (err == MARMOT_OK && !(bc->h = calloc(1, sizeof(*bc->h)))) err = MARMOT_ERR_MEMORY;
+        if (err == MARMOT_OK && conv_history_decode(rec, rec_len, bc->h) != 0) {
+            free(bc->h);   /* cleared by the decoder */
+            bc->h = NULL;
+            err = MARMOT_ERR_STORAGE_NOT_FOUND;   /* unreadable: no candidate */
+        }
+        if (err == MARMOT_OK && mls_group_deserialize(tip, tip_len, &bc->cur) != 0)
+            err = MARMOT_ERR_MLS;
+        if (err == MARMOT_OK) {
+            memcpy(bc->key, key, 32);
+            conv_prune_stale(bc->h, bc->cur.epoch);
+            m->branch_cache = bc;
+            *out = bc;
+        } else {
+            branch_cache_drop(bc);
+        }
+    }
+    free_secret(rec, rec_len);
+    free_secret(tip, tip_len);
+    return err;
+}
+
 MarmotError
 marmot_commit_branch_decrypt(Marmot *m, MarmotGroup *group, uint64_t epoch,
                              const uint8_t tag[32], const uint8_t *msg, size_t msg_len,
                              uint8_t **out_plaintext, size_t *out_len,
-                             uint8_t out_sender_identity[32])
+                             uint8_t out_sender_identity[32], uint32_t *out_sender_leaf)
 {
-    if (!m || !group || !tag || !msg || !out_plaintext || !out_len || !out_sender_identity)
+    if (!m || !group || !tag || !msg || !out_plaintext || !out_len || !out_sender_identity ||
+        !out_sender_leaf)
         return MARMOT_ERR_INVALID_ARG;
     *out_plaintext = NULL;
     *out_len = 0;
-    MlsGroup cur;
-    MarmotError err = conv_current(m, group, &cur);
+    *out_sender_leaf = UINT32_MAX;
+    if (!m->storage || !m->storage->mls_load) return MARMOT_ERR_STORAGE;
+    BranchCache *bc = NULL;
+    MarmotError err = branch_cache_get(m, &group->mls_group_id, &bc);
     if (err != MARMOT_OK) return err;
-    ConvHistory *h = NULL;
-    err = history_load(m, group->mls_group_id.data, group->mls_group_id.len, &h);
-    if (err == MARMOT_OK && !h) err = MARMOT_ERR_STORAGE_NOT_FOUND;
-    ConvTree t;
-    memset(&t, 0, sizeof(t));
-    if (err == MARMOT_OK) {
-        conv_prune_stale(h, cur.epoch);
-        err = conv_build(m, &cur, h, &t);
+    if (!bc) return MARMOT_ERR_STORAGE_NOT_FOUND;
+    ConvHistory *h = bc->h;
+    /* Who sent it, from its sender data alone: a leaf that witnesses this
+     * state already (or a full quorum) teaches nothing, so nothing is
+     * rebuilt or decrypted for it.  Our own leaf is decrypted (our echo is
+     * MARMOT_ERR_OWN_MESSAGE). */
+    if (conv_witness_full(h, epoch, tag)) return MARMOT_ERR_NIP44;
+    for (size_t i = 0; i < h->n_secrets; i++) {
+        const ConvBranchSecret *bs = &h->secrets[i];
+        if (bs->epoch != epoch || memcmp(bs->tag, tag, 32) != 0) continue;
+        uint32_t leaf = UINT32_MAX;
+        if (mls_private_message_sender_leaf(bs->sender_data, group->mls_group_id.data,
+                                            group->mls_group_id.len, epoch, msg, msg_len,
+                                            &leaf) == 0 &&
+            leaf != bc->cur.own_leaf_index && conv_witness_leaf_known(h, epoch, tag, leaf))
+            return MARMOT_ERR_NIP44;
+        break;
     }
-    if (err == MARMOT_OK) {
-        /* The candidate state is rebuilt by replay, so decrypting on it
-         * spends nothing that is kept: if its branch is selected later,
-         * the message is read again on the canonical state. */
-        const ConvNode *n = NULL;
-        for (size_t k = 0; k < t.n_nodes && !n; k++)
-            if (t.nodes[k].state && t.nodes[k].epoch == epoch &&
-                memcmp(t.nodes[k].tag, tag, 32) == 0)
-                n = &t.nodes[k];
-        MlsGroup work;
-        uint32_t sender = UINT32_MAX;
-        if (!n) {
-            err = MARMOT_ERR_STORAGE_NOT_FOUND;
-        } else if (mls_clone(n->state, &work) != 0) {
-            err = MARMOT_ERR_MLS;
-        } else {
-            int rc = mls_group_decrypt(&work, msg, msg_len, out_plaintext, out_len, &sender);
-            if (rc == 0 && marmot_mls_sender_identity(&work, sender, out_sender_identity) != 0) {
-                free_secret(*out_plaintext, *out_len);
-                *out_plaintext = NULL;
-                *out_len = 0;
-                rc = MARMOT_ERR_AUTHOR_MISMATCH;
-            }
-            err = rc == 0 ? MARMOT_OK
-                          : (rc == MARMOT_ERR_OWN_MESSAGE || rc == MARMOT_ERR_AUTHOR_MISMATCH)
-                                ? (MarmotError)rc : MARMOT_ERR_MLS;
-            mls_group_free(&work);
+    if (!bc->built) {
+        err = conv_build(m, &bc->cur, h, &bc->t);
+        if (err != MARMOT_OK) {
+            marmot_branch_cache_free(m);
+            return err;
         }
+        bc->built = true;
+        m->branch_builds++;
     }
-    tree_clear(&t);
-    history_free(h);
-    mls_group_free(&cur);
+    /* The candidate state is rebuilt by replay, so decrypting on (a copy
+     * of) it spends nothing that is kept: if its branch is selected later,
+     * the message is read again on the canonical state. */
+    const ConvTree *t = &bc->t;
+    const ConvNode *n = NULL;
+    for (size_t k = 0; k < t->n_nodes && !n; k++)
+        if (t->nodes[k].state && t->nodes[k].epoch == epoch &&
+            memcmp(t->nodes[k].tag, tag, 32) == 0)
+            n = &t->nodes[k];
+    MlsGroup work;
+    uint32_t sender = UINT32_MAX;
+    if (!n) {
+        err = MARMOT_ERR_STORAGE_NOT_FOUND;
+    } else if (mls_clone(n->state, &work) != 0) {
+        err = MARMOT_ERR_MLS;
+    } else {
+        int rc = mls_group_decrypt(&work, msg, msg_len, out_plaintext, out_len, &sender);
+        if (rc == 0 && marmot_mls_sender_identity(&work, sender, out_sender_identity) != 0) {
+            free_secret(*out_plaintext, *out_len);
+            *out_plaintext = NULL;
+            *out_len = 0;
+            rc = MARMOT_ERR_AUTHOR_MISMATCH;
+        }
+        if (rc == 0) *out_sender_leaf = sender;
+        err = rc == 0 ? MARMOT_OK
+                      : (rc == MARMOT_ERR_OWN_MESSAGE || rc == MARMOT_ERR_AUTHOR_MISMATCH)
+                            ? (MarmotError)rc : MARMOT_ERR_MLS;
+        mls_group_free(&work);
+    }
+    /* A tree holding a candidate that waits for a proposal is not kept: the
+     * proposal may arrive without the record changing. */
+    bool held = false;
+    for (size_t i = 0; i < h->n_cands && !held; i++) held = t->status[i] == CAND_HELD;
+    if (held) marmot_branch_cache_free(m);
     return err;
 }
 
@@ -4243,7 +4525,7 @@ pending_retain(Marmot *m, MarmotGroup *group, uint64_t old_epoch, const uint8_t 
         known = memcmp(h->entries[i].key.digest, p.key.digest, 32) == 0;
     for (size_t i = 0; h && !known && i < h->n_cands; i++)
         known = memcmp(h->cands[i].digest, p.key.digest, 32) == 0;
-    if (err == MARMOT_OK && !known && h->n_cands < CONV_MAX_CANDIDATES) {
+    if (err == MARMOT_OK && !known && h->n_cands < CONV_CANDIDATE_SLOTS) {
         ConvCandidate *c = &h->cands[h->n_cands];
         memset(c, 0, sizeof(*c));
         c->source_epoch = p.parent_epoch;
@@ -4292,7 +4574,7 @@ pending_converge(Marmot *m, MarmotGroup *group, const MlsGroup *pre, const Pendi
         bool known = false;
         for (size_t k = 0; k < h->n_cands && !known; k++)
             known = memcmp(h->cands[k].digest, digest, 32) == 0;
-        if (known || h->n_cands >= CONV_MAX_CANDIDATES) continue;   /* bound: dropped */
+        if (known || h->n_cands >= CONV_CANDIDATE_SLOTS) continue;   /* bounded by the pass */
         ConvCandidate *c = &h->cands[h->n_cands];
         memset(c, 0, sizeof(*c));
         c->source_epoch = d->epoch;
@@ -4483,14 +4765,23 @@ marmot_commit_process_inbound_ex(Marmot *m, MarmotGroup *group,
             return MARMOT_OK;
         }
         bool known = commit_sender_on(&cur, msg, msg_len, &route, &sender);
-        err = known ? stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde, &applied)
-                    : MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        /* Its parent is the state it authenticates against, whatever sealed
+         * it (convergence.md "Candidate branches", W25 review L1): one that
+         * does not authenticate on the tip may on a retained candidate state
+         * of this epoch. */
+        bool elsewhere = h && h->n_cands > 0 &&
+                         (!known || mls_group_commit_authentic(&cur, msg, msg_len, sender) != 0);
+        err = known && !elsewhere
+                  ? stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde, &applied)
+                  : MARMOT_ERR_MLS_PROCESS_MESSAGE;
         bool removed = false;
         MlsCommitSummary dep;
         /* A Commit citing a proposal we lack (review H1) may still remove us
          * outright; otherwise it is MARMOT_ERR_PROPOSAL_UNKNOWN: kept by the
          * application and offered again once the proposal arrives. */
-        if ((err == MARMOT_ERR_MLS_PROCESS_MESSAGE || err == MARMOT_ERR_PROPOSAL_UNKNOWN) &&
+        if (elsewhere) {
+            linear = false;   /* judged among the retained branches */
+        } else if ((err == MARMOT_ERR_MLS_PROCESS_MESSAGE || err == MARMOT_ERR_PROPOSAL_UNKNOWN) &&
             known &&
             removes_self(m, &cur, msg, msg_len, sender, &removed, &dep) == 0 && removed) {
             /* nostrc-xrya: a Commit that removes us cannot be applied (its
@@ -4559,7 +4850,7 @@ marmot_commit_process_inbound_ex(Marmot *m, MarmotGroup *group,
             err = conv_rerun(m, group, h, true, result, &out);
             if (err == MARMOT_OK && out == CONV_UNCHANGED) {
                 marmot_txn_keep(m);
-                err = MARMOT_ERR_WRONG_EPOCH;
+                err = MARMOT_ERR_COMMIT_RETAINED;   /* its branch is selectable now */
             }
             converged = err == MARMOT_OK;
         } else if (stage_err != MARMOT_OK) {

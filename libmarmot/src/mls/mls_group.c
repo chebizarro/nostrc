@@ -3675,6 +3675,40 @@ mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t msg
     return rc;
 }
 
+int
+mls_private_message_sender_leaf(const uint8_t sender_data_secret[32], const uint8_t *group_id,
+                                size_t group_id_len, uint64_t epoch, const uint8_t *msg,
+                                size_t msg_len, uint32_t *out_leaf)
+{
+    if (!sender_data_secret || !group_id || !msg || !out_leaf) return MARMOT_ERR_INVALID_ARG;
+    MlsMLSMessage wire;
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, msg, msg_len);
+    if (mls_message_deserialize(&reader, &wire) != 0) return MARMOT_ERR_MLS_FRAMING;
+    int rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+    const MlsPrivateMessage *pm = &wire.private_message;
+    if (!mls_tls_reader_done(&reader)) {
+        rc = MARMOT_ERR_MLS_FRAMING;
+    } else if (wire.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE &&
+               pm->content_type == MLS_CONTENT_TYPE_APPLICATION &&
+               pm->group_id_len == group_id_len &&
+               memcmp(pm->group_id, group_id, group_id_len) == 0 && pm->epoch == epoch) {
+        size_t sample_len = pm->ciphertext_len < MLS_HASH_LEN ? pm->ciphertext_len : MLS_HASH_LEN;
+        const MlsSenderDataAAD aad = { pm->group_id, pm->group_id_len, pm->epoch,
+                                       pm->content_type };
+        MlsSenderData sd;
+        if (mls_sender_data_decrypt(sender_data_secret, &aad, pm->ciphertext, sample_len,
+                                    pm->encrypted_sender_data, pm->encrypted_sender_data_len,
+                                    &sd) == 0) {
+            *out_leaf = sd.leaf_index;
+            rc = 0;
+        }
+        sodium_memzero(&sd, sizeof(sd));
+    }
+    mls_message_clear(&wire);
+    return rc;
+}
+
 /* The authenticated part of processing a Commit (RFC 9420 sections 6.1-6.3):
  * a Commit of this group and epoch from member `sender_leaf`, as a
  * PublicMessage (signature over the pre-Commit GroupContext and membership

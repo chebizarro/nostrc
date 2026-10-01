@@ -333,11 +333,11 @@ expect_refused(Member *x, const MarmotGroupId *gid, const char *event, MarmotErr
 }
 
 /* A competitor that loses its selection: nothing canonical changes, and it
- * is retained (nostrc-w1m0). */
+ * is retained (nostrc-w1m0): MARMOT_ERR_COMMIT_RETAINED. */
 static void
 expect_lost(Member *x, const MarmotGroupId *gid, const char *event, const char *what)
 {
-    expect_refused_ex(x, gid, event, MARMOT_ERR_WRONG_EPOCH, what, false);
+    expect_refused_ex(x, gid, event, MARMOT_ERR_COMMIT_RETAINED, what, false);
 }
 
 static void
@@ -726,7 +726,7 @@ test_mdk_forks_converge(void)
         /* race: Alice's key sorts below Bob's. */
         if (order == 0) {
             fork_deliver(&o, "race_alice", MARMOT_OK, C, false);
-            fork_deliver(&o, "race_bob", MARMOT_ERR_WRONG_EPOCH, C, false);
+            fork_deliver(&o, "race_bob", MARMOT_ERR_COMMIT_RETAINED, C, false);
         } else {
             fork_deliver(&o, "race_bob", MARMOT_OK, C, false);
             fork_deliver(&o, "race_alice", MARMOT_OK, C, true);
@@ -736,13 +736,13 @@ test_mdk_forks_converge(void)
         /* depth2: Carol's two self-updates beat Alice's rename. */
         if (order == 0) {
             fork_deliver(&o, "depth2_rename", MARMOT_OK, C, false);
-            fork_deliver(&o, "depth2_first", MARMOT_ERR_WRONG_EPOCH, C, false);
+            fork_deliver(&o, "depth2_first", MARMOT_ERR_COMMIT_RETAINED, C, false);
             fork_deliver(&o, "depth2_second", MARMOT_OK, C, true);
         } else {
             fork_deliver(&o, "depth2_second", MARMOT_ERR_NIP44, C, false);
             fork_deliver(&o, "depth2_first", MARMOT_OK, C, false);
             fork_deliver(&o, "depth2_second", MARMOT_OK, C, false);
-            fork_deliver(&o, "depth2_rename", MARMOT_ERR_WRONG_EPOCH, C, false);
+            fork_deliver(&o, "depth2_rename", MARMOT_ERR_COMMIT_RETAINED, C, false);
         }
         fork_verdict(&o, &gid, N_FORK_DEPTH2_NAME, N_FORK_DEPTH2_EPOCH, "depth2");
         fork_deliver(&o, "message_after_depth2", MARMOT_OK, A, false);
@@ -750,7 +750,7 @@ test_mdk_forks_converge(void)
         CHECK(strcmp(N_FORK_WITNESSED_HIGHER_KEY, "bob") == 0, "the capture's roles");
         if (order == 0) {
             fork_deliver(&o, "witnessed_low", MARMOT_OK, C, false);
-            fork_deliver(&o, "witnessed_high", MARMOT_ERR_WRONG_EPOCH, C, false);
+            fork_deliver(&o, "witnessed_high", MARMOT_ERR_COMMIT_RETAINED, C, false);
             fork_deliver(&o, "witness_message", MARMOT_OK, A, true);
         } else {
             fork_deliver(&o, "witness_message", MARMOT_ERR_NIP44, A, false);
@@ -760,6 +760,217 @@ test_mdk_forks_converge(void)
         }
         fork_verdict(&o, &gid, N_FORK_WITNESSED_NAME, N_FORK_WITNESSED_EPOCH, "witnessed");
         fork_deliver(&o, "message_after_witnessed", MARMOT_OK, A, false);
+        marmot_group_id_free(&gid);
+        member_free(&o);
+    }
+}
+
+/* Every delivery order of the three MDK forks (2 x 6 x 6 = 72), with an
+ * application's retry policy for held events (W25 review H2):
+ *  - FZ_EVERY: every held event is offered again after every delivery;
+ *  - FZ_GROUNDHOG: Groundhog's -- events refused as not decryptable yet
+ *    (MARMOT_ERR_NIP44), waiting for a proposal or refused for capacity are
+ *    held, and offered again (to a fixpoint) only when the decryption
+ *    context changed: a Commit applied, the selected branch changed, or a
+ *    Commit retained as a losing candidate (MARMOT_ERR_COMMIT_RETAINED).
+ * Each order must reach MDK's verdict, read MDK's message of each converged
+ * epoch, and not move on re-delivery of everything. */
+enum { FZ_EVERY, FZ_GROUNDHOG };
+
+typedef struct {
+    const char *held[N_FORK_STEP_COUNT];
+    size_t      n;
+    int         policy;
+    size_t      apps;                /* application messages delivered */
+} FuzzQ;
+
+static void
+fz_hold(FuzzQ *q, const char *name)
+{
+    for (size_t i = 0; i < q->n; i++)
+        if (strcmp(q->held[i], name) == 0) return;
+    CHECK(q->n < N_FORK_STEP_COUNT, "held queue");
+    q->held[q->n++] = name;
+}
+
+/* Deliver one; whether the Groundhog policy retries now (*progress: it was
+ * not held). */
+static bool
+fz_one(Member *o, FuzzQ *q, const char *name, bool *progress)
+{
+    MarmotMessageResult r;
+    MarmotError err = deliver(o, fork_event(name), &r);
+    bool fire = false;
+    if (err == MARMOT_ERR_NIP44 || err == MARMOT_ERR_PROPOSAL_UNKNOWN ||
+        err == MARMOT_ERR_RESOURCE_REFUSED) {
+        fz_hold(q, name);
+    } else {
+        *progress = true;
+        if (err == MARMOT_OK && r.type == MARMOT_RESULT_APPLICATION_MESSAGE) q->apps++;
+        fire = err == MARMOT_ERR_COMMIT_RETAINED ||
+               (err == MARMOT_OK &&
+                (r.type == MARMOT_RESULT_COMMIT || r.convergence.branch_recovered));
+    }
+    marmot_message_result_free(&r);
+    return fire;
+}
+
+static void
+fz_retry(Member *o, FuzzQ *q)
+{
+    for (bool again = true; again;) {
+        again = false;
+        const char *pass[N_FORK_STEP_COUNT];
+        size_t n = q->n;
+        memcpy(pass, q->held, n * sizeof(*pass));
+        q->n = 0;
+        for (size_t i = 0; i < n; i++) {
+            bool progress = false;
+            bool fire = fz_one(o, q, pass[i], &progress);
+            if (q->policy == FZ_EVERY ? progress : fire) again = true;
+        }
+    }
+}
+
+static void
+fz_feed(Member *o, FuzzQ *q, const char *name)
+{
+    bool progress = false;
+    bool fire = fz_one(o, q, name, &progress);
+    if (q->policy == FZ_EVERY || fire) fz_retry(o, q);
+}
+
+static bool
+fz_verdict(Member *x, const MarmotGroupId *gid, const char *name, unsigned long long epoch)
+{
+    MarmotGroup *g = group_of(x, gid);
+    bool ok = g->epoch == epoch && g->name && strcmp(g->name, name) == 0;
+    marmot_group_free(g);
+    return ok;
+}
+
+static bool
+fz_msg(Member *o, const char *name)
+{
+    MarmotMessageResult r;
+    MarmotError err = deliver(o, fork_event(name), &r);
+    bool ok = err == MARMOT_OK && r.type == MARMOT_RESULT_APPLICATION_MESSAGE;
+    marmot_message_result_free(&r);
+    return ok;
+}
+
+static bool
+fz_next(int *a, int n)
+{
+    int i = n - 2;
+    while (i >= 0 && a[i] >= a[i + 1]) i--;
+    if (i < 0) return false;
+    int j = n - 1;
+    while (a[j] <= a[i]) j--;
+    int t = a[i];
+    a[i] = a[j];
+    a[j] = t;
+    for (int l = i + 1, r = n - 1; l < r; l++, r--) {
+        t = a[l];
+        a[l] = a[r];
+        a[r] = t;
+    }
+    return true;
+}
+
+static void
+test_mdk_forks_every_order(void)
+{
+    const char *race[] = { "race_alice", "race_bob" };
+    const char *d2[] = { "depth2_rename", "depth2_first", "depth2_second" };
+    const char *wt[] = { "witnessed_low", "witnessed_high", "witness_message" };
+    for (int policy = FZ_EVERY; policy <= FZ_GROUNDHOG; policy++) {
+        int runs = 0, bad = 0;
+        int pr[2] = { 0, 1 };
+        do {
+            int pd[3] = { 0, 1, 2 };
+            do {
+                int pw[3] = { 0, 1, 2 };
+                do {
+                    runs++;
+                    Member o;
+                    MarmotGroupId gid;
+                    fork_observer(&o, &gid);
+                    FuzzQ q = { .n = 0, .policy = policy };
+                    fz_feed(&o, &q, "admin_change");
+                    for (int i = 0; i < 2; i++) fz_feed(&o, &q, race[pr[i]]);
+                    bool v1 = fz_verdict(&o, &gid, N_FORK_RACE_NAME, N_FORK_RACE_EPOCH);
+                    bool m1 = fz_msg(&o, "message_after_race");
+                    for (int i = 0; i < 3; i++) fz_feed(&o, &q, d2[pd[i]]);
+                    bool v2 = fz_verdict(&o, &gid, N_FORK_DEPTH2_NAME, N_FORK_DEPTH2_EPOCH);
+                    bool m2 = fz_msg(&o, "message_after_depth2");
+                    for (int i = 0; i < 3; i++) fz_feed(&o, &q, wt[pw[i]]);
+                    bool v3 = fz_verdict(&o, &gid, N_FORK_WITNESSED_NAME, N_FORK_WITNESSED_EPOCH);
+                    bool m3 = fz_msg(&o, "message_after_witnessed");
+                    bool drained = q.n == 0;
+                    /* Re-delivery of every event: nothing moves. */
+                    for (size_t i = 0; i < N_FORK_STEP_COUNT; i++) {
+                        MarmotMessageResult r;
+                        (void)deliver(&o, N_FORK_STEPS[i].event_json, &r);
+                        marmot_message_result_free(&r);
+                    }
+                    bool v4 = fz_verdict(&o, &gid, N_FORK_WITNESSED_NAME, N_FORK_WITNESSED_EPOCH);
+                    if (!(v1 && m1 && v2 && m2 && v3 && m3 && v4 && drained)) {
+                        bad++;
+                        printf("\n    policy %d race %d%d depth2 %d%d%d witnessed %d%d%d: "
+                               "race %d/%d depth2 %d/%d witnessed %d/%d redelivery %d held %zu",
+                               policy, pr[0], pr[1], pd[0], pd[1], pd[2], pw[0], pw[1], pw[2],
+                               v1, m1, v2, m2, v3, m3, v4, q.n);
+                    }
+                    marmot_group_id_free(&gid);
+                    member_free(&o);
+                } while (fz_next(pw, 3));
+            } while (fz_next(pd, 3));
+        } while (fz_next(pr, 2));
+        CHECK(runs == 72 && bad == 0, "%s: %d of %d delivery orders end off MDK's verdict",
+              policy == FZ_EVERY ? "retry after every delivery" : "Groundhog's retry policy",
+              bad, runs);
+    }
+}
+
+/* Backfill newest first -- how relays serve history -- under Groundhog's
+ * retry policy: every child, witness and message arrives before what it
+ * builds on.
+ *  - The whole capture: everything is held until the oldest Commit applies.
+ *  - After going offline on the canonical tip (the race read live, then
+ *    Alice's rename of the depth-2 fork applied live): the rest, newest
+ *    first.  Carol's second Commit and every later event are held; her
+ *    first loses to the applied rename and is only retained -- no Commit
+ *    applies -- so only MARMOT_ERR_COMMIT_RETAINED tells that her second
+ *    can now be read (W25 review H2), and her branch then wins.
+ * Each reaches MDK's final verdict, reads every message MDK sent, and
+ * leaves nothing held. */
+static void
+test_mdk_forks_backfill_newest_first(void)
+{
+    for (int offline = 0; offline < 2; offline++) {
+        Member o;
+        MarmotGroupId gid;
+        fork_observer(&o, &gid);
+        FuzzQ q = { .n = 0, .policy = FZ_GROUNDHOG };
+        size_t live = 0;
+        if (offline) {
+            static const char *const read_live[] = { "admin_change", "race_alice", "race_bob",
+                                                     "message_after_race", "depth2_rename" };
+            for (size_t i = 0; i < sizeof(read_live) / sizeof(read_live[0]); i++)
+                fz_feed(&o, &q, read_live[i]);
+            CHECK(q.n == 0 && q.apps == 1, "read live: nothing held");
+            live = 4;   /* the capture's steps before the depth-2 fork */
+        }
+        for (size_t i = N_FORK_STEP_COUNT; i-- > live;) {
+            if (offline && strcmp(N_FORK_STEPS[i].name, "depth2_rename") == 0) continue;
+            fz_feed(&o, &q, N_FORK_STEPS[i].name);
+        }
+        const char *what = offline ? "newest first after going offline" : "newest first";
+        CHECK(fz_verdict(&o, &gid, N_FORK_WITNESSED_NAME, N_FORK_WITNESSED_EPOCH),
+              "%s: MDK's verdict", what);
+        CHECK(q.n == 0, "%s: %zu events still held", what, q.n);
+        CHECK(q.apps == 4, "%s: MDK's 4 messages read, %zu", what, q.apps);
         marmot_group_id_free(&gid);
         member_free(&o);
     }
@@ -2326,6 +2537,8 @@ main(int argc, char **argv)
     RUN(test_mdk_commit_before_its_proposal);
     RUN(test_mdk_competing_self_remove_commits);
     RUN(test_mdk_forks_converge);
+    RUN(test_mdk_forks_every_order);
+    RUN(test_mdk_forks_backfill_newest_first);
     RUN(test_openmls_negatives);
     RUN(test_lifecycle_enablement);
     RUN(test_removal_judged_whole);

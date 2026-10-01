@@ -305,6 +305,46 @@ test_message_pagination(MarmotStorage *s)
     marmot_group_id_free(&gid);
 }
 
+/* Optional since 0.12.0 (nostrc-w1m0): the messages of a group whose epoch
+ * is in [from, to], of no other group. */
+static void
+test_messages_in_epochs(MarmotStorage *s)
+{
+    if (!s->messages_in_epochs) return;   /* libmarmot pages instead */
+    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"epoch_grp", 9);
+    MarmotGroupId other = marmot_group_id_new((uint8_t *)"epoch_oth", 9);
+    ensure_group(s, &gid, "epoch_grp");
+    ensure_group(s, &other, "epoch_oth");
+    for (int i = 0; i < 8; i++) {
+        MarmotMessage *m = make_test_message(i < 6 ? &gid : &other, 120 + i, 2500 + i);
+        m->epoch = (uint64_t)(i < 6 ? i : 3);   /* epochs 0..5; the other group's at 3 */
+        assert(s->save_message(s->ctx, m) == MARMOT_OK);
+        marmot_message_free(m);
+    }
+    MarmotMessage **msgs = NULL;
+    size_t count = 0;
+    assert(s->messages_in_epochs(s->ctx, &gid, 2, 4, &msgs, &count) == MARMOT_OK);
+    assert(count == 3);
+    bool seen[3] = { false, false, false };
+    for (size_t i = 0; i < count; i++) {
+        assert(marmot_group_id_equal(&msgs[i]->mls_group_id, &gid));
+        assert(msgs[i]->epoch >= 2 && msgs[i]->epoch <= 4);
+        assert(msgs[i]->id[0] == (uint8_t)(120 + msgs[i]->epoch));
+        seen[msgs[i]->epoch - 2] = true;
+        marmot_message_free(msgs[i]);
+    }
+    free(msgs);
+    assert(seen[0] && seen[1] && seen[2]);
+    /* An empty range is no error. */
+    msgs = NULL;
+    count = 7;
+    assert(s->messages_in_epochs(s->ctx, &gid, 40, 50, &msgs, &count) == MARMOT_OK);
+    assert(count == 0);
+    free(msgs);
+    marmot_group_id_free(&gid);
+    marmot_group_id_free(&other);
+}
+
 static void
 test_message_last(MarmotStorage *s)
 {
@@ -964,6 +1004,7 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
     TEST(test_message_save_and_find, backend_name, s);
     TEST(test_message_pagination, backend_name, s);
     TEST(test_message_last, backend_name, s);
+    TEST(test_messages_in_epochs, backend_name, s);
     TEST(test_message_processed_tracking, backend_name, s);
 
     /* Welcomes */

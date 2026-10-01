@@ -320,6 +320,41 @@ oom:
 }
 
 static MarmotError
+mem_messages_in_epochs(void *ctx, const MarmotGroupId *gid, uint64_t from_epoch,
+                       uint64_t to_epoch, MarmotMessage ***out, size_t *out_count)
+{
+    MemCtx *mc = ctx;
+    *out = NULL;
+    *out_count = 0;
+    size_t n = 0;
+    for (size_t i = 0; i < mc->msg_count; i++) {
+        const MarmotMessage *m = mc->messages[i];
+        if (marmot_group_id_equal(&m->mls_group_id, gid) && m->epoch >= from_epoch &&
+            m->epoch <= to_epoch)
+            n++;
+    }
+    if (n == 0) return MARMOT_OK;
+    MarmotMessage **arr = calloc(n, sizeof(*arr));
+    if (!arr) return MARMOT_ERR_MEMORY;
+    size_t added = 0;
+    for (size_t i = 0; i < mc->msg_count && added < n; i++) {
+        const MarmotMessage *m = mc->messages[i];
+        if (!marmot_group_id_equal(&m->mls_group_id, gid) || m->epoch < from_epoch ||
+            m->epoch > to_epoch)
+            continue;
+        if (!(arr[added] = msg_deep_copy(m))) {
+            for (size_t j = 0; j < added; j++) marmot_message_free(arr[j]);
+            free(arr);
+            return MARMOT_ERR_MEMORY;
+        }
+        added++;
+    }
+    *out = arr;
+    *out_count = added;
+    return MARMOT_OK;
+}
+
+static MarmotError
 mem_last_message(void *ctx, const MarmotGroupId *gid,
                   MarmotSortOrder order, MarmotMessage **out)
 {
@@ -1058,6 +1093,7 @@ marmot_storage_memory_new(void)
     s->save_group = mem_save_group;
     s->delete_group = mem_delete_group;
     s->messages = mem_messages;
+    s->messages_in_epochs = mem_messages_in_epochs;
     s->last_message = mem_last_message;
 
     /* Message ops */

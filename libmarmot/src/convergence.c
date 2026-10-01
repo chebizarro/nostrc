@@ -11,7 +11,7 @@
  *   u8  tier (0 full, 1 reader)             -- since 0.10.0 (nostrc-yuj2)
  *   u32 pending_count, u32 leaf * count        (always written as 0 now)
  *   -- since 0.12.0 (W25, nostrc-w1m0):
- *   u8  CONV_TRAILER_V1
+ *   u8  CONV_TRAILER_V2
  *   u8  flags of entries[0] (CONV_OWN)
  *   opaque32 commit of entries[0]
  *   u8  n, then n older entries (epoch descending):
@@ -21,8 +21,9 @@
  *       u64 source_epoch, [32] digest, [32] parent_tag,
  *       u8 flags (CONV_OWN; with it CONV_PRIVILEGED, CONV_UNCONFIRMED), opaque32 msg,
  *       opaque8 event_id, and when own: opaque32 post
- *   u8  n, then n witnesses: u64 epoch, [32] tag, [32] sender
- *   u8  n, then n branch secrets: u64 epoch, [32] tag, [32] exporter
+ *   u8  n, then n witnesses: u64 epoch, [32] tag, [32] sender, u32 leaf
+ *   u8  n, then n branch secrets: u64 epoch, [32] tag, [32] exporter,
+ *       [32] sender_data
  *
  * libmarmot 0.10.0 and 0.11.0 refuse a record with the trailer (their
  * reader wants the end after the pending list): after a downgrade, late
@@ -41,7 +42,8 @@
 #define CONV_RECORD_VERSION 1
 #define CONV_TIER_FULL      0
 #define CONV_TIER_READER    1
-#define CONV_TRAILER_V1     0xC1
+/* 0xC1 was this branch's first layout (never released, not read). */
+#define CONV_TRAILER_V2     0xC2
 
 #define CONV_PRIVILEGED  0x01
 #define CONV_OWN         0x02
@@ -132,7 +134,7 @@ conv_history_encode(const ConvHistory *h, uint8_t **out, size_t *out_len)
               write_state(&buf, &e0->state) &&
               mls_tls_write_u8(&buf, e0->reader ? CONV_TIER_READER : CONV_TIER_FULL) == 0 &&
               mls_tls_write_u32(&buf, 0) == 0 &&
-              mls_tls_write_u8(&buf, CONV_TRAILER_V1) == 0 &&
+              mls_tls_write_u8(&buf, CONV_TRAILER_V2) == 0 &&
               mls_tls_write_u8(&buf, e0->own ? CONV_OWN : 0) == 0 &&
               write_bytes32(&buf, e0->commit, e0->commit_len) &&
               mls_tls_write_u8(&buf, (uint8_t)(h->n_entries - 1)) == 0;
@@ -164,12 +166,14 @@ conv_history_encode(const ConvHistory *h, uint8_t **out, size_t *out_len)
     for (size_t i = 0; ok && i < h->n_wits; i++)
         ok = mls_tls_write_u64(&buf, h->wits[i].epoch) == 0 &&
              mls_tls_buf_append(&buf, h->wits[i].tag, 32) == 0 &&
-             mls_tls_buf_append(&buf, h->wits[i].sender, 32) == 0;
+             mls_tls_buf_append(&buf, h->wits[i].sender, 32) == 0 &&
+             mls_tls_write_u32(&buf, h->wits[i].leaf) == 0;
     ok = ok && mls_tls_write_u8(&buf, (uint8_t)h->n_secrets) == 0;
     for (size_t i = 0; ok && i < h->n_secrets; i++)
         ok = mls_tls_write_u64(&buf, h->secrets[i].epoch) == 0 &&
              mls_tls_buf_append(&buf, h->secrets[i].tag, 32) == 0 &&
-             mls_tls_buf_append(&buf, h->secrets[i].exporter, 32) == 0;
+             mls_tls_buf_append(&buf, h->secrets[i].exporter, 32) == 0 &&
+             mls_tls_buf_append(&buf, h->secrets[i].sender_data, 32) == 0;
     if (!ok) {
         if (buf.data) sodium_memzero(buf.data, buf.len);
         mls_tls_buf_free(&buf);
@@ -271,14 +275,15 @@ read_trailer(MlsTlsReader *r, ConvHistory *out)
     for (uint8_t i = 0; i < n; i++) {
         ConvWitness *w = &out->wits[out->n_wits++];
         if (mls_tls_read_u64(r, &w->epoch) != 0 || mls_tls_read_fixed(r, w->tag, 32) != 0 ||
-            mls_tls_read_fixed(r, w->sender, 32) != 0)
+            mls_tls_read_fixed(r, w->sender, 32) != 0 || mls_tls_read_u32(r, &w->leaf) != 0)
             return false;
     }
     if (mls_tls_read_u8(r, &n) != 0 || n > CONV_MAX_CANDIDATES) return false;
     for (uint8_t i = 0; i < n; i++) {
         ConvBranchSecret *s = &out->secrets[out->n_secrets++];
         if (mls_tls_read_u64(r, &s->epoch) != 0 || mls_tls_read_fixed(r, s->tag, 32) != 0 ||
-            mls_tls_read_fixed(r, s->exporter, 32) != 0)
+            mls_tls_read_fixed(r, s->exporter, 32) != 0 ||
+            mls_tls_read_fixed(r, s->sender_data, 32) != 0)
             return false;
     }
     return mls_tls_reader_done(r);
@@ -315,7 +320,7 @@ conv_history_decode(const uint8_t *data, size_t len, ConvHistory *out)
         e0->reader = tier == CONV_TIER_READER;
         if (ok && !mls_tls_reader_done(&r)) {
             uint8_t marker = 0;
-            ok = mls_tls_read_u8(&r, &marker) == 0 && marker == CONV_TRAILER_V1 &&
+            ok = mls_tls_read_u8(&r, &marker) == 0 && marker == CONV_TRAILER_V2 &&
                  read_trailer(&r, out);
         }
     }
@@ -359,8 +364,17 @@ conv_witness_full(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32])
     return conv_witness_count(h, epoch, tag) >= CONV_WITNESS_QUORUM_SENDERS;
 }
 
+bool
+conv_witness_leaf_known(const ConvHistory *h, uint64_t epoch, const uint8_t tag[32], uint32_t leaf)
+{
+    for (size_t i = 0; i < h->n_wits; i++)
+        if (witness_is(&h->wits[i], epoch, tag) && h->wits[i].leaf == leaf) return true;
+    return false;
+}
+
 int
-conv_witness_add(ConvHistory *h, uint64_t epoch, const uint8_t tag[32], const uint8_t sender[32])
+conv_witness_add(ConvHistory *h, uint64_t epoch, const uint8_t tag[32], const uint8_t sender[32],
+                 uint32_t leaf)
 {
     if (conv_witness_known(h, epoch, tag, sender) || conv_witness_full(h, epoch, tag)) return 0;
     if (h->n_wits >= CONV_MAX_WITNESSES) return -1;
@@ -368,7 +382,27 @@ conv_witness_add(ConvHistory *h, uint64_t epoch, const uint8_t tag[32], const ui
     w->epoch = epoch;
     memcpy(w->tag, tag, 32);
     memcpy(w->sender, sender, 32);
+    w->leaf = leaf;
     return 1;
+}
+
+void
+conv_score_witnesses(const ConvHistory *h, const ConvPathState *path, size_t n_path,
+                     ConvBranchScore *s)
+{
+    size_t quorum_epochs = 0;
+    s->witness_score = 0;
+    for (size_t i = 0; i < n_path; i++) {
+        const ConvPathState *p = &path[i];
+        if (!p->tag || p->epoch <= s->fork_epoch || p->epoch > s->tip_epoch) continue;
+        /* A witness of an epoch outside the branch tip's app-payload window
+         * counts for nothing (retained-history.md "App-payload retention"). */
+        if (s->tip_epoch - p->epoch > CONV_APP_PAYLOAD_PAST_EPOCH_LIMIT) continue;
+        size_t c = conv_witness_count(h, p->epoch, p->tag);
+        s->witness_score += c;
+        if (c >= CONV_WITNESS_QUORUM_SENDERS) quorum_epochs++;
+    }
+    s->quorum = quorum_epochs >= CONV_WITNESS_QUORUM_EPOCHS;
 }
 
 /* ── Branch comparison ────────────────────────────────────────────────── */

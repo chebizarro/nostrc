@@ -554,6 +554,21 @@ int mls_group_handshake_sender(const MlsGroup *group, const uint8_t *msg, size_t
                                uint32_t *out_leaf);
 
 /**
+ * The leaf the sender data of the application PrivateMessage @msg names,
+ * decrypted with @sender_data_secret (RFC 9420 section 6.3.2) of the state
+ * of @group_id at @epoch -- without that state at hand.  No ratchet key is
+ * used.  Only routes: the message is authenticated when it is decrypted.
+ * Since 0.12.0 (nostrc-w1m0: who sent a candidate branch's message).
+ *
+ * @return 0 with *out_leaf set; MARMOT_ERR_MLS_FRAMING or
+ *   MARMOT_ERR_MLS_PROCESS_MESSAGE otherwise
+ */
+int mls_private_message_sender_leaf(const uint8_t sender_data_secret[32],
+                                    const uint8_t *group_id, size_t group_id_len,
+                                    uint64_t epoch, const uint8_t *msg, size_t msg_len,
+                                    uint32_t *out_leaf);
+
+/**
  * Process an incoming Commit message.
  *
  * Validates the commit, applies proposals, decrypts the UpdatePath
