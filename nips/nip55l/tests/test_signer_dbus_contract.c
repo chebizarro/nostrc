@@ -147,6 +147,27 @@ static void wait_for_name(GDBusConnection *bus, guint timeout_s) {
   wait_for_named(bus, BUS_NAME, timeout_s);
 }
 
+static void on_vanished(GDBusConnection *c, const gchar *n, gpointer ud) {
+  (void)c; (void)n;
+  WaitCtx *w = ud; w->appeared = TRUE; g_main_loop_quit(w->loop);
+}
+
+/* Until the bus has dropped @name. The watcher asks GetNameOwner after its
+ * NameOwnerChanged match is in place, so a name already gone is reported at
+ * once and a later drop is not missed. */
+static void wait_for_vanished(GDBusConnection *bus, const char *name, guint timeout_s) {
+  WaitCtx w = { g_main_loop_new(NULL, FALSE), FALSE };
+  guint watch = g_bus_watch_name_on_connection(bus, name,
+                                               G_BUS_NAME_WATCHER_FLAGS_NONE,
+                                               NULL, on_vanished, &w, NULL);
+  guint to = g_timeout_add_seconds(timeout_s, on_timeout, &w);
+  g_main_loop_run(w.loop);
+  if (w.appeared) g_source_remove(to);
+  g_bus_unwatch_name(watch);
+  g_main_loop_unref(w.loop);
+  CHECK(w.appeared);
+}
+
 static GVariant *call(GDBusConnection *bus, const char *method, GVariant *args,
                       const char *reply_sig, GError **err) {
   return g_dbus_connection_call_sync(bus, BUS_NAME, OBJ_PATH, IFACE, method,
@@ -1038,6 +1059,9 @@ static void test_disconnected_sender_before_cleanup(Ctx *ctx) {
   watch_wait_request(&w, 1);
   CHECK(g_strcmp0(w.a.kind, "event") == 0);
   close_conn(private);
+  /* nostrc-glzv: the bus drops the name when it has processed the
+   * disconnect, which under load can be after close_sync returns. */
+  wait_for_vanished(ctx->bus, sender, 20);
 
   GError *err = NULL;
   GVariant *owner = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus",
