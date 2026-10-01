@@ -2275,17 +2275,6 @@ all_key_package_reqs(World *w, guint key)
          key_package_reqs(&w->x, key) + key_package_reqs(&w->g, key);
 }
 
-/* nostrc-6ukh, W24 review H1/M1/N3. Bob (default mode) sees members without
- * the proof that Alice added. With no evidence in hand they are UNVERIFIED,
- * "Added by" Alice, and nothing is looked up by itself: no KeyPackage REQ
- * from Bob at all, and none ever on the group relay. Bob's Verify asks the
- * discovery relays and the person's write relays: Carol, whose KeyPackage
- * is there, is VERIFIED; the stranger's is gone (replaced, deleted), so he
- * stays UNVERIFIED. Messages flow throughout. After a restart the verdicts
- * hold from the store and nothing is asked again. An admin's Remove + Add
- * of Carol's slot is a new device Alice added: Carol's verdict does not
- * carry over to it (only the device's own renewal would). Kind 10051 is
- * never asked for. */
 /* nostrc-juhs: the account's own Add can come back from the group relay
  * before that relay's OK, and libmarmot merges it on that echo (reporting no
  * committer: it is ours). The device it added is still the account's
@@ -2320,6 +2309,17 @@ test_own_commit_echo_before_ok(void)
   world_down(&w);
 }
 
+/* nostrc-6ukh, W24 review H1/M1/N3. Bob (default mode) sees members without
+ * the proof that Alice added. With no evidence in hand they are UNVERIFIED,
+ * "Added by" Alice, and nothing is looked up by itself: no KeyPackage REQ
+ * from Bob at all, and none ever on the group relay. Bob's Verify asks the
+ * discovery relays and the person's write relays: Carol, whose KeyPackage
+ * is there, is VERIFIED; the stranger's is gone (replaced, deleted), so he
+ * stays UNVERIFIED. Messages flow throughout. After a restart the verdicts
+ * hold from the store and nothing is asked again. An admin's Remove + Add
+ * of Carol's slot is a new device Alice added: Carol's verdict does not
+ * carry over to it (only the device's own renewal would). Kind 10051 is
+ * never asked for. */
 static void
 test_unproven_member_identity(void)
 {

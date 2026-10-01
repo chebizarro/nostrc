@@ -1910,11 +1910,14 @@ static gchar *event_id_of(const gchar *json);
 
 /* Whether @envelope_id is the account's own Commit that libmarmot holds
  * pending for a relay's OK. Its echo from a relay merges it, and libmarmot
- * then reports no committer (nostrc-juhs). */
+ * then reports no committer (nostrc-juhs). Asked only while a Commit of ours
+ * is out: the read loads the group's MLS state (W25 review L2), and
+ * round_start() sets group->round before publishing, while group_refresh()
+ * keeps pending_commit across an unanswered round and a restart. */
 static gboolean
 own_pending_commit(GhMlsGroup *group, const gchar *envelope_id)
 {
-  if (!envelope_id)
+  if (!envelope_id || !(group->round || group->pending_commit))
     return FALSE;
   char *pending_json = NULL;
   if (marmot_get_pending_commit(group->service->marmot, &group->gid, &pending_json, NULL) !=

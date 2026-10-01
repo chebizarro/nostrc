@@ -28,15 +28,25 @@ MOCK
 # FIRST_FAIL: tests failing in the parallel run; RERUN_FAIL: failing alone.
 # RERUN_SHORT=1: the rerun runs no test at all. REPORT: failing tests whose
 # output holds a sanitizer report (RERUN_REPORT: in the rerun); SKIP: tests
-# CTest reports as skipped.
+# CTest reports as skipped (RERUN_SKIP: in the rerun). TESTS: the test names
+# (alpha beta gamma). HANG_FILE: the first run prints a result and waits for
+# that file (an interrupted run).
 cat > "$tmp/bin/ctest" <<'MOCK'
 #!/bin/bash
 printf 'CTEST %s\n' "$*" >> "$TRACE"
 case " $* " in *" --output-on-failure "*) ;; *) echo "no --output-on-failure" >&2; exit 9 ;; esac
-tests="alpha beta gamma"
+tests="${TESTS:-alpha beta gamma}"
 fail="$FIRST_FAIL"
+skip="${SKIP:-}"
 run=first
-case " $* " in *" --parallel "*) ;; *) fail="$RERUN_FAIL"; run=rerun ;; esac
+case " $* " in *" --parallel "*) ;; *) fail="$RERUN_FAIL"; skip="${RERUN_SKIP:-$skip}"; run=rerun ;; esac
+if [ "$run" = first ] && [ -n "${HANG_FILE:-}" ]; then
+    echo "      Start 1: alpha"
+    echo "1/3 Test #1: alpha .........   Passed    0.10 sec"
+    echo "PARTIAL-OUTPUT"
+    while [ ! -e "$HANG_FILE" ]; do sleep 0.1; done
+    exit 130
+fi
 [ "$run" = first ] || [ -z "${CTEST_PARALLEL_LEVEL:-}" ] || printf 'PARALLEL_RERUN\n' >> "$TRACE"
 selected="$tests"
 for ((i = 1; i <= $#; i++)); do
@@ -66,7 +76,7 @@ for t in $selected; do
             echo "SUMMARY: AddressSanitizer: 65 byte(s) leaked in 1 allocation(s)."
         fi
         failed="$failed $t"
-    elif [[ " ${SKIP:-} " == *" $t "* ]]; then
+    elif [[ " $skip " == *" $t "* ]]; then
         echo "$n/$total Test #$n: $t .........***Skipped   0.10 sec"
     else
         echo "$n/$total Test #$n: $t .........   Passed    0.10 sec"
@@ -139,7 +149,33 @@ grep -q 'SMOKE TESTS FAILED' "$tmp/out" || fail "no failure line"
 if FIRST_FAIL="alpha" RERUN_FAIL="" RERUN_SHORT=1 gate > "$tmp/out" 2>&1; then
     fail "an empty rerun passed the gate"
 fi
-grep -q 'the rerun ran 0 test(s) for: alpha' "$tmp/out" || fail "empty rerun not named"
+grep -q 'the rerun did not pass: alpha (not run)' "$tmp/out" || fail "empty rerun not named"
+
+# ---- W25 review L1: each failed test must pass in the rerun ----
+# A test that fails, then skips (SKIP_RETURN_CODE 77) alone: ctest exits 0,
+# but it never passed.
+if FIRST_FAIL="beta" RERUN_FAIL="" RERUN_SKIP="beta" gate > "$tmp/out" 2>&1; then
+    fail "a test skipped in its rerun passed the gate"
+fi
+grep -q 'the rerun did not pass: beta (Skipped)' "$tmp/out" || fail "a skipped rerun is not named"
+! grep -q 'RERUN:' "$tmp/out" || fail "a skipped rerun was reported as passed"
+# A name with regex characters is selected exactly: "x+y" is not "xy".
+FIRST_FAIL="x+y" RERUN_FAIL="" TESTS="x+y xy" gate > "$tmp/out" 2>&1 ||
+    fail "a flake named with regex characters failed the gate"
+grep -qF -- '-R ^(x\+y)$' "$tmp/trace" || fail "the rerun did not select x+y exactly"
+grep -q 'passed alone: x+y$' "$tmp/out" || fail "x+y not reported"
+if FIRST_FAIL="x+y" RERUN_FAIL="x+y" TESTS="x+y xy" gate > "$tmp/out" 2>&1; then
+    fail "x+y failing alone passed the gate (its pattern matched xy)"
+fi
+
+# ---- W25 review N5: a broad break is not rerun ----
+if FIRST_FAIL="alpha beta gamma" RERUN_FAIL="" RERUN_MAX=2 gate > "$tmp/out" 2>&1; then
+    fail "more than RERUN_MAX failures passed the gate"
+fi
+[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "more than RERUN_MAX failures were rerun"
+grep -q '3 tests failed, more than RERUN_MAX (2): a break, not a flake; not rerun' "$tmp/out" ||
+    fail "the cap is not explained"
+grep -q 'OUTPUT-OF-gamma-first' "$tmp/out" || fail "a capped run did not print its failures"
 
 # ---- the sanitizer set's mode (linux-gate.sh --sanitizers) ----
 : > "$tmp/state/gate-history/gates"
@@ -204,7 +240,7 @@ FIRST_FAIL="" RERUN_FAIL="" SKIP="alpha" gate > "$tmp/out" 2>&1 || fail "a smoke
 # caller's environment sets CTEST_PARALLEL_LEVEL.
 macos() {
     : > "$tmp/trace"
-    PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 CTEST_TIMEOUT='' \
+    PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" JOBS="${MACOS_JOBS:-2}" TEST_REGEX=. DISPLAY_WRAP=0 CTEST_TIMEOUT='' \
         BUILD_DIR="$tmp/build" STATE_DIR="$tmp/macos-state" HISTORY_DIR="$tmp/macos-history" \
         GATE="macOS gate" SUITE="tests" CTEST_PARALLEL_LEVEL=8 \
         bash "$scripts/linux-gate-smoke.sh"
@@ -214,6 +250,32 @@ FIRST_FAIL="beta" RERUN_FAIL="" macos > "$tmp/out" 2>&1 || fail "a macOS flake f
 ! grep -q '^PARALLEL_RERUN$' "$tmp/trace" || fail "the macOS rerun ran in parallel"
 grep -q 'macOS gate: RERUN: failed in the parallel run, passed alone: beta' "$tmp/out" || fail "macOS rerun not surfaced"
 grep -q $'\tbeta$' "$tmp/macos-history/reruns" || fail "macOS rerun not counted in HISTORY_DIR"
+# W25 review N3: a serial first run is not called parallel.
+FIRST_FAIL="beta" RERUN_FAIL="" MACOS_JOBS=1 macos > "$tmp/out" 2>&1 || fail "a serial macOS flake failed the gate"
+grep -q 'RERUN: failed in the first run, passed alone: beta' "$tmp/out" || fail "a serial run called parallel"
+! grep -q 'parallel run' "$tmp/out" || fail "a serial run called parallel"
+# W25 review N4: PROGRESS=1 streams each result; an interrupted run keeps its
+# log in the history.
+FIRST_FAIL="" RERUN_FAIL="" PROGRESS=1 macos > "$tmp/out" 2>&1 || fail "a clean PROGRESS run failed"
+grep -q '^==> macOS gate: running tests, 2 at a time' "$tmp/out" || fail "no start line"
+grep -q '^   2/3 Test #2: beta' "$tmp/out" || fail "progress not streamed"
+: > "$tmp/trace"
+rm -f "$tmp/hang"
+PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 CTEST_TIMEOUT='' \
+    BUILD_DIR="$tmp/build" STATE_DIR="$tmp/macos-state" HISTORY_DIR="$tmp/macos-history" \
+    GATE="macOS gate" SUITE="tests" PROGRESS=1 HANG_FILE="$tmp/hang" FIRST_FAIL="" RERUN_FAIL="" \
+    bash "$scripts/linux-gate-smoke.sh" > "$tmp/out" 2>&1 &
+hung=$!
+for _ in $(seq 1 100); do grep -q PARTIAL-OUTPUT "$tmp/macos-state/ctest.log" 2>/dev/null && break; sleep 0.1; done
+kill -TERM "$hung"
+touch "$tmp/hang"   # ctest ends, as Ctrl-C would end it
+status=0
+wait "$hung" || status=$?
+[ "$status" -eq 130 ] || fail "an interrupted run exited $status, not 130"
+interrupted="$(ls "$tmp/macos-history/"*-interrupted.log 2>/dev/null | head -1)"
+[ -n "$interrupted" ] || fail "an interrupted run's log was not kept"
+grep -q PARTIAL-OUTPUT "$interrupted" || fail "the kept log is not the run's"
+grep -q "interrupted .*the log so far: $interrupted" "$tmp/out" || fail "the kept log is not named"
 ls "$tmp/macos-history/"*-first-run.log > /dev/null || fail "macOS first-run log not kept in HISTORY_DIR"
 [ ! -e "$tmp/macos-state/gate-history" ] || fail "HISTORY_DIR was ignored"
 ! grep -q 'in volume' "$tmp/out" || fail "a volume was named without VOLUME"
@@ -248,6 +310,39 @@ FLAKY
     rm -f "$real/build/flaky-count"
     if ALWAYS_FAIL=1 real_gate > "$tmp/out" 2>&1; then fail "real CTest: a failing rerun passed"; fi
     grep -q 'the rerun alone failed too' "$tmp/out" || fail "real CTest: no rerun failure line"
+
+    # The W25 review's L1 repros, with real CTest. A test that fails in the
+    # full run and exits 77 (its SKIP_RETURN_CODE) alone: CTest says Skipped
+    # and exits 0, but the test never passed.
+    probe() {   # probe NAME CMAKE-BODY: a project of its own, run through the gate
+        mkdir -p "$real/$1/src" "$real/$1/state"
+        printf '%s\n' "cmake_minimum_required(VERSION 3.16)" "project($1 NONE)" "enable_testing()" \
+            "$2" > "$real/$1/src/CMakeLists.txt"
+        cmake -S "$real/$1/src" -B "$real/$1/build" > /dev/null
+        JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 BUILD_DIR="$real/$1/build" STATE_DIR="$real/$1/state" \
+            GATE="Real gate" SUITE="tests" bash "$scripts/linux-gate-smoke.sh"
+    }
+    cat > "$real/fail_then_skip.sh" <<'SKIPPER'
+n=$(( $(cat "$1" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$1"
+[ "$n" -ge 2 ] && exit 77
+exit 1
+SKIPPER
+    if probe skipprobe "add_test(NAME fail_then_skip COMMAND sh $real/fail_then_skip.sh $real/skip-count)
+set_tests_properties(fail_then_skip PROPERTIES SKIP_RETURN_CODE 77)" > "$tmp/out" 2>&1; then
+        fail "real CTest: a test that failed, then skipped, passed the gate"
+    fi
+    grep -q 'the rerun did not pass: fail_then_skip (Skipped)' "$tmp/out" ||
+        { cat "$tmp/out"; fail "real CTest: the skipped rerun is not named"; }
+    [ "$(cat "$real/skip-count")" = 2 ] || fail "real CTest: fail_then_skip not rerun once"
+    # A failed test named with a regex character: "x+y" (always fails) must
+    # not be judged by "xy" (passes), which its unescaped pattern matches.
+    if probe idprobe 'add_test(NAME x+y COMMAND false)
+add_test(NAME xy COMMAND true)' > "$tmp/out" 2>&1; then
+        fail "real CTest: x+y, failing alone too, passed the gate through xy"
+    fi
+    grep -q 'the rerun alone failed too' "$tmp/out" || { cat "$tmp/out"; fail "real CTest: x+y's rerun did not fail"; }
+    grep -q 'x+y' "$real/idprobe/state/ctest-rerun.log" || fail "real CTest: the rerun did not run x+y"
+    ! grep -qE 'Test +#[0-9]+: xy ' "$real/idprobe/state/ctest-rerun.log" || fail "real CTest: the rerun ran xy"
 else
     echo "(no cmake/ctest: the real-CTest case is skipped)"
 fi

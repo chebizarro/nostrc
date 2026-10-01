@@ -223,6 +223,9 @@ grep -q 'DUMMY-OUTPUT-first' "$tmp/flaky-output"
 grep -q '!! macOS gate: RERUN: failed in the parallel run, passed alone: dummy' "$tmp/flaky-output"
 grep -qE 'dummy needed a rerun in 1 of the last [0-9]+ gate\(s\)' "$tmp/flaky-output"
 grep -q 'macOS gate: tests passed after a rerun' "$tmp/flaky-output"
+# Each test's result is printed as it comes (W25 review N4).
+grep -q '^==> macOS gate: running tests, 3 at a time' "$tmp/flaky-output"
+grep -q '^   1/1 Test #1: dummy .*Failed' "$tmp/flaky-output"
 grep -q $'\tdummy$' "$repo/.git/nostrc-macos-gate-history/reruns"
 ls "$repo/.git/nostrc-macos-gate-history/"*-first-run.log >/dev/null
 assert_clean
@@ -233,6 +236,26 @@ if run_hook test > "$tmp/test-output" 2>&1; then
 fi
 grep -q 'DUMMY-OUTPUT-rerun' "$tmp/test-output"
 grep -q 'macOS gate: TESTS FAILED' "$tmp/test-output"
+assert_clean
+
+# A git older than 2.31 echoes --path-format=absolute back instead of
+# applying it (W25 review N6): the history still lands in the common dir.
+mkdir -p "$tmp/oldgit"
+real_git="$(command -v git)"
+cat > "$tmp/oldgit/git" <<MOCK
+#!/bin/bash
+args=()
+for arg; do
+    if [ "\$arg" = --path-format=absolute ]; then printf '%s\n' "\$arg"; else args+=("\$arg"); fi
+done
+exec "$real_git" "\${args[@]}"
+MOCK
+chmod +x "$tmp/oldgit/git"
+before="$(grep -c . "$repo/.git/nostrc-macos-gate-history/reruns")"
+PATH="$tmp/oldgit:$PATH" run_hook flaky > "$tmp/oldgit-output" 2>&1
+[ "$(grep -c . "$repo/.git/nostrc-macos-gate-history/reruns")" -eq $((before + 1)) ]
+absent 'path-format' "$tmp/oldgit-output"
+[ ! -e "$branch/--path-format=absolute" ]
 assert_clean
 
 for stage in beads configure build test linux sanitizer; do
