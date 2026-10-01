@@ -124,14 +124,17 @@ G_BEGIN_DECLS
  * GH_MLS_SERVICE_ERROR_NEEDS_UPDATE.
  *
  * Leaving (nostrc-2um6; MIP-03 "Leaving a group", Marmot
- * protocol-core/member-departure.md). Where the group supports it
- * (libmarmot >= 0.12.0: every member's app processes SelfRemove, and the
- * account is not an admin -- admins step down first), gh_mls_service_leave()
- * leaves for everyone: libmarmot makes the account's SelfRemove proposal,
+ * protocol-core/member-departure.md). Unless the account is an admin
+ * (admins step down first), gh_mls_service_leave() leaves for everyone:
+ * libmarmot makes the account's leave proposal -- a SelfRemove, which any
+ * member commits, where the group's required_capabilities list it, else a
+ * Remove request, which an admin commits (as MDK 0.8; review M1) --
  * which is published to the group relays (republished after a restart, and
  * made again for each new epoch), and the group is "leaving": it is still
  * read, nothing else is sent, and once another member commits the proposal
- * the group ends ("end" LEFT). Otherwise (gh_mls_service_leave_kind()) the
+ * the group ends ("end" LEFT). If a new epoch's proposal cannot be made, the
+ * leave is dropped and the group says so ("leave-failed"). Otherwise
+ * (gh_mls_service_leave_kind()) the
  * group ends on this device only ("end" LEFT_DEVICE): marmot_leave_group()
  * marks it inactive locally and the service stops reading it; the others
  * keep counting the account until an admin removes it. Leaving again while
@@ -140,13 +143,16 @@ G_BEGIN_DECLS
  * Others leaving. A member's own departure request -- its SelfRemove, or
  * the Remove of itself MDK 0.8 sends where SelfRemove is not required -- is
  * kept by libmarmot (marmot_process_message(): MARMOT_RESULT_PROPOSAL), and
- * the service commits it after a random delay of
- * GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS..MAX_MS (member-departure.md: any
+ * the service commits it after a random delay
+ * (GH_MLS_SERVICE_DEPARTURE_JITTER_*, growing with the group; member-departure.md: any
  * remaining member may commit a SelfRemove, as MDK 0.8 and 0.11 do; a Remove
  * needs an admin), through the same publish-then-merge lifecycle as every
  * Commit; another member's Commit consuming it first cancels ours. When a
- * Commit takes such a member out of the group, the group emits
- * "member-left".
+ * Commit takes such a member out of the group -- whether or not this
+ * account saw the proposal: libmarmot names them in the Commit's result --
+ * the group emits "member-left". A Commit that arrives before the proposal
+ * it cites is held and offered again when a proposal arrives (review H1);
+ * meanwhile no departure Commit of ours is scheduled.
  *
  * Removal (nostrc-xrya). A member an admin removed cannot enter the next
  * epoch (the Commit's UpdatePath is encrypted to the others). libmarmot
@@ -213,9 +219,19 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_MAX_INVITEES 32
 /* The random delay before committing another member's leave (milliseconds):
  * member-departure.md "short randomized jitter", so that members online
- * together rarely race. */
+ * together rarely race. The window is MIN_MS..MIN_MS + PER_MEMBER_MS per
+ * member, at most MAX_MS (review L5). Metadata: relays cannot read the
+ * events, but they see a proposal followed by a burst of Commits from
+ * fresh keys, which marks a departure and hints at how many members were
+ * online; a wider window shortens the burst, it does not hide it. */
 #define GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS 1000
-#define GH_MLS_SERVICE_DEPARTURE_JITTER_MAX_MS 4000
+#define GH_MLS_SERVICE_DEPARTURE_JITTER_PER_MEMBER_MS 250
+#define GH_MLS_SERVICE_DEPARTURE_JITTER_MAX_MS 15000
+/* A held Commit that cites a proposal not received yet (review H1) is
+ * retried whenever a proposal or Commit arrives, at most this many times
+ * and for this long (seconds); then it is junk. */
+#define GH_MLS_SERVICE_PROPOSAL_WAIT_TRIES 16
+#define GH_MLS_SERVICE_PROPOSAL_WAIT_S 600
 
 typedef enum {
   GH_MLS_KEY_PACKAGE_NONE,        /* not published (inactive, offline or not yet) */
@@ -250,7 +266,8 @@ typedef enum {
 
 /* What gh_mls_service_leave() would do for a group (nostrc-2um6). */
 typedef enum {
-  GH_MLS_LEAVE_EVERYONE,           /* SelfRemove: the others are told */
+  GH_MLS_LEAVE_EVERYONE,           /* SelfRemove: the others are told; any of them commits it */
+  GH_MLS_LEAVE_ADMINS,             /* a Remove request: an admin commits it (review M1) */
   GH_MLS_LEAVE_DEVICE_ADMIN,       /* this device only: admins step down first */
   GH_MLS_LEAVE_DEVICE_UNSUPPORTED, /* this device only: someone's app can't process a leave */
   GH_MLS_LEAVE_DEVICE_WAITING,     /* this device only: the leave still waits for a member */
@@ -313,7 +330,8 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * and the next subscription asks again) and "leaving" (the account's
  * SelfRemove waits for a member's Commit). Signal "members-changed": the
  * member list or the admins may differ. Signal "member-left" (gchar *pubkey,
- * hex): a Commit took out a member who had asked to leave (nostrc-2um6). */
+ * hex): a Commit took out a member who had asked to leave (nostrc-2um6);
+ * "leave-failed" (gh_mls_group_get_leave_failed()). */
 const gchar *gh_mls_group_get_group_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_room_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_name(GhMlsGroup *self);
@@ -322,6 +340,12 @@ guint64 gh_mls_group_get_epoch(GhMlsGroup *self);
 gboolean gh_mls_group_get_active(GhMlsGroup *self);
 /* TRUE while the account's leave waits for a member's Commit (nostrc-2um6). */
 gboolean gh_mls_group_get_leaving(GhMlsGroup *self);
+/* While leaving: TRUE when an admin must commit it (a Remove request). */
+gboolean gh_mls_group_get_leave_via_admin(GhMlsGroup *self);
+/* The leave could not go on (a new epoch's proposal could not be made) and
+ * was dropped: the account is still a member and may send (review L3).
+ * Cleared by the next gh_mls_service_leave(). */
+gboolean gh_mls_group_get_leave_failed(GhMlsGroup *self);
 GhMlsGroupEnd gh_mls_group_get_end(GhMlsGroup *self);
 const gchar *gh_mls_group_get_removed_by(GhMlsGroup *self);
 GhMlsReadState gh_mls_group_get_read_state(GhMlsGroup *self);

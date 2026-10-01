@@ -91,6 +91,8 @@ struct _GhMlsGroup {
   gchar *leave_json;         /* the SelfRemove event of the current epoch */
   GhRelayPublish *leave_publish; /* publishing it; NULL once a relay took it */
   gboolean leave_sent;       /* a group relay accepted leave_json */
+  gboolean leave_via_admin;  /* the leave is a Remove request an admin commits (review M1) */
+  gboolean leave_failed;     /* the leave could not go on and was dropped (review L3) */
   /* Others leaving: members who asked to (hex), and the delayed Commit. */
   GHashTable *leavers;
   guint departures_source;
@@ -114,6 +116,7 @@ enum {
   GROUP_PROP_DECRYPT_PENDING,
   GROUP_PROP_HISTORY_INCOMPLETE,
   GROUP_PROP_LEAVING,
+  GROUP_PROP_LEAVE_FAILED,
   N_GROUP_PROPS
 };
 static GParamSpec *group_props[N_GROUP_PROPS];
@@ -276,6 +279,12 @@ typedef struct {
   guint misses;        /* Commits applied since, without it becoming readable */
   gboolean shown;      /* makes decrypt-pending (not the join second's stored answer) */
   gint64 held_us;      /* when it was first held (monotonic) */
+  /* A Commit citing a proposal not received yet (nostrc-2um6 review H1):
+   * offered again whenever a proposal arrives, and dropped after
+   * GH_MLS_SERVICE_PROPOSAL_WAIT_TRIES retries or
+   * GH_MLS_SERVICE_PROPOSAL_WAIT_S. */
+  gboolean awaits_proposal;
+  guint proposal_tries;
 } Held;
 
 static void
@@ -519,6 +528,20 @@ gh_mls_group_get_leaving(GhMlsGroup *self)
   return self->leaving;
 }
 
+gboolean
+gh_mls_group_get_leave_via_admin(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
+  return self->leaving && self->leave_via_admin;
+}
+
+gboolean
+gh_mls_group_get_leave_failed(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
+  return self->leave_failed;
+}
+
 GhMlsGroupEnd
 gh_mls_group_get_end(GhMlsGroup *self)
 {
@@ -647,6 +670,7 @@ gh_mls_group_get_property(GObject *object, guint id, GValue *value, GParamSpec *
   case GROUP_PROP_DECRYPT_PENDING: g_value_set_boolean(value, self->decrypt_pending); break;
   case GROUP_PROP_HISTORY_INCOMPLETE: g_value_set_boolean(value, self->history_incomplete); break;
   case GROUP_PROP_LEAVING: g_value_set_boolean(value, self->leaving); break;
+  case GROUP_PROP_LEAVE_FAILED: g_value_set_boolean(value, self->leave_failed); break;
   default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
 }
@@ -714,6 +738,8 @@ gh_mls_group_class_init(GhMlsGroupClass *klass)
   group_props[GROUP_PROP_HISTORY_INCOMPLETE] =
     g_param_spec_boolean("history-incomplete", NULL, NULL, FALSE, ro);
   group_props[GROUP_PROP_LEAVING] = g_param_spec_boolean("leaving", NULL, NULL, FALSE, ro);
+  group_props[GROUP_PROP_LEAVE_FAILED] = g_param_spec_boolean("leave-failed", NULL, NULL, FALSE,
+                                                              ro);
   g_object_class_install_properties(object_class, N_GROUP_PROPS, group_props);
   group_signals[GROUP_SIGNAL_MEMBERS_CHANGED] =
     g_signal_new("members-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
@@ -981,6 +1007,9 @@ group_refresh(GhMlsGroup *group)
   bool leave_waits = false;
   gboolean leaving = active && marmot_is_leaving(m, &group->gid, &leave_waits) == MARMOT_OK &&
                      leave_waits;
+  MarmotLeaveKind leave_kind = MARMOT_LEAVE_SELF_REMOVE;
+  if (leaving && marmot_can_self_remove(m, &group->gid, &leave_kind) == MARMOT_OK)
+    group->leave_via_admin = leave_kind == MARMOT_LEAVE_REMOVE_REQUEST;
   if (group->leaving != leaving) {
     group->leaving = leaving;
     g_object_notify_by_pspec(object, group_props[GROUP_PROP_LEAVING]);
@@ -1198,7 +1227,7 @@ static EventOutcome process_event(GhMlsGroup *group, const gchar *event_json, co
  * stays behind it so the next subscription fetches it again (review M1). */
 static void
 hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created_at,
-           gboolean shown)
+           gboolean shown, gboolean awaits_proposal)
 {
   if (!id || g_hash_table_contains(group->held_ids, id))
     return;
@@ -1215,6 +1244,7 @@ hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created
   held->created_at = MIN(created_at, now_s(group->service));
   held->shown = shown;
   held->held_us = g_get_monotonic_time();
+  held->awaits_proposal = awaits_proposal;
   g_queue_push_tail(&group->held, held);
   g_hash_table_add(group->held_ids, held->id);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
@@ -1293,11 +1323,20 @@ retry_held(GhMlsGroup *group)
   } while (group->retry_again);
   guint fresh = group->fresh_commits;
   group->fresh_commits = 0;
-  for (GList *l = group->held.head; fresh && l;) {
+  gint64 now_us = g_get_monotonic_time();
+  for (GList *l = group->held.head; l;) {
     GList *next = l->next;
     Held *held = l->data;
     held->misses += fresh;
-    if (held->misses >= GH_MLS_SERVICE_JUNK_AFTER_COMMITS) {
+    /* A Commit still waiting for its proposal (review H1): one more try
+     * counted per pass, and given up after a bounded count or time. */
+    gboolean gave_up = FALSE;
+    if (held->awaits_proposal && touched) {
+      held->proposal_tries++;
+      gave_up = held->proposal_tries >= GH_MLS_SERVICE_PROPOSAL_WAIT_TRIES ||
+                now_us - held->held_us >= (gint64)GH_MLS_SERVICE_PROPOSAL_WAIT_S * G_USEC_PER_SEC;
+    }
+    if (gave_up || held->misses >= GH_MLS_SERVICE_JUNK_AFTER_COMMITS) {
       remember_junk(group, held->id);
       g_hash_table_remove(group->held_ids, held->id);
       g_queue_delete_link(&group->held, l);
@@ -1352,7 +1391,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   memset(&result, 0, sizeof result);
   MarmotError err = marmot_process_message(self->marmot, event_json, &result);
   gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE;
-  gboolean proposal = FALSE;
+  gboolean proposal = FALSE, awaits_proposal = FALSE;
   gint64 created_at = 0;
   NostrEvent *envelope = nostr_event_new();
   g_autofree gchar *envelope_id = NULL;
@@ -1394,6 +1433,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     accepted = TRUE;
   } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_COMMIT) {
     commit = accepted = TRUE;
+    /* Who left on their own request, proposal seen or not (review L4):
+     * "member-left" once the refresh finds them gone. */
+    for (size_t i = 0; i < result.commit.departed_count; i++)
+      if (g_strcmp0(result.commit.departed_pubkey_hexes[i], self->account) != 0)
+        g_hash_table_add(group->leavers, g_strdup(result.commit.departed_pubkey_hexes[i]));
   } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_PROPOSAL) {
     /* nostrc-2um6: a member's standalone proposal, which libmarmot keeps for
      * the Commit that references it; a leave is committed after a delay. */
@@ -1403,6 +1447,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   } else if (err == MARMOT_ERR_NIP44) {
     /* A later epoch's (or not for us): wait for the Commit that opens it. */
     held = group->active;   /* an ended group holds nothing (review N5) */
+  } else if (err == MARMOT_ERR_PROPOSAL_UNKNOWN) {
+    /* nostrc-2um6 review H1: a Commit citing a proposal not received yet
+     * (one second, relay order): kept, and offered again when a proposal
+     * arrives; meanwhile no departure Commit of ours competes with it. */
+    held = awaits_proposal = group->active;
   } else if (err == MARMOT_ERR_USE_AFTER_EVICTION && listening(group)) {
     /* Removed by a Commit that may still lose: nothing but that epoch's
      * Commits is read. libmarmot counts the later-epoch events it cannot
@@ -1440,7 +1489,9 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
       return EVENT_OTHER;   /* judged junk before (nostrc-oya4) */
     if (!retry)
       hold_event(group, envelope_id, event_json, created_at,
-                 !(stored && group->floor > 0 && created_at <= group->floor));
+                 !(stored && group->floor > 0 && created_at <= group->floor), awaits_proposal);
+    else if (awaits_proposal)
+      retry->awaits_proposal = TRUE;
     return EVENT_HELD;
   }
   if (!accepted)
@@ -1452,10 +1503,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   group->newest = MAX(group->newest, bounded);
   if (group->read == GH_MLS_READ_LIVE && all_relays_answered(group))
     save_cursor(group, bounded);
-  if (commit)
+  if (commit) {
     after_commit(group, retry == NULL);
-  else if (proposal)
+  } else if (proposal) {
+    /* A held Commit may have waited for this proposal (review H1). */
+    retry_held(group);
     departures_schedule(group);
+  }
   return EVENT_ACCEPTED;
 }
 
@@ -2114,6 +2168,7 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
 
 /* ---- Leaving and others' leaves (nostrc-2um6) ------------------------------------------ */
 
+static gboolean held_awaits_proposal(GhMlsGroup *group);
 static GTask *op_task(GhMlsService *self, OpKind kind, GhMlsGroup *group,
                       GCancellable *cancellable, GAsyncReadyCallback callback,
                       gpointer user_data, gpointer tag);
@@ -2173,7 +2228,7 @@ departures_fired(gpointer data)
   /* Re-checked now: another member's Commit may have consumed it, or a
    * change of ours is still out (after_commit() schedules again). */
   if (!running(self) || !group->active || group->leaving || group->round ||
-      group->pending_commit || !departures_committable(group))
+      group->pending_commit || held_awaits_proposal(group) || !departures_committable(group))
     return G_SOURCE_REMOVE;
   GTask *task = op_task(self, OP_DEPARTURES, group, NULL, departures_done, NULL,
                         gh_mls_service_change_finish);
@@ -2184,15 +2239,38 @@ departures_fired(gpointer data)
 /* A member asked to leave: commit it after a random delay (member-departure.md:
  * any remaining member may; the jitter keeps members online together from
  * racing, and never enters ordering). */
+/* A held Commit waits for a proposal (review H1): it may consume the leave
+ * we would commit, so ours waits too. */
+static gboolean
+held_awaits_proposal(GhMlsGroup *group)
+{
+  for (GList *l = group->held.head; l; l = l->next)
+    if (((Held *)l->data)->awaits_proposal)
+      return TRUE;
+  return FALSE;
+}
+
+/* The jitter window grows with the group (review L5): with N members
+ * online, about 1 + (N-1)*latency/window of them fire before the first
+ * Commit is seen. */
+static gint64
+departures_window_ms(GhMlsGroup *group)
+{
+  guint n = group->members ? g_strv_length(group->members) : 1;
+  gint64 max = GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS +
+               (gint64)n * GH_MLS_SERVICE_DEPARTURE_JITTER_PER_MEMBER_MS;
+  return MIN(max, GH_MLS_SERVICE_DEPARTURE_JITTER_MAX_MS);
+}
+
 static void
 departures_schedule(GhMlsGroup *group)
 {
   GhMlsService *self = group->service;
   if (group->departures_source || !running(self) || !group->active || group->leaving ||
-      !departures_committable(group))
+      group->retrying || held_awaits_proposal(group) || !departures_committable(group))
     return;
   gint64 ms = gh_clock_random_range(self->clock, GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS,
-                                    GH_MLS_SERVICE_DEPARTURE_JITTER_MAX_MS);
+                                    departures_window_ms(group));
   group->departures_source = gh_clock_timeout_add(self->clock, (guint64)ms, departures_fired,
                                                   group, NULL);
 }
@@ -2291,10 +2369,20 @@ leave_continue(GhMlsGroup *group)
     return;
   char *json = NULL;
   MarmotError err = marmot_self_remove(self->marmot, &group->gid, &json);
-  if (err == MARMOT_OK && json)
+  if (err == MARMOT_OK && json) {
     leave_start(group, json);
-  else
-    g_debug("Groundhog cannot send its leave now: %s", marmot_error_string(err));
+  } else if (err != MARMOT_ERR_OWN_COMMIT_PENDING) {
+    /* The leave cannot go on in this epoch (e.g. the account was made an
+     * admin): say so and stop blocking sends, rather than "waiting" for a
+     * Commit that cannot come (review L3). */
+    g_message("Groundhog stopped leaving an encrypted group: %s", marmot_error_string(err));
+    leave_cancel(group);
+    if (marmot_cancel_leave(self->marmot, &group->gid) == MARMOT_OK) {
+      group->leave_failed = TRUE;
+      g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
+      group_refresh(group);
+    }
+  }
   free(json);
 }
 
@@ -3603,8 +3691,12 @@ gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
   /* For everyone where the group supports it (nostrc-2um6): our SelfRemove,
    * durable in libmarmot, published now or once online; the group is
    * "leaving" until a member commits it. Leaving again gives up waiting. */
+  if (group->leave_failed) {
+    group->leave_failed = FALSE;
+    g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
+  }
   if (!group->leaving) {
-    MarmotError check = marmot_can_self_remove(self->marmot, &group->gid);
+    MarmotError check = marmot_can_self_remove(self->marmot, &group->gid, NULL);
     if (check == MARMOT_ERR_OWN_COMMIT_PENDING) {
       g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_BUSY,
                           "Another change of this group is still being sent");
@@ -3642,10 +3734,11 @@ gh_mls_service_leave_kind(GhMlsService *self, GhMlsGroup *group)
     return GH_MLS_LEAVE_DEVICE;
   if (group->leaving)
     return GH_MLS_LEAVE_DEVICE_WAITING;
-  switch (marmot_can_self_remove(self->marmot, &group->gid)) {
+  MarmotLeaveKind kind = MARMOT_LEAVE_SELF_REMOVE;
+  switch (marmot_can_self_remove(self->marmot, &group->gid, &kind)) {
   case MARMOT_OK:
-  case MARMOT_ERR_OWN_COMMIT_PENDING:   /* for everyone, once our change is out */
-    return GH_MLS_LEAVE_EVERYONE;
+  case MARMOT_ERR_OWN_COMMIT_PENDING:   /* the same, once our change is out */
+    return kind == MARMOT_LEAVE_REMOVE_REQUEST ? GH_MLS_LEAVE_ADMINS : GH_MLS_LEAVE_EVERYONE;
   case MARMOT_ERR_ADMIN_CANNOT_LEAVE:
     return GH_MLS_LEAVE_DEVICE_ADMIN;
   case MARMOT_ERR_UNSUPPORTED:

@@ -210,7 +210,12 @@ sync_status(GhMlsGroupInfoDialog *self)
   guint unsent = gh_mls_group_get_unsent_welcomes(self->group);
   g_autofree gchar *words = NULL;
   if (gh_mls_group_get_leaving(self->group))
-    words = g_strdup(_("You’re leaving. Waiting for another member to confirm it."));
+    words = g_strdup(gh_mls_group_get_leave_via_admin(self->group)
+                       ? _("You’re leaving. Waiting for an admin to remove you.")
+                       : _("You’re leaving. Waiting for another member to confirm it."));
+  else if (gh_mls_group_get_leave_failed(self->group))
+    words = g_strdup(_("Your leave couldn’t continue after the group changed, so you’re still "
+                       "a member and can send again. You can leave again."));
   else if (pending)
     words = g_strdup(_("A change to the group is waiting for a relay to accept it."));
   else if (unsent > 0)
@@ -219,7 +224,8 @@ sync_status(GhMlsGroupInfoDialog *self)
                                         "%u invitations haven’t reached their people’s inboxes "
                                         "yet.", unsent), unsent);
   gtk_widget_set_visible(GTK_WIDGET(self->pending_row), words != NULL);
-  gtk_spinner_set_spinning(self->pending_spinner, words != NULL);
+  gtk_spinner_set_spinning(self->pending_spinner,
+                           words != NULL && !gh_mls_group_get_leave_failed(self->group));
   adw_action_row_set_subtitle(self->pending_row, words ? words : "");
   gboolean manage = can_manage(self);
   gtk_widget_set_visible(self->add_member_button, manage);
@@ -489,7 +495,7 @@ on_leave_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
     toast(self, words);
     return;
   }
-  toast(self, self->leave_kind == GH_MLS_LEAVE_EVERYONE
+  toast(self, self->leave_kind == GH_MLS_LEAVE_EVERYONE || self->leave_kind == GH_MLS_LEAVE_ADMINS
                 ? _("Leaving the group…")
                 : _("You left the group on this device"));
   sync_all(self);

@@ -166,6 +166,10 @@ gh_mls_leave_copy(GhMlsLeave kind)
   case GH_MLS_LEAVE_EVERYONE:
     return _("The other members are told that you left. Once one of them confirms it, this "
              "group stops on this device too. Messages you have stay on this device.");
+  case GH_MLS_LEAVE_ADMINS:
+    return _("The group’s admins are asked to remove you. Once one of them does, this group "
+             "stops on this device too; until then the others still count you. Messages you "
+             "have stay on this device.");
   case GH_MLS_LEAVE_DEVICE_ADMIN:
     return _("You’re an admin, so you can’t leave for everyone yet: make someone else an admin "
              "and step down first. Leaving now stops this group on this device only, and the "

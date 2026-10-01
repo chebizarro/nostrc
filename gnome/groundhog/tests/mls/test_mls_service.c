@@ -309,7 +309,9 @@ test_group_lifecycle(void)
   /* Bob (not an admin) leaves for everyone (nostrc-2um6): his SelfRemove,
    * which Alice commits; then he stops reading; his room and history stay. */
   g_autoptr(GError) error = NULL;
-  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_EVERYONE);
+  /* Groundhog makes its groups alone, so they do not require SelfRemove
+   * (MDK's rule, review L1): the leave is a Remove request (review M1). */
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_ADMINS);
   g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
   g_assert_no_error(error);
   g_assert_true(gh_mls_group_get_leaving(gb));
@@ -2244,7 +2246,7 @@ test_member_leaves(void)
   g_signal_connect(gb, "member-left", G_CALLBACK(on_member_left), &bob_log);
 
   g_assert_cmpint(gh_mls_service_leave_kind(alice->service, ga), ==, GH_MLS_LEAVE_DEVICE_ADMIN);
-  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_EVERYONE);
+  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_ADMINS);
 
   set_online(alice, FALSE);
   set_online(bob, FALSE);
@@ -2252,6 +2254,7 @@ test_member_leaves(void)
   g_assert_true(gh_mls_service_leave(carol->service, gc, &error));
   g_assert_no_error(error);
   g_assert_true(gh_mls_group_get_leaving(gc));
+  g_assert_true(gh_mls_group_get_leave_via_admin(gc));
   g_assert_true(gh_mls_group_get_active(gc));
   g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==,
                   GH_MLS_LEAVE_DEVICE_WAITING);
@@ -2304,6 +2307,139 @@ test_member_leaves(void)
   world_down(&w);
 }
 
+typedef struct {
+  WireRelay *relay;
+  guint n;
+} StoredAtLeast;
+
+static gboolean
+stored_at_least(gpointer data)
+{
+  StoredAtLeast *count = data;
+  return count->relay->stored->len >= count->n;
+}
+
+static gboolean
+group_left(gpointer data)
+{
+  return gh_mls_group_get_end(data) == GH_MLS_GROUP_END_LEFT;
+}
+
+typedef struct {
+  GhMlsGroup *group;
+  guint n;
+} HeldMore;
+
+static gboolean
+held_more(gpointer data)
+{
+  HeldMore *wait = data;
+  return gh_mls_group_get_unreadable(wait->group) >= wait->n;
+}
+
+static gboolean
+leave_failed(gpointer data)
+{
+  return gh_mls_group_get_leave_failed(data);
+}
+
+/* nostrc-2um6 review H1: Bob, an admin who could commit Carol's leave,
+ * receives Alice's Commit of it before the leave itself (here: withheld on
+ * G until Bob caught up). He keeps the Commit, applies it once the proposal
+ * arrives, and publishes no competing Commit of his own. */
+static void
+test_commit_before_proposal(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Reordered", (const guint[]){ BOB, CAROL }, 2);
+  GhMlsGroup *gb = join(bob, ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(is_admin, gb, "Bob becoming an admin");
+  wait_epoch(gc, (gint)gh_mls_group_get_epoch(ga));
+
+  set_online(bob, FALSE);
+  StoredAtLeast on_g = { &w.g, w.g.stored->len + 1 };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(carol->service, gc, &error));
+  g_assert_no_error(error);
+  spin_until(stored_at_least, &on_g, "Carol's leave on G");
+  g_autofree gchar *proposal_id = g_strdup(last_stored_445(&w.g)->id);
+  wait_members(ga, 2);   /* Alice commits it */
+  spin_until(group_left, gc, "Carol's leave committed");
+
+  /* Bob comes back to the Commit alone, and catches up completely (within
+   * one catch-up, Groundhog applies events oldest first anyway): the
+   * Commit is held, waiting for its proposal. */
+  wire_relay_withhold(&w.g, proposal_id);
+  guint64 before = gh_mls_group_get_epoch(gb);
+  HeldMore more = { gb, gh_mls_group_get_unreadable(gb) + 1 };
+  set_online(bob, TRUE);
+  wait_live(gb);
+  spin_until(held_more, &more, "Bob holding the Commit");
+  g_assert_cmpuint(gh_mls_group_get_epoch(gb), ==, before);
+  guint stored = w.g.stored->len;
+  guint held = gh_mls_group_get_unreadable(gb);
+
+  wire_relay_release(&w.g, proposal_id);
+  wait_members(gb, 2);
+  g_assert_cmpuint(gh_mls_group_get_epoch(gb), ==, gh_mls_group_get_epoch(ga));
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, held - 1);   /* the Commit applied */
+  /* Past Bob's longest jitter: still no Commit of his. */
+  gint64 until = g_get_monotonic_time() +
+                 (GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS + 4 * GH_MLS_SERVICE_DEPARTURE_JITTER_PER_MEMBER_MS +
+                  1000) * 1000;
+  while (g_get_monotonic_time() < until)
+    g_main_context_iteration(NULL, FALSE);
+  g_assert_cmpuint(w.g.stored->len, ==, stored);
+  send_text(bob, gb, "after the reorder");
+  wait_message(alice, gh_mls_group_get_room_id(ga), "after the reorder");
+  world_down(&w);
+}
+
+/* nostrc-2um6 review L3: Carol's leave cannot go on once Alice makes her an
+ * admin (admins cannot leave this way): the leave is dropped, the group
+ * says so, and Carol can send again. */
+static void
+test_leave_failed(void)
+{
+  World w;
+  const guint keys[] = { ALICE, CAROL };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Promoted", (const guint[]){ CAROL }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gc = join(carol, ALICE);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(carol->service, gc, &error));
+  g_assert_true(gh_mls_group_get_leaving(gc));
+  const gchar *admins[] = { hex[ALICE], hex[CAROL], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(leave_failed, gc, "Carol's leave dropped");
+  g_assert_false(gh_mls_group_get_leaving(gc));
+  g_assert_true(gh_mls_group_get_active(gc));
+  send_text(carol, gc, "staying after all");
+  wait_message(alice, room, "staying after all");
+  /* Leaving again clears it: an admin now, on this device only. */
+  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_DEVICE_ADMIN);
+  g_assert_true(gh_mls_service_leave(carol->service, gc, &error));
+  g_assert_false(gh_mls_group_get_leave_failed(gc));
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_LEFT_DEVICE);
+  world_down(&w);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2312,6 +2448,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/key-packages", test_key_packages);
   g_test_add_func("/groundhog/mls-service/group-lifecycle", test_group_lifecycle);
   g_test_add_func("/groundhog/mls-service/member-leaves", test_member_leaves);
+  g_test_add_func("/groundhog/mls-service/commit-before-proposal", test_commit_before_proposal);
+  g_test_add_func("/groundhog/mls-service/leave-failed", test_leave_failed);
   g_test_add_func("/groundhog/mls-service/restart-mid-commit", test_restart_mid_commit);
   g_test_add_func("/groundhog/mls-service/account-switch", test_account_switch);
   g_test_add_func("/groundhog/mls-service/future-replay-moves-no-cursor",
