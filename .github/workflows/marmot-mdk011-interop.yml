@@ -7,9 +7,11 @@ name: Marmot MDK 0.11 interop (adopted profile)
 # MDK v0.9.0 expected-incompatible probe (a102b196,
 # tests/interop/mdk/driver-0.9-probe), on the test's own local relays only.
 # Separate from marmot-mdk-interop.yml (MDK 0.8) so a green 0.8 run never
-# implies adopted success. The MDK<->MDK control must pass; the adopted cases
-# are expected failures (exit 77, reported Skipped) and are listed as such,
-# never as green. On demand and nightly: the image builds compile MDK.
+# implies adopted success. The MDK<->MDK control and every adopted case must
+# pass (nostrc-lf62); the MDK 0.9.0 probe is the expected failure (exit 77,
+# reported Skipped) and is listed as such, never as green. xvfb-run gives
+# the -gui case (the real invitations dialog) a display. On demand and
+# nightly: the image builds compile MDK.
 on:
   workflow_dispatch:
   schedule:
@@ -41,7 +43,7 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
-            desktop-file-utils appstream blueprint-compiler
+            desktop-file-utils appstream blueprint-compiler xvfb xauth
           docker version
 
       - name: Configure with the MDK 0.11 matrix
@@ -59,7 +61,7 @@ jobs:
           MDK_DRIVER_LOG: warn
         run: |
           set -o pipefail
-          ctest --test-dir build -R '^groundhog-mdk011-interop' -V \
+          xvfb-run -a ctest --test-dir build -R '^groundhog-mdk011-interop' -V \
             --output-junit "$PWD/mdk011-interop.junit.xml" 2>&1 | tee mdk011-interop.log
 
       - name: Matrix summary (expected failures are not green)

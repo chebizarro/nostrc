@@ -677,6 +677,101 @@ fn admit_key_package(event: &Event) -> Res<(KeyPackage, KeyPackageMetadata)> {
     Ok((key_package, metadata))
 }
 
+/// The KeyPackage an inviter picks from an author's kind 30443 events, as
+/// MDK 0.11's marmot-app does (key_package_records.rs,
+/// preferred_fresh_key_package_from_records, at the pinned commit): newest
+/// first (created_at, then event id, both descending); the newest event of
+/// each `d` slot supersedes its slot even when it is not admitted (never
+/// fall back to an older one, whose key may be retired); a slot whose
+/// newest event is another profile -- e.g. the MDK 0.8 KeyPackage a
+/// dual-format client keeps in its own slot -- or fails admission is passed
+/// over; among the admitted, marmot-app's `client` ranking (White Noise
+/// first, Amethyst last) picks, newest first within a rank. With nothing
+/// admitted, the newest slot's failure. Also the number of slots seen.
+fn select_key_package(author: &str, events: Vec<Event>) -> Res<(Event, usize)> {
+    let mut events: Vec<Event> = events
+        .into_iter()
+        .filter(|e| e.kind == Kind::Custom(KIND_KEY_PACKAGE) && e.pubkey.to_hex() == author)
+        .collect();
+    events.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+    let mut slots = HashSet::new();
+    let mut seen = 0usize;
+    let mut newest_error = None;
+    let mut selected: Option<(Event, u8)> = None;
+    for event in events.into_iter().rev() {
+        let slot = tag_value(&event, "d").first().and_then(|t| t.get(1)).filter(|d| !d.is_empty()).cloned();
+        if let Some(slot) = slot
+            && !slots.insert(slot)
+        {
+            continue;
+        }
+        seen += 1;
+        let priority = client_priority(&event);
+        if let Err(error) = admit_key_package(&event) {
+            newest_error.get_or_insert(error);
+            continue;
+        }
+        if selected.as_ref().is_none_or(|(_, best)| priority > *best) {
+            let top = priority == 2;
+            selected = Some((event, priority));
+            if top {
+                break;
+            }
+        }
+    }
+    match selected {
+        Some((event, _)) => Ok((event, seen)),
+        None => Err(newest_error.unwrap_or_else(|| fail(STATE, "no KeyPackage found"))),
+    }
+}
+
+/// marmot-app's key_package_client_priority (pinned commit): one `client`
+/// tag naming "whitenoise" ranks first, "amethyst" last, anything else (or
+/// no single tag) between.
+fn client_priority(event: &Event) -> u8 {
+    let clients = tag_value(event, "client");
+    match clients.as_slice() {
+        [tag] if tag.len() >= 2 => {
+            let name = tag[1].trim();
+            if name.eq_ignore_ascii_case("whitenoise") {
+                2
+            } else if name.eq_ignore_ascii_case("amethyst") {
+                0
+            } else {
+                1
+            }
+        }
+        _ => 1,
+    }
+}
+
+/// The author's NIP-65 write relays: the newest kind 10002 on `discover`,
+/// its `r` entries marked "write" or unmarked (never "read"), in order.
+/// Never kind 10051 (the adopted transport removed it).
+async fn write_relays(discover: &[String], author: &str) -> Res<Vec<String>> {
+    let filter = json!({ "kinds": [10002], "authors": [author] });
+    let lists = fetch_all(discover, &filter, &Keys::generate()).await?;
+    let newest = lists
+        .into_iter()
+        .filter(|e| e.pubkey.to_hex() == author)
+        .max_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| b.id.cmp(&a.id)))
+        .ok_or_else(|| fail(STATE, "no relay list (kind 10002) found"))?;
+    let mut out: Vec<String> = Vec::new();
+    for tag in tag_value(&newest, "r") {
+        let write = match tag.get(2).map(String::as_str) {
+            None | Some("") | Some("write") => true,
+            _ => false,
+        };
+        if write && tag.len() >= 2 && !out.contains(&tag[1]) {
+            out.push(tag[1].clone());
+        }
+    }
+    if out.is_empty() {
+        return Err(fail(STATE, "the relay list names no write relay"));
+    }
+    Ok(out)
+}
+
 fn describe_metadata(metadata: &KeyPackageMetadata) -> Value {
     json!({
         "profile": format!("{:?}", metadata.protocol_profile),
@@ -927,19 +1022,22 @@ impl Driver {
             "publish_key_package" => self.publish_key_package(req).await,
             "fetch_key_package" => {
                 let author = str_arg(req, "author")?;
-                let from = strs_arg(req, "from")?;
+                // Where to look: the author's kind 10002 write relays, found on
+                // `discover` (the adopted transport, nostrc-8u53), or `from`.
+                let (from, write_relays) = if req.get("discover").is_some() {
+                    let write = write_relays(&strs_arg(req, "discover")?, author).await?;
+                    (write.clone(), json!(write))
+                } else {
+                    (strs_arg(req, "from")?, Value::Null)
+                };
                 let filter = json!({ "kinds": [KIND_KEY_PACKAGE], "authors": [author] });
                 let events = fetch_all(&from, &filter, &Keys::generate()).await?;
-                // marmot-app's order (relay_event_id_cmp): the newest, and on
-                // equal created_at the smaller event id.
-                let newest = events
-                    .into_iter()
-                    .max_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| b.id.cmp(&a.id)))
-                    .ok_or_else(|| fail(STATE, "no KeyPackage found"))?;
-                let view = describe_key_package(&newest);
+                let (selected, slots) = select_key_package(author, events)?;
+                let view = describe_key_package(&selected);
                 let name = str_arg(req, "peer")?.to_string();
-                self.vectors.record("key_package_event_fetched", &name, json!({ "event": newest, "mdk": view }));
-                Ok(json!({ "event": newest.as_json(), "mdk": view }))
+                self.vectors.record("key_package_event_fetched", &name, json!({ "event": selected, "mdk": view }));
+                Ok(json!({ "event": selected.as_json(), "mdk": view, "slots": slots,
+                           "write_relays": write_relays }))
             }
             "parse_key_package" => {
                 let event = event_arg(req.get("event").ok_or_else(|| fail(INTERNAL, "missing 'event'"))?)?;

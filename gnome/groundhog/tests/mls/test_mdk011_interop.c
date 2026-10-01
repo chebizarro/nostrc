@@ -5,8 +5,10 @@
  * app_data_dictionary components and the 0x8009 account proof) behind the
  * JSON-lines driver of tests/interop/mdk/driver-0.11 (mdk-peer.h). Groundhog
  * accounts are the real GhMlsService of mls-world.h on the test's local
- * relays: KeyPackages on W, Welcomes gift-wrapped (NIP-59) to the invitee's
- * inbox X, group traffic on G with NIP-42 AUTH.
+ * relays, as shipped: they publish an adopted and an MDK 0.8 KeyPackage, each
+ * in its own `d` slot, on their kind 10002 write relay W (nostrc-lf62);
+ * Welcomes are gift-wrapped (NIP-59) to the invitee's inbox X; group traffic
+ * is on G with NIP-42 AUTH.
  *
  * Every case runs alone (CTest groundhog-mdk011-interop-<case>, -p).
  *
@@ -14,34 +16,42 @@
  *    must pass: it proves the driver, the relays and the adopted flows
  *    (KeyPackage, Welcome 1059 -> 13 -> 444, kind 9 both ways, rename, add,
  *    remove, self-update, SelfRemove leave) before any Groundhog verdict.
+ *  groundhog-invites-mdk: Groundhog's New Group check reads a White Noise
+ *    (MDK 0.11) user's KeyPackage as adopted-only, and Groundhog, requiring
+ *    every member's proof, creates an adopted group with her; MDK joins from
+ *    the Welcome; kind 445 both ways (nostrc-lse9, a Groundhog-made group).
+ *  mdk-invites-groundhog: MDK 0.11 finds Groundhog's adopted KeyPackage
+ *    through its kind 10002 write relays -- per slot, passing over the newer
+ *    MDK 0.8 one -- admits it and invites Alice (nostrc-8u53); the invitation
+ *    is listed as the invitations dialog shows it and accepted (with --gui:
+ *    in GhMlsInvitesDialog itself); kind 445 both ways (nostrc-lse9, an
+ *    MDK-made group); the join's replacement is confirmed, retires the old
+ *    adopted key only, and is what MDK finds next.
+ *  adopted-welcome: an adopted Welcome for another device of Alice's account
+ *    (an MDK device's KeyPackage) reaches Groundhog: not for this device,
+ *    it is refused as it arrives, with no invitation, no group and Alice's
+ *    own KeyPackages untouched (same-account multi-device: nostrc-yaa1).
+ *  white-noise-welcome: MDK 0.11 invites Alice's published adopted
+ *    KeyPackage into a White Noise-shaped group; Groundhog joins, follows
+ *    its Commits, and messages flow both ways (nostrc-qp24.5.2).
+ *  adopted-commits: Groundhog creates an adopted group with an engine-default
+ *    MDK 0.11 peer through New Group's own path and the two exchange
+ *    messages and Commits both ways (nostrc-qp24.5.1.3).
  *
- *  adopted-commits: Groundhog and an engine-default MDK 0.11 peer in one
- *    adopted group exchange messages and Commits both ways (nostrc-
- *    qp24.5.1.3). It must pass.
- *
- * The other adopted cases. Groundhog publishes no adopted KeyPackage
- * (producer OFF) and libmarmot refuses White Noise groups (nostrc-qp24.5.2),
- * so each asserts today's honest refusal precisely (the
- * failure class, nothing published, no group, no invitation, no stall, no
- * crash) and then exits 77: CTest reports it Skipped (XFAIL), never Passed.
- * A refusal of another shape fails; so does an unexpected success (XPASS),
- * which means the expectation must be updated.
- *  groundhog-invites-mdk: Groundhog reads an MDK 0.11 KeyPackage and is asked
- *    to invite its author, default and legacy mode.
- *  mdk-invites-groundhog: MDK 0.11 reads Groundhog's KeyPackage and is asked
- *    to invite Alice.
- *  adopted-welcome: an adopted Welcome reaches Groundhog (MDK 0.11 invites a
- *    second, MDK device of Alice's account; the gift wrap lands in Alice's
- *    inbox, where Groundhog opens it).
- *  white-noise-welcome: MDK 0.11 invites a libmarmot adopted KeyPackage
- *    (made in Groundhog's store) into a White Noise-shaped group; Groundhog
- *    joins and messages flow both ways (nostrc-qp24.5.2); XFAIL at the
- *    group's first Commit (nostrc-qp24.5.1). */
+ * mdk09-probe: MDK 0.9.0 (the dictionary engine, v1 proof) is expected
+ * incompatible: the case asserts the refusal precisely (the failure class,
+ * nothing published, no group, no invitation, no stall, no crash) and then
+ * exits 77: CTest reports it Skipped (XFAIL), never Passed. A refusal of
+ * another shape fails; so does an unexpected success (XPASS). */
 #include "mls-world.h"
 #include "mdk-peer.h"
 
 #include "gh-mls-copy.h"
 #include "gh-mls-invitee.h"
+#include "gh-mls-invites-dialog.h"
+#include "gh-test-dialog.h"
+
+extern void groundhog_register_resource(void);
 
 enum { DAVE = STRANGER };
 
@@ -50,6 +60,8 @@ enum { DAVE = STRANGER };
 
 
 static MdkDriver driver;
+/* --gui: mdk-invites-groundhog accepts in GhMlsInvitesDialog. */
+static gboolean gui_mode;
 
 /* ---- XFAIL bookkeeping ------------------------------------------------------------- */
 
@@ -164,6 +176,27 @@ mdk_fetch_key_package(World *w, const gchar *peer, guint key, JsonObject **view)
   *view = json_object_ref(json_object_get_object_member(kp, "mdk"));
   g_autofree gchar *text = mdk_json(*view);
   g_test_message("MDK 0.11 %s admits %s's KeyPackage: %s", peer, hex[key], text);
+  return g_strdup(json_object_get_string_member(kp, "event"));
+}
+
+/* Account key's KeyPackage as MDK 0.11 finds it for an invitation (nostrc-
+ * 8u53): the account's kind 10002 from the discovery relay E, its write
+ * relays, and there marmot-app's per-slot choice; *view: MDK's admission.
+ * Asserts the write relays are W alone. */
+static gchar *
+mdk_discover_key_package(World *w, const gchar *peer, guint key, JsonObject **view)
+{
+  g_autoptr(JsonObject) kp = mdk_call(&driver,
+                                      "\"cmd\":\"fetch_key_package\",\"peer\":\"%s\","
+                                      "\"author\":\"%s\",\"discover\":[\"%s\"]",
+                                      peer, hex[key], w->e.url);
+  g_auto(GStrv) write = mdk_strv(json_object_get_array_member(kp, "write_relays"));
+  g_assert_cmpuint(g_strv_length(write), ==, 1);
+  g_assert_cmpstr(write[0], ==, w->w.url);
+  *view = json_object_ref(json_object_get_object_member(kp, "mdk"));
+  g_autofree gchar *text = mdk_json(*view);
+  g_test_message("MDK 0.11 %s finds %s's KeyPackage through the 10002 (%" G_GINT64_FORMAT
+                 " slots): %s", peer, hex[key], json_object_get_int_member(kp, "slots"), text);
   return g_strdup(json_object_get_string_member(kp, "event"));
 }
 
@@ -444,7 +477,7 @@ test_control(void)
   mdk_driver_stop(&driver);
 }
 
-/* ---- adopted: Groundhog invites an MDK 0.11 user ------------------------------------ */
+/* ---- New Group's check, and a refused creation ----------------------------------- */
 
 typedef struct {
   gboolean done;
@@ -492,144 +525,60 @@ refused_creation(World *w, App *alice, const gchar *mode)
   return wait.error;
 }
 
-static void
-test_groundhog_invites_mdk(void)
-{
-  cases_run++;
-  if (!mdk_up())
-    return;
-  World w;
-  const guint keys[] = { ALICE };
-  world_up(&w, keys, G_N_ELEMENTS(keys));
-  App *alice = &w.apps[ALICE];
-  spin_until(key_package_published, alice, "Alice's KeyPackage");
-  mdk_peer("carol", CAROL);
-  g_autofree gchar *to = g_strdup_printf("\"%s\",\"%s\"", w.w.url, w.x.url);
-  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", to);
-  accept_contact(alice, CAROL);
-
-  /* libmarmot on the adopted KeyPackage event. */
-  bool proven = true;
-  MarmotError proof = marmot_key_package_event_has_account_proof(carol_kp, &proven);
-  g_test_message("libmarmot account-proof check of an MDK 0.11 KeyPackage: %s, proven %d",
-                 marmot_error_string(proof), proven);
-  g_assert_cmpint(proof, ==, MARMOT_ERR_VALIDATION);
-
-  /* New Group's check row. */
-  CheckWait check = { 0 };
-  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, on_checked,
-                             &check);
-  spin_until(check_done, &check, "the KeyPackage check");
-  g_test_message("New Group check row for an MDK 0.11 user: state %d, \"%s\", can invite %d",
-                 check.state, gh_mls_invitee_copy(check.state),
-                 gh_mls_invitee_can_invite(check.state));
-  /* Today's row reads an adopted KeyPackage as none at all (nostrc-ncp0). */
-  g_assert_cmpint(check.state, ==, GH_MLS_INVITEE_NOT_SET_UP);
-  g_assert_false(gh_mls_invitee_can_invite(check.state));
-
-  /* By default (members without the account proof admitted in legacy
-   * groups, nostrc-6ukh) and with the preference that requires proofs. */
-  g_autoptr(GError) by_default = refused_creation(&w, alice, "default");
-  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", TRUE);
-  g_autoptr(GError) strict = refused_creation(&w, alice, "proofs required");
-  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", FALSE);
-  /* Precise class: the adopted KeyPackage is one libmarmot cannot use. */
-  g_assert_error(by_default, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE);
-  g_assert_error(strict, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE);
-  xfail("unsupported", "Groundhog cannot invite an MDK 0.11 user: libmarmot does not admit an "
-                       "adopted (MLSMessage-framed, 0x8009) KeyPackage (nostrc-qp24.5.1)");
-
-  world_down(&w);
-  mdk_driver_stop(&driver);
-}
-
-/* ---- adopted: MDK 0.11 invites Groundhog -------------------------------------------- */
-
-static void
-test_mdk_invites_groundhog(void)
-{
-  cases_run++;
-  if (!mdk_up())
-    return;
-  World w;
-  const guint keys[] = { ALICE };
-  world_up(&w, keys, G_N_ELEMENTS(keys));
-  App *alice = &w.apps[ALICE];
-  spin_until(key_package_published, alice, "Alice's KeyPackage");
-  accept_contact(alice, CAROL);
-  mdk_peer("carol", CAROL);
-
-  /* MDK 0.11's relay-fetch admission refuses Groundhog's (legacy) KeyPackage
-   * as unsupported... */
-  g_autoptr(JsonObject) view = NULL;
-  g_autofree gchar *alice_kp = mdk_fetch_key_package(&w, "carol", ALICE, &view);
-  if (json_object_get_boolean_member(view, "parsed"))
-    g_error("XPASS: MDK 0.11 admits Groundhog's KeyPackage; update the expectation");
-  g_assert_cmpstr(json_object_get_string_member(view, "class"), ==, "unsupported");
-  g_assert_nonnull(strstr(json_object_get_string_member(view, "error"),
-                          "a legacy MIP-00 KeyPackage event"));
-
-  /* ...and so does create_group: nothing reaches Alice's inbox. */
-  guint g_events = w.g.events, x_events = w.x.events;
-  g_autoptr(JsonObject) made = mdk_try(&driver,
-    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"Made by MDK 0.11\","
-    "\"description\":\"\",\"relays\":[\"%s\"],\"admins\":[\"%s\"],"
-    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
-    w.g.url, hex[CAROL], alice_kp, w.x.url);
-  g_autofree gchar *text = mdk_json(made);
-  g_test_message("MDK 0.11 inviting Groundhog: %s", text);
-  if (json_object_get_boolean_member(made, "ok"))
-    g_error("XPASS: MDK 0.11 invited Groundhog; update the expectation");
-  g_assert_cmpstr(json_object_get_string_member(made, "class"), ==, "unsupported");
-  g_assert_cmpuint(w.g.events, ==, g_events);
-  g_assert_cmpuint(w.x.events, ==, x_events);
-  g_assert_cmpuint(alice->invites, ==, 0);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
-  xfail("unsupported", json_object_get_string_member(made, "error"));
-
-  world_down(&w);
-  mdk_driver_stop(&driver);
-}
-
-/* ---- adopted: an adopted Welcome reaches Groundhog ---------------------------------- */
+/* ---- an adopted Welcome for another device of the account ------------------------- */
 
 typedef struct {
   App *app;
   const gchar *wrap_id;
 } WelcomeWait;
 
-/* libmarmot's record of a processed Welcome, if any: its state and reason. */
-static gboolean
-welcome_record_find(App *app, const gchar *wrap_id, gint *state, gchar **reason)
-{
-  g_autoptr(GError) error = NULL;
-  MarmotStorage *storage = gh_store_marmot_new(app->store, &error);
-  g_assert_no_error(error);
-  guint8 wrapper[32];
-  g_assert_true(nostr_hex2bin(wrapper, wrap_id, sizeof wrapper));
-  bool found = false;
-  int s = -1;
-  char *why = NULL;
-  g_assert_cmpint(storage->find_processed_welcome(storage->ctx, wrapper, &found, &s, &why),
-                  ==, MARMOT_OK);
-  marmot_storage_free(storage);
-  if (found) {
-    *state = s;
-    *reason = g_strdup(why);
-  }
-  free(why);
-  return found;
-}
-
 static gboolean
 welcome_processed(gpointer data)
 {
   WelcomeWait *wait = data;
-  gint state;
-  g_autofree gchar *reason = NULL;
-  return welcome_record_find(wait->app, wait->wrap_id, &state, &reason);
+  return processed_welcome(wait->app, wait->wrap_id, NULL, NULL);
 }
 
+/* The value of the one `name` tag of a signed event's JSON (transfer full). */
+static gchar *
+event_tag_of(const gchar *event_json, const gchar *name)
+{
+  g_autoptr(JsonParser) parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, event_json, -1, NULL));
+  JsonArray *tags = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)),
+                                                 "tags");
+  gchar *value = NULL;
+  for (guint i = 0; i < json_array_get_length(tags); i++) {
+    JsonArray *tag = json_array_get_array_element(tags, i);
+    if (g_strcmp0(json_array_get_string_element(tag, 0), name) == 0) {
+      g_assert_null(value);
+      value = g_strdup(json_array_get_string_element(tag, 1));
+    }
+  }
+  g_assert_nonnull(value);
+  return value;
+}
+
+/* Whether libmarmot still holds the private init key of KeyPackageRef
+ * ref_hex for the account. */
+static gboolean
+holds_init_key(App *app, const gchar *ref_hex)
+{
+  guint8 ref[32];
+  g_assert_true(nostr_hex2bin(ref, ref_hex, sizeof ref));
+  bool present = false;
+  g_assert_cmpint(marmot_key_package_has_private_key(gh_mls_service_get_marmot(app->service), ref,
+                                                     &present), ==, MARMOT_OK);
+  return present;
+}
+
+/* Carol invites a second device of Alice's account, on MDK 0.11, whose
+ * KeyPackage she was handed directly. The gift wrap lands in Alice's inbox,
+ * where Groundhog opens it: it is for another device's KeyPackage, so it is
+ * refused as it arrives -- recorded failed, never an invitation, no group --
+ * and Alice's own KeyPackages, adopted ones included, are untouched (the
+ * account's devices publish their own; same-account multi-device is
+ * nostrc-yaa1). */
 static void
 test_adopted_welcome(void)
 {
@@ -640,12 +589,13 @@ test_adopted_welcome(void)
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
-  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  spin_until(key_package_published, alice, "Alice's KeyPackages");
   accept_contact(alice, CAROL);
   mdk_peer("carol", CAROL);
-  /* A second device of Alice's account, on MDK 0.11: its KeyPackage is made
-   * and handed to Carol directly (never published, so Groundhog's own
-   * KeyPackage stays the newest on W). */
+  g_autofree gchar *own_id = g_strdup(
+    gh_mls_service_get_key_package_id_for_format(alice->service,
+                                                 GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED));
+  g_assert_nonnull(own_id);
   mdk_peer("alice-mdk", ALICE);
   g_autofree gchar *alice_mdk_kp = mdk_publish_key_package("alice-mdk", "");
 
@@ -659,23 +609,14 @@ test_adopted_welcome(void)
   const gchar *wrap = json_object_get_string_member(json_array_get_object_element(welcomes, 0),
                                                     "wrapper_id");
 
-  /* Groundhog opens the gift wrap and refuses the adopted Welcome: recorded
-   * as failed with libmarmot's reason, no invitation, no group, no stall. */
   WelcomeWait wait = { alice, wrap };
-  spin_until(welcome_processed, &wait, "Groundhog's verdict on the adopted Welcome");
+  spin_until(welcome_processed, &wait, "Groundhog's verdict on the other device's Welcome");
   gint state = -1;
   g_autofree gchar *reason = NULL;
-  g_assert_true(welcome_record_find(alice, wrap, &state, &reason));
-  g_test_message("Groundhog on an adopted (MDK 0.11) Welcome: state %d, \"%s\"; invitations %u",
-                 state, reason ? reason : "", alice->invites);
-  if (state != MARMOT_WELCOME_STATE_FAILED)
-    g_error("XPASS?: the adopted Welcome is in state %d, not failed; update the expectation",
-            state);
-  /* libmarmot 0.12.0 decodes and opens an adopted Welcome on arrival
-   * (nostrc-qp24.5.1; before, "welcome content decode failed").  This one
-   * is for the MDK device's KeyPackage, not Groundhog's -- Groundhog
-   * publishes no adopted KeyPackage yet (producer OFF) -- so it is refused
-   * there, final, with no invitation (nostrc-5yb3). */
+  g_assert_true(processed_welcome(alice, wrap, &state, &reason));
+  g_test_message("Groundhog on another device's adopted Welcome: state %d, \"%s\"", state,
+                 reason ? reason : "");
+  g_assert_cmpint(state, ==, MARMOT_WELCOME_STATE_FAILED);
   g_assert_cmpstr(reason, ==, "matching KeyPackage private key not found");
   g_assert_cmpuint(alice->invites, ==, 0);
   g_autoptr(GError) list_error = NULL;
@@ -683,24 +624,19 @@ test_adopted_welcome(void)
   g_assert_no_error(list_error);
   g_assert_cmpuint(invites->len, ==, 0);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
-  g_autofree gchar *what = g_strdup_printf("Groundhog refuses an adopted Welcome: \"%s\"",
-                                           reason ? reason : "");
-  xfail("unsupported", what);
+  /* Nothing of Alice's own was spent: no rotation, the same KeyPackage. */
+  drain();
+  g_assert_cmpstr(gh_mls_service_get_key_package_id_for_format(alice->service,
+                                                               GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED),
+                  ==, own_id);
+  g_assert_cmpint(gh_mls_service_get_key_package_state(alice->service), ==,
+                  GH_MLS_KEY_PACKAGE_PUBLISHED);
 
   world_down(&w);
   mdk_driver_stop(&driver);
 }
 
-/* ---- adopted: a White Noise group invites a libmarmot adopted KeyPackage ------------ */
-
-/* libmarmot's adopted KeyPackage producer without its build gate
- * (MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER stays OFF, so Groundhog
- * publishes none): the test entry point of libmarmot/src/kp_profile.h. */
-MarmotError marmot_create_key_package_adopted_internal(Marmot *m, const uint8_t nostr_pubkey[32],
-                                                       const uint8_t nostr_sk[32],
-                                                       MarmotAccountSignFunc account_sign,
-                                                       void *sign_data,
-                                                       MarmotKeyPackageResult *result);
+/* ---- adopted: a White Noise group invites Groundhog's published KeyPackage ---------- */
 
 static void
 assert_has_all(JsonArray *array, const gchar *const *want, guint n)
@@ -831,9 +767,10 @@ mdk_sync_joined(const gchar *peer, const gchar *group, GPtrArray *before)
 }
 
 /* Groundhog (libmarmot) and MDK 0.11 in one adopted group, Commits both
- * ways.  Groundhog creates the group (a test hook; it does not offer adopted
- * groups to the user, and publishes no adopted KeyPackage: producer OFF)
- * and invites MDK; white-noise-welcome is the other way round. */
+ * ways. Groundhog creates the group as New Group does (nostrc-lf62: the
+ * KeyPackage lookup on Carol's write relay finds her adopted KeyPackage, so
+ * the group is adopted) and invites MDK; white-noise-welcome is the other
+ * way round. */
 static void
 test_adopted_commits(void)
 {
@@ -847,20 +784,22 @@ test_adopted_commits(void)
   spin_until(key_package_published, alice, "Alice's KeyPackage (her proof enrolled)");
   accept_contact(alice, CAROL);
   mdk_peer_engine_default("carol", CAROL);
-  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", "");
+  g_autofree gchar *on_w = g_strdup_printf("\"%s\"", w.w.url);
+  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", on_w);
   g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
 
-  /* Groundhog creates the adopted group with Carol (MDK). */
+  /* Groundhog creates the group with Carol (MDK): adopted. */
   const gchar *relays[] = { w.g.url, NULL };
-  const gchar *kps[] = { carol_kp, NULL };
+  const gchar *people[] = { hex[CAROL], NULL };
   OpWait created = { 0 };
-  gh_mls_service_test_create_adopted_group_async(alice->service, "Adopted by Groundhog", relays,
-                                                 kps, NULL, on_created, &created);
+  gh_mls_service_create_group_async(alice->service, "Adopted by Groundhog", NULL, relays, people,
+                                    NULL, on_created, &created);
   spin_until(op_done, &created, "the adopted group creation");
   g_assert_no_error(created.error);
   g_assert_nonnull(created.result);
   GhMlsGroup *ga = created.result;
   g_object_unref(ga);   /* the service keeps it */
+  g_assert_true(gh_mls_group_get_adopted(ga));
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
   g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
@@ -941,6 +880,253 @@ test_adopted_commits(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- Groundhog invites a White Noise (MDK 0.11) user ------------------------------- */
+
+static void
+test_groundhog_invites_mdk(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackages");
+  mdk_peer("carol", CAROL);
+  g_autofree gchar *to = g_strdup_printf("\"%s\",\"%s\"", w.w.url, w.x.url);
+  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", to);
+  g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
+  accept_contact(alice, CAROL);
+
+  /* libmarmot admits the White Noise KeyPackage as adopted, not as MDK 0.8. */
+  g_assert_cmpint(marmot_validate_key_package_event_json(carol_kp,
+                                                         MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, 0,
+                                                         NULL, NULL), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_validate_key_package_event_json(carol_kp,
+                                                         MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, 0,
+                                                         NULL, NULL), !=, MARMOT_OK);
+
+  /* New Group's check row: ready, newer-format groups only. */
+  CheckWait check = { 0 };
+  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, on_checked,
+                             &check);
+  spin_until(check_done, &check, "the KeyPackage check");
+  g_test_message("New Group check row for a White Noise user: state %d, \"%s\"", check.state,
+                 gh_mls_invitee_copy(check.state));
+  g_assert_cmpint(check.state, ==, GH_MLS_INVITEE_READY_ADOPTED_ONLY);
+  g_assert_true(gh_mls_invitee_can_invite(check.state));
+  g_assert_true(gh_mls_invitee_can_join(check.state, TRUE));
+  g_assert_false(gh_mls_invitee_can_join(check.state, FALSE));
+
+  /* Alice, requiring every member's account proof (the adopted format always
+   * carries one), creates the group: adopted. */
+  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", TRUE);
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *people[] = { hex[CAROL], NULL };
+  OpWait created = { 0 };
+  gh_mls_service_create_group_async(alice->service, "Groundhog and White Noise", NULL, relays,
+                                    people, NULL, on_created, &created);
+  spin_until(op_done, &created, "the group creation");
+  g_assert_no_error(created.error);
+  GhMlsGroup *ga = created.result;
+  g_assert_nonnull(ga);
+  g_object_unref(ga);   /* the service keeps it */
+  g_assert_true(gh_mls_group_get_adopted(ga));
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+  g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
+
+  /* MDK joins from the Welcome (rumor `e`: the KeyPackage it consumed). */
+  g_autoptr(JsonObject) joined = mdk_join(&w, "carol", ALICE, carol_kp_id);
+  const gchar *group = json_object_get_string_member(joined, "group");
+  g_assert_cmpstr(json_object_get_string_member(joined, "profile"), ==, "Current");
+  assert_gh_converged(ga, joined);
+
+  /* Kind 445 both ways in Groundhog's adopted group (nostrc-lse9). */
+  send_accepted(alice, ga, "hello white noise");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    g_assert_true(synced_message(synced, hex[ALICE], "hello white noise"));
+  }
+  mdk_send("carol", group, "hello groundhog");
+  wait_message(alice, room, "hello groundhog");
+  g_assert_cmpstr(gh_message_get_sender(find_message(alice, room, "hello groundhog")), ==,
+                  hex[CAROL]);
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
+/* ---- MDK 0.11 invites Groundhog --------------------------------------------------- */
+
+typedef struct {
+  GhMlsInvitesDialog *dialog;
+  const gchar *text;
+} ToastWait;
+
+static gboolean
+toast_is(gpointer data)
+{
+  ToastWait *wait = data;
+  return g_strcmp0(gh_mls_invites_dialog_get_last_toast(wait->dialog), wait->text) == 0;
+}
+
+/* Alice accepts her one invitation, from Carol, to the group `name` of two:
+ * as the invitations dialog lists it (with --gui, in GhMlsInvitesDialog,
+ * which accepts it), else through the service calls the dialog makes. */
+static GhMlsGroup *
+accept_from_carol(App *alice, const gchar *name)
+{
+  spin_until(has_invite, alice, "Alice's invitation from MDK");
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) invites = gh_mls_service_list_invites(alice->service, &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(invites->len, ==, 1);
+  GhMlsInvite *invite = g_ptr_array_index(invites, 0);
+  g_assert_cmpstr(invite->inviter, ==, hex[CAROL]);
+  g_assert_cmpstr(invite->group_name, ==, name);
+  g_assert_cmpuint(invite->member_count, ==, 2);
+  /* Nothing joins before Accept. */
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
+  if (!gui_mode) {
+    GhMlsGroup *group = gh_mls_service_accept_invite(alice->service, invite->wrapper_id, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(group);
+    alice->invites = 0;
+    return group;
+  }
+  GhMlsUiContext context = { .service = alice->service, .accounts = alice->accounts,
+                             .model = alice->model, .settings = alice->settings };
+  GhMlsInvitesDialog *dialog = gh_mls_invites_dialog_new(&context);
+  adw_dialog_present(ADW_DIALOG(dialog), NULL);
+  spin_until(gh_test_dialog_shown, dialog, "the invitations shown");
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 1);
+  const gchar *title = NULL, *subtitle = NULL;
+  g_assert_true(gh_mls_invites_dialog_describe(dialog, invite->wrapper_id, &title, &subtitle));
+  g_test_message("The invitations dialog: \"%s\", \"%s\"", title, subtitle);
+  g_assert_cmpstr(title, ==, name);
+  g_assert_nonnull(strstr(subtitle, "2 members"));
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "mls-invites.accept", "s", invite->wrapper_id);
+  g_autofree gchar *joined = g_strdup_printf("You joined “%s”", name);
+  ToastWait toast = { dialog, joined };
+  spin_until(toast_is, &toast, "the dialog's \"You joined\"");
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 0);
+  adw_dialog_force_close(ADW_DIALOG(dialog));
+  drain();
+  alice->invites = 0;
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 1);
+  GhMlsGroup *group = g_list_model_get_item(G_LIST_MODEL(alice->service), 0);
+  g_object_unref(group);   /* the service keeps it */
+  return group;
+}
+
+typedef struct {
+  App *app;
+  const gchar *old_id;
+} AdoptedReplaced;
+
+static gboolean
+adopted_replaced(gpointer data)
+{
+  AdoptedReplaced *wait = data;
+  const gchar *id = gh_mls_service_get_key_package_id_for_format(wait->app->service,
+                                                                 GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
+  return id && g_strcmp0(id, wait->old_id) != 0 &&
+         gh_mls_service_get_key_package_state(wait->app->service) ==
+           GH_MLS_KEY_PACKAGE_PUBLISHED;
+}
+
+static void
+test_mdk_invites_groundhog(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackages");
+  accept_contact(alice, CAROL);
+  mdk_peer("carol", CAROL);
+
+  /* Groundhog published both formats on W, the MDK 0.8 one the newer: a
+   * reader taking the newest event whatever its slot would get that. */
+  g_assert_cmpint(newest_key_package_format(&w.w, ALICE), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_autofree gchar *adopted_id = g_strdup(
+    gh_mls_service_get_key_package_id_for_format(alice->service,
+                                                 GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED));
+  g_autofree gchar *legacy_id = g_strdup(
+    gh_mls_service_get_key_package_id_for_format(alice->service, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY));
+  g_assert_nonnull(adopted_id);
+  g_assert_nonnull(legacy_id);
+
+  /* MDK 0.11 looks Alice up as marmot-app does (nostrc-8u53): her kind 10002
+   * on the discovery relay, her write relay W, per slot -- the adopted
+   * KeyPackage, which it admits. */
+  g_autoptr(JsonObject) view = NULL;
+  g_autofree gchar *alice_kp = mdk_discover_key_package(&w, "carol", ALICE, &view);
+  if (!json_object_get_boolean_member(view, "parsed"))
+    g_error("MDK 0.11 refuses Groundhog's adopted KeyPackage (%s): %s",
+            json_object_get_string_member(view, "class"),
+            json_object_get_string_member(view, "error"));
+  g_assert_cmpstr(json_object_get_string_member(view, "profile"), ==, "Current");
+  g_autofree gchar *found_id = event_id_of(alice_kp);
+  g_assert_cmpstr(found_id, ==, adopted_id);
+  g_autofree gchar *old_ref = event_tag_of(alice_kp, "i");
+  g_assert_true(holds_init_key(alice, old_ref));
+
+  /* Carol creates a group with Alice; the Welcome goes to Alice's inbox. */
+  g_autoptr(JsonObject) made = mdk_call(&driver,
+    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"Made by White Noise\","
+    "\"description\":\"\",\"relays\":[\"%s\"],\"admins\":[\"%s\"],"
+    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
+    w.g.url, hex[CAROL], alice_kp, w.x.url);
+  g_assert_cmpstr(json_object_get_string_member(made, "profile"), ==, "Current");
+  g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
+
+  /* Alice: listed in the invitations, accepted, joined. */
+  GhMlsGroup *ga = accept_from_carol(alice, "Made by White Noise");
+  g_assert_true(gh_mls_group_get_adopted(ga));
+  g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "Made by White Noise");
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  wait_live(ga);
+
+  /* Kind 445 both ways in MDK's adopted group (nostrc-lse9). */
+  mdk_send("carol", group, "hello from white noise");
+  wait_message(alice, room, "hello from white noise");
+  g_assert_cmpstr(gh_message_get_sender(find_message(alice, room, "hello from white noise")), ==,
+                  hex[CAROL]);
+  send_accepted(alice, ga, "hello from groundhog");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_true(synced_message(synced, hex[ALICE], "hello from groundhog"));
+  }
+
+  /* The join spent the adopted KeyPackage: its replacement, confirmed by a
+   * relay, retires the old adopted init key -- and is what MDK finds next;
+   * the MDK 0.8 one came along, the newer again. */
+  AdoptedReplaced replaced = { alice, adopted_id };
+  spin_until(adopted_replaced, &replaced, "Alice's adopted replacement");
+  g_assert_false(holds_init_key(alice, old_ref));
+  g_assert_cmpint(newest_key_package_format(&w.w, ALICE), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_autoptr(JsonObject) next_view = NULL;
+  g_autofree gchar *next_kp = mdk_discover_key_package(&w, "carol", ALICE, &next_view);
+  g_assert_true(json_object_get_boolean_member(next_view, "parsed"));
+  g_autofree gchar *next_id = event_id_of(next_kp);
+  g_assert_cmpstr(next_id, ==,
+                  gh_mls_service_get_key_package_id_for_format(alice->service,
+                                                               GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED));
+  g_autofree gchar *next_ref = event_tag_of(next_kp, "i");
+  g_assert_true(holds_init_key(alice, next_ref));
+  g_autofree gchar *old_d = event_tag_of(alice_kp, "d"), *next_d = event_tag_of(next_kp, "d");
+  g_assert_cmpstr(old_d, ==, next_d);   /* the same adopted slot */
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 static void
 test_white_noise_welcome(void)
 {
@@ -951,28 +1137,19 @@ test_white_noise_welcome(void)
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
-  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  spin_until(key_package_published, alice, "Alice's KeyPackages");
   accept_contact(alice, CAROL);
   mdk_peer("carol", CAROL);
-
-  /* Alice's adopted KeyPackage, made by libmarmot in Groundhog's own store
-   * (its private keys stay there) and handed to Carol directly. */
   Marmot *marmot = gh_mls_service_get_marmot(alice->service);
-  guint8 pk[32], sk[32];
-  g_assert_true(nostr_hex2bin(pk, hex[ALICE], sizeof pk));
-  g_assert_true(nostr_hex2bin(sk, gh_test_secret[ALICE], sizeof sk));
-  MarmotKeyPackageResult kp;
-  memset(&kp, 0, sizeof kp);
-  g_assert_cmpint(marmot_create_key_package_adopted_internal(marmot, pk, sk, NULL, NULL, &kp), ==,
-                  MARMOT_OK);
-  memset(sk, 0, sizeof sk);
 
-  /* MDK 0.11's KeyPackage parser admits it as a current-profile KeyPackage
-   * advertising what every White Noise group requires (nostrc-qp24.5.2). */
-  g_autoptr(JsonObject) view = mdk_call(&driver,
-    "\"cmd\":\"parse_key_package\",\"peer\":\"carol\",\"event\":%s", kp.event_json);
+  /* Alice's adopted KeyPackage as Groundhog published it (nostrc-lf62), as
+   * MDK 0.11 finds it through her kind 10002: its parser admits it as a
+   * current-profile KeyPackage advertising what every White Noise group
+   * requires (nostrc-qp24.5.2). */
+  g_autoptr(JsonObject) view = NULL;
+  g_autofree gchar *alice_kp = mdk_discover_key_package(&w, "carol", ALICE, &view);
   g_autofree gchar *view_text = mdk_json(view);
-  g_test_message("MDK 0.11 on a libmarmot adopted KeyPackage: %s", view_text);
+  g_test_message("MDK 0.11 on Groundhog's adopted KeyPackage: %s", view_text);
   if (!json_object_get_boolean_member(view, "parsed"))
     g_error("MDK 0.11 refuses the libmarmot adopted KeyPackage (%s): %s",
             json_object_get_string_member(view, "class"),
@@ -1000,8 +1177,7 @@ test_white_noise_welcome(void)
     "\"description\":\"wn\",\"relays\":[\"%s\"],\"admins\":[\"%s\",\"%s\"],"
     "\"white_noise\":true,\"media_endpoints\":[\"https://blossom.example.com\"],"
     "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
-    w.g.url, hex[CAROL], hex[ALICE], kp.event_json, w.x.url);
-  marmot_key_package_result_free(&kp);
+    w.g.url, hex[CAROL], hex[ALICE], alice_kp, w.x.url);
   g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
   g_auto(GStrv) components = mdk_strv(json_object_get_array_member(made, "components"));
   g_autofree gchar *component_text = g_strjoinv(",", components);
@@ -1167,6 +1343,43 @@ test_mdk09_probe(void)
 int
 main(int argc, char **argv)
 {
+  /* --gui: mdk-invites-groundhog accepts in the real invitations dialog. */
+  gui_mode = argc > 1 && g_str_equal(argv[1], "--gui");
+  if (gui_mode) {
+    argv[1] = argv[0];
+    argv++;
+    argc--;
+#ifdef __APPLE__
+    /* As the other GUI tests: GTK's macOS accessibility backend has no announce. */
+    g_setenv("GTK_A11Y", "none", FALSE);
+#endif
+    /* Before g_test_init(), as the other GUI tests. */
+    if (!gtk_init_check()) {
+      g_printerr("groundhog-mdk011-interop GUI case skipped: no graphical display\n");
+      return 77;
+    }
+    adw_init();
+    groundhog_register_resource();
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+    g_test_init(&argc, &argv, NULL);
+    /* mls_world_init() beside GTK: GTK keeps the session bus it was given. */
+    g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+    g_log_set_fatal_mask(NULL, G_LOG_FATAL_MASK | G_LOG_LEVEL_WARNING | G_LOG_LEVEL_CRITICAL);
+    for (guint key = 1; key < GH_TEST_KEYS; key++) {
+      hex[key] = gh_test_pub(key);
+      npub[key] = gh_test_npub(key);
+    }
+    gh_test_bus_up_beside_gtk(&test_bus);
+    g_test_add_func("/groundhog/mdk011-interop-gui/mdk-invites-groundhog",
+                    test_mdk_invites_groundhog);
+    gint rc = g_test_run();
+    mls_world_finish();
+    if (cases_run == 0) {
+      g_printerr("no case matched the requested -p path(s): nothing ran\n");
+      return 1;
+    }
+    return rc == 0 && not_run ? 77 : rc;
+  }
   g_test_init(&argc, &argv, NULL);
   mls_world_init();
   g_test_add_func("/groundhog/mdk011-interop/control", test_control);

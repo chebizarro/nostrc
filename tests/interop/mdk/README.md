@@ -146,14 +146,20 @@ publication. What reaches the wire matches White Noise 0.11:
   lifecycle staging. Their events carry White Noise Android's `client` tag
   (`White Noise Android`, whitenoise-android `6186a253`; `peer_new`
   `"client": null` drops it, as for a generic MDK consumer). Fetched
-  KeyPackages pass the checks of marmot-app's relay-fetch path (strict
-  cutover: current profile only), and the newest wins with marmot-app's
-  tie-break (equal `created_at`: the smaller event id).
+  KeyPackages are chosen as marmot-app's invitation discovery chooses them
+  (`preferred_fresh_key_package_from_records`, nostrc-lf62): newest first,
+  the newest event of each `d` slot supersedes its slot, a slot whose
+  newest event is another profile or fails marmot-app's relay-fetch checks
+  (strict cutover: current profile only) is passed over, and marmot-app's
+  `client` ranking picks among the rest. A dual-format Groundhog keeps its
+  MDK 0.8 KeyPackage in a slot of its own, the newer: a reader that took the
+  newest event whatever its slot would get that one. With `discover`, the
+  author's write relays come from their newest kind 10002 there (`r`
+  entries marked `write` or unmarked), as marmot-app looks them up.
 
 Not matched: the relay I/O is the driver's own, as in the 0.8 driver.
-MDK 0.11's relay plane (nostr-sdk, NIP-65 discovery, the KeyPackage
-lifecycle's publish/retire bookkeeping, client-priority selection among
-several KeyPackages) is not exercised. Pins beyond MDK: OpenMLS fork
+MDK 0.11's relay plane (nostr-sdk, the KeyPackage lifecycle's
+publish/retire bookkeeping, the freshness window) is not exercised. Pins beyond MDK: OpenMLS fork
 `59e7d3b2…`, nostr fork `a9c7a642…` and MDK's two `[patch.crates-io]`
 entries, all as MDK v0.11.0 locks them; Rust 1.97.1 (MDK's toolchain pin).
 Every crate version in `driver-0.11/Cargo.lock` is the one in MDK v0.11.0's
@@ -180,27 +186,30 @@ ctest --test-dir _build -R '^groundhog-mdk011-interop' -V
 | `groundhog-mdk011-interop-artifacts-reset` | empties `vectors.jsonl` (fixture) | pass |
 | `groundhog-mdk011-interop-image`, `-image-mdk09` | `docker build` of the two images, parity tests included (fixtures) | pass |
 | `groundhog-mdk011-interop-control` | MDK 0.11 <-> MDK 0.11 on the test's relays: KeyPackage publish/fetch/admit (White Noise wire shape asserted), create, Welcome 1059 -> 13 -> 444 (rumor `e` = the consumed KeyPackage, `relays` = G), kind 9 both ways, rename, add (third member joins), remove, self-update, SelfRemove leave committed by the admin; both GroupContexts equal | **pass** (proves driver, relays and flows) |
-| `groundhog-mdk011-interop-groundhog-invites-mdk` | Groundhog (default and legacy mode) asked to invite an MDK 0.11 user | XFAIL `unsupported`: libmarmot `MARMOT_ERR_VALIDATION`, row NOT_SET_UP, `NO_KEY_PACKAGE`, nothing published (copy: nostrc-ncp0) |
-| `groundhog-mdk011-interop-mdk-invites-groundhog` | MDK 0.11 asked to invite Groundhog | XFAIL `unsupported`: MDK cannot decode the legacy MIP-00 KeyPackage (no MLSMessage framing), nothing published |
-| `groundhog-mdk011-interop-adopted-welcome` | an adopted Welcome reaches Groundhog (MDK 0.11 invites a second, MDK device of Alice's account) | XFAIL `unsupported`: libmarmot (0.12.0) opens it on arrival and records it failed, "matching KeyPackage private key not found" (it is for the MDK device's KeyPackage; Groundhog publishes no adopted KeyPackage yet); no invitation, no group |
-| `groundhog-mdk011-interop-white-noise-welcome` | a libmarmot adopted KeyPackage, made in Alice's Groundhog store by libmarmot's (build-gated) producer and handed to Carol: MDK 0.11's parser admits it (current profile; `0x0006 0xf2d1`, `0x0008 0x000a`, components with `0x8006` and `0x800b`), marmot-app's invite precheck passes, and Carol creates a White Noise-shaped group (`create_group` `white_noise`) with Alice, both admins. Groundhog lists the invitation, joins (profile adopted; agent policy and media policy read with `marmot_get_group_components()`), and kind 9 flows both ways. Then Carol renames the group, Groundhog follows (same epoch, name, members and admins as MDK) and reads her next message; Groundhog renames it, MDK follows; kind 9 both ways after | PASS (since W24b slice H: XFAIL `unsupported` at the first Commit before) |
-| `groundhog-mdk011-interop-adopted-commits` | Groundhog and an MDK 0.11 peer configured as the engine default (`peer_new` `config: engine-default`: no SelfRemove, agent stream or media v2 required) in one adopted group. Groundhog creates it (test hook `gh_mls_service_test_create_adopted_group_async()`: Groundhog offers no adopted groups yet) with MDK's KeyPackage; MDK joins (rumor `e`, `relays` asserted); kind 9 both ways; Groundhog renames (0x8001) and makes MDK a co-admin (0x8003), MDK follows; MDK renames and self-updates, Groundhog follows; kind 9 both ways again; Groundhog removes MDK, an admin, dropping its key from 0x8003 in the same Commit, and MDK records its removal. Both sides' group, epoch, name, members and admins agree after every step. MDK's sync may leave only the Add that admitted it undecryptable (`TransportDeferred`): any joiner's case (nostrc-qp24.5.1.3) | **pass** |
+| `groundhog-mdk011-interop-groundhog-invites-mdk` | Groundhog invites a White Noise (MDK 0.11) user: New Group's check row reads her KeyPackage as adopted-only ("Ready to invite. Their app joins only groups in the newer format"); Alice, requiring every member's proof, creates the group, which is adopted (nostrc-lf62); MDK joins from the Welcome (rumor `e` = her KeyPackage); kind 445 both ways (nostrc-lse9, a Groundhog-made group) | **pass** (XFAIL `unsupported` before W25) |
+| `groundhog-mdk011-interop-mdk-invites-groundhog` | MDK 0.11 invites Groundhog: it finds Alice's KeyPackage through her kind 10002 on the discovery relay and her write relay W, per slot -- the adopted one, although her MDK 0.8 one is newer (nostrc-8u53) -- admits it and creates a group; Groundhog lists the invitation as the invitations dialog shows it (name, Carol, 2 members), nothing joined before Accept, then accepts; kind 445 both ways (nostrc-lse9, an MDK-made group); the join's adopted replacement is confirmed, retires the old adopted init key, keeps the slot, and is what MDK finds next | **pass** (XFAIL `unsupported` before W25) |
+| `groundhog-mdk011-interop-mdk-invites-groundhog-gui` | the same, the invitation accepted in the real `GhMlsInvitesDialog` (its row's title and subtitle, Accept, "You joined ...") | **pass**; Skipped (77) without a display |
+| `groundhog-mdk011-interop-adopted-welcome` | an adopted Welcome for another device of Alice's account (MDK 0.11 invites a second, MDK device's KeyPackage) reaches Groundhog | **pass**: refused as it arrives, recorded failed, "matching KeyPackage private key not found"; no invitation, no group; Alice's own adopted KeyPackage not spent (same-account multi-device: nostrc-yaa1) |
+| `groundhog-mdk011-interop-white-noise-welcome` | Alice's adopted KeyPackage as Groundhog published it, found by MDK through her 10002: MDK 0.11's parser admits it (current profile; `0x0006 0xf2d1`, `0x0008 0x000a`, components with `0x8006` and `0x800b`), marmot-app's invite precheck passes, and Carol creates a White Noise-shaped group (`create_group` `white_noise`) with Alice, both admins. Groundhog lists the invitation, joins (profile adopted; agent policy and media policy read with `marmot_get_group_components()`), and kind 9 flows both ways. Then Carol renames the group, Groundhog follows (same epoch, name, members and admins as MDK) and reads her next message; Groundhog renames it, MDK follows; kind 9 both ways after | PASS (since W24b slice H: XFAIL `unsupported` at the first Commit before) |
+| `groundhog-mdk011-interop-adopted-commits` | Groundhog and an MDK 0.11 peer configured as the engine default (`peer_new` `config: engine-default`: no SelfRemove, agent stream or media v2 required) in one adopted group. Groundhog creates it as New Group does, from MDK's KeyPackage on its write relay (an adopted group: nostrc-lf62); MDK joins (rumor `e`, `relays` asserted); kind 9 both ways; Groundhog renames (0x8001) and makes MDK a co-admin (0x8003), MDK follows; MDK renames and self-updates, Groundhog follows; kind 9 both ways again; Groundhog removes MDK, an admin, dropping its key from 0x8003 in the same Commit, and MDK records its removal. Both sides' group, epoch, name, members and admins agree after every step. MDK's sync may leave only the Add that admitted it undecryptable (`TransportDeferred`): any joiner's case (nostrc-qp24.5.1.3) | **pass** |
 | `groundhog-mdk011-interop-mdk09-probe` | an MDK 0.9.0 KeyPackage, to MDK 0.11 and to Groundhog | XFAIL `unsupported`: MDK 0.11 "unsupported proof version 1"; Groundhog as for 0.11 |
 
-Expected failures are never green. An adopted case asserts today's refusal
-precisely (failure class, nothing published, no group or invitation, bounded
-waits so no stall, no crash), then exits 77, which `SKIP_RETURN_CODE` reports
-as **Skipped**, not Passed. A refusal of another shape fails, and so does an
-unexpected success (`XPASS: ... update the expectation`). A case that cannot
-run (driver unset) exits 77 too, and a `-p` path that matches no case exits
-1. Each case runs alone (`-p`), so one case's XFAIL cannot hide another's
+Expected failures are never green. The MDK 0.9.0 probe, the one expected
+incompatibility left, asserts the refusal precisely (failure class, nothing
+published, no group or invitation, bounded waits so no stall, no crash), then
+exits 77, which `SKIP_RETURN_CODE` reports as **Skipped**, not Passed. A
+refusal of another shape fails, and so does an unexpected success
+(`XPASS: ... update the expectation`). A case that cannot run (driver unset,
+or no display for `-gui`) exits 77 too, and a `-p` path that matches no case
+exits 1. Each case runs alone (`-p`), so one case's XFAIL cannot hide another's
 result.
 
 Reading the results: ctest's footer counts a Skipped test as passed ("100%
 tests passed"); its "The following tests did not run: ... (Skipped)" list is
 the one that names the XFAILs. Likewise the CI job's conclusion is green when
-the control passes and nothing fails: "not green" for the adopted cases lives
-in the job summary table, by design.
+nothing fails: "not green" for the MDK 0.9.0 probe lives in the job summary
+table, by design. CI runs the matrix under `xvfb-run`, so the `-gui` case
+runs there too.
 
 Timings (macOS 27, Docker Desktop, 14 CPUs): a cold `driver-0.11` image build
 248 s, a cold probe build 95 s, an incremental image rebuild after a driver
@@ -261,7 +270,7 @@ per request, in order, logs on stderr, every relay wait bounded by
 | `hello` | optional `profiles` | pins, profile, commands |
 | `peer_new` | `peer`, `secret`, optional `client` (the KeyPackage `client` tag; default `White Noise Android`, `null`: none), optional `config` (`white-noise`, the default: marmot-app's registry and components; `engine-default`: cgka-engine's empty registry and default components 0x8001 0x8003 0x800c plus routing 0x8004, nostrc-qp24.5.1.3) | `pubkey` (a fresh SQLCipher session per peer) |
 | `publish_key_package` | `peer`, `to` (`[]`: made, not sent); `relays` accepted and unused (adopted KeyPackages carry no relays tag) | `event`, `event_id`, `mdk` (decoded metadata: profile, ref, ciphersuite, extensions, proposals, components, lifetime) |
-| `fetch_key_package` / `parse_key_package` | `peer`, `author` + `from` / `event` | `event`, `mdk`: `parsed` and metadata, or `class` and `error` |
+| `fetch_key_package` / `parse_key_package` | `peer`, `author` + `from` or `discover` (discovery relays: the author's write relays from their kind 10002) / `event` | `event` (chosen per slot as marmot-app does), `mdk`: `parsed` and metadata, or `class` and `error`; `slots` seen; `write_relays` (with `discover`) |
 | `create_group` | `peer`, `name`, `description`, `relays`, `admins`, `key_packages`, `welcome_relays`; optional `white_noise` (`true`: also the components marmot-app adds to every group -- `0x8006` `user_to_agent_default` and `0x800b` `EncryptedMediaPolicyV2::blossom_default` of `media_endpoints`, which the test sets to an example.com URL, never contacted) | `state` and `welcomes` (`to`, `wrapper_id`). Every KeyPackage first passes marmot-app's invite precheck (`create_key_package_requirements` then `KeyPackageRequirements::validate`: profile, ciphersuite, required capabilities, mandatory components, agent-stream roles); a refusal is `invite precheck: ...` |
 | `add_members` / `remove_members` / `update_group_data` / `self_update` | as for 0.8 (`update_group_data`: `name`, `description`) | `state`, `commit_id`, `welcomes`, `events` (published to the group relays first, confirmed once one accepted, else rolled back) |
 | `leave` | `peer`, `group` | `state` (`leave_in_progress`), `proposal_id` (a standalone SelfRemove; an admin's sync commits it) |

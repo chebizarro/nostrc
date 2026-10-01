@@ -1772,9 +1772,12 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
   # adopted Marmot profile) behind its own driver and image,
   # tests/interop/mdk/driver-0.11, run apart from the 0.8 test so a green 0.8
   # run never implies adopted success. One CTest per case of
-  # tests/mls/test_mdk011_interop.c: the MDK<->MDK control must pass; the
-  # adopted cases assert Groundhog's honest refusal and exit 77 (XFAIL), which
-  # SKIP_RETURN_CODE reports as Skipped, never Passed. The driver's redacted
+  # tests/mls/test_mdk011_interop.c: the MDK<->MDK control and every adopted
+  # case must pass (nostrc-lf62); the MDK 0.9.0 probe asserts the expected
+  # incompatibility and exits 77 (XFAIL), which SKIP_RETURN_CODE reports as
+  # Skipped, never Passed. Groundhog is linked as shipped (the UI library and
+  # the service, no test hooks); -gui runs mdk-invites-groundhog through the
+  # real invitations dialog (77 without a display). The driver's redacted
   # wire vectors land in ${CMAKE_BINARY_DIR}/mdk011-interop-artifacts.
   option(BUILD_MDK011_INTEROP
          "Build and run the Groundhog/MDK 0.11 (adopted profile) interop matrix (needs Docker)" OFF)
@@ -1786,19 +1789,15 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       message(FATAL_ERROR "BUILD_MDK011_INTEROP needs BUILD_TESTING, libsoup-3.0 and json-glib-1.0")
     endif()
     add_executable(test-groundhog-mdk011-interop tests/mls/test_mdk011_interop.c
-      ${GROUNDHOG_MLS_SERVICE_SOURCES} src/mls/gh-mls-invitee.c src/ui/gh-mls-copy.c
-      src/store/gh-store-marmot.c src/store/gh-mls-commits.c
       src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
       ${GROUNDHOG_DM_SEND_SOURCES})
     target_include_directories(test-groundhog-mdk011-interop PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls)
-    target_link_libraries(test-groundhog-mdk011-interop PRIVATE groundhog-store-testhooks marmot
-      groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
-      groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+    target_link_libraries(test-groundhog-mdk011-interop PRIVATE groundhog-mls-ui marmot
+      nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_JSON)
-    target_compile_definitions(test-groundhog-mdk011-interop PRIVATE GH_MLS_TEST_HOOKS=1)
     target_compile_options(test-groundhog-mdk011-interop PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-mdk011-interop)
     add_dependencies(test-groundhog-mdk011-interop groundhog-test-schemas)
@@ -1865,9 +1864,17 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       endif()
     endif()
     foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
-            adopted-welcome white-noise-welcome adopted-commits mdk09-probe)
+            mdk-invites-groundhog-gui adopted-welcome white-noise-welcome adopted-commits
+            mdk09-probe)
+      if (groundhog_mdk011_case STREQUAL "mdk-invites-groundhog-gui")
+        set(groundhog_mdk011_command test-groundhog-mdk011-interop --gui
+            -p /groundhog/mdk011-interop-gui/mdk-invites-groundhog)
+      else()
+        set(groundhog_mdk011_command test-groundhog-mdk011-interop
+            -p /groundhog/mdk011-interop/${groundhog_mdk011_case})
+      endif()
       add_test(NAME groundhog-mdk011-interop-${groundhog_mdk011_case}
-        COMMAND test-groundhog-mdk011-interop -p /groundhog/mdk011-interop/${groundhog_mdk011_case})
+        COMMAND ${groundhog_mdk011_command})
       set_tests_properties(groundhog-mdk011-interop-${groundhog_mdk011_case} PROPERTIES
         TIMEOUT 900 SKIP_RETURN_CODE 77 RESOURCE_LOCK groundhog-mdk011
         ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;GH_MDK_DRIVER=${groundhog_mdk011_driver};GH_MDK09_DRIVER=${groundhog_mdk09_driver};MDK_DRIVER_ARTIFACT_DIR=${groundhog_mdk011_artifacts}")
