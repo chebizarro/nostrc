@@ -187,6 +187,19 @@ typedef struct {
      * Default: false (since 0.12.0)
      */
     bool allow_unproven_self;
+
+    /**
+     * Keep a legacy group permissive at the Add that brings it its second
+     * member. By default (false) that Add -- a group created alone, as
+     * Groundhog creates them, getting its first invitees -- also requires
+     * SelfRemove (0x000a) when our leaf and every invitee advertise it: MDK
+     * 0.8's creation rule (LCD over the invitees), applied at the first Add
+     * (nostrc-8ndz), so any member can commit a member's leave. True keeps
+     * required_capabilities as they are, as MDK keeps a group it created
+     * with no invitee, e.g. to admit later invitees without SelfRemove.
+     * Default: false (since 0.12.0; the field is appended, rebuild callers)
+     */
+    bool keep_first_add_permissive;
 } MarmotConfig;
 
 /**

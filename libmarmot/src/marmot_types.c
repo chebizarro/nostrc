@@ -80,6 +80,7 @@ marmot_config_default(void)
         .allow_legacy_raw_messages = false,
         .allow_unproven_members = true,   /* legacy-profile groups only */
         .allow_unproven_self = false,
+        .keep_first_add_permissive = false,
     };
 }
 

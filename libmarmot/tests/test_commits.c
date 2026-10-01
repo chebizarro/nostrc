@@ -400,6 +400,10 @@ static bool g_charlie_lowest;
 /* trio_init(): Alice creates the group alone, then adds Bob (nostrc-2um6
  * review L1: such a group does not require SelfRemove). */
 static bool g_trio_alone;
+/* ...and keeps it permissive at that first Add (MarmotConfig
+ * keep_first_add_permissive; nostrc-8ndz: by default that Add requires
+ * SelfRemove when everyone supports it). */
+static bool g_trio_permissive;
 
 static void
 trio_init(Trio *t)
@@ -435,6 +439,7 @@ trio_init(Trio *t)
         char **w = NULL;
         size_t wn = 0;
         char *c = NULL;
+        t->alice.m->config.keep_first_add_permissive = g_trio_permissive;
         merge(&t->alice, &t->gid);
         OK(marmot_add_members(t->alice.m, &t->gid, kps, 1, &w, &wn, &c));
         merge(&t->alice, &t->gid);
@@ -7234,15 +7239,16 @@ test_commit_before_proposal_is_kept(void)
 }
 
 /* nostrc-2um6 review M1: where required_capabilities do not list SelfRemove
- * (a group created alone, as Groundhog creates them), the leave is MDK
- * 0.8's: a Remove of ourselves, a PrivateMessage, committed by an admin. */
+ * (a group created alone and kept permissive at its first Add, as MDK keeps
+ * a group created with no invitee), the leave is MDK 0.8's: a Remove of
+ * ourselves, a PrivateMessage, committed by an admin. */
 static void
 test_remove_request_where_self_remove_not_required(void)
 {
-    g_trio_alone = true;
+    g_trio_alone = g_trio_permissive = true;
     Quad q;
     quad_init(&q);
-    g_trio_alone = false;
+    g_trio_alone = g_trio_permissive = false;
     Trio *t = &q.t;
     expect_required_capabilities_of(&t->alice, &t->gid, "alone, then Add", false);
     MarmotLeaveKind kind = 0;
@@ -7300,6 +7306,31 @@ test_remove_request_where_self_remove_not_required(void)
     quad_clear(&q);
 }
 
+/* nostrc-8ndz: the Add that brings a group created alone its second member
+ * requires SelfRemove in the same Commit when our leaf and the invitee
+ * advertise it (MDK's creation rule, MarmotConfig keep_first_add_permissive
+ * false): the joiner's Welcome already carries it, every member then
+ * leaves by SelfRemove, and the next Add keeps it. */
+static void
+test_first_add_requires_self_remove(void)
+{
+    g_trio_alone = true;
+    Quad q;
+    quad_init(&q);
+    g_trio_alone = false;
+    Trio *t = &q.t;
+    Member *all[4] = { &t->alice, &t->bob, &t->charlie, &q.dave };
+    for (int i = 0; i < 4; i++)
+        expect_required_capabilities_of(all[i], &t->gid, "required at the first Add", true);
+    MarmotLeaveKind kind = MARMOT_LEAVE_REMOVE_REQUEST;
+    OK(marmot_can_self_remove(t->charlie.m, &t->gid, &kind));
+    CHECK(kind == MARMOT_LEAVE_SELF_REMOVE, "leave by SelfRemove (%d)", kind);
+    bool required = false, upgradable = true;
+    OK(marmot_get_self_remove_requirement(q.dave.m, &t->gid, &required, &upgradable));
+    CHECK(required && !upgradable, "nothing left to upgrade");
+    quad_clear(&q);
+}
+
 /* nostrc-8ndz: a group that does not require SelfRemove (created alone)
  * gains the requirement by an admin's GroupContextExtensions Commit once
  * every leaf advertises it; every member follows, the rest of the
@@ -7309,10 +7340,10 @@ test_remove_request_where_self_remove_not_required(void)
 static void
 test_require_self_remove_upgrade(void)
 {
-    g_trio_alone = true;
+    g_trio_alone = g_trio_permissive = true;
     Quad q;
     quad_init(&q);
-    g_trio_alone = false;
+    g_trio_alone = g_trio_permissive = false;
     Trio *t = &q.t;
     expect_required_capabilities_of(&t->alice, &t->gid, "alone, then Add", false);
     bool required = true, upgradable = false;
@@ -7751,6 +7782,7 @@ main(int argc, char **argv)
     RUN(test_commit_before_proposal_is_kept);
     RUN(test_remove_request_where_self_remove_not_required);
     RUN(test_require_self_remove_upgrade);
+    RUN(test_first_add_requires_self_remove);
     RUN(test_proposal_store_bounded_per_sender);
     RUN(test_departures_ignore_removed_leaves);
     RUN(test_cancel_leave);

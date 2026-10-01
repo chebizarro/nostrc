@@ -1570,7 +1570,9 @@ add_members_adopted(Marmot *m, MarmotGroup *group, const MlsGroup *mls,
     int rc = mls_group_commit_adopted(&post, NULL, 0, ptrs, kp_count, NULL, 0, &add);
     if (rc != 0) {
         err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY
-              : rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG : MARMOT_ERR_MLS;
+              : rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG
+              : rc == MARMOT_ERR_KEY_PACKAGE_CAPABILITIES ? MARMOT_ERR_KEY_PACKAGE_CAPABILITIES
+              : MARMOT_ERR_MLS;
         goto out;
     }
     /* Every leaf of the epoch the joiners enter verifies (they check it). */
@@ -1787,6 +1789,31 @@ out:
     return err;
 }
 
+static int exts_with_self_remove_required(const uint8_t *exts, size_t exts_len, uint8_t **out,
+                                          size_t *out_len);
+
+/* nostrc-8ndz: whether the Add of `kps` brings legacy group `mls` its
+ * second member and should also require SelfRemove: only our leaf so far,
+ * SelfRemove not required yet, and our leaf and every invitee advertise it
+ * (MDK 0.8's creation-time LCD rule; "empty stays empty" until the first
+ * Add, and an invitee without it keeps the group permissive). */
+static bool
+first_add_requires_self_remove(const Marmot *m, const MlsGroup *mls, const MlsKeyPackage *kps,
+                               size_t kp_count)
+{
+    if (m->config.keep_first_add_permissive || mls->profile == MARMOT_GROUP_PROFILE_ADOPTED ||
+        mls_group_requires_proposal(mls, MLS_PROPOSAL_SELF_REMOVE) ||
+        !mls_group_members_support_proposal(mls, MLS_PROPOSAL_SELF_REMOVE))
+        return false;
+    size_t occupied = 0;
+    for (uint32_t i = 0; i < mls->tree.n_leaves; i++)
+        occupied += mls->tree.nodes[mls_tree_leaf_to_node(i)].type == MLS_NODE_LEAF;
+    if (occupied != 1) return false;
+    for (size_t i = 0; i < kp_count; i++)
+        if (!key_package_self_remove(&kps[i])) return false;
+    return kp_count > 0;
+}
+
 static MarmotError
 add_members_impl(Marmot *m,
                     const MarmotGroupId *mls_group_id,
@@ -1843,13 +1870,32 @@ add_members_impl(Marmot *m,
     err = legacy_group_data_reencoded(&mls, group->nostr_group_id, &reencoded,
                                       &reencoded_len);
     if (err != MARMOT_OK) goto fail;
+    /* The Add bringing a group created alone its second member requires
+     * SelfRemove too, in the same Commit (nostrc-8ndz). */
+    if (first_add_requires_self_remove(m, &mls, kps, kp_count)) {
+        uint8_t *with_sr = NULL;
+        size_t with_sr_len = 0;
+        if (exts_with_self_remove_required(reencoded ? reencoded : mls.extensions_data,
+                                           reencoded ? reencoded_len : mls.extensions_len,
+                                           &with_sr, &with_sr_len) != 0) {
+            err = MARMOT_ERR_EXTENSION_FORMAT;
+            goto fail;
+        }
+        free(reencoded);
+        reencoded = with_sr;
+        reencoded_len = with_sr_len;
+    }
     if (clone_mls_group(&mls, &post) != 0) {
         err = MARMOT_ERR_MLS;
         goto fail;
     }
     int rc = add_key_packages(&post, kps, kp_count, reencoded, reencoded_len, &add);
     if (rc != 0) {
-        err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
+        /* nostrc-zbmb: an invitee whose app cannot join what the group
+         * requires is named as such. */
+        err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY
+              : rc == MARMOT_ERR_KEY_PACKAGE_CAPABILITIES ? MARMOT_ERR_KEY_PACKAGE_CAPABILITIES
+              : MARMOT_ERR_MLS;
         goto fail;
     }
     /* Never publish an Add whose Welcome the joiners must reject (review

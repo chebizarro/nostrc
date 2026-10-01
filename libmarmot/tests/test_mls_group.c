@@ -4453,6 +4453,110 @@ TEST(test_commit_removing_committer_refused)
     three_member_fixture_clear(&f);
 }
 
+
+/* ── nostrc-zbmb: joiners must support what the group requires ────────── */
+
+/* GroupContext extensions: required_capabilities {[], [SelfRemove], []}. */
+static const uint8_t REQUIRE_SELF_REMOVE_EXTS[] = { 0x00, 0x03, 0x05, 0x00, 0x02, 0x00, 0x0a,
+                                                    0x00 };
+
+/* A valid KeyPackage whose leaf advertises no proposal types: a libmarmot
+ * 0.11.0 or pre-#236 MDK leaf (the review's split probe). */
+static void
+key_package_without_self_remove(MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
+                                const uint8_t id[32])
+{
+    assert(mls_key_package_create(kp, priv, id, 32, NULL, 0) == 0);
+    free(kp->leaf_node.proposals);
+    kp->leaf_node.proposals = NULL;
+    kp->leaf_node.proposal_count = 0;
+    assert(mls_leaf_node_sign(&kp->leaf_node, priv->signature_key_private, NULL, 0, 0) == 0);
+    assert(mls_key_package_sign(kp, priv) == 0);
+    assert(mls_key_package_validate(kp) == 0);
+}
+
+/* The W25 review's probe: Alice's group requires SelfRemove; an Add of a
+ * leaf without it is refused before anything changes (it was committed:
+ * OpenMLS/MDK members refuse such a Commit and the group splits). */
+TEST(test_add_refuses_unsupported_key_package)
+{
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+    MlsGroup a;
+    assert(mls_group_create(&a, GROUP_ID, sizeof(GROUP_ID), ALICE_ID, 32, sk,
+                            REQUIRE_SELF_REMOVE_EXTS, sizeof REQUIRE_SELF_REMOVE_EXTS) == 0);
+    assert(mls_group_requires_proposal(&a, MLS_PROPOSAL_SELF_REMOVE));
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    key_package_without_self_remove(&kp, &priv, CHARLIE_ID);
+    const MlsKeyPackage *kps[1] = { &kp };
+    MlsAddResult add;
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_members(&a, kps, 1, &add) == MARMOT_ERR_KEY_PACKAGE_CAPABILITIES);
+    assert(a.epoch == 0 && a.tree.n_leaves == 1);
+
+    /* Nor may a GroupContextExtensions in the same Commit require what the
+     * joiner lacks (it is checked against the epoch it joins). */
+    MlsGroup b;
+    uint8_t sk2[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&b, sk2) == 0);
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_members_with_extensions(&b, kps, 1, REQUIRE_SELF_REMOVE_EXTS,
+                                                 sizeof REQUIRE_SELF_REMOVE_EXTS, &add) ==
+           MARMOT_ERR_KEY_PACKAGE_CAPABILITIES);
+    assert(b.epoch == 0 && b.tree.n_leaves == 1);
+    /* Without the requirement the same KeyPackage joins. */
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_members(&b, kps, 1, &add) == 0);
+    mls_add_result_clear(&add);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_group_free(&a);
+    mls_group_free(&b);
+}
+
+/* A non-conforming member's Commit adding such a leaf is refused on arrival
+ * and changes nothing (receivers enforce §12.1.1 as OpenMLS does). */
+TEST(test_inbound_add_of_unsupported_key_package_refused)
+{
+    uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
+    assert(mls_crypto_sign_keygen(sk, pk) == 0);
+    MlsGroup alice, bob;
+    assert(mls_group_create(&alice, GROUP_ID, sizeof(GROUP_ID), ALICE_ID, 32, sk,
+                            REQUIRE_SELF_REMOVE_EXTS, sizeof REQUIRE_SELF_REMOVE_EXTS) == 0);
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    assert(mls_key_package_create(&bob_kp, &bob_priv, BOB_ID, 32, NULL, 0) == 0);
+    MlsAddResult add;
+    memset(&add, 0, sizeof add);
+    assert(mls_group_add_member(&alice, &bob_kp, &add) == 0);
+    assert(mls_welcome_process(add.welcome_data, add.welcome_len, &bob_kp, &bob_priv, NULL, 0,
+                               &bob) == 0);
+    mls_add_result_clear(&add);
+    assert(mls_group_requires_proposal(&bob, MLS_PROPOSAL_SELF_REMOVE));
+
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    key_package_without_self_remove(&kp, &priv, CHARLIE_ID);
+    const MlsKeyPackage *kps[1] = { &kp };
+    mls_test_allow_unsupported_adds = true;   /* what a non-conforming client sends */
+    memset(&add, 0, sizeof add);
+    int rc = mls_group_add_members(&alice, kps, 1, &add);
+    mls_test_allow_unsupported_adds = false;
+    assert(rc == 0);
+    uint64_t epoch = bob.epoch;
+    assert(mls_group_process_commit(&bob, add.commit_data, add.commit_len,
+                                    alice.own_leaf_index) == MARMOT_ERR_KEY_PACKAGE_CAPABILITIES);
+    assert(bob.epoch == epoch && bob.tree.n_leaves == 2);
+    mls_add_result_clear(&add);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice);
+    mls_group_free(&bob);
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -4468,6 +4572,10 @@ int main(void)
     RUN(test_group_create_with_extensions);
     RUN(test_group_tree_hash);
     RUN(test_group_context_build);
+
+    printf(" Joiners and required capabilities (nostrc-zbmb):\n");
+    RUN(test_add_refuses_unsupported_key_package);
+    RUN(test_inbound_add_of_unsupported_key_package_refused);
 
     printf(" Application messages:\n");
     RUN(test_encrypt_decrypt_single_member);

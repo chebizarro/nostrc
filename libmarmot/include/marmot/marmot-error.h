@@ -83,6 +83,13 @@ typedef enum {
      *  is until another Commit of that epoch moves it on.  A non-admin's
      *  refused Commit keeps its specific error (every member refuses it). */
     MARMOT_ERR_COMMIT_REFUSED           = -53,
+    /** Since 0.12.0 (nostrc-zbmb): a KeyPackage whose leaf does not support
+     *  what the group requires (RFC 9420 §12.1.1, §7.2: every GroupContext
+     *  extension, and the required_capabilities extension's extension and
+     *  proposal types -- e.g. SelfRemove 0x000a), so it cannot join: our
+     *  Add of it is refused before anything is staged, and a Commit that
+     *  adds one is refused on arrival (OpenMLS/MDK refuse it too). */
+    MARMOT_ERR_KEY_PACKAGE_CAPABILITIES = -54,
 
     /* Message errors */
     MARMOT_ERR_MESSAGE                  = -60,

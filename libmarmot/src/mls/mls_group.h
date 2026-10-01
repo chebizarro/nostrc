@@ -375,6 +375,11 @@ int mls_group_add_members(MlsGroup *group,
                           const MlsKeyPackage *const *kps, size_t kp_count,
                           MlsAddResult *result);
 
+/* Tests only (nostrc-zbmb): when true, our Adds skip the check that a
+ * joiner supports what the group requires, so a test can make the Commit a
+ * non-conforming client sends and check that receivers refuse it. */
+extern bool mls_test_allow_unsupported_adds;
+
 /**
  * mls_group_add_members() with a GroupContextExtensions proposal in the same
  * Commit (when `extensions` is not NULL): the group's extension list becomes

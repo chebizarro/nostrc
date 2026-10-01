@@ -1368,6 +1368,8 @@ set_u16_vec(uint16_t **arr, size_t *count, const uint16_t *vals, size_t n)
     return 0;
 }
 
+bool mls_test_leaf_without_self_remove = false;
+
 int
 mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node)
 {
@@ -1380,7 +1382,7 @@ mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node)
         set_u16_vec(&node->cap_extensions, &node->cap_extension_count,
                     MLS_MARMOT_CAP_EXTENSIONS, MLS_MARMOT_CAP_EXTENSION_COUNT) != 0 ||
         set_u16_vec(&node->proposals, &node->proposal_count, MLS_MARMOT_CAP_PROPOSALS,
-                    MLS_MARMOT_CAP_PROPOSAL_COUNT) != 0 ||
+                    mls_test_leaf_without_self_remove ? 0 : MLS_MARMOT_CAP_PROPOSAL_COUNT) != 0 ||
         set_u16_vec(&node->cap_credentials, &node->cap_credential_count, creds, 1) != 0)
         return -1;
     return 0;

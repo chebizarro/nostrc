@@ -58,6 +58,8 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_KEY_PACKAGE_IDENTITY:    return "key package identity mismatch";
     case MARMOT_ERR_IDENTITY_CHANGE:         return "identity change not allowed";
     case MARMOT_ERR_COMMIT_REFUSED:          return "an admin's commit this group cannot follow";
+    case MARMOT_ERR_KEY_PACKAGE_CAPABILITIES:
+        return "key package does not support what the group requires";
 
     /* Message */
     case MARMOT_ERR_MESSAGE:                 return "message error";
