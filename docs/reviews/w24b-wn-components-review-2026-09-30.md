@@ -270,3 +270,82 @@ Revert spot-checks: each mutation was applied alone, rebuilt under ASAN, and rev
 - **L2:** tighten `url_classify()` for WHATWG-invalid IP literals. This could go to nostrc-lyup or a new bead.
 - **L3:** gnostr inner-kind filtering, required before the adopted KeyPackage producer is enabled for any consumer. This could go to nostrc-ji2j or a gnostr bead.
 - **L4:** zeroize `MlsGroup.extensions_data` on free.
+
+---
+
+## Addendum (2026-10-01): re-review of the fixes, final verdict
+
+- **Reviewed:** `marmot/w24b-wn-components` at `b991e6c3`, four commits on `169c64b7`:
+
+| Commit | Addresses |
+|---|---|
+| `a562b94b` | M1 prep, N1 |
+| `6fc97ccd` | L2 (with the macOS `inet_pton` fix) |
+| `c3416e42` | L4, N3 |
+| `b991e6c3` | L1, L3, N2, N4 (docs) |
+
+  The review branch is rebased onto that tip; the original document above is unchanged.
+- **Final verdict:** **APPROVE.** Every finding is resolved, or is now correctly owned by slice H or the merge. One new Nit (A1) is informational.
+
+### Per finding
+
+- **M1 (prep): resolved on this slice's side.**
+  - **The validator.** `mls_adopted_component_state_valid()` (`mls_app_components.c:649-660`) is `validate_component_state()` itself, run on a zeroed scratch context. It cannot drift from admission, by construction.
+  - **Fuzzed:**
+    - 80,000 single states: 30,000 `0x8006`, 30,000 `0x800b`, and 20,000 random states for 13 other ids. The validator's code equals the decode verdict on every one: 0 when it decodes (`0x8006`: and requires only `receive`), `UNSUPPORTED` for send/fanout, `EXTENSION_FORMAT` otherwise.
+    - 29,826 intact mutated White Noise GroupContexts. A parse of 0 implies every entry validates, and any malformed entry implies the parse is `EXTENSION_FORMAT`; zero violations. The other 28 cases had a corrupted outer extension type, which the parse rightly refuses first as `UNSUPPORTED`.
+  - **Test:** `test_component_state_validator` covers valid replacement `0x8006`/`0x800b` states and every documented refusal. The header (`mls_app_components.h:161-190`) tells slice H to call it.
+  - **Still open, on slice H:** H's current tip (`54971451`) still has `adopted_component_valid()` refusing `0x8006`/`0x800b` (`commits.c:411-415`). Switching it to the new validator, plus the positive update tests, stays the merge condition for whichever slice lands second. No bead records the hand-off yet; adding a note to nostrc-qp24.5.1 would help.
+  - **Textual conflicts:** a trial merge of the two tips now has conflicts, all outside libmarmot sources: `VERSION_MANIFEST.md`, `libmarmot/README.md`, `tests/interop/mdk/README.md`, the `gnome/groundhog/CMakeLists.txt` case list and `test_mdk011_interop.c`. The source files merge cleanly.
+- **L1: resolved.** The README "Divergence from MDK v0.11.0" section and the `mls_adopted_tree_check()` doc state the stricter rule and its consequences accurately. Upstream bead nostrc-0b99 is filed.
+- **L2: resolved, and verified differentially.**
+  - **The change.** `url_normalize_ex()` now reports a host that no WHATWG parser accepts, and `url_classify()` makes that `AVATAR_INVALID`. Such a host is either an IPv4 parse failure (`host_ipv4()` = -1) or a bracketed host that is no IPv6 address or carries a zone id. IDNA and `_` hosts stay unverified.
+  - **The original corpus.** Rerun unchanged (6 seeds × 60,000): no hard disagreement, and the accepted-verified counts are unchanged. Accepted-unverified states MDK refuses fell from **946 to 20**.
+  - **A new IP-literal corpus** (4 seeds, 112,477 stored URLs, raw and MDK-normalized): random IPv4 hosts (octal, hex, overflow, 1-6 parts, numeric last label after a domain) and IPv6 hosts (compression, upper case, embedded IPv4 tails with leading zeros, 256 or 3/5 parts, zone ids, unclosed brackets).
+    - 0 disagreements with MDK, and **0** unverified-but-MDK-refuses.
+    - The `0x8007` avatar class equals the `0x800b` endpoint class on every https URL.
+    - All 1,944 bracketed hosts with a leading-zero IPv4 tail are refused, as MDK refuses them.
+  - **The macOS `inet_pton` fix is needed.** macOS `inet_pton` accepts `::1.2.3.04` and `::01.2.3.4`; glibc refuses both. With the embedded-IPv4 check removed, macOS normalizes `[::1.2.3.04]`, which MDK refuses, and `test_media` catches it (R2 below).
+  - **Platform parity.** The whole 723,120-line corpus gives byte-identical verdicts on macOS and on Linux (glibc, `nostrc-linux-ci:arm64`): the original, GroupContext, IP-literal and validator inputs.
+- **L3: resolved as tracked.** `marmot-group-components.h:22-26` makes "show only kind 9 as chat" every consumer's duty, and names gnostr's gap. nostrc-ruwy (P1 bug) blocks gnostr from publishing adopted KeyPackages until it is fixed.
+- **L4: resolved.** GroupContext bytes are now `sodium_memzero`ed in three places:
+  - `mls_group_free()`, which also covers every `mls_group_deserialize()` failure path, since they `goto fail` → `mls_group_free`;
+  - `mls_group_info_clear()`;
+  - `apply_group_context_extensions()` when the context is replaced.
+
+  The remaining `free(...extensions_data)` sites (`mls_group.c:1537,1898`) hold KeyPackage and leaf extensions, not GroupContexts.
+- **N1: resolved.** The file header is restored, and the 0x8006 paragraph moved to the `mls_adopted_tree_check()` doc.
+- **N2: resolved** (`adopted.h:38-39`).
+- **N3: resolved.** `read_vec()` returns `VEC_NOMEM`, which every caller maps to `MARMOT_ERR_MEMORY` in the `0x8002`, `0x8007` and `0x800b` decoders. This is by inspection; allocation failure is not injected by any test.
+- **N4: resolved.** The header now distinguishes the render secret from the Blossom write credential, and tells render-only consumers not to keep the upload key.
+- **N5: resolved.** The nostrc-qp24.5.2 and nostrc-m6tp notes cite `169c64b7` and the fix commits; `a4999e2f` is gone.
+
+### A1 (Nit, new, informational): 20 corner-case URLs remain unverified rather than invalid
+
+These are the 20 residual cases, across 180,000 states:
+- **IP literals the host charset check pre-empts.** Hosts with `_` or `~` inside a numeric-ending IPv4 (`https://1.2_3.04/`, `https://256.1~1.1/`) fail libmarmot's host charset before the IPv4 parser runs. Hosts with an unclosed `[` (`https://[\::ffff:1.2.3.4]/`: the backslash ends the authority) never reach the IPv6 parser. WHATWG refuses all of these.
+- **IDNA and path forms**, the documented slice G residual.
+
+Only the accept direction is affected, and the endpoints are never contacted. If wanted: run the numeric-last-label test before the charset check, and treat an unclosed `[` in the authority as WHATWG-invalid.
+
+### Re-verification
+
+| Check | Result |
+|---|---|
+| `ninja` (full tree) | OK |
+| `ctest -R marmot` | 25/25 |
+| `check-unsequenced-args.py` | clean |
+| ASAN+UBSAN (macOS): `test_media`, `test_adopted`, `test_kp_profile`, `test_commits` | pass |
+| ASAN+UBSAN+LSan (Linux): 23/23 `marmot_test_*`, plus the 723,120-line corpus | rc 0, no report |
+| `scripts/linux-gate.sh --sanitizers` (clean checkout of `b991e6c3`) | 50 passed |
+| MDK oracle | the committed `policy-verdicts` crate, rebuilt in a private MDK v0.11.0 clone; its main.rs is unchanged by the fixes |
+| Docker volumes | unchanged |
+
+Revert spot-checks of the fixes, each applied alone and reverted:
+
+| # | Mutation | Caught by |
+|---|---|---|
+| R1 | `url_classify()` ignores `whatwg_invalid` | `test_media:1182` |
+| R2 | embedded-IPv4 check in `host_ipv6()` removed | `test_media:1206` (macOS) |
+| R3 | IPv6 bracket failure not flagged | `test_media:1182` |
+| R4 | validator turns `UNSUPPORTED` into 0 | `test_adopted:1551` |
