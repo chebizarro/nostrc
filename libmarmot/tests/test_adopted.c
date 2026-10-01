@@ -766,6 +766,30 @@ test_group_context_negatives(void)
     static const uint8_t legacy[] = {0xf2, 0xee, 0x02, 0x00, 0x02};
     CHECK(mls_group_context_profile_of(legacy, sizeof(legacy)) == MARMOT_GROUP_PROFILE_LEGACY,
           "legacy");
+    /* A recognizable but malformed 0x0006 after legacy group data --
+     * truncated, or with a non-minimal length -- is adopted and refused, at
+     * classification, creation and load alike (W24 review L1). */
+    static const uint8_t legacy_trunc[] = {0xf2, 0xee, 0x02, 0x00, 0x02, 0x00, 0x06, 0x05, 0x00, 0x00};
+    static const uint8_t legacy_nonmin[] = {0xf2, 0xee, 0x02, 0x00, 0x02, 0x00, 0x06, 0x40, 0x01, 0x00};
+    const struct { const uint8_t *b; size_t n; } bad_dict[] = {
+        {legacy_trunc, sizeof(legacy_trunc)}, {legacy_nonmin, sizeof(legacy_nonmin)}};
+    for (size_t i = 0; i < 2; i++) {
+        CHECK(mls_group_context_profile_of(bad_dict[i].b, bad_dict[i].n) ==
+                  MARMOT_GROUP_PROFILE_ADOPTED, "malformed 0x0006 classified adopted");
+        MlsAdoptedGroupContext bad_gc;
+        EXPECT_ERR(mls_adopted_group_context_parse(bad_dict[i].b, bad_dict[i].n, &bad_gc),
+                   MARMOT_ERR_EXTENSION_FORMAT); /* undecodable list: format first */
+        uint8_t gid[32] = {1}, ident[32] = {2}, gsk[MLS_SIG_SK_LEN], gpk[MLS_SIG_PK_LEN];
+        crypto_sign_keypair(gpk, gsk);
+        MlsGroup g;
+        CHECK(mls_group_create(&g, gid, 32, ident, 32, gsk, bad_dict[i].b, bad_dict[i].n) != 0,
+              "creation refused");
+        sodium_memzero(gsk, sizeof(gsk));
+        /* Without the legacy entry the malformed dictionary itself fails. */
+        EXPECT_ERR(mls_adopted_group_context_parse(bad_dict[i].b + 5, bad_dict[i].n - 5, &bad_gc),
+                   MARMOT_ERR_EXTENSION_FORMAT);
+    }
+
     /* Only an app_data_dictionary makes a group adopted: a legacy group's
      * required_capabilities may name 0x0006 / 0x0008 (e.g. computed from
      * its members' capabilities) and stays legacy, as before 0.12.0. */

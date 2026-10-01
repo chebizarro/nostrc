@@ -333,8 +333,12 @@ mls_group_context_profile_of(const uint8_t *exts, size_t len)
         uint16_t type = 0;
         const uint8_t *d = NULL;
         size_t dlen = 0;
-        if (mls_tls_read_u16(&r, &type) != 0 || read_vec(&r, &d, &dlen) != 0) break;
+        if (mls_tls_read_u16(&r, &type) != 0) break;
+        /* Recognized by its type alone, before its length: a truncated or
+         * non-minimally encoded 0x0006 is adopted -- and then refused by the
+         * strict parse -- never legacy (W24 review L1). */
         if (type == MLS_EXTENSION_APP_DATA_DICTIONARY) return MARMOT_GROUP_PROFILE_ADOPTED;
+        if (read_vec(&r, &d, &dlen) != 0) break;
     }
     return MARMOT_GROUP_PROFILE_LEGACY;
 }
