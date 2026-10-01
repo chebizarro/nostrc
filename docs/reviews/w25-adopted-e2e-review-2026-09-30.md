@@ -4,7 +4,8 @@
 - **Beads:** nostrc-lf62, nostrc-8u53, nostrc-lse9 (follow-ups nostrc-c0yo, nostrc-cyxb)
 - **Brief:** /tmp/w25/K.md
 - **Reviewer:** independent peer review (AGENTS.md), worktree `/tmp/rv-w25-adopted-e2e` at `f5b4a121`
-- **Verdict:** **CHANGES-REQUIRED (narrow).** Fix M1 and M2 before merge. M3 is a merge-order plan; the rest can be follow-ups. No Blocker or High.
+- **Re-review (addendum, tip `de4290d5`):** **CHANGES-REQUIRED (narrow), one item (M4)**; every earlier finding is fixed. See the addendum at the end.
+- **Original verdict:** **CHANGES-REQUIRED (narrow).** Fix M1 and M2 before merge. M3 is a merge-order plan; the rest can be follow-ups. No Blocker or High.
 
 The core of the slice is sound. Before this branch, both producers wrote into one `d` slot, and an ACK of either format retired the other's keys. libmarmot now gives each profile its own slot, confirmation and expiry. Groundhog runs one publication per format. New Group and Group Info pick the format, and the service and libmarmot both enforce it. The MDK 0.11 cases are genuine live runs in both directions, including the GUI accept.
 
@@ -180,3 +181,90 @@ g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FOR
 ## Versioning
 
 libmarmot and Groundhog changes are folded into their unreleased 0.12.0 rows (VERSION_MANIFEST.md). The rows correctly say marmot-gobject and gnostr need no bump: neither calls the adopted producer (nostrc-ruwy still blocks gnostr). The harness and driver changes are tests only. This complies with AGENTS.md.
+
+## Addendum (re-review of fixes `0fd2ad8a` libmarmot and `de4290d5` Groundhog; tip `de4290d5`)
+
+- **Final verdict:** **CHANGES-REQUIRED (narrow): one item, M4.**
+- M1, M2, L1 (except M4), L2 and N1-N3 are fixed and revert-tested, as are the two bugs the author found.
+- M4 is new and was introduced with the L1 withdrawal: its deletion request does not reach the newest MDK 0.8 KeyPackage, yet its keys are still retired. The fix is small. With M4 fixed and its test added, this is **APPROVE-WITH-NITS**, and a further re-review is not needed.
+- M3 (merge order with L, M and N) stands as written.
+
+### What I ran (worktree rebased onto `de4290d5`)
+
+| Check | Result |
+|---|---|
+| Build (`BUILD_GROUNDHOG=ON`) | clean |
+| `ctest` marmot, MLS, privacy and preferences subset | 42/42 pass, including `groundhog-mls-kp-lifecycle{,-adopted}`, `groundhog-mls-service`, `groundhog-mls-ui-gui`, `groundhog-preferences`, `groundhog-privacy-{static,e2e,summary}` |
+| MDK 0.8 and 0.11 matrices (images rebuilt from the tip's drivers) | MDK 0.8: all 11 cases pass (`-V`). MDK 0.11: control, groundhog-invites-mdk, mdk-invites-groundhog, -gui, adopted-welcome, white-noise-welcome and adopted-commits **pass**; mdk09-probe **Skipped** (the expected XFAIL) |
+| `scripts/linux-gate.sh --sanitizers` (clean detached worktree at `de4290d5`) | 52/52 sanitizer tests pass; no Docker volume created |
+| My M1 scratch case, unchanged | **now passes**: `held=1 … after upgrade = ADOPTED`, then `held=0 … after decline = LEGACY` |
+| Revert spot-checks | All fail as expected:<br>- M2 service guard off: `mls-service/create-in-format` (:176) and `mls-ui-gui/new-group-format-changed` ("Group Not Created" never shown)<br>- withdrawal OK branch removed: `legacy-switched-off`, keys never retired<br>- mid-round recheck removed: `legacy-switched-off`, withdrawal never sent<br>- N3 re-activation removed: `test_kp_lifecycle:691`<br>- N1 `kp_used` record removed: `test_kp_lifecycle:611`<br>All restored |
+| N2 | `-DMARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=OFF` gives one WARNING naming the new option. The next configure says nothing, and the old entry is gone from `CMakeCache.txt` |
+
+### Item by item
+
+- **M1: fixed.** When the adopted KeyPackage goes out, `key_package_maybe_publish` marks the MDK 0.8 slot due: `rotate`, plus its cursor set to 0, which persists (gh-mls-service.c, the `review M1` block). A companion that is held, refused or interrupted therefore goes out at the hold's end, the retry or the next start. My original case passes, and the author's `upgrade-companion-held` covers it.
+- **M2: fixed at both layers.**
+  - **Service.** `gh_mls_service_create_group_in_format_async` refuses with `FORMAT_CHANGED` when the create-time lookups no longer give every invitee a KeyPackage of the expected format. There is no fallback.
+  - **Page.** New Group passes the format it showed (`self->format`, computed with the notice). On `FORMAT_CHANGED` it runs the invitee check again, so the page re-renders what Create would now make.
+  - **Remaining callers.** New Group is the only production caller of create; the format-less `gh_mls_service_create_group_async` is left to tests.
+  - Both tests are revert-checked.
+- **L1: switch and charter are mostly right; M4 below.**
+  - **Setting.** `mls-legacy-key-packages` (default true, `check_privacy.py` updated) appears in Preferences › Privacy › Conversations, inside the encrypted-groups feature gate.
+  - **Withdrawal.** Turning it off sends one kind-5 request:
+    - tags: one `a` = `30443:<pubkey>:<d of the MDK 0.8 slot>` and `k` = `30443`; empty content;
+    - signed by the account and checked after signing (kind 5, author);
+    - sent only to the KeyPackage write relays, with the own-list-publish AUTH purpose;
+    - held, like a replacement, while invitations are pending.
+  - **Keys are retired only on the request's first relay OK.** A refused request keeps them (tested). `marmot_key_package_retire_profile` touches only the MDK 0.8 profile.
+  - **Privacy of the request.** Acceptable: it names only the slot address the KeyPackage already published. But the request is itself a lasting public event saying that this account offered, and then dropped, the older format. The charter's "copies may persist" covers the KeyPackage, not the request. Nit: say so.
+  - **Charter amendment (§2.2 table row and 2026-10-01 note, §settings table).** Accurate on cost, default, behaviour, ACK-tied deletion, the hold, re-enabling, and sunset criteria tied to nostrc-cyxb. One exception: "only the current format is published" does not hold today (M4).
+- **L2: fixed.** For an invitee with both formats, the MDK 0.8 event's proof is now judged too. When it is unusable and proofs are required, the invitee becomes READY_ADOPTED_ONLY (gh-mls-invitee.c).
+- **N1: fixed.** `marmot_kp_lifecycle_consumed` records the spent profile (`kp_used`) inside the accepting transaction, clearing it when unknown. `accept_invite` rotates that format and falls back to the group's profile.
+- **N2: fixed** (see the table).
+- **N3: fixed.** After the account-wide deactivation, the other profile's newest KeyPackage is re-activated, so `active` is per profile.
+- **The author's two bugs: fixed and covered.**
+  - **Withdrawal OK.** The request's OK reaches `key_package_update` with the slot as its data. It is now routed to `key_package_withdrawn` (first OK only) before the KeyPackage-confirmation path, which would otherwise have recorded the request's id as the KeyPackage and marked the slot published without retiring anything. A failed withdrawal is not reported as a KeyPackage `FAILED` and is retried.
+  - **Switch flipped mid-round.** `on_legacy_key_packages_changed` sets `key_package_recheck`, which `key_package_done` honours once the round ends. A KeyPackage published by the round in flight is then covered by the following withdrawal, subject to M4.
+
+### New findings
+
+#### M4 (Medium): the withdrawal's `created_at` can be older than the MDK 0.8 KeyPackage it should delete, so a NIP-09 relay keeps that KeyPackage while Groundhog deletes its keys
+
+**Where.** gh-mls-service.c `key_package_withdraw`: `nostr_event_set_created_at(event, now_s(self))`, with only an `a` tag.
+
+**Mechanism.**
+- libmarmot gives every KeyPackage `created_at = max(now, last + 1)` per account (`marmot_kp_lifecycle_created_at`). The MDK 0.8 one is always the adopted one + 1, so right after a round it is at least a second in the future, and bursts of rotations push it further.
+- NIP-09 deletes the versions of an `a` address only up to the request's `created_at`.
+- Groundhog retires the keys on the request's first OK.
+
+**Reproduced.** Scratch case `review-withdrawal-covers`, reviewer-only: three quick `rotate()`s, then the switch off. Log: `newest MDK 0.8 KeyPackage created_at=1790889528 deletion created_at=1790889521`, and `del >= newest_kp` fails.
+
+**Triggers.** The ones that matter:
+- a withdrawal right after a round: the mid-round flip path with an auto-approving signer;
+- several joins in quick succession;
+- the system clock stepped back, which leaves libmarmot's `last_created_at` ahead for the size of the step.
+
+**Impact.** A compliant relay keeps the newest MDK 0.8 KeyPackage after the user switched the format off:
+- the fingerprint the user wanted gone stays published;
+- older apps keep inviting through it, and every such Welcome fails, because its keys are already deleted. That breaks the "keys deleted only once the relays were asked to delete it" contract the charter states.
+
+The fake relay does not apply NIP-09, so `legacy-switched-off` cannot see this.
+
+**Fix.**
+- Give the request `created_at` ≥ the newest MDK 0.8 KeyPackage's `created_at`. For example, have libmarmot expose the slot's last `created_at`, or take the request's from `marmot_kp_lifecycle_created_at`.
+- Additionally add `e` tags for the slot's known event id(s): NIP-09 `e` deletions are not bounded by `created_at`.
+- Assert in the test that the request covers the newest MDK 0.8 event, and ideally teach the fake relay NIP-09 `a`/`e` deletion.
+
+#### L3 (Low): any `marmot_key_package_slot` error is treated as "never published"
+
+**Where.** `key_package_withdraw`: the `!= MARMOT_OK` branch calls `key_package_withdrawn()` straight away.
+
+**Scenario.** A transient storage error while reading `kp_slot` retires the MDK 0.8 keys with no deletion request sent, while the KeyPackage stays published. Its Welcomes then fail. This breaks the ACK-tied rule.
+
+**Fix.** Treat only `MARMOT_ERR_STORAGE_NOT_FOUND` as "nothing to withdraw". On any other error, leave the keys and retry.
+
+#### Nits
+
+- N4: in a build without the adopted producer, the Preferences switch is still shown and still toggles, but has no effect (the MDK 0.8 KeyPackage is kept). Hide or disable it there.
+- N5 (charter): mention that the deletion request itself is public and lasting (see L1 above).
