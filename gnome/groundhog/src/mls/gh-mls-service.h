@@ -42,8 +42,14 @@ G_BEGIN_DECLS
  * the same KeyPackage), even across a restart -- never after a Welcome that
  * failed.
  *
- * KeyPackage lifecycle (nostrc-0bdg; foundation/key-packages.md). The
- * replacement is acknowledgement-tied: the first relay OK for a new
+ * KeyPackage lifecycle (nostrc-0bdg; foundation/key-packages.md). A due
+ * replacement -- lifetime, the user's rotate or a join -- is not published
+ * while a received invitation is pending (it was most likely made with the
+ * current KeyPackage, whose key the replacement's confirmation deletes), for
+ * at most GH_MLS_KEY_PACKAGE_MAX_HOLD and never closer than
+ * GH_MLS_KEY_PACKAGE_EXPIRY_MARGIN to the current one's Lifetime end; it is
+ * looked at again on accept, decline, failed accept, start and a timer.
+ * The replacement is acknowledgement-tied: the first relay OK for a new
  * KeyPackage confirms it (marmot_key_package_confirm_published()), and only
  * then does libmarmot delete the private material of the older ones. Until
  * then a delayed Welcome to the old (last-resort) KeyPackage still joins;
@@ -258,6 +264,13 @@ G_BEGIN_DECLS
 
 /* Default KeyPackage rotation age (28 days). */
 #define GH_MLS_KEY_PACKAGE_LIFETIME ((gint64)28 * 24 * 3600)
+/* A due KeyPackage replacement waits for pending invitations (see "KeyPackage
+ * lifecycle" above) at most this long, and never later than the margin
+ * before the current KeyPackage's Lifetime ends; it is looked at again at
+ * least this often. */
+#define GH_MLS_KEY_PACKAGE_MAX_HOLD ((gint64)7 * 24 * 3600)
+#define GH_MLS_KEY_PACKAGE_EXPIRY_MARGIN ((gint64)24 * 3600)
+#define GH_MLS_KEY_PACKAGE_HOLD_RECHECK_S 600
 /* Kind-445 events of a later epoch held for a Commit, per group. */
 #define GH_MLS_SERVICE_MAX_HELD 256
 /* Overlap subtracted from a group's read cursor (seconds). */
@@ -305,7 +318,8 @@ G_BEGIN_DECLS
 
 typedef enum {
   GH_MLS_KEY_PACKAGE_NONE,        /* not published (inactive, offline or not yet) */
-  GH_MLS_KEY_PACKAGE_NO_RELAYS,   /* the account has no own write or inbox relay */
+  GH_MLS_KEY_PACKAGE_NO_RELAYS,   /* the account's kind 10002 lists no write-capable relay
+                                   * (or none is known): nobody can invite it */
   GH_MLS_KEY_PACKAGE_PUBLISHING,  /* made, being signed or published */
   GH_MLS_KEY_PACKAGE_PUBLISHED,   /* a relay accepted the current one */
   GH_MLS_KEY_PACKAGE_FAILED       /* the signer declined, or no relay accepted it */
@@ -528,6 +542,7 @@ typedef struct {
   guint publish_deadline;              /* per-relay seconds; 0: the publish default */
   guint lookup_deadline;               /* per-phase seconds; 0: 15 */
   gint64 key_package_lifetime;         /* seconds; 0: GH_MLS_KEY_PACKAGE_LIFETIME */
+  gint64 key_package_max_hold;         /* seconds; 0: GH_MLS_KEY_PACKAGE_MAX_HOLD */
 } GhMlsServiceConfig;
 
 #define GH_TYPE_MLS_SERVICE (gh_mls_service_get_type())
@@ -586,9 +601,14 @@ void gh_mls_service_set_backfill_quiet(GhMlsService *self, guint quiet_ms);
 void gh_mls_service_set_pending_shown(GhMlsService *self, guint shown_ms);
 /* The id of the KeyPackage event last accepted by a relay, or NULL. */
 const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
-/* Rotates the KeyPackage now (e.g. the user asked); FALSE with
- * GH_MLS_SERVICE_ERROR_INACTIVE when the service is not running. */
+/* Asks for a new KeyPackage (e.g. the user asked); FALSE with
+ * GH_MLS_SERVICE_ERROR_INACTIVE when the service is not running. Published
+ * now, or -- while an invitation is pending -- once none is or the hold ends
+ * (gh_mls_service_get_key_package_held()). */
 gboolean gh_mls_service_rotate_key_package(GhMlsService *self, GError **error);
+/* Whether a due KeyPackage replacement is held back because an invitation
+ * is pending (the current KeyPackage stays published meanwhile). */
+gboolean gh_mls_service_get_key_package_held(GhMlsService *self);
 
 /* The group of a hex MLS group id or of a room id, or NULL. Transfer none. */
 GhMlsGroup *gh_mls_service_lookup(GhMlsService *self, const gchar *group_id_or_room_id);

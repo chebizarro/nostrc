@@ -26,8 +26,9 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
  * and each group's read cursor ("mls/" + a hash of the group id: the scope
  * is bounded and names no group). */
 #define KEY_PACKAGE_CURSOR "mls/key-package"
-/* 1 while a join's KeyPackage replacement waits for pending invitations. */
-#define KEY_PACKAGE_JOINED_CURSOR "mls/key-package-joined"
+/* When a due KeyPackage replacement was first held back for pending
+ * invitations (0: not held); see key_package_hold(). */
+#define KEY_PACKAGE_HELD_CURSOR "mls/key-package-held"
 /* A new joiner reads back this far (its Welcome may arrive late). */
 #define JOIN_BACKFILL ((gint64)2 * 24 * 3600)
 /* Retry of unanswered Commits, Welcomes and sends: jittered, doubling. */
@@ -177,6 +178,7 @@ struct _GhMlsService {
   guint publish_deadline;
   guint lookup_deadline;
   gint64 key_package_lifetime;
+  gint64 key_package_max_hold;
   gboolean disposed;
 
   GPtrArray *groups;               /* GhMlsGroup, oldest first */
@@ -203,6 +205,9 @@ struct _GhMlsService {
   GhRelayPublish *key_package_publish;
   guint8 key_package_ref[32];        /* KeyPackageRef of the one in flight */
   gboolean key_package_in_flight;    /* ...until its first relay OK confirms it */
+  gboolean key_package_held;         /* a due replacement waits for invitations */
+  guint key_package_hold_timer;      /* GhClock source: look at the hold again */
+  guint key_package_sweep_timer;     /* GhClock source: the next not_after */
 
   /* Member identities (nostrc-6ukh, W24 review H1) */
   GHashTable *verifying;           /* account hex: a Verify the user asked for runs */
@@ -4245,10 +4250,14 @@ pending_welcome(GhMlsService *self, const gchar *wrapper_id, GError **error)
 }
 
 static void key_package_rotate(GhMlsService *self);
+static void key_package_maybe_publish(GhMlsService *self);
+
+typedef enum { INVITES_NONE, INVITES_PENDING, INVITES_UNKNOWN } InvitesPending;
 
 /* Whether a received invitation is still pending (neither accepted nor
- * declined nor refused). */
-static gboolean
+ * declined nor refused). A listing that fails is UNKNOWN: callers treat it
+ * as pending (review L1), never as "none". */
+static InvitesPending
 invitations_pending(GhMlsService *self)
 {
   MarmotWelcome **welcomes = NULL;
@@ -4258,7 +4267,7 @@ invitations_pending(GhMlsService *self)
   drop_stale_error(self);
   if (marmot_get_pending_welcomes(self->marmot, &page, &welcomes, &n) != MARMOT_OK) {
     drop_stale_error(self);
-    return FALSE;
+    return INVITES_UNKNOWN;
   }
   gboolean pending = FALSE;
   for (size_t i = 0; i < n; i++) {
@@ -4266,32 +4275,7 @@ invitations_pending(GhMlsService *self)
     marmot_welcome_free(welcomes[i]);
   }
   free(welcomes);
-  return pending;
-}
-
-/* MIP-00 / foundation/key-packages.md: after a successful join the account
- * SHOULD publish a fresh replacement, and the replacement's confirmation
- * retires the old (last-resort) KeyPackage's keys (nostrc-0bdg). Invitations
- * already received were most likely made with that same KeyPackage: while
- * one is still pending the replacement waits (the old KeyPackage stays
- * published and usable: it is last-resort), and the last accept or decline
- * runs it. Recorded in the store (KEY_PACKAGE_JOINED_CURSOR), so a restart
- * keeps it. Never run by a failed Welcome. The lifetime rotation still
- * applies meanwhile. */
-static void
-key_package_rotate_after_join(GhMlsService *self, gboolean joined)
-{
-  gint64 owed = 0;
-  if (!joined &&
-      (!gh_store_get_cursor(self->store, KEY_PACKAGE_JOINED_CURSOR, "", &owed, NULL) ||
-       owed <= 0))
-    return;
-  gboolean wait = invitations_pending(self);
-  g_autoptr(GError) error = NULL;
-  if (!gh_store_set_cursor(self->store, KEY_PACKAGE_JOINED_CURSOR, "", wait ? 1 : 0, &error))
-    g_message("Groundhog could not record a spent KeyPackage: %s", error->message);
-  if (!wait)
-    key_package_rotate(self);
+  return pending ? INVITES_PENDING : INVITES_NONE;
 }
 
 GhMlsGroup *
@@ -4317,6 +4301,10 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
     /* libmarmot keeps its deliberate outcomes (a retired duplicate). */
     if (!gh_store_commit(self->store, NULL))
       gh_store_rollback(self->store);
+    /* The invitation may have left the pending state: a replacement held
+     * for it is looked at again (review M1). A failed Welcome never asks
+     * for a rotation itself. */
+    key_package_maybe_publish(self);
     return NULL;
   }
   g_autofree gchar *gid_hex = to_hex(joined->mls_group_id.data, joined->mls_group_id.len);
@@ -4345,8 +4333,9 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
   if (group->floor == 0)
     set_floor(group, made);
   group_subscribe(group);
-  /* MIP-00: the KeyPackage the Welcome used is spent; publish a new one. */
-  key_package_rotate_after_join(self, TRUE);
+  /* MIP-00: the KeyPackage the Welcome used is spent; publish a new one
+   * (held while other invitations are pending: key_package_hold()). */
+  key_package_rotate(self);
   return group;
 }
 
@@ -4362,8 +4351,8 @@ gh_mls_service_decline_invite(GhMlsService *self, const gchar *wrapper_id, GErro
   marmot_welcome_free(welcome);
   if (err != MARMOT_OK)
     return marmot_fail(self, err, "The invitation could not be declined", error);
-  /* A replacement a join owed, now that no invitation waits for it. */
-  key_package_rotate_after_join(self, FALSE);
+  /* A replacement held for pending invitations, looked at again. */
+  key_package_maybe_publish(self);
   return TRUE;
 }
 
@@ -4897,11 +4886,52 @@ gh_mls_service_test_has_init_key(GhMlsService *self, const gchar *ref_hex)
 }
 #endif
 
+static void key_package_sweep(GhMlsService *self);
+
+static gboolean
+key_package_sweep_fired(gpointer data)
+{
+  GhMlsService *self = data;
+  self->key_package_sweep_timer = 0;
+  key_package_sweep(self);
+  key_package_maybe_publish(self);
+  return G_SOURCE_REMOVE;
+}
+
+/* The sweep runs again at the earliest not_after left, whether or not a
+ * publish check comes (review L3: e.g. an account without write relays). */
+static void
+key_package_sweep_schedule(GhMlsService *self)
+{
+  if (self->key_package_sweep_timer) {
+    gh_clock_source_remove(self->clock, self->key_package_sweep_timer);
+    self->key_package_sweep_timer = 0;
+  }
+  if (self->disposed || self->generation == 0)
+    return;
+  int64_t not_after = 0;
+  drop_stale_error(self);
+  if (marmot_key_package_next_expiry(self->marmot, self->account_key, &not_after) !=
+        MARMOT_OK) {
+    drop_stale_error(self);
+    return;
+  }
+  if (not_after <= 0)
+    return;
+  gint64 wait_s = MAX((gint64)not_after - now_s(self), 0) + 1;
+  self->key_package_sweep_timer =
+    gh_clock_timeout_add(self->clock, (guint64)wait_s * 1000, key_package_sweep_fired, self,
+                         NULL);
+}
+
 /* Lifetime bound (foundation/key-packages.md): an expired KeyPackage's
- * private material goes, whatever its state. */
+ * private material goes, whatever its state. Runs at every start, every
+ * publish check and at the earliest not_after (key_package_sweep_schedule). */
 static void
 key_package_sweep(GhMlsService *self)
 {
+  if (self->disposed || self->generation == 0)
+    return;
   g_autoptr(GError) error = NULL;
   drop_stale_error(self);
   if (!gh_store_begin(self->store, &error)) {
@@ -4923,6 +4953,83 @@ key_package_sweep(GhMlsService *self)
   } else if (deleted > 0) {
     g_debug("Groundhog retired %" G_GSIZE_FORMAT " expired KeyPackage(s)", deleted);
   }
+  key_package_sweep_schedule(self);
+}
+
+static gboolean
+key_package_hold_fired(gpointer data)
+{
+  GhMlsService *self = data;
+  self->key_package_hold_timer = 0;
+  key_package_maybe_publish(self);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+key_package_hold_stop(GhMlsService *self, gboolean forget)
+{
+  if (self->key_package_hold_timer) {
+    gh_clock_source_remove(self->clock, self->key_package_hold_timer);
+    self->key_package_hold_timer = 0;
+  }
+  self->key_package_held = FALSE;
+  gint64 since = 0;
+  if (forget && self->store &&
+      gh_store_get_cursor(self->store, KEY_PACKAGE_HELD_CURSOR, "", &since, NULL) && since > 0)
+    gh_store_set_cursor(self->store, KEY_PACKAGE_HELD_CURSOR, "", 0, NULL);
+}
+
+/* A due replacement (lifetime, the user's rotate, or a join) of a KeyPackage
+ * that pending invitations were most likely made with (nostrc-0bdg, review
+ * H1/M1). Its first relay OK makes libmarmot delete the old private key
+ * (foundation/key-packages.md: no later than the confirmed replacement;
+ * "Local retention policy MUST NOT extend" that), and a pending invitation
+ * could no longer be accepted. So the replacement is not *published* while
+ * an invitation is pending -- the old KeyPackage stays published and
+ * usable (last-resort) -- for at most GhMlsServiceConfig.key_package_max_hold
+ * (GH_MLS_KEY_PACKAGE_MAX_HOLD) from when it was first held, and never
+ * later than GH_MLS_KEY_PACKAGE_EXPIRY_MARGIN before the current
+ * KeyPackage's Lifetime ends. Recorded in the store (a restart keeps the
+ * start); looked at again on every accept, decline and failed accept, at
+ * every start and on a timer (at most GH_MLS_KEY_PACKAGE_HOLD_RECHECK_S).
+ * An invitation list that cannot be read counts as pending. TRUE: held. */
+static gboolean
+key_package_hold(GhMlsService *self)
+{
+  int64_t expires = 0;
+  drop_stale_error(self);
+  if (marmot_key_package_next_expiry(self->marmot, self->account_key, &expires) != MARMOT_OK) {
+    drop_stale_error(self);
+    expires = -1;   /* unknown: hold, bounded by the cap alone */
+  }
+  /* Nothing published to protect (a first KeyPackage). */
+  if (expires == 0 || invitations_pending(self) == INVITES_NONE) {
+    key_package_hold_stop(self, TRUE);
+    return FALSE;
+  }
+  gint64 now = now_s(self), since = 0;
+  if (!gh_store_get_cursor(self->store, KEY_PACKAGE_HELD_CURSOR, "", &since, NULL) ||
+      since <= 0 || since > now) {
+    since = now;
+    gh_store_set_cursor(self->store, KEY_PACKAGE_HELD_CURSOR, "", since, NULL);
+  }
+  gint64 deadline = since + self->key_package_max_hold;
+  if (expires > 0)
+    deadline = MIN(deadline, (gint64)expires - GH_MLS_KEY_PACKAGE_EXPIRY_MARGIN);
+  if (now >= deadline) {
+    g_message("Groundhog publishes its KeyPackage replacement although an invitation is "
+              "still pending: it waited as long as it may");
+    key_package_hold_stop(self, FALSE);
+    return FALSE;
+  }
+  self->key_package_held = TRUE;
+  if (!self->key_package_hold_timer) {
+    gint64 wait_s = MIN(deadline - now, (gint64)GH_MLS_KEY_PACKAGE_HOLD_RECHECK_S);
+    self->key_package_hold_timer =
+      gh_clock_timeout_add(self->clock, (guint64)MAX(wait_s, 1) * 1000, key_package_hold_fired,
+                           self, NULL);
+  }
+  return TRUE;
 }
 
 /* The relay's OK for the KeyPackage in flight: the replacement is
@@ -4998,6 +5105,8 @@ key_package_update(GhRelayPublish *publish, const GhRelayPublishResult *result, 
   /* The first relay OK (transports/nostr.md "Publish targets and
    * acknowledgements"): the replacement is confirmed. */
   key_package_confirm(self);
+  key_package_hold_stop(self, TRUE);
+  key_package_sweep_schedule(self);
   g_autoptr(GError) error = NULL;
   /* A rotation asked for while this one was in flight (a Welcome joined
    * meanwhile) still stands: the publication time is not recorded, so the
@@ -5117,6 +5226,13 @@ key_package_maybe_publish(GhMlsService *self)
     return;
   }
   if (!self->key_package_rotate && last > 0 && now_s(self) - last < self->key_package_lifetime) {
+    key_package_hold_stop(self, TRUE);
+    key_package_set_state(self, GH_MLS_KEY_PACKAGE_PUBLISHED);
+    return;
+  }
+  /* Due. Pending invitations hold the replacement back (review H1); the
+   * current KeyPackage stays published meanwhile. */
+  if (key_package_hold(self)) {
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_PUBLISHED);
     return;
   }
@@ -5143,6 +5259,7 @@ key_package_maybe_publish(GhMlsService *self)
    * so a failure or a restart publishes again. */
   self->key_package_rotate = FALSE;
   key_package_set_state(self, GH_MLS_KEY_PACKAGE_PUBLISHING);
+  key_package_sweep_schedule(self);
   KeyPackageJob *job = g_new0(KeyPackageJob, 1);
   g_weak_ref_init(&job->service, self);
   job->run = self->run;
@@ -5179,6 +5296,13 @@ gh_mls_service_get_key_package_id(GhMlsService *self)
 {
   g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
   return self->key_package_id;
+}
+
+gboolean
+gh_mls_service_get_key_package_held(GhMlsService *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  return self->key_package_held;
 }
 
 gboolean
@@ -5264,7 +5388,7 @@ resume_all(GhMlsService *self)
     leave_continue(group);
     departures_schedule(group);
   }
-  key_package_rotate_after_join(self, FALSE);
+  key_package_sweep(self);
   key_package_maybe_publish(self);
 }
 
@@ -5289,6 +5413,11 @@ stop_generation(GhMlsService *self)
   }
   self->key_package_busy = FALSE;
   self->key_package_in_flight = FALSE;
+  key_package_hold_stop(self, FALSE);
+  if (self->key_package_sweep_timer) {
+    gh_clock_source_remove(self->clock, self->key_package_sweep_timer);
+    self->key_package_sweep_timer = 0;
+  }
   g_hash_table_remove_all(self->deliveries);
   /* Verifies in flight were cancelled: nothing is "checking" any more. */
   {
@@ -5445,6 +5574,8 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
                                                : g_network_monitor_get_default());
   self->publish_deadline = config->publish_deadline;
   self->lookup_deadline = config->lookup_deadline;
+  self->key_package_max_hold = config->key_package_max_hold > 0 ? config->key_package_max_hold
+                                                                : GH_MLS_KEY_PACKAGE_MAX_HOLD;
   self->key_package_lifetime = config->key_package_lifetime > 0 ? config->key_package_lifetime
                                                                 : GH_MLS_KEY_PACKAGE_LIFETIME;
 

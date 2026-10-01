@@ -445,6 +445,25 @@ marmot_key_package_sweep_expired(Marmot *m, const uint8_t owner_pubkey[32], int6
 }
 
 MarmotError
+marmot_key_package_next_expiry(Marmot *m, const uint8_t owner_pubkey[32],
+                               int64_t *out_not_after)
+{
+    if (out_not_after) *out_not_after = 0;
+    if (!m || !owner_pubkey || !out_not_after) return MARMOT_ERR_INVALID_ARG;
+    if (!storage_ready(m)) return MARMOT_ERR_STORAGE;
+    KpLife life;
+    MarmotError err = life_open(m, owner_pubkey, &life);
+    if (err != MARMOT_OK) return err;
+    uint64_t earliest = 0;
+    for (size_t i = 0; i < life.count; i++) {
+        uint64_t t = life.entries[i].not_after;
+        if (t != 0 && (earliest == 0 || t < earliest)) earliest = t;
+    }
+    *out_not_after = (int64_t)earliest;
+    return MARMOT_OK;
+}
+
+MarmotError
 marmot_key_package_has_private_key(Marmot *m, const uint8_t key_package_ref[32],
                                    bool *out_present)
 {

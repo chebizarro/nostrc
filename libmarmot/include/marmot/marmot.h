@@ -368,6 +368,23 @@ MarmotError marmot_key_package_sweep_expired(Marmot *m, const uint8_t owner_pubk
                                              int64_t now, size_t *out_deleted);
 
 /**
+ * marmot_key_package_next_expiry:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @out_not_after: (out): the earliest Lifetime not_after (Unix seconds) among
+ *   the account's KeyPackages that still hold private material, or 0 when
+ *   there is none
+ *
+ * When to run marmot_key_package_sweep_expired() next, and the latest
+ * moment by which a replacement of the current KeyPackage must be
+ * published. Writes nothing.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
+ */
+MarmotError marmot_key_package_next_expiry(Marmot *m, const uint8_t owner_pubkey[32],
+                                           int64_t *out_not_after);
+
+/**
  * marmot_key_package_has_private_key:
  * @m: Marmot instance
  * @key_package_ref: (array fixed-size=32): a KeyPackageRef

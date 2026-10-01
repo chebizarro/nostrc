@@ -290,6 +290,36 @@ settled(gpointer data)
   G_STMT_START { SettledWait stw_ = { (app_), (old_id_) }; \
     spin_until(settled, &stw_, "the KeyPackage replacement settled"); } G_STMT_END
 
+/* A due replacement held back: still the first KeyPackage, published and
+ * kept, and nothing new on W. */
+static G_GNUC_UNUSED void
+assert_held(World *w, App *app, const gchar *ref, const gchar *id)
+{
+  g_assert_true(gh_mls_service_get_key_package_held(app->service));
+  g_assert_cmpint(gh_mls_service_get_key_package_state(app->service), ==,
+                  GH_MLS_KEY_PACKAGE_PUBLISHED);
+  /* The id is known again after a restart only once one is accepted. */
+  const gchar *now_id = gh_mls_service_get_key_package_id(app->service);
+  g_assert_true(now_id == NULL || g_str_equal(now_id, id));
+  g_assert_true(has_init_key(app, ref));
+  drain();
+  g_assert_cmpuint(n_key_packages(&w->w, app->key), ==, 1);
+}
+
+typedef struct {
+  App *app;
+  gint64 age;
+} AgedWait;
+
+/* The account's last recorded publication is at least `age` seconds old. */
+static G_GNUC_UNUSED gboolean
+key_package_aged(gpointer data)
+{
+  AgedWait *wait = data;
+  gint64 at = key_package_cursor(wait->app);
+  return at > 0 && g_get_real_time() / G_USEC_PER_SEC - at >= wait->age;
+}
+
 /* ---- the producer's shape -------------------------------------------------------- */
 
 /* The published KeyPackage in the producer profile's strict form; for the
@@ -539,7 +569,7 @@ test_delayed_welcome(void)
 }
 
 /* Invitations already received were made with the same last-resort
- * KeyPackage: the join's replacement waits until none is pending, so each
+ * KeyPackage: the join's replacement is held while one is pending, so each
  * of them still joins; then the replacement retires the old key. */
 static void
 test_pending_invitations_defer_rotation(void)
@@ -555,7 +585,6 @@ test_pending_invitations_defer_rotation(void)
   g_autofree gchar *ref1 = NULL;
   newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
   g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
-  gint64 cursor1 = key_package_cursor(bob);
   accept_contact(alice, BOB);
   accept_contact(carol, BOB);
   g_autoptr(GError) error = NULL;
@@ -569,24 +598,130 @@ test_pending_invitations_defer_rotation(void)
   g_autofree gchar *one = invite_from(bob, ALICE);
   g_assert_nonnull(gh_mls_service_accept_invite(bob->service, one, &error));
   g_assert_no_error(error);
-  /* Carol's invitation is pending: no replacement yet. */
-  g_assert_cmpint(gh_mls_service_get_key_package_state(bob->service), ==,
-                  GH_MLS_KEY_PACKAGE_PUBLISHED);
-  g_assert_cmpint(key_package_cursor(bob), ==, cursor1);
-  g_assert_true(has_init_key(bob, ref1));
+  /* Carol's invitation is pending: the replacement is held. */
+  assert_held(&w, bob, ref1, id1);
 
-  /* A restart keeps the owed replacement waiting. */
+  /* A restart keeps it held. */
   app_restart(bob);
   wait_published(bob);
-  g_assert_cmpint(key_package_cursor(bob), ==, cursor1);
+  assert_held(&w, bob, ref1, id1);
 
   g_autofree gchar *two = invite_from(bob, CAROL);
   g_assert_nonnull(gh_mls_service_accept_invite(bob->service, two, &error));
   g_assert_no_error(error);
   /* None pending: the replacement now, and its OK retires KeyPackage 1. */
-  RotatedWait done = { bob, id1 };
-  spin_until(rotated, &done, "Bob's replacement after the last pending invitation");
+  wait_settled(bob, id1);
+  g_assert_false(gh_mls_service_get_key_package_held(bob->service));
   g_assert_false(has_init_key(bob, ref1));
+  world_down(&w);
+}
+
+/* Review H1, the reviewer's probe: a rotation the user asks for while an
+ * invitation is pending is held; the invitation still joins; then the
+ * replacement is published and retires the old key. */
+static void
+test_rotation_held_for_pending_invitation(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  g_autofree gchar *ref1 = NULL;
+  newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
+  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(create_attempt(alice, "One", (const guint[]){ BOB }, 1, &error));
+  g_assert_no_error(error);
+  InvitesWait one_wait = { bob, 1 };
+  spin_until(invites_at_least, &one_wait, "the invitation");
+  g_assert_true(gh_mls_service_rotate_key_package(bob->service, &error));
+  g_assert_no_error(error);
+  assert_held(&w, bob, ref1, id1);
+  g_autofree gchar *one = invite_from(bob, ALICE);
+  GhMlsGroup *joined = gh_mls_service_accept_invite(bob->service, one, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(joined);
+  wait_settled(bob, id1);
+  g_assert_false(has_init_key(bob, ref1));
+  world_down(&w);
+}
+
+/* Review H1, the lifetime path: a KeyPackage older than the rotation age,
+ * looked at again (here at a restart) while an invitation is pending, is
+ * not replaced; the invitation joins. */
+static void
+test_lifetime_rotation_held(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_key_package_lifetime = 2;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(create_attempt(alice, "One", (const guint[]){ BOB }, 1, &error));
+  g_assert_no_error(error);
+  InvitesWait one_wait = { bob, 1 };
+  spin_until(invites_at_least, &one_wait, "the invitation");
+  /* The KeyPackage Alice used (a short rotation age: read it now). */
+  g_autofree gchar *ref1 = NULL;
+  newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
+  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  /* Past the rotation age; the restart's check finds it due. */
+  AgedWait aged = { bob, 3 };
+  spin_until(key_package_aged, &aged, "Bob's KeyPackage past its rotation age");
+  app_restart(bob);
+  StateWait published = { bob, GH_MLS_KEY_PACKAGE_PUBLISHED };
+  spin_until(state_is, &published, "the KeyPackage state after a restart");
+  assert_held(&w, bob, ref1, id1);
+  g_autofree gchar *one = invite_from(bob, ALICE);
+  g_assert_nonnull(gh_mls_service_accept_invite(bob->service, one, &error));
+  g_assert_no_error(error);
+  wait_settled(bob, id1);
+  g_assert_false(has_init_key(bob, ref1));
+  world_down(&w);
+}
+
+/* Review H1/M1, the cap: a replacement is held at most
+ * key_package_max_hold; then it is published (its timer, no other
+ * trigger) and the still-pending invitation can no longer join -- the
+ * spec's bound wins over the wait. */
+static void
+test_hold_cap_expires(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_key_package_max_hold = 2;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  g_autofree gchar *ref1 = NULL;
+  newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
+  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(create_attempt(alice, "One", (const guint[]){ BOB }, 1, &error));
+  g_assert_no_error(error);
+  InvitesWait one_wait = { bob, 1 };
+  spin_until(invites_at_least, &one_wait, "the invitation");
+  g_assert_true(gh_mls_service_rotate_key_package(bob->service, &error));
+  g_assert_no_error(error);
+  assert_held(&w, bob, ref1, id1);
+  wait_settled(bob, id1);
+  g_assert_false(gh_mls_service_get_key_package_held(bob->service));
+  g_assert_false(has_init_key(bob, ref1));
+  g_autofree gchar *one = invite_from(bob, ALICE);
+  g_assert_null(gh_mls_service_accept_invite(bob->service, one, &error));
+  g_assert_nonnull(error);
   world_down(&w);
 }
 
@@ -702,6 +837,10 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("delayed-welcome"), test_delayed_welcome);
   g_test_add_func(KP_TEST("pending-invitations-defer-rotation"),
                   test_pending_invitations_defer_rotation);
+  g_test_add_func(KP_TEST("rotation-held-for-pending-invitation"),
+                  test_rotation_held_for_pending_invitation);
+  g_test_add_func(KP_TEST("lifetime-rotation-held"), test_lifetime_rotation_held);
+  g_test_add_func(KP_TEST("hold-cap-expires"), test_hold_cap_expires);
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
 #endif
   gint rc = g_test_run();

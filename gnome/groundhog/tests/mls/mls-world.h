@@ -48,6 +48,10 @@ static gboolean world_fake_clock;
  * ["r", W, "write"], ["r", H] (unmarked: read and write) and ["r", R,
  * "read"] instead of an unmarked W. */
 static gboolean world_split_lists;
+/* The next world's services: KeyPackage rotation age and the longest a due
+ * replacement waits for pending invitations (seconds; 0: the defaults). */
+static gint64 world_key_package_lifetime;
+static gint64 world_key_package_max_hold;
 
 static G_GNUC_UNUSED void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int line)
@@ -331,6 +335,8 @@ service_up(App *app)
     .network = G_NETWORK_MONITOR(app->network),
     .publish_deadline = 20,
     .lookup_deadline = 20,
+    .key_package_lifetime = world_key_package_lifetime,
+    .key_package_max_hold = world_key_package_max_hold,
   };
   g_autoptr(GError) error = NULL;
   app->service = gh_mls_service_new(&config, &error);
@@ -469,6 +475,8 @@ world_down(World *w)
   gh_test_signer_down(&test_bus, &w->signer);
   world_fake_clock = FALSE;
   world_split_lists = FALSE;
+  world_key_package_lifetime = 0;
+  world_key_package_max_hold = 0;
   rm_rf(w->root);
   g_free(w->root);
 }

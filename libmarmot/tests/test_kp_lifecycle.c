@@ -385,11 +385,16 @@ test_lifetime_sweep(void)
                                                   0, &kp, owner));
     int64_t not_after = (int64_t)kp.leaf_node.lifetime_not_after;
     mls_key_package_clear(&kp);
+    int64_t next = 0;
+    OK(marmot_key_package_next_expiry(bob.m, bob.pk, &next));
+    CHECK(next == not_after, "next expiry is the KeyPackage's not_after");
     size_t n = 99;
     OK(marmot_key_package_sweep_expired(bob.m, bob.pk, not_after - 1, &n));
     CHECK(n == 0 && has_key(&bob, &k1), "kept before not_after");
     OK(marmot_key_package_sweep_expired(bob.m, bob.pk, not_after, &n));
     CHECK(n == 1 && !has_key(&bob, &k1), "deleted at not_after");
+    OK(marmot_key_package_next_expiry(bob.m, bob.pk, &next));
+    CHECK(next == 0, "nothing left to expire");
     free(k1.json);
     member_free(&bob);
 }
