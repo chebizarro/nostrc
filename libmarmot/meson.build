@@ -211,11 +211,17 @@ if get_option('tests')
     'test_mls_tree_vectors',
     'test_rfc9420_vectors',
   ]
+  # test_kp_profile checks the public producer against the library's gate.
+  marmot_test_c_args = []
+  if get_option('adopted_key_package_producer')
+    marmot_test_c_args += '-DMARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1'
+  endif
   foreach name : marmot_test_names
     test('marmot_' + name, executable(name, 'tests' / (name + '.c'),
       include_directories: [marmot_inc, marmot_src_inc],
       link_with: libmarmot,
       dependencies: marmot_deps,
+      c_args: marmot_test_c_args,
     ))
   endforeach
 

@@ -177,6 +177,16 @@ static void test_create_and_validate(void) {
     CHECK(marmot_create_key_package_for_profile(m, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, pk, sk,
                                                 NULL, NULL, relays, 1, &r) == MARMOT_ERR_UNSUPPORTED,
           "public ADOPTED producer is build-gated off");
+#else
+    /* On by default since 0.12.0 (nostrc-lf62): the public producer makes
+     * what the internal one does. */
+    CHECK(marmot_create_key_package_for_profile(m, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, pk, sk,
+                                                NULL, NULL, relays, 1, &r) == MARMOT_OK,
+          "public ADOPTED producer");
+    CHECK(marmot_validate_key_package_event_json(r.event_json, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                 0, NULL, NULL) == MARMOT_OK,
+          "public ADOPTED producer output validates");
+    marmot_key_package_result_free(&r);
 #endif
     CHECK(marmot_create_key_package_adopted_internal(m, pk, sk, NULL, NULL, &r) == MARMOT_OK,
           "create adopted");

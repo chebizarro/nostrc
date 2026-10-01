@@ -6,12 +6,14 @@
  * behavior"; transports/nostr.md "KeyPackage publication", "Publish
  * targets and acknowledgements"):
  *
- *  - Replacement is acknowledgement-tied. Every KeyPackage reuses the
- *    account's one publication slot (`d`), so a newer one replaces the older
- *    ones on relays. Only when a relay accepted a newer KeyPackage (NIP-01
- *    OK true, marmot_key_package_confirm_published()) is the private
- *    material of every older one deleted -- the confirmed replacement bound,
- *    for last-resort KeyPackages too. Until then a delayed Welcome to the old
+ *  - Replacement is acknowledgement-tied. Every KeyPackage reuses its
+ *    profile's publication slot (`d`; the MDK 0.8 and the adopted profile
+ *    each have their own, nostrc-lf62), so a newer one replaces the older
+ *    events of that profile on relays and never the other profile's. Only
+ *    when a relay accepted a newer KeyPackage (NIP-01 OK true,
+ *    marmot_key_package_confirm_published()) is the private material of
+ *    every older one of the same profile deleted -- the confirmed
+ *    replacement bound, for last-resort KeyPackages too. Until then a delayed Welcome to the old
  *    one still opens; after it, such a Welcome fails (the spec's deliberate
  *    confidentiality-versus-availability trade-off).
  *  - A newer KeyPackage made but not confirmed yet (its publish failed, or
@@ -23,11 +25,13 @@
  *    (marmot_key_package_sweep_expired()).
  *  - A failed Welcome changes nothing.
  *
- * The slot's entries are kept per account in the backend's MLS key store
- * (label "kp_life", key the owner pubkey), as the slot id itself is: no
- * storage schema change. An account whose KeyPackages predate the record
- * gets one seeded from find_key_packages_by_pubkey() (oldest first, all
- * unconfirmed), so a confirmed replacement retires them too.
+ * The entries of both slots are kept per account in the backend's MLS key
+ * store (label "kp_life", key the owner pubkey; each entry flagged with its
+ * profile), as the slot ids themselves are: no storage schema change. An
+ * account whose KeyPackages predate the record gets one seeded from
+ * find_key_packages_by_pubkey() (oldest first, all unconfirmed, MDK 0.8
+ * profile: the only one produced then), so a confirmed replacement retires
+ * them too.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -49,6 +53,7 @@ enum {
     KP_LIFE_LAST_RESORT = 1 << 0,
     KP_LIFE_CONFIRMED   = 1 << 1,   /* a relay accepted it */
     KP_LIFE_CONSUMED    = 1 << 2,   /* a Welcome to it was joined */
+    KP_LIFE_ADOPTED     = 1 << 3,   /* independent adopted publication slot */
 };
 
 typedef struct {
@@ -322,7 +327,8 @@ marmot_kp_lifecycle_created_at(Marmot *m, const uint8_t owner[32], int64_t now,
 
 MarmotError
 marmot_kp_lifecycle_register(Marmot *m, const uint8_t owner[32], const uint8_t ref[32],
-                             uint64_t not_after, bool last_resort, int64_t created_at)
+                             uint64_t not_after, bool last_resort, bool adopted,
+                             int64_t created_at)
 {
     if (!storage_ready(m) || !owner || !ref) return MARMOT_ERR_STORAGE;
     KpLife life;
@@ -331,12 +337,20 @@ marmot_kp_lifecycle_register(Marmot *m, const uint8_t owner[32], const uint8_t r
     if (created_at > life.last_created_at) life.last_created_at = created_at;
     if (life_find(&life, ref)) return life_save(m, owner, &life);
     /* Bounded: a long run of unconfirmed publishes drops the oldest
-     * entries, never the newest confirmed one (it is still published). */
+     * entries, never either profile's newest confirmed one (each is still
+     * published in its own slot). */
     while (life.count >= KP_LIFE_MAX) {
-        size_t newest_confirmed = SIZE_MAX;
-        for (size_t i = 0; i < life.count; i++)
-            if (life.entries[i].flags & KP_LIFE_CONFIRMED) newest_confirmed = i;
-        size_t victim = newest_confirmed == 0 ? 1 : 0;
+        size_t newest_confirmed[2] = { SIZE_MAX, SIZE_MAX };
+        for (size_t i = 0; i < life.count; i++) {
+            unsigned profile = (life.entries[i].flags & KP_LIFE_ADOPTED) != 0;
+            if (life.entries[i].flags & KP_LIFE_CONFIRMED)
+                newest_confirmed[profile] = i;
+        }
+        size_t victim = 0;
+        while (victim < life.count &&
+               (victim == newest_confirmed[0] || victim == newest_confirmed[1]))
+            victim++;
+        if (victim == life.count) return MARMOT_ERR_STORAGE;
         err = delete_private(m, life.entries[victim].ref);
         if (err != MARMOT_OK) return err;
         life_remove_at(&life, victim);
@@ -346,7 +360,8 @@ marmot_kp_lifecycle_register(Marmot *m, const uint8_t owner[32], const uint8_t r
     memcpy(e->ref, ref, 32);
     e->seq = life.next_seq++;
     e->not_after = not_after;
-    e->flags = last_resort ? KP_LIFE_LAST_RESORT : 0;
+    e->flags = (last_resort ? KP_LIFE_LAST_RESORT : 0) |
+               (adopted ? KP_LIFE_ADOPTED : 0);
     return life_save(m, owner, &life);
 }
 
@@ -385,10 +400,13 @@ confirm_impl(Marmot *m, const uint8_t owner[32], const uint8_t ref[32])
     KpLifeEntry *target = life_find(&life, ref);
     if (!target) return MARMOT_ERR_KEY_NOT_FOUND;
     uint64_t seq = target->seq;
+    bool adopted = (target->flags & KP_LIFE_ADOPTED) != 0;
     target->flags |= KP_LIFE_CONFIRMED;
-    /* Every older KeyPackage of the slot is superseded on the relays. */
+    /* Every older KeyPackage of the same profile's slot is superseded on the
+     * relays; the other profile's slot is untouched (nostrc-lf62). */
     for (size_t i = 0; i < life.count;) {
-        if (life.entries[i].seq < seq) {
+        if (life.entries[i].seq < seq &&
+            ((life.entries[i].flags & KP_LIFE_ADOPTED) != 0) == adopted) {
             err = delete_private(m, life.entries[i].ref);
             if (err != MARMOT_OK) return err;
             life_remove_at(&life, i);
@@ -449,23 +467,47 @@ marmot_key_package_sweep_expired(Marmot *m, const uint8_t owner_pubkey[32], int6
     return err;
 }
 
+/* The earliest not_after among @owner's KeyPackages; of one profile only
+ * when @profile is 0 or 1 (MarmotKeyPackageProfile), of all when it is -1. */
+static MarmotError
+next_expiry_impl(Marmot *m, const uint8_t owner[32], int profile, int64_t *out)
+{
+    if (out) *out = 0;
+    if (!m || !owner || !out) return MARMOT_ERR_INVALID_ARG;
+    if (!storage_ready(m)) return MARMOT_ERR_STORAGE;
+    KpLife life;
+    MarmotError err = life_open(m, owner, &life);
+    if (err != MARMOT_OK) return err;
+    uint64_t earliest = 0;
+    for (size_t i = 0; i < life.count; i++) {
+        int adopted = (life.entries[i].flags & KP_LIFE_ADOPTED) != 0;
+        if (profile >= 0 && adopted != (profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED))
+            continue;
+        uint64_t t = life.entries[i].not_after;
+        if (t != 0 && (earliest == 0 || t < earliest)) earliest = t;
+    }
+    *out = (int64_t)earliest;
+    return MARMOT_OK;
+}
+
 MarmotError
 marmot_key_package_next_expiry(Marmot *m, const uint8_t owner_pubkey[32],
                                int64_t *out_not_after)
 {
-    if (out_not_after) *out_not_after = 0;
-    if (!m || !owner_pubkey || !out_not_after) return MARMOT_ERR_INVALID_ARG;
-    if (!storage_ready(m)) return MARMOT_ERR_STORAGE;
-    KpLife life;
-    MarmotError err = life_open(m, owner_pubkey, &life);
-    if (err != MARMOT_OK) return err;
-    uint64_t earliest = 0;
-    for (size_t i = 0; i < life.count; i++) {
-        uint64_t t = life.entries[i].not_after;
-        if (t != 0 && (earliest == 0 || t < earliest)) earliest = t;
+    return next_expiry_impl(m, owner_pubkey, -1, out_not_after);
+}
+
+MarmotError
+marmot_key_package_next_expiry_for_profile(Marmot *m, const uint8_t owner_pubkey[32],
+                                           MarmotKeyPackageProfile profile,
+                                           int64_t *out_not_after)
+{
+    if (profile != MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8 &&
+        profile != MARMOT_KEY_PACKAGE_PROFILE_ADOPTED) {
+        if (out_not_after) *out_not_after = 0;
+        return MARMOT_ERR_INVALID_ARG;
     }
-    *out_not_after = (int64_t)earliest;
-    return MARMOT_OK;
+    return next_expiry_impl(m, owner_pubkey, (int)profile, out_not_after);
 }
 
 MarmotError

@@ -261,21 +261,23 @@ marmot_base64_decode(const char *b64, size_t *out_len)
  *
  * The spec requires the slot id to be generated once from 32 random bytes,
  * retained locally, and reused for every routine replacement; it must not be
- * derived from identity or key material. libmarmot keeps one active
- * KeyPackage per account, so one slot per owner pubkey is persisted in the
- * backend's MLS key store (no storage schema change).
+ * derived from identity or key material. Legacy and adopted profiles have
+ * independent slots, so publishing one cannot replace the other on a relay.
+ * The legacy slot retains its existing storage label across upgrades.
  * ──────────────────────────────────────────────────────────────────────── */
 
-#define MARMOT_KP_SLOT_LABEL "kp_slot"
-#define MARMOT_KP_SLOT_LEN   32
+#define MARMOT_KP_SLOT_LABEL_LEGACY  "kp_slot"
+#define MARMOT_KP_SLOT_LABEL_ADOPTED "kp_slot_adopted"
+#define MARMOT_KP_SLOT_LEN           32
 
 static MarmotError
 load_or_create_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
-                                uint8_t slot_out[MARMOT_KP_SLOT_LEN])
+                                bool adopted, uint8_t slot_out[MARMOT_KP_SLOT_LEN])
 {
+    const char *label = adopted ? MARMOT_KP_SLOT_LABEL_ADOPTED : MARMOT_KP_SLOT_LABEL_LEGACY;
     uint8_t *stored = NULL;
     size_t stored_len = 0;
-    MarmotError err = m->storage->mls_load(m->storage->ctx, MARMOT_KP_SLOT_LABEL,
+    MarmotError err = m->storage->mls_load(m->storage->ctx, label,
                                            owner_pubkey, 32,
                                            &stored, &stored_len);
     if (err == MARMOT_OK) {
@@ -288,7 +290,7 @@ load_or_create_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
     if (err != MARMOT_ERR_STORAGE_NOT_FOUND) return err;
 
     randombytes_buf(slot_out, MARMOT_KP_SLOT_LEN);
-    return m->storage->mls_store(m->storage->ctx, MARMOT_KP_SLOT_LABEL,
+    return m->storage->mls_store(m->storage->ctx, label,
                                  owner_pubkey, 32,
                                  slot_out, MARMOT_KP_SLOT_LEN);
 }
@@ -646,7 +648,7 @@ create_key_package_common_impl(Marmot *m,
     /* Resolve the account's publication slot before creating key material,
      * so a storage failure here leaves nothing to clean up. */
     uint8_t slot[MARMOT_KP_SLOT_LEN];
-    MarmotError slot_err = load_or_create_key_package_slot(m, nostr_pubkey, slot);
+    MarmotError slot_err = load_or_create_key_package_slot(m, nostr_pubkey, adopted, slot);
     if (slot_err != MARMOT_OK)
         return slot_err;
     /* A replacement is strictly newer than the slot's last event
@@ -959,7 +961,7 @@ success:
      * private material until a relay accepts a newer one
      * (marmot_key_package_confirm_published()). */
     err = marmot_kp_lifecycle_register(m, nostr_pubkey, kp_ref,
-                                       kp.leaf_node.lifetime_not_after, last_resort,
+                                       kp.leaf_node.lifetime_not_after, last_resort, adopted,
                                        created_at);
     if (err != MARMOT_OK) {
         m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
@@ -1079,9 +1081,8 @@ marmot_create_key_package_for_profile(Marmot *m,
                                        MarmotKeyPackageResult *result)
 {
 #ifndef MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
-    /* Build-time opt-in (see MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER):
-     * a published ADOPTED KeyPackage promises remote inviters group
-     * behaviour this engine does not implement yet. */
+    /* Built without the adopted producer (CMake MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER
+     * off; on by default since 0.12.0, nostrc-lf62): MDK 0.8 KeyPackages only. */
     if (profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED)
         return MARMOT_ERR_UNSUPPORTED;
 #endif

@@ -39,7 +39,7 @@ MarmotError marmot_kp_lifecycle_created_at(Marmot *m, const uint8_t owner[32], i
  * newest, unconfirmed entry of the account's publication slot. */
 MarmotError marmot_kp_lifecycle_register(Marmot *m, const uint8_t owner[32],
                                          const uint8_t ref[32], uint64_t not_after,
-                                         bool last_resort, int64_t created_at);
+                                         bool last_resort, bool adopted, int64_t created_at);
 
 /* A Welcome opened with @use was joined (inside the accepting
  * transaction): a non-last-resort KeyPackage's private material is deleted

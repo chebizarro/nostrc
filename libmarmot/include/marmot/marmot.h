@@ -126,9 +126,11 @@ void marmot_free(Marmot *m);
  * Nostr event. The event id, pubkey, and Schnorr signature are produced from
  * @nostr_sk.
  *
- * The event's `d` tag is the account's KeyPackage publication slot: a random
- * 32-byte id generated on the first call for @nostr_pubkey, persisted in the
- * MLS key store, and reused by every later call. Publishing the new event
+ * The event's `d` tag is the account's MDK 0.8-profile KeyPackage
+ * publication slot: a random 32-byte id generated on the first call for
+ * @nostr_pubkey, persisted in the MLS key store, and reused by every later
+ * call (adopted-profile KeyPackages have a slot of their own, see
+ * marmot_create_key_package_for_profile()). Publishing the new event
  * therefore replaces the previous KeyPackage on relays (same
  * `(pubkey, 30443, d)` address) instead of accumulating stale packages; the
  * previous package is also marked inactive locally. Its private material
@@ -311,13 +313,16 @@ MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
  * "Selection and lifecycle", transports/nostr.md "KeyPackage publication")
  *
  * libmarmot keeps the private material (init, encryption and signature
- * keys) of each KeyPackage it makes, in the account's one publication slot
- * (`d`). It deletes it:
- * - for every older KeyPackage of the slot, once the caller reports that a
- *   relay accepted a newer one (marmot_key_package_confirm_published():
- *   the replacement is acknowledgement-tied). A newer KeyPackage that was
- *   made but never confirmed (a failed or interrupted publish) keeps the
- *   older ones, and itself, until a later one is confirmed;
+ * keys) of each KeyPackage it makes, in its profile's publication slot
+ * (`d`): an account has one slot per MarmotKeyPackageProfile (since
+ * 0.12.0, nostrc-lf62), so a KeyPackage of one profile never replaces the
+ * other's on a relay. It deletes it:
+ * - for every older KeyPackage of the same profile, once the caller reports
+ *   that a relay accepted a newer one of that profile
+ *   (marmot_key_package_confirm_published(): the replacement is
+ *   acknowledgement-tied). A newer KeyPackage that was made but never
+ *   confirmed (a failed or interrupted publish) keeps the older ones, and
+ *   itself, until a later one is confirmed;
  * - for a consumed non-last-resort KeyPackage, when a Welcome to it is
  *   joined (marmot_accept_welcome()). Every KeyPackage libmarmot publishes
  *   is last-resort: it may serve further Welcomes until the first bound;
@@ -338,8 +343,10 @@ MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
  * Call when a relay accepted the kind:30443 event of @key_package_ref
  * (NIP-01 OK true; a rejecting OK, an error or a timeout is not an
  * acknowledgement). Deletes the private material of every KeyPackage of
- * the account made before it -- the confirmed replacement -- and keeps
- * newer ones. Idempotent: a second confirmation deletes nothing more.
+ * the account and of the same profile made before it -- the confirmed
+ * replacement -- and keeps newer ones and every KeyPackage of the other
+ * profile (its own slot). Idempotent: a second confirmation deletes nothing
+ * more.
  *
  * Returns: MARMOT_OK; MARMOT_ERR_KEY_NOT_FOUND when @key_package_ref is not
  *   a live KeyPackage of @owner_pubkey (never made here, or already
@@ -427,14 +434,14 @@ MarmotError marmot_key_package_has_private_key(Marmot *m, const uint8_t key_pack
  *   app_data_dictionary; the Lifetime is current and spans at most
  *   7,261,200 s.
  *
- *   EXPERIMENTAL: since 0.12.0 libmarmot admits and creates adopted-profile
- *   groups (marmot_create_group_for_profile()), but cannot yet process
- *   their Commits (AppDataUpdate, membership changes), and a published
- *   ADOPTED KeyPackage would promise remote inviters that it can.
- *   Producing one therefore needs the build option
- *   MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER (CMake; meson
- *   `adopted_key_package_producer`), OFF by default, until it does
- *   (Groundhog W2). Validation and selection are always available.
+ *   Since 0.12.0 libmarmot admits and creates adopted-profile groups
+ *   (marmot_create_group_for_profile()) and processes their Commits
+ *   (AppDataUpdate, membership changes; nostrc-qp24.5.1.3), so producing
+ *   ADOPTED KeyPackages is on by default; the build option
+ *   MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER (CMake; until 0.12.0
+ *   MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER, default OFF; meson
+ *   `adopted_key_package_producer`) turns it off. Validation and selection
+ *   are always available.
  *
  * Which kind:30443 profile to produce or accept.
  */
@@ -442,6 +449,28 @@ typedef enum {
     MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8 = 0,
     MARMOT_KEY_PACKAGE_PROFILE_ADOPTED = 1,
 } MarmotKeyPackageProfile;
+
+/**
+ * marmot_key_package_next_expiry_for_profile:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @profile: the profile whose slot to look at
+ * @out_not_after: (out): the earliest Lifetime not_after (Unix seconds) among
+ *   the account's KeyPackages of @profile that still hold private material,
+ *   or 0 when there is none
+ *
+ * marmot_key_package_next_expiry() for one profile's slot (since 0.12.0,
+ * nostrc-lf62): 0 says nothing of that profile is left to protect, so a
+ * caller may publish its first KeyPackage of @profile while it holds back a
+ * replacement of the other. Writes nothing.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG (also for an unknown @profile);
+ *   storage errors
+ */
+MarmotError marmot_key_package_next_expiry_for_profile(Marmot *m,
+                                                       const uint8_t owner_pubkey[32],
+                                                       MarmotKeyPackageProfile profile,
+                                                       int64_t *out_not_after);
 
 /**
  * MarmotAccountSignFunc:
@@ -483,13 +512,16 @@ typedef int (*MarmotAccountSignFunc)(void *user_data,
  * @relay_count: number of relay URLs
  * @result: (out): the kind:30443 event JSON and KeyPackageRef
  *
- * marmot_create_key_package() with a selectable profile. Storage, the
- * stable `d` publication slot and rotation behave identically for both
- * profiles; MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8 produces exactly what
- * marmot_create_key_package() does.
+ * marmot_create_key_package() with a selectable profile. Storage and
+ * rotation behave identically for both profiles, but each profile has its
+ * own stable `d` publication slot (since 0.12.0, nostrc-lf62: publishing
+ * both does not make one replace the other on relays, and confirming one
+ * retires only its own predecessors); MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8
+ * produces exactly what marmot_create_key_package() does.
  *
- * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED for ADOPTED unless libmarmot
- *   was built with MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER;
+ * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED for ADOPTED when libmarmot
+ *   was built with its adopted producer off (CMake
+ *   MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER, meson adopted_key_package_producer);
  *   MARMOT_ERR_INVALID_ARG for an ADOPTED request with
  *   neither @nostr_sk nor @account_sign nor an enrolled account proof for
  *   @nostr_pubkey; MARMOT_ERR_CRYPTO or

@@ -5,13 +5,22 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-# nostrc-prqu.9: publishing an ADOPTED-profile KeyPackage advertises group
-# behaviour (app_data_update, app-component group state) that libmarmot's
-# group engine does not implement yet, which misleads *remote* inviters.
-# Validation/selection of ADOPTED KeyPackages is always available; producing
-# them is a build-time opt-in for interop work until Groundhog W2.
-option(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
-  "Allow marmot_create_key_package_for_profile(ADOPTED) (experimental)" OFF)
+# nostrc-prqu.9 made producing ADOPTED-profile KeyPackages a build-time
+# opt-in (MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER, OFF) while libmarmot's
+# group engine could not honour what they advertise (app_data_update,
+# app-component group state). Since 0.12.0 it can (adopted Commits,
+# nostrc-qp24.5.1.3), so the producer is on by default (nostrc-lf62); OFF
+# builds a library that produces MDK 0.8-profile KeyPackages only.
+# Validation/selection of ADOPTED KeyPackages is always available. The
+# option has a new name so that a cache from before, holding the old
+# default OFF, cannot keep it off unnoticed; the C macro keeps its name.
+option(MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER
+  "Allow marmot_create_key_package_for_profile(ADOPTED)" ON)
+if(DEFINED CACHE{MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER})
+  message(STATUS "libmarmot: MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER is replaced by "
+                 "MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER (now ${MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER}); "
+                 "the old cache entry is ignored")
+endif()
 
 set(MARMOT_VERSION_MAJOR 0)
 set(MARMOT_VERSION_MINOR 12)
@@ -106,7 +115,7 @@ set(MARMOT_PUBLIC_HEADERS
 
 # ─── Library target ──────────────────────────────────────────────────────
 add_library(marmot ${MARMOT_SOURCES})
-if(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER)
+if(MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
   target_compile_definitions(marmot PRIVATE MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1)
 endif()
 set(marmot_VERSION "${MARMOT_VERSION}")
@@ -307,6 +316,10 @@ if(BUILD_TESTING)
   add_executable(test_kp_profile ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_kp_profile.c)
   target_link_libraries(test_kp_profile PRIVATE marmot)
   target_include_directories(test_kp_profile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if(MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
+    # The test checks the public producer against the library's own gate.
+    target_compile_definitions(test_kp_profile PRIVATE MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1)
+  endif()
   add_test(NAME marmot_test_kp_profile COMMAND test_kp_profile)
 
   # Test: adopted-profile group admission and creation (nostrc-qp24.5.1)

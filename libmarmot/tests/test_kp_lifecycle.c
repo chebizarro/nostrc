@@ -591,12 +591,73 @@ test_grease_skipped(void)
     nostr_tags_free(tags);
 }
 
+/* Two wire profiles must not replace one another's relay slot or retire
+ * one another's init keys when their own replacement is acknowledged. */
+static void
+test_profiles_have_independent_slots(void)
+{
+    Member bob;
+    member_init(&bob);
+    Kp legacy1 = legacy_kp(&bob);
+    Kp adopted1 = adopted_kp(&bob, true);
+    char *legacy_slot = tag_value(legacy1.json, "d");
+    char *adopted_slot = tag_value(adopted1.json, "d");
+    CHECK(legacy_slot && adopted_slot && strcmp(legacy_slot, adopted_slot) != 0,
+          "profiles need distinct relay replacement slots");
+    OK(marmot_key_package_confirm_published(bob.m, bob.pk, legacy1.ref));
+    OK(marmot_key_package_confirm_published(bob.m, bob.pk, adopted1.ref));
+    CHECK(has_key(&bob, &legacy1) && has_key(&bob, &adopted1),
+          "confirming either profile preserves the other");
+    /* Each slot's own expiry: what a caller holds back per profile. */
+    int64_t legacy_exp = 0, adopted_exp = 0, any_exp = 0;
+    OK(marmot_key_package_next_expiry_for_profile(bob.m, bob.pk,
+                                                  MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
+                                                  &legacy_exp));
+    OK(marmot_key_package_next_expiry_for_profile(bob.m, bob.pk,
+                                                  MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                  &adopted_exp));
+    OK(marmot_key_package_next_expiry(bob.m, bob.pk, &any_exp));
+    CHECK(legacy_exp > 0 && adopted_exp > 0 &&
+          any_exp == (legacy_exp < adopted_exp ? legacy_exp : adopted_exp),
+          "per-profile expiries, the earliest overall");
+    int64_t none = -1;
+    CHECK(marmot_key_package_next_expiry_for_profile(bob.m, bob.pk, (MarmotKeyPackageProfile)7,
+                                                     &none) == MARMOT_ERR_INVALID_ARG &&
+          none == 0, "unknown profile refused");
+    Kp legacy2 = legacy_kp(&bob);
+    Kp adopted2 = adopted_kp(&bob, true);
+    char *legacy_slot2 = tag_value(legacy2.json, "d");
+    char *adopted_slot2 = tag_value(adopted2.json, "d");
+    CHECK(strcmp(legacy_slot, legacy_slot2) == 0 &&
+          strcmp(adopted_slot, adopted_slot2) == 0, "both slots stay stable");
+    OK(marmot_key_package_confirm_published(bob.m, bob.pk, legacy2.ref));
+    CHECK(!has_key(&bob, &legacy1) && has_key(&bob, &adopted1),
+          "legacy ACK retires only legacy");
+    OK(marmot_key_package_confirm_published(bob.m, bob.pk, adopted2.ref));
+    CHECK(!has_key(&bob, &adopted1) && has_key(&bob, &legacy2),
+          "adopted ACK retires only adopted");
+    Member carol;
+    member_init(&carol);
+    Kp legacy_only = legacy_kp(&carol);
+    int64_t carol_adopted = -1;
+    OK(marmot_key_package_next_expiry_for_profile(carol.m, carol.pk,
+                                                  MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                  &carol_adopted));
+    CHECK(carol_adopted == 0, "no adopted KeyPackage: nothing of that profile to protect");
+    free(legacy_only.json);
+    member_free(&carol);
+    free(legacy_slot); free(adopted_slot); free(legacy_slot2); free(adopted_slot2);
+    free(legacy1.json); free(legacy2.json); free(adopted1.json); free(adopted2.json);
+    member_free(&bob);
+}
+
 int
 main(void)
 {
     if (sodium_init() < 0) return 1;
     printf("KeyPackage lifecycle (nostrc-0bdg)\n");
     RUN(test_rotation_ack_tied);
+    RUN(test_profiles_have_independent_slots);
     RUN(test_unconfirmed_replacement);
     RUN(test_last_resort_delayed_welcome);
     RUN(test_single_use_consumed);

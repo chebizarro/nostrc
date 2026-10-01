@@ -315,7 +315,7 @@ parse, cryptographic or authorization failure.
 | Commits: Add, Remove, self-update, AppDataUpdate (rename, admins, relays, routing rotation) | **Yes** (since nostrc-qp24.5.1.3), followed and made, judged by the group's components (below). Real MDK v0.11.0 Commits and messages are followed; MDK 0.11 follows ours (live harness). A removal of our own leaf ends the group for us, as in legacy groups |
 | Commits libmarmot cannot judge as MDK does | **Refused** (`MARMOT_ERR_UNSUPPORTED`, the group stops there): GroupContextExtensions, Update and PSK proposals, and a disband (`0x800c` `disbanded`) |
 | Leaving (SelfRemove), standalone proposals | SelfRemove only (an adopted group has no Remove request): kept, committed by any member (`marmot_commit_pending_proposals()`), and ours where every leaf supports it (libmarmot's adopted leaves do, since nostrc-qp24.5.2). An admin's standalone AppDataUpdate is kept for the Commit that references it; anything else is refused |
-| Publishing adopted KeyPackages | **Off**: `MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER` stays OFF by default, so peers cannot invite libmarmot into adopted groups yet. What it would publish advertises exactly what a White Noise creator requires (extensions `0x0006 0xF2D1`, proposals `0x0008 0x000a`, components `0x8001 0x8003 0x8004 0x8006 0x8009 0x800b 0x800c`) and passes MDK 0.11's parser and invite precheck |
+| Publishing adopted KeyPackages | **On** (since nostrc-lf62): `MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER` (meson `adopted_key_package_producer`) is ON by default; OFF builds an MDK 0.8-only producer. An adopted KeyPackage advertises exactly what a White Noise creator requires (extensions `0x0006 0xF2D1`, proposals `0x0008 0x000a`, components `0x8001 0x8003 0x8004 0x8006 0x8009 0x800b 0x800c`); MDK 0.11 finds it through the account's kind 10002, admits it, invites it and exchanges messages with it (Groundhog harness `mdk-invites-groundhog`). It has its own `d` slot beside the MDK 0.8 one, so an account can publish both |
 | MDK 0.9.x groups (`0xf2f1` proof v1) | Refused (mixed or unsupported profile) |
 
 So Groundhog can join a White Noise group, exchange messages in it and
@@ -509,6 +509,34 @@ rule; a group of neither profile is refused. Serial format 4's profile byte is a
 private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 
 ## Changelog
+
+### 0.12.0 (unreleased): one KeyPackage slot per profile; the adopted producer on (nostrc-lf62)
+
+**New API and build default** (MINOR for 0.x; folded into 0.12.0).
+
+- **Independent slots.** An account's MDK 0.8 and adopted KeyPackages each
+  have their own stable `d` publication slot (the MDK 0.8 one keeps its
+  `kp_slot` store label; the adopted one is `kp_slot_adopted`), so a client
+  publishing both does not have one replace the other on relays: before,
+  both reused one slot, and publishing the second format silently replaced
+  the first on every relay, which then also lost its private key on the
+  next ACK.
+- **Lifecycle per profile.** `marmot_key_package_confirm_published()`
+  retires only the older KeyPackages of the confirmed one's profile; the
+  bounded record never drops either profile's newest confirmed entry.
+  Lifecycle entries carry their profile (a flag bit in `kp_life`; entries
+  from before are MDK 0.8, the only profile produced then).
+- **New:** `marmot_key_package_next_expiry_for_profile()`: whether, and
+  until when, a profile has KeyPackages left to protect.
+- **The adopted producer is on by default**, under a new CMake option name,
+  `MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER` (meson
+  `adopted_key_package_producer`): adopted Commits are processed since
+  nostrc-qp24.5.1.3, so an adopted KeyPackage no longer promises what the
+  engine cannot do. The old `MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER`
+  (default OFF) is ignored, so a cache from before cannot keep the producer
+  off unnoticed; set the new one OFF to build without it. A meson build
+  directory made before keeps its stored value (`meson configure
+  -Dadopted_key_package_producer=true`).
 
 ### 0.12.0 (unreleased): Commits in adopted groups (nostrc-qp24.5.1.3)
 
