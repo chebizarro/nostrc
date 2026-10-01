@@ -67,7 +67,7 @@ hook.
 | 2b | Our rename and admin change applied by MDK; MDK's rename applied by us | | works; converged (epoch, name, members, admins) | same |
 | 2b | MDK adds a second Groundhog account (Bob), who joins from MDK's Welcome; three-way messages | | works | same |
 | 2b | MDK removes Bob (Bob's group ends, "removed by" the MDK admin); we remove MDK (MDK ends Inactive) | | works | same |
-| - | An MDK member leaves (SelfRemove proposal) | not supported | not supported | libmarmot returns UNSUPPORTED for standalone proposals (nostrc-2um6); not exercised |
+| - | An MDK member leaves (SelfRemove proposal) | not supported (W23) | not supported (W23) | libmarmot returned UNSUPPORTED for standalone proposals; works since W24, see the addendum below |
 | 3 | Two Groundhog devices on one account | out of scope | out of scope | Marmot multi-device is non-normative (`ideas/multi-device.md`); nostrc-yaa1 |
 | 3 | Two Groundhog installs, different accounts, next to MDK | | works | 2b (Alice and Bob: separate GhMlsService, stores, relays sessions) |
 
@@ -298,3 +298,31 @@ it is positive in legacy mode. What is not yet acceptable:
 
 Also open: nostrc-2um6 (SelfRemove), nostrc-2lrz (Commit created_at
 ordering), nostrc-ho1z (a pre-Accept invitation for a group we cannot join).
+
+## Addendum (W24, nostrc-2um6): leaving, both ways
+
+libmarmot 0.12.0 keeps standalone proposals and implements SelfRemove
+(0x000a). Two new cases of `test_mdk_interop.c` pass against MDK v0.8.0
+(`575ae29d`):
+
+| # | Flow | Mode | Result |
+| --- | --- | --- | --- |
+| 3a | An MDK member leaves a Groundhog group: the group requires SelfRemove (both leaves advertise it; MDK's LCD rule), so MDK's `leave_group()` sends a SelfRemove PublicMessage; Groundhog keeps it, commits it by reference after its jitter, reports "member-left"; MDK applies the Commit and is Inactive | legacy (the MDK leaf is unproven) | works (`mdk-member-leaves`) |
+| 3b | Groundhog leaves an MDK group: Groundhog's SelfRemove reaches G; MDK auto-commits it by reference (a PrivateMessage Commit); Groundhog ends the group as LEFT | default | works (`groundhog-leaves`) |
+
+- **Vector.** MDK's SelfRemove MLSMessage and OpenMLS's own ProposalRef for
+  it (driver `leave_group`) are `MDK_SELF_REMOVE_*` in
+  `libmarmot/tests/test_interop.c`. libmarmot computes the same
+  ProposalRef.
+- **Who commits.** Any member commits a SelfRemove: MDK 0.8, MDK 0.11 and
+  the adopted spec agree. Groundhog commits after 1-4 s of jitter.
+- **MDK's Remove-based leave.** Where a group does not require SelfRemove,
+  MDK 0.8 leaves with a Remove of itself, sent as a PrivateMessage. An admin
+  commits it (libmarmot test `test_private_remove_self_committed_by_admin`).
+  MDK's own admin auto-commit of such a proposal filters for SelfRemove
+  only, so it commits an empty Commit (`messages/proposal.rs`
+  `auto_commit_proposal`). That is an MDK issue, not exercised here.
+- **D4's remaining deviation is closed** for new groups: they require
+  SelfRemove when every initial member advertises it.
+- **Still open:** admins cannot leave for everyone (they step down first, and
+  Groundhog does not offer that yet), and the adopted profile (nostrc-qp24.5.1).

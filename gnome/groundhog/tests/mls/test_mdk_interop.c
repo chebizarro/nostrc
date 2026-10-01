@@ -24,6 +24,13 @@
  *  2b. Legacy mode (GH_MLS_TEST_HOOKS): Groundhog invites MDK, both sides
  *     commit (rename, admins, add, remove) and converge; a second Groundhog
  *     account (Bob) joins through MDK's Add.
+ *  3a. An MDK member leaves (nostrc-2um6; MIP-03 "Leaving a group"): in a
+ *     Groundhog group (legacy mode: the MDK leaf is unproven) that requires
+ *     SelfRemove, MDK's SelfRemove PublicMessage is committed by Groundhog
+ *     after its jitter; MDK follows and is out.
+ *  3b. Groundhog leaves (default mode): in an MDK group, Groundhog's
+ *     SelfRemove is auto-committed by MDK by reference (a PrivateMessage);
+ *     Groundhog ends the group as LEFT.
  * Two devices on one account are out of scope (nostrc-yaa1).
  * Results: docs/analysis/marmot-mdk-interop-2026-09-30.md. */
 #include "mls-world.h"
@@ -755,6 +762,148 @@ test_groundhog_invites_mdk_legacy(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- 3. Leaving (nostrc-2um6) ------------------------------------------------------------ */
+
+typedef struct {
+  WireRelay *relay;
+  guint n;
+} StoredCount;
+
+static gboolean
+stored_reached(gpointer data)
+{
+  StoredCount *count = data;
+  return count->relay->stored->len >= count->n;
+}
+
+static void
+on_member_left(GhMlsGroup *group, const gchar *pubkey, gpointer data)
+{
+  (void)group;
+  g_ptr_array_add(data, g_strdup(pubkey));
+}
+
+/* 3a: Groundhog creates the group (legacy mode) with Carol (MDK). Both
+ * leaves advertise SelfRemove, so the group requires it (MIP-01; MDK's LCD
+ * rule) and MDK's leave is a SelfRemove PublicMessage. Groundhog keeps it,
+ * commits it by reference after the jitter, and reports "member-left";
+ * MDK follows its own removal. */
+static void
+test_mdk_member_leaves(void)
+{
+  if (!mdk_up())
+    return;
+  gh_mls_service_test_allow_unproven_members(TRUE);
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  mdk_peer("carol", CAROL);
+  g_autofree gchar *carol_kp = mdk_publish_key_package(&w, "carol");
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Carol leaves", (const guint[]){ CAROL }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+  g_autofree gchar *group = NULL;
+  {
+    g_autoptr(JsonObject) joined = mdk_join(&w, "carol", hex[ALICE], &group);
+    assert_converged(ga, joined);
+  }
+  g_autoptr(GPtrArray) gone = g_ptr_array_new_with_free_func(g_free);
+  g_signal_connect(ga, "member-left", G_CALLBACK(on_member_left), gone);
+
+  g_autoptr(JsonObject) left = mdk_call(&driver,
+    "\"cmd\":\"leave_group\",\"peer\":\"carol\",\"group\":\"%s\"", group);
+  const gchar *message = json_object_get_string_member(left, "mls_message");
+  g_test_message("MDK SelfRemove MLSMessage: %s", message);
+  g_autofree gchar *refs = mdk_json(left);
+  g_test_message("MDK leave_group: %s", refs);
+  /* A PublicMessage (00 01 00 01) carrying a Proposal: MDK left with SelfRemove. */
+  g_assert_true(g_str_has_prefix(message, "00010001"));
+
+  wait_members(ga, 1);
+  g_assert_cmpuint(gone->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(gone, 0), ==, hex[CAROL]);
+  g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+  JsonObject *state = json_object_get_object_member(synced, "state");
+  g_assert_cmpuint(synced_count(synced, "commit"), ==, 1);
+  g_assert_false(mdk_has(json_object_get_array_member(state, "members"), hex[CAROL]));
+  g_test_message("MDK after its leave was committed: %s",
+                 json_object_get_string_member(state, "state"));
+  send_accepted(alice, ga, "after carol left");
+  g_signal_handlers_disconnect_by_data(ga, gone);
+  world_down(&w);
+  gh_mls_service_test_allow_unproven_members(FALSE);
+  mdk_driver_stop(&driver);
+}
+
+/* 3b: MDK (Carol, the only admin) makes a group with Alice; Groundhog's
+ * KeyPackage advertises SelfRemove, so MDK requires it. Alice leaves for
+ * everyone: her SelfRemove reaches G, MDK auto-commits it by reference
+ * (MDK 0.8 messages/proposal.rs: any member commits a SelfRemove), and
+ * Groundhog ends the group as LEFT -- default mode, no test hook. */
+static void
+test_groundhog_leaves(void)
+{
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  mdk_peer("carol", CAROL);
+  accept_contact(alice, CAROL);
+  g_autofree gchar *alice_kp = NULL;
+  {
+    g_autoptr(JsonObject) view = NULL;
+    alice_kp = mdk_fetch_key_package(&w, "carol", ALICE, &view);
+    g_assert_true(json_object_get_boolean_member(view, "parsed"));
+    g_assert_true(mdk_has(json_object_get_array_member(view, "capability_proposals"), "0x000a"));
+  }
+  g_autoptr(JsonObject) made = mdk_call(&driver,
+    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"Alice leaves\","
+    "\"description\":\"interop\",\"relays\":[\"%s\"],\"admins\":[\"%s\"],"
+    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
+    w.g.url, hex[CAROL], alice_kp, w.x.url);
+  g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
+  GhMlsGroup *ga = join(alice, CAROL);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  assert_converged(ga, made);
+  mdk_send("carol", group, "before you go");
+  wait_message(alice, room, "before you go");
+
+  g_assert_cmpint(gh_mls_service_leave_kind(alice->service, ga), ==, GH_MLS_LEAVE_EVERYONE);
+  StoredCount on_g = { &w.g, w.g.stored->len + 1 };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(alice->service, ga, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_mls_group_get_leaving(ga));
+  spin_until(stored_reached, &on_g, "Alice's SelfRemove on G");
+
+  g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+  JsonArray *results = json_object_get_array_member(synced, "results");
+  gboolean committed = FALSE;
+  for (guint i = 0; i < json_array_get_length(results); i++) {
+    JsonObject *r = json_array_get_object_element(results, i);
+    if (g_strcmp0(json_object_get_string_member(r, "type"), "proposal") == 0 &&
+        json_object_has_member(r, "auto_commit") &&
+        json_object_get_null_member(r, "auto_commit_error"))
+      committed = TRUE;
+  }
+  g_assert_true(committed);
+  JsonObject *state = json_object_get_object_member(synced, "state");
+  g_assert_false(mdk_has(json_object_get_array_member(state, "members"), hex[ALICE]));
+
+  spin_until(group_ended, ga, "Alice's leave committed by MDK");
+  g_assert_cmpint(gh_mls_group_get_end(ga), ==, GH_MLS_GROUP_END_LEFT);
+  g_assert_false(gh_mls_group_get_leaving(ga));
+  g_assert_null(gh_mls_group_get_removed_by(ga));
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -771,6 +920,8 @@ main(int argc, char **argv)
                   test_groundhog_invites_mdk_default);
   g_test_add_func("/groundhog/mdk-interop/groundhog-invites-mdk-legacy",
                   test_groundhog_invites_mdk_legacy);
+  g_test_add_func("/groundhog/mdk-interop/mdk-member-leaves", test_mdk_member_leaves);
+  g_test_add_func("/groundhog/mdk-interop/groundhog-leaves", test_groundhog_leaves);
   gint rc = g_test_run();
   mls_world_finish();
   return rc;

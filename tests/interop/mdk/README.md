@@ -35,8 +35,9 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
 
 - `groundhog-mdk-interop-image` (a CTest fixture) runs
   `docker build -t nostrc-mdk-interop:0.8.0 tests/interop/mdk/driver`.
-- `groundhog-mdk-interop` then runs the six cases of
-  `gnome/groundhog/tests/mls/test_mdk_interop.c`.
+- `groundhog-mdk-interop` then runs the eight cases of
+  `gnome/groundhog/tests/mls/test_mdk_interop.c` (since W24 also an MDK
+  member leaving and Groundhog leaving, nostrc-2um6).
 - The container reaches the test's relays on the host's 127.0.0.1:
   - Linux: `--network host`.
   - macOS (Docker Desktop): `MDK_DRIVER_DIAL_HOST=host.docker.internal`.
@@ -82,7 +83,8 @@ AUTH:
 | `update_group_data` | `peer`, `group`, `name`, `description`, `admins`, `image`, `publish` | state |
 | `self_update` | `peer`, `group` | state |
 | `send` | `peer`, `group`, `text`, `publish` | `event_id` (or the unpublished `event`) |
-| `sync` | `peer`, `group` | every kind:445 of the group through `process_message` as a fixpoint: `results`, `failed` (MDK's error and `openmls`: OpenMLS's own verdict on a fresh copy), `state` |
+| `leave_group` | `peer`, `group` | MDK's leave (a SelfRemove where the group requires it, else a Remove of itself) published to the group relays, not merged: `state`, `event_id`, `mls_message` (hex) and OpenMLS's `proposal_refs` (nostrc-2um6) |
+| `sync` | `peer`, `group` | every kind:445 of the group through `process_message` as a fixpoint: `results`, `failed` (MDK's error and `openmls`: OpenMLS's own verdict on a fresh copy), `state`. A leave MDK auto-commits (`type` `proposal`) is published and merged like any Commit (`auto_commit`, `auto_commit_error`) |
 | `fetch_welcomes` / `accept_welcome` | `peer`, `from` / `wrapper_id` | Welcomes found (refusals carry the rumor's kind and tags) / state |
 | `state`, `messages` | `peer`, `group` | group view / stored messages |
 | `export_secret` | `peer`, `group`, `label`, `context`, `length` | MLS-Exporter output (vector capture) |

@@ -523,6 +523,38 @@ impl Driver {
                 let peer = self.peer(req)?;
                 group_state(peer, &group_id)
             }
+            "leave_group" => {
+                // MIP-03 "Leaving a group": MDK's leave_group() -- a SelfRemove
+                // PublicMessage where the group requires SelfRemove, else a Remove of
+                // itself -- published to the group relays for another member to
+                // commit; a proposal, so nothing is merged. Also returns the
+                // MLSMessage and OpenMLS's own ProposalRef for it (vector capture).
+                let group_id = group_id_arg(req)?;
+                let peer = self.peer(req)?;
+                let result = peer.mdk.leave_group(&group_id).map_err(err("leave_group"))?;
+                let event = result.evolution_event;
+                peer.seen.insert(event.id);
+                let group = peer
+                    .mdk
+                    .load_mls_group(&group_id)
+                    .map_err(err("load_mls_group"))?
+                    .ok_or("no such group")?;
+                let message = open_current(peer, &group, &event)?;
+                let refs: Vec<String> = group
+                    .pending_proposals()
+                    .map(|p| hex::encode(p.proposal_reference_ref().as_slice()))
+                    .collect();
+                let relays = group_relays(peer, &group_id)?;
+                let (accepted, answers) = publish_all(&relays, &event, &Keys::generate()).await;
+                if !accepted {
+                    return Err(format!("no group relay accepted the leave: {answers}"));
+                }
+                let mut state = group_state(peer, &group_id)?;
+                state["event_id"] = json!(event.id.to_hex());
+                state["mls_message"] = json!(hex::encode(message));
+                state["proposal_refs"] = json!(refs);
+                Ok(state)
+            }
             "export_secret" => {
                 // MLS-Exporter(label, context, length) of the group's current epoch
                 // (RFC 9420 section 8.5), e.g. MIP-03's ("marmot", "group-event", 32).
@@ -663,6 +695,22 @@ impl Driver {
                     Ok(MessageProcessingResult::Unprocessable { .. }) => {
                         last_error.insert(id, "Unprocessable".into());
                         still.push(event);
+                    }
+                    Ok(MessageProcessingResult::Proposal(update)) => {
+                        // MDK auto-committed a member's leave (a SelfRemove, from any
+                        // member; or, as an admin, a Remove the member sent for itself):
+                        // a careful client publishes that Commit and merges it only once
+                        // a relay took it (MIP-03), as commit_and_merge() does.
+                        peer.seen.insert(event.id);
+                        last_error.remove(&id);
+                        progress = true;
+                        let committed =
+                            commit_and_merge(peer, &group_id, &update.evolution_event).await;
+                        results.push(json!({
+                            "id": id, "type": "proposal",
+                            "auto_commit": update.evolution_event.id.to_hex(),
+                            "auto_commit_error": committed.err(),
+                        }));
                     }
                     Ok(result) => {
                         peer.seen.insert(event.id);
