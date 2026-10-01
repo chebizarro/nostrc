@@ -161,3 +161,92 @@ I verified this: `-p /groundhog/mdk011-interop/contrl` exits 0 with `1..0`. The 
 ## Follow-ups to file
 
 M1, plus L1–L4 as separate beads if not fixed in this branch. N1, N2 and N6 can ride along with the M1 fix.
+
+---
+
+## Addendum: re-review of the fixes (977f3827, 775dbc7b, 38682629)
+
+I rebased the review branch onto `38682629`. The author's correction stands: the fanout capability is **0xF2D4**, not 0xF2D3 (`crates/traits/src/agent_text_stream.rs:31-33` at `946e0547`: 0xF2D1 receive, 0xF2D2 send, 0xF2D4 fanout). M1 above should read "0xF2D1, 0xF2D2, 0xF2D4".
+
+### Final verdict: APPROVE
+
+Every finding is fixed, and I verified each fix independently. I am not requiring any further change.
+
+### Finding by finding
+
+| Finding | Status | How I verified it |
+| --- | --- | --- |
+| **M1** wire config ≠ marmot-app | **Fixed** | See "M1 parity check" below |
+| **L1** key-bearing components dumped | **Fixed (allowlist)** | See "L1 redaction" below |
+| **L2** empty `-p` passes vacuously | **Fixed** | Every case does `cases_run++` as its first statement. `main()` returns 1 when `cases_run == 0`, checked before the 77 mapping. I ran `-p /groundhog/mdk011-interop/contrl`: **rc 1**, "no case matched the requested -p path(s): nothing ran" |
+| **L3** 0.9 probe lacks the feature registry | **Fixed** | The probe's `.feature_registry(app_feature_registry())` and component set now match 0.9's marmot-app. My independent normalized-body comparison against `/tmp/mdk-v0.9.0` (`a102b196`) gives *equal*. The same `parity` tests run in its image build. `mdk09-probe` still XFAILs with "unsupported proof version 1" |
+| **L4** summary labels crash-after-XFAIL as XFAIL | **Fixed** | I ran the summary script on the new run, then on a copy of its JUnit with `adopted-welcome` turned into `status="fail"` + `<failure>`. The row now reads **FAIL**, and the real run's rows are unchanged |
+| **N1** `messages` advertised | Fixed | Removed from `hello` |
+| **N2** dead code | Fixed | The no-op `match` is gone. `sha256_hex` is now used for redaction digests |
+| **N3** tag-pinned base images | Fixed | `rust:1.97.1-slim-bookworm@sha256:2775a09d…`, `rust:1.90.0-slim-bookworm@sha256:64232e65…`, `debian:bookworm-slim@sha256:3783cc01…`. Each equals today's multi-arch index digest (`docker buildx imagetools inspect`) |
+| **N4** tie-break | Fixed | `max_by(created_at, then smaller id)`, as in marmot-app's `relay_event_id_cmp` |
+| **N5** "100% passed" footer, CI conclusion | Fixed | Both are explained in the README |
+| **N6** vectors accumulate | Fixed | The new fixture `groundhog-mdk011-interop-artifacts-reset` runs `cmake -E rm -f vectors.jsonl` and is required by every case. Each line carries `driver_run`. After my run: 25 lines from 4 driver runs, so no carry-over from the earlier 25 |
+| **N7** unquoted mount path | Fixed | `-v '<dir>:/artifacts'` is single-quoted. The run passing proves `g_shell_parse_argv` strips the quotes; Docker would reject a quoted mount spec |
+
+### M1 parity check: compared against the pinned source, verified three ways
+
+1. **Content.**
+   - `app_feature_registry()` and `supported_app_component_ids()` now copy marmot-app's: SelfRemove plus the three `Optional` QUIC roles, and component 0x8006.
+   - My own normalized-body comparison (same normalization as the test) against my independent clone of `946e0547` gives *equal* for both functions.
+   - The control now asserts the wire shape on every MDK KeyPackage. The run's vector shows:
+     - `mls_extensions` 0x0006/0xf2d1/0xf2d2/0xf2d4;
+     - `mls_proposals` 0x0008/0x000a;
+     - `app_components` 0x8001–0x8009, 0x800b, 0x800c (0x8006 included);
+     - one `client` tag, "White Noise Android".
+2. **The test reads the pinned source.**
+   - I built the `build` stage and looked inside. `$CARGO_HOME/git/checkouts` holds exactly one MDK checkout, `mdk-7d5a3a2420b194f5/946e054`. Its `git rev-parse HEAD` is `946e0547485c9a2c393c2048ec3a968fd50fb441`.
+   - Its `crates/marmot-app/src/lib.rs` is byte-identical (SHA-256 `793a6c5d…`) to my clone's.
+   - The checkout exists only because `Cargo.lock` pins that rev, and the test derives the path from `MDK_REV`, so a mismatch between the two fails with "no MDK checkout".
+3. **The test fails when the driver drifts.**
+   - From a scratch copy of the build context with 0x8006 removed from `supported_app_component_ids()`, `docker build` fails at `RUN cargo test --release --locked` (exit 101).
+   - `parity::component_set_is_marmot_apps` FAILED, with marmot-app's body (0x8006 included) on the right of the diff. The other three tests passed.
+   - A comment-only scratch rebuild passes, in 27 s with deps cached.
+   - `session_config_is_marmot_apps` also guards marmot-app's `SessionConfig` chain: exactly three calls, and later reassignments limited to `convergence_policy`, `defer_group_hydration` and `recorder`.
+
+**`client` tag.** It is verified end to end. whitenoise-android `6186a253`, `MarmotClient.kt:30,37`, sets `clientName = "White Noise Android"`. marmot-uniffi passes it to `with_key_package_client_name` (`crates/marmot-uniffi/src/lib.rs:227`), and the adapter emits it as the `client` tag. KeyPackages come from `fresh_key_package()`, which calls the same `build_fresh_key_package` as marmot-app's lifecycle staging (`cgka-engine/src/key_package.rs:350`, `maintenance.rs:55`).
+
+### L1 redaction: allowlist-based, verified
+
+- **The allowlist.**
+  - `component_value()` dumps raw hex only for ids in `DUMPABLE_COMPONENTS` (0x0001, 0x0002, 0x8001, 0x8003–0x8008, 0x800b, 0x800c).
+  - Everything else becomes `{redacted, len, sha256}`: 0x8002, and any id nobody has vetted.
+  - The unit test `redaction::key_bearing_components_never_leave_raw` covers 0x8002, an unknown 0x80ff, and a readable profile. It passed in the build.
+- **No allowlisted component carries a key.** I read each struct upstream:
+  - profile: name and description;
+  - routing: the group id and relays;
+  - avatar URL: url, dim and thumbhash;
+  - media V1/V2: format, locator kinds and endpoints. The media key is exporter-derived and is not stored in the component;
+  - the agent-text-stream policy: roles and sizes;
+  - lifecycle: an enum.
+- **No other path emits component bytes.** `group_state` lists component ids only. `GroupStateChange` (the Debug in `describe_event`) carries no component bytes; `GroupAvatarChanged` has no fields.
+- The nsec-hex line guard remains as a second layer.
+- In the run, the 4 test secrets and `nsec1` appear 0 times in the vectors and 0 times in the ctest `-V` log.
+
+### Matrix re-run (38682629, macOS 27, Docker Desktop shared with other agents' jobs)
+
+`ctest -R '^groundhog-mdk011-interop' -V`: rc 0, 18.6 s.
+
+| Test | Result | Time |
+| --- | --- | --- |
+| `artifacts-reset` | Passed | 0.01 s |
+| `image` | Passed (layers cached from the author's build of this exact source, the `cargo test` layer included; I separately forced the tests to run, see M1) | 1.33 s |
+| `image-mdk09` | Passed | 0.67 s |
+| `control` | **Passed** | 9.65 s |
+| `groundhog-invites-mdk` | Skipped, XFAIL `[unsupported]` | 1.24 s |
+| `mdk-invites-groundhog` | Skipped, XFAIL `[unsupported]` | 1.22 s |
+| `adopted-welcome` | Skipped, XFAIL `[unsupported]` | 2.36 s |
+| `mdk09-probe` | Skipped, XFAIL `[unsupported]` | 2.13 s |
+
+The workflow's summary script lists the control as pass and the four cases as "XFAIL (not green)" with their reasons.
+
+Clean-up: I removed my temporary images (`rv-parity-ok`, `rv-parity-buildstage`) and scratch contexts, and created no volumes. The one new volume, `w24e-marmot-asan`, belongs to another agent's linux-ci container.
+
+### Remaining (optional, non-blocking)
+
+- **N8 (Nit).** The parity tests locate the MDK checkout by a 7-character prefix and take `found.first()`. In the clean image build there is exactly one checkout, which I verified. On a developer machine with several `mdk-*` checkouts (forks) at a colliding short rev, the test could read another tree. Asserting the checkout's full `HEAD` (or its `.cargo-ok` dir's rev) against `MDK_REV` would close this. The `\n        .` indentation match in `session_config_is_marmot_apps` is formatting-sensitive, but it fails closed.
