@@ -276,3 +276,81 @@ Every finding is fixed and pinned by a test that fails when its fix is reverted.
   - Fold E into the unreleased 0.12.0.
 - **Slice A `2e367295`:** conflicts in VERSION_MANIFEST.md, README.md, commits.c (two non-legacy refusals: keep both) and mls_group.c (`mls_group_replace_members()` must use `group_install_checked()`). The header was already reconciled at `fc6c896b`.
 - **Slice B `777589a1`:** README only. Its `mls_group_commit_by_ref()` must switch to `group_install_checked()`.
+
+---
+
+## Addendum 2 (rebase onto master `77b606a9`: slices G, C, B), 2026-09-30
+
+- Re-reviewed: `marmot/w24-adopted-admission` at `1cfefe46`. That's the 8 rebased commits `5890d8fe..ddbdca31`, plus `1cfefe46` (B integration).
+- This review branch is rebased onto it.
+
+### Verdict: APPROVE-WITH-NITS
+
+The rebase preserved every fix. All six Commit producers install checked, including B's `mls_group_commit_by_ref()`. `1cfefe46` closes B's SelfRemove, Remove-request, inbound-proposal and pending-proposal paths for adopted groups. I found nothing else in B or C that can change an adopted group's state through a Commit, a proposal or a removal. One new Low (R1, a `created_at` floor leak on non-transactional storage) and one test-coverage nit (R2). Neither blocks.
+
+### (a) Range-diff `c28c4b22..9b405454` vs `77b606a9..ddbdca31`
+
+- **Unchanged:** the L1, L2, L4 and L5 commits (`=`).
+- **Changed, only through integration:**
+  1. **Feature commit.** Folded into master's unreleased 0.12.0: the CMake and meson bumps were dropped, VERSION_MANIFEST got decision rows, and marmot-gobject 1.5.0 and groundhog 0.12.0 are "no further bump". `marmot-media.h` and `marmot-group-profile.h` sit side by side in `marmot.h`, CMake and meson. Calls adapt to the new signatures: `add_members_staged(…, extensions…)` and `marmot_commit_build_event(…, created_at)`. Adopted create now dates the founding Commit and its Welcome rumors through slice C's floor, exactly as legacy create does (`groups.c:653` vs `:1024`). **B's `mls_group_commit_by_ref()` switches to `group_install_checked()`** and clears its result on refusal.
+  2. **H1 commit.** It follows C's `group_data_of(g, stored, &out)` and B's `removal_key(…, departures, …)`. The guards are unchanged.
+  5. **L3 commit.** It is merged onto slice C's identical KeyPackage loop (C had already split NOT_FOUND from other storage errors). It keeps the `*reason = NULL` contract, and accept now returns `open_reason ? refuse_welcome(m, w, open_reason, open_err) : open_err` under C's new `refuse_welcome()` signature. Only definitive outcomes are recorded. A transient error leaves the Welcome pending both on arrival and on accept. Missing `welcome_data` is final per C (nostrc-w285). Correct.
+  8. **Nits commit.** README context only.
+- **Producers**, in `mls_group.c` on the tip: `mls_group_add_members_with_extensions`, `_remove_members`, `_self_update`, `_self_update_with_leaf_extensions`, `_commit_extensions` and `_commit_by_ref` all use `group_install_checked()`. The single direct `group_install_staged()` (`:4555`) is the Commit processor, right after its own `staged.profile != live->profile || mls_group_profile_check_entered()` check.
+
+### (b) What else of B and C reaches an adopted group
+
+- **H1 re-run on this tip** (Alice/Bob/Carol, non-admin Remove of Carol, 4 runs): `marmot_process_message -> -5 (UNSUPPORTED)`, the group stays ACTIVE, and the MLS state is kept.
+- **Inbound standalone proposals.**
+  - `marmot_commit_process_inbound()` routes `route.proposal` to `marmot_proposal_process_inbound()` *before* its H1 guard. That function now refuses non-legacy groups right after `load_mls()`, before `mls_group_open_proposal()`.
+  - The only proposal-store writers (`slot_store`, `index_store`, via `keep_opened()`) are reached from that function and from `self_remove()`, which is guarded.
+  - `marmot_proposals_prune()` and `marmot_proposals_forget()` run only after an applied Commit or a final removal, and neither can happen in an adopted group.
+  - The leaving record (`leaving_store`) and `store_mls()` live only in `self_remove()`.
+- **Held Commits / `MARMOT_ERR_PROPOSAL_UNKNOWN`.**
+  - It is produced only by `process_commit_impl()` (`mls_group.c:3964`). Inbound, that is reached through `stage_inbound()`, and only after the H1 guard: from `inbound_removed()` (guarded), or from deferred replay or `marmot_commit_clear_pending()`, which need a pending Commit that `marmot_commit_stage_pending()` never lets an adopted group create.
+  - An adopted Commit therefore always gets `MARMOT_ERR_UNSUPPORTED`. Groundhog holds only `MARMOT_ERR_PROPOSAL_UNKNOWN` (`gh-mls-service.c:1469`), so nothing is held or retried.
+- **`may_commit_privileged()`** (B) now agrees with H1: without exactly one GroupData, nobody may commit a privileged change. **`marmot_policy_is_adopted()`** reads the admitted `g->profile` (one classifier).
+- **C's `created_at` floor.**
+  - On adopted create it's drawn only when there are invitees, inside the create transaction, and stamped on the evolution event and every Welcome rumor. That matches legacy.
+  - Inbound, the floor is observed only after an *applied* Commit (`messages.c:970-972`), so refused adopted Commits never lift it. Application messages draw it as in legacy groups.
+- **Revert spot-checks (25).** All 20 earlier ones are still caught, and so are the four new guards: inbound proposals, `self_remove`, `commit_pending_proposals` and `may_commit_privileged`. Two layered call sites are not caught (R2).
+
+### New findings
+
+#### R1 (Low) — Refused adopted Commits draw the `created_at` floor first; on storage without transactions they leak it
+
+`groups.c:1160` (`finish_local_commit_now()`) and `:1462` (`add_members_impl()`) call `marmot_next_group_event_time(…, commit = true)` *before* `marmot_commit_stage_pending()` refuses an adopted Commit. `load_group_for_commit_ex()` does not check the profile. With transactions (Groundhog's `gh-store-marmot`), the draw is rolled back. But libmarmot's own memory, SQLite and nostrdb backends have no `begin`/`commit`/`rollback`; that includes marmot-gobject's backends.
+
+**Reproduced** on the memory backend with 200 `marmot_self_update()` calls on an adopted group:
+- the first 60 return `MARMOT_ERR_UNSUPPORTED`;
+- the next 140 return `MARMOT_ERR_EVENT_RATE` (-36);
+- the user's next application message is dated **+60 s** (`GROUP_EVENT_MAX_LEAD`).
+
+So a UI that retries a refused action future-dates the member's own messages by up to a minute, and it gets the wrong error. The effect is bounded and recovers with time.
+
+**Fix.** Refuse non-legacy groups in `load_group_for_commit_ex()`, before any floor draw or MLS work.
+
+The same ordering exists for legacy refusals after the draw, such as `marmot_commit_authorize()` errors (pre-existing, slice C). But adopted groups make it reachable on every attempt.
+
+#### R2 (Nit) — Two layered guards are not individually pinned
+
+- Restoring `mls_group_commit_by_ref()` to `group_install_staged()` (M26) passes every suite. `test_install_checked` exercises only `mls_group_add_member()`.
+- Dropping only `marmot_commit_process_inbound()`'s top-level adopted guard (M25) passes too, because `removal_key()`, `removal_contested()`, `evict()` and `marmot_commit_authorize()` still refuse.
+
+Both are defense in depth behind tested outer guards; the Marmot-layer caller of `commit_by_ref` refuses adopted groups first. A table-driven `test_install_checked` covering each producer would pin the L4 rule.
+
+### Gates (tip `1cfefe46`)
+
+| Gate | Result |
+| --- | --- |
+| macOS full build (`-DBUILD_GROUNDHOG=ON`) | OK; no warnings in libmarmot sources or tests |
+| `ctest -R "mls\|marmot\|welcome\|invite\|group\|mdk\|proposal\|leave"` | 35/35 |
+| `-DBUILD_MDK011_INTEROP=ON`, `ctest -R mdk011` (MDK v0.11.0 Docker matrix) | control passed. `adopted-welcome` shows the expected XFAIL ("Groundhog on an adopted (MDK 0.11) Welcome: state 3, 'matching KeyPackage private key not found'; invitations 0"), refused on arrival as `1cfefe46` expects. The other cross-implementation cases are XFAIL, as documented. No Docker volumes created. |
+| `scripts/check-unsequenced-args.py` | clean |
+| `scripts/linux-gate.sh --sanitizers` | passed, 50 tests |
+| libmarmot's 23 suites, ASAN+UBSAN+LSan (Linux image; throwaway volume removed) | 23/23 |
+| Revert spot-checks | 24/25 caught plus M26; the uncaught ones are described in R2 |
+
+### Required before merge
+
+Nothing blocking. R1 is a one-line fix (refuse adopted groups in `load_group_for_commit_ex()`); do it here or file it as a bead. R2 is optional.
