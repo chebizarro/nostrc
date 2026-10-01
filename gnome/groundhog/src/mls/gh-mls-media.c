@@ -1,9 +1,13 @@
 #include "gh-mls-media.h"
+#include "gh-mls-media-private.h"
 
 #include "gh-attachment.h"
 
+#include <limits.h>
 #include <nostr-event.h>
 #include <nostr-tag.h>
+#include <openssl/crypto.h>
+#include <stdlib.h>
 #include <string.h>
 
 G_DEFINE_QUARK(gh-mls-media-error-quark, gh_mls_media_error)
@@ -208,6 +212,7 @@ gh_mls_attachments_from_inner_event(const gchar *inner_json, guint64 source_epoc
 
 typedef struct {
   gchar *name, *type;
+  gsize max_size;
 } FileInfo;
 
 static void
@@ -217,6 +222,38 @@ file_info_free(gpointer data)
   g_free(info->name);
   g_free(info->type);
   g_free(info);
+}
+
+static void
+refuse_not_local(GTask *task)
+{
+  g_task_return_new_error(task, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_NOT_LOCAL,
+                          "Only files on this device can be sent");
+  g_object_unref(task);
+}
+
+/* Under a GVfs FUSE mount: reading it makes gvfsd fetch it (SMB, SFTP, ...)
+ * outside GhNetHttp and Tor, although g_file_is_native() says TRUE. */
+static gboolean
+path_under_gvfs(const gchar *path)
+{
+  if (!path)
+    return FALSE;
+  g_autofree gchar *run = g_build_filename(g_get_user_runtime_dir(), "gvfs", NULL);
+  g_autofree gchar *home = g_build_filename(g_get_home_dir(), ".gvfs", NULL);
+  /* Each root as given and with its own symlinks resolved (/var is
+   * /private/var on macOS; a resolved file path carries the latter). */
+  char run_real[PATH_MAX], home_real[PATH_MAX];
+  const gchar *roots[] = { run, home, realpath(run, run_real) ? run_real : NULL,
+                           realpath(home, home_real) ? home_real : NULL };
+  for (guint i = 0; i < G_N_ELEMENTS(roots); i++) {
+    if (!roots[i])
+      continue;
+    gsize n = strlen(roots[i]);
+    if (strncmp(path, roots[i], n) == 0 && (path[n] == '\0' || path[n] == G_DIR_SEPARATOR))
+      return TRUE;
+  }
+  return FALSE;
 }
 
 static void
@@ -233,6 +270,20 @@ on_file_loaded(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
+on_filesystem_info(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GTask *task = data;
+  g_autoptr(GFileInfo) fs = g_file_query_filesystem_info_finish(G_FILE(source), result, NULL);
+  const gchar *type = fs ? g_file_info_get_attribute_string(fs, G_FILE_ATTRIBUTE_FILESYSTEM_TYPE)
+                         : NULL;
+  if (type && strstr(type, "gvfs")) {
+    refuse_not_local(task);
+    return;
+  }
+  g_file_load_bytes_async(G_FILE(source), g_task_get_cancellable(task), on_file_loaded, task);
+}
+
+static void
 on_file_info(GObject *source, GAsyncResult *result, gpointer data)
 {
   GTask *task = data;
@@ -244,36 +295,58 @@ on_file_info(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   if (g_file_info_get_file_type(info) != G_FILE_TYPE_REGULAR) {
-    g_task_return_new_error(task, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_NOT_LOCAL,
-                            "Only files on this device can be sent");
-    g_object_unref(task);
+    refuse_not_local(task);
     return;
   }
   FileInfo *fi = g_task_get_task_data(task);
+  /* The size limit before a byte is read (a 6 GB video is not loaded to
+   * be refused at 25 MiB). */
+  goffset size = g_file_info_get_size(info);
+  if (size < 0 || (guint64)size > fi->max_size) {
+    g_task_return_new_error(task, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_TOO_LARGE,
+                            "The file is larger than %" G_GSIZE_FORMAT " MB, so it can't be sent",
+                            fi->max_size / (1024 * 1024));
+    g_object_unref(task);
+    return;
+  }
   fi->name = g_strdup(g_file_info_get_display_name(info));
   const gchar *type = g_file_info_get_content_type(info);
   fi->type = type ? g_content_type_get_mime_type(type) : NULL;
-  g_file_load_bytes_async(G_FILE(source), g_task_get_cancellable(task), on_file_loaded, task);
+  g_file_query_filesystem_info_async(G_FILE(source), G_FILE_ATTRIBUTE_FILESYSTEM_TYPE,
+                                     G_PRIORITY_DEFAULT, g_task_get_cancellable(task),
+                                     on_filesystem_info, task);
 }
 
 void
-gh_mls_media_read_file_async(GFile *file, GCancellable *cancellable,
+gh_mls_media_read_file_async(GFile *file, gsize max_size, GCancellable *cancellable,
                              GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(G_IS_FILE(file));
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_media_read_file_async);
-  g_task_set_task_data(task, g_new0(FileInfo, 1), file_info_free);
+  FileInfo *fi = g_new0(FileInfo, 1);
+  fi->max_size = max_size;
+  g_task_set_task_data(task, fi, file_info_free);
   /* Charter §4.2: nothing of a remote GVfs location (https://, smb://) is
-   * queried or read; GVfs would fetch it outside GhNetHttp and Tor. */
+   * queried or read; GVfs would fetch it outside GhNetHttp and Tor. Its
+   * FUSE mount is the same location under a native path: refused by path,
+   * as given and with symlinks resolved, before any content is read. */
   if (!g_file_is_native(file)) {
-    g_task_return_new_error(task, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_NOT_LOCAL,
-                            "Only files on this device can be sent");
-    g_object_unref(task);
+    refuse_not_local(task);
+    return;
+  }
+  g_autofree gchar *path = g_file_get_path(file);
+  if (path_under_gvfs(path)) {
+    refuse_not_local(task);
+    return;
+  }
+  char resolved[PATH_MAX];
+  if (path && realpath(path, resolved) && path_under_gvfs(resolved)) {
+    refuse_not_local(task);
     return;
   }
   g_file_query_info_async(file,
-                          G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+                          G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_SIZE ","
                           G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
                           G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
                           G_FILE_QUERY_INFO_NONE, G_PRIORITY_DEFAULT, cancellable, on_file_info,
@@ -374,6 +447,8 @@ gh_mls_media_seal(Marmot *marmot, const gchar *group_id_hex, GBytes *file,
   }
   sealed->width = prepared->width;
   sealed->height = prepared->height;
+  sealed->stripped = prepared->stripped;
+  sealed->may_have_metadata = prepared->may_have_metadata;
   sealed->attachment = attachment_take(&up.reference, up.source_epoch);
   marmot_media_upload_clear(&up);
   return sealed;
@@ -441,18 +516,18 @@ gh_mls_media_check_epoch(Marmot *marmot, const gchar *group_id_hex,
   MarmotGroupId gid;
   if (!gid_from_hex(group_id_hex, &gid, error))
     return FALSE;
-  MarmotGroup *group = NULL;
-  MarmotError err = marmot_get_group(marmot, &gid, &group);
+  /* Reconciles an interrupted epoch transition first, as
+   * marmot_create_message() does (review L3). */
+  MarmotError err = marmot_media_check_epoch(marmot, &gid, attachment->source_epoch);
   marmot_group_id_free(&gid);
-  if (err != MARMOT_OK || !group)
-    return media_fail(err != MARMOT_OK ? err : MARMOT_ERR_GROUP_NOT_FOUND,
-                      "The group is not available", error);
-  gboolean same = group->epoch == attachment->source_epoch;
-  marmot_group_free(group);
-  if (!same)
+  if (err == MARMOT_ERR_MEDIA_EPOCH_CHANGED) {
     g_set_error_literal(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_EPOCH_CHANGED,
                         "The group changed while the file was uploading; it is sent again");
-  return same;
+    return FALSE;
+  }
+  if (err != MARMOT_OK)
+    return media_fail(err, "The group is not available", error);
+  return TRUE;
 }
 
 /* ---- download --------------------------------------------------------------------- */
@@ -554,6 +629,40 @@ gh_mls_media_fetch_finish(GAsyncResult *result, GError **error)
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* A decrypted attachment: wiped when the last reference goes (review L4),
+ * as the NIP-17 open path does. */
+typedef struct {
+  guint8 *data;
+  gsize size;
+} Wiped;
+
+static gsize wiped_total;   /* atomically updated: a GBytes may die on any thread */
+
+static void
+wiped_free(gpointer data)
+{
+  Wiped *w = data;
+  OPENSSL_cleanse(w->data, w->size);
+  g_atomic_pointer_add(&wiped_total, (gssize)w->size);
+  free(w->data);   /* libmarmot's malloc */
+  g_free(w);
+}
+
+static GBytes *
+wiped_bytes_take(guint8 *data, gsize size)
+{
+  Wiped *w = g_new0(Wiped, 1);
+  w->data = data;
+  w->size = size;
+  return g_bytes_new_with_free_func(data, size, wiped_free, w);
+}
+
+gsize
+gh_mls_media_test_wiped_bytes(void)
+{
+  return (gsize)g_atomic_pointer_get(&wiped_total);
+}
+
 GBytes *
 gh_mls_media_open(Marmot *marmot, const gchar *group_id_hex, const GhMlsAttachment *attachment,
                   GBytes *ciphertext, GError **error)
@@ -574,5 +683,5 @@ gh_mls_media_open(Marmot *marmot, const gchar *group_id_hex, const GhMlsAttachme
     media_fail(err, "The file could not be opened", error);
     return NULL;
   }
-  return g_bytes_new_take(pt, pt_len);
+  return wiped_bytes_take(pt, pt_len);
 }

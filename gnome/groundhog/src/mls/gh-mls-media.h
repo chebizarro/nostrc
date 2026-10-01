@@ -10,8 +10,12 @@
  * GhNetHttp (Tor and the network mode; public hosts only on download).
  *
  * Sending, in order:
- *   1. gh_mls_media_read_file_async(): a file on this device only.
- *   2. gh_mls_media_seal(): metadata removed (gh_attachment_prepare), then
+ *   1. gh_mls_media_read_file_async(): a file on this device only (no remote
+ *      GVfs location, no GVfs FUSE path), refused over max_size before it is
+ *      read.
+ *   2. gh_mls_media_seal(): JPEG and PNG metadata removed
+ *      (gh_attachment_prepare); every other type is sent unchanged and the
+ *      result says so (may_have_metadata: show the one-time notice), then
  *      encrypted for the group's current epoch.
  *   3. gh_mls_media_upload_async(): the ciphertext to Blossom; the server's
  *      URL becomes the blossom-v1 locator.
@@ -39,7 +43,8 @@ typedef enum {
   GH_MLS_MEDIA_ERROR_UNAVAILABLE,   /* no locator to fetch, or every one failed */
   GH_MLS_MEDIA_ERROR_DAMAGED,       /* a hash or the authentication tag mismatched */
   GH_MLS_MEDIA_ERROR_NO_KEY,        /* that epoch's key is no longer kept */
-  GH_MLS_MEDIA_ERROR_FAILED         /* libmarmot failed otherwise */
+  GH_MLS_MEDIA_ERROR_FAILED,        /* libmarmot failed otherwise */
+  GH_MLS_MEDIA_ERROR_TOO_LARGE      /* over the size limit, refused before reading */
 } GhMlsMediaError;
 
 #define GH_MLS_MEDIA_ERROR gh_mls_media_error_quark()
@@ -76,11 +81,15 @@ GhMlsAttachment *gh_mls_attachment_new_from_imeta(const gchar *const *tag, guint
 GPtrArray *gh_mls_attachments_from_inner_event(const gchar *inner_json, guint64 source_epoch,
                                                guint *out_rejected);
 
-/* Step 1: loads a native file (refused before any I/O otherwise: a remote
- * GVfs location would be fetched outside GhNetHttp). Finishes with its
- * bytes; out_name and out_type (nullable) get the display name and the
- * content type's MIME type. */
-void gh_mls_media_read_file_async(GFile *file, GCancellable *cancellable,
+/* Step 1: loads a file on this device. Refused (GH_MLS_MEDIA_ERROR_NOT_LOCAL)
+ * before any I/O when it is not native, or its path (as given, then with
+ * symlinks resolved) is under a GVfs FUSE mount ($XDG_RUNTIME_DIR/gvfs,
+ * ~/.gvfs): GVfs would fetch it outside GhNetHttp and Tor. Not a regular
+ * file, or on a filesystem of type gvfs: NOT_LOCAL too. Over max_size
+ * (standard::size): GH_MLS_MEDIA_ERROR_TOO_LARGE, before reading it.
+ * Finishes with its bytes; out_name and out_type (nullable) get the display
+ * name and the content type's MIME type. */
+void gh_mls_media_read_file_async(GFile *file, gsize max_size, GCancellable *cancellable,
                                   GAsyncReadyCallback callback, gpointer user_data);
 GBytes *gh_mls_media_read_file_finish(GAsyncResult *result, gchar **out_name,
                                       gchar **out_type, GError **error);
@@ -89,13 +98,19 @@ typedef struct {
   GBytes *ciphertext;          /* to upload; its SHA-256 is the blob id */
   GhMlsAttachment *attachment; /* no locator until uploaded */
   guint width, height;         /* JPEG/PNG header size; 0 otherwise */
+  gboolean stripped;           /* JPEG/PNG metadata was removed */
+  gboolean may_have_metadata;  /* another type, sent unchanged: it may carry
+                                * location, author or device details (show
+                                * the one-time notice, as for NIP-17) */
 } GhMlsMediaSealed;
 void gh_mls_media_sealed_free(GhMlsMediaSealed *sealed);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhMlsMediaSealed, gh_mls_media_sealed_free)
 
-/* Step 2: file (1 .. max_size bytes) with its metadata removed, encrypted
- * for the group's current epoch. filename is the display name (1..255
- * bytes of UTF-8, sent as is); mime_hint as gh_attachment_prepare(). */
+/* Step 2: file (1 .. max_size bytes), JPEG/PNG metadata removed and any
+ * other type unchanged (may_have_metadata), encrypted for the group's
+ * current epoch. filename is the display name (1..255 bytes of UTF-8, sent
+ * as is: a camera name like IMG_20260930_142233.jpg is itself a
+ * timestamp); mime_hint as gh_attachment_prepare(). */
 GhMlsMediaSealed *gh_mls_media_seal(Marmot *marmot, const gchar *group_id_hex, GBytes *file,
                                     const gchar *mime_hint, const gchar *filename,
                                     gsize max_size, GError **error);
@@ -107,7 +122,10 @@ void gh_mls_media_upload_async(GhBlossomClient *client, const GhMlsMediaSealed *
                                gpointer user_data);
 GhMlsAttachment *gh_mls_media_upload_finish(GAsyncResult *result, GError **error);
 
-/* Step 4: TRUE when a message sent now is in the attachment's epoch. */
+/* Step 4: TRUE when a message sent now is in the attachment's epoch
+ * (marmot_media_check_epoch(): an interrupted epoch transition is
+ * reconciled first, as marmot_create_message() will). Call it in the same
+ * main-loop turn as marmot_create_message(). */
 gboolean gh_mls_media_check_epoch(Marmot *marmot, const gchar *group_id_hex,
                                   const GhMlsAttachment *attachment, GError **error);
 
@@ -121,7 +139,8 @@ void gh_mls_media_fetch_async(GhBlossomClient *client, const GhMlsAttachment *at
 GBytes *gh_mls_media_fetch_finish(GAsyncResult *result, GError **error);
 
 /* Decrypts ciphertext with the source epoch's key: ciphertext hash, then
- * the AEAD, then the plaintext hash (GH_MLS_MEDIA_ERROR_DAMAGED). */
+ * the AEAD, then the plaintext hash (GH_MLS_MEDIA_ERROR_DAMAGED). The
+ * returned bytes are wiped when freed. */
 GBytes *gh_mls_media_open(Marmot *marmot, const gchar *group_id_hex,
                           const GhMlsAttachment *attachment, GBytes *ciphertext,
                           GError **error);

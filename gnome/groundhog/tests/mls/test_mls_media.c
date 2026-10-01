@@ -5,9 +5,11 @@
 #include "blossom-fixture.h"
 #include "gh-attachment.h"
 #include "gh-mls-media.h"
+#include "gh-mls-media-private.h"
 
 #include <glib/gstdio.h>
 #include <string.h>
+#include <unistd.h>
 
 static const guint8 GID[32] = { 0x47, 0x48, 1, 2, 3 };
 #define GID_HEX "4748010203000000000000000000000000000000000000000000000000000000"
@@ -140,6 +142,9 @@ test_roundtrip_through_blossom(void)
   g_assert_cmpuint(gh_mls_attachment_get_source_epoch(sealed->attachment), ==, 3);
   g_assert_cmpstr(gh_mls_attachment_get_media_type(sealed->attachment), ==, "text/plain");
   g_assert_cmpstr(gh_mls_attachment_get_filename(sealed->attachment), ==, "notes.txt");
+  /* Not JPEG/PNG: sent unchanged, and the result says so (review M2). */
+  g_assert_false(sealed->stripped);
+  g_assert_true(sealed->may_have_metadata);
   /* Without a locator there is nothing to send yet. */
   g_auto(GStrv) none = gh_mls_attachment_dup_imeta(sealed->attachment, &error);
   g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_INVALID);
@@ -198,9 +203,13 @@ test_roundtrip_through_blossom(void)
   g_autoptr(GBytes) ciphertext = fetch(&f, got, &error);
   g_assert_no_error(error);
   g_assert_cmpuint(blossom_fixture_count(f.blossom, "GET"), ==, 1);
-  g_autoptr(GBytes) plain = gh_mls_media_open(f.marmot, GID_HEX, got, ciphertext, &error);
+  GBytes *plain = gh_mls_media_open(f.marmot, GID_HEX, got, ciphertext, &error);
   g_assert_no_error(error);
   g_assert_cmpmem(g_bytes_get_data(plain, NULL), g_bytes_get_size(plain), text, sizeof text - 1);
+  /* The decrypted file is wiped when its last reference goes (review L4). */
+  gsize wiped = gh_mls_media_test_wiped_bytes();
+  g_bytes_unref(plain);
+  g_assert_cmpuint(gh_mls_media_test_wiped_bytes() - wiped, ==, sizeof text - 1);
 
   /* Damaged: other bytes under the attachment's name. */
   g_autoptr(GBytes) wrong = g_bytes_new_static("not the file", 12);
@@ -281,6 +290,8 @@ test_seal_strips_metadata(void)
   g_assert_no_error(error);
   g_assert_cmpstr(gh_mls_attachment_get_media_type(sealed->attachment), ==, "image/png");
   g_assert_cmpstr(gh_mls_attachment_get_dim(sealed->attachment), ==, "1x1");
+  g_assert_true(sealed->stripped);
+  g_assert_false(sealed->may_have_metadata);
   g_autoptr(GhMlsAttachment) sent = upload(&f, sealed, &error);
   g_assert_no_error(error);
   g_autoptr(GBytes) ct = fetch(&f, sent, &error);
@@ -382,7 +393,7 @@ test_read_file_native_only(void)
   g_assert_true(g_file_set_contents(path, "\x89PNG\r\n\x1a\n", 8, &error));
   g_autoptr(GFile) local = g_file_new_for_path(path);
   Wait w = { 0 };
-  gh_mls_media_read_file_async(local, NULL, on_done, &w);
+  gh_mls_media_read_file_async(local, 1 << 20, NULL, on_done, &w);
   g_autofree gchar *name = NULL, *type = NULL;
   g_autoptr(GBytes) bytes = gh_mls_media_read_file_finish(wait_for(&w), &name, &type, &error);
   g_object_unref(w.result);
@@ -392,7 +403,7 @@ test_read_file_native_only(void)
 
   g_autoptr(GFile) remote = g_file_new_for_uri("https://example.invalid/photo.png");
   Wait r = { 0 };
-  gh_mls_media_read_file_async(remote, NULL, on_done, &r);
+  gh_mls_media_read_file_async(remote, 1 << 20, NULL, on_done, &r);
   g_autoptr(GBytes) refused = gh_mls_media_read_file_finish(wait_for(&r), NULL, NULL, &error);
   g_object_unref(r.result);
   g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_NOT_LOCAL);
@@ -401,22 +412,88 @@ test_read_file_native_only(void)
 
   g_autoptr(GFile) folder = g_file_new_for_path(dir);
   Wait d = { 0 };
-  gh_mls_media_read_file_async(folder, NULL, on_done, &d);
+  gh_mls_media_read_file_async(folder, 1 << 20, NULL, on_done, &d);
   g_autoptr(GBytes) not_file = gh_mls_media_read_file_finish(wait_for(&d), NULL, NULL, &error);
   g_object_unref(d.result);
   g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_NOT_LOCAL);
   g_assert_null(not_file);
+  g_clear_error(&error);
+
+  /* Over the limit: refused from its size, before it is read (review L6).
+   * A sparse 64 MiB file against a 1 MiB limit. */
+  g_autofree gchar *big_path = g_build_filename(dir, "big.bin", NULL);
+  FILE *big = fopen(big_path, "wb");
+  g_assert_nonnull(big);
+  g_assert_cmpint(ftruncate(fileno(big), 64 << 20), ==, 0);
+  fclose(big);
+  g_autoptr(GFile) big_file = g_file_new_for_path(big_path);
+  Wait l = { 0 };
+  gh_mls_media_read_file_async(big_file, 1 << 20, NULL, on_done, &l);
+  g_autoptr(GBytes) too_big = gh_mls_media_read_file_finish(wait_for(&l), NULL, NULL, &error);
+  g_object_unref(l.result);
+  g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_TOO_LARGE);
+  g_assert_null(too_big);
+  g_clear_error(&error);
+  g_unlink(big_path);
   g_unlink(path);
   g_rmdir(dir);
+}
+
+/* A GVfs FUSE mount ($XDG_RUNTIME_DIR/gvfs, set to a temporary directory in
+ * main()) is native to GIO but fetched by gvfsd outside GhNetHttp: refused,
+ * also through a symlink (review L6). */
+static void
+test_read_file_refuses_gvfs_fuse(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *share = g_build_filename(g_get_user_runtime_dir(), "gvfs",
+                                             "smb-share:server=nas,share=photos", NULL);
+  g_assert_cmpint(g_mkdir_with_parents(share, 0700), ==, 0);
+  g_autofree gchar *path = g_build_filename(share, "holiday.png", NULL);
+  g_assert_true(g_file_set_contents(path, "\x89PNG\r\n\x1a\n", 8, &error));
+  g_autoptr(GFile) inside = g_file_new_for_path(path);
+  Wait w = { 0 };
+  gh_mls_media_read_file_async(inside, 1 << 20, NULL, on_done, &w);
+  g_autoptr(GBytes) refused = gh_mls_media_read_file_finish(wait_for(&w), NULL, NULL, &error);
+  g_object_unref(w.result);
+  g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_NOT_LOCAL);
+  g_assert_null(refused);
+  g_clear_error(&error);
+
+  g_autofree gchar *dir = g_dir_make_tmp("gh-mls-media-link-XXXXXX", &error);
+  g_assert_no_error(error);
+  g_autofree gchar *link = g_build_filename(dir, "holiday.png", NULL);
+  g_assert_cmpint(symlink(path, link), ==, 0);
+  g_autoptr(GFile) via_link = g_file_new_for_path(link);
+  Wait v = { 0 };
+  gh_mls_media_read_file_async(via_link, 1 << 20, NULL, on_done, &v);
+  g_autoptr(GBytes) refused2 = gh_mls_media_read_file_finish(wait_for(&v), NULL, NULL, &error);
+  g_object_unref(v.result);
+  g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_NOT_LOCAL);
+  g_assert_null(refused2);
+  g_unlink(link);
+  g_rmdir(dir);
+  g_unlink(path);
 }
 
 int
 main(int argc, char **argv)
 {
+  /* A private runtime dir for the GVfs FUSE case, before GLib reads it. */
+  g_autofree gchar *runtime = g_dir_make_tmp("gh-mls-media-run-XXXXXX", NULL);
+  g_assert_nonnull(runtime);
+  g_setenv("XDG_RUNTIME_DIR", runtime, TRUE);
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/mls-media/read-file-refuses-gvfs-fuse", test_read_file_refuses_gvfs_fuse);
   g_test_add_func("/mls-media/roundtrip-through-blossom", test_roundtrip_through_blossom);
   g_test_add_func("/mls-media/seal-strips-metadata", test_seal_strips_metadata);
   g_test_add_func("/mls-media/fetch-locators", test_fetch_locators);
   g_test_add_func("/mls-media/read-file-native-only", test_read_file_native_only);
-  return g_test_run();
+  int rc = g_test_run();
+  g_autofree gchar *gvfs = g_build_filename(runtime, "gvfs", NULL);
+  g_autofree gchar *share = g_build_filename(gvfs, "smb-share:server=nas,share=photos", NULL);
+  g_rmdir(share);
+  g_rmdir(gvfs);
+  g_rmdir(runtime);
+  return rc;
 }
