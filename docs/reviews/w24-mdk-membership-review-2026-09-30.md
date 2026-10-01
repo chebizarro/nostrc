@@ -182,3 +182,133 @@ For a group with no 0xF2EE, `group_data_of(pre)` is NULL, so `gde_is_admin()` re
 - **H1:** raise nostrc-dujv to P1 with the policy above. Blocks the `GH_FEATURE_ENCRYPTED_GROUPS` flip.
 - **M1:** libmarmot rotation report plus Groundhog chain of custody. Fold into owkh or link it.
 - **L3:** pin or refuse profile downgrades, against nostrc-qp24.5.1.
+
+---
+
+## Addendum: re-review of the fixes (tip `2e367295`)
+
+- **Fix commits:**
+  - `fc6c896b`: libmarmot B1, L1, L3; `committer_leaf`.
+  - `05a3b38f`: libmarmot `welcome_signer` (owkh).
+  - `5f45514f`: `welcome_signer` kept out of snapshots and dropped with the group.
+  - `2e367295`: Groundhog H1, M1, L2, L4 and the nits.
+- **Integrator ruling on H1:** no automatic lookups; Verify on request only; never against group relays.
+- **Method:** this branch was rebased onto `2e367295`. Every probe and mutant below was temporary and reverted; the tree is clean.
+
+### Final verdict: **APPROVE-WITH-NITS**
+
+B1 is closed in both modes and in every variant I tried. H1 now follows the ruling for automatic behaviour: no lookup happens without a user action, including after a restart. Chain of custody (M1) carries status only across the committer's own UpdatePath. The `welcome_signer` binding (owkh) is sound. L1–L4 and N1–N4 are fixed, each covered by a test that kills its mutant.
+
+One gap remains against the ruling (A1, Medium). The Verify lookup never adds the group's relays itself, but it doesn't remove them either. A group relay that is also a discovery relay, or the member's NIP-65 write relay, still receives the Verify REQ. I confirmed this by test. This is on demand, one person at a time, on a fresh Tor circuit, so it is far weaker than the old automatic leak. It should be fixed before the `GH_FEATURE_ENCRYPTED_GROUPS` flip (with a bead), but it does not block merging behind the flag.
+
+### Gates at `2e367295`
+
+| Gate | Result |
+|---|---|
+| `ninja` (`-DBUILD_GROUNDHOG=ON -DBUILD_MDK_INTEROP=ON`) | PASS |
+| `ctest -R "marmot\|groundhog\|gnostr-test-mls"` | **99/99 passed** (same four environment skips) |
+| MDK 0.8 harness (`groundhog-mdk-interop`, MDK v0.8.0 `575ae29d`) | **7/7 ran and passed**, including the Dave self-update and creator assertions below |
+| `scripts/check-unsequenced-args.py` | PASS |
+| `scripts/linux-gate.sh --sanitizers` | **PASS, 49 tests** (ASAN+UBSAN+LSAN, arm64; groundhog-mls-service, -mls-ui, -privacy-mls, -store-*) |
+| Docker | No volumes created (named or anonymous) |
+
+### B1: closed
+
+`commits.c` now treats every changed slot other than the committer's own leaf as filled by an Add. That makes the Commit privileged (admins only) and the leaf a new identity claim. Only the committer's leaf is "renewed", through its UpdatePath, authenticated under its previous key.
+
+I reran my own attack independently at the new tip, with variants. Each Commit was processed by an admin peer through `marmot_process_message()`:
+
+| Attack (non-admin Charlie) | Default mode | Proofs required |
+|---|---|---|
+| Remove(proof-less Mdk) + Add(leaf claiming Mdk, Charlie's keys), same slot | `COMMIT_FROM_NON_ADMIN` | `COMMIT_FROM_NON_ADMIN` |
+| Remove(proven Dave) + Add(Dave's *genuine* second KeyPackage), same slot (also passed under the old rule) | `COMMIT_FROM_NON_ADMIN` | `COMMIT_FROM_NON_ADMIN` |
+| `marmot_commit_authorize()` directly: committer Charlie, Mdk's slot replaced | `COMMIT_FROM_NON_ADMIN` (privileged) | same |
+
+**Can a non-admin still renew any slot other than its own?** No.
+- An UpdatePath only rewrites the committer's leaf.
+- Marmot's inbound path refuses by-reference proposals, so there are no foreign Update proposals.
+- Every other changed slot is privileged.
+
+An admin's same-slot swap is judged as a new claim: refused when proofs are required; in default mode it is the admitted proof-less Add that the legacy trust model allows. Groundhog then shows it as unverified, "Added by <admin>", and does not carry Mdk's status over (asserted in `test_mls_service`).
+
+**Mutants (each killed):**
+- `members_changed` back to identity-only → `slot_takeover` fails (default mode got success).
+- Same identity treated as renewal again → fails ("an admin's swap: a new claim without a proof").
+
+### H1: matches the ruling for automatic behaviour; A1 is still open
+
+- `verify_group()` now uses only evidence in hand: own-Add KeyPackages, KeyPackages already fetched, `welcome_signer`, renewal. There is no network call.
+- The only lookup is `gh_mls_service_verify_member_async()`, behind a confirmed Verify button in Group Info. It asks the discovery relays, then the person's NIP-65 write relays, with ephemeral AUTH and a fresh isolation label per scope. It never asks for kind 10051.
+- The 24 h re-check is gone. The charter §2.2 text and the privacy summary were updated.
+
+**Does the privacy test really assert "no request without a user action"?** Yes, with caveats.
+- `test_privacy_mls/member-lookups-on-demand-only` records the KeyPackage REQs naming Carol on the discovery and write relays after Alice's own (user-initiated) invitation. It then waits for Bob to see Carol, go live and drain. It asserts that the count is unchanged, that Carol is UNVERIFIED, and that relays x and g received zero. Only after Bob's Verify do the counts rise, still with zero on g.
+- `test_mls_service/unproven-member-identity` covers the restart path: after `app_restart()`, nothing is asked again, on any of e/w/x/g.
+- **Mutant:** I restored automatic lookups by calling Verify from `verify_group()` for every unverified device. Both tests fail. The privacy test trips first on its state assertion (CHECKING instead of UNVERIFIED), ahead of the REQ count.
+
+Caveats (A3, below):
+- The REQ matcher counts only frames containing `30443`, so an automatic regression that fetched only kind 10002 or 443 for a member would not be counted.
+- The world's second group relay `h` is not checked.
+
+### M1: correct, and confirmed against real MDK
+
+- **Groundhog** carries status (`renewed_from`) only when the new key's leaf equals libmarmot's `committer_leaf` *and* its account equals the committer. That is the one leaf the Commit's UpdatePath renewed, under the previous key's signature. Any other new key is a new device, "added by" the committer.
+- **Mutant:** carrying status to any new key in the same slot (ignoring `committer_leaf`) is killed: the admin Remove+Add case comes out VERIFIED instead of UNVERIFIED.
+- **MDK harness:** Dave stays VERIFIED across MDK 0.8's key-rotating `self_update` (`test_mdk_interop.c:556-562`). "Added by <themselves>" no longer appears for renewals. "They added this device themselves" remains only for a genuine own-account Add.
+
+### owkh (`welcome_signer`): sound
+
+The binding holds through four steps:
+1. At a Welcome join, libmarmot records (signer leaf, signature key) only when the GroupInfo signer leaf's credential equals the Welcome's sender.
+2. The GroupInfo signature is verified under that leaf's signature key (`mls_welcome.c:758-771`), so whoever produced the GroupInfo holds that device's key.
+3. Groundhog's sender is the authenticated seal author. `welcome_sink` → `marmot_process_welcome()` takes `welcomer` from the rumor's `pubkey`, and `gh-nip17-inbox.c:319-321` rejects any Welcome whose rumor author differs from the seal signer. The seal's signature is verified (`parse_signed`), and its content is NIP-44 decrypted with the signer's conversation key.
+4. A report carries `welcome_signer = true` only while that slot still holds the recorded key.
+
+**Can a forwarded Welcome mark the wrong device?** Not that I can find:
+- **Re-publishing Alice's own wrap:** same content, same device.
+- **Re-wrapping a rumor Alice sent to Mallory under Mallory's seal:** rejected (`SENDER_MISMATCH`).
+- **Rewriting the rumor's pubkey to Mallory:** sender Mallory ≠ the signer claiming Alice, so nothing is recorded (and the MLS Welcome is encrypted to Mallory's KeyPackage anyway).
+- **Re-wrapping Alice's seal to Victor:** Victor cannot decrypt it (wrong conversation key).
+- **An admin later swapping Alice's slot (Remove+Add, same identity, new key):** the key differs, so it is no longer reported.
+
+The record is kept out of epoch snapshots and deleted with the group (`5f45514f`). `test_welcome_signer_reported` covers the creator-who-invited case and a signer naming another account.
+
+### L1–L4 and nits
+
+- **L1, fixed:** a refused competitor is stale only if `commit_key_cmp() >= 0`. Mutant (unconditional remap): killed ("Bob's forged Add would have won: the group stops there").
+- **L2, fixed:**
+  - The refused Commit and its cause are stored (`gh_store_mls_refused_save`) and reloaded at start (`load_refused`).
+  - `save_cursor()` keeps the cursor at or before `refused_at`.
+  - The prrl path (turn the preference off → apply) works from the stored record.
+- **L3, fixed:** a Commit in a non-legacy group, or into another profile, is `MARMOT_ERR_UNSUPPORTED`. Mutant (drop the post-profile check): killed ("legacy -> mixed"). The profile enum now comes from slice E's header.
+- **L4, fixed:**
+  - Refusal copy follows the recorded cause (`GhMlsRefusal`) and blames no admin. The strict-mode copy honestly covers both causes.
+  - "Checking identity…" says Groundhog is asking, not that it failed.
+  - The preference now reads "Only join groups where every member's app proves their account".
+- **N1–N4, fixed:**
+  - N1: one `gh_mls_requires_proofs()`.
+  - N2: a listed member whose devices can't be read shows UNVERIFIED.
+  - N3: device records are deleted when the device leaves, and a group's records when it ends for good.
+  - N4: the threat model is documented.
+
+### Remaining findings
+
+**A1 — Medium (privacy, the H1 ruling): Verify does not exclude group relays that are also discovery or write relays.**
+`gnome/groundhog/src/mls/gh-mls-service.c:3910` passes `discovery_relays(self)` unfiltered. Phase 2 (`gh-mls-key-packages.c:194` `write_relays()`) skips only URLs already asked.
+
+- **Why it is realistic:** an MDK group's relays are typically its creator's own NIP-65 write relays, and popular relays commonly serve as discovery relays too.
+- **Confirmed (temporary test):** I set Bob's discovery relays to `{e, g}` (g = the group relay) and ran Verify for Carol. The group relay received **2** KeyPackage REQs naming Carol, and the test's own "never g" assertion failed.
+- **Effect:** the ruling ("never against group relays") is not enforced, and the confirmation copy's "but not this group" (`gh-mls-copy.c:300`) is then untrue.
+- **Fix:** drop every URL in `group->relays` (normalized) from both phases. Pass an exclusion list into `gh_mls_key_package_evidence_lookup_async()` so phase 2 filters too. If nothing is left, report "no relay to ask that isn't one of this group's". Extend the privacy test with a discovery list that includes the group relay, and a Carol 10002 that names it.
+
+**A2 — Nit (MLS conformance, pre-existing): the main commit path doesn't refuse a Remove of the committer's own leaf.**
+RFC 9420 §12.2 forbids it, but only `mls_group_commit_removes_self()` checks (`mls_group.c:3165`); `process_commit_impl()` does not. I found no way to turn this into a takeover: the committer's slot always ends up holding its own UpdatePath leaf, authenticated by the old key. However, `authorize()`'s "only the committer's leaf is renewed in place" reasoning leans on that invariant, so refuse it in the MLS layer.
+
+**A3 — Nit (test strength):**
+- `test_privacy_mls.c:299`'s `key_package_reqs()` counts only REQs that contain `30443`. For "no request without a user action", count any REQ whose `authors` includes the member, whatever the kind.
+- Include relay `h` in the "never a group relay" sum.
+
+### Suggested beads
+- **A1:** exclude group relays from Verify, both phases, plus the test. Blocks the `GH_FEATURE_ENCRYPTED_GROUPS` flip.
+- **A2:** MLS layer refuses Remove(committer).
+- **A3:** widen the privacy-test matcher.
