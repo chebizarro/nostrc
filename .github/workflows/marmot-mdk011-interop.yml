@@ -82,14 +82,16 @@ jobs:
               name = case.get("name")
               status = case.get("status", "")
               num = by_name.get(name)
-              if num in xfail:
-                  result, why = "XFAIL (not green)", "[%s] %s" % xfail[num]
-              elif status == "run" and case.find("failure") is None:
-                  result, why = "pass", ""
-              elif case.find("skipped") is not None or status in ("notrun", "disabled"):
-                  result, why = "not run", ""
-              else:
+              # A failure wins over an XFAIL line printed before it (a case
+              # that met its XFAIL and then crashed is a FAIL).
+              if case.find("failure") is not None or status == "fail":
                   result, why = "FAIL", ""
+              elif num in xfail:
+                  result, why = "XFAIL (not green)", "[%s] %s" % xfail[num]
+              elif status == "run":
+                  result, why = "pass", ""
+              else:
+                  result, why = "not run", ""
               print("| %s | %s | %s |" % (name, result, why.replace("|", "\\|")[:300]))
           PY
 

@@ -1735,6 +1735,12 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     add_dependencies(test-groundhog-mdk011-interop groundhog-test-schemas)
     set(groundhog_mdk011_artifacts "${CMAKE_BINARY_DIR}/mdk011-interop-artifacts")
     file(MAKE_DIRECTORY "${groundhog_mdk011_artifacts}")
+    # Every run starts with an empty vectors.jsonl (the drivers append; each
+    # line also carries its driver process's run id).
+    add_test(NAME groundhog-mdk011-interop-artifacts-reset
+      COMMAND ${CMAKE_COMMAND} -E rm -f "${groundhog_mdk011_artifacts}/vectors.jsonl")
+    set_tests_properties(groundhog-mdk011-interop-artifacts-reset PROPERTIES
+      FIXTURES_SETUP groundhog-mdk011-artifacts)
     if (MDK011_INTEROP_DRIVER)
       set(groundhog_mdk011_driver "${MDK011_INTEROP_DRIVER}")
       set(groundhog_mdk011_fixture)
@@ -1752,8 +1758,9 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       set(groundhog_mdk011_fixture groundhog-mdk011-image)
       # As for 0.8: the host's network on Linux, host.docker.internal on
       # Docker Desktop (the URLs and the NIP-42 relay tag stay 127.0.0.1).
-      # The artifact directory is mounted at /artifacts.
-      set(groundhog_mdk011_run "${GROUNDHOG_DOCKER} run --rm -i -e MDK_DRIVER_LOG -e MDK_DRIVER_DEADLINE_S -e MDK_DRIVER_ARTIFACT_DIR=/artifacts -v ${groundhog_mdk011_artifacts}:/artifacts")
+      # The artifact directory is mounted at /artifacts (single-quoted for
+      # g_shell_parse_argv: a build path may hold spaces).
+      set(groundhog_mdk011_run "${GROUNDHOG_DOCKER} run --rm -i -e MDK_DRIVER_LOG -e MDK_DRIVER_DEADLINE_S -e MDK_DRIVER_ARTIFACT_DIR=/artifacts -v '${groundhog_mdk011_artifacts}:/artifacts'")
       if (APPLE)
         set(groundhog_mdk011_driver "${groundhog_mdk011_run} -e MDK_DRIVER_DIAL_HOST=host.docker.internal ${groundhog_mdk011_image}")
       else()
@@ -1795,14 +1802,12 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       set_tests_properties(groundhog-mdk011-interop-${groundhog_mdk011_case} PROPERTIES
         TIMEOUT 900 SKIP_RETURN_CODE 77 RESOURCE_LOCK groundhog-mdk011
         ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;GH_MDK_DRIVER=${groundhog_mdk011_driver};GH_MDK09_DRIVER=${groundhog_mdk09_driver};MDK_DRIVER_ARTIFACT_DIR=${groundhog_mdk011_artifacts}")
-      set(groundhog_mdk011_fixtures ${groundhog_mdk011_fixture})
+      set(groundhog_mdk011_fixtures groundhog-mdk011-artifacts ${groundhog_mdk011_fixture})
       if (groundhog_mdk011_case STREQUAL "mdk09-probe")
         list(APPEND groundhog_mdk011_fixtures ${groundhog_mdk09_fixture})
       endif()
-      if (groundhog_mdk011_fixtures)
-        set_tests_properties(groundhog-mdk011-interop-${groundhog_mdk011_case} PROPERTIES
-          FIXTURES_REQUIRED "${groundhog_mdk011_fixtures}")
-      endif()
+      set_tests_properties(groundhog-mdk011-interop-${groundhog_mdk011_case} PROPERTIES
+        FIXTURES_REQUIRED "${groundhog_mdk011_fixtures}")
     endforeach()
   endif()
 else()
