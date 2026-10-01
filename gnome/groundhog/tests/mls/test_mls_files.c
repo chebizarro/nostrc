@@ -661,7 +661,9 @@ test_names(void)
     { "../../.bashrc", "_.._.bashrc" },
     { "/etc/passwd", "_etc_passwd" },
     { ".hidden", "hidden" },
-    { "report‮gpj.exe", "report_gpj.exe" },
+    /* U+202E RIGHT-TO-LEFT OVERRIDE as bytes (GCC refuses the character
+     * itself in source: -Wbidi-chars). */
+    { "report\xe2\x80\xae" "gpj.exe", "report_gpj.exe" },
     { "a\\b:c\td", "a_b_c_d" },
     { "...", NULL },
     { "  ", NULL },
