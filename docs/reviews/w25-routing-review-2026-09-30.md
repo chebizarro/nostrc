@@ -255,3 +255,107 @@ Most mls-service cases and the MDK 0.8 leave cases now exercise a configuration 
 
 - nostrc-3ajb: libmarmot refuses an MDK 0.11 admin's GroupContextExtensions upgrade in an adopted group. Until it is fixed, that is a split path for adopted groups.
 - nostrc-zbmb: see H1. I recommend raising it to block 8ndz's automatic trigger.
+
+## Addendum: re-review of the fixes (tip `0c5b8ef7`)
+
+- **Rebased on:** master `543ca0b6`.
+- **New commits:** `3af3ba3f` (libmarmot: zbmb, and SelfRemove at the first Add), `342e93fb` (Groundhog: the 8ndz product change, M1, the Lows and nits), `0b52b24a` (L2 test hardening, docs, manifest), `0c5b8ef7` (MDK 0.8 `groundhog-leaves-mdk-admin` keeps a permissive group).
+- **Final verdict:** **APPROVE-WITH-NITS.**
+  - H1 and M1 are fixed and tested.
+  - L1, L2, L3 and N1–N3 are fixed.
+  - Two residual Lows (R1, R2) and one Nit (R3) remain. None blocks the merge.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `ninja` (macOS 27 env, `-DBUILD_GROUNDHOG=ON`, MDK harnesses on) | clean |
+| ctest: libmarmot, plus Groundhog mls / privacy-mls / store / group-ui / relay / mls-ui / mls-media, plus gnostr mls (49 tests, `-j6`) | 48 pass, 1 skipped (keyring). `marmot_test_adopted_commits` aborted once. That is the known wall-clock flake nostrc-12m0 (the test is untouched here): 5/5 sequential and 60/60 six-way-concurrent reruns pass |
+| `scripts/linux-gate.sh --sanitizers` (52 tests) | pass |
+| macOS ASAN+UBSAN: `test_mls_group`, `test_commits`, `test_protocol`, `test_adopted`, `test_adopted_commits` | pass, no reports |
+| MDK 0.8 live (13 cases, incl. `mdk-member-self-removes` and `groundhog-requires-self-remove`) | 13/13 pass |
+| MDK 0.11 live (private tag built from this tree, since removed): `control`, `white-noise-welcome`, `adopted-commits`, `routing-rotation` | pass. `groundhog-invites-mdk` is its documented XFAIL (`unsupported`, nostrc-qp24.5.1) |
+| **The split probe, rerun** (`zbmb_probe.c`, unchanged) | `rc=-54` (`MARMOT_ERR_KEY_PACKAGE_CAPABILITIES`): refused. It was `rc=0` before |
+| Revert: the producer check in `add_members_staged()` (`mls_group.c:1722`) | `test_add_refuses_unsupported_key_package` FAIL |
+| Revert: the receiver check in `process_commit_impl()` (`mls_group.c:4305`) | `test_inbound_add_of_unsupported_key_package_refused` FAIL |
+| Mutation: `created_here()` true for every group with a record (joined ones too) | **no test fails** (R2) |
+| Docker | volumes identical before and after (268) |
+
+### Disposition of the findings
+
+**H1, zbmb: fixed in both directions.**
+- **Producer:** `add_members_staged()` checks every joiner with `key_package_supports_group()`, which reuses `group_extension_supported()`.
+  - It checks against the GroupContextExtensions of this Commit when it has them, so an Add made together with a GCE is checked against the new list.
+  - It refuses with the new `MARMOT_ERR_KEY_PACKAGE_CAPABILITIES` (-54) before anything is staged.
+  - The legacy and adopted producers both map that error through.
+  - Groundhog shows it as `GH_MLS_SERVICE_ERROR_INVITEE_UNSUPPORTED`, with honest copy ("…someone you invited uses an app that can't, so they can't join it. Nothing was changed.").
+- **Receiver:** the pre-application validation pass refuses an inbound Add whose leaf does not support the epoch being entered (the last GCE proposal's list).
+- Both directions are tested, and each test fails when its check is reverted (above).
+- The `marmot.h` doc now describes a rule that libmarmot enforces.
+
+**8ndz product change: as asked, with one inference caveat (R1).**
+- **SelfRemove at the first Add.** `first_add_requires_self_remove()` (`groups.c`) folds the requirement into the Add Commit when all of these hold:
+  - the group is legacy;
+  - SelfRemove is not yet required;
+  - only our leaf is occupied;
+  - our leaf and every invitee advertise SelfRemove.
+  
+  This is MDK's creation-time LCD rule, applied at the first Add, with no separate Commit. A legacy invitee keeps the group permissive. `MarmotConfig.keep_first_add_permissive` (appended field, unreleased 0.12.0) opts out. MDK 0.8 follows the combined Add+GCE Commit live (`mdk-member-self-removes`).
+- **Background upgrade.** Now only when `created_here()` is true, and only when `caught_up()`: the group is read live, every current relay has answered, and no backfill is pending or queued. The delay is a random 10 min to 6 h. A service-wide `upgrade_slot` keeps two groups' upgrades at least 30 min apart. `test_background_upgrade` covers the stagger. This also settles the timing burst and the stale-epoch Commit from L1. The co-admin race is now limited to groups we created, at a random time in a 6 h window.
+- **The "created here" inference.**
+  - **Groups created or joined by this build:** `set_origin()` writes `mls/o/<hash>`: 1 on create (`:4140`), 2 on accept (`:5279`). A joined group is therefore never marked created. Groups our account's *other* device created count as joined on this device. This is correct.
+  - **Groups older than the record:** a fallback applies, and it can misfire (R1).
+
+**M1: fixed.** `stage_change()` (`:3386`) queues the admin's change behind a Commit Groundhog made on its own (the `auto_change` flag, set for the upgrade and for automatic departures). It no longer returns BUSY. `queued_flush()` stages the queued changes in order once that Commit's round is reported and nothing is pending. Each queued change is re-checked with `check_change()` first, and a cancelled one is skipped. `stop_generation()` fails them as cancelled. `test_background_upgrade` renames while the upgrade is out, and the rename lands right after it. A user's own change still gets BUSY behind the user's own pending change, which is correct.
+
+**L1: fixed** (see above).
+
+**L2: fixed.**
+- `all_relays_answered()` and the read state now follow the current relays only. An earlier address keeps its own `since`.
+- In addition, a relay read only for an earlier address is dropped after 3 failures in a row. The counter resets on every re-subscription, so this is best-effort. The cursor fix is the one that matters.
+- `routing-dead-earlier-relay` first makes that relay silent, and asserts the cursor still moves, then kills it.
+
+**L3: fixed.** Invite KeyPackage lookups now avoid `read_relays` (`:4051`), as Verify does.
+
+**N1: fixed.** The copy now reads "another group on this device (one you're in or were in)".
+
+**N2: fixed.** ADDRESS_TAKEN is mapped only on invite-accept (`:5239`).
+
+**N3: fixed.**
+- The tests now run the app's behaviour by default.
+- `world_permissive_groups` is set only by the two Remove-request cases (`mdk-member-leaves`, `groundhog-leaves-mdk-admin`), and the harness README says why.
+
+### Residual findings
+
+**R1 (Low): the fallback for groups without an `mls/o/` record can mark a joined group "created here".**
+
+**Where:** `gnome/groundhog/src/mls/gh-mls-service.c:3631` (`created_here()`, the record-less branch).
+
+The fallback says "created here" when *our account* holds leaf 0 and no member is `welcome_signer`. Two things make that unreliable:
+- `welcome_signer` is true only while the welcomer's *device* is still at its leaf with the same key (`marmot-members.h:48`). It turns false once the welcomer leaves or rotates its key.
+- libmarmot has recorded it only since `94062fdb` (2026-09-30). Every earlier join has none.
+
+**Failure scenario:**
+1. MDK user M creates a group, then leaves. Leaf 0 is now blank.
+2. Admin A adds us before this build. The Add takes the leftmost blank leaf, so we get leaf 0.
+3. Our join predates the `welcome_signer` record, or A later leaves.
+4. After updating, we are an admin, and every leaf supports SelfRemove. `created_here()` returns TRUE.
+5. Groundhog commits the background upgrade in a group someone else made. That is exactly what the integrator excluded.
+
+The same happens when *another device of our account* holds leaf 0: the check compares the account, not this device.
+
+**Impact:** Low. Encrypted groups are a development-only build option (`GH_FEATURE_ENCRYPTED_GROUPS`, OFF), so only existing dev installs hold record-less groups. The outcome is a GCE Commit that every member supports. Because zbmb is fixed, later legacy invitees are refused with honest copy rather than splitting the group.
+
+**Fix:** drop the fallback and treat a record-less group as "joined" (conservative; no shipped install has such groups). Or at least compare this device's leaf (its signature key) instead of the account, and persist the inferred origin.
+
+**R2 (Low, test gap): nothing tests that a joined group never gets the background upgrade.**
+
+Making `created_here()` return TRUE for every recorded group (joined included) passes `groundhog-mls-service` and all 13 MDK 0.8 cases. The window is shortened only where a test sets it, and no case has Groundhog as an admin of a group it joined, with the window shortened.
+
+**Fix:** add one case. An MDK- or Groundhog-made permissive group makes us an admin, with the window at milliseconds. Assert that no GCE Commit comes from us, while the creator's own upgrade still does.
+
+**R3 (Nit): a test hook is compiled into the production library.**
+
+**Where:** `libmarmot/src/mls/mls_group.c:1656`. `mls_test_allow_unsupported_adds` is a writable global in every build, declared only in the internal header. It defaults to false and no production code sets it. Even so, the switch that turns zbmb back off is better compiled out, e.g. behind `MARMOT_TEST_HOOKS` as the other test entry points are.
+
+**Observation (not a regression).** Suppose an automatic Commit's round finishes with no relay answering (republished later), and meanwhile an inbound Commit supersedes it. Then the changes queued behind it wait until a later round of ours is reported, or the service stops. This is the existing "unanswered rounds wait" semantics: a user's own change in the same position would wait the same way.
