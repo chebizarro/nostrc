@@ -130,14 +130,20 @@ record_welcome_failure(Marmot *m, const uint8_t wrapper_event_id[32],
  * path): recorded as failed, and its own record leaves the pending list as a
  * declined one does. Before 0.11.0 it stayed pending, listed as an
  * invitation that fails again on every attempt (nostrc-7gx7: an MDK 0.8
- * group with a second unproven member). */
-static void
-refuse_welcome(Marmot *m, const MarmotWelcome *welcome, const char *reason)
+ * group with a second unproven member). Returns `refusal`; if the failed
+ * state cannot be saved, nothing is recorded, the Welcome stays pending and
+ * the save's error is returned (nostrc-w285). */
+static MarmotError
+refuse_welcome(Marmot *m, const MarmotWelcome *welcome, const char *reason,
+               MarmotError refusal)
 {
     MarmotWelcome failed = *welcome;
     failed.state = MARMOT_WELCOME_STATE_FAILED;
-    (void)m->storage->save_welcome(m->storage->ctx, &failed);
+    MarmotError err = m->storage->save_welcome(m->storage->ctx, &failed);
+    if (err != MARMOT_OK)
+        return err;
     record_welcome_failure(m, welcome->wrapper_event_id, reason, true);
+    return refusal;
 }
 
 /*
@@ -469,12 +475,15 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     /* Retrieve the raw MLS Welcome data from storage */
     uint8_t *welcome_data = NULL;
     size_t welcome_len = 0;
-    if (m->storage->mls_load(m->storage->ctx, "welcome_data",
-                              welcome->wrapper_event_id, 32,
-                              &welcome_data, &welcome_len) != 0) {
-        refuse_welcome(m, welcome, "stored welcome data not found");
-        return MARMOT_ERR_STORAGE;
-    }
+    MarmotError load_err = m->storage->mls_load(m->storage->ctx, "welcome_data",
+                                                 welcome->wrapper_event_id, 32,
+                                                 &welcome_data, &welcome_len);
+    /* Only missing data is final: another storage error may be transient (a
+     * busy database), and the invitation stays pending (nostrc-w285). */
+    if (load_err == MARMOT_ERR_STORAGE_NOT_FOUND)
+        return refuse_welcome(m, welcome, "stored welcome data not found", load_err);
+    if (load_err != MARMOT_OK)
+        return load_err;
 
     /* We need to find which KeyPackage was used for this Welcome.
      * The MLS Welcome contains KeyPackageRef entries — we need to
@@ -488,8 +497,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     if (mls_welcome_deserialize(&reader, &mls_welcome) != 0) {
         free(welcome_data);
-        refuse_welcome(m, welcome, "MLS Welcome deserialize failed");
-        return MARMOT_ERR_MLS;
+        return refuse_welcome(m, welcome, "MLS Welcome deserialize failed", MARMOT_ERR_MLS);
     }
     free(welcome_data);
 
@@ -560,8 +568,8 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     if (!found) {
         mls_welcome_clear(&mls_welcome);
-        refuse_welcome(m, welcome, "matching KeyPackage private key not found");
-        return MARMOT_ERR_KEY_NOT_FOUND;
+        return refuse_welcome(m, welcome, "matching KeyPackage private key not found",
+                              MARMOT_ERR_KEY_NOT_FOUND);
     }
 
     /* Process the MLS Welcome to join the group */
@@ -575,19 +583,16 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     mls_key_package_clear(&matched_kp);
     sodium_memzero(&matched_priv, sizeof(matched_priv));
 
-    if (rc != 0) {
-        refuse_welcome(m, welcome, "MLS Welcome processing failed");
-        return MARMOT_ERR_MLS;
-    }
+    if (rc != 0)
+        return refuse_welcome(m, welcome, "MLS Welcome processing failed", MARMOT_ERR_MLS);
 
     /* Every member is who its credential says (nostrc-7vyi): otherwise
      * nothing of the group is stored. */
     MarmotError bind_err = welcome_tree_bound(m, &mls_group, signer_leaf, welcome);
     if (bind_err != MARMOT_OK) {
         mls_group_free(&mls_group);
-        refuse_welcome(m, welcome,
-                               "member leaf without a valid account-identity proof");
-        return bind_err;
+        return refuse_welcome(m, welcome, "member leaf without a valid account-identity proof",
+                              bind_err);
     }
 
     /* A duplicate Welcome for a group we already joined: keep our state
@@ -622,9 +627,8 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
         gde = marmot_group_data_extension_deserialize(gde_data, gde_data_len);
     if (!gde) {
         mls_group_free(&mls_group);
-        refuse_welcome(m, welcome,
-                               "missing or malformed marmot_group_data (0xF2EE)");
-        return MARMOT_ERR_EXTENSION_FORMAT;
+        return refuse_welcome(m, welcome, "missing or malformed marmot_group_data (0xF2EE)",
+                              MARMOT_ERR_EXTENSION_FORMAT);
     }
 
     /* Create the MarmotGroup */

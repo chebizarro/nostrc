@@ -26,9 +26,14 @@
  * libmarmot 0.10.0 and older wrote a layout of their own instead: a fixed
  * uint32 admins length, and a has_image byte followed by fixed-size image
  * fields (and a has_upload_key byte). No other implementation reads it, and
- * libmarmot read nobody else's (nostrc-7gx7). It is still read, strictly and
- * only when the MIP-01 layout does not parse, so groups those versions made
- * keep loading; it is never written.
+ * libmarmot read nobody else's (nostrc-7gx7). It is read only from our own
+ * stored group state (marmot_group_data_extension_deserialize_stored()), so
+ * groups those versions made keep loading; a Welcome's or a Commit's
+ * GroupData must be MIP-01 (nostrc-c7ho). It is never written.
+ *
+ * Version 1 is read in both encodings MDK wrote: without image_upload_key
+ * (MDK before December 2025) and with it empty (MDK 0.8). Its image_key is
+ * the image's encryption key itself, not a v2 seed.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -302,7 +307,10 @@ decode_mip01(const uint8_t *data, size_t len)
         read_optional(&r, 32, &ext->image_hash) != 0 ||
         read_optional(&r, 32, &ext->image_key) != 0 ||
         read_optional(&r, 12, &ext->image_nonce) != 0 ||
-        read_optional(&r, 32, &ext->image_upload_key) != 0)
+        /* Version 1 as MDK wrote it before image_upload_key existed ends
+         * here; MDK 0.8 writes v1 with the field, empty (nostrc-c7ho). */
+        (!(ext->version == 1 && mls_tls_reader_done(&r)) &&
+         read_optional(&r, 32, &ext->image_upload_key) != 0))
         goto fail;
     /* The image is all or nothing; its upload key needs it. */
     bool has_image = ext->image_hash != NULL;
@@ -380,6 +388,13 @@ MarmotGroupDataExtension *
 marmot_group_data_extension_deserialize(const uint8_t *data, size_t len)
 {
     if (!data || len < 2 || len > MARMOT_EXTENSION_MAX_ENCODED_SIZE) return NULL;
-    MarmotGroupDataExtension *ext = decode_mip01(data, len);
-    return ext ? ext : decode_libmarmot_0_10(data, len);
+    return decode_mip01(data, len);
+}
+
+MarmotGroupDataExtension *
+marmot_group_data_extension_deserialize_stored(const uint8_t *data, size_t len)
+{
+    MarmotGroupDataExtension *ext = marmot_group_data_extension_deserialize(data, len);
+    if (ext || !data || len < 2 || len > MARMOT_EXTENSION_MAX_ENCODED_SIZE) return ext;
+    return decode_libmarmot_0_10(data, len);
 }

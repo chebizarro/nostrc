@@ -4793,6 +4793,505 @@ test_winner_after_its_branch(void)
     winner_after_its_branch(5, false);
 }
 
+/* ── Commits as PrivateMessages (RFC 9420 section 6.3; nostrc-dkiq) ─────
+ *
+ * libmarmot sends Commits as PublicMessages; MDK 0.8 (OpenMLS
+ * MIXED_CIPHERTEXT) sends them as PrivateMessages, and only the opt-in MDK
+ * harness exercised that path (W23 review M1).  private_commit_bytes() builds
+ * one the way OpenMLS does -- the PrivateMessageContent layout test_interop.c
+ * checks against OpenMLS's message-protection commit_priv -- for a pathless
+ * Add: its commit_secret is zero, so the next epoch follows from state the
+ * test holds (PrivateMessage signature and transcript, key schedule,
+ * confirmation tag).  It is then encrypted under a handshake ratchet.  Each
+ * option forges one property and keeps the rest consistent, so only the
+ * check under test can refuse the Commit. */
+typedef struct {
+    uint32_t data_leaf;        /* sender data and handshake ratchet; UINT32_MAX: own */
+    uint64_t epoch_skew;       /* added to the message's epoch (header and content) */
+    uint32_t generation;       /* of the handshake ratchet */
+    bool     public_signature; /* signed as a PublicMessage */
+    bool     tamper;           /* last ciphertext byte (the AEAD tag) flipped */
+    uint8_t  padding_byte;     /* the last padding byte (0: honest) */
+} PrivCommit;
+
+static const PrivCommit PRIV_HONEST = { UINT32_MAX, 0, 0, false, false, 0 };
+
+/* `x`'s pathless Add of `kp` as a PrivateMessage MLSMessage, on x's stored
+ * state; *exporter is that epoch's exporter secret (the kind:445 seal). */
+static uint8_t *
+private_commit_bytes(Member *x, const MarmotGroupId *gid, const MlsKeyPackage *kp,
+                     const PrivCommit *o, size_t *out_len, uint8_t exporter[32])
+{
+    MlsGroup g, next;
+    load_mls(x, gid, &g);
+    load_mls(x, gid, &next);
+    memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+    uint32_t leaf = o->data_leaf == UINT32_MAX ? g.own_leaf_index : o->data_leaf;
+    uint64_t epoch = g.epoch + o->epoch_skew;
+
+    MlsProposal add;
+    memset(&add, 0, sizeof(add));
+    add.type = MLS_PROPOSAL_ADD;
+    add.add.key_package = *kp;                 /* borrowed */
+    MlsCommit commit;
+    memset(&commit, 0, sizeof(commit));
+    commit.proposals = &add;
+    commit.proposal_count = 1;
+    MlsTlsBuf body;
+    CHECK(mls_tls_buf_init(&body, 1024) == 0 && mls_commit_serialize(&commit, &body) == 0,
+          "Commit body");
+
+    /* The FramedContent the receiver rebuilds from the PrivateMessage. */
+    MlsFramedContent fc;
+    memset(&fc, 0, sizeof(fc));
+    fc.group_id = g.group_id;
+    fc.group_id_len = g.group_id_len;
+    fc.epoch = epoch;
+    fc.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    fc.sender.leaf_index = leaf;
+    fc.content_type = MLS_CONTENT_TYPE_COMMIT;
+    fc.content = body.data;
+    fc.content_len = body.len;
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    CHECK(mls_group_context_build(&g, &gc, &gc_len) == 0, "GroupContext");
+    MlsFramedContentAuthData auth;
+    memset(&auth, 0, sizeof(auth));
+    CHECK(mls_framed_content_sign(&fc, o->public_signature ? MLS_WIRE_FORMAT_PUBLIC_MESSAGE
+                                                           : MLS_WIRE_FORMAT_PRIVATE_MESSAGE,
+                                  gc, gc_len, g.own_signature_key, &auth) == 0, "sign");
+
+    /* confirmed_transcript_hash = H(interim || wire_format || FramedContent ||
+     * signature), as received: a PrivateMessage (RFC 9420 section 8.2). */
+    MlsTlsBuf cth;
+    CHECK(mls_tls_buf_init(&cth, 512) == 0 &&
+          mls_tls_buf_append(&cth, g.interim_transcript_hash, MLS_HASH_LEN) == 0 &&
+          mls_tls_write_u16(&cth, MLS_WIRE_FORMAT_PRIVATE_MESSAGE) == 0 &&
+          mls_framed_content_serialize(&fc, &cth) == 0 &&
+          mls_tls_write_opaque16(&cth, auth.signature, auth.signature_len) == 0,
+          "transcript input");
+    CHECK(mls_crypto_hash(next.confirmed_transcript_hash, cth.data, cth.len) == 0, "hash");
+    mls_tls_buf_free(&cth);
+
+    /* The next epoch: the Add's leaf (unmerged on its direct path, RFC 9420
+     * section 12.1.1), commit_secret zero, no PSK. */
+    next.epoch = g.epoch + 1;
+    uint32_t node = 0;
+    CHECK(mls_tree_add_leaf(&next.tree, &node) == 0, "add leaf");
+    next.tree.nodes[node].type = MLS_NODE_LEAF;
+    CHECK(mls_leaf_node_clone(&next.tree.nodes[node].leaf, &kp->leaf_node) == 0, "leaf");
+    uint32_t dp[64], dp_len = 0;
+    CHECK(mls_tree_direct_path(node, next.tree.n_leaves, dp, 64, &dp_len) == 0, "path");
+    for (uint32_t i = 0; i < dp_len; i++) {
+        MlsNode *p = &next.tree.nodes[dp[i]];
+        if (p->type != MLS_NODE_PARENT) continue;
+        uint32_t *l = realloc(p->parent.unmerged_leaves,
+                              (p->parent.unmerged_leaf_count + 1) * sizeof(uint32_t));
+        CHECK(l, "unmerged leaves");
+        p->parent.unmerged_leaves = l;
+        l[p->parent.unmerged_leaf_count++] = mls_tree_node_to_leaf(node);
+    }
+    uint8_t th[MLS_HASH_LEN];
+    CHECK(mls_group_tree_hash(&next, th) == 0, "tree hash");
+    uint8_t *next_gc = NULL;
+    size_t next_gc_len = 0;
+    CHECK(mls_group_context_serialize(g.group_id, g.group_id_len, next.epoch, th,
+                                      next.confirmed_transcript_hash, g.extensions_data,
+                                      g.extensions_len, &next_gc, &next_gc_len) == 0,
+          "next GroupContext");
+    uint8_t zero[MLS_HASH_LEN] = { 0 };
+    MlsEpochSecrets es;
+    CHECK(mls_key_schedule_derive(g.epoch_secrets.init_secret, zero, next_gc, next_gc_len,
+                                  NULL, &es) == 0, "key schedule");
+    uint8_t tag[MLS_HASH_LEN];
+    CHECK(mls_compute_confirmation_tag(es.confirmation_key, next.confirmed_transcript_hash,
+                                       tag) == 0, "confirmation tag");
+    sodium_memzero(&es, sizeof(es));
+
+    /* PrivateMessageContent: Commit || signature<V> || confirmation_tag<V>
+     * || zero padding (at least one byte). */
+    MlsTlsBuf pmc;
+    CHECK(mls_tls_buf_init(&pmc, body.len + 160) == 0 &&
+          mls_tls_buf_append(&pmc, body.data, body.len) == 0 &&
+          mls_tls_write_opaque16(&pmc, auth.signature, auth.signature_len) == 0 &&
+          mls_tls_write_opaque32(&pmc, tag, MLS_HASH_LEN) == 0, "content");
+    do CHECK(mls_tls_write_u8(&pmc, 0) == 0, "padding"); while (pmc.len % 32 != 0);
+    pmc.data[pmc.len - 1] = o->padding_byte;
+
+    MlsMessageKeys keys;
+    if (leaf < g.tree.n_leaves) {
+        CHECK(mls_secret_tree_get_keys_for_generation(&g.secret_tree, leaf, true,
+                                                      o->generation, 1000, &keys) == 0,
+              "handshake keys");
+    } else {                                   /* no such member: any key */
+        randombytes_buf(&keys, sizeof(keys));
+        keys.generation = o->generation;
+    }
+    uint8_t guard[4];
+    randombytes_buf(guard, sizeof(guard));
+    MlsMLSMessage wire;
+    memset(&wire, 0, sizeof(wire));
+    wire.wire_format = MLS_WIRE_FORMAT_PRIVATE_MESSAGE;
+    CHECK(mls_private_message_encrypt(g.group_id, g.group_id_len, epoch, MLS_CONTENT_TYPE_COMMIT,
+                                      NULL, 0, pmc.data, pmc.len,
+                                      g.epoch_secrets.sender_data_secret, &keys, leaf, guard,
+                                      &wire.private_message) == 0, "encrypt");
+    if (o->tamper)
+        wire.private_message.ciphertext[wire.private_message.ciphertext_len - 1] ^= 0x01;
+    MlsTlsBuf out;
+    CHECK(mls_tls_buf_init(&out, 1024) == 0 && mls_message_serialize(&wire, &out) == 0,
+          "MLSMessage");
+
+    mls_message_clear(&wire);
+    sodium_memzero(&keys, sizeof(keys));
+    sodium_memzero(pmc.data, pmc.len);
+    mls_tls_buf_free(&pmc);
+    free(next_gc);
+    free(gc);
+    free(auth.signature_data);
+    mls_tls_buf_free(&body);
+    mls_group_free(&next);
+    mls_group_free(&g);
+    *out_len = out.len;
+    return out.data;
+}
+
+static char *
+private_commit(Member *x, const MarmotGroupId *gid, const uint8_t nostr_gid[32],
+               const MlsKeyPackage *kp, const PrivCommit *o)
+{
+    uint8_t exporter[32];
+    size_t len = 0;
+    uint8_t *msg = private_commit_bytes(x, gid, kp, o, &len, exporter);
+    char *json = marmot_commit_build_event(msg, len, exporter, nostr_gid);
+    CHECK(json, "Commit event");
+    sodium_memzero(exporter, sizeof(exporter));
+    free(msg);
+    return json;
+}
+
+/* The leaf of account `pk` in `x`'s view of the group. */
+static uint32_t
+leaf_of(Member *x, const MarmotGroupId *gid, const uint8_t pk[32])
+{
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    uint32_t found = UINT32_MAX;
+    uint8_t id[32];
+    for (uint32_t i = 0; i < g.tree.n_leaves && found == UINT32_MAX; i++)
+        if (marmot_mls_sender_identity(&g, i, id) == 0 && memcmp(id, pk, 32) == 0)
+            found = i;
+    mls_group_free(&g);
+    CHECK(found != UINT32_MAX, "leaf of %s", x->name);
+    return found;
+}
+
+/* An honest PrivateMessage Commit applies everywhere through
+ * marmot_process_message(), at any handshake generation in the window. */
+static void
+test_private_message_commit_applies(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member dave;
+    member_init(&dave, "Dave");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(dave.pk, dave.sk, NULL, LEAF_GENUINE, &kp, &priv);
+    PrivCommit later = PRIV_HONEST;
+    later.generation = 3;
+    char *json = private_commit(&t.alice, &t.gid, t.nostr_gid, &kp, &later);
+    expect_commit(&t.bob, json, "Alice's PrivateMessage Add");
+    expect_commit(&t.charlie, json, "Alice's PrivateMessage Add");
+    Member *two[] = { &t.bob, &t.charlie };
+    expect_converged(two, 2, &t.gid, "Before", t.epoch + 1);
+    CHECK(leaf_of(&t.bob, &t.gid, dave.pk) == leaf_of(&t.charlie, &t.gid, dave.pk),
+          "Dave added at the same leaf");
+    expect_messages_flow(two, 2, &t.gid);
+    free(json);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
+/* Each forged PrivateMessage Commit is refused through
+ * marmot_process_message() and changes nothing; the honest one still
+ * applies afterwards. */
+static void
+test_private_message_commit_forgeries_rejected(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member dave, victor;
+    member_init(&dave, "Dave");
+    member_init(&victor, "Victor");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(dave.pk, dave.sk, NULL, LEAF_GENUINE, &kp, &priv);
+
+    /* The tree is four leaves wide; leaf 3 is blank. */
+    MlsGroup g;
+    load_mls(&t.alice, &t.gid, &g);
+    uint8_t id[32];
+    CHECK(g.tree.n_leaves == 4 && marmot_mls_sender_identity(&g, 3, id) != 0, "a blank leaf");
+    mls_group_free(&g);
+
+    struct { const char *what; PrivCommit o; Member *to; MarmotError want; } cases[] = {
+        /* Alice encrypts as Bob, an admin, and signs with her own key. */
+        { "sender data naming another member", PRIV_HONEST, &t.charlie,
+          MARMOT_ERR_MLS_PROCESS_MESSAGE },
+        { "tampered ciphertext", PRIV_HONEST, &t.bob, MARMOT_ERR_MLS_PROCESS_MESSAGE },
+        { "non-zero padding", PRIV_HONEST, &t.bob, MARMOT_ERR_MLS_PROCESS_MESSAGE },
+        { "PublicMessage signature in a PrivateMessage", PRIV_HONEST, &t.bob,
+          MARMOT_ERR_MLS_PROCESS_MESSAGE },
+        { "sender data naming a blank leaf", PRIV_HONEST, &t.bob,
+          MARMOT_ERR_MLS_PROCESS_MESSAGE },
+        { "the next epoch in this epoch's seal", PRIV_HONEST, &t.bob, MARMOT_ERR_WRONG_EPOCH },
+    };
+    cases[0].o.data_leaf = leaf_of(&t.alice, &t.gid, t.bob.pk);
+    cases[1].o.tamper = true;
+    cases[2].o.padding_byte = 0x01;
+    cases[3].o.public_signature = true;
+    cases[4].o.data_leaf = 3;
+    cases[5].o.epoch_skew = 1;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *json = private_commit(&t.alice, &t.gid, t.nostr_gid, &kp, &cases[i].o);
+        expect_rejected(cases[i].to, &t.gid, json, cases[i].want, cases[i].what);
+        free(json);
+    }
+
+    /* An Add whose account proof fails, refused in default mode as in a
+     * PublicMessage (nostrc-7vyi). */
+    struct { const char *what; LeafProof mode; } proofs[] = {
+        { "Add of Victor with Alice's proof", LEAF_PROOF_BY_OTHER },
+        { "Add of Victor with his proof of another key", LEAF_REPLAYED_PROOF },
+        { "Add of Victor without a proof", LEAF_NO_PROOF },
+    };
+    for (size_t i = 0; i < sizeof(proofs) / sizeof(proofs[0]); i++) {
+        MlsKeyPackage bad;
+        MlsKeyPackagePrivate bad_priv;
+        leaf_key_package(victor.pk, victor.sk, &t.alice, proofs[i].mode, &bad, &bad_priv);
+        char *json = private_commit(&t.alice, &t.gid, t.nostr_gid, &bad, &PRIV_HONEST);
+        expect_rejected(&t.bob, &t.gid, json, MARMOT_ERR_KEY_PACKAGE_IDENTITY, proofs[i].what);
+        expect_rejected(&t.charlie, &t.gid, json, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                        proofs[i].what);
+        free(json);
+        mls_key_package_clear(&bad);
+        mls_key_package_private_clear(&bad_priv);
+    }
+
+    char *honest = private_commit(&t.alice, &t.gid, t.nostr_gid, &kp, &PRIV_HONEST);
+    expect_commit(&t.bob, honest, "the honest Add after the forgeries");
+    expect_commit(&t.charlie, honest, "the honest Add after the forgeries");
+    free(honest);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    marmot_free(victor.m);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
+/* The MLS layer itself (mls_group_process_commit): a PrivateMessage of
+ * another epoch is refused, a refused Commit consumes no handshake key, and
+ * a handshake generation already read is not accepted again. */
+static void
+test_private_message_commit_epoch_and_generation(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member dave;
+    member_init(&dave, "Dave");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(dave.pk, dave.sk, NULL, LEAF_GENUINE, &kp, &priv);
+    uint32_t alice = leaf_of(&t.alice, &t.gid, t.alice.pk);
+    uint8_t exporter[32];
+    size_t len = 0;
+
+    /* Header and content name the next epoch; the signature and key
+     * schedule are otherwise this epoch's. */
+    PrivCommit o = PRIV_HONEST;
+    o.epoch_skew = 1;
+    uint8_t *msg = private_commit_bytes(&t.alice, &t.gid, &kp, &o, &len, exporter);
+    MlsGroup bob;
+    load_mls(&t.bob, &t.gid, &bob);
+    CHECK(mls_group_process_commit(&bob, msg, len, alice) != 0 && bob.epoch == t.epoch,
+          "a PrivateMessage Commit of another epoch");
+    free(msg);
+
+    /* Commits refused at generation 0 -- one the AEAD refuses, one that
+     * decrypts and is refused after -- leave that key in place: the honest
+     * one at generation 0 still opens on the same state. */
+    PrivCommit refused[2] = { PRIV_HONEST, PRIV_HONEST };
+    refused[0].tamper = true;
+    refused[1].public_signature = true;
+    for (size_t i = 0; i < 2; i++) {
+        msg = private_commit_bytes(&t.alice, &t.gid, &kp, &refused[i], &len, exporter);
+        CHECK(mls_group_process_commit(&bob, msg, len, alice) != 0 && bob.epoch == t.epoch,
+              "refused Commit %zu", i);
+        free(msg);
+    }
+    msg = private_commit_bytes(&t.alice, &t.gid, &kp, &PRIV_HONEST, &len, exporter);
+    CHECK(mls_group_process_commit(&bob, msg, len, alice) == 0 && bob.epoch == t.epoch + 1,
+          "the honest Commit after a refused one");
+    free(msg);
+    mls_group_free(&bob);
+
+    /* Bob already read Alice's handshake generations 0 and 1 this epoch
+     * (1 first: 0 was kept as a skipped key, then taken). */
+    load_mls(&t.bob, &t.gid, &bob);
+    MlsMessageKeys k;
+    CHECK(mls_secret_tree_get_keys_for_generation(&bob.secret_tree, alice, true, 1, 1000, &k) == 0 &&
+          mls_secret_tree_get_keys_for_generation(&bob.secret_tree, alice, true, 0, 1000, &k) == 0,
+          "read generations 1 and 0");
+    sodium_memzero(&k, sizeof(k));
+    for (uint32_t gen = 0; gen <= 2; gen++) {
+        o = PRIV_HONEST;
+        o.generation = gen;
+        msg = private_commit_bytes(&t.alice, &t.gid, &kp, &o, &len, exporter);
+        int rc = mls_group_process_commit(&bob, msg, len, alice);
+        free(msg);
+        if (gen < 2)
+            CHECK(rc != 0 && bob.epoch == t.epoch, "generation %u read again", gen);
+        else
+            CHECK(rc == 0 && bob.epoch == t.epoch + 1, "a fresh generation");
+    }
+    mls_group_free(&bob);
+    sodium_memzero(exporter, sizeof(exporter));
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
+/* ── GroupData of libmarmot 0.10.0 (nostrc-c7ho) ───────────────────────── */
+
+/* `name` and Alice as admin in the layout libmarmot 0.10.0 wrote, as a
+ * GroupContext extension list. */
+static void
+legacy_group_data_extensions(const uint8_t nostr_gid[32], const char *name,
+                             const uint8_t admin[32], MlsTlsBuf *ext)
+{
+    MlsTlsBuf old;
+    CHECK(mls_tls_buf_init(&old, 256) == 0 &&
+          mls_tls_write_u16(&old, 2) == 0 &&
+          mls_tls_buf_append(&old, nostr_gid, 32) == 0 &&
+          mls_tls_write_opaque16(&old, (const uint8_t *)name, strlen(name)) == 0 &&
+          mls_tls_write_opaque16(&old, NULL, 0) == 0 &&
+          mls_tls_write_u32(&old, 32) == 0 &&            /* admins: fixed uint32 */
+          mls_tls_buf_append(&old, admin, 32) == 0 &&
+          mls_tls_write_opaque32(&old, NULL, 0) == 0 &&   /* relays */
+          mls_tls_write_u8(&old, 0) == 0, "0.10.0 GroupData");   /* no image */
+    CHECK(marmot_group_data_extension_deserialize(old.data, old.len) == NULL,
+          "the 0.10.0 bytes are not MIP-01");
+    CHECK(mls_tls_buf_init(ext, old.len + 8) == 0 &&
+          mls_tls_write_u16(ext, MARMOT_EXTENSION_TYPE) == 0 &&
+          mls_tls_write_opaque16(ext, old.data, old.len) == 0, "extension list");
+    mls_tls_buf_free(&old);
+}
+
+static void
+set_extensions(MlsGroup *g, const MlsTlsBuf *ext)
+{
+    free(g->extensions_data);
+    g->extensions_data = malloc(ext->len);
+    CHECK(g->extensions_data, "extensions");
+    memcpy(g->extensions_data, ext->data, ext->len);
+    g->extensions_len = ext->len;
+}
+
+/* A group a 0.10.0 libmarmot made keeps its GroupData in that layout until
+ * a metadata Commit rewrites it: Commits that leave it alone are authorized
+ * on it (the bytes are our own stored state), while a Commit that writes the
+ * old layout -- network input -- is refused. */
+static void
+test_legacy_group_data_only_from_stored_state(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup pre, post;
+    load_mls(&t.alice, &t.gid, &pre);
+    MlsTlsBuf ext;
+    legacy_group_data_extensions(t.nostr_gid, "Old", t.alice.pk, &ext);
+    set_extensions(&pre, &ext);
+    mls_tls_buf_free(&ext);
+
+    /* An ordinary Commit (UpdatePath): the stored GroupData unchanged. */
+    MlsTlsBuf same;
+    legacy_group_data_extensions(t.nostr_gid, "Old", t.alice.pk, &same);
+    load_mls(&t.alice, &t.gid, &post);
+    set_extensions(&post, &same);
+    mls_tls_buf_free(&same);
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    OK(marmot_commit_authorize(&pre, &post, pre.own_leaf_index, false, &key, &gde));
+    CHECK(gde && strcmp(gde->name, "Old") == 0 && !key.privileged,
+          "the stored 0.10.0 GroupData is read");
+    marmot_group_data_extension_free(gde);
+    mls_group_free(&post);
+
+    /* An admin's Commit writing GroupData in the 0.10.0 layout. */
+    MlsTlsBuf renamed;
+    legacy_group_data_extensions(t.nostr_gid, "Renamed", t.alice.pk, &renamed);
+    load_mls(&t.alice, &t.gid, &post);
+    set_extensions(&post, &renamed);
+    mls_tls_buf_free(&renamed);
+    gde = NULL;
+    CHECK(marmot_commit_authorize(&pre, &post, pre.own_leaf_index, false, &key, &gde) ==
+              MARMOT_ERR_EXTENSION_FORMAT && !gde,
+          "a Commit's 0.10.0 GroupData is refused");
+    mls_group_free(&post);
+    mls_group_free(&pre);
+    trio_clear(&t);
+}
+
+/* ── created_at order of a group's kind:445 events (nostrc-2lrz) ──────── */
+
+static int64_t
+created_at_of(const char *json)
+{
+    NostrEvent *event = nostr_event_new();
+    CHECK(event && nostr_event_deserialize_compact(event, json, NULL) == 1,
+          "parse signed group event");
+    int64_t created_at = nostr_event_get_created_at(event);
+    nostr_event_free(event);
+    return created_at;
+}
+
+/* MDK 0.8 never retries a kind:445 it failed, so a Commit of epoch n+1 it
+ * reads before the one of epoch n strands it, and created_at is the only
+ * order relays give.  What a member publishes to a group back to back, and
+ * what it publishes after applying another member's Commit, carries a later
+ * created_at -- within one second too. */
+static void
+test_group_events_have_strictly_increasing_created_at(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *ev[5];
+    ev[0] = rename_group(&t.alice, &t.gid, "One");
+    ev[1] = app_message(&t.alice, &t.gid, "after One");
+    ev[2] = rename_group(&t.alice, &t.gid, "Two");
+    ev[3] = rename_group(&t.alice, &t.gid, "Three");
+    ev[4] = app_message(&t.alice, &t.gid, "after Three");
+    for (size_t i = 1; i < 5; i++)
+        CHECK(created_at_of(ev[i]) > created_at_of(ev[i - 1]),
+              "Alice's event %zu after her event %zu", i, i - 1);
+
+    expect_commit(&t.bob, ev[0], "One");
+    expect_commit(&t.bob, ev[2], "Two");
+    expect_commit(&t.bob, ev[3], "Three");
+    char *bob_commit = rename_group(&t.bob, &t.gid, "Four");
+    char *bob_message = app_message(&t.bob, &t.gid, "after Four");
+    CHECK(created_at_of(bob_commit) > created_at_of(ev[3]), "Bob's Commit after Alice's");
+    CHECK(created_at_of(bob_message) > created_at_of(bob_commit), "Bob's message after it");
+    for (size_t i = 0; i < 5; i++) free(ev[i]);
+    free(bob_commit);
+    free(bob_message);
+    trio_clear(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -4806,6 +5305,11 @@ main(int argc, char **argv)
     RUN(test_inner_event_delivered_once);
     RUN(test_rename_reaches_every_member);
     RUN(test_events_signed_by_fresh_ephemeral_keys);
+    RUN(test_group_events_have_strictly_increasing_created_at);
+    RUN(test_private_message_commit_applies);
+    RUN(test_private_message_commit_forgeries_rejected);
+    RUN(test_private_message_commit_epoch_and_generation);
+    RUN(test_legacy_group_data_only_from_stored_state);
     RUN(test_commit_pending_until_merged);
     RUN(test_pending_commit_races);
     RUN(test_stale_duplicate_and_future_commits);

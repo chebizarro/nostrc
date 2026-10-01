@@ -83,19 +83,29 @@ mls_clone(const MlsGroup *src, MlsGroup *dst)
 }
 
 /* The group's marmot_group_data: *out is NULL when the group has none (a
- * legacy group); more than one, or one that does not parse, is an error. */
+ * legacy group); more than one, or one that does not parse, is an error.
+ * `stored` is the state we loaded from storage that `g` is (or derives from):
+ * only bytes it already holds may be in the libmarmot 0.10.0 layout, which
+ * groups made by those versions keep; GroupData a peer's Commit wrote must
+ * be MIP-01 (nostrc-c7ho). */
 static MarmotError
-group_data_of(const MlsGroup *g, MarmotGroupDataExtension **out)
+group_data_of(const MlsGroup *g, const MlsGroup *stored, MarmotGroupDataExtension **out)
 {
     *out = NULL;
-    const uint8_t *data = NULL;
-    size_t len = 0, count = 0;
+    const uint8_t *data = NULL, *base = NULL;
+    size_t len = 0, count = 0, base_len = 0, base_count = 0;
     if (marmot_extensions_find(g->extensions_data, g->extensions_len,
                                MARMOT_EXTENSION_TYPE, &data, &len, &count) != 0 ||
         count > 1)
         return MARMOT_ERR_EXTENSION_FORMAT;
     if (count == 0) return MARMOT_OK;
-    *out = marmot_group_data_extension_deserialize(data, len);
+    bool ours = g == stored ||
+                (marmot_extensions_find(stored->extensions_data, stored->extensions_len,
+                                        MARMOT_EXTENSION_TYPE, &base, &base_len,
+                                        &base_count) == 0 &&
+                 base_count == 1 && base_len == len && memcmp(base, data, len) == 0);
+    *out = ours ? marmot_group_data_extension_deserialize_stored(data, len)
+                : marmot_group_data_extension_deserialize(data, len);
     return *out ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
 }
 
@@ -249,8 +259,8 @@ marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
     key->privileged = members_changed || ext_changed;
 
     MarmotGroupDataExtension *before = NULL, *after = NULL;
-    MarmotError err = group_data_of(pre, &before);
-    if (err == MARMOT_OK) err = group_data_of(post, &after);
+    MarmotError err = group_data_of(pre, pre, &before);
+    if (err == MARMOT_OK) err = group_data_of(post, pre, &after);
     if (err == MARMOT_OK && before && !after)
         err = MARMOT_ERR_EXTENSION_FORMAT;          /* GroupData removed */
     if (err == MARMOT_OK && before && after &&
@@ -360,7 +370,7 @@ retained_pending_compute(const MlsGroup *parent, const MarmotCommitKey *key,
     *n_out = 0;
     MarmotGroupDataExtension *gde = NULL;
     /* An unreadable GroupData: count every member as a possible winner. */
-    bool gde_ok = group_data_of(parent, &gde) == MARMOT_OK;
+    bool gde_ok = group_data_of(parent, parent, &gde) == MARMOT_OK;
     uint32_t *list = parent->tree.n_leaves ? calloc(parent->tree.n_leaves, sizeof(*list)) : NULL;
     if (parent->tree.n_leaves && !list) {
         marmot_group_data_extension_free(gde);
@@ -796,7 +806,7 @@ marmot_group_reconcile(Marmot *m, MarmotGroup *group)
      * authoritative; bring the record up to it. */
     if (mls.epoch != group->epoch) {
         MarmotGroupDataExtension *gde = NULL;
-        err = group_data_of(&mls, &gde);
+        err = group_data_of(&mls, &mls, &gde);
         if (err == MARMOT_OK && gde) err = marmot_group_apply_group_data(group, gde);
         marmot_group_data_extension_free(gde);
         if (err == MARMOT_OK) {
@@ -832,9 +842,9 @@ marmot_sign_ephemeral(NostrEvent *event)
 }
 
 char *
-marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
-                          const uint8_t source_exporter[32],
-                          const uint8_t nostr_group_id[32])
+marmot_commit_build_event_at(const uint8_t *commit_msg, size_t commit_len,
+                             const uint8_t source_exporter[32],
+                             const uint8_t nostr_group_id[32], int64_t created_at)
 {
     if (!commit_msg || commit_len == 0 || !source_exporter || !nostr_group_id)
         return NULL;
@@ -852,7 +862,7 @@ marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
     if (event && tags && h) {
         nostr_event_set_kind(event, MARMOT_KIND_GROUP_MESSAGE);
         nostr_event_set_content(event, content);
-        nostr_event_set_created_at(event, marmot_now());
+        nostr_event_set_created_at(event, created_at);
         nostr_tags_append(tags, h);
         h = NULL;
         nostr_event_set_tags(event, tags);
@@ -866,6 +876,15 @@ marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
     if (event) nostr_event_free(event);
     free(content);
     return json;
+}
+
+char *
+marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
+                          const uint8_t source_exporter[32],
+                          const uint8_t nostr_group_id[32])
+{
+    return marmot_commit_build_event_at(commit_msg, commit_len, source_exporter,
+                                         nostr_group_id, marmot_now());
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1536,7 +1555,7 @@ removal_key(const MlsGroup *pre, uint32_t committer_leaf, const uint8_t digest[3
     key->privileged = true;
     memcpy(key->digest, digest, 32);
     MarmotGroupDataExtension *gde = NULL;
-    MarmotError err = group_data_of(pre, &gde);
+    MarmotError err = group_data_of(pre, pre, &gde);
     if (err == MARMOT_OK && !gde_is_admin(gde, key->committer))
         err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
     marmot_group_data_extension_free(gde);
@@ -1664,7 +1683,7 @@ static bool
 removal_contested(const MlsGroup *base, const MarmotCommitKey *key)
 {
     MarmotGroupDataExtension *gde = NULL;
-    bool gde_ok = group_data_of(base, &gde) == MARMOT_OK;
+    bool gde_ok = group_data_of(base, base, &gde) == MARMOT_OK;
     bool contested = false;
     for (uint32_t i = 0; i < base->tree.n_leaves && !contested; i++) {
         const MlsLeafNode *leaf = leaf_at(base, i);

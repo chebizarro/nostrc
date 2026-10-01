@@ -292,6 +292,47 @@ no other client could read it. `marmot_encrypt_media()` now returns
 and read-only, for references already stored. Frozen encrypted-media-v1 is
 not read (its validity rules need the frozen unsafe-host set): such a tag is
 `MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION`.
+### 0.12.0 (unreleased): hardening after the W23 MDK review (nostrc-c7ho, nostrc-w285, nostrc-2lrz, nostrc-dkiq)
+
+**API behaviour change** (MINOR for 0.x); no wire or state-format change.
+
+#### What changed
+
+- **libmarmot 0.10.0 GroupData only from our own state (nostrc-c7ho).**
+  `marmot_group_data_extension_deserialize()` reads MIP-01 only. The
+  0.10.0 layout is read only from GroupData we stored ourselves: a stored
+  group's, or a Commit's that leaves it byte-identical. GroupData from a
+  Welcome, or one a Commit writes, must be MIP-01. Before, the 0.10.0
+  fallback ran on every input, network input included (W23 review L3).
+- **MIP-01 version 1 is read (nostrc-c7ho).** Both encodings MDK used:
+  without `image_upload_key` (MDK before December 2025) and with it empty
+  (MDK 0.8). Written back as MDK 0.8 writes it. A v1 `image_key` is the
+  image's encryption key itself, not a v2 seed, and `MarmotGroup` does not
+  carry the version yet (nostrc-x215).
+- **An invitation survives a storage error (nostrc-w285).**
+  `marmot_accept_welcome()` refuses a Welcome for good only when its raw
+  data is missing (`MARMOT_ERR_STORAGE_NOT_FOUND`, was
+  `MARMOT_ERR_STORAGE`); any other load error is returned and the Welcome
+  stays pending (W23 review L1). A refusal whose failed state cannot be
+  saved records nothing, leaves the Welcome pending and returns the save's
+  error (L2).
+- **A group's kind:445 events carry strictly increasing created_at
+  (nostrc-2lrz).** MDK 0.8 never retries a kind:445 it failed once, so a
+  Commit of epoch n+1 it reads before the one of epoch n strands it, and
+  created_at is the only order relays give. Every Commit and application
+  message we publish to a group is dated after the previous one, and after
+  the newest Commit of another member we applied (at most a minute ahead of
+  our clock). The floor is kept per `nostr_group_id` in `mls_kv`, label
+  `group_event_created_at`; group snapshots leave it alone, since a Commit
+  rolled back was still published.
+- **Tests for Commits sent as PrivateMessages (nostrc-dkiq, W23 review
+  M1).** OpenMLS's message-protection `commit_priv` vector is opened as
+  `private_commit_open()` does. Through `marmot_process_message()`, a
+  PrivateMessage Commit built in-tree applies, and each forgery is refused:
+  another member's sender data, a blank leaf, a tampered ciphertext,
+  non-zero padding, a PublicMessage signature, another epoch, an Add whose
+  account proof fails. At the MLS layer: another epoch, a refused Commit
+  consuming no handshake key, a generation read before.
 
 ### 0.11.0 (unreleased): Marmot wire conformance, found by the first live MDK 0.8 test (nostrc-7gx7, nostrc-77pa)
 

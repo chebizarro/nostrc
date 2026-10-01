@@ -15,9 +15,11 @@
  * MLS_GROUP_WELCOMES_LABEL, all keyed by the MLS group id (groups.c,
  * commits.c, messages.c, welcome.c). They are the only group-scoped labels:
  * the others are keyed by a public key (kp_slot), a KeyPackageRef (kp_priv,
- * kp_full) or a gift-wrap id (welcome_data) and must never be captured or
- * restored by a group snapshot. The e2e test fails if libmarmot starts using
- * an unclassified label. */
+ * kp_full), a gift-wrap id (welcome_data) or a nostr_group_id
+ * (group_event_created_at, since libmarmot 0.12: the created_at floor of the
+ * group's events, which a rolled-back Commit, already published, must not
+ * lower) and must never be captured or restored by a group snapshot. The
+ * e2e test fails if libmarmot starts using an unclassified label. */
 #define MLS_GROUP_STATE_LABEL "mls_group"
 #define MLS_GROUP_PARENT_LABEL "mls_group_parent"
 #define MLS_GROUP_PENDING_LABEL "mls_group_pending"

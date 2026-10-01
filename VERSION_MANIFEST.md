@@ -19,6 +19,8 @@ files already declare a version.
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
+| marmot-gobject | `marmot-gobject/` | 1.4.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
+| groundhog | `gnome/groundhog/` | 0.11.3 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | NIP-46 client/provider | `nips/nip46/` | Unversioned | Unreleased | — | None; authoritative version ownership must be established before release |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
@@ -168,6 +170,9 @@ particular:
   listed source agrees with **Declared version**.
 - A component marked **Unversioned** must gain an authoritative SemVer source
   before its first release.
+| libmarmot 0.11.0 -> 0.12.0 (MINOR: W23 MDK review hardening. nostrc-c7ho: `marmot_group_data_extension_deserialize()` reads MIP-01 only, the libmarmot 0.10.0 layout only from GroupData we stored (a Commit that leaves it byte-identical included), and MIP-01 v1 is read in both MDK encodings; nostrc-w285: `marmot_accept_welcome()` refuses for good only on missing raw data (`MARMOT_ERR_STORAGE_NOT_FOUND`, was `MARMOT_ERR_STORAGE`), keeps the Welcome pending on any other storage error and when the failed state cannot be saved; nostrc-2lrz: a group's kind:445 events carry strictly increasing created_at, kept per nostr_group_id under the new `mls_kv` label `group_event_created_at`; nostrc-dkiq: in-tree tests of Commits sent as PrivateMessages) | libmarmot | 0.12.0 | MINOR: 0.x public behaviour change (a public decoder's accepted input narrowed, an error code changed); no wire, ABI or state-format change. Other W24 libmarmot bumps are reconciled by the integrator. |
+| same | marmot-gobject, gnostr | 1.4.0, 0.1.0 | No bump: no source change; both link libmarmot statically and are unreleased. marmot-gobject passes `marmot_accept_welcome_by_wrapper_id()`'s error code through, which is now `MARMOT_ERR_STORAGE_NOT_FOUND` for a Welcome whose raw data is gone. |
+| same (Groundhog: `GhStoreMarmot` classifies the new label `group_event_created_at`, keyed by nostr_group_id and never captured or restored by a group snapshot; the store test checks a rolled-back Commit leaves it raised) | groundhog | 0.11.3 | PATCH: stores a new libmarmot label, no feature or format change of its own. |
 
 ## Automation status
 

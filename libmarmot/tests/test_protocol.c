@@ -1513,6 +1513,76 @@ test_decline_welcome(void)
     PASS();
 }
 
+static MarmotError
+transient_welcome_load(void *ctx, const char *label, const uint8_t *key,
+                       size_t key_len, uint8_t **data, size_t *len)
+{
+    (void)ctx; (void)label; (void)key; (void)key_len; (void)data; (void)len;
+    return MARMOT_ERR_STORAGE;
+}
+
+static MarmotError
+failed_welcome_save(void *ctx, const MarmotWelcome *welcome)
+{
+    (void)ctx; (void)welcome;
+    return MARMOT_ERR_STORAGE;
+}
+
+static void
+test_accept_welcome_storage_failures(void)
+{
+    TEST("MIP-02: transient load and failed refusal save keep invitation pending");
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "create Marmot");
+    MarmotWelcome *w = marmot_welcome_new();
+    ASSERT(w != NULL, "create Welcome");
+    randombytes_buf(w->id, 32);
+    randombytes_buf(w->wrapper_event_id, 32);
+    w->state = MARMOT_WELCOME_STATE_PENDING;
+    w->event_json = strdup("{\"kind\":444,\"content\":\"\"}");
+    ASSERT_OK(m->storage->save_welcome(m->storage->ctx, w), "save pending Welcome");
+    MarmotError (*load)(void *, const char *, const uint8_t *, size_t,
+                        uint8_t **, size_t *) = m->storage->mls_load;
+    MarmotError (*save)(void *, const MarmotWelcome *) = m->storage->save_welcome;
+
+    m->storage->mls_load = transient_welcome_load;
+    ASSERT(marmot_accept_welcome(m, w) == MARMOT_ERR_STORAGE,
+           "transient storage load is not a permanent refusal");
+    m->storage->mls_load = load;
+
+    /* No raw Welcome bytes: a permanent not-found refusal is warranted, but
+     * only if its failed-state record can be saved. */
+    m->storage->save_welcome = failed_welcome_save;
+    ASSERT(marmot_accept_welcome(m, w) == MARMOT_ERR_STORAGE,
+           "failed refusal save returns storage error");
+    m->storage->save_welcome = save;
+    MarmotWelcome **pending = NULL;
+    size_t count = 0;
+    ASSERT_OK(marmot_get_pending_welcomes(m, NULL, &pending, &count),
+              "list pending after storage failures");
+    ASSERT(count == 1, "Welcome must remain pending");
+    for (size_t i = 0; i < count; i++) marmot_welcome_free(pending[i]);
+    free(pending);
+    bool found = false;
+    int state = 0;
+    char *reason = NULL;
+    ASSERT_OK(m->storage->find_processed_welcome(m->storage->ctx,
+              w->wrapper_event_id, &found, &state, &reason), "find failure record");
+    ASSERT(!found, "no final failure record when Welcome remains pending");
+    free(reason);
+
+    ASSERT(marmot_accept_welcome(m, w) == MARMOT_ERR_STORAGE_NOT_FOUND,
+           "missing raw data is a permanent refusal");
+    pending = NULL; count = 0;
+    ASSERT_OK(marmot_get_pending_welcomes(m, NULL, &pending, &count),
+              "list after permanent refusal");
+    ASSERT(count == 0, "permanently refused Welcome is no longer pending");
+    free(pending);
+    marmot_welcome_free(w);
+    marmot_free(m);
+    PASS();
+}
+
 static void
 test_welcome_end_to_end(void)
 {
@@ -3376,6 +3446,7 @@ main(void)
     test_process_welcome_basic();
     test_process_welcome_wrong_kind();
     test_decline_welcome();
+    test_accept_welcome_storage_failures();
     test_welcome_end_to_end();
     test_welcome_duplicate_detection();
     test_accept_welcome_null_args();

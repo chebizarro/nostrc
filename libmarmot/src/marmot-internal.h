@@ -63,6 +63,24 @@ int marmot_constant_time_eq(const uint8_t *a, const uint8_t *b, size_t n);
 /** Get current UNIX timestamp. */
 int64_t marmot_now(void);
 
+/** The created_at of the next kind:445 event we publish to this group: now,
+ * or one second after the newest we published or applied, whichever is later
+ * (nostrc-2lrz).  Reserved in storage: call it inside the operation's
+ * storage transaction, which undoes the reservation if the operation fails. */
+MarmotError marmot_next_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
+                                         int64_t *created_at);
+
+/** Another member's Commit with this created_at was applied: our next event
+ * follows it (as far as a minute ahead of our clock). */
+MarmotError marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
+                                            int64_t created_at);
+
+/** Decode GroupData we stored ourselves: MIP-01, or the layout libmarmot
+ * 0.10.0 and older wrote (nostrc-c7ho).  Never for a Welcome's or a peer
+ * Commit's GroupData: marmot_group_data_extension_deserialize() is for those. */
+MarmotGroupDataExtension *marmot_group_data_extension_deserialize_stored(
+    const uint8_t *data, size_t len);
+
 /** Ensure MLS identity is initialized. Returns 0 on success, -1 on error. */
 int marmot_ensure_identity(Marmot *m);
 

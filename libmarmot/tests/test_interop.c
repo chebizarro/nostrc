@@ -1297,7 +1297,10 @@ test_group_data_extension_libmarmot_0_10_layout(void)
     assert(mls_tls_buf_append(&old, img, 12) == 0);
     assert(mls_tls_write_u8(&old, 0) == 0);                  /* no upload key */
 
-    MarmotGroupDataExtension *ext = marmot_group_data_extension_deserialize(old.data, old.len);
+    assert(marmot_group_data_extension_deserialize(old.data, old.len) == NULL &&
+           "legacy local bytes must not be accepted from the wire");
+    MarmotGroupDataExtension *ext =
+        marmot_group_data_extension_deserialize_stored(old.data, old.len);
     assert(ext != NULL);
     assert(strcmp(ext->name, "Old") == 0 && ext->description == NULL);
     assert(ext->admin_count == 1 && memcmp(ext->admins[0], admin, 32) == 0);
@@ -1356,6 +1359,51 @@ test_group_data_extension_later_version(void)
     free(half);
     free(v3);
     free(v2);
+}
+
+/* MIP-01 version 1 in both encodings MDK wrote (nostrc-c7ho): without
+ * image_upload_key (MDK before December 2025) and with it empty (MDK 0.8).
+ * A version 2 without the field is truncated. */
+static void
+test_group_data_extension_version_1(void)
+{
+    size_t len = 0;
+    uint8_t *v = hex_dup(MDK_GDE_ONE_ADMIN_EMPTY, &len);
+    assert(v[len - 1] == 0x00);                /* image_upload_key<V>: empty */
+    v[1] = 1;
+    MarmotGroupDataExtension *with = marmot_group_data_extension_deserialize(v, len);
+    assert(with && with->version == 1 && with->admin_count == 1 && !with->image_upload_key);
+    MarmotGroupDataExtension *without = marmot_group_data_extension_deserialize(v, len - 1);
+    assert(without && without->version == 1 && without->admin_count == 1 &&
+           !without->image_hash && !without->image_upload_key);
+    /* Written back as MDK 0.8 writes version 1: the field present, empty. */
+    uint8_t *out = NULL;
+    size_t out_len = 0;
+    assert(marmot_group_data_extension_serialize(without, &out, &out_len) == MARMOT_OK);
+    assert(out_len == len && memcmp(out, v, len) == 0);
+    free(out);
+    marmot_group_data_extension_free(with);
+    marmot_group_data_extension_free(without);
+
+    /* Version 1 with an image (its image_key is the key itself), no upload key. */
+    uint8_t *img = malloc(len - 4 + 3 + 32 + 32 + 12);
+    assert(img);
+    memcpy(img, v, len - 4);
+    size_t n = len - 4;
+    img[n++] = 32; memset(img + n, 0x11, 32); n += 32;
+    img[n++] = 32; memset(img + n, 0x22, 32); n += 32;
+    img[n++] = 12; memset(img + n, 0x33, 12); n += 12;
+    MarmotGroupDataExtension *pic = marmot_group_data_extension_deserialize(img, n);
+    assert(pic && pic->version == 1 && pic->image_hash && pic->image_key &&
+           pic->image_nonce && !pic->image_upload_key);
+    marmot_group_data_extension_free(pic);
+    img[1] = 2;
+    assert(marmot_group_data_extension_deserialize(img, n) == NULL);
+    free(img);
+
+    v[1] = 2;
+    assert(marmot_group_data_extension_deserialize(v, len - 1) == NULL);
+    free(v);
 }
 
 /* ── 3c. kind:445 content as MDK 0.8 encrypts it (MIP-03, nostrc-7gx7) ──
@@ -2114,6 +2162,128 @@ assert_application_priv_unprotects(const MdkMessageProtectionVector *v)
     mls_message_clear(&wire);
 }
 
+/* RFC 9420 message-protection: commit_priv, a Commit as OpenMLS (MDK 0.8's
+ * engine) sends it as a PrivateMessage, unprotected as libmarmot's
+ * private_commit_open() does (nostrc-dkiq, W23 review M1): sender data,
+ * the sender's handshake ratchet, then the PrivateMessageContent of a Commit
+ * (RFC 9420 section 6.3.1).  Its FramedContent carries the vector's Commit;
+ * the signature verifies as mls_private_message only, never as the
+ * PublicMessage's; the content is Commit || signature<V> ||
+ * confirmation_tag<V> || zero padding (what test_commits.c builds); a
+ * tampered ciphertext or a non-zero padding byte is refused. */
+static void
+assert_commit_priv_unprotects(const MdkMessageProtectionVector *v)
+{
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, v->commit_priv, v->commit_priv_len);
+    MlsMLSMessage wire;
+    assert(mls_message_deserialize(&r, &wire) == 0 && mls_tls_reader_done(&r) &&
+           wire.wire_format == MLS_WIRE_FORMAT_PRIVATE_MESSAGE);
+    const MlsPrivateMessage *pm = &wire.private_message;
+    assert(pm->content_type == MLS_CONTENT_TYPE_COMMIT && pm->epoch == v->epoch);
+
+    size_t sample = pm->ciphertext_len < MLS_HASH_LEN ? pm->ciphertext_len : MLS_HASH_LEN;
+    MlsSenderData sd;
+    const MlsSenderDataAAD sd_aad = { pm->group_id, pm->group_id_len, pm->epoch, pm->content_type };
+    assert(mls_sender_data_decrypt(v->sender_data_secret, &sd_aad, pm->ciphertext, sample,
+                                   pm->encrypted_sender_data,
+                                   pm->encrypted_sender_data_len, &sd) == 0);
+    MlsSecretTree st;
+    assert(mls_secret_tree_init(&st, v->encryption_secret, 2) == 0);
+    uint8_t *content = NULL;
+    size_t content_len = 0;
+    MlsSenderData used;
+    assert(mls_private_message_decrypt_with_sender_data(pm, &sd, &st, 1000, &content,
+                                                         &content_len, &used) == 0);
+    mls_secret_tree_free(&st);
+
+    MlsPublicMessage opened;
+    memset(&opened, 0, sizeof(opened));
+    assert(mls_handshake_content_decode(pm, sd.leaf_index, content, content_len,
+                                        &opened.content, &opened.auth) == 0);
+    assert_bytes_eq("message-protection.commit_priv Commit", opened.content.content,
+                    v->commit, v->commit_len);
+    assert(opened.content.content_len == v->commit_len);
+    assert(opened.content.sender.sender_type == MLS_SENDER_TYPE_MEMBER &&
+           opened.content.sender.leaf_index == sd.leaf_index);
+    assert(opened.auth.has_confirmation_tag && opened.auth.confirmation_tag_len == MLS_HASH_LEN);
+
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_serialize(v->group_id, v->group_id_len, v->epoch, v->tree_hash,
+                                       v->confirmed_transcript_hash, NULL, 0,
+                                       &gc, &gc_len) == 0);
+    assert(v->signature_pub_len == MLS_SIG_PK_LEN);
+    assert(mls_framed_content_verify(&opened.content, &opened.auth,
+                                     MLS_WIRE_FORMAT_PRIVATE_MESSAGE, gc, gc_len,
+                                     v->signature_pub) == 0);
+    /* The signature binds the wire format: it does not verify as a
+     * PublicMessage's, and commit_pub's does not verify as a PrivateMessage's. */
+    assert(mls_framed_content_verify(&opened.content, &opened.auth,
+                                     MLS_WIRE_FORMAT_PUBLIC_MESSAGE, gc, gc_len,
+                                     v->signature_pub) != 0);
+    MlsTlsReader pr;
+    mls_tls_reader_init(&pr, v->commit_pub, v->commit_pub_len);
+    MlsMLSMessage pub;
+    assert(mls_message_deserialize(&pr, &pub) == 0 &&
+           pub.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE);
+    assert(pub.public_message.content.content_len == v->commit_len &&
+           memcmp(pub.public_message.content.content, v->commit, v->commit_len) == 0);
+    assert(mls_framed_content_verify(&pub.public_message.content, &pub.public_message.auth,
+                                     MLS_WIRE_FORMAT_PUBLIC_MESSAGE, gc, gc_len,
+                                     v->signature_pub) == 0);
+    assert(mls_framed_content_verify(&opened.content, &pub.public_message.auth,
+                                     MLS_WIRE_FORMAT_PRIVATE_MESSAGE, gc, gc_len,
+                                     v->signature_pub) != 0);
+    mls_message_clear(&pub);
+
+    /* The layout test_commits.c encodes, then zero padding. */
+    MlsTlsBuf ours;
+    assert(mls_tls_buf_init(&ours, content_len) == 0);
+    assert(mls_tls_buf_append(&ours, v->commit, v->commit_len) == 0 &&
+           mls_tls_write_opaque16(&ours, opened.auth.signature, opened.auth.signature_len) == 0 &&
+           mls_tls_write_opaque32(&ours, opened.auth.confirmation_tag, MLS_HASH_LEN) == 0);
+    assert(ours.len <= content_len);
+    assert_bytes_eq("message-protection.commit_priv PrivateMessageContent", ours.data,
+                    content, ours.len);
+    for (size_t i = ours.len; i < content_len; i++) assert(content[i] == 0);
+    mls_tls_buf_free(&ours);
+    mls_public_message_clear(&opened);
+
+    /* Padding is zero bytes only. */
+    uint8_t *padded = malloc(content_len + 1);
+    assert(padded);
+    memcpy(padded, content, content_len);
+    padded[content_len] = 0x00;
+    assert(mls_handshake_content_decode(pm, sd.leaf_index, padded, content_len + 1,
+                                        &opened.content, &opened.auth) == 0);
+    mls_public_message_clear(&opened);
+    padded[content_len] = 0x01;
+    assert(mls_handshake_content_decode(pm, sd.leaf_index, padded, content_len + 1,
+                                        &opened.content, &opened.auth) != 0);
+    free(padded);
+
+    /* A flipped ciphertext byte past the sender-data sample fails the AEAD. */
+    MlsPrivateMessage tampered = *pm;
+    uint8_t *ct = malloc(pm->ciphertext_len);
+    assert(ct);
+    memcpy(ct, pm->ciphertext, pm->ciphertext_len);
+    ct[pm->ciphertext_len - 1] ^= 0x01;
+    tampered.ciphertext = ct;
+    assert(mls_secret_tree_init(&st, v->encryption_secret, 2) == 0);
+    uint8_t *bad = NULL;
+    size_t bad_len = 0;
+    assert(mls_private_message_decrypt_with_sender_data(&tampered, &sd, &st, 1000, &bad,
+                                                         &bad_len, &used) != 0);
+    mls_secret_tree_free(&st);
+    free(ct);
+
+    sodium_memzero(content, content_len);
+    free(content);
+    free(gc);
+    mls_message_clear(&wire);
+}
+
 static void
 test_mdk_message_protection_vectors(const char *vector_dir)
 {
@@ -2128,9 +2298,10 @@ test_mdk_message_protection_vectors(const char *vector_dir)
         assert_mls_message_roundtrip("message-protection.proposal_priv", vectors[i].proposal_priv, vectors[i].proposal_priv_len);
         assert_mls_message_roundtrip("message-protection.application_priv", vectors[i].application_priv, vectors[i].application_priv_len);
         assert_application_priv_unprotects(&vectors[i]);
+        assert_commit_priv_unprotects(&vectors[i]);
     }
-    printf("PASS (%zu ciphersuite-1 protection cases asserted, application_priv "
-           "unprotected and its signature verified)\n", count);
+    printf("PASS (%zu ciphersuite-1 protection cases asserted, application_priv and "
+           "commit_priv unprotected and their signatures verified)\n", count);
 }
 
 static void
@@ -3011,6 +3182,7 @@ int main(void)
     TEST(test_group_data_extension_mdk_vectors);
     TEST(test_group_data_extension_libmarmot_0_10_layout);
     TEST(test_group_data_extension_later_version);
+    TEST(test_group_data_extension_version_1);
     TEST(test_group_event_mdk_vector);
 
     printf("\n─ Key Derivation Consistency ─\n");

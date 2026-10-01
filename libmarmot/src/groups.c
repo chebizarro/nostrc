@@ -611,10 +611,13 @@ create_group_impl(Marmot *m,
                                        config->admin_count, mls_group.tree.n_leaves,
                                        (const char **)config->relay_urls,
                                        config->relay_count, result->welcome_rumor_jsons);
+            int64_t created_at = 0;
             if (err == MARMOT_OK)
-                result->evolution_event_json = marmot_commit_build_event(
+                err = marmot_next_group_event_time(m, nostr_group_id, &created_at);
+            if (err == MARMOT_OK)
+                result->evolution_event_json = marmot_commit_build_event_at(
                     add_result.commit_data, add_result.commit_len,
-                    source_exporter, nostr_group_id);
+                    source_exporter, nostr_group_id, created_at);
             if (err == MARMOT_OK && !result->evolution_event_json)
                 err = MARMOT_ERR_EVENT_BUILD;
         } else {
@@ -769,14 +772,17 @@ finish_local_commit(Marmot *m, MarmotGroup *group,
                     char **out_commit_json)
 {
     if (!commit || commit_len == 0) return MARMOT_ERR_MLS;
-    char *json = marmot_commit_build_event(commit, commit_len,
-                                           pre->epoch_secrets.exporter_secret,
-                                           group->nostr_group_id);
+    int64_t created_at = 0;
+    MarmotError err = marmot_next_group_event_time(m, group->nostr_group_id, &created_at);
+    if (err != MARMOT_OK) return err;
+    char *json = marmot_commit_build_event_at(commit, commit_len,
+                                              pre->epoch_secrets.exporter_secret,
+                                              group->nostr_group_id, created_at);
     if (!json) return MARMOT_ERR_EVENT_BUILD;
     /* The pending record keeps the signed event (republish after a restart)
      * and the Welcomes with their recipients (sent after the merge). */
-    MarmotError err = marmot_commit_stage_pending(m, pre, post, commit, commit_len,
-                                                  json, welcomes, welcome_count);
+    err = marmot_commit_stage_pending(m, pre, post, commit, commit_len,
+                                      json, welcomes, welcome_count);
     if (err != MARMOT_OK) {
         free(json);
         return err;
@@ -1029,8 +1035,8 @@ add_members_impl(Marmot *m,
         size_t data_len = 0, n_gde = 0;
         if (marmot_extensions_find(post.extensions_data, post.extensions_len,
                                    MARMOT_EXTENSION_TYPE, &data, &data_len, &n_gde) == 0 &&
-            n_gde == 1)
-            gde = marmot_group_data_extension_deserialize(data, data_len);
+            n_gde == 1)   /* our own state: a 0.10.0 group's layout too */
+            gde = marmot_group_data_extension_deserialize_stored(data, data_len);
     }
     err = build_welcome_rumors(&add, sender, key_package_event_jsons, kp_count,
                                group->nostr_group_id, group->name, group->description,
@@ -1240,7 +1246,7 @@ updated_group_data(const MlsGroup *mls, const MarmotGroupConfig *config,
 
     MarmotGroupDataExtension *gde = NULL;
     if (count == 1) {
-        gde = marmot_group_data_extension_deserialize(cur, cur_len);
+        gde = marmot_group_data_extension_deserialize_stored(cur, cur_len);
         if (!gde) return MARMOT_ERR_MLS;
     } else {
         gde = marmot_group_data_extension_new();

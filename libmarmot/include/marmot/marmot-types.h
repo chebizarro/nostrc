@@ -462,7 +462,9 @@ void marmot_group_data_extension_free(MarmotGroupDataExtension *ext);
 int marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
                                            uint8_t **out_data, size_t *out_len);
 
-/** Deserialize extension from TLS wire format. Caller frees result. */
+/** Deserialize a MIP-01 extension (version 1 or later) from TLS wire format.
+ *  Since 0.12.0 libmarmot 0.10.0's own layout is not accepted here (it is
+ *  read only from a group's stored state). Caller frees result. */
 MarmotGroupDataExtension *marmot_group_data_extension_deserialize(
     const uint8_t *data, size_t len);
 

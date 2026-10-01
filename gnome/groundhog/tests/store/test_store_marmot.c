@@ -224,11 +224,17 @@ db_dump(GhStore *store, const gchar *like)
   return g_string_free(out, FALSE);
 }
 
+/* libmarmot's created_at floor of a group's kind:445 events, keyed by the
+ * nostr_group_id (nostrc-2lrz), is not group state: a Commit rolled back was
+ * still published, and what follows it must not reuse its time. */
+#define EVENT_TIME_LABEL "group_event_created_at"
+
 /* What a group snapshot covers, for every group. */
 static gchar *
 group_state_dump(GhStore *store)
 {
-  g_autofree gchar *kv = sql_dump(store, "SELECT * FROM mls_kv");
+  g_autofree gchar *kv = sql_dump(store, "SELECT * FROM mls_kv WHERE label <> '"
+                                         EVENT_TIME_LABEL "'");
   g_autofree gchar *info = sql_dump(store, "SELECT * FROM mls_group_info");
   g_autofree gchar *relays = sql_dump(store, "SELECT * FROM mls_group_relays");
   g_autofree gchar *secrets = sql_dump(store, "SELECT * FROM mls_exporter_secrets");
@@ -240,6 +246,18 @@ static gchar *
 kv_dump(GhStore *store)
 {
   return sql_dump(store, "SELECT * FROM mls_kv");
+}
+
+static gchar *
+kv_state_dump(GhStore *store)
+{
+  return sql_dump(store, "SELECT * FROM mls_kv WHERE label <> '" EVENT_TIME_LABEL "'");
+}
+
+static gchar *
+event_time_dump(GhStore *store)
+{
+  return sql_dump(store, "SELECT * FROM mls_kv WHERE label = '" EVENT_TIME_LABEL "'");
 }
 
 static void
@@ -2349,7 +2367,7 @@ assert_labels_classified(GhStore *store)
   static const gchar *const known[] = {
     "mls_group", "mls_group_parent", "mls_group_pending", "mls_group_welcomes",
     "kp_slot", "kp_priv",
-    "kp_full", "welcome_data", NULL,
+    "kp_full", "welcome_data", EVENT_TIME_LABEL, NULL,
   };
   g_autofree gchar *labels = sql_text(store, "SELECT group_concat(label, ',') FROM "
                                              "(SELECT DISTINCT label FROM mls_kv ORDER BY label)");
@@ -2499,7 +2517,8 @@ test_e2e_persistence(void)
 }
 
 /* Snapshots of real libmarmot state: a Commit (metadata update, new epoch)
- * rolled back leaves mls_kv byte-identical and a working group. */
+ * rolled back leaves the group's mls_kv rows byte-identical and a working
+ * group; the created_at floor the Commit raised stays raised. */
 static void
 test_snapshot_libmarmot_state(void)
 {
@@ -2509,7 +2528,7 @@ test_snapshot_libmarmot_state(void)
   const char *relays[] = { RELAY_ONE };
   uint64_t epoch0 = 0;
   MarmotGroupId gid = actor_create_group(&alice, "Before", relays, 1, &epoch0);
-  g_autofree gchar *kv_before = kv_dump(alice.store);
+  g_autofree gchar *kv_before = kv_state_dump(alice.store);
   g_autofree gchar *state_before = group_state_dump(alice.store);
 
   MarmotStorage *s = alice.storage;
@@ -2527,14 +2546,18 @@ test_snapshot_libmarmot_state(void)
   assert_marmot_ok(marmot_get_group(alice.marmot, &gid, &group));
   g_assert_cmpuint(group->epoch, ==, epoch0 + 1);
   marmot_group_free(group);
-  g_autofree gchar *kv_committed = kv_dump(alice.store);
+  g_autofree gchar *kv_committed = kv_state_dump(alice.store);
   g_assert_cmpstr(kv_committed, !=, kv_before);
+  g_autofree gchar *time_committed = event_time_dump(alice.store);
+  g_assert_cmpstr(time_committed, !=, "");
 
   /* The Commit lost the race: roll back. */
   assert_marmot_ok(s->rollback_snapshot(s->ctx, &gid, "pending-commit"));
-  g_autofree gchar *kv_after = kv_dump(alice.store);
+  g_autofree gchar *kv_after = kv_state_dump(alice.store);
   g_autofree gchar *state_after = group_state_dump(alice.store);
+  g_autofree gchar *time_after = event_time_dump(alice.store);
   g_assert_cmpstr(kv_after, ==, kv_before);
+  g_assert_cmpstr(time_after, ==, time_committed);
   g_assert_cmpstr(state_after, ==, state_before);
   assert_marmot_ok(marmot_get_group(alice.marmot, &gid, &group));
   g_assert_cmpstr(group->name, ==, "Before");

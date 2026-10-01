@@ -658,6 +658,16 @@ create_message_impl(Marmot *m,
     }
 
     /* ── 4. Build kind:445 event ──────────────────────────────────────── */
+    /* Dated after the group's previous event (nostrc-2lrz). */
+    int64_t created_at = 0;
+    MarmotError time_err = marmot_next_group_event_time(m, group->nostr_group_id,
+                                                        &created_at);
+    if (time_err != MARMOT_OK) {
+        free(nip44_ciphertext);
+        free(bound_json);
+        marmot_group_free(group);
+        return time_err;
+    }
     /* Per MIP-03 a completely separate, fresh ephemeral key signs every
      * kind:445 (marmot_sign_ephemeral(), below); it is never the account
      * key and never reused. */
@@ -671,7 +681,7 @@ create_message_impl(Marmot *m,
 
     nostr_event_set_kind(event, MARMOT_KIND_GROUP_MESSAGE);
     nostr_event_set_content(event, nip44_ciphertext);
-    nostr_event_set_created_at(event, marmot_now());
+    nostr_event_set_created_at(event, created_at);
     free(nip44_ciphertext);
 
     /* Tags: "h" = nostr_group_id hex */
@@ -716,7 +726,7 @@ create_message_impl(Marmot *m,
         return MARMOT_ERR_MEMORY;
     }
     result->message->kind = MARMOT_KIND_GROUP_MESSAGE;
-    result->message->created_at = marmot_now();
+    result->message->created_at = created_at;
     result->message->processed_at = 0;
     result->message->mls_group_id = marmot_group_id_new(
         mls_group_id->data, mls_group_id->len);
@@ -950,6 +960,9 @@ process_group_event(Marmot *m, const char *group_event_json,
         err = marmot_commit_process_inbound(m, group, used_epoch,
                                             decrypted, decrypted_len,
                                             parsed.event_id, result);
+        if (err == MARMOT_OK && result->type == MARMOT_RESULT_COMMIT)
+            err = marmot_observe_group_event_time(m, group->nostr_group_id,
+                                                  parsed.created_at);
         free(decrypted);
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);

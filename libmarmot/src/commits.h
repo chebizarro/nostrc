@@ -172,6 +172,9 @@ MarmotError marmot_group_apply_group_data(MarmotGroup *group,
 char *marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
                                 const uint8_t source_exporter[32],
                                 const uint8_t nostr_group_id[32]);
+char *marmot_commit_build_event_at(const uint8_t *commit_msg, size_t commit_len,
+                                   const uint8_t source_exporter[32],
+                                   const uint8_t nostr_group_id[32], int64_t created_at);
 
 /**
  * Sign `event` with a freshly generated secp256k1 key that is wiped
