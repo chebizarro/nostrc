@@ -714,9 +714,10 @@ epoch for good (nostrc-prrl).
 
 - **The policy is keyed by the group's wire profile**
   (`MarmotGroupProfile`, `marmot/marmot-group-profile.h`, one header shared
-  with the adopted-profile admission work, W24 slice E). Legacy means
-  exactly one 0xF2EE and no app_data_dictionary in the authenticated
-  GroupContext.
+  with the adopted-profile admission work, W24 slice E). Legacy is slice
+  E's profile: pinned LEGACY when the group was admitted, created or loaded,
+  and no app_data_dictionary in its GroupContext (a group without GroupData
+  is legacy, with no admin).
 - **In a LEGACY group**, `MarmotConfig.allow_unproven_members` (default now
   **true**) admits leaves without the proof:
   - in a Welcome's tree;
@@ -744,7 +745,10 @@ epoch for good (nostrc-prrl).
   was filled by an Add: the Commit is privileged (admins only), and the leaf
   is a new identity claim (a valid proof, or the policy in a legacy group).
   libmarmot applies no Update proposals; whoever adds them must treat their
-  leaves as renewals too.
+  leaves as renewals too. A departure (slice B: a SelfRemove-only Commit,
+  any member's to commit, or a Remove a member sent for itself) only blanks
+  the leaver's slot; an Add that refills it is still privileged and a new
+  claim (`test_departure_is_not_a_takeover`).
 - **A proof that does not verify is refused in every profile and mode**
   (nostrc-7vyi, we6g unchanged).
 - **Our own leaves.** `allow_unproven_members` no longer makes them. The new
@@ -780,9 +784,9 @@ epoch for good (nostrc-prrl).
   This is typically an MDK 0.8 group's creator, whose leaf key is in no
   KeyPackage. A signer claiming another account than the sender, or a leaf
   added into that slot later, is not marked.
-- **Who committed.** `MarmotMessageResult.commit.committer_pubkey_hex` is
-  the authenticated committer of an inbound Commit (who added a member), and
-  `committer_leaf` its leaf. That leaf is the one a Commit renews in place:
+- **Who committed.** `MarmotMessageResult.commit.committer_pubkey_hex`
+  (slice B's, nostrc-2um6) is the authenticated committer of an inbound
+  Commit (who added a member), and `committer_leaf` its leaf. That leaf is the one a Commit renews in place:
   its UpdatePath leaf may carry a new signature key (MDK's self-update
   rotates it), signed in by the previous key, so it is the same device,
   renewed. An application may carry what it knew of the old key over to the
@@ -803,13 +807,14 @@ epoch for good (nostrc-prrl).
 
 - **API/ABI.**
   - `MarmotConfig` gains `allow_unproven_self`, and
-    `MarmotMessageResult.commit` gains `committer_pubkey_hex` (freed by
-    `marmot_message_result_free()`) and `committer_leaf`. Rebuild, and
-    start from `marmot_config_default()`.
-  - New installed headers `marmot/marmot-members.h` and
-    `marmot/marmot-group-profile.h` (both included by `marmot/marmot.h`).
+    `MarmotMessageResult.commit` gains `committer_leaf` (next to slice B's
+    `committer_pubkey_hex`). Rebuild, and start from
+    `marmot_config_default()`.
+  - New installed header `marmot/marmot-members.h` (included by
+    `marmot/marmot.h`; `MarmotGroupProfile` is slice E's
+    `marmot/marmot-group-profile.h`).
   - Internal: `mls_group_replace_members()` (Removes, then Adds, in one
-    Commit).
+    Commit; installed through `group_install_checked()`).
 - **Behaviour.**
   - A caller that relied on the default refusal must set
     `allow_unproven_members = false` (marmot-gobject does, so Gnostr keeps

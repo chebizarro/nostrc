@@ -4177,6 +4177,142 @@ test_slot_takeover_refused(void)
     slot_takeover(true);
 }
 
+/* A copy of `g` through its serialization. */
+static void
+mls_copy(const MlsGroup *g, MlsGroup *out)
+{
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    CHECK(mls_group_serialize(g, &blob, &len) == 0 && mls_group_deserialize(blob, len, out) == 0,
+          "copy the MLS state");
+    sodium_memzero(blob, len);
+    free(blob);
+}
+
+/* `g`'s leaf `leaf`, blanked, then (when `with` is not NULL) refilled with
+ * `with` -- a Commit's departure, and an Add landing in that slot. */
+static void
+set_slot(MlsGroup *g, uint32_t leaf, const MlsLeafNode *with)
+{
+    MlsNode *node = &g->tree.nodes[mls_tree_leaf_to_node(leaf)];
+    mls_tree_blank_node(node);
+    if (!with) return;
+    node->type = MLS_NODE_LEAF;
+    CHECK(mls_leaf_node_clone(&node->leaf, with) == 0, "refill the slot");
+}
+
+/* W24 slice A with slice B: a departure is not a slot takeover. A
+ * SelfRemove-only Commit (any member's to commit, nostrc-2um6) or a Remove a
+ * member sent for itself (admins commit it) only blanks the leaver's slot.
+ * The B1 rule still holds around them: a slot an Add refills -- even the
+ * leaver's, even under the leaver's identity -- makes the Commit privileged
+ * and the leaf a new identity claim. Judged by marmot_commit_authorize_ex()
+ * with the departures the MLS layer reports. */
+static void
+test_departure_is_not_a_takeover(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member dave;
+    member_init(&dave, "Dave");   /* a second non-admin, to commit */
+    MlsGroup base, pre;
+    load_mls(&t.alice, &t.gid, &base);
+    MlsKeyPackage dave_kp, fresh, bare;
+    MlsKeyPackagePrivate dave_priv, fresh_priv, bare_priv;
+    leaf_key_package(dave.pk, dave.sk, NULL, LEAF_GENUINE, &dave_kp, &dave_priv);
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_member(&base, &dave_kp, &add) == 0, "Dave joins");
+    mls_add_result_clear(&add);
+    mls_copy(&base, &pre);
+    uint32_t alice = tree_leaf_of(&pre, t.alice.pk);
+    uint32_t charlie = tree_leaf_of(&pre, t.charlie.pk);
+    uint32_t dave_leaf = tree_leaf_of(&pre, dave.pk);
+    CHECK(alice != UINT32_MAX && charlie != UINT32_MAX && dave_leaf != UINT32_MAX, "leaves");
+    /* Charlie's new device: proven, and (another KeyPackage) without a proof. */
+    leaf_key_package(t.charlie.pk, t.charlie.sk, NULL, LEAF_GENUINE, &fresh, &fresh_priv);
+    leaf_key_package(t.charlie.pk, NULL, &t.alice, LEAF_NO_PROOF, &bare, &bare_priv);
+
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    MlsCommitSummary sr;
+    memset(&sr, 0, sizeof(sr));
+    sr.proposal_count = 1;
+    sr.self_remove_count = 1;
+    sr.self_removed[0] = charlie;
+
+    /* Charlie's SelfRemove, alone: ordinary, Dave (not an admin) commits it. */
+    MlsGroup left;
+    mls_copy(&pre, &left);
+    set_slot(&left, charlie, NULL);
+    CHECK(marmot_commit_authorize_ex(&pre, &left, dave_leaf, false, &sr, &key, &gde) ==
+              MARMOT_OK && !key.privileged, "SelfRemove only: a departure, ordinary");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+
+    /* The leaver's slot refilled under the leaver's identity is never part
+     * of a departure, even where the summary names only the SelfRemove. */
+    MlsGroup refilled;
+    mls_copy(&pre, &refilled);
+    set_slot(&refilled, charlie, &fresh.leaf_node);
+    CHECK(marmot_commit_authorize_ex(&pre, &refilled, dave_leaf, true, &sr, &key, &gde) ==
+              MARMOT_ERR_COMMIT_FROM_NON_ADMIN && !gde, "a refilled slot is no departure");
+
+    /* SelfRemove + Add (two proposals): privileged, and the refill is a new
+     * claim -- by an admin, a proven leaf passes, an unproven one only by
+     * the legacy policy. */
+    MlsCommitSummary sr_add = sr;
+    sr_add.proposal_count = 2;
+    CHECK(marmot_commit_authorize_ex(&pre, &refilled, dave_leaf, true, &sr_add, &key, &gde) ==
+              MARMOT_ERR_COMMIT_FROM_NON_ADMIN && !gde, "SelfRemove + Add, by a non-admin");
+    CHECK(marmot_commit_authorize_ex(&pre, &refilled, alice, false, &sr_add, &key, &gde) ==
+              MARMOT_OK && key.privileged, "SelfRemove + Add of a proven leaf, by an admin");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+    MlsGroup refilled_bare;
+    mls_copy(&pre, &refilled_bare);
+    set_slot(&refilled_bare, charlie, &bare.leaf_node);
+    CHECK(marmot_commit_authorize_ex(&pre, &refilled_bare, alice, false, &sr_add, &key, &gde) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY && !gde,
+          "SelfRemove + Add of an unproven leaf, proofs required: a new claim");
+    CHECK(marmot_commit_authorize_ex(&pre, &refilled_bare, alice, true, &sr_add, &key, &gde) ==
+              MARMOT_OK, "the same in default mode (legacy group)");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+
+    /* A Remove Charlie sent for himself (MDK 0.8's leave): a departure an
+     * admin commits; refilled, the same new claim. */
+    MlsCommitSummary own;
+    memset(&own, 0, sizeof(own));
+    own.proposal_count = 1;
+    own.left_count = 1;
+    own.left[0] = charlie;
+    CHECK(marmot_commit_authorize_ex(&pre, &left, dave_leaf, false, &own, &key, &gde) ==
+              MARMOT_ERR_COMMIT_FROM_NON_ADMIN && !gde, "Remove of self, by a non-admin");
+    CHECK(marmot_commit_authorize_ex(&pre, &left, alice, false, &own, &key, &gde) == MARMOT_OK &&
+              key.privileged, "Remove of self, by an admin");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+    own.proposal_count = 2;
+    CHECK(marmot_commit_authorize_ex(&pre, &refilled_bare, alice, false, &own, &key, &gde) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY && !gde,
+          "Remove of self + Add of an unproven leaf: a new claim");
+
+    mls_group_free(&refilled_bare);
+    mls_group_free(&refilled);
+    mls_group_free(&left);
+    mls_group_free(&pre);
+    mls_group_free(&base);
+    mls_key_package_clear(&bare);
+    mls_key_package_private_clear(&bare_priv);
+    mls_key_package_clear(&fresh);
+    mls_key_package_private_clear(&fresh_priv);
+    mls_key_package_clear(&dave_kp);
+    mls_key_package_private_clear(&dave_priv);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
 /* Review W20 B1: without an account proof for the creator, the group would
  * start with a leaf no joiner accepts in another admin's Welcome.  The
  * default mode refuses to create it; enrolling (or legacy mode) creates it. */
@@ -7406,6 +7542,7 @@ main(int argc, char **argv)
     RUN(test_default_mode_legacy_profile);
     RUN(test_non_legacy_profile_fails_closed);
     RUN(test_slot_takeover_refused);
+    RUN(test_departure_is_not_a_takeover);
     RUN(test_welcome_signer_reported);
     RUN(test_refused_competitor_ordering);
     RUN(test_retained_parent_retires_once_settled);
