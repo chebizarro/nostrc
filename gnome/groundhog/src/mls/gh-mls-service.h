@@ -432,6 +432,11 @@ GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **erro
  * change was staged again because libmarmot refused its Commit with
  * MARMOT_ERR_EVENT_RATE (review W24 N5). */
 guint gh_mls_service_test_rate_retries(void);
+/* Test hooks (nostrc-2um6): the next `n` group changes staged are refused
+ * with MARMOT_ERR_EVENT_RATE as libmarmot refuses them, nothing staged; and
+ * how many Commits of members' leaves failed. */
+void gh_mls_service_test_refuse_rate(guint n);
+guint gh_mls_service_test_departure_failures(void);
 #endif
 #if defined(GH_MLS_TEST_HOOKS) && GH_MLS_SERVICE_ACCOUNT_PROOF
 /* Test hook, compiled only into test executables (the MDK 0.8 interop

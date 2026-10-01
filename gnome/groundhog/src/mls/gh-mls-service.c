@@ -2101,15 +2101,31 @@ produce_metadata(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char *
 
 #ifdef GH_MLS_TEST_HOOKS
 static guint test_rate_retries;
+static guint test_refuse_rate;
+static guint test_departure_failures;
 
 guint
 gh_mls_service_test_rate_retries(void)
 {
   return test_rate_retries;
 }
+
+void
+gh_mls_service_test_refuse_rate(guint n)
+{
+  test_refuse_rate = n;
+}
+
+guint
+gh_mls_service_test_departure_failures(void)
+{
+  return test_departure_failures;
+}
 #endif
 
 static gboolean check_change(GhMlsService *self, GhMlsGroup *group, GError **error);
+static gboolean check_departures(GhMlsService *self, GhMlsGroup *group, GError **error);
+static gboolean check_running(GhMlsService *self, GError **error);
 static void stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer,
                          gpointer data);
 
@@ -2129,7 +2145,10 @@ rate_retry_fired(gpointer data)
   GError *error = NULL;
   if (g_task_return_error_if_cancelled(task)) {
     g_object_unref(task);
-  } else if (!check_change(self, op->group, &error)) {
+  } else if (op->kind == OP_DEPARTURES ? !check_departures(self, op->group, &error)
+                                       : !check_change(self, op->group, &error)) {
+    /* A member's leave is any member's to commit, not an admin's only
+     * (nostrc-2um6): re-checked as departures_fired() checks it. */
     g_task_return_error(task, error);
     g_object_unref(task);
   } else {
@@ -2151,9 +2170,16 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
     g_object_unref(task);
     return;
   }
-  GhMlsCommitPublish *publish = gh_mls_commit_stage(self->store, self->marmot, self->storage,
-                                                    &group->gid, self->account, producer, data,
-                                                    &error);
+  GhMlsCommitPublish *publish = NULL;
+#ifdef GH_MLS_TEST_HOOKS
+  if (test_refuse_rate > 0) {   /* as libmarmot refuses it; nothing is staged */
+    test_refuse_rate--;
+    g_set_error(&error, GH_MLS_COMMIT_ERROR, MARMOT_ERR_EVENT_RATE, "%s: %s",
+                "Could not stage the change", marmot_error_string(MARMOT_ERR_EVENT_RATE));
+  } else
+#endif
+    publish = gh_mls_commit_stage(self->store, self->marmot, self->storage, &group->gid,
+                                  self->account, producer, data, &error);
   if (!publish) {
     Op *op = g_task_get_task_data(task);
     if (error->domain == GH_MLS_COMMIT_ERROR && error->code == MARMOT_ERR_EVENT_RATE &&
@@ -2234,8 +2260,12 @@ departures_done(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) error = NULL;
   /* Superseded (another member committed it first), refused or busy: the
    * next Commit, or the leaver's fresh proposal, schedules it again. */
-  if (!gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error))
+  if (!gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error)) {
+#ifdef GH_MLS_TEST_HOOKS
+    test_departure_failures++;
+#endif
     g_debug("Groundhog did not commit a member's leave: %s", error->message);
+  }
 }
 
 static gboolean
@@ -2253,6 +2283,27 @@ departures_fired(gpointer data)
                         gh_mls_service_change_finish);
   stage_change(task, group, produce_departures, NULL);
   return G_SOURCE_REMOVE;
+}
+
+/* Whether a member's leave may still be committed by us: the group change
+ * check for departures, which any member may commit (unlike check_change(),
+ * no admin is needed). */
+static gboolean
+check_departures(GhMlsService *self, GhMlsGroup *group, GError **error)
+{
+  if (!check_running(self, error))
+    return FALSE;
+  if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active || group->leaving) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Not an active group of this account");
+    return FALSE;
+  }
+  if (!departures_committable(group)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                        "No member's leave is left to commit");
+    return FALSE;
+  }
+  return TRUE;
 }
 
 /* A member asked to leave: commit it after a random delay (member-departure.md:

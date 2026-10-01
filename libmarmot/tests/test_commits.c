@@ -6644,6 +6644,74 @@ test_alone_group_requires_nothing(void)
     marmot_free(a.m);
 }
 
+/* nostrc-2um6 with nostrc-2lrz: a SelfRemove and the Commit of members'
+ * leaves are dated through the group's created_at floor like every other
+ * kind:445 of ours: after a burst of messages (the floor runs seconds ahead
+ * of the clock) each is dated after them, and the Commit is refused with
+ * MARMOT_ERR_EVENT_RATE, nothing staged, when it cannot be dated within the
+ * bound. */
+static void
+test_departure_events_follow_the_floor(void)
+{
+    Quad q;
+    quad_init(&q);
+    Trio *t = &q.t;
+    int64_t last = 0;
+    for (int i = 0; i < 4; i++) {
+        char *ev = app_message(&t->charlie, &t->gid, "burst");
+        last = created_at_of(ev);
+        free(ev);
+    }
+    CHECK(last > marmot_now(), "the floor runs ahead of the clock");
+    char *leave = NULL;
+    OK(marmot_self_remove(t->charlie.m, &t->gid, &leave));
+    CHECK(created_at_of(leave) > last, "the SelfRemove after Charlie's messages: %lld <= %lld",
+          (long long)created_at_of(leave), (long long)last);
+    expect_proposal(&q.dave, leave, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true,
+                    "Charlie leaves");
+
+    for (int i = 0; i < 4; i++) {
+        char *ev = app_message(&q.dave, &t->gid, "burst");
+        last = created_at_of(ev);
+        free(ev);
+    }
+    /* A floor at the bound: the Commit cannot be dated within it. The row is
+     * written and read in one second (retried at a second boundary). */
+    MarmotStorage *st = q.dave.m->storage;
+    uint8_t *saved = NULL;
+    size_t saved_len = 0;
+    OK(st->mls_load(st->ctx, "group_event_created_at", t->nostr_gid, 32, &saved, &saved_len));
+    MarmotError err = MARMOT_OK;
+    char *commit = NULL;
+    for (int tries = 0; tries < 3; tries++) {
+        int64_t now = marmot_now(), at = now + 60;
+        uint8_t row[16];
+        for (size_t i = 0; i < 8; i++)
+            row[i] = row[8 + i] = (uint8_t)((uint64_t)at >> (56 - 8 * i));
+        OK(st->mls_store(st->ctx, "group_event_created_at", t->nostr_gid, 32, row, sizeof row));
+        err = marmot_commit_pending_proposals(q.dave.m, &t->gid, &commit);
+        if (marmot_now() == now) break;
+        free(commit);
+        commit = NULL;
+    }
+    CHECK(err == MARMOT_ERR_EVENT_RATE && !commit, "refused at the bound: %d", err);
+    MarmotGroup *g = NULL;
+    OK(st->find_group_by_mls_id(st->ctx, &t->gid, &g));
+    bool pending = true;
+    OK(marmot_commit_has_pending(q.dave.m, g, &pending));
+    CHECK(!pending, "nothing staged");
+    marmot_group_free(g);
+
+    /* Back to Dave's floor: the Commit is dated after his messages. */
+    OK(st->mls_store(st->ctx, "group_event_created_at", t->nostr_gid, 32, saved, saved_len));
+    free(saved);
+    OK(marmot_commit_pending_proposals(q.dave.m, &t->gid, &commit));
+    CHECK(commit && created_at_of(commit) > last, "the Commit after Dave's messages");
+    free(commit);
+    free(leave);
+    quad_clear(&q);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -6727,6 +6795,7 @@ main(int argc, char **argv)
     RUN(test_self_remove_leaves_for_everyone);
     RUN(test_self_remove_admin_and_authorization);
     RUN(test_self_remove_is_epoch_bound);
+    RUN(test_departure_events_follow_the_floor);
     RUN(test_alone_group_requires_nothing);
     RUN(test_commit_before_proposal_is_kept);
     RUN(test_remove_request_where_self_remove_not_required);

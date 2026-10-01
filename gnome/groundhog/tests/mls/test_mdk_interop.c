@@ -995,6 +995,68 @@ test_groundhog_leaves_mdk_admin(void)
   mdk_driver_stop(&driver);
 }
 
+/* 3d (rebase onto nostrc-2lrz): MDK (Carol, the only admin) makes a group
+ * with Alice and Bob (Groundhog); their KeyPackages advertise SelfRemove, so
+ * MDK requires it and a leave is any member's to commit. Bob leaves; Alice,
+ * not an admin, commits his SelfRemove after the jitter. Her first staging
+ * is refused with MARMOT_ERR_EVENT_RATE (forced by a test hook, as libmarmot
+ * refuses a Commit it cannot date within a minute): the retry a second later
+ * must not ask for an admin, so it goes through with no failed attempt.
+ * Carol is not synced: MDK auto-commits every SelfRemove it reads, which
+ * would race Alice's Commit (that is case 3b). */
+static void
+test_groundhog_member_commits_leave(void)
+{
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  spin_until(key_package_published, bob, "Bob's KeyPackage");
+  mdk_peer("carol", CAROL);
+  accept_contact(alice, CAROL);
+  accept_contact(bob, CAROL);
+  g_autoptr(JsonObject) alice_view = NULL;
+  g_autoptr(JsonObject) bob_view = NULL;
+  g_autofree gchar *alice_kp = mdk_fetch_key_package(&w, "carol", ALICE, &alice_view);
+  g_autofree gchar *bob_kp = mdk_fetch_key_package(&w, "carol", BOB, &bob_view);
+  g_assert_true(mdk_has(json_object_get_array_member(bob_view, "capability_proposals"),
+                        "0x000a"));
+  g_autoptr(JsonObject) made = mdk_call(&driver,
+    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"Bob leaves\","
+    "\"description\":\"interop\",\"relays\":[\"%s\"],\"admins\":[\"%s\"],"
+    "\"key_packages\":[%s,%s],\"welcome_relays\":[\"%s\"]",
+    w.g.url, hex[CAROL], alice_kp, bob_kp, w.x.url);
+  GhMlsGroup *ga = join(alice, CAROL);
+  GhMlsGroup *gb = join(bob, CAROL);
+  assert_converged(ga, made);
+  assert_converged(gb, made);
+  g_assert_false(gh_mls_group_get_is_admin(ga));
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_EVERYONE);
+  g_autoptr(GPtrArray) gone = g_ptr_array_new_with_free_func(g_free);
+  g_signal_connect(ga, "member-left", G_CALLBACK(on_member_left), gone);
+
+  guint retries = gh_mls_service_test_rate_retries();
+  guint failures = gh_mls_service_test_departure_failures();
+  gh_mls_service_test_refuse_rate(1);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+  g_assert_no_error(error);
+  spin_until(group_ended, gb, "Bob's leave committed by Alice");
+  g_assert_cmpint(gh_mls_group_get_end(gb), ==, GH_MLS_GROUP_END_LEFT);
+  wait_members(ga, 2);
+  g_assert_cmpuint(gh_mls_service_test_rate_retries(), ==, retries + 1);
+  g_assert_cmpuint(gh_mls_service_test_departure_failures(), ==, failures);
+  g_assert_cmpuint(gone->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(gone, 0), ==, hex[BOB]);
+  gh_mls_service_test_refuse_rate(0);
+  g_signal_handlers_disconnect_by_data(ga, gone);
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1015,6 +1077,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves", test_groundhog_leaves);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves-mdk-admin",
                   test_groundhog_leaves_mdk_admin);
+  g_test_add_func("/groundhog/mdk-interop/groundhog-member-commits-leave",
+                  test_groundhog_member_commits_leave);
   gint rc = g_test_run();
   mls_world_finish();
   return rc;
