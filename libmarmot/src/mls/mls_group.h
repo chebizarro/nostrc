@@ -375,10 +375,13 @@ int mls_group_add_members(MlsGroup *group,
                           const MlsKeyPackage *const *kps, size_t kp_count,
                           MlsAddResult *result);
 
-/* Tests only (nostrc-zbmb): when true, our Adds skip the check that a
- * joiner supports what the group requires, so a test can make the Commit a
+#ifdef MARMOT_TEST_HOOKS
+/* Tests only (nostrc-zbmb), and only in builds with tests
+ * (MARMOT_TEST_HOOKS): when true, our Adds skip the check that a joiner
+ * supports what the group requires, so a test can make the Commit a
  * non-conforming client sends and check that receivers refuse it. */
 extern bool mls_test_allow_unsupported_adds;
+#endif
 
 /**
  * mls_group_add_members() with a GroupContextExtensions proposal in the same

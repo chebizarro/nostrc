@@ -128,6 +128,14 @@ add_library(marmot ${MARMOT_SOURCES})
 if(MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
   target_compile_definitions(marmot PRIVATE MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1)
 endif()
+# Test-only switches in the internal MLS headers (mls_test_allow_unsupported_adds,
+# mls_test_leaf_without_self_remove; nostrc-zbmb): compiled into the library
+# only for builds with tests, never into a release build without them (W25
+# slice M re-review R3). PUBLIC: the test executables read the declarations.
+option(MARMOT_TEST_HOOKS "Compile libmarmot's test-only switches" ${BUILD_TESTING})
+if(MARMOT_TEST_HOOKS)
+  target_compile_definitions(marmot PUBLIC MARMOT_TEST_HOOKS=1)
+endif()
 set(marmot_VERSION "${MARMOT_VERSION}")
 # SONAME: MAJOR from 1.0; while 0.x every MINOR may break the ABI (AGENTS.md:
 # 0.x MINOR for breaking changes), so the SONAME carries 0.MINOR. 0.12 changed

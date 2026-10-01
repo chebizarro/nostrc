@@ -4516,9 +4516,14 @@ TEST(test_add_refuses_unsupported_key_package)
 }
 
 /* A non-conforming member's Commit adding such a leaf is refused on arrival
- * and changes nothing (receivers enforce §12.1.1 as OpenMLS does). */
+ * and changes nothing (receivers enforce §12.1.1 as OpenMLS does). Made with
+ * a test-only switch (MARMOT_TEST_HOOKS). */
 TEST(test_inbound_add_of_unsupported_key_package_refused)
 {
+#ifndef MARMOT_TEST_HOOKS
+    printf("(skipped: no MARMOT_TEST_HOOKS) ");
+    return;
+#else
     uint8_t sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN];
     assert(mls_crypto_sign_keygen(sk, pk) == 0);
     MlsGroup alice, bob;
@@ -4555,6 +4560,7 @@ TEST(test_inbound_add_of_unsupported_key_package_refused)
     mls_key_package_private_clear(&bob_priv);
     mls_group_free(&alice);
     mls_group_free(&bob);
+#endif
 }
 
 int main(void)

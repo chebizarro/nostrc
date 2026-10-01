@@ -3629,8 +3629,9 @@ departures_schedule(GhMlsGroup *group)
  * leave, and a later invitee whose app lacks it is refused with honest copy
  * (nostrc-zbmb). Nothing else is committed for new groups.
  *
- * A group this device created before that (or whose first invitee lacked
- * SelfRemove) gets the requirement once in the background, when every
+ * A group this device created (its mls/o/ record says so) without the
+ * requirement -- made permissive, e.g. its first invitee lacked SelfRemove
+ * -- gets it once in the background, when every
  * member supports it, through libmarmot marmot_require_self_remove() (a
  * GroupContextExtensions Commit, MDK 0.11's upgrade_group_capabilities()):
  * only once the group has caught up (read live, every current relay
@@ -3665,33 +3666,18 @@ set_origin(GhMlsGroup *group, gint64 origin)
               error->message);
 }
 
-/* Whether this device created the group. Without the record (a group from
- * before it): our account holds leaf 0, the creator's, and no member
- * vouched for a Welcome of ours (libmarmot's welcome_signer). */
+/* Whether this device created the group: only by its record (set on create
+ * and on join). A group without one -- from before the record, so only on
+ * development installs -- counts as joined: nothing about its tree says for
+ * sure that this device made it (W25 slice M re-review R1), and a group
+ * someone else made is left as its creator chose. */
 static gboolean
 created_here(GhMlsGroup *group)
 {
-  GhMlsService *self = group->service;
   g_autofree gchar *scope = origin_scope(group);
   gint64 origin = 0;
-  if (!gh_store_get_cursor(self->store, scope, "", &origin, NULL))
-    return FALSE;
-  if (origin)
-    return origin == ORIGIN_CREATED;
-  MarmotMemberIdentity *ids = NULL;
-  size_t n = 0;
-  if (marmot_get_group_member_identities(self->marmot, &group->gid, &ids, &n) != MARMOT_OK)
-    return FALSE;
-  gboolean ours = FALSE, welcomed = FALSE;
-  for (size_t i = 0; i < n; i++) {
-    welcomed |= ids[i].welcome_signer;
-    if (ids[i].leaf_index == 0) {
-      g_autofree gchar *account = to_hex(ids[i].account_pubkey, 32);
-      ours = g_str_equal(account, self->account);
-    }
-  }
-  free(ids);
-  return ours && !welcomed;
+  return gh_store_get_cursor(group->service->store, scope, "", &origin, NULL) &&
+         origin == ORIGIN_CREATED;
 }
 
 static gboolean

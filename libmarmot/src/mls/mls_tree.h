@@ -232,10 +232,13 @@ extern const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT];
 #define MLS_MARMOT_CAP_PROPOSAL_COUNT 1
 extern const uint16_t MLS_MARMOT_CAP_PROPOSALS[MLS_MARMOT_CAP_PROPOSAL_COUNT];
 int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
-/* Tests only (nostrc-zbmb): when true, the legacy capabilities above list
- * no proposal type -- a libmarmot 0.11.0 or pre-#236 MDK leaf, without
+#ifdef MARMOT_TEST_HOOKS
+/* Tests only (nostrc-zbmb), and only in builds with tests
+ * (MARMOT_TEST_HOOKS): when true, the legacy capabilities above list no
+ * proposal type -- a libmarmot 0.11.0 or pre-#236 MDK leaf, without
  * SelfRemove -- so a test can publish such a KeyPackage. */
 extern bool mls_test_leaf_without_self_remove;
+#endif
 
 /*
  * The capabilities of a leaf in an adopted-profile group or KeyPackage

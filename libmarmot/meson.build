@@ -142,6 +142,11 @@ endif
 if get_option('adopted_key_package_producer')
   marmot_c_args += '-DMARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1'
 endif
+# Test-only switches (nostrc-zbmb): only in builds with tests, as in
+# CMakeLists.txt (MARMOT_TEST_HOOKS).
+if get_option('tests')
+  marmot_c_args += '-DMARMOT_TEST_HOOKS=1'
+endif
 
 # Library
 libmarmot = library('marmot',
@@ -212,7 +217,7 @@ if get_option('tests')
     'test_rfc9420_vectors',
   ]
   # test_kp_profile checks the public producer against the library's gate.
-  marmot_test_c_args = []
+  marmot_test_c_args = ['-DMARMOT_TEST_HOOKS=1']
   if get_option('adopted_key_package_producer')
     marmot_test_c_args += '-DMARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1'
   endif

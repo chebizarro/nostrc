@@ -1653,7 +1653,12 @@ static bool leaf_occupied(const MlsGroup *group, uint32_t leaf);
 static int key_package_supports_group(const MlsKeyPackage *kp, const uint8_t *exts,
                                       size_t exts_len);
 
+#ifdef MARMOT_TEST_HOOKS
 bool mls_test_allow_unsupported_adds = false;
+#define ALLOW_UNSUPPORTED_ADDS mls_test_allow_unsupported_adds
+#else
+#define ALLOW_UNSUPPORTED_ADDS false   /* compiled out (re-review R3) */
+#endif
 
 /* Removes, Adds, then a GroupContextExtensions proposal or (adopted groups,
  * nostrc-qp24.5.1.3) inline AppDataUpdates, with an UpdatePath; a Welcome
@@ -1719,7 +1724,7 @@ add_members_staged(MlsGroup *group,
         if (rc != 0) goto done;
         /* nostrc-zbmb: the joiner supports what the epoch it joins requires
          * -- this Commit's GroupContextExtensions when it has them. */
-        rc = mls_test_allow_unsupported_adds
+        rc = ALLOW_UNSUPPORTED_ADDS
                  ? 0
                  : key_package_supports_group(kps[i],
                                               gce_extensions ? gce_extensions

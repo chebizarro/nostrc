@@ -3049,6 +3049,7 @@ test_self_remove_required(void)
   world_down(&w);
 }
 
+#ifdef MARMOT_TEST_HOOKS   /* libmarmot's test-only switch (re-review R3) */
 /* `key`'s KeyPackage, published as an app without SelfRemove makes it
  * (libmarmot 0.11.0, MDK before #236). */
 static gchar *
@@ -3101,6 +3102,8 @@ test_invitee_without_self_remove(void)
   g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_ADMINS);
   world_down(&w);
 }
+
+#endif
 
 typedef struct {
   GhMlsGroup *group;
@@ -3208,6 +3211,116 @@ test_background_upgrade(void)
   spin_until(name_is, &renamed, "Bob following the rename");
   LeaveKindWait bob_kind = { bob, gb1 };
   spin_until(leaves_by_self_remove, &bob_kind, "Bob following the upgrade");
+  world_down(&w);
+}
+
+static gboolean
+alice_requires_self_remove(gpointer data)
+{
+  Upgraded *u = data;
+  return requires_self_remove(u->app, u->group) && !gh_mls_group_get_pending_commit(u->group);
+}
+
+/* W25 slice M re-review R2. Bob joined Alice's permissive group and became
+ * an admin: he never commits the SelfRemove requirement in it (only the
+ * device that created a group does), however short the delay -- Alice is
+ * offline meanwhile, so nobody does. Once she is back, her own upgrade
+ * comes, and Bob follows it. */
+static void
+test_joined_group_never_upgraded(void)
+{
+  World w;
+  world_legacy_only = TRUE;   /* an MDK 0.8 group between Groundhog accounts */
+  world_permissive_groups = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Alice's", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(is_admin, gb, "Bob becoming an admin");
+  g_autofree gchar *gid = g_strdup(gh_mls_group_get_group_id(ga));
+  g_assert_false(requires_self_remove(bob, gb));
+
+  /* The update, a short window; Alice is away. */
+  set_online(alice, FALSE);
+  gh_mls_service_test_set_permissive_groups(FALSE);
+  gh_mls_service_test_set_upgrade_window(100, 200, 0);
+  app_restart(bob);
+  gb = gh_mls_service_lookup(bob->service, gid);
+  g_assert_nonnull(gb);
+  wait_live(gb);
+  g_assert_true(gh_mls_group_get_is_admin(gb));
+  guint published = count_445(&w.g);
+  gint64 until = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;   /* ten windows */
+  while (g_get_monotonic_time() < until)
+    g_main_context_iteration(NULL, FALSE);
+  g_assert_false(requires_self_remove(bob, gb));
+  g_assert_cmpuint(count_445(&w.g), ==, published);
+  g_assert_false(gh_mls_group_get_pending_commit(gb));
+
+  /* Alice, who created it, upgrades it once she is back. */
+  set_online(alice, TRUE);
+  app_restart(alice);
+  ga = gh_mls_service_lookup(alice->service, gid);
+  g_assert_nonnull(ga);
+  Upgraded mine = { ga, alice, 0 };
+  spin_until(alice_requires_self_remove, &mine, "Alice's upgrade");
+  Upgraded his = { gb, bob, 0 };   /* an admin: he leaves on this device only */
+  spin_until(alice_requires_self_remove, &his, "Bob following it");
+  g_assert_cmpuint(count_445(&w.g), ==, published + 1);
+  world_down(&w);
+}
+
+/* W25 slice M re-review R1. A group without the "created here" record (made
+ * before the record existed) counts as joined, though Alice made it and
+ * holds its creator's leaf: no background upgrade, whatever the tree. */
+static void
+test_unrecorded_group_never_upgraded(void)
+{
+  World w;
+  world_legacy_only = TRUE;   /* an MDK 0.8 group between Groundhog accounts */
+  world_permissive_groups = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Older", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  g_autofree gchar *gid = g_strdup(gh_mls_group_get_group_id(ga));
+  /* Forget the record, as a group from before it has none
+   * (gh-mls-service.c origin_scope()). */
+  gsize len = strlen(gid) / 2;
+  g_autofree guint8 *bytes = g_malloc(len);
+  g_assert_true(nostr_hex2bin(bytes, gid, len));
+  g_autoptr(GChecksum) sum = g_checksum_new(G_CHECKSUM_SHA256);
+  static const guchar domain[] = "groundhog/mls-origin/v1";
+  g_checksum_update(sum, domain, sizeof domain);
+  g_checksum_update(sum, bytes, (gssize)len);
+  g_autofree gchar *scope = g_strdup_printf("mls/o/%.32s", g_checksum_get_string(sum));
+  gint64 origin = 0;
+  g_assert_true(gh_store_get_cursor(alice->store, scope, "", &origin, NULL));
+  g_assert_cmpint(origin, ==, 1);   /* created here */
+  g_assert_true(gh_store_set_cursor(alice->store, scope, "", 0, NULL));
+
+  gh_mls_service_test_set_permissive_groups(FALSE);
+  gh_mls_service_test_set_upgrade_window(100, 200, 0);
+  app_restart(alice);
+  ga = gh_mls_service_lookup(alice->service, gid);
+  g_assert_nonnull(ga);
+  wait_live(ga);
+  guint published = count_445(&w.g);
+  gint64 until = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;   /* ten windows */
+  while (g_get_monotonic_time() < until)
+    g_main_context_iteration(NULL, FALSE);
+  g_assert_false(requires_self_remove(alice, ga));
+  g_assert_cmpuint(count_445(&w.g), ==, published);
   world_down(&w);
 }
 
@@ -3657,9 +3770,15 @@ main(int argc, char **argv)
 #endif
   g_test_add_func("/groundhog/mls-service/invite-address-taken", test_invite_address_taken);
   g_test_add_func("/groundhog/mls-service/self-remove-required", test_self_remove_required);
+#ifdef MARMOT_TEST_HOOKS
   g_test_add_func("/groundhog/mls-service/invitee-without-self-remove",
                   test_invitee_without_self_remove);
+#endif
   g_test_add_func("/groundhog/mls-service/background-upgrade", test_background_upgrade);
+  g_test_add_func("/groundhog/mls-service/joined-group-never-upgraded",
+                  test_joined_group_never_upgraded);
+  g_test_add_func("/groundhog/mls-service/unrecorded-group-never-upgraded",
+                  test_unrecorded_group_never_upgraded);
   g_test_add_func("/groundhog/mls-service/routing-dead-earlier-relay",
                   test_routing_dead_earlier_relay);
   g_test_add_func("/groundhog/mls-service/unproven-invitee",
