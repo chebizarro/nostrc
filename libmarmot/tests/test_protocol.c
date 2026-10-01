@@ -1583,6 +1583,99 @@ test_accept_welcome_storage_failures(void)
     PASS();
 }
 
+/* mls_load failing with MARMOT_ERR_STORAGE (a busy or failing database)
+ * for one label only. */
+static const char *g_failing_label;
+static MarmotError (*g_real_mls_load)(void *, const char *, const uint8_t *, size_t,
+                                      uint8_t **, size_t *);
+
+static MarmotError
+label_failing_load(void *ctx, const char *label, const uint8_t *key, size_t key_len,
+                   uint8_t **data, size_t *len)
+{
+    if (g_failing_label && strcmp(label, g_failing_label) == 0) {
+        *data = NULL;
+        *len = 0;
+        return MARMOT_ERR_STORAGE;
+    }
+    return g_real_mls_load(ctx, label, key, key_len, data, len);
+}
+
+static size_t
+pending_welcome_count(Marmot *m)
+{
+    MarmotWelcome **pending = NULL;
+    size_t count = 0;
+    if (marmot_get_pending_welcomes(m, NULL, &pending, &count) != MARMOT_OK) return SIZE_MAX;
+    for (size_t i = 0; i < count; i++) marmot_welcome_free(pending[i]);
+    free(pending);
+    return count;
+}
+
+/* Review W24 M3: a storage error reading our KeyPackage's private keys
+ * (kp_priv) or the KeyPackage itself (kp_full) is returned and keeps the
+ * invitation pending, with no failure record; it used to be taken for "not
+ * our KeyPackage" and refuse the Welcome for good.  Once storage works, the
+ * same Welcome is accepted. */
+static void
+test_accept_welcome_keypackage_storage_failures(void)
+{
+    TEST("MIP-02: a KeyPackage storage error keeps the invitation pending");
+    Marmot *creator = create_test_instance();
+    Marmot *member = create_test_instance();
+    ASSERT(creator && member, "instances");
+    uint8_t creator_sk[32], creator_pk[32], member_sk[32], member_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+    generate_nostr_keypair(member_sk, member_pk);
+    MarmotKeyPackageResult kp;
+    memset(&kp, 0, sizeof(kp));
+    ASSERT_OK(marmot_create_key_package(member, member_pk, member_sk, NULL, 0, &kp),
+              "member KeyPackage");
+    const char *kp_jsons[] = { kp.event_json };
+    MarmotGroupConfig config = {0};
+    config.name = "Storage errors";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    ASSERT_OK(marmot_create_group(creator, creator_pk, kp_jsons, 1, &config, &cg),
+              "create_group");
+    uint8_t wrapper[32];
+    randombytes_buf(wrapper, 32);
+    MarmotWelcome *w = NULL;
+    ASSERT_OK(marmot_process_welcome(member, wrapper, cg.welcome_rumor_jsons[0], &w),
+              "process_welcome");
+
+    static const char *const labels[] = { "kp_priv", "kp_full" };
+    g_real_mls_load = member->storage->mls_load;
+    for (size_t i = 0; i < 2; i++) {
+        member->storage->mls_load = label_failing_load;
+        g_failing_label = labels[i];
+        MarmotError err = marmot_accept_welcome(member, w);
+        member->storage->mls_load = g_real_mls_load;
+        g_failing_label = NULL;
+        ASSERT(err == MARMOT_ERR_STORAGE, labels[i]);
+        ASSERT(pending_welcome_count(member) == 1, "the Welcome is still pending");
+        bool found = false;
+        int state = 0;
+        char *reason = NULL;
+        ASSERT_OK(member->storage->find_processed_welcome(member->storage->ctx, wrapper,
+                                                          &found, &state, &reason),
+                  "failure record");
+        free(reason);
+        ASSERT(!found, "no failure record");
+    }
+    ASSERT_OK(marmot_accept_welcome(member, w), "accepted once storage works");
+    ASSERT(pending_welcome_count(member) == 0, "no longer pending");
+
+    marmot_welcome_free(w);
+    marmot_create_group_result_free(&cg);
+    marmot_key_package_result_free(&kp);
+    marmot_free(creator);
+    marmot_free(member);
+    PASS();
+}
+
 static void
 test_welcome_end_to_end(void)
 {
@@ -3447,6 +3540,7 @@ main(void)
     test_process_welcome_wrong_kind();
     test_decline_welcome();
     test_accept_welcome_storage_failures();
+    test_accept_welcome_keypackage_storage_failures();
     test_welcome_end_to_end();
     test_welcome_duplicate_detection();
     test_accept_welcome_null_args();

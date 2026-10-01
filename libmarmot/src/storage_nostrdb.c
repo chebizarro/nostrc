@@ -402,6 +402,16 @@ ndb_all_groups(void *ctx, MarmotGroup ***out, size_t *out_count)
     return MARMOT_OK;
 }
 
+/* An mdb_get() result as a lookup outcome: *found, or absent
+ * (MDB_NOTFOUND), or an error -- never "absent": callers act on absence for
+ * good, e.g. refusing an invitation (nostrc-w285, review W24 L1). */
+static MarmotError
+ndb_lookup(int rc, bool *found)
+{
+    *found = rc == 0;
+    return (rc == 0 || rc == MDB_NOTFOUND) ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
 static MarmotError
 ndb_find_group_by_mls_id(void *ctx, const MarmotGroupId *gid, MarmotGroup **out)
 {
@@ -414,12 +424,12 @@ ndb_find_group_by_mls_id(void *ctx, const MarmotGroupId *gid, MarmotGroup **out)
 
     MDB_val k = { .mv_size = gid->len, .mv_data = (void *)gid->data };
     MDB_val v;
-    int rc = mdb_get(txn, nc->dbi_groups, &k, &v);
-    if (rc == 0) {
-        *out = deserialize_group(gid, v.mv_data, v.mv_size);
-    }
+    bool found = false;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_groups, &k, &v), &found);
+    if (found && !(*out = deserialize_group(gid, v.mv_data, v.mv_size)))
+        err = MARMOT_ERR_STORAGE;
     mdb_txn_abort(txn);
-    return MARMOT_OK; /* not found is not error */
+    return err;
 }
 
 static MarmotError
@@ -644,12 +654,12 @@ ndb_find_message_by_id(void *ctx, const uint8_t event_id[32], MarmotMessage **ou
 
     MDB_val k = { .mv_size = 32, .mv_data = (void *)event_id };
     MDB_val v;
-    int rc = mdb_get(txn, nc->dbi_messages, &k, &v);
-    if (rc == 0) {
-        *out = deserialize_message(event_id, v.mv_data, v.mv_size);
-    }
+    bool found = false;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_messages, &k, &v), &found);
+    if (found && !(*out = deserialize_message(event_id, v.mv_data, v.mv_size)))
+        err = MARMOT_ERR_STORAGE;
     mdb_txn_abort(txn);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -766,10 +776,9 @@ ndb_is_message_processed(void *ctx, const uint8_t wrapper_id[32], bool *out)
 
     MDB_val k = { .mv_size = 32, .mv_data = (void *)wrapper_id };
     MDB_val v;
-    if (mdb_get(txn, nc->dbi_processed, &k, &v) == 0)
-        *out = true;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_processed, &k, &v), out);
     mdb_txn_abort(txn);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -830,16 +839,23 @@ ndb_find_welcome_by_event_id(void *ctx, const uint8_t event_id[32], MarmotWelcom
 
     MDB_val k = { .mv_size = 32, .mv_data = (void *)event_id };
     MDB_val v;
-    if (mdb_get(txn, nc->dbi_welcomes, &k, &v) == 0) {
+    bool found = false;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_welcomes, &k, &v), &found);
+    if (found) {
         MarmotWelcome *w = marmot_welcome_new();
         if (w) {
             memcpy(w->id, event_id, 32);
             w->event_json = strndup(v.mv_data, v.mv_size);
         }
-        *out = w;
+        if (!w || !w->event_json) {
+            marmot_welcome_free(w);
+            err = MARMOT_ERR_MEMORY;
+        } else {
+            *out = w;
+        }
     }
     mdb_txn_abort(txn);
-    return MARMOT_OK;
+    return err;
 }
 
 /* Welcome processing record stored in dbi_kv with label "wproc".
@@ -957,8 +973,12 @@ ndb_find_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
     MDB_val k = { .mv_size = kl, .mv_data = kbuf };
     MDB_val v;
     int rc = mdb_get(txn, nc->dbi_kv, &k, &v);
-    if (rc == 0 && v.mv_size >= 1) {
-        *found = true;
+    MarmotError err = ndb_lookup(rc, found);
+    if (*found && v.mv_size < 1) {
+        *found = false;
+        err = MARMOT_ERR_STORAGE;               /* a damaged record */
+    }
+    if (*found) {
         const uint8_t *p = v.mv_data;
         *state = (int)p[0];
 
@@ -978,7 +998,7 @@ ndb_find_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
         }
     }
     mdb_txn_abort(txn);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -1168,13 +1188,12 @@ ndb_find_key_package_by_ref(void *ctx, const uint8_t ref[32], MarmotKeyPackageIn
 
     MDB_val k = { .mv_size = kl, .mv_data = kbuf };
     MDB_val v;
-    int rc = mdb_get(txn, nc->dbi_kv, &k, &v);
-    if (rc == 0) {
-        *out = deserialize_kpi(v.mv_data, v.mv_size);
-        if (!*out) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
-    }
+    bool found = false;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_kv, &k, &v), &found);
+    if (found && !(*out = deserialize_kpi(v.mv_data, v.mv_size)))
+        err = MARMOT_ERR_STORAGE;
     mdb_txn_abort(txn);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -1384,14 +1403,15 @@ ndb_get_exporter_secret(void *ctx, const MarmotGroupId *gid,
 
     MDB_val k = { .mv_size = key_len, .mv_data = key_buf };
     MDB_val v;
-    int rc = mdb_get(txn, nc->dbi_secrets, &k, &v);
-    mdb_txn_abort(txn);
-
-    if (rc == 0 && v.mv_size >= 32) {
+    bool found = false;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_secrets, &k, &v), &found);
+    if (err == MARMOT_OK && !found) err = MARMOT_ERR_STORAGE_NOT_FOUND;
+    if (found && v.mv_size >= 32)
         memcpy(out, v.mv_data, 32);
-        return MARMOT_OK;
-    }
-    return MARMOT_ERR_STORAGE_NOT_FOUND;
+    else if (found)
+        err = MARMOT_ERR_STORAGE;               /* a damaged record */
+    mdb_txn_abort(txn);
+    return err;
 }
 
 static MarmotError
@@ -1551,16 +1571,20 @@ ndb_mls_load(void *ctx, const char *label,
 
     MDB_val k = { .mv_size = kl, .mv_data = kbuf };
     MDB_val v;
-    int rc = mdb_get(txn, nc->dbi_kv, &k, &v);
-    if (rc == 0 && v.mv_size > 0) {
+    bool found = false;
+    MarmotError err = ndb_lookup(mdb_get(txn, nc->dbi_kv, &k, &v), &found);
+    if (err == MARMOT_OK && (!found || v.mv_size == 0)) err = MARMOT_ERR_STORAGE_NOT_FOUND;
+    if (err == MARMOT_OK) {
         *out = malloc(v.mv_size);
         if (*out) {
             memcpy(*out, v.mv_data, v.mv_size);
             *out_len = v.mv_size;
+        } else {
+            err = MARMOT_ERR_MEMORY;
         }
     }
     mdb_txn_abort(txn);
-    return (*out) ? MARMOT_OK : MARMOT_ERR_STORAGE_NOT_FOUND;
+    return err;
 }
 
 static MarmotError
@@ -1579,8 +1603,11 @@ ndb_mls_delete(void *ctx, const char *label,
 
     MDB_val k = { .mv_size = kl, .mv_data = kbuf };
     int rc = mdb_del(txn, nc->dbi_kv, &k, NULL);
-    mdb_txn_commit(txn);
-    return (rc == 0) ? MARMOT_OK : MARMOT_ERR_STORAGE_NOT_FOUND;
+    if (rc != 0) {
+        mdb_txn_abort(txn);
+        return rc == MDB_NOTFOUND ? MARMOT_ERR_STORAGE_NOT_FOUND : MARMOT_ERR_STORAGE;
+    }
+    return mdb_txn_commit(txn) == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
 /* ── Lifecycle ─────────────────────────────────────────────────────────── */

@@ -516,69 +516,65 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     }
     free(welcome_data);
 
-    /* Find our entry among the EncryptedGroupSecrets */
+    /* Find our entry among the EncryptedGroupSecrets.  Only a definitive
+     * not-found means "not our KeyPackage": any other storage error leaves
+     * the Welcome pending, as for its raw data (nostrc-w285, review W24 M3). */
     MlsKeyPackage matched_kp;
     MlsKeyPackagePrivate matched_priv;
+    memset(&matched_kp, 0, sizeof(matched_kp));
     bool found = false;
 
-    for (size_t i = 0; i < mls_welcome.secret_count; i++) {
+    for (size_t i = 0; i < mls_welcome.secret_count && !found; i++) {
+        const uint8_t *ref = mls_welcome.secrets[i].key_package_ref;
         uint8_t *priv_data = NULL;
         size_t priv_len = 0;
-
-        /* Look up private key material by (label="kp_priv", key=KeyPackageRef) */
-        if (m->storage->mls_load &&
-            m->storage->mls_load(m->storage->ctx, "kp_priv",
-                                  mls_welcome.secrets[i].key_package_ref,
-                                  MLS_HASH_LEN,
-                                  &priv_data, &priv_len) == 0 &&
-            priv_data != NULL &&
-            priv_len == (MLS_KEM_SK_LEN + MLS_KEM_SK_LEN + MLS_SIG_SK_LEN)) {
-            /* Found our KeyPackage private material */
-            memcpy(matched_priv.init_key_private, priv_data, MLS_KEM_SK_LEN);
-            memcpy(matched_priv.encryption_key_private,
-                   priv_data + MLS_KEM_SK_LEN, MLS_KEM_SK_LEN);
-            memcpy(matched_priv.signature_key_private,
-                   priv_data + MLS_KEM_SK_LEN + MLS_KEM_SK_LEN, MLS_SIG_SK_LEN);
-            sodium_memzero(priv_data, priv_len);
+        MarmotError kp_err = m->storage->mls_load(m->storage->ctx, "kp_priv", ref,
+                                                  MLS_HASH_LEN, &priv_data, &priv_len);
+        if (kp_err == MARMOT_ERR_STORAGE_NOT_FOUND) continue;
+        if (kp_err != MARMOT_OK) {
+            mls_welcome_clear(&mls_welcome);
+            return kp_err;
+        }
+        if (!priv_data || priv_len != MLS_KEM_SK_LEN + MLS_KEM_SK_LEN + MLS_SIG_SK_LEN) {
+            if (priv_data) sodium_memzero(priv_data, priv_len);
             free(priv_data);
+            continue;                       /* not a key of ours we can use */
+        }
+        memcpy(matched_priv.init_key_private, priv_data, MLS_KEM_SK_LEN);
+        memcpy(matched_priv.encryption_key_private, priv_data + MLS_KEM_SK_LEN, MLS_KEM_SK_LEN);
+        memcpy(matched_priv.signature_key_private, priv_data + 2 * MLS_KEM_SK_LEN,
+               MLS_SIG_SK_LEN);
+        sodium_memzero(priv_data, priv_len);
+        free(priv_data);
 
-            /* Load the full serialized KeyPackage so mls_welcome_process_parsed
-             * can compute the correct KeyPackageRef and populate the tree. */
+        /* The full KeyPackage, so mls_welcome_process_parsed can compute the
+         * KeyPackageRef and populate the tree. */
+        uint8_t *kp_data = NULL;
+        size_t kp_len = 0;
+        kp_err = m->storage->mls_load(m->storage->ctx, "kp_full", ref, MLS_HASH_LEN,
+                                      &kp_data, &kp_len);
+        if (kp_err != MARMOT_OK && kp_err != MARMOT_ERR_STORAGE_NOT_FOUND) {
+            sodium_memzero(&matched_priv, sizeof(matched_priv));
+            mls_welcome_clear(&mls_welcome);
+            return kp_err;
+        }
+        bool parsed = false;
+        if (kp_err == MARMOT_OK && kp_data) {
+            MlsTlsReader kp_reader;
+            mls_tls_reader_init(&kp_reader, kp_data, kp_len);
+            parsed = mls_key_package_deserialize(&kp_reader, &matched_kp) == 0;
+        }
+        free(kp_data);
+        if (!parsed) {
+            /* Missing or unreadable: a minimal KeyPackage, whose ref check
+             * fails below, a final refusal. */
+            mls_key_package_clear(&matched_kp);
             memset(&matched_kp, 0, sizeof(matched_kp));
-
-            uint8_t *kp_data = NULL;
-            size_t kp_len = 0;
-            if (m->storage->mls_load(m->storage->ctx, "kp_full",
-                                      mls_welcome.secrets[i].key_package_ref,
-                                      MLS_HASH_LEN,
-                                      &kp_data, &kp_len) == 0 && kp_data) {
-                MlsTlsReader kp_reader;
-                mls_tls_reader_init(&kp_reader, kp_data, kp_len);
-                if (mls_key_package_deserialize(&kp_reader, &matched_kp) != 0) {
-                    free(kp_data);
-                    /* Fallback: create minimal KP (may fail ref check) */
-                    matched_kp.version = 1;
-                    matched_kp.cipher_suite = MARMOT_CIPHERSUITE;
-                    crypto_scalarmult_base(matched_kp.init_key,
-                                           matched_priv.init_key_private);
-                } else {
-                    free(kp_data);
-                }
-            } else {
-                free(kp_data);
-                /* Fallback: create minimal KP (may fail ref check) */
-                matched_kp.version = 1;
-                matched_kp.cipher_suite = MARMOT_CIPHERSUITE;
-                crypto_scalarmult_base(matched_kp.init_key,
-                                       matched_priv.init_key_private);
-            }
-            found = true;
-            break;
+            matched_kp.version = 1;
+            matched_kp.cipher_suite = MARMOT_CIPHERSUITE;
+            crypto_scalarmult_base(matched_kp.init_key, matched_priv.init_key_private);
         }
-        if (priv_data) {
-            sodium_memzero(priv_data, priv_len);
-            free(priv_data);
-        }
+        found = true;
     }
 
     if (!found) {

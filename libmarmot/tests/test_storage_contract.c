@@ -776,6 +776,92 @@ test_sqlite_encryption_request_requires_codec(MarmotStorage *unused)
     }
 }
 
+#if MARMOT_TEST_HAVE_SQLITE3_HEADER
+/* nostrc-w285, review W24 L1: a read that fails (here SQLITE_CORRUPT: the
+ * tables' pages are overwritten) is an error, never "absent".  libmarmot
+ * acts on absence for good: a Welcome whose data or KeyPackage is missing is
+ * refused, a message not yet processed is processed again.  Before 0.12.0
+ * every sqlite3_step() outcome but a row read as "not found". */
+static void
+test_sqlite_read_errors_are_not_absence(MarmotStorage *unused)
+{
+    (void)unused;
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/read_errors.db", tmp_dir);
+    MarmotStorage *s = marmot_storage_sqlite_new(db_path, NULL);
+    assert(s != NULL);
+    uint8_t key[32];
+    memset(key, 0x42, sizeof(key));
+    static const uint8_t value[] = { 1, 2, 3 };
+    assert(s->mls_store(s->ctx, "kp_priv", key, 32, value, sizeof(value)) == MARMOT_OK);
+    marmot_storage_free(s);
+
+    /* Every page of the lookup tables and their indexes, overwritten; the
+     * schema (page 1) is left alone, so the store opens. */
+    sqlite3 *db = NULL;
+    assert(sqlite3_open(db_path, &db) == SQLITE_OK);
+    sqlite3_stmt *st = NULL;
+    assert(sqlite3_prepare_v2(db, "PRAGMA page_size", -1, &st, NULL) == SQLITE_OK &&
+           sqlite3_step(st) == SQLITE_ROW);
+    long page_size = (long)sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    assert(sqlite3_prepare_v2(db,
+        "SELECT rootpage FROM sqlite_master WHERE rootpage > 1 AND tbl_name IN "
+        "('groups','messages','welcomes','processed_messages','processed_welcomes',"
+        "'key_package_infos','exporter_secrets','mls_store')", -1, &st, NULL) == SQLITE_OK);
+    long pages[64];
+    size_t n_pages = 0;
+    while (sqlite3_step(st) == SQLITE_ROW && n_pages < 64)
+        pages[n_pages++] = (long)sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    assert(n_pages >= 8);
+    FILE *f = fopen(db_path, "r+b");
+    assert(f != NULL);
+    char *junk = malloc((size_t)page_size);
+    assert(junk != NULL);
+    memset(junk, 0xA5, (size_t)page_size);
+    for (size_t i = 0; i < n_pages; i++) {
+        assert(fseek(f, (pages[i] - 1) * page_size, SEEK_SET) == 0);
+        assert(fwrite(junk, 1, (size_t)page_size, f) == (size_t)page_size);
+    }
+    fclose(f);
+    free(junk);
+
+    s = marmot_storage_sqlite_new(db_path, NULL);
+    assert(s != NULL);
+    uint8_t *out = NULL;
+    size_t out_len = 0;
+    assert(s->mls_load(s->ctx, "kp_priv", key, 32, &out, &out_len) == MARMOT_ERR_STORAGE &&
+           out == NULL);
+    assert(s->mls_load(s->ctx, "kp_full", key, 32, &out, &out_len) == MARMOT_ERR_STORAGE);
+    assert(s->mls_delete(s->ctx, "kp_priv", key, 32) == MARMOT_ERR_STORAGE);
+    MarmotGroupId gid = marmot_group_id_new(key, 32);
+    uint8_t secret[32];
+    assert(s->get_exporter_secret(s->ctx, &gid, 0, secret) == MARMOT_ERR_STORAGE);
+    MarmotGroup *g = NULL;
+    assert(s->find_group_by_mls_id(s->ctx, &gid, &g) == MARMOT_ERR_STORAGE && g == NULL);
+    assert(s->find_group_by_nostr_id(s->ctx, key, &g) == MARMOT_ERR_STORAGE && g == NULL);
+    MarmotMessage *msg = NULL;
+    assert(s->find_message_by_id(s->ctx, key, &msg) == MARMOT_ERR_STORAGE && msg == NULL);
+    assert(s->last_message(s->ctx, &gid, MARMOT_SORT_CREATED_AT_FIRST, &msg) ==
+               MARMOT_ERR_STORAGE && msg == NULL);
+    bool processed = true;
+    assert(s->is_message_processed(s->ctx, key, &processed) == MARMOT_ERR_STORAGE);
+    MarmotWelcome *w = NULL;
+    assert(s->find_welcome_by_event_id(s->ctx, key, &w) == MARMOT_ERR_STORAGE && w == NULL);
+    bool found = true;
+    int state = 0;
+    char *reason = NULL;
+    assert(s->find_processed_welcome(s->ctx, key, &found, &state, &reason) ==
+               MARMOT_ERR_STORAGE && !found);
+    MarmotKeyPackageInfo *kpi = NULL;
+    assert(s->find_key_package_by_ref(s->ctx, key, &kpi) == MARMOT_ERR_STORAGE && kpi == NULL);
+    marmot_group_id_free(&gid);
+    marmot_storage_free(s);
+}
+#endif
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Test runner — runs all contract tests against a given backend
  * ──────────────────────────────────────────────────────────────────────── */
@@ -875,6 +961,9 @@ int main(void)
             run_contract_tests("sqlite", s, true);
             marmot_storage_free(s);
             TEST(test_sqlite_encryption_request_requires_codec, "sqlite", NULL);
+#if MARMOT_TEST_HAVE_SQLITE3_HEADER
+            TEST(test_sqlite_read_errors_are_not_absence, "sqlite", NULL);
+#endif
             total_backends++;
         } else {
             printf("\n── sqlite backend ── SKIPPED (not available)\n");

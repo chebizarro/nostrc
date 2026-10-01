@@ -31,6 +31,13 @@ extern "C" {
  * - Functions returning pointers transfer ownership to the caller.
  * - Functions accepting pointers as input do NOT take ownership
  *   (the storage implementation must copy if it needs to retain).
+ *
+ * Absence and failure (since 0.12.0, nostrc-w285): "not found" (NULL in
+ * *out, false, or MARMOT_ERR_STORAGE_NOT_FOUND) means the record does not
+ * exist.  A read that fails (I/O, a busy or damaged database, out of
+ * memory) must return an error instead -- MARMOT_ERR_STORAGE or
+ * MARMOT_ERR_MEMORY -- because libmarmot acts on absence for good, e.g. by
+ * refusing an invitation whose data is missing.
  */
 typedef struct MarmotStorage {
     /* ── Opaque backend context ────────────────────────────────────────── */

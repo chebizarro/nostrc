@@ -356,12 +356,19 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   image's encryption key itself, not a v2 seed, and `MarmotGroup` does not
   carry the version yet (nostrc-x215).
 - **An invitation survives a storage error (nostrc-w285).**
-  `marmot_accept_welcome()` refuses a Welcome for good only when its raw
-  data is missing (`MARMOT_ERR_STORAGE_NOT_FOUND`, was
-  `MARMOT_ERR_STORAGE`); any other load error is returned and the Welcome
-  stays pending (W23 review L1). A refusal whose failed state cannot be
-  saved records nothing, leaves the Welcome pending and returns the save's
-  error (L2).
+  `marmot_accept_welcome()` refuses a Welcome for good only on a definitive
+  not-found: of its raw data (now `MARMOT_ERR_STORAGE_NOT_FOUND`, was
+  `MARMOT_ERR_STORAGE`), or of every KeyPackage it names (`kp_priv`; a
+  missing `kp_full` fails the Welcome's processing). Any other storage
+  error is returned and the Welcome stays pending (W23 review L1, review
+  W24 M3). A refusal whose failed state cannot be saved records nothing,
+  leaves the Welcome pending and returns the save's error (L2).
+  - The sqlite and nostrdb backends report a failed read as
+    `MARMOT_ERR_STORAGE` (or `MARMOT_ERR_MEMORY`), never as not-found or
+    "absent": before, every `sqlite3_step()` outcome but a row, and every
+    `mdb_get()` error, read as missing, in every single-row lookup (review
+    W24 L1). Backends must keep `MARMOT_ERR_STORAGE_NOT_FOUND` for "no such
+    record".
 - **A group's kind:445 events are dated in order (nostrc-2lrz).** MDK 0.8
   never retries a kind:445 it failed once, so an event of epoch n+1 it
   reads before the Commit that opens epoch n+1 strands it, and created_at

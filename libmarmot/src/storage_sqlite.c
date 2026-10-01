@@ -397,6 +397,18 @@ sql_all_groups(void *ctx, MarmotGroup ***out, size_t *out_count)
     return MARMOT_OK;
 }
 
+/* The step of a single-row lookup: *row says whether it found one.  Any
+ * other outcome than a row or the end (BUSY, IOERR, NOMEM, CORRUPT, ...) is
+ * an error, never "absent": callers act on absence for good, e.g. refusing
+ * an invitation (nostrc-w285, review W24 L1). */
+static MarmotError
+step_lookup(sqlite3_stmt *stmt, bool *row)
+{
+    int rc = sqlite3_step(stmt);
+    *row = rc == SQLITE_ROW;
+    return (rc == SQLITE_ROW || rc == SQLITE_DONE) ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
 static MarmotError
 sql_find_group_by_mls_id(void *ctx, const MarmotGroupId *gid, MarmotGroup **out)
 {
@@ -409,12 +421,11 @@ sql_find_group_by_mls_id(void *ctx, const MarmotGroupId *gid, MarmotGroup **out)
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     bind_group_id(stmt, 1, gid);
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
-        *out = group_from_row(stmt);
-    }
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (row && !(*out = group_from_row(stmt))) err = MARMOT_ERR_MEMORY;
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -429,12 +440,11 @@ sql_find_group_by_nostr_id(void *ctx, const uint8_t nostr_id[32], MarmotGroup **
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     sqlite3_bind_blob(stmt, 1, nostr_id, 32, SQLITE_TRANSIENT);
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
-        *out = group_from_row(stmt);
-    }
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (row && !(*out = group_from_row(stmt))) err = MARMOT_ERR_MEMORY;
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -589,11 +599,11 @@ sql_last_message(void *ctx, const MarmotGroupId *gid,
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     bind_group_id(stmt, 1, gid);
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        *out = message_from_row(stmt);
-    }
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (row && !(*out = message_from_row(stmt))) err = MARMOT_ERR_MEMORY;
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -642,11 +652,11 @@ sql_find_message_by_id(void *ctx, const uint8_t event_id[32], MarmotMessage **ou
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     sqlite3_bind_blob(stmt, 1, event_id, 32, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        *out = message_from_row(stmt);
-    }
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (row && !(*out = message_from_row(stmt))) err = MARMOT_ERR_MEMORY;
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -661,9 +671,9 @@ sql_is_message_processed(void *ctx, const uint8_t wrapper_id[32], bool *out)
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     sqlite3_bind_blob(stmt, 1, wrapper_id, 32, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) == SQLITE_ROW) *out = true;
+    MarmotError err = step_lookup(stmt, out);
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -775,11 +785,11 @@ sql_find_welcome_by_event_id(void *ctx, const uint8_t event_id[32], MarmotWelcom
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     sqlite3_bind_blob(stmt, 1, event_id, 32, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        *out = welcome_from_row(stmt);
-    }
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (row && !(*out = welcome_from_row(stmt))) err = MARMOT_ERR_MEMORY;
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -847,13 +857,13 @@ sql_find_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     sqlite3_bind_blob(stmt, 1, wrapper_id, 32, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        *found = true;
+    MarmotError err = step_lookup(stmt, found);
+    if (*found) {
         *state = sqlite3_column_int(stmt, 0);
         *reason = read_text(stmt, 1);
     }
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -984,11 +994,11 @@ sql_find_key_package_by_ref(void *ctx, const uint8_t ref[32],
     if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
 
     sqlite3_bind_blob(stmt, 1, ref, 32, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        *out = kpi_from_row(stmt);
-    }
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (row && !(*out = kpi_from_row(stmt))) err = MARMOT_ERR_MEMORY;
     sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    return err;
 }
 
 static MarmotError
@@ -1145,19 +1155,19 @@ sql_get_exporter_secret(void *ctx, const MarmotGroupId *gid,
     bind_group_id(stmt, 1, gid);
     sqlite3_bind_int64(stmt, 2, (int64_t)epoch);
 
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (err == MARMOT_OK && !row) err = MARMOT_ERR_STORAGE_NOT_FOUND;
+    if (row) {
         const void *data = sqlite3_column_blob(stmt, 0);
         int len = sqlite3_column_bytes(stmt, 0);
-        if (data && len >= 32) {
+        if (data && len >= 32)
             memcpy(out, data, 32);
-            sqlite3_finalize(stmt);
-            return MARMOT_OK;
-        }
+        else
+            err = MARMOT_ERR_STORAGE;           /* a damaged row, not a missing one */
     }
-
     sqlite3_finalize(stmt);
-    return MARMOT_ERR_STORAGE_NOT_FOUND;
+    return err;
 }
 
 static MarmotError
@@ -1288,8 +1298,10 @@ sql_mls_load(void *ctx, const char *label,
     sqlite3_bind_text(stmt, 1, label, -1, SQLITE_TRANSIENT);
     sqlite3_bind_blob(stmt, 2, key, (int)key_len, SQLITE_TRANSIENT);
 
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
+    bool row = false;
+    MarmotError err = step_lookup(stmt, &row);
+    if (err == MARMOT_OK && !row) err = MARMOT_ERR_STORAGE_NOT_FOUND;
+    if (row) {
         const void *data = sqlite3_column_blob(stmt, 0);
         int len = sqlite3_column_bytes(stmt, 0);
         if (data && len > 0) {
@@ -1298,16 +1310,12 @@ sql_mls_load(void *ctx, const char *label,
                 memcpy(*out, data, (size_t)len);
                 *out_len = (size_t)len;
             } else {
-                sqlite3_finalize(stmt);
-                return MARMOT_ERR_MEMORY;
+                err = MARMOT_ERR_MEMORY;
             }
         }
-        sqlite3_finalize(stmt);
-        return MARMOT_OK;
     }
-
     sqlite3_finalize(stmt);
-    return MARMOT_ERR_STORAGE_NOT_FOUND;
+    return err;
 }
 
 static MarmotError
@@ -1324,10 +1332,11 @@ sql_mls_delete(void *ctx, const char *label,
 
     sqlite3_bind_text(stmt, 1, label, -1, SQLITE_TRANSIENT);
     sqlite3_bind_blob(stmt, 2, key, (int)key_len, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
+    rc = sqlite3_step(stmt);
 
     int changes = sqlite3_changes(sc->db);
     sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) return MARMOT_ERR_STORAGE;
     return (changes > 0) ? MARMOT_OK : MARMOT_ERR_STORAGE_NOT_FOUND;
 }
 
