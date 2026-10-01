@@ -109,6 +109,7 @@ struct _GhMlsNewGroupPage {
   GPtrArray *relay_rows;   /* GhMlsRelayRow in relays_group */
   gchar *reason;           /* why Create can't run, or NULL */
   const gchar *notice;     /* the group's format said, or NULL (static) */
+  GhMlsKeyPackageFormat format; /* the format shown: what Create asks for (review M2) */
   GCancellable *creating;  /* the running create */
   GhMlsGroup *group;       /* made by Create */
   guint invited;
@@ -182,6 +183,8 @@ sync_create(GhMlsNewGroupPage *self)
   self->notice = !reason && legacy_only
     ? _("Some people use an older app version; this group will use the older format. "
         "Remove them to make a newer-format group instead.") : NULL;
+  self->format = legacy_only ? GH_MLS_KEY_PACKAGE_FORMAT_LEGACY
+                             : GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED;
   g_free(self->reason);
   self->reason = g_strdup(reason);
   gtk_label_set_text(self->create_reason, reason ? reason : "");
@@ -335,6 +338,10 @@ created(GObject *source, GAsyncResult *result, gpointer data)
     g_autofree gchar *words = gh_mls_error_copy(error);
     set_status(self, "dialog-warning-symbolic", FALSE, _("Group Not Created"), words, FALSE,
                TRUE);
+    /* The KeyPackages changed since the check (review M2): check again, so
+     * the page shows what Create would now make. */
+    if (g_error_matches(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_FORMAT_CHANGED))
+      gh_mls_invitee_picker_check_again(self->picker);
     sync_create(self);
     return;
   }
@@ -393,10 +400,10 @@ action_create(GtkWidget *widget, const gchar *action, GVariant *parameter)
   set_status(self, "content-loading-symbolic", TRUE, _("Creating the Group…"), description,
              FALSE, FALSE);
   sync_create(self);
-  gh_mls_service_create_group_async(self->context.service, name, about,
-                                    (const gchar *const *)relays,
-                                    (const gchar *const *)invitees, self->creating, created,
-                                    g_object_ref(self));
+  gh_mls_service_create_group_in_format_async(self->context.service, name, about,
+                                              (const gchar *const *)relays,
+                                              (const gchar *const *)invitees, self->format,
+                                              self->creating, created, g_object_ref(self));
 }
 
 static void
@@ -511,6 +518,13 @@ gh_mls_new_group_page_get_format_notice(GhMlsNewGroupPage *self)
 {
   g_return_val_if_fail(GH_IS_MLS_NEW_GROUP_PAGE(self), NULL);
   return self->notice;
+}
+
+GhMlsKeyPackageFormat
+gh_mls_new_group_page_get_format(GhMlsNewGroupPage *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_NEW_GROUP_PAGE(self), GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
+  return self->format;
 }
 
 gboolean

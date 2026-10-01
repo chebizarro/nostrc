@@ -928,6 +928,43 @@ processed_welcome(App *app, const gchar *wrap_id, gint *state, gchar **reason)
   return found;
 }
 
+/* Forward: defined below. */
+static G_GNUC_UNUSED GhMlsKeyPackageFormat key_package_format(NostrEvent *event);
+
+/* Withholds every kind 30443 of `key` in `format` the relay keeps (a relay
+ * that keeps one back from REQs: review M2). How many. */
+static G_GNUC_UNUSED guint
+withhold_key_packages(WireRelay *relay, guint key, GhMlsKeyPackageFormat format)
+{
+  guint n = 0;
+  for (guint i = 0; i < relay->stored->len; i++) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i);
+    if (nostr_event_get_kind(stored->event) == 30443 &&
+        g_strcmp0(nostr_event_get_pubkey(stored->event), hex[key]) == 0 &&
+        key_package_format(stored->event) == format) {
+      wire_relay_withhold(relay, stored->id);
+      n++;
+    }
+  }
+  return n;
+}
+
+/* Serves every event the relay withholds again. */
+static G_GNUC_UNUSED void
+release_all_withheld(WireRelay *relay)
+{
+  if (!relay->withheld)
+    return;
+  g_autoptr(GPtrArray) ids = g_ptr_array_new_with_free_func(g_free);
+  GHashTableIter iter;
+  gpointer id;
+  g_hash_table_iter_init(&iter, relay->withheld);
+  while (g_hash_table_iter_next(&iter, &id, NULL))
+    g_ptr_array_add(ids, g_strdup(id));
+  for (guint i = 0; i < ids->len; i++)
+    wire_relay_release(relay, g_ptr_array_index(ids, i));
+}
+
 /* A kind-30443 event's KeyPackage format (nostrc-lf62): the adopted profile
  * lists its components in an `app_components` tag, which the MDK 0.8
  * profile never has. */

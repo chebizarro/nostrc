@@ -44,13 +44,22 @@ G_BEGIN_DECLS
  * relays and never the other format's (each one's created_at strictly
  * newer); the adopted one is made first and the MDK 0.8 one with it, so the
  * MDK 0.8 one is the account's newest kind 30443 for a legacy reader that
- * ignores slots. A format's KeyPackage
+ * ignores slots: an adopted replacement leaves the MDK 0.8 one due, recorded
+ * in the store, until it goes out, so one held for an invitation or failed
+ * goes at the hold's end, the retry or the next start (review M1). The MDK
+ * 0.8 format follows the "mls-legacy-key-packages" setting ("Let people
+ * using older Marmot apps invite me", on by default; privacy charter
+ * amendment 2026-10-01): switched off, its KeyPackage is withdrawn with a
+ * NIP-09 deletion request to the same write relays and its private keys
+ * deleted once a relay accepted that request; switched on, a new one is
+ * published in its slot. A build without the adopted producer keeps it on.
+ * A format's KeyPackage
  * is rotated when it is older than the lifetime (default
  * GH_MLS_KEY_PACKAGE_LIFETIME) and after a Welcome to it was joined -- once
  * no other received invitation is pending (they were most likely made with
  * the same KeyPackage), even across a restart -- never after a Welcome that
- * failed. A join rotates the format of the group joined; the user's rotate,
- * both.
+ * failed. A join rotates the format of the KeyPackage it spent (libmarmot
+ * records it; review N1); the user's rotate, every format published.
  *
  * KeyPackage lifecycle (nostrc-0bdg; foundation/key-packages.md). A due
  * replacement -- lifetime, the user's rotate or a join -- is not published
@@ -406,7 +415,9 @@ typedef enum {
   GH_MLS_SERVICE_ERROR_FORGED_IDENTITY, /* someone's account proof does not verify */
   GH_MLS_SERVICE_ERROR_MIXED_PROFILE, /* invitees with only the adopted and only the MDK 0.8
                                        * KeyPackage format cannot share a new group */
-  GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH /* an invitee has no KeyPackage in the group's format */
+  GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH, /* an invitee has no KeyPackage in the group's format */
+  GH_MLS_SERVICE_ERROR_FORMAT_CHANGED /* an invitee's KeyPackages no longer give the format the
+                                       * user was shown (review M2): check again */
 } GhMlsServiceError;
 
 /* Whether settings asks for every member's account proof: the key
@@ -673,6 +684,19 @@ void gh_mls_service_create_group_async(GhMlsService *self, const gchar *name,
                                        const gchar *const *invitees,
                                        GCancellable *cancellable,
                                        GAsyncReadyCallback callback, gpointer user_data);
+/* The same, in the group format the user was shown (New Group, review M2):
+ * when the lookups at creation no longer give every invitee a KeyPackage of
+ * `format`, nothing is made and the task fails with
+ * GH_MLS_SERVICE_ERROR_FORMAT_CHANGED, never with a group of the other
+ * format. Finish with gh_mls_service_create_group_finish(). */
+void gh_mls_service_create_group_in_format_async(GhMlsService *self, const gchar *name,
+                                                 const gchar *description,
+                                                 const gchar *const *relays,
+                                                 const gchar *const *invitees,
+                                                 GhMlsKeyPackageFormat format,
+                                                 GCancellable *cancellable,
+                                                 GAsyncReadyCallback callback,
+                                                 gpointer user_data);
 GhMlsGroup *gh_mls_service_create_group_finish(GhMlsService *self, GAsyncResult *result,
                                                GError **error);
 

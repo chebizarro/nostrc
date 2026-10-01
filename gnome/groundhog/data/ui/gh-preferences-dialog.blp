@@ -103,6 +103,11 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         subtitle: _("Refuses people whose app can't prove their account, like older White Noise or Amethyst, even if Groundhog verified them another way. If an admin adds one to a group you're in, you can't read its new messages.");
       }
 
+      Adw.SwitchRow older_marmot_invites_row {
+        title: _("Let people using older Marmot apps invite me");
+        subtitle: _("Also publishes an older-format invitation key for older White Noise and Amethyst. Anyone can link the two keys to your account. Off: that key is withdrawn.");
+      }
+
       Adw.SwitchRow message_previews_row {
         title: _("Show Message Previews in List");
         subtitle: _("The latest message appears under each conversation");

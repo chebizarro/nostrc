@@ -34,6 +34,10 @@
  *    consented kind 10002 included) and invite each other; an existing 10002
  *    is never offered for replacement nor replaced.
  *
+ *  - upgrade-companion-held (review M1): an MDK 0.8 KeyPackage owed with an
+ *    adopted one goes out once its hold ends, even after a restart.
+ *  - legacy-switched-off (review L1): the MDK 0.8 format switched off is
+ *    withdrawn, its keys retired only after a relay accepted the request.
  *  - formats-own-lifecycle (both formats, nostrc-lf62): each format has its
  *    own `d` slot; a join through one format's KeyPackage replaces that
  *    format only, and its OK retires only that format's old key; an adopted
@@ -1106,6 +1110,177 @@ test_formats_own_lifecycle(void)
   g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, L);
   world_down(&w);
 }
+
+typedef struct {
+  App *app;
+  GhMlsKeyPackageFormat format;
+} FormatPublishedWait;
+
+static gboolean
+format_confirmed(gpointer data)
+{
+  FormatPublishedWait *wait = data;
+  return gh_mls_service_get_key_package_id_for_format(wait->app->service, wait->format) != NULL;
+}
+
+/* Review M1 (the reviewer's case): Bob upgrades with an invitation pending.
+ * His first adopted KeyPackage has nothing to protect and goes out; the MDK
+ * 0.8 one it brings along is held for the invitation, so for now the
+ * adopted event is his newest kind 30443. The MDK 0.8 one stays owed --
+ * across a restart too -- and goes out once the hold ends (here the
+ * invitation is declined): the MDK 0.8 event is the newest again. */
+static void
+test_upgrade_companion_held(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_legacy_only = TRUE;   /* before the upgrade */
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  GhMlsGroup *older = create_attempt(alice, "One", (const guint[]){ BOB }, 1, &error);
+  g_assert_no_error(error);
+  g_assert_false(gh_mls_group_get_adopted(older));
+  InvitesWait one = { bob, 1 };
+  spin_until(invites_at_least, &one, "the invitation");
+  g_autofree gchar *wrapper = invite_from(bob, ALICE);
+
+  world_legacy_only = FALSE;  /* the upgrade */
+  app_restart(bob);
+  FormatCountWait adopted = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, 1 };
+  spin_until(format_count_reached, &adopted, "Bob's first adopted KeyPackage");
+  /* Its OK handled: the adopted format is not due any more. */
+  FormatPublishedWait confirmed = { bob, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED };
+  spin_until(format_confirmed, &confirmed, "Bob's adopted KeyPackage confirmed");
+  g_assert_true(gh_mls_service_get_key_package_held(bob->service));
+  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
+  g_autoptr(GPtrArray) legacy_before = stored_key_packages_of(&w.w, BOB,
+                                                              GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_assert_cmpuint(legacy_before->len, ==, 1);
+
+  /* Still owed after a restart. */
+  app_restart(bob);
+  StateWait published = { bob, GH_MLS_KEY_PACKAGE_PUBLISHED };
+  spin_until(state_is, &published, "Bob's KeyPackage state after a restart");
+  g_assert_true(gh_mls_service_get_key_package_held(bob->service));
+
+  g_assert_true(gh_mls_service_decline_invite(bob->service, wrapper, &error));
+  g_assert_no_error(error);
+  FormatCountWait legacy = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &legacy, "the MDK 0.8 KeyPackage that was owed");
+  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  wait_published(bob);
+  g_assert_false(gh_mls_service_get_key_package_held(bob->service));
+  world_down(&w);
+}
+
+/* `key`'s deletion requests (kind 5) any client sent the relay. */
+static GPtrArray *
+deletions_on(WireRelay *relay, guint key)
+{
+  GPtrArray *all = published(relay, 5);
+  for (guint i = all->len; i > 0; i--)
+    if (g_strcmp0(nostr_event_get_pubkey(g_ptr_array_index(all, i - 1)), hex[key]) != 0)
+      g_ptr_array_remove_index(all, i - 1);
+  return all;
+}
+
+typedef struct {
+  WireRelay *relay;
+  guint key;
+  guint count;
+} DeletionWait;
+
+static gboolean
+deletions_reached(gpointer data)
+{
+  DeletionWait *wait = data;
+  g_autoptr(GPtrArray) all = deletions_on(wait->relay, wait->key);
+  return all->len >= wait->count;
+}
+
+typedef struct {
+  App *app;
+  const gchar *ref;
+} KeyGoneWait;
+
+static gboolean
+init_key_gone(gpointer data)
+{
+  KeyGoneWait *wait = data;
+  return !has_init_key(wait->app, wait->ref);
+}
+
+#define LEGACY_KEY_PACKAGES "mls-legacy-key-packages"
+
+/* Review L1: "Let people using older Marmot apps invite me" switched off.
+ * The MDK 0.8 KeyPackage is withdrawn -- a NIP-09 deletion request for its
+ * slot's address, to the write relays -- and its private keys go only once
+ * a relay accepted that request (refused, they stay: a delayed Welcome
+ * still opens). The adopted one is untouched; rotations publish it alone.
+ * Switched back on, a new MDK 0.8 KeyPackage goes out in the same slot. */
+static void
+test_legacy_switched_off(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  const GhMlsKeyPackageFormat A = GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED;
+  const GhMlsKeyPackageFormat L = GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
+  g_autofree gchar *l_ref = NULL, *l_d = NULL, *a_ref = NULL;
+  newest_key_package_of(&w.w, ALICE, L, &l_ref, &l_d, NULL);
+  newest_key_package_of(&w.w, ALICE, A, &a_ref, NULL, NULL);
+
+  /* No relay accepts the request: nothing is retired. */
+  w.w.refuse_events = w.h.refuse_events = TRUE;
+  g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, FALSE);
+  DeletionWait asked = { &w.w, ALICE, 1 };
+  spin_until(deletions_reached, &asked, "the withdrawal sent");
+  g_autoptr(GPtrArray) sent = deletions_on(&w.w, ALICE);
+  NostrEvent *request = g_ptr_array_index(sent, 0);
+  g_autofree gchar *address = g_strdup_printf("30443:%s:%s", hex[ALICE], l_d);
+  g_assert_cmpstr(tag_value(request, "a"), ==, address);
+  g_assert_cmpstr(tag_value(request, "k"), ==, "30443");
+  g_assert_cmpuint(tag_count(request, "a"), ==, 1);
+  drain();
+  g_assert_true(has_init_key(alice, l_ref));
+
+  /* Accepted: the MDK 0.8 keys go, the adopted ones stay. */
+  w.w.refuse_events = w.h.refuse_events = FALSE;
+  g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, TRUE);
+  g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, FALSE);
+  KeyGoneWait gone = { alice, l_ref };
+  spin_until(init_key_gone, &gone, "the MDK 0.8 keys retired");
+  g_assert_true(has_init_key(alice, a_ref));
+  g_assert_null(gh_mls_service_get_key_package_id_for_format(alice->service, L));
+  wait_state(alice, GH_MLS_KEY_PACKAGE_PUBLISHED);
+
+  /* A rotation publishes the adopted format alone. */
+  g_autoptr(GPtrArray) legacy_before = stored_key_packages_of(&w.w, ALICE, L);
+  g_autofree gchar *a_id = g_strdup(kp_id(alice));
+  rotate(alice);
+  wait_settled(alice, a_id);
+  drain();
+  g_autoptr(GPtrArray) legacy_after = stored_key_packages_of(&w.w, ALICE, L);
+  g_assert_cmpuint(legacy_after->len, ==, legacy_before->len);
+
+  /* Switched back on: a new MDK 0.8 KeyPackage, in the same slot. */
+  g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, TRUE);
+  FormatCountWait back = { &w.w, ALICE, L, legacy_before->len + 1 };
+  spin_until(format_count_reached, &back, "a new MDK 0.8 KeyPackage");
+  g_autofree gchar *l_ref2 = NULL, *l_d2 = NULL;
+  newest_key_package_of(&w.w, ALICE, L, &l_ref2, &l_d2, NULL);
+  g_assert_cmpstr(l_d2, ==, l_d);
+  g_assert_true(has_init_key(alice, l_ref2));
+  world_down(&w);
+}
 #endif
 
 #if GH_TEST_HAVE_INBOX_SETUP
@@ -1610,6 +1785,8 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func(KP_TEST("formats-own-lifecycle"), test_formats_own_lifecycle);
+  g_test_add_func(KP_TEST("upgrade-companion-held"), test_upgrade_companion_held);
+  g_test_add_func(KP_TEST("legacy-switched-off"), test_legacy_switched_off);
 #endif
 #if GH_TEST_HAVE_INBOX_SETUP
   g_test_add_func(KP_TEST("fresh-accounts-invite-each-other"),

@@ -105,6 +105,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="AdwSwitchRow" id="older_marmot_invites_row">
+                <property name="title" translatable="yes">Let people using older Marmot apps invite me</property>
+                <property name="subtitle" translatable="yes">Also publishes an older-format invitation key for older White Noise and Amethyst. Anyone can link the two keys to your account. Off: that key is withdrawn.</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwSwitchRow" id="message_previews_row">
                 <property name="title" translatable="yes">Show Message Previews in List</property>
                 <property name="subtitle" translatable="yes">The latest message appears under each conversation</property>

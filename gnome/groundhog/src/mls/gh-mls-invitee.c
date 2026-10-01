@@ -9,9 +9,22 @@ gh_mls_invitee_classify(const GhMlsKeyPackage *key_package, const GError *error,
                         gboolean require_proof)
 {
   if (key_package) {
-    if (key_package->adopted)
-      return key_package->legacy_event_json ? GH_MLS_INVITEE_READY
-                                            : GH_MLS_INVITEE_READY_ADOPTED_ONLY;
+    if (key_package->adopted) {
+      if (!key_package->legacy_event_json)
+        return GH_MLS_INVITEE_READY_ADOPTED_ONLY;
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+      /* Their MDK 0.8 KeyPackage is only for an older-format group: judged
+       * by the same proof rule as an MDK 0.8-only person's (review L2). If
+       * it can't be used, they join newer-format groups only. */
+      bool legacy_proven = false;
+      MarmotError legacy_err =
+        marmot_key_package_event_has_account_proof(key_package->legacy_event_json,
+                                                   &legacy_proven);
+      if (legacy_err != MARMOT_OK || (!legacy_proven && require_proof))
+        return GH_MLS_INVITEE_READY_ADOPTED_ONLY;
+#endif
+      return GH_MLS_INVITEE_READY;
+    }
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
     bool proven = false;
     MarmotError err = marmot_key_package_event_has_account_proof(key_package->event_json,

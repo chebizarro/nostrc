@@ -57,6 +57,9 @@ const gchar *gh_mls_new_group_page_get_format_notice(GhMlsNewGroupPage *self);
 /* Whether the choice between the people of each format is offered (they
  * share none; "mls-new.keep-adopted" and "mls-new.keep-legacy" take it). */
 gboolean gh_mls_new_group_page_get_format_choice(GhMlsNewGroupPage *self);
+/* The group format the page shows, which Create asks the service for
+ * (review M2). */
+GhMlsKeyPackageFormat gh_mls_new_group_page_get_format(GhMlsNewGroupPage *self);
 /* The identity row's title, NULL when hidden. */
 const gchar *gh_mls_new_group_page_get_identity_title(GhMlsNewGroupPage *self);
 const gchar *gh_mls_new_group_page_get_status_title(GhMlsNewGroupPage *self);

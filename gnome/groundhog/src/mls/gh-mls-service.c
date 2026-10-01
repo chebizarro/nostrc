@@ -38,6 +38,9 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
 #define MAX_GROUP_RELAYS 16
 /* The settings key that brings back the proof requirement (nostrc-6ukh). */
 #define VERIFIED_ONLY_KEY "only-join-verified-mls-groups"
+/* Whether the account also publishes the MDK 0.8 KeyPackage (nostrc-lf62
+ * review L1; privacy charter amendment 2026-10-01). */
+#define LEGACY_KEY_PACKAGES_KEY "mls-legacy-key-packages"
 /* KeyPackages of the account's own Adds kept per group as evidence. */
 #define MAX_OWN_EVIDENCE 64
 
@@ -164,6 +167,8 @@ typedef struct {
   gboolean busy;                     /* made, being signed or published */
   gboolean rotate;                   /* a replacement was asked for */
   gboolean held;                     /* its due replacement waits for invitations */
+  gboolean withdrawing;              /* publishing a deletion request for the slot (L1) */
+  GhRelayPublish *withdrawal;        /* that request's publish (borrowed: slot->publish) */
   GhRelayPublish *publish;
   guint8 ref[32];                    /* KeyPackageRef of the one in flight */
   gboolean in_flight;                /* ...until its first relay OK confirms it */
@@ -220,6 +225,7 @@ struct _GhMlsService {
   GhMlsKeyPackageState key_package;  /* of every format the account publishes */
   KeyPackageSlot kp[GH_MLS_KEY_PACKAGE_N_FORMATS];
   gboolean key_package_held;         /* a due replacement waits for invitations */
+  gboolean key_package_recheck;      /* the formats changed during a round: look again */
   guint key_package_hold_timer;      /* GhClock source: look at the hold again */
   guint key_package_sweep_timer;     /* GhClock source: the next not_after */
 
@@ -2494,6 +2500,7 @@ typedef struct {
   GPtrArray *legacy_packages;  /* per invitee: their MDK 0.8 KeyPackage, or NULL */
   GArray *keys;               /* 32-byte accounts: members (remove) or admins (metadata) */
   gboolean adopted;           /* create, add: the group's profile is the adopted one */
+  gint expected;              /* create: the format the user was shown (-1: any) */
   guint rate_retries;         /* stagings libmarmot refused with MARMOT_ERR_EVENT_RATE */
   guint lookups;              /* in flight */
   GError *error;              /* the first lookup failure */
@@ -3197,7 +3204,19 @@ invitees_ready(GTask *task)
     adopted_count += g_ptr_array_index(op->adopted_packages, i) != NULL;
     legacy_count += g_ptr_array_index(op->legacy_packages, i) != NULL;
   }
-  if (op->kind == OP_CREATE) {
+  if (op->kind == OP_CREATE && op->expected >= 0) {
+    /* The format New Group showed (review M2): the lookups at creation must
+     * agree. A KeyPackage gone missing since the check (a relay withholding
+     * it, a lookup timing out) never turns the group into an older-format
+     * one unseen; the user reviews the choice instead. */
+    op->adopted = op->expected == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED;
+    if ((op->adopted ? adopted_count : legacy_count) != n) {
+      g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_FORMAT_CHANGED,
+                              "An invitee's KeyPackages changed since they were checked");
+      g_object_unref(task);
+      return;
+    }
+  } else if (op->kind == OP_CREATE) {
     op->adopted = adopted_count == n;
     if (!op->adopted && legacy_count != n) {
       g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_MIXED_PROFILE,
@@ -3361,6 +3380,7 @@ op_task(GhMlsService *self, OpKind kind, GhMlsGroup *group, GCancellable *cancel
   g_task_set_source_tag(task, tag);
   Op *op = g_new0(Op, 1);
   op->kind = kind;
+  op->expected = -1;
   op->group = group ? g_object_ref(group) : NULL;
   op->key_packages = g_ptr_array_new_with_free_func(g_free);
   g_task_set_task_data(task, op, op_free);
@@ -3439,16 +3459,15 @@ relays_valid(const gchar *const *relays, GError **error)
   return TRUE;
 }
 
-void
-gh_mls_service_create_group_async(GhMlsService *self, const gchar *name,
-                                  const gchar *description, const gchar *const *relays,
-                                  const gchar *const *invitees, GCancellable *cancellable,
-                                  GAsyncReadyCallback callback, gpointer user_data)
+static void
+create_group(GhMlsService *self, const gchar *name, const gchar *description,
+             const gchar *const *relays, const gchar *const *invitees, gint expected,
+             GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
-  g_return_if_fail(GH_IS_MLS_SERVICE(self));
   GTask *task = op_task(self, OP_CREATE, NULL, cancellable, callback, user_data,
                         gh_mls_service_create_group_async);
   Op *op = g_task_get_task_data(task);
+  op->expected = expected;
   GError *error = NULL;
   if (!check_running(self, &error) || !relays_valid(relays, &error)) {
     g_task_return_error(task, error);
@@ -3474,6 +3493,31 @@ gh_mls_service_create_group_async(GhMlsService *self, const gchar *name,
   op->relays = g_strdupv((gchar **)relays);
   op->people = lowercase_unique(invitees);
   look_up_invitees(task);
+}
+
+void
+gh_mls_service_create_group_async(GhMlsService *self, const gchar *name,
+                                  const gchar *description, const gchar *const *relays,
+                                  const gchar *const *invitees, GCancellable *cancellable,
+                                  GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  create_group(self, name, description, relays, invitees, -1, cancellable, callback, user_data);
+}
+
+void
+gh_mls_service_create_group_in_format_async(GhMlsService *self, const gchar *name,
+                                            const gchar *description,
+                                            const gchar *const *relays,
+                                            const gchar *const *invitees,
+                                            GhMlsKeyPackageFormat format,
+                                            GCancellable *cancellable,
+                                            GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  g_return_if_fail(format < GH_MLS_KEY_PACKAGE_N_FORMATS);
+  create_group(self, name, description, relays, invitees, (gint)format, cancellable, callback,
+               user_data);
 }
 
 
@@ -4523,10 +4567,18 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
     set_floor(group, made);
   group_subscribe(group);
   /* MIP-00: the KeyPackage the Welcome used is spent; publish a new one of
-   * its format -- the joined group's profile (held while other invitations
-   * are pending: key_package_hold_verdict()). */
-  key_package_rotate(self, group->adopted ? GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED
-                                          : GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+   * its format (held while other invitations are pending:
+   * key_package_hold_verdict()). libmarmot recorded which one it opened the
+   * Welcome with (review N1); unknown (it predates the record), the group's
+   * profile says. */
+  MarmotKeyPackageProfile used = group->adopted ? MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+                                                : MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8;
+  drop_stale_error(self);
+  if (marmot_key_package_last_used_profile(self->marmot, self->account_key, &used) != MARMOT_OK)
+    drop_stale_error(self);
+  key_package_rotate(self, used == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+                             ? GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED
+                             : GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
   return group;
 }
 
@@ -5006,12 +5058,27 @@ identity_new_generation(GhMlsService *self, guint64 generation)
  * a relay or observer can link the two slots to one account (they share
  * the author, relays and timing) and learn that it runs a client speaking
  * both formats. */
+/* Whether the user lets people on older Marmot apps invite them (the
+ * "mls-legacy-key-packages" setting; on unless switched off). */
+static gboolean
+legacy_wanted(GhMlsService *self)
+{
+  if (!self->settings)
+    return TRUE;
+  g_autoptr(GSettingsSchema) schema = NULL;
+  g_object_get(self->settings, "settings-schema", &schema, NULL);
+  return !schema || !g_settings_schema_has_key(schema, LEGACY_KEY_PACKAGES_KEY) ||
+         g_settings_get_boolean(self->settings, LEGACY_KEY_PACKAGES_KEY);
+}
+
 static gboolean
 key_package_produced(GhMlsService *self, GhMlsKeyPackageFormat format)
 {
-  if (format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY)
-    return TRUE;
-  return GH_MLS_ADOPTED_KEY_PACKAGES && !self->legacy_only;
+  gboolean adopted = GH_MLS_ADOPTED_KEY_PACKAGES && !self->legacy_only;
+  if (format == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED)
+    return adopted;
+  /* Without the adopted one, the MDK 0.8 one is the only way in: kept. */
+  return !adopted || legacy_wanted(self);
 }
 
 static const gchar *
@@ -5160,6 +5227,7 @@ gh_mls_service_test_has_init_key(GhMlsService *self, const gchar *ref_hex)
 #endif
 
 static void key_package_sweep(GhMlsService *self);
+static void key_package_withdrawn(KeyPackageSlot *slot);
 
 static gboolean
 key_package_sweep_fired(gpointer data)
@@ -5404,7 +5472,15 @@ key_package_update(GhRelayPublish *publish, const GhRelayPublishResult *result, 
 {
   KeyPackageSlot *slot = data;
   GhMlsService *self = slot->service;
-  if (result->outcome != GH_RELAY_PUBLISH_ACCEPTED || slot->state == GH_MLS_KEY_PACKAGE_PUBLISHED)
+  if (result->outcome != GH_RELAY_PUBLISH_ACCEPTED)
+    return;
+  /* A withdrawal: its first OK retires the keys, the others say nothing. */
+  if (publish == slot->withdrawal) {
+    if (slot->withdrawing)
+      key_package_withdrawn(slot);
+    return;
+  }
+  if (slot->state == GH_MLS_KEY_PACKAGE_PUBLISHED)
     return;
   /* The first relay OK (transports/nostr.md "Publish targets and
    * acknowledgements"): the replacement is confirmed. */
@@ -5443,17 +5519,24 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
   GhMlsService *self = slot->service;
   if (slot->publish == publish)
     slot->publish = NULL;
+  if (slot->withdrawal == publish)
+    slot->withdrawal = NULL;
   slot->busy = FALSE;
   /* No relay accepted it: the older KeyPackages keep their keys (it may
-   * still have reached a relay; the next confirmed one retires it). */
+   * still have reached a relay; the next confirmed one retires it). A
+   * withdrawal no relay accepted keeps them too, and is asked again. */
   slot->in_flight = FALSE;
+  gboolean withdrawal = slot->withdrawing;
+  slot->withdrawing = FALSE;
   if (!summary->any_accepted) {
-    key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
+    if (!withdrawal)
+      key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
     schedule_retry(self);
   }
   g_idle_add(key_package_publish_free_idle, publish);
-  /* A rotation asked for while this round was in flight. */
-  gboolean rotate = FALSE;
+  /* A rotation asked for, or the MDK 0.8 format switched on or off, while
+   * this round was in flight. */
+  gboolean rotate = self->key_package_recheck;
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
     rotate |= self->kp[f].rotate;
   if (summary->any_accepted && rotate && !key_package_any_busy(self))
@@ -5562,6 +5645,151 @@ key_package_publish(GhMlsService *self, GhMlsKeyPackageFormat format, const gcha
   marmot_key_package_result_free(&made);
 }
 
+/* The withdrawal's first relay OK (review L1): the relays were asked to
+ * delete the MDK 0.8 KeyPackage, so its keys go now -- never before, as for
+ * a replacement: until then a Welcome to it still opens. Its cursor goes to
+ * 0, so switching the format back on publishes a new one at once. */
+static void
+key_package_withdrawn(KeyPackageSlot *slot)
+{
+  GhMlsService *self = slot->service;
+  slot->withdrawing = FALSE;
+  g_autoptr(GError) error = NULL;
+  size_t retired = 0;
+  drop_stale_error(self);
+  if (!gh_store_begin(self->store, &error)) {
+    g_message("Groundhog could not retire its older-format KeyPackage: %s", error->message);
+    return;
+  }
+  MarmotError err = marmot_key_package_retire_profile(self->marmot, self->account_key,
+                                                      MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
+                                                      &retired);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "Retiring the older-format KeyPackage", &error);
+    gh_store_rollback(self->store);
+    g_message("Groundhog could not retire its older-format KeyPackage: %s", error->message);
+    return;
+  }
+  if (!gh_store_set_cursor(self->store, KEY_PACKAGE_CURSOR,
+                           key_package_cursor_key(GH_MLS_KEY_PACKAGE_FORMAT_LEGACY), 0, &error) ||
+      !gh_store_commit(self->store, &error)) {
+    gh_store_rollback(self->store);
+    g_message("Groundhog could not retire its older-format KeyPackage: %s", error->message);
+    return;
+  }
+  g_debug("Groundhog withdrew its older-format KeyPackage (%" G_GSIZE_FORMAT " key(s))",
+          retired);
+  g_clear_pointer(&slot->id, g_free);
+  slot->rotate = FALSE;
+  slot->held = FALSE;
+  gboolean other_held = FALSE;
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    other_held |= self->kp[f].held;
+  if (!other_held)
+    key_package_hold_stop(self, TRUE);
+  key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_NONE);
+  key_package_sweep_schedule(self);
+}
+
+/* The deletion request (NIP-09: `a` = the slot's address, `k` = 30443)
+ * signed: checked, then published where the KeyPackages go. */
+static void
+key_package_withdraw_signed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  KeyPackageJob *job = data;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *signed_json = gh_account_controller_sign_finish(result, &error);
+  g_autoptr(GhMlsService) self = g_weak_ref_get(&job->service);
+  if (!self || self->run != job->run || !running(self)) {
+    key_package_job_free(job);
+    return;
+  }
+  KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
+  NostrEvent *event = signed_json ? nostr_event_new() : NULL;
+  gboolean ok = event && nostr_event_deserialize_compact(event, signed_json, NULL) == 1 &&
+                nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                nostr_event_get_kind(event) == 5 &&
+                g_strcmp0(nostr_event_get_pubkey(event), self->account) == 0;
+  if (event)
+    nostr_event_free(event);
+  GhRelayPublish *publish = ok ? gh_relay_publish_new(self->generation, signed_json,
+                                                      key_package_update, key_package_done,
+                                                      slot, &error)
+                               : NULL;
+  guint added = 0;
+  for (guint i = 0; publish && job->urls[i]; i++) {
+    if (!gh_relay_publish_add_url(publish, job->urls[i], NULL))
+      continue;
+    gh_auth_policy_apply_publish(self->policy, publish, GH_AUTH_PURPOSE_OWN_LIST_PUBLISH,
+                                 job->urls[i], NULL);
+    added++;
+  }
+  if (publish && self->publish_deadline)
+    gh_relay_publish_set_deadline(publish, self->publish_deadline);
+  /* Recorded first: a publish's callbacks may run before it starts. */
+  slot->publish = publish;
+  slot->withdrawal = publish;
+  if (!publish || !added || !gh_relay_publish_start(publish, &error)) {
+    g_message("Groundhog could not withdraw its older-format KeyPackage: %s",
+              error ? error->message : "the signer returned something else");
+    slot->publish = NULL;
+    slot->withdrawal = NULL;
+    if (publish)
+      gh_relay_publish_unref(publish);
+    slot->busy = FALSE;
+    slot->withdrawing = FALSE;
+    key_package_job_free(job);
+    return;
+  }
+  key_package_job_free(job);
+}
+
+/* Asks the account's write relays to delete its MDK 0.8 KeyPackage (the
+ * user switched that format off); its keys are retired on the first OK. */
+static void
+key_package_withdraw(GhMlsService *self, const gchar *const *urls)
+{
+  KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
+  char d[65];
+  drop_stale_error(self);
+  if (marmot_key_package_slot(self->marmot, self->account_key,
+                              MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, d) != MARMOT_OK) {
+    /* No slot was ever published: nothing to ask the relays; retire. */
+    drop_stale_error(self);
+    key_package_withdrawn(slot);
+    return;
+  }
+  g_autofree gchar *address = g_strdup_printf("%d:%s:%s", MARMOT_KIND_KEY_PACKAGE, self->account,
+                                              d);
+  g_autofree gchar *kind = g_strdup_printf("%d", MARMOT_KIND_KEY_PACKAGE);
+  NostrEvent *event = nostr_event_new();
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("a", address, NULL));
+  nostr_tags_append(tags, nostr_tag_new("k", kind, NULL));
+  nostr_event_set_kind(event, 5);
+  nostr_event_set_created_at(event, now_s(self));
+  nostr_event_set_content(event, "");
+  nostr_event_set_pubkey(event, self->account);
+  nostr_event_set_tags(event, tags);
+  char *raw = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  if (!raw) {
+    g_message("Groundhog could not withdraw its older-format KeyPackage");
+    return;
+  }
+  slot->busy = TRUE;
+  slot->withdrawing = TRUE;
+  KeyPackageJob *job = g_new0(KeyPackageJob, 1);
+  g_weak_ref_init(&job->service, self);
+  job->run = self->run;
+  job->format = GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
+  job->urls = g_strdupv((gchar **)urls);
+  gh_account_controller_sign_with_cancellable_async(self->accounts, raw, self->cancellable,
+                                                    key_package_withdraw_signed, job);
+  free(raw);
+}
+
 /* Publishes a format's new KeyPackage when none was published within the
  * lifetime, or the last one was spent. One round at a time: while either
  * format is being made or published, the next check waits for it. The
@@ -5576,6 +5804,7 @@ key_package_maybe_publish(GhMlsService *self)
 {
   if (!running(self) || key_package_any_busy(self) || !identity_ready(self))
     return;
+  self->key_package_recheck = FALSE;
   key_package_sweep(self);
   g_auto(GStrv) urls = key_package_relays(self);
   if (!urls[0]) {
@@ -5597,6 +5826,19 @@ key_package_maybe_publish(GhMlsService *self)
     due[f] = self->kp[f].rotate || last <= 0 || now_s(self) - last >= self->key_package_lifetime;
     any_due |= due[f];
   }
+  /* The MDK 0.8 format switched off (L1) while its keys are still kept: its
+   * KeyPackage is withdrawn (a deletion request), then they are retired. */
+  gboolean withdraw = FALSE;
+  if (!key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY)) {
+    int64_t legacy_expires = 0;
+    drop_stale_error(self);
+    if (marmot_key_package_next_expiry_for_profile(self->marmot, self->account_key,
+                                                   MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
+                                                   &legacy_expires) != MARMOT_OK)
+      drop_stale_error(self);
+    withdraw = legacy_expires != 0;
+    any_due |= withdraw;
+  }
   if (!any_due) {
     for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
       self->kp[f].held = FALSE;
@@ -5615,10 +5857,10 @@ key_package_maybe_publish(GhMlsService *self)
   for (guint i = 0; i < G_N_ELEMENTS(order); i++) {
     GhMlsKeyPackageFormat f = order[i];
     KeyPackageSlot *slot = &self->kp[f];
-    gboolean want = due[f] || (f == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
-                               go[GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED]);
+    gboolean legacy = f == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
+    gboolean want = due[f] || (legacy && withdraw);
     slot->held = FALSE;
-    if (!want || !key_package_produced(self, f))
+    if (!want || (!key_package_produced(self, f) && !(legacy && withdraw)))
       continue;
     gint64 deadline = 0;
     switch (key_package_hold_verdict(self, f, pending, &deadline)) {
@@ -5634,14 +5876,32 @@ key_package_maybe_publish(GhMlsService *self)
       go[f] = TRUE;
       break;
     }
+    /* An adopted replacement brings an MDK 0.8 one along (it stays the
+     * newest kind 30443), and stays owed until it goes out (review M1): held
+     * or failed, it is still due at the hold's end, the retry or a restart. */
+    if (f == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED && go[f] &&
+        key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY) &&
+        !due[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY]) {
+      due[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY] = TRUE;
+      self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].rotate = TRUE;
+      g_autoptr(GError) error = NULL;
+      if (!gh_store_set_cursor(self->store, KEY_PACKAGE_CURSOR,
+                               key_package_cursor_key(GH_MLS_KEY_PACKAGE_FORMAT_LEGACY), 0, &error))
+        g_message("Groundhog could not record a due KeyPackage: %s", error->message);
+    }
   }
   key_package_hold_apply(self, ended, wake);
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
     if (key_package_produced(self, f) && !go[f])
       key_package_slot_set_state(&self->kp[f], GH_MLS_KEY_PACKAGE_PUBLISHED);
-  for (guint i = 0; i < G_N_ELEMENTS(order); i++)
-    if (go[order[i]])
+  for (guint i = 0; i < G_N_ELEMENTS(order); i++) {
+    if (!go[order[i]])
+      continue;
+    if (order[i] == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY && withdraw)
+      key_package_withdraw(self, (const gchar *const *)urls);
+    else
       key_package_publish(self, order[i], (const gchar *const *)urls);
+  }
   key_package_sweep_schedule(self);
 }
 
@@ -5806,6 +6066,8 @@ stop_generation(GhMlsService *self)
     slot->busy = FALSE;
     slot->in_flight = FALSE;
     slot->held = FALSE;
+    slot->withdrawing = FALSE;
+    slot->withdrawal = NULL;
   }
   key_package_hold_stop(self, FALSE);
   if (self->key_package_sweep_timer) {
@@ -5893,6 +6155,19 @@ on_relays_changed(GhAccountRelays *relays, gpointer data)
 
 /* ---- Object --------------------------------------------------------------------------- */
 
+/* "Let people using older Marmot apps invite me" (review L1): on, the MDK
+ * 0.8 KeyPackage is published again; off, it is withdrawn and its keys
+ * retired once a relay accepted the request. */
+static void
+on_legacy_key_packages_changed(GhMlsService *self, gchar *key, GSettings *settings)
+{
+  (void)key;
+  (void)settings;
+  key_package_update_state(self);
+  self->key_package_recheck = TRUE;   /* a round in flight looks again when it ends */
+  key_package_maybe_publish(self);
+}
+
 static void
 on_verified_only_changed(GSettings *settings, gchar *key, gpointer data)
 {
@@ -5960,9 +6235,13 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   self->account_relays = config->account_relays ? g_object_ref(config->account_relays) : NULL;
   self->inboxes = config->inboxes ? g_object_ref(config->inboxes) : NULL;
   self->settings = config->settings ? g_object_ref(config->settings) : NULL;
-  if (self->settings)
+  if (self->settings) {
     g_signal_connect_object(self->settings, "changed::" VERIFIED_ONLY_KEY,
                             G_CALLBACK(on_verified_only_changed), self, 0);
+    g_signal_connect_object(self->settings, "changed::" LEGACY_KEY_PACKAGES_KEY,
+                            G_CALLBACK(on_legacy_key_packages_changed), self,
+                            G_CONNECT_SWAPPED);
+  }
   self->may_look_up = config->may_look_up;
   self->consent_data = config->consent_data;
   self->network = g_object_ref(config->network ? config->network

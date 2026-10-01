@@ -42,6 +42,9 @@ gboolean gh_mls_invitee_picker_get_checking(GhMlsInviteePicker *self);
 GhMlsInviteeState gh_mls_invitee_picker_get_state(GhMlsInviteePicker *self, const gchar *pubkey);
 gboolean gh_mls_invitee_picker_set_selected(GhMlsInviteePicker *self, const gchar *pubkey,
                                             gboolean selected);
+/* Checks every chosen person again (e.g. their KeyPackages changed since
+ * they were checked). */
+void gh_mls_invitee_picker_check_again(GhMlsInviteePicker *self);
 /* The row of a listed person (tests: its words and widgets), or NULL. */
 AdwActionRow *gh_mls_invitee_picker_get_row(GhMlsInviteePicker *self, const gchar *pubkey);
 

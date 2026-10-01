@@ -75,13 +75,13 @@ static const char *const preference_keys[] = {
   "link-previews", "load-profile-pictures", "filter-unknown-senders", "show-message-previews",
   "network-mode", "tor-socks-address", "discovery-relays", "signer-method",
   "run-in-background", "retention-days", "default-disappearing-seconds", "enter-sends",
-  "blossom-servers", "only-join-verified-mls-groups",
+  "blossom-servers", "only-join-verified-mls-groups", "mls-legacy-key-packages",
 };
 
 static const char *const switch_keys[] = {
   "notifications-enabled", "sound-enabled", "load-remote-images", "link-previews",
   "load-profile-pictures", "filter-unknown-senders", "show-message-previews", "enter-sends",
-  "run-in-background", "only-join-verified-mls-groups",
+  "run-in-background", "only-join-verified-mls-groups", "mls-legacy-key-packages",
 };
 
 typedef struct {
@@ -1140,6 +1140,7 @@ test_gated_rows_this_build(Fixture *f, gconstpointer data)
     { "enter-sends", GH_FEATURE_COMPOSER },
     { "blossom-servers", GH_FEATURE_ATTACHMENTS },
     { "only-join-verified-mls-groups", GH_FEATURE_ENCRYPTED_GROUPS },
+    { "mls-legacy-key-packages", GH_FEATURE_ENCRYPTED_GROUPS },
   };
   G_STATIC_ASSERT(G_N_ELEMENTS(expect) == G_N_ELEMENTS(preference_keys));
   present(f, 800, 700);
@@ -1175,7 +1176,7 @@ test_gated_rows_none(Fixture *f, gconstpointer data)
     "notifications-enabled", "notification-privacy", "sound-enabled", "load-remote-images",
     "link-previews", "load-profile-pictures", "filter-unknown-senders", "tor-socks-address",
     "retention-days", "default-disappearing-seconds", "enter-sends", "blossom-servers",
-    "only-join-verified-mls-groups",
+    "only-join-verified-mls-groups", "mls-legacy-key-packages",
   };
   present(f, 800, 700);
   for (guint i = 0; i < G_N_ELEMENTS(gated); i++)

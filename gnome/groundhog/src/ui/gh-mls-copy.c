@@ -137,6 +137,9 @@ gh_mls_error_copy(const GError *error)
     case GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH:
       return g_strdup(_("Someone you chose can’t join this group: their app doesn’t use this "
                         "group’s format. Nothing was changed."));
+    case GH_MLS_SERVICE_ERROR_FORMAT_CHANGED:
+      return g_strdup(_("Someone’s invitation key changed; review and try again. Nothing was "
+                        "changed."));
     default:
       break;
     }

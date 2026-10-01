@@ -182,6 +182,9 @@ GSETTINGS = {
     # §7.11 Privacy / Conversations (PD-8, D9).
     "filter-unknown-senders": Key("b", "true"),
     "only-join-verified-mls-groups": Key("b", "false"),
+    # Charter amendment 2026-10-01 (nostrc-lf62 review L1): on until the
+    # sunset criteria there are met.
+    "mls-legacy-key-packages": Key("b", "true"),
     "show-message-previews": Key("b", "true"),
     # §7.11 Network / Connection (§4.2).
     "network-mode": Key("s", "'system'", ("system", "none", "tor")),

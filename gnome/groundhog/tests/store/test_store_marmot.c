@@ -2376,7 +2376,7 @@ assert_labels_classified(GhStore *store)
   static const gchar *const known[] = {
     "mls_group", "mls_group_parent", "mls_group_pending", "mls_group_welcomes",
     "mls_group_proposals", "mls_group_leaving", "mls_group_proposal_slot",
-    "kp_slot", "kp_life", "kp_priv",
+    "kp_slot", "kp_slot_adopted", "kp_life", "kp_used", "kp_priv",
     "kp_full", "welcome_data", EVENT_TIME_LABEL,
     "welcome_signer",   /* a join fact, group-keyed, kept out of snapshots */
     NULL,

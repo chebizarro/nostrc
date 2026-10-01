@@ -149,6 +149,58 @@ test_key_packages(void)
   world_down(&w);
 }
 
+/* Review M2: New Group asks for the format it showed. When the lookups at
+ * creation no longer give it -- here Bob's write relay keeps his adopted
+ * KeyPackage back -- nothing is made (no group, no Commit, no Welcome) and
+ * the task says so, where a creation without an expected format would
+ * quietly make an older-format group. With the KeyPackage served again, the
+ * same request makes the adopted group. */
+static G_GNUC_UNUSED void
+test_create_in_format(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  g_assert_cmpuint(withhold_key_packages(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED), ==, 1);
+  guint g_events = w.g.events, x_events = w.x.events;
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *people[] = { hex[BOB], NULL };
+  OpWait refused = { 0 };
+  gh_mls_service_create_group_in_format_async(alice->service, "As shown", NULL, relays, people,
+                                              GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, NULL,
+                                              on_created, &refused);
+  spin_until(op_done, &refused, "the refused creation");
+  g_assert_error(refused.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_FORMAT_CHANGED);
+  g_assert_null(refused.result);
+  g_clear_error(&refused.error);
+  drain();
+  g_assert_cmpuint(w.g.events, ==, g_events);
+  g_assert_cmpuint(w.x.events, ==, x_events);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
+  /* Without an expected format the service would choose the older one. */
+  OpWait any = { 0 };
+  gh_mls_service_create_group_async(alice->service, "Any", NULL, relays, people, NULL,
+                                    on_created, &any);
+  spin_until(op_done, &any, "the creation in any format");
+  g_assert_no_error(any.error);
+  g_assert_false(gh_mls_group_get_adopted(any.result));
+  g_object_unref(any.result);
+  /* Served again: the format shown. */
+  release_all_withheld(&w.w);
+  OpWait made = { 0 };
+  gh_mls_service_create_group_in_format_async(alice->service, "As shown", NULL, relays, people,
+                                              GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, NULL,
+                                              on_created, &made);
+  spin_until(op_done, &made, "the creation as shown");
+  g_assert_no_error(made.error);
+  g_assert_true(gh_mls_group_get_adopted(made.result));
+  g_object_unref(made.result);
+  world_down(&w);
+}
+
 typedef struct {
   GhMlsGroup *group;
   const gchar *name;
@@ -3042,6 +3094,9 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   mls_world_init();
   g_test_add_func("/groundhog/mls-service/key-packages", test_key_packages);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  g_test_add_func("/groundhog/mls-service/create-in-format", test_create_in_format);
+#endif
   g_test_add_func("/groundhog/mls-service/group-lifecycle", test_group_lifecycle);
   g_test_add_func("/groundhog/mls-service/group-lifecycle-legacy", test_group_lifecycle_legacy);
   g_test_add_func("/groundhog/mls-service/member-leaves", test_member_leaves);

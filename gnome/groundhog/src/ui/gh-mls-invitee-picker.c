@@ -295,6 +295,18 @@ on_accounts_changed(GhMlsInviteePicker *self)
 }
 
 void
+gh_mls_invitee_picker_check_again(GhMlsInviteePicker *self)
+{
+  g_return_if_fail(GH_IS_MLS_INVITEE_PICKER(self));
+  for (guint i = 0; i < self->rows->len; i++) {
+    GhMlsInviteeRow *row = g_ptr_array_index(self->rows, i);
+    if (row_selected(row))
+      start_check(self, row);
+  }
+  changed(self);
+}
+
+void
 gh_mls_invitee_picker_setup(GhMlsInviteePicker *self, const GhMlsUiContext *context,
                             const gchar *const *members)
 {

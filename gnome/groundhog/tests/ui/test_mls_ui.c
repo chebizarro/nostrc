@@ -495,6 +495,17 @@ test_view_model(void)
   g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", TRUE);
   g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_NEEDS_UPDATE);
   g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", FALSE);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  /* Review L2: Carol also gets an adopted KeyPackage. Her MDK 0.8 one still
+   * lacks the proof: by default she is ready for any group; when proofs
+   * are required, only for newer-format ones (her older-format key can't be
+   * used), never a plain "Ready". */
+  inject_adopted_key_package(&w, CAROL);
+  g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_READY);
+  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", TRUE);
+  g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_READY_ADOPTED_ONLY);
+  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", FALSE);
+#endif
 #endif
   g_autoptr(GSettings) none = settings_with_discovery(NULL);
   g_assert_cmpint(check_with(alice, none, BOB, NULL, NULL), ==, GH_MLS_INVITEE_NO_RELAYS);
@@ -1460,6 +1471,65 @@ test_gui_new_group_formats(void)
 }
 #endif
 
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+/* Review M2: New Group creates the format it showed, or nothing. Bob is
+ * checked Ready (both formats: the newer-format group, no notice); then his
+ * write relay keeps his adopted KeyPackage back. Create is refused with
+ * "Someone's invitation key changed; review and try again" -- no
+ * older-format group made unseen -- and Bob is checked again: now the page
+ * says the group would use the older format. */
+static void
+test_gui_new_group_format_changed(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhNip29Service *nip29 = nip29_up(alice);
+  group_send_stub_reset();
+  GhWindow *window = app_window(alice, nip29);
+  g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
+  AdwDialog *dialog = visible_dialog(window);
+  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
+  GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
+    gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+  gh_mls_new_group_page_set_name(page, "As Shown");
+  g_assert_true(gh_mls_new_group_page_add_relay(page, w.g.url));
+  gtk_widget_activate_action(find_type(GTK_WIDGET(page), GH_TYPE_MLS_RELAY_ROW, w.w.url),
+                             "relay.remove", NULL);
+  GhMlsInviteePicker *picker = gh_mls_new_group_page_get_picker(page);
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
+  wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY);
+  g_assert_null(create_reason(page));
+  g_assert_null(gh_mls_new_group_page_get_format_notice(page));
+  g_assert_cmpint(gh_mls_new_group_page_get_format(page), ==, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
+
+  g_assert_cmpuint(withhold_key_packages(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED), ==, 1);
+  guint g_events = w.g.events;
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.create", NULL);
+  wait_text(status_title, page, "Group Not Created");
+  GtkLabel *description = GTK_LABEL(gtk_widget_get_template_child(
+    GTK_WIDGET(page), GH_TYPE_MLS_NEW_GROUP_PAGE, "status_description"));
+  g_assert_nonnull(strstr(gtk_label_get_text(description),
+                          "Someone’s invitation key changed; review and try again"));
+  g_assert_null(gh_mls_new_group_page_get_group(page));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
+  g_assert_cmpuint(w.g.events, ==, g_events);
+  /* Checked again: what Create would make now, said. */
+  wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY_LEGACY);
+  g_assert_nonnull(gh_mls_new_group_page_get_format_notice(page));
+  g_assert_cmpint(gh_mls_new_group_page_get_format(page), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  adw_dialog_force_close(dialog);
+  drain();
+  close_window(window);
+  gh_test_release(nip29);
+  world_down(&w);
+}
+#endif
+
 /* ---- --gui: members without the account proof (nostrc-6ukh, nostrc-prrl) ---------------- */
 
 typedef struct {
@@ -1746,6 +1816,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/mls-ui-gui/new-group", test_gui_new_group);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
     g_test_add_func("/groundhog/mls-ui-gui/new-group-formats", test_gui_new_group_formats);
+    g_test_add_func("/groundhog/mls-ui-gui/new-group-format-changed",
+                    test_gui_new_group_format_changed);
 #endif
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF

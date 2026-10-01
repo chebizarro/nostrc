@@ -65,6 +65,11 @@
       <summary>Only join encrypted groups where every member's app proves their account</summary>
       <description>Off (the default): people whose app cannot prove their account (older White Noise, Amethyst) can be invited and their groups joined; Groundhog confirms each of them from evidence it already holds (the KeyPackage used to add them, keys it fetched, the device's own renewals), marks the others "Identity not verified", and looks keys up only when you ask (Verify). On: invitations to such people, invitations into groups that hold one, and an admin's change that adds one are refused, even when Groundhog verified the person another way; a group refused that way can't be read past the change. A forged account proof is refused either way.</description>
     </key>
+    <key name="mls-legacy-key-packages" type="b">
+      <default>true</default>
+      <summary>Let people using older Marmot apps invite me</summary>
+      <description>On (the default for now): besides the invitation key (KeyPackage) of the current Marmot format, Groundhog publishes one in the older MDK 0.8 format, so people on older White Noise or Amethyst can invite you into older-format groups. The two keys can be linked to each other and to your account, show that your app offers both, and need two signer approvals per renewal. Off: only the current format is published; the older-format key is withdrawn (a deletion request to your relays) and its private keys are deleted once a relay accepted that request. This will turn off by default, and later go, once older Marmot apps are no longer in use or MDK 0.8 support ends (privacy charter, 2026-10-01 amendment).</description>
+    </key>
     <key name="show-message-previews" type="b">
       <default>true</default>
       <summary>Show message previews in the conversation list</summary>
