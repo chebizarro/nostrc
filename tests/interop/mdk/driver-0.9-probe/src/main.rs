@@ -14,12 +14,19 @@ use std::time::Duration;
 use cgka_engine::account_identity_proof::{
     ACCOUNT_IDENTITY_PROOF_EXTENSION_TYPE, AccountIdentityProofRequest, AccountIdentityProofSigner,
 };
+use cgka_engine::FeatureRegistry;
 use cgka_engine::key_package::key_package_metadata;
 use cgka_session::{AccountDeviceSession, SessionConfig};
+use cgka_traits::agent_text_stream::{
+    AGENT_TEXT_STREAM_QUIC_FANOUT_CAPABILITY, AGENT_TEXT_STREAM_QUIC_FANOUT_FEATURE,
+    AGENT_TEXT_STREAM_QUIC_RECEIVE_CAPABILITY, AGENT_TEXT_STREAM_QUIC_RECEIVE_FEATURE,
+    AGENT_TEXT_STREAM_QUIC_SEND_CAPABILITY, AGENT_TEXT_STREAM_QUIC_SEND_FEATURE,
+};
 use cgka_traits::app_components::{
     AGENT_TEXT_STREAM_QUIC_COMPONENT_ID, GROUP_ENCRYPTED_MEDIA_COMPONENT_ID,
     NOSTR_ROUTING_COMPONENT_ID, default_group_components,
 };
+use cgka_traits::capabilities::{Capability, CapabilityRequirement, Feature, RequirementLevel};
 use cgka_traits::{MemberId, TransportEndpoint};
 use futures_util::{SinkExt, StreamExt};
 use nostr::prelude::*;
@@ -120,9 +127,61 @@ impl AccountIdentityProofSigner for ProofSigner {
     }
 }
 
-/// MDK 0.9's marmot-app supported component set (supported_app_component_ids):
-/// advertised by its session and listed in its KeyPackage app_components tag.
-fn app_components() -> Vec<u16> {
+// MDK 0.9's session configuration, as its marmot-app makes it: the two
+// functions below are verbatim copies of marmot-app's at MDK_REV
+// (`app_feature_registry` and `MarmotApp::supported_app_component_ids`); the
+// `parity` tests (run by the image build) fail if they drift. So the probe's
+// leaves advertise what a real 0.9 client's do: SelfRemove and the three
+// agent-text-stream-QUIC roles, and the component set it lists in the
+// KeyPackage's app_components tag.
+
+fn app_feature_registry() -> FeatureRegistry {
+    let mut registry = FeatureRegistry::new();
+    registry.register(
+        Feature("self-remove"),
+        CapabilityRequirement {
+            requires: Capability::Proposal(10),
+            level: RequirementLevel::Required,
+            description: "MIP-03 SelfRemove group departure",
+        },
+    );
+    // Each agent-text-stream-QUIC role maps to its own distinct backing
+    // capability (a private-use MLS extension type), so a member advertises
+    // `receive`/`send`/`fanout` independently and a group's
+    // `required_member_roles` mask is enforceable per role (#177,
+    // agent-text-stream-quic-v1.md). The capability/feature/bit mapping is the
+    // shared `AGENT_TEXT_STREAM_QUIC_ROLES` table so the engine enforcement and
+    // this registration cannot drift.
+    for (feature, capability, description) in [
+        (
+            AGENT_TEXT_STREAM_QUIC_RECEIVE_FEATURE.clone(),
+            AGENT_TEXT_STREAM_QUIC_RECEIVE_CAPABILITY,
+            "receive QUIC-backed agent text stream previews",
+        ),
+        (
+            AGENT_TEXT_STREAM_QUIC_SEND_FEATURE.clone(),
+            AGENT_TEXT_STREAM_QUIC_SEND_CAPABILITY,
+            "send QUIC-backed agent text stream frames",
+        ),
+        (
+            AGENT_TEXT_STREAM_QUIC_FANOUT_FEATURE.clone(),
+            AGENT_TEXT_STREAM_QUIC_FANOUT_CAPABILITY,
+            "fan out QUIC-backed agent text stream frames",
+        ),
+    ] {
+        registry.register(
+            feature,
+            CapabilityRequirement {
+                requires: capability,
+                level: RequirementLevel::Optional,
+                description,
+            },
+        );
+    }
+    registry
+}
+
+fn supported_app_component_ids() -> Vec<u16> {
     let mut components = default_group_components();
     components.insert(NOSTR_ROUTING_COMPONENT_ID);
     components.insert(AGENT_TEXT_STREAM_QUIC_COMPONENT_ID);
@@ -174,7 +233,8 @@ impl Driver {
                     Box::new(transport_nostr_peeler::NostrMlsPeeler::new().with_welcome_signer(keys.clone())),
                 )
                 .account_identity_proof_signer(Arc::new(ProofSigner { keys: keys.clone() }))
-                .supported_app_components(app_components());
+                .feature_registry(app_feature_registry())
+                .supported_app_components(supported_app_component_ids());
                 let session = AccountDeviceSession::open(config).map_err(as_fail("internal", "session open"))?;
                 let pubkey = keys.public_key().to_hex();
                 let slot = hex::encode(Keys::generate().secret_key().to_secret_bytes());
@@ -204,7 +264,7 @@ impl Driver {
                         "0x000a".into(),
                     ],
                     mls_proposals: vec!["0x0008".into(), "0x000a".into()],
-                    app_components: app_components().iter().map(|id| format!("0x{id:04x}")).collect(),
+                    app_components: supported_app_component_ids().iter().map(|id| format!("0x{id:04x}")).collect(),
                     publish_endpoints: vec![TransportEndpoint("ws://127.0.0.1:1".into())],
                 };
                 let unsigned = publication.to_event().map_err(as_fail("internal", "KeyPackage event"))?;
@@ -271,5 +331,102 @@ async fn main() {
         if stdout.write_all(text.as_bytes()).await.is_err() || stdout.flush().await.is_err() {
             break;
         }
+    }
+}
+
+/// The probe's session configuration is MDK 0.9 marmot-app's at MDK_REV (see
+/// ../driver-0.11, whose `parity` tests these mirror).
+#[cfg(test)]
+mod parity {
+    use super::MDK_REV;
+    use std::path::PathBuf;
+
+    const PROBE: &str = include_str!("main.rs");
+
+    /// marmot-app's lib.rs in Cargo's git checkout of MDK at MDK_REV.
+    fn marmot_app() -> String {
+        let home = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+            .expect("CARGO_HOME or HOME");
+        let checkouts = home.join("git/checkouts");
+        let short = &MDK_REV[..7];
+        let found: Vec<PathBuf> = std::fs::read_dir(&checkouts)
+            .unwrap_or_else(|e| panic!("{}: {e}", checkouts.display()))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mdk-"))
+            .map(|e| e.path().join(short).join("crates/marmot-app/src/lib.rs"))
+            .filter(|p| p.is_file())
+            .collect();
+        let lib = found.first().unwrap_or_else(|| panic!("no MDK checkout at {short} in {}", checkouts.display()));
+        std::fs::read_to_string(lib).expect("marmot-app/src/lib.rs at MDK_REV")
+    }
+
+    fn body(source: &str, signature: &str) -> String {
+        let at = source.find(signature).unwrap_or_else(|| panic!("no `{signature}`"));
+        let open = at + source[at..].find('{').unwrap();
+        let mut depth = 0usize;
+        let mut end = open;
+        for (i, c) in source[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        source[open..=end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap())
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    #[test]
+    fn feature_registry_is_marmot_apps() {
+        let sig = "fn app_feature_registry() -> FeatureRegistry";
+        assert_eq!(body(PROBE, sig), body(&marmot_app(), sig));
+    }
+
+    #[test]
+    fn component_set_is_marmot_apps() {
+        assert_eq!(
+            body(PROBE, "fn supported_app_component_ids() -> Vec<u16>"),
+            body(&marmot_app(), "fn supported_app_component_ids(&self) -> Vec<u16>")
+        );
+    }
+
+    #[test]
+    fn session_config_is_marmot_apps() {
+        let app = marmot_app();
+        let at = app.find("let mut session_config = SessionConfig::new(").expect("marmot-app's SessionConfig");
+        let chain = &app[at..at + app[at..].find(';').unwrap()];
+        assert_eq!(chain.matches("\n        .").count(), 3, "marmot-app's SessionConfig chain changed:\n{chain}");
+        for call in [
+            ".account_identity_proof_signer(",
+            ".feature_registry(app_feature_registry())",
+            ".supported_app_components(self.supported_app_component_ids())",
+        ] {
+            assert!(chain.contains(call), "marmot-app no longer calls {call}");
+        }
+        let mut later: Vec<&str> = app
+            .match_indices("session_config = session_config.")
+            .map(|(i, m)| {
+                let rest = &app[i + m.len()..];
+                &rest[..rest.find('(').unwrap()]
+            })
+            .collect();
+        later.sort();
+        later.dedup();
+        assert_eq!(later, ["convergence_policy", "recorder"]);
+        assert!(PROBE.contains(".feature_registry(app_feature_registry())"));
+        assert!(PROBE.contains(".supported_app_components(supported_app_component_ids())"));
     }
 }
