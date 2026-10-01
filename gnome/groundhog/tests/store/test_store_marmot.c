@@ -837,6 +837,14 @@ contract_key_package_info_deactivate(MarmotStorage *s)
   g_assert_nonnull(found);
   g_assert_false(found->active);
   marmot_key_package_info_free(found);
+
+  /* nostrc-0bdg review N3: a retired KeyPackage's row goes. */
+  g_assert_cmpint(s->delete_key_package_info(s->ctx, info1.ref), ==, MARMOT_OK);
+  g_assert_cmpint(s->find_key_package_by_ref(s->ctx, info1.ref, &found), ==, MARMOT_OK);
+  g_assert_null(found);
+  g_assert_cmpint(s->find_key_package_by_ref(s->ctx, info2.ref, &found), ==, MARMOT_OK);
+  g_assert_nonnull(found);
+  marmot_key_package_info_free(found);
 }
 
 static void
@@ -969,6 +977,7 @@ test_contract_libmarmot_cases(void)
   ASSERT_PROVIDED(find_key_package_by_ref);
   ASSERT_PROVIDED(find_key_packages_by_pubkey);
   ASSERT_PROVIDED(deactivate_key_packages);
+  ASSERT_PROVIDED(delete_key_package_info);
   ASSERT_PROVIDED(group_relays);
   ASSERT_PROVIDED(replace_group_relays);
   ASSERT_PROVIDED(get_exporter_secret);

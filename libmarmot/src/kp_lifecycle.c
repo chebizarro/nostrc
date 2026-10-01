@@ -187,6 +187,11 @@ delete_private(Marmot *m, const uint8_t ref[32])
 {
     MarmotError err = delete_or_absent(m, "kp_priv", ref);
     if (err == MARMOT_OK) err = delete_or_absent(m, "kp_full", ref);
+    /* Its info row too (review N3): no local rotation history. */
+    if (err == MARMOT_OK && m->storage->delete_key_package_info) {
+        err = m->storage->delete_key_package_info(m->storage->ctx, ref);
+        if (err == MARMOT_ERR_STORAGE_NOT_FOUND) err = MARMOT_OK;
+    }
     return err;
 }
 

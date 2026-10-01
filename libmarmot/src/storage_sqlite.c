@@ -1047,6 +1047,21 @@ oom:
 }
 
 static MarmotError
+sql_delete_key_package_info(void *ctx, const uint8_t ref[32])
+{
+    SqliteCtx *sc = ctx;
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(sc->db, "DELETE FROM key_package_infos WHERE ref = ?", -1, &stmt,
+                           NULL) != SQLITE_OK)
+        return MARMOT_ERR_STORAGE;
+    sqlite3_bind_blob(stmt, 1, ref, 32, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) return MARMOT_ERR_STORAGE;
+    return sqlite3_changes(sc->db) > 0 ? MARMOT_OK : MARMOT_ERR_STORAGE_NOT_FOUND;
+}
+
+static MarmotError
 sql_deactivate_key_packages(void *ctx, const uint8_t pubkey[32])
 {
     SqliteCtx *sc = ctx;
@@ -1353,6 +1368,15 @@ sql_destroy(void *ctx)
     free(sc);
 }
 
+/* The backend's connection, for libmarmot's own tests (not in a public
+ * header): they check its pragmas. */
+void *marmot_storage_sqlite_test_handle(MarmotStorage *s);
+void *
+marmot_storage_sqlite_test_handle(MarmotStorage *s)
+{
+    return s && s->ctx ? ((SqliteCtx *)s->ctx)->db : NULL;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Public constructor
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1400,6 +1424,12 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
 #endif
     }
 
+    /* Deleted rows are overwritten, not left in free pages (nostrc-0bdg
+     * review L2): a KeyPackage's private init key deleted at its confirmed
+     * replacement must not survive in the file, or (with SQLCipher)
+     * decryptably for whoever later obtains the key. */
+    sqlite3_exec(sc->db, "PRAGMA secure_delete=ON;", NULL, NULL, NULL);
+
     /* Initialize schema */
     if (ensure_schema(sc->db) != 0) {
         sqlite3_close(sc->db);
@@ -1445,6 +1475,7 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
     s->find_key_package_by_ref = sql_find_key_package_by_ref;
     s->find_key_packages_by_pubkey = sql_find_key_packages_by_pubkey;
     s->deactivate_key_packages = sql_deactivate_key_packages;
+    s->delete_key_package_info = sql_delete_key_package_info;
 
     /* Relay ops */
     s->group_relays = sql_group_relays;

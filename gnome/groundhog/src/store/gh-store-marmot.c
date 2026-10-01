@@ -1444,6 +1444,23 @@ out:
   return txn_end(self, err);
 }
 
+/* nostrc-0bdg: the row of a KeyPackage whose private material libmarmot
+ * deleted; no history of retired KeyPackages stays. */
+static MarmotError
+ghm_delete_key_package_info(void *ctx, const uint8_t ref[32])
+{
+  GhStoreMarmot *self = ctx;
+  if (!ref)
+    return invalid(self, "A KeyPackageRef is required");
+  MarmotError err = txn_begin(self);
+  if (err != MARMOT_OK)
+    return err;
+  TRY(exec_keyed(self, "DELETE FROM mls_key_packages WHERE ref = ?1", ref, 32,
+                 "Deleting an MLS key package"));
+out:
+  return txn_end(self, err);
+}
+
 /* ---- Relays ------------------------------------------------------------------------ */
 
 static MarmotError
@@ -1974,6 +1991,7 @@ gh_store_marmot_new(GhStore *store, GError **error)
   storage->find_key_package_by_ref = ghm_find_key_package_by_ref;
   storage->find_key_packages_by_pubkey = ghm_find_key_packages_by_pubkey;
   storage->deactivate_key_packages = ghm_deactivate_key_packages;
+  storage->delete_key_package_info = ghm_delete_key_package_info;
 
   storage->group_relays = ghm_group_relays;
   storage->replace_group_relays = ghm_replace_group_relays;

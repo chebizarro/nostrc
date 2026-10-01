@@ -237,6 +237,12 @@ test_rotation_ack_tied(void)
     CHECK(has_key(&bob, &k1) && has_key(&bob, &k2), "both until a relay accepts k2");
     OK(marmot_key_package_confirm_published(bob.m, bob.pk, k2.ref));
     CHECK(!has_key(&bob, &k1), "k1 deleted on k2's confirmation");
+    MarmotKeyPackageInfo *info = NULL;
+    OK(bob.m->storage->find_key_package_by_ref(bob.m->storage->ctx, k1.ref, &info));
+    CHECK(info == NULL, "k1's info row deleted with it (no rotation history)");
+    OK(bob.m->storage->find_key_package_by_ref(bob.m->storage->ctx, k2.ref, &info));
+    CHECK(info != NULL, "k2's info row kept");
+    marmot_key_package_info_free(info);
     CHECK(has_key(&bob, &k2), "k2 kept");
     /* Idempotent; an unknown or retired ref is not confirmable. */
     OK(marmot_key_package_confirm_published(bob.m, bob.pk, k2.ref));
@@ -497,6 +503,72 @@ test_ciphersuite_singleton(void)
     member_free(&bob);
 }
 
+/* @json with @value appended to (or, NULL, the last value dropped from) its
+ * one @key tag, re-signed by @x. */
+static char *
+retag(Member *x, const char *json, const char *key, const char *value)
+{
+    NostrEvent *ev = nostr_event_new();
+    CHECK(nostr_event_deserialize_compact(ev, json, NULL), "parse");
+    NostrTags *tags = nostr_tags_new(0);
+    for (size_t i = 0; i < nostr_tags_size(ev->tags); i++) {
+        NostrTag *t = nostr_tags_get(ev->tags, i);
+        bool hit = strcmp(nostr_tag_get_key(t), key) == 0;
+        size_t n = nostr_tag_size(t) - (hit && !value ? 1 : 0);
+        NostrTag *c = nostr_tag_new(nostr_tag_get_key(t), NULL);
+        for (size_t j = 1; j < n; j++) nostr_tag_append(c, nostr_tag_get(t, j));
+        if (hit && value) nostr_tag_append(c, value);
+        nostr_tags_append(tags, c);
+    }
+    nostr_event_set_tags(ev, tags);
+    free(ev->id);
+    ev->id = NULL;
+    CHECK(nostr_event_sign(ev, x->sk_hex) == 0, "re-sign");
+    char *out = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    return out;
+}
+
+/* Review L4 (MDK 0.11 key_package_records.rs): mls_extensions and
+ * mls_proposals name exactly the decoded leaf's capabilities. */
+static void
+test_capability_tags_match_leaf(void)
+{
+    Member bob;
+    member_init(&bob);
+    Kp k = adopted_kp(&bob, true);
+    char *extra_ext = retag(&bob, k.json, "mls_extensions", "0x0007");
+    char *extra_prop = retag(&bob, k.json, "mls_proposals", "0x0007");
+    char *less_prop = retag(&bob, k.json, "mls_proposals", NULL);
+    EXPECT_ERR(marmot_validate_key_package_event_json(extra_ext, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                      0, NULL, NULL), MARMOT_ERR_VALIDATION);
+    EXPECT_ERR(marmot_validate_key_package_event_json(extra_prop,
+                                                      MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, 0,
+                                                      NULL, NULL), MARMOT_ERR_VALIDATION);
+    EXPECT_ERR(marmot_validate_key_package_event_json(less_prop, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                      0, NULL, NULL), MARMOT_ERR_VALIDATION);
+    /* Same set in another order: still valid (compared as sets). */
+    NostrEvent *ev = nostr_event_new();
+    CHECK(nostr_event_deserialize_compact(ev, k.json, NULL), "parse");
+    for (size_t i = 0; i < nostr_tags_size(ev->tags); i++) {
+        NostrTag *t = nostr_tags_get(ev->tags, i);
+        if (strcmp(nostr_tag_get_key(t), "mls_proposals") != 0 || nostr_tag_size(t) < 3) continue;
+        NostrTag *c = nostr_tag_new("mls_proposals", NULL);
+        for (size_t j = nostr_tag_size(t) - 1; j >= 1; j--) nostr_tag_append(c, nostr_tag_get(t, j));
+        nostr_tags_set(ev->tags, i, c);   /* does not free the old tag */
+        nostr_tag_free(t);
+    }
+    free(ev->id);
+    ev->id = NULL;
+    CHECK(nostr_event_sign(ev, bob.sk_hex) == 0, "re-sign");
+    char *reordered = nostr_event_serialize_compact(ev);
+    nostr_event_free(ev);
+    OK(marmot_validate_key_package_event_json(reordered, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, 0,
+                                              NULL, NULL));
+    free(extra_ext); free(extra_prop); free(less_prop); free(reordered); free(k.json);
+    member_free(&bob);
+}
+
 int
 main(void)
 {
@@ -512,5 +584,6 @@ main(void)
     RUN(test_bounded);
     RUN(test_adopted_enrolled_producer);
     RUN(test_ciphersuite_singleton);
+    RUN(test_capability_tags_match_leaf);
     return 0;
 }

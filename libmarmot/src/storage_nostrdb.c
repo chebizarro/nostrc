@@ -1255,6 +1255,25 @@ ndb_find_key_packages_by_pubkey(void *ctx, const uint8_t pubkey[32],
 }
 
 static MarmotError
+ndb_delete_key_package_info(void *ctx, const uint8_t ref[32])
+{
+    NdbCtx *nc = ctx;
+    uint8_t kbuf[64];
+    size_t kl = make_kpi_key(ref, kbuf, sizeof(kbuf));
+    if (kl == 0) return MARMOT_ERR_INVALID_ARG;
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0) return MARMOT_ERR_STORAGE;
+    MDB_val k = { .mv_size = kl, .mv_data = kbuf };
+    int rc = mdb_del(txn, nc->dbi_kv, &k, NULL);
+    if (rc == MDB_NOTFOUND) {
+        mdb_txn_abort(txn);
+        return MARMOT_ERR_STORAGE_NOT_FOUND;
+    }
+    if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
+    return mdb_txn_commit(txn) == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
+static MarmotError
 ndb_deactivate_key_packages(void *ctx, const uint8_t pubkey[32])
 {
     NdbCtx *nc = ctx;
@@ -1699,6 +1718,7 @@ marmot_storage_nostrdb_new(void *ndb_handle, const char *mls_state_dir)
     s->find_key_package_by_ref = ndb_find_key_package_by_ref;
     s->find_key_packages_by_pubkey = ndb_find_key_packages_by_pubkey;
     s->deactivate_key_packages = ndb_deactivate_key_packages;
+    s->delete_key_package_info = ndb_delete_key_package_info;
     s->group_relays = ndb_group_relays;
     s->replace_group_relays = ndb_replace_group_relays;
     s->get_exporter_secret = ndb_get_exporter_secret;

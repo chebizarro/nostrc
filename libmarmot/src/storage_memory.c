@@ -708,6 +708,22 @@ mem_find_key_packages_by_pubkey(void *ctx, const uint8_t pubkey[32],
 }
 
 static MarmotError
+mem_delete_key_package_info(void *ctx, const uint8_t ref[32])
+{
+    MemCtx *mc = ctx;
+    for (size_t i = 0; i < mc->kp_info_count; i++) {
+        if (memcmp(mc->kp_infos[i]->ref, ref, 32) == 0) {
+            marmot_key_package_info_free(mc->kp_infos[i]);
+            memmove(&mc->kp_infos[i], &mc->kp_infos[i + 1],
+                    (mc->kp_info_count - i - 1) * sizeof(MarmotKeyPackageInfo *));
+            mc->kp_info_count--;
+            return MARMOT_OK;
+        }
+    }
+    return MARMOT_ERR_STORAGE_NOT_FOUND;
+}
+
+static MarmotError
 mem_deactivate_key_packages(void *ctx, const uint8_t pubkey[32])
 {
     MemCtx *mc = ctx;
@@ -1050,6 +1066,7 @@ marmot_storage_memory_new(void)
     s->find_key_package_by_ref = mem_find_key_package_by_ref;
     s->find_key_packages_by_pubkey = mem_find_key_packages_by_pubkey;
     s->deactivate_key_packages = mem_deactivate_key_packages;
+    s->delete_key_package_info = mem_delete_key_package_info;
 
     /* Relay ops */
     s->group_relays = mem_group_relays;

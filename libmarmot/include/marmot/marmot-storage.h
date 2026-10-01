@@ -279,6 +279,16 @@ typedef struct MarmotStorage {
 
     /** Undo every write since begin. */
     void (*rollback)(void *ctx);
+
+    /* ── Key package info removal (optional; since 0.12.0, nostrc-0bdg) ── */
+
+    /** Delete the key package info row of @ref, when libmarmot deleted its
+     *  private material (kp_lifecycle.c): no local history of retired
+     *  KeyPackages is kept. MARMOT_ERR_STORAGE_NOT_FOUND (or MARMOT_OK)
+     *  when there is none. NULL: the rows stay, as before 0.12.0. Appended
+     *  at the end: a storage built against an older header must be
+     *  rebuilt. */
+    MarmotError (*delete_key_package_info)(void *ctx, const uint8_t ref[32]);
 } MarmotStorage;
 
 /* ──────────────────────────────────────────────────────────────────────────

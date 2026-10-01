@@ -1239,6 +1239,30 @@ fail_kp:
  * foundation/key-packages.md and account-identity-proof-v2.md @26fa6a6.
  * ──────────────────────────────────────────────────────────────────────── */
 
+/* The one `key` id-list tag names exactly @ids as a set (MDK 0.11
+ * require_multi_value_key_package_tag_matches(); nostrc-0bdg review L4).
+ * The tag's values are pairwise distinct (id_list_tag_valid()). */
+static bool
+id_list_tag_is_set(NostrTags *tags, const char *key, const uint16_t *ids, size_t n)
+{
+    NostrTag *tag = NULL;
+    if (count_tags(tags, key, &tag) != 1) return false;
+    size_t distinct = 0;
+    for (size_t i = 0; i < n; i++) {
+        bool seen = false;
+        for (size_t j = 0; j < i && !seen; j++) seen = ids[j] == ids[i];
+        if (seen) continue;
+        distinct++;
+        char v[7];
+        snprintf(v, sizeof(v), "0x%04x", (unsigned)ids[i]);
+        bool found = false;
+        for (size_t k = 1; k < nostr_tag_size(tag) && !found; k++)
+            found = strcmp(nostr_tag_get(tag, k), v) == 0;
+        if (!found) return false;
+    }
+    return nostr_tag_size(tag) - 1 == distinct;
+}
+
 static bool
 id_list_tag_contains(NostrTags *tags, const char *key, const char *value)
 {
@@ -1371,6 +1395,14 @@ validate_key_package_event_adopted(NostrEvent *event, int64_t now,
         char suite[7];
         snprintf(suite, sizeof(suite), "0x%04x", (unsigned)kp_out->cipher_suite);
         if (!id_list_tag_contains(event->tags, "mls_ciphersuite", suite)) goto fail_kp;
+        /* mls_extensions and mls_proposals are exactly the leaf's
+         * capabilities (review L4, as MDK 0.11 checks). */
+        if (!id_list_tag_is_set(event->tags, "mls_extensions",
+                                kp_out->leaf_node.cap_extensions,
+                                kp_out->leaf_node.cap_extension_count) ||
+            !id_list_tag_is_set(event->tags, "mls_proposals", kp_out->leaf_node.proposals,
+                                kp_out->leaf_node.proposal_count))
+            goto fail_kp;
         uint16_t *ids = NULL;
         size_t n_ids = 0;
         if (leaf_app_components(&kp_out->leaf_node, &ids, &n_ids) != 0) goto fail_kp;

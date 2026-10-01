@@ -574,6 +574,23 @@ test_exporter_secret_delete(MarmotStorage *s)
 
 /* ── 6. Key package info operations ────────────────────────────────────── */
 
+/* nostrc-0bdg review N3: a retired KeyPackage's info row goes with it. */
+static void
+test_key_package_info_delete(MarmotStorage *s)
+{
+    MarmotKeyPackageInfo info;
+    memset(&info, 0, sizeof(info));
+    memset(info.ref, 0xD4, 32);
+    memset(info.owner_pubkey, 0xE5, 32);
+    info.created_at = 1700000000;
+    info.active = true;
+    assert(s->save_key_package_info(s->ctx, &info) == MARMOT_OK);
+    assert(s->delete_key_package_info(s->ctx, info.ref) == MARMOT_OK);
+    MarmotKeyPackageInfo *found = NULL;
+    assert(s->find_key_package_by_ref(s->ctx, info.ref, &found) == MARMOT_OK && found == NULL);
+    assert(s->delete_key_package_info(s->ctx, info.ref) == MARMOT_ERR_STORAGE_NOT_FOUND);
+}
+
 static void
 test_key_package_info_roundtrip(MarmotStorage *s)
 {
@@ -760,6 +777,64 @@ test_snapshot_lifecycle(MarmotStorage *s)
     marmot_group_id_free(&gid);
 }
 
+/* Whether @path's bytes contain @needle (n bytes); a missing file has none. */
+static int
+file_contains(const char *path, const uint8_t *needle, size_t n)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *data = malloc(size > 0 ? (size_t)size : 1);
+    assert(data != NULL);
+    size_t got = fread(data, 1, (size_t)(size > 0 ? size : 0), f);
+    fclose(f);
+    int found = 0;
+    for (size_t i = 0; !found && n <= got && i + n <= got; i++)
+        found = memcmp(data + i, needle, n) == 0;
+    free(data);
+    return found;
+}
+
+void *marmot_storage_sqlite_test_handle(MarmotStorage *s);
+
+/* nostrc-0bdg review L2: a deleted private key does not survive in the
+ * database file's free pages (PRAGMA secure_delete). The backend sets it ON
+ * itself: SQLite builds differ in their default (macOS's system library:
+ * FAST, Ubuntu's: ON; others: OFF). */
+static void
+test_sqlite_secure_delete(MarmotStorage *unused)
+{
+    (void)unused;
+    char db_path[512], wal_path[600];
+    snprintf(db_path, sizeof(db_path), "%s/secure_delete.db", tmp_dir);
+    snprintf(wal_path, sizeof(wal_path), "%s-wal", db_path);
+    static const uint8_t canary[] = "kp-priv-canary-0bdg-0123456789abcdef-must-not-survive";
+    uint8_t key[32];
+    memset(key, 0x5A, sizeof(key));
+    MarmotStorage *s = marmot_storage_sqlite_new(db_path, NULL);
+    assert(s != NULL);
+#if MARMOT_TEST_HAVE_SQLITE3_HEADER
+    sqlite3_stmt *st = NULL;
+    assert(sqlite3_prepare_v2(marmot_storage_sqlite_test_handle(s), "PRAGMA secure_delete", -1,
+                              &st, NULL) == SQLITE_OK &&
+           sqlite3_step(st) == SQLITE_ROW);
+    assert(sqlite3_column_int(st, 0) == 1);   /* ON, whatever the build's default */
+    sqlite3_finalize(st);
+#endif
+    assert(s->mls_store(s->ctx, "kp_priv", key, 32, canary, sizeof(canary)) == MARMOT_OK);
+    marmot_storage_free(s);
+    assert(file_contains(db_path, canary, sizeof(canary)) ||
+           file_contains(wal_path, canary, sizeof(canary)));   /* the probe sees it */
+    s = marmot_storage_sqlite_new(db_path, NULL);
+    assert(s != NULL);
+    assert(s->mls_delete(s->ctx, "kp_priv", key, 32) == MARMOT_OK);
+    marmot_storage_free(s);
+    assert(!file_contains(db_path, canary, sizeof(canary)));
+    assert(!file_contains(wal_path, canary, sizeof(canary)));
+}
+
 static void
 test_sqlite_encryption_request_requires_codec(MarmotStorage *unused)
 {
@@ -916,6 +991,8 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
     assert(s->deactivate_key_packages != NULL);
     TEST(test_key_package_info_roundtrip, backend_name, s);
     TEST(test_key_package_info_deactivate, backend_name, s);
+    assert(s->delete_key_package_info != NULL);
+    TEST(test_key_package_info_delete, backend_name, s);
 
     /* Persistence */
     if (is_persistent_expected) {
@@ -961,6 +1038,7 @@ int main(void)
             run_contract_tests("sqlite", s, true);
             marmot_storage_free(s);
             TEST(test_sqlite_encryption_request_requires_codec, "sqlite", NULL);
+            TEST(test_sqlite_secure_delete, "sqlite", NULL);
 #if MARMOT_TEST_HAVE_SQLITE3_HEADER
             TEST(test_sqlite_read_errors_are_not_absence, "sqlite", NULL);
 #endif
