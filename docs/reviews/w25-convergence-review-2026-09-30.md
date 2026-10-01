@@ -397,3 +397,224 @@ nostrdb `mdb_put`, Groundhog `ON CONFLICT DO UPDATE`).
    retrying held events on it, and the 72-order fuzzer as a test (both retry
    policies).
 3. File M1, M2 and L1 as beads, or fix them. Add the L2 tests.
+
+---
+
+## Addendum (2026-10-01): re-review of the fixes
+
+- **Fix commits:**
+  - `9be480f6`: libmarmot
+  - `1b688b28`: Groundhog, nostrc-xrza
+  - `013f4484`: docs
+- **Branch:** rebased onto master `543ca0b6`. The range-diff shows the five
+  original commits unchanged; only the manifest context moved. This review
+  branch is rebased onto `013f4484`.
+
+### Verdict: APPROVE-WITH-NITS
+
+Every finding from the first review is fixed. Each fix is backed by my own
+probes, rerun unchanged from the first review, and by mutations: every new
+test fails with its fix reverted. Two Medium follow-ups remain (N1 and N2
+below). Neither is a regression in libmarmot's convergence. Encrypted groups
+still ship behind `GH_FEATURE_ENCRYPTED_GROUPS=0`. Both should be filed and
+fixed before that flag is turned on.
+
+### What I ran
+
+| Check | Result |
+| --- | --- |
+| Build | OK |
+| `ctest` (libmarmot, Groundhog store, MLS and conversation tests) | 49/49 pass. One reports Skipped: `groundhog-store-key-keyring`, which needs a keyring. |
+| macOS ASan+UBSan: `test_commits`, `test_adopted_commits`, `test_protocol`, `test_storage`, `test_storage_contract` | All pass, no reports |
+| `scripts/linux-gate.sh --sanitizers` | Pass, 52 tests |
+| `check-unsequenced-args.py` | Clean |
+| MDK 0.11 matrix (own driver image, unchanged driver) | Pass. `concurrent-commits` passes in 11 s, including its new withdrawn-witness assertion. |
+| Docker volumes | None created |
+
+The probes are not committed. Their diff is kept outside the tree as
+`/tmp/rv-w25-conv2-probes.diff`.
+
+**Mutation checks.** Each reverted fix makes its test fail:
+
+| Reverted fix | Failing test |
+| --- | --- |
+| H1: refuse before selection | `test_linear_commit_with_store_full` |
+| H2: `WRONG_EPOCH` for a retained Commit | `test_mdk_forks_every_order`: "40 of 72 delivery orders end off MDK's verdict" |
+| L1: parent by seal only | `test_parent_found_by_authentication` |
+| M1: no leaf shortcut | `test_held_branch_message_cost_bounded` |
+| M2: no epoch query | `test_reorg_reads_only_affected_epochs` |
+| Groundhog: no retry on `COMMIT_RETAINED` | `retained-commit-retries-held` |
+| Groundhog: capacity refusal not held | `capacity-refusal-held-not-junk` |
+| Groundhog: withdrawn messages not marked | `conflict-withdraws-messages` |
+
+### Status of each finding
+
+**H1: fixed.** The bounds now apply after selection, and only to losers
+(`conv_retained`, commits.c:3402). Eviction removes the least likely loser:
+unattached ones first, then by the best branch through each, a tip before
+what it builds on, then epoch and digest.
+
+My first-review probes, rerun unchanged:
+- **P1.** Charlie's 4 losers return `-55 COMMIT_RETAINED`. A fifth is also
+  `-55`, retained by evicting a lower-ranked earlier one; Bob keeps 4. Charlie's
+  honest linear Commit then applies at Bob (`MARMOT_OK`, a Commit result), and
+  all three converge.
+- **P2.** With the store holding 32, the linear Commit applies (`MARMOT_OK`),
+  all three converge, and Bob still holds 32.
+
+Groundhog now holds `RESOURCE_REFUSED` events as `capacity`. They are never
+junked, and once dropped the cursor stays pinned behind them, as
+`transports/nostr.md` requires.
+
+**H2: fixed.** `MARMOT_ERR_COMMIT_RETAINED` (-55) is distinct from stale input
+(commits.c:4194). Groundhog retries held events on it: immediately inside a
+retry pass, coalesced to one pass per 250 ms for fresh deliveries.
+
+All of the following were run in my own fuzzer, which models Groundhog's real
+policy *including* its junk aging (an event still held after 3 fresh Commits
+is junk):
+
+| Orders tried | Result |
+| --- | --- |
+| All 72 per-fork orders of the MDK 0.11 capture | 72/72 reach MDK's verdict and read every converged-epoch message (was 40/72 diverging) |
+| Whole 12-event capture, newest-first (relay backfill order) | Converges, all 4 converged-path messages delivered and not withdrawn |
+| 3000 random shuffles of the whole capture, aging disabled | 3000/3000 converge with every converged-path message delivered |
+| The same 3000 shuffles, Groundhog's real aging | Residual failures: see N1 |
+
+**M1: fixed.** Measured as in the first review (3-member group, 4 retained
+candidates, 3 runs):
+
+| Case | Before | After |
+| --- | --- | --- |
+| Held candidate-branch message | 2.2 ms | 0.155–0.159 ms |
+| Same message, re-offered | 6 ms | 0.117–0.120 ms |
+| Normal message (reference) | about 0.08 ms | about 0.08 ms |
+
+The cost is now under 2× a normal message, and a retry pass is cheap.
+
+**M2: fixed.** A reorg reads only the superseded epochs
+(`messages_in_epochs`, implemented in the memory, SQLite and Groundhog
+backends). Without that query, only matching messages are kept in memory.
+Measured on a 200k-row `mls_messages` in SQLCipher 4.17 (286 MB): the
+Groundhog query takes 95–143 ms and loads only the 251 matching rows.
+
+**M3: fixed.** Withdrawn messages are marked in the same transaction (seen
+namespace 6) and survive a restart. The row, its accessible summary and the
+list text say "This message was withdrawn when the group resolved a
+conflict", and the group emits `conflict-resolved` with a toast naming what
+was undone. The tests cover the reader and the sender. The MDK case asserts
+that Groundhog's own witness on the branch it left is marked withdrawn.
+
+**L1: fixed.** A candidate's parent is the retained state its MLS
+authentication succeeds against (`conv_parent_of`, commits.c:3088). The
+sealing state is only tried first. A Commit sealed under the tip that does
+not authenticate there goes to the retained branches. A Commit no state
+authenticates is `MLS_PROCESS_MESSAGE`, as MDK does.
+`test_parent_found_by_authentication` covers my scenario: a re-sealed child
+finds its parent.
+
+**L2: fixed.** New tests pin the witness window
+(`test_witness_window_bounds_score`) and the exporter deletion above a lowered
+tip.
+
+**L3: filed upstream** as nostrc-sq85 (P2) and stated in the README.
+
+**Nits: fixed.** `CONV_MAX_ORPHANS` is gone, and the libmarmot-vs-MDK
+difference on witnesses of withdrawn messages is documented in convergence.h.
+
+### The question on `marmot_save_created_message`: does it change the privacy or forward-secrecy posture?
+
+**MLS forward secrecy: no change.** The stored row holds the kind:445
+ciphertext and the inner event, which Groundhog already keeps in its
+conversation store and outbox. No key material is added. The new
+`ConvBranchSecret.sender_data` (trailer 0xC2) holds candidate states'
+sender-data secrets. Those states can already be rebuilt from retained state
+plus Commit bytes, so this adds nothing either.
+
+**At-rest privacy: yes, it gets worse for the account's own messages.** See N2.
+
+### New findings
+
+**N1 (Medium, Groundhog; pre-existing rule, new interaction): junk aging drops held convergence input before its parent arrives**
+
+- **Where:** `gnome/groundhog/src/mls/gh-mls-service.c:1910-1915`
+  (`held->misses >= GH_MLS_SERVICE_JUNK_AFTER_COMMITS`, which is 3, then
+  `remember_junk`).
+- **Evidence.** In 3000 random interleavings of the whole capture, with
+  Groundhog's aging modelled exactly (misses counted per fresh Commit at the
+  end of each retry pass; capacity refusals exempt):
+  - 169 runs end on the wrong branch;
+  - 336 runs lose a message of the converged path.
+
+  Every failing run has junked events. With aging disabled, 0/3000 fail. With a
+  threshold of 6 (`max_rewind_commits + 1`), 0 runs end on the wrong branch and
+  1 loses a message.
+- **Example** (trial 26): `message_after_witnessed`, then `witnessed_high`
+  (both held), then 3 or more fresh Commits from the earlier forks. Both are
+  junked before `witnessed_low` and `depth2_*` open their epochs, and the
+  branch never wins at this member.
+- **Spec.** The junk ids stop later re-delivery (`junk_ids`), and the cursor
+  is no longer pinned behind them. That records the events as permanently
+  unreadable, which `transports/nostr.md` forbids for deferred and
+  resource-refused input.
+- **How likely.** Per-fork and newest-first orders are clean. It takes a
+  branch event arriving 3 or more Commits ahead of its parent: multi-relay
+  catch-up or relay lag in a busy group.
+- **Fix.** Make aging horizon-aware: count canonical tip advances, and junk
+  only after more than `max_rewind_commits` of them. Keep junked events
+  eligible on refetch: don't pin `junk_ids` for them, or pin the cursor as is
+  now done for `capacity`. Add the whole-capture shuffle (with aging) to
+  `test_mdk_forks_every_order`.
+
+**N2 (Medium, Groundhog privacy): the account's own message text now outlives purge, expiry, conversation delete and leaving the group**
+
+- **Where:**
+  - `gnome/groundhog/src/mls/gh-mls-service.c:4107` stores our sent inner event
+    (plaintext) in `mls_messages`.
+  - Nothing ever deletes from `mls_messages`. There is no `DELETE FROM
+    mls_messages` in `gnome/groundhog/src/store/`, and the group cleanup does
+    not touch it.
+- **What the store already does.** Groundhog's purge deliberately removes
+  every plaintext copy: NIP-40 expiry (gh-store.c:3887), the retention window
+  (gh-store.c:3897), and conversation forget (gh-store.c:3998). The comments
+  say so: "An outgoing message's text is also in its outbox row ... those go
+  first"; "A downloaded file's plaintext goes with its message".
+- **Failure.** A user sends an expiring message, or deletes the conversation,
+  or the retention cutoff passes. The text stays in `mls_messages` in the same
+  SQLCipher database indefinitely, and anyone who later holds the store key
+  reads it.
+- **Pre-existing part.** Inbound MLS plaintext was already retained this way;
+  that gap predates this branch. Own messages were not, before `1b688b28`.
+- **Fix.** Purge or forget `mls_messages` rows in lockstep with the
+  conversation rows (by group and `created_at` or rumor id, inbound and own).
+  Or store own messages without `content`: invalidation needs only id and
+  epoch, and Groundhog could key the withdrawal by the rumor id it already
+  knows.
+
+**N3 (Low): M1's cache is invalidated by every late canonical message**
+
+`branch_cache_get` (commits.c:4364) keys the cache by the record bytes.
+`marmot_commit_decrypt_late` rewrites the record on every late message
+(commits.c:915). So a member who interleaves late messages with held branch
+messages forces a rebuild of up to 32 candidates per branch message. The cost
+is linear in their own traffic, unlike the old per-retry blow-up. Key the
+cache by the candidate set (the candidates' digests plus the entries' tags)
+rather than the whole record.
+
+**Nits**
+- Groundhog has no `(mls_group_id, epoch)` index on `mls_messages`, so
+  `messages_in_epochs` scans the table: about 0.1 s at 200k rows.
+- The branch cache keeps rebuilt candidate states (epoch secrets) in process
+  memory until the next branch message or `marmot_free`, even after the record
+  has pruned them. Drop it when a group's record changes, or on a timer.
+- `ConvWitness.leaf` is only used for the M1 shortcut. Since sender data is not
+  signature-bound, a member can claim any leaf, but the shortcut only *skips*
+  work and never adds a witness, so this is harmless. Worth a comment.
+
+### Required before enabling encrypted groups (not before merge)
+
+1. **N1:** horizon-aware junk aging, and junked events eligible on refetch.
+2. **N2:** purge `mls_messages` with the conversation, or don't store own
+   plaintext.
+
+File both as beads.
