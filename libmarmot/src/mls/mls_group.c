@@ -1627,9 +1627,12 @@ add_members_staged(MlsGroup *group,
         }
     }
 
-    /* A GroupContextExtensions proposal, applied after the Adds as receivers
-     * apply it (RFC 9420 §12.4.2): every member, the joiners included, must
-     * support the new extensions (§12.1.7). */
+    /* A GroupContextExtensions proposal.  RFC 9420 §12.3 applies it before
+     * the Adds and evaluates them against the new extensions; libmarmot
+     * applies the proposals in its own order, then checks the new extensions
+     * against every leaf.  The result is the same: the tree and GroupContext
+     * do not depend on the order, and every member, the joiners included,
+     * must support the new extensions either way (§12.1.7). */
     if (gce_extensions) {
         rc = group_context_extensions_validate(group, gce_extensions, gce_len, UINT32_MAX);
         if (rc != 0) goto done;

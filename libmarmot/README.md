@@ -186,9 +186,10 @@ MDK 0.8 reads a group's kind:445 in created_at order and never retries
 one it failed, so libmarmot dates them in order (nostrc-2lrz):
 
 - Each event we publish to a group is dated after the group's previous
-  one, and a Commit after every event. An application message is never
-  dated at or before a Commit: not ours, not one of another member we
-  applied, not the one that added us.
+  one, and a Commit after every event. An application message is dated
+  after the Commits it follows (ours, another member's we applied, the one
+  that added us), except at the 60 s bound: there it may share the second
+  of a Commit dated at the bound.
 - Nothing is dated more than 60 s ahead of our clock. Application messages
   run at most 30 s ahead on their own; past that, messages share a second
   (of one epoch, which MDK reads in any order). So a Commit always finds a
@@ -199,7 +200,11 @@ one it failed, so libmarmot dates them in order (nostrc-2lrz):
   ahead (a member whose clock runs fast) is followed only that far: our
   events after it may be dated before it.
 - A Commit that cannot be dated within the bound is refused with
-  `MARMOT_ERR_EVENT_RATE`; retry in a second.
+  `MARMOT_ERR_EVENT_RATE`; retry in a second (Groundhog retries by
+  itself).
+- A stored floor past the bound (our clock was set back after we
+  published, or the row is damaged) is read as a second inside it, so
+  Commits are not blocked until real time catches up (review W24 L6).
 
 **What this reveals (review W24 L4).** created_at is public: relays, and
 anyone fetching the group's kind:445 by its `h` tag, see it. Per-event

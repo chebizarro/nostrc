@@ -1114,6 +1114,57 @@ is_admin(gpointer data)
   return gh_mls_group_get_is_admin(data);
 }
 
+/* Review W24 N5: libmarmot refuses a Commit it cannot date within a minute of
+ * our clock (MARMOT_ERR_EVENT_RATE): right after applying another member's
+ * Commit dated that far ahead, for about a second. Bob applies Alice's
+ * rename only as a copy dated a day ahead (the genuine event withheld), and
+ * renames at once: the service stages the change again a second later and
+ * it goes through, with no error. The refusal needs Bob's rename in the
+ * second he applied the copy, so the round repeats until one retry was seen. */
+static void
+test_change_retried_after_event_rate(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Rate", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(is_admin, gb, "Bob becoming an admin");
+
+  guint before = gh_mls_service_test_rate_retries();
+  for (guint round = 0; round < 5 && gh_mls_service_test_rate_retries() == before; round++) {
+    g_autofree gchar *ahead_name = g_strdup_printf("Ahead %u", round);
+    g_autofree gchar *bob_name = g_strdup_printf("Bob's %u", round);
+    set_online(bob, FALSE);
+    OpWait renamed = { 0 };
+    gh_mls_service_update_metadata_async(alice->service, ga, ahead_name, NULL, NULL,
+                                         on_changed, &renamed);
+    change(alice, &renamed);
+    WireStored *genuine = last_stored_445(&w.g);
+    wire_relay_withhold(&w.g, genuine->id);
+    g_autofree gchar *copy = resigned(genuine->json, real_now() + 24 * 3600);
+    wire_relay_inject(&w.g, copy);
+    set_online(bob, TRUE);
+    NameWait applied = { gb, ahead_name };
+    spin_until(name_is, &applied, "Bob applying the copy dated a day ahead");
+    OpWait bob_renamed = { 0 };
+    gh_mls_service_update_metadata_async(bob->service, gb, bob_name, NULL, NULL, on_changed,
+                                         &bob_renamed);
+    change(bob, &bob_renamed);
+    NameWait seen = { ga, bob_name };
+    spin_until(name_is, &seen, "Alice following Bob's rename");
+  }
+  g_assert_cmpuint(gh_mls_service_test_rate_retries(), >, before);
+  world_down(&w);
+}
+
 /* §7.10 owner/admin: the creator makes Bob an admin; Bob then invites Carol,
  * who joins and reads. (With libmarmot >= 0.10.0 Carol's join checks every
  * leaf's account proof, the creator's included: this needs the creator's
@@ -2169,6 +2220,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
   g_test_add_func("/groundhog/mls-service/burst-then-commit-accepted",
                   test_burst_then_commit_accepted);
+  g_test_add_func("/groundhog/mls-service/change-retried-after-event-rate",
+                  test_change_retried_after_event_rate);
   g_test_add_func("/groundhog/mls-service/second-admin-invites", test_second_admin_invites);
   g_test_add_func("/groundhog/mls-service/catch-up-2-commits", test_catch_up_2);
   g_test_add_func("/groundhog/mls-service/catch-up-4-commits", test_catch_up_4);

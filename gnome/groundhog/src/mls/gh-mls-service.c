@@ -367,7 +367,10 @@ marmot_fail(GhMlsService *self, MarmotError err, const gchar *what, GError **err
   }
   GhMlsServiceError code = 0;
   switch (err) {
-  case MARMOT_ERR_OWN_COMMIT_PENDING: code = GH_MLS_SERVICE_ERROR_BUSY; break;
+  case MARMOT_ERR_OWN_COMMIT_PENDING:
+  /* The group's events cannot be dated within libmarmot's bound right now
+   * (2lrz): transient, like a change still being sent. */
+  case MARMOT_ERR_EVENT_RATE: code = GH_MLS_SERVICE_ERROR_BUSY; break;
   case MARMOT_ERR_ADMIN_ONLY:
   case MARMOT_ERR_COMMIT_FROM_NON_ADMIN: code = GH_MLS_SERVICE_ERROR_NOT_ADMIN; break;
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
@@ -1721,6 +1724,8 @@ typedef struct {
   GStrv relays;               /* create */
   GStrv people;               /* invitees (create, add) or members (remove) */
   GPtrArray *key_packages;    /* the invitees' selected kind-30443 JSON */
+  GArray *keys;               /* 32-byte accounts: members (remove) or admins (metadata) */
+  guint rate_retries;         /* stagings libmarmot refused with MARMOT_ERR_EVENT_RATE */
   guint lookups;              /* in flight */
   GError *error;              /* the first lookup failure */
 } Op;
@@ -1735,6 +1740,8 @@ op_free(gpointer data)
   g_strfreev(op->relays);
   g_strfreev(op->people);
   g_ptr_array_unref(op->key_packages);
+  if (op->keys)
+    g_array_unref(op->keys);
   g_clear_error(&op->error);
   g_free(op);
 }
@@ -1919,14 +1926,72 @@ produce_add(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
 static MarmotError
 produce_remove(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
 {
-  GArray *keys = data;
-  return marmot_remove_members(marmot, gid, (const uint8_t (*)[32])keys->data, keys->len, out);
+  Op *op = data;
+  return marmot_remove_members(marmot, gid, (const uint8_t (*)[32])op->keys->data,
+                               op->keys->len, out);
 }
 
+/* The Op's name, description or admins (whichever it sets). */
 static MarmotError
 produce_metadata(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
 {
-  return marmot_update_group_metadata(marmot, gid, data, out);
+  Op *op = data;
+  MarmotGroupConfig config = {
+    .name = op->name,
+    .description = op->description,
+    .admin_pubkeys = op->keys ? (uint8_t (*)[32])op->keys->data : NULL,
+    .admin_count = op->keys ? op->keys->len : 0,
+  };
+  return marmot_update_group_metadata(marmot, gid, &config, out);
+}
+
+/* libmarmot refuses a Commit it cannot date within a minute of our clock
+ * (MARMOT_ERR_EVENT_RATE, nostrc-2lrz): right after another member's Commit
+ * dated that far ahead, or Commits back to back. It fits a second later, so
+ * the change is staged again after RATE_RETRY_MS, up to RATE_RETRIES times,
+ * before the caller sees GH_MLS_SERVICE_ERROR_BUSY (review W24 N5). The
+ * producer's data lives in the task's Op. */
+#define RATE_RETRY_MS 1000
+#define RATE_RETRIES 5
+
+#ifdef GH_MLS_TEST_HOOKS
+static guint test_rate_retries;
+
+guint
+gh_mls_service_test_rate_retries(void)
+{
+  return test_rate_retries;
+}
+#endif
+
+static gboolean check_change(GhMlsService *self, GhMlsGroup *group, GError **error);
+static void stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer,
+                         gpointer data);
+
+typedef struct {
+  GTask *task;                /* owned */
+  GhMlsCommitProducer producer;
+  gpointer data;              /* the task's */
+} RateRetry;
+
+static gboolean
+rate_retry_fired(gpointer data)
+{
+  RateRetry *retry = data;
+  GTask *task = retry->task;
+  GhMlsService *self = g_task_get_source_object(task);
+  Op *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (g_task_return_error_if_cancelled(task)) {
+    g_object_unref(task);
+  } else if (!check_change(self, op->group, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+  } else {
+    stage_change(task, op->group, retry->producer, retry->data);
+  }
+  g_free(retry);
+  return G_SOURCE_REMOVE;
 }
 
 /* Stages the change (T-mls) and publishes it; task completes with it. */
@@ -1945,6 +2010,21 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
                                                     &group->gid, self->account, producer, data,
                                                     &error);
   if (!publish) {
+    Op *op = g_task_get_task_data(task);
+    if (error->domain == GH_MLS_COMMIT_ERROR && error->code == MARMOT_ERR_EVENT_RATE &&
+        op->rate_retries < RATE_RETRIES) {
+      op->rate_retries++;
+#ifdef GH_MLS_TEST_HOOKS
+      test_rate_retries++;
+#endif
+      drop_stale_error(self);
+      RateRetry *retry = g_new0(RateRetry, 1);
+      retry->task = task;                 /* our reference */
+      retry->producer = producer;
+      retry->data = data;
+      gh_clock_timeout_add(self->clock, RATE_RETRY_MS, rate_retry_fired, retry, NULL);
+      return;
+    }
     if (error->domain == GH_MLS_COMMIT_ERROR) {
       GError *mapped = NULL;
       marmot_fail(self, (MarmotError)error->code, "The change could not be made", &mapped);
@@ -2326,7 +2406,8 @@ gh_mls_service_remove_members_async(GhMlsService *self, GhMlsGroup *group,
     g_object_unref(task);
     return;
   }
-  stage_change(task, group, produce_remove, keys);
+  op->keys = g_steal_pointer(&keys);
+  stage_change(task, group, produce_remove, op);
 }
 
 void
@@ -2350,8 +2431,10 @@ gh_mls_service_update_metadata_async(GhMlsService *self, GhMlsGroup *group, cons
     g_object_unref(task);
     return;
   }
-  MarmotGroupConfig config = { .name = (char *)name, .description = (char *)description };
-  stage_change(task, group, produce_metadata, &config);
+  Op *op = g_task_get_task_data(task);
+  op->name = g_strdup(name);
+  op->description = g_strdup(description);
+  stage_change(task, group, produce_metadata, op);
 }
 
 void
@@ -2389,8 +2472,9 @@ gh_mls_service_set_admins_async(GhMlsService *self, GhMlsGroup *group,
     g_object_unref(task);
     return;
   }
-  MarmotGroupConfig config = { .admin_pubkeys = keys, .admin_count = n };
-  stage_change(task, group, produce_metadata, &config);
+  op->keys = g_array_sized_new(FALSE, FALSE, 32, n);
+  g_array_append_vals(op->keys, key_bytes, n);
+  stage_change(task, group, produce_metadata, op);
 }
 
 gboolean

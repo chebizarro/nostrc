@@ -341,8 +341,10 @@ int mls_group_add_members(MlsGroup *group,
 /**
  * mls_group_add_members() with a GroupContextExtensions proposal in the same
  * Commit (when `extensions` is not NULL): the group's extension list becomes
- * `extensions`, applied after the Adds as receivers apply it, and the
- * Welcome carries it.  Every member, the joiners included, must support it
+ * `extensions` (RFC 9420 §12.3 applies it before the Adds and evaluates them
+ * against it; the resulting tree and GroupContext are the same in either
+ * order), and the Welcome carries it.  Every member, the joiners included,
+ * must support it
  * (MARMOT_ERR_UNSUPPORTED or MARMOT_ERR_INVALID_ARG otherwise).  libmarmot
  * re-encodes a libmarmot 0.10.0 group's GroupData this way when it adds
  * members (review W24 M1).

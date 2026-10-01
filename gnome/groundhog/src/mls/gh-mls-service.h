@@ -346,6 +346,12 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * first. Signals: "invite-received" (gchar *wrapper_id), "group-added"
  * (GhMlsGroup). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
+#ifdef GH_MLS_TEST_HOOKS
+/* Test hook, compiled only into test executables: how many times a group
+ * change was staged again because libmarmot refused its Commit with
+ * MARMOT_ERR_EVENT_RATE (review W24 N5). */
+guint gh_mls_service_test_rate_retries(void);
+#endif
 #if defined(GH_MLS_TEST_HOOKS) && GH_MLS_SERVICE_ACCOUNT_PROOF
 /* Test hook, compiled only into test executables (the MDK 0.8 interop
  * harness, nostrc-7gx7): services created from now on run libmarmot in

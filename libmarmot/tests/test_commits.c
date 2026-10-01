@@ -5801,6 +5801,53 @@ test_group_event_peer_lead_capped(void)
     trio_clear(&t);
 }
 
+/* `x`'s floor row for the group: newest event `last`, newest Commit `commit`. */
+static void
+plant_floor(Member *x, const uint8_t nostr_gid[32], int64_t last, int64_t commit)
+{
+    uint8_t row[16];
+    for (size_t i = 0; i < 8; i++) {
+        row[i] = (uint8_t)((uint64_t)last >> (56 - 8 * i));
+        row[8 + i] = (uint8_t)((uint64_t)commit >> (56 - 8 * i));
+    }
+    OK(x->m->storage->mls_store(x->m->storage->ctx, "group_event_created_at", nostr_gid, 32,
+                                row, sizeof(row)));
+}
+
+/* Review W24 L6: a floor left far ahead -- our clock was 2 h fast while we
+ * published, then set back -- or a damaged row at INT64_MAX does not block
+ * the group until real time catches up: it reads as a second inside the
+ * bound, so a Commit goes through dated within it, and so does a message.
+ * (Each Commit follows a freshly planted row: two Commits in the same
+ * second at the bound wait a second, as always.) */
+static void
+test_group_event_floor_far_ahead(void)
+{
+    Trio t;
+    trio_init(&t);
+    const int64_t rows[][2] = {
+        { 0, 0 },                                   /* now + 2 h, set below */
+        { 0, 0 },
+        { INT64_MAX, INT64_MAX },
+    };
+    for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        int64_t ahead = marmot_now() + 2 * 3600;
+        plant_floor(&t.alice, t.nostr_gid, rows[i][0] ? rows[i][0] : ahead,
+                    rows[i][1] ? rows[i][1] : ahead);
+        char name[32];
+        snprintf(name, sizeof(name), "Back in time %zu", i);
+        char *commit = rename_group(&t.alice, &t.gid, name);
+        CHECK(created_at_of(commit) <= marmot_now() + 60, "Commit %zu within the bound", i);
+        expect_commit(&t.bob, commit, name);
+        free(commit);
+    }
+    plant_floor(&t.alice, t.nostr_gid, marmot_now() + 2 * 3600, marmot_now() + 2 * 3600);
+    char *msg = app_message(&t.alice, &t.gid, "after the clock step");
+    CHECK(created_at_of(msg) <= marmot_now() + 60, "message within the bound");
+    free(msg);
+    trio_clear(&t);
+}
+
 /* A floor row of another shape (an earlier format, a torn write) does not
  * block the group: it is read as absent and rewritten (review W24 N2). */
 static void
@@ -5839,6 +5886,7 @@ main(int argc, char **argv)
     RUN(test_group_event_lead_is_bounded);
     RUN(test_group_event_peer_lead_capped);
     RUN(test_group_event_floor_repairs);
+    RUN(test_group_event_floor_far_ahead);
     RUN(test_private_message_commit_applies);
     RUN(test_private_message_commit_forgeries_rejected);
     RUN(test_private_message_commit_epoch_and_generation);

@@ -101,8 +101,9 @@ marmot_now(void)
  *     far: we follow Commits as far ahead as anyone may date them.
  *   - An application message runs at most GROUP_EVENT_SOFT_LEAD ahead on
  *     its own: past it, messages share a second.  They are of one epoch,
- *     which MDK reads in any order; a message is never dated at or before a
- *     Commit.  So a Commit always finds a second after a burst of messages.
+ *     which MDK reads in any order; a message is dated after the Commits it
+ *     follows, except at the bound (below).  So a Commit always finds a
+ *     second after a burst of messages.
  *   - A Commit that cannot be dated within the bound is refused with
  *     MARMOT_ERR_EVENT_RATE (retry in a second): Commits made back to back
  *     for half a minute, or ours right after another member's Commit dated
@@ -135,6 +136,14 @@ group_event_times_load(Marmot *m, const uint8_t nostr_group_id[32], GroupEventTi
         t->last = (int64_t)v[0];
         t->commit = (int64_t)v[1];
     }
+    /* Nothing we date passes now + GROUP_EVENT_MAX_LEAD, so a value past it
+     * was written while our clock ran ahead and was then set back (or the
+     * row is damaged): order against it cannot be kept within what relays
+     * and MDK accept.  Read as a second inside the bound, so the next Commit
+     * fits (review W24 L6); this also keeps last + 1 from overflowing. */
+    int64_t bound = marmot_now() + GROUP_EVENT_MAX_LEAD;
+    if (t->last > bound) t->last = bound - 1;
+    if (t->commit > bound) t->commit = bound - 1;
     return MARMOT_OK;
 }
 

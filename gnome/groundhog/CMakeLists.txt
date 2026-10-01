@@ -1602,6 +1602,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
     target_compile_options(test-groundhog-mls-service PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(test-groundhog-mls-service PRIVATE GH_MLS_TEST_HOOKS=1)
     groundhog_store_link_sqlcipher_first(test-groundhog-mls-service)
     add_dependencies(test-groundhog-mls-service groundhog-test-schemas)
     add_test(NAME groundhog-mls-service COMMAND test-groundhog-mls-service)

@@ -66,8 +66,9 @@ int64_t marmot_now(void);
 /** The created_at of the next kind:445 event we publish to this group: now,
  * or a second after the group's newest event we published or applied,
  * within a bounded lead over our clock (nostrc-2lrz; see marmot.c).  An
- * application message (`commit` false) is never dated at or before a
- * Commit; a Commit, after every event.  Reserved in storage: call it inside
+ * application message (`commit` false) is dated after the Commits it
+ * follows, at the 60 s bound at most in the same second; a Commit, after
+ * every event.  Reserved in storage: call it inside
  * the operation's storage transaction, which undoes the reservation if the
  * operation fails.  MARMOT_ERR_EVENT_RATE (Commits only): the bound is
  * reached, retry in a second. */
