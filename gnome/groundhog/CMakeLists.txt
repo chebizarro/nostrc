@@ -1694,7 +1694,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     target_link_libraries(test-groundhog-privacy-mls PRIVATE groundhog-store-testhooks marmot
       groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
-      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST OpenSSL::Crypto)
     target_compile_options(test-groundhog-privacy-mls PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(test-groundhog-privacy-mls PRIVATE ${GROUNDHOG_MLS_SERVICE_DEFS})
     groundhog_store_link_sqlcipher_first(test-groundhog-privacy-mls)

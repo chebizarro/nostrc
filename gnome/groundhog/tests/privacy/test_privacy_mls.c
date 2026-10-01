@@ -13,10 +13,19 @@
  *    relays, which can't tie it to the group;
  *  - H7: no plaintext, group name or key canary in any file outside the
  *    encrypted store, raw (open and after close), nor in the logs
- *    (G_MESSAGES_DEBUG=all).
+ *    (G_MESSAGES_DEBUG=all);
+ *  - inside the store (W25 slice N re-review N2): once Groundhog purges a
+ *    message -- disappearing-message expiry, the retention window, forget
+ *    conversation, after leaving the group -- its text is nowhere in the
+ *    store's pages, decrypted: libmarmot's message rows keep no plaintext
+ *    (gh-store-marmot.h).
  * The accounts, relays and signer are mls-world.h's. */
 #include "canary-scan.h"
 #include "mls-world.h"
+
+#include "gh-store-mls.h"
+
+#include <openssl/evp.h>
 
 #include "nostr/nip59/nip59.h"
 
@@ -452,6 +461,255 @@ test_member_lookups_on_demand_only(void)
   world_down(&w);
 }
 
+/* ---- Inside the store: a purged message's text is gone (N2) -------------------------- */
+
+#define PAGE_SIZE 4096
+#define PAGE_RESERVE 80 /* SQLCipher 4: 16-byte IV + 64-byte HMAC-SHA512 */
+#define WAL_HEADER 32
+#define WAL_FRAME_HEADER 24
+
+static guint32
+be32(const guint8 *p)
+{
+  return ((guint32)p[0] << 24) | ((guint32)p[1] << 16) | ((guint32)p[2] << 8) | p[3];
+}
+
+/* Every page of path (store.db, or with wal the frames of its WAL),
+ * decrypted with the account's store key as it is on disk (live and free
+ * pages and old WAL frames alike), into scan (as in test_media_purge.c). */
+static guint
+scan_decrypted_file(const guint8 *key, CanaryScan *scan, const gchar *path, gboolean wal)
+{
+  gchar *contents = NULL;
+  gsize length = 0;
+  if (!g_file_get_contents(path, &contents, &length, NULL))
+    return 0;
+  const gsize header = wal ? WAL_HEADER : 0, frame = wal ? WAL_FRAME_HEADER : 0;
+  guint pages = 0;
+  for (gsize at = header; at + frame + PAGE_SIZE <= length; at += frame + PAGE_SIZE) {
+    const guint8 *page = (const guint8 *)contents + at + frame;
+    guint32 pgno = wal ? be32((const guint8 *)contents + at) : (guint32)(at / PAGE_SIZE) + 1;
+    const gsize start = pgno == 1 ? 16 : 0; /* page 1 begins with the plaintext salt */
+    guint8 out[PAGE_SIZE] = { 0 };
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    int n = 0, last = 0;
+    g_assert_cmpint(EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key,
+                                       page + PAGE_SIZE - PAGE_RESERVE), ==, 1);
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    g_assert_cmpint(EVP_DecryptUpdate(ctx, out + start, &n, page + start,
+                                      (int)(PAGE_SIZE - PAGE_RESERVE - start)), ==, 1);
+    g_assert_cmpint(EVP_DecryptFinal_ex(ctx, out + start + n, &last), ==, 1);
+    EVP_CIPHER_CTX_free(ctx);
+    if (pgno == 1) {   /* the decryption is right: a SQLite header */
+      g_assert_cmpuint(((guint)out[16] << 8) | out[17], ==, PAGE_SIZE);
+      g_assert_cmpuint(out[20], ==, PAGE_RESERVE);
+    }
+    g_autofree gchar *source = g_strdup_printf("%s page %u (decrypted)", wal ? "-wal" : "store.db",
+                                               pgno);
+    canary_scan_bytes(scan, source, out, PAGE_SIZE - PAGE_RESERVE);
+    pages++;
+  }
+  g_free(contents);
+  return pages;
+}
+
+/* Whether `text` is in app's store, decrypted (store.db and its WAL). */
+static gboolean
+in_store_pages(App *app, const gchar *text)
+{
+  guint8 key[GH_STORE_KEY_SIZE];
+  app_store_key(app, key);
+  CanaryScan *scan = canary_scan_new();
+  canary_scan_add_literal(scan, text, text);
+  const gchar *path = gh_store_get_path(app->store);
+  g_assert_cmpuint(scan_decrypted_file(key, scan, path, FALSE), >, 0);
+  g_autofree gchar *wal = g_strconcat(path, "-wal", NULL);
+  scan_decrypted_file(key, scan, wal, TRUE);
+  gboolean found = canary_scan_get_hits(scan)->len > 0;
+  canary_scan_free(scan);
+  return found;
+}
+
+/* The group's id, as bytes. */
+static MarmotGroupId
+gid_of_group(GhMlsGroup *group)
+{
+  const gchar *hex_id = gh_mls_group_get_group_id(group);
+  gsize len = strlen(hex_id) / 2;
+  g_autofree guint8 *bytes = g_malloc(len);
+  g_assert_true(nostr_hex2bin(bytes, hex_id, len));
+  return marmot_group_id_new(bytes, len);
+}
+
+/* `from` sends `text` to the group with a NIP-40 expiration at `expires_at`
+ * (Groundhog sends none; another client can): libmarmot directly, published
+ * on G. */
+static void
+send_expiring(World *w, App *from, GhMlsGroup *group, const gchar *text, gint64 expires_at)
+{
+  g_autofree gchar *inner = g_strdup_printf(
+    "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+    "\"tags\":[[\"expiration\",\"%" G_GINT64_FORMAT "\"]],\"content\":\"%s\"}",
+    hex[from->key], g_get_real_time() / G_USEC_PER_SEC, expires_at, text);
+  MarmotGroupId gid = gid_of_group(group);
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  g_assert_cmpint(marmot_create_message(gh_mls_service_get_marmot(from->service), &gid, inner,
+                                        &out), ==, MARMOT_OK);
+  wire_relay_inject(&w->g, out.event_json);
+  marmot_outgoing_message_free(&out);
+  marmot_group_id_free(&gid);
+}
+
+static gint64
+store_conversation(App *app, GhMlsGroup *group)
+{
+  gint64 id = 0;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_mls_save_room(app->store, gh_mls_group_get_group_id(group), NULL, &id,
+                                       &error));
+  g_assert_no_error(error);
+  return id;
+}
+
+/* A restart closes the store: its WAL is checkpointed into store.db (whose
+ * freed pages secure_delete zeroed) and goes. */
+static GhMlsGroup *
+restart_app(App *app, const gchar *room)
+{
+  app_restart(app);
+  GhMlsGroup *group = gh_mls_service_lookup(app->service, room);
+  g_assert_nonnull(group);
+  return group;
+}
+
+typedef struct {
+  App *app;
+  const gchar *room_id;
+  const gchar *text;
+} StatusWait;
+
+static gboolean
+sent(gpointer data)
+{
+  StatusWait *wait = data;
+  GhMessage *message = find_message(wait->app, wait->room_id, wait->text);
+  return message && gh_message_get_status(message) == GH_MESSAGE_STATUS_SENT;
+}
+
+/* N2: Alice's purges -- a disappearing message she received expires; the
+ * retention window passes over what she sent and received; she forgets the
+ * conversation. Each time the purged text is in no page of her store,
+ * decrypted, while what remains still is (the controls). */
+static void
+test_purged_text_leaves_the_store(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  spin_until(key_package_published, bob, "Bob's KeyPackage");
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Purged", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(ga);
+
+  /* Expiry: a received disappearing message. */
+  const gchar *expiring = "N2-CANARY-received-disappearing-7f3a";
+  const gchar *kept_in = "N2-CANARY-received-kept-1c9e";
+  const gchar *kept_out = "N2-CANARY-sent-kept-5b2d";
+  send_expiring(&w, bob, gb, expiring, real_now() + 3);
+  wait_message(alice, room, "N2-CANARY-received-disappearing-7f3a");
+  send_text(bob, gb, kept_in);
+  wait_message(alice, room, "N2-CANARY-received-kept-1c9e");
+  send_text(alice, ga, kept_out);
+  StatusWait out_sent = { alice, room, kept_out };
+  spin_until(sent, &out_sent, "Alice's message sent");
+  ga = restart_app(alice, room);
+  g_assert_true(in_store_pages(alice, expiring));   /* the scan finds what is there */
+  g_usleep(4 * G_USEC_PER_SEC);
+  GhStorePurgeStats stats = { 0 };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_purge(alice->store, 0, &stats, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(stats.n_expired, ==, 1);
+  ga = restart_app(alice, room);
+  g_assert_false(in_store_pages(alice, expiring));
+  g_assert_true(in_store_pages(alice, kept_in));
+  g_assert_true(in_store_pages(alice, kept_out));
+
+  /* Retention: everything received before the cutoff, sent or received. */
+  g_usleep(1100 * 1000);
+  g_assert_true(gh_store_purge(alice->store, real_now(), &stats, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(stats.n_retention, >=, 2);
+  g_usleep(1100 * 1000);
+  const gchar *forget_in = "N2-CANARY-received-forgotten-3e81";
+  const gchar *forget_out = "N2-CANARY-sent-forgotten-a64f";
+  send_text(bob, gb, forget_in);
+  wait_message(alice, room, "N2-CANARY-received-forgotten-3e81");
+  send_text(alice, ga, forget_out);
+  StatusWait forget_sent = { alice, room, forget_out };
+  spin_until(sent, &forget_sent, "Alice's second message sent");
+  ga = restart_app(alice, room);
+  g_assert_false(in_store_pages(alice, kept_in));
+  g_assert_false(in_store_pages(alice, kept_out));
+  g_assert_true(in_store_pages(alice, forget_in));
+  g_assert_true(in_store_pages(alice, forget_out));
+
+  /* Forget conversation. */
+  g_assert_true(gh_store_forget_conversation(alice->store, store_conversation(alice, ga), &error));
+  g_assert_no_error(error);
+  ga = restart_app(alice, room);
+  g_assert_false(in_store_pages(alice, forget_in));
+  g_assert_false(in_store_pages(alice, forget_out));
+  g_assert_false(in_store_pages(alice, expiring));
+  world_down(&w);
+}
+
+static gboolean
+group_left(gpointer data)
+{
+  return gh_mls_group_get_end(data) == GH_MLS_GROUP_END_LEFT;
+}
+
+/* N2: Bob leaves the group (Alice commits his SelfRemove) and then forgets
+ * its conversation: what he sent and received in it is in no page of his
+ * store, decrypted. */
+static void
+test_left_group_text_leaves_the_store(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  spin_until(key_package_published, bob, "Bob's KeyPackage");
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Left", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  const gchar *to_bob = "N2-CANARY-received-before-leaving-90d1";
+  const gchar *from_bob = "N2-CANARY-sent-before-leaving-2ac7";
+  send_text(alice, ga, to_bob);
+  wait_message(bob, room, "N2-CANARY-received-before-leaving-90d1");
+  send_text(bob, gb, from_bob);
+  wait_message(alice, room, "N2-CANARY-sent-before-leaving-2ac7");
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+  g_assert_no_error(error);
+  spin_until(group_left, gb, "Bob's leave committed");
+  gb = restart_app(bob, room);
+  g_assert_true(in_store_pages(bob, to_bob));   /* the messages stay until forgotten */
+  g_assert_true(gh_store_forget_conversation(bob->store, store_conversation(bob, gb), &error));
+  g_assert_no_error(error);
+  restart_app(bob, room);
+  g_assert_false(in_store_pages(bob, to_bob));
+  g_assert_false(in_store_pages(bob, from_bob));
+  g_assert_true(in_store_pages(alice, to_bob));   /* control: Alice keeps hers */
+  world_down(&w);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -466,6 +724,10 @@ main(int argc, char **argv)
                   test_member_lookups_on_demand_only);
   g_test_add_func("/groundhog/privacy-mls/no-secrets-outside-the-store",
                   test_no_secrets_outside_the_store);
+  g_test_add_func("/groundhog/privacy-mls/purged-text-leaves-the-store",
+                  test_purged_text_leaves_the_store);
+  g_test_add_func("/groundhog/privacy-mls/left-group-text-leaves-the-store",
+                  test_left_group_text_leaves_the_store);
   gint rc = g_test_run();
   mls_world_finish();
   canary_log_capture_uninstall();

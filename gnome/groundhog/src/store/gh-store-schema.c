@@ -348,12 +348,31 @@ static const gchar schema_v5[] =
   "  bytes      BLOB NOT NULL,"
   "  fetched_at INTEGER NOT NULL);";
 
+/* Schema v6 (W25 slice N re-review, nostrc-w1m0):
+ *
+ * - N2: libmarmot's message rows keep no plaintext (gh-store-marmot.h,
+ *   "Messages keep no plaintext"): rows stored before keep only the inner
+ *   event's id in place of their content, lose their tags and kind 445, and
+ *   their author. An inner event without an id loses its content (it is
+ *   only Groundhog's key for withdrawing the message).
+ * - A reorg reads one group's messages by epoch range (libmarmot
+ *   messages_in_epochs): an index on (mls_group_id, epoch). */
+static const gchar schema_v6[] =
+  "UPDATE mls_messages SET "
+  "  content = CASE WHEN json_valid(content) AND json_type(content, '$.id') = 'text' "
+  "    AND length(json_extract(content, '$.id')) = 64 "
+  "    THEN lower(json_extract(content, '$.id')) ELSE NULL END, "
+  "  tags_json = NULL, event_json = NULL, pubkey = zeroblob(32) "
+  "  WHERE content IS NOT NULL OR tags_json IS NOT NULL OR event_json IS NOT NULL;"
+  "CREATE INDEX mls_messages_by_epoch ON mls_messages (mls_group_id, epoch);";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
   { 3, "Local verification marks on contacts (charter §3.3, G19)", schema_v3 },
   { 4, "Read state by arrival, timer changes, recipients without an inbox (W18)", schema_v4 },
   { 5, "Encrypted group attachments and pictures (W25)", schema_v5 },
+  { 6, "No plaintext in libmarmot's message rows; messages by epoch (W25)", schema_v6 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

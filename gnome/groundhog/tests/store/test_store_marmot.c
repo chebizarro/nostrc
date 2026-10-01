@@ -496,7 +496,9 @@ contract_message_save_and_find(MarmotStorage *s)
   MarmotMessage *found = NULL;
   g_assert_cmpint(s->find_message_by_id(s->ctx, m->id, &found), ==, MARMOT_OK);
   g_assert_nonnull(found);
-  g_assert_cmpstr(found->content, ==, "Message #1");
+  /* GhStoreMarmot keeps no plaintext (gh-store-marmot.h): content that is
+   * no inner event keeps nothing. */
+  g_assert_null(found->content);
   g_assert_cmpint(found->created_at, ==, 1000);
   marmot_message_free(found);
   marmot_message_free(m);
@@ -1149,21 +1151,45 @@ message_at(const MarmotGroupId *gid, guint8 id, gint64 created_at, gint64 proces
   return m;
 }
 
+/* What GhStoreMarmot keeps of a saved message a (W25 slice N re-review N2):
+ * everything libmarmot reads back, and for the content `content` (the inner
+ * event's id, or NULL); no tags, no kind 445, no author. */
 static void
-assert_messages_equal(const MarmotMessage *a, const MarmotMessage *b)
+assert_message_kept(const MarmotMessage *a, const MarmotMessage *b, const gchar *content)
 {
+  static const guint8 no_author[32] = { 0 };
   g_assert_cmpmem(a->id, 32, b->id, 32);
-  g_assert_cmpmem(a->pubkey, 32, b->pubkey, 32);
+  g_assert_cmpmem(no_author, 32, b->pubkey, 32);
   g_assert_cmpuint(a->kind, ==, b->kind);
   g_assert_true(marmot_group_id_equal(&a->mls_group_id, &b->mls_group_id));
   g_assert_cmpint(a->created_at, ==, b->created_at);
   g_assert_cmpint(a->processed_at, ==, b->processed_at);
-  g_assert_cmpstr(a->content, ==, b->content);
-  g_assert_cmpstr(a->tags_json, ==, b->tags_json);
-  g_assert_cmpstr(a->event_json, ==, b->event_json);
+  g_assert_cmpstr(content, ==, b->content);
+  g_assert_null(b->tags_json);
+  g_assert_null(b->event_json);
   g_assert_cmpmem(a->wrapper_event_id, 32, b->wrapper_event_id, 32);
   g_assert_cmpuint(a->epoch, ==, b->epoch);
   g_assert_cmpint(a->state, ==, b->state);
+}
+
+/* An unsigned kind-9 inner event saying `text`, with its id (as MIP-03
+ * inner events carry it), and that id. */
+static gchar *
+inner_event_of(const gchar *text, gchar out_id[65])
+{
+  NostrEvent *e = nostr_event_new();
+  nostr_event_set_kind(e, 9);
+  nostr_event_set_pubkey(e, "3333333333333333333333333333333333333333333333333333333333333333");
+  nostr_event_set_created_at(e, T0);
+  nostr_event_set_content(e, text);
+  nostr_event_set_tags(e, nostr_tags_new(0));
+  g_assert_cmpint(nostr_event_compute_id(e, out_id), ==, NOSTR_EVENT_VALIDATION_OK);
+  e->id = strdup(out_id);
+  char *json = nostr_event_serialize_compact(e);
+  nostr_event_free(e);
+  gchar *out = g_strdup(json);
+  free(json);
+  return out;
 }
 
 static void
@@ -1192,21 +1218,36 @@ test_roundtrip_messages(void)
   MarmotGroupId gid = gid_of("message group");
   MarmotGroupId other = gid_of("other group");
 
-  /* Every field, then an upsert on the same id. */
+  /* Every field, then an upsert on the same id. Kept: what libmarmot reads
+   * back, and for the content the inner event's id -- never its text, tags,
+   * the kind 445 or the author (gh-store-marmot.h). */
   MarmotMessage *m = message_at(&gid, 0x10, T0, T0 + 1);
+  gchar inner_id[65] = { 0 };
+  free(m->content);
+  g_autofree gchar *inner = inner_event_of("the plaintext stays out", inner_id);
+  m->content = strdup(inner);
   m->tags_json = strdup("[[\"e\",\"\xc3\xa9\"]]");
   m->event_json = strdup("{\"kind\":445,\"content\":\"\\u0000 escaped\"}");
   assert_marmot_ok(s->save_message(s->ctx, m));
   MarmotMessage *found = NULL;
   assert_marmot_ok(s->find_message_by_id(s->ctx, m->id, &found));
-  assert_messages_equal(m, found);
+  assert_message_kept(m, found, inner_id);
+  /* libmarmot saves a row it read back (a withdrawal): kept the same. */
+  found->state = MARMOT_MSG_STATE_EPOCH_INVALIDATED;
+  assert_marmot_ok(s->save_message(s->ctx, found));
   marmot_message_free(found);
+  m->state = MARMOT_MSG_STATE_EPOCH_INVALIDATED;
+  assert_marmot_ok(s->find_message_by_id(s->ctx, m->id, &found));
+  assert_message_kept(m, found, inner_id);
+  marmot_message_free(found);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM mls_messages WHERE content LIKE "
+                                 "'%plaintext%' OR tags_json IS NOT NULL OR event_json IS NOT NULL"),
+                  ==, 0);
   free(m->content);
   m->content = NULL;
-  m->state = MARMOT_MSG_STATE_EPOCH_INVALIDATED;
   assert_marmot_ok(s->save_message(s->ctx, m));
   assert_marmot_ok(s->find_message_by_id(s->ctx, m->id, &found));
-  assert_messages_equal(m, found);
+  assert_message_kept(m, found, NULL);
   marmot_message_free(found);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM mls_messages"), ==, 1);
 
@@ -2221,11 +2262,58 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 5);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 6);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */
   assert_migrated(&account);
+  test_account_clear(&account);
+}
+
+/* Schema 6 (W25 slice N re-review N2): message rows libmarmot stored
+ * before keep no plaintext once migrated -- the inner event's id in place
+ * of the content, no tags, no kind 445, no author -- and a reorg's epoch
+ * query has its index. */
+static void
+test_migration_v6_scrubs_messages(void)
+{
+  TestAccount account;
+  test_account_init(&account, ACCOUNT_A);
+  GhStore *store = store_open(&account, NULL);
+  gchar inner_id[65] = { 0 };
+  g_autofree gchar *inner = inner_event_of("a plaintext row from schema 5", inner_id);
+  char *rows = sqlite3_mprintf(
+    "INSERT INTO mls_messages (" "id, mls_group_id, pubkey, kind, created_at, processed_at, "
+    "content, tags_json, event_json, wrapper_event_id, epoch, state) VALUES "
+    "(x'%s', x'aa', x'%s', 9, 1, 2, %Q, '[[\"t\",\"tag text\"]]', '{\"kind\":445}', x'%s', 3, 1),"
+    "(x'%s', x'aa', x'%s', 9, 1, 2, 'not an event', NULL, NULL, x'%s', 3, 1)",
+    "0101010101010101010101010101010101010101010101010101010101010101",
+    "3333333333333333333333333333333333333333333333333333333333333333", inner,
+    "0202020202020202020202020202020202020202020202020202020202020202",
+    "0303030303030303030303030303030303030303030303030303030303030303",
+    "3333333333333333333333333333333333333333333333333333333333333333",
+    "0404040404040404040404040404040404040404040404040404040404040404");
+  sql_exec(store, rows);
+  sqlite3_free(rows);
+  /* Back to schema 5. */
+  sql_exec(store, "DROP INDEX mls_messages_by_epoch");
+  sql_exec(store, "DELETE FROM schema_migrations WHERE version = 6");
+  sql_exec(store, "PRAGMA user_version = 5");
+  gh_store_close(store);
+
+  store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
+  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 6);
+  g_autofree gchar *kept = sql_text(store, "SELECT content FROM mls_messages WHERE "
+                                           "id = x'0101010101010101010101010101010101010101010101"
+                                           "010101010101010101'");
+  g_assert_cmpstr(kept, ==, inner_id);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM mls_messages WHERE content IS NULL"), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM mls_messages WHERE tags_json IS NOT NULL "
+                                 "OR event_json IS NOT NULL OR pubkey <> zeroblob(32) OR "
+                                 "instr(content, 'plaintext') > 0"), ==, 0);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND "
+                                 "name = 'mls_messages_by_epoch'"), ==, 1);
+  gh_store_close(store);
   test_account_clear(&account);
 }
 
@@ -3423,13 +3511,23 @@ check_advanced(GhStore *store, CrashCase *c)
   g_assert_cmpuint(group_epoch(store, d->gid), ==, d->epoch_before + 1);
 }
 
+/* The message is stored once, by its kind 445's id, and its text is not
+ * (GhStoreMarmot keeps no plaintext: W25 slice N re-review N2). */
 static void
 check_message_stored(GhStore *store, CrashCase *c)
 {
   OpData *d = c->data;
-  g_autofree gchar *sql = g_strdup_printf(
+  NostrEvent *ev = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(ev, d->event_json, NULL));
+  char *id = nostr_event_get_id(ev);
+  nostr_event_free(ev);
+  g_autofree gchar *by_id = g_strdup_printf(
+    "SELECT count(*) FROM mls_messages WHERE lower(hex(id)) = '%s'", id);
+  free(id);
+  g_assert_cmpint(sql_int(store, by_id), ==, 1);
+  g_autofree gchar *text = g_strdup_printf(
     "SELECT count(*) FROM mls_messages WHERE instr(content, '%s') > 0", d->expect_text);
-  g_assert_cmpint(sql_int(store, sql), ==, 1);
+  g_assert_cmpint(sql_int(store, text), ==, 0);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM mls_processed_messages"), >=, 1);
 }
 
@@ -4304,6 +4402,7 @@ main(int argc, char **argv)
   g_test_add_func("/store-marmot/transaction/disk-full", test_disk_full);
   g_test_add_func("/store-marmot/store-kinds", test_store_kinds);
   g_test_add_func("/store-marmot/migration/v1-to-v2", test_migration_v1_to_v2);
+  g_test_add_func("/store-marmot/migration/v6-scrubs-messages", test_migration_v6_scrubs_messages);
   g_test_add_func("/store-marmot/migration/crash", test_migration_crash);
   g_test_add_func("/store-marmot/t-mls/crash-atomicity", test_tmls_crash_atomicity);
   g_test_add_func("/store-marmot/e2e/persistence", test_e2e_persistence);

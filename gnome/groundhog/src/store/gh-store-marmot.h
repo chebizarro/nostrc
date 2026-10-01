@@ -90,6 +90,16 @@ G_BEGIN_DECLS
  * temporary tables, no logs of values, no caches beyond one call. Returned
  * buffers are plain malloc() memory that libmarmot owns and frees.
  *
+ * Messages keep no plaintext (W25 slice N re-review N2): save_message stores
+ * what libmarmot reads back -- the ids, group, epoch, state, times and kind,
+ * all its idempotency and convergence (withdrawal by epoch) need -- and in
+ * place of the content the inner event's id (Groundhog's key of the message:
+ * a withdrawal names it by that), with no tags, no kind 445 and an all-zero
+ * author. The plaintext lives in the conversation store alone, which
+ * disappearing-message expiry, the retention window and forget purge; a
+ * message read back here carries only that. Rows stored before schema 6 are
+ * scrubbed the same way by its migration.
+ *
  * Errors. Every vtable function returns a MarmotError (INVALID_ARG for an
  * argument out of the bounds below, STORAGE_CONSTRAINT for a constraint
  * failure, STORAGE otherwise). The underlying GhStore error, which keeps

@@ -636,8 +636,8 @@ test_future_replay_moves_no_cursor(void)
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   GhMlsGroup *gb = join(bob, ALICE);
   /* Nothing held may mask the cursor (re-review N5): any Add Commit of
-   * Bob's join second ages out over three Commits. */
-  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
+   * Bob's join second ages out as the group's epoch moves on. */
+  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_EPOCHS; i++) {
     g_autofree gchar *name = g_strdup_printf("Clock %u", i);
     rename_group(alice, ga, name);
     NameWait seen = { gb, name };
@@ -727,7 +727,7 @@ test_held_until_commit(void)
 /* M1: a flood of junk with the group's public h cannot push out a genuine
  * later-epoch message that arrives after it (the oldest held goes first),
  * the queue never grows past its cap, and junk that stays unreadable
- * through GH_MLS_SERVICE_JUNK_AFTER_COMMITS Commits is dropped. The junk
+ * through GH_MLS_SERVICE_JUNK_AFTER_EPOCHS epochs is dropped. The junk
  * comes live in one burst of 300: GNostrSubscription no longer drops events
  * past 200 queued (nostrc-dha5, nostrc-kzun). */
 static void
@@ -767,7 +767,7 @@ test_junk_does_not_evict(void)
   spin_until(sent, &genuine, "the genuine message sent");
   wire_relay_release(&w.g, commit);
   wait_message(bob, room, "genuine");      /* it survived the flood */
-  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
+  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_EPOCHS; i++) {
     OpWait again = { 0 };
     g_autofree gchar *name = g_strdup_printf("Flooded %u", i);
     gh_mls_service_update_metadata_async(alice->service, ga, name, NULL, NULL, on_changed,
@@ -786,8 +786,10 @@ test_junk_does_not_evict(void)
  * held events: a held event's type (message or Commit) is sealed until its
  * epoch opens. An undecryptable event dated in the join's own second, from
  * a stored answer -- where the joiner's own Add Commit lands -- is held but
- * not shown; a later one is. Junk dropped after the Commits is not held
- * again when a reconnect's overlap fetches it once more. */
+ * not shown; a later one is. Junk dropped as the group moved on is held
+ * again when a reconnect's overlap fetches it once more -- it may be a
+ * competing branch's input (W25 slice N re-review N1) -- but silently:
+ * decrypt-pending does not come back for it. */
 static gboolean
 decrypt_pending_is(gpointer data)
 {
@@ -835,8 +837,8 @@ test_decrypt_pending_honest(void)
   g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, (guint)base + 2);   /* still held */
   gh_mls_service_set_pending_shown(bob->service, 0);
 
-  /* Three Commits later both are junk, dropped. */
-  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
+  /* The group moved on past the horizon: both are junk, dropped. */
+  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_EPOCHS; i++) {
     g_autofree gchar *name = g_strdup_printf("Pending %u", i);
     rename_group(alice, ga, name);
     NameWait seen = { gb, name };
@@ -845,11 +847,11 @@ test_decrypt_pending_honest(void)
   g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, 0);
   g_assert_false(gh_mls_group_get_decrypt_pending(gb));
 
-  /* A reconnect's overlap fetches them again: judged already, not held. */
+  /* A reconnect's overlap fetches them again: held again, silently. */
   set_online(bob, FALSE);
   set_online(bob, TRUE);
   wait_live(gb);
-  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, 0);
+  wait_unreadable(gb, base + 2);
   g_assert_false(gh_mls_group_get_decrypt_pending(gb));
   world_down(&w);
 }
@@ -948,6 +950,58 @@ test_retained_commit_retries_held(void)
   world_down(&w);
 }
 
+static guint retained_candidates(App *app, GhMlsGroup *group);
+typedef struct {
+  App *app;
+  GhMlsGroup *group;
+  guint n;
+} CandidatesWait;
+static gboolean candidates_are(gpointer data);
+
+/* W25 slice N re-review N1: a competing branch's event that comes several
+ * Commits before its parent is still held when the parent arrives. Bob's
+ * two renames (a branch) race Alice's; Carol gets Bob's second first --
+ * held -- then four more of Alice's Commits (the old rule made a held event
+ * junk after three), then Bob's first: retained, it opens the second, which
+ * is retained too. Held events age by tip advances beyond Marmot's
+ * max_rewind_commits only. */
+static void
+test_branch_event_outlives_commits(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  GhMlsGroup *ga, *gb, *gc;
+  g_autofree gchar *room = NULL;
+  trio_two_admins(&w, &ga, &gb, &gc, &room);
+
+  w.g.withhold_new = TRUE;
+  rename_group(bob, gb, "Bob 1");
+  g_autofree gchar *bob_first = g_strdup(last_stored_445(&w.g)->id);
+  rename_group(bob, gb, "Bob 2");
+  g_autofree gchar *bob_second = g_strdup(last_stored_445(&w.g)->id);
+  w.g.withhold_new = FALSE;
+
+  guint base = gh_mls_group_get_unreadable(gc);
+  wire_relay_release(&w.g, bob_second);
+  wait_unreadable(gc, (gint)base + 1);   /* before its parent: held */
+  for (guint i = 0; i < CONV_MAX_REWIND_COMMITS - 1; i++) {
+    g_autofree gchar *name = g_strdup_printf("Alice %u", i);
+    rename_group(alice, ga, name);
+    NameWait seen = { gc, name };
+    spin_until(name_is, &seen, "Carol applying Alice's Commit");
+  }
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gc), ==, base + 1);   /* still held */
+  wire_relay_release(&w.g, bob_first);
+  CandidatesWait both = { carol, gc, 2 };
+  spin_until(candidates_are, &both, "Carol retaining Bob's branch, both Commits");
+  wait_unreadable(gc, (gint)base);
+  g_assert_cmpstr(gh_mls_group_get_name(gc), ==, "Alice 3");   /* the deeper branch */
+  send_text(alice, ga, "after the branch");
+  wait_message(carol, room, "after the branch");
+  world_down(&w);
+}
+
 static guint
 retained_candidates(App *app, GhMlsGroup *group)
 {
@@ -977,12 +1031,6 @@ unreadable_at_most(gpointer data)
   return gh_mls_group_get_unreadable(wait->group) <= (guint)wait->value;
 }
 
-typedef struct {
-  App *app;
-  GhMlsGroup *group;
-  guint n;
-} CandidatesWait;
-
 static gboolean
 candidates_are(gpointer data)
 {
@@ -993,9 +1041,9 @@ candidates_are(gpointer data)
 /* nostrc-w1m0 (W25 review H1): a losing Commit libmarmot has no room to
  * retain (MARMOT_ERR_RESOURCE_REFUSED) is no judgement on it. Carol floods
  * losing self-updates; Bob retains CONV_MAX_PER_COMMITTER of them and the
- * least likely is refused: held (offered again with every retry), never
- * junk, and once dropped it keeps Bob's cursor behind it, so a later fetch
- * offers it again (Marmot transports/nostr.md "resource_refused"). */
+ * least likely is refused: held, offered again with every retry and
+ * keeping Bob's cursor behind it, until it is stale (Marmot
+ * transports/nostr.md "resource_refused"). */
 static void
 test_capacity_refusal_held_not_junk(void)
 {
@@ -1048,23 +1096,27 @@ test_capacity_refusal_held_not_junk(void)
   gint64 cursor = gh_mls_group_get_cursor(gb);
   g_assert_cmpint(cursor, >, 0);
 
-  /* Commits move the group on: a junk event would be dropped and forgotten
-   * after GH_MLS_SERVICE_JUNK_AFTER_COMMITS, and the cursor would pass it;
-   * this one is dropped, but the cursor stays where it was (a later REQ,
-   * from it less the overlap, fetches it again). */
-  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
+  /* Commits move the group on (more than the three that once made a held
+   * event junk): it stays held, offered again with every retry, and the
+   * cursor stays behind it -- until its source epoch leaves the horizon and
+   * libmarmot judges it stale. */
+  guint i = 0;
+  for (; i < CONV_MAX_REWIND_COMMITS - 1; i++) {
     g_usleep(1100 * 1000);   /* each dated after the cursor */
     g_autofree gchar *name = g_strdup_printf("Moved on %u", i);
     rename_group(alice, ga, name);
     NameWait moved = { gb, name };
     spin_until(name_is, &moved, "Bob following");
   }
-  GroupWait dropped = { gb, (gint)base };
-  spin_until(unreadable_at_most, &dropped, "the refused Commit dropped");
-  g_usleep(1100 * 1000);
-  send_text(alice, ga, "after the flood");
-  wait_message(bob, gh_mls_group_get_room_id(ga), "after the flood");
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, base + 1);   /* still held */
   g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, cursor);
+  g_autofree gchar *stale = g_strdup_printf("Moved on %u", i);
+  rename_group(alice, ga, stale);
+  NameWait moved = { gb, stale };
+  spin_until(name_is, &moved, "Bob following");
+  GroupWait dropped = { gb, (gint)base };
+  spin_until(unreadable_at_most, &dropped, "the refused Commit judged stale");
+  g_assert_cmpuint(retained_candidates(bob, gb), ==, 0);   /* all stale now */
   for (guint i = 0; i < FLOOD; i++)
     g_free(flood[i]);
   world_down(&w);
@@ -1863,10 +1915,12 @@ test_catch_up_past_relay_cap(void)
   wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
   g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
   wait_live(gb);
-  /* Nothing of the backlog is held; applied oldest first, its three Commits
-   * are fresh ones, which also age out the join's own Add Commit. */
-  g_assert_cmpint(gh_mls_group_get_unreadable(gb), ==, 0);
+  /* Nothing of the backlog is held (applied oldest first). The join's own
+   * Add Commit, of its second, may still be: it ages out once the group's
+   * epoch is GH_MLS_SERVICE_JUNK_AFTER_EPOCHS past it, and never holds the
+   * cursor back meanwhile. */
   g_assert_cmpint(base, <=, 1);
+  g_assert_cmpint(gh_mls_group_get_unreadable(gb), <=, base);
   CursorWait moved = { gb, newest };
   spin_until(cursor_reached, &moved, "the cursor past the backlog");
   /* 303 events at 50 a page: the live answer and at least five older pages. */
@@ -1908,6 +1962,7 @@ test_catch_up_two_relays_partial(void)
   app_restart(bob);
   GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
   wait_live(gb);
+  gint base = (gint)gh_mls_group_get_unreadable(gb);   /* the join's own Add Commit */
 
   set_online(bob, FALSE);
   w.g.withhold_new = TRUE;                  /* served only as re-signed below */
@@ -1936,7 +1991,7 @@ test_catch_up_two_relays_partial(void)
   wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
   g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
   wait_live(gb);
-  g_assert_cmpint(gh_mls_group_get_unreadable(gb), ==, 0);
+  g_assert_cmpint(gh_mls_group_get_unreadable(gb), <=, base);   /* nothing of the backlog */
   CursorWait moved = { gb, newest };
   spin_until(cursor_reached, &moved, "the cursor past the backlog");
   g_assert_cmpuint(paged_reqs(&w.g), >=, 3);   /* each relay held about 200: paged */
@@ -4022,6 +4077,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/decrypt-pending-honest", test_decrypt_pending_honest);
   g_test_add_func("/groundhog/mls-service/retained-commit-retries-held",
                   test_retained_commit_retries_held);
+  g_test_add_func("/groundhog/mls-service/branch-event-outlives-commits",
+                  test_branch_event_outlives_commits);
   g_test_add_func("/groundhog/mls-service/capacity-refusal-held-not-junk",
                   test_capacity_refusal_held_not_junk);
   g_test_add_func("/groundhog/mls-service/conflict-withdraws-messages",

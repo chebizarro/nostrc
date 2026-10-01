@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <nostr-event.h>
 #include <sqlite3.h>
 
 /* libmarmot keeps a group's MLS state (tree, epoch secrets, ...) in mls_kv
@@ -1080,6 +1081,31 @@ ghm_last_message(void *ctx, const MarmotGroupId *group_id, MarmotSortOrder sort_
   return find_message(self, sql, group_id->data, group_id->len, out);
 }
 
+/* A stored message's content as GhStoreMarmot keeps it: the inner event's
+ * id (lowercase hex; kept as is when it is one already, as when libmarmot
+ * saves a row it read back), or nothing. */
+static gchar *
+message_record_content(const char *content)
+{
+  if (!content)
+    return NULL;
+  gsize n = strlen(content);
+  gboolean hex = n == 64;
+  for (gsize i = 0; hex && i < n; i++)
+    hex = g_ascii_isdigit(content[i]) || (content[i] >= 'a' && content[i] <= 'f');
+  if (hex)
+    return g_strdup(content);
+  NostrEvent *event = nostr_event_new();
+  gchar id[65] = { 0 };
+  gboolean ok = event &&
+                nostr_event_deserialize_unsigned(event, content, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                (event->id ? nostr_event_validate_id(event, id)
+                           : nostr_event_compute_id(event, id)) == NOSTR_EVENT_VALIDATION_OK;
+  if (event)
+    nostr_event_free(event);
+  return ok ? g_strdup(id) : NULL;
+}
+
 static MarmotError
 ghm_save_message(void *ctx, const MarmotMessage *msg)
 {
@@ -1087,6 +1113,7 @@ ghm_save_message(void *ctx, const MarmotMessage *msg)
   if (!msg)
     return invalid(self, "No message to save");
   MarmotError err = MARMOT_OK;
+  g_autofree gchar *kept = NULL;
   if ((err = check_gid(self, &msg->mls_group_id)) != MARMOT_OK ||
       (err = check_text(self, "A message's content", msg->content,
                         GH_STORE_MARMOT_MAX_JSON)) != MARMOT_OK ||
@@ -1095,6 +1122,12 @@ ghm_save_message(void *ctx, const MarmotMessage *msg)
       (err = check_text(self, "A message's event", msg->event_json,
                         GH_STORE_MARMOT_MAX_JSON)) != MARMOT_OK)
     return err;
+  /* W25 slice N re-review N2 (privacy charter §3.7): only what libmarmot
+   * reads back -- ids, group, epoch, state, times, kind -- and the inner
+   * event's id in place of its content (what a withdrawal names the message
+   * by); never the plaintext, its tags, the kind 445 or the author. */
+  kept = message_record_content(msg->content);
+  static const uint8_t no_author[32] = { 0 };
   if ((err = txn_begin(self)) != MARMOT_OK)
     return err;
 
@@ -1110,13 +1143,13 @@ ghm_save_message(void *ctx, const MarmotMessage *msg)
     "state = excluded.state", &stmt));
   BIND(bind_bytes(stmt, 1, msg->id, 32));
   BIND(bind_bytes(stmt, 2, msg->mls_group_id.data, msg->mls_group_id.len));
-  BIND(bind_bytes(stmt, 3, msg->pubkey, 32));
+  BIND(bind_bytes(stmt, 3, no_author, 32));
   BIND(sqlite3_bind_int64(stmt, 4, msg->kind));
   BIND(sqlite3_bind_int64(stmt, 5, msg->created_at));
   BIND(sqlite3_bind_int64(stmt, 6, msg->processed_at));
-  BIND(bind_text(stmt, 7, msg->content));
-  BIND(bind_text(stmt, 8, msg->tags_json));
-  BIND(bind_text(stmt, 9, msg->event_json));
+  BIND(bind_text(stmt, 7, kept));
+  BIND(sqlite3_bind_null(stmt, 8));
+  BIND(sqlite3_bind_null(stmt, 9));
   BIND(bind_bytes(stmt, 10, msg->wrapper_event_id, 32));
   BIND(sqlite3_bind_int64(stmt, 11, (sqlite3_int64) msg->epoch));
   BIND(sqlite3_bind_int64(stmt, 12, msg->state));

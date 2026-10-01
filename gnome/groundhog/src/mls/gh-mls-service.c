@@ -123,13 +123,12 @@ struct _GhMlsGroup {
   GHashTable *held_ids;      /* their event ids (owned by the Held records) */
   gboolean decrypt_pending;  /* a shown Held is waiting (nostrc-oya4) */
   guint pending_source;      /* re-judges decrypt-pending when a Held ages out */
-  GHashTable *junk_ids;      /* ids dropped as junk, not held again (bounded) */
+  GHashTable *junk_ids;      /* ids aged out unread: held again silently (bounded) */
   GQueue junk_order;         /* the same ids, oldest first (owned here) */
   gint64 pinned;             /* oldest created_at dropped unread this session; 0: none */
   gint64 floor;              /* when the account joined (or made) the group; 0: unknown */
   gboolean retrying;         /* retry_held() runs: a nested Commit only asks again */
   gboolean retry_again;
-  guint fresh_commits;       /* Commits applied not out of the queue, since the last aging */
   gint64 retained_retry_us;  /* the last retry for a retained Commit (monotonic) */
   guint retained_source;     /* a retry for retained Commits, coalesced (W25 review M1) */
   /* Changes: the Commit being published, and who waits for it. */
@@ -435,7 +434,7 @@ typedef struct {
   gchar *id;
   gchar *json;
   gint64 created_at;   /* bounded to now + skew */
-  guint misses;        /* Commits applied since, without it becoming readable */
+  guint64 epoch;       /* the group's epoch when it was held: it ages by tip advances */
   gboolean shown;      /* makes decrypt-pending (not the join second's stored answer) */
   gint64 held_us;      /* when it was first held (monotonic) */
   /* A Commit citing a proposal not received yet (nostrc-2um6 review H1):
@@ -444,11 +443,6 @@ typedef struct {
    * GH_MLS_SERVICE_PROPOSAL_WAIT_S. */
   gboolean awaits_proposal;
   guint proposal_tries;
-  /* A losing Commit libmarmot had no room to retain (MARMOT_ERR_RESOURCE_
-   * REFUSED, W25 review H1): never junk. Offered again with every retry; once
-   * dropped, the cursor stays behind it so a later fetch offers it again
-   * (Marmot transports/nostr.md "resource_refused"). */
-  gboolean capacity;
 } Held;
 
 static void
@@ -1178,8 +1172,11 @@ listening(GhMlsGroup *group)
                             group->end == GH_MLS_GROUP_END_LEFT) && !group->removal_final);
 }
 
-/* An event dropped as junk is not held again when a later REQ's overlap
- * fetches it once more (nostrc-oya4): it was judged already. */
+/* An event that aged out unread (retry_held()) is remembered: fetched again
+ * (a later REQ's overlap, a restart), it is held again -- it may still be
+ * convergence input whose parent comes later (W25 slice N re-review N1;
+ * transports/nostr.md: deferred input is never recorded as seen) -- but
+ * silently: it does not raise decrypt-pending again (nostrc-oya4). */
 static void
 remember_junk(GhMlsGroup *group, const gchar *id)
 {
@@ -2166,7 +2163,7 @@ static EventOutcome process_event(GhMlsGroup *group, const gchar *event_json, co
  * stays behind it so the next subscription fetches it again (review M1). */
 static void
 hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created_at,
-           gboolean shown, gboolean awaits_proposal, gboolean capacity)
+           gboolean shown, gboolean awaits_proposal)
 {
   if (!id || g_hash_table_contains(group->held_ids, id))
     return;
@@ -2184,7 +2181,7 @@ hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created
   held->shown = shown;
   held->held_us = g_get_monotonic_time();
   held->awaits_proposal = awaits_proposal;
-  held->capacity = capacity;
+  held->epoch = group->epoch;
   g_queue_push_tail(&group->held, held);
   g_hash_table_add(group->held_ids, held->id);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
@@ -2213,12 +2210,16 @@ held_older_first(gconstpointer a, gconstpointer b)
  * it is tried again (nostrc-kzun); the rest of that second is still tried,
  * as it may hold the closing epoch's messages.
  *
- * Junk: anyone can post a kind 445 with the group's public h. Once the
- * fixpoint ends, every event still unreadable counts one miss per Commit
- * that came from a relay (or was our own, merged) since the last count --
- * never per Commit applied out of this queue -- and one that reaches
- * GH_MLS_SERVICE_JUNK_AFTER_COMMITS misses is dropped (and no longer holds
- * the cursor back). */
+ * Junk: anyone can post a kind 445 with the group's public h. An event
+ * still unreadable once the group's epoch advanced more than Marmot's
+ * max_rewind_commits past the one it was held at (GH_MLS_SERVICE_JUNK_AFTER_
+ * EPOCHS) is dropped and no longer holds the cursor back: no branch it
+ * could belong to can still be selected, nor its Commit staged (W25 slice N
+ * re-review N1: counting Commits instead dropped a competing branch's events
+ * that came a few Commits before their parent). Dropped, it stays eligible:
+ * fetched again, it is held again (remember_junk()). A Commit refused for
+ * capacity (MARMOT_ERR_RESOURCE_REFUSED) is held the same way: it is
+ * offered again with every retry until it is retained or stale. */
 static void
 retry_held(GhMlsGroup *group)
 {
@@ -2261,13 +2262,10 @@ retry_held(GhMlsGroup *group)
     }
     g_list_free(pass);
   } while (group->retry_again);
-  guint fresh = group->fresh_commits;
-  group->fresh_commits = 0;
   gint64 now_us = g_get_monotonic_time();
   for (GList *l = group->held.head; l;) {
     GList *next = l->next;
     Held *held = l->data;
-    held->misses += fresh;
     /* A Commit still waiting for its proposal (review H1): one more try
      * counted per pass, and given up after a bounded count or time. */
     gboolean gave_up = FALSE;
@@ -2276,12 +2274,9 @@ retry_held(GhMlsGroup *group)
       gave_up = held->proposal_tries >= GH_MLS_SERVICE_PROPOSAL_WAIT_TRIES ||
                 now_us - held->held_us >= (gint64)GH_MLS_SERVICE_PROPOSAL_WAIT_S * G_USEC_PER_SEC;
     }
-    if (gave_up || held->misses >= GH_MLS_SERVICE_JUNK_AFTER_COMMITS) {
-      /* Refused for capacity is no judgement: it is fetched again. */
-      if (held->capacity)
-        group->pinned = group->pinned ? MIN(group->pinned, held->created_at) : held->created_at;
-      else
-        remember_junk(group, held->id);
+    gboolean aged = group->epoch > held->epoch + GH_MLS_SERVICE_JUNK_AFTER_EPOCHS - 1;
+    if (gave_up || aged) {
+      remember_junk(group, held->id);
       g_hash_table_remove(group->held_ids, held->id);
       g_queue_delete_link(&group->held, l);
       held_free(held);
@@ -2332,7 +2327,7 @@ retry_held_retained(GhMlsGroup *group, gboolean fresh)
   group->retained_source = g_timeout_add((guint)(wait_us / 1000) + 1, retained_retry_due, group);
 }
 
-static void after_commit(GhMlsGroup *group, gboolean fresh);
+static void after_commit(GhMlsGroup *group);
 static void queued_flush(GhMlsGroup *group);
 static void departures_schedule(GhMlsGroup *group);
 static gchar *event_id_of(const gchar *json);
@@ -2396,7 +2391,8 @@ current_relays_settled(GhMlsGroup *group)
 
 /* nostrc-xrza (W25 review M3): the messages a branch change withdrew, by
  * the inner event ids the conversation keys them by. libmarmot reports
- * their kind 445s; its stored copy holds the inner event. */
+ * their kind 445s; GhStoreMarmot keeps the inner event's id for each
+ * (gh-store-marmot.h, "Messages keep no plaintext"). */
 static GPtrArray *
 withdrawn_messages(GhMlsGroup *group, const MarmotMessageResult *result)
 {
@@ -2420,12 +2416,12 @@ withdrawn_messages(GhMlsGroup *group, const MarmotMessageResult *result)
       drop_stale_error(self);
       continue;
     }
-    g_autoptr(GhMessage) message =
-      stored->content ? gh_message_new_from_mls(self->account, group->gid_hex, stored->content,
-                                                NULL)
-                      : NULL;
-    if (message)
-      g_ptr_array_add(ids, g_strdup(gh_message_get_rumor_id(message)));
+    const gchar *inner = stored->content;
+    gboolean is_id = inner && strlen(inner) == 64;
+    for (guint b = 0; is_id && b < 64; b++)
+      is_id = g_ascii_isdigit(inner[b]) || (inner[b] >= 'a' && inner[b] <= 'f');
+    if (is_id)
+      g_ptr_array_add(ids, g_strdup(inner));
     marmot_message_free(stored);
   }
   return ids;
@@ -2487,7 +2483,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE, refused = FALSE;
   GhMlsRefusal refusal = GH_MLS_REFUSAL_BROKEN_PROOF;   /* or UNPROVEN: set_refused() */
   gboolean proposal = FALSE, awaits_proposal = FALSE;
-  gboolean retained = FALSE, capacity = FALSE;
+  gboolean retained = FALSE;
 
   if (err == MARMOT_OK && result.type == MARMOT_RESULT_APPLICATION_MESSAGE) {
     g_autoptr(GError) bad = NULL;
@@ -2577,9 +2573,9 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     accepted = retained = TRUE;
   } else if (err == MARMOT_ERR_RESOURCE_REFUSED) {
     /* W25 review H1: a losing Commit libmarmot has no room to retain now.
-     * Not invalid, never junk: held, offered again, and fetched again if
-     * dropped (transports/nostr.md "resource_refused"). */
-    held = capacity = group->active;
+     * Not invalid: held and offered again with every retry, until it is
+     * retained or stale (transports/nostr.md "resource_refused"). */
+    held = group->active;
   } else if (err == MARMOT_ERR_NIP44) {
     /* A later epoch's (or not for us): wait for the Commit that opens it. */
     held = group->active;   /* an ended group holds nothing (review N5) */
@@ -2649,17 +2645,14 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
      * never holds the cursor back (save_cursor()). */
     if (group->floor > 0 && created_at < group->floor)
       return EVENT_OTHER;
-    if (!capacity && envelope_id && g_hash_table_contains(group->junk_ids, envelope_id))
-      return EVENT_OTHER;   /* judged junk before (nostrc-oya4) */
-    if (!retry) {
+    /* Aged out before: held again, silently (remember_junk()). */
+    gboolean aged = envelope_id && g_hash_table_contains(group->junk_ids, envelope_id);
+    if (!retry)
       hold_event(group, envelope_id, event_json, created_at,
-                 !(stored && group->floor > 0 && created_at <= group->floor), awaits_proposal,
-                 capacity);
-    } else {
-      if (awaits_proposal)
-        retry->awaits_proposal = TRUE;
-      retry->capacity = capacity;
-    }
+                 !aged && !(stored && group->floor > 0 && created_at <= group->floor),
+                 awaits_proposal);
+    else if (awaits_proposal)
+      retry->awaits_proposal = TRUE;
     return EVENT_HELD;
   }
   if (!accepted)
@@ -2684,7 +2677,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     g_auto(GStrv) members_before = recovered ? g_strdupv(group->members) : NULL;
     g_auto(GStrv) admins_before = recovered ? g_strdupv(group->admins) : NULL;
     g_object_ref(group);
-    after_commit(group, retry == NULL);
+    after_commit(group);
     if (recovered)
       g_signal_emit(group, group_signals[GROUP_SIGNAL_CONFLICT_RESOLVED], 0,
                     withdrawn ? withdrawn->len : 0u,
@@ -3302,17 +3295,13 @@ complete_waiters(GhMlsGroup *group, const GError *error)
 
 static void leave_continue(GhMlsGroup *group);
 
-/* @fresh: the Commit came from a relay or was our own merged, not out of
- * the held queue (it ages the queue's junk; review N2). */
 static void
-after_commit(GhMlsGroup *group, gboolean fresh)
+after_commit(GhMlsGroup *group)
 {
   /* The group moved on: a refused Commit lost its epoch (nostrc-prrl). */
   if (group->refused_json)
     set_refused(group, NULL, GH_MLS_REFUSAL_NONE);
   group_refresh(group);
-  if (fresh)
-    group->fresh_commits++;
   retry_held(group);
   welcomes_pump(group);
   /* nostrc-2um6: a new epoch makes a leave proposal stale (ours is made
@@ -3341,7 +3330,7 @@ round_report(Round *round)
     group->last_committer = g_strdup(group->service->account);
     group->last_committer_leaf = G_MAXUINT32;   /* our own leaf is proven */
   }
-  after_commit(group, TRUE);
+  after_commit(group);
   complete_waiters(group, error);
 }
 

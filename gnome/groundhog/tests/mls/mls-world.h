@@ -316,6 +316,15 @@ static const GhDmInboxStorage inbox_storage = {
   .save_checkpoint = inbox_save_checkpoint,
 };
 
+/* The account's store key (deterministic per account: a test may decrypt
+ * the store's pages with it). */
+static G_GNUC_UNUSED void
+app_store_key(const App *app, guint8 key[GH_STORE_KEY_SIZE])
+{
+  for (guint i = 0; i < GH_STORE_KEY_SIZE; i++)
+    key[i] = (guint8)(0x40 + app->key * 7 + i);
+}
+
 static G_GNUC_UNUSED void
 on_invite(GhMlsService *service, const gchar *wrapper_id, gpointer data)
 {
@@ -328,8 +337,7 @@ static G_GNUC_UNUSED void
 store_open(App *app)
 {
   guint8 key[GH_STORE_KEY_SIZE];
-  for (guint i = 0; i < sizeof key; i++)
-    key[i] = (guint8)(0x40 + app->key * 7 + i);
+  app_store_key(app, key);
   g_autoptr(GBytes) bytes = g_bytes_new(key, sizeof key);
   GhStoreConfig config = { app->data_dir, hex[app->key], NULL, NULL, app->clock };
   g_autofree gchar *store_id = g_strdup_printf("3c0d2a51-3b8e-4f6a-9c1d-2e4f5a6b7c%02u", app->key);

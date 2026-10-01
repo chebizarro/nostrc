@@ -146,9 +146,10 @@ G_BEGIN_DECLS
  * retried as a fixpoint after every Commit (a whole backlog at once) and
  * whenever a Commit is retained as a losing candidate (its exporter secret
  * opens its branch's events; MARMOT_ERR_COMMIT_RETAINED); one still
- * unreadable after GH_MLS_SERVICE_JUNK_AFTER_COMMITS new Commits is junk. A
- * Commit refused for capacity (MARMOT_ERR_RESOURCE_REFUSED) is held the
- * same way but never junk: dropped, it keeps the cursor behind it. Nothing from before the account joined is held. A joined group is
+ * unreadable once the group's epoch advanced GH_MLS_SERVICE_JUNK_AFTER_EPOCHS
+ * past the one it was held at is dropped (and held again, silently, if
+ * fetched again). A Commit refused for capacity (MARMOT_ERR_RESOURCE_REFUSED)
+ * is held the same way. Nothing from before the account joined is held. A joined group is
  * read from its Welcome's time. A sent message is one
  * transaction -- the outgoing message row, marmot_create_message() (the
  * sender ratchet step) and its sealed kind 445 -- committed before anything
@@ -333,10 +334,12 @@ G_BEGIN_DECLS
  * anyone posts with the group's h would otherwise show it for good in a
  * quiet group (W22 review N4). It stays held and is retried. */
 #define GH_MLS_SERVICE_PENDING_SHOWN_S (15 * 60)
-/* A held event still unreadable after this many applied Commits is junk --
- * except a Commit refused for capacity (MARMOT_ERR_RESOURCE_REFUSED), which
- * is dropped without being judged and fetched again later. */
-#define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
+/* A held event still unreadable once the group's epoch is this many past
+ * the one it was held at is dropped: more than Marmot's max_rewind_commits
+ * (5, a protocol constant), so no competing branch it could belong to can
+ * still win (W25 slice N re-review N1). Fetched again, it is held again,
+ * silently. */
+#define GH_MLS_SERVICE_JUNK_AFTER_EPOCHS 6
 /* Held events are retried when a Commit is retained as a losing candidate
  * (MARMOT_ERR_COMMIT_RETAINED): at most once per this many milliseconds for
  * Commits from relays (later ones in the interval share one retry). */
