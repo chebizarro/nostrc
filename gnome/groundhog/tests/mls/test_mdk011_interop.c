@@ -15,8 +15,13 @@
  *    (KeyPackage, Welcome 1059 -> 13 -> 444, kind 9 both ways, rename, add,
  *    remove, self-update, SelfRemove leave) before any Groundhog verdict.
  *
- * The adopted cases. libmarmot cannot create or join an adopted group yet
- * (nostrc-qp24.5.1), so each asserts today's honest refusal precisely (the
+ *  adopted-commits: Groundhog and an engine-default MDK 0.11 peer in one
+ *    adopted group exchange messages and Commits both ways (nostrc-
+ *    qp24.5.1.3). It must pass.
+ *
+ * The other adopted cases. Groundhog publishes no adopted KeyPackage
+ * (producer OFF) and libmarmot refuses White Noise groups (nostrc-qp24.5.2),
+ * so each asserts today's honest refusal precisely (the
  * failure class, nothing published, no group, no invitation, no stall, no
  * crash) and then exits 77: CTest reports it Skipped (XFAIL), never Passed.
  * A refusal of another shape fails; so does an unexpected success (XPASS),
@@ -854,6 +859,228 @@ test_white_noise_welcome(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- adopted Commits both ways (nostrc-qp24.5.1.3) ---------------------------------- */
+
+/* An MDK 0.11 peer configured as the engine's default (not White Noise's
+ * marmot-app: its groups require no SelfRemove, agent stream or media v2,
+ * which libmarmot does not support yet: nostrc-qp24.5.2). */
+static void
+mdk_peer_engine_default(const gchar *peer, guint key)
+{
+  g_autoptr(JsonObject) made = mdk_call(&driver,
+                                        "\"cmd\":\"peer_new\",\"peer\":\"%s\",\"secret\":\"%s\","
+                                        "\"config\":\"engine-default\",\"client\":null",
+                                        peer, gh_test_secret[key]);
+  g_assert_cmpstr(json_object_get_string_member(made, "pubkey"), ==, hex[key]);
+}
+
+typedef struct {
+  GhMlsGroup *group;
+  const gchar *name;
+} NameWait;
+
+static gboolean
+name_is(gpointer data)
+{
+  NameWait *wait = data;
+  return g_strcmp0(gh_mls_group_get_name(wait->group), wait->name) == 0;
+}
+
+#define wait_name(group_, name_) \
+  G_STMT_START { NameWait nw_ = { (group_), (name_) }; \
+    spin_until(name_is, &nw_, "the group's name " name_); } G_STMT_END
+
+static gboolean
+welcomes_sent(gpointer data)
+{
+  return gh_mls_group_get_unsent_welcomes(data) == 0;
+}
+
+/* Sends from Groundhog and waits until a group relay accepted it. */
+static void
+send_accepted(App *app, GhMlsGroup *group, const gchar *text)
+{
+  send_text(app, group, text);
+  MessageWait wait = { app, gh_mls_group_get_room_id(group), text };
+  spin_until(sent_accepted, &wait, "the message accepted by a group relay");
+}
+
+static void
+change_done(OpWait *wait)
+{
+  spin_until(op_done, wait, "the group change");
+  g_assert_no_error(wait->error);
+  g_assert_true(wait->ok);
+}
+
+/* The MDK peer's view (a "state" object) equals Groundhog's: group, epoch,
+ * name, members, admins. */
+static void
+assert_gh_converged(GhMlsGroup *group, JsonObject *state)
+{
+  g_assert_cmpstr(json_object_get_string_member(state, "group"), ==,
+                  gh_mls_group_get_group_id(group));
+  g_assert_cmpuint(state_epoch(state), ==, gh_mls_group_get_epoch(group));
+  g_assert_cmpstr(json_object_get_string_member(state, "name"), ==, gh_mls_group_get_name(group));
+  g_auto(GStrv) mdk_members = mdk_strv(json_object_get_array_member(state, "members"));
+  g_auto(GStrv) gh_members = gh_mls_group_dup_members(group);
+  qsort(gh_members, g_strv_length(gh_members), sizeof(gchar *), mdk_strcmp);
+  assert_strv_equal(mdk_members, gh_members);
+  g_auto(GStrv) mdk_admins = mdk_strv(json_object_get_array_member(state, "admins"));
+  g_auto(GStrv) gh_admins = gh_mls_group_dup_admins(group);
+  qsort(gh_admins, g_strv_length(gh_admins), sizeof(gchar *), mdk_strcmp);
+  assert_strv_equal(mdk_admins, gh_admins);
+}
+
+/* The ids of the kind-445 events on `relay` so far (e.g. the Commit that
+ * added a joiner: before its join, it cannot read them). */
+static GPtrArray *
+group_events_on(WireRelay *relay)
+{
+  GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < relay->stored->len; i++) {
+    WireStored *event = g_ptr_array_index(relay->stored, i);
+    if (nostr_event_get_kind(event->event) == 445)
+      g_ptr_array_add(ids, g_strdup(nostr_event_get_id(event->event)));
+  }
+  return ids;
+}
+
+/* mdk_sync() for a peer that joined after `before` were published: those
+ * (only) may stay undecryptable to it (TransportDeferred), as the Add that
+ * admitted it does for any joiner. */
+static JsonObject *
+mdk_sync_joined(const gchar *peer, const gchar *group, GPtrArray *before)
+{
+  JsonObject *synced = mdk_call(&driver, "\"cmd\":\"sync\",\"peer\":\"%s\",\"group\":\"%s\"",
+                                peer, group);
+  g_autofree gchar *text = mdk_json(synced);
+  g_test_message("MDK %s sync: %s", peer, text);
+  JsonArray *failed = json_object_get_array_member(synced, "failed");
+  for (guint i = 0; i < json_array_get_length(failed); i++) {
+    JsonObject *f = json_array_get_object_element(failed, i);
+    const gchar *id = json_object_get_string_member(f, "id");
+    gboolean pre_join = FALSE;
+    for (guint k = 0; k < before->len && !pre_join; k++)
+      pre_join = g_strcmp0(g_ptr_array_index(before, k), id) == 0;
+    if (!pre_join || !g_str_has_prefix(json_object_get_string_member(f, "outcome"),
+                                       "TransportDeferred"))
+      g_error("MDK %s failed on %s", peer, text);
+  }
+  return synced;
+}
+
+/* Groundhog (libmarmot) and MDK 0.11 in one adopted group, Commits both
+ * ways.  Groundhog cannot be invited into an adopted group yet (no adopted
+ * KeyPackage: producer OFF), so it creates the group (a test hook; it does
+ * not offer adopted groups to the user) and invites MDK. */
+static void
+test_adopted_commits(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage (her proof enrolled)");
+  accept_contact(alice, CAROL);
+  mdk_peer_engine_default("carol", CAROL);
+  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", "");
+  g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
+
+  /* Groundhog creates the adopted group with Carol (MDK). */
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *kps[] = { carol_kp, NULL };
+  OpWait created = { 0 };
+  gh_mls_service_test_create_adopted_group_async(alice->service, "Adopted by Groundhog", relays,
+                                                 kps, NULL, on_created, &created);
+  spin_until(op_done, &created, "the adopted group creation");
+  g_assert_no_error(created.error);
+  g_assert_nonnull(created.result);
+  GhMlsGroup *ga = created.result;
+  g_object_unref(ga);   /* the service keeps it */
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+  g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
+  g_assert_cmpuint(before_join->len, ==, 1);   /* the Add that admits Carol */
+  g_autoptr(JsonObject) joined = mdk_join(&w, "carol", ALICE, carol_kp_id);
+  const gchar *group = json_object_get_string_member(joined, "group");
+  g_assert_cmpstr(json_object_get_string_member(joined, "profile"), ==, "Current");
+  assert_gh_converged(ga, joined);
+
+  /* Messages both ways. */
+  send_accepted(alice, ga, "hello adopted mdk");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    g_assert_true(synced_message(synced, hex[ALICE], "hello adopted mdk"));
+  }
+  mdk_send("carol", group, "hello adopted groundhog");
+  wait_message(alice, room, "hello adopted groundhog");
+
+  /* Groundhog's Commits, MDK follows: a rename (0x8001), then Carol a
+   * co-admin (0x8003). */
+  {
+    OpWait renamed = { 0 };
+    gh_mls_service_update_metadata_async(alice->service, ga, "Renamed by Groundhog", NULL, NULL,
+                                         on_changed, &renamed);
+    change_done(&renamed);
+    OpWait admins = { 0 };
+    const gchar *both[] = { hex[ALICE], hex[CAROL], NULL };
+    gh_mls_service_set_admins_async(alice->service, ga, both, NULL, on_changed, &admins);
+    change_done(&admins);
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    assert_gh_converged(ga, sync_state(synced));
+    g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "Renamed by Groundhog");
+  }
+
+  /* MDK's Commits, Groundhog follows: a rename, then a self-update. */
+  {
+    g_autoptr(JsonObject) renamed = mdk_call(&driver,
+      "\"cmd\":\"update_group_data\",\"peer\":\"carol\",\"group\":\"%s\","
+      "\"name\":\"Renamed by MDK\"", group);
+    wait_name(ga, "Renamed by MDK");
+    assert_gh_converged(ga, renamed);
+    g_autoptr(JsonObject) updated = mdk_call(&driver,
+      "\"cmd\":\"self_update\",\"peer\":\"carol\",\"group\":\"%s\"", group);
+    wait_epoch(ga, (gint)state_epoch(updated));
+    assert_gh_converged(ga, updated);
+  }
+
+  /* Messages after the Commits, both ways. */
+  mdk_send("carol", group, "mdk after the commits");
+  wait_message(alice, room, "mdk after the commits");
+  send_accepted(alice, ga, "groundhog after the commits");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    g_assert_true(synced_message(synced, hex[ALICE], "groundhog after the commits"));
+  }
+
+  /* Groundhog removes Carol, an admin: her key leaves 0x8003 in the same
+   * Commit (admin-policy-v1.md), which MDK accepts. */
+  {
+    OpWait removed = { 0 };
+    const gchar *carol_only[] = { hex[CAROL], NULL };
+    gh_mls_service_remove_members_async(alice->service, ga, carol_only, NULL, on_changed,
+                                        &removed);
+    change_done(&removed);
+    g_auto(GStrv) admins = gh_mls_group_dup_admins(ga);
+    g_assert_cmpuint(g_strv_length(admins), ==, 1);
+    g_assert_cmpstr(admins[0], ==, hex[ALICE]);
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    JsonObject *state = sync_state(synced);
+    g_test_message("MDK after Groundhog removed it: removed %d, epoch %" G_GINT64_FORMAT
+                   " (Groundhog %" G_GUINT64_FORMAT ")",
+                   json_object_get_boolean_member(state, "removed"),
+                   json_object_get_int_member(state, "epoch"), gh_mls_group_get_epoch(ga));
+    g_assert_true(json_object_get_boolean_member(state, "removed"));
+  }
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 /* ---- MDK 0.9.0, expected incompatible ------------------------------------------------ */
 
 static void
@@ -944,6 +1171,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/mdk-invites-groundhog", test_mdk_invites_groundhog);
   g_test_add_func("/groundhog/mdk011-interop/adopted-welcome", test_adopted_welcome);
   g_test_add_func("/groundhog/mdk011-interop/white-noise-welcome", test_white_noise_welcome);
+  g_test_add_func("/groundhog/mdk011-interop/adopted-commits", test_adopted_commits);
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);
   gint rc = g_test_run();
   mls_world_finish();

@@ -579,6 +579,19 @@ guint gh_mls_service_test_rate_retries(void);
  * how many Commits of members' leaves failed. */
 void gh_mls_service_test_refuse_rate(guint n);
 guint gh_mls_service_test_departure_failures(void);
+/* Test hook (nostrc-qp24.5.1.3): an adopted-profile group (libmarmot
+ * marmot_create_group_for_profile(), the account's enrolled proof) named
+ * `name` on `relays`, inviting the authors of `key_package_events` (signed
+ * adopted kind-30443 JSON, no lookup), created and published as
+ * gh_mls_service_create_group_async() makes a legacy group; finish with
+ * gh_mls_service_create_group_finish().  Groundhog does not offer adopted
+ * groups to the user yet (the adopted KeyPackage producer is off). */
+void gh_mls_service_test_create_adopted_group_async(GhMlsService *self, const gchar *name,
+                                                   const gchar *const *relays,
+                                                   const gchar *const *key_package_events,
+                                                   GCancellable *cancellable,
+                                                   GAsyncReadyCallback callback,
+                                                   gpointer user_data);
 #endif
 const gchar *gh_mls_service_get_account(GhMlsService *self);
 /* libmarmot, for tests and diagnostics (borrowed; one thread). */

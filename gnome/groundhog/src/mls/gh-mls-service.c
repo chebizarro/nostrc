@@ -2393,6 +2393,7 @@ typedef struct {
   GStrv people;               /* invitees (create, add) or members (remove) */
   GPtrArray *key_packages;    /* the invitees' selected kind-30443 JSON */
   GArray *keys;               /* 32-byte accounts: members (remove) or admins (metadata) */
+  gboolean adopted;           /* create: an adopted-profile group (test hook) */
   guint rate_retries;         /* stagings libmarmot refused with MARMOT_ERR_EVENT_RATE */
   guint lookups;              /* in flight */
   GError *error;              /* the first lookup failure */
@@ -3230,8 +3231,11 @@ create_group_now(GTask *task)
   }
   /* The account alone first (applied at once: nobody else sees it); the
    * invitees join through one published Add Commit. */
-  MarmotError err = marmot_create_group(self->marmot, self->account_key, NULL, 0, &config,
-                                        &created);
+  MarmotError err = op->adopted
+    ? marmot_create_group_for_profile(self->marmot, MARMOT_GROUP_PROFILE_ADOPTED,
+                                      self->account_key, NULL, NULL, NULL, NULL, 0, &config,
+                                      &created)
+    : marmot_create_group(self->marmot, self->account_key, NULL, 0, &config, &created);
   if (err == MARMOT_OK)
     err = marmot_merge_pending_commit(self->marmot, &created.group->mls_group_id);
   g_autofree gchar *gid_hex = err == MARMOT_OK
@@ -3308,6 +3312,33 @@ gh_mls_service_create_group_async(GhMlsService *self, const gchar *name,
   op->people = lowercase_unique(invitees);
   look_up_invitees(task);
 }
+
+#ifdef GH_MLS_TEST_HOOKS
+void
+gh_mls_service_test_create_adopted_group_async(GhMlsService *self, const gchar *name,
+                                               const gchar *const *relays,
+                                               const gchar *const *key_package_events,
+                                               GCancellable *cancellable,
+                                               GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  GTask *task = op_task(self, OP_CREATE, NULL, cancellable, callback, user_data,
+                        gh_mls_service_create_group_async);
+  Op *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!check_running(self, &error) || !relays_valid(relays, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  op->adopted = TRUE;
+  op->name = g_strdup(name);
+  op->relays = g_strdupv((gchar **)relays);
+  for (guint i = 0; key_package_events && key_package_events[i]; i++)
+    g_ptr_array_add(op->key_packages, g_strdup(key_package_events[i]));
+  create_group_now(task);
+}
+#endif
 
 GhMlsGroup *
 gh_mls_service_create_group_finish(GhMlsService *self, GAsyncResult *result, GError **error)

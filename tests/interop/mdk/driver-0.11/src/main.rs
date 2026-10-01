@@ -502,6 +502,13 @@ fn app_feature_registry() -> FeatureRegistry {
     registry
 }
 
+/// cgka-engine's default supported components (profile 0x8001, admin policy
+/// 0x8003, lifecycle 0x800c) plus Nostr routing 0x8004, which every
+/// Nostr-routed group requires: an MDK 0.11 engine as configured by default.
+fn engine_default_component_ids() -> Vec<u16> {
+    vec![0x8001, 0x8003, 0x8004, 0x800c]
+}
+
 fn supported_app_component_ids() -> Vec<u16> {
     let mut components = default_group_components();
     components.insert(GROUP_BLOSSOM_IMAGE_COMPONENT_ID);
@@ -874,9 +881,29 @@ impl Driver {
                     keys.public_key().to_bytes().to_vec(),
                     Box::new(transport_nostr_peeler::NostrMlsPeeler::new().with_welcome_signer(keys.clone())),
                 )
-                .account_identity_proof_signer(Arc::new(ProofSigner { keys: keys.clone() }))
-                .feature_registry(app_feature_registry())
-                .supported_app_components(supported_app_component_ids());
+                .account_identity_proof_signer(Arc::new(ProofSigner { keys: keys.clone() }));
+                // "config": "engine-default" (nostrc-qp24.5.1.3): cgka-engine's
+                // own defaults -- the empty feature registry and the default
+                // components (profile, admin policy, lifecycle) plus Nostr
+                // routing -- instead of White Noise's marmot-app configuration.
+                // Its groups require no SelfRemove, agent stream or media v2.
+                let engine_default = match req.get("config") {
+                    None => false,
+                    Some(v) => match v.as_str() {
+                        Some("white-noise") => false,
+                        Some("engine-default") => true,
+                        _ => return Err(fail(INTERNAL, "'config' must be \"white-noise\" or \"engine-default\"")),
+                    },
+                };
+                let config = if engine_default {
+                    config
+                        .feature_registry(FeatureRegistry::new())
+                        .supported_app_components(engine_default_component_ids())
+                } else {
+                    config
+                        .feature_registry(app_feature_registry())
+                        .supported_app_components(supported_app_component_ids())
+                };
                 let session = AccountDeviceSession::open(config).map_err(engine_fail("session open"))?;
                 let slot = hex::encode(Keys::generate().secret_key().to_secret_bytes());
                 let client = match req.get("client") {
