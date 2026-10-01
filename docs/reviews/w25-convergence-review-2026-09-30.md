@@ -618,3 +618,214 @@ rather than the whole record.
    plaintext.
 
 File both as beads.
+
+---
+
+## Final addendum (2026-10-01): N1–N3 and the port onto K, M and L
+
+- **Branch:** `marmot/w25-convergence`, tip `29b49029`, on local master
+  `d2c04cdd` (slices K, M and L).
+- **New commits:**
+  - `920017d7`: port off K's removed test hook
+  - `7128c8d8`: libmarmot N3, and the aging fuzz as a test
+  - `17afc5fe`: Groundhog N1 and N2
+  - `b6ceef61`, `7ba434f7`, `29b49029`: docs
+- **Renumbering:** `MARMOT_ERR_RESOURCE_REFUSED` is now -55 and
+  `MARMOT_ERR_COMMIT_RETAINED` -56. The previous addendum's "-55" for
+  `COMMIT_RETAINED` predates this. The store migration is schema 6.
+- This review branch is rebased onto `29b49029`.
+
+### Verdict: APPROVE-WITH-NITS
+
+N1, N2 and N3 are fixed, each confirmed by my own probes and by a mutation
+that makes its new test fail. The port onto K, M and L is clean, textually and
+semantically.
+
+The two conditions I set for enabling encrypted groups (N1 and N2) are met.
+What remains are nits and one P4 bead, nostrc-as6q, which should be raised to
+P3 (see "Remaining").
+
+### What I ran
+
+| Check | Result |
+| --- | --- |
+| Build | OK |
+| `ctest -R "marmot\|groundhog"`, MDK interop excluded, `-j6` | 102 tests: 101 pass, 1 fails (see below) |
+| macOS ASan+UBSan: `test_commits`, `test_adopted_commits`, `test_protocol`, `test_storage`, `test_storage_contract` | All pass, no reports |
+| `scripts/linux-gate.sh --sanitizers` | Pass, 53 tests |
+| `check-unsequenced-args.py` | Clean |
+| MDK 0.11 matrix (driver image rebuilt from this tree's `driver-0.11`, which K and L changed) | 11/11 pass, `concurrent-commits` in 12.4 s |
+| Docker volumes | None created |
+
+- **The ctest failure.** `groundhog-mls-kp-lifecycle-adopted`
+  (`legacy-switched-off`: "no MDK 0.8 KeyPackage left on the relays did not
+  happen within 90 s") failed once under that load.
+  - Alone it passes 3/3 (40–54 s).
+  - It also passes in the sanitizer gate, whose list includes it.
+  - It is slice K's test, and the branch touches no KeyPackage-lifecycle file.
+  - It is a load-sensitive wait, not this branch. File it as a flake.
+- **The MDK matrix.** The cases that used to assert refusals now pass for real
+  (no skips), since K publishes adopted KeyPackages.
+
+The probes are not committed. Their diff is kept outside the tree as
+`/tmp/rv-w25-conv3-probes.diff`.
+
+### The port: `git range-diff 543ca0b6..013f4484 d2c04cdd..b4a12904`
+
+All eight reviewed commits map one-to-one. The only "changed" one is the
+manifest commit, whose rows were rewritten around master's.
+
+**No convergence code moved.** Every difference is context or the error
+renumbering. No hunk of `commits.c`, `convergence.c`, `convergence.h` or
+`messages.c` differs. I then checked the semantics of each slice:
+
+- **K:**
+  - K took -54 (`MARMOT_ERR_KEY_PACKAGE_CAPABILITIES`). The codes -53 to -56
+    are unique in `marmot-error.h`, and the README and manifest agree.
+  - K removed `gh_mls_service_test_create_adopted_group_async`. `920017d7`
+    now has `concurrent-commits` publish Alice's adopted KeyPackage on her
+    write relay, create the group through `gh_mls_service_create_group_async`
+    (New Group's real path, as `adopted-commits` does), and assert the group is
+    adopted. That is stronger than the hook.
+- **M:**
+  - M's producers (SelfRemove requirement, routing) and L's (`0x800b` media
+    policy, `0x8002`/`0x8007` image) all end in `finish_adopted_commit` →
+    `finish_local_commit` → `marmot_commit_stage_pending` with the Commit
+    bytes. `pending_apply` persists them through `marmot_commit_persist_ex`, so
+    a reorg still demotes our own Commits as candidates instead of dropping
+    them. No producer bypasses this tail.
+  - A reorg that undoes a routing rotation still reports `routing_changed`
+    from `conv_install`, so M's follow logic applies. The MDK
+    `routing-rotation` case passes.
+- **L:**
+  - L took store schema 5, so N's scrub is schema 6. A static assert ties the
+    migration count to `GH_STORE_SCHEMA_VERSION`.
+  - The resolutions in `gh-message.c` and `gh-message-row.c` keep a withdrawn
+    message's attachment cards, files and file count out of the row and out of
+    its accessible summary. The MDK `white-noise-media` case passes.
+
+### N1 (held-event aging): fixed
+
+- **Change** (`gh-mls-service.c`, `GH_MLS_SERVICE_JUNK_AFTER_EPOCHS` = 6): an
+  event is dropped only once the group's epoch is 6 past the epoch it was held
+  at. `junk_ids` now only suppresses the decrypt-pending notice: an aged-out
+  event fetched again is held again (`process_event`, `aged`).
+- **My fuzzer, rerun** with this exact rule: newest-first plus 3000 seeded
+  shuffles of the whole 12-event capture, Groundhog's retry policy,
+  `COMMIT_RETAINED` and `RESOURCE_REFUSED` included.
+
+  | Aging threshold | Aged events refetched? | Wrong branch | Lost a converged-path message |
+  | --- | --- | --- | --- |
+  | 6 epochs (shipped) | no | 0/3001 | 0/3001 |
+  | 3 epochs | no | 896 | 1348 |
+  | 2 epochs | no | 1562 | 2032 |
+  | any | yes (ideal refetch) | 0 | 0 |
+
+  The 3-epoch row matches the author's 883 and 1347 with another seed. The
+  "yes" row shows that refetch is the fallback, but the horizon threshold is
+  what protects convergence input when no refetch happens.
+- **Limitation.** The capture spans only 5 epochs, so the 6-epoch threshold
+  never fires within it. That is the point of horizon-based aging: inside the
+  rollback horizon, nothing ages out. But the boundary itself is argued from
+  `max_rewind_commits`, not exercised by a vector.
+- **Mutations.**
+  - Threshold set to 2: `branch-event-outlives-commits` fails ("unreadable == 0,
+    want 2"), as does `commit-before-proposal`.
+  - Aged events not re-held: `decrypt-pending-honest` fails.
+
+### N2 (no plaintext in libmarmot's message rows): fixed
+
+- **Design.** `ghm_save_message` keeps only the ids, group, epoch, state,
+  times and kind, with the inner event's canonical id in place of the content
+  (`message_record_content`). It drops tags and the kind:445, and zeroes the
+  author.
+  - I checked what reads these rows back. libmarmot uses only existence
+    (`find_message_by_id` for duplicates) and id, epoch and state
+    (`invalidate_messages`). Groundhog uses the stored content only as the
+    inner id (`withdrawn_messages`). marmot-gobject never runs on
+    GhStoreMarmot.
+  - The plaintext now lives only in the conversation store, which expiry,
+    retention and forget purge.
+- **Canary scans** (`groundhog-privacy-mls`). They decrypt every page of
+  `store.db` and every WAL frame with the store key, after a restart, with
+  positive controls. They cover:
+  - disappearing-message expiry (received; Groundhog itself sends no expiring
+    messages);
+  - the retention window, sent and received;
+  - forget conversation, sent and received;
+  - leaving the group and then forgetting it, sent and received.
+
+  That covers expiry, retention, forget and leave. Mutation: storing the full
+  content again makes `purged-text-leaves-the-store` fail.
+- **Schema 6 scrub, on disk** (my own probe). The `v6-scrubs-messages` test
+  checks rows through SQL only, so I added a probe:
+  - Setup: a short canary, a canary in tags, and a long canary spanning an
+    overflow page, all in a schema-5 row; then the store is migrated and
+    closed.
+  - Method: I decrypted every page independently (`openssl`, AES-256-CBC with
+    the raw store key; page 1 decrypts to a valid SQLite header).
+  - Before migration the canaries sit on pages 35 and 56 (56 is the overflow
+    page). Afterwards they are on no page. SQLCipher's `secure_delete`
+    zeroes the freed overflow page, and closing removes the WAL.
+- **Withdrawal with only inner ids: yes.**
+  - libmarmot reports the withdrawn kind:445 ids. `withdrawn_messages` maps
+    each stored row's content (the inner id) to the conversation message.
+  - Both sides derive the same canonical id. libmarmot's `check_inner_author`
+    computes it. Groundhog's `gh_message_new_from_mls` and
+    `message_record_content` both validate a present `id` field, or compute it
+    when absent.
+  - An inner event whose `id` field lies is never shown, so there is nothing
+    to withdraw.
+  - Tests: `conflict-withdraws-messages` (reader and sender, restart) and the
+    MDK `concurrent-commits` round 3 assertion both pass.
+
+**nostrc-as6q (P4): the scrubbed rows still outlive forget, leave and
+retention.** The bead describes them as activity metadata. One property is
+missing from its description: an inner event id is SHA-256 over
+`[0, pubkey, created_at, kind, tags, content]`. With the group's few members
+as candidate authors, the row's time and kind, and empty tags for plain text,
+the id is a confirmation oracle. Whoever holds the store key can recover a
+*purged* short message ("ok", "yes", "at 5") by guessing.
+
+The same oracle already exists in `mls_processed_messages`, whose
+`message_event_id` is kept indefinitely, so this is not new to the branch.
+Recommendations:
+- Raise as6q to P3.
+- Delete a group's `mls_messages` rows at forget and group end, and rows older
+  than `tip − max_rewind_commits`.
+- Treat `mls_processed_messages` the same way past the retention horizon.
+
+### N3 (late messages no longer drop the branch cache): fixed
+
+- **Change** (`branch_cache_key`). The key covers the group, the tip
+  (epoch and confirmed transcript hash), each retained entry (epoch,
+  confirmed transcript hash, Commit digest, own, reader) and each candidate
+  (source epoch, digest, parent hint, own). Those are what the rebuilt tree
+  depends on. Witnesses and ratchet progress are out, so a late message no
+  longer forces a rebuild.
+- **Freshness.** The leaf shortcut reads the record as stored now, so
+  witnesses are current.
+- **Mutation:** dropping the cache on every late message makes
+  `test_held_branch_message_cost_bounded` fail ("after a late message: nothing
+  rebuilt").
+- **Memory nit, fixed.** The cache is now freed when the tip moves, at a
+  reorg, at an eviction, and when the candidate set changes. Rebuilt states
+  the record no longer retains don't linger.
+
+### Remaining (nits, none blocking)
+
+1. **nostrc-as6q:** as above; raise to P3 and note the confirmation oracle.
+2. **Schema-6 rows without an id.** A pre-v6 row whose inner JSON has no `id`
+   field gets NULL content. If a reorg within 5 epochs of the upgrade
+   withdraws that message, it is not marked. This only matters at upgrade
+   time, and the encrypted-groups flag is still off.
+3. **Aging edge.** An event held 6 or more epochs before its branch's own
+   parent arrives can still age out while that branch is eligible (fork
+   ≥ tip − 5). It is held again if fetched again. Acceptable: such an event is
+   undecryptable, so its own epoch is unknowable.
+4. **WAL residue.** Between a purge and the next checkpoint, old page images
+   remain in WAL frames (encrypted). The canary scans run after a restart. A
+   `wal_checkpoint(TRUNCATE)` after `gh_store_purge` and forget would close
+   that window.
+5. **Flake.** File `groundhog-mls-kp-lifecycle-adopted`'s 90 s wait as
+   load-sensitive.
