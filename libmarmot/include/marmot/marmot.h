@@ -25,6 +25,7 @@
 #include "marmot-types.h"
 #include "marmot-storage.h"
 #include "marmot-media.h"
+#include "marmot-group-profile.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -320,25 +321,27 @@ MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
  *   app-components/account-identity-proof-v2.md). Content is base64 of an
  *   MLSMessage (wire_format mls_key_package) whose KeyPackageRef is still
  *   computed over the inner KeyPackage; no `encoding` or `relays` tags; an
- *   `app_components` id-list tag including `0x8009`; LeafNode capabilities
+ *   `app_components` id-list tag listing exactly the leaf's private-use
+ *   (>= 0x8000) components, including `0x8009`; LeafNode capabilities
  *   advertise app_data_dictionary (0x0006) and app_data_update (0x0008);
  *   the LeafNode's app_data_dictionary carries app_components
- *   [0x0001, 0x8009], safe_aad [] and the 104-byte
+ *   [0x0001, 0x8001, 0x8003, 0x8004, 0x8009, 0x800c] (since 0.12.0: the
+ *   adopted components libmarmot supports, which an MDK 0.11 inviter
+ *   requires), safe_aad [] and the 104-byte
  *   marmot.member.account-identity-proof.v2 signed by the Nostr account key
  *   over the leaf's MLS signature key; last-resort status is the empty
  *   `last_resort_key_package` (0x0004) entry of a KeyPackage-level
  *   app_data_dictionary; the Lifetime is current and spans at most
  *   7,261,200 s.
  *
- *   EXPERIMENTAL: this covers KeyPackage production, validation and
- *   selection only. libmarmot's group engine still implements the MDK 0.8
- *   group profile (0xf2ee group data, no AppDataUpdate / app-component
- *   group state), and a published ADOPTED KeyPackage would promise remote
- *   inviters that behaviour. Producing one therefore needs the build
- *   option MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER (CMake; meson
- *   `adopted_key_package_producer`), OFF by default, until the engine
- *   supports adopted-profile groups (Groundhog W2). Validation and
- *   selection are always available.
+ *   EXPERIMENTAL: since 0.12.0 libmarmot admits and creates adopted-profile
+ *   groups (marmot_create_group_for_profile()), but cannot yet process
+ *   their Commits (AppDataUpdate, membership changes), and a published
+ *   ADOPTED KeyPackage would promise remote inviters that it can.
+ *   Producing one therefore needs the build option
+ *   MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER (CMake; meson
+ *   `adopted_key_package_producer`), OFF by default, until it does
+ *   (Groundhog W2). Validation and selection are always available.
  *
  * Which kind:30443 profile to produce or accept.
  */
@@ -492,6 +495,91 @@ MarmotError marmot_create_group(Marmot *m,
                                  const char **key_package_event_jsons, size_t kp_count,
                                  const MarmotGroupConfig *config,
                                  MarmotCreateGroupResult *result);
+
+/**
+ * marmot_create_group_for_profile:
+ * @m: Marmot instance
+ * @profile: the wire profile of the new group
+ * @creator_pubkey: (array fixed-size=32): creator's Nostr public key
+ * @creator_sk: (array fixed-size=32) (nullable): the creator's account
+ *   secret key, used only to sign the creator leaf's account proof
+ * @account_sign: (scope call) (nullable): signs the creator leaf's account
+ *   proof when @creator_sk is NULL (see #MarmotAccountSignFunc); called
+ *   synchronously, at most once
+ * @sign_data: (closure account_sign): user data for @account_sign
+ * @key_package_event_jsons: (array length=kp_count): signed kind:30443
+ *   events, one per invitee
+ * @kp_count: number of invitees
+ * @config: name, description, extra admins and relays
+ * @result: (out): the group, one welcome rumor per invitee, the evolution
+ *   event
+ *
+ * marmot_create_group() with a selectable profile.
+ *
+ * %MARMOT_GROUP_PROFILE_LEGACY is exactly marmot_create_group(); @creator_sk
+ * and @account_sign must be NULL (the creator leaf carries the enrolled
+ * proof).
+ *
+ * %MARMOT_GROUP_PROFILE_ADOPTED creates a group of the adopted Marmot
+ * specification (MDK 0.11; protocol-core/group-setup.md) -- since 0.12.0:
+ * - GroupContext: required_capabilities {extensions [0x0006], proposals
+ *   [0x0008]} and an app_data_dictionary whose app_components require
+ *   0x8001 (profile: @config name and description), 0x8003 (admin policy:
+ *   the creator plus @config admins, each of whom must be the creator or
+ *   an invitee), 0x8004 (Nostr routing: a random nostr_group_id and the
+ *   @config relays, 1 to 16 ws/wss URLs, sorted and deduplicated), 0x8009
+ *   and 0x800c (lifecycle: active).
+ * - Creator leaf: capabilities [0x0006] / [0x0008] and the account proof
+ *   (marmot.member.account-identity-proof.v2) over this instance's MLS
+ *   signature key, signed now by @creator_sk or through @account_sign;
+ *   with neither, the proof this instance was enrolled with for
+ *   @creator_pubkey (marmot_set_account_proof()), else
+ *   %MARMOT_ERR_KEY_PACKAGE_IDENTITY.
+ * - Invitees: KeyPackages valid under %MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+ *   whose leaves advertise every required component and capability
+ *   (%MARMOT_ERR_KEY_PACKAGE otherwise).
+ * - Welcome rumors follow the adopted Nostr binding: content base64
+ *   MLSMessage(mls_welcome), exactly one `e` (KeyPackage event id) and one
+ *   `relays` tag, no `encoding` tag and no cleartext group preview.
+ * The group is stored like marmot_create_group()'s; its profile is
+ * persisted (marmot_get_group_profile()).
+ *
+ * Adopted groups are admitted, stored and loaded, and can exchange
+ * application messages; libmarmot does not yet process or produce Commits
+ * in them (AppDataUpdate, adds, removals, self-updates): those fail with
+ * %MARMOT_ERR_UNSUPPORTED and leave the group unchanged.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG (bad arguments or config);
+ *   MARMOT_ERR_KEY_PACKAGE_IDENTITY; MARMOT_ERR_KEY_PACKAGE; KeyPackage
+ *   validation errors; storage errors
+ */
+MarmotError marmot_create_group_for_profile(Marmot *m,
+                                             MarmotGroupProfile profile,
+                                             const uint8_t creator_pubkey[32],
+                                             const uint8_t creator_sk[32],
+                                             MarmotAccountSignFunc account_sign,
+                                             void *sign_data,
+                                             const char **key_package_event_jsons,
+                                             size_t kp_count,
+                                             const MarmotGroupConfig *config,
+                                             MarmotCreateGroupResult *result);
+
+/**
+ * marmot_get_group_profile:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ * @out_profile: (out): its wire profile
+ *
+ * The profile a stored group was created or joined under (persisted with
+ * its MLS state; groups stored before 0.12.0 are
+ * %MARMOT_GROUP_PROFILE_LEGACY).  Since 0.12.0.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_GROUP_NOT_FOUND; MARMOT_ERR_DESERIALIZATION
+ *   for a stored state that no longer validates
+ */
+MarmotError marmot_get_group_profile(Marmot *m,
+                                      const MarmotGroupId *mls_group_id,
+                                      MarmotGroupProfile *out_profile);
 
 /**
  * marmot_merge_pending_commit:

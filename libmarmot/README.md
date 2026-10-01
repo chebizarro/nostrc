@@ -284,10 +284,136 @@ What does not hold yet:
   Commit that references them, and SelfRemove both ways is tested live
   (`mdk-member-leaves`, `groundhog-leaves`). Other proposal types of MDK's
   are kept, but only departures are committed by libmarmot.
-- **The adopted profile.** MDK 0.9 and later use it; libmarmot does not speak
-  it yet (nostrc-qp24.5.1).
+- **The adopted profile.** Since 0.12.0 libmarmot admits and creates
+  adopted-profile groups, but cannot yet follow their Commits and refuses
+  every White Noise group: see below.
+
+## Adopted profile (MDK 0.11)
+
+The adopted Marmot specification (marmot-protocol/marmot `07da8ff`) is what
+MDK 0.9 and later, and every current White Noise build (MDK 0.11.0), speak.
+Its groups carry their state in MLS app components: `required_capabilities`
+plus an `app_data_dictionary` GroupContext, and an account-identity proof
+(`0x8009`) in every member leaf. A group's profile is fixed when it is
+created or joined, stored with its MLS state (`marmot_get_group_profile()`),
+and never changed: there is no automatic fallback between profiles on a
+parse, cryptographic or authorization failure.
+
+**Status in 0.12.0: admission and creation only.** Honestly:
+
+| | Adopted groups |
+| --- | --- |
+| Join (Welcome) a group created by MDK 0.11 | **Yes**: real MDK v0.11.0 `cgka-engine` Welcome, `tests/test_adopted.c` |
+| Create a group MDK 0.11 joins | **Yes**: `marmot_create_group_for_profile()`; MDK v0.11.0 joined it (one manual run with a throwaway MDK driver, recorded in `tests/vectors/mdk-0.11/README.md`; not in CI) |
+| Persist, load, clone | **Yes**, re-validated on every load (serial format 4) |
+| Application messages (kind:445) | Between libmarmot members, yes; with MDK not yet tested |
+| **White Noise groups** | **Refused** (`MARMOT_ERR_UNSUPPORTED`): marmot-app requires SelfRemove (`0x000a`), agent text stream (`0x8006`, receive role `0xf2d1`) and encrypted media v2 (`0x800b`) of every group, none of which libmarmot implements yet |
+| Commits (AppDataUpdate, Add, Remove, Update, self-update) | **Refused** (`MARMOT_ERR_UNSUPPORTED`), ours and others' (nostrc-qp24.5): a member falls behind at the group's first Commit |
+| Publishing adopted KeyPackages | **Off**: `MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER` stays OFF by default, so peers cannot invite libmarmot into adopted groups yet |
+| MDK 0.9.x groups (`0xf2f1` proof v1) | Refused (mixed or unsupported profile) |
+
+So Groundhog still cannot talk to current White Noise users: this release
+is the admission engine the remaining work (Commits, SelfRemove, the agent
+stream receive role, media v2) builds on.
+
+What is checked, everywhere a group is created, joined, loaded or cloned
+(`src/mls/mls_app_components.c`, `src/adopted.c`):
+
+- **GroupContext.** Exactly `required_capabilities` and
+  `app_data_dictionary`, each once, canonically encoded (minimal varints,
+  exact lengths, no trailing bytes). Required: extension `0x0006`, proposal
+  `0x0008`; anything else required must be an RFC 9420 default or is
+  refused as unsupported. The dictionary's entries are strictly ascending;
+  `app_components` is a sorted, unique list requiring `0x8003` (admin
+  policy) and `0x8009` (account proof), and libmarmot also needs `0x8004`
+  (Nostr routing). Every required component must be one libmarmot
+  supports (`0x8001` profile, `0x8003`, `0x8004`, `0x8009`, `0x800c`
+  lifecycle) and have its state; each state is validated (UTF-8 and length
+  bounds, sorted unique admin keys, 1-16 sorted unique relay URLs of the
+  Nostr relay URL profile, lifecycle `active`). `0x8009` state in the
+  GroupContext, `safe_aad` framing, frozen media v1 and any legacy marker
+  (`0xf2ee` group data, `0xf2f1` proof v1: a mixed group) are refused.
+  Components nobody requires are kept byte for byte and not interpreted.
+- **Members.** Every leaf: a 32-byte basic credential; capabilities covering
+  the required ones; exactly one LeafNode extension, a canonical
+  `app_data_dictionary` advertising every required component; exactly one
+  104-byte `0x8009` proof naming its own account; on a Welcome, every leaf
+  signature and every proof's BIP-340 signature verifies; every admin is a
+  member of every epoch the group enters; the inviter (GroupInfo signer) is
+  an admin, and the Welcome's Nostr sender (seal author) is that inviter's
+  account.
+- **Welcome rumor.** Content base64 of `MLSMessage(mls_welcome)` with no
+  `encoding` tag (the adopted binding), exactly one `e` and one `relays`
+  tag; cleartext preview tags are ignored (the adopted binding has none).
+  Such a Welcome is opened and checked when it arrives
+  (`marmot_process_welcome()`): one libmarmot cannot join (not for its
+  KeyPackages, unsupported, invalid) is refused there with its reason and
+  never listed as an invitation; one it can join is listed with the group's
+  signed name, description, admins and member count.
+- **Profile.** A group is adopted exactly when its GroupContext carries an
+  `app_data_dictionary` extension (what libmarmot refused before 0.12.0);
+  everything else keeps the legacy rules.
+
+Creation: `marmot_create_group_for_profile(m, MARMOT_GROUP_PROFILE_ADOPTED,
+...)` signs the creator leaf's account proof with the account secret key or
+through a `MarmotAccountSignFunc` (e.g. a D-Bus signer), or uses the proof
+the instance was enrolled with; invitees must present adopted-profile
+KeyPackages advertising every required component. The GroupContext requires
+`0x8001`, `0x8003`, `0x8004`, `0x8009` and `0x800c` (as an MDK 0.11 creator
+does); the Welcome rumor carries only `e` and `relays`.
+
+Fixtures: `tests/vectors/mdk-0.11/` (real MDK v0.11.0 and pinned-OpenMLS
+captures, with provenance).
 
 ## Changelog
+
+### 0.12.0 (unreleased): adopted-profile admission and creation (nostrc-qp24.5.1, nostrc-qp24.5.1.1)
+
+**New API** (MINOR): `marmot_create_group_for_profile()`,
+`marmot_get_group_profile()`, `MarmotGroupProfile`
+(`<marmot/marmot-group-profile.h>`, included by `marmot.h`). See "Adopted
+profile (MDK 0.11)" above.
+
+#### What changed
+
+- **Adopted groups are admitted, created, stored and loaded** instead of
+  being refused wholesale (before, any GroupContext `app_data_dictionary`
+  was `MARMOT_ERR_UNSUPPORTED` at the MLS layer and `MARMOT_ERR_MLS` from
+  `marmot_accept_welcome()`). A Welcome is now refused with a specific
+  error: `MARMOT_ERR_UNSUPPORTED` (a requirement libmarmot cannot honour,
+  e.g. every White Noise group), `MARMOT_ERR_EXTENSION_FORMAT` (malformed,
+  non-canonical, truncated, missing mandatory parts),
+  `MARMOT_ERR_VALIDATION` (mixed profile, a member without a proof or a
+  required capability, a disbanded group), `MARMOT_ERR_KEY_PACKAGE_IDENTITY`
+  (a proof that does not verify), `MARMOT_ERR_ADMIN_ONLY` (an inviter who
+  is not an admin), `MARMOT_ERR_AUTHOR_MISMATCH` (a Welcome wrapped by
+  another account than its inviter). An adopted Welcome is checked already
+  by `marmot_process_welcome()`, which returns these errors (and
+  `MARMOT_ERR_KEY_NOT_FOUND` for a Welcome to none of our KeyPackages) and
+  records the Welcome as failed, so it is never listed as an invitation. A Welcome with another ciphersuite is now refused as
+  `MARMOT_ERR_UNSUPPORTED` (was `MARMOT_ERR_MLS`).
+- **Commits in adopted groups are refused** (`MARMOT_ERR_UNSUPPORTED`):
+  `marmot_commit_authorize()` never judges them by the MIP-01 rules, under
+  which a group without GroupData would let any member commit.
+- **MLS state serial format 4**, written for adopted groups only: format 3
+  plus the profile byte. Legacy groups are still written as format 3, byte
+  for byte. Every load re-validates the profile's structural invariants.
+  0.11.0 cannot load a format-4 state.
+- **kind:444 rumors without an `encoding` tag** are read as base64 when
+  they decode to an MLSMessage Welcome (MDK 0.11 sends no `encoding` tag);
+  otherwise as hex, as before.
+- **Adopted KeyPackages** (producer still build-gated OFF) advertise the
+  components libmarmot supports (`0x8001 0x8003 0x8004 0x8009 0x800c`),
+  which an MDK 0.11 inviter requires, and their `app_components` tag lists
+  only private-use ids, as MDK publishes and requires; the validator
+  accepts MDK's events (it wrongly expected `0x0001` in the tag).
+- **The committer's UpdatePath leaf** keeps its group profile's
+  capabilities (an adopted leaf keeps advertising `0x0008`).
+
+#### Compatibility
+
+Legacy (MDK 0.8, `0xF2EE`) groups behave as in 0.11.0. Adopted states
+cannot be downgraded to 0.11.0.
 
 ### 0.12.0 (unreleased): standalone proposals and SelfRemove (nostrc-2um6)
 
@@ -1635,6 +1761,7 @@ tag cardinality". Tags and values match the MDK 0.8 events in
 | `test_media` | MIP-04 encrypt/decrypt, tamper detection | 11 |
 | `test_rfc9420_vectors` | RFC 9420 crypto validation (HKDF, Ed25519, AES-GCM, tree math) | 38 |
 | `test_interop` | MDK interoperability vectors, self-consistency | 9 |
+| `test_adopted` | Adopted-profile admission and creation against MDK v0.11.0 / OpenMLS captures | 14 |
 
 Run all tests:
 ```bash

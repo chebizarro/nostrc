@@ -15,6 +15,7 @@
  */
 
 #include "marmot-internal.h"
+#include "adopted.h"
 #include "kp_profile.h"
 #include "commits.h"
 #include "mls/mls_welcome.h"
@@ -103,6 +104,119 @@ extract_group_preview_from_tags(MarmotWelcome *welcome, NostrTags *tags)
             }
         }
     }
+}
+
+static bool
+is_lower_hex64(const char *s)
+{
+    if (!s || strlen(s) != 64) return false;
+    for (size_t i = 0; i < 64; i++)
+        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return false;
+    return true;
+}
+
+/* The MLS bytes of a kind:444 rumor's content: base64 when it is tagged
+ * `encoding` = `base64` (MDK 0.8 profile); with no `encoding` tag, base64 of
+ * an MLSMessage(mls_welcome) -- the adopted Nostr binding (transports/
+ * nostr.md "Welcome delivery", MDK 0.11), *adopted set -- or else hex (a
+ * pre-encoding rumor).  The two cannot be confused: base64 of an MLSMessage
+ * starts "AAEAAw", which is not hex (nostrc-qp24.5.1). */
+static uint8_t *
+decode_welcome_content(const char *content, NostrTags *tags, size_t *out_len, bool *adopted)
+{
+    *adopted = false;
+    bool has_encoding = false, is_base64 = false;
+    for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (nostr_tag_size(tag) >= 1 && strcmp(nostr_tag_get_key(tag), "encoding") == 0) {
+            has_encoding = true;
+            is_base64 = nostr_tag_size(tag) >= 2 &&
+                        strcmp(nostr_tag_get_value(tag), "base64") == 0;
+            break;
+        }
+    }
+    if (is_base64) return base64_decode(content, out_len);
+    if (!has_encoding) {
+        size_t len = 0;
+        uint8_t *data = base64_decode(content, &len);
+        if (data && len >= 4 && data[0] == 0x00 && data[1] == 0x01 && data[2] == 0x00 &&
+            data[3] == MLS_WIRE_FORMAT_WELCOME) {
+            *adopted = true;
+            *out_len = len;
+            return data;
+        }
+        free(data);
+    }
+    /* Hex decode (deprecated) */
+    size_t hex_len = strlen(content);
+    if (hex_len % 2 != 0) return NULL;
+    uint8_t *data = malloc(hex_len / 2 ? hex_len / 2 : 1);
+    if (data && marmot_hex_decode(content, data, hex_len / 2) != 0) {
+        free(data);
+        return NULL;
+    }
+    *out_len = hex_len / 2;
+    return data;
+}
+
+/* transports/nostr.md "Event identity and tag cardinality": an adopted
+ * kind:444 rumor has exactly one `e` tag with exactly one lowercase-hex
+ * event id, and exactly one `relays` tag with one or more distinct relay
+ * URLs of the relay URL profile. */
+static bool
+adopted_rumor_tags_valid(NostrTags *tags)
+{
+    size_t n_e = 0, n_relays = 0;
+    for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        const char *key = nostr_tag_size(tag) >= 1 ? nostr_tag_get_key(tag) : NULL;
+        if (!key) continue;
+        if (strcmp(key, "e") == 0) {
+            if (++n_e > 1 || nostr_tag_size(tag) != 2 ||
+                !is_lower_hex64(nostr_tag_get_value(tag)))
+                return false;
+        } else if (strcmp(key, "relays") == 0) {
+            if (++n_relays > 1 || nostr_tag_size(tag) < 2) return false;
+            for (size_t j = 1; j < nostr_tag_size(tag); j++) {
+                const char *url = nostr_tag_get(tag, j);
+                if (!url || !mls_relay_url_valid((const uint8_t *)url, strlen(url)))
+                    return false;
+                for (size_t k = 1; k < j; k++)
+                    if (strcmp(nostr_tag_get(tag, k), url) == 0) return false;
+            }
+        }
+    }
+    return n_e == 1 && n_relays == 1;
+}
+
+static MarmotError welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data,
+                                size_t len, MlsGroup *out, const char **reason);
+
+/* The invitation preview of an opened adopted Welcome, from the group's
+ * signed components (not from rumor tags). */
+static MarmotError
+adopted_preview(MarmotWelcome *welcome, const MlsGroup *g)
+{
+    MarmotGroup *group = NULL;
+    char **relays = NULL;
+    size_t n_relays = 0;
+    MarmotError err = marmot_adopted_group_from_mls(g, &group, &relays, &n_relays);
+    if (err != MARMOT_OK) return err;
+    marmot_adopted_relays_free(relays, n_relays);
+    memcpy(welcome->nostr_group_id, group->nostr_group_id, 32);
+    welcome->group_name = group->name;
+    welcome->group_description = group->description;
+    welcome->group_admin_pubkeys = group->admin_pubkeys;
+    welcome->group_admin_count = group->admin_count;
+    group->name = group->description = NULL;
+    group->admin_pubkeys = NULL;
+    group->admin_count = 0;
+    size_t members = 0;
+    for (uint32_t i = 0; i < g->tree.n_leaves; i++)
+        if (g->tree.nodes[mls_tree_leaf_to_node(i)].type == MLS_NODE_LEAF) members++;
+    welcome->member_count = members;
+    marmot_group_free(group);
+    return MARMOT_OK;
 }
 
 /* Record the Welcome as failed.  Before anything else was written that
@@ -250,6 +364,81 @@ welcome_tree_bound(const Marmot *m, const MlsGroup *g, uint32_t signer_leaf,
     return marmot_tree_members_bound(g, exempt, m->config.allow_unproven_members);
 }
 
+/*
+ * The record of a legacy-profile group joined from @mls.  MIP-01: every
+ * Marmot group carries exactly one marmot_group_data (0xF2EE), and the
+ * joiner verifies it (MIP-02, step 3). A group with none, several, or one
+ * that does not decode is refused (MARMOT_ERR_EXTENSION_FORMAT): it used to
+ * be joined without its nostr_group_id, name, relays and admins (nostrc-
+ * 7gx7: every MDK 0.8 Welcome, before 0.11.0 read MIP-01's encoding).
+ */
+static MarmotError
+legacy_group_from_mls(const MlsGroup *mls, MarmotGroup **out, char ***relays_out,
+                      size_t *relay_count_out)
+{
+    *out = NULL;
+    *relays_out = NULL;
+    *relay_count_out = 0;
+    MarmotGroupDataExtension *gde = NULL;
+    const uint8_t *gde_data = NULL;
+    size_t gde_data_len = 0, gde_count = 0;
+    if (marmot_extensions_find(mls->extensions_data, mls->extensions_len,
+                               MARMOT_EXTENSION_TYPE, &gde_data, &gde_data_len,
+                               &gde_count) == 0 &&
+        gde_count == 1)
+        gde = marmot_group_data_extension_deserialize(gde_data, gde_data_len);
+    if (!gde) return MARMOT_ERR_EXTENSION_FORMAT;
+
+    /* Create the MarmotGroup */
+    MarmotGroup *group = marmot_group_new();
+    if (!group) {
+        marmot_group_data_extension_free(gde);
+        return MARMOT_ERR_MEMORY;
+    }
+
+    group->mls_group_id = marmot_group_id_new(mls->group_id, mls->group_id_len);
+    group->epoch = mls->epoch;
+    group->state = MARMOT_GROUP_STATE_ACTIVE;
+
+    memcpy(group->nostr_group_id, gde->nostr_group_id, 32);
+    if (gde->name) group->name = strdup(gde->name);
+    if (gde->description) group->description = strdup(gde->description);
+
+    if (gde->admin_count > 0 && gde->admins) {
+        group->admin_count = gde->admin_count;
+        group->admin_pubkeys = malloc(gde->admin_count * 32);
+        if (group->admin_pubkeys)
+            memcpy(group->admin_pubkeys, gde->admins, gde->admin_count * 32);
+    }
+
+    if (gde->image_hash) {
+        group->image_hash = malloc(32);
+        if (group->image_hash) memcpy(group->image_hash, gde->image_hash, 32);
+    }
+    if (gde->image_key) {
+        group->image_key = malloc(32);
+        if (group->image_key) memcpy(group->image_key, gde->image_key, 32);
+    }
+    if (gde->image_nonce) {
+        group->image_nonce = malloc(12);
+        if (group->image_nonce) memcpy(group->image_nonce, gde->image_nonce, 12);
+    }
+
+    /* Extract relay URLs from gde before freeing */
+    if (gde->relay_count > 0 && gde->relays) {
+        char **relays = calloc(gde->relay_count, sizeof(char *));
+        if (relays) {
+            for (size_t i = 0; i < gde->relay_count; i++)
+                relays[i] = gde->relays[i] ? strdup(gde->relays[i]) : NULL;
+            *relays_out = relays;
+            *relay_count_out = gde->relay_count;
+        }
+    }
+    marmot_group_data_extension_free(gde);
+    *out = group;
+    return MARMOT_OK;
+}
+
 static MarmotError
 error_for_processed_welcome_state(int state)
 {
@@ -353,37 +542,18 @@ process_welcome_impl(Marmot *m,
         return MARMOT_ERR_DESERIALIZATION;
     }
 
-    /* Check encoding */
-    bool is_base64 = false;
-    if (rumor.tags) {
-        for (size_t i = 0; i < nostr_tags_size(rumor.tags); i++) {
-            NostrTag *tag = nostr_tags_get(rumor.tags, i);
-            if (nostr_tag_size(tag) >= 2 &&
-                strcmp(nostr_tag_get_key(tag), "encoding") == 0 &&
-                strcmp(nostr_tag_get_value(tag), "base64") == 0) {
-                is_base64 = true;
-                break;
-            }
-        }
-    }
-
     /* Decode content to MLS Welcome bytes */
-    uint8_t *welcome_data = NULL;
     size_t welcome_len = 0;
-
-    if (is_base64) {
-        welcome_data = base64_decode(rumor.content, &welcome_len);
-    } else {
-        /* Hex decode (deprecated) */
-        size_t hex_len = strlen(rumor.content);
-        if (hex_len % 2 == 0) {
-            welcome_len = hex_len / 2;
-            welcome_data = malloc(welcome_len);
-            if (welcome_data && marmot_hex_decode(rumor.content, welcome_data, welcome_len) != 0) {
-                free(welcome_data);
-                welcome_data = NULL;
-            }
-        }
+    bool adopted_rumor = false;
+    uint8_t *welcome_data = decode_welcome_content(rumor.content, rumor.tags, &welcome_len,
+                                                   &adopted_rumor);
+    if (welcome_data && adopted_rumor && !adopted_rumor_tags_valid(rumor.tags)) {
+        free(welcome_data);
+        free(rumor.id); free(rumor.pubkey); free(rumor.content);
+        free(rumor.sig); nostr_tags_free(rumor.tags);
+        record_welcome_failure(m, wrapper_event_id, "malformed adopted welcome rumor tags",
+                               true);
+        return MARMOT_ERR_VALIDATION;
     }
 
     /* Extract relay URLs from tags */
@@ -440,8 +610,43 @@ process_welcome_impl(Marmot *m,
     welcome->group_relays = relay_urls;
     welcome->group_relay_count = relay_count;
 
-    /* Extract cleartext preview info from rumor tags. */
-    extract_group_preview_from_tags(welcome, rumor.tags);
+    /* Extract cleartext preview info from rumor tags.  The adopted binding
+     * has no cleartext preview: such tags would be unauthenticated claims
+     * (nostrc-qp24.5.1), so an adopted rumor's group fields stay empty
+     * until the signed components are read on accept. */
+    if (adopted_rumor) {
+        memset(welcome->nostr_group_id, 0, 32);
+        welcome->group_name = NULL;
+        welcome->group_description = NULL;
+        welcome->member_count = 0;
+    } else {
+        extract_group_preview_from_tags(welcome, rumor.tags);
+    }
+
+    /* An adopted Welcome is opened now (nostrc-qp24.5.1): one libmarmot
+     * cannot join -- not for our KeyPackages, unsupported (every White Noise
+     * group, for now), invalid -- is refused here with its reason, instead
+     * of becoming an invitation that can only fail; one it can join shows
+     * its signed group profile. */
+    if (adopted_rumor) {
+        MlsGroup opened;
+        const char *why = NULL;
+        MarmotError oerr = welcome_open(m, welcome, welcome_data, welcome_len, &opened, &why);
+        if (oerr == MARMOT_OK) {
+            if (opened.profile == MARMOT_GROUP_PROFILE_ADOPTED)
+                oerr = adopted_preview(welcome, &opened);
+            mls_group_free(&opened);
+        }
+        if (oerr != MARMOT_OK) {
+            free(rumor.id); free(rumor.pubkey); free(rumor.content);
+            free(rumor.sig); nostr_tags_free(rumor.tags);
+            free(welcome_data);
+            marmot_welcome_free(welcome);
+            record_welcome_failure(m, wrapper_event_id, why ? why : marmot_error_string(oerr),
+                                   true);
+            return oerr;
+        }
+    }
 
     /* Free the rumor event after preview extraction */
     free(rumor.id); free(rumor.pubkey); free(rumor.content);
@@ -471,35 +676,21 @@ process_welcome_impl(Marmot *m,
     return MARMOT_OK;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
- * Public API: marmot_accept_welcome
- * ──────────────────────────────────────────────────────────────────────── */
-
+/*
+ * Open the MLS Welcome @data (len @len) of @welcome for one of our
+ * KeyPackages and admit the group it describes: decrypt and verify it
+ * (mls_welcome.c: for an adopted group also its GroupContext, members and
+ * leaf signatures), then bind every member to its account -- for an adopted
+ * group (nostrc-qp24.5.1) with no exemption, the inviter an admin, and the
+ * Welcome sent by that inviter.  On success *out is the joined state (caller
+ * frees); otherwise *reason names the failure.  Writes nothing.
+ */
 static MarmotError
-accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **out_group)
+welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_t len,
+             MlsGroup *out, const char **reason)
 {
-    if (out_group)
-        *out_group = NULL;
-    if (!m || !welcome)
-        return MARMOT_ERR_INVALID_ARG;
-    if (!m->storage || !m->storage->mls_load || !m->storage->mls_store ||
-        !m->storage->save_exporter_secret || !m->storage->save_group ||
-        !m->storage->save_welcome || !m->storage->save_processed_welcome)
-        return MARMOT_ERR_STORAGE;
-
-    /* Retrieve the raw MLS Welcome data from storage */
-    uint8_t *welcome_data = NULL;
-    size_t welcome_len = 0;
-    MarmotError load_err = m->storage->mls_load(m->storage->ctx, "welcome_data",
-                                                 welcome->wrapper_event_id, 32,
-                                                 &welcome_data, &welcome_len);
-    /* Only missing data is final: another storage error may be transient (a
-     * busy database), and the invitation stays pending (nostrc-w285). */
-    if (load_err == MARMOT_ERR_STORAGE_NOT_FOUND)
-        return refuse_welcome(m, welcome, "stored welcome data not found", load_err);
-    if (load_err != MARMOT_OK)
-        return load_err;
-
+    memset(out, 0, sizeof(*out));
+    *reason = NULL;
     /* We need to find which KeyPackage was used for this Welcome.
      * The MLS Welcome contains KeyPackageRef entries — we need to
      * match against our stored KeyPackage private keys. */
@@ -508,13 +699,12 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     MlsWelcome mls_welcome;
     memset(&mls_welcome, 0, sizeof(mls_welcome));
     MlsTlsReader reader;
-    mls_tls_reader_init(&reader, welcome_data, welcome_len);
+    mls_tls_reader_init(&reader, data, len);
 
     if (mls_welcome_deserialize(&reader, &mls_welcome) != 0) {
-        free(welcome_data);
-        return refuse_welcome(m, welcome, "MLS Welcome deserialize failed", MARMOT_ERR_MLS);
+        *reason = "MLS Welcome deserialize failed";
+        return MARMOT_ERR_MLS;
     }
-    free(welcome_data);
 
     /* Find our entry among the EncryptedGroupSecrets.  Only a definitive
      * not-found means "not our KeyPackage": any other storage error leaves
@@ -579,8 +769,8 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     if (!found) {
         mls_welcome_clear(&mls_welcome);
-        return refuse_welcome(m, welcome, "matching KeyPackage private key not found",
-                              MARMOT_ERR_KEY_NOT_FOUND);
+        *reason = "matching KeyPackage private key not found";
+        return MARMOT_ERR_KEY_NOT_FOUND;
     }
 
     /* Process the MLS Welcome to join the group */
@@ -594,17 +784,98 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     mls_key_package_clear(&matched_kp);
     sodium_memzero(&matched_priv, sizeof(matched_priv));
 
-    if (rc != 0)
-        return refuse_welcome(m, welcome, "MLS Welcome processing failed", MARMOT_ERR_MLS);
+    if (rc != 0) {
+        /* An adopted group libmarmot cannot honour, or whose GroupContext or
+         * members are malformed, is refused with that reason (nostrc-
+         * qp24.5.1); any other failure is the MLS layer's. */
+        switch (rc) {
+        case MARMOT_ERR_UNSUPPORTED:
+            *reason = "group requires something libmarmot does not support";
+            return MARMOT_ERR_UNSUPPORTED;
+        case MARMOT_ERR_EXTENSION_FORMAT:
+        case MARMOT_ERR_VALIDATION:
+            *reason = "invalid adopted group state";
+            return (MarmotError)rc;
+        default:
+            *reason = "MLS Welcome processing failed";
+            return MARMOT_ERR_MLS;
+        }
+    }
 
     /* Every member is who its credential says (nostrc-7vyi): otherwise
-     * nothing of the group is stored. */
-    MarmotError bind_err = welcome_tree_bound(m, &mls_group, signer_leaf, welcome);
+     * nothing of the group is stored.  An adopted group (nostrc-qp24.5.1)
+     * has no exemption and no legacy mode: every leaf carries a verified
+     * account proof, and the inviter -- the GroupInfo signer -- is an admin
+     * of the joined state (protocol-core/joining.md, admin-policy-v1.md). */
+    MarmotError bind_err;
+    const char *bind_reason = "member leaf without a valid account-identity proof";
+    if (mls_group.profile == MARMOT_GROUP_PROFILE_ADOPTED) {
+        bind_err = marmot_adopted_members_proven(&mls_group);
+        if (bind_err == MARMOT_OK && !marmot_adopted_leaf_is_admin(&mls_group, signer_leaf)) {
+            bind_err = MARMOT_ERR_ADMIN_ONLY;
+            bind_reason = "welcome not sent by an admin of the group";
+        }
+        /* The Nostr sender (seal author, or the rumor's) is that inviter's
+         * account: a Welcome re-wrapped by anyone else is refused. */
+        uint8_t sender[32], inviter[32];
+        if (bind_err == MARMOT_OK &&
+            (!welcome_sender(welcome, sender) ||
+             marmot_mls_sender_identity(&mls_group, signer_leaf, inviter) != 0 ||
+             sodium_memcmp(sender, inviter, 32) != 0)) {
+            bind_err = MARMOT_ERR_AUTHOR_MISMATCH;
+            bind_reason = "welcome not sent by its inviter";
+        }
+    } else {
+        bind_err = welcome_tree_bound(m, &mls_group, signer_leaf, welcome);
+    }
     if (bind_err != MARMOT_OK) {
         mls_group_free(&mls_group);
-        return refuse_welcome(m, welcome, "member leaf without a valid account-identity proof",
-                              bind_err);
+        *reason = bind_reason;
+        return bind_err;
     }
+    *out = mls_group;
+    return MARMOT_OK;
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Public API: marmot_accept_welcome
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static MarmotError
+accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **out_group)
+{
+    if (out_group)
+        *out_group = NULL;
+    if (!m || !welcome)
+        return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->mls_load || !m->storage->mls_store ||
+        !m->storage->save_exporter_secret || !m->storage->save_group ||
+        !m->storage->save_welcome || !m->storage->save_processed_welcome)
+        return MARMOT_ERR_STORAGE;
+
+    /* Retrieve the raw MLS Welcome data from storage */
+    uint8_t *welcome_data = NULL;
+    size_t welcome_len = 0;
+    MarmotError load_err = m->storage->mls_load(m->storage->ctx, "welcome_data",
+                                                 welcome->wrapper_event_id, 32,
+                                                 &welcome_data, &welcome_len);
+    /* Only missing data is final: another storage error may be transient (a
+     * busy database), and the invitation stays pending (nostrc-w285). */
+    if (load_err == MARMOT_ERR_STORAGE_NOT_FOUND)
+        return refuse_welcome(m, welcome, "stored welcome data not found", load_err);
+    if (load_err != MARMOT_OK)
+        return load_err;
+
+    MlsGroup mls_group;
+    const char *open_reason = NULL;
+    MarmotError open_err = welcome_open(m, welcome, welcome_data, welcome_len, &mls_group,
+                                        &open_reason);
+    free(welcome_data);
+    /* A failure without a reason is a storage error that may be transient:
+     * the invitation stays pending (nostrc-w285). */
+    if (open_err != MARMOT_OK)
+        return open_reason ? refuse_welcome(m, welcome, open_reason, open_err) : open_err;
 
     /* A duplicate Welcome for a group we already joined: keep our state
      * (it may be epochs ahead) and retire this copy as accepted. */
@@ -623,75 +894,24 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
         return MARMOT_ERR_WELCOME_ALREADY_ACCEPTED;
     }
 
-    /* MIP-01: every Marmot group carries exactly one marmot_group_data
-     * (0xF2EE), and the joiner verifies it (MIP-02, step 3). A group with
-     * none, several, or one that does not decode is refused: it used to be
-     * joined without its nostr_group_id, name, relays and admins (nostrc-7gx7:
-     * every MDK 0.8 Welcome, before 0.11.0 read MIP-01's encoding). */
-    MarmotGroupDataExtension *gde = NULL;
-    const uint8_t *gde_data = NULL;
-    size_t gde_data_len = 0, gde_count = 0;
-    if (marmot_extensions_find(mls_group.extensions_data, mls_group.extensions_len,
-                               MARMOT_EXTENSION_TYPE, &gde_data, &gde_data_len,
-                               &gde_count) == 0 &&
-        gde_count == 1)
-        gde = marmot_group_data_extension_deserialize(gde_data, gde_data_len);
-    if (!gde) {
-        mls_group_free(&mls_group);
-        return refuse_welcome(m, welcome, "missing or malformed marmot_group_data (0xF2EE)",
-                              MARMOT_ERR_EXTENSION_FORMAT);
-    }
-
-    /* Create the MarmotGroup */
-    MarmotGroup *group = marmot_group_new();
-    if (!group) {
-        mls_group_free(&mls_group);
-        marmot_group_data_extension_free(gde);
-        return MARMOT_ERR_MEMORY;
-    }
-
-    group->mls_group_id = marmot_group_id_new(mls_group.group_id, mls_group.group_id_len);
-    group->epoch = mls_group.epoch;
-    group->state = MARMOT_GROUP_STATE_ACTIVE;
-
-    if (gde) {
-        memcpy(group->nostr_group_id, gde->nostr_group_id, 32);
-        if (gde->name) group->name = strdup(gde->name);
-        if (gde->description) group->description = strdup(gde->description);
-
-        if (gde->admin_count > 0 && gde->admins) {
-            group->admin_count = gde->admin_count;
-            group->admin_pubkeys = malloc(gde->admin_count * 32);
-            if (group->admin_pubkeys)
-                memcpy(group->admin_pubkeys, gde->admins, gde->admin_count * 32);
-        }
-
-        if (gde->image_hash) {
-            group->image_hash = malloc(32);
-            if (group->image_hash) memcpy(group->image_hash, gde->image_hash, 32);
-        }
-        if (gde->image_key) {
-            group->image_key = malloc(32);
-            if (group->image_key) memcpy(group->image_key, gde->image_key, 32);
-        }
-        if (gde->image_nonce) {
-            group->image_nonce = malloc(12);
-            if (group->image_nonce) memcpy(group->image_nonce, gde->image_nonce, 12);
-        }
-    }
-
-    /* Extract relay URLs from gde before freeing */
+    /* The group record: a legacy group's from its marmot_group_data, an
+     * adopted group's from its signed components (nostrc-qp24.5.1). */
+    MarmotGroup *group = NULL;
     char **gde_relays = NULL;
     size_t gde_relay_count = 0;
-    if (gde && gde->relay_count > 0 && gde->relays) {
-        gde_relay_count = gde->relay_count;
-        gde_relays = calloc(gde_relay_count, sizeof(char *));
-        if (gde_relays) {
-            for (size_t i = 0; i < gde_relay_count; i++)
-                gde_relays[i] = gde->relays[i] ? strdup(gde->relays[i]) : NULL;
-        }
+    const bool adopted = mls_group.profile == MARMOT_GROUP_PROFILE_ADOPTED;
+    MarmotError group_err =
+        adopted ? marmot_adopted_group_from_mls(&mls_group, &group, &gde_relays, &gde_relay_count)
+                : legacy_group_from_mls(&mls_group, &group, &gde_relays, &gde_relay_count);
+    if (group_err != MARMOT_OK) {
+        mls_group_free(&mls_group);
+        if (group_err != MARMOT_ERR_MEMORY)
+            return refuse_welcome(m, welcome,
+                                  adopted ? "malformed adopted group components"
+                                          : "missing or malformed marmot_group_data (0xF2EE)",
+                                  group_err);
+        return group_err;
     }
-    marmot_group_data_extension_free(gde);
 
     /* Store exporter secret. Mandatory for message encryption after accept. */
     MarmotError err = m->storage->save_exporter_secret(m->storage->ctx,

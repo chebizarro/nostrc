@@ -15,6 +15,7 @@
  */
 
 #include "marmot-internal.h"
+#include "adopted.h"
 #include "commits.h"
 #include "proposals.h"
 #include "kp_profile.h"
@@ -770,6 +771,322 @@ create_group_impl(Marmot *m,
     marmot_group_id_free(&gid);
     mls_group_free(&mls_group);
     return MARMOT_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Adopted-profile creation (nostrc-qp24.5.1, nostrc-qp24.5.1.1)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* The kind:444 rumor of the adopted Nostr binding (transports/nostr.md
+ * "Welcome delivery"): content is base64 of MLSMessage(mls_welcome); exactly
+ * one `e` tag (the consumed KeyPackage event) and one `relays` tag (the
+ * group's routing relays); no `encoding` tag and no cleartext preview.
+ * Unsigned (it is gift-wrapped by the caller). */
+static char *
+build_adopted_welcome_rumor(const uint8_t *welcome, size_t welcome_len,
+                            const uint8_t sender[32], const char *kp_event_id,
+                            char *const *relays, size_t relay_count, int64_t created_at)
+{
+    if (!kp_event_id || strlen(kp_event_id) != 64 || relay_count == 0) return NULL;
+    char *b64 = base64_encode(welcome, welcome_len);
+    char *sender_hex = marmot_hex_encode(sender, 32);
+    NostrEvent *event = b64 && sender_hex ? nostr_event_new() : NULL;
+    NostrTags *tags = event ? nostr_tags_new(0) : NULL;
+    NostrTag *e = tags ? nostr_tag_new("e", kp_event_id, NULL) : NULL;
+    NostrTag *r = e ? nostr_tag_new("relays", relays[0], NULL) : NULL;
+    char *json = NULL;
+    if (r) {
+        for (size_t i = 1; i < relay_count; i++) nostr_tag_append(r, relays[i]);
+        nostr_tags_append(tags, e);
+        nostr_tags_append(tags, r);
+        e = r = NULL;
+        nostr_event_set_pubkey(event, sender_hex);
+        nostr_event_set_kind(event, MARMOT_KIND_WELCOME);
+        nostr_event_set_content(event, b64);
+        /* Dated as the Commit that adds the joiner (nostrc-2lrz). */
+        nostr_event_set_created_at(event, created_at);
+        nostr_event_set_tags(event, tags);
+        tags = NULL;
+        json = nostr_event_serialize_compact(event);
+    }
+    if (e) nostr_tag_free(e);
+    if (r) nostr_tag_free(r);
+    if (tags) nostr_tags_free(tags);
+    if (event) nostr_event_free(event);
+    free(sender_hex);
+    free(b64);
+    return json;
+}
+
+static int
+cmp_key32(const void *a, const void *b)
+{
+    return memcmp(a, b, 32);
+}
+
+/* Store a new group: MLS state, exporter secret, record, routing relays.
+ * On error nothing of it remains (for backends without transactions). */
+static MarmotError
+persist_new_adopted_group(Marmot *m, const MlsGroup *mls, const MarmotGroup *group,
+                          char *const *relays, size_t relay_count)
+{
+    MarmotStorage *s = m->storage;
+    if (!s->replace_group_relays) return MARMOT_ERR_STORAGE;
+    uint8_t *state = NULL;
+    size_t state_len = 0;
+    if (mls_group_serialize(mls, &state, &state_len) != 0) return MARMOT_ERR_SERIALIZATION;
+    MarmotError err = s->mls_store(s->ctx, "mls_group", mls->group_id, mls->group_id_len,
+                                   state, state_len);
+    sodium_memzero(state, state_len);
+    free(state);
+    if (err != MARMOT_OK) return err;
+    err = s->save_exporter_secret(s->ctx, &group->mls_group_id, mls->epoch,
+                                  mls->epoch_secrets.exporter_secret);
+    if (err == MARMOT_OK) {
+        err = s->save_group(s->ctx, group);
+        if (err == MARMOT_OK) {
+            err = s->replace_group_relays(s->ctx, &group->mls_group_id,
+                                          (const char **)relays, relay_count);
+            if (err != MARMOT_OK) s->delete_group(s->ctx, &group->mls_group_id);
+        }
+        if (err != MARMOT_OK)
+            s->delete_exporter_secret(s->ctx, &group->mls_group_id, mls->epoch);
+    }
+    if (err != MARMOT_OK) s->mls_delete(s->ctx, "mls_group", mls->group_id, mls->group_id_len);
+    return err;
+}
+
+static MarmotError
+create_group_adopted_impl(Marmot *m, const uint8_t creator_pubkey[32],
+                          const uint8_t *creator_sk, MarmotAccountSignFunc account_sign,
+                          void *sign_data, const char **kp_jsons, size_t kp_count,
+                          const MarmotGroupConfig *config, MarmotCreateGroupResult *result)
+{
+    if (!m->storage || !m->storage->save_group || !m->storage->delete_group ||
+        !m->storage->mls_store || !m->storage->mls_delete ||
+        !m->storage->save_exporter_secret || !m->storage->delete_exporter_secret ||
+        !m->storage->replace_group_relays)
+        return MARMOT_ERR_STORAGE;
+    if (marmot_ensure_identity(m) != 0) return MARMOT_ERR_CRYPTO;
+
+    MarmotError err = MARMOT_OK;
+    MlsKeyPackage *kps = NULL;
+    uint8_t (*members)[32] = NULL;
+    uint8_t (*admins)[32] = NULL;
+    const char **relays = NULL;
+    size_t relay_count = 0, admin_count = 0;
+    uint8_t *gc = NULL, *leaf_ext = NULL;
+    size_t gc_len = 0, leaf_ext_len = 0;
+    char **group_relays = NULL;
+    size_t group_relay_count = 0;
+    uint8_t source_exporter[32];
+    uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
+    MlsGroup mls;
+    MlsAddResult add;
+    MlsAdoptedGroupContext parsed;
+    uint8_t mls_group_id[32], nostr_group_id[32];
+    bool have_mls = false;
+    int rc;
+    memset(&mls, 0, sizeof(mls));
+    memset(&add, 0, sizeof(add));
+    memset(source_exporter, 0, sizeof(source_exporter));
+
+    /* 1. Invitees: signed ADOPTED kind:30443 events, each fully validated
+     *    (id, signature, tags, framing, lifetime, account proof). */
+    if (kp_count > 0) {
+        kps = calloc(kp_count, sizeof(*kps));
+        members = calloc(kp_count, sizeof(*members));
+        if (!kps || !members) {
+            err = MARMOT_ERR_MEMORY;
+            goto done;
+        }
+        for (size_t i = 0; i < kp_count; i++) {
+            err = kp_jsons[i] ? marmot_parse_key_package_event_for_profile(
+                                    kp_jsons[i], MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, 0,
+                                    &kps[i], members[i])
+                              : MARMOT_ERR_INVALID_ARG;
+            if (err != MARMOT_OK) goto done;
+        }
+    }
+
+    /* 2. Admins: the creator plus the requested ones, each of them a
+     *    founding member (admin-policy-v1.md; MDK mdk#737), sorted, unique. */
+    admins = calloc(1 + config->admin_count, sizeof(*admins));
+    if (!admins) {
+        err = MARMOT_ERR_MEMORY;
+        goto done;
+    }
+    memcpy(admins[0], creator_pubkey, 32);
+    admin_count = 1;
+    for (size_t i = 0; i < config->admin_count; i++) {
+        bool member = memcmp(config->admin_pubkeys[i], creator_pubkey, 32) == 0;
+        for (size_t j = 0; !member && j < kp_count; j++)
+            member = memcmp(config->admin_pubkeys[i], members[j], 32) == 0;
+        if (!member) {
+            err = MARMOT_ERR_INVALID_ARG;
+            goto done;
+        }
+        memcpy(admins[admin_count++], config->admin_pubkeys[i], 32);
+    }
+    qsort(admins, admin_count, 32, cmp_key32);
+    size_t unique = 0;
+    for (size_t i = 0; i < admin_count; i++)
+        if (unique == 0 || memcmp(admins[unique - 1], admins[i], 32) != 0)
+            memcpy(admins[unique++], admins[i], 32);
+    admin_count = unique;
+
+    /* 3. Signed routing relays (1..16, the relay URL profile). */
+    err = marmot_adopted_canonical_relays((const char *const *)config->relay_urls,
+                                          config->relay_count, &relays, &relay_count);
+    if (err != MARMOT_OK) goto done;
+
+    /* 4. The GroupContext; every invitee's leaf must satisfy it before any
+     *    MLS state is built (MDK: MissingRequiredCapabilities). */
+    randombytes_buf(mls_group_id, sizeof(mls_group_id));
+    randombytes_buf(nostr_group_id, sizeof(nostr_group_id));
+    err = marmot_adopted_group_context_build(config->name, config->description,
+                                             (const uint8_t (*)[32])admins, admin_count,
+                                             nostr_group_id, relays, relay_count, &gc, &gc_len);
+    if (err != MARMOT_OK) goto done;
+    if (mls_adopted_group_context_parse(gc, gc_len, &parsed) != 0) {
+        err = MARMOT_ERR_INTERNAL;
+        goto done;
+    }
+    for (size_t i = 0; i < kp_count; i++)
+        if (mls_adopted_leaf_check(&kps[i].leaf_node, &parsed) != 0) {
+            err = MARMOT_ERR_KEY_PACKAGE;
+            goto done;
+        }
+
+    /* 5. The creator's leaf proof (qp24.5.1.1): signed now over this
+     *    instance's MLS signature key, by @creator_sk or @account_sign; else
+     *    the proof this instance was enrolled with for @creator_pubkey. */
+    if (creator_sk || account_sign) {
+        int64_t now = marmot_now();
+        err = marmot_account_proof_create(creator_pubkey, creator_sk, account_sign, sign_data,
+                                          MARMOT_CIPHERSUITE, MARMOT_SIGNATURE_SCHEME_ED25519,
+                                          m->ed25519_pk, MLS_SIG_PK_LEN,
+                                          (uint64_t)(now > 0 ? now : 1), proof);
+    } else {
+        err = marmot_account_proof_lookup(m, creator_pubkey, proof)
+                  ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+    }
+    if (err == MARMOT_OK) err = marmot_leaf_adopted_extensions(proof, &leaf_ext, &leaf_ext_len);
+    sodium_memzero(proof, sizeof(proof));
+    if (err != MARMOT_OK) goto done;
+
+    /* 6. The group (validated as ADOPTED by the MLS layer), then one Commit
+     *    adding every invitee and one Welcome. */
+    rc = mls_group_create_with_leaf_extensions(&mls, mls_group_id, 32, creator_pubkey, 32,
+                                                   m->ed25519_sk, gc, gc_len, leaf_ext,
+                                                   leaf_ext_len);
+    if (rc != 0) {
+        err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : (MarmotError)rc;
+        goto done;
+    }
+    have_mls = true;
+    if (mls.profile != MARMOT_GROUP_PROFILE_ADOPTED) {
+        err = MARMOT_ERR_INTERNAL;
+        goto done;
+    }
+    memcpy(source_exporter, mls.epoch_secrets.exporter_secret, 32);
+    result->welcome_count = kp_count;
+    if (kp_count > 0) {
+        result->welcome_rumor_jsons = calloc(kp_count, sizeof(char *));
+        if (!result->welcome_rumor_jsons) {
+            err = MARMOT_ERR_MEMORY;
+            goto done;
+        }
+        rc = add_key_packages(&mls, kps, kp_count, NULL, 0, &add);
+        if (rc != 0) {
+            err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
+            goto done;
+        }
+    }
+    /* Every joiner checks the epoch it enters and verifies every leaf: so do
+     * we, before anything leaves. */
+    rc = mls_group_profile_check_entered(&mls);
+    if (rc != 0) {
+        err = (MarmotError)rc;
+        goto done;
+    }
+    err = marmot_adopted_members_proven(&mls);
+    if (err != MARMOT_OK) goto done;
+
+    /* 7. The group record from its (signed) components. */
+    err = marmot_adopted_group_from_mls(&mls, &result->group, &group_relays,
+                                        &group_relay_count);
+    if (err != MARMOT_OK) goto done;
+    /* The founding Commit and its Welcomes are dated through the group's
+     * created_at floor, as for a legacy group (nostrc-2lrz). */
+    int64_t created_at = 0;
+    if (kp_count > 0) {
+        err = marmot_next_group_event_time(m, result->group->nostr_group_id, true, &created_at);
+        if (err != MARMOT_OK) goto done;
+    }
+    for (size_t i = 0; i < kp_count; i++) {
+        char *kp_event_id = extract_event_id_hex(kp_jsons[i]);
+        result->welcome_rumor_jsons[i] = build_adopted_welcome_rumor(
+            add.welcome_data, add.welcome_len, creator_pubkey, kp_event_id, group_relays,
+            group_relay_count, created_at);
+        free(kp_event_id);
+        if (!result->welcome_rumor_jsons[i]) {
+            err = MARMOT_ERR_EVENT_BUILD;
+            goto done;
+        }
+    }
+    if (kp_count > 0) {
+        result->evolution_event_json =
+            marmot_commit_build_event(add.commit_data, add.commit_len, source_exporter,
+                                      result->group->nostr_group_id, created_at);
+        if (!result->evolution_event_json) {
+            err = MARMOT_ERR_EVENT_BUILD;
+            goto done;
+        }
+    }
+
+    /* 8. Store it (the founding Commit is applied at once, as for legacy
+     *    groups: nobody but the joiners can see it). */
+    err = persist_new_adopted_group(m, &mls, result->group, group_relays, group_relay_count);
+
+done:
+    sodium_memzero(source_exporter, sizeof(source_exporter));
+    mls_add_result_clear(&add);
+    if (have_mls) mls_group_free(&mls);
+    if (kps) free_key_packages(kps, kp_count);
+    free(members);
+    free(admins);
+    free(relays);
+    free(gc);
+    free(leaf_ext);
+    marmot_adopted_relays_free(group_relays, group_relay_count);
+    if (err != MARMOT_OK) marmot_create_group_result_free(result);
+    return err;
+}
+
+static MarmotError
+create_group_for_profile_impl(Marmot *m, MarmotGroupProfile profile,
+                              const uint8_t creator_pubkey[32], const uint8_t *creator_sk,
+                              MarmotAccountSignFunc account_sign, void *sign_data,
+                              const char **kp_jsons, size_t kp_count,
+                              const MarmotGroupConfig *config,
+                              MarmotCreateGroupResult *result)
+{
+    if (!m || !creator_pubkey || !config || !result || (kp_count > 0 && !kp_jsons) ||
+        (config->admin_count > 0 && !config->admin_pubkeys) ||
+        (config->relay_count > 0 && !config->relay_urls))
+        return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    switch (profile) {
+    case MARMOT_GROUP_PROFILE_LEGACY:
+        /* A legacy creator leaf carries the enrolled proof (marmot_create_group()). */
+        if (creator_sk || account_sign) return MARMOT_ERR_INVALID_ARG;
+        return create_group_impl(m, creator_pubkey, kp_jsons, kp_count, config, result);
+    case MARMOT_GROUP_PROFILE_ADOPTED:
+        return create_group_adopted_impl(m, creator_pubkey, creator_sk, account_sign, sign_data,
+                                         kp_jsons, kp_count, config, result);
+    }
+    return MARMOT_ERR_INVALID_ARG;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1696,6 +2013,32 @@ marmot_create_group(Marmot *m,
     if (err == MARMOT_OK && end != MARMOT_OK)
         marmot_create_group_result_free(result);   /* rolled back */
     return end;
+}
+
+MarmotError
+marmot_create_group_for_profile(Marmot *m, MarmotGroupProfile profile,
+                                const uint8_t creator_pubkey[32], const uint8_t creator_sk[32],
+                                MarmotAccountSignFunc account_sign, void *sign_data,
+                                const char **key_package_event_jsons, size_t kp_count,
+                                const MarmotGroupConfig *config,
+                                MarmotCreateGroupResult *result)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = create_group_for_profile_impl(m, profile, creator_pubkey, creator_sk, account_sign,
+                                        sign_data, key_package_event_jsons, kp_count, config,
+                                        result);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK)
+        marmot_create_group_result_free(result);   /* rolled back */
+    return end;
+}
+
+MarmotError
+marmot_get_group_profile(Marmot *m, const MarmotGroupId *mls_group_id,
+                         MarmotGroupProfile *out_profile)
+{
+    return marmot_adopted_stored_profile(m, mls_group_id, out_profile);
 }
 
 MarmotError

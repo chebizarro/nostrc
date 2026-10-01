@@ -268,8 +268,13 @@ generate_update_path(MlsGroup *group,
         path_out->leaf_node.credential_identity_len = old_leaf->credential_identity_len;
     }
     path_out->leaf_node.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT;
-    /* Capabilities (RFC 9420 §7.2; nostrc-prqu.10) */
-    if (mls_leaf_node_set_marmot_capabilities(&path_out->leaf_node) != 0) goto fail;
+    /* Capabilities (RFC 9420 §7.2; nostrc-prqu.10): the group's profile's
+     * (an adopted leaf must keep advertising app_data_update, nostrc-
+     * qp24.5.1). */
+    if ((group->profile == MARMOT_GROUP_PROFILE_ADOPTED
+             ? mls_leaf_node_set_adopted_capabilities(&path_out->leaf_node)
+             : mls_leaf_node_set_marmot_capabilities(&path_out->leaf_node)) != 0)
+        goto fail;
     /* The LeafNode extensions carry over, and with the signature key and the
      * credential they bind, so does the account proof: it must not be
      * dropped from a member's leaf (nostrc-7vyi; receivers check). */
@@ -1075,6 +1080,52 @@ group_install_staged(MlsGroup *live, MlsGroup *staged)
     mls_group_free(&old);
 }
 
+/* group_install_staged() for a stage a local Commit producer built: the
+ * epoch it enters keeps the group's profile and, for an adopted group, its
+ * invariants (nostrc-qp24.5.1).  On failure the stage is freed, the live
+ * group is unchanged. */
+static int
+group_install_checked(MlsGroup *live, MlsGroup *staged)
+{
+    int rc = staged->profile != live->profile ? MARMOT_ERR_VALIDATION
+                                              : mls_group_profile_check_entered(staged);
+    if (rc != 0) {
+        mls_group_free(staged);
+        return rc;
+    }
+    group_install_staged(live, staged);
+    return 0;
+}
+
+static int
+profile_check(const MlsGroup *g, bool entered)
+{
+    if (!g) return MARMOT_ERR_INVALID_ARG;
+    if (g->profile != MARMOT_GROUP_PROFILE_LEGACY && g->profile != MARMOT_GROUP_PROFILE_ADOPTED)
+        return MARMOT_ERR_VALIDATION;
+    /* No group changes profile: the GroupContext still claims the one the
+     * group was admitted under. */
+    if (mls_group_context_profile_of(g->extensions_data, g->extensions_len) != g->profile)
+        return MARMOT_ERR_VALIDATION;
+    if (g->profile != MARMOT_GROUP_PROFILE_ADOPTED) return 0;
+    MlsAdoptedGroupContext gc;
+    int rc = mls_adopted_group_context_parse(g->extensions_data, g->extensions_len, &gc);
+    if (rc == 0) rc = mls_adopted_tree_check(&g->tree, &gc, entered);
+    return rc;
+}
+
+int
+mls_group_profile_check(const MlsGroup *g)
+{
+    return profile_check(g, false);
+}
+
+int
+mls_group_profile_check_entered(const MlsGroup *g)
+{
+    return profile_check(g, true);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Lifecycle
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1224,10 +1275,18 @@ mls_group_create_with_leaf_extensions(MlsGroup *group,
     if (!group || !group_id || !credential_identity || !signature_key_private ||
         (leaf_extensions_len > 0 && !leaf_extensions))
         return MARMOT_ERR_INVALID_ARG;
-    if (mls_group_extensions_supported(extensions_data, extensions_len) != 0)
-        return MARMOT_ERR_UNSUPPORTED;
+    /* The GroupContext decides the group's profile for good (nostrc-
+     * qp24.5.1): an adopted one must be complete and canonical before
+     * anything is built on it; a legacy one keeps its old opaque handling. */
+    MarmotGroupProfile profile = mls_group_context_profile_of(extensions_data, extensions_len);
+    if (profile == MARMOT_GROUP_PROFILE_ADOPTED) {
+        MlsAdoptedGroupContext gc;
+        int gc_rc = mls_adopted_group_context_parse(extensions_data, extensions_len, &gc);
+        if (gc_rc != 0) return gc_rc;
+    }
 
     memset(group, 0, sizeof(*group));
+    group->profile = profile;
 
     /* Copy group ID */
     group->group_id = malloc(group_id_len);
@@ -1295,6 +1354,11 @@ mls_group_create_with_leaf_extensions(MlsGroup *group,
         leaf->leaf.extensions_len = leaf_extensions_len;
     }
     leaf->leaf.leaf_node_source = MLS_LEAF_NODE_SOURCE_COMMIT; /* initial group creation */
+    if (profile == MARMOT_GROUP_PROFILE_ADOPTED &&
+        mls_leaf_node_set_adopted_capabilities(&leaf->leaf) != 0) {
+        sodium_memzero(enc_sk, sizeof(enc_sk));
+        goto fail;
+    }
     if (mls_leaf_node_sign(&leaf->leaf, signature_key_private,
                            group->group_id, group->group_id_len, 0) != 0) {
         sodium_memzero(enc_sk, sizeof(enc_sk));
@@ -1302,6 +1366,16 @@ mls_group_create_with_leaf_extensions(MlsGroup *group,
     }
 
     sodium_memzero(enc_sk, sizeof(enc_sk));
+
+    /* An adopted group starts valid or not at all: the creator's leaf must
+     * carry the account proof and advertise every required component. */
+    if (profile == MARMOT_GROUP_PROFILE_ADOPTED) {
+        int check_rc = mls_group_profile_check(group);
+        if (check_rc != 0) {
+            mls_group_free(group);
+            return check_rc;
+        }
+    }
 
     /* Initialize transcript hashes to zero (epoch 0) */
     memset(group->confirmed_transcript_hash, 0, MLS_HASH_LEN);
@@ -1949,8 +2023,9 @@ mls_group_add_members_with_extensions(MlsGroup *group,
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
     int rc = add_members_staged(&staged, kps, kp_count, extensions, extensions_len, result);
-    if (rc == 0) group_install_staged(group, &staged);
+    if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
+    if (rc != 0) mls_add_result_clear(result);
     return rc;
 }
 
@@ -1983,8 +2058,9 @@ mls_group_remove_members(MlsGroup *group,
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
     int rc = remove_members_staged(&staged, leaves, leaf_count, result);
-    if (rc == 0) group_install_staged(group, &staged);
+    if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
+    if (rc != 0) mls_commit_result_clear(result);
     return rc;
 }
 
@@ -2004,8 +2080,9 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
     int rc = path_commit_staged(&staged, NULL, 0, NULL, 0, false, result);
-    if (rc == 0) group_install_staged(group, &staged);
+    if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
+    if (rc != 0) mls_commit_result_clear(result);
     return rc;
 }
 
@@ -2019,8 +2096,9 @@ mls_group_self_update_with_leaf_extensions(MlsGroup *group,
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
     int rc = path_commit_staged(&staged, NULL, 0, leaf_ext, leaf_ext_len, true, result);
-    if (rc == 0) group_install_staged(group, &staged);
+    if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
+    if (rc != 0) mls_commit_result_clear(result);
     return rc;
 }
 
@@ -2048,8 +2126,9 @@ mls_group_commit_extensions(MlsGroup *group,
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
     rc = path_commit_staged(&staged, &gce, 1, NULL, 0, false, result);
-    if (rc == 0) group_install_staged(group, &staged);
+    if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
+    if (rc != 0) mls_commit_result_clear(result);
     return rc;
 }
 
@@ -3678,8 +3757,9 @@ mls_group_commit_by_ref(MlsGroup *group, const uint8_t *const *acs, const size_t
         return MARMOT_ERR_INTERNAL;
     }
     rc = commit_by_ref_staged(&staged, props, ac_count, result);
-    if (rc == 0) group_install_staged(group, &staged);
+    if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
+    if (rc != 0) mls_commit_result_clear(result);
     return rc;
 }
 
@@ -4456,6 +4536,13 @@ process_commit_impl(MlsGroup *group,
     /* Removes, Updates and the UpdatePath may have blanked or re-keyed nodes
      * on our path: forget their old private keys. */
     prune_own_path_keys(group);
+
+    /* The epoch entered keeps the group's profile and, for an adopted group,
+     * every resulting-state invariant (nostrc-qp24.5.1; group-setup.md). */
+    if (staged.profile != live_group->profile || mls_group_profile_check_entered(&staged) != 0) {
+        staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        goto staged_fail;
+    }
 
     group_install_staged(live_group, &staged);
     free(pre_gc);
@@ -5346,21 +5433,31 @@ fail:
  * ══════════════════════════════════════════════════════════════════════════ */
 
 #define MLS_GROUP_SERIAL_MAGIC  0x4D4C5347  /* "MLSG" */
-#define MLS_GROUP_SERIAL_VER    3
+#define MLS_GROUP_SERIAL_VER    4
 /* The last version that stored no secret tree. */
 #define MLS_GROUP_SERIAL_VER_LEGACY_MAX 2
+/* Version 4 (nostrc-qp24.5.1) is version 3 followed by one byte, the
+ * MarmotGroupProfile.  A legacy-profile group is still written as version 3,
+ * byte for byte as before, so its stored form does not change; only an
+ * adopted-profile group is written as version 4.  Versions 1 to 3 load as
+ * legacy. */
+#define MLS_GROUP_SERIAL_VER_NO_PROFILE 3
 
 int
 mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
 {
     if (!group || !out_data || !out_len) return -1;
+    const bool adopted = group->profile == MARMOT_GROUP_PROFILE_ADOPTED;
+    if (!adopted && group->profile != MARMOT_GROUP_PROFILE_LEGACY) return -1;
 
     MlsTlsBuf buf;
     if (mls_tls_buf_init(&buf, 4096) != 0) return -1;
 
     /* Header */
     if (mls_tls_write_u32(&buf, MLS_GROUP_SERIAL_MAGIC) != 0) goto fail;
-    if (mls_tls_write_u32(&buf, MLS_GROUP_SERIAL_VER) != 0) goto fail;
+    if (mls_tls_write_u32(&buf, adopted ? MLS_GROUP_SERIAL_VER
+                                        : MLS_GROUP_SERIAL_VER_NO_PROFILE) != 0)
+        goto fail;
 
     /* Group ID */
     if (mls_tls_write_opaque32(&buf, group->group_id, group->group_id_len) != 0)
@@ -5455,6 +5552,9 @@ mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
     if (group->secret_tree.n_leaves != group->tree.n_leaves ||
         mls_secret_tree_serialize(&group->secret_tree, &buf) != 0)
         goto fail;
+
+    /* Version 4: the profile (only adopted groups are written as 4). */
+    if (adopted && mls_tls_write_u8(&buf, (uint8_t)group->profile) != 0) goto fail;
 
     *out_data = buf.data;
     *out_len = buf.len;
@@ -5553,9 +5653,8 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
     if (mls_tls_read_fixed(&reader, group->interim_transcript_hash, MLS_HASH_LEN) != 0)
         goto fail;
 
-    /* Extensions */
-    if (mls_tls_read_opaque32(&reader, &group->extensions_data, &group->extensions_len) != 0 ||
-        mls_group_extensions_supported(group->extensions_data, group->extensions_len) != 0)
+    /* Extensions (checked against the profile once it is known, below) */
+    if (mls_tls_read_opaque32(&reader, &group->extensions_data, &group->extensions_len) != 0)
         goto fail;
 
     /* Config */
@@ -5614,7 +5713,20 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
                                  MLS_SECRET_TREE_LEGACY_OWN_STRIDE) != 0)
             goto fail;
     }
-    if (!mls_tls_reader_done(&reader)) goto fail;
+
+    /* The profile (version 4), and a state that still satisfies it: a
+     * stored or cloned adopted state is re-validated, never trusted; an
+     * adopted GroupContext under a legacy (or no) profile is refused, as
+     * before 0.12.0 (nostrc-qp24.5.1). */
+    group->profile = MARMOT_GROUP_PROFILE_LEGACY;
+    if (version > MLS_GROUP_SERIAL_VER_NO_PROFILE) {
+        uint8_t profile = 0;
+        if (mls_tls_read_u8(&reader, &profile) != 0 ||
+            profile != MARMOT_GROUP_PROFILE_ADOPTED)
+            goto fail;
+        group->profile = MARMOT_GROUP_PROFILE_ADOPTED;
+    }
+    if (!mls_tls_reader_done(&reader) || mls_group_profile_check(group) != 0) goto fail;
 
     return 0;
 

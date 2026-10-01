@@ -319,6 +319,15 @@ marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
     *post_gde = NULL;
     memset(key, 0, sizeof(*key));
 
+    /* An adopted-profile group's Commits are authorized by its components
+     * (admin-policy-v1 against the candidate parent, AppDataUpdate, the
+     * resulting-state invariants), which libmarmot does not implement yet
+     * (nostrc-qp24.5).  Refuse them -- never judge them by the MIP-01 rules
+     * below, under which a group without GroupData lets any member commit
+     * (nostrc-qp24.5.1). */
+    if (pre->profile != MARMOT_GROUP_PROFILE_LEGACY || post->profile != MARMOT_GROUP_PROFILE_LEGACY)
+        return MARMOT_ERR_UNSUPPORTED;
+
     const MlsLeafNode *committer = leaf_at(pre, committer_leaf);
     if (!committer || committer->credential_identity_len != 32 ||
         !committer->credential_identity)

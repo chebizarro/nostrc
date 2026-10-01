@@ -17,6 +17,7 @@
 #include "mls_key_package.h"
 #include "mls_framing.h"
 #include "mls_app_data_update.h"
+#include "mls_app_components.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -225,6 +226,13 @@ typedef struct {
     uint8_t       *extensions_data;     /**< Serialized GroupContext extensions */
     size_t         extensions_len;
 
+    /* ── Wire profile (nostrc-qp24.5.1) ───────────────────────────────── */
+    /** Classified from the GroupContext when the group is created, joined
+     *  or loaded, persisted with the state (serial version 4) and never
+     *  changed: an ADOPTED state must always pass
+     *  mls_group_profile_check(). */
+    MarmotGroupProfile profile;
+
     /* ── Configuration ────────────────────────────────────────────────── */
     uint32_t max_forward_distance;      /**< Max forward ratchet for decryption */
 } MlsGroup;
@@ -235,6 +243,22 @@ typedef struct {
 
 /** Free all internal resources of an MlsGroup (but not the struct itself). */
 void mls_group_free(MlsGroup *g);
+
+/**
+ * The structural invariants of @g's profile (nostrc-qp24.5.1): LEGACY needs
+ * a GroupContext without an adopted marker; ADOPTED one that passes
+ * mls_adopted_group_context_parse() and members that pass
+ * mls_adopted_tree_check().  0, or the MARMOT_ERR_* of the first failure.
+ * Account proofs are not verified cryptographically here.  Run on every
+ * created, loaded or cloned state.
+ */
+int mls_group_profile_check(const MlsGroup *g);
+
+/**
+ * mls_group_profile_check() plus the resulting-epoch invariants of an epoch
+ * the group enters (by Welcome or Commit): every admin is a member.
+ */
+int mls_group_profile_check_entered(const MlsGroup *g);
 
 /**
  * Reduce `g` to what reading the rest of its epoch's application messages

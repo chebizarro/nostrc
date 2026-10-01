@@ -1368,3 +1368,21 @@ mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node)
         return -1;
     return 0;
 }
+
+int
+mls_leaf_node_set_adopted_capabilities(MlsLeafNode *node)
+{
+    static const uint16_t versions[] = {1};
+    static const uint16_t suites[] = {MARMOT_CIPHERSUITE};
+    static const uint16_t exts[] = {0x0006};  /* app_data_dictionary */
+    static const uint16_t props[] = {0x0008}; /* app_data_update */
+    static const uint16_t creds[] = {MLS_CREDENTIAL_BASIC};
+    if (!node) return -1;
+    if (set_u16_vec(&node->versions, &node->version_count, versions, 1) != 0 ||
+        set_u16_vec(&node->ciphersuites, &node->ciphersuite_count, suites, 1) != 0 ||
+        set_u16_vec(&node->cap_extensions, &node->cap_extension_count, exts, 1) != 0 ||
+        set_u16_vec(&node->proposals, &node->proposal_count, props, 1) != 0 ||
+        set_u16_vec(&node->cap_credentials, &node->cap_credential_count, creds, 1) != 0)
+        return -1;
+    return 0;
+}

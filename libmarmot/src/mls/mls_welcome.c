@@ -675,13 +675,21 @@ welcome_process_impl(const MlsWelcome *welcome,
         mls_tls_buf_free(&tbuf);
     }
 
-    /* An adopted GroupContext needs app-component authorization and update
-     * handling before it can be safely joined. Keep legacy groups readable. */
-    if (mls_group_extensions_supported(gi.extensions_data, gi.extensions_len) != 0) {
-        mls_group_info_clear(&gi);
-        sodium_memzero(joiner_secret, sizeof(joiner_secret));
-        mls_group_free(group_out);
-        return MARMOT_ERR_UNSUPPORTED;
+    /* The GroupContext fixes the group's profile (nostrc-qp24.5.1).  An
+     * adopted one is admitted only when complete, canonical and limited to
+     * requirements libmarmot honours (mls_app_components.h); a legacy one
+     * keeps its historical handling.  No fallback between the two. */
+    group_out->profile = mls_group_context_profile_of(gi.extensions_data, gi.extensions_len);
+    if (group_out->profile == MARMOT_GROUP_PROFILE_ADOPTED) {
+        MlsAdoptedGroupContext adopted_gc;
+        int gc_rc = mls_adopted_group_context_parse(gi.extensions_data, gi.extensions_len,
+                                                    &adopted_gc);
+        if (gc_rc != 0) {
+            mls_group_info_clear(&gi);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            mls_group_free(group_out);
+            return gc_rc;
+        }
     }
 
     /* Extensions */
@@ -771,6 +779,28 @@ welcome_process_impl(const MlsWelcome *welcome,
         return MARMOT_ERR_WELCOME_INVALID;
     }
     mls_tls_buf_free(&gi_tbs);
+
+    /* Adopted profile (nostrc-qp24.5.1; RFC 9420 §12.4.3.1): with the tree
+     * authenticated by the GroupInfo signature, every member leaf must
+     * itself verify -- its signature covers the account-proof dictionary --
+     * and satisfy the group's capability and component requirements; every
+     * admin must be a member. */
+    if (group_out->profile == MARMOT_GROUP_PROFILE_ADOPTED) {
+        int adm_rc = mls_group_profile_check_entered(group_out);
+        for (uint32_t i = 0; adm_rc == 0 && i < group_out->tree.n_leaves; i++) {
+            const MlsNode *n = &group_out->tree.nodes[mls_tree_leaf_to_node(i)];
+            if (n->type == MLS_NODE_LEAF &&
+                mls_leaf_node_verify_signature(&n->leaf, group_out->group_id,
+                                               group_out->group_id_len, i) != 0)
+                adm_rc = MARMOT_ERR_WELCOME_INVALID;
+        }
+        if (adm_rc != 0) {
+            mls_group_info_clear(&gi);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            mls_group_free(group_out);
+            return adm_rc;
+        }
+    }
 
     /* Find our leaf index by matching our KeyPackage's HPKE encryption key
      * against leaf nodes in the tree (RFC 9420 §12.4.3.1).

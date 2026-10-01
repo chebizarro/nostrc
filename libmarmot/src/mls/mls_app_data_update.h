@@ -31,9 +31,13 @@ int  mls_app_data_update_serialize(const MlsAppDataUpdate *p, MlsTlsBuf *buf);
 int  mls_app_data_update_deserialize(MlsTlsReader *reader, MlsAppDataUpdate *p);
 void mls_app_data_update_clear(MlsAppDataUpdate *p);
 
-/* Until GroupContext components can be applied and validated, reject a
- * recognizable app_data_dictionary (0x0006). Legacy opaque extension bytes,
- * including malformed lists, retain their existing read behavior. */
+/* The gate on GroupContextExtensions proposals (produced or received):
+ * reject a recognizable app_data_dictionary (0x0006).  In a legacy group it
+ * would change the group's profile in place, which no profile allows; an
+ * adopted group changes components only through AppDataUpdate, which is not
+ * applied yet.  Creation, Welcome and load admit an adopted GroupContext
+ * through mls_app_components.h instead (nostrc-qp24.5.1).  Legacy opaque
+ * extension bytes, including malformed lists, retain their read behavior. */
 int mls_group_extensions_supported(const uint8_t *data, size_t len);
 
 /* Bounded, non-publishing state transition for a same-epoch admin-policy

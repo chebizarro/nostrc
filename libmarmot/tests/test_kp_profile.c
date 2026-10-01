@@ -184,9 +184,15 @@ static void test_create_and_validate(void) {
     CHECK(nostr_event_deserialize_compact(ev, r.event_json, NULL), "parse event");
     CHECK(ev->kind == 30443, "kind");
     CHECK(!first_tag(ev, "encoding") && !first_tag(ev, "relays"), "no encoding/relays tags");
+    /* The leaf's private-use components only, as MDK 0.11 requires: the
+     * adopted components libmarmot supports (nostrc-qp24.5.1). */
     NostrTag *t = first_tag(ev, "app_components");
-    CHECK(t && nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x0001") == 0 &&
-          strcmp(nostr_tag_get(t, 2), "0x8009") == 0, "app_components [0x0001,0x8009]");
+    CHECK(t && nostr_tag_size(t) == 6 && strcmp(nostr_tag_get(t, 1), "0x8001") == 0 &&
+          strcmp(nostr_tag_get(t, 2), "0x8003") == 0 &&
+          strcmp(nostr_tag_get(t, 3), "0x8004") == 0 &&
+          strcmp(nostr_tag_get(t, 4), "0x8009") == 0 &&
+          strcmp(nostr_tag_get(t, 5), "0x800c") == 0,
+          "app_components [0x8001,0x8003,0x8004,0x8009,0x800c]");
     t = first_tag(ev, "mls_extensions");
     CHECK(t && nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "0x0006") == 0,
           "mls_extensions from leaf caps");

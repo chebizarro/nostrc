@@ -10,6 +10,7 @@
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
 #include "mls/mls_key_package.h"
+#include "mls/mls_app_components.h"
 #include "mls/mls-internal.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,6 +24,9 @@
 #define MARMOT_COMPONENT_SAFE_AAD           0x0002
 #define MARMOT_COMPONENT_LAST_RESORT_KP     0x0004
 #define MARMOT_COMPONENT_ACCOUNT_PROOF_V2   0x8009
+/* First private-use ComponentID; kind:30443 `app_components` tags list only
+ * these (MDK 0.11 PRIVATE_USE_APP_COMPONENT_ID_START). */
+#define MARMOT_COMPONENT_PRIVATE_USE_START  0x8000
 
 /* RFC 9420 §6 */
 #define MARMOT_MLS_VERSION_10               0x0001
@@ -130,6 +134,25 @@ MarmotError marmot_leaf_set_proof(MlsLeafNode *leaf, const uint8_t proof[MARMOT_
  * marmot_leaf_set_proof()); *out is malloc()ed. */
 MarmotError marmot_leaf_proof_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
                                          uint8_t **out, size_t *out_len);
+
+/* The LeafNode extension list of an adopted-profile leaf (nostrc-qp24.5.1):
+ * one app_data_dictionary with app_components [0x0001] followed by
+ * MLS_ADOPTED_SUPPORTED_COMPONENTS (the components libmarmot can be
+ * required to support), safe_aad [] and @proof.  *out is malloc()ed. */
+MarmotError marmot_leaf_adopted_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+                                           uint8_t **out, size_t *out_len);
+
+/* marmot_leaf_set_proof() with marmot_leaf_adopted_extensions(). */
+MarmotError marmot_leaf_set_adopted_proof(MlsLeafNode *leaf,
+                                          const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN]);
+
+/* A signed kind:30443 event: id and signature verified, then validated
+ * under @profile (marmot_validate_key_package_event_json()), the decoded
+ * KeyPackage in @kp_out (caller clears) and its author in @nostr_pubkey_out. */
+MarmotError marmot_parse_key_package_event_for_profile(const char *event_json,
+                                                       MarmotKeyPackageProfile profile,
+                                                       int64_t now, MlsKeyPackage *kp_out,
+                                                       uint8_t nostr_pubkey_out[32]);
 
 /* ADOPTED producer without the MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
  * build gate, for libmarmot's own tests only. */

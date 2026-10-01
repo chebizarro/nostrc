@@ -92,10 +92,15 @@ test_group_context_gate(void)
     CHECK(mls_group_extensions_supported(truncated_app_dict,
                                          sizeof(truncated_app_dict)) != 0);
 
+    /* Since 0.12.0 creation admits an adopted GroupContext only when it is
+     * complete (nostrc-qp24.5.1): an empty dictionary without
+     * required_capabilities is malformed, and nothing is created. */
     MlsGroup group = {0};
     uint8_t id[32] = {0}, sk[MLS_SIG_SK_LEN] = {0};
     CHECK(mls_group_create(&group, id, sizeof(id), id, sizeof(id), sk,
-                           app_dict_ext, sizeof(app_dict_ext)) == MARMOT_ERR_UNSUPPORTED);
+                           app_dict_ext, sizeof(app_dict_ext)) == MARMOT_ERR_EXTENSION_FORMAT);
+    CHECK(mls_group_create(&group, id, sizeof(id), id, sizeof(id), sk,
+                           mixed_ext, sizeof(mixed_ext)) == MARMOT_ERR_VALIDATION);
 }
 
 static void

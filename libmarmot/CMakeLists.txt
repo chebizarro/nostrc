@@ -66,11 +66,13 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_schedule.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_framing.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_app_data_update.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_app_components.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_package.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_group.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/credentials.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/kp_profile.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/adopted.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/proposals.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
@@ -94,6 +96,7 @@ set(MARMOT_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-storage.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-media.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-group-profile.h
   ${MARMOT_PUBLIC_VERSION_HEADER}
 )
 
@@ -302,6 +305,11 @@ if(BUILD_TESTING)
   target_include_directories(test_kp_profile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_kp_profile COMMAND test_kp_profile)
 
+  # Test: adopted-profile group admission and creation (nostrc-qp24.5.1)
+  add_executable(test_adopted ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_adopted.c)
+  target_link_libraries(test_adopted PRIVATE marmot)
+  target_include_directories(test_adopted PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_adopted COMMAND test_adopted)
   # Test: Storage contract tests (all backends)
   add_executable(test_storage_contract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_storage_contract.c)
   target_link_libraries(test_storage_contract PRIVATE marmot)

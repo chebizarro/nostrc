@@ -491,13 +491,54 @@ marmot_leaf_proof_status(const MlsLeafNode *leaf, uint16_t ciphersuite)
     return st;
 }
 
+static MarmotError
+leaf_dictionary_extensions(const uint16_t *supported, size_t n_supported,
+                           const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+                           uint8_t **out, size_t *out_len);
+
 MarmotError
 marmot_leaf_proof_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
                              uint8_t **out, size_t *out_len)
 {
-    if (!proof || !out || !out_len) return MARMOT_ERR_INVALID_ARG;
     static const uint16_t supported[] = {MARMOT_COMPONENT_APP_COMPONENTS,
                                          MARMOT_COMPONENT_ACCOUNT_PROOF_V2};
+    return leaf_dictionary_extensions(supported, 2, proof, out, out_len);
+}
+
+MarmotError
+marmot_leaf_adopted_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+                               uint8_t **out, size_t *out_len)
+{
+    /* app_components itself, then every adopted component libmarmot can be
+     * required to support (ascending; includes 0x8009). */
+    uint16_t supported[1 + MLS_ADOPTED_SUPPORTED_COMPONENT_COUNT];
+    supported[0] = MARMOT_COMPONENT_APP_COMPONENTS;
+    memcpy(supported + 1, MLS_ADOPTED_SUPPORTED_COMPONENTS,
+           sizeof(MLS_ADOPTED_SUPPORTED_COMPONENTS));
+    return leaf_dictionary_extensions(supported, 1 + MLS_ADOPTED_SUPPORTED_COMPONENT_COUNT,
+                                      proof, out, out_len);
+}
+
+MarmotError
+marmot_leaf_set_adopted_proof(MlsLeafNode *leaf, const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN])
+{
+    if (!leaf || !proof) return MARMOT_ERR_INVALID_ARG;
+    uint8_t *exts = NULL;
+    size_t len = 0;
+    MarmotError err = marmot_leaf_adopted_extensions(proof, &exts, &len);
+    if (err != MARMOT_OK) return err;
+    free(leaf->extensions_data);
+    leaf->extensions_data = exts;
+    leaf->extensions_len = len;
+    return MARMOT_OK;
+}
+
+static MarmotError
+leaf_dictionary_extensions(const uint16_t *supported, size_t n_supported,
+                           const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+                           uint8_t **out, size_t *out_len)
+{
+    if (!proof || !out || !out_len) return MARMOT_ERR_INVALID_ARG;
     MlsTlsBuf app_components, safe_aad, dict, exts;
     mls_tls_buf_init(&app_components, 16);
     mls_tls_buf_init(&safe_aad, 4);
@@ -505,7 +546,7 @@ marmot_leaf_proof_extensions(const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
     mls_tls_buf_init(&exts, 176);
     MarmotError err = MARMOT_ERR_MEMORY;
     if (!app_components.data || !safe_aad.data || !dict.data || !exts.data) goto out;
-    if (marmot_components_list_encode(supported, 2, &app_components) != 0 ||
+    if (marmot_components_list_encode(supported, n_supported, &app_components) != 0 ||
         marmot_components_list_encode(NULL, 0, &safe_aad) != 0)
         goto out;
     MarmotComponentData entries[3] = {

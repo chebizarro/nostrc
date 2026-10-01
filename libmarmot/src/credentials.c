@@ -388,9 +388,12 @@ replace_u16_vec(uint16_t **arr, size_t *count, const uint16_t *vals, size_t n)
     return 0;
 }
 
-/* Leaf app_data_dictionary: app_components [0x0001, 0x8009], safe_aad [] and
- * the account-identity proof over the leaf's signature key (the same three
- * entries MDK's cgka-engine emits; marmot_leaf_set_proof()). */
+/* Leaf app_data_dictionary: app_components [0x0001] plus the adopted
+ * components libmarmot supports (MLS_ADOPTED_SUPPORTED_COMPONENTS, incl.
+ * 0x8009), safe_aad [] and the account-identity proof over the leaf's
+ * signature key -- the entries MDK's cgka-engine emits.  An MDK 0.11
+ * inviter requires 0x8001, 0x8003 and 0x800c (and 0x8004 for a Nostr
+ * group) of every invitee (nostrc-qp24.5.1). */
 static MarmotError
 build_leaf_dictionary_adopted(MlsKeyPackage *kp, const uint8_t account_pk[32],
                               const uint8_t *account_sk, MarmotAccountSignFunc sign_fn,
@@ -401,7 +404,7 @@ build_leaf_dictionary_adopted(MlsKeyPackage *kp, const uint8_t account_pk[32],
         account_pk, account_sk, sign_fn, sign_data, kp->cipher_suite,
         MARMOT_SIGNATURE_SCHEME_ED25519, kp->leaf_node.signature_key, MLS_SIG_PK_LEN,
         (uint64_t)time(NULL), proof);
-    if (err == MARMOT_OK) err = marmot_leaf_set_proof(&kp->leaf_node, proof);
+    if (err == MARMOT_OK) err = marmot_leaf_set_adopted_proof(&kp->leaf_node, proof);
     sodium_memzero(proof, sizeof(proof));
     return err;
 }
@@ -763,13 +766,17 @@ create_key_package_common_impl(Marmot *m,
     if (!tag) goto tag_fail;
     nostr_tags_append(tags, tag);
 
-    /* app_components id-list tag (adopted profile only), derived from the
-     * signed LeafNode's app_components list; includes 0x8009. */
+    /* app_components id-list tag (adopted profile only): the signed
+     * LeafNode's private-use (>= 0x8000) app_components, includes 0x8009.
+     * MDK 0.11 refuses a tag that is not exactly that set (nostrc-qp24.5.1). */
     if (adopted) {
         uint16_t *ids = NULL;
         size_t n_ids = 0;
         if (leaf_app_components(&kp.leaf_node, &ids, &n_ids) != 0) goto tag_fail;
-        tag = id_list_tag_new("app_components", ids, n_ids);
+        size_t n_private = 0;
+        for (size_t i = 0; i < n_ids; i++)
+            if (ids[i] >= MARMOT_COMPONENT_PRIVATE_USE_START) ids[n_private++] = ids[i];
+        tag = id_list_tag_new("app_components", ids, n_private);
         free(ids);
         if (!tag) goto tag_fail;
         nostr_tags_append(tags, tag);
@@ -1287,7 +1294,10 @@ validate_key_package_event_adopted(NostrEvent *event, int64_t now,
 
     /* The advertisement must not lie about the decoded KeyPackage: the
      * ciphersuite tag names the KeyPackage's suite and app_components is
-     * exactly the leaf's app_components list (as a set). */
+     * exactly the leaf's private-use (>= 0x8000) app_components, as a set --
+     * the upstream ids (0x0001 app_components itself) are discoverable from
+     * the MLS capabilities and not published (MDK 0.11 marmot-app
+     * key_package_records.rs, nostrc-qp24.5.1). */
     err = MARMOT_ERR_VALIDATION;
     {
         char suite[7];
@@ -1296,10 +1306,14 @@ validate_key_package_event_adopted(NostrEvent *event, int64_t now,
         uint16_t *ids = NULL;
         size_t n_ids = 0;
         if (leaf_app_components(&kp_out->leaf_node, &ids, &n_ids) != 0) goto fail_kp;
+        size_t n_private = 0;
+        for (size_t i = 0; i < n_ids; i++)
+            if (ids[i] >= MARMOT_COMPONENT_PRIVATE_USE_START) n_private++;
         NostrTag *ac = NULL;
         count_tags(event->tags, "app_components", &ac);
-        bool same = ac && nostr_tag_size(ac) - 1 == n_ids;
+        bool same = ac && nostr_tag_size(ac) - 1 == n_private;
         for (size_t i = 0; same && i < n_ids; i++) {
+            if (ids[i] < MARMOT_COMPONENT_PRIVATE_USE_START) continue;
             char v[7];
             snprintf(v, sizeof(v), "0x%04x", (unsigned)ids[i]);
             same = id_list_tag_contains(event->tags, "app_components", v);
@@ -1376,6 +1390,29 @@ marmot_validate_key_package_event_json(const char *event_json,
  * Internal: parse a signed kind:30443 event JSON and extract the
  * MlsKeyPackage (id + signature verified before any field is trusted).
  * ──────────────────────────────────────────────────────────────────────── */
+
+MarmotError
+marmot_parse_key_package_event_for_profile(const char *event_json,
+                                           MarmotKeyPackageProfile profile, int64_t now,
+                                           MlsKeyPackage *kp_out,
+                                           uint8_t nostr_pubkey_out[32])
+{
+    if (!event_json || !kp_out) return MARMOT_ERR_INVALID_ARG;
+    memset(kp_out, 0, sizeof(*kp_out));
+    NostrEvent event;
+    memset(&event, 0, sizeof(event));
+    if (!nostr_event_deserialize_compact(&event, event_json, NULL))
+        return MARMOT_ERR_DESERIALIZATION;
+    MarmotError err = MARMOT_ERR_UNEXPECTED_EVENT;
+    if (event.kind == MARMOT_KIND_KEY_PACKAGE) {
+        err = verify_event_id_and_signature(&event);
+        if (err == MARMOT_OK)
+            err = marmot_validate_key_package_event_profile(&event, profile, now, kp_out,
+                                                            nostr_pubkey_out);
+    }
+    clear_stack_event(&event);
+    return err;
+}
 
 MarmotError
 marmot_parse_key_package_event(const char *event_json,

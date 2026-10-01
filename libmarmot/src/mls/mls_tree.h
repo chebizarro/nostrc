@@ -233,6 +233,19 @@ extern const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT];
 extern const uint16_t MLS_MARMOT_CAP_PROPOSALS[MLS_MARMOT_CAP_PROPOSAL_COUNT];
 int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
 
+/*
+ * The capabilities of a leaf in an adopted-profile group or KeyPackage
+ * (nostrc-qp24.5.1; foundation/key-packages.md "Capability advertising",
+ * MDK 0.11 cgka-engine capabilities.rs leaf_capabilities):
+ *   versions     mls10
+ *   ciphersuites MARMOT_CIPHERSUITE
+ *   extensions   0x0006 app_data_dictionary (no 0xf2ee, no last_resort)
+ *   proposals    0x0008 app_data_update
+ *   credentials  basic
+ * Replaces any capability vectors in @node.
+ */
+int mls_leaf_node_set_adopted_capabilities(MlsLeafNode *node);
+
 /** Free parent node internals. */
 void mls_parent_node_clear(MlsParentNode *node);
 
