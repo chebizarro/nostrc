@@ -108,6 +108,7 @@ marmot_sources = files(
   'src/kp_lifecycle.c',
   'src/adopted.c',
   'src/commits.c',
+  'src/convergence.c',
   'src/proposals.c',
   'src/members.c',
   'src/groups.c',

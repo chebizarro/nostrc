@@ -94,6 +94,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/kp_lifecycle.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/adopted.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/convergence.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/proposals.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/members.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c

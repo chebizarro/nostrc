@@ -91,6 +91,13 @@ typedef enum {
      *  adds one is refused on arrival (OpenMLS/MDK refuse it too). */
     MARMOT_ERR_KEY_PACKAGE_CAPABILITIES = -54,
 
+    /** Since 0.12.0 (nostrc-w1m0; Marmot inbound-processing.md
+     *  "resource_refused"): a Commit off the canonical branch that the
+     *  group's bounded convergence state has no room for (too many retained
+     *  competing Commits, or too many of one committer's).  Nothing was
+     *  kept and it is not invalid: it may be offered again. */
+    MARMOT_ERR_RESOURCE_REFUSED         = -55,
+
     /* Message errors */
     MARMOT_ERR_MESSAGE                  = -60,
     MARMOT_ERR_OWN_MESSAGE              = -61,

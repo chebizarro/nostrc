@@ -226,6 +226,12 @@ marmot_message_result_free(MarmotMessageResult *result)
     default:
         break;
     }
+    for (size_t i = 0; i < result->convergence.superseded_count; i++)
+        free(result->convergence.superseded_commit_digests[i]);
+    free(result->convergence.superseded_commit_digests);
+    for (size_t i = 0; i < result->convergence.invalidated_count; i++)
+        free(result->convergence.invalidated_message_ids[i]);
+    free(result->convergence.invalidated_message_ids);
     memset(result, 0, sizeof(*result));
 }
 

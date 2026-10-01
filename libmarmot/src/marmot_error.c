@@ -61,6 +61,8 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_KEY_PACKAGE_CAPABILITIES:
         return "key package does not support what the group requires";
 
+    case MARMOT_ERR_RESOURCE_REFUSED:        return "no room to retain this competing commit now";
+
     /* Message */
     case MARMOT_ERR_MESSAGE:                 return "message error";
     case MARMOT_ERR_OWN_MESSAGE:             return "received own message";

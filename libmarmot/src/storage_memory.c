@@ -350,6 +350,18 @@ static MarmotError
 mem_save_message(void *ctx, const MarmotMessage *msg)
 {
     MemCtx *mc = ctx;
+    /* By id, as the other backends (INSERT OR REPLACE, mdb_put): saving a
+     * message again updates it (nostrc-w1m0: a losing branch's message
+     * becomes MARMOT_MSG_STATE_EPOCH_INVALIDATED). */
+    static const uint8_t no_id[32];
+    for (size_t i = 0; memcmp(msg->id, no_id, 32) != 0 && i < mc->msg_count; i++) {
+        if (memcmp(mc->messages[i]->id, msg->id, 32) != 0) continue;
+        MarmotMessage *copy = msg_deep_copy(msg);
+        if (!copy) return MARMOT_ERR_MEMORY;
+        marmot_message_free(mc->messages[i]);
+        mc->messages[i] = copy;
+        return MARMOT_OK;
+    }
     if (mc->msg_count >= mc->msg_cap) {
         size_t new_cap = mc->msg_cap ? mc->msg_cap * 2 : 64;
         MarmotMessage **arr = realloc(mc->messages, new_cap * sizeof(MarmotMessage *));

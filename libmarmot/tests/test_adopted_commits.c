@@ -275,8 +275,11 @@ snapshot_clear(Snapshot *s)
     memset(s, 0, sizeof(*s));
 }
 
+/* `parent_too` false: a losing competitor is retained as a candidate, so
+ * the retained-parent record may change (nostrc-w1m0). */
 static void
-expect_unchanged(Member *x, const MarmotGroupId *gid, const Snapshot *b, const char *what)
+expect_unchanged_ex(Member *x, const MarmotGroupId *gid, const Snapshot *b, const char *what,
+                    bool parent_too)
 {
     Snapshot n;
     snapshot(x, gid, &n);
@@ -287,9 +290,10 @@ expect_unchanged(Member *x, const MarmotGroupId *gid, const Snapshot *b, const c
     CHECK(memcmp(n.nostr_gid, b->nostr_gid, 32) == 0, "%s: routing changed", what);
     CHECK(n.state_len == b->state_len && memcmp(n.state, b->state, n.state_len) == 0,
           "%s: MLS state changed", what);
-    CHECK((!n.parent) == (!b->parent) &&
-          (!n.parent || (n.parent_len == b->parent_len &&
-                         memcmp(n.parent, b->parent, n.parent_len) == 0)),
+    CHECK(!parent_too ||
+          ((!n.parent) == (!b->parent) &&
+           (!n.parent || (n.parent_len == b->parent_len &&
+                          memcmp(n.parent, b->parent, n.parent_len) == 0))),
           "%s: retained parent changed", what);
     CHECK(n.has_exporter_next == b->has_exporter_next, "%s: next exporter stored", what);
     CHECK((!n.floor) == (!b->floor) &&
@@ -297,6 +301,12 @@ expect_unchanged(Member *x, const MarmotGroupId *gid, const Snapshot *b, const c
                         memcmp(n.floor, b->floor, n.floor_len) == 0)),
           "%s: created_at floor moved", what);
     snapshot_clear(&n);
+}
+
+static void
+expect_unchanged(Member *x, const MarmotGroupId *gid, const Snapshot *b, const char *what)
+{
+    expect_unchanged_ex(x, gid, b, what, true);
 }
 
 static MarmotError
@@ -310,10 +320,28 @@ deliver(Member *x, const char *event_json, MarmotMessageResult *out)
     return err;
 }
 
+static void expect_refused_ex(Member *x, const MarmotGroupId *gid, const char *event,
+                              MarmotError want, const char *what, bool parent_too);
+
 /* `event` refused with `want`, the group untouched. */
 static void
 expect_refused(Member *x, const MarmotGroupId *gid, const char *event, MarmotError want,
                const char *what)
+{
+    expect_refused_ex(x, gid, event, want, what, true);
+}
+
+/* A competitor that loses its selection: nothing canonical changes, and it
+ * is retained (nostrc-w1m0). */
+static void
+expect_lost(Member *x, const MarmotGroupId *gid, const char *event, const char *what)
+{
+    expect_refused_ex(x, gid, event, MARMOT_ERR_WRONG_EPOCH, what, false);
+}
+
+static void
+expect_refused_ex(Member *x, const MarmotGroupId *gid, const char *event, MarmotError want,
+                  const char *what, bool parent_too)
 {
     Snapshot before;
     snapshot(x, gid, &before);
@@ -323,7 +351,7 @@ expect_refused(Member *x, const MarmotGroupId *gid, const char *event, MarmotErr
           marmot_error_string(want));
     CHECK(res.type != MARMOT_RESULT_COMMIT, "%s: no Commit result", what);
     marmot_message_result_free(&res);
-    expect_unchanged(x, gid, &before, what);
+    expect_unchanged_ex(x, gid, &before, what, parent_too);
     snapshot_clear(&before);
 }
 
@@ -574,10 +602,11 @@ test_mdk_commit_before_its_proposal(void)
     member_free(&o);
 }
 
-/* Competing Commits of one epoch (convergence.md, the bounded legacy
- * subset): libmarmot commits Dave's SelfRemove itself, then Alice's MDK
- * Commit of the same proposal arrives.  Both are ordinary (SelfRemove
- * only); the lower committer key wins, transport order never decides. */
+/* Competing Commits of one epoch (convergence.md "Same-epoch races"):
+ * libmarmot commits Dave's SelfRemove itself, then Alice's MDK Commit of
+ * the same proposal arrives.  Both are ordinary (SelfRemove only) and
+ * unwitnessed; the lower committer key wins, transport order never decides.
+ * A loser is retained (its branch could still grow). */
 static void
 test_mdk_competing_self_remove_commits(void)
 {
@@ -604,7 +633,7 @@ test_mdk_competing_self_remove_commits(void)
     const char *theirs = mdk_step("self_remove_commit")->event_json;
     if (memcmp(observer, alice, 32) < 0) {
         /* Ours sorts first: Alice's loses and is stale. */
-        expect_refused(&o, &gid, theirs, MARMOT_ERR_WRONG_EPOCH, "losing competitor");
+        expect_lost(&o, &gid, theirs, "losing competitor");
     } else {
         /* Alice's sorts first: it replaces ours, and MDK's next Commit
          * applies on top of it. */

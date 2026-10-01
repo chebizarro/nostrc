@@ -3133,9 +3133,10 @@ test_message_epoch_lookback(void)
 
     /* The NIP-44 layer tries the exporter secrets of recent epochs.  The MLS
      * PrivateMessage keys are epoch-bound: since 0.7.0 (nostrc-qp24.7) a
-     * message of the previous epoch is read with the retained parent state
-     * (here our own, so it is recognised as ours); two epochs back is past
-     * libmarmot's one-epoch rewind horizon and fails in the MLS layer. */
+     * message of an earlier epoch is read with that epoch's retained state
+     * (here our own, so it is recognised as ours) -- since 0.12.0 the last
+     * five epochs (the convergence horizon, nostrc-w1m0); six epochs back
+     * the state and its exporter secret are released, and it fails. */
 
     Marmot *m = create_test_instance();
     ASSERT(m != NULL, "failed to create instance");
@@ -3154,10 +3155,11 @@ test_message_epoch_lookback(void)
     MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
     ASSERT_OK(err, "create_group");
 
-    /* Two messages at epoch 0 */
-    MarmotOutgoingMessage msg_out, msg_old;
+    /* Three messages at epoch 0 */
+    MarmotOutgoingMessage msg_out, msg_old, msg_far;
     memset(&msg_out, 0, sizeof(msg_out));
     memset(&msg_old, 0, sizeof(msg_old));
+    memset(&msg_far, 0, sizeof(msg_far));
     err = marmot_create_message(m, &gresult.group->mls_group_id,
                                  "{\"kind\":9,\"content\":\"epoch0 msg\","
                                  "\"created_at\":1700000000,\"tags\":[]}",
@@ -3169,6 +3171,11 @@ test_message_epoch_lookback(void)
                                  "\"created_at\":1700000000,\"tags\":[]}",
                                  &msg_old);
     ASSERT_OK(err, "second create_message at epoch 0");
+    err = marmot_create_message(m, &gresult.group->mls_group_id,
+                                 "{\"kind\":9,\"content\":\"epoch0 far\","
+                                 "\"created_at\":1700000000,\"tags\":[]}",
+                                 &msg_far);
+    ASSERT_OK(err, "third create_message at epoch 0");
 
     /* Advance epoch by updating group metadata */
     MarmotGroupConfig update_config = {0};
@@ -3191,7 +3198,7 @@ test_message_epoch_lookback(void)
            "previous-epoch message: read through the retained parent");
     marmot_message_result_free(&msg_in);
 
-    /* Epoch 2: epoch 0 is beyond the rewind horizon. */
+    /* Epoch 2: epoch 0 is inside the five-epoch horizon. */
     update_config.name = "Epoch Lookback Test v3";
     commit_json = NULL;
     ASSERT_OK(marmot_update_group_metadata(m, &gresult.group->mls_group_id,
@@ -3202,12 +3209,32 @@ test_message_epoch_lookback(void)
               "second merge");
     memset(&msg_in, 0, sizeof(msg_in));
     err = marmot_process_message(m, msg_old.event_json, &msg_in);
-    ASSERT(err == MARMOT_ERR_MLS,
-           "should fail: MLS state two epochs back is not retained");
+    ASSERT(err == MARMOT_OK && msg_in.type == MARMOT_RESULT_OWN_MESSAGE,
+           "two epochs back: read through the retained history");
+    marmot_message_result_free(&msg_in);
+
+    /* Epoch 6: epoch 0 left the horizon. */
+    for (int i = 0; i < 4; i++) {
+        char name[48];
+        snprintf(name, sizeof(name), "Epoch Lookback Test v%d", 4 + i);
+        update_config.name = name;
+        commit_json = NULL;
+        ASSERT_OK(marmot_update_group_metadata(m, &gresult.group->mls_group_id,
+                                               &update_config, &commit_json),
+                  "later update");
+        free(commit_json);
+        ASSERT_OK(marmot_merge_pending_commit(m, &gresult.group->mls_group_id),
+                  "later merge");
+    }
+    memset(&msg_in, 0, sizeof(msg_in));
+    err = marmot_process_message(m, msg_far.event_json, &msg_in);
+    ASSERT(err == MARMOT_ERR_NIP44,
+           "should fail: epoch 0 is six epochs back, released");
 
     marmot_message_result_free(&msg_in);
     marmot_outgoing_message_free(&msg_out);
     marmot_outgoing_message_free(&msg_old);
+    marmot_outgoing_message_free(&msg_far);
     marmot_create_group_result_free(&gresult);
     marmot_free(m);
     PASS();

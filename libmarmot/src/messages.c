@@ -661,6 +661,31 @@ create_message_impl(Marmot *m,
             marmot_group_free(group);
             return MARMOT_ERR_STORAGE;
         }
+        /* Our own message witnesses our branch as the others' do, once
+         * they read it (convergence.md "App-payload witnesses"; MDK counts
+         * its Created messages too).  At the tip it never changes the
+         * selection, so nothing else can happen here. */
+        uint8_t me[32];
+        if (marmot_mls_sender_identity(&mls_group, mls_group.own_leaf_index, me) == 0) {
+            MarmotMessageResult unused;
+            memset(&unused, 0, sizeof(unused));
+            uint8_t *replaced = NULL;
+            size_t replaced_len = 0;
+            MarmotError werr = marmot_commit_note_witness(m, group, mls_group.epoch,
+                                                          mls_group.confirmed_transcript_hash,
+                                                          me, true, &replaced, &replaced_len,
+                                                          &unused);
+            marmot_message_result_free(&unused);
+            if (replaced) sodium_memzero(replaced, replaced_len);
+            free(replaced);
+            if (werr != MARMOT_OK) {
+                free(nip44_ciphertext);
+                mls_group_free(&mls_group);
+                free(bound_json);
+                marmot_group_free(group);
+                return werr;
+            }
+        }
         mls_group_free(&mls_group);
     }
 
@@ -818,9 +843,15 @@ save_created_message_impl(Marmot *m,
  * Public API: marmot_process_message
  * ══════════════════════════════════════════════════════════════════════════ */
 
+static MarmotError branch_app_message(Marmot *m, MarmotGroup *group, uint64_t epoch,
+                                      const uint8_t tag[32], bool wants,
+                                      const uint8_t *msg, size_t msg_len,
+                                      MarmotMessageResult *result, bool *restart);
+
+/* `depth`: 1 when re-reading a message whose branch it made canonical. */
 static MarmotError
-process_group_event(Marmot *m, const char *group_event_json,
-                    GroupEventOrigin origin, MarmotMessageResult *result)
+process_group_event_at(Marmot *m, const char *group_event_json,
+                       GroupEventOrigin origin, MarmotMessageResult *result, int depth)
 {
     if (!m || !group_event_json || !result)
         return MARMOT_ERR_INVALID_ARG;
@@ -947,6 +978,33 @@ process_group_event(Marmot *m, const char *group_event_json,
     }
     sodium_memzero(exporter_secret, sizeof(exporter_secret));
 
+    /* Not one of the canonical epochs': maybe a retained candidate
+     * state's -- a competing branch's Commit or message (nostrc-w1m0;
+     * inbound-processing.md "Transport-deferred input"). */
+    bool branch = false;          /* peeled with a candidate state's secret */
+    bool branch_wants = false;    /* that state's witnesses are below quorum */
+    uint8_t branch_tag[32] = { 0 };
+    if (!decrypted_ok && !contested_removal) {
+        MarmotBranchSecret *bs = NULL;
+        size_t nbs = 0;
+        MarmotError berr = marmot_commit_branch_secrets(m, &group->mls_group_id, &bs, &nbs);
+        if (berr != MARMOT_OK) {
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return berr;
+        }
+        for (size_t i = 0; i < nbs && !decrypted_ok; i++) {
+            if (marmot_group_event_decrypt(bs[i].exporter, parsed.content, &decrypted,
+                                           &decrypted_len) != 0)
+                continue;
+            decrypted_ok = branch = true;
+            used_epoch = bs[i].epoch;
+            branch_wants = bs[i].wants_witness;
+            memcpy(branch_tag, bs[i].tag, 32);
+        }
+        marmot_branch_secrets_free(bs, nbs);
+    }
+
     if (!decrypted_ok) {
         if (contested_removal && parsed.event_id &&
             marmot_commit_removal_note_later(m, group, parsed.event_id, NULL) == MARMOT_OK)
@@ -973,9 +1031,10 @@ process_group_event(Marmot *m, const char *group_event_json,
         return MARMOT_ERR_USE_AFTER_EVICTION;
     }
     if (is_commit) {
-        err = marmot_commit_process_inbound(m, group, used_epoch,
-                                            decrypted, decrypted_len,
-                                            parsed.event_id, result);
+        err = marmot_commit_process_inbound_ex(m, group, used_epoch,
+                                               branch ? branch_tag : NULL,
+                                               decrypted, decrypted_len,
+                                               parsed.event_id, result);
         if (err == MARMOT_OK && result->type == MARMOT_RESULT_COMMIT)
             err = marmot_observe_group_event_time(m, group->nostr_group_id,
                                                   parsed.created_at);
@@ -983,6 +1042,39 @@ process_group_event(Marmot *m, const char *group_event_json,
         marmot_group_free(group);
         parsed_group_event_clear(&parsed);
         if (err != MARMOT_OK) marmot_message_result_free(result);
+        return err;
+    }
+    if (branch) {
+        /* An application message of a candidate state: a witness for its
+         * branch, delivered only once that branch is canonical. */
+        bool restart = false;
+        err = branch_app_message(m, group, used_epoch, branch_tag, branch_wants, decrypted,
+                                 decrypted_len, result, &restart);
+        free(decrypted);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        if (err != MARMOT_OK) {
+            marmot_message_result_free(result);
+            return err;
+        }
+        if (!restart) return MARMOT_OK;
+        /* Its branch is canonical now: read it as any message of the
+         * canonical branch (once: the canonical path never restarts). */
+        if (depth > 0) {
+            marmot_message_result_free(result);
+            return MARMOT_ERR_INTERNAL;
+        }
+        MarmotMessageResult conv;   /* the branch change, kept across the re-read */
+        memset(&conv, 0, sizeof(conv));
+        conv.type = MARMOT_RESULT_UNPROCESSABLE;
+        conv.convergence = result->convergence;
+        memset(&result->convergence, 0, sizeof(result->convergence));
+        err = process_group_event_at(m, group_event_json, origin, result, depth + 1);
+        if (err == MARMOT_OK && !result->convergence.branch_recovered) {
+            result->convergence = conv.convergence;
+            memset(&conv.convergence, 0, sizeof(conv.convergence));
+        }
+        marmot_message_result_free(&conv);
         return err;
     }
 
@@ -1003,7 +1095,7 @@ process_group_event(Marmot *m, const char *group_event_json,
     bool late = false;   /* decrypted with the retained previous-epoch state */
     StateUndo undo = { 0 };   /* the ratchet record this message replaced */
     StateUndo parent_undo = { 0 };   /* the retained parent, if a witness settled it */
-    uint32_t live_sender = UINT32_MAX;   /* sender leaf of a current-epoch message */
+    uint8_t state_tag[32] = { 0 };   /* the decrypting state's confirmed transcript hash */
     uint8_t sender_identity[32] = { 0 };   /* the MLS sender's account */
     bool have_identity = false;
     uint8_t inner_id[32] = { 0 };          /* canonical id of the inner event */
@@ -1020,7 +1112,7 @@ process_group_event(Marmot *m, const char *group_event_json,
                                         &sender_leaf);
         if (mls_rc == 0) {
             used_mls = true;
-            live_sender = sender_leaf;
+            memcpy(state_tag, mls_group.confirmed_transcript_hash, 32);
             have_identity = marmot_mls_sender_identity(&mls_group, sender_leaf,
                                                        sender_identity) == 0;
         } else if (mls_rc == MARMOT_ERR_OWN_MESSAGE) {
@@ -1034,16 +1126,17 @@ process_group_event(Marmot *m, const char *group_event_json,
             result->type = MARMOT_RESULT_OWN_MESSAGE;
             return MARMOT_OK;
         }
-    } else if (mls_loaded && used_epoch + 1 == mls_group.epoch) {
-        /* A message sent in the previous epoch that arrived after we
-         * applied the next Commit: read it with the retained parent state
-         * (nostrc-qp24.7; one epoch, libmarmot's rewind horizon). */
+    } else if (mls_loaded && used_epoch < mls_group.epoch) {
+        /* A message sent in an earlier epoch that arrived after we applied
+         * a later Commit: read it with that epoch's retained state
+         * (nostrc-qp24.7; since W25 the last five epochs, the app-payload
+         * window, nostrc-w1m0). */
         uint32_t sender_leaf = 0;
         MarmotError lerr = marmot_commit_decrypt_late(m, &group->mls_group_id, used_epoch,
                                                       decrypted, decrypted_len,
                                                       &inner_plaintext,
                                                       &inner_plaintext_len, &sender_leaf,
-                                                      sender_identity,
+                                                      sender_identity, state_tag,
                                                       &undo.blob, &undo.len);
         if (lerr == MARMOT_OK) {
             used_mls = true;
@@ -1150,11 +1243,13 @@ process_group_event(Marmot *m, const char *group_event_json,
         parsed_group_event_clear(&parsed);
         return MARMOT_ERR_STORAGE;
     }
-    /* nostrc-yuj2: the sender is now known to be at this epoch; the retained
-     * parent may no longer need its full state (see commits.c). */
-    if (used_mls && !late && !duplicate) {
-        MarmotError werr = marmot_commit_note_witness(m, &mls_group, live_sender,
-                                                      &parent_undo.blob, &parent_undo.len);
+    /* nostrc-w1m0: a witness of the branch the message's state is on
+     * (convergence.md "App-payload witnesses"; commits.c). */
+    if (used_mls && !duplicate) {
+        MarmotError werr = marmot_commit_note_witness(m, group, used_epoch, state_tag,
+                                                      sender_identity, true,
+                                                      &parent_undo.blob, &parent_undo.len,
+                                                      result);
         if (werr != MARMOT_OK) {
             state_undo_apply(m, &group->mls_group_id, &undo);
             mls_group_free(&mls_group);
@@ -1303,6 +1398,70 @@ process_group_event(Marmot *m, const char *group_event_json,
     marmot_group_free(group);
     parsed_group_event_clear(&parsed);
     return MARMOT_OK;
+}
+
+static MarmotError
+process_group_event(Marmot *m, const char *group_event_json,
+                    GroupEventOrigin origin, MarmotMessageResult *result)
+{
+    return process_group_event_at(m, group_event_json, origin, result, 0);
+}
+
+/* An application message `msg` of the candidate state `tag` of `epoch`
+ * (nostrc-w1m0; convergence.md "App-payload witnesses"): decrypted on that
+ * state, rebuilt, and checked like any payload (the inner author is the MLS
+ * sender), it is a witness for its branch -- which may make that branch
+ * canonical (*restart: read it again, now on the canonical branch).
+ * Otherwise it is not deliverable yet: MARMOT_ERR_NIP44, transport-deferred
+ * (the application keeps it and offers it again after the next Commit; it
+ * is never marked processed), with the witness kept. */
+static MarmotError
+branch_app_message(Marmot *m, MarmotGroup *group, uint64_t epoch, const uint8_t tag[32],
+                   bool wants, const uint8_t *msg, size_t msg_len,
+                   MarmotMessageResult *result, bool *restart)
+{
+    *restart = false;
+    if (!wants) return MARMOT_ERR_NIP44;   /* its state's quorum is met already */
+    uint8_t *plain = NULL;
+    size_t plain_len = 0;
+    uint8_t sender[32];
+    MarmotError err = marmot_commit_branch_decrypt(m, group, epoch, tag, msg, msg_len, &plain,
+                                                   &plain_len, sender);
+    if (err == MARMOT_ERR_OWN_MESSAGE) {
+        result->type = MARMOT_RESULT_OWN_MESSAGE;   /* ours, from a branch that lost */
+        return MARMOT_OK;
+    }
+    if (err == MARMOT_ERR_MLS || err == MARMOT_ERR_STORAGE_NOT_FOUND ||
+        err == MARMOT_ERR_AUTHOR_MISMATCH)
+        return MARMOT_ERR_NIP44;
+    if (err != MARMOT_OK) return err;
+    char *json = malloc(plain_len + 1);
+    if (!json) {
+        sodium_memzero(plain, plain_len);
+        free(plain);
+        return MARMOT_ERR_MEMORY;
+    }
+    memcpy(json, plain, plain_len);
+    json[plain_len] = '\0';
+    sodium_memzero(plain, plain_len);
+    free(plain);
+    uint8_t inner_id[32];
+    err = check_inner_author(json, sender, inner_id);
+    free(json);
+    if (err != MARMOT_OK) return err;   /* decryption alone is no witness */
+    uint8_t *replaced = NULL;
+    size_t replaced_len = 0;
+    err = marmot_commit_note_witness(m, group, epoch, tag, sender, false, &replaced,
+                                     &replaced_len, result);
+    if (replaced) sodium_memzero(replaced, replaced_len);
+    free(replaced);
+    if (err != MARMOT_OK) return err;
+    if (marmot_commit_state_canonical(m, &group->mls_group_id, epoch, tag)) {
+        *restart = true;
+        return MARMOT_OK;
+    }
+    marmot_txn_keep(m);   /* the witness stays; the message waits for its branch */
+    return MARMOT_ERR_NIP44;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

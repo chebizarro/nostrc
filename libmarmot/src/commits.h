@@ -112,14 +112,14 @@ MarmotError marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post
 
 /**
  * Persist an applied epoch transition: the exporter secret of post->epoch,
- * the retained parent (`pre` plus the Commit's ordering key, used to judge a
- * competing Commit for the same epoch and to read late application messages
- * of `pre`'s epoch; reduced to the late-message part at once when no member
- * could publish a winning competitor, nostrc-yuj2), the new MLS state, and
- * `group` (updated from `post_gde` and post->epoch).  It runs inside the operation's storage transaction
- * (nostrc-qp24.7), which makes the four writes atomic; for backends without
- * transactions a failed write also restores every record already written,
- * so on error the stored state is as it was.
+ * the retained history (`pre`, the Commit's ordering key and its MLSMessage
+ * become the newest entry: commits.c, "Retained history"), the new MLS
+ * state, and `group` (updated from `post_gde` and post->epoch).  It runs
+ * inside the operation's storage transaction (nostrc-qp24.7), which makes
+ * the four writes atomic; for backends without transactions a failed write
+ * also restores every record already written, so on error the stored state
+ * is as it was.  marmot_commit_persist() does not know the Commit's bytes:
+ * a later reorg cannot retain that Commit as a candidate.
  */
 MarmotError marmot_commit_persist(Marmot *m, const MlsGroup *pre,
                                   const MlsGroup *post,
@@ -127,14 +127,24 @@ MarmotError marmot_commit_persist(Marmot *m, const MlsGroup *pre,
                                   const MarmotGroupDataExtension *post_gde,
                                   MarmotGroup *group);
 
+/** marmot_commit_persist() of the Commit `commit` (its MLSMessage; ours
+ *  when `own`), kept in the retained history (nostrc-w1m0). */
+MarmotError marmot_commit_persist_ex(Marmot *m, const MlsGroup *pre,
+                                     const MlsGroup *post,
+                                     const MarmotCommitKey *key,
+                                     const MarmotGroupDataExtension *post_gde,
+                                     MarmotGroup *group,
+                                     const uint8_t *commit, size_t commit_len, bool own);
+
 /**
- * A late application message (MLS PrivateMessage `msg`) of `epoch`, the
- * epoch before the current one: decrypt it with the retained parent state
- * (the state the last applied Commit was built on, kept for one epoch) and
- * store that state's advanced ratchet.  The retention horizon is libmarmot's
- * one-epoch rewind: older messages cannot be read.  MARMOT_ERR_OWN_MESSAGE
- * for our own message; MARMOT_ERR_STORAGE_NOT_FOUND when no state of that
- * epoch is retained; MARMOT_ERR_MLS when it does not decrypt.
+ * A late application message (MLS PrivateMessage `msg`) of `epoch`, an
+ * epoch before the current one: decrypt it with the retained canonical
+ * state of that epoch (the last five are retained: the app-payload window,
+ * nostrc-w1m0) and store that state's advanced ratchet.  *out_tag: that
+ * state's confirmed transcript hash (for marmot_commit_note_witness()).
+ * MARMOT_ERR_OWN_MESSAGE for our own message; MARMOT_ERR_STORAGE_NOT_FOUND
+ * when no state of that epoch is retained; MARMOT_ERR_MLS when it does not
+ * decrypt.
  *
  * On success *out_replaced holds the retained-parent record as it was
  * before (caller wipes and frees it): the caller writes it back under
@@ -149,20 +159,64 @@ MarmotError marmot_commit_decrypt_late(Marmot *m, const MarmotGroupId *gid,
                                        uint8_t **out_plaintext, size_t *out_len,
                                        uint32_t *out_sender,
                                        uint8_t out_sender_identity[32],
+                                       uint8_t out_tag[32],
                                        uint8_t **out_replaced, size_t *out_replaced_len);
 
 /**
- * nostrc-yuj2: an application message from `sender_leaf` decrypted and
- * authenticated in `cur`'s epoch.  If the retained parent still keeps its
- * full state waiting for that member (it could have published a winning
- * competing Commit), it is off the list now; when nobody is left, the parent
- * is reduced to what reads late messages (mls_group_strip_to_reader()).  On
- * a change *out_replaced holds the record as it was (caller wipes and frees
- * it, and writes it back if a later write of the operation fails).  A
- * storage error fails the operation; an unreadable record is left alone.
+ * nostrc-w1m0 (convergence.md "App-payload witnesses"): an application
+ * message of `epoch`, from the account `sender`, decrypted on the state
+ * whose confirmed transcript hash is `tag` and passed every payload check
+ * (the inner author is the MLS sender); `canonical`: that state is the
+ * canonical one of its epoch.  The witness is recorded once per
+ * (state, account), up to the quorum; when it may change the selected
+ * branch (a candidate state's, or an earlier epoch's, while branches are
+ * retained) the retained branches are resolved again: a change is reported
+ * in result->convergence and `group` follows it.  On a change of the
+ * record *out_replaced holds it as it was (caller wipes and frees it, and
+ * writes it back if a later write of the operation fails).  A storage
+ * error fails the operation; an unreadable record is left alone.
  */
-MarmotError marmot_commit_note_witness(Marmot *m, const MlsGroup *cur, uint32_t sender_leaf,
-                                       uint8_t **out_replaced, size_t *out_replaced_len);
+MarmotError marmot_commit_note_witness(Marmot *m, MarmotGroup *group, uint64_t epoch,
+                                       const uint8_t tag[32], const uint8_t sender[32],
+                                       bool canonical,
+                                       uint8_t **out_replaced, size_t *out_replaced_len,
+                                       MarmotMessageResult *result);
+
+/**
+ * The exporter secret of a retained candidate (non-canonical) state: its
+ * kind:445 events peel with it (inbound-processing.md "Transport-deferred
+ * input").  `wants_witness`: its witness count is below the quorum, so an
+ * application message of it is still worth reading.
+ */
+typedef struct {
+    uint64_t epoch;
+    uint8_t  tag[32];        /* the state's confirmed transcript hash */
+    uint8_t  exporter[32];
+    bool     wants_witness;
+} MarmotBranchSecret;
+
+/** The retained candidate states' exporter secrets of `gid` (*out NULL when
+ *  none).  Free with marmot_branch_secrets_free(). */
+MarmotError marmot_commit_branch_secrets(Marmot *m, const MarmotGroupId *gid,
+                                         MarmotBranchSecret **out, size_t *out_count);
+void marmot_branch_secrets_free(MarmotBranchSecret *list, size_t count);
+
+/** Whether the state `tag` of `epoch` is canonical now (the tip or a
+ *  retained canonical epoch). */
+bool marmot_commit_state_canonical(Marmot *m, const MarmotGroupId *gid, uint64_t epoch,
+                                   const uint8_t tag[32]);
+
+/**
+ * An application message `msg` of the candidate state `tag` of `epoch`
+ * (peeled with its branch secret): decrypt it on that state, rebuilt by
+ * replaying its branch (nothing kept is spent).  *out_sender_identity: the
+ * sender leaf's account.  MARMOT_ERR_STORAGE_NOT_FOUND when that state is
+ * no longer a candidate; MARMOT_ERR_OWN_MESSAGE; MARMOT_ERR_MLS.
+ */
+MarmotError marmot_commit_branch_decrypt(Marmot *m, MarmotGroup *group, uint64_t epoch,
+                                         const uint8_t tag[32], const uint8_t *msg,
+                                         size_t msg_len, uint8_t **out_plaintext,
+                                         size_t *out_len, uint8_t out_sender_identity[32]);
 
 /**
  * nostrc-7vyi (joining.md step 5): every member leaf of `g` is bound to the
@@ -306,6 +360,16 @@ MarmotError marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                                           const uint8_t *msg, size_t msg_len,
                                           const char *event_id_hex,
                                           MarmotMessageResult *result);
+
+/** marmot_commit_process_inbound() of a Commit whose kind:445 event the
+ *  exporter secret of the candidate state `parent_tag` (NULL: the canonical
+ *  state of `outer_epoch`) opened: that state is the Commit's parent
+ *  (nostrc-w1m0). */
+MarmotError marmot_commit_process_inbound_ex(Marmot *m, MarmotGroup *group,
+                                             uint64_t outer_epoch, const uint8_t *parent_tag,
+                                             const uint8_t *msg, size_t msg_len,
+                                             const char *event_id_hex,
+                                             MarmotMessageResult *result);
 
 /* The content encryption of kind:445 events (MIP-03, messages.c): keyed by
  * an epoch's RFC 9420 exporter_secret (the key is MLS-Exporter("marmot",

@@ -601,6 +601,31 @@ typedef struct {
         /** The sender asks to leave: a SelfRemove, or a Remove of itself */
         bool leave;
     } proposal;
+
+    /** Since 0.12.0 (nostrc-w1m0, Marmot convergence): valid with any
+     *  type.  Processing this event made another branch of the group's
+     *  history canonical (a competing branch now scores higher: deeper, or
+     *  witnessed by more members' messages, or first by the Commit
+     *  ordering).  Commits this member had applied were superseded: every
+     *  group change they announced did not happen (the group as it is now
+     *  is in commit.updated_group for a COMMIT result, else read it again),
+     *  and the application messages delivered on the losing branch are
+     *  withdrawn -- their stored copies are MARMOT_MSG_STATE_EPOCH_INVALIDATED.
+     *  A losing branch stays retained and may still win later. */
+    struct {
+        /** Another branch became canonical. */
+        bool branch_recovered;
+        /** The last epoch the two branches share. */
+        uint64_t fork_epoch;
+        /** SHA-256 (hex, caller-owned) of each superseded Commit's
+         *  MLSMessage, oldest first. */
+        char **superseded_commit_digests;
+        size_t superseded_count;
+        /** Outer kind:445 event ids (hex, caller-owned) of the stored
+         *  messages withdrawn. */
+        char **invalidated_message_ids;
+        size_t invalidated_count;
+    } convergence;
 } MarmotMessageResult;
 
 /** MLS proposal types reported in MarmotMessageResult and
