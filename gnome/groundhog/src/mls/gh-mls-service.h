@@ -300,6 +300,10 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_MAX_HELD 256
 /* Overlap subtracted from a group's read cursor (seconds). */
 #define GH_MLS_SERVICE_CURSOR_OVERLAP 600
+/* An earlier routing address of an adopted group (nostrc-ms4d) is read at
+ * most this long after the Commit that left it, and only while the group is
+ * not yet two epochs past it (libmarmot reads nothing older). */
+#define GH_MLS_SERVICE_ROUTING_RETAIN_S ((gint64)7 * 24 * 3600)
 /* A group relay's backfill: REQ limit, and older pages per subscription. */
 #define GH_MLS_SERVICE_PAGE_LIMIT 500
 #define GH_MLS_SERVICE_MAX_PAGES 64
@@ -420,8 +424,10 @@ typedef enum {
   GH_MLS_SERVICE_ERROR_MIXED_PROFILE, /* invitees with only the adopted and only the MDK 0.8
                                        * KeyPackage format cannot share a new group */
   GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH, /* an invitee has no KeyPackage in the group's format */
-  GH_MLS_SERVICE_ERROR_FORMAT_CHANGED /* an invitee's KeyPackages no longer give the format the
+  GH_MLS_SERVICE_ERROR_FORMAT_CHANGED, /* an invitee's KeyPackages no longer give the format the
                                        * user was shown (review M2): check again */
+  GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN   /* an invitation names the address (h tag) of another
+                                        * group of ours; refused for good (nostrc-scki) */
 } GhMlsServiceError;
 
 /* Whether settings asks for every member's account proof: the key
@@ -556,6 +562,9 @@ GhMlsRefusal gh_mls_group_get_refusal(GhMlsGroup *self);
 GStrv gh_mls_group_dup_admins(GhMlsGroup *self);
 /* The group relays (sorted). Transfer full. */
 GStrv gh_mls_group_dup_relays(GhMlsGroup *self);
+/* Every relay the group is read at: its relays, and those of earlier routing
+ * addresses still followed for late events (nostrc-ms4d); sorted. */
+GStrv gh_mls_group_dup_read_relays(GhMlsGroup *self);
 
 /* A pending invitation: a Welcome received and stored, not yet accepted. */
 typedef struct {
@@ -634,6 +643,10 @@ guint gh_mls_service_test_rate_retries(void);
  * how many Commits of members' leaves failed. */
 void gh_mls_service_test_refuse_rate(guint n);
 guint gh_mls_service_test_departure_failures(void);
+/* Test hook (nostrc-8ndz): whether an admin commits the SelfRemove
+ * requirement on its own (TRUE, as in the app); tests about the Remove
+ * request path, or counting Commits exactly, turn it off. */
+void gh_mls_service_test_set_self_remove_upgrade(gboolean enabled);
 #endif
 const gchar *gh_mls_service_get_account(GhMlsService *self);
 /* libmarmot, for tests and diagnostics (borrowed; one thread). */

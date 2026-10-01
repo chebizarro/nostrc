@@ -375,7 +375,7 @@ test_copy(void)
 
   g_autoptr(GHashTable) errors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (gint code = GH_MLS_SERVICE_ERROR_NO_CONSENT;
-       code <= GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH; code++) {
+       code <= GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN; code++) {
     g_autoptr(GError) error = g_error_new(GH_MLS_SERVICE_ERROR, code, "internal detail %d", code);
     gchar *words = gh_mls_error_copy(error);
     g_assert_null(strstr(words, "internal detail"));   /* plain words, not the log's */
@@ -401,6 +401,11 @@ test_copy(void)
                                                    GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH, "x");
   g_autofree gchar *mismatch_words = gh_mls_error_copy(mismatch);
   g_assert_nonnull(strstr(mismatch_words, "this group’s format"));
+  g_autoptr(GError) taken = g_error_new_literal(GH_MLS_SERVICE_ERROR,
+                                                GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN, "x");
+  g_autofree gchar *taken_words = gh_mls_error_copy(taken);
+  g_assert_nonnull(strstr(taken_words, "same group address as another group"));
+  g_assert_nonnull(strstr(taken_words, "refused"));
 
   g_autofree gchar *from_contact = gh_mls_invite_subtitle("npub1abcd…wxyz", "Bob", TRUE, 3);
   g_assert_cmpstr(from_contact, ==, "From Bob · 3 members");

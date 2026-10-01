@@ -18,6 +18,7 @@ G_BEGIN_DECLS
 
 #define GH_STORE_MLS_MEMBER_PREFIX "mls-member:"
 #define GH_STORE_MLS_REFUSED_PREFIX "mls-refused:"
+#define GH_STORE_MLS_ROUTING_PREFIX "mls-routing:"
 
 typedef enum {
   GH_STORE_MLS_MEMBER_UNCHECKED = 0, /* not looked up yet (added_by may be known) */
@@ -45,7 +46,8 @@ gboolean gh_store_mls_member_save(GhStore *store, const gchar *group_hex, const 
 /* Forgets one device (it left the group). */
 gboolean gh_store_mls_member_delete(GhStore *store, const gchar *group_hex, const gchar *account,
                                     const gchar *signature_key, GError **error);
-/* Forgets every device record and the refused Commit of a group. */
+/* Forgets every device record, the refused Commit and the routing record of
+ * a group. */
 gboolean gh_store_mls_member_forget_group(GhStore *store, const gchar *group_hex,
                                           GError **error);
 
@@ -60,6 +62,16 @@ gboolean gh_store_mls_refused_save(GhStore *store, const gchar *group_hex, const
                                    guint cause, GError **error);
 gboolean gh_store_mls_refused_load(GhStore *store, const gchar *group_hex, gchar **json,
                                    guint *cause, GError **error);
+
+/* The routing addresses an adopted group left and that Groundhog still reads
+ * for backfill (nostrc-ms4d): an opaque record of GhMlsService's, at most
+ * 64 KiB of UTF-8, under GH_STORE_MLS_ROUTING_PREFIX + SHA-256 of the group.
+ * Saving NULL forgets it; loading gives NULL without one. The group's
+ * forget_group() forgets it too. */
+gboolean gh_store_mls_routing_save(GhStore *store, const gchar *group_hex, const gchar *record,
+                                   GError **error);
+gboolean gh_store_mls_routing_load(GhStore *store, const gchar *group_hex, gchar **record,
+                                   GError **error);
 
 G_END_DECLS
 #endif

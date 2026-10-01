@@ -966,6 +966,76 @@ test_mdk_member_leaves(void)
   mdk_driver_stop(&driver);
 }
 
+typedef struct {
+  App *app;
+  GhMlsGroup *group;
+} RequiredWait;
+
+static gboolean
+self_remove_required(gpointer data)
+{
+  RequiredWait *wait = data;
+  GhMlsGroup *group = wait->group;
+  Marmot *m = gh_mls_service_get_marmot(wait->app->service);
+  const gchar *gid_hex = gh_mls_group_get_group_id(group);
+  gsize len = strlen(gid_hex) / 2;
+  g_autofree guint8 *bytes = g_malloc(len);
+  g_assert_true(nostr_hex2bin(bytes, gid_hex, len));
+  MarmotGroupId gid = marmot_group_id_new(bytes, len);
+  bool required = false;
+  MarmotError err = marmot_get_self_remove_requirement(m, &gid, &required, NULL);
+  marmot_group_id_free(&gid);
+  return err == MARMOT_OK && required && !gh_mls_group_get_pending_commit(group);
+}
+
+/* 3c (nostrc-8ndz): as 3a, but Groundhog's admin requires SelfRemove on its
+ * own once MDK 0.8 (whose leaf advertises it) has joined -- a
+ * GroupContextExtensions Commit, as the app does. MDK 0.8 follows it, and
+ * its leave_group() is then a SelfRemove (a PublicMessage), which Groundhog
+ * commits. */
+static void
+test_groundhog_requires_self_remove(void)
+{
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_self_remove_upgrade = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  mdk_peer("carol", CAROL);
+  g_autofree gchar *carol_kp = mdk_publish_key_package(&w, "carol");
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Carol may leave", (const guint[]){ CAROL }, 1);
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+  g_autofree gchar *group = NULL;
+  {
+    g_autoptr(JsonObject) joined = mdk_join(&w, "carol", hex[ALICE], &group);
+    (void)joined;
+  }
+  RequiredWait required = { alice, ga };
+  spin_until(self_remove_required, &required, "Alice requiring SelfRemove");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_cmpuint(synced_count(synced, "commit"), >=, 1);
+    assert_converged(ga, json_object_get_object_member(synced, "state"));
+  }
+  g_autoptr(JsonObject) left = mdk_call(&driver,
+    "\"cmd\":\"leave_group\",\"peer\":\"carol\",\"group\":\"%s\"", group);
+  const gchar *message = json_object_get_string_member(left, "mls_message");
+  g_test_message("MDK leave MLSMessage: %s", message);
+  /* A PublicMessage (00 01 00 01): MDK's SelfRemove. */
+  g_assert_true(g_str_has_prefix(message, "00010001"));
+  wait_members(ga, 1);
+  g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+  JsonObject *state = json_object_get_object_member(synced, "state");
+  g_assert_false(mdk_has(json_object_get_array_member(state, "members"), hex[CAROL]));
+  send_accepted(alice, ga, "after carol left");
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 /* 3b: MDK (Carol, the only admin) makes a group with Alice; Groundhog's
  * KeyPackage advertises SelfRemove, so MDK requires it. Alice leaves for
  * everyone: her SelfRemove reaches G, MDK auto-commits it by reference
@@ -1195,6 +1265,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk-interop/groundhog-invites-mdk-strict",
                   test_groundhog_invites_mdk_strict);
   g_test_add_func("/groundhog/mdk-interop/mdk-member-leaves", test_mdk_member_leaves);
+  g_test_add_func("/groundhog/mdk-interop/groundhog-requires-self-remove",
+                  test_groundhog_requires_self_remove);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves", test_groundhog_leaves);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves-mdk-admin",
                   test_groundhog_leaves_mdk_admin);

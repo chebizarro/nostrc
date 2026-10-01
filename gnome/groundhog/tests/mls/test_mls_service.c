@@ -2769,6 +2769,287 @@ test_adopted_change_refused(void)
   g_assert_false(gh_mls_group_get_change_refused(gb));
   world_down(&w);
 }
+
+/* ---- Routing rotation (nostrc-ms4d) ---------------------------------------------------- */
+
+/* Carol (the admin) makes an adopted group on G with Alice and Bob, who
+ * join; the group's first address is returned. */
+static gchar *
+adopted_trio(World *w, GhMlsGroup **ga, GhMlsGroup **gb, GhMlsGroup **gc)
+{
+  App *alice = &w->apps[ALICE], *bob = &w->apps[BOB], *carol = &w->apps[CAROL];
+  wait_key_packages(w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(carol, ALICE);
+  accept_contact(carol, BOB);
+  *gc = create_group(carol, "Rotating", (const guint[]){ ALICE, BOB }, 2);
+  g_assert_true(gh_mls_group_get_adopted(*gc));
+  *ga = join(alice, CAROL);
+  *gb = join(bob, CAROL);
+  wait_live(*gc);
+  return g_strdup(h_of(last_stored_445(&w->g)));
+}
+
+typedef struct {
+  GhMlsGroup *group;
+  const gchar *const *want;
+  gboolean read;   /* the read relays, else the relays */
+} RelaysWait;
+
+static gboolean
+relays_are(gpointer data)
+{
+  RelaysWait *wait = data;
+  g_auto(GStrv) have = wait->read ? gh_mls_group_dup_read_relays(wait->group)
+                                  : gh_mls_group_dup_relays(wait->group);
+  return have && g_strv_equal((const gchar *const *)have, wait->want);
+}
+
+#define wait_relays(group_, read_, ...) \
+  G_STMT_START { const gchar *want_[] = { __VA_ARGS__, NULL }; \
+    RelaysWait rw_ = { (group_), want_, (read_) }; \
+    spin_until(relays_are, &rw_, "the group's relays"); } G_STMT_END
+
+/* The two relay URLs of G and H, sorted, for wait_relays(). */
+static void
+g_and_h(World *w, const gchar **first, const gchar **second)
+{
+  gboolean g_first = g_strcmp0(w->g.url, w->h.url) < 0;
+  *first = g_first ? w->g.url : w->h.url;
+  *second = g_first ? w->h.url : w->g.url;
+}
+
+static guint
+messages_with(App *app, const gchar *room_id, const gchar *text)
+{
+  GhConversation *room = gh_conversation_store_lookup(app->model, room_id);
+  guint n = room ? g_list_model_get_n_items(G_LIST_MODEL(room)) : 0, found = 0;
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(room), i);
+    found += g_strcmp0(gh_message_get_content(message), text) == 0;
+  }
+  return found;
+}
+
+static gboolean
+stored_with_h(WireRelay *relay, const gchar *h)
+{
+  for (guint i = 0; i < relay->stored->len; i++)
+    if (g_strcmp0(h_of(g_ptr_array_index(relay->stored, i)), h) == 0)
+      return TRUE;
+  return FALSE;
+}
+
+/* nostrc-ms4d. Carol, the admin of an adopted group on G, rotates its
+ * routing to a new address on H, as MDK's UpdateAppComponents can (her own
+ * client then sits at the old epoch, unaware, as a member that has not seen
+ * the rotation yet). Alice and Bob follow it mid-conversation: they read
+ * the new address on H and publish there only (G never sees the new address,
+ * not even in a REQ); they keep reading the old address on G, where Carol's
+ * late messages still arrive, and read them; the same MLS message under a
+ * second envelope at the new address is shown once; all of it survives
+ * Bob's restart. Once the group is two epochs past the old address (Alice
+ * leaves and Bob commits it) G is read no more. */
+static void
+test_routing_rotation(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  GhMlsGroup *ga = NULL, *gb = NULL, *gc = NULL;
+  g_autofree gchar *old_h = adopted_trio(&w, &ga, &gb, &gc);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(gb));
+  const gchar *first = NULL, *second = NULL;
+  g_and_h(&w, &first, &second);
+  send_text(alice, ga, "before the rotation");
+  wait_text(bob, room, "before the rotation");
+
+  guint8 to[32];
+  randombytes_buf(to, sizeof to);
+  g_autofree gchar *new_h = nostr_bin2hex(to, sizeof to);
+  g_autofree gchar *rotation = forge_rotation(carol, gc, to, w.h.url);
+  wire_relay_inject(&w.g, rotation);   /* at the prior address, as the spec says */
+  wait_relays(ga, FALSE, w.h.url);
+  wait_relays(gb, FALSE, w.h.url);
+  wait_relays(gb, TRUE, first, second);
+
+  /* Mid-conversation: the new address, on H only. */
+  send_text(alice, ga, "after the rotation");
+  wait_text(bob, room, "after the rotation");
+  g_assert_cmpstr(h_of(last_stored_445(&w.h)), ==, new_h);
+  g_assert_false(stored_with_h(&w.g, new_h));
+  g_assert_false(client_frames_mention(&w.g, new_h));
+
+  /* Late at the old address: Carol has not applied her rotation. */
+  send_text(carol, gc, "carol, late");
+  wait_text(bob, room, "carol, late");
+  wait_text(alice, room, "carol, late");
+  WireStored *late = last_stored_445(&w.g);
+  g_assert_cmpstr(h_of(late), ==, old_h);
+
+  /* The same MLS message again, in a new envelope at the new address: one
+   * message (dedup by the MLS message, not the event id), nothing held. */
+  guint unreadable = gh_mls_group_get_unreadable(gb);
+  g_autofree gchar *copy = rewrap_445(carol, gc, late->json, to);
+  wire_relay_inject(&w.h, copy);
+  send_text(alice, ga, "after the copy");
+  wait_text(bob, room, "after the copy");
+  drain();
+  g_assert_cmpuint(messages_with(bob, room, "carol, late"), ==, 1);
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, unreadable);
+
+  /* A restart across the rotation: both addresses are read again. */
+  app_restart(bob);
+  gb = only_group(bob);
+  wait_live(gb);
+  wait_relays(gb, FALSE, w.h.url);
+  wait_relays(gb, TRUE, first, second);
+  send_text(carol, gc, "carol, late again");
+  wait_text(bob, room, "carol, late again");
+  send_text(alice, ga, "after the restart");
+  wait_text(bob, room, "after the restart");
+  g_assert_cmpuint(messages_with(bob, room, "carol, late"), ==, 1);
+
+  /* Two epochs past the old address: Alice leaves (SelfRemove), Bob
+   * commits it; G is read no more. */
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(alice->service, ga, &error));
+  g_assert_no_error(error);
+  wait_members(gb, 2);
+  wait_relays(gb, TRUE, w.h.url);
+  world_down(&w);
+}
+
+/* nostrc-ms4d: an earlier address is read at most
+ * GH_MLS_SERVICE_ROUTING_RETAIN_S after the rotation, whatever the epoch;
+ * the bound holds across a restart (the store clock is fake here). */
+static void
+test_routing_retention(void)
+{
+  World w;
+  world_fake_clock = TRUE;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  GhMlsGroup *ga = NULL, *gb = NULL, *gc = NULL;
+  g_autofree gchar *old_h = adopted_trio(&w, &ga, &gb, &gc);
+  const gchar *first = NULL, *second = NULL;
+  g_and_h(&w, &first, &second);
+  guint8 to[32];
+  randombytes_buf(to, sizeof to);
+  g_autofree gchar *rotation = forge_rotation(carol, gc, to, w.h.url);
+  wire_relay_inject(&w.g, rotation);
+  wait_relays(gb, TRUE, first, second);
+  gh_clock_fake_advance(bob->clock, (GH_MLS_SERVICE_ROUTING_RETAIN_S - 60) * G_USEC_PER_SEC);
+  drain();
+  app_restart(bob);   /* the clock goes on where it was */
+  gb = only_group(bob);
+  wait_relays(gb, TRUE, first, second);
+  gh_clock_fake_advance(bob->clock, (gint64)120 * G_USEC_PER_SEC);
+  wait_relays(gb, TRUE, w.h.url);
+  wait_relays(gb, FALSE, w.h.url);
+  (void)ga;
+  world_down(&w);
+}
+
+/* nostrc-scki: an invitation to a group at an address (h tag) another group
+ * of Bob's already has is refused for good, and says why; it is no longer
+ * listed. (The colliding group is planted in Bob's store: two honest groups
+ * never share a random address.) */
+static void
+test_invite_address_taken(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Squatted", (const guint[]){ BOB }, 1);
+  spin_until(has_invite, bob, "an invitation");
+  g_autofree gchar *wrapper = the_invite(bob, ALICE);
+
+  Marmot *ma = gh_mls_service_get_marmot(alice->service);
+  const gchar *gid_hex = gh_mls_group_get_group_id(ga);
+  gsize gid_len = strlen(gid_hex) / 2;
+  guint8 *gid_bytes = g_malloc(gid_len);
+  g_assert_true(nostr_hex2bin(gid_bytes, gid_hex, gid_len));
+  MarmotGroupId gid = marmot_group_id_new(gid_bytes, gid_len);
+  g_free(gid_bytes);
+  MarmotGroup *real = NULL;
+  g_assert_cmpint(marmot_get_group(ma, &gid, &real), ==, MARMOT_OK);
+  Marmot *mb = gh_mls_service_get_marmot(bob->service);
+  MarmotGroup *held = marmot_group_new();
+  guint8 other[32];
+  randombytes_buf(other, sizeof other);
+  held->mls_group_id = marmot_group_id_new(other, sizeof other);
+  held->state = MARMOT_GROUP_STATE_ACTIVE;
+  memcpy(held->nostr_group_id, real->nostr_group_id, 32);
+  g_assert_cmpint(mb->storage->save_group(mb->storage->ctx, held), ==, MARMOT_OK);
+  marmot_group_free(held);
+  marmot_group_free(real);
+  marmot_group_id_free(&gid);
+
+  g_autoptr(GError) error = NULL;
+  GhMlsGroup *joined = gh_mls_service_accept_invite(bob->service, wrapper, &error);
+  g_assert_null(joined);
+  g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN);
+  g_clear_error(&error);
+  g_autoptr(GPtrArray) invites = gh_mls_service_list_invites(bob->service, &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(invites->len, ==, 0);
+  world_down(&w);
+}
+
+typedef struct {
+  App *app;
+  GhMlsGroup *group;
+} LeaveKindWait;
+
+static gboolean
+leaves_by_self_remove(gpointer data)
+{
+  LeaveKindWait *wait = data;
+  return gh_mls_service_leave_kind(wait->app->service, wait->group) == GH_MLS_LEAVE_EVERYONE;
+}
+
+/* nostrc-8ndz. Alice makes a group alone and adds Bob and Carol, so it does
+ * not require SelfRemove; as their apps all support it, Alice (the admin)
+ * soon requires it on her own. Then Carol (no admin) leaves while Alice is
+ * offline, and Bob (no admin either) commits her leave: nobody waits for an
+ * admin. */
+static void
+test_self_remove_required(void)
+{
+  World w;
+  world_self_remove_upgrade = TRUE;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Free to go", (const guint[]){ BOB, CAROL }, 2);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  LeaveKindWait carol_kind = { carol, gc };
+  spin_until(leaves_by_self_remove, &carol_kind, "the group requiring SelfRemove");
+  LeaveKindWait bob_kind = { bob, gb };
+  spin_until(leaves_by_self_remove, &bob_kind, "Bob following it");
+  wait_epoch(ga, (gint)gh_mls_group_get_epoch(gb));
+
+  set_online(alice, FALSE);   /* the only admin is away */
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(carol->service, gc, &error));
+  g_assert_no_error(error);
+  g_assert_false(gh_mls_group_get_leave_via_admin(gc));
+  wait_members(gb, 2);
+  spin_until(group_ended, gc, "Carol's leave committed by Bob");
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_LEFT);
+  set_online(alice, TRUE);
+  wait_members(ga, 2);
+  send_text(alice, ga, "after carol left");
+  wait_text(bob, room, "after carol left");
+  world_down(&w);
+}
 #else
 /* libmarmot < 0.10.0 has no account proof: nothing to enroll. */
 static void
@@ -3151,7 +3432,11 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/forged-member-refused", test_forged_member_refused);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func("/groundhog/mls-service/adopted-change-refused", test_adopted_change_refused);
+  g_test_add_func("/groundhog/mls-service/routing-rotation", test_routing_rotation);
+  g_test_add_func("/groundhog/mls-service/routing-retention", test_routing_retention);
 #endif
+  g_test_add_func("/groundhog/mls-service/invite-address-taken", test_invite_address_taken);
+  g_test_add_func("/groundhog/mls-service/self-remove-required", test_self_remove_required);
   g_test_add_func("/groundhog/mls-service/unproven-invitee",
                   test_unproven_invitee);
 #endif

@@ -1066,6 +1066,31 @@ impl Driver {
                 };
                 self.evolve(req, group_id, intent, &[], &[]).await
             }
+            "update_routing" => {
+                // nostrc-ms4d: an admin's change of the group's Nostr routing
+                // (0x8004) through the engine's generic UpdateAppComponents
+                // (marmot-app sets routing only at creation). "relays": the
+                // new signed list; "rotate": true also moves the group to a
+                // fresh random nostr_group_id (a routing rotation), else it
+                // keeps its address. The Commit goes to the prior routing's
+                // relays (evolve() reads it before the merge).
+                let group_id = group_id_arg(req)?;
+                let relays = strs_arg(req, "relays")?;
+                let rotate = req.get("rotate").and_then(Value::as_bool).unwrap_or(false);
+                let previous = routing(self.peer(req)?, &group_id)?.nostr_group_id;
+                let nostr_group_id: [u8; 32] =
+                    if rotate { Keys::generate().secret_key().to_secret_bytes() } else { previous };
+                let route = NostrRoutingV1::new(nostr_group_id, relays)
+                    .map_err(|e| fail(INTERNAL, format!("routing: {e}")))?;
+                let data = encode_nostr_routing_v1(&route).map_err(|e| fail(INTERNAL, format!("routing: {e}")))?;
+                let intent = SendIntent::UpdateAppComponents {
+                    group_id: group_id.clone(),
+                    updates: vec![AppComponentData { component_id: NOSTR_ROUTING_COMPONENT_ID, data }],
+                };
+                let mut state = self.evolve(req, group_id, intent, &[], &[]).await?;
+                state["previous_nostr_group_id"] = json!(hex::encode(previous));
+                Ok(state)
+            }
             "self_update" => {
                 let group_id = group_id_arg(req)?;
                 let intent = SendIntent::SelfUpdate { group_id: group_id.clone() };

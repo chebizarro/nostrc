@@ -1822,7 +1822,12 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       set(CMAKE_FIND_APPBUNDLE NEVER)
       find_program(GROUNDHOG_DOCKER docker REQUIRED)
       set(CMAKE_FIND_APPBUNDLE "${groundhog_saved_appbundle}")
-      set(groundhog_mdk011_image nostrc-mdk-interop:0.11.0)
+      # Image tags are shared by every checkout on the machine: a branch that
+      # changes driver-0.11/ builds its own (e.g. -DMDK011_INTEROP_IMAGE=
+      # nostrc-mdk-interop:0.11.0-mybranch) so it never races another's.
+      set(MDK011_INTEROP_IMAGE "nostrc-mdk-interop:0.11.0" CACHE STRING
+          "Docker tag the MDK 0.11 driver image is built and run under")
+      set(groundhog_mdk011_image "${MDK011_INTEROP_IMAGE}")
       add_test(NAME groundhog-mdk011-interop-image
         COMMAND ${GROUNDHOG_DOCKER} build -t ${groundhog_mdk011_image}
                 ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/interop/mdk/driver-0.11)
@@ -1870,7 +1875,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     endif()
     foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
             mdk-invites-groundhog-gui adopted-welcome white-noise-welcome adopted-commits
-            mdk09-probe)
+            routing-rotation mdk09-probe)
       if (groundhog_mdk011_case STREQUAL "mdk-invites-groundhog-gui")
         set(groundhog_mdk011_command test-groundhog-mdk011-interop --gui
             -p /groundhog/mdk011-interop-gui/mdk-invites-groundhog)

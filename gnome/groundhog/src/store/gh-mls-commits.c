@@ -96,13 +96,40 @@ compare_strings(gconstpointer a, gconstpointer b)
   return strcmp(*(const gchar *const *) a, *(const gchar *const *) b);
 }
 
-/* The group's relay URLs, sorted (NULL-terminated; empty when none). */
+/* The group's relay URLs, sorted (NULL-terminated; empty when none): an
+ * adopted group's signed 0x8004 relays of the epoch the Commit leaves --
+ * where its members listen (nostr-routing-v1.md "Routing rotation"); the
+ * relay table is not rewritten by a Commit and may list relays the group
+ * dropped (nostrc-ms4d) -- a legacy group's relay table. */
 static GStrv
 group_relays(Marmot *marmot, MarmotStorage *storage, const MarmotGroupId *gid, GError **error)
 {
+  uint8_t current[32];
+  char **signed_urls = NULL;
+  size_t n_signed = 0;
+  MarmotError err = marmot_get_group_routing(marmot, gid, current, &signed_urls, &n_signed, NULL,
+                                             NULL);
+  if (err == MARMOT_OK) {
+    GPtrArray *urls = g_ptr_array_new();
+    for (size_t i = 0; i < n_signed; i++)
+      g_ptr_array_add(urls, g_strdup(signed_urls[i]));
+    for (size_t i = 0; i < n_signed; i++)
+      free(signed_urls[i]);
+    free(signed_urls);
+    g_ptr_array_sort(urls, compare_strings);
+    g_ptr_array_add(urls, NULL);
+    return (GStrv) g_ptr_array_free(urls, FALSE);
+  }
+  /* A legacy group (UNSUPPORTED), or one without MLS state: the relay
+   * table. Any other error (a busy store) fails: never the stale table. */
+  if (err != MARMOT_ERR_UNSUPPORTED && err != MARMOT_ERR_GROUP_NOT_FOUND) {
+    marmot_fail(storage, err, "Reading the group routing", error);
+    return NULL;
+  }
+  drop_stale_error(storage);
   MarmotGroupRelay *relays = NULL;
   size_t n = 0;
-  MarmotError err = marmot_get_group_relay_urls(marmot, gid, &relays, &n);
+  err = marmot_get_group_relay_urls(marmot, gid, &relays, &n);
   if (err != MARMOT_OK) {
     marmot_fail(storage, err, "Reading the group relays", error);
     return NULL;

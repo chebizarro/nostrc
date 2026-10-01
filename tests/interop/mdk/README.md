@@ -35,7 +35,7 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
 
 - `groundhog-mdk-interop-image` (a CTest fixture) runs
   `docker build -t nostrc-mdk-interop:0.8.0 tests/interop/mdk/driver`.
-- `groundhog-mdk-interop` then runs the eleven cases of
+- `groundhog-mdk-interop` then runs the twelve cases of
   `gnome/groundhog/tests/mls/test_mdk_interop.c`. Since W24 (nostrc-6ukh)
   Groundhog's default mode admits MDK 0.8 members, which have no account
   proof. The `-strict` cases set the `only-join-verified-mls-groups`
@@ -44,7 +44,10 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
   applies once the preference is off. Default-mode cases verify MDK members
   only on request (Verify), and check that a member's own key-rotating
   self-update keeps them verified (W24 review M1). Also since W24: an MDK
-  member leaving and Groundhog leaving (nostrc-2um6).
+  member leaving and Groundhog leaving (nostrc-2um6). Since W25
+  (nostrc-8ndz), `groundhog-requires-self-remove`: Groundhog's admin requires
+  SelfRemove on its own once MDK 0.8 has joined, MDK follows that
+  GroupContextExtensions Commit, and its leave is then a SelfRemove.
 - The container reaches the test's relays on the host's 127.0.0.1:
   - Linux: `--network host`.
   - macOS (Docker Desktop): `MDK_DRIVER_DIAL_HOST=host.docker.internal`.
@@ -192,6 +195,7 @@ ctest --test-dir _build -R '^groundhog-mdk011-interop' -V
 | `groundhog-mdk011-interop-adopted-welcome` | an adopted Welcome for another device of Alice's account (MDK 0.11 invites a second, MDK device's KeyPackage) reaches Groundhog | **pass**: refused as it arrives, recorded failed, "matching KeyPackage private key not found"; no invitation, no group; Alice's own adopted KeyPackage not spent (same-account multi-device: nostrc-yaa1) |
 | `groundhog-mdk011-interop-white-noise-welcome` | Alice's adopted KeyPackage as Groundhog published it, found by MDK through her 10002: MDK 0.11's parser admits it (current profile; `0x0006 0xf2d1`, `0x0008 0x000a`, components with `0x8006` and `0x800b`), marmot-app's invite precheck passes, and Carol creates a White Noise-shaped group (`create_group` `white_noise`) with Alice, both admins. Groundhog lists the invitation, joins (profile adopted; agent policy and media policy read with `marmot_get_group_components()`), and kind 9 flows both ways. Then Carol renames the group, Groundhog follows (same epoch, name, members and admins as MDK) and reads her next message; Groundhog renames it, MDK follows; kind 9 both ways after | PASS (since W24b slice H: XFAIL `unsupported` at the first Commit before) |
 | `groundhog-mdk011-interop-adopted-commits` | Groundhog and an MDK 0.11 peer configured as the engine default (`peer_new` `config: engine-default`: no SelfRemove, agent stream or media v2 required) in one adopted group. Groundhog creates it as New Group does, from MDK's KeyPackage on its write relay (an adopted group: nostrc-lf62); MDK joins (rumor `e`, `relays` asserted); kind 9 both ways; Groundhog renames (0x8001) and makes MDK a co-admin (0x8003), MDK follows; MDK renames and self-updates, Groundhog follows; kind 9 both ways again; Groundhog removes MDK, an admin, dropping its key from 0x8003 in the same Commit, and MDK records its removal. Both sides' group, epoch, name, members and admins agree after every step. MDK's sync may leave only the Add that admitted it undecryptable (`TransportDeferred`): any joiner's case (nostrc-qp24.5.1.3) | **pass** |
+| `groundhog-mdk011-interop-routing-rotation` | Groundhog creates an adopted group with an engine-default MDK 0.11 peer and makes it a co-admin; MDK rotates the routing (`update_routing`, `rotate`) to a new random address on a second relay H, publishing the Commit at the old address on G. Groundhog follows: it publishes at the new address on H only, still reads the old address on G, and never asks G for the new one; kind 9 both ways after the rotation; epochs, members and admins agree (nostrc-ms4d) | **pass** |
 | `groundhog-mdk011-interop-mdk09-probe` | an MDK 0.9.0 KeyPackage, to MDK 0.11 and to Groundhog | XFAIL `unsupported`: MDK 0.11 "unsupported proof version 1"; Groundhog as for 0.11 |
 
 Expected failures are never green. The MDK 0.9.0 probe, the one expected
@@ -218,6 +222,10 @@ adopted case (21 s for the whole matrix with both images cached).
 
 Knobs, beyond those of the 0.8 harness:
 
+- `-DMDK011_INTEROP_IMAGE=<tag>` (default `nostrc-mdk-interop:0.11.0`): the
+  tag the image is built and run under. Image tags are shared by every
+  checkout on the machine, so a branch that changes `driver-0.11/` builds
+  its own (e.g. `nostrc-mdk-interop:0.11.0-<branch>`).
 - `-DMDK011_INTEROP_DRIVER="<command line>"` / `-DMDK09_PROBE_DRIVER=...`:
   another driver instead of the image, e.g. a native
   `cargo build --release` of `driver-0.11/` (whose `rust-toolchain.toml`
@@ -273,6 +281,7 @@ per request, in order, logs on stderr, every relay wait bounded by
 | `fetch_key_package` / `parse_key_package` | `peer`, `author` + `from` or `discover` (discovery relays: the author's write relays from their kind 10002) / `event` | `event` (chosen per slot as marmot-app does), `mdk`: `parsed` and metadata, or `class` and `error`; `slots` seen; `write_relays` (with `discover`) |
 | `create_group` | `peer`, `name`, `description`, `relays`, `admins`, `key_packages`, `welcome_relays`; optional `white_noise` (`true`: also the components marmot-app adds to every group -- `0x8006` `user_to_agent_default` and `0x800b` `EncryptedMediaPolicyV2::blossom_default` of `media_endpoints`, which the test sets to an example.com URL, never contacted) | `state` and `welcomes` (`to`, `wrapper_id`). Every KeyPackage first passes marmot-app's invite precheck (`create_key_package_requirements` then `KeyPackageRequirements::validate`: profile, ciphersuite, required capabilities, mandatory components, agent-stream roles); a refusal is `invite precheck: ...` |
 | `add_members` / `remove_members` / `update_group_data` / `self_update` | as for 0.8 (`update_group_data`: `name`, `description`) | `state`, `commit_id`, `welcomes`, `events` (published to the group relays first, confirmed once one accepted, else rolled back) |
+| `update_routing` | `peer`, `group`, `relays` (the new signed list), `rotate` (true: also a fresh random `nostr_group_id`) | as `update_group_data`, plus `previous_nostr_group_id`; an admin's 0x8004 AppDataUpdate through the engine's `UpdateAppComponents`, published at the prior routing (nostrc-ms4d) |
 | `leave` | `peer`, `group` | `state` (`leave_in_progress`), `proposal_id` (a standalone SelfRemove; an admin's sync commits it) |
 | `send` | `peer`, `group`, `text`, `publish` | `event_id` (kind 9 inside MLS) |
 | `sync` | `peer`, `group` | the group's kind 445 ingested as a fixpoint, the engine's settlement window waited out and convergence advanced: `results` (`application`: author, kind, content; `commit`; other group events), `inputs`, `failed`, `published` (e.g. the admin's SelfRemove Commit), `state` |

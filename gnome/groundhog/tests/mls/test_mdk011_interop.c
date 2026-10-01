@@ -1127,6 +1127,119 @@ test_mdk_invites_groundhog(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- routing rotation (nostrc-ms4d) --------------------------------------------------- */
+
+static gboolean
+stored_with_h(WireRelay *relay, const gchar *h)
+{
+  for (guint i = 0; i < relay->stored->len; i++) {
+    NostrTags *tags = nostr_event_get_tags(((WireStored *)g_ptr_array_index(relay->stored, i))->event);
+    for (size_t k = 0; tags && k < nostr_tags_size(tags); k++) {
+      NostrTag *tag = nostr_tags_get(tags, k);
+      if (g_strcmp0(nostr_tag_get(tag, 0), "h") == 0 && g_strcmp0(nostr_tag_get(tag, 1), h) == 0)
+        return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+typedef struct {
+  GhMlsGroup *group;
+  const gchar *const *want;
+  gboolean read;
+} RelaysWait;
+
+static gboolean
+relays_are(gpointer data)
+{
+  RelaysWait *wait = data;
+  g_auto(GStrv) have = wait->read ? gh_mls_group_dup_read_relays(wait->group)
+                                  : gh_mls_group_dup_relays(wait->group);
+  return have && g_strv_equal((const gchar *const *)have, wait->want);
+}
+
+/* MDK 0.11's admin rotates an adopted group's routing (0x8004) to a new
+ * random address on another relay, through the engine's UpdateAppComponents
+ * (driver `update_routing`); Groundhog follows it: it reads and publishes at
+ * the new address on H, keeps reading the old one on G (never asking G for
+ * the new address), and kind 9 flows both ways after the rotation. */
+static void
+test_routing_rotation(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage (her proof enrolled)");
+  accept_contact(alice, CAROL);
+  mdk_peer_engine_default("carol", CAROL);
+  g_autofree gchar *on_w = g_strdup_printf("\"%s\"", w.w.url);
+  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", on_w);
+  g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *people[] = { hex[CAROL], NULL };
+  OpWait created = { 0 };
+  gh_mls_service_create_group_async(alice->service, "Rotating", NULL, relays, people, NULL,
+                                    on_created, &created);
+  spin_until(op_done, &created, "the adopted group creation");
+  g_assert_no_error(created.error);
+  GhMlsGroup *ga = created.result;
+  g_object_unref(ga);   /* the service keeps it */
+  g_assert_true(gh_mls_group_get_adopted(ga));
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+  g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
+  g_autoptr(JsonObject) joined = mdk_join(&w, "carol", ALICE, carol_kp_id);
+  const gchar *group = json_object_get_string_member(joined, "group");
+  g_autofree gchar *old_h = g_strdup(json_object_get_string_member(joined, "nostr_group_id"));
+  {
+    OpWait admins = { 0 };
+    const gchar *both[] = { hex[ALICE], hex[CAROL], NULL };
+    gh_mls_service_set_admins_async(alice->service, ga, both, NULL, on_changed, &admins);
+    change_done(&admins);
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    assert_gh_converged(ga, sync_state(synced));
+  }
+
+  /* MDK rotates to a new address on H. */
+  g_autoptr(JsonObject) rotated = mdk_call(&driver,
+    "\"cmd\":\"update_routing\",\"peer\":\"carol\",\"group\":\"%s\",\"relays\":[\"%s\"],"
+    "\"rotate\":true", group, w.h.url);
+  g_assert_cmpstr(json_object_get_string_member(rotated, "previous_nostr_group_id"), ==, old_h);
+  g_autofree gchar *new_h = g_strdup(json_object_get_string_member(rotated, "nostr_group_id"));
+  g_assert_cmpstr(new_h, !=, old_h);
+  g_assert_true(stored_with_h(&w.g, old_h));   /* the rotation Commit, at the old address */
+  {
+    const gchar *want[] = { w.h.url, NULL };
+    RelaysWait now = { ga, want, FALSE };
+    spin_until(relays_are, &now, "Groundhog following the rotation");
+    gboolean g_first = g_strcmp0(w.g.url, w.h.url) < 0;
+    const gchar *both[] = { g_first ? w.g.url : w.h.url, g_first ? w.h.url : w.g.url, NULL };
+    RelaysWait read = { ga, both, TRUE };
+    spin_until(relays_are, &read, "the old address still read");
+  }
+  wait_epoch(ga, (gint)state_epoch(rotated));
+  assert_gh_converged(ga, rotated);
+
+  /* Both ways at the new address. */
+  mdk_send("carol", group, "mdk after the rotation");
+  wait_message(alice, room, "mdk after the rotation");
+  send_accepted(alice, ga, "groundhog after the rotation");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    g_assert_true(synced_message(synced, hex[ALICE], "groundhog after the rotation"));
+  }
+  g_assert_true(stored_with_h(&w.h, new_h));
+  g_assert_false(stored_with_h(&w.g, new_h));
+  g_assert_false(client_frames_mention(&w.g, new_h));
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 static void
 test_white_noise_welcome(void)
 {
@@ -1388,6 +1501,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/adopted-welcome", test_adopted_welcome);
   g_test_add_func("/groundhog/mdk011-interop/white-noise-welcome", test_white_noise_welcome);
   g_test_add_func("/groundhog/mdk011-interop/adopted-commits", test_adopted_commits);
+  g_test_add_func("/groundhog/mdk011-interop/routing-rotation", test_routing_rotation);
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);
   gint rc = g_test_run();
   mls_world_finish();

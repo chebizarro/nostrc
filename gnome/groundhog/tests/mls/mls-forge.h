@@ -186,4 +186,62 @@ forge_replace(App *admin, GhMlsGroup *group, guint claimed)
   return out;
 }
 
+/* `admin`'s rotation of an adopted group's routing (0x8004) to `to` at the
+ * one relay `relay` (nostrc-ms4d), sealed at the group's current address --
+ * as MDK's UpdateAppComponents makes it, Groundhog offering none. The
+ * admin's own state is not changed: its client stays at the old epoch and
+ * address, as a member that has not seen the rotation yet. */
+static G_GNUC_UNUSED gchar *
+forge_rotation(App *admin, GhMlsGroup *group, const guint8 to[32], const gchar *relay)
+{
+  gsize url_len = strlen(relay);
+  g_assert_cmpuint(url_len, <, 62);   /* one-byte lengths below */
+  guint8 routing[32 + 2 + 64];
+  memcpy(routing, to, 32);
+  routing[32] = (guint8)(url_len + 1);   /* relays<V> */
+  routing[33] = (guint8)url_len;         /* url<V> */
+  memcpy(routing + 34, relay, url_len);
+  return forge_adopted_update(admin, group, 0x8004, routing, 34 + url_len);
+}
+
+/* The MLS message of kind 445 `json`, which `sender` sent in its current
+ * epoch, under a fresh envelope (new nonce, new ephemeral key, so a new
+ * event id) at h tag `h`: the same MLS bytes delivered twice, as a
+ * republish or another relay's copy can. */
+static G_GNUC_UNUSED gchar *
+rewrap_445(App *sender, GhMlsGroup *group, const gchar *json, const guint8 h[32])
+{
+  Marmot *m = gh_mls_service_get_marmot(sender->service);
+  const gchar *gid_hex = gh_mls_group_get_group_id(group);
+  gsize gid_len = strlen(gid_hex) / 2;
+  guint8 *gid_bytes = g_malloc(gid_len);
+  g_assert_true(nostr_hex2bin(gid_bytes, gid_hex, gid_len));
+  uint8_t *blob = NULL;
+  size_t len = 0;
+  g_assert_cmpint(m->storage->mls_load(m->storage->ctx, "mls_group", gid_bytes, gid_len, &blob,
+                                       &len), ==, MARMOT_OK);
+  g_free(gid_bytes);
+  MlsGroup g;
+  memset(&g, 0, sizeof g);
+  g_assert_cmpint(mls_group_deserialize(blob, len, &g), ==, 0);
+  sodium_memzero(blob, len);
+  free(blob);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
+  uint8_t *msg = NULL;
+  size_t msg_len = 0;
+  g_assert_cmpint(marmot_group_event_decrypt(g.epoch_secrets.exporter_secret,
+                                             nostr_event_get_content(event), &msg, &msg_len),
+                  ==, 0);
+  char *again = marmot_commit_build_event(msg, msg_len, g.epoch_secrets.exporter_secret, h,
+                                          nostr_event_get_created_at(event));
+  g_assert_nonnull(again);
+  gchar *out = g_strdup(again);
+  free(again);
+  free(msg);
+  nostr_event_free(event);
+  mls_group_free(&g);
+  return out;
+}
+
 #endif
