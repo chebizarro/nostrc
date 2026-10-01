@@ -417,7 +417,10 @@ typedef enum {
   GH_MLS_REFUSAL_NONE,
   GH_MLS_REFUSAL_BROKEN_PROOF,  /* default mode: a proof that does not verify, or one a
                                  * member's own new leaf dropped */
-  GH_MLS_REFUSAL_UNPROVEN       /* proofs required: a member without one, or broken */
+  GH_MLS_REFUSAL_UNPROVEN,      /* proofs required: a member without one, or broken */
+  GH_MLS_REFUSAL_UNFOLLOWABLE   /* an admin's change libmarmot cannot follow, or that breaks
+                                 * the group's rules (adopted groups: MARMOT_ERR_COMMIT_REFUSED,
+                                 * W24b slice H review L2) */
 } GhMlsRefusal;
 
 GType gh_mls_refusal_get_type(void);

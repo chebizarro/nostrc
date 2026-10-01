@@ -235,7 +235,7 @@ gh_store_mls_member_forget_group(GhStore *store, const gchar *group_hex, GError 
 
 gboolean
 gh_store_mls_refused_save(GhStore *store, const gchar *group_hex, const gchar *json,
-                          gboolean requiring_proofs, GError **error)
+                          guint cause, GError **error)
 {
   g_return_val_if_fail(store != NULL, FALSE);
   g_autofree gchar *key = refused_key(group_hex, error);
@@ -244,10 +244,10 @@ gh_store_mls_refused_save(GhStore *store, const gchar *group_hex, const gchar *j
   if (!json)
     return run(store, "DELETE FROM meta WHERE key = ?1", key, NULL,
                "Forgetting an encrypted group's refused change", error);
-  if (!g_utf8_validate(json, -1, NULL) || strlen(json) > 256 * 1024)
+  if (!g_utf8_validate(json, -1, NULL) || strlen(json) > 256 * 1024 || cause > 2)
     return invalid(error, "not a refused change");
-  /* "1 <0|1> <json>": version, whether proofs were required. */
-  g_autofree gchar *value = g_strdup_printf("1 %d %s", requiring_proofs ? 1 : 0, json);
+  /* "1 <0|1|2> <json>": version, the cause (2 since W24b slice H). */
+  g_autofree gchar *value = g_strdup_printf("1 %u %s", cause, json);
   return run(store,
              "INSERT INTO meta (key, value) VALUES (?1, ?2) "
              "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -256,12 +256,12 @@ gh_store_mls_refused_save(GhStore *store, const gchar *group_hex, const gchar *j
 
 gboolean
 gh_store_mls_refused_load(GhStore *store, const gchar *group_hex, gchar **json,
-                          gboolean *requiring_proofs, GError **error)
+                          guint *cause, GError **error)
 {
   g_return_val_if_fail(store != NULL && json != NULL, FALSE);
   *json = NULL;
-  if (requiring_proofs)
-    *requiring_proofs = FALSE;
+  if (cause)
+    *cause = 0;
   g_autofree gchar *key = refused_key(group_hex, error);
   if (!key)
     return FALSE;
@@ -273,11 +273,12 @@ gh_store_mls_refused_load(GhStore *store, const gchar *group_hex, gchar **json,
   if (rc == SQLITE_ROW) {
     const gchar *value = (const gchar *)sqlite3_column_text(stmt, 0);
     /* Only a record this module wrote. */
-    if (value && (g_str_has_prefix(value, "1 0 ") || g_str_has_prefix(value, "1 1 ")) &&
+    if (value && (g_str_has_prefix(value, "1 0 ") || g_str_has_prefix(value, "1 1 ") ||
+                  g_str_has_prefix(value, "1 2 ")) &&
         value[4]) {
       *json = g_strdup(value + 4);
-      if (requiring_proofs)
-        *requiring_proofs = value[2] == '1';
+      if (cause)
+        *cause = (guint)(value[2] - '0');
     }
     rc = SQLITE_DONE;
   }

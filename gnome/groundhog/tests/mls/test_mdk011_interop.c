@@ -710,12 +710,6 @@ assert_has_all(JsonArray *array, const gchar *const *want, guint n)
       g_error("MDK does not see %s in the libmarmot KeyPackage", want[i]);
 }
 
-static gboolean
-something_unreadable(gpointer data)
-{
-  return gh_mls_group_get_unreadable(data) > 0;
-}
-
 /* Alice's message with this text accepted by a group relay. */
 static gboolean
 sent_accepted(gpointer data)
@@ -725,145 +719,11 @@ sent_accepted(gpointer data)
   return message && gh_message_get_status(message) == GH_MESSAGE_STATUS_SENT;
 }
 
-static void
-test_white_noise_welcome(void)
-{
-  cases_run++;
-  if (!mdk_up())
-    return;
-  World w;
-  const guint keys[] = { ALICE };
-  world_up(&w, keys, G_N_ELEMENTS(keys));
-  App *alice = &w.apps[ALICE];
-  spin_until(key_package_published, alice, "Alice's KeyPackage");
-  accept_contact(alice, CAROL);
-  mdk_peer("carol", CAROL);
-
-  /* Alice's adopted KeyPackage, made by libmarmot in Groundhog's own store
-   * (its private keys stay there) and handed to Carol directly. */
-  Marmot *marmot = gh_mls_service_get_marmot(alice->service);
-  guint8 pk[32], sk[32];
-  g_assert_true(nostr_hex2bin(pk, hex[ALICE], sizeof pk));
-  g_assert_true(nostr_hex2bin(sk, gh_test_secret[ALICE], sizeof sk));
-  MarmotKeyPackageResult kp;
-  memset(&kp, 0, sizeof kp);
-  g_assert_cmpint(marmot_create_key_package_adopted_internal(marmot, pk, sk, NULL, NULL, &kp), ==,
-                  MARMOT_OK);
-  memset(sk, 0, sizeof sk);
-
-  /* MDK 0.11's KeyPackage parser admits it as a current-profile KeyPackage
-   * advertising what every White Noise group requires (nostrc-qp24.5.2). */
-  g_autoptr(JsonObject) view = mdk_call(&driver,
-    "\"cmd\":\"parse_key_package\",\"peer\":\"carol\",\"event\":%s", kp.event_json);
-  g_autofree gchar *view_text = mdk_json(view);
-  g_test_message("MDK 0.11 on a libmarmot adopted KeyPackage: %s", view_text);
-  if (!json_object_get_boolean_member(view, "parsed"))
-    g_error("MDK 0.11 refuses the libmarmot adopted KeyPackage (%s): %s",
-            json_object_get_string_member(view, "class"),
-            json_object_get_string_member(view, "error"));
-  g_assert_cmpstr(json_object_get_string_member(view, "profile"), ==, "Current");
-  static const gchar *const want_ext[] = { "0x0006", "0xf2d1" };
-  static const gchar *const want_prop[] = { "0x0008", "0x000a" };
-  static const gchar *const want_comp[] = { "0x8001", "0x8003", "0x8004", "0x8006",
-                                            "0x8009", "0x800b", "0x800c" };
-  assert_has_all(json_object_get_array_member(view, "mls_extensions"), want_ext,
-                 G_N_ELEMENTS(want_ext));
-  assert_has_all(json_object_get_array_member(view, "mls_proposals"), want_prop,
-                 G_N_ELEMENTS(want_prop));
-  assert_has_all(json_object_get_array_member(view, "app_components"), want_comp,
-                 G_N_ELEMENTS(want_comp));
-  /* Not the send or fanout role: libmarmot opens no QUIC stream. */
-  g_assert_false(mdk_has(json_object_get_array_member(view, "mls_extensions"), "0xf2d2"));
-  g_assert_false(mdk_has(json_object_get_array_member(view, "mls_extensions"), "0xf2d4"));
-
-  /* Carol creates a group as White Noise does (marmot-app's components:
-   * agent text stream user_to_agent_default, encrypted media v2), after
-   * marmot-app's invite precheck of Alice's KeyPackage. */
-  g_autoptr(JsonObject) made = mdk_call(&driver,
-    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"White Noise group\","
-    "\"description\":\"wn\",\"relays\":[\"%s\"],\"admins\":[\"%s\"],"
-    "\"white_noise\":true,\"media_endpoints\":[\"https://blossom.example.com\"],"
-    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
-    w.g.url, hex[CAROL], kp.event_json, w.x.url);
-  marmot_key_package_result_free(&kp);
-  g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
-  g_auto(GStrv) components = mdk_strv(json_object_get_array_member(made, "components"));
-  g_autofree gchar *component_text = g_strjoinv(",", components);
-  g_test_message("White Noise group components: %s", component_text);
-  g_assert_true(g_strv_contains((const gchar *const *)components, "0x8006"));
-  g_assert_true(g_strv_contains((const gchar *const *)components, "0x800b"));
-
-  /* Groundhog lists the invitation and joins: past admission. */
-  GhMlsGroup *ga = join(alice, CAROL);
-  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
-  g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "White Noise group");
-  guint8 gid_bytes[64];
-  const gchar *gid_hex = gh_mls_group_get_group_id(ga);
-  gsize gid_len = strlen(gid_hex) / 2;   /* MDK 0.11 group ids are 16 bytes */
-  g_assert_cmpuint(gid_len, <=, sizeof gid_bytes);
-  g_assert_true(nostr_hex2bin(gid_bytes, gid_hex, gid_len));
-  MarmotGroupId gid = marmot_group_id_new(gid_bytes, gid_len);
-  MarmotGroupProfile profile = MARMOT_GROUP_PROFILE_LEGACY;
-  g_assert_cmpint(marmot_get_group_profile(marmot, &gid, &profile), ==, MARMOT_OK);
-  g_assert_cmpint(profile, ==, MARMOT_GROUP_PROFILE_ADOPTED);
-  MarmotGroupComponents parts;
-  g_assert_cmpint(marmot_get_group_components(marmot, &gid, &parts), ==, MARMOT_OK);
-  g_assert_true(parts.has_agent_text_stream);
-  g_assert_cmpuint(parts.agent_text_stream.required_member_roles, ==,
-                   MARMOT_AGENT_STREAM_ROLE_RECEIVE);
-  g_assert_true(parts.has_media_policy);
-  g_assert_cmpstr(parts.media_policy.default_blob_endpoints[0].base_url, ==,
-                  "https://blossom.example.com/");
-  marmot_group_components_clear(&parts);
-  marmot_group_id_free(&gid);
-
-  /* Application messages both ways. */
-  mdk_send("carol", group, "hello from white noise");
-  wait_message(alice, room, "hello from white noise");
-  g_assert_cmpstr(gh_message_get_sender(find_message(alice, room, "hello from white noise")), ==,
-                  hex[CAROL]);
-  send_text(alice, ga, "hello from groundhog");
-  {
-    MessageWait sent = { alice, room, "hello from groundhog" };
-    spin_until(sent_accepted, &sent, "Alice's message accepted by a group relay");
-    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
-    g_assert_true(synced_message(synced, hex[ALICE], "hello from groundhog"));
-  }
-
-  /* A Commit: libmarmot does not follow adopted Commits yet
-   * (nostrc-qp24.5.1, W24 slice H). */
-  guint64 joined_epoch = gh_mls_group_get_epoch(ga);
-  g_autoptr(JsonObject) renamed = mdk_call(&driver,
-    "\"cmd\":\"update_group_data\",\"peer\":\"carol\",\"group\":\"%s\","
-    "\"name\":\"Renamed by White Noise\"", group);
-  g_assert_cmpuint(state_epoch(renamed), ==, joined_epoch + 1);
-  mdk_send("carol", group, "after the rename");
-  /* Today: Groundhog stays in the joined epoch -- not renamed, the message
-   * of the next epoch unreadable and waited for (decrypt-pending), not
-   * refused for good (change-refused stays FALSE), the group still active:
-   * no crash, no stall beyond the wait. */
-  spin_until(something_unreadable, ga, "the next epoch's message held unreadable");
-  if (gh_mls_group_get_epoch(ga) > joined_epoch)
-    g_error("XPASS: Groundhog followed a White Noise Commit; update the expectation");
-  g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, joined_epoch);
-  g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "White Noise group");
-  g_assert_null(find_message(alice, room, "after the rename"));
-  g_assert_true(gh_mls_group_get_decrypt_pending(ga));
-  g_assert_false(gh_mls_group_get_change_refused(ga));
-  g_assert_true(gh_mls_group_get_active(ga));
-  xfail("unsupported", "a White Noise group is joined and its messages flow both ways, but "
-                       "libmarmot does not follow adopted Commits yet (nostrc-qp24.5.1, W24 "
-                       "slice H): Groundhog stays in the joined epoch");
-
-  world_down(&w);
-  mdk_driver_stop(&driver);
-}
-
 /* ---- adopted Commits both ways (nostrc-qp24.5.1.3) ---------------------------------- */
 
 /* An MDK 0.11 peer configured as the engine's default (not White Noise's
- * marmot-app: its groups require no SelfRemove, agent stream or media v2,
- * which libmarmot does not support yet: nostrc-qp24.5.2). */
+ * marmot-app: its groups require no SelfRemove, agent stream or media v2;
+ * white-noise-welcome covers those). */
 static void
 mdk_peer_engine_default(const gchar *peer, guint key)
 {
@@ -971,9 +831,9 @@ mdk_sync_joined(const gchar *peer, const gchar *group, GPtrArray *before)
 }
 
 /* Groundhog (libmarmot) and MDK 0.11 in one adopted group, Commits both
- * ways.  Groundhog cannot be invited into an adopted group yet (no adopted
- * KeyPackage: producer OFF), so it creates the group (a test hook; it does
- * not offer adopted groups to the user) and invites MDK. */
+ * ways.  Groundhog creates the group (a test hook; it does not offer adopted
+ * groups to the user, and publishes no adopted KeyPackage: producer OFF)
+ * and invites MDK; white-noise-welcome is the other way round. */
 static void
 test_adopted_commits(void)
 {
@@ -1076,6 +936,149 @@ test_adopted_commits(void)
                    json_object_get_int_member(state, "epoch"), gh_mls_group_get_epoch(ga));
     g_assert_true(json_object_get_boolean_member(state, "removed"));
   }
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
+static void
+test_white_noise_welcome(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  accept_contact(alice, CAROL);
+  mdk_peer("carol", CAROL);
+
+  /* Alice's adopted KeyPackage, made by libmarmot in Groundhog's own store
+   * (its private keys stay there) and handed to Carol directly. */
+  Marmot *marmot = gh_mls_service_get_marmot(alice->service);
+  guint8 pk[32], sk[32];
+  g_assert_true(nostr_hex2bin(pk, hex[ALICE], sizeof pk));
+  g_assert_true(nostr_hex2bin(sk, gh_test_secret[ALICE], sizeof sk));
+  MarmotKeyPackageResult kp;
+  memset(&kp, 0, sizeof kp);
+  g_assert_cmpint(marmot_create_key_package_adopted_internal(marmot, pk, sk, NULL, NULL, &kp), ==,
+                  MARMOT_OK);
+  memset(sk, 0, sizeof sk);
+
+  /* MDK 0.11's KeyPackage parser admits it as a current-profile KeyPackage
+   * advertising what every White Noise group requires (nostrc-qp24.5.2). */
+  g_autoptr(JsonObject) view = mdk_call(&driver,
+    "\"cmd\":\"parse_key_package\",\"peer\":\"carol\",\"event\":%s", kp.event_json);
+  g_autofree gchar *view_text = mdk_json(view);
+  g_test_message("MDK 0.11 on a libmarmot adopted KeyPackage: %s", view_text);
+  if (!json_object_get_boolean_member(view, "parsed"))
+    g_error("MDK 0.11 refuses the libmarmot adopted KeyPackage (%s): %s",
+            json_object_get_string_member(view, "class"),
+            json_object_get_string_member(view, "error"));
+  g_assert_cmpstr(json_object_get_string_member(view, "profile"), ==, "Current");
+  static const gchar *const want_ext[] = { "0x0006", "0xf2d1" };
+  static const gchar *const want_prop[] = { "0x0008", "0x000a" };
+  static const gchar *const want_comp[] = { "0x8001", "0x8003", "0x8004", "0x8006",
+                                            "0x8009", "0x800b", "0x800c" };
+  assert_has_all(json_object_get_array_member(view, "mls_extensions"), want_ext,
+                 G_N_ELEMENTS(want_ext));
+  assert_has_all(json_object_get_array_member(view, "mls_proposals"), want_prop,
+                 G_N_ELEMENTS(want_prop));
+  assert_has_all(json_object_get_array_member(view, "app_components"), want_comp,
+                 G_N_ELEMENTS(want_comp));
+  /* Not the send or fanout role: libmarmot opens no QUIC stream. */
+  g_assert_false(mdk_has(json_object_get_array_member(view, "mls_extensions"), "0xf2d2"));
+  g_assert_false(mdk_has(json_object_get_array_member(view, "mls_extensions"), "0xf2d4"));
+
+  /* Carol creates a group as White Noise does (marmot-app's components:
+   * agent text stream user_to_agent_default, encrypted media v2), after
+   * marmot-app's invite precheck of Alice's KeyPackage. */
+  g_autoptr(JsonObject) made = mdk_call(&driver,
+    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"White Noise group\","
+    "\"description\":\"wn\",\"relays\":[\"%s\"],\"admins\":[\"%s\",\"%s\"],"
+    "\"white_noise\":true,\"media_endpoints\":[\"https://blossom.example.com\"],"
+    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
+    w.g.url, hex[CAROL], hex[ALICE], kp.event_json, w.x.url);
+  marmot_key_package_result_free(&kp);
+  g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
+  g_auto(GStrv) components = mdk_strv(json_object_get_array_member(made, "components"));
+  g_autofree gchar *component_text = g_strjoinv(",", components);
+  g_test_message("White Noise group components: %s", component_text);
+  g_assert_true(g_strv_contains((const gchar *const *)components, "0x8006"));
+  g_assert_true(g_strv_contains((const gchar *const *)components, "0x800b"));
+
+  /* Groundhog lists the invitation and joins: past admission. */
+  GhMlsGroup *ga = join(alice, CAROL);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "White Noise group");
+  guint8 gid_bytes[64];
+  const gchar *gid_hex = gh_mls_group_get_group_id(ga);
+  gsize gid_len = strlen(gid_hex) / 2;   /* MDK 0.11 group ids are 16 bytes */
+  g_assert_cmpuint(gid_len, <=, sizeof gid_bytes);
+  g_assert_true(nostr_hex2bin(gid_bytes, gid_hex, gid_len));
+  MarmotGroupId gid = marmot_group_id_new(gid_bytes, gid_len);
+  MarmotGroupProfile profile = MARMOT_GROUP_PROFILE_LEGACY;
+  g_assert_cmpint(marmot_get_group_profile(marmot, &gid, &profile), ==, MARMOT_OK);
+  g_assert_cmpint(profile, ==, MARMOT_GROUP_PROFILE_ADOPTED);
+  MarmotGroupComponents parts;
+  g_assert_cmpint(marmot_get_group_components(marmot, &gid, &parts), ==, MARMOT_OK);
+  g_assert_true(parts.has_agent_text_stream);
+  g_assert_cmpuint(parts.agent_text_stream.required_member_roles, ==,
+                   MARMOT_AGENT_STREAM_ROLE_RECEIVE);
+  g_assert_true(parts.has_media_policy);
+  g_assert_cmpstr(parts.media_policy.default_blob_endpoints[0].base_url, ==,
+                  "https://blossom.example.com/");
+  marmot_group_components_clear(&parts);
+  marmot_group_id_free(&gid);
+
+  /* Application messages both ways. */
+  mdk_send("carol", group, "hello from white noise");
+  wait_message(alice, room, "hello from white noise");
+  g_assert_cmpstr(gh_message_get_sender(find_message(alice, room, "hello from white noise")), ==,
+                  hex[CAROL]);
+  send_text(alice, ga, "hello from groundhog");
+  {
+    MessageWait sent = { alice, room, "hello from groundhog" };
+    spin_until(sent_accepted, &sent, "Alice's message accepted by a group relay");
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_true(synced_message(synced, hex[ALICE], "hello from groundhog"));
+  }
+
+  /* Commits both ways in the White Noise group (nostrc-qp24.5.1.3, W24
+   * slice H): Groundhog follows Carol's rename and reads the next epoch ... */
+  guint64 joined_epoch = gh_mls_group_get_epoch(ga);
+  g_autoptr(JsonObject) renamed = mdk_call(&driver,
+    "\"cmd\":\"update_group_data\",\"peer\":\"carol\",\"group\":\"%s\","
+    "\"name\":\"Renamed by White Noise\"", group);
+  g_assert_cmpuint(state_epoch(renamed), ==, joined_epoch + 1);
+  wait_name(ga, "Renamed by White Noise");
+  assert_gh_converged(ga, renamed);
+  mdk_send("carol", group, "after the rename");
+  wait_message(alice, room, "after the rename");
+  g_assert_false(gh_mls_group_get_change_refused(ga));
+  g_assert_true(gh_mls_group_get_active(ga));
+  /* ... and Carol (MDK 0.11, marmot-app's components) follows Groundhog's
+   * rename -- an AppDataUpdate Commit whose UpdatePath leaf advertises the
+   * White Noise set -- and its next message. */
+  {
+    OpWait mine = { 0 };
+    gh_mls_service_update_metadata_async(alice->service, ga, "Renamed by Groundhog", NULL, NULL,
+                                         on_changed, &mine);
+    change_done(&mine);
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    assert_gh_converged(ga, sync_state(synced));
+    g_assert_cmpstr(json_object_get_string_member(sync_state(synced), "name"), ==,
+                    "Renamed by Groundhog");
+  }
+  send_accepted(alice, ga, "groundhog after its rename");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_true(synced_message(synced, hex[ALICE], "groundhog after its rename"));
+  }
+  mdk_send("carol", group, "white noise after groundhog's rename");
+  wait_message(alice, room, "white noise after groundhog's rename");
 
   world_down(&w);
   mdk_driver_stop(&driver);

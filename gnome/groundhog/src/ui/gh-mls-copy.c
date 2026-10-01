@@ -330,6 +330,10 @@ gh_mls_refused_copy(GhMlsRefusal refusal)
   case GH_MLS_REFUSAL_BROKEN_PROOF:
     return _("Groundhog refused a change to this group: an account proof in it doesn’t check "
              "out. New messages here can’t be read until the group moves past that change.");
+  case GH_MLS_REFUSAL_UNFOLLOWABLE:
+    return _("Groundhog refused a change to this group: Groundhog can’t follow it, or it "
+             "breaks the group’s rules. New messages here can’t be read until the group moves "
+             "past that change.");
   case GH_MLS_REFUSAL_NONE:
   default:
     return NULL;

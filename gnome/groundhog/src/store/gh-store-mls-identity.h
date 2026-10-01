@@ -50,13 +50,16 @@ gboolean gh_store_mls_member_forget_group(GhStore *store, const gchar *group_hex
                                           GError **error);
 
 /* The admin's Commit (signed kind 445 JSON) the group was refused at for
- * good, and whether the account required proofs then (nostrc-prrl, W24
- * review L2): kept until a later Commit moves the group on. json NULL
- * deletes it. load: *json NULL without one. */
+ * good, and why (nostrc-prrl, W24 review L2): `cause` 0 a proof that does
+ * not verify, 1 a member without a proof while the account required proofs,
+ * 2 a change libmarmot cannot follow (W24b slice H review L2,
+ * MARMOT_ERR_COMMIT_REFUSED).  Kept until a later Commit moves the group
+ * on.  json NULL deletes it.  load: *json NULL without one; a record of
+ * another cause is not read. */
 gboolean gh_store_mls_refused_save(GhStore *store, const gchar *group_hex, const gchar *json,
-                                   gboolean requiring_proofs, GError **error);
+                                   guint cause, GError **error);
 gboolean gh_store_mls_refused_load(GhStore *store, const gchar *group_hex, gchar **json,
-                                   gboolean *requiring_proofs, GError **error);
+                                   guint *cause, GError **error);
 
 G_END_DECLS
 #endif

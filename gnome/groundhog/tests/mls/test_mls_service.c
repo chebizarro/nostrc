@@ -2552,6 +2552,78 @@ test_forged_member_refused(void)
   g_assert_false(gh_mls_group_get_change_refused(gb));
   world_down(&w);
 }
+
+/* W24b slice H review L2. In an adopted group (made with the test hook:
+ * Groundhog offers none yet), an admin's Commit libmarmot refuses for good
+ * -- here Alice's modified client restating the active lifecycle, a
+ * "redundant lifecycle update" MDK refuses too -- is "change-refused",
+ * cause "unfollowable", kept across a restart, and cleared once the group
+ * moves on; a non-admin's junk Commit marks nothing. */
+static void
+test_adopted_change_refused(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  /* Bob's adopted KeyPackage, made by libmarmot in his own store (the
+   * producer is build-gated; its test entry point). */
+  Marmot *mb = gh_mls_service_get_marmot(bob->service);
+  guint8 pk[32], sk[32];
+  g_assert_true(nostr_hex2bin(pk, hex[BOB], sizeof pk));
+  g_assert_true(nostr_hex2bin(sk, gh_test_secret[BOB], sizeof sk));
+  MarmotKeyPackageResult kp;
+  memset(&kp, 0, sizeof kp);
+  g_assert_cmpint(marmot_create_key_package_adopted_internal(mb, pk, sk, NULL, NULL, &kp), ==,
+                  MARMOT_OK);
+  memset(sk, 0, sizeof sk);
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *kps[] = { kp.event_json, NULL };
+  OpWait created = { 0 };
+  gh_mls_service_test_create_adopted_group_async(alice->service, "Adopted", relays, kps, NULL,
+                                                 on_created, &created);
+  spin_until(op_done, &created, "the adopted group creation");
+  g_assert_no_error(created.error);
+  GhMlsGroup *ga = created.result;
+  g_object_unref(ga);   /* the service keeps it */
+  marmot_key_package_result_free(&kp);
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  guint64 epoch = gh_mls_group_get_epoch(gb);
+
+  /* Bob (no admin) renames the group from a modified client: Alice drops
+   * it, and marks nothing (every member refuses it). */
+  static const guint8 profile[] = { 0x04, 'j', 'u', 'n', 'k', 0x00 };
+  g_autofree gchar *junk = forge_adopted_update(bob, gb, 0x8001, profile, sizeof profile);
+  wire_relay_inject(&w.g, junk);
+  send_text(bob, gb, "after bob's junk");
+  wait_text(alice, room, "after bob's junk");
+  g_assert_false(gh_mls_group_get_change_refused(ga));
+
+  /* Alice's redundant lifecycle update: Bob refuses it for good. */
+  static const guint8 active[] = { 0x00 };
+  g_autofree gchar *redundant = forge_adopted_update(alice, ga, 0x800c, active, sizeof active);
+  wire_relay_inject(&w.g, redundant);
+  spin_until(change_refused, gb, "Bob refusing Alice's lifecycle update");
+  g_assert_cmpint(gh_mls_group_get_refusal(gb), ==, GH_MLS_REFUSAL_UNFOLLOWABLE);
+  g_assert_cmpuint(gh_mls_group_get_epoch(gb), ==, epoch);
+  g_assert_true(gh_mls_group_get_active(gb));
+
+  /* Kept across a restart, cause and all. */
+  app_restart(bob);
+  gb = only_group(bob);
+  g_assert_true(gh_mls_group_get_change_refused(gb));
+  g_assert_cmpint(gh_mls_group_get_refusal(gb), ==, GH_MLS_REFUSAL_UNFOLLOWABLE);
+
+  /* Alice's honest change moves the group on, and clears it. */
+  rename_group(alice, ga, "Moved on");
+  NameWait moved = { gb, "Moved on" };
+  spin_until(name_is, &moved, "Bob applying Alice's honest change");
+  g_assert_false(gh_mls_group_get_change_refused(gb));
+  world_down(&w);
+}
 #else
 /* libmarmot < 0.10.0 has no account proof: nothing to enroll. */
 static void
@@ -2906,6 +2978,7 @@ main(int argc, char **argv)
                   test_unproven_member_identity);
   g_test_add_func("/groundhog/mls-service/refused-change-honest", test_refused_change_honest);
   g_test_add_func("/groundhog/mls-service/forged-member-refused", test_forged_member_refused);
+  g_test_add_func("/groundhog/mls-service/adopted-change-refused", test_adopted_change_refused);
   g_test_add_func("/groundhog/mls-service/unproven-invitee",
                   test_unproven_invitee);
 #endif

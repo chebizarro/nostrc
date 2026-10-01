@@ -295,6 +295,7 @@ gh_mls_refusal_get_type(void)
       { GH_MLS_REFUSAL_NONE, "GH_MLS_REFUSAL_NONE", "none" },
       { GH_MLS_REFUSAL_BROKEN_PROOF, "GH_MLS_REFUSAL_BROKEN_PROOF", "broken-proof" },
       { GH_MLS_REFUSAL_UNPROVEN, "GH_MLS_REFUSAL_UNPROVEN", "unproven" },
+      { GH_MLS_REFUSAL_UNFOLLOWABLE, "GH_MLS_REFUSAL_UNFOLLOWABLE", "unfollowable" },
       { 0, NULL, NULL }
     };
     g_once_init_leave(&type, g_enum_register_static("GhMlsRefusal", values));
@@ -1357,10 +1358,11 @@ event_created_at(const gchar *json)
 
 /* An admin's Commit libmarmot refused for good (nostrc-prrl): the group
  * can't follow it, and nothing is "waiting". Kept in the store with why
- * (proofs required or not) until a Commit moves the group on, and the read
- * cursor stays behind it (W24 review L2). event_json NULL clears it. */
+ * (`refusal`; for a proof, whether proofs are required decides) until a
+ * Commit moves the group on, and the read cursor stays behind it (W24
+ * review L2). event_json NULL clears it. */
 static void
-set_refused(GhMlsGroup *group, const gchar *event_json)
+set_refused(GhMlsGroup *group, const gchar *event_json, GhMlsRefusal refusal)
 {
   GhMlsService *self = group->service;
   gboolean was = group->refused_json != NULL;
@@ -1370,12 +1372,14 @@ set_refused(GhMlsGroup *group, const gchar *event_json)
     group->refused_json = event_json ? g_strdup(event_json) : NULL;
     group->refused_at = event_created_at(event_json);
     group->refusal = !event_json ? GH_MLS_REFUSAL_NONE
+                     : refusal == GH_MLS_REFUSAL_UNFOLLOWABLE ? GH_MLS_REFUSAL_UNFOLLOWABLE
                      : self->allow_unproven ? GH_MLS_REFUSAL_BROKEN_PROOF
                                             : GH_MLS_REFUSAL_UNPROVEN;
+    guint cause = group->refusal == GH_MLS_REFUSAL_UNFOLLOWABLE ? 2
+                  : group->refusal == GH_MLS_REFUSAL_UNPROVEN ? 1 : 0;
     g_autoptr(GError) error = NULL;
     if ((event_json || was) &&
-        !gh_store_mls_refused_save(self->store, group->gid_hex, event_json,
-                                   group->refusal == GH_MLS_REFUSAL_UNPROVEN, &error))
+        !gh_store_mls_refused_save(self->store, group->gid_hex, event_json, cause, &error))
       g_message("Groundhog could not store a group's refused change: %s", error->message);
   }
   if (was != (event_json != NULL) || !same)
@@ -1388,13 +1392,15 @@ static void
 load_refused(GhMlsGroup *group)
 {
   g_autofree gchar *json = NULL;
-  gboolean requiring = FALSE;
-  if (!gh_store_mls_refused_load(group->service->store, group->gid_hex, &json, &requiring,
-                                 NULL) || !json)
+  guint cause = 0;
+  if (!gh_store_mls_refused_load(group->service->store, group->gid_hex, &json, &cause, NULL) ||
+      !json)
     return;
   group->refused_json = g_steal_pointer(&json);
   group->refused_at = event_created_at(group->refused_json);
-  group->refusal = requiring ? GH_MLS_REFUSAL_UNPROVEN : GH_MLS_REFUSAL_BROKEN_PROOF;
+  group->refusal = cause == 2   ? GH_MLS_REFUSAL_UNFOLLOWABLE
+                   : cause == 1 ? GH_MLS_REFUSAL_UNPROVEN
+                                : GH_MLS_REFUSAL_BROKEN_PROOF;
 }
 
 /* A group ended for good keeps no record of its members (W24 review N3). */
@@ -1920,6 +1926,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   memset(&result, 0, sizeof result);
   MarmotError err = marmot_process_message(self->marmot, event_json, &result);
   gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE, refused = FALSE;
+  GhMlsRefusal refusal = GH_MLS_REFUSAL_BROKEN_PROOF;   /* or UNPROVEN: set_refused() */
   gboolean proposal = FALSE, awaits_proposal = FALSE;
   gint64 created_at = 0;
   NostrEvent *envelope = nostr_event_new();
@@ -1988,6 +1995,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
      * member whose proof is forged, or (the account requiring proofs) has
      * none (nostrc-prrl). It is not something to wait for. */
     refused = TRUE;
+  } else if (err == MARMOT_ERR_COMMIT_REFUSED && group->active) {
+    /* An adopted group's admin's Commit libmarmot refuses for good: one it
+     * cannot follow as MDK does (a disband, say) or one breaking the
+     * group's rules (W24b slice H review L2). A non-admin's junk keeps its
+     * own error and marks nothing. */
+    refused = TRUE;
+    refusal = GH_MLS_REFUSAL_UNFOLLOWABLE;
   } else if (err == MARMOT_ERR_NIP44) {
     /* A later epoch's (or not for us): wait for the Commit that opens it. */
     held = group->active;   /* an ended group holds nothing (review N5) */
@@ -2015,7 +2029,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     return EVENT_OTHER;
   }
   if (refused) {
-    set_refused(group, event_json);
+    set_refused(group, event_json, refusal);
     return EVENT_OTHER;
   }
   if (check_final) {
@@ -2468,7 +2482,7 @@ after_commit(GhMlsGroup *group, gboolean fresh)
 {
   /* The group moved on: a refused Commit lost its epoch (nostrc-prrl). */
   if (group->refused_json)
-    set_refused(group, NULL);
+    set_refused(group, NULL, GH_MLS_REFUSAL_NONE);
   group_refresh(group);
   if (fresh)
     group->fresh_commits++;
@@ -5572,7 +5586,8 @@ on_verified_only_changed(GSettings *settings, gchar *key, gpointer data)
   /* A Commit refused only because proofs were required applies now. */
   for (guint i = 0; i < self->groups->len; i++) {
     GhMlsGroup *group = g_ptr_array_index(self->groups, i);
-    if (!group->refused_json || !group->active)
+    if (!group->refused_json || !group->active ||
+        group->refusal == GH_MLS_REFUSAL_UNFOLLOWABLE)
       continue;
     g_autofree gchar *json = g_strdup(group->refused_json);
     process_event(group, json, NULL, FALSE, NULL);

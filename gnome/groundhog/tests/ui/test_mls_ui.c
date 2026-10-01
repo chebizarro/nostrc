@@ -276,7 +276,7 @@ test_copy(void)
   /* nostrc-prrl: a refused change is said as such, by its cause, never as
    * a wait; no admin is blamed (W24 review L4). */
   g_assert_null(gh_mls_refused_copy(GH_MLS_REFUSAL_NONE));
-  for (gint refusal = GH_MLS_REFUSAL_BROKEN_PROOF; refusal <= GH_MLS_REFUSAL_UNPROVEN;
+  for (gint refusal = GH_MLS_REFUSAL_BROKEN_PROOF; refusal <= GH_MLS_REFUSAL_UNFOLLOWABLE;
        refusal++) {
     const gchar *refused = gh_mls_refused_copy(refusal);
     g_assert_null(strstr(refused, "yet"));
@@ -287,6 +287,9 @@ test_copy(void)
   g_assert_nonnull(strstr(gh_mls_refused_copy(GH_MLS_REFUSAL_UNPROVEN),
                           "Turning that preference off"));
   g_assert_null(strstr(gh_mls_refused_copy(GH_MLS_REFUSAL_BROKEN_PROOF), "preference"));
+  /* W24b slice H review L2: a change Groundhog can't follow. */
+  g_assert_nonnull(strstr(gh_mls_refused_copy(GH_MLS_REFUSAL_UNFOLLOWABLE), "can’t follow"));
+  g_assert_null(strstr(gh_mls_refused_copy(GH_MLS_REFUSAL_UNFOLLOWABLE), "preference"));
   /* Verify says what it reveals, and what came of it (W24 review H1). */
   g_autofree gchar *prompt = gh_mls_verify_prompt("Dave");
   g_assert_nonnull(strstr(prompt, "Those relays can see whom you look up"));
