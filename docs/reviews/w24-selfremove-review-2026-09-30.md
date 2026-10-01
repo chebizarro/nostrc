@@ -171,3 +171,107 @@ A valid Commit with more than 64 SelfRemoves, or self-Removes by reference, is r
 ## Required before merge
 
 H1. M1 and M2 are strongly recommended in this slice; if not, file them as beads blocking enabling `GH_FEATURE_ENCRYPTED_GROUPS`.
+
+---
+
+## Addendum: re-review of the fixes (`aef3aa1c`, `e5b16eb7`, `6df721dd`; tip `6df721dd`)
+
+### Final verdict: CHANGES-REQUIRED (one new, narrow item: R1)
+
+Every original finding is resolved, and each fix I spot-checked fails its test when reverted. But the M1 fix, together with Groundhog's "re-propose every epoch" rule, introduces a reproducible unbounded loop with an MDK 0.8 admin (R1). The fix is small. Once R1 is addressed this is an APPROVE.
+
+### Gates (re-run on `6df721dd`)
+
+| Gate | Result |
+| --- | --- |
+| macOS build, `ctest -R "marmot\|mls\|groundhog\|interop\|kp_profile\|store"` (with `-DBUILD_MDK_INTEROP=ON`) | 108/108 passed (4 GUI tests skipped); `groundhog-mdk-interop` ran against the real MDK 0.8 driver |
+| `scripts/linux-gate.sh --sanitizers` | passed, 49 tests |
+| libmarmot `test_commits`, `test_marmot_interop`, `test_mls_group`, `test_mls_key_package`, `test_kp_profile` under ASAN+LSan+UBSan (CI image, `--rm`, ASAN flags confirmed in `build.ninja`) | 0 reports |
+| Reordered-delivery repro (my libmarmot probe from the first round) | Commit before proposal now returns `-69 MARMOT_ERR_PROPOSAL_UNKNOWN`, repeatably, nothing marked processed; once the proposal arrives the redelivered Commit applies (`type=1 err=0`) |
+| Revert spot-checks | H1 Groundhog: dropping `retry_held()` on an accepted proposal makes `commit-before-proposal` fail (gh test :2305); mapping an unresolved ref back to `MLS_PROCESS_MESSAGE` makes it fail (:2299). M2: one shared slot for every sender makes test_commits :4880 fail. L2: counting removed leaves makes :5401 fail. All pass restored |
+
+### Finding by finding
+
+- **H1: resolved.**
+  - Error and authentication:
+    - An unresolved reference is now `MARMOT_ERR_PROPOSAL_UNKNOWN`. A reference to a proposal an earlier reference of the same Commit already consumed stays a processing error (`proposal_store_resolve` -2).
+    - The Commit is authenticated first (`commit_authenticate()` runs before references are resolved, mls_group.c `process_commit_impl`), so only a member can make Groundhog hold one.
+    - A Commit that both cites an unknown proposal and removes us is still recognised as a removal.
+  - Groundhog hold and retry:
+    - It holds the event (`awaits_proposal`), retries on every accepted proposal (`retry_held()` before `departures_schedule()`) and on each Commit pass.
+    - It gives up after 16 tries or 600 s, on monotonic time. The overall held-queue cap still applies.
+    - The junk mark only prevents re-holding: a later redelivery that now applies is accepted.
+  - No competing Commit:
+    - `departures_schedule()` and `departures_fired()` refuse while any held Commit awaits a proposal, and while a retry pass is running.
+    - The author's `commit-before-proposal` test withholds the proposal on G and asserts that Bob holds the Commit, applies it on release, and stores nothing more after his longest jitter.
+  - Residual (acceptable): a member can burn the 16 tries by re-wrapping its own valid proposals in fresh events, which are reported again as duplicates. That only matters for a Commit whose proposal never arrives, and the outcome is the pre-fix behaviour, healed by the 600 s overlap on the next subscription.
+- **M1: resolved as asked; it causes R1.**
+  - Send rule and wire format:
+    - SelfRemove is sent only when `required_capabilities` lists 0x000a (`mls_group_requires_proposal`), as MDK 0.8 `try_self_remove()` does.
+    - Otherwise a Remove of our own leaf goes out as a PrivateMessage under our handshake ratchet. The ratchet step is stored in the same transaction as the proposal record and the leave request.
+    - Our own echo is recognised from the sender data before any decryption attempt (`MARMOT_ERR_OWN_MESSAGE`), so the spent key is never needed.
+    - The bytes are MDK-compatible: in my probe, MDK 0.8 decrypted and processed the request.
+  - Leave kind and copy:
+    - `MarmotLeaveKind` and `GH_MLS_LEAVE_ADMINS` make the confirmation say "The group's admins are asked to remove you…", and the status says "Waiting for an admin to remove you."
+    - That copy is honest when the admin runs libmarmot (Groundhog commits it after its jitter; `mdk-member-leaves` exercises the reverse direction). It is not honest with an MDK 0.8 admin; see R1.
+- **M2: resolved.**
+  - Only leave proposals are kept: a non-admin's SelfRemove, and in legacy groups a non-admin's Remove of itself. Everything else is `UNSUPPORTED` and not stored.
+  - Storage is one slot per (epoch, authenticated sender leaf), at most 4 records, behind an index capped at 4096. The slot key comes from the signed sender, so a flooder can only fill its own slot. Its records are its own leave requests, so a successful flood just gets the flooder committed out.
+  - An insert rewrites one slot (and the small index only for a new slot). Pruning keeps the current and parent epochs, so occupancy is bounded by members × 2 × 4.
+  - I found no remaining flood path.
+- **L1: resolved.** No invitees means `[]`, as in MDK, and the false comment is fixed. The consequence is discussed below.
+- **L2: resolved.** Leaves the same Commit removes are excluded from the SelfRemove capability check, as OpenMLS does.
+- **L3: resolved.** `marmot_cancel_leave()` exists. Groundhog drops a leave it cannot continue and raises "leave-failed" with honest copy, and sending works again. Nit N4 below.
+- **L4: resolved.**
+  - `MarmotMessageResult.commit.departed_pubkey_hexes` lists self-requested departures from the Commit itself, so "member-left" no longer depends on having seen the proposal. It is freed in `marmot_message_result_free()`.
+  - The durable conversation row is tracked as nostrc-b25u.
+- **L5: resolved.** The window is 1 s plus 250 ms per member, capped at 15 s, and the relay-visible burst is documented in `gh-mls-service.h`.
+- **N1: resolved** (admin checked before a pending Commit). **N2 and N3: documented** in `mls_group.h`.
+
+### R1 (High, new): leaving by Remove request livelocks with an MDK 0.8 admin
+
+`libmarmot/src/proposals.c:809-814`, `:887-889`; `gnome/groundhog/src/mls/gh-mls-service.c` `after_commit()` → `leave_continue()`; MDK 0.8 `messages/proposal.rs:301-331`
+
+When an MDK 0.8 admin receives a Remove-of-self, it calls `auto_commit_proposal()`. That builds a Commit with `consume_proposal_store(true)` and the filter `|queued| matches!(queued.proposal(), Proposal::SelfRemove)`. The Remove is filtered out, so MDK publishes an **empty** path-only Commit. The interop doc already records this ("MDK's own admin auto-commit … commits an empty Commit").
+
+Groundhog applies that Commit, is still a member and still Leaving, and `leave_continue()` makes a fresh Remove request for the new epoch, which MDK answers with another empty Commit, without end.
+
+Reproduced with a temporary MDK 0.8 harness case. Groundhog (Alice) creates the group with Carol (MDK), makes Carol the only admin, then Alice leaves:
+
+```
+RV leave kind=1 (ADMINS=1)
+RV round 0: alice epoch 2, carol commits 1, carol still counts alice=1
+RV round 0: alice now epoch 3, active=1 leaving=1, G events=4
+RV round 1: alice epoch 3, carol commits 1, carol still counts alice=1
+RV round 1: alice now epoch 4, active=1 leaving=1, G events=6
+RV round 2: alice epoch 4, carol commits 1, carol still counts alice=1
+RV round 2: alice now epoch 5, active=1 leaving=1, G events=8
+```
+
+**Failure scenario.** Every Groundhog-made group now leaves by Remove request (see below), and Groundhog supports promoting a member to admin. In any such group where the admin online is an MDK 0.8 client and no libmarmot admin commits first:
+- the leaver and the MDK admin exchange a request and an empty Commit every round, for as long as both are online;
+- the group's epoch churns, every member processes two events per round, and relays store them;
+- the leaver never leaves, cannot send, and is told "Waiting for an admin to remove you."
+
+A Groundhog admin online at the same time masks it: its privileged Commit outranks MDK's ordinary empty one in `commit_key_cmp`. So the existing tests never see it.
+
+**Fix (any one is sufficient):**
+- In Remove-request mode, do not re-propose automatically after a Commit by an admin that left a pending request of ours unconsumed. Stop instead, using the existing "leave-failed" path with copy along the lines of "an admin's app didn't act on it", or back off (for example a fixed number of re-requests per leave, with exponential delay).
+- Keep the harness case above as a regression test, asserting that the loop is bounded.
+- File an upstream MDK issue: `auto_commit_proposal` should admit `Remove` where the sender equals the removed leaf when the committer is an admin.
+
+### Nit N4 (new): any `marmot_self_remove()` failure drops the durable leave
+
+`gh-mls-service.c` `leave_continue()`
+
+Every error except `OWN_COMMIT_PENDING` cancels the leave, including transient ones such as `MARMOT_ERR_STORAGE`. Cancel only on the definitive answers: `ADMIN_CANNOT_LEAVE`, `UNSUPPORTED`, `USE_AFTER_EVICTION`. Retry the rest on the next pass.
+
+### The flagged consequence: Groundhog groups do not require SelfRemove (nostrc-8ndz)
+
+**Acceptable for now, once R1 is fixed.**
+- Groundhog creates every group alone and then Adds, so under MDK's empty-invitee rule its groups require nothing and non-admins leave by a Remove request an admin commits.
+- That matches MDK 0.8 exactly and keeps 0.11 and older peers addable. A Groundhog admin commits such requests automatically, after its jitter.
+- The cost is that a leave waits for an online admin and sends are blocked meanwhile. The copy says so, and leaving again gives up and leaves on this device only.
+- Everything stays behind `GH_FEATURE_ENCRYPTED_GROUPS=0`.
+- nostrc-8ndz (admin GroupContextExtensions adding 0x000a once every leaf supports it, or alongside the first Add) correctly describes the way back to any-member SelfRemove. It should be done before the flag is turned on, because with it R1-style admin dependence disappears for all-modern groups.
+- R1 must not wait for nostrc-8ndz: groups with a ≤0.11 or legacy member will always stay on Remove requests.
