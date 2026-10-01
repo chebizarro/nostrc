@@ -130,6 +130,7 @@ typedef enum {
     MARMOT_ERR_MEDIA_INVALID_REFERENCE  = -153,  /* malformed imeta / component */
     MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION = -154, /* imeta v absent or not v2 */
     MARMOT_ERR_MEDIA_LEGACY_FORMAT      = -155,  /* pre-0.12 format: never produced */
+    MARMOT_ERR_MEDIA_EPOCH_CHANGED      = -156,  /* sealed for an earlier epoch */
 
     /* Snapshot errors */
     MARMOT_ERR_SNAPSHOT_FAILED          = -120,

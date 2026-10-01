@@ -638,6 +638,134 @@ test_legacy_format_is_never_produced(void)
     marmot_free(m);
 }
 
+/* Review N2: the exporter step, pinned.  The generator computed it with
+ * openmls's crypto provider (self-checked on the RFC 9420 key-schedule
+ * vectors); the first value is also the reviewer's independent one. */
+static void
+test_exporter_step_vectors(void)
+{
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    json_t *steps = json_object_get(root, "exporter_step");
+    assert(json_array_size(steps) >= 2);
+    size_t i;
+    json_t *c;
+    json_array_foreach(steps, i, c) {
+        assert(strcmp(jstr(c, "label"), "marmot") == 0);
+        assert(strcmp(jstr(c, "context"), "encrypted-media") == 0);
+        uint8_t exporter[32], media[32], event[32];
+        unhex_fixed(jstr(c, "exporter_secret"), exporter, 32);
+        assert(marmot_media_secret_from_exporter(exporter, media) == 0);
+        assert_bytes_hex(media, 32, jstr(c, "media_secret"));
+        assert(mls_exporter(exporter, "marmot", (const uint8_t *)"group-event", 11, event, 32) == 0);
+        assert_bytes_hex(event, 32, jstr(c, "group_event_secret"));
+    }
+    assert(strcmp(jstr(json_array_get(steps, 0), "media_secret"),
+                  "73bd647f044b114b9b3dc182b780653dc65c1b3fbaa3eda7a30f1db93e506635") == 0);
+
+    /* End to end through the public API: MDK sealed "from-exporter-epoch-9"
+     * under the media secret of exporter_step[1]; store that exporter secret
+     * at epoch 9 and decrypt. */
+    json_t *step = json_array_get(steps, 1), *the_case = NULL;
+    json_array_foreach(json_object_get(root, "cases"), i, c)
+        if (strcmp(jstr(c, "name"), "from-exporter-epoch-9") == 0) the_case = c;
+    assert(the_case);
+    assert(strcmp(jstr(the_case, "media_secret"), jstr(step, "media_secret")) == 0);
+    Marmot *m = create_test_marmot();
+    MarmotGroupId gid = marmot_group_id_new((const uint8_t *)"exporter-e2e", 12);
+    save_group_at(m, &gid, 10);
+    uint8_t exporter[32];
+    unhex_fixed(jstr(step, "exporter_secret"), exporter, 32);
+    assert(m->storage->save_exporter_secret(m->storage->ctx, &gid, 9, exporter) == MARMOT_OK);
+    MarmotMediaReference ref = parsed_ref(json_object_get(the_case, "imeta"));
+    size_t ct_len = 0, pt_len = 0;
+    uint8_t *ct = unhex(jstr(the_case, "ciphertext"), &ct_len);
+    uint8_t *want = unhex(jstr(the_case, "plaintext"), &pt_len);
+    uint8_t *pt = NULL;
+    size_t got_len = 0;
+    assert(marmot_media_decrypt(m, &gid, 9, &ref, ct, ct_len, &pt, &got_len) == MARMOT_OK);
+    assert(got_len == pt_len && memcmp(pt, want, pt_len) == 0);
+    free(pt);
+    free(ct);
+    free(want);
+    marmot_media_reference_clear(&ref);
+    marmot_group_id_free(&gid);
+    marmot_free(m);
+    json_decref(root);
+}
+
+/* Review L3: the epoch check before a send. */
+static void
+test_check_epoch(void)
+{
+    Marmot *m = create_test_marmot();
+    MarmotGroupId gid = marmot_group_id_new(GID_BYTES, 32);
+    save_group_at(m, &gid, 7);
+    assert(marmot_media_check_epoch(m, &gid, 7) == MARMOT_OK);
+    assert(marmot_media_check_epoch(m, &gid, 6) == MARMOT_ERR_MEDIA_EPOCH_CHANGED);
+    MarmotGroupId other = marmot_group_id_new((const uint8_t *)"none", 4);
+    assert(marmot_media_check_epoch(m, &other, 7) == MARMOT_ERR_GROUP_NOT_FOUND);
+    marmot_group_id_free(&other);
+    marmot_group_id_free(&gid);
+    marmot_free(m);
+}
+
+/* Review L5: the retained pre-0.12 reader, on a fixture built by an
+ * independent implementation (legacy-pre-0.12.json). */
+static void
+test_legacy_reader(void)
+{
+    json_t *f = load_fixture("legacy-pre-0.12.json");
+    Marmot *m = create_test_marmot();
+    MarmotGroupId gid = marmot_group_id_new(GID_BYTES, 32);
+    uint64_t epoch = (uint64_t)json_integer_value(json_object_get(f, "epoch"));
+    save_group_at(m, &gid, epoch);
+    uint8_t exporter[32];
+    unhex_fixed(jstr(f, "exporter_secret"), exporter, 32);
+    assert(m->storage->save_exporter_secret(m->storage->ctx, &gid, epoch, exporter) == MARMOT_OK);
+    size_t ct_len = 0, want_len = 0;
+    uint8_t *ct = unhex(jstr(f, "ciphertext"), &ct_len);
+    uint8_t *want = unhex(jstr(f, "plaintext"), &want_len);
+    MarmotImetaInfo imeta = { .mime_type = (char *)jstr(f, "mime_type"), .epoch = epoch };
+    unhex_fixed(jstr(f, "nonce"), imeta.nonce, 12);
+    unhex_fixed(jstr(f, "file_hash"), imeta.file_hash, 32);
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    assert(marmot_decrypt_media(m, &gid, ct, ct_len, &imeta, &pt, &pt_len) == MARMOT_OK);
+    assert(pt_len == want_len && memcmp(pt, want, pt_len) == 0);
+    free(pt);
+
+    /* The hash is not optional. */
+    MarmotImetaInfo no_hash = imeta;
+    memset(no_hash.file_hash, 0, 32);
+    assert(marmot_decrypt_media(m, &gid, ct, ct_len, &no_hash, &pt, &pt_len) ==
+           MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    MarmotImetaInfo wrong_hash = imeta;
+    wrong_hash.file_hash[0] ^= 1;
+    assert(marmot_decrypt_media(m, &gid, ct, ct_len, &wrong_hash, &pt, &pt_len) ==
+           MARMOT_ERR_MEDIA_HASH_MISMATCH);
+    assert(pt == NULL);
+    /* The MIME type is authenticated; the ciphertext too. */
+    MarmotImetaInfo wrong_mime = imeta;
+    wrong_mime.mime_type = (char *)"image/jpeg";
+    assert(marmot_decrypt_media(m, &gid, ct, ct_len, &wrong_mime, &pt, &pt_len) ==
+           MARMOT_ERR_MEDIA_DECRYPT);
+    ct[0] ^= 1;
+    assert(marmot_decrypt_media(m, &gid, ct, ct_len, &imeta, &pt, &pt_len) ==
+           MARMOT_ERR_MEDIA_DECRYPT);
+    ct[0] ^= 1;
+    /* Another epoch's key is not kept: not found. */
+    MarmotImetaInfo other = imeta;
+    other.epoch = epoch + 1;
+    assert(marmot_decrypt_media(m, &gid, ct, ct_len, &other, &pt, &pt_len) ==
+           MARMOT_ERR_STORAGE_NOT_FOUND);
+    assert(marmot_decrypt_media(m, &gid, ct, 15, &imeta, &pt, &pt_len) == MARMOT_ERR_INVALID_INPUT);
+    free(ct);
+    free(want);
+    marmot_group_id_free(&gid);
+    marmot_free(m);
+    json_decref(f);
+}
+
 /* ── 0x8002 group Blossom image ────────────────────────────────────────── */
 
 static void
@@ -737,12 +865,30 @@ test_group_image_encrypt_fresh(void)
 
 /* ── 0x8007 group avatar URL ───────────────────────────────────────────── */
 
-/* Inputs MDK's `url` crate accepts that libmarmot's strict subset rejects:
- * IDNA hosts need UTS #46, which libmarmot does not implement. */
-static bool
-known_subset_gap(const char *input)
+/* Decode one stored URL (empty hints); returns the error, *unverified set. */
+static MarmotError
+decode_stored_url(const char *url, bool *unverified)
 {
-    return strstr(input, "xn--") || strstr(input, "b\xc3\xbc" "cher");
+    size_t n = strlen(url);
+    assert(n < 2048);
+    uint8_t buf[2 + 2048 + 2];
+    size_t at = 0;
+    if (n < 64) {
+        buf[at++] = (uint8_t)n;
+    } else {
+        buf[at++] = (uint8_t)(0x40 | (n >> 8));
+        buf[at++] = (uint8_t)n;
+    }
+    memcpy(buf + at, url, n);
+    at += n;
+    buf[at++] = 0;
+    buf[at++] = 0;
+    MarmotGroupAvatarUrl d;
+    MarmotError err = marmot_group_avatar_url_decode(buf, at, &d);
+    if (unverified) *unverified = err == MARMOT_OK && d.url_unverified;
+    if (err == MARMOT_OK) assert(d.url && strcmp(d.url, url) == 0);   /* never rewritten */
+    marmot_group_avatar_url_clear(&d);
+    return err;
 }
 
 static void
@@ -752,32 +898,35 @@ test_avatar_url_vectors(void)
     json_t *av = json_object_get(root, "avatar_url");
     size_t i, matched = 0;
     json_t *c;
+    size_t gaps = 0;
     json_array_foreach(json_object_get(av, "normalize"), i, c) {
         const char *in = jstr(c, "input");
         json_t *want = json_object_get(c, "normalized");
         char *got = NULL;
         MarmotError err = marmot_group_avatar_url_normalize(in, &got);
-        if (known_subset_gap(in)) {
-            assert(!json_is_null(want) && err == MARMOT_ERR_INVALID_INPUT);
-            continue;
-        }
-        if (json_is_null(want)) {
-            if (err == MARMOT_OK) fprintf(stderr, "\n%s accepted as %s\n", in, got);
-            assert(err == MARMOT_ERR_INVALID_INPUT);
-        } else {
-            if (err != MARMOT_OK || strcmp(got, json_string_value(want)) != 0)
-                fprintf(stderr, "\n%s -> %s (MDK %s)\n", in, got ? got : "error",
-                        json_string_value(want));
-            assert(err == MARMOT_OK && strcmp(got, json_string_value(want)) == 0);
-            /* Normalized output is a fixed point. */
-            char *again = NULL;
+        if (err == MARMOT_OK) {
+            /* What libmarmot produces is exactly what MDK produces. */
+            if (json_is_null(want) || strcmp(got, json_string_value(want)) != 0)
+                fprintf(stderr, "\n%s -> %s (MDK %s)\n", in, got,
+                        json_is_null(want) ? "refuses" : json_string_value(want));
+            assert(!json_is_null(want) && strcmp(got, json_string_value(want)) == 0);
+            char *again = NULL;   /* a fixed point */
             assert(marmot_group_avatar_url_normalize(got, &again) == MARMOT_OK);
             assert(strcmp(again, got) == 0);
             free(again);
+            matched++;
+        } else if (!json_is_null(want)) {
+            /* Outside the subset: never produced, but MDK's canonical bytes
+             * are accepted when decoded (usually unverified), never refused. */
+            assert(decode_stored_url(json_string_value(want), NULL) == MARMOT_OK);
+            gaps++;
+        } else {
+            assert(err == MARMOT_ERR_INVALID_INPUT);
+            matched++;
         }
-        matched++;
         free(got);
     }
+    assert(gaps >= 10);
     assert(matched >= 15);
 
     json_array_foreach(json_object_get(av, "decode"), i, c) {
@@ -799,6 +948,88 @@ test_avatar_url_vectors(void)
         free(bytes);
     }
     json_decref(root);
+}
+
+/* Review M3: validity is consensus, rendering is local.  Against MDK's own
+ * decoder verdicts: MDK-valid state is never refused; libmarmot calls a
+ * value invalid only when MDK does too, and valid only when MDK does too. */
+static void
+test_avatar_url_stored_consensus(void)
+{
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    json_t *stored = json_object_get(json_object_get(root, "avatar_url"), "stored");
+    size_t i, valid = 0, invalid = 0, unverified_n = 0;
+    json_t *c;
+    json_array_foreach(stored, i, c) {
+        size_t len = 0;
+        uint8_t *bytes = unhex(jstr(c, "bytes"), &len);
+        bool mdk_valid = json_is_true(json_object_get(c, "mdk_valid"));
+        MarmotGroupAvatarUrl d;
+        MarmotError err = marmot_group_avatar_url_decode(bytes, len, &d);
+        if (err == MARMOT_OK && !d.url_unverified) {
+            assert(mdk_valid);
+            valid++;
+        } else if (err == MARMOT_OK) {
+            unverified_n++;
+        } else {
+            if (mdk_valid) fprintf(stderr, "\nrefuses MDK-valid %s\n", jstr(c, "url"));
+            assert(!mdk_valid && err == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+            invalid++;
+        }
+        marmot_group_avatar_url_clear(&d);
+        free(bytes);
+    }
+    assert(valid >= 2 && invalid >= 15 && unverified_n >= 8);
+    json_decref(root);
+
+    /* The review's divergence cases: MDK (url 2.5.8) canonical, outside
+     * libmarmot's subset -- accepted, kept byte for byte, never contacted,
+     * never produced. */
+    static const char *const divergent[] = {
+        "https://xn--bcher-kva.example/a.png", "https://xn--r8jz45g.jp/avatar.png",
+        "https://my_host.example.com/a.png", "https://example.com/avatar.png?size[]=512",
+        "https://example.com/avatar.png?w=512|h=512", "https://example.com/avatar.png?sig=a^b",
+        "https://example.com/avatar.png?q=`x`", "https://example.com/a^b.png",
+        "https://example.com/a|b.png", "https://example.com/[x].png", NULL };
+    for (size_t k = 0; divergent[k]; k++) {
+        bool unverified = false;
+        assert(decode_stored_url(divergent[k], &unverified) == MARMOT_OK);
+        if (!unverified) fprintf(stderr, "\n%s verified\n", divergent[k]);
+        assert(unverified);
+        MarmotGroupAvatarUrl u = { .url = (char *)divergent[k], .url_unverified = true };
+        MarmotGroupBlossomImage img = { .present = true };
+        assert(marmot_group_avatar_select(&u, &img) == MARMOT_GROUP_AVATAR_URL_PLACEHOLDER);
+        uint8_t *enc = NULL;
+        size_t enc_len = 0;
+        assert(marmot_group_avatar_url_encode(&u, &enc, &enc_len) ==
+               MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+        u.url_unverified = false;   /* not normalizable either */
+        assert(marmot_group_avatar_url_encode(&u, &enc, &enc_len) ==
+               MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    }
+    /* Provably non-canonical under every WHATWG version: refused. */
+    static const char *const never[] = {
+        "https://example.com", "https://example.com?q", "https://Example.com/", "https://e.example:443/",
+        "https://e.example:0080/", "https://e.example:/", "https://e.example/a/../b",
+        "https://e.example/%2E/b", "https://e.example/a b", "https://e.example/a`b",
+        "https://e.example/{x}", "https://e.example/a\\b", "https://e.example/?a b",
+        "https://e.example/?a'b", "https://e.example/#f", "https://u@e.example/",
+        "https://e%41.example/", "http://e.example/", "https://e.example/\x7f",
+        "https://1.2.3/", "https://[2001:DB8::1]/", NULL };
+    for (size_t k = 0; never[k]; k++) {
+        if (decode_stored_url(never[k], NULL) != MARMOT_ERR_MEDIA_INVALID_REFERENCE)
+            fprintf(stderr, "\naccepted %s\n", never[k]);
+        assert(decode_stored_url(never[k], NULL) == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    }
+    /* Inside the subset and canonical: valid. */
+    static const char *const fine[] = {
+        "https://e.example/", "https://e.example:8443/a.png?s=1", "https://1.2.0.3/",
+        "https://[2001:db8::1]/a", "https://e.example/%7Euser/a%20b.png", "https://e.example./x", NULL };
+    for (size_t k = 0; fine[k]; k++) {
+        bool unverified = true;
+        assert(decode_stored_url(fine[k], &unverified) == MARMOT_OK);
+        assert(!unverified);
+    }
 }
 
 static void
@@ -831,6 +1062,7 @@ test_avatar_url_rules_and_precedence(void)
         "https://e.example:x/", "https://256.1.1.1/", "https://1.2.3.4.5/", "https://09/",
         "https://e_x.example/", "https://e.example/a^b", "https://e.example/a|b",
         "https://[fe80::1%25en0]/", "https://e.example/?a#b", "wss://e.example/",
+        "https://h.example/a/./b:/.%2e/c", "https://h.example/a/B:/../c",
         "https://e.example/\xff",
     };
     for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
@@ -888,9 +1120,13 @@ main(void)
     TEST(test_group_roundtrip_and_retained_epoch);
     TEST(test_group_encrypt_fresh_nonce_and_input_rules);
     TEST(test_legacy_format_is_never_produced);
+    TEST(test_legacy_reader);
+    TEST(test_exporter_step_vectors);
+    TEST(test_check_epoch);
     TEST(test_group_image_vectors);
     TEST(test_group_image_encrypt_fresh);
     TEST(test_avatar_url_vectors);
+    TEST(test_avatar_url_stored_consensus);
     TEST(test_avatar_url_rules_and_precedence);
     printf("All media tests passed.\n");
     return 0;

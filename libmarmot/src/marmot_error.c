@@ -118,6 +118,7 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_MEDIA_INVALID_REFERENCE: return "invalid media reference";
     case MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION: return "unsupported media version";
     case MARMOT_ERR_MEDIA_LEGACY_FORMAT:     return "legacy media format is not produced";
+    case MARMOT_ERR_MEDIA_EPOCH_CHANGED:     return "the group epoch changed since the media was encrypted";
 
     /* Snapshot */
     case MARMOT_ERR_SNAPSHOT_FAILED:         return "snapshot operation failed";

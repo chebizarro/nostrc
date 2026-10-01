@@ -799,6 +799,33 @@ marmot_media_encrypt(Marmot *m, const MarmotGroupId *gid, const uint8_t *plainte
     return end;
 }
 
+static MarmotError
+check_epoch_impl(Marmot *m, const MarmotGroupId *gid, uint64_t source_epoch)
+{
+    MarmotGroup *group = NULL;
+    MarmotError err = m->storage->find_group_by_mls_id(m->storage->ctx, gid, &group);
+    if (err != MARMOT_OK) return err;
+    if (!group) return MARMOT_ERR_GROUP_NOT_FOUND;
+    err = marmot_group_reconcile(m, group);   /* as marmot_create_message() */
+    uint64_t epoch = group->epoch;
+    marmot_group_free(group);
+    if (err != MARMOT_OK) return err;
+    return epoch == source_epoch ? MARMOT_OK : MARMOT_ERR_MEDIA_EPOCH_CHANGED;
+}
+
+MarmotError
+marmot_media_check_epoch(Marmot *m, const MarmotGroupId *gid, uint64_t source_epoch)
+{
+    if (!m || !gid) return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->find_group_by_mls_id) return MARMOT_ERR_STORAGE;
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = check_epoch_impl(m, gid, source_epoch);
+    /* EPOCH_CHANGED is an answer, not a failure: keep a repair it made. */
+    if (err == MARMOT_ERR_MEDIA_EPOCH_CHANGED) marmot_txn_keep(m);
+    return marmot_txn_end(m, err);
+}
+
 MarmotError
 marmot_media_decrypt(Marmot *m, const MarmotGroupId *gid, uint64_t source_epoch,
                      const MarmotMediaReference *ref, const uint8_t *ciphertext,
@@ -855,6 +882,10 @@ marmot_decrypt_media(Marmot *m, const MarmotGroupId *mls_group_id,
     *out_data = NULL;
     *out_len = 0;
     if (enc_len < AEAD_TAG_LEN) return MARMOT_ERR_INVALID_INPUT;
+    /* The plaintext hash is mandatory: the old format let a sender omit it
+     * (nostrc-u7cb review L5). */
+    static const uint8_t zero[32] = { 0 };
+    if (sodium_memcmp(imeta->file_hash, zero, 32) == 0) return MARMOT_ERR_MEDIA_INVALID_REFERENCE;
 
     uint8_t exporter[32], key[32];
     MarmotError err = m->storage->get_exporter_secret(m->storage->ctx, mls_group_id,
@@ -880,14 +911,12 @@ marmot_decrypt_media(Marmot *m, const MarmotGroupId *mls_group_id,
         free(pt);
         return MARMOT_ERR_MEDIA_DECRYPT;
     }
-    static const uint8_t zero[32] = { 0 };
-    if (memcmp(imeta->file_hash, zero, 32) != 0) {
-        uint8_t got[32];
-        SHA256(pt, (size_t)pt_len, got);
-        if (memcmp(got, imeta->file_hash, 32) != 0) {
-            free(pt);
-            return MARMOT_ERR_MEDIA_HASH_MISMATCH;
-        }
+    uint8_t got[32];
+    SHA256(pt, (size_t)pt_len, got);
+    if (sodium_memcmp(got, imeta->file_hash, 32) != 0) {
+        sodium_memzero(pt, (size_t)pt_len);
+        free(pt);
+        return MARMOT_ERR_MEDIA_HASH_MISMATCH;
     }
     *out_data = pt;
     *out_len = (size_t)pt_len;

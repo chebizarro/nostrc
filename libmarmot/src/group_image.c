@@ -68,6 +68,11 @@ finish_buf(MlsTlsBuf *b, uint8_t **out, size_t *out_len)
 
 /* ── 0x8002 marmot.group.blossom.image.v1 ──────────────────────────────── */
 
+/* The 0x8002 spec cites the frozen v1 media-type algorithm, under which
+ * "image/" or "a/b/c" would be canonical; MDK v0.11.0's
+ * canonicalize_marmot_media_type (documented as that frozen algorithm)
+ * enforces the shared token and length rules instead.  libmarmot follows
+ * MDK for interop (review N1; the discrepancy is to be raised upstream). */
 static bool
 image_media_type_valid(const char *mt)
 {
@@ -543,7 +548,18 @@ port_done:
             size_t sl = (size_t)(se - seg);
             bool last = se == pend;
             bool dd = is_double_dot(seg, sl), sd = !dd && is_single_dot(seg, sl);
-            if (dd && depth > 0) b.len = starts[--depth];
+            if (dd && depth > 0) {
+                /* ".." over a drive-letter-like segment ("b:"): url 2.5.8
+                 * keeps it, ada-url pops it -- no single canonical form. */
+                const char *popped = b.s + starts[depth - 1] + 1;
+                size_t pl = b.len - starts[depth - 1] - 1;
+                if (pl == 2 && popped[1] == ':' &&
+                    ((popped[0] >= 'a' && popped[0] <= 'z') || (popped[0] >= 'A' && popped[0] <= 'Z'))) {
+                    free(starts);
+                    goto done;
+                }
+                b.len = starts[--depth];
+            }
             if ((dd || sd) && last) {
                 starts[depth++] = b.len;
                 str_putc(&b, '/');
@@ -611,6 +627,7 @@ marmot_group_avatar_url_encode(const MarmotGroupAvatarUrl *av, uint8_t **out, si
         (av->dim_len && !av->dim) || (av->thumbhash_len && !av->thumbhash))
         return MARMOT_ERR_MEDIA_INVALID_REFERENCE;
     char *url = NULL;
+    if (has_url && av->url_unverified) return MARMOT_ERR_MEDIA_INVALID_REFERENCE;
     if (has_url) {
         MarmotError err = marmot_group_avatar_url_normalize(av->url, &url);
         if (err != MARMOT_OK)
@@ -630,6 +647,80 @@ marmot_group_avatar_url_encode(const MarmotGroupAvatarUrl *av, uint8_t **out, si
         return MARMOT_ERR_MEMORY;
     }
     return finish_buf(&b, out, out_len);
+}
+
+typedef enum { AVATAR_VALID, AVATAR_INVALID, AVATAR_UNVERIFIED } AvatarClass;
+
+/*
+ * Stored 0x8007 bytes, judged three ways (nostrc-u7cb review M3).  WHATWG is
+ * a living standard and its implementations already differ (url 2.5.8 keeps
+ * '^' raw in a path, ada-url encodes it; they treat "b:" segments apart), so
+ * libmarmot only calls a value invalid when no serializer version can have
+ * produced it, and accepts the rest unverified instead of forking the group.
+ */
+static AvatarClass
+avatar_url_classify(const char *url, size_t len)
+{
+    for (size_t i = 0; i < len; i++)
+        if ((uint8_t)url[i] <= 0x20 || (uint8_t)url[i] >= 0x7f)
+            return AVATAR_INVALID;   /* a serialization is printable ASCII */
+    if (len < 8 || memcmp(url, "https://", 8) != 0 || memchr(url, '#', len))
+        return AVATAR_INVALID;
+    const char *a = url + 8, *end = url + len;
+    const char *ae = a;
+    while (ae < end && *ae != '/' && *ae != '?') ae++;
+    if (ae == a || ae == end || *ae != '/') return AVATAR_INVALID;   /* host; path "/" */
+    const char *host_end = ae;
+    if (*a == '[') {
+        const char *close = memchr(a, ']', (size_t)(ae - a));
+        if (!close) return AVATAR_INVALID;
+        host_end = close + 1;
+    } else {
+        const char *q = a;
+        /* Serialized hosts are lowercase and percent-decoded; "[]<>\\^" are
+         * forbidden host code points in every WHATWG version. */
+        for (; q < ae && *q != ':'; q++)
+            if (*q == '@' || *q == '%' || (*q >= 'A' && *q <= 'Z') || strchr("[]<>\\^", *q))
+                return AVATAR_INVALID;
+        host_end = q;
+        if (host_end == a) return AVATAR_INVALID;
+    }
+    if (memchr(a, '@', (size_t)(ae - a))) return AVATAR_INVALID;
+    if (host_end < ae) {   /* ":port": shortest decimal, not 443 */
+        if (*host_end != ':' || host_end + 1 == ae) return AVATAR_INVALID;
+        const char *pd = host_end + 1;
+        if (*pd == '0' && ae - pd > 1) return AVATAR_INVALID;
+        unsigned long v = 0;
+        for (const char *q = pd; q < ae; q++) {
+            if (*q < '0' || *q > '9') return AVATAR_INVALID;
+            v = v * 10 + (unsigned long)(*q - '0');
+            if (v > 65535) return AVATAR_INVALID;
+        }
+        if (v == 443) return AVATAR_INVALID;
+    }
+    const char *qs = memchr(ae, '?', (size_t)(end - ae));
+    const char *pe = qs ? qs : end;
+    for (const char *seg = ae + 1;;) {   /* path */
+        const char *se = seg;
+        while (se < pe && *se != '/') se++;
+        if (is_single_dot(seg, (size_t)(se - seg)) || is_double_dot(seg, (size_t)(se - seg)))
+            return AVATAR_INVALID;
+        if (se >= pe) break;
+        seg = se + 1;
+    }
+    for (const char *q = ae; q < pe; q++)
+        if (strchr("\\\"<>`{}", *q)) return AVATAR_INVALID;
+    for (const char *q = pe; q < end; q++)
+        if (strchr("\"<>'", *q)) return AVATAR_INVALID;
+
+    /* Inside libmarmot's subset its normalization is exact; outside it,
+     * this decoder cannot tell. */
+    char *norm = NULL;
+    MarmotError nerr = marmot_group_avatar_url_normalize(url, &norm);
+    if (nerr != MARMOT_OK) return AVATAR_UNVERIFIED;
+    bool same = strcmp(norm, url) == 0;
+    free(norm);
+    return same ? AVATAR_VALID : AVATAR_INVALID;
 }
 
 MarmotError
@@ -652,14 +743,16 @@ marmot_group_avatar_url_decode(const uint8_t *data, size_t len, MarmotGroupAvata
         return MARMOT_OK;
     }
     if (memchr(url, 0, url_len) || !marmot_media_utf8_valid(url, url_len)) goto fail;
-    /* A decoder re-normalizes and never repairs: the stored bytes must be
-     * exactly the serializer's output. */
-    char *norm = NULL;
-    MarmotError nerr = marmot_group_avatar_url_normalize((const char *)url, &norm);
-    if (nerr == MARMOT_ERR_MEMORY) { err = nerr; goto fail; }
-    bool same = nerr == MARMOT_OK && strcmp(norm, (const char *)url) == 0;
-    free(norm);
-    if (!same) goto fail;
+    /* A decoder never repairs: the stored bytes are kept as they are. */
+    switch (avatar_url_classify((const char *)url, url_len)) {
+    case AVATAR_INVALID:
+        goto fail;
+    case AVATAR_UNVERIFIED:
+        out->url_unverified = true;
+        break;
+    case AVATAR_VALID:
+        break;
+    }
     out->url = (char *)url;
     return MARMOT_OK;
 fail:
@@ -682,7 +775,9 @@ MarmotGroupAvatarSource
 marmot_group_avatar_select(const MarmotGroupAvatarUrl *avatar_url,
                            const MarmotGroupBlossomImage *blossom_image)
 {
-    if (avatar_url && avatar_url->url && *avatar_url->url) return MARMOT_GROUP_AVATAR_URL;
+    if (avatar_url && avatar_url->url && *avatar_url->url)
+        return avatar_url->url_unverified ? MARMOT_GROUP_AVATAR_URL_PLACEHOLDER
+                                          : MARMOT_GROUP_AVATAR_URL;
     if (blossom_image && blossom_image->present) return MARMOT_GROUP_AVATAR_BLOSSOM;
     return MARMOT_GROUP_AVATAR_NONE;
 }

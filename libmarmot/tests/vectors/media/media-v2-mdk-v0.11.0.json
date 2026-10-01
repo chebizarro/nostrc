@@ -99,6 +99,206 @@
       {
         "input": "https://0x7f.1/a.png",
         "normalized": "https://127.0.0.1/a.png"
+      },
+      {
+        "input": "https://xn--r8jz45g.jp/avatar.png",
+        "normalized": "https://xn--r8jz45g.jp/avatar.png"
+      },
+      {
+        "input": "https://my_host.example.com/a.png",
+        "normalized": "https://my_host.example.com/a.png"
+      },
+      {
+        "input": "https://example.com/avatar.png?size[]=512",
+        "normalized": "https://example.com/avatar.png?size[]=512"
+      },
+      {
+        "input": "https://example.com/avatar.png?w=512|h=512",
+        "normalized": "https://example.com/avatar.png?w=512|h=512"
+      },
+      {
+        "input": "https://example.com/avatar.png?sig=a^b",
+        "normalized": "https://example.com/avatar.png?sig=a^b"
+      },
+      {
+        "input": "https://example.com/avatar.png?q=`x`",
+        "normalized": "https://example.com/avatar.png?q=`x`"
+      },
+      {
+        "input": "https://example.com/a^b.png",
+        "normalized": "https://example.com/a^b.png"
+      },
+      {
+        "input": "https://example.com/a|b.png",
+        "normalized": "https://example.com/a|b.png"
+      },
+      {
+        "input": "https://example.com/[x].png",
+        "normalized": "https://example.com/[x].png"
+      },
+      {
+        "input": "https://h.example/a/./b:/.%2e/c",
+        "normalized": "https://h.example/a/b:/c"
+      },
+      {
+        "input": "https://ex%61mple.com/x",
+        "normalized": "https://example.com/x"
+      },
+      {
+        "input": "https://example.com/{x}.png",
+        "normalized": "https://example.com/%7Bx%7D.png"
+      }
+    ],
+    "stored": [
+      {
+        "bytes": "1968747470733a2f2f6578616d706c652e636f6d2f612e706e670000",
+        "mdk_valid": true,
+        "url": "https://example.com/a.png"
+      },
+      {
+        "bytes": "2168747470733a2f2f786e2d2d72386a7a3435672e6a702f6176617461722e706e670000",
+        "mdk_valid": true,
+        "url": "https://xn--r8jz45g.jp/avatar.png"
+      },
+      {
+        "bytes": "2168747470733a2f2f6d795f686f73742e6578616d706c652e636f6d2f612e706e670000",
+        "mdk_valid": true,
+        "url": "https://my_host.example.com/a.png"
+      },
+      {
+        "bytes": "2968747470733a2f2f6578616d706c652e636f6d2f6176617461722e706e673f73697a655b5d3d3531320000",
+        "mdk_valid": true,
+        "url": "https://example.com/avatar.png?size[]=512"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f615e622e706e670000",
+        "mdk_valid": true,
+        "url": "https://example.com/a^b.png"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f617c622e706e670000",
+        "mdk_valid": true,
+        "url": "https://example.com/a|b.png"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f5b785d2e706e670000",
+        "mdk_valid": true,
+        "url": "https://example.com/[x].png"
+      },
+      {
+        "bytes": "2468747470733a2f2f6578616d706c652e636f6d2f6176617461722e706e673f713d6078600000",
+        "mdk_valid": true,
+        "url": "https://example.com/avatar.png?q=`x`"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f7b787d2e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com/{x}.png"
+      },
+      {
+        "bytes": "1868747470733a2f2f682e6578616d706c652f612f623a2f630000",
+        "mdk_valid": true,
+        "url": "https://h.example/a/b:/c"
+      },
+      {
+        "bytes": "2368747470733a2f2f786e2d2d62636865722d6b76612e6578616d706c652f612e706e670000",
+        "mdk_valid": true,
+        "url": "https://xn--bcher-kva.example/a.png"
+      },
+      {
+        "bytes": "18687474703a2f2f6578616d706c652e636f6d2f612e706e670000",
+        "mdk_valid": false,
+        "url": "http://example.com/a.png"
+      },
+      {
+        "bytes": "1968747470733a2f2f4578616d706c652e636f6d2f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://Example.com/a.png"
+      },
+      {
+        "bytes": "1768747470733a2f2f65782536316d706c652e636f6d2f780000",
+        "mdk_valid": false,
+        "url": "https://ex%61mple.com/x"
+      },
+      {
+        "bytes": "1d68747470733a2f2f6578616d706c652e636f6d3a3434332f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com:443/a.png"
+      },
+      {
+        "bytes": "1e68747470733a2f2f6578616d706c652e636f6d2f782f2e2e2f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com/x/../a.png"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f2e2f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com/./a.png"
+      },
+      {
+        "bytes": "1368747470733a2f2f6578616d706c652e636f6d0000",
+        "mdk_valid": false,
+        "url": "https://example.com"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f6120622e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com/a b.png"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f6122622e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com/a\"b.png"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f613c622e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com/a<b.png"
+      },
+      {
+        "bytes": "1a68747470733a2f2f6578616d706c652e636f6d2f3f713d2778270000",
+        "mdk_valid": false,
+        "url": "https://example.com/?q='x'"
+      },
+      {
+        "bytes": "1b68747470733a2f2f6578616d706c652e636f6d2f612e706e6723660000",
+        "mdk_valid": false,
+        "url": "https://example.com/a.png#f"
+      },
+      {
+        "bytes": "1b68747470733a2f2f75406578616d706c652e636f6d2f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://u@example.com/a.png"
+      },
+      {
+        "bytes": "1a68747470733a2f2f6578c3a46d706c652e636f6d2f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://exämple.com/a.png"
+      },
+      {
+        "bytes": "1a68747470733a2f2f6578616d706c652e636f6d2fc3a92e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com/é.png"
+      },
+      {
+        "bytes": "136674703a2f2f6578616d706c652e636f6d2f610000",
+        "mdk_valid": false,
+        "url": "ftp://example.com/a"
+      },
+      {
+        "bytes": "1e68747470733a2f2f6578616d706c652e636f6d3a303434332f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com:0443/a.png"
+      },
+      {
+        "bytes": "1d68747470733a2f2f6578616d706c652e636f6d3a3038302f612e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com:080/a.png"
+      },
+      {
+        "bytes": "1968747470733a2f2f6578616d706c652e636f6d5c612e706e670000",
+        "mdk_valid": false,
+        "url": "https://example.com\\a.png"
       }
     ]
   },
@@ -178,6 +378,47 @@
       "nonce": "000102030405060708090a0b",
       "plaintext": "00",
       "plaintext_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    },
+    {
+      "aad": "656e637279707465642d6d656469612d763200a8cffc893d8847f405f1af7424e0a04a19f7df9326857e9e94bd89061c90e5c300746578742f706c61696e0065392e747874",
+      "ciphertext": "8db6cbbcc0d6deef0b7e69a68db1978ff72f957e62dfac026c3a61b7bbd6dc9c3a6d389ab7444e4ffcb009214281e8a80e87e5d13fb45e3a2e01238f7b4761299808",
+      "ciphertext_sha256": "98efb64755412f032c23145369db44aa1fe7c81a98aab7092bd1ed6085a8e901",
+      "file_key": "83bf59fe0380c561b88c7910eb26a1048cea3c8eac3695842058fb4bec2ebf3d",
+      "filename": "e9.txt",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/98efb64755412f032c23145369db44aa1fe7c81a98aab7092bd1ed6085a8e901",
+        "ciphertext_sha256 98efb64755412f032c23145369db44aa1fe7c81a98aab7092bd1ed6085a8e901",
+        "plaintext_sha256 a8cffc893d8847f405f1af7424e0a04a19f7df9326857e9e94bd89061c90e5c3",
+        "nonce 999999999999999999999999",
+        "m text/plain",
+        "filename e9.txt"
+      ],
+      "key_info": "656e637279707465642d6d656469612d763200a8cffc893d8847f405f1af7424e0a04a19f7df9326857e9e94bd89061c90e5c300746578742f706c61696e0065392e747874006b6579",
+      "media_secret": "d571486bf193a5fcc2f741ad23b90dbe96e58aa180f66ed631bc991cad188bd2",
+      "media_type": "text/plain",
+      "media_type_input": "text/plain",
+      "name": "from-exporter-epoch-9",
+      "nonce": "999999999999999999999999",
+      "plaintext": "7365616c656420756e646572204d4c532d4578706f72746572286d61726d6f742c20656e637279707465642d6d6564696129",
+      "plaintext_sha256": "a8cffc893d8847f405f1af7424e0a04a19f7df9326857e9e94bd89061c90e5c3"
+    }
+  ],
+  "exporter_step": [
+    {
+      "context": "encrypted-media",
+      "exporter_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "group_event_secret": "9cd1c46ce77ddc934668779dfd6ca83c978fc10b1e0a721e07258d35a5732d19",
+      "label": "marmot",
+      "media_secret": "73bd647f044b114b9b3dc182b780653dc65c1b3fbaa3eda7a30f1db93e506635"
+    },
+    {
+      "context": "encrypted-media",
+      "exporter_secret": "0c79e33b9d5cd3cf0e5d89b1f2ce286de1093e896411151f2c426056f1bdcf12",
+      "group_event_secret": "22cbd4d39402c2048a086699e0d552ee132025fbe33371016935f6a1bc2843f4",
+      "label": "marmot",
+      "media_secret": "d571486bf193a5fcc2f741ad23b90dbe96e58aa180f66ed631bc991cad188bd2"
     }
   ],
   "group_image": {

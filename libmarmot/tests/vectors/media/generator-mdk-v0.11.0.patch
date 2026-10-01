@@ -1,3 +1,29 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 6e94733f..be645227 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3598,6 +3598,8 @@ dependencies = [
+  "nostr 0.45.5",
+  "nostr-relay-builder",
+  "nostr-sdk",
++ "openmls_rust_crypto",
++ "openmls_traits",
+  "opentelemetry-proto",
+  "prost",
+  "psl",
+diff --git a/crates/marmot-app/Cargo.toml b/crates/marmot-app/Cargo.toml
+index 56257dbb..b74c87ff 100644
+--- a/crates/marmot-app/Cargo.toml
++++ b/crates/marmot-app/Cargo.toml
+@@ -66,6 +66,8 @@ url.workspace = true
+ zeroize.workspace = true
+ 
+ [dev-dependencies]
++openmls_rust_crypto.workspace = true
++openmls_traits.workspace = true
+ criterion.workspace = true
+ keyring-core.workspace = true
+ marmot-forensics.workspace = true
 diff --git a/crates/marmot-app/src/media/group_image.rs b/crates/marmot-app/src/media/group_image.rs
 index 80367f98..ccf2b81e 100644
 --- a/crates/marmot-app/src/media/group_image.rs
@@ -24,10 +50,10 @@ index 189322a2..9e1d14a9 100644
 +mod w24_vectors;
 diff --git a/crates/marmot-app/src/media/w24_vectors.rs b/crates/marmot-app/src/media/w24_vectors.rs
 new file mode 100644
-index 00000000..2c9d5ee5
+index 00000000..874b44df
 --- /dev/null
 +++ b/crates/marmot-app/src/media/w24_vectors.rs
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,289 @@
 +//! nostrc W24 throwaway vector generator (nostrc-u7cb). NOT part of MDK.
 +//! Uses MDK v0.11.0's own media crypto, imeta builder/parser and app-component
 +//! codecs to emit fixtures for libmarmot. Run:
@@ -40,6 +66,27 @@ index 00000000..2c9d5ee5
 +    decode_group_blossom_image_v1, encode_group_avatar_url_v1, encode_group_blossom_image_v1,
 +};
 +use serde_json::{Value, json};
++use openmls_rust_crypto::RustCrypto;
++use openmls_traits::{crypto::OpenMlsCrypto, types::HashType};
++
++/// RFC 9420 MLS-Exporter for ciphersuite 1 (SHA-256) on openmls's own
++/// crypto provider: ExpandWithLabel(DeriveSecret(exporter_secret, label),
++/// "exported", Hash(context), len), KDFLabel with QUIC varint vectors.
++fn mls_exporter(secret: &[u8], label: &[u8], context: &[u8], len: usize) -> Vec<u8> {
++    let crypto = RustCrypto::default();
++    let expand_with_label = |s: &[u8], lab: &[u8], ctx: &[u8], l: usize| -> Vec<u8> {
++        let mut info = (l as u16).to_be_bytes().to_vec();
++        let full = [b"MLS 1.0 ".as_slice(), lab].concat();
++        cgka_traits::app_components::encode_quic_varint(full.len() as u64, &mut info);
++        info.extend_from_slice(&full);
++        cgka_traits::app_components::encode_quic_varint(ctx.len() as u64, &mut info);
++        info.extend_from_slice(ctx);
++        crypto.hkdf_expand(HashType::Sha2_256, s, &info, l).unwrap().as_slice().to_vec()
++    };
++    let derived = expand_with_label(secret, label, &[], 32);
++    let ctx_hash = crypto.hash(HashType::Sha2_256, context).unwrap();
++    expand_with_label(&derived, b"exported", &ctx_hash, len)
++}
 +
 +fn sha(b: &[u8]) -> [u8; 32] {
 +    Sha256::digest(b).into()
@@ -102,13 +149,41 @@ index 00000000..2c9d5ee5
 +fn w24_vectors() {
 +    let secret5 = sha(b"nostrc-w24 fixed media exporter secret, epoch 5");
 +    let secret6 = sha(b"nostrc-w24 fixed media exporter secret, epoch 6");
++    // Self-check the exporter on the committed RFC 9420 key-schedule
++    // vectors (ciphersuite 1) before using it.
++    let ks: Value = serde_json::from_str(&std::fs::read_to_string(
++        std::env::var("W24_KEY_SCHEDULE").expect("W24_KEY_SCHEDULE=<nostrc>/libmarmot/tests/vectors/mdk/key-schedule.json"),
++    ).unwrap()).unwrap();
++    let mut checked = 0;
++    for v in ks.as_array().unwrap().iter().filter(|v| v["cipher_suite"] == 1) {
++        for e in v["epochs"].as_array().unwrap() {
++            let x = &e["exporter"];
++            let got = mls_exporter(&hex::decode(e["exporter_secret"].as_str().unwrap()).unwrap(),
++                // openmls's KAT runner (and libmarmot's) uses the label field as
++                // the label string itself, not hex-decoded.
++                x["label"].as_str().unwrap().as_bytes(),
++                &hex::decode(x["context"].as_str().unwrap()).unwrap(), x["length"].as_u64().unwrap() as usize);
++            assert_eq!(hex::encode(got), x["secret"].as_str().unwrap());
++            checked += 1;
++        }
++    }
++    assert!(checked > 0);
++    let exporter_steps: Vec<Value> = [(0u8..32).collect::<Vec<u8>>(), sha(b"nostrc-w24 exporter_secret, epoch 9").to_vec()]
++        .iter().map(|es| json!({"exporter_secret": hex::encode(es), "label": "marmot", "context": "encrypted-media",
++            "media_secret": hex::encode(mls_exporter(es, b"marmot", b"encrypted-media", 32)),
++            "group_event_secret": hex::encode(mls_exporter(es, b"marmot", b"group-event", 32))})).collect();
++    // The reviewer's independent value (docs/reviews/w24-media-v2-review-2026-09-30.md, N2).
++    assert_eq!(exporter_steps[0]["media_secret"], "73bd647f044b114b9b3dc182b780653dc65c1b3fbaa3eda7a30f1db93e506635");
 +    let mut cases = Vec::new();
 +    let mut store = Vec::new();
-+    for (name, pt, mt_in, fname, nonce, dim) in [
-+        ("png-basic", b"\x89PNG\r\n\x1a\nnostrc w24 media v2 vector".to_vec(), "image/png", "photo.png", [0x11u8; 12], Some("640x480")),
-+        ("jpg-alias-params-utf8-filename", b"JFIF-ish bytes for a jpeg".to_vec(), " Image/JPG; charset=binary ", "\u{e9}t\u{e9} \u{5199}\u{771f} 1.jpg", [0xa5u8; 12], None),
-+        ("spaces-filename-octet-stream", vec![0u8; 1], "application/octet-stream", " Photo.JPG ", *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b", None),
++    let exported9: [u8; 32] = hex::decode(exporter_steps[1]["media_secret"].as_str().unwrap()).unwrap().try_into().unwrap();
++    for (secret, name, pt, mt_in, fname, nonce, dim) in [
++        (secret5, "png-basic", b"\x89PNG\r\n\x1a\nnostrc w24 media v2 vector".to_vec(), "image/png", "photo.png", [0x11u8; 12], Some("640x480")),
++        (secret5, "jpg-alias-params-utf8-filename", b"JFIF-ish bytes for a jpeg".to_vec(), " Image/JPG; charset=binary ", "\u{e9}t\u{e9} \u{5199}\u{771f} 1.jpg", [0xa5u8; 12], None),
++        (secret5, "spaces-filename-octet-stream", vec![0u8; 1], "application/octet-stream", " Photo.JPG ", *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b", None),
++        (exported9, "from-exporter-epoch-9", b"sealed under MLS-Exporter(marmot, encrypted-media)".to_vec(), "text/plain", "e9.txt", [0x99u8; 12], None),
 +    ] {
++        let secret5 = secret;
 +        let mt = canonical_media_type_v2(mt_in).unwrap();
 +        let h = sha(&pt);
 +        let (key, aad, ct) = seal(&secret5, &pt, &h, &mt, fname, &nonce);
@@ -200,9 +275,33 @@ index 00000000..2c9d5ee5
 +        "https://user:pw@example.com/a.png", "https://example.com/a.png#frag", "https://127.0.0.1/a.png",
 +        "https://[2001:DB8::1]/a.png", "https://xn--bcher-kva.example/a.png", "https://b\u{fc}cher.example/a.png",
 +        "https://example.com/%7Euser/a.png", "https://example.com/a.png?q=%20x", "ftp://example.com/a.png",
-+        "https://example.com./a.png", "https://EXAMPLE.com:0443/a.png", "https://0x7f.1/a.png"];
++        "https://example.com./a.png", "https://EXAMPLE.com:0443/a.png", "https://0x7f.1/a.png",
++        // The review's MDK-canonical URLs outside libmarmot's subset (M3).
++        "https://xn--r8jz45g.jp/avatar.png", "https://my_host.example.com/a.png",
++        "https://example.com/avatar.png?size[]=512", "https://example.com/avatar.png?w=512|h=512",
++        "https://example.com/avatar.png?sig=a^b", "https://example.com/avatar.png?q=`x`",
++        "https://example.com/a^b.png", "https://example.com/a|b.png", "https://example.com/[x].png",
++        "https://h.example/a/./b:/.%2e/c", "https://ex%61mple.com/x", "https://example.com/{x}.png"];
 +    let avatar_norm: Vec<Value> = avatar_inputs.iter().map(|s| json!({"input": s,
 +        "normalized": cgka_traits::app_components::validate_and_normalize_group_avatar_url(s).ok()})).collect();
++    // Stored bytes, judged by MDK's decoder: libmarmot may only call a value
++    // INVALID that MDK also refuses, and must not refuse what MDK accepts.
++    let stored = ["https://example.com/a.png", "https://xn--r8jz45g.jp/avatar.png", "https://my_host.example.com/a.png",
++        "https://example.com/avatar.png?size[]=512", "https://example.com/a^b.png", "https://example.com/a|b.png",
++        "https://example.com/[x].png", "https://example.com/avatar.png?q=`x`", "https://example.com/{x}.png",
++        "https://h.example/a/b:/c", "https://xn--bcher-kva.example/a.png",
++        "http://example.com/a.png", "https://Example.com/a.png", "https://ex%61mple.com/x", "https://example.com:443/a.png",
++        "https://example.com/x/../a.png", "https://example.com/./a.png", "https://example.com", "https://example.com/a b.png",
++        "https://example.com/a\"b.png", "https://example.com/a<b.png", "https://example.com/?q='x'", "https://example.com/a.png#f",
++        "https://u@example.com/a.png", "https://ex\u{e4}mple.com/a.png", "https://example.com/\u{e9}.png", "ftp://example.com/a",
++        "https://example.com:0443/a.png", "https://example.com:080/a.png", "https://example.com\\a.png"];
++    let stored_cases: Vec<Value> = stored.iter().map(|u| {
++        let mut bytes = Vec::new();
++        cgka_traits::app_components::encode_quic_varint(u.len() as u64, &mut bytes);
++        bytes.extend_from_slice(u.as_bytes());
++        bytes.extend_from_slice(&[0, 0]);
++        json!({"url": u, "bytes": hex::encode(&bytes), "mdk_valid": decode_group_avatar_url_v1(&bytes).is_ok()})
++    }).collect();
 +    let av = GroupAvatarUrlV1 { url: "https://example.com/a.png".into(), dim: b"512x512".to_vec(), thumbhash: b"1QcSHQRnh493V4dIh4eXh1h4kJUI".to_vec() };
 +    let av_bytes = encode_group_avatar_url_v1(&av).unwrap();
 +    let mut av_cases = vec![
@@ -229,7 +328,8 @@ index 00000000..2c9d5ee5
 +            "media_secret_note": "media_secret is the already-exported MLS-Exporter(\"marmot\", \"encrypted-media\", 32) value, fixed as SHA-256 of an ASCII label",
 +            "bead": "nostrc-u7cb"
 +        },
-+        "media_secret_epoch_5": hex::encode(secret5),
++        "exporter_step": exporter_steps,
++        "media_secret_epoch_5": hex::encode(sha(b"nostrc-w24 fixed media exporter secret, epoch 5")),
 +        "media_secret_epoch_6": hex::encode(secret6),
 +        "mdk_unit_vector": {"media_secret": hex::encode([7u8; 32]), "plaintext_sha256": hex::encode([0x22u8; 32]),
 +            "media_type": "image/jpeg", "filename": " Photo.JPG ",
@@ -239,7 +339,7 @@ index 00000000..2c9d5ee5
 +            "media_type": "image/png", "aad": hex::encode(&img_aad), "ciphertext": hex::encode(&img_ct),
 +            "image_hash": hex::encode(sha(&img_ct)), "image_upload_key": hex::encode([0x77u8; 32]),
 +            "component_bytes": hex::encode(&image_bytes), "decode": decode_cases},
-+        "avatar_url": {"normalize": avatar_norm, "decode": av_cases}
++        "avatar_url": {"normalize": avatar_norm, "decode": av_cases, "stored": stored_cases}
 +    });
 +    std::fs::write("/tmp/w24-media-v2-vectors.json", serde_json::to_string_pretty(&out).unwrap()).unwrap();
 +}

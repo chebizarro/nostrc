@@ -51,6 +51,9 @@ MarmotError marmot_encrypt_media(Marmot *m,
 /**
  * Deprecated, read-only: decrypts a reference in libmarmot's pre-0.12 media
  * format that is already stored locally.  New media is marmot_media_decrypt().
+ * imeta->file_hash (the plaintext SHA-256) is required; an all-zero hash is
+ * MARMOT_ERR_MEDIA_INVALID_REFERENCE.  The epoch is the caller's: never take
+ * it from a received tag (the old format let the sender choose it).
  */
 MarmotError marmot_decrypt_media(Marmot *m,
                                   const MarmotGroupId *mls_group_id,

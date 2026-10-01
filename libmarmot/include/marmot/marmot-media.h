@@ -134,6 +134,18 @@ MarmotError marmot_media_decrypt(Marmot *m,
                                  const uint8_t *ciphertext, size_t ciphertext_len,
                                  uint8_t **plaintext_out, size_t *plaintext_len);
 
+/**
+ * MARMOT_OK when a message created now would be sent in `source_epoch`
+ * (MarmotMediaUpload.source_epoch), else MARMOT_ERR_MEDIA_EPOCH_CHANGED:
+ * encrypt and upload again.  Like marmot_create_message() it first repairs
+ * a group record left behind by an interrupted epoch transition, so the
+ * epoch compared is the one the message will really use.  Call it in the
+ * same uninterrupted turn as marmot_create_message() (no Commit processed
+ * in between).
+ */
+MarmotError marmot_media_check_epoch(Marmot *m, const MarmotGroupId *mls_group_id,
+                                     uint64_t source_epoch);
+
 /** Append a locator (copied).  Structure is checked by imeta_build. */
 MarmotError marmot_media_reference_add_locator(MarmotMediaReference *reference,
                                                const char *kind,
@@ -230,6 +242,12 @@ void marmot_group_blossom_image_clear(MarmotGroupBlossomImage *image);
 /**
  * MarmotGroupAvatarUrl: url NULL is the absent state (then no hints).
  * dim and thumbhash are opaque render hints of at most 256 bytes.
+ *
+ * url_unverified (decode only): the stored URL is accepted state but lies
+ * outside the subset of the WHATWG serializer libmarmot can verify (an IDNA
+ * or '_' host, '^ | [ ]' in the path, ...).  Validity is consensus and
+ * rendering is local: such a URL is kept byte for byte, never rewritten, and
+ * never contacted -- render a placeholder (MARMOT_GROUP_AVATAR_URL_PLACEHOLDER).
  */
 typedef struct {
     char    *url;
@@ -237,20 +255,37 @@ typedef struct {
     size_t   dim_len;
     uint8_t *thumbhash;
     size_t   thumbhash_len;
+    bool     url_unverified;
 } MarmotGroupAvatarUrl;
 
 /**
  * Normalize an https avatar URL to the bytes the WHATWG URL serializer
- * produces.  libmarmot implements a strict subset: ASCII hosts (DNS names,
- * canonical IPv4, bracketed IPv6), optional port, path and query without
- * characters the serializer would rewrite.  Anything outside that subset,
+ * produces, for producing state.  libmarmot implements a strict subset:
+ * ASCII hosts (DNS names of letters, digits, '-' and '.', canonical IPv4,
+ * bracketed IPv6), optional port, path and query without characters whose
+ * serialization differs between WHATWG versions.  Anything outside it,
  * including non-ASCII or punycode (xn--) hosts, http, userinfo and
- * fragments, is MARMOT_ERR_INVALID_INPUT: libmarmot never stores or accepts
- * bytes it cannot prove normalized.
+ * fragments, is MARMOT_ERR_INVALID_INPUT: libmarmot only produces bytes it
+ * can prove canonical.
  */
 MarmotError marmot_group_avatar_url_normalize(const char *raw, char **out);
 
-/** Encode (normalizing url) / exactly decode (url must already be normalized). */
+/**
+ * Encode normalizes url (an unverified or non-normalizable URL is
+ * MARMOT_ERR_MEDIA_INVALID_REFERENCE: libmarmot never produces it).
+ *
+ * Decode is three-way, so a Commit is never refused for a URL another
+ * implementation's WHATWG parser stores as canonical:
+ *   - valid: inside libmarmot's subset and byte-equal to its normalization;
+ *   - invalid (MARMOT_ERR_MEDIA_INVALID_REFERENCE): provably not the output
+ *     of any WHATWG serializer version -- not UTF-8, a byte outside printable
+ *     ASCII, not "https://", userinfo or '#', an uppercase or '%' host, a
+ *     default/empty/zero-padded port, a missing path, a dot segment, '\'
+ *     before the query, an unencoded space, '"', '<', '>', '`', '{' or '}' in
+ *     the path, space, '"', '<', '>' or '\'' in the query, or a value inside the
+ *     subset whose normalization differs;
+ *   - unverified: everything else; accepted with url_unverified set.
+ */
 MarmotError marmot_group_avatar_url_encode(const MarmotGroupAvatarUrl *avatar,
                                            uint8_t **out, size_t *out_len);
 MarmotError marmot_group_avatar_url_decode(const uint8_t *data, size_t len,
@@ -259,8 +294,10 @@ void marmot_group_avatar_url_clear(MarmotGroupAvatarUrl *avatar);
 
 typedef enum {
     MARMOT_GROUP_AVATAR_NONE = 0,
-    MARMOT_GROUP_AVATAR_URL,       /**< 0x8007 present: it wins */
-    MARMOT_GROUP_AVATAR_BLOSSOM,   /**< only 0x8002 present */
+    MARMOT_GROUP_AVATAR_URL,          /**< 0x8007 present: it wins */
+    MARMOT_GROUP_AVATAR_BLOSSOM,      /**< only 0x8002 present */
+    MARMOT_GROUP_AVATAR_URL_PLACEHOLDER, /**< 0x8007 wins but is unverified:
+                                          *   show a placeholder, fetch nothing */
 } MarmotGroupAvatarSource;
 
 /** Rendering precedence (group-avatar-url-v1.md): either may be NULL. */

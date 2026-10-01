@@ -1,0 +1,10 @@
+{
+  "generator": "Python 'cryptography' re-implementation of libmarmot <= 0.11 marmot_encrypt_media (nostrc-u7cb review L5): key = HMAC-SHA256(exporter_secret, 'marmot-media-key' || 0x01), ChaCha20-Poly1305 with AAD = MIME type",
+  "epoch": 4,
+  "exporter_secret": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+  "mime_type": "image/png",
+  "nonce": "5c5c5c5c5c5c5c5c5c5c5c5c",
+  "plaintext": "7072652d302e3132206c69626d61726d6f74206d656469612c2073746f726564206c6f63616c6c79",
+  "file_hash": "64905f97abbc90df78841040fcc0ff9ea074709ba41fd41095043c5f2fd6c1d2",
+  "ciphertext": "60ae37455acb14ec64979e4d05428413b48c1b1b02e6396d837e3ed3a44103ea17df93f8a04d09bdb4225240bcc208ce4d087671588a6ed1"
+}

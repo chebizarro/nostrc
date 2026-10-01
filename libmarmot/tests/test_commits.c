@@ -2432,6 +2432,38 @@ test_media_source_epoch_of_late_message(void)
     trio_clear(&t);
 }
 
+/* Review L3: the epoch check reconciles first.  A crash between storing
+ * Charlie's MLS state at E+1 and his group record leaves the record at E;
+ * media sealed for E must still be refused, because marmot_create_message()
+ * would reconcile and send in E+1. */
+static void
+test_media_check_epoch_reconciles(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *commit = rename_group(&t.alice, &t.gid, "Moved");
+    expect_commit(&t.charlie, commit, "Charlie moves to E+1");
+    OK(marmot_media_check_epoch(t.charlie.m, &t.gid, t.epoch + 1));
+
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(t.charlie.m, &t.gid, &g));
+    g->epoch = t.epoch;   /* the record an interrupted transition leaves */
+    OK(t.charlie.m->storage->save_group(t.charlie.m->storage->ctx, g));
+    marmot_group_free(g);
+
+    CHECK(marmot_media_check_epoch(t.charlie.m, &t.gid, t.epoch) ==
+              MARMOT_ERR_MEDIA_EPOCH_CHANGED,
+          "a stale record must not pass media sealed for the old epoch");
+    g = NULL;
+    OK(marmot_get_group(t.charlie.m, &t.gid, &g));
+    CHECK(g->epoch == t.epoch + 1, "the check kept its repair: %" PRIu64, g->epoch);
+    marmot_group_free(g);
+    OK(marmot_media_check_epoch(t.charlie.m, &t.gid, t.epoch + 1));
+    expect_commit(&t.bob, commit, "Bob follows");
+    free(commit);
+    trio_clear(&t);
+}
+
 /* ── Secret-tree ratchet persistence (nostrc-ai04) ────────────────────── */
 
 /* ── Sender authentication (nostrc-we6g) ──────────────────────────────────────── */
@@ -4773,6 +4805,7 @@ main(int argc, char **argv)
     RUN(test_rumor_path_accepts_unsigned);
     RUN(test_late_messages_use_retained_parent);
     RUN(test_media_source_epoch_of_late_message);
+    RUN(test_media_check_epoch_reconciles);
     RUN(test_operations_run_in_one_transaction);
     RUN(test_send_stores_step_before_event);
     RUN(test_forged_member_identity_rejected);

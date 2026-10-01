@@ -268,6 +268,23 @@ What does not hold yet:
   from or written to live groups (that needs AppDataUpdate and adopted
   admission).
 
+Review follow-ups (nostrc-u7cb):
+
+- **SONAME `libmarmot.so.0.12`** (`.0.12.dylib`): while 0.x the SONAME is
+  0.MINOR in CMake and meson, because a 0.x MINOR may break the ABI and this
+  one does (`MarmotMessageResult` grew `app_msg.epoch`).
+- **0x8007 decode is three-way.** Valid (inside libmarmot's subset, byte
+  equal), invalid (provably not any WHATWG serializer's output) or
+  unverified: accepted, kept byte for byte, `url_unverified` set, rendered as
+  a placeholder and never contacted (`MARMOT_GROUP_AVATAR_URL_PLACEHOLDER`).
+  WHATWG implementations already disagree (url 2.5.8 and ada-url on `^` in a
+  path and on `..` over a `b:` segment), so libmarmot never refuses a Commit
+  over a URL another parser calls canonical.  Producing stays strict.
+- `marmot_media_check_epoch()`: reconciles an interrupted epoch transition
+  before comparing, as `marmot_create_message()` does
+  (`MARMOT_ERR_MEDIA_EPOCH_CHANGED`).
+- The read-only legacy decryptor now requires `file_hash`.
+
 **Incompatible:** the pre-0.12 media format (HMAC `marmot-media-key` of the
 raw exporter secret, MIME-only AAD) matched neither v2 nor the frozen v1, so
 no other client could read it. `marmot_encrypt_media()` now returns

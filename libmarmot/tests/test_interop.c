@@ -21,6 +21,7 @@
 
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
+#include "media_v2.h"
 #include "mls/mls-internal.h"
 #include "mls/mls_key_schedule.h"
 #include "mls/mls_key_package.h"
@@ -1442,20 +1443,22 @@ static void
 test_exporter_media_key_consistency(void)
 {
     /*
-     * MIP-04: media_key = MLS-Exporter("marmot-media-key", "", 32)
-     *
-     * Actually media.c uses HMAC-SHA256 directly, but the label is the same.
-     * Verify the derivation is consistent.
+     * MIP-04 encrypted-media-v2: media_secret =
+     * MLS-Exporter("marmot", "encrypted-media", 32) of the source epoch,
+     * distinct from the kind-445 key MLS-Exporter("marmot", "group-event", 32).
+     * (libmarmot < 0.12 used HMAC "marmot-media-key", which no peer reads.)
      */
     uint8_t exporter_secret[32];
     randombytes_buf(exporter_secret, 32);
 
-    uint8_t key1[32], key2[32];
-    assert(mls_exporter(exporter_secret, "marmot-media-key",
-                         NULL, 0, key1, 32) == 0);
-    assert(mls_exporter(exporter_secret, "marmot-media-key",
-                         NULL, 0, key2, 32) == 0);
+    uint8_t key1[32], key2[32], event_key[32];
+    assert(mls_exporter(exporter_secret, "marmot", (const uint8_t *)"encrypted-media", 15,
+                        key1, 32) == 0);
+    assert(marmot_media_secret_from_exporter(exporter_secret, key2) == 0);
     assert(memcmp(key1, key2, 32) == 0);
+    assert(mls_exporter(exporter_secret, "marmot", (const uint8_t *)"group-event", 11,
+                        event_key, 32) == 0);
+    assert(memcmp(key1, event_key, 32) != 0);
 }
 
 /* ── 6. Full key schedule → exporter secret chain ─────────────────────── */
