@@ -275,3 +275,68 @@ Every error except `OWN_COMMIT_PENDING` cancels the leave, including transient o
 - Everything stays behind `GH_FEATURE_ENCRYPTED_GROUPS=0`.
 - nostrc-8ndz (admin GroupContextExtensions adding 0x000a once every leaf supports it, or alongside the first Add) correctly describes the way back to any-member SelfRemove. It should be done before the flag is turned on, because with it R1-style admin dependence disappears for all-modern groups.
 - R1 must not wait for nostrc-8ndz: groups with a ≤0.11 or legacy member will always stay on Remove requests.
+
+---
+
+## Final addendum: R1 and N4 (`777589a1`; tip `777589a1`)
+
+### Final verdict: APPROVE-WITH-NITS
+
+R1 and N4 are resolved. The loop is bounded and the bound is tested against the real MDK 0.8 client. The new committer field comes from the authenticated MLS sender. Definitive errors are told apart from transient ones. The nits below need no further review round.
+
+### Gates (on `777589a1`)
+
+| Gate | Result |
+| --- | --- |
+| macOS build, `ctest -R "marmot\|mls\|groundhog\|interop\|kp_profile\|store"` (`-DBUILD_MDK_INTEROP=ON`) | 108/108 passed (4 GUI tests skipped); `groundhog-mdk-interop` against the real MDK 0.8 driver |
+| New harness case `groundhog-leaves-mdk-admin` (Docker free) | passes: exactly 2 rounds (`round 0: … leaving 1`, `round 1: … leaving 0`), then `NOT_PROCESSED`; a further MDK sync yields 0 proposals and 0 Commits; G stores nothing more; Alice sends again and MDK reads it |
+| Revert spot-check | disabling the admin-Commit count in `leave_continue()` makes the case fail at test_mdk_interop.c:960 (`rounds < GH_MLS_SERVICE_LEAVE_REQUESTS`: 2 < 2) after round 1 still leaving; restored it passes |
+| `scripts/linux-gate.sh --sanitizers` | passed, 49 tests |
+| libmarmot `test_commits`, `test_marmot_interop`, `test_mls_group` under ASAN+LSan+UBSan (CI image, `--rm`) | 0 reports; `committer_pubkey_hex` is freed in `marmot_message_result_free()` and on the error path |
+
+### The questions asked
+
+- **Is the 2-request bound plus cancel safe? Yes.**
+  - Each applied Commit whose authenticated committer is in the group's admin list, arriving while our Remove request waits, counts one miss.
+  - The second miss calls `leave_give_up()` inside `leave_continue()`, *before* `marmot_self_remove()` would make the next epoch's request.
+  - Proposals are epoch-bound, so when the leave is dropped no live request of ours remains for an admin to commit later. The "still a member, can send" state is therefore true.
+  - `marmot_cancel_leave()` failing leaves the group Leaving, to be retried on the next pass (fail closed).
+  - The bound is exactly 2 requests and 2 empty MDK Commits per leave attempt, as the harness case shows.
+- **Is it honest? Yes, with one wording nit (F2).** "Your leave request wasn't processed by the group admin" is accurate: the admin's Commits came and kept the account.
+- **Is `committer_pubkey_hex` sound? Yes.**
+  - It is `key.committer`, set by `marmot_commit_authorize_ex()` from the credential identity of `committer_leaf` in the pre-Commit tree.
+  - `committer_leaf` is the MLS sender: the PublicMessage framing, or the decrypted sender data for a PrivateMessage.
+  - `commit_authenticate()` checks that sender against the framing (`from != sender_leaf`, `leaf_index != sender_leaf` → fail), verifies the signature with that leaf's signature key, and checks the membership tag.
+  - The outer kind:445 pubkey (ephemeral) never enters it.
+  - It is set only when a Commit is applied (linear, or the retained-parent winner). It is NULL for our own merge, so our own Commits never count as admin misses.
+  - Groundhog compares it against `group->admins`, the pre-Commit admins (refresh runs after the check).
+- **Does N4 distinguish definitive from transient errors? Yes.**
+  - Cancel only on `ADMIN_CANNOT_LEAVE`, `UNSUPPORTED` and `USE_AFTER_EVICTION`.
+  - Everything else, including `OWN_COMMIT_PENDING` and storage errors, keeps the durable leave and calls `schedule_retry()`, which backs off exponentially with jitter up to `RETRY_MAX_S`.
+  - See F4 for the persistent-but-unlisted case.
+
+### Nits (no re-review needed)
+
+- **F1 (Low): any admin Commit counts as a miss, not just one that dropped our request.**
+  - Consider a group with a libmarmot admin who would commit the request after its jitter (up to 15 s). If other admin activity (a rename, an Add) lands twice inside that window, the leave stops with "not processed" although it would have succeeded.
+  - The outcome is safe (still a member, can retry) but spurious.
+  - Refinement: count only Commits that carry no proposals (MDK's empty auto-commit) or that consume none of ours.
+- **F2 (Nit): the "not processed" status suggests a choice that one press does not give.**
+  - The status says "You can leave on this device only…". But after it, `gh_mls_service_leave_kind()` returns `ADMINS` again (the group is no longer Leaving), so the next Leave re-sends a request, and device-only takes a second Leave ("give up waiting").
+  - Either return `GH_MLS_LEAVE_DEVICE` while `leave_failure == NOT_PROCESSED`, or say "Leave again to ask once more, or …".
+- **F3 (Nit): the miss counter lives in memory.** `leave_misses` resets on restart, so each app start allows 2 more requests. That is bounded per session; persisting it with the leave request would make it bounded per leave.
+- **F4 (Nit): some persistent errors retry forever.** Unlisted errors such as `OWN_LEAF_NOT_FOUND`, `GROUP_NOT_FOUND`, or `DESERIALIZATION` of a damaged leave record retry indefinitely (backed off) with sends gated. That is fail-closed, which is defensible, but the first two are definitive in practice and could join the cancel list.
+- **Test coupling (Nit):** the harness case asserts against `GH_MLS_SERVICE_LEAVE_REQUESTS` itself, so it guards the counting logic, not the constant's value. That is fine, and the revert check above confirms it catches the loop.
+
+### Status of every finding
+
+| Finding | Status |
+| --- | --- |
+| H1 Commit before proposal | resolved (round 2) |
+| M1 SelfRemove only where required | resolved (round 2) |
+| M2 proposal flooding | resolved (round 2) |
+| L1-L5, N1-N3 | resolved or documented (round 2) |
+| R1 Remove request livelock with MDK 0.8 admin | **resolved** (bounded at 2, harness-tested); upstream MDK issue nostrc-laxu |
+| N4 transient errors drop the leave | **resolved** |
+| nostrc-8ndz (Groundhog groups leave via admins) | acceptable for now, as judged in round 2; do before enabling `GH_FEATURE_ENCRYPTED_GROUPS` |
+| F1-F4 | nits, may be filed as follow-ups |
