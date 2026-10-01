@@ -643,6 +643,9 @@ mls_leaf_node_deserialize(MlsTlsReader *reader, MlsLeafNode *node)
         size_t _bytes; \
         if (mls_tls_read_vli(reader, &_bytes) != 0) return -1; \
         if (_bytes % 2 != 0) return -1; \
+        /* Check the claimed length before allocating (W24 review L5): \
+         * a varint can claim up to 2^62 bytes. */ \
+        if (_bytes > mls_tls_reader_remaining(reader)) return -1; \
         node->count_field = _bytes / 2; \
         if (node->count_field > 0) { \
             node->field = malloc(node->count_field * sizeof(uint16_t)); \
@@ -713,6 +716,8 @@ mls_parent_node_deserialize(MlsTlsReader *reader, MlsParentNode *node)
     if (mls_tls_read_vli(reader, &ul_bytes) != 0) return -1;
     /* Validate that ul_bytes is divisible by 4 (4 bytes per uint32) */
     if (ul_bytes % 4 != 0) return -1;
+    /* Check the claimed length before allocating (W24 review L5). */
+    if (ul_bytes > mls_tls_reader_remaining(reader)) return -1;
     node->unmerged_leaf_count = ul_bytes / 4;
     if (node->unmerged_leaf_count > 0) {
         node->unmerged_leaves = malloc(node->unmerged_leaf_count * sizeof(uint32_t));

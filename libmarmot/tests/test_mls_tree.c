@@ -761,6 +761,101 @@ static void test_parent_node_no_unmerged(void)
     mls_parent_node_clear(&dst);
 }
 
+/*
+ * W24 review L5: the LeafNode capability vectors (READ_U16_VEC) and the
+ * ParentNode unmerged_leaves list allocated from the varint length claim
+ * before checking that many bytes remain.  The review's mutation fuzzer hit
+ * this within seconds (ASAN allocation-size-too-big in
+ * mls_leaf_node_deserialize).  These are that input class, minimized: a
+ * well-formed prefix followed by a length claim with nothing behind it.
+ *
+ *   - 4-byte varint 0xBFFFFFFE (~1 GiB): pre-fix this malloc'd ~1 GiB, then
+ *     failed the first element read, leaving the vector allocated; it must
+ *     now be refused with nothing allocated.
+ *   - 8-byte varint (2^61): pre-fix this is the fuzzer's ASAN abort
+ *     (allocation-size-too-big); it must now be refused before malloc.
+ */
+static const uint8_t L5_CLAIM_1GIB[] = { 0xBF, 0xFF, 0xFF, 0xFE };
+static const uint8_t L5_CLAIM_2P61[] = { 0xE0, 0x00, 0x00, 0x00,
+                                          0x00, 0x00, 0x00, 0x00 };
+
+/* encryption_key, signature_key, credential_type, credential identity */
+static size_t
+l5_leaf_prefix(uint8_t *out)
+{
+    size_t n = 0;
+    out[n++] = MLS_KEM_PK_LEN; memset(out + n, 0x11, MLS_KEM_PK_LEN); n += MLS_KEM_PK_LEN;
+    out[n++] = MLS_SIG_PK_LEN; memset(out + n, 0x22, MLS_SIG_PK_LEN); n += MLS_SIG_PK_LEN;
+    out[n++] = 0x00; out[n++] = 0x01;              /* basic */
+    out[n++] = 4; memcpy(out + n, "user", 4); n += 4;
+    return n;
+}
+
+static void test_leaf_node_huge_capability_claim(void)
+{
+    const uint8_t *claims[] = { L5_CLAIM_1GIB, L5_CLAIM_2P61 };
+    const size_t claim_lens[] = { sizeof(L5_CLAIM_1GIB), sizeof(L5_CLAIM_2P61) };
+    /* Put the claim in each of the five capability vectors in turn; the
+     * vectors before it are well formed (one uint16 each). */
+    for (size_t c = 0; c < 2; c++) {
+        for (int slot = 0; slot < 5; slot++) {
+            uint8_t in[256];
+            size_t n = l5_leaf_prefix(in);
+            for (int i = 0; i < slot; i++) {
+                in[n++] = 0x02; in[n++] = 0x00; in[n++] = 0x01;
+            }
+            memcpy(in + n, claims[c], claim_lens[c]); n += claim_lens[c];
+            /* A few trailing bytes so the claim, not EOF at the varint,
+             * is what is being judged. */
+            in[n++] = 0x00; in[n++] = 0x01;
+
+            MlsTlsReader reader;
+            mls_tls_reader_init(&reader, in, n);
+            MlsLeafNode dst;
+            assert(mls_leaf_node_deserialize(&reader, &dst) == -1);
+            /* Refused before allocating: no vector at or after the slot. */
+            uint16_t *vecs[5] = { dst.versions, dst.ciphersuites,
+                                  dst.cap_extensions, dst.proposals,
+                                  dst.cap_credentials };
+            for (int i = slot; i < 5; i++) assert(vecs[i] == NULL);
+            mls_leaf_node_clear(&dst);
+        }
+    }
+}
+
+static void test_parent_node_huge_unmerged_claim(void)
+{
+    MlsParentNode src;
+    memset(&src, 0, sizeof(src));
+    memset(src.encryption_key, 0xAA, MLS_KEM_PK_LEN);
+
+    const uint8_t *claims[] = { L5_CLAIM_1GIB, L5_CLAIM_2P61 };
+    const size_t claim_lens[] = { sizeof(L5_CLAIM_1GIB), sizeof(L5_CLAIM_2P61) };
+    for (size_t c = 0; c < 2; c++) {
+        MlsTlsBuf buf;
+        assert(mls_tls_buf_init(&buf, 256) == 0);
+        assert(mls_parent_node_serialize(&src, &buf) == 0);
+        /* The last byte is the empty unmerged_leaves varint; replace it. */
+        assert(buf.len > 0 && buf.data[buf.len - 1] == 0x00);
+        buf.len--;
+        /* 0xBFFFFFFE is not a multiple of 4; use 0xBFFFFFFC there. */
+        uint8_t claim[8];
+        memcpy(claim, claims[c], claim_lens[c]);
+        if (c == 0) claim[3] = 0xFC;
+        assert(mls_tls_buf_append(&buf, claim, claim_lens[c]) == 0);
+        const uint8_t tail[4] = { 0, 0, 0, 1 };
+        assert(mls_tls_buf_append(&buf, tail, sizeof(tail)) == 0);
+
+        MlsTlsReader reader;
+        mls_tls_reader_init(&reader, buf.data, buf.len);
+        MlsParentNode dst;
+        assert(mls_parent_node_deserialize(&reader, &dst) == -1);
+        assert(dst.unmerged_leaves == NULL);
+        mls_parent_node_clear(&dst);
+        mls_tls_buf_free(&buf);
+    }
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Tree math edge cases
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1087,6 +1182,8 @@ int main(void)
     TEST(test_leaf_node_commit_with_parent_hash);
     TEST(test_parent_node_roundtrip);
     TEST(test_parent_node_no_unmerged);
+    TEST(test_leaf_node_huge_capability_claim);
+    TEST(test_parent_node_huge_unmerged_claim);
 
     printf("\n  --- Edge cases ---\n");
     TEST(test_tree_single_leaf);
