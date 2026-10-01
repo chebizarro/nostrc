@@ -2155,32 +2155,34 @@ test_create_proof_inputs(void)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- * Commits in adopted groups fail closed (nostrc-qp24.5)
+ * Commits in adopted groups (nostrc-qp24.5.1.3; refused until then).  The
+ * full coverage is tests/test_adopted_commits.c.
  * ══════════════════════════════════════════════════════════════════════════ */
 
 static void
-test_adopted_commits_refused(void)
+test_adopted_commits_applied(void)
 {
     Pair p;
     pair_create(&p);
 
-    /* Our own Commits: refused, nothing staged or applied. */
+    /* Our own Commits are made: a rename by the 0x8001 AppDataUpdate (no
+     * GroupData), as receivers judge it. */
     char *commit_json = NULL;
-    EXPECT_ERR(marmot_self_update(p.alice.m, &p.gid, NULL, &commit_json),
-               MARMOT_ERR_UNSUPPORTED);
-    CHECK(!commit_json, "no Commit event");
     MarmotGroupConfig rename = config_for(NULL, 0, NULL, 0);
     rename.name = "renamed";
-    CHECK(marmot_update_group_metadata(p.alice.m, &p.gid, &rename, &commit_json) != MARMOT_OK,
-          "no GroupData rename of an adopted group");
-    CHECK(!commit_json, "no Commit event");
+    OK(marmot_update_group_metadata(p.alice.m, &p.gid, &rename, &commit_json));
+    CHECK(commit_json, "a Commit event");
     bool superseded = false;
     char *pending = NULL;
     OK(marmot_get_pending_commit(p.alice.m, &p.gid, &pending, &superseded));
-    CHECK(!pending, "nothing pending");
+    CHECK(pending && !superseded, "pending until published");
+    free(pending);
+    OK(marmot_clear_pending_commit(p.alice.m, &p.gid));   /* not published */
+    free(commit_json);
+    commit_json = NULL;
 
     /* A Commit from a member (built at the MLS layer, authenticated): Bob
-     * refuses it and keeps his state. */
+     * applies it. */
     uint8_t *blob = NULL;
     size_t len = 0;
     load_mls(&p.alice, &p.gid, &blob, &len);
@@ -2199,24 +2201,25 @@ test_adopted_commits_refused(void)
     MarmotMessageResult res;
     memset(&res, 0, sizeof(res));
     MarmotError err = marmot_process_message(p.bob.m, event, &res);
-    CHECK(err == MARMOT_ERR_UNSUPPORTED, "adopted Commit refused: err=%d type=%d", err,
-          res.type);
+    CHECK(err == MARMOT_OK && res.type == MARMOT_RESULT_COMMIT,
+          "adopted self-update applied: err=%d type=%d", err, res.type);
     marmot_message_result_free(&res);
     MarmotGroup *g = NULL;
     OK(marmot_get_group(p.bob.m, &p.gid, &g));
-    CHECK(g->epoch == 1, "bob still at epoch 1");
+    CHECK(g->epoch == 2, "bob at epoch 2");
     marmot_group_free(g);
     load_mls(&p.bob, &p.gid, &blob, &len);
     MlsGroup bob_mls;
-    CHECK(mls_group_deserialize(blob, len, &bob_mls) == 0 && bob_mls.epoch == 1 &&
-          bob_mls.profile == MARMOT_GROUP_PROFILE_ADOPTED, "bob state unchanged");
-    /* Directly: marmot_commit_authorize() refuses adopted transitions. */
+    CHECK(mls_group_deserialize(blob, len, &bob_mls) == 0 && bob_mls.epoch == 2 &&
+          bob_mls.profile == MARMOT_GROUP_PROFILE_ADOPTED, "bob's state advanced");
+    /* Directly: marmot_commit_authorize() judges an adopted transition by
+     * its components (here none changes: an ordinary self-update shape). */
     MlsGroup post;
     CHECK(mls_group_deserialize(blob, len, &post) == 0, "post");
     MarmotCommitKey key;
     MarmotGroupDataExtension *gde = NULL;
-    EXPECT_ERR(marmot_commit_authorize(&bob_mls, &post, 0, false, &key, &gde),
-               MARMOT_ERR_UNSUPPORTED);
+    OK(marmot_commit_authorize(&bob_mls, &post, 0, false, &key, &gde));
+    CHECK(!key.privileged && !gde, "ordinary, no GroupData");
     mls_group_free(&post);
     mls_group_free(&bob_mls);
     sodium_memzero(blob, len);
@@ -2285,13 +2288,14 @@ expect_untouched(Member *x, const MarmotGroupId *gid, uint64_t epoch)
 }
 
 static void
-test_adopted_removal_refused(void)
+test_adopted_removal_judged(void)
 {
     /* W24 review H1: a Commit that removes OUR leaf never reaches
      * marmot_commit_authorize(); it was judged by the MIP-01 removal rules,
      * under which a group without GroupData made everyone an admin.  Bob, no
      * admin, could evict Carol -- and, with his key sorting first, make the
-     * removal final and her keys deleted. */
+     * removal final and her keys deleted.  Since nostrc-qp24.5.1.3 an
+     * adopted removal is judged by the group's 0x8003 admins. */
     Member alice, bob, carol;
     member_init(&alice, "alice");
     member_init(&bob, "bob");
@@ -2316,38 +2320,42 @@ test_adopted_removal_refused(void)
     OK(join(&carol, r.welcome_rumor_jsons[1], NULL));
     marmot_create_group_result_free(&r);
 
-    /* Bob (no admin) removes Carol. */
+    /* Bob (no admin) removes Carol: refused by everyone, nothing kept. */
     char *event = mls_remove_event(&bob, &gid, carol.pk, ngid);
     Member *recv[2] = {&carol, &alice};
     for (int i = 0; i < 2; i++) {
         MarmotMessageResult res;
         memset(&res, 0, sizeof(res));
-        EXPECT_ERR(marmot_process_message(recv[i]->m, event, &res), MARMOT_ERR_UNSUPPORTED);
+        EXPECT_ERR(marmot_process_message(recv[i]->m, event, &res),
+                   MARMOT_ERR_COMMIT_FROM_NON_ADMIN);
         marmot_message_result_free(&res);
         expect_untouched(recv[i], &gid, 1);
     }
     free(event);
-    /* An admin's removal is refused too (adopted Commits are not processed
-     * yet): the removed member is not told, and stays active but stuck. */
-    event = mls_remove_event(&alice, &gid, carol.pk, ngid);
-    MarmotMessageResult res;
-    memset(&res, 0, sizeof(res));
-    EXPECT_ERR(marmot_process_message(carol.m, event, &res), MARMOT_ERR_UNSUPPORTED);
-    marmot_message_result_free(&res);
-    expect_untouched(&carol, &gid, 1);
-    free(event);
-
     /* Carol still reads the group. */
     MarmotOutgoingMessage out;
     memset(&out, 0, sizeof(out));
     OK(marmot_create_message(alice.m, &gid,
                              "{\"kind\":9,\"content\":\"still here\",\"created_at\":1700000000,\"tags\":[]}",
                              &out));
+    MarmotMessageResult res;
     memset(&res, 0, sizeof(res));
     OK(marmot_process_message(carol.m, out.event_json, &res));
     CHECK(res.type == MARMOT_RESULT_APPLICATION_MESSAGE, "message");
     marmot_message_result_free(&res);
     marmot_outgoing_message_free(&out);
+
+    /* The admin's removal: Carol is told, her copy ends. */
+    event = mls_remove_event(&alice, &gid, carol.pk, ngid);
+    memset(&res, 0, sizeof(res));
+    OK(marmot_process_message(carol.m, event, &res));
+    CHECK(res.type == MARMOT_RESULT_COMMIT, "her removal");
+    marmot_message_result_free(&res);
+    bool removed = false;
+    uint8_t remover[32];
+    OK(marmot_get_group_removal(carol.m, &gid, &removed, remover, NULL, NULL));
+    CHECK(removed && memcmp(remover, alice.pk, 32) == 0, "removed by alice");
+    free(event);
 
     free(bob_kp);
     free(carol_kp);
@@ -2375,11 +2383,12 @@ advertise_self_remove(MlsGroup *g)
     }
 }
 
-/* W24 slice B (standalone proposals, SelfRemove) on an adopted group, which
- * cannot process Commits yet (nostrc-qp24.5.1.3): no leave is sent, none is
- * kept, none is committed. */
+/* W24 slice B (standalone proposals, SelfRemove) on an adopted group
+ * (nostrc-qp24.5.1.3): the only adopted departure is SelfRemove, which every
+ * leaf must support (libmarmot's own adopted leaves do not advertise it yet:
+ * W24 slice I); a Remove request is no adopted proposal. */
 static void
-test_adopted_departures_refused(void)
+test_adopted_departures(void)
 {
     Pair p;
     pair_create_ex(&p, false);   /* Bob is not an admin: he could leave */
@@ -2387,7 +2396,8 @@ test_adopted_departures_refused(void)
     size_t before_len = 0, after_len = 0;
     load_mls(&p.bob, &p.gid, &before, &before_len);
 
-    /* Bob, not an admin: no SelfRemove and no Remove request. */
+    /* Bob, not an admin: no SelfRemove (a leaf lacks it) and no Remove
+     * request. */
     MarmotLeaveKind kind = MARMOT_LEAVE_SELF_REMOVE;
     EXPECT_ERR(marmot_can_self_remove(p.bob.m, &p.gid, &kind), MARMOT_ERR_UNSUPPORTED);
     char *json = NULL;
@@ -2427,7 +2437,7 @@ test_adopted_departures_refused(void)
 
     /* A SelfRemove from Bob, in a version of the group where every leaf
      * advertises it (Alice's stored state patched the same way, so it
-     * verifies): Alice refuses it too, before opening it. */
+     * verifies): Alice keeps it and, as any member may, commits it. */
     MlsGroup alice_mls;
     load_group_state(&p.alice, &p.gid, &alice_mls);
     advertise_self_remove(&alice_mls);
@@ -2448,21 +2458,19 @@ test_adopted_departures_refused(void)
     free(msg);
     mls_group_free(&bob_mls);
     memset(&res, 0, sizeof(res));
-    EXPECT_ERR(marmot_process_message(p.alice.m, event, &res), MARMOT_ERR_UNSUPPORTED);
-    CHECK(res.type != MARMOT_RESULT_PROPOSAL, "no departure reported");
+    OK(marmot_process_message(p.alice.m, event, &res));
+    CHECK(res.type == MARMOT_RESULT_PROPOSAL && res.proposal.leave, "departure reported");
     marmot_message_result_free(&res);
     free(event);
     MarmotPendingProposal *props = NULL;
     size_t n_props = 0;
     OK(marmot_get_pending_proposals(p.alice.m, &p.gid, &props, &n_props));
-    CHECK(n_props == 0, "nothing kept: %zu", n_props);
+    CHECK(n_props == 1 && props[0].committable, "kept, committable: %zu", n_props);
     marmot_pending_proposals_free(props);
-
-    /* Nor does Alice commit departures. */
     char *commit = NULL;
-    EXPECT_ERR(marmot_commit_pending_proposals(p.alice.m, &p.gid, &commit),
-               MARMOT_ERR_UNSUPPORTED);
-    CHECK(!commit, "no Commit event");
+    OK(marmot_commit_pending_proposals(p.alice.m, &p.gid, &commit));
+    CHECK(commit, "a SelfRemove-only Commit");
+    free(commit);
     sodium_memzero(exporter, sizeof(exporter));
     pair_free(&p);
 }
@@ -2787,9 +2795,9 @@ main(int argc, char **argv)
     RUN(test_adopted_key_package_white_noise_shape);
     RUN(test_create_adopted_and_join);
     RUN(test_create_proof_inputs);
-    RUN(test_adopted_commits_refused);
-    RUN(test_adopted_removal_refused);
-    RUN(test_adopted_departures_refused);
+    RUN(test_adopted_commits_applied);
+    RUN(test_adopted_removal_judged);
+    RUN(test_adopted_departures);
     RUN(test_no_group_data_no_admin);
     RUN(test_commit_processor_profile_check);
     RUN(test_install_checked);

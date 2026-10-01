@@ -193,8 +193,13 @@ group_derive_epoch(MlsGroup *group,
     mls_secret_tree_free(&group->secret_tree);
     memcpy(&group->epoch_secrets, &new_secrets, sizeof(new_secrets));
 
+    /* The secret tree has the canonical (truncated) tree's structure, the
+     * view tree_hash is computed over (RFC 9420 sections 7.7, 9; OpenMLS):
+     * sized by the live width, a member whose right edge was removed derived
+     * other leaf secrets than OpenMLS and read none of its messages
+     * (nostrc-qp24.5.1.3, found by the MDK v0.11.0 SelfRemove vector). */
     rc = mls_secret_tree_init(&group->secret_tree, new_secrets.encryption_secret,
-                              group->tree.n_leaves);
+                              mls_tree_canonical_leaves(&group->tree));
     /* The tree holds every leaf secret now: the root is deleted (RFC 9420
      * §9.2), so no consumed message key can be derived again from it. */
     sodium_memzero(group->epoch_secrets.encryption_secret, MLS_HASH_LEN);
@@ -1640,14 +1645,21 @@ done:
     return rc;
 }
 
+static bool leaf_occupied(const MlsGroup *group, uint32_t leaf);
+
 /* The limit receivers apply to Adds per Commit (process_commit_impl). */
 #define MLS_MAX_ADDS_PER_COMMIT 64
 
+/* Removes, Adds, then a GroupContextExtensions proposal or (adopted groups,
+ * nostrc-qp24.5.1.3) inline AppDataUpdates, with an UpdatePath; a Welcome
+ * when there are Adds.  kp_count may be 0 when something else is
+ * committed. */
 static int
 add_members_staged(MlsGroup *group,
                    const uint32_t *removes, size_t remove_count,
                    const MlsKeyPackage *const *kps, size_t kp_count,
                    const uint8_t *gce_extensions, size_t gce_len,
+                   const MlsAppDataUpdate *adus, size_t adu_count,
                    MlsAddResult *result)
 {
     int rc = MARMOT_ERR_INTERNAL;
@@ -1656,10 +1668,11 @@ add_members_staged(MlsGroup *group,
     uint64_t pre_epoch = group->epoch;
     uint8_t pre_membership_key[MLS_HASH_LEN];
     uint8_t confirmation_tag[MLS_HASH_LEN];
-    uint8_t (*lca_secrets)[MLS_HASH_LEN] = calloc(kp_count, MLS_HASH_LEN);
-    uint32_t *added = calloc(kp_count, sizeof(uint32_t));
-    uint32_t *lca_nodes = calloc(kp_count, sizeof(uint32_t));
-    MlsProposal *proposals = calloc(remove_count + kp_count + 1, sizeof(MlsProposal));
+    size_t slots = kp_count ? kp_count : 1;
+    uint8_t (*lca_secrets)[MLS_HASH_LEN] = calloc(slots, MLS_HASH_LEN);
+    uint32_t *added = calloc(slots, sizeof(uint32_t));
+    uint32_t *lca_nodes = calloc(slots, sizeof(uint32_t));
+    MlsProposal *proposals = calloc(remove_count + kp_count + 1 + adu_count, sizeof(MlsProposal));
     size_t proposals_made = 0;
     uint8_t *commit = NULL, *welcome = NULL;
     size_t commit_len = 0, welcome_len = 0;
@@ -1760,6 +1773,51 @@ add_members_staged(MlsGroup *group,
         }
     }
 
+    /* Inline AppDataUpdates (adopted groups only), applied to the
+     * dictionary as receivers apply them, before the UpdatePath binds the
+     * new GroupContext (nostrc-qp24.5.1.3). */
+    if (adu_count > 0) {
+        const MlsAppDataUpdate *ops[MLS_APP_DATA_UPDATE_MAX];
+        if (group->profile != MARMOT_GROUP_PROFILE_ADOPTED || gce_extensions) {
+            rc = MARMOT_ERR_UNSUPPORTED;
+            goto done;
+        }
+        if (adu_count > MLS_APP_DATA_UPDATE_MAX) {
+            rc = MARMOT_ERR_INVALID_ARG;
+            goto done;
+        }
+        for (size_t i = 0; i < adu_count; i++) {
+            MlsProposal *p = &proposals[proposals_made];
+            p->type = MLS_PROPOSAL_APP_DATA_UPDATE;
+            p->update_leaf_index = UINT32_MAX;
+            p->sender_leaf = UINT32_MAX;
+            p->app_data_update.component_id = adus[i].component_id;
+            p->app_data_update.operation = adus[i].operation;
+            if (adus[i].update_len > 0) {
+                p->app_data_update.update = malloc(adus[i].update_len);
+                if (!p->app_data_update.update) {
+                    rc = MARMOT_ERR_MEMORY;
+                    goto done;
+                }
+                memcpy(p->app_data_update.update, adus[i].update, adus[i].update_len);
+                p->app_data_update.update_len = adus[i].update_len;
+            }
+            proposals_made++;
+            ops[i] = &adus[i];
+        }
+        uint8_t *next_ext = NULL;
+        size_t next_len = 0;
+        rc = mls_app_data_update_apply(group->extensions_data, group->extensions_len, ops,
+                                       adu_count, &next_ext, &next_len);
+        if (rc != 0) {
+            if (rc == MARMOT_ERR_MLS_PROCESS_MESSAGE) rc = MARMOT_ERR_INVALID_ARG;
+            goto done;
+        }
+        free(group->extensions_data);
+        group->extensions_data = next_ext;
+        group->extensions_len = next_len;
+    }
+
     rc = path_commit_with_proposals(group, proposals, proposals_made, added, kp_count,
                                     lca_nodes, lca_secrets, pre_gc, pre_gc_len,
                                     pre_epoch, pre_membership_key, confirmation_tag,
@@ -1767,9 +1825,11 @@ add_members_staged(MlsGroup *group,
     proposals = NULL;   /* owned by the helper */
     proposals_made = 0;
     if (rc != 0) goto done;
-    rc = build_welcome(group, confirmation_tag, kps, kp_count, lca_secrets,
-                       &welcome, &welcome_len);
-    if (rc != 0) goto done;
+    if (kp_count > 0) {
+        rc = build_welcome(group, confirmation_tag, kps, kp_count, lca_secrets,
+                           &welcome, &welcome_len);
+        if (rc != 0) goto done;
+    }
 
     result->commit_data = commit;
     result->commit_len = commit_len;
@@ -1788,7 +1848,7 @@ done:
     free(added);
     free(lca_nodes);
     if (lca_secrets) {
-        sodium_memzero(lca_secrets, kp_count * MLS_HASH_LEN);
+        sodium_memzero(lca_secrets, slots * MLS_HASH_LEN);
         free(lca_secrets);
     }
     return rc;
@@ -2055,7 +2115,8 @@ mls_group_add_members_with_extensions(MlsGroup *group,
     memset(result, 0, sizeof(*result));
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = add_members_staged(&staged, NULL, 0, kps, kp_count, extensions, extensions_len, result);
+    int rc = add_members_staged(&staged, NULL, 0, kps, kp_count, extensions, extensions_len,
+                                NULL, 0, result);
     if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
     if (rc != 0) mls_add_result_clear(result);
@@ -2076,7 +2137,43 @@ mls_group_replace_members(MlsGroup *group,
     memset(result, 0, sizeof(*result));
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = add_members_staged(&staged, removes, remove_count, kps, kp_count, NULL, 0, result);
+    int rc = add_members_staged(&staged, removes, remove_count, kps, kp_count, NULL, 0, NULL, 0,
+                                result);
+    if (rc == 0) rc = group_install_checked(group, &staged);
+    else mls_group_free(&staged);
+    if (rc != 0) mls_add_result_clear(result);
+    return rc;
+}
+
+int
+mls_group_commit_adopted(MlsGroup *group,
+                         const uint32_t *removes, size_t remove_count,
+                         const MlsKeyPackage *const *kps, size_t kp_count,
+                         const MlsAppDataUpdate *adus, size_t adu_count,
+                         MlsAddResult *result)
+{
+    if (!group || !result || (remove_count && !removes) || (kp_count && !kps) ||
+        (adu_count && !adus) || remove_count + kp_count + adu_count == 0)
+        return MARMOT_ERR_INVALID_ARG;
+    if (group->profile != MARMOT_GROUP_PROFILE_ADOPTED) return MARMOT_ERR_UNSUPPORTED;
+    if (kp_count > MLS_MAX_ADDS_PER_COMMIT || remove_count > 64 ||
+        adu_count > MLS_APP_DATA_UPDATE_MAX)
+        return MARMOT_ERR_INVALID_ARG;
+    for (size_t i = 0; i < kp_count; i++)
+        if (!kps[i]) return MARMOT_ERR_INVALID_ARG;
+    /* Each Remove names a current member other than us, once (RFC 9420
+     * §12.2). */
+    for (size_t i = 0; i < remove_count; i++) {
+        if (removes[i] == group->own_leaf_index || !leaf_occupied(group, removes[i]))
+            return MARMOT_ERR_INVALID_ARG;
+        for (size_t j = 0; j < i; j++)
+            if (removes[j] == removes[i]) return MARMOT_ERR_INVALID_ARG;
+    }
+    memset(result, 0, sizeof(*result));
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    int rc = add_members_staged(&staged, removes, remove_count, kps, kp_count, NULL, 0, adus,
+                                adu_count, result);
     if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
     if (rc != 0) mls_add_result_clear(result);
@@ -2220,16 +2317,22 @@ commit_path_required(const MlsProposal *proposals, size_t count)
     return false;
 }
 
-/** Validate that all proposals have types this processor understands, and
- *  that at most one is GroupContextExtensions (RFC 9420 §12.2). */
+/** Validate that all proposals have types this processor understands, that
+ *  at most one is GroupContextExtensions (RFC 9420 §12.2), and that none
+ *  follows an AppDataUpdate (draft-ietf-mls-extensions 4.7; OpenMLS
+ *  AppDataUpdateValidationError::IncorrectOrder). */
 static int
 validate_proposal_ordering(const MlsProposal *proposals, size_t count)
 {
     size_t gce_count = 0;
+    bool seen_adu = false;
     for (size_t i = 0; i < count; i++) {
         switch (proposals[i].type) {
         case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
-            if (++gce_count > 1) return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            if (++gce_count > 1 || seen_adu) return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            break;
+        case MLS_PROPOSAL_APP_DATA_UPDATE:
+            seen_adu = true;
             break;
         case MLS_PROPOSAL_ADD:
         case MLS_PROPOSAL_UPDATE:
@@ -2286,7 +2389,7 @@ sort_proposals_for_application(MlsProposal *proposals, size_t count)
  * ──────────────────────────────────────────────────────────────────────── */
 
 static int proposal_deserialize(MlsTlsReader *reader, MlsProposal *p);
-static int proposal_type_apply_supported(const MlsProposal *p);
+static int proposal_type_apply_supported(const MlsGroup *group, const MlsProposal *p);
 
 typedef struct {
     uint8_t     ref[MLS_HASH_LEN];
@@ -2561,7 +2664,8 @@ proposal_ac_open(const MlsGroup *group, const uint8_t *ac, size_t ac_len, MlsPro
     case MLS_PROPOSAL_ADD:
     case MLS_PROPOSAL_UPDATE:
     case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
-        rc = proposal_type_apply_supported(prop) ? 0 : MARMOT_ERR_UNSUPPORTED;
+    case MLS_PROPOSAL_APP_DATA_UPDATE:   /* adopted groups (nostrc-qp24.5.1.3) */
+        rc = proposal_type_apply_supported(group, prop) ? 0 : MARMOT_ERR_UNSUPPORTED;
         break;
     case MLS_PROPOSAL_REMOVE:
         rc = leaf_occupied(group, prop->remove.removed_leaf) ? 0
@@ -2572,7 +2676,7 @@ proposal_ac_open(const MlsGroup *group, const uint8_t *ac, size_t ac_len, MlsPro
         rc = wf == MLS_WIRE_FORMAT_PUBLIC_MESSAGE ? 0 : MARMOT_ERR_MLS_PROCESS_MESSAGE;
         break;
     default:
-        rc = MARMOT_ERR_UNSUPPORTED;   /* PSK, ReInit, ExternalInit, AppDataUpdate */
+        rc = MARMOT_ERR_UNSUPPORTED;   /* PSK, ReInit, ExternalInit */
         break;
     }
     if (rc == 0 && mls_crypto_ref_hash(ref, "MLS 1.0 Proposal Reference", ac, ac_len) != 0)
@@ -2624,21 +2728,34 @@ proposal_store_build_ac(MlsProposalStore *store, const MlsGroup *group,
     return 0;
 }
 
+/* Whether `group` applies a proposal of `p`'s type.  An adopted group
+ * (nostrc-qp24.5.1.3) applies Add, Remove, SelfRemove and AppDataUpdate:
+ * its GroupContext changes only through AppDataUpdate (a
+ * GroupContextExtensions proposal may not touch app_data_dictionary,
+ * draft-ietf-mls-extensions 4.7, and libmarmot implements no other
+ * GroupContext change there), only the committer's UpdatePath renews a
+ * leaf (an Update proposal is an admin-only MDK flow libmarmot does not
+ * judge), and Marmot defines no PSK.  Everything else fails closed
+ * (MARMOT_ERR_UNSUPPORTED).  A legacy group never applies AppDataUpdate. */
 static int
-proposal_type_apply_supported(const MlsProposal *p)
+proposal_type_apply_supported(const MlsGroup *group, const MlsProposal *p)
 {
     if (!p || p->unsupported) return 0;
+    bool adopted = group && group->profile == MARMOT_GROUP_PROFILE_ADOPTED;
     switch (p->type) {
     case MLS_PROPOSAL_ADD:
-    case MLS_PROPOSAL_UPDATE:
     case MLS_PROPOSAL_REMOVE:
-    case MLS_PROPOSAL_PSK:
     case MLS_PROPOSAL_SELF_REMOVE:
         return 1;
+    case MLS_PROPOSAL_UPDATE:
+    case MLS_PROPOSAL_PSK:
+        return !adopted;
     case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
-        return mls_group_extensions_supported(
-            p->group_context_extensions.extensions,
-            p->group_context_extensions.extensions_len) == 0;
+        return !adopted && mls_group_extensions_supported(
+                               p->group_context_extensions.extensions,
+                               p->group_context_extensions.extensions_len) == 0;
+    case MLS_PROPOSAL_APP_DATA_UPDATE:
+        return adopted;
     default:
         return 0;
     }
@@ -3472,6 +3589,8 @@ mls_group_open_proposal(const MlsGroup *group, const uint8_t *msg, size_t msg_le
     out->target_leaf = prop.type == MLS_PROPOSAL_REMOVE        ? prop.remove.removed_leaf
                        : prop.type == MLS_PROPOSAL_SELF_REMOVE ? out->sender_leaf
                                                                 : UINT32_MAX;
+    out->component_id = prop.type == MLS_PROPOSAL_APP_DATA_UPDATE
+                            ? prop.app_data_update.component_id : 0;
     mls_proposal_clear(&prop);
     out->ac = ac.data;
     out->ac_len = ac.len;
@@ -3640,6 +3759,39 @@ commit_departures_check(const MlsGroup *group, const MlsProposal *props, size_t 
     return 0;
 }
 
+/* nostrc-qp24.5.1.3: the shape of a Commit whose references are resolved
+ * (an unresolved one counts as other), for the Marmot layer's adopted
+ * authorization (group-messaging.md "Commit authorization"; MDK
+ * is_allowed_non_admin_commit).  A by-reference proposal is one whose
+ * sender_leaf is set: the store sets it, inline proposals have none. */
+static int
+commit_shape_fill(const MlsProposal *props, size_t n, bool has_path, MlsCommitSummary *sum)
+{
+    sum->shape_known = true;
+    sum->has_path = has_path;
+    for (size_t i = 0; i < n; i++) {
+        const MlsProposal *p = &props[i];
+        switch (p->type) {
+        case MLS_PROPOSAL_ADD: sum->add_count++; break;
+        case MLS_PROPOSAL_REMOVE: sum->remove_count++; break;
+        case MLS_PROPOSAL_UPDATE: sum->update_count++; break;
+        case MLS_PROPOSAL_GROUP_CONTEXT_EXT: sum->gce_count++; break;
+        case MLS_PROPOSAL_APP_DATA_UPDATE: sum->adu_count++; break;
+        case MLS_PROPOSAL_SELF_REMOVE: break;   /* counted by the departures */
+        default: sum->other_count++; break;
+        }
+        if (p->is_ref || p->sender_leaf == UINT32_MAX || p->type == MLS_PROPOSAL_SELF_REMOVE)
+            continue;
+        if (sum->ref_count == MLS_COMMIT_SUMMARY_MAX) return -1;
+        sum->ref_sender[sum->ref_count] = p->sender_leaf;
+        sum->ref_type[sum->ref_count] = p->type;
+        sum->ref_component[sum->ref_count] =
+            p->type == MLS_PROPOSAL_APP_DATA_UPDATE ? p->app_data_update.component_id : 0;
+        sum->ref_count++;
+    }
+    return 0;
+}
+
 /* mls_group_commit_removes_self() with references resolved against `store`
  * (nullable): an unresolved one proves nothing and is skipped. */
 static int
@@ -3678,6 +3830,13 @@ commit_removes_self_impl(const MlsGroup *group, const uint8_t *commit_data, size
         case MLS_PROPOSAL_PSK:
         case MLS_PROPOSAL_SELF_REMOVE:
             break;
+        case MLS_PROPOSAL_APP_DATA_UPDATE:
+            /* An admin's removal of another admin's last leaf carries the
+             * admin-policy update with it (admin-policy-v1.md; MDK
+             * do_send_remove_members): adopted groups only. */
+            if (group->profile != MARMOT_GROUP_PROFILE_ADOPTED)
+                rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            break;
         default:
             rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
             break;
@@ -3685,8 +3844,9 @@ commit_removes_self_impl(const MlsGroup *group, const uint8_t *commit_data, size
     }
     MlsCommitSummary sum;
     if (rc == 0 &&
-        commit_departures_check(group, commit.proposals, commit.proposal_count, sender_leaf,
-                                &sum) != 0)
+        (commit_departures_check(group, commit.proposals, commit.proposal_count, sender_leaf,
+                                 &sum) != 0 ||
+         commit_shape_fill(commit.proposals, commit.proposal_count, commit.has_path, &sum) != 0))
         rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;   /* not a valid removal (section 12.1.3) */
     for (size_t i = 0; rc == 0 && i < commit.proposal_count; i++)
         if (departure_leaf(&commit.proposals[i]) == group->own_leaf_index)
@@ -4012,7 +4172,7 @@ process_commit_impl(MlsGroup *group,
                 goto staged_fail;
             }
         }
-        if (!proposal_type_apply_supported(p)) {
+        if (!proposal_type_apply_supported(group, p)) {
             mls_commit_clear(&commit);
             staged_rc = MARMOT_ERR_UNSUPPORTED;
             goto staged_fail;
@@ -4043,7 +4203,9 @@ process_commit_impl(MlsGroup *group,
     {
         MlsCommitSummary sum;
         if (commit_departures_check(group, commit.proposals, commit.proposal_count,
-                                    sender_leaf, &sum) != 0) {
+                                    sender_leaf, &sum) != 0 ||
+            commit_shape_fill(commit.proposals, commit.proposal_count, commit.has_path,
+                              &sum) != 0) {
             mls_commit_clear(&commit);
             staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
             goto staged_fail;
@@ -4091,6 +4253,10 @@ process_commit_impl(MlsGroup *group,
     uint32_t updated_leaves[64];
     size_t updated_leaf_count = 0;
     bool has_gce = false;
+    /* AppDataUpdates, in Commit order, applied after the others
+     * (nostrc-qp24.5.1.3; OpenMLS apply_proposals_with_app_data_updates). */
+    const MlsAppDataUpdate *adus[MLS_APP_DATA_UPDATE_MAX];
+    size_t adu_count = 0;
 
     /* Apply proposals */
     for (size_t i = 0; i < commit.proposal_count; i++) {
@@ -4227,12 +4393,42 @@ process_commit_impl(MlsGroup *group,
                 goto staged_fail;
             }
             break;
+        case MLS_PROPOSAL_APP_DATA_UPDATE:
+            if (adu_count == MLS_APP_DATA_UPDATE_MAX) {
+                mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
+                staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+                goto staged_fail;
+            }
+            adus[adu_count++] = &p->app_data_update;
+            break;
         default:
             mls_commit_clear(&commit);
             sodium_memzero(psk_secret, sizeof(psk_secret));
             staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
             goto staged_fail;
         }
+    }
+
+    /* The app_data_dictionary the AppDataUpdates leave (an adopted group's
+     * only GroupContext change): its bytes are judged with the resulting
+     * epoch below (mls_group_profile_check_entered()) and by the Marmot
+     * layer (component values, who sent and committed them). */
+    if (adu_count > 0) {
+        uint8_t *next_ext = NULL;
+        size_t next_len = 0;
+        int arc = mls_app_data_update_apply(group->extensions_data, group->extensions_len,
+                                            adus, adu_count, &next_ext, &next_len);
+        if (arc != 0) {
+            mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
+            staged_rc = arc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY
+                                                  : MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto staged_fail;
+        }
+        free(group->extensions_data);
+        group->extensions_data = next_ext;
+        group->extensions_len = next_len;
     }
 
     /* §7.3 step 8: every leaf this Commit installed has signature and
@@ -5187,9 +5383,9 @@ proposal_deserialize(MlsTlsReader *reader, MlsProposal *p)
         return 0;
     }
     case MLS_PROPOSAL_APP_DATA_UPDATE:
-        /* Recognize the draft-10 wire shape, but never apply it without
-         * component state, authorization, and resulting-epoch validation. */
-        p->unsupported = true;
+        /* Draft-10 wire shape.  Applied only in an adopted group
+         * (proposal_type_apply_supported(); nostrc-qp24.5.1.3), whose
+         * resulting state and authorization are checked after. */
         return mls_app_data_update_deserialize(reader, &p->app_data_update);
     case MLS_PROPOSAL_SELF_REMOVE:
         return 0;   /* empty body (draft-ietf-mls-extensions) */
@@ -5613,7 +5809,10 @@ mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
     }
 
     /* Secret tree: where every sender ratchet is (nostrc-ai04). */
-    if (group->secret_tree.n_leaves != group->tree.n_leaves ||
+    /* Its width is fixed when the epoch starts (the canonical tree's then,
+     * mls_tree_canonical_leaves()): never wider than the live tree. */
+    if (group->secret_tree.n_leaves == 0 ||
+        group->secret_tree.n_leaves > group->tree.n_leaves ||
         mls_secret_tree_serialize(&group->secret_tree, &buf) != 0)
         goto fail;
 
@@ -5757,8 +5956,17 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
     }
 
     if (!legacy) {
-        if (mls_secret_tree_deserialize(&reader, group->tree.n_leaves,
-                                        &group->secret_tree) != 0)
+        /* The width its epoch started with: the canonical tree's (since
+         * 0.12.0, mls_tree_canonical_leaves()), or the live width a state
+         * written before kept; never wider than the live tree. */
+        uint32_t width = 0;
+        if (mls_tls_reader_remaining(&reader) >= 4) {
+            const uint8_t *p = reader.data + reader.pos;
+            width = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+                    ((uint32_t)p[2] << 8) | p[3];
+        }
+        if (width == 0 || width > group->tree.n_leaves ||
+            mls_secret_tree_deserialize(&reader, width, &group->secret_tree) != 0)
             goto fail;
     } else {
         /* Migration (nostrc-ai04): no ratchet was stored, so re-derive the
@@ -5767,7 +5975,7 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
          * sender past every generation this state may have sent at. */
         int rc = mls_secret_tree_init(&group->secret_tree,
                                       group->epoch_secrets.encryption_secret,
-                                      group->tree.n_leaves);
+                                      mls_tree_canonical_leaves(&group->tree));
         sodium_memzero(group->epoch_secrets.encryption_secret, MLS_HASH_LEN);
         if (rc != 0) goto fail;
         /* (An own leaf outside the tree -- e.g. we were removed -- cannot

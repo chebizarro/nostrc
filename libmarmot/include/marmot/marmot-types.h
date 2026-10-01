@@ -564,6 +564,15 @@ typedef struct {
          * the new one is). Every other leaf a Commit changes was added, and
          * is a new identity claim. Since 0.12.0. */
         uint32_t committer_leaf;
+        /** Since 0.12.0 (nostrc-qp24.5.1.3): the Commit changed an adopted
+         *  group's signed Nostr routing (0x8004): its nostr_group_id
+         *  (updated_group carries the new one), its relays, or both.
+         *  marmot_get_group_routing() gives the new relays and every
+         *  address the group had; previous_nostr_group_id is the one this
+         *  Commit left (equal to the new one when only the relays changed).
+         *  Keep reading the old address for the earlier epochs' traffic. */
+        bool routing_changed;
+        uint8_t previous_nostr_group_id[32];
     } commit;
 
     /** Valid when type == MARMOT_RESULT_PROPOSAL (since 0.12.0,

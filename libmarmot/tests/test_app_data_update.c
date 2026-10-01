@@ -1,11 +1,13 @@
 /*
- * AppDataUpdate draft-10 wire vectors and fail-closed parser coverage.
- * These are syntax tests, not adopted Marmot group-state interoperability.
+ * AppDataUpdate draft-10 wire vectors, fail-closed parser coverage and (since
+ * 0.12.0, nostrc-qp24.5.1.3) the dictionary application OpenMLS performs.
+ * Live adopted Commits are covered by test_adopted_commits.c.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "mls/mls_app_data_update.h"
 #include "mls/mls_group.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,7 +72,9 @@ test_vectors(void)
     CHECK(mls_tls_reader_done(&reader));
     CHECK(decoded.proposal_count == 1 &&
           decoded.proposals[0].type == MLS_PROPOSAL_APP_DATA_UPDATE &&
-          decoded.proposals[0].unsupported &&
+          /* Parsed for every group; applied only in an adopted one
+           * (proposal_type_apply_supported(), nostrc-qp24.5.1.3). */
+          !decoded.proposals[0].unsupported &&
           decoded.proposals[0].app_data_update.component_id == 0x8003);
     mls_commit_clear(&decoded);
     mls_tls_buf_free(&buf);
@@ -249,6 +253,86 @@ test_admin_policy_state(void)
     mls_tree_free(&tree);
 }
 
+/* An extension list: [0x0003 caps][0x0006 dict(entries)] or the reverse. */
+static size_t
+ext_list(uint8_t *out, bool dict_first, const uint8_t *entries, size_t entries_len)
+{
+    static const uint8_t caps[] = {0x00, 0x03, 0x03, 0x00, 0x00, 0x00};
+    size_t n = 0;
+    uint8_t dict[64];
+    size_t d = 0;
+    dict[d++] = 0x00;
+    dict[d++] = 0x06;
+    dict[d++] = (uint8_t)(entries_len + 1);
+    dict[d++] = (uint8_t)entries_len;
+    memcpy(dict + d, entries, entries_len);
+    d += entries_len;
+    if (dict_first) {
+        memcpy(out, dict, d);
+        n = d;
+    }
+    memcpy(out + n, caps, sizeof(caps));
+    n += sizeof(caps);
+    if (!dict_first) {
+        memcpy(out + n, dict, d);
+        n += d;
+    }
+    return n;
+}
+
+static void
+test_apply(void)
+{
+    /* entries: 0x0001 {0x01}, 0x8001 {0x02 'a' 'b'}, 0x8003 {0xcc} */
+    static const uint8_t entries[] = {0x00, 0x01, 0x01, 0x01, 0x80, 0x01, 0x03,
+                                      0x02, 0x61, 0x62, 0x80, 0x03, 0x01, 0xcc};
+    uint8_t list[128];
+    size_t list_len = ext_list(list, true, entries, sizeof(entries));
+    uint8_t name[] = {0x01, 0x7a};
+    uint8_t fresh[] = {0x99};
+    MlsAppDataUpdate up = {0x8001, MLS_APP_DATA_UPDATE_OP_UPDATE, name, sizeof(name)};
+    MlsAppDataUpdate add = {0x8002, MLS_APP_DATA_UPDATE_OP_UPDATE, fresh, sizeof(fresh)};
+    MlsAppDataUpdate rm = {0x8003, MLS_APP_DATA_UPDATE_OP_REMOVE, NULL, 0};
+    const MlsAppDataUpdate *ops[] = {&rm, &add, &up};   /* any order: one per id */
+    uint8_t *out = NULL;
+    size_t out_len = 0;
+    CHECK(mls_app_data_update_apply(list, list_len, ops, 3, &out, &out_len) == 0);
+    /* The dictionary moves after required_capabilities (OpenMLS
+     * Extensions::add_or_replace), entries ascending: 0x0001 kept, 0x8001
+     * replaced, 0x8002 added, 0x8003 removed. */
+    static const uint8_t want_entries[] = {0x00, 0x01, 0x01, 0x01, 0x80, 0x01, 0x02,
+                                           0x01, 0x7a, 0x80, 0x02, 0x01, 0x99};
+    uint8_t want[128];
+    size_t want_len = ext_list(want, false, want_entries, sizeof(want_entries));
+    CHECK(out && out_len == want_len && memcmp(out, want, want_len) == 0);
+    free(out);
+
+    /* Refused: two operations for one component, a remove of absent state,
+     * no dictionary, an unknown operation. */
+    out = NULL;
+    MlsAppDataUpdate up2 = {0x8001, MLS_APP_DATA_UPDATE_OP_REMOVE, NULL, 0};
+    const MlsAppDataUpdate *dup[] = {&up, &up2};
+    CHECK(mls_app_data_update_apply(list, list_len, dup, 2, &out, &out_len) ==
+          MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
+    MlsAppDataUpdate rm_absent = {0x8004, MLS_APP_DATA_UPDATE_OP_REMOVE, NULL, 0};
+    const MlsAppDataUpdate *absent[] = {&rm_absent};
+    CHECK(mls_app_data_update_apply(list, list_len, absent, 1, &out, &out_len) ==
+          MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
+    static const uint8_t caps_only[] = {0x00, 0x03, 0x03, 0x00, 0x00, 0x00};
+    const MlsAppDataUpdate *one[] = {&up};
+    CHECK(mls_app_data_update_apply(caps_only, sizeof(caps_only), one, 1, &out, &out_len) ==
+          MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
+    MlsAppDataUpdate bad_op = {0x8001, 3, NULL, 0};
+    const MlsAppDataUpdate *bad[] = {&bad_op};
+    CHECK(mls_app_data_update_apply(list, list_len, bad, 1, &out, &out_len) ==
+          MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
+    /* A dictionary whose entries are not strictly ascending. */
+    static const uint8_t unsorted[] = {0x80, 0x03, 0x01, 0xcc, 0x80, 0x01, 0x01, 0x00};
+    size_t u_len = ext_list(list, true, unsorted, sizeof(unsorted));
+    CHECK(mls_app_data_update_apply(list, u_len, one, 1, &out, &out_len) ==
+          MARMOT_ERR_EXTENSION_FORMAT && !out);
+}
+
 int
 main(void)
 {
@@ -256,7 +340,8 @@ main(void)
     test_admin_policy_state();
     test_group_context_gate();
     test_malformed();
+    test_apply();
     if (failures) return 1;
-    puts("AppDataUpdate wire tests passed (engine application remains disabled)");
+    puts("AppDataUpdate wire and application tests passed");
     return 0;
 }

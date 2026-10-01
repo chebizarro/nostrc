@@ -80,6 +80,13 @@ MarmotError marmot_next_group_event_time(Marmot *m, const uint8_t nostr_group_id
 MarmotError marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
                                             int64_t created_at);
 
+/* nostrc-qp24.5.1.3: an adopted group's routing rotation moved it from
+ * @from_nostr_group_id to @to_nostr_group_id.  Events at the new address are
+ * dated after every event of the group at the old one: its created_at floor
+ * (the newest event, the newest Commit) carries over, never lowered. */
+MarmotError marmot_carry_group_event_time(Marmot *m, const uint8_t from_nostr_group_id[32],
+                                          const uint8_t to_nostr_group_id[32]);
+
 /** Decode GroupData we stored ourselves: MIP-01, or the layout libmarmot
  * 0.10.0 and older wrote (nostrc-c7ho).  Never for a Welcome's or a peer
  * Commit's GroupData: marmot_group_data_extension_deserialize() is for those. */

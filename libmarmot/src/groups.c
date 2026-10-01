@@ -1150,6 +1150,23 @@ finish_local_commit(Marmot *m, MarmotGroup *group,
     return MARMOT_OK;
 }
 
+/* The policy every receiver applies to our Commit `pre` -> `post`, before
+ * anything is dated or stored: a Commit the group refuses must not draw a
+ * created_at from the group's floor first (nostrc-u9kv; the backends
+ * without transactions keep a drawn time).  Pure. */
+static MarmotError
+local_commit_precheck(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
+                      const MlsCommitSummary *departures)
+{
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    MarmotError err = marmot_commit_authorize_ex(pre, post, pre->own_leaf_index,
+                                                 m->config.allow_unproven_members, departures,
+                                                 &key, &gde);
+    marmot_group_data_extension_free(gde);
+    return err;
+}
+
 /* finish_local_commit() for a Commit dated now (nostrc-2lrz). */
 static MarmotError
 finish_local_commit_now(Marmot *m, MarmotGroup *group,
@@ -1157,7 +1174,9 @@ finish_local_commit_now(Marmot *m, MarmotGroup *group,
                         const uint8_t *commit, size_t commit_len, char **out_commit_json)
 {
     int64_t created_at = 0;
-    MarmotError err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
+    MarmotError err = local_commit_precheck(m, pre, post, NULL);
+    if (err == MARMOT_OK)
+        err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
     if (err != MARMOT_OK) return err;
     return finish_local_commit(m, group, pre, post, commit, commit_len, created_at, NULL, 0,
                                out_commit_json);
@@ -1382,6 +1401,392 @@ legacy_group_data_reencoded(const MlsGroup *mls, const uint8_t nostr_group_id[32
     return err;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Adopted-profile Commits of our own (nostrc-qp24.5.1.3)
+ *
+ * The same transitions MDK v0.11.0 makes (cgka-engine message_processor
+ * send.rs, update_group_data.rs): Adds of proof-bearing adopted KeyPackages;
+ * Removes, with the admin-policy update an admin's removal needs in the same
+ * Commit; component updates as inline AppDataUpdates (full replacement
+ * state).  Each is checked as receivers check it (local_commit_precheck(),
+ * then the MLS layer's resulting-epoch check) before it is dated or stored.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* The adopted GroupContext of `mls`, parsed (borrowing its bytes). */
+static MarmotError
+adopted_context(const MlsGroup *mls, MlsAdoptedGroupContext *gc)
+{
+    if (mls->profile != MARMOT_GROUP_PROFILE_ADOPTED) return MARMOT_ERR_UNSUPPORTED;
+    int rc = mls_adopted_group_context_parse(mls->extensions_data, mls->extensions_len, gc);
+    return rc == 0 ? MARMOT_OK : (MarmotError)rc;
+}
+
+/* An AppDataUpdate setting `id` to `bytes` (borrowed). */
+static void
+adu_update(MlsAppDataUpdate *op, uint16_t id, uint8_t *bytes, size_t len)
+{
+    memset(op, 0, sizeof(*op));
+    op->component_id = id;
+    op->operation = MLS_APP_DATA_UPDATE_OP_UPDATE;
+    op->update = bytes;
+    op->update_len = len;
+}
+
+/* marmot.group.admin-policy.v1 state for `admins` (sorted, unique, at least
+ * one): admins<V>. */
+static MarmotError
+admin_policy_encode(const uint8_t (*admins)[32], size_t count, MlsTlsBuf *out)
+{
+    if (count == 0) return MARMOT_ERR_INVALID_ARG;
+    for (size_t i = 1; i < count; i++)
+        if (memcmp(admins[i - 1], admins[i], 32) >= 0) return MARMOT_ERR_INVALID_ARG;
+    if (mls_tls_buf_init(out, count * 32 + 8) != 0) return MARMOT_ERR_MEMORY;
+    if (mls_tls_write_opaque32(out, (const uint8_t *)admins, count * 32) != 0) {
+        mls_tls_buf_free(out);
+        return MARMOT_ERR_MEMORY;
+    }
+    return MARMOT_OK;
+}
+
+/* Whether account `pk` keeps a member leaf in `mls` once `removed` (leaf
+ * indices) are gone. */
+static bool
+account_stays(const MlsGroup *mls, const uint8_t pk[32], const uint32_t *removed, size_t n)
+{
+    for (uint32_t i = 0; i < mls->tree.n_leaves; i++) {
+        const MlsNode *node = &mls->tree.nodes[mls_tree_leaf_to_node(i)];
+        if (node->type != MLS_NODE_LEAF || node->leaf.credential_identity_len != 32 ||
+            memcmp(node->leaf.credential_identity, pk, 32) != 0)
+            continue;
+        bool gone = false;
+        for (size_t k = 0; k < n && !gone; k++) gone = removed[k] == i;
+        if (!gone) return true;
+    }
+    return false;
+}
+
+/* Our Commit `post` (built from `pre`): checked as receivers check it, dated
+ * through the group's floor, sealed and stored as pending with `welcomes`. */
+static MarmotError
+finish_adopted_commit(Marmot *m, MarmotGroup *group, const MlsGroup *pre, const MlsGroup *post,
+                      const MlsAddResult *res, const char **kp_jsons, size_t kp_count,
+                      const uint8_t (*recipients)[32], char ***out_welcomes,
+                      char **out_commit_json)
+{
+    MarmotError err = local_commit_precheck(m, pre, post, NULL);
+    if (err != MARMOT_OK) return err;
+    char **rumors = NULL;
+    MarmotUnsentWelcome *outbox = NULL;
+    char **relays = NULL;
+    size_t n_relays = 0;
+    MarmotGroup *rec = NULL;
+    uint8_t sender[32];
+    int64_t created_at = 0;
+    if (kp_count > 0) {
+        rumors = calloc(kp_count, sizeof(*rumors));
+        outbox = calloc(kp_count, sizeof(*outbox));
+        if (!rumors || !outbox) {
+            err = MARMOT_ERR_MEMORY;
+            goto out;
+        }
+        /* The Welcome names the group's relays as the epoch it opens signs
+         * them (transports/nostr.md "Welcome delivery"). */
+        err = marmot_adopted_group_from_mls(post, &rec, &relays, &n_relays);
+        if (err == MARMOT_OK && get_own_credential_identity(pre, sender) != 0)
+            err = MARMOT_ERR_OWN_LEAF_NOT_FOUND;
+        if (err != MARMOT_OK) goto out;
+    }
+    err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
+    if (err != MARMOT_OK) goto out;
+    for (size_t i = 0; i < kp_count; i++) {
+        char *kp_event_id = extract_event_id_hex(kp_jsons[i]);
+        rumors[i] = build_adopted_welcome_rumor(res->welcome_data, res->welcome_len, sender,
+                                                kp_event_id, relays, n_relays, created_at);
+        free(kp_event_id);
+        if (!rumors[i]) {
+            err = MARMOT_ERR_EVENT_BUILD;
+            goto out;
+        }
+        memcpy(outbox[i].recipient, recipients[i], 32);
+        outbox[i].rumor_json = rumors[i];   /* borrowed */
+    }
+    err = finish_local_commit(m, group, pre, post, res->commit_data, res->commit_len, created_at,
+                              outbox, kp_count, out_commit_json);
+    if (err == MARMOT_OK && out_welcomes) {
+        *out_welcomes = rumors;
+        rumors = NULL;
+    }
+out:
+    if (rumors) {
+        for (size_t i = 0; i < kp_count; i++) free(rumors[i]);
+        free(rumors);
+    }
+    free(outbox);
+    marmot_adopted_relays_free(relays, n_relays);
+    marmot_group_free(rec);
+    return err;
+}
+
+static MarmotError
+add_members_adopted(Marmot *m, MarmotGroup *group, const MlsGroup *mls,
+                    const char **kp_jsons, size_t kp_count, char ***out_welcome_jsons,
+                    size_t *out_welcome_count, char **out_commit_json)
+{
+    MlsAdoptedGroupContext gc;
+    MarmotError err = adopted_context(mls, &gc);
+    if (err != MARMOT_OK) return err;
+    MlsKeyPackage *kps = calloc(kp_count, sizeof(*kps));
+    const MlsKeyPackage **ptrs = calloc(kp_count, sizeof(*ptrs));
+    uint8_t (*recipients)[32] = calloc(kp_count, 32);
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    size_t parsed = 0;
+    if (!kps || !ptrs || !recipients) {
+        err = MARMOT_ERR_MEMORY;
+        goto out;
+    }
+    /* Invitees: signed adopted kind:30443 events (id, signature, tags,
+     * framing, lifetime, a verified account proof), each leaf satisfying the
+     * group's requirements (MDK: MissingRequiredCapabilities). */
+    for (size_t i = 0; i < kp_count; i++) {
+        err = kp_jsons[i] ? marmot_parse_key_package_event_for_profile(
+                                kp_jsons[i], MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, 0, &kps[i],
+                                recipients[i])
+                          : MARMOT_ERR_INVALID_ARG;
+        if (err != MARMOT_OK) goto out;
+        parsed++;
+        if (mls_adopted_leaf_check(&kps[i].leaf_node, &gc) != 0) {
+            err = MARMOT_ERR_KEY_PACKAGE;
+            goto out;
+        }
+        ptrs[i] = &kps[i];
+    }
+    if (clone_mls_group(mls, &post) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto out;
+    }
+    int rc = mls_group_commit_adopted(&post, NULL, 0, ptrs, kp_count, NULL, 0, &add);
+    if (rc != 0) {
+        err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY
+              : rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG : MARMOT_ERR_MLS;
+        goto out;
+    }
+    /* Every leaf of the epoch the joiners enter verifies (they check it). */
+    err = marmot_adopted_members_proven(&post);
+    if (err == MARMOT_OK)
+        err = finish_adopted_commit(m, group, mls, &post, &add, kp_jsons, kp_count,
+                                    (const uint8_t (*)[32])recipients, out_welcome_jsons,
+                                    out_commit_json);
+    if (err == MARMOT_OK) *out_welcome_count = kp_count;
+out:
+    if (kps) free_key_packages(kps, parsed);
+    free(ptrs);
+    free(recipients);
+    mls_add_result_clear(&add);
+    mls_group_free(&post);
+    return err;
+}
+
+static MarmotError
+remove_members_adopted(Marmot *m, MarmotGroup *group, const MlsGroup *mls,
+                       const uint32_t *leaves, size_t count, char **out_commit_json)
+{
+    MlsAdoptedGroupContext gc;
+    MarmotError err = adopted_context(mls, &gc);
+    if (err != MARMOT_OK) return err;
+    const uint8_t *keys = NULL;
+    size_t n_admins = 0;
+    if (!gc.admins || mls_admin_policy_v1_decode(gc.admins, gc.admins_len, &keys, &n_admins) != 0)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+    /* admin-policy-v1.md "Active admins": a Commit that removes an admin's
+     * last leaf drops its key in the same Commit (MDK do_send_remove_members
+     * stages that update with the Removes). */
+    uint8_t (*kept)[32] = calloc(n_admins, 32);
+    if (!kept) return MARMOT_ERR_MEMORY;
+    size_t n_kept = 0;
+    for (size_t i = 0; i < n_admins; i++)
+        if (account_stays(mls, keys + 32 * i, leaves, count)) memcpy(kept[n_kept++], keys + 32 * i, 32);
+    MlsTlsBuf policy = {0};
+    MlsAppDataUpdate op;
+    size_t n_ops = 0;
+    if (n_kept != n_admins) {
+        err = admin_policy_encode((const uint8_t (*)[32])kept, n_kept, &policy);
+        if (err != MARMOT_OK) {
+            free(kept);
+            return err;
+        }
+        adu_update(&op, MARMOT_COMPONENT_ADMIN_POLICY_V1, policy.data, policy.len);
+        n_ops = 1;
+    }
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MlsAddResult res;
+    memset(&res, 0, sizeof(res));
+    if (clone_mls_group(mls, &post) != 0) {
+        err = MARMOT_ERR_MLS;
+    } else {
+        int rc = mls_group_commit_adopted(&post, leaves, count, NULL, 0, n_ops ? &op : NULL,
+                                          n_ops, &res);
+        err = rc == 0 ? MARMOT_OK
+              : rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG
+              : rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
+    }
+    if (err == MARMOT_OK)
+        err = finish_adopted_commit(m, group, mls, &post, &res, NULL, 0, NULL, NULL,
+                                    out_commit_json);
+    mls_add_result_clear(&res);
+    mls_group_free(&post);
+    mls_tls_buf_free(&policy);
+    free(kept);
+    return err;
+}
+
+static int
+cmp_admin_key(const void *a, const void *b)
+{
+    return memcmp(a, b, 32);
+}
+
+/* marmot_update_group_metadata() for an adopted group: each field of
+ * `config` that changes its component becomes one inline AppDataUpdate --
+ * name/description 0x8001, admins 0x8003 (each a member; sorted), relays
+ * 0x8004 (same nostr_group_id; sorted, deduplicated).  Nothing to change is
+ * MARMOT_ERR_INVALID_ARG. */
+static MarmotError
+update_metadata_adopted(Marmot *m, MarmotGroup *group, const MlsGroup *mls,
+                        const MarmotGroupConfig *config, char **out_commit_json)
+{
+    MlsAdoptedGroupContext gc;
+    MarmotError err = adopted_context(mls, &gc);
+    if (err != MARMOT_OK) return err;
+    MlsAppDataUpdate ops[3];
+    size_t n_ops = 0;
+    MlsTlsBuf profile = {0}, admins = {0}, routing = {0}, relay_entries = {0};
+    uint8_t (*sorted)[32] = NULL;
+    const char **relays = NULL;
+    size_t relay_count = 0;
+
+    if (config->name || config->description) {
+        const uint8_t *nm = (const uint8_t *)"", *ds = (const uint8_t *)"";
+        size_t nl = 0, dl = 0;
+        if (gc.profile &&
+            mls_group_profile_v1_decode(gc.profile, gc.profile_len, &nm, &nl, &ds, &dl) != 0) {
+            err = MARMOT_ERR_EXTENSION_FORMAT;
+            goto out;
+        }
+        if (config->name) {
+            nm = (const uint8_t *)config->name;
+            nl = strlen(config->name);
+        }
+        if (config->description) {
+            ds = (const uint8_t *)config->description;
+            dl = strlen(config->description);
+        }
+        if (nl > MARMOT_GROUP_PROFILE_NAME_MAX || dl > MARMOT_GROUP_PROFILE_DESCRIPTION_MAX ||
+            !mls_utf8_valid(nm, nl) || !mls_utf8_valid(ds, dl)) {
+            err = MARMOT_ERR_INVALID_ARG;
+            goto out;
+        }
+        if (mls_tls_buf_init(&profile, nl + dl + 16) != 0 ||
+            mls_tls_write_opaque32(&profile, nm, nl) != 0 ||
+            mls_tls_write_opaque32(&profile, ds, dl) != 0) {
+            err = MARMOT_ERR_MEMORY;
+            goto out;
+        }
+        if (!gc.profile || gc.profile_len != profile.len ||
+            memcmp(gc.profile, profile.data, profile.len) != 0)
+            adu_update(&ops[n_ops++], MARMOT_COMPONENT_GROUP_PROFILE_V1, profile.data,
+                       profile.len);
+    }
+    if (config->admin_count > 0 && config->admin_pubkeys) {
+        sorted = calloc(config->admin_count, 32);
+        if (!sorted) {
+            err = MARMOT_ERR_MEMORY;
+            goto out;
+        }
+        memcpy(sorted, config->admin_pubkeys, config->admin_count * 32);
+        qsort(sorted, config->admin_count, 32, cmp_admin_key);
+        size_t unique = 0;
+        for (size_t i = 0; i < config->admin_count; i++) {
+            uint32_t leaf = 0;
+            if (find_leaf_by_pubkey(mls, sorted[i], &leaf) != 0) {
+                err = MARMOT_ERR_MEMBER_NOT_FOUND;   /* every admin is a member */
+                goto out;
+            }
+            if (unique == 0 || memcmp(sorted[unique - 1], sorted[i], 32) != 0)
+                memcpy(sorted[unique++], sorted[i], 32);
+        }
+        err = admin_policy_encode((const uint8_t (*)[32])sorted, unique, &admins);
+        if (err != MARMOT_OK) goto out;
+        if (!gc.admins || gc.admins_len != admins.len ||
+            memcmp(gc.admins, admins.data, admins.len) != 0)
+            adu_update(&ops[n_ops++], MARMOT_COMPONENT_ADMIN_POLICY_V1, admins.data, admins.len);
+    }
+    if (config->relay_count > 0 && config->relay_urls) {
+        const uint8_t *ngid = NULL;
+        MlsRelaySpan spans[MARMOT_NOSTR_ROUTING_MAX_RELAYS];
+        size_t n_spans = 0;
+        if (!gc.routing ||
+            mls_nostr_routing_v1_decode(gc.routing, gc.routing_len, &ngid, spans, &n_spans) != 0) {
+            err = MARMOT_ERR_EXTENSION_FORMAT;
+            goto out;
+        }
+        err = marmot_adopted_canonical_relays((const char *const *)config->relay_urls,
+                                              config->relay_count, &relays, &relay_count);
+        if (err != MARMOT_OK) goto out;
+        if (mls_tls_buf_init(&relay_entries, 256) != 0 || mls_tls_buf_init(&routing, 256) != 0) {
+            err = MARMOT_ERR_MEMORY;
+            goto out;
+        }
+        for (size_t i = 0; i < relay_count; i++)
+            if (mls_tls_write_opaque32(&relay_entries, (const uint8_t *)relays[i],
+                                       strlen(relays[i])) != 0) {
+                err = MARMOT_ERR_MEMORY;
+                goto out;
+            }
+        if (mls_tls_buf_append(&routing, ngid, 32) != 0 ||
+            mls_tls_write_opaque32(&routing, relay_entries.data, relay_entries.len) != 0) {
+            err = MARMOT_ERR_MEMORY;
+            goto out;
+        }
+        if (gc.routing_len != routing.len || memcmp(gc.routing, routing.data, routing.len) != 0)
+            adu_update(&ops[n_ops++], MARMOT_COMPONENT_NOSTR_ROUTING_V1, routing.data,
+                       routing.len);
+    }
+    if (n_ops == 0) {
+        err = MARMOT_ERR_INVALID_ARG;   /* nothing changes: no Commit */
+        goto out;
+    }
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MlsAddResult res;
+    memset(&res, 0, sizeof(res));
+    if (clone_mls_group(mls, &post) != 0) {
+        err = MARMOT_ERR_MLS;
+    } else {
+        int rc = mls_group_commit_adopted(&post, NULL, 0, NULL, 0, ops, n_ops, &res);
+        err = rc == 0 ? MARMOT_OK
+              : rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG
+              : rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY
+              : rc == MARMOT_ERR_VALIDATION ? MARMOT_ERR_VALIDATION : MARMOT_ERR_MLS;
+    }
+    if (err == MARMOT_OK)
+        err = finish_adopted_commit(m, group, mls, &post, &res, NULL, 0, NULL, NULL,
+                                    out_commit_json);
+    mls_add_result_clear(&res);
+    mls_group_free(&post);
+out:
+    mls_tls_buf_free(&profile);
+    mls_tls_buf_free(&admins);
+    mls_tls_buf_free(&routing);
+    mls_tls_buf_free(&relay_entries);
+    free(sorted);
+    free(relays);
+    return err;
+}
+
 static MarmotError
 add_members_impl(Marmot *m,
                     const MarmotGroupId *mls_group_id,
@@ -1402,6 +1807,13 @@ add_members_impl(Marmot *m,
     MlsGroup mls;
     MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
     if (err != MARMOT_OK) return err;
+    if (mls.profile == MARMOT_GROUP_PROFILE_ADOPTED) {   /* nostrc-qp24.5.1.3 */
+        err = add_members_adopted(m, group, &mls, key_package_event_jsons, kp_count,
+                                  out_welcome_jsons, out_welcome_count, out_commit_json);
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
+    }
 
     MlsKeyPackage *kps = NULL;
     MlsGroup post;
@@ -1459,7 +1871,9 @@ add_members_impl(Marmot *m,
             gde = marmot_group_data_extension_deserialize(data, data_len);
     }
     int64_t created_at = 0;
-    err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
+    err = local_commit_precheck(m, &mls, &post, NULL);   /* nostrc-u9kv */
+    if (err == MARMOT_OK)
+        err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
     if (err == MARMOT_OK)
         err = build_welcome_rumors(&add, sender, key_package_event_jsons, kp_count,
                                    group->nostr_group_id, group->name, group->description,
@@ -1541,6 +1955,10 @@ remove_members_impl(Marmot *m,
             goto out;
         }
     }
+    if (mls.profile == MARMOT_GROUP_PROFILE_ADOPTED) {   /* nostrc-qp24.5.1.3 */
+        err = remove_members_adopted(m, group, &mls, leaves, count, out_commit_json);
+        goto out;
+    }
     /* Every member in one Commit (nostrc-wc6v). */
     if (clone_mls_group(&mls, &post) != 0) {
         err = MARMOT_ERR_MLS;
@@ -1579,8 +1997,10 @@ commit_pending_proposals_impl(Marmot *m, const MarmotGroupId *mls_group_id,
      * marmot_proposals_select() checks. */
     MarmotError err = load_group_for_commit_ex(m, mls_group_id, &group, &mls, false);
     if (err != MARMOT_OK) return err;
-    /* Adopted groups commit nothing yet (nostrc-qp24.5.1.3; W24 slice E). */
-    if (mls.profile != MARMOT_GROUP_PROFILE_LEGACY) {
+    /* A group of neither profile commits nothing (W24 slice E); adopted
+     * groups commit SelfRemoves as any member may (nostrc-qp24.5.1.3). */
+    if (mls.profile != MARMOT_GROUP_PROFILE_LEGACY &&
+        mls.profile != MARMOT_GROUP_PROFILE_ADOPTED) {
         mls_group_free(&mls);
         marmot_group_free(group);
         return MARMOT_ERR_UNSUPPORTED;
@@ -1627,10 +2047,13 @@ commit_pending_proposals_impl(Marmot *m, const MarmotGroupId *mls_group_id,
         else
             departures.left[departures.left_count++] = p->target_leaf;
     }
-    /* Dated after every event of ours in the group, or refused with
-     * MARMOT_ERR_EVENT_RATE (retry in a second; nostrc-2lrz). */
+    /* The group's policy first (nostrc-u9kv), then dated after every event
+     * of ours in the group, or refused with MARMOT_ERR_EVENT_RATE (retry in
+     * a second; nostrc-2lrz). */
     int64_t created_at = 0;
-    err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
+    err = local_commit_precheck(m, &mls, &post, &departures);
+    if (err == MARMOT_OK)
+        err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
     if (err != MARMOT_OK) goto out;
     char *json = marmot_commit_build_event(result.commit_data, result.commit_len,
                                            mls.epoch_secrets.exporter_secret,
@@ -1856,6 +2279,12 @@ update_group_metadata_impl(Marmot *m,
     MlsGroup mls;
     MarmotError err = load_group_for_commit(m, mls_group_id, &group, &mls);
     if (err != MARMOT_OK) return err;
+    if (mls.profile == MARMOT_GROUP_PROFILE_ADOPTED) {   /* nostrc-qp24.5.1.3 */
+        err = update_metadata_adopted(m, group, &mls, config, out_commit_json);
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
+    }
 
     /* Commit the new GroupData as a GroupContextExtensions proposal (RFC 9420
      * §12.1.7) so every member moves to the same GroupContext; the Commit is
@@ -1935,6 +2364,51 @@ marmot_group_account_proof_template(Marmot *m, const MarmotGroupId *mls_group_id
     return group_account_proof_template_impl(m, mls_group_id, out_unsigned_event_json);
 }
 
+/* Our adopted leaf's LeafNode extensions with its account proof (0x8009)
+ * replaced by `proof`, every other entry (the components it advertises)
+ * kept: a renewed proof, never a changed capability (nostrc-qp24.5.1.3). */
+static MarmotError
+adopted_leaf_ext_with_proof(const MlsGroup *mls, const uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN],
+                            uint8_t **out, size_t *out_len)
+{
+    *out = NULL;
+    *out_len = 0;
+    const MlsLeafNode *leaf = &mls->tree.nodes[mls_tree_leaf_to_node(mls->own_leaf_index)].leaf;
+    const uint8_t *dict = NULL;
+    size_t dict_len = 0, count = 0;
+    MarmotComponentData *entries = NULL;
+    size_t n = 0;
+    if (marmot_extensions_find(leaf->extensions_data, leaf->extensions_len,
+                               MARMOT_EXT_APP_DATA_DICTIONARY, &dict, &dict_len, &count) != 0 ||
+        count != 1 || marmot_app_data_dict_parse(dict, dict_len, &entries, &n) != 0)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+    MarmotError err = MARMOT_ERR_EXTENSION_FORMAT;
+    for (size_t i = 0; i < n; i++)
+        if (entries[i].component_id == MARMOT_COMPONENT_ACCOUNT_PROOF_V2) {
+            entries[i].data = proof;
+            entries[i].len = MARMOT_ACCOUNT_PROOF_LEN;
+            err = MARMOT_OK;
+        }
+    MlsTlsBuf d = {0}, exts = {0};
+    if (err == MARMOT_OK &&
+        (mls_tls_buf_init(&d, dict_len + 16) != 0 || mls_tls_buf_init(&exts, dict_len + 32) != 0))
+        err = MARMOT_ERR_MEMORY;
+    if (err == MARMOT_OK &&
+        (marmot_app_data_dict_encode(entries, n, &d) != 0 ||
+         mls_tls_write_u16(&exts, MARMOT_EXT_APP_DATA_DICTIONARY) != 0 ||
+         mls_tls_write_opaque32(&exts, d.data, d.len) != 0))
+        err = MARMOT_ERR_SERIALIZATION;
+    if (err == MARMOT_OK) {
+        *out = exts.data;
+        *out_len = exts.len;
+        exts.data = NULL;
+    }
+    mls_tls_buf_free(&d);
+    mls_tls_buf_free(&exts);
+    free(entries);
+    return err;
+}
+
 static MarmotError
 self_update_impl(Marmot *m, const MarmotGroupId *mls_group_id, const char *signed_proof_json,
                  char **out_commit_json)
@@ -1959,7 +2433,10 @@ self_update_impl(Marmot *m, const MarmotGroupId *mls_group_id, const char *signe
                   ? marmot_account_proof_from_signed(account, sig_key, MLS_SIG_PK_LEN,
                                                      signed_proof_json, proof)
                   : MARMOT_ERR_OWN_LEAF_NOT_FOUND;
-        if (err == MARMOT_OK) err = marmot_leaf_proof_extensions(proof, &leaf_ext, &leaf_ext_len);
+        if (err == MARMOT_OK)
+            err = mls.profile == MARMOT_GROUP_PROFILE_ADOPTED
+                      ? adopted_leaf_ext_with_proof(&mls, proof, &leaf_ext, &leaf_ext_len)
+                      : marmot_leaf_proof_extensions(proof, &leaf_ext, &leaf_ext_len);
         sodium_memzero(proof, sizeof(proof));
         if (err != MARMOT_OK) goto out;
     }

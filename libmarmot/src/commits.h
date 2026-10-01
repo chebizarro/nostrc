@@ -46,6 +46,14 @@ MarmotError marmot_commit_removal_note_later(Marmot *m, MarmotGroup *group,
 MarmotError marmot_commit_deferred_replay_order(Marmot *m, const MarmotGroupId *gid,
                                                 size_t *order, size_t max, size_t *out_count);
 
+/**
+ * nostrc-qp24.5.1.3: the group an address it had before a routing rotation
+ * names (marmot_get_group_routing()'s previous addresses).
+ * MARMOT_ERR_GROUP_NOT_FOUND when none.
+ */
+MarmotError marmot_commit_find_group_by_alias(Marmot *m, const uint8_t nostr_group_id[32],
+                                              MarmotGroup **out);
+
 /** A Welcome made us a member again: forget an earlier removal. */
 MarmotError marmot_commit_clear_removal(Marmot *m, const MarmotGroupId *gid);
 

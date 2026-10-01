@@ -936,7 +936,7 @@ welcome_process_impl(const MlsWelcome *welcome,
     /* Initialize secret tree; its root is then deleted (RFC 9420 §9.2). */
     int st_rc = mls_secret_tree_init(&group_out->secret_tree,
                                      es->encryption_secret,
-                                     group_out->tree.n_leaves);
+                                     mls_tree_canonical_leaves(&group_out->tree));
     sodium_memzero(es->encryption_secret, MLS_HASH_LEN);
     /* A joiner has no further use for the joiner and welcome secrets (the
      * GroupInfo is already open): consumed, deleted (RFC 9420 §9.2). */

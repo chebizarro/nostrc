@@ -842,6 +842,15 @@ process_group_event(Marmot *m, const char *group_event_json,
     err = m->storage->find_group_by_nostr_id(m->storage->ctx,
                                              parsed.nostr_group_id,
                                              &group);
+    /* An address the group had before a routing rotation still routes to
+     * it: the earlier epochs' traffic is published there (nostrc-qp24.5.1.3,
+     * nostr-routing-v1.md "Routing rotation"). */
+    if ((err == MARMOT_OK && !group) || err == MARMOT_ERR_STORAGE_NOT_FOUND ||
+        err == MARMOT_ERR_GROUP_NOT_FOUND) {
+        marmot_group_free(group);
+        group = NULL;
+        err = marmot_commit_find_group_by_alias(m, parsed.nostr_group_id, &group);
+    }
     if (err != MARMOT_OK || !group) {
         parsed_group_event_clear(&parsed);
         return MARMOT_ERR_GROUP_NOT_FOUND;

@@ -206,6 +206,22 @@ marmot_observe_group_event_time(Marmot *m, const uint8_t nostr_group_id[32],
     return group_event_times_store(m, nostr_group_id, &t);
 }
 
+MarmotError
+marmot_carry_group_event_time(Marmot *m, const uint8_t from_nostr_group_id[32],
+                              const uint8_t to_nostr_group_id[32])
+{
+    if (!group_event_time_usable(m, from_nostr_group_id) || !to_nostr_group_id)
+        return MARMOT_ERR_INVALID_ARG;
+    GroupEventTimes from, to;
+    MarmotError err = group_event_times_load(m, from_nostr_group_id, &from);
+    if (err == MARMOT_OK) err = group_event_times_load(m, to_nostr_group_id, &to);
+    if (err != MARMOT_OK) return err;
+    if (from.last <= to.last && from.commit <= to.commit) return MARMOT_OK;
+    if (from.last > to.last) to.last = from.last;
+    if (from.commit > to.commit) to.commit = from.commit;
+    return group_event_times_store(m, to_nostr_group_id, &to);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Storage transactions (nostrc-qp24.7)
  * ──────────────────────────────────────────────────────────────────────── */

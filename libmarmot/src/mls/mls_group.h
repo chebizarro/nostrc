@@ -627,6 +627,7 @@ typedef struct {
     uint32_t  sender_leaf;        /**< the member that sent it */
     uint16_t  type;               /**< MLS_PROPOSAL_* */
     uint32_t  target_leaf;        /**< Remove: removed leaf; SelfRemove: the sender; else UINT32_MAX */
+    uint16_t  component_id;       /**< AppDataUpdate: the component it changes; else 0 */
 } MlsOpenedProposal;
 
 /** Free an opened proposal's bytes. */
@@ -683,6 +684,24 @@ typedef struct {
     uint32_t self_removed[MLS_COMMIT_SUMMARY_MAX]; /**< their senders, the leaves they removed */
     size_t   left_count;                           /**< by-reference Removes a member sent for itself */
     uint32_t left[MLS_COMMIT_SUMMARY_MAX];         /**< those leaves */
+
+    /* The Commit's shape (nostrc-qp24.5.1.3), for the adopted profile's
+     * authorization (group-messaging.md "Commit authorization"): set by the
+     * Commit processor (shape_known), never stored with a pending Commit.
+     * A producer's summary leaves it unknown and the Marmot layer derives
+     * the shape of our own Commit from the states. */
+    bool     shape_known;
+    bool     has_path;                             /**< an UpdatePath */
+    size_t   add_count, remove_count, update_count;
+    size_t   gce_count;                            /**< GroupContextExtensions */
+    size_t   adu_count;                            /**< AppDataUpdate (0x0008) */
+    size_t   other_count;                          /**< PSK, ReInit, ExternalInit, unknown */
+    /* By-reference proposals other than SelfRemove: their senders (leaves of
+     * the source epoch) and types; their authority is the Marmot layer's. */
+    size_t   ref_count;
+    uint32_t ref_sender[MLS_COMMIT_SUMMARY_MAX];
+    uint16_t ref_type[MLS_COMMIT_SUMMARY_MAX];
+    uint16_t ref_component[MLS_COMMIT_SUMMARY_MAX]; /**< an AppDataUpdate's component id */
 } MlsCommitSummary;
 
 /**
@@ -711,6 +730,22 @@ int mls_group_commit_removes_self_by_ref(const MlsGroup *group,
                                          const uint8_t *const *acs, const size_t *ac_lens,
                                          size_t ac_count, bool *out_removed,
                                          MlsCommitSummary *summary);
+
+/**
+ * An adopted-profile Commit (nostrc-qp24.5.1.3) of Removes of @removes,
+ * Adds of @kps and inline AppDataUpdate proposals @adus (applied to the
+ * GroupContext app_data_dictionary as receivers apply them,
+ * mls_app_data_update_apply()), with an UpdatePath; in that proposal order.
+ * Any of the three may be empty, not all.  With Adds, result->welcome_data
+ * is the Welcome.  Only for an adopted group (MARMOT_ERR_UNSUPPORTED
+ * otherwise); installed through the resulting-epoch check like every
+ * producer.  On failure the group is unchanged.
+ */
+int mls_group_commit_adopted(MlsGroup *group,
+                             const uint32_t *removes, size_t remove_count,
+                             const MlsKeyPackage *const *kps, size_t kp_count,
+                             const MlsAppDataUpdate *adus, size_t adu_count,
+                             MlsAddResult *result);
 
 /**
  * Commit, by reference, the opened proposals @acs of this epoch (SelfRemove

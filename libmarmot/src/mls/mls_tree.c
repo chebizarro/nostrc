@@ -54,6 +54,18 @@ mls_tree_root(uint32_t n)
 }
 
 uint32_t
+mls_tree_canonical_leaves(const MlsRatchetTree *tree)
+{
+    if (!tree || tree->n_nodes == 0 || !tree->nodes) return 0;
+    uint32_t used = tree->n_nodes;
+    while (used > 0 && tree->nodes[used - 1].type == MLS_NODE_BLANK) used--;
+    if (used == 0) return tree->n_leaves;   /* all blank: nothing to truncate to */
+    uint32_t full = 1;
+    while (full < used) full = full * 2 + 1;
+    return (full + 1) / 2;
+}
+
+uint32_t
 mls_tree_left(uint32_t x)
 {
     uint32_t k = mls_tree_level(x);

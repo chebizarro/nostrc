@@ -1,6 +1,7 @@
 /*
- * MLS extensions draft-10 AppDataUpdate proposal wire codec.
- * The Marmot group engine does not apply these proposals yet.
+ * MLS extensions draft-10 AppDataUpdate proposal: wire codec, and (since
+ * libmarmot 0.12.0, nostrc-qp24.5.1.3) its application to an adopted
+ * group's GroupContext app_data_dictionary.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -34,11 +35,40 @@ void mls_app_data_update_clear(MlsAppDataUpdate *p);
 /* The gate on GroupContextExtensions proposals (produced or received):
  * reject a recognizable app_data_dictionary (0x0006).  In a legacy group it
  * would change the group's profile in place, which no profile allows; an
- * adopted group changes components only through AppDataUpdate, which is not
- * applied yet.  Creation, Welcome and load admit an adopted GroupContext
+ * adopted group changes components only through AppDataUpdate
+ * (mls_app_data_update_apply(); libmarmot applies no GroupContextExtensions
+ * there at all).  Creation, Welcome and load admit an adopted GroupContext
  * through mls_app_components.h instead (nostrc-qp24.5.1).  Legacy opaque
  * extension bytes, including malformed lists, retain their read behavior. */
 int mls_group_extensions_supported(const uint8_t *data, size_t len);
+
+/* At most this many AppDataUpdate operations in one Commit: there is at
+ * most one per component (app-components/README.md), and an adopted group
+ * has at most MLS_ADOPTED_MAX_IDS dictionary entries. */
+#define MLS_APP_DATA_UPDATE_MAX 16
+
+/*
+ * The GroupContext extension list @exts with @ops applied to its
+ * app_data_dictionary, as the pinned OpenMLS (erskingardner/openmls@59e7d3b,
+ * MDK v0.11.0) applies a Commit's AppDataUpdate proposals
+ * (apply_app_data_update_proposals): an `update` sets the component's
+ * entry to its bytes (full replacement), a `remove` deletes it; entries stay
+ * strictly ascending by component id; the dictionary extension is then
+ * removed from the list and appended at its end (Extensions::add_or_replace),
+ * every other extension keeping its bytes and order.
+ *
+ * Refused, as invalid (MARMOT_ERR_MLS_PROCESS_MESSAGE): more than one
+ * operation for one component (draft-ietf-mls-extensions 4.7; Marmot
+ * app-components/README.md "GroupContext Update Processing"), a remove of a
+ * component with no state, an unknown operation, no dictionary to update.
+ * MARMOT_ERR_EXTENSION_FORMAT: @exts or its dictionary does not parse
+ * canonically.  Component bytes are not interpreted here: the resulting
+ * state is validated by mls_group_profile_check_entered() and the Marmot
+ * layer.  *out is malloc()ed.
+ */
+int mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
+                              const MlsAppDataUpdate *const *ops, size_t n_ops,
+                              uint8_t **out, size_t *out_len);
 
 /* Bounded, non-publishing state transition for a same-epoch admin-policy
  * replacement. Both trees must be MLS-authenticated parent/resulting trees;

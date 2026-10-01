@@ -1112,6 +1112,36 @@ MarmotError marmot_get_group_removal(Marmot *m,
                                      uint64_t *out_epoch, bool *out_final);
 
 /**
+ * marmot_get_group_routing:
+ * @m: Marmot instance
+ * @mls_group_id: an adopted-profile group
+ * @out_nostr_group_id: (out): its current Nostr routing id (0x8004
+ *   marmot.transport.nostr.routing.v1; the record's nostr_group_id)
+ * @out_relays: (out) (transfer full) (array length=out_relay_count): its
+ *   signed relay list, sorted; free each string and the array
+ * @out_relay_count: (out)
+ * @out_previous: (out) (optional) (transfer full) (array length=out_previous_count):
+ *   the routing ids it had before, oldest first (at most 16): a Commit
+ *   that rotated nostr_group_id leaves the traffic of earlier epochs at the
+ *   old address.  libmarmot routes such an event to the group
+ *   (marmot_process_message()); subscribe to these as well while their
+ *   epochs may still deliver (nostr-routing-v1.md "Routing rotation").
+ *   NULL when none; free() it.
+ * @out_previous_count: (out) (optional)
+ *
+ * The group's Nostr routing as its MLS state signs it (since 0.12.0,
+ * nostrc-qp24.5.1.3).  A Commit result reports a change
+ * (MarmotMessageResult.commit.routing_changed).
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED for a legacy group (its relays
+ * are its GroupData's); MARMOT_ERR_GROUP_NOT_FOUND
+ */
+MarmotError marmot_get_group_routing(Marmot *m, const MarmotGroupId *mls_group_id,
+                                     uint8_t out_nostr_group_id[32], char ***out_relays,
+                                     size_t *out_relay_count, uint8_t (**out_previous)[32],
+                                     size_t *out_previous_count);
+
+/**
  * marmot_update_group_metadata:
  * @m: Marmot instance
  * @mls_group_id: the group to update

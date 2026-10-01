@@ -206,6 +206,7 @@ if get_option('tests')
     'test_kp_profile',
     'test_adopted',
     'test_kp_lifecycle',
+    'test_adopted_commits',
     'test_storage_contract',
     'test_mls_tree_vectors',
     'test_rfc9420_vectors',

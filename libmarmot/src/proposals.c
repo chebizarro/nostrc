@@ -682,10 +682,9 @@ marmot_proposal_process_inbound(Marmot *m, MarmotGroup *group, const uint8_t *ms
     MlsGroup cur;
     MarmotError err = load_mls(m, &group->mls_group_id, &cur);
     if (err != MARMOT_OK) return MARMOT_ERR_MLS;
-    /* An adopted group cannot process Commits yet (nostrc-qp24.5.1.3), so a
-     * departure it keeps could never be committed or followed: refused
-     * before it is opened, like the group's Commits (W24 slice E). */
-    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY) {
+    /* A group of neither profile keeps nothing (W24 slice E). */
+    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY &&
+        cur.profile != MARMOT_GROUP_PROFILE_ADOPTED) {
         mls_group_free(&cur);
         return MARMOT_ERR_UNSUPPORTED;
     }
@@ -715,8 +714,20 @@ marmot_proposal_process_inbound(Marmot *m, MarmotGroup *group, const uint8_t *ms
     bool self_remove = op.type == MLS_PROPOSAL_SELF_REMOVE;
     bool remove_self = op.type == MLS_PROPOSAL_REMOVE && op.target_leaf == op.sender_leaf &&
                        !marmot_policy_is_adopted(&cur);
-    if (err == MARMOT_OK && !self_remove && !remove_self) err = MARMOT_ERR_UNSUPPORTED;
-    if (err == MARMOT_OK && admin) err = MARMOT_ERR_ADMIN_CANNOT_LEAVE;
+    /* nostrc-qp24.5.1.3: in an adopted group an active admin may also send
+     * a component update standalone (app-components/README.md; MDK
+     * authorize_proposal), for an admin's Commit to reference.  The
+     * operation's bytes are judged with that Commit; a lifecycle update is
+     * inline only (group-lifecycle-v1.md).  It is kept, never committed by
+     * libmarmot (inline is the default path). */
+    bool app_data = op.type == MLS_PROPOSAL_APP_DATA_UPDATE &&
+                    cur.profile == MARMOT_GROUP_PROFILE_ADOPTED;
+    if (err == MARMOT_OK && !self_remove && !remove_self && !app_data)
+        err = MARMOT_ERR_UNSUPPORTED;
+    if (err == MARMOT_OK && app_data && !admin) err = MARMOT_ERR_ADMIN_ONLY;
+    if (err == MARMOT_OK && app_data && op.component_id == MARMOT_COMPONENT_GROUP_LIFECYCLE_V1)
+        err = MARMOT_ERR_VALIDATION;
+    if (err == MARMOT_OK && !app_data && admin) err = MARMOT_ERR_ADMIN_CANNOT_LEAVE;
     bool dup = false;
     uint8_t target[32];
     bool has_target = op.target_leaf != UINT32_MAX && leaf_identity(&cur, op.target_leaf, target);
@@ -814,6 +825,10 @@ marmot_pending_proposals_free(MarmotPendingProposal *proposals)
 static MarmotLeaveKind
 leave_kind_of(const MlsGroup *g)
 {
+    /* An adopted group's only departure is SelfRemove (member-
+     * departure.md; MDK prepare_self_remove_proposal): a non-admin's Remove
+     * request is not an adopted proposal (nostrc-qp24.5.1.3). */
+    if (g->profile == MARMOT_GROUP_PROFILE_ADOPTED) return MARMOT_LEAVE_SELF_REMOVE;
     return mls_group_requires_proposal(g, MLS_PROPOSAL_SELF_REMOVE) ? MARMOT_LEAVE_SELF_REMOVE
                                                                     : MARMOT_LEAVE_REMOVE_REQUEST;
 }
@@ -858,10 +873,9 @@ self_remove(Marmot *m, const MarmotGroupId *gid, char **out_event_json, MarmotLe
     err = dry ? MARMOT_OK : marmot_group_reconcile(m, group);
     if (err == MARMOT_OK) err = load_mls(m, gid, &cur);
     if (err != MARMOT_OK) goto out;
-    /* No leave for everyone from an adopted group (W24 slice E): it cannot
-     * process the Commit that would follow (nostrc-qp24.5.1.3), and a Remove
-     * of ourselves is no adopted leave at all.  Leave on this device only. */
-    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY) {
+    /* A group of neither profile: no leave for everyone (W24 slice E). */
+    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY &&
+        cur.profile != MARMOT_GROUP_PROFILE_ADOPTED) {
         err = MARMOT_ERR_UNSUPPORTED;
         goto out;
     }
@@ -893,7 +907,7 @@ self_remove(Marmot *m, const MarmotGroupId *gid, char **out_event_json, MarmotLe
     err = MARMOT_OK;
     if (kind == MARMOT_LEAVE_SELF_REMOVE &&
         !mls_group_members_support_proposal(&cur, MLS_PROPOSAL_SELF_REMOVE))
-        err = MARMOT_ERR_UNSUPPORTED;   /* required, yet a leaf lacks it: refuse */
+        err = MARMOT_ERR_UNSUPPORTED;   /* a leaf lacks it: nobody could commit it */
     if (dry || err != MARMOT_OK) goto out;
 
     int rc = kind == MARMOT_LEAVE_SELF_REMOVE

@@ -249,3 +249,178 @@ done:
     mls_tls_buf_free(&entries);
     return rc;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Applying a Commit's AppDataUpdate operations (nostrc-qp24.5.1.3)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* An opaque<V> vector, borrowed. */
+static int
+read_vec_borrow(MlsTlsReader *r, const uint8_t **out, size_t *len)
+{
+    size_t n = 0;
+    if (mls_tls_read_vli(r, &n) != 0 || n > mls_tls_reader_remaining(r)) return -1;
+    *out = r->data + r->pos;
+    *len = n;
+    r->pos += n;
+    return 0;
+}
+
+int
+mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
+                          const MlsAppDataUpdate *const *ops, size_t n_ops,
+                          uint8_t **out, size_t *out_len)
+{
+    if (!out || !out_len || (exts_len && !exts) || (n_ops && !ops) ||
+        n_ops > MLS_APP_DATA_UPDATE_MAX)
+        return n_ops > MLS_APP_DATA_UPDATE_MAX ? MARMOT_ERR_MLS_PROCESS_MESSAGE
+                                               : MARMOT_ERR_INVALID_ARG;
+    *out = NULL;
+    *out_len = 0;
+
+    /* One operation per component, each a known operation. */
+    for (size_t i = 0; i < n_ops; i++) {
+        if (!ops[i] || (ops[i]->operation != MLS_APP_DATA_UPDATE_OP_UPDATE &&
+                        ops[i]->operation != MLS_APP_DATA_UPDATE_OP_REMOVE) ||
+            (ops[i]->operation == MLS_APP_DATA_UPDATE_OP_UPDATE && ops[i]->update_len &&
+             !ops[i]->update))
+            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        for (size_t j = 0; j < i; j++)
+            if (ops[j]->component_id == ops[i]->component_id)
+                return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+    }
+
+    /* The extension list: every extension but the dictionary is copied as
+     * it is, in order; exactly one dictionary. */
+    MlsTlsBuf others = {0}, entries = {0}, dict = {0}, list = {0};
+    int rc = MARMOT_ERR_MEMORY;
+    if (mls_tls_buf_init(&others, exts_len + 16) != 0 ||
+        mls_tls_buf_init(&entries, exts_len + 64) != 0 ||
+        mls_tls_buf_init(&dict, exts_len + 64) != 0 ||
+        mls_tls_buf_init(&list, exts_len + 64) != 0)
+        goto done;
+    const uint8_t *old = NULL;
+    size_t old_len = 0, n_dicts = 0;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, exts, exts_len);
+    while (!mls_tls_reader_done(&r)) {
+        size_t start = r.pos;
+        uint16_t type = 0;
+        const uint8_t *d = NULL;
+        size_t dlen = 0;
+        if (mls_tls_read_u16(&r, &type) != 0 || read_vec_borrow(&r, &d, &dlen) != 0) {
+            rc = MARMOT_ERR_EXTENSION_FORMAT;
+            goto done;
+        }
+        if (type == MLS_EXTENSION_APP_DATA_DICTIONARY) {
+            old = d;
+            old_len = dlen;
+            n_dicts++;
+        } else if (mls_tls_buf_append(&others, exts + start, r.pos - start) != 0) {
+            goto done;
+        }
+    }
+    if (n_dicts != 1) {
+        rc = n_dicts == 0 ? MARMOT_ERR_MLS_PROCESS_MESSAGE : MARMOT_ERR_EXTENSION_FORMAT;
+        goto done;
+    }
+
+    /* AppDataDictionary { ComponentData component_data<V>; } */
+    MlsTlsReader dr;
+    mls_tls_reader_init(&dr, old, old_len);
+    const uint8_t *ents = NULL;
+    size_t ents_len = 0;
+    if (read_vec_borrow(&dr, &ents, &ents_len) != 0 || !mls_tls_reader_done(&dr)) {
+        rc = MARMOT_ERR_EXTENSION_FORMAT;
+        goto done;
+    }
+
+    /* Removes must name present state (draft-ietf-mls-extensions 4.7). */
+    for (size_t i = 0; i < n_ops; i++) {
+        if (ops[i]->operation != MLS_APP_DATA_UPDATE_OP_REMOVE) continue;
+        bool present = false;
+        MlsTlsReader er;
+        mls_tls_reader_init(&er, ents, ents_len);
+        while (!mls_tls_reader_done(&er)) {
+            uint16_t id = 0;
+            const uint8_t *d = NULL;
+            size_t dlen = 0;
+            if (mls_tls_read_u16(&er, &id) != 0 || read_vec_borrow(&er, &d, &dlen) != 0) {
+                rc = MARMOT_ERR_EXTENSION_FORMAT;
+                goto done;
+            }
+            present |= id == ops[i]->component_id;
+        }
+        if (!present) {
+            rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            goto done;
+        }
+    }
+
+    /* Merge in ascending id order: the old entries (strictly ascending) and
+     * the operations (any order, unique ids). */
+    MlsTlsReader er;
+    mls_tls_reader_init(&er, ents, ents_len);
+    bool have_entry = false, first = true;
+    uint16_t entry_id = 0, prev = 0;
+    const uint8_t *entry = NULL;
+    size_t entry_len = 0;
+    uint32_t last_written = 0x10000;   /* none */
+    for (;;) {
+        if (!have_entry && !mls_tls_reader_done(&er)) {
+            if (mls_tls_read_u16(&er, &entry_id) != 0 ||
+                read_vec_borrow(&er, &entry, &entry_len) != 0 || (!first && entry_id <= prev)) {
+                rc = MARMOT_ERR_EXTENSION_FORMAT;
+                goto done;
+            }
+            first = false;
+            prev = entry_id;
+            have_entry = true;
+        }
+        /* The lowest operation id above the last id written. */
+        const MlsAppDataUpdate *op = NULL;
+        for (size_t i = 0; i < n_ops; i++) {
+            uint16_t id = ops[i]->component_id;
+            if (last_written != 0x10000 && id <= last_written) continue;
+            if (!op || id < op->component_id) op = ops[i];
+        }
+        if (!have_entry && !op) break;
+        uint16_t id;
+        const uint8_t *data;
+        size_t len;
+        bool write;
+        if (op && (!have_entry || op->component_id <= entry_id)) {
+            id = op->component_id;
+            if (have_entry && entry_id == id) have_entry = false;   /* replaced */
+            write = op->operation == MLS_APP_DATA_UPDATE_OP_UPDATE;
+            data = op->update;
+            len = op->update_len;
+        } else {
+            id = entry_id;
+            write = true;
+            data = entry;
+            len = entry_len;
+            have_entry = false;
+        }
+        last_written = id;
+        if (write && (mls_tls_write_u16(&entries, id) != 0 ||
+                      mls_tls_write_opaque32(&entries, data, len) != 0))
+            goto done;
+    }
+
+    if (mls_tls_write_opaque32(&dict, entries.data, entries.len) != 0 ||
+        mls_tls_buf_append(&list, others.data, others.len) != 0 ||
+        mls_tls_write_u16(&list, MLS_EXTENSION_APP_DATA_DICTIONARY) != 0 ||
+        mls_tls_write_opaque32(&list, dict.data, dict.len) != 0)
+        goto done;
+    *out = list.data;
+    *out_len = list.len;
+    list.data = NULL;
+    rc = 0;
+done:
+    mls_tls_buf_free(&others);
+    mls_tls_buf_free(&entries);
+    mls_tls_buf_free(&dict);
+    mls_tls_buf_free(&list);
+    return rc;
+}
