@@ -35,7 +35,7 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
 
 - `groundhog-mdk-interop-image` (a CTest fixture) runs
   `docker build -t nostrc-mdk-interop:0.8.0 tests/interop/mdk/driver`.
-- `groundhog-mdk-interop` then runs the twelve cases of
+- `groundhog-mdk-interop` then runs the thirteen cases of
   `gnome/groundhog/tests/mls/test_mdk_interop.c`. Since W24 (nostrc-6ukh)
   Groundhog's default mode admits MDK 0.8 members, which have no account
   proof. The `-strict` cases set the `only-join-verified-mls-groups`
@@ -45,9 +45,16 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
   only on request (Verify), and check that a member's own key-rotating
   self-update keeps them verified (W24 review M1). Also since W24: an MDK
   member leaving and Groundhog leaving (nostrc-2um6). Since W25
-  (nostrc-8ndz), `groundhog-requires-self-remove`: Groundhog's admin requires
-  SelfRemove on its own once MDK 0.8 has joined, MDK follows that
-  GroupContextExtensions Commit, and its leave is then a SelfRemove.
+  (nostrc-8ndz): `mdk-member-self-removes` -- Groundhog's Add of MDK 0.8,
+  the group's first, requires SelfRemove (MDK's creation rule), and MDK's
+  leave is a SelfRemove that Groundhog commits; and
+  `groundhog-requires-self-remove` -- a group made permissive (as before
+  libmarmot 0.12) gets the requirement in the background after Groundhog's
+  update, a GroupContextExtensions Commit MDK 0.8 follows. Cases run the
+  app's behaviour except `mdk-member-leaves`, which keeps a permissive group
+  (`world_permissive_groups`) to cover the Remove-request path: the app
+  still takes it in groups made before 0.12 or whose first invitee lacked
+  SelfRemove.
 - The container reaches the test's relays on the host's 127.0.0.1:
   - Linux: `--network host`.
   - macOS (Docker Desktop): `MDK_DRIVER_DIAL_HOST=host.docker.internal`.

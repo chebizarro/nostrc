@@ -1159,9 +1159,9 @@ typedef struct {
   GhMlsGroup *ga, *gb;
 } UpgradeWait;
 
-/* nostrc-8ndz: Alice's service requires SelfRemove on its own once Bob
- * joined (both apps support it); settled when Bob follows and nothing of
- * Alice's is pending. */
+/* nostrc-8ndz: the Add that brought Bob required SelfRemove (both apps
+ * support it); settled when Bob leaves by it and nothing of Alice's is
+ * pending. */
 static gboolean
 self_remove_settled(gpointer data)
 {

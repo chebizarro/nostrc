@@ -551,10 +551,32 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   KeyPackage made so far, and every later one is later still), so a NIP-09
   deletion request by address is never older than the newest version it
   must delete, and a KeyPackage published after it is never covered by it.
-### 0.12.0 (unreleased): routing safety and the SelfRemove requirement (nostrc-scki, nostrc-8ndz)
+
+### 0.12.0 (unreleased): routing safety, joiner capabilities and the SelfRemove requirement (nostrc-scki, nostrc-zbmb, nostrc-8ndz)
 
 **New API** (MINOR, folded into 0.12.0): `marmot_get_self_remove_requirement()`,
-`marmot_require_self_remove()`.
+`marmot_require_self_remove()`, `MARMOT_ERR_KEY_PACKAGE_CAPABILITIES` (-54),
+`MarmotConfig.keep_first_add_permissive` (appended to the struct: rebuild
+callers).
+
+- **Joiners must support what the group requires (nostrc-zbmb).** An Add's
+  KeyPackage leaf must support every GroupContext extension of the epoch it
+  joins and whatever required_capabilities demand (RFC 9420 §12.1.1, §7.2).
+  Our Adds refuse one that does not, before anything is staged
+  (`MARMOT_ERR_KEY_PACKAGE_CAPABILITIES`; a GroupContextExtensions proposal
+  in the same Commit counts), and a Commit that adds one is refused on
+  arrival (`MARMOT_ERR_MLS_PROCESS_MESSAGE` from `marmot_process_message()`).
+  Before, libmarmot committed such an Add and accepted one, which
+  OpenMLS/MDK members refuse: the group split (W25 slice M review H1).
+- **SelfRemove at the first Add (nostrc-8ndz).** The Add that brings a
+  legacy group created alone its second member also requires SelfRemove,
+  in the same Commit, when our leaf and every invitee advertise it: MDK
+  0.8's creation-time LCD rule, applied to a group created alone and then
+  invited to (how Groundhog makes groups). An invitee without
+  SelfRemove keeps the group permissive, as does
+  `MarmotConfig.keep_first_add_permissive` (MDK keeps a group it created
+  with no invitee permissive on purpose, to admit legacy KeyPackages
+  later).
 
 - **A Welcome may not take another group's address (nostrc-scki).** A
   `nostr_group_id` is a public h tag, and libmarmot routes a kind:445 by it
@@ -568,14 +590,14 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   another group's h tag could break that group for us. A re-invite to the
   same MLS group is no collision; an ended group's record still counts.
 - **Requiring SelfRemove in an existing legacy group (nostrc-8ndz).** A
-  group created with no invitee (Groundhog makes every group so) does not
-  require SelfRemove, so a member's leave is a Remove request an admin
-  commits. `marmot_require_self_remove()` makes the admin's
+  group made permissive (before 0.12.0, or with an invitee without
+  SelfRemove at its first Add) does not require SelfRemove, so a member's
+  leave is a Remove request an admin commits. `marmot_require_self_remove()` makes the admin's
   GroupContextExtensions Commit that adds 0x000a to required_capabilities
   (every other extension and byte kept), refused unless every leaf
   advertises SelfRemove; MDK 0.11's `upgrade_group_capabilities()` is the
   same Commit. Afterwards any member commits a member's SelfRemove; a later
-  invitee must advertise SelfRemove, MDK's rule for groups created with it.
+  invitee must advertise SelfRemove (enforced, nostrc-zbmb).
   Receivers need nothing new: a GroupContext change is privileged in MIP-01
   and the MLS layer checks every leaf (MDK 0.8 follows it too).
 - **Adopted groups.** `marmot_require_self_remove()` refuses them

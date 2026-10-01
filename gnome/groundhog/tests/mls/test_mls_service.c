@@ -3211,9 +3211,11 @@ test_background_upgrade(void)
   world_down(&w);
 }
 
-/* Review L2: the relay an adopted group left is dead (as an admin's reason
- * to drop it usually is). It does not hold the group's read cursor back,
- * and after a few failures in a row it is read no more. */
+/* Review L2. The relay an adopted group left first stops answering (it
+ * takes REQs and never ends their stored answer): the group's read cursor
+ * moves on regardless, on the current relays' answers. Then it is dead for
+ * good (as an admin's reason to drop it usually is): after a few failures
+ * in a row it is read no more. */
 static void
 test_routing_dead_earlier_relay(void)
 {
@@ -3231,20 +3233,34 @@ test_routing_dead_earlier_relay(void)
   wire_relay_inject(&w.g, rotation);
   wait_relays(gb, TRUE, first, second);
 
+  /* G never answers Bob's next REQ (a reconnect re-subscribes him). */
+  w.g.late_kind = MARMOT_KIND_GROUP_MESSAGE;
+  w.g.late_ms = 10 * 60 * 1000;
+  set_online(bob, FALSE);
+  set_online(bob, TRUE);
+  wait_live(gb);
+  g_usleep(1100 * 1000);   /* a later second than anything before */
+  send_text(alice, ga, "while g is silent");
+  wait_text(bob, room, "while g is silent");
+  gint64 at = nostr_event_get_created_at(last_stored_445(&w.h)->event);
+  CursorWait past = { gb, at };
+  spin_until(cursor_reached, &past, "the cursor moving on without G's answer");
+  {
+    g_auto(GStrv) read = gh_mls_group_dup_read_relays(gb);
+    g_assert_cmpuint(g_strv_length(read), ==, 2);   /* still read */
+  }
+
   /* G goes down for good. */
+  w.g.late_kind = 0;
   w.g.close_on_connect = TRUE;
   for (guint i = 0; i < w.g.connections->len; i++) {
     SoupWebsocketConnection *c = g_ptr_array_index(w.g.connections, i);
     if (soup_websocket_connection_get_state(c) == SOUP_WEBSOCKET_STATE_OPEN)
       soup_websocket_connection_close(c, SOUP_WEBSOCKET_CLOSE_GOING_AWAY, NULL);
   }
-  g_usleep(1100 * 1000);   /* a later second than anything before */
-  send_text(alice, ga, "while g is down");
-  wait_text(bob, room, "while g is down");
-  gint64 at = nostr_event_get_created_at(last_stored_445(&w.h)->event);
-  CursorWait past = { gb, at };
-  spin_until(cursor_reached, &past, "the cursor moving on without G");
   wait_relays(gb, TRUE, w.h.url);
+  send_text(alice, ga, "after g was dropped");
+  wait_text(bob, room, "after g was dropped");
   world_down(&w);
 }
 #else

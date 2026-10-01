@@ -985,7 +985,16 @@ MarmotError marmot_self_update(Marmot *m,
  * published (nostrc-7vyi; see marmot_self_update() to prove existing
  * leaves).
  *
- * Returns: MARMOT_OK on success
+ * Every invitee's KeyPackage must support what the group requires (RFC 9420
+ * §12.1.1: its GroupContext extensions and required_capabilities), or
+ * nothing is staged (since 0.12.0, nostrc-zbmb).  The Add that brings a
+ * legacy group created alone its second member also requires SelfRemove
+ * (0x000a) in the same Commit when our leaf and every invitee advertise it,
+ * MDK's creation rule (since 0.12.0, nostrc-8ndz;
+ * MarmotConfig.keep_first_add_permissive keeps the group permissive).
+ *
+ * Returns: MARMOT_OK on success; MARMOT_ERR_KEY_PACKAGE_CAPABILITIES when an
+ *   invitee's leaf lacks what the group requires
  */
 MarmotError marmot_add_members(Marmot *m,
                                 const MarmotGroupId *mls_group_id,
@@ -1312,9 +1321,13 @@ MarmotError marmot_get_self_remove_requirement(Marmot *m, const MarmotGroupId *m
  * keeps every other extension, as MDK 0.11's upgrade_group_capabilities()
  * does (since 0.12.0, nostrc-8ndz).  Afterwards members leave by SelfRemove,
  * which any member commits, instead of a Remove request only an admin
- * commits; a later invitee's KeyPackage must advertise SelfRemove (MDK's
- * rule for groups created with it).  Admin-only, like every GroupContext
- * change.  Pending like any Commit: publish, then
+ * commits; a later invitee's KeyPackage must advertise SelfRemove, or
+ * marmot_add_members() refuses it (MARMOT_ERR_KEY_PACKAGE_CAPABILITIES,
+ * nostrc-zbmb).  Admin-only, like every GroupContext change.  For a group
+ * created alone, marmot_add_members() already requires SelfRemove at the
+ * Add that brings the second member when everyone supports it
+ * (MarmotConfig.keep_first_add_permissive); this is for groups made
+ * permissive.  Pending like any Commit: publish, then
  * marmot_merge_pending_commit() or marmot_clear_pending_commit().
  *
  * Adopted-profile groups are refused (MARMOT_ERR_UNSUPPORTED): libmarmot
