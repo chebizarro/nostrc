@@ -43,14 +43,6 @@ static pid_t spawn_daemon(const char *bin, const char *xrd, const char *state) {
   _exit(127);
 }
 
-static int wait_socket(const char *path) {
-  struct stat st;
-  for (int i = 0; i < 1000; i++) {
-    if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) return 0;
-    sleep_ms(10);
-  }
-  return -1;
-}
 
 static int stop_daemon(pid_t pid) {
   kill(pid, SIGTERM);
@@ -214,7 +206,7 @@ int main(void) {
   snprintf(frame, flen, "[\"EVENT\",%s]", ejson);
 
   pid_t pid = spawn_daemon(bin, xrd, state);
-  CHECK(wait_socket(sock_path) == 0, "socket never appeared");
+  CHECK(ws_wait_accepting(sock_path, 10000) == 0, "daemon never accepted");
   long long up = -1;
   int fd = ws_open(sock_path, &up);
   CHECK(fd >= 0, "upgrade failed");
@@ -235,7 +227,7 @@ int main(void) {
 
   /* Same store after a restart: the event is on disk. */
   pid = spawn_daemon(bin, xrd, state);
-  CHECK(wait_socket(sock_path) == 0, "socket never appeared (restart)");
+  CHECK(ws_wait_accepting(sock_path, 10000) == 0, "daemon never accepted (restart)");
   fd = ws_open(sock_path, &up);
   CHECK(fd >= 0, "upgrade failed (restart)");
   if (fd >= 0) {

@@ -85,13 +85,8 @@ int main(void) {
   }
   char sock_path[600];
   snprintf(sock_path, sizeof sock_path, "%s/nostr/relay.sock", xrd);
-  struct stat st;
-  int appeared = 0;
-  for (int i = 0; i < 800 && !appeared; i++) {
-    appeared = stat(sock_path, &st) == 0 && S_ISSOCK(st.st_mode);
-    if (!appeared) sleep_ms(10);
-  }
-  CHECK(appeared, "socket never appeared at %s", sock_path);
+  int appeared = ws_wait_accepting(sock_path, 8000) == 0;
+  CHECK(appeared, "daemon never accepted at %s", sock_path);
 
   if (appeared) {
     /* Let the daemon go idle: the old loop was parked inside lws by now. */

@@ -89,6 +89,28 @@ static inline int unix_socket_cloexec(void) {
 #endif
 }
 
+/* Waits (bounded) until the daemon at @sock_path accepts connections: 0, or
+ * -1 after @timeout_ms. The socket file appears at bind(), before listen(),
+ * so its existence alone races the daemon's startup: a connect in between is
+ * refused (nostrc-8kb5; as in test_session_relay_peercred.c). The probe is
+ * closed at once. */
+static inline int ws_wait_accepting(const char *sock_path, long timeout_ms) {
+  struct sockaddr_un sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sun_family = AF_UNIX;
+  if (strlen(sock_path) >= sizeof sa.sun_path) return -1;
+  strncpy(sa.sun_path, sock_path, sizeof sa.sun_path - 1);
+  for (long waited = 0; waited < timeout_ms; waited += 10) {
+    int fd = unix_socket_cloexec();
+    if (fd < 0) return -1;
+    int rc = connect(fd, (struct sockaddr *)&sa, sizeof sa);
+    close(fd);
+    if (rc == 0) return 0;
+    sleep_ms(10);
+  }
+  return -1;
+}
+
 /* Connect, upgrade, and return the socket; *upgrade_ms gets the latency. */
 static inline int ws_open(const char *sock_path, long long *upgrade_ms) {
   int fd = unix_socket_cloexec();
