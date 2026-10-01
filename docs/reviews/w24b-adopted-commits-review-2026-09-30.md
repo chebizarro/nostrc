@@ -403,3 +403,219 @@ macOS 27, with `/tmp/nostrc-macos27-env.sh`, `cmake -G Ninja -DBUILD_GROUNDHOG=O
 - **L4:** the missing forgeries and unit tests.
 - **nostrc-scki:** the fix must check the routing alias table as well as current ids.
 - **nostrc-ms4d:** stays the Groundhog routing wiring (resubscribe, old-address backfill, relay refresh).
+
+---
+
+## Addendum: re-review of the fixes (2026-10-01)
+
+- **Branch re-reviewed:** `marmot/w24b-adopted-commits` at `d0700c8a`, rebased on master `64f765e3` (which includes slice I):
+  - the reviewed commits, rebased: `056fc300` (was `54971451`) and `5bcb7434` (was `5799f390`);
+  - the review fixes: `22282581` (libmarmot) and `d0700c8a` (Groundhog and the harness flip).
+- **Review branch:** rebased onto `d0700c8a`; this addendum is appended.
+- **Verdict: APPROVE-WITH-NITS.**
+  - **Fixed:** M1, MC, L1–L4 and N1–N5 are all fixed and tested, and every repro from the first review now behaves as MDK v0.11.0 does.
+  - **What remains (Low or Nit):**
+    - R1: a legacy strict-mode removal is shown as "refused" rather than "removed";
+    - R2: a pre-authorization proposal sort that is quadratic, bounded in Groundhog;
+    - R3: two untested branches;
+    - R4: change-refused copy and cursor;
+    - R5: a public-result parent-hash check.
+  - None of them blocks the merge.
+
+### The first review's findings
+
+| Finding | Status | Evidence |
+|---|---|---|
+| **M1** lifecycle rules | **Fixed** | See below |
+| **MC** slice I validator | **Fixed** | See below |
+| **L1** removal judged whole | **Fixed** (adopted and legacy) | See below; new Low **R1** and Nit **R5** |
+| **L2** `MARMOT_ERR_COMMIT_REFUSED` | **Fixed** | See below; test gap **R3**, Nit **R4** |
+| **L3** absent removal, update count | **Fixed as designed** | See below; the pre-authorization sort is **R2** |
+| **L4** test gaps | **Fixed** | Pinned-OpenMLS forgeries for valid and malformed 0x8002/0x8005/0x8007, a direct test of the admin-SelfRemove sender, a direct by-reference-capture test. My earlier survivors now fail: R6a (old M4), R6b (old M14), R6c (0x8005 length) |
+| **N1–N5** | **Fixed** | Count 16 (`README.md:2180`); the ordering comment; `mls_tree.h` placement; lbgu wording (0.11.0 never released, `VERSION_MANIFEST.md` no longer says "both now match"); the routing history drops an address the group returns to (`test_rotation_back_to_old_address`, mutation R7) |
+
+**M1** (`adopted_lifecycle_transition()`, `commits.c`) is a case-by-case port of MDK `validate_group_lifecycle_transition`:
+- **The rules ported:**
+  - 0x800c cannot be un-required;
+  - no redundant or by-reference lifecycle update;
+  - the enablement is inline, alone and active;
+  - otherwise the state never changes;
+  - a disband stays `MARMOT_ERR_UNSUPPORTED`.
+- **My repros, rerun on `d0700c8a`:**
+
+  | Repro | Result |
+  |---|---|
+  | P1, P2, P3 | **refused**, as `MARMOT_ERR_COMMIT_REFUSED` (judged `MARMOT_ERR_VALIDATION`) |
+  | P4 (control) | accepted, as MDK accepts it |
+  | P5 (control) | refused |
+
+- New pinned-OpenMLS forgeries cover the same cases and the enablement.
+- Mutations R1a–R1e (each rule removed) are caught.
+- The property fuzz now checks MDK's lifecycle invariants as well, on three bases including a lifecycle-less group: 3.74M iterations, 326,404 generated lifecycle changes, 1 accepted (a valid enablement), **0 violations**.
+
+**MC:**
+- `adopted_component_valid()` is now slice I's `mls_adopted_component_state_valid()` plus the disband refusal.
+- Valid 0x800b and receive-only 0x8006 updates are followed (`ok_media_v2`, `ok_agent_stream`).
+- The two test flips I predicted are handled.
+- The five rebase conflicts are resolved: both harness cases are registered, and slice I's manifest rows are kept.
+- The Marmot-layer copy of the check is now redundant (mutation R2 survives because the MLS-layer entered-epoch check, which uses the same validator, refuses first). That is expected.
+
+**L1** (`removal_key()`): a Commit that removes our leaf now goes through `mls_group_commit_public_result_by_ref()` and the full `marmot_commit_authorize_ex()`. The public result is the processor up to the path-secret decryption, then the resulting-epoch check.
+- **My probe** (an admin's Remove(Carol) plus an invalid AppDataUpdate): Carol now refuses it exactly as Bob does (`MARMOT_ERR_COMMIT_REFUSED`), and stays active and not removed.
+- **Legacy, legitimate removals:** in default mode a legitimate removal of us is still recognized. The evidence:
+  - `probe_legacy_strict.c`;
+  - the live MDK 0.8 matrix: 11/11 subtests, including both cases where an MDK 0.8 admin removes a Groundhog member (`mdk-invites-groundhog`, `groundhog-invites-mdk-default`, `GH_MLS_GROUP_END_REMOVED` asserted);
+  - all 13 nostrc-xrya removal tests in `test_commits` (learns it, losing and winning races, finality and key deletion, pending interplay, rival removals), plus the new forged-Add case, under ASAN on macOS and LSan on Linux.
+- **The one legacy behaviour change** is strict proof mode (R1).
+- Mutations: R3a (verdict ignored) and R3b (public result skips the entered-epoch check) are caught.
+
+**L2:**
+- **When libmarmot uses the new code.** `MARMOT_ERR_COMMIT_REFUSED` is returned only when all of these hold:
+  - the group is adopted;
+  - the Commit is of the current epoch;
+  - it is authenticated (`mls_group_commit_authentic()`: signature and membership tag);
+  - it comes from an admin of that epoch;
+  - it is refused for its content.
+- **Mutations:** R4a (no mapping) and R4b (a non-admin's junk mapped too) are caught.
+- **A tampered admin Commit** keeps `MARMOT_ERR_MLS_PROCESS_MESSAGE` (`probe_refused_auth.c`); see R3 for the missing test.
+- **Groundhog** maps the error to "change refused" with the new cause `UNFOLLOWABLE`:
+  - it is stored as cause 2, which older builds ignore;
+  - it is never retried on the proof preference, and is cleared by the next Commit;
+  - its test (`mls-service/adopted-change-refused`) passes and fails when the mapping is removed.
+
+**L3:**
+- **What changed:**
+  - a removal of absent state is a no-op, as in MDK and its OpenMLS pin;
+  - the operations are sorted once (`qsort`, O(n log n)) and merged linearly;
+  - duplicates are adjacent;
+  - every operation array is heap-sized by the Commit.
+- **The differential fuzzer**, with its reference model updated to the new semantics: 7.4M inputs, 0 disagreements, 4,492,786 accepted with byte-identical output, under ASAN+UBSAN and LSan.
+- **Is the 65,536 bound a DoS vector?** No: nothing on the apply path is worse than O(n log n). The bound is one operation per u16 id. But the bound is checked after a pre-existing O(n²) step, which is R2.
+
+### New findings (re-review)
+
+#### R1 (Low): legacy, proofs required — a legitimate removal of us that also admits an unproven member is no longer recognized
+
+- **Where:** `commits.c` `removal_key()` passes `m->config.allow_unproven_members` to `marmot_commit_authorize_ex()` for the public result.
+- **Evidence:** `probe_legacy_strict.c`. Alice, an admin, commits Remove(Charlie) plus Add(Victor, no proof). Bob (default mode) and MDK 0.8 follow it.
+
+  | Victor | Charlie's mode | Charlie's result |
+  |---|---|---|
+  | unproven | default | removed |
+  | unproven | **proofs required** | **`MARMOT_ERR_KEY_PACKAGE_IDENTITY`**, stays active, not removed |
+  | proven | either | removed |
+  | forged proof | (everyone) | refused, as intended |
+
+- **Failure scenario:** a Groundhog user with `only-join-verified-mls-groups` on, in a legacy group, is removed by an admin who also adds a member without a proof.
+  - Before this slice they saw "removed" and their keys were deleted.
+  - Now they see "change refused (unproven)" and keep a dead group's keys.
+  - They are told the truth only if they turn the preference off, which retries the Commit.
+- **Severity:** no security impact: the group stops for them either way. The preference is off by default.
+- **Fix:** when the Commit removes our leaf, judge it with `allow_unproven = true`. An *absent* proof then never blocks our removal; an *invalid* one still does, so L1's stealth-exclusion protection is kept. Add the probe's strict case as a test.
+
+#### R2 (Low; hardening): a member's Commit can make every receiver spend O(updates × adds) moves of 512-byte structs before authorization
+
+- **Where:**
+  - `mls_group.c` `sort_proposals_for_application()`, an insertion sort of `MlsProposal` (512 bytes each). It runs in `process_commit_impl()` before any operation-count check and before Marmot authorization.
+  - Nothing bounds a Commit's proposal count before it:
+    - the departures check limits Removes to distinct occupied leaves;
+    - Adds are only parsed structurally until the apply loop;
+    - an AppDataUpdate is 7 bytes on the wire and sorts after both.
+  - `marmot_process_message()` has no event-size cap (it parses with `nostr_event_deserialize_compact`, which applies none).
+- **Evidence:** `probe_adu_dos.c` (release build, `-O2`). Bob, a non-admin, frames, signs and tags a Commit with K AppDataUpdates first, then A Adds; the confirmation tag is junk, since it is checked only after the sort. Alice's processing time before refusal:
+
+  | Event size | K | A | Sorted order | Adversarial order |
+  |---|---|---|---|---|
+  | 242 KB | 13,000 | 200 | 0.015 s | 0.043 s |
+  | 879 KB | 30,000 | 1,000 | 0.050 s | 0.379 s |
+  | 1.76 MB | 60,000 | 2,000 | 0.138 s | **1.459 s** |
+
+  The cost grows with the square of the event size. Groundhog processes each kind:445 synchronously in the MLS service's relay callback (`on_group_update` → `process_event`), on the context its scopes run on.
+- **Bound in practice:**
+  - Groundhog's relay path (libnostr `nostr_event_deserialize_signed`) drops events over 256 KB (`NOSTR_MAX_EVENT_SIZE_BYTES`), which caps the cost at about 43 ms per event.
+  - An embedder calling `marmot_process_message()` with larger events has no such cap.
+- **Since when:** the original slice H. AppDataUpdates reached the sort before the old 16-update cap too.
+- **Fix:**
+  - replace the insertion sort with a stable O(n) bucket pass over the five application-order classes, or sort an index array;
+  - optionally refuse oversized events or proposal counts in `marmot_process_message()` before parsing.
+
+#### R3 (Nit; test gaps found by mutation)
+
+- **R4c survives:** dropping the authenticity requirement from `refused_for_good()`. The code is right (my probe shows a tampered admin Commit is not mapped), but no test pins it. Without that check, anyone holding the exporter secret could raise every member's "change refused" banner with a forged admin-sender Commit.
+- **R1f survives:** counting by-reference AppDataUpdates as inline for the enablement in `commit_shape_fill()`. The by-reference enablement case is tested only with a hand-built summary.
+- **Fix:** add a forgery each, one with a tampered tag and one an enablement referencing its 0x0001 update.
+
+#### R4 (Nit): "change refused" for an admin Commit everyone refuses
+
+- An admin's Commit that every member refuses (malformed, say) is also `MARMOT_ERR_COMMIT_REFUSED`: libmarmot cannot tell it apart.
+- Groundhog's copy then says "New messages here can't be read until the group moves past that change". In that case the group never moved, and same-epoch messages stay readable.
+- The read cursor stays held at that Commit until a later Commit (`gh-mls-service.c:1717-1719`), so each restart refetches from there.
+- **Fix:** soften the copy ("may not be readable"). Consider clearing the state once a later message of the same epoch is read.
+
+#### R5 (Nit): the public result skips the UpdatePath parent-hash check
+
+- `mls_group_commit_public_result_by_ref()` returns before `mls_treekem_apply_update_path()` (`mls_group.c:4659`).
+- That function checks the committer's parent-hash chain (RFC 9420 §7.9.2) on public data, and every non-removed member runs it.
+- So an admin's removal with a bad parent hash ends the group for the removed member only.
+- **Fix:** run it on the public result; it is cheap.
+- **What no fix can close:** a removed member can never check the confirmation tag (it lacks the new epoch's secrets; MDK has the same limit). Say in the README that a determined admin can still make a removed member alone see its removal.
+
+### Re-review verification
+
+macOS 27, `/tmp/nostrc-macos27-env.sh`, `cmake -G Ninja -DBUILD_GROUNDHOG=ON`, on `d0700c8a`:
+
+| Check | Result |
+|---|---|
+| `ninja` (full tree) | OK, no warning in touched code |
+| Full `ctest` (minus the MDK matrices) | 452/452 passed (5 skipped: environment-gated) |
+| `python3 scripts/check-unsequenced-args.py` | clean |
+| ASAN+UBSAN (macOS): all 24 `marmot_test_*` | pass |
+| ASAN+UBSAN+LSan (`nostrc-linux-ci:arm64`): all 24 `marmot_test_*`, both fuzzers, all five probes | pass, 0 sanitizer reports |
+| `scripts/linux-gate.sh --sanitizers` (clean checkout of `d0700c8a`) | 50 tests passed |
+| Live MDK 0.11 matrix (private tag built from `d0700c8a`) | `control`, **`white-noise-welcome`** and `adopted-commits` pass; 3 XFAIL-skipped as documented |
+| Live MDK 0.8 matrix (private tag) | 11/11, including both MDK-admin removals of a Groundhog member |
+| Differential fuzz `mls_app_data_update_apply()` vs reference (new semantics) | 7.4M inputs, 0 disagreements (4,492,786 accepted, byte-identical); canonical width 2.0M trees, 0 mismatches |
+| Authorization property fuzz (lifecycle invariants added; three bases) | 3.74M iterations (527,604 accepted, 157,768 by non-admins; 326,404 lifecycle changes generated, 1 accepted), 0 violations |
+| Repro probes | P1–P3 refused, P4 accepted; removal judged whole; rotation rollback holds at all 7 writes; R1, R2, R4c probes as above |
+
+**`white-noise-welcome` is a genuine live PASS:**
+1. MDK 0.11 (`946e0547`, OpenMLS `59e7d3b`) parses libmarmot's adopted KeyPackage (Current profile, `0xf2d1`, `0x000a`, 0x8006/0x800b).
+2. Carol creates a White Noise group with components 0x0001, 0x8001, 0x8003, 0x8004, 0x8006, 0x800b and 0x800c.
+3. Groundhog joins, and kind 9 goes both ways.
+4. Groundhog follows Carol's rename: `wait_name`, `assert_gh_converged`, her next message read, not change-refused.
+5. Groundhog renames the group, and MDK goes from epoch 2 to 3 with previous name "Renamed by White Noise".
+6. kind 9 goes both ways after.
+
+**Revert spot-checks of the fixes.** Each mutation was applied alone, rebuilt under ASAN, and reverted; the Groundhog one was rebuilt in the review tree and reverted. 16 of 19 were caught:
+
+| # | Mutation | Result |
+|---|---|---|
+| R1a–R1e | each M1 rule removed, or the check not called | caught (`test_adopted_commits:716`, `:901`) |
+| R1f | by-reference enablement AppDataUpdate counted as inline | survived (R3) |
+| R2 | Marmot-layer component check accepts anything | survived: redundant (MLS layer refuses first) |
+| R3a | removal ignores the whole-Commit verdict | caught (`test_adopted_commits`, `test_adopted:2324`, `test_commits:308`) |
+| R3b | public result skips the entered-epoch check | caught (`remove_observer_malformed`) |
+| R4a | no `COMMIT_REFUSED` mapping | caught |
+| R4b | a non-admin's junk mapped too | caught |
+| R4c | authenticity not required for the mapping | survived (R3) |
+| R5a | duplicate component ids allowed | caught (`test_app_data_update:327`) |
+| R5b | operations not sorted | caught |
+| R6a | admin SelfRemove sender unchecked | caught (`test_adopted_commits:1193`) |
+| R6b | by-reference senders never recorded | caught (`:1076`) |
+| R6c | 0x8005 length unchecked | caught (`retention_7_bytes`) |
+| R7 | returned-to address stays in the history | caught (`:1669`) |
+| G1 | Groundhog: `COMMIT_REFUSED` not mapped to change-refused | caught (`mls-service/adopted-change-refused`) |
+
+### Re-review scratch and cleanup
+
+- **Scratch:** `/tmp/rv-h2-mut` (detached at `d0700c8a`, ASAN build and mutations) and `/tmp/rv-h2-gate` (clean checkout for the gate). Both are removed.
+- **Kept:** probes and fuzzers in `/tmp/rv-h-scratch`: `probe_legacy_strict.c`, `probe_adu_dos.c`, `probe_refused_auth.c`, `probe_removal2.c`, `fuzz_adu2.c`, `fuzz_authz2.c`.
+- **Docker:** the private tags (`nostrc-mdk-interop:rv-w24b-h2`, `:rv-w24b-h-08`) were removed. The volume list before and after is identical.
+
+### Follow-ups (author)
+
+- **R1:** judge a Commit that removes us with absent proofs allowed, keeping invalid proofs refused, and test strict mode.
+- **R2:** a stable O(n) proposal-order pass, and optionally an event-size or proposal-count cap in `marmot_process_message()`.
+- **R3:** the two missing tests (tampered-tag forgery; by-reference enablement).
+- **R4:** the change-refused copy and the held cursor for an everyone-refused admin Commit.
+- **R5:** the parent-hash check in the public result, and a README note on the confirmation-tag limit.
