@@ -37,6 +37,7 @@ tests="alpha beta gamma"
 fail="$FIRST_FAIL"
 run=first
 case " $* " in *" --parallel "*) ;; *) fail="$RERUN_FAIL"; run=rerun ;; esac
+[ "$run" = first ] || [ -z "${CTEST_PARALLEL_LEVEL:-}" ] || printf 'PARALLEL_RERUN\n' >> "$TRACE"
 selected="$tests"
 for ((i = 1; i <= $#; i++)); do
     if [ "${!i}" = -R ]; then
@@ -197,5 +198,58 @@ fi
 grep -q 'a test was skipped or did not run' "$tmp/out" || fail "the skip is not named"
 # The smoke run allows skips (FORBID_PATTERN unset).
 FIRST_FAIL="" RERUN_FAIL="" SKIP="alpha" gate > "$tmp/out" 2>&1 || fail "a smoke skip failed the gate"
+
+# ---- the macOS stage's mode (scripts/pre-push, nostrc-7c1v) ----
+# History outside STATE_DIR, no volume, and a serial rerun even when the
+# caller's environment sets CTEST_PARALLEL_LEVEL.
+macos() {
+    : > "$tmp/trace"
+    PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 CTEST_TIMEOUT='' \
+        BUILD_DIR="$tmp/build" STATE_DIR="$tmp/macos-state" HISTORY_DIR="$tmp/macos-history" \
+        GATE="macOS gate" SUITE="tests" CTEST_PARALLEL_LEVEL=8 \
+        bash "$scripts/linux-gate-smoke.sh"
+}
+mkdir -p "$tmp/macos-state"
+FIRST_FAIL="beta" RERUN_FAIL="" macos > "$tmp/out" 2>&1 || fail "a macOS flake failed the gate"
+! grep -q '^PARALLEL_RERUN$' "$tmp/trace" || fail "the macOS rerun ran in parallel"
+grep -q 'macOS gate: RERUN: failed in the parallel run, passed alone: beta' "$tmp/out" || fail "macOS rerun not surfaced"
+grep -q $'\tbeta$' "$tmp/macos-history/reruns" || fail "macOS rerun not counted in HISTORY_DIR"
+ls "$tmp/macos-history/"*-first-run.log > /dev/null || fail "macOS first-run log not kept in HISTORY_DIR"
+[ ! -e "$tmp/macos-state/gate-history" ] || fail "HISTORY_DIR was ignored"
+! grep -q 'in volume' "$tmp/out" || fail "a volume was named without VOLUME"
+
+# ---- real CMake/CTest (their output format, not the mock's) ----
+if command -v cmake > /dev/null && command -v ctest > /dev/null; then
+    real="$tmp/real"
+    mkdir -p "$real/src" "$real/state"
+    cat > "$real/src/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.16)
+project(gate_smoke_selftest NONE)
+enable_testing()
+add_test(NAME flaky_dummy COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/flaky.sh" "${CMAKE_CURRENT_BINARY_DIR}/flaky-count")
+add_test(NAME steady_dummy COMMAND sh -c "echo run >> '${CMAKE_CURRENT_BINARY_DIR}/steady-count'")
+CMAKE
+    # Fails its first run, passes later ones, unless ALWAYS_FAIL=1.
+    cat > "$real/src/flaky.sh" <<'FLAKY'
+n=$(( $(cat "$1" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$1"
+echo "flaky_dummy run $n"
+[ "$n" -ge 2 ] && [ "${ALWAYS_FAIL:-0}" != 1 ]
+FLAKY
+    cmake -S "$real/src" -B "$real/build" > /dev/null
+    real_gate() {
+        JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 BUILD_DIR="$real/build" STATE_DIR="$real/state" \
+            GATE="Real gate" SUITE="tests" bash "$scripts/linux-gate-smoke.sh"
+    }
+    real_gate > "$tmp/out" 2>&1 || { cat "$tmp/out"; fail "real CTest: a flake failed the gate"; }
+    grep -q 'RERUN: failed in the parallel run, passed alone: flaky_dummy$' "$tmp/out" || fail "real CTest: rerun not surfaced"
+    grep -q 'flaky_dummy run 1' "$tmp/out" || fail "real CTest: first output not printed"
+    [ "$(cat "$real/build/flaky-count")" = 2 ] || fail "real CTest: flaky_dummy not run exactly twice"
+    [ "$(wc -l < "$real/build/steady-count" | tr -d ' ')" = 1 ] || fail "real CTest: a passing test was rerun"
+    rm -f "$real/build/flaky-count"
+    if ALWAYS_FAIL=1 real_gate > "$tmp/out" 2>&1; then fail "real CTest: a failing rerun passed"; fi
+    grep -q 'the rerun alone failed too' "$tmp/out" || fail "real CTest: no rerun failure line"
+else
+    echo "(no cmake/ctest: the real-CTest case is skipped)"
+fi
 
 echo 'linux gate smoke tests passed'

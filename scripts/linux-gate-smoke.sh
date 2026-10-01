@@ -3,9 +3,11 @@
 # linux-gate-smoke.sh — the Linux gate's CTest run, inside its container
 # (scripts/linux-gate.sh mounts this file next to the build; nostrc-16yi): the
 # smoke subset, or with --sanitizers the Groundhog sanitizer set (nostrc-3han).
+# scripts/pre-push also runs it on the host for the macOS stage's full CTest
+# run (nostrc-7c1v), so both stages rerun and report alike.
 #
-# The tests run in parallel beside the macOS build. A test that fails is run
-# once more on its own: that absorbs a race lost under that load, while a real
+# The tests run in parallel beside the other stages' builds. A test that fails
+# is run once more on its own (serially, whatever CTEST_PARALLEL_LEVEL says): that absorbs a race lost under that load, while a real
 # break fails both times. A rerun is never silent or forgotten:
 #  - the first run keeps each failed test's output (--output-on-failure); it
 #    is printed (the last TAIL_LINES lines of each) even when the rerun
@@ -21,7 +23,8 @@
 #
 # Environment: JOBS, and SMOKE_EXCLUDE (a ctest -E regex) or TEST_REGEX (a
 # ctest -R regex, which wins). Optional: BUILD_DIR (/work/build), STATE_DIR
-# (/work), VOLUME (named in messages), GATE_SECONDS (elapsed seconds of the gate
+# (/work: the run's logs), HISTORY_DIR (STATE_DIR/gate-history), VOLUME (the
+# volume holding them, named in messages), GATE_SECONDS (elapsed seconds of the gate
 # so far), HISTORY_KEEP (20), TAIL_LINES (200, or "all"), GATE ("Linux gate")
 # and SUITE ("smoke tests") for messages, DISPLAY_WRAP (1: under
 # dbus-run-session and xvfb-run; 0: bare), CTEST_TIMEOUT (120; empty: CTest's
@@ -47,7 +50,10 @@ else
   SELECT=(-E "$SMOKE_EXCLUDE")
 fi
 SECONDS="${GATE_SECONDS:-0}"
-HISTORY="$STATE_DIR/gate-history"
+HISTORY="${HISTORY_DIR:-$STATE_DIR/gate-history}"
+WHERE="${VOLUME:+ in volume $VOLUME}"
+# The first run passes --parallel; the rerun must run alone.
+unset CTEST_PARALLEL_LEVEL
 mkdir -p "$HISTORY"
 touch "$HISTORY/gates" "$HISTORY/reruns"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -144,7 +150,7 @@ find "$HISTORY" -name "*-first-run.log" | sort |
 echo "==> $GATE: ${first:-the run failed}; failed in the parallel run: ${failed:-(none named)}"
 if [ -z "$failed" ]; then
   tail -n 60 "$STATE_DIR/ctest.log"
-  echo "==> $GATE: $SUITE_FAILED ($(stamp)); no failed test named, full log: $kept in volume ${VOLUME:-?}"
+  echo "==> $GATE: $SUITE_FAILED ($(stamp)); no failed test named, full log: $kept$WHERE"
   exit 1
 fi
 # shellcheck disable=SC2086 # $failed is a list of test names
@@ -158,7 +164,7 @@ if [ "$SANITIZER_REPORTS" = block ]; then
   done
   if [ -n "$reported" ]; then
     echo "==> $GATE: sanitizer report in:$reported (output above); a report is not rerun"
-    echo "==> $GATE: $SUITE_FAILED ($(stamp)); full log: $kept in volume ${VOLUME:-?}"
+    echo "==> $GATE: $SUITE_FAILED ($(stamp)); full log: $kept$WHERE"
     exit 1
   fi
 fi
@@ -170,7 +176,7 @@ if ! smoke -R "^($(printf "%s" "$failed" | tr " " "|"))\$" > "$STATE_DIR/ctest-r
   sed -n "/The following tests FAILED/,/^Errors while running/p" "$STATE_DIR/ctest-rerun.log"
   # shellcheck disable=SC2086
   print_failures "$STATE_DIR/ctest-rerun.log" $(failed_in "$STATE_DIR/ctest-rerun.log")
-  echo "==> $GATE: $SUITE_FAILED ($(stamp)); logs in volume ${VOLUME:-?} under $STATE_DIR"
+  echo "==> $GATE: $SUITE_FAILED ($(stamp)); the first run's full log: $kept$WHERE"
   exit 1
 fi
 check_forbidden "$STATE_DIR/ctest-rerun.log"
@@ -186,7 +192,7 @@ for test in $failed; do
 done
 gates="$(recent_gates | wc -l | tr -d " ")"
 echo "!! $GATE: RERUN: failed in the parallel run, passed alone: $failed"
-echo "!!   first failure's output above; its full log: $kept in volume ${VOLUME:-?}"
+echo "!!   first failure's output above; its full log: $kept$WHERE"
 for test in $failed; do
   # The recent gates in which this test needed a rerun.
   count="$(awk -F '\t' -v t="$test" 'NR == FNR { recent[$1] = 1; next }

@@ -13,6 +13,7 @@ git -C "$repo" config user.email test@example.invalid
 cp "$scripts/pre-push" "$repo/scripts/pre-push"
 cp "$scripts/install-hooks.sh" "$repo/scripts/install-hooks.sh"
 cp "$scripts/linux-gate.sh" "$repo/scripts/linux-gate.sh"
+cp "$scripts/linux-gate-smoke.sh" "$repo/scripts/linux-gate-smoke.sh"
 cp "$scripts/sanitizer-gate-ci.py" "$repo/scripts/sanitizer-gate-ci.py"
 # The sanitizer stage reads the candidate's groundhog-sanitizers job.
 mkdir -p "$repo/.github/workflows"
@@ -67,6 +68,8 @@ else
     fi
 fi
 MOCK
+# One test, "dummy", in CTest's output format: FAIL_STAGE=test fails it in
+# every run, FAIL_STAGE=flaky only in the first (parallel) run.
 cat > "$tmp/bin/ctest" <<'MOCK'
 #!/bin/bash
 set -eu
@@ -75,7 +78,31 @@ if [ "${3:-}" = -N ]; then
     printf 'Total Tests: 1\n'
     exit 0
 fi
-[ "${FAIL_STAGE:-}" != test ]
+run=rerun
+case " $* " in *" --parallel "*) run=first ;; esac
+if [ "$run" = rerun ] && [ -n "${CTEST_PARALLEL_LEVEL:-}" ]; then
+    printf 'PARALLEL_RERUN\n' >> "$TRACE"
+fi
+fail=0
+case "${FAIL_STAGE:-}" in
+    test) fail=1 ;;
+    flaky) [ "$run" = rerun ] || fail=1 ;;
+esac
+echo "      Start 1: dummy"
+if [ "$fail" = 1 ]; then
+    echo "1/1 Test #1: dummy ......................***Failed    0.10 sec"
+    echo "DUMMY-OUTPUT-$run"
+    echo
+    echo "0% tests passed, 1 tests failed out of 1"
+    echo
+    echo "The following tests FAILED:"
+    echo "	  1 - dummy (Failed)"
+    echo "Errors while running CTest"
+    exit 8
+fi
+echo "1/1 Test #1: dummy ......................   Passed    0.10 sec"
+echo
+echo "100% tests passed, 0 tests failed out of 1"
 MOCK
 # Docker stands in for the Linux stage. It is on PATH in every run, including
 # the real-CMake ones, so no test starts a container.
@@ -184,6 +211,28 @@ if run_hook "" 0 real > "$tmp/no-tests-output" 2>&1; then
     exit 1
 fi
 grep -q 'No registered CTest tests.*count=0' "$tmp/no-tests-output"
+assert_clean
+
+# The macOS run goes through linux-gate-smoke.sh: a test that fails and then
+# passes alone passes the push, loudly, and is counted in the shared history.
+CTEST_PARALLEL_LEVEL=3 run_hook flaky > "$tmp/flaky-output" 2>&1
+grep -q '^CTEST .*--no-tests=error --output-on-failure --parallel 3 -R \.$' "$tmp/trace"
+grep -qF -- '-R ^(dummy)$' "$tmp/trace"
+absent '^PARALLEL_RERUN$' "$tmp/trace"
+grep -q 'DUMMY-OUTPUT-first' "$tmp/flaky-output"
+grep -q '!! macOS gate: RERUN: failed in the parallel run, passed alone: dummy' "$tmp/flaky-output"
+grep -qE 'dummy needed a rerun in 1 of the last [0-9]+ gate\(s\)' "$tmp/flaky-output"
+grep -q 'macOS gate: tests passed after a rerun' "$tmp/flaky-output"
+grep -q $'\tdummy$' "$repo/.git/nostrc-macos-gate-history/reruns"
+ls "$repo/.git/nostrc-macos-gate-history/"*-first-run.log >/dev/null
+assert_clean
+# ... and a test that fails alone too blocks it.
+if run_hook test > "$tmp/test-output" 2>&1; then
+    echo 'a test failing in its rerun too did not block the push' >&2
+    exit 1
+fi
+grep -q 'DUMMY-OUTPUT-rerun' "$tmp/test-output"
+grep -q 'macOS gate: TESTS FAILED' "$tmp/test-output"
 assert_clean
 
 for stage in beads configure build test linux sanitizer; do
