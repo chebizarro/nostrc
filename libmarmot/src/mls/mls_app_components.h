@@ -1,13 +1,8 @@
 /*
  * libmarmot - adopted-profile GroupContext and member-leaf admission
  * (nostrc-qp24.5.1).
- * the founding Commit,
- * as in MDK).  When the GroupContext carries 0x8006, every leaf also
- * advertises the role capability (MLS extension type) of each role in its
- * required_member_roles: agent-text-stream-quic-v1.md makes that a
- * resulting-epoch invariant of every member (MDK v0.11.0 enforces it on
- * invitees and on a joiner's own client, which the Welcome tree check
- * here covers).  The proofs' signatures are NOT verified here.
+ *
+ * The structural half of admitting an adopted-profile group (marmot-protocol/
  * marmot @07da8ff: protocol-core/group-setup.md, the app-components docs,
  * foundation/registries.md; MDK v0.11.0 cgka-engine app_components.rs):
  * the GroupContext's required_capabilities and app_data_dictionary, the
@@ -164,6 +159,37 @@ int mls_adopted_group_context_parse(const uint8_t *exts, size_t len,
                                     MlsAdoptedGroupContext *out);
 
 /*
+ * Whether @data is a valid state of component @id in an adopted
+ * GroupContext, by exactly the rules mls_adopted_group_context_parse()
+ * applies to each dictionary entry (the per-entry half; requirement lists
+ * and "required, but no state" are the caller's).  For a state replaced
+ * or added by an AppDataUpdate.
+ *
+ * W24 slice H (nostrc-qp24.5.1): the AppDataUpdate path MUST call this
+ * instead of its own adopted_component_valid().  One definition keeps
+ * admission (Welcome, load, entered epoch) and Commit validation from ever
+ * disagreeing: a valid 0x8006 or 0x800b update returns 0 here and must be
+ * applied, not refused as unsupported (review of slice I, M1).  Keep the
+ * removal and lifecycle rules in the caller.
+ *
+ * Returns 0 (also for an id libmarmot does not interpret: opaque, any
+ * bytes), or:
+ *  - MARMOT_ERR_EXTENSION_FORMAT: malformed state of a known component
+ *    (0x0001 app_components, 0x8001 profile, 0x8002 Blossom image, 0x8003
+ *    admin policy, 0x8004 Nostr routing, 0x8005 retention, 0x8006 agent
+ *    text stream, 0x8007 avatar URL, 0x800b encrypted media v2, 0x800c
+ *    lifecycle), and any 0x8009 state (LeafNode only);
+ *  - MARMOT_ERR_UNSUPPORTED: safe_aad (0x0002) state; a 0x8006 policy
+ *    requiring the send or fanout role;
+ *  - MARMOT_ERR_VALIDATION: frozen encrypted media v1 (0x8008); a
+ *    disbanded lifecycle;
+ *  - MARMOT_ERR_MEMORY.
+ * An avatar or media endpoint URL outside libmarmot's verifiable subset is
+ * valid (unverified, never contacted).
+ */
+int mls_adopted_component_state_valid(uint16_t id, const uint8_t *data, size_t len);
+
+/*
  * The structural member check of an adopted group: every leaf is a 32-byte
  * BasicCredential whose capabilities cover the group's required_capabilities
  * (RFC 9420 §7.2 defaults implied), whose only LeafNode extension is one
@@ -173,7 +199,14 @@ int mls_adopted_group_context_parse(const uint8_t *exts, size_t len,
  * key names a member (admin-policy-v1.md: a property of every epoch a group
  * enters, checked where one is entered -- a Welcome, a Commit -- but not of
  * the founding epoch-0 state, whose co-admins join with the founding Commit,
- * as in MDK).  The proofs' signatures are NOT verified here.  0 or
+ * as in MDK).  When the GroupContext carries 0x8006, every leaf also
+ * advertises the role capability (MLS extension type) of each role in its
+ * required_member_roles: agent-text-stream-quic-v1.md makes that a
+ * resulting-epoch invariant of every member.  MDK v0.11.0 enforces it only
+ * on invitees and on a joiner's own client (not in its resulting-epoch
+ * check): a deliberate, stricter divergence (README "Adopted profile";
+ * nostrc-qp24.5.2 review L1).  The proofs' signatures are NOT verified
+ * here.  0 or
  * MARMOT_ERR_VALIDATION (MARMOT_ERR_EXTENSION_FORMAT for an undecodable leaf
  * dictionary).
  */

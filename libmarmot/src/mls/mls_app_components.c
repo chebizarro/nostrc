@@ -647,6 +647,19 @@ validate_component_state(uint16_t id, const uint8_t *data, size_t len,
 }
 
 int
+mls_adopted_component_state_valid(uint16_t id, const uint8_t *data, size_t len)
+{
+    if (len > 0 && !data) return MARMOT_ERR_INVALID_ARG;
+    static const uint8_t empty[1] = {0};
+    /* The admission rules exactly, with their side effects on a scratch
+     * context (review M1: one definition for Welcome, load, entered epoch
+     * and AppDataUpdate). */
+    MlsAdoptedGroupContext scratch;
+    memset(&scratch, 0, sizeof(scratch));
+    return validate_component_state(id, data ? data : empty, len, &scratch);
+}
+
+int
 mls_adopted_group_context_parse(const uint8_t *exts, size_t len, MlsAdoptedGroupContext *out)
 {
     if (!out || (len > 0 && !exts)) return MARMOT_ERR_INVALID_ARG;

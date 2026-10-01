@@ -1505,6 +1505,70 @@ test_white_noise_welcome_joined(void)
     member_free(&bob);
 }
 
+/* Review M1: the one per-component validator slice H's AppDataUpdate path
+ * calls agrees with admission on every entry, and accepts the valid 0x8006
+ * and 0x800b replacements an MDK admin may commit. */
+static void
+test_component_state_validator(void)
+{
+    size_t len = 0;
+    const uint8_t *exts = NULL;
+    uint8_t *raw = wn_exts(&len, &exts);
+    GcSpec base;
+    gc_spec_from(exts, len, &base);
+    for (size_t i = 0; i < base.n_entries; i++)
+        CHECK(mls_adopted_component_state_valid(base.entries[i].id, base.entries[i].data,
+                                                base.entries[i].len) == 0,
+              "White Noise entry %04x valid", base.entries[i].id);
+
+    /* Valid replacements: another receive-only policy, new endpoints. */
+    static const uint8_t agent2[12] = {1, 7, 0, 0, 0x20, 0, 0, 0, 0, 60, 0, 0};
+    OK(mls_adopted_component_state_valid(0x8006, agent2, sizeof(agent2)));
+    char *kinds[] = {"blossom-v1", "ipfs-v1", NULL};
+    MarmotMediaBlobEndpoint eps[] = {{"blossom-v1", "https://a.example/", false},
+                                     {"ipfs-v1", "http://b.example:8080/x", false}};
+    MarmotGroupMediaPolicy pol = {kinds, 2, eps, 2};
+    uint8_t *media = NULL;
+    size_t media_len = 0;
+    OK(marmot_group_media_policy_encode(&pol, &media, &media_len));
+    OK(mls_adopted_component_state_valid(0x800b, media, media_len));
+    /* ... and each agrees with the full parse of a GroupContext carrying it. */
+    GcSpec s = base;
+    gc_entry(&s, 0x8006)->data = agent2;
+    gc_entry(&s, 0x800b)->data = media;
+    gc_entry(&s, 0x800b)->len = media_len;
+    OK(gc_parse_spec(&s));
+    free(media);
+
+    /* The documented refusals, the codes admission gives. */
+    static const uint8_t agent_send[12] = {3, 3, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0};
+    static const uint8_t agent_bad[12] = {1, 2, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0};
+    static const uint8_t media_bad[] = {0x12, 'e', 'n', 'c', 'r', 'y', 'p', 't', 'e', 'd', '-',
+                                        'm', 'e', 'd', 'i', 'a', '-', 'v', '1', 0x00, 0x00};
+    static const uint8_t retention7[7] = {0}, partial_image[] = {0x01, 0xaa, 0, 0, 0, 0};
+    static const uint8_t proof104[104] = {0}, empty_list[] = {0x00}, one[] = {0x01};
+    static const uint8_t junk[] = {0xff, 0xfe};
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8006, agent_send, 12), MARMOT_ERR_UNSUPPORTED);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8006, agent_bad, 12),
+               MARMOT_ERR_EXTENSION_FORMAT);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8006, agent_bad, 11),
+               MARMOT_ERR_EXTENSION_FORMAT);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x800b, media_bad, sizeof(media_bad)),
+               MARMOT_ERR_EXTENSION_FORMAT);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8005, retention7, 7),
+               MARMOT_ERR_EXTENSION_FORMAT);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8002, partial_image, sizeof(partial_image)),
+               MARMOT_ERR_EXTENSION_FORMAT);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8009, proof104, 104),
+               MARMOT_ERR_EXTENSION_FORMAT);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x0002, empty_list, 1), MARMOT_ERR_UNSUPPORTED);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8008, empty_list, 1), MARMOT_ERR_VALIDATION);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x800c, one, 1), MARMOT_ERR_VALIDATION);
+    EXPECT_ERR(mls_adopted_component_state_valid(0x8001, NULL, 0), MARMOT_ERR_EXTENSION_FORMAT);
+    OK(mls_adopted_component_state_valid(0x9001, junk, sizeof(junk))); /* opaque */
+    free(raw);
+}
+
 /* agent-text-stream-quic-v1.md: every member advertises the role
  * capability of each role the group requires (here receive, 0xF2D1). */
 static void
@@ -2709,6 +2773,7 @@ main(int argc, char **argv)
     RUN(test_persist_load_clone);
     RUN(test_white_noise_welcome_joined);
     RUN(test_white_noise_member_roles);
+    RUN(test_component_state_validator);
     RUN(test_welcome_transient_storage_error);
     RUN(test_openmls_welcome_negatives);
     RUN(test_adopted_rumor_shape);
