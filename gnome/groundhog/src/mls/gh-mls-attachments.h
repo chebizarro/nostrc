@@ -148,10 +148,16 @@ void gh_mls_attachments_fetch_picture_async(GhMlsAttachments *self, GhMlsGroup *
 GBytes *gh_mls_attachments_fetch_picture_finish(GhMlsAttachments *self, GAsyncResult *result,
                                                 GError **error);
 /* An admin's new picture (file: a JPEG or PNG read on this device; NULL
- * removes the picture). GH_BLOSSOM_ERROR_NO_SERVER when the group names no
- * media server to keep it on. Completes once the Commit is merged. */
+ * removes the picture). confirmed_hosts (required with file): the hosts the
+ * admin was shown (gh_mls_attachments_dup_picture_upload_hosts()); the
+ * upload goes to exactly those, and when the group's are no longer the same
+ * nothing is sealed or uploaded: GH_MLS_SERVICE_ERROR_SERVERS_CHANGED,
+ * confirm again (W25 re-review R4). GH_BLOSSOM_ERROR_NO_SERVER when the
+ * group names no media server to keep it on. Completes once the Commit is
+ * merged. */
 void gh_mls_attachments_set_picture_async(GhMlsAttachments *self, GhMlsGroup *group,
                                           GBytes *file, const gchar *mime_hint,
+                                          const gchar *const *confirmed_hosts,
                                           GCancellable *cancellable,
                                           GAsyncReadyCallback callback, gpointer user_data);
 gboolean gh_mls_attachments_set_picture_finish(GhMlsAttachments *self, GAsyncResult *result,

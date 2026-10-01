@@ -203,6 +203,11 @@ gh_mls_attachments_describe(GhMlsAttachments *self, const GError *error,
       retry = TRUE;
       text = _("The group kept changing while the file was uploading, so it wasn't sent.");
       break;
+    case GH_MLS_SERVICE_ERROR_SERVERS_CHANGED:
+      retry = TRUE;
+      text = _("The group's servers changed, so nothing was uploaded. Check where it goes and "
+               "try again.");
+      break;
     case GH_MLS_SERVICE_ERROR_NOT_ADMIN:
       text = _("Only a group admin can change the group's picture.");
       break;
@@ -992,11 +997,14 @@ on_picture_uploaded(GObject *source, GAsyncResult *result, gpointer data)
 
 void
 gh_mls_attachments_set_picture_async(GhMlsAttachments *self, GhMlsGroup *group, GBytes *file,
-                                     const gchar *mime_hint, GCancellable *cancellable,
-                                     GAsyncReadyCallback callback, gpointer user_data)
+                                     const gchar *mime_hint,
+                                     const gchar *const *confirmed_hosts,
+                                     GCancellable *cancellable, GAsyncReadyCallback callback,
+                                     gpointer user_data)
 {
   g_return_if_fail(GH_IS_MLS_ATTACHMENTS(self));
   g_return_if_fail(GH_IS_MLS_GROUP(group));
+  g_return_if_fail(!file || confirmed_hosts);
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_attachments_set_picture_async);
   SetPictureOp *op = g_new0(SetPictureOp, 1);
@@ -1027,6 +1035,15 @@ gh_mls_attachments_set_picture_async(GhMlsAttachments *self, GhMlsGroup *group, 
   marmot_group_components_clear(&c);
   g_auto(GStrv) servers = gh_blossom_client_dup_public_servers(client_of(self),
                                                                (const gchar *const *)named);
+  /* Exactly the servers the admin was shown, or nothing (W25 re-review R4):
+   * a Commit may have changed them while the confirmation was open. */
+  g_auto(GStrv) hosts = public_hosts(self, (const gchar *const *)named);
+  if (!g_strv_equal((const gchar *const *)hosts, confirmed_hosts)) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_SERVERS_CHANGED,
+                            "The group's media servers changed since they were confirmed");
+    g_object_unref(task);
+    return;
+  }
   if (!servers[0]) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER,
                             "The group names no media server for its picture");

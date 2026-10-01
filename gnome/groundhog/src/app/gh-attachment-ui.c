@@ -41,9 +41,12 @@ typedef struct {
   GhAttachmentUiGroups groups;  /* groups.can_send NULL: none */
   gpointer groups_data;
   GDestroyNotify groups_destroy;
+  GObject *watched;             /* groups.watch's object for the shown conversation */
+  gulong watched_handler;
 } GhAttachmentUi;
 
 static void close_offer(GhAttachmentUi *ui);
+static void on_state_source(GtkWidget *window);
 
 static GhAttachmentUi *
 ui_of(GtkWidget *window)
@@ -67,10 +70,32 @@ offer_free(Offer *offer)
   g_free(offer);
 }
 
+/* Follows object's "notify" (NULL: none) for the attach button, the
+ * handler the window's (g_signal_connect_object(): it ends with the window
+ * too). */
+static void
+watch(GhAttachmentUi *ui, GObject *object)
+{
+  if (ui->watched == object)
+    return;
+  /* The window going may have ended the handler already. */
+  if (ui->watched && ui->watched_handler &&
+      g_signal_handler_is_connected(ui->watched, ui->watched_handler))
+    g_signal_handler_disconnect(ui->watched, ui->watched_handler);
+  ui->watched_handler = 0;
+  g_clear_object(&ui->watched);
+  if (!object)
+    return;
+  ui->watched = g_object_ref(object);
+  ui->watched_handler = g_signal_connect_object(object, "notify", G_CALLBACK(on_state_source),
+                                                ui->window, G_CONNECT_SWAPPED);
+}
+
 static void
 ui_free(gpointer data)
 {
   GhAttachmentUi *ui = data;
+  watch(ui, NULL);
   if (ui->loading)
     g_cancellable_cancel(ui->loading);
   g_clear_object(&ui->loading);
@@ -143,6 +168,9 @@ static void
 update_can_attach(GhAttachmentUi *ui)
 {
   GhConversation *conversation = gh_conversation_view_get_conversation(ui->view);
+  watch(ui, ui->groups.watch && conversation &&
+              gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_MLS
+              ? ui->groups.watch(conversation, ui->groups_data) : NULL);
   g_auto(GStrv) recipients = recipients_of(ui, conversation);
   gboolean can = (recipients && outbox_of(ui) && gh_attachments_get_client(ui->attachments)) ||
                  group_of(ui, conversation);
@@ -493,6 +521,9 @@ gh_attachment_ui_offer_bytes(GhWindow *window, GBytes *bytes, const gchar *name,
   if (!ui)
     return;
   GhConversation *conversation = gh_conversation_view_get_conversation(ui->view);
+  watch(ui, ui->groups.watch && conversation &&
+              gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_MLS
+              ? ui->groups.watch(conversation, ui->groups_data) : NULL);
   g_auto(GStrv) recipients = recipients_of(ui, conversation);
   GhConversation *group = recipients ? NULL : group_of(ui, conversation);
   if (!group && (!recipients || !outbox_of(ui))) {
@@ -896,6 +927,7 @@ on_window_destroy(GtkWidget *window)
   if (ui->loading)
     g_cancellable_cancel(ui->loading);
   close_offer(ui);
+  watch(ui, NULL);
   ui->destroyed = TRUE;
   gh_attachment_card_set_provider(window, NULL, NULL, NULL);
 }

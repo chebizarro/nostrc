@@ -968,6 +968,61 @@ test_download_rebinding(void)
   fixture_down(&f);
 }
 
+/* W25 review M1, re-review R3 (the reviewer's probe): a keyed upload (a
+ * group picture) to a group-named server whose public-looking name passes
+ * the preflight but resolves to 127.0.0.1 is refused at connect time
+ * (GhNetHttpRequest.public_only): the resolver was asked, and nothing
+ * connected. */
+typedef struct { gboolean done; gchar *url; GError *error; } KeyedWait;
+static gboolean keyed_done(gpointer d) { return ((KeyedWait *)d)->done; }
+static void
+on_keyed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  KeyedWait *w = data;
+  w->url = gh_blossom_client_upload_finish(GH_BLOSSOM_CLIENT(source), result, NULL, &w->error);
+  w->done = TRUE;
+}
+static void
+test_keyed_upload_rebinding(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  g_autoptr(GResolver) previous = g_resolver_get_default();
+  g_autoptr(RebindResolver) resolver = g_object_new(REBIND_TYPE_RESOLVER, NULL);
+  g_resolver_set_default(G_RESOLVER(resolver));
+  guint accepted = 0;
+  g_autoptr(GSocketService) listener = g_socket_service_new();
+  guint16 port = gh_test_listen_loopback(G_SOCKET_LISTENER(listener));
+  g_signal_connect(listener, "incoming", G_CALLBACK(on_incoming), &accepted);
+  g_socket_service_start(listener);
+  g_autofree gchar *server = g_strdup_printf("https://" REBIND_HOST ":%u", port);
+  const gchar *servers[] = { server, NULL };
+  g_autoptr(GBytes) blob = g_bytes_new_static("ciphertext", 10);
+  g_autofree gchar *sha = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, blob);
+  guint8 key[32];
+  memset(key, 0x11, sizeof key);
+  gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
+  g_auto(GStrv) usable = gh_blossom_client_dup_public_servers(f.client, servers);
+  g_assert_cmpuint(g_strv_length(usable), ==, 1); /* the name passes the preflight */
+  KeyedWait w = { 0 };
+  gh_blossom_client_upload_keyed_async(f.client, servers, blob, sha, key, NULL, on_keyed, &w);
+  spin_until(keyed_done, &w);
+  g_test_message("keyed upload result: %s", w.error ? w.error->message : "no error");
+  g_assert_null(w.url);
+  g_assert_nonnull(w.error);
+  g_assert_cmpuint(resolver->lookups, >, 0);
+  drain();
+  g_test_message("connections accepted: %u", accepted);
+  g_assert_cmpuint(accepted, ==, 0);
+  g_clear_error(&w.error);
+  g_signal_handlers_disconnect_by_data(listener, &accepted);
+  g_socket_service_stop(listener);
+  drain();
+  g_socket_listener_close(G_SOCKET_LISTENER(listener));
+  g_resolver_set_default(previous);
+  fixture_down(&f);
+}
+
 /* ---- main ------------------------------------------------------------------------ */
 
 static void
@@ -1022,6 +1077,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/at9-tor", test_at9_tor);
   g_test_add_func("/groundhog/blossom/download-address-policy", test_download_address_policy);
   g_test_add_func("/groundhog/blossom/download-rebinding", test_download_rebinding);
+  g_test_add_func("/groundhog/blossom/keyed-upload-rebinding", test_keyed_upload_rebinding);
   int status = g_test_run();
   canary_log_capture_uninstall();
   remove_tree(root);

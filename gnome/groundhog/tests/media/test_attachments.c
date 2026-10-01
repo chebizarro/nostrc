@@ -1032,7 +1032,8 @@ assert_no_transient_files(void)
 /* Save As for a file whose sender chose its name (W25 review L4): the
  * sender's stem, the extension of the bytes, else the declared type, else
  * the sender's own only when it is a document or media extension; never a
- * launcher, script or executable. */
+ * launcher, script or executable, not even one left inside the stem
+ * (re-review R1). */
 static void
 test_save_names(void)
 {
@@ -1060,6 +1061,14 @@ test_save_names(void)
     { "", "image/png", png_bytes, "photo.png" },
     { NULL, "application/pdf", NULL, "file.pdf" },
     { "archive.tar.gz", "application/gzip", NULL, "archive.tar.gz" },
+    /* W25 re-review R1: no extension of ours, so no dot of the sender's. */
+    { "holiday.desktop.bin", "application/octet-stream", script, "holiday_desktop" },
+    { "run.sh.x", "application/octet-stream", script, "run_sh" },
+    { "setup.exe.dat", NULL, script, "setup_exe" },
+    { "app.desktop.zzz", "application/x-desktop", NULL, "app_desktop" },
+    { ".bashrc", NULL, script, "_bashrc" },
+    { ".hidden.png", "image/png", png_bytes, "_hidden.png" },
+    { "a.b.c.desktop", "application/octet-stream", NULL, "a_b_c" },
   };
   for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
     g_autofree gchar *name = gh_attachment_card_safe_save_name(cases[i].sender, cases[i].mime,

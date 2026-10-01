@@ -1,6 +1,5 @@
 #include "gh-mls-attachment-ui.h"
 
-#include "gh-conversation-view.h"
 #include "gh-mls-copy.h"
 
 static GhMlsGroup *
@@ -78,6 +77,15 @@ download_note(GhAttachmentTransfer *transfer, gpointer data)
   return gh_mls_attachments_download_note(data, transfer);
 }
 
+/* The shown group: the attach button follows it as it changes (left,
+ * removed, leaving, offline), not only when another conversation is shown.
+ * The attachment UI connects to it for the window (W25 re-review R2). */
+static GObject *
+watch(GhConversation *conversation, gpointer data)
+{
+  return G_OBJECT(group_of(data, conversation));
+}
+
 static const GhAttachmentUiGroups groups = {
   .can_send = can_send,
   .send_async = send_async,
@@ -87,53 +95,8 @@ static const GhAttachmentUiGroups groups = {
   .download = download,
   .cancel = cancel,
   .download_note = download_note,
+  .watch = watch,
 };
-
-/* The attach button follows the shown group as it changes (left, removed,
- * leaving, offline), not only when another conversation is shown. */
-typedef struct {
-  GhWindow *window;          /* not owned: this is the window's data */
-  GhMlsAttachments *files;   /* a reference */
-  GhMlsGroup *watched;       /* a reference, or NULL */
-} Follow;
-
-#define FOLLOW_DATA "groundhog-mls-attachment-ui"
-
-static void
-follow_unwatch(Follow *follow)
-{
-  if (follow->watched)
-    g_signal_handlers_disconnect_by_data(follow->watched, follow);
-  g_clear_object(&follow->watched);
-}
-
-static void
-follow_free(gpointer data)
-{
-  Follow *follow = data;
-  follow_unwatch(follow);
-  g_clear_object(&follow->files);
-  g_free(follow);
-}
-
-static void
-on_group_changed(Follow *follow)
-{
-  gh_attachment_ui_groups_changed(follow->window);
-}
-
-static void
-on_conversation_shown(GhConversationView *view, GParamSpec *pspec, Follow *follow)
-{
-  (void)pspec;
-  follow_unwatch(follow);
-  GhMlsGroup *group = group_of(follow->files, gh_conversation_view_get_conversation(view));
-  if (group) {
-    follow->watched = g_object_ref(group);
-    g_signal_connect_swapped(group, "notify", G_CALLBACK(on_group_changed), follow);
-  }
-  gh_attachment_ui_groups_changed(follow->window);
-}
 
 void
 gh_mls_attachment_ui_attach(GhWindow *window, GhMlsAttachments *files)
@@ -141,14 +104,4 @@ gh_mls_attachment_ui_attach(GhWindow *window, GhMlsAttachments *files)
   g_return_if_fail(GH_IS_WINDOW(window));
   g_return_if_fail(GH_IS_MLS_ATTACHMENTS(files));
   gh_attachment_ui_set_groups(window, &groups, g_object_ref(files), g_object_unref);
-  GtkWidget *view = gh_content_page_get_view(gh_window_get_content(window));
-  if (!GH_IS_CONVERSATION_VIEW(view))
-    return;
-  Follow *follow = g_new0(Follow, 1);
-  follow->window = window;
-  follow->files = g_object_ref(files);
-  g_object_set_data_full(G_OBJECT(window), FOLLOW_DATA, follow, follow_free);
-  g_signal_connect_object(view, "notify::conversation", G_CALLBACK(on_conversation_shown),
-                          follow, 0);
-  on_conversation_shown(GH_CONVERSATION_VIEW(view), NULL, follow);
 }

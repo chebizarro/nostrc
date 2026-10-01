@@ -182,6 +182,7 @@ struct _GhMlsGroupInfoDialog {
   gboolean picture_shown;   /* the avatar shows the decrypted picture */
   GBytes *offered_picture;  /* chosen, awaiting the upload's confirmation */
   gchar *offered_mime;
+  GStrv offered_hosts;      /* the hosts that confirmation names */
 };
 
 G_DEFINE_FINAL_TYPE(GhMlsGroupInfoDialog, gh_mls_group_info_dialog, ADW_TYPE_DIALOG)
@@ -752,15 +753,39 @@ action_show_picture(GtkWidget *widget, const gchar *action, GVariant *parameter)
   sync_picture(self);
 }
 
+/* A picture being set: kept to ask again if the servers changed. */
+typedef struct {
+  GhMlsGroupInfoDialog *self;  /* a reference */
+  GBytes *file;
+  gchar *mime;
+} SetCall;
+
+static void
+set_call_free(SetCall *call)
+{
+  g_object_unref(call->self);
+  g_bytes_unref(call->file);
+  g_free(call->mime);
+  g_free(call);
+}
+
 static void
 on_picture_set(GObject *source, GAsyncResult *result, gpointer data)
 {
-  GhMlsGroupInfoDialog *self = data;
+  SetCall *call = data;
+  GhMlsGroupInfoDialog *self = call->self;
   g_autoptr(GError) error = NULL;
   gboolean ok = gh_mls_attachments_set_picture_finish(GH_MLS_ATTACHMENTS(source), result,
                                                       &error);
-  picture_finished(self, ok ? NULL : error, TRUE, _("The group’s picture was changed"));
-  g_object_unref(self);
+  /* W25 re-review R4: the group's servers changed while the admin was
+   * asked; nothing was uploaded, so ask again, naming the new ones. */
+  gboolean ask_again = !ok && g_error_matches(error, GH_MLS_SERVICE_ERROR,
+                                              GH_MLS_SERVICE_ERROR_SERVERS_CHANGED);
+  picture_finished(self, ok || ask_again ? NULL : error, TRUE,
+                   ok ? _("The group’s picture was changed") : NULL);
+  if (ask_again && !gtk_widget_in_destruction(GTK_WIDGET(self)))
+    gh_mls_group_info_dialog_set_picture(self, call->file, call->mime);
+  set_call_free(call);
 }
 
 static void
@@ -776,14 +801,19 @@ on_picture_removed(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
-start_set_picture(GhMlsGroupInfoDialog *self, GBytes *file, const gchar *mime)
+start_set_picture(GhMlsGroupInfoDialog *self, GBytes *file, const gchar *mime,
+                  const gchar *const *hosts)
 {
   if (!self->files || self->picture_op || !can_manage(self))
     return;
   self->picture_op = g_cancellable_new();
   self->pending++;
-  gh_mls_attachments_set_picture_async(self->files, self->group, file, mime, self->picture_op,
-                                       on_picture_set, g_object_ref(self));
+  SetCall *call = g_new0(SetCall, 1);
+  call->self = g_object_ref(self);
+  call->file = g_bytes_ref(file);
+  call->mime = g_strdup(mime);
+  gh_mls_attachments_set_picture_async(self->files, self->group, file, mime, hosts,
+                                       self->picture_op, on_picture_set, call);
   sync_picture(self);
 }
 
@@ -806,8 +836,10 @@ gh_mls_group_info_dialog_set_picture(GhMlsGroupInfoDialog *self, GBytes *file,
   }
   g_clear_pointer(&self->offered_picture, g_bytes_unref);
   g_clear_pointer(&self->offered_mime, g_free);
+  g_clear_pointer(&self->offered_hosts, g_strfreev);
   self->offered_picture = g_bytes_ref(file);
   self->offered_mime = g_strdup(mime);
+  self->offered_hosts = g_steal_pointer(&hosts);
   adw_alert_dialog_set_body(self->set_picture_dialog, note);
   adw_dialog_present(ADW_DIALOG(self->set_picture_dialog), GTK_WIDGET(self));
 }
@@ -819,8 +851,10 @@ on_set_picture_response(AdwAlertDialog *dialog, const gchar *response, gpointer 
   GhMlsGroupInfoDialog *self = data;
   g_autoptr(GBytes) file = g_steal_pointer(&self->offered_picture);
   g_autofree gchar *mime = g_steal_pointer(&self->offered_mime);
-  if (file && g_strcmp0(response, "set-picture-confirm") == 0)
-    start_set_picture(self, file, mime);
+  g_auto(GStrv) hosts = g_steal_pointer(&self->offered_hosts);
+  /* Exactly the servers the confirmation named (W25 re-review R4). */
+  if (file && hosts && g_strcmp0(response, "set-picture-confirm") == 0)
+    start_set_picture(self, file, mime, (const gchar *const *)hosts);
 }
 
 AdwAlertDialog *
@@ -926,8 +960,9 @@ on_remove_picture_response(AdwAlertDialog *dialog, const gchar *response, gpoint
     gh_mls_service_clear_avatar_url_async(self->context.service, self->group, self->picture_op,
                                           on_picture_removed, g_object_ref(self));
   else
-    gh_mls_attachments_set_picture_async(self->files, self->group, NULL, NULL, self->picture_op,
-                                         on_picture_removed, g_object_ref(self));
+    gh_mls_attachments_set_picture_async(self->files, self->group, NULL, NULL, NULL,
+                                         self->picture_op, on_picture_removed,
+                                         g_object_ref(self));
   sync_picture(self);
 }
 
@@ -1194,6 +1229,7 @@ gh_mls_group_info_dialog_finalize(GObject *object)
   g_free(self->last_toast);
   g_clear_pointer(&self->offered_picture, g_bytes_unref);
   g_free(self->offered_mime);
+  g_strfreev(self->offered_hosts);
   G_OBJECT_CLASS(gh_mls_group_info_dialog_parent_class)->finalize(object);
 }
 

@@ -598,8 +598,9 @@ test_legacy_group_has_no_picture(void)
   guint64 epoch = gh_mls_group_get_epoch(ga);
   g_autoptr(GBytes) photo = make_png();
   PictureWait set = { 0 };
-  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
-                                       &set);
+  const gchar *const no_hosts[] = { NULL };
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", no_hosts, NULL,
+                                       on_picture_set, &set);
   spin_until(picture_done, &set, "the refused picture");
   g_assert_false(set.ok);
   g_assert_error(set.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED);
@@ -688,8 +689,9 @@ test_adopted_picture(void)
                   GH_MLS_PICTURE_NONE);
   g_autoptr(GBytes) photo = make_png();
   PictureWait set = { 0 };
-  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
-                                       &set);
+  const gchar *const no_hosts[] = { NULL };
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", no_hosts, NULL,
+                                       on_picture_set, &set);
   spin_until(picture_done, &set, "the refused picture");
   g_assert_error(set.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
   picture_wait_clear(&set);
@@ -708,8 +710,8 @@ test_adopted_picture(void)
   gh_attachments_set_allow_private_hosts(fa.attachments, FALSE);
   g_auto(GStrv) none = gh_mls_attachments_dup_picture_upload_hosts(fa.files, ga);
   g_assert_cmpuint(g_strv_length(none), ==, 0);
-  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
-                                       &set);
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png",
+                                       (const gchar *const *)none, NULL, on_picture_set, &set);
   spin_until(picture_done, &set, "the private-host picture refused");
   g_assert_error(set.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
   picture_wait_clear(&set);
@@ -724,9 +726,30 @@ test_adopted_picture(void)
   g_assert_nonnull(strstr(note, "127.0.0.1"));
   g_assert_nonnull(strstr(note, "IP address"));
 
+  /* W25 re-review R4: while the admin is asked, a Commit adds a server.
+   * The upload goes only where the confirmation said, so nothing is
+   * uploaded and the confirmation must be shown again, naming both. */
+  const gchar *two[] = { blossom_fixture_url(blossom), "https://blossom.example.com", NULL };
+  OpWait changed = { 0 };
+  gh_mls_service_test_set_media_policy_async(alice->service, ga, two, NULL, on_changed,
+                                             &changed);
+  spin_until(op_done, &changed, "the second media policy Commit");
+  g_assert_no_error(changed.error);
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png",
+                                       (const gchar *const *)hosts, NULL, on_picture_set, &set);
+  spin_until(picture_done, &set, "the picture whose servers changed");
+  g_assert_error(set.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_SERVERS_CHANGED);
+  picture_wait_clear(&set);
+  g_assert_cmpuint(blossom_fixture_requests(blossom)->len, ==, 0);
+  g_strfreev(hosts);
+  hosts = gh_mls_attachments_dup_picture_upload_hosts(fa.files, ga);
+  g_assert_cmpuint(g_strv_length(hosts), ==, 2);
+  g_assert_cmpstr(hosts[1], ==, "blossom.example.com");
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+
   /* Alice sets it: one keyed upload, then the Commit; she sees it. */
-  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
-                                       &set);
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png",
+                                       (const gchar *const *)hosts, NULL, on_picture_set, &set);
   spin_until(picture_done, &set, "the picture set");
   g_assert_no_error(set.error);
   g_assert_true(set.ok);
@@ -766,8 +789,8 @@ test_adopted_picture(void)
   g_assert_nonnull(kept);
 
   /* Replaced: Bob's copy of the first picture goes. */
-  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
-                                       &set);
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png",
+                                       (const gchar *const *)hosts, NULL, on_picture_set, &set);
   spin_until(picture_done, &set, "the picture replaced");
   g_assert_no_error(set.error);
   picture_wait_clear(&set);
@@ -785,7 +808,8 @@ test_adopted_picture(void)
   g_autofree gchar *second_id = current_picture_id(bob, gb);
 
   /* Removed: nothing to show, and the copy is gone. */
-  gh_mls_attachments_set_picture_async(fa.files, ga, NULL, NULL, NULL, on_picture_set, &set);
+  gh_mls_attachments_set_picture_async(fa.files, ga, NULL, NULL, NULL, NULL, on_picture_set,
+                                       &set);
   spin_until(picture_done, &set, "the picture removed");
   g_assert_no_error(set.error);
   picture_wait_clear(&set);

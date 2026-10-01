@@ -442,8 +442,11 @@ typedef enum {
                                             * requires (SelfRemove; nostrc-zbmb) */
   GH_MLS_SERVICE_ERROR_EPOCH_CHANGED,  /* the group moved on since the files were sealed:
                                         * seal and upload them again (W25) */
-  GH_MLS_SERVICE_ERROR_UNSUPPORTED     /* this group's kind can't do that (a legacy group's
+  GH_MLS_SERVICE_ERROR_UNSUPPORTED,    /* this group's kind can't do that (a legacy group's
                                         * picture, W25) */
+  GH_MLS_SERVICE_ERROR_SERVERS_CHANGED /* the group's media servers are no longer the ones
+                                        * the admin confirmed: confirm again (W25 re-review
+                                        * R4) */
 } GhMlsServiceError;
 
 /* Whether settings asks for every member's account proof: the key

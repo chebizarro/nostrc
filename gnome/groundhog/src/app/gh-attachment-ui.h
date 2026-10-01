@@ -62,7 +62,8 @@ void gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *confi
  * preview, metadata notice, consent), size limit, files on this device only,
  * cards with Download on request, and Save As as a NIP-17 file; what differs
  * (sealing for the group's epoch, the kind-9 imeta, opening with the epoch)
- * is the delegate's. Every function is required but download_note. */
+ * is the delegate's. Every function is required but download_note and
+ * watch. */
 typedef struct {
   /* Whether files can be sent in conversation (an encrypted group) now. */
   gboolean (*can_send)(GhConversation *conversation, gpointer data);
@@ -80,6 +81,11 @@ typedef struct {
   void (*download)(GhAttachmentTransfer *transfer, gpointer data);
   void (*cancel)(GhAttachmentTransfer *transfer, gpointer data);
   gchar *(*download_note)(GhAttachmentTransfer *transfer, gpointer data);
+  /* Optional: the object whose "notify" may change can_send for the shown
+   * conversation (its group: left, removed, leaving, offline), or NULL
+   * (transfer none). The attach button follows it while it is shown; the
+   * handler is the window's (W25 re-review R2). */
+  GObject *(*watch)(GhConversation *conversation, gpointer data);
 } GhAttachmentUiGroups;
 
 /* Installs (or with NULL removes) groups; destroy frees data then or with

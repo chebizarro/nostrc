@@ -101,7 +101,9 @@ const gchar *gh_attachment_card_sniff_extension(GBytes *plaintext);
  * sender_name already sanitized, nullable): the sender's stem with the
  * extension of the bytes (sniffed), else of the declared type, else the
  * sender's own only if it is a document, media or archive extension: never
- * .desktop, a script, an executable or a launcher. */
+ * .desktop, a script, an executable or a launcher. Without an extension of
+ * these, the stem keeps no dot ("holiday.desktop.bin" is "holiday_desktop");
+ * a leading dot never survives (no hidden file). */
 gchar *gh_attachment_card_safe_save_name(const gchar *sender_name, const gchar *mime,
                                          GBytes *plaintext);
 

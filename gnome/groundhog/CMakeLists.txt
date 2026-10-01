@@ -2570,6 +2570,15 @@ if (TARGET groundhog-media AND TARGET groundhog-account-store AND GROUNDHOG_OUTB
     target_compile_options(test-groundhog-attachment-ui PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-attachment-ui)
     add_dependencies(test-groundhog-attachment-ui groundhog-test-schemas)
+    # W25 re-review R2: the application's encrypted-group delegate
+    # (gh-mls-attachment-ui.c) on a real window, under fatal-criticals.
+    if (TARGET groundhog-mls-files)
+      target_sources(test-groundhog-attachment-ui PRIVATE src/app/gh-mls-attachment-ui.c
+        src/ui/gh-mls-copy.c)
+      target_link_libraries(test-groundhog-attachment-ui PRIVATE groundhog-mls-files)
+      target_compile_definitions(test-groundhog-attachment-ui PRIVATE
+        GROUNDHOG_TEST_MLS_FILES=1)
+    endif()
     add_test(NAME groundhog-attachment-ui COMMAND test-groundhog-attachment-ui)
     set_tests_properties(groundhog-attachment-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")

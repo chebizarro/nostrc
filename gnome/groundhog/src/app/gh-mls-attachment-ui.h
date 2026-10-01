@@ -12,8 +12,9 @@ G_BEGIN_DECLS
  * button, the sheet and the cards with the NIP-17 rules, and its files go
  * through gh_mls_attachments_send_async(). Files go where the composer's
  * text can (gh_mls_send_reason()), and the attach button follows the shown
- * group as it changes (gh_attachment_ui_groups_changed()). After
- * gh_attachment_ui_attach() and gh_mls_ui_attach(). */
+ * group as it changes (GhAttachmentUiGroups.watch: the attachment UI
+ * connects to the group for the window). After gh_attachment_ui_attach()
+ * and gh_mls_ui_attach(); again replaces it. */
 void gh_mls_attachment_ui_attach(GhWindow *window, GhMlsAttachments *files);
 
 G_END_DECLS

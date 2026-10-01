@@ -228,6 +228,13 @@ gh_attachment_card_safe_save_name(const gchar *sender_name, const gchar *mime,
    * neither the bytes nor the type name one. */
   if (!ext && sender_ext && g_strv_contains(safe_extensions, sender_ext))
     ext = sender_ext;
+  /* The stem's own dots never become the extension (W25 re-review R1):
+   * without one of ours, "holiday.desktop.bin" would be saved as
+   * "holiday.desktop", so every dot left in the stem goes; with one, the
+   * last extension is ours and only a leading dot (a hidden file) goes. */
+  for (gchar *c = stem; *c; c++)
+    if (*c == '.' && (!ext || c == stem))
+      *c = '_';
   if (!*stem) {
     g_free(stem);
     stem = g_strdup(mime && g_str_has_prefix(mime, "image/") ? _("photo") : _("file"));

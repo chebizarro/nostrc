@@ -27,6 +27,9 @@
 #include "blossom-fixture.h"
 #include "gh-attachment-card.h"
 #include "gh-attachment-ui.h"
+#if GROUNDHOG_TEST_MLS_FILES
+#include "gh-mls-attachment-ui.h"
+#endif
 #include "gh-preferences-dialog.h"
 #include "gh-store-blossom.h"
 #include "gh-store-media.h"
@@ -1328,13 +1331,26 @@ typedef struct {
   gchar *fail_server;
   GhAttachmentTransfer *transfer;
   guint lookups, downloads;
+  GSimpleAction *group;  /* the group as watched: "enabled" is "can send now" */
+  gboolean ended;        /* a change the group doesn't notify */
+  guint can_sends;
 } StubGroups;
 
 static gboolean
 stub_can_send(GhConversation *conversation, gpointer data)
 {
-  (void)data;
-  return g_str_has_suffix(gh_conversation_get_room_id(conversation), STUB_GROUP);
+  StubGroups *stub = data;
+  stub->can_sends++;
+  return g_str_has_suffix(gh_conversation_get_room_id(conversation), STUB_GROUP) &&
+         (!stub->group || g_action_get_enabled(G_ACTION(stub->group))) && !stub->ended;
+}
+
+static GObject *
+stub_watch(GhConversation *conversation, gpointer data)
+{
+  StubGroups *stub = data;
+  return g_str_has_suffix(gh_conversation_get_room_id(conversation), STUB_GROUP)
+           ? G_OBJECT(stub->group) : NULL;
 }
 
 static void
@@ -1407,6 +1423,7 @@ static const GhAttachmentUiGroups stub_groups = {
   .lookup = stub_lookup,
   .download = stub_download,
   .cancel = stub_cancel,
+  .watch = stub_watch,
 };
 
 static gboolean
@@ -1476,6 +1493,7 @@ test_group_delegate(void)
   StubGroups stub = { 0 };
   stub.transfer = gh_attachment_transfer_new_described("stub/0", "image/png",
                                                        "../../.config/autostart/x.png");
+  stub.group = g_simple_action_new("group", NULL);
   gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
   g_autoptr(GhMessage) message = group_file_message(&f);
   g_autoptr(GError) error = NULL;
@@ -1488,6 +1506,22 @@ test_group_delegate(void)
   send_stack_select(&f.s, group);
   g_assert_true(gh_composer_get_can_attach(composer));
   guint pubs_before = pubs ? pubs->len : 0;
+
+  /* The attach button follows the shown group as it changes (left,
+   * removed, leaving, offline: its notify), not only when another
+   * conversation is shown (W25 re-review R2); a change the group doesn't
+   * notify is the delegate's to say (gh_attachment_ui_groups_changed()). */
+  g_simple_action_set_enabled(stub.group, FALSE);
+  g_assert_false(gh_composer_get_can_attach(composer));
+  g_simple_action_set_enabled(stub.group, TRUE);
+  g_assert_true(gh_composer_get_can_attach(composer));
+  stub.ended = TRUE;
+  g_assert_true(gh_composer_get_can_attach(composer));
+  gh_attachment_ui_groups_changed(f.s.window);
+  g_assert_false(gh_composer_get_can_attach(composer));
+  stub.ended = FALSE;
+  gh_attachment_ui_groups_changed(f.s.window);
+  g_assert_true(gh_composer_get_can_attach(composer));
 
   /* Send: the stripped bytes go to the delegate. */
   g_autoptr(GBytes) jpeg = make_jpeg(32 * 1024, 7);
@@ -1555,12 +1589,50 @@ test_group_delegate(void)
 
   gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
   g_assert_false(gh_composer_get_can_attach(composer));
+  /* No delegate, no watch: the group's notify asks nothing any more. */
+  guint asked = stub.can_sends;
+  g_simple_action_set_enabled(stub.group, FALSE);
+  g_assert_cmpuint(stub.can_sends, ==, asked);
   fixture_clear(&f);
+  g_clear_object(&stub.group);
   g_clear_object(&stub.transfer);
   g_clear_pointer(&stub.file, g_bytes_unref);
   g_free(stub.name);
   g_free(stub.mime);
 }
+
+#if GROUNDHOG_TEST_MLS_FILES
+/* The application's own delegate (gh-mls-attachment-ui.c) on a real window,
+ * under fatal-criticals: it installs and follows without a CRITICAL (W25
+ * re-review R2: its follower was once connected with a non-GObject, so it
+ * never followed), twice too; without an MLS service no group conversation
+ * offers the attach button, before or after a groups change. */
+static void
+test_mls_delegate_attach(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, TRUE);
+  GhMlsAttachments *files = gh_mls_attachments_new(f.attachments);
+  gh_mls_attachment_ui_attach(f.s.window, files);
+  g_autoptr(GhMessage) message = group_file_message(&f);
+  g_autoptr(GError) error = NULL;
+  gh_conversation_store_add_message(f.s.model, message, &error);
+  g_assert_no_error(error);
+  GhConversation *group = gh_conversation_store_lookup(f.s.model,
+                                                       gh_message_get_room_id(message));
+  g_assert_nonnull(group);
+  GhComposer *composer = send_stack_composer(&f.s);
+  send_stack_select(&f.s, group);
+  g_assert_false(gh_composer_get_can_attach(composer));
+  gh_attachment_ui_groups_changed(f.s.window);
+  g_assert_false(gh_composer_get_can_attach(composer));
+  gh_mls_attachment_ui_attach(f.s.window, files);
+  g_assert_false(gh_composer_get_can_attach(composer));
+  g_object_unref(files);   /* the window keeps its own */
+  fixture_clear(&f);
+}
+#endif
 
 static gchar *
 test_env_up(void)
@@ -1608,6 +1680,9 @@ main(int argc, char **argv)
   ADD("card-cancel-and-errors", test_card_cancel_and_errors);
   ADD("preferences", test_preferences);
   ADD("group-delegate", test_group_delegate);
+#if GROUNDHOG_TEST_MLS_FILES
+  ADD("mls-delegate-attach", test_mls_delegate_attach);
+#endif
 #undef ADD
   int status = g_test_run();
   stack_keys_clear();
