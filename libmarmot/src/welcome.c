@@ -632,7 +632,12 @@ process_welcome_impl(Marmot *m,
         MlsGroup opened;
         const char *why = NULL;
         MarmotError oerr = welcome_open(m, welcome, welcome_data, welcome_len, &opened, &why);
-        if (oerr == MARMOT_OK) {
+        /* A storage error that may be transient (no reason) does not fail
+         * the Welcome for good: it is stored as a pending invitation like
+         * any other, and accepting it runs the whole check again (W24
+         * review L3). */
+        if (oerr != MARMOT_OK && !why) oerr = MARMOT_OK;
+        else if (oerr == MARMOT_OK) {
             if (opened.profile == MARMOT_GROUP_PROFILE_ADOPTED)
                 oerr = adopted_preview(welcome, &opened);
             mls_group_free(&opened);
@@ -642,8 +647,9 @@ process_welcome_impl(Marmot *m,
             free(rumor.sig); nostr_tags_free(rumor.tags);
             free(welcome_data);
             marmot_welcome_free(welcome);
-            record_welcome_failure(m, wrapper_event_id, why ? why : marmot_error_string(oerr),
-                                   true);
+            /* Recorded only when definitive (a reason): an allocation
+             * failure in the preview is not. */
+            if (why) record_welcome_failure(m, wrapper_event_id, why, true);
             return oerr;
         }
     }
@@ -683,7 +689,8 @@ process_welcome_impl(Marmot *m,
  * leaf signatures), then bind every member to its account -- for an adopted
  * group (nostrc-qp24.5.1) with no exemption, the inviter an admin, and the
  * Welcome sent by that inviter.  On success *out is the joined state (caller
- * frees); otherwise *reason names the failure.  Writes nothing.
+ * frees); otherwise *reason names the failure, or is NULL for a storage
+ * error that may be transient (the Welcome stays pending).  Writes nothing.
  */
 static MarmotError
 welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_t len,
@@ -708,7 +715,9 @@ welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_
 
     /* Find our entry among the EncryptedGroupSecrets.  Only a definitive
      * not-found means "not our KeyPackage": any other storage error leaves
-     * the Welcome pending, as for its raw data (nostrc-w285, review W24 M3). */
+     * the Welcome pending, as for its raw data (nostrc-w285, review W24 M3).
+     * Such an error returns with *reason NULL: nothing is recorded (W24
+     * slice E review L3). */
     MlsKeyPackage matched_kp;
     MlsKeyPackagePrivate matched_priv;
     memset(&matched_kp, 0, sizeof(matched_kp));

@@ -1142,6 +1142,62 @@ expect_refused(Member *x, const char *rumor, const MarmotGroupId *gid, MarmotErr
     marmot_welcome_free(w);
 }
 
+/* A storage whose "kp_priv" lookup fails with a (transient) storage error
+ * while g_kp_fault is set. */
+static bool g_kp_fault;
+static MarmotError (*g_real_mls_load)(void *, const char *, const uint8_t *, size_t,
+                                      uint8_t **, size_t *);
+
+static MarmotError
+faulty_mls_load(void *ctx, const char *label, const uint8_t *key, size_t key_len,
+                uint8_t **out, size_t *out_len)
+{
+    if (g_kp_fault && strcmp(label, "kp_priv") == 0) {
+        *out = NULL;
+        *out_len = 0;
+        return MARMOT_ERR_STORAGE;
+    }
+    return g_real_mls_load(ctx, label, key, key_len, out, out_len);
+}
+
+static void
+test_welcome_transient_storage_error(void)
+{
+    /* W24 review L3: a busy store while an adopted Welcome arrives (or is
+     * accepted) must not fail it for good. */
+    const AdoptedMdkFixture *f = &MDK011_ENGINE_DEFAULT;
+    Member bob;
+    member_init(&bob, "bob");
+    install_mdk_joiner(&bob, f);
+    g_real_mls_load = bob.m->storage->mls_load;
+    bob.m->storage->mls_load = faulty_mls_load;
+
+    /* Arrival: stored as a pending invitation, unchecked. */
+    g_kp_fault = true;
+    uint8_t wrapper[32];
+    randombytes_buf(wrapper, sizeof(wrapper));
+    MarmotWelcome *w = NULL;
+    OK(marmot_process_welcome(bob.m, wrapper, f->rumor_json, &w));
+    CHECK(w && w->state == MARMOT_WELCOME_STATE_PENDING, "pending");
+    /* Accept while still busy: the error, nothing recorded, still pending. */
+    EXPECT_ERR(marmot_accept_welcome(bob.m, w), MARMOT_ERR_STORAGE);
+    MarmotWelcome **pending = NULL;
+    size_t n_pending = 0;
+    MarmotPagination page = marmot_pagination_default();
+    OK(marmot_get_pending_welcomes(bob.m, &page, &pending, &n_pending));
+    CHECK(n_pending == 1, "still pending after a transient failure");
+    welcomes_free(pending, n_pending);
+    /* The store recovers: the same invitation is accepted. */
+    g_kp_fault = false;
+    OK(marmot_accept_welcome(bob.m, w));
+    marmot_welcome_free(w);
+    MarmotGroupId gid = fixture_gid(f);
+    CHECK(group_stored(&bob, &gid), "joined");
+    marmot_group_id_free(&gid);
+    bob.m->storage->mls_load = g_real_mls_load;
+    member_free(&bob);
+}
+
 static void
 test_white_noise_welcome_refused(void)
 {
@@ -2051,6 +2107,7 @@ main(int argc, char **argv)
     RUN(test_mdk_welcome_join);
     RUN(test_persist_load_clone);
     RUN(test_white_noise_welcome_refused);
+    RUN(test_welcome_transient_storage_error);
     RUN(test_openmls_welcome_negatives);
     RUN(test_adopted_rumor_shape);
     RUN(test_mdk_key_package_event_validates);

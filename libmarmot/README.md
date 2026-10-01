@@ -349,7 +349,10 @@ What is checked, everywhere a group is created, joined, loaded or cloned
   (`marmot_process_welcome()`): one libmarmot cannot join (not for its
   KeyPackages, unsupported, invalid) is refused there with its reason and
   never listed as an invitation; one it can join is listed with the group's
-  signed name, description, admins and member count.
+  signed name, description, admins and member count. Only a definitive
+  outcome fails it: a storage error other than "not found" while looking up
+  our KeyPackage leaves it pending (unchecked), and accepting it checks it
+  all again.
 - **Profile.** A group is adopted exactly when its GroupContext carries an
   `app_data_dictionary` extension (what libmarmot refused before 0.12.0);
   everything else keeps the legacy rules.
