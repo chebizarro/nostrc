@@ -329,3 +329,108 @@ Separately, check and send are two calls, so their atomicity relies on the calle
 - **Meson:** the branch fails and master compiles; see M1.
 
 **Not shown:** a live MDK v0.11 attachment exchange in both directions. That needs nostrc-a5u5, as the bead notes.
+
+---
+
+## Addendum: re-review of the fixes (tip `bb161380`)
+
+Six commits address the review: `ea8e1fd0`, `80be3a43`, `5a958dc6`, `1c3aada9`, `3f55083c` and `bb161380`. This branch was rebased onto `bb161380`.
+
+**Final verdict: APPROVE-WITH-NITS.**
+- Every Medium is fixed and pinned by a test that fails when the fix is reverted.
+- One fix is half done. The L2 SONAME change works in meson but not in CMake, and the manifest and README say CMake is fixed too. It is a one-line fix, and should go in with the merge.
+
+### Per finding
+
+| Finding | Status | Verification |
+|---|---|---|
+| M1 meson build | **Fixed** | `meson setup` and `meson compile` on libmarmot succeed; `meson test marmot_test_media` passes |
+| M2 metadata flag | **Fixed** | `GhMlsMediaSealed.stripped` and `.may_have_metadata`, with honest header text. Dropping the copy fails `test-groundhog-mls-media` |
+| M3 0x8007 decode | **Fixed** | Three-way decode, with the corpus rerun below. Five reverts are caught. The sixth, R4, removes encode's explicit `url_unverified` check and survives as an equivalent mutant: an unverified URL never normalizes, so encode refuses it anyway |
+| L1 marmot-gobject MINOR | **Accepted as documented** | `VERSION_MANIFEST.md` now records why AGENTS.md says MAJOR, why the unreleased precedent applies, and what must happen before the first release |
+| L2 SONAME | **Half fixed** (see L2′) | meson builds `@rpath/libmarmot.0.12.dylib`; a CMake shared build still builds `@rpath/libmarmot.0.dylib` |
+| L3 epoch check | **Fixed** | `marmot_media_check_epoch()` reconciles, and keeps the repair on EPOCH_CHANGED. Removing either step fails `test_commits` (`:2478`, `:2126`) |
+| L4 plaintext wipe | **Fixed** | `gh_mls_media_open()` returns an `OPENSSL_cleanse`-on-free GBytes. Reverting to `g_bytes_new_take` fails the wipe counter test |
+| L5 legacy reader | **Fixed** | An all-zero `file_hash` is refused, and the mismatch path is wiped. `legacy-pre-0.12.json` independently opens with my Python model and its hash matches. Accepting a zero hash fails `test_legacy_reader` |
+| L6 size and GVfs | **Fixed** | See below |
+| N2 exporter pinning | **Fixed** | See below |
+| N4 gnostr wording | **Fixed** | The manifest row now says "no user-visible change" and explains why |
+| N1 | Fixed | A comment in `group_image.c` |
+| N3, L7 | Open | Not in scope of these commits; still Nit/Low |
+
+### M3: corpus rerun
+
+I rebuilt the ASAN harnesses against the new headers; `MarmotGroupAvatarUrl` gained `url_unverified`. I reran the same 60,020-input corpus through `marmot_group_avatar_url_decode()` and `marmot_group_avatar_select()`.
+
+**Results**
+- **Producer side:** 0 forks against MDK's `url` 2.5.8 normalizer.
+  - The four drive-letter producer differences from round 1 are gone: `..` over `b:` is now refused.
+  - Three inputs remain where libmarmot repairs invalid IPv6 text (`[02001:…]`), but its output is MDK-canonical.
+- **MDK-canonical stored URLs:** 29,370 checked, 0 refused (was 9,868).
+  - 19,502 come back VALID and 9,868 UNVERIFIED.
+- **ada / Node 26 canonical stored URLs:** 29,364 checked, 0 refused.
+  - 19,823 come back VALID and 9,541 UNVERIFIED.
+- **Soundness of VALID:** 7,414 raw inputs were classified VALID.
+  - All of them are byte-identical to MDK's normalization, and all to ada's.
+  - Every VALID maps to `MARMOT_GROUP_AVATAR_URL`.
+- **UNVERIFIED never gets fetched:** every UNVERIFIED value maps to `MARMOT_GROUP_AVATAR_URL_PLACEHOLDER`, and encode refuses to republish one.
+  - No production code decodes, selects or fetches 0x8007 yet; the only callers are tests.
+  - So "never contacted" holds by construction today. nostrc-m6tp's renderer must branch on `marmot_group_avatar_select()`, not on `url` being non-NULL, because the raw bytes stay exposed in `url`.
+- **Residual:** of 6,451 raw inputs accepted as UNVERIFIED, 2,590 are bytes MDK would reject or rewrite. That is the documented, admin-only fork in the other direction.
+- **Host code points:** both parsers reject a host containing `^` or `|`.
+  - libmarmot calls `^` INVALID and `|` UNVERIFIED. The `|` case could be INVALID, but conservative is fine.
+  - `{` and backtick hosts are canonical for both parsers and stay UNVERIFIED (accepted).
+- **Ordinary URLs:**
+  - Every canonical one from my original list is VALID or UNVERIFIED: the IDN, `_`-host, `size[]`, `|`, `^`, `[x]` and backtick ones.
+  - The raw, non-canonical forms are INVALID as stored bytes: `bücher.example` before punycode, uppercase, `%61`, `{id}`, and a literal space. That is right, since no conformant producer stores them.
+
+### L2′ (Low, remaining): CMake still installs SONAME 0
+
+**Where**
+- `libmarmot/CMakeLists.txt:105-123` sets `SOVERSION ${MARMOT_SOVERSION}` (`0.12`).
+- Then `apply_versioning(marmot)` (`cmake/VersionHelpers.cmake:121-130`) overwrites it with the MAJOR derived from `marmot_VERSION`, because `marmot_SOVERSION` is not defined.
+
+**Evidence**
+- `cmake -DBUILD_SHARED_LIBS=ON`, then `ninja marmot`, builds `libmarmot.0.12.0.dylib` with install name **`@rpath/libmarmot.0.dylib`**.
+- `VERSION_MANIFEST.md` and `README.md` claim `libmarmot.so.0.12` "in both CMakeLists.txt and meson.build".
+
+**Failure scenario:** the round-1 L2 scenario, unchanged, for any CMake-based shared package.
+
+**Fix:** add `set(marmot_SOVERSION "${MARMOT_SOVERSION}")` before `apply_versioning(marmot)`. I tested it temporarily: the install name becomes `@rpath/libmarmot.0.12.dylib`. Then reverted.
+
+### L6: size, GVfs refusal and the privacy-scanner exception
+
+**Size.** `standard::size` is checked against `max_size` before any read, and returns `GH_MLS_MEDIA_ERROR_TOO_LARGE`. Disabling it fails the test.
+
+**GVfs.** A file is refused as not local, before any content is read, in three ways:
+- by path prefix: `$XDG_RUNTIME_DIR/gvfs` or `~/.gvfs`, as given and with symlinks resolved;
+- by the realpath of the file;
+- by a filesystem type containing `gvfs` (`fuse.gvfsd-fuse`).
+
+The test sets `XDG_RUNTIME_DIR` to a temporary directory and covers a direct path and a symlink. Disabling the literal-path check, the resolved-path check, or both (leaving only the filesystem-type check) each fails `test_read_file_refuses_gvfs_fuse`.
+
+This is narrower than the `filesystem::remote` I suggested: kernel NFS, CIFS or sshfs mounts are not refused. Those are not GVfs, so the charter's GVfs rule is met.
+
+**Scanner exception.** `check_privacy.py` gets one exact `(no-tmp-cache, src/mls/gh-mls-media.c, g_get_user_runtime_dir)` entry with its justification:
+- `no-tmp-cache` is not in `UNWAIVABLE`;
+- the scanner fails a stale entry;
+- the use is a path comparison only, with nothing created, written or read under the directory;
+- removing the entry fails `groundhog-privacy-static`, and restoring it passes.
+
+### N2: exporter pinning
+
+- **Generator.** It computes RFC 9420's exporter on openmls's crypto provider (`hkdf_expand` and `hash` from `openmls_rust_crypto`). It self-checks against the committed RFC 9420 key-schedule vectors and asserts my `73bd647f…6635`.
+  - It does not call `MlsGroup::export_secret`, but it is a third independent implementation, and that is sufficient.
+- **Fixture.** Both `exporter_step` entries (exporter `00..1f` and the epoch-9 one, media and group-event) match my Python RFC 9420 code.
+- **End to end.** `test_exporter_step_vectors` decrypts an MDK-sealed case from a stored exporter secret.
+- **Provenance.** A pristine MDK v0.11.0 with the new patch regenerates `media-v2-mdk-v0.11.0.json` byte-identically (sha256 `ead181aa…`).
+
+### Gates at `bb161380`
+
+- **Build:** `ninja` full build OK.
+- **ctest:** 45/45 targeted tests pass, including `groundhog-privacy-static` and `groundhog-privacy-mls`.
+- **`scripts/check-unsequenced-args.py`:** clean.
+- **`scripts/linux-gate.sh --sanitizers`:** pass, 50 tests including `groundhog-mls-media`.
+- **macOS ASAN+UBSAN:** `test_media` and `test_commits` are clean.
+- **Revert checks:** 16 fix reverts in all. 15 are caught by a failing test, and one (R4) is an equivalent mutant.
+- **Cleanliness:** no Docker volumes were created, and the worktree is clean apart from this document.
