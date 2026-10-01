@@ -830,6 +830,9 @@ test_sqlite_secure_delete(MarmotStorage *unused)
     s = marmot_storage_sqlite_new(db_path, NULL);
     assert(s != NULL);
     assert(s->mls_delete(s->ctx, "kp_priv", key, 32) == MARMOT_OK);
+    /* Still open (review A4): neither the pages nor the WAL keep it. */
+    assert(!file_contains(db_path, canary, sizeof(canary)));
+    assert(!file_contains(wal_path, canary, sizeof(canary)));
     marmot_storage_free(s);
     assert(!file_contains(db_path, canary, sizeof(canary)));
     assert(!file_contains(wal_path, canary, sizeof(canary)));

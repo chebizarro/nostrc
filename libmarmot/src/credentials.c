@@ -1239,16 +1239,27 @@ fail_kp:
  * foundation/key-packages.md and account-identity-proof-v2.md @26fa6a6.
  * ──────────────────────────────────────────────────────────────────────── */
 
+bool
+marmot_mls_is_grease(uint16_t id)
+{
+    /* RFC 9420 section 13.5: 0x0A0A, 0x1A1A, ..., 0xEAEA. */
+    return (id & 0x0F0F) == 0x0A0A && (id >> 12) == ((id >> 4) & 0xF) && id <= 0xEAEA;
+}
+
 /* The one `key` id-list tag names exactly @ids as a set (MDK 0.11
- * require_multi_value_key_package_tag_matches(); nostrc-0bdg review L4).
+ * require_multi_value_key_package_tag_matches(); nostrc-0bdg review L4),
+ * leaving out GREASE ids when @skip_grease (MDK's
+ * advertised_capabilities_from_caps() does for extensions, review A2).
  * The tag's values are pairwise distinct (id_list_tag_valid()). */
-static bool
-id_list_tag_is_set(NostrTags *tags, const char *key, const uint16_t *ids, size_t n)
+bool
+marmot_kp_id_list_tag_is_set(NostrTags *tags, const char *key, const uint16_t *ids, size_t n,
+                             bool skip_grease)
 {
     NostrTag *tag = NULL;
     if (count_tags(tags, key, &tag) != 1) return false;
     size_t distinct = 0;
     for (size_t i = 0; i < n; i++) {
+        if (skip_grease && marmot_mls_is_grease(ids[i])) continue;
         bool seen = false;
         for (size_t j = 0; j < i && !seen; j++) seen = ids[j] == ids[i];
         if (seen) continue;
@@ -1397,11 +1408,12 @@ validate_key_package_event_adopted(NostrEvent *event, int64_t now,
         if (!id_list_tag_contains(event->tags, "mls_ciphersuite", suite)) goto fail_kp;
         /* mls_extensions and mls_proposals are exactly the leaf's
          * capabilities (review L4, as MDK 0.11 checks). */
-        if (!id_list_tag_is_set(event->tags, "mls_extensions",
-                                kp_out->leaf_node.cap_extensions,
-                                kp_out->leaf_node.cap_extension_count) ||
-            !id_list_tag_is_set(event->tags, "mls_proposals", kp_out->leaf_node.proposals,
-                                kp_out->leaf_node.proposal_count))
+        if (!marmot_kp_id_list_tag_is_set(event->tags, "mls_extensions",
+                                          kp_out->leaf_node.cap_extensions,
+                                          kp_out->leaf_node.cap_extension_count, true) ||
+            !marmot_kp_id_list_tag_is_set(event->tags, "mls_proposals",
+                                          kp_out->leaf_node.proposals,
+                                          kp_out->leaf_node.proposal_count, false))
             goto fail_kp;
         uint16_t *ids = NULL;
         size_t n_ids = 0;

@@ -1352,6 +1352,12 @@ sql_mls_delete(void *ctx, const char *label,
     int changes = sqlite3_changes(sc->db);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) return MARMOT_ERR_STORAGE;
+    /* A deleted private key (nostrc-0bdg review A4): secure_delete zeroes
+     * the database page, but its earlier frames stay in the WAL until a
+     * checkpoint; write them back and truncate the WAL now (outside a
+     * transaction only: inside one the delete is not durable yet). */
+    if (changes > 0 && strcmp(label, "kp_priv") == 0 && sqlite3_get_autocommit(sc->db))
+        sqlite3_wal_checkpoint_v2(sc->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL);
     return (changes > 0) ? MARMOT_OK : MARMOT_ERR_STORAGE_NOT_FOUND;
 }
 

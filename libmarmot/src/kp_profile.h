@@ -12,6 +12,7 @@
 #include "mls/mls_key_package.h"
 #include "mls/mls_app_components.h"
 #include "mls/mls-internal.h"
+#include <nostr-tag.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -153,6 +154,13 @@ MarmotError marmot_parse_key_package_event_for_profile(const char *event_json,
                                                        MarmotKeyPackageProfile profile,
                                                        int64_t now, MlsKeyPackage *kp_out,
                                                        uint8_t nostr_pubkey_out[32]);
+
+/* RFC 9420 section 13.5 GREASE value (0x0A0A ... 0xEAEA). */
+bool marmot_mls_is_grease(uint16_t id);
+/* Whether the one @key id-list tag of @tags names exactly @ids (n) as a set,
+ * GREASE ids left out when @skip_grease (nostrc-0bdg review L4/A2). */
+bool marmot_kp_id_list_tag_is_set(NostrTags *tags, const char *key, const uint16_t *ids,
+                                  size_t n, bool skip_grease);
 
 /* ADOPTED producer without the MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
  * build gate, for libmarmot's own tests only. */

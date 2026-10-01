@@ -569,6 +569,28 @@ test_capability_tags_match_leaf(void)
     member_free(&bob);
 }
 
+/* Review A2: GREASE extension ids of the leaf are not expected in the
+ * mls_extensions tag (as MDK filters them); proposals are compared whole. */
+static void
+test_grease_skipped(void)
+{
+    CHECK(marmot_mls_is_grease(0x0A0A) && marmot_mls_is_grease(0x1A1A) &&
+          marmot_mls_is_grease(0xEAEA), "GREASE values");
+    CHECK(!marmot_mls_is_grease(0xFAFA) && !marmot_mls_is_grease(0x0A1A) &&
+          !marmot_mls_is_grease(0x0006) && !marmot_mls_is_grease(0x000A), "not GREASE");
+    NostrTags *tags = nostr_tags_new(0);
+    nostr_tags_append(tags, nostr_tag_new("mls_extensions", "0x0006", NULL));
+    const uint16_t leaf[] = {0x0006, 0x2A2A};
+    CHECK(marmot_kp_id_list_tag_is_set(tags, "mls_extensions", leaf, 2, true),
+          "a GREASE leaf extension is not expected in the tag");
+    CHECK(!marmot_kp_id_list_tag_is_set(tags, "mls_extensions", leaf, 2, false),
+          "unless GREASE is compared (proposals)");
+    const uint16_t other[] = {0x0006, 0x0007};
+    CHECK(!marmot_kp_id_list_tag_is_set(tags, "mls_extensions", other, 2, true),
+          "a real extra extension still mismatches");
+    nostr_tags_free(tags);
+}
+
 int
 main(void)
 {
@@ -585,5 +607,6 @@ main(void)
     RUN(test_adopted_enrolled_producer);
     RUN(test_ciphersuite_singleton);
     RUN(test_capability_tags_match_leaf);
+    RUN(test_grease_skipped);
     return 0;
 }
