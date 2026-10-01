@@ -494,7 +494,10 @@ Review fixes, same release:
   overwritten, not left in free pages, whatever the SQLite build's default.
 - An adopted kind:30443 whose `mls_extensions` or `mls_proposals` tag is not
   exactly (as a set) the decoded leaf's capabilities is refused, as MDK 0.11
-  refuses it.
+  refuses it. GREASE extension ids of the leaf (RFC 9420 section 13.5) are
+  not expected in `mls_extensions`, as in MDK.
+- After deleting a KeyPackage's private key the SQLite backend runs
+  `wal_checkpoint(TRUNCATE)`, so no WAL frame keeps it either.
 
 ### 0.12.0 (unreleased): White Noise groups and the read side of their components (nostrc-qp24.5.2, nostrc-m6tp)
 
