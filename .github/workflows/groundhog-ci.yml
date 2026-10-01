@@ -78,7 +78,7 @@ jobs:
             test-groundhog-relay-guard \
             test-groundhog-media-cache-binding \
             test-groundhog-attachments test-groundhog-attachment-ui \
-            test-groundhog-mls-media
+            test-groundhog-mls-media test-groundhog-mls-files
 
       - name: Require complete Groundhog test registration
         run: |
@@ -116,7 +116,7 @@ jobs:
               'groundhog-media', 'groundhog-blossom', 'groundhog-media-purge', 'groundhog-relay-guard',
               'groundhog-media-cache-binding',
               'groundhog-attachments', 'groundhog-attachment-ui',
-              'groundhog-mls-media',
+              'groundhog-mls-media', 'groundhog-mls-files',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -205,6 +205,7 @@ jobs:
         groundhog-multi-send
         groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard
         groundhog-media-cache-binding groundhog-attachments groundhog-mls-media
+        groundhog-mls-files
         nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain
     steps:
       - name: Checkout with submodules
