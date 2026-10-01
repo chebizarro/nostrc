@@ -121,6 +121,11 @@ raw_urls = [
     'https:blossom.example.com', 'https:///blossom.example.com/', ' https://blossom.example.com/ ',
     'https://blossom.example.com/b:/..', 'https://blossom.example.com/%2e/x', 'https://e%41.example/',
     'https://ex%2Eample.com/', 'https://localhost/', 'https://blossom.example.com:65535/', 'https://blossom.example.com:65536/',
+    # IP literals (slice I review L2): provably invalid, and valid edge forms.
+    'https://256.1.1.1/', 'https://1.2.3.4.5/', 'https://x.123/', 'https://[1::2::3]/',
+    'https://[::1%25eth0]/', 'https://08.1.1.1/', 'https://1.2.3.256/', 'https://0x/',
+    'https://0x7f.1/', 'https://[::1:2:3:4:5:6:7]/', 'https://[0:1:2:3:4:5:6:7]/', 'https://[1:2]/',
+    'https://[::ffff:1.2.3.4]/', 'https://[::1.2.3.04]/', 'https://4294967296/', 'https://4294967295/',
 ]
 norm = [json.loads(l) for l in run(['normalize'], '\n'.join(u.encode().hex() for u in raw_urls) + '\n').splitlines()]
 urls = []

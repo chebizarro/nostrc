@@ -394,6 +394,25 @@ host_ipv6(const char *p, size_t n, Str *b)
     if (n == 0 || n >= sizeof tmp || memchr(p, '%', n)) return false;
     memcpy(tmp, p, n);
     tmp[n] = 0;
+    /* An embedded IPv4 tail is checked here, as the WHATWG IPv6 parser
+     * does it (four decimal parts 0..255, no leading zero): inet_pton
+     * differs by platform (macOS accepts "::1.2.3.04"). */
+    const char *dot = memchr(tmp, '.', n);
+    if (dot) {
+        const char *v4 = dot;
+        while (v4 > tmp && v4[-1] != ':') v4--;
+        int parts = 0;
+        for (const char *q = v4; *q;) {
+            const char *s = q;
+            unsigned v = 0;
+            while (*q >= '0' && *q <= '9' && q - s < 4) v = v * 10 + (unsigned)(*q++ - '0');
+            if (q == s || q - s > 3 || v > 255 || (q - s > 1 && *s == '0')) return false;
+            parts++;
+            if (*q == '.') q++;
+            else if (*q) return false;
+        }
+        if (parts != 4 || tmp[n - 1] == '.') return false;
+    }
     uint8_t a[16];
     if (inet_pton(AF_INET6, tmp, a) != 1) return false;
     uint16_t w[8];
@@ -453,9 +472,19 @@ typedef enum { URL_AVATAR, URL_ENDPOINT } UrlProfile;
 _Static_assert(MARMOT_GROUP_AVATAR_URL_MAX == MARMOT_MEDIA_POLICY_ENDPOINT_URL_MAX,
                "one URL length bound for both profiles");
 
+/*
+ * Normalize @raw under @profile.  On failure, *whatwg_invalid (if given)
+ * tells "no WHATWG parser accepts this host" (review L2: an IPv4 host that
+ * ends in a number but fails the IPv4 parser -- an octet over 255, more
+ * than four parts, a non-numeric part --, or a bracketed host that is no
+ * IPv6 address or carries a zone id) from "outside libmarmot's verifiable
+ * subset" (IDNA, '_' hosts, ...).  Only the first makes a stored URL
+ * invalid; the second leaves it unverified.
+ */
 static MarmotError
-url_normalize(const char *raw, UrlProfile profile, char **out)
+url_normalize_ex(const char *raw, UrlProfile profile, char **out, bool *whatwg_invalid)
 {
+    if (whatwg_invalid) *whatwg_invalid = false;
     if (!raw || !out) return MARMOT_ERR_INVALID_ARG;
     *out = NULL;
     size_t raw_len = strlen(raw);
@@ -498,7 +527,13 @@ url_normalize(const char *raw, UrlProfile profile, char **out)
     if (*p == '[') {
         const char *close = memchr(p, ']', auth);
         if (!close) goto done;
-        if (!host_ipv6(p + 1, (size_t)(close - p - 1), &b)) goto done;
+        if (!host_ipv6(p + 1, (size_t)(close - p - 1), &b)) {
+            /* Every WHATWG IPv6 serialization is an inet_pton address;
+             * anything else in brackets (a zone id, a malformed literal)
+             * is no valid host at all. */
+            if (whatwg_invalid) *whatwg_invalid = true;
+            goto done;
+        }
         if (close + 1 < ae) {
             if (close[1] != ':') goto done;
             port = close + 2;
@@ -521,7 +556,11 @@ url_normalize(const char *raw, UrlProfile profile, char **out)
         }
         host[hn] = 0;
         int v4 = host_ipv4(host, &b);
-        if (v4 < 0) goto done;
+        if (v4 < 0) {
+            /* Ends in a number, yet the WHATWG IPv4 parser fails. */
+            if (whatwg_invalid) *whatwg_invalid = true;
+            goto done;
+        }
         if (v4 == 0) {
             /* A domain: non-empty labels (one trailing dot allowed), no
              * punycode labels (they need UTS #46 validation). */
@@ -635,6 +674,12 @@ done:
     free(host);
     free(in);
     return err;
+}
+
+static MarmotError
+url_normalize(const char *raw, UrlProfile profile, char **out)
+{
+    return url_normalize_ex(raw, profile, out, NULL);
 }
 
 MarmotError
@@ -758,8 +803,9 @@ url_classify(const char *url, size_t len, UrlProfile profile)
     /* Inside libmarmot's subset its normalization is exact; outside it,
      * this decoder cannot tell. */
     char *norm = NULL;
-    MarmotError nerr = url_normalize(url, profile, &norm);
-    if (nerr != MARMOT_OK) return AVATAR_UNVERIFIED;
+    bool whatwg_invalid = false;
+    MarmotError nerr = url_normalize_ex(url, profile, &norm, &whatwg_invalid);
+    if (nerr != MARMOT_OK) return whatwg_invalid ? AVATAR_INVALID : AVATAR_UNVERIFIED;
     bool same = strcmp(norm, url) == 0;
     free(norm);
     return same ? AVATAR_VALID : AVATAR_INVALID;

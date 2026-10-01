@@ -246,6 +246,86 @@
    "error": "encrypted media endpoint URL is invalid: invalid port number",
    "in": "https://blossom.example.com:65536/",
    "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv4 address",
+   "in": "https://256.1.1.1/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv4 address",
+   "in": "https://1.2.3.4.5/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv4 address",
+   "in": "https://x.123/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv6 address",
+   "in": "https://[1::2::3]/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv6 address",
+   "in": "https://[::1%25eth0]/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv4 address",
+   "in": "https://08.1.1.1/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv4 address",
+   "in": "https://1.2.3.256/",
+   "ok": false
+  },
+  {
+   "in": "https://0x/",
+   "normalized": "https://0.0.0.0/",
+   "ok": true
+  },
+  {
+   "in": "https://0x7f.1/",
+   "normalized": "https://127.0.0.1/",
+   "ok": true
+  },
+  {
+   "in": "https://[::1:2:3:4:5:6:7]/",
+   "normalized": "https://[0:1:2:3:4:5:6:7]/",
+   "ok": true
+  },
+  {
+   "in": "https://[0:1:2:3:4:5:6:7]/",
+   "normalized": "https://[0:1:2:3:4:5:6:7]/",
+   "ok": true
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv6 address",
+   "in": "https://[1:2]/",
+   "ok": false
+  },
+  {
+   "in": "https://[::ffff:1.2.3.4]/",
+   "normalized": "https://[::ffff:102:304]/",
+   "ok": true
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv6 address",
+   "in": "https://[::1.2.3.04]/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid IPv4 address",
+   "in": "https://4294967296/",
+   "ok": false
+  },
+  {
+   "in": "https://4294967295/",
+   "normalized": "https://255.255.255.255/",
+   "ok": true
   }
  ],
  "cases": [
@@ -2383,6 +2463,139 @@
    "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312e0a626c6f73736f6d2d76312268747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a36353533362f",
    "mdk_ok": false,
    "mdk_error": "encrypted media endpoint URL is invalid: invalid port number"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://256.1.1.1/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311e0a626c6f73736f6d2d76311268747470733a2f2f3235362e312e312e312f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv4 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://1.2.3.4.5/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311e0a626c6f73736f6d2d76311268747470733a2f2f312e322e332e342e352f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv4 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://x.123/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311a0a626c6f73736f6d2d76310e68747470733a2f2f782e3132332f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv4 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[1::2::3]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311e0a626c6f73736f6d2d76311268747470733a2f2f5b313a3a323a3a335d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv6 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[::1%25eth0]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631210a626c6f73736f6d2d76311568747470733a2f2f5b3a3a31253235657468305d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv6 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://08.1.1.1/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311d0a626c6f73736f6d2d76311168747470733a2f2f30382e312e312e312f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv4 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://1.2.3.256/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311e0a626c6f73736f6d2d76311268747470733a2f2f312e322e332e3235362f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv4 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://0x/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631170a626c6f73736f6d2d76310b68747470733a2f2f30782f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://0.0.0.0/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311c0a626c6f73736f6d2d76311068747470733a2f2f302e302e302e302f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://0x7f.1/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311b0a626c6f73736f6d2d76310f68747470733a2f2f307837662e312f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[::1:2:3:4:5:6:7]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631260a626c6f73736f6d2d76311a68747470733a2f2f5b3a3a313a323a333a343a353a363a375d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[0:1:2:3:4:5:6:7]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631260a626c6f73736f6d2d76311a68747470733a2f2f5b303a313a323a333a343a353a363a375d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[1:2]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311a0a626c6f73736f6d2d76310e68747470733a2f2f5b313a325d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv6 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[::ffff:1.2.3.4]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631250a626c6f73736f6d2d76311968747470733a2f2f5b3a3a666666663a312e322e332e345d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[::ffff:102:304]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631250a626c6f73736f6d2d76311968747470733a2f2f5b3a3a666666663a3130323a3330345d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[::1.2.3.04]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631210a626c6f73736f6d2d76311568747470733a2f2f5b3a3a312e322e332e30345d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv6 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://4294967296/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311f0a626c6f73736f6d2d76311368747470733a2f2f343239343936373239362f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid IPv4 address"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://4294967295/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311f0a626c6f73736f6d2d76311368747470733a2f2f343239343936373239352f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://255.255.255.255/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631240a626c6f73736f6d2d76311868747470733a2f2f3235352e3235352e3235352e3235352f",
+   "mdk_ok": true,
+   "mdk_error": null
   }
  ]
 }

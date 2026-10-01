@@ -1173,6 +1173,13 @@ test_policy_verdicts_match_mdk(void)
                 free(enc);
                 valid++;
             } else if (err == MARMOT_OK) {
+                /* Review L2: a provably invalid IP literal is refused, never
+                 * merely unverified. */
+                const char *why = json_string_value(json_object_get(c, "mdk_error"));
+                if (why && (strstr(why, "invalid IPv4 address") || strstr(why, "invalid IPv6 address")))
+                    fprintf(stderr, "\n0x800b %s: unverified, MDK: %s\n", jstr(c, "note"), why);
+                assert(!why || (!strstr(why, "invalid IPv4 address") &&
+                                !strstr(why, "invalid IPv6 address")));
                 unverified++;
             } else {
                 if (mdk_ok) fprintf(stderr, "\n0x800b %s: refuses an MDK-valid state\n", jstr(c, "note"));
@@ -1284,6 +1291,18 @@ test_policy_codecs(void)
     free(enc);
     char *n = NULL;
     assert(marmot_group_avatar_url_normalize("http://x.example/a.png", &n) == MARMOT_ERR_INVALID_INPUT);
+    /* Review L2, the 0x8007 avatar too: an invalid IP literal is invalid
+     * state, a valid but unverifiable host stays unverified. */
+    static const char *const bad_ip_avatars[] = {
+        "https://256.1.1.1/a.png", "https://x.123/a.png", "https://[1::2::3]/a.png",
+        "https://[::1%25eth0]/a.png", NULL };
+    for (size_t i = 0; bad_ip_avatars[i]; i++) {
+        bool unverified = false;
+        assert(decode_stored_url(bad_ip_avatars[i], &unverified) == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    }
+    bool ip_unverified = false;
+    assert(decode_stored_url("https://my_host.example/a.png", &ip_unverified) == MARMOT_OK && ip_unverified);
+    assert(decode_stored_url("https://127.0.0.1/a.png", &ip_unverified) == MARMOT_OK && !ip_unverified);
 
     /* Stored endpoint URLs that no WHATWG serializer produces for a valid
      * endpoint are invalid, never merely unverified (MDK: query, fragment,
@@ -1293,6 +1312,10 @@ test_policy_codecs(void)
         "https://x.example/#f", "https://u@x.example/", "https://u:p@x.example/",
         "http://x.example:80/", "https://x.example:443/", "https://x.example",
         "https://X.example/", "ftp://x.example/", "wss://x.example/", "https://x.example/a b",
+        /* review L2: IP literals no WHATWG parser accepts */
+        "https://256.1.1.1/", "https://1.2.3.4.5/", "https://x.123/", "https://[1::2::3]/",
+        "https://[::1%25eth0]/", "https://08.1.1.1/", "https://4294967296/", "https://[1:2]/",
+        "https://[::1.2.3.04]/",
         NULL };
     for (size_t i = 0; never[i]; i++) {
         size_t ul = strlen(never[i]);
