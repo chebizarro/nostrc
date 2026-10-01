@@ -640,11 +640,11 @@ for both profiles; it replaces the one-parent subset.
   nowhere first, then the lowest-scoring branch, a branch tip before what it
   builds on). A Commit the selection makes canonical, a linear advance of
   the tip included, is never refused for capacity. When the arriving Commit
-  is the one evicted it is `MARMOT_ERR_RESOURCE_REFUSED` (-54): nothing
+  is the one evicted it is `MARMOT_ERR_RESOURCE_REFUSED` (-55): nothing
   kept, never marked processed, retryable (`transports/nostr.md`: offer it
   again later).
 - **Retained, reported.** A Commit retained as a losing candidate is
-  `MARMOT_ERR_COMMIT_RETAINED` (-55): processed, the group unchanged, but its
+  `MARMOT_ERR_COMMIT_RETAINED` (-56): processed, the group unchanged, but its
   state's exporter secret may open held events -- offer the events held as
   `MARMOT_ERR_NIP44` again (`inbound-processing.md`: a transport-deferred
   object is retried when the candidate-key set changes). With that retry
@@ -700,8 +700,8 @@ for both profiles; it replaces the one-parent subset.
   whose epoch went down. Outgoing messages are reported withdrawn only when
   the caller stored them (`marmot_save_created_message()`).
 - **API/ABI.** `MarmotMessageResult` grows at its end (`convergence`; the
-  0.12 SONAME covers it). `MARMOT_ERR_RESOURCE_REFUSED` (-54),
-  `MARMOT_ERR_COMMIT_RETAINED` (-55). `MarmotStorage` grows at its end
+  0.12 SONAME covers it). `MARMOT_ERR_RESOURCE_REFUSED` (-55),
+  `MARMOT_ERR_COMMIT_RETAINED` (-56). `MarmotStorage` grows at its end
   (`messages_in_epochs`, optional): a storage built against an older header
   must be rebuilt (and zero-initialized, as libmarmot's own are). A storage
   may keep less of a saved message than all of it: libmarmot reads back
