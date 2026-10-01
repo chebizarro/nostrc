@@ -1015,11 +1015,27 @@ test_avatar_url_stored_consensus(void)
         "https://e.example/{x}", "https://e.example/a\\b", "https://e.example/?a b",
         "https://e.example/?a'b", "https://e.example/#f", "https://u@e.example/",
         "https://e%41.example/", "http://e.example/", "https://e.example/\x7f",
-        "https://1.2.3/", "https://[2001:DB8::1]/", NULL };
+        "https://1.2.3/", "https://[2001:DB8::1]/", "https://a<b.example/", "https://a^b.example/",
+        "https://a]b.example/",
+        /* Outside the subset too (so only the explicit rule decides); MDK's
+         * normalizer rewrites each, so none is MDK-valid stored state. */
+        "https://My_Host.example/", "https://my_host.example:443/", "https://my_host.example:/",
+        "https://my_host.example:0080/", "https://e.example/a^b`c", "https://e.example/a|{x}",
+        "https://e.example/?a|b'c", "https://e.example/a^b\"c", "https://e.example/a^b<c", NULL };
     for (size_t k = 0; never[k]; k++) {
         if (decode_stored_url(never[k], NULL) != MARMOT_ERR_MEDIA_INVALID_REFERENCE)
             fprintf(stderr, "\naccepted %s\n", never[k]);
         assert(decode_stored_url(never[k], NULL) == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    }
+    /* MDK's canonical forms of those: accepted (unverified). */
+    static const char *const mdk_forms[] = {
+        "https://my_host.example/", "https://my_host.example:80/", "https://e.example/a^b%60c",
+        "https://e.example/a|%7Bx%7D", "https://e.example/?a|b%27c", "https://e.example/a^b%22c",
+        "https://e.example/a^b%3Cc", NULL };
+    for (size_t k = 0; mdk_forms[k]; k++) {
+        bool unverified = false;
+        assert(decode_stored_url(mdk_forms[k], &unverified) == MARMOT_OK);
+        assert(unverified);
     }
     /* Inside the subset and canonical: valid. */
     static const char *const fine[] = {

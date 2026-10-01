@@ -2325,6 +2325,28 @@ test_send_stores_step_before_event(void)
     shim_free(alice.m);
 }
 
+/* The epoch check runs in one transaction, and EPOCH_CHANGED is an answer,
+ * not a failure: a repair it made is committed, not rolled back. */
+static void
+test_media_check_epoch_transaction(void)
+{
+    Marmot *m = shim_marmot_new();
+    MarmotGroupId gid = marmot_group_id_new((const uint8_t *)"epoch-txn", 9);
+    MarmotGroup *g = marmot_group_new();
+    g->mls_group_id = marmot_group_id_new(gid.data, gid.len);
+    g->epoch = 3;
+    OK(g_shim.inner->save_group(g_shim.inner->ctx, g));   /* outside the shim's gate */
+    marmot_group_free(g);
+    shim_reset_counts();
+    OK(marmot_media_check_epoch(m, &gid, 3));
+    expect_txns(1, 1, 0, "check, same epoch");
+    shim_reset_counts();
+    CHECK(marmot_media_check_epoch(m, &gid, 2) == MARMOT_ERR_MEDIA_EPOCH_CHANGED, "older epoch");
+    expect_txns(1, 1, 0, "check, epoch changed: committed");
+    marmot_group_id_free(&gid);
+    shim_free(m);
+}
+
 /* ── Late messages (nostrc-qp24.7) ────────────────────────────────────── */
 
 /* Messages Bob sent in epoch E reach Charlie after Charlie applied the Commit
@@ -4806,6 +4828,7 @@ main(int argc, char **argv)
     RUN(test_late_messages_use_retained_parent);
     RUN(test_media_source_epoch_of_late_message);
     RUN(test_media_check_epoch_reconciles);
+    RUN(test_media_check_epoch_transaction);
     RUN(test_operations_run_in_one_transaction);
     RUN(test_send_stores_step_before_event);
     RUN(test_forged_member_identity_rejected);
