@@ -1277,6 +1277,32 @@ no_legacy_left(gpointer data)
 
 #define LEGACY_KEY_PACKAGES "mls-legacy-key-packages"
 
+/* Whether the relay keeps the event id. */
+static gboolean
+kept_on(WireRelay *relay, const gchar *id)
+{
+  for (guint i = 0; i < relay->stored->len; i++)
+    if (g_strcmp0(((WireStored *)g_ptr_array_index(relay->stored, i))->id, id) == 0)
+      return TRUE;
+  return FALSE;
+}
+
+/* Each format's current KeyPackage is kept on both write relays, W and H.
+ * wait_published() waits for W only; the service still publishes to H
+ * after W answered, so a test that changes how the relays answer must wait
+ * for both first, or H answers the changed way. */
+static gboolean
+current_key_packages_on_both(gpointer data)
+{
+  App *app = data;
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    const gchar *id = gh_mls_service_get_key_package_id_for_format(app->service, f);
+    if (id && (!kept_on(&app->world->w, id) || !kept_on(&app->world->h, id)))
+      return FALSE;
+  }
+  return TRUE;
+}
+
 /* Review L1 and M4: "Let people using older Marmot apps invite me" switched
  * off. The MDK 0.8 KeyPackage is withdrawn -- a NIP-09 deletion request to
  * the write relays naming its slot's address, dated no earlier than its
@@ -1300,13 +1326,18 @@ test_legacy_switched_off(void)
   wait_published(alice);
   const GhMlsKeyPackageFormat A = GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED;
   const GhMlsKeyPackageFormat L = GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
-  /* Quick rotations: the newest KeyPackages are dated ahead of the clock. */
-  for (guint i = 0; i < 3; i++) {
+  /* Quick rotations: the newest KeyPackages are dated ahead of the clock
+   * (each makes two, one second apart at least; a loaded machine may need
+   * more than three to get ahead). */
+  for (guint i = 0; i < 3 || (i < 10 && newest_sent_created_at(&w.w, ALICE, L) <= real_now());
+       i++) {
     g_autofree gchar *before = g_strdup(kp_id(alice));
     rotate(alice);
     wait_settled(alice, before);
     wait_published(alice);
   }
+  /* Both write relays have them before they are told to refuse. */
+  spin_until(current_key_packages_on_both, alice, "the KeyPackages on W and H");
   g_autofree gchar *l_ref = NULL, *l_d = NULL, *a_ref = NULL, *l_json = NULL;
   newest_key_package_of(&w.w, ALICE, L, &l_ref, &l_d, &l_json);
   newest_key_package_of(&w.w, ALICE, A, &a_ref, NULL, NULL);
@@ -1319,6 +1350,11 @@ test_legacy_switched_off(void)
   g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, FALSE);
   DeletionWait asked = { &w.w, ALICE, 1 };
   spin_until(deletions_reached, &asked, "the withdrawal sent");
+  /* ...and refused by H too (a relay answers as it receives): lifting the
+   * refusal before H had it would let H accept this request, retiring the
+   * keys while W, which refused, still serves the KeyPackage. */
+  DeletionWait asked_h = { &w.h, ALICE, 1 };
+  spin_until(deletions_reached, &asked_h, "the withdrawal refused by H");
   g_autoptr(GPtrArray) sent = deletions_on(&w.w, ALICE);
   NostrEvent *request = g_ptr_array_index(sent, 0);
   g_autofree gchar *address = g_strdup_printf("30443:%s:%s", hex[ALICE], l_d);
