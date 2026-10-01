@@ -38,14 +38,17 @@ d_tag(NostrEvent *event)
   return NULL;
 }
 
+/* `key`'s kind-30443 events on the relay of one format (-1: any); out_d:
+ * the newest one's d tag. */
 static guint
-key_packages_by(WireRelay *relay, guint key, gchar **out_d)
+key_packages_of(WireRelay *relay, guint key, gint format, gchar **out_d)
 {
   g_autoptr(GPtrArray) events = published(relay, 30443);
   guint n = 0;
   for (guint i = 0; i < events->len; i++) {
     NostrEvent *event = g_ptr_array_index(events, i);
-    if (g_strcmp0(nostr_event_get_pubkey(event), hex[key]) != 0)
+    if (g_strcmp0(nostr_event_get_pubkey(event), hex[key]) != 0 ||
+        (format >= 0 && (guint)format != key_package_format(event)))
       continue;
     n++;
     if (out_d) {
@@ -54,6 +57,12 @@ key_packages_by(WireRelay *relay, guint key, gchar **out_d)
     }
   }
   return n;
+}
+
+static guint
+key_packages_by(WireRelay *relay, guint key, gchar **out_d)
+{
+  return key_packages_of(relay, key, -1, out_d);
 }
 
 typedef struct {
@@ -84,9 +93,10 @@ key_package_rotated(gpointer data)
            GH_MLS_KEY_PACKAGE_PUBLISHED;
 }
 
-/* MIP-00: each account's KeyPackage on its own kind-10002 write relays only
- * (never its 10050 inbox relays, nostrc-0bdg), signed by the account; a
- * rotation replaces it in the same `d` slot. */
+/* MIP-00: each account's KeyPackages on its own kind-10002 write relays only
+ * (never its 10050 inbox relays, nostrc-0bdg), signed by the account: one per
+ * format (nostrc-lf62), each in its own `d` slot, the MDK 0.8 one the newer;
+ * the user's rotation replaces both, each in its own slot. */
 static void
 test_key_packages(void)
 {
@@ -94,11 +104,23 @@ test_key_packages(void)
   const guint keys[] = { ALICE, BOB };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  const guint formats = GH_MLS_ADOPTED_KEY_PACKAGES ? 2 : 1;
   g_autofree gchar *d_first = NULL, *d_second = NULL;
-  g_assert_cmpuint(key_packages_by(&w.w, ALICE, &d_first), ==, 1);
+  g_autofree gchar *d_adopted = NULL, *d_adopted_second = NULL;
+  g_assert_cmpuint(key_packages_by(&w.w, ALICE, NULL), ==, formats);
+  g_assert_cmpuint(key_packages_of(&w.w, ALICE, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &d_first), ==,
+                   1);
+  g_assert_cmpuint(key_packages_of(&w.w, ALICE, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, &d_adopted),
+                   ==, formats - 1);
   g_assert_cmpuint(key_packages_by(&w.x, ALICE, NULL), ==, 0);
-  g_assert_cmpuint(key_packages_by(&w.w, BOB, NULL), ==, 1);
+  g_assert_cmpuint(key_packages_by(&w.w, BOB, NULL), ==, formats);
   g_assert_nonnull(d_first);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  g_assert_nonnull(d_adopted);
+  g_assert_cmpstr(d_first, !=, d_adopted);   /* one slot per format */
+  /* The MDK 0.8 one is the newer: a slot-blind legacy reader takes it. */
+  g_assert_cmpuint(newest_key_package_format(&w.w, ALICE), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+#endif
   const gchar *first_id = gh_mls_service_get_key_package_id(w.apps[ALICE].service);
   g_assert_nonnull(first_id);
   g_autofree gchar *first = g_strdup(first_id);
@@ -106,17 +128,24 @@ test_key_packages(void)
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_mls_service_rotate_key_package(w.apps[ALICE].service, &error));
   g_assert_no_error(error);
-  CountWait again = { &w.w, ALICE, 2 };
-  spin_until(key_packages_reached, &again, "the rotated KeyPackage");
+  CountWait again = { &w.w, ALICE, 2 * formats };
+  spin_until(key_packages_reached, &again, "the rotated KeyPackages");
   RotatedWait rotated = { &w.apps[ALICE], first };
   spin_until(key_package_rotated, &rotated, "the rotated KeyPackage accepted");
-  g_assert_cmpuint(key_packages_by(&w.w, ALICE, &d_second), ==, 2);
+  g_assert_cmpuint(key_packages_of(&w.w, ALICE, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &d_second), ==,
+                   2);
   g_assert_cmpstr(d_first, ==, d_second);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  g_assert_cmpuint(key_packages_of(&w.w, ALICE, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED,
+                                   &d_adopted_second), ==, 2);
+  g_assert_cmpstr(d_adopted, ==, d_adopted_second);
+  g_assert_cmpuint(newest_key_package_format(&w.w, ALICE), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+#endif
 
   /* A restart within the lifetime publishes nothing new. */
   app_restart(&w.apps[ALICE]);
   spin_until(key_package_published, &w.apps[ALICE], "the KeyPackage state after a restart");
-  g_assert_cmpuint(key_packages_by(&w.w, ALICE, NULL), ==, 2);
+  g_assert_cmpuint(key_packages_by(&w.w, ALICE, NULL), ==, 2 * formats);
   world_down(&w);
 }
 
@@ -169,20 +198,29 @@ change(App *app, OpWait *wait)
   (void)app;
 }
 
-/* The whole life of a group among three accounts. */
+/* The whole life of a group among three Groundhog accounts: invite, chat,
+ * add, rename, remove, leave, restart. With the shipped producers they make
+ * an adopted-profile group (nostrc-lf62: each has an adopted KeyPackage);
+ * `legacy` pins every account to the MDK 0.8 format, so the same life runs
+ * in an MDK 0.8-profile group. */
 static void
-test_group_lifecycle(void)
+group_lifecycle(gboolean legacy)
 {
   World w;
+  world_legacy_only = legacy;
   world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
   wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
   accept_contact(alice, BOB);
   accept_contact(alice, CAROL);
+  const gboolean adopted = GH_MLS_ADOPTED_KEY_PACKAGES && !legacy;
+  const GhMlsKeyPackageFormat format = adopted ? GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED
+                                               : GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
 
   /* Create and invite: one Add, merged on the relay's OK. */
   GhMlsGroup *ga = create_group(alice, "Trio", (const guint[]){ BOB }, 1);
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  g_assert_cmpint(gh_mls_group_get_adopted(ga), ==, adopted);
   g_assert_true(gh_mls_group_get_is_admin(ga));
   g_assert_false(gh_mls_group_get_pending_commit(ga));
   g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, 1);
@@ -197,9 +235,10 @@ test_group_lifecycle(void)
 
   /* Join through the Welcome. */
   GhMlsGroup *gb = join(bob, ALICE);
-  /* MIP-00: the Welcome spent Bob's KeyPackage; a new one replaces it. */
-  CountWait rotated = { &w.w, BOB, 2 };
-  spin_until(key_packages_reached, &rotated, "Bob's KeyPackage rotated after the join");
+  g_assert_cmpint(gh_mls_group_get_adopted(gb), ==, adopted);
+  /* MIP-00: the Welcome spent Bob's KeyPackage of the group's format; a new
+   * one replaces it in that format's slot. */
+  g_assert_cmpuint(key_packages_of(&w.w, BOB, format, NULL), ==, 2);
   g_assert_cmpstr(gh_mls_group_get_room_id(gb), ==, room);
   g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Trio");
   g_assert_false(gh_mls_group_get_is_admin(gb));
@@ -309,12 +348,15 @@ test_group_lifecycle(void)
   g_assert_null(gh_mls_group_get_removed_by(gc));
   g_assert_false(gh_mls_group_get_active(gc));
 
-  /* Bob (not an admin) leaves for everyone (nostrc-2um6): his SelfRemove,
-   * which Alice commits; then he stops reading; his room and history stay. */
+  /* Bob (not an admin) leaves for everyone (nostrc-2um6), which Alice
+   * commits; then he stops reading; his room and history stay. */
   g_autoptr(GError) error = NULL;
-  /* Groundhog makes its groups alone, so they do not require SelfRemove
-   * (MDK's rule, review L1): the leave is a Remove request (review M1). */
-  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_ADMINS);
+  /* An adopted group's members all support SelfRemove: Bob's own leave
+   * proposal. Groundhog makes its MDK 0.8 groups alone, so they do not
+   * require SelfRemove (MDK's rule, review L1): there the leave is a Remove
+   * request (review M1). */
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==,
+                  adopted ? GH_MLS_LEAVE_EVERYONE : GH_MLS_LEAVE_ADMINS);
   g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
   g_assert_no_error(error);
   g_assert_true(gh_mls_group_get_leaving(gb));
@@ -343,6 +385,18 @@ test_group_lifecycle(void)
   g_assert_nonnull(find_message(alice, room, "carol here"));
   wait_live(ga2);
   world_down(&w);
+}
+
+static void
+test_group_lifecycle(void)
+{
+  group_lifecycle(FALSE);
+}
+
+static void
+test_group_lifecycle_legacy(void)
+{
+  group_lifecycle(TRUE);
 }
 
 typedef struct {
@@ -2284,6 +2338,8 @@ test_own_commit_echo_before_ok(void)
 {
   World w;
   const guint keys[] = { ALICE, BOB };
+  /* Carol's older app joins only an MDK 0.8-format group (nostrc-lf62). */
+  world_legacy_only = TRUE;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
@@ -2325,6 +2381,8 @@ test_unproven_member_identity(void)
 {
   World w;
   const guint keys[] = { ALICE, BOB };
+  /* MDK 0.8-format groups only (nostrc-lf62): members without the proof */
+  world_legacy_only = TRUE;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
@@ -2488,6 +2546,8 @@ test_refused_change_honest(void)
 {
   World w;
   world_fake_clock = TRUE;
+  /* MDK 0.8-format groups only (nostrc-lf62): a member without the proof */
+  world_legacy_only = TRUE;
   world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
   wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
@@ -2556,6 +2616,8 @@ test_forged_member_refused(void)
 {
   World w;
   const guint keys[] = { ALICE, BOB };
+  /* MDK 0.8-format groups only (nostrc-lf62): mls-forge.h forges an MDK 0.8 Add */
+  world_legacy_only = TRUE;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
@@ -2587,15 +2649,15 @@ test_forged_member_refused(void)
   world_down(&w);
 }
 
-/* W24b slice H review L2. In an adopted group (made with the test hook:
- * Groundhog offers none yet), an admin's Commit libmarmot refuses for good
+/* W24b slice H review L2. In an adopted group (Groundhog's own, between two
+ * of its accounts: nostrc-lf62), an admin's Commit libmarmot refuses for good
  * -- here Alice's modified client restating the active lifecycle, a
  * "redundant lifecycle update" MDK refuses too -- is "change-refused",
  * cause "unfollowable", kept across a restart; a non-admin's junk Commit
  * marks nothing. Re-review R4: once every other member (Alice, whose own
  * client never applied it) is read at the same epoch after it, the refusal
  * and its cursor hold are released; the group then moves on as usual. */
-static void
+static G_GNUC_UNUSED void
 test_adopted_change_refused(void)
 {
   World w;
@@ -2604,27 +2666,8 @@ test_adopted_change_refused(void)
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
   accept_contact(alice, BOB);
-  /* Bob's adopted KeyPackage, made by libmarmot in his own store (the
-   * producer is build-gated; its test entry point). */
-  Marmot *mb = gh_mls_service_get_marmot(bob->service);
-  guint8 pk[32], sk[32];
-  g_assert_true(nostr_hex2bin(pk, hex[BOB], sizeof pk));
-  g_assert_true(nostr_hex2bin(sk, gh_test_secret[BOB], sizeof sk));
-  MarmotKeyPackageResult kp;
-  memset(&kp, 0, sizeof kp);
-  g_assert_cmpint(marmot_create_key_package_adopted_internal(mb, pk, sk, NULL, NULL, &kp), ==,
-                  MARMOT_OK);
-  memset(sk, 0, sizeof sk);
-  const gchar *relays[] = { w.g.url, NULL };
-  const gchar *kps[] = { kp.event_json, NULL };
-  OpWait created = { 0 };
-  gh_mls_service_test_create_adopted_group_async(alice->service, "Adopted", relays, kps, NULL,
-                                                 on_created, &created);
-  spin_until(op_done, &created, "the adopted group creation");
-  g_assert_no_error(created.error);
-  GhMlsGroup *ga = created.result;
-  g_object_unref(ga);   /* the service keeps it */
-  marmot_key_package_result_free(&kp);
+  GhMlsGroup *ga = create_group(alice, "Adopted", (const guint[]){ BOB }, 1);
+  g_assert_true(gh_mls_group_get_adopted(ga));
   GhMlsGroup *gb = join(bob, ALICE);
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   guint64 epoch = gh_mls_group_get_epoch(gb);
@@ -2761,10 +2804,15 @@ is_leaving(gpointer data)
  * Carol's group ends as LEFT for good, and the two go on. Alice, an admin,
  * can only leave on this device (admins step down first). */
 static void
-test_member_leaves(void)
+member_leaves(gboolean legacy)
 {
   World w;
+  world_legacy_only = legacy;
   world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  /* An adopted group (nostrc-lf62): every member supports SelfRemove, so
+   * Carol's own leave proposal, which any member commits; an MDK 0.8 group
+   * Groundhog made: a Remove request an admin commits (review M1). */
+  const gboolean adopted = GH_MLS_ADOPTED_KEY_PACKAGES && !legacy;
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
   wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
   accept_contact(alice, BOB);
@@ -2780,7 +2828,9 @@ test_member_leaves(void)
   g_signal_connect(gb, "member-left", G_CALLBACK(on_member_left), &bob_log);
 
   g_assert_cmpint(gh_mls_service_leave_kind(alice->service, ga), ==, GH_MLS_LEAVE_DEVICE_ADMIN);
-  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_ADMINS);
+  g_assert_cmpint(gh_mls_group_get_adopted(ga), ==, adopted);
+  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==,
+                  adopted ? GH_MLS_LEAVE_EVERYONE : GH_MLS_LEAVE_ADMINS);
 
   set_online(alice, FALSE);
   set_online(bob, FALSE);
@@ -2788,7 +2838,7 @@ test_member_leaves(void)
   g_assert_true(gh_mls_service_leave(carol->service, gc, &error));
   g_assert_no_error(error);
   g_assert_true(gh_mls_group_get_leaving(gc));
-  g_assert_true(gh_mls_group_get_leave_via_admin(gc));
+  g_assert_cmpint(gh_mls_group_get_leave_via_admin(gc), ==, !adopted);
   g_assert_true(gh_mls_group_get_active(gc));
   g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==,
                   GH_MLS_LEAVE_DEVICE_WAITING);
@@ -2839,6 +2889,18 @@ test_member_leaves(void)
   g_ptr_array_unref(alice_log.left);
   g_ptr_array_unref(bob_log.left);
   world_down(&w);
+}
+
+static void
+test_member_leaves(void)
+{
+  member_leaves(FALSE);
+}
+
+static void
+test_member_leaves_legacy(void)
+{
+  member_leaves(TRUE);
 }
 
 typedef struct {
@@ -2981,7 +3043,9 @@ main(int argc, char **argv)
   mls_world_init();
   g_test_add_func("/groundhog/mls-service/key-packages", test_key_packages);
   g_test_add_func("/groundhog/mls-service/group-lifecycle", test_group_lifecycle);
+  g_test_add_func("/groundhog/mls-service/group-lifecycle-legacy", test_group_lifecycle_legacy);
   g_test_add_func("/groundhog/mls-service/member-leaves", test_member_leaves);
+  g_test_add_func("/groundhog/mls-service/member-leaves-legacy", test_member_leaves_legacy);
   g_test_add_func("/groundhog/mls-service/commit-before-proposal", test_commit_before_proposal);
   g_test_add_func("/groundhog/mls-service/leave-failed", test_leave_failed);
   g_test_add_func("/groundhog/mls-service/restart-mid-commit", test_restart_mid_commit);
@@ -3030,7 +3094,9 @@ main(int argc, char **argv)
                   test_own_commit_echo_before_ok);
   g_test_add_func("/groundhog/mls-service/refused-change-honest", test_refused_change_honest);
   g_test_add_func("/groundhog/mls-service/forged-member-refused", test_forged_member_refused);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func("/groundhog/mls-service/adopted-change-refused", test_adopted_change_refused);
+#endif
   g_test_add_func("/groundhog/mls-service/unproven-invitee",
                   test_unproven_invitee);
 #endif

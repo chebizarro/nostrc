@@ -14,18 +14,19 @@
  *  - rotation-ack-tied: a rotation reuses the `d` slot; a replacement no
  *    relay accepted keeps the old private init key; the first OK of a newer
  *    one deletes it.
- *  - delayed-welcome (MDK 0.8 producer): a Welcome to the old last-resort
- *    KeyPackage joins while its replacement is unconfirmed; once a relay
- *    accepted the replacement, a Welcome delayed in transit fails -- and
- *    that failure rotates nothing.
- *  - pending-invitations-defer-rotation (MDK 0.8 producer): a join's
+ *  - delayed-welcome: a Welcome to the old last-resort KeyPackage joins
+ *    while its replacement is unconfirmed; once a relay accepted the
+ *    replacement, a Welcome delayed in transit fails -- an adopted one as it
+ *    arrives, never listed; an MDK 0.8 one when accepted -- and that failure
+ *    rotates nothing.
+ *  - pending-invitations-defer-rotation: a join's
  *    replacement is held while other received invitations are pending (made
  *    with the same last-resort KeyPackage), across a restart; the last one
  *    joins, then the replacement retires the old key.
  *  - rotation-held-for-pending-invitation, lifetime-rotation-held (review
  *    H1): the user's rotate and the lifetime rotation are held the same way.
  *  - hold-cap-expires (review H1/M1): the hold ends at its cap, by its timer.
- *  - failed-welcome-preserves (MDK 0.8 producer): a Welcome that fails keeps
+ *  - failed-welcome-preserves (an MDK 0.8 group): a Welcome that fails keeps
  *    the key and rotates nothing; the inviter's next Welcome to the same
  *    KeyPackage joins.
  *  - fresh-accounts-invite-each-other, relay-list-never-replaced (review H2):
@@ -33,12 +34,18 @@
  *    consented kind 10002 included) and invite each other; an existing 10002
  *    is never offered for replacement nor replaced.
  *
- * Built twice: with the MDK 0.8 producer, and with the adopted producer
- * (GH_MLS_ADOPTED_KEY_PACKAGES=1, the compile gate a release flips, with
- * libmarmot's ungated internal producer standing in for its own build gate).
- * Groundhog's groups are legacy-profile, which cannot add an adopted
- * KeyPackage yet (adopted Commits, nostrc-lf62): the Welcome cases run with
- * the MDK 0.8 producer only. */
+ *  - formats-own-lifecycle (both formats, nostrc-lf62): each format has its
+ *    own `d` slot; a join through one format's KeyPackage replaces that
+ *    format only, and its OK retires only that format's old key; an adopted
+ *    replacement brings an MDK 0.8 one along, which stays the newest.
+ *
+ * Built twice: with the MDK 0.8 producer only (a build without libmarmot's
+ * adopted producer), and as shipped (GH_MLS_ADOPTED_KEY_PACKAGES=1: both
+ * formats; libmarmot's ungated internal producer stands in when libmarmot's
+ * own gate is off). Every case follows one format, kp_format: the adopted
+ * one in the shipped build -- Groundhog accounts make adopted groups with
+ * each other there, so the Welcome cases spend adopted KeyPackages -- and
+ * the MDK 0.8 one otherwise; a case about MDK 0.8 groups sets it so. */
 #include "mls-world.h"
 
 #include <nostr-keys.h>
@@ -47,6 +54,11 @@
 #endif
 
 #define VERIFIED_ONLY "only-join-verified-mls-groups"
+
+/* The KeyPackage format the running case follows (see above). */
+#define KP_FORMAT_DEFAULT (GH_MLS_ADOPTED_KEY_PACKAGES ? GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED \
+                                                      : GH_MLS_KEY_PACKAGE_FORMAT_LEGACY)
+static GhMlsKeyPackageFormat kp_format = KP_FORMAT_DEFAULT;
 
 /* ---- helpers ------------------------------------------------------------------- */
 
@@ -88,18 +100,27 @@ tag_count(NostrEvent *event, const gchar *key)
   return n;
 }
 
-/* `key`'s kind-30443 events the relay kept, oldest first (borrowed). */
+/* `key`'s kind-30443 events of a format the relay kept, oldest first
+ * (borrowed). */
 static GPtrArray *
-stored_key_packages(WireRelay *relay, guint key)
+stored_key_packages_of(WireRelay *relay, guint key, GhMlsKeyPackageFormat format)
 {
   GPtrArray *out = g_ptr_array_new();
   for (guint i = 0; i < relay->stored->len; i++) {
     WireStored *stored = g_ptr_array_index(relay->stored, i);
     if (nostr_event_get_kind(stored->event) == 30443 &&
-        g_strcmp0(nostr_event_get_pubkey(stored->event), hex[key]) == 0)
+        g_strcmp0(nostr_event_get_pubkey(stored->event), hex[key]) == 0 &&
+        key_package_format(stored->event) == format)
       g_ptr_array_add(out, stored);
   }
   return out;
+}
+
+/* ...of the format the case follows. */
+static GPtrArray *
+stored_key_packages(WireRelay *relay, guint key)
+{
+  return stored_key_packages_of(relay, key, kp_format);
 }
 
 static guint
@@ -109,11 +130,13 @@ n_key_packages(WireRelay *relay, guint key)
   return all->len;
 }
 
-/* The newest kept KeyPackage of `key` on the relay: its `i` (ref) and `d`. */
+/* The newest kept KeyPackage of `key` of a format on the relay: its `i`
+ * (ref) and `d`. */
 static void
-newest_key_package(WireRelay *relay, guint key, gchar **ref, gchar **d, gchar **json)
+newest_key_package_of(WireRelay *relay, guint key, GhMlsKeyPackageFormat format, gchar **ref,
+                      gchar **d, gchar **json)
 {
-  g_autoptr(GPtrArray) all = stored_key_packages(relay, key);
+  g_autoptr(GPtrArray) all = stored_key_packages_of(relay, key, format);
   g_assert_cmpuint(all->len, >, 0);
   WireStored *newest = g_ptr_array_index(all, all->len - 1);
   if (ref)
@@ -122,6 +145,13 @@ newest_key_package(WireRelay *relay, guint key, gchar **ref, gchar **d, gchar **
     *d = g_strdup(tag_value(newest->event, "d"));
   if (json)
     *json = g_strdup(newest->json);
+}
+
+/* ...of the format the case follows. */
+static void
+newest_key_package(WireRelay *relay, guint key, gchar **ref, gchar **d, gchar **json)
+{
+  newest_key_package_of(relay, key, kp_format, ref, d, json);
 }
 
 /* Whether any frame a client sent the relay mentions text. */
@@ -171,11 +201,18 @@ typedef struct {
   const gchar *old_id;
 } RotatedWait;
 
+/* The followed format's KeyPackage id (the last one a relay accepted). */
+static const gchar *
+kp_id(App *app)
+{
+  return gh_mls_service_get_key_package_id_for_format(app->service, kp_format);
+}
+
 static G_GNUC_UNUSED gboolean
 rotated(gpointer data)
 {
   RotatedWait *wait = data;
-  const gchar *id = gh_mls_service_get_key_package_id(wait->app->service);
+  const gchar *id = kp_id(wait->app);
   return id && g_strcmp0(id, wait->old_id) != 0 &&
          gh_mls_service_get_key_package_state(wait->app->service) ==
            GH_MLS_KEY_PACKAGE_PUBLISHED;
@@ -202,13 +239,17 @@ has_init_key(App *app, const gchar *ref)
   return gh_mls_service_test_has_init_key(app->service, ref);
 }
 
-/* When the service last recorded its KeyPackage published (store cursor
- * "mls/key-package"); a rotation request sets it to 0 at once. */
+/* When the service last recorded the followed format's KeyPackage published
+ * (store cursor "mls/key-package", key "" for the MDK 0.8 format and
+ * "adopted" for the adopted one); a rotation request sets it to 0 at once. */
 static G_GNUC_UNUSED gint64
 key_package_cursor(App *app)
 {
   gint64 at = -1;
-  g_assert_true(gh_store_get_cursor(app->store, "mls/key-package", "", &at, NULL));
+  g_assert_true(gh_store_get_cursor(app->store, "mls/key-package",
+                                    kp_format == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED ? "adopted"
+                                                                                   : "",
+                                    &at, NULL));
   return at;
 }
 
@@ -284,7 +325,7 @@ settled(gpointer data)
 {
   SettledWait *wait = data;
   App *app = wait->app;
-  const gchar *id = gh_mls_service_get_key_package_id(app->service);
+  const gchar *id = kp_id(app);
   if (!id || g_strcmp0(id, wait->old_id) == 0 ||
       gh_mls_service_get_key_package_state(app->service) != GH_MLS_KEY_PACKAGE_PUBLISHED ||
       key_package_cursor(app) <= 0)
@@ -307,7 +348,7 @@ assert_held(World *w, App *app, const gchar *ref, const gchar *id)
   g_assert_cmpint(gh_mls_service_get_key_package_state(app->service), ==,
                   GH_MLS_KEY_PACKAGE_PUBLISHED);
   /* The id is known again after a restart only once one is accepted. */
-  const gchar *now_id = gh_mls_service_get_key_package_id(app->service);
+  const gchar *now_id = kp_id(app);
   g_assert_true(now_id == NULL || g_str_equal(now_id, id));
   g_assert_true(has_init_key(app, ref));
   drain();
@@ -328,10 +369,26 @@ key_package_aged(gpointer data)
   return at > 0 && g_get_real_time() / G_USEC_PER_SEC - at >= wait->age;
 }
 
+typedef struct {
+  WireRelay *relay;
+  guint key;
+  GhMlsKeyPackageFormat format;
+  guint count;
+} FormatCountWait;
+
+/* The relay keeps at least `count` of `key`'s KeyPackages of `format`. */
+static gboolean
+format_count_reached(gpointer data)
+{
+  FormatCountWait *wait = data;
+  g_autoptr(GPtrArray) all = stored_key_packages_of(wait->relay, wait->key, wait->format);
+  return all->len >= wait->count;
+}
+
 /* ---- the producer's shape -------------------------------------------------------- */
 
-/* The published KeyPackage in the producer profile's strict form; for the
- * MDK 0.8 producer its `relays` tag names only the write-capable relays. */
+/* The published KeyPackage in its format's strict form; an MDK 0.8 one's
+ * `relays` tag names only the write-capable relays. */
 static void
 assert_strict_shape(World *w, const gchar *json)
 {
@@ -341,16 +398,24 @@ assert_strict_shape(World *w, const gchar *json)
   g_assert_cmpuint(tag_count(event, "i"), ==, 1);
   g_assert_cmpuint(tag_count(event, "mls_protocol_version"), ==, 1);
   g_assert_cmpuint(tag_count(event, "mls_ciphersuite"), ==, 1);
-#if GH_MLS_ADOPTED_KEY_PACKAGES
-  g_assert_cmpint(marmot_validate_key_package_event_json(json, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
-                                                         0, NULL, NULL), ==, MARMOT_OK);
-  g_assert_cmpuint(tag_count(event, "encoding"), ==, 0);
-  g_assert_cmpuint(tag_count(event, "relays"), ==, 0);
-  g_assert_cmpuint(tag_count(event, "app_components"), ==, 1);
-  (void)w;
-#else
+  if (key_package_format(event) == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED) {
+    g_assert_cmpint(marmot_validate_key_package_event_json(json,
+                                                           MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, 0,
+                                                           NULL, NULL), ==, MARMOT_OK);
+    /* ...and not under the other format's rules. */
+    g_assert_cmpint(marmot_validate_key_package_event_json(json,
+                                                           MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, 0,
+                                                           NULL, NULL), !=, MARMOT_OK);
+    g_assert_cmpuint(tag_count(event, "encoding"), ==, 0);
+    g_assert_cmpuint(tag_count(event, "relays"), ==, 0);
+    g_assert_cmpuint(tag_count(event, "app_components"), ==, 1);
+    nostr_event_free(event);
+    return;
+  }
   g_assert_cmpint(marmot_validate_key_package_event_json(json, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
                                                          0, NULL, NULL), ==, MARMOT_OK);
+  g_assert_cmpint(marmot_validate_key_package_event_json(json, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                         0, NULL, NULL), !=, MARMOT_OK);
   NostrTags *tags = nostr_event_get_tags(event);
   for (size_t i = 0; i < nostr_tags_size(tags); i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
@@ -361,13 +426,13 @@ assert_strict_shape(World *w, const gchar *json)
       g_assert_true(g_str_equal(nostr_tag_get(tag, j), w->w.url) ||
                     g_str_equal(nostr_tag_get(tag, j), w->h.url));
   }
-#endif
   nostr_event_free(event);
 }
 
 /* ---- tests ------------------------------------------------------------------------ */
 
-/* Publishing: the account's write-capable set only. */
+/* Publishing: the account's write-capable set only, each format (both, as
+ * shipped: nostrc-lf62) in its strict shape and its own `d` slot. */
 static void
 test_write_relays_only(void)
 {
@@ -377,18 +442,41 @@ test_write_relays_only(void)
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   wait_published(alice);
-  g_assert_cmpuint(n_key_packages(&w.w, ALICE), ==, 1);
-  CountWait unmarked = { &w.h, ALICE, 1 };
-  spin_until(key_packages_reached, &unmarked, "the KeyPackage on the unmarked relay");
+  const guint formats = GH_MLS_ADOPTED_KEY_PACKAGES ? 2 : 1;
+  g_autofree gchar *legacy_d = NULL, *legacy_json = NULL;
+  g_autoptr(GPtrArray) legacy = stored_key_packages_of(&w.w, ALICE,
+                                                       GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_assert_cmpuint(legacy->len, ==, 1);
+  newest_key_package_of(&w.w, ALICE, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, NULL, &legacy_d,
+                        &legacy_json);
+  assert_strict_shape(&w, legacy_json);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  g_autofree gchar *adopted_d = NULL, *adopted_json = NULL;
+  g_autoptr(GPtrArray) adopted = stored_key_packages_of(&w.w, ALICE,
+                                                        GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
+  g_assert_cmpuint(adopted->len, ==, 1);
+  newest_key_package_of(&w.w, ALICE, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, NULL, &adopted_d,
+                        &adopted_json);
+  assert_strict_shape(&w, adopted_json);
+  g_assert_cmpstr(adopted_d, !=, legacy_d);
+  /* The MDK 0.8 one is the newer (a slot-blind legacy reader takes it). */
+  g_assert_cmpint(newest_key_package_format(&w.w, ALICE), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+#endif
+  /* Each format on the unmarked relay H too (its OK may come after W's). */
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (f == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED && formats == 1)
+      continue;
+    FormatCountWait unmarked = { &w.h, ALICE, f, 1 };
+    spin_until(format_count_reached, &unmarked, "each KeyPackage on the unmarked relay");
+    g_autoptr(GPtrArray) on_h = stored_key_packages_of(&w.h, ALICE, f);
+    g_assert_cmpuint(on_h->len, ==, 1);
+  }
   WireRelay *never[] = { &w.r, &w.x, &w.g, &w.e };
   for (guint i = 0; i < G_N_ELEMENTS(never); i++) {
     g_assert_cmpuint(n_key_packages(never[i], ALICE), ==, 0);
     g_assert_false(inbound_mentions(never[i], "30443"));
     g_assert_false(inbound_mentions(never[i], "10051"));
   }
-  g_autofree gchar *json = NULL;
-  newest_key_package(&w.w, ALICE, NULL, NULL, &json);
-  assert_strict_shape(&w, json);
   world_down(&w);
 }
 
@@ -411,14 +499,10 @@ test_lookup_privacy(void)
   g_autoptr(GError) error = NULL;
   GhMlsGroup *group = create_attempt_on(alice, w.h.url, "Private", (const guint[]){ BOB }, 1,
                                         &error);
-#if GH_MLS_ADOPTED_KEY_PACKAGES
-  /* A legacy-profile group cannot add an adopted KeyPackage (yet). */
-  g_assert_null(group);
-  g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE);
-#else
   g_assert_no_error(error);
   g_assert_nonnull(group);
-#endif
+  /* Bob's adopted KeyPackage made it an adopted group (nostrc-lf62). */
+  g_assert_cmpint(gh_mls_group_get_adopted(group), ==, GH_MLS_ADOPTED_KEY_PACKAGES);
   g_assert_cmpuint(key_package_reqs(&w.w, BOB), >=, 1);
   g_assert_true(client_frames_mention(&w.e, hex[BOB]));   /* the 10002 */
   g_assert_cmpuint(key_package_reqs(&w.e, BOB), ==, 0);
@@ -446,7 +530,7 @@ test_rotation_ack_tied(void)
   g_autofree gchar *ref1 = NULL, *d1 = NULL;
   newest_key_package(&w.w, ALICE, &ref1, &d1, NULL);
   g_assert_true(has_init_key(alice, ref1));
-  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(alice->service));
+  g_autofree gchar *id1 = g_strdup(kp_id(alice));
 
   /* The relay rejects the replacement: nothing confirmed, nothing retired. */
   w.w.refuse_events = w.h.refuse_events = TRUE;
@@ -475,17 +559,36 @@ test_rotation_ack_tied(void)
   world_down(&w);
 }
 
-#if !GH_MLS_ADOPTED_KEY_PACKAGES
-/* The relay's withheld events (wire_relay_withhold()), all released. */
-static void
-release_withheld(WireRelay *relay)
+/* The ids of the relay's withheld events (wire_relay_withhold()). */
+static GPtrArray *
+withheld_ids(WireRelay *relay)
 {
-  g_autoptr(GPtrArray) ids = g_ptr_array_new_with_free_func(g_free);
+  GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
   GHashTableIter iter;
   gpointer id;
   g_hash_table_iter_init(&iter, relay->withheld);
   while (g_hash_table_iter_next(&iter, &id, NULL))
     g_ptr_array_add(ids, g_strdup(id));
+  return ids;
+}
+
+typedef struct {
+  App *app;
+  const gchar *wrap_id;
+} WrapWait;
+
+static gboolean
+wrap_processed(gpointer data)
+{
+  WrapWait *wait = data;
+  return processed_welcome(wait->app, wait->wrap_id, NULL, NULL);
+}
+
+/* The relay's withheld events (wire_relay_withhold()), all released. */
+static void
+release_withheld(WireRelay *relay)
+{
+  g_autoptr(GPtrArray) ids = withheld_ids(relay);
   for (guint i = 0; i < ids->len; i++)
     wire_relay_release(relay, g_ptr_array_index(ids, i));
 }
@@ -542,7 +645,7 @@ test_delayed_welcome(void)
 
   /* A relay accepts a replacement: the old key goes. */
   w.w.refuse_events = w.h.refuse_events = FALSE;
-  g_autofree gchar *id_before = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  g_autofree gchar *id_before = g_strdup(kp_id(bob));
   rotate(bob);
   wait_settled(bob, id_before);
   g_assert_false(has_init_key(bob, ref1));
@@ -553,21 +656,37 @@ test_delayed_welcome(void)
   /* Carol's Welcome to KeyPackage 1 arrives now: it fails, and rotates
    * nothing (the spec's deliberate trade-off; Carol retries with the
    * current KeyPackage). */
-  g_autofree gchar *id_now = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  g_autofree gchar *id_now = g_strdup(kp_id(bob));
   gint64 cursor_now = key_package_cursor(bob);
   g_assert_cmpint(cursor_now, >, 0);
   guint published_before = n_key_packages(&w.w, BOB);
   bob->invites = 0;
+  g_autoptr(GPtrArray) wraps = withheld_ids(&w.x);
+  g_assert_cmpuint(wraps->len, ==, 1);
   release_withheld(&w.x);
-  spin_until(invites_at_least, &one, "Carol's delayed invitation");
-  g_autofree gchar *delayed = invite_from(bob, CAROL);
-  GhMlsGroup *late = gh_mls_service_accept_invite(bob->service, delayed, &error);
-  g_assert_null(late);
-  g_assert_nonnull(error);
-  g_clear_error(&error);
+  if (kp_format == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED) {
+    /* libmarmot opens an adopted Welcome as it arrives (nostrc-qp24.5.1):
+     * one to a retired KeyPackage is refused right there, for good, and is
+     * never listed as an invitation. */
+    WrapWait processed = { bob, g_ptr_array_index(wraps, 0) };
+    spin_until(wrap_processed, &processed, "Bob's verdict on Carol's delayed Welcome");
+    gint state = -1;
+    g_autofree gchar *reason = NULL;
+    g_assert_true(processed_welcome(bob, g_ptr_array_index(wraps, 0), &state, &reason));
+    g_assert_cmpint(state, ==, MARMOT_WELCOME_STATE_FAILED);
+    g_assert_cmpstr(reason, ==, "matching KeyPackage private key not found");
+    g_assert_cmpuint(bob->invites, ==, 0);
+  } else {
+    spin_until(invites_at_least, &one, "Carol's delayed invitation");
+    g_autofree gchar *delayed = invite_from(bob, CAROL);
+    GhMlsGroup *late = gh_mls_service_accept_invite(bob->service, delayed, &error);
+    g_assert_null(late);
+    g_assert_nonnull(error);
+    g_clear_error(&error);
+  }
   g_assert_cmpint(gh_mls_service_get_key_package_state(bob->service), ==,
                   GH_MLS_KEY_PACKAGE_PUBLISHED);
-  g_assert_cmpstr(gh_mls_service_get_key_package_id(bob->service), ==, id_now);
+  g_assert_cmpstr(kp_id(bob), ==, id_now);
   g_assert_cmpint(key_package_cursor(bob), ==, cursor_now);   /* no rotation asked */
   g_assert_true(has_init_key(bob, ref_now));
   drain();
@@ -592,7 +711,7 @@ test_pending_invitations_defer_rotation(void)
   wait_published(carol);
   g_autofree gchar *ref1 = NULL;
   newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
-  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  g_autofree gchar *id1 = g_strdup(kp_id(bob));
   accept_contact(alice, BOB);
   accept_contact(carol, BOB);
   g_autoptr(GError) error = NULL;
@@ -639,7 +758,7 @@ test_rotation_held_for_pending_invitation(void)
   wait_published(bob);
   g_autofree gchar *ref1 = NULL;
   newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
-  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  g_autofree gchar *id1 = g_strdup(kp_id(bob));
   accept_contact(alice, BOB);
   g_autoptr(GError) error = NULL;
   g_assert_nonnull(create_attempt(alice, "One", (const guint[]){ BOB }, 1, &error));
@@ -681,7 +800,7 @@ test_lifetime_rotation_held(void)
   /* The KeyPackage Alice used (a short rotation age: read it now). */
   g_autofree gchar *ref1 = NULL;
   newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
-  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  g_autofree gchar *id1 = g_strdup(kp_id(bob));
   /* Past the rotation age; the restart's check finds it due. */
   AgedWait aged = { bob, 3 };
   spin_until(key_package_aged, &aged, "Bob's KeyPackage past its rotation age");
@@ -714,7 +833,7 @@ test_hold_cap_expires(void)
   wait_published(bob);
   g_autofree gchar *ref1 = NULL;
   newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
-  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  g_autofree gchar *id1 = g_strdup(kp_id(bob));
   accept_contact(alice, BOB);
   g_autoptr(GError) error = NULL;
   g_assert_nonnull(create_attempt(alice, "One", (const guint[]){ BOB }, 1, &error));
@@ -742,7 +861,7 @@ static gboolean
 held_or_new(gpointer data)
 {
   HeldOrNew *wait = data;
-  const gchar *id = gh_mls_service_get_key_package_id(wait->app->service);
+  const gchar *id = kp_id(wait->app);
   return gh_mls_service_get_key_package_held(wait->app->service) ||
          (id && g_strcmp0(id, wait->old_id) != 0);
 }
@@ -761,7 +880,7 @@ test_invitation_listing_error_holds(void)
   wait_published(alice);
   g_autofree gchar *ref1 = NULL;
   newest_key_package(&w.w, ALICE, &ref1, NULL, NULL);
-  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(alice->service));
+  g_autofree gchar *id1 = g_strdup(kp_id(alice));
   gh_mls_service_test_fail_invitation_listing(TRUE);
   rotate(alice);
   /* The first publish may still be in flight (its other relay): the
@@ -802,12 +921,16 @@ inject_unproven_key_package(World *w, guint key)
 }
 
 /* A Welcome whose processing fails keeps the key and rotates nothing; the
- * inviter's next Welcome to the same KeyPackage joins. */
+ * inviter's next Welcome to the same KeyPackage joins. Carol's older app has
+ * only an MDK 0.8 KeyPackage, so Alice's groups with her are MDK 0.8 groups
+ * and Bob's MDK 0.8 KeyPackage is the one at stake (as shipped, his adopted
+ * one stays untouched throughout: nostrc-lf62). */
 static void
 test_failed_welcome_preserves(void)
 {
   World w;
   world_split_lists = TRUE;
+  kp_format = GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
   const guint keys[] = { ALICE, BOB };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
@@ -815,9 +938,15 @@ test_failed_welcome_preserves(void)
   wait_published(bob);
   g_autofree gchar *ref1 = NULL;
   newest_key_package(&w.w, BOB, &ref1, NULL, NULL);
-  g_autofree gchar *id1 = g_strdup(gh_mls_service_get_key_package_id(bob->service));
+  g_autofree gchar *id1 = g_strdup(kp_id(bob));
   gint64 cursor1 = key_package_cursor(bob);
   g_assert_cmpint(cursor1, >, 0);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  g_autofree gchar *adopted_ref = NULL;
+  newest_key_package_of(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, &adopted_ref, NULL, NULL);
+  g_autofree gchar *adopted_id = g_strdup(
+    gh_mls_service_get_key_package_id_for_format(bob->service, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED));
+#endif
   inject_unproven_key_package(&w, CAROL);
   accept_contact(alice, BOB);
   accept_contact(alice, CAROL);
@@ -826,8 +955,11 @@ test_failed_welcome_preserves(void)
    * group with Carol's older app fails to join. */
   g_settings_set_boolean(bob->settings, VERIFIED_ONLY, TRUE);
   g_autoptr(GError) error = NULL;
-  g_assert_nonnull(create_attempt(alice, "Mixed", (const guint[]){ BOB, CAROL }, 2, &error));
+  GhMlsGroup *mixed_group = create_attempt(alice, "Mixed", (const guint[]){ BOB, CAROL }, 2,
+                                           &error);
   g_assert_no_error(error);
+  g_assert_nonnull(mixed_group);
+  g_assert_false(gh_mls_group_get_adopted(mixed_group));
   InvitesWait one = { bob, 1 };
   spin_until(invites_at_least, &one, "the first invitation");
   g_autofree gchar *mixed = invite_from(bob, ALICE);
@@ -837,14 +969,16 @@ test_failed_welcome_preserves(void)
   g_assert_true(has_init_key(bob, ref1));
   g_assert_cmpint(gh_mls_service_get_key_package_state(bob->service), ==,
                   GH_MLS_KEY_PACKAGE_PUBLISHED);
-  g_assert_cmpstr(gh_mls_service_get_key_package_id(bob->service), ==, id1);
+  g_assert_cmpstr(kp_id(bob), ==, id1);
   g_assert_cmpint(key_package_cursor(bob), ==, cursor1);   /* no rotation asked */
   drain();
   g_assert_cmpuint(n_key_packages(&w.w, BOB), ==, 1);
 
-  /* Alice retries with the same KeyPackage: Bob joins. */
+  /* Alice retries with the same KeyPackage (Bob no longer requires proofs):
+   * Bob joins. */
+  g_settings_set_boolean(bob->settings, VERIFIED_ONLY, FALSE);
   bob->invites = 0;
-  g_assert_nonnull(create_attempt(alice, "Again", (const guint[]){ BOB }, 1, &error));
+  g_assert_nonnull(create_attempt(alice, "Again", (const guint[]){ BOB, CAROL }, 2, &error));
   g_assert_no_error(error);
   spin_until(invites_at_least, &one, "the second invitation");
   g_autofree gchar *again = invite_from(bob, ALICE);
@@ -855,11 +989,126 @@ test_failed_welcome_preserves(void)
   RotatedWait done = { bob, id1 };
   spin_until(rotated, &done, "Bob's replacement after the join");
   g_assert_false(has_init_key(bob, ref1));
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  /* Only the MDK 0.8 format was spent: the adopted KeyPackage, its slot and
+   * its key are as they were. */
+  g_assert_true(has_init_key(bob, adopted_ref));
+  g_assert_cmpstr(gh_mls_service_get_key_package_id_for_format(bob->service,
+                                                               GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED),
+                  ==, adopted_id);
+  g_autoptr(GPtrArray) adopted = stored_key_packages_of(&w.w, BOB,
+                                                        GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
+  g_assert_cmpuint(adopted->len, ==, 1);
+#endif
+  world_down(&w);
+  kp_format = KP_FORMAT_DEFAULT;
+}
+
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+typedef struct {
+  App *app;
+  GhMlsKeyPackageFormat format;
+  const gchar *old_id;
+} FormatWait;
+
+static gboolean
+format_replaced(gpointer data)
+{
+  FormatWait *wait = data;
+  const gchar *id = gh_mls_service_get_key_package_id_for_format(wait->app->service,
+                                                                 wait->format);
+  return id && g_strcmp0(id, wait->old_id) != 0 &&
+         gh_mls_service_get_key_package_state(wait->app->service) ==
+           GH_MLS_KEY_PACKAGE_PUBLISHED;
+}
+
+/* nostrc-lf62: the two formats' lifecycles are independent. Bob publishes
+ * one KeyPackage of each, in its own `d` slot. Joining an MDK 0.8 group
+ * (Carol's older app has only that format) spends and replaces his MDK 0.8
+ * KeyPackage only: its OK retires the old MDK 0.8 key, never the adopted
+ * one, whose event stays the one published. Joining an adopted group spends
+ * the adopted one: its replacement retires the old adopted key, and an MDK
+ * 0.8 replacement comes along, so the MDK 0.8 event stays the account's
+ * newest (a slot-blind legacy reader still finds one it can use). The slots
+ * never change. */
+static void
+test_formats_own_lifecycle(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  const GhMlsKeyPackageFormat A = GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED;
+  const GhMlsKeyPackageFormat L = GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
+  g_autofree gchar *a_ref1 = NULL, *a_d = NULL, *l_ref1 = NULL, *l_d = NULL;
+  newest_key_package_of(&w.w, BOB, A, &a_ref1, &a_d, NULL);
+  newest_key_package_of(&w.w, BOB, L, &l_ref1, &l_d, NULL);
+  g_assert_cmpstr(a_d, !=, l_d);
+  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, L);
+  g_autofree gchar *a_id1 = g_strdup(gh_mls_service_get_key_package_id_for_format(bob->service, A));
+  g_autofree gchar *l_id1 = g_strdup(gh_mls_service_get_key_package_id_for_format(bob->service, L));
+  inject_unproven_key_package(&w, CAROL);
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+
+  /* An MDK 0.8 group: Bob's MDK 0.8 KeyPackage is spent and replaced. */
+  g_autoptr(GError) error = NULL;
+  GhMlsGroup *older = create_attempt(alice, "Older", (const guint[]){ BOB, CAROL }, 2, &error);
+  g_assert_no_error(error);
+  g_assert_false(gh_mls_group_get_adopted(older));
+  InvitesWait one = { bob, 1 };
+  spin_until(invites_at_least, &one, "the MDK 0.8 group's invitation");
+  g_autofree gchar *first = invite_from(bob, ALICE);
+  g_assert_nonnull(gh_mls_service_accept_invite(bob->service, first, &error));
+  g_assert_no_error(error);
+  FormatWait legacy_done = { bob, L, l_id1 };
+  spin_until(format_replaced, &legacy_done, "Bob's MDK 0.8 replacement");
+  wait_published(bob);   /* the first OK may be H's: W keeps it too */
+  g_assert_false(has_init_key(bob, l_ref1));
+  g_assert_true(has_init_key(bob, a_ref1));
+  g_assert_cmpstr(gh_mls_service_get_key_package_id_for_format(bob->service, A), ==, a_id1);
+  drain();
+  g_autoptr(GPtrArray) adopted_now = stored_key_packages_of(&w.w, BOB, A);
+  g_assert_cmpuint(adopted_now->len, ==, 1);
+  g_autofree gchar *l_ref2 = NULL, *l_d2 = NULL;
+  newest_key_package_of(&w.w, BOB, L, &l_ref2, &l_d2, NULL);
+  g_assert_cmpstr(l_d2, ==, l_d);
+  g_assert_true(has_init_key(bob, l_ref2));
+
+  /* An adopted group: the adopted KeyPackage is spent; both formats are
+   * replaced, each in its slot, the MDK 0.8 one the newer again. */
+  bob->invites = 0;
+  g_autofree gchar *l_id2 = g_strdup(gh_mls_service_get_key_package_id_for_format(bob->service, L));
+  GhMlsGroup *newer = create_attempt(alice, "Newer", (const guint[]){ BOB }, 1, &error);
+  g_assert_no_error(error);
+  g_assert_true(gh_mls_group_get_adopted(newer));
+  spin_until(invites_at_least, &one, "the adopted group's invitation");
+  g_autofree gchar *second = invite_from(bob, ALICE);
+  g_assert_nonnull(gh_mls_service_accept_invite(bob->service, second, &error));
+  g_assert_no_error(error);
+  FormatWait adopted_done = { bob, A, a_id1 };
+  spin_until(format_replaced, &adopted_done, "Bob's adopted replacement");
+  FormatWait legacy_along = { bob, L, l_id2 };
+  spin_until(format_replaced, &legacy_along, "the MDK 0.8 replacement along with it");
+  wait_published(bob);
+  g_assert_false(has_init_key(bob, a_ref1));
+  g_assert_false(has_init_key(bob, l_ref2));
+  g_autofree gchar *a_ref2 = NULL, *a_d2 = NULL, *l_ref3 = NULL, *l_d3 = NULL;
+  newest_key_package_of(&w.w, BOB, A, &a_ref2, &a_d2, NULL);
+  newest_key_package_of(&w.w, BOB, L, &l_ref3, &l_d3, NULL);
+  g_assert_cmpstr(a_d2, ==, a_d);
+  g_assert_cmpstr(l_d3, ==, l_d);
+  g_assert_true(has_init_key(bob, a_ref2));
+  g_assert_true(has_init_key(bob, l_ref3));
+  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, L);
   world_down(&w);
 }
 #endif
 
-#if GH_TEST_HAVE_INBOX_SETUP && !GH_MLS_ADOPTED_KEY_PACKAGES
+#if GH_TEST_HAVE_INBOX_SETUP
 #include "gh-inbox-setup.h"
 #include "gh-relay-list-setup.h"
 
@@ -1321,10 +1570,11 @@ test_relay_list_never_replaced(void)
 }
 #endif
 
-#if GH_MLS_ADOPTED_KEY_PACKAGES
-/* libmarmot's own build gate refuses the public ADOPTED producer in a
- * default build; its ungated internal producer, signer-only (the enrolled
- * proof), stands in for that one call. */
+#if GH_MLS_ADOPTED_KEY_PACKAGES && !GH_TEST_LIBMARMOT_ADOPTED_PRODUCER
+/* libmarmot built with its adopted producer off refuses the public ADOPTED
+ * producer; its ungated internal producer, signer-only (the enrolled
+ * proof), stands in for that one call. As shipped (the gate on) the
+ * service's own call runs. */
 static MarmotError
 adopted_producer(Marmot *marmot, const guint8 account[32], MarmotKeyPackageResult *made)
 {
@@ -1338,7 +1588,9 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   mls_world_init();
 #if GH_MLS_ADOPTED_KEY_PACKAGES
+#if !GH_TEST_LIBMARMOT_ADOPTED_PRODUCER
   gh_mls_service_test_set_adopted_producer(adopted_producer);
+#endif
 #define KP_TEST(name) "/groundhog/mls-kp-lifecycle-adopted/" name
 #else
 #define KP_TEST(name) "/groundhog/mls-kp-lifecycle/" name
@@ -1346,7 +1598,6 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("write-relays-only"), test_write_relays_only);
   g_test_add_func(KP_TEST("lookup-privacy"), test_lookup_privacy);
   g_test_add_func(KP_TEST("rotation-ack-tied"), test_rotation_ack_tied);
-#if !GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func(KP_TEST("delayed-welcome"), test_delayed_welcome);
   g_test_add_func(KP_TEST("pending-invitations-defer-rotation"),
                   test_pending_invitations_defer_rotation);
@@ -1357,10 +1608,14 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("invitation-listing-error-holds"),
                   test_invitation_listing_error_holds);
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  g_test_add_func(KP_TEST("formats-own-lifecycle"), test_formats_own_lifecycle);
 #endif
-#if GH_TEST_HAVE_INBOX_SETUP && !GH_MLS_ADOPTED_KEY_PACKAGES
+#if GH_TEST_HAVE_INBOX_SETUP
   g_test_add_func(KP_TEST("fresh-accounts-invite-each-other"),
                   test_fresh_accounts_invite_each_other);
+  g_test_add_func(KP_TEST("first-run-accounts-invite-each-other"),
+                  test_first_run_accounts_invite_each_other);
   g_test_add_func(KP_TEST("relay-list-never-replaced"), test_relay_list_never_replaced);
   g_test_add_func(KP_TEST("relay-list-on-a-message-relay-kept"),
                   test_relay_list_on_a_message_relay_kept);
@@ -1374,8 +1629,6 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("relay-list-newer-edit-kept"), test_relay_list_newer_edit_kept);
   g_test_add_func(KP_TEST("relay-list-appeared-while-signing-kept"),
                   test_relay_list_appeared_while_signing_kept);
-  g_test_add_func(KP_TEST("first-run-accounts-invite-each-other"),
-                  test_first_run_accounts_invite_each_other);
 #endif
   gint rc = g_test_run();
   mls_world_finish();

@@ -96,6 +96,8 @@ struct _GhMlsNewGroupPage {
   GtkLabel *relay_error;
   GtkLabel *error_label;
   GtkLabel *create_reason;
+  GtkLabel *format_notice;
+  GtkWidget *format_choice;
   GtkImage *status_icon;
   GtkSpinner *status_spinner;
   GtkLabel *status_title;
@@ -106,6 +108,7 @@ struct _GhMlsNewGroupPage {
   GhMlsUiContext context;  /* service, accounts, model, settings referenced */
   GPtrArray *relay_rows;   /* GhMlsRelayRow in relays_group */
   gchar *reason;           /* why Create can't run, or NULL */
+  const gchar *notice;     /* the group's format said, or NULL (static) */
   GCancellable *creating;  /* the running create */
   GhMlsGroup *group;       /* made by Create */
   guint invited;
@@ -162,10 +165,32 @@ sync_create(GhMlsNewGroupPage *self)
     reason = _("Someone you chose can’t be invited yet. Remove them to continue.");
   else if (self->relay_rows->len == 0)
     reason = _("Add at least one group relay.");
+  /* The group's format (nostrc-lf62), as the service will choose it: the
+   * newer (adopted) one unless someone chosen has only the older one. */
+  gboolean legacy_only = FALSE, adopted_only = FALSE;
+  g_auto(GStrv) selected = gh_mls_invitee_picker_dup_selected(self->picker);
+  for (guint i = 0; selected && selected[i]; i++) {
+    GhMlsInviteeState state = gh_mls_invitee_picker_get_state(self->picker, selected[i]);
+    legacy_only |= !gh_mls_invitee_can_join(state, TRUE) && gh_mls_invitee_can_join(state, FALSE);
+    adopted_only |= gh_mls_invitee_can_join(state, TRUE) && !gh_mls_invitee_can_join(state, FALSE);
+  }
+  gboolean mixed = !reason && legacy_only && adopted_only;
+  if (mixed)
+    reason = _("Some people you chose use an older app version that joins only older-format "
+               "groups, and others an app that joins only newer-format ones. One group can’t "
+               "use both formats: keep one set, and make a separate group for the others.");
+  self->notice = !reason && legacy_only
+    ? _("Some people use an older app version; this group will use the older format. "
+        "Remove them to make a newer-format group instead.") : NULL;
   g_free(self->reason);
   self->reason = g_strdup(reason);
   gtk_label_set_text(self->create_reason, reason ? reason : "");
   gtk_widget_set_visible(GTK_WIDGET(self->create_reason), reason != NULL);
+  gtk_label_set_text(self->format_notice, self->notice ? self->notice : "");
+  gtk_widget_set_visible(GTK_WIDGET(self->format_notice), self->notice != NULL);
+  gtk_widget_set_visible(self->format_choice, mixed);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-new.keep-adopted", mixed);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-new.keep-legacy", mixed);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-new.create",
                                 reason == NULL && !self->creating);
 }
@@ -323,6 +348,29 @@ created(GObject *source, GAsyncResult *result, gpointer data)
   sync_create(self);
 }
 
+/* "Keep Newer-Format People" / "Keep Older-Format People": un-chooses
+ * whoever cannot join a group of the kept format (nostrc-lf62). */
+static void
+action_keep(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)parameter;
+  GhMlsNewGroupPage *self = GH_MLS_NEW_GROUP_PAGE(widget);
+  gboolean adopted = g_str_equal(action, "mls-new.keep-adopted");
+  g_auto(GStrv) selected = gh_mls_invitee_picker_dup_selected(self->picker);
+  guint removed = 0;
+  for (guint i = 0; selected && selected[i]; i++) {
+    GhMlsInviteeState state = gh_mls_invitee_picker_get_state(self->picker, selected[i]);
+    if (gh_mls_invitee_can_invite(state) && !gh_mls_invitee_can_join(state, adopted) &&
+        gh_mls_invitee_picker_set_selected(self->picker, selected[i], FALSE))
+      removed++;
+  }
+  g_autofree gchar *said = g_strdup_printf(
+    g_dngettext(NULL, "Removed %u person from the group.", "Removed %u people from the group.",
+                removed), removed);
+  announce(self, said, FALSE);
+  sync_create(self);
+}
+
 static void
 action_create(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
@@ -459,6 +507,20 @@ gh_mls_new_group_page_get_create_reason(GhMlsNewGroupPage *self)
 }
 
 const gchar *
+gh_mls_new_group_page_get_format_notice(GhMlsNewGroupPage *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_NEW_GROUP_PAGE(self), NULL);
+  return self->notice;
+}
+
+gboolean
+gh_mls_new_group_page_get_format_choice(GhMlsNewGroupPage *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_NEW_GROUP_PAGE(self), FALSE);
+  return gtk_widget_get_visible(self->format_choice);
+}
+
+const gchar *
 gh_mls_new_group_page_get_identity_title(GhMlsNewGroupPage *self)
 {
   g_return_val_if_fail(GH_IS_MLS_NEW_GROUP_PAGE(self), NULL);
@@ -534,6 +596,8 @@ gh_mls_new_group_page_class_init(GhMlsNewGroupPageClass *klass)
   BIND(relay_error);
   BIND(error_label);
   BIND(create_reason);
+  BIND(format_notice);
+  BIND(format_choice);
   BIND(status_icon);
   BIND(status_spinner);
   BIND(status_title);
@@ -542,6 +606,8 @@ gh_mls_new_group_page_class_init(GhMlsNewGroupPageClass *klass)
   BIND(back_button);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "mls-new.create", NULL, action_create);
+  gtk_widget_class_install_action(widget_class, "mls-new.keep-adopted", NULL, action_keep);
+  gtk_widget_class_install_action(widget_class, "mls-new.keep-legacy", NULL, action_keep);
   gtk_widget_class_install_action(widget_class, "mls-new.open", NULL, action_open);
   gtk_widget_class_install_action(widget_class, "mls-new.back", NULL, action_back);
   gtk_widget_class_install_action(widget_class, "mls-new.retry-identity", NULL,

@@ -52,6 +52,12 @@
 
 extern void groundhog_register_resource(void);
 
+/* A running Groundhog account's check row: both KeyPackage formats as
+ * shipped, the MDK 0.8 one alone without libmarmot's adopted producer
+ * (nostrc-lf62). */
+#define GROUNDHOG_READY (GH_MLS_ADOPTED_KEY_PACKAGES ? GH_MLS_INVITEE_READY \
+                                                     : GH_MLS_INVITEE_READY_LEGACY)
+
 /* ---- helpers ------------------------------------------------------------------------ */
 
 static void
@@ -119,6 +125,29 @@ inject_legacy_key_package(World *w, guint key)
   marmot_free(legacy);
   return id;
 }
+
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+/* `key` runs an app that speaks only the adopted format (White Noise on MDK
+ * 0.11): an adopted KeyPackage, its account proof signed with the key, on
+ * W. */
+static void
+inject_adopted_key_package(World *w, guint key)
+{
+  Marmot *other = marmot_new(marmot_storage_memory_new());
+  guint8 pubkey[32], secret[32];
+  g_assert_true(nostr_hex2bin(pubkey, hex[key], sizeof pubkey));
+  g_assert_true(nostr_hex2bin(secret, gh_test_secret[key], sizeof secret));
+  MarmotKeyPackageResult made;
+  memset(&made, 0, sizeof made);
+  g_assert_cmpint(marmot_create_key_package_for_profile(other, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                        pubkey, secret, NULL, NULL, NULL, 0,
+                                                        &made), ==, MARMOT_OK);
+  memset(secret, 0, sizeof secret);
+  wire_relay_inject(&w->w, made.event_json);
+  marmot_key_package_result_free(&made);
+  marmot_free(other);
+}
+#endif
 
 typedef struct {
   gboolean done;
@@ -232,9 +261,21 @@ test_copy(void)
     g_assert_cmpuint(strlen(words), >, 0);
     g_assert_false(g_hash_table_contains(seen, words));   /* every state its own */
     g_hash_table_add(seen, (gpointer)words);
-    g_assert_cmpint(gh_mls_invitee_can_invite(state), ==,
-                    state == GH_MLS_INVITEE_READY || state == GH_MLS_INVITEE_READY_UNPROVEN);
+    gboolean ready = state == GH_MLS_INVITEE_READY || state == GH_MLS_INVITEE_READY_ADOPTED_ONLY ||
+                     state == GH_MLS_INVITEE_READY_LEGACY ||
+                     state == GH_MLS_INVITEE_READY_UNPROVEN;
+    g_assert_cmpint(gh_mls_invitee_can_invite(state), ==, ready);
+    /* Which group format each can join (nostrc-lf62). */
+    g_assert_cmpint(gh_mls_invitee_can_join(state, TRUE), ==,
+                    state == GH_MLS_INVITEE_READY || state == GH_MLS_INVITEE_READY_ADOPTED_ONLY);
+    g_assert_cmpint(gh_mls_invitee_can_join(state, FALSE), ==,
+                    state == GH_MLS_INVITEE_READY || state == GH_MLS_INVITEE_READY_LEGACY ||
+                    state == GH_MLS_INVITEE_READY_UNPROVEN);
   }
+  g_assert_cmpstr(gh_mls_invitee_copy(GH_MLS_INVITEE_READY), ==, "Ready to invite");
+  g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_READY_LEGACY), "older format"));
+  g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_READY_ADOPTED_ONLY),
+                          "newer format"));
   g_assert_cmpstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NOT_SET_UP), ==,
                   "Hasn’t set up encrypted groups");
   g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NEEDS_UPDATE),
@@ -334,7 +375,7 @@ test_copy(void)
 
   g_autoptr(GHashTable) errors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (gint code = GH_MLS_SERVICE_ERROR_NO_CONSENT;
-       code <= GH_MLS_SERVICE_ERROR_FORGED_IDENTITY; code++) {
+       code <= GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH; code++) {
     g_autoptr(GError) error = g_error_new(GH_MLS_SERVICE_ERROR, code, "internal detail %d", code);
     gchar *words = gh_mls_error_copy(error);
     g_assert_null(strstr(words, "internal detail"));   /* plain words, not the log's */
@@ -350,6 +391,16 @@ test_copy(void)
                                                  GH_MLS_SERVICE_ERROR_FORGED_IDENTITY, "x");
   g_autofree gchar *forged_words = gh_mls_error_copy(forged);
   g_assert_nonnull(strstr(forged_words, "forged"));
+  /* Group formats (nostrc-lf62). */
+  g_autoptr(GError) mixed = g_error_new_literal(GH_MLS_SERVICE_ERROR,
+                                                GH_MLS_SERVICE_ERROR_MIXED_PROFILE, "x");
+  g_autofree gchar *mixed_words = gh_mls_error_copy(mixed);
+  g_assert_nonnull(strstr(mixed_words, "can’t use both"));
+  g_assert_nonnull(strstr(mixed_words, "Nothing was changed"));
+  g_autoptr(GError) mismatch = g_error_new_literal(GH_MLS_SERVICE_ERROR,
+                                                   GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH, "x");
+  g_autofree gchar *mismatch_words = gh_mls_error_copy(mismatch);
+  g_assert_nonnull(strstr(mismatch_words, "this group’s format"));
 
   g_autofree gchar *from_contact = gh_mls_invite_subtitle("npub1abcd…wxyz", "Bob", TRUE, 3);
   g_assert_cmpstr(from_contact, ==, "From Bob · 3 members");
@@ -435,7 +486,7 @@ test_view_model(void)
   g_assert_false(gh_mls_is_contact(alice->model, hex[STRANGER]));
 
   /* The KeyPackage check, each honest state. */
-  g_assert_cmpint(check(alice, BOB), ==, GH_MLS_INVITEE_READY);
+  g_assert_cmpint(check(alice, BOB), ==, GROUNDHOG_READY);
   g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_NOT_SET_UP);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
   g_free(inject_legacy_key_package(&w, CAROL));
@@ -846,7 +897,7 @@ test_gui_new_group(void)
                   "Someone you chose can’t be invited yet. Remove them to continue.");
   gh_mls_invitee_picker_set_selected(picker, hex[CAROL], FALSE);
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
-  wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY);
+  wait_pick(picker, hex[BOB], GROUNDHOG_READY);
   /* The KeyPackage on Bob's write relay only, never on the discovery
    * relay (nostrc-0bdg). */
   g_assert_true(key_package_asked(&w.w, hex[BOB]));
@@ -862,14 +913,20 @@ test_gui_new_group(void)
   g_settings_set_string(alice->settings, "current-npub", npub[ALICE]);
   gh_account_controller_refresh(alice->accounts);
   spin_until(accounts_active, alice->accounts, "Alice active again");
-  wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY);
+  wait_pick(picker, hex[BOB], GROUNDHOG_READY);
   spin_until(reason_cleared, page, "Create ready again");
 
+  /* Bob's app speaks the newer format: nothing to say about the format
+   * (built without the adopted producer, only the older one: said). */
+  g_assert_cmpint(gh_mls_new_group_page_get_format_notice(page) != NULL, ==,
+                  !GH_MLS_ADOPTED_KEY_PACKAGES);
+  g_assert_false(gh_mls_new_group_page_get_format_choice(page));
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.create", NULL);
   wait_text(status_title, page, "Group Created");
   GhMlsGroup *ga = gh_mls_new_group_page_get_group(page);
   g_assert_nonnull(ga);
   g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "Book Club");
+  g_assert_cmpint(gh_mls_group_get_adopted(ga), ==, GH_MLS_ADOPTED_KEY_PACKAGES);   /* lf62 */
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
   g_assert_nonnull(conversation);
@@ -940,6 +997,9 @@ test_gui_new_group(void)
   spin_until(invitations_are, &zero, "Bob's invitations entry gone");
   GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
   g_assert_nonnull(gb);
+  /* An adopted Welcome (as shipped), listed and accepted in the
+   * invitations dialog. */
+  g_assert_cmpint(gh_mls_group_get_adopted(gb), ==, GH_MLS_ADOPTED_KEY_PACKAGES);
   wait_live(gb);
   wait_message(bob, room, "Hello, Book Club");
 
@@ -1116,7 +1176,7 @@ test_gui_group_info(void)
   g_assert_cmpuint(gh_mls_invitee_picker_get_n_listed(picker), ==, 1);
   g_assert_null(gh_mls_invitee_picker_get_row(picker, hex[BOB]));   /* a member already */
   gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE);
-  wait_pick(picker, hex[CAROL], GH_MLS_INVITEE_READY);
+  wait_pick(picker, hex[CAROL], GROUNDHOG_READY);
   gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.save-add", NULL);
   spin_until(nothing_pending, info, "the Add merged");
   wait_text(last_info_toast, info, "Invited 1 person. They join once they accept.");
@@ -1243,18 +1303,22 @@ test_gui_group_info(void)
   spin_until(pending_is, &view_wait, "the banner gone");
   g_assert_false(gtk_widget_get_visible(undecryptable));
 
-  /* Bob (not an admin) leaves for everyone (nostrc-2um6): the copy says the
-   * admins are asked; he is "leaving" until Alice's service commits his
-   * Remove request, and her Group Info toasts that he left. */
+  /* Bob (not an admin) leaves for everyone (nostrc-2um6): the copy says how;
+   * he is "leaving" until Alice's service commits his leave, and her Group
+   * Info toasts that he left. */
   GhMlsGroupInfoDialog *alice_info = show_info(window, conversation);
   bob_info = show_info(bob_window, bob_conversation);
   gtk_widget_activate_action(GTK_WIDGET(bob_info), "mls-group.leave", NULL);
   AdwAlertDialog *leave = gh_mls_group_info_dialog_get_leave_dialog(bob_info);
   g_assert_cmpstr(adw_alert_dialog_get_heading(leave), ==, "Leave Group?");
-  /* A Groundhog group does not require SelfRemove: the admins are asked
-   * (review M1). */
-  g_assert_nonnull(strstr(adw_alert_dialog_get_body(leave),
-                          "The group’s admins are asked to remove you."));
+  /* Between Groundhog accounts the group is adopted (nostrc-lf62), and every
+   * member supports SelfRemove: Bob's own leave proposal, the others told.
+   * An MDK 0.8 group Groundhog made (a build without the adopted producer)
+   * does not require it: there the admins are asked (review M1). */
+  g_assert_cmpint(gh_mls_group_get_adopted(gb), ==, GH_MLS_ADOPTED_KEY_PACKAGES);
+  g_assert_cmpstr(adw_alert_dialog_get_body(leave), ==,
+                  gh_mls_leave_copy(GH_MLS_ADOPTED_KEY_PACKAGES ? GH_MLS_LEAVE_EVERYONE
+                                                                : GH_MLS_LEAVE_ADMINS));
   confirm(leave, GTK_WIDGET(bob_info), "leave-confirm");
   g_assert_cmpstr(gh_mls_group_info_dialog_get_last_toast(bob_info), ==, "Leaving the group…");
   gpointer data = NULL;
@@ -1278,6 +1342,123 @@ test_gui_group_info(void)
   close_window(window);
   world_down(&w);
 }
+
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+static const gchar *
+format_notice(gpointer page)
+{
+  return gh_mls_new_group_page_get_format_notice(page);
+}
+
+/* nostrc-lf62: the group's format on New Group. Bob's app speaks only the
+ * newer (adopted) format, Carol's only the older one. Carol alone: the
+ * group will use the older format, and the page says so. Both: one group
+ * can't use both formats; the page explains it and offers the choice, Keep
+ * Newer-Format People or Keep Older-Format People, each un-choosing the
+ * others. The older-format group is made; its Group Info refuses to add
+ * Bob, saying why. */
+static void
+test_gui_new_group_formats(void)
+{
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  inject_adopted_key_package(&w, BOB);
+  g_free(inject_legacy_key_package(&w, CAROL));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhNip29Service *nip29 = nip29_up(alice);
+  group_send_stub_reset();
+  GhWindow *window = app_window(alice, nip29);
+  g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
+  AdwDialog *dialog = visible_dialog(window);
+  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
+  GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
+    gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+  gh_mls_new_group_page_set_name(page, "Formats");
+  /* The group relay G, not W: the invitees' KeyPackages are on W, and a
+   * lookup never asks the new group's relays (nostrc-0bdg). */
+  g_assert_true(gh_mls_new_group_page_add_relay(page, w.g.url));
+  gtk_widget_activate_action(find_type(GTK_WIDGET(page), GH_TYPE_MLS_RELAY_ROW, w.w.url),
+                             "relay.remove", NULL);
+  GhMlsInviteePicker *picker = gh_mls_new_group_page_get_picker(page);
+
+  /* Carol alone: the older format, said, and Create runs. */
+  gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE);
+  wait_pick(picker, hex[CAROL], GH_MLS_INVITEE_READY_UNPROVEN);
+  g_assert_null(create_reason(page));
+  g_assert_nonnull(format_notice(page));
+  g_assert_nonnull(strstr(format_notice(page),
+                          "Some people use an older app version; this group will use the "
+                          "older format."));
+  g_assert_false(gh_mls_new_group_page_get_format_choice(page));
+
+  /* Bob too: no format in common. */
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
+  wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY_ADOPTED_ONLY);
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(gh_mls_invitee_picker_get_row(picker,
+                                                                                    hex[BOB])),
+                          "joins only groups in the newer format"));
+  g_assert_nonnull(create_reason(page));
+  g_assert_nonnull(strstr(create_reason(page), "One group can’t use both formats"));
+  g_assert_null(format_notice(page));
+  g_assert_true(gh_mls_new_group_page_get_format_choice(page));
+
+  /* Keep the newer format's people: Carol is un-chosen; an adopted group
+   * could be made. */
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.keep-adopted", NULL);
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_selected(picker), ==, 1);
+  g_assert_cmpint(gh_mls_invitee_picker_get_state(picker, hex[BOB]), ==,
+                  GH_MLS_INVITEE_READY_ADOPTED_ONLY);
+  g_assert_null(create_reason(page));
+  g_assert_null(format_notice(page));
+  g_assert_false(gh_mls_new_group_page_get_format_choice(page));
+
+  /* Carol again, then keep the older format's people: Bob is un-chosen. */
+  gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE);
+  wait_pick(picker, hex[CAROL], GH_MLS_INVITEE_READY_UNPROVEN);
+  g_assert_true(gh_mls_new_group_page_get_format_choice(page));
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.keep-legacy", NULL);
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_selected(picker), ==, 1);
+  g_assert_cmpint(gh_mls_invitee_picker_get_state(picker, hex[CAROL]), ==,
+                  GH_MLS_INVITEE_READY_UNPROVEN);
+  g_assert_null(create_reason(page));
+  g_assert_nonnull(format_notice(page));
+  g_assert_false(gh_mls_new_group_page_get_format_choice(page));
+
+  /* Created: an older-format group. */
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.create", NULL);
+  wait_text(status_title, page, "Group Created");
+  GhMlsGroup *ga = gh_mls_new_group_page_get_group(page);
+  g_assert_nonnull(ga);
+  g_assert_false(gh_mls_group_get_adopted(ga));
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.open", NULL);
+  spin_until(no_dialog, window, "New Group closed");
+
+  /* Group Info: Bob can't join this group's format, and it says why. */
+  GhMlsGroupInfoDialog *info = show_info(window, conversation);
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.add-members", NULL);
+  GhMlsInviteePicker *add = gh_mls_group_info_dialog_get_add_picker(info);
+  gh_mls_invitee_picker_set_selected(add, hex[BOB], TRUE);
+  wait_pick(add, hex[BOB], GH_MLS_INVITEE_READY_ADOPTED_ONLY);
+  GtkLabel *add_reason = GTK_LABEL(gtk_widget_get_template_child(
+    GTK_WIDGET(info), GH_TYPE_MLS_GROUP_INFO_DIALOG, "add_reason"));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(add_reason)));
+  g_assert_nonnull(strstr(gtk_label_get_text(add_reason),
+                          "joins only newer-format groups, and this group uses the older "
+                          "format"));
+  adw_dialog_force_close(ADW_DIALOG(info));
+  drain();
+  close_window(window);
+  gh_test_release(nip29);
+  world_down(&w);
+}
+#endif
 
 /* ---- --gui: members without the account proof (nostrc-6ukh, nostrc-prrl) ---------------- */
 
@@ -1317,6 +1498,9 @@ test_gui_unverified_member(void)
 {
   World w;
   const guint keys[] = { ALICE, BOB };
+  /* Members without the proof exist only in MDK 0.8-format groups: Alice
+   * and Bob publish that format only here (nostrc-lf62). */
+  world_legacy_only = TRUE;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
   wait_published(&w, keys, G_N_ELEMENTS(keys));
@@ -1560,6 +1744,9 @@ main(int argc, char **argv)
     gh_test_bus_up_beside_gtk(&test_bus);
     g_test_add_func("/groundhog/mls-ui-gui/flag-new-group", test_gui_flag_new_group);
     g_test_add_func("/groundhog/mls-ui-gui/new-group", test_gui_new_group);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+    g_test_add_func("/groundhog/mls-ui-gui/new-group-formats", test_gui_new_group_formats);
+#endif
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
     g_test_add_func("/groundhog/mls-ui-gui/unverified-member", test_gui_unverified_member);

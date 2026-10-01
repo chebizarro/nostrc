@@ -49,6 +49,7 @@ gh_mls_key_package_free(GhMlsKeyPackage *key_package)
   g_free(key_package->pubkey);
   g_free(key_package->event_json);
   g_free(key_package->event_id);
+  g_free(key_package->legacy_event_json);
   g_free(key_package);
 }
 
@@ -192,19 +193,30 @@ finish(GTask *task)
     return;
   }
   guint8 owner[32];
-  size_t index = 0;
-  gboolean ok = nostr_hex2bin(owner, lookup->pubkey, sizeof owner) &&
-                marmot_select_key_package_event((const char **)lookup->candidates->pdata,
-                                                lookup->candidates->len, owner,
-                                                &index) == MARMOT_OK &&
-                index < lookup->candidates->len;
-  if (!ok) {
+  size_t adopted_index = 0, legacy_index = 0;
+  if (!nostr_hex2bin(owner, lookup->pubkey, sizeof owner)) {
+    fail(task, G_IO_ERROR_NOT_FOUND, "This person has no valid KeyPackage");
+    return;
+  }
+  gboolean adopted = marmot_select_key_package_event_for_profile(
+    (const char **)lookup->candidates->pdata, lookup->candidates->len, owner,
+    MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, &adopted_index) == MARMOT_OK &&
+    adopted_index < lookup->candidates->len;
+  gboolean legacy = marmot_select_key_package_event_for_profile(
+    (const char **)lookup->candidates->pdata, lookup->candidates->len, owner,
+    MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, &legacy_index) == MARMOT_OK &&
+    legacy_index < lookup->candidates->len;
+  if (!adopted && !legacy) {
     fail(task, G_IO_ERROR_NOT_FOUND, "This person has no valid KeyPackage");
     return;
   }
   GhMlsKeyPackage *result = g_new0(GhMlsKeyPackage, 1);
   result->pubkey = g_strdup(lookup->pubkey);
-  result->event_json = g_strdup(g_ptr_array_index(lookup->candidates, index));
+  result->adopted = adopted;
+  result->event_json = g_strdup(g_ptr_array_index(lookup->candidates,
+                                                   adopted ? adopted_index : legacy_index));
+  if (legacy)
+    result->legacy_event_json = g_strdup(g_ptr_array_index(lookup->candidates, legacy_index));
   NostrEvent *event = nostr_event_new();
   if (event && nostr_event_deserialize_compact(event, result->event_json, NULL) == 1)
     {

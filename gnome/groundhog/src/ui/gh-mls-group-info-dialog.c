@@ -407,6 +407,19 @@ sync_add_reason(GhMlsGroupInfoDialog *self)
     reason = _("Checking whether everyone you chose can join…");
   else if (!gh_mls_invitee_picker_get_ready(self->add_picker))
     reason = _("Someone you chose can’t be invited yet. Remove them to continue.");
+  else {
+    /* Only the group's own format can join it (nostrc-lf62). */
+    gboolean adopted = gh_mls_group_get_adopted(self->group);
+    g_auto(GStrv) people = gh_mls_invitee_picker_dup_selected(self->add_picker);
+    for (guint i = 0; people && people[i] && !reason; i++)
+      if (!gh_mls_invitee_can_join(gh_mls_invitee_picker_get_state(self->add_picker, people[i]),
+                                   adopted))
+        reason = adopted
+          ? _("Someone you chose uses an older app version that can’t join this group. "
+              "Remove them to continue.")
+          : _("Someone you chose uses an app that joins only newer-format groups, and this "
+              "group uses the older format. Remove them to continue.");
+  }
   gtk_label_set_text(self->add_reason, reason ? reason : "");
   gtk_widget_set_visible(GTK_WIDGET(self->add_reason), reason != NULL);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.save-add",

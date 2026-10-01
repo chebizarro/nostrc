@@ -16,8 +16,12 @@ G_BEGIN_DECLS
  * "Hasn't set up encrypted groups", "Ready to invite. Their app can't prove
  * their account...", ...). */
 const gchar *gh_mls_invitee_copy(GhMlsInviteeState state);
-/* Whether a person in this state can be invited now (READY, READY_UNPROVEN). */
+/* Whether a person in this state can be invited now (the READY states; which
+ * group format they can join: gh_mls_invitee_can_join()). */
 gboolean gh_mls_invitee_can_invite(GhMlsInviteeState state);
+/* Whether someone in this state can join a group of this format (adopted,
+ * else MDK 0.8: nostrc-lf62). */
+gboolean gh_mls_invitee_can_join(GhMlsInviteeState state, gboolean adopted);
 
 /* This device's enrollment (the account proof, GhMlsIdentityState). NULL
  * title: nothing to show (enrolled, or not required). ready: groups can be

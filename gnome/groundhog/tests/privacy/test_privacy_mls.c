@@ -355,7 +355,9 @@ on_refused(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 /* W24 review H1: Carol (an older app, no account proof) joins through
- * Alice's Add. Bob learns nothing about her by himself: no KeyPackage REQ
+ * Alice's Add -- into an MDK 0.8-format group, the only one she can join, so
+ * Alice and Bob publish that format only here (nostrc-lf62). Bob learns
+ * nothing about her by himself: no KeyPackage REQ
  * naming her leaves Bob, and the group relay sees none from anyone. Only
  * Bob's Verify asks, and only the discovery relay and Carol's write relay;
  * a group relay that is also a discovery or write relay is still never
@@ -365,6 +367,7 @@ test_member_lookups_on_demand_only(void)
 {
   World w;
   const guint keys[] = { ALICE, BOB };
+  world_legacy_only = TRUE;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
   for (guint i = 0; i < G_N_ELEMENTS(keys); i++)

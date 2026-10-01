@@ -9,6 +9,9 @@ gh_mls_invitee_classify(const GhMlsKeyPackage *key_package, const GError *error,
                         gboolean require_proof)
 {
   if (key_package) {
+    if (key_package->adopted)
+      return key_package->legacy_event_json ? GH_MLS_INVITEE_READY
+                                            : GH_MLS_INVITEE_READY_ADOPTED_ONLY;
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
     bool proven = false;
     MarmotError err = marmot_key_package_event_has_account_proof(key_package->event_json,
@@ -16,11 +19,11 @@ gh_mls_invitee_classify(const GhMlsKeyPackage *key_package, const GError *error,
     if (err != MARMOT_OK)
       return GH_MLS_INVITEE_NOT_SET_UP;   /* the lookup selected it: not expected */
     if (proven)
-      return GH_MLS_INVITEE_READY;
+      return GH_MLS_INVITEE_READY_LEGACY;
     return require_proof ? GH_MLS_INVITEE_NEEDS_UPDATE : GH_MLS_INVITEE_READY_UNPROVEN;
 #else
     (void)require_proof;
-    return GH_MLS_INVITEE_READY;
+    return GH_MLS_INVITEE_READY_LEGACY;
 #endif
   }
   if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))

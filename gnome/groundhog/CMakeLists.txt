@@ -1575,10 +1575,14 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     nostr_nip17_core nostr_nip59_core)
   target_compile_options(groundhog-mls-service PRIVATE -Wall -Wextra -Werror)
   # The adopted-profile KeyPackage producer (nostrc-0bdg) follows libmarmot's
-  # own build gate: one switch, MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER,
-  # OFF by default, turns both on.
-  if (MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER)
-    target_compile_definitions(groundhog-mls-service PUBLIC GH_MLS_ADOPTED_KEY_PACKAGES=1)
+  # own build gate: one switch, MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER,
+  # ON by default since nostrc-lf62, turns both on. The tests that compile
+  # the service sources themselves build the same (GROUNDHOG_MLS_SERVICE_DEFS),
+  # unless they pin a producer on purpose (groundhog-mls-kp-lifecycle).
+  set(GROUNDHOG_MLS_SERVICE_DEFS)
+  if (MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
+    set(GROUNDHOG_MLS_SERVICE_DEFS GH_MLS_ADOPTED_KEY_PACKAGES=1)
+    target_compile_definitions(groundhog-mls-service PUBLIC ${GROUNDHOG_MLS_SERVICE_DEFS})
   endif()
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-mls-service)
@@ -1611,7 +1615,8 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
     target_compile_options(test-groundhog-mls-service PRIVATE -Wall -Wextra -Werror)
-    target_compile_definitions(test-groundhog-mls-service PRIVATE GH_MLS_TEST_HOOKS=1)
+    target_compile_definitions(test-groundhog-mls-service PRIVATE GH_MLS_TEST_HOOKS=1
+      ${GROUNDHOG_MLS_SERVICE_DEFS})
     groundhog_store_link_sqlcipher_first(test-groundhog-mls-service)
     add_dependencies(test-groundhog-mls-service groundhog-test-schemas)
     add_test(NAME groundhog-mls-service COMMAND test-groundhog-mls-service)
@@ -1620,9 +1625,10 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     # KeyPackage transport lifecycle (nostrc-0bdg): kind-10002 write relays
     # only (a read/write split), lookup privacy, the d slot kept, ACK-tied
     # retirement of old init keys, the delayed-Welcome trade-off and failed
-    # Welcomes. Built twice: with the MDK 0.8 producer, and with the
-    # compile-gated adopted producer turned on (libmarmot's ungated internal
-    # producer standing in for libmarmot's own gate, hence its src/).
+    # Welcomes, and the formats' independent lifecycles (nostrc-lf62). Built
+    # twice: with the MDK 0.8 producer only (libmarmot's gate off), and as
+    # shipped, both formats (libmarmot's ungated internal producer standing
+    # in when its gate is off, hence its src/).
     foreach(groundhog_kp_variant IN ITEMS legacy adopted)
       if (groundhog_kp_variant STREQUAL "legacy")
         set(groundhog_kp_name groundhog-mls-kp-lifecycle)
@@ -1647,6 +1653,11 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       if (groundhog_kp_variant STREQUAL "adopted")
         target_compile_definitions(test-${groundhog_kp_name} PRIVATE
           GH_MLS_ADOPTED_KEY_PACKAGES=1)
+        if (MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
+          # As shipped: libmarmot's public producer, no stand-in.
+          target_compile_definitions(test-${groundhog_kp_name} PRIVATE
+            GH_TEST_LIBMARMOT_ADOPTED_PRODUCER=1)
+        endif()
         target_include_directories(test-${groundhog_kp_name} PRIVATE
           ${CMAKE_CURRENT_SOURCE_DIR}/../../libmarmot/src)
       endif()
@@ -1680,6 +1691,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
     target_compile_options(test-groundhog-privacy-mls PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(test-groundhog-privacy-mls PRIVATE ${GROUNDHOG_MLS_SERVICE_DEFS})
     groundhog_store_link_sqlcipher_first(test-groundhog-privacy-mls)
     add_dependencies(test-groundhog-privacy-mls groundhog-test-schemas)
     add_test(NAME groundhog-privacy-mls COMMAND test-groundhog-privacy-mls)
@@ -1718,7 +1730,8 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_JSON)
     # Case 3d forces a MARMOT_ERR_EVENT_RATE refusal (nostrc-2um6).
-    target_compile_definitions(test-groundhog-mdk-interop PRIVATE GH_MLS_TEST_HOOKS=1)
+    target_compile_definitions(test-groundhog-mdk-interop PRIVATE GH_MLS_TEST_HOOKS=1
+      ${GROUNDHOG_MLS_SERVICE_DEFS})
     target_compile_options(test-groundhog-mdk-interop PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-mdk-interop)
     add_dependencies(test-groundhog-mdk-interop groundhog-test-schemas)

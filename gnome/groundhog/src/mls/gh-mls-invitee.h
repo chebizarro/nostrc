@@ -36,9 +36,14 @@ G_BEGIN_DECLS
 
 typedef enum {
   GH_MLS_INVITEE_CHECKING,     /* the lookup runs */
-  GH_MLS_INVITEE_READY,        /* a KeyPackage that can be invited */
-  GH_MLS_INVITEE_READY_UNPROVEN, /* can be invited, but their app can't prove their account:
-                                  * other members may see them as not verified */
+  GH_MLS_INVITEE_READY,        /* KeyPackages of both formats: joins any group */
+  GH_MLS_INVITEE_READY_ADOPTED_ONLY, /* an adopted KeyPackage only (e.g. White Noise on
+                                      * MDK 0.11): joins adopted-profile groups only */
+  GH_MLS_INVITEE_READY_LEGACY, /* an MDK 0.8 KeyPackage only, with the account proof (an
+                                * older app): joins MDK 0.8-profile groups only */
+  GH_MLS_INVITEE_READY_UNPROVEN, /* an MDK 0.8 KeyPackage only, and their app can't prove
+                                  * their account: other members may see them as not
+                                  * verified */
   GH_MLS_INVITEE_NOT_SET_UP,   /* relays answered: no valid KeyPackage */
   GH_MLS_INVITEE_NEEDS_UPDATE, /* a KeyPackage without the account proof, which the account
                                 * requires */
@@ -48,8 +53,9 @@ typedef enum {
 } GhMlsInviteeState;
 
 /* The state a lookup's result means (key_package NULL: error says why;
- * require_proof: the account requires proofs). libmarmot < 0.10.0 has no
- * proof: any valid KeyPackage is READY. */
+ * require_proof: the account requires proofs). The adopted format always
+ * carries a verified proof; the MDK 0.8 one may lack it. libmarmot < 0.10.0
+ * has no proof: any valid MDK 0.8 KeyPackage is READY_LEGACY. */
 GhMlsInviteeState gh_mls_invitee_classify(const GhMlsKeyPackage *key_package,
                                           const GError *error, gboolean require_proof);
 

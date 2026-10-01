@@ -31,9 +31,9 @@ G_BEGIN_DECLS
  * silent relay.
  *
  * Which: every signed kind 30443 authored by the person goes to
- * marmot_select_key_package_event() (the addressable-slot rules: newest per
- * (pubkey, d) slot, full KeyPackage validation, then newest), and the
- * winner is the result.
+ * marmot_select_key_package_event_for_profile() for both adopted and MDK 0.8
+ * formats (newest valid event per addressable slot). Adopted is preferred;
+ * the legacy candidate is also returned for a legacy group's Add.
  *
  * Consent is the caller's: never look up someone who is only a message
  * request (charter PD-8, PT-8). The lookup is bound to the account generation
@@ -50,6 +50,8 @@ typedef struct {
   gchar *pubkey;      /* lowercase hex */
   gchar *event_json;  /* the selected signed kind 30443 */
   gchar *event_id;
+  gboolean adopted;          /* event_json uses the adopted profile */
+  gchar *legacy_event_json;  /* nullable, independently validated MDK 0.8 event */
   guint sources;      /* relays asked, both phases */
   guint answered;     /* relays that sent EOSE */
 } GhMlsKeyPackage;

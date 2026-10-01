@@ -57,6 +57,9 @@ static gboolean world_fresh_lists;
 /* ...and set no discovery relay either: a real first run (PD-13). */
 static gboolean world_no_discovery;
 static gint64 world_key_package_max_hold;
+/* The next world's accounts publish MDK 0.8 KeyPackages only (nostrc-lf62):
+ * they make MDK 0.8-format groups with each other. */
+static gboolean world_legacy_only;
 
 static G_GNUC_UNUSED void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int line)
@@ -346,6 +349,7 @@ service_up(App *app)
     .lookup_deadline = 20,
     .key_package_lifetime = world_key_package_lifetime,
     .key_package_max_hold = world_key_package_max_hold,
+    .legacy_key_packages_only = world_legacy_only,
   };
   g_autoptr(GError) error = NULL;
   app->service = gh_mls_service_new(&config, &error);
@@ -489,20 +493,46 @@ world_down(World *w)
   world_fresh_lists = FALSE;
   world_no_discovery = FALSE;
   world_key_package_max_hold = 0;
+  world_legacy_only = FALSE;
   rm_rf(w->root);
   g_free(w->root);
 }
 
 /* ---- waits and lookups ------------------------------------------------------------ */
 
-/* The account's KeyPackage is published and on its write relay W (where
- * lookups find it; the state turns PUBLISHED on the first relay's OK). */
+/* Whether W keeps the event id. */
+static G_GNUC_UNUSED gboolean
+stored_on_w(App *app, const gchar *id)
+{
+  GPtrArray *stored = app->world->w.stored;
+  for (guint i = 0; i < stored->len; i++)
+    if (g_strcmp0(((WireStored *)g_ptr_array_index(stored, i))->id, id) == 0)
+      return TRUE;
+  return FALSE;
+}
+
+/* The account's KeyPackages are published and on its write relay W (where
+ * lookups find them; the state turns PUBLISHED on each format's first
+ * relay OK, which may come from another write relay first): each format's
+ * accepted event is kept on W (nostrc-lf62). After a restart that publishes
+ * nothing, no id is known yet: then any of the account's kind 30443 on W. */
 static G_GNUC_UNUSED gboolean
 key_package_published(gpointer data)
 {
   App *app = data;
   if (gh_mls_service_get_key_package_state(app->service) != GH_MLS_KEY_PACKAGE_PUBLISHED)
     return FALSE;
+  gboolean known = FALSE;
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    const gchar *id = gh_mls_service_get_key_package_id_for_format(app->service, f);
+    if (!id)
+      continue;
+    known = TRUE;
+    if (!stored_on_w(app, id))
+      return FALSE;
+  }
+  if (known)
+    return TRUE;
   GPtrArray *stored = app->world->w.stored;
   for (guint i = 0; i < stored->len; i++) {
     WireStored *event = g_ptr_array_index(stored, i);
@@ -685,6 +715,7 @@ create_group(App *app, const gchar *name, const guint *invitees, guint n)
 
 typedef struct {
   App *app;
+  GhMlsKeyPackageFormat format;
   const gchar *old_id;
 } ReplacedWait;
 
@@ -692,30 +723,39 @@ static G_GNUC_UNUSED gboolean
 key_package_replaced(gpointer data)
 {
   ReplacedWait *wait = data;
-  const gchar *id = gh_mls_service_get_key_package_id(wait->app->service);
+  const gchar *id = gh_mls_service_get_key_package_id_for_format(wait->app->service,
+                                                                 wait->format);
   return id && g_strcmp0(id, wait->old_id) != 0 &&
          gh_mls_service_get_key_package_state(wait->app->service) ==
            GH_MLS_KEY_PACKAGE_PUBLISHED;
 }
 
 /* `app` accepts its one invitation from `inviter` and reads the group. The
- * join's KeyPackage replacement (nostrc-0bdg) is awaited too, so a later
- * invitation is made with the new KeyPackage: its confirmation retires the
- * old one, and a Welcome to that would fail (the spec's trade-off). */
+ * join's KeyPackage replacement (nostrc-0bdg) -- of the format the group
+ * used (nostrc-lf62) -- is awaited too, so a later invitation is made with
+ * the new KeyPackage: its confirmation retires the old one, and a Welcome
+ * to that would fail (the spec's trade-off). */
 static G_GNUC_UNUSED GhMlsGroup *
 join(App *app, guint inviter)
 {
   spin_until(has_invite, app, "an invitation");
   g_autofree gchar *wrapper = the_invite(app, inviter);
-  g_autofree gchar *kp_before = g_strdup(gh_mls_service_get_key_package_id(app->service));
+  gchar *kp_before[GH_MLS_KEY_PACKAGE_N_FORMATS];
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    kp_before[f] = g_strdup(gh_mls_service_get_key_package_id_for_format(app->service, f));
   g_autoptr(GError) error = NULL;
   GhMlsGroup *group = gh_mls_service_accept_invite(app->service, wrapper, &error);
   g_assert_no_error(error);
   g_assert_nonnull(group);
   app->invites = 0;
   wait_live(group);
-  ReplacedWait replaced = { app, kp_before };
+  GhMlsKeyPackageFormat format = gh_mls_group_get_adopted(group)
+                                   ? GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED
+                                   : GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
+  ReplacedWait replaced = { app, format, kp_before[format] };
   spin_until(key_package_replaced, &replaced, "the joiner's KeyPackage replacement");
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    g_free(kp_before[f]);
   return group;
 }
 
@@ -860,6 +900,65 @@ published(WireRelay *relay, gint kind)
       nostr_event_free(event);
   }
   return out;
+}
+
+/* libmarmot's record of a processed Welcome (its gift wrap's id), if any:
+ * its state (MarmotWelcomeState) and reason. */
+static G_GNUC_UNUSED gboolean
+processed_welcome(App *app, const gchar *wrap_id, gint *state, gchar **reason)
+{
+  g_autoptr(GError) error = NULL;
+  MarmotStorage *storage = gh_store_marmot_new(app->store, &error);
+  g_assert_no_error(error);
+  guint8 wrapper[32];
+  g_assert_true(nostr_hex2bin(wrapper, wrap_id, sizeof wrapper));
+  bool found = false;
+  int s = -1;
+  char *why = NULL;
+  g_assert_cmpint(storage->find_processed_welcome(storage->ctx, wrapper, &found, &s, &why),
+                  ==, MARMOT_OK);
+  marmot_storage_free(storage);
+  if (found) {
+    if (state)
+      *state = s;
+    if (reason)
+      *reason = g_strdup(why);
+  }
+  free(why);
+  return found;
+}
+
+/* A kind-30443 event's KeyPackage format (nostrc-lf62): the adopted profile
+ * lists its components in an `app_components` tag, which the MDK 0.8
+ * profile never has. */
+static G_GNUC_UNUSED GhMlsKeyPackageFormat
+key_package_format(NostrEvent *event)
+{
+  NostrTags *tags = nostr_event_get_tags(event);
+  for (size_t i = 0; tags && i < nostr_tags_size(tags); i++)
+    if (g_strcmp0(nostr_tag_get(nostr_tags_get(tags, i), 0), "app_components") == 0)
+      return GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED;
+  return GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
+}
+
+/* The format of `key`'s newest kind 30443 the relay keeps, whatever its slot
+ * (by created_at, then the lower id: what a slot-blind reader takes). */
+static G_GNUC_UNUSED GhMlsKeyPackageFormat
+newest_key_package_format(WireRelay *relay, guint key)
+{
+  WireStored *newest = NULL;
+  for (guint i = 0; i < relay->stored->len; i++) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i);
+    if (nostr_event_get_kind(stored->event) != 30443 ||
+        g_strcmp0(nostr_event_get_pubkey(stored->event), hex[key]) != 0)
+      continue;
+    gint64 at = nostr_event_get_created_at(stored->event);
+    gint64 best = newest ? nostr_event_get_created_at(newest->event) : 0;
+    if (!newest || at > best || (at == best && g_strcmp0(stored->id, newest->id) < 0))
+      newest = stored;
+  }
+  g_assert_nonnull(newest);
+  return key_package_format(newest->event);
 }
 
 /* Whether any client frame to relay mentions text (e.g. a pubkey in a REQ). */

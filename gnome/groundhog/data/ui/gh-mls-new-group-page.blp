@@ -146,6 +146,49 @@ template $GhMlsNewGroupPage: Adw.NavigationPage {
               ]
             }
 
+            // The group's format (nostrc-lf62): the older one when someone
+            // chosen has only an older app.
+            Label format_notice {
+              visible: false;
+              wrap: true;
+              justify: center;
+              margin-bottom: 12;
+              use-markup: false;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            // People who share no format: keep one set (nostrc-lf62).
+            Box format_choice {
+              visible: false;
+              orientation: horizontal;
+              spacing: 12;
+              halign: center;
+              margin-bottom: 12;
+
+              Button {
+                label: _("Keep _Newer-Format People");
+                use-underline: true;
+                action-name: "mls-new.keep-adopted";
+
+                styles [
+                  "pill",
+                ]
+              }
+
+              Button {
+                label: _("Keep _Older-Format People");
+                use-underline: true;
+                action-name: "mls-new.keep-legacy";
+
+                styles [
+                  "pill",
+                ]
+              }
+            }
+
             Button create_button {
               label: _("_Create Group");
               use-underline: true;

@@ -27,20 +27,30 @@ G_BEGIN_DECLS
  * An ephemeral store is refused (KC-4: MLS is disabled without durable state).
  *
  * KeyPackages (MIP-00, kind 30443). While the account is active and online
- * the service keeps one KeyPackage of the account published: made by
- * libmarmot (its private init key stored first, in the store), signed by the
- * account's signer, and published to the account's kind-10002 write-capable
- * relays only -- `r` entries marked "write" or unmarked; never read-only
- * ones, never the kind-10050 inbox relays, never kind 10051 (Marmot
- * transports/nostr.md "KeyPackage publication"; charter §4.3 "own list
- * publish": GhAuthPolicy OWN_LIST_PUBLISH, account AUTH only on challenge).
- * Every KeyPackage reuses the account's addressable `d` slot, so a new one
- * replaces the old one on relays (each one's created_at strictly newer). It
+ * the service keeps one KeyPackage of the account published per format
+ * (GhMlsKeyPackageFormat, nostrc-lf62): the adopted one (MDK 0.11, current
+ * White Noise; built in with GH_MLS_ADOPTED_KEY_PACKAGES) and the MDK 0.8
+ * one, so that older White Noise and Amethyst can still invite the account.
+ * The price is two KeyPackage events, which anyone can link to each other
+ * and to the account (same author, relays and timing), showing that its app
+ * speaks both formats. Each is made by libmarmot (its private init key
+ * stored first, in the store), signed by the account's signer, and
+ * published to the account's kind-10002 write-capable relays only -- `r`
+ * entries marked "write" or unmarked; never read-only ones, never the
+ * kind-10050 inbox relays, never kind 10051 (Marmot transports/nostr.md
+ * "KeyPackage publication"; charter §4.3 "own list publish": GhAuthPolicy
+ * OWN_LIST_PUBLISH, account AUTH only on challenge). Each format reuses its
+ * own addressable `d` slot, so a new one replaces its format's old one on
+ * relays and never the other format's (each one's created_at strictly
+ * newer); the adopted one is made first and the MDK 0.8 one with it, so the
+ * MDK 0.8 one is the account's newest kind 30443 for a legacy reader that
+ * ignores slots. A format's KeyPackage
  * is rotated when it is older than the lifetime (default
  * GH_MLS_KEY_PACKAGE_LIFETIME) and after a Welcome to it was joined -- once
  * no other received invitation is pending (they were most likely made with
  * the same KeyPackage), even across a restart -- never after a Welcome that
- * failed.
+ * failed. A join rotates the format of the group joined; the user's rotate,
+ * both.
  *
  * KeyPackage lifecycle (nostrc-0bdg; foundation/key-packages.md). A due
  * replacement -- lifetime, the user's rotate or a join -- is not published
@@ -53,14 +63,14 @@ G_BEGIN_DECLS
  * KeyPackage confirms it (marmot_key_package_confirm_published()), and only
  * then does libmarmot delete the private material of the older ones. Until
  * then a delayed Welcome to the old (last-resort) KeyPackage still joins;
- * after it, it fails: the spec's deliberate trade-off. Groundhog's
- * KeyPackages are last-resort, so a join leaves the key for further
- * Welcomes until that confirmation; libmarmot deletes a consumed
- * single-use one at the join. An expired KeyPackage's private material goes
- * at every start and publish check (marmot_key_package_sweep_expired()).
- * The producer is the MDK 0.8 profile; the adopted profile
- * (GH_MLS_ADOPTED_KEY_PACKAGES) is compile-gated off until Groundhog's
- * groups are adopted-profile too.
+ * after it, it fails: the spec's deliberate trade-off. Confirmation, the
+ * hold and the deletion are per format: a format's replacement retires only
+ * that format's older keys, and a format with no KeyPackage left is not
+ * held. Groundhog's KeyPackages are last-resort, so a join leaves the key
+ * for further Welcomes until that confirmation; libmarmot deletes a
+ * consumed single-use one at the join. An expired KeyPackage's private
+ * material goes at every start and publish check
+ * (marmot_key_package_sweep_expired()).
  *
  * Invitations need consent (charter PD-8, PT-8). A KeyPackage is looked up
  * (gh-mls-key-packages.h: discovery relays, then the person's 10002 write
@@ -255,9 +265,11 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_ACCOUNT_PROOF 0
 #endif
 
-/* The adopted-profile KeyPackage producer (nostrc-0bdg): off by default,
- * on with libmarmot's MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER (the CMake
- * option sets both). Same slot, relays and lifecycle as the MDK 0.8 one. */
+/* The adopted-profile KeyPackage producer (nostrc-0bdg): on with libmarmot's
+ * producer (the CMake option MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER sets both; on
+ * by default since nostrc-lf62). Same relays and lifecycle as the MDK 0.8
+ * one, its own `d` slot. Without it the account publishes MDK 0.8
+ * KeyPackages only, and only MDK 0.8-format groups can add it. */
 #ifndef GH_MLS_ADOPTED_KEY_PACKAGES
 #define GH_MLS_ADOPTED_KEY_PACKAGES 0
 #endif
@@ -325,6 +337,15 @@ typedef enum {
   GH_MLS_KEY_PACKAGE_FAILED       /* the signer declined, or no relay accepted it */
 } GhMlsKeyPackageState;
 
+/* The KeyPackage formats (nostrc-lf62): an account publishes one KeyPackage
+ * of each it produces, and a group can add an invitee only through the
+ * format of its own profile. */
+typedef enum {
+  GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, /* the adopted Marmot profile (MDK 0.11, White Noise) */
+  GH_MLS_KEY_PACKAGE_FORMAT_LEGACY,  /* the MDK 0.8 profile ("the older format") */
+  GH_MLS_KEY_PACKAGE_N_FORMATS
+} GhMlsKeyPackageFormat;
+
 GType gh_mls_key_package_state_get_type(void);
 #define GH_TYPE_MLS_KEY_PACKAGE_STATE (gh_mls_key_package_state_get_type())
 
@@ -382,7 +403,10 @@ typedef enum {
   GH_MLS_SERVICE_ERROR_NOT_ENROLLED,   /* the signer has not approved this device's proof */
   GH_MLS_SERVICE_ERROR_NEEDS_UPDATE,   /* someone's app cannot prove their account, and the
                                         * account requires proofs (nostrc-6ukh) */
-  GH_MLS_SERVICE_ERROR_FORGED_IDENTITY /* someone's account proof does not verify */
+  GH_MLS_SERVICE_ERROR_FORGED_IDENTITY, /* someone's account proof does not verify */
+  GH_MLS_SERVICE_ERROR_MIXED_PROFILE, /* invitees with only the adopted and only the MDK 0.8
+                                       * KeyPackage format cannot share a new group */
+  GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH /* an invitee has no KeyPackage in the group's format */
 } GhMlsServiceError;
 
 /* Whether settings asks for every member's account proof: the key
@@ -484,6 +508,10 @@ GhMlsGroupEnd gh_mls_group_get_end(GhMlsGroup *self);
 const gchar *gh_mls_group_get_removed_by(GhMlsGroup *self);
 GhMlsReadState gh_mls_group_get_read_state(GhMlsGroup *self);
 gboolean gh_mls_group_get_is_admin(GhMlsGroup *self);
+/* Whether the group is adopted-profile (MDK 0.11, White Noise), else MDK
+ * 0.8-profile ("the older format"); fixed for the group's life. Only the
+ * matching KeyPackage format can be added (nostrc-lf62). */
+gboolean gh_mls_group_get_adopted(GhMlsGroup *self);
 gboolean gh_mls_group_get_pending_commit(GhMlsGroup *self);
 guint gh_mls_group_get_unsent_welcomes(GhMlsGroup *self);
 guint gh_mls_group_get_unreadable(GhMlsGroup *self);
@@ -546,6 +574,10 @@ typedef struct {
   guint lookup_deadline;               /* per-phase seconds; 0: 15 */
   gint64 key_package_lifetime;         /* seconds; 0: GH_MLS_KEY_PACKAGE_LIFETIME */
   gint64 key_package_max_hold;         /* seconds; 0: GH_MLS_KEY_PACKAGE_MAX_HOLD */
+  /* Publish MDK 0.8 KeyPackages only, as a build without the adopted producer
+   * does (nostrc-lf62): for tests (Groundhog accounts then make MDK 0.8
+   * groups with each other) and diagnostics. */
+  gboolean legacy_key_packages_only;
 } GhMlsServiceConfig;
 
 #define GH_TYPE_MLS_SERVICE (gh_mls_service_get_type())
@@ -566,9 +598,9 @@ void gh_mls_service_test_fail_invitation_listing(gboolean fail);
 gboolean gh_mls_service_test_has_init_key(GhMlsService *self, const gchar *ref_hex);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
 /* Test hook (nostrc-0bdg): replaces the one libmarmot call that its own
- * build gate (MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER) refuses in a
- * default build, e.g. with libmarmot's ungated internal producer; the
- * rest of the adopted producer path is the service's own. */
+ * build gate (CMake MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER) refuses when it is
+ * off, e.g. with libmarmot's ungated internal producer; the rest of the
+ * adopted producer path is the service's own. */
 typedef MarmotError (*GhMlsTestAdoptedProducer)(Marmot *marmot, const guint8 account[32],
                                                 MarmotKeyPackageResult *made);
 void gh_mls_service_test_set_adopted_producer(GhMlsTestAdoptedProducer producer);
@@ -600,6 +632,8 @@ const gchar *gh_mls_service_get_account(GhMlsService *self);
 /* libmarmot, for tests and diagnostics (borrowed; one thread). */
 Marmot *gh_mls_service_get_marmot(GhMlsService *self);
 
+/* Every format the account publishes, together: PUBLISHED once each one
+ * is; PUBLISHING or FAILED while one is. */
 GhMlsKeyPackageState gh_mls_service_get_key_package_state(GhMlsService *self);
 /* The account-proof enrollment ("identity-state", notified). */
 GhMlsIdentityState gh_mls_service_get_identity_state(GhMlsService *self);
@@ -618,9 +652,13 @@ void gh_mls_service_set_backfill_quiet(GhMlsService *self, guint quiet_ms);
 /* How long a held event keeps "decrypt-pending" up (milliseconds; 0:
  * GH_MLS_SERVICE_PENDING_SHOWN_S). For tests and tuning. */
 void gh_mls_service_set_pending_shown(GhMlsService *self, guint shown_ms);
-/* The id of the KeyPackage event last accepted by a relay, or NULL. */
+/* The id of the KeyPackage event last accepted by a relay, or NULL: of the
+ * adopted format when the account publishes it, else of the MDK 0.8 one. */
 const gchar *gh_mls_service_get_key_package_id(GhMlsService *self);
-/* Asks for a new KeyPackage (e.g. the user asked); FALSE with
+/* The same for one format; NULL for a format the account does not publish. */
+const gchar *gh_mls_service_get_key_package_id_for_format(GhMlsService *self,
+                                                          GhMlsKeyPackageFormat format);
+/* Asks for a new KeyPackage of every format (e.g. the user asked); FALSE with
  * GH_MLS_SERVICE_ERROR_INACTIVE when the service is not running. Published
  * now, or -- while an invitation is pending -- once none is or the hold ends
  * (gh_mls_service_get_key_package_held()). */
@@ -637,7 +675,11 @@ GhMlsGroup *gh_mls_service_lookup(GhMlsService *self, const gchar *group_id_or_r
  * ws(s) URLs) and invites invitees (1 to GH_MLS_SERVICE_MAX_INVITEES hex
  * pubkeys): consent, KeyPackage lookups, the group, one Add Commit
  * (published, merged), then the Welcomes. Completes once the Add was merged
- * (the group, with the Welcomes on their way) or failed. */
+ * (the group, with the Welcomes on their way) or failed. The group is
+ * adopted-profile when every invitee has an adopted KeyPackage, and
+ * MDK 0.8-profile when someone has only an MDK 0.8 one (nostrc-lf62);
+ * invitees who have only one format each, different ones, cannot share a
+ * group: GH_MLS_SERVICE_ERROR_MIXED_PROFILE, nothing made. */
 void gh_mls_service_create_group_async(GhMlsService *self, const gchar *name,
                                        const gchar *description,
                                        const gchar *const *relays,

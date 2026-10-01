@@ -13,6 +13,11 @@ gh_mls_invitee_copy(GhMlsInviteeState state)
     return _("Checking whether they can join…");
   case GH_MLS_INVITEE_READY:
     return _("Ready to invite");
+  case GH_MLS_INVITEE_READY_ADOPTED_ONLY:
+    return _("Ready to invite. Their app joins only groups in the newer format");
+  case GH_MLS_INVITEE_READY_LEGACY:
+    return _("Ready to invite. Their app is an older version, so a group with them uses the "
+             "older format");
   case GH_MLS_INVITEE_READY_UNPROVEN:
     return _("Ready to invite. Their app can’t prove their account, so others may see "
              "“Identity not verified”");
@@ -34,7 +39,26 @@ gh_mls_invitee_copy(GhMlsInviteeState state)
 gboolean
 gh_mls_invitee_can_invite(GhMlsInviteeState state)
 {
-  return state == GH_MLS_INVITEE_READY || state == GH_MLS_INVITEE_READY_UNPROVEN;
+  return state == GH_MLS_INVITEE_READY ||
+         state == GH_MLS_INVITEE_READY_ADOPTED_ONLY ||
+         state == GH_MLS_INVITEE_READY_LEGACY ||
+         state == GH_MLS_INVITEE_READY_UNPROVEN;
+}
+
+gboolean
+gh_mls_invitee_can_join(GhMlsInviteeState state, gboolean adopted)
+{
+  switch (state) {
+  case GH_MLS_INVITEE_READY:
+    return TRUE;
+  case GH_MLS_INVITEE_READY_ADOPTED_ONLY:
+    return adopted;
+  case GH_MLS_INVITEE_READY_LEGACY:
+  case GH_MLS_INVITEE_READY_UNPROVEN:
+    return !adopted;
+  default:
+    return FALSE;
+  }
 }
 
 GhMlsIdentityCopy
@@ -106,6 +130,13 @@ gh_mls_error_copy(const GError *error)
     case GH_MLS_SERVICE_ERROR_FORGED_IDENTITY:
       return g_strdup(_("Someone’s account proof is forged or broken, so Groundhog refused it. "
                         "Nothing was changed."));
+    case GH_MLS_SERVICE_ERROR_MIXED_PROFILE:
+      return g_strdup(_("Some people you chose can join only newer-format groups, and others "
+                        "only older-format ones; one group can’t use both. Nothing was "
+                        "changed."));
+    case GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH:
+      return g_strdup(_("Someone you chose can’t join this group: their app doesn’t use this "
+                        "group’s format. Nothing was changed."));
     default:
       break;
     }
