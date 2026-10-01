@@ -120,6 +120,9 @@ set_target_properties(marmot PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR
     "${CMAKE_INSTALL_INCLUDEDIR}/marmot"
 )
+# apply_versioning() reads <target>_SOVERSION; without it the 0.MINOR
+# SONAME above is overwritten with "0" (W24 media-v2 re-review).
+set(marmot_SOVERSION "${MARMOT_SOVERSION}")
 apply_versioning(marmot)
 
 target_include_directories(marmot
