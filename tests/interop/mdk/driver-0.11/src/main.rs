@@ -1689,8 +1689,9 @@ impl Driver {
                    "url": url, "ciphertext_sha256": ciphertext_sha256 }))
     }
 
-    /// Opens a received v2 attachment as marmot-app does
-    /// (`download_encrypted_media_with_transport`): its blossom-v1 locator
+    /// Opens a received v2 attachment as marmot-app's download path does
+    /// (`download_encrypted_media_with_transport`), but NOT through its imeta
+    /// parser and validator (nostrc-qeyg): its blossom-v1 locator
     /// fetched, the body's SHA-256 checked first, then the AEAD with the
     /// source epoch's media key, then the plaintext hash. The driver keeps no
     /// per-epoch secret cache, so the source epoch must be the group's
@@ -1705,6 +1706,15 @@ impl Driver {
             .iter()
             .map(|v| v.as_str().unwrap_or_default().to_string())
             .collect();
+        // Not marmot-app's parser (nostrc-qeyg): only the fields the key and
+        // AAD are derived from, each exactly once (a first-wins reader of a
+        // duplicated m, filename or hash would derive another key).
+        for name in ["v", "ciphertext_sha256", "plaintext_sha256", "nonce", "m", "filename"] {
+            let prefix = format!("{name} ");
+            if tag.iter().skip(1).filter(|f| f.starts_with(&prefix)).count() > 1 {
+                return Err(fail(CRYPTO, format!("duplicate imeta field {name}")));
+            }
+        }
         let field = |name: &str| -> Option<String> {
             tag.iter().skip(1).find_map(|f| f.strip_prefix(&format!("{name} ")).map(str::to_string))
         };
