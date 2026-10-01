@@ -211,3 +211,68 @@ The other 16 are caught:
 - Strongly recommended in this slice: **L1** (a one-line classifier fix plus two negatives) and **L2** (a `TamperedLeaf` negative fixture; pin `MARMOT_ERR_UNSUPPORTED` in `test_adopted_commits_refused`).
 - When merging A and B: **L4** (checked install for their new producers).
 - Otherwise, file as beads: L3, L5 (pre-existing), N1–N5.
+
+---
+
+## Addendum (re-review of the fixes), 2026-09-30
+
+- Re-reviewed: `marmot/w24-adopted-admission` at `9b405454`. The seven fix commits are `cba71181` (H1), `aed4e2df` (L1), `725f07ed` (L2), `1503eb7d` (L3), `fa150c42` (L4), `ea66d32f` (L5) and `9b405454` (N1–N5).
+- This review branch is rebased onto that tip.
+
+### Final verdict: APPROVE-WITH-NITS
+
+Every finding is fixed and pinned by a test that fails when its fix is reverted. H1 is closed on every adopted Commit path, and the new parsers fuzz clean with oversized allocations made fatal. What remains are merge-integration items for whoever lands second, and two minor notes.
+
+### Gates (new tip)
+
+| Gate | Result |
+| --- | --- |
+| macOS `ninja` (full tree, `-DBUILD_GROUNDHOG=ON`) | OK; no warnings in libmarmot sources or tests |
+| `ctest -R "mls\|marmot\|welcome\|invite\|group"` | 34/34; `test_adopted` now has 22 cases |
+| `scripts/check-unsequenced-args.py` | clean |
+| `scripts/linux-gate.sh --sanitizers` | passed, 49 tests |
+| libmarmot's 23 suites, ASAN+UBSAN+LSan (Linux image, throwaway volume removed) | 23/23 |
+| libmarmot's 23 suites, ASAN+UBSAN (macOS) | 23/23 |
+| Re-fuzz, 4 × 120 s, ≈19M iterations, `allocator_may_return_null=0` (an oversized allocation aborts) | no reports. L5 used to abort within seconds. Classifier-versus-old-gate disagreements: **0** (L1). |
+| All 20 original revert spot-checks | **20/20 caught** (previously 16) |
+| Fixtures (re-captured with the new `commits` section) | committed emitter = capture workspace; the header regenerates byte for byte; a fresh capture passes `test_adopted` 22/22 |
+
+### Findings
+
+- **H1: fixed.** Verified in four ways.
+  - **The original repro on the new tip.** Same Alice/Bob/Carol probe, 8 runs with fresh keys. Every run gives `marmot_process_message -> -5 (MARMOT_ERR_UNSUPPORTED)`, the group stays ACTIVE, there is no removal record, and the MLS state is kept. Alice also refuses.
+  - **Every path is guarded.**
+    - `marmot_commit_process_inbound()` refuses a non-legacy group right after `load_current()`, before staging, the removal branch, deferral or retained-parent judgement (`commits.c` after `:2127`).
+    - `inbound_removed()` refuses before any judgement.
+    - `removal_key()`, `removal_contested()` (never final) and `evict()` each refuse non-legacy groups as a second line.
+    - The deferred replay (`deferred_order()` → `inbound_order_key()` → `removal_key()`) and `marmot_commit_clear_pending()` → `marmot_commit_process_inbound()` land on those guards.
+    - `marmot_commit_removal_note_later()` and its `forget_keys()` need a stored removal record. The only writers are `evict()` and `inbound_removed()`, so no adopted group can get one. Local producers still go through `marmot_commit_stage_pending()` → `marmot_commit_authorize()` (refused).
+  - **My audit of the `gde_is_admin(NULL)` callers.** It now returns false: no GroupData means no admin.
+    - `marmot_commit_authorize()` (`:274`): only after the profile refusal, so legacy only. A privileged Commit in a legacy state without GroupData is now refused.
+    - `removal_key()` (`:1560`): legacy only.
+    - `could_win()` (`:364`): both of its callers, `retained_pending_compute()` (`:391`) and `removal_contested()` (`:1698`), now treat a NULL GroupData as "every member could win" *before* calling it. Ordering bounds stay conservative, and no removal becomes final on a NULL GroupData.
+  - **The test has teeth.** Putting `commits.c` back to `cba71181^` fails `test_adopted` (`test_adopted_removal_refused`: `marmot_process_message … -> 0, want -5`).
+- **L1: fixed.** The type is checked before the length. Both of my inputs (`00 06 05 00 00`, `00 06 40 01 00`) now classify ADOPTED, and `mls_group_create_with_leaf_extensions()` refuses them with `MARMOT_ERR_EXTENSION_FORMAT`. Reverting just the classifier hunk fails `test_adopted.c:779`.
+- **L2: fixed.** New tests `test_welcome_tampered_leaf` (Bob's HPKE key altered after signing, under the creator's GroupInfo signature), `test_commit_processor_profile_check` (OpenMLS-built PublicMessage Commits), `test_install_checked`, `test_create_wrong_enrolled_proof` and `test_adopted_removal_refused`. M1, M11, M15 and M19 are now caught.
+- **L3: fixed.** `welcome_open()` separates `MARMOT_ERR_STORAGE_NOT_FOUND` from other storage errors and returns those without a reason. On arrival, a reasonless failure stores the Welcome as pending; on accept, `refuse_welcome()` runs only with a reason. All buffers are freed and zeroed on the new early returns (checked). Covered by `test_welcome_transient_storage_error`.
+- **L4: fixed on this branch.** Format 4 writes the private `MLS_GROUP_SERIAL_PROFILE_ADOPTED` (0x01), not the enum value. The rule that every producer installs through `group_install_checked()` is documented in `mls_group.c` and the README, and pinned by `test_install_checked`. The other branches still install directly, which is expected since they don't have the function yet; see the merge notes.
+- **L5: fixed.** `READ_U16_VEC` and the ParentNode `unmerged_leaves` length are both checked against the remaining bytes before allocating. Reverting fails `test_mls_tree`. Re-fuzzed clean (see Gates).
+- **N1: fixed.** IPv6 literals, forbidden host code points and numeric hosts are now validated. `wss://[zzz]`, `wss://ex<ample.com` and `wss://exa%zzmple.com` are refused. The validator is still stricter than WHATWG in places (no IPv4 shorthand like `wss://1.2.3`, no `%` in hosts), which fails closed.
+- **N2: fixed.** An adopted kind:444 rumor carrying `sig` is refused.
+- **N3: fixed.** The duplicate heading is gone.
+- **N4: fixed** with `_Static_assert`s.
+- **N5: documented.**
+
+### Remaining notes
+
+- **Nit:** `gde_is_admin(NULL) == false` also applies to *legacy* MLS states without GroupData. Only pre-0.11 joins can be in that state, since the Welcome now requires exactly one 0xF2EE. Privileged Commits in those groups are now refused, which fails closed. groups.c `is_admin()` (record-based, `admin_count == 0` means anyone) would still let us *build* such a Commit, but `marmot_commit_stage_pending()` refuses it before publishing, so the two sides stay consistent. Worth a README line under legacy compatibility.
+- **Nit:** a Welcome stored as pending after a transient error at arrival has no signed preview until it is accepted. That's acceptable, because the accept re-runs every check.
+
+### Merge risk (current tips)
+
+- **master `aae023f5`** (now with slices G and C) conflicts in VERSION_MANIFEST.md, libmarmot/CMakeLists.txt, README.md and marmot.h (header lists: keep both).
+  - `mls/mls_group.c`: master's `add_members_staged(…, extensions, extensions_len, …)` meets E's `group_install_checked()`. Keep both, and switch master's other direct installs in Commit producers to `group_install_checked()` (5 call sites on master).
+  - `welcome.c`: master's slice C rewrote the accept path with the same KeyPackage loop and a new `refuse_welcome(m, welcome, reason, err)` signature. Keep E's `welcome_open()` and adapt it to that signature.
+  - Fold E into the unreleased 0.12.0.
+- **Slice A `2e367295`:** conflicts in VERSION_MANIFEST.md, README.md, commits.c (two non-legacy refusals: keep both) and mls_group.c (`mls_group_replace_members()` must use `group_install_checked()`). The header was already reconciled at `fc6c896b`.
+- **Slice B `777589a1`:** README only. Its `mls_group_commit_by_ref()` must switch to `group_install_checked()`.
