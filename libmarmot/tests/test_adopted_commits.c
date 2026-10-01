@@ -23,6 +23,7 @@
 #include "mls/mls_app_data_update.h"
 #include "mls/mls-internal.h"
 #include "vectors/mdk-0.11/adopted_commits_fixture.h"
+#include "vectors/mdk-0.11/convergence_forks_fixture.h"
 #include <nostr-event.h>
 #include <nostr-tag.h>
 #include <secp256k1.h>
@@ -647,6 +648,121 @@ test_mdk_competing_self_remove_commits(void)
     snapshot_clear(&ours_state);
     marmot_group_id_free(&gid);
     member_free(&o);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MDK v0.11.0 forks: libmarmot selects the branch MDK's convergence selects
+ * (nostrc-w1m0; vectors/mdk-0.11/convergence-forks.json)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+fork_observer(Member *x, MarmotGroupId *gid)
+{
+    member_init(x, "observer");
+    size_t kp_len = 0;
+    uint8_t *framed = unhex(N_FORK_KP_MLS_MESSAGE, &kp_len);
+    CHECK(kp_len > 4 && framed[3] == 5, "MLSMessage(mls_key_package)");
+    install_key_package(x, framed + 4, kp_len - 4, N_FORK_INIT_SK, N_FORK_ENC_SK,
+                        N_FORK_SIG_SEED, N_FORK_SIG_PUB);
+    free(framed);
+    OK(join(x, N_FORK_RUMOR_JSON));
+    *gid = gid_of(N_FORK_GROUP_ID);
+}
+
+static const char *
+fork_event(const char *name)
+{
+    for (size_t i = 0; i < N_FORK_STEP_COUNT; i++)
+        if (strcmp(N_FORK_STEPS[i].name, name) == 0) return N_FORK_STEPS[i].event_json;
+    CHECK(0, "no fork step %s", name);
+    return NULL;
+}
+
+/* Deliver the captured `name`: refused with `want`, or (MARMOT_OK) a result
+ * of `type`, which changed the selected branch or not (`recovered`). */
+static void
+fork_deliver(Member *x, const char *name, MarmotError want, MarmotMessageResultType type,
+             bool recovered)
+{
+    MarmotMessageResult r;
+    MarmotError err = deliver(x, fork_event(name), &r);
+    CHECK(err == want, "%s: err %d (%s), want %d (%s)", name, err, marmot_error_string(err), want,
+          marmot_error_string(want));
+    if (err == MARMOT_OK)
+        CHECK(r.type == type && r.convergence.branch_recovered == recovered,
+              "%s: type %d (want %d), branch changed %d (want %d)", name, r.type, type,
+              r.convergence.branch_recovered, recovered);
+    marmot_message_result_free(&r);
+}
+
+/* MDK's verdict: every MDK party's group name and epoch after settling. */
+static void
+fork_verdict(Member *x, const MarmotGroupId *gid, const char *name, unsigned long long epoch,
+             const char *what)
+{
+    MarmotGroup *g = group_of(x, gid);
+    CHECK(g->epoch == epoch && g->name && strcmp(g->name, name) == 0,
+          "%s: libmarmot '%s' at %llu, MDK '%s' at %llu", what, g->name ? g->name : "(null)",
+          (unsigned long long)g->epoch, name, epoch);
+    marmot_group_free(g);
+}
+
+/* Three forks MDK v0.11.0 resolved among its own engines (two admins'
+ * same-epoch renames; an admin's rename against a member's two-Commit
+ * branch; a same-epoch race decided by a witness against the key), replayed
+ * to a libmarmot member in the captured order and in an adversarial one --
+ * the loser first, a branch's second Commit before its first, the witness
+ * before its Commit.  It reaches MDK's verdict each time, and reads the
+ * message MDK sent in the converged epoch: its epoch secrets are MDK's. */
+static void
+test_mdk_forks_converge(void)
+{
+    const MarmotMessageResultType C = MARMOT_RESULT_COMMIT, A = MARMOT_RESULT_APPLICATION_MESSAGE;
+    for (int order = 0; order < 2; order++) {
+        Member o;
+        MarmotGroupId gid;
+        fork_observer(&o, &gid);
+        fork_deliver(&o, "admin_change", MARMOT_OK, C, false);
+        /* race: Alice's key sorts below Bob's. */
+        if (order == 0) {
+            fork_deliver(&o, "race_alice", MARMOT_OK, C, false);
+            fork_deliver(&o, "race_bob", MARMOT_ERR_WRONG_EPOCH, C, false);
+        } else {
+            fork_deliver(&o, "race_bob", MARMOT_OK, C, false);
+            fork_deliver(&o, "race_alice", MARMOT_OK, C, true);
+        }
+        fork_verdict(&o, &gid, N_FORK_RACE_NAME, N_FORK_RACE_EPOCH, "race");
+        fork_deliver(&o, "message_after_race", MARMOT_OK, A, false);
+        /* depth2: Carol's two self-updates beat Alice's rename. */
+        if (order == 0) {
+            fork_deliver(&o, "depth2_rename", MARMOT_OK, C, false);
+            fork_deliver(&o, "depth2_first", MARMOT_ERR_WRONG_EPOCH, C, false);
+            fork_deliver(&o, "depth2_second", MARMOT_OK, C, true);
+        } else {
+            fork_deliver(&o, "depth2_second", MARMOT_ERR_NIP44, C, false);
+            fork_deliver(&o, "depth2_first", MARMOT_OK, C, false);
+            fork_deliver(&o, "depth2_second", MARMOT_OK, C, false);
+            fork_deliver(&o, "depth2_rename", MARMOT_ERR_WRONG_EPOCH, C, false);
+        }
+        fork_verdict(&o, &gid, N_FORK_DEPTH2_NAME, N_FORK_DEPTH2_EPOCH, "depth2");
+        fork_deliver(&o, "message_after_depth2", MARMOT_OK, A, false);
+        /* witnessed: the higher key's rename, witnessed by its committer. */
+        CHECK(strcmp(N_FORK_WITNESSED_HIGHER_KEY, "bob") == 0, "the capture's roles");
+        if (order == 0) {
+            fork_deliver(&o, "witnessed_low", MARMOT_OK, C, false);
+            fork_deliver(&o, "witnessed_high", MARMOT_ERR_WRONG_EPOCH, C, false);
+            fork_deliver(&o, "witness_message", MARMOT_OK, A, true);
+        } else {
+            fork_deliver(&o, "witness_message", MARMOT_ERR_NIP44, A, false);
+            fork_deliver(&o, "witnessed_high", MARMOT_OK, C, false);
+            fork_deliver(&o, "witnessed_low", MARMOT_OK, C, true);   /* the key, unwitnessed */
+            fork_deliver(&o, "witness_message", MARMOT_OK, A, true);  /* offered again */
+        }
+        fork_verdict(&o, &gid, N_FORK_WITNESSED_NAME, N_FORK_WITNESSED_EPOCH, "witnessed");
+        fork_deliver(&o, "message_after_witnessed", MARMOT_OK, A, false);
+        marmot_group_id_free(&gid);
+        member_free(&o);
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2209,6 +2325,7 @@ main(int argc, char **argv)
     RUN(test_mdk_commit_sequence);
     RUN(test_mdk_commit_before_its_proposal);
     RUN(test_mdk_competing_self_remove_commits);
+    RUN(test_mdk_forks_converge);
     RUN(test_openmls_negatives);
     RUN(test_lifecycle_enablement);
     RUN(test_removal_judged_whole);

@@ -1,0 +1,26 @@
+[package]
+name = "w25n-vectors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Throwaway nostrc W25 N convergence fork fixture emitter (not part of MDK)."
+
+[dependencies]
+cgka-engine.workspace = true
+cgka-traits.workspace = true
+storage-sqlite.workspace = true
+transport-nostr-peeler.workspace = true
+transport-nostr-adapter.workspace = true
+openmls.workspace = true
+openmls_basic_credential.workspace = true
+openmls_traits.workspace = true
+openmls_rust_crypto.workspace = true
+tls_codec = { workspace = true, features = ["derive", "std"] }
+nostr.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde_json.workspace = true
+hex.workspace = true
+base64.workspace = true
+sha2.workspace = true
+k256 = { version = "0.13", default-features = false, features = ["schnorr"] }

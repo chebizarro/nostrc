@@ -489,10 +489,10 @@ Commit (`cgka-engine` app_components.rs), against the candidate parent:
   that epoch moves it on; Groundhog shows "change refused"); a non-admin's
   keeps its specific error, and `MARMOT_ERR_KEY_PACKAGE_IDENTITY` its own
   meaning. Not yet for a refused competitor of the Commit we applied.
-- **Convergence** is the legacy bounded subset (one retained parent,
-  CommitOrderingSuffix with the adopted privileged/ordinary split, held
-  Commits with `MARMOT_ERR_PROPOSAL_UNKNOWN`); full adopted convergence is
-  nostrc-w1m0.
+- **Convergence** follows the adopted protocol for both profiles since
+  W25 (nostrc-w1m0; see the changelog): five retained epochs, multi-Commit
+  branches, witnesses, reorgs with invalidation. The pass timers, the
+  disband lifecycle and Welcome invalidation are not done.
 
 **For integrators and new code (W24 review L4).** Every MLS-layer Commit
 producer must install its staged group through `group_install_checked()`
@@ -608,6 +608,88 @@ callers).
   GroupContextExtensions upgrade there whose resulting GroupContext keeps
   the dictionary; libmarmot refusing such an inbound Commit is tracked
   separately.
+
+### 0.12.0 (unreleased): adopted convergence (nostrc-w1m0)
+
+**New capability and API** (MINOR for 0.x; folded into 0.12.0).
+Marmot `protocol-core/convergence.md` and `retained-history.md`
+(marmot-protocol/marmot 07da8ffb), as MDK v0.11.0's cgka-engine runs them,
+for both profiles; it replaces the one-parent subset.
+
+#### What changed
+
+- **Retained history.** The full state and canonical Commit of each of the
+  last `max_rewind_commits` (5) epochs, in the `mls_group_parent` record (its
+  0.10.0 prefix unchanged, a new trailer). Nothing older: a state, its
+  exporter secret and its proposals are released when its epoch leaves the
+  horizon. Late application messages read across the same five epochs
+  (`app_payload_past_epoch_limit`), not just one.
+- **Candidates.** A Commit that does not linearly advance the tip -- a
+  competitor of an applied Commit, one on a competing branch, the losing side
+  of a reorg, our own pending Commit superseded before its relay OK -- is
+  retained while its source epoch is inside the horizon. Its parent is the
+  state whose exporter secret sealed its kind:445 (MIP-03); candidate states'
+  exporter secrets are kept, so a branch's later Commits and messages peel.
+  Bounded: 32 Commits, 4 per committer; beyond, `MARMOT_ERR_RESOURCE_REFUSED`
+  (-54), nothing kept.
+- **Resolution** on every admitted input: replay from the oldest candidate's
+  source epoch, every maximal branch through the canonical states and the
+  candidates, each Commit fully validated against its parent; MDK's
+  comparator: effective depth (raw depth + 1 when two distinct accounts'
+  messages witness one branch epoch), quorum, witness score (distinct
+  accounts per epoch, at most 2, inside the five-epoch window of the
+  branch's tip), privileged before ordinary, committer, digest. The selected
+  branch is applied as a linear advance, a multi-Commit extension or a
+  reorg; the tip epoch can go down (a witnessed branch beats a longer one by
+  one Commit).
+- **Witnesses.** An application message that decrypts on a state and passes
+  every payload check (its inner author is its MLS sender) witnesses that
+  state for its account, once, our own sends included. One of a candidate
+  state is decrypted on that state rebuilt by replay, recorded, and is
+  `MARMOT_ERR_NIP44` (offer it again later) until its branch wins; then it
+  is delivered.
+- **Invalidation.** `MarmotMessageResult.convergence` (any result type): the
+  branch changed, the fork epoch, the superseded Commits' digests and the
+  withdrawn messages; their stored copies become
+  `MARMOT_MSG_STATE_EPOCH_INVALIDATED`.
+- **Lost acknowledgement.** A pending Commit superseded before its OK stays
+  retained, unconfirmed: never a selectable tip on its own (publish before
+  apply), it wins when others build on it or witness it, or once its relay
+  echo arrives; the pending record then reads as merged.
+- **Removal.** A realized removal stays terminal for our leaf
+  (`member-departure.md`): finality is still judged by same-epoch races only.
+
+#### Compatibility
+
+- **Behaviour.** A losing competitor is still `MARMOT_ERR_WRONG_EPOCH` but is
+  kept (`marmot_txn_keep()`); the same Commit as one retained in the
+  canonical history is `MARMOT_RESULT_OWN_MESSAGE`, five epochs back.
+  Groundhog and other callers that mark events seen on a Commit result now
+  also see results whose epoch went down.
+- **API/ABI.** `MarmotMessageResult` grows at its end (`convergence`; the
+  0.12 SONAME covers it). `MARMOT_ERR_RESOURCE_REFUSED`.
+- **Storage.** The retained-parent record gains the W25 trailer; libmarmot
+  0.10.0/0.11.0 cannot read it (late messages and competitors of retained
+  epochs fail closed after a downgrade, until the next Commit). Records of
+  earlier versions are read: a 0.9.0 one is a full parent without Commit
+  bytes, a 0.10.0/0.11.0 reader-only parent still reads late messages and
+  judges nothing. The pending record gains an optional trailer (the Commit's
+  MLSMessage). The memory backend's `save_message` updates by id.
+- **Security (forward secrecy).** Whoever obtains the whole store holds the
+  init secrets and private path keys of the last five epochs and, with the
+  Commits relays carry, every message of those epochs and of the current
+  one: the adopted protocol's tradeoff. nostrc-yuj2's early reduction of the
+  parent to a reader is gone (it made a member refuse a deeper branch the
+  others select).
+- **Not done (nostrc-w1m0 stays open).** The pass timers
+  (`settlement_quiescence_ms`, `max_convergence_pass_ms`), the
+  Syncing/Resolving phases and holding outbound work while a pass is open:
+  each input resolves at once, which reaches the same branch once input
+  closes but exposes intermediate selections. Inbound Commits are still
+  admitted during `PendingPublish`. The disband lifecycle. Withdrawing a
+  Welcome a losing branch's Add sent. A processed-event marker is not
+  cleared when its message is withdrawn (it is not re-delivered if its
+  branch wins again).
 
 ### 0.12.0 (unreleased): Commits in adopted groups (nostrc-qp24.5.1.3)
 

@@ -5822,19 +5822,19 @@ fail:
  * key of its epoch.
  *
  * NOT covered by this alone (review B1): after a Commit, libmarmot also keeps
- * the previous epoch's state as the retained parent ("mls_group_parent", to
- * judge a competing Commit and read late messages).  While it is kept in
- * full -- its init secret and the private keys that open the Commit's
- * UpdatePath -- it and the Commit, which relays carry, derive the current
- * epoch again from scratch: every message of the current epoch (and the
- * parent epoch's unconsumed keys) is exposed to whoever obtains the whole
- * store.  Since 0.10.0 (nostrc-yuj2) that lasts only until every member
- * that could publish a winning competing Commit was seen at the new epoch
- * (at once when there is none; at the latest the next Commit): the parent
- * is then reduced by mls_group_strip_to_reader() to its sender-data secret
- * and secret tree, which read the parent epoch's late messages but cannot
- * process a Commit (commits.c, "Retained parent record").
- *
+ * the states of the last five epochs as its retained history
+ * ("mls_group_parent", commits.c "Retained history": to judge competing
+ * branches and read late messages).  Kept in full -- init secrets and the
+ * private keys that open each Commit's UpdatePath -- they and the Commits,
+ * which relays carry, derive every later epoch again from scratch: every
+ * message of those epochs and of the current one is exposed to whoever
+ * obtains the whole store.  That is the adopted protocol's tradeoff
+ * (retained-history.md "Retained cryptographic material"); a state leaves
+ * the record, and so the store, as soon as its epoch leaves the five-epoch
+ * horizon.  From 0.10.0 until W25 (nostrc-yuj2) the parent was reduced by
+ * mls_group_strip_to_reader() as soon as no same-epoch competitor could
+ * win; multi-Commit branches made that unsafe (nostrc-w1m0).
+
  * Versions 1 and 2 stored those three secrets and no ratchet (every load
  * restarted each sender at generation 0: key reuse, nostrc-ai04).  They are
  * still read: the tree is re-derived, the secrets deleted, and the own

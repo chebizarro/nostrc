@@ -8270,6 +8270,57 @@ test_same_epoch_witness_decides(void)
     trio_clear(&t);
 }
 
+/* A reorg is observer-atomic (durability.md "Observer-atomic transitions"):
+ * on a backend without transactions, a write that fails at any point of it
+ * leaves the group exactly as it was -- state, retained history, exporter
+ * secrets, record -- and the same Commit makes it once storage works. */
+static void
+test_reorg_write_failure_keeps_everything(void)
+{
+    Trio t;
+    trio_init(&t);
+    char *rename = rename_group(&t.alice, &t.gid, "Alice's");
+    char *c1 = self_update(&t.charlie, &t.gid);
+    char *c2 = self_update(&t.charlie, &t.gid);
+    expect_commit(&t.bob, rename, "Bob applies Alice's rename");
+    expect_lost(&t.bob, &t.gid, c1, "the parent");
+    MarmotStorage *st = t.bob.m->storage;
+    int failed = 0;
+    for (int k = 1; k < 32; k++) {
+        Snapshot before;
+        snapshot(&t.bob, &t.gid, &before);
+        faults_arm(&t.bob);
+        g_faults.fail_at = k;
+        MarmotError err;
+        deliver(&t.bob, c2, &err, NULL);
+        int writes = g_faults.writes;
+        faults_disarm(&t.bob);
+        if (writes < k) {
+            /* No k-th write: the reorg went through. */
+            CHECK(err == MARMOT_OK, "the reorg once nothing fails: %d", err);
+            snapshot_clear(&before);
+            break;
+        }
+        failed++;
+        CHECK(err != MARMOT_OK, "write %d failed, yet the reorg succeeded", k);
+        expect_unchanged(&t.bob, &t.gid, &before, "a failed reorg");
+        uint8_t secret[32];
+        CHECK(st->get_exporter_secret(st->ctx, &t.gid, t.epoch + 2, secret) ==
+                  MARMOT_ERR_STORAGE_NOT_FOUND,
+              "write %d: no exporter secret of the branch's tip left behind", k);
+        snapshot_clear(&before);
+    }
+    CHECK(failed >= 4, "the reorg writes several records: %d", failed);
+    expect_lost(&t.alice, &t.gid, c1, "Alice: the parent");
+    expect_commit(&t.alice, c2, "Alice follows");
+    expect_converged(t.all, 3, &t.gid, "Before", t.epoch + 2);
+    expect_messages_flow(t.all, 3, &t.gid);
+    free(rename);
+    free(c1);
+    free(c2);
+    trio_clear(&t);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -8347,6 +8398,7 @@ main(int argc, char **argv)
     RUN(test_branch_flood_is_bounded);
     RUN(test_witness_quorum_beats_longer_branch);
     RUN(test_same_epoch_witness_decides);
+    RUN(test_reorg_write_failure_keeps_everything);
     RUN(test_signer_only_key_packages_share_one_leaf_key);
     RUN(test_group_members_follow_the_epoch);
     RUN(test_removed_member_learns_it);

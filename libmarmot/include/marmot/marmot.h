@@ -1562,29 +1562,38 @@ MarmotError marmot_save_created_message(Marmot *m,
  *   the group -- unless our own Commit for this epoch is pending: then the
  *   lower CommitOrderingSuffix (below) wins now; a received Commit that
  *   loses is kept and MARMOT_ERR_OWN_COMMIT_PENDING returned, and it is
- *   processed again by marmot_clear_pending_commit().  One for the
- *   previous epoch competes with the Commit already
- *   applied from that parent: the same Commit again is
- *   MARMOT_RESULT_OWN_MESSAGE (e.g. our own, echoed); a different one
- *   replaces it only if it wins the Marmot same-epoch ordering (privileged
- *   before ordinary, then lower committer key, then lower SHA-256 of the
- *   Commit bytes; transport timestamps and ids never count), otherwise, like
- *   any older Commit, it is MARMOT_ERR_WRONG_EPOCH.  Since 0.10.0 that
- *   judgement is possible only until every member that could publish a
- *   winning competitor was seen sending at the new epoch (nostrc-yuj2);
- *   later, a different Commit for the previous epoch is
- *   MARMOT_ERR_WRONG_EPOCH too.  A Commit for a future
- *   epoch cannot be decrypted yet (MARMOT_ERR_NIP44); retry it after the
- *   missing Commits.  Every rejection leaves the group unchanged.
+ *   processed again by marmot_clear_pending_commit().  Since 0.12.0
+ *   (nostrc-w1m0) the group converges as the adopted Marmot protocol
+ *   defines (protocol-core/convergence.md, as MDK 0.11 runs it): the states
+ *   and Commits of the last five epochs are retained; a Commit that forks
+ *   from one of them -- a competitor of an applied Commit, a Commit on top
+ *   of a competing branch, sealed under that branch's epoch -- is retained
+ *   as a candidate, and every input resolves the retained branches again:
+ *   the deeper branch wins (counting a bounded boost for one witnessed by
+ *   two members' messages at one of its epochs), then the witnessed one,
+ *   then privileged before ordinary, the lower committer key, the lower
+ *   SHA-256 of the tip Commit; transport timestamps and ids never count.  A
+ *   Commit that loses (or ties to lose) is MARMOT_ERR_WRONG_EPOCH, and stays
+ *   retained (it may win later); the same Commit as one applied is
+ *   MARMOT_RESULT_OWN_MESSAGE (e.g. our own, echoed).  When another branch
+ *   becomes canonical, result->convergence says which Commits it superseded
+ *   and which delivered messages it withdrew (see MarmotMessageResult); the
+ *   group's epoch may then go down.  A Commit older than the retained
+ *   epochs is MARMOT_ERR_WRONG_EPOCH; one this group's bounded convergence
+ *   state has no room for is MARMOT_ERR_RESOURCE_REFUSED.  A Commit for an
+ *   epoch we hold no state of cannot be decrypted yet (MARMOT_ERR_NIP44);
+ *   retry it after the missing Commits.  Every rejection leaves the group
+ *   unchanged.  Each input resolves at once: the pass timers of
+ *   convergence.md are not implemented.
  * - Standalone proposals: MARMOT_ERR_UNSUPPORTED (not queued)
  *
- * Late messages (since 0.7.0): an application message of the previous
- * epoch that arrives after the next Commit was applied is read with the
- * retained parent state (the state that Commit was built on, kept for one
- * epoch).  Older ones fail with MARMOT_ERR_MLS.  Since 0.10.0 the retained
- * parent keeps its full state only while a competing Commit could still win;
- * then it keeps only what reads these late messages (nostrc-yuj2; see the
- * libmarmot README).
+ * Late messages (since 0.7.0): an application message of an earlier epoch
+ * that arrives after a later Commit was applied is read with that epoch's
+ * retained state -- since 0.12.0 any of the last five (the app-payload
+ * window, nostrc-w1m0).  Older ones fail.  An application message of a
+ * competing branch's epoch counts as a witness for that branch and is
+ * MARMOT_ERR_NIP44 (keep it and offer it again) until that branch becomes
+ * canonical; then it is delivered.
  *
  * Replays and reordering (since 0.8.0, nostrc-ai04): each sender's ratchet
  * is stored with the group state, so a generation decrypts once -- a message

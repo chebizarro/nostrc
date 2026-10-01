@@ -10,19 +10,18 @@
  * enforce the Marmot policy on the resulting state (marmot_commit_authorize)
  * before anything is written.
  *
- * Epoch handling (Marmot protocol-core/convergence.md, bounded subset):
- *   - source epoch == current epoch: linear advance, applied.
- *   - source epoch == current - 1: the Commit competes with the one we
- *     applied from the same parent.  The parent state and the applied
- *     Commit's ordering key are retained ("mls_group_parent"); the same
- *     bytes are a duplicate, otherwise the lower CommitOrderingSuffix
- *     (privileged < ordinary, then committer, then SHA-256 digest) wins and
- *     replaces the applied Commit.  Transport metadata never takes part.
- *     The parent is kept in full only while a competing Commit could still
- *     win (nostrc-yuj2): see "Retained parent record" below.
- *   - anything older, or a competitor that loses: MARMOT_ERR_WRONG_EPOCH.
- *   - future epochs cannot be recovered from the NIP-44 layer (no exporter
- *     secret yet) and are rejected the same way if they ever reach here.
+ * Epoch handling (Marmot protocol-core/convergence.md; "Convergence"
+ * below, nostrc-w1m0):
+ *   - a Commit for the current epoch, with no competing branch retained:
+ *     linear advance, applied (our own pending Commit competes with it by
+ *     the same-epoch ordering);
+ *   - any other Commit inside the retained horizon (five epochs) -- a
+ *     competitor of an applied Commit, a Commit on a competing branch -- is
+ *     retained as a candidate and the retained branches are resolved again:
+ *     the selected branch becomes canonical (the stored state may move to
+ *     another branch, and to a lower epoch); transport metadata never takes
+ *     part;
+ *   - anything older: MARMOT_ERR_WRONG_EPOCH.
  * Every rejection leaves the stored group untouched.
  *
  * SPDX-License-Identifier: MIT
