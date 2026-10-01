@@ -44,6 +44,10 @@ static GhTestBus test_bus;
 /* The next world's accounts run on a fake store clock that does not move
  * (e.g. two sends within one second, deterministically). */
 static gboolean world_fake_clock;
+/* The next world's kind-10002 lists split relays by marker (nostrc-0bdg):
+ * ["r", W, "write"], ["r", H] (unmarked: read and write) and ["r", R,
+ * "read"] instead of an unmarked W. */
+static gboolean world_split_lists;
 
 static G_GNUC_UNUSED void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int line)
@@ -184,6 +188,21 @@ sign_event(guint key, gint kind, gint64 created_at, const gchar *content, NostrT
   return out;
 }
 
+/* The kind 10002 of world_split_lists: a write-only, an unmarked and a
+ * read-only relay. */
+static G_GNUC_UNUSED void
+seed_split_list(WireRelay *discovery, guint key, const gchar *write_url, const gchar *both_url,
+                const gchar *read_url)
+{
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("r", write_url, "write", NULL));
+  nostr_tags_append(tags, nostr_tag_new("r", both_url, NULL));
+  nostr_tags_append(tags, nostr_tag_new("r", read_url, "read", NULL));
+  g_autofree gchar *json = sign_event(key, 10002, g_get_real_time() / G_USEC_PER_SEC - 3600,
+                                      "", tags);
+  wire_relay_inject(discovery, json);
+}
+
 /* A signed kind 10050 (tag "relay") or 10002 (tag "r"), as the account's own
  * list publication would have put it on the discovery relay. */
 static G_GNUC_UNUSED void
@@ -222,7 +241,9 @@ typedef struct {
 struct _World {
   GhTestSigner signer;
   WireRelay e, w, x, g;
-  WireRelay h;              /* a second group relay, for tests that name it */
+  WireRelay h;              /* a second group relay, for tests that name it; with
+                             * world_split_lists also an unmarked 10002 relay */
+  WireRelay r;              /* world_split_lists: every account's read-only relay */
   gchar *root;
   App apps[N_APPS];
 };
@@ -414,7 +435,7 @@ world_up(World *w, const guint *keys, guint n_keys)
   w->root = g_dir_make_tmp("groundhog-mls-XXXXXX", NULL);
   g_assert_nonnull(w->root);
   gh_test_signer_up(&test_bus, &w->signer);
-  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g, &w->h };
+  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g, &w->h, &w->r };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
     relays[i]->serve = TRUE;
     relays[i]->record = TRUE;
@@ -423,7 +444,10 @@ world_up(World *w, const guint *keys, guint n_keys)
   w->x.auth_gate_dms = TRUE;   /* kind 1059 only to its signed-in recipient */
   w->g.require_auth = TRUE;    /* MLS routing: ephemeral AUTH, for real */
   for (guint key = 1; key < GH_TEST_KEYS; key++) {
-    seed_list(&w->e, key, 10002, w->w.url);
+    if (world_split_lists)
+      seed_split_list(&w->e, key, w->w.url, w->h.url, w->r.url);
+    else
+      seed_list(&w->e, key, 10002, w->w.url);
     seed_list(&w->e, key, 10050, w->x.url);
   }
   for (guint i = 0; i < n_keys; i++)
@@ -438,12 +462,13 @@ world_down(World *w)
   GhTestSenders check = { &test_bus, &w->signer };
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   drain();
-  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g, &w->h };
+  WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g, &w->h, &w->r };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
     relay_clear(relays[i]);
   drain();
   gh_test_signer_down(&test_bus, &w->signer);
   world_fake_clock = FALSE;
+  world_split_lists = FALSE;
   rm_rf(w->root);
   g_free(w->root);
 }
@@ -451,8 +476,7 @@ world_down(World *w)
 /* ---- waits and lookups ------------------------------------------------------------ */
 
 /* The account's KeyPackage is published and on its write relay W (where
- * lookups find it; the state turns PUBLISHED on the first relay's OK, which
- * may be the inbox relay's). */
+ * lookups find it; the state turns PUBLISHED on the first relay's OK). */
 static G_GNUC_UNUSED gboolean
 key_package_published(gpointer data)
 {
@@ -639,18 +663,39 @@ create_group(App *app, const gchar *name, const guint *invitees, guint n)
   return group;
 }
 
-/* `app` accepts its one invitation from `inviter` and reads the group. */
+typedef struct {
+  App *app;
+  const gchar *old_id;
+} ReplacedWait;
+
+static G_GNUC_UNUSED gboolean
+key_package_replaced(gpointer data)
+{
+  ReplacedWait *wait = data;
+  const gchar *id = gh_mls_service_get_key_package_id(wait->app->service);
+  return id && g_strcmp0(id, wait->old_id) != 0 &&
+         gh_mls_service_get_key_package_state(wait->app->service) ==
+           GH_MLS_KEY_PACKAGE_PUBLISHED;
+}
+
+/* `app` accepts its one invitation from `inviter` and reads the group. The
+ * join's KeyPackage replacement (nostrc-0bdg) is awaited too, so a later
+ * invitation is made with the new KeyPackage: its confirmation retires the
+ * old one, and a Welcome to that would fail (the spec's trade-off). */
 static G_GNUC_UNUSED GhMlsGroup *
 join(App *app, guint inviter)
 {
   spin_until(has_invite, app, "an invitation");
   g_autofree gchar *wrapper = the_invite(app, inviter);
+  g_autofree gchar *kp_before = g_strdup(gh_mls_service_get_key_package_id(app->service));
   g_autoptr(GError) error = NULL;
   GhMlsGroup *group = gh_mls_service_accept_invite(app->service, wrapper, &error);
   g_assert_no_error(error);
   g_assert_nonnull(group);
   app->invites = 0;
   wait_live(group);
+  ReplacedWait replaced = { app, kp_before };
+  spin_until(key_package_replaced, &replaced, "the joiner's KeyPackage replacement");
   return group;
 }
 

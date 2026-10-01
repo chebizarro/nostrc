@@ -161,5 +161,14 @@ MarmotError marmot_create_key_package_adopted_internal(Marmot *m, const uint8_t 
                                                        MarmotAccountSignFunc account_sign,
                                                        void *sign_data,
                                                        MarmotKeyPackageResult *result);
+/* The same with the last-resort marker chosen: without it, a single-use
+ * KeyPackage (no KeyPackage-level app_data_dictionary), which libmarmot
+ * never publishes -- for the lifecycle tests (nostrc-0bdg) only. */
+MarmotError marmot_create_key_package_adopted_internal_ex(Marmot *m,
+                                                          const uint8_t nostr_pubkey[32],
+                                                          const uint8_t nostr_sk[32],
+                                                          MarmotAccountSignFunc account_sign,
+                                                          void *sign_data, bool last_resort,
+                                                          MarmotKeyPackageResult *result);
 
 #endif /* MARMOT_KP_PROFILE_H */

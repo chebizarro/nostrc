@@ -245,8 +245,12 @@ write_relays(Lookup *lookup)
       continue;
     const gchar *url = nostr_tag_get(tag, 1);
     const gchar *marker = nostr_tag_size(tag) >= 3 ? nostr_tag_get(tag, 2) : NULL;
+    /* An invitation asked phase 1 for the relay list only: a discovery
+     * relay that is also a write relay is asked again, for KeyPackages.
+     * Verification asked phase 1 for KeyPackages too. */
     if ((marker && *marker && g_strcmp0(marker, "write") != 0) ||
-        !gh_relay_url_validate(url, NULL) || g_hash_table_contains(lookup->asked, url) ||
+        !gh_relay_url_validate(url, NULL) ||
+        (lookup->evidence && g_hash_table_contains(lookup->asked, url)) ||
         g_hash_table_contains(added, url))
       continue;
     g_strv_builder_add(out, url);
@@ -301,6 +305,10 @@ keep_event(Lookup *lookup, const gchar *json, const gchar *id)
   gint64 created_at = nostr_event_get_created_at(event);
   nostr_event_free(event);
   if (kind == MARMOT_KIND_KEY_PACKAGE || (lookup->evidence && kind == GH_MLS_KIND_LEGACY_KEY_PACKAGE)) {
+    /* An invitation trusts only what the person's write relays served
+     * (phase 2), never an event a discovery relay pushed unasked. */
+    if (!lookup->evidence && lookup->phase != 2)
+      return;
     if (lookup->candidates->len >= MAX_CANDIDATES || !id ||
         g_hash_table_contains(lookup->candidate_ids, id))
       return;
@@ -362,7 +370,10 @@ start_phase(GTask *task, const gchar *const *urls, gint phase)
   lookup->phase = (guint)phase;
   NostrFilters *filters = nostr_filters_new();
   NostrFilter *filter = nostr_filter_new();
-  int both[] = { 10002, MARMOT_KIND_KEY_PACKAGE };
+  /* An invitation reads KeyPackages only from the person's write-capable
+   * relays (transports/nostr.md, nostrc-0bdg): phase 1 asks the discovery
+   * relays for the relay list alone. */
+  int list[] = { 10002 };
   int only[] = { MARMOT_KIND_KEY_PACKAGE };
   /* Verification also reads the older kind 443 (never kind 10051: the
    * adopted spec dropped it). */
@@ -371,7 +382,7 @@ start_phase(GTask *task, const gchar *const *urls, gint phase)
   if (phase == 1 && lookup->evidence)
     nostr_filter_set_kinds(filter, both_evidence, G_N_ELEMENTS(both_evidence));
   else if (phase == 1)
-    nostr_filter_set_kinds(filter, both, G_N_ELEMENTS(both));
+    nostr_filter_set_kinds(filter, list, G_N_ELEMENTS(list));
   else if (lookup->evidence)
     nostr_filter_set_kinds(filter, only_evidence, G_N_ELEMENTS(only_evidence));
   else
@@ -474,14 +485,16 @@ lookup_start(GTask *task, GhAccountController *accounts, const gchar *const *dis
 
 void
 gh_mls_key_package_lookup_async(GhAccountController *accounts,
-                                const gchar *const *discovery_relays, const gchar *pubkey,
+                                const gchar *const *discovery_relays,
+                                const gchar *const *exclude, const gchar *pubkey,
                                 guint deadline, GCancellable *cancellable,
                                 GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_key_package_lookup_async);
-  lookup_start(task, accounts, discovery_relays, NULL, pubkey, deadline, FALSE, cancellable);
+  lookup_start(task, accounts, discovery_relays, exclude, pubkey, deadline, FALSE,
+               cancellable);
 }
 
 void

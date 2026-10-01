@@ -1574,6 +1574,12 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     groundhog-auth-policy groundhog-conversations groundhog-account-relays
     nostr_nip17_core nostr_nip59_core)
   target_compile_options(groundhog-mls-service PRIVATE -Wall -Wextra -Werror)
+  # The adopted-profile KeyPackage producer (nostrc-0bdg) follows libmarmot's
+  # own build gate: one switch, MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER,
+  # OFF by default, turns both on.
+  if (MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER)
+    target_compile_definitions(groundhog-mls-service PUBLIC GH_MLS_ADOPTED_KEY_PACKAGES=1)
+  endif()
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-mls-service)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS=1)
@@ -1611,6 +1617,45 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     add_test(NAME groundhog-mls-service COMMAND test-groundhog-mls-service)
     set_tests_properties(groundhog-mls-service PROPERTIES TIMEOUT 300
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # KeyPackage transport lifecycle (nostrc-0bdg): kind-10002 write relays
+    # only (a read/write split), lookup privacy, the d slot kept, ACK-tied
+    # retirement of old init keys, the delayed-Welcome trade-off and failed
+    # Welcomes. Built twice: with the MDK 0.8 producer, and with the
+    # compile-gated adopted producer turned on (libmarmot's ungated internal
+    # producer standing in for libmarmot's own gate, hence its src/).
+    foreach(groundhog_kp_variant IN ITEMS legacy adopted)
+      if (groundhog_kp_variant STREQUAL "legacy")
+        set(groundhog_kp_name groundhog-mls-kp-lifecycle)
+      else()
+        set(groundhog_kp_name groundhog-mls-kp-lifecycle-adopted)
+      endif()
+      add_executable(test-${groundhog_kp_name} tests/mls/test_mls_kp_lifecycle.c
+        ${GROUNDHOG_MLS_SERVICE_SOURCES}
+        src/store/gh-store-marmot.c src/store/gh-mls-commits.c
+        src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
+        ${GROUNDHOG_DM_SEND_SOURCES})
+      target_include_directories(test-${groundhog_kp_name} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls)
+      target_link_libraries(test-${groundhog_kp_name} PRIVATE groundhog-store-testhooks marmot
+        groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+        groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
+        PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_options(test-${groundhog_kp_name} PRIVATE -Wall -Wextra -Werror)
+      target_compile_definitions(test-${groundhog_kp_name} PRIVATE GH_MLS_TEST_HOOKS=1)
+      if (groundhog_kp_variant STREQUAL "adopted")
+        target_compile_definitions(test-${groundhog_kp_name} PRIVATE
+          GH_MLS_ADOPTED_KEY_PACKAGES=1)
+        target_include_directories(test-${groundhog_kp_name} PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../libmarmot/src)
+      endif()
+      groundhog_store_link_sqlcipher_first(test-${groundhog_kp_name})
+      add_dependencies(test-${groundhog_kp_name} groundhog-test-schemas)
+      add_test(NAME ${groundhog_kp_name} COMMAND test-${groundhog_kp_name})
+      set_tests_properties(${groundhog_kp_name} PROPERTIES TIMEOUT 300
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    endforeach()
     # G24 privacy harness, encrypted groups (charter §2.2, §4.3, §4.4, PD-8,
     # H7): no KeyPackage lookup for a message request or a stranger; Welcomes
     # only as gift wraps to the invitee's own 10050; kind 445 only under

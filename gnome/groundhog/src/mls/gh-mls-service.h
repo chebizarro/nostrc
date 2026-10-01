@@ -29,12 +29,32 @@ G_BEGIN_DECLS
  * KeyPackages (MIP-00, kind 30443). While the account is active and online
  * the service keeps one KeyPackage of the account published: made by
  * libmarmot (its private init key stored first, in the store), signed by the
- * account's signer, and published to the account's own kind-10002 write
- * relays and kind-10050 inbox relays (charter §4.3 "own list publish":
- * GhAuthPolicy OWN_LIST_PUBLISH, account AUTH only on challenge). Every
- * KeyPackage reuses the account's addressable `d` slot, so a new one replaces
- * the old one on relays. It is rotated when it is older than the lifetime
- * (default GH_MLS_KEY_PACKAGE_LIFETIME) and after a Welcome consumed it.
+ * account's signer, and published to the account's kind-10002 write-capable
+ * relays only -- `r` entries marked "write" or unmarked; never read-only
+ * ones, never the kind-10050 inbox relays, never kind 10051 (Marmot
+ * transports/nostr.md "KeyPackage publication"; charter §4.3 "own list
+ * publish": GhAuthPolicy OWN_LIST_PUBLISH, account AUTH only on challenge).
+ * Every KeyPackage reuses the account's addressable `d` slot, so a new one
+ * replaces the old one on relays (each one's created_at strictly newer). It
+ * is rotated when it is older than the lifetime (default
+ * GH_MLS_KEY_PACKAGE_LIFETIME) and after a Welcome to it was joined -- once
+ * no other received invitation is pending (they were most likely made with
+ * the same KeyPackage), even across a restart -- never after a Welcome that
+ * failed.
+ *
+ * KeyPackage lifecycle (nostrc-0bdg; foundation/key-packages.md). The
+ * replacement is acknowledgement-tied: the first relay OK for a new
+ * KeyPackage confirms it (marmot_key_package_confirm_published()), and only
+ * then does libmarmot delete the private material of the older ones. Until
+ * then a delayed Welcome to the old (last-resort) KeyPackage still joins;
+ * after it, it fails: the spec's deliberate trade-off. Groundhog's
+ * KeyPackages are last-resort, so a join leaves the key for further
+ * Welcomes until that confirmation; libmarmot deletes a consumed
+ * single-use one at the join. An expired KeyPackage's private material goes
+ * at every start and publish check (marmot_key_package_sweep_expired()).
+ * The producer is the MDK 0.8 profile; the adopted profile
+ * (GH_MLS_ADOPTED_KEY_PACKAGES) is compile-gated off until Groundhog's
+ * groups are adopted-profile too.
  *
  * Invitations need consent (charter PD-8, PT-8). A KeyPackage is looked up
  * (gh-mls-key-packages.h: discovery relays, then the person's 10002 write
@@ -227,6 +247,13 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_ACCOUNT_PROOF 1
 #else
 #define GH_MLS_SERVICE_ACCOUNT_PROOF 0
+#endif
+
+/* The adopted-profile KeyPackage producer (nostrc-0bdg): off by default,
+ * on with libmarmot's MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER (the CMake
+ * option sets both). Same slot, relays and lifecycle as the MDK 0.8 one. */
+#ifndef GH_MLS_ADOPTED_KEY_PACKAGES
+#define GH_MLS_ADOPTED_KEY_PACKAGES 0
 #endif
 
 /* Default KeyPackage rotation age (28 days). */
@@ -513,6 +540,18 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * (GhMlsGroup). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
 #ifdef GH_MLS_TEST_HOOKS
+/* Test hook (nostrc-0bdg): whether libmarmot still holds the private init
+ * key of the KeyPackage whose ref (`i` tag) is @ref_hex. */
+gboolean gh_mls_service_test_has_init_key(GhMlsService *self, const gchar *ref_hex);
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+/* Test hook (nostrc-0bdg): replaces the one libmarmot call that its own
+ * build gate (MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER) refuses in a
+ * default build, e.g. with libmarmot's ungated internal producer; the
+ * rest of the adopted producer path is the service's own. */
+typedef MarmotError (*GhMlsTestAdoptedProducer)(Marmot *marmot, const guint8 account[32],
+                                                MarmotKeyPackageResult *made);
+void gh_mls_service_test_set_adopted_producer(GhMlsTestAdoptedProducer producer);
+#endif
 /* Test hook, compiled only into test executables: how many times a group
  * change was staged again because libmarmot refused its Commit with
  * MARMOT_ERR_EVENT_RATE (review W24 N5). */

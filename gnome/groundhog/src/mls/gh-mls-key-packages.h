@@ -9,15 +9,22 @@ G_BEGIN_DECLS
  * GhMlsKeyPackageLookup (nostrc-qp24.13): finds the KeyPackage (kind 30443,
  * MIP-00) to invite one person with. GTK-free, main context only.
  *
- * Where (Marmot transports/nostr.md: KeyPackages live on the author's
- * kind-10002 write set; privacy charter §2.2 "Discovery relays: whose
- * KeyPackages you fetch", §4.3 "Contact directory"):
- *  1. one URL-scoped REQ {kinds:[10002, 30443], authors:[person]} to the
- *     discovery relays the caller gives (the discovery-relays setting), then
+ * Where (Marmot transports/nostr.md "KeyPackage publication": KeyPackages
+ * live on the author's kind-10002 write-capable set, nostrc-0bdg; privacy
+ * charter §2.2 "Discovery relays: whose KeyPackages you fetch", §4.3
+ * "Contact directory"):
+ *  1. one URL-scoped REQ {kinds:[10002], authors:[person]} to the discovery
+ *     relays the caller gives (the discovery-relays setting), then
  *  2. when a kind-10002 by that person came back, one REQ
- *     {kinds:[30443], authors:[person]} to its write relays not asked yet
- *     (at most GH_MLS_KEY_PACKAGE_MAX_WRITE_RELAYS).
- * Nothing else is contacted, never the account's own relays as such. Each
+ *     {kinds:[30443], authors:[person]} to its write-capable relays --
+ *     `r` entries marked "write" or unmarked, never read-only ones (at most
+ *     GH_MLS_KEY_PACKAGE_MAX_WRITE_RELAYS; a discovery relay among them is
+ *     asked again). Only KeyPackages from phase 2 count: no 10002, no
+ *     KeyPackage ("hasn't set up encrypted groups").
+ * Nothing else is contacted, never the account's own relays as such, never
+ * kind 10051, and never a relay in `exclude` (compared by
+ * gh_mls_relay_key()) in either phase: the service passes the group's
+ * relays, which must not learn whom an inviter looks up. Each
  * phase is one fresh scope with GhAuthPolicy's CONTACT_DIRECTORY identity:
  * an ephemeral key if a relay demands AUTH, never the account (R1). A phase
  * ends when every relay sent EOSE or failed; the deadline only bounds a
@@ -50,9 +57,10 @@ typedef struct {
 void gh_mls_key_package_free(GhMlsKeyPackage *key_package);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhMlsKeyPackage, gh_mls_key_package_free)
 
-/* deadline: seconds per phase (0: 15). */
+/* deadline: seconds per phase (0: 15). exclude: nullable. */
 void gh_mls_key_package_lookup_async(GhAccountController *accounts,
                                      const gchar *const *discovery_relays,
+                                     const gchar *const *exclude,
                                      const gchar *pubkey, guint deadline,
                                      GCancellable *cancellable,
                                      GAsyncReadyCallback callback, gpointer user_data);

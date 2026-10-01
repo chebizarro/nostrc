@@ -827,7 +827,7 @@ test_gui_new_group(void)
   GhMlsInviteePicker *picker = gh_mls_new_group_page_get_picker(page);
   g_assert_cmpuint(gh_mls_invitee_picker_get_n_listed(picker), ==, 2);
   g_assert_null(gh_mls_invitee_picker_get_row(picker, hex[STRANGER]));   /* a request */
-  g_assert_false(key_package_asked(&w.e, hex[BOB]));   /* nothing looked up yet */
+  g_assert_false(key_package_asked(&w.w, hex[BOB]));   /* nothing looked up yet */
   g_assert_true(gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE));
   wait_pick(picker, hex[CAROL], GH_MLS_INVITEE_NOT_SET_UP);
   AdwActionRow *carol_row = gh_mls_invitee_picker_get_row(picker, hex[CAROL]);
@@ -838,8 +838,12 @@ test_gui_new_group(void)
   gh_mls_invitee_picker_set_selected(picker, hex[CAROL], FALSE);
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
   wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY);
-  g_assert_true(key_package_asked(&w.e, hex[BOB]));
+  /* The KeyPackage on Bob's write relay only, never on the discovery
+   * relay (nostrc-0bdg). */
+  g_assert_true(key_package_asked(&w.w, hex[BOB]));
+  g_assert_false(key_package_asked(&w.e, hex[BOB]));
   g_assert_false(key_package_asked(&w.e, hex[STRANGER]));   /* PD-8 */
+  g_assert_false(key_package_asked(&w.w, hex[STRANGER]));
   g_assert_null(create_reason(page));
 
   /* An account generation change ends the lookups: whoever is chosen is

@@ -114,7 +114,8 @@ test_pt8_no_key_package_lookup_for_requests(void)
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
 
   /* Accepting the request is the consent: now Carol is looked up (her
-   * KeyPackage, on the discovery relay and then her write relay). */
+   * relay list on the discovery relay, then her KeyPackage on her write
+   * relay only, nostrc-0bdg). */
   GListModel *rooms = G_LIST_MODEL(alice->model);
   for (guint i = 0; i < g_list_model_get_n_items(rooms); i++) {
     g_autoptr(GhConversation) room = g_list_model_get_item(rooms, i);
@@ -129,7 +130,8 @@ test_pt8_no_key_package_lookup_for_requests(void)
   spin_until(op_done, &wait, "the consented invitation");
   g_assert_no_error(wait.error);
   g_object_unref(wait.result);
-  g_assert_true(key_package_req(&w.e, hex[CAROL]));
+  g_assert_true(client_frames_mention(&w.e, hex[CAROL]));
+  g_assert_false(key_package_req(&w.e, hex[CAROL]));
   g_assert_true(key_package_req(&w.w, hex[CAROL]));
   g_assert_false(looked_up_anywhere(&w, hex[STRANGER], FALSE));
   world_down(&w);

@@ -131,7 +131,9 @@ void marmot_free(Marmot *m);
  * MLS key store, and reused by every later call. Publishing the new event
  * therefore replaces the previous KeyPackage on relays (same
  * `(pubkey, 30443, d)` address) instead of accumulating stale packages; the
- * previous package is also marked inactive locally.
+ * previous package is also marked inactive locally. Its private material
+ * stays until a relay accepted the new one (see
+ * marmot_key_package_confirm_published()).
  *
  * Tags follow the MDK 0.8 Marmot transport profile pinned by
  * `tests/vectors/mdk/protocol-vectors.json`: `d`, `mls_protocol_version`,
@@ -305,6 +307,79 @@ MarmotError marmot_key_package_event_has_account_proof(const char *event_json,
                                                         bool *out_proven);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * KeyPackage transport lifecycle (nostrc-0bdg; foundation/key-packages.md
+ * "Selection and lifecycle", transports/nostr.md "KeyPackage publication")
+ *
+ * libmarmot keeps the private material (init, encryption and signature
+ * keys) of each KeyPackage it makes, in the account's one publication slot
+ * (`d`). It deletes it:
+ * - for every older KeyPackage of the slot, once the caller reports that a
+ *   relay accepted a newer one (marmot_key_package_confirm_published():
+ *   the replacement is acknowledgement-tied). A newer KeyPackage that was
+ *   made but never confirmed (a failed or interrupted publish) keeps the
+ *   older ones, and itself, until a later one is confirmed;
+ * - for a consumed non-last-resort KeyPackage, when a Welcome to it is
+ *   joined (marmot_accept_welcome()). Every KeyPackage libmarmot publishes
+ *   is last-resort: it may serve further Welcomes until the first bound;
+ * - at its Lifetime's not_after (marmot_key_package_sweep_expired()).
+ * A Welcome that fails changes nothing. A Welcome delayed past the
+ * confirmed replacement no longer opens (MARMOT_ERR_KEY_NOT_FOUND): the
+ * spec's deliberate confidentiality-versus-availability trade-off; the
+ * inviter retries with the current KeyPackage.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * marmot_key_package_confirm_published:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @key_package_ref: (array fixed-size=32): the KeyPackageRef of a
+ *   KeyPackage this instance made for @owner_pubkey (its `i` tag)
+ *
+ * Call when a relay accepted the kind:30443 event of @key_package_ref
+ * (NIP-01 OK true; a rejecting OK, an error or a timeout is not an
+ * acknowledgement). Deletes the private material of every KeyPackage of
+ * the account made before it -- the confirmed replacement -- and keeps
+ * newer ones. Idempotent: a second confirmation deletes nothing more.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_KEY_NOT_FOUND when @key_package_ref is not
+ *   a live KeyPackage of @owner_pubkey (never made here, or already
+ *   retired); MARMOT_ERR_INVALID_ARG; storage errors (nothing deleted)
+ */
+MarmotError marmot_key_package_confirm_published(Marmot *m,
+                                                 const uint8_t owner_pubkey[32],
+                                                 const uint8_t key_package_ref[32]);
+
+/**
+ * marmot_key_package_sweep_expired:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @now: the time (Unix seconds); 0 means the current time
+ * @out_deleted: (out) (optional): how many KeyPackages lost their private
+ *   material
+ *
+ * Deletes the private material of every KeyPackage of the account whose
+ * Lifetime not_after is at or before @now, in any state (published,
+ * consumed last-resort, never confirmed). Call it at start and from time to
+ * time: "Local retention policy MUST NOT extend" the Lifetime bound.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
+ */
+MarmotError marmot_key_package_sweep_expired(Marmot *m, const uint8_t owner_pubkey[32],
+                                             int64_t now, size_t *out_deleted);
+
+/**
+ * marmot_key_package_has_private_key:
+ * @m: Marmot instance
+ * @key_package_ref: (array fixed-size=32): a KeyPackageRef
+ * @out_present: (out): whether this instance still holds the KeyPackage's
+ *   private init key (a Welcome to it can still be opened)
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
+ */
+MarmotError marmot_key_package_has_private_key(Marmot *m, const uint8_t key_package_ref[32],
+                                               bool *out_present);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * KeyPackage profiles (nostrc-prqu.9) — opt-in; the functions above always
  * use MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8.
  * ──────────────────────────────────────────────────────────────────────── */
@@ -382,8 +457,9 @@ typedef int (*MarmotAccountSignFunc)(void *user_data,
  * @account_sign: (scope call) (nullable): signs the account-identity proof
  *   when @nostr_sk is NULL; called synchronously, at most once, before this
  *   function returns. Since 0.10.0 also used for MDK_0_8, whose leaf carries
- *   the proof too (without either, MDK_0_8 falls back to the enrolled
- *   instance key as marmot_create_key_package_unsigned() does).
+ *   the proof too. Without either, both profiles fall back to the enrolled
+ *   instance key as marmot_create_key_package_unsigned() does (ADOPTED
+ *   since 0.12.0, nostrc-0bdg: signer-only callers such as Groundhog).
  * @sign_data: (closure account_sign): user data for @account_sign
  * @relay_urls: (array length=relay_count) (nullable): stored with the
  *   KeyPackage; also emitted as the `relays` tag in the MDK_0_8 profile only
@@ -398,7 +474,8 @@ typedef int (*MarmotAccountSignFunc)(void *user_data,
  * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED for ADOPTED unless libmarmot
  *   was built with MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER;
  *   MARMOT_ERR_INVALID_ARG for an ADOPTED request with
- *   neither @nostr_sk nor @account_sign; MARMOT_ERR_CRYPTO or
+ *   neither @nostr_sk nor @account_sign nor an enrolled account proof for
+ *   @nostr_pubkey; MARMOT_ERR_CRYPTO or
  *   MARMOT_ERR_VALIDATION when the account signature fails or does not
  *   verify; other errors as marmot_create_key_package()
  */

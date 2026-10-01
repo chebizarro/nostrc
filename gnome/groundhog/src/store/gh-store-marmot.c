@@ -24,8 +24,9 @@
  * by the group id too, but records a fact of the join (which device the
  * Welcome's sender vouched for), not epoch state: an epoch rollback must not
  * touch it, so it stays out of snapshots. The
- * others are keyed by a public key (kp_slot), a KeyPackageRef (kp_priv,
- * kp_full), a gift-wrap id (welcome_data) or a nostr_group_id
+ * others are keyed by a public key (kp_slot; kp_life, since libmarmot 0.12.0
+ * the account's KeyPackage lifecycle record, nostrc-0bdg), a KeyPackageRef
+ * (kp_priv, kp_full), a gift-wrap id (welcome_data) or a nostr_group_id
  * (group_event_created_at, since libmarmot 0.12: the created_at floor of the
  * group's events, which a rolled-back Commit, already published, must not
  * lower) and must never be captured or restored by a group snapshot. The

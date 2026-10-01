@@ -69,6 +69,7 @@ jobs:
             test-groundhog-privacy-summary test-groundhog-conversation-info \
             test-groundhog-nip29-service \
             test-groundhog-mls-service test-groundhog-privacy-mls \
+            test-groundhog-mls-kp-lifecycle test-groundhog-mls-kp-lifecycle-adopted \
             test-groundhog-net test-groundhog-tls-resumption \
             test-groundhog-group-ui test-groundhog-mls-ui \
             test-groundhog-conversation-menu \
@@ -106,6 +107,7 @@ jobs:
               'groundhog-privacy-summary', 'groundhog-conversation-info',
               'groundhog-conversation-info-gui', 'groundhog-nip29-service',
               'groundhog-mls-service', 'groundhog-privacy-mls',
+              'groundhog-mls-kp-lifecycle', 'groundhog-mls-kp-lifecycle-adopted',
               'groundhog-net', 'groundhog-tls-resumption',
               'groundhog-group-ui', 'groundhog-group-ui-gui',
               'groundhog-mls-ui', 'groundhog-mls-ui-gui', 'groundhog-mls-preview-guard',
@@ -197,6 +199,7 @@ jobs:
         groundhog-privacy-e2e groundhog-new-message groundhog-requests
         groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service
         groundhog-mls-service groundhog-privacy-mls
+        groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted
         groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui
         groundhog-conversation-menu
         groundhog-multi-send

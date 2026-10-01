@@ -62,8 +62,8 @@ gh_mls_invitee_check_async(GhAccountController *accounts, GSettings *settings,
    * the lookup skips any URL it can't use. */
   g_auto(GStrv) sources = settings ? g_settings_get_strv(settings, "discovery-relays")
                                    : g_new0(gchar *, 1);
-  gh_mls_key_package_lookup_async(accounts, (const gchar *const *)sources, pubkey, deadline,
-                                  cancellable, lookup_done, task);
+  gh_mls_key_package_lookup_async(accounts, (const gchar *const *)sources, NULL, pubkey,
+                                  deadline, cancellable, lookup_done, task);
 }
 
 GhMlsInviteeState

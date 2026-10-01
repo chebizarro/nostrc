@@ -72,6 +72,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/credentials.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/kp_profile.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/kp_lifecycle.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/adopted.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/proposals.c
@@ -313,6 +314,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_adopted PRIVATE marmot)
   target_include_directories(test_adopted PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_adopted COMMAND test_adopted)
+
+  # Test: KeyPackage transport lifecycle (nostrc-0bdg)
+  add_executable(test_kp_lifecycle ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_kp_lifecycle.c)
+  target_link_libraries(test_kp_lifecycle PRIVATE marmot)
+  target_include_directories(test_kp_lifecycle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_kp_lifecycle COMMAND test_kp_lifecycle)
   # Test: Storage contract tests (all backends)
   add_executable(test_storage_contract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_storage_contract.c)
   target_link_libraries(test_storage_contract PRIVATE marmot)

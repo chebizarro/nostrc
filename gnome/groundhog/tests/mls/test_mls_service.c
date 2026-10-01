@@ -84,8 +84,9 @@ key_package_rotated(gpointer data)
            GH_MLS_KEY_PACKAGE_PUBLISHED;
 }
 
-/* MIP-00: each account's KeyPackage on its own write and inbox relays,
- * signed by the account; a rotation replaces it in the same `d` slot. */
+/* MIP-00: each account's KeyPackage on its own kind-10002 write relays only
+ * (never its 10050 inbox relays, nostrc-0bdg), signed by the account; a
+ * rotation replaces it in the same `d` slot. */
 static void
 test_key_packages(void)
 {
@@ -93,11 +94,9 @@ test_key_packages(void)
   const guint keys[] = { ALICE, BOB };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
-  CountWait on_inbox = { &w.x, ALICE, 1 };
-  spin_until(key_packages_reached, &on_inbox, "Alice's KeyPackage on her inbox relay");
   g_autofree gchar *d_first = NULL, *d_second = NULL;
   g_assert_cmpuint(key_packages_by(&w.w, ALICE, &d_first), ==, 1);
-  g_assert_cmpuint(key_packages_by(&w.x, ALICE, NULL), ==, 1);
+  g_assert_cmpuint(key_packages_by(&w.x, ALICE, NULL), ==, 0);
   g_assert_cmpuint(key_packages_by(&w.w, BOB, NULL), ==, 1);
   g_assert_nonnull(d_first);
   const gchar *first_id = gh_mls_service_get_key_package_id(w.apps[ALICE].service);

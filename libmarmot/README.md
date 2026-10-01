@@ -438,6 +438,50 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 
 ## Changelog
 
+### 0.12.0 (unreleased): KeyPackage transport lifecycle (nostrc-0bdg)
+
+**New API** (MINOR): `marmot_key_package_confirm_published()`,
+`marmot_key_package_sweep_expired()`, `marmot_key_package_has_private_key()`.
+No wire, ABI or group-state change; one new `mls_kv` label, `kp_life`
+(account-scoped, like `kp_slot`: never part of a group snapshot).
+
+What changed (marmot foundation/key-packages.md "Selection and lifecycle"):
+
+- **Acknowledgement-tied replacement.** Every KeyPackage of an account
+  reuses its one `d` slot. Call `marmot_key_package_confirm_published()`
+  when a relay accepted a KeyPackage (NIP-01 OK true); libmarmot then
+  deletes the private material (init, encryption, signature keys and the
+  stored KeyPackage) of every older one, last-resort or not. A newer one
+  whose publish failed keeps everything until a later confirmation. Before
+  0.12.0 nothing was ever deleted.
+- **Consumption.** A successful `marmot_accept_welcome()` deletes a consumed
+  non-last-resort KeyPackage's private material in the same transaction.
+  libmarmot's own KeyPackages are last-resort: they may serve further
+  Welcomes until the confirmed replacement. A failed Welcome changes nothing.
+- **Lifetime.** `marmot_key_package_sweep_expired()` deletes, in any state,
+  the private material of every KeyPackage whose Lifetime not_after has
+  passed. Call it at start and from time to time.
+- **Bound.** At most 32 KeyPackages per account keep private material; the
+  oldest unconfirmed one goes first, never the newest confirmed one.
+- **Migration.** An account with KeyPackages from an earlier version gets
+  its record seeded from the store at the first lifecycle call: the
+  previous KeyPackages are retired by the first confirmed replacement.
+- **The delayed-Welcome trade-off.** A Welcome to the old KeyPackage that
+  arrives after the confirmed replacement fails
+  (`MARMOT_ERR_KEY_NOT_FOUND`); the inviter retries with the current one.
+- **ADOPTED producer.** `marmot_create_key_package_for_profile(ADOPTED)`
+  (still build-gated) accepts neither key nor signer when the instance is
+  enrolled (`marmot_set_account_proof()`): the leaf then uses the enrolled
+  key and proof, as the MDK 0.8 profile does.
+- **Strictly newer replacements.** A new KeyPackage event is dated at
+  least one second after the slot's previous one (relays and selectors keep
+  the lower event id on an equal `created_at`).
+- **Validation.** An adopted kind:30443 whose `mls_ciphersuite` tag holds
+  more than one value is refused (`MARMOT_ERR_VALIDATION`).
+
+Callers that never confirm (marmot-gobject, Gnostr today) keep older
+private material as before, bounded as above.
+
 ### 0.12.0 (unreleased): White Noise groups and the read side of their components (nostrc-qp24.5.2, nostrc-m6tp)
 
 **New API** (MINOR): `<marmot/marmot-group-components.h>` (included by

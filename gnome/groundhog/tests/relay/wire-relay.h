@@ -27,6 +27,8 @@
  *    recipient only);
  *  - auth_writes: an EVENT is refused with OK false "auth-required:" until
  *    the connection authenticated, as any key.
+ * With refuse_events (serve mode) every EVENT is answered OK false
+ * "blocked:" and nothing is kept: a relay that rejects a publish outright.
  * wire_relay_inject() keeps an event as if a client had published it
  * (fixtures), and sends it to matching live REQs. With record set, every
  * text frame in either direction is kept in frames (WireFrame), tagged with
@@ -75,6 +77,7 @@ struct _WireRelay {
   gboolean serve;
   gboolean auth_gate_dms;    /* kind 1059 only to its authenticated recipient */
   gboolean auth_writes;      /* EVENT only from an authenticated connection */
+  gboolean refuse_events;    /* serve: every EVENT refused (OK false "blocked:") */
   gboolean record;           /* keep every text frame in frames */
   GPtrArray *stored;         /* WireStored, in arrival order */
   GPtrArray *frames;         /* WireFrame, in order */
@@ -498,6 +501,11 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
     if ((relay->require_auth || relay->auth_writes) && !wire_authed(connection)) {
       relay->refused_events++;
       wire_send_ok(connection, event_id, FALSE, "auth-required: sign in to publish");
+      return TRUE;
+    }
+    if (relay->refuse_events) {
+      relay->refused_events++;
+      wire_send_ok(connection, event_id, FALSE, "blocked: refused by the test relay");
       return TRUE;
     }
     g_autofree gchar *json = wire_frame_payload(text, "[\"EVENT\",");

@@ -32,6 +32,7 @@
 
 #include "marmot-internal.h"
 #include "kp_profile.h"
+#include "kp_lifecycle.h"
 #include "mls/mls_key_package.h"
 #include "mls/mls-internal.h"
 #include <nostr-event.h>
@@ -352,10 +353,17 @@ fail:
 
 /* KeyPackage-level extensions: app_data_dictionary with the empty-data
  * last_resort_key_package component (libmarmot KeyPackages are last-resort
- * packages: the same slot is reused and init keys survive a Welcome). */
+ * packages: the same slot is reused and init keys survive a Welcome).
+ * Without @with_last_resort (libmarmot's lifecycle tests only,
+ * nostrc-0bdg): none. */
 static int
-build_kp_extensions_adopted(uint8_t **out_data, size_t *out_len)
+build_kp_extensions_adopted(bool with_last_resort, uint8_t **out_data, size_t *out_len)
 {
+    if (!with_last_resort) {
+        *out_data = NULL;
+        *out_len = 0;
+        return 0;
+    }
     MlsTlsBuf dict, buf;
     if (mls_tls_buf_init(&dict, 16) != 0) return -1;
     if (mls_tls_buf_init(&buf, 16) != 0) {
@@ -396,15 +404,26 @@ replace_u16_vec(uint16_t **arr, size_t *count, const uint16_t *vals, size_t n)
  * group) of every invitee (nostrc-qp24.5.1), a White Noise (marmot-app)
  * one also 0x8006 and 0x800b (nostrc-qp24.5.2). */
 static MarmotError
-build_leaf_dictionary_adopted(MlsKeyPackage *kp, const uint8_t account_pk[32],
-                              const uint8_t *account_sk, MarmotAccountSignFunc sign_fn,
-                              void *sign_data)
+build_leaf_dictionary_adopted(Marmot *m, MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
+                              const uint8_t account_pk[32], const uint8_t *account_sk,
+                              MarmotAccountSignFunc sign_fn, void *sign_data)
 {
     uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
-    MarmotError err = marmot_account_proof_create(
-        account_pk, account_sk, sign_fn, sign_data, kp->cipher_suite,
-        MARMOT_SIGNATURE_SCHEME_ED25519, kp->leaf_node.signature_key, MLS_SIG_PK_LEN,
-        (uint64_t)time(NULL), proof);
+    MarmotError err;
+    if (account_sk || sign_fn) {
+        err = marmot_account_proof_create(
+            account_pk, account_sk, sign_fn, sign_data, kp->cipher_suite,
+            MARMOT_SIGNATURE_SCHEME_ED25519, kp->leaf_node.signature_key, MLS_SIG_PK_LEN,
+            (uint64_t)time(NULL), proof);
+    } else if (marmot_account_proof_lookup(m, account_pk, proof)) {
+        /* A signer-only caller (Groundhog, nostrc-0bdg): the enrolled
+         * instance key and its proof, as the MDK 0.8 profile does. */
+        memcpy(kp->leaf_node.signature_key, m->ed25519_pk, MLS_SIG_PK_LEN);
+        memcpy(priv->signature_key_private, m->ed25519_sk, MLS_SIG_SK_LEN);
+        err = MARMOT_OK;
+    } else {
+        return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+    }
     if (err == MARMOT_OK) err = marmot_leaf_set_adopted_proof(&kp->leaf_node, proof);
     sodium_memzero(proof, sizeof(proof));
     return err;
@@ -521,13 +540,15 @@ marmot_has_account_proof(Marmot *m, const uint8_t account_pubkey[32])
 }
 
 static MarmotError
-create_mls_key_package_adopted(MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
+create_mls_key_package_adopted(Marmot *m, MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
                                const uint8_t account_pk[32], const uint8_t *account_sk,
-                               MarmotAccountSignFunc sign_fn, void *sign_data)
+                               MarmotAccountSignFunc sign_fn, void *sign_data,
+                               bool last_resort)
 {
     uint8_t *ext_data = NULL;
     size_t ext_len = 0;
-    if (build_kp_extensions_adopted(&ext_data, &ext_len) != 0) return MARMOT_ERR_MEMORY;
+    if (build_kp_extensions_adopted(last_resort, &ext_data, &ext_len) != 0)
+        return MARMOT_ERR_MEMORY;
     int rc = mls_key_package_create_unsigned(kp, priv, account_pk, 32, ext_data, ext_len);
     free(ext_data);
     if (rc != 0) return MARMOT_ERR_MLS;
@@ -545,7 +566,8 @@ create_mls_key_package_adopted(MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
         replace_u16_vec(&kp->leaf_node.proposals, &kp->leaf_node.proposal_count,
                         MLS_ADOPTED_CAP_PROPOSALS, MLS_ADOPTED_CAP_PROPOSAL_COUNT) != 0)
         goto fail;
-    err = build_leaf_dictionary_adopted(kp, account_pk, account_sk, sign_fn, sign_data);
+    err = build_leaf_dictionary_adopted(m, kp, priv, account_pk, account_sk, sign_fn,
+                                        sign_data);
     if (err != MARMOT_OK) goto fail;
     if (mls_key_package_sign(kp, priv) != 0) {
         err = MARMOT_ERR_CRYPTO;
@@ -593,6 +615,7 @@ create_key_package_common_impl(Marmot *m,
                           bool sign_event,
                           MarmotAccountSignFunc account_sign, void *sign_data,
                           const char **relay_urls, size_t relay_count,
+                          bool last_resort,
                           MarmotKeyPackageResult *result)
 {
     if (!m || !nostr_pubkey || !result || (sign_event && !nostr_sk))
@@ -601,8 +624,11 @@ create_key_package_common_impl(Marmot *m,
         profile != MARMOT_KEY_PACKAGE_PROFILE_ADOPTED)
         return MARMOT_ERR_INVALID_ARG;
     const bool adopted = profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED;
-    if (adopted && !nostr_sk && !account_sign)
+    if (adopted && !nostr_sk && !account_sign &&
+        !marmot_account_proof_lookup(m, nostr_pubkey, NULL))
         return MARMOT_ERR_INVALID_ARG;
+    /* MDK 0.8 profile KeyPackages always carry the last_resort extension. */
+    if (!adopted) last_resort = true;
     if (relay_count > 0 && !relay_urls)
         return MARMOT_ERR_INVALID_ARG;
 
@@ -623,6 +649,12 @@ create_key_package_common_impl(Marmot *m,
     MarmotError slot_err = load_or_create_key_package_slot(m, nostr_pubkey, slot);
     if (slot_err != MARMOT_OK)
         return slot_err;
+    /* A replacement is strictly newer than the slot's last event
+     * (nostrc-0bdg, kp_lifecycle.c). */
+    int64_t created_at = 0;
+    slot_err = marmot_kp_lifecycle_created_at(m, nostr_pubkey, marmot_now(), &created_at);
+    if (slot_err != MARMOT_OK)
+        return slot_err;
 
     /* Create MLS KeyPackage */
     MlsKeyPackage kp;
@@ -631,8 +663,9 @@ create_key_package_common_impl(Marmot *m,
     memset(&kp_priv, 0, sizeof(kp_priv));
 
     if (adopted) {
-        MarmotError aerr = create_mls_key_package_adopted(&kp, &kp_priv, nostr_pubkey,
-                                                          nostr_sk, account_sign, sign_data);
+        MarmotError aerr = create_mls_key_package_adopted(m, &kp, &kp_priv, nostr_pubkey,
+                                                          nostr_sk, account_sign, sign_data,
+                                                          last_resort);
         if (aerr != MARMOT_OK) return aerr;
     } else {
         /* Build KeyPackage extensions (last_resort) */
@@ -717,7 +750,7 @@ create_key_package_common_impl(Marmot *m,
     free(b64_content);
 
     /* Set created_at */
-    nostr_event_set_created_at(event, marmot_now());
+    nostr_event_set_created_at(event, created_at);
 
     /* Build tags */
     NostrTags *tags = nostr_tags_new(0);
@@ -921,6 +954,22 @@ success:
         return err;
     }
 
+    /* Transport lifecycle (nostrc-0bdg, kp_lifecycle.c): the newest,
+     * unconfirmed KeyPackage of the account's slot. Older ones keep their
+     * private material until a relay accepts a newer one
+     * (marmot_key_package_confirm_published()). */
+    err = marmot_kp_lifecycle_register(m, nostr_pubkey, kp_ref,
+                                       kp.leaf_node.lifetime_not_after, last_resort,
+                                       created_at);
+    if (err != MARMOT_OK) {
+        m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
+        m->storage->mls_delete(m->storage->ctx, "kp_full", kp_ref, MLS_HASH_LEN);
+        marmot_key_package_result_free(result);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&kp_priv);
+        return err;
+    }
+
     /* Deactivate previous key packages for this pubkey (rotation). Mandatory
      * so callers do not publish a new active package while older ones remain
      * active after a failed storage write. */
@@ -971,13 +1020,14 @@ create_key_package_common(Marmot *m,
                           bool sign_event,
                           MarmotAccountSignFunc account_sign, void *sign_data,
                           const char **relay_urls, size_t relay_count,
+                          bool last_resort,
                           MarmotKeyPackageResult *result)
 {
     MarmotError err = marmot_txn_begin(m);
     if (err != MARMOT_OK) return err;
     err = create_key_package_common_impl(m, profile, nostr_pubkey, nostr_sk, sign_event,
                                          account_sign, sign_data, relay_urls,
-                                         relay_count, result);
+                                         relay_count, last_resort, result);
     MarmotError end = marmot_txn_end(m, err);
     if (err == MARMOT_OK && end != MARMOT_OK) marmot_key_package_result_free(result);
     return end;
@@ -992,7 +1042,7 @@ marmot_create_key_package(Marmot *m,
 {
     return create_key_package_common(m, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
                                      nostr_pubkey, nostr_sk, true, NULL, NULL,
-                                     relay_urls, relay_count, result);
+                                     relay_urls, relay_count, true, result);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1015,7 +1065,7 @@ marmot_create_key_package_unsigned(Marmot *m,
 
     return create_key_package_common(m, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
                                      nostr_pubkey, NULL, false, NULL, NULL,
-                                     relay_urls, relay_count, result);
+                                     relay_urls, relay_count, true, result);
 }
 
 MarmotError
@@ -1036,7 +1086,7 @@ marmot_create_key_package_for_profile(Marmot *m,
         return MARMOT_ERR_UNSUPPORTED;
 #endif
     return create_key_package_common(m, profile, nostr_pubkey, nostr_sk, nostr_sk != NULL,
-                                     account_sign, sign_data, relay_urls, relay_count,
+                                     account_sign, sign_data, relay_urls, relay_count, true,
                                      result);
 }
 
@@ -1049,7 +1099,20 @@ marmot_create_key_package_adopted_internal(Marmot *m, const uint8_t nostr_pubkey
 {
     return create_key_package_common(m, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, nostr_pubkey,
                                      nostr_sk, nostr_sk != NULL, account_sign, sign_data,
-                                     NULL, 0, result);
+                                     NULL, 0, true, result);
+}
+
+/* The same with the last-resort marker chosen (lifecycle tests, nostrc-0bdg). */
+MarmotError
+marmot_create_key_package_adopted_internal_ex(Marmot *m, const uint8_t nostr_pubkey[32],
+                                              const uint8_t nostr_sk[32],
+                                              MarmotAccountSignFunc account_sign,
+                                              void *sign_data, bool last_resort,
+                                              MarmotKeyPackageResult *result)
+{
+    return create_key_package_common(m, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, nostr_pubkey,
+                                     nostr_sk, nostr_sk != NULL, account_sign, sign_data,
+                                     NULL, 0, last_resort, result);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1249,7 +1312,10 @@ validate_key_package_event_adopted(NostrEvent *event, int64_t now,
     if (!is_lower_hex_len(d, 2 * MARMOT_KP_SLOT_LEN) || !version ||
         strcmp(version, "1.0") != 0 || !is_lower_hex_len(ref_hex, 2 * MLS_HASH_LEN))
         return MARMOT_ERR_VALIDATION;
+    /* mls_ciphersuite names the KeyPackage's one suite: a singleton
+     * (nostrc-0bdg). */
     if (!id_list_tag_valid(event->tags, "mls_ciphersuite") ||
+        !singleton_tag_value(event->tags, "mls_ciphersuite") ||
         !id_list_tag_valid(event->tags, "mls_extensions") ||
         !id_list_tag_valid(event->tags, "mls_proposals") ||
         !id_list_tag_valid(event->tags, "app_components") ||

@@ -17,6 +17,7 @@
 #include "marmot-internal.h"
 #include "adopted.h"
 #include "kp_profile.h"
+#include "kp_lifecycle.h"
 #include "commits.h"
 #include "members.h"
 #include "mls/mls_welcome.h"
@@ -192,7 +193,7 @@ adopted_rumor_tags_valid(NostrTags *tags)
 
 static MarmotError welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data,
                                 size_t len, MlsGroup *out, uint32_t *out_signer_leaf,
-                                const char **reason);
+                                MarmotKpUse *out_use, const char **reason);
 
 /* The invitation preview of an opened adopted Welcome, from the group's
  * signed components (not from rumor tags). */
@@ -644,7 +645,7 @@ process_welcome_impl(Marmot *m,
         MlsGroup opened;
         const char *why = NULL;
         MarmotError oerr = welcome_open(m, welcome, welcome_data, welcome_len, &opened, NULL,
-                                        &why);
+                                        NULL, &why);
         /* A storage error that may be transient (no reason) does not fail
          * the Welcome for good: it is stored as a pending invitation like
          * any other, and accepting it runs the whole check again (W24
@@ -703,15 +704,21 @@ process_welcome_impl(Marmot *m,
  * group (nostrc-qp24.5.1) with no exemption, the inviter an admin, and the
  * Welcome sent by that inviter.  On success *out is the joined state (caller
  * frees) and *out_signer_leaf (nullable) the GroupInfo signer's leaf, whose
- * device the Welcome's sender vouched for (W24 review owkh); otherwise *reason names the failure, or is NULL for a storage
+ * device the Welcome's sender vouched for (W24 review owkh), and *out_use
+ * (nullable) the KeyPackage of ours it was opened with (nostrc-0bdg);
+ * otherwise *reason names the failure, or is NULL for a storage
  * error that may be transient (the Welcome stays pending).  Writes nothing.
  */
 static MarmotError
 welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_t len,
-             MlsGroup *out, uint32_t *out_signer_leaf, const char **reason)
+             MlsGroup *out, uint32_t *out_signer_leaf, MarmotKpUse *out_use,
+             const char **reason)
 {
     memset(out, 0, sizeof(*out));
     if (out_signer_leaf) *out_signer_leaf = UINT32_MAX;
+    if (out_use) memset(out_use, 0, sizeof(*out_use));
+    MarmotKpUse use;
+    memset(&use, 0, sizeof(use));
     *reason = NULL;
     /* We need to find which KeyPackage was used for this Welcome.
      * The MLS Welcome contains KeyPackageRef entries — we need to
@@ -789,6 +796,14 @@ welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_
             crypto_scalarmult_base(matched_kp.init_key, matched_priv.init_key_private);
         }
         found = true;
+        /* Which KeyPackage this is, for its lifecycle after a join. */
+        memcpy(use.ref, ref, sizeof(use.ref));
+        use.have = parsed && matched_kp.leaf_node.credential_identity &&
+                   matched_kp.leaf_node.credential_identity_len == 32;
+        if (use.have) {
+            memcpy(use.owner, matched_kp.leaf_node.credential_identity, 32);
+            use.last_resort = marmot_kp_is_last_resort(&matched_kp);
+        }
     }
 
     if (!found) {
@@ -859,6 +874,7 @@ welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_
     }
     *out = mls_group;
     if (out_signer_leaf) *out_signer_leaf = signer_leaf;
+    if (out_use) *out_use = use;
     return MARMOT_OK;
 }
 
@@ -895,8 +911,9 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     MlsGroup mls_group;
     const char *open_reason = NULL;
     uint32_t signer_leaf = UINT32_MAX;   /* the GroupInfo signer (W24 review owkh) */
+    MarmotKpUse used;                    /* our KeyPackage it opened with (nostrc-0bdg) */
     MarmotError open_err = welcome_open(m, welcome, welcome_data, welcome_len, &mls_group,
-                                        &signer_leaf, &open_reason);
+                                        &signer_leaf, &used, &open_reason);
     free(welcome_data);
     /* A failure without a reason is a storage error that may be transient:
      * the invitation stays pending (nostrc-w285). */
@@ -1028,6 +1045,14 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
                                              marmot_now(),
                                              MARMOT_WELCOME_STATE_ACCEPTED,
                                              NULL);
+    if (err != MARMOT_OK)
+        goto fail;
+
+    /* The join succeeded: a consumed non-last-resort KeyPackage's private
+     * material goes now, in this transaction (foundation/key-packages.md;
+     * kp_lifecycle.c). A failed Welcome never gets here: nothing of the
+     * KeyPackage changes. */
+    err = marmot_kp_lifecycle_consumed(m, &used);
     if (err != MARMOT_OK)
         goto fail;
 

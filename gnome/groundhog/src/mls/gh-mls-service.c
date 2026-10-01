@@ -26,6 +26,8 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
  * and each group's read cursor ("mls/" + a hash of the group id: the scope
  * is bounded and names no group). */
 #define KEY_PACKAGE_CURSOR "mls/key-package"
+/* 1 while a join's KeyPackage replacement waits for pending invitations. */
+#define KEY_PACKAGE_JOINED_CURSOR "mls/key-package-joined"
 /* A new joiner reads back this far (its Welcome may arrive late). */
 #define JOIN_BACKFILL ((gint64)2 * 24 * 3600)
 /* Retry of unanswered Commits, Welcomes and sends: jittered, doubling. */
@@ -199,6 +201,8 @@ struct _GhMlsService {
   gboolean key_package_busy;
   gboolean key_package_rotate;
   GhRelayPublish *key_package_publish;
+  guint8 key_package_ref[32];        /* KeyPackageRef of the one in flight */
+  gboolean key_package_in_flight;    /* ...until its first relay OK confirms it */
 
   /* Member identities (nostrc-6ukh, W24 review H1) */
   GHashTable *verifying;           /* account hex: a Verify the user asked for runs */
@@ -3153,9 +3157,14 @@ look_up_invitees(GTask *task)
     }
   }
   g_auto(GStrv) sources = discovery_relays(self);
+  /* Never on the group's relays (nostrc-0bdg): they would learn whom the
+   * group is about to add. The new group's relays, or the group's. */
+  const gchar *const *group_relays = op->relays ? (const gchar *const *)op->relays
+                                   : op->group  ? (const gchar *const *)op->group->relays
+                                                : NULL;
   op->lookups = n;
   for (guint i = 0; i < n; i++)
-    gh_mls_key_package_lookup_async(self->accounts, (const gchar *const *)sources,
+    gh_mls_key_package_lookup_async(self->accounts, (const gchar *const *)sources, group_relays,
                                     op->people[i], self->lookup_deadline, self->cancellable,
                                     lookup_done, task);
 }
@@ -4237,6 +4246,54 @@ pending_welcome(GhMlsService *self, const gchar *wrapper_id, GError **error)
 
 static void key_package_rotate(GhMlsService *self);
 
+/* Whether a received invitation is still pending (neither accepted nor
+ * declined nor refused). */
+static gboolean
+invitations_pending(GhMlsService *self)
+{
+  MarmotWelcome **welcomes = NULL;
+  size_t n = 0;
+  MarmotPagination page = marmot_pagination_default();
+  page.limit = 1000;
+  drop_stale_error(self);
+  if (marmot_get_pending_welcomes(self->marmot, &page, &welcomes, &n) != MARMOT_OK) {
+    drop_stale_error(self);
+    return FALSE;
+  }
+  gboolean pending = FALSE;
+  for (size_t i = 0; i < n; i++) {
+    pending |= welcomes[i]->state == MARMOT_WELCOME_STATE_PENDING;
+    marmot_welcome_free(welcomes[i]);
+  }
+  free(welcomes);
+  return pending;
+}
+
+/* MIP-00 / foundation/key-packages.md: after a successful join the account
+ * SHOULD publish a fresh replacement, and the replacement's confirmation
+ * retires the old (last-resort) KeyPackage's keys (nostrc-0bdg). Invitations
+ * already received were most likely made with that same KeyPackage: while
+ * one is still pending the replacement waits (the old KeyPackage stays
+ * published and usable: it is last-resort), and the last accept or decline
+ * runs it. Recorded in the store (KEY_PACKAGE_JOINED_CURSOR), so a restart
+ * keeps it. Never run by a failed Welcome. The lifetime rotation still
+ * applies meanwhile. */
+static void
+key_package_rotate_after_join(GhMlsService *self, gboolean joined)
+{
+  gint64 owed = 0;
+  if (!joined &&
+      (!gh_store_get_cursor(self->store, KEY_PACKAGE_JOINED_CURSOR, "", &owed, NULL) ||
+       owed <= 0))
+    return;
+  gboolean wait = invitations_pending(self);
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_set_cursor(self->store, KEY_PACKAGE_JOINED_CURSOR, "", wait ? 1 : 0, &error))
+    g_message("Groundhog could not record a spent KeyPackage: %s", error->message);
+  if (!wait)
+    key_package_rotate(self);
+}
+
 GhMlsGroup *
 gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError **error)
 {
@@ -4289,7 +4346,7 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
     set_floor(group, made);
   group_subscribe(group);
   /* MIP-00: the KeyPackage the Welcome used is spent; publish a new one. */
-  key_package_rotate(self);
+  key_package_rotate_after_join(self, TRUE);
   return group;
 }
 
@@ -4305,6 +4362,8 @@ gh_mls_service_decline_invite(GhMlsService *self, const gchar *wrapper_id, GErro
   marmot_welcome_free(welcome);
   if (err != MARMOT_OK)
     return marmot_fail(self, err, "The invitation could not be declined", error);
+  /* A replacement a join owed, now that no invitation waits for it. */
+  key_package_rotate_after_join(self, FALSE);
   return TRUE;
 }
 
@@ -4767,31 +4826,158 @@ key_package_set_state(GhMlsService *self, GhMlsKeyPackageState state)
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_KEY_PACKAGE_STATE]);
 }
 
-/* The account's own kind-10002 write and kind-10050 inbox relays (§4.3 own
- * list publish), sorted, unique, at most 16. */
+/* Where the account's KeyPackages go (§4.3 own list publish; Marmot
+ * transports/nostr.md "KeyPackage publication", nostrc-0bdg): its kind-10002
+ * write-capable set only -- `r` entries marked "write" or unmarked, never
+ * read-only ones, never the kind-10050 inbox relays -- the one set inviters
+ * look them up on. Sorted, unique, at most 16. */
 static GStrv
-own_relays(GhMlsService *self)
+key_package_relays(GhMlsService *self)
 {
   g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
   if (self->account_relays &&
       gh_account_relays_get_generation(self->account_relays) == self->generation) {
-    const gchar *const *lists[] = { gh_account_relays_get_write_relays(self->account_relays),
-                                    gh_account_relays_get_inbox_relays(self->account_relays) };
-    for (guint l = 0; l < G_N_ELEMENTS(lists); l++)
-      for (guint i = 0; lists[l] && lists[l][i] && urls->len < MAX_GROUP_RELAYS; i++)
-        if (gh_relay_url_validate(lists[l][i], NULL) &&
-            !g_ptr_array_find_with_equal_func(urls, lists[l][i], g_str_equal, NULL))
-          g_ptr_array_add(urls, g_strdup(lists[l][i]));
+    const gchar *const *write = gh_account_relays_get_write_relays(self->account_relays);
+    for (guint i = 0; write && write[i] && urls->len < MAX_GROUP_RELAYS; i++)
+      if (gh_relay_url_validate(write[i], NULL) &&
+          !g_ptr_array_find_with_equal_func(urls, write[i], g_str_equal, NULL))
+        g_ptr_array_add(urls, g_strdup(write[i]));
   }
   g_ptr_array_sort(urls, compare_strings);
   g_ptr_array_add(urls, NULL);
   return (GStrv)g_ptr_array_steal(urls, NULL);
 }
 
+/* The KeyPackage producer. The adopted profile (kind 30443 of the adopted
+ * Marmot spec: MLSMessage framing, app_components, no encoding or relays
+ * tag) is compile-gated off (GH_MLS_ADOPTED_KEY_PACKAGES, set with
+ * libmarmot's MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER): Groundhog's
+ * groups are legacy-profile until adopted Commits land. Both use the
+ * enrolled account proof (the signer is asynchronous) and the same slot and
+ * lifecycle. */
+#if GH_MLS_ADOPTED_KEY_PACKAGES && defined(GH_MLS_TEST_HOOKS)
+static GhMlsTestAdoptedProducer test_adopted_producer;
+
+void
+gh_mls_service_test_set_adopted_producer(GhMlsTestAdoptedProducer producer)
+{
+  test_adopted_producer = producer;
+}
+#endif
+
+static MarmotError
+key_package_make(GhMlsService *self, const gchar *const *urls, MarmotKeyPackageResult *made)
+{
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  (void)urls;   /* the adopted profile repeats no relays */
+#ifdef GH_MLS_TEST_HOOKS
+  if (test_adopted_producer)
+    return test_adopted_producer(self->marmot, self->account_key, made);
+#endif
+  return marmot_create_key_package_for_profile(self->marmot, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                               self->account_key, NULL, NULL, NULL, NULL, 0,
+                                               made);
+#else
+  return marmot_create_key_package_unsigned(self->marmot, self->account_key,
+                                            (const char **)urls,
+                                            g_strv_length((gchar **)urls), made);
+#endif
+}
+
+#ifdef GH_MLS_TEST_HOOKS
+gboolean
+gh_mls_service_test_has_init_key(GhMlsService *self, const gchar *ref_hex)
+{
+  guint8 ref[32];
+  bool present = false;
+  g_assert_true(lower_hex64(ref_hex) && nostr_hex2bin(ref, ref_hex, sizeof ref));
+  g_assert_cmpint(marmot_key_package_has_private_key(self->marmot, ref, &present), ==,
+                  MARMOT_OK);
+  return present;
+}
+#endif
+
+/* Lifetime bound (foundation/key-packages.md): an expired KeyPackage's
+ * private material goes, whatever its state. */
+static void
+key_package_sweep(GhMlsService *self)
+{
+  g_autoptr(GError) error = NULL;
+  drop_stale_error(self);
+  if (!gh_store_begin(self->store, &error)) {
+    g_message("Groundhog could not check its KeyPackages' lifetime: %s", error->message);
+    return;
+  }
+  size_t deleted = 0;
+  MarmotError err = marmot_key_package_sweep_expired(self->marmot, self->account_key, 0,
+                                                     &deleted);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "Retiring expired KeyPackages", &error);
+    gh_store_rollback(self->store);
+    g_message("Groundhog could not retire its expired KeyPackages: %s", error->message);
+    return;
+  }
+  if (!gh_store_commit(self->store, &error)) {
+    gh_store_rollback(self->store);
+    g_message("Groundhog could not retire its expired KeyPackages: %s", error->message);
+  } else if (deleted > 0) {
+    g_debug("Groundhog retired %" G_GSIZE_FORMAT " expired KeyPackage(s)", deleted);
+  }
+}
+
+/* The relay's OK for the KeyPackage in flight: the replacement is
+ * confirmed, and libmarmot deletes the private material of every older
+ * KeyPackage of the slot -- never before (ACK-tied replacement). */
+static void
+key_package_confirm(GhMlsService *self)
+{
+  if (!self->key_package_in_flight)
+    return;
+  self->key_package_in_flight = FALSE;
+  g_autoptr(GError) error = NULL;
+  drop_stale_error(self);
+  if (!gh_store_begin(self->store, &error)) {
+    g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+    return;
+  }
+  MarmotError err = marmot_key_package_confirm_published(self->marmot, self->account_key,
+                                                         self->key_package_ref);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "Retiring the old KeyPackage", &error);
+    gh_store_rollback(self->store);
+    g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+    return;
+  }
+  if (!gh_store_commit(self->store, &error)) {
+    gh_store_rollback(self->store);
+    g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+  }
+}
+
+/* The `i` tag (KeyPackageRef) of a kind-30443 event, when it is exactly
+ * @ref. */
+static gboolean
+key_package_event_has_ref(NostrEvent *event, const guint8 ref[32])
+{
+  g_autofree gchar *want = to_hex(ref, 32);
+  NostrTags *tags = nostr_event_get_tags(event);
+  guint found = 0;
+  gboolean same = FALSE;
+  for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || g_strcmp0(nostr_tag_get(tag, 0), "i") != 0)
+      continue;
+    found++;
+    same = nostr_tag_size(tag) == 2 && g_strcmp0(nostr_tag_get(tag, 1), want) == 0;
+  }
+  return found == 1 && same;
+}
+
 typedef struct {
   GWeakRef service;
   guint64 run;
   GStrv urls;
+  guint8 ref[32];      /* the KeyPackageRef being published */
 } KeyPackageJob;
 
 static void
@@ -4809,12 +4995,18 @@ key_package_update(GhRelayPublish *publish, const GhRelayPublishResult *result, 
   if (result->outcome != GH_RELAY_PUBLISH_ACCEPTED ||
       self->key_package == GH_MLS_KEY_PACKAGE_PUBLISHED)
     return;
+  /* The first relay OK (transports/nostr.md "Publish targets and
+   * acknowledgements"): the replacement is confirmed. */
+  key_package_confirm(self);
   g_autoptr(GError) error = NULL;
-  if (!gh_store_set_cursor(self->store, KEY_PACKAGE_CURSOR, "", now_s(self), &error))
+  /* A rotation asked for while this one was in flight (a Welcome joined
+   * meanwhile) still stands: the publication time is not recorded, so the
+   * next check publishes again (key_package_done() runs it). */
+  if (!self->key_package_rotate &&
+      !gh_store_set_cursor(self->store, KEY_PACKAGE_CURSOR, "", now_s(self), &error))
     g_message("Groundhog could not record the KeyPackage publication: %s", error->message);
   g_free(self->key_package_id);
   self->key_package_id = g_strdup(gh_relay_publish_get_event_id(publish));
-  self->key_package_rotate = FALSE;
   key_package_set_state(self, GH_MLS_KEY_PACKAGE_PUBLISHED);
 }
 
@@ -4832,11 +5024,17 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
   if (self->key_package_publish == publish)
     self->key_package_publish = NULL;
   self->key_package_busy = FALSE;
+  /* No relay accepted it: the older KeyPackages keep their keys (it may
+   * still have reached a relay; the next confirmed one retires it). */
+  self->key_package_in_flight = FALSE;
   if (!summary->any_accepted) {
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_FAILED);
     schedule_retry(self);
   }
   g_idle_add(key_package_publish_free_idle, publish);
+  /* A rotation asked for while this publish was in flight. */
+  if (summary->any_accepted && self->key_package_rotate)
+    key_package_maybe_publish(self);
 }
 
 static void
@@ -4851,12 +5049,14 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     key_package_job_free(job);
     return;
   }
-  /* The signer must have signed exactly a KeyPackage of this account. */
+  /* The signer must have signed exactly a KeyPackage of this account, the
+   * one just made (its KeyPackageRef is what a relay OK confirms). */
   NostrEvent *event = signed_json ? nostr_event_new() : NULL;
   gboolean ok = event && nostr_event_deserialize_compact(event, signed_json, NULL) == 1 &&
                 nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK &&
                 nostr_event_get_kind(event) == MARMOT_KIND_KEY_PACKAGE &&
-                g_strcmp0(nostr_event_get_pubkey(event), self->account) == 0;
+                g_strcmp0(nostr_event_get_pubkey(event), self->account) == 0 &&
+                key_package_event_has_ref(event, job->ref);
   if (event)
     nostr_event_free(event);
   GhRelayPublish *publish = ok ? gh_relay_publish_new(self->generation, signed_json,
@@ -4885,8 +5085,11 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   self->key_package_publish = publish;
+  memcpy(self->key_package_ref, job->ref, sizeof self->key_package_ref);
+  self->key_package_in_flight = TRUE;
   if (!gh_relay_publish_start(publish, &error)) {
     self->key_package_publish = NULL;
+    self->key_package_in_flight = FALSE;
     gh_relay_publish_unref(publish);
     self->key_package_busy = FALSE;
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_FAILED);
@@ -4901,7 +5104,8 @@ key_package_maybe_publish(GhMlsService *self)
 {
   if (!running(self) || self->key_package_busy || !identity_ready(self))
     return;
-  g_auto(GStrv) urls = own_relays(self);
+  key_package_sweep(self);
+  g_auto(GStrv) urls = key_package_relays(self);
   if (!urls[0]) {
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_NO_RELAYS);
     return;
@@ -4922,9 +5126,7 @@ key_package_maybe_publish(GhMlsService *self)
   drop_stale_error(self);
   if (!gh_store_begin(self->store, &error))
     return;
-  MarmotError err = marmot_create_key_package_unsigned(self->marmot, self->account_key,
-                                                       (const char **)urls, g_strv_length(urls),
-                                                       &made);
+  MarmotError err = key_package_make(self, (const gchar *const *)urls, &made);
   if (err != MARMOT_OK || !gh_store_commit(self->store, &error)) {
     if (err != MARMOT_OK) {
       marmot_fail(self, err, "Making a KeyPackage", &error);
@@ -4936,11 +5138,16 @@ key_package_maybe_publish(GhMlsService *self)
     return;
   }
   self->key_package_busy = TRUE;
+  /* This KeyPackage serves any rotation asked for so far; until a relay
+   * accepts it the publication time stays unrecorded (0 after a rotation),
+   * so a failure or a restart publishes again. */
+  self->key_package_rotate = FALSE;
   key_package_set_state(self, GH_MLS_KEY_PACKAGE_PUBLISHING);
   KeyPackageJob *job = g_new0(KeyPackageJob, 1);
   g_weak_ref_init(&job->service, self);
   job->run = self->run;
   job->urls = g_steal_pointer(&urls);
+  memcpy(job->ref, made.key_package_ref, sizeof job->ref);
   gh_account_controller_sign_with_cancellable_async(self->accounts, made.event_json,
                                                     self->cancellable, key_package_signed,
                                                     job);
@@ -4948,7 +5155,8 @@ key_package_maybe_publish(GhMlsService *self)
 }
 
 /* MIP-00: a Welcome consumed the published KeyPackage (or the user asked):
- * publish a new one, now or at the next start. */
+ * publish a new one, now or at the next start. Only a successful join
+ * rotates (foundation/key-packages.md "Failure behavior"). */
 static void
 key_package_rotate(GhMlsService *self)
 {
@@ -5056,6 +5264,7 @@ resume_all(GhMlsService *self)
     leave_continue(group);
     departures_schedule(group);
   }
+  key_package_rotate_after_join(self, FALSE);
   key_package_maybe_publish(self);
 }
 
@@ -5079,6 +5288,7 @@ stop_generation(GhMlsService *self)
     g_clear_pointer(&self->key_package_publish, gh_relay_publish_unref);
   }
   self->key_package_busy = FALSE;
+  self->key_package_in_flight = FALSE;
   g_hash_table_remove_all(self->deliveries);
   /* Verifies in flight were cancelled: nothing is "checking" any more. */
   {
