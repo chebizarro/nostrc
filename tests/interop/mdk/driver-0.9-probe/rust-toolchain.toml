@@ -1,0 +1,4 @@
+# MDK v0.9.0 pins this toolchain (its rust-toolchain.toml); so does the Dockerfile.
+[toolchain]
+channel = "1.90.0"
+profile = "minimal"

@@ -1699,6 +1699,112 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     set_tests_properties(groundhog-mdk-interop PROPERTIES TIMEOUT 1200 ${groundhog_mdk_fixture}
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;GH_MDK_DRIVER=${groundhog_mdk_driver}")
   endif()
+  # The adopted-profile matrix (nostrc-a5u5): MDK v0.11.0 (cgka-engine, the
+  # adopted Marmot profile) behind its own driver and image,
+  # tests/interop/mdk/driver-0.11, run apart from the 0.8 test so a green 0.8
+  # run never implies adopted success. One CTest per case of
+  # tests/mls/test_mdk011_interop.c: the MDK<->MDK control must pass; the
+  # adopted cases assert Groundhog's honest refusal and exit 77 (XFAIL), which
+  # SKIP_RETURN_CODE reports as Skipped, never Passed. The driver's redacted
+  # wire vectors land in ${CMAKE_BINARY_DIR}/mdk011-interop-artifacts.
+  option(BUILD_MDK011_INTEROP
+         "Build and run the Groundhog/MDK 0.11 (adopted profile) interop matrix (needs Docker)" OFF)
+  set(MDK011_INTEROP_DRIVER "" CACHE STRING
+      "MDK 0.11 interop driver command line; empty: the Docker image the test builds")
+  if (BUILD_MDK011_INTEROP)
+    if (NOT (BUILD_TESTING AND TARGET groundhog-test-schemas AND
+             TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST AND TARGET PkgConfig::GROUNDHOG_JSON))
+      message(FATAL_ERROR "BUILD_MDK011_INTEROP needs BUILD_TESTING, libsoup-3.0 and json-glib-1.0")
+    endif()
+    add_executable(test-groundhog-mdk011-interop tests/mls/test_mdk011_interop.c
+      ${GROUNDHOG_MLS_SERVICE_SOURCES} src/mls/gh-mls-invitee.c src/ui/gh-mls-copy.c
+      src/store/gh-store-marmot.c src/store/gh-mls-commits.c
+      src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
+      ${GROUNDHOG_DM_SEND_SOURCES})
+    target_include_directories(test-groundhog-mdk011-interop PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/ui ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls)
+    target_link_libraries(test-groundhog-mdk011-interop PRIVATE groundhog-store-testhooks marmot
+      groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+      groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_JSON)
+    target_compile_definitions(test-groundhog-mdk011-interop PRIVATE GH_MLS_TEST_HOOKS=1)
+    target_compile_options(test-groundhog-mdk011-interop PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-mdk011-interop)
+    add_dependencies(test-groundhog-mdk011-interop groundhog-test-schemas)
+    set(groundhog_mdk011_artifacts "${CMAKE_BINARY_DIR}/mdk011-interop-artifacts")
+    file(MAKE_DIRECTORY "${groundhog_mdk011_artifacts}")
+    if (MDK011_INTEROP_DRIVER)
+      set(groundhog_mdk011_driver "${MDK011_INTEROP_DRIVER}")
+      set(groundhog_mdk011_fixture)
+    else()
+      set(groundhog_saved_appbundle "${CMAKE_FIND_APPBUNDLE}")
+      set(CMAKE_FIND_APPBUNDLE NEVER)
+      find_program(GROUNDHOG_DOCKER docker REQUIRED)
+      set(CMAKE_FIND_APPBUNDLE "${groundhog_saved_appbundle}")
+      set(groundhog_mdk011_image nostrc-mdk-interop:0.11.0)
+      add_test(NAME groundhog-mdk011-interop-image
+        COMMAND ${GROUNDHOG_DOCKER} build -t ${groundhog_mdk011_image}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/interop/mdk/driver-0.11)
+      set_tests_properties(groundhog-mdk011-interop-image PROPERTIES TIMEOUT 3600
+        FIXTURES_SETUP groundhog-mdk011-image)
+      set(groundhog_mdk011_fixture groundhog-mdk011-image)
+      # As for 0.8: the host's network on Linux, host.docker.internal on
+      # Docker Desktop (the URLs and the NIP-42 relay tag stay 127.0.0.1).
+      # The artifact directory is mounted at /artifacts.
+      set(groundhog_mdk011_run "${GROUNDHOG_DOCKER} run --rm -i -e MDK_DRIVER_LOG -e MDK_DRIVER_DEADLINE_S -e MDK_DRIVER_ARTIFACT_DIR=/artifacts -v ${groundhog_mdk011_artifacts}:/artifacts")
+      if (APPLE)
+        set(groundhog_mdk011_driver "${groundhog_mdk011_run} -e MDK_DRIVER_DIAL_HOST=host.docker.internal ${groundhog_mdk011_image}")
+      else()
+        # Artifacts owned by the user running the tests, not root.
+        execute_process(COMMAND id -u OUTPUT_VARIABLE groundhog_uid OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND id -g OUTPUT_VARIABLE groundhog_gid OUTPUT_STRIP_TRAILING_WHITESPACE)
+        set(groundhog_mdk011_driver "${groundhog_mdk011_run} --user ${groundhog_uid}:${groundhog_gid} --network host ${groundhog_mdk011_image}")
+      endif()
+    endif()
+    # The MDK v0.9.0 expected-incompatible probe (KeyPackages only), its own
+    # image; MDK09_PROBE_DRIVER replaces it with another command line.
+    set(MDK09_PROBE_DRIVER "" CACHE STRING
+        "MDK 0.9.0 probe driver command line; empty: the Docker image the test builds")
+    if (MDK09_PROBE_DRIVER)
+      set(groundhog_mdk09_driver "${MDK09_PROBE_DRIVER}")
+      set(groundhog_mdk09_fixture)
+    else()
+      set(groundhog_saved_appbundle "${CMAKE_FIND_APPBUNDLE}")
+      set(CMAKE_FIND_APPBUNDLE NEVER)
+      find_program(GROUNDHOG_DOCKER docker REQUIRED)
+      set(CMAKE_FIND_APPBUNDLE "${groundhog_saved_appbundle}")
+      set(groundhog_mdk09_image nostrc-mdk-interop:0.9.0-probe)
+      add_test(NAME groundhog-mdk011-interop-image-mdk09
+        COMMAND ${GROUNDHOG_DOCKER} build -t ${groundhog_mdk09_image}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/interop/mdk/driver-0.9-probe)
+      set_tests_properties(groundhog-mdk011-interop-image-mdk09 PROPERTIES TIMEOUT 3600
+        FIXTURES_SETUP groundhog-mdk09-image)
+      set(groundhog_mdk09_fixture groundhog-mdk09-image)
+      if (APPLE)
+        set(groundhog_mdk09_driver "${GROUNDHOG_DOCKER} run --rm -i -e MDK_DRIVER_LOG -e MDK_DRIVER_DEADLINE_S -e MDK_DRIVER_DIAL_HOST=host.docker.internal ${groundhog_mdk09_image}")
+      else()
+        set(groundhog_mdk09_driver "${GROUNDHOG_DOCKER} run --rm -i -e MDK_DRIVER_LOG -e MDK_DRIVER_DEADLINE_S --network host ${groundhog_mdk09_image}")
+      endif()
+    endif()
+    foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
+            adopted-welcome mdk09-probe)
+      add_test(NAME groundhog-mdk011-interop-${groundhog_mdk011_case}
+        COMMAND test-groundhog-mdk011-interop -p /groundhog/mdk011-interop/${groundhog_mdk011_case})
+      set_tests_properties(groundhog-mdk011-interop-${groundhog_mdk011_case} PROPERTIES
+        TIMEOUT 900 SKIP_RETURN_CODE 77 RESOURCE_LOCK groundhog-mdk011
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;GH_MDK_DRIVER=${groundhog_mdk011_driver};GH_MDK09_DRIVER=${groundhog_mdk09_driver};MDK_DRIVER_ARTIFACT_DIR=${groundhog_mdk011_artifacts}")
+      set(groundhog_mdk011_fixtures ${groundhog_mdk011_fixture})
+      if (groundhog_mdk011_case STREQUAL "mdk09-probe")
+        list(APPEND groundhog_mdk011_fixtures ${groundhog_mdk09_fixture})
+      endif()
+      if (groundhog_mdk011_fixtures)
+        set_tests_properties(groundhog-mdk011-interop-${groundhog_mdk011_case} PROPERTIES
+          FIXTURES_REQUIRED "${groundhog_mdk011_fixtures}")
+      endif()
+    endforeach()
+  endif()
 else()
   message(STATUS "Groundhog MLS service: disabled (needs GhStoreMarmot, the DM inbox, "
                  "GhAuthPolicy, the conversation model, the relay lists and NIP-17/59)")

@@ -1,0 +1,46 @@
+[package]
+name = "mdk011-interop-driver"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Line-protocol MDK 0.11 (cgka-engine, adopted Marmot profile) peer for nostrc's interop tests (nostrc-a5u5)"
+license = "MIT"
+
+# The third-party peer, pinned: MDK v0.11.0 (946e0547, the adopted Marmot
+# profile: cgka-engine, app_data_dictionary components, 0x8009 account proof).
+# The account-device stack White Noise 0.11 runs: cgka-session's
+# AccountDeviceSession (cgka-engine on SQLCipher storage-sqlite), the
+# transport-nostr-peeler (kind 445 / NIP-59 Welcomes) and the
+# transport-nostr-adapter's kind 30443 KeyPackage publication. Every crate comes
+# from that one commit; Cargo.lock pins the rest (built with --locked). The 0.8
+# driver (../driver) is a separate crate and image and is not touched.
+[dependencies]
+cgka-session = { git = "https://github.com/marmot-protocol/mdk", rev = "946e0547485c9a2c393c2048ec3a968fd50fb441" }
+cgka-engine = { git = "https://github.com/marmot-protocol/mdk", rev = "946e0547485c9a2c393c2048ec3a968fd50fb441" }
+cgka-traits = { git = "https://github.com/marmot-protocol/mdk", rev = "946e0547485c9a2c393c2048ec3a968fd50fb441" }
+storage-sqlite = { git = "https://github.com/marmot-protocol/mdk", rev = "946e0547485c9a2c393c2048ec3a968fd50fb441" }
+transport-nostr-peeler = { git = "https://github.com/marmot-protocol/mdk", rev = "946e0547485c9a2c393c2048ec3a968fd50fb441" }
+transport-nostr-adapter = { git = "https://github.com/marmot-protocol/mdk", rev = "946e0547485c9a2c393c2048ec3a968fd50fb441" }
+# The Nostr crate MDK 0.11 itself pins (its workspace dependency), so event
+# and key types are the ones its peeler signs and verifies with.
+nostr = { git = "https://github.com/erskingardner/rust-nostr", rev = "a9c7a6423d104c603de6ea8244265ea17f0f9d89", default-features = false, features = ["std", "rand", "os-rng", "nip59"] }
+serde_json = "1"
+hex = "0.4"
+base64 = "0.22"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "net", "io-std", "io-util", "time"] }
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# MDK's own diagnostics on stderr (MDK_DRIVER_LOG, an EnvFilter; default warn).
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
+
+# The same two crates.io patches as MDK v0.11.0's workspace (a git consumer
+# does not inherit them): without them the SQLCipher amalgamation and hax
+# macros would differ from what MDK ships.
+[patch.crates-io]
+hax-lib-macros = { git = "https://github.com/cryspen/hax.git", rev = "8f9cb576e58f6cc7e9ed249a7d4439b0f7ed0da7" }
+libsqlite3-sys = { git = "https://github.com/rusqlite/rusqlite.git", rev = "5ae7fdf83085c595fd54f977b3a56ccacabaf16b" }
+
+[profile.release]
+debug = 1

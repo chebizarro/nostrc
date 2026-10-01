@@ -1,0 +1,105 @@
+name: Marmot MDK 0.11 interop (adopted profile)
+
+# The adopted-profile interop matrix (nostrc-a5u5; release gate nostrc-7gx7;
+# docs/analysis/marmot-adopted-profile-gap-2026-09-30.md): Groundhog's
+# GhMlsService (libmarmot) against MDK v0.11.0 (946e0547, cgka-engine; the
+# JSON-lines driver of tests/interop/mdk/driver-0.11, a Docker image) and the
+# MDK v0.9.0 expected-incompatible probe (a102b196,
+# tests/interop/mdk/driver-0.9-probe), on the test's own local relays only.
+# Separate from marmot-mdk-interop.yml (MDK 0.8) so a green 0.8 run never
+# implies adopted success. The MDK<->MDK control must pass; the adopted cases
+# are expected failures (exit 77, reported Skipped) and are listed as such,
+# never as green. On demand and nightly: the image builds compile MDK.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '47 3 * * *'
+
+# Builds and runs third-party code (MDK, OpenMLS crates): read-only token,
+# no secrets.
+permissions:
+  contents: read
+
+jobs:
+  mdk011-adopted-matrix:
+    name: MDK 0.11 adopted matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
+            desktop-file-utils appstream blueprint-compiler
+          docker version
+
+      - name: Configure with the MDK 0.11 matrix
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON -DBUILD_MDK011_INTEROP=ON \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=OFF \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF
+
+      - name: Build the matrix test
+        run: cmake --build build --parallel 2 --target test-groundhog-mdk011-interop
+
+      - name: Groundhog <-> MDK 0.11 and the MDK 0.9.0 probe (builds both images first)
+        env:
+          MDK_DRIVER_LOG: warn
+        run: |
+          set -o pipefail
+          ctest --test-dir build -R '^groundhog-mdk011-interop' -V \
+            --output-junit "$PWD/mdk011-interop.junit.xml" 2>&1 | tee mdk011-interop.log
+
+      - name: Matrix summary (expected failures are not green)
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import re, xml.etree.ElementTree as ET
+          log = open("mdk011-interop.log", encoding="utf-8", errors="replace").read()
+          xfail = {}
+          for num, cls, what in re.findall(r"^(\d+): XFAIL \[([^\]]+)\]: (.*)$", log, re.M):
+              xfail[num] = (cls, what)
+          nums = dict(re.findall(r"Test +#(\d+): (groundhog-mdk011-interop-\S+)", log))
+          by_name = {v: k for k, v in nums.items()}
+          print("| Case | Result | Class / reason |\n| --- | --- | --- |")
+          try:
+              cases = ET.parse("mdk011-interop.junit.xml").getroot().iter("testcase")
+          except (OSError, ET.ParseError):
+              cases = []
+          for case in cases:
+              name = case.get("name")
+              status = case.get("status", "")
+              num = by_name.get(name)
+              if num in xfail:
+                  result, why = "XFAIL (not green)", "[%s] %s" % xfail[num]
+              elif status == "run" and case.find("failure") is None:
+                  result, why = "pass", ""
+              elif case.find("skipped") is not None or status in ("notrun", "disabled"):
+                  result, why = "not run", ""
+              else:
+                  result, why = "FAIL", ""
+              print("| %s | %s | %s |" % (name, result, why.replace("|", "\\|")[:300]))
+          PY
+
+      - name: Keep the run and the redacted vectors as evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: marmot-mdk011-interop
+          path: |
+            mdk011-interop.log
+            mdk011-interop.junit.xml
+            build/mdk011-interop-artifacts/
+          if-no-files-found: ignore

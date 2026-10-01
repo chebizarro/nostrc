@@ -44,12 +44,14 @@ mdk_answered(gpointer data)
   return driver->line != NULL || driver->ended;
 }
 
-/* Starts the driver; FALSE (nothing started) when GH_MDK_DRIVER is unset. */
+/* Starts the driver whose command line is in environment variable `env`
+ * (e.g. GH_MDK09_DRIVER for a second driver of another MDK version); FALSE
+ * (nothing started) when it is unset. */
 static G_GNUC_UNUSED gboolean
-mdk_driver_start(MdkDriver *driver)
+mdk_driver_start_env(MdkDriver *driver, const gchar *env)
 {
   memset(driver, 0, sizeof *driver);
-  const gchar *command = g_getenv("GH_MDK_DRIVER");
+  const gchar *command = g_getenv(env);
   if (!command || !*command)
     return FALSE;
   g_auto(GStrv) argv = NULL;
@@ -64,6 +66,13 @@ mdk_driver_start(MdkDriver *driver)
   driver->requests = g_subprocess_get_stdin_pipe(driver->process);
   driver->answers = g_data_input_stream_new(g_subprocess_get_stdout_pipe(driver->process));
   return TRUE;
+}
+
+/* Starts the driver; FALSE (nothing started) when GH_MDK_DRIVER is unset. */
+static G_GNUC_UNUSED gboolean
+mdk_driver_start(MdkDriver *driver)
+{
+  return mdk_driver_start_env(driver, "GH_MDK_DRIVER");
 }
 
 static G_GNUC_UNUSED void
