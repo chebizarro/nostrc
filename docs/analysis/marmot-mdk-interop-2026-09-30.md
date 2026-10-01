@@ -307,13 +307,16 @@ libmarmot 0.12.0 keeps standalone proposals and implements SelfRemove
 
 | # | Flow | Mode | Result |
 | --- | --- | --- | --- |
-| 3a | An MDK member leaves a Groundhog group: the group requires SelfRemove (both leaves advertise it; MDK's LCD rule), so MDK's `leave_group()` sends a SelfRemove PublicMessage; Groundhog keeps it, commits it by reference after its jitter, reports "member-left"; MDK applies the Commit and is Inactive | legacy (the MDK leaf is unproven) | works (`mdk-member-leaves`) |
+| 3a | An MDK member leaves a Groundhog group. Groundhog makes groups alone, so they do not require SelfRemove (MDK's rule, after review L1). MDK's `leave_group()` therefore sends a Remove of itself as a PrivateMessage; Groundhog, the admin, keeps it, commits it by reference after its jitter and reports "member-left"; MDK applies the Commit and is Inactive. This proves PrivateMessage proposal interop: MDK resolves our reference to its own encrypted proposal | legacy (the MDK leaf is unproven) | works (`mdk-member-leaves`) |
 | 3b | Groundhog leaves an MDK group: Groundhog's SelfRemove reaches G; MDK auto-commits it by reference (a PrivateMessage Commit); Groundhog ends the group as LEFT | default | works (`groundhog-leaves`) |
 
 - **Vector.** MDK's SelfRemove MLSMessage and OpenMLS's own ProposalRef for
-  it (driver `leave_group`) are `MDK_SELF_REMOVE_*` in
-  `libmarmot/tests/test_interop.c`. libmarmot computes the same
-  ProposalRef.
+  it (driver `leave_group`, captured from a group that required SelfRemove)
+  are `MDK_SELF_REMOVE_*` in `libmarmot/tests/test_interop.c`. libmarmot
+  computes the same ProposalRef.
+- **When SelfRemove is sent.** As MDK 0.8 decides: only when the group's
+  required_capabilities list it; otherwise the leave is a Remove request for
+  an admin (review M1).
 - **Who commits.** Any member commits a SelfRemove: MDK 0.8, MDK 0.11 and
   the adopted spec agree. Groundhog commits after 1-4 s of jitter.
 - **MDK's Remove-based leave.** Where a group does not require SelfRemove,

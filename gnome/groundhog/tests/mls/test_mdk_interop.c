@@ -24,10 +24,11 @@
  *  2b. Legacy mode (GH_MLS_TEST_HOOKS): Groundhog invites MDK, both sides
  *     commit (rename, admins, add, remove) and converge; a second Groundhog
  *     account (Bob) joins through MDK's Add.
- *  3a. An MDK member leaves (nostrc-2um6; MIP-03 "Leaving a group"): in a
- *     Groundhog group (legacy mode: the MDK leaf is unproven) that requires
- *     SelfRemove, MDK's SelfRemove PublicMessage is committed by Groundhog
- *     after its jitter; MDK follows and is out.
+ *  3a. An MDK member leaves (nostrc-2um6; MIP-03 "Leaving a group"): a
+ *     Groundhog group (legacy mode: the MDK leaf is unproven) is made alone
+ *     and does not require SelfRemove (MDK's rule), so MDK leaves with a
+ *     Remove of itself, a PrivateMessage, which Groundhog (the admin)
+ *     commits after its jitter; MDK follows and is out.
  *  3b. Groundhog leaves (default mode): in an MDK group, Groundhog's
  *     SelfRemove is auto-committed by MDK by reference (a PrivateMessage);
  *     Groundhog ends the group as LEFT.
@@ -783,11 +784,13 @@ on_member_left(GhMlsGroup *group, const gchar *pubkey, gpointer data)
   g_ptr_array_add(data, g_strdup(pubkey));
 }
 
-/* 3a: Groundhog creates the group (legacy mode) with Carol (MDK). Both
- * leaves advertise SelfRemove, so the group requires it (MIP-01; MDK's LCD
- * rule) and MDK's leave is a SelfRemove PublicMessage. Groundhog keeps it,
+/* 3a: Groundhog creates the group (legacy mode) with Carol (MDK). Groundhog
+ * makes its groups alone, so they do not require SelfRemove (MDK's rule for
+ * an empty invitee list, review L1), and MDK 0.8's leave_group() is then a
+ * Remove of itself sent as a PrivateMessage. Groundhog, the admin, keeps it,
  * commits it by reference after the jitter, and reports "member-left";
- * MDK follows its own removal. */
+ * MDK follows its own removal. (The SelfRemove form is case 3b, and MDK's
+ * SelfRemove bytes are the MDK_SELF_REMOVE_* vector.) */
 static void
 test_mdk_member_leaves(void)
 {
@@ -816,11 +819,11 @@ test_mdk_member_leaves(void)
   g_autoptr(JsonObject) left = mdk_call(&driver,
     "\"cmd\":\"leave_group\",\"peer\":\"carol\",\"group\":\"%s\"", group);
   const gchar *message = json_object_get_string_member(left, "mls_message");
-  g_test_message("MDK SelfRemove MLSMessage: %s", message);
+  g_test_message("MDK leave MLSMessage: %s", message);
   g_autofree gchar *refs = mdk_json(left);
   g_test_message("MDK leave_group: %s", refs);
-  /* A PublicMessage (00 01 00 01) carrying a Proposal: MDK left with SelfRemove. */
-  g_assert_true(g_str_has_prefix(message, "00010001"));
+  /* A PrivateMessage (00 01 00 02): MDK's Remove of itself (review M1). */
+  g_assert_true(g_str_has_prefix(message, "00010002"));
 
   wait_members(ga, 1);
   g_assert_cmpuint(gone->len, ==, 1);
