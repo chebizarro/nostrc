@@ -529,14 +529,16 @@ create_mls_key_package_adopted(MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
     if (rc != 0) return MARMOT_ERR_MLS;
 
     /* Adopted-profile capabilities (foundation/key-packages.md "Capability
-     * advertising"): app_data_dictionary + app_data_update. No 0xf2ee, no
+     * advertising"): app_data_dictionary + app_data_update, and self_remove
+     * (registries.md 0x000a; protocol-core/member-departure.md), which the
+     * engine implements since 0.12.0 (nostrc-2um6). No 0xf2ee, no
      * last_resort extension type (last resort is a component now). */
     static const uint16_t exts[] = {MARMOT_EXT_APP_DATA_DICTIONARY};
-    static const uint16_t props[] = {MARMOT_PROPOSAL_APP_DATA_UPDATE};
+    static const uint16_t props[] = {MARMOT_PROPOSAL_APP_DATA_UPDATE, MARMOT_PROPOSAL_SELF_REMOVE};
     MarmotError err = MARMOT_ERR_MEMORY;
     if (replace_u16_vec(&kp->leaf_node.cap_extensions, &kp->leaf_node.cap_extension_count,
                         exts, 1) != 0 ||
-        replace_u16_vec(&kp->leaf_node.proposals, &kp->leaf_node.proposal_count, props, 1) != 0)
+        replace_u16_vec(&kp->leaf_node.proposals, &kp->leaf_node.proposal_count, props, 2) != 0)
         goto fail;
     err = build_leaf_dictionary_adopted(kp, account_pk, account_sk, sign_fn, sign_data);
     if (err != MARMOT_OK) goto fail;
@@ -749,12 +751,12 @@ create_key_package_common_impl(Marmot *m,
     nostr_tags_append(tags, tag);
 
     /* mls_proposals id-list tag. MDK 0.8 parsers reject a kind:30443 whose
-     * mls_proposals is anything but exactly ["0x000a"] (SelfRemove), so the
-     * vector-compatible profile keeps it, although the LeafNode deliberately
-     * does NOT list SelfRemove (libmarmot cannot process it; nostrc-prqu.10).
-     * That is safe: the tag is an advertisement/fetch filter, and MDK derives
-     * a group's required proposals from the decoded leaves (intersection),
-     * so a group with a libmarmot member never requires SelfRemove. */
+     * mls_proposals is anything but exactly ["0x000a"] (SelfRemove). Since
+     * 0.12.0 the LeafNode lists SelfRemove too (nostrc-2um6), so tag and
+     * leaf agree; before, the tag was only an advertisement the leaf did not
+     * back.  MDK derives a group's required proposals from the decoded
+     * leaves (intersection), so MDK groups with libmarmot members now
+     * require SelfRemove. */
     tag = adopted ? id_list_tag_new("mls_proposals", kp.leaf_node.proposals,
                                     kp.leaf_node.proposal_count)
                   : nostr_tag_new("mls_proposals", "0x000a", NULL);

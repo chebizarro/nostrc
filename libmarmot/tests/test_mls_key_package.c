@@ -307,8 +307,8 @@ TEST(test_capabilities_and_lifetime)
     assert(kp.leaf_node.cap_extensions[0] == 0x0006); /* app_data_dictionary (proof) */
     assert(kp.leaf_node.cap_extensions[1] == 0x000A); /* last_resort */
     assert(kp.leaf_node.cap_extensions[2] == 0xF2EE); /* marmot_group_data */
-    /* SelfRemove is not implemented, so it is not advertised. */
-    assert(kp.leaf_node.proposal_count == 0);
+    /* SelfRemove (0x000a), implemented since 0.12.0 (nostrc-2um6). */
+    assert(kp.leaf_node.proposal_count == 1 && kp.leaf_node.proposals[0] == 0x000A);
     assert(kp.leaf_node.version_count == 1 && kp.leaf_node.versions[0] == 1);
     assert(kp.leaf_node.ciphersuite_count == 1 &&
            kp.leaf_node.ciphersuites[0] == MARMOT_CIPHERSUITE);
@@ -326,7 +326,7 @@ TEST(test_capabilities_and_lifetime)
     mls_tls_reader_init(&r, buf.data, buf.len);
     MlsKeyPackage back;
     assert(mls_key_package_deserialize(&r, &back) == 0);
-    assert(back.leaf_node.cap_extension_count == 3 && back.leaf_node.proposal_count == 0);
+    assert(back.leaf_node.cap_extension_count == 3 && back.leaf_node.proposal_count == 1);
     assert(back.leaf_node.lifetime_not_after == kp.leaf_node.lifetime_not_after);
     assert(mls_key_package_validate(&back) == 0);
     mls_key_package_clear(&back);

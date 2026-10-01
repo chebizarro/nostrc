@@ -635,6 +635,8 @@ skip_proposal_body(MlsTlsReader *reader)
         mls_app_data_update_clear(&update);
         return rc;
     }
+    case MLS_PROPOSAL_SELF_REMOVE:
+        return 0;   /* struct {} SelfRemove (nostrc-2um6) */
     default:
         return -1;
     }
@@ -1043,6 +1045,43 @@ auth_data_deserialize(MlsTlsReader *reader, uint8_t content_type,
         auth->has_confirmation_tag = true;
     }
     return 0;
+}
+
+int
+mls_authenticated_content_serialize(uint16_t wire_format, const MlsFramedContent *content,
+                                    const MlsFramedContentAuthData *auth, MlsTlsBuf *buf)
+{
+    if (!content || !auth || !buf) return -1;
+    if (mls_tls_write_u16(buf, wire_format) != 0 ||
+        mls_framed_content_serialize(content, buf) != 0 ||
+        auth_data_serialize(auth, content->content_type, buf) != 0)
+        return -1;
+    return 0;
+}
+
+int
+mls_authenticated_content_deserialize(MlsTlsReader *reader, uint16_t *wire_format,
+                                      MlsFramedContent *content,
+                                      MlsFramedContentAuthData *auth)
+{
+    if (!reader || !wire_format || !content || !auth) return -1;
+    memset(content, 0, sizeof(*content));
+    memset(auth, 0, sizeof(*auth));
+    if (mls_tls_read_u16(reader, wire_format) != 0 ||
+        mls_framed_content_deserialize(reader, content) != 0)
+        goto fail;
+    if (auth_data_deserialize(reader, content->content_type, auth) != 0) goto fail;
+    return 0;
+fail:
+    mls_framed_content_clear(content);
+    memset(auth, 0, sizeof(*auth));
+    return -1;
+}
+
+void
+mls_framed_content_auth_data_clear(MlsFramedContentAuthData *auth)
+{
+    if (auth) auth_data_clear(auth);
 }
 
 int

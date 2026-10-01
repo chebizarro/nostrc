@@ -2895,6 +2895,16 @@ mdk_passive_commit_sender(const uint8_t *commit, size_t commit_len)
  * keys (nostrc-il4i): OpenMLS sends it for every Commit with an UpdatePath. */
 static size_t g_passive_welcomes_with_path_keys;
 
+/* nostrc-2um6: the same vectors with every standalone proposal opened by
+ * mls_group_open_proposal() and every Commit resolved against those
+ * AuthenticatedContent records (mls_group_process_commit_by_ref()), the
+ * path libmarmot's Commit processing now takes.  The epoch authenticators
+ * must still match OpenMLS's: each record's ProposalRef equals the one
+ * OpenMLS put in its Commit. */
+static bool   g_passive_by_ref;
+static size_t g_by_ref_proposals;
+static size_t g_by_ref_epochs_with_proposals;
+
 /* Every cached path key is a valid key pair for a parent node on the
  * member's direct path whose public key is in the tree.  Returns the count. */
 static size_t
@@ -3007,13 +3017,56 @@ test_mdk_passive_client_vector(const MdkPassiveClientVector *vec,
 
         uint32_t sender = mdk_passive_commit_sender(epoch->commit.data,
                                                     epoch->commit.len);
-        int commit_rc = mls_group_process_commit_ex_with_psks(&group,
+        int commit_rc;
+        if (g_passive_by_ref) {
+            uint8_t **acs = epoch->proposal_count ? calloc(epoch->proposal_count, sizeof(*acs))
+                                                  : NULL;
+            size_t *ac_lens = epoch->proposal_count
+                                  ? calloc(epoch->proposal_count, sizeof(*ac_lens)) : NULL;
+            bool unsupported = vec->external_psk_count > 0;
+            size_t opened = 0;
+            for (size_t p = 0; !unsupported && p < epoch->proposal_count; p++) {
+                MlsOpenedProposal op;
+                int orc = mls_group_open_proposal(&group, pmsgs[p], plens[p], &op);
+                if (orc == MARMOT_ERR_UNSUPPORTED) {
+                    unsupported = true;   /* PSK, ReInit, ...: not kept standalone */
+                    break;
+                }
+                assert(orc == 0 && "passive-client proposal must open");
+                acs[opened] = op.ac;
+                ac_lens[opened++] = op.ac_len;
+                op.ac = NULL;
+                mls_opened_proposal_clear(&op);
+            }
+            if (unsupported) {
+                for (size_t p = 0; p < opened; p++) free(acs[p]);
+                free(acs);
+                free(ac_lens);
+                free(pmsgs);
+                free(plens);
+                *out_xfail = true;
+                snprintf(reason, reason_sz, "%s#%zu by-ref: a proposal type not kept standalone",
+                         file, vidx);
+                break;
+            }
+            g_by_ref_proposals += opened;
+            if (opened) g_by_ref_epochs_with_proposals++;
+            commit_rc = mls_group_process_commit_by_ref(&group, epoch->commit.data,
+                                                        epoch->commit.len, sender,
+                                                        (const uint8_t *const *)acs, ac_lens,
+                                                        opened, NULL);
+            for (size_t p = 0; p < opened; p++) free(acs[p]);
+            free(acs);
+            free(ac_lens);
+        } else {
+            commit_rc = mls_group_process_commit_ex_with_psks(&group,
                                                      epoch->commit.data,
                                                      epoch->commit.len, sender,
                                                      pmsgs, plens,
                                                      epoch->proposal_count,
                                                      psks,
                                                      vec->external_psk_count);
+        }
         free(pmsgs);
         free(plens);
 
@@ -3086,6 +3139,73 @@ test_mdk_passive_client_all_vectors(const char *vector_dir)
            g_passive_welcomes_with_path_keys);
     for (size_t r = 0; r < reason_count; r++)
         printf("      XFAIL: %s\n", reasons[r]);
+}
+
+/* nostrc-2um6: MDK v0.8.0's SelfRemove proposal (leave_group() in a group
+ * that requires SelfRemove: an MLS PublicMessage), captured live with the
+ * interop driver (tests/interop/mdk, `leave_group`: the MLSMessage opened
+ * from its kind:445, and OpenMLS 04c50d7's own ProposalRef for it). A
+ * PublicMessage's AuthenticatedContent needs no group secret, so the
+ * ProposalRef libmarmot computes from MDK's bytes must equal OpenMLS's: the
+ * reference MDK's (or our) Commit cites. */
+static const char MDK_SELF_REMOVE_MSG[] =
+    "00010001204e7302acc10e8ca21af6d2ae557ed3186066e392f311ca0372c9f8"
+    "0eebd4885d000000000000000101000000010002000a404010eb5662eb639be0"
+    "7b0b5952a38afc8fd62f4854957411e4a04ce5ff16220af3f317902b9c51b74e"
+    "82053d3370dc2bdbf409b46d548fcd5c5245d9615c6c7007205d95d56050ec80"
+    "23075e9bf481dc71f425fb612597da96c4fa977441f7b5ccb6";
+static const char MDK_SELF_REMOVE_REF[] =
+    "8144e1908f0492ede5175da454562476fefc8654da554d3f19a5eb446d200128";
+
+static void
+test_mdk_self_remove_vector(void)
+{
+    size_t len = strlen(MDK_SELF_REMOVE_MSG) / 2;
+    uint8_t *msg = malloc(len);
+    uint8_t want_ref[32];
+    assert(msg && marmot_hex_decode(MDK_SELF_REMOVE_MSG, msg, len) == 0 &&
+           marmot_hex_decode(MDK_SELF_REMOVE_REF, want_ref, 32) == 0);
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, msg, len);
+    MlsMLSMessage wire;
+    assert(mls_message_deserialize(&r, &wire) == 0 && mls_tls_reader_done(&r));
+    assert(wire.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE);
+    const MlsPublicMessage *pm = &wire.public_message;
+    assert(pm->content.content_type == MLS_CONTENT_TYPE_PROPOSAL);
+    assert(pm->content.sender.sender_type == MLS_SENDER_TYPE_MEMBER);
+    /* Proposal { proposal_type = self_remove (0x000a); SelfRemove {} }. */
+    assert(pm->content.content_len == 2 && pm->content.content[0] == 0x00 &&
+           pm->content.content[1] == 0x0A);
+    assert(pm->has_membership_tag);
+    /* Byte-exact round trip. */
+    MlsTlsBuf out;
+    assert(mls_tls_buf_init(&out, len) == 0 && mls_message_serialize(&wire, &out) == 0);
+    assert(out.len == len && memcmp(out.data, msg, len) == 0);
+    mls_tls_buf_free(&out);
+    /* ProposalRef = RefHash("MLS 1.0 Proposal Reference", AuthenticatedContent). */
+    MlsTlsBuf ac;
+    assert(mls_tls_buf_init(&ac, len) == 0 &&
+           mls_authenticated_content_serialize(MLS_WIRE_FORMAT_PUBLIC_MESSAGE, &pm->content,
+                                               &pm->auth, &ac) == 0);
+    uint8_t ref[32];
+    assert(mls_crypto_ref_hash(ref, "MLS 1.0 Proposal Reference", ac.data, ac.len) == 0);
+    assert(memcmp(ref, want_ref, 32) == 0 && "libmarmot's ProposalRef equals OpenMLS's");
+    /* The AuthenticatedContent parses back to the same content. */
+    MlsTlsReader ar;
+    mls_tls_reader_init(&ar, ac.data, ac.len);
+    uint16_t wf = 0;
+    MlsFramedContent fc;
+    MlsFramedContentAuthData auth;
+    assert(mls_authenticated_content_deserialize(&ar, &wf, &fc, &auth) == 0 &&
+           mls_tls_reader_done(&ar) && wf == MLS_WIRE_FORMAT_PUBLIC_MESSAGE &&
+           fc.content_len == 2 && fc.epoch == pm->content.epoch);
+    mls_framed_content_clear(&fc);
+    mls_framed_content_auth_data_clear(&auth);
+    mls_tls_buf_free(&ac);
+    mls_message_clear(&wire);
+    free(msg);
+    g_mdk_asserted++;
+    printf("PASS (MDK SelfRemove PublicMessage: body, round trip, ProposalRef)\n");
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
@@ -3162,6 +3282,19 @@ int main(void)
         test_mdk_welcome_vectors(vector_dir);
         printf("  %-55s", "MDK passive-client vectors");
         test_mdk_passive_client_all_vectors(vector_dir);
+        /* nostrc-2um6: again, every proposal opened and kept as libmarmot's
+         * Commit processing keeps it, and each Commit resolved against those
+         * records by reference. */
+        printf("  %-55s", "MDK passive-client vectors, proposals by reference");
+        g_passive_by_ref = true;
+        test_mdk_passive_client_all_vectors(vector_dir);
+        g_passive_by_ref = false;
+        assert(g_by_ref_proposals > 0 && g_by_ref_epochs_with_proposals > 0 &&
+               "no passive-client Commit referenced an opened proposal");
+        printf("      %zu proposals opened, %zu Commits referenced them\n", g_by_ref_proposals,
+               g_by_ref_epochs_with_proposals);
+        printf("  %-55s", "MDK SelfRemove proposal (live capture)");
+        test_mdk_self_remove_vector();
         
         /* Utilities */
         printf("  %-55s", "MDK deserialization vectors");
@@ -3200,7 +3333,8 @@ int main(void)
     if (found_vectors) {
         printf("\nInterop self-tests passed; MDK asserted checks: %zu; deferred vector classes: 0.\n"
                "  (No vector class is skipped/deferred; passive-client asserts real per-epoch\n"
-             "   bytes end-to-end with 0 honest XFAIL sub-cases.)\n",
+             "   bytes end-to-end with 0 honest XFAIL sub-cases.  Its by-reference pass\n"
+             "   skips the vectors with PSK proposals, which are not kept standalone.)\n",
              g_mdk_asserted);
     } else {
         printf("\nAll interop self-tests passed (9 self-tests; no MDK vectors loaded).\n");

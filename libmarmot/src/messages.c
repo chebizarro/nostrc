@@ -26,6 +26,7 @@
 
 #include "marmot-internal.h"
 #include "commits.h"
+#include "proposals.h"
 #include "mls/mls_group.h"
 #include "mls/mls-internal.h"
 #include <nostr-event.h>
@@ -553,6 +554,12 @@ create_message_impl(Marmot *m,
     if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
         marmot_group_free(group);
         return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+    /* Leaving: nothing but our SelfRemove is sent (nostrc-2um6). */
+    err = marmot_leaving_gate(m, mls_group_id);
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        return err;
     }
     /* The record's epoch picks the exporter secret: repair it first if a
      * crash interrupted the last epoch transition. */

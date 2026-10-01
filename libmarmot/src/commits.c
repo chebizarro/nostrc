@@ -29,6 +29,7 @@
  */
 
 #include "commits.h"
+#include "proposals.h"
 #include "kp_profile.h"
 #include "mls/mls-internal.h"
 #include "mls/mls_framing.h"
@@ -55,6 +56,11 @@
 #define REMOVED_V2_LEN  (1 + 8 + 1 + 32 + 32)
 #define REMOVED_FROM_PARENT 1
 #define REMOVED_FINAL       2
+/* Since 0.12.0 (nostrc-2um6): the Commit committed our own SelfRemove, and
+ * its key is ordinary (SelfRemoves only, any member's).  libmarmot 0.11.0
+ * refuses such a record (it reports the group ended, not why). */
+#define REMOVED_LEFT        4
+#define REMOVED_ORDINARY    8
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Helpers
@@ -219,11 +225,55 @@ commit_key_cmp(const MarmotCommitKey *a, const MarmotCommitKey *b)
  * Authorization (MIP-01)
  * ──────────────────────────────────────────────────────────────────────── */
 
+/* nostrc-2um6: a Commit of SelfRemove proposals and nothing else. */
+static bool
+self_remove_only(const MlsCommitSummary *d)
+{
+    return d && d->self_remove_count > 0 && d->self_remove_count == d->proposal_count;
+}
+
+static bool
+summary_self_removed(const MlsCommitSummary *d, uint32_t leaf)
+{
+    for (size_t i = 0; d && i < d->self_remove_count; i++)
+        if (d->self_removed[i] == leaf) return true;
+    return false;
+}
+
+/* Every SelfRemove's sender is a non-admin of `pre` (MIP-03: an admin steps
+ * down first; member-departure.md "Validation"), per the group's admin
+ * policy hook. */
+static MarmotError
+self_removers_not_admins(const MlsGroup *pre, const MlsCommitSummary *d)
+{
+    for (size_t i = 0; d && i < d->self_remove_count; i++) {
+        uint8_t id[32];
+        bool admin = true;
+        if (marmot_mls_sender_identity(pre, d->self_removed[i], id) != 0)
+            return MARMOT_ERR_FROM_NON_MEMBER;
+        MarmotError err = marmot_policy_is_admin(pre, id, &admin);
+        if (err != MARMOT_OK) return err;
+        if (admin) return MARMOT_ERR_ADMIN_CANNOT_LEAVE;
+    }
+    return MARMOT_OK;
+}
+
 MarmotError
 marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
                         uint32_t committer_leaf, bool allow_unproven,
                         MarmotCommitKey *key,
                         MarmotGroupDataExtension **post_gde)
+{
+    return marmot_commit_authorize_ex(pre, post, committer_leaf, allow_unproven, NULL, key,
+                                      post_gde);
+}
+
+MarmotError
+marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
+                           uint32_t committer_leaf, bool allow_unproven,
+                           const MlsCommitSummary *departures,
+                           MarmotCommitKey *key,
+                           MarmotGroupDataExtension **post_gde)
 {
     if (!pre || !post || !key || !post_gde) return MARMOT_ERR_INVALID_ARG;
     *post_gde = NULL;
@@ -243,12 +293,18 @@ marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
     const MlsLeafNode *committer_after = leaf_at(post, committer_leaf);
     if (!committer_after || !same_identity(committer, committer_after))
         return MARMOT_ERR_IDENTITY_CHANGE;
+    /* nostrc-2um6: the leaves a SelfRemove-only Commit blanks left on their
+     * own request; that Commit is ordinary (any member may commit it). */
+    bool sr_only = self_remove_only(departures);
+    MarmotError derr = self_removers_not_admins(pre, departures);
+    if (derr != MARMOT_OK) return derr;
     bool members_changed = false;
     uint32_t n = pre->tree.n_leaves > post->tree.n_leaves ? pre->tree.n_leaves
                                                           : post->tree.n_leaves;
     for (uint32_t i = 0; i < n && !members_changed; i++) {
         const MlsLeafNode *a = leaf_at(pre, i);
         const MlsLeafNode *b = leaf_at(post, i);
+        if (sr_only && a && !b && summary_self_removed(departures, i)) continue;
         members_changed = (!a != !b) || (a && !same_identity(a, b));
     }
 
@@ -770,6 +826,11 @@ undo_parent:
 undo_exporter:
     if (!undo_ok) err = MARMOT_ERR_STORAGE;
 out:
+    /* Proposals of epochs before the retained parent's can no longer be
+     * referenced (nostrc-2um6). */
+    if (err == MARMOT_OK)
+        marmot_proposals_prune(m, post->group_id, post->group_id_len,
+                               post->epoch > 0 ? post->epoch - 1 : 0);
     sodium_memzero(old_exporter, sizeof(old_exporter));
     free_secret(old_state, old_state_len);
     free_secret(old_parent, old_parent_len);
@@ -890,6 +951,11 @@ marmot_commit_build_event(const uint8_t *commit_msg, size_t commit_len,
  *   u8  welcome count, then per Welcome: [32] recipient, opaque rumor<V>
  *   u8  deferred count, then per deferred inbound Commit:
  *       u64 outer epoch, opaque msg<V>, opaque event_id<V> (hex or empty)
+ *   since 0.12.0, only for a Commit of departures (nostrc-2um6), a trailer:
+ *   u8  1, u32 proposal count, u8 n + n u32 SelfRemove leaves,
+ *       u8 n + n u32 leaves that removed themselves by a Remove
+ *   (libmarmot 0.11.0 cannot read such a record: after a downgrade it fails
+ *   closed and the Commit is cleared.)
  *
  * A pending Commit is LIVE while the group is still in the state it was
  * built on (review R1: the epoch number alone is not enough -- a winning
@@ -924,6 +990,8 @@ typedef struct {
     size_t          welcome_count;
     DeferredCommit  deferred[PENDING_MAX_DEFERRED];
     size_t          deferred_count;
+    bool            has_departures;   /* a Commit of departures (trailer) */
+    MlsCommitSummary departures;
 } PendingCommit;
 
 typedef enum { PENDING_LIVE, PENDING_MERGED, PENDING_STALE } PendingStatus;
@@ -1023,6 +1091,17 @@ pending_store(Marmot *m, const uint8_t *gid, size_t gid_len, const PendingCommit
              mls_tls_write_opaque8(&buf, (const uint8_t *)d->event_id,
                                    d->event_id ? strlen(d->event_id) : 0) == 0;
     }
+    if (ok && p->has_departures) {
+        const MlsCommitSummary *dp = &p->departures;
+        ok = mls_tls_write_u8(&buf, 1) == 0 &&
+             mls_tls_write_u32(&buf, (uint32_t)dp->proposal_count) == 0 &&
+             mls_tls_write_u8(&buf, (uint8_t)dp->self_remove_count) == 0;
+        for (size_t i = 0; ok && i < dp->self_remove_count; i++)
+            ok = mls_tls_write_u32(&buf, dp->self_removed[i]) == 0;
+        ok = ok && mls_tls_write_u8(&buf, (uint8_t)dp->left_count) == 0;
+        for (size_t i = 0; ok && i < dp->left_count; i++)
+            ok = mls_tls_write_u32(&buf, dp->left[i]) == 0;
+    }
     if (ok)
         err = m->storage->mls_store(m->storage->ctx, PENDING_LABEL, gid, gid_len,
                                     buf.data, buf.len);
@@ -1078,6 +1157,26 @@ pending_load(Marmot *m, const uint8_t *gid, size_t gid_len, PendingCommit *out)
                 if (ok) memcpy(d->event_id, id, id_len);
             }
             free(id);
+        }
+        uint8_t marker = 0;
+        if (ok && !mls_tls_reader_done(&r)) {
+            MlsCommitSummary *dp = &out->departures;
+            uint32_t pc = 0;
+            uint8_t nsr = 0, nleft = 0;
+            ok = mls_tls_read_u8(&r, &marker) == 0 && marker == 1 &&
+                 mls_tls_read_u32(&r, &pc) == 0 && mls_tls_read_u8(&r, &nsr) == 0 &&
+                 nsr <= MLS_COMMIT_SUMMARY_MAX;
+            for (uint8_t i = 0; ok && i < nsr; i++)
+                ok = mls_tls_read_u32(&r, &dp->self_removed[i]) == 0;
+            ok = ok && mls_tls_read_u8(&r, &nleft) == 0 && nleft <= MLS_COMMIT_SUMMARY_MAX;
+            for (uint8_t i = 0; ok && i < nleft; i++)
+                ok = mls_tls_read_u32(&r, &dp->left[i]) == 0;
+            if (ok) {
+                dp->proposal_count = pc;
+                dp->self_remove_count = nsr;
+                dp->left_count = nleft;
+                out->has_departures = true;
+            }
         }
         if (ok && mls_tls_reader_done(&r)) err = MARMOT_OK;
     }
@@ -1310,6 +1409,17 @@ marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre, const MlsGroup *post
                             const char *event_json,
                             const MarmotUnsentWelcome *welcomes, size_t welcome_count)
 {
+    return marmot_commit_stage_pending_ex(m, pre, post, commit, commit_len, event_json,
+                                          welcomes, welcome_count, NULL);
+}
+
+MarmotError
+marmot_commit_stage_pending_ex(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
+                               const uint8_t *commit, size_t commit_len,
+                               const char *event_json,
+                               const MarmotUnsentWelcome *welcomes, size_t welcome_count,
+                               const MlsCommitSummary *departures)
+{
     if (!m || !pre || !post || !commit || commit_len == 0 || !event_json ||
         welcome_count > PENDING_MAX_WELCOMES || (welcome_count && !welcomes))
         return MARMOT_ERR_INVALID_ARG;
@@ -1318,9 +1428,13 @@ marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre, const MlsGroup *post
     MarmotGroupDataExtension *gde = NULL;
     /* The same policy every receiver applies: never publish what the group
      * rejects. */
-    MarmotError err = marmot_commit_authorize(pre, post, pre->own_leaf_index,
-                                              m->config.allow_unproven_members,
-                                              &p.key, &gde);
+    MarmotError err = marmot_commit_authorize_ex(pre, post, pre->own_leaf_index,
+                                                 m->config.allow_unproven_members,
+                                                 departures, &p.key, &gde);
+    if (departures) {
+        p.has_departures = true;
+        p.departures = *departures;
+    }
     marmot_group_data_extension_free(gde);
     if (err != MARMOT_OK) return err;
     if (mls_crypto_hash(p.key.digest, commit, commit_len) != 0) return MARMOT_ERR_CRYPTO;
@@ -1382,9 +1496,10 @@ pending_apply(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const PendingC
 {
     MarmotCommitKey key;
     MarmotGroupDataExtension *gde = NULL;
-    MarmotError err = marmot_commit_authorize(cur, &p->post, cur->own_leaf_index,
-                                              m->config.allow_unproven_members,
-                                              &key, &gde);
+    MarmotError err = marmot_commit_authorize_ex(cur, &p->post, cur->own_leaf_index,
+                                                 m->config.allow_unproven_members,
+                                                 p->has_departures ? &p->departures : NULL,
+                                                 &key, &gde);
     if (err != MARMOT_OK) {
         /* It can never apply: drop it rather than wedge the group. */
         if (pending_delete(m, group->mls_group_id.data, group->mls_group_id.len) == MARMOT_OK)
@@ -1481,7 +1596,19 @@ stage_inbound(const Marmot *m, const MlsGroup *parent, const uint8_t *msg, size_
               MarmotGroupDataExtension **gde)
 {
     if (mls_clone(parent, post) != 0) return MARMOT_ERR_MLS;
-    int rc = mls_group_process_commit(post, msg, msg_len, sender);
+    /* Its references resolve against the proposals of the parent's epoch
+     * (nostrc-2um6). */
+    MarmotProposalSet set;
+    MarmotError lerr = marmot_proposals_load_epoch((Marmot *)m, parent->group_id,
+                                                   parent->group_id_len, parent->epoch, &set);
+    if (lerr != MARMOT_OK) {
+        mls_group_free(post);
+        return lerr;
+    }
+    MlsCommitSummary departures;
+    int rc = mls_group_process_commit_by_ref(post, msg, msg_len, sender, set.acs, set.ac_lens,
+                                             set.ac_count, &departures);
+    marmot_proposals_clear(&set);
     if (rc != 0) {
         mls_group_free(post);
         if (rc == MARMOT_ERR_UNSUPPORTED || rc == MARMOT_ERR_OWN_COMMIT_PENDING ||
@@ -1489,10 +1616,30 @@ stage_inbound(const Marmot *m, const MlsGroup *parent, const uint8_t *msg, size_
             return (MarmotError)rc;
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
     }
-    MarmotError err = marmot_commit_authorize(parent, post, sender,
-                                              m->config.allow_unproven_members, key, gde);
+    MarmotError err = marmot_commit_authorize_ex(parent, post, sender,
+                                                 m->config.allow_unproven_members, &departures,
+                                                 key, gde);
     if (err != MARMOT_OK) mls_group_free(post);
     return err;
+}
+
+/* mls_group_commit_removes_self_by_ref() against the proposals of `base`'s
+ * epoch.  *departures: what the Commit did with departure requests. */
+static int
+removes_self(const Marmot *m, const MlsGroup *base, const uint8_t *msg, size_t msg_len,
+             uint32_t sender, bool *removed, MlsCommitSummary *departures)
+{
+    *removed = false;
+    memset(departures, 0, sizeof(*departures));
+    MarmotProposalSet set;
+    if (marmot_proposals_load_epoch((Marmot *)m, base->group_id, base->group_id_len,
+                                    base->epoch, &set) != MARMOT_OK)
+        return -1;
+    int rc = mls_group_commit_removes_self_by_ref(base, msg, msg_len, sender, set.acs,
+                                                  set.ac_lens, set.ac_count, removed,
+                                                  departures);
+    marmot_proposals_clear(&set);
+    return rc;
 }
 
 /* Keep an inbound Commit that lost to our pending one, for
@@ -1534,7 +1681,7 @@ defer_inbound(Marmot *m, PendingCommit *p, const uint8_t *gid, size_t gid_len,
  * exactly as marmot_commit_authorize() demands of a Commit we could apply. */
 static MarmotError
 removal_key(const MlsGroup *pre, uint32_t committer_leaf, const uint8_t digest[32],
-            MarmotCommitKey *key)
+            const MlsCommitSummary *departures, MarmotCommitKey *key)
 {
     memset(key, 0, sizeof(*key));
     const MlsLeafNode *committer = leaf_at(pre, committer_leaf);
@@ -1543,10 +1690,14 @@ removal_key(const MlsGroup *pre, uint32_t committer_leaf, const uint8_t digest[3
         return MARMOT_ERR_FROM_NON_MEMBER;
     memcpy(key->committer, committer->credential_identity, 32);
     key->committer_leaf = committer_leaf;
-    key->privileged = true;
+    /* nostrc-2um6: committing SelfRemoves only (ours among them) is ordinary:
+     * any member may do it.  Every other removal is an admin's. */
+    key->privileged = !self_remove_only(departures);
     memcpy(key->digest, digest, 32);
+    MarmotError err = self_removers_not_admins(pre, departures);
+    if (err != MARMOT_OK || !key->privileged) return err;
     MarmotGroupDataExtension *gde = NULL;
-    MarmotError err = group_data_of(pre, pre, &gde);
+    err = group_data_of(pre, pre, &gde);
     if (err == MARMOT_OK && !gde_is_admin(gde, key->committer))
         err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
     marmot_group_data_extension_free(gde);
@@ -1595,7 +1746,8 @@ typedef struct {
     uint64_t        epoch;        /* the epoch the removing Commit left */
     bool            from_parent;  /* judged on the retained parent (it beat our Commit) */
     bool            final;        /* nobody can beat it any more */
-    MarmotCommitKey key;          /* privileged */
+    bool            left;         /* it committed our own SelfRemove (nostrc-2um6) */
+    MarmotCommitKey key;          /* privileged, unless it commits SelfRemoves only */
     uint8_t         n_later;      /* later-epoch events seen (distinct ids) */
     uint8_t         later[MARMOT_REMOVAL_FINAL_AFTER][32];
 } Removal;
@@ -1607,7 +1759,8 @@ removal_store(Marmot *m, const uint8_t *gid, size_t gid_len, const Removal *rm)
     rec[0] = REMOVED_VERSION;
     for (int i = 0; i < 8; i++) rec[1 + i] = (uint8_t)(rm->epoch >> (56 - 8 * i));
     rec[9] = (uint8_t)((rm->from_parent ? REMOVED_FROM_PARENT : 0) |
-                       (rm->final ? REMOVED_FINAL : 0));
+                       (rm->final ? REMOVED_FINAL : 0) | (rm->left ? REMOVED_LEFT : 0) |
+                       (rm->key.privileged ? 0 : REMOVED_ORDINARY));
     memcpy(rec + 10, rm->key.committer, 32);
     memcpy(rec + 42, rm->key.digest, 32);
     rec[REMOVED_V2_LEN] = rm->n_later;
@@ -1629,7 +1782,8 @@ removal_load(Marmot *m, const uint8_t *gid, size_t gid_len, Removal *out)
                                            &rec, &len);
     if (err != MARMOT_OK) return err;
     bool ok = rec && len >= REMOVED_V2_LEN &&
-              (rec[9] & ~(REMOVED_FROM_PARENT | REMOVED_FINAL)) == 0;
+              (rec[9] & ~(REMOVED_FROM_PARENT | REMOVED_FINAL | REMOVED_LEFT |
+                          REMOVED_ORDINARY)) == 0;
     if (ok && rec[0] == 2) {
         ok = len == REMOVED_V2_LEN;
     } else if (ok && rec[0] == REMOVED_VERSION) {
@@ -1650,7 +1804,8 @@ removal_load(Marmot *m, const uint8_t *gid, size_t gid_len, Removal *out)
     for (int i = 0; i < 8; i++) out->epoch = (out->epoch << 8) | rec[1 + i];
     out->from_parent = (rec[9] & REMOVED_FROM_PARENT) != 0;
     out->final = (rec[9] & REMOVED_FINAL) != 0;
-    out->key.privileged = true;
+    out->left = (rec[9] & REMOVED_LEFT) != 0;
+    out->key.privileged = (rec[9] & REMOVED_ORDINARY) == 0;
     out->key.committer_leaf = UINT32_MAX;
     memcpy(out->key.committer, rec + 10, 32);
     memcpy(out->key.digest, rec + 42, 32);
@@ -1717,6 +1872,8 @@ forget_keys(Marmot *m, const MarmotGroup *group)
         err = s->delete_exporter_secret(s->ctx, &group->mls_group_id, e);
         if (err == MARMOT_ERR_STORAGE_NOT_FOUND) err = MARMOT_OK;
     }
+    /* Its proposals and our leave request (nostrc-2um6) end with it. */
+    if (err == MARMOT_OK) marmot_proposals_forget(m, gid, gid_len);
     return err;
 }
 
@@ -1728,7 +1885,7 @@ forget_keys(Marmot *m, const MarmotGroup *group)
  * competitor can still undo it (see above).  In the caller's transaction. */
 static MarmotError
 evict(Marmot *m, MarmotGroup *group, const MlsGroup *base, bool on_parent,
-      const MarmotCommitKey *key, uint64_t epoch)
+      const MarmotCommitKey *key, uint64_t epoch, bool left)
 {
     MarmotStorage *s = m->storage;
     if (!s->mls_store || !s->mls_delete || !s->save_group) return MARMOT_ERR_STORAGE;
@@ -1736,7 +1893,7 @@ evict(Marmot *m, MarmotGroup *group, const MlsGroup *base, bool on_parent,
     size_t gid_len = group->mls_group_id.len;
     RetainedParent rp;
     bool have_rp = !on_parent && retained_load(m, gid, gid_len, &rp) == 0;
-    Removal rm = { .epoch = epoch, .from_parent = on_parent, .key = *key };
+    Removal rm = { .epoch = epoch, .from_parent = on_parent, .key = *key, .left = left };
     rm.final = removal_final(base, key, on_parent, have_rp ? &rp : NULL);
     if (have_rp) retained_clear(&rp);
     MarmotError err = removal_store(m, gid, gid_len, &rm);
@@ -1776,6 +1933,19 @@ marmot_get_group_removal(Marmot *m, const MarmotGroupId *mls_group_id, bool *out
     if (out_remover) memcpy(out_remover, rm.key.committer, 32);
     if (out_epoch) *out_epoch = rm.epoch;
     if (out_final) *out_final = rm.final;
+    return MARMOT_OK;
+}
+
+MarmotError
+marmot_get_group_left(Marmot *m, const MarmotGroupId *mls_group_id, bool *out_left)
+{
+    if (!m || !mls_group_id || !out_left) return MARMOT_ERR_INVALID_ARG;
+    *out_left = false;
+    Removal rm;
+    MarmotError err = removal_load(m, mls_group_id->data, mls_group_id->len, &rm);
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND) return MARMOT_OK;
+    if (err != MARMOT_OK) return err;
+    *out_left = rm.left;
     return MARMOT_OK;
 }
 
@@ -1893,9 +2063,10 @@ inbound_order_key(const Marmot *m, const MlsGroup *base, const uint8_t *msg, siz
     mls_group_free(&post);
     marmot_group_data_extension_free(gde);
     bool removed = false;
+    MlsCommitSummary dep;
     if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE &&
-        mls_group_commit_removes_self(base, msg, msg_len, sender, &removed) == 0 && removed)
-        err = removal_key(base, sender, digest, key);
+        removes_self(m, base, msg, msg_len, sender, &removed, &dep) == 0 && removed)
+        err = removal_key(base, sender, digest, &dep, key);
     else if (err == MARMOT_OK)
         memcpy(key->digest, digest, 32);
     return err == MARMOT_OK;
@@ -2041,12 +2212,13 @@ inbound_removed(Marmot *m, MarmotGroup *group, uint64_t epoch, const CommitRoute
             }
         } else if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE) {
             bool removed = false;
-            if (mls_group_commit_removes_self(base, msg, msg_len, sender, &removed) == 0 &&
-                removed) {
-                err = removal_key(base, sender, digest, &key);
+            MlsCommitSummary dep;
+            if (removes_self(m, base, msg, msg_len, sender, &removed, &dep) == 0 && removed) {
+                err = removal_key(base, sender, digest, &dep, &key);
                 if (err == MARMOT_OK && commit_key_cmp(&key, beat) < 0) {
-                    /* Another admin's removal wins that epoch. */
-                    Removal next = { .epoch = epoch, .from_parent = on_parent, .key = key };
+                    /* Another removal wins that epoch. */
+                    Removal next = { .epoch = epoch, .from_parent = on_parent, .key = key,
+                                     .left = summary_self_removed(&dep, base->own_leaf_index) };
                     next.final = removal_final(base, &key, on_parent,
                                                !on_parent && have_rp ? &rp : NULL);
                     err = removal_store(m, gid, gid_len, &next);
@@ -2080,8 +2252,13 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
     CommitRoute route;
     if (!commit_route(msg, msg_len, group->mls_group_id.data, group->mls_group_id.len, &route))
         return MARMOT_ERR_MLS_FRAMING;
-    /* Standalone proposals are not queued yet: Commits carry them inline. */
-    if (route.proposal) return MARMOT_ERR_UNSUPPORTED;
+    /* A standalone Proposal is kept for the Commit that references it
+     * (nostrc-2um6; proposals.c). */
+    if (route.proposal) {
+        if (!route.group_ok) return MARMOT_ERR_WRONG_GROUP_ID;
+        if (route.epoch != outer_epoch) return MARMOT_ERR_WRONG_EPOCH;
+        return marmot_proposal_process_inbound(m, group, msg, msg_len, event_id_hex, result);
+    }
     if (!route.commit) return MARMOT_ERR_MLS_FRAMING;
     if (!route.group_ok) return MARMOT_ERR_WRONG_GROUP_ID;
     uint64_t epoch = route.epoch;
@@ -2137,19 +2314,21 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
         err = known ? stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde)
                     : MARMOT_ERR_MLS_PROCESS_MESSAGE;
         bool removed = false;
+        MlsCommitSummary dep;
         if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE && known &&
-            mls_group_commit_removes_self(&cur, msg, msg_len, sender, &removed) == 0 &&
-            removed) {
+            removes_self(m, &cur, msg, msg_len, sender, &removed, &dep) == 0 && removed) {
             /* nostrc-xrya: a Commit that removes us cannot be applied (its
              * UpdatePath is encrypted to the others), but an admin's
-             * authenticated one ends the group for us -- unless our own
-             * pending Commit wins the epoch. */
-            err = removal_key(&cur, sender, digest, &key);
+             * authenticated one -- or any member's committing our own
+             * SelfRemove (nostrc-2um6) -- ends the group for us, unless our
+             * own pending Commit wins the epoch. */
+            err = removal_key(&cur, sender, digest, &dep, &key);
             if (err == MARMOT_OK && live && commit_key_cmp(&key, &p.key) >= 0)
                 err = defer_inbound(m, &p, gid, gid_len, epoch, msg, msg_len, digest,
                                     event_id_hex);
             else if (err == MARMOT_OK)
-                err = evict(m, group, &cur, false, &key, epoch);
+                err = evict(m, group, &cur, false, &key, epoch,
+                            summary_self_removed(&dep, cur.own_leaf_index));
         } else if (err == MARMOT_OK) {
             memcpy(key.digest, digest, 32);
             if (live && commit_key_cmp(&key, &p.key) >= 0)
@@ -2187,15 +2366,18 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                 err = stage_inbound(m, &rp.parent, msg, msg_len, sender, &post,
                                     &key, &gde);
                 bool removed = false;
+                MlsCommitSummary dep;
                 if (err == MARMOT_ERR_MLS_PROCESS_MESSAGE &&
-                    mls_group_commit_removes_self(&rp.parent, msg, msg_len, sender,
-                                                  &removed) == 0 && removed) {
+                    removes_self(m, &rp.parent, msg, msg_len, sender, &removed, &dep) == 0 &&
+                    removed) {
                     /* A competing Commit that removes us (nostrc-xrya): if it
                      * beats the one we applied, the group ends for us. */
-                    err = removal_key(&rp.parent, sender, digest, &key);
+                    err = removal_key(&rp.parent, sender, digest, &dep, &key);
                     if (err == MARMOT_OK)
                         err = commit_key_cmp(&key, &rp.key) < 0
-                                  ? evict(m, group, &rp.parent, true, &key, epoch)
+                                  ? evict(m, group, &rp.parent, true, &key, epoch,
+                                          summary_self_removed(&dep,
+                                                               rp.parent.own_leaf_index))
                                   : MARMOT_ERR_WRONG_EPOCH;   /* the applied Commit wins */
                 } else if (err == MARMOT_OK) {
                     memcpy(key.digest, digest, 32);

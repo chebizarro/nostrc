@@ -467,6 +467,38 @@ int mls_public_message_serialize(const MlsPublicMessage *msg, MlsTlsBuf *buf);
 /** Deserialize a PublicMessage from TLS wire format. */
 int mls_public_message_deserialize(MlsTlsReader *reader, MlsPublicMessage *msg);
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * AuthenticatedContent (RFC 9420 §6.1)
+ *
+ * struct {
+ *   WireFormat wire_format;
+ *   FramedContent content;
+ *   FramedContentAuthData auth;
+ * } AuthenticatedContent;
+ *
+ * What a ProposalRef hashes (RefHash("MLS 1.0 Proposal Reference",
+ * AuthenticatedContent), §5.2) for a proposal in either wire format.  Since
+ * 0.12.0 (nostrc-2um6).
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Serialize an AuthenticatedContent; `content`/`auth` are a FramedContent
+ *  and its auth data (e.g. an MlsPublicMessage's, or a decrypted
+ *  PrivateMessage's from mls_handshake_content_decode()). */
+int mls_authenticated_content_serialize(uint16_t wire_format,
+                                        const MlsFramedContent *content,
+                                        const MlsFramedContentAuthData *auth,
+                                        MlsTlsBuf *buf);
+
+/** Deserialize an AuthenticatedContent (strict: the reader must end there is
+ *  the caller's check).  On success the caller frees *content and *auth
+ *  (mls_framed_content_clear(), mls_framed_content_auth_data_clear()). */
+int mls_authenticated_content_deserialize(MlsTlsReader *reader, uint16_t *wire_format,
+                                          MlsFramedContent *content,
+                                          MlsFramedContentAuthData *auth);
+
+/** Free an auth data's heap parts. */
+void mls_framed_content_auth_data_clear(MlsFramedContentAuthData *auth);
+
 /**
  * Compute the membership tag for a PublicMessage.
  *

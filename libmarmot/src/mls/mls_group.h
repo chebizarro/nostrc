@@ -37,6 +37,11 @@ extern "C" {
 #define MLS_PROPOSAL_EXTERNAL_INIT  6
 #define MLS_PROPOSAL_GROUP_CONTEXT_EXT 7
 #define MLS_PROPOSAL_APP_DATA_UPDATE  8
+/* draft-ietf-mls-extensions SelfRemove (Marmot registry 0x000a; empty
+ * body, the sender leaves).  Never inline: it is sent as a standalone
+ * PublicMessage and committed by reference by another member.  Since
+ * 0.12.0 (nostrc-2um6). */
+#define MLS_PROPOSAL_SELF_REMOVE   0x000A
 
 #define MLS_RESUMPTION_PSK_CACHE_SIZE 8
 #define MLS_OWN_PATH_KEY_CACHE_SIZE 128
@@ -108,6 +113,11 @@ typedef struct {
      *  Update, i.e. one the committer generated) is rejected on processing
      *  (RFC 9420 §12.2): the committer updates itself via the UpdatePath. */
     uint32_t update_leaf_index;
+
+    /** The member leaf that sent a by-reference proposal (from its framing,
+     *  once resolved); UINT32_MAX for an inline one, whose sender is the
+     *  committer.  A SelfRemove removes this leaf. */
+    uint32_t sender_leaf;
 
     /** True when this slot is a referenced proposal (ProposalOrRef type 2)
      *  that has not yet been resolved against an external proposal store. */
@@ -551,6 +561,121 @@ int mls_group_process_commit_ex_with_psks(MlsGroup *group,
                                           size_t proposal_count,
                                           const MlsPskInput *external_psks,
                                           size_t external_psk_count);
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Standalone proposals and Commits by reference (since 0.12.0, nostrc-2um6)
+ *
+ * A standalone Proposal is authenticated once, in the epoch it was sent in,
+ * and kept as its AuthenticatedContent (RFC 9420 section 6.1): a
+ * PrivateMessage cannot be decrypted twice, and the bytes are what its
+ * ProposalRef hashes.  A Commit of that epoch resolves its references
+ * against those records; each record's signature is checked again then.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * MlsOpenedProposal:
+ *
+ * A standalone Proposal authenticated in a group's epoch.
+ */
+typedef struct {
+    uint8_t  *ac;                 /**< AuthenticatedContent bytes (caller frees) */
+    size_t    ac_len;
+    uint8_t   ref[MLS_HASH_LEN];  /**< ProposalRef */
+    uint16_t  wire_format;        /**< it arrived as: MLS_WIRE_FORMAT_PUBLIC/PRIVATE_MESSAGE */
+    uint32_t  sender_leaf;        /**< the member that sent it */
+    uint16_t  type;               /**< MLS_PROPOSAL_* */
+    uint32_t  target_leaf;        /**< Remove: removed leaf; SelfRemove: the sender; else UINT32_MAX */
+} MlsOpenedProposal;
+
+/** Free an opened proposal's bytes. */
+void mls_opened_proposal_clear(MlsOpenedProposal *p);
+
+/**
+ * Authenticate the standalone Proposal MLSMessage @msg in @group's epoch:
+ * a PublicMessage by its signature and membership tag, a PrivateMessage by
+ * decrypting it with its sender's handshake ratchet (left as it was, as for
+ * a Commit) and then its signature (wire format mls_private_message).  The
+ * body must parse completely and be of a type a Commit can apply (Add,
+ * Update, Remove, GroupContextExtensions, SelfRemove); a SelfRemove must come
+ * as a PublicMessage (draft-ietf-mls-extensions, MIP-03), a Remove must name
+ * an occupied leaf.
+ *
+ * @return 0; MARMOT_ERR_MLS_FRAMING (not a Proposal MLSMessage);
+ *   MARMOT_ERR_WRONG_GROUP_ID; MARMOT_ERR_WRONG_EPOCH (another epoch);
+ *   MARMOT_ERR_UNSUPPORTED (another proposal type);
+ *   MARMOT_ERR_MLS_PROCESS_MESSAGE (does not authenticate, malformed)
+ */
+int mls_group_open_proposal(const MlsGroup *group, const uint8_t *msg, size_t msg_len,
+                            MlsOpenedProposal *out);
+
+/** Whether every member leaf of @group advertises proposal type @type in its
+ *  capabilities (RFC 9420 section 12.2; a default type always counts). */
+bool mls_group_members_support_proposal(const MlsGroup *group, uint16_t type);
+
+/**
+ * MlsCommitSummary:
+ *
+ * What a processed Commit did with the leaves of its members' own departure
+ * requests, for the protocol layer's authorization.
+ */
+#define MLS_COMMIT_SUMMARY_MAX 64
+typedef struct {
+    size_t   proposal_count;                       /**< all proposals of the Commit */
+    size_t   self_remove_count;                    /**< SelfRemove proposals */
+    uint32_t self_removed[MLS_COMMIT_SUMMARY_MAX]; /**< their senders, the leaves they removed */
+    size_t   left_count;                           /**< by-reference Removes a member sent for itself */
+    uint32_t left[MLS_COMMIT_SUMMARY_MAX];         /**< those leaves */
+} MlsCommitSummary;
+
+/**
+ * mls_group_process_commit() for a Commit whose references resolve against
+ * @acs (AuthenticatedContent records of this epoch's opened proposals; each
+ * is checked again: this group and epoch, a member sender, its signature).
+ * A SelfRemove may only be referenced, never by its own sender, and only
+ * when every member supports it; a leaf may be removed once.  @summary
+ * (nullable) is filled on success.
+ */
+int mls_group_process_commit_by_ref(MlsGroup *group,
+                                    const uint8_t *commit_data, size_t commit_len,
+                                    uint32_t sender_leaf,
+                                    const uint8_t *const *acs, const size_t *ac_lens,
+                                    size_t ac_count, MlsCommitSummary *summary);
+
+/**
+ * mls_group_commit_removes_self() resolving references against @acs: a
+ * referenced SelfRemove of our own leaf, or a referenced Remove of it,
+ * counts too.  @summary (nullable) gets what the Commit did with
+ * departure requests (filled when *out_removed).
+ */
+int mls_group_commit_removes_self_by_ref(const MlsGroup *group,
+                                         const uint8_t *commit_data, size_t commit_len,
+                                         uint32_t sender_leaf,
+                                         const uint8_t *const *acs, const size_t *ac_lens,
+                                         size_t ac_count, bool *out_removed,
+                                         MlsCommitSummary *summary);
+
+/**
+ * Commit, by reference, the opened proposals @acs of this epoch (SelfRemove
+ * and Remove only: the departures), with an UpdatePath.  Each must be from
+ * another member and remove a different leaf, never ours; SelfRemove needs
+ * every member's support.  On success the group advances (on failure it is
+ * unchanged), as for mls_group_remove_members().
+ *
+ * @return 0; MARMOT_ERR_INVALID_ARG for a set that cannot be committed
+ */
+int mls_group_commit_by_ref(MlsGroup *group,
+                            const uint8_t *const *acs, const size_t *ac_lens, size_t ac_count,
+                            MlsCommitResult *result);
+
+/**
+ * Our own SelfRemove proposal for @group's epoch: a PublicMessage (signed,
+ * with the membership tag) in *out_msg, and *out_own opened as a receiver
+ * would (to keep for the Commit that will reference it).  The group is not
+ * changed.  MARMOT_ERR_UNSUPPORTED when some member does not support
+ * SelfRemove.
+ */
+int mls_group_self_remove_proposal(const MlsGroup *group, uint8_t **out_msg, size_t *out_len,
+                                   MlsOpenedProposal *out_own);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Application messages

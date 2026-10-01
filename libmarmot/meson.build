@@ -105,6 +105,7 @@ marmot_sources = files(
   'src/credentials.c',
   'src/kp_profile.c',
   'src/commits.c',
+  'src/proposals.c',
   'src/groups.c',
   'src/welcome.c',
   'src/messages.c',

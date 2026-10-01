@@ -72,6 +72,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/credentials.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/kp_profile.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/proposals.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/messages.c

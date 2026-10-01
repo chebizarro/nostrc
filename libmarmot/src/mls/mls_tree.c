@@ -1333,6 +1333,10 @@ const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT] = {
     0xF2EE, /* marmot_group_data */
 };
 
+const uint16_t MLS_MARMOT_CAP_PROPOSALS[MLS_MARMOT_CAP_PROPOSAL_COUNT] = {
+    0x000A, /* self_remove (draft-ietf-mls-extensions; nostrc-2um6) */
+};
+
 static int
 set_u16_vec(uint16_t **arr, size_t *count, const uint16_t *vals, size_t n)
 {
@@ -1358,7 +1362,8 @@ mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node)
         set_u16_vec(&node->ciphersuites, &node->ciphersuite_count, suites, 1) != 0 ||
         set_u16_vec(&node->cap_extensions, &node->cap_extension_count,
                     MLS_MARMOT_CAP_EXTENSIONS, MLS_MARMOT_CAP_EXTENSION_COUNT) != 0 ||
-        set_u16_vec(&node->proposals, &node->proposal_count, NULL, 0) != 0 ||
+        set_u16_vec(&node->proposals, &node->proposal_count, MLS_MARMOT_CAP_PROPOSALS,
+                    MLS_MARMOT_CAP_PROPOSAL_COUNT) != 0 ||
         set_u16_vec(&node->cap_credentials, &node->cap_credential_count, creds, 1) != 0)
         return -1;
     return 0;

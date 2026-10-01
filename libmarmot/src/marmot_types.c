@@ -213,6 +213,10 @@ marmot_message_result_free(MarmotMessageResult *result)
     case MARMOT_RESULT_COMMIT:
         marmot_group_free(result->commit.updated_group);
         break;
+    case MARMOT_RESULT_PROPOSAL:
+        free(result->proposal.sender_pubkey_hex);
+        free(result->proposal.target_pubkey_hex);
+        break;
     default:
         break;
     }

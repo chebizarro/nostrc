@@ -191,8 +191,9 @@ static void test_create_and_validate(void) {
     CHECK(t && nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "0x0006") == 0,
           "mls_extensions from leaf caps");
     t = first_tag(ev, "mls_proposals");
-    CHECK(t && nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "0x0008") == 0,
-          "mls_proposals from leaf caps");
+    CHECK(t && nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x0008") == 0 &&
+          strcmp(nostr_tag_get(t, 2), "0x000a") == 0,
+          "mls_proposals from leaf caps (app_data_update, self_remove)");
     size_t clen = strlen(ev->content), len = 0;
     uint8_t *raw = malloc(clen);
     CHECK(raw && sodium_base642bin(raw, clen, ev->content, clen, NULL, &len, NULL,

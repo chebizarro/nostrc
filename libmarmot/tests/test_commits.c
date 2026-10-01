@@ -13,6 +13,7 @@
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
 #include "commits.h"
+#include "proposals.h"
 #include "kp_profile.h"
 #include "test_enroll.h"
 #include "mls/mls_group.h"
@@ -1302,14 +1303,15 @@ test_same_epoch_race_converges(void)
 }
 
 /* MIP-01 "Required MLS Extensions": the GroupContext carries
- * required_capabilities requiring 0xF2EE (no proposal type: exactly what
- * MDK 0.8 computes for a group with a member without SelfRemove), and a
+ * required_capabilities requiring 0xF2EE and, since 0.12.0, the SelfRemove
+ * proposal (0x000a) every libmarmot leaf now supports -- exactly what MDK
+ * 0.8 computes when every invitee advertises it (nostrc-2um6) -- and a
  * metadata Commit keeps exactly one. Without it OpenMLS refused every
  * GroupContextExtensions proposal of ours (nostrc-7gx7). */
 static void
 expect_required_capabilities(Member *x, const MarmotGroupId *gid, const char *what)
 {
-    static const uint8_t want[] = { 0x02, 0xf2, 0xee, 0x00, 0x00 };
+    static const uint8_t want[] = { 0x02, 0xf2, 0xee, 0x02, 0x00, 0x0a, 0x00 };
     MlsGroup mls;
     load_mls(x, gid, &mls);
     const uint8_t *data = NULL;
@@ -5869,6 +5871,494 @@ test_group_event_floor_repairs(void)
     trio_clear(&t);
 }
 
+/* ── Standalone proposals and SelfRemove (nostrc-2um6) ─────────────────── */
+
+/* Trio plus Dave, a second non-admin: Alice, Bob admins; Charlie, Dave not. */
+typedef struct {
+    Trio    t;
+    Member  dave;
+    Member *all[4];
+} Quad;
+
+static void
+quad_init(Quad *q)
+{
+    trio_init(&q->t);
+    member_init(&q->dave, "Dave");
+    char *kp = key_package(&q->dave);
+    const char *kps[] = { kp };
+    char **welcomes = NULL;
+    size_t wc = 0;
+    char *commit = NULL;
+    OK(marmot_add_members(q->t.alice.m, &q->t.gid, kps, 1, &welcomes, &wc, &commit));
+    free(kp);
+    merge(&q->t.alice, &q->t.gid);
+    expect_commit(&q->t.bob, commit, "Alice adds Dave");
+    expect_commit(&q->t.charlie, commit, "Alice adds Dave");
+    join(&q->dave, welcomes[0]);
+    mark_all_welcomes_sent(&q->t.alice, &q->t.gid);
+    free(welcomes[0]);
+    free(welcomes);
+    free(commit);
+    q->t.epoch++;
+    q->all[0] = &q->t.alice;
+    q->all[1] = &q->t.bob;
+    q->all[2] = &q->t.charlie;
+    q->all[3] = &q->dave;
+}
+
+static void
+quad_clear(Quad *q)
+{
+    trio_clear(&q->t);
+    marmot_free(q->dave.m);
+}
+
+static bool
+is_member(Member *x, const MarmotGroupId *gid, const Member *who)
+{
+    uint8_t (*members)[32] = NULL;
+    size_t n = 0;
+    OK(marmot_get_group_members(x->m, gid, &members, &n));
+    bool found = false;
+    for (size_t i = 0; i < n; i++)
+        if (memcmp(members[i], who->pk, 32) == 0) found = true;
+    free(members);
+    return found;
+}
+
+/* `x` receives `ev`, a standalone proposal of `sender`'s. */
+static void
+expect_proposal(Member *x, const char *ev, uint16_t type, const Member *sender, bool leave,
+                const char *what)
+{
+    MarmotMessageResult r;
+    memset(&r, 0, sizeof(r));
+    MarmotError err = marmot_process_message(x->m, ev, &r);
+    CHECK(err == MARMOT_OK && r.type == MARMOT_RESULT_PROPOSAL,
+          "%s: %s got err=%d (%s) type=%d", what, x->name, err, marmot_error_string(err),
+          r.type);
+    char *hex = marmot_hex_encode(sender->pk, 32);
+    CHECK(r.proposal.proposal_type == type && r.proposal.leave == leave &&
+          r.proposal.sender_pubkey_hex && strcmp(r.proposal.sender_pubkey_hex, hex) == 0,
+          "%s: %s: type %#x leave %d", what, x->name, r.proposal.proposal_type,
+          r.proposal.leave);
+    if (leave)
+        CHECK(r.proposal.target_pubkey_hex && strcmp(r.proposal.target_pubkey_hex, hex) == 0,
+              "%s: %s: the leaver is the target", what, x->name);
+    free(hex);
+    marmot_message_result_free(&r);
+}
+
+static size_t
+pending_count(Member *x, const MarmotGroupId *gid, size_t *committable)
+{
+    MarmotPendingProposal *p = NULL;
+    size_t n = 0;
+    OK(marmot_get_pending_proposals(x->m, gid, &p, &n));
+    if (committable) {
+        *committable = 0;
+        for (size_t i = 0; i < n; i++) *committable += p[i].committable;
+    }
+    marmot_pending_proposals_free(p);
+    return n;
+}
+
+static void
+expect_group_ended(Member *x, const MarmotGroupId *gid, const Member *remover, bool left,
+                   const char *what)
+{
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(x->m, gid, &g));
+    CHECK(g->state == MARMOT_GROUP_STATE_INACTIVE, "%s: %s still active", what, x->name);
+    marmot_group_free(g);
+    bool removed = false, was_left = !left;
+    uint8_t by[32];
+    OK(marmot_get_group_removal(x->m, gid, &removed, by, NULL, NULL));
+    OK(marmot_get_group_left(x->m, gid, &was_left));
+    CHECK(removed && memcmp(by, remover->pk, 32) == 0, "%s: %s removed by %s", what, x->name,
+          remover->name);
+    CHECK(was_left == left, "%s: %s left=%d, want %d", what, x->name, was_left, left);
+}
+
+/* MIP-03 "Leaving a group" / member-departure.md: Charlie (not an admin)
+ * leaves with a SelfRemove PublicMessage; Dave, another non-admin, commits
+ * it by reference (MDK auto-commits from any member); everyone, Charlie
+ * included, follows; the others go on without him. */
+static void
+test_self_remove_leaves_for_everyone(void)
+{
+    Quad q;
+    quad_init(&q);
+    Trio *t = &q.t;
+    char *leave = NULL;
+    OK(marmot_can_self_remove(t->charlie.m, &t->gid));
+    CHECK(marmot_can_self_remove(t->alice.m, &t->gid) == MARMOT_ERR_ADMIN_CANNOT_LEAVE,
+          "an admin: no SelfRemove");
+    OK(marmot_self_remove(t->charlie.m, &t->gid, &leave));
+    CHECK(leave, "a SelfRemove event");
+    OK(marmot_can_self_remove(t->charlie.m, &t->gid));   /* already Leaving */
+    bool leaving = false;
+    OK(marmot_is_leaving(t->charlie.m, &t->gid, &leaving));
+    CHECK(leaving, "Charlie is Leaving");
+    char *again = NULL;
+    OK(marmot_self_remove(t->charlie.m, &t->gid, &again));
+    CHECK(strcmp(again, leave) == 0, "same epoch: the same bytes (member-departure.md)");
+    free(again);
+
+    /* The proposal: an authenticated PublicMessage SelfRemove. */
+    {
+        MlsGroup g;
+        load_mls(&t->charlie, &t->gid, &g);
+        NostrEvent *ev = nostr_event_new();
+        CHECK(ev && nostr_event_deserialize_compact(ev, leave, NULL), "parse");
+        uint8_t *msg = NULL;
+        size_t len = 0;
+        CHECK(marmot_group_event_decrypt(g.epoch_secrets.exporter_secret, ev->content, &msg,
+                                         &len) == 0, "group-event layer");
+        CHECK(len > 4 && msg[3] == MLS_WIRE_FORMAT_PUBLIC_MESSAGE, "a PublicMessage (MIP-03)");
+        free(msg);
+        nostr_event_free(ev);
+        mls_group_free(&g);
+    }
+
+    expect_proposal(&t->alice, leave, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true,
+                    "Charlie leaves");
+    expect_proposal(&t->bob, leave, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true,
+                    "Charlie leaves");
+    expect_proposal(&q.dave, leave, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true,
+                    "Charlie leaves");
+    MarmotError err;
+    CHECK(deliver(&t->charlie, leave, &err, NULL) == MARMOT_RESULT_OWN_MESSAGE &&
+          err == MARMOT_OK, "Charlie's own echo: %d", err);
+    size_t can = 0;
+    CHECK(pending_count(&q.dave, &t->gid, &can) == 1 && can == 1, "Dave may commit it");
+    CHECK(pending_count(&t->charlie, &t->gid, &can) == 1 && can == 0,
+          "the leaver never commits its own");
+
+    /* Leaving: nothing but the SelfRemove is sent. */
+    MarmotOutgoingMessage out;
+    memset(&out, 0, sizeof(out));
+    CHECK(marmot_create_message(t->charlie.m, &t->gid,
+                                "{\"kind\":9,\"content\":\"x\",\"created_at\":1,\"tags\":[]}",
+                                &out) == MARMOT_ERR_LEAVING, "no message while Leaving");
+    char *c = NULL;
+    CHECK(marmot_self_update(t->charlie.m, &t->gid, NULL, &c) == MARMOT_ERR_LEAVING && !c,
+          "no Commit while Leaving");
+    CHECK(marmot_commit_pending_proposals(t->charlie.m, &t->gid, &c) == MARMOT_ERR_LEAVING,
+          "the leaver commits nothing");
+
+    /* Dave, not an admin, commits it. */
+    char *commit = NULL;
+    OK(marmot_commit_pending_proposals(q.dave.m, &t->gid, &commit));
+    CHECK(commit, "Dave's SelfRemove Commit");
+    merge(&q.dave, &t->gid);
+    expect_commit(&t->alice, commit, "Dave commits Charlie's leave");
+    expect_commit(&t->bob, commit, "Dave commits Charlie's leave");
+    MarmotGroup *g = NULL;
+    MarmotMessageResultType type = deliver(&t->charlie, commit, &err, &g);
+    CHECK(err == MARMOT_OK && type == MARMOT_RESULT_COMMIT, "Charlie sees his leave: %d", err);
+    marmot_group_free(g);
+    expect_group_ended(&t->charlie, &t->gid, &q.dave, true, "Charlie left");
+    CHECK(marmot_create_message(t->charlie.m, &t->gid,
+                                "{\"kind\":9,\"content\":\"x\",\"created_at\":1,\"tags\":[]}",
+                                &out) == MARMOT_ERR_USE_AFTER_EVICTION, "ended");
+
+    Member *rest[3] = { &t->alice, &t->bob, &q.dave };
+    expect_converged(rest, 3, &t->gid, "Before", t->epoch + 1);
+    for (size_t i = 0; i < 3; i++)
+        CHECK(!is_member(rest[i], &t->gid, &t->charlie), "%s still counts Charlie",
+              rest[i]->name);
+    CHECK(pending_count(&t->alice, &t->gid, NULL) == 0, "nothing pending in the new epoch");
+    expect_messages_flow(rest, 3, &t->gid);
+    free(commit);
+    free(leave);
+    quad_clear(&q);
+}
+
+/* An admin cannot SelfRemove (MIP-03; member-departure.md): refused on
+ * sending, on receipt and in a Commit's authorization.  A Commit of
+ * SelfRemoves only is ordinary; with any other proposal it is privileged. */
+static void
+test_self_remove_admin_and_authorization(void)
+{
+    Quad q;
+    quad_init(&q);
+    Trio *t = &q.t;
+    char *ev = NULL;
+    CHECK(marmot_self_remove(t->bob.m, &t->gid, &ev) == MARMOT_ERR_ADMIN_CANNOT_LEAVE && !ev,
+          "Bob is an admin");
+    bool leaving = true;
+    OK(marmot_is_leaving(t->bob.m, &t->gid, &leaving));
+    CHECK(!leaving, "nothing recorded");
+
+    /* Bob's SelfRemove made anyway (another client): refused on receipt. */
+    MlsGroup bob;
+    load_mls(&t->bob, &t->gid, &bob);
+    uint8_t *msg = NULL;
+    size_t len = 0;
+    MlsOpenedProposal own;
+    CHECK(mls_group_self_remove_proposal(&bob, &msg, &len, &own) == 0, "Bob's SelfRemove");
+    char *forged = marmot_commit_build_event(msg, len, bob.epoch_secrets.exporter_secret,
+                                             t->nostr_gid, marmot_now());
+    MarmotError err;
+    deliver(&t->charlie, forged, &err, NULL);
+    CHECK(err == MARMOT_ERR_ADMIN_CANNOT_LEAVE, "an admin's SelfRemove is refused: %d", err);
+    CHECK(pending_count(&t->charlie, &t->gid, NULL) == 0, "and not kept");
+
+    /* ...and in a Commit: Dave commits Bob's SelfRemove by reference on his
+     * own copy; authorization refuses it. */
+    MlsGroup pre, post;
+    load_mls(&q.dave, &t->gid, &pre);
+    load_mls(&q.dave, &t->gid, &post);
+    MlsOpenedProposal at_dave;
+    CHECK(mls_group_open_proposal(&pre, msg, len, &at_dave) == 0, "Dave opens it");
+    const uint8_t *acs[1] = { at_dave.ac };
+    size_t lens[1] = { at_dave.ac_len };
+    MlsCommitResult r;
+    memset(&r, 0, sizeof(r));
+    CHECK(mls_group_commit_by_ref(&post, acs, lens, 1, &r) == 0, "MLS allows it");
+    MlsCommitSummary sum;
+    memset(&sum, 0, sizeof(sum));
+    sum.proposal_count = 1;
+    sum.self_remove_count = 1;
+    sum.self_removed[0] = at_dave.sender_leaf;
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    CHECK(marmot_commit_authorize_ex(&pre, &post, pre.own_leaf_index, false, &sum, &key, &gde) ==
+              MARMOT_ERR_ADMIN_CANNOT_LEAVE, "Marmot refuses it");
+    mls_commit_result_clear(&r);
+    mls_group_free(&post);
+    mls_opened_proposal_clear(&at_dave);
+
+    /* Charlie's SelfRemove committed by Dave: ordinary when alone... */
+    char *leave = NULL;
+    OK(marmot_self_remove(t->charlie.m, &t->gid, &leave));
+    NostrEvent *e = nostr_event_new();
+    CHECK(e && nostr_event_deserialize_compact(e, leave, NULL), "parse");
+    uint8_t *cmsg = NULL;
+    size_t clen = 0;
+    CHECK(marmot_group_event_decrypt(pre.epoch_secrets.exporter_secret, e->content, &cmsg,
+                                     &clen) == 0, "open");
+    nostr_event_free(e);
+    load_mls(&q.dave, &t->gid, &post);
+    MlsOpenedProposal ch;
+    CHECK(mls_group_open_proposal(&pre, cmsg, clen, &ch) == 0, "open Charlie's");
+    acs[0] = ch.ac;
+    lens[0] = ch.ac_len;
+    memset(&r, 0, sizeof(r));
+    CHECK(mls_group_commit_by_ref(&post, acs, lens, 1, &r) == 0, "commit");
+    sum.self_removed[0] = ch.sender_leaf;
+    OK(marmot_commit_authorize_ex(&pre, &post, pre.own_leaf_index, false, &sum, &key, &gde));
+    CHECK(!key.privileged, "a SelfRemove-only Commit is ordinary");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+    /* ...privileged with anything else (a non-admin cannot commit that). */
+    sum.proposal_count = 2;
+    CHECK(marmot_commit_authorize_ex(&pre, &post, pre.own_leaf_index, false, &sum, &key, &gde) ==
+              MARMOT_ERR_COMMIT_FROM_NON_ADMIN, "mixed: privileged");
+    /* Without the departures the removal is an ordinary member change. */
+    CHECK(marmot_commit_authorize(&pre, &post, pre.own_leaf_index, false, &key, &gde) ==
+              MARMOT_ERR_COMMIT_FROM_NON_ADMIN, "unknown departures: privileged");
+    mls_commit_result_clear(&r);
+    mls_group_free(&post);
+
+    /* MLS rules: the leaver cannot commit its own; nor can a leaf go twice. */
+    MlsGroup charlie;
+    load_mls(&t->charlie, &t->gid, &charlie);
+    MlsOpenedProposal at_charlie;
+    CHECK(mls_group_open_proposal(&charlie, cmsg, clen, &at_charlie) == 0, "open own");
+    acs[0] = at_charlie.ac;
+    lens[0] = at_charlie.ac_len;
+    memset(&r, 0, sizeof(r));
+    CHECK(mls_group_commit_by_ref(&charlie, acs, lens, 1, &r) == MARMOT_ERR_INVALID_ARG,
+          "the leaver commits its own");
+    const uint8_t *two[2] = { ch.ac, ch.ac };
+    size_t two_lens[2] = { ch.ac_len, ch.ac_len };
+    load_mls(&q.dave, &t->gid, &post);
+    CHECK(mls_group_commit_by_ref(&post, two, two_lens, 2, &r) == MARMOT_ERR_INVALID_ARG,
+          "one leaf, twice");
+    mls_group_free(&post);
+    mls_opened_proposal_clear(&at_charlie);
+    mls_group_free(&charlie);
+
+    mls_opened_proposal_clear(&ch);
+    free(cmsg);
+    free(leave);
+    mls_opened_proposal_clear(&own);
+    free(msg);
+    free(forged);
+    mls_group_free(&pre);
+    mls_group_free(&bob);
+    quad_clear(&q);
+}
+
+/* A proposal is bound to its epoch: after a Commit that keeps the leaver,
+ * its SelfRemove is stale (WRONG_EPOCH), a fresh one is made for the new
+ * epoch (new bytes), and the old records are pruned. */
+static void
+test_self_remove_is_epoch_bound(void)
+{
+    Quad q;
+    quad_init(&q);
+    Trio *t = &q.t;
+    char *old = NULL;
+    OK(marmot_self_remove(t->charlie.m, &t->gid, &old));
+    expect_proposal(&t->alice, old, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true, "old");
+
+    char *c1 = rename_group(&t->alice, &t->gid, "One");
+    expect_commit(&t->bob, c1, "rename 1");
+    expect_commit(&t->charlie, c1, "rename 1 (Leaving still follows)");
+    expect_commit(&q.dave, c1, "rename 1");
+    MarmotError err;
+    deliver(&q.dave, old, &err, NULL);
+    CHECK(err == MARMOT_ERR_WRONG_EPOCH, "a stale SelfRemove: %d", err);
+    CHECK(pending_count(&t->alice, &t->gid, NULL) == 0, "the old one is not pending any more");
+
+    char *fresh = NULL;
+    OK(marmot_self_remove(t->charlie.m, &t->gid, &fresh));
+    CHECK(strcmp(fresh, old) != 0, "a new epoch: a fresh proposal");
+    expect_proposal(&q.dave, fresh, MARMOT_PROPOSAL_TYPE_SELF_REMOVE, &t->charlie, true, "fresh");
+
+    char *c2 = rename_group(&t->alice, &t->gid, "Two");
+    expect_commit(&t->bob, c2, "rename 2");
+    expect_commit(&q.dave, c2, "rename 2");
+    MarmotProposalSet set;
+    OK(marmot_proposals_load(t->alice.m, t->gid.data, t->gid.len, &set));
+    for (size_t i = 0; i < set.count; i++)
+        CHECK(set.items[i].epoch + 1 >= t->epoch + 2, "an epoch-%llu record kept",
+              (unsigned long long)set.items[i].epoch);
+    marmot_proposals_clear(&set);
+    free(c1);
+    free(c2);
+    free(fresh);
+    free(old);
+    quad_clear(&q);
+}
+
+/* MDK 0.8 leaves a group that does not require SelfRemove with a Remove of
+ * itself (OpenMLS leave_group()), sent as a PrivateMessage in its
+ * MIXED_CIPHERTEXT groups.  It is opened with the sender's handshake
+ * ratchet, kept, and committed by reference by an admin only. */
+static char *
+private_remove_self(Member *x, const MarmotGroupId *gid, const uint8_t nostr_gid[32])
+{
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    uint8_t body[6] = { 0x00, 0x03,
+                        (uint8_t)(g.own_leaf_index >> 24), (uint8_t)(g.own_leaf_index >> 16),
+                        (uint8_t)(g.own_leaf_index >> 8), (uint8_t)g.own_leaf_index };
+    MlsFramedContent fc;
+    memset(&fc, 0, sizeof(fc));
+    fc.group_id = g.group_id;
+    fc.group_id_len = g.group_id_len;
+    fc.epoch = g.epoch;
+    fc.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    fc.sender.leaf_index = g.own_leaf_index;
+    fc.content_type = MLS_CONTENT_TYPE_PROPOSAL;
+    fc.content = body;
+    fc.content_len = sizeof body;
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    MlsFramedContentAuthData auth;
+    CHECK(mls_group_context_build(&g, &gc, &gc_len) == 0 &&
+          mls_framed_content_sign(&fc, MLS_WIRE_FORMAT_PRIVATE_MESSAGE, gc, gc_len,
+                                  g.own_signature_key, &auth) == 0, "sign");
+    MlsTlsBuf pt;
+    CHECK(mls_tls_buf_init(&pt, 128) == 0 && mls_tls_buf_append(&pt, body, sizeof body) == 0 &&
+          mls_tls_write_opaque16(&pt, auth.signature, MLS_SIG_LEN) == 0, "content");
+    MlsMessageKeys keys;
+    CHECK(mls_secret_tree_derive_keys(&g.secret_tree, g.own_leaf_index, true, &keys) == 0,
+          "handshake keys");
+    uint8_t guard[4];
+    randombytes_buf(guard, sizeof guard);
+    MlsMLSMessage w;
+    memset(&w, 0, sizeof(w));
+    w.wire_format = MLS_WIRE_FORMAT_PRIVATE_MESSAGE;
+    w.cipher_suite = MARMOT_CIPHERSUITE;
+    CHECK(mls_private_message_encrypt(g.group_id, g.group_id_len, g.epoch,
+                                      MLS_CONTENT_TYPE_PROPOSAL, NULL, 0, pt.data, pt.len,
+                                      g.epoch_secrets.sender_data_secret, &keys,
+                                      g.own_leaf_index, guard, &w.private_message) == 0,
+          "encrypt");
+    MlsTlsBuf out;
+    CHECK(mls_tls_buf_init(&out, 256) == 0 && mls_message_serialize(&w, &out) == 0, "serialize");
+    char *json = marmot_commit_build_event(out.data, out.len, g.epoch_secrets.exporter_secret,
+                                           nostr_gid, marmot_now());
+    CHECK(json, "event");
+    mls_message_clear(&w);
+    mls_tls_buf_free(&out);
+    mls_tls_buf_free(&pt);
+    free(gc);
+    mls_group_free(&g);
+    return json;
+}
+
+static void
+test_private_remove_self_committed_by_admin(void)
+{
+    Quad q;
+    quad_init(&q);
+    Trio *t = &q.t;
+    char *ev = private_remove_self(&t->charlie, &t->gid, t->nostr_gid);
+    /* The leaver keeps its own proposal (OpenMLS leave_group() stores it):
+     * here from the relay's echo, which its own handshake ratchet opens. */
+    MarmotError own_err;
+    MarmotMessageResultType own_type = deliver(&t->charlie, ev, &own_err, NULL);
+    CHECK(own_type == MARMOT_RESULT_OWN_MESSAGE && own_err == MARMOT_OK, "Charlie's echo: %d",
+          own_err);
+    expect_proposal(&q.dave, ev, MARMOT_PROPOSAL_TYPE_REMOVE, &t->charlie, true, "Dave");
+    expect_proposal(&t->bob, ev, MARMOT_PROPOSAL_TYPE_REMOVE, &t->charlie, true, "Bob");
+    expect_proposal(&t->alice, ev, MARMOT_PROPOSAL_TYPE_REMOVE, &t->charlie, true, "Alice");
+    size_t can = 0;
+    CHECK(pending_count(&q.dave, &t->gid, &can) == 1 && can == 0,
+          "a Remove is an admin's to commit");
+    char *none = (char *)"x";
+    OK(marmot_commit_pending_proposals(q.dave.m, &t->gid, &none));
+    CHECK(none == NULL, "Dave commits nothing");
+    CHECK(pending_count(&t->bob, &t->gid, &can) == 1 && can == 1, "Bob may");
+    /* The opening restored the ratchet: Charlie's messages still read. */
+    char *hello = app_message(&t->charlie, &t->gid, "still here");
+    expect_app(&t->bob, hello, "after the private proposal");
+    free(hello);
+
+    char *commit = NULL;
+    OK(marmot_commit_pending_proposals(t->bob.m, &t->gid, &commit));
+    CHECK(commit, "Bob's Commit");
+    merge(&t->bob, &t->gid);
+    expect_commit(&t->alice, commit, "Bob commits Charlie's Remove");
+    expect_commit(&q.dave, commit, "Bob commits Charlie's Remove");
+    MarmotError err;
+    CHECK(deliver(&t->charlie, commit, &err, NULL) == MARMOT_RESULT_COMMIT && err == MARMOT_OK,
+          "Charlie sees it: %d", err);
+    expect_group_ended(&t->charlie, &t->gid, &t->bob, false, "Charlie removed (by request)");
+    Member *rest[3] = { &t->alice, &t->bob, &q.dave };
+    expect_converged(rest, 3, &t->gid, "Before", t->epoch + 1);
+    expect_messages_flow(rest, 3, &t->gid);
+    free(commit);
+    free(ev);
+    quad_clear(&q);
+}
+
+/* A group created alone requires SelfRemove too (MIP-01). */
+static void
+test_alone_group_requires_self_remove(void)
+{
+    Member a;
+    member_init(&a, "Alice");
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Alone";
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(a.m, a.pk, NULL, 0, &cfg, &cg));
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+    expect_required_capabilities(&a, &gid, "alone");
+    marmot_group_id_free(&gid);
+    marmot_free(a.m);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -5949,6 +6439,11 @@ main(int argc, char **argv)
     RUN(test_removal_final_waits_for_parent);
     RUN(test_rival_removal_replaces);
     RUN(test_winner_after_its_branch);
+    RUN(test_self_remove_leaves_for_everyone);
+    RUN(test_self_remove_admin_and_authorization);
+    RUN(test_self_remove_is_epoch_bound);
+    RUN(test_private_remove_self_committed_by_admin);
+    RUN(test_alone_group_requires_self_remove);
     printf("All commit tests passed\n");
     return 0;
 }

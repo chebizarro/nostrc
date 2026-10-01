@@ -16,6 +16,7 @@
 
 #include "marmot-internal.h"
 #include "commits.h"
+#include "proposals.h"
 #include "kp_profile.h"
 #include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
@@ -138,30 +139,51 @@ find_leaf_by_pubkey(const MlsGroup *mls, const uint8_t pubkey[32],
  *            ProposalType proposal_types<V>;     = []
  *            CredentialType credential_types<V>; = [] } RequiredCapabilities;
  *
- * No proposal type: MIP-01 also wants self_remove (0x000a) there, but
- * libmarmot does not implement SelfRemove, and MDK 0.8 requires it only when
- * every invitee advertises it (its "LCD" rule), so for a group with a
- * libmarmot member it computes exactly this. libmarmot 0.10.0 and older
- * omitted the extension, and OpenMLS (valn1001) then refuses every
+ * Proposal types: MIP-01 also wants self_remove (0x000a), which libmarmot
+ * implements since 0.12.0 (nostrc-2um6).  It is required when every initial
+ * member advertises it -- MDK 0.8's "LCD" rule (groups.rs), byte for byte:
+ * [0x000a] then, [] when an invitee lacks it.  A group created with no
+ * invitee requires it (MDK leaves that case empty; MIP-01 asks for it, and
+ * every libmarmot and MDK 0.8 KeyPackage advertises it).  MDK 0.8 members
+ * leave a group by SelfRemove only when the group requires it, and by a
+ * Remove of themselves otherwise.  libmarmot 0.10.0 and older omitted the
+ * extension, and OpenMLS (valn1001) then refuses every
  * GroupContextExtensions proposal, which lists 0xF2EE without it: MDK could
  * not follow a rename (nostrc-7gx7). */
 static int
-write_required_capabilities(MlsTlsBuf *buf)
+write_required_capabilities(MlsTlsBuf *buf, bool self_remove)
 {
-    static const uint8_t data[] = {
+    static const uint8_t with_self_remove[] = {
+        0x02, (uint8_t)(MARMOT_EXTENSION_TYPE >> 8), (uint8_t)(MARMOT_EXTENSION_TYPE & 0xff),
+        0x02, (uint8_t)(MLS_PROPOSAL_SELF_REMOVE >> 8),
+        (uint8_t)(MLS_PROPOSAL_SELF_REMOVE & 0xff),   /* proposal_types */
+        0x00,                                         /* credential_types */
+    };
+    static const uint8_t without[] = {
         0x02, (uint8_t)(MARMOT_EXTENSION_TYPE >> 8), (uint8_t)(MARMOT_EXTENSION_TYPE & 0xff),
         0x00,   /* proposal_types */
         0x00,   /* credential_types */
     };
+    const uint8_t *data = self_remove ? with_self_remove : without;
+    size_t len = self_remove ? sizeof with_self_remove : sizeof without;
     return mls_tls_write_u16(buf, MLS_EXTENSION_REQUIRED_CAPABILITIES) != 0 ||
-                   mls_tls_write_opaque16(buf, data, sizeof data) != 0
+                   mls_tls_write_opaque16(buf, data, len) != 0
                ? -1
                : 0;
 }
 
+/* Whether a KeyPackage's leaf advertises SelfRemove (MDK's LCD input). */
+static bool
+key_package_self_remove(const MlsKeyPackage *kp)
+{
+    for (size_t i = 0; i < kp->leaf_node.proposal_count; i++)
+        if (kp->leaf_node.proposals[i] == MLS_PROPOSAL_SELF_REMOVE) return true;
+    return false;
+}
+
 static int
 build_group_data_extension(const MarmotGroupConfig *config,
-                            const uint8_t nostr_group_id[32],
+                            const uint8_t nostr_group_id[32], bool require_self_remove,
                             uint8_t **ext_data, size_t *ext_len)
 {
     MarmotGroupDataExtension *gde = marmot_group_data_extension_new();
@@ -216,7 +238,7 @@ build_group_data_extension(const MarmotGroupConfig *config,
     /* Extension type: 0xF2EE, then required_capabilities (MIP-01). */
     if (mls_tls_write_u16(&buf, MARMOT_EXTENSION_TYPE) != 0 ||
         mls_tls_write_opaque16(&buf, gde_bytes, gde_len) != 0 ||
-        write_required_capabilities(&buf) != 0) {
+        write_required_capabilities(&buf, require_self_remove) != 0) {
         free(gde_bytes);
         mls_tls_buf_free(&buf);
         return -1;
@@ -535,12 +557,27 @@ create_group_impl(Marmot *m,
     uint8_t nostr_group_id[32];
     randombytes_buf(nostr_group_id, 32);
 
+    /* The invitees' KeyPackages first: what they support decides the
+     * group's required proposals (write_required_capabilities()). */
+    MlsKeyPackage *kps = NULL;
+    MarmotError err = MARMOT_OK;
+    bool require_self_remove = true;
+    if (kp_count > 0) {
+        err = parse_key_packages(m, key_package_event_jsons, kp_count, &kps, NULL);
+        if (err != MARMOT_OK) return err;
+        for (size_t i = 0; i < kp_count; i++)
+            require_self_remove = require_self_remove && key_package_self_remove(&kps[i]);
+    }
+
     /* Build GroupContext extensions with GroupData */
     uint8_t *ext_data = NULL;
     size_t ext_len = 0;
-    MarmotError err = build_group_data_extension(config, nostr_group_id,
-                                                  &ext_data, &ext_len);
-    if (err != MARMOT_OK) return err;
+    err = build_group_data_extension(config, nostr_group_id, require_self_remove,
+                                     &ext_data, &ext_len);
+    if (err != MARMOT_OK) {
+        free_key_packages(kps, kp_count);
+        return err;
+    }
 
     /* The creator's leaf carries this instance's account proof
      * (nostrc-7vyi; marmot_set_account_proof()).  Without one no joiner
@@ -552,6 +589,7 @@ create_group_impl(Marmot *m,
     bool proven = marmot_account_proof_lookup(m, creator_pubkey, proof);
     if (!proven && !m->config.allow_unproven_members) {
         free(ext_data);
+        free_key_packages(kps, kp_count);
         return MARMOT_ERR_KEY_PACKAGE_IDENTITY;
     }
     if (proven) {
@@ -559,6 +597,7 @@ create_group_impl(Marmot *m,
         sodium_memzero(proof, sizeof(proof));
         if (err != MARMOT_OK) {
             free(ext_data);
+            free_key_packages(kps, kp_count);
             return err;
         }
     }
@@ -575,19 +614,16 @@ create_group_impl(Marmot *m,
                                                    leaf_ext, leaf_ext_len);
     free(ext_data);
     free(leaf_ext);
-    if (rc != 0) return MARMOT_ERR_MLS;
+    if (rc != 0) {
+        free_key_packages(kps, kp_count);
+        return MARMOT_ERR_MLS;
+    }
 
     /* All invitees join through one Commit with one Add each and one
      * Welcome (RFC 9420 §12.4; nostrc-wc6v): one Commit per invitee left
      * every earlier invitee at a stale epoch. */
     result->welcome_count = kp_count;
     if (kp_count > 0) {
-        MlsKeyPackage *kps = NULL;
-        err = parse_key_packages(m, key_package_event_jsons, kp_count, &kps, NULL);
-        if (err != MARMOT_OK) {
-            mls_group_free(&mls_group);
-            return err;
-        }
         result->welcome_rumor_jsons = calloc(kp_count, sizeof(char *));
         /* The published Commit is sealed with its source epoch's exporter
          * secret (MIP-03), like any kind:445 event of that epoch. */
@@ -843,6 +879,12 @@ load_group_for_commit_ex(Marmot *m, const MarmotGroupId *mls_group_id,
     if (group->state != MARMOT_GROUP_STATE_ACTIVE) {
         marmot_group_free(group);
         return MARMOT_ERR_USE_AFTER_EVICTION;
+    }
+    /* Leaving: no Commit of ours any more (nostrc-2um6; member-departure.md). */
+    err = marmot_leaving_gate(m, mls_group_id);
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        return err;
     }
     err = marmot_group_reconcile(m, group);
     /* One Commit at a time: the previous one must be merged or cleared. */
@@ -1203,6 +1245,108 @@ out:
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Public API: marmot_commit_pending_proposals (nostrc-2um6)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static MarmotError
+commit_pending_proposals_impl(Marmot *m, const MarmotGroupId *mls_group_id,
+                              char **out_commit_json)
+{
+    if (!m || !mls_group_id || !out_commit_json) return MARMOT_ERR_INVALID_ARG;
+    *out_commit_json = NULL;
+    MarmotGroup *group = NULL;
+    MlsGroup mls;
+    /* Not admin-only: a SelfRemove-only Commit is any member's
+     * (proposals.c); a member's own Remove needs an admin, which
+     * marmot_proposals_select() checks. */
+    MarmotError err = load_group_for_commit_ex(m, mls_group_id, &group, &mls, false);
+    if (err != MARMOT_OK) return err;
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MlsCommitResult result;
+    memset(&result, 0, sizeof(result));
+    MarmotProposalSet set;
+    size_t *pick = NULL, n = 0;
+    const uint8_t **acs = NULL;
+    size_t *lens = NULL;
+    err = marmot_proposals_load(m, mls_group_id->data, mls_group_id->len, &set);
+    if (err == MARMOT_OK) err = marmot_proposals_select(&mls, &set, &pick, &n);
+    if (err != MARMOT_OK || n == 0) goto out;   /* nothing to commit */
+    acs = calloc(n, sizeof(*acs));
+    lens = calloc(n, sizeof(*lens));
+    if (!acs || !lens) {
+        err = MARMOT_ERR_MEMORY;
+        goto out;
+    }
+    for (size_t i = 0; i < n; i++) {
+        acs[i] = set.items[pick[i]].ac;
+        lens[i] = set.items[pick[i]].ac_len;
+    }
+    if (clone_mls_group(&mls, &post) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto out;
+    }
+    int rc = mls_group_commit_by_ref(&post, acs, lens, n, &result);
+    if (rc != 0) {
+        err = rc == MARMOT_ERR_INVALID_ARG ? MARMOT_ERR_INVALID_ARG : MARMOT_ERR_MLS;
+        goto out;
+    }
+    /* What the Commit does with departures, for the authorization of the
+     * Commit (now and at merge), as receivers will see it. */
+    MlsCommitSummary departures;
+    memset(&departures, 0, sizeof(departures));
+    departures.proposal_count = n;
+    for (size_t i = 0; i < n; i++) {
+        const MarmotStoredProposal *p = &set.items[pick[i]];
+        if (p->type == MLS_PROPOSAL_SELF_REMOVE)
+            departures.self_removed[departures.self_remove_count++] = p->sender_leaf;
+        else
+            departures.left[departures.left_count++] = p->target_leaf;
+    }
+    /* Dated after every event of ours in the group, or refused with
+     * MARMOT_ERR_EVENT_RATE (retry in a second; nostrc-2lrz). */
+    int64_t created_at = 0;
+    err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
+    if (err != MARMOT_OK) goto out;
+    char *json = marmot_commit_build_event(result.commit_data, result.commit_len,
+                                           mls.epoch_secrets.exporter_secret,
+                                           group->nostr_group_id, created_at);
+    if (!json) {
+        err = MARMOT_ERR_EVENT_BUILD;
+        goto out;
+    }
+    err = marmot_commit_stage_pending_ex(m, &mls, &post, result.commit_data, result.commit_len,
+                                         json, NULL, 0, &departures);
+    if (err != MARMOT_OK) free(json);
+    else *out_commit_json = json;
+out:
+    free(acs);
+    free(lens);
+    free(pick);
+    marmot_proposals_clear(&set);
+    mls_commit_result_clear(&result);
+    mls_group_free(&post);
+    mls_group_free(&mls);
+    marmot_group_free(group);
+    return err;
+}
+
+MarmotError
+marmot_commit_pending_proposals(Marmot *m, const MarmotGroupId *mls_group_id,
+                                char **out_commit_json)
+{
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    err = commit_pending_proposals_impl(m, mls_group_id, out_commit_json);
+    MarmotError end = marmot_txn_end(m, err);
+    if (err == MARMOT_OK && end != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+    }
+    return end;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_leave_group
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -1269,7 +1413,7 @@ replace_group_data_extension(const uint8_t *exts, size_t exts_len,
         (mls_tls_write_u16(&buf, MARMOT_EXTENSION_TYPE) != 0 ||
          mls_tls_write_opaque16(&buf, gde_bytes, gde_len) != 0))
         goto fail;
-    if (!has_required && write_required_capabilities(&buf) != 0) goto fail;
+    if (!has_required && write_required_capabilities(&buf, false) != 0) goto fail;
     *out = buf.data;
     *out_len = buf.len;
     return 0;

@@ -280,12 +280,99 @@ What does not hold yet:
 
 - **Default mode.** Without `MarmotConfig.allow_unproven_members`, MDK 0.8
   members are refused (0.10.0, below).
-- **Standalone proposals.** They are not processed, so an MDK member's
-  SelfRemove is not seen (nostrc-2um6).
+- **Standalone proposals** (since 0.12.0, nostrc-2um6): kept for the
+  Commit that references them, and SelfRemove both ways is tested live
+  (`mdk-member-leaves`, `groundhog-leaves`). Other proposal types of MDK's
+  are kept, but only departures are committed by libmarmot.
 - **The adopted profile.** MDK 0.9 and later use it; libmarmot does not speak
   it yet (nostrc-qp24.5.1).
 
 ## Changelog
+
+### 0.12.0 (unreleased): standalone proposals and SelfRemove (nostrc-2um6)
+
+**Capability and wire change** (MINOR for 0.x). A member can now leave a
+group for everyone (MIP-03 "Leaving a group"; Marmot
+protocol-core/member-departure.md), and an MDK member's leave is seen.
+
+#### What changed
+
+- **SelfRemove (proposal type 0x000a, draft-ietf-mls-extensions; Marmot
+  registry).** Empty body, sent only as an MLS PublicMessage, committed only
+  by reference and never by its sender. Wire format and ProposalRef match
+  MDK v0.8.0 / OpenMLS `04c50d7` byte for byte (`MDK_SELF_REMOVE_*` in
+  `tests/test_interop.c`, captured live with the driver's `leave_group`).
+- **Standalone proposals.** `marmot_process_message()` no longer returns
+  `MARMOT_ERR_UNSUPPORTED` for them. A Proposal of the current epoch, as a
+  PublicMessage (signature and membership tag) or a PrivateMessage
+  (decrypted with its sender's handshake ratchet, put back as for a Commit;
+  then its signature), is kept as its AuthenticatedContent with its
+  ProposalRef, and the result is the new `MARMOT_RESULT_PROPOSAL` payload
+  (`result.proposal`: type, sender, target, `leave`). Kept types: Add,
+  Update, Remove, GroupContextExtensions, SelfRemove (others stay
+  unsupported). A Commit of that epoch resolves its references against them,
+  each record's signature checked again (`mls_group_process_commit_by_ref()`).
+  The same path replays the OpenMLS passive-client vectors with every
+  proposal opened and referenced (1542 proposals, 100 Commits; vectors with
+  PSK proposals stay on the old path).
+- **Authorization.** A SelfRemove from an admin is refused, on receipt and in
+  a Commit (MIP-03: admins step down first; `MARMOT_ERR_ADMIN_CANNOT_LEAVE`).
+  A Commit of SelfRemove proposals only is ordinary: any member may commit
+  it. Anything else with it, or a Remove a member sent for itself (MDK 0.8's
+  leave where SelfRemove is not required), stays privileged. The admin test
+  goes through a profile hook, `marmot_policy_is_admin()`: legacy groups
+  read the 0xF2EE admins, adopted groups the `marmot.group.admin-policy.v1`
+  (0x8003) component; there only SelfRemove may be a non-admin's standalone
+  proposal.
+- **Who commits.** MDK 0.8 (`messages/proposal.rs`) and 0.11
+  (`cgka-engine/src/auto_committer.rs`) auto-commit a SelfRemove from any
+  member, and the adopted spec lets "any remaining member" commit it, with a
+  local jitter; MDK 0.8 commits a member's own Remove only as an admin. So
+  `marmot_commit_pending_proposals()` commits, by reference, every valid
+  SelfRemove (one per leaving leaf, the lowest SHA-256 of its MLSMessage)
+  for any member, and a member's own Remove for an admin. libmarmot does not
+  schedule it: the application does (Groundhog after 1-4 s of jitter).
+- **Leaving.** `marmot_self_remove()` makes our SelfRemove for the current
+  epoch (the same bytes again within it, a fresh one for a new epoch) and
+  records a durable leave request ("Leaving": `marmot_create_message()` and
+  every Commit producer return the new `MARMOT_ERR_LEAVING`).
+  `marmot_can_self_remove()` says beforehand whether it would work. When a
+  Commit removes us through our own SelfRemove, the group ends as after an
+  admin's removal, and `marmot_get_group_left()` says we left.
+  `marmot_leave_group()` stays local only.
+- **Capabilities.** Every leaf libmarmot makes advertises SelfRemove, and
+  adopted KeyPackages advertise `[0x0008, 0x000a]`. A new group requires it
+  when every initial member advertises it (MDK 0.8's LCD rule, byte for
+  byte), and also when created with no invitee (MIP-01; MDK leaves that
+  case empty). MDK 0.8 therefore makes groups with libmarmot members that
+  require SelfRemove, and its members leave them with it.
+- **New API.** `marmot_self_remove()`, `marmot_can_self_remove()`,
+  `marmot_is_leaving()`, `marmot_get_pending_proposals()` /
+  `marmot_pending_proposals_free()` (`MarmotPendingProposal`),
+  `marmot_commit_pending_proposals()`, `marmot_get_group_left()`,
+  `MARMOT_PROPOSAL_TYPE_*`, `MARMOT_ERR_LEAVING`,
+  `MARMOT_ERR_ADMIN_CANNOT_LEAVE`.
+
+#### Compatibility
+
+- **ABI.** `MarmotMessageResult` grows a `proposal` member at its end:
+  rebuild callers.
+- **Storage.** New `mls_kv` labels `mls_group_proposals` and
+  `mls_group_leaving` (group-scoped, keyed by the MLS group id). The removal
+  record's flags gain "left" (4) and "ordinary key" (8), and a pending
+  Commit of departures carries a trailer. libmarmot 0.11.0 refuses such
+  records: after a downgrade, the group reads as ended (cause unknown), or
+  the pending Commit fails closed and must be cleared.
+- **Wire.** A libmarmot 0.11.0 member refuses every standalone proposal, so
+  it cannot follow a group where anyone leaves by SelfRemove. In groups that
+  require SelfRemove it cannot be added: its leaves do not advertise it
+  (RFC 9420 section 7.2). Upgrade whole groups together, as for 0.11.0.
+- **Limits.** A proposal of an epoch other than the current one is
+  `MARMOT_ERR_WRONG_EPOCH` and not kept. A competing Commit of the retained
+  parent epoch can still reference that epoch's kept proposals, but one that
+  arrives only after the next Commit cannot. Existing groups keep their
+  `required_capabilities`: a metadata Commit adds the extension where it is
+  missing, but not the SelfRemove requirement.
 
 ### 0.12.0 (unreleased): MIP-04 encrypted media v2 and group image components (nostrc-u7cb)
 

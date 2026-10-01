@@ -87,6 +87,20 @@ MarmotError marmot_commit_authorize(const MlsGroup *pre, const MlsGroup *post,
                                     MarmotGroupDataExtension **post_gde);
 
 /**
+ * marmot_commit_authorize() knowing what the Commit did with departure
+ * requests (`departures`, from the MLS layer; NULL: nothing known, as
+ * before 0.12.0).  nostrc-2um6: a SelfRemove's sender may not be an admin
+ * of `pre` (marmot_policy_is_admin(); MARMOT_ERR_ADMIN_CANNOT_LEAVE), and a
+ * Commit of SelfRemove proposals only is ordinary -- any member may commit
+ * it -- while every other change still makes it privileged.
+ */
+MarmotError marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
+                                       uint32_t committer_leaf, bool allow_unproven,
+                                       const MlsCommitSummary *departures,
+                                       MarmotCommitKey *key,
+                                       MarmotGroupDataExtension **post_gde);
+
+/**
  * Persist an applied epoch transition: the exporter secret of post->epoch,
  * the retained parent (`pre` plus the Commit's ordering key, used to judge a
  * competing Commit for the same epoch and to read late application messages
@@ -206,6 +220,17 @@ MarmotError marmot_commit_stage_pending(Marmot *m, const MlsGroup *pre,
                                         const char *event_json,
                                         const MarmotUnsentWelcome *welcomes,
                                         size_t welcome_count);
+
+/** marmot_commit_stage_pending() of a Commit of departures (nostrc-2um6):
+ *  `departures` is authorized with it and kept in the pending record, so
+ *  the merge authorizes it the same way. */
+MarmotError marmot_commit_stage_pending_ex(Marmot *m, const MlsGroup *pre,
+                                           const MlsGroup *post,
+                                           const uint8_t *commit, size_t commit_len,
+                                           const char *event_json,
+                                           const MarmotUnsentWelcome *welcomes,
+                                           size_t welcome_count,
+                                           const MlsCommitSummary *departures);
 
 /**
  * The group's pending Commit: its signed event (NULL when there is none) and

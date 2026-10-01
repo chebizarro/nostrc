@@ -82,6 +82,13 @@ typedef enum {
     MARMOT_ERR_WRONG_EPOCH              = -64,
     MARMOT_ERR_WRONG_GROUP_ID           = -65,
     MARMOT_ERR_USE_AFTER_EVICTION       = -66,
+    /* Since 0.12.0 (nostrc-2um6): the group is being left (a SelfRemove
+     * proposal of ours waits for another member's Commit) -- nothing but
+     * that proposal may be sent (Marmot member-departure.md, "Leaving"). */
+    MARMOT_ERR_LEAVING                  = -67,
+    /* Since 0.12.0: an admin cannot leave by SelfRemove; it steps down from
+     * the admins first (MIP-03; member-departure.md). */
+    MARMOT_ERR_ADMIN_CANNOT_LEAVE       = -68,
 
     /* Welcome errors */
     MARMOT_ERR_WELCOME                  = -70,

@@ -522,7 +522,46 @@ typedef struct {
         /** Updated group info (caller-owned, may be NULL) */
         MarmotGroup *updated_group;
     } commit;
+
+    /** Valid when type == MARMOT_RESULT_PROPOSAL (since 0.12.0,
+     *  nostrc-2um6): a member's standalone Proposal, authenticated in the
+     *  current epoch and kept for the Commit that references it. */
+    struct {
+        /** MLS proposal type (MARMOT_PROPOSAL_TYPE_*) */
+        uint16_t proposal_type;
+        /** The member that sent it, hex (caller-owned) */
+        char *sender_pubkey_hex;
+        /** The member it removes, hex (caller-owned); NULL for other types */
+        char *target_pubkey_hex;
+        /** The sender asks to leave: a SelfRemove, or a Remove of itself */
+        bool leave;
+    } proposal;
 } MarmotMessageResult;
+
+/** MLS proposal types reported in MarmotMessageResult and
+ *  MarmotPendingProposal (RFC 9420 section 17.4; Marmot registry). */
+#define MARMOT_PROPOSAL_TYPE_ADD          0x0001
+#define MARMOT_PROPOSAL_TYPE_UPDATE       0x0002
+#define MARMOT_PROPOSAL_TYPE_REMOVE       0x0003
+#define MARMOT_PROPOSAL_TYPE_GROUP_CONTEXT_EXTENSIONS 0x0007
+#define MARMOT_PROPOSAL_TYPE_SELF_REMOVE  0x000A
+
+/**
+ * MarmotPendingProposal:
+ *
+ * A standalone Proposal of the group's current epoch that no Commit has
+ * consumed yet (marmot_get_pending_proposals(), since 0.12.0).
+ */
+typedef struct {
+    uint16_t type;          /**< MARMOT_PROPOSAL_TYPE_* */
+    uint8_t  sender[32];    /**< the member that sent it */
+    bool     has_target;    /**< a Remove or SelfRemove */
+    uint8_t  target[32];    /**< the member it removes */
+    bool     leave;         /**< the sender asks to leave */
+    bool     own;           /**< ours (our own SelfRemove) */
+    bool     committable;   /**< marmot_commit_pending_proposals() would commit it now */
+    uint8_t  ref[32];       /**< its ProposalRef (RFC 9420 section 5.2), what a Commit cites */
+} MarmotPendingProposal;
 
 /** Free a MarmotMessageResult's owned data */
 void marmot_message_result_free(MarmotMessageResult *result);
