@@ -1793,13 +1793,15 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
              TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST AND TARGET PkgConfig::GROUNDHOG_JSON))
       message(FATAL_ERROR "BUILD_MDK011_INTEROP needs BUILD_TESTING, libsoup-3.0 and json-glib-1.0")
     endif()
+    # W25: the media case uses the files layer (groundhog-mls-files, through
+    # groundhog-mls-ui) with the local Blossom fixture.
     add_executable(test-groundhog-mdk011-interop tests/mls/test_mdk011_interop.c
       src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
-      ${GROUNDHOG_DM_SEND_SOURCES})
+      ${GROUNDHOG_DM_SEND_SOURCES} tests/media/blossom-fixture.c)
     target_include_directories(test-groundhog-mdk011-interop PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
     target_link_libraries(test-groundhog-mdk011-interop PRIVATE groundhog-mls-ui marmot
       nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_JSON)
@@ -1874,8 +1876,8 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       endif()
     endif()
     foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
-            mdk-invites-groundhog-gui adopted-welcome white-noise-welcome adopted-commits
-            routing-rotation mdk09-probe)
+            mdk-invites-groundhog-gui adopted-welcome white-noise-welcome white-noise-media
+            adopted-commits routing-rotation mdk09-probe)
       if (groundhog_mdk011_case STREQUAL "mdk-invites-groundhog-gui")
         set(groundhog_mdk011_command test-groundhog-mdk011-interop --gui
             -p /groundhog/mdk011-interop-gui/mdk-invites-groundhog)

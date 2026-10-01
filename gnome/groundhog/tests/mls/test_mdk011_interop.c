@@ -45,6 +45,9 @@
  * another shape fails; so does an unexpected success (XPASS). */
 #include "mls-world.h"
 #include "mdk-peer.h"
+#include "blossom-fixture.h"
+#include "gh-attachments.h"
+#include "gh-mls-attachments.h"
 
 #include "gh-mls-copy.h"
 #include "gh-mls-invitee.h"
@@ -1240,16 +1243,15 @@ test_routing_rotation(void)
   mdk_driver_stop(&driver);
 }
 
-static void
-test_white_noise_welcome(void)
+/* The White Noise group of the welcome and media cases: Alice's adopted
+ * KeyPackage as Groundhog published it, found by Carol (MDK 0.11) through
+ * her kind 10002, passes MDK's parser and marmot-app's invite precheck; Carol creates
+ * a White Noise-shaped group with Alice (both admins); Alice joins. Returns
+ * Alice's group, *out_group the group id hex for the driver. */
+static GhMlsGroup *
+white_noise_group(World *w_, gchar **out_group)
 {
-  cases_run++;
-  if (!mdk_up())
-    return;
-  World w;
-  const guint keys[] = { ALICE };
-  world_up(&w, keys, G_N_ELEMENTS(keys));
-  App *alice = &w.apps[ALICE];
+  App *alice = &w_->apps[ALICE];
   spin_until(key_package_published, alice, "Alice's KeyPackages");
   accept_contact(alice, CAROL);
   mdk_peer("carol", CAROL);
@@ -1260,7 +1262,7 @@ test_white_noise_welcome(void)
    * current-profile KeyPackage advertising what every White Noise group
    * requires (nostrc-qp24.5.2). */
   g_autoptr(JsonObject) view = NULL;
-  g_autofree gchar *alice_kp = mdk_discover_key_package(&w, "carol", ALICE, &view);
+  g_autofree gchar *alice_kp = mdk_discover_key_package(w_, "carol", ALICE, &view);
   g_autofree gchar *view_text = mdk_json(view);
   g_test_message("MDK 0.11 on Groundhog's adopted KeyPackage: %s", view_text);
   if (!json_object_get_boolean_member(view, "parsed"))
@@ -1290,7 +1292,7 @@ test_white_noise_welcome(void)
     "\"description\":\"wn\",\"relays\":[\"%s\"],\"admins\":[\"%s\",\"%s\"],"
     "\"white_noise\":true,\"media_endpoints\":[\"https://blossom.example.com\"],"
     "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
-    w.g.url, hex[CAROL], hex[ALICE], alice_kp, w.x.url);
+    w_->g.url, hex[CAROL], hex[ALICE], alice_kp, w_->x.url);
   g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
   g_auto(GStrv) components = mdk_strv(json_object_get_array_member(made, "components"));
   g_autofree gchar *component_text = g_strjoinv(",", components);
@@ -1300,7 +1302,6 @@ test_white_noise_welcome(void)
 
   /* Groundhog lists the invitation and joins: past admission. */
   GhMlsGroup *ga = join(alice, CAROL);
-  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   g_assert_cmpstr(gh_mls_group_get_name(ga), ==, "White Noise group");
   guint8 gid_bytes[64];
   const gchar *gid_hex = gh_mls_group_get_group_id(ga);
@@ -1321,6 +1322,23 @@ test_white_noise_welcome(void)
                   "https://blossom.example.com/");
   marmot_group_components_clear(&parts);
   marmot_group_id_free(&gid);
+  *out_group = g_steal_pointer(&group);
+  return ga;
+}
+
+static void
+test_white_noise_welcome(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  g_autofree gchar *group = NULL;
+  GhMlsGroup *ga = white_noise_group(&w, &group);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
 
   /* Application messages both ways. */
   mdk_send("carol", group, "hello from white noise");
@@ -1369,6 +1387,201 @@ test_white_noise_welcome(void)
   mdk_send("carol", group, "white noise after groundhog's rename");
   wait_message(alice, room, "white noise after groundhog's rename");
 
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
+/* ---- MIP-04 encrypted media v2 both ways (W25, nostrc-q3a6) ------------------------- */
+
+/* A 1x1 PNG with no ancillary chunk: what Groundhog sends is these bytes. */
+static GBytes *
+tiny_png(void)
+{
+  static const guint8 png[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+    0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+    0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8,
+    0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00,
+    0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+  };
+  return g_bytes_new_static(png, sizeof png);
+}
+
+typedef struct {
+  gboolean done;
+  GhMessage *message;
+  GError *error;
+} MediaSent;
+
+static gboolean
+media_sent(gpointer data)
+{
+  return ((MediaSent *)data)->done;
+}
+
+static void
+on_media_sent(GObject *source, GAsyncResult *result, gpointer data)
+{
+  MediaSent *sent = data;
+  sent->message = gh_mls_attachments_send_finish(GH_MLS_ATTACHMENTS(source), result, NULL,
+                                                 &sent->error);
+  sent->done = TRUE;
+}
+
+static gboolean
+transfer_settled(gpointer data)
+{
+  GhAttachmentState state = gh_attachment_transfer_get_state(data);
+  return state == GH_ATTACHMENT_STATE_READY || state == GH_ATTACHMENT_STATE_FAILED;
+}
+
+static gboolean
+message_sent(gpointer data)
+{
+  return gh_message_get_status(data) == GH_MESSAGE_STATUS_SENT;
+}
+
+/* The sync result of author's kind 9 with an imeta tag (borrowed). */
+static JsonObject *
+synced_media(JsonObject *synced, const gchar *author)
+{
+  JsonArray *results = json_object_get_array_member(synced, "results");
+  for (guint i = 0; i < json_array_get_length(results); i++) {
+    JsonObject *r = json_array_get_object_element(results, i);
+    if (g_strcmp0(json_object_get_string_member(r, "type"), "application") != 0 ||
+        g_strcmp0(json_object_get_string_member(r, "author"), author) != 0 ||
+        !json_object_has_member(r, "tags"))
+      continue;
+    JsonArray *tags = json_object_get_array_member(r, "tags");
+    for (guint k = 0; k < json_array_get_length(tags); k++) {
+      JsonArray *tag = json_array_get_array_element(tags, k);
+      if (json_array_get_length(tag) > 1 &&
+          g_strcmp0(json_array_get_string_element(tag, 0), "imeta") == 0)
+        return r;
+    }
+  }
+  return NULL;
+}
+
+static gchar *
+json_of_node(JsonNode *node)
+{
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  json_generator_set_root(gen, node);
+  return json_generator_to_data(gen, NULL);
+}
+
+/* White Noise's media: Carol (MDK 0.11) sends a photo as marmot-app does --
+ * encrypted-media-v2 under the group's media exporter, uploaded to the local
+ * Blossom server, one kind 9 with its imeta -- and Groundhog shows it,
+ * fetches nothing until Download, then opens it with the message's epoch,
+ * byte for byte; Groundhog sends one the same way and MDK opens it. */
+static void
+test_white_noise_media(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  g_autofree gchar *group = NULL;
+  GhMlsGroup *ga = white_noise_group(&w, &group);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+
+  BlossomFixture *blossom = blossom_fixture_new();
+  g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
+  g_autoptr(GSettings) settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
+  const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
+  g_settings_set_strv(settings, "blossom-servers", servers);
+  g_settings_set_string(settings, "network-mode", "none");
+  g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
+  GhAttachmentsConfig config = { .settings = settings, .http = http };
+  GhAttachments *attachments = gh_attachments_new(&config);
+  gh_attachments_set_allow_private_hosts(attachments, TRUE);
+  gh_attachments_set_store(attachments, alice->store);
+  GhMlsAttachments *files = gh_mls_attachments_new(attachments);
+  gh_mls_attachments_set_service(files, alice->service);
+
+  /* MDK -> Groundhog. */
+  g_autoptr(GBytes) photo = tiny_png();
+  g_autofree gchar *photo_b64 = g_base64_encode(g_bytes_get_data(photo, NULL),
+                                                g_bytes_get_size(photo));
+  g_autoptr(JsonObject) sent = mdk_call(&driver,
+    "\"cmd\":\"send_media\",\"peer\":\"carol\",\"group\":\"%s\",\"file\":\"%s\","
+    "\"mime\":\"image/png\",\"filename\":\"IMG_0001.png\",\"blossom\":\"%s\","
+    "\"caption\":\"a photo from white noise\",\"dim\":\"1x1\"",
+    group, photo_b64, blossom_fixture_url(blossom));
+  guint64 mdk_epoch = (guint64)json_object_get_int_member(sent, "epoch");
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 1);
+  wait_message(alice, room, "a photo from white noise");
+  GhMessage *received = find_message(alice, room, "a photo from white noise");
+  g_assert_cmpstr(gh_message_get_sender(received), ==, hex[CAROL]);
+  g_assert_cmpuint(gh_message_get_n_attachments(received), ==, 1);
+  g_assert_cmpuint(gh_message_get_rejected_attachments(received), ==, 0);
+  const GhMessageAttachment *theirs = gh_message_get_attachment(received, 0);
+  g_assert_cmpstr(theirs->media_type, ==, "image/png");
+  g_assert_cmpstr(theirs->filename, ==, "IMG_0001.png");
+  g_assert_cmpuint(theirs->width, ==, 1);
+  guint64 epoch = 0;
+  g_assert_true(gh_message_get_mls_epoch(received, &epoch));
+  g_assert_cmpuint(epoch, ==, mdk_epoch);
+  GhAttachmentTransfer *transfer = gh_mls_attachments_lookup(files, received, 0);
+  g_assert_nonnull(transfer);
+  g_assert_cmpint(gh_attachment_transfer_get_state(transfer), ==, GH_ATTACHMENT_STATE_IDLE);
+  drain();
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 0);
+  gh_mls_attachments_download(files, transfer);
+  spin_until(transfer_settled, transfer, "Groundhog opening MDK's photo");
+  g_assert_cmpstr(gh_attachment_transfer_get_error(transfer), ==, NULL);
+  g_assert_cmpint(gh_attachment_transfer_get_state(transfer), ==, GH_ATTACHMENT_STATE_READY);
+  g_assert_true(g_bytes_equal(gh_attachment_transfer_get_plaintext(transfer), photo));
+  g_assert_true(gh_attachment_transfer_get_previewable(transfer));
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
+
+  /* Groundhog -> MDK. */
+  MediaSent mine = { 0 };
+  gh_mls_attachments_send_async(files, ga, photo, "IMG_0002.png", "image/png", NULL, NULL,
+                                on_media_sent, &mine);
+  spin_until(media_sent, &mine, "Groundhog's photo sent");
+  g_assert_no_error(mine.error);
+  spin_until(message_sent, mine.message, "Groundhog's photo accepted by a group relay");
+  g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+  JsonObject *app = synced_media(synced, hex[ALICE]);
+  g_assert_nonnull(app);
+  g_assert_cmpuint((guint64)json_object_get_int_member(app, "epoch"), ==,
+                   gh_mls_group_get_epoch(ga));
+  JsonArray *tags = json_object_get_array_member(app, "tags");
+  JsonNode *imeta = NULL;
+  for (guint k = 0; k < json_array_get_length(tags) && !imeta; k++) {
+    JsonArray *tag = json_array_get_array_element(tags, k);
+    if (g_strcmp0(json_array_get_string_element(tag, 0), "imeta") == 0)
+      imeta = json_array_get_element(tags, k);
+  }
+  g_autofree gchar *imeta_json = json_of_node(imeta);
+  g_test_message("Groundhog's imeta as MDK received it: %s", imeta_json);
+  g_assert_nonnull(strstr(imeta_json, "\"filename photo.png\""));
+  g_autoptr(JsonObject) opened = mdk_call(&driver,
+    "\"cmd\":\"open_media\",\"peer\":\"carol\",\"group\":\"%s\",\"imeta\":%s,"
+    "\"epoch\":%" G_GINT64_FORMAT,
+    group, imeta_json, json_object_get_int_member(app, "epoch"));
+  gsize opened_len = 0;
+  g_autofree guchar *opened_bytes =
+    g_base64_decode(json_object_get_string_member(opened, "file"), &opened_len);
+  GhAttachmentTransfer *own = gh_mls_attachments_lookup(files, mine.message, 0);
+  GBytes *own_plain = gh_attachment_transfer_get_plaintext(own);
+  g_assert_nonnull(own_plain);
+  g_assert_cmpmem(opened_bytes, opened_len, g_bytes_get_data(own_plain, NULL),
+                  g_bytes_get_size(own_plain));
+  g_assert_cmpstr(json_object_get_string_member(opened, "media_type"), ==, "image/png");
+
+  g_clear_object(&mine.message);
+  g_object_unref(files);
+  gh_attachments_set_store(attachments, NULL);
+  g_object_unref(attachments);
+  drain();
+  blossom_fixture_free(blossom);
   world_down(&w);
   mdk_driver_stop(&driver);
 }
@@ -1500,6 +1713,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/mdk-invites-groundhog", test_mdk_invites_groundhog);
   g_test_add_func("/groundhog/mdk011-interop/adopted-welcome", test_adopted_welcome);
   g_test_add_func("/groundhog/mdk011-interop/white-noise-welcome", test_white_noise_welcome);
+  g_test_add_func("/groundhog/mdk011-interop/white-noise-media", test_white_noise_media);
   g_test_add_func("/groundhog/mdk011-interop/adopted-commits", test_adopted_commits);
   g_test_add_func("/groundhog/mdk011-interop/routing-rotation", test_routing_rotation);
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);

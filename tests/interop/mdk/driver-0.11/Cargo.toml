@@ -28,6 +28,10 @@ serde_json = "1"
 hex = "0.4"
 base64 = "0.22"
 sha2 = "0.10"
+# MIP-04 encrypted-media-v2 (send_media, open_media): MDK v0.11.0's workspace
+# versions (marmot-app's media/crypto.rs).
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["rt", "macros", "net", "io-std", "io-util", "time"] }
 tokio-tungstenite = "0.26"

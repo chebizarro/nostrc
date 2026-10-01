@@ -73,6 +73,9 @@ use cgka_traits::app_components::{
     encode_encrypted_media_policy_v2, encode_nostr_routing_v1,
 };
 use cgka_traits::app_event::{MARMOT_APP_EVENT_KIND_CHAT, MarmotAppEvent};
+use cgka_traits::app_components::GROUP_ENCRYPTED_MEDIA_EXPORTER_CACHE_KEY;
+use chacha20poly1305::aead::{AeadInPlace, KeyInit};
+use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use cgka_traits::capabilities::{Capability, CapabilityRequirement, Feature, RequirementLevel};
 use cgka_traits::engine::{CreateGroupRequest, GroupEvent, KeyPackage, SendIntent};
 use cgka_traits::group::ProtocolProfile;
@@ -192,6 +195,191 @@ fn deadline() -> Duration {
 }
 
 // ---- relay client (as in ../driver) --------------------------------------------
+
+/* ---- MIP-04 encrypted-media-v2 (marmot-app 0.11 media/, parity tested) ---------- */
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EncryptedMediaVersion {
+    V2,
+}
+
+impl EncryptedMediaVersion {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::V2 => "encrypted-media-v2",
+        }
+    }
+}
+
+struct MediaLocator {
+    kind: String,
+    value: String,
+}
+
+/// The fields of marmot-app's `MediaAttachmentReference` its `imeta_tag`
+/// writes (the source epoch is the message's, not a tag).
+struct MediaAttachmentReference {
+    locators: Vec<MediaLocator>,
+    ciphertext_sha256: String,
+    plaintext_sha256: String,
+    nonce_hex: String,
+    file_name: String,
+    media_type: String,
+    version: String,
+    dim: Option<String>,
+    thumbhash: Option<String>,
+}
+
+impl MediaAttachmentReference {
+    pub(crate) fn imeta_tag(&self) -> Vec<String> {
+        let mut tag = vec!["imeta".to_owned(), format!("v {}", self.version)];
+        tag.extend(
+            self.locators
+                .iter()
+                .map(|locator| format!("locator {} {}", locator.kind, locator.value)),
+        );
+        tag.extend([
+            format!("ciphertext_sha256 {}", self.ciphertext_sha256),
+            format!("plaintext_sha256 {}", self.plaintext_sha256),
+            format!("nonce {}", self.nonce_hex),
+            format!("m {}", self.media_type),
+            format!("filename {}", self.file_name),
+        ]);
+        if let Some(dim) = self.dim.as_deref() {
+            tag.push(format!("dim {}", dim));
+        }
+        if let Some(thumbhash) = self.thumbhash.as_deref() {
+            tag.push(format!("thumbhash {}", thumbhash));
+        }
+        tag
+    }
+}
+
+fn media_key_info(
+    version: EncryptedMediaVersion,
+    file_hash: &[u8; 32],
+    media_type: &str,
+    file_name: &str,
+) -> Vec<u8> {
+    let version = version.as_str();
+    let mut info =
+        Vec::with_capacity(version.len() + 1 + 32 + 1 + media_type.len() + 1 + file_name.len() + 4);
+    info.extend_from_slice(version.as_bytes());
+    info.push(0);
+    info.extend_from_slice(file_hash);
+    info.push(0);
+    info.extend_from_slice(media_type.as_bytes());
+    info.push(0);
+    info.extend_from_slice(file_name.as_bytes());
+    info.push(0);
+    info.extend_from_slice(b"key");
+    info
+}
+
+fn media_aad(
+    version: EncryptedMediaVersion,
+    file_hash: &[u8; 32],
+    media_type: &str,
+    file_name: &str,
+) -> Vec<u8> {
+    let version = version.as_str();
+    let mut aad =
+        Vec::with_capacity(version.len() + 1 + 32 + 1 + media_type.len() + 1 + file_name.len());
+    aad.extend_from_slice(version.as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(file_hash);
+    aad.push(0);
+    aad.extend_from_slice(media_type.as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(file_name.as_bytes());
+    aad
+}
+
+/// A minimal HTTP/1.1 exchange with a loopback `http://` server (the test's
+/// Blossom fixture), dialled like the relays (MDK_DRIVER_DIAL_HOST): the
+/// status and body; `Connection: close`, bounded by the deadline.
+async fn http_exchange(url: &str, method: &str, headers: &[(&str, String)], body: &[u8]) -> Res<(u16, Vec<u8>)> {
+    let dial = dial_url(url);
+    let rest = dial.strip_prefix("http://").ok_or_else(|| fail(UNSUPPORTED, format!("{url}: only http:// test servers")))?;
+    let (authority, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    let host_header = url.strip_prefix("http://").map(|r| r.split('/').next().unwrap_or(r)).unwrap_or(authority);
+    let exchange = async {
+        let mut stream = TcpStream::connect(authority).await.map_err(as_fail(TRANSPORT, url))?;
+        let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\nContent-Length: {}\r\n", body.len());
+        for (k, v) in headers {
+            head.push_str(&format!("{k}: {v}\r\n"));
+        }
+        head.push_str("\r\n");
+        stream.write_all(head.as_bytes()).await.map_err(as_fail(TRANSPORT, url))?;
+        stream.write_all(body).await.map_err(as_fail(TRANSPORT, url))?;
+        let mut answer = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut answer).await.map_err(as_fail(TRANSPORT, url))?;
+        let split = answer.windows(4).position(|w| w == b"\r\n\r\n")
+            .ok_or_else(|| fail(TRANSPORT, format!("{url}: no HTTP header")))?;
+        let header = String::from_utf8_lossy(&answer[..split]).to_string();
+        let status: u16 = header.split_whitespace().nth(1).and_then(|s| s.parse().ok())
+            .ok_or_else(|| fail(TRANSPORT, format!("{url}: no HTTP status")))?;
+        let mut payload = answer[split + 4..].to_vec();
+        if header.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+            payload = dechunk(&payload).ok_or_else(|| fail(TRANSPORT, format!("{url}: bad chunked body")))?;
+        }
+        Ok::<_, Failure>((status, payload))
+    };
+    tokio::time::timeout(deadline(), exchange).await.map_err(|_| fail(TRANSPORT, format!("{url}: timed out")))?
+}
+
+fn dechunk(mut data: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    loop {
+        let line_end = data.windows(2).position(|w| w == b"\r\n")?;
+        let size = usize::from_str_radix(std::str::from_utf8(&data[..line_end]).ok()?.split(';').next()?.trim(), 16).ok()?;
+        data = &data[line_end + 2..];
+        if size == 0 {
+            return Some(out);
+        }
+        out.extend_from_slice(data.get(..size)?);
+        data = data.get(size + 2..)?;
+    }
+}
+
+async fn http_get(url: &str) -> Res<Vec<u8>> {
+    let (status, body) = http_exchange(url, "GET", &[], &[]).await?;
+    if status != 200 {
+        return Err(fail(TRANSPORT, format!("{url}: HTTP {status}")));
+    }
+    Ok(body)
+}
+
+/// BUD-02 PUT /upload with the kind-24242 authorization marmot-app's Blossom
+/// client signs (t upload, x, expiration), signed by the account's keys.
+async fn blossom_upload(server: &str, blob: &[u8], sha256: &str, keys: &Keys) -> Res<String> {
+    let expiration = Timestamp::now().as_secs() + 300;
+    let auth = EventBuilder::new(Kind::Custom(24242), "Upload blob")
+        .tags([
+            Tag::parse(["t", "upload"]).map_err(as_fail(INTERNAL, "tag"))?,
+            Tag::parse(["x", sha256]).map_err(as_fail(INTERNAL, "tag"))?,
+            Tag::parse(["expiration", &expiration.to_string()]).map_err(as_fail(INTERNAL, "tag"))?,
+        ])
+        .finalize(keys)
+        .map_err(as_fail(INTERNAL, "blossom auth"))?;
+    let header = format!("Nostr {}", base64::engine::general_purpose::STANDARD.encode(auth.as_json()));
+    let url = format!("{server}/upload");
+    let (status, body) = http_exchange(&url, "PUT", &[
+        ("Authorization", header),
+        ("Content-Type", "application/octet-stream".to_string()),
+    ], blob).await?;
+    if status != 200 && status != 201 {
+        return Err(fail(TRANSPORT, format!("{url}: HTTP {status}: {}", String::from_utf8_lossy(&body))));
+    }
+    let descriptor: Value = serde_json::from_slice(&body).map_err(as_fail(TRANSPORT, "blossom descriptor"))?;
+    if descriptor["sha256"].as_str() != Some(sha256) {
+        return Err(fail(TRANSPORT, "the Blossom descriptor names another blob"));
+    }
+    Ok(format!("{server}/{sha256}"))
+}
 
 struct Relay {
     url: String,
@@ -915,7 +1103,8 @@ fn describe_event(event: &GroupEvent) -> Value {
             match MarmotAppEvent::decode(payload) {
                 Ok(app) => json!({ "type": "application", "id": hex::encode(message_id.as_slice()),
                     "author": hex::encode(sender.as_slice()), "inner_pubkey": app.pubkey,
-                    "kind": app.kind, "content": app.content, "epoch": epoch.0 }),
+                    "kind": app.kind, "content": app.content, "tags": app.tags,
+                    "epoch": epoch.0 }),
                 Err(e) => json!({ "type": "application", "author": hex::encode(sender.as_slice()),
                     "undecodable": e.to_string(), "epoch": epoch.0 }),
             }
@@ -959,7 +1148,8 @@ impl Driver {
                     "protocol_profile": "Current",
                     "commands": ["hello", "peer_new", "publish_key_package", "fetch_key_package",
                         "parse_key_package", "create_group", "add_members", "remove_members",
-                        "update_group_data", "self_update", "leave", "send", "sync",
+                        "update_group_data", "self_update", "leave", "send", "send_media",
+                        "open_media", "sync",
                         "fetch_welcomes", "accept_welcome", "state", "group_context"],
                     "configured_as": "marmot-app app_feature_registry() + supported_app_component_ids() at mdk_rev",
                 }))
@@ -1098,6 +1288,8 @@ impl Driver {
             }
             "leave" => self.leave(req).await,
             "send" => self.send(req).await,
+            "send_media" => self.send_media(req).await,
+            "open_media" => self.open_media(req).await,
             "sync" => self.sync(req).await,
             "fetch_welcomes" => self.fetch_welcomes(req).await,
             "accept_welcome" => {
@@ -1407,6 +1599,162 @@ impl Driver {
         }
         self.vectors.record("kind445_application", &name, json!({ "event": event }));
         Ok(json!({ "event_id": event.id.to_hex() }))
+    }
+
+    /// MIP-04 encrypted-media-v2 as marmot-app 0.11 sends it
+    /// (`upload_encrypted_media_attachment`, `AppMessageIntent::Media`): the
+    /// file is sealed with the group's current-epoch media exporter
+    /// (`MLS-Exporter("marmot", "encrypted-media", 32)`), its key and AAD
+    /// from marmot-app's `media_key_info`/`media_aad` (verbatim, parity
+    /// tested), ChaCha20-Poly1305 under a fresh nonce, uploaded to `blossom`
+    /// (BUD-02, a kind-24242 authorization signed by the peer's account, as
+    /// marmot-app's signer does), then one kind-9 app event whose tags are the
+    /// ordered `imeta` (`imeta_tag`, verbatim) and whose content is the
+    /// caption, sent only in that epoch (`expected_epoch`). The plaintext is
+    /// test data, never a secret; the media secret and file key never leave.
+    async fn send_media(&mut self, req: &Value) -> Res<Value> {
+        let group_id = group_id_arg(req)?;
+        let file = base64::engine::general_purpose::STANDARD
+            .decode(str_arg(req, "file")?)
+            .map_err(as_fail(INTERNAL, "file"))?;
+        let media_type = str_arg(req, "mime")?.to_string();
+        let file_name = str_arg(req, "filename")?.to_string();
+        let blossom = str_arg(req, "blossom")?.trim_end_matches('/').to_string();
+        let caption = req.get("caption").and_then(Value::as_str).map(str::to_string);
+        let peer = self.peer(req)?;
+        let (epoch, secret) = peer
+            .session
+            .exporter_secret_with_epoch(&group_id, GROUP_ENCRYPTED_MEDIA_EXPORTER_CACHE_KEY, 32)
+            .map_err(engine_fail("media exporter"))?;
+        let plaintext_hash: [u8; 32] = Sha256::digest(&file).into();
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(&Keys::generate().secret_key().to_secret_bytes()[..12]);
+        let version = EncryptedMediaVersion::V2;
+        let hkdf = hkdf::Hkdf::<Sha256>::from_prk(secret.as_ref())
+            .map_err(|_| fail(INTERNAL, "media secret is not a PRK"))?;
+        let mut key = [0u8; 32];
+        hkdf.expand(&media_key_info(version, &plaintext_hash, &media_type, &file_name), &mut key)
+            .map_err(|_| fail(INTERNAL, "media key derivation"))?;
+        let aad = media_aad(version, &plaintext_hash, &media_type, &file_name);
+        let mut encrypted = file;
+        ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|_| fail(INTERNAL, "media key length"))?
+            .encrypt_in_place(Nonce::from_slice(&nonce), &aad, &mut encrypted)
+            .map_err(|_| fail(INTERNAL, "media encryption"))?;
+        key.iter_mut().for_each(|b| *b = 0);
+        let ciphertext_sha256 = hex::encode(Sha256::digest(&encrypted));
+        let url = blossom_upload(&blossom, &encrypted, &ciphertext_sha256, &peer.keys).await?;
+        let reference = MediaAttachmentReference {
+            locators: vec![MediaLocator { kind: "blossom-v1".to_string(), value: url.clone() }],
+            ciphertext_sha256: ciphertext_sha256.clone(),
+            plaintext_sha256: hex::encode(plaintext_hash),
+            nonce_hex: hex::encode(nonce),
+            file_name,
+            media_type,
+            version: version.as_str().to_string(),
+            dim: req.get("dim").and_then(Value::as_str).map(str::to_string),
+            thumbhash: None,
+        };
+        let imeta = reference.imeta_tag();
+        let now = Timestamp::now().as_secs();
+        let payload = MarmotAppEvent::new(peer.keys.public_key().to_hex(), now,
+                                          MARMOT_APP_EVENT_KIND_CHAT, vec![imeta.clone()],
+                                          caption.unwrap_or_default())
+            .encode()
+            .map_err(as_fail(INTERNAL, "app event"))?;
+        let effects = peer
+            .session
+            .send(SendIntent::AppMessage { group_id: group_id.clone(), payload,
+                                           expected_epoch: Some(epoch) })
+            .await
+            .map_err(engine_fail("send"))?;
+        let msg = effects
+            .publish
+            .iter()
+            .find_map(|w| match w {
+                PublishWork::ApplicationMessage { msg, .. } => Some(msg.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| fail(STATE, format!("no message to publish (queued: {})", effects.queued.len())))?;
+        let event = transport_event(&msg)?;
+        peer.seen.insert(event.id);
+        let name = peer.name.clone();
+        let relays = routing(peer, &group_id)?.relays;
+        let (accepted, answers) = publish_all(&relays, &event, &Keys::generate()).await;
+        if !accepted {
+            return Err(fail(TRANSPORT, format!("no group relay accepted the message: {answers}")));
+        }
+        self.vectors.record("kind445_application", &name, json!({ "event": event }));
+        Ok(json!({ "event_id": event.id.to_hex(), "epoch": epoch.0, "imeta": imeta,
+                   "url": url, "ciphertext_sha256": ciphertext_sha256 }))
+    }
+
+    /// Opens a received v2 attachment as marmot-app does
+    /// (`download_encrypted_media_with_transport`): its blossom-v1 locator
+    /// fetched, the body's SHA-256 checked first, then the AEAD with the
+    /// source epoch's media key, then the plaintext hash. The driver keeps no
+    /// per-epoch secret cache, so the source epoch must be the group's
+    /// current one (`state`), else `unsupported`. Answers the plaintext
+    /// (test data) in base64.
+    async fn open_media(&mut self, req: &Value) -> Res<Value> {
+        let group_id = group_id_arg(req)?;
+        let source_epoch = req.get("epoch").and_then(Value::as_u64)
+            .ok_or_else(|| fail(INTERNAL, "epoch"))?;
+        let tag: Vec<String> = req.get("imeta").and_then(Value::as_array)
+            .ok_or_else(|| fail(INTERNAL, "imeta"))?
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default().to_string())
+            .collect();
+        let field = |name: &str| -> Option<String> {
+            tag.iter().skip(1).find_map(|f| f.strip_prefix(&format!("{name} ")).map(str::to_string))
+        };
+        if tag.first().map(String::as_str) != Some("imeta") ||
+            field("v").as_deref() != Some(EncryptedMediaVersion::V2.as_str()) {
+            return Err(fail(UNSUPPORTED, "not an encrypted-media-v2 imeta"));
+        }
+        let locator = field("locator").ok_or_else(|| fail(CRYPTO, "no locator"))?;
+        let url = locator.strip_prefix("blossom-v1 ").ok_or_else(|| fail(UNSUPPORTED, "locator kind"))?;
+        let want_ct = field("ciphertext_sha256").ok_or_else(|| fail(CRYPTO, "ciphertext_sha256"))?;
+        let want_pt = field("plaintext_sha256").ok_or_else(|| fail(CRYPTO, "plaintext_sha256"))?;
+        let nonce = hex::decode(field("nonce").ok_or_else(|| fail(CRYPTO, "nonce"))?)
+            .map_err(as_fail(CRYPTO, "nonce"))?;
+        let media_type = field("m").ok_or_else(|| fail(CRYPTO, "m"))?;
+        let file_name = field("filename").ok_or_else(|| fail(CRYPTO, "filename"))?;
+        let peer = self.peer(req)?;
+        let (epoch, secret) = peer
+            .session
+            .exporter_secret_with_epoch(&group_id, GROUP_ENCRYPTED_MEDIA_EXPORTER_CACHE_KEY, 32)
+            .map_err(engine_fail("media exporter"))?;
+        if epoch.0 != source_epoch {
+            return Err(fail(UNSUPPORTED, format!(
+                "the driver keeps only the current epoch's media secret ({} != {source_epoch})", epoch.0)));
+        }
+        let mut body = http_get(url).await?;
+        if hex::encode(Sha256::digest(&body)) != want_ct.to_ascii_lowercase() {
+            return Err(fail(CRYPTO, "ciphertext hash mismatch"));
+        }
+        let plaintext_hash: [u8; 32] = hex::decode(&want_pt).map_err(as_fail(CRYPTO, "plaintext_sha256"))?
+            .try_into().map_err(|_| fail(CRYPTO, "plaintext_sha256 length"))?;
+        let version = EncryptedMediaVersion::V2;
+        let hkdf = hkdf::Hkdf::<Sha256>::from_prk(secret.as_ref())
+            .map_err(|_| fail(INTERNAL, "media secret is not a PRK"))?;
+        let mut key = [0u8; 32];
+        hkdf.expand(&media_key_info(version, &plaintext_hash, &media_type, &file_name), &mut key)
+            .map_err(|_| fail(INTERNAL, "media key derivation"))?;
+        let aad = media_aad(version, &plaintext_hash, &media_type, &file_name);
+        if nonce.len() != 12 {
+            return Err(fail(CRYPTO, "nonce length"));
+        }
+        let opened = ChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|_| fail(INTERNAL, "media key length"))?
+            .decrypt_in_place(Nonce::from_slice(&nonce), &aad, &mut body);
+        key.iter_mut().for_each(|b| *b = 0);
+        opened.map_err(|_| fail(CRYPTO, "media decryption failed"))?;
+        if Sha256::digest(&body).as_slice() != plaintext_hash {
+            return Err(fail(CRYPTO, "plaintext hash mismatch"));
+        }
+        Ok(json!({ "file": base64::engine::general_purpose::STANDARD.encode(&body),
+                   "media_type": media_type, "filename": file_name }))
     }
 
     /// Every kind 445 of the group on its relays, ingested oldest first as a
@@ -1775,6 +2123,45 @@ mod parity {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect()
+    }
+
+    fn mdk_file(relative: &str) -> String {
+        let home = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+            .expect("CARGO_HOME or HOME");
+        let checkouts = home.join("git/checkouts");
+        let short = &MDK_REV[..7];
+        let found: Vec<PathBuf> = std::fs::read_dir(&checkouts)
+            .unwrap_or_else(|e| panic!("{}: {e}", checkouts.display()))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mdk-"))
+            .map(|e| e.path().join(short).join(relative))
+            .filter(|p| p.is_file())
+            .collect();
+        let path = found.first().unwrap_or_else(|| panic!("no {relative} at {short}"));
+        std::fs::read_to_string(path).expect("MDK source at MDK_REV")
+    }
+
+    /// send_media/open_media seal and open with marmot-app's own v2 key
+    /// info, AAD and imeta writer (media/crypto.rs, media/mod.rs at MDK_REV).
+    #[test]
+    fn media_v2_is_marmot_apps() {
+        let crypto = mdk_file("crates/marmot-app/src/media/crypto.rs");
+        let media = mdk_file("crates/marmot-app/src/media/mod.rs");
+        for sig in ["fn media_key_info(", "fn media_aad("] {
+            assert_eq!(body(DRIVER, sig), body(&crypto, sig), "{sig}");
+        }
+        let sig = "fn imeta_tag(&self) -> Vec<String>";
+        assert_eq!(body(DRIVER, sig), body(&media, sig));
+        // The key is HKDF-Expand(PRK = the media exporter, info, 32), the
+        // cipher ChaCha20-Poly1305: marmot-app's derive_media_file_key.
+        let derive = body(&crypto, "fn derive_media_file_key(");
+        assert!(derive.contains("Hkdf::<Sha256>::from_prk(media_secret)"));
+        assert!(derive.contains("hkdf.expand(&media_key_info(version,file_hash,media_type,file_name),&mutkey,)"));
+        assert!(media.contains("ChaCha20Poly1305::new_from_slice(&file_key)"));
+        assert!(media.contains("GROUP_ENCRYPTED_MEDIA_EXPORTER_CACHE_KEY") ||
+                mdk_file("crates/marmot-app/src/client/mod.rs").contains("GROUP_ENCRYPTED_MEDIA_EXPORTER_CACHE_KEY,"));
     }
 
     #[test]

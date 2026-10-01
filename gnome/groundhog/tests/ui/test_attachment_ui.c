@@ -1409,6 +1409,14 @@ static const GhAttachmentUiGroups stub_groups = {
   .cancel = stub_cancel,
 };
 
+static gboolean
+saved_toast(gpointer data)
+{
+  Fixture *f = data;
+  const gchar *t = gh_attachment_ui_get_last_toast(f->s.window);
+  return t && g_str_has_prefix(t, "Saved ");
+}
+
 /* A decrypted kind-9 group message from key 2 with one file (as the MLS
  * layer describes it) and one rejected reference. */
 static GhMessage *
@@ -1523,9 +1531,27 @@ test_group_delegate(void)
   g_autoptr(GBytes) plain = g_bytes_new_static("\x89PNG\r\n\x1a\n", 8);
   gh_attachment_transfer_succeed(stub.transfer, plain, FALSE, FALSE);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(card), "attachment.save", NULL));
-  gh_test_run_until_idle();
+  /* The write is asynchronous: its toast first, so the next one is ours. */
+  gh_test_spin_until(saved_toast, &f);
   g_assert_cmpuint(f.save_asked, ==, 1);
   g_assert_cmpstr(f.save_name, ==, "_.._.config_autostart_x.png");
+
+  /* A file under a GVfs FUSE mount is a remote location (SMB, SFTP...)
+   * under a native path: refused before anything is read, here as in a
+   * NIP-17 conversation. */
+  g_autofree gchar *share = g_build_filename(g_get_user_runtime_dir(), "gvfs",
+                                             "smb-share:server=nas,share=photos", NULL);
+  g_assert_cmpint(g_mkdir_with_parents(share, 0700), ==, 0);
+  g_autofree gchar *remote = g_build_filename(share, "holiday.jpg", NULL);
+  g_assert_true(g_file_set_contents(remote, "\xff\xd8\xff", 3, NULL));
+  g_autoptr(GFile) remote_file = g_file_new_for_path(remote);
+  guint sends = stub.sends;
+  gh_attachment_ui_offer_file(f.s.window, remote_file);
+  gh_test_run_until_idle();
+  g_assert_cmpstr(gh_attachment_ui_get_last_toast(f.s.window), ==,
+                  "Only files on this device can be sent");
+  g_assert_null(gh_attachment_ui_get_sheet(f.s.window));
+  g_assert_cmpuint(stub.sends, ==, sends);
 
   gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
   g_assert_false(gh_composer_get_can_attach(composer));
@@ -1542,7 +1568,7 @@ test_env_up(void)
   gchar *root = g_dir_make_tmp("groundhog-attachment-ui-xdg-XXXXXX", NULL);
   g_assert_nonnull(root);
   static const gchar *const vars[] = { "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
-                                       "XDG_CONFIG_HOME" };
+                                       "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR" };
   for (guint i = 0; i < G_N_ELEMENTS(vars); i++) {
     g_autofree gchar *dir = g_build_filename(root, vars[i], NULL);
     g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
