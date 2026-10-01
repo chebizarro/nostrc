@@ -27,7 +27,8 @@ typedef struct {
   GhRelayScope *scope;
   guint timer;
   guint phase;            /* 1: discovery relays, 2: the person's write relays */
-  GPtrArray *candidates;  /* kind-30443 JSON */
+  gboolean evidence;      /* a verification lookup: kind 443 too, every candidate back */
+  GPtrArray *candidates;  /* kind-30443 (and, for evidence, 443) JSON */
   GHashTable *candidate_ids;
   gchar *relay_list;      /* the newest kind 10002 by the person */
   gint64 relay_list_at;
@@ -136,6 +137,18 @@ finish(GTask *task)
     return;
   if (!still_current(task)) {
     fail(task, G_IO_ERROR_CANCELLED, "The KeyPackage lookup was cancelled");
+    return;
+  }
+  if (lookup->evidence) {
+    /* Nobody answered: no verdict either way (offline is not "not found"). */
+    if (lookup->answered == 0 && lookup->candidates->len == 0) {
+      fail(task, G_IO_ERROR_HOST_UNREACHABLE, "No relay answered the KeyPackage lookup");
+      return;
+    }
+    GPtrArray *found = g_ptr_array_ref(lookup->candidates);
+    lookup_done(lookup);
+    g_task_return_pointer(task, found, (GDestroyNotify)g_ptr_array_unref);
+    g_object_unref(task);
     return;
   }
   if (lookup->candidates->len == 0) {
@@ -254,7 +267,7 @@ keep_event(Lookup *lookup, const gchar *json, const gchar *id)
   gint kind = nostr_event_get_kind(event);
   gint64 created_at = nostr_event_get_created_at(event);
   nostr_event_free(event);
-  if (kind == MARMOT_KIND_KEY_PACKAGE) {
+  if (kind == MARMOT_KIND_KEY_PACKAGE || (lookup->evidence && kind == GH_MLS_KIND_LEGACY_KEY_PACKAGE)) {
     if (lookup->candidates->len >= MAX_CANDIDATES || !id ||
         g_hash_table_contains(lookup->candidate_ids, id))
       return;
@@ -318,8 +331,16 @@ start_phase(GTask *task, const gchar *const *urls, gint phase)
   NostrFilter *filter = nostr_filter_new();
   int both[] = { 10002, MARMOT_KIND_KEY_PACKAGE };
   int only[] = { MARMOT_KIND_KEY_PACKAGE };
-  if (phase == 1)
+  /* Verification also reads the older kind 443 (never kind 10051: the
+   * adopted spec dropped it). */
+  int both_evidence[] = { 10002, MARMOT_KIND_KEY_PACKAGE, GH_MLS_KIND_LEGACY_KEY_PACKAGE };
+  int only_evidence[] = { MARMOT_KIND_KEY_PACKAGE, GH_MLS_KIND_LEGACY_KEY_PACKAGE };
+  if (phase == 1 && lookup->evidence)
+    nostr_filter_set_kinds(filter, both_evidence, G_N_ELEMENTS(both_evidence));
+  else if (phase == 1)
     nostr_filter_set_kinds(filter, both, G_N_ELEMENTS(both));
+  else if (lookup->evidence)
+    nostr_filter_set_kinds(filter, only_evidence, G_N_ELEMENTS(only_evidence));
   else
     nostr_filter_set_kinds(filter, only, G_N_ELEMENTS(only));
   const char *authors[] = { lookup->pubkey };
@@ -375,15 +396,10 @@ on_cancelled(GCancellable *cancellable, gpointer data)
   g_idle_add_full(G_PRIORITY_DEFAULT, cancel_idle, g_object_ref(data), g_object_unref);
 }
 
-void
-gh_mls_key_package_lookup_async(GhAccountController *accounts,
-                                const gchar *const *discovery_relays, const gchar *pubkey,
-                                guint deadline, GCancellable *cancellable,
-                                GAsyncReadyCallback callback, gpointer user_data)
+static void
+lookup_start(GTask *task, GhAccountController *accounts, const gchar *const *discovery_relays,
+             const gchar *pubkey, guint deadline, gboolean evidence, GCancellable *cancellable)
 {
-  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
-  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
-  g_task_set_source_tag(task, gh_mls_key_package_lookup_async);
   g_autofree gchar *lower = pubkey ? g_ascii_strdown(pubkey, -1) : NULL;
   if (!lower_hex64(lower)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -392,6 +408,7 @@ gh_mls_key_package_lookup_async(GhAccountController *accounts,
     return;
   }
   Lookup *lookup = g_new0(Lookup, 1);
+  lookup->evidence = evidence;
   lookup->accounts = g_object_ref(accounts);
   lookup->generation = gh_account_controller_get_generation(accounts);
   lookup->pubkey = g_steal_pointer(&lower);
@@ -411,6 +428,37 @@ gh_mls_key_package_lookup_async(GhAccountController *accounts,
                                                    task, NULL);
   }
   start_phase(task, discovery_relays, 1);
+}
+
+void
+gh_mls_key_package_lookup_async(GhAccountController *accounts,
+                                const gchar *const *discovery_relays, const gchar *pubkey,
+                                guint deadline, GCancellable *cancellable,
+                                GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_mls_key_package_lookup_async);
+  lookup_start(task, accounts, discovery_relays, pubkey, deadline, FALSE, cancellable);
+}
+
+void
+gh_mls_key_package_evidence_lookup_async(GhAccountController *accounts,
+                                         const gchar *const *relays, const gchar *pubkey,
+                                         guint deadline, GCancellable *cancellable,
+                                         GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_mls_key_package_evidence_lookup_async);
+  lookup_start(task, accounts, relays, pubkey, deadline, TRUE, cancellable);
+}
+
+GPtrArray *
+gh_mls_key_package_evidence_lookup_finish(GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, NULL), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
 }
 
 GhMlsKeyPackage *

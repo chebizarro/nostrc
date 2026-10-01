@@ -1566,7 +1566,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     AND GROUNDHOG_DM_SEND_SOURCES)
   message(STATUS "Groundhog MLS service: enabled")
   set(GROUNDHOG_MLS_SERVICE_SOURCES src/mls/gh-mls-service.c src/mls/gh-mls-key-packages.c
-    src/store/gh-store-mls.c)
+    src/store/gh-store-mls.c src/store/gh-store-mls-identity.c)
   add_library(groundhog-mls-service STATIC ${GROUNDHOG_MLS_SERVICE_SOURCES})
   target_include_directories(groundhog-mls-service PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
@@ -1593,10 +1593,13 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       src/store/gh-store-marmot.c src/store/gh-mls-commits.c
       src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
       ${GROUNDHOG_DM_SEND_SOURCES})
+    # libmarmot's own src/ too: tests/mls/mls-forge.h builds what only a
+    # modified client sends (a forged account proof, nostrc-6ukh).
     target_include_directories(test-groundhog-mls-service PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy)
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../libmarmot/src)
     target_link_libraries(test-groundhog-mls-service PRIVATE groundhog-store-testhooks marmot
       groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
@@ -1638,9 +1641,10 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
   # JSON-lines driver of tests/interop/mdk/driver, run as a Docker container
   # so no host Rust toolchain is needed. groundhog-mdk-interop-image builds
   # the image (a CTest fixture); MDK_INTEROP_DRIVER replaces it with another
-  # command line, e.g. a natively built driver. The legacy-mode cases use the
-  # GH_MLS_TEST_HOOKS switch of gh-mls-service.h, compiled into this test
-  # only. Evidence: docs/analysis/marmot-mdk-interop-2026-09-30.md.
+  # command line, e.g. a natively built driver. Default-mode cases admit MDK
+  # 0.8 members (nostrc-6ukh); the strict cases set the
+  # only-join-verified-mls-groups preference. Evidence:
+  # docs/analysis/marmot-mdk-interop-2026-09-30.md.
   option(BUILD_MDK_INTEROP "Build and run the Groundhog/MDK 0.8 interop test (needs Docker)"
          OFF)
   set(MDK_INTEROP_DRIVER "" CACHE STRING
@@ -1663,6 +1667,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
       groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_JSON)
+    # Case 3d forces a MARMOT_ERR_EVENT_RATE refusal (nostrc-2um6).
     target_compile_definitions(test-groundhog-mdk-interop PRIVATE GH_MLS_TEST_HOOKS=1)
     target_compile_options(test-groundhog-mdk-interop PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-mdk-interop)

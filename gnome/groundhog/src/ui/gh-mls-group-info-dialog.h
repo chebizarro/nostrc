@@ -64,6 +64,14 @@ struct _GhMlsInviteePicker *gh_mls_group_info_dialog_get_add_picker(GhMlsGroupIn
  * not listed; *removable: whether its Remove is offered. */
 const gchar *gh_mls_group_info_dialog_get_member(GhMlsGroupInfoDialog *self,
                                                  const gchar *pubkey, gboolean *removable);
+/* The identity badge of pubkey's row ("Identity not verified", "" when it
+ * shows none), NULL when not listed; *out_explanation: the explanation
+ * ("Added by …"), or NULL (nostrc-6ukh). */
+const gchar *gh_mls_group_info_dialog_get_member_identity(GhMlsGroupInfoDialog *self,
+                                                          const gchar *pubkey,
+                                                          const gchar **out_explanation);
+/* The Messages row's status (read state, ended, or a refused change). */
+const gchar *gh_mls_group_info_dialog_get_messages_status(GhMlsGroupInfoDialog *self);
 AdwAlertDialog *gh_mls_group_info_dialog_get_leave_dialog(GhMlsGroupInfoDialog *self);
 AdwAlertDialog *gh_mls_group_info_dialog_get_remove_dialog(GhMlsGroupInfoDialog *self);
 void gh_mls_group_info_dialog_set_rename(GhMlsGroupInfoDialog *self, const gchar *name,

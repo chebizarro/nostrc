@@ -12,20 +12,26 @@
  *     app_data_dictionary), creates a group with it, Groundhog joins from
  *     the Welcome, messages and Commits (rename, self-update, removal) flow
  *     both ways.
- *  1b. An MDK group holding a second MDK member: by default Groundhog lists
- *     the invitation and accepting it fails with NEEDS_UPDATE (the unproven
- *     leaf is not the sender's; listing it at all is nostrc-ho1z); legacy
- *     mode joins and talks with both.
+ * Since nostrc-6ukh Groundhog's default admits MDK 0.8 members (no account
+ * proof) in these legacy-profile groups, and marks the ones it can't
+ * confirm from a KeyPackage they published; the "strict" cases turn on
+ * the preference that requires proofs (only-join-verified-mls-groups).
+ *  1b. An MDK group holding a second MDK member: by default Groundhog joins
+ *     and talks with both, Dave confirmed from his KeyPackage; strict, the
+ *     invitation is listed and accepting it fails with NEEDS_UPDATE (the
+ *     unproven leaf is not the sender's; listing it at all is nostrc-ho1z).
  *  1c. An MDK admin adds a second MDK member to a group Groundhog is in: by
- *     default Groundhog refuses the Commit and stalls at the old epoch
- *     (asserted as today's behaviour; its UI is not honest yet, nostrc-prrl).
- *  2a. Groundhog invites an MDK user by default: the New Group check row and
+ *     default Groundhog follows the Commit and reads what comes after;
+ *     strict, it refuses the Commit and says so ("change-refused"), never
+ *     that it waits for an earlier change (nostrc-prrl), and turning the
+ *     preference off applies it.
+ *  2a. Strict: Groundhog invites an MDK user: the New Group check row and
  *     the service say NEEDS_UPDATE, and nothing is created or published.
- *  2b. Legacy mode (GH_MLS_TEST_HOOKS): Groundhog invites MDK, both sides
- *     commit (rename, admins, add, remove) and converge; a second Groundhog
- *     account (Bob) joins through MDK's Add.
+ *  2b. By default Groundhog invites MDK (the check row says so, ready), both
+ *     sides commit (rename, admins, add, remove) and converge; a second
+ *     Groundhog account (Bob) joins through MDK's Add.
  *  3a. An MDK member leaves (nostrc-2um6; MIP-03 "Leaving a group"): a
- *     Groundhog group (legacy mode: the MDK leaf is unproven) is made alone
+ *     Groundhog group (default mode admits the unproven MDK leaf) is made alone
  *     and does not require SelfRemove (MDK's rule), so MDK leaves with a
  *     Remove of itself, a PrivateMessage, which Groundhog (the admin)
  *     commits after its jitter; MDK follows and is out.
@@ -45,6 +51,15 @@
 #include "gh-mls-invitee.h"
 
 enum { DAVE = STRANGER };
+
+#define VERIFIED_ONLY "only-join-verified-mls-groups"
+
+static gboolean
+member_settled(gpointer data)
+{
+  GhMlsGroup *group = data;
+  return gh_mls_group_get_member_identity(group, hex[DAVE], NULL) != GH_MLS_MEMBER_CHECKING;
+}
 
 static MdkDriver driver;
 
@@ -430,7 +445,7 @@ mdk_group_with_dave(World *w, gchar **out_alice_wrap)
 }
 
 static void
-test_mdk_group_unproven_member_default(void)
+test_mdk_group_unproven_member_strict(void)
 {
   if (!mdk_up())
     return;
@@ -438,6 +453,7 @@ test_mdk_group_unproven_member_default(void)
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
+  g_settings_set_boolean(alice->settings, VERIFIED_ONLY, TRUE);
   spin_until(key_package_published, alice, "Alice's KeyPackage");
   accept_contact(alice, CAROL);
   g_autofree gchar *wrap = NULL;
@@ -457,7 +473,7 @@ test_mdk_group_unproven_member_default(void)
   g_autofree gchar *copy = gh_mls_error_copy(error);
   g_autofree gchar *reason = NULL;
   gint state = welcome_record(alice, wrap, &reason);
-  g_test_message("Groundhog (default) accepting an MDK Welcome with a second MDK member: %s %d "
+  g_test_message("Groundhog (strict) accepting an MDK Welcome with a second MDK member: %s %d "
                  "\"%s\"; the UI says \"%s\"; Welcome state %d, \"%s\"",
                  g_quark_to_string(error->domain), error->code, error->message, copy, state,
                  reason ? reason : "");
@@ -479,11 +495,10 @@ test_mdk_group_unproven_member_default(void)
 }
 
 static void
-test_mdk_group_unproven_member_legacy(void)
+test_mdk_group_unproven_member_default(void)
 {
   if (!mdk_up())
     return;
-  gh_mls_service_test_allow_unproven_members(TRUE);
   World w;
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
@@ -510,8 +525,19 @@ test_mdk_group_unproven_member_legacy(void)
   g_autoptr(JsonObject) dave_sync = mdk_sync("dave", group);
   g_assert_true(synced_message(dave_sync, hex[ALICE], "alice to everyone"));
 
+  /* Dave (no proof) was in the group before Alice: confirmed from the
+   * KeyPackage he published, who added him not known (nostrc-6ukh). */
+  spin_until(member_settled, ga, "Dave's identity check");
+  g_autofree gchar *by = NULL;
+  g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[DAVE], &by), ==,
+                  GH_MLS_MEMBER_VERIFIED);
+  g_assert_null(by);
+  /* Carol's creator leaf comes from no KeyPackage she published: what
+   * Groundhog can say of her is recorded, not assumed. */
+  g_test_message("Groundhog's view of the MDK group's creator (no proof): identity %d",
+                 gh_mls_group_get_member_identity(ga, hex[CAROL], NULL));
+
   world_down(&w);
-  gh_mls_service_test_allow_unproven_members(FALSE);
   mdk_driver_stop(&driver);
 }
 
@@ -523,8 +549,15 @@ unreadable_positive(gpointer data)
   return gh_mls_group_get_unreadable(data) > 0;
 }
 
+static gboolean
+change_refused(gpointer data)
+{
+  return gh_mls_group_get_change_refused(data);
+}
+
+/* strict: Alice requires proofs (nostrc-prrl); else the default. */
 static void
-test_mdk_adds_unproven_member(void)
+mdk_adds_unproven_member(gboolean strict)
 {
   if (!mdk_up())
     return;
@@ -532,6 +565,7 @@ test_mdk_adds_unproven_member(void)
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
+  g_settings_set_boolean(alice->settings, VERIFIED_ONLY, strict);
   spin_until(key_package_published, alice, "Alice's KeyPackage");
   accept_contact(alice, CAROL);
   mdk_peer("carol", CAROL);
@@ -557,27 +591,64 @@ test_mdk_adds_unproven_member(void)
     "\"welcome_relays\":[\"%s\"]", group, dave_kp, w.x.url);
   mdk_send("carol", group, "carol after adding dave");
 
-  /* Groundhog (default) refuses that Commit: it stays in the old epoch for
-   * good and holds what follows as unreadable, still saying it waits for an
-   * earlier change (nostrc-prrl). */
+  if (!strict) {
+    /* Default (nostrc-6ukh): Groundhog follows Carol's Add and reads on;
+     * Dave is confirmed from his KeyPackage, added by Carol. */
+    wait_message(alice, room, "carol after adding dave");
+    assert_converged(ga, added);
+    spin_until(member_settled, ga, "Dave's identity check");
+    g_autofree gchar *by = NULL;
+    g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[DAVE], &by), ==,
+                    GH_MLS_MEMBER_VERIFIED);
+    g_assert_cmpstr(by, ==, hex[CAROL]);
+    g_assert_false(gh_mls_group_get_change_refused(ga));
+    world_down(&w);
+    mdk_driver_stop(&driver);
+    return;
+  }
+
+  /* Strict: Groundhog refuses that Commit for good, says so, and never
+   * that it waits for an earlier change (nostrc-prrl). */
+  spin_until(change_refused, ga, "Groundhog refusing the MDK Add");
   spin_until(unreadable_positive, ga, "Groundhog holding the MDK group's traffic");
   drain();
   g_auto(GStrv) members = gh_mls_group_dup_members(ga);
-  g_test_message("Groundhog (default) after an MDK Add of an unproven member: epoch %" G_GUINT64_FORMAT
+  g_test_message("Groundhog (strict) after an MDK Add of an unproven member: epoch %" G_GUINT64_FORMAT
                  " (MDK %" G_GINT64_FORMAT "), members %u, unreadable %u, decrypt-pending %d, "
-                 "active %d, end %d",
+                 "change-refused %d, active %d, end %d; the view says \"%s\"",
                  gh_mls_group_get_epoch(ga), json_object_get_int_member(added, "epoch"),
                  g_strv_length(members), gh_mls_group_get_unreadable(ga),
-                 gh_mls_group_get_decrypt_pending(ga), gh_mls_group_get_active(ga),
-                 gh_mls_group_get_end(ga));
+                 gh_mls_group_get_decrypt_pending(ga), gh_mls_group_get_change_refused(ga),
+                 gh_mls_group_get_active(ga), gh_mls_group_get_end(ga),
+                 gh_mls_refused_copy(TRUE));
   g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, epoch);
   g_assert_null(find_message(alice, room, "carol after adding dave"));
+  g_assert_false(gh_mls_group_get_decrypt_pending(ga));
+  g_assert_true(gh_mls_group_get_active(ga));
+
+  /* The preference off: the change applies and the message is read. */
+  g_settings_set_boolean(alice->settings, VERIFIED_ONLY, FALSE);
+  wait_message(alice, room, "carol after adding dave");
+  g_assert_false(gh_mls_group_get_change_refused(ga));
+  assert_converged(ga, added);
 
   world_down(&w);
   mdk_driver_stop(&driver);
 }
 
-/* ---- 2a. Groundhog invites an MDK user, default -------------------------------------- */
+static void
+test_mdk_adds_unproven_member(void)
+{
+  mdk_adds_unproven_member(FALSE);
+}
+
+static void
+test_mdk_adds_unproven_member_strict(void)
+{
+  mdk_adds_unproven_member(TRUE);
+}
+
+/* ---- 2a. Groundhog invites an MDK user, strict ---------------------------------------- */
 
 typedef struct {
   gboolean done;
@@ -601,7 +672,7 @@ on_checked(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
-test_groundhog_invites_mdk_default(void)
+test_groundhog_invites_mdk_strict(void)
 {
   if (!mdk_up())
     return;
@@ -609,6 +680,7 @@ test_groundhog_invites_mdk_default(void)
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
+  g_settings_set_boolean(alice->settings, VERIFIED_ONLY, TRUE);
   spin_until(key_package_published, alice, "Alice's KeyPackage");
   mdk_peer("carol", CAROL);
   g_autofree gchar *carol_kp = mdk_publish_key_package(&w, "carol");
@@ -640,7 +712,7 @@ test_groundhog_invites_mdk_default(void)
   spin_until(op_done, &wait, "the refused creation");
   g_assert_null(wait.result);
   g_autofree gchar *copy = gh_mls_error_copy(wait.error);
-  g_test_message("Groundhog (default) inviting an MDK 0.8 user: %s %d \"%s\"; the UI says \"%s\"",
+  g_test_message("Groundhog (strict) inviting an MDK 0.8 user: %s %d \"%s\"; the UI says \"%s\"",
                  g_quark_to_string(wait.error->domain), wait.error->code, wait.error->message,
                  copy);
   g_assert_error(wait.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NEEDS_UPDATE);
@@ -653,14 +725,13 @@ test_groundhog_invites_mdk_default(void)
   mdk_driver_stop(&driver);
 }
 
-/* ---- 2b. Groundhog invites MDK, legacy mode -------------------------------------------- */
+/* ---- 2b. Groundhog invites MDK, default ------------------------------------------------- */
 
 static void
-test_groundhog_invites_mdk_legacy(void)
+test_groundhog_invites_mdk_default(void)
 {
   if (!mdk_up())
     return;
-  gh_mls_service_test_allow_unproven_members(TRUE);
   World w;
   const guint keys[] = { ALICE, BOB };
   world_up(&w, keys, G_N_ELEMENTS(keys));
@@ -670,6 +741,14 @@ test_groundhog_invites_mdk_legacy(void)
   mdk_peer("carol", CAROL);
   g_autofree gchar *carol_kp = mdk_publish_key_package(&w, "carol");
   accept_contact(alice, CAROL);
+
+  /* The New Group check row: she can be invited (nostrc-6ukh). */
+  CheckWait check = { 0 };
+  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, on_checked,
+                             &check);
+  spin_until(check_done, &check, "the KeyPackage check");
+  g_assert_cmpint(check.state, ==, GH_MLS_INVITEE_READY_UNPROVEN);
+  g_assert_true(gh_mls_invitee_can_invite(check.state));
 
   /* Groundhog creates the group and invites Carol (MDK). */
   GhMlsGroup *ga = create_group(alice, "Made by Groundhog", (const guint[]){ CAROL }, 1);
@@ -763,7 +842,6 @@ test_groundhog_invites_mdk_legacy(void)
   }
 
   world_down(&w);
-  gh_mls_service_test_allow_unproven_members(FALSE);
   mdk_driver_stop(&driver);
 }
 
@@ -788,7 +866,8 @@ on_member_left(GhMlsGroup *group, const gchar *pubkey, gpointer data)
   g_ptr_array_add(data, g_strdup(pubkey));
 }
 
-/* 3a: Groundhog creates the group (legacy mode) with Carol (MDK). Groundhog
+/* 3a: Groundhog creates the group with Carol (MDK; her leaf has no proof,
+ * which the default admits in a legacy group, nostrc-6ukh). Groundhog
  * makes its groups alone, so they do not require SelfRemove (MDK's rule for
  * an empty invitee list, review L1), and MDK 0.8's leave_group() is then a
  * Remove of itself sent as a PrivateMessage. Groundhog, the admin, keeps it,
@@ -800,7 +879,6 @@ test_mdk_member_leaves(void)
 {
   if (!mdk_up())
     return;
-  gh_mls_service_test_allow_unproven_members(TRUE);
   World w;
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
@@ -841,7 +919,6 @@ test_mdk_member_leaves(void)
   send_accepted(alice, ga, "after carol left");
   g_signal_handlers_disconnect_by_data(ga, gone);
   world_down(&w);
-  gh_mls_service_test_allow_unproven_members(FALSE);
   mdk_driver_stop(&driver);
 }
 
@@ -923,7 +1000,6 @@ test_groundhog_leaves_mdk_admin(void)
 {
   if (!mdk_up())
     return;
-  gh_mls_service_test_allow_unproven_members(TRUE);
   World w;
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
@@ -991,7 +1067,6 @@ test_groundhog_leaves_mdk_admin(void)
     g_assert_true(synced_message(synced, hex[ALICE], "still here"));
   }
   world_down(&w);
-  gh_mls_service_test_allow_unproven_members(FALSE);
   mdk_driver_stop(&driver);
 }
 
@@ -1065,14 +1140,16 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk-interop/mdk-invites-groundhog", test_mdk_invites_groundhog);
   g_test_add_func("/groundhog/mdk-interop/mdk-group-unproven-member-default",
                   test_mdk_group_unproven_member_default);
-  g_test_add_func("/groundhog/mdk-interop/mdk-group-unproven-member-legacy",
-                  test_mdk_group_unproven_member_legacy);
+  g_test_add_func("/groundhog/mdk-interop/mdk-group-unproven-member-strict",
+                  test_mdk_group_unproven_member_strict);
   g_test_add_func("/groundhog/mdk-interop/mdk-adds-unproven-member",
                   test_mdk_adds_unproven_member);
+  g_test_add_func("/groundhog/mdk-interop/mdk-adds-unproven-member-strict",
+                  test_mdk_adds_unproven_member_strict);
   g_test_add_func("/groundhog/mdk-interop/groundhog-invites-mdk-default",
                   test_groundhog_invites_mdk_default);
-  g_test_add_func("/groundhog/mdk-interop/groundhog-invites-mdk-legacy",
-                  test_groundhog_invites_mdk_legacy);
+  g_test_add_func("/groundhog/mdk-interop/groundhog-invites-mdk-strict",
+                  test_groundhog_invites_mdk_strict);
   g_test_add_func("/groundhog/mdk-interop/mdk-member-leaves", test_mdk_member_leaves);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves", test_groundhog_leaves);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves-mdk-admin",

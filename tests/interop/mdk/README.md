@@ -35,9 +35,14 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
 
 - `groundhog-mdk-interop-image` (a CTest fixture) runs
   `docker build -t nostrc-mdk-interop:0.8.0 tests/interop/mdk/driver`.
-- `groundhog-mdk-interop` then runs the eight cases of
-  `gnome/groundhog/tests/mls/test_mdk_interop.c` (since W24 also an MDK
-  member leaving and Groundhog leaving, nostrc-2um6).
+- `groundhog-mdk-interop` then runs the eleven cases of
+  `gnome/groundhog/tests/mls/test_mdk_interop.c`. Since W24 (nostrc-6ukh)
+  Groundhog's default mode admits MDK 0.8 members, which have no account
+  proof. The `-strict` cases set the `only-join-verified-mls-groups`
+  preference and assert the refusals. These include nostrc-prrl: an MDK
+  admin's Add of an MDK member is shown as refused, never as a wait, and
+  applies once the preference is off. Also since W24: an MDK member leaving
+  and Groundhog leaving (nostrc-2um6).
 - The container reaches the test's relays on the host's 127.0.0.1:
   - Linux: `--network host`.
   - macOS (Docker Desktop): `MDK_DRIVER_DIAL_HOST=host.docker.internal`.

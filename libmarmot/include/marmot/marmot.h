@@ -178,7 +178,7 @@ MarmotError marmot_create_key_package(Marmot *m,
  *
  * Returns: MARMOT_OK on success; MARMOT_ERR_KEY_PACKAGE_IDENTITY when the
  *   instance holds no account proof for @nostr_pubkey (unless
- *   MarmotConfig.allow_unproven_members, which yields a legacy KeyPackage
+ *   MarmotConfig.allow_unproven_self, which yields a legacy KeyPackage
  *   without one)
  */
 MarmotError marmot_create_key_package_unsigned(Marmot *m,
@@ -483,10 +483,11 @@ MarmotError marmot_select_key_package_event_for_profile(const char **event_jsons
  *
  * Account binding (nostrc-7vyi): the creator's leaf carries the instance's
  * account proof, so the instance must be enrolled for @creator_pubkey
- * (marmot_set_account_proof()), and every invitee's KeyPackage leaf must
- * carry a valid proof.  Otherwise MARMOT_ERR_KEY_PACKAGE_IDENTITY and
- * nothing is created, unless MarmotConfig.allow_unproven_members (legacy
- * mode), which creates unproven leaves.
+ * (marmot_set_account_proof()), unless MarmotConfig.allow_unproven_self.
+ * An invitee's KeyPackage leaf may lack a proof only while
+ * MarmotConfig.allow_unproven_members (the default; new groups are of the
+ * legacy profile); a proof that does not verify is always refused.
+ * Otherwise MARMOT_ERR_KEY_PACKAGE_IDENTITY and nothing is created.
  *
  * Returns: MARMOT_OK on success
  */
@@ -769,14 +770,16 @@ MarmotError marmot_self_update(Marmot *m,
  * the event to the group relays, then call marmot_merge_pending_commit() once
  * one accepted it (and only then send the Welcomes), or
  * marmot_clear_pending_commit() if none did.  MARMOT_ERR_OWN_COMMIT_PENDING
- * while another Commit of ours is pending.  Every KeyPackage leaf must carry
- * a valid account-identity proof, which every member checks, and every other
- * current member's leaf must carry one too, since the joiner accepts no
- * unproven leaf but ours (we send the Welcome).  Otherwise
- * MARMOT_ERR_KEY_PACKAGE_IDENTITY and nothing changes: no Add whose Welcome
- * the joiner must reject is ever published (nostrc-7vyi; see
- * marmot_self_update() to prove existing leaves).  Legacy mode
- * (MarmotConfig.allow_unproven_members) skips both.
+ * while another Commit of ours is pending.  A KeyPackage leaf, and every
+ * other current member's leaf, may lack the account-identity proof only in a
+ * legacy-profile group while MarmotConfig.allow_unproven_members (the
+ * default; MarmotGroupProfile).  Otherwise each must carry a valid one,
+ * since every member checks it and a joiner that requires proofs accepts no
+ * unproven leaf but ours (we send the Welcome).  A proof that does not
+ * verify is always refused.  On refusal MARMOT_ERR_KEY_PACKAGE_IDENTITY and
+ * nothing changes: no Add whose Welcome the joiner must reject is ever
+ * published (nostrc-7vyi; see marmot_self_update() to prove existing
+ * leaves).
  *
  * Returns: MARMOT_OK on success
  */
@@ -1105,12 +1108,14 @@ MarmotError marmot_process_welcome_from(Marmot *m,
  * Every member leaf of the Welcome's ratchet tree must be bound to its
  * account (nostrc-7vyi; Marmot protocol-core/joining.md): by a valid
  * marmot.member.account-identity-proof.v2, or -- for the leaf that signed
- * the GroupInfo only -- by being the account that sent the Welcome (the
- * rumor's `pubkey`). Our own leaf is our KeyPackage's. Otherwise the join
- * fails with MARMOT_ERR_KEY_PACKAGE_IDENTITY, nothing of the group is
- * stored and the Welcome is recorded as failed. A leaf without a proof is
- * accepted in legacy mode only (MarmotConfig.allow_unproven_members); a
- * proof that does not verify never is.
+ * the GroupInfo only, and only in a legacy-profile group -- by being the
+ * account that sent the Welcome (the rumor's `pubkey`). Our own leaf is our
+ * KeyPackage's. In a legacy-profile group any leaf may lack the proof while
+ * MarmotConfig.allow_unproven_members (the default; such members are
+ * MARMOT_MEMBER_IDENTITY_UNPROVEN). Otherwise the join fails with
+ * MARMOT_ERR_KEY_PACKAGE_IDENTITY, nothing of the group is stored and the
+ * Welcome is recorded as failed. A proof that does not verify is refused in
+ * every profile and mode.
  *
  * Returns: MARMOT_OK on success
  */
@@ -1418,5 +1423,8 @@ MarmotError marmot_get_messages(Marmot *m,
 #ifdef __cplusplus
 }
 #endif
+
+/* Member identity status and KeyPackage evidence (since 0.12.0). */
+#include "marmot-members.h"
 
 #endif /* MARMOT_H */

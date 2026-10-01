@@ -276,10 +276,13 @@ What is tested now:
   - OpenMLS message-protection and tree vectors in `tests/vectors/mdk/`.
 - **Protocol constants**: kind:30443/444/445, extension type 0xF2EE.
 
+Since 0.12.0 the default admits MDK 0.8 members, which carry no account
+proof, in these legacy-profile groups, and reports them UNPROVEN
+(`marmot/marmot-members.h`). All harness cases pass in default mode and
+with proofs required (0.12.0, below).
+
 What does not hold yet:
 
-- **Default mode.** Without `MarmotConfig.allow_unproven_members`, MDK 0.8
-  members are refused (0.10.0, below).
 - **Standalone proposals** (since 0.12.0, nostrc-2um6): kept for the
   Commit that references them, and SelfRemove both ways is tested live
   (`mdk-member-leaves`, `groundhog-leaves`). Other proposal types of MDK's
@@ -698,6 +701,117 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
     replay of the applied Commit (a duplicate, nothing changes), and a
     tampered parent-epoch Commit judged on the retained parent.
 
+### 0.12.0 (unreleased): members without the account proof, by group profile (nostrc-6ukh, nostrc-prrl)
+
+**Behaviour change of a default** (MINOR for 0.x). MDK 0.8 and
+Amethyst/Quartz (the MIP-era, "legacy" profile) give their members no
+account proof. libmarmot 0.10.0 and 0.11.0 refused such members by default,
+so a default instance could not invite MDK 0.8 users or join their larger
+groups. Worse, an MDK admin adding an MDK member stranded it at the old
+epoch for good (nostrc-prrl).
+
+#### What changed
+
+- **The policy is keyed by the group's wire profile**
+  (`MarmotGroupProfile`, `marmot/marmot-group-profile.h`, one header shared
+  with the adopted-profile admission work, W24 slice E). Legacy means
+  exactly one 0xF2EE and no app_data_dictionary in the authenticated
+  GroupContext.
+- **In a LEGACY group**, `MarmotConfig.allow_unproven_members` (default now
+  **true**) admits leaves without the proof:
+  - in a Welcome's tree;
+  - in our own Adds (and group creation);
+  - in inbound Commits, PublicMessage and PrivateMessage alike (one
+    `marmot_commit_authorize()`).
+- **Set it false** (or call `marmot_set_allow_unproven_members()`) to
+  require proofs, as before.
+- **Every other profile fails closed**, whatever the flag says:
+  - no Welcome-tree leaf without a proof, not even the sender's (the
+    sender exemption is legacy-only);
+  - no Commit is judged by the legacy rules: a Commit in a non-legacy group,
+    or one that changes the GroupContext to another profile (or a mix), is
+    MARMOT_ERR_UNSUPPORTED. A group keeps the profile it was joined with; an
+    adopted group can never be turned legacy (W24 review L3). Slice E pins
+    the profile explicitly (`MlsGroup.profile`, state format 4).
+- **An Add-filled slot is a new member** (W24 review B1, security). A
+  Commit with Remove(Y) and an Add of a KeyPackage claiming Y lands the new
+  leaf in Y's slot under Y's identity (Removes apply first, an Add takes the
+  leftmost blank leaf). Judged by identity alone, that was an unprivileged
+  Commit and "Y's own new leaf", so any member could replace a proof-less
+  member's device with keys of their own, accepted in default mode and with
+  proofs required. Now only the committer's own leaf is renewed in place
+  (its UpdatePath, signed in by its previous key). Every other changed slot
+  was filled by an Add: the Commit is privileged (admins only), and the leaf
+  is a new identity claim (a valid proof, or the policy in a legacy group).
+  libmarmot applies no Update proposals; whoever adds them must treat their
+  leaves as renewals too.
+- **A proof that does not verify is refused in every profile and mode**
+  (nostrc-7vyi, we6g unchanged).
+- **Our own leaves.** `allow_unproven_members` no longer makes them. The new
+  `MarmotConfig.allow_unproven_self` (default false) is the only way to
+  create KeyPackages and groups without a proof when not enrolled. It exists
+  for tests that stand in for MDK 0.8 peers, and for migration tools.
+- **Who is proven.** `marmot_get_group_member_identities()` lists one entry
+  per leaf:
+  - the account and the leaf's signature key (the device);
+  - its status: `MARMOT_MEMBER_IDENTITY_PROVEN`, `_UNPROVEN` or `_INVALID`
+    (damaged state only: such a leaf is never admitted).
+- **Confirming an unproven member.**
+  `marmot_key_package_event_matches_member()` checks that a signed
+  KeyPackage event is that device's. It accepts kind 30443 (MDK 0.8 or
+  adopted framing) and the older kind 443 (base64 or hex content). It
+  checks, in order:
+  - the event id and signature;
+  - the KeyPackage and leaf signatures;
+  - that the credential is the author;
+  - that there is no invalid proof;
+  - the leaf's signature key.
+
+  An expired KeyPackage still counts: it shows the account published the
+  key then. Kind 443 is evidence only, never an invitation. There is no age
+  bound: a device key the account published long ago, lost, and that leaks
+  later still matches. Present a match as "the account published this key",
+  not as proof the account controls it now.
+- **Who committed.** `MarmotMessageResult.commit.committer_pubkey_hex` is
+  the authenticated committer of an inbound Commit (who added a member), and
+  `committer_leaf` its leaf. That leaf is the one a Commit renews in place:
+  its UpdatePath leaf may carry a new signature key (MDK's self-update
+  rotates it), signed in by the previous key, so it is the same device,
+  renewed. An application may carry what it knew of the old key over to the
+  new one (chain of custody). Every other leaf a Commit changes was added.
+- **A refusal means the group stops there.** `marmot_process_message()`
+  returns MARMOT_ERR_KEY_PACKAGE_IDENTITY when the group really stops at the
+  refused Commit:
+  - for a Commit of the epoch the member is at;
+  - for a competitor of a Commit already applied that would have won its
+    epoch by the ordering (members who don't check proofs follow it; never
+    fork silently, W24 review L1).
+
+  A refused competitor that loses to the applied Commit is
+  MARMOT_ERR_WRONG_EPOCH (stale). An application can therefore show a
+  refused change honestly (Groundhog's "change-refused", nostrc-prrl).
+
+#### Compatibility
+
+- **API/ABI.**
+  - `MarmotConfig` gains `allow_unproven_self`, and
+    `MarmotMessageResult.commit` gains `committer_pubkey_hex` (freed by
+    `marmot_message_result_free()`) and `committer_leaf`. Rebuild, and
+    start from `marmot_config_default()`.
+  - New installed headers `marmot/marmot-members.h` and
+    `marmot/marmot-group-profile.h` (both included by `marmot/marmot.h`).
+  - Internal: `mls_group_replace_members()` (Removes, then Adds, in one
+    Commit).
+- **Behaviour.**
+  - A caller that relied on the default refusal must set
+    `allow_unproven_members = false` (marmot-gobject does, so Gnostr keeps
+    requiring proofs).
+  - A caller that set `allow_unproven_members = true` to make its own
+    unproven KeyPackages or groups must set `allow_unproven_self`.
+- **Wire and state.** Unchanged.
+
+### 0.11.0 (unreleased): Marmot wire conformance, found by the first live MDK 0.8 test (nostrc-7gx7, nostrc-77pa)
+
 **Wire change** (MINOR for 0.x). 0.11.0 and 0.10.0 or older cannot read each
 other's kind:445 events: upgrade whole groups together.
 
@@ -906,7 +1020,8 @@ do not trust, as unauthenticated.
   rumor naming another author fails with `MARMOT_ERR_AUTHOR_MISMATCH`.
   `marmot_process_welcome()` still trusts the rumor's `pubkey`, so feed it
   only rumors whose seal was checked. Gnostr uses the new call.
-- **Legacy mode.** `MarmotConfig.allow_unproven_members` (default `false`)
+- **Legacy mode.** `MarmotConfig.allow_unproven_members` (default `false`
+  in 0.10.0 and 0.11.0; `true`, legacy-profile groups only, since 0.12.0)
   accepts leaves that carry no proof: KeyPackages and members from MDK 0.8
   or libmarmot 0.9.0 and older. A proof that does not verify is rejected
   in either mode.

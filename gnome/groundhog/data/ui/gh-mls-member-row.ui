@@ -18,6 +18,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child type="suffix">
+      <object class="GtkLabel" id="identity_badge">
+        <property name="visible">false</property>
+        <property name="valign">3</property>
+        <style>
+          <class name="caption"/>
+          <class name="warning"/>
+          <class name="groundhog-identity-badge"/>
+        </style>
+      </object>
+    </child>
+    <child type="suffix">
       <object class="GtkLabel" id="role_badge">
         <property name="visible">false</property>
         <property name="valign">3</property>

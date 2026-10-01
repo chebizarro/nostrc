@@ -21,8 +21,10 @@ G_BEGIN_DECLS
  * discovery-relays setting, then the person's 10002 write relays; ephemeral
  * AUTH only, charter §2.2 "Discovery relays: whose KeyPackages you fetch")
  * and, with libmarmot >= 0.10.0, whether the KeyPackage's leaf carries the
- * account proof GhMlsService's Add requires
- * (marmot_key_package_event_has_account_proof()). The check is advisory:
+ * account proof (marmot_key_package_event_has_account_proof()). Without it
+ * (MDK 0.8, Amethyst/Quartz) they can still be invited (nostrc-6ukh), unless
+ * the account requires proofs (the settings key
+ * "only-join-verified-mls-groups"). The check is advisory:
  * gh_mls_service_create_group_async() and _add_members_async() look everyone
  * up again (a fresh 30443, charter §7.10) and their errors are the truth.
  *
@@ -35,19 +37,24 @@ G_BEGIN_DECLS
 typedef enum {
   GH_MLS_INVITEE_CHECKING,     /* the lookup runs */
   GH_MLS_INVITEE_READY,        /* a KeyPackage that can be invited */
+  GH_MLS_INVITEE_READY_UNPROVEN, /* can be invited, but their app can't prove their account:
+                                  * other members may see them as not verified */
   GH_MLS_INVITEE_NOT_SET_UP,   /* relays answered: no valid KeyPackage */
-  GH_MLS_INVITEE_NEEDS_UPDATE, /* a KeyPackage without the account proof */
+  GH_MLS_INVITEE_NEEDS_UPDATE, /* a KeyPackage without the account proof, which the account
+                                * requires */
   GH_MLS_INVITEE_UNREACHABLE,  /* no relay answered */
   GH_MLS_INVITEE_NO_RELAYS,    /* no usable discovery relay */
   GH_MLS_INVITEE_FAILED        /* anything else */
 } GhMlsInviteeState;
 
-/* The state a lookup's result means (key_package NULL: error says why).
- * libmarmot < 0.10.0 has no proof: any valid KeyPackage is READY. */
+/* The state a lookup's result means (key_package NULL: error says why;
+ * require_proof: the account requires proofs). libmarmot < 0.10.0 has no
+ * proof: any valid KeyPackage is READY. */
 GhMlsInviteeState gh_mls_invitee_classify(const GhMlsKeyPackage *key_package,
-                                          const GError *error);
+                                          const GError *error, gboolean require_proof);
 
-/* Checks pubkey (hex) with the discovery-relays of settings (deadline:
+/* Checks pubkey (hex) with the discovery-relays of settings, and its
+ * "only-join-verified-mls-groups" (deadline:
  * seconds per phase, 0: the lookup's default). Consent is the caller's:
  * only ever for a gh_mls_contacts_dup() person. finish: the state, or
  * CHECKING with error G_IO_ERROR_CANCELLED (the cancellable or an account

@@ -694,7 +694,7 @@ test_mdk_protocol_kp_tag_parity(const char *json, size_t json_len)
     /* The tags do not depend on the leaf's account proof (nostrc-7vyi):
      * a legacy instance makes this unsigned KeyPackage without one. */
     MarmotConfig cfg = marmot_config_default();
-    cfg.allow_unproven_members = true;
+    cfg.allow_unproven_self = true;
     Marmot *m = marmot_new_with_config(marmot_storage_memory_new(), &cfg);
     assert(m);
     uint8_t pk[32];

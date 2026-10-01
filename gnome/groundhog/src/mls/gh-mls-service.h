@@ -121,7 +121,30 @@ G_BEGIN_DECLS
  * is asked again only for a new account generation, at the next start, or
  * through gh_mls_service_retry_identity(). An
  * invitee (or a group member) whose app cannot prove its account is
- * GH_MLS_SERVICE_ERROR_NEEDS_UPDATE.
+ * GH_MLS_SERVICE_ERROR_NEEDS_UPDATE only while the account chose to require
+ * proofs (below).
+ *
+ * Members without the proof (nostrc-6ukh). Legacy-profile groups (MDK 0.8,
+ * Amethyst/Quartz) hold members whose app cannot prove their account. By
+ * default libmarmot admits them there (MarmotConfig.allow_unproven_members;
+ * never in adopted-profile groups, and never a proof that does not verify),
+ * so they can be invited and their groups joined. For each such device the
+ * service then tries to confirm the binding itself: a KeyPackage event the
+ * account signed (kind 30443 or the older 443; signatures checked by
+ * libmarmot) whose leaf has the device's credential and signature key,
+ * from the KeyPackage the account used to add it, or else found on the
+ * group's relays, the discovery relays and the person's kind-10002 write
+ * relays (gh_mls_key_package_evidence_lookup_async(): the same
+ * transports, Tor and network mode as every lookup; ephemeral AUTH; never
+ * kind 10051). The verdict and who added the device are kept in the
+ * encrypted store (gh-store-mls-identity.h); a device found by nobody is
+ * looked up again after GH_MLS_MEMBER_RECHECK_S. Nothing waits for it:
+ * messaging never does. gh_mls_group_get_member_identity() is the result.
+ * The settings key "only-join-verified-mls-groups" (default off) brings
+ * back the refusal: invitations, Welcomes and Commits with such a member
+ * fail (NEEDS_UPDATE), and an admin's Commit refused for that reason is
+ * shown as "change-refused", never as a wait (nostrc-prrl); turning the key
+ * off applies it.
  *
  * Leaving (nostrc-2um6; MIP-03 "Leaving a group", Marmot
  * protocol-core/member-departure.md). Unless the account is an admin
@@ -215,6 +238,9 @@ G_BEGIN_DECLS
  * anyone posts with the group's h would otherwise show it for good in a
  * quiet group (W22 review N4). It stays held and is retried. */
 #define GH_MLS_SERVICE_PENDING_SHOWN_S (15 * 60)
+/* A member device nobody's relays had a matching KeyPackage for is looked
+ * up again after this long (seconds). */
+#define GH_MLS_MEMBER_RECHECK_S (24 * 3600)
 /* A held event still unreadable after this many applied Commits is junk. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
@@ -303,7 +329,9 @@ typedef enum {
   GH_MLS_SERVICE_ERROR_NO_RELAYS,      /* no group relay (or none usable) */
   GH_MLS_SERVICE_ERROR_INACTIVE,       /* the store's account is not the active one */
   GH_MLS_SERVICE_ERROR_NOT_ENROLLED,   /* the signer has not approved this device's proof */
-  GH_MLS_SERVICE_ERROR_NEEDS_UPDATE    /* someone's app cannot prove their account yet */
+  GH_MLS_SERVICE_ERROR_NEEDS_UPDATE,   /* someone's app cannot prove their account, and the
+                                        * account requires proofs (nostrc-6ukh) */
+  GH_MLS_SERVICE_ERROR_FORGED_IDENTITY /* someone's account proof does not verify */
 } GhMlsServiceError;
 
 typedef enum {
@@ -317,6 +345,18 @@ typedef enum {
 
 GType gh_mls_identity_state_get_type(void);
 #define GH_TYPE_MLS_IDENTITY_STATE (gh_mls_identity_state_get_type())
+
+/* What Groundhog knows about who a member is (nostrc-6ukh). An account with
+ * several devices is as weak as its weakest one. */
+typedef enum {
+  GH_MLS_MEMBER_PROVEN,     /* the leaf carries the account's own proof */
+  GH_MLS_MEMBER_VERIFIED,   /* no proof, but a KeyPackage the account signed matches */
+  GH_MLS_MEMBER_CHECKING,   /* no proof; looking for such a KeyPackage */
+  GH_MLS_MEMBER_UNVERIFIED  /* no proof, and none was found */
+} GhMlsMemberIdentity;
+
+GType gh_mls_member_identity_get_type(void);
+#define GH_TYPE_MLS_MEMBER_IDENTITY (gh_mls_member_identity_get_type())
 
 #define GH_TYPE_MLS_GROUP (gh_mls_group_get_type())
 G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
@@ -341,11 +381,17 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * "history-incomplete" (a group relay's backfill could
  * not be fetched completely this subscription: paging failed or ran out, or
  * more was delivered than the service keeps at once; the read cursor holds,
- * and the next subscription asks again) and "leaving" (the account's
- * SelfRemove waits for a member's Commit). Signal "members-changed": the
- * member list or the admins may differ. Signal "member-left" (gchar *pubkey,
- * hex): a Commit took out a member who had asked to leave (nostrc-2um6);
- * "leave-failed" (gh_mls_group_get_leave_failed()). */
+ * and the next subscription asks again), "leaving" (the account's
+ * SelfRemove waits for a member's Commit), "unverified-members" (members
+ * CHECKING or UNVERIFIED, nostrc-6ukh) and "change-refused" (an admin's
+ * Commit was refused for good: it added someone whose identity can't be
+ * verified while the account requires proofs, or whose proof is forged;
+ * the group can't be read past it, and nothing is "waiting": decrypt-pending
+ * stays FALSE; a later Commit that applies clears it; nostrc-prrl). Signal
+ * "members-changed": the member list, the admins or a member's identity
+ * may differ. Signal "member-left" (gchar *pubkey, hex): a Commit took out
+ * a member who had asked to leave (nostrc-2um6); "leave-failed"
+ * (gh_mls_group_get_leave_failed()). */
 const gchar *gh_mls_group_get_group_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_room_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_name(GhMlsGroup *self);
@@ -381,6 +427,14 @@ gint64 gh_mls_group_get_cursor(GhMlsGroup *self);
 /* The members' account keys (lowercase hex, sorted; the account included):
  * what every member can see (charter §2.2). Transfer full. */
 GStrv gh_mls_group_dup_members(GhMlsGroup *self);
+/* What is known about member (hex): see GhMlsMemberIdentity; PROVEN for
+ * one that is not a member. out_added_by (nullable, transfer full): the
+ * admin who added its weakest device, hex, or NULL when not known (it was
+ * there before the account joined). */
+GhMlsMemberIdentity gh_mls_group_get_member_identity(GhMlsGroup *self, const gchar *member,
+                                                     gchar **out_added_by);
+guint gh_mls_group_get_unverified_members(GhMlsGroup *self);
+gboolean gh_mls_group_get_change_refused(GhMlsGroup *self);
 /* The GroupData admins (lowercase hex, sorted). Transfer full. */
 GStrv gh_mls_group_dup_admins(GhMlsGroup *self);
 /* The group relays (sorted). Transfer full. */
@@ -407,7 +461,8 @@ typedef struct {
   GhConversationStore *conversations;  /* bound to the store's account; borrowed */
   GhAccountRelays *account_relays;     /* own 10002 write + 10050: KeyPackage publish */
   GhInboxResolver *inboxes;            /* invitees' 10050: Welcome delivery */
-  GSettings *settings;                 /* discovery-relays: KeyPackage lookups */
+  GSettings *settings;                 /* discovery-relays: KeyPackage lookups;
+                                        * only-join-verified-mls-groups */
   GhDmInbox *inbox;                    /* nullable: where Welcomes arrive (its sink) */
   /* NULL: an accepted peer of a non-request NIP-17 room of conversations. */
   GhMlsConsentFunc may_look_up;
@@ -437,13 +492,6 @@ guint gh_mls_service_test_rate_retries(void);
  * how many Commits of members' leaves failed. */
 void gh_mls_service_test_refuse_rate(guint n);
 guint gh_mls_service_test_departure_failures(void);
-#endif
-#if defined(GH_MLS_TEST_HOOKS) && GH_MLS_SERVICE_ACCOUNT_PROOF
-/* Test hook, compiled only into test executables (the MDK 0.8 interop
- * harness, nostrc-7gx7): services created from now on run libmarmot in
- * legacy mode (MarmotConfig.allow_unproven_members), accepting member leaves
- * without the account proof. Groundhog itself never sets it. */
-void gh_mls_service_test_allow_unproven_members(gboolean allow);
 #endif
 const gchar *gh_mls_service_get_account(GhMlsService *self);
 /* libmarmot, for tests and diagnostics (borrowed; one thread). */

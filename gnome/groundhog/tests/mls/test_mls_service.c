@@ -9,6 +9,9 @@
  * account switch closes every group connection and reselecting reopens
  * them. */
 #include "mls-world.h"
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+#include "mls-forge.h"
+#endif
 
 #include <nostr-keys.h>
 
@@ -2098,46 +2101,285 @@ test_account_proof_enrollment(void)
   world_down(&w);
 }
 
-/* A KeyPackage without the account proof (MDK 0.8, libmarmot <= 0.9.0)
- * cannot be invited: honest "needs an update", not "no KeyPackage". */
+#define VERIFIED_ONLY "only-join-verified-mls-groups"
+
+/* `key` runs an older client (MDK 0.8, libmarmot <= 0.9.0): a KeyPackage
+ * without the account proof on W. Its event id (transfer full). */
+static gchar *
+inject_legacy_key_package(World *w, guint key)
+{
+  MarmotConfig config = marmot_config_default();
+  config.allow_unproven_self = true;
+  Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
+  guint8 pubkey[32];
+  g_assert_true(nostr_hex2bin(pubkey, hex[key], sizeof pubkey));
+  const char *relays[] = { w->w.url };
+  MarmotKeyPackageResult made;
+  memset(&made, 0, sizeof made);
+  g_assert_cmpint(marmot_create_key_package_unsigned(legacy, pubkey, relays, 1, &made), ==,
+                  MARMOT_OK);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, made.event_json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[key]), ==, 0);
+  char *signed_json = nostr_event_serialize_compact(event);
+  gchar *id = event_id_dup(event);
+  nostr_event_free(event);
+  wire_relay_inject(&w->w, signed_json);
+  free(signed_json);
+  marmot_key_package_result_free(&made);
+  marmot_free(legacy);
+  return id;
+}
+
 static void
-test_unproven_invitee_needs_update(void)
+add_member(App *app, GhMlsGroup *group, guint key)
+{
+  const gchar *people[] = { hex[key], NULL };
+  OpWait added = { 0 };
+  gh_mls_service_add_members_async(app->service, group, people, NULL, on_changed, &added);
+  spin_until(op_done, &added, "the Add");
+  g_assert_no_error(added.error);
+  g_assert_true(added.ok);
+}
+
+typedef struct {
+  GhMlsGroup *group;
+  guint key;
+} IdentityWait;
+
+static gboolean
+identity_settled(gpointer data)
+{
+  IdentityWait *wait = data;
+  g_auto(GStrv) members = gh_mls_group_dup_members(wait->group);
+  return g_strv_contains((const gchar *const *)members, hex[wait->key]) &&
+         gh_mls_group_get_member_identity(wait->group, hex[wait->key], NULL) !=
+           GH_MLS_MEMBER_CHECKING;
+}
+
+/* What the group says of `key` once it is not CHECKING: `want`, added by
+ * `added_by` (0: not known). */
+static void
+assert_identity(GhMlsGroup *group, guint key, GhMlsMemberIdentity want, guint added_by)
+{
+  IdentityWait wait = { group, key };
+  spin_until(identity_settled, &wait, "the member's identity check");
+  g_autofree gchar *by = NULL;
+  g_assert_cmpint(gh_mls_group_get_member_identity(group, hex[key], &by), ==, want);
+  g_assert_cmpstr(by, ==, added_by ? hex[added_by] : NULL);
+}
+
+/* REQs a relay got for `key`'s KeyPackages. */
+static guint
+key_package_reqs(WireRelay *relay, guint key)
+{
+  guint n = 0;
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
+        strstr(frame->text, "30443") && strstr(frame->text, hex[key]))
+      n++;
+  }
+  return n;
+}
+
+static gboolean
+change_refused(gpointer data)
+{
+  return gh_mls_group_get_change_refused(data);
+}
+
+static gboolean
+change_not_refused(gpointer data)
+{
+  return !gh_mls_group_get_change_refused(data);
+}
+
+/* nostrc-6ukh. A KeyPackage without the account proof (MDK 0.8, libmarmot
+ * <= 0.9.0) can be invited by default, and the inviter knows the device
+ * from the KeyPackage it used. Only when the account requires proofs is
+ * the invitation refused, honestly ("needs an update"), with nothing
+ * changed. */
+static void
+test_unproven_invitee(void)
 {
   World w;
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
-  /* Carol runs an older client: its KeyPackage carries no proof. */
-  MarmotConfig config = marmot_config_default();
-  config.allow_unproven_members = true;
-  Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
-  guint8 carol_key[32];
-  g_assert_true(nostr_hex2bin(carol_key, hex[CAROL], sizeof carol_key));
-  const char *relays[] = { w.w.url };
-  MarmotKeyPackageResult made;
-  memset(&made, 0, sizeof made);
-  g_assert_cmpint(marmot_create_key_package_unsigned(legacy, carol_key, relays, 1, &made), ==,
-                  MARMOT_OK);
-  NostrEvent *event = nostr_event_new();
-  g_assert_cmpint(nostr_event_deserialize_compact(event, made.event_json, NULL), ==, 1);
-  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[CAROL]), ==, 0);
-  char *signed_json = nostr_event_serialize_compact(event);
-  nostr_event_free(event);
-  wire_relay_inject(&w.w, signed_json);
-  free(signed_json);
-  marmot_key_package_result_free(&made);
-  marmot_free(legacy);
-
+  g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
   accept_contact(alice, CAROL);
+
+  /* Proofs required: refused before anything is made (nostrc-7gx7). */
+  g_settings_set_boolean(alice->settings, VERIFIED_ONLY, TRUE);
   g_autoptr(GError) error = NULL;
   guint g_events = w.g.events;
   create_attempt(alice, CAROL, &error);
   g_assert_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NEEDS_UPDATE);
-  /* Nothing was changed, as the UI says: no group of one is left behind
-   * and no group relay saw anything (nostrc-7gx7). */
+  g_clear_error(&error);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 0);
   g_assert_cmpuint(w.g.events, ==, g_events);
+
+  /* The default: Carol is invited, and Alice confirmed her device from the
+   * KeyPackage she added her with. */
+  g_settings_set_boolean(alice->settings, VERIFIED_ONLY, FALSE);
+  GhMlsGroup *ga = create_group(alice, "Older app", (const guint[]){ CAROL }, 1);
+  wait_members(ga, 2);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+  g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[ALICE], NULL), ==,
+                  GH_MLS_MEMBER_PROVEN);
+  g_assert_cmpuint(gh_mls_group_get_unverified_members(ga), ==, 0);
+  world_down(&w);
+}
+
+/* nostrc-6ukh. Bob (default mode) sees two members without the proof that
+ * Alice added: Carol, whose KeyPackage he finds (kind 30443 on her write
+ * relay), is VERIFIED; the stranger's is gone by the time Bob reads the Add
+ * (replaced, deleted), so he is UNVERIFIED -- "Added by" Alice, and nothing
+ * waits for it: messages flow. The verdicts and who added whom are kept in
+ * the store: after a restart they hold at once, and no relay is asked
+ * again before GH_MLS_MEMBER_RECHECK_S. Kind 10051 is never asked for. */
+static void
+test_unproven_member_identity(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Mixed", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[ALICE], NULL), ==,
+                  GH_MLS_MEMBER_PROVEN);
+
+  /* Verified: a KeyPackage Carol signed matches her device. */
+  g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
+  accept_contact(alice, CAROL);
+  add_member(alice, ga, CAROL);
+  wait_members(gb, 3);
+  assert_identity(gb, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+  g_assert_cmpuint(key_package_reqs(&w.w, CAROL), >, 0);   /* her 10002 write relay */
+  g_assert_true(client_frames_mention(&w.w, ",443"));       /* the older kind too */
+
+  /* Unverified: the stranger's KeyPackage is gone before Bob looks. */
+  g_autofree gchar *stranger_kp = inject_legacy_key_package(&w, STRANGER);
+  accept_contact(alice, STRANGER);
+  set_online(bob, FALSE);
+  add_member(alice, ga, STRANGER);
+  wire_relay_withhold(&w.w, stranger_kp);
+  set_online(bob, TRUE);
+  wait_members(gb, 4);
+  assert_identity(gb, STRANGER, GH_MLS_MEMBER_UNVERIFIED, ALICE);
+  g_assert_cmpuint(gh_mls_group_get_unverified_members(gb), ==, 1);
+  assert_identity(ga, STRANGER, GH_MLS_MEMBER_VERIFIED, ALICE);   /* Alice saw it herself */
+  send_text(bob, gb, "despite an unverified member");
+  wait_text(alice, gh_mls_group_get_room_id(ga), "despite an unverified member");
+
+  /* After a restart: from the store, without asking again. */
+  guint asked = key_package_reqs(&w.w, STRANGER) + key_package_reqs(&w.e, STRANGER) +
+                key_package_reqs(&w.g, STRANGER);
+  app_restart(bob);
+  gb = only_group(bob);
+  g_autofree gchar *by = NULL;
+  g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[STRANGER], &by), ==,
+                  GH_MLS_MEMBER_UNVERIFIED);
+  g_assert_cmpstr(by, ==, hex[ALICE]);
+  g_autofree gchar *carol_by = NULL;
+  g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[CAROL], &carol_by), ==,
+                  GH_MLS_MEMBER_VERIFIED);
+  g_assert_cmpstr(carol_by, ==, hex[ALICE]);
+  wait_live(gb);
+  drain();
+  g_assert_cmpuint(key_package_reqs(&w.w, STRANGER) + key_package_reqs(&w.e, STRANGER) +
+                     key_package_reqs(&w.g, STRANGER), ==, asked);
+
+  WireRelay *relays[] = { &w.e, &w.w, &w.x, &w.g };
+  for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
+    g_assert_false(client_frames_mention(relays[i], "10051"));
+  world_down(&w);
+}
+
+/* nostrc-prrl. Bob requires proofs; Alice (default mode) adds Carol, whose
+ * app can't prove her account. Bob refuses the Commit for good: the group
+ * says so ("change-refused") and never that it waits for an earlier change,
+ * although Alice's next message, of the new epoch, can't be read. Turning
+ * the preference off applies the change: Carol is listed (and confirmed)
+ * and the message read. */
+static void
+test_refused_change_honest(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Strict", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_settings_set_boolean(bob->settings, VERIFIED_ONLY, TRUE);
+  guint64 epoch = gh_mls_group_get_epoch(gb);
+  guint base = gh_mls_group_get_unreadable(gb);
+
+  g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
+  accept_contact(alice, CAROL);
+  add_member(alice, ga, CAROL);
+  spin_until(change_refused, gb, "Bob refusing the Add");
+  g_assert_cmpuint(gh_mls_group_get_epoch(gb), ==, epoch);
+  wait_members(gb, 2);
+  send_text(alice, ga, "after Carol joined");
+  wait_unreadable(gb, base + 1);
+  drain();
+  g_assert_false(gh_mls_group_get_decrypt_pending(gb));
+  g_assert_true(gh_mls_group_get_active(gb));
+
+  g_settings_set_boolean(bob->settings, VERIFIED_ONLY, FALSE);
+  spin_until(change_not_refused, gb, "the refused change applying");
+  wait_members(gb, 3);
+  wait_text(bob, gh_mls_group_get_room_id(gb), "after Carol joined");
+  assert_identity(gb, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+  world_down(&w);
+}
+
+/* A leaf whose account proof does not verify is refused in the default
+ * mode too (nostrc-7vyi, we6g): Alice's modified client adds a leaf
+ * claiming Carol with a proof Alice signed. Bob refuses it for good, says
+ * so, and shows nothing as waiting (an unreadable event dated later would
+ * otherwise); Alice's next honest change moves the group on and clears it. */
+static void
+test_forged_member_refused(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Forged", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(gb);
+  g_autofree gchar *h = g_strdup(h_of(last_stored_445(&w.g)));
+  guint64 epoch = gh_mls_group_get_epoch(gb);
+  guint base = gh_mls_group_get_unreadable(gb);
+
+  g_autofree gchar *forged = forge_add_with_bad_proof(alice, ga, CAROL, ALICE);
+  wire_relay_inject(&w.g, forged);
+  spin_until(change_refused, gb, "Bob refusing the forged Add");
+  g_assert_cmpuint(gh_mls_group_get_epoch(gb), ==, epoch);
+  g_auto(GStrv) members = gh_mls_group_dup_members(gb);
+  g_assert_cmpuint(g_strv_length(members), ==, 2);
+  g_autofree gchar *later = junk_445(h, 1, real_now() + 30);
+  wire_relay_inject(&w.g, later);
+  wait_unreadable(gb, base + 1);
+  drain();
+  g_assert_false(gh_mls_group_get_decrypt_pending(gb));
+
+  rename_group(alice, ga, "Moved on");
+  NameWait moved = { gb, "Moved on" };
+  spin_until(name_is, &moved, "Bob applying Alice's honest change");
+  g_assert_false(gh_mls_group_get_change_refused(gb));
   world_down(&w);
 }
 #else
@@ -2490,8 +2732,12 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/account-proof-enrollment",
                   test_account_proof_enrollment);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
-  g_test_add_func("/groundhog/mls-service/unproven-invitee-needs-update",
-                  test_unproven_invitee_needs_update);
+  g_test_add_func("/groundhog/mls-service/unproven-member-identity",
+                  test_unproven_member_identity);
+  g_test_add_func("/groundhog/mls-service/refused-change-honest", test_refused_change_honest);
+  g_test_add_func("/groundhog/mls-service/forged-member-refused", test_forged_member_refused);
+  g_test_add_func("/groundhog/mls-service/unproven-invitee",
+                  test_unproven_invitee);
 #endif
   gint rc = g_test_run();
   mls_world_finish();

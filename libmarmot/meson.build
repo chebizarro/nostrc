@@ -108,6 +108,7 @@ marmot_sources = files(
   'src/adopted.c',
   'src/commits.c',
   'src/proposals.c',
+  'src/members.c',
   'src/groups.c',
   'src/welcome.c',
   'src/messages.c',
@@ -163,6 +164,7 @@ marmot_dep = declare_dependency(
 
 # Install public headers
 install_headers(
+  'include/marmot/marmot-members.h',
   'include/marmot/marmot.h',
   'include/marmot/marmot-error.h',
   'include/marmot/marmot-types.h',

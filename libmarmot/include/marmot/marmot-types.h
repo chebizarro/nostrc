@@ -154,16 +154,39 @@ typedef struct {
     bool allow_legacy_raw_messages;
 
     /**
-     * Accept member leaves that carry no account-identity proof
-     * (marmot.member.account-identity-proof.v2): KeyPackages and added
-     * members from MDK 0.8 or libmarmot before 0.10.0, and such leaves in a
-     * Welcome's tree. Disabled by default: without the proof nothing binds a
-     * leaf's credential to its Nostr account, so an admin could add a leaf
-     * claiming any account and post as it (nostrc-7vyi). A proof that is
-     * present but does not verify is rejected either way.
-     * Default: false
+     * Accept other members' leaves that carry no account-identity proof
+     * (marmot.member.account-identity-proof.v2) in LEGACY-profile groups
+     * (MARMOT_GROUP_PROFILE_LEGACY: 0xF2EE group data, no
+     * app_data_dictionary): members from MDK 0.8, Amethyst/Quartz and
+     * libmarmot before 0.10.0. It applies to a Welcome's tree, to our own
+     * Adds, and to inbound Commits (PublicMessage and PrivateMessage alike).
+     *
+     * Without the proof nothing but the KeyPackage event the inviter saw
+     * binds the leaf to the account its credential names, so such a member
+     * is MARMOT_MEMBER_IDENTITY_UNPROVEN (marmot_get_group_member_identities())
+     * and callers should say so; marmot_key_package_event_matches_member()
+     * checks a signed KeyPackage the account published.
+     *
+     * Never in other profiles: an adopted or unrecognised group requires a
+     * valid proof on every leaf, whatever this says. A proof that is present
+     * but does not verify is refused in every profile and mode (nostrc-7vyi).
+     * Set false to require proofs in legacy groups too (the 0.10.0/0.11.0
+     * default); marmot_set_allow_unproven_members() changes it later.
+     * Default: true (since 0.12.0)
      */
     bool allow_unproven_members;
+
+    /**
+     * Create this instance's own KeyPackages and groups without an account
+     * proof when it is not enrolled (marmot_set_account_proof()), as MDK 0.8
+     * and libmarmot before 0.10.0 did. For tests that stand in for such
+     * peers, and for migration tools; no application should set it: other
+     * libmarmot members refuse such a leaf when they require proofs, and
+     * every adopted-profile peer does. Before 0.12.0
+     * allow_unproven_members did this too.
+     * Default: false (since 0.12.0)
+     */
+    bool allow_unproven_self;
 } MarmotConfig;
 
 /**
@@ -527,10 +550,20 @@ typedef struct {
          *  proposal. */
         char **departed_pubkey_hexes;
         size_t departed_count;
-        /** Since 0.12.0: who committed it (hex, caller-owned; NULL when
-         *  not known), e.g. to tell whether an admin's Commit left a leave
-         *  request of ours unconsumed (nostrc-2um6 re-review R1). */
+        /** Since 0.12.0: the authenticated committer of an inbound Commit
+         *  (hex, caller-owned; NULL when not known: our own Commit echoed
+         *  back, one judged while we are removed), e.g. to tell whether an
+         *  admin's Commit left a leave request of ours unconsumed
+         *  (nostrc-2um6 re-review R1) or who added a member (nostrc-6ukh). */
         char *committer_pubkey_hex;
+        /** The committer's leaf (UINT32_MAX when committer_pubkey_hex is
+         * NULL). It is the one leaf a Commit renews in place: its UpdatePath
+         * leaf, which may carry a new signature key, was signed in by the
+         * leaf's previous key and keeps its account -- the same device,
+         * renewed (chain of custody: whatever the old key was known to be,
+         * the new one is). Every other leaf a Commit changes was added, and
+         * is a new identity claim. Since 0.12.0. */
+        uint32_t committer_leaf;
     } commit;
 
     /** Valid when type == MARMOT_RESULT_PROPOSAL (since 0.12.0,

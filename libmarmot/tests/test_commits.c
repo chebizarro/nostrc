@@ -14,6 +14,7 @@
 #include "marmot-internal.h"
 #include "commits.h"
 #include "proposals.h"
+#include "members.h"
 #include "kp_profile.h"
 #include "test_enroll.h"
 #include "mls/mls_group.h"
@@ -2916,12 +2917,17 @@ test_forged_member_identity_rejected(void)
     trio_init(&t);
     Member victor;
     member_init(&victor, "Victor");   /* the impersonated account, not a member */
+    /* Proofs required (allow_unproven_members = false; the default before
+     * 0.12.0): parts 1, 2 and 5 below. test_default_mode_legacy_profile()
+     * covers the default. */
+    Member *trio[] = { &t.alice, &t.bob, &t.charlie };
+    for (size_t i = 0; i < 3; i++) trio[i]->m->config.allow_unproven_members = false;
 
     /* 1. The API refuses a KeyPackage without the proof (an unproven event
      *    that is otherwise valid: signed by its own account). */
     {
         MarmotConfig legacy = marmot_config_default();
-        legacy.allow_unproven_members = true;
+        legacy.allow_unproven_self = true;
         Marmot *old = marmot_new_with_config(marmot_storage_memory_new(), &legacy);
         CHECK(old, "legacy instance");
         MarmotKeyPackageResult r;
@@ -3190,6 +3196,7 @@ test_welcome_with_forged_member_rejected(void)
     MlsKeyPackage bob_kp, other;
     MlsKeyPackagePrivate other_priv;
     own_key_package(&bob, &bob_kp);
+    bob.m->config.allow_unproven_members = false;   /* proofs required, until below */
 
     struct {
         const char *what;
@@ -3275,6 +3282,7 @@ test_welcome_sender_from_seal(void)
     MlsKeyPackage bob_kp, other;
     MlsKeyPackagePrivate other_priv;
     own_key_package(&bob, &bob_kp);
+    bob.m->config.allow_unproven_members = false;   /* proofs required */
     leaf_key_package(alice.pk, alice.sk, &mallory, LEAF_GENUINE, &other, &other_priv);
 
     /* Mallory's unproven leaf signs; her seal says Mallory. */
@@ -3431,7 +3439,7 @@ test_account_proof_enrollment(void)
 static char *
 legacy_key_package(Member *x)
 {
-    CHECK(x->m->config.allow_unproven_members && !marmot_has_account_proof(x->m, x->pk),
+    CHECK(x->m->config.allow_unproven_self && !marmot_has_account_proof(x->m, x->pk),
           "an unenrolled legacy instance");
     MarmotKeyPackageResult r;
     memset(&r, 0, sizeof(r));
@@ -3460,10 +3468,11 @@ mls_leaf_count(Member *x, const MarmotGroupId *gid)
 }
 
 /* Review W20 B1: a group of unproven members (created by 0.9.0, or before
- * enrollment) upgraded to the default mode.  Adding Dave would produce a
+ * enrollment) whose members now require proofs.  Adding Dave would produce a
  * Welcome Dave must reject (Bob's and Charlie's leaves are unproven and not
  * the sender's), and Dave's leaf would stay as a ghost: the inviter refuses
- * the Add and nothing changes.  In legacy mode the group still grows. */
+ * the Add and nothing changes.  Accepting unproven members (the default
+ * since 0.12.0) the group still grows. */
 static void
 test_add_refused_when_joiners_would_reject(void)
 {
@@ -3473,7 +3482,7 @@ test_add_refused_when_joiners_would_reject(void)
     member_init_unenrolled(&charlie, "Charlie");
     member_init(&dave, "Dave");
     Member *three[] = { &alice, &bob, &charlie };
-    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = true;
+    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_self = true;
 
     /* The 0.9.0 group: unproven creator, unproven members. */
     char *bob_kp = legacy_key_package(&bob), *charlie_kp = legacy_key_package(&charlie);
@@ -3492,7 +3501,7 @@ test_add_refused_when_joiners_would_reject(void)
     marmot_create_group_result_free(&cg);
     expect_messages_flow(three, 3, &gid);
 
-    /* Everyone upgrades to the default mode. */
+    /* Everyone requires proofs (the default before 0.12.0). */
     for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = false;
     char *dave_kp = key_package(&dave);
     const char *kps2[] = { dave_kp };
@@ -3513,7 +3522,8 @@ test_add_refused_when_joiners_would_reject(void)
     CHECK(mls_leaf_count(&alice, &gid) == 3, "no ghost leaf");
     expect_messages_flow(three, 3, &gid);
 
-    /* Legacy mode (the transition) still admits Dave, and he can join. */
+    /* Accepting unproven members (the default since 0.12.0) admits Dave,
+     * and he can join. */
     for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = true;
     dave.m->config.allow_unproven_members = true;
     OK(marmot_add_members(alice.m, &gid, kps2, 1, &welcomes, &n, &add));
@@ -3572,7 +3582,7 @@ prove_leaf(Member *x, const MarmotGroupId *gid, Member *const *others, size_t n)
  * Each member signs the template for its own group leaf and self-updates;
  * receivers accept the new leaf with the proof, reject one signed by another
  * account, and once every leaf is proven an admin can admit Dave, who joins
- * in the default mode. */
+ * requiring proofs. */
 static void
 test_members_prove_existing_leaves_by_self_update(void)
 {
@@ -3582,7 +3592,7 @@ test_members_prove_existing_leaves_by_self_update(void)
     member_init_unenrolled(&charlie, "Charlie");
     member_init(&dave, "Dave");
     Member *three[] = { &alice, &bob, &charlie };
-    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = true;
+    for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_self = true;
     char *bob_kp = legacy_key_package(&bob), *charlie_kp = legacy_key_package(&charlie);
     const char *kps[] = { bob_kp, charlie_kp };
     MarmotGroupConfig cfg = {0};
@@ -3598,6 +3608,7 @@ test_members_prove_existing_leaves_by_self_update(void)
                                             cg.group->mls_group_id.len);
     marmot_create_group_result_free(&cg);
     for (size_t i = 0; i < 3; i++) three[i]->m->config.allow_unproven_members = false;
+    dave.m->config.allow_unproven_members = false;
 
     /* A proof signed by another account is refused; nothing is pending. */
     char *tmpl = NULL;
@@ -3645,6 +3656,455 @@ test_members_prove_existing_leaves_by_self_update(void)
     free(bob_kp);
     marmot_group_id_free(&gid);
     for (size_t i = 0; i < 4; i++) marmot_free(four[i]->m);
+}
+
+/* The leaf of `x`'s account in `g` (UINT32_MAX: none). */
+static uint32_t
+tree_leaf_of(const MlsGroup *g, const uint8_t account[32])
+{
+    uint8_t id[32];
+    for (uint32_t i = 0; i < g->tree.n_leaves; i++)
+        if (marmot_mls_sender_identity(g, i, id) == 0 && memcmp(id, account, 32) == 0)
+            return i;
+    return UINT32_MAX;
+}
+
+static const MarmotMemberIdentity *
+identity_of(const MarmotMemberIdentity *ids, size_t n, const uint8_t account[32])
+{
+    for (size_t i = 0; i < n; i++)
+        if (memcmp(ids[i].account_pubkey, account, 32) == 0) return &ids[i];
+    return NULL;
+}
+
+/* The leaf of `account` in `x`'s stored state of `gid`. */
+static uint32_t
+leaf_of_member(Member *x, const MarmotGroupId *gid, const uint8_t account[32])
+{
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    uint32_t leaf = tree_leaf_of(&g, account);
+    mls_group_free(&g);
+    return leaf;
+}
+
+/* nostrc-6ukh: the default (allow_unproven_members, since 0.12.0) in a
+ * legacy-profile group. MDK 0.8 members without the account proof join
+ * through our own Add, through another admin's Commit and in a Welcome's
+ * tree, and are reported UNPROVEN; a proof that does not verify is still
+ * refused (we6g, 7vyi); marmot_set_allow_unproven_members(false) brings
+ * back the refusal. */
+static void
+test_default_mode_legacy_profile(void)
+{
+    Trio t;
+    trio_init(&t);
+    CHECK(t.alice.m->config.allow_unproven_members && !t.alice.m->config.allow_unproven_self,
+          "the defaults");
+    {
+        MlsGroup g;
+        load_mls(&t.alice, &t.gid, &g);
+        CHECK(marmot_mls_group_is_legacy(&g), "a libmarmot group is legacy");
+        mls_group_free(&g);
+    }
+
+    /* 1. Our own Add of an MDK 0.8 KeyPackage, applied by the others (an
+     *    inbound Commit), and its Welcome joined. */
+    Member mdk;
+    member_init_unenrolled(&mdk, "Mdk");
+    mdk.m->config.allow_unproven_self = true;
+    char *mdk_kp = legacy_key_package(&mdk);
+    const char *kps[] = { mdk_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &welcomes, &n, &add));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, add, "Alice adds an MDK 0.8 member");
+    expect_commit(&t.charlie, add, "Alice adds an MDK 0.8 member");
+    join(&mdk, welcomes[0]);
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+
+    /* 2. A Welcome whose tree holds that unproven leaf (not its sender's):
+     *    Dave joins, and Bob's Add of him applies everywhere. */
+    Member dave;
+    member_init(&dave, "Dave");
+    char *dave_kp = key_package(&dave);
+    const char *kps2[] = { dave_kp };
+    OK(marmot_add_members(t.bob.m, &t.gid, kps2, 1, &welcomes, &n, &add));
+    merge(&t.bob, &t.gid);
+    {
+        /* The result names the authenticated committer: who added Dave. */
+        MarmotMessageResult r;
+        memset(&r, 0, sizeof(r));
+        OK(marmot_process_message(t.alice.m, add, &r));
+        char *bob_hex = marmot_hex_encode(t.bob.pk, 32);
+        CHECK(r.type == MARMOT_RESULT_COMMIT && r.commit.committer_pubkey_hex &&
+                  strcmp(r.commit.committer_pubkey_hex, bob_hex) == 0,
+              "the committer is Bob: %s", r.commit.committer_pubkey_hex);
+        free(bob_hex);
+        marmot_message_result_free(&r);
+    }
+    expect_commit(&t.charlie, add, "Bob adds Dave");
+    expect_commit(&mdk, add, "Bob adds Dave");
+    join(&dave, welcomes[0]);
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    Member *five[] = { &t.alice, &t.bob, &t.charlie, &mdk, &dave };
+    expect_messages_flow(five, 5, &t.gid);
+
+    /* 3. Who is proven, as every member sees it. */
+    for (size_t k = 0; k < 5; k++) {
+        MarmotMemberIdentity *ids = NULL;
+        size_t n_ids = 0;
+        OK(marmot_get_group_member_identities(five[k]->m, &t.gid, &ids, &n_ids));
+        CHECK(n_ids == 5, "%s sees five leaves: %zu", five[k]->name, n_ids);
+        for (size_t i = 0; i < 5; i++) {
+            const MarmotMemberIdentity *id = identity_of(ids, n_ids, five[i]->pk);
+            CHECK(id, "%s lists %s", five[k]->name, five[i]->name);
+            MarmotMemberIdentityStatus want = five[i] == &mdk ? MARMOT_MEMBER_IDENTITY_UNPROVEN
+                                                               : MARMOT_MEMBER_IDENTITY_PROVEN;
+            CHECK(id->status == want, "%s sees %s as %d", five[k]->name, five[i]->name,
+                  id->status);
+        }
+        free(ids);
+    }
+
+    /* 4. A proof that does not verify is refused in the default mode too. */
+    LeafProof bad[] = { LEAF_PROOF_BY_OTHER, LEAF_REPLAYED_PROOF };
+    for (size_t i = 0; i < 2; i++) {
+        MlsKeyPackage kp;
+        MlsKeyPackagePrivate priv;
+        leaf_key_package(t.charlie.pk, t.charlie.sk, &t.alice, bad[i], &kp, &priv);
+        char *forged = forge_add_commit(&t.alice, &t.gid, &kp, t.nostr_gid);
+        expect_rejected(&t.bob, &t.gid, forged, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                        "default mode, a bad proof");
+        expect_rejected(&mdk, &t.gid, forged, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                        "default mode, a bad proof");
+        free(forged);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&priv);
+    }
+
+    /* 5. The knob: requiring proofs refuses our own Add of an unproven
+     *    KeyPackage, and another admin's Commit adding one. */
+    OK(marmot_set_allow_unproven_members(t.bob.m, false));
+    OK(marmot_set_allow_unproven_members(t.alice.m, false));
+    Member mdk2;
+    member_init_unenrolled(&mdk2, "Mdk2");
+    mdk2.m->config.allow_unproven_self = true;
+    char *mdk2_kp = legacy_key_package(&mdk2);
+    const char *kps3[] = { mdk2_kp };
+    add = NULL;
+    welcomes = NULL;
+    CHECK(marmot_add_members(t.alice.m, &t.gid, kps3, 1, &welcomes, &n, &add) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY && !add && !welcomes,
+          "proofs required: our own Add of an unproven KeyPackage");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(mdk2.pk, NULL, &t.alice, LEAF_NO_PROOF, &kp, &priv);
+    char *bare = forge_add_commit(&t.alice, &t.gid, &kp, t.nostr_gid);
+    expect_rejected(&t.bob, &t.gid, bare, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                    "proofs required: another admin adds an unproven leaf");
+    CHECK(marmot_set_allow_unproven_members(NULL, true) == MARMOT_ERR_INVALID_ARG, "NULL");
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+
+    free(bare);
+    free(mdk2_kp);
+    free(dave_kp);
+    free(mdk_kp);
+    marmot_free(mdk2.m);
+    marmot_free(dave.m);
+    marmot_free(mdk.m);
+    trio_clear(&t);
+}
+
+/* Replaces `g`'s GroupContext extensions with `bytes` (an Extension list). */
+static void
+set_extension_bytes(MlsGroup *g, const uint8_t *bytes, size_t len)
+{
+    free(g->extensions_data);
+    g->extensions_data = malloc(len ? len : 1);
+    CHECK(g->extensions_data, "extensions");
+    if (len) memcpy(g->extensions_data, bytes, len);
+    g->extensions_len = len;
+}
+
+/* Appends an empty app_data_dictionary (0x0006) to `g`'s extensions. */
+static void
+add_dictionary(MlsGroup *g)
+{
+    size_t n = g->extensions_len;
+    uint8_t *b = malloc(n + 3);
+    CHECK(b, "extensions");
+    if (n) memcpy(b, g->extensions_data, n);
+    b[n] = 0x00;
+    b[n + 1] = 0x06;
+    b[n + 2] = 0x00;   /* extension_data<V>: empty */
+    set_extension_bytes(g, b, n + 3);
+    free(b);
+}
+
+/* nostrc-6ukh: only a legacy-profile group admits a leaf without the
+ * account proof. An adopted (app_data_dictionary, no 0xF2EE) or
+ * mixed (both) GroupContext fails closed: no unproven
+ * leaf in a Welcome tree -- not even the sender's -- nor added by a
+ * Commit, nor kept unproven by a member's own new leaf, whatever
+ * allow_unproven_members says. marmot_commit_authorize() is the policy of
+ * PublicMessage and PrivateMessage Commits alike (stage_inbound()). */
+static void
+test_non_legacy_profile_fails_closed(void)
+{
+    Trio t;
+    trio_init(&t);
+    MlsGroup pre, post;
+    load_mls(&t.alice, &t.gid, &pre);
+    CHECK(marmot_mls_group_is_legacy(&pre), "legacy");
+
+    /* The profiles. */
+    MlsGroup probe;
+    load_mls(&t.alice, &t.gid, &probe);
+    add_dictionary(&probe);
+    CHECK(!marmot_mls_group_is_legacy(&probe), "mixed: not legacy");
+    const uint8_t dict_only[] = { 0x00, 0x06, 0x00 };
+    set_extension_bytes(&probe, dict_only, sizeof(dict_only));
+    CHECK(!marmot_mls_group_is_legacy(&probe), "adopted: not legacy");
+    /* Slice E's definition: adopted exactly when the GroupContext carries
+     * an app_data_dictionary; one without GroupData is legacy, with no
+     * admin (W24 slice E review H1). */
+    set_extension_bytes(&probe, NULL, 0);
+    CHECK(marmot_mls_group_is_legacy(&probe), "none: legacy (no admin)");
+    const uint8_t junk[] = { 0x00, 0x06, 0x05 };
+    set_extension_bytes(&probe, junk, sizeof(junk));
+    CHECK(!marmot_mls_group_is_legacy(&probe), "garbage 0x0006: not legacy");
+    CHECK(!marmot_mls_group_is_legacy(NULL), "NULL");
+    mls_group_free(&probe);
+    /* The profile pinned at admission decides too: an adopted group whose
+     * GroupContext reads legacy is not (it is damaged). */
+    load_mls(&t.alice, &t.gid, &probe);
+    probe.profile = MARMOT_GROUP_PROFILE_ADOPTED;
+    CHECK(!marmot_mls_group_is_legacy(&probe), "pinned adopted: not legacy");
+    mls_group_free(&probe);
+
+    /* An Add Commit of an unproven leaf, as authorization sees it. */
+    Member mdk;
+    member_init(&mdk, "Mdk");
+    MlsKeyPackage kp, genuine;
+    MlsKeyPackagePrivate priv, genuine_priv;
+    leaf_key_package(mdk.pk, NULL, &t.alice, LEAF_NO_PROOF, &kp, &priv);
+    leaf_key_package(mdk.pk, mdk.sk, &t.alice, LEAF_GENUINE, &genuine, &genuine_priv);
+    load_mls(&t.alice, &t.gid, &post);
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_member(&post, &kp, &add) == 0, "MLS Add");
+    mls_add_result_clear(&add);
+    MlsGroup post_proven;
+    load_mls(&t.alice, &t.gid, &post_proven);
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_member(&post_proven, &genuine, &add) == 0, "MLS Add (proven)");
+    mls_add_result_clear(&add);
+    uint32_t alice_leaf = pre.own_leaf_index;
+    uint32_t mdk_leaf = tree_leaf_of(&post, mdk.pk);
+    CHECK(mdk_leaf != UINT32_MAX, "the unproven leaf");
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+
+    /* Legacy: the policy decides. */
+    CHECK(marmot_commit_authorize(&pre, &post, alice_leaf, true, &key, &gde) == MARMOT_OK,
+          "legacy, unproven allowed");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+    CHECK(marmot_commit_authorize(&pre, &post, alice_leaf, false, &key, &gde) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY, "legacy, proofs required");
+    CHECK(marmot_tree_members_bound(&post, UINT32_MAX, true) == MARMOT_OK, "legacy tree");
+    CHECK(marmot_tree_members_bound(&post, mdk_leaf, false) == MARMOT_OK,
+          "legacy tree, the sender exempt");
+    CHECK(marmot_tree_members_bound(&post, UINT32_MAX, false) ==
+              MARMOT_ERR_KEY_PACKAGE_IDENTITY, "legacy tree, proofs required");
+
+    /* The profile is kept (W24 review L3): a Commit that changes the
+     * GroupContext to another profile is refused, whatever it adds. */
+    MlsGroup into_mixed;
+    load_mls(&t.alice, &t.gid, &into_mixed);
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_member(&into_mixed, &genuine, &add) == 0, "MLS Add (proven)");
+    mls_add_result_clear(&add);
+    add_dictionary(&into_mixed);
+    CHECK(marmot_commit_authorize(&pre, &into_mixed, alice_leaf, true, &key, &gde) ==
+              MARMOT_ERR_UNSUPPORTED && !gde, "legacy -> mixed");
+    MlsGroup adopted_pre;
+    load_mls(&t.alice, &t.gid, &adopted_pre);
+    set_extension_bytes(&adopted_pre, dict_only, sizeof(dict_only));
+    CHECK(marmot_commit_authorize(&adopted_pre, &post_proven, alice_leaf, true, &key, &gde) ==
+              MARMOT_ERR_UNSUPPORTED && !gde, "adopted -> legacy, never a downgrade");
+    mls_group_free(&adopted_pre);
+    mls_group_free(&into_mixed);
+
+    /* Unrecognised (0xF2EE and a dictionary): no Commit is judged by the
+     * legacy rules, proven or not. */
+    add_dictionary(&pre);
+    add_dictionary(&post);
+    add_dictionary(&post_proven);
+    CHECK(marmot_commit_authorize(&pre, &post, alice_leaf, true, &key, &gde) ==
+              MARMOT_ERR_UNSUPPORTED && !gde, "unknown profile, unproven Add");
+    CHECK(marmot_commit_authorize(&pre, &post_proven, alice_leaf, true, &key, &gde) ==
+              MARMOT_ERR_UNSUPPORTED && !gde, "unknown profile, proven Add");
+    CHECK(marmot_tree_members_bound(&post, UINT32_MAX, true) == MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+          "unknown profile, tree");
+    CHECK(marmot_tree_members_bound(&post, mdk_leaf, true) == MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+          "unknown profile, tree, no sender exemption");
+    CHECK(marmot_tree_members_bound(&post_proven, UINT32_MAX, false) == MARMOT_OK,
+          "unknown profile, proven tree");
+
+    /* A member's own new leaf (its UpdatePath: it commits) stays unproven:
+     * legacy only.  The same state, with Mdk's leaf renewed. */
+    MlsGroup with_mdk;
+    load_mls(&t.alice, &t.gid, &with_mdk);
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_member(&with_mdk, &kp, &add) == 0, "MLS Add, the pre state");
+    mls_add_result_clear(&add);
+    MlsGroup post2;
+    {
+        uint8_t *blob = NULL;
+        size_t len = 0;
+        CHECK(mls_group_serialize(&with_mdk, &blob, &len) == 0 &&
+              mls_group_deserialize(blob, len, &post2) == 0, "copy the pre state");
+        sodium_memzero(blob, len);
+        free(blob);
+    }
+    MlsLeafNode *renewed = &post2.tree.nodes[mls_tree_leaf_to_node(mdk_leaf)].leaf;
+    renewed->signature[0] ^= 1;   /* another leaf of the same identity */
+    CHECK(marmot_commit_authorize(&with_mdk, &post2, mdk_leaf, true, &key, &gde) == MARMOT_OK,
+          "legacy: a member's leaf stays unproven");
+    marmot_group_data_extension_free(gde);
+    gde = NULL;
+    const uint8_t dict_only2[] = { 0x00, 0x06, 0x00 };
+    add_dictionary(&with_mdk);
+    add_dictionary(&post2);
+    CHECK(marmot_commit_authorize(&with_mdk, &post2, mdk_leaf, true, &key, &gde) ==
+              MARMOT_ERR_UNSUPPORTED && !gde,
+          "unknown profile: not even a member's own new leaf");
+    /* Adopted (dictionary only) trees: nothing unproven, no exemption. */
+    set_extension_bytes(&post, dict_only2, sizeof(dict_only2));
+    CHECK(marmot_tree_members_bound(&post, mdk_leaf, true) == MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+          "adopted tree");
+
+    mls_group_free(&with_mdk);
+    mls_group_free(&post2);
+    mls_group_free(&post_proven);
+    mls_group_free(&post);
+    mls_group_free(&pre);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_key_package_clear(&genuine);
+    mls_key_package_private_clear(&genuine_priv);
+    marmot_free(mdk.m);
+    trio_clear(&t);
+}
+
+/* W24 review B1, the slot takeover: Remove(Y) + Add(KeyPackage claiming Y,
+ * with the committer's keys) in one Commit puts the new leaf in Y's slot
+ * under Y's identity (RFC 9420: Removes first, the leftmost blank leaf).
+ * Judged by identity alone it was an unprivileged Commit and Y's own new
+ * leaf, so a non-admin took over a proof-less member's device, accepted in
+ * the default mode and with proofs required.  An Add-filled slot is a
+ * membership change (admins only) and a new identity claim. */
+static void
+slot_takeover(bool require_proofs)
+{
+    Trio t;
+    trio_init(&t);
+    Member mdk;
+    member_init_unenrolled(&mdk, "Mdk");
+    mdk.m->config.allow_unproven_self = true;
+    char *mdk_kp = legacy_key_package(&mdk);
+    const char *kps[] = { mdk_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &welcomes, &n, &add));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, add, "Alice adds Mdk");
+    expect_commit(&t.charlie, add, "Alice adds Mdk");
+    join(&mdk, welcomes[0]);
+    Member *four[] = { &t.alice, &t.bob, &t.charlie, &mdk };
+    for (size_t i = 0; i < 4; i++) four[i]->m->config.allow_unproven_members = !require_proofs;
+    const char *mode = require_proofs ? "proofs required" : "default mode";
+
+    /* `x`'s Commit removing Mdk and adding a leaf that claims Mdk, made of
+     * `x`'s keys (the leaf's key, its private part: x's alone). */
+    Member *swappers[] = { &t.charlie, &t.bob };
+    char *swaps[2] = { NULL, NULL };
+    for (size_t k = 0; k < 2; k++) {
+        MlsGroup g;
+        load_mls(swappers[k], &t.gid, &g);
+        uint32_t mdk_leaf = tree_leaf_of(&g, mdk.pk);
+        CHECK(mdk_leaf != UINT32_MAX, "Mdk's leaf");
+        uint8_t exporter[32];
+        memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+        MlsKeyPackage kp;
+        MlsKeyPackagePrivate priv;
+        leaf_key_package(mdk.pk, NULL, swappers[k], LEAF_NO_PROOF, &kp, &priv);
+        const MlsKeyPackage *kpp[] = { &kp };
+        MlsAddResult res;
+        memset(&res, 0, sizeof(res));
+        CHECK(mls_group_replace_members(&g, &mdk_leaf, 1, kpp, 1, &res) == 0, "Remove + Add");
+        CHECK(tree_leaf_of(&g, mdk.pk) == mdk_leaf, "the Add took Mdk's slot");
+        swaps[k] = marmot_commit_build_event(res.commit_data, res.commit_len, exporter,
+                                             t.nostr_gid, marmot_now());
+        CHECK(swaps[k], "the Commit event");
+        mls_add_result_clear(&res);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&priv);
+        mls_group_free(&g);
+        sodium_memzero(exporter, sizeof(exporter));
+    }
+
+    /* Charlie is no admin: nobody accepts it. */
+    expect_rejected(&t.alice, &t.gid, swaps[0], MARMOT_ERR_COMMIT_FROM_NON_ADMIN, mode);
+    expect_rejected(&t.bob, &t.gid, swaps[0], MARMOT_ERR_COMMIT_FROM_NON_ADMIN, mode);
+    expect_rejected(&mdk, &t.gid, swaps[0], MARMOT_ERR_COMMIT_FROM_NON_ADMIN, mode);
+
+    /* Bob is an admin: a new member, judged as one. */
+    if (require_proofs) {
+        expect_rejected(&t.alice, &t.gid, swaps[1], MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                        "an admin's swap: a new claim without a proof");
+    } else {
+        MarmotMessageResult r;
+        memset(&r, 0, sizeof(r));
+        OK(marmot_process_message(t.alice.m, swaps[1], &r));
+        CHECK(r.type == MARMOT_RESULT_COMMIT, "an admin may add an unproven member");
+        CHECK(r.commit.committer_leaf != UINT32_MAX &&
+                  r.commit.committer_leaf != leaf_of_member(&t.alice, &t.gid, mdk.pk),
+              "the committer is Bob, not the swapped slot");
+        marmot_message_result_free(&r);
+        MarmotMemberIdentity *ids = NULL;
+        size_t n_ids = 0;
+        OK(marmot_get_group_member_identities(t.alice.m, &t.gid, &ids, &n_ids));
+        const MarmotMemberIdentity *id = identity_of(ids, n_ids, mdk.pk);
+        CHECK(id && id->status == MARMOT_MEMBER_IDENTITY_UNPROVEN, "listed unproven");
+        free(ids);
+    }
+
+    free(swaps[0]);
+    free(swaps[1]);
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    free(mdk_kp);
+    marmot_free(mdk.m);
+    trio_clear(&t);
+}
+
+static void
+test_slot_takeover_refused(void)
+{
+    slot_takeover(false);
+    slot_takeover(true);
 }
 
 /* Review W20 B1: without an account proof for the creator, the group would
@@ -3924,6 +4384,69 @@ test_competitor_within_window_still_wins(void)
     free(commit);
     mls_group_free(&bob_at_e);
     trio_clear(&t);
+}
+
+/* nostrc-prrl, W24 review L1: a refused Commit (KEY_PACKAGE_IDENTITY) is
+ * reported wherever the group really stops -- for the epoch the member is
+ * at, and for a competitor of a Commit already applied that would have won
+ * its epoch (members who don't check proofs follow it: never fork
+ * silently).  Only a refused competitor that loses to the applied Commit is
+ * stale (WRONG_EPOCH). */
+static void
+test_refused_competitor_ordering(void)
+{
+    /* It would have won: Bob's privileged forged Add beats Alice's
+     * privileged rename (Bob's key sorts lower). */
+    {
+        Trio t;
+        trio_init(&t);
+        MlsKeyPackage kp;
+        MlsKeyPackagePrivate priv;
+        leaf_key_package(t.charlie.pk, t.charlie.sk, &t.alice, LEAF_PROOF_BY_OTHER, &kp, &priv);
+        char *forged = forge_add_commit(&t.bob, &t.gid, &kp, t.nostr_gid);   /* Bob's, at E */
+        expect_rejected(&t.charlie, &t.gid, forged, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                        "a forged Add of the current epoch");
+        char *renamed = rename_group(&t.alice, &t.gid, "Moved on");
+        expect_commit(&t.charlie, renamed, "Alice's honest change of that epoch");
+        CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE,
+              "Bob could still win the epoch");
+        expect_rejected(&t.charlie, &t.gid, forged, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                        "Bob's forged Add would have won: the group stops there");
+        free(renamed);
+        free(forged);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&priv);
+        trio_clear(&t);
+    }
+    /* It loses: Alice's self-update dropping her proof (unprivileged)
+     * against Bob's self-update (unprivileged, Bob's key sorts lower). */
+    {
+        Trio t;
+        trio_init(&t);
+        MlsGroup g;
+        load_mls(&t.alice, &t.gid, &g);
+        uint8_t exporter[32];
+        memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+        MlsCommitResult res;
+        memset(&res, 0, sizeof(res));
+        CHECK(mls_group_self_update_with_leaf_extensions(&g, NULL, 0, &res) == 0,
+              "Alice's leaf without its proof");
+        char *dropped = marmot_commit_build_event(res.commit_data, res.commit_len, exporter,
+                                                  t.nostr_gid, marmot_now());
+        CHECK(dropped, "the Commit event");
+        mls_commit_result_clear(&res);
+        mls_group_free(&g);
+        sodium_memzero(exporter, sizeof(exporter));
+        char *bob = self_update(&t.bob, &t.gid);
+        expect_commit(&t.charlie, bob, "Bob's self-update");
+        CHECK(stored_parent(&t.charlie, &t.gid, NULL) == TIER_CONVERGENCE,
+              "Alice could still win the epoch");
+        expect_rejected(&t.charlie, &t.gid, dropped, MARMOT_ERR_WRONG_EPOCH,
+                        "Alice's refused self-update, which loses to Bob's: stale");
+        free(bob);
+        free(dropped);
+        trio_clear(&t);
+    }
 }
 
 /* Nobody could publish a winning competitor: the parent is reduced when the
@@ -5123,21 +5646,28 @@ test_private_message_commit_forgeries_rejected(void)
         free(json);
     }
 
-    /* An Add whose account proof fails, refused in default mode as in a
-     * PublicMessage (nostrc-7vyi). */
-    struct { const char *what; LeafProof mode; } proofs[] = {
-        { "Add of Victor with Alice's proof", LEAF_PROOF_BY_OTHER },
-        { "Add of Victor with his proof of another key", LEAF_REPLAYED_PROOF },
-        { "Add of Victor without a proof", LEAF_NO_PROOF },
+    /* An Add whose account proof fails, refused as in a PublicMessage
+     * (nostrc-7vyi): a proof that does not verify in default mode too, an
+     * Add without one when proofs are required (since 0.12.0 the default
+     * admits it in a legacy-profile group, nostrc-6ukh; see
+     * test_private_message_unproven_add_default). */
+    struct { const char *what; LeafProof mode; bool strict; } proofs[] = {
+        { "Add of Victor with Alice's proof", LEAF_PROOF_BY_OTHER, false },
+        { "Add of Victor with his proof of another key", LEAF_REPLAYED_PROOF, false },
+        { "Add of Victor without a proof, proofs required", LEAF_NO_PROOF, true },
     };
     for (size_t i = 0; i < sizeof(proofs) / sizeof(proofs[0]); i++) {
         MlsKeyPackage bad;
         MlsKeyPackagePrivate bad_priv;
         leaf_key_package(victor.pk, victor.sk, &t.alice, proofs[i].mode, &bad, &bad_priv);
         char *json = private_commit(&t.alice, &t.gid, t.nostr_gid, &bad, &PRIV_HONEST);
+        t.bob.m->config.allow_unproven_members = !proofs[i].strict;
+        t.charlie.m->config.allow_unproven_members = !proofs[i].strict;
         expect_rejected(&t.bob, &t.gid, json, MARMOT_ERR_KEY_PACKAGE_IDENTITY, proofs[i].what);
         expect_rejected(&t.charlie, &t.gid, json, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
                         proofs[i].what);
+        t.bob.m->config.allow_unproven_members = true;
+        t.charlie.m->config.allow_unproven_members = true;
         free(json);
         mls_key_package_clear(&bad);
         mls_key_package_private_clear(&bad_priv);
@@ -5151,6 +5681,38 @@ test_private_message_commit_forgeries_rejected(void)
     mls_key_package_private_clear(&priv);
     marmot_free(victor.m);
     marmot_free(dave.m);
+    trio_clear(&t);
+}
+
+/* nostrc-6ukh: in a legacy-profile group the default admits an admin's
+ * PrivateMessage Add of a member without the account proof, as it does a
+ * PublicMessage one, and reports the member UNPROVEN. */
+static void
+test_private_message_unproven_add_default(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member victor;
+    member_init(&victor, "Victor");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(victor.pk, victor.sk, NULL, LEAF_NO_PROOF, &kp, &priv);
+    char *json = private_commit(&t.alice, &t.gid, t.nostr_gid, &kp, &PRIV_HONEST);
+    expect_commit(&t.bob, json, "Alice's PrivateMessage Add of Victor without a proof");
+    expect_commit(&t.charlie, json, "Alice's PrivateMessage Add of Victor without a proof");
+    Member *two[] = { &t.bob, &t.charlie };
+    expect_converged(two, 2, &t.gid, "Before", t.epoch + 1);
+    MarmotMemberIdentity *ids = NULL;
+    size_t n = 0;
+    CHECK(marmot_get_group_member_identities(t.bob.m, &t.gid, &ids, &n) == MARMOT_OK,
+          "identities");
+    const MarmotMemberIdentity *v = identity_of(ids, n, victor.pk);
+    CHECK(v && v->status == MARMOT_MEMBER_IDENTITY_UNPROVEN, "Victor is UNPROVEN");
+    free(ids);
+    free(json);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    marmot_free(victor.m);
     trio_clear(&t);
 }
 
@@ -6732,6 +7294,7 @@ main(int argc, char **argv)
     RUN(test_group_event_floor_far_ahead);
     RUN(test_private_message_commit_applies);
     RUN(test_private_message_commit_forgeries_rejected);
+    RUN(test_private_message_unproven_add_default);
     RUN(test_private_message_commit_epoch_and_generation);
     RUN(test_private_message_commit_checks_alone);
     RUN(test_private_message_commit_of_past_epoch);
@@ -6770,6 +7333,10 @@ main(int argc, char **argv)
     RUN(test_add_refused_when_joiners_would_reject);
     RUN(test_create_group_needs_enrollment);
     RUN(test_members_prove_existing_leaves_by_self_update);
+    RUN(test_default_mode_legacy_profile);
+    RUN(test_non_legacy_profile_fails_closed);
+    RUN(test_slot_takeover_refused);
+    RUN(test_refused_competitor_ordering);
     RUN(test_retained_parent_retires_once_settled);
     RUN(test_competitor_within_window_still_wins);
     RUN(test_retained_parent_retired_at_once);

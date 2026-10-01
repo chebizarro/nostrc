@@ -48,6 +48,7 @@ struct _GhPreferencesDialog {
   AdwSwitchRow *profile_pictures_row;
   GtkLabel *web_note;
   AdwSwitchRow *filter_unknown_senders_row;
+  AdwSwitchRow *verified_mls_groups_row;
   AdwSwitchRow *message_previews_row;
   AdwSwitchRow *enter_sends_row;
   AdwPreferencesGroup *disappearing_group;
@@ -128,6 +129,7 @@ static const struct {
   { "retention-days", GH_PREFERENCES_FEATURE_EXPIRY },
   { "blossom-servers", GH_PREFERENCES_FEATURE_ATTACHMENTS },
   { "tor-socks-address", GH_PREFERENCES_FEATURE_TOR },
+  { "only-join-verified-mls-groups", GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS },
 };
 
 static gboolean
@@ -165,6 +167,8 @@ static const struct {
   { "load-profile-pictures", G_STRUCT_OFFSET(GhPreferencesDialog, profile_pictures_row) },
   { "filter-unknown-senders",
     G_STRUCT_OFFSET(GhPreferencesDialog, filter_unknown_senders_row) },
+  { "only-join-verified-mls-groups",
+    G_STRUCT_OFFSET(GhPreferencesDialog, verified_mls_groups_row) },
   { "show-message-previews", G_STRUCT_OFFSET(GhPreferencesDialog, message_previews_row) },
   { "enter-sends", G_STRUCT_OFFSET(GhPreferencesDialog, enter_sends_row) },
   { "run-in-background", G_STRUCT_OFFSET(GhPreferencesDialog, run_in_background_row) },
@@ -1324,6 +1328,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(profile_pictures_row);
   BIND(web_note);
   BIND(filter_unknown_senders_row);
+  BIND(verified_mls_groups_row);
   BIND(message_previews_row);
   BIND(enter_sends_row);
   BIND(disappearing_group);

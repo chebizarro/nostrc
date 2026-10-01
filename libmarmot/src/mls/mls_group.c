@@ -1641,6 +1641,7 @@ done:
 
 static int
 add_members_staged(MlsGroup *group,
+                   const uint32_t *removes, size_t remove_count,
                    const MlsKeyPackage *const *kps, size_t kp_count,
                    const uint8_t *gce_extensions, size_t gce_len,
                    MlsAddResult *result)
@@ -1654,7 +1655,7 @@ add_members_staged(MlsGroup *group,
     uint8_t (*lca_secrets)[MLS_HASH_LEN] = calloc(kp_count, MLS_HASH_LEN);
     uint32_t *added = calloc(kp_count, sizeof(uint32_t));
     uint32_t *lca_nodes = calloc(kp_count, sizeof(uint32_t));
-    MlsProposal *proposals = calloc(kp_count + 1, sizeof(MlsProposal));
+    MlsProposal *proposals = calloc(remove_count + kp_count + 1, sizeof(MlsProposal));
     size_t proposals_made = 0;
     uint8_t *commit = NULL, *welcome = NULL;
     size_t commit_len = 0, welcome_len = 0;
@@ -1665,6 +1666,26 @@ add_members_staged(MlsGroup *group,
         goto done;
     }
     if (mls_group_context_build(group, &pre_gc, &pre_gc_len) != 0) goto done;
+
+    /* Removes first, as receivers apply them (RFC 9420 §12.4.2): each leaf
+     * and its direct path blanked, so an Add may take its slot. */
+    for (size_t i = 0; i < remove_count; i++) {
+        uint32_t node = mls_tree_leaf_to_node(removes[i]);
+        uint32_t path[64];
+        uint32_t path_len = 0;
+        if (removes[i] >= group->tree.n_leaves || removes[i] == group->own_leaf_index ||
+            group->tree.nodes[node].type != MLS_NODE_LEAF ||
+            mls_tree_direct_path(node, group->tree.n_leaves, path, 64, &path_len) != 0) {
+            rc = MARMOT_ERR_INVALID_ARG;
+            goto done;
+        }
+        mls_tree_blank_node(&group->tree.nodes[node]);
+        for (uint32_t j = 0; j < path_len; j++)
+            mls_tree_blank_node(&group->tree.nodes[path[j]]);
+        proposals[proposals_made].type = MLS_PROPOSAL_REMOVE;
+        proposals[proposals_made].remove.removed_leaf = removes[i];
+        proposals_made++;
+    }
 
     /* Apply the Adds as receivers do (RFC 9420 §12.1.1, in proposal order):
      * each new leaf takes the leftmost blank slot and is unmerged at every
@@ -1686,7 +1707,7 @@ add_members_staged(MlsGroup *group,
             goto done;
         }
         added[i] = mls_tree_node_to_leaf(node);
-        rc = add_proposal_from_key_package(&proposals[i], kps[i]);
+        rc = add_proposal_from_key_package(&proposals[remove_count + i], kps[i]);
         if (rc != 0) goto done;
         proposals_made++;
     }
@@ -1718,7 +1739,7 @@ add_members_staged(MlsGroup *group,
     if (gce_extensions) {
         rc = group_context_extensions_validate(group, gce_extensions, gce_len, UINT32_MAX);
         if (rc != 0) goto done;
-        MlsProposal *gce = &proposals[kp_count];
+        MlsProposal *gce = &proposals[remove_count + kp_count];
         gce->type = MLS_PROPOSAL_GROUP_CONTEXT_EXT;
         gce->update_leaf_index = UINT32_MAX;
         gce->group_context_extensions.extensions = malloc(gce_len ? gce_len : 1);
@@ -2030,7 +2051,28 @@ mls_group_add_members_with_extensions(MlsGroup *group,
     memset(result, 0, sizeof(*result));
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = add_members_staged(&staged, kps, kp_count, extensions, extensions_len, result);
+    int rc = add_members_staged(&staged, NULL, 0, kps, kp_count, extensions, extensions_len, result);
+    if (rc == 0) rc = group_install_checked(group, &staged);
+    else mls_group_free(&staged);
+    if (rc != 0) mls_add_result_clear(result);
+    return rc;
+}
+
+int
+mls_group_replace_members(MlsGroup *group,
+                          const uint32_t *removes, size_t remove_count,
+                          const MlsKeyPackage *const *kps, size_t kp_count,
+                          MlsAddResult *result)
+{
+    if (!group || (remove_count && !removes) || !kps || kp_count == 0 || !result)
+        return MARMOT_ERR_INVALID_ARG;
+    if (kp_count > MLS_MAX_ADDS_PER_COMMIT || remove_count > 64) return MARMOT_ERR_INVALID_ARG;
+    for (size_t i = 0; i < kp_count; i++)
+        if (!kps[i]) return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    MlsGroup staged;
+    if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
+    int rc = add_members_staged(&staged, removes, remove_count, kps, kp_count, NULL, 0, result);
     if (rc == 0) rc = group_install_checked(group, &staged);
     else mls_group_free(&staged);
     if (rc != 0) mls_add_result_clear(result);

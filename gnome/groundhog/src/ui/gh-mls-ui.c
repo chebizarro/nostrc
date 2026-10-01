@@ -95,9 +95,21 @@ static void
 sync_unreadable(MlsUi *ui)
 {
   GhConversationView *view = view_of(ui);
-  if (view)
-    gh_conversation_view_set_decrypt_pending(
-      view, ui->shown && gh_mls_group_get_decrypt_pending(ui->shown));
+  if (!view)
+    return;
+  gh_conversation_view_set_decrypt_pending(
+    view, ui->shown && gh_mls_group_get_decrypt_pending(ui->shown));
+  /* A change refused for good is said as such, never as a wait (nostrc-prrl). */
+  gboolean refused = ui->shown && gh_mls_group_get_active(ui->shown) &&
+                     gh_mls_group_get_change_refused(ui->shown);
+  gboolean strict = FALSE;
+  if (refused && ui->settings) {
+    g_autoptr(GSettingsSchema) schema = NULL;
+    g_object_get(ui->settings, "settings-schema", &schema, NULL);
+    strict = schema && g_settings_schema_has_key(schema, "only-join-verified-mls-groups") &&
+             g_settings_get_boolean(ui->settings, "only-join-verified-mls-groups");
+  }
+  gh_conversation_view_set_unreadable_reason(view, refused ? gh_mls_refused_copy(strict) : NULL);
 }
 
 static void
@@ -136,6 +148,7 @@ set_shown(MlsUi *ui, GhMlsGroup *group)
   if (group) {
     g_signal_connect_swapped(group, "members-changed", G_CALLBACK(on_shown_members), ui);
     g_signal_connect_swapped(group, "notify::decrypt-pending", G_CALLBACK(on_shown_state), ui);
+    g_signal_connect_swapped(group, "notify::change-refused", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::active", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::end", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::read-state", G_CALLBACK(on_shown_state), ui);

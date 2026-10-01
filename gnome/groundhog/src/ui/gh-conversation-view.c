@@ -597,6 +597,7 @@ struct _GhConversationView {
   GtkWidget *undecryptable_row;
   GtkLabel *undecryptable_label;
   gboolean decrypt_pending;
+  gchar *unreadable_reason;   /* why the group can't be read past a change (nostrc-prrl) */
   AdwBreakpoint *compact_breakpoint;
   AdwAlertDialog *link_dialog;
   AdwAlertDialog *preview_dialog;
@@ -1558,16 +1559,42 @@ gh_conversation_view_set_locked_messages(GhConversationView *self, guint count)
   gtk_widget_set_visible(self->locked_row, count > 0);
 }
 
+static void
+sync_undecryptable(GhConversationView *self)
+{
+  /* No number and no cause (nostrc-oya4, W22 review N4): what can't be
+   * read may be messages, group changes or junk anyone posted -- unless
+   * the cause is known for good (a refused change, nostrc-prrl). */
+  gtk_label_set_text(self->undecryptable_label,
+                     self->unreadable_reason
+                       ? self->unreadable_reason
+                       : _("Some messages in this group can't be read yet."));
+  gtk_widget_set_visible(self->undecryptable_row,
+                         self->decrypt_pending || self->unreadable_reason);
+}
+
 void
 gh_conversation_view_set_decrypt_pending(GhConversationView *self, gboolean pending)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
   self->decrypt_pending = !!pending;
-  /* No number and no cause (nostrc-oya4, W22 review N4): what can't be
-   * read may be messages, group changes or junk anyone posted. */
-  gtk_label_set_text(self->undecryptable_label,
-                     _("Some messages in this group can't be read yet."));
-  gtk_widget_set_visible(self->undecryptable_row, self->decrypt_pending);
+  sync_undecryptable(self);
+}
+
+void
+gh_conversation_view_set_unreadable_reason(GhConversationView *self, const gchar *reason)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  g_free(self->unreadable_reason);
+  self->unreadable_reason = reason && *reason ? g_strdup(reason) : NULL;
+  sync_undecryptable(self);
+}
+
+const gchar *
+gh_conversation_view_get_unreadable_reason(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  return self->unreadable_reason;
 }
 
 gboolean
@@ -1772,6 +1799,7 @@ gh_conversation_view_finalize(GObject *object)
   g_free(self->pending_preview);
   g_free(self->last_announcement);
   g_free(self->no_inbox_name);
+  g_free(self->unreadable_reason);
   G_OBJECT_CLASS(gh_conversation_view_parent_class)->finalize(object);
 }
 

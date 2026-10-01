@@ -16,6 +16,7 @@
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
 #include "commits.h"
+#include "kp_profile.h"
 #include <nostr/nip44/nip44.h>
 #include <sodium.h>
 #include <stdio.h>
@@ -27,6 +28,7 @@
 #include <nostr-event.h>
 #include <nostr-tag.h>
 #include <unistd.h>
+#include <time.h>
 
 /* Internal declarations needed for round-trip test */
 #include "../src/mls/mls_key_package.h"
@@ -828,7 +830,7 @@ test_key_package_account_proof_check(void)
 
     /* A legacy leaf (MDK 0.8, libmarmot <= 0.9.0): valid, selectable, unproven. */
     MarmotConfig config = marmot_config_default();
-    config.allow_unproven_members = true;
+    config.allow_unproven_self = true;
     Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
     ASSERT(legacy != NULL, "legacy instance");
     uint8_t sk2[32], pk2[32];
@@ -862,6 +864,181 @@ test_key_package_account_proof_check(void)
     marmot_key_package_result_free(&proven);
     marmot_free(legacy);
     marmot_free(m);
+    PASS();
+}
+
+/* The leaf of a KeyPackage event, as a member of a group would carry it. */
+static bool
+kp_member_identity(const char *json, MarmotMemberIdentity *out)
+{
+    MlsKeyPackage kp;
+    uint8_t owner[32];
+    if (marmot_parse_key_package_event(json, &kp, owner) != MARMOT_OK) return false;
+    memset(out, 0, sizeof(*out));
+    memcpy(out->account_pubkey, owner, 32);
+    memcpy(out->signature_key, kp.leaf_node.signature_key, 32);
+    out->status = MARMOT_MEMBER_IDENTITY_UNPROVEN;
+    mls_key_package_clear(&kp);
+    return true;
+}
+
+/* hex of the KeyPackage bytes a base64 kind:30443 content holds: the
+ * content of the earliest kind:443 events. */
+static char *
+kp_content_hex(const char *json)
+{
+    NostrEvent ev;
+    if (!kp_event_from_json(json, &ev)) return NULL;
+    size_t cap = strlen(ev.content), len = 0;
+    uint8_t *bytes = malloc(cap + 1);
+    char *hex = NULL;
+    if (bytes && sodium_base642bin(bytes, cap, ev.content, cap, NULL, &len, NULL,
+                                   sodium_base64_VARIANT_ORIGINAL) == 0)
+        hex = marmot_hex_encode(bytes, len);
+    free(bytes);
+    kp_clear_event(&ev);
+    return hex;
+}
+
+/* nostrc-6ukh: a signed KeyPackage the account published confirms an
+ * unproven member's device. kind 30443 and the older 443 (base64 or hex)
+ * count; anything forged, another account's or another device's does not. */
+static void
+test_key_package_event_matches_member(void)
+{
+    TEST("6ukh: a published KeyPackage confirms an unproven member");
+
+    MarmotConfig config = marmot_config_default();
+    config.allow_unproven_self = true;
+    Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
+    ASSERT(legacy != NULL, "legacy instance");
+    uint8_t sk[32], pk[32], sk2[32], pk2[32];
+    generate_nostr_keypair(sk, pk);
+    generate_nostr_keypair(sk2, pk2);
+    MarmotKeyPackageResult a, b;
+    memset(&a, 0, sizeof(a));
+    memset(&b, 0, sizeof(b));
+    ASSERT_OK(marmot_create_key_package_unsigned(legacy, pk, NULL, 0, &a), "device 1");
+    ASSERT_OK(marmot_create_key_package_unsigned(legacy, pk, NULL, 0, &b), "device 2");
+    char *kp30443 = kp_resign(a.event_json, sk, 0, 0, KP_MUT_NONE, NULL, NULL);
+    char *other_device = kp_resign(b.event_json, sk, 0, 0, KP_MUT_NONE, NULL, NULL);
+    ASSERT(kp30443 && other_device, "signed");
+    MarmotMemberIdentity member;
+    ASSERT(kp_member_identity(kp30443, &member), "the member the first KeyPackage made");
+
+    bool match = false;
+    ASSERT_OK(marmot_key_package_event_matches_member(kp30443, &member, &match), "30443");
+    ASSERT(match, "kind 30443 of the member's device matches");
+
+    /* The older kind 443: base64 with its encoding tag, or hex content. */
+    char *kp443 = kp_resign(a.event_json, sk, 443, 0, KP_MUT_DROP, "d", NULL);
+    match = false;
+    ASSERT_OK(marmot_key_package_event_matches_member(kp443, &member, &match), "443 base64");
+    ASSERT(match, "kind 443 (base64) matches");
+    char *hex = kp_content_hex(a.event_json);
+    ASSERT(hex, "hex content");
+    char *kp443_hex_bare = kp_resign(a.event_json, sk, 443, 0, KP_MUT_CONTENT, NULL, hex);
+    char *kp443_hex = kp_resign(kp443_hex_bare, sk, 443, 0, KP_MUT_SET_VALUE, "encoding", "hex");
+    match = false;
+    ASSERT_OK(marmot_key_package_event_matches_member(kp443_hex, &member, &match), "443 hex");
+    ASSERT(match, "kind 443 (hex, encoding tag) matches");
+    char *kp443_hex_untagged = kp_resign(kp443_hex_bare, sk, 443, 0, KP_MUT_DROP, "encoding",
+                                         NULL);
+    match = false;
+    ASSERT_OK(marmot_key_package_event_matches_member(kp443_hex_untagged, &member, &match),
+              "443 hex, no encoding tag");
+    ASSERT(match, "kind 443 (hex, untagged) matches");
+
+    /* The same account's other device: a valid KeyPackage, no match. */
+    match = true;
+    ASSERT_OK(marmot_key_package_event_matches_member(other_device, &member, &match), "device 2");
+    ASSERT(!match, "another device of the account does not match");
+    /* A leaf naming another account than the one claimed. */
+    MarmotMemberIdentity elsewhere = member;
+    memcpy(elsewhere.account_pubkey, pk2, 32);
+    match = true;
+    ASSERT_OK(marmot_key_package_event_matches_member(kp30443, &elsewhere, &match), "account");
+    ASSERT(!match, "a KeyPackage of another account does not match");
+
+    /* Forged: re-signed by another author (the credential names pk), a
+     * broken signature, another kind. */
+    char *by_other = kp_resign(a.event_json, sk2, 0, 0, KP_MUT_NONE, NULL, NULL);
+    match = true;
+    ASSERT(marmot_key_package_event_matches_member(by_other, &member, &match) ==
+           MARMOT_ERR_AUTHOR_MISMATCH && !match, "another author's event");
+    char *tampered = strdup(kp30443);
+    char *sig = strstr(tampered, "\"sig\":\"");
+    ASSERT(sig, "sig field");
+    sig[7] = sig[7] == '0' ? '1' : '0';
+    match = true;
+    ASSERT(marmot_key_package_event_matches_member(tampered, &member, &match) != MARMOT_OK &&
+           !match, "a broken signature");
+    char *kind1 = kp_resign(a.event_json, sk, 1, 0, KP_MUT_NONE, NULL, NULL);
+    match = true;
+    ASSERT(marmot_key_package_event_matches_member(kind1, &member, &match) ==
+           MARMOT_ERR_UNEXPECTED_EVENT && !match, "kind 1");
+    ASSERT(marmot_key_package_event_matches_member(NULL, &member, &match) ==
+           MARMOT_ERR_INVALID_ARG, "NULL event");
+    ASSERT(marmot_key_package_event_matches_member(kp30443, NULL, &match) ==
+           MARMOT_ERR_INVALID_ARG, "NULL member");
+
+    /* A proven KeyPackage matches its device as well. */
+    Marmot *m = create_test_instance();
+    MarmotKeyPackageResult proven;
+    memset(&proven, 0, sizeof(proven));
+    ASSERT_OK(marmot_create_key_package(m, pk2, sk2, NULL, 0, &proven), "proven");
+    MarmotMemberIdentity proven_member;
+    ASSERT(kp_member_identity(proven.event_json, &proven_member), "proven member");
+    match = false;
+    ASSERT_OK(marmot_key_package_event_matches_member(proven.event_json, &proven_member, &match),
+              "proven KeyPackage");
+    ASSERT(match, "a proven KeyPackage matches its device too");
+
+    /* A leaf with a proof that does not verify (signed by pk2 for pk's
+     * leaf), published by pk: never evidence (we6g, 7vyi). */
+    MlsKeyPackage bad;
+    MlsKeyPackagePrivate bad_priv;
+    ASSERT(mls_key_package_create_unsigned(&bad, &bad_priv, pk, 32, NULL, 0) == 0, "KP");
+    uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
+    ASSERT_OK(marmot_account_proof_create(pk2, sk2, NULL, NULL, MARMOT_CIPHERSUITE,
+                                          MARMOT_SIGNATURE_SCHEME_ED25519,
+                                          bad.leaf_node.signature_key, MLS_SIG_PK_LEN,
+                                          (uint64_t)time(NULL), proof), "pk2's proof");
+    ASSERT_OK(marmot_leaf_set_proof(&bad.leaf_node, proof), "set proof");
+    ASSERT(mls_key_package_sign(&bad, &bad_priv) == 0, "sign KP");
+    MlsTlsBuf buf;
+    ASSERT(mls_tls_buf_init(&buf, 512) == 0 && mls_key_package_serialize(&bad, &buf) == 0,
+           "serialize");
+    size_t b64_len = sodium_base64_ENCODED_LEN(buf.len, sodium_base64_VARIANT_ORIGINAL);
+    char *b64 = malloc(b64_len);
+    sodium_bin2base64(b64, b64_len, buf.data, buf.len, sodium_base64_VARIANT_ORIGINAL);
+    char *bad_event = kp_resign(a.event_json, sk, 0, 0, KP_MUT_CONTENT, NULL, b64);
+    MarmotMemberIdentity bad_member = member;
+    memcpy(bad_member.signature_key, bad.leaf_node.signature_key, 32);
+    match = true;
+    ASSERT(marmot_key_package_event_matches_member(bad_event, &bad_member, &match) ==
+           MARMOT_ERR_KEY_PACKAGE_IDENTITY && !match, "an invalid proof is no evidence");
+    free(bad_event);
+    free(b64);
+    mls_tls_buf_free(&buf);
+    mls_key_package_clear(&bad);
+    mls_key_package_private_clear(&bad_priv);
+
+    free(kind1);
+    free(tampered);
+    free(by_other);
+    free(kp443_hex_untagged);
+    free(kp443_hex);
+    free(kp443_hex_bare);
+    free(hex);
+    free(kp443);
+    free(other_device);
+    free(kp30443);
+    marmot_key_package_result_free(&proven);
+    marmot_key_package_result_free(&a);
+    marmot_key_package_result_free(&b);
+    marmot_free(m);
+    marmot_free(legacy);
     PASS();
 }
 
@@ -3511,6 +3688,7 @@ main(void)
     test_key_package_slot_persists_across_restart();
     test_key_package_parse_rejects_legacy_443();
     test_key_package_account_proof_check();
+    test_key_package_event_matches_member();
     test_key_package_parse_enforces_tag_rules();
     test_select_key_package_newest_in_slot();
     test_select_key_package_invalid_winner_empties_slot();

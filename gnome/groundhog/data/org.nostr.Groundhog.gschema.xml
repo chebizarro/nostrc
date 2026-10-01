@@ -60,6 +60,11 @@
       <summary>Filter unknown senders</summary>
       <description>Messages from people you have not accepted go to Message Requests, with no profile lookup and hidden notifications, until you accept them. Reserved; not used yet.</description>
     </key>
+    <key name="only-join-verified-mls-groups" type="b">
+      <default>false</default>
+      <summary>Only join encrypted groups with verified member identities</summary>
+      <description>Off (the default): people whose app cannot prove their account (older White Noise, Amethyst) can be invited and their groups joined; Groundhog tries to confirm each of them from a KeyPackage the account published, and marks the ones it can't as "Identity not verified". On: invitations to such people, invitations into groups that hold one, and an admin's change that adds one are refused; a group refused that way can't be read past the change. A forged account proof is refused either way.</description>
+    </key>
     <key name="show-message-previews" type="b">
       <default>true</default>
       <summary>Show message previews in the conversation list</summary>

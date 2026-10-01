@@ -30,6 +30,7 @@
 
 #include "commits.h"
 #include "proposals.h"
+#include "members.h"
 #include "kp_profile.h"
 #include "mls/mls-internal.h"
 #include "mls/mls_framing.h"
@@ -172,9 +173,12 @@ same_leaf(const MlsLeafNode *a, const MlsLeafNode *b)
             memcmp(a->extensions_data, b->extensions_data, a->extensions_len) == 0);
 }
 
-/* nostrc-7vyi: `after` (the leaf a Commit left in a slot that held `before`,
- * NULL for a new slot) is bound to the account its credential names.  An
- * unchanged leaf was checked when it joined. */
+/* nostrc-7vyi: `after`, the leaf a Commit left in a slot, is bound to the
+ * account its credential names.  `before` is the slot's previous leaf when
+ * `after` RENEWS it -- the holder's own new leaf, signed in by its previous
+ * key -- and NULL when `after` is a new identity claim (an Add, whether into
+ * a blank slot or into the slot of a leaf the same Commit removed: W24
+ * review B1).  An unchanged leaf was checked when it joined. */
 static MarmotError
 leaf_binding_check(const MlsLeafNode *before, const MlsLeafNode *after, bool allow_unproven)
 {
@@ -187,13 +191,14 @@ leaf_binding_check(const MlsLeafNode *before, const MlsLeafNode *after, bool all
     case MARMOT_LEAF_PROOF_ABSENT:
         break;
     }
-    /* The same member's new leaf: the MLS layer pinned its identity; it may
-     * stay unproven, but not drop a proof (account-identity-proof-v2.md,
-     * "Lifecycle"). */
-    if (before && same_identity(before, after))
+    /* The holder's renewed leaf: the MLS layer pinned its identity and the
+     * old key signed it in; it may stay unproven, but not drop a proof
+     * (account-identity-proof-v2.md, "Lifecycle"). */
+    if (before)
         return marmot_leaf_proof_status(before, MARMOT_CIPHERSUITE) == MARMOT_LEAF_PROOF_ABSENT
                    ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
-    /* A new identity claim: only the account's own proof supports it. */
+    /* A new identity claim: only the account's own proof supports it, or
+     * the policy (legacy groups only: marmot_commit_authorize()). */
     return allow_unproven ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
 }
 
@@ -201,6 +206,12 @@ MarmotError
 marmot_tree_members_bound(const MlsGroup *g, uint32_t exempt, bool allow_unproven)
 {
     if (!g) return MARMOT_ERR_INVALID_ARG;
+    /* Only a legacy-profile group may hold leaves without the proof, the
+     * Welcome sender's included (nostrc-6ukh). */
+    if (!marmot_mls_group_is_legacy(g)) {
+        allow_unproven = false;
+        exempt = UINT32_MAX;
+    }
     for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
         const MlsLeafNode *leaf = leaf_at(g, i);
         if (!leaf || i == g->own_leaf_index) continue;
@@ -325,13 +336,17 @@ marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
     *post_gde = NULL;
     memset(key, 0, sizeof(*key));
 
-    /* An adopted-profile group's Commits are authorized by its components
-     * (admin-policy-v1 against the candidate parent, AppDataUpdate, the
-     * resulting-state invariants), which libmarmot does not implement yet
-     * (nostrc-qp24.5).  Refuse them -- never judge them by the MIP-01 rules
-     * below, under which a group without GroupData lets any member commit
-     * (nostrc-qp24.5.1). */
-    if (pre->profile != MARMOT_GROUP_PROFILE_LEGACY || post->profile != MARMOT_GROUP_PROFILE_LEGACY)
+    /* These are the MIP-01 (legacy profile) rules.  An adopted-profile
+     * group's Commits are authorized by its components (admin-policy-v1
+     * against the candidate parent, AppDataUpdate, the resulting-state
+     * invariants), which libmarmot does not implement yet (nostrc-qp24.5).
+     * Refuse them -- never judge them by the rules below, under which a
+     * group without GroupData lets any member commit (nostrc-qp24.5.1) and
+     * a leaf without the account proof may be admitted (nostrc-6ukh).  A
+     * group keeps the profile it was admitted with: a Commit into another
+     * profile is refused too (W24 review L3; the MLS layer refuses it first,
+     * mls_group_process_commit()). */
+    if (!marmot_mls_group_is_legacy(pre) || !marmot_mls_group_is_legacy(post))
         return MARMOT_ERR_UNSUPPORTED;
 
     const MlsLeafNode *committer = leaf_at(pre, committer_leaf);
@@ -341,10 +356,19 @@ marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
     memcpy(key->committer, committer->credential_identity, 32);
     key->committer_leaf = committer_leaf;
 
-    /* Membership: an added or removed leaf, or a slot that now holds another
-     * account (Remove + Add reusing it), makes the Commit privileged.  The
-     * committer stays in the group under its own account (the MLS layer
-     * already pins the identity of Update and UpdatePath leaves). */
+    /* Membership: a removed leaf, or a slot an Add filled, makes the Commit
+     * privileged (admins only).  Only the committer's own leaf is renewed in
+     * place, by its UpdatePath, which the MLS layer verified under the
+     * committer's previous key and whose identity it pinned.  Every other
+     * slot whose leaf changed was filled by an Add -- into a blank slot, or
+     * into the slot of a leaf this Commit removed: RFC 9420 applies Removes
+     * first and an Add takes the leftmost blank leaf, so Remove(Y) +
+     * Add(KeyPackage claiming Y) lands in Y's slot under the same identity.
+     * Judged by identity alone that swap passed as unprivileged and as Y's
+     * own new leaf: any member could take over a proof-less member's device
+     * (W24 review B1).  libmarmot applies no Update proposals (no proposal
+     * store on this path; a by-reference Update is MARMOT_ERR_UNSUPPORTED);
+     * whoever adds them must pass their leaves in as renewals too. */
     const MlsLeafNode *committer_after = leaf_at(post, committer_leaf);
     if (!committer_after || !same_identity(committer, committer_after))
         return MARMOT_ERR_IDENTITY_CHANGE;
@@ -359,8 +383,11 @@ marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
     for (uint32_t i = 0; i < n && !members_changed; i++) {
         const MlsLeafNode *a = leaf_at(pre, i);
         const MlsLeafNode *b = leaf_at(post, i);
+        /* A departure (nostrc-2um6: a SelfRemove-only Commit, which any
+         * member may commit) only blanks the leaf; it never refills it. */
         if (sr_only && a && !b && summary_self_removed(departures, i)) continue;
-        members_changed = (!a != !b) || (a && !same_identity(a, b));
+        members_changed = (!a != !b) ||
+                          (a && i != committer_leaf && !same_leaf(a, b));
     }
 
     bool ext_changed = pre->extensions_len != post->extensions_len ||
@@ -381,8 +408,12 @@ marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
         err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
     /* Every account the Commit brings in is its own (nostrc-7vyi). */
     for (uint32_t i = 0; err == MARMOT_OK && i < post->tree.n_leaves; i++) {
+        const MlsLeafNode *a = leaf_at(pre, i);
         const MlsLeafNode *b = leaf_at(post, i);
-        if (b) err = leaf_binding_check(leaf_at(pre, i), b, allow_unproven);
+        if (!b) continue;
+        bool kept = a && same_leaf(a, b);
+        bool renewed = a && i == committer_leaf;
+        err = leaf_binding_check(kept || renewed ? a : NULL, b, allow_unproven);
     }
     marmot_group_data_extension_free(before);
     if (err != MARMOT_OK) {
@@ -1770,6 +1801,7 @@ fill_commit_result(Marmot *m, MarmotGroup *group, MarmotMessageResult *result)
 {
     result->type = MARMOT_RESULT_COMMIT;
     result->commit.updated_group = NULL;
+    result->commit.committer_leaf = UINT32_MAX;
     (void)m->storage->find_group_by_mls_id(m->storage->ctx, &group->mls_group_id,
                                            &result->commit.updated_group);
 }
@@ -2337,6 +2369,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
     if (epoch != outer_epoch) return MARMOT_ERR_WRONG_EPOCH;
 
     MarmotCommitKey key;
+    memset(&key, 0, sizeof(key));
     uint8_t digest[32];
     if (mls_crypto_hash(digest, msg, msg_len) != 0) return MARMOT_ERR_CRYPTO;
 
@@ -2464,6 +2497,16 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
             } else {
                 err = stage_inbound(m, &rp.parent, msg, msg_len, sender, &post,
                                     &key, &gde, &applied);
+                /* A competitor of the Commit we applied that we refuse:
+                 * stale only if it loses to that Commit (nostrc-prrl).  One
+                 * that wins its epoch is where members who don't check
+                 * proofs go, so the group really stops here: say so, never
+                 * fork silently (W24 review L1).  authorize() filled the
+                 * ordering key before refusing. */
+                if (err == MARMOT_ERR_KEY_PACKAGE_IDENTITY) {
+                    memcpy(key.digest, digest, 32);
+                    if (commit_key_cmp(&key, &rp.key) >= 0) err = MARMOT_ERR_WRONG_EPOCH;
+                }
                 bool removed = false;
                 MlsCommitSummary dep;
                 if ((err == MARMOT_ERR_MLS_PROCESS_MESSAGE ||
@@ -2515,5 +2558,8 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
     result->commit.departed_pubkey_hexes = departed;
     result->commit.departed_count = n_departed;
     result->commit.committer_pubkey_hex = committer;
+    /* The leaf that committed it, as authorization established: the one
+     * leaf renewed in place (nostrc-6ukh, W24 review M1). */
+    result->commit.committer_leaf = committer ? key.committer_leaf : UINT32_MAX;
     return MARMOT_OK;
 }

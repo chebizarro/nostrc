@@ -583,13 +583,13 @@ create_group_impl(Marmot *m,
 
     /* The creator's leaf carries this instance's account proof
      * (nostrc-7vyi; marmot_set_account_proof()).  Without one no joiner
-     * would accept the leaf in another admin's Welcome: only legacy mode
-     * creates it unproven. */
+     * that requires proofs would accept the leaf in another admin's
+     * Welcome: only MarmotConfig.allow_unproven_self creates it unproven. */
     uint8_t proof[MARMOT_ACCOUNT_PROOF_LEN];
     uint8_t *leaf_ext = NULL;
     size_t leaf_ext_len = 0;
     bool proven = marmot_account_proof_lookup(m, creator_pubkey, proof);
-    if (!proven && !m->config.allow_unproven_members) {
+    if (!proven && !m->config.allow_unproven_self) {
         free(ext_data);
         free_key_packages(kps, kp_count);
         return MARMOT_ERR_KEY_PACKAGE_IDENTITY;

@@ -165,8 +165,14 @@ marmot_gobject_client_new(MarmotGobjectStorage *storage)
     MarmotStorage *raw = marmot_gobject_storage_steal_raw_storage(storage);
     g_return_val_if_fail(raw != NULL, NULL);
 
-    /* marmot_new() takes ownership of the storage pointer. */
-    Marmot *m = marmot_new(raw);
+    /* libmarmot 0.12.0 admits members without the account proof in
+     * legacy-profile groups by default (nostrc-6ukh). This client has no
+     * way to tell its users who could not be verified, so it keeps
+     * requiring proofs, as before. marmot_new_with_config() takes ownership
+     * of the storage pointer. */
+    MarmotConfig config = marmot_config_default();
+    config.allow_unproven_members = false;
+    Marmot *m = marmot_new_with_config(raw, &config);
     if (!m) {
         marmot_storage_free(raw);
         return NULL;

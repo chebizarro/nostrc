@@ -186,6 +186,10 @@ void gh_conversation_view_set_locked_messages(GhConversationView *self, guint co
  * readable. The getter reads what is shown, for tests. */
 void gh_conversation_view_set_decrypt_pending(GhConversationView *self, gboolean pending);
 gboolean gh_conversation_view_get_decrypt_pending(GhConversationView *self);
+/* Why the shown group can't be read past a change, for good (nostrc-prrl):
+ * shown in the same row instead of "can't be read yet". NULL clears it. */
+void gh_conversation_view_set_unreadable_reason(GhConversationView *self, const gchar *reason);
+const gchar *gh_conversation_view_get_unreadable_reason(GhConversationView *self);
 
 /* The view's accessibility announcements (charter §7.14), for tests: how
  * many were made at @priority, and the last text. */

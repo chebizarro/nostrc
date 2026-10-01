@@ -75,6 +75,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/adopted.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/commits.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/proposals.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/members.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/messages.c
@@ -91,6 +92,7 @@ endif()
 list(APPEND MARMOT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_nostrdb.c)
 
 set(MARMOT_PUBLIC_HEADERS
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-members.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-error.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-types.h

@@ -13,10 +13,10 @@ G_BEGIN_DECLS
  */
 
 /* A person's KeyPackage check, as a row subtitle ("Ready to invite",
- * "Hasn't set up encrypted groups", "Needs to update their app: it can't
- * prove their account yet", ...). */
+ * "Hasn't set up encrypted groups", "Ready to invite. Their app can't prove
+ * their account...", ...). */
 const gchar *gh_mls_invitee_copy(GhMlsInviteeState state);
-/* Whether a person in this state can be invited now (READY only). */
+/* Whether a person in this state can be invited now (READY, READY_UNPROVEN). */
 gboolean gh_mls_invitee_can_invite(GhMlsInviteeState state);
 
 /* This device's enrollment (the account proof, GhMlsIdentityState). NULL
@@ -36,6 +36,26 @@ GhMlsIdentityCopy gh_mls_identity_copy(GhMlsIdentityState state);
 /* A failed create, add, remove, rename or accept, in plain words (transfer
  * full). */
 gchar *gh_mls_error_copy(const GError *error);
+
+/* A member whose identity isn't confirmed (nostrc-6ukh): badge NULL for a
+ * PROVEN or VERIFIED one; else "Identity not verified" (or "Checking
+ * identity…") with the explanation "Added by <added_by>. Groundhog couldn't
+ * confirm this account owns this device." (added_by: the admin's cached
+ * name or short npub, NULL when not known) and both for screen readers.
+ * Clear with gh_mls_member_copy_clear(). */
+typedef struct {
+  const gchar *badge;
+  gchar *explanation;
+  gchar *accessible;
+} GhMlsMemberCopy;
+
+GhMlsMemberCopy gh_mls_member_copy(GhMlsMemberIdentity identity, const gchar *added_by);
+void gh_mls_member_copy_clear(GhMlsMemberCopy *copy);
+
+/* An admin's change refused for good ("change-refused", nostrc-prrl): why
+ * the group can't be read past it, honestly (requires_proofs: the account
+ * requires every member's proof). Never "waiting". */
+const gchar *gh_mls_refused_copy(gboolean requires_proofs);
 
 /* Why the composer can't send to group (transfer full), or NULL when it can:
  * no service (encrypted groups aren't running for this account), left,

@@ -518,13 +518,15 @@ test_groundhog_invites_mdk(void)
   g_assert_cmpint(check.state, ==, GH_MLS_INVITEE_NOT_SET_UP);
   g_assert_false(gh_mls_invitee_can_invite(check.state));
 
+  /* By default (members without the account proof admitted in legacy
+   * groups, nostrc-6ukh) and with the preference that requires proofs. */
   g_autoptr(GError) by_default = refused_creation(&w, alice, "default");
-  gh_mls_service_test_allow_unproven_members(TRUE);
-  g_autoptr(GError) legacy = refused_creation(&w, alice, "legacy mode");
-  gh_mls_service_test_allow_unproven_members(FALSE);
+  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", TRUE);
+  g_autoptr(GError) strict = refused_creation(&w, alice, "proofs required");
+  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", FALSE);
   /* Precise class: the adopted KeyPackage is one libmarmot cannot use. */
   g_assert_error(by_default, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE);
-  g_assert_error(legacy, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE);
+  g_assert_error(strict, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE);
   xfail("unsupported", "Groundhog cannot invite an MDK 0.11 user: libmarmot does not admit an "
                        "adopted (MLSMessage-framed, 0x8009) KeyPackage (nostrc-qp24.5.1)");
 

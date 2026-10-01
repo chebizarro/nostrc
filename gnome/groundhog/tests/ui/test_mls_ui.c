@@ -10,8 +10,9 @@
  *
  * Default mode (no display): the view model and its words. Every state's
  * copy; accepted contacts only (never a message request, never the account);
- * the KeyPackage check: ready, not set up, needs an update (a legacy
- * KeyPackage without the account proof), no relay answered, no discovery
+ * the KeyPackage check: ready, ready without the account proof (a legacy
+ * KeyPackage; "needs an update" only when proofs are required, nostrc-6ukh),
+ * not set up, no relay answered, no discovery
  * relay, cancelled; Owner and Admin from the group's admin order; the
  * composer's reasons (live, offline, left).
  *
@@ -91,12 +92,13 @@ admit_request(App *app, guint from)
   return room;
 }
 
-/* Carol runs an older client: a KeyPackage without the account proof on W. */
-static void
+/* `key` runs an older client: a KeyPackage without the account proof on W.
+ * Its event id (transfer full). */
+static gchar *
 inject_legacy_key_package(World *w, guint key)
 {
   MarmotConfig config = marmot_config_default();
-  config.allow_unproven_members = true;
+  config.allow_unproven_self = true;
   Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
   guint8 pubkey[32];
   g_assert_true(nostr_hex2bin(pubkey, hex[key], sizeof pubkey));
@@ -109,11 +111,13 @@ inject_legacy_key_package(World *w, guint key)
   g_assert_cmpint(nostr_event_deserialize_compact(event, made.event_json, NULL), ==, 1);
   g_assert_cmpint(nostr_event_sign(event, gh_test_secret[key]), ==, 0);
   char *signed_json = nostr_event_serialize_compact(event);
+  gchar *id = event_id_dup(event);
   nostr_event_free(event);
   wire_relay_inject(&w->w, signed_json);
   free(signed_json);
   marmot_key_package_result_free(&made);
   marmot_free(legacy);
+  return id;
 }
 
 typedef struct {
@@ -228,12 +232,46 @@ test_copy(void)
     g_assert_cmpuint(strlen(words), >, 0);
     g_assert_false(g_hash_table_contains(seen, words));   /* every state its own */
     g_hash_table_add(seen, (gpointer)words);
-    g_assert_cmpint(gh_mls_invitee_can_invite(state), ==, state == GH_MLS_INVITEE_READY);
+    g_assert_cmpint(gh_mls_invitee_can_invite(state), ==,
+                    state == GH_MLS_INVITEE_READY || state == GH_MLS_INVITEE_READY_UNPROVEN);
   }
   g_assert_cmpstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NOT_SET_UP), ==,
                   "Hasn’t set up encrypted groups");
   g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NEEDS_UPDATE),
                           "can’t prove their account"));
+  g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NEEDS_UPDATE),
+                          "every identity is verified"));
+  g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_READY_UNPROVEN),
+                          "Identity not verified"));
+
+  /* nostrc-6ukh: a member whose identity isn't confirmed, with who added
+   * them; a proven or verified one shows nothing. */
+  for (gint identity = GH_MLS_MEMBER_PROVEN; identity <= GH_MLS_MEMBER_VERIFIED; identity++) {
+    GhMlsMemberCopy plain = gh_mls_member_copy(identity, "Alice");
+    g_assert_null(plain.badge);
+    g_assert_null(plain.explanation);
+    gh_mls_member_copy_clear(&plain);
+  }
+  GhMlsMemberCopy unverified = gh_mls_member_copy(GH_MLS_MEMBER_UNVERIFIED, "Alice");
+  g_assert_cmpstr(unverified.badge, ==, "Identity not verified");
+  g_assert_cmpstr(unverified.explanation, ==,
+                  "Added by Alice. Groundhog couldn’t confirm this account owns this device.");
+  g_assert_nonnull(strstr(unverified.accessible, "Identity not verified"));
+  gh_mls_member_copy_clear(&unverified);
+  GhMlsMemberCopy before = gh_mls_member_copy(GH_MLS_MEMBER_UNVERIFIED, NULL);
+  g_assert_nonnull(strstr(before.explanation, "Already in the group when you joined"));
+  gh_mls_member_copy_clear(&before);
+  GhMlsMemberCopy checking = gh_mls_member_copy(GH_MLS_MEMBER_CHECKING, "Alice");
+  g_assert_cmpstr(checking.badge, ==, "Checking identity…");
+  gh_mls_member_copy_clear(&checking);
+  /* nostrc-prrl: a refused change is said as such, never as a wait. */
+  for (gint strict = 0; strict < 2; strict++) {
+    const gchar *refused = gh_mls_refused_copy(strict);
+    g_assert_null(strstr(refused, "yet"));
+    g_assert_null(strstr(refused, "Waiting"));
+    g_assert_nonnull(strstr(refused, "can’t be read"));
+  }
+  g_assert_cmpstr(gh_mls_refused_copy(TRUE), !=, gh_mls_refused_copy(FALSE));
 
   GhMlsIdentityCopy ready = gh_mls_identity_copy(GH_MLS_IDENTITY_ENROLLED);
   g_assert_true(ready.ready);
@@ -255,8 +293,8 @@ test_copy(void)
   g_assert_nonnull(none.title);
 
   g_autoptr(GHashTable) errors = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  for (gint code = GH_MLS_SERVICE_ERROR_NO_CONSENT; code <= GH_MLS_SERVICE_ERROR_NEEDS_UPDATE;
-       code++) {
+  for (gint code = GH_MLS_SERVICE_ERROR_NO_CONSENT;
+       code <= GH_MLS_SERVICE_ERROR_FORGED_IDENTITY; code++) {
     g_autoptr(GError) error = g_error_new(GH_MLS_SERVICE_ERROR, code, "internal detail %d", code);
     gchar *words = gh_mls_error_copy(error);
     g_assert_null(strstr(words, "internal detail"));   /* plain words, not the log's */
@@ -266,8 +304,12 @@ test_copy(void)
   g_autoptr(GError) update = g_error_new_literal(GH_MLS_SERVICE_ERROR,
                                                  GH_MLS_SERVICE_ERROR_NEEDS_UPDATE, "x");
   g_autofree gchar *update_words = gh_mls_error_copy(update);
-  g_assert_nonnull(strstr(update_words, "update it"));
+  g_assert_nonnull(strstr(update_words, "every member’s identity is verified"));
   g_assert_nonnull(strstr(update_words, "Nothing was changed"));
+  g_autoptr(GError) forged = g_error_new_literal(GH_MLS_SERVICE_ERROR,
+                                                 GH_MLS_SERVICE_ERROR_FORGED_IDENTITY, "x");
+  g_autofree gchar *forged_words = gh_mls_error_copy(forged);
+  g_assert_nonnull(strstr(forged_words, "forged"));
 
   g_autofree gchar *from_contact = gh_mls_invite_subtitle("npub1abcd…wxyz", "Bob", TRUE, 3);
   g_assert_cmpstr(from_contact, ==, "From Bob · 3 members");
@@ -308,10 +350,14 @@ test_copy(void)
                                                       "x");
   g_autoptr(GError) no_relays = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "x");
   g_autoptr(GError) other = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED, "x");
-  g_assert_cmpint(gh_mls_invitee_classify(NULL, not_found), ==, GH_MLS_INVITEE_NOT_SET_UP);
-  g_assert_cmpint(gh_mls_invitee_classify(NULL, unreachable), ==, GH_MLS_INVITEE_UNREACHABLE);
-  g_assert_cmpint(gh_mls_invitee_classify(NULL, no_relays), ==, GH_MLS_INVITEE_NO_RELAYS);
-  g_assert_cmpint(gh_mls_invitee_classify(NULL, other), ==, GH_MLS_INVITEE_FAILED);
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, not_found, FALSE), ==,
+                  GH_MLS_INVITEE_NOT_SET_UP);
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, unreachable, FALSE), ==,
+                  GH_MLS_INVITEE_UNREACHABLE);
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, no_relays, FALSE), ==,
+                  GH_MLS_INVITEE_NO_RELAYS);
+  g_assert_cmpint(gh_mls_invitee_classify(NULL, other, FALSE), ==,
+                  GH_MLS_INVITEE_FAILED);
 }
 
 /* ---- default mode: people, checks, roles, reasons ----------------------------------- */
@@ -352,8 +398,12 @@ test_view_model(void)
   g_assert_cmpint(check(alice, BOB), ==, GH_MLS_INVITEE_READY);
   g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_NOT_SET_UP);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
-  inject_legacy_key_package(&w, CAROL);
+  g_free(inject_legacy_key_package(&w, CAROL));
+  /* nostrc-6ukh: invitable by default; refused when proofs are required. */
+  g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_READY_UNPROVEN);
+  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", TRUE);
   g_assert_cmpint(check(alice, CAROL), ==, GH_MLS_INVITEE_NEEDS_UPDATE);
+  g_settings_set_boolean(alice->settings, "only-join-verified-mls-groups", FALSE);
 #endif
   g_autoptr(GSettings) none = settings_with_discovery(NULL);
   g_assert_cmpint(check_with(alice, none, BOB, NULL, NULL), ==, GH_MLS_INVITEE_NO_RELAYS);
@@ -1185,6 +1235,120 @@ test_gui_group_info(void)
   world_down(&w);
 }
 
+/* ---- --gui: members without the account proof (nostrc-6ukh, nostrc-prrl) ---------------- */
+
+typedef struct {
+  GhMlsGroup *group;
+  guint key;
+  GhMlsMemberIdentity want;
+} MemberIs;
+
+static gboolean
+member_is(gpointer data)
+{
+  MemberIs *wait = data;
+  g_auto(GStrv) members = gh_mls_group_dup_members(wait->group);
+  return strv_has((const gchar *const *)members, hex[wait->key]) &&
+         gh_mls_group_get_member_identity(wait->group, hex[wait->key], NULL) == wait->want;
+}
+
+static gboolean
+reason_is(gpointer data)
+{
+  SubtitleWait *wait = data;
+  return g_strcmp0(gh_conversation_view_get_unreadable_reason(view_of(wait->window)),
+                   wait->text) == 0;
+}
+
+/* Bob requires proofs: Alice's Add of the stranger (an older app) is
+ * refused, and Bob's conversation and Group Info say so, not that
+ * something is still on its way; off, it applies. Then Carol is added while
+ * Bob is away and her KeyPackage is gone by then: Bob's Group Info marks
+ * her "Identity not verified" with who added her; Alice, who added her
+ * from her KeyPackage, sees no mark. */
+static void
+test_gui_unverified_member(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Older Apps", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  group_send_stub_reset();
+  GhWindow *bob_window = app_window(bob, NULL);
+  GhConversation *bob_conversation = gh_conversation_store_lookup(bob->model, room);
+  g_assert_true(gh_window_open_item(bob_window, bob_conversation));
+
+  /* Refused, honestly (nostrc-prrl). */
+  g_settings_set_boolean(bob->settings, "only-join-verified-mls-groups", TRUE);
+  g_autofree gchar *stranger_kp = inject_legacy_key_package(&w, STRANGER);
+  accept_contact(alice, STRANGER);
+  const gchar *stranger[] = { hex[STRANGER], NULL };
+  OpWait added = { 0 };
+  gh_mls_service_add_members_async(alice->service, ga, stranger, NULL, on_changed, &added);
+  spin_until(op_done, &added, "Alice's Add of the stranger");
+  g_assert_no_error(added.error);
+  SubtitleWait refused = { bob_window, gh_mls_refused_copy(TRUE) };
+  spin_until(reason_is, &refused, "Bob's view saying the change was refused");
+  g_assert_false(gh_conversation_view_get_decrypt_pending(view_of(bob_window)));
+  GhMlsGroupInfoDialog *bob_info = show_info(bob_window, bob_conversation);
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_messages_status(bob_info), ==,
+                  gh_mls_refused_copy(TRUE));
+  adw_dialog_force_close(ADW_DIALOG(bob_info));
+  drain();
+  g_settings_set_boolean(bob->settings, "only-join-verified-mls-groups", FALSE);
+  SubtitleWait cleared = { bob_window, NULL };
+  spin_until(reason_is, &cleared, "the refused change applying");
+  MemberIs stranger_ok = { gb, STRANGER, GH_MLS_MEMBER_VERIFIED };
+  spin_until(member_is, &stranger_ok, "the stranger confirmed from their KeyPackage");
+
+  /* Unverified: Carol's KeyPackage is gone before Bob reads the Add. */
+  g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
+  accept_contact(alice, CAROL);
+  set_online(bob, FALSE);
+  const gchar *carol[] = { hex[CAROL], NULL };
+  OpWait added_carol = { 0 };
+  gh_mls_service_add_members_async(alice->service, ga, carol, NULL, on_changed, &added_carol);
+  spin_until(op_done, &added_carol, "Alice's Add of Carol");
+  g_assert_no_error(added_carol.error);
+  wire_relay_withhold(&w.w, carol_kp);
+  set_online(bob, TRUE);
+  MemberIs carol_unverified = { gb, CAROL, GH_MLS_MEMBER_UNVERIFIED };
+  spin_until(member_is, &carol_unverified, "Carol unverified for Bob");
+  bob_info = show_info(bob_window, bob_conversation);
+  const gchar *explanation = NULL;
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(bob_info, hex[CAROL],
+                                                               &explanation), ==,
+                  "Identity not verified");
+  g_assert_true(g_str_has_prefix(explanation, "Added by "));
+  g_assert_nonnull(strstr(explanation, "Groundhog couldn’t confirm this account owns this "
+                                       "device."));
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(bob_info, hex[STRANGER], NULL),
+                  ==, "");
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(bob_info, hex[ALICE], NULL),
+                  ==, "");
+  adw_dialog_force_close(ADW_DIALOG(bob_info));
+  drain();
+
+  GhWindow *window = app_window(alice, NULL);
+  GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
+  g_assert_true(gh_window_open_item(window, conversation));
+  MemberIs carol_verified = { ga, CAROL, GH_MLS_MEMBER_VERIFIED };
+  spin_until(member_is, &carol_verified, "Carol confirmed for Alice");
+  GhMlsGroupInfoDialog *info = show_info(window, conversation);
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(info, hex[CAROL], NULL), ==, "");
+  adw_dialog_force_close(ADW_DIALOG(info));
+  drain();
+
+  close_window(bob_window);
+  close_window(window);
+  world_down(&w);
+}
+
 /* ---- --gui: enrollment ------------------------------------------------------------------ */
 
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
@@ -1325,6 +1489,9 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/mls-ui-gui/flag-new-group", test_gui_flag_new_group);
     g_test_add_func("/groundhog/mls-ui-gui/new-group", test_gui_new_group);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
+#if GH_MLS_SERVICE_ACCOUNT_PROOF
+    g_test_add_func("/groundhog/mls-ui-gui/unverified-member", test_gui_unverified_member);
+#endif
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
     g_test_add_func("/groundhog/mls-ui-gui/enrollment", test_gui_enrollment);
 #endif

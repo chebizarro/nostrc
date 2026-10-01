@@ -99,6 +99,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="AdwSwitchRow" id="verified_mls_groups_row">
+                <property name="title" translatable="yes">Only join groups where every member's identity is verified</property>
+                <property name="subtitle" translatable="yes">Refuses people whose app can't prove their account, like older White Noise or Amethyst. If an admin adds one to a group you're in, you can't read its new messages.</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwSwitchRow" id="message_previews_row">
                 <property name="title" translatable="yes">Show Message Previews in List</property>
                 <property name="subtitle" translatable="yes">The latest message appears under each conversation</property>

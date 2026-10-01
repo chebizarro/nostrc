@@ -451,7 +451,7 @@ static void test_create_group_reports_save_group_failure(void)
 
     /* A fake creator key: no account proof, so legacy mode (nostrc-7vyi). */
     MarmotConfig legacy = marmot_config_default();
-    legacy.allow_unproven_members = true;
+    legacy.allow_unproven_self = true;
     Marmot *m = marmot_new_with_config(s, &legacy);
     assert(m != NULL);
 
@@ -491,7 +491,7 @@ static void test_create_group_rolls_back_after_relay_failure(void)
 
     /* A fake creator key: no account proof, so legacy mode (nostrc-7vyi). */
     MarmotConfig legacy = marmot_config_default();
-    legacy.allow_unproven_members = true;
+    legacy.allow_unproven_self = true;
     Marmot *m = marmot_new_with_config(s, &legacy);
     assert(m != NULL);
 
@@ -533,7 +533,7 @@ static void test_key_package_reports_private_store_failure(void)
 
     /* No account proof here (the key is fake): a legacy KeyPackage. */
     MarmotConfig cfg = marmot_config_default();
-    cfg.allow_unproven_members = true;
+    cfg.allow_unproven_self = true;
     Marmot *m = marmot_new_with_config(s, &cfg);
     assert(m != NULL);
 

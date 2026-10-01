@@ -391,6 +391,21 @@ int mls_group_add_members_with_extensions(MlsGroup *group,
                                           const uint8_t *extensions, size_t extensions_len,
                                           MlsAddResult *result);
 
+/**
+ * mls_group_add_members() whose Commit first removes `removes` (at most 64
+ * occupied leaves, never our own): Remove proposals, then Adds, in one
+ * Commit with one UpdatePath.  RFC 9420 applies Removes first and an Add
+ * takes the leftmost blank leaf, so an Add may land in a removed member's
+ * slot.  Marmot treats every such slot as a new member (admins only, a new
+ * identity claim: marmot_commit_authorize()); libmarmot's tests use it to
+ * build the slot takeover W24 review B1 found.  On failure the group is
+ * unchanged.
+ */
+int mls_group_replace_members(MlsGroup *group,
+                              const uint32_t *removes, size_t remove_count,
+                              const MlsKeyPackage *const *kps, size_t kp_count,
+                              MlsAddResult *result);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Remove member
  * ──────────────────────────────────────────────────────────────────────── */

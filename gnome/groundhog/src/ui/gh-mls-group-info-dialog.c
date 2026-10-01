@@ -16,10 +16,12 @@ G_DECLARE_FINAL_TYPE(GhMlsMemberRow, gh_mls_member_row, GH, MLS_MEMBER_ROW, AdwA
 struct _GhMlsMemberRow {
   AdwActionRow parent_instance;
   AdwAvatar *avatar;
+  GtkLabel *identity_badge;
   GtkLabel *role_badge;
   GtkWidget *remove_button;
   gchar *pubkey;
   GhMlsRole role;
+  GhMlsMemberIdentity identity;
 };
 
 G_DEFINE_FINAL_TYPE(GhMlsMemberRow, gh_mls_member_row, ADW_TYPE_ACTION_ROW)
@@ -48,6 +50,7 @@ gh_mls_member_row_class_init(GhMlsMemberRowClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-mls-member-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, avatar);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, identity_badge);
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, role_badge);
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, remove_button);
   gtk_widget_class_install_action(widget_class, "member.remove", NULL, member_remove);
@@ -59,18 +62,35 @@ gh_mls_member_row_init(GhMlsMemberRow *self)
   gtk_widget_init_template(GTK_WIDGET(self));
 }
 
+/* identity/added_by: what GhMlsService knows of who the member is
+ * (nostrc-6ukh); added_by: the admin's name or short npub, or NULL. */
 static GhMlsMemberRow *
 member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRole role,
-               gboolean removable)
+               gboolean removable, GhMlsMemberIdentity identity, const gchar *added_by)
 {
   GhMlsMemberRow *self = g_object_new(GH_TYPE_MLS_MEMBER_ROW, NULL);
   self->pubkey = g_strdup(pubkey);
   self->role = role;
+  self->identity = identity;
   g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
   const gchar *shown = name && *name ? name : npub;
   g_autofree gchar *title = is_you ? g_strdup_printf(_("%s (You)"), shown) : g_strdup(shown);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self), title);
-  adw_action_row_set_subtitle(ADW_ACTION_ROW(self), name && *name ? npub : "");
+  GhMlsMemberCopy copy = gh_mls_member_copy(identity, added_by);
+  if (copy.badge) {
+    g_autofree gchar *subtitle = name && *name
+      ? g_strdup_printf("%s\n%s", npub, copy.explanation) : g_strdup(copy.explanation);
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(self), subtitle);
+    adw_action_row_set_subtitle_lines(ADW_ACTION_ROW(self), 0);
+    gtk_label_set_text(self->identity_badge, copy.badge);
+    gtk_widget_set_tooltip_text(GTK_WIDGET(self->identity_badge), copy.explanation);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                   copy.accessible, -1);
+  } else {
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(self), name && *name ? npub : "");
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->identity_badge), copy.badge != NULL);
+  gh_mls_member_copy_clear(&copy);
   adw_avatar_set_text(self->avatar, shown);
   const gchar *badge = gh_mls_role_copy(role);
   gtk_label_set_text(self->role_badge, badge ? badge : "");
@@ -202,10 +222,19 @@ sync_status(GhMlsGroupInfoDialog *self)
   const gchar *by_name = by ? display_name(self, by) : NULL;
   g_autofree gchar *ended = gh_mls_end_copy(gh_mls_group_get_end(self->group),
                                             by_name && *by_name ? by_name : by_npub);
-  adw_action_row_set_subtitle(self->messages_row,
-                              active || !ended
-                                ? gh_mls_read_copy(gh_mls_group_get_read_state(self->group))
-                                : ended);
+  const gchar *read = gh_mls_read_copy(gh_mls_group_get_read_state(self->group));
+  if (active && gh_mls_group_get_change_refused(self->group)) {
+    /* An admin's change refused for good (nostrc-prrl). */
+    gboolean strict = FALSE;
+    if (self->context.settings) {
+      g_autoptr(GSettingsSchema) schema = NULL;
+      g_object_get(self->context.settings, "settings-schema", &schema, NULL);
+      strict = schema && g_settings_schema_has_key(schema, "only-join-verified-mls-groups") &&
+               g_settings_get_boolean(self->context.settings, "only-join-verified-mls-groups");
+    }
+    read = gh_mls_refused_copy(strict);
+  }
+  adw_action_row_set_subtitle(self->messages_row, active || !ended ? read : ended);
   gboolean pending = gh_mls_group_get_pending_commit(self->group);
   guint unsent = gh_mls_group_get_unsent_welcomes(self->group);
   g_autofree gchar *words = NULL;
@@ -270,8 +299,14 @@ sync_members(GhMlsGroupInfoDialog *self)
       if (role_rank(role) != rank)
         continue;
       gboolean you = g_strcmp0(members[i], account) == 0;
+      g_autofree gchar *added_by = NULL;
+      GhMlsMemberIdentity identity = gh_mls_group_get_member_identity(self->group, members[i],
+                                                                      &added_by);
+      const gchar *adder_name = added_by ? display_name(self, added_by) : NULL;
+      g_autofree gchar *adder_npub = added_by ? gh_recipient_npub_short(added_by) : NULL;
       GhMlsMemberRow *row = member_row_new(members[i], display_name(self, members[i]), you,
-                                           role, manage && !you);
+                                           role, manage && !you, identity,
+                                           adder_name && *adder_name ? adder_name : adder_npub);
       adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
       g_ptr_array_add(self->member_rows, row);
     }
@@ -609,6 +644,33 @@ gh_mls_group_info_dialog_get_member(GhMlsGroupInfoDialog *self, const gchar *pub
     return gtk_label_get_text(row->role_badge);
   }
   return NULL;
+}
+
+const gchar *
+gh_mls_group_info_dialog_get_member_identity(GhMlsGroupInfoDialog *self, const gchar *pubkey,
+                                             const gchar **out_explanation)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  if (out_explanation)
+    *out_explanation = NULL;
+  for (guint i = 0; i < self->member_rows->len; i++) {
+    GhMlsMemberRow *row = g_ptr_array_index(self->member_rows, i);
+    if (g_strcmp0(row->pubkey, pubkey) != 0)
+      continue;
+    if (!gtk_widget_get_visible(GTK_WIDGET(row->identity_badge)))
+      return "";
+    if (out_explanation)
+      *out_explanation = gtk_widget_get_tooltip_text(GTK_WIDGET(row->identity_badge));
+    return gtk_label_get_text(row->identity_badge);
+  }
+  return NULL;
+}
+
+const gchar *
+gh_mls_group_info_dialog_get_messages_status(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return adw_action_row_get_subtitle(self->messages_row);
 }
 
 AdwAlertDialog *

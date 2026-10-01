@@ -13,7 +13,8 @@ G_BEGIN_DECLS
  *
  *   Privacy   notifications-enabled, notification-privacy, sound-enabled,
  *             load-remote-images, link-previews, load-profile-pictures,
- *             filter-unknown-senders, show-message-previews
+ *             filter-unknown-senders, only-join-verified-mls-groups,
+ *             show-message-previews
  *   Messages  enter-sends, default-disappearing-seconds, retention-days,
  *             blossom-servers (the Attachments group, G22)
  *   Network   network-mode, tor-socks-address, discovery-relays
@@ -94,8 +95,9 @@ typedef enum {
   GH_PREFERENCES_FEATURE_REQUEST_FILTER   = 1 << 6, /* letting unknown senders through */
   GH_PREFERENCES_FEATURE_ATTACHMENTS      = 1 << 7, /* G21/G22: Blossom attachments */
   GH_PREFERENCES_FEATURE_EXPIRY           = 1 << 8, /* G07: the expiry and retention purge */
+  GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS = 1 << 9, /* encrypted groups (nostrc-6ukh) */
 } GhPreferencesFeatures;
-#define GH_PREFERENCES_FEATURES_ALL ((GhPreferencesFeatures)((1 << 9) - 1))
+#define GH_PREFERENCES_FEATURES_ALL ((GhPreferencesFeatures)((1 << 10) - 1))
 
 /* Whether Tor answers at tor-socks-address (the app's network session). */
 typedef enum {

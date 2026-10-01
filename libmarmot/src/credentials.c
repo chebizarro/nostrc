@@ -442,8 +442,8 @@ account_proof_remember(Marmot *m, const uint8_t owner[32],
 
 /* The proof on a new MDK 0.8 KeyPackage leaf: signed now with the account key
  * or @sign_fn over the leaf's fresh key; else this instance's enrolled key
- * and proof (marmot_set_account_proof()); else, only in legacy mode
- * (MarmotConfig.allow_unproven_members), no proof. The leaf is signed after. */
+ * and proof (marmot_set_account_proof()); else, only with
+ * MarmotConfig.allow_unproven_self, no proof. The leaf is signed after. */
 static MarmotError
 prove_key_package_leaf(Marmot *m, MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
                        const uint8_t account_pk[32], const uint8_t *account_sk,
@@ -461,7 +461,7 @@ prove_key_package_leaf(Marmot *m, MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
         memcpy(priv->signature_key_private, m->ed25519_sk, MLS_SIG_SK_LEN);
         err = MARMOT_OK;
     } else {
-        return m->config.allow_unproven_members ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+        return m->config.allow_unproven_self ? MARMOT_OK : MARMOT_ERR_KEY_PACKAGE_IDENTITY;
     }
     if (err == MARMOT_OK) err = marmot_leaf_set_proof(&kp->leaf_node, proof);
     sodium_memzero(proof, sizeof(proof));
@@ -1453,6 +1453,104 @@ marmot_key_package_event_has_account_proof(const char *event_json, bool *out_pro
                   MARMOT_LEAF_PROOF_VALID;
     mls_key_package_clear(&kp);
     return MARMOT_OK;
+}
+
+/* The KeyPackage an evidence event carries: base64 (MDK 0.8, the adopted
+ * profile) or hex (the earliest kind:443 events), named by `encoding` or,
+ * without one, hex only when the content is all hex; a bare KeyPackage or
+ * an MLSMessage(mls_key_package) (adopted). */
+static int
+evidence_key_package(const NostrEvent *event, MlsKeyPackage *kp)
+{
+    const char *content = event->content;
+    if (!content || !*content || strlen(content) > 2 * 65536) return -1;
+    const char *encoding = singleton_tag_value(event->tags, "encoding");
+    if (count_tags(event->tags, "encoding", NULL) > 1) return -1;
+    size_t clen = strlen(content);
+    bool hex = encoding ? strcmp(encoding, "hex") == 0
+                        : (clen % 2 == 0 && is_hex_len(content, clen));
+    if (encoding && !hex && strcmp(encoding, "base64") != 0) return -1;
+    size_t len = 0;
+    uint8_t *data = NULL;
+    if (hex) {
+        if (clen % 2 != 0) return -1;
+        len = clen / 2;
+        data = malloc(len ? len : 1);
+        if (!data || marmot_hex_decode(content, data, len) != 0) {
+            free(data);
+            return -1;
+        }
+    } else {
+        data = marmot_base64_decode(content, &len);
+        if (!data) return -1;
+    }
+    int rc = -1;
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, data, len);
+    memset(kp, 0, sizeof(*kp));
+    if (mls_key_package_deserialize(&reader, kp) == 0 && mls_tls_reader_done(&reader)) {
+        rc = 0;
+    } else {
+        mls_key_package_clear(kp);
+        memset(kp, 0, sizeof(*kp));
+        rc = marmot_mls_message_unframe_key_package(data, len, kp) == 0 ? 0 : -1;
+        if (rc != 0) mls_key_package_clear(kp);
+    }
+    free(data);
+    return rc;
+}
+
+MarmotError
+marmot_key_package_event_matches_member(const char *event_json,
+                                         const MarmotMemberIdentity *member,
+                                         bool *out_matches)
+{
+    if (!out_matches) return MARMOT_ERR_INVALID_ARG;
+    *out_matches = false;
+    if (!event_json || !member) return MARMOT_ERR_INVALID_ARG;
+
+    NostrEvent event;
+    memset(&event, 0, sizeof(event));
+    if (!nostr_event_deserialize_compact(&event, event_json, NULL))
+        return MARMOT_ERR_DESERIALIZATION;
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    uint8_t author[32];
+    bool have_kp = false;
+    MarmotError err = MARMOT_OK;
+
+    /* Kind 443 is no invitation KeyPackage any more (the strict 30443
+     * parsers refuse it for Adds): here it is only evidence that its author
+     * published this device's key. */
+    if (event.kind != MARMOT_KIND_KEY_PACKAGE && event.kind != 443)
+        err = MARMOT_ERR_UNEXPECTED_EVENT;
+    if (err == MARMOT_OK) err = verify_event_id_and_signature(&event);
+    if (err == MARMOT_OK && marmot_hex_decode(event.pubkey, author, 32) != 0)
+        err = MARMOT_ERR_VALIDATION;
+    if (err == MARMOT_OK) {
+        if (evidence_key_package(&event, &kp) != 0) {
+            err = MARMOT_ERR_KEY_PACKAGE;
+        } else {
+            have_kp = true;
+            /* The KeyPackage's own signature and its leaf's (RFC 9420). */
+            if (mls_key_package_validate(&kp) != 0)
+                err = MARMOT_ERR_KEY_PACKAGE;
+            else if (kp.leaf_node.credential_identity_len != 32 ||
+                     !kp.leaf_node.credential_identity ||
+                     memcmp(kp.leaf_node.credential_identity, author, 32) != 0)
+                err = MARMOT_ERR_AUTHOR_MISMATCH;
+            else if (marmot_leaf_proof_status(&kp.leaf_node, kp.cipher_suite) ==
+                     MARMOT_LEAF_PROOF_INVALID)
+                err = MARMOT_ERR_KEY_PACKAGE_IDENTITY;
+        }
+    }
+    if (err == MARMOT_OK)
+        *out_matches = sodium_memcmp(author, member->account_pubkey, 32) == 0 &&
+                       sodium_memcmp(kp.leaf_node.signature_key, member->signature_key,
+                                     32) == 0;
+    if (have_kp) mls_key_package_clear(&kp);
+    clear_stack_event(&event);
+    return err;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

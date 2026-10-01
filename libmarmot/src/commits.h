@@ -73,10 +73,12 @@ typedef struct {
  *
  * Account binding (nostrc-7vyi): every leaf the Commit adds, or whose slot
  * now holds another account, carries a valid account-identity proof, else
- * MARMOT_ERR_KEY_PACKAGE_IDENTITY; with `allow_unproven` (legacy mode) one
- * without any proof passes.  A member's replaced leaf (Update, UpdatePath)
- * keeps its identity (the MLS layer pins it) and may not drop a proof it
- * had.  A proof that does not verify always fails.
+ * MARMOT_ERR_KEY_PACKAGE_IDENTITY; with `allow_unproven`
+ * (MarmotConfig.allow_unproven_members) one without any proof passes, in a
+ * legacy-profile group only (`pre` and `post`; nostrc-6ukh).  A member's
+ * replaced leaf (Update, UpdatePath) keeps its identity (the MLS layer pins
+ * it) and may not drop a proof it had; outside the legacy profile it needs
+ * one.  A proof that does not verify always fails.
  *
  * Fills `key` (all but digest) and returns the post-Commit GroupData in
  * *post_gde (caller frees).  Pure: touches no storage.
@@ -158,8 +160,10 @@ MarmotError marmot_commit_note_witness(Marmot *m, const MlsGroup *cur, uint32_t 
  * nostrc-7vyi (joining.md step 5): every member leaf of `g` is bound to the
  * account its credential names -- by a valid account-identity proof, or it
  * is `g`'s own leaf or the `exempt` leaf (UINT32_MAX: none).  A leaf without
- * any proof passes only with `allow_unproven` (legacy mode); a proof that
- * does not verify never does.  MARMOT_ERR_KEY_PACKAGE_IDENTITY otherwise.
+ * any proof passes only with `allow_unproven` (MarmotConfig.
+ * allow_unproven_members); a proof that does not verify never does.  Both
+ * `exempt` and `allow_unproven` apply only to a legacy-profile `g`
+ * (nostrc-6ukh).  MARMOT_ERR_KEY_PACKAGE_IDENTITY otherwise.
  * The joiner applies it to a Welcome's tree (exempting the GroupInfo signer
  * when it sent the Welcome), the inviter to the tree its Welcome carries.
  */
