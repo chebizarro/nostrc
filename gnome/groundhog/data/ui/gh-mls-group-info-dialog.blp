@@ -287,11 +287,12 @@ template $GhMlsGroupInfoDialog: Adw.Dialog {
 
 // Response ids are unique across the file: blueprint-compiler 0.12 treats
 // them as object ids.
-// Leaving is local (gh-mls-service.h "Leaving"): an MLS member can't take
-// itself out of the group, so the copy says the others keep counting you.
+// What Leave does depends on the group (gh-mls-service.h "Leaving",
+// nostrc-2um6): for everyone where it can, else on this device only. The
+// body is set when the dialog is shown (gh_mls_leave_copy()).
 Adw.AlertDialog leave_dialog {
   heading: _("Leave Group?");
-  body: _("You’ll stop receiving this group’s messages on this device. The other members keep counting you as a member until an admin removes you.");
+  body: "";
   default-response: "leave-cancel";
   close-response: "leave-cancel";
 

@@ -318,7 +318,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   </template>
   <object class="AdwAlertDialog" id="leave_dialog">
     <property name="heading" translatable="yes">Leave Group?</property>
-    <property name="body" translatable="yes">You’ll stop receiving this group’s messages on this device. The other members keep counting you as a member until an admin removes you.</property>
+    <property name="body"></property>
     <property name="default-response">leave-cancel</property>
     <property name="close-response">leave-cancel</property>
     <responses>

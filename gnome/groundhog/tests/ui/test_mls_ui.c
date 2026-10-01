@@ -197,6 +197,19 @@ test_copy(void)
   g_assert_null(gh_mls_end_copy(GH_MLS_GROUP_END_NONE, NULL));
   g_autofree gchar *left = gh_mls_end_copy(GH_MLS_GROUP_END_LEFT, "Alice");
   g_assert_cmpstr(left, ==, "You left this group. Its messages stay on this device.");
+  /* nostrc-2um6: leaving on this device only says the others still count you. */
+  g_autofree gchar *left_here = gh_mls_end_copy(GH_MLS_GROUP_END_LEFT_DEVICE, NULL);
+  g_assert_nonnull(strstr(left_here, "on this device"));
+  g_assert_nonnull(strstr(left_here, "still count you"));
+  g_assert_nonnull(strstr(gh_mls_leave_copy(GH_MLS_LEAVE_EVERYONE), "are told that you left"));
+  g_assert_nonnull(strstr(gh_mls_leave_copy(GH_MLS_LEAVE_DEVICE_ADMIN), "step down first"));
+  g_assert_nonnull(strstr(gh_mls_leave_copy(GH_MLS_LEAVE_DEVICE_UNSUPPORTED),
+                          "can’t process a member leaving"));
+  g_assert_nonnull(strstr(gh_mls_leave_copy(GH_MLS_LEAVE_DEVICE_WAITING), "Stop waiting?"));
+  for (GhMlsLeave k = GH_MLS_LEAVE_DEVICE_ADMIN; k <= GH_MLS_LEAVE_DEVICE; k++)
+    g_assert_nonnull(strstr(gh_mls_leave_copy(k), "keep counting you"));
+  g_autofree gchar *gone = gh_mls_member_left_copy("Bob");
+  g_assert_cmpstr(gone, ==, "Bob left the group");
   g_autofree gchar *removed_by = gh_mls_end_copy(GH_MLS_GROUP_END_REMOVED, "Alice");
   g_assert_cmpstr(removed_by, ==,
                   "You were removed from this group by Alice. Its messages stay on this device.");
@@ -538,6 +551,20 @@ static const gchar *
 last_info_toast(gpointer dialog)
 {
   return gh_mls_group_info_dialog_get_last_toast(dialog);
+}
+
+/* nostrc-2um6 */
+static gboolean
+left_for_everyone(gpointer group)
+{
+  return gh_mls_group_get_end(group) == GH_MLS_GROUP_END_LEFT;
+}
+
+static gboolean
+toast_says_left(gpointer dialog)
+{
+  const gchar *t = gh_mls_group_info_dialog_get_last_toast(dialog);
+  return t && g_str_has_suffix(t, " left the group");
 }
 
 static GtkWidget *
@@ -1121,23 +1148,32 @@ test_gui_group_info(void)
   spin_until(pending_is, &view_wait, "the banner gone");
   g_assert_false(gtk_widget_get_visible(undecryptable));
 
-  /* Bob leaves: the copy says the others keep counting him. */
+  /* Bob (not an admin) leaves for everyone (nostrc-2um6): the copy says
+   * the others are told; he is "leaving" until Alice's service commits his
+   * SelfRemove, and her Group Info toasts that he left. */
+  GhMlsGroupInfoDialog *alice_info = show_info(window, conversation);
   bob_info = show_info(bob_window, bob_conversation);
   gtk_widget_activate_action(GTK_WIDGET(bob_info), "mls-group.leave", NULL);
   AdwAlertDialog *leave = gh_mls_group_info_dialog_get_leave_dialog(bob_info);
   g_assert_cmpstr(adw_alert_dialog_get_heading(leave), ==, "Leave Group?");
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(leave),
-                          "keep counting you as a member until an admin removes you"));
+                          "The other members are told that you left."));
   confirm(leave, GTK_WIDGET(bob_info), "leave-confirm");
-  g_assert_false(gh_mls_group_get_active(gb));
-  g_assert_cmpstr(gh_mls_group_info_dialog_get_last_toast(bob_info), ==,
-                  "You left the group on this device");
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_last_toast(bob_info), ==, "Leaving the group…");
   gpointer data = NULL;
   const GhSendUiDelegate *delegate = group_send_stub_delegate_for(bob_conversation, &data);
+  if (gh_mls_group_get_active(gb)) {
+    g_autofree gchar *leaving = delegate->reason(bob_conversation, data);
+    g_assert_cmpstr(leaving, ==, "You’re leaving this group, so nothing more can be sent to it.");
+  }
+  spin_until(left_for_everyone, gb, "Bob's leave confirmed");
   g_autofree gchar *reason = delegate->reason(bob_conversation, data);
   g_assert_cmpstr(reason, ==, "You left this group.");
+  wait_members(ga, 1);
   g_auto(GStrv) members = gh_mls_group_dup_members(ga);
-  g_assert_true(strv_has((const gchar *const *)members, hex[BOB]));   /* still counted */
+  g_assert_false(strv_has((const gchar *const *)members, hex[BOB]));   /* gone for everyone */
+  spin_until(toast_says_left, alice_info, "Alice's toast that Bob left");
+  adw_dialog_force_close(ADW_DIALOG(alice_info));
   adw_dialog_force_close(ADW_DIALOG(bob_info));
   drain();
 

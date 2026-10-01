@@ -123,10 +123,30 @@ G_BEGIN_DECLS
  * invitee (or a group member) whose app cannot prove its account is
  * GH_MLS_SERVICE_ERROR_NEEDS_UPDATE.
  *
- * Leaving. marmot_leave_group() marks the group inactive locally and the
- * service stops reading it; an MLS member cannot remove itself from the tree
- * (no self-remove proposal in libmarmot yet), so the others keep counting it
- * until an admin removes it.
+ * Leaving (nostrc-2um6; MIP-03 "Leaving a group", Marmot
+ * protocol-core/member-departure.md). Where the group supports it
+ * (libmarmot >= 0.12.0: every member's app processes SelfRemove, and the
+ * account is not an admin -- admins step down first), gh_mls_service_leave()
+ * leaves for everyone: libmarmot makes the account's SelfRemove proposal,
+ * which is published to the group relays (republished after a restart, and
+ * made again for each new epoch), and the group is "leaving": it is still
+ * read, nothing else is sent, and once another member commits the proposal
+ * the group ends ("end" LEFT). Otherwise (gh_mls_service_leave_kind()) the
+ * group ends on this device only ("end" LEFT_DEVICE): marmot_leave_group()
+ * marks it inactive locally and the service stops reading it; the others
+ * keep counting the account until an admin removes it. Leaving again while
+ * "leaving" gives up waiting and leaves on this device.
+ *
+ * Others leaving. A member's own departure request -- its SelfRemove, or
+ * the Remove of itself MDK 0.8 sends where SelfRemove is not required -- is
+ * kept by libmarmot (marmot_process_message(): MARMOT_RESULT_PROPOSAL), and
+ * the service commits it after a random delay of
+ * GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS..MAX_MS (member-departure.md: any
+ * remaining member may commit a SelfRemove, as MDK 0.8 and 0.11 do; a Remove
+ * needs an admin), through the same publish-then-merge lifecycle as every
+ * Commit; another member's Commit consuming it first cancels ours. When a
+ * Commit takes such a member out of the group, the group emits
+ * "member-left".
  *
  * Removal (nostrc-xrya). A member an admin removed cannot enter the next
  * epoch (the Commit's UpdatePath is encrypted to the others). libmarmot
@@ -191,6 +211,11 @@ G_BEGIN_DECLS
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
 #define GH_MLS_SERVICE_MAX_INVITEES 32
+/* The random delay before committing another member's leave (milliseconds):
+ * member-departure.md "short randomized jitter", so that members online
+ * together rarely race. */
+#define GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS 1000
+#define GH_MLS_SERVICE_DEPARTURE_JITTER_MAX_MS 4000
 
 typedef enum {
   GH_MLS_KEY_PACKAGE_NONE,        /* not published (inactive, offline or not yet) */
@@ -216,10 +241,21 @@ GType gh_mls_read_state_get_type(void);
 /* Why a group is no longer active for the account (nostrc-xrya). */
 typedef enum {
   GH_MLS_GROUP_END_NONE,     /* active */
-  GH_MLS_GROUP_END_LEFT,     /* the account left (gh_mls_service_leave()), on this device */
+  GH_MLS_GROUP_END_LEFT,     /* the account left: a member committed its SelfRemove */
   GH_MLS_GROUP_END_REMOVED,  /* an admin's Commit removed the account's leaf */
-  GH_MLS_GROUP_END_UNKNOWN   /* inactive, and why can't be read (a damaged record) */
+  GH_MLS_GROUP_END_UNKNOWN,  /* inactive, and why can't be read (a damaged record) */
+  GH_MLS_GROUP_END_LEFT_DEVICE /* the account left on this device only; the others still
+                                * count it (gh_mls_service_leave() without SelfRemove) */
 } GhMlsGroupEnd;
+
+/* What gh_mls_service_leave() would do for a group (nostrc-2um6). */
+typedef enum {
+  GH_MLS_LEAVE_EVERYONE,           /* SelfRemove: the others are told */
+  GH_MLS_LEAVE_DEVICE_ADMIN,       /* this device only: admins step down first */
+  GH_MLS_LEAVE_DEVICE_UNSUPPORTED, /* this device only: someone's app can't process a leave */
+  GH_MLS_LEAVE_DEVICE_WAITING,     /* this device only: the leave still waits for a member */
+  GH_MLS_LEAVE_DEVICE              /* this device only (busy, offline, or an error) */
+} GhMlsLeave;
 
 GType gh_mls_group_end_get_type(void);
 #define GH_TYPE_MLS_GROUP_END (gh_mls_group_end_get_type())
@@ -274,14 +310,18 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * "history-incomplete" (a group relay's backfill could
  * not be fetched completely this subscription: paging failed or ran out, or
  * more was delivered than the service keeps at once; the read cursor holds,
- * and the next subscription asks again). Signal "members-changed": the
- * member list or the admins may differ. */
+ * and the next subscription asks again) and "leaving" (the account's
+ * SelfRemove waits for a member's Commit). Signal "members-changed": the
+ * member list or the admins may differ. Signal "member-left" (gchar *pubkey,
+ * hex): a Commit took out a member who had asked to leave (nostrc-2um6). */
 const gchar *gh_mls_group_get_group_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_room_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_name(GhMlsGroup *self);
 const gchar *gh_mls_group_get_description(GhMlsGroup *self);
 guint64 gh_mls_group_get_epoch(GhMlsGroup *self);
 gboolean gh_mls_group_get_active(GhMlsGroup *self);
+/* TRUE while the account's leave waits for a member's Commit (nostrc-2um6). */
+gboolean gh_mls_group_get_leaving(GhMlsGroup *self);
 GhMlsGroupEnd gh_mls_group_get_end(GhMlsGroup *self);
 const gchar *gh_mls_group_get_removed_by(GhMlsGroup *self);
 GhMlsReadState gh_mls_group_get_read_state(GhMlsGroup *self);
@@ -429,9 +469,13 @@ void gh_mls_service_set_admins_async(GhMlsService *self, GhMlsGroup *group,
 gboolean gh_mls_service_change_finish(GhMlsService *self, GAsyncResult *result,
                                       GError **error);
 
-/* Leaves (locally; see above): the group turns inactive and is not read any
- * more; its room and history stay. */
+/* Leaves the group (see "Leaving" above): for everyone where it can, then
+ * the group is "leaving" until a member commits it; otherwise on this device
+ * only, at once (the group turns inactive and is not read any more; its room
+ * and history stay). */
 gboolean gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error);
+/* What gh_mls_service_leave() would do now (for the confirmation copy). */
+GhMlsLeave gh_mls_service_leave_kind(GhMlsService *self, GhMlsGroup *group);
 
 /* Sends a chat message (kind 9 inner event) to an active group: stored and
  * ratcheted in one transaction, listed at once, then published. The listed

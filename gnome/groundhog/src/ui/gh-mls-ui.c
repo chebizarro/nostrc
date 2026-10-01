@@ -113,6 +113,18 @@ on_shown_state(MlsUi *ui)
   gh_send_ui_refresh(ui->window);
 }
 
+/* nostrc-2um6: a member of the shown group who asked to leave is out. */
+static void
+on_shown_member_left(GhMlsGroup *group, const gchar *pubkey, gpointer data)
+{
+  (void)group;
+  MlsUi *ui = data;
+  const gchar *name = ui->display_name ? ui->display_name(pubkey, ui->names_data) : NULL;
+  g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
+  g_autofree gchar *words = gh_mls_member_left_copy(name && *name ? name : npub);
+  adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window), adw_toast_new(words));
+}
+
 static void
 set_shown(MlsUi *ui, GhMlsGroup *group)
 {
@@ -127,6 +139,8 @@ set_shown(MlsUi *ui, GhMlsGroup *group)
     g_signal_connect_swapped(group, "notify::active", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::end", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::read-state", G_CALLBACK(on_shown_state), ui);
+    g_signal_connect_swapped(group, "notify::leaving", G_CALLBACK(on_shown_state), ui);
+    g_signal_connect(group, "member-left", G_CALLBACK(on_shown_member_left), ui);
     g_signal_connect_swapped(group, "notify::name", G_CALLBACK(on_shown_members), ui);
   }
   sync_unreadable(ui);
@@ -299,9 +313,14 @@ delegate_send(GhConversation *conversation, const gchar *text, gpointer data, GE
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         _("You were removed from this group, so the message was not sent. It "
                           "is kept here."));
-  else if (gh_mls_group_get_end(group) == GH_MLS_GROUP_END_LEFT)
+  else if (gh_mls_group_get_end(group) == GH_MLS_GROUP_END_LEFT ||
+           gh_mls_group_get_end(group) == GH_MLS_GROUP_END_LEFT_DEVICE)
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         _("You left this group, so the message was not sent. It is kept here."));
+  else if (gh_mls_group_get_leaving(group))
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        _("You’re leaving this group, so the message was not sent. It is kept "
+                          "here."));
   else if (!gh_mls_group_get_active(group))
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         _("This group has ended, so the message was not sent. It is kept "

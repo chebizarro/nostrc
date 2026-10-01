@@ -125,6 +125,8 @@ gh_mls_send_reason(GhMlsService *service, GhMlsGroup *group, const gchar *remove
     return g_strdup(_("This group has ended on this device."));
   if (!gh_mls_group_get_active(group))
     return g_strdup(_("You left this group."));
+  if (gh_mls_group_get_leaving(group))
+    return g_strdup(_("You’re leaving this group, so nothing more can be sent to it."));
   if (gh_mls_group_get_read_state(group) == GH_MLS_READ_IDLE)
     return g_strdup(_("Encrypted groups send only while you’re online."));
   return NULL;
@@ -142,6 +144,11 @@ gh_mls_end_copy(GhMlsGroupEnd end, const gchar *remover)
     return g_strdup(_("You were removed from this group. Its messages stay on this device."));
   case GH_MLS_GROUP_END_LEFT:
     return g_strdup(_("You left this group. Its messages stay on this device."));
+  case GH_MLS_GROUP_END_LEFT_DEVICE:
+    /* Only this device stopped (nostrc-2um6): the others weren't told. */
+    return g_strdup(_("You left this group on this device. Its other members still count you "
+                      "as a member until an admin removes you. Its messages stay on this "
+                      "device."));
   case GH_MLS_GROUP_END_UNKNOWN:
     /* Its record can't be read: say that it ended, not why (review N3). */
     return g_strdup(_("This group has ended on this device. Its messages stay on this "
@@ -150,6 +157,39 @@ gh_mls_end_copy(GhMlsGroupEnd end, const gchar *remover)
   default:
     return NULL;
   }
+}
+
+const gchar *
+gh_mls_leave_copy(GhMlsLeave kind)
+{
+  switch (kind) {
+  case GH_MLS_LEAVE_EVERYONE:
+    return _("The other members are told that you left. Once one of them confirms it, this "
+             "group stops on this device too. Messages you have stay on this device.");
+  case GH_MLS_LEAVE_DEVICE_ADMIN:
+    return _("You’re an admin, so you can’t leave for everyone yet: make someone else an admin "
+             "and step down first. Leaving now stops this group on this device only, and the "
+             "other members keep counting you until an admin removes you.");
+  case GH_MLS_LEAVE_DEVICE_UNSUPPORTED:
+    return _("Someone in this group uses an app that can’t process a member leaving. Leaving "
+             "now stops this group on this device only, and the other members keep counting "
+             "you until an admin removes you.");
+  case GH_MLS_LEAVE_DEVICE_WAITING:
+    return _("No member has confirmed your leave yet. Stop waiting? This group stops on this "
+             "device now, and the other members keep counting you until one of them confirms "
+             "it.");
+  case GH_MLS_LEAVE_DEVICE:
+  default:
+    return _("This group stops on this device only, and the other members keep counting you "
+             "until an admin removes you.");
+  }
+}
+
+gchar *
+gh_mls_member_left_copy(const gchar *member)
+{
+  /* TRANSLATORS: %s is the member's name or short npub. */
+  return g_strdup_printf(_("%s left the group"), member && *member ? member : _("Someone"));
 }
 
 const gchar *

@@ -306,11 +306,17 @@ test_group_lifecycle(void)
   g_assert_null(gh_mls_group_get_removed_by(gc));
   g_assert_false(gh_mls_group_get_active(gc));
 
-  /* Bob leaves: he stops reading; his room and history stay. */
+  /* Bob (not an admin) leaves for everyone (nostrc-2um6): his SelfRemove,
+   * which Alice commits; then he stops reading; his room and history stay. */
   g_autoptr(GError) error = NULL;
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_EVERYONE);
   g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
   g_assert_no_error(error);
+  g_assert_true(gh_mls_group_get_leaving(gb));
+  wait_members(ga, 1);
+  spin_until(group_ended, gb, "Bob's leave confirmed");
   g_assert_false(gh_mls_group_get_active(gb));
+  g_assert_false(gh_mls_group_get_leaving(gb));
   g_assert_cmpint(gh_mls_group_get_end(gb), ==, GH_MLS_GROUP_END_LEFT);
   g_assert_null(gh_mls_group_get_removed_by(gb));
   g_assert_cmpint(gh_mls_group_get_read_state(gb), ==, GH_MLS_READ_IDLE);
@@ -2194,6 +2200,110 @@ test_account_switch(void)
   world_down(&w);
 }
 
+/* ---- Leaving (nostrc-2um6) ------------------------------------------------------------- */
+
+typedef struct {
+  GPtrArray *left;   /* hex of members reported gone */
+} LeftLog;
+
+static void
+on_member_left(GhMlsGroup *group, const gchar *pubkey, gpointer data)
+{
+  (void)group;
+  g_ptr_array_add(((LeftLog *)data)->left, g_strdup(pubkey));
+}
+
+static gboolean
+is_leaving(gpointer data)
+{
+  return gh_mls_group_get_leaving(data);
+}
+
+/* Carol (not an admin) leaves for everyone while Alice and Bob are offline:
+ * her SelfRemove survives a restart and is published again; when they come
+ * back one of them commits it after the jitter, both report "member-left",
+ * Carol's group ends as LEFT for good, and the two go on. Alice, an admin,
+ * can only leave on this device (admins step down first). */
+static void
+test_member_leaves(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Leavers", (const guint[]){ BOB, CAROL }, 2);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  wait_live(ga);
+  LeftLog alice_log = { g_ptr_array_new_with_free_func(g_free) };
+  LeftLog bob_log = { g_ptr_array_new_with_free_func(g_free) };
+  g_signal_connect(ga, "member-left", G_CALLBACK(on_member_left), &alice_log);
+  g_signal_connect(gb, "member-left", G_CALLBACK(on_member_left), &bob_log);
+
+  g_assert_cmpint(gh_mls_service_leave_kind(alice->service, ga), ==, GH_MLS_LEAVE_DEVICE_ADMIN);
+  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_EVERYONE);
+
+  set_online(alice, FALSE);
+  set_online(bob, FALSE);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(carol->service, gc, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_mls_group_get_leaving(gc));
+  g_assert_true(gh_mls_group_get_active(gc));
+  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==,
+                  GH_MLS_LEAVE_DEVICE_WAITING);
+  g_assert_null(gh_mls_service_send(carol->service, gc, "still here?", &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
+
+  /* The leave request is durable: after a restart it is still Leaving. */
+  app_restart(carol);
+  gc = gh_mls_service_lookup(carol->service, room);
+  g_assert_nonnull(gc);
+  spin_until(is_leaving, gc, "Carol still leaving after a restart");
+
+  set_online(alice, TRUE);
+  set_online(bob, TRUE);
+  wait_members(ga, 2);
+  wait_members(gb, 2);
+  spin_until(group_ended, gc, "Carol's leave confirmed");
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_LEFT);
+  g_assert_false(gh_mls_group_get_leaving(gc));
+  g_assert_null(gh_mls_group_get_removed_by(gc));
+  g_assert_cmpuint(alice_log.left->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(alice_log.left, 0), ==, hex[CAROL]);
+  g_assert_cmpuint(bob_log.left->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(bob_log.left, 0), ==, hex[CAROL]);
+  g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, gh_mls_group_get_epoch(gb));
+
+  send_text(alice, ga, "after carol left");
+  wait_message(bob, room, "after carol left");
+  send_text(bob, gb, "bob after carol left");
+  wait_message(alice, room, "bob after carol left");
+  drain();
+  g_assert_null(find_message(carol, room, "after carol left"));
+
+  /* Carol's end survives a restart. */
+  app_restart(carol);
+  gc = gh_mls_service_lookup(carol->service, room);
+  g_assert_cmpint(gh_mls_group_get_end(gc), ==, GH_MLS_GROUP_END_LEFT);
+  g_assert_false(gh_mls_group_get_active(gc));
+
+  /* An admin's Leave is on this device only, and says so. */
+  g_assert_true(gh_mls_service_leave(alice->service, ga, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_mls_group_get_end(ga), ==, GH_MLS_GROUP_END_LEFT_DEVICE);
+  g_assert_false(gh_mls_group_get_leaving(ga));
+  g_signal_handlers_disconnect_by_data(ga, &alice_log);
+  g_signal_handlers_disconnect_by_data(gb, &bob_log);
+  g_ptr_array_unref(alice_log.left);
+  g_ptr_array_unref(bob_log.left);
+  world_down(&w);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2201,6 +2311,7 @@ main(int argc, char **argv)
   mls_world_init();
   g_test_add_func("/groundhog/mls-service/key-packages", test_key_packages);
   g_test_add_func("/groundhog/mls-service/group-lifecycle", test_group_lifecycle);
+  g_test_add_func("/groundhog/mls-service/member-leaves", test_member_leaves);
   g_test_add_func("/groundhog/mls-service/restart-mid-commit", test_restart_mid_commit);
   g_test_add_func("/groundhog/mls-service/account-switch", test_account_switch);
   g_test_add_func("/groundhog/mls-service/future-replay-moves-no-cursor",

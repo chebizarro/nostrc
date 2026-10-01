@@ -118,6 +118,7 @@ struct _GhMlsGroupInfoDialog {
   GPtrArray *member_rows;   /* GtkWidget in members_group */
   GPtrArray *relay_rows;    /* GtkWidget in relays_group */
   gchar *removing;          /* the pubkey the remove confirmation asks about */
+  GhMlsLeave leave_kind;    /* what the shown leave confirmation said (nostrc-2um6) */
   gchar *last_toast;
   guint pending;            /* changes started, not finished */
 };
@@ -143,8 +144,9 @@ display_name(GhMlsGroupInfoDialog *self, const gchar *pubkey)
 static gboolean
 can_manage(GhMlsGroupInfoDialog *self)
 {
+  /* Leaving (nostrc-2um6): nothing but the leave is sent any more. */
   return self->context.service && gh_mls_group_get_active(self->group) &&
-         gh_mls_group_get_is_admin(self->group);
+         !gh_mls_group_get_leaving(self->group) && gh_mls_group_get_is_admin(self->group);
 }
 
 static void
@@ -207,7 +209,9 @@ sync_status(GhMlsGroupInfoDialog *self)
   gboolean pending = gh_mls_group_get_pending_commit(self->group);
   guint unsent = gh_mls_group_get_unsent_welcomes(self->group);
   g_autofree gchar *words = NULL;
-  if (pending)
+  if (gh_mls_group_get_leaving(self->group))
+    words = g_strdup(_("You’re leaving. Waiting for another member to confirm it."));
+  else if (pending)
     words = g_strdup(_("A change to the group is waiting for a relay to accept it."));
   else if (unsent > 0)
     words = g_strdup_printf(g_dngettext(NULL,
@@ -461,8 +465,13 @@ action_leave(GtkWidget *widget, const gchar *action, GVariant *parameter)
   (void)action;
   (void)parameter;
   GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
-  if (gh_mls_group_get_active(self->group))
-    adw_dialog_present(ADW_DIALOG(self->leave_dialog), GTK_WIDGET(self));
+  if (!gh_mls_group_get_active(self->group) || !self->context.service)
+    return;
+  /* Say what Leave will do: for everyone, or on this device only and why
+   * (nostrc-2um6). */
+  self->leave_kind = gh_mls_service_leave_kind(self->context.service, self->group);
+  adw_alert_dialog_set_body(self->leave_dialog, gh_mls_leave_copy(self->leave_kind));
+  adw_dialog_present(ADW_DIALOG(self->leave_dialog), GTK_WIDGET(self));
 }
 
 static void
@@ -480,8 +489,22 @@ on_leave_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
     toast(self, words);
     return;
   }
-  toast(self, _("You left the group on this device"));
+  toast(self, self->leave_kind == GH_MLS_LEAVE_EVERYONE
+                ? _("Leaving the group…")
+                : _("You left the group on this device"));
   sync_all(self);
+}
+
+/* nostrc-2um6: a member who asked to leave is out. */
+static void
+on_member_left(GhMlsGroup *group, const gchar *pubkey, gpointer data)
+{
+  (void)group;
+  GhMlsGroupInfoDialog *self = data;
+  const gchar *name = display_name(self, pubkey);
+  g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
+  g_autofree gchar *words = gh_mls_member_left_copy(name && *name ? name : npub);
+  toast(self, words);
 }
 
 static void
@@ -529,6 +552,7 @@ gh_mls_group_info_dialog_new(GhMlsGroup *group, const GhMlsUiContext *context)
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(group, "members-changed", G_CALLBACK(sync_all), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(group, "member-left", G_CALLBACK(on_member_left), self, 0);
   fill_privacy(self);
   sync_all(self);
   return self;

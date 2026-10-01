@@ -30,9 +30,13 @@ G_BEGIN_DECLS
  *    gh_mls_service_remove_members_async()), and Name and Description
  *    (gh_mls_service_update_metadata_async()).
  *  - Group relays (read-only).
- *  - Leave (confirmed; gh_mls_service_leave()): local only, and the
- *    confirmation says so: the other members keep counting the account until
- *    an admin removes it. A left group says so and offers nothing else.
+ *  - Leave (confirmed; gh_mls_service_leave()): the confirmation says what
+ *    it does (gh_mls_service_leave_kind(), gh_mls_leave_copy(); nostrc-2um6):
+ *    for everyone where the group supports it -- then the group is "leaving"
+ *    until a member confirms it, and says so -- or on this device only, and
+ *    why: the other members keep counting the account until an admin
+ *    removes it. A left group says so and offers nothing else. A member who
+ *    asked to leave and is out is toasted ("Alice left the group").
  * Every change is one Commit; the dialog says it is being sent and toasts
  * its outcome (gh_mls_error_copy() on failure). The dialog follows the
  * group live and closes when its service goes (account switch).

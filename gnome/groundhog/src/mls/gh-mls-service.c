@@ -86,6 +86,14 @@ struct _GhMlsGroup {
   /* Changes: the Commit being published, and who waits for it. */
   Round *round;
   GPtrArray *waiters;        /* GTask */
+  /* Leaving (nostrc-2um6): our SelfRemove, while a member has to commit it. */
+  gboolean leaving;
+  gchar *leave_json;         /* the SelfRemove event of the current epoch */
+  GhRelayPublish *leave_publish; /* publishing it; NULL once a relay took it */
+  gboolean leave_sent;       /* a group relay accepted leave_json */
+  /* Others leaving: members who asked to (hex), and the delayed Commit. */
+  GHashTable *leavers;
+  guint departures_source;
 };
 
 enum {
@@ -105,10 +113,11 @@ enum {
   GROUP_PROP_UNREADABLE,
   GROUP_PROP_DECRYPT_PENDING,
   GROUP_PROP_HISTORY_INCOMPLETE,
+  GROUP_PROP_LEAVING,
   N_GROUP_PROPS
 };
 static GParamSpec *group_props[N_GROUP_PROPS];
-enum { GROUP_SIGNAL_MEMBERS_CHANGED, N_GROUP_SIGNALS };
+enum { GROUP_SIGNAL_MEMBERS_CHANGED, GROUP_SIGNAL_MEMBER_LEFT, N_GROUP_SIGNALS };
 static guint group_signals[N_GROUP_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhMlsGroup, gh_mls_group, G_TYPE_OBJECT)
@@ -231,6 +240,7 @@ gh_mls_group_end_get_type(void)
       { GH_MLS_GROUP_END_LEFT, "GH_MLS_GROUP_END_LEFT", "left" },
       { GH_MLS_GROUP_END_REMOVED, "GH_MLS_GROUP_END_REMOVED", "removed" },
       { GH_MLS_GROUP_END_UNKNOWN, "GH_MLS_GROUP_END_UNKNOWN", "unknown" },
+      { GH_MLS_GROUP_END_LEFT_DEVICE, "GH_MLS_GROUP_END_LEFT_DEVICE", "left-device" },
       { 0, NULL, NULL }
     };
     g_once_init_leave(&type, g_enum_register_static("GhMlsGroupEnd", values));
@@ -502,6 +512,13 @@ gh_mls_group_get_active(GhMlsGroup *self)
   return self->active;
 }
 
+gboolean
+gh_mls_group_get_leaving(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
+  return self->leaving;
+}
+
 GhMlsGroupEnd
 gh_mls_group_get_end(GhMlsGroup *self)
 {
@@ -629,6 +646,7 @@ gh_mls_group_get_property(GObject *object, guint id, GValue *value, GParamSpec *
   case GROUP_PROP_UNREADABLE: g_value_set_uint(value, g_queue_get_length(&self->held)); break;
   case GROUP_PROP_DECRYPT_PENDING: g_value_set_boolean(value, self->decrypt_pending); break;
   case GROUP_PROP_HISTORY_INCOMPLETE: g_value_set_boolean(value, self->history_incomplete); break;
+  case GROUP_PROP_LEAVING: g_value_set_boolean(value, self->leaving); break;
   default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
 }
@@ -637,8 +655,11 @@ static void
 gh_mls_group_finalize(GObject *object)
 {
   GhMlsGroup *self = GH_MLS_GROUP(object);
-  g_warn_if_fail(self->scope == NULL && self->round == NULL);
+  g_warn_if_fail(self->scope == NULL && self->round == NULL && self->leave_publish == NULL &&
+                 self->departures_source == 0);
   marmot_group_id_free(&self->gid);
+  g_free(self->leave_json);
+  g_hash_table_unref(self->leavers);
   g_free(self->gid_hex);
   g_free(self->room_id);
   g_free(self->name);
@@ -692,10 +713,14 @@ gh_mls_group_class_init(GhMlsGroupClass *klass)
     g_param_spec_boolean("decrypt-pending", NULL, NULL, FALSE, ro);
   group_props[GROUP_PROP_HISTORY_INCOMPLETE] =
     g_param_spec_boolean("history-incomplete", NULL, NULL, FALSE, ro);
+  group_props[GROUP_PROP_LEAVING] = g_param_spec_boolean("leaving", NULL, NULL, FALSE, ro);
   g_object_class_install_properties(object_class, N_GROUP_PROPS, group_props);
   group_signals[GROUP_SIGNAL_MEMBERS_CHANGED] =
     g_signal_new("members-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
                  NULL, NULL, G_TYPE_NONE, 0);
+  group_signals[GROUP_SIGNAL_MEMBER_LEFT] =
+    g_signal_new("member-left", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void
@@ -712,6 +737,7 @@ gh_mls_group_init(GhMlsGroup *self)
   self->members = g_new0(gchar *, 1);
   self->admins = g_new0(gchar *, 1);
   self->relays = g_new0(gchar *, 1);
+  self->leavers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 }
 
 void
@@ -801,7 +827,8 @@ drop_held(GhMlsGroup *group)
 static gboolean
 listening(GhMlsGroup *group)
 {
-  return group->active || (group->end == GH_MLS_GROUP_END_REMOVED && !group->removal_final);
+  return group->active || ((group->end == GH_MLS_GROUP_END_REMOVED ||
+                            group->end == GH_MLS_GROUP_END_LEFT) && !group->removal_final);
 }
 
 /* An event dropped as junk is not held again when a later REQ's overlap
@@ -899,6 +926,8 @@ group_refresh(GhMlsGroup *group)
 
   uint8_t (*keys)[32] = NULL;
   size_t n_keys = 0;
+  /* nostrc-2um6: members who asked to leave and are gone now. */
+  g_autoptr(GPtrArray) left = g_ptr_array_new_with_free_func(g_free);
   if (marmot_get_group_members(m, &group->gid, &keys, &n_keys) == MARMOT_OK) {
     GPtrArray *members = g_ptr_array_new();
     for (size_t i = 0; i < n_keys; i++)
@@ -908,6 +937,15 @@ group_refresh(GhMlsGroup *group)
       g_strfreev(group->members);
       group->members = list;
       members_changed = TRUE;
+      GHashTableIter it;
+      gpointer key;
+      g_hash_table_iter_init(&it, group->leavers);
+      while (active && g_hash_table_iter_next(&it, &key, NULL)) {
+        if (g_strv_contains((const gchar *const *)group->members, key))
+          continue;
+        g_ptr_array_add(left, g_strdup(key));
+        g_hash_table_iter_remove(&it);
+      }
     } else {
       g_strfreev(list);
     }
@@ -921,20 +959,35 @@ group_refresh(GhMlsGroup *group)
   g_autofree gchar *removed_by = NULL;
   gboolean removal_final = FALSE;
   if (!active) {
-    bool removed = false, final = false;
+    bool removed = false, final = false, left_group = false;
     uint8_t by[32];
     MarmotError rerr = marmot_get_group_removal(m, &group->gid, &removed, by, NULL, &final);
+    if (rerr == MARMOT_OK && removed)
+      rerr = marmot_get_group_left(m, &group->gid, &left_group);
     if (rerr != MARMOT_OK) {
       end = GH_MLS_GROUP_END_UNKNOWN;
+    } else if (removed && left_group) {
+      /* A member committed our SelfRemove (nostrc-2um6). */
+      end = GH_MLS_GROUP_END_LEFT;
+      removal_final = final;
     } else if (removed) {
       end = GH_MLS_GROUP_END_REMOVED;
       removed_by = to_hex(by, 32);
       removal_final = final;
     } else {
-      end = GH_MLS_GROUP_END_LEFT;
+      end = GH_MLS_GROUP_END_LEFT_DEVICE;
     }
   }
-  gboolean reactivated = active && !group->active && group->end == GH_MLS_GROUP_END_REMOVED;
+  bool leave_waits = false;
+  gboolean leaving = active && marmot_is_leaving(m, &group->gid, &leave_waits) == MARMOT_OK &&
+                     leave_waits;
+  if (group->leaving != leaving) {
+    group->leaving = leaving;
+    g_object_notify_by_pspec(object, group_props[GROUP_PROP_LEAVING]);
+  }
+  gboolean reactivated = active && !group->active &&
+                         (group->end == GH_MLS_GROUP_END_REMOVED ||
+                          group->end == GH_MLS_GROUP_END_LEFT);
   group->removal_final = removal_final;
   if (group->active != active) {
     group->active = active;
@@ -993,6 +1046,9 @@ group_refresh(GhMlsGroup *group)
   g_object_thaw_notify(object);
   if (members_changed)
     g_signal_emit(group, group_signals[GROUP_SIGNAL_MEMBERS_CHANGED], 0);
+  for (guint i = 0; i < left->len; i++)
+    g_signal_emit(group, group_signals[GROUP_SIGNAL_MEMBER_LEFT], 0,
+                  (const gchar *)g_ptr_array_index(left, i));
   if (name_changed && group->active)
     group_list_room(group);
   if (!group->active) {
@@ -1257,6 +1313,7 @@ retry_held(GhMlsGroup *group)
 }
 
 static void after_commit(GhMlsGroup *group, gboolean fresh);
+static void departures_schedule(GhMlsGroup *group);
 
 /* Every relay of the subscription sent its EOSE, fully paged, and is still
  * connected (value 1), apart from URLs that could never be subscribed
@@ -1295,6 +1352,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   memset(&result, 0, sizeof result);
   MarmotError err = marmot_process_message(self->marmot, event_json, &result);
   gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE;
+  gboolean proposal = FALSE;
   gint64 created_at = 0;
   NostrEvent *envelope = nostr_event_new();
   g_autofree gchar *envelope_id = NULL;
@@ -1336,6 +1394,12 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     accepted = TRUE;
   } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_COMMIT) {
     commit = accepted = TRUE;
+  } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_PROPOSAL) {
+    /* nostrc-2um6: a member's standalone proposal, which libmarmot keeps for
+     * the Commit that references it; a leave is committed after a delay. */
+    proposal = accepted = TRUE;
+    if (result.proposal.leave && result.proposal.sender_pubkey_hex)
+      g_hash_table_add(group->leavers, g_strdup(result.proposal.sender_pubkey_hex));
   } else if (err == MARMOT_ERR_NIP44) {
     /* A later epoch's (or not for us): wait for the Commit that opens it. */
     held = group->active;   /* an ended group holds nothing (review N5) */
@@ -1390,6 +1454,8 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     save_cursor(group, bounded);
   if (commit)
     after_commit(group, retry == NULL);
+  else if (proposal)
+    departures_schedule(group);
   return EVENT_ACCEPTED;
 }
 
@@ -1714,7 +1780,7 @@ retry_succeeded(GhMlsService *self)
 
 /* ---- Commits: publish, then merge (gh-mls-commits.h) ---------------------------------- */
 
-typedef enum { OP_CREATE, OP_ADD, OP_REMOVE, OP_METADATA } OpKind;
+typedef enum { OP_CREATE, OP_ADD, OP_REMOVE, OP_METADATA, OP_DEPARTURES } OpKind;
 
 typedef struct {
   OpKind kind;
@@ -1790,6 +1856,8 @@ complete_waiters(GhMlsGroup *group, const GError *error)
   }
 }
 
+static void leave_continue(GhMlsGroup *group);
+
 /* @fresh: the Commit came from a relay or was our own merged, not out of
  * the held queue (it ages the queue's junk; review N2). */
 static void
@@ -1800,6 +1868,10 @@ after_commit(GhMlsGroup *group, gboolean fresh)
     group->fresh_commits++;
   retry_held(group);
   welcomes_pump(group);
+  /* nostrc-2um6: a new epoch makes a leave proposal stale (ours is made
+   * again); others' leaves may be committable now. */
+  leave_continue(group);
+  departures_schedule(group);
 }
 
 /* The Commit reached a final state for the account's change. */
@@ -2038,6 +2110,192 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
   g_ptr_array_add(group->waiters, task);   /* takes the reference */
   group_refresh(group);
   round_start(group, publish);
+}
+
+/* ---- Leaving and others' leaves (nostrc-2um6) ------------------------------------------ */
+
+static GTask *op_task(GhMlsService *self, OpKind kind, GhMlsGroup *group,
+                      GCancellable *cancellable, GAsyncReadyCallback callback,
+                      gpointer user_data, gpointer tag);
+
+static MarmotError
+produce_departures(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
+{
+  (void)data;
+  return marmot_commit_pending_proposals(marmot, gid, out);
+}
+
+/* Whether libmarmot would commit a member's leave now; also learns who asked
+ * to leave (after a restart, from the kept proposals). */
+static gboolean
+departures_committable(GhMlsGroup *group)
+{
+  MarmotPendingProposal *p = NULL;
+  size_t n = 0;
+  gboolean any = FALSE;
+  if (marmot_get_pending_proposals(group->service->marmot, &group->gid, &p, &n) != MARMOT_OK)
+    return FALSE;
+  for (size_t i = 0; i < n; i++) {
+    if (p[i].leave && !p[i].own)
+      g_hash_table_add(group->leavers, to_hex(p[i].sender, 32));
+    any |= p[i].committable;
+  }
+  marmot_pending_proposals_free(p);
+  return any;
+}
+
+static void
+departures_cancel(GhMlsGroup *group)
+{
+  if (group->departures_source) {
+    gh_clock_source_remove(group->service->clock, group->departures_source);
+    group->departures_source = 0;
+  }
+}
+
+static void
+departures_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)data;
+  g_autoptr(GError) error = NULL;
+  /* Superseded (another member committed it first), refused or busy: the
+   * next Commit, or the leaver's fresh proposal, schedules it again. */
+  if (!gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error))
+    g_debug("Groundhog did not commit a member's leave: %s", error->message);
+}
+
+static gboolean
+departures_fired(gpointer data)
+{
+  GhMlsGroup *group = data;
+  GhMlsService *self = group->service;
+  group->departures_source = 0;
+  /* Re-checked now: another member's Commit may have consumed it, or a
+   * change of ours is still out (after_commit() schedules again). */
+  if (!running(self) || !group->active || group->leaving || group->round ||
+      group->pending_commit || !departures_committable(group))
+    return G_SOURCE_REMOVE;
+  GTask *task = op_task(self, OP_DEPARTURES, group, NULL, departures_done, NULL,
+                        gh_mls_service_change_finish);
+  stage_change(task, group, produce_departures, NULL);
+  return G_SOURCE_REMOVE;
+}
+
+/* A member asked to leave: commit it after a random delay (member-departure.md:
+ * any remaining member may; the jitter keeps members online together from
+ * racing, and never enters ordering). */
+static void
+departures_schedule(GhMlsGroup *group)
+{
+  GhMlsService *self = group->service;
+  if (group->departures_source || !running(self) || !group->active || group->leaving ||
+      !departures_committable(group))
+    return;
+  gint64 ms = gh_clock_random_range(self->clock, GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS,
+                                    GH_MLS_SERVICE_DEPARTURE_JITTER_MAX_MS);
+  group->departures_source = gh_clock_timeout_add(self->clock, (guint64)ms, departures_fired,
+                                                  group, NULL);
+}
+
+static void
+leave_cancel(GhMlsGroup *group)
+{
+  if (group->leave_publish) {
+    gh_relay_publish_cancel(group->leave_publish);
+    g_clear_pointer(&group->leave_publish, gh_relay_publish_unref);
+  }
+}
+
+static gboolean
+leave_publish_free_idle(gpointer data)
+{
+  gh_relay_publish_unref(data);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+leave_update(GhRelayPublish *publish, const GhRelayPublishResult *result, gpointer data)
+{
+  GhMlsGroup *group = data;
+  if (publish == group->leave_publish && result->outcome == GH_RELAY_PUBLISH_ACCEPTED)
+    group->leave_sent = TRUE;
+}
+
+static void
+leave_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, gpointer data)
+{
+  GhMlsGroup *group = data;
+  (void)summary;
+  if (publish != group->leave_publish)
+    return;
+  group->leave_publish = NULL;
+  g_idle_add(leave_publish_free_idle, publish);
+  if (!group->leave_sent)
+    schedule_retry(group->service);   /* resume_all() publishes it again */
+}
+
+/* Publishes our SelfRemove event `json` to the group relays until one takes
+ * it (MIP-03: like any kind 445, ephemeral AUTH only). */
+static void
+leave_start(GhMlsGroup *group, const gchar *json)
+{
+  GhMlsService *self = group->service;
+  if (g_strcmp0(group->leave_json, json) != 0) {
+    leave_cancel(group);
+    g_free(group->leave_json);
+    group->leave_json = g_strdup(json);
+    group->leave_sent = FALSE;
+  }
+  if (group->leave_sent || group->leave_publish || !running(self) || !group->relays ||
+      !group->relays[0])
+    return;
+  g_autoptr(GError) error = NULL;
+  GhRelayPublish *relay = gh_relay_publish_new(self->generation, json, leave_update, leave_done,
+                                               group, &error);
+  if (!relay) {
+    g_warning("Groundhog cannot publish its leave: %s", error->message);
+    return;
+  }
+  if (self->publish_deadline)
+    gh_relay_publish_set_deadline(relay, self->publish_deadline);
+  guint added = 0;
+  for (guint i = 0; group->relays[i]; i++) {
+    g_autoptr(GError) url_error = NULL;
+    if (!gh_relay_publish_add_url(relay, group->relays[i], &url_error))
+      continue;
+    gh_auth_policy_apply_publish(self->policy, relay, GH_AUTH_PURPOSE_MLS_ROUTING,
+                                 group->relays[i], NULL);
+    added++;
+  }
+  if (!added) {
+    gh_relay_publish_unref(relay);
+    return;
+  }
+  group->leave_publish = relay;
+  if (!gh_relay_publish_start(relay, &error)) {
+    group->leave_publish = NULL;
+    gh_relay_publish_unref(relay);
+    g_warning("Groundhog cannot publish its leave: %s", error->message);
+  }
+}
+
+/* While leaving: (re)publish the SelfRemove of the current epoch. libmarmot
+ * returns the same bytes within an epoch and a fresh proposal for a new one
+ * (member-departure.md); its leave request is durable, so this also resumes
+ * a leave after a restart. */
+static void
+leave_continue(GhMlsGroup *group)
+{
+  GhMlsService *self = group->service;
+  if (!running(self) || !group->active || !group->leaving)
+    return;
+  char *json = NULL;
+  MarmotError err = marmot_self_remove(self->marmot, &group->gid, &json);
+  if (err == MARMOT_OK && json)
+    leave_start(group, json);
+  else
+    g_debug("Groundhog cannot send its leave now: %s", marmot_error_string(err));
+  free(json);
 }
 
 static gboolean
@@ -2784,10 +3042,11 @@ gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text, GE
   g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
   if (!check_running(self, error))
     return NULL;
+  /* Leaving (nostrc-2um6): nothing but the leave is sent any more. */
   if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active ||
-      !text || !*text || !g_utf8_validate(text, -1, NULL)) {
+      group->leaving || !text || !*text || !g_utf8_validate(text, -1, NULL)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                        "A message needs text and an active group");
+                        "A message needs text and an active group it is not leaving");
     return NULL;
   }
   if (!group->relays[0]) {
@@ -3341,12 +3600,59 @@ gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
     return FALSE;
   }
   drop_stale_error(self);
+  /* For everyone where the group supports it (nostrc-2um6): our SelfRemove,
+   * durable in libmarmot, published now or once online; the group is
+   * "leaving" until a member commits it. Leaving again gives up waiting. */
+  if (!group->leaving) {
+    MarmotError check = marmot_can_self_remove(self->marmot, &group->gid);
+    if (check == MARMOT_ERR_OWN_COMMIT_PENDING) {
+      g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_BUSY,
+                          "Another change of this group is still being sent");
+      return FALSE;
+    }
+    if (check == MARMOT_OK) {
+      char *json = NULL;
+      MarmotError err = marmot_self_remove(self->marmot, &group->gid, &json);
+      if (err != MARMOT_OK)
+        return marmot_fail(self, err, "The group could not be left", error);
+      departures_cancel(group);
+      group_refresh(group);
+      leave_start(group, json);
+      free(json);
+      return TRUE;
+    }
+  }
+  /* On this device only: an admin, a member whose app cannot process a
+   * leave, or giving up waiting. */
+  leave_cancel(group);
+  departures_cancel(group);
   MarmotError err = marmot_leave_group(self->marmot, &group->gid);
   if (err != MARMOT_OK)
     return marmot_fail(self, err, "The group could not be left", error);
   group_unsubscribe(group);
   group_refresh(group);
   return TRUE;
+}
+
+GhMlsLeave
+gh_mls_service_leave_kind(GhMlsService *self, GhMlsGroup *group)
+{
+  if (!GH_IS_MLS_SERVICE(self) || !GH_IS_MLS_GROUP(group) || group->service != self ||
+      !group->active)
+    return GH_MLS_LEAVE_DEVICE;
+  if (group->leaving)
+    return GH_MLS_LEAVE_DEVICE_WAITING;
+  switch (marmot_can_self_remove(self->marmot, &group->gid)) {
+  case MARMOT_OK:
+  case MARMOT_ERR_OWN_COMMIT_PENDING:   /* for everyone, once our change is out */
+    return GH_MLS_LEAVE_EVERYONE;
+  case MARMOT_ERR_ADMIN_CANNOT_LEAVE:
+    return GH_MLS_LEAVE_DEVICE_ADMIN;
+  case MARMOT_ERR_UNSUPPORTED:
+    return GH_MLS_LEAVE_DEVICE_UNSUPPORTED;
+  default:
+    return GH_MLS_LEAVE_DEVICE;
+  }
 }
 
 /* ---- Account proof (libmarmot >= 0.10.0; review B2) --------------------------------------- */
@@ -3842,6 +4148,8 @@ resume_all(GhMlsService *self)
     GhMlsGroup *group = g_ptr_array_index(self->groups, i);
     group_refresh(group);
     welcomes_pump(group);
+    leave_continue(group);
+    departures_schedule(group);
   }
   key_package_maybe_publish(self);
 }
@@ -3877,6 +4185,8 @@ stop_generation(GhMlsService *self)
       Round *round = g_steal_pointer(&group->round);
       round_free(round);
     }
+    leave_cancel(group);
+    departures_cancel(group);
     /* Held events stay (review M1): a network flap must not lose them. */
     complete_waiters(group, cancelled);
   }

@@ -44,10 +44,17 @@ gchar *gh_mls_error_copy(const GError *error);
  * account: the service refuses sends then). */
 gchar *gh_mls_send_reason(GhMlsService *service, GhMlsGroup *group, const gchar *remover);
 
-/* An ended group's state for Group Info (transfer full): "You left…",
+/* An ended group's state for Group Info (transfer full): "You left…" (for
+ * everyone, or on this device only, nostrc-2um6),
  * "You were removed from this group by …", or, when why can't be read,
  * "This group has ended…", with where its messages are. */
 gchar *gh_mls_end_copy(GhMlsGroupEnd end, const gchar *remover);
+
+/* What Leave does, for its confirmation (nostrc-2um6): for everyone, or on
+ * this device only and why. */
+const gchar *gh_mls_leave_copy(GhMlsLeave kind);
+/* "Alice left the group" (transfer full); member: a name or short npub. */
+gchar *gh_mls_member_left_copy(const gchar *member);
 
 /* "Owner" / "Admin" badge text, NULL for a member. */
 const gchar *gh_mls_role_copy(GhMlsRole role);
