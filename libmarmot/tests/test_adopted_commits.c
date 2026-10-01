@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK(cond, ...)                                                    \
     do {                                                                    \
@@ -1674,6 +1675,305 @@ test_rotation_back_to_old_address(void)
     trio_free(&t);
 }
 
+/* ── Re-review (R2, R3, R5) ─────────────────────────────────────────── */
+
+static double
+now_s(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+static void
+load_group(Member *x, const MarmotGroupId *gid, MlsGroup *out)
+{
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    OK(x->m->storage->mls_load(x->m->storage->ctx, "mls_group", gid->data, gid->len, &blob, &len));
+    CHECK(mls_group_deserialize(blob, len, out) == 0, "state");
+    sodium_memzero(blob, len);
+    free(blob);
+}
+
+static char *
+to_hex(const uint8_t *bin, size_t len)
+{
+    char *hex = malloc(2 * len + 1);
+    CHECK(hex, "alloc");
+    sodium_bin2hex(hex, 2 * len + 1, bin, len);
+    return hex;
+}
+
+/* `commit` as a PublicMessage of `g`'s epoch, framed, signed and
+ * membership-tagged by `g`'s own member -- what a modified client of that
+ * member can send -- with confirmation tag `tag` (which only a member of
+ * the next epoch can check). */
+static uint8_t *
+frame_commit(const MlsGroup *g, const MlsCommit *commit, const uint8_t tag[MLS_HASH_LEN],
+             size_t *out_len)
+{
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    CHECK(mls_group_context_build(g, &gc, &gc_len) == 0, "group context");
+    MlsTlsBuf body = {0};
+    CHECK(mls_tls_buf_init(&body, 4096) == 0 && mls_commit_serialize(commit, &body) == 0,
+          "Commit");
+    MlsMLSMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    msg.cipher_suite = MARMOT_CIPHERSUITE;
+    MlsPublicMessage *pm = &msg.public_message;
+    pm->content.group_id = malloc(g->group_id_len);
+    CHECK(pm->content.group_id, "alloc");
+    memcpy(pm->content.group_id, g->group_id, g->group_id_len);
+    pm->content.group_id_len = g->group_id_len;
+    pm->content.epoch = g->epoch;
+    pm->content.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    pm->content.sender.leaf_index = g->own_leaf_index;
+    pm->content.content_type = MLS_CONTENT_TYPE_COMMIT;
+    pm->content.content = body.data;
+    pm->content.content_len = body.len;
+    body.data = NULL;
+    size_t body_len = body.len;
+    mls_tls_buf_free(&body);
+    CHECK(mls_framed_content_sign(&pm->content, MLS_WIRE_FORMAT_PUBLIC_MESSAGE, gc, gc_len,
+                                  g->own_signature_key, &pm->auth) == 0, "signature");
+    pm->auth.has_confirmation_tag = true;
+    memcpy(pm->auth.confirmation_tag, tag, MLS_HASH_LEN);
+    pm->auth.confirmation_tag_len = MLS_HASH_LEN;
+    CHECK(mls_public_message_compute_membership_tag(pm, g->epoch_secrets.membership_key, gc,
+                                                    gc_len) == 0, "membership tag");
+    MlsTlsBuf out = {0};
+    CHECK(mls_tls_buf_init(&out, body_len + 1024) == 0 && mls_message_serialize(&msg, &out) == 0,
+          "MLSMessage");
+    mls_message_clear(&msg);
+    free(gc);
+    *out_len = out.len;
+    return out.data;
+}
+
+/* Re-review R2: a member (Bob, no admin) sends a Commit of 40,000
+ * AppDataUpdates followed by 4,000 Adds -- the order the application sort
+ * reverses, before any authorization -- and the same proposals already in
+ * application order (Adds first).  Both are refused (their Adds do not
+ * verify), and the reversed one costs about what the ordered one does: the
+ * sort is one linear pass (the insertion sort it replaced moved 512-byte
+ * proposals O(n^2) times -- 60x the ordered cost here, seconds).  Measured
+ * as a ratio, which sanitizers and slow machines leave alone.  A Commit
+ * with more proposals than any may have (MLS_COMMIT_MAX_PROPOSALS) is
+ * refused while it is parsed, and that bound is exact. */
+static void
+test_large_commit_refused_quickly(void)
+{
+    Trio t;
+    trio_create(&t);
+    MlsGroup bob;
+    load_group(&t.bob, &t.gid, &bob);
+    uint8_t who[32];
+    randombytes_buf(who, sizeof(who));
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    CHECK(mls_key_package_create(&kp, &priv, who, 32, NULL, 0) == 0, "KeyPackage");
+    kp.signature[0] ^= 0x01;   /* validated only when its Add is applied */
+    enum { K = 40000, A = 4000 };
+    const size_t n = MLS_COMMIT_MAX_PROPOSALS + 1;
+    MlsProposal *props = calloc(n, sizeof(*props));
+    MlsProposal *ordered = calloc(K + A, sizeof(*ordered));
+    CHECK(props && ordered, "alloc");
+    static uint8_t one = 1;
+    for (size_t i = 0; i < n; i++) {
+        props[i].sender_leaf = UINT32_MAX;
+        props[i].update_leaf_index = UINT32_MAX;
+        if (i >= K && i < K + A) {
+            props[i].type = MLS_PROPOSAL_ADD;
+            props[i].add.key_package = kp;   /* shallow: serialized, never freed here */
+        } else {
+            props[i].type = MLS_PROPOSAL_APP_DATA_UPDATE;
+            props[i].app_data_update.component_id = (uint16_t)(0x1000 + i);
+            props[i].app_data_update.operation = MLS_APP_DATA_UPDATE_OP_UPDATE;
+            props[i].app_data_update.update = &one;
+            props[i].app_data_update.update_len = 1;
+        }
+    }
+    memcpy(ordered, props + K, A * sizeof(*ordered));       /* the Adds first */
+    memcpy(ordered + A, props, K * sizeof(*ordered));       /* then the updates */
+    uint8_t tag[MLS_HASH_LEN];
+    memset(tag, 0x5a, sizeof(tag));
+    MlsCommit c;
+    memset(&c, 0, sizeof(c));
+
+    double cost[2];
+    for (int k = 0; k < 2; k++) {
+        c.proposals = k == 0 ? ordered : props;   /* application order, then reversed */
+        c.proposal_count = K + A;
+        size_t len = 0;
+        uint8_t *msg = frame_commit(&bob, &c, tag, &len);
+        double t0 = now_s();
+        MarmotError err = marmot_commit_judge(t.alice.m, &t.gid, msg, len);
+        cost[k] = now_s() - t0;
+        CHECK(err == MARMOT_ERR_MLS_PROCESS_MESSAGE, "refused: %d (%s)", err,
+              marmot_error_string(err));
+        free(msg);
+    }
+    printf("[ordered %.3f s, reversed %.3f s] ", cost[0], cost[1]);
+    CHECK(cost[1] < 3.0 * cost[0] + 0.05,
+          "40,000 AppDataUpdates then 4,000 Adds: %.3f s, in application order %.3f s",
+          cost[1], cost[0]);
+
+    /* Over the bound: refused at parse, no dearer than the ones above. */
+    c.proposals = props;
+    c.proposal_count = n;
+    size_t len = 0;
+    uint8_t *msg = frame_commit(&bob, &c, tag, &len);
+    double t0 = now_s();
+    MarmotError err = marmot_commit_judge(t.alice.m, &t.gid, msg, len);
+    double dt = now_s() - t0;
+    CHECK(err == MARMOT_ERR_MLS_PROCESS_MESSAGE, "refused: %d (%s)", err, marmot_error_string(err));
+    CHECK(dt < 3.0 * cost[0] + 0.05, "%zu proposals refused in %.3f s", n, dt);
+    free(msg);
+
+    /* The bound, exactly, on the Commit body. */
+    for (size_t extra = 0; extra < 2; extra++) {
+        c.proposal_count = MLS_COMMIT_MAX_PROPOSALS + extra;
+        MlsTlsBuf body = {0};
+        CHECK(mls_tls_buf_init(&body, 4096) == 0 && mls_commit_serialize(&c, &body) == 0, "body");
+        MlsTlsReader rd;
+        mls_tls_reader_init(&rd, body.data, body.len);
+        MlsCommit parsed;
+        int rc = mls_commit_deserialize(&rd, &parsed);
+        if (extra == 0) {
+            CHECK(rc == 0 && parsed.proposal_count == MLS_COMMIT_MAX_PROPOSALS,
+                  "MLS_COMMIT_MAX_PROPOSALS proposals parse");
+            mls_commit_clear(&parsed);
+        } else {
+            CHECK(rc != 0, "one more is refused");
+        }
+        mls_tls_buf_free(&body);
+    }
+    free(ordered);
+    free(props);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_group_free(&bob);
+    trio_free(&t);
+}
+
+/* Re-review R3: an admin's Commit that does not authenticate (its
+ * membership tag tampered) is never reported as the group's own
+ * (MARMOT_ERR_COMMIT_REFUSED): anyone holding the exporter secret could
+ * otherwise raise every member's "change refused" with a forged admin
+ * sender.  The same Commit intact is (test_openmls_negatives). */
+static void
+test_tampered_admin_commit_not_reported(void)
+{
+    Member o;
+    MarmotGroupId gid;
+    omls_observer(&o, &gid);
+    size_t len = 0;
+    uint8_t *msg = unhex(forgery("lifecycle_redundant"), &len);
+    msg[len - 1] ^= 0x01;   /* the membership tag, the PublicMessage's last field */
+    char *hex = to_hex(msg, len);
+    EXPECT_ERR(judge(&o, &gid, hex), MARMOT_ERR_MLS_PROCESS_MESSAGE);
+    char *event = seal(&o, &gid, hex);
+    expect_refused(&o, &gid, event, MARMOT_ERR_MLS_PROCESS_MESSAGE, "a tampered admin Commit");
+    free(event);
+    free(hex);
+    free(msg);
+    marmot_group_id_free(&gid);
+    member_free(&o);
+}
+
+/* Re-review R3: the lifecycle enablement with its 0x0001 update by
+ * reference (WL's standalone proposal, an admin's, kept) and its 0x800c
+ * state inline: MDK requires every enablement proposal inline, so the
+ * processor must not count the referenced update as inline. */
+static void
+test_enablement_by_reference_refused(void)
+{
+    Member o;
+    MarmotGroupId gid;
+    lc_observer(&o, &gid);
+    char *proposal = seal(&o, &gid, H_OMLS_LC_REF_PROPOSAL_WL_REQUIREMENTS);
+    MarmotMessageResult r;
+    OK(deliver(&o, proposal, &r));
+    CHECK(r.type == MARMOT_RESULT_PROPOSAL, "an admin's 0x0001 proposal is kept");
+    marmot_message_result_free(&r);
+    EXPECT_ERR(judge(&o, &gid, H_OMLS_LC_REF_COMMIT_XL_ENABLE_BY_REF), MARMOT_ERR_VALIDATION);
+    char *commit = seal(&o, &gid, H_OMLS_LC_REF_COMMIT_XL_ENABLE_BY_REF);
+    expect_refused(&o, &gid, commit, MARMOT_ERR_COMMIT_REFUSED, "the enablement by reference");
+    free(proposal);
+    free(commit);
+    marmot_group_id_free(&gid);
+    member_free(&o);
+}
+
+/* Re-review R5: Alice's removal of Carol with one UpdatePath node's public
+ * key altered (the Commit re-signed and re-tagged by Alice: the parent-hash
+ * chain of her new leaf no longer matches).  Carol, whom it removes, checks
+ * the chain on its public result as Bob does on the full Commit: neither
+ * follows it, and Carol is not removed.  The Commit intact removes her. */
+static void
+test_removal_parent_hash_checked(void)
+{
+    Trio t;
+    trio_create(&t);
+    MlsGroup pre, g, carol;
+    load_group(&t.alice, &t.gid, &pre);
+    load_group(&t.alice, &t.gid, &g);
+    load_group(&t.carol, &t.gid, &carol);
+    uint32_t rm = carol.own_leaf_index;
+    MlsAddResult res;
+    memset(&res, 0, sizeof(res));
+    CHECK(mls_group_commit_adopted(&g, &rm, 1, NULL, 0, NULL, 0, &res) == 0, "Alice removes Carol");
+
+    MlsTlsReader rd;
+    mls_tls_reader_init(&rd, res.commit_data, res.commit_len);
+    MlsMLSMessage wire;
+    CHECK(mls_message_deserialize(&rd, &wire) == 0 &&
+              wire.wire_format == MLS_WIRE_FORMAT_PUBLIC_MESSAGE, "PublicMessage");
+    MlsTlsReader cr;
+    mls_tls_reader_init(&cr, wire.public_message.content.content,
+                        wire.public_message.content.content_len);
+    MlsCommit commit;
+    CHECK(mls_commit_deserialize(&cr, &commit) == 0 && commit.has_path &&
+              commit.path.node_count >= 1, "Commit with a path");
+    commit.path.nodes[0].encryption_key[0] ^= 0x01;
+    size_t len = 0;
+    uint8_t *tampered = frame_commit(&pre, &commit, wire.public_message.auth.confirmation_tag, &len);
+    mls_commit_clear(&commit);
+    mls_message_clear(&wire);
+    char *hex = to_hex(tampered, len);
+    EXPECT_ERR(marmot_commit_judge(t.carol.m, &t.gid, tampered, len), MARMOT_ERR_MLS_PROCESS_MESSAGE);
+    char *bad = marmot_commit_build_event(tampered, len, pre.epoch_secrets.exporter_secret,
+                                          t.nostr_gid, marmot_now());
+    expect_refused(&t.carol, &t.gid, bad, MARMOT_ERR_COMMIT_REFUSED, "Carol: a bad parent hash");
+    expect_refused(&t.bob, &t.gid, bad, MARMOT_ERR_COMMIT_REFUSED, "Bob: a bad parent hash");
+    bool removed = true;
+    OK(marmot_get_group_removal(t.carol.m, &t.gid, &removed, NULL, NULL, NULL));
+    CHECK(!removed, "Carol not removed by it");
+
+    char *ok = marmot_commit_build_event(res.commit_data, res.commit_len,
+                                         pre.epoch_secrets.exporter_secret, t.nostr_gid,
+                                         marmot_now());
+    MarmotMessageResult r;
+    MarmotError err = deliver(&t.carol, ok, &r);
+    marmot_message_result_free(&r);
+    CHECK(err == MARMOT_OK || err == MARMOT_ERR_USE_AFTER_EVICTION, "intact: %d (%s)", err,
+          marmot_error_string(err));
+    OK(marmot_get_group_removal(t.carol.m, &t.gid, &removed, NULL, NULL, NULL));
+    CHECK(removed, "the intact Commit removes Carol");
+    free(ok);
+    free(bad);
+    free(hex);
+    free(tampered);
+    mls_add_result_clear(&res);
+    mls_group_free(&pre);
+    mls_group_free(&g);
+    mls_group_free(&carol);
+    trio_free(&t);
+}
+
 /* W24 review H1, now judged: a non-admin's Commit removing a member is
  * refused (never "everyone is an admin"), the victim untouched. */
 static void
@@ -1768,6 +2068,10 @@ main(int argc, char **argv)
     RUN(test_self_update_with_new_proof);
     RUN(test_rotation_onto_another_group_refused);
     RUN(test_rotation_back_to_old_address);
+    RUN(test_large_commit_refused_quickly);
+    RUN(test_tampered_admin_commit_not_reported);
+    RUN(test_enablement_by_reference_refused);
+    RUN(test_removal_parent_hash_checked);
     RUN(test_nonadmin_removal_refused);
     RUN(test_refused_commit_draws_no_time);
     printf("all passed\n");

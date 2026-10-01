@@ -151,9 +151,11 @@ slice H. `tests/test_adopted_commits.c` reads it.
   malformed 0x8002, 0x8007 (a non-URL) and 0x8005 (7 bytes); a removal of
   absent state and 20 updates in one Commit (valid, as MDK accepts them); X
   removing the observer with and without a malformed 0x8002; and
-  `lifecycle_less`, a second group (creator XL and the observer) that has not
-  enabled lifecycle-v1, with MDK's enablement Commit (valid), the enablement
-  with a rename, and a lifecycle state without the requirement; and by
+  `lifecycle_less`, a second group (creator XL, co-admin WL and the
+  observer) that has not enabled lifecycle-v1, with MDK's enablement Commit
+  (valid), the enablement with a rename, a lifecycle state without the
+  requirement, and (re-review R3) WL's standalone 0x0001 update and XL's
+  enablement citing it by reference; and by
   reference: X's standalone rename and its Commit, Y's (no admin) and X's
   Commit of it, W's at epoch 1, X demoting W, W's at epoch 2 and X's Commit
   of it. Every forgery is built from the same stored epoch: an OpenMLS group

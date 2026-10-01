@@ -120,6 +120,7 @@ struct _GhMlsGroup {
   gchar *refused_json;       /* an admin's Commit refused for good (nostrc-prrl), or NULL */
   gint64 refused_at;         /* its created_at: the cursor stays behind it (L2) */
   GhMlsRefusal refusal;
+  GHashTable *refusal_witnesses; /* hex: members read at this epoch after it (R4) */
 };
 
 enum {
@@ -895,6 +896,7 @@ gh_mls_group_finalize(GObject *object)
   g_ptr_array_unref(self->own_evidence);
   g_free(self->last_committer);
   g_free(self->refused_json);
+  g_hash_table_unref(self->refusal_witnesses);
   G_OBJECT_CLASS(gh_mls_group_parent_class)->finalize(object);
 }
 
@@ -959,6 +961,7 @@ gh_mls_group_init(GhMlsGroup *self)
   self->admins = g_new0(gchar *, 1);
   self->relays = g_new0(gchar *, 1);
   self->leavers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->refusal_witnesses = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->devices = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, device_free);
   self->own_evidence = g_ptr_array_new_with_free_func(g_free);
   self->last_committer_leaf = G_MAXUINT32;
@@ -1368,6 +1371,7 @@ set_refused(GhMlsGroup *group, const gchar *event_json, GhMlsRefusal refusal)
   gboolean was = group->refused_json != NULL;
   gboolean same = event_json && g_strcmp0(group->refused_json, event_json) == 0;
   if (!same) {
+    g_hash_table_remove_all(group->refusal_witnesses);
     g_free(group->refused_json);
     group->refused_json = event_json ? g_strdup(event_json) : NULL;
     group->refused_at = event_created_at(event_json);
@@ -1385,6 +1389,20 @@ set_refused(GhMlsGroup *group, const gchar *event_json, GhMlsRefusal refusal)
   if (was != (event_json != NULL) || !same)
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_CHANGE_REFUSED]);
   sync_decrypt_pending(group);
+}
+
+/* Whether every member but us has been read at the group's epoch after its
+ * refused Commit (W24b slice H re-review R4): they all refused it. */
+static gboolean
+refused_by_everyone(GhMlsGroup *group)
+{
+  if (!group->members || g_hash_table_size(group->refusal_witnesses) == 0)
+    return FALSE;
+  for (guint i = 0; group->members[i]; i++)
+    if (g_strcmp0(group->members[i], group->service->account) != 0 &&
+        !g_hash_table_contains(group->refusal_witnesses, group->members[i]))
+      return FALSE;
+  return TRUE;
 }
 
 /* The refused change of a stored group, at start (W24 review L2). */
@@ -1967,6 +1985,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     }
     /* Another kind (a reaction, a deletion) is read but not shown yet. */
     accepted = TRUE;
+    /* W24b slice H re-review R4: a member's message of the epoch a refused
+     * Commit would have ended, dated after that Commit, says the member did
+     * not follow it either. */
+    if (group->refused_json && result.app_msg.sender_pubkey_hex &&
+        result.app_msg.epoch == group->epoch && created_at > group->refused_at &&
+        g_strcmp0(result.app_msg.sender_pubkey_hex, self->account) != 0)
+      g_hash_table_add(group->refusal_witnesses, g_strdup(result.app_msg.sender_pubkey_hex));
   } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_COMMIT) {
     commit = accepted = TRUE;
     /* Who left on their own request, proposal seen or not (review L4):
@@ -2032,6 +2057,10 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     set_refused(group, event_json, refusal);
     return EVENT_OTHER;
   }
+  /* Every other member refused it too: the group never moved past it, and
+   * nothing is left to fetch again behind it (re-review R4). */
+  if (group->refused_json && refused_by_everyone(group))
+    set_refused(group, NULL, GH_MLS_REFUSAL_NONE);
   if (check_final) {
     bool removed = false, final = false;
     if (marmot_get_group_removal(self->marmot, &group->gid, &removed, NULL, NULL, &final) ==

@@ -927,27 +927,31 @@ mod forgeries {
             .expect("0x8006")
     }
 
-    /// A second group (creator XL and the observer) that has not enabled
-    /// lifecycle-v1, for MDK's enablement rules (slice H review M1).
+    /// A second group (creator XL, co-admin WL and the observer) that has not
+    /// enabled lifecycle-v1, for MDK's enablement rules (slice H review M1,
+    /// re-review R3).
     fn lifecycle_less(o: &Member) -> Value {
         let mut xl = member(b"w24h-lc-x");
+        let mut wl = member(b"w24h-lc-w");
         let (kp_o, o_private) = key_package(o, 0);
+        let (kp_w, _) = key_package(&wl, 0);
         let config = MlsGroupCreateConfig::builder()
             .ciphersuite(CS)
             .capabilities(capabilities())
             .with_leaf_node_extensions(leaf_extensions(Some(proof(xl.seed, &xl.signer.to_public_vec(), false))))
             .expect("leaf extensions")
-            .with_group_context_extensions(group_context_with(&[identity(xl.seed)], &REQUIRED_NO_LIFECYCLE, [0x44; 32]))
+            .with_group_context_extensions(group_context_with(&[identity(xl.seed), identity(wl.seed)], &REQUIRED_NO_LIFECYCLE, [0x44; 32]))
             .wire_format_policy(openmls::prelude::PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
             .use_ratchet_tree_extension(true)
             .build();
         let mut group = MlsGroup::new(&xl.provider, &xl.signer, &config, cwk(&xl)).expect("group");
         let (_c, welcome, _gi) = group
-            .add_members(&xl.provider, &xl.signer, &[kp_o.clone()])
-            .expect("add observer");
+            .add_members(&xl.provider, &xl.signer, &[kp_w, kp_o.clone()])
+            .expect("add WL and the observer");
         group.merge_pending_commit(&xl.provider).expect("merge");
         xl.group = Some(group);
         let welcome = welcome.tls_serialize_detached().expect("welcome");
+        join(&mut wl, &welcome);
         let enabled = components(&REQUIRED_COMPONENTS);
         let mut c = serde_json::Map::new();
         let mut put = |name: &str, bytes: Vec<u8>| {
@@ -958,7 +962,22 @@ mod forgeries {
         put("ok_enable_lifecycle", commit(&mut xl, vec![], vec![], vec![(0x0001, Some(enabled.clone())), (0x800c, Some(vec![0]))], None, false));
         put("enable_lifecycle_with_rename", commit(&mut xl, vec![], vec![], vec![(0x0001, Some(enabled.clone())), (0x800c, Some(vec![0])), (0x8001, Some(profile("renamed while enabling")))], None, false));
         put("lifecycle_state_unrequired", commit(&mut xl, vec![], vec![], vec![(0x800c, Some(vec![0]))], None, false));
+        // Re-review R3: the enablement with its 0x0001 update by reference
+        // (WL's standalone proposal, an admin's), its 0x800c state inline:
+        // MDK requires every enablement proposal inline.
+        let pw = propose(&mut wl, 0x0001, enabled.clone());
+        receive_proposal(&mut xl, &pw);
+        let enable_by_ref = commit(&mut xl, vec![], vec![], vec![(0x800c, Some(vec![0]))], None, true);
+        xl.group
+            .as_mut()
+            .unwrap()
+            .clear_pending_proposals(xl.provider.storage())
+            .expect("clear proposals");
         json!({
+            "by_ref": {
+                "proposal_wl_requirements": hex::encode(pw),
+                "commit_xl_enable_by_ref": hex::encode(enable_by_ref),
+            },
             "observer_key_package": hex::encode(kp_o.tls_serialize_detached().unwrap()),
             "observer_private": o_private,
             "welcome": hex::encode(&welcome),

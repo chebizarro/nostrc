@@ -4980,6 +4980,57 @@ test_removal_with_forged_add_not_followed(void)
     trio_clear(&t);
 }
 
+/* W24b slice H re-review R1: Charlie requires proofs; Alice (the admin)
+ * removes him and, in the same Commit, adds Victor without a proof, which
+ * Bob (default mode) follows.  Charlie judges the removal of his own leaf
+ * with absent proofs allowed: he learns he was removed, rather than being
+ * kept in a group that went on without him.  (A forged proof still is not
+ * followed: test_removal_with_forged_add_not_followed.) */
+static void
+test_strict_member_removed_with_unproven_add(void)
+{
+    Trio t;
+    trio_init(&t);
+    t.charlie.m->config.allow_unproven_members = false;   /* proofs required */
+    Member victor;
+    member_init(&victor, "Victor");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(victor.pk, victor.sk, &t.alice, LEAF_NO_PROOF, &kp, &priv);
+    MlsGroup g, charlie_state;
+    load_mls(&t.alice, &t.gid, &g);
+    load_mls(&t.charlie, &t.gid, &charlie_state);
+    uint8_t exporter[32];
+    memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+    uint32_t removes[1] = {charlie_state.own_leaf_index};
+    const MlsKeyPackage *kps[1] = {&kp};
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_replace_members(&g, removes, 1, kps, 1, &add) == 0, "Remove + Add");
+    char *json = marmot_commit_build_event(add.commit_data, add.commit_len, exporter,
+                                           t.nostr_gid, marmot_now());
+    CHECK(json, "Commit event");
+    expect_commit(&t.bob, json, "Bob (default mode) follows it");
+    MarmotError err;
+    MarmotMessageResultType type = deliver(&t.charlie, json, &err, NULL);
+    CHECK((err == MARMOT_OK && type == MARMOT_RESULT_COMMIT) ||
+              err == MARMOT_ERR_USE_AFTER_EVICTION,
+          "Charlie gets his removal: err=%d (%s) type=%d", err, marmot_error_string(err), type);
+    uint8_t by[32];
+    CHECK(removal_of(&t.charlie, &t.gid, by, NULL), "Charlie learns he was removed");
+    CHECK(memcmp(by, t.alice.pk, 32) == 0, "by Alice");
+    CHECK(state_of(&t.charlie, &t.gid) == MARMOT_GROUP_STATE_INACTIVE, "inactive");
+    free(json);
+    mls_add_result_clear(&add);
+    mls_group_free(&g);
+    mls_group_free(&charlie_state);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    sodium_memzero(exporter, sizeof(exporter));
+    marmot_free(victor.m);
+    trio_clear(&t);
+}
+
 static void
 test_removed_member_learns_it(void)
 {
@@ -7599,6 +7650,7 @@ main(int argc, char **argv)
     RUN(test_group_members_follow_the_epoch);
     RUN(test_removed_member_learns_it);
     RUN(test_removal_with_forged_add_not_followed);
+    RUN(test_strict_member_removed_with_unproven_add);
     RUN(test_losing_removal_first_is_undone);
     RUN(test_losing_removal_after_winner);
     RUN(test_previous_epoch_removal_wins);

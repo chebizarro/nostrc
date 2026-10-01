@@ -439,7 +439,10 @@ Commit (`cgka-engine` app_components.rs), against the candidate parent:
 - **AppDataUpdate (0x0008).** Applied by value and by reference (slice B's
   authenticated proposal store), as MDK's pinned OpenMLS applies it: each
   operation replaces or removes its component's entry, at most one per
-  component (so at most 65536 in a Commit), a removal of a component with
+  component (so at most 65536 in a Commit; a Commit of more than
+  `MLS_COMMIT_MAX_PROPOSALS` = 65536 + 1024 proposals of any kind is refused
+  while it is parsed, and proposals are put in application order in one
+  linear pass), a removal of a component with
   no state removes nothing (as OpenMLS and MDK do; the draft calls it
   invalid), and the dictionary extension is re-appended last. Every changed
   component's bytes pass the one validator admission uses too
@@ -470,10 +473,16 @@ Commit (`cgka-engine` app_components.rs), against the candidate parent:
   a shared one would misroute that group's traffic.
 - **A Commit removing our leaf** is judged whole before it ends the group
   for us, as MDK does: its public result (every proposal applied, the
-  committer's UpdatePath leaf, the GroupContext; a removed member can
-  compute it, `mls_group_commit_public_result_by_ref()`) passes the
-  resulting-epoch check and the authorization above. Legacy groups the
-  same, by their own rules.
+  committer's UpdatePath applied with its parent-hash chain checked, the
+  GroupContext; a removed member can compute it,
+  `mls_group_commit_public_result_by_ref()`) passes the resulting-epoch
+  check and the authorization above. Legacy groups the same, by their own
+  rules, except that a leaf without the account proof never keeps us in a
+  group even when we require proofs (the others may admit it); a proof that
+  does not verify always does. A removed member can never check the
+  Commit's confirmation tag (it lacks the new epoch's secrets; MDK has the
+  same limit): an admin determined to can still make a removed member alone
+  see its removal.
 - **Refused for good.** An authenticated Commit of one of the group's
   admins, of the current epoch, that libmarmot refuses for its content is
   `MARMOT_ERR_COMMIT_REFUSED` (the group stops there until another Commit of
@@ -523,6 +532,13 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   too (L1); `MARMOT_ERR_COMMIT_REFUSED` for an admin's Commit refused for
   good (L2); an absent removal is a no-op and the 16-update cap is gone
   (L3); an address a group returns to leaves its routing history (N5).
+  Re-review (APPROVE-WITH-NITS): a removal of our leaf is judged with
+  absent proofs allowed, invalid ones refused (R1); the proposal sort is a
+  stable linear pass and a Commit has at most `MLS_COMMIT_MAX_PROPOSALS`
+  proposals (R2: a member's Commit of 40,000 AppDataUpdates then 4,000 Adds
+  took 60 times as long as the same proposals in application order, seconds,
+  before authorization); the removed member checks the
+  UpdatePath's parent hashes (R5).
 - **New API.** `marmot_get_group_routing()`;
   `MarmotMessageResult.commit.routing_changed` and
   `previous_nostr_group_id` (the struct grows at its end; the 0.12 SONAME
@@ -2238,7 +2254,7 @@ tag cardinality". Tags and values match the MDK 0.8 events in
 | `test_rfc9420_vectors` | RFC 9420 crypto validation (HKDF, Ed25519, AES-GCM, tree math) | 38 |
 | `test_interop` | MDK interoperability vectors, self-consistency | 9 |
 | `test_adopted` | Adopted-profile admission and creation against MDK v0.11.0 / OpenMLS captures | 14 |
-| `test_adopted_commits` | Adopted-profile Commits: a real MDK v0.11.0 sequence, pinned-OpenMLS negatives and positives (White Noise components, lifecycle transitions, removal judged whole), by reference, rollback, our own producers, routing | 16 |
+| `test_adopted_commits` | Adopted-profile Commits: a real MDK v0.11.0 sequence, pinned-OpenMLS negatives and positives (White Noise components, lifecycle transitions, removal judged whole), by reference, rollback, our own producers, routing, oversized Commits, parent hashes | 20 |
 
 Run all tests:
 ```bash

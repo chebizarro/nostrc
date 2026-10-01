@@ -870,7 +870,16 @@ int mls_group_tree_hash(const MlsGroup *group, uint8_t out[MLS_HASH_LEN]);
 /** Serialize a Commit to TLS wire format. */
 int mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf);
 
-/** Deserialize a Commit from TLS wire format. */
+/* At most this many proposals in a Commit: one AppDataUpdate per component
+ * id (MLS_APP_DATA_UPDATE_MAX), and 1024 for every other kind (the receive
+ * path applies at most 64 Adds, 64 Updates and MLS_COMMIT_SUMMARY_MAX
+ * departures of each kind, one GroupContextExtensions).  A longer one is
+ * refused while it is parsed, before any proposal is sorted or applied
+ * (slice H re-review R2). */
+#define MLS_COMMIT_MAX_PROPOSALS ((size_t)MLS_APP_DATA_UPDATE_MAX + 1024u)
+
+/** Deserialize a Commit from TLS wire format (at most
+ *  MLS_COMMIT_MAX_PROPOSALS proposals). */
 int mls_commit_deserialize(MlsTlsReader *reader, MlsCommit *commit);
 
 /** Serialize an UpdatePath to TLS wire format. */

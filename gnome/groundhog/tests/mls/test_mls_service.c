@@ -2557,8 +2557,10 @@ test_forged_member_refused(void)
  * Groundhog offers none yet), an admin's Commit libmarmot refuses for good
  * -- here Alice's modified client restating the active lifecycle, a
  * "redundant lifecycle update" MDK refuses too -- is "change-refused",
- * cause "unfollowable", kept across a restart, and cleared once the group
- * moves on; a non-admin's junk Commit marks nothing. */
+ * cause "unfollowable", kept across a restart; a non-admin's junk Commit
+ * marks nothing. Re-review R4: once every other member (Alice, whose own
+ * client never applied it) is read at the same epoch after it, the refusal
+ * and its cursor hold are released; the group then moves on as usual. */
 static void
 test_adopted_change_refused(void)
 {
@@ -2605,6 +2607,10 @@ test_adopted_change_refused(void)
   /* Alice's redundant lifecycle update: Bob refuses it for good. */
   static const guint8 active[] = { 0x00 };
   g_autofree gchar *redundant = forge_adopted_update(alice, ga, 0x800c, active, sizeof active);
+  NostrEvent *ev = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(ev, redundant, NULL), ==, 1);
+  gint64 refused_at = nostr_event_get_created_at(ev);
+  nostr_event_free(ev);
   wire_relay_inject(&w.g, redundant);
   spin_until(change_refused, gb, "Bob refusing Alice's lifecycle update");
   g_assert_cmpint(gh_mls_group_get_refusal(gb), ==, GH_MLS_REFUSAL_UNFOLLOWABLE);
@@ -2616,8 +2622,18 @@ test_adopted_change_refused(void)
   gb = only_group(bob);
   g_assert_true(gh_mls_group_get_change_refused(gb));
   g_assert_cmpint(gh_mls_group_get_refusal(gb), ==, GH_MLS_REFUSAL_UNFOLLOWABLE);
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), <=, refused_at);
 
-  /* Alice's honest change moves the group on, and clears it. */
+  /* Alice writes at the same epoch, a second later: every member but Bob
+   * refused it, so nothing waits behind it any more. */
+  g_usleep(1100 * 1000);
+  send_text(alice, ga, "alice after her refused change");
+  wait_text(bob, room, "alice after her refused change");
+  spin_until(change_not_refused, gb, "the refusal released");
+  CursorWait past = { gb, refused_at + 1 };
+  spin_until(cursor_reached, &past, "the cursor past the refused Commit");
+
+  /* Alice's honest change moves the group on. */
   rename_group(alice, ga, "Moved on");
   NameWait moved = { gb, "Moved on" };
   spin_until(name_is, &moved, "Bob applying Alice's honest change");

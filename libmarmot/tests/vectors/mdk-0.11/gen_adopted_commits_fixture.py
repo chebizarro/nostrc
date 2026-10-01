@@ -105,6 +105,8 @@ for name, val in (
     ("XL", lc["creator_account"]),
 ):
     lines.append(f"#define H_OMLS_LC_{name} {c_str(val)}")
+for k, v in lc["by_ref"].items():
+    lines.append(f"#define H_OMLS_LC_REF_{k.upper()} {c_str(v)}")
 lines += ["", "static const AdoptedForgery H_OMLS_LC_COMMITS[] = {"]
 for k in sorted(lc["commits"]):
     c = lc["commits"][k]

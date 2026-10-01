@@ -2364,8 +2364,13 @@ defer_inbound(Marmot *m, PendingCommit *p, const uint8_t *gid, size_t gid_len,
  * compute -- passes the resulting-epoch check and marmot_commit_authorize_ex()
  * of its profile: admin authority, every GroupContext change (an adopted
  * group's dictionary and lifecycle rules, a legacy group's GroupData), and
- * every new leaf's proof.  A Commit the other members refuse never ends the
- * group for us.  Before, only the committer's authority was judged. */
+ * every new leaf's proof (an absent one allowed, an invalid one never: R1
+ * below), and the UpdatePath's parent-hash chain.  A Commit the other
+ * members refuse never ends the group for us.  Before, only the committer's
+ * authority was judged.  What a removed member can never check is the
+ * confirmation tag (it lacks the new epoch's secrets; MDK has the same
+ * limit): an admin determined to can still make a removed member alone see
+ * its removal. */
 static MarmotError
 removal_key(const Marmot *m, const MlsGroup *pre, const uint8_t *msg, size_t msg_len,
             uint32_t committer_leaf, const uint8_t digest[32],
@@ -2390,9 +2395,15 @@ removal_key(const Marmot *m, const MlsGroup *pre, const uint8_t *msg, size_t msg
         return rc == MARMOT_ERR_UNSUPPORTED || rc == MARMOT_ERR_MEMORY ||
                        rc == MARMOT_ERR_PROPOSAL_UNKNOWN
                    ? (MarmotError)rc : MARMOT_ERR_MLS_PROCESS_MESSAGE;
+    /* Leaves without the account proof are allowed here even when the
+     * account requires proofs (slice H re-review R1): the other members
+     * may admit them (legacy default mode, MDK 0.8), so such a Commit
+     * really does end the group for us, and "only join verified groups"
+     * cannot keep us in one.  A proof that does not verify is still
+     * refused (in an adopted group every leaf's proof is checked anyway):
+     * a forged Add never makes us believe we were removed. */
     MarmotGroupDataExtension *gde = NULL;
-    err = marmot_commit_authorize_ex(pre, &pub, committer_leaf, m->config.allow_unproven_members,
-                                     &sum, key, &gde);
+    err = marmot_commit_authorize_ex(pre, &pub, committer_leaf, true, &sum, key, &gde);
     marmot_group_data_extension_free(gde);
     mls_group_free(&pub);
     memcpy(key->digest, digest, 32);

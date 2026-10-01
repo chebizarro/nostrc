@@ -2368,20 +2368,28 @@ proposal_application_order(uint16_t type)
     }
 }
 
-static void
+/* Stable, in O(n): a counting pass over the five application-order
+ * classes, then each proposal moved once (slice H re-review R2: the
+ * insertion sort it replaces moved 512-byte proposals O(n^2) times, before
+ * any authorization, for a member's Commit of tens of thousands of
+ * AppDataUpdates followed by Adds).  The proposals are moved, not copied:
+ * ownership of their buffers goes with them.  MARMOT_ERR_MEMORY, the array
+ * unchanged, if the scratch array cannot be had. */
+static int
 sort_proposals_for_application(MlsProposal *proposals, size_t count)
 {
-    for (size_t i = 1; i < count; i++) {
-        MlsProposal cur = proposals[i];
-        int cur_order = proposal_application_order(cur.type);
-        size_t j = i;
-        while (j > 0 &&
-               proposal_application_order(proposals[j - 1].type) > cur_order) {
-            proposals[j] = proposals[j - 1];
-            j--;
-        }
-        proposals[j] = cur;
-    }
+    if (count < 2) return 0;
+    size_t start[6] = {0};
+    for (size_t i = 0; i < count; i++)
+        start[proposal_application_order(proposals[i].type) + 1]++;
+    for (size_t k = 1; k < 6; k++) start[k] += start[k - 1];
+    MlsProposal *sorted = malloc(count * sizeof(*sorted));
+    if (!sorted) return MARMOT_ERR_MEMORY;
+    for (size_t i = 0; i < count; i++)
+        sorted[start[proposal_application_order(proposals[i].type)]++] = proposals[i];
+    memcpy(proposals, sorted, count * sizeof(*sorted));
+    free(sorted);
+    return 0;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -4282,7 +4290,12 @@ process_commit_impl(MlsGroup *group,
         goto staged_fail;
     }
 
-    sort_proposals_for_application(commit.proposals, commit.proposal_count);
+    if (sort_proposals_for_application(commit.proposals, commit.proposal_count) != 0) {
+        mls_commit_clear(&commit);
+        sodium_memzero(psk_secret, sizeof(psk_secret));
+        staged_rc = MARMOT_ERR_MEMORY;
+        goto staged_fail;
+    }
 
     uint32_t added_leaves[64];
     size_t added_leaf_count = 0;
@@ -4855,7 +4868,16 @@ process_commit_impl(MlsGroup *group,
 
 public_result:
     /* The public result (mls_group_commit_public_result_by_ref()): never
-     * installed. */
+     * installed.  The UpdatePath's public part as every other member applies
+     * it, its parent-hash chain checked (RFC 9420 section 7.9.2; slice H
+     * re-review R5). */
+    if (commit.has_path &&
+        mls_treekem_apply_update_path(&staged.tree, sender_leaf, &commit.path) != 0) {
+        mls_commit_clear(&commit);
+        sodium_memzero(psk_secret, sizeof(psk_secret));
+        staged_rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        goto staged_fail;
+    }
     mls_commit_clear(&commit);
     sodium_memzero(psk_secret, sizeof(psk_secret));
     staged.epoch = live_group->epoch + 1;
@@ -5653,12 +5675,23 @@ mls_commit_deserialize(MlsTlsReader *reader, MlsCommit *commit)
     if (proposals_len > 0) {
         MlsTlsReader proposals_reader;
         mls_tls_reader_init(&proposals_reader, proposals_data, proposals_len);
+        size_t capacity = 0;
 
         while (!mls_tls_reader_done(&proposals_reader)) {
-            MlsProposal *new_proposals = realloc(
-                commit->proposals, (commit->proposal_count + 1) * sizeof(MlsProposal));
-            if (!new_proposals) { free(proposals_data); goto fail; }
-            commit->proposals = new_proposals;
+            /* A longer Commit is refused before anything else is done with
+             * it (slice H re-review R2). */
+            if (commit->proposal_count == MLS_COMMIT_MAX_PROPOSALS) {
+                free(proposals_data); goto fail;
+            }
+            if (commit->proposal_count == capacity) {
+                size_t grown = capacity ? 2 * capacity : 8;
+                if (grown > MLS_COMMIT_MAX_PROPOSALS) grown = MLS_COMMIT_MAX_PROPOSALS;
+                MlsProposal *new_proposals = realloc(commit->proposals,
+                                                     grown * sizeof(MlsProposal));
+                if (!new_proposals) { free(proposals_data); goto fail; }
+                commit->proposals = new_proposals;
+                capacity = grown;
+            }
 
             MlsProposal *proposal = &commit->proposals[commit->proposal_count];
             memset(proposal, 0, sizeof(*proposal));
