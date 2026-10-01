@@ -361,13 +361,6 @@ static struct lws_protocols g_control_protocols[] = {
 };
 
 static struct lws_context *g_control_ctx;
-static atomic_int g_control_stop;
-
-static void *control_service(void *arg) {
-    (void)arg;
-    while (!atomic_load(&g_control_stop)) lws_service(g_control_ctx, 50);
-    return NULL;
-}
 
 static void control_connect(int established_before) {
     struct lws_client_connect_info ci;
@@ -381,11 +374,13 @@ static void control_connect(int established_before) {
     ci.ssl_connection = LCCSCF_USE_SSL;
     ci.protocol = "wss";
     CHECK(lws_client_connect_via_info(&ci), "control lws connect");
-    lws_cancel_service(g_control_ctx);
+    /* libwebsockets contexts are serviced and connected from one thread. A
+     * cross-thread connect raced the service loop and could close before
+     * CLIENT_ESTABLISHED under gate load. */
     double deadline = now_seconds() + 20.0;
     while (atomic_load(&g_lws_established) <= established_before && !atomic_load(&g_lws_failed) &&
            now_seconds() < deadline)
-        usleep(10000);
+        lws_service(g_control_ctx, 50);
     CHECK(atomic_load(&g_lws_established) > established_before, "control lws never connected");
 }
 
@@ -438,8 +433,6 @@ int main(void) {
     info.client_ssl_ca_mem_len = (unsigned int)strlen(g_cert_pem);
     g_control_ctx = lws_create_context(&info);
     CHECK(g_control_ctx, "control lws context");
-    pthread_t control_thread;
-    CHECK(pthread_create(&control_thread, NULL, control_service, NULL) == 0, "control thread");
     control_connect(0);
     control_connect(1);
     wait_hellos(4);
@@ -473,9 +466,6 @@ int main(void) {
 
     nostr_connection_close(a);
     nostr_connection_close(b);
-    atomic_store(&g_control_stop, 1);
-    lws_cancel_service(g_control_ctx);
-    pthread_join(control_thread, NULL);
     lws_context_destroy(g_control_ctx);
     server_stop();
     unlink(ca_path);
