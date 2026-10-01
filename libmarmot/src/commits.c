@@ -1957,6 +1957,9 @@ forget_keys(Marmot *m, const MarmotGroup *group)
     MarmotStorage *s = m->storage;
     const uint8_t *gid = group->mls_group_id.data;
     size_t gid_len = group->mls_group_id.len;
+    /* Who vouched for which device at our join (members.c) goes too. */
+    MarmotError werr = s->mls_delete(s->ctx, "welcome_signer", gid, gid_len);
+    if (werr != MARMOT_OK && werr != MARMOT_ERR_STORAGE_NOT_FOUND) return werr;
     MarmotError err = s->mls_delete(s->ctx, "mls_group", gid, gid_len);
     if (err == MARMOT_ERR_STORAGE_NOT_FOUND) err = MARMOT_OK;
     if (err == MARMOT_OK) {

@@ -16,11 +16,15 @@
  * group's standalone proposals under MLS_GROUP_PROPOSALS_LABEL and the
  * account's leave request under MLS_GROUP_LEAVING_LABEL, all keyed by the MLS
  * group id (groups.c, commits.c, messages.c, welcome.c, proposals.c). They
- * are the group-scoped labels (the kept proposals themselves,
- * "mls_group_proposal_slot", are keyed by group id || epoch || sender and
- * stay out of snapshots like every composite key; a rollback restores the
- * index, whose missing or extra slots read as empty or are pruned):
- * the others are keyed by a public key (kp_slot), a KeyPackageRef (kp_priv,
+ * are the group-scoped labels a snapshot captures and restores (the kept
+ * proposals themselves, "mls_group_proposal_slot", are keyed by group id ||
+ * epoch || sender and stay out of snapshots like every composite key; a
+ * rollback restores the index, whose missing or extra slots read as empty or
+ * are pruned). "welcome_signer" (since libmarmot 0.12.0, members.c) is keyed
+ * by the group id too, but records a fact of the join (which device the
+ * Welcome's sender vouched for), not epoch state: an epoch rollback must not
+ * touch it, so it stays out of snapshots. The
+ * others are keyed by a public key (kp_slot), a KeyPackageRef (kp_priv,
  * kp_full), a gift-wrap id (welcome_data) or a nostr_group_id
  * (group_event_created_at, since libmarmot 0.12: the created_at floor of the
  * group's events, which a rolled-back Commit, already published, must not
