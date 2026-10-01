@@ -235,3 +235,183 @@ The rows are misplaced (N1).
 - The Groundhog store test checks that a rolled-back Commit leaves the floor raised, which is the subtle property.
 - The w285 refusal path is now consistent: a refusal is either recorded completely or not at all.
 - The follow-ups are filed: nostrc-x215 (v1 image_key semantics), nostrc-qfer (upstream MDK retry), nostrc-d19g (stale floor rows).
+
+---
+
+## Addendum: re-review of the follow-ups (tip `d58add27`)
+
+**Commits reviewed:**
+
+| Commit | Addresses |
+|---|---|
+| `6ade03b3` | M2, L3, L4, N2, N3 |
+| `cb9d5f15` | M1, L2 |
+| `151606a2` | M3, L1 |
+| `ddc33101` | L5 |
+| `08330bce` | N1 |
+| `d58add27` | M2 test |
+
+This review branch is rebased onto `d58add27`.
+
+### Final verdict: **APPROVE-WITH-NITS**
+
+All three Medium and all five Low findings are resolved, and so are N1-N3. I checked each fix by reverting it on its own and confirming that a test fails (table below). The one exception is a check that is redundant by construction, as the author notes.
+
+The new `MARMOT_ERR_EVENT_RATE` refusal is safe: nothing is created, and in practice it lasts about a second. There is one new Low:
+
+- **L6:** a floor left far ahead by our own clock that was later corrected blocks Commits until real time catches up.
+
+L6 is a narrow trigger with a three-line fix. It should be fixed, or filed as a bead, before `GH_FEATURE_ENCRYPTED_GROUPS` is turned on, but it does not block this merge. There are also three Nits (N4-N6).
+
+### Gates at `d58add27` (macOS 27, `source /tmp/nostrc-macos27-env.sh`)
+
+| Gate | Result |
+|---|---|
+| `ninja` (incremental, review worktree) | PASS |
+| `python3 scripts/check-unsequenced-args.py` | PASS |
+| `ctest` (full) | 443/444. `gnostr-test-event-item-txn-budget` aborted once while the Docker sanitizer gate ran in parallel; it passed 3/3 when re-run alone. It is a gnostr transaction-budget timing test, and this branch makes no gnostr change. All marmot and groundhog tests passed, including `groundhog-mls-service` with the new `/groundhog/mls-service/burst-then-commit-accepted`: 90 messages and a Commit through a relay that refuses events more than 60 s ahead, none refused |
+| Host ASAN+UBSAN, out-of-tree, from a clean worktree at `d58add27`: `test_commits` (all), `test_protocol`, `test_marmot_interop`, `test_storage_contract` | PASS, no reports. The back-to-back-Commit loop reaches `EVENT_RATE` even under ASAN's slowdown |
+| `scripts/linux-gate.sh --sanitizers` (clean detached worktree at `d58add27`) | PASS: "sanitizer tests passed, 49 run". It reused the existing `nostrc-linux-gate-asan-arm64` volume, after waiting for another agent's gate on it, and created none |
+
+### Mutation spot-checks at `d58add27` (each applied alone, test binaries rebuilt, file restored)
+
+| # | Mutation | Result |
+|---|---|---|
+| D1 | No signature check for PrivateMessage Commits | Caught: forgeries, epoch_and_generation, and checks_alone ("signed by Charlie, processed as Alice's") |
+| D2 | Header epoch check alone (`private_message_sender`) | **Caught**: checks_alone "a PrivateMessage header of another epoch names no sender" (survived at `81efdc50`) |
+| D3 | FramedContent epoch check alone (`commit_authenticate`) | **Caught**: checks_alone, PublicMessage case (survived at `81efdc50`) |
+| D5 | Blank-leaf check alone | **Caught**: checks_alone "sender data naming a blank leaf names no sender" (survived at `81efdc50`) |
+| D6 | Ratchet restore removed | Caught |
+| D7 | Padding check removed | Caught |
+| D8 | `from != sender_leaf` alone | Survives, as the author notes (see L5 below) |
+| D8b | `from != sender_leaf` **and** the FramedContent sender check | **Caught**: "sender data naming Alice, processed as Charlie's" |
+| D9 | Leaf binding disabled | Caught |
+| C1 | Stored decoder for every GroupData | Caught |
+| C4 | Welcome decodes with the stored decoder | **Caught**: `test_welcome_with_legacy_group_data_refused` (survived at `81efdc50`; L2) |
+| M1 | Add does not re-encode 0.10.0 GroupData | **Caught**: `test_add_reencodes_legacy_group_data`, where Dave's accept returns -84 |
+| M3a | `kp_priv` storage error read as "not ours" | **Caught**: test_protocol "a KeyPackage storage error keeps the invitation pending: kp_priv" |
+| M3b | `kp_full` storage error takes the minimal-KP fallback | **Caught** (kp_full) |
+| L1a | sqlite `step_lookup` reads errors as absence | **Caught**: `test_sqlite_read_errors_are_not_absence` |
+| T1 | Observing a peer's Commit time removed | Caught: "Bob's Commit after Alice's" and "Bob's message after the Add" |
+| T2 | No reservation | Caught |
+| M2a | Message soft lead removed | **Caught**: "message 29 dated 31 s ahead" |
+| M2b | Commit dated past the bound instead of `EVENT_RATE` | **Caught**: lead_is_bounded and peer_lead_capped |
+| M2c | Observe cap removed | **Caught**: "Bob's floor 0 is 100000 s ahead" (`d58add27`) |
+| L3a | Joiner floor not seeded from the Welcome | **Caught**: "Dave's first message after his Add" |
+| L3b | Welcome rumor dated `now` | **Caught**: "the Welcome is dated as its Commit" |
+| N2 | Malformed floor row is an error | **Caught**: `test_group_event_floor_repairs` |
+
+### Status of each finding
+
+#### M1: resolved, interop checked (`cb9d5f15`)
+**The fix.** `marmot_add_members()` checks the stored GroupData. When it does not read as MIP-01, the Add re-encodes it as MIP-01 in the same Commit, through a GroupContextExtensions proposal built by `legacy_group_data_reencoded()` (`groups.c`) and `mls_group_add_members_with_extensions()`. The re-encode is `updated_group_data()` with no changes, which also adds `required_capabilities [0xF2EE]` when it is missing.
+
+**The test** reproduces my original scenario. A trio's stored GroupData is rewritten to the 0.10.0 layout, Alice adds Dave, and all four members converge, read MIP-01, keep name, description and admins, and exchange messages.
+
+**Interop risk:**
+- **RFC 9420.** A GroupContextExtensions proposal is "Path Required" (§17.4). Add Commits are built by `path_commit_with_proposals()`, so they carry an UpdatePath. ✔
+- **libmarmot 0.11 members.** The MLS receive path (`mls_group_process_commit`) is unchanged on this branch (only `add_members_staged` changed in `mls_group.c`), so a 0.11 member processes this Commit exactly as the converging 0.12 test shows. 0.11's `marmot_commit_authorize()` decodes the legacy `pre` with its old fallback and the MIP-01 `post` normally. It treats the Commit as privileged and requires the committer to be an admin, which an Add already requires. ✔
+- **libmarmot 0.10 members.** No new risk. Since 0.11 they cannot decrypt any kind:445 (MIP-03 ChaCha20 replaced NIP-44) or read MIP-01 GroupData, so a group mixing 0.10 and 0.11+ members was already broken for them.
+- **MDK.** A group whose GroupData is still in the 0.10.0 layout cannot contain MDK members (MDK never read that layout). An MDK joiner added through this path receives a MIP-01 v2 GroupContext with `required_capabilities`. ✔
+- **Proposal order.** The sender emits `[Add…, GroupContextExtensions]`. libmarmot receivers apply them in vector order, then validate the new extensions against every leaf, joiners included (`mls_group.c:3419-3436`). RFC 9420 §12.3 applies the GroupContextExtensions proposal first, and "the new extensions MUST be used when evaluating other proposals" (Adds included). This makes no difference here, for three reasons:
+  - The resulting tree and GroupContext do not depend on the order.
+  - The new extension list is a superset of the old one.
+  - The joiners' leaves are checked against the new list either way.
+
+  An RFC-order receiver such as OpenMLS evaluates the Adds against `required_capabilities [0xF2EE]`, which Marmot KeyPackages advertise. ✔ The comment citing the RFC is wrong (N4).
+- **Residual.** The added `required_capabilities` needs every leaf to advertise 0xF2EE. libmarmot leaves have done so since `83f0e036`, which includes 0.10.0 (`credentials.c:324` there). A leaf from the very first libmarmot commit would make the Add fail cleanly with an MLS error and create nothing, which is no phantom member. 0.11's metadata Commit already behaved that way.
+
+#### M2: resolved (`6ade03b3`, `d58add27`)
+**The new rule** (`marmot.c:82-200`). The floor row keeps two values, the newest event `last` and the newest Commit `commit`:
+- An application message is dated `max(now, last + 1)`. Beyond the 30 s soft lead it is dated `now + 30`, or `commit + 1` if that is later. It is never dated past `now + 60`.
+- A Commit is dated `max(now, last + 1)`. If that would pass `now + 60`, the Commit is refused with `MARMOT_ERR_EVENT_RATE`.
+- An observed peer Commit (or our Welcome) still moves us at most to our `now + 60`, and the observation never lowers the floor.
+
+**Verified:**
+- My original reproduction (300 messages leaving the next Commit 302 s ahead) is covered by `test_group_event_lead_is_bounded`: 120 messages stay within 30 s, the Commit after them fits, and Commits made back to back end in `EVENT_RATE` with nothing pending.
+- The 60 s bound is also well inside MDK 0.8's default `max_future_skew_secs` of 300 s (`mdk-core/src/lib.rs:172`). `validate_created_at_with_now` rejects kind:445 events dated further ahead as `InvalidTimestamp`. So at `81efdc50` an unbounded lead past 300 s would also have made MDK peers refuse our events, not just relays.
+
+**`MARMOT_ERR_EVENT_RATE`: is refusing our own Commit for about a second safe, and does Groundhog retry?**
+- **Nothing is created.** The refusal comes from `marmot_next_group_event_time()`, before the floor is written and before any Commit is staged, inside the operation's storage transaction. Every Commit path reserves its time this way: `finish_local_commit_now()` for remove, metadata and self-update; `add_members_impl()` and `create_group_impl()` directly. The test asserts that nothing is pending afterwards. Messages are never refused. `marmot_leave_group()` publishes nothing. ✔
+- **When it fires.** Groundhog sends one change at a time (`stage_change()` returns BUSY while a change is being sent, `gh-mls-service.c:1938`), so our own Commits cannot approach 60 per second. In practice it fires in two cases:
+  - within about 1-2 s of applying a peer Commit dated about 59 s or more ahead of our clock (a fast clock or a hostile member), if we also sent a message in that second. By the next tick the Commit fits.
+  - after a backward clock step (L6), where the refusal lasts far longer than "a second".
+
+  A hostile member committing every second could keep our Commits refused. Such a member already makes our Commits lose to its own (stale epoch), so this is not a new denial of service.
+- **No retry in Groundhog.** `stage_change()` → `marmot_fail()` returns `GH_MLS_COMMIT_ERROR` "The change could not be made: too many group events too fast; retry later" (`gh-mls-service.c:361-389`). The user retries by hand. That is acceptable for the 1-2 s case, and N5 suggests treating the error as transient. Create-group cannot hit it: a new group's floor is empty, and its Add follows the creation Commit by one second at most.
+
+#### M3: resolved (`151606a2`)
+- `welcome.c:519-578`: only `MARMOT_ERR_STORAGE_NOT_FOUND` from `kp_priv` means "not this KeyPackageRef". For `kp_full`, only NOT_FOUND (or an undecodable KeyPackage) takes the minimal-KP fallback. Any other error returns with the Welcome pending, and `matched_priv` is wiped.
+- `test_accept_welcome_keypackage_storage_failures` covers both labels: the error is returned, the Welcome stays pending with no failure record, and it is accepted afterwards. Mutations M3a and M3b are caught. ✔
+
+#### L1: resolved for sqlite; nostrdb accepted as inspected, tracked by nostrc-d1oq (`151606a2`)
+**sqlite.** `step_lookup()` treats only `SQLITE_ROW` and `SQLITE_DONE` as success, in every single-row lookup, `mls_load` and `get_exporter_secret`. `mls_delete` now checks its step. A damaged exporter row is `MARMOT_ERR_STORAGE`, not "missing". `test_sqlite_read_errors_are_not_absence` overwrites the lookup tables' pages and asserts every lookup returns `MARMOT_ERR_STORAGE`, and mutation L1a is caught. ✔
+
+**nostrdb.** I read the diff line by line, and it is correct:
+- `ndb_lookup()` maps `MDB_NOTFOUND` to absent and any other `mdb_get()` code to `MARMOT_ERR_STORAGE`.
+- Failed allocations are `MARMOT_ERR_MEMORY`.
+- Damaged records (an empty processed-Welcome value, an exporter value under 32 bytes, an undecodable group, message or KeyPackage info) are `MARMOT_ERR_STORAGE`.
+- `mls_delete` aborts the transaction on failure, instead of committing a failed one.
+
+The author's note is accurate. nostrc-d1oq exists and records why no test runs this backend: the contract test passes a directory to an `MDB_NOSUBDIR` environment, so it is SKIPPED, and the suite crashes with a file path, before this branch too. `storage_nostrdb.c` is compiled in the default build (`libmarmot/CMakeFiles/marmot.dir/src/storage_nostrdb.c.o`), and no in-tree product constructs it (marmot-gobject uses sqlite). Accepted, with d1oq tracking a test.
+
+#### L2: resolved (`cb9d5f15`)
+`test_welcome_with_legacy_group_data_refused` pins the Welcome to the strict decoder: mutation C4 is now caught. ✔
+
+#### L3: resolved (`6ade03b3`)
+- The Welcome rumors of an Add (and of `create_group`) carry the Add Commit's reserved created_at.
+- Accepting a Welcome seeds the joiner's floor through `marmot_observe_group_event_time(…, welcome_created_at())`, capped at `now + 60`.
+- Mutations L3a and L3b are caught.
+- A rumor up to 60 s ahead is accepted by both sides. libmarmot's own rumor check rejects only Welcomes that are too old (`welcome.c`, `max_event_age_secs`), and MDK 0.8's Welcome path does not validate the rumor's created_at. ✔
+
+#### L4: resolved (`6ade03b3`)
+The README section "Timing of kind:445 events" states the dating rules and both public signals (sender chains, epoch markers), and the bounded lead caps both. One sentence overstates (N6).
+
+#### L5: resolved (`ddc33101`)
+- `test_private_message_commit_checks_alone` pins each check at the layer where it alone decides:
+  - the header epoch and the blank leaf via `mls_group_handshake_sender()`;
+  - the FramedContent epoch via a PublicMessage Commit, where it is the only epoch check;
+  - signature verification against the sender data.
+- `test_private_message_commit_of_past_epoch` covers:
+  - a header naming the previous epoch (`WRONG_EPOCH`);
+  - a relay replay of the applied Commit, a duplicate that changes nothing;
+  - a tampered parent-epoch Commit judged on the retained parent;
+  - the new epoch refusing the old Commit at the MLS layer.
+
+  This was the case my review asked for.
+- **The `from != sender_leaf` note is right.** `mls_handshake_content_decode()` sets the FramedContent sender from the same sender data `private_commit_open()` returns as `from`. So `from != sender_leaf` (`mls_group.c:3087`) and `pm->content.sender.leaf_index != sender_leaf` compare one value, and neither alone can make a test fail. Removing both (D8b) is caught. Keeping both as defence in depth is fine.
+- Generation reuse stays an MLS-layer contract test, because handshake keys are never consumed. The README documents this. Accepted.
+
+#### N1, N2, N3: resolved
+- **N1:** the three rows now sit inside the decision table (`VERSION_MANIFEST.md:144-146`, before "## Maintenance" at line 148).
+- **N2:** a row of any other shape is read as absent and rewritten (`test_group_event_floor_repairs`; mutation caught).
+- **N3:** the floor-bypassing wrapper is gone. `marmot_commit_build_event()` takes created_at, and every production caller reserves it.
+
+### New findings
+
+#### L6 (Low): A floor left ahead by our own clock blocks every Commit until real time catches up
+**Where:** `libmarmot/src/marmot.c:161-183` (`marmot_next_group_event_time`). The loaded floor is used as is: `next = t.last + 1`, and a Commit past `now + 60` is refused. Nothing ever lowers the floor.
+
+**Scenario.** Our clock was more than 60 s fast while we published to the group, then it was corrected backwards. Typical causes:
+- a dual-boot machine whose RTC holds local time, in a UTC+ zone, before NTP syncs;
+- someone fixing the time by hand;
+- restoring a store backed up on a device with a fast clock.
+
+From then on, every Commit to that group (add, remove, rename, self-update) returns `MARMOT_ERR_EVENT_RATE` for (step − 60) s, while messages are dated a constant 60 s ahead.
+
+I reproduced it with a throwaway test on `d58add27`. Alice's floor row was set 2 h ahead. Her message was dated +60 s, and three renames over 4 s each returned `-36 too many group events too fast; retry later`.
+
+The error says "retry in a second" but the refusal lasts hours, and Groundhog does not retry. A peer cannot cause this, because observations are capped at our current clock. Compared with `81efdc50` this is not a regression: there, the same Commits were dated hours ahead and refused by relays and by MDK (more than 300 s ahead). Compared with 0.11, which had no floor, it is new.
+
+The same unchecked load also lets a corrupted row with `last = INT64_MAX` overflow `t.last + 1`, which is undefined behaviour. The `INT64_MAX` guard of `81efdc50` was removed.
+
+**Fix:** after loading, clamp both values to `now + GROUP_EVENT_MAX_LEAD − 1`. Anything we dated past the bound was outside what relays and MDK accept anyway, so order against it cannot be kept. Add a test with a far-ahead row.
+
+#### N4 (Nit): The proposal-order comment misstates RFC 9420
+`libmarmot/src/mls/mls_group.c:1630-1632` and `mls_group.h` say the extensions are "applied after the Adds as receivers apply it (RFC 9420 §12.4.2)". §12.3 applies a GroupContextExtensions proposal **first**, and the new extensions are used to evaluate the Adds. §12.4.2 only refers back to §12.3. The outcome is the same here (see M1), but correct the comment. libmarmot's own receive order (vector order, then validation of all leaves) predates this branch.
+
+#### N5 (Nit): Groundhog shows `EVENT_RATE` as a generic failure
+`gnome/groundhog/src/mls/gh-mls-service.c:369-383`: `marmot_fail()` maps `MARMOT_ERR_EVENT_RATE` to the generic `GH_MLS_COMMIT_ERROR`. Map it to `GH_MLS_SERVICE_ERROR_BUSY`, or to another transient code, so the UI treats it like "Another change of this group is still being sent". The alternative is an automatic retry after a second.
+
+#### N6 (Nit): The README overstates the ordering guarantee
+The README says "An application message is never dated at or before a Commit". `marmot.c`'s own comment admits the edge: past the bound a message is dated `now + 60`, the same second as a Commit dated there, whether a peer's or a run of ours. Say "at most in the same second, at the 60 s bound".
