@@ -340,3 +340,63 @@ R1 and N4 are resolved. The loop is bounded and the bound is tested against the 
 | N4 transient errors drop the leave | **resolved** |
 | nostrc-8ndz (Groundhog groups leave via admins) | acceptable for now, as judged in round 2; do before enabling `GH_FEATURE_ENCRYPTED_GROUPS` |
 | F1-F4 | nits, may be filed as follow-ups |
+
+---
+
+## Rebase addendum: onto master `aae023f5` (slices C and G); tip `edac0960`
+
+### Verdict: APPROVE-WITH-NITS
+
+The rebase lost no behaviour, and the new integration fix is sound. It cannot be used to push a non-departure Commit. One new low-severity nit (G1).
+
+### Gates (on `edac0960`)
+
+| Gate | Result |
+| --- | --- |
+| macOS build, `ctest -R "marmot\|mls\|groundhog\|interop\|kp_profile\|store"` (`-DBUILD_MDK_INTEROP=ON`) | 109/109 passed (4 GUI tests skipped); `groundhog-mdk-interop` against MDK 0.8, including the new `groundhog-member-commits-leave` (3d) |
+| `scripts/linux-gate.sh --sanitizers` | passed, 50 tests |
+| Revert spot-checks | retrying departures with the admin-only `check_change()` makes 3d fail (test_mdk_interop.c:1047, "Bob's leave committed by Alice did not happen"); dating the `marmot_commit_pending_proposals()` Commit with `marmot_now()` instead of the floor makes `test_departure_events_follow_the_floor` fail (test_commits.c:6697, "refused at the bound"). Both pass restored |
+
+### (a) Conflict resolutions against C's created_at floor
+
+- **Range-diff.** `git range-diff 777589a1~7..777589a1 aae023f5..edac0960` matches all seven commits:
+  - `00eb9d49` and `6df721dd` are unchanged (`=`).
+  - The other five differ only in:
+    - VERSION_MANIFEST and README reconciliation (libmarmot and groundhog 0.12.0 already on master, so B folds in with no further bump);
+    - the slice-C signatures `group_data_of(pre, pre, &gde)` and `marmot_commit_build_event(…, created_at)`;
+    - the `gh-store-marmot.c` label comment;
+    - hunk realignment in `test_commits.c`.
+- **Source interdiff.** I diffed B's own source patch before and after the rebase (`82a615e4..777589a1` vs `aae023f5..edac0960~1` over `libmarmot/src`, `libmarmot/include`, `gnome/groundhog/src`, ignoring offsets). The *only* differences are the three expected resolutions:
+  1. `removal_key()`: `group_data_of(pre, pre, &gde)`.
+  2. `commit_pending_proposals_impl()`: `marmot_next_group_event_time(m, nostr_group_id, true, …)`, a Commit, so it can return `MARMOT_ERR_EVENT_RATE`. It runs after `mls_group_commit_by_ref()` on the clone and before anything is staged, so a refusal stages nothing. The new libmarmot test asserts this.
+  3. `self_remove()`: `marmot_next_group_event_time(…, false, …)`, a non-Commit that is never rate-refused. This covers both leave kinds (SelfRemove and the PrivateMessage Remove request share this producer). It runs only on the non-dry path, inside the call's transaction. A same-epoch re-publish returns the stored bytes with their original created_at, as the spec requires.
+
+  There are no Groundhog source differences at all.
+- **Tests.** Comparing the `RUN(...)` and `g_test_add_func` sets of every touched test file at `777589a1` and `edac0960~1`, the changes are only additions (master's C and G tests). No slice-B test was dropped. The range-diff hunk around `test_private_remove_self_committed_by_admin` is realignment: that test was already renamed in `aef3aa1c`.
+
+### (b) `edac0960`: departure retry after `EVENT_RATE`
+
+- **Is the rule sound? Yes.**
+  - The relaxed re-check (`check_departures()`: running, our active group, not leaving, `departures_committable()`) applies only when `op->kind == OP_DEPARTURES`.
+  - That kind is created at a single internal site, `departures_fired()` (gh-mls-service.c:2282), together with the fixed producer `produce_departures`. The retry re-stages `retry->producer`, which is the same `produce_departures`.
+  - No public API creates an `OP_DEPARTURES` op or supplies its producer.
+- **Can a non-admin use it to push a non-departure Commit? No.** Three independent checks stand in the way:
+  1. The only producer reachable is `marmot_commit_pending_proposals()`. It commits nothing but the *selected* departure proposals: a non-admin's SelfRemove, and a Remove-of-self only when `may_commit_privileged()` holds for us.
+  2. libmarmot authorizes before staging (`marmot_commit_stage_pending_ex()` → `marmot_commit_authorize_ex()` with the departure summary). The Commit is ordinary only if it is SelfRemove-only; anything else needs an admin.
+  3. Every receiver applies the same authorization.
+
+  The Groundhog check is a scheduling gate, not the security boundary, and relaxing it widens nothing.
+
+### Nit G1 (Low, new): the retry re-check lacks the H1 guard
+
+`gh-mls-service.c` `check_departures()`
+
+The commit says the retry is "re-checked as `departures_fired()` does". But `departures_fired()` also refuses while `held_awaits_proposal(group)` (H1) and while `round` or `pending_commit` is set. `check_departures()` checks neither.
+
+`round` and `pending_commit` are covered anyway, because libmarmot refuses with `OWN_COMMIT_PENDING`. The held-Commit guard is not covered. A Commit citing a proposal we lack can arrive during the rate-retry window (1 s, up to 5 times). The retry would then publish our own SelfRemove Commit, competing with one the group may already have applied.
+
+Ordering still converges (both are ordinary; `commit_key_cmp`), so the cost is the churn H1 removed, in a narrow window. Fix: share one predicate between `departures_fired()` and `check_departures()`, including `held_awaits_proposal()`.
+
+### Carried nits
+
+F1-F4 from the previous addendum are unchanged. None blocks the merge.
