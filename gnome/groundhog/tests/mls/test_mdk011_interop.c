@@ -47,6 +47,8 @@ static MdkDriver driver;
 static guint xfails;
 /* A case that could not run (no driver): never green either. */
 static gboolean not_run;
+/* Cases entered: a -p path that matches none must not pass vacuously. */
+static guint cases_run;
 
 /* Records the expected failure of an adopted case, by class. The case still
  * passed every assertion of the refusal: main() turns the run into a skip. */
@@ -107,6 +109,38 @@ mdk_publish_key_package(const gchar *peer, const gchar *to)
   JsonObject *view = json_object_get_object_member(kp, "mdk");
   g_assert_cmpstr(json_object_get_string_member(view, "profile"), ==, "Current");
   return g_strdup(json_object_get_string_member(kp, "event"));
+}
+
+/* A KeyPackage as White Noise 0.11 publishes it (marmot-app's session
+ * configuration, nostrc-a5u5 review M1): the leaf advertises SelfRemove
+ * (proposal 0x000a) and the three agent-text-stream-QUIC roles (private-use
+ * extensions 0xF2D1, 0xF2D2, 0xF2D4) besides app_data_dictionary 0x0006, the
+ * component set includes 0x8006 beside the 0x8009 proof, and the event carries
+ * White Noise Android's `client` tag. */
+static void
+assert_white_noise_key_package(JsonObject *view, const gchar *event_json)
+{
+  JsonArray *extensions = json_object_get_array_member(view, "mls_extensions");
+  static const gchar *const want_extensions[] = { "0x0006", "0xf2d1", "0xf2d2", "0xf2d4" };
+  for (guint i = 0; i < G_N_ELEMENTS(want_extensions); i++)
+    g_assert_true(mdk_has(extensions, want_extensions[i]));
+  g_assert_true(mdk_has(json_object_get_array_member(view, "mls_proposals"), "0x000a"));
+  JsonArray *components = json_object_get_array_member(view, "app_components");
+  g_assert_true(mdk_has(components, "0x8006"));
+  g_assert_true(mdk_has(components, "0x8009"));
+  g_autoptr(JsonParser) parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, event_json, -1, NULL));
+  JsonArray *tags = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)),
+                                                 "tags");
+  guint clients = 0;
+  for (guint i = 0; i < json_array_get_length(tags); i++) {
+    JsonArray *tag = json_array_get_array_element(tags, i);
+    if (g_strcmp0(json_array_get_string_element(tag, 0), "client") == 0) {
+      clients++;
+      g_assert_cmpstr(json_array_get_string_element(tag, 1), ==, "White Noise Android");
+    }
+  }
+  g_assert_cmpuint(clients, ==, 1);
 }
 
 /* The newest KeyPackage of account key on W, as the peer fetched it; *view:
@@ -262,6 +296,7 @@ event_id_of(const gchar *event_json)
 static void
 test_control(void)
 {
+  cases_run++;
   if (!mdk_up())
     return;
   World w;
@@ -278,7 +313,7 @@ test_control(void)
   g_autofree gchar *dave_kp = mdk_fetch_key_package(&w, "carol", DAVE, &dave_view);
   g_assert_true(json_object_get_boolean_member(dave_view, "parsed"));
   g_assert_cmpstr(json_object_get_string_member(dave_view, "profile"), ==, "Current");
-  g_assert_true(mdk_has(json_object_get_array_member(dave_view, "app_components"), "0x8009"));
+  assert_white_noise_key_package(dave_view, dave_kp);
   g_autofree gchar *dave_kp_id = event_id_of(dave_kp);
   g_autofree gchar *published_id = event_id_of(dave_published);
   g_assert_cmpstr(dave_kp_id, ==, published_id);
@@ -343,6 +378,7 @@ test_control(void)
   g_autoptr(JsonObject) bob_view = NULL;
   g_autofree gchar *bob_kp = mdk_fetch_key_package(&w, "carol", BOB, &bob_view);
   g_assert_true(json_object_get_boolean_member(bob_view, "parsed"));
+  assert_white_noise_key_package(bob_view, bob_kp);
   g_autofree gchar *bob_kp_id = event_id_of(bob_kp);
   {
     g_autoptr(JsonObject) added = mdk_call(&driver,
@@ -450,6 +486,7 @@ refused_creation(World *w, App *alice, const gchar *mode)
 static void
 test_groundhog_invites_mdk(void)
 {
+  cases_run++;
   if (!mdk_up())
     return;
   World w;
@@ -500,6 +537,7 @@ test_groundhog_invites_mdk(void)
 static void
 test_mdk_invites_groundhog(void)
 {
+  cases_run++;
   if (!mdk_up())
     return;
   World w;
@@ -584,6 +622,7 @@ welcome_processed(gpointer data)
 static void
 test_adopted_welcome(void)
 {
+  cases_run++;
   if (!mdk_up())
     return;
   World w;
@@ -643,6 +682,7 @@ test_adopted_welcome(void)
 static void
 test_mdk09_probe(void)
 {
+  cases_run++;
   if (!mdk_up())
     return;
   MdkDriver probe;
@@ -729,6 +769,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);
   gint rc = g_test_run();
   mls_world_finish();
+  if (cases_run == 0) {
+    g_printerr("no case matched the requested -p path(s): nothing ran\n");
+    return 1;
+  }
   /* An expected failure is never green: a run that met its XFAIL exits 77,
    * which CTest reports as Skipped (SKIP_RETURN_CODE); so does a case that
    * could not run. */

@@ -6,14 +6,18 @@
 //! Docker container, and drives it on stdin/stdout; the relays are the test's
 //! local relays.
 //!
-//! Each peer is the account-device stack White Noise 0.11 runs, configured as
-//! marmot-app configures it: cgka-session's AccountDeviceSession (cgka-engine
-//! on SQLCipher storage, ProtocolProfile::Current, the app feature registry
-//! with SelfRemove, the app's component set, the pinned v1 convergence
-//! policy), the transport-nostr-peeler (kind 445 sealing, NIP-59 Welcomes)
-//! and the transport-nostr-adapter's kind 30443 KeyPackage publication. The
-//! relay I/O is this driver's own (as in the 0.8 driver), not marmot-app's
-//! relay plane: one WebSocket per operation, every wait bounded.
+//! Each peer is the account-device stack White Noise 0.11 runs, with
+//! marmot-app's session configuration: cgka-session's AccountDeviceSession
+//! (cgka-engine on SQLCipher storage, ProtocolProfile::Current, the pinned v1
+//! convergence policy, and marmot-app's own feature registry and supported
+//! component set, copied verbatim and checked against the pinned source by the
+//! `parity` tests), the transport-nostr-peeler (kind 445 sealing, NIP-59
+//! Welcomes) and the transport-nostr-adapter's kind 30443 KeyPackage
+//! publication, with White Noise Android's `client` tag. KeyPackages come from
+//! `fresh_key_package()`, which builds them with the same engine function
+//! (`build_fresh_key_package`) as marmot-app's lifecycle staging. The relay
+//! I/O is this driver's own (as in the 0.8 driver), not marmot-app's relay
+//! plane: one WebSocket per operation, every wait bounded.
 //!
 //! Protocol: one JSON object per line on stdin, `{"id": N, "cmd": "...", ...}`;
 //! exactly one answer line per request on stdout, `{"id": N, "ok": true, ...}`
@@ -27,11 +31,12 @@
 //! settlement window (the adopted convergence policy's 1 s quiescence), which
 //! the engine reports and the driver waits out before advancing convergence.
 //!
-//! Vectors: with MDK_DRIVER_ARTIFACT_DIR set, the public wire objects the
-//! peers make or see (signed KeyPackage events, unwrapped Welcome rumors,
-//! GroupContext component lists, kind 445 events) are appended to
-//! `vectors.jsonl` there. Secrets (account keys, the SQLCipher key, MLS or
-//! exporter secrets) are never written: no command returns them, and every
+//! Vectors: with MDK_DRIVER_ARTIFACT_DIR set, the wire objects the peers make
+//! or see (signed KeyPackage events, unwrapped Welcome rumors, kind 445
+//! events) and the member-visible GroupContext (component bytes, key-bearing
+//! components redacted to length and digest) are appended to `vectors.jsonl`
+//! there. Secrets (account keys, the SQLCipher key, MLS or exporter secrets,
+//! group image keys) are never written: no command returns them, and every
 //! artifact line is checked against the peers' secret keys before it is
 //! written. Requests are never logged (peer_new carries a secret).
 //!
@@ -51,12 +56,19 @@ use cgka_engine::account_identity_proof::{AccountIdentityProofRequest, AccountId
 use cgka_engine::feature_registry::FeatureRegistry;
 use cgka_engine::key_package::{KeyPackageMetadata, key_package_metadata};
 use cgka_session::{AccountDeviceSession, PublishWork, SessionConfig, SessionEffects};
+use cgka_traits::agent_text_stream::{
+    AGENT_TEXT_STREAM_QUIC_FANOUT_CAPABILITY, AGENT_TEXT_STREAM_QUIC_FANOUT_FEATURE,
+    AGENT_TEXT_STREAM_QUIC_RECEIVE_CAPABILITY, AGENT_TEXT_STREAM_QUIC_RECEIVE_FEATURE,
+    AGENT_TEXT_STREAM_QUIC_SEND_CAPABILITY, AGENT_TEXT_STREAM_QUIC_SEND_FEATURE,
+};
 use cgka_traits::app_components::{
-    AppComponentData, GROUP_AVATAR_URL_COMPONENT_ID, GROUP_BLOSSOM_IMAGE_COMPONENT_ID,
-    GROUP_ENCRYPTED_MEDIA_V1_COMPONENT_ID, GROUP_ENCRYPTED_MEDIA_V2_COMPONENT_ID,
-    GROUP_MESSAGE_RETENTION_COMPONENT_ID, NOSTR_ROUTING_COMPONENT_ID, NostrRoutingV1,
-    PRIVATE_USE_APP_COMPONENT_ID_START, decode_nostr_routing_v1, default_group_components,
-    encode_nostr_routing_v1,
+    AGENT_TEXT_STREAM_QUIC_COMPONENT_ID, APP_COMPONENTS_COMPONENT_ID, AppComponentData,
+    GROUP_ADMIN_POLICY_COMPONENT_ID, GROUP_AVATAR_URL_COMPONENT_ID,
+    GROUP_BLOSSOM_IMAGE_COMPONENT_ID, GROUP_ENCRYPTED_MEDIA_V1_COMPONENT_ID,
+    GROUP_ENCRYPTED_MEDIA_V2_COMPONENT_ID, GROUP_LIFECYCLE_COMPONENT_ID,
+    GROUP_MESSAGE_RETENTION_COMPONENT_ID, GROUP_PROFILE_COMPONENT_ID, NOSTR_ROUTING_COMPONENT_ID,
+    NostrRoutingV1, PRIVATE_USE_APP_COMPONENT_ID_START, SAFE_AAD_COMPONENT_ID,
+    decode_nostr_routing_v1, default_group_components, encode_nostr_routing_v1,
 };
 use cgka_traits::app_event::{MARMOT_APP_EVENT_KIND_CHAT, MarmotAppEvent};
 use cgka_traits::capabilities::{Capability, CapabilityRequirement, Feature, RequirementLevel};
@@ -372,6 +384,9 @@ struct Vectors {
     file: Option<std::fs::File>,
     /// Hex of every peer's secret key: no artifact line may contain one.
     secrets: Vec<String>,
+    /// This driver process's id, on every line (several processes, one per
+    /// case, append to one file in a run; CTest empties it first).
+    run: String,
 }
 
 impl Vectors {
@@ -387,7 +402,8 @@ impl Vectors {
                 }
             }
         });
-        Self { file, secrets: Vec::new() }
+        let run = hex::encode(&Keys::generate().public_key().to_bytes()[..8]);
+        Self { file, secrets: Vec::new(), run }
     }
 
     fn record(&mut self, kind: &str, peer: &str, mut value: Value) {
@@ -395,6 +411,7 @@ impl Vectors {
         value["vector"] = json!(kind);
         value["peer"] = json!(peer);
         value["mdk_rev"] = json!(MDK_REV);
+        value["driver_run"] = json!(self.run);
         let line = value.to_string();
         if self.secrets.iter().any(|s| line.contains(s.as_str())) {
             // Redaction guard: a secret must never reach the artifact.
@@ -426,9 +443,17 @@ impl AccountIdentityProofSigner for ProofSigner {
     }
 }
 
-/// marmot-app's feature registry, as far as the core protocol goes: SelfRemove
-/// (MIP-03 departure, proposal 0x000a). The agent-text-stream roles are not
-/// registered (no QUIC streams here).
+// White Noise 0.11's session configuration. The two functions below are
+// verbatim copies of marmot-app's at MDK_REV (crates/marmot-app/src/lib.rs:
+// `app_feature_registry` and `MarmotApp::supported_app_component_ids`), and
+// the `parity` tests (run by `cargo test`, and so by the image build) fail if
+// their bodies differ from the pinned source or if marmot-app configures its
+// session with anything else. They decide what a leaf and a KeyPackage
+// advertise on the wire: SelfRemove (proposal 0x000a), the three
+// agent-text-stream-QUIC roles as Optional private-use extensions
+// (0xF2D1/0xF2D2/0xF2D4; advertising them needs no QUIC transport) and the
+// component set including 0x8006. The bodies keep marmot-app's comments.
+
 fn app_feature_registry() -> FeatureRegistry {
     let mut registry = FeatureRegistry::new();
     registry.register(
@@ -439,21 +464,62 @@ fn app_feature_registry() -> FeatureRegistry {
             description: "MIP-03 SelfRemove group departure",
         },
     );
+    // Each agent-text-stream-QUIC role maps to its own distinct backing
+    // capability (a private-use MLS extension type), so a member advertises
+    // `receive`/`send`/`fanout` independently and a group's
+    // `required_member_roles` mask is enforceable per role (#177,
+    // agent-text-stream-quic-v1.md). The capability/feature/bit mapping is the
+    // shared `AGENT_TEXT_STREAM_QUIC_ROLES` table so the engine enforcement and
+    // this registration cannot drift.
+    for (feature, capability, description) in [
+        (
+            AGENT_TEXT_STREAM_QUIC_RECEIVE_FEATURE.clone(),
+            AGENT_TEXT_STREAM_QUIC_RECEIVE_CAPABILITY,
+            "receive QUIC-backed agent text stream previews",
+        ),
+        (
+            AGENT_TEXT_STREAM_QUIC_SEND_FEATURE.clone(),
+            AGENT_TEXT_STREAM_QUIC_SEND_CAPABILITY,
+            "send QUIC-backed agent text stream frames",
+        ),
+        (
+            AGENT_TEXT_STREAM_QUIC_FANOUT_FEATURE.clone(),
+            AGENT_TEXT_STREAM_QUIC_FANOUT_CAPABILITY,
+            "fan out QUIC-backed agent text stream frames",
+        ),
+    ] {
+        registry.register(
+            feature,
+            CapabilityRequirement {
+                requires: capability,
+                level: RequirementLevel::Optional,
+                description,
+            },
+        );
+    }
     registry
 }
 
-/// marmot-app's supported component set (supported_app_component_ids), less
-/// the agent text stream.
-fn app_components() -> Vec<u16> {
+fn supported_app_component_ids() -> Vec<u16> {
     let mut components = default_group_components();
     components.insert(GROUP_BLOSSOM_IMAGE_COMPONENT_ID);
     components.insert(NOSTR_ROUTING_COMPONENT_ID);
     components.insert(GROUP_MESSAGE_RETENTION_COMPONENT_ID);
+    components.insert(AGENT_TEXT_STREAM_QUIC_COMPONENT_ID);
     components.insert(GROUP_AVATAR_URL_COMPONENT_ID);
+    // Existing legacy groups continue to require V1, while fresh
+    // current-profile groups require V2. Advertising both is support, not
+    // negotiation: each group's required component id selects exactly one.
     components.insert(GROUP_ENCRYPTED_MEDIA_V1_COMPONENT_ID);
     components.insert(GROUP_ENCRYPTED_MEDIA_V2_COMPONENT_ID);
     components.into_iter().collect()
 }
+
+/// The KeyPackage `client` tag White Noise Android 0.11 publishes
+/// (whitenoise-android 6186a253, MarmotClient.kt: `CLIENT_NAME`, passed to
+/// marmot-app's `key_package_client_name`); a peer may override it (null:
+/// none, as for a generic MDK consumer).
+const WHITE_NOISE_CLIENT_NAME: &str = "White Noise Android";
 
 struct Peer {
     name: String,
@@ -461,6 +527,8 @@ struct Peer {
     session: AccountDeviceSession,
     /// The KeyPackage slot (`d` tag), stable across replacements.
     slot: String,
+    /// The KeyPackage `client` tag, if any.
+    client: Option<String>,
     /// Kind 445 event ids this peer published or applied.
     seen: HashSet<EventId>,
     /// Gift wraps already opened: their outcome, by wrapper id.
@@ -626,17 +694,48 @@ fn describe_key_package(event: &Event) -> Value {
     }
 }
 
-/// The ids of the components present in a group's app_data_dictionary, with
-/// their bytes: the public GroupContext every member holds.
+/// The component ids probed in a group's app_data_dictionary.
 const PROBED_COMPONENTS: std::ops::RangeInclusive<u16> = 0x8001..=0x8010;
 
+/// Components whose bytes hold no key material, so they may be dumped: the
+/// component list, safe AAD, profile, admin policy, routing, retention, the
+/// agent-text-stream policy, URL avatar, both media policies and lifecycle.
+/// Everything else is redacted to its length and SHA-256: 0x8002 (Blossom
+/// image: image key, nonce and upload key, which MDK itself prints as
+/// <redacted>) and any id not known to be key-free.
+const DUMPABLE_COMPONENTS: &[u16] = &[
+    APP_COMPONENTS_COMPONENT_ID,
+    SAFE_AAD_COMPONENT_ID,
+    GROUP_PROFILE_COMPONENT_ID,
+    GROUP_ADMIN_POLICY_COMPONENT_ID,
+    NOSTR_ROUTING_COMPONENT_ID,
+    GROUP_MESSAGE_RETENTION_COMPONENT_ID,
+    AGENT_TEXT_STREAM_QUIC_COMPONENT_ID,
+    GROUP_AVATAR_URL_COMPONENT_ID,
+    GROUP_ENCRYPTED_MEDIA_V1_COMPONENT_ID,
+    GROUP_ENCRYPTED_MEDIA_V2_COMPONENT_ID,
+    GROUP_LIFECYCLE_COMPONENT_ID,
+];
+
+/// A component's bytes as they may leave the driver (answers, vectors).
+fn component_value(id: u16, bytes: &[u8]) -> Value {
+    if DUMPABLE_COMPONENTS.contains(&id) {
+        json!(hex::encode(bytes))
+    } else {
+        json!({ "redacted": true, "len": bytes.len(), "sha256": sha256_hex(bytes) })
+    }
+}
+
+/// The member-visible GroupContext: the components present in the group's
+/// app_data_dictionary (key-bearing ones redacted, see DUMPABLE_COMPONENTS)
+/// and the required capabilities.
 fn group_context(peer: &Peer, group_id: &GroupId) -> Res<Value> {
     let ids: Vec<u16> = (0x0001..=0x000f).chain(PROBED_COMPONENTS).collect();
     let values = peer.session.app_components(group_id, &ids).map_err(engine_fail("app_components"))?;
     let mut components = serde_json::Map::new();
     for (id, value) in ids.iter().zip(values) {
         if let Some(bytes) = value {
-            components.insert(format!("0x{id:04x}"), json!(hex::encode(bytes)));
+            components.insert(format!("0x{id:04x}"), component_value(*id, &bytes));
         }
     }
     let record = peer.session.group_record(group_id).map_err(engine_fail("group_record"))?;
@@ -757,7 +856,8 @@ impl Driver {
                     "commands": ["hello", "peer_new", "publish_key_package", "fetch_key_package",
                         "parse_key_package", "create_group", "add_members", "remove_members",
                         "update_group_data", "self_update", "leave", "send", "sync",
-                        "fetch_welcomes", "accept_welcome", "state", "group_context", "messages"],
+                        "fetch_welcomes", "accept_welcome", "state", "group_context"],
+                    "configured_as": "marmot-app app_feature_registry() + supported_app_component_ids() at mdk_rev",
                 }))
             }
             "peer_new" => {
@@ -774,14 +874,20 @@ impl Driver {
                 )
                 .account_identity_proof_signer(Arc::new(ProofSigner { keys: keys.clone() }))
                 .feature_registry(app_feature_registry())
-                .supported_app_components(app_components());
+                .supported_app_components(supported_app_component_ids());
                 let session = AccountDeviceSession::open(config).map_err(engine_fail("session open"))?;
                 let slot = hex::encode(Keys::generate().secret_key().to_secret_bytes());
+                let client = match req.get("client") {
+                    None => Some(WHITE_NOISE_CLIENT_NAME.to_string()),
+                    Some(Value::Null) => None,
+                    Some(v) => Some(v.as_str().ok_or_else(|| fail(INTERNAL, "'client' must be a string or null"))?.to_string()),
+                };
                 let peer = Peer {
                     name: name.clone(),
                     keys,
                     session,
                     slot,
+                    client,
                     seen: HashSet::new(),
                     wraps: HashMap::new(),
                     joined: HashMap::new(),
@@ -795,9 +901,11 @@ impl Driver {
                 let from = strs_arg(req, "from")?;
                 let filter = json!({ "kinds": [KIND_KEY_PACKAGE], "authors": [author] });
                 let events = fetch_all(&from, &filter, &Keys::generate()).await?;
+                // marmot-app's order (relay_event_id_cmp): the newest, and on
+                // equal created_at the smaller event id.
                 let newest = events
                     .into_iter()
-                    .max_by_key(|e| (e.created_at, e.id))
+                    .max_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| b.id.cmp(&a.id)))
                     .ok_or_else(|| fail(STATE, "no KeyPackage found"))?;
                 let view = describe_key_package(&newest);
                 let name = str_arg(req, "peer")?.to_string();
@@ -891,7 +999,7 @@ impl Driver {
         let key_package = peer.session.fresh_key_package().await.map_err(engine_fail("fresh_key_package"))?;
         let metadata = key_package_metadata(&key_package).map_err(engine_fail("KeyPackage metadata"))?;
         let publication = NostrKeyPackagePublication {
-            client_name: None,
+            client_name: peer.client.clone(),
             account_id: MemberId::new(peer.keys.public_key().to_bytes().to_vec()),
             key_package,
             key_package_slot_id: peer.slot.clone(),
@@ -1303,11 +1411,6 @@ async fn publish_effects(peer: &mut Peer, effects: &SessionEffects) -> Res<Vec<V
             _ => continue,
         };
         let event = transport_event(msg)?;
-        let group_id = match &msg.envelope {
-            cgka_traits::TransportEnvelope::GroupMessage { .. } => None,
-            _ => None,
-        };
-        let _: Option<GroupId> = group_id;
         let relays = relays_of_transport_group(peer, &event)?;
         let (accepted, answers) = publish_all(&relays, &event, &Keys::generate()).await;
         peer.seen.insert(event.id);
@@ -1375,7 +1478,6 @@ fn work_names(work: &[PublishWork]) -> String {
     format!("[{}]", names.join(", "))
 }
 
-#[allow(dead_code)]
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -1424,5 +1526,139 @@ async fn main() {
         if stdout.write_all(text.as_bytes()).await.is_err() || stdout.flush().await.is_err() {
             break;
         }
+    }
+}
+
+/// The driver's session configuration is marmot-app's at MDK_REV: the two
+/// functions that decide what leaves and KeyPackages advertise are
+/// byte-for-byte (comments and whitespace aside) marmot-app's, and marmot-app
+/// configures its SessionConfig with nothing else that reaches the wire.
+#[cfg(test)]
+mod parity {
+    use super::MDK_REV;
+    use std::path::PathBuf;
+
+    const DRIVER: &str = include_str!("main.rs");
+
+    /// marmot-app's lib.rs in Cargo's git checkout of MDK at MDK_REV
+    /// (`$CARGO_HOME/git/checkouts/mdk-<hash>/<rev[..7]>/`: the whole
+    /// repository at that commit, fetched for the build).
+    fn marmot_app() -> String {
+        let home = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+            .expect("CARGO_HOME or HOME");
+        let checkouts = home.join("git/checkouts");
+        let short = &MDK_REV[..7];
+        let found: Vec<PathBuf> = std::fs::read_dir(&checkouts)
+            .unwrap_or_else(|e| panic!("{}: {e}", checkouts.display()))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mdk-"))
+            .map(|e| e.path().join(short).join("crates/marmot-app/src/lib.rs"))
+            .filter(|p| p.is_file())
+            .collect();
+        let lib = found.first().unwrap_or_else(|| panic!("no MDK checkout at {short} in {}", checkouts.display()));
+        std::fs::read_to_string(lib).expect("marmot-app/src/lib.rs at MDK_REV")
+    }
+
+    /// The body of the function declared by `signature` in `source`: from its
+    /// opening brace to the matching one, `//` comments and whitespace removed.
+    fn body(source: &str, signature: &str) -> String {
+        let at = source.find(signature).unwrap_or_else(|| panic!("no `{signature}`"));
+        let open = at + source[at..].find('{').unwrap();
+        let mut depth = 0usize;
+        let mut end = open;
+        for (i, c) in source[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        source[open..=end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap())
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    #[test]
+    fn feature_registry_is_marmot_apps() {
+        let app = marmot_app();
+        let sig = "fn app_feature_registry() -> FeatureRegistry";
+        assert_eq!(body(DRIVER, sig), body(&app, sig));
+    }
+
+    #[test]
+    fn component_set_is_marmot_apps() {
+        let app = marmot_app();
+        assert_eq!(
+            body(DRIVER, "fn supported_app_component_ids() -> Vec<u16>"),
+            body(&app, "fn supported_app_component_ids(&self) -> Vec<u16>")
+        );
+    }
+
+    /// marmot-app builds its SessionConfig with exactly these calls; a new
+    /// one (a protocol profile, a legacy switch, ...) fails here until the
+    /// driver follows it.
+    #[test]
+    fn session_config_is_marmot_apps() {
+        let app = marmot_app();
+        let at = app.find("let mut session_config = SessionConfig::new(").expect("marmot-app's SessionConfig");
+        let chain = &app[at..at + app[at..].find(';').unwrap()];
+        assert_eq!(
+            chain.matches("\n        .").map(|_| ()).count(),
+            3,
+            "marmot-app's SessionConfig chain changed:\n{chain}"
+        );
+        for call in [
+            ".account_identity_proof_signer(",
+            ".feature_registry(app_feature_registry())",
+            ".supported_app_components(self.supported_app_component_ids())",
+        ] {
+            assert!(chain.contains(call), "marmot-app no longer calls {call}");
+        }
+        // Later reassignments: only wire-neutral ones (hydration timing, a
+        // test-policy-only convergence override, the audit recorder).
+        let mut later: Vec<&str> = app
+            .match_indices("session_config = session_config.")
+            .map(|(i, m)| {
+                let rest = &app[i + m.len()..];
+                &rest[..rest.find('(').unwrap()]
+            })
+            .collect();
+        later.sort();
+        later.dedup();
+        assert_eq!(later, ["convergence_policy", "defer_group_hydration", "recorder"]);
+        // The driver's own chain uses the same two functions.
+        assert!(DRIVER.contains(".feature_registry(app_feature_registry())"));
+        assert!(DRIVER.contains(".supported_app_components(supported_app_component_ids())"));
+    }
+}
+
+#[cfg(test)]
+mod redaction {
+    use super::*;
+
+    #[test]
+    fn key_bearing_components_never_leave_raw() {
+        let secret = [0xA5u8; 76];
+        let value = component_value(GROUP_BLOSSOM_IMAGE_COMPONENT_ID, &secret);
+        let text = value.to_string();
+        assert!(!text.contains(&hex::encode(secret)), "0x8002 bytes leaked: {text}");
+        assert_eq!(value["redacted"], json!(true));
+        assert_eq!(value["len"], json!(76));
+        // An id nobody vetted is redacted too.
+        assert_eq!(component_value(0x80ff, &secret)["redacted"], json!(true));
+        // Key-free components stay readable vectors.
+        assert_eq!(component_value(GROUP_PROFILE_COMPONENT_ID, &[1, 2]), json!("0102"));
     }
 }

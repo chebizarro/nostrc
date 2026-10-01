@@ -14,7 +14,8 @@
 # Rust 1.97.1 is MDK v0.11.0's own toolchain pin (rust-toolchain.toml).
 # SQLCipher is built from source with vendored OpenSSL (rusqlite's
 # bundled-sqlcipher-vendored-openssl), which needs perl and make.
-FROM docker.io/library/rust:1.97.1-slim-bookworm AS build
+# Base images pinned by multi-arch index digest (tag kept for reading).
+FROM docker.io/library/rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates perl make pkg-config \
  && rm -rf /var/lib/apt/lists/*
@@ -25,7 +26,11 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
  && cargo build --release --locked && rm -rf src
 COPY src ./src
 RUN touch src/main.rs && cargo build --release --locked
+# The parity tests: the driver's feature registry, component set and session
+# configuration are marmot-app's at the pinned MDK commit (read from Cargo's
+# git checkout of it). A drift fails the image build, and so every case.
+RUN cargo test --release --locked
 
-FROM docker.io/library/debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 COPY --from=build /src/target/release/mdk011-interop-driver /usr/local/bin/mdk011-interop-driver
 ENTRYPOINT ["/usr/local/bin/mdk011-interop-driver"]

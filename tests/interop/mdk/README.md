@@ -111,16 +111,40 @@ never stand in for an adopted one.
 | `driver-0.11/` | `nostrc-mdk-interop:0.11.0` | `v0.11.0` = `946e0547485c9a2c393c2048ec3a968fd50fb441` | `marmot-adopted` | adopted peer |
 | `driver-0.9-probe/` | `nostrc-mdk-interop:0.9.0-probe` | `v0.9.0` = `a102b1966267c5bfcbe3a822212c0e343ac109ef` | `marmot-dictionary-proof-v1` | expected-incompatible KeyPackage probe |
 
-The 0.11 peer is the account-device stack White Noise 0.11 runs, configured
-as marmot-app configures it: cgka-session's `AccountDeviceSession`
-(cgka-engine on SQLCipher storage-sqlite, `ProtocolProfile::Current`, the app
-feature registry with SelfRemove, the app's component set, the pinned v1
-convergence policy), the real `NostrMlsPeeler` (kind 445 sealing, NIP-59
-Welcomes 1059 -> 13 -> 444) and the transport-nostr-adapter's kind 30443
-KeyPackage publication. Fetched KeyPackages pass the checks of marmot-app's
-relay-fetch path (strict cutover: current profile only). The relay I/O is
-the driver's own, as in the 0.8 driver; MDK 0.11's relay plane
-(nostr-sdk, NIP-65 discovery) is not exercised. Pins beyond MDK: OpenMLS fork
+The 0.11 peer is the account-device stack White Noise 0.11 runs:
+cgka-session's `AccountDeviceSession` (cgka-engine on SQLCipher
+storage-sqlite, `ProtocolProfile::Current`, the pinned v1 convergence
+policy), the real `NostrMlsPeeler` (kind 445 sealing, NIP-59 Welcomes
+1059 -> 13 -> 444) and the transport-nostr-adapter's kind 30443 KeyPackage
+publication. What reaches the wire matches White Noise 0.11:
+
+- **Session configuration.** `app_feature_registry()` and
+  `supported_app_component_ids()` are verbatim copies of marmot-app's at
+  `946e0547` (`crates/marmot-app/src/lib.rs`). Leaves and KeyPackages
+  therefore advertise SelfRemove (proposal 0x000a), the three
+  agent-text-stream-QUIC roles as Optional private-use extensions
+  (0xF2D1, 0xF2D2, 0xF2D4; advertising needs no QUIC transport) beside
+  0x0006, and the component set with 0x8006 and the 0x8009 proof.
+- **Parity check.** `cargo test` (run by the image build, so a drift fails
+  the `-image` fixture and every case) compares both function bodies with the
+  pinned marmot-app source, read from Cargo's git checkout of MDK. It also
+  checks that marmot-app's `SessionConfig` chain is still exactly the proof
+  signer, these two functions and wire-neutral settings (hydration timing,
+  the test-only convergence override, the audit recorder). The control case
+  asserts the resulting wire shape on every MDK KeyPackage.
+- **KeyPackages** come from `fresh_key_package()`, which builds them with
+  the same engine function (`build_fresh_key_package`) as marmot-app's
+  lifecycle staging. Their events carry White Noise Android's `client` tag
+  (`White Noise Android`, whitenoise-android `6186a253`; `peer_new`
+  `"client": null` drops it, as for a generic MDK consumer). Fetched
+  KeyPackages pass the checks of marmot-app's relay-fetch path (strict
+  cutover: current profile only), and the newest wins with marmot-app's
+  tie-break (equal `created_at`: the smaller event id).
+
+Not matched: the relay I/O is the driver's own, as in the 0.8 driver.
+MDK 0.11's relay plane (nostr-sdk, NIP-65 discovery, the KeyPackage
+lifecycle's publish/retire bookkeeping, client-priority selection among
+several KeyPackages) is not exercised. Pins beyond MDK: OpenMLS fork
 `59e7d3b2…`, nostr fork `a9c7a642…` and MDK's two `[patch.crates-io]`
 entries, all as MDK v0.11.0 locks them; Rust 1.97.1 (MDK's toolchain pin).
 Every crate version in `driver-0.11/Cargo.lock` is the one in MDK v0.11.0's
@@ -129,7 +153,9 @@ own lock.
 MDK v0.9.0 leaves carry the superseded `0xF2F1` v1 account proof, which
 neither MDK 0.11 nor libmarmot accepts. The probe makes and publishes
 KeyPackages exactly as 0.9's marmot-app does (Rust 1.90.0, crates.io nostr
-0.44.2 and OpenMLS 0.8.1 as 0.9 locks them) and nothing else: no group
+0.44.2 and OpenMLS 0.8.1 as 0.9 locks them), with 0.9 marmot-app's feature
+registry and component set (verbatim, under the same parity tests against
+`a102b196`) and its hard-coded event tags. It does nothing else: no group
 operation is expected to interoperate, so none is implemented.
 
 ### Run it
@@ -142,8 +168,9 @@ ctest --test-dir _build -R '^groundhog-mdk011-interop' -V
 
 | CTest | What | Expected |
 | --- | --- | --- |
-| `groundhog-mdk011-interop-image`, `-image-mdk09` | `docker build` of the two images (fixtures) | pass |
-| `groundhog-mdk011-interop-control` | MDK 0.11 <-> MDK 0.11 on the test's relays: KeyPackage publish/fetch/admit, create, Welcome 1059 -> 13 -> 444 (rumor `e` = the consumed KeyPackage, `relays` = G), kind 9 both ways, rename, add (third member joins), remove, self-update, SelfRemove leave committed by the admin; both GroupContexts equal | **pass** (proves driver, relays and flows) |
+| `groundhog-mdk011-interop-artifacts-reset` | empties `vectors.jsonl` (fixture) | pass |
+| `groundhog-mdk011-interop-image`, `-image-mdk09` | `docker build` of the two images, parity tests included (fixtures) | pass |
+| `groundhog-mdk011-interop-control` | MDK 0.11 <-> MDK 0.11 on the test's relays: KeyPackage publish/fetch/admit (White Noise wire shape asserted), create, Welcome 1059 -> 13 -> 444 (rumor `e` = the consumed KeyPackage, `relays` = G), kind 9 both ways, rename, add (third member joins), remove, self-update, SelfRemove leave committed by the admin; both GroupContexts equal | **pass** (proves driver, relays and flows) |
 | `groundhog-mdk011-interop-groundhog-invites-mdk` | Groundhog (default and legacy mode) asked to invite an MDK 0.11 user | XFAIL `unsupported`: libmarmot `MARMOT_ERR_VALIDATION`, row NOT_SET_UP, `NO_KEY_PACKAGE`, nothing published (copy: nostrc-ncp0) |
 | `groundhog-mdk011-interop-mdk-invites-groundhog` | MDK 0.11 asked to invite Groundhog | XFAIL `unsupported`: MDK cannot decode the legacy MIP-00 KeyPackage (no MLSMessage framing), nothing published |
 | `groundhog-mdk011-interop-adopted-welcome` | an adopted Welcome reaches Groundhog (MDK 0.11 invites a second, MDK device of Alice's account) | XFAIL `unsupported`: libmarmot records it failed, "welcome content decode failed"; no invitation, no group |
@@ -154,12 +181,20 @@ precisely (failure class, nothing published, no group or invitation, bounded
 waits so no stall, no crash), then exits 77, which `SKIP_RETURN_CODE` reports
 as **Skipped**, not Passed. A refusal of another shape fails, and so does an
 unexpected success (`XPASS: ... update the expectation`). A case that cannot
-run (driver unset) exits 77 too. Each case runs alone (`-p`), so one case's
-XFAIL cannot hide another's result.
+run (driver unset) exits 77 too, and a `-p` path that matches no case exits
+1. Each case runs alone (`-p`), so one case's XFAIL cannot hide another's
+result.
+
+Reading the results: ctest's footer counts a Skipped test as passed ("100%
+tests passed"); its "The following tests did not run: ... (Skipped)" list is
+the one that names the XFAILs. Likewise the CI job's conclusion is green when
+the control passes and nothing fails: "not green" for the adopted cases lives
+in the job summary table, by design.
 
 Timings (macOS 27, Docker Desktop, 14 CPUs): a cold `driver-0.11` image build
-248 s, a cold probe build 95 s; then about 10 s for the control and 1.5 to
-2.5 s for each adopted case.
+248 s, a cold probe build 95 s, an incremental image rebuild after a driver
+edit about 30 s; then about 10 s for the control and 1.3 to 5 s for each
+adopted case (21 s for the whole matrix with both images cached).
 
 Knobs, beyond those of the 0.8 harness:
 
@@ -167,15 +202,20 @@ Knobs, beyond those of the 0.8 harness:
   another driver instead of the image, e.g. a native
   `cargo build --release` of `driver-0.11/` (whose `rust-toolchain.toml`
   selects 1.97.1).
-- `MDK_DRIVER_ARTIFACT_DIR`: the 0.11 driver appends the public wire objects
-  it makes or sees to `vectors.jsonl` there: signed kind 30443 events (made
-  and fetched, with the admission verdict), unwrapped Welcome rumors (kind
-  444 with its tags), GroupContext component lists and bytes per epoch, and
-  kind 445 events (application, Commit, SelfRemove). CTest sets it to
-  `<build>/mdk011-interop-artifacts` (mounted at `/artifacts` in the
-  container). No secret is ever written: no command returns one (there is no
-  `export_secret`), requests are never logged, and each line is checked
-  against the peers' secret keys before it is written.
+- `MDK_DRIVER_ARTIFACT_DIR`: the 0.11 driver appends to `vectors.jsonl`
+  there the wire objects it makes or sees (signed kind 30443 events, made and
+  fetched with the admission verdict; unwrapped Welcome rumors, kind 444 with
+  its tags; kind 445 events: application, Commit, SelfRemove) and the
+  member-visible GroupContext per epoch. A GroupContext is
+  member-confidential, not public: components known to be key-free are
+  dumped as bytes, and 0x8002 (the Blossom group image's key, nonce and
+  upload key) and any id not known to be key-free are redacted to their
+  length and SHA-256, in answers and vectors alike. Each line carries its
+  driver process's `driver_run` id; CTest empties the file before each run
+  and sets the directory to `<build>/mdk011-interop-artifacts` (mounted at
+  `/artifacts` in the container). No secret is ever written: no command
+  returns one (there is no `export_secret`), requests are never logged, and
+  each line is checked against the peers' secret keys before it is written.
 
 CI: `.github/workflows/marmot-mdk011-interop.yml` (nightly and on demand,
 `contents: read`, actions pinned by SHA, no secrets) runs the matrix apart
@@ -190,7 +230,8 @@ per request, in order, logs on stderr, every relay wait bounded by
 
 - **Profile negotiation.** `hello` takes an optional `profiles` list (the
   caller's acceptable profiles, best first) and answers `contract: 2`,
-  `mdk_rev`, `openmls_rev`, `nostr_rev`, `profile` and `commands`; a list
+  `mdk_rev`, `openmls_rev`, `nostr_rev`, `profile`, `configured_as` and
+  `commands`; a list
   without the driver's profile is refused as `unsupported`. Profile names:
   `marmot-legacy-mip` (MDK 0.8: 0xF2EE group data, contract 1, no
   negotiation), `marmot-dictionary-proof-v1` (MDK 0.9.0), `marmot-adopted`
@@ -207,7 +248,7 @@ per request, in order, logs on stderr, every relay wait bounded by
 | Command | Arguments | Answer (0.11) |
 | --- | --- | --- |
 | `hello` | optional `profiles` | pins, profile, commands |
-| `peer_new` | `peer`, `secret` | `pubkey` (a fresh SQLCipher session per peer) |
+| `peer_new` | `peer`, `secret`, optional `client` (the KeyPackage `client` tag; default `White Noise Android`, `null`: none) | `pubkey` (a fresh SQLCipher session per peer) |
 | `publish_key_package` | `peer`, `to` (`[]`: made, not sent); `relays` accepted and unused (adopted KeyPackages carry no relays tag) | `event`, `event_id`, `mdk` (decoded metadata: profile, ref, ciphersuite, extensions, proposals, components, lifetime) |
 | `fetch_key_package` / `parse_key_package` | `peer`, `author` + `from` / `event` | `event`, `mdk`: `parsed` and metadata, or `class` and `error` |
 | `create_group` | `peer`, `name`, `description`, `relays`, `admins`, `key_packages`, `welcome_relays` | `state` and `welcomes` (`to`, `wrapper_id`) |
@@ -217,7 +258,7 @@ per request, in order, logs on stderr, every relay wait bounded by
 | `sync` | `peer`, `group` | the group's kind 445 ingested as a fixpoint, the engine's settlement window waited out and convergence advanced: `results` (`application`: author, kind, content; `commit`; other group events), `inputs`, `failed`, `published` (e.g. the admin's SelfRemove Commit), `state` |
 | `fetch_welcomes` / `accept_welcome` | `peer`, `from` / `wrapper_id` | Welcomes found and joined (rumor kind and tags, `class` on refusal) / the joined group's state |
 | `state` | `peer`, `group` | group, routing id and relays, epoch, name, description, profile, removed, members, admins, component ids |
-| `group_context` | `peer`, `group` | component bytes by id, required proposals/extensions/components, epoch |
+| `group_context` | `peer`, `group` | component bytes by id (key-bearing ones as `{redacted, len, sha256}`), required proposals/extensions/components, epoch |
 | `export_secret`, `group_extension`, `welcome_bytes` | | `unsupported` (0.8 vector commands; no secrets, no 0xF2EE) |
 
 The 0.9.0 probe answers `hello`, `peer_new` and `publish_key_package`, and
