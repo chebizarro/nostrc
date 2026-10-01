@@ -118,6 +118,10 @@ typedef struct {
   const gchar *content_type;  /* of body; NULL: application/octet-stream */
   GBytes *body;               /* the request body, or NULL */
   gsize max_bytes;            /* the answer's body cap (> 0) */
+  /* W25: the URL is someone else's choice (e.g. a group's media server):
+   * connect only to public addresses, checked where the connection is made,
+   * exactly as gh_net_http_get_public_async(). */
+  gboolean public_only;
 } GhNetHttpRequest;
 
 void gh_net_http_send_async(GhNetHttp *self, const GhNetHttpRequest *request,

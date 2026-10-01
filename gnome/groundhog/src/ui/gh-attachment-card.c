@@ -168,6 +168,73 @@ gh_attachment_card_type_icon(const gchar *mime)
   return "text-x-generic-symbolic";
 }
 
+const gchar *
+gh_attachment_card_sniff_extension(GBytes *plaintext)
+{
+  gsize size = 0;
+  const guint8 *data = plaintext ? g_bytes_get_data(plaintext, &size) : NULL;
+  if (size >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff)
+    return "jpg";
+  if (size >= 8 && memcmp(data, "\x89PNG\r\n\x1a\n", 8) == 0)
+    return "png";
+  if (size >= 6 && (memcmp(data, "GIF87a", 6) == 0 || memcmp(data, "GIF89a", 6) == 0))
+    return "gif";
+  if (size >= 12 && memcmp(data, "RIFF", 4) == 0 && memcmp(data + 8, "WEBP", 4) == 0)
+    return "webp";
+  if (size >= 5 && memcmp(data, "%PDF-", 5) == 0)
+    return "pdf";
+  if (size >= 4 && memcmp(data, "PK\x03\x04", 4) == 0)
+    return "zip";
+  return NULL;
+}
+
+static const struct {
+  const gchar *mime, *ext;
+} declared_extensions[] = {
+  { "image/jpeg", "jpg" }, { "image/png", "png" }, { "image/gif", "gif" },
+  { "image/webp", "webp" }, { "application/pdf", "pdf" }, { "text/plain", "txt" },
+  { "application/zip", "zip" }, { "video/mp4", "mp4" }, { "video/webm", "webm" },
+  { "audio/mpeg", "mp3" }, { "audio/ogg", "ogg" }, { "audio/mp4", "m4a" },
+};
+
+/* Extensions a sender may keep when the type says nothing better: documents,
+ * media and archives a file manager opens in a viewer, never something it
+ * runs or launches (.desktop, scripts, executables, installers, links, web
+ * pages that run scripts from file://). */
+static const gchar *const safe_extensions[] = {
+  "txt", "md", "pdf", "rtf", "csv", "odt", "ods", "odp", "doc", "docx", "xls", "xlsx", "ppt",
+  "pptx", "epub", "jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif", "bmp", "tif",
+  "tiff", "mp3", "m4a", "ogg", "oga", "opus", "flac", "wav", "mp4", "m4v", "mov", "webm", "mkv",
+  "zip", "7z", "tar", "gz", "xz", "bz2", "ics", "vcf", NULL,
+};
+
+gchar *
+gh_attachment_card_safe_save_name(const gchar *sender_name, const gchar *mime,
+                                  GBytes *plaintext)
+{
+  /* The bytes decide the extension; the declared type when they can't. */
+  const gchar *ext = gh_attachment_card_sniff_extension(plaintext);
+  for (guint i = 0; !ext && mime && i < G_N_ELEMENTS(declared_extensions); i++)
+    if (g_str_equal(mime, declared_extensions[i].mime))
+      ext = declared_extensions[i].ext;
+  g_autofree gchar *stem = g_strdup(sender_name && *sender_name ? sender_name : "");
+  gchar *dot = strrchr(stem, '.');
+  g_autofree gchar *sender_ext = NULL;
+  if (dot && dot != stem) {
+    sender_ext = g_ascii_strdown(dot + 1, -1);
+    *dot = '\0';
+  }
+  /* Only a harmless extension of the sender's survives, and only when
+   * neither the bytes nor the type name one. */
+  if (!ext && sender_ext && g_strv_contains(safe_extensions, sender_ext))
+    ext = sender_ext;
+  if (!*stem) {
+    g_free(stem);
+    stem = g_strdup(mime && g_str_has_prefix(mime, "image/") ? _("photo") : _("file"));
+  }
+  return ext ? g_strconcat(stem, ".", ext, NULL) : g_steal_pointer(&stem);
+}
+
 gchar *
 gh_attachment_card_suggest_name(const gchar *mime, GBytes *plaintext)
 {
@@ -377,9 +444,16 @@ update(GhAttachmentCard *self)
       state_text = _("Downloaded");
       /* A photo that is not PNG or JPEG (or too large to decode) stays a
        * card: say so rather than show nothing. */
-      const gchar *note = !shown && self->mime && g_str_has_prefix(self->mime, "image/")
-                            ? _("This photo can't be shown here. Save it to open it.")
-                            : NULL;
+      const gchar *note = NULL;
+      if (!shown && self->mime && g_str_has_prefix(self->mime, "image/")) {
+        /* W25 review L4: no nudge to open what isn't the image it claims. */
+        const gchar *sniffed = gh_attachment_card_sniff_extension(
+          gh_attachment_transfer_get_plaintext(self->transfer));
+        gboolean image = sniffed && (g_str_equal(sniffed, "jpg") || g_str_equal(sniffed, "png") ||
+                                     g_str_equal(sniffed, "gif") || g_str_equal(sniffed, "webp"));
+        note = image ? _("This photo can't be shown here. Save it to open it.")
+                     : _("This file isn't the photo it says it is, so it isn't shown.");
+      }
       show_status(self, note, FALSE, FALSE);
       show_buttons(self, FALSE, FALSE, FALSE, TRUE);
       break;

@@ -543,7 +543,9 @@ on_loaded(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 /* A gvfs filesystem is a remote location under a native path: refused
- * before a byte is read. */
+ * before a byte is read. This query fails open (no answer: the file is
+ * read): the path check in gh_attachment_ui_offer_file() is the guard, this
+ * is a second look for mounts outside the known roots (W25 review N7). */
 static void
 on_filesystem_info(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -829,12 +831,13 @@ card_save(GhAttachmentTransfer *transfer, GtkWidget *card, gpointer data)
   if (ui->destroyed || !plaintext)
     return;
   /* A group file's name is the sender's, sanitized (any UTF-8 but NUL,
-   * '/' included, W25); otherwise one from the bytes and the type. */
+   * '/' included, W25), its extension from the bytes or the type, never an
+   * executable's (review L4); otherwise one from the bytes and the type. */
   const gchar *sender_name = gh_attachment_transfer_get_suggested_name(transfer);
-  g_autofree gchar *name =
-    sender_name ? g_strdup(sender_name)
-                : gh_attachment_card_suggest_name(gh_attachment_transfer_get_media_type(transfer),
-                                                  plaintext);
+  const gchar *mime = gh_attachment_transfer_get_media_type(transfer);
+  g_autofree gchar *name = sender_name
+    ? gh_attachment_card_safe_save_name(sender_name, mime, plaintext)
+    : gh_attachment_card_suggest_name(mime, plaintext);
   SaveOp *op = g_new0(SaveOp, 1);
   op->window = g_object_ref(ui->window);
   op->plaintext = g_bytes_ref(plaintext);

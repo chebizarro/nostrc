@@ -10,9 +10,10 @@ G_BEGIN_DECLS
  * files (a reference is kept) as the attachment UI's group delegate
  * (gh_attachment_ui_set_groups()), so an MLS conversation gets the attach
  * button, the sheet and the cards with the NIP-17 rules, and its files go
- * through gh_mls_attachments_send_async(). After gh_attachment_ui_attach()
- * and gh_mls_ui_attach(). Call gh_attachment_ui_groups_changed() when the
- * service changes. */
+ * through gh_mls_attachments_send_async(). Files go where the composer's
+ * text can (gh_mls_send_reason()), and the attach button follows the shown
+ * group as it changes (gh_attachment_ui_groups_changed()). After
+ * gh_attachment_ui_attach() and gh_mls_ui_attach(). */
 void gh_mls_attachment_ui_attach(GhWindow *window, GhMlsAttachments *files);
 
 G_END_DECLS

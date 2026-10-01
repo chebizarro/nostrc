@@ -94,6 +94,16 @@ const gchar *gh_attachment_card_type_icon(const gchar *mime);
 /* The file name Save As suggests for a declared MIME type and the
  * plaintext's magic bytes (plaintext nullable): "photo.jpg", "file.pdf"... */
 gchar *gh_attachment_card_suggest_name(const gchar *mime, GBytes *plaintext);
+/* The extension the plaintext's magic bytes say (jpg, png, gif, webp, pdf,
+ * zip), or NULL. */
+const gchar *gh_attachment_card_sniff_extension(GBytes *plaintext);
+/* Save As for a file whose sender chose its name (W25 review L4;
+ * sender_name already sanitized, nullable): the sender's stem with the
+ * extension of the bytes (sniffed), else of the declared type, else the
+ * sender's own only if it is a document, media or archive extension: never
+ * .desktop, a script, an executable or a launcher. */
+gchar *gh_attachment_card_safe_save_name(const gchar *sender_name, const gchar *mime,
+                                         GBytes *plaintext);
 
 G_END_DECLS
 #endif

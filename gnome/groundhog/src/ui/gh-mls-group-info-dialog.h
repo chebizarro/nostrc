@@ -33,10 +33,11 @@ G_BEGIN_DECLS
  *    header's avatar shows the group's encrypted picture once the user chose
  *    Show Picture (the only fetch: from the group's media server, through
  *    GhNetHttp) and it passed the decode guard; otherwise the initials. A
- *    web-address picture is never loaded (a placeholder); a legacy group
- *    says it can't have one. Admins choose a JPEG or PNG on this device
- *    (metadata removed, encrypted, uploaded) or remove the picture; each is
- *    one Commit.
+ *    web-address picture is never loaded (a placeholder); for a legacy group
+ *    Groundhog says it can't show or change the picture. Admins choose a
+ *    JPEG or PNG on this device (metadata removed, encrypted, uploaded to
+ *    the group's public media servers, named in a confirmation first) or
+ *    remove the picture (confirmed); each is one Commit.
  *  - Group relays (read-only).
  *  - Leave (confirmed; gh_mls_service_leave()): the confirmation says what
  *    it does (gh_mls_service_leave_kind(), gh_mls_leave_copy(); nostrc-2um6):
@@ -92,11 +93,15 @@ void gh_mls_group_info_dialog_set_rename(GhMlsGroupInfoDialog *self, const gchar
                                          const gchar *description);
 /* The picture row's words (NULL: no picture section), whether the header
  * shows the decrypted picture, and an admin's chosen file as the Choose
- * dialog would give it (tests). */
+ * dialog would give it: its confirmation is presented, naming every server
+ * the upload may go to and what they learn (nothing is uploaded before
+ * set-picture-confirm), and Remove's confirmation (tests). */
 const gchar *gh_mls_group_info_dialog_get_picture_status(GhMlsGroupInfoDialog *self);
 gboolean gh_mls_group_info_dialog_get_picture_shown(GhMlsGroupInfoDialog *self);
 void gh_mls_group_info_dialog_set_picture(GhMlsGroupInfoDialog *self, GBytes *file,
                                           const gchar *mime);
+AdwAlertDialog *gh_mls_group_info_dialog_get_set_picture_dialog(GhMlsGroupInfoDialog *self);
+AdwAlertDialog *gh_mls_group_info_dialog_get_remove_picture_dialog(GhMlsGroupInfoDialog *self);
 
 G_END_DECLS
 #endif

@@ -320,17 +320,16 @@ typedef struct {
   gboolean as_account;
   gint64 now;
   GError *last_error; /* the latest server's failure */
-  guint8 *upload_key; /* keyed upload: 32 secret bytes (secure memory), else NULL */
+  nostr_secure_buf upload_key; /* keyed upload: its 32 secret bytes (locked, wiped), else empty */
+  gboolean public_only; /* servers someone else named: public addresses only */
 } Upload;
 
 static void
 upload_free(gpointer data)
 {
   Upload *upload = data;
-  if (upload->upload_key) {
-    secure_wipe(upload->upload_key, 32);
-    g_free(upload->upload_key);
-  }
+  if (upload->upload_key.ptr)
+    secure_free(&upload->upload_key);
   g_bytes_unref(upload->ciphertext);
   g_strfreev(upload->servers);
   g_free(upload->server);
@@ -437,6 +436,7 @@ upload_put(GTask *task, const gchar *auth_json)
     .content_type = "application/octet-stream",
     .body = upload->ciphertext,
     .max_bytes = DESCRIPTOR_MAX_BYTES,
+    .public_only = upload->public_only,
   };
   gh_net_http_send_async(self->http, &request, g_task_get_cancellable(task), on_uploaded, task);
 }
@@ -487,7 +487,7 @@ upload_next(GTask *task)
   }
   upload->now = g_get_real_time() / G_USEC_PER_SEC;
   /* A keyed upload is never the account's: the key is the blob's owner. */
-  upload->as_account = !upload->upload_key && self->sign_async &&
+  upload->as_account = !upload->upload_key.ptr && self->sign_async &&
                        g_hash_table_contains(self->consent, upload->server);
   if (upload->as_account) {
     NostrEvent *event = auth_event_new(self->account_pubkey, upload->sha256, upload->host,
@@ -501,7 +501,7 @@ upload_next(GTask *task)
     return;
   }
   g_autofree gchar *auth = auth_sign_ephemeral(upload->sha256, upload->host, upload->now,
-                                               upload->upload_key);
+                                               upload->upload_key.ptr);
   if (!auth) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
                             "Could not sign the upload");
@@ -566,8 +566,21 @@ upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
   memcpy(upload->sha256, sha256, 65);
   upload->servers = servers ? g_strdupv((gchar **)servers) : gh_blossom_client_dup_servers(self);
   if (upload_key) {
-    upload->upload_key = g_malloc(32);
-    memcpy(upload->upload_key, upload_key, 32);
+    upload->upload_key = secure_alloc(32);
+    if (!upload->upload_key.ptr) {
+      upload_free(upload);
+      g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
+                              "Could not hold the upload key");
+      g_object_unref(task);
+      return;
+    }
+    memcpy(upload->upload_key.ptr, upload_key, 32);
+    /* Servers someone else named (a group's): public addresses only, as for
+     * every download of a URL someone else chose (W25 review M1). */
+    upload->public_only = !self->allow_private_hosts;
+    g_auto(GStrv) usable = gh_blossom_client_dup_public_servers(self, servers);
+    g_strfreev(upload->servers);
+    upload->servers = g_steal_pointer(&usable);
   }
   g_task_set_task_data(task, upload, upload_free);
   if (g_task_return_error_if_cancelled(task)) {
@@ -643,6 +656,20 @@ host_public(const gchar *host)
       return FALSE;
   }
   return TRUE;
+}
+
+GStrv
+gh_blossom_client_dup_public_servers(GhBlossomClient *self, const gchar *const *servers)
+{
+  g_return_val_if_fail(GH_IS_BLOSSOM_CLIENT(self), NULL);
+  g_autoptr(GStrvBuilder) out = g_strv_builder_new();
+  for (guint i = 0; servers && servers[i]; i++) {
+    g_autofree gchar *host = NULL;
+    g_autofree gchar *normalized = normalize_server(servers[i], &host);
+    if (normalized && (self->allow_private_hosts || host_public(host)))
+      g_strv_builder_add(out, servers[i]);
+  }
+  return g_strv_builder_end(out);
 }
 
 /* The path names the blob: its last segment is sha256 (any case), maybe

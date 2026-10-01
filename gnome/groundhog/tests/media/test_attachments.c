@@ -1029,6 +1029,47 @@ assert_no_transient_files(void)
   }
 }
 
+/* Save As for a file whose sender chose its name (W25 review L4): the
+ * sender's stem, the extension of the bytes, else the declared type, else
+ * the sender's own only when it is a document or media extension; never a
+ * launcher, script or executable. */
+static void
+test_save_names(void)
+{
+  static const guint8 png[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0 };
+  static const guint8 jpeg[] = { 0xff, 0xd8, 0xff, 0xe0 };
+  static const guint8 text[] = "#!/bin/sh\nrm -rf ~\n";
+  g_autoptr(GBytes) png_bytes = g_bytes_new_static(png, sizeof png);
+  g_autoptr(GBytes) jpeg_bytes = g_bytes_new_static(jpeg, sizeof jpeg);
+  g_autoptr(GBytes) script = g_bytes_new_static(text, sizeof text - 1);
+  struct {
+    const gchar *sender, *mime;
+    GBytes *bytes;
+    const gchar *want;
+  } cases[] = {
+    { "holiday.desktop", "image/png", png_bytes, "holiday.png" },
+    { "holiday.desktop", "image/png", script, "holiday.png" },
+    { "photo.png.sh", "image/png", script, "photo.png.png" },
+    { "run.sh", "application/octet-stream", script, "run" },
+    { "installer.exe", NULL, script, "installer" },
+    { "report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      NULL, "report.docx" },
+    { "notes.TXT", "application/octet-stream", script, "notes.txt" },
+    { "scan.jpg", "image/png", jpeg_bytes, "scan.jpg" },
+    { "page.html", "text/html", NULL, "page" },
+    { "", "image/png", png_bytes, "photo.png" },
+    { NULL, "application/pdf", NULL, "file.pdf" },
+    { "archive.tar.gz", "application/gzip", NULL, "archive.tar.gz" },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_autofree gchar *name = gh_attachment_card_safe_save_name(cases[i].sender, cases[i].mime,
+                                                               cases[i].bytes);
+    g_assert_cmpstr(name, ==, cases[i].want);
+  }
+  g_assert_cmpstr(gh_attachment_card_sniff_extension(png_bytes), ==, "png");
+  g_assert_null(gh_attachment_card_sniff_extension(script));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1062,6 +1103,7 @@ main(int argc, char **argv)
   ADD("sent-own-file", test_sent_own_file);
   ADD("no-store", test_no_store);
   ADD("card-words", test_card_words);
+  ADD("save-names", test_save_names);
 #undef ADD
   int status = g_test_run();
   assert_no_transient_files();

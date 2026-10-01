@@ -128,9 +128,13 @@ gh_attachment_transfer_get_suggested_name(GhAttachmentTransfer *self)
 static gboolean
 unsafe_char(gunichar c)
 {
+  /* Bidi_Control (U+061C, U+200E/F, U+202A-E, U+2066-9), zero-width marks,
+   * the line and paragraph separators and the BOM, besides controls and
+   * path separators (W25 review N2). */
   return c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0) || c == '/' || c == '\\' ||
-         c == ':' || (c >= 0x200b && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) ||
-         (c >= 0x2066 && c <= 0x2069) || c == 0xfeff;
+         c == ':' || c == 0x061c || (c >= 0x200b && c <= 0x200f) || c == 0x2028 ||
+         c == 0x2029 || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) ||
+         c == 0xfeff;
 }
 
 #define SAFE_NAME_MAX 200 /* bytes, well under every filesystem's 255 */

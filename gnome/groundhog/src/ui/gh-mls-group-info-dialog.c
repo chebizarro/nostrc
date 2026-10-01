@@ -164,6 +164,8 @@ struct _GhMlsGroupInfoDialog {
   GtkWidget *show_picture_button;
   GtkWidget *set_picture_button;
   GtkWidget *remove_picture_button;
+  AdwAlertDialog *set_picture_dialog;
+  AdwAlertDialog *remove_picture_dialog;
 
   GhMlsGroup *group;
   GhMlsUiContext context;   /* objects referenced; service weak-watched */
@@ -178,6 +180,8 @@ struct _GhMlsGroupInfoDialog {
   GCancellable *picture_op; /* fetching or setting the picture */
   gint picture_state;       /* GhMlsPictureState shown, -1 before */
   gboolean picture_shown;   /* the avatar shows the decrypted picture */
+  GBytes *offered_picture;  /* chosen, awaiting the upload's confirmation */
+  gchar *offered_mime;
 };
 
 G_DEFINE_FINAL_TYPE(GhMlsGroupInfoDialog, gh_mls_group_info_dialog, ADW_TYPE_DIALOG)
@@ -361,12 +365,15 @@ sync_relays(GhMlsGroupInfoDialog *self)
 /* ---- the picture (W25, nostrc-m6tp) ------------------------------------------------- */
 
 static gchar *
-picture_text(GhMlsGroupInfoDialog *self, GhMlsPictureState state, const gchar *host)
+picture_text(GhMlsGroupInfoDialog *self, GhMlsPictureState state, const gchar *const *hosts)
 {
+  g_autofree gchar *where = gh_mls_describe_hosts(hosts);
+  guint n = hosts ? g_strv_length((gchar **)hosts) : 0;
   switch (state) {
   case GH_MLS_PICTURE_UNSUPPORTED:
-    return g_strdup(_("This group was made with an older kind of encrypted group, which can’t "
-                      "have a picture."));
+    /* W25 review L2: such a group may have a picture others see. */
+    return g_strdup(_("Groundhog can’t show or change the picture of this older kind of "
+                      "group."));
   case GH_MLS_PICTURE_WEB:
     return g_strdup(_("The group’s picture is a web address. Groundhog doesn’t load pictures "
                       "from the web, so it shows the group’s initials."));
@@ -374,13 +381,20 @@ picture_text(GhMlsGroupInfoDialog *self, GhMlsPictureState state, const gchar *h
     return g_strdup(_("The group’s picture is a web address Groundhog can’t check, so it’s "
                       "never loaded."));
   case GH_MLS_PICTURE_AVAILABLE:
-    if (!host)
+    if (!where)
       return g_strdup(_("An encrypted picture. Show Picture downloads it."));
+    /* W25 review L3: every server that may be asked, in order. */
+    if (n == 1)
+      return gh_mls_attachments_get_tor(self->files)
+        ? g_strdup_printf(_("An encrypted picture. Show Picture downloads it from %s through "
+                            "Tor."), where)
+        : g_strdup_printf(_("An encrypted picture. Show Picture downloads it from %s, which can "
+                            "see your IP address."), where);
     return gh_mls_attachments_get_tor(self->files)
-      ? g_strdup_printf(_("An encrypted picture. Show Picture downloads it from %s through "
-                          "Tor."), host)
-      : g_strdup_printf(_("An encrypted picture. Show Picture downloads it from %s, which can "
-                          "see your IP address."), host);
+      ? g_strdup_printf(_("An encrypted picture. Show Picture downloads it from the first of %s "
+                          "that has it, through Tor."), where)
+      : g_strdup_printf(_("An encrypted picture. Show Picture downloads it from the first of %s "
+                          "that has it; each server asked can see your IP address."), where);
   case GH_MLS_PICTURE_NO_SERVER:
     return g_strdup(_("An encrypted picture, but the group doesn’t say which server keeps it, "
                       "so it can’t be shown."));
@@ -400,9 +414,9 @@ sync_picture(GhMlsGroupInfoDialog *self)
     return;
   }
   g_autoptr(GBytes) picture = NULL;
-  g_autofree gchar *host = NULL;
+  g_auto(GStrv) hosts = NULL;
   GhMlsPictureState state = gh_mls_attachments_get_picture(self->files, self->group, &picture,
-                                                           &host);
+                                                           &hosts);
   /* Shown only after the decode guard, with GTK's own loaders. */
   g_autoptr(GdkTexture) texture = NULL;
   if (picture && gh_attachment_check_preview(picture, NULL, NULL, NULL, NULL))
@@ -410,7 +424,7 @@ sync_picture(GhMlsGroupInfoDialog *self)
   adw_avatar_set_custom_image(self->avatar, texture ? GDK_PAINTABLE(texture) : NULL);
   self->picture_shown = texture != NULL;
   self->picture_state = state;
-  g_autofree gchar *text = picture_text(self, state, host);
+  g_autofree gchar *text = picture_text(self, state, (const gchar *const *)hosts);
   adw_action_row_set_subtitle(self->picture_row, text);
   gboolean busy = self->picture_op != NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->picture_spinner), busy);
@@ -714,6 +728,11 @@ on_picture_fetched(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GBytes) picture =
     gh_mls_attachments_fetch_picture_finish(GH_MLS_ATTACHMENTS(source), result, &error);
   picture_finished(self, picture ? NULL : error, FALSE, NULL);
+  /* W25 review N4: said, not only shown. */
+  if (picture && !gtk_widget_in_destruction(GTK_WIDGET(self)) &&
+      gtk_widget_get_mapped(GTK_WIDGET(self)))
+    gtk_accessible_announce(GTK_ACCESSIBLE(self), _("The group’s picture is shown"),
+                            GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
   g_object_unref(self);
 }
 
@@ -756,6 +775,19 @@ on_picture_removed(GObject *source, GAsyncResult *result, gpointer data)
   g_object_unref(self);
 }
 
+static void
+start_set_picture(GhMlsGroupInfoDialog *self, GBytes *file, const gchar *mime)
+{
+  if (!self->files || self->picture_op || !can_manage(self))
+    return;
+  self->picture_op = g_cancellable_new();
+  self->pending++;
+  gh_mls_attachments_set_picture_async(self->files, self->group, file, mime, self->picture_op,
+                                       on_picture_set, g_object_ref(self));
+  sync_picture(self);
+}
+
+/* W25 review M1: nothing is uploaded before the admin saw where it goes. */
 void
 gh_mls_group_info_dialog_set_picture(GhMlsGroupInfoDialog *self, GBytes *file,
                                      const gchar *mime)
@@ -764,11 +796,45 @@ gh_mls_group_info_dialog_set_picture(GhMlsGroupInfoDialog *self, GBytes *file,
   g_return_if_fail(file != NULL);
   if (!self->files || self->picture_op || !can_manage(self))
     return;
-  self->picture_op = g_cancellable_new();
-  self->pending++;
-  gh_mls_attachments_set_picture_async(self->files, self->group, file, mime, self->picture_op,
-                                       on_picture_set, g_object_ref(self));
-  sync_picture(self);
+  g_auto(GStrv) hosts = gh_mls_attachments_dup_picture_upload_hosts(self->files, self->group);
+  g_autofree gchar *note = gh_mls_picture_upload_note(
+    (const gchar *const *)hosts, gh_mls_attachments_get_tor(self->files));
+  if (!note) {
+    toast(self, _("This group doesn’t name a server for its pictures, so one can’t be set "
+                  "here."));
+    return;
+  }
+  g_clear_pointer(&self->offered_picture, g_bytes_unref);
+  g_clear_pointer(&self->offered_mime, g_free);
+  self->offered_picture = g_bytes_ref(file);
+  self->offered_mime = g_strdup(mime);
+  adw_alert_dialog_set_body(self->set_picture_dialog, note);
+  adw_dialog_present(ADW_DIALOG(self->set_picture_dialog), GTK_WIDGET(self));
+}
+
+static void
+on_set_picture_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
+{
+  (void)dialog;
+  GhMlsGroupInfoDialog *self = data;
+  g_autoptr(GBytes) file = g_steal_pointer(&self->offered_picture);
+  g_autofree gchar *mime = g_steal_pointer(&self->offered_mime);
+  if (file && g_strcmp0(response, "set-picture-confirm") == 0)
+    start_set_picture(self, file, mime);
+}
+
+AdwAlertDialog *
+gh_mls_group_info_dialog_get_set_picture_dialog(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->set_picture_dialog;
+}
+
+AdwAlertDialog *
+gh_mls_group_info_dialog_get_remove_picture_dialog(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->remove_picture_dialog;
 }
 
 static void
@@ -832,6 +898,7 @@ action_set_picture(GtkWidget *widget, const gchar *action, GVariant *parameter)
                        on_picture_chosen, g_object_ref(self));
 }
 
+/* W25 review L5: for every member, so confirmed first. */
 static void
 action_remove_picture(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
@@ -839,6 +906,17 @@ action_remove_picture(GtkWidget *widget, const gchar *action, GVariant *paramete
   (void)action;
   (void)parameter;
   if (!self->files || self->picture_op || !can_manage(self))
+    return;
+  adw_dialog_present(ADW_DIALOG(self->remove_picture_dialog), widget);
+}
+
+static void
+on_remove_picture_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
+{
+  (void)dialog;
+  GhMlsGroupInfoDialog *self = data;
+  if (g_strcmp0(response, "remove-picture-confirm") != 0 || !self->files ||
+      self->picture_op || !can_manage(self))
     return;
   self->picture_op = g_cancellable_new();
   self->pending++;
@@ -1114,6 +1192,8 @@ gh_mls_group_info_dialog_finalize(GObject *object)
   g_free(self->removing);
   g_free(self->verifying);
   g_free(self->last_toast);
+  g_clear_pointer(&self->offered_picture, g_bytes_unref);
+  g_free(self->offered_mime);
   G_OBJECT_CLASS(gh_mls_group_info_dialog_parent_class)->finalize(object);
 }
 
@@ -1158,6 +1238,8 @@ gh_mls_group_info_dialog_class_init(GhMlsGroupInfoDialogClass *klass)
   BIND(show_picture_button);
   BIND(set_picture_button);
   BIND(remove_picture_button);
+  BIND(set_picture_dialog);
+  BIND(remove_picture_dialog);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "mls-group.add-members", NULL,
                                   action_add_members);
@@ -1185,6 +1267,10 @@ gh_mls_group_info_dialog_init(GhMlsGroupInfoDialog *self)
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect(self->leave_dialog, "response", G_CALLBACK(on_leave_response), self);
   g_signal_connect(self->remove_dialog, "response", G_CALLBACK(on_remove_response), self);
+  g_signal_connect(self->set_picture_dialog, "response", G_CALLBACK(on_set_picture_response),
+                   self);
+  g_signal_connect(self->remove_picture_dialog, "response",
+                   G_CALLBACK(on_remove_picture_response), self);
   g_signal_connect(self->verify_dialog, "response", G_CALLBACK(on_verify_response), self);
   g_signal_connect_swapped(self->add_picker, "changed", G_CALLBACK(sync_add_reason), self);
   g_signal_connect_swapped(self->name_row, "entry-activated", G_CALLBACK(on_rename_activated),

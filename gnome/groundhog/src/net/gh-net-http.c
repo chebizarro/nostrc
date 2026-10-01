@@ -683,8 +683,8 @@ gh_net_http_send_async(GhNetHttp *self, const GhNetHttpRequest *request,
                    g_str_equal(request->method, SOUP_METHOD_HEAD));
   g_return_if_fail(header_value_ok(request->accept) && header_value_ok(request->authorization) &&
                    header_value_ok(request->content_type));
-  request_start(self, request, request->uri, request->accept, request->max_bytes, FALSE,
-                cancellable, callback, user_data);
+  request_start(self, request, request->uri, request->accept, request->max_bytes,
+                request->public_only, cancellable, callback, user_data);
 }
 
 GBytes *

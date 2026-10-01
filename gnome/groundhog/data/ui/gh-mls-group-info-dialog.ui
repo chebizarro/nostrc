@@ -92,6 +92,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="use-underline">true</property>
                                   </object>
                                 </property>
+                                <accessibility>
+                                  <property name="label" translatable="yes">Choose Group Picture</property>
+                                </accessibility>
                               </object>
                             </property>
                             <child>
@@ -398,6 +401,25 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <responses>
       <response id="remove-cancel" translatable="yes">_Cancel</response>
       <response id="remove-confirm" translatable="yes" appearance="destructive">_Remove</response>
+    </responses>
+  </object>
+  <object class="AdwAlertDialog" id="set_picture_dialog">
+    <property name="heading" translatable="yes">Set This Picture for Everyone?</property>
+    <property name="default-response">set-picture-cancel</property>
+    <property name="close-response">set-picture-cancel</property>
+    <responses>
+      <response id="set-picture-cancel" translatable="yes">_Cancel</response>
+      <response id="set-picture-confirm" translatable="yes" appearance="suggested">_Upload and Set</response>
+    </responses>
+  </object>
+  <object class="AdwAlertDialog" id="remove_picture_dialog">
+    <property name="heading" translatable="yes">Remove the Picture for Everyone?</property>
+    <property name="body" translatable="yes">Every member will see the group’s initials instead. To bring the picture back, choose it again.</property>
+    <property name="default-response">remove-picture-cancel</property>
+    <property name="close-response">remove-picture-cancel</property>
+    <responses>
+      <response id="remove-picture-cancel" translatable="yes">_Cancel</response>
+      <response id="remove-picture-confirm" translatable="yes" appearance="destructive">_Remove</response>
     </responses>
   </object>
 </interface>

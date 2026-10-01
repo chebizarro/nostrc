@@ -4527,7 +4527,7 @@ gh_mls_service_get_components(GhMlsService *self, GhMlsGroup *group,
   MarmotError err = marmot_get_group_components(self->marmot, &group->gid, out);
   if (err == MARMOT_ERR_UNSUPPORTED) {
     g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
-                        "This kind of group has no picture or media settings");
+                        "Groundhog reads no app components of this older kind of group");
     return FALSE;
   }
   return err == MARMOT_OK || marmot_fail(self, err, "The group's settings can't be read", error);
@@ -4548,17 +4548,18 @@ gh_mls_service_set_image_async(GhMlsService *self, GhMlsGroup *group,
     g_object_unref(task);
     return;
   }
-  /* A legacy (0xF2EE) group: libmarmot writes no MIP-01 image fields. */
+  /* A legacy (0xF2EE) group: libmarmot writes no MIP-01 image fields (its
+   * group may still have a picture others set; nostrc-g5zw). */
   if (!gh_mls_service_get_adopted(self, group)) {
     g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
-                            "This group was made with an older kind of encrypted group, which "
-                            "can't have a picture");
+                            "Groundhog can't change the picture of this older kind of group");
     g_object_unref(task);
     return;
   }
   if (image && image->present) {
     op->image = *image;
-    op->image.media_type = g_strdup(image->media_type);
+    /* libmarmot's clear free()s it (W25 review N9). */
+    op->image.media_type = image->media_type ? strdup(image->media_type) : NULL;
     if (!op->image.media_type) {
       g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                               "A picture needs its type");
@@ -4568,6 +4569,43 @@ gh_mls_service_set_image_async(GhMlsService *self, GhMlsGroup *group,
   }
   stage_change(task, group, produce_image, op);
 }
+
+#ifdef GH_MLS_TEST_HOOKS
+static MarmotError
+produce_media_policy(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
+{
+  Op *op = data;
+  char *kinds[] = { (char *)MARMOT_MEDIA_LOCATOR_BLOSSOM_V1, NULL };
+  guint n = g_strv_length(op->relays);
+  g_autofree MarmotMediaBlobEndpoint *endpoints = g_new0(MarmotMediaBlobEndpoint, MAX(n, 1));
+  for (guint i = 0; i < n; i++) {
+    endpoints[i].locator_kind = (char *)MARMOT_MEDIA_LOCATOR_BLOSSOM_V1;
+    endpoints[i].base_url = op->relays[i];
+  }
+  MarmotGroupMediaPolicy policy = { kinds, 1, endpoints, n };
+  return marmot_update_group_media_policy(marmot, gid, &policy, out);
+}
+
+void
+gh_mls_service_test_set_media_policy_async(GhMlsService *self, GhMlsGroup *group,
+                                           const gchar *const *endpoints,
+                                           GCancellable *cancellable,
+                                           GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  GTask *task = op_task(self, OP_METADATA, group, cancellable, callback, user_data,
+                        gh_mls_service_change_finish);
+  Op *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!check_change(self, group, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  op->relays = g_strdupv((gchar **)endpoints);
+  stage_change(task, group, produce_media_policy, op);
+}
+#endif
 
 void
 gh_mls_service_clear_avatar_url_async(GhMlsService *self, GhMlsGroup *group,
@@ -4586,7 +4624,7 @@ gh_mls_service_clear_avatar_url_async(GhMlsService *self, GhMlsGroup *group,
   }
   if (!gh_mls_service_get_adopted(self, group)) {
     g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
-                            "This kind of group has no picture");
+                            "Groundhog can't change the picture of this older kind of group");
     g_object_unref(task);
     return;
   }

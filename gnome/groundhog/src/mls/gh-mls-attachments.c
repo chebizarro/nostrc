@@ -399,6 +399,85 @@ host_of_url(const gchar *url)
   return uri && g_uri_get_host(uri) ? g_strdup(g_uri_get_host(uri)) : NULL;
 }
 
+/* The hosts, in order and once each, of the URLs this client may contact
+ * (public hosts only, as GhBlossomClient enforces for downloads). */
+static GStrv
+public_hosts(GhMlsAttachments *self, const gchar *const *urls)
+{
+  g_autoptr(GStrvBuilder) hosts = g_strv_builder_new();
+  GhBlossomClient *client = client_of(self);
+  g_auto(GStrv) usable = client ? gh_blossom_client_dup_public_servers(client, urls)
+                                : g_new0(gchar *, 1);
+  g_autoptr(GPtrArray) seen = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; usable[i]; i++) {
+    gchar *host = host_of_url(usable[i]);
+    gboolean dup = !host;
+    for (guint k = 0; !dup && k < seen->len; k++)
+      dup = g_str_equal(g_ptr_array_index(seen, k), host);
+    if (dup) {
+      g_free(host);
+      continue;
+    }
+    g_strv_builder_add(hosts, host);
+    g_ptr_array_add(seen, host);
+  }
+  return g_strv_builder_end(hosts);
+}
+
+gchar *
+gh_mls_describe_hosts(const gchar *const *hosts)
+{
+  guint n = hosts ? g_strv_length((gchar **)hosts) : 0;
+  if (n == 0)
+    return NULL;
+  if (n == 1)
+    return g_strdup(hosts[0]);
+  g_autofree gchar *head = g_strjoinv(", ", (gchar **)hosts);
+  /* "a, b, c" -> "a, b or c" */
+  gchar *last_comma = g_strrstr(head, ", ");
+  *last_comma = '\0';
+  /* TRANSLATORS: the last of several servers: "a.example, b.example or c.example". */
+  return g_strdup_printf(_("%s or %s"), head, last_comma + 2);
+}
+
+gchar *
+gh_mls_download_note(const gchar *const *hosts, gboolean tor)
+{
+  g_autofree gchar *where = gh_mls_describe_hosts(hosts);
+  guint n = hosts ? g_strv_length((gchar **)hosts) : 0;
+  if (!where)
+    return g_strdup(_("No server this file names can be contacted, so it can't be downloaded"));
+  if (n == 1)
+    return tor ? g_strdup_printf(_("Downloads the encrypted file from %s through Tor"), where)
+               : g_strdup_printf(_("Downloads the encrypted file from %s, which can see your IP "
+                                   "address"), where);
+  return tor ? g_strdup_printf(_("Downloads the encrypted file from the first of %s that has it, "
+                                 "through Tor"), where)
+             : g_strdup_printf(_("Downloads the encrypted file from the first of %s that has it; "
+                                 "each server asked can see your IP address"), where);
+}
+
+gchar *
+gh_mls_picture_upload_note(const gchar *const *hosts, gboolean tor)
+{
+  g_autofree gchar *where = gh_mls_describe_hosts(hosts);
+  guint n = hosts ? g_strv_length((gchar **)hosts) : 0;
+  if (!where)
+    return NULL;
+  if (n == 1)
+    return tor ? g_strdup_printf(_("The picture is encrypted on this device, then uploaded to %s "
+                                   "through Tor. Everyone in the group will see it."), where)
+               : g_strdup_printf(_("The picture is encrypted on this device, then uploaded to %s, "
+                                   "which can see your IP address. Everyone in the group will see "
+                                   "it."), where);
+  return tor ? g_strdup_printf(_("The picture is encrypted on this device, then uploaded to the "
+                                 "first of %s that takes it, through Tor. Everyone in the group "
+                                 "will see it."), where)
+             : g_strdup_printf(_("The picture is encrypted on this device, then uploaded to the "
+                                 "first of %s that takes it; each server asked can see your IP "
+                                 "address. Everyone in the group will see it."), where);
+}
+
 void
 gh_mls_attachments_download(GhMlsAttachments *self, GhAttachmentTransfer *transfer)
 {
@@ -454,14 +533,18 @@ gh_mls_attachments_download_note(GhMlsAttachments *self, GhAttachmentTransfer *t
   Entry *entry = transfer ? entry_of(self, transfer) : NULL;
   if (!entry || !entry->attachment)
     return NULL;
+  /* Every server Download may ask, in order: the sender's locators, then
+   * the group's media servers (W25 review L3). */
   g_auto(GStrv) own = gh_mls_attachment_dup_blossom_urls(entry->attachment);
-  g_autofree gchar *host = host_of_url(own[0]);
-  if (!host)
-    return g_strdup(_("Downloads the encrypted file from the group's file server"));
-  return gh_attachments_get_tor(self->attachments)
-    ? g_strdup_printf(_("Downloads the encrypted file from %s through Tor"), host)
-    : g_strdup_printf(_("Downloads the encrypted file from %s, which can see your IP address"),
-                      host);
+  g_auto(GStrv) fallbacks = service_of(self) ? fallback_urls(self, entry) : NULL;
+  g_autoptr(GStrvBuilder) all = g_strv_builder_new();
+  g_strv_builder_addv(all, (const char **)own);
+  if (fallbacks)
+    g_strv_builder_addv(all, (const char **)fallbacks);
+  g_auto(GStrv) urls = g_strv_builder_end(all);
+  g_auto(GStrv) hosts = public_hosts(self, (const gchar *const *)urls);
+  return gh_mls_download_note((const gchar *const *)hosts,
+                              gh_attachments_get_tor(self->attachments));
 }
 
 guint
@@ -701,13 +784,13 @@ gh_mls_picture_may_load(GhMlsPictureState state, gboolean remote_images)
 
 GhMlsPictureState
 gh_mls_attachments_get_picture(GhMlsAttachments *self, GhMlsGroup *group, GBytes **out_picture,
-                               gchar **out_host)
+                               GStrv *out_hosts)
 {
   g_return_val_if_fail(GH_IS_MLS_ATTACHMENTS(self), GH_MLS_PICTURE_NONE);
   if (out_picture)
     *out_picture = NULL;
-  if (out_host)
-    *out_host = NULL;
+  if (out_hosts)
+    *out_hosts = NULL;
   if (!service_of(self) || !GH_IS_MLS_GROUP(group))
     return GH_MLS_PICTURE_NONE;
   MarmotGroupComponents c;
@@ -726,14 +809,16 @@ gh_mls_attachments_get_picture(GhMlsAttachments *self, GhMlsGroup *group, GBytes
     g_autoptr(GBytes) cached = store && picture_id
       ? gh_store_group_image_get(store, gid, picture_id, NULL, NULL) : NULL;
     g_auto(GStrv) urls = gh_mls_media_picture_urls(&c);
+    /* Only servers Show Picture may contact (public hosts). */
+    g_auto(GStrv) hosts = public_hosts(self, (const gchar *const *)urls);
     if (cached) {
       state = GH_MLS_PICTURE_READY;
       if (out_picture)
         *out_picture = g_steal_pointer(&cached);
-    } else if (!urls[0]) {
+    } else if (!hosts[0]) {
       state = GH_MLS_PICTURE_NO_SERVER;
-    } else if (out_host) {
-      *out_host = host_of_url(urls[0]);
+    } else if (out_hosts) {
+      *out_hosts = g_steal_pointer(&hosts);
     }
   }
   marmot_group_components_clear(&c);
@@ -936,9 +1021,12 @@ gh_mls_attachments_set_picture_async(GhMlsAttachments *self, GhMlsGroup *group, 
     return;
   }
   /* 0x8002 names no server: members look on the group's media servers, so
-   * the picture goes there (MDK uploads it to its default media server). */
-  g_auto(GStrv) servers = gh_mls_media_dup_servers(&c);
+   * the picture goes there (MDK uploads it to its default media server),
+   * public hosts only (W25 review M1; the upload filters again). */
+  g_auto(GStrv) named = gh_mls_media_dup_servers(&c);
   marmot_group_components_clear(&c);
+  g_auto(GStrv) servers = gh_blossom_client_dup_public_servers(client_of(self),
+                                                               (const gchar *const *)named);
   if (!servers[0]) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER,
                             "The group names no media server for its picture");
@@ -955,6 +1043,19 @@ gh_mls_attachments_set_picture_async(GhMlsAttachments *self, GhMlsGroup *group, 
   gh_blossom_client_upload_keyed_async(client_of(self), (const gchar *const *)servers,
                                        op->ciphertext, sha, op->image.image_upload_key,
                                        cancellable, on_picture_uploaded, task);
+}
+
+GStrv
+gh_mls_attachments_dup_picture_upload_hosts(GhMlsAttachments *self, GhMlsGroup *group)
+{
+  g_return_val_if_fail(GH_IS_MLS_ATTACHMENTS(self), NULL);
+  MarmotGroupComponents c;
+  if (!service_of(self) || !GH_IS_MLS_GROUP(group) ||
+      !gh_mls_service_get_components(self->service, group, &c, NULL))
+    return g_new0(gchar *, 1);
+  g_auto(GStrv) named = gh_mls_media_dup_servers(&c);
+  marmot_group_components_clear(&c);
+  return public_hosts(self, (const gchar *const *)named);
 }
 
 gboolean

@@ -1721,8 +1721,7 @@ test_gui_group_files(void)
   g_assert_true(gh_window_open_item(window, conversation));
   GhMlsGroupInfoDialog *info = show_info(window, conversation);
   g_assert_cmpstr(gh_mls_group_info_dialog_get_picture_status(info), ==,
-                  "This group was made with an older kind of encrypted group, which can’t have "
-                  "a picture.");
+                  "Groundhog can’t show or change the picture of this older kind of group.");
   g_assert_false(gh_mls_group_info_dialog_get_picture_shown(info));
   const gchar *picture_actions[] = { "mls-group.set-picture", "mls-group.show-picture",
                                       "mls-group.remove-picture" };

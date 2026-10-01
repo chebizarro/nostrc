@@ -52,8 +52,11 @@ G_BEGIN_DECLS
  *    hash, opened, and kept in the encrypted store (gh_store_group_image_*)
  *    for that very state. An admin sets one (a JPEG or PNG on this device,
  *    metadata removed, encrypted, uploaded to the group's media servers
- *    signed by the picture's own upload key, then one Commit) or removes it.
- *    A legacy group has none: GH_MLS_PICTURE_UNSUPPORTED.
+ *    whose host is public -- the rule for every URL someone else names, W25
+ *    review M1 -- signed by the picture's own upload key, then one Commit)
+ *    or removes it; the window confirms both first, naming every server.
+ *    Groundhog has no picture support for a legacy group:
+ *    GH_MLS_PICTURE_UNSUPPORTED.
  */
 
 #define GH_MLS_ATTACHMENTS_SEND_TRIES 3
@@ -128,10 +131,16 @@ GhMlsPictureState gh_mls_picture_state_for_source(MarmotGroupAvatarSource source
 gboolean gh_mls_picture_may_load(GhMlsPictureState state, gboolean remote_images);
 
 /* group's picture now: the state, and for READY its bytes (wiped when freed),
- * for AVAILABLE the host Show Picture contacts. Reads the store, never the
- * network; forgets a stored picture the group no longer has. */
+ * for AVAILABLE every host Show Picture may contact, in order (public hosts
+ * only; with none, NO_SERVER). Reads the store, never the network; forgets a
+ * stored picture the group no longer has. */
 GhMlsPictureState gh_mls_attachments_get_picture(GhMlsAttachments *self, GhMlsGroup *group,
-                                                 GBytes **out_picture, gchar **out_host);
+                                                 GBytes **out_picture, GStrv *out_hosts);
+/* The hosts a new picture of group would be uploaded to, in order: the
+ * group's verified media servers whose host is public (W25 review M1);
+ * empty when there is none (set_picture then fails with NO_SERVER). For the
+ * admin's confirmation (gh_mls_picture_upload_note()). */
+GStrv gh_mls_attachments_dup_picture_upload_hosts(GhMlsAttachments *self, GhMlsGroup *group);
 /* The user's Show Picture: fetch, check, open and keep it. */
 void gh_mls_attachments_fetch_picture_async(GhMlsAttachments *self, GhMlsGroup *group,
                                             GCancellable *cancellable,
@@ -147,6 +156,16 @@ void gh_mls_attachments_set_picture_async(GhMlsAttachments *self, GhMlsGroup *gr
                                           GAsyncReadyCallback callback, gpointer user_data);
 gboolean gh_mls_attachments_set_picture_finish(GhMlsAttachments *self, GAsyncResult *result,
                                                GError **error);
+
+/* Copy (W25 review L3: every server that may be asked is named).
+ * "a.example", "a.example or b.example", "a.example, b.example or c.example";
+ * NULL for none. */
+gchar *gh_mls_describe_hosts(const gchar *const *hosts);
+/* Download's note for a file whose servers are hosts (in the order asked). */
+gchar *gh_mls_download_note(const gchar *const *hosts, gboolean tor);
+/* The admin's confirmation before a picture upload: where it goes, what
+ * the server learns, who sees it. NULL without a host. */
+gchar *gh_mls_picture_upload_note(const gchar *const *hosts, gboolean tor);
 
 /* Whether the network mode is Tor (what a fetch reveals to the server). */
 gboolean gh_mls_attachments_get_tor(GhMlsAttachments *self);

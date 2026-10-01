@@ -132,16 +132,27 @@ gchar *gh_blossom_client_upload_finish(GhBlossomClient *self, GAsyncResult *resu
 
 /* As upload_async(), for a blob another key owns (W25, nostrc-m6tp): an
  * encrypted group picture, whose 0x8002 state names the secp256k1
- * upload_key (copied, wiped when done) that may replace or delete it, as
- * MDK uploads it. The authorization is signed with that key, never the
- * account's (no consent applies), and the servers are the given list (the
- * group's own media servers), not blossom-servers. Finishes with
+ * upload_key (copied into locked memory, wiped when done) that may replace
+ * or delete it, as MDK uploads it. The authorization is signed with that
+ * key, never the account's (no consent applies), and the servers are the
+ * given list (the group's own media servers), not blossom-servers. Those
+ * are someone else's choice, so they get the download rule (W25 review M1):
+ * a server whose host is not public (loopback, private, link-local, local
+ * names; gh_blossom_client_dup_public_servers()) is never contacted, and the
+ * connection itself is public-only (GhNetHttpRequest.public_only). With no
+ * server left: GH_BLOSSOM_ERROR_NO_SERVER, before any request. Finishes with
  * gh_blossom_client_upload_finish(). */
 void gh_blossom_client_upload_keyed_async(GhBlossomClient *self, const gchar *const *servers,
                                           GBytes *ciphertext, const gchar *sha256_hex,
                                           const guint8 upload_key[32],
                                           GCancellable *cancellable,
                                           GAsyncReadyCallback callback, gpointer user_data);
+
+/* The servers of a list someone else named that this client may contact:
+ * http(s) URLs whose host is public (as for downloads; any host with
+ * gh_blossom_client_set_allow_private_hosts(), tests only), in order. */
+GStrv gh_blossom_client_dup_public_servers(GhBlossomClient *self,
+                                           const gchar *const *servers);
 
 /* Downloads the ciphertext at url (the kind-15 content), whose SHA-256 is
  * sha256_hex (the message's x), into memory. size is the message's size tag

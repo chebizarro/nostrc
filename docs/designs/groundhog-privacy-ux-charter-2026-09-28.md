@@ -301,6 +301,15 @@ CREATE INDEX messages_by_expiry ON messages (expires_at) WHERE expires_at IS NOT
 -- Schema v4 (W18) adds messages.seq and conversations.admit_seq, read_seq,
 -- reply_read_at/_id and timer_changed_at, and outbox_events.no_inbox: see the
 -- read-state amendment below, §3.6 and §3.7.
+-- Schema v5 (W25, encrypted group files and pictures) adds messages.mls_epoch
+-- (the source epoch libmarmot authenticated for an MLS inner event; NULL
+-- elsewhere and on older rows), message_media (message_id, file_id: the media
+-- cache identities an MLS message's attachments are bound to; a decrypted
+-- copy in `media` exists only while such a message does, and goes with the
+-- last of them) and group_images (an encrypted group's decrypted picture,
+-- keyed by the component state that named it; deleted on forget and Clear).
+-- Every migration is one-way: a store at v5 is refused by an older Groundhog
+-- (NEWER_SCHEMA), which therefore cannot open it after an upgrade.
 
 CREATE TABLE seen (ns INTEGER NOT NULL, id TEXT NOT NULL, first_seen INTEGER NOT NULL,
                    PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg,

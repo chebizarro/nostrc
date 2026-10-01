@@ -95,6 +95,10 @@ template $GhMlsGroupInfoDialog: Adw.Dialog {
                   label: _("_Choose…");
                   use-underline: true;
                 };
+
+                accessibility {
+                  label: _("Choose Group Picture");
+                }
               };
 
               Adw.ActionRow picture_row {
@@ -381,5 +385,31 @@ Adw.AlertDialog remove_dialog {
   responses [
     remove-cancel: _("_Cancel"),
     remove-confirm: _("_Remove") destructive,
+  ]
+}
+
+// W25 review M1: before a group picture is uploaded, where it goes (every
+// server that may take it) and what that server learns (body from C).
+Adw.AlertDialog set_picture_dialog {
+  heading: _("Set This Picture for Everyone?");
+  default-response: "set-picture-cancel";
+  close-response: "set-picture-cancel";
+
+  responses [
+    set-picture-cancel: _("_Cancel"),
+    set-picture-confirm: _("_Upload and Set") suggested,
+  ]
+}
+
+// W25 review L5: removing the picture changes it for every member.
+Adw.AlertDialog remove_picture_dialog {
+  heading: _("Remove the Picture for Everyone?");
+  body: _("Every member will see the group’s initials instead. To bring the picture back, choose it again.");
+  default-response: "remove-picture-cancel";
+  close-response: "remove-picture-cancel";
+
+  responses [
+    remove-picture-cancel: _("_Cancel"),
+    remove-picture-confirm: _("_Remove") destructive,
   ]
 }

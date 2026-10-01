@@ -581,6 +581,7 @@ test_legacy_group_has_no_picture(void)
 {
   World w;
   const guint keys[] = { ALICE, BOB };
+  world_legacy_only = TRUE;   /* MDK 0.8 KeyPackages only: a legacy group */
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
@@ -611,6 +612,192 @@ test_legacy_group_has_no_picture(void)
   g_assert_cmpuint(blossom_fixture_requests(blossom)->len, ==, 0);
   g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, epoch);
   files_down(&fa);
+  blossom_fixture_free(blossom);
+  world_down(&w);
+}
+
+static void
+picture_wait_clear(PictureWait *wait)
+{
+  g_clear_error(&wait->error);
+  memset(wait, 0, sizeof *wait);
+}
+
+typedef struct {
+  gboolean done;
+  GBytes *picture;
+  GError *error;
+} FetchWait;
+
+static gboolean
+fetch_done(gpointer data)
+{
+  return ((FetchWait *)data)->done;
+}
+
+static void
+on_picture_fetched(GObject *source, GAsyncResult *result, gpointer data)
+{
+  FetchWait *wait = data;
+  wait->picture = gh_mls_attachments_fetch_picture_finish(GH_MLS_ATTACHMENTS(source), result,
+                                                          &wait->error);
+  wait->done = TRUE;
+}
+
+static gchar *
+current_picture_id(App *app, GhMlsGroup *group)
+{
+  MarmotGroupComponents c;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_get_components(app->service, group, &c, &error));
+  gchar *id = c.image.present ? gh_mls_media_picture_id(&c.image) : NULL;
+  marmot_group_components_clear(&c);
+  return id;
+}
+
+/* An adopted group's picture end to end (W25 review L1, M1): its media
+ * servers set by an admin's 0x800b Commit; a server that isn't a public
+ * host is never uploaded to (nothing reaches it); Alice sets a picture
+ * (signed by its own upload key, never her account) and sees it from the
+ * store; Bob sees AVAILABLE with nothing fetched, Show Picture fetches it
+ * once and then it comes from the store; a replaced picture's copy goes, and
+ * so does the removed one's. */
+static void
+test_adopted_picture(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  /* New Group's own path (nostrc-lf62): Bob has an adopted KeyPackage, so
+   * the group is adopted. */
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Pictures", (const guint[]){ BOB }, 1);
+  g_assert_true(gh_mls_service_get_adopted(alice->service, ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_assert_true(gh_mls_service_get_adopted(bob->service, gb));
+  BlossomFixture *blossom = blossom_fixture_new();
+  Files fa, fb;
+  files_up(&fa, alice, blossom_fixture_url(blossom), NULL);
+  files_up(&fb, bob, blossom_fixture_url(blossom), NULL);
+  const gchar *gid = gh_mls_group_get_group_id(gb);
+
+  /* No media server yet: no picture can be set. */
+  g_assert_cmpint(gh_mls_attachments_get_picture(fb.files, gb, NULL, NULL), ==,
+                  GH_MLS_PICTURE_NONE);
+  g_autoptr(GBytes) photo = make_png();
+  PictureWait set = { 0 };
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
+                                       &set);
+  spin_until(picture_done, &set, "the refused picture");
+  g_assert_error(set.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
+  picture_wait_clear(&set);
+
+  /* An admin names the group's media server (the loopback fixture). */
+  const gchar *endpoints[] = { blossom_fixture_url(blossom), NULL };
+  OpWait policy = { 0 };
+  gh_mls_service_test_set_media_policy_async(alice->service, ga, endpoints, NULL, on_changed,
+                                             &policy);
+  spin_until(op_done, &policy, "the media policy Commit");
+  g_assert_no_error(policy.error);
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+
+  /* M1: outside tests a loopback server is not a public host: never
+   * contacted for the upload, and not offered in the confirmation. */
+  gh_attachments_set_allow_private_hosts(fa.attachments, FALSE);
+  g_auto(GStrv) none = gh_mls_attachments_dup_picture_upload_hosts(fa.files, ga);
+  g_assert_cmpuint(g_strv_length(none), ==, 0);
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
+                                       &set);
+  spin_until(picture_done, &set, "the private-host picture refused");
+  g_assert_error(set.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
+  picture_wait_clear(&set);
+  g_assert_cmpuint(blossom_fixture_requests(blossom)->len, ==, 0);
+  gh_attachments_set_allow_private_hosts(fa.attachments, TRUE);
+
+  /* The confirmation names the server and what it learns. */
+  g_auto(GStrv) hosts = gh_mls_attachments_dup_picture_upload_hosts(fa.files, ga);
+  g_assert_cmpuint(g_strv_length(hosts), ==, 1);
+  g_assert_cmpstr(hosts[0], ==, "127.0.0.1");
+  g_autofree gchar *note = gh_mls_picture_upload_note((const gchar *const *)hosts, FALSE);
+  g_assert_nonnull(strstr(note, "127.0.0.1"));
+  g_assert_nonnull(strstr(note, "IP address"));
+
+  /* Alice sets it: one keyed upload, then the Commit; she sees it. */
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
+                                       &set);
+  spin_until(picture_done, &set, "the picture set");
+  g_assert_no_error(set.error);
+  g_assert_true(set.ok);
+  picture_wait_clear(&set);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 1);
+  BlossomRequest *put = g_ptr_array_index(blossom_fixture_requests(blossom), 0);
+  g_assert_true(put->auth_valid);
+  g_assert_cmpstr(put->auth_pubkey, !=, hex[ALICE]);
+  g_autoptr(GBytes) alices = NULL;
+  g_assert_cmpint(gh_mls_attachments_get_picture(fa.files, ga, &alices, NULL), ==,
+                  GH_MLS_PICTURE_READY);
+  g_assert_false(has_secret(alices));
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 0);
+
+  /* Bob: available, nothing fetched until Show Picture; then the store. */
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_auto(GStrv) show_hosts = NULL;
+  g_assert_cmpint(gh_mls_attachments_get_picture(fb.files, gb, NULL, &show_hosts), ==,
+                  GH_MLS_PICTURE_AVAILABLE);
+  g_assert_cmpstr(show_hosts[0], ==, "127.0.0.1");
+  drain();
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 0);
+  FetchWait fetched = { 0 };
+  gh_mls_attachments_fetch_picture_async(fb.files, gb, NULL, on_picture_fetched, &fetched);
+  spin_until(fetch_done, &fetched, "Show Picture");
+  g_assert_no_error(fetched.error);
+  g_assert_true(g_bytes_equal(fetched.picture, alices));
+  g_clear_pointer(&fetched.picture, g_bytes_unref);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
+  g_autoptr(GBytes) bobs = NULL;
+  g_assert_cmpint(gh_mls_attachments_get_picture(fb.files, gb, &bobs, NULL), ==,
+                  GH_MLS_PICTURE_READY);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
+  g_autofree gchar *first_id = current_picture_id(bob, gb);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GBytes) kept = gh_store_group_image_get(bob->store, gid, first_id, NULL, &error);
+  g_assert_nonnull(kept);
+
+  /* Replaced: Bob's copy of the first picture goes. */
+  gh_mls_attachments_set_picture_async(fa.files, ga, photo, "image/png", NULL, on_picture_set,
+                                       &set);
+  spin_until(picture_done, &set, "the picture replaced");
+  g_assert_no_error(set.error);
+  picture_wait_clear(&set);
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_assert_cmpint(gh_mls_attachments_get_picture(fb.files, gb, NULL, NULL), ==,
+                  GH_MLS_PICTURE_AVAILABLE);
+  g_autoptr(GBytes) old = gh_store_group_image_get(bob->store, gid, first_id, NULL, &error);
+  g_assert_null(old);
+  g_assert_no_error(error);
+  FetchWait again = { 0 };
+  gh_mls_attachments_fetch_picture_async(fb.files, gb, NULL, on_picture_fetched, &again);
+  spin_until(fetch_done, &again, "Show Picture again");
+  g_assert_no_error(again.error);
+  g_clear_pointer(&again.picture, g_bytes_unref);
+  g_autofree gchar *second_id = current_picture_id(bob, gb);
+
+  /* Removed: nothing to show, and the copy is gone. */
+  gh_mls_attachments_set_picture_async(fa.files, ga, NULL, NULL, NULL, on_picture_set, &set);
+  spin_until(picture_done, &set, "the picture removed");
+  g_assert_no_error(set.error);
+  picture_wait_clear(&set);
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  g_assert_cmpint(gh_mls_attachments_get_picture(fb.files, gb, NULL, NULL), ==,
+                  GH_MLS_PICTURE_NONE);
+  g_autoptr(GBytes) gone = gh_store_group_image_get(bob->store, gid, second_id, NULL, &error);
+  g_assert_null(gone);
+  g_assert_no_error(error);
+
+  files_down(&fa);
+  files_down(&fb);
   blossom_fixture_free(blossom);
   world_down(&w);
 }
@@ -673,6 +860,28 @@ test_names(void)
     g_autofree gchar *name = gh_attachment_transfer_sanitize_name(safe[i].in);
     g_assert_cmpstr(name, ==, safe[i].out);
   }
+  /* W25 review N2: the Arabic letter mark (a Bidi_Control) and the line
+   * and paragraph separators. */
+  g_autofree gchar *alm = gh_attachment_transfer_sanitize_name("a\xd8\x9c" "b\xe2\x80\xa8"
+                                                               "c\xe2\x80\xa9" "d.txt");
+  g_assert_cmpstr(alm, ==, "a_b_c_d.txt");
+  /* W25 review L3: every server that may be asked is named. */
+  const gchar *one[] = { "a.example", NULL };
+  const gchar *three[] = { "a.example", "b.example", "c.example", NULL };
+  g_autofree gchar *d1 = gh_mls_describe_hosts(one);
+  g_autofree gchar *d3 = gh_mls_describe_hosts(three);
+  g_assert_cmpstr(d1, ==, "a.example");
+  g_assert_cmpstr(d3, ==, "a.example, b.example or c.example");
+  g_assert_null(gh_mls_describe_hosts(NULL));
+  g_autofree gchar *note3 = gh_mls_download_note(three, FALSE);
+  g_assert_nonnull(strstr(note3, "a.example, b.example or c.example"));
+  g_assert_nonnull(strstr(note3, "IP address"));
+  g_autofree gchar *tor1 = gh_mls_download_note(one, TRUE);
+  g_assert_nonnull(strstr(tor1, "through Tor"));
+  g_autofree gchar *up3 = gh_mls_picture_upload_note(three, TRUE);
+  g_assert_nonnull(strstr(up3, "a.example, b.example or c.example"));
+  g_assert_nonnull(strstr(up3, "through Tor"));
+  g_assert_null(gh_mls_picture_upload_note(NULL, FALSE));
   g_autofree gchar *invalid = gh_attachment_transfer_sanitize_name("\xff\xfe");
   g_assert_null(invalid);
   GString *longname = g_string_new(NULL);
@@ -697,6 +906,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-files/tor", test_tor);
   g_test_add_func("/groundhog/mls-files/legacy-group-has-no-picture",
                   test_legacy_group_has_no_picture);
+  g_test_add_func("/groundhog/mls-files/adopted-picture", test_adopted_picture);
   g_test_add_func("/groundhog/mls-files/picture-policy", test_picture_policy);
   g_test_add_func("/groundhog/mls-files/names", test_names);
   int status = g_test_run();

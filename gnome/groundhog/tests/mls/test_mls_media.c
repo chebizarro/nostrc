@@ -599,6 +599,24 @@ test_picture_roundtrip(void)
   /* Keyed upload: the authorization's pubkey is the upload key's. */
   g_autofree gchar *sha = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, ciphertext);
   const gchar *servers[] = { blossom_fixture_url(f.blossom), NULL };
+  /* W25 review M1: servers someone else named get the download rule. A
+   * loopback server is not a public host outside tests: never contacted. */
+  gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
+  const gchar *named[] = { blossom_fixture_url(f.blossom), "https://192.168.1.1",
+                           "https://[fe80::1]", "https://printer.local", NULL };
+  g_auto(GStrv) usable = gh_blossom_client_dup_public_servers(f.client, named);
+  g_assert_cmpuint(g_strv_length(usable), ==, 0);
+  Wait refused = { 0 };
+  gh_blossom_client_upload_keyed_async(f.client, named, ciphertext, sha, image.image_upload_key,
+                                       NULL, on_done, &refused);
+  g_autofree gchar *none = gh_blossom_client_upload_finish(f.client, wait_for(&refused), NULL,
+                                                           &error);
+  g_object_unref(refused.result);
+  g_assert_error(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
+  g_assert_null(none);
+  g_clear_error(&error);
+  g_assert_cmpuint(blossom_fixture_requests(f.blossom)->len, ==, 0);
+  gh_blossom_client_set_allow_private_hosts(f.client, TRUE);
   Wait up = { 0 };
   gh_blossom_client_upload_keyed_async(f.client, servers, ciphertext, sha, image.image_upload_key,
                                        NULL, on_done, &up);
