@@ -35,7 +35,8 @@ bool marmot_adopted_leaf_is_admin(const MlsGroup *g, uint32_t leaf);
  * The GroupContext extension list of a new adopted group (group-setup.md
  * "Creation flow", MDK 0.11 do_create_group): required_capabilities
  * {extensions [0x0006], proposals [0x0008]}, then one app_data_dictionary
- * with app_components requiring MLS_ADOPTED_SUPPORTED_COMPONENTS,
+ * with app_components requiring MLS_ADOPTED_CREATE_COMPONENTS (0x8001
+ * 0x8003 0x8004 0x8009 0x800c; not the wider supported list),
  * marmot.group.profile.v1 (@name, @description; NULL is empty),
  * marmot.group.admin-policy.v1 (@admins, sorted and unique),
  * marmot.transport.nostr.routing.v1 (@nostr_group_id, @relays sorted and

@@ -19,6 +19,12 @@
  * A group that requires the `send` or `fanout` role is refused
  * (MARMOT_ERR_UNSUPPORTED).
  *
+ * The role is advertised for every libmarmot consumer, so every consumer
+ * must honour it: show only kind 9 as chat, and keep the agent-stream
+ * kinds 1200-1202 (and other non-chat inner kinds) out of chat history.
+ * Groundhog does; gnostr's mls-groups plugin does not yet, which must be
+ * fixed before it publishes adopted KeyPackages (nostrc-ruwy).
+ *
  * SPDX-License-Identifier: MIT
  */
 
@@ -166,8 +172,11 @@ void marmot_group_media_policy_clear(MarmotGroupMediaPolicy *policy);
  *  - name, description: 0x8001 marmot.group.profile.v1 (empty strings when
  *    the group has no profile component);
  *  - image: 0x8002 marmot.group.blossom.image.v1 (image.present false when
- *    absent or in its empty state).  image_key and image_upload_key are
- *    group secrets;
+ *    absent or in its empty state).  image_key (with image_nonce) is the
+ *    group secret needed to render the image.  image_upload_key is the
+ *    Blossom *write* credential of the image blob: whoever holds it can
+ *    replace or delete it.  A render-only consumer must neither keep nor
+ *    copy it (MDK exposes it to apps too; it is here for the write path);
  *  - avatar_url: 0x8007 marmot.group.avatar-url.v1 (url NULL when absent
  *    or empty); avatar_source: the rendering precedence
  *    (marmot_group_avatar_select(): a URL avatar wins, an unverified one is

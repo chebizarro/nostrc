@@ -366,7 +366,7 @@ What is checked, everywhere a group is created, joined, loaded or cloned
   the required ones; exactly one LeafNode extension, a canonical
   `app_data_dictionary` advertising every required component; the role
   capability of each agent-stream role `0x8006` requires (`0xF2D1`: the
-  spec makes it every member's, in every epoch); exactly one
+  spec makes it every member's, in every epoch: see "Divergence" below); exactly one
   104-byte `0x8009` proof naming its own account; on a Welcome, every leaf
   signature and every proof's BIP-340 signature verifies; every admin is a
   member of every epoch the group enters; the inviter (GroupInfo signer) is
@@ -386,6 +386,30 @@ What is checked, everywhere a group is created, joined, loaded or cloned
 - **Profile.** A group is adopted exactly when its GroupContext carries an
   `app_data_dictionary` extension (what libmarmot refused before 0.12.0);
   everything else keeps the legacy rules.
+
+**Divergence from MDK v0.11.0 (deliberate; slice I review L1).** The agent
+text stream spec makes "every current member advertises every role
+`required_member_roles` names" a resulting-epoch invariant, checked on every
+Commit. libmarmot checks it on every leaf of every state it admits (Welcome
+tree, load and, with live adopted Commits, every resulting epoch). MDK
+checks roles only on invitees and on a joiner's own client; its
+resulting-epoch check (`validate_resulting_leaf_capabilities`) and its
+outbound component update skip them. So a crafted or third-party Commit
+that leaves a member without `0xF2D1` in a group requiring `receive` (an Add
+of such a KeyPackage, or an admin adding `0x8006` to a group with such a
+member) is accepted by MDK members and refused by libmarmot: a Welcome with
+`MARMOT_ERR_VALIDATION`, a Commit (once followed) by falling behind. No
+legitimate White Noise group triggers it: every marmot-app since 0.9.0
+advertises all three roles, and marmot-app's invite precheck refuses an
+invitee without them. libmarmot keeps the spec rule; raising it upstream is
+nostrc-0b99.
+
+**One validator for component state.** `mls_adopted_component_state_valid()`
+(`src/mls/mls_app_components.h`) is exactly the per-entry rule set of
+admission. An AppDataUpdate (the live Commit path) must judge a new
+component state with it, not a copy (slice I review M1), so that a valid
+`0x8006` or `0x800b` update is never refused while a Welcome carrying the
+same state is admitted.
 
 Creation: `marmot_create_group_for_profile(m, MARMOT_GROUP_PROFILE_ADOPTED,
 ...)` signs the creator leaf's account proof with the account secret key or
@@ -456,6 +480,17 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   MIP-01 `image_*` fields stay unset for adopted groups (the `0x8002` image
   needs its media type, and the group key is not copied into another
   table). Writing components (AppDataUpdate) comes with adopted Commits.
+
+- **Review fixes** (slice I review, APPROVE-WITH-NITS): the shared
+  component-state validator (M1, above); an avatar (`0x8007`) or media
+  endpoint (`0x800b`) URL whose host no WHATWG parser accepts -- an invalid
+  IPv4 literal such as `256.1.1.1`, `1.2.3.4.5` or `x.123`, a malformed or
+  zone-id IPv6 literal -- is now invalid state, as MDK says, not accepted
+  unverified (L2; an embedded IPv4 tail in an IPv6 literal is checked as
+  WHATWG does, since macOS `inet_pton` accepts `::1.2.3.04`); GroupContext
+  bytes are zeroized whenever freed (they may hold the `0x8002` keys; L4);
+  an allocation failure in the `0x8002`/`0x8007`/`0x800b` decoders is
+  `MARMOT_ERR_MEMORY`, not malformed state (N3).
 
 #### Compatibility
 
