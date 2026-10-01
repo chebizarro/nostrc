@@ -345,6 +345,11 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   group's, or a Commit's that leaves it byte-identical. GroupData from a
   Welcome, or one a Commit writes, must be MIP-01. Before, the 0.10.0
   fallback ran on every input, network input included (W23 review L3).
+  - So that such a group can still grow, `marmot_add_members()` re-encodes
+    its GroupData as MIP-01 in the Add Commit itself (a
+    GroupContextExtensions proposal with the same values), and the Welcome
+    carries the MIP-01 encoding (review W24 M1). Members authorize it like
+    an admin's metadata Commit; an Add needs an admin anyway.
 - **MIP-01 version 1 is read (nostrc-c7ho).** Both encodings MDK used:
   without `image_upload_key` (MDK before December 2025) and with it empty
   (MDK 0.8). Written back as MDK 0.8 writes it. A v1 `image_key` is the

@@ -1560,6 +1560,7 @@ done:
 static int
 add_members_staged(MlsGroup *group,
                    const MlsKeyPackage *const *kps, size_t kp_count,
+                   const uint8_t *gce_extensions, size_t gce_len,
                    MlsAddResult *result)
 {
     int rc = MARMOT_ERR_INTERNAL;
@@ -1571,7 +1572,7 @@ add_members_staged(MlsGroup *group,
     uint8_t (*lca_secrets)[MLS_HASH_LEN] = calloc(kp_count, MLS_HASH_LEN);
     uint32_t *added = calloc(kp_count, sizeof(uint32_t));
     uint32_t *lca_nodes = calloc(kp_count, sizeof(uint32_t));
-    MlsProposal *proposals = calloc(kp_count, sizeof(MlsProposal));
+    MlsProposal *proposals = calloc(kp_count + 1, sizeof(MlsProposal));
     size_t proposals_made = 0;
     uint8_t *commit = NULL, *welcome = NULL;
     size_t commit_len = 0, welcome_len = 0;
@@ -1626,7 +1627,30 @@ add_members_staged(MlsGroup *group,
         }
     }
 
-    rc = path_commit_with_proposals(group, proposals, kp_count, added, kp_count,
+    /* A GroupContextExtensions proposal, applied after the Adds as receivers
+     * apply it (RFC 9420 §12.4.2): every member, the joiners included, must
+     * support the new extensions (§12.1.7). */
+    if (gce_extensions) {
+        rc = group_context_extensions_validate(group, gce_extensions, gce_len, UINT32_MAX);
+        if (rc != 0) goto done;
+        MlsProposal *gce = &proposals[kp_count];
+        gce->type = MLS_PROPOSAL_GROUP_CONTEXT_EXT;
+        gce->update_leaf_index = UINT32_MAX;
+        gce->group_context_extensions.extensions = malloc(gce_len ? gce_len : 1);
+        if (!gce->group_context_extensions.extensions) {
+            rc = MARMOT_ERR_MEMORY;
+            goto done;
+        }
+        if (gce_len) memcpy(gce->group_context_extensions.extensions, gce_extensions, gce_len);
+        gce->group_context_extensions.extensions_len = gce_len;
+        proposals_made++;
+        if (apply_group_context_extensions(group, gce_extensions, gce_len) != 0) {
+            rc = MARMOT_ERR_UNSUPPORTED;
+            goto done;
+        }
+    }
+
+    rc = path_commit_with_proposals(group, proposals, proposals_made, added, kp_count,
                                     lca_nodes, lca_secrets, pre_gc, pre_gc_len,
                                     pre_epoch, pre_membership_key, confirmation_tag,
                                     &commit, &commit_len);
@@ -1904,6 +1928,15 @@ mls_group_add_members(MlsGroup *group,
                       const MlsKeyPackage *const *kps, size_t kp_count,
                       MlsAddResult *result)
 {
+    return mls_group_add_members_with_extensions(group, kps, kp_count, NULL, 0, result);
+}
+
+int
+mls_group_add_members_with_extensions(MlsGroup *group,
+                                      const MlsKeyPackage *const *kps, size_t kp_count,
+                                      const uint8_t *extensions, size_t extensions_len,
+                                      MlsAddResult *result)
+{
     if (!group || !kps || kp_count == 0 || !result)
         return MARMOT_ERR_INVALID_ARG;
     if (kp_count > MLS_MAX_ADDS_PER_COMMIT) return MARMOT_ERR_INVALID_ARG;
@@ -1912,7 +1945,7 @@ mls_group_add_members(MlsGroup *group,
     memset(result, 0, sizeof(*result));
     MlsGroup staged;
     if (group_stage_clone(group, &staged) != 0) return MARMOT_ERR_INTERNAL;
-    int rc = add_members_staged(&staged, kps, kp_count, result);
+    int rc = add_members_staged(&staged, kps, kp_count, extensions, extensions_len, result);
     if (rc == 0) group_install_staged(group, &staged);
     else mls_group_free(&staged);
     return rc;

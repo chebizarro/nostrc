@@ -459,15 +459,18 @@ parse_key_packages(Marmot *m, const char **jsons, size_t count, MlsKeyPackage **
     return MARMOT_OK;
 }
 
-/* One Commit adding every KeyPackage; the group is unchanged on failure. */
+/* One Commit adding every KeyPackage, and replacing the GroupContext
+ * extensions with `extensions` when not NULL; the group is unchanged on
+ * failure. */
 static int
 add_key_packages(MlsGroup *mls, const MlsKeyPackage *kps, size_t count,
-                 MlsAddResult *result)
+                 const uint8_t *extensions, size_t extensions_len, MlsAddResult *result)
 {
     const MlsKeyPackage **ptrs = calloc(count, sizeof(*ptrs));
     if (!ptrs) return MARMOT_ERR_MEMORY;
     for (size_t i = 0; i < count; i++) ptrs[i] = &kps[i];
-    int rc = mls_group_add_members(mls, ptrs, count, result);
+    int rc = mls_group_add_members_with_extensions(mls, ptrs, count, extensions,
+                                                   extensions_len, result);
     free(ptrs);
     return rc;
 }
@@ -593,7 +596,7 @@ create_group_impl(Marmot *m,
         MlsAddResult add_result;
         memset(&add_result, 0, sizeof(add_result));
         rc = result->welcome_rumor_jsons
-                 ? add_key_packages(&mls_group, kps, kp_count, &add_result)
+                 ? add_key_packages(&mls_group, kps, kp_count, NULL, 0, &add_result)
                  : MARMOT_ERR_MEMORY;
         free_key_packages(kps, kp_count);
         /* Every joiner must accept the tree the Welcome carries. */
@@ -984,6 +987,42 @@ mark_welcomes_sent_impl(Marmot *m, const MarmotGroupId *mls_group_id,
  * ──────────────────────────────────────────────────────────────────────── */
 
 static MarmotError
+updated_group_data(const MlsGroup *mls, const MarmotGroupConfig *config,
+                   const uint8_t nostr_group_id[32],
+                   MarmotGroupDataExtension **gde_out,
+                   uint8_t **exts_out, size_t *exts_len_out);
+
+/* A group libmarmot 0.10.0 made may still hold its GroupData in that
+ * version's layout, which no joiner reads: a Welcome's GroupData must be
+ * MIP-01 (nostrc-c7ho).  For such a group, *exts_out is the extension list
+ * with the same GroupData re-encoded as MIP-01, for the Add to commit along
+ * (review W24 M1); NULL when the GroupData is MIP-01 or absent. */
+static MarmotError
+legacy_group_data_reencoded(const MlsGroup *mls, const uint8_t nostr_group_id[32],
+                            uint8_t **exts_out, size_t *exts_len_out)
+{
+    *exts_out = NULL;
+    *exts_len_out = 0;
+    const uint8_t *data = NULL;
+    size_t len = 0, count = 0;
+    if (marmot_extensions_find(mls->extensions_data, mls->extensions_len,
+                               MARMOT_EXTENSION_TYPE, &data, &len, &count) != 0 ||
+        count > 1)
+        return MARMOT_ERR_MLS;
+    if (count == 0) return MARMOT_OK;
+    MarmotGroupDataExtension *gde = marmot_group_data_extension_deserialize(data, len);
+    if (gde) {
+        marmot_group_data_extension_free(gde);
+        return MARMOT_OK;
+    }
+    static const MarmotGroupConfig unchanged = { 0 };
+    MarmotError err = updated_group_data(mls, &unchanged, nostr_group_id, &gde,
+                                         exts_out, exts_len_out);
+    marmot_group_data_extension_free(gde);
+    return err;
+}
+
+static MarmotError
 add_members_impl(Marmot *m,
                     const MarmotGroupId *mls_group_id,
                     const char **key_package_event_jsons, size_t kp_count,
@@ -1009,6 +1048,8 @@ add_members_impl(Marmot *m,
     memset(&post, 0, sizeof(post));
     MlsAddResult add;
     memset(&add, 0, sizeof(add));
+    uint8_t *reencoded = NULL;
+    size_t reencoded_len = 0;
     char *commit_json = NULL;
     char **welcomes = calloc(kp_count, sizeof(char *));
     uint8_t (*recipients)[32] = calloc(kp_count, 32);
@@ -1025,12 +1066,16 @@ add_members_impl(Marmot *m,
         goto fail;
     }
 
-    /* Every KeyPackage in one Commit (nostrc-wc6v). */
+    /* Every KeyPackage in one Commit (nostrc-wc6v), with the GroupData
+     * re-encoded as MIP-01 if it is still in the 0.10.0 layout. */
+    err = legacy_group_data_reencoded(&mls, group->nostr_group_id, &reencoded,
+                                      &reencoded_len);
+    if (err != MARMOT_OK) goto fail;
     if (clone_mls_group(&mls, &post) != 0) {
         err = MARMOT_ERR_MLS;
         goto fail;
     }
-    int rc = add_key_packages(&post, kps, kp_count, &add);
+    int rc = add_key_packages(&post, kps, kp_count, reencoded, reencoded_len, &add);
     if (rc != 0) {
         err = rc == MARMOT_ERR_MEMORY ? MARMOT_ERR_MEMORY : MARMOT_ERR_MLS;
         goto fail;
@@ -1050,8 +1095,8 @@ add_members_impl(Marmot *m,
         size_t data_len = 0, n_gde = 0;
         if (marmot_extensions_find(post.extensions_data, post.extensions_len,
                                    MARMOT_EXTENSION_TYPE, &data, &data_len, &n_gde) == 0 &&
-            n_gde == 1)   /* our own state: a 0.10.0 group's layout too */
-            gde = marmot_group_data_extension_deserialize_stored(data, data_len);
+            n_gde == 1)   /* MIP-01 now, re-encoded above if it was not */
+            gde = marmot_group_data_extension_deserialize(data, data_len);
     }
     int64_t created_at = 0;
     err = marmot_next_group_event_time(m, group->nostr_group_id, true, &created_at);
@@ -1074,6 +1119,7 @@ add_members_impl(Marmot *m,
 
     free(recipients);
     free(outbox);
+    free(reencoded);
     free_key_packages(kps, kp_count);
     mls_add_result_clear(&add);
     mls_group_free(&post);
@@ -1087,6 +1133,7 @@ add_members_impl(Marmot *m,
 fail:
     free(recipients);
     free(outbox);
+    free(reencoded);
     free_key_packages(kps, kp_count);
     mls_add_result_clear(&add);
     if (welcomes) {

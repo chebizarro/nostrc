@@ -5246,6 +5246,176 @@ test_legacy_group_data_only_from_stored_state(void)
     trio_clear(&t);
 }
 
+/* The trio's GroupData (name "Before", description "Desc", Alice and Bob
+ * admins) in the layout libmarmot 0.10.0 wrote. */
+static void
+legacy_trio_group_data(const Trio *t, MlsTlsBuf *old)
+{
+    CHECK(mls_tls_buf_init(old, 256) == 0 &&
+          mls_tls_write_u16(old, 2) == 0 &&
+          mls_tls_buf_append(old, t->nostr_gid, 32) == 0 &&
+          mls_tls_write_opaque16(old, (const uint8_t *)"Before", 6) == 0 &&
+          mls_tls_write_opaque16(old, (const uint8_t *)"Desc", 4) == 0 &&
+          mls_tls_write_u32(old, 64) == 0 &&             /* admins: fixed uint32 */
+          mls_tls_buf_append(old, t->alice.pk, 32) == 0 &&
+          mls_tls_buf_append(old, t->bob.pk, 32) == 0 &&
+          mls_tls_write_opaque32(old, NULL, 0) == 0 &&    /* relays */
+          mls_tls_write_u8(old, 0) == 0, "0.10.0 GroupData");   /* no image */
+    CHECK(marmot_group_data_extension_deserialize(old->data, old->len) == NULL,
+          "the 0.10.0 bytes are not MIP-01");
+}
+
+/* Every member's stored state with the GroupData entry of its GroupContext
+ * extensions in the 0.10.0 layout, the rest of the list kept: the trio as a
+ * group libmarmot 0.10.0 made, with no metadata Commit since.  All three
+ * hold the same GroupContext, so the group works as before. */
+static void
+make_trio_group_data_legacy(Trio *t)
+{
+    MlsTlsBuf old;
+    legacy_trio_group_data(t, &old);
+    for (size_t m = 0; m < 3; m++) {
+        Member *x = t->all[m];
+        MlsGroup g;
+        load_mls(x, &t->gid, &g);
+        MlsTlsReader r;
+        mls_tls_reader_init(&r, g.extensions_data, g.extensions_len);
+        MlsTlsBuf list;
+        CHECK(mls_tls_buf_init(&list, g.extensions_len + old.len) == 0, "list");
+        bool replaced = false;
+        while (mls_tls_reader_remaining(&r) > 0) {
+            uint16_t type = 0;
+            uint8_t *data = NULL;
+            size_t len = 0;
+            CHECK(mls_tls_read_u16(&r, &type) == 0 &&
+                  mls_tls_read_opaque16(&r, &data, &len) == 0, "extension");
+            bool gd = type == MARMOT_EXTENSION_TYPE;
+            replaced |= gd;
+            CHECK(mls_tls_write_u16(&list, type) == 0 &&
+                  mls_tls_write_opaque16(&list, gd ? old.data : data, gd ? old.len : len) == 0,
+                  "write extension");
+            free(data);
+        }
+        CHECK(replaced, "%s's GroupData", x->name);
+        set_extensions(&g, &list);
+        mls_tls_buf_free(&list);
+        uint8_t *blob = NULL;
+        size_t blob_len = 0;
+        CHECK(mls_group_serialize(&g, &blob, &blob_len) == 0, "serialize");
+        OK(x->m->storage->mls_store(x->m->storage->ctx, "mls_group", t->gid.data, t->gid.len,
+                                    blob, blob_len));
+        sodium_memzero(blob, blob_len);
+        free(blob);
+        mls_group_free(&g);
+    }
+    mls_tls_buf_free(&old);
+}
+
+/* The GroupData of `x`'s stored state reads as MIP-01. */
+static bool
+group_data_is_mip01(Member *x, const MarmotGroupId *gid)
+{
+    MlsGroup g;
+    load_mls(x, gid, &g);
+    const uint8_t *data = NULL;
+    size_t len = 0, count = 0;
+    MarmotGroupDataExtension *gde = NULL;
+    if (marmot_extensions_find(g.extensions_data, g.extensions_len, MARMOT_EXTENSION_TYPE,
+                               &data, &len, &count) == 0 && count == 1)
+        gde = marmot_group_data_extension_deserialize(data, len);
+    bool ok = gde != NULL;
+    marmot_group_data_extension_free(gde);
+    mls_group_free(&g);
+    return ok;
+}
+
+/* Review W24 M1: an Add in a group whose GroupData is still in the 0.10.0
+ * layout re-encodes it as MIP-01 in the same Commit, so the joiner, which
+ * reads only MIP-01 from a Welcome, accepts it; every member follows, and
+ * the group keeps its name, description, admins and messages. */
+static void
+test_add_reencodes_legacy_group_data(void)
+{
+    Trio t;
+    trio_init(&t);
+    make_trio_group_data_legacy(&t);
+    CHECK(!group_data_is_mip01(&t.alice, &t.gid), "the trio is a 0.10.0 group");
+    expect_messages_flow(t.all, 3, &t.gid);
+
+    Member dave;
+    member_init(&dave, "Dave");
+    char *dave_kp = key_package(&dave);
+    const char *kps[] = { dave_kp };
+    char **welcomes = NULL;
+    size_t n = 0;
+    char *add = NULL;
+    OK(marmot_add_members(t.alice.m, &t.gid, kps, 1, &welcomes, &n, &add));
+    merge(&t.alice, &t.gid);
+    expect_commit(&t.bob, add, "the Add to a 0.10.0 group");
+    expect_commit(&t.charlie, add, "the Add to a 0.10.0 group");
+    join(&dave, welcomes[0]);
+    Member *four[] = { &t.alice, &t.bob, &t.charlie, &dave };
+    expect_converged(four, 4, &t.gid, "Before", t.epoch + 1);
+    for (size_t i = 0; i < 4; i++)
+        CHECK(group_data_is_mip01(four[i], &t.gid), "%s's GroupData is MIP-01", four[i]->name);
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(dave.m, &t.gid, &g));
+    CHECK(g->description && strcmp(g->description, "Desc") == 0 && g->admin_count == 2,
+          "Dave reads the description and both admins");
+    marmot_group_free(g);
+    expect_messages_flow(four, 4, &t.gid);
+
+    free(add);
+    free(welcomes[0]);
+    free(welcomes);
+    free(dave_kp);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
+/* Review W24 L2: a Welcome whose GroupContext carries GroupData in the
+ * 0.10.0 layout is refused for good (network input is MIP-01 only,
+ * nostrc-c7ho): the Add Commit an older inviter made without re-encoding. */
+static void
+test_welcome_with_legacy_group_data_refused(void)
+{
+    Trio t;
+    trio_init(&t);
+    make_trio_group_data_legacy(&t);
+    Member dave;
+    member_init(&dave, "Dave");
+    MlsKeyPackage kp;
+    own_key_package(&dave, &kp);
+    MlsGroup g;
+    load_mls(&t.alice, &t.gid, &g);
+    const MlsKeyPackage *kps[] = { &kp };
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_members(&g, kps, 1, &add) == 0, "an Add without re-encoding");
+    size_t b64_len = sodium_base64_ENCODED_LEN(add.welcome_len, sodium_base64_VARIANT_ORIGINAL);
+    char *b64 = malloc(b64_len);
+    CHECK(b64, "base64");
+    sodium_bin2base64(b64, b64_len, add.welcome_data, add.welcome_len,
+                      sodium_base64_VARIANT_ORIGINAL);
+    char *author = marmot_hex_encode(t.alice.pk, 32);
+    size_t cap = strlen(b64) + 256;
+    char *rumor = malloc(cap);
+    CHECK(author && rumor, "rumor");
+    snprintf(rumor, cap,
+             "{\"pubkey\":\"%s\",\"created_at\":%lld,\"kind\":444,"
+             "\"tags\":[[\"encoding\",\"base64\"]],\"content\":\"%s\"}",
+             author, (long long)time(NULL), b64);
+    expect_join(&dave, rumor, MARMOT_ERR_EXTENSION_FORMAT, "a Welcome with 0.10.0 GroupData");
+    free(rumor);
+    free(author);
+    free(b64);
+    mls_add_result_clear(&add);
+    mls_group_free(&g);
+    mls_key_package_clear(&kp);
+    marmot_free(dave.m);
+    trio_clear(&t);
+}
+
 /* ── created_at order of a group's kind:445 events (nostrc-2lrz) ──────── */
 
 static int64_t
@@ -5461,6 +5631,8 @@ main(int argc, char **argv)
     RUN(test_private_message_commit_forgeries_rejected);
     RUN(test_private_message_commit_epoch_and_generation);
     RUN(test_legacy_group_data_only_from_stored_state);
+    RUN(test_add_reencodes_legacy_group_data);
+    RUN(test_welcome_with_legacy_group_data_refused);
     RUN(test_commit_pending_until_merged);
     RUN(test_pending_commit_races);
     RUN(test_stale_duplicate_and_future_commits);

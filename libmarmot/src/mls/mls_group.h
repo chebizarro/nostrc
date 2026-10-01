@@ -338,6 +338,20 @@ int mls_group_add_members(MlsGroup *group,
                           const MlsKeyPackage *const *kps, size_t kp_count,
                           MlsAddResult *result);
 
+/**
+ * mls_group_add_members() with a GroupContextExtensions proposal in the same
+ * Commit (when `extensions` is not NULL): the group's extension list becomes
+ * `extensions`, applied after the Adds as receivers apply it, and the
+ * Welcome carries it.  Every member, the joiners included, must support it
+ * (MARMOT_ERR_UNSUPPORTED or MARMOT_ERR_INVALID_ARG otherwise).  libmarmot
+ * re-encodes a libmarmot 0.10.0 group's GroupData this way when it adds
+ * members (review W24 M1).
+ */
+int mls_group_add_members_with_extensions(MlsGroup *group,
+                                          const MlsKeyPackage *const *kps, size_t kp_count,
+                                          const uint8_t *extensions, size_t extensions_len,
+                                          MlsAddResult *result);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Remove member
  * ──────────────────────────────────────────────────────────────────────── */
