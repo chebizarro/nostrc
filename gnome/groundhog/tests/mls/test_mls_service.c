@@ -2286,6 +2286,40 @@ all_key_package_reqs(World *w, guint key)
  * of Carol's slot is a new device Alice added: Carol's verdict does not
  * carry over to it (only the device's own renewal would). Kind 10051 is
  * never asked for. */
+/* nostrc-juhs: the account's own Add can come back from the group relay
+ * before that relay's OK, and libmarmot merges it on that echo (reporting no
+ * committer: it is ours). The device it added is still the account's
+ * addition, as when the OK comes first. */
+static void
+test_own_commit_echo_before_ok(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Echo first", (const guint[]){ BOB }, 1);
+  /* An older client's device: who added it is all the group knows of it. */
+  g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
+  accept_contact(alice, CAROL);
+
+  w.g.hold_oks = TRUE;
+  const gchar *people[] = { hex[CAROL], NULL };
+  OpWait added = { 0 };
+  gh_mls_service_add_members_async(alice->service, ga, people, NULL, on_changed, &added);
+  wait_members(ga, 3);          /* merged on the echo */
+  g_assert_false(added.done);   /* the relay has not answered */
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+
+  wire_relay_release_oks(&w.g);
+  spin_until(op_done, &added, "the Add");
+  g_assert_no_error(added.error);
+  g_assert_true(added.ok);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+  world_down(&w);
+}
+
 static void
 test_unproven_member_identity(void)
 {
@@ -2992,6 +3026,8 @@ main(int argc, char **argv)
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
   g_test_add_func("/groundhog/mls-service/unproven-member-identity",
                   test_unproven_member_identity);
+  g_test_add_func("/groundhog/mls-service/own-commit-echo-before-ok",
+                  test_own_commit_echo_before_ok);
   g_test_add_func("/groundhog/mls-service/refused-change-honest", test_refused_change_honest);
   g_test_add_func("/groundhog/mls-service/forged-member-refused", test_forged_member_refused);
   g_test_add_func("/groundhog/mls-service/adopted-change-refused", test_adopted_change_refused);

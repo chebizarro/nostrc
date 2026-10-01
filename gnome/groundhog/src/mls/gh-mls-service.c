@@ -1906,6 +1906,26 @@ retry_held(GhMlsGroup *group)
 
 static void after_commit(GhMlsGroup *group, gboolean fresh);
 static void departures_schedule(GhMlsGroup *group);
+static gchar *event_id_of(const gchar *json);
+
+/* Whether @envelope_id is the account's own Commit that libmarmot holds
+ * pending for a relay's OK. Its echo from a relay merges it, and libmarmot
+ * then reports no committer (nostrc-juhs). */
+static gboolean
+own_pending_commit(GhMlsGroup *group, const gchar *envelope_id)
+{
+  if (!envelope_id)
+    return FALSE;
+  char *pending_json = NULL;
+  if (marmot_get_pending_commit(group->service->marmot, &group->gid, &pending_json, NULL) !=
+      MARMOT_OK) {
+    drop_stale_error(group->service);
+    return FALSE;
+  }
+  g_autofree gchar *pending_id = pending_json ? event_id_of(pending_json) : NULL;
+  free(pending_json);
+  return pending_id && g_str_equal(pending_id, envelope_id);
+}
 
 /* Every relay of the subscription sent its EOSE, fully paged, and is still
  * connected (value 1), apart from URLs that could never be subscribed
@@ -1940,12 +1960,6 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     g_message("Groundhog could not read an encrypted group message: %s", error->message);
     return EVENT_OTHER;
   }
-  MarmotMessageResult result;
-  memset(&result, 0, sizeof result);
-  MarmotError err = marmot_process_message(self->marmot, event_json, &result);
-  gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE, refused = FALSE;
-  GhMlsRefusal refusal = GH_MLS_REFUSAL_BROKEN_PROOF;   /* or UNPROVEN: set_refused() */
-  gboolean proposal = FALSE, awaits_proposal = FALSE;
   gint64 created_at = 0;
   NostrEvent *envelope = nostr_event_new();
   g_autofree gchar *envelope_id = NULL;
@@ -1959,6 +1973,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   }
   if (envelope)
     nostr_event_free(envelope);
+  gboolean own_commit = own_pending_commit(group, envelope_id);
+  MarmotMessageResult result;
+  memset(&result, 0, sizeof result);
+  MarmotError err = marmot_process_message(self->marmot, event_json, &result);
+  gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE, refused = FALSE;
+  GhMlsRefusal refusal = GH_MLS_REFUSAL_BROKEN_PROOF;   /* or UNPROVEN: set_refused() */
+  gboolean proposal = FALSE, awaits_proposal = FALSE;
 
   if (err == MARMOT_OK && result.type == MARMOT_RESULT_APPLICATION_MESSAGE) {
     g_autoptr(GError) bad = NULL;
@@ -2004,11 +2025,18 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     if (group->leaving && group->leave_via_admin && result.commit.committer_pubkey_hex &&
         g_strv_contains((const gchar *const *)group->admins, result.commit.committer_pubkey_hex))
       group->leave_admin_commit = TRUE;
-    /* Who added the devices the Commit brings (nostrc-6ukh). */
+    /* Who added the devices the Commit brings (nostrc-6ukh). Our own,
+     * merged on its relay echo before the relay's OK, is ours, as when that
+     * OK merges it (round_report(); nostrc-juhs). */
     g_free(group->last_committer);
-    group->last_committer = g_strdup(result.commit.committer_pubkey_hex);
-    group->last_committer_leaf = result.commit.committer_pubkey_hex
-                                   ? result.commit.committer_leaf : G_MAXUINT32;
+    if (!result.commit.committer_pubkey_hex && own_commit) {
+      group->last_committer = g_strdup(self->account);
+      group->last_committer_leaf = G_MAXUINT32;   /* our own leaf is proven */
+    } else {
+      group->last_committer = g_strdup(result.commit.committer_pubkey_hex);
+      group->last_committer_leaf = result.commit.committer_pubkey_hex
+                                     ? result.commit.committer_leaf : G_MAXUINT32;
+    }
   } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_PROPOSAL) {
     /* nostrc-2um6: a member's standalone proposal, which libmarmot keeps for
      * the Commit that references it; a leave is committed after a delay. */

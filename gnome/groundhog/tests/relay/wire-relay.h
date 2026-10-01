@@ -31,6 +31,9 @@
  * late_ms later (if still open): a connected relay slow to answer.
  * With refuse_events (serve mode) every EVENT is answered OK false
  * "blocked:" and nothing is kept: a relay that rejects a publish outright.
+ * With hold_oks (serve mode) an EVENT is kept and sent to subscriptions at
+ * once, but its OK waits for wire_relay_release_oks(): a publisher sees its
+ * own event come back before the relay's answer.
  * wire_relay_inject() keeps an event as if a client had published it
  * (fixtures), and sends it to matching live REQs. With record set, every
  * text frame in either direction is kept in frames (WireFrame), tagged with
@@ -95,7 +98,16 @@ struct _WireRelay {
   gint64 max_future_seconds; /* serve: an EVENT dated further ahead of the clock is
                               * refused, as relays do (strfry, relayd); 0: none */
   guint future_refused;      /* EVENTs refused for it */
+  gboolean hold_oks;         /* serve: an EVENT's OK waits for wire_relay_release_oks() */
+  GPtrArray *held_oks;       /* WireHeldOk, in arrival order */
 };
+
+/* An OK held back (hold_oks). */
+typedef struct {
+  SoupWebsocketConnection *connection;
+  gchar *id;
+  gchar *message;
+} WireHeldOk;
 
 /* One text frame on one of the relay's connections. */
 typedef struct {
@@ -464,6 +476,30 @@ wire_relay_release(WireRelay *relay, const gchar *id)
 }
 
 static G_GNUC_UNUSED void
+wire_held_ok_free(gpointer data)
+{
+  WireHeldOk *held = data;
+  g_object_unref(held->connection);
+  g_free(held->id);
+  g_free(held->message);
+  g_free(held);
+}
+
+/* Sends the OKs hold_oks kept back, in order, to the connections still open,
+ * and answers at once from now on. */
+static G_GNUC_UNUSED void
+wire_relay_release_oks(WireRelay *relay)
+{
+  relay->hold_oks = FALSE;
+  for (guint i = 0; i < relay->held_oks->len; i++) {
+    WireHeldOk *held = g_ptr_array_index(relay->held_oks, i);
+    if (soup_websocket_connection_get_state(held->connection) == SOUP_WEBSOCKET_STATE_OPEN)
+      wire_send_ok(held->connection, held->id, TRUE, held->message);
+  }
+  g_ptr_array_set_size(relay->held_oks, 0);
+}
+
+static G_GNUC_UNUSED void
 wire_relay_inject(WireRelay *relay, const gchar *json)
 {
   g_assert_true(relay->serve);
@@ -567,7 +603,16 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
     }
     relay->events++;
     WireStored *stored = wire_keep(relay, json);
-    wire_send_ok(connection, event_id, TRUE, stored ? "" : "duplicate: already have it");
+    const gchar *ok = stored ? "" : "duplicate: already have it";
+    if (relay->hold_oks) {
+      WireHeldOk *held = g_new0(WireHeldOk, 1);
+      held->connection = g_object_ref(connection);
+      held->id = g_strdup(event_id);
+      held->message = g_strdup(ok);
+      g_ptr_array_add(relay->held_oks, held);
+    } else {
+      wire_send_ok(connection, event_id, TRUE, ok);
+    }
     if (relay->on_event)
       relay->on_event(relay, connection, event_id, relay->on_event_data);
     if (stored)
@@ -684,6 +729,7 @@ relay_setup(WireRelay *relay)
     relay->auth_pubkeys = g_ptr_array_new_with_free_func(g_free);
   relay->stored = g_ptr_array_new_with_free_func(wire_stored_free);
   relay->frames = g_ptr_array_new_with_free_func(wire_frame_free);
+  relay->held_oks = g_ptr_array_new_with_free_func(wire_held_ok_free);
   soup_server_add_websocket_handler(relay->server, "/relay", NULL, NULL,
                                     wire_on_websocket, relay, NULL);
 }
@@ -747,6 +793,7 @@ relay_clear(WireRelay *relay)
   g_clear_pointer(&relay->auth_pubkeys, g_ptr_array_unref);
   g_clear_pointer(&relay->stored, g_ptr_array_unref);
   g_clear_pointer(&relay->frames, g_ptr_array_unref);
+  g_clear_pointer(&relay->held_oks, g_ptr_array_unref);
   g_clear_pointer(&relay->withheld, g_hash_table_unref);
   soup_server_disconnect(relay->server);
   g_object_unref(relay->server);
