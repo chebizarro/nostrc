@@ -45,6 +45,12 @@ typedef enum {
  * @signature_key: the leaf's Ed25519 signature key (the device)
  * @leaf_index: the MLS leaf
  * @status: see MarmotMemberIdentityStatus
+ * @welcome_signer: this device signed the GroupInfo of the Welcome we
+ *   joined with, and its account sent that Welcome (the NIP-59 seal is its
+ *   signature): the account vouched for this device -- evidence for an
+ *   UNPROVEN leaf, as a KeyPackage it published would be (typically the
+ *   creator of an MDK 0.8 group who invited us). Keyed by leaf and
+ *   signature key: a leaf added into that slot later is not it.
  *
  * One occupied leaf. One account may have several (devices).
  */
@@ -53,6 +59,7 @@ typedef struct {
     uint8_t signature_key[32];
     uint32_t leaf_index;
     MarmotMemberIdentityStatus status;
+    bool welcome_signer;
 } MarmotMemberIdentity;
 
 /**

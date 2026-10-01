@@ -24,6 +24,14 @@ extern "C" {
  * review L3). A group without GroupData is legacy (with no admin). */
 bool marmot_mls_group_is_legacy(const MlsGroup *group);
 
+/* At a Welcome join (welcome.c): record the GroupInfo signer's leaf and
+ * signature key when its credential names `sender`, the account that sent
+ * the Welcome (authenticated by the NIP-59 seal): that account vouched for
+ * that device (W24 review owkh; MarmotMemberIdentity.welcome_signer). Any
+ * other case clears an earlier record. A storage failure is returned. */
+MarmotError marmot_welcome_signer_record(Marmot *m, const MlsGroup *group,
+                                         uint32_t signer_leaf, const uint8_t *sender);
+
 #ifdef __cplusplus
 }
 #endif

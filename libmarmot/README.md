@@ -772,6 +772,14 @@ epoch for good (nostrc-prrl).
   bound: a device key the account published long ago, lost, and that leaks
   later still matches. Present a match as "the account published this key",
   not as proof the account controls it now.
+- **Who vouched for the device that invited us** (W24 review owkh). At a
+  Welcome join, libmarmot records the GroupInfo signer's leaf and signature
+  key when its credential names the Welcome's sender, the account the NIP-59
+  seal authenticates. `MarmotMemberIdentity.welcome_signer` then marks that
+  device: its account vouched for it, as for a KeyPackage it published.
+  This is typically an MDK 0.8 group's creator, whose leaf key is in no
+  KeyPackage. A signer claiming another account than the sender, or a leaf
+  added into that slot later, is not marked.
 - **Who committed.** `MarmotMessageResult.commit.committer_pubkey_hex` is
   the authenticated committer of an inbound Commit (who added a member), and
   `committer_leaf` its leaf. That leaf is the one a Commit renews in place:

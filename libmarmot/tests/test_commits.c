@@ -4100,6 +4100,76 @@ slot_takeover(bool require_proofs)
     trio_clear(&t);
 }
 
+/* W24 review owkh: the device that signed the Welcome we joined with is
+ * vouched for by its account when that account sent the Welcome (the
+ * NIP-59 seal): an unproven creator who invited us is welcome_signer; a
+ * signer claiming another account than the sender is not. */
+static void
+test_welcome_signer_reported(void)
+{
+    /* An unenrolled legacy creator (MDK 0.8's shape) invites Bob. */
+    Member creator, bob;
+    member_init_unenrolled(&creator, "Creator");
+    creator.m->config.allow_unproven_self = true;
+    member_init(&bob, "Bob");
+    char *bob_kp = key_package(&bob);
+    const char *kps[] = { bob_kp };
+    MarmotGroupConfig cfg = {0};
+    cfg.name = "Legacy";
+    cfg.admin_pubkeys = (uint8_t (*)[32])creator.pk;
+    cfg.admin_count = 1;
+    MarmotCreateGroupResult cg;
+    memset(&cg, 0, sizeof(cg));
+    OK(marmot_create_group(creator.m, creator.pk, kps, 1, &cfg, &cg));
+    join(&bob, cg.welcome_rumor_jsons[0]);
+    MarmotGroupId gid = marmot_group_id_new(cg.group->mls_group_id.data,
+                                            cg.group->mls_group_id.len);
+    marmot_create_group_result_free(&cg);
+    MarmotMemberIdentity *ids = NULL;
+    size_t n_ids = 0;
+    OK(marmot_get_group_member_identities(bob.m, &gid, &ids, &n_ids));
+    const MarmotMemberIdentity *c = identity_of(ids, n_ids, creator.pk);
+    const MarmotMemberIdentity *b = identity_of(ids, n_ids, bob.pk);
+    CHECK(c && c->status == MARMOT_MEMBER_IDENTITY_UNPROVEN && c->welcome_signer,
+          "the creator who sent the Welcome vouched for its device");
+    CHECK(b && !b->welcome_signer, "our own leaf is not");
+    free(ids);
+
+    /* Mallory's Welcome: her leaf claims Alice; Mallory sent it. */
+    Member mallory, alice, carol;
+    member_init(&mallory, "Mallory");
+    member_init(&alice, "Alice");
+    member_init(&carol, "Carol");
+    MlsKeyPackage carol_kp, other;
+    MlsKeyPackagePrivate other_priv;
+    own_key_package(&carol, &carol_kp);
+    leaf_key_package(mallory.pk, mallory.sk, &mallory, LEAF_GENUINE, &other, &other_priv);
+    char *claims_alice = mallory_welcome(alice.pk, &other, &carol_kp, mallory.pk);
+    expect_join(&carol, claims_alice, MARMOT_OK, "default mode: an unproven signer");
+    MarmotGroup **groups = NULL;
+    size_t n_groups = 0;
+    OK(marmot_get_all_groups(carol.m, &groups, &n_groups));
+    CHECK(n_groups == 1, "joined");
+    OK(marmot_get_group_member_identities(carol.m, &groups[0]->mls_group_id, &ids, &n_ids));
+    const MarmotMemberIdentity *a = identity_of(ids, n_ids, alice.pk);
+    CHECK(a && a->status == MARMOT_MEMBER_IDENTITY_UNPROVEN && !a->welcome_signer,
+          "a signer claiming someone else than the sender is vouched for by nobody");
+    free(ids);
+    groups_free(groups, n_groups);
+
+    free(claims_alice);
+    mls_key_package_clear(&carol_kp);
+    mls_key_package_clear(&other);
+    mls_key_package_private_clear(&other_priv);
+    free(bob_kp);
+    marmot_group_id_free(&gid);
+    marmot_free(creator.m);
+    marmot_free(bob.m);
+    marmot_free(mallory.m);
+    marmot_free(alice.m);
+    marmot_free(carol.m);
+}
+
 static void
 test_slot_takeover_refused(void)
 {
@@ -7336,6 +7406,7 @@ main(int argc, char **argv)
     RUN(test_default_mode_legacy_profile);
     RUN(test_non_legacy_profile_fails_closed);
     RUN(test_slot_takeover_refused);
+    RUN(test_welcome_signer_reported);
     RUN(test_refused_competitor_ordering);
     RUN(test_retained_parent_retires_once_settled);
     RUN(test_competitor_within_window_still_wins);

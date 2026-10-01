@@ -18,6 +18,7 @@
 #include "adopted.h"
 #include "kp_profile.h"
 #include "commits.h"
+#include "members.h"
 #include "mls/mls_welcome.h"
 #include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
@@ -190,7 +191,8 @@ adopted_rumor_tags_valid(NostrTags *tags)
 }
 
 static MarmotError welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data,
-                                size_t len, MlsGroup *out, const char **reason);
+                                size_t len, MlsGroup *out, uint32_t *out_signer_leaf,
+                                const char **reason);
 
 /* The invitation preview of an opened adopted Welcome, from the group's
  * signed components (not from rumor tags). */
@@ -641,7 +643,8 @@ process_welcome_impl(Marmot *m,
     if (adopted_rumor) {
         MlsGroup opened;
         const char *why = NULL;
-        MarmotError oerr = welcome_open(m, welcome, welcome_data, welcome_len, &opened, &why);
+        MarmotError oerr = welcome_open(m, welcome, welcome_data, welcome_len, &opened, NULL,
+                                        &why);
         /* A storage error that may be transient (no reason) does not fail
          * the Welcome for good: it is stored as a pending invitation like
          * any other, and accepting it runs the whole check again (W24
@@ -699,14 +702,16 @@ process_welcome_impl(Marmot *m,
  * leaf signatures), then bind every member to its account -- for an adopted
  * group (nostrc-qp24.5.1) with no exemption, the inviter an admin, and the
  * Welcome sent by that inviter.  On success *out is the joined state (caller
- * frees); otherwise *reason names the failure, or is NULL for a storage
+ * frees) and *out_signer_leaf (nullable) the GroupInfo signer's leaf, whose
+ * device the Welcome's sender vouched for (W24 review owkh); otherwise *reason names the failure, or is NULL for a storage
  * error that may be transient (the Welcome stays pending).  Writes nothing.
  */
 static MarmotError
 welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_t len,
-             MlsGroup *out, const char **reason)
+             MlsGroup *out, uint32_t *out_signer_leaf, const char **reason)
 {
     memset(out, 0, sizeof(*out));
+    if (out_signer_leaf) *out_signer_leaf = UINT32_MAX;
     *reason = NULL;
     /* We need to find which KeyPackage was used for this Welcome.
      * The MLS Welcome contains KeyPackageRef entries — we need to
@@ -853,6 +858,7 @@ welcome_open(Marmot *m, const MarmotWelcome *welcome, const uint8_t *data, size_
         return bind_err;
     }
     *out = mls_group;
+    if (out_signer_leaf) *out_signer_leaf = signer_leaf;
     return MARMOT_OK;
 }
 
@@ -888,8 +894,9 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     MlsGroup mls_group;
     const char *open_reason = NULL;
+    uint32_t signer_leaf = UINT32_MAX;   /* the GroupInfo signer (W24 review owkh) */
     MarmotError open_err = welcome_open(m, welcome, welcome_data, welcome_len, &mls_group,
-                                        &open_reason);
+                                        &signer_leaf, &open_reason);
     free(welcome_data);
     /* A failure without a reason is a storage error that may be transient:
      * the invitation stays pending (nostrc-w285). */
@@ -968,6 +975,14 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     err = marmot_observe_group_event_time(m, group->nostr_group_id, welcome_created_at(welcome));
     if (err != MARMOT_OK)
         goto fail;
+    /* Which device the Welcome's sender vouched for (W24 review owkh). */
+    {
+        uint8_t sender[32];
+        err = marmot_welcome_signer_record(m, &mls_group, signer_leaf,
+                                           welcome_sender(welcome, sender) ? sender : NULL);
+        if (err != MARMOT_OK)
+            goto fail;
+    }
 
     /* Store group relays when the welcome carries them. */
     if (gde_relays && gde_relay_count > 0) {
