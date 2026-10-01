@@ -500,3 +500,421 @@ index 323cd8dd..6af5ef52 100644
    gint rc = g_test_run();
    mls_world_finish();
 ```
+
+
+---
+
+## Final addendum (2026-10-01): R1–R3 and nits on tip `fc11dd79`
+
+Fix commits: `7f5ce63c` (A2, A4), `63762b83` (R1, R2, R3, A3, A5), `fc11dd79` (charter, versions, changelog). The review branch was rebased onto `fc11dd79`.
+
+### Final verdict: APPROVE-WITH-NITS
+
+R1, R2 and R3 are fixed and hold up under the variants below. The ADD_WRITE design (editing the user's existing 10002) is safe and consistent with the charter.
+
+One residual remains (F1, Low): a list that appears **while the signer prompt is open** is still published over. It needs another client to publish the account's list during that prompt. It should be closed before `GH_FEATURE_ENCRYPTED_GROUPS` flips, but it does not block this slice.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| macOS build at `fc11dd79` | OK |
+| ctest: marmot, groundhog mls/privacy/store/ui/onboarding/preferences/inbox/account | 50/50 passed (keyring skipped) |
+| `check-unsequenced-args.py`, `gnome/groundhog/tests/check_privacy.py` | clean |
+| `scripts/linux-gate.sh --sanitizers` | passed, 52 tests. One unrelated flake: libnostr `test_relay_teardown_leaks` failed in the parallel run and passed alone, with no sanitizer report (the gate notes 1 rerun in its last 20 runs) |
+| libmarmot under ASAN+UBSAN+LSan | 24/24 passed |
+| Docker volumes | none created |
+
+### R1: rerun of the overwrite probe, plus variants
+
+I added a probe-only wire-relay knob (`late_10002_ms`: answer kind-10002 REQs after a delay) for the timing variants. Probes are in appendix C and not committed.
+
+| Probe | Setup | Result |
+|---|---|---|
+| V1 (P3 rerun) | The user's 10002 only on message relay X; discovery relay E has none | Offer shown (CREATE), then **SKIPPED** at the pre-publish check. X still holds only the user's list; nothing published anywhere. **Fixed.** |
+| V2 | X connected but answers kind-10002 REQs only after 25 s; no list anywhere | **FAILED** at the 15 s deadline ("couldn't confirm… Nothing was published"); no 10002 on E or X |
+| V3 | The user's list only on X, which answers after 25 s | **FAILED** at 15.0 s; the user's list on X intact; nothing on E |
+| V4 | The user's list only on X, which answers after 6 s, inside the deadline | **SKIPPED** at 6.0 s; the list intact |
+| V5 | Discovery = {E, H}; the user's list only on H, which answers after 6 s | Polled for 5 s while H was silent: **never offered** (DISCOVERING, then `all_answered`); after H answered, offer NONE |
+| V6 | ADD_WRITE; base (read-only list) on E; a **newer** list from another client on target X | **SKIPPED**; the other client's list intact |
+| V7 | CREATE; another client publishes the user's first 10002 to X **after the check, while the signer request is open** | **DONE**: Groundhog's list (dated 5 s later) was published to X, so it supersedes the other client's list on any NIP-01 relay. This is **F1** |
+
+Revert spot-checks, each in `gh-relay-list-setup.c`:
+
+| Reverted | Caught by the author's tests? |
+|---|---|
+| ignore a target that holds a list (`found`) | yes: `relay-list-on-a-message-relay-kept` |
+| a failed or closed target counts as "none" | yes: `relay-list-unconfirmed-not-published` |
+| offer on partial discovery (`all_answered` dropped) | yes: `relay-list-not-offered-on-partial-discovery` |
+| ADD_WRITE drops non-`r` tags | yes: `relay-list-write-relay-added` |
+| a **silent** target counts as "none" at the deadline | **no**: only my V2 (F2) |
+| ADD_WRITE ignores a **newer** list on a target | **no**: only my V6 (F2) |
+
+How the R1 fix works:
+- The offer now needs own-list discovery COMPLETE with **every** discovery relay answering (`gh_account_relays_get_all_answered()`).
+- Before signing, every publish target (chosen relays ∪ own write ∪ discovery) gets its own REQ `{kinds:[10002], authors:[me]}` under OWN_LIST_DISCOVERY (ephemeral AUTH only, never the account).
+- A target holding a list → SKIPPED. A target that fails, closes, or stays silent past `GH_RELAY_LIST_SETUP_CHECK_S` (15 s) → FAILED, with nothing signed or published.
+- The offer is checked again right before the signer request.
+
+### R2: a first run with empty `discovery-relays`: fixed
+
+At Publish nothing is known, so the relay list stays NONE. With `adopt_discovery`, the message relays become the discovery relays. Once GhAccountRelays has asked them, the onboarding result page offers "Publish Relay List" (CREATE) or "Add My Relays" (ADD_WRITE). That offer has its own consent button and runs the same check of every target.
+
+Two tests cover this:
+- `first-run-accounts-invite-each-other` (`world_no_discovery`): no discovery relay at all; the offer appears after adoption; both accounts end up invitable and invite each other.
+- `groundhog-onboarding first-run-offers-relay-list`: the result page, with the default empty setting.
+
+Preferences [Set Up] remains the fallback for anyone who skips it.
+
+### R3: the ADD_WRITE edit: safe and consistent with the charter
+
+I judge it an **additive edit of the freshest known list, under consent, never a replacement**:
+- **When it is offered.** Only when the account's 10002 exists but names **no** write-capable relay (only `read` entries, or none usable). A list that already has a write relay is never offered an edit, so Groundhog never narrows or re-orders a working outbox setup. In that case the account is already invitable.
+- **The base is the freshest known list.** GhAccountRelays keeps the newest 10002 by NIP-01 (created_at, then lower id) across the discovery relays. The pre-publish check then makes any **other** list on any target, at least as new as the base, a SKIPPED (V6; equal timestamps count as newer). Older lists on targets are superseded correctly.
+- **The edit is additive.** `build_extended()` copies every tag verbatim, in order: non-`r` tags (e.g. `client`), unparsable `r` entries, every other relay. It keeps the content. The only changes:
+  - each chosen relay is appended as `["r", url, "write"]`;
+  - if it was already listed as `read`, that entry becomes unmarked (read and write), so nothing is lost.
+
+  `created_at` = max(now, base + 1). The author's `relay-list-write-relay-added` test pins tag order and content.
+- **It requires consent:**
+  - the confirm-page switch, retitled "Add These Relays to Your Relay List", whose text says everything else is kept;
+  - the result-page button "Add My Relays", the Preferences [Add Relays] button and the NO_WRITE_RELAYS copy;
+  - plus a separate Nostr Signer request.
+- **Charter:** the §4.3 decision paragraph records it ("can, with consent, have the chosen relays added to it as `write` entries, every other tag kept"). It is published under OWN_LIST_PUBLISH and checked under OWN_LIST_DISCOVERY, so no new egress purpose or identity is introduced.
+- **Residual:** F1's race applies here too. A concurrent edit made in another client during the signer prompt would be lost, as in any read-modify-write over replaceable events. See F1.
+
+R3 Preferences: NO_RELAYS is split into NO_RELAYS ([Set Up]) and NO_WRITE_RELAYS ([Add Relays], accurate copy). The relay step now fulfils the latter, so there is no loop. Pinned in `groundhog-preferences key-package-row`.
+
+### Nits from the previous round: all fixed
+
+- **A2:** `marmot_mls_is_grease()` (RFC 9420 §13.5 pattern, 0x0A0A–0xEAEA) is skipped for `mls_extensions` only. Proposals are compared whole, exactly as MDK's `advertised_capabilities_from_caps()` does. Tested.
+- **A3:** a test hook makes the invitation listing fail, and the rotation is held (`invitation-listing-error-holds`).
+- **A4:** after a `kp_priv` delete, `storage_sqlite.c` runs `wal_checkpoint(TRUNCATE)` when in autocommit. This backend has no `begin`/`commit` hooks, so libmarmot's transactions are no-ops on it and the checkpoint does run. The storage contract test checks that a canary is in neither the DB file nor the `-wal`.
+- **A5:** a held replacement is shown in Preferences (`HELD`), live through the new `key-package-held` property.
+
+### Remaining findings
+
+- **F1 (Low): the existence check is not repeated after the signer answers.**
+  - `gh-relay-list-setup.c:262-285` (`sign_list`) and `:236-260` (`on_signed`): `check_settled()` closes the check REQ and asks the signer, and the signer's answer goes straight to `start_publish()`. With a remote signer the prompt can stay open for minutes.
+  - If another client publishes the account's first 10002 (CREATE), or edits it (ADD_WRITE), on a target during that window, Groundhog's newer list supersedes it. V7 reproduces this.
+  - **Fix (either):**
+    - keep the check subscription open through SIGNING and abort (SKIPPED) on any `other_list()` event;
+    - re-run the target check after `on_signed` and publish only if it is still clean.
+  - File a bead blocking the encrypted-groups flip.
+- **F2 (Low): two guards have no test.** The deadline path (a connected but silent target) and ADD_WRITE's "newer list on a target" are each caught only by my probes V2 and V6. Adopt them, with a wire-relay delay knob like `late_10002_ms`, or an equivalent `withhold`-based variant.
+- **F3 (Nit): the ADD_WRITE switch defaults to on.** On the confirm page, `relay_list_switch` is `active: true` for both modes. Consent is still explicit (a visible switch, Publish, and a separate signer prompt), but an edit of a user-owned list would be better opt-in: default it to off for ADD_WRITE.
+- **F4 (Nit): charter table row not updated.** The "Own list discovery" row still lists only `discovery-relays` as its relays. The pre-publish check now also asks the publish targets under that purpose. The decision paragraph says so; the row's cell should too.
+- **F5 (Nit, inherent): a relay can hide the list and still answer.** A relay that serves the author's 10002 only to authenticated readers but still answers EOSE to an ephemeral reader is indistinguishable from "none". This is rare for a public kind and has no fix short of account AUTH, which the charter forbids for discovery. Mention it in the gh-relay-list-setup.h comment.
+
+## Appendix C: final re-review probes (not committed)
+
+```diff
+diff --git a/gnome/groundhog/tests/mls/test_mls_kp_lifecycle.c b/gnome/groundhog/tests/mls/test_mls_kp_lifecycle.c
+index 5c02f1cc..defeda86 100644
+--- a/gnome/groundhog/tests/mls/test_mls_kp_lifecycle.c
++++ b/gnome/groundhog/tests/mls/test_mls_kp_lifecycle.c
+@@ -1208,6 +1208,225 @@ test_relay_list_never_replaced(void)
+   }
+   world_down(&w);
+ }
++
++/* ---- REVIEW PROBES (final re-review) ---- */
++static guint
++probe_lists_on(WireRelay *relay, guint key, const gchar *want_r)
++{
++  guint n = 0;
++  for (guint i = 0; i < relay->stored->len; i++) {
++    WireStored *st = g_ptr_array_index(relay->stored, i);
++    if (nostr_event_get_kind(st->event) != 10002 ||
++        g_strcmp0(nostr_event_get_pubkey(st->event), hex[key]) != 0)
++      continue;
++    NostrTag *r = nostr_tags_get(nostr_event_get_tags(st->event), 0);
++    g_test_message("PROBE   10002 on %s: created_at=%" G_GINT64_FORMAT " first r=%s", relay->url,
++                   (gint64)nostr_event_get_created_at(st->event), r ? nostr_tag_get(r, 1) : "-");
++    if (!want_r || (r && g_strcmp0(nostr_tag_get(r, 1), want_r) == 0))
++      n++;
++  }
++  return n;
++}
++
++static void
++probe_state(const gchar *name, GhInboxSetup *setup, gint64 t0)
++{
++  GhRelayListSetup *l = gh_inbox_setup_get_relay_list(setup);
++  const GError *e = l ? gh_relay_list_setup_get_error(l) : NULL;
++  g_test_message("PROBE %s: relay list state=%d (DONE=%d FAILED=%d SKIPPED=%d) after %.1fs: %s",
++                 name, gh_inbox_setup_get_relay_list_state(setup), GH_INBOX_SETUP_RELAY_LIST_DONE,
++                 GH_INBOX_SETUP_RELAY_LIST_FAILED, GH_INBOX_SETUP_RELAY_LIST_SKIPPED,
++                 (g_get_monotonic_time() - t0) / 1e6, e ? e->message : "-");
++}
++
++/* V1: the re-review's P3, as written then (seed_list, no extra tags). */
++static void
++probe_v1(void)
++{
++  World w;
++  world_fresh_lists = TRUE;
++  const guint keys[] = { ALICE };
++  world_up(&w, keys, G_N_ELEMENTS(keys));
++  App *alice = &w.apps[ALICE];
++  seed_list(&w.x, ALICE, 10002, "wss://my-real-outbox.example");
++  drain();
++  g_test_message("PROBE V1: offer=%d", offer_of(alice));
++  gint64 t0 = g_get_monotonic_time();
++  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
++  probe_state("V1", setup, t0);
++  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==, GH_INBOX_SETUP_RELAY_LIST_SKIPPED);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, NULL), ==, 1);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, "wss://my-real-outbox.example"), ==, 1);
++  g_object_run_dispose(G_OBJECT(setup));
++  world_down(&w);
++}
++
++/* V2: a target that is connected but never answers in time (no list anywhere). */
++static void
++probe_v2(void)
++{
++  World w;
++  world_fresh_lists = TRUE;
++  const guint keys[] = { ALICE };
++  world_up(&w, keys, G_N_ELEMENTS(keys));
++  App *alice = &w.apps[ALICE];
++  w.x.late_10002_ms = 25000;
++  gint64 t0 = g_get_monotonic_time();
++  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
++  probe_state("V2", setup, t0);
++  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==, GH_INBOX_SETUP_RELAY_LIST_FAILED);
++  WireRelay *relays[] = { &w.e, &w.x };
++  for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
++    g_assert_cmpuint(probe_lists_on(relays[i], ALICE, NULL), ==, 0);
++  g_object_run_dispose(G_OBJECT(setup));
++  world_down(&w);
++}
++
++/* V3: the user's list only on a target that answers after the deadline. */
++static void
++probe_v3(void)
++{
++  World w;
++  world_fresh_lists = TRUE;
++  const guint keys[] = { ALICE };
++  world_up(&w, keys, G_N_ELEMENTS(keys));
++  App *alice = &w.apps[ALICE];
++  seed_list(&w.x, ALICE, 10002, "wss://my-real-outbox.example");
++  w.x.late_10002_ms = 25000;
++  gint64 t0 = g_get_monotonic_time();
++  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
++  probe_state("V3", setup, t0);
++  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), !=, GH_INBOX_SETUP_RELAY_LIST_DONE);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, NULL), ==, 1);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, "wss://my-real-outbox.example"), ==, 1);
++  g_assert_cmpuint(probe_lists_on(&w.e, ALICE, NULL), ==, 0);
++  g_object_run_dispose(G_OBJECT(setup));
++  world_down(&w);
++}
++
++/* V4: the user's list only on a target that answers late, but in time. */
++static void
++probe_v4(void)
++{
++  World w;
++  world_fresh_lists = TRUE;
++  const guint keys[] = { ALICE };
++  world_up(&w, keys, G_N_ELEMENTS(keys));
++  App *alice = &w.apps[ALICE];
++  seed_list(&w.x, ALICE, 10002, "wss://my-real-outbox.example");
++  w.x.late_10002_ms = 6000;
++  gint64 t0 = g_get_monotonic_time();
++  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
++  probe_state("V4", setup, t0);
++  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==, GH_INBOX_SETUP_RELAY_LIST_SKIPPED);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, "wss://my-real-outbox.example"), ==, 1);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, NULL), ==, 1);
++  g_object_run_dispose(G_OBJECT(setup));
++  world_down(&w);
++}
++
++/* V5: a discovery relay H that holds the list answers late: no offer
++ * before it answered, none after. */
++static void
++probe_v5(void)
++{
++  World w;
++  world_fresh_lists = TRUE;
++  const guint keys[] = { ALICE };
++  world_up(&w, keys, G_N_ELEMENTS(keys));
++  App *alice = &w.apps[ALICE];
++  seed_list(&w.h, ALICE, 10002, "wss://my-real-outbox.example");
++  w.h.late_10002_ms = 6000;
++  const gchar *discovery[] = { w.e.url, w.h.url, NULL };
++  g_settings_set_strv(alice->settings, "discovery-relays", discovery);
++  gint64 t0 = g_get_monotonic_time();
++  guint offered_while_waiting = 0;
++  while (g_get_monotonic_time() - t0 < 5 * G_USEC_PER_SEC) {
++    g_main_context_iteration(NULL, FALSE);
++    offered_while_waiting += offer_of(alice) != GH_RELAY_LIST_OFFER_NONE;
++  }
++  spin_until(has_relay_list, alice, "the late list");
++  g_test_message("PROBE V5: offered while H was silent: %u times; after: offer=%d",
++                 offered_while_waiting, offer_of(alice));
++  g_assert_cmpuint(offered_while_waiting, ==, 0);
++  g_assert_cmpint(offer_of(alice), ==, GH_RELAY_LIST_OFFER_NONE);
++  world_down(&w);
++}
++
++/* V6: ADD_WRITE with a NEWER list (another client's edit) on target X. */
++static void
++probe_v6(void)
++{
++  World w;
++  world_fresh_lists = TRUE;
++  const guint keys[] = { ALICE };
++  world_up(&w, keys, G_N_ELEMENTS(keys));
++  App *alice = &w.apps[ALICE];
++  seed_relay_list(&w.e, ALICE, w.r.url, "read");             /* base: now - 3600 */
++  spin_until(has_relay_list, alice, "the read-only list");
++  NostrTags *tags = nostr_tags_new(0);
++  nostr_tags_append(tags, nostr_tag_new("r", "wss://edited-elsewhere.example", "read", NULL));
++  g_autofree gchar *newer = sign_event(ALICE, 10002, g_get_real_time() / G_USEC_PER_SEC - 60,
++                                       "", tags);
++  wire_relay_inject(&w.x, newer);
++  g_test_message("PROBE V6: offer=%d (ADD_WRITE=%d)", offer_of(alice), GH_RELAY_LIST_OFFER_ADD_WRITE);
++  gint64 t0 = g_get_monotonic_time();
++  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
++  probe_state("V6", setup, t0);
++  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==, GH_INBOX_SETUP_RELAY_LIST_SKIPPED);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, "wss://edited-elsewhere.example"), ==, 1);
++  g_assert_cmpuint(probe_lists_on(&w.x, ALICE, NULL), ==, 1);
++  g_object_run_dispose(G_OBJECT(setup));
++  world_down(&w);
++}
++
++static gboolean
++probe_signing(gpointer data)
++{
++  GhRelayListSetup *l = gh_inbox_setup_get_relay_list(data);
++  return l && gh_relay_list_setup_get_state(l) >= GH_RELAY_LIST_SETUP_SIGNING;
++}
++
++static gboolean
++probe_setup_finished(gpointer data)
++{
++  GhInboxSetupState st = gh_inbox_setup_get_state(data);
++  GhRelayListSetup *l = gh_inbox_setup_get_relay_list(data);
++  return (st == GH_INBOX_SETUP_DONE || st == GH_INBOX_SETUP_FAILED) &&
++         (!l || gh_relay_list_setup_get_state(l) >= GH_RELAY_LIST_SETUP_DONE);
++}
++
++/* V7: another client publishes the user's first 10002 to target X while
++ * Groundhog's signer request is open (after the check). */
++static void
++probe_v7(void)
++{
++  World w;
++  world_fresh_lists = TRUE;
++  const guint keys[] = { ALICE };
++  world_up(&w, keys, G_N_ELEMENTS(keys));
++  App *alice = &w.apps[ALICE];
++  GhInboxSetupConfig config = { .accounts = alice->accounts, .account_relays = alice->relays,
++                                .settings = alice->settings, .offer_relay_list = TRUE };
++  g_autoptr(GhInboxSetup) setup = gh_inbox_setup_new(&config);
++  const gchar *chosen[] = { w.x.url, NULL };
++  g_autoptr(GError) error = NULL;
++  g_assert_true(gh_inbox_setup_start_full(setup, chosen, FALSE, TRUE, &error));
++  spin_until(probe_signing, setup, "the relay list signer request");
++  GhRelayListSetupState at = gh_relay_list_setup_get_state(gh_inbox_setup_get_relay_list(setup));
++  NostrTags *tags = nostr_tags_new(0);
++  nostr_tags_append(tags, nostr_tag_new("r", "wss://other-client.example", NULL));
++  g_autofree gchar *json = sign_event(ALICE, 10002, g_get_real_time() / G_USEC_PER_SEC - 5, "",
++                                      tags);
++  wire_relay_inject(&w.x, json);
++  spin_until(probe_setup_finished, setup, "the setup");
++  g_test_message("PROBE V7: injected at state=%d (SIGNING=%d); final relay list state=%d",
++                 at, GH_RELAY_LIST_SETUP_SIGNING, gh_inbox_setup_get_relay_list_state(setup));
++  guint kept = probe_lists_on(&w.x, ALICE, "wss://other-client.example");
++  g_test_message("PROBE V7: the other client's list still on X: %u", kept);
++  g_object_run_dispose(G_OBJECT(setup));
++  world_down(&w);
++}
+ #endif
+ 
+ #if GH_MLS_ADOPTED_KEY_PACKAGES
+@@ -1260,6 +1479,15 @@ main(int argc, char **argv)
+   g_test_add_func(KP_TEST("relay-list-write-relay-added"), test_relay_list_write_relay_added);
+   g_test_add_func(KP_TEST("first-run-accounts-invite-each-other"),
+                   test_first_run_accounts_invite_each_other);
++#endif
++#if GH_TEST_HAVE_INBOX_SETUP && !GH_MLS_ADOPTED_KEY_PACKAGES
++  g_test_add_func(KP_TEST("probe-v1"), probe_v1);
++  g_test_add_func(KP_TEST("probe-v2"), probe_v2);
++  g_test_add_func(KP_TEST("probe-v3"), probe_v3);
++  g_test_add_func(KP_TEST("probe-v4"), probe_v4);
++  g_test_add_func(KP_TEST("probe-v5"), probe_v5);
++  g_test_add_func(KP_TEST("probe-v6"), probe_v6);
++  g_test_add_func(KP_TEST("probe-v7"), probe_v7);
+ #endif
+   gint rc = g_test_run();
+   mls_world_finish();
+diff --git a/gnome/groundhog/tests/relay/wire-relay.h b/gnome/groundhog/tests/relay/wire-relay.h
+index d48d4e8b..34971a3f 100644
+--- a/gnome/groundhog/tests/relay/wire-relay.h
++++ b/gnome/groundhog/tests/relay/wire-relay.h
+@@ -86,6 +86,7 @@ struct _WireRelay {
+   GHashTable *withheld;      /* ids kept but served to nobody until released */
+   gboolean withhold_new;     /* every event kept from now on is withheld */
+   guint max_limit;           /* serve: a REQ's stored answer per filter, at most; 0: none */
++  guint late_10002_ms;       /* REVIEW PROBE: answer kind-10002 REQs this late */
+   gboolean stall_pages;      /* serve: a REQ with an until is never answered (no EOSE) */
+   guint stalled_reqs;
+   gint64 max_future_seconds; /* serve: an EVENT dated further ahead of the clock is
+@@ -359,6 +360,32 @@ wire_answer_req(WireRelay *relay, SoupWebsocketConnection *connection, const gch
+   wire_send(connection, eose);
+ }
+ 
++/* REVIEW PROBE: a relay that answers kind-10002 REQs late. */
++static G_GNUC_UNUSED gboolean
++wire_filters_want_kind(NostrFilters *filters, int kind)
++{
++  for (size_t i = 0; i < filters->count; i++)
++    for (size_t k = 0; k < nostr_filter_kinds_len(&filters->filters[i]); k++)
++      if (nostr_filter_kinds_get(&filters->filters[i], k) == kind)
++        return TRUE;
++  return FALSE;
++}
++
++typedef struct { WireRelay *relay; SoupWebsocketConnection *c; gchar *sub; } WireLate;
++
++static gboolean
++wire_late_fire(gpointer data)
++{
++  WireLate *late = data;
++  NostrFilters *filters = g_hash_table_lookup(wire_subs(late->c), late->sub);
++  if (filters && wire_open(late->c))
++    wire_answer_req(late->relay, late->c, late->sub, filters);
++  g_object_unref(late->c);
++  g_free(late->sub);
++  g_free(late);
++  return G_SOURCE_REMOVE;
++}
++
+ /* A newly kept event goes to every live REQ that matches it. */
+ static G_GNUC_UNUSED void
+ wire_broadcast(WireRelay *relay, WireStored *stored)
+@@ -475,7 +502,15 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const
+     } else {
+       NostrFilters *filters = g_steal_pointer(&req->filters);
+       g_hash_table_replace(wire_subs(connection), g_strdup(sub_id), filters);
+-      wire_answer_req(relay, connection, sub_id, filters);
++      if (relay->late_10002_ms && wire_filters_want_kind(filters, 10002)) {
++        WireLate *late = g_new0(WireLate, 1);
++        late->relay = relay;
++        late->c = g_object_ref(connection);
++        late->sub = g_strdup(sub_id);
++        g_timeout_add(relay->late_10002_ms, wire_late_fire, late);
++      } else {
++        wire_answer_req(relay, connection, sub_id, filters);
++      }
+     }
+     nostr_envelope_free(envelope);
+     return TRUE;
+```
