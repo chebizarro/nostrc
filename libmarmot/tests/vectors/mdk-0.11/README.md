@@ -139,8 +139,21 @@ slice H. `tests/test_adopted_commits.c` reads it.
   dropping a required component or the admin policy or the lifecycle, an
   empty or non-member admin list, malformed profile/routing bytes, removing
   an admin without dropping its key (and with it: valid), Adds with a
-  tampered or no account proof, a disband, an AppDataUpdate of 0x800b, of
-  0x8009, of an unknown id (valid), a GroupContextExtensions proposal; and by
+  tampered or no account proof, a disband, a malformed 0x800b, an
+  AppDataUpdate of 0x8009, of an unknown id (valid), a GroupContextExtensions
+  proposal; since the slice H review (`openmls_forgeries` regenerated
+  2026-10-01 with the same emitter, `mdk_engine` kept as captured): lifecycle
+  transitions MDK refuses (un-requiring 0x800c, alone or with a rename; a
+  redundant 0x800c=active) and the control (un-requiring 0x8001, valid);
+  valid 0x800b (`EncryptedMediaPolicyV2::blossom_default`) and 0x8006
+  (`user_to_agent_default`, the members' leaves advertising the receive role
+  0xF2D1 as libmarmot's do) updates and 0x8006 requiring send; valid and
+  malformed 0x8002, 0x8007 (a non-URL) and 0x8005 (7 bytes); a removal of
+  absent state and 20 updates in one Commit (valid, as MDK accepts them); X
+  removing the observer with and without a malformed 0x8002; and
+  `lifecycle_less`, a second group (creator XL and the observer) that has not
+  enabled lifecycle-v1, with MDK's enablement Commit (valid), the enablement
+  with a rename, and a lifecycle state without the requirement; and by
   reference: X's standalone rename and its Commit, Y's (no admin) and X's
   Commit of it, W's at epoch 1, X demoting W, W's at epoch 2 and X's Commit
   of it. Every forgery is built from the same stored epoch: an OpenMLS group
@@ -159,6 +172,10 @@ cd /tmp/mdk-h && cargo build -p w24h-vectors && git diff Cargo.lock   # only w24
 target/debug/w24h-vectors emit <this dir>/adopted-commits.json
 cd <this dir> && python3 gen_adopted_commits_fixture.py
 ```
+
+(The slice H review fixes regenerated only `openmls_forgeries`: emit to a
+scratch file and copy that key into `adopted-commits.json`, keeping
+`mdk_engine`.)
 
 MLS keys and the MDK group are random per capture; the tests depend on no
 particular bytes beyond what the capture records (the account keys are

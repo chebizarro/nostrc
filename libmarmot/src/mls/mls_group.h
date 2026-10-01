@@ -503,6 +503,16 @@ int mls_group_commit_extensions(MlsGroup *group,
  * ──────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Whether @commit_data is a Commit of this group and epoch that member
+ * @sender_leaf signed (RFC 9420 sections 6.1-6.3: a PublicMessage's
+ * signature and membership tag, or a PrivateMessage decrypted and its
+ * signature checked), whatever its content: 0, or the error.  Nothing is
+ * applied.
+ */
+int mls_group_commit_authentic(const MlsGroup *group, const uint8_t *commit_data,
+                               size_t commit_len, uint32_t sender_leaf);
+
+/**
  * Whether the Commit @commit_data from member @sender_leaf in @group's epoch
  * removes @group's own leaf (RFC 9420 §12.4.2; OpenMLS's self_removed).  A
  * removed member cannot process such a Commit: its UpdatePath is encrypted
@@ -695,6 +705,11 @@ typedef struct {
     size_t   add_count, remove_count, update_count;
     size_t   gce_count;                            /**< GroupContextExtensions */
     size_t   adu_count;                            /**< AppDataUpdate (0x0008) */
+    /* For MDK's lifecycle transition rules (validate_group_lifecycle_
+     * transition; slice H review M1): AppDataUpdates of 0x800c, inline or by
+     * reference, and inline AppDataUpdates of 0x0001 or 0x800c. */
+    size_t   adu_lifecycle_count;
+    size_t   adu_inline_enablement_count;
     size_t   other_count;                          /**< PSK, ReInit, ExternalInit, unknown */
     /* By-reference proposals other than SelfRemove: their senders (leaves of
      * the source epoch) and types; their authority is the Marmot layer's. */
@@ -730,6 +745,25 @@ int mls_group_commit_removes_self_by_ref(const MlsGroup *group,
                                          const uint8_t *const *acs, const size_t *ac_lens,
                                          size_t ac_count, bool *out_removed,
                                          MlsCommitSummary *summary);
+
+/**
+ * The public result of a Commit from @sender_leaf (slice H review L1):
+ * mls_group_process_commit_by_ref()'s every check up to, not including, the
+ * decryption of the UpdatePath secret, then the resulting-epoch check
+ * (mls_group_profile_check_entered()).  *out is a copy of @group with the
+ * Commit's proposals applied, the committer's leaf replaced by the
+ * UpdatePath's (parent nodes are not updated) and the epoch advanced: no
+ * key schedule, no secrets of the new epoch; for judging (authorization,
+ * leaves, GroupContext), never for installing.  A member the Commit removes
+ * can compute it.  Free with mls_group_free().  @summary as for
+ * mls_group_process_commit_by_ref().  @group is unchanged.
+ */
+int mls_group_commit_public_result_by_ref(const MlsGroup *group,
+                                          const uint8_t *commit_data, size_t commit_len,
+                                          uint32_t sender_leaf,
+                                          const uint8_t *const *acs, const size_t *ac_lens,
+                                          size_t ac_count, MlsGroup *out,
+                                          MlsCommitSummary *summary);
 
 /**
  * An adopted-profile Commit (nostrc-qp24.5.1.3) of Removes of @removes,

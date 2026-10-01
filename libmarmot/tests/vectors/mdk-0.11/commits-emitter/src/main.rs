@@ -607,9 +607,14 @@ mod forgeries {
     use tls_codec::Deserialize as _;
 
     const CS: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
-    /// libmarmot's adopted leaf advertisement (MLS_ADOPTED_SUPPORTED_COMPONENTS + 0x0001).
-    const LEAF_COMPONENTS: [u16; 6] = [0x0001, 0x8001, 0x8003, 0x8004, 0x8009, 0x800c];
+    /// libmarmot's adopted leaf advertisement since W24 slice I
+    /// (MLS_ADOPTED_SUPPORTED_COMPONENTS + 0x0001).
+    const LEAF_COMPONENTS: [u16; 8] = [0x0001, 0x8001, 0x8003, 0x8004, 0x8006, 0x8009, 0x800b, 0x800c];
     const REQUIRED_COMPONENTS: [u16; 5] = [0x8001, 0x8003, 0x8004, 0x8009, 0x800c];
+    /// A group that has not enabled lifecycle-v1 (0x800c neither required nor present).
+    const REQUIRED_NO_LIFECYCLE: [u16; 4] = [0x8001, 0x8003, 0x8004, 0x8009];
+    /// The agent text stream receive role's capability (as libmarmot's leaves).
+    const RECEIVE_ROLE: u16 = 0xF2D1;
 
     fn proof(seed: &[u8], sig_pub: &[u8], tamper: bool) -> Vec<u8> {
         let mut p = account_identity_proof_component(
@@ -642,7 +647,7 @@ mod forgeries {
         Capabilities::new(
             None,
             Some(&[CS]),
-            Some(&[ExtensionType::AppDataDictionary]),
+            Some(&[ExtensionType::AppDataDictionary, ExtensionType::Unknown(RECEIVE_ROLE)]),
             Some(&[ProposalType::AppDataUpdate]),
             None,
         )
@@ -696,13 +701,17 @@ mod forgeries {
     }
 
     fn group_context(admins: &[[u8; 32]]) -> Extensions<GroupContext> {
+        group_context_with(admins, &REQUIRED_COMPONENTS, [0x43; 32])
+    }
+
+    fn group_context_with(admins: &[[u8; 32]], required_components: &[u16], nostr_gid: [u8; 32]) -> Extensions<GroupContext> {
         let required = RequiredCapabilitiesExtension::new(
             &[ExtensionType::AppDataDictionary],
             &[ProposalType::AppDataUpdate],
             &[],
         );
         let mut dict = AppDataDictionary::new();
-        dict.insert(0x0001, encode_components_list(&REQUIRED_COMPONENTS.iter().copied().collect()));
+        dict.insert(0x0001, encode_components_list(&required_components.iter().copied().collect()));
         dict.insert(
             0x8001,
             encode_group_profile_v1(&GroupProfileV1 {
@@ -712,8 +721,10 @@ mod forgeries {
             .unwrap(),
         );
         dict.insert(0x8003, admin_policy(admins.to_vec()));
-        dict.insert(0x8004, routing([0x43; 32], &[RELAY_A]).data);
-        dict.insert(0x800c, vec![0]);
+        dict.insert(0x8004, routing(nostr_gid, &[RELAY_A]).data);
+        if required_components.contains(&0x800c) {
+            dict.insert(0x800c, vec![0]);
+        }
         Extensions::from_vec(vec![
             Extension::RequiredCapabilities(required),
             Extension::AppDataDictionary(AppDataDictionaryExtension::new(dict)),
@@ -879,6 +890,83 @@ mod forgeries {
             .unwrap()
     }
 
+    fn components(ids: &[u16]) -> Vec<u8> {
+        encode_components_list(&ids.iter().copied().collect())
+    }
+
+    /// Valid component states, encoded by MDK v0.11.0's own encoders.
+    fn blossom_image() -> Vec<u8> {
+        use cgka_traits::app_components::{GroupBlossomImageV1, encode_group_blossom_image_v1};
+        encode_group_blossom_image_v1(&GroupBlossomImageV1 {
+            image_hash: vec![0x11; 32],
+            image_key: vec![0x22; 32],
+            image_nonce: vec![0x33; 12],
+            image_upload_key: vec![0x44; 32],
+            media_type: "image/png".into(),
+        })
+        .expect("0x8002")
+    }
+
+    fn avatar_url(url: &str) -> Vec<u8> {
+        use cgka_traits::app_components::{GroupAvatarUrlV1, encode_group_avatar_url_v1};
+        encode_group_avatar_url_v1(&GroupAvatarUrlV1 { url: url.into(), dim: vec![], thumbhash: vec![] })
+            .expect("0x8007")
+    }
+
+    fn media_v2(endpoint: &str) -> Vec<u8> {
+        use cgka_traits::app_components::{EncryptedMediaPolicyV2, encode_encrypted_media_policy_v2};
+        encode_encrypted_media_policy_v2(
+            &EncryptedMediaPolicyV2::blossom_default([endpoint.to_owned()]).expect("policy"),
+        )
+        .expect("0x800b")
+    }
+
+    fn agent_stream_receive() -> Vec<u8> {
+        cgka_traits::agent_text_stream::AgentTextStreamQuicPolicyV1::user_to_agent_default()
+            .encode_component_state()
+            .expect("0x8006")
+    }
+
+    /// A second group (creator XL and the observer) that has not enabled
+    /// lifecycle-v1, for MDK's enablement rules (slice H review M1).
+    fn lifecycle_less(o: &Member) -> Value {
+        let mut xl = member(b"w24h-lc-x");
+        let (kp_o, o_private) = key_package(o, 0);
+        let config = MlsGroupCreateConfig::builder()
+            .ciphersuite(CS)
+            .capabilities(capabilities())
+            .with_leaf_node_extensions(leaf_extensions(Some(proof(xl.seed, &xl.signer.to_public_vec(), false))))
+            .expect("leaf extensions")
+            .with_group_context_extensions(group_context_with(&[identity(xl.seed)], &REQUIRED_NO_LIFECYCLE, [0x44; 32]))
+            .wire_format_policy(openmls::prelude::PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .use_ratchet_tree_extension(true)
+            .build();
+        let mut group = MlsGroup::new(&xl.provider, &xl.signer, &config, cwk(&xl)).expect("group");
+        let (_c, welcome, _gi) = group
+            .add_members(&xl.provider, &xl.signer, &[kp_o.clone()])
+            .expect("add observer");
+        group.merge_pending_commit(&xl.provider).expect("merge");
+        xl.group = Some(group);
+        let welcome = welcome.tls_serialize_detached().expect("welcome");
+        let enabled = components(&REQUIRED_COMPONENTS);
+        let mut c = serde_json::Map::new();
+        let mut put = |name: &str, bytes: Vec<u8>| {
+            c.insert(name.into(), json!({ "by": "xl", "message": hex::encode(bytes) }));
+        };
+        // MDK's enablement shape: require 0x800c and install `active`, inline,
+        // nothing else (EnableDisbanding).
+        put("ok_enable_lifecycle", commit(&mut xl, vec![], vec![], vec![(0x0001, Some(enabled.clone())), (0x800c, Some(vec![0]))], None, false));
+        put("enable_lifecycle_with_rename", commit(&mut xl, vec![], vec![], vec![(0x0001, Some(enabled.clone())), (0x800c, Some(vec![0])), (0x8001, Some(profile("renamed while enabling")))], None, false));
+        put("lifecycle_state_unrequired", commit(&mut xl, vec![], vec![], vec![(0x800c, Some(vec![0]))], None, false));
+        json!({
+            "observer_key_package": hex::encode(kp_o.tls_serialize_detached().unwrap()),
+            "observer_private": o_private,
+            "welcome": hex::encode(&welcome),
+            "creator_account": hex::encode(identity(xl.seed)),
+            "commits": Value::Object(c),
+        })
+    }
+
     pub fn emit() -> Value {
         // X creates; W (co-admin), Y (no admin) and the observer O join.
         let mut x = member(b"w24h-neg-x");
@@ -916,6 +1004,7 @@ mod forgeries {
         };
         let w_leaf = leaf(&w);
         let y_leaf = leaf(&y);
+        let o_leaf = leaf(&o);
 
         let only_x = admin_policy(vec![identity(x.seed)]);
         let fresh = member(b"w24h-neg-new");
@@ -950,10 +1039,45 @@ mod forgeries {
         put("add_bad_proof", "x", commit(&mut x, vec![], vec![kp_bad], vec![], None, false));
         put("add_without_proof", "x", commit(&mut x, vec![], vec![kp_none], vec![], None, false));
         put("disband", "x", commit(&mut x, vec![], vec![], vec![(0x800c, Some(vec![1]))], None, false));
-        put("unsupported_component", "x", commit(&mut x, vec![], vec![], vec![(0x800b, Some(vec![0x00]))], None, false));
+        put("malformed_media_v2", "x", commit(&mut x, vec![], vec![], vec![(0x800b, Some(vec![0x00]))], None, false));
         put("proof_in_group_context", "x", commit(&mut x, vec![], vec![], vec![(0x8009, Some(vec![0x00; 104]))], None, false));
         let gce = x.group.as_ref().unwrap().extensions().clone();
         put("group_context_extensions", "x", commit(&mut x, vec![], vec![], vec![], Some(gce), false));
+
+        // Slice H review M1: lifecycle (0x800c) transitions MDK refuses
+        // (validate_group_lifecycle_transition), and the control.
+        let no_lifecycle = components(&[0x8001, 0x8003, 0x8004, 0x8009]);
+        put("lifecycle_unrequire", "x", commit(&mut x, vec![], vec![], vec![(0x0001, Some(no_lifecycle.clone()))], None, false));
+        put("lifecycle_redundant", "x", commit(&mut x, vec![], vec![], vec![(0x800c, Some(vec![0]))], None, false));
+        put("lifecycle_unrequire_rename", "x", commit(&mut x, vec![], vec![], vec![(0x0001, Some(no_lifecycle)), (0x8001, Some(profile("renamed while un-requiring")))], None, false));
+        put("ok_unrequire_profile", "x", commit(&mut x, vec![], vec![], vec![(0x0001, Some(components(&[0x8003, 0x8004, 0x8009, 0x800c])))], None, false));
+        // MC (slice I's validator): White Noise components updated.
+        put("ok_media_v2", "x", commit(&mut x, vec![], vec![], vec![(0x800b, Some(media_v2("https://blossom.example.com")))], None, false));
+        put("ok_agent_stream", "x", commit(&mut x, vec![], vec![], vec![(0x8006, Some(agent_stream_receive()))], None, false));
+        let mut send_required = agent_stream_receive();
+        send_required[0] = 0x03; // receive | send
+        put("agent_stream_send_required", "x", commit(&mut x, vec![], vec![], vec![(0x8006, Some(send_required))], None, false));
+        // L4: 0x8002, 0x8005 and 0x8007 on the Commit path.
+        put("ok_image", "x", commit(&mut x, vec![], vec![], vec![(0x8002, Some(blossom_image()))], None, false));
+        put("ok_avatar", "x", commit(&mut x, vec![], vec![], vec![(0x8007, Some(avatar_url("https://example.com/avatar.png")))], None, false));
+        put("ok_retention", "x", commit(&mut x, vec![], vec![], vec![(0x8005, Some(vec![0, 0, 0, 0, 0, 0, 0x0e, 0x10]))], None, false));
+        let mut bad_image = blossom_image();
+        bad_image.truncate(bad_image.len() - 1);
+        put("malformed_image", "x", commit(&mut x, vec![], vec![], vec![(0x8002, Some(bad_image))], None, false));
+        let mut not_url = vec![9u8];
+        not_url.extend_from_slice(b"not a url");
+        not_url.extend_from_slice(&[0, 0]);
+        put("avatar_not_url", "x", commit(&mut x, vec![], vec![], vec![(0x8007, Some(not_url))], None, false));
+        put("retention_7_bytes", "x", commit(&mut x, vec![], vec![], vec![(0x8005, Some(vec![0, 0, 0, 0, 0, 0x0e, 0x10]))], None, false));
+        // L3: what MDK and its OpenMLS accept.
+        put("ok_remove_absent", "x", commit(&mut x, vec![], vec![], vec![(0x9001, None)], None, false));
+        let many = (0x9100u16..0x9114).map(|id| (id, Some(vec![id as u8]))).collect::<Vec<_>>();
+        put("ok_twenty_updates", "x", commit(&mut x, vec![], vec![], many, None, false));
+        // L1: X removes the observer, with a malformed component riding
+        // along (every member refuses it), and the valid control.
+        put("remove_observer_malformed", "x", commit(&mut x, vec![o_leaf], vec![], vec![(0x8002, Some(vec![0x01]))], None, false));
+        put("ok_remove_observer", "x", commit(&mut x, vec![o_leaf], vec![], vec![], None, false));
+        let lc = lifecycle_less(&o);
 
         // By reference: X's standalone rename, then X's Commit of it.
         let px = propose(&mut x, 0x8001, profile("renamed by reference"));
@@ -994,6 +1118,8 @@ mod forgeries {
             "y_account": hex::encode(identity(y.seed)),
             "w_leaf": w_leaf,
             "y_leaf": y_leaf,
+            "o_leaf": o_leaf,
+            "lifecycle_less": lc,
             "commits": Value::Object(c),
             "by_ref": {
                 "proposal_x": hex::encode(px),

@@ -307,16 +307,23 @@ test_apply(void)
     CHECK(out && out_len == want_len && memcmp(out, want, want_len) == 0);
     free(out);
 
-    /* Refused: two operations for one component, a remove of absent state,
-     * no dictionary, an unknown operation. */
+    /* A remove of a component with no state removes nothing, as the pinned
+     * OpenMLS and MDK v0.11.0 do (slice H review L3): the same entries, the
+     * dictionary moved last. */
     out = NULL;
+    MlsAppDataUpdate rm_absent = {0x8004, MLS_APP_DATA_UPDATE_OP_REMOVE, NULL, 0};
+    const MlsAppDataUpdate *absent[] = {&rm_absent};
+    CHECK(mls_app_data_update_apply(list, list_len, absent, 1, &out, &out_len) == 0);
+    want_len = ext_list(want, false, entries, sizeof(entries));
+    CHECK(out && out_len == want_len && memcmp(out, want, want_len) == 0);
+    free(out);
+    out = NULL;
+
+    /* Refused: two operations for one component, no dictionary, an unknown
+     * operation. */
     MlsAppDataUpdate up2 = {0x8001, MLS_APP_DATA_UPDATE_OP_REMOVE, NULL, 0};
     const MlsAppDataUpdate *dup[] = {&up, &up2};
     CHECK(mls_app_data_update_apply(list, list_len, dup, 2, &out, &out_len) ==
-          MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
-    MlsAppDataUpdate rm_absent = {0x8004, MLS_APP_DATA_UPDATE_OP_REMOVE, NULL, 0};
-    const MlsAppDataUpdate *absent[] = {&rm_absent};
-    CHECK(mls_app_data_update_apply(list, list_len, absent, 1, &out, &out_len) ==
           MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
     static const uint8_t caps_only[] = {0x00, 0x03, 0x03, 0x00, 0x00, 0x00};
     const MlsAppDataUpdate *one[] = {&up};
@@ -333,6 +340,53 @@ test_apply(void)
           MARMOT_ERR_EXTENSION_FORMAT && !out);
 }
 
+/* More operations than the old cap of 16 (slice H review L3): one per
+ * component id, as many as MDK sends; given in descending order, written
+ * ascending; a duplicate anywhere among them is refused; more than one per
+ * u16 id is refused before anything is read. */
+static void
+test_apply_many(void)
+{
+    static const uint8_t entries[] = {0x00, 0x01, 0x01, 0x01};
+    uint8_t list[64];
+    size_t list_len = ext_list(list, true, entries, sizeof(entries));
+    enum { N = 1000 };
+    static MlsAppDataUpdate ops[N];
+    static const MlsAppDataUpdate *ptrs[N];
+    static uint8_t data[N];
+    for (size_t i = 0; i < N; i++) {
+        data[i] = (uint8_t)i;
+        ops[i].component_id = (uint16_t)(0x9000 + N - 1 - i);   /* descending */
+        ops[i].operation = MLS_APP_DATA_UPDATE_OP_UPDATE;
+        ops[i].update = &data[i];
+        ops[i].update_len = 1;
+        ptrs[i] = &ops[i];
+    }
+    uint8_t *out = NULL;
+    size_t out_len = 0;
+    CHECK(mls_app_data_update_apply(list, list_len, ptrs, N, &out, &out_len) == 0 && out);
+    /* caps (6), then type 0x0006, two varint lengths (2 bytes each beyond
+     * 63), then 0x0001 {0x01} and N entries of 4 bytes, ascending. */
+    size_t entries_len = 4 + 4 * (size_t)N;
+    CHECK(out_len == 6 + 2 + 2 + 2 + entries_len);
+    const uint8_t *e = out + 6 + 2 + 2 + 2;
+    CHECK(e[0] == 0x00 && e[1] == 0x01);
+    bool ascending = true;
+    for (size_t i = 0; i < N; i++) {
+        const uint8_t *x = e + 4 + 4 * i;
+        uint16_t id = (uint16_t)(x[0] << 8 | x[1]);
+        ascending &= id == 0x9000 + i && x[2] == 1 && x[3] == (uint8_t)(N - 1 - i);
+    }
+    CHECK(ascending);
+    free(out);
+    out = NULL;
+    ops[N / 2].component_id = ops[N - 1].component_id;   /* a duplicate */
+    CHECK(mls_app_data_update_apply(list, list_len, ptrs, N, &out, &out_len) ==
+          MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
+    CHECK(mls_app_data_update_apply(list, list_len, ptrs, (size_t)MLS_APP_DATA_UPDATE_MAX + 1, &out,
+                                    &out_len) == MARMOT_ERR_MLS_PROCESS_MESSAGE && !out);
+}
+
 int
 main(void)
 {
@@ -341,6 +395,7 @@ main(void)
     test_group_context_gate();
     test_malformed();
     test_apply();
+    test_apply_many();
     if (failures) return 1;
     puts("AppDataUpdate wire and application tests passed");
     return 0;

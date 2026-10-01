@@ -81,12 +81,34 @@ for name, val in (
     lines.append(f"#define H_OMLS_{name} {c_str(val)}")
 lines.append(f"#define H_OMLS_W_LEAF {o['w_leaf']}u")
 lines.append(f"#define H_OMLS_Y_LEAF {o['y_leaf']}u")
+lines.append(f"#define H_OMLS_O_LEAF {o['o_leaf']}u")
 for k, v in o["by_ref"].items():
     lines.append(f"#define H_OMLS_REF_{k.upper()} {c_str(v)}")
 lines += ["", "static const AdoptedForgery H_OMLS_COMMITS[] = {"]
 for k in sorted(o["commits"]):
     c = o["commits"][k]
     lines.append(f"    {{{c_str(k)}, {c_str(c['by'])},\n     {c_str(c['message'])}}},")
-lines += ["};", f"#define H_OMLS_COMMIT_COUNT {len(o['commits'])}", "", "#endif", ""]
+lines += ["};", f"#define H_OMLS_COMMIT_COUNT {len(o['commits'])}", ""]
+
+# A second group that has not enabled lifecycle-v1 (slice H review M1).
+lc = o["lifecycle_less"]
+lines.append("/* openmls_forgeries.lifecycle_less: creator XL, the observer; 0x800c")
+lines.append(" * neither required nor present. */")
+p = lc["observer_private"]
+for name, val in (
+    ("KP", lc["observer_key_package"]),
+    ("INIT_SK", p["init_key_private"]),
+    ("ENC_SK", p["encryption_key_private"]),
+    ("SIG_SEED", p["signature_key_private_seed"]),
+    ("SIG_PUB", p["signature_key_public"]),
+    ("WELCOME", lc["welcome"]),
+    ("XL", lc["creator_account"]),
+):
+    lines.append(f"#define H_OMLS_LC_{name} {c_str(val)}")
+lines += ["", "static const AdoptedForgery H_OMLS_LC_COMMITS[] = {"]
+for k in sorted(lc["commits"]):
+    c = lc["commits"][k]
+    lines.append(f"    {{{c_str(k)}, {c_str(c['by'])},\n     {c_str(c['message'])}}},")
+lines += ["};", f"#define H_OMLS_LC_COMMIT_COUNT {len(lc['commits'])}", "", "#endif", ""]
 (HERE / "adopted_commits_fixture.h").write_text("\n".join(lines))
 print("wrote adopted_commits_fixture.h")

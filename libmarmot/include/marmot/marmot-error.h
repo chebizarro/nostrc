@@ -73,6 +73,16 @@ typedef enum {
     MARMOT_ERR_KEY_PACKAGE              = -50,
     MARMOT_ERR_KEY_PACKAGE_IDENTITY     = -51,
     MARMOT_ERR_IDENTITY_CHANGE          = -52,
+    /** Since 0.12.0 (adopted-profile groups): an authenticated Commit of
+     *  one of the group's admins, of the current epoch, that libmarmot
+     *  refuses for good -- one it cannot judge as MDK does (a disband, a
+     *  GroupContextExtensions or Update proposal) or one that breaks the
+     *  group's rules (an invalid component, a forbidden lifecycle
+     *  transition, a routing rotation onto another held group's address).
+     *  The group cannot follow it; nothing is waiting.  It stays where it
+     *  is until another Commit of that epoch moves it on.  A non-admin's
+     *  refused Commit keeps its specific error (every member refuses it). */
+    MARMOT_ERR_COMMIT_REFUSED           = -53,
 
     /* Message errors */
     MARMOT_ERR_MESSAGE                  = -60,

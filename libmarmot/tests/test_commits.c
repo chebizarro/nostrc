@@ -4936,6 +4936,50 @@ state_of(Member *x, const MarmotGroupId *gid)
     return state;
 }
 
+/* W24b slice H review L1: a Commit that removes our leaf is judged whole,
+ * as one we could apply -- not on the committer's authority alone.  Alice
+ * (the admin) removes Charlie and, in the same Commit, adds a leaf whose
+ * proof Alice forged: Bob refuses it, and so does Charlie, who keeps his
+ * group (before, Charlie took it as his removal and deleted his keys). */
+static void
+test_removal_with_forged_add_not_followed(void)
+{
+    Trio t;
+    trio_init(&t);
+    Member victor;
+    member_init(&victor, "Victor");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    leaf_key_package(victor.pk, victor.sk, &t.alice, LEAF_PROOF_BY_OTHER, &kp, &priv);
+    MlsGroup g, charlie_state;
+    load_mls(&t.alice, &t.gid, &g);
+    load_mls(&t.charlie, &t.gid, &charlie_state);
+    uint8_t exporter[32];
+    memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+    uint32_t removes[1] = {charlie_state.own_leaf_index};
+    const MlsKeyPackage *kps[1] = {&kp};
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_replace_members(&g, removes, 1, kps, 1, &add) == 0, "Remove + Add");
+    char *json = marmot_commit_build_event(add.commit_data, add.commit_len, exporter,
+                                           t.nostr_gid, marmot_now());
+    CHECK(json, "Commit event");
+    expect_rejected(&t.bob, &t.gid, json, MARMOT_ERR_KEY_PACKAGE_IDENTITY, "Bob");
+    expect_rejected(&t.charlie, &t.gid, json, MARMOT_ERR_KEY_PACKAGE_IDENTITY,
+                    "Charlie, whom it removes");
+    CHECK(!removal_of(&t.charlie, &t.gid, NULL, NULL), "Charlie not removed");
+    CHECK(state_of(&t.charlie, &t.gid) == MARMOT_GROUP_STATE_ACTIVE, "Charlie stays active");
+    free(json);
+    mls_add_result_clear(&add);
+    mls_group_free(&g);
+    mls_group_free(&charlie_state);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    sodium_memzero(exporter, sizeof(exporter));
+    marmot_free(victor.m);
+    trio_clear(&t);
+}
+
 static void
 test_removed_member_learns_it(void)
 {
@@ -7554,6 +7598,7 @@ main(int argc, char **argv)
     RUN(test_signer_only_key_packages_share_one_leaf_key);
     RUN(test_group_members_follow_the_epoch);
     RUN(test_removed_member_learns_it);
+    RUN(test_removal_with_forged_add_not_followed);
     RUN(test_losing_removal_first_is_undone);
     RUN(test_losing_removal_after_winner);
     RUN(test_previous_epoch_removal_wins);

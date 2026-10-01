@@ -2367,52 +2367,15 @@ test_adopted_removal_judged(void)
 
 static void load_group_state(Member *x, const MarmotGroupId *gid, MlsGroup *out);
 
-/* Every leaf of `g` also advertises SelfRemove (0x000a), so that a
- * SelfRemove can be built in, and is opened by, an adopted group. */
-static void
-advertise_self_remove(MlsGroup *g)
-{
-    for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
-        MlsNode *n = &g->tree.nodes[mls_tree_leaf_to_node(i)];
-        if (n->type != MLS_NODE_LEAF) continue;
-        MlsLeafNode *leaf = &n->leaf;
-        uint16_t *grown = realloc(leaf->proposals, (leaf->proposal_count + 1) * sizeof(*grown));
-        CHECK(grown, "realloc");
-        grown[leaf->proposal_count++] = 0x000a;
-        leaf->proposals = grown;
-    }
-}
-
 /* W24 slice B (standalone proposals, SelfRemove) on an adopted group
  * (nostrc-qp24.5.1.3): the only adopted departure is SelfRemove, which every
- * leaf must support (libmarmot's own adopted leaves do not advertise it yet:
- * W24 slice I); a Remove request is no adopted proposal. */
+ * leaf must support -- libmarmot's adopted leaves advertise it since W24
+ * slice I (nostrc-qp24.5.2) -- and a Remove request is no adopted proposal. */
 static void
 test_adopted_departures(void)
 {
     Pair p;
-    pair_create_ex(&p, false);   /* Bob is not an admin: he could leave */
-    uint8_t *before = NULL, *after = NULL;
-    size_t before_len = 0, after_len = 0;
-    load_mls(&p.bob, &p.gid, &before, &before_len);
-
-    /* Bob, not an admin: no SelfRemove (a leaf lacks it) and no Remove
-     * request. */
-    MarmotLeaveKind kind = MARMOT_LEAVE_SELF_REMOVE;
-    EXPECT_ERR(marmot_can_self_remove(p.bob.m, &p.gid, &kind), MARMOT_ERR_UNSUPPORTED);
-    char *json = NULL;
-    EXPECT_ERR(marmot_self_remove(p.bob.m, &p.gid, &json), MARMOT_ERR_UNSUPPORTED);
-    CHECK(!json, "no leave event");
-    bool leaving = true;
-    OK(marmot_is_leaving(p.bob.m, &p.gid, &leaving));
-    CHECK(!leaving, "bob is not leaving");
-    load_mls(&p.bob, &p.gid, &after, &after_len);
-    CHECK(after_len == before_len && memcmp(after, before, before_len) == 0,
-          "bob's state unchanged (no handshake ratchet step)");
-    sodium_memzero(after, after_len);
-    free(after);
-    sodium_memzero(before, before_len);
-    free(before);
+    pair_create_ex(&p, false);   /* Bob is not an admin: he can leave */
 
     /* A Remove request (a PrivateMessage Remove of Bob's own leaf) reaching
      * Alice: refused, not kept. */
@@ -2428,40 +2391,35 @@ test_adopted_departures(void)
     mls_opened_proposal_clear(&own);
     char *event = marmot_commit_build_event(msg, msg_len, exporter, p.nostr_gid, marmot_now());
     free(msg);
+    sodium_memzero(exporter, sizeof(exporter));
+    mls_group_free(&bob_mls);
     MarmotMessageResult res;
     memset(&res, 0, sizeof(res));
     EXPECT_ERR(marmot_process_message(p.alice.m, event, &res), MARMOT_ERR_UNSUPPORTED);
     marmot_message_result_free(&res);
     free(event);
-    mls_group_free(&bob_mls);
 
-    /* A SelfRemove from Bob, in a version of the group where every leaf
-     * advertises it (Alice's stored state patched the same way, so it
-     * verifies): Alice keeps it and, as any member may, commits it. */
-    MlsGroup alice_mls;
-    load_group_state(&p.alice, &p.gid, &alice_mls);
-    advertise_self_remove(&alice_mls);
-    uint8_t *blob = NULL;
-    size_t len = 0;
-    CHECK(mls_group_serialize(&alice_mls, &blob, &len) == 0, "serialize");
-    OK(p.alice.m->storage->mls_store(p.alice.m->storage->ctx, "mls_group", p.gid.data,
-                                     p.gid.len, blob, len));
-    sodium_memzero(blob, len);
-    free(blob);
-    mls_group_free(&alice_mls);
-    load_group_state(&p.bob, &p.gid, &bob_mls);
-    advertise_self_remove(&bob_mls);
-    CHECK(mls_group_self_remove_proposal(&bob_mls, &msg, &msg_len, &own) == 0,
-          "MLS SelfRemove");
-    mls_opened_proposal_clear(&own);
-    event = marmot_commit_build_event(msg, msg_len, exporter, p.nostr_gid, marmot_now());
-    free(msg);
-    mls_group_free(&bob_mls);
+    /* Alice, the only admin, cannot leave; Bob can, by SelfRemove (every
+     * leaf advertises it). */
+    MarmotLeaveKind kind = MARMOT_LEAVE_SELF_REMOVE;
+    EXPECT_ERR(marmot_can_self_remove(p.alice.m, &p.gid, &kind), MARMOT_ERR_ADMIN_CANNOT_LEAVE);
+    kind = (MarmotLeaveKind)-1;
+    OK(marmot_can_self_remove(p.bob.m, &p.gid, &kind));
+    CHECK(kind == MARMOT_LEAVE_SELF_REMOVE, "an adopted leave is a SelfRemove");
+    char *leave = NULL;
+    OK(marmot_self_remove(p.bob.m, &p.gid, &leave));
+    CHECK(leave, "leave event");
+    bool leaving = false;
+    OK(marmot_is_leaving(p.bob.m, &p.gid, &leaving));
+    CHECK(leaving, "bob is leaving");
+
+    /* Alice keeps it and, as any member may, commits it; Bob follows his
+     * removal. */
     memset(&res, 0, sizeof(res));
-    OK(marmot_process_message(p.alice.m, event, &res));
+    OK(marmot_process_message(p.alice.m, leave, &res));
     CHECK(res.type == MARMOT_RESULT_PROPOSAL && res.proposal.leave, "departure reported");
     marmot_message_result_free(&res);
-    free(event);
+    free(leave);
     MarmotPendingProposal *props = NULL;
     size_t n_props = 0;
     OK(marmot_get_pending_proposals(p.alice.m, &p.gid, &props, &n_props));
@@ -2470,8 +2428,15 @@ test_adopted_departures(void)
     char *commit = NULL;
     OK(marmot_commit_pending_proposals(p.alice.m, &p.gid, &commit));
     CHECK(commit, "a SelfRemove-only Commit");
+    OK(marmot_merge_pending_commit(p.alice.m, &p.gid));
+    memset(&res, 0, sizeof(res));
+    OK(marmot_process_message(p.bob.m, commit, &res));
+    CHECK(res.type == MARMOT_RESULT_COMMIT, "bob's departure committed");
+    marmot_message_result_free(&res);
     free(commit);
-    sodium_memzero(exporter, sizeof(exporter));
+    bool removed = false;
+    OK(marmot_get_group_removal(p.bob.m, &p.gid, &removed, NULL, NULL, NULL));
+    CHECK(removed, "bob has left");
     pair_free(&p);
 }
 

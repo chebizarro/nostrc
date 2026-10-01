@@ -439,12 +439,22 @@ Commit (`cgka-engine` app_components.rs), against the candidate parent:
 - **AppDataUpdate (0x0008).** Applied by value and by reference (slice B's
   authenticated proposal store), as MDK's pinned OpenMLS applies it: each
   operation replaces or removes its component's entry, at most one per
-  component, a removal names present state, and the dictionary extension is
-  re-appended last. Every changed component's bytes pass the validator MDK
-  uses (0x0001, 0x8001, 0x8002, 0x8003, 0x8004, 0x8005, 0x8007, 0x800c
-  active); one libmarmot cannot validate is refused, and unknown ids (which
-  MDK keeps too) are kept. 0x0001, 0x0002, 0x8003 and 0x800c are never
-  removed.
+  component (so at most 65536 in a Commit), a removal of a component with
+  no state removes nothing (as OpenMLS and MDK do; the draft calls it
+  invalid), and the dictionary extension is re-appended last. Every changed
+  component's bytes pass the one validator admission uses too
+  (`mls_adopted_component_state_valid()`, W24 slice I: MDK's rules for
+  0x0001, 0x8001-0x8007, 0x800b, 0x800c), so White Noise's media (0x800b)
+  and agent-stream (0x8006, receive role) updates are followed; unknown ids
+  (which MDK keeps too) are kept. 0x0001, 0x0002, 0x8003 and 0x800c are
+  never removed. A disband (0x800c `disbanded`) is refused
+  (`MARMOT_ERR_UNSUPPORTED`): libmarmot does not implement the terminal
+  pass.
+- **Lifecycle (0x800c).** MDK's `validate_group_lifecycle_transition()`:
+  once required, 0x800c stays required; a Commit may not update it unless
+  it enables it (not required -> required, state `active`, every proposal
+  inline and an AppDataUpdate of 0x0001 or 0x800c), even to the same bytes;
+  the state never changes otherwise (`MARMOT_ERR_VALIDATION`).
 - **The epoch entered.** `mls_group_profile_check_entered()`: required
   components present and valid, canonical dictionary, every admin a member
   (so removing an admin's last leaf without dropping its key is refused, and
@@ -458,6 +468,18 @@ Commit (`cgka-engine` app_components.rs), against the candidate parent:
   another of our groups has or had is refused
   (`MARMOT_ERR_PROTOCOL_GROUP_MISMATCH`): routing ids are public h tags, and
   a shared one would misroute that group's traffic.
+- **A Commit removing our leaf** is judged whole before it ends the group
+  for us, as MDK does: its public result (every proposal applied, the
+  committer's UpdatePath leaf, the GroupContext; a removed member can
+  compute it, `mls_group_commit_public_result_by_ref()`) passes the
+  resulting-epoch check and the authorization above. Legacy groups the
+  same, by their own rules.
+- **Refused for good.** An authenticated Commit of one of the group's
+  admins, of the current epoch, that libmarmot refuses for its content is
+  `MARMOT_ERR_COMMIT_REFUSED` (the group stops there until another Commit of
+  that epoch moves it on; Groundhog shows "change refused"); a non-admin's
+  keeps its specific error, and `MARMOT_ERR_KEY_PACKAGE_IDENTITY` its own
+  meaning. Not yet for a refused competitor of the Commit we applied.
 - **Convergence** is the legacy bounded subset (one retained parent,
   CommitOrderingSuffix with the adopted privileged/ordinary split, held
   Commits with `MARMOT_ERR_PROPOSAL_UNKNOWN`); full adopted convergence is
@@ -493,13 +515,21 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   description), 0x8003 (admins, each a member) and 0x8004 (relays; nothing
   to change is `MARMOT_ERR_INVALID_ARG`), SelfRemove (inbound, committed by
   any member, ours where every leaf supports it). A Commit removing our leaf
-  ends the group for us, judged by 0x8003.
+  ends the group for us once judged whole (below).
+- **Review fixes** (slice H review, CHANGES-REQUIRED; nostrc-jnnr), on slice
+  I: MDK's lifecycle transition rules (M1); slice I's component validator
+  on the AppDataUpdate path, so White Noise groups' 0x8006/0x800b updates
+  are followed (MC); a Commit removing our leaf judged whole, legacy groups
+  too (L1); `MARMOT_ERR_COMMIT_REFUSED` for an admin's Commit refused for
+  good (L2); an absent removal is a no-op and the 16-update cap is gone
+  (L3); an address a group returns to leaves its routing history (N5).
 - **New API.** `marmot_get_group_routing()`;
   `MarmotMessageResult.commit.routing_changed` and
   `previous_nostr_group_id` (the struct grows at its end; the 0.12 SONAME
-  covers it). Internal: `mls_group_commit_adopted()`,
-  `mls_app_data_update_apply()`, `MlsCommitSummary` carries the Commit's
-  shape.
+  covers it); `MARMOT_ERR_COMMIT_REFUSED` (-53). Internal:
+  `mls_group_commit_adopted()`, `mls_app_data_update_apply()`,
+  `mls_group_commit_public_result_by_ref()`, `mls_group_commit_authentic()`,
+  `marmot_commit_judge()`; `MlsCommitSummary` carries the Commit's shape.
 - **nostrc-u9kv.** A Commit of ours the group would refuse is refused before
   a created_at is drawn from the group's floor (a backend without
   transactions kept the drawn time: 200 refused self-updates ran the floor a
@@ -517,18 +547,23 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 #### Compatibility
 
 - **Wire.** Adopted groups now evolve. The secret-tree fix changes the leaf
-  secrets of an epoch whose live tree has a blank right edge: in such an
-  epoch libmarmot 0.11.0 and 0.12.0 members cannot read each other's
-  messages (0.12.0 matches RFC 9420 and MDK). A state persisted with the old
-  width keeps it until its epoch ends.
+  secrets of every epoch whose live tree has a blank right edge: libmarmot
+  0.12.0 matches RFC 9420 and MDK, earlier libmarmot does not, and the two
+  cannot read each other's messages in any such epoch until the right edge
+  refills (libmarmot never truncates its live tree). libmarmot 0.11.0 was
+  never released, and the only shipped libmarmot (0.1.0, in
+  gnostr-v0.1.0-preview) was already wire-incompatible: no deployed member
+  or Groundhog user is affected. A state persisted with the old width keeps
+  it until its epoch ends.
+- **Behaviour.** An adopted admin's Commit refused for good now reports
+  `MARMOT_ERR_COMMIT_REFUSED` rather than its specific error.
 - **Storage.** New `mls_kv` labels `nostr_group_id_alias` (keyed by an old
   nostr_group_id) and `nostr_group_id_history` (keyed by the MLS group id).
   The group record's relay table (`replace_group_relays`) is not rewritten
   by a Commit, as for legacy groups: read the signed relays with
   `marmot_get_group_routing()`.
 - **Not done.** Full adopted convergence (nostrc-w1m0): libmarmot's bounded
-  one-parent subset applies. White Noise groups are still refused
-  (nostrc-qp24.5.2). The adopted KeyPackage producer stays OFF. No API makes
+  one-parent subset applies. The adopted KeyPackage producer stays OFF. No API makes
   a group image (0x8002/0x8007) update, a routing rotation or a standalone
   AppDataUpdate; inbound ones are followed.
 
@@ -2203,7 +2238,7 @@ tag cardinality". Tags and values match the MDK 0.8 events in
 | `test_rfc9420_vectors` | RFC 9420 crypto validation (HKDF, Ed25519, AES-GCM, tree math) | 38 |
 | `test_interop` | MDK interoperability vectors, self-consistency | 9 |
 | `test_adopted` | Adopted-profile admission and creation against MDK v0.11.0 / OpenMLS captures | 14 |
-| `test_adopted_commits` | Adopted-profile Commits: a real MDK v0.11.0 sequence, pinned-OpenMLS negatives, by reference, rollback, our own producers | 11 |
+| `test_adopted_commits` | Adopted-profile Commits: a real MDK v0.11.0 sequence, pinned-OpenMLS negatives and positives (White Noise components, lifecycle transitions, removal judged whole), by reference, rollback, our own producers, routing | 16 |
 
 Run all tests:
 ```bash

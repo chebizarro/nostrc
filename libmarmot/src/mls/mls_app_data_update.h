@@ -42,10 +42,12 @@ void mls_app_data_update_clear(MlsAppDataUpdate *p);
  * extension bytes, including malformed lists, retain their read behavior. */
 int mls_group_extensions_supported(const uint8_t *data, size_t len);
 
-/* At most this many AppDataUpdate operations in one Commit: there is at
- * most one per component (app-components/README.md), and an adopted group
- * has at most MLS_ADOPTED_MAX_IDS dictionary entries. */
-#define MLS_APP_DATA_UPDATE_MAX 16
+/* At most this many AppDataUpdate operations in one Commit: one per
+ * component id (app-components/README.md; MDK v0.11.0
+ * validate_app_data_update_batch), so one per u16 value -- MDK's limit,
+ * which bounds nothing else.  More necessarily repeats an id.  Callers size
+ * their operation arrays by the Commit's proposal count, never by this. */
+#define MLS_APP_DATA_UPDATE_MAX 65536u
 
 /*
  * The GroupContext extension list @exts with @ops applied to its
@@ -59,8 +61,10 @@ int mls_group_extensions_supported(const uint8_t *data, size_t len);
  *
  * Refused, as invalid (MARMOT_ERR_MLS_PROCESS_MESSAGE): more than one
  * operation for one component (draft-ietf-mls-extensions 4.7; Marmot
- * app-components/README.md "GroupContext Update Processing"), a remove of a
- * component with no state, an unknown operation, no dictionary to update.
+ * app-components/README.md "GroupContext Update Processing"), an unknown
+ * operation, no dictionary to update.  A remove of a component with no
+ * state removes nothing, as in the pinned OpenMLS and MDK v0.11.0 (the
+ * draft calls it invalid; slice H review L3).  MARMOT_ERR_MEMORY.
  * MARMOT_ERR_EXTENSION_FORMAT: @exts or its dictionary does not parse
  * canonically.  Component bytes are not interpreted here: the resulting
  * state is validated by mls_group_profile_check_entered() and the Marmot

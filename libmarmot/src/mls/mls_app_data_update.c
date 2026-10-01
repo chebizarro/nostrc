@@ -266,28 +266,46 @@ read_vec_borrow(MlsTlsReader *r, const uint8_t **out, size_t *len)
     return 0;
 }
 
+/* Ascending component id (qsort). */
+static int
+adu_id_cmp(const void *a, const void *b)
+{
+    uint16_t x = (*(const MlsAppDataUpdate *const *)a)->component_id;
+    uint16_t y = (*(const MlsAppDataUpdate *const *)b)->component_id;
+    return (x > y) - (x < y);
+}
+
 int
 mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
                           const MlsAppDataUpdate *const *ops, size_t n_ops,
                           uint8_t **out, size_t *out_len)
 {
-    if (!out || !out_len || (exts_len && !exts) || (n_ops && !ops) ||
-        n_ops > MLS_APP_DATA_UPDATE_MAX)
-        return n_ops > MLS_APP_DATA_UPDATE_MAX ? MARMOT_ERR_MLS_PROCESS_MESSAGE
-                                               : MARMOT_ERR_INVALID_ARG;
+    if (!out || !out_len || (exts_len && !exts) || (n_ops && !ops))
+        return MARMOT_ERR_INVALID_ARG;
     *out = NULL;
     *out_len = 0;
+    /* More operations than component ids necessarily repeats one. */
+    if (n_ops > MLS_APP_DATA_UPDATE_MAX) return MARMOT_ERR_MLS_PROCESS_MESSAGE;
 
-    /* One operation per component, each a known operation. */
-    for (size_t i = 0; i < n_ops; i++) {
+    /* Each a known operation; sorted by component id, one per component
+     * (O(n log n): a Commit may carry tens of thousands). */
+    for (size_t i = 0; i < n_ops; i++)
         if (!ops[i] || (ops[i]->operation != MLS_APP_DATA_UPDATE_OP_UPDATE &&
                         ops[i]->operation != MLS_APP_DATA_UPDATE_OP_REMOVE) ||
             (ops[i]->operation == MLS_APP_DATA_UPDATE_OP_UPDATE && ops[i]->update_len &&
              !ops[i]->update))
             return MARMOT_ERR_MLS_PROCESS_MESSAGE;
-        for (size_t j = 0; j < i; j++)
-            if (ops[j]->component_id == ops[i]->component_id)
+    const MlsAppDataUpdate **sorted = NULL;
+    if (n_ops > 0) {
+        sorted = malloc(n_ops * sizeof(*sorted));
+        if (!sorted) return MARMOT_ERR_MEMORY;
+        memcpy(sorted, ops, n_ops * sizeof(*sorted));
+        qsort(sorted, n_ops, sizeof(*sorted), adu_id_cmp);
+        for (size_t i = 1; i < n_ops; i++)
+            if (sorted[i]->component_id == sorted[i - 1]->component_id) {
+                free(sorted);
                 return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            }
     }
 
     /* The extension list: every extension but the dictionary is copied as
@@ -335,37 +353,19 @@ mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
         goto done;
     }
 
-    /* Removes must name present state (draft-ietf-mls-extensions 4.7). */
-    for (size_t i = 0; i < n_ops; i++) {
-        if (ops[i]->operation != MLS_APP_DATA_UPDATE_OP_REMOVE) continue;
-        bool present = false;
-        MlsTlsReader er;
-        mls_tls_reader_init(&er, ents, ents_len);
-        while (!mls_tls_reader_done(&er)) {
-            uint16_t id = 0;
-            const uint8_t *d = NULL;
-            size_t dlen = 0;
-            if (mls_tls_read_u16(&er, &id) != 0 || read_vec_borrow(&er, &d, &dlen) != 0) {
-                rc = MARMOT_ERR_EXTENSION_FORMAT;
-                goto done;
-            }
-            present |= id == ops[i]->component_id;
-        }
-        if (!present) {
-            rc = MARMOT_ERR_MLS_PROCESS_MESSAGE;
-            goto done;
-        }
-    }
-
     /* Merge in ascending id order: the old entries (strictly ascending) and
-     * the operations (any order, unique ids). */
+     * the sorted operations.  A remove of a component with no state removes
+     * nothing, as the pinned OpenMLS does when no GroupContextExtensions
+     * proposal rides along (validation.rs; MDK v0.11.0 checks no presence
+     * either, validate_app_component_remove_against): libmarmot follows
+     * MDK there rather than draft-ietf-mls-extensions 4.7's "invalid"
+     * (slice H review L3). */
     MlsTlsReader er;
     mls_tls_reader_init(&er, ents, ents_len);
     bool have_entry = false, first = true;
     uint16_t entry_id = 0, prev = 0;
     const uint8_t *entry = NULL;
-    size_t entry_len = 0;
-    uint32_t last_written = 0x10000;   /* none */
+    size_t entry_len = 0, k = 0;
     for (;;) {
         if (!have_entry && !mls_tls_reader_done(&er)) {
             if (mls_tls_read_u16(&er, &entry_id) != 0 ||
@@ -377,19 +377,13 @@ mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
             prev = entry_id;
             have_entry = true;
         }
-        /* The lowest operation id above the last id written. */
-        const MlsAppDataUpdate *op = NULL;
-        for (size_t i = 0; i < n_ops; i++) {
-            uint16_t id = ops[i]->component_id;
-            if (last_written != 0x10000 && id <= last_written) continue;
-            if (!op || id < op->component_id) op = ops[i];
-        }
-        if (!have_entry && !op) break;
+        if (!have_entry && k == n_ops) break;
         uint16_t id;
         const uint8_t *data;
         size_t len;
         bool write;
-        if (op && (!have_entry || op->component_id <= entry_id)) {
+        if (k < n_ops && (!have_entry || sorted[k]->component_id <= entry_id)) {
+            const MlsAppDataUpdate *op = sorted[k++];
             id = op->component_id;
             if (have_entry && entry_id == id) have_entry = false;   /* replaced */
             write = op->operation == MLS_APP_DATA_UPDATE_OP_UPDATE;
@@ -402,7 +396,6 @@ mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
             len = entry_len;
             have_entry = false;
         }
-        last_written = id;
         if (write && (mls_tls_write_u16(&entries, id) != 0 ||
                       mls_tls_write_opaque32(&entries, data, len) != 0))
             goto done;
@@ -418,6 +411,7 @@ mls_app_data_update_apply(const uint8_t *exts, size_t exts_len,
     list.data = NULL;
     rc = 0;
 done:
+    free(sorted);
     mls_tls_buf_free(&others);
     mls_tls_buf_free(&entries);
     mls_tls_buf_free(&dict);

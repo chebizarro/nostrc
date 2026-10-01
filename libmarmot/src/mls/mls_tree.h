@@ -36,7 +36,6 @@ uint32_t mls_tree_node_width(uint32_t n);
 /** Root node index for tree with n leaves. */
 uint32_t mls_tree_root(uint32_t n);
 
-
 /** Left child of intermediate node x. */
 uint32_t mls_tree_left(uint32_t x);
 
@@ -337,9 +336,6 @@ int mls_tree_filtered_direct_path(const MlsRatchetTree *tree, uint32_t leaf_idx,
 int mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
                   uint8_t out[MLS_HASH_LEN]);
 
-/**
- * Compute the tree hash of the root (the overall tree hash).
- */
 /* The leaf count of @tree's canonical form (RFC 9420 section 7.7: a blank
  * right subtree of the root is truncated; the ratchet-tree serialization
  * and GroupContext tree_hash use this view).  The live tree keeps its width
@@ -347,6 +343,9 @@ int mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
  * (section 9), as OpenMLS sizes it.  0 for an empty tree. */
 uint32_t mls_tree_canonical_leaves(const MlsRatchetTree *tree);
 
+/**
+ * Compute the tree hash of the root (the overall tree hash).
+ */
 int mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────

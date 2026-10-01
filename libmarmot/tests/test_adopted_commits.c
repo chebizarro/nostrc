@@ -623,19 +623,21 @@ test_mdk_competing_self_remove_commits(void)
  * Pinned OpenMLS: Commits MDK refuses to send (negatives), by reference
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/* The observer joins a forgery group from its KeyPackage and Welcome. */
 static void
-omls_observer(Member *x, MarmotGroupId *gid)
+forgery_observer(Member *x, MarmotGroupId *gid, const char *kp_hex, const char *init,
+                 const char *enc, const char *seed, const char *pub, const char *welcome,
+                 const char *inviter_seed, const char *inviter_hex)
 {
     member_init(x, "observer");
     size_t kp_len = 0;
-    uint8_t *kp = unhex(H_OMLS_KP, &kp_len);
-    install_key_package(x, kp, kp_len, H_OMLS_INIT_SK, H_OMLS_ENC_SK, H_OMLS_SIG_SEED,
-                        H_OMLS_SIG_PUB);
+    uint8_t *kp = unhex(kp_hex, &kp_len);
+    install_key_package(x, kp, kp_len, init, enc, seed, pub);
     free(kp);
     uint8_t inviter[32];
-    mdk_test_identity("w24h-neg-x", inviter);
-    CHECK(same_key_hex(inviter, H_OMLS_X), "inviter identity");
-    char *rumor = rumor_for(H_OMLS_WELCOME, inviter);
+    mdk_test_identity(inviter_seed, inviter);
+    CHECK(same_key_hex(inviter, inviter_hex), "inviter identity");
+    char *rumor = rumor_for(welcome, inviter);
     OK(join(x, rumor));
     free(rumor);
     MarmotGroup **groups = NULL;
@@ -647,66 +649,290 @@ omls_observer(Member *x, MarmotGroupId *gid)
     free(groups);
 }
 
+static void
+omls_observer(Member *x, MarmotGroupId *gid)
+{
+    forgery_observer(x, gid, H_OMLS_KP, H_OMLS_INIT_SK, H_OMLS_ENC_SK, H_OMLS_SIG_SEED,
+                     H_OMLS_SIG_PUB, H_OMLS_WELCOME, "w24h-neg-x", H_OMLS_X);
+}
+
+/* The group that has not enabled lifecycle-v1 (slice H review M1). */
+static void
+lc_observer(Member *x, MarmotGroupId *gid)
+{
+    forgery_observer(x, gid, H_OMLS_LC_KP, H_OMLS_LC_INIT_SK, H_OMLS_LC_ENC_SK,
+                     H_OMLS_LC_SIG_SEED, H_OMLS_LC_SIG_PUB, H_OMLS_LC_WELCOME, "w24h-lc-x",
+                     H_OMLS_LC_XL);
+}
+
+static const char *
+forgery_in(const AdoptedForgery *list, size_t n, const char *name)
+{
+    for (size_t i = 0; i < n; i++)
+        if (strcmp(list[i].name, name) == 0) return list[i].message;
+    CHECK(0, "no forgery %s", name);
+    return NULL;
+}
+
 static const char *
 forgery(const char *name)
 {
-    for (size_t i = 0; i < H_OMLS_COMMIT_COUNT; i++)
-        if (strcmp(H_OMLS_COMMITS[i].name, name) == 0) return H_OMLS_COMMITS[i].message;
-    CHECK(0, "no forgery %s", name);
-    return NULL;
+    return forgery_in(H_OMLS_COMMITS, H_OMLS_COMMIT_COUNT, name);
+}
+
+/* How libmarmot judges a Commit (MLSMessage hex) of the stored epoch: the
+ * specific refusal (marmot_commit_judge()), which the public API reports as
+ * MARMOT_ERR_COMMIT_REFUSED when an admin made it. */
+static MarmotError
+judge(Member *x, const MarmotGroupId *gid, const char *mls_hex)
+{
+    size_t len = 0;
+    uint8_t *msg = unhex(mls_hex, &len);
+    MarmotError err = marmot_commit_judge(x->m, gid, msg, len);
+    free(msg);
+    return err;
+}
+
+typedef struct {
+    const char *name;
+    MarmotError want;     /* marmot_process_message() */
+    MarmotError reason;   /* marmot_commit_judge() */
+} Refusal;
+
+/* Each of `cases` (forgeries of `list`) refused, with its reason, the group
+ * untouched; then `ok` still applies. */
+static void
+expect_refusals(void (*observer)(Member *, MarmotGroupId *), const AdoptedForgery *list,
+                size_t n_list, const Refusal *cases, size_t n, const char *ok)
+{
+    Member o;
+    MarmotGroupId gid;
+    observer(&o, &gid);
+    for (size_t i = 0; i < n; i++) {
+        const char *mls = forgery_in(list, n_list, cases[i].name);
+        MarmotError reason = judge(&o, &gid, mls);
+        CHECK(reason == cases[i].reason, "%s: reason %d (%s), want %d (%s)", cases[i].name,
+              reason, marmot_error_string(reason), cases[i].reason,
+              marmot_error_string(cases[i].reason));
+        char *event = seal(&o, &gid, mls);
+        expect_refused(&o, &gid, event, cases[i].want, cases[i].name);
+        free(event);
+    }
+    /* After every refusal the group still follows a valid Commit. */
+    char *event = seal(&o, &gid, forgery_in(list, n_list, ok));
+    MarmotMessageResult r;
+    OK(deliver(&o, event, &r));
+    CHECK(r.type == MARMOT_RESULT_COMMIT, "%s applies after the refusals", ok);
+    marmot_message_result_free(&r);
+    free(event);
+    marmot_group_id_free(&gid);
+    member_free(&o);
 }
 
 static void
 test_openmls_negatives(void)
 {
-    static const struct {
-        const char *name;
-        MarmotError want;
-    } cases[] = {
-        /* Authorization against the candidate parent (admins X and W). */
-        {"nonadmin_rename", MARMOT_ERR_COMMIT_FROM_NON_ADMIN},
-        {"nonadmin_add", MARMOT_ERR_COMMIT_FROM_NON_ADMIN},
+#define ADMIN(name_, reason_) {name_, MARMOT_ERR_COMMIT_REFUSED, reason_}
+    static const Refusal cases[] = {
+        /* Authorization against the candidate parent (admins X and W): a
+         * non-admin's Commit keeps its specific error (every member refuses
+         * it; slice H review L2). */
+        {"nonadmin_rename", MARMOT_ERR_COMMIT_FROM_NON_ADMIN, MARMOT_ERR_COMMIT_FROM_NON_ADMIN},
+        {"nonadmin_add", MARMOT_ERR_COMMIT_FROM_NON_ADMIN, MARMOT_ERR_COMMIT_FROM_NON_ADMIN},
         /* Y's Remove of W, an admin, without dropping W's key: the
          * resulting-epoch check (an admin without a leaf) refuses it before
          * authorization does (a non-admin's Remove of a non-admin:
          * test_nonadmin_removal_refused). */
-        {"nonadmin_remove", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        /* Resulting-epoch invariants (the MLS layer's entered-epoch check). */
-        {"drop_required_routing", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"remove_admin_policy", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"remove_lifecycle", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"empty_admins", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"admin_not_member", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"remove_admin_uncoupled", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"malformed_profile", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"malformed_routing", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"proof_in_group_context", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"disband", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        {"add_without_proof", MARMOT_ERR_MLS_PROCESS_MESSAGE},
-        /* A proof that does not verify: the Marmot layer. */
-        {"add_bad_proof", MARMOT_ERR_KEY_PACKAGE_IDENTITY},
+        {"nonadmin_remove", MARMOT_ERR_MLS_PROCESS_MESSAGE, MARMOT_ERR_MLS_PROCESS_MESSAGE},
+        /* An admin's Commit refused for good: MARMOT_ERR_COMMIT_REFUSED (L2),
+         * for its reason.  Resulting-epoch invariants (the MLS layer's
+         * entered-epoch check, slice I's component validator). */
+        ADMIN("drop_required_routing", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("remove_admin_policy", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("remove_lifecycle", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("empty_admins", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("admin_not_member", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("remove_admin_uncoupled", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("malformed_profile", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("malformed_routing", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("proof_in_group_context", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("disband", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("add_without_proof", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        /* Malformed 0x800b, 0x8002, 0x8007 and 0x8005 states, and an agent
+         * stream requiring the send role (slice I's validator; L4). */
+        ADMIN("malformed_media_v2", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("malformed_image", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("avatar_not_url", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("retention_7_bytes", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        ADMIN("agent_stream_send_required", MARMOT_ERR_MLS_PROCESS_MESSAGE),
+        /* Lifecycle transitions MDK refuses (M1; the reviewer's P1-P3). */
+        ADMIN("lifecycle_unrequire", MARMOT_ERR_VALIDATION),
+        ADMIN("lifecycle_redundant", MARMOT_ERR_VALIDATION),
+        ADMIN("lifecycle_unrequire_rename", MARMOT_ERR_VALIDATION),
+        /* A removal of our leaf judged whole (L1): its public result has a
+         * malformed 0x8002, which every member refuses. */
+        ADMIN("remove_observer_malformed", MARMOT_ERR_MLS_PROCESS_MESSAGE),
         /* What libmarmot cannot judge as MDK does: fail closed. */
-        {"unsupported_component", MARMOT_ERR_UNSUPPORTED},
-        {"group_context_extensions", MARMOT_ERR_UNSUPPORTED},
+        ADMIN("group_context_extensions", MARMOT_ERR_UNSUPPORTED),
+        /* A proof that does not verify: its own refusal state (nostrc-prrl). */
+        {"add_bad_proof", MARMOT_ERR_KEY_PACKAGE_IDENTITY, MARMOT_ERR_KEY_PACKAGE_IDENTITY},
     };
+#undef ADMIN
+    expect_refusals(omls_observer, H_OMLS_COMMITS, H_OMLS_COMMIT_COUNT, cases,
+                    sizeof(cases) / sizeof(cases[0]), "ok_rename");
+}
+
+/* MDK's lifecycle enablement rules (validate_group_lifecycle_transition;
+ * slice H review M1) in a group that has not enabled lifecycle-v1. */
+static void
+test_lifecycle_enablement(void)
+{
+    static const Refusal cases[] = {
+        /* Enabling with an unrelated proposal riding along. */
+        {"enable_lifecycle_with_rename", MARMOT_ERR_COMMIT_REFUSED, MARMOT_ERR_VALIDATION},
+        /* A lifecycle state without the requirement. */
+        {"lifecycle_state_unrequired", MARMOT_ERR_COMMIT_REFUSED, MARMOT_ERR_VALIDATION},
+    };
+    expect_refusals(lc_observer, H_OMLS_LC_COMMITS, H_OMLS_LC_COMMIT_COUNT, cases,
+                    sizeof(cases) / sizeof(cases[0]), "ok_enable_lifecycle");
+
+    /* The enablement applies (MDK's EnableDisbanding shape) and its rules
+     * judge the shape, not only the states: the same states with a
+     * by-reference proposal, or with no shape known, are refused. */
+    Member o;
+    MarmotGroupId gid;
+    lc_observer(&o, &gid);
+    MlsGroup pre, post;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    OK(o.m->storage->mls_load(o.m->storage->ctx, "mls_group", gid.data, gid.len, &blob, &len));
+    CHECK(mls_group_deserialize(blob, len, &pre) == 0, "pre");
+    sodium_memzero(blob, len);
+    free(blob);
+    char *event = seal(&o, &gid, forgery_in(H_OMLS_LC_COMMITS, H_OMLS_LC_COMMIT_COUNT,
+                                             "ok_enable_lifecycle"));
+    MarmotMessageResult r;
+    OK(deliver(&o, event, &r));
+    CHECK(r.type == MARMOT_RESULT_COMMIT, "enablement applied");
+    marmot_message_result_free(&r);
+    free(event);
+    MarmotGroupComponents parts;
+    OK(marmot_get_group_components(o.m, &gid, &parts));
+    bool required = false;
+    for (size_t i = 0; i < parts.required_component_count; i++)
+        required |= parts.required_components[i] == 0x800c;
+    CHECK(required && parts.epoch == 2, "lifecycle-v1 now required");
+    marmot_group_components_clear(&parts);
+    OK(o.m->storage->mls_load(o.m->storage->ctx, "mls_group", gid.data, gid.len, &blob, &len));
+    CHECK(mls_group_deserialize(blob, len, &post) == 0, "post");
+    sodium_memzero(blob, len);
+    free(blob);
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    MlsCommitSummary s;
+    memset(&s, 0, sizeof(s));
+    s.shape_known = true;
+    s.has_path = true;
+    s.proposal_count = 2;
+    s.adu_count = 2;
+    s.adu_lifecycle_count = 1;
+    s.adu_inline_enablement_count = 2;
+    OK(marmot_commit_authorize_ex(&pre, &post, 0, false, &s, &key, &gde));
+    s.adu_inline_enablement_count = 1;   /* one of the two by reference */
+    s.ref_count = 1;
+    s.ref_type[0] = MLS_PROPOSAL_APP_DATA_UPDATE;
+    s.ref_component[0] = 0x0001;
+    s.ref_sender[0] = 0;
+    EXPECT_ERR(marmot_commit_authorize_ex(&pre, &post, 0, false, &s, &key, &gde),
+               MARMOT_ERR_VALIDATION);
+    EXPECT_ERR(marmot_commit_authorize_ex(&pre, &post, 0, false, NULL, &key, &gde),
+               MARMOT_ERR_VALIDATION);
+    /* Each rule on its own, with states made by applying AppDataUpdates and
+     * a summary that names no lifecycle update: (a) un-requiring 0x800c,
+     * its state kept; (b) a lifecycle state appearing while 0x800c is not
+     * required. */
+    memset(&s, 0, sizeof(s));
+    s.shape_known = true;
+    s.has_path = true;
+    s.proposal_count = 1;
+    s.adu_count = 1;
+    {
+        static const uint8_t unrequired[] = {0x08, 0x80, 0x01, 0x80, 0x03, 0x80, 0x04, 0x80, 0x09};
+        MlsAppDataUpdate op = {0x0001, MLS_APP_DATA_UPDATE_OP_UPDATE, (uint8_t *)unrequired,
+                               sizeof(unrequired)};
+        const MlsAppDataUpdate *ops[] = {&op};
+        MlsGroup next;
+        uint8_t *b2 = NULL;
+        size_t l2 = 0;
+        CHECK(mls_group_serialize(&post, &b2, &l2) == 0 && mls_group_deserialize(b2, l2, &next) == 0,
+              "clone");
+        sodium_memzero(b2, l2);
+        free(b2);
+        uint8_t *ext = NULL;
+        size_t ext_len = 0;
+        CHECK(mls_app_data_update_apply(post.extensions_data, post.extensions_len, ops, 1, &ext,
+                                        &ext_len) == 0, "apply");
+        free(next.extensions_data);
+        next.extensions_data = ext;
+        next.extensions_len = ext_len;
+        EXPECT_ERR(marmot_commit_authorize_ex(&post, &next, 0, false, &s, &key, &gde),
+                   MARMOT_ERR_VALIDATION);   /* (a) */
+        mls_group_free(&next);
+    }
+    {
+        static const uint8_t active[] = {0x00};
+        MlsAppDataUpdate op = {0x800c, MLS_APP_DATA_UPDATE_OP_UPDATE, (uint8_t *)active, 1};
+        const MlsAppDataUpdate *ops[] = {&op};
+        MlsGroup next;
+        uint8_t *b2 = NULL;
+        size_t l2 = 0;
+        CHECK(mls_group_serialize(&pre, &b2, &l2) == 0 && mls_group_deserialize(b2, l2, &next) == 0,
+              "clone");
+        sodium_memzero(b2, l2);
+        free(b2);
+        uint8_t *ext = NULL;
+        size_t ext_len = 0;
+        CHECK(mls_app_data_update_apply(pre.extensions_data, pre.extensions_len, ops, 1, &ext,
+                                        &ext_len) == 0, "apply");
+        free(next.extensions_data);
+        next.extensions_data = ext;
+        next.extensions_len = ext_len;
+        EXPECT_ERR(marmot_commit_authorize_ex(&pre, &next, 0, false, &s, &key, &gde),
+                   MARMOT_ERR_VALIDATION);   /* (b) */
+        mls_group_free(&next);
+    }
+    CHECK(!gde, "no GroupData");
+    mls_group_free(&pre);
+    mls_group_free(&post);
+    marmot_group_id_free(&gid);
+    member_free(&o);
+}
+
+/* A Commit removing our leaf is judged whole (slice H review L1): the
+ * valid one ends the group for us; the one with a malformed component
+ * every member refuses (test_openmls_negatives) does not. */
+static void
+test_removal_judged_whole(void)
+{
     Member o;
     MarmotGroupId gid;
     omls_observer(&o, &gid);
-    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-        char *event = seal(&o, &gid, forgery(cases[i].name));
-        expect_refused(&o, &gid, event, cases[i].want, cases[i].name);
-        free(event);
-    }
-    /* After every refusal the group still follows a valid Commit. */
-    char *event = seal(&o, &gid, forgery("ok_rename"));
+    char *bad = seal(&o, &gid, forgery("remove_observer_malformed"));
+    expect_refused(&o, &gid, bad, MARMOT_ERR_COMMIT_REFUSED, "removal with a malformed 0x8002");
+    free(bad);
+    bool removed = true;
+    OK(marmot_get_group_removal(o.m, &gid, &removed, NULL, NULL, NULL));
+    CHECK(!removed, "not removed by a refused Commit");
+    char *ok = seal(&o, &gid, forgery("ok_remove_observer"));
     MarmotMessageResult r;
-    OK(deliver(&o, event, &r));
-    CHECK(r.type == MARMOT_RESULT_COMMIT, "valid rename applies");
+    MarmotError err = deliver(&o, ok, &r);
     marmot_message_result_free(&r);
-    free(event);
-    MarmotGroup *g = group_of(&o, &gid);
-    CHECK(g->name && strcmp(g->name, "renamed by X") == 0, "renamed");
-    marmot_group_free(g);
+    free(ok);
+    CHECK(err == MARMOT_OK || err == MARMOT_ERR_USE_AFTER_EVICTION, "valid removal: %d (%s)",
+          err, marmot_error_string(err));
+    uint8_t remover[32];
+    OK(marmot_get_group_removal(o.m, &gid, &removed, remover, NULL, NULL));
+    CHECK(removed && same_key_hex(remover, H_OMLS_X), "removed by X");
     marmot_group_id_free(&gid);
     member_free(&o);
 }
@@ -714,9 +940,18 @@ test_openmls_negatives(void)
 static void
 test_openmls_positives(void)
 {
-    static const char *const names[] = {"ok_rename", "ok_unknown_component",
-                                        "ok_nonadmin_self_update", "ok_remove_admin_coupled",
-                                        "ok_add"};
+    static const char *const names[] = {
+        "ok_rename", "ok_unknown_component", "ok_nonadmin_self_update",
+        "ok_remove_admin_coupled", "ok_add",
+        /* Valid White Noise component updates (slice I's validator): encrypted
+         * media v2 and the agent stream's receive role (MC). */
+        "ok_media_v2", "ok_agent_stream",
+        /* Valid 0x8002, 0x8007 and 0x8005 states (L4). */
+        "ok_image", "ok_avatar", "ok_retention",
+        /* What MDK accepts (L3): a removal of a component with no state, 20
+         * AppDataUpdates in one Commit; and un-requiring 0x8001 (M1's
+         * control, P4). */
+        "ok_remove_absent", "ok_twenty_updates", "ok_unrequire_profile"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         Member o;
         MarmotGroupId gid;
@@ -734,6 +969,32 @@ test_openmls_positives(void)
                   "W removed with its admin key");
         if (strcmp(names[i], "ok_add") == 0)
             CHECK(member_count(&o, &gid) == 5, "added");
+        MarmotGroupComponents parts;
+        OK(marmot_get_group_components(o.m, &gid, &parts));
+        if (strcmp(names[i], "ok_media_v2") == 0)
+            CHECK(parts.has_media_policy && parts.media_policy.default_blob_endpoint_count == 1 &&
+                      strcmp(parts.media_policy.default_blob_endpoints[0].base_url,
+                             "https://blossom.example.com/") == 0,
+                  "media policy followed");
+        if (strcmp(names[i], "ok_agent_stream") == 0)
+            CHECK(parts.has_agent_text_stream &&
+                      parts.agent_text_stream.required_member_roles ==
+                          MARMOT_AGENT_STREAM_ROLE_RECEIVE,
+                  "agent stream followed");
+        if (strcmp(names[i], "ok_image") == 0)
+            CHECK(parts.image.present, "image followed");
+        if (strcmp(names[i], "ok_avatar") == 0)
+            CHECK(parts.avatar_url.url &&
+                      strcmp(parts.avatar_url.url, "https://example.com/avatar.png") == 0,
+                  "avatar followed");
+        if (strcmp(names[i], "ok_unrequire_profile") == 0) {
+            bool profile_required = false;
+            for (size_t k = 0; k < parts.required_component_count; k++)
+                profile_required |= parts.required_components[k] == 0x8001;
+            CHECK(!profile_required && strcmp(parts.name, "W24-H forgeries") == 0,
+                  "0x8001 no longer required, its state kept");
+        }
+        marmot_group_components_clear(&parts);
         CHECK(g->epoch == 2, "%s: epoch 2", names[i]);
         marmot_group_free(g);
         marmot_group_id_free(&gid);
@@ -774,6 +1035,50 @@ test_openmls_by_reference(void)
               r.proposal.proposal_type == 0x0008,
           "an admin's AppDataUpdate proposal is kept");
     marmot_message_result_free(&r);
+    /* The processor reports a by-reference AppDataUpdate's sender and
+     * component to the authorization (slice H review L4: the summary's
+     * capture, which the ingest's refusal of a non-admin's proposal
+     * otherwise hides): X's Commit of Y's rename, Y's proposal opened
+     * directly (libmarmot refused to keep it). */
+    {
+        uint8_t *blob = NULL;
+        size_t len = 0;
+        OK(o.m->storage->mls_load(o.m->storage->ctx, "mls_group", gid.data, gid.len, &blob,
+                                  &len));
+        MlsGroup g1;
+        CHECK(mls_group_deserialize(blob, len, &g1) == 0, "state");
+        sodium_memzero(blob, len);
+        free(blob);
+        size_t pl = 0, cl = 0;
+        uint8_t *pm = unhex(H_OMLS_REF_PROPOSAL_Y, &pl);
+        uint8_t *cm = unhex(H_OMLS_REF_COMMIT_X_OF_Y, &cl);
+        MlsOpenedProposal opened;
+        CHECK(mls_group_open_proposal(&g1, pm, pl, &opened) == 0 &&
+                  opened.sender_leaf == H_OMLS_Y_LEAF,
+              "Y's proposal opens");
+        bool cited = false;
+        for (size_t i = 0; i + MLS_HASH_LEN <= cl && !cited; i++)
+            cited = memcmp(cm + i, opened.ref, MLS_HASH_LEN) == 0;
+        CHECK(cited, "X's Commit cites Y's proposal by reference");
+        const uint8_t *acs[1] = {opened.ac};
+        const size_t ac_lens[1] = {opened.ac_len};
+        MlsCommitSummary sum;
+        memset(&sum, 0, sizeof(sum));
+        CHECK(mls_group_process_commit_by_ref(&g1, cm, cl, 0, acs, ac_lens, 1, &sum) == 0,
+              "processed");
+        CHECK(sum.shape_known && sum.proposal_count == 1 && sum.adu_count == 1 &&
+                  sum.ref_count == 1 && sum.ref_sender[0] == H_OMLS_Y_LEAF &&
+                  sum.ref_type[0] == MLS_PROPOSAL_APP_DATA_UPDATE &&
+                  sum.ref_component[0] == 0x8001 && sum.adu_inline_enablement_count == 0,
+              "by-reference sender in the summary: proposals %zu adu %zu refs %zu sender %u "
+              "type %u component 0x%04x",
+              sum.proposal_count, sum.adu_count, sum.ref_count, sum.ref_sender[0],
+              sum.ref_type[0], sum.ref_component[0]);
+        mls_opened_proposal_clear(&opened);
+        free(pm);
+        free(cm);
+        mls_group_free(&g1);
+    }
     char *cx = seal(&o, &gid, H_OMLS_REF_COMMIT_X);
     OK(deliver(&o, cx, &r));
     CHECK(r.type == MARMOT_RESULT_COMMIT, "by-reference rename applied");
@@ -873,6 +1178,21 @@ test_authorize_by_reference_rules(void)
     s.update_count = 1;
     EXPECT_ERR(marmot_commit_authorize_ex(&pre, &post, x_leaf, false, &s, &key, &gde),
                MARMOT_ERR_UNSUPPORTED);
+    /* A SelfRemove's sender must be no admin of its source epoch
+     * (admin-policy-v1.md; MDK reject_admin_self_remove_proposals): here
+     * the authorization's own check, which the ingest's refusal of an
+     * admin's SelfRemove proposal otherwise hides (slice H review L4).
+     * The states are the parent's: what is judged is the shape. */
+    memset(&s, 0, sizeof(s));
+    s.shape_known = true;
+    s.has_path = true;
+    s.proposal_count = 1;
+    s.self_remove_count = 1;
+    s.self_removed[0] = H_OMLS_W_LEAF;   /* an admin */
+    EXPECT_ERR(marmot_commit_authorize_ex(&pre, &post, H_OMLS_Y_LEAF, false, &s, &key, &gde),
+               MARMOT_ERR_ADMIN_CANNOT_LEAVE);
+    s.self_removed[0] = H_OMLS_Y_LEAF;   /* no admin; committed by X */
+    OK(marmot_commit_authorize_ex(&pre, &post, x_leaf, false, &s, &key, &gde));
     CHECK(!gde, "no GroupData for an adopted group");
     mls_group_free(&pre);
     mls_group_free(&post);
@@ -1261,7 +1581,11 @@ test_rotation_onto_another_group_refused(void)
     CHECK(mls_group_commit_adopted(&g, NULL, 0, NULL, 0, &op, 1, &res) == 0, "MLS rotation");
     char *ev = marmot_commit_build_event(res.commit_data, res.commit_len, exporter, t.nostr_gid,
                                          marmot_now());
-    expect_refused(&t.bob, &t.gid, ev, MARMOT_ERR_PROTOCOL_GROUP_MISMATCH,
+    /* Judged on its own the Commit is valid; it is the routing record that
+     * refuses it, for good: Alice is an admin, so the application hears
+     * MARMOT_ERR_COMMIT_REFUSED (slice H review L2). */
+    OK(marmot_commit_judge(t.bob.m, &t.gid, res.commit_data, res.commit_len));
+    expect_refused(&t.bob, &t.gid, ev, MARMOT_ERR_COMMIT_REFUSED,
                    "rotation onto another group's address");
     free(ev);
     mls_add_result_clear(&res);
@@ -1281,6 +1605,72 @@ test_rotation_onto_another_group_refused(void)
     marmot_message_result_free(&m);
     marmot_outgoing_message_free(&out);
     marmot_group_id_free(&gid2);
+    trio_free(&t);
+}
+
+/* Alice's rotation of the trio's routing to `to`, from her MLS state `g`
+ * (advanced), sealed at address `at`, followed by Bob. */
+static void
+rotate(Trio *t, MlsGroup *g, const uint8_t at[32], const uint8_t to[32])
+{
+    uint8_t routing[32 + 1 + 1 + 25];
+    memcpy(routing, to, 32);
+    routing[32] = 26;                       /* relays<V>: one entry */
+    routing[33] = 25;                       /* url<V> */
+    memcpy(routing + 34, "wss://relay-a.example.com", 25);
+    MlsAppDataUpdate op = {0x8004, MLS_APP_DATA_UPDATE_OP_UPDATE, routing, sizeof(routing)};
+    uint8_t exporter[32];
+    memcpy(exporter, g->epoch_secrets.exporter_secret, 32);
+    MlsAddResult res;
+    memset(&res, 0, sizeof(res));
+    CHECK(mls_group_commit_adopted(g, NULL, 0, NULL, 0, &op, 1, &res) == 0, "MLS rotation");
+    char *ev = marmot_commit_build_event(res.commit_data, res.commit_len, exporter, at,
+                                         marmot_now());
+    MarmotMessageResult r;
+    OK(deliver(&t->bob, ev, &r));
+    CHECK(r.type == MARMOT_RESULT_COMMIT && r.commit.routing_changed &&
+              memcmp(r.commit.previous_nostr_group_id, at, 32) == 0,
+          "rotation followed");
+    marmot_message_result_free(&r);
+    free(ev);
+    mls_add_result_clear(&res);
+    sodium_memzero(exporter, sizeof(exporter));
+}
+
+/* A group that rotates back to an earlier address (slice H review N5): the
+ * address is current again, and no longer listed among the previous ones
+ * (nor kept as an alias of itself). */
+static void
+test_rotation_back_to_old_address(void)
+{
+    Trio t;
+    trio_create(&t);
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    OK(t.alice.m->storage->mls_load(t.alice.m->storage->ctx, "mls_group", t.gid.data, t.gid.len,
+                                    &blob, &len));
+    MlsGroup g;
+    CHECK(mls_group_deserialize(blob, len, &g) == 0, "state");
+    sodium_memzero(blob, len);
+    free(blob);
+    uint8_t away[32];
+    randombytes_buf(away, sizeof(away));
+    rotate(&t, &g, t.nostr_gid, away);
+    rotate(&t, &g, away, t.nostr_gid);
+    uint8_t current[32];
+    char **relays = NULL;
+    size_t n_relays = 0;
+    uint8_t (*previous)[32] = NULL;
+    size_t n_previous = 0;
+    OK(marmot_get_group_routing(t.bob.m, &t.gid, current, &relays, &n_relays, &previous,
+                                &n_previous));
+    CHECK(memcmp(current, t.nostr_gid, 32) == 0, "back at the first address");
+    CHECK(n_previous == 1 && memcmp(previous[0], away, 32) == 0,
+          "previous: only the address left (%zu)", n_previous);
+    for (size_t i = 0; i < n_relays; i++) free(relays[i]);
+    free(relays);
+    free(previous);
+    mls_group_free(&g);
     trio_free(&t);
 }
 
@@ -1368,6 +1758,8 @@ main(int argc, char **argv)
     RUN(test_mdk_commit_before_its_proposal);
     RUN(test_mdk_competing_self_remove_commits);
     RUN(test_openmls_negatives);
+    RUN(test_lifecycle_enablement);
+    RUN(test_removal_judged_whole);
     RUN(test_openmls_positives);
     RUN(test_openmls_by_reference);
     RUN(test_authorize_by_reference_rules);
@@ -1375,6 +1767,7 @@ main(int argc, char **argv)
     RUN(test_own_commits);
     RUN(test_self_update_with_new_proof);
     RUN(test_rotation_onto_another_group_refused);
+    RUN(test_rotation_back_to_old_address);
     RUN(test_nonadmin_removal_refused);
     RUN(test_refused_commit_draws_no_time);
     printf("all passed\n");

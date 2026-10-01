@@ -285,6 +285,14 @@ MarmotError marmot_commit_get_unsent_welcomes(Marmot *m, const MarmotGroupId *gi
 MarmotError marmot_commit_mark_welcomes_sent(Marmot *m, const MarmotGroupId *gid,
                                              const uint8_t (*ids)[32], size_t id_count);
 
+/* Tests and diagnostics: how a Commit (MLSMessage bytes) of the stored
+ * current epoch of `gid` would be judged -- the specific refusal of
+ * staging and authorization (and of a removal of our leaf), before any
+ * routing-record check and without MARMOT_ERR_COMMIT_REFUSED's mapping.
+ * Nothing is stored. */
+MarmotError marmot_commit_judge(Marmot *m, const MarmotGroupId *gid, const uint8_t *msg,
+                                size_t msg_len);
+
 /**
  * Apply a received Commit (`msg`, an MLSMessage PublicMessage already
  * recovered from the kind:445 NIP-44 layer with the exporter secret of

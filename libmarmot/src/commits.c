@@ -348,78 +348,18 @@ self_removers_not_admins(const MlsGroup *pre, const MlsCommitSummary *d)
  *     it before any install.
  * ──────────────────────────────────────────────────────────────────────── */
 
-#define ADOPTED_COMPONENT_MESSAGE_RETENTION_V1 0x8005u
-#define ADOPTED_COMPONENT_AGENT_TEXT_STREAM_V1 0x8006u
-
-/* MDK validate_app_component_bytes() for component `id`'s new state. */
+/* A component's new state (MDK validate_app_component_bytes): slice I's
+ * mls_adopted_component_state_valid(), the one definition admission and
+ * the AppDataUpdate path share (slice I review M1), so a valid 0x8006 or
+ * 0x800b update is followed.  One exception, fail-closed: a disband
+ * (0x800c `disbanded`) is a terminal convergence pass libmarmot does not
+ * implement (group-lifecycle-v1.md), MARMOT_ERR_UNSUPPORTED. */
 static MarmotError
 adopted_component_valid(uint16_t id, const uint8_t *data, size_t len)
 {
-    switch (id) {
-    case MARMOT_COMPONENT_APP_COMPONENTS: {
-        uint16_t ids[MLS_ADOPTED_MAX_IDS];
-        size_t n = 0;
-        return mls_components_list_decode_strict(data, len, ids, MLS_ADOPTED_MAX_IDS, &n) == 0
-                   ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
-    }
-    case MARMOT_COMPONENT_GROUP_PROFILE_V1: {
-        const uint8_t *nm, *ds;
-        size_t nl, dl;
-        return mls_group_profile_v1_decode(data, len, &nm, &nl, &ds, &dl) == 0
-                   ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
-    }
-    case MARMOT_COMPONENT_ADMIN_POLICY_V1: {
-        const uint8_t *keys;
-        size_t n;
-        return mls_admin_policy_v1_decode(data, len, &keys, &n) == 0
-                   ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
-    }
-    case MARMOT_COMPONENT_NOSTR_ROUTING_V1: {
-        const uint8_t *ngid;
-        MlsRelaySpan relays[MARMOT_NOSTR_ROUTING_MAX_RELAYS];
-        size_t n;
-        return mls_nostr_routing_v1_decode(data, len, &ngid, relays, &n) == 0
-                   ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
-    }
-    case MARMOT_COMPONENT_GROUP_LIFECYCLE_V1:
-        if (len != 1 || data[0] > 1) return MARMOT_ERR_EXTENSION_FORMAT;
-        /* active -> disbanded is a terminal convergence pass libmarmot does
-         * not implement (group-lifecycle-v1.md): fail closed. */
-        return data[0] == 0 ? MARMOT_OK : MARMOT_ERR_UNSUPPORTED;
-    case MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1: {
-        MarmotGroupBlossomImage img;
-        MarmotError err = marmot_group_blossom_image_decode(data, len, &img);
-        if (err == MARMOT_OK) marmot_group_blossom_image_clear(&img);
-        return err == MARMOT_OK ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
-    }
-    case MARMOT_COMPONENT_GROUP_AVATAR_URL_V1: {
-        /* Valid or unverified (kept, never contacted): libmarmot never
-         * refuses a URL another WHATWG serializer calls canonical (0.12.0
-         * media review). */
-        MarmotGroupAvatarUrl av;
-        MarmotError err = marmot_group_avatar_url_decode(data, len, &av);
-        if (err == MARMOT_OK) marmot_group_avatar_url_clear(&av);
-        return err == MARMOT_OK ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
-    }
-    case ADOPTED_COMPONENT_MESSAGE_RETENTION_V1:
-        /* u64 seconds, big-endian (MDK decode_message_retention). */
-        return len == 8 ? MARMOT_OK : MARMOT_ERR_EXTENSION_FORMAT;
-    case MARMOT_COMPONENT_SAFE_AAD:
-    case MARMOT_COMPONENT_ACCOUNT_PROOF_V2:
-        /* safe_aad state is unsupported by MDK too; the proof is LeafNode-only. */
-        return MARMOT_ERR_VALIDATION;
-    case ADOPTED_COMPONENT_AGENT_TEXT_STREAM_V1:
-    case MARMOT_COMPONENT_GROUP_ENCRYPTED_MEDIA_V2:
-    case MARMOT_COMPONENT_ENCRYPTED_MEDIA_V1:
-        /* MDK validates these; libmarmot cannot yet (W24 slice I owns 0x8006
-         * and 0x800b validation): never accept what MDK might refuse. */
+    if (id == MARMOT_COMPONENT_GROUP_LIFECYCLE_V1 && len == 1 && data[0] == 1)
         return MARMOT_ERR_UNSUPPORTED;
-    default:
-        /* Unknown to MDK as well (is_known_group_component): any bytes,
-         * kept and never interpreted (app-components/README.md "Unknown
-         * Data"). */
-        return MARMOT_OK;
-    }
+    return (MarmotError)mls_adopted_component_state_valid(id, data, len);
 }
 
 /* The app_data_dictionary entries of `g`'s GroupContext (borrowed). */
@@ -484,6 +424,78 @@ adopted_dictionary_changes_valid(const MlsGroup *pre, const MlsGroup *post, bool
     return err;
 }
 
+/* Lifecycle (0x800c) of `g`: *state -1 (no state), 0 active, 1
+ * disbanded; *required: 0x0001 lists it. */
+static MarmotError
+adopted_lifecycle(const MlsGroup *g, int *state, bool *required)
+{
+    *state = -1;
+    *required = false;
+    MarmotComponentData *e = NULL;
+    size_t n = 0;
+    MarmotError err = adopted_dictionary(g, &e, &n);
+    for (size_t i = 0; err == MARMOT_OK && i < n; i++) {
+        if (e[i].component_id == MARMOT_COMPONENT_GROUP_LIFECYCLE_V1) {
+            if (e[i].len != 1 || e[i].data[0] > 1) err = MARMOT_ERR_EXTENSION_FORMAT;
+            else *state = e[i].data[0];
+        } else if (e[i].component_id == MARMOT_COMPONENT_APP_COMPONENTS) {
+            uint16_t ids[MLS_ADOPTED_MAX_IDS];
+            size_t k = 0;
+            if (mls_components_list_decode_strict(e[i].data, e[i].len, ids,
+                                                  MLS_ADOPTED_MAX_IDS, &k) != 0)
+                err = MARMOT_ERR_EXTENSION_FORMAT;
+            for (size_t j = 0; j < k; j++)
+                *required |= ids[j] == MARMOT_COMPONENT_GROUP_LIFECYCLE_V1;
+        }
+    }
+    free(e);
+    return err;
+}
+
+/* MDK v0.11.0 validate_group_lifecycle_transition()
+ * (cgka-engine/src/app_components.rs:859-1019), run on every staged Commit
+ * (slice H review M1): group-lifecycle-v1.md "Once required, this component
+ * MUST remain present and required for the remainder of the group's
+ * lifetime".  In MDK's order:
+ *   - a disbanded parent has no outgoing transition;
+ *   - required -> not required: refused ("cannot be un-required");
+ *   - not required -> required (the enablement): the state must become
+ *     active, and every proposal be inline and an AppDataUpdate of 0x0001
+ *     or 0x800c;
+ *   - otherwise, unless active -> disbanded: the state may not change, and
+ *     no proposal may be an AppDataUpdate of 0x800c, even one restating
+ *     the present state ("redundant lifecycle update");
+ *   - active -> disbanded (a disband): MARMOT_ERR_UNSUPPORTED, libmarmot
+ *     does not implement it (MDK's own shape rules are not needed to refuse
+ *     it).
+ * A refusal is MARMOT_ERR_VALIDATION.  For our own Commit (a producer's:
+ * shape unknown) what needs the shape fails closed; our producers never
+ * write 0x800c. */
+static MarmotError
+adopted_lifecycle_transition(const MlsGroup *pre, const MlsGroup *post,
+                             const MlsCommitSummary *sum)
+{
+    int before = -1, after = -1;
+    bool before_required = false, after_required = false;
+    MarmotError err = adopted_lifecycle(pre, &before, &before_required);
+    if (err == MARMOT_OK) err = adopted_lifecycle(post, &after, &after_required);
+    if (err != MARMOT_OK) return err;
+    bool shape = sum && sum->shape_known;
+
+    if (before == 1) return MARMOT_ERR_VALIDATION;
+    if (before_required && !after_required) return MARMOT_ERR_VALIDATION;
+    if (!before_required && after_required) {
+        if (after != 0) return MARMOT_ERR_VALIDATION;
+        if (!shape || sum->adu_inline_enablement_count != sum->proposal_count)
+            return MARMOT_ERR_VALIDATION;
+        return MARMOT_OK;
+    }
+    if (before == 0 && after == 1) return MARMOT_ERR_UNSUPPORTED;   /* disband */
+    if (before != after) return MARMOT_ERR_VALIDATION;
+    if (shape && sum->adu_lifecycle_count > 0) return MARMOT_ERR_VALIDATION;
+    return MARMOT_OK;
+}
+
 static MarmotError
 adopted_commit_authorize(const MlsGroup *pre, const MlsGroup *post, uint32_t committer_leaf,
                          const MlsCommitSummary *sum, MarmotCommitKey *key)
@@ -521,6 +533,8 @@ adopted_commit_authorize(const MlsGroup *pre, const MlsGroup *post, uint32_t com
     }
     bool dict_changed = false;
     err = adopted_dictionary_changes_valid(pre, post, &dict_changed);
+    if (err != MARMOT_OK) return err;
+    err = adopted_lifecycle_transition(pre, post, sum);
     if (err != MARMOT_OK) return err;
     /* Nothing but the dictionary may differ in an adopted GroupContext:
      * required_capabilities changes only by GroupContextExtensions, which
@@ -1156,9 +1170,12 @@ routing_history_load(Marmot *m, const uint8_t *gid, size_t gid_len,
     return MARMOT_OK;
 }
 
-/* The group `gid` leaves the address `old_id`. */
+/* The group `gid` leaves the address `old_id` for `new_id`.  An earlier
+ * address it returns to (a competing Commit undid a rotation) is current
+ * again, so no longer a previous one (slice H review N5). */
 static MarmotError
-routing_remember(Marmot *m, const MarmotGroupId *gid, const uint8_t old_id[32])
+routing_remember(Marmot *m, const MarmotGroupId *gid, const uint8_t old_id[32],
+                 const uint8_t new_id[32])
 {
     MarmotStorage *s = m->storage;
     uint8_t ids[ROUTING_HISTORY_MAX][32];
@@ -1169,10 +1186,27 @@ routing_remember(Marmot *m, const MarmotGroupId *gid, const uint8_t old_id[32])
         err = MARMOT_OK;
     }
     if (err != MARMOT_OK) return err;
-    for (size_t i = 0; i < n; i++)
-        if (memcmp(ids[i], old_id, 32) == 0) return MARMOT_OK;   /* known already */
-    err = s->mls_store(s->ctx, ROUTING_ALIAS_LABEL, old_id, 32, gid->data, gid->len);
-    if (err != MARMOT_OK) return err;
+    for (size_t i = 0; i < n; i++) {
+        if (memcmp(ids[i], new_id, 32) != 0) continue;
+        MarmotError derr = s->mls_delete(s->ctx, ROUTING_ALIAS_LABEL, new_id, 32);
+        if (derr != MARMOT_OK && derr != MARMOT_ERR_STORAGE_NOT_FOUND) return derr;
+        memmove(ids[i], ids[i + 1], (n - i - 1) * 32);
+        n--;
+        break;
+    }
+    bool known = false;
+    for (size_t i = 0; i < n && !known; i++) known = memcmp(ids[i], old_id, 32) == 0;
+    if (!known) {
+        err = s->mls_store(s->ctx, ROUTING_ALIAS_LABEL, old_id, 32, gid->data, gid->len);
+        if (err != MARMOT_OK) return err;
+    }
+    if (known) {
+        uint8_t rec[1 + ROUTING_HISTORY_MAX * 32];
+        rec[0] = (uint8_t)n;
+        memcpy(rec + 1, ids, n * 32);
+        return s->mls_store(s->ctx, ROUTING_HISTORY_LABEL, gid->data, gid->len, rec,
+                            1 + n * 32);
+    }
     if (n == ROUTING_HISTORY_MAX) {
         MarmotError derr = s->mls_delete(s->ctx, ROUTING_ALIAS_LABEL, ids[0], 32);
         if (derr != MARMOT_OK && derr != MARMOT_ERR_STORAGE_NOT_FOUND) return derr;
@@ -1264,7 +1298,8 @@ adopted_record_apply(Marmot *m, MarmotGroup *group, const MlsGroup *g)
             marmot_group_free(fresh);
             return MARMOT_ERR_PROTOCOL_GROUP_MISMATCH;
         }
-        err = routing_remember(m, &group->mls_group_id, group->nostr_group_id);
+        err = routing_remember(m, &group->mls_group_id, group->nostr_group_id,
+                               fresh->nostr_group_id);
         if (err == MARMOT_OK && m->storage->mls_load && m->storage->mls_store)
             err = marmot_carry_group_event_time(m, group->nostr_group_id, fresh->nostr_group_id);
         if (err != MARMOT_OK) {
@@ -2249,6 +2284,41 @@ removes_self(const Marmot *m, const MlsGroup *base, const uint8_t *msg, size_t m
     return rc;
 }
 
+/* Slice H review L2: `err`, the refusal of an inbound Commit of the current
+ * epoch, as MARMOT_ERR_COMMIT_REFUSED when it is for good and the group's
+ * own -- an adopted group, an authenticated Commit, one of its admins' (a
+ * non-admin's junk, which every member refuses, keeps its error), refused
+ * for its content -- so that the application says the group stopped there
+ * instead of waiting for nothing.  Transient outcomes (a proposal not
+ * received yet, storage, our own pending Commit) keep theirs, as does
+ * MARMOT_ERR_KEY_PACKAGE_IDENTITY (its own refusal state, nostrc-prrl). */
+static MarmotError
+refused_for_good(const MlsGroup *cur, const uint8_t *msg, size_t msg_len, uint32_t sender,
+                 MarmotError err)
+{
+    if (cur->profile != MARMOT_GROUP_PROFILE_ADOPTED) return err;
+    switch (err) {
+    case MARMOT_ERR_MLS_PROCESS_MESSAGE:
+    case MARMOT_ERR_UNSUPPORTED:
+    case MARMOT_ERR_VALIDATION:
+    case MARMOT_ERR_EXTENSION_FORMAT:
+    case MARMOT_ERR_PROTOCOL_GROUP_MISMATCH:
+    case MARMOT_ERR_IDENTITY_CHANGE:
+    case MARMOT_ERR_COMMIT_FROM_NON_ADMIN:
+    case MARMOT_ERR_FROM_NON_MEMBER:
+        break;
+    default:
+        return err;
+    }
+    uint8_t id[32];
+    bool admin = false;
+    if (mls_group_commit_authentic(cur, msg, msg_len, sender) != 0 ||
+        marmot_mls_sender_identity(cur, sender, id) != 0 ||
+        marmot_policy_is_admin(cur, id, &admin) != MARMOT_OK || !admin)
+        return err;
+    return MARMOT_ERR_COMMIT_REFUSED;
+}
+
 /* Keep an inbound Commit that lost to our pending one, for
  * marmot_clear_pending_commit(). */
 static MarmotError
@@ -2283,56 +2353,49 @@ defer_inbound(Marmot *m, PendingCommit *p, const uint8_t *gid, size_t gid_len,
 }
 
 /* nostrc-xrya: the ordering key and authority of an authenticated Commit that
- * removes our leaf (mls_group_commit_removes_self()).  A Remove is
- * privileged: the committer must be an admin of the pre-Commit GroupData,
- * exactly as marmot_commit_authorize() demands of a Commit we could apply. */
+ * removes our leaf (mls_group_commit_removes_self()), which we cannot apply
+ * (its UpdatePath is encrypted to the others).
+ *
+ * It is judged whole, as a Commit we could apply (slice H review L1; MDK
+ * runs its full staged-Commit validation before it acts on a removal,
+ * message_processor/ingest.rs): its public result -- every proposal
+ * applied, the committer's UpdatePath leaf, the GroupContext
+ * (mls_group_commit_public_result_by_ref()), which a removed member can
+ * compute -- passes the resulting-epoch check and marmot_commit_authorize_ex()
+ * of its profile: admin authority, every GroupContext change (an adopted
+ * group's dictionary and lifecycle rules, a legacy group's GroupData), and
+ * every new leaf's proof.  A Commit the other members refuse never ends the
+ * group for us.  Before, only the committer's authority was judged. */
 static MarmotError
-removal_key(const MlsGroup *pre, uint32_t committer_leaf, const uint8_t digest[32],
+removal_key(const Marmot *m, const MlsGroup *pre, const uint8_t *msg, size_t msg_len,
+            uint32_t committer_leaf, const uint8_t digest[32],
             const MlsCommitSummary *departures, MarmotCommitKey *key)
 {
+    (void)departures;   /* the public result's summary is the same Commit's */
     memset(key, 0, sizeof(*key));
-    /* A removal of our leaf is judged by its profile's rules: MIP-01
-     * GroupData in a legacy group, admin-policy-v1 against the candidate
-     * parent in an adopted one (nostrc-qp24.5.1.3); anything else fails. */
     if (pre->profile != MARMOT_GROUP_PROFILE_LEGACY &&
         pre->profile != MARMOT_GROUP_PROFILE_ADOPTED)
         return MARMOT_ERR_UNSUPPORTED;
-    const MlsLeafNode *committer = leaf_at(pre, committer_leaf);
-    if (!committer || committer->credential_identity_len != 32 ||
-        !committer->credential_identity)
-        return MARMOT_ERR_FROM_NON_MEMBER;
-    memcpy(key->committer, committer->credential_identity, 32);
-    key->committer_leaf = committer_leaf;
-    /* nostrc-2um6: committing SelfRemoves only (ours among them) is ordinary:
-     * any member may do it.  Every other removal is an admin's. */
-    key->privileged = !self_remove_only(departures);
-    memcpy(key->digest, digest, 32);
-    MarmotError err = self_removers_not_admins(pre, departures);
-    if (err != MARMOT_OK || !key->privileged) return err;
-    if (pre->profile == MARMOT_GROUP_PROFILE_ADOPTED) {
-        /* A Remove (with whatever rides along: the admin-policy update an
-         * admin's removal needs) is an active admin's to commit, and every
-         * by-reference proposal but a SelfRemove an admin's to send. */
-        bool admin = false;
-        err = marmot_policy_is_admin(pre, key->committer, &admin);
-        if (err == MARMOT_OK && !admin) err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
-        for (size_t i = 0; err == MARMOT_OK && departures && departures->shape_known &&
-                           i < departures->ref_count; i++) {
-            uint8_t id[32];
-            bool sender_admin = false;
-            if (marmot_mls_sender_identity(pre, departures->ref_sender[i], id) != 0)
-                err = MARMOT_ERR_FROM_NON_MEMBER;
-            else if ((err = marmot_policy_is_admin(pre, id, &sender_admin)) == MARMOT_OK &&
-                     !sender_admin)
-                err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
-        }
-        return err;
-    }
+    MarmotProposalSet set;
+    MarmotError err = marmot_proposals_load_epoch((Marmot *)m, pre->group_id,
+                                                  pre->group_id_len, pre->epoch, &set);
+    if (err != MARMOT_OK) return err;
+    MlsGroup pub;
+    MlsCommitSummary sum;
+    memset(&sum, 0, sizeof(sum));
+    int rc = mls_group_commit_public_result_by_ref(pre, msg, msg_len, committer_leaf, set.acs,
+                                                   set.ac_lens, set.ac_count, &pub, &sum);
+    marmot_proposals_clear(&set);
+    if (rc != 0)
+        return rc == MARMOT_ERR_UNSUPPORTED || rc == MARMOT_ERR_MEMORY ||
+                       rc == MARMOT_ERR_PROPOSAL_UNKNOWN
+                   ? (MarmotError)rc : MARMOT_ERR_MLS_PROCESS_MESSAGE;
     MarmotGroupDataExtension *gde = NULL;
-    err = group_data_of(pre, pre, &gde);
-    if (err == MARMOT_OK && !gde_is_admin(gde, key->committer))
-        err = MARMOT_ERR_COMMIT_FROM_NON_ADMIN;
+    err = marmot_commit_authorize_ex(pre, &pub, committer_leaf, m->config.allow_unproven_members,
+                                     &sum, key, &gde);
     marmot_group_data_extension_free(gde);
+    mls_group_free(&pub);
+    memcpy(key->digest, digest, 32);
     return err;
 }
 
@@ -2693,6 +2756,41 @@ commit_sender_on(const MlsGroup *base, const uint8_t *msg, size_t msg_len,
     return mls_group_handshake_sender(base, msg, msg_len, out) == 0;
 }
 
+MarmotError
+marmot_commit_judge(Marmot *m, const MarmotGroupId *gid, const uint8_t *msg, size_t msg_len)
+{
+    if (!m || !gid || !msg) return MARMOT_ERR_INVALID_ARG;
+    CommitRoute route;
+    if (!commit_route(msg, msg_len, gid->data, gid->len, &route) || !route.commit)
+        return MARMOT_ERR_MLS_FRAMING;
+    MlsGroup cur;
+    MarmotError err = load_current(m, gid, &cur);
+    if (err != MARMOT_OK) {
+        mls_group_free(&cur);
+        return err;
+    }
+    uint32_t sender = UINT32_MAX;
+    MlsGroup post;
+    memset(&post, 0, sizeof(post));
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    if (route.epoch != cur.epoch || !commit_sender_on(&cur, msg, msg_len, &route, &sender)) {
+        err = MARMOT_ERR_WRONG_EPOCH;
+    } else {
+        err = stage_inbound(m, &cur, msg, msg_len, sender, &post, &key, &gde, NULL);
+        bool removed = false;
+        MlsCommitSummary dep;
+        uint8_t digest[32] = {0};
+        if ((err == MARMOT_ERR_MLS_PROCESS_MESSAGE || err == MARMOT_ERR_PROPOSAL_UNKNOWN) &&
+            removes_self(m, &cur, msg, msg_len, sender, &removed, &dep) == 0 && removed)
+            err = removal_key(m, &cur, msg, msg_len, sender, digest, &dep, &key);
+    }
+    mls_group_free(&post);
+    mls_group_free(&cur);
+    marmot_group_data_extension_free(gde);
+    return err;
+}
+
 /* The ordering key of a Commit judged on `base`: one that applies, or an
  * admin's removal of our leaf.  FALSE when it is neither. */
 static bool
@@ -2711,7 +2809,7 @@ inbound_order_key(const Marmot *m, const MlsGroup *base, const uint8_t *msg, siz
     MlsCommitSummary dep;
     if ((err == MARMOT_ERR_MLS_PROCESS_MESSAGE || err == MARMOT_ERR_PROPOSAL_UNKNOWN) &&
         removes_self(m, base, msg, msg_len, sender, &removed, &dep) == 0 && removed)
-        err = removal_key(base, sender, digest, &dep, key);
+        err = removal_key(m, base, msg, msg_len, sender, digest, &dep, key);
     else if (err == MARMOT_OK)
         memcpy(key->digest, digest, 32);
     return err == MARMOT_OK;
@@ -2865,7 +2963,7 @@ inbound_removed(Marmot *m, MarmotGroup *group, uint64_t epoch, const CommitRoute
             bool removed = false;
             MlsCommitSummary dep;
             if (removes_self(m, base, msg, msg_len, sender, &removed, &dep) == 0 && removed) {
-                err = removal_key(base, sender, digest, &dep, &key);
+                err = removal_key(m, base, msg, msg_len, sender, digest, &dep, &key);
                 if (err == MARMOT_OK && commit_key_cmp(&key, beat) < 0) {
                     /* Another removal wins that epoch. */
                     Removal next = { .epoch = epoch, .from_parent = on_parent, .key = key,
@@ -3002,7 +3100,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
              * authenticated one -- or any member's committing our own
              * SelfRemove (nostrc-2um6) -- ends the group for us, unless our
              * own pending Commit wins the epoch. */
-            err = removal_key(&cur, sender, digest, &dep, &key);
+            err = removal_key(m, &cur, msg, msg_len, sender, digest, &dep, &key);
             if (err == MARMOT_OK && live && commit_key_cmp(&key, &p.key) >= 0)
                 err = defer_inbound(m, &p, gid, gid_len, epoch, msg, msg_len, digest,
                                     event_id_hex);
@@ -3025,6 +3123,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
             /* A winner replaces the state our pending Commit was built on:
              * from now on it is STALE and merging it fails (review R1). */
         }
+        if (err != MARMOT_OK && known) err = refused_for_good(&cur, msg, msg_len, sender, err);
         if (perr == MARMOT_OK) pending_clear(&p);
     } else if (cur.epoch > 0 && epoch == cur.epoch - 1) {
         /* A Commit from the parent of the one we applied. */
@@ -3069,7 +3168,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                     removed) {
                     /* A competing Commit that removes us (nostrc-xrya): if it
                      * beats the one we applied, the group ends for us. */
-                    err = removal_key(&rp.parent, sender, digest, &dep, &key);
+                    err = removal_key(m, &rp.parent, msg, msg_len, sender, digest, &dep, &key);
                     if (err == MARMOT_OK)
                         err = commit_key_cmp(&key, &rp.key) < 0
                                   ? evict(m, group, &rp.parent, true, &key, epoch,
