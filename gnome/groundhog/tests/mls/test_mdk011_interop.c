@@ -40,7 +40,8 @@
  *  concurrent-commits: Groundhog and MDK 0.11 commit from the same epoch
  *    and converge on one branch: MDK's by the key (Groundhog switches),
  *    then Groundhog's by a witness against the key (MDK switches), then
- *    the key again between two witnessed branches (nostrc-w1m0).
+ *    MDK's by the key between two witnessed branches (Groundhog switches on
+ *    a message) (nostrc-w1m0).
  *
  * mdk09-probe: MDK 0.9.0 (the dictionary engine, v1 proof) is expected
  * incompatible: the case asserts the refusal precisely (the failure class,
@@ -1598,8 +1599,10 @@ test_white_noise_media(void)
  * (protocol-core/convergence.md, as MDK runs them).  First, unwitnessed, the
  * lower committer key wins: MDK's (secret 1 sorts below secret 3), and
  * Groundhog switches to it.  Then Groundhog's rename is witnessed by its own
- * message at its epoch, and wins despite the key: MDK switches to it.
- * Messages flow both ways after each. */
+ * message at its epoch, and wins despite the key: MDK switches to it.  Then
+ * both are witnessed, the key decides again, and Groundhog switches on MDK's
+ * message (the branch change a message makes).  Messages flow both ways
+ * after each. */
 static void
 test_concurrent_commits(void)
 {
@@ -1685,6 +1688,53 @@ test_concurrent_commits(void)
     send_accepted(carol, gc, "groundhog after the second race");
     g_autoptr(JsonObject) read = mdk_sync_joined("alice", group, before_join);
     g_assert_true(synced_message(read, hex[CAROL], "groundhog after the second race"));
+  }
+
+  /* 3. Both renames witnessed by their committer's own message: the scores
+   *    tie and the key decides (MDK's).  The group relay withholds every new
+   *    event until released, so each side commits and speaks without the
+   *    other's events; Groundhog then gets MDK's rename (it loses: only
+   *    Groundhog's branch is witnessed there yet) and MDK's message, which
+   *    witnesses MDK's branch and switches Groundhog on a message. */
+  {
+    g_autoptr(GPtrArray) before = group_events_on(&w.g);
+    w.g.withhold_new = TRUE;
+    OpWait renamed = { 0 };
+    gh_mls_service_update_metadata_async(carol->service, gc, "Groundhog's third", NULL, NULL,
+                                         on_changed, &renamed);
+    change_done(&renamed);
+    send_accepted(carol, gc, "groundhog witness three");
+    g_autoptr(GPtrArray) after_gh = group_events_on(&w.g);
+    g_assert_cmpuint(after_gh->len, ==, before->len + 2);
+    g_autoptr(JsonObject) theirs = mdk_call(&driver,
+      "\"cmd\":\"update_group_data\",\"peer\":\"alice\",\"group\":\"%s\","
+      "\"name\":\"MDK's third\"", group);
+    g_autoptr(JsonObject) settled = mdk_sync_joined("alice", group, before_join);
+    g_assert_cmpstr(json_object_get_string_member(sync_state(settled), "name"), ==,
+                    "MDK's third");
+    mdk_send("alice", group, "mdk witness three");
+    g_autoptr(GPtrArray) after_mdk = group_events_on(&w.g);
+    g_assert_cmpuint(after_mdk->len, ==, after_gh->len + 2);
+    w.g.withhold_new = FALSE;
+    /* MDK's rename, then its message, to Groundhog. */
+    for (guint i = after_gh->len; i < after_mdk->len; i++)
+      wire_relay_release(&w.g, g_ptr_array_index(after_mdk, i));
+    wait_name(gc, "MDK's third");
+    wait_message(carol, room, "mdk witness three");
+    /* Groundhog's, to MDK: its rename loses there too. */
+    for (guint i = before->len; i < after_gh->len; i++)
+      wire_relay_release(&w.g, g_ptr_array_index(after_mdk, i));
+    /* (Groundhog's witness is on the losing branch: MDK counts it, and
+     * delivers nothing of it.) */
+    g_autoptr(JsonObject) synced = mdk_sync_joined("alice", group, before_join);
+    g_assert_false(synced_message(synced, hex[CAROL], "groundhog witness three"));
+    assert_gh_converged(gc, sync_state(synced));
+    g_assert_cmpuint(state_epoch(theirs), ==, gh_mls_group_get_epoch(gc));
+    mdk_send("alice", group, "mdk after the third race");
+    wait_message(carol, room, "mdk after the third race");
+    send_accepted(carol, gc, "groundhog after the third race");
+    g_autoptr(JsonObject) read = mdk_sync_joined("alice", group, before_join);
+    g_assert_true(synced_message(read, hex[CAROL], "groundhog after the third race"));
   }
 
   world_down(&w);
