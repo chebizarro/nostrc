@@ -281,3 +281,133 @@ White Noise runs `parse_media_attachment()` and `validate()` (`crates/marmot-app
 - **M1:** keyed uploads to group-named endpoints must be public-only, and the destination must be named to the admin, with a test.
 - **Recommended in the same pass (cheap):** L2 copy, L3 note, N1 wiring, N4 label.
 - **Follow-ups (file or fold into existing beads):** L1 (nostrc-46k7/nostrc-8ave), L4, L5, L6, N5.
+
+---
+
+## Addendum: re-review of the fixes (2026-10-01)
+
+- **Branch re-reviewed:** `groundhog/w25-images-attachments` at `0f1d2e87`, rebased onto `543ca0b6`. The five original commits are now `0a221b89`…`cd949f63`.
+  - `git range-diff` and a diff of the two ranges excluding `VERSION_MANIFEST.md` match line for line: the only differences are hunk offsets.
+  - The new commits are `7911db69` (libmarmot `marmot_update_group_media_policy()`), `5ad455e2` (Groundhog: M1, L1-L5, N1-N9) and `0f1d2e87` (driver, L6).
+- **This review branch** was rebased onto `0f1d2e87`.
+- **Final verdict: APPROVE-WITH-NITS.**
+  - **M1 is fixed, and I verified it at both layers**, including a DNS-rebinding attempt.
+  - Two of the Low fixes are incomplete:
+    - **R1:** the L4 Save As allowlist can be bypassed with a double extension.
+    - **R2:** the N1 wiring emits a GLib CRITICAL and never connects.
+  - Both are a few lines, behind `GH_FEATURE_ENCRYPTED_GROUPS=0`, and are not merge-blocking at Low. I recommend fixing them, each with a test, before the flag flips, preferably in the same series.
+
+### Verification at `0f1d2e87`
+
+| What | Result |
+|---|---|
+| `ninja` (BUILD_GROUNDHOG, BUILD_MDK011_INTEROP with the native driver) | builds |
+| `ctest -R 'marmot\|groundhog' -E mdk011` | **102/102 pass** (the same 4 environment skips). A first run failed `groundhog-blossom` only because its binary was still my scratch build. Rebuilt from the clean tree, it passes |
+| `python3 scripts/check-unsequenced-args.py` | clean |
+| `driver-0.11` rebuilt `--locked`; `cargo test` | 5/5 parity tests pass |
+| MDK 0.11 `control`, `white-noise-welcome`, `white-noise-media`, `adopted-commits` | pass |
+| libmarmot `test_adopted_commits` and `test_commits` under macOS ASAN+UBSAN (`/tmp/rv-w25b-asan`), with my scratch probes of the new producer | pass. Probes reverted |
+| `scripts/linux-gate.sh --sanitizers` (ASAN+UBSAN+LSAN, Ubuntu 24.04 GCC; the existing shared volumes, `docker volume ls` unchanged) | **53/53 pass** |
+
+### M1: fixed and verified
+
+- **Preflight.** `gh_blossom_client_dup_public_servers()` runs the download rule (`normalize_server()` + `host_public()`: loopback, RFC 1918, link-local, CGNAT, `.local`/`.lan`/`.internal`/single-label names, numeric oddities) in two places:
+  - in `gh_mls_attachments_set_picture_async()`, before sealing;
+  - again in `upload_start()` for every keyed upload.
+
+  With no server left, the result is `GH_BLOSSOM_ERROR_NO_SERVER` before any request. `test_mls_media/picture-roundtrip` now offers a loopback fixture, `192.168.1.1`, `[fe80::1]` and `printer.local`, and asserts `NO_SERVER` with zero fixture requests. `mls-files/adopted-picture` checks the same end to end.
+- **Connect time.** The new `GhNetHttpRequest.public_only` is set for keyed uploads (unless `allow_private_hosts`, tests only). `gh_net_http_send_async()` passes it to `request_start()`, so outside Tor the PUT uses `public_session_new()`. That session is nostrc-qi5e's `GhPublicEnumerator`, which drops every resolved address `gh_net_address_is_public()` refuses. It is the same path the download rebinding test covers.
+- **DNS rebinding, tried.** I added a scratch `/groundhog/blossom/keyed-upload-rebinding` test (patch kept at `/tmp/rv-w25b-rebind-test.patch`), reusing `test_blossom.c`'s `RebindResolver`:
+  1. `https://rebind.groundhog.test:<port>` passes the preflight (`dup_public_servers` keeps it) and resolves to 127.0.0.1, where a listener counts connections.
+  2. With the fix, the keyed upload fails with "This address leads to your own computer or local network, so it isn't used", the resolver was consulted, and **0 connections** were made.
+  3. With `upload_put()`'s `.public_only` forced to FALSE (mutation), the same upload **connects** (1 connection; the TLS handshake fails).
+
+  So the connect-time layer is what stops rebinding, and it works.
+- **Confirmation.** "Choose…" no longer uploads. `gh_mls_group_info_dialog_set_picture()` presents `set_picture_dialog` ("Set This Picture for Everyone?"), whose body is `gh_mls_picture_upload_note()`:
+  - It names every host the upload may go to, in order and only public ones (`gh_mls_attachments_dup_picture_upload_hosts()`): "a.example, b.example or c.example".
+  - It says either that each server can see the IP address, or that the upload goes through Tor.
+  - It says that everyone in the group will see the picture.
+
+  Only "Upload and Set" starts the seal and upload. With no public host, the dialog doesn't open and a toast says why. `upload_key` is now `secure_alloc` (locked), so N6 is fixed too.
+- **Residuals (Nit):**
+  - **R3.** No committed test covers the connect-time layer for uploads. The new tests use literal private hosts, which the preflight already drops. Adding the scratch rebinding test above would pin it.
+  - **R4.**
+    - The confirmation lists hosts read when the file is chosen, but the upload re-reads the 0x800b state when confirmed. A Commit that changes the group's servers while the dialog is open sends the picture to servers the admin wasn't shown (still public-only). Pass the confirmed list through, or re-check it before uploading.
+    - No GUI test presents `set_picture_dialog` or `remove_picture_dialog`, for example Cancel ⇒ no PUT and no Commit. Only the note helpers are tested.
+
+### L4: content sniffing and allowlist mostly right, but bypassable (R1, Low)
+
+**What the fix does.** `gh_attachment_card_safe_save_name()` (`gh-attachment-card.c`) picks the extension in this order:
+1. the bytes (`gh_attachment_card_sniff_extension()`: JPEG, PNG, GIF, WebP, PDF, ZIP magic);
+2. else the declared type (a 12-entry table);
+3. else the sender's own extension, only if it is in `safe_extensions` (documents, media, archives, `.ics`/`.vcf`).
+
+The "Save it to open it" nudge now appears only when the bytes sniff as an image. Otherwise the card says "This file isn't the photo it says it is, so it isn't shown". The committed cases (`test_attachments/save-names`) are right.
+
+**The bypass.** The allowlist judges only the **last** extension, and the stem keeps everything before it. When neither the bytes nor the declared type yield an extension (e.g. `application/octet-stream`, `application/x-desktop`, or no `m`) and the last extension isn't allowlisted, the function returns the stem, whose own trailing extension then becomes the effective one. Probed through the real function (scratch, reverted):
+
+| Sender name | Declared type | Save As suggests |
+|---|---|---|
+| `holiday.desktop.bin` | `application/octet-stream` | **`holiday.desktop`** |
+| `run.sh.x` | `application/octet-stream` | **`run.sh`** |
+| `setup.exe.dat` | none | **`setup.exe`** |
+| `app.desktop.zzz` | `application/x-desktop` | **`app.desktop`** |
+
+**Fix.** When the chosen extension isn't the sender's, or there is none, neutralize the dots left in the stem: `holiday_desktop`, or `holiday_desktop.bin` → `holiday_desktop`. Alternatively, judge every dotted segment against the allowlist. Add these four cases to `save-names`.
+
+The risk stays Low: the user still confirms the name in the Save dialog, and GNOME doesn't launch an untrusted `.desktop` file or a non-executable script. But the fix's own claim, "never .desktop, a script or an executable", doesn't hold.
+
+### N1: the fix never connects (R2, Low)
+
+- **What's right.** `can_send` now uses the composer's own `gh_mls_send_reason()`, so attaching is refused at use when the group has ended, is leaving, or is offline.
+- **The broken part.** `gh_mls_attachment_ui_attach()` connects with `g_signal_connect_object(view, "notify::conversation", G_CALLBACK(on_conversation_shown), follow, 0)` (`gh-mls-attachment-ui.c`). `follow` is a plain `g_new0` struct, not a GObject.
+  - GLib asserts `G_IS_OBJECT (gobject)` and returns handler id 0. I reproduced it with the same struct layout: "g_signal_connect_object: assertion 'G_IS_OBJECT (gobject)' failed", handler id 0. It aborts under `G_DEBUG=fatal-criticals`.
+  - With encrypted groups enabled, every window `gh_app_services_attach_window()` sets up would log a CRITICAL. The attach button still wouldn't follow conversation changes or the shown group's state; only the one `on_conversation_shown()` call at attach time runs.
+  - No test reaches this function: `test_attachment_ui` installs the delegate with `gh_attachment_ui_set_groups()` directly. That is why the suite stays green.
+- **Fix.** Connect with `g_signal_connect(view, …, follow)` and disconnect in `follow_free()` (keep a weak pointer to the view). Or connect with the window as the GObject and look `Follow` up through `FOLLOW_DATA`. Add a GUI test that calls `gh_mls_attachment_ui_attach()` under `fatal-criticals`, leaves the shown group, and asserts the attach button hides.
+
+### `marmot_update_group_media_policy()`: admin-only and validated
+
+- **Path.** It encodes with `marmot_group_media_policy_encode()`, then goes through the image producers' path: `update_image_component_txn()` → `update_adopted_image_component()`. That path gives:
+  - one libmarmot transaction;
+  - `mls_adopted_component_state_valid()`, now documented as defence in depth (N3);
+  - `load_group_for_commit(require_admin=TRUE)`;
+  - a no-op refused with no Commit;
+  - `finish_adopted_commit()`, which checks the Commit as receivers check it;
+  - the old state compared against `gc.media_policy` for 0x800b.
+- **Admin-only.** The committed test refuses Bob with `MARMOT_ERR_ADMIN_ONLY` and no Commit, refuses NULL, checks that receivers follow (the endpoint is stored normalized and verified), and checks the no-op.
+- **Validation, probed** (scratch, ASAN+UBSAN, reverted):
+  - no locator kind, an unverifiable IDNA endpoint (`https://xn--…`), an endpoint whose kind isn't allowed, and an endpoint flagged `base_url_unverified` are each `MARMOT_ERR_INVALID_INPUT`, with no Commit staged;
+  - on a legacy group it is `MARMOT_ERR_UNSUPPORTED` inside one rolled-back transaction (`expect_txns(1, 0, 1)`).
+- **Nit.** Those negative cases aren't in the committed tests. Add them.
+- **Note.** Like the codec, the producer accepts `http://` and private or loopback endpoints: libmarmot verifies the WHATWG form, not reachability, as MDK does. With M1 fixed, Groundhog applies the public-address rule on every consumer: Show Picture, download fallbacks and keyed upload.
+- **Production use.** Groundhog calls the producer only from the `GH_MLS_TEST_HOOKS` hook `gh_mls_service_test_set_media_policy_async()`. A user-facing producer is still nostrc-46k7.
+
+### Status of the other findings
+
+| Finding | Status |
+|---|---|
+| L1 | **Fixed.** `mls-files/adopted-picture` covers it end to end: an admin's 0x800b Commit; the private host refused; Alice's keyed upload and her READY from the store; Bob AVAILABLE with 0 GETs; Show Picture fetches once, then READY from the store; a replaced copy and the removed copy go. Mutation: dropping `get_picture()`'s `gh_store_group_image_forget()` fails it (`'old' should be NULL`) |
+| L2 | **Fixed.** "Groundhog can't show or change the picture of this older kind of group." The service errors and `test_mls_ui` were updated |
+| L3 | **Fixed.** `gh_mls_download_note()` and the picture row name every public host in order: the sender's locators, then the group's servers ("the first of a, b or c that has it; each server asked can see your IP address"). Tested in `mls-files/names` |
+| L4 | **Partly fixed:** R1 |
+| L5 | **Fixed.** `remove_picture_dialog` (destructive, Cancel by default) runs before the Commit. Not GUI-tested (R4) |
+| L6 | **Addressed.** `open_media` now refuses a duplicated `v`, hash, `nonce`, `m` or `filename`. The README says plainly that marmot-app's parser isn't used. Tracked as nostrc-qeyg (open, P3) |
+| N1 | **Broken:** R2 |
+| N2 | **Fixed:** U+061C, U+2028 and U+2029 are added to `unsafe_char()` and tested |
+| N3 | **Documented** (comment in `update_adopted_image_component()`) |
+| N4 | **Fixed:** `accessibility { label: _("Choose Group Picture"); }`, and a shown picture is announced (`gtk_accessible_announce`) |
+| N5 | **Fixed:** the charter's schema section describes v5 and says every migration is one-way (`NEWER_SCHEMA`) |
+| N6 | **Fixed:** `secure_alloc` |
+| N7 | **Documented** |
+| N8 | **Tracked:** nostrc-yrdm (open, P4) |
+| N9 | **Fixed:** `strdup` |
+
+### Recommended before `GH_FEATURE_ENCRYPTED_GROUPS` flips
+
+1. **R1:** neutralize the stem's inner extensions, and add the four cases.
+2. **R2:** connect the follower correctly, and add a GUI test under `fatal-criticals`.
+3. **R3/R4:** commit the rebinding test, carry the confirmed host list into the upload, and add GUI tests for both picture dialogs.
+4. **Producer tests:** add the negative policy cases to `test_adopted_commits`.
+
+No code or beads were changed by this re-review. Every scratch probe and mutation was reverted, and the tree was clean before the addendum was committed.
