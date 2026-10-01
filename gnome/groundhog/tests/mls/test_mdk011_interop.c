@@ -1593,6 +1593,28 @@ test_white_noise_media(void)
 
 /* ---- concurrent Commits: Groundhog and MDK 0.11 converge (nostrc-w1m0) -------------- */
 
+typedef struct {
+  guint fired;
+  guint withdrawn;
+  guint undone;
+} Conflicts;
+
+static void
+on_conflict(GhMlsGroup *group, guint withdrawn, guint undone, gpointer data)
+{
+  (void)group;
+  Conflicts *c = data;
+  c->fired++;
+  c->withdrawn += withdrawn;
+  c->undone |= undone;
+}
+
+static gboolean
+message_withdrawn(gpointer data)
+{
+  return gh_message_get_withdrawn(data);
+}
+
 /* Groundhog (Carol's account) and MDK 0.11 (Alice's), both admins of one
  * adopted group, commit from the same epoch -- each before it has the
  * other's Commit -- and both converge on one branch by the adopted rules
@@ -1601,8 +1623,10 @@ test_white_noise_media(void)
  * Groundhog switches to it.  Then Groundhog's rename is witnessed by its own
  * message at its epoch, and wins despite the key: MDK switches to it.  Then
  * both are witnessed, the key decides again, and Groundhog switches on MDK's
- * message (the branch change a message makes).  Messages flow both ways
- * after each. */
+ * message (the branch change a message makes): Groundhog's own message of
+ * the branch it left is marked withdrawn (MDK never delivered it), and each
+ * switch says what it undid (nostrc-xrza).  Messages flow both ways after
+ * each. */
 static void
 test_concurrent_commits(void)
 {
@@ -1643,6 +1667,8 @@ test_concurrent_commits(void)
     g_autoptr(JsonObject) synced = mdk_sync_joined("alice", group, before_join);
     assert_gh_converged(gc, sync_state(synced));
   }
+  Conflicts conflicts = { 0 };
+  g_signal_connect(gc, "conflict-resolved", G_CALLBACK(on_conflict), &conflicts);
 
   /* 1. Unwitnessed: the lower committer key (MDK's) wins; Groundhog
    *    switches to it when it arrives. */
@@ -1658,6 +1684,9 @@ test_concurrent_commits(void)
       "\"name\":\"MDK's concurrent\"", group);
     g_assert_cmpuint(state_epoch(theirs), ==, base + 1);
     wait_name(gc, "MDK's concurrent");
+    g_assert_cmpuint(conflicts.fired, ==, 1);   /* its own rename undone, nothing withdrawn */
+    g_assert_cmpuint(conflicts.withdrawn, ==, 0);
+    g_assert_true(conflicts.undone & GH_MLS_UNDONE_NAME);
     g_autoptr(JsonObject) synced = mdk_sync_joined("alice", group, before_join);
     assert_gh_converged(gc, sync_state(synced));
     mdk_send("alice", group, "mdk after the first race");
@@ -1721,6 +1750,12 @@ test_concurrent_commits(void)
       wire_relay_release(&w.g, g_ptr_array_index(after_mdk, i));
     wait_name(gc, "MDK's third");
     wait_message(carol, room, "mdk witness three");
+    GhMessage *own = find_message(carol, room, "groundhog witness three");
+    g_assert_nonnull(own);
+    spin_until(message_withdrawn, own, "Groundhog's witness of the branch it left withdrawn");
+    g_assert_false(gh_message_get_withdrawn(find_message(carol, room, "mdk witness three")));
+    g_assert_cmpuint(conflicts.fired, ==, 2);   /* round 2: Groundhog stayed on its branch */
+    g_assert_cmpuint(conflicts.withdrawn, ==, 1);
     /* Groundhog's, to MDK: its rename loses there too. */
     for (guint i = before->len; i < after_gh->len; i++)
       wire_relay_release(&w.g, g_ptr_array_index(after_mdk, i));

@@ -89,6 +89,10 @@ gchar *gh_mls_end_copy(GhMlsGroupEnd end, const gchar *remover);
 const gchar *gh_mls_leave_copy(GhMlsLeave kind);
 /* "Alice left the group" (transfer full); member: a name or short npub. */
 gchar *gh_mls_member_left_copy(const gchar *member);
+/* nostrc-xrza: the group resolved a conflict between changes made at the
+ * same time ("conflict-resolved"): what it undid (a GhMlsUndone mask) and
+ * how many messages it withdrew. Transfer full. */
+gchar *gh_mls_conflict_copy(guint withdrawn, guint undone);
 
 /* "Owner" / "Admin" badge text, NULL for a member. */
 const gchar *gh_mls_role_copy(GhMlsRole role);

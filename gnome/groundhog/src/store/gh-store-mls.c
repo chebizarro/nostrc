@@ -405,6 +405,14 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
                            sqlite3_column_int64(stmt, 5) >= 0;
       gh_mls_imeta_describe(message, group_hex, has_epoch,
                             has_epoch ? (guint64)sqlite3_column_int64(stmt, 5) : 0);
+      /* Withdrawn when the group resolved a conflict (nostrc-xrza). */
+      gboolean withdrawn = FALSE;
+      if (!gh_store_mls_is_withdrawn(store, group_hex, gh_message_get_rumor_id(message),
+                                     &withdrawn, error)) {
+        g_object_unref(message);
+        goto fail;
+      }
+      gh_message_set_withdrawn(message, withdrawn);
       g_ptr_array_add(messages, message);
     }
   } while (!conversation && messages->len == 0 && more);

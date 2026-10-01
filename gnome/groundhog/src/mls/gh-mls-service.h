@@ -143,9 +143,12 @@ G_BEGIN_DECLS
  * and the store kept, only while every group relay has answered, never past
  * now and never past an event held or dropped unread. Held events are kept
  * once per id (oldest dropped first when full) across network flaps and
- * retried as a fixpoint after every Commit (a whole backlog at once); one
- * still unreadable after GH_MLS_SERVICE_JUNK_AFTER_COMMITS new Commits is
- * junk. Nothing from before the account joined is held. A joined group is
+ * retried as a fixpoint after every Commit (a whole backlog at once) and
+ * whenever a Commit is retained as a losing candidate (its exporter secret
+ * opens its branch's events; MARMOT_ERR_COMMIT_RETAINED); one still
+ * unreadable after GH_MLS_SERVICE_JUNK_AFTER_COMMITS new Commits is junk. A
+ * Commit refused for capacity (MARMOT_ERR_RESOURCE_REFUSED) is held the
+ * same way but never junk: dropped, it keeps the cursor behind it. Nothing from before the account joined is held. A joined group is
  * read from its Welcome's time. A sent message is one
  * transaction -- the outgoing message row, marmot_create_message() (the
  * sender ratchet step) and its sealed kind 445 -- committed before anything
@@ -330,8 +333,14 @@ G_BEGIN_DECLS
  * anyone posts with the group's h would otherwise show it for good in a
  * quiet group (W22 review N4). It stays held and is retried. */
 #define GH_MLS_SERVICE_PENDING_SHOWN_S (15 * 60)
-/* A held event still unreadable after this many applied Commits is junk. */
+/* A held event still unreadable after this many applied Commits is junk --
+ * except a Commit refused for capacity (MARMOT_ERR_RESOURCE_REFUSED), which
+ * is dropped without being judged and fetched again later. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
+/* Held events are retried when a Commit is retained as a losing candidate
+ * (MARMOT_ERR_COMMIT_RETAINED): at most once per this many milliseconds for
+ * Commits from relays (later ones in the interval share one retry). */
+#define GH_MLS_SERVICE_RETAINED_RETRY_MS 250
 /* People invited at once (one Add Commit). */
 #define GH_MLS_SERVICE_MAX_INVITEES 32
 /* The random delay before committing another member's leave (milliseconds):
@@ -476,6 +485,14 @@ typedef enum {
   GH_MLS_MEMBER_UNVERIFIED  /* no proof, and no evidence in hand */
 } GhMlsMemberIdentity;
 
+/* What a branch change of the group undid ("conflict-resolved"). */
+typedef enum {
+  GH_MLS_UNDONE_NONE = 0,
+  GH_MLS_UNDONE_NAME = 1 << 0,
+  GH_MLS_UNDONE_MEMBERS = 1 << 1,
+  GH_MLS_UNDONE_ADMINS = 1 << 2
+} GhMlsUndone;
+
 /* Why a group's change was refused for good ("change-refused"). */
 typedef enum {
   GH_MLS_REFUSAL_NONE,
@@ -526,7 +543,13 @@ G_DECLARE_FINAL_TYPE(GhMlsGroup, gh_mls_group, GH, MLS_GROUP, GObject)
  * "members-changed": the member list, the admins or a member's identity
  * may differ. Signal "member-left" (gchar *pubkey, hex): a Commit took out
  * a member who had asked to leave (nostrc-2um6); "leave-failed"
- * (gh_mls_group_get_leave_failed()). */
+ * (gh_mls_group_get_leave_failed()). Signal "conflict-resolved" (guint
+ * withdrawn, guint undone, a GhMlsUndone mask): the group resolved a
+ * conflict between changes made at the same time and followed another
+ * branch than the one it was on (Marmot convergence.md; nostrc-xrza): the
+ * group's name, members or admins of the branch it left (undone) are no
+ * longer its state, and withdrawn messages of that branch -- which other
+ * members never saw -- are marked (gh_message_get_withdrawn()), for good. */
 const gchar *gh_mls_group_get_group_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_room_id(GhMlsGroup *self);
 const gchar *gh_mls_group_get_name(GhMlsGroup *self);

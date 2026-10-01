@@ -988,6 +988,61 @@ out:
   return MARMOT_OK;
 }
 
+/* libmarmot 0.12.0 (nostrc-w1m0): a reorg withdraws the messages of the
+ * epochs it supersedes and reads only those. */
+static MarmotError
+ghm_messages_in_epochs(void *ctx, const MarmotGroupId *group_id, uint64_t from_epoch,
+                       uint64_t to_epoch, MarmotMessage ***out_msgs, size_t *out_count)
+{
+  GhStoreMarmot *self = ctx;
+  if (!out_msgs || !out_count)
+    return invalid(self, "messages_in_epochs needs its output arguments");
+  *out_msgs = NULL;
+  *out_count = 0;
+  MarmotError err = check_gid(self, group_id);
+  if (err != MARMOT_OK)
+    return err;
+  if (from_epoch > to_epoch || from_epoch > (uint64_t) G_MAXINT64)
+    return MARMOT_OK;
+  if (to_epoch > (uint64_t) G_MAXINT64)
+    to_epoch = (uint64_t) G_MAXINT64;
+
+  sqlite3_stmt *stmt = NULL;
+  MarmotMessage **msgs = NULL;
+  size_t n = 0, cap = 0;
+  TRY(check_readable(self));
+  TRY(prepare(self, "SELECT " MESSAGE_COLUMNS " FROM mls_messages "
+                    "WHERE mls_group_id = ?1 AND epoch >= ?2 AND epoch <= ?3", &stmt));
+  BIND(bind_bytes(stmt, 1, group_id->data, group_id->len));
+  BIND(sqlite3_bind_int64(stmt, 2, (sqlite3_int64) from_epoch));
+  BIND(sqlite3_bind_int64(stmt, 3, (sqlite3_int64) to_epoch));
+  for (;;) {
+    gboolean has_row = FALSE;
+    TRY(step_row(self, stmt, &has_row, "Listing MLS messages by epoch"));
+    if (!has_row)
+      break;
+    MarmotMessage **bigger = grow_array(msgs, &cap, n, sizeof *msgs);
+    if (!bigger) {
+      err = oom(self);
+      goto out;
+    }
+    msgs = bigger;
+    TRY(message_from_row(self, stmt, &msgs[n]));
+    n++;
+  }
+out:
+  sqlite3_finalize(stmt);
+  if (err != MARMOT_OK) {
+    for (size_t i = 0; i < n; i++)
+      marmot_message_free(msgs[i]);
+    free(msgs);
+    return err;
+  }
+  *out_msgs = msgs;
+  *out_count = n;
+  return MARMOT_OK;
+}
+
 static MarmotError
 find_message(GhStoreMarmot *self, const char *sql, const void *key, size_t key_len,
              MarmotMessage **out)
@@ -1976,6 +2031,7 @@ gh_store_marmot_new(GhStore *store, GError **error)
   storage->save_group = ghm_save_group;
   storage->delete_group = ghm_delete_group;
   storage->messages = ghm_messages;
+  storage->messages_in_epochs = ghm_messages_in_epochs;
   storage->last_message = ghm_last_message;
 
   storage->save_message = ghm_save_message;

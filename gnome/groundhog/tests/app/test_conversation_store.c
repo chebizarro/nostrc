@@ -1210,6 +1210,30 @@ test_mls_rooms(void)
   g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 1);
   g_assert_false(gh_conversation_get_is_request(room));
 
+  /* nostrc-xrza: withdrawn when the group resolved a conflict -- marked,
+   * its text never shown as delivered; once, and only on a group message. */
+  guint notified = 0;
+  g_signal_connect(message, "notify::withdrawn", G_CALLBACK(count_notify), &notified);
+  g_assert_false(gh_message_get_withdrawn(message));
+  g_autofree gchar *before = gh_message_dup_display_text(message);
+  g_assert_cmpstr(before, ==, "hello group");
+  gh_message_set_withdrawn(message, TRUE);
+  gh_message_set_withdrawn(message, TRUE);
+  g_assert_cmpuint(notified, ==, 1);
+  g_assert_true(gh_message_get_withdrawn(message));
+  gboolean prop = FALSE;
+  g_object_get(message, "withdrawn", &prop, NULL);
+  g_assert_true(prop);
+  g_autofree gchar *after = gh_message_dup_display_text(message);
+  g_assert_cmpstr(after, ==, "This message was withdrawn when the group resolved a conflict");
+  g_assert_cmpstr(gh_message_get_content(message), ==, "hello group");
+  Rumor direct = { .author = 2, .p = { 1 }, .created_at = 1000, .content = "a direct message" };
+  g_autofree gchar *direct_json = rumor_json(&direct, NULL);
+  g_autoptr(GhMessage) nip17 = gh_message_new_from_rumor(hex[1], direct_json, &error);
+  g_assert_no_error(error);
+  gh_message_set_withdrawn(nip17, TRUE);
+  g_assert_false(gh_message_get_withdrawn(nip17));   /* only a group message */
+
   /* Only unsigned kind-9 inner events are group messages. */
   g_autofree gchar *signed_inner = inner_event(2, "signed", 9, TRUE);
   g_assert_null(gh_message_new_from_mls(hex[1], group, signed_inner, &error));

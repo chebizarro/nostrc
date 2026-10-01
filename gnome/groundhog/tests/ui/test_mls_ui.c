@@ -247,6 +247,17 @@ test_copy(void)
     g_assert_nonnull(strstr(gh_mls_leave_copy(k), "keep counting you"));
   g_autofree gchar *gone = gh_mls_member_left_copy("Bob");
   g_assert_cmpstr(gone, ==, "Bob left the group");
+  /* nostrc-xrza: a conflict resolved says what it undid. */
+  g_autofree gchar *conflict = gh_mls_conflict_copy(0, GH_MLS_UNDONE_NONE);
+  g_assert_cmpstr(conflict, ==,
+                  "The group resolved a conflict between changes made at the same time");
+  g_autofree gchar *undone = gh_mls_conflict_copy(2, GH_MLS_UNDONE_NAME | GH_MLS_UNDONE_ADMINS);
+  g_assert_cmpstr(undone, ==,
+                  "The group resolved a conflict between changes made at the same time: a "
+                  "change of its name was undone; a change of its admins was undone; 2 messages "
+                  "were withdrawn");
+  g_autofree gchar *one = gh_mls_conflict_copy(1, GH_MLS_UNDONE_MEMBERS);
+  g_assert_nonnull(strstr(one, "a change of its members was undone; 1 message was withdrawn"));
   g_autofree gchar *removed_by = gh_mls_end_copy(GH_MLS_GROUP_END_REMOVED, "Alice");
   g_assert_cmpstr(removed_by, ==,
                   "You were removed from this group by Alice. Its messages stay on this device.");

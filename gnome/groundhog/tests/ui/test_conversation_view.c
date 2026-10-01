@@ -1592,6 +1592,29 @@ test_states(Fixture *f, gconstpointer data)
   g_assert_nonnull(strstr(gh_message_row_get_summary(row), ": Unable to decrypt yet"));
   g_assert_null(strstr(gh_message_row_get_summary(row), "example.com"));
   g_object_unref(row);
+
+  /* 14: an encrypted-group message the group withdrew when it resolved a
+   * conflict (nostrc-xrza): marked, its text gone from the bubble and the
+   * summary, no preview -- live, as the mark arrives. */
+  g_autofree gchar *inner = g_strdup_printf(
+    "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+    "\"tags\":[],\"content\":\"see https://example.com/x\"}", hex[2], noon_today());
+  g_autoptr(GError) bad = NULL;
+  g_autoptr(GhMessage) group_message =
+    gh_message_new_from_mls(hex[1], "0123456789abcdef", inner, &bad);
+  g_assert_no_error(bad);
+  row = GH_MESSAGE_ROW(g_object_ref_sink(gh_message_row_new()));
+  gh_message_row_set_message(row, group_message);
+  g_assert_cmpstr(text_of(row_child(row, "body_label")), ==, "see https://example.com/x");
+  gh_message_set_withdrawn(group_message, TRUE);
+  g_assert_cmpstr(text_of(row_child(row, "body_label")), ==,
+                  "This message was withdrawn when the group resolved a conflict");
+  g_assert_true(gtk_widget_has_css_class(row_child(row, "body_label"), "groundhog-withdrawn"));
+  g_assert_false(shown(row_child(row, "preview_box")));
+  g_assert_nonnull(strstr(gh_message_row_get_summary(row),
+                          ": This message was withdrawn when the group resolved a conflict"));
+  g_assert_null(strstr(gh_message_row_get_summary(row), "example.com"));
+  g_object_unref(row);
 }
 
 static gboolean

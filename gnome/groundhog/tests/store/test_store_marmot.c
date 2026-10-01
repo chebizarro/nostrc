@@ -1218,6 +1218,7 @@ test_roundtrip_messages(void)
   };
   for (guint i = 0; i < G_N_ELEMENTS(rows); i++) {
     MarmotMessage *row = message_at(&other, rows[i].id, rows[i].created, rows[i].processed);
+    row->epoch = 7 + i;
     assert_marmot_ok(s->save_message(s->ctx, row));
     marmot_message_free(row);
   }
@@ -1233,6 +1234,28 @@ test_roundtrip_messages(void)
 
   MarmotMessage **msgs = NULL;
   size_t n = 0;
+  /* By epoch (libmarmot 0.12.0, nostrc-w1m0): epochs 8..10 of that group
+   * only, in any order. */
+  g_assert_nonnull(s->messages_in_epochs);
+  assert_marmot_ok(s->messages_in_epochs(s->ctx, &other, 8, 10, &msgs, &n));
+  g_assert_cmpuint(n, ==, 3);
+  guint seen = 0;
+  for (size_t i = 0; i < n; i++) {
+    g_assert_true(marmot_group_id_equal(&msgs[i]->mls_group_id, &other));
+    g_assert_cmpuint(msgs[i]->epoch, >=, 8);
+    g_assert_cmpuint(msgs[i]->epoch, <=, 10);
+    g_assert_cmpuint(msgs[i]->id[0], ==, msgs[i]->epoch - 6);
+    seen |= 1u << (msgs[i]->epoch - 8);
+    marmot_message_free(msgs[i]);
+  }
+  free(msgs);
+  g_assert_cmpuint(seen, ==, 7);
+  assert_marmot_ok(s->messages_in_epochs(s->ctx, &other, 12, 20, &msgs, &n));
+  g_assert_cmpuint(n, ==, 0);
+  free(msgs);
+  assert_marmot_ok(s->messages_in_epochs(s->ctx, &other, 9, 8, &msgs, &n));
+  g_assert_cmpuint(n, ==, 0);
+  free(msgs);
   assert_marmot_ok(s->messages(s->ctx, &other, NULL, &msgs, &n));
   g_assert_cmpuint(n, ==, 5);
   g_assert_cmpuint(msgs[0]->id[0], ==, 0x05);

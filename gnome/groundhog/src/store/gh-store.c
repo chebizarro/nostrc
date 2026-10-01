@@ -272,6 +272,8 @@ check_seen_id(GhStoreSeenNs ns, const gchar *id, GError **error)
     return check_hex("A seen event id", id, 64, 64, FALSE, error);
   case GH_STORE_SEEN_MLS_MESSAGE:
     return check_hex("A seen MLS message id", id, 1, GH_STORE_MAX_ID, FALSE, error);
+  case GH_STORE_SEEN_MLS_WITHDRAWN:
+    return check_hex("A withdrawn MLS message key", id, 64, 64, FALSE, error);
   default:
     g_set_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID, "Unknown seen namespace %d", ns);
     return FALSE;
@@ -2798,6 +2800,38 @@ gh_store_seen_add(GhStore *store, GhStoreSeenNs ns, const gchar *id, GError **er
   if (!check_seen_id(ns, id, error) || !store_writable(store, error))
     return FALSE;
   return seen_insert(store, ns, id, gh_clock_get_unix(store->clock), NULL, error);
+}
+
+static gboolean
+check_mls_message_ref(const gchar *group_id_hex, const gchar *message_id, GError **error)
+{
+  return check_hex("The group id", group_id_hex, 2, 2 * 256, FALSE, error) &&
+         check_hex("The message id", message_id, 1, GH_STORE_MAX_ID, FALSE, error);
+}
+
+gboolean
+gh_store_mls_mark_withdrawn(GhStore *store, const gchar *group_id_hex, const gchar *message_id,
+                            GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (!check_mls_message_ref(group_id_hex, message_id, error) || !store_writable(store, error))
+    return FALSE;
+  g_autofree gchar *key = seen_key_for(GH_STORE_BACKEND_MLS, group_id_hex, message_id);
+  return seen_insert(store, GH_STORE_SEEN_MLS_WITHDRAWN, key, gh_clock_get_unix(store->clock),
+                     NULL, error);
+}
+
+gboolean
+gh_store_mls_is_withdrawn(GhStore *store, const gchar *group_id_hex, const gchar *message_id,
+                          gboolean *out_withdrawn, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(out_withdrawn != NULL, FALSE);
+  *out_withdrawn = FALSE;
+  if (!check_mls_message_ref(group_id_hex, message_id, error))
+    return FALSE;
+  g_autofree gchar *key = seen_key_for(GH_STORE_BACKEND_MLS, group_id_hex, message_id);
+  return gh_store_seen_contains(store, GH_STORE_SEEN_MLS_WITHDRAWN, key, out_withdrawn, error);
 }
 
 /* ---- T-admit ------------------------------------------------------------------------ */

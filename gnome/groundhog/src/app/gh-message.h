@@ -93,8 +93,20 @@ void gh_message_set_status(GhMessage *self, GhMessageStatus status);
 
 /* Readable properties for templates (charter §7.4): "rumor-id", "sender",
  * "body" (the content), "is-outgoing", "created-at", "kind", "subject",
- * "expires-at", "status" and "relays". sender-name and attachment belong to
+ * "expires-at", "status", "relays" and "withdrawn". sender-name and attachment belong to
  * the contact directory and kind-15 slices. */
+
+/* nostrc-xrza (W25 review M3): an encrypted-group message the group
+ * withdrew when it resolved a conflict -- its epoch lost the group's branch
+ * selection (Marmot convergence.md), so other members never saw it. Shown
+ * marked, never as delivered text: gh_message_dup_display_text() is then
+ * gh_message_withdrawn_text(). Set only on an MLS message (ignored on any
+ * other); notifies "withdrawn". Local only. */
+gboolean gh_message_get_withdrawn(GhMessage *self);
+void gh_message_set_withdrawn(GhMessage *self, gboolean withdrawn);
+/* "This message was withdrawn when the group resolved a conflict"
+ * (translated). */
+const gchar *gh_message_withdrawn_text(void);
 
 /* Inbox relays that delivered a wrap of this message, in arrival order.
  * NULL-terminated, never NULL; empty for a local echo. */

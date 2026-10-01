@@ -246,6 +246,32 @@ gh_mls_member_left_copy(const gchar *member)
   return g_strdup_printf(_("%s left the group"), member && *member ? member : _("Someone"));
 }
 
+gchar *
+gh_mls_conflict_copy(guint withdrawn, guint undone)
+{
+  g_autoptr(GPtrArray) parts = g_ptr_array_new_with_free_func(g_free);
+  if (undone & GH_MLS_UNDONE_NAME)
+    g_ptr_array_add(parts, g_strdup(_("a change of its name was undone")));
+  if (undone & GH_MLS_UNDONE_MEMBERS)
+    g_ptr_array_add(parts, g_strdup(_("a change of its members was undone")));
+  if (undone & GH_MLS_UNDONE_ADMINS)
+    g_ptr_array_add(parts, g_strdup(_("a change of its admins was undone")));
+  if (withdrawn > 0)
+    /* TRANSLATORS: messages sent on the side of a conflict the group did
+     * not keep; other members never saw them. */
+    g_ptr_array_add(parts, g_strdup_printf(g_dngettext(NULL, "%u message was withdrawn",
+                                                       "%u messages were withdrawn", withdrawn),
+                                           withdrawn));
+  if (parts->len == 0)
+    return g_strdup(_("The group resolved a conflict between changes made at the same time"));
+  g_ptr_array_add(parts, NULL);
+  g_autofree gchar *joined = g_strjoinv(_("; "), (gchar **)parts->pdata);
+  /* TRANSLATORS: %s lists what was undone, e.g. "a change of its name was
+   * undone; 2 messages were withdrawn". */
+  return g_strdup_printf(_("The group resolved a conflict between changes made at the same "
+                           "time: %s"), joined);
+}
+
 const gchar *
 gh_mls_role_copy(GhMlsRole role)
 {

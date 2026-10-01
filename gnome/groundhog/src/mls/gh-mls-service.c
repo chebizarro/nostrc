@@ -130,6 +130,8 @@ struct _GhMlsGroup {
   gboolean retrying;         /* retry_held() runs: a nested Commit only asks again */
   gboolean retry_again;
   guint fresh_commits;       /* Commits applied not out of the queue, since the last aging */
+  gint64 retained_retry_us;  /* the last retry for a retained Commit (monotonic) */
+  guint retained_source;     /* a retry for retained Commits, coalesced (W25 review M1) */
   /* Changes: the Commit being published, and who waits for it. */
   Round *round;
   GPtrArray *waiters;        /* GTask */
@@ -197,7 +199,12 @@ enum {
   N_GROUP_PROPS
 };
 static GParamSpec *group_props[N_GROUP_PROPS];
-enum { GROUP_SIGNAL_MEMBERS_CHANGED, GROUP_SIGNAL_MEMBER_LEFT, N_GROUP_SIGNALS };
+enum {
+  GROUP_SIGNAL_MEMBERS_CHANGED,
+  GROUP_SIGNAL_MEMBER_LEFT,
+  GROUP_SIGNAL_CONFLICT_RESOLVED,
+  N_GROUP_SIGNALS
+};
 static guint group_signals[N_GROUP_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhMlsGroup, gh_mls_group, G_TYPE_OBJECT)
@@ -437,6 +444,11 @@ typedef struct {
    * GH_MLS_SERVICE_PROPOSAL_WAIT_S. */
   gboolean awaits_proposal;
   guint proposal_tries;
+  /* A losing Commit libmarmot had no room to retain (MARMOT_ERR_RESOURCE_
+   * REFUSED, W25 review H1): never junk. Offered again with every retry; once
+   * dropped, the cursor stays behind it so a later fetch offers it again
+   * (Marmot transports/nostr.md "resource_refused"). */
+  gboolean capacity;
 } Held;
 
 static void
@@ -983,6 +995,8 @@ gh_mls_group_finalize(GObject *object)
   g_queue_clear_full(&self->junk_order, g_free);
   if (self->pending_source)
     g_source_remove(self->pending_source);
+  if (self->retained_source)
+    g_source_remove(self->retained_source);
   g_queue_clear_full(&self->backfill, stored_free);
   if (self->quiet_source)
     g_source_remove(self->quiet_source);
@@ -1040,6 +1054,9 @@ gh_mls_group_class_init(GhMlsGroupClass *klass)
   group_signals[GROUP_SIGNAL_MEMBER_LEFT] =
     g_signal_new("member-left", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  group_signals[GROUP_SIGNAL_CONFLICT_RESOLVED] =
+    g_signal_new("conflict-resolved", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
+                 NULL, NULL, G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_UINT);
 }
 
 static void
@@ -2149,7 +2166,7 @@ static EventOutcome process_event(GhMlsGroup *group, const gchar *event_json, co
  * stays behind it so the next subscription fetches it again (review M1). */
 static void
 hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created_at,
-           gboolean shown, gboolean awaits_proposal)
+           gboolean shown, gboolean awaits_proposal, gboolean capacity)
 {
   if (!id || g_hash_table_contains(group->held_ids, id))
     return;
@@ -2167,6 +2184,7 @@ hold_event(GhMlsGroup *group, const gchar *id, const gchar *json, gint64 created
   held->shown = shown;
   held->held_us = g_get_monotonic_time();
   held->awaits_proposal = awaits_proposal;
+  held->capacity = capacity;
   g_queue_push_tail(&group->held, held);
   g_hash_table_add(group->held_ids, held->id);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
@@ -2259,7 +2277,11 @@ retry_held(GhMlsGroup *group)
                 now_us - held->held_us >= (gint64)GH_MLS_SERVICE_PROPOSAL_WAIT_S * G_USEC_PER_SEC;
     }
     if (gave_up || held->misses >= GH_MLS_SERVICE_JUNK_AFTER_COMMITS) {
-      remember_junk(group, held->id);
+      /* Refused for capacity is no judgement: it is fetched again. */
+      if (held->capacity)
+        group->pinned = group->pinned ? MIN(group->pinned, held->created_at) : held->created_at;
+      else
+        remember_junk(group, held->id);
       g_hash_table_remove(group->held_ids, held->id);
       g_queue_delete_link(&group->held, l);
       held_free(held);
@@ -2271,6 +2293,43 @@ retry_held(GhMlsGroup *group)
   if (touched)
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNREADABLE]);
   sync_decrypt_pending(group);
+}
+
+static gboolean
+retained_retry_due(gpointer data)
+{
+  GhMlsGroup *group = data;
+  group->retained_source = 0;
+  group->retained_retry_us = g_get_monotonic_time();
+  retry_held(group);
+  return G_SOURCE_REMOVE;
+}
+
+/* A Commit was retained as a losing candidate (MARMOT_ERR_COMMIT_RETAINED,
+ * W25 review H2): the decryption context changed -- its state's exporter
+ * secret may open held events of its branch -- so they are offered again
+ * (inbound-processing.md: a transport-deferred object is retried whenever
+ * the candidate-key set changes). Inside a retry pass that is the fixpoint's
+ * next pass; for Commits arriving from relays the retries are coalesced to
+ * one per GH_MLS_SERVICE_RETAINED_RETRY_MS (review M1: a flood of losing
+ * Commits does not buy a pass over the whole queue each). */
+static void
+retry_held_retained(GhMlsGroup *group, gboolean fresh)
+{
+  if (!fresh || group->retrying) {
+    retry_held(group);
+    return;
+  }
+  if (group->retained_source)
+    return;   /* one is due already */
+  gint64 now = g_get_monotonic_time();
+  gint64 wait_us = group->retained_retry_us + (gint64)GH_MLS_SERVICE_RETAINED_RETRY_MS * 1000 - now;
+  if (group->retained_retry_us == 0 || wait_us <= 0) {
+    group->retained_retry_us = now;
+    retry_held(group);
+    return;
+  }
+  group->retained_source = g_timeout_add((guint)(wait_us / 1000) + 1, retained_retry_due, group);
 }
 
 static void after_commit(GhMlsGroup *group, gboolean fresh);
@@ -2335,6 +2394,64 @@ current_relays_settled(GhMlsGroup *group)
   return TRUE;
 }
 
+/* nostrc-xrza (W25 review M3): the messages a branch change withdrew, by
+ * the inner event ids the conversation keys them by. libmarmot reports
+ * their kind 445s; its stored copy holds the inner event. */
+static GPtrArray *
+withdrawn_messages(GhMlsGroup *group, const MarmotMessageResult *result)
+{
+  GhMlsService *self = group->service;
+  GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
+  MarmotStorage *st = self->storage;
+  for (size_t i = 0; st && st->find_message_by_id && i < result->convergence.invalidated_count;
+       i++) {
+    const gchar *hex = result->convergence.invalidated_message_ids[i];
+    uint8_t id[32];
+    if (!hex || strlen(hex) != 64)
+      continue;
+    gboolean ok = TRUE;
+    for (guint b = 0; b < 32 && ok; b++) {
+      gint hi = g_ascii_xdigit_value(hex[2 * b]), lo = g_ascii_xdigit_value(hex[2 * b + 1]);
+      ok = hi >= 0 && lo >= 0;
+      id[b] = (uint8_t)((hi << 4) | lo);
+    }
+    MarmotMessage *stored = NULL;
+    if (!ok || st->find_message_by_id(st->ctx, id, &stored) != MARMOT_OK || !stored) {
+      drop_stale_error(self);
+      continue;
+    }
+    g_autoptr(GhMessage) message =
+      stored->content ? gh_message_new_from_mls(self->account, group->gid_hex, stored->content,
+                                                NULL)
+                      : NULL;
+    if (message)
+      g_ptr_array_add(ids, g_strdup(gh_message_get_rumor_id(message)));
+    marmot_message_free(stored);
+  }
+  return ids;
+}
+
+static gboolean
+strv_same(GStrv a, GStrv b)
+{
+  static const gchar *const none[] = { NULL };
+  return g_strv_equal(a ? (const gchar *const *)a : none, b ? (const gchar *const *)b : none);
+}
+
+/* What the branch change undid of the group's state, from before it. */
+static guint
+undone_since(GhMlsGroup *group, const gchar *name, GStrv members, GStrv admins)
+{
+  guint undone = GH_MLS_UNDONE_NONE;
+  if (g_strcmp0(name, group->name) != 0)
+    undone |= GH_MLS_UNDONE_NAME;
+  if (!strv_same(members, group->members))
+    undone |= GH_MLS_UNDONE_MEMBERS;
+  if (!strv_same(admins, group->admins))
+    undone |= GH_MLS_UNDONE_ADMINS;
+  return undone;
+}
+
 /* One kind-445 envelope from a group relay: libmarmot's relay path (id and
  * signature first) and, for a chat message, its admission, in one
  * transaction. @retry: the held record when this is a retry (it is not held
@@ -2370,6 +2487,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   gboolean commit = FALSE, held = FALSE, accepted = FALSE, check_final = FALSE, refused = FALSE;
   GhMlsRefusal refusal = GH_MLS_REFUSAL_BROKEN_PROOF;   /* or UNPROVEN: set_refused() */
   gboolean proposal = FALSE, awaits_proposal = FALSE;
+  gboolean retained = FALSE, capacity = FALSE;
 
   if (err == MARMOT_OK && result.type == MARMOT_RESULT_APPLICATION_MESSAGE) {
     g_autoptr(GError) bad = NULL;
@@ -2452,6 +2570,16 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
      * own error and marks nothing. */
     refused = TRUE;
     refusal = GH_MLS_REFUSAL_UNFOLLOWABLE;
+  } else if (err == MARMOT_ERR_COMMIT_RETAINED) {
+    /* nostrc-w1m0 (W25 review H2): a valid Commit retained as a losing
+     * candidate. It is processed (the cursor may pass it) and the group is
+     * unchanged, but its state's exporter secret may open held events. */
+    accepted = retained = TRUE;
+  } else if (err == MARMOT_ERR_RESOURCE_REFUSED) {
+    /* W25 review H1: a losing Commit libmarmot has no room to retain now.
+     * Not invalid, never junk: held, offered again, and fetched again if
+     * dropped (transports/nostr.md "resource_refused"). */
+    held = capacity = group->active;
   } else if (err == MARMOT_ERR_NIP44) {
     /* A later epoch's (or not for us): wait for the Commit that opens it. */
     held = group->active;   /* an ended group holds nothing (review N5) */
@@ -2474,8 +2602,23 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   /* nostrc-w1m0: libmarmot made another branch of the group canonical while
    * processing this event -- a competing Commit, or a message witnessing a
    * competing branch: the group changed as after a Commit. */
-  if (err == MARMOT_OK && result.convergence.branch_recovered)
+  g_autoptr(GPtrArray) withdrawn = NULL;
+  gboolean recovered = err == MARMOT_OK && result.convergence.branch_recovered;
+  if (recovered) {
     commit = TRUE;
+    /* nostrc-xrza: its messages that the group withdrew are marked, in
+     * the same transaction (convergence.md: a change that lost branch
+     * selection must not stay visible as completed). */
+    withdrawn = withdrawn_messages(group, &result);
+    for (guint i = 0; i < withdrawn->len; i++)
+      if (!gh_store_mls_mark_withdrawn(self->store, group->gid_hex, withdrawn->pdata[i],
+                                       &error)) {
+        g_message("Groundhog could not mark a withdrawn group message: %s", error->message);
+        gh_store_rollback(self->store);
+        marmot_message_result_free(&result);
+        return EVENT_OTHER;
+      }
+  }
   marmot_message_result_free(&result);
   /* libmarmot rolled a failed operation back itself; its deliberate
    * outcomes (a deferred competing Commit) are kept. */
@@ -2506,13 +2649,17 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
      * never holds the cursor back (save_cursor()). */
     if (group->floor > 0 && created_at < group->floor)
       return EVENT_OTHER;
-    if (envelope_id && g_hash_table_contains(group->junk_ids, envelope_id))
+    if (!capacity && envelope_id && g_hash_table_contains(group->junk_ids, envelope_id))
       return EVENT_OTHER;   /* judged junk before (nostrc-oya4) */
-    if (!retry)
+    if (!retry) {
       hold_event(group, envelope_id, event_json, created_at,
-                 !(stored && group->floor > 0 && created_at <= group->floor), awaits_proposal);
-    else if (awaits_proposal)
-      retry->awaits_proposal = TRUE;
+                 !(stored && group->floor > 0 && created_at <= group->floor), awaits_proposal,
+                 capacity);
+    } else {
+      if (awaits_proposal)
+        retry->awaits_proposal = TRUE;
+      retry->capacity = capacity;
+    }
     return EVENT_HELD;
   }
   if (!accepted)
@@ -2524,8 +2671,27 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   group->newest = MAX(group->newest, bounded);
   if (group->read == GH_MLS_READ_LIVE && all_relays_answered(group))
     save_cursor(group, bounded);
+  if (withdrawn && account_matches_model(self))
+    for (guint i = 0; i < withdrawn->len; i++) {
+      GhMessage *shown = gh_conversation_store_lookup_message(self->conversations,
+                                                              withdrawn->pdata[i]);
+      if (shown && gh_message_is_mls(shown) &&
+          g_strcmp0(gh_message_get_group_id(shown), group->gid_hex) == 0)
+        gh_message_set_withdrawn(shown, TRUE);
+    }
   if (commit) {
+    g_autofree gchar *name_before = recovered ? g_strdup(group->name) : NULL;
+    g_auto(GStrv) members_before = recovered ? g_strdupv(group->members) : NULL;
+    g_auto(GStrv) admins_before = recovered ? g_strdupv(group->admins) : NULL;
+    g_object_ref(group);
     after_commit(group, retry == NULL);
+    if (recovered)
+      g_signal_emit(group, group_signals[GROUP_SIGNAL_CONFLICT_RESOLVED], 0,
+                    withdrawn ? withdrawn->len : 0u,
+                    undone_since(group, name_before, members_before, admins_before));
+    g_object_unref(group);
+  } else if (retained) {
+    retry_held_retained(group, retry == NULL);
   } else if (proposal) {
     /* A held Commit may have waited for this proposal (review H1). */
     retry_held(group);
@@ -5056,6 +5222,15 @@ send_inner(GhMlsService *self, GhMlsGroup *group, const gchar *text, GPtrArray *
   err = marmot_create_message(self->marmot, &group->gid, inner, &out);
   if (err != MARMOT_OK) {
     marmot_fail(self, err, "The message could not be encrypted", error);
+    goto fail;
+  }
+  /* Kept with its epoch in libmarmot's store, as a received message is, so
+   * a branch change that withdraws it reports it (nostrc-xrza). */
+  err = marmot_save_created_message(self->marmot, &group->gid, out.event_json,
+                                    out.message && out.message->content ? out.message->content
+                                                                        : inner);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The message could not be stored", error);
     goto fail;
   }
   envelope_id = event_id_of(out.event_json);

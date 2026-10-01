@@ -26,7 +26,9 @@ G_BEGIN_DECLS
  * ratchet step and its message commit together). The same conversation also
  * holds the outbox rows of the account's own Commits (kind 445) and Welcome
  * wraps (kind 444) from gh-mls-commits.c and gh-mls-service.c: they are
- * never listed as messages.
+ * never listed as messages. A message the group withdrew when it resolved a
+ * conflict (gh_store_mls_mark_withdrawn(), nostrc-xrza) is listed marked
+ * so (gh_message_get_withdrawn()).
  *
  * The GhStoreMls object is the MLS persistence delegate of a
  * GhConversationStore (gh-conversation-private.h): gh_store_mls_attach()

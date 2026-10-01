@@ -35,6 +35,7 @@ struct _GhMessage {
   guint64 mls_epoch;
   GPtrArray *attachments;   /* GhMessageAttachment, MLS only; NULL: none */
   guint rejected_attachments;
+  gboolean withdrawn;   /* nostrc-xrza: withdrawn by the group's convergence */
 };
 
 enum {
@@ -49,6 +50,7 @@ enum {
   PROP_EXPIRES_AT,
   PROP_STATUS,
   PROP_RELAYS,
+  PROP_WITHDRAWN,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -291,6 +293,8 @@ gh_message_dup_display_text(GhMessage *self)
   if (file)
     /* TRANSLATORS: an encrypted file received or sent, before it is opened. */
     return g_strdup(gh_nip17_file_is_image(file) ? _("Photo") : _("File"));
+  if (self->withdrawn)
+    return g_strdup(gh_message_withdrawn_text());
   /* An encrypted group's files with no caption (W25): never a URL. */
   if ((!self->content || !*self->content) && self->attachments && self->attachments->len) {
     const GhMessageAttachment *first = g_ptr_array_index(self->attachments, 0);
@@ -345,6 +349,32 @@ gh_message_get_rejected_attachments(GhMessage *self)
 {
   g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
   return self->rejected_attachments;
+}
+
+const gchar *
+gh_message_withdrawn_text(void)
+{
+  /* TRANSLATORS: in place of an encrypted-group message the group withdrew
+   * when two members' changes conflicted: other members never saw it. */
+  return _("This message was withdrawn when the group resolved a conflict");
+}
+
+gboolean
+gh_message_get_withdrawn(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), FALSE);
+  return self->withdrawn;
+}
+
+void
+gh_message_set_withdrawn(GhMessage *self, gboolean withdrawn)
+{
+  g_return_if_fail(GH_IS_MESSAGE(self));
+  withdrawn = !!withdrawn;
+  if (!self->mls || self->withdrawn == withdrawn)
+    return;
+  self->withdrawn = withdrawn;
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_WITHDRAWN]);
 }
 
 GhNip17File *
@@ -774,6 +804,9 @@ gh_message_get_property(GObject *object, guint id, GValue *value, GParamSpec *ps
   case PROP_STATUS:
     g_value_set_enum(value, self->status);
     break;
+  case PROP_WITHDRAWN:
+    g_value_set_boolean(value, self->withdrawn);
+    break;
   case PROP_RELAYS:
     g_value_set_boxed(value, gh_message_get_relays(self));
     break;
@@ -825,6 +858,8 @@ gh_message_class_init(GhMessageClass *klass)
                                          ro | G_PARAM_EXPLICIT_NOTIFY);
   props[PROP_RELAYS] = g_param_spec_boxed("relays", NULL, NULL, G_TYPE_STRV,
                                           ro | G_PARAM_EXPLICIT_NOTIFY);
+  props[PROP_WITHDRAWN] = g_param_spec_boolean("withdrawn", NULL, NULL, FALSE,
+                                               ro | G_PARAM_EXPLICIT_NOTIFY);
   g_object_class_install_properties(object_class, N_PROPS, props);
 }
 

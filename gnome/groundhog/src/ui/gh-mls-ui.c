@@ -136,6 +136,19 @@ on_shown_member_left(GhMlsGroup *group, const gchar *pubkey, gpointer data)
   adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window), adw_toast_new(words));
 }
 
+/* nostrc-xrza: the shown group followed another branch. */
+static void
+on_shown_conflict(GhMlsGroup *group, guint withdrawn, guint undone, gpointer data)
+{
+  (void)group;
+  MlsUi *ui = data;
+  g_autofree gchar *words = gh_mls_conflict_copy(withdrawn, undone);
+  AdwToast *toast = adw_toast_new(words);
+  adw_toast_set_timeout(toast, 0);   /* read it: it says what changed */
+  adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window), toast);
+  gh_conversation_list_refresh_title(ui->window);
+}
+
 static void
 set_shown(MlsUi *ui, GhMlsGroup *group)
 {
@@ -153,6 +166,7 @@ set_shown(MlsUi *ui, GhMlsGroup *group)
     g_signal_connect_swapped(group, "notify::read-state", G_CALLBACK(on_shown_state), ui);
     g_signal_connect_swapped(group, "notify::leaving", G_CALLBACK(on_shown_state), ui);
     g_signal_connect(group, "member-left", G_CALLBACK(on_shown_member_left), ui);
+    g_signal_connect(group, "conflict-resolved", G_CALLBACK(on_shown_conflict), ui);
     g_signal_connect_swapped(group, "notify::name", G_CALLBACK(on_shown_members), ui);
   }
   sync_unreadable(ui);

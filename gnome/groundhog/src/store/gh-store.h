@@ -306,7 +306,11 @@ typedef enum {
   GH_STORE_SEEN_MLS_MESSAGE = 4,
   /* NIP-17 gift-wrap id finally rejected after a signer call: skipped before
    * any signer call, never a seen message (G05, legacy .seen "x" lines). */
-  GH_STORE_SEEN_REJECTED_WRAP = 5
+  GH_STORE_SEEN_REJECTED_WRAP = 5,
+  /* An MLS message the group withdrew when it resolved a conflict
+   * (nostrc-xrza, W25 review M3; libmarmot reports its kind 445), keyed like
+   * GH_STORE_SEEN_MLS_MESSAGE. Never a seen message: a mark on one. */
+  GH_STORE_SEEN_MLS_WITHDRAWN = 6
 } GhStoreSeenNs;
 
 typedef enum {
@@ -484,6 +488,16 @@ gboolean gh_store_seen_contains(GhStore *store, GhStoreSeenNs ns, const gchar *i
 /* Records an id with no message (e.g. legacy .seen import, ST-12). */
 gboolean gh_store_seen_add(GhStore *store, GhStoreSeenNs ns, const gchar *id,
                            GError **error);
+
+/* nostrc-xrza (W25 review M3): the encrypted-group message message_id (its
+ * inner event id) of group_id_hex was withdrawn -- its epoch lost the
+ * group's branch selection (Marmot convergence.md) -- and stays marked so
+ * (withdrawal is final, as in MDK). Inside the caller's transaction if any. */
+gboolean gh_store_mls_mark_withdrawn(GhStore *store, const gchar *group_id_hex,
+                                     const gchar *message_id, GError **error);
+gboolean gh_store_mls_is_withdrawn(GhStore *store, const gchar *group_id_hex,
+                                   const gchar *message_id, gboolean *out_withdrawn,
+                                   GError **error);
 
 /* ---- T-admit ------------------------------------------------------------------------ */
 

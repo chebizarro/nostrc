@@ -244,4 +244,48 @@ rewrap_445(App *sender, GhMlsGroup *group, const gchar *json, const guint8 h[32]
   return out;
 }
 
+/* `committer`'s modified client: the kind 445 of an ordinary self-update
+ * Commit from its current state, dated `created_at`, and the SHA-256 of its
+ * MLSMessage (`digest`, the Commit's last tie-breaker). The committer's own
+ * state is not changed (nostrc-w1m0: a flood of losing branches). */
+static G_GNUC_UNUSED gchar *
+forge_self_update(App *committer, GhMlsGroup *group, gint64 created_at, uint8_t digest[32])
+{
+  Marmot *m = gh_mls_service_get_marmot(committer->service);
+  const gchar *gid_hex = gh_mls_group_get_group_id(group);
+  gsize gid_len = strlen(gid_hex) / 2;
+  guint8 *gid_bytes = g_malloc(gid_len);
+  g_assert_true(nostr_hex2bin(gid_bytes, gid_hex, gid_len));
+  MarmotGroupId gid = marmot_group_id_new(gid_bytes, gid_len);
+  g_free(gid_bytes);
+  uint8_t *blob = NULL;
+  size_t len = 0;
+  g_assert_cmpint(m->storage->mls_load(m->storage->ctx, "mls_group", gid.data, gid.len, &blob,
+                                       &len), ==, MARMOT_OK);
+  MlsGroup g;
+  memset(&g, 0, sizeof g);
+  g_assert_cmpint(mls_group_deserialize(blob, len, &g), ==, 0);
+  sodium_memzero(blob, len);
+  free(blob);
+  MarmotGroup *info = NULL;
+  g_assert_cmpint(marmot_get_group(m, &gid, &info), ==, MARMOT_OK);
+  uint8_t exporter[32];
+  memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+  MlsCommitResult res;
+  memset(&res, 0, sizeof res);
+  g_assert_cmpint(mls_group_self_update(&g, &res), ==, 0);
+  g_assert_cmpint(crypto_hash_sha256(digest, res.commit_data, res.commit_len), ==, 0);
+  char *json = marmot_commit_build_event(res.commit_data, res.commit_len, exporter,
+                                         info->nostr_group_id, created_at);
+  g_assert_nonnull(json);
+  gchar *out = g_strdup(json);
+  free(json);
+  sodium_memzero(exporter, sizeof exporter);
+  mls_commit_result_clear(&res);
+  mls_group_free(&g);
+  marmot_group_free(info);
+  marmot_group_id_free(&gid);
+  return out;
+}
+
 #endif

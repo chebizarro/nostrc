@@ -12,6 +12,7 @@
 #include "gh-store-mls-identity.h"
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
 #include "mls-forge.h"
+#include "convergence.h"
 #endif
 
 #include <nostr-keys.h>
@@ -877,6 +878,301 @@ epoch_is(gpointer data)
 {
   GroupWait *wait = data;
   return gh_mls_group_get_epoch(wait->group) == (guint64)wait->value;
+}
+
+/* Bob and Alice admins of a trio's group (Alice made it). */
+static void
+trio_two_admins(World *w, GhMlsGroup **ga, GhMlsGroup **gb, GhMlsGroup **gc, gchar **room)
+{
+  App *alice = &w->apps[ALICE], *bob = &w->apps[BOB], *carol = &w->apps[CAROL];
+  wait_key_packages(w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  *ga = create_group(alice, "Before", (const guint[]){ BOB, CAROL }, 2);
+  *room = g_strdup(gh_mls_group_get_room_id(*ga));
+  *gb = join(bob, ALICE);
+  *gc = join(carol, ALICE);
+  const gchar *admins[] = { hex[ALICE], hex[BOB], NULL };
+  OpWait promoted = { 0 };
+  gh_mls_service_set_admins_async(alice->service, *ga, admins, NULL, on_changed, &promoted);
+  change(alice, &promoted);
+  spin_until(became_admin, *gb, "Bob becoming an admin");
+  GroupWait carol_epoch = { *gc, (gint)gh_mls_group_get_epoch(*ga) };
+  spin_until(epoch_is, &carol_epoch, "Carol in Alice's epoch");
+  GroupWait bob_epoch = { *gb, (gint)gh_mls_group_get_epoch(*ga) };
+  spin_until(epoch_is, &bob_epoch, "Bob in Alice's epoch");
+  wait_live(*gb);
+  wait_live(*gc);
+}
+
+/* nostrc-w1m0 (W25 review H2): a Commit retained as a losing candidate
+ * changes what can be decrypted, so held events are offered again. Bob's
+ * two renames (a depth-2 branch) race Alice's one; Carol applies Alice's,
+ * then gets Bob's second Commit before his first -- held, not decryptable
+ * -- and then his first, which loses on its own and is retained: the held
+ * child opens with its state's secret, and the deeper branch wins. */
+static void
+test_retained_commit_retries_held(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  g_assert_cmpint(strcmp(hex[ALICE], hex[BOB]), <, 0);   /* Alice's Commit sorts first */
+  GhMlsGroup *ga, *gb, *gc;
+  g_autofree gchar *room = NULL;
+  trio_two_admins(&w, &ga, &gb, &gc, &room);
+
+  w.g.withhold_new = TRUE;
+  rename_group(alice, ga, "Alice's");
+  g_autofree gchar *alice_rename = g_strdup(last_stored_445(&w.g)->id);
+  rename_group(bob, gb, "Bob 1");
+  g_autofree gchar *bob_first = g_strdup(last_stored_445(&w.g)->id);
+  rename_group(bob, gb, "Bob 2");
+  g_autofree gchar *bob_second = g_strdup(last_stored_445(&w.g)->id);
+  w.g.withhold_new = FALSE;
+
+  wire_relay_release(&w.g, alice_rename);
+  NameWait carol_alice = { gc, "Alice's" };
+  spin_until(name_is, &carol_alice, "Carol applying Alice's rename");
+  guint base = gh_mls_group_get_unreadable(gc);
+  wire_relay_release(&w.g, bob_second);
+  wait_unreadable(gc, (gint)base + 1);   /* the child, before its parent: held */
+  wire_relay_release(&w.g, bob_first);
+  NameWait carol_bob = { gc, "Bob 2" }, alice_bob = { ga, "Bob 2" };
+  spin_until(name_is, &carol_bob, "Carol following the deeper branch");
+  spin_until(name_is, &alice_bob, "Alice following the deeper branch");
+  wait_unreadable(gc, (gint)base);
+  send_text(alice, ga, "on the deeper branch");
+  wait_message(&w.apps[CAROL], room, "on the deeper branch");
+  wait_message(bob, room, "on the deeper branch");
+  world_down(&w);
+}
+
+static guint
+retained_candidates(App *app, GhMlsGroup *group)
+{
+  Marmot *m = gh_mls_service_get_marmot(app->service);
+  const gchar *gid_hex = gh_mls_group_get_group_id(group);
+  gsize gid_len = strlen(gid_hex) / 2;
+  g_autofree guint8 *gid = g_malloc(gid_len);
+  g_assert_true(nostr_hex2bin(gid, gid_hex, gid_len));
+  uint8_t *blob = NULL;
+  size_t len = 0;
+  if (m->storage->mls_load(m->storage->ctx, "mls_group_parent", gid, gid_len, &blob, &len) !=
+        MARMOT_OK || !blob)
+    return 0;
+  ConvHistory *h = g_new0(ConvHistory, 1);
+  guint n = conv_history_decode(blob, len, h) == 0 ? (guint)h->n_cands : 0;
+  conv_history_clear(h);
+  g_free(h);
+  sodium_memzero(blob, len);
+  free(blob);
+  return n;
+}
+
+static gboolean
+unreadable_at_most(gpointer data)
+{
+  GroupWait *wait = data;
+  return gh_mls_group_get_unreadable(wait->group) <= (guint)wait->value;
+}
+
+typedef struct {
+  App *app;
+  GhMlsGroup *group;
+  guint n;
+} CandidatesWait;
+
+static gboolean
+candidates_are(gpointer data)
+{
+  CandidatesWait *wait = data;
+  return retained_candidates(wait->app, wait->group) == wait->n;
+}
+
+/* nostrc-w1m0 (W25 review H1): a losing Commit libmarmot has no room to
+ * retain (MARMOT_ERR_RESOURCE_REFUSED) is no judgement on it. Carol floods
+ * losing self-updates; Bob retains CONV_MAX_PER_COMMITTER of them and the
+ * least likely is refused: held (offered again with every retry), never
+ * junk, and once dropped it keeps Bob's cursor behind it, so a later fetch
+ * offers it again (Marmot transports/nostr.md "resource_refused"). */
+static void
+test_capacity_refusal_held_not_junk(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Flood", (const guint[]){ BOB, CAROL }, 2);
+  GhMlsGroup *gb = join(bob, ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  GroupWait bob_epoch = { gb, (gint)gh_mls_group_get_epoch(ga) };
+  spin_until(epoch_is, &bob_epoch, "Bob in Alice's epoch");
+  wait_live(gb);
+
+  /* Carol's flood from this epoch, then Alice's (privileged) rename, which
+   * every one of them loses to. */
+  enum { FLOOD = CONV_MAX_PER_COMMITTER + 1 };
+  gchar *flood[FLOOD];
+  uint8_t digest[FLOOD][32];
+  g_usleep(1100 * 1000);   /* after the join's second (which holds no cursor back) */
+  gint64 flooded_at = real_now();
+  for (guint i = 0; i < FLOOD; i++)
+    flood[i] = forge_self_update(carol, gc, flooded_at, digest[i]);
+  for (guint i = 0; i < FLOOD; i++)   /* by digest, the least likely last */
+    for (guint j = i + 1; j < FLOOD; j++)
+      if (memcmp(digest[j], digest[i], 32) < 0) {
+        gchar *t = flood[i];
+        flood[i] = flood[j];
+        flood[j] = t;
+        uint8_t d[32];
+        memcpy(d, digest[i], 32);
+        memcpy(digest[i], digest[j], 32);
+        memcpy(digest[j], d, 32);
+      }
+  g_usleep(1100 * 1000);   /* every later Commit dated after the flood */
+  rename_group(alice, ga, "Renamed");
+  NameWait bob_name = { gb, "Renamed" };
+  spin_until(name_is, &bob_name, "Bob applying the rename");
+  guint base = gh_mls_group_get_unreadable(gb);
+  for (guint i = 0; i + 1 < FLOOD; i++)
+    wire_relay_inject(&w.g, flood[i]);
+  CandidatesWait four = { bob, gb, CONV_MAX_PER_COMMITTER };
+  spin_until(candidates_are, &four, "Bob retaining Carol's best losing Commits");
+  g_assert_cmpuint(gh_mls_group_get_unreadable(gb), ==, base);   /* retained: processed */
+  wire_relay_inject(&w.g, flood[FLOOD - 1]);
+  wait_unreadable(gb, (gint)base + 1);   /* refused for capacity: held */
+  g_assert_cmpuint(retained_candidates(bob, gb), ==, CONV_MAX_PER_COMMITTER);
+  gint64 cursor = gh_mls_group_get_cursor(gb);
+  g_assert_cmpint(cursor, >, 0);
+
+  /* Commits move the group on: a junk event would be dropped and forgotten
+   * after GH_MLS_SERVICE_JUNK_AFTER_COMMITS, and the cursor would pass it;
+   * this one is dropped, but the cursor stays where it was (a later REQ,
+   * from it less the overlap, fetches it again). */
+  for (guint i = 0; i < GH_MLS_SERVICE_JUNK_AFTER_COMMITS; i++) {
+    g_usleep(1100 * 1000);   /* each dated after the cursor */
+    g_autofree gchar *name = g_strdup_printf("Moved on %u", i);
+    rename_group(alice, ga, name);
+    NameWait moved = { gb, name };
+    spin_until(name_is, &moved, "Bob following");
+  }
+  GroupWait dropped = { gb, (gint)base };
+  spin_until(unreadable_at_most, &dropped, "the refused Commit dropped");
+  g_usleep(1100 * 1000);
+  send_text(alice, ga, "after the flood");
+  wait_message(bob, gh_mls_group_get_room_id(ga), "after the flood");
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, cursor);
+  for (guint i = 0; i < FLOOD; i++)
+    g_free(flood[i]);
+  world_down(&w);
+}
+
+typedef struct {
+  guint fired;
+  guint withdrawn;
+  guint undone;
+} ConflictSeen;
+
+static void
+on_conflict(GhMlsGroup *group, guint withdrawn, guint undone, gpointer data)
+{
+  (void)group;
+  ConflictSeen *seen = data;
+  seen->fired++;
+  seen->withdrawn += withdrawn;
+  seen->undone |= undone;
+}
+
+static gboolean
+message_withdrawn(gpointer data)
+{
+  return gh_message_get_withdrawn(data);
+}
+
+/* nostrc-xrza (W25 review M3; convergence.md): a change that lost the
+ * group's branch selection does not stay visible as done, and the messages
+ * of its branch -- which the other members never saw -- are marked
+ * withdrawn. Alice and Bob rename at once; Alice writes on her branch.
+ * Carol gets Bob's rename and his message first; then Alice's rename and
+ * hers: witnessed alike, Alice's key sorts first, and Carol and Bob follow
+ * her branch. Bob's message is withdrawn at both (his own copy too), and
+ * stays withdrawn after a restart. */
+static void
+test_conflict_withdraws_messages(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  g_assert_cmpint(strcmp(hex[ALICE], hex[BOB]), <, 0);   /* Alice's Commit sorts first */
+  GhMlsGroup *ga, *gb, *gc;
+  g_autofree gchar *room = NULL;
+  trio_two_admins(&w, &ga, &gb, &gc, &room);
+  ConflictSeen at_carol = { 0 }, at_bob = { 0 }, at_alice = { 0 };
+  g_signal_connect(gc, "conflict-resolved", G_CALLBACK(on_conflict), &at_carol);
+  g_signal_connect(gb, "conflict-resolved", G_CALLBACK(on_conflict), &at_bob);
+  g_signal_connect(ga, "conflict-resolved", G_CALLBACK(on_conflict), &at_alice);
+
+  w.g.withhold_new = TRUE;
+  rename_group(bob, gb, "Bob's");
+  g_autofree gchar *bob_rename = g_strdup(last_stored_445(&w.g)->id);
+  rename_group(alice, ga, "Alice's");
+  g_autofree gchar *alice_rename = g_strdup(last_stored_445(&w.g)->id);
+  send_text(alice, ga, "alice on her branch");
+  StatusWait alice_sent = { alice, room, "alice on her branch" };
+  spin_until(sent, &alice_sent, "Alice's message sent");
+  g_autofree gchar *alice_message = g_strdup(last_stored_445(&w.g)->id);
+  w.g.withhold_new = FALSE;
+
+  wire_relay_release(&w.g, bob_rename);
+  NameWait carol_bob = { gc, "Bob's" };
+  spin_until(name_is, &carol_bob, "Carol applying Bob's rename");
+  send_text(bob, gb, "bob on his branch");
+  wait_message(carol, room, "bob on his branch");
+  GhMessage *at_carol_msg = find_message(carol, room, "bob on his branch");
+  g_assert_false(gh_message_get_withdrawn(at_carol_msg));
+  g_assert_cmpuint(at_carol.fired, ==, 0);
+
+  wire_relay_release(&w.g, alice_rename);
+  wire_relay_release(&w.g, alice_message);
+  NameWait carol_alice = { gc, "Alice's" }, bob_alice = { gb, "Alice's" };
+  spin_until(name_is, &carol_alice, "Carol following Alice's branch");
+  spin_until(name_is, &bob_alice, "Bob following Alice's branch");
+  wait_message(carol, room, "alice on her branch");
+  wait_message(bob, room, "alice on her branch");
+  spin_until(message_withdrawn, at_carol_msg, "Bob's message withdrawn at Carol");
+  GhMessage *own = find_message(bob, room, "bob on his branch");
+  g_assert_nonnull(own);
+  spin_until(message_withdrawn, own, "Bob's message withdrawn at Bob");
+  g_assert_false(gh_message_get_withdrawn(find_message(carol, room, "alice on her branch")));
+  g_assert_null(find_message(alice, room, "bob on his branch"));   /* never hers to see */
+  g_assert_cmpuint(at_carol.fired, ==, 1);
+  g_assert_cmpuint(at_carol.withdrawn, ==, 1);
+  g_assert_true(at_carol.undone & GH_MLS_UNDONE_NAME);
+  g_assert_cmpuint(at_bob.fired, ==, 1);
+  g_assert_cmpuint(at_bob.withdrawn, ==, 1);
+  g_assert_true(at_bob.undone & GH_MLS_UNDONE_NAME);
+  g_assert_cmpuint(at_alice.fired, ==, 0);   /* she never left her branch */
+
+  /* Stored so: listed withdrawn after a restart. */
+  g_autofree gchar *rumor = g_strdup(gh_message_get_rumor_id(at_carol_msg));
+  gboolean marked = FALSE;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_mls_is_withdrawn(carol->store, gh_mls_group_get_group_id(gc), rumor,
+                                          &marked, &error));
+  g_assert_no_error(error);
+  g_assert_true(marked);
+  send_text(carol, gc, "after the conflict");
+  wait_message(alice, room, "after the conflict");
+  wait_message(bob, room, "after the conflict");
+  app_restart(carol);
+  GhMessage *restored = find_message(carol, room, "bob on his branch");
+  g_assert_nonnull(restored);
+  g_assert_true(gh_message_get_withdrawn(restored));
+  g_assert_false(gh_message_get_withdrawn(find_message(carol, room, "after the conflict")));
+  world_down(&w);
 }
 
 static void
@@ -3724,6 +4020,12 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/held-until-commit", test_held_until_commit);
   g_test_add_func("/groundhog/mls-service/junk-does-not-evict", test_junk_does_not_evict);
   g_test_add_func("/groundhog/mls-service/decrypt-pending-honest", test_decrypt_pending_honest);
+  g_test_add_func("/groundhog/mls-service/retained-commit-retries-held",
+                  test_retained_commit_retries_held);
+  g_test_add_func("/groundhog/mls-service/capacity-refusal-held-not-junk",
+                  test_capacity_refusal_held_not_junk);
+  g_test_add_func("/groundhog/mls-service/conflict-withdraws-messages",
+                  test_conflict_withdraws_messages);
   g_test_add_func("/groundhog/mls-service/losing-removal-reactivates",
                   test_losing_removal_reactivates);
   g_test_add_func("/groundhog/mls-service/removal-from-held-queue", test_removal_from_held_queue);

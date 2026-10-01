@@ -143,14 +143,16 @@ compose_summary(GhMessage *message, GDateTime *now, gboolean undecryptable)
   g_autofree gchar *sender = gh_message_row_sender_name(message);
   g_autofree gchar *time =
     gh_conversation_row_format_message_time(gh_message_get_created_at(message), now);
-  g_autofree gchar *file = undecryptable ? NULL : file_text(message);
+  gboolean withdrawn = !undecryptable && gh_message_get_withdrawn(message);
+  g_autofree gchar *file = undecryptable || withdrawn ? NULL : file_text(message);
   const gchar *body = undecryptable ? _("Unable to decrypt yet")
+                      : withdrawn   ? gh_message_withdrawn_text()
                       : file        ? file
                                     : gh_message_get_content(message);
   /* TRANSLATORS: a message's accessible label: sender, time, text. */
   GString *out = g_string_new(NULL);
   g_string_printf(out, _("%s, %s: %s"), sender, time, body);
-  guint files = undecryptable || file ? 0 : gh_message_get_n_attachments(message);
+  guint files = undecryptable || withdrawn || file ? 0 : gh_message_get_n_attachments(message);
   if (files > 0) {
     /* TRANSLATORS: a captioned message's attached files, in its accessible label. */
     g_autofree gchar *count = g_strdup_printf(g_dngettext(NULL, "%u file attached",
@@ -382,16 +384,20 @@ update_all(GhMessageRow *self)
 
   g_clear_pointer(&self->preview_uri, g_free);
   set_class(GTK_WIDGET(self->body_label), "groundhog-undecryptable", self->undecryptable);
-  guint cards = message && !self->undecryptable ? card_count(message) : 0;
+  /* nostrc-xrza: withdrawn when the group resolved a conflict -- marked,
+   * never shown as the text (or the files) other members did not see. */
+  gboolean withdrawn = message && !self->undecryptable && gh_message_get_withdrawn(message);
+  set_class(GTK_WIDGET(self->body_label), "groundhog-withdrawn", withdrawn);
+  guint cards = message && !self->undecryptable && !withdrawn ? card_count(message) : 0;
   gboolean file_message = cards > 0;
   /* The cards replace the body, or follow an encrypted group message's
    * caption (W25); they fetch nothing by being shown. */
   update_cards(self, file_message ? message : NULL, cards);
   const gchar *caption = message ? gh_message_get_content(message) : NULL;
-  gboolean show_body = !file_message ||
+  gboolean show_body = withdrawn || !file_message ||
                        (gh_message_get_kind(message) != GH_NIP17_FILE_KIND && caption && *caption);
   gtk_widget_set_visible(GTK_WIDGET(self->attachment_slot), file_message ||
-                         (message && !self->undecryptable &&
+                         (message && !self->undecryptable && !withdrawn &&
                           gh_message_get_rejected_attachments(message) > 0));
   gtk_widget_set_visible(GTK_WIDGET(self->body_label), show_body);
   if (!message) {
@@ -399,9 +405,11 @@ update_all(GhMessageRow *self)
     gtk_label_set_text(self->sender_label, "");
     gtk_label_set_text(self->time_label, "");
   } else {
-    g_autofree gchar *file = self->undecryptable || show_body ? NULL : file_text(message);
+    g_autofree gchar *file = self->undecryptable || withdrawn || show_body ? NULL : file_text(message);
     if (self->undecryptable) {
       gtk_label_set_text(self->body_label, _("Unable to decrypt yet"));
+    } else if (withdrawn) {
+      gtk_label_set_text(self->body_label, gh_message_withdrawn_text());
     } else if (file) {
       gtk_label_set_text(self->body_label, file);
     } else {
@@ -504,6 +512,8 @@ gh_message_row_set_message(GhMessageRow *self, GhMessage *message)
     g_signal_connect_object(message, "notify::status", G_CALLBACK(update_status), self,
                             G_CONNECT_SWAPPED);
     g_signal_connect_object(message, "notify::expires-at", G_CALLBACK(update_all), self,
+                            G_CONNECT_SWAPPED);
+    g_signal_connect_object(message, "notify::withdrawn", G_CALLBACK(update_all), self,
                             G_CONNECT_SWAPPED);
   }
   update_all(self);
