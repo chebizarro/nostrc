@@ -141,9 +141,13 @@ gh_mls_error_copy(const GError *error)
       return g_strdup(_("Someone’s invitation key changed; review and try again. Nothing was "
                         "changed."));
     case GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN:
-      return g_strdup(_("This invitation uses the same group address as another group you’re "
-                        "in, so the two groups’ messages couldn’t be told apart. Groundhog "
-                        "refused it. Ask whoever invited you to make a new group."));
+      return g_strdup(_("This invitation uses the same group address as another group on this "
+                        "device (one you’re in or were in), so the two groups’ messages couldn’t "
+                        "be told apart. Groundhog refused it. Ask whoever invited you to make a "
+                        "new group."));
+    case GH_MLS_SERVICE_ERROR_INVITEE_UNSUPPORTED:
+      return g_strdup(_("This group lets members leave on their own, and someone you invited "
+                        "uses an app that can’t, so they can’t join it. Nothing was changed."));
     default:
       break;
     }

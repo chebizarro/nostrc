@@ -925,6 +925,10 @@ test_mdk_member_leaves(void)
     return;
   World w;
   const guint keys[] = { ALICE };
+  /* Permissive: the Remove-request path, still taken in groups made before
+   * libmarmot 0.12 or whose first invitee lacked SelfRemove (3a' is the
+   * app's own path since nostrc-8ndz). */
+  world_permissive_groups = TRUE;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   spin_until(key_package_published, alice, "Alice's KeyPackage");
@@ -988,19 +992,21 @@ self_remove_required(gpointer data)
   return err == MARMOT_OK && required && !gh_mls_group_get_pending_commit(group);
 }
 
-/* 3c (nostrc-8ndz): as 3a, but Groundhog's admin requires SelfRemove on its
- * own once MDK 0.8 (whose leaf advertises it) has joined -- a
- * GroupContextExtensions Commit, as the app does. MDK 0.8 follows it, and
- * its leave_group() is then a SelfRemove (a PublicMessage), which Groundhog
- * commits. */
+/* MDK Carol joins Alice's group (made alone, then one Add) and leaves by
+ * SelfRemove, which Groundhog commits. `background` FALSE (3a', nostrc-8ndz):
+ * the app's own path -- that Add already requires SelfRemove, as MDK's
+ * creation rule does when every invitee supports it. TRUE (3c): a group made
+ * permissive (before libmarmot 0.12) gets the requirement in the background
+ * after Alice's update -- a GroupContextExtensions Commit -- and MDK 0.8
+ * follows it. */
 static void
-test_groundhog_requires_self_remove(void)
+mdk_leaves_by_self_remove(gboolean background)
 {
   if (!mdk_up())
     return;
   World w;
   const guint keys[] = { ALICE };
-  world_self_remove_upgrade = TRUE;
+  world_permissive_groups = background;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   spin_until(key_package_published, alice, "Alice's KeyPackage");
@@ -1008,18 +1014,29 @@ test_groundhog_requires_self_remove(void)
   g_autofree gchar *carol_kp = mdk_publish_key_package(&w, "carol");
   accept_contact(alice, CAROL);
   GhMlsGroup *ga = create_group(alice, "Carol may leave", (const guint[]){ CAROL }, 1);
+  g_autofree gchar *gid = g_strdup(gh_mls_group_get_group_id(ga));
   spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
   g_autofree gchar *group = NULL;
   {
     g_autoptr(JsonObject) joined = mdk_join(&w, "carol", hex[ALICE], &group);
-    (void)joined;
+    assert_converged(ga, joined);
   }
   RequiredWait required = { alice, ga };
-  spin_until(self_remove_required, &required, "Alice requiring SelfRemove");
-  {
+  if (background) {
+    g_assert_false(self_remove_required(&required));
+    gh_mls_service_test_set_permissive_groups(FALSE);
+    gh_mls_service_test_set_upgrade_window(200, 400, 0);
+    app_restart(alice);
+    ga = gh_mls_service_lookup(alice->service, gid);
+    g_assert_nonnull(ga);
+    required.group = ga;
+    spin_until(self_remove_required, &required, "Alice requiring SelfRemove");
     g_autoptr(JsonObject) synced = mdk_sync("carol", group);
-    g_assert_cmpuint(synced_count(synced, "commit"), >=, 1);
+    g_assert_cmpuint(synced_count(synced, "commit"), ==, 1);
     assert_converged(ga, json_object_get_object_member(synced, "state"));
+  } else {
+    g_assert_true(self_remove_required(&required));   /* in the Add itself */
+    g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, 1);
   }
   g_autoptr(JsonObject) left = mdk_call(&driver,
     "\"cmd\":\"leave_group\",\"peer\":\"carol\",\"group\":\"%s\"", group);
@@ -1034,6 +1051,18 @@ test_groundhog_requires_self_remove(void)
   send_accepted(alice, ga, "after carol left");
   world_down(&w);
   mdk_driver_stop(&driver);
+}
+
+static void
+test_mdk_member_self_removes(void)
+{
+  mdk_leaves_by_self_remove(FALSE);
+}
+
+static void
+test_groundhog_requires_self_remove(void)
+{
+  mdk_leaves_by_self_remove(TRUE);
 }
 
 /* 3b: MDK (Carol, the only admin) makes a group with Alice; Groundhog's
@@ -1265,6 +1294,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk-interop/groundhog-invites-mdk-strict",
                   test_groundhog_invites_mdk_strict);
   g_test_add_func("/groundhog/mdk-interop/mdk-member-leaves", test_mdk_member_leaves);
+  g_test_add_func("/groundhog/mdk-interop/mdk-member-self-removes",
+                  test_mdk_member_self_removes);
   g_test_add_func("/groundhog/mdk-interop/groundhog-requires-self-remove",
                   test_groundhog_requires_self_remove);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves", test_groundhog_leaves);

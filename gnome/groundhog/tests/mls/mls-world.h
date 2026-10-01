@@ -60,10 +60,12 @@ static gint64 world_key_package_max_hold;
 /* The next world's accounts publish MDK 0.8 KeyPackages only (nostrc-lf62):
  * they make MDK 0.8-format groups with each other. */
 static gboolean world_legacy_only;
-/* The next world's admins commit the SelfRemove requirement on their own,
- * as the app does (nostrc-8ndz). Off by default: most tests count Commits
- * exactly or exercise the Remove-request path of groups without it. */
-static gboolean world_self_remove_upgrade;
+/* The next world's groups are permissive (nostrc-8ndz): the first Add does
+ * not require SelfRemove and nothing upgrades them later -- the shape of a
+ * group made before 0.12 or whose first invitee lacked SelfRemove, where a
+ * member's leave is a Remove request only an admin commits. FALSE (the
+ * default) is the app's behaviour; only the Remove-request cases set it. */
+static gboolean world_permissive_groups;
 
 static G_GNUC_UNUSED void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int line)
@@ -466,7 +468,7 @@ world_up(World *w, const guint *keys, guint n_keys)
     relay_init(relays[i]);
   }
 #ifdef GH_MLS_TEST_HOOKS
-  gh_mls_service_test_set_self_remove_upgrade(world_self_remove_upgrade);
+  gh_mls_service_test_set_permissive_groups(world_permissive_groups);
 #endif
   w->x.auth_gate_dms = TRUE;   /* kind 1059 only to its signed-in recipient */
   w->g.require_auth = TRUE;    /* MLS routing: ephemeral AUTH, for real */
@@ -495,7 +497,10 @@ world_down(World *w)
   drain();
   gh_test_signer_down(&test_bus, &w->signer);
   world_fake_clock = FALSE;
-  world_self_remove_upgrade = FALSE;
+  world_permissive_groups = FALSE;
+#ifdef GH_MLS_TEST_HOOKS
+  gh_mls_service_test_set_upgrade_window(0, 0, 0);
+#endif
   world_split_lists = FALSE;
   world_key_package_lifetime = 0;
   world_fresh_lists = FALSE;

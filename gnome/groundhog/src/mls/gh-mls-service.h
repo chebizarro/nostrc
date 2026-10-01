@@ -304,6 +304,16 @@ G_BEGIN_DECLS
  * most this long after the Commit that left it, and only while the group is
  * not yet two epochs past it (libmarmot reads nothing older). */
 #define GH_MLS_SERVICE_ROUTING_RETAIN_S ((gint64)7 * 24 * 3600)
+/* A relay read only for an earlier address that fails this many times in a
+ * row (no EOSE between) is read no more (nostrc-ms4d review L2). */
+#define GH_MLS_SERVICE_EARLIER_RELAY_FAILURES 3
+/* The one-time SelfRemove requirement of an existing group this device
+ * created (nostrc-8ndz): a random delay in [MIN, MAX] once the group has
+ * caught up, and at least STAGGER after the previous group's, so a first
+ * launch never commits in many groups at once (review L1). */
+#define GH_MLS_SERVICE_UPGRADE_DELAY_MIN_S (10 * 60)
+#define GH_MLS_SERVICE_UPGRADE_DELAY_MAX_S (6 * 3600)
+#define GH_MLS_SERVICE_UPGRADE_STAGGER_S (30 * 60)
 /* A group relay's backfill: REQ limit, and older pages per subscription. */
 #define GH_MLS_SERVICE_PAGE_LIMIT 500
 #define GH_MLS_SERVICE_MAX_PAGES 64
@@ -426,8 +436,10 @@ typedef enum {
   GH_MLS_SERVICE_ERROR_PROFILE_MISMATCH, /* an invitee has no KeyPackage in the group's format */
   GH_MLS_SERVICE_ERROR_FORMAT_CHANGED, /* an invitee's KeyPackages no longer give the format the
                                        * user was shown (review M2): check again */
-  GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN   /* an invitation names the address (h tag) of another
+  GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN,  /* an invitation names the address (h tag) of another
                                         * group of ours; refused for good (nostrc-scki) */
+  GH_MLS_SERVICE_ERROR_INVITEE_UNSUPPORTED /* an invitee's app cannot join what the group
+                                            * requires (SelfRemove; nostrc-zbmb) */
 } GhMlsServiceError;
 
 /* Whether settings asks for every member's account proof: the key
@@ -643,10 +655,15 @@ guint gh_mls_service_test_rate_retries(void);
  * how many Commits of members' leaves failed. */
 void gh_mls_service_test_refuse_rate(guint n);
 guint gh_mls_service_test_departure_failures(void);
-/* Test hook (nostrc-8ndz): whether an admin commits the SelfRemove
- * requirement on its own (TRUE, as in the app); tests about the Remove
- * request path, or counting Commits exactly, turn it off. */
-void gh_mls_service_test_set_self_remove_upgrade(gboolean enabled);
+/* Test hooks (nostrc-8ndz). permissive TRUE: services made from now on keep
+ * a group created alone permissive at its first Add (libmarmot
+ * MarmotConfig.keep_first_add_permissive) and make no background SelfRemove
+ * upgrade -- the shape of groups made before 0.12, or with a first invitee
+ * whose app lacks SelfRemove (default FALSE, as the app). And the background
+ * upgrade's delay window and stagger in milliseconds (all 0: the defaults
+ * above). */
+void gh_mls_service_test_set_permissive_groups(gboolean permissive);
+void gh_mls_service_test_set_upgrade_window(guint min_ms, guint max_ms, guint stagger_ms);
 #endif
 const gchar *gh_mls_service_get_account(GhMlsService *self);
 /* libmarmot, for tests and diagnostics (borrowed; one thread). */

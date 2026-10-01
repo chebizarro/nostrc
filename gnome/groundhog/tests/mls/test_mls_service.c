@@ -403,12 +403,10 @@ group_lifecycle(gboolean legacy)
   /* Bob (not an admin) leaves for everyone (nostrc-2um6), which Alice
    * commits; then he stops reading; his room and history stay. */
   g_autoptr(GError) error = NULL;
-  /* An adopted group's members all support SelfRemove: Bob's own leave
-   * proposal. Groundhog makes its MDK 0.8 groups alone, so they do not
-   * require SelfRemove (MDK's rule, review L1): there the leave is a Remove
-   * request (review M1). */
-  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==,
-                  adopted ? GH_MLS_LEAVE_EVERYONE : GH_MLS_LEAVE_ADMINS);
+  /* Every member supports SelfRemove: Bob's own leave proposal. An adopted
+   * group requires it; an MDK 0.8 group Groundhog made required it at its
+   * first Add (nostrc-8ndz). */
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_EVERYONE);
   g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
   g_assert_no_error(error);
   g_assert_true(gh_mls_group_get_leaving(gb));
@@ -2958,6 +2956,7 @@ static void
 test_invite_address_taken(void)
 {
   World w;
+  world_legacy_only = TRUE;   /* an MDK 0.8 group between Groundhog accounts */
   const guint keys[] = { ALICE, BOB };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
@@ -3011,16 +3010,16 @@ leaves_by_self_remove(gpointer data)
   return gh_mls_service_leave_kind(wait->app->service, wait->group) == GH_MLS_LEAVE_EVERYONE;
 }
 
-/* nostrc-8ndz. Alice makes a group alone and adds Bob and Carol, so it does
- * not require SelfRemove; as their apps all support it, Alice (the admin)
- * soon requires it on her own. Then Carol (no admin) leaves while Alice is
- * offline, and Bob (no admin either) commits her leave: nobody waits for an
- * admin. */
+/* nostrc-8ndz. Alice makes a group alone and adds Bob and Carol in one Add:
+ * as all three apps support SelfRemove, that Add requires it (MDK's
+ * creation rule), with no other Commit. Then Carol (no admin) leaves while
+ * Alice is offline, and Bob (no admin either) commits her leave: nobody
+ * waits for an admin. */
 static void
 test_self_remove_required(void)
 {
   World w;
-  world_self_remove_upgrade = TRUE;
+  world_legacy_only = TRUE;   /* an MDK 0.8 group between Groundhog accounts */
   world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
   App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
   wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
@@ -3030,11 +3029,10 @@ test_self_remove_required(void)
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   GhMlsGroup *gb = join(bob, ALICE);
   GhMlsGroup *gc = join(carol, ALICE);
-  LeaveKindWait carol_kind = { carol, gc };
-  spin_until(leaves_by_self_remove, &carol_kind, "the group requiring SelfRemove");
-  LeaveKindWait bob_kind = { bob, gb };
-  spin_until(leaves_by_self_remove, &bob_kind, "Bob following it");
-  wait_epoch(ga, (gint)gh_mls_group_get_epoch(gb));
+  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_EVERYONE);
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_EVERYONE);
+  g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, 1);   /* the Add only */
+  g_assert_cmpuint(count_445(&w.g), ==, 1);
 
   set_online(alice, FALSE);   /* the only admin is away */
   g_autoptr(GError) error = NULL;
@@ -3048,6 +3046,205 @@ test_self_remove_required(void)
   wait_members(ga, 2);
   send_text(alice, ga, "after carol left");
   wait_text(bob, room, "after carol left");
+  world_down(&w);
+}
+
+/* `key`'s KeyPackage, published as an app without SelfRemove makes it
+ * (libmarmot 0.11.0, MDK before #236). */
+static gchar *
+inject_key_package_without_self_remove(World *w, guint key)
+{
+  mls_test_leaf_without_self_remove = TRUE;
+  gchar *id = inject_legacy_key_package(w, key);
+  mls_test_leaf_without_self_remove = FALSE;
+  return id;
+}
+
+/* nostrc-zbmb. The stranger's app lacks SelfRemove. Alice's group with Bob
+ * requires it, so her Add of the stranger is refused before anything is
+ * published, and says why (OpenMLS/MDK members would refuse that Add and the
+ * group would split). A group whose first Add includes the stranger stays
+ * permissive (MDK's rule: every invitee must support it): Carol's leave
+ * there is a Remove request. */
+static void
+test_invitee_without_self_remove(void)
+{
+  World w;
+  world_legacy_only = TRUE;   /* an MDK 0.8 group between Groundhog accounts */
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  accept_contact(alice, STRANGER);
+  GhMlsGroup *ga = create_group(alice, "Requires it", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_EVERYONE);
+  g_autofree gchar *stranger_kp = inject_key_package_without_self_remove(&w, STRANGER);
+  guint published = count_445(&w.g);
+  guint64 epoch = gh_mls_group_get_epoch(ga);
+  const gchar *people[] = { hex[STRANGER], NULL };
+  OpWait added = { 0 };
+  gh_mls_service_add_members_async(alice->service, ga, people, NULL, on_changed, &added);
+  spin_until(op_done, &added, "the refused Add");
+  g_assert_error(added.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_INVITEE_UNSUPPORTED);
+  g_clear_error(&added.error);
+  drain();
+  g_assert_cmpuint(count_445(&w.g), ==, published);
+  g_assert_cmpuint(gh_mls_group_get_epoch(ga), ==, epoch);
+  g_assert_false(gh_mls_group_get_pending_commit(ga));
+
+  /* With the stranger among the first invitees, nothing is required. */
+  GhMlsGroup *ga2 = create_group(alice, "Permissive", (const guint[]){ CAROL, STRANGER }, 2);
+  (void)ga2;
+  GhMlsGroup *gc = join(carol, ALICE);
+  g_assert_cmpint(gh_mls_service_leave_kind(carol->service, gc), ==, GH_MLS_LEAVE_ADMINS);
+  world_down(&w);
+}
+
+typedef struct {
+  GhMlsGroup *group;
+  App *app;
+  gint64 at;       /* monotonic µs it was first seen requiring SelfRemove */
+} Upgraded;
+
+static gboolean
+requires_self_remove(App *app, GhMlsGroup *group)
+{
+  Marmot *m = gh_mls_service_get_marmot(app->service);
+  const gchar *gid_hex = gh_mls_group_get_group_id(group);
+  gsize len = strlen(gid_hex) / 2;
+  g_autofree guint8 *bytes = g_malloc(len);
+  g_assert_true(nostr_hex2bin(bytes, gid_hex, len));
+  MarmotGroupId gid = marmot_group_id_new(bytes, len);
+  bool required = false;
+  MarmotError err = marmot_get_self_remove_requirement(m, &gid, &required, NULL);
+  marmot_group_id_free(&gid);
+  return err == MARMOT_OK && required;
+}
+
+static gboolean
+both_upgraded(gpointer data)
+{
+  Upgraded *u = data;
+  gboolean all = TRUE;
+  for (guint i = 0; i < 2; i++) {
+    if (!u[i].at && requires_self_remove(u[i].app, u[i].group) &&
+        !gh_mls_group_get_pending_commit(u[i].group))
+      u[i].at = g_get_monotonic_time();
+    all &= u[i].at != 0;
+  }
+  return all;
+}
+
+typedef struct {
+  App *app;
+  OpWait renamed;
+  gboolean asked;
+} RenameOnPending;
+
+/* Review M1: the admin renames the group the moment Groundhog's own
+ * upgrade Commit is staged (still out): the rename waits behind it. */
+static void
+rename_when_pending(GObject *object, GParamSpec *pspec, gpointer data)
+{
+  (void)pspec;
+  RenameOnPending *r = data;
+  GhMlsGroup *group = GH_MLS_GROUP(object);
+  if (r->asked || !gh_mls_group_get_pending_commit(group))
+    return;
+  r->asked = TRUE;
+  gh_mls_service_update_metadata_async(r->app->service, group, "Renamed meanwhile", NULL, NULL,
+                                       on_changed, &r->renamed);
+}
+
+/* nostrc-8ndz. Two groups Alice made before the requirement (permissive
+ * then, as before 0.12) get it once in the background after the update --
+ * not as a burst: the second is committed at least the stagger after the
+ * first (both only once caught up). Alice renames the first group while
+ * its upgrade Commit is out: the rename is not refused as busy, it is made
+ * right after (review M1), and Bob follows both. */
+static void
+test_background_upgrade(void)
+{
+  World w;
+  world_legacy_only = TRUE;   /* an MDK 0.8 group between Groundhog accounts */
+  world_permissive_groups = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga1 = create_group(alice, "Old one", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb1 = join(bob, ALICE);
+  GhMlsGroup *ga2 = create_group(alice, "Old two", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  g_autofree gchar *gid1 = g_strdup(gh_mls_group_get_group_id(ga1));
+  g_autofree gchar *gid2 = g_strdup(gh_mls_group_get_group_id(ga2));
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb1), ==, GH_MLS_LEAVE_ADMINS);
+  g_assert_false(requires_self_remove(alice, ga1));
+
+  /* The update: production behaviour, a short window for the test. */
+  gh_mls_service_test_set_permissive_groups(FALSE);
+  gh_mls_service_test_set_upgrade_window(300, 600, 2500);
+  app_restart(alice);
+  ga1 = gh_mls_service_lookup(alice->service, gid1);
+  ga2 = gh_mls_service_lookup(alice->service, gid2);
+  g_assert_nonnull(ga1);
+  g_assert_nonnull(ga2);
+  RenameOnPending rename = { alice, { 0 }, FALSE };
+  g_signal_connect(ga1, "notify::pending-commit", G_CALLBACK(rename_when_pending), &rename);
+  Upgraded upgraded[2] = { { ga1, alice, 0 }, { ga2, alice, 0 } };
+  spin_until(both_upgraded, upgraded, "both groups requiring SelfRemove");
+  gint64 gap = ABS(upgraded[1].at - upgraded[0].at) / 1000;
+  g_test_message("upgrades %" G_GINT64_FORMAT " ms apart", gap);
+  g_assert_cmpint(gap, >=, 1800);   /* the stagger, less scheduling slack */
+  g_assert_true(rename.asked);
+  spin_until(op_done, &rename.renamed, "the rename made behind the upgrade");
+  g_assert_no_error(rename.renamed.error);
+  g_assert_true(rename.renamed.ok);
+  g_signal_handlers_disconnect_by_data(ga1, &rename);
+  NameWait renamed = { gb1, "Renamed meanwhile" };
+  spin_until(name_is, &renamed, "Bob following the rename");
+  LeaveKindWait bob_kind = { bob, gb1 };
+  spin_until(leaves_by_self_remove, &bob_kind, "Bob following the upgrade");
+  world_down(&w);
+}
+
+/* Review L2: the relay an adopted group left is dead (as an admin's reason
+ * to drop it usually is). It does not hold the group's read cursor back,
+ * and after a few failures in a row it is read no more. */
+static void
+test_routing_dead_earlier_relay(void)
+{
+  World w;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  GhMlsGroup *ga = NULL, *gb = NULL, *gc = NULL;
+  g_autofree gchar *old_h = adopted_trio(&w, &ga, &gb, &gc);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(gb));
+  const gchar *first = NULL, *second = NULL;
+  g_and_h(&w, &first, &second);
+  guint8 to[32];
+  randombytes_buf(to, sizeof to);
+  g_autofree gchar *rotation = forge_rotation(carol, gc, to, w.h.url);
+  wire_relay_inject(&w.g, rotation);
+  wait_relays(gb, TRUE, first, second);
+
+  /* G goes down for good. */
+  w.g.close_on_connect = TRUE;
+  for (guint i = 0; i < w.g.connections->len; i++) {
+    SoupWebsocketConnection *c = g_ptr_array_index(w.g.connections, i);
+    if (soup_websocket_connection_get_state(c) == SOUP_WEBSOCKET_STATE_OPEN)
+      soup_websocket_connection_close(c, SOUP_WEBSOCKET_CLOSE_GOING_AWAY, NULL);
+  }
+  g_usleep(1100 * 1000);   /* a later second than anything before */
+  send_text(alice, ga, "while g is down");
+  wait_text(bob, room, "while g is down");
+  gint64 at = nostr_event_get_created_at(last_stored_445(&w.h)->event);
+  CursorWait past = { gb, at };
+  spin_until(cursor_reached, &past, "the cursor moving on without G");
+  wait_relays(gb, TRUE, w.h.url);
   world_down(&w);
 }
 #else
@@ -3132,15 +3329,22 @@ is_leaving(gpointer data)
 }
 
 /* Carol (not an admin) leaves for everyone while Alice and Bob are offline:
- * her SelfRemove survives a restart and is published again; when they come
- * back one of them commits it after the jitter, both report "member-left",
+ * her leave request survives a restart and is published again; when they
+ * come back an admin commits it after the jitter, both report "member-left",
  * Carol's group ends as LEFT for good, and the two go on. Alice, an admin,
- * can only leave on this device (admins step down first). */
+ * can only leave on this device (admins step down first).
+ *
+ * The MDK 0.8 variant keeps a permissive group (world_permissive_groups):
+ * it is about the Remove-request path, which the app still takes in MDK 0.8
+ * groups made before 0.12 and in those whose first invitee lacked SelfRemove
+ * (nostrc-8ndz); self-remove-required covers the SelfRemove path of the
+ * app's own MDK 0.8 groups. */
 static void
 member_leaves(gboolean legacy)
 {
   World w;
   world_legacy_only = legacy;
+  world_permissive_groups = legacy;   /* the Remove-request path (below) */
   world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
   /* An adopted group (nostrc-lf62): every member supports SelfRemove, so
    * Carol's own leave proposal, which any member commits; an MDK 0.8 group
@@ -3437,6 +3641,11 @@ main(int argc, char **argv)
 #endif
   g_test_add_func("/groundhog/mls-service/invite-address-taken", test_invite_address_taken);
   g_test_add_func("/groundhog/mls-service/self-remove-required", test_self_remove_required);
+  g_test_add_func("/groundhog/mls-service/invitee-without-self-remove",
+                  test_invitee_without_self_remove);
+  g_test_add_func("/groundhog/mls-service/background-upgrade", test_background_upgrade);
+  g_test_add_func("/groundhog/mls-service/routing-dead-earlier-relay",
+                  test_routing_dead_earlier_relay);
   g_test_add_func("/groundhog/mls-service/unproven-invitee",
                   test_unproven_invitee);
 #endif

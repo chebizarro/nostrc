@@ -151,6 +151,13 @@ struct _GhMlsGroup {
    * per epoch (upgrade_epoch is the epoch tried, plus one; 0: none). */
   guint upgrade_source;
   guint64 upgrade_epoch;
+  /* Review M1: an automatic Commit of ours (the upgrade, a departure) is out;
+   * the admin's own changes made meanwhile wait behind it (QueuedChange). */
+  gboolean auto_change;
+  GQueue queued;
+  /* Review L2: url -> failures in a row of a relay read only for an earlier
+   * address (dropped at GH_MLS_SERVICE_EARLIER_RELAY_FAILURES). */
+  GHashTable *earlier_failures;
   /* Member identities (nostrc-6ukh). */
   GHashTable *devices;       /* "account:signature key" (hex) -> Device */
   gboolean devices_loaded;   /* read once: a device new after that was just added */
@@ -276,6 +283,10 @@ struct _GhMlsService {
   GHashTable *deliveries;          /* key (welcome id hex or outbox id) -> Delivery */
   guint retry;
   guint retry_s;
+  /* nostrc-8ndz: when the last background SelfRemove upgrade was scheduled
+   * to fire (store clock, unix milliseconds): the next one is staggered
+   * after it. */
+  gint64 upgrade_slot;
 };
 
 enum { PROP_0, PROP_KEY_PACKAGE_STATE, PROP_IDENTITY_STATE, PROP_KEY_PACKAGE_HELD, N_PROPS };
@@ -552,9 +563,8 @@ marmot_fail(GhMlsService *self, MarmotError err, const gchar *what, GError **err
   case MARMOT_ERR_EVENT_RATE: code = GH_MLS_SERVICE_ERROR_BUSY; break;
   case MARMOT_ERR_ADMIN_ONLY:
   case MARMOT_ERR_COMMIT_FROM_NON_ADMIN: code = GH_MLS_SERVICE_ERROR_NOT_ADMIN; break;
-  /* A Welcome whose group address another group of ours has or had
-   * (nostrc-scki): libmarmot refused it for good. */
-  case MARMOT_ERR_PROTOCOL_GROUP_MISMATCH: code = GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN; break;
+  /* An invitee whose leaf lacks what the group requires (nostrc-zbmb). */
+  case MARMOT_ERR_KEY_PACKAGE_CAPABILITIES: code = GH_MLS_SERVICE_ERROR_INVITEE_UNSUPPORTED; break;
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
   case MARMOT_ERR_KEY_PACKAGE_IDENTITY:
     /* A leaf libmarmot refuses in a KeyPackage, a Commit or a Welcome's tree
@@ -899,6 +909,8 @@ gh_mls_group_dup_read_relays(GhMlsGroup *self)
   return g_strdupv(self->read_relays);
 }
 
+static void upgrade_schedule(GhMlsGroup *group);
+
 static void
 group_set_read(GhMlsGroup *group, GhMlsReadState read)
 {
@@ -906,6 +918,8 @@ group_set_read(GhMlsGroup *group, GhMlsReadState read)
     return;
   group->read = read;
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_READ_STATE]);
+  if (read == GH_MLS_READ_LIVE)
+    upgrade_schedule(group);   /* caught up (nostrc-8ndz review L1) */
 }
 
 static void
@@ -942,11 +956,13 @@ static void
 gh_mls_group_finalize(GObject *object)
 {
   GhMlsGroup *self = GH_MLS_GROUP(object);
-  g_warn_if_fail(self->scopes->len == 0 && self->retain_source == 0 && self->round == NULL && self->leave_publish == NULL &&
-                 self->departures_source == 0 && self->upgrade_source == 0);
+  g_warn_if_fail(self->scopes->len == 0 && self->retain_source == 0 && self->round == NULL &&
+                 self->leave_publish == NULL && self->departures_source == 0 &&
+                 self->upgrade_source == 0 && g_queue_is_empty(&self->queued));
   marmot_group_id_free(&self->gid);
   g_free(self->leave_json);
   g_hash_table_unref(self->leavers);
+  g_hash_table_unref(self->earlier_failures);
   g_free(self->gid_hex);
   g_free(self->room_id);
   g_free(self->name);
@@ -1044,6 +1060,8 @@ gh_mls_group_init(GhMlsGroup *self)
   self->scopes = g_ptr_array_new_with_free_func((GDestroyNotify)gh_relay_scope_unref);
   self->url_scope = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->leavers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->earlier_failures = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_queue_init(&self->queued);
   self->refusal_witnesses = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->devices = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, device_free);
   self->own_evidence = g_ptr_array_new_with_free_func(g_free);
@@ -2054,6 +2072,7 @@ group_unsubscribe(GhMlsGroup *group)
     gh_relay_scope_cancel(g_ptr_array_index(group->scopes, i));
   g_ptr_array_set_size(group->scopes, 0);
   g_hash_table_remove_all(group->url_scope);
+  g_hash_table_remove_all(group->earlier_failures);
   if (group->retain_source) {
     gh_clock_source_remove(group->service->clock, group->retain_source);
     group->retain_source = 0;
@@ -2254,6 +2273,7 @@ retry_held(GhMlsGroup *group)
 }
 
 static void after_commit(GhMlsGroup *group, gboolean fresh);
+static void queued_flush(GhMlsGroup *group);
 static void departures_schedule(GhMlsGroup *group);
 static gchar *event_id_of(const gchar *json);
 
@@ -2289,13 +2309,28 @@ static void upgrade_cancel(GhMlsGroup *group);
 static gboolean
 all_relays_answered(GhMlsGroup *group)
 {
-  if (!group->read_relays || !group->read_relays[0])
+  /* The current routing's relays only (review L2): an earlier address has
+   * its own fixed `since`, and a dead relay the group dropped must not hold
+   * the group's cursor back for the days it is still read. */
+  if (!group->relays || !group->relays[0])
     return FALSE;
-  for (guint i = 0; group->read_relays[i]; i++) {
-    gint state = GPOINTER_TO_INT(g_hash_table_lookup(group->settled, group->read_relays[i]));
+  for (guint i = 0; group->relays[i]; i++) {
+    gint state = GPOINTER_TO_INT(g_hash_table_lookup(group->settled, group->relays[i]));
     if (state != 1 && state != 3)
       return FALSE;
   }
+  return TRUE;
+}
+
+/* Every current relay has answered or failed (the group's read state). */
+static gboolean
+current_relays_settled(GhMlsGroup *group)
+{
+  if (!group->relays || !group->relays[0])
+    return FALSE;
+  for (guint i = 0; group->relays[i]; i++)
+    if (!g_hash_table_contains(group->settled, group->relays[i]))
+      return FALSE;
   return TRUE;
 }
 
@@ -2572,8 +2607,7 @@ give_up_backfill(GhMlsGroup *group)
   }
   g_hash_table_remove_all(group->backfilling);
   update_history_incomplete(group);
-  if (group->read_relays &&
-      g_hash_table_size(group->settled) >= g_strv_length(group->read_relays))
+  if (current_relays_settled(group))
     group_set_read(group, GH_MLS_READ_LIVE);
   flush_backfill(group);
 }
@@ -2662,6 +2696,53 @@ keep_backfill(GhMlsGroup *group, const GhRelayUpdate *update)
     backfill_full(group);
 }
 
+static gboolean
+resubscribe_idle(gpointer data)
+{
+  GhMlsGroup *group = data;
+  if (group->scopes->len > 0)
+    group_subscribe(group);
+  g_object_unref(group);
+  return G_SOURCE_REMOVE;
+}
+
+/* Review L2: a relay read only for an earlier address failed. One that
+ * fails GH_MLS_SERVICE_EARLIER_RELAY_FAILURES times in a row -- an admin
+ * usually drops a relay because it is dead -- is read no more; its late
+ * events are lost with it. Re-subscribed from an idle: we are inside its
+ * scope's callback. */
+static void
+earlier_relay_failed(GhMlsGroup *group, const gchar *url)
+{
+  guint n = GPOINTER_TO_UINT(g_hash_table_lookup(group->earlier_failures, url)) + 1;
+  g_hash_table_insert(group->earlier_failures, g_strdup(url), GUINT_TO_POINTER(n));
+  if (n < GH_MLS_SERVICE_EARLIER_RELAY_FAILURES)
+    return;
+  g_hash_table_remove(group->earlier_failures, url);
+  gboolean changed = FALSE;
+  for (guint i = group->addresses->len; i-- > 0;) {
+    Address *a = g_ptr_array_index(group->addresses, i);
+    if (!strv_has((const gchar *const *)a->relays, url))
+      continue;
+    GPtrArray *rest = g_ptr_array_new();
+    for (guint k = 0; a->relays[k]; k++)
+      if (!g_str_equal(a->relays[k], url))
+        g_ptr_array_add(rest, g_strdup(a->relays[k]));
+    g_strfreev(a->relays);
+    a->relays = sorted_strv(rest);
+    if (!a->relays[0])
+      g_ptr_array_remove_index(group->addresses, i);
+    changed = TRUE;
+  }
+  if (!changed)
+    return;
+  g_message("Groundhog stopped reading a relay an encrypted group left: it kept failing");
+  routing_save(group);
+  g_strfreev(group->read_relays);
+  group->read_relays = read_relays_of(group);
+  g_idle_add(resubscribe_idle, g_object_ref(group));
+}
+
 static void
 on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
 {
@@ -2695,9 +2776,9 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
                 "the group's read cursor stays where it was");
     g_hash_table_insert(group->settled, g_strdup(update->url),
                         GINT_TO_POINTER(update->incomplete ? 4 : 1));
+    g_hash_table_remove(group->earlier_failures, update->url);
     update_history_incomplete(group);
-    guint n = g_strv_length(group->read_relays);
-    if (g_hash_table_size(group->settled) >= n) {
+    if (current_relays_settled(group)) {
       group_set_read(group, GH_MLS_READ_LIVE);
       if (all_relays_answered(group))
         save_cursor(group, group->newest);
@@ -2716,13 +2797,14 @@ on_group_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
       break;
     g_hash_table_insert(group->settled, g_strdup(update->url), GINT_TO_POINTER(2));
     update_history_incomplete(group);
+    if (!strv_has((const gchar *const *)group->relays, update->url))
+      earlier_relay_failed(group, update->url);
     gboolean any_live = FALSE;
-    GHashTableIter iter;
-    gpointer value;
-    g_hash_table_iter_init(&iter, group->settled);
-    while (g_hash_table_iter_next(&iter, NULL, &value))
-      any_live |= GPOINTER_TO_INT(value) == 1 || GPOINTER_TO_INT(value) == 4;
-    if (!any_live && g_hash_table_size(group->settled) >= g_strv_length(group->read_relays))
+    for (guint i = 0; group->relays[i]; i++) {
+      gint state = GPOINTER_TO_INT(g_hash_table_lookup(group->settled, group->relays[i]));
+      any_live |= state == 1 || state == 4;
+    }
+    if (!any_live && current_relays_settled(group))
       group_set_read(group, GH_MLS_READ_DISCONNECTED);
     break;
   }
@@ -3118,9 +3200,13 @@ round_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, gpoint
   if (group->round == round)
     group->round = NULL;
   if (!round->reported) {
-    /* Unanswered: republished later, byte for byte (the waiters wait). */
+    /* Unanswered: republished later, byte for byte (the waiters wait, and
+     * so do changes queued behind it). */
     group_refresh(group);
     schedule_retry(group->service);
+  } else if (!group->pending_commit) {
+    group->auto_change = FALSE;
+    queued_flush(group);
   }
   g_idle_add(round_free_idle, round);
 }
@@ -3221,12 +3307,21 @@ produce_metadata(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char *
 static guint test_rate_retries;
 static guint test_refuse_rate;
 static guint test_departure_failures;
-static gboolean test_no_upgrade;
+static gboolean test_permissive_groups;
+static guint test_upgrade_min_ms, test_upgrade_max_ms, test_upgrade_stagger_ms;
 
 void
-gh_mls_service_test_set_self_remove_upgrade(gboolean enabled)
+gh_mls_service_test_set_permissive_groups(gboolean permissive)
 {
-  test_no_upgrade = !enabled;
+  test_permissive_groups = permissive;
+}
+
+void
+gh_mls_service_test_set_upgrade_window(guint min_ms, guint max_ms, guint stagger_ms)
+{
+  test_upgrade_min_ms = min_ms;
+  test_upgrade_max_ms = max_ms;
+  test_upgrade_stagger_ms = stagger_ms;
 }
 
 guint
@@ -3283,6 +3378,46 @@ rate_retry_fired(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+typedef struct {
+  GTask *task;                /* owned */
+  GhMlsCommitProducer producer;
+  gpointer data;              /* the task's */
+} QueuedChange;
+
+/* The next change queued behind an automatic Commit, now that it is through
+ * (staged now; the rest wait for that one). */
+static void
+queued_flush(GhMlsGroup *group)
+{
+  QueuedChange *queued = g_queue_pop_head(&group->queued);
+  if (!queued)
+    return;
+  GError *error = NULL;
+  if (g_task_return_error_if_cancelled(queued->task)) {
+    g_object_unref(queued->task);
+  } else if (!check_change(group->service, group, &error)) {
+    g_task_return_error(queued->task, error);
+    g_object_unref(queued->task);
+  } else {
+    stage_change(queued->task, group, queued->producer, queued->data);
+  }
+  g_free(queued);
+  if (!group->round && !group->pending_commit)
+    queued_flush(group);   /* that one failed at once: the next */
+}
+
+static void
+queued_cancel(GhMlsGroup *group, const GError *error)
+{
+  QueuedChange *queued;
+  while ((queued = g_queue_pop_head(&group->queued))) {
+    g_task_return_error(queued->task, g_error_copy(error));
+    g_object_unref(queued->task);
+    g_free(queued);
+  }
+  group->auto_change = FALSE;
+}
+
 /* Stages the change (T-mls) and publishes it; task completes with it. */
 static void
 stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpointer data)
@@ -3290,6 +3425,17 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
   GhMlsService *self = group->service;
   g_autoptr(GError) error = NULL;
   if (group->round || group->pending_commit) {
+    /* Review M1: behind a Commit Groundhog made on its own (the SelfRemove
+     * upgrade, a member's leave) the admin's change waits and is made once
+     * that one is through, instead of failing for a change they never made. */
+    if (group->auto_change) {
+      QueuedChange *queued = g_new0(QueuedChange, 1);
+      queued->task = task;
+      queued->producer = producer;
+      queued->data = data;
+      g_queue_push_tail(&group->queued, queued);
+      return;
+    }
     g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_BUSY,
                             "Another change of this group is still being sent");
     g_object_unref(task);
@@ -3406,7 +3552,10 @@ departures_fired(gpointer data)
     return G_SOURCE_REMOVE;
   GTask *task = op_task(self, OP_DEPARTURES, group, NULL, departures_done, NULL,
                         gh_mls_service_change_finish);
+  group->auto_change = TRUE;   /* the admin's own changes queue behind it (M1) */
   stage_change(task, group, produce_departures, NULL);
+  if (!group->round && !group->pending_commit)
+    group->auto_change = FALSE;   /* not staged */
   return G_SOURCE_REMOVE;
 }
 
@@ -3472,22 +3621,88 @@ departures_schedule(GhMlsGroup *group)
 
 /* ---- Requiring SelfRemove (nostrc-8ndz) ------------------------------------------------- *
  *
- * Groundhog makes every group alone and then Adds, so under MDK 0.8's LCD
- * rule its groups require nothing ("empty stays empty") and a member's leave
- * is a Remove request only an admin commits: with no admin online, nobody
- * can leave. MDK, creating a group with its invitees, requires SelfRemove
- * when they all support it. Groundhog does the same once the group has
- * another member: an admin of ours commits the requirement on its own
- * (libmarmot marmot_require_self_remove(), a GroupContextExtensions Commit,
- * as MDK 0.11's upgrade_group_capabilities()) when every member's leaf
- * already advertises SelfRemove. It is not offered as a choice in Group
- * Info: the only cost -- a later invitee's app must support SelfRemove,
- * which every Groundhog and MDK client does -- is MDK's default too, and
- * the choice would ask users about a protocol detail. A group made alone is
- * left alone (an invitee may still lack it), and so is an adopted group
- * (libmarmot makes those with SelfRemove required). Tried once per epoch,
- * after the departures' jitter, so admins online together seldom race; a
- * lost race is an ordinary superseded Commit. */
+ * Groundhog makes every group alone and then Adds. libmarmot's Add that
+ * brings such a group its second member also requires SelfRemove when our
+ * leaf and every invitee advertise it -- MDK's creation rule (LCD over the
+ * invitees), in that same Commit (MarmotConfig.keep_first_add_permissive
+ * stays false) -- so any member, not only an admin, commits a member's
+ * leave, and a later invitee whose app lacks it is refused with honest copy
+ * (nostrc-zbmb). Nothing else is committed for new groups.
+ *
+ * A group this device created before that (or whose first invitee lacked
+ * SelfRemove) gets the requirement once in the background, when every
+ * member supports it, through libmarmot marmot_require_self_remove() (a
+ * GroupContextExtensions Commit, MDK 0.11's upgrade_group_capabilities()):
+ * only once the group has caught up (read live, every current relay
+ * answered), after a long random delay, and staggered across groups so a
+ * first launch never commits in many groups at once (review L1). Groups
+ * others made are left as their creator chose (MDK keeps a group created
+ * with no invitee permissive on purpose). The admin's own changes made
+ * while it is out wait behind it (review M1). */
+
+#define ORIGIN_CREATED 1
+#define ORIGIN_JOINED 2
+
+/* Where the group's origin is kept: "mls/o/" + 32 hex of SHA-256(domain ||
+ * group id); 1 created on this device, 2 joined by a Welcome. */
+static gchar *
+origin_scope(GhMlsGroup *group)
+{
+  g_autoptr(GChecksum) sum = g_checksum_new(G_CHECKSUM_SHA256);
+  static const guchar domain[] = "groundhog/mls-origin/v1";
+  g_checksum_update(sum, domain, sizeof domain);
+  g_checksum_update(sum, group->gid.data, (gssize)group->gid.len);
+  return g_strdup_printf("mls/o/%.32s", g_checksum_get_string(sum));
+}
+
+static void
+set_origin(GhMlsGroup *group, gint64 origin)
+{
+  g_autofree gchar *scope = origin_scope(group);
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_set_cursor(group->service->store, scope, "", origin, &error))
+    g_message("Groundhog could not record where an encrypted group came from: %s",
+              error->message);
+}
+
+/* Whether this device created the group. Without the record (a group from
+ * before it): our account holds leaf 0, the creator's, and no member
+ * vouched for a Welcome of ours (libmarmot's welcome_signer). */
+static gboolean
+created_here(GhMlsGroup *group)
+{
+  GhMlsService *self = group->service;
+  g_autofree gchar *scope = origin_scope(group);
+  gint64 origin = 0;
+  if (!gh_store_get_cursor(self->store, scope, "", &origin, NULL))
+    return FALSE;
+  if (origin)
+    return origin == ORIGIN_CREATED;
+  MarmotMemberIdentity *ids = NULL;
+  size_t n = 0;
+  if (marmot_get_group_member_identities(self->marmot, &group->gid, &ids, &n) != MARMOT_OK)
+    return FALSE;
+  gboolean ours = FALSE, welcomed = FALSE;
+  for (size_t i = 0; i < n; i++) {
+    welcomed |= ids[i].welcome_signer;
+    if (ids[i].leaf_index == 0) {
+      g_autofree gchar *account = to_hex(ids[i].account_pubkey, 32);
+      ours = g_str_equal(account, self->account);
+    }
+  }
+  free(ids);
+  return ours && !welcomed;
+}
+
+static gboolean
+upgrade_permissive(void)
+{
+#ifdef GH_MLS_TEST_HOOKS
+  return test_permissive_groups;
+#else
+  return FALSE;
+#endif
+}
 
 static MarmotError
 produce_require_self_remove(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
@@ -3496,22 +3711,25 @@ produce_require_self_remove(Marmot *marmot, const MarmotGroupId *gid, gpointer d
   return marmot_require_self_remove(marmot, gid, out);
 }
 
+/* The group could take the requirement from us now, caught up or not. */
 static gboolean
 upgrade_wanted(GhMlsGroup *group)
 {
   GhMlsService *self = group->service;
-#ifdef GH_MLS_TEST_HOOKS
-  if (test_no_upgrade)
-    return FALSE;
-#endif
-  /* A change of ours still out is waited for (upgrade_fired()). */
-  if (!running(self) || !group->active || !group->is_admin || group->leaving ||
-      group->upgrade_epoch == group->epoch + 1 || !group->members ||
+  if (upgrade_permissive() || !running(self) || !group->active || !group->is_admin ||
+      group->leaving || group->upgrade_epoch == group->epoch + 1 || !group->members ||
       g_strv_length(group->members) < 2)
     return FALSE;
   bool required = false, upgradable = false;
   return marmot_get_self_remove_requirement(self->marmot, &group->gid, &required, &upgradable) ==
-           MARMOT_OK && upgradable;
+           MARMOT_OK && upgradable && created_here(group);
+}
+
+static gboolean
+caught_up(GhMlsGroup *group)
+{
+  return group->read == GH_MLS_READ_LIVE && all_relays_answered(group) &&
+         g_hash_table_size(group->backfilling) == 0 && g_queue_is_empty(&group->backfill);
 }
 
 static void
@@ -3528,7 +3746,7 @@ upgrade_done(GObject *source, GAsyncResult *result, gpointer data)
 {
   (void)data;
   g_autoptr(GError) error = NULL;
-  /* Superseded, refused or busy: the next epoch tries again. */
+  /* Superseded, refused or busy: a later epoch tries again. */
   if (!gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error))
     g_debug("Groundhog did not require SelfRemove in a group: %s", error->message);
 }
@@ -3538,29 +3756,52 @@ upgrade_fired(gpointer data)
 {
   GhMlsGroup *group = data;
   group->upgrade_source = 0;
-  if (!upgrade_wanted(group))
-    return G_SOURCE_REMOVE;
-  /* A change of ours is out: its outcome (after_commit()) schedules again. */
-  if (group->round || group->pending_commit)
+  /* Not caught up (any more): going live schedules it again; a change of
+   * ours still out: its outcome does (after_commit()). */
+  if (!upgrade_wanted(group) || !caught_up(group) || group->round || group->pending_commit)
     return G_SOURCE_REMOVE;
   group->upgrade_epoch = group->epoch + 1;
   GhMlsService *self = group->service;
   GTask *task = op_task(self, OP_METADATA, group, NULL, upgrade_done, NULL,
                         gh_mls_service_change_finish);
+  group->auto_change = TRUE;
   stage_change(task, group, produce_require_self_remove, NULL);
+  if (!group->round && !group->pending_commit)
+    group->auto_change = FALSE;   /* not staged */
   return G_SOURCE_REMOVE;
+}
+
+static void
+upgrade_window(guint64 *min_ms, guint64 *max_ms, guint64 *stagger_ms)
+{
+  *min_ms = (guint64)GH_MLS_SERVICE_UPGRADE_DELAY_MIN_S * 1000;
+  *max_ms = (guint64)GH_MLS_SERVICE_UPGRADE_DELAY_MAX_S * 1000;
+  *stagger_ms = (guint64)GH_MLS_SERVICE_UPGRADE_STAGGER_S * 1000;
+#ifdef GH_MLS_TEST_HOOKS
+  if (test_upgrade_max_ms) {
+    *min_ms = test_upgrade_min_ms;
+    *max_ms = test_upgrade_max_ms;
+    *stagger_ms = test_upgrade_stagger_ms;
+  }
+#endif
 }
 
 static void
 upgrade_schedule(GhMlsGroup *group)
 {
-  if (group->upgrade_source || !upgrade_wanted(group))
+  if (group->upgrade_source || !caught_up(group) || !upgrade_wanted(group))
     return;
   GhMlsService *self = group->service;
-  gint64 ms = gh_clock_random_range(self->clock, GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS,
-                                    departures_window_ms(group));
-  group->upgrade_source = gh_clock_timeout_add(self->clock, (guint64)ms, upgrade_fired, group,
-                                               NULL);
+  guint64 min_ms, max_ms, stagger_ms;
+  upgrade_window(&min_ms, &max_ms, &stagger_ms);
+  gint64 now_ms = now_s(self) * 1000;
+  gint64 at_ms = now_ms + gh_clock_random_range(self->clock, (gint64)min_ms, (gint64)max_ms);
+  /* Staggered: never within `stagger` of another group's. */
+  if (self->upgrade_slot > 0)
+    at_ms = MAX(at_ms, self->upgrade_slot + (gint64)stagger_ms);
+  self->upgrade_slot = at_ms;
+  group->upgrade_source = gh_clock_timeout_add(self->clock, (guint64)(at_ms - now_ms),
+                                               upgrade_fired, group, NULL);
 }
 
 static void
@@ -3908,9 +4149,10 @@ look_up_invitees(GTask *task)
   }
   g_auto(GStrv) sources = discovery_relays(self);
   /* Never on the group's relays (nostrc-0bdg): they would learn whom the
-   * group is about to add. The new group's relays, or the group's. */
+   * group is about to add. The new group's relays, or every relay the group
+   * is read at -- an earlier address's too (nostrc-ms4d review L3). */
   const gchar *const *group_relays = op->relays ? (const gchar *const *)op->relays
-                                   : op->group  ? (const gchar *const *)op->group->relays
+                                   : op->group  ? (const gchar *const *)op->group->read_relays
                                                 : NULL;
   op->adopted_packages = g_ptr_array_new_with_free_func(g_free);
   op->legacy_packages = g_ptr_array_new_with_free_func(g_free);
@@ -4008,6 +4250,7 @@ create_group_now(GTask *task)
   marmot_create_group_result_free(&created);
   op->group = g_object_ref(group);
   set_floor(group, now_s(self));
+  set_origin(group, ORIGIN_CREATED);   /* nostrc-8ndz */
   save_cursor(group, now_s(self));
   group_subscribe(group);
   remember_own_evidence(group, op->key_packages);
@@ -5099,8 +5342,17 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
   MarmotError err = marmot_accept_welcome_by_wrapper_id(self->marmot, wrapper, &joined);
   if (err != MARMOT_OK || !joined) {
     marmot_group_free(joined);
-    marmot_fail(self, err != MARMOT_OK ? err : MARMOT_ERR_WELCOME_NOT_FOUND,
-                "The invitation could not be accepted", error);
+    /* A Welcome whose group address another group of ours has or had
+     * (nostrc-scki): libmarmot refused it for good. Only here does this
+     * error mean that (review N2). */
+    if (err == MARMOT_ERR_PROTOCOL_GROUP_MISMATCH) {
+      drop_stale_error(self);
+      g_set_error(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN,
+                  "The invitation could not be accepted: %s", marmot_error_string(err));
+    } else {
+      marmot_fail(self, err != MARMOT_OK ? err : MARMOT_ERR_WELCOME_NOT_FOUND,
+                  "The invitation could not be accepted", error);
+    }
     /* libmarmot keeps its deliberate outcomes (a retired duplicate). */
     if (!gh_store_commit(self->store, NULL))
       gh_store_rollback(self->store);
@@ -5135,6 +5387,7 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
     save_cursor(group, MAX(made, 1));
   if (group->floor == 0)
     set_floor(group, made);
+  set_origin(group, ORIGIN_JOINED);   /* never "created here" (nostrc-8ndz) */
   group_subscribe(group);
   /* MIP-00: the KeyPackage the Welcome used is spent; publish a new one of
    * its format (held while other invitations are pending:
@@ -6736,6 +6989,7 @@ stop_generation(GhMlsService *self)
     upgrade_cancel(group);
     /* Held events stay (review M1): a network flap must not lose them. */
     complete_waiters(group, cancelled);
+    queued_cancel(group, cancelled);
   }
 }
 
@@ -6849,6 +7103,9 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
    * groups only (nostrc-6ukh); the account may require proofs instead. */
   MarmotConfig marmot_config = marmot_config_default();
   marmot_config.allow_unproven_members = !gh_mls_requires_proofs(config->settings);
+  /* nostrc-8ndz: the first Add requires SelfRemove when everyone supports it
+   * (libmarmot's default); a test may make permissive groups instead. */
+  marmot_config.keep_first_add_permissive = upgrade_permissive();
   Marmot *marmot = marmot_new_with_config(storage, &marmot_config);
   if (!marmot) {
     marmot_storage_free(storage);
