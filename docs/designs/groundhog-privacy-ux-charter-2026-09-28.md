@@ -183,7 +183,7 @@ Each default has an ID, a rationale and a test. Test IDs are defined in §9.
 | Recipient's inbox relays | Sender IP at publish time (without Tor), wrap size and arrival time. **Not** sender identity | — | Welcome size and time |
 | Group relay | — | Everything: content, members, roles, times, your IP and pubkey | — |
 | MLS routing relays | — | — | Group routing id (links the group's messages), sizes, times, reader IPs. Not member identities (no account AUTH), not content |
-| Discovery relays | Which pubkeys you look up, your IP | Group metadata you fetch | Whose KeyPackages you fetch |
+| Discovery relays | Which pubkeys you look up, your IP | Group metadata you fetch | Whose KeyPackages you fetch: an invitee's, or a member's when you ask to verify them (W24 review H1: never by itself, never on a group relay; the person's own write relays see it too) |
 | Network observer | Relay hostnames (DNS/SNI), timing, volume; in Tor mode only that you use Tor | same | same |
 | Attachment server | Uploader IP, time, size; downloader IP and time; linkable by hash | — | — |
 | Anyone | Your published 10050/10002 lists: that you accept DMs and where | Public group metadata | Your KeyPackages (kind 30443): that you support MLS |

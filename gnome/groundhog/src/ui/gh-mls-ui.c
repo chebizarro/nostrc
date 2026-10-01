@@ -99,17 +99,12 @@ sync_unreadable(MlsUi *ui)
     return;
   gh_conversation_view_set_decrypt_pending(
     view, ui->shown && gh_mls_group_get_decrypt_pending(ui->shown));
-  /* A change refused for good is said as such, never as a wait (nostrc-prrl). */
+  /* A change refused for good is said as such, by its recorded cause,
+   * never as a wait (nostrc-prrl, W24 review L4). */
   gboolean refused = ui->shown && gh_mls_group_get_active(ui->shown) &&
                      gh_mls_group_get_change_refused(ui->shown);
-  gboolean strict = FALSE;
-  if (refused && ui->settings) {
-    g_autoptr(GSettingsSchema) schema = NULL;
-    g_object_get(ui->settings, "settings-schema", &schema, NULL);
-    strict = schema && g_settings_schema_has_key(schema, "only-join-verified-mls-groups") &&
-             g_settings_get_boolean(ui->settings, "only-join-verified-mls-groups");
-  }
-  gh_conversation_view_set_unreadable_reason(view, refused ? gh_mls_refused_copy(strict) : NULL);
+  gh_conversation_view_set_unreadable_reason(
+    view, refused ? gh_mls_refused_copy(gh_mls_group_get_refusal(ui->shown)) : NULL);
 }
 
 static void

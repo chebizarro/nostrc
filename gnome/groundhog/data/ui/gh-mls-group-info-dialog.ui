@@ -326,6 +326,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <response id="leave-confirm" translatable="yes" appearance="destructive">_Leave</response>
     </responses>
   </object>
+  <object class="AdwAlertDialog" id="verify_dialog">
+    <property name="heading" translatable="yes">Verify Identity?</property>
+    <property name="default-response">verify-cancel</property>
+    <property name="close-response">verify-cancel</property>
+    <responses>
+      <response id="verify-cancel" translatable="yes">_Cancel</response>
+      <response id="verify-confirm" translatable="yes" appearance="suggested">_Verify</response>
+    </responses>
+  </object>
   <object class="AdwAlertDialog" id="remove_dialog">
     <property name="heading" translatable="yes">Remove from Group?</property>
     <property name="default-response">remove-cancel</property>

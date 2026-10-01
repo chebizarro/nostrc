@@ -240,38 +240,63 @@ test_copy(void)
   g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NEEDS_UPDATE),
                           "can’t prove their account"));
   g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_NEEDS_UPDATE),
-                          "every identity is verified"));
+                          "every member’s app proves their account"));
   g_assert_nonnull(strstr(gh_mls_invitee_copy(GH_MLS_INVITEE_READY_UNPROVEN),
                           "Identity not verified"));
 
   /* nostrc-6ukh: a member whose identity isn't confirmed, with who added
    * them; a proven or verified one shows nothing. */
   for (gint identity = GH_MLS_MEMBER_PROVEN; identity <= GH_MLS_MEMBER_VERIFIED; identity++) {
-    GhMlsMemberCopy plain = gh_mls_member_copy(identity, "Alice");
+    GhMlsMemberCopy plain = gh_mls_member_copy(identity, "Alice", FALSE);
     g_assert_null(plain.badge);
     g_assert_null(plain.explanation);
     gh_mls_member_copy_clear(&plain);
   }
-  GhMlsMemberCopy unverified = gh_mls_member_copy(GH_MLS_MEMBER_UNVERIFIED, "Alice");
+  GhMlsMemberCopy unverified = gh_mls_member_copy(GH_MLS_MEMBER_UNVERIFIED, "Alice", FALSE);
   g_assert_cmpstr(unverified.badge, ==, "Identity not verified");
   g_assert_cmpstr(unverified.explanation, ==,
                   "Added by Alice. Groundhog couldn’t confirm this account owns this device.");
   g_assert_nonnull(strstr(unverified.accessible, "Identity not verified"));
   gh_mls_member_copy_clear(&unverified);
-  GhMlsMemberCopy before = gh_mls_member_copy(GH_MLS_MEMBER_UNVERIFIED, NULL);
-  g_assert_nonnull(strstr(before.explanation, "Already in the group when you joined"));
+  /* Nobody known (an MDK group's creator, owkh): gentle, no blame. */
+  GhMlsMemberCopy before = gh_mls_member_copy(GH_MLS_MEMBER_UNVERIFIED, NULL, FALSE);
+  g_assert_nonnull(strstr(before.explanation, "older apps"));
+  g_assert_null(strstr(before.explanation, "Added by"));
   gh_mls_member_copy_clear(&before);
-  GhMlsMemberCopy checking = gh_mls_member_copy(GH_MLS_MEMBER_CHECKING, "Alice");
+  /* Their own device (W24 review M1): never "Added by <themselves>". */
+  GhMlsMemberCopy own = gh_mls_member_copy(GH_MLS_MEMBER_UNVERIFIED, "Dave", TRUE);
+  g_assert_null(strstr(own.explanation, "Added by"));
+  g_assert_nonnull(strstr(own.explanation, "themselves"));
+  gh_mls_member_copy_clear(&own);
+  /* Checking claims no failure while it runs (W24 review L4). */
+  GhMlsMemberCopy checking = gh_mls_member_copy(GH_MLS_MEMBER_CHECKING, "Alice", FALSE);
   g_assert_cmpstr(checking.badge, ==, "Checking identity…");
+  g_assert_null(strstr(checking.explanation, "couldn’t"));
   gh_mls_member_copy_clear(&checking);
-  /* nostrc-prrl: a refused change is said as such, never as a wait. */
-  for (gint strict = 0; strict < 2; strict++) {
-    const gchar *refused = gh_mls_refused_copy(strict);
+  /* nostrc-prrl: a refused change is said as such, by its cause, never as
+   * a wait; no admin is blamed (W24 review L4). */
+  g_assert_null(gh_mls_refused_copy(GH_MLS_REFUSAL_NONE));
+  for (gint refusal = GH_MLS_REFUSAL_BROKEN_PROOF; refusal <= GH_MLS_REFUSAL_UNPROVEN;
+       refusal++) {
+    const gchar *refused = gh_mls_refused_copy(refusal);
     g_assert_null(strstr(refused, "yet"));
     g_assert_null(strstr(refused, "Waiting"));
+    g_assert_null(strstr(refused, "admin"));
     g_assert_nonnull(strstr(refused, "can’t be read"));
   }
-  g_assert_cmpstr(gh_mls_refused_copy(TRUE), !=, gh_mls_refused_copy(FALSE));
+  g_assert_nonnull(strstr(gh_mls_refused_copy(GH_MLS_REFUSAL_UNPROVEN),
+                          "Turning that preference off"));
+  g_assert_null(strstr(gh_mls_refused_copy(GH_MLS_REFUSAL_BROKEN_PROOF), "preference"));
+  /* Verify says what it reveals, and what came of it (W24 review H1). */
+  g_autofree gchar *prompt = gh_mls_verify_prompt("Dave");
+  g_assert_nonnull(strstr(prompt, "Those relays can see whom you look up"));
+  g_autofree gchar *yes = gh_mls_verify_result_copy(GH_MLS_MEMBER_VERIFIED, NULL, "Dave");
+  g_assert_cmpstr(yes, ==, "Verified: Dave published this device’s key.");
+  g_autofree gchar *no = gh_mls_verify_result_copy(GH_MLS_MEMBER_UNVERIFIED, NULL, "Dave");
+  g_assert_nonnull(strstr(no, "stays unverified"));
+  g_autoptr(GError) silent = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "x");
+  g_autofree gchar *nobody = gh_mls_verify_result_copy(GH_MLS_MEMBER_UNVERIFIED, silent, "Dave");
+  g_assert_cmpstr(nobody, ==, "No relay answered, so nothing was checked.");
 
   GhMlsIdentityCopy ready = gh_mls_identity_copy(GH_MLS_IDENTITY_ENROLLED);
   g_assert_true(ready.ready);
@@ -304,7 +329,7 @@ test_copy(void)
   g_autoptr(GError) update = g_error_new_literal(GH_MLS_SERVICE_ERROR,
                                                  GH_MLS_SERVICE_ERROR_NEEDS_UPDATE, "x");
   g_autofree gchar *update_words = gh_mls_error_copy(update);
-  g_assert_nonnull(strstr(update_words, "every member’s identity is verified"));
+  g_assert_nonnull(strstr(update_words, "every member’s app proves their account"));
   g_assert_nonnull(strstr(update_words, "Nothing was changed"));
   g_autoptr(GError) forged = g_error_new_literal(GH_MLS_SERVICE_ERROR,
                                                  GH_MLS_SERVICE_ERROR_FORGED_IDENTITY, "x");
@@ -1261,11 +1286,13 @@ reason_is(gpointer data)
 }
 
 /* Bob requires proofs: Alice's Add of the stranger (an older app) is
- * refused, and Bob's conversation and Group Info say so, not that
- * something is still on its way; off, it applies. Then Carol is added while
- * Bob is away and her KeyPackage is gone by then: Bob's Group Info marks
- * her "Identity not verified" with who added her; Alice, who added her
- * from her KeyPackage, sees no mark. */
+ * refused, and Bob's conversation and Group Info say so, by its cause, not
+ * that something is still on its way; off, it applies. Bob's Group Info
+ * marks the stranger "Identity not verified" with who added him, and offers
+ * Verify: confirmed first (it says what relays learn), it finds his
+ * KeyPackage and the mark goes. Carol's KeyPackage is gone by the time Bob
+ * verifies her: she stays marked, and the toast says so. Alice, who added
+ * both from their KeyPackages, sees no mark and is offered no Verify. */
 static void
 test_gui_unverified_member(void)
 {
@@ -1292,19 +1319,36 @@ test_gui_unverified_member(void)
   gh_mls_service_add_members_async(alice->service, ga, stranger, NULL, on_changed, &added);
   spin_until(op_done, &added, "Alice's Add of the stranger");
   g_assert_no_error(added.error);
-  SubtitleWait refused = { bob_window, gh_mls_refused_copy(TRUE) };
+  SubtitleWait refused = { bob_window, gh_mls_refused_copy(GH_MLS_REFUSAL_UNPROVEN) };
   spin_until(reason_is, &refused, "Bob's view saying the change was refused");
   g_assert_false(gh_conversation_view_get_decrypt_pending(view_of(bob_window)));
   GhMlsGroupInfoDialog *bob_info = show_info(bob_window, bob_conversation);
   g_assert_cmpstr(gh_mls_group_info_dialog_get_messages_status(bob_info), ==,
-                  gh_mls_refused_copy(TRUE));
+                  gh_mls_refused_copy(GH_MLS_REFUSAL_UNPROVEN));
   adw_dialog_force_close(ADW_DIALOG(bob_info));
   drain();
   g_settings_set_boolean(bob->settings, "only-join-verified-mls-groups", FALSE);
   SubtitleWait cleared = { bob_window, NULL };
   spin_until(reason_is, &cleared, "the refused change applying");
-  MemberIs stranger_ok = { gb, STRANGER, GH_MLS_MEMBER_VERIFIED };
-  spin_until(member_is, &stranger_ok, "the stranger confirmed from their KeyPackage");
+  MemberIs stranger_unverified = { gb, STRANGER, GH_MLS_MEMBER_UNVERIFIED };
+  spin_until(member_is, &stranger_unverified, "the stranger listed, nothing looked up");
+
+  /* Verify the stranger, from Group Info. */
+  bob_info = show_info(bob_window, bob_conversation);
+  g_assert_true(gh_mls_group_info_dialog_get_member_verifiable(bob_info, hex[STRANGER]));
+  g_assert_false(gh_mls_group_info_dialog_get_member_verifiable(bob_info, hex[ALICE]));
+  gtk_widget_activate_action(GTK_WIDGET(bob_info), "mls-group.verify", "s", hex[STRANGER]);
+  AdwAlertDialog *ask = gh_mls_group_info_dialog_get_verify_dialog(bob_info);
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(ask), "Those relays can see whom you"));
+  confirm(ask, GTK_WIDGET(bob_info), "verify-confirm");
+  spin_until(nothing_pending, bob_info, "the Verify");
+  g_assert_true(g_str_has_prefix(gh_mls_group_info_dialog_get_last_toast(bob_info),
+                                 "Verified: "));
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(bob_info, hex[STRANGER], NULL),
+                  ==, "");
+  g_assert_false(gh_mls_group_info_dialog_get_member_verifiable(bob_info, hex[STRANGER]));
+  adw_dialog_force_close(ADW_DIALOG(bob_info));
+  drain();
 
   /* Unverified: Carol's KeyPackage is gone before Bob reads the Add. */
   g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
@@ -1327,6 +1371,14 @@ test_gui_unverified_member(void)
   g_assert_true(g_str_has_prefix(explanation, "Added by "));
   g_assert_nonnull(strstr(explanation, "Groundhog couldn’t confirm this account owns this "
                                        "device."));
+  gtk_widget_activate_action(GTK_WIDGET(bob_info), "mls-group.verify", "s", hex[CAROL]);
+  confirm(gh_mls_group_info_dialog_get_verify_dialog(bob_info), GTK_WIDGET(bob_info),
+          "verify-confirm");
+  spin_until(nothing_pending, bob_info, "the Verify");
+  g_assert_nonnull(strstr(gh_mls_group_info_dialog_get_last_toast(bob_info),
+                          "stays unverified"));
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(bob_info, hex[CAROL], NULL),
+                  ==, "Identity not verified");
   g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(bob_info, hex[STRANGER], NULL),
                   ==, "");
   g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(bob_info, hex[ALICE], NULL),
@@ -1341,6 +1393,7 @@ test_gui_unverified_member(void)
   spin_until(member_is, &carol_verified, "Carol confirmed for Alice");
   GhMlsGroupInfoDialog *info = show_info(window, conversation);
   g_assert_cmpstr(gh_mls_group_info_dialog_get_member_identity(info, hex[CAROL], NULL), ==, "");
+  g_assert_false(gh_mls_group_info_dialog_get_member_verifiable(info, hex[CAROL]));
   adw_dialog_force_close(ADW_DIALOG(info));
   drain();
 

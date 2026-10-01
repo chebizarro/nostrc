@@ -33,16 +33,28 @@ end).
 >   legacy-profile groups. Every adopted or unrecognised group still fails
 >   closed, and a proof that does not verify is refused everywhere.
 > - **What Groundhog does with them.** Groundhog confirms each such device
->   from a KeyPackage its account signed and marks the rest "Identity not
->   verified".
+>   from evidence it already holds (the KeyPackage it added the device with,
+>   KeyPackages it already fetched, the device's own key renewal), and marks
+>   the rest "Identity not verified". A per-member Verify looks the person's
+>   KeyPackages up on the discovery relays and their write relays, never the
+>   group relays, and only when the user asks (W24 review H1).
+> - **A member's own key rotation keeps them verified.** In case 1b, Dave
+>   (verified) self-updates and MDK rotates his signature key; the new key
+>   was signed in by the old one, so Groundhog still shows him verified
+>   (W24 review M1).
 > - **The old refusals** are now the opt-in preference
 >   `only-join-verified-mls-groups`.
 > - **Cases 1b, 1c and 2a/2b** pass in default mode, and their refusals pass
 >   with the preference on. Rerun against MDK v0.8.0 `575ae29d`: 7/7.
 > - **1c (prrl) is honest now.** A refused Commit is `change-refused`, never
 >   decrypt-pending, and it applies once the preference is turned off.
-> - **One finding: an MDK group's creator stays "Identity not verified".**
->   Her leaf key appears in no KeyPackage she published (nostrc-owkh).
+> - **An MDK group's creator.** Her leaf key appears in no KeyPackage she
+>   published (nostrc-owkh), so KeyPackage evidence can't confirm her. When
+>   she is the one who invited us, the Welcome's GroupInfo is signed by her
+>   device and the NIP-59 seal by her account: libmarmot records that signer
+>   (`welcome_signer`), and Groundhog shows her verified. A creator who did
+>   not send our Welcome stays "Identity not verified", gently worded ("as
+>   with many older apps").
 
 ## Setup
 

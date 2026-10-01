@@ -81,4 +81,64 @@ forge_add_with_bad_proof(App *admin, GhMlsGroup *group, guint claimed, guint for
   return out;
 }
 
+/* `admin`'s modified client: one Commit removing `claimed`'s leaf and adding
+ * a leaf that claims `claimed`, made of fresh keys of the admin's (no proof):
+ * the new leaf lands in the old slot (W24 review B1). libmarmot judges it a
+ * new member the admin added, never `claimed`'s own renewal. The admin's own
+ * state is not changed. */
+static G_GNUC_UNUSED gchar *
+forge_replace(App *admin, GhMlsGroup *group, guint claimed)
+{
+  Marmot *m = gh_mls_service_get_marmot(admin->service);
+  const gchar *gid_hex = gh_mls_group_get_group_id(group);
+  gsize gid_len = strlen(gid_hex) / 2;
+  guint8 *gid_bytes = g_malloc(gid_len);
+  g_assert_true(nostr_hex2bin(gid_bytes, gid_hex, gid_len));
+  MarmotGroupId gid = marmot_group_id_new(gid_bytes, gid_len);
+  g_free(gid_bytes);
+  uint8_t *blob = NULL;
+  size_t len = 0;
+  g_assert_cmpint(m->storage->mls_load(m->storage->ctx, "mls_group", gid.data, gid.len, &blob,
+                                       &len), ==, MARMOT_OK);
+  MlsGroup g;
+  memset(&g, 0, sizeof g);
+  g_assert_cmpint(mls_group_deserialize(blob, len, &g), ==, 0);
+  sodium_memzero(blob, len);
+  free(blob);
+  MarmotGroup *info = NULL;
+  g_assert_cmpint(marmot_get_group(m, &gid, &info), ==, MARMOT_OK);
+  guint8 claimed_pk[32];
+  g_assert_true(nostr_hex2bin(claimed_pk, hex[claimed], 32));
+  uint32_t slot = UINT32_MAX;
+  for (uint32_t i = 0; i < g.tree.n_leaves; i++) {
+    uint8_t id[32];
+    if (marmot_mls_sender_identity(&g, i, id) == 0 && memcmp(id, claimed_pk, 32) == 0)
+      slot = i;
+  }
+  g_assert_cmpuint(slot, !=, UINT32_MAX);
+  MlsKeyPackage kp;
+  MlsKeyPackagePrivate priv;
+  g_assert_cmpint(mls_key_package_create_unsigned(&kp, &priv, claimed_pk, 32, NULL, 0), ==, 0);
+  g_assert_cmpint(mls_key_package_sign(&kp, &priv), ==, 0);
+  uint8_t exporter[32];
+  memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+  const MlsKeyPackage *kps[] = { &kp };
+  MlsAddResult add;
+  memset(&add, 0, sizeof add);
+  g_assert_cmpint(mls_group_replace_members(&g, &slot, 1, kps, 1, &add), ==, 0);
+  char *json = marmot_commit_build_event(add.commit_data, add.commit_len, exporter,
+                                         info->nostr_group_id, g_get_real_time() / G_USEC_PER_SEC);
+  g_assert_nonnull(json);
+  gchar *out = g_strdup(json);
+  free(json);
+  sodium_memzero(exporter, sizeof exporter);
+  mls_add_result_clear(&add);
+  mls_key_package_clear(&kp);
+  mls_key_package_private_clear(&priv);
+  mls_group_free(&g);
+  marmot_group_free(info);
+  marmot_group_id_free(&gid);
+  return out;
+}
+
 #endif

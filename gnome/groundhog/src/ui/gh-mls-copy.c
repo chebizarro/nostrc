@@ -20,7 +20,7 @@ gh_mls_invitee_copy(GhMlsInviteeState state)
     return _("Hasn’t set up encrypted groups");
   case GH_MLS_INVITEE_NEEDS_UPDATE:
     return _("Their app can’t prove their account, and you only join groups where every "
-             "identity is verified");
+             "member’s app proves their account");
   case GH_MLS_INVITEE_UNREACHABLE:
     return _("Couldn’t check: no relay answered");
   case GH_MLS_INVITEE_NO_RELAYS:
@@ -101,7 +101,7 @@ gh_mls_error_copy(const GError *error)
       return g_strdup(_("Approve this device in Nostr Signer first."));
     case GH_MLS_SERVICE_ERROR_NEEDS_UPDATE:
       return g_strdup(_("Someone uses an app that can’t prove their account, and you only join "
-                        "groups where every member’s identity is verified. Nothing was "
+                        "groups where every member’s app proves their account. Nothing was "
                         "changed."));
     case GH_MLS_SERVICE_ERROR_FORGED_IDENTITY:
       return g_strdup(_("Someone’s account proof is forged or broken, so Groundhog refused it. "
@@ -280,27 +280,33 @@ gh_mls_parse_relay(const gchar *text, GError **error)
 }
 
 GhMlsMemberCopy
-gh_mls_member_copy(GhMlsMemberIdentity identity, const gchar *added_by)
+gh_mls_member_copy(GhMlsMemberIdentity identity, const gchar *added_by, gboolean added_by_self)
 {
   GhMlsMemberCopy copy = { NULL, NULL, NULL };
   switch (identity) {
   case GH_MLS_MEMBER_CHECKING:
     copy.badge = _("Checking identity…");
+    copy.explanation = g_strdup(_("Groundhog is asking relays for a key this person published."));
     break;
   case GH_MLS_MEMBER_UNVERIFIED:
     copy.badge = _("Identity not verified");
+    if (added_by_self)
+      copy.explanation = g_strdup(_("They added this device themselves. Groundhog couldn’t "
+                                    "confirm this account owns this device."));
+    else if (added_by && *added_by)
+      /* TRANSLATORS: %s is the group admin's name or short npub. */
+      copy.explanation = g_strdup_printf(_("Added by %s. Groundhog couldn’t confirm this "
+                                           "account owns this device."), added_by);
+    else
+      /* Common for older apps, and so for an MDK group's creator (owkh). */
+      copy.explanation = g_strdup(_("Their app can’t prove their account, as with many older "
+                                    "apps, and Groundhog has no key they published to compare."));
     break;
   case GH_MLS_MEMBER_PROVEN:
   case GH_MLS_MEMBER_VERIFIED:
   default:
     return copy;
   }
-  copy.explanation = added_by && *added_by
-    /* TRANSLATORS: %s is the group admin's name or short npub. */
-    ? g_strdup_printf(_("Added by %s. Groundhog couldn’t confirm this account owns this "
-                        "device."), added_by)
-    : g_strdup(_("Already in the group when you joined. Groundhog couldn’t confirm this "
-                 "account owns this device."));
   copy.accessible = g_strdup_printf("%s. %s", copy.badge, copy.explanation);
   return copy;
 }
@@ -313,11 +319,46 @@ gh_mls_member_copy_clear(GhMlsMemberCopy *copy)
 }
 
 const gchar *
-gh_mls_refused_copy(gboolean requires_proofs)
+gh_mls_refused_copy(GhMlsRefusal refusal)
 {
-  if (requires_proofs)
-    return _("An admin added someone whose identity can’t be verified. You only take part in "
-             "groups where every identity is verified, so new messages here can’t be read.");
-  return _("An admin added someone with a forged account proof, and Groundhog refused the "
-           "change. New messages here can’t be read until an admin fixes the group.");
+  switch (refusal) {
+  case GH_MLS_REFUSAL_UNPROVEN:
+    return _("Groundhog refused a change to this group: it brings in someone whose app can’t "
+             "prove their account, or whose proof doesn’t check out, and you only join groups "
+             "where every member’s app proves their account. New messages here can’t be read. "
+             "Turning that preference off tries the change again.");
+  case GH_MLS_REFUSAL_BROKEN_PROOF:
+    return _("Groundhog refused a change to this group: an account proof in it doesn’t check "
+             "out. New messages here can’t be read until the group moves past that change.");
+  case GH_MLS_REFUSAL_NONE:
+  default:
+    return NULL;
+  }
+}
+
+gchar *
+gh_mls_verify_prompt(const gchar *name)
+{
+  /* TRANSLATORS: %s is the member's name or short npub. */
+  return g_strdup_printf(_("Groundhog will ask relays for keys %s published and compare them "
+                           "with this device. Those relays can see whom you look up, but not "
+                           "this group."), name);
+}
+
+gchar *
+gh_mls_verify_result_copy(GhMlsMemberIdentity identity, const GError *error, const gchar *name)
+{
+  if (error) {
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE))
+      return g_strdup(_("No relay answered, so nothing was checked."));
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT))
+      return g_strdup(_("Add a discovery relay in Preferences to verify identities."));
+    return gh_mls_error_copy(error);
+  }
+  if (identity == GH_MLS_MEMBER_VERIFIED || identity == GH_MLS_MEMBER_PROVEN)
+    /* TRANSLATORS: %s is the member's name or short npub. */
+    return g_strdup_printf(_("Verified: %s published this device’s key."), name);
+  /* TRANSLATORS: %s is the member's name or short npub. */
+  return g_strdup_printf(_("%s hasn’t published a key for this device. Their identity stays "
+                           "unverified."), name);
 }

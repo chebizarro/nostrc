@@ -99,8 +99,8 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
 
       Adw.SwitchRow verified_mls_groups_row {
-        title: _("Only join groups where every member's identity is verified");
-        subtitle: _("Refuses people whose app can't prove their account, like older White Noise or Amethyst. If an admin adds one to a group you're in, you can't read its new messages.");
+        title: _("Only join groups where every member's app proves their account");
+        subtitle: _("Refuses people whose app can't prove their account, like older White Noise or Amethyst, even if Groundhog verified them another way. If an admin adds one to a group you're in, you can't read its new messages.");
       }
 
       Adw.SwitchRow message_previews_row {

@@ -7,6 +7,10 @@
  *    inbox relays and nowhere else; no bare kind 444 anywhere; every kind
  *    445 is signed by a fresh key that is no account's, and the group relay
  *    only ever sees ephemeral AUTH keys;
+ *  - member identity (W24 review H1): no KeyPackage lookup about a group
+ *    member happens without the user asking (Verify), and none ever reaches
+ *    a group relay -- only the discovery relays and the person's own write
+ *    relays, which can't tie it to the group;
  *  - H7: no plaintext, group name or key canary in any file outside the
  *    encrypted store, raw (open and after close), nor in the logs
  *    (G_MESSAGES_DEBUG=all).
@@ -284,6 +288,104 @@ test_no_secrets_outside_the_store(void)
   world_down(&w);
 }
 
+/* REQs for KeyPackages (kind 30443) naming `key` that `relay` received. */
+static guint
+key_package_reqs(WireRelay *relay, guint key)
+{
+  guint n = 0;
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
+        strstr(frame->text, "30443") && strstr(frame->text, hex[key]))
+      n++;
+  }
+  return n;
+}
+
+typedef struct {
+  gboolean done;
+  GhMlsMemberIdentity identity;
+} VerifyWait;
+
+static gboolean
+verify_finished(gpointer data)
+{
+  return ((VerifyWait *)data)->done;
+}
+
+static void
+on_verified(GObject *source, GAsyncResult *result, gpointer data)
+{
+  VerifyWait *wait = data;
+  g_autoptr(GError) error = NULL;
+  wait->identity = gh_mls_service_verify_member_finish(GH_MLS_SERVICE(source), result, &error);
+  g_assert_no_error(error);
+  wait->done = TRUE;
+}
+
+/* W24 review H1: Carol (an older app, no account proof) joins through
+ * Alice's Add. Bob learns nothing about her by himself: no KeyPackage REQ
+ * naming her leaves Bob, and the group relay sees none from anyone. Only
+ * Bob's Verify asks, and only the discovery relay and Carol's write relay. */
+static void
+test_member_lookups_on_demand_only(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  for (guint i = 0; i < G_N_ELEMENTS(keys); i++)
+    spin_until(key_package_published, &w.apps[keys[i]], "a KeyPackage published");
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Lookups", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+
+  /* Carol's KeyPackage without the proof, on her write relay. */
+  MarmotConfig config = marmot_config_default();
+  config.allow_unproven_self = true;
+  Marmot *legacy = marmot_new_with_config(marmot_storage_memory_new(), &config);
+  guint8 pubkey[32];
+  g_assert_true(nostr_hex2bin(pubkey, hex[CAROL], sizeof pubkey));
+  const char *relays[] = { w.w.url };
+  MarmotKeyPackageResult made;
+  memset(&made, 0, sizeof made);
+  g_assert_cmpint(marmot_create_key_package_unsigned(legacy, pubkey, relays, 1, &made), ==,
+                  MARMOT_OK);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, made.event_json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[CAROL]), ==, 0);
+  char *signed_json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  wire_relay_inject(&w.w, signed_json);
+  free(signed_json);
+  marmot_key_package_result_free(&made);
+  marmot_free(legacy);
+
+  accept_contact(alice, CAROL);
+  const gchar *carol[] = { hex[CAROL], NULL };
+  OpWait added = { 0 };
+  gh_mls_service_add_members_async(alice->service, ga, carol, NULL, on_changed, &added);
+  spin_until(op_done, &added, "Alice's Add of Carol");
+  g_assert_no_error(added.error);
+  guint asked = key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL);
+  wait_members(gb, 3);
+  wait_live(gb);
+  drain();
+  g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[CAROL], NULL), ==,
+                  GH_MLS_MEMBER_UNVERIFIED);
+  g_assert_cmpuint(key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL), ==, asked);
+  g_assert_cmpuint(key_package_reqs(&w.x, CAROL) + key_package_reqs(&w.g, CAROL), ==, 0);
+
+  VerifyWait wait = { 0 };
+  gh_mls_service_verify_member_async(bob->service, gb, hex[CAROL], NULL, on_verified, &wait);
+  spin_until(verify_finished, &wait, "Bob's Verify");
+  g_assert_cmpint(wait.identity, ==, GH_MLS_MEMBER_VERIFIED);
+  g_assert_cmpuint(key_package_reqs(&w.e, CAROL), >, 0);
+  g_assert_cmpuint(key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL), >, asked);
+  g_assert_cmpuint(key_package_reqs(&w.x, CAROL) + key_package_reqs(&w.g, CAROL), ==, 0);
+  world_down(&w);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -294,6 +396,8 @@ main(int argc, char **argv)
                   test_pt8_no_key_package_lookup_for_requests);
   g_test_add_func("/groundhog/privacy-mls/welcome-only-as-gift-wrap",
                   test_welcome_only_as_gift_wrap);
+  g_test_add_func("/groundhog/privacy-mls/member-lookups-on-demand-only",
+                  test_member_lookups_on_demand_only);
   g_test_add_func("/groundhog/privacy-mls/no-secrets-outside-the-store",
                   test_no_secrets_outside_the_store);
   gint rc = g_test_run();

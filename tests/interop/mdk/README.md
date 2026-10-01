@@ -41,8 +41,10 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
   proof. The `-strict` cases set the `only-join-verified-mls-groups`
   preference and assert the refusals. These include nostrc-prrl: an MDK
   admin's Add of an MDK member is shown as refused, never as a wait, and
-  applies once the preference is off. Also since W24: an MDK member leaving
-  and Groundhog leaving (nostrc-2um6).
+  applies once the preference is off. Default-mode cases verify MDK members
+  only on request (Verify), and check that a member's own key-rotating
+  self-update keeps them verified (W24 review M1). Also since W24: an MDK
+  member leaving and Groundhog leaving (nostrc-2um6).
 - The container reaches the test's relays on the host's 127.0.0.1:
   - Linux: `--network host`.
   - macOS (Docker Desktop): `MDK_DRIVER_DIAL_HOST=host.docker.internal`.

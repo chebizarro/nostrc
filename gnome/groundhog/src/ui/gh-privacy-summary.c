@@ -203,6 +203,10 @@ add_mls(const GhPrivacyContext *context, GhPrivacySummary *summary, GStrvBuilder
                                     "relays see their size and time.")));
   g_strv_builder_add(visible, tr(N_("Anyone can see that you can join encrypted groups, from the "
                                     "key packages you publish.")));
+  /* W24 review H1: lookups only when you invite or ask to verify. */
+  g_strv_builder_add(visible, tr(N_("Discovery relays see whose published keys you look up: "
+                                    "when you invite someone, or ask to verify a member. "
+                                    "Groundhog never asks the group's relays.")));
   g_strv_builder_add(visible, tr(N_("Members see what you write, your public key and the "
                                     "member list.")));
 

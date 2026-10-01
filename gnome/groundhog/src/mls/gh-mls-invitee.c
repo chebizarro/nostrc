@@ -34,18 +34,6 @@ gh_mls_invitee_classify(const GhMlsKeyPackage *key_package, const GError *error,
   return GH_MLS_INVITEE_FAILED;
 }
 
-/* The service's rule (gh-mls-service.c requires_proofs()). */
-static gboolean
-requires_proofs(GSettings *settings)
-{
-  if (!settings)
-    return FALSE;
-  g_autoptr(GSettingsSchema) schema = NULL;
-  g_object_get(settings, "settings-schema", &schema, NULL);
-  return schema && g_settings_schema_has_key(schema, "only-join-verified-mls-groups") &&
-         g_settings_get_boolean(settings, "only-join-verified-mls-groups");
-}
-
 static void
 lookup_done(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -69,7 +57,7 @@ gh_mls_invitee_check_async(GhAccountController *accounts, GSettings *settings,
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_invitee_check_async);
-  g_task_set_task_data(task, GINT_TO_POINTER(requires_proofs(settings)), NULL);
+  g_task_set_task_data(task, GINT_TO_POINTER(gh_mls_requires_proofs(settings)), NULL);
   /* The service's own lookup sources (gh-mls-service.c discovery_relays()):
    * the lookup skips any URL it can't use. */
   g_auto(GStrv) sources = settings ? g_settings_get_strv(settings, "discovery-relays")

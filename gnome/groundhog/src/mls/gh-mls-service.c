@@ -110,9 +110,13 @@ struct _GhMlsGroup {
   GHashTable *devices;       /* "account:signature key" (hex) -> Device */
   gboolean devices_loaded;   /* read once: a device new after that was just added */
   gchar *last_committer;     /* hex: whose Commit the next refresh follows, or NULL */
+  guint32 last_committer_leaf; /* its leaf, the one leaf it renews (UINT32_MAX: none) */
   guint unverified;          /* accounts CHECKING or UNVERIFIED */
   GPtrArray *own_evidence;   /* KeyPackage JSON of the account's own Adds */
+  gboolean records_forgotten; /* ended for good: its member records are gone (N3) */
   gchar *refused_json;       /* an admin's Commit refused for good (nostrc-prrl), or NULL */
+  gint64 refused_at;         /* its created_at: the cursor stays behind it (L2) */
+  GhMlsRefusal refusal;
 };
 
 enum {
@@ -196,8 +200,9 @@ struct _GhMlsService {
   gboolean key_package_rotate;
   GhRelayPublish *key_package_publish;
 
-  /* Member identity lookups in flight (nostrc-6ukh) */
-  GHashTable *verifying;           /* account hex: an evidence lookup runs */
+  /* Member identities (nostrc-6ukh, W24 review H1) */
+  GHashTable *verifying;           /* account hex: a Verify the user asked for runs */
+  GPtrArray *known_key_packages;   /* KeyPackage JSON already fetched (invitations, Verify) */
 
   /* Welcomes and sends in flight */
   GHashTable *deliveries;          /* key (welcome id hex or outbox id) -> Delivery */
@@ -270,6 +275,33 @@ gh_mls_member_identity_get_type(void)
     g_once_init_leave(&type, g_enum_register_static("GhMlsMemberIdentity", values));
   }
   return type;
+}
+
+GType
+gh_mls_refusal_get_type(void)
+{
+  static gsize type = 0;
+  if (g_once_init_enter(&type)) {
+    static const GEnumValue values[] = {
+      { GH_MLS_REFUSAL_NONE, "GH_MLS_REFUSAL_NONE", "none" },
+      { GH_MLS_REFUSAL_BROKEN_PROOF, "GH_MLS_REFUSAL_BROKEN_PROOF", "broken-proof" },
+      { GH_MLS_REFUSAL_UNPROVEN, "GH_MLS_REFUSAL_UNPROVEN", "unproven" },
+      { 0, NULL, NULL }
+    };
+    g_once_init_leave(&type, g_enum_register_static("GhMlsRefusal", values));
+  }
+  return type;
+}
+
+gboolean
+gh_mls_requires_proofs(GSettings *settings)
+{
+  if (!settings)
+    return FALSE;
+  g_autoptr(GSettingsSchema) schema = NULL;
+  g_object_get(settings, "settings-schema", &schema, NULL);
+  return schema && g_settings_schema_has_key(schema, VERIFIED_ONLY_KEY) &&
+         g_settings_get_boolean(settings, VERIFIED_ONLY_KEY);
 }
 
 GType
@@ -734,8 +766,13 @@ gh_mls_group_get_member_identity(GhMlsGroup *self, const gchar *member, gchar **
     *out_added_by = NULL;
   g_return_val_if_fail(GH_IS_MLS_GROUP(self), GH_MLS_MEMBER_PROVEN);
   Device *device = member ? weakest_device(self, member) : NULL;
-  if (!device)
-    return GH_MLS_MEMBER_PROVEN;
+  if (!device) {
+    /* A listed member whose devices could not be read is not shown as
+     * fine (W24 review N2); someone not in the group has nothing to show. */
+    gboolean listed = member && self->members &&
+                      g_strv_contains((const gchar *const *)self->members, member);
+    return listed ? GH_MLS_MEMBER_UNVERIFIED : GH_MLS_MEMBER_PROVEN;
+  }
   if (out_added_by)
     *out_added_by = g_strdup(device->added_by);
   return device->state;
@@ -753,6 +790,13 @@ gh_mls_group_get_change_refused(GhMlsGroup *self)
 {
   g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
   return self->refused_json != NULL;
+}
+
+GhMlsRefusal
+gh_mls_group_get_refusal(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), GH_MLS_REFUSAL_NONE);
+  return self->refused_json ? self->refusal : GH_MLS_REFUSAL_NONE;
 }
 
 GStrv
@@ -907,6 +951,7 @@ gh_mls_group_init(GhMlsGroup *self)
   self->leavers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->devices = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, device_free);
   self->own_evidence = g_ptr_array_new_with_free_func(g_free);
+  self->last_committer_leaf = G_MAXUINT32;
 }
 
 void
@@ -1037,10 +1082,12 @@ group_list_room(GhMlsGroup *group)
     gh_conversation_store_ensure_group(self->conversations, group->room_id, group->name);
 }
 
-/* ---- Member identities (nostrc-6ukh) ------------------------------------------------------ */
+/* ---- Member identities (nostrc-6ukh, W24 review H1/M1) ------------------------------------ */
 
 static GStrv discovery_relays(GhMlsService *self);
 static void verify_group(GhMlsGroup *group);
+
+#define MAX_KNOWN_KEY_PACKAGES 256
 
 static void
 device_save(GhMlsGroup *group, Device *device, GhStoreMlsMemberCheck check)
@@ -1078,12 +1125,30 @@ sync_unverified(GhMlsGroup *group)
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_UNVERIFIED_MEMBERS]);
 }
 
-/* A device new to us: PROVEN by libmarmot, or what the store says. A device
- * that appears after the group was first read was added by the Commit just
- * applied (group->last_committer). */
+/* The device of `account` in leaf `leaf` before the Commit just applied. */
+static Device *
+device_at(GhMlsGroup *group, const gchar *account, guint32 leaf)
+{
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, group->devices);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Device *device = value;
+    if (device->leaf.leaf_index == leaf && g_strcmp0(device->account, account) == 0)
+      return device;
+  }
+  return NULL;
+}
+
+/* A device new to us: PROVEN by libmarmot; else what the store says; else,
+ * when `renewed_from` is the key this leaf had before its own Commit (its
+ * UpdatePath, signed in by that key: libmarmot's committer_leaf), what was
+ * known of that key (W24 review M1); else UNVERIFIED. A device that
+ * appears after the group was first read, and is no renewal, was added by
+ * the Commit just applied (group->last_committer). */
 static Device *
 device_new(GhMlsGroup *group, const MarmotMemberIdentity *leaf, const gchar *account,
-           const gchar *signature_key)
+           const gchar *signature_key, const Device *renewed_from)
 {
   GhMlsService *self = group->service;
   Device *device = g_new0(Device, 1);
@@ -1102,24 +1167,44 @@ device_new(GhMlsGroup *group, const MarmotMemberIdentity *leaf, const gchar *acc
     g_message("Groundhog could not read what it knows about a group member: %s",
               error->message);
   device->added_by = g_steal_pointer(&record.added_by);
-  gboolean fresh = found && record.check == GH_STORE_MLS_MEMBER_NOT_FOUND &&
-                   now_s(self) - record.checked_at < GH_MLS_MEMBER_RECHECK_S;
+  gboolean save = FALSE;
+  GhStoreMlsMemberCheck check = found ? record.check : GH_STORE_MLS_MEMBER_UNCHECKED;
   if (leaf->status == MARMOT_MEMBER_IDENTITY_UNPROVEN && found &&
-      record.check == GH_STORE_MLS_MEMBER_VERIFIED)
+      record.check == GH_STORE_MLS_MEMBER_VERIFIED) {
     device->state = GH_MLS_MEMBER_VERIFIED;
-  else if (leaf->status == MARMOT_MEMBER_IDENTITY_UNPROVEN && !fresh)
-    device->state = GH_MLS_MEMBER_CHECKING;
-  else
-    device->state = GH_MLS_MEMBER_UNVERIFIED;   /* none found lately, or a bad proof */
-  if (!device->added_by && group->devices_loaded && lower_hex64(group->last_committer)) {
-    device->added_by = g_strdup(group->last_committer);
-    device_save(group, device, found ? record.check : GH_STORE_MLS_MEMBER_UNCHECKED);
+  } else if (leaf->status == MARMOT_MEMBER_IDENTITY_UNPROVEN && leaf->welcome_signer) {
+    /* Its account sent us the Welcome this device signed (the NIP-59
+     * seal): the account vouched for it, as for a KeyPackage it published
+     * -- typically an MDK group's creator who invited us (owkh). */
+    device->state = GH_MLS_MEMBER_VERIFIED;
+    check = GH_STORE_MLS_MEMBER_VERIFIED;
+    save = TRUE;
+  } else if (leaf->status == MARMOT_MEMBER_IDENTITY_UNPROVEN && renewed_from &&
+             (renewed_from->state == GH_MLS_MEMBER_VERIFIED ||
+              renewed_from->state == GH_MLS_MEMBER_PROVEN)) {
+    device->state = GH_MLS_MEMBER_VERIFIED;   /* the verified key signed this one in */
+    check = GH_STORE_MLS_MEMBER_VERIFIED;
+    save = TRUE;
+  } else {
+    device->state = renewed_from && renewed_from->state == GH_MLS_MEMBER_CHECKING
+                      ? GH_MLS_MEMBER_CHECKING : GH_MLS_MEMBER_UNVERIFIED;
   }
+  if (!device->added_by && renewed_from && renewed_from->added_by) {
+    device->added_by = g_strdup(renewed_from->added_by);   /* still whoever added it */
+    save = TRUE;
+  } else if (!device->added_by && !renewed_from && group->devices_loaded &&
+             lower_hex64(group->last_committer)) {
+    device->added_by = g_strdup(group->last_committer);
+    save = TRUE;
+  }
+  if (save)
+    device_save(group, device, check);
   gh_store_mls_member_clear(&record);
   return device;
 }
 
-/* Reads the group's devices from libmarmot; TRUE when what it shows changed. */
+/* Reads the group's devices from libmarmot; TRUE when what it shows changed.
+ * Devices that left are forgotten in the store (W24 review N3). */
 static gboolean
 refresh_devices(GhMlsGroup *group)
 {
@@ -1147,17 +1232,33 @@ refresh_devices(GhMlsGroup *group)
         changed = TRUE;
       }
     } else {
-      device = device_new(group, &leaves[i], account, signature_key);
+      /* Only the committer's own leaf is renewed in place; any other new
+       * key is a device someone added (libmarmot, W24 review B1). */
+      const Device *renewed_from =
+        leaves[i].leaf_index == group->last_committer_leaf &&
+            g_strcmp0(account, group->last_committer) == 0
+          ? device_at(group, account, leaves[i].leaf_index) : NULL;
+      device = device_new(group, &leaves[i], account, signature_key, renewed_from);
       changed = TRUE;
     }
     g_hash_table_replace(next, key, device);
   }
   free(leaves);
-  changed |= g_hash_table_size(group->devices) > 0;   /* devices that left */
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, group->devices);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Device *gone = value;
+    changed = TRUE;
+    if (gone->state != GH_MLS_MEMBER_PROVEN)
+      gh_store_mls_member_delete(self->store, group->gid_hex, gone->account,
+                                 gone->signature_key, NULL);
+  }
   g_hash_table_unref(group->devices);
   group->devices = next;
   group->devices_loaded = TRUE;
   g_clear_pointer(&group->last_committer, g_free);
+  group->last_committer_leaf = G_MAXUINT32;
   sync_unverified(group);
   return changed;
 }
@@ -1176,90 +1277,24 @@ device_matches(const Device *device, GPtrArray *candidates)
   return FALSE;
 }
 
-typedef struct {
-  GhMlsService *self;   /* a reference */
-  gchar *account;
-  guint64 run;
-} Verify;
-
-/* The evidence lookup for one account ended: every group's CHECKING
- * devices of that account get their verdict. found NULL: no relay
- * answered, so nothing is recorded (it is looked up again next start). */
+/* A KeyPackage event fetched anyway (an invitation, a Verify): evidence
+ * kept in memory for the run, bounded. */
 static void
-verify_done(GObject *source, GAsyncResult *result, gpointer data)
+remember_key_package(GhMlsService *self, const gchar *json)
 {
-  (void)source;
-  Verify *verify = data;
-  GhMlsService *self = verify->self;
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GPtrArray) found = gh_mls_key_package_evidence_lookup_finish(result, &error);
-  if (!self->disposed && verify->run == self->run) {
-    g_hash_table_remove(self->verifying, verify->account);
-    if (!found)
-      g_debug("Groundhog could not look a group member's KeyPackages up: %s", error->message);
-    for (guint i = 0; i < self->groups->len; i++) {
-      GhMlsGroup *group = g_ptr_array_index(self->groups, i);
-      gboolean changed = FALSE;
-      GHashTableIter iter;
-      gpointer value;
-      g_hash_table_iter_init(&iter, group->devices);
-      while (g_hash_table_iter_next(&iter, NULL, &value)) {
-        Device *device = value;
-        if (device->state != GH_MLS_MEMBER_CHECKING ||
-            g_strcmp0(device->account, verify->account) != 0)
-          continue;
-        if (device_matches(device, found)) {
-          device->state = GH_MLS_MEMBER_VERIFIED;
-          device_save(group, device, GH_STORE_MLS_MEMBER_VERIFIED);
-        } else {
-          device->state = GH_MLS_MEMBER_UNVERIFIED;
-          if (found)   /* relays answered: nothing of theirs matches */
-            device_save(group, device, GH_STORE_MLS_MEMBER_NOT_FOUND);
-        }
-        changed = TRUE;
-      }
-      if (changed) {
-        sync_unverified(group);
-        g_signal_emit(group, group_signals[GROUP_SIGNAL_MEMBERS_CHANGED], 0);
-      }
-    }
-  }
-  g_object_unref(self);
-  g_free(verify->account);
-  g_free(verify);
+  if (!json)
+    return;
+  for (guint i = 0; i < self->known_key_packages->len; i++)
+    if (g_str_equal(g_ptr_array_index(self->known_key_packages, i), json))
+      return;
+  if (self->known_key_packages->len >= MAX_KNOWN_KEY_PACKAGES)
+    g_ptr_array_remove_index(self->known_key_packages, 0);
+  g_ptr_array_add(self->known_key_packages, g_strdup(json));
 }
 
-/* One evidence lookup per account at a time, on the group's relays and the
- * discovery relays, then the account's own write relays. */
-static void
-verify_lookup(GhMlsGroup *group, const gchar *account)
-{
-  GhMlsService *self = group->service;
-  g_autoptr(GStrvBuilder) urls = g_strv_builder_new();
-  g_autoptr(GHashTable) added = g_hash_table_new(g_str_hash, g_str_equal);
-  g_auto(GStrv) discovery = discovery_relays(self);
-  for (guint i = 0; group->relays && group->relays[i]; i++)
-    if (g_hash_table_add(added, group->relays[i]))
-      g_strv_builder_add(urls, group->relays[i]);
-  for (guint i = 0; discovery && discovery[i]; i++)
-    if (g_hash_table_add(added, discovery[i]))
-      g_strv_builder_add(urls, discovery[i]);
-  g_auto(GStrv) relays = g_strv_builder_end(urls);
-  if (!relays[0])
-    return;   /* nowhere to look: it stays CHECKING until there is */
-  g_hash_table_add(self->verifying, g_strdup(account));
-  Verify *verify = g_new0(Verify, 1);
-  verify->self = g_object_ref(self);
-  verify->account = g_strdup(account);
-  verify->run = self->run;
-  gh_mls_key_package_evidence_lookup_async(self->accounts, (const gchar *const *)relays,
-                                           account, self->lookup_deadline, self->cancellable,
-                                           verify_done, verify);
-}
-
-/* Confirms the group's CHECKING devices: from the KeyPackages the account
- * itself added them with, else by an evidence lookup (in the background:
- * nothing waits for it). */
+/* Confirms the group's unconfirmed devices from evidence already in hand:
+ * the KeyPackages the account added them with, and those it fetched anyway.
+ * No network traffic (W24 review H1). */
 static void
 verify_group(GhMlsGroup *group)
 {
@@ -1272,14 +1307,13 @@ verify_group(GhMlsGroup *group)
   g_hash_table_iter_init(&iter, group->devices);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Device *device = value;
-    if (device->state != GH_MLS_MEMBER_CHECKING)
+    if (device->state != GH_MLS_MEMBER_UNVERIFIED)
       continue;
-    if (device_matches(device, group->own_evidence)) {
+    if (device_matches(device, group->own_evidence) ||
+        device_matches(device, self->known_key_packages)) {
       device->state = GH_MLS_MEMBER_VERIFIED;
       device_save(group, device, GH_STORE_MLS_MEMBER_VERIFIED);
       changed = TRUE;
-    } else if (running(self) && !g_hash_table_contains(self->verifying, device->account)) {
-      verify_lookup(group, device->account);
     }
   }
   if (changed) {
@@ -1300,17 +1334,75 @@ remember_own_evidence(GhMlsGroup *group, GPtrArray *key_packages)
   }
 }
 
+static gint64
+event_created_at(const gchar *json)
+{
+  gint64 at = 0;
+  NostrEvent *event = json ? nostr_event_new() : NULL;
+  if (event && nostr_event_deserialize_compact(event, json, NULL) == 1)
+    at = nostr_event_get_created_at(event);
+  if (event)
+    nostr_event_free(event);
+  return at;
+}
+
 /* An admin's Commit libmarmot refused for good (nostrc-prrl): the group
- * can't follow it, and nothing is "waiting". */
+ * can't follow it, and nothing is "waiting". Kept in the store with why
+ * (proofs required or not) until a Commit moves the group on, and the read
+ * cursor stays behind it (W24 review L2). event_json NULL clears it. */
 static void
 set_refused(GhMlsGroup *group, const gchar *event_json)
 {
+  GhMlsService *self = group->service;
   gboolean was = group->refused_json != NULL;
-  g_free(group->refused_json);
-  group->refused_json = event_json ? g_strdup(event_json) : NULL;
-  if (was != (event_json != NULL))
+  gboolean same = event_json && g_strcmp0(group->refused_json, event_json) == 0;
+  if (!same) {
+    g_free(group->refused_json);
+    group->refused_json = event_json ? g_strdup(event_json) : NULL;
+    group->refused_at = event_created_at(event_json);
+    group->refusal = !event_json ? GH_MLS_REFUSAL_NONE
+                     : self->allow_unproven ? GH_MLS_REFUSAL_BROKEN_PROOF
+                                            : GH_MLS_REFUSAL_UNPROVEN;
+    g_autoptr(GError) error = NULL;
+    if ((event_json || was) &&
+        !gh_store_mls_refused_save(self->store, group->gid_hex, event_json,
+                                   group->refusal == GH_MLS_REFUSAL_UNPROVEN, &error))
+      g_message("Groundhog could not store a group's refused change: %s", error->message);
+  }
+  if (was != (event_json != NULL) || !same)
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_CHANGE_REFUSED]);
   sync_decrypt_pending(group);
+}
+
+/* The refused change of a stored group, at start (W24 review L2). */
+static void
+load_refused(GhMlsGroup *group)
+{
+  g_autofree gchar *json = NULL;
+  gboolean requiring = FALSE;
+  if (!gh_store_mls_refused_load(group->service->store, group->gid_hex, &json, &requiring,
+                                 NULL) || !json)
+    return;
+  group->refused_json = g_steal_pointer(&json);
+  group->refused_at = event_created_at(group->refused_json);
+  group->refusal = requiring ? GH_MLS_REFUSAL_UNPROVEN : GH_MLS_REFUSAL_BROKEN_PROOF;
+}
+
+/* A group ended for good keeps no record of its members (W24 review N3). */
+static void
+forget_group_records(GhMlsGroup *group)
+{
+  if (group->records_forgotten)
+    return;
+  group->records_forgotten = TRUE;
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_mls_member_forget_group(group->service->store, group->gid_hex, &error))
+    g_message("Groundhog could not forget an ended group's members: %s", error->message);
+  if (group->refused_json) {
+    g_clear_pointer(&group->refused_json, g_free);
+    group->refusal = GH_MLS_REFUSAL_NONE;
+    g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_CHANGE_REFUSED]);
+  }
 }
 
 /* Reads everything the group shows from libmarmot and notifies what changed.
@@ -1505,8 +1597,10 @@ group_refresh(GhMlsGroup *group)
   if (!group->active) {
     drop_held(group);
     /* A removal that may still lose keeps listening for the winner. */
-    if (!listening(group))
+    if (!listening(group)) {
       group_unsubscribe(group);
+      forget_group_records(group);
+    }
   } else if (reactivated) {
     /* A winning Commit undid the removal (review B1): read again from the
      * cursor, which held while the group was ended. */
@@ -1557,6 +1651,7 @@ ensure_group(GhMlsService *self, const MarmotGroupId *gid)
   if (group)
     return group;
   group = group_new(self, gid);
+  load_refused(group);
   group_refresh(group);
   g_ptr_array_add(self->groups, group);
   g_list_model_items_changed(G_LIST_MODEL(self), self->groups->len - 1, 0, 1);
@@ -1613,6 +1708,9 @@ save_cursor(GhMlsGroup *group, gint64 cursor)
   }
   if (group->pinned > 0)
     cursor = MIN(cursor, group->pinned);
+  /* A refused Commit is fetched again after a restart (W24 review L2). */
+  if (group->refused_json && group->refused_at > 0)
+    cursor = MIN(cursor, group->refused_at);
   if (cursor <= group->cursor)
     return;
   g_autoptr(GError) error = NULL;
@@ -1868,6 +1966,8 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     /* Who added the devices the Commit brings (nostrc-6ukh). */
     g_free(group->last_committer);
     group->last_committer = g_strdup(result.commit.committer_pubkey_hex);
+    group->last_committer_leaf = result.commit.committer_pubkey_hex
+                                   ? result.commit.committer_leaf : G_MAXUINT32;
   } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_PROPOSAL) {
     /* nostrc-2um6: a member's standalone proposal, which libmarmot keeps for
      * the Commit that references it; a leave is committed after a delay. */
@@ -2387,6 +2487,7 @@ round_report(Round *round)
     retry_succeeded(group->service);
     g_free(group->last_committer);
     group->last_committer = g_strdup(group->service->account);
+    group->last_committer_leaf = G_MAXUINT32;   /* our own leaf is proven */
   }
   after_commit(group, TRUE);
   complete_waiters(group, error);
@@ -3011,6 +3112,7 @@ lookup_done(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GhMlsKeyPackage) kp = gh_mls_key_package_lookup_finish(result, &error);
   if (kp) {
     g_ptr_array_add(op->key_packages, g_strdup(kp->event_json));
+    remember_key_package(g_task_get_source_object(task), kp->event_json);
   } else if (!op->error) {
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
       op->error = g_error_new(GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE,
@@ -4206,6 +4308,166 @@ gh_mls_service_decline_invite(GhMlsService *self, const gchar *wrapper_id, GErro
   return TRUE;
 }
 
+/* ---- Verify (W24 review H1) ----------------------------------------------------------- */
+
+typedef struct {
+  GhMlsGroup *group;   /* a reference */
+  gchar *account;
+  guint64 run;
+} VerifyOp;
+
+static void
+verify_op_free(gpointer data)
+{
+  VerifyOp *op = data;
+  g_clear_object(&op->group);
+  g_free(op->account);
+  g_free(op);
+}
+
+/* The account's devices in every group whose state is `from` become `to`. */
+static void
+verify_mark(GhMlsService *self, const gchar *account, GhMlsMemberIdentity from,
+            GhMlsMemberIdentity to)
+{
+  for (guint i = 0; i < self->groups->len; i++) {
+    GhMlsGroup *group = g_ptr_array_index(self->groups, i);
+    gboolean changed = FALSE;
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, group->devices);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+      Device *device = value;
+      if (device->state == from && g_strcmp0(device->account, account) == 0) {
+        device->state = to;
+        changed = TRUE;
+      }
+    }
+    if (changed) {
+      sync_unverified(group);
+      g_signal_emit(group, group_signals[GROUP_SIGNAL_MEMBERS_CHANGED], 0);
+    }
+  }
+}
+
+static void
+verify_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  GTask *task = data;
+  GhMlsService *self = g_task_get_source_object(task);
+  VerifyOp *op = g_task_get_task_data(task);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) found = gh_mls_key_package_evidence_lookup_finish(result, &error);
+  if (self->disposed || op->run != self->run) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The account changed before the check finished");
+    g_object_unref(task);
+    return;
+  }
+  g_hash_table_remove(self->verifying, op->account);
+  for (guint i = 0; found && i < found->len; i++)
+    remember_key_package(self, g_ptr_array_index(found, i));
+  /* Every device of the account the answer confirms, in every group; the
+   * asked group's others are recorded as checked (relays answered). */
+  for (guint i = 0; i < self->groups->len; i++) {
+    GhMlsGroup *group = g_ptr_array_index(self->groups, i);
+    gboolean changed = FALSE;
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, group->devices);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+      Device *device = value;
+      if ((device->state != GH_MLS_MEMBER_CHECKING &&
+           device->state != GH_MLS_MEMBER_UNVERIFIED) ||
+          g_strcmp0(device->account, op->account) != 0)
+        continue;
+      if (device_matches(device, found)) {
+        device->state = GH_MLS_MEMBER_VERIFIED;
+        device_save(group, device, GH_STORE_MLS_MEMBER_VERIFIED);
+      } else {
+        device->state = GH_MLS_MEMBER_UNVERIFIED;
+        if (found && group == op->group)
+          device_save(group, device, GH_STORE_MLS_MEMBER_NOT_FOUND);
+      }
+      changed = TRUE;
+    }
+    if (changed) {
+      sync_unverified(group);
+      g_signal_emit(group, group_signals[GROUP_SIGNAL_MEMBERS_CHANGED], 0);
+    }
+  }
+  if (!found) {
+    g_task_return_error(task, g_steal_pointer(&error));
+  } else {
+    g_task_return_int(task, gh_mls_group_get_member_identity(op->group, op->account, NULL));
+  }
+  g_object_unref(task);
+}
+
+void
+gh_mls_service_verify_member_async(GhMlsService *self, GhMlsGroup *group, const gchar *member,
+                                   GCancellable *cancellable, GAsyncReadyCallback callback,
+                                   gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_mls_service_verify_member_async);
+  GError *error = NULL;
+  g_autofree gchar *account = member ? g_ascii_strdown(member, -1) : NULL;
+  if (!check_running(self, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  Device *device = GH_IS_MLS_GROUP(group) && group->service == self && lower_hex64(account)
+                     ? weakest_device(group, account) : NULL;
+  if (!device || device->state == GH_MLS_MEMBER_PROVEN) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "Not a member of this group whose identity needs checking");
+    g_object_unref(task);
+    return;
+  }
+  if (g_hash_table_contains(self->verifying, account)) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_BUSY,
+                            "This person is being checked already");
+    g_object_unref(task);
+    return;
+  }
+  /* The discovery relays, then the person's own write relays: never the
+   * group's relays, the one place a lookup could be tied to the group. */
+  g_auto(GStrv) relays = discovery_relays(self);
+  if (!relays[0]) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "No discovery relay to look KeyPackages up on");
+    g_object_unref(task);
+    return;
+  }
+  VerifyOp *op = g_new0(VerifyOp, 1);
+  op->group = g_object_ref(group);
+  op->account = g_strdup(account);
+  op->run = self->run;
+  g_task_set_task_data(task, op, verify_op_free);
+  g_hash_table_add(self->verifying, g_strdup(account));
+  verify_mark(self, account, GH_MLS_MEMBER_UNVERIFIED, GH_MLS_MEMBER_CHECKING);
+  gh_mls_key_package_evidence_lookup_async(self->accounts, (const gchar *const *)relays,
+                                           account, self->lookup_deadline, self->cancellable,
+                                           verify_done, task);
+}
+
+GhMlsMemberIdentity
+gh_mls_service_verify_member_finish(GhMlsService *self, GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self), GH_MLS_MEMBER_UNVERIFIED);
+  GError *local = NULL;
+  gssize identity = g_task_propagate_int(G_TASK(result), &local);
+  if (local) {
+    g_propagate_error(error, local);
+    return GH_MLS_MEMBER_UNVERIFIED;
+  }
+  return (GhMlsMemberIdentity)identity;
+}
+
 gboolean
 gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
 {
@@ -4798,7 +5060,15 @@ stop_generation(GhMlsService *self)
   }
   self->key_package_busy = FALSE;
   g_hash_table_remove_all(self->deliveries);
-  g_hash_table_remove_all(self->verifying);   /* their lookups were cancelled */
+  /* Verifies in flight were cancelled: nothing is "checking" any more. */
+  {
+    GHashTableIter iter;
+    gpointer account;
+    g_hash_table_iter_init(&iter, self->verifying);
+    while (g_hash_table_iter_next(&iter, &account, NULL))
+      verify_mark(self, account, GH_MLS_MEMBER_CHECKING, GH_MLS_MEMBER_UNVERIFIED);
+    g_hash_table_remove_all(self->verifying);
+  }
   g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
                                                     "The account changed; the change stays "
                                                     "pending and is sent again later");
@@ -4870,25 +5140,12 @@ on_relays_changed(GhAccountRelays *relays, gpointer data)
 
 /* ---- Object --------------------------------------------------------------------------- */
 
-/* Whether the account requires every member's proof (VERIFIED_ONLY_KEY,
- * default off): a GSettings without the key never does. */
-static gboolean
-requires_proofs(GSettings *settings)
-{
-  if (!settings)
-    return FALSE;
-  g_autoptr(GSettingsSchema) schema = NULL;
-  g_object_get(settings, "settings-schema", &schema, NULL);
-  return schema && g_settings_schema_has_key(schema, VERIFIED_ONLY_KEY) &&
-         g_settings_get_boolean(settings, VERIFIED_ONLY_KEY);
-}
-
 static void
 on_verified_only_changed(GSettings *settings, gchar *key, gpointer data)
 {
   (void)key;
   GhMlsService *self = data;
-  self->allow_unproven = !requires_proofs(settings);
+  self->allow_unproven = !gh_mls_requires_proofs(settings);
   marmot_set_allow_unproven_members(self->marmot, self->allow_unproven);
   if (!self->allow_unproven)
     return;
@@ -4924,7 +5181,7 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   /* libmarmot's default admits members without the proof in legacy-profile
    * groups only (nostrc-6ukh); the account may require proofs instead. */
   MarmotConfig marmot_config = marmot_config_default();
-  marmot_config.allow_unproven_members = !requires_proofs(config->settings);
+  marmot_config.allow_unproven_members = !gh_mls_requires_proofs(config->settings);
   Marmot *marmot = marmot_new_with_config(storage, &marmot_config);
   if (!marmot) {
     marmot_storage_free(storage);
@@ -5078,6 +5335,7 @@ gh_mls_service_finalize(GObject *object)
   g_ptr_array_unref(self->groups);
   g_hash_table_unref(self->deliveries);
   g_hash_table_unref(self->verifying);
+  g_ptr_array_unref(self->known_key_packages);
   if (self->marmot)
     marmot_free(self->marmot);   /* and its storage */
   g_clear_object(&self->rooms);
@@ -5140,4 +5398,5 @@ gh_mls_service_init(GhMlsService *self)
   self->groups = g_ptr_array_new_with_free_func(g_object_unref);
   self->deliveries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, delivery_free);
   self->verifying = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->known_key_packages = g_ptr_array_new_with_free_func(g_free);
 }

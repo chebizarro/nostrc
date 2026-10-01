@@ -70,6 +70,11 @@ const gchar *gh_mls_group_info_dialog_get_member(GhMlsGroupInfoDialog *self,
 const gchar *gh_mls_group_info_dialog_get_member_identity(GhMlsGroupInfoDialog *self,
                                                           const gchar *pubkey,
                                                           const gchar **out_explanation);
+/* Whether pubkey's row offers Verify (W24 review H1), and the confirmation
+ * the action shows first. */
+gboolean gh_mls_group_info_dialog_get_member_verifiable(GhMlsGroupInfoDialog *self,
+                                                        const gchar *pubkey);
+AdwAlertDialog *gh_mls_group_info_dialog_get_verify_dialog(GhMlsGroupInfoDialog *self);
 /* The Messages row's status (read state, ended, or a refused change). */
 const gchar *gh_mls_group_info_dialog_get_messages_status(GhMlsGroupInfoDialog *self);
 AdwAlertDialog *gh_mls_group_info_dialog_get_leave_dialog(GhMlsGroupInfoDialog *self);

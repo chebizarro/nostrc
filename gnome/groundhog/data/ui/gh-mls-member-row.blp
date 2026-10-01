@@ -6,9 +6,10 @@ using Adw 1;
 // them or their short npub (plain text, never markup), an Owner or Admin
 // badge from the group's own admin list, an "Identity not verified" badge
 // for a member whose app can't prove their account and whom Groundhog
-// couldn't confirm either (nostrc-6ukh; the explanation is the subtitle),
-// and, only for an admin and never for oneself, Remove from Group
-// (confirmed first).
+// couldn't confirm either (nostrc-6ukh; the explanation is the subtitle;
+// informative, not an alarm: older apps are like this), Verify for such a
+// member (asks relays, confirmed first: W24 review H1), and, only for an
+// admin and never for oneself, Remove from Group (confirmed first).
 template $GhMlsMemberRow: Adw.ActionRow {
   use-markup: false;
   title-lines: 1;
@@ -28,8 +29,22 @@ template $GhMlsMemberRow: Adw.ActionRow {
 
     styles [
       "caption",
-      "warning",
+      "dim-label",
       "groundhog-identity-badge",
+    ]
+  }
+
+  [suffix]
+  Button verify_button {
+    visible: false;
+    valign: center;
+    label: _("_Verify");
+    use-underline: true;
+    tooltip-text: _("Ask relays for a key this person published");
+    action-name: "member.verify";
+
+    styles [
+      "flat",
     ]
   }
 

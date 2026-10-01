@@ -303,6 +303,17 @@ Adw.AlertDialog leave_dialog {
 }
 
 // The body names the person (from C).
+Adw.AlertDialog verify_dialog {
+  heading: _("Verify Identity?");
+  default-response: "verify-cancel";
+  close-response: "verify-cancel";
+
+  responses [
+    verify-cancel: _("_Cancel"),
+    verify-confirm: _("_Verify") suggested,
+  ]
+}
+
 Adw.AlertDialog remove_dialog {
   heading: _("Remove from Group?");
   default-response: "remove-cancel";

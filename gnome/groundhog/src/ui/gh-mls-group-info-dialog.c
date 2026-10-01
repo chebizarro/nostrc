@@ -18,6 +18,7 @@ struct _GhMlsMemberRow {
   AdwAvatar *avatar;
   GtkLabel *identity_badge;
   GtkLabel *role_badge;
+  GtkWidget *verify_button;
   GtkWidget *remove_button;
   gchar *pubkey;
   GhMlsRole role;
@@ -36,6 +37,15 @@ member_remove(GtkWidget *widget, const gchar *action, GVariant *parameter)
 }
 
 static void
+member_verify(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsMemberRow *self = GH_MLS_MEMBER_ROW(widget);
+  gtk_widget_activate_action(widget, "mls-group.verify", "s", self->pubkey);
+}
+
+static void
 gh_mls_member_row_finalize(GObject *object)
 {
   g_free(GH_MLS_MEMBER_ROW(object)->pubkey);
@@ -51,9 +61,11 @@ gh_mls_member_row_class_init(GhMlsMemberRowClass *klass)
                                               "/org/nostr/Groundhog/ui/gh-mls-member-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, identity_badge);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, verify_button);
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, role_badge);
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, remove_button);
   gtk_widget_class_install_action(widget_class, "member.remove", NULL, member_remove);
+  gtk_widget_class_install_action(widget_class, "member.verify", NULL, member_verify);
 }
 
 static void
@@ -63,10 +75,13 @@ gh_mls_member_row_init(GhMlsMemberRow *self)
 }
 
 /* identity/added_by: what GhMlsService knows of who the member is
- * (nostrc-6ukh); added_by: the admin's name or short npub, or NULL. */
+ * (nostrc-6ukh); added_by: the admin's name or short npub, or NULL;
+ * added_by_self: the member added this device. verifiable: offer Verify
+ * (an UNVERIFIED member, the service running). */
 static GhMlsMemberRow *
 member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRole role,
-               gboolean removable, GhMlsMemberIdentity identity, const gchar *added_by)
+               gboolean removable, GhMlsMemberIdentity identity, const gchar *added_by,
+               gboolean added_by_self, gboolean verifiable)
 {
   GhMlsMemberRow *self = g_object_new(GH_TYPE_MLS_MEMBER_ROW, NULL);
   self->pubkey = g_strdup(pubkey);
@@ -76,7 +91,7 @@ member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRol
   const gchar *shown = name && *name ? name : npub;
   g_autofree gchar *title = is_you ? g_strdup_printf(_("%s (You)"), shown) : g_strdup(shown);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self), title);
-  GhMlsMemberCopy copy = gh_mls_member_copy(identity, added_by);
+  GhMlsMemberCopy copy = gh_mls_member_copy(identity, added_by, added_by_self);
   if (copy.badge) {
     g_autofree gchar *subtitle = name && *name
       ? g_strdup_printf("%s\n%s", npub, copy.explanation) : g_strdup(copy.explanation);
@@ -91,6 +106,14 @@ member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRol
   }
   gtk_widget_set_visible(GTK_WIDGET(self->identity_badge), copy.badge != NULL);
   gh_mls_member_copy_clear(&copy);
+  gboolean verify = verifiable && identity == GH_MLS_MEMBER_UNVERIFIED;
+  gtk_widget_set_visible(self->verify_button, verify);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.verify", verify);
+  if (verify) {
+    g_autofree gchar *label = g_strdup_printf(_("Verify %s’s Identity"), shown);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->verify_button),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+  }
   adw_avatar_set_text(self->avatar, shown);
   const gchar *badge = gh_mls_role_copy(role);
   gtk_label_set_text(self->role_badge, badge ? badge : "");
@@ -132,6 +155,7 @@ struct _GhMlsGroupInfoDialog {
   AdwEntryRow *description_row;
   AdwAlertDialog *leave_dialog;
   AdwAlertDialog *remove_dialog;
+  AdwAlertDialog *verify_dialog;
 
   GhMlsGroup *group;
   GhMlsUiContext context;   /* objects referenced; service weak-watched */
@@ -139,6 +163,7 @@ struct _GhMlsGroupInfoDialog {
   GPtrArray *relay_rows;    /* GtkWidget in relays_group */
   gchar *removing;          /* the pubkey the remove confirmation asks about */
   GhMlsLeave leave_kind;    /* what the shown leave confirmation said (nostrc-2um6) */
+  gchar *verifying;         /* the pubkey the verify confirmation asks about */
   gchar *last_toast;
   guint pending;            /* changes started, not finished */
 };
@@ -223,17 +248,9 @@ sync_status(GhMlsGroupInfoDialog *self)
   g_autofree gchar *ended = gh_mls_end_copy(gh_mls_group_get_end(self->group),
                                             by_name && *by_name ? by_name : by_npub);
   const gchar *read = gh_mls_read_copy(gh_mls_group_get_read_state(self->group));
-  if (active && gh_mls_group_get_change_refused(self->group)) {
-    /* An admin's change refused for good (nostrc-prrl). */
-    gboolean strict = FALSE;
-    if (self->context.settings) {
-      g_autoptr(GSettingsSchema) schema = NULL;
-      g_object_get(self->context.settings, "settings-schema", &schema, NULL);
-      strict = schema && g_settings_schema_has_key(schema, "only-join-verified-mls-groups") &&
-               g_settings_get_boolean(self->context.settings, "only-join-verified-mls-groups");
-    }
-    read = gh_mls_refused_copy(strict);
-  }
+  if (active && gh_mls_group_get_change_refused(self->group))
+    /* An admin's change refused for good, by its cause (nostrc-prrl, L4). */
+    read = gh_mls_refused_copy(gh_mls_group_get_refusal(self->group));
   adw_action_row_set_subtitle(self->messages_row, active || !ended ? read : ended);
   gboolean pending = gh_mls_group_get_pending_commit(self->group);
   guint unsent = gh_mls_group_get_unsent_welcomes(self->group);
@@ -302,11 +319,14 @@ sync_members(GhMlsGroupInfoDialog *self)
       g_autofree gchar *added_by = NULL;
       GhMlsMemberIdentity identity = gh_mls_group_get_member_identity(self->group, members[i],
                                                                       &added_by);
+      gboolean self_added = g_strcmp0(added_by, members[i]) == 0;
       const gchar *adder_name = added_by ? display_name(self, added_by) : NULL;
       g_autofree gchar *adder_npub = added_by ? gh_recipient_npub_short(added_by) : NULL;
       GhMlsMemberRow *row = member_row_new(members[i], display_name(self, members[i]), you,
                                            role, manage && !you, identity,
-                                           adder_name && *adder_name ? adder_name : adder_npub);
+                                           adder_name && *adder_name ? adder_name : adder_npub,
+                                           self_added,
+                                           !you && gh_mls_group_get_active(self->group));
       adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
       g_ptr_array_add(self->member_rows, row);
     }
@@ -462,6 +482,68 @@ on_remove_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
                                       change_new(self, _("Removed from the group")));
   toast(self, _("Removing…"));
   sync_status(self);
+}
+
+/* Verify (W24 review H1): only after the user agreed to ask relays. */
+static void
+action_verify(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  const gchar *pubkey = g_variant_get_string(parameter, NULL);
+  if (!self->context.service ||
+      gh_mls_group_get_member_identity(self->group, pubkey, NULL) != GH_MLS_MEMBER_UNVERIFIED)
+    return;
+  g_free(self->verifying);
+  self->verifying = g_strdup(pubkey);
+  g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
+  const gchar *name = display_name(self, pubkey);
+  g_autofree gchar *body = gh_mls_verify_prompt(name && *name ? name : npub);
+  adw_alert_dialog_set_body(self->verify_dialog, body);
+  adw_dialog_present(ADW_DIALOG(self->verify_dialog), GTK_WIDGET(self));
+}
+
+typedef struct {
+  GhMlsGroupInfoDialog *self;   /* a reference */
+  gchar *name;
+} Verify;
+
+static void
+verify_finished(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Verify *verify = data;
+  GhMlsGroupInfoDialog *self = verify->self;
+  g_autoptr(GError) error = NULL;
+  GhMlsMemberIdentity identity =
+    gh_mls_service_verify_member_finish(GH_MLS_SERVICE(source), result, &error);
+  self->pending--;
+  if (!gtk_widget_in_destruction(GTK_WIDGET(self)) &&
+      !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_autofree gchar *words = gh_mls_verify_result_copy(identity, error, verify->name);
+    toast(self, words);
+    sync_all(self);
+  }
+  g_object_unref(self);
+  g_free(verify->name);
+  g_free(verify);
+}
+
+static void
+on_verify_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
+{
+  (void)dialog;
+  GhMlsGroupInfoDialog *self = data;
+  g_autofree gchar *pubkey = g_steal_pointer(&self->verifying);
+  if (!pubkey || g_strcmp0(response, "verify-confirm") != 0 || !self->context.service)
+    return;
+  Verify *verify = g_new0(Verify, 1);
+  verify->self = g_object_ref(self);
+  g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
+  const gchar *name = display_name(self, pubkey);
+  verify->name = g_strdup(name && *name ? name : npub);
+  self->pending++;
+  gh_mls_service_verify_member_async(self->context.service, self->group, pubkey, NULL,
+                                     verify_finished, verify);
 }
 
 static void
@@ -666,6 +748,25 @@ gh_mls_group_info_dialog_get_member_identity(GhMlsGroupInfoDialog *self, const g
   return NULL;
 }
 
+gboolean
+gh_mls_group_info_dialog_get_member_verifiable(GhMlsGroupInfoDialog *self, const gchar *pubkey)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), FALSE);
+  for (guint i = 0; i < self->member_rows->len; i++) {
+    GhMlsMemberRow *row = g_ptr_array_index(self->member_rows, i);
+    if (g_strcmp0(row->pubkey, pubkey) == 0)
+      return gtk_widget_get_visible(row->verify_button);
+  }
+  return FALSE;
+}
+
+AdwAlertDialog *
+gh_mls_group_info_dialog_get_verify_dialog(GhMlsGroupInfoDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP_INFO_DIALOG(self), NULL);
+  return self->verify_dialog;
+}
+
 const gchar *
 gh_mls_group_info_dialog_get_messages_status(GhMlsGroupInfoDialog *self)
 {
@@ -719,6 +820,7 @@ gh_mls_group_info_dialog_finalize(GObject *object)
   g_ptr_array_unref(self->member_rows);
   g_ptr_array_unref(self->relay_rows);
   g_free(self->removing);
+  g_free(self->verifying);
   g_free(self->last_toast);
   G_OBJECT_CLASS(gh_mls_group_info_dialog_parent_class)->finalize(object);
 }
@@ -757,11 +859,13 @@ gh_mls_group_info_dialog_class_init(GhMlsGroupInfoDialogClass *klass)
   BIND(description_row);
   BIND(leave_dialog);
   BIND(remove_dialog);
+  BIND(verify_dialog);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "mls-group.add-members", NULL,
                                   action_add_members);
   gtk_widget_class_install_action(widget_class, "mls-group.save-add", NULL, action_save_add);
   gtk_widget_class_install_action(widget_class, "mls-group.remove", "s", action_remove);
+  gtk_widget_class_install_action(widget_class, "mls-group.verify", "s", action_verify);
   gtk_widget_class_install_action(widget_class, "mls-group.rename", NULL, action_rename);
   gtk_widget_class_install_action(widget_class, "mls-group.save-rename", NULL,
                                   action_save_rename);
@@ -776,6 +880,7 @@ gh_mls_group_info_dialog_init(GhMlsGroupInfoDialog *self)
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect(self->leave_dialog, "response", G_CALLBACK(on_leave_response), self);
   g_signal_connect(self->remove_dialog, "response", G_CALLBACK(on_remove_response), self);
+  g_signal_connect(self->verify_dialog, "response", G_CALLBACK(on_verify_response), self);
   g_signal_connect_swapped(self->add_picker, "changed", G_CALLBACK(sync_add_reason), self);
   g_signal_connect_swapped(self->name_row, "entry-activated", G_CALLBACK(on_rename_activated),
                            self);

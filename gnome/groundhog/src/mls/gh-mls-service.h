@@ -127,24 +127,37 @@ G_BEGIN_DECLS
  * Members without the proof (nostrc-6ukh). Legacy-profile groups (MDK 0.8,
  * Amethyst/Quartz) hold members whose app cannot prove their account. By
  * default libmarmot admits them there (MarmotConfig.allow_unproven_members;
- * never in adopted-profile groups, and never a proof that does not verify),
- * so they can be invited and their groups joined. For each such device the
- * service then tries to confirm the binding itself: a KeyPackage event the
- * account signed (kind 30443 or the older 443; signatures checked by
- * libmarmot) whose leaf has the device's credential and signature key,
- * from the KeyPackage the account used to add it, or else found on the
- * group's relays, the discovery relays and the person's kind-10002 write
- * relays (gh_mls_key_package_evidence_lookup_async(): the same
- * transports, Tor and network mode as every lookup; ephemeral AUTH; never
- * kind 10051). The verdict and who added the device are kept in the
- * encrypted store (gh-store-mls-identity.h); a device found by nobody is
- * looked up again after GH_MLS_MEMBER_RECHECK_S. Nothing waits for it:
- * messaging never does. gh_mls_group_get_member_identity() is the result.
- * The settings key "only-join-verified-mls-groups" (default off) brings
- * back the refusal: invitations, Welcomes and Commits with such a member
- * fail (NEEDS_UPDATE), and an admin's Commit refused for that reason is
- * shown as "change-refused", never as a wait (nostrc-prrl); turning the key
- * off applies it.
+ * never in adopted-profile groups, never a proof that does not verify, and
+ * a slot an Add fills is always a new claim an admin made), so they can be
+ * invited and their groups joined. What the service knows of each such
+ * device (gh_mls_group_get_member_identity()) comes from evidence already
+ * in hand, without any network traffic (W24 review H1):
+ *  - the KeyPackage the account itself added the device with;
+ *  - the Welcome the account joined with: the device that signed it, when
+ *    its account sent it (the NIP-59 seal; libmarmot's welcome_signer) --
+ *    typically the creator of an MDK group who invited us (owkh);
+ *  - a KeyPackage event the service already fetched (an invitation lookup,
+ *    an earlier Verify), checked by libmarmot
+ *    (marmot_key_package_event_matches_member());
+ *  - the device's own renewal: a Commit by the device's leaf (its
+ *    UpdatePath, signed in by its previous key) carries what was known of
+ *    the old key over to the new one, so MDK's key-rotating self-update
+ *    keeps a verified member verified (W24 review M1).
+ * Anything else is UNVERIFIED until the user asks: Verify
+ * (gh_mls_service_verify_member_async()) is one lookup, for that one
+ * account, on the discovery relays and the person's kind-10002 write
+ * relays only -- never the group's relays, which could tie the lookup to
+ * the group -- on the normal transports (network mode, Tor, a fresh Tor
+ * isolation per relay scope, ephemeral AUTH; kinds 30443 and 443, never
+ * 10051). Nothing is looked up again by itself. The verdicts and who added
+ * each device are kept in the encrypted store (gh-store-mls-identity.h) and
+ * forgotten with the device or the group. Messaging never waits for any of
+ * it. The settings key "only-join-verified-mls-groups" (default off;
+ * gh_mls_requires_proofs()) brings the refusal back: invitations, Welcomes
+ * and Commits with such a member fail (NEEDS_UPDATE), and an admin's Commit
+ * refused for good is "change-refused" (gh_mls_group_get_refusal()), never
+ * a wait (nostrc-prrl); it is kept across restarts, the read cursor stays
+ * behind it, and turning the preference off applies it.
  *
  * Leaving (nostrc-2um6; MIP-03 "Leaving a group", Marmot
  * protocol-core/member-departure.md). Unless the account is an admin
@@ -238,9 +251,6 @@ G_BEGIN_DECLS
  * anyone posts with the group's h would otherwise show it for good in a
  * quiet group (W22 review N4). It stays held and is retried. */
 #define GH_MLS_SERVICE_PENDING_SHOWN_S (15 * 60)
-/* A member device nobody's relays had a matching KeyPackage for is looked
- * up again after this long (seconds). */
-#define GH_MLS_MEMBER_RECHECK_S (24 * 3600)
 /* A held event still unreadable after this many applied Commits is junk. */
 #define GH_MLS_SERVICE_JUNK_AFTER_COMMITS 3
 /* People invited at once (one Add Commit). */
@@ -334,6 +344,11 @@ typedef enum {
   GH_MLS_SERVICE_ERROR_FORGED_IDENTITY /* someone's account proof does not verify */
 } GhMlsServiceError;
 
+/* Whether settings asks for every member's account proof: the key
+ * "only-join-verified-mls-groups", FALSE when settings is NULL or has no
+ * such key (one rule for the service and the UI, W24 review N1). */
+gboolean gh_mls_requires_proofs(GSettings *settings);
+
 typedef enum {
   GH_MLS_IDENTITY_NOT_REQUIRED, /* libmarmot < 0.10.0: no account proof */
   GH_MLS_IDENTITY_NONE,         /* not asked yet (inactive, offline) */
@@ -350,10 +365,22 @@ GType gh_mls_identity_state_get_type(void);
  * several devices is as weak as its weakest one. */
 typedef enum {
   GH_MLS_MEMBER_PROVEN,     /* the leaf carries the account's own proof */
-  GH_MLS_MEMBER_VERIFIED,   /* no proof, but a KeyPackage the account signed matches */
-  GH_MLS_MEMBER_CHECKING,   /* no proof; looking for such a KeyPackage */
-  GH_MLS_MEMBER_UNVERIFIED  /* no proof, and none was found */
+  GH_MLS_MEMBER_VERIFIED,   /* no proof, but a KeyPackage the account signed matches
+                             * (or matched the key this device renewed) */
+  GH_MLS_MEMBER_CHECKING,   /* no proof; a Verify the user asked for runs */
+  GH_MLS_MEMBER_UNVERIFIED  /* no proof, and no evidence in hand */
 } GhMlsMemberIdentity;
+
+/* Why a group's change was refused for good ("change-refused"). */
+typedef enum {
+  GH_MLS_REFUSAL_NONE,
+  GH_MLS_REFUSAL_BROKEN_PROOF,  /* default mode: a proof that does not verify, or one a
+                                 * member's own new leaf dropped */
+  GH_MLS_REFUSAL_UNPROVEN       /* proofs required: a member without one, or broken */
+} GhMlsRefusal;
+
+GType gh_mls_refusal_get_type(void);
+#define GH_TYPE_MLS_REFUSAL (gh_mls_refusal_get_type())
 
 GType gh_mls_member_identity_get_type(void);
 #define GH_TYPE_MLS_MEMBER_IDENTITY (gh_mls_member_identity_get_type())
@@ -428,13 +455,16 @@ gint64 gh_mls_group_get_cursor(GhMlsGroup *self);
  * what every member can see (charter §2.2). Transfer full. */
 GStrv gh_mls_group_dup_members(GhMlsGroup *self);
 /* What is known about member (hex): see GhMlsMemberIdentity; PROVEN for
- * one that is not a member. out_added_by (nullable, transfer full): the
- * admin who added its weakest device, hex, or NULL when not known (it was
- * there before the account joined). */
+ * one that is not a member, UNVERIFIED for a listed member whose devices
+ * could not be read (W24 review N2). out_added_by (nullable, transfer
+ * full): who added its weakest device, hex (the member itself when it
+ * added that device), or NULL when not known (it was there before the
+ * account joined). */
 GhMlsMemberIdentity gh_mls_group_get_member_identity(GhMlsGroup *self, const gchar *member,
                                                      gchar **out_added_by);
 guint gh_mls_group_get_unverified_members(GhMlsGroup *self);
 gboolean gh_mls_group_get_change_refused(GhMlsGroup *self);
+GhMlsRefusal gh_mls_group_get_refusal(GhMlsGroup *self);
 /* The GroupData admins (lowercase hex, sorted). Transfer full. */
 GStrv gh_mls_group_dup_admins(GhMlsGroup *self);
 /* The group relays (sorted). Transfer full. */
@@ -562,6 +592,21 @@ void gh_mls_service_set_admins_async(GhMlsService *self, GhMlsGroup *group,
                                      GAsyncReadyCallback callback, gpointer user_data);
 gboolean gh_mls_service_change_finish(GhMlsService *self, GAsyncResult *result,
                                       GError **error);
+
+/* Verify (W24 review H1): the user asked to check member (hex), a member of
+ * group without the account proof. One KeyPackage lookup for that account
+ * on the discovery relays and its kind-10002 write relays (never the
+ * group's relays); a KeyPackage it signed that matches a device of the
+ * member makes it VERIFIED, and the verdict is kept. finish: the member's
+ * identity afterwards (UNVERIFIED: relays answered, nothing matched), or
+ * FALSE-ish with error: G_IO_ERROR_HOST_UNREACHABLE (no relay answered;
+ * nothing recorded), G_IO_ERROR_INVALID_ARGUMENT (not such a member, no
+ * discovery relay), GH_MLS_SERVICE_ERROR_INACTIVE. */
+void gh_mls_service_verify_member_async(GhMlsService *self, GhMlsGroup *group,
+                                        const gchar *member, GCancellable *cancellable,
+                                        GAsyncReadyCallback callback, gpointer user_data);
+GhMlsMemberIdentity gh_mls_service_verify_member_finish(GhMlsService *self,
+                                                        GAsyncResult *result, GError **error);
 
 /* Leaves the group (see "Leaving" above): for everyone where it can, then
  * the group is "leaving" until a member commits it; otherwise on this device

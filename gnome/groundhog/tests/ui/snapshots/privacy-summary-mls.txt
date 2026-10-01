@@ -8,6 +8,7 @@ what others can see:
 - The group's relays store only encrypted messages. They see an id that links the group's messages, their sizes and times, and the IP addresses of members who connect. They don't see who the members are.
 - Invitations arrive like private messages: your message relays see their size and time.
 - Anyone can see that you can join encrypted groups, from the key packages you publish.
+- Discovery relays see whose published keys you look up: when you invite someone, or ask to verify a member. Groundhog never asks the group's relays.
 - Members see what you write, your public key and the member list.
 what Groundhog can't protect:
 - Other devices: this group works on this device only.

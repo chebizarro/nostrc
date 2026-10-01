@@ -17,7 +17,8 @@
  * confirm from a KeyPackage they published; the "strict" cases turn on
  * the preference that requires proofs (only-join-verified-mls-groups).
  *  1b. An MDK group holding a second MDK member: by default Groundhog joins
- *     and talks with both, Dave confirmed from his KeyPackage; strict, the
+ *     and talks with both; Dave is confirmed by Verify from his KeyPackage
+ *     and stays confirmed across his own key-rotating self-update; strict, the
  *     invitation is listed and accepting it fails with NEEDS_UPDATE (the
  *     unproven leaf is not the sender's; listing it at all is nostrc-ho1z).
  *  1c. An MDK admin adds a second MDK member to a group Groundhog is in: by
@@ -54,11 +55,35 @@ enum { DAVE = STRANGER };
 
 #define VERIFIED_ONLY "only-join-verified-mls-groups"
 
+typedef struct {
+  gboolean done;
+  GhMlsMemberIdentity identity;
+} VerifyWait;
+
 static gboolean
-member_settled(gpointer data)
+verify_done(gpointer data)
 {
-  GhMlsGroup *group = data;
-  return gh_mls_group_get_member_identity(group, hex[DAVE], NULL) != GH_MLS_MEMBER_CHECKING;
+  return ((VerifyWait *)data)->done;
+}
+
+static void
+on_verified(GObject *source, GAsyncResult *result, gpointer data)
+{
+  VerifyWait *wait = data;
+  g_autoptr(GError) error = NULL;
+  wait->identity = gh_mls_service_verify_member_finish(GH_MLS_SERVICE(source), result, &error);
+  g_assert_no_error(error);
+  wait->done = TRUE;
+}
+
+/* The user's Verify of `key` (W24 review H1: nothing is looked up by itself). */
+static GhMlsMemberIdentity
+verify_member(App *app, GhMlsGroup *group, guint key)
+{
+  VerifyWait wait = { 0 };
+  gh_mls_service_verify_member_async(app->service, group, hex[key], NULL, on_verified, &wait);
+  spin_until(verify_done, &wait, "the Verify");
+  return wait.identity;
 }
 
 static MdkDriver driver;
@@ -525,17 +550,34 @@ test_mdk_group_unproven_member_default(void)
   g_autoptr(JsonObject) dave_sync = mdk_sync("dave", group);
   g_assert_true(synced_message(dave_sync, hex[ALICE], "alice to everyone"));
 
-  /* Dave (no proof) was in the group before Alice: confirmed from the
-   * KeyPackage he published, who added him not known (nostrc-6ukh). */
-  spin_until(member_settled, ga, "Dave's identity check");
+  /* Dave (no proof) was in the group before Alice: nothing in hand, so
+   * not verified, who added him not known, and nothing looked up until
+   * Alice asks; her Verify finds the KeyPackage he published (nostrc-6ukh,
+   * W24 review H1). */
   g_autofree gchar *by = NULL;
   g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[DAVE], &by), ==,
-                  GH_MLS_MEMBER_VERIFIED);
+                  GH_MLS_MEMBER_UNVERIFIED);
   g_assert_null(by);
-  /* Carol's creator leaf comes from no KeyPackage she published: what
-   * Groundhog can say of her is recorded, not assumed. */
-  g_test_message("Groundhog's view of the MDK group's creator (no proof): identity %d",
-                 gh_mls_group_get_member_identity(ga, hex[CAROL], NULL));
+  g_assert_cmpint(verify_member(alice, ga, DAVE), ==, GH_MLS_MEMBER_VERIFIED);
+
+  /* Dave self-updates: MDK rotates his leaf's signature key. The new key
+   * was signed in by the verified one, so he stays verified, and nobody
+   * "added" him (W24 review M1). */
+  {
+    g_autoptr(JsonObject) rotated = mdk_call(&driver,
+      "\"cmd\":\"self_update\",\"peer\":\"dave\",\"group\":\"%s\"", group);
+    wait_epoch(ga, (gint)state_epoch(rotated));
+    assert_converged(ga, rotated);
+  }
+  g_autofree gchar *by_after = NULL;
+  g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[DAVE], &by_after), ==,
+                  GH_MLS_MEMBER_VERIFIED);
+  g_assert_null(by_after);
+  /* Carol's creator leaf is in no KeyPackage she published, but it signed
+   * the Welcome she sent Alice (the NIP-59 seal): she vouched for it
+   * (W24 review owkh). */
+  g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[CAROL], NULL), ==,
+                  GH_MLS_MEMBER_VERIFIED);
 
   world_down(&w);
   mdk_driver_stop(&driver);
@@ -593,14 +635,16 @@ mdk_adds_unproven_member(gboolean strict)
 
   if (!strict) {
     /* Default (nostrc-6ukh): Groundhog follows Carol's Add and reads on;
-     * Dave is confirmed from his KeyPackage, added by Carol. */
+     * Dave, added by Carol, is not verified until Alice asks (H1). */
     wait_message(alice, room, "carol after adding dave");
     assert_converged(ga, added);
-    spin_until(member_settled, ga, "Dave's identity check");
     g_autofree gchar *by = NULL;
     g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[DAVE], &by), ==,
-                    GH_MLS_MEMBER_VERIFIED);
+                    GH_MLS_MEMBER_UNVERIFIED);
     g_assert_cmpstr(by, ==, hex[CAROL]);
+    g_assert_cmpint(verify_member(alice, ga, DAVE), ==, GH_MLS_MEMBER_VERIFIED);
+    g_assert_cmpint(gh_mls_group_get_member_identity(ga, hex[CAROL], NULL), ==,
+                    GH_MLS_MEMBER_VERIFIED);   /* she sent the Welcome (owkh) */
     g_assert_false(gh_mls_group_get_change_refused(ga));
     world_down(&w);
     mdk_driver_stop(&driver);

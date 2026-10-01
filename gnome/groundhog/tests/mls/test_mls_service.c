@@ -9,6 +9,7 @@
  * account switch closes every group connection and reselecting reopens
  * them. */
 #include "mls-world.h"
+#include "gh-store-mls-identity.h"
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
 #include "mls-forge.h"
 #endif
@@ -2233,13 +2234,59 @@ test_unproven_invitee(void)
   world_down(&w);
 }
 
-/* nostrc-6ukh. Bob (default mode) sees two members without the proof that
- * Alice added: Carol, whose KeyPackage he finds (kind 30443 on her write
- * relay), is VERIFIED; the stranger's is gone by the time Bob reads the Add
- * (replaced, deleted), so he is UNVERIFIED -- "Added by" Alice, and nothing
- * waits for it: messages flow. The verdicts and who added whom are kept in
- * the store: after a restart they hold at once, and no relay is asked
- * again before GH_MLS_MEMBER_RECHECK_S. Kind 10051 is never asked for. */
+typedef struct {
+  gboolean done;
+  GhMlsMemberIdentity identity;
+  GError *error;
+} VerifyWait;
+
+static gboolean
+verify_done_p(gpointer data)
+{
+  return ((VerifyWait *)data)->done;
+}
+
+static void
+on_verified(GObject *source, GAsyncResult *result, gpointer data)
+{
+  VerifyWait *wait = data;
+  wait->identity = gh_mls_service_verify_member_finish(GH_MLS_SERVICE(source), result,
+                                                       &wait->error);
+  wait->done = TRUE;
+}
+
+/* The user's Verify of `key` in `group` (W24 review H1). */
+static GhMlsMemberIdentity
+verify(App *app, GhMlsGroup *group, guint key, GError **error)
+{
+  VerifyWait wait = { 0 };
+  gh_mls_service_verify_member_async(app->service, group, hex[key], NULL, on_verified, &wait);
+  spin_until(verify_done_p, &wait, "the Verify");
+  if (wait.error)
+    g_propagate_error(error, wait.error);
+  return wait.identity;
+}
+
+/* KeyPackage REQs (kinds 30443/443) naming `key`, on any of the world's
+ * relays but the group relay, and on the group relay. */
+static guint
+all_key_package_reqs(World *w, guint key)
+{
+  return key_package_reqs(&w->e, key) + key_package_reqs(&w->w, key) +
+         key_package_reqs(&w->x, key) + key_package_reqs(&w->g, key);
+}
+
+/* nostrc-6ukh, W24 review H1/M1/N3. Bob (default mode) sees members without
+ * the proof that Alice added. With no evidence in hand they are UNVERIFIED,
+ * "Added by" Alice, and nothing is looked up by itself: no KeyPackage REQ
+ * from Bob at all, and none ever on the group relay. Bob's Verify asks the
+ * discovery relays and the person's write relays: Carol, whose KeyPackage
+ * is there, is VERIFIED; the stranger's is gone (replaced, deleted), so he
+ * stays UNVERIFIED. Messages flow throughout. After a restart the verdicts
+ * hold from the store and nothing is asked again. An admin's Remove + Add
+ * of Carol's slot is a new device Alice added: Carol's verdict does not
+ * carry over to it (only the device's own renewal would). Kind 10051 is
+ * never asked for. */
 static void
 test_unproven_member_identity(void)
 {
@@ -2254,92 +2301,215 @@ test_unproven_member_identity(void)
   g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[ALICE], NULL), ==,
                   GH_MLS_MEMBER_PROVEN);
 
-  /* Verified: a KeyPackage Carol signed matches her device. */
+  /* Carol and the stranger (older apps) join through Alice's Adds. */
   g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
-  accept_contact(alice, CAROL);
-  add_member(alice, ga, CAROL);
-  wait_members(gb, 3);
-  assert_identity(gb, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
-  assert_identity(ga, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
-  g_assert_cmpuint(key_package_reqs(&w.w, CAROL), >, 0);   /* her 10002 write relay */
-  g_assert_true(client_frames_mention(&w.w, ",443"));       /* the older kind too */
-
-  /* Unverified: the stranger's KeyPackage is gone before Bob looks. */
   g_autofree gchar *stranger_kp = inject_legacy_key_package(&w, STRANGER);
+  accept_contact(alice, CAROL);
   accept_contact(alice, STRANGER);
-  set_online(bob, FALSE);
+  add_member(alice, ga, CAROL);
   add_member(alice, ga, STRANGER);
-  wire_relay_withhold(&w.w, stranger_kp);
-  set_online(bob, TRUE);
+  guint carol_asked = all_key_package_reqs(&w, CAROL);
+  guint stranger_asked = all_key_package_reqs(&w, STRANGER);
   wait_members(gb, 4);
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga));
+  drain();
+  assert_identity(gb, CAROL, GH_MLS_MEMBER_UNVERIFIED, ALICE);
+  assert_identity(gb, STRANGER, GH_MLS_MEMBER_UNVERIFIED, ALICE);
+  g_assert_cmpuint(gh_mls_group_get_unverified_members(gb), ==, 2);
+  assert_identity(ga, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);   /* her own KeyPackages */
+  assert_identity(ga, STRANGER, GH_MLS_MEMBER_VERIFIED, ALICE);
+  g_assert_cmpuint(all_key_package_reqs(&w, CAROL), ==, carol_asked);   /* nothing by itself */
+  g_assert_cmpuint(all_key_package_reqs(&w, STRANGER), ==, stranger_asked);
+  send_text(bob, gb, "despite unverified members");
+  wait_text(alice, gh_mls_group_get_room_id(ga), "despite unverified members");
+
+  /* Verify: Carol's KeyPackage matches; the stranger's is gone. */
+  g_autoptr(GError) error = NULL;
+  g_assert_cmpint(verify(bob, gb, CAROL, &error), ==, GH_MLS_MEMBER_VERIFIED);
+  g_assert_no_error(error);
+  assert_identity(gb, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+  g_assert_cmpuint(key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL), >,
+                   carol_asked);
+  g_assert_true(client_frames_mention(&w.w, ",443"));      /* the older kind too */
+  wire_relay_withhold(&w.w, stranger_kp);
+  g_assert_cmpint(verify(bob, gb, STRANGER, &error), ==, GH_MLS_MEMBER_UNVERIFIED);
+  g_assert_no_error(error);
   assert_identity(gb, STRANGER, GH_MLS_MEMBER_UNVERIFIED, ALICE);
   g_assert_cmpuint(gh_mls_group_get_unverified_members(gb), ==, 1);
-  assert_identity(ga, STRANGER, GH_MLS_MEMBER_VERIFIED, ALICE);   /* Alice saw it herself */
-  send_text(bob, gb, "despite an unverified member");
-  wait_text(alice, gh_mls_group_get_room_id(ga), "despite an unverified member");
+  /* A proven member needs no Verify. */
+  verify(bob, gb, ALICE, &error);
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
 
-  /* After a restart: from the store, without asking again. */
-  guint asked = key_package_reqs(&w.w, STRANGER) + key_package_reqs(&w.e, STRANGER) +
-                key_package_reqs(&w.g, STRANGER);
+  /* After a restart: from the store, and nothing asked again. */
+  guint asked = all_key_package_reqs(&w, STRANGER) + all_key_package_reqs(&w, CAROL);
   app_restart(bob);
   gb = only_group(bob);
-  g_autofree gchar *by = NULL;
-  g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[STRANGER], &by), ==,
-                  GH_MLS_MEMBER_UNVERIFIED);
-  g_assert_cmpstr(by, ==, hex[ALICE]);
-  g_autofree gchar *carol_by = NULL;
-  g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[CAROL], &carol_by), ==,
-                  GH_MLS_MEMBER_VERIFIED);
-  g_assert_cmpstr(carol_by, ==, hex[ALICE]);
+  assert_identity(gb, STRANGER, GH_MLS_MEMBER_UNVERIFIED, ALICE);
+  assert_identity(gb, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
   wait_live(gb);
   drain();
-  g_assert_cmpuint(key_package_reqs(&w.w, STRANGER) + key_package_reqs(&w.e, STRANGER) +
-                     key_package_reqs(&w.g, STRANGER), ==, asked);
+  g_assert_cmpuint(all_key_package_reqs(&w, STRANGER) + all_key_package_reqs(&w, CAROL), ==,
+                   asked);
 
+  /* An admin's Remove + Add of Carol's slot: a new device, added by Alice;
+   * Carol's verdict stays with her old key (W24 review B1, M1). */
+  g_autofree gchar *replace = forge_replace(alice, ga, CAROL);
+  wire_relay_inject(&w.g, replace);
+  wait_epoch(gb, (gint)gh_mls_group_get_epoch(ga) + 1);
+  assert_identity(gb, CAROL, GH_MLS_MEMBER_UNVERIFIED, ALICE);
+
+  /* Never the group relay, never kind 10051. */
+  g_assert_cmpuint(key_package_reqs(&w.g, CAROL) + key_package_reqs(&w.g, STRANGER), ==, 0);
+
+  /* What Bob knew of the stranger's device goes when he leaves (N3). */
+  {
+    const gchar *gid_hex = gh_mls_group_get_group_id(gb);
+    gsize gid_len = strlen(gid_hex) / 2;
+    g_autofree guint8 *gid_bytes = g_malloc(gid_len);
+    g_assert_true(nostr_hex2bin(gid_bytes, gid_hex, gid_len));
+    MarmotGroupId gid = marmot_group_id_new(gid_bytes, gid_len);
+    MarmotMemberIdentity *ids = NULL;
+    size_t n_ids = 0;
+    g_assert_cmpint(marmot_get_group_member_identities(gh_mls_service_get_marmot(bob->service),
+                                                       &gid, &ids, &n_ids), ==, MARMOT_OK);
+    g_autofree gchar *device = NULL;
+    for (size_t i = 0; i < n_ids; i++) {
+      g_autofree gchar *account = g_malloc0(65);
+      for (guint j = 0; j < 32; j++)
+        g_snprintf(account + 2 * j, 3, "%02x", ids[i].account_pubkey[j]);
+      if (g_str_equal(account, hex[STRANGER])) {
+        device = g_malloc0(65);
+        for (guint j = 0; j < 32; j++)
+          g_snprintf(device + 2 * j, 3, "%02x", ids[i].signature_key[j]);
+      }
+    }
+    free(ids);
+    marmot_group_id_free(&gid);
+    g_assert_nonnull(device);
+    GhStoreMlsMember record;
+    gboolean found = FALSE;
+    g_assert_true(gh_store_mls_member_load(bob->store, gid_hex, hex[STRANGER], device,
+                                           &record, &found, NULL));
+    g_assert_true(found);
+    gh_store_mls_member_clear(&record);
+    g_autofree gchar *kept_gid = g_strdup(gid_hex);
+    /* Leaving (nostrc-2um6) is not leaving yet: the record stays while the
+     * group waits for a member to commit Bob's departure. (Alice cannot
+     * here: the forged Commit above, made from her state outside her
+     * service, moved Bob to an epoch her service never applied.) Leaving
+     * again gives up waiting and ends the group on this device. */
+    g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+    g_assert_no_error(error);
+    g_assert_true(gh_mls_group_get_leaving(gb));
+    g_assert_true(gh_store_mls_member_load(bob->store, kept_gid, hex[STRANGER], device,
+                                           &record, &found, NULL));
+    g_assert_true(found);
+    gh_store_mls_member_clear(&record);
+    g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+    g_assert_no_error(error);
+    g_assert_true(group_ended(gb));
+    g_assert_true(gh_store_mls_member_load(bob->store, kept_gid, hex[STRANGER], device,
+                                           &record, &found, NULL));
+    g_assert_false(found);
+  }
   WireRelay *relays[] = { &w.e, &w.w, &w.x, &w.g };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
     g_assert_false(client_frames_mention(relays[i], "10051"));
   world_down(&w);
 }
 
-/* nostrc-prrl. Bob requires proofs; Alice (default mode) adds Carol, whose
- * app can't prove her account. Bob refuses the Commit for good: the group
- * says so ("change-refused") and never that it waits for an earlier change,
- * although Alice's next message, of the new epoch, can't be read. Turning
- * the preference off applies the change: Carol is listed (and confirmed)
- * and the message read. */
+typedef struct {
+  WireRelay *relay;
+  guint count;
+} Kind445Count;
+
+static guint
+count_445(WireRelay *relay)
+{
+  guint n = 0;
+  for (guint i = 0; i < relay->stored->len; i++)
+    n += nostr_event_get_kind(((WireStored *)g_ptr_array_index(relay->stored, i))->event) == 445;
+  return n;
+}
+
+static gboolean
+more_445(gpointer data)
+{
+  Kind445Count *wait = data;
+  return count_445(wait->relay) > wait->count;
+}
+
+/* nostrc-prrl, W24 review L2/L4. Bob and Carol require proofs; Alice
+ * (default mode) adds the stranger, whose app can't prove his account. Bob
+ * refuses the Commit for good and says so ("change-refused", the cause
+ * recorded: proofs required), never that it waits for an earlier change,
+ * although Alice's next message, of the new epoch, can't be read. Carol,
+ * refusing too, writes on at the old epoch: what Bob reads of it never moves
+ * his read cursor past the refused Commit (the store clock frozen here, so
+ * only the event's own time could move it), and the refusal survives a
+ * restart. Turning the preference off applies the change: the stranger is
+ * listed and Alice's message read. */
 static void
 test_refused_change_honest(void)
 {
   World w;
-  const guint keys[] = { ALICE, BOB };
-  world_up(&w, keys, G_N_ELEMENTS(keys));
-  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
-  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  world_fake_clock = TRUE;
+  world_up(&w, TRIO, G_N_ELEMENTS(TRIO));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB], *carol = &w.apps[CAROL];
+  wait_key_packages(&w, TRIO, G_N_ELEMENTS(TRIO));
   accept_contact(alice, BOB);
-  GhMlsGroup *ga = create_group(alice, "Strict", (const guint[]){ BOB }, 1);
-  GhMlsGroup *gb = join(bob, ALICE);
-  g_settings_set_boolean(bob->settings, VERIFIED_ONLY, TRUE);
-  guint64 epoch = gh_mls_group_get_epoch(gb);
-  guint base = gh_mls_group_get_unreadable(gb);
-
-  g_autofree gchar *carol_kp = inject_legacy_key_package(&w, CAROL);
   accept_contact(alice, CAROL);
-  add_member(alice, ga, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Strict", (const guint[]){ BOB, CAROL }, 2);
+  GhMlsGroup *gb = join(bob, ALICE);
+  GhMlsGroup *gc = join(carol, ALICE);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(gb));
+  g_settings_set_boolean(bob->settings, VERIFIED_ONLY, TRUE);
+  g_settings_set_boolean(carol->settings, VERIFIED_ONLY, TRUE);
+  guint64 epoch = gh_mls_group_get_epoch(gb);
+
+  g_autofree gchar *stranger_kp = inject_legacy_key_package(&w, STRANGER);
+  accept_contact(alice, STRANGER);
+  add_member(alice, ga, STRANGER);
+  gint64 refused_at = nostr_event_get_created_at(last_stored_445(&w.g)->event);
   spin_until(change_refused, gb, "Bob refusing the Add");
+  spin_until(change_refused, gc, "Carol refusing the Add");
+  g_assert_cmpint(gh_mls_group_get_refusal(gb), ==, GH_MLS_REFUSAL_UNPROVEN);
   g_assert_cmpuint(gh_mls_group_get_epoch(gb), ==, epoch);
-  wait_members(gb, 2);
-  send_text(alice, ga, "after Carol joined");
-  wait_unreadable(gb, base + 1);
+  wait_members(gb, 3);
+
+  /* Carol at the old epoch, read by Bob as if sent much later (her own
+   * copy withheld; the store clocks moved on): the cursor holds. */
+  Kind445Count stored = { &w.g, count_445(&w.g) };
+  w.g.withhold_new = TRUE;
+  send_text(carol, gc, "carol at the old epoch");
+  spin_until(more_445, &stored, "Carol's message on the group relay");
+  WireStored *original = last_stored_445(&w.g);
+  g_assert_true(g_hash_table_contains(w.g.withheld, original->id));
+  w.g.withhold_new = FALSE;
+  gh_clock_fake_advance(bob->clock, (gint64)2000 * G_USEC_PER_SEC);
+  g_autofree gchar *later = resigned(original->json, refused_at + 1000);
+  wire_relay_inject(&w.g, later);
+  wait_text(bob, room, "carol at the old epoch");
+  g_assert_cmpint(gh_mls_group_get_cursor(gb), <=, refused_at);
+
+  send_text(alice, ga, "after the stranger joined");
+  wait_unreadable(gb, 1);
   drain();
   g_assert_false(gh_mls_group_get_decrypt_pending(gb));
   g_assert_true(gh_mls_group_get_active(gb));
 
+  /* Kept across a restart, cause and all. */
+  app_restart(bob);
+  gb = only_group(bob);
+  g_assert_true(gh_mls_group_get_change_refused(gb));
+  g_assert_cmpint(gh_mls_group_get_refusal(gb), ==, GH_MLS_REFUSAL_UNPROVEN);
+
   g_settings_set_boolean(bob->settings, VERIFIED_ONLY, FALSE);
   spin_until(change_not_refused, gb, "the refused change applying");
-  wait_members(gb, 3);
-  wait_text(bob, gh_mls_group_get_room_id(gb), "after Carol joined");
-  assert_identity(gb, CAROL, GH_MLS_MEMBER_VERIFIED, ALICE);
+  wait_members(gb, 4);
+  wait_text(bob, room, "after the stranger joined");
+  assert_identity(gb, STRANGER, GH_MLS_MEMBER_UNVERIFIED, ALICE);
   world_down(&w);
 }
 
@@ -2367,6 +2537,7 @@ test_forged_member_refused(void)
   g_autofree gchar *forged = forge_add_with_bad_proof(alice, ga, CAROL, ALICE);
   wire_relay_inject(&w.g, forged);
   spin_until(change_refused, gb, "Bob refusing the forged Add");
+  g_assert_cmpint(gh_mls_group_get_refusal(gb), ==, GH_MLS_REFUSAL_BROKEN_PROOF);
   g_assert_cmpuint(gh_mls_group_get_epoch(gb), ==, epoch);
   g_auto(GStrv) members = gh_mls_group_dup_members(gb);
   g_assert_cmpuint(g_strv_length(members), ==, 2);

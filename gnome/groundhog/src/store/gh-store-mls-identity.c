@@ -20,19 +20,50 @@ hex_ok(const gchar *value, gsize min, gsize max)
   return TRUE;
 }
 
+static gboolean
+invalid(GError **error, const gchar *what)
+{
+  g_set_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID, "Encrypted group: %s", what);
+  return FALSE;
+}
+
+/* GH_STORE_MLS_MEMBER_PREFIX + H(group) + "/": every device row of a group. */
+static gchar *
+group_prefix(const gchar *group_hex, GError **error)
+{
+  if (!hex_ok(group_hex, 2, 512)) {
+    invalid(error, "not a group id");
+    return NULL;
+  }
+  g_autofree gchar *digest = g_compute_checksum_for_string(G_CHECKSUM_SHA256, group_hex, -1);
+  return g_strconcat(GH_STORE_MLS_MEMBER_PREFIX, digest, "/", NULL);
+}
+
 static gchar *
 record_key(const gchar *group_hex, const gchar *account, const gchar *signature_key,
            GError **error)
 {
-  if (!hex_ok(group_hex, 2, 512) || !hex_ok(account, 64, 64) ||
-      !hex_ok(signature_key, 64, 64)) {
-    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
-                        "Encrypted-group member: not a group, account and device key");
+  if (!hex_ok(account, 64, 64) || !hex_ok(signature_key, 64, 64)) {
+    invalid(error, "not an account and device key");
     return NULL;
   }
+  g_autofree gchar *prefix = group_prefix(group_hex, error);
+  if (!prefix)
+    return NULL;
   g_autofree gchar *joined = g_strjoin(":", group_hex, account, signature_key, NULL);
   g_autofree gchar *digest = g_compute_checksum_for_string(G_CHECKSUM_SHA256, joined, -1);
-  return g_strconcat(GH_STORE_MLS_MEMBER_PREFIX, digest, NULL);
+  return g_strconcat(prefix, digest, NULL);
+}
+
+static gchar *
+refused_key(const gchar *group_hex, GError **error)
+{
+  if (!hex_ok(group_hex, 2, 512)) {
+    invalid(error, "not a group id");
+    return NULL;
+  }
+  g_autofree gchar *digest = g_compute_checksum_for_string(G_CHECKSUM_SHA256, group_hex, -1);
+  return g_strconcat(GH_STORE_MLS_REFUSED_PREFIX, digest, NULL);
 }
 
 /* Refuses to run inside a transaction SQLite already abandoned (see
@@ -149,4 +180,110 @@ gh_store_mls_member_save(GhStore *store, const gchar *group_hex, const gchar *ac
   if (rc == SQLITE_DONE)
     return TRUE;
   return gh_store_set_sqlite_error(store, rc, "Saving an encrypted-group member", error);
+}
+
+/* Runs `sql` with ?1 (and ?2 when given) bound. */
+static gboolean
+run(GhStore *store, const gchar *sql, const gchar *one, const gchar *two, const gchar *what,
+    GError **error)
+{
+  if (gh_store_is_read_only(store)) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_CORRUPT, "The store is read-only");
+    return FALSE;
+  }
+  sqlite3_stmt *stmt = prepare(store, sql, error);
+  if (!stmt)
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, one, -1, SQLITE_STATIC);
+  if (two)
+    sqlite3_bind_text(stmt, 2, two, -1, SQLITE_STATIC);
+  int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  if (rc == SQLITE_DONE)
+    return TRUE;
+  return gh_store_set_sqlite_error(store, rc, what, error);
+}
+
+gboolean
+gh_store_mls_member_delete(GhStore *store, const gchar *group_hex, const gchar *account,
+                           const gchar *signature_key, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_autofree gchar *key = record_key(group_hex, account, signature_key, error);
+  return key && run(store, "DELETE FROM meta WHERE key = ?1", key, NULL,
+                    "Forgetting an encrypted-group member", error);
+}
+
+gboolean
+gh_store_mls_member_forget_group(GhStore *store, const gchar *group_hex, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_autofree gchar *prefix = group_prefix(group_hex, error);
+  if (!prefix)
+    return FALSE;
+  /* Every key with the prefix sorts before the prefix with its last byte
+   * ('/') raised by one ('0'). */
+  g_autofree gchar *end = g_strdup(prefix);
+  end[strlen(end) - 1] = '0';
+  g_autofree gchar *refused = refused_key(group_hex, error);
+  return refused &&
+         run(store, "DELETE FROM meta WHERE key >= ?1 AND key < ?2", prefix, end,
+             "Forgetting an encrypted group's members", error) &&
+         run(store, "DELETE FROM meta WHERE key = ?1", refused, NULL,
+             "Forgetting an encrypted group's refused change", error);
+}
+
+gboolean
+gh_store_mls_refused_save(GhStore *store, const gchar *group_hex, const gchar *json,
+                          gboolean requiring_proofs, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_autofree gchar *key = refused_key(group_hex, error);
+  if (!key)
+    return FALSE;
+  if (!json)
+    return run(store, "DELETE FROM meta WHERE key = ?1", key, NULL,
+               "Forgetting an encrypted group's refused change", error);
+  if (!g_utf8_validate(json, -1, NULL) || strlen(json) > 256 * 1024)
+    return invalid(error, "not a refused change");
+  /* "1 <0|1> <json>": version, whether proofs were required. */
+  g_autofree gchar *value = g_strdup_printf("1 %d %s", requiring_proofs ? 1 : 0, json);
+  return run(store,
+             "INSERT INTO meta (key, value) VALUES (?1, ?2) "
+             "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+             key, value, "Saving an encrypted group's refused change", error);
+}
+
+gboolean
+gh_store_mls_refused_load(GhStore *store, const gchar *group_hex, gchar **json,
+                          gboolean *requiring_proofs, GError **error)
+{
+  g_return_val_if_fail(store != NULL && json != NULL, FALSE);
+  *json = NULL;
+  if (requiring_proofs)
+    *requiring_proofs = FALSE;
+  g_autofree gchar *key = refused_key(group_hex, error);
+  if (!key)
+    return FALSE;
+  sqlite3_stmt *stmt = prepare(store, "SELECT value FROM meta WHERE key = ?1", error);
+  if (!stmt)
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC);
+  int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW) {
+    const gchar *value = (const gchar *)sqlite3_column_text(stmt, 0);
+    /* Only a record this module wrote. */
+    if (value && (g_str_has_prefix(value, "1 0 ") || g_str_has_prefix(value, "1 1 ")) &&
+        value[4]) {
+      *json = g_strdup(value + 4);
+      if (requiring_proofs)
+        *requiring_proofs = value[2] == '1';
+    }
+    rc = SQLITE_DONE;
+  }
+  sqlite3_finalize(stmt);
+  if (rc == SQLITE_DONE)
+    return TRUE;
+  return gh_store_set_sqlite_error(store, rc, "Reading an encrypted group's refused change",
+                                   error);
 }

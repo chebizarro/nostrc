@@ -39,23 +39,33 @@ gchar *gh_mls_error_copy(const GError *error);
 
 /* A member whose identity isn't confirmed (nostrc-6ukh): badge NULL for a
  * PROVEN or VERIFIED one; else "Identity not verified" (or "Checking
- * identity…") with the explanation "Added by <added_by>. Groundhog couldn't
- * confirm this account owns this device." (added_by: the admin's cached
- * name or short npub, NULL when not known) and both for screen readers.
- * Clear with gh_mls_member_copy_clear(). */
+ * identity…" while a Verify runs) with an explanation: "Added by
+ * <added_by>. Groundhog couldn't confirm this account owns this device."
+ * (added_by: the admin's cached name or short npub), "They added this
+ * device themselves…" (added_by_self), or, with nobody known, a gentle
+ * note that older apps can't prove their account (owkh); and both for
+ * screen readers. Clear with gh_mls_member_copy_clear(). */
 typedef struct {
   const gchar *badge;
   gchar *explanation;
   gchar *accessible;
 } GhMlsMemberCopy;
 
-GhMlsMemberCopy gh_mls_member_copy(GhMlsMemberIdentity identity, const gchar *added_by);
+GhMlsMemberCopy gh_mls_member_copy(GhMlsMemberIdentity identity, const gchar *added_by,
+                                   gboolean added_by_self);
 void gh_mls_member_copy_clear(GhMlsMemberCopy *copy);
 
 /* An admin's change refused for good ("change-refused", nostrc-prrl): why
- * the group can't be read past it, honestly (requires_proofs: the account
- * requires every member's proof). Never "waiting". */
-const gchar *gh_mls_refused_copy(gboolean requires_proofs);
+ * the group can't be read past it, by the refusal's recorded cause (W24
+ * review L4), never "waiting". NULL for GH_MLS_REFUSAL_NONE. */
+const gchar *gh_mls_refused_copy(GhMlsRefusal refusal);
+
+/* Verify (W24 review H1): what asking relays reveals, before the user
+ * agrees (name: the member's name or short npub), and the outcome (error:
+ * the finish error, or NULL). Transfer full. */
+gchar *gh_mls_verify_prompt(const gchar *name);
+gchar *gh_mls_verify_result_copy(GhMlsMemberIdentity identity, const GError *error,
+                                 const gchar *name);
 
 /* Why the composer can't send to group (transfer full), or NULL when it can:
  * no service (encrypted groups aren't running for this account), left,
