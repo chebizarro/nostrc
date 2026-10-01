@@ -628,10 +628,28 @@ for both profiles; it replaces the one-parent subset.
   competitor of an applied Commit, one on a competing branch, the losing side
   of a reorg, our own pending Commit superseded before its relay OK -- is
   retained while its source epoch is inside the horizon. Its parent is the
-  state whose exporter secret sealed its kind:445 (MIP-03); candidate states'
-  exporter secrets are kept, so a branch's later Commits and messages peel.
-  Bounded: 32 Commits, 4 per committer; beyond, `MARMOT_ERR_RESOURCE_REFUSED`
-  (-54), nothing kept.
+  retained state its MLS authentication succeeds against (membership tag or
+  sender data, and signature), whichever state's exporter secret sealed its
+  kind:445 -- that one is only tried first; a Commit no retained state
+  authenticates is `MARMOT_ERR_MLS_PROCESS_MESSAGE` and not retained (MDK
+  drops it too). Candidate states' exporter and sender-data secrets are
+  kept, so a branch's later Commits and messages peel.
+- **Bounds, on losers only.** Every Commit is admitted and resolved first;
+  then the Commits retained off the selected branch are bounded -- 32, 4 per
+  committer -- by evicting the least likely to win (one that attaches
+  nowhere first, then the lowest-scoring branch, a branch tip before what it
+  builds on). A Commit the selection makes canonical, a linear advance of
+  the tip included, is never refused for capacity. When the arriving Commit
+  is the one evicted it is `MARMOT_ERR_RESOURCE_REFUSED` (-54): nothing
+  kept, never marked processed, retryable (`transports/nostr.md`: offer it
+  again later).
+- **Retained, reported.** A Commit retained as a losing candidate is
+  `MARMOT_ERR_COMMIT_RETAINED` (-55): processed, the group unchanged, but its
+  state's exporter secret may open held events -- offer the events held as
+  `MARMOT_ERR_NIP44` again (`inbound-processing.md`: a transport-deferred
+  object is retried when the candidate-key set changes). With that retry
+  every one of the 72 delivery orders of the MDK 0.11 fork vectors reaches
+  MDK's verdict, newest-first backfill included.
 - **Resolution** on every admitted input: replay from the oldest candidate's
   source epoch, every maximal branch through the canonical states and the
   candidates, each Commit fully validated against its parent; MDK's
@@ -647,11 +665,19 @@ for both profiles; it replaces the one-parent subset.
   state for its account, once, our own sends included. One of a candidate
   state is decrypted on that state rebuilt by replay, recorded, and is
   `MARMOT_ERR_NIP44` (offer it again later) until its branch wins; then it
-  is delivered.
+  is delivered. Offered again, it costs little: the rebuilt states are
+  cached for the stored record and tip, and a message whose sender leaf
+  (read from its sender data alone) witnesses its state already rebuilds
+  nothing. The witnesses of a branch that lost a reorg stay (MDK 0.11 no
+  longer re-admits withdrawn messages as witnesses, so a later contest of
+  the same old branch can score differently there).
 - **Invalidation.** `MarmotMessageResult.convergence` (any result type): the
   branch changed, the fork epoch, the superseded Commits' digests and the
   withdrawn messages; their stored copies become
-  `MARMOT_MSG_STATE_EPOCH_INVALIDATED`.
+  `MARMOT_MSG_STATE_EPOCH_INVALIDATED`. Only the superseded epochs' messages
+  are read: the new optional storage op `messages_in_epochs` (memory, SQLite
+  and Groundhog's store have it; without it, as the nostrdb backend, the
+  history is paged and only the matching messages are kept).
 - **Lost acknowledgement.** A pending Commit superseded before its OK stays
   retained, unconfirmed: never a selectable tip on its own (publish before
   apply), it wins when others build on it or witness it, or once its relay
@@ -661,14 +687,24 @@ for both profiles; it replaces the one-parent subset.
 
 #### Compatibility
 
-- **Behaviour.** A losing competitor is still `MARMOT_ERR_WRONG_EPOCH` but is
-  kept (`marmot_txn_keep()`); the same Commit as one retained in the
-  canonical history is `MARMOT_RESULT_OWN_MESSAGE`, five epochs back.
-  Groundhog and other callers that mark events seen on a Commit result now
-  also see results whose epoch went down.
+- **Behaviour.** A losing competitor is `MARMOT_ERR_COMMIT_RETAINED` and is
+  kept (`marmot_txn_keep()`); offered again it is `MARMOT_ERR_WRONG_EPOCH`.
+  The same Commit as one retained in the canonical history is
+  `MARMOT_RESULT_OWN_MESSAGE`, five epochs back. Callers that hold
+  undecryptable events must offer them again on `MARMOT_ERR_COMMIT_RETAINED`
+  and on a branch change, not only after an applied Commit, and must never
+  record a `MARMOT_ERR_RESOURCE_REFUSED` event as seen. Groundhog and other
+  callers that mark events seen on a Commit result now also see results
+  whose epoch went down. Outgoing messages are reported withdrawn only when
+  the caller stored them (`marmot_save_created_message()`).
 - **API/ABI.** `MarmotMessageResult` grows at its end (`convergence`; the
-  0.12 SONAME covers it). `MARMOT_ERR_RESOURCE_REFUSED`.
-- **Storage.** The retained-parent record gains the W25 trailer; libmarmot
+  0.12 SONAME covers it). `MARMOT_ERR_RESOURCE_REFUSED` (-54),
+  `MARMOT_ERR_COMMIT_RETAINED` (-55). `MarmotStorage` grows at its end
+  (`messages_in_epochs`, optional): a storage built against an older header
+  must be rebuilt (and zero-initialized, as libmarmot's own are).
+- **Storage.** The retained-parent record gains the W25 trailer (marker
+  0xC2: witnesses carry their leaf, branch secrets their sender-data
+  secret); libmarmot
   0.10.0/0.11.0 cannot read it (late messages and competitors of retained
   epochs fail closed after a downgrade, until the next Commit). Records of
   earlier versions are read: a 0.9.0 one is a full parent without Commit
@@ -681,6 +717,13 @@ for both profiles; it replaces the one-parent subset.
   one: the adopted protocol's tradeoff. nostrc-yuj2's early reduction of the
   parent to a reader is gone (it made a member refuse a deeper branch the
   others select).
+- **Security (the rule itself, raised upstream: nostrc-sq85).** Under the
+  longest-branch rule, as MDK runs it too, one member can publish a deeper
+  chain of self-updates from up to five epochs back -- withdrawing the
+  others' messages of those epochs -- or outlast a depth-1 removal of itself
+  with two; the per-committer bound (4 retained losers: a fifth losing
+  Commit of the chain is evicted, so its sixth cannot attach) limits one
+  account to rewriting about four epochs.
 - **Not done (nostrc-w1m0 stays open).** The pass timers
   (`settlement_quiescence_ms`, `max_convergence_pass_ms`), the
   Syncing/Resolving phases and holding outbound work while a pass is open:

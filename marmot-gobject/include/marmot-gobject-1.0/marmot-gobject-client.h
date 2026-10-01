@@ -445,6 +445,13 @@ void marmot_gobject_client_process_message_async(MarmotGobjectClient *self,
  * #MarmotGobjectClient::group-updated carries the updated group).
  * When *out_result_type is OWN_MESSAGE, returns NULL (skip).
  *
+ * Errors are in the MARMOT_GOBJECT_ERROR domain with libmarmot's codes.
+ * Since libmarmot 0.12.0 (group convergence): MARMOT_ERR_COMMIT_RETAINED
+ * is a Commit kept on a competing branch -- processed, nothing to show --
+ * after which events held for MARMOT_ERR_NIP44 should be offered again;
+ * MARMOT_ERR_RESOURCE_REFUSED is retryable: never record the event as
+ * processed, offer it again later.
+ *
  * Returns: (transfer full) (nullable): decrypted inner event JSON, or NULL
  */
 gchar *marmot_gobject_client_process_message_finish(MarmotGobjectClient *self,
