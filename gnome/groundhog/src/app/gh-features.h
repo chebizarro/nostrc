@@ -41,6 +41,9 @@ G_BEGIN_DECLS
 #ifndef GROUNDHOG_HAVE_ATTACHMENTS
 #define GROUNDHOG_HAVE_ATTACHMENTS 0
 #endif
+#ifndef GROUNDHOG_HAVE_ADOPTED_KEY_PACKAGES
+#define GROUNDHOG_HAVE_ADOPTED_KEY_PACKAGES 0
+#endif
 
 /* G09: network modes and the Tor transport (src/net/gh-net-session.c and
  * gh-relay-net.c, installed by gh-app-services.c before any connection). */
@@ -59,6 +62,12 @@ G_BEGIN_DECLS
  * build without OpenSSL or libsoup has none. */
 #define GH_FEATURE_ATTACHMENTS      GROUNDHOG_HAVE_ATTACHMENTS
 #define GH_FEATURE_EXPIRY           GROUNDHOG_HAVE_EXPIRY /* G07: gh-expiry.c, gh-app-services.c */
+/* nostrc-lf62: GhMlsService publishes the adopted-profile KeyPackage
+ * (GH_MLS_ADOPTED_KEY_PACKAGES, MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER), so the
+ * older MDK 0.8 one is optional ("Let people using older Marmot apps invite
+ * me"). Without the producer the older format is the only one: the switch
+ * is hidden (review N4). */
+#define GH_FEATURE_ADOPTED_KEY_PACKAGES GROUNDHOG_HAVE_ADOPTED_KEY_PACKAGES
 /* Not a preference: encrypted groups (Marmot MLS, nostrc-qp24.13). When 1,
  * gh-app-outbox.c runs GhMlsService beside each outbox, gh-app-services.c
  * attaches their UI (gh-mls-ui.c, nostrc-9xf5: New Group's encrypted page,
@@ -105,7 +114,8 @@ gh_features_for_preferences(void)
          (GH_FEATURE_REQUEST_FILTER ? GH_PREFERENCES_FEATURE_REQUEST_FILTER : 0) |
          (GH_FEATURE_ATTACHMENTS ? GH_PREFERENCES_FEATURE_ATTACHMENTS : 0) |
          (GH_FEATURE_EXPIRY ? GH_PREFERENCES_FEATURE_EXPIRY : 0) |
-         (GH_FEATURE_ENCRYPTED_GROUPS ? GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS : 0);
+         (GH_FEATURE_ENCRYPTED_GROUPS ? GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS : 0) |
+         (GH_FEATURE_ADOPTED_KEY_PACKAGES ? GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES : 0);
 }
 
 G_END_DECLS

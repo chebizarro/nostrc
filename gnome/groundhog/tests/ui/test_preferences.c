@@ -372,6 +372,31 @@ test_choice_rows_bind_both_ways(Fixture *f, gconstpointer data)
   }
 }
 
+/* ---- older Marmot invitations (nostrc-lf62) ----------------------------------------- */
+
+/* "Let people using older Marmot apps invite me" is a choice only when the
+ * adopted producer is built: then it's shown and bound; without it the older
+ * format is the only one and the switch isn't shown at all (review N4). */
+static void
+test_older_marmot_switch(Fixture *f, gconstpointer data)
+{
+  gboolean producer = (GPOINTER_TO_UINT(data) & GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES) != 0;
+  GtkWidget *row = gh_preferences_dialog_get_key_widget(f->dialog, "mls-legacy-key-packages");
+  g_assert_true(row == child(f, "older_marmot_invites_row"));
+  g_assert_cmpint(gtk_widget_get_visible(row), ==, producer);
+  g_assert_cmpint(gh_preferences_dialog_get_key_available(f->dialog, "mls-legacy-key-packages"),
+                  ==, producer);
+  if (!producer) {
+    g_assert_false(gtk_widget_get_sensitive(row));
+    return;
+  }
+  g_assert_true(gtk_widget_get_sensitive(row));
+  g_assert_true(adw_switch_row_get_active(ADW_SWITCH_ROW(row))); /* on by default */
+  g_settings_set_boolean(f->settings, "mls-legacy-key-packages", FALSE);
+  drain_idle();
+  g_assert_false(adw_switch_row_get_active(ADW_SWITCH_ROW(row)));
+}
+
 /* ---- network mode and Tor -------------------------------------------------------- */
 
 static void
@@ -1080,6 +1105,14 @@ assert_gated(Fixture *f, const char *key)
     return;
   }
   g_assert_false(gtk_widget_get_sensitive(widget));
+  /* The older-format switch is not shown at all without the adopted
+   * producer: that format is then the only one (review N4). */
+  if (g_str_equal(key, "mls-legacy-key-packages")) {
+    guint features = 0;
+    g_object_get(f->dialog, "features", &features, NULL);
+    g_assert_cmpint(gtk_widget_get_visible(widget), ==,
+                    (features & GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES) != 0);
+  }
   const char *subtitle = adw_action_row_get_subtitle(ADW_ACTION_ROW(widget));
   gboolean always_on = g_str_equal(key, "filter-unknown-senders");
   if (always_on)
@@ -1140,7 +1173,7 @@ test_gated_rows_this_build(Fixture *f, gconstpointer data)
     { "enter-sends", GH_FEATURE_COMPOSER },
     { "blossom-servers", GH_FEATURE_ATTACHMENTS },
     { "only-join-verified-mls-groups", GH_FEATURE_ENCRYPTED_GROUPS },
-    { "mls-legacy-key-packages", GH_FEATURE_ENCRYPTED_GROUPS },
+    { "mls-legacy-key-packages", GH_FEATURE_ENCRYPTED_GROUPS && GH_FEATURE_ADOPTED_KEY_PACKAGES },
   };
   G_STATIC_ASSERT(G_N_ELEMENTS(expect) == G_N_ELEMENTS(preference_keys));
   present(f, 800, 700);
@@ -1408,6 +1441,9 @@ main(int argc, char **argv)
   ADD("key-package-row", test_key_package_row, all);
   ADD("key-package-row-no-feature", test_key_package_row,
       all & ~GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS);
+  ADD("older-marmot-switch", test_older_marmot_switch, all);
+  ADD("older-marmot-switch-no-producer", test_older_marmot_switch,
+      all & ~GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES);
   ADD("delete-all-runs-forget", test_delete_all_runs_forget, build);
   ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, build);
   ADD("minimum-size-layout", test_minimum_size_layout, build);

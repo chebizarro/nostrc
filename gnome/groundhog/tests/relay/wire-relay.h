@@ -83,6 +83,10 @@ struct _WireRelay {
   gboolean auth_gate_dms;    /* kind 1059 only to its authenticated recipient */
   gboolean auth_writes;      /* EVENT only from an authenticated connection */
   gboolean refuse_events;    /* serve: every EVENT refused (OK false "blocked:") */
+  gboolean nip09;            /* serve: a kept kind 5 deletes its author's events it names,
+                              * before its OK: `e` ids, and `a` addresses up to its
+                              * created_at (NIP-09) */
+  guint deleted;             /* events deleted that way */
   gboolean record;           /* keep every text frame in frames */
   GPtrArray *stored;         /* WireStored, in arrival order */
   GPtrArray *frames;         /* WireFrame, in order */
@@ -518,6 +522,57 @@ wire_frame_payload(const gchar *text, const gchar *prefix)
   return g_strndup(text + skip, length - skip - 1);
 }
 
+/* The value of a stored event's first `name` tag, or NULL (borrowed). */
+static G_GNUC_UNUSED const gchar *
+wire_tag_value(NostrEvent *event, const gchar *name)
+{
+  NostrTags *tags = nostr_event_get_tags(event);
+  for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (tag && nostr_tag_size(tag) >= 2 && g_strcmp0(nostr_tag_get(tag, 0), name) == 0)
+      return nostr_tag_get(tag, 1);
+  }
+  return NULL;
+}
+
+/* NIP-09 (relay->nip09): the kept deletion request deletes the events of its
+ * author it names, by `e` id or by `a` address ("kind:pubkey:d") for the
+ * versions dated up to its own created_at. */
+static G_GNUC_UNUSED void
+wire_apply_deletion(WireRelay *relay, WireStored *request)
+{
+  NostrEvent *del = request->event;
+  const gchar *author = nostr_event_get_pubkey(del);
+  gint64 until = nostr_event_get_created_at(del);
+  NostrTags *tags = nostr_event_get_tags(del);
+  for (guint i = relay->stored->len; i > 0; i--) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i - 1);
+    if (stored == request || g_strcmp0(nostr_event_get_pubkey(stored->event), author) != 0)
+      continue;
+    gboolean gone = FALSE;
+    for (size_t t = 0; tags && t < nostr_tags_size(tags) && !gone; t++) {
+      NostrTag *tag = nostr_tags_get(tags, t);
+      if (!tag || nostr_tag_size(tag) < 2)
+        continue;
+      const gchar *name = nostr_tag_get(tag, 0), *value = nostr_tag_get(tag, 1);
+      if (g_strcmp0(name, "e") == 0) {
+        gone = g_strcmp0(value, stored->id) == 0;
+      } else if (g_strcmp0(name, "a") == 0) {
+        const gchar *d = wire_tag_value(stored->event, "d");
+        g_autofree gchar *address = g_strdup_printf("%d:%s:%s",
+                                                    nostr_event_get_kind(stored->event),
+                                                    author, d ? d : "");
+        gone = g_strcmp0(value, address) == 0 &&
+               nostr_event_get_created_at(stored->event) <= until;
+      }
+    }
+    if (gone) {
+      g_ptr_array_remove_index(relay->stored, i - 1);
+      relay->deleted++;
+    }
+  }
+}
+
 /* Handles REQ, CLOSE and EVENT in store-and-serve mode; FALSE for anything
  * else (AUTH), which the common path handles. */
 static G_GNUC_UNUSED gboolean
@@ -603,6 +658,8 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
     }
     relay->events++;
     WireStored *stored = wire_keep(relay, json);
+    if (stored && relay->nip09 && nostr_event_get_kind(stored->event) == 5)
+      wire_apply_deletion(relay, stored);
     const gchar *ok = stored ? "" : "duplicate: already have it";
     if (relay->hold_oks) {
       WireHeldOk *held = g_new0(WireHeldOk, 1);

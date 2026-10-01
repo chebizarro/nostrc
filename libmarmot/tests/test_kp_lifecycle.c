@@ -690,11 +690,20 @@ test_profiles_have_independent_slots(void)
         free(infos);
         CHECK(active == 2 && legacy_active && adopted_active, "the newest of each profile active");
     }
+    /* M4: a deletion request dated after every KeyPackage made, the next
+     * KeyPackage after it. */
+    int64_t reserved = 0;
+    OK(marmot_key_package_reserve_created_at(bob.m, bob.pk, 1, &reserved));
+    CHECK(reserved > created_at_of(legacy2.json) && reserved > created_at_of(adopted2.json),
+          "the reservation is later than every KeyPackage, even dated ahead");
+    Kp legacy3 = legacy_kp(&bob);
+    CHECK(created_at_of(legacy3.json) > reserved, "the next KeyPackage is later still");
+    free(legacy3.json);
     /* Stopping a profile retires all of its keys, never the other's. */
     size_t retired = 0;
     OK(marmot_key_package_retire_profile(bob.m, bob.pk, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
                                          &retired));
-    CHECK(retired == 1 && !has_key(&bob, &legacy2) && has_key(&bob, &adopted2),
+    CHECK(retired == 2 && !has_key(&bob, &legacy2) && has_key(&bob, &adopted2),
           "legacy retired, adopted kept");
     OK(marmot_key_package_next_expiry_for_profile(bob.m, bob.pk,
                                                   MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,

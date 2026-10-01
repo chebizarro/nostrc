@@ -50,9 +50,13 @@ G_BEGIN_DECLS
  * 0.8 format follows the "mls-legacy-key-packages" setting ("Let people
  * using older Marmot apps invite me", on by default; privacy charter
  * amendment 2026-10-01): switched off, its KeyPackage is withdrawn with a
- * NIP-09 deletion request to the same write relays and its private keys
- * deleted once a relay accepted that request; switched on, a new one is
- * published in its slot. A build without the adopted producer keeps it on.
+ * NIP-09 deletion request to the same write relays (its `a` address and an
+ * `e` tag per MDK 0.8 KeyPackage event id this run published, dated from
+ * libmarmot's KeyPackage clock so never before the newest of them: review
+ * M4) and its private keys deleted once a relay accepted that request (a
+ * slot that can't be read keeps them and retries: L3); switched on, a new
+ * one is published in its slot. A build without the adopted producer keeps
+ * it on (and Preferences doesn't show the switch).
  * A format's KeyPackage
  * is rotated when it is older than the lifetime (default
  * GH_MLS_KEY_PACKAGE_LIFETIME) and after a Welcome to it was joined -- once
@@ -604,6 +608,11 @@ GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **erro
 /* Test hook (nostrc-0bdg re-review A3): the received-invitation list cannot
  * be read (as with a storage error) while fail is TRUE. */
 void gh_mls_service_test_fail_invitation_listing(gboolean fail);
+/* Test hook (W25 slice K re-review L3): reading the MDK 0.8 KeyPackage's
+ * slot for its withdrawal fails with a storage error (not "not found")
+ * while fail is TRUE; how many times it did since the last call. */
+void gh_mls_service_test_fail_key_package_slot(gboolean fail);
+guint gh_mls_service_test_key_package_slot_failures(void);
 /* Test hook (nostrc-0bdg): whether libmarmot still holds the private init
  * key of the KeyPackage whose ref (`i` tag) is @ref_hex. */
 gboolean gh_mls_service_test_has_init_key(GhMlsService *self, const gchar *ref_hex);

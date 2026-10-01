@@ -1587,6 +1587,11 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-mls-service)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS=1)
+    # Preferences shows "Let people using older Marmot apps invite me" only
+    # when the older format is a choice (gh-features.h, review N4).
+    if (MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
+      target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ADOPTED_KEY_PACKAGES=1)
+    endif()
   endif()
   if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
       TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)

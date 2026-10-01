@@ -135,7 +135,8 @@ static const struct {
   { "blossom-servers", GH_PREFERENCES_FEATURE_ATTACHMENTS },
   { "tor-socks-address", GH_PREFERENCES_FEATURE_TOR },
   { "only-join-verified-mls-groups", GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS },
-  { "mls-legacy-key-packages", GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS },
+  { "mls-legacy-key-packages",
+    GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS | GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES },
 };
 
 static gboolean
@@ -1246,6 +1247,11 @@ gh_preferences_dialog_constructed(GObject *object)
      * always kept apart (charter §7.9), so that filter is simply on. */
     gboolean always_on = g_str_equal(key, "filter-unknown-senders");
     adw_switch_row_set_active(ADW_SWITCH_ROW(row), always_on);
+    /* Without the adopted producer the older invitation key is the only
+     * one, never a choice: no switch at all (review N4). */
+    if (g_str_equal(key, "mls-legacy-key-packages") &&
+        !(self->features & GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES))
+      gtk_widget_set_visible(row, FALSE);
     gate_row(ADW_ACTION_ROW(row),
              always_on ? _("Always on in this version: messages from people you haven't "
                            "accepted go to Message Requests, without profile lookups")

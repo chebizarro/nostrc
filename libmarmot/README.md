@@ -546,6 +546,11 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   Welcome spent, recorded in the accepting transaction under the
   account-scoped `kp_used` label: N1). A new KeyPackage no longer leaves the
   other profile's current one marked inactive: `active` is per profile (N3).
+  Re-review M4: `marmot_key_package_reserve_created_at()` hands out a
+  `created_at` from the account's KeyPackage clock (later than every
+  KeyPackage made so far, and every later one is later still), so a NIP-09
+  deletion request by address is never older than the newest version it
+  must delete, and a KeyPackage published after it is never covered by it.
 
 ### 0.12.0 (unreleased): Commits in adopted groups (nostrc-qp24.5.1.3)
 

@@ -37,7 +37,10 @@
  *  - upgrade-companion-held (review M1): an MDK 0.8 KeyPackage owed with an
  *    adopted one goes out once its hold ends, even after a restart.
  *  - legacy-switched-off (review L1): the MDK 0.8 format switched off is
- *    withdrawn, its keys retired only after a relay accepted the request.
+ *    withdrawn, its keys retired only after a relay accepted the request,
+ *    which covers its newest version by date and by id (re-review M4).
+ *  - legacy-withdraw-unreadable-slot (re-review L3): a slot that can't be
+ *    read keeps the keys and is retried, never taken as never published.
  *  - formats-own-lifecycle (both formats, nostrc-lf62): each format has its
  *    own `d` slot; a join through one format's KeyPackage replaces that
  *    format only, and its OK retires only that format's old key; an adopted
@@ -1203,26 +1206,88 @@ deletions_reached(gpointer data)
   return all->len >= wait->count;
 }
 
+/* The id of a kept event's JSON (transfer full). */
+static gchar *
+event_id_of_json(const gchar *json)
+{
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
+  gchar *id = event_id_dup(event);
+  nostr_event_free(event);
+  return id;
+}
+
+/* The kind-30443 events of `key` in `format` any client sent the relay:
+ * the newest's created_at (0: none). */
+static gint64
+newest_sent_created_at(WireRelay *relay, guint key, GhMlsKeyPackageFormat format)
+{
+  g_autoptr(GPtrArray) sent = published(relay, 30443);
+  gint64 newest = 0;
+  for (guint i = 0; i < sent->len; i++) {
+    NostrEvent *event = g_ptr_array_index(sent, i);
+    if (g_strcmp0(nostr_event_get_pubkey(event), hex[key]) == 0 &&
+        key_package_format(event) == format)
+      newest = MAX(newest, nostr_event_get_created_at(event));
+  }
+  return newest;
+}
+
 typedef struct {
   App *app;
   const gchar *ref;
-} KeyGoneWait;
+  WireRelay *relays[2];
+} KeyGoneOnDeletion;
+
+/* The keys gone; checked the moment they go: by then a relay that honours
+ * NIP-09 has applied the request (it answers OK only after). */
+static gboolean
+init_key_gone_after_deletion(gpointer data)
+{
+  KeyGoneOnDeletion *wait = data;
+  if (has_init_key(wait->app, wait->ref))
+    return FALSE;
+  guint emptied = 0;
+  for (guint i = 0; i < G_N_ELEMENTS(wait->relays); i++) {
+    g_autoptr(GPtrArray) left = stored_key_packages_of(wait->relays[i], wait->app->key,
+                                                      GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+    emptied += left->len == 0;
+  }
+  g_assert_cmpuint(emptied, >=, 1);
+  return TRUE;
+}
+
+typedef struct {
+  WireRelay *relays[2];
+  guint key;
+} NoLegacyWait;
 
 static gboolean
-init_key_gone(gpointer data)
+no_legacy_left(gpointer data)
 {
-  KeyGoneWait *wait = data;
-  return !has_init_key(wait->app, wait->ref);
+  NoLegacyWait *wait = data;
+  for (guint i = 0; i < G_N_ELEMENTS(wait->relays); i++) {
+    g_autoptr(GPtrArray) left = stored_key_packages_of(wait->relays[i], wait->key,
+                                                      GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+    if (left->len > 0)
+      return FALSE;
+  }
+  return TRUE;
 }
 
 #define LEGACY_KEY_PACKAGES "mls-legacy-key-packages"
 
-/* Review L1: "Let people using older Marmot apps invite me" switched off.
- * The MDK 0.8 KeyPackage is withdrawn -- a NIP-09 deletion request for its
- * slot's address, to the write relays -- and its private keys go only once
- * a relay accepted that request (refused, they stay: a delayed Welcome
- * still opens). The adopted one is untouched; rotations publish it alone.
- * Switched back on, a new MDK 0.8 KeyPackage goes out in the same slot. */
+/* Review L1 and M4: "Let people using older Marmot apps invite me" switched
+ * off. The MDK 0.8 KeyPackage is withdrawn -- a NIP-09 deletion request to
+ * the write relays naming its slot's address, dated no earlier than its
+ * newest version (libmarmot dates KeyPackages ahead of the clock after
+ * quick rotations), and every event of the slot known by id -- and its
+ * private keys go only once a relay accepted, and so applied, the request
+ * (refused, they stay: a delayed Welcome still opens). The relays here honour
+ * NIP-09: afterwards no MDK 0.8 KeyPackage of the account is left on them.
+ * The adopted one is untouched; rotations publish it alone. Switched back
+ * on, a new MDK 0.8 KeyPackage goes out in the same slot, dated after the
+ * request. */
 static void
 test_legacy_switched_off(void)
 {
@@ -1230,13 +1295,24 @@ test_legacy_switched_off(void)
   world_split_lists = TRUE;
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
+  w.w.nip09 = w.h.nip09 = TRUE;
   App *alice = &w.apps[ALICE];
   wait_published(alice);
   const GhMlsKeyPackageFormat A = GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED;
   const GhMlsKeyPackageFormat L = GH_MLS_KEY_PACKAGE_FORMAT_LEGACY;
-  g_autofree gchar *l_ref = NULL, *l_d = NULL, *a_ref = NULL;
-  newest_key_package_of(&w.w, ALICE, L, &l_ref, &l_d, NULL);
+  /* Quick rotations: the newest KeyPackages are dated ahead of the clock. */
+  for (guint i = 0; i < 3; i++) {
+    g_autofree gchar *before = g_strdup(kp_id(alice));
+    rotate(alice);
+    wait_settled(alice, before);
+    wait_published(alice);
+  }
+  g_autofree gchar *l_ref = NULL, *l_d = NULL, *a_ref = NULL, *l_json = NULL;
+  newest_key_package_of(&w.w, ALICE, L, &l_ref, &l_d, &l_json);
   newest_key_package_of(&w.w, ALICE, A, &a_ref, NULL, NULL);
+  g_autofree gchar *l_id = event_id_of_json(l_json);
+  gint64 newest_legacy = newest_sent_created_at(&w.w, ALICE, L);
+  g_assert_cmpint(newest_legacy, >, real_now());   /* ahead of the clock */
 
   /* No relay accepts the request: nothing is retired. */
   w.w.refuse_events = w.h.refuse_events = TRUE;
@@ -1249,36 +1325,94 @@ test_legacy_switched_off(void)
   g_assert_cmpstr(tag_value(request, "a"), ==, address);
   g_assert_cmpstr(tag_value(request, "k"), ==, "30443");
   g_assert_cmpuint(tag_count(request, "a"), ==, 1);
+  /* It covers the newest version, by date and by id (review M4). */
+  g_assert_cmpint(nostr_event_get_created_at(request), >=, newest_legacy);
+  gboolean names_newest = FALSE;
+  NostrTags *tags = nostr_event_get_tags(request);
+  for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    names_newest |= g_strcmp0(nostr_tag_get(tag, 0), "e") == 0 &&
+                    g_strcmp0(nostr_tag_get(tag, 1), l_id) == 0;
+  }
+  g_assert_true(names_newest);
   drain();
   g_assert_true(has_init_key(alice, l_ref));
+  g_assert_cmpuint(w.w.deleted + w.h.deleted, ==, 0);
 
-  /* Accepted: the MDK 0.8 keys go, the adopted ones stay. */
+  /* Accepted: applied by the relays, and only then the MDK 0.8 keys go;
+   * the adopted ones stay. */
   w.w.refuse_events = w.h.refuse_events = FALSE;
   g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, TRUE);
   g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, FALSE);
-  KeyGoneWait gone = { alice, l_ref };
-  spin_until(init_key_gone, &gone, "the MDK 0.8 keys retired");
+  KeyGoneOnDeletion gone = { alice, l_ref, { &w.w, &w.h } };
+  spin_until(init_key_gone_after_deletion, &gone, "the MDK 0.8 keys retired");
+  NoLegacyWait none = { { &w.w, &w.h }, ALICE };
+  spin_until(no_legacy_left, &none, "no MDK 0.8 KeyPackage left on the relays");
   g_assert_true(has_init_key(alice, a_ref));
   g_assert_null(gh_mls_service_get_key_package_id_for_format(alice->service, L));
   wait_state(alice, GH_MLS_KEY_PACKAGE_PUBLISHED);
+  g_autoptr(GPtrArray) accepted = deletions_on(&w.w, ALICE);
+  gint64 deleted_up_to = nostr_event_get_created_at(g_ptr_array_index(accepted,
+                                                                      accepted->len - 1));
 
   /* A rotation publishes the adopted format alone. */
-  g_autoptr(GPtrArray) legacy_before = stored_key_packages_of(&w.w, ALICE, L);
   g_autofree gchar *a_id = g_strdup(kp_id(alice));
   rotate(alice);
   wait_settled(alice, a_id);
   drain();
   g_autoptr(GPtrArray) legacy_after = stored_key_packages_of(&w.w, ALICE, L);
-  g_assert_cmpuint(legacy_after->len, ==, legacy_before->len);
+  g_assert_cmpuint(legacy_after->len, ==, 0);
 
-  /* Switched back on: a new MDK 0.8 KeyPackage, in the same slot. */
+  /* Switched back on: a new MDK 0.8 KeyPackage, in the same slot, dated
+   * after the request (a relay that honoured it accepts it). */
   g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, TRUE);
-  FormatCountWait back = { &w.w, ALICE, L, legacy_before->len + 1 };
+  FormatCountWait back = { &w.w, ALICE, L, 1 };
   spin_until(format_count_reached, &back, "a new MDK 0.8 KeyPackage");
-  g_autofree gchar *l_ref2 = NULL, *l_d2 = NULL;
-  newest_key_package_of(&w.w, ALICE, L, &l_ref2, &l_d2, NULL);
+  g_autofree gchar *l_ref2 = NULL, *l_d2 = NULL, *l_json2 = NULL;
+  newest_key_package_of(&w.w, ALICE, L, &l_ref2, &l_d2, &l_json2);
   g_assert_cmpstr(l_d2, ==, l_d);
   g_assert_true(has_init_key(alice, l_ref2));
+  NostrEvent *again = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(again, l_json2, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_get_created_at(again), >, deleted_up_to);
+  nostr_event_free(again);
+  world_down(&w);
+}
+
+static gboolean
+slot_read_failed(gpointer data)
+{
+  (void)data;
+  return gh_mls_service_test_key_package_slot_failures() > 0;
+}
+
+/* Re-review L3: only a definitive not-found of the MDK 0.8 slot means it
+ * was never published. A slot that can't be read (a storage error) keeps
+ * the keys and sends nothing; the retry withdraws it once it can be read. */
+static void
+test_legacy_withdraw_unreadable_slot(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  w.w.nip09 = w.h.nip09 = TRUE;
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  g_autofree gchar *l_ref = NULL;
+  newest_key_package_of(&w.w, ALICE, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &l_ref, NULL, NULL);
+
+  gh_mls_service_test_fail_key_package_slot(TRUE);
+  g_settings_set_boolean(alice->settings, LEGACY_KEY_PACKAGES, FALSE);
+  spin_until(slot_read_failed, NULL, "the slot read failing");
+  drain();
+  g_assert_true(has_init_key(alice, l_ref));
+  g_autoptr(GPtrArray) none = deletions_on(&w.w, ALICE);
+  g_assert_cmpuint(none->len, ==, 0);
+
+  gh_mls_service_test_fail_key_package_slot(FALSE);
+  KeyGoneOnDeletion gone = { alice, l_ref, { &w.w, &w.h } };
+  spin_until(init_key_gone_after_deletion, &gone, "the retried withdrawal");
   world_down(&w);
 }
 #endif
@@ -1787,6 +1921,8 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("formats-own-lifecycle"), test_formats_own_lifecycle);
   g_test_add_func(KP_TEST("upgrade-companion-held"), test_upgrade_companion_held);
   g_test_add_func(KP_TEST("legacy-switched-off"), test_legacy_switched_off);
+  g_test_add_func(KP_TEST("legacy-withdraw-unreadable-slot"),
+                  test_legacy_withdraw_unreadable_slot);
 #endif
 #if GH_TEST_HAVE_INBOX_SETUP
   g_test_add_func(KP_TEST("fresh-accounts-invite-each-other"),

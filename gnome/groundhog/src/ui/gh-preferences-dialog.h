@@ -96,8 +96,11 @@ typedef enum {
   GH_PREFERENCES_FEATURE_ATTACHMENTS      = 1 << 7, /* G21/G22: Blossom attachments */
   GH_PREFERENCES_FEATURE_EXPIRY           = 1 << 8, /* G07: the expiry and retention purge */
   GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS = 1 << 9, /* encrypted groups (nostrc-6ukh) */
+  /* The adopted-profile KeyPackage producer (nostrc-lf62): only then is the
+   * older format a choice, so without it that switch isn't shown at all. */
+  GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES = 1 << 10,
 } GhPreferencesFeatures;
-#define GH_PREFERENCES_FEATURES_ALL ((GhPreferencesFeatures)((1 << 10) - 1))
+#define GH_PREFERENCES_FEATURES_ALL ((GhPreferencesFeatures)((1 << 11) - 1))
 
 /* Whether Tor answers at tor-socks-address (the app's network session). */
 typedef enum {

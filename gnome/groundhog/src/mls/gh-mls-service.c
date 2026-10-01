@@ -36,6 +36,8 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
 #define RETRY_MIN_S 15
 #define RETRY_MAX_S 600
 #define MAX_GROUP_RELAYS 16
+/* A slot's accepted KeyPackage event ids remembered for a withdrawal. */
+#define MAX_KEY_PACKAGE_EVENT_IDS 16
 /* The settings key that brings back the proof requirement (nostrc-6ukh). */
 #define VERIFIED_ONLY_KEY "only-join-verified-mls-groups"
 /* Whether the account also publishes the MDK 0.8 KeyPackage (nostrc-lf62
@@ -164,6 +166,8 @@ typedef struct {
   GhMlsKeyPackageFormat format;
   GhMlsKeyPackageState state;
   gchar *id;                         /* the event last accepted by a relay */
+  GPtrArray *event_ids;              /* every event of the slot accepted this run, oldest
+                                      * first (bounded): a withdrawal's `e` tags (M4) */
   gboolean busy;                     /* made, being signed or published */
   gboolean rotate;                   /* a replacement was asked for */
   gboolean held;                     /* its due replacement waits for invitations */
@@ -5502,6 +5506,11 @@ key_package_update(GhRelayPublish *publish, const GhRelayPublishResult *result, 
     g_message("Groundhog could not record the KeyPackage publication: %s", error->message);
   g_free(slot->id);
   slot->id = g_strdup(gh_relay_publish_get_event_id(publish));
+  if (slot->id) {
+    if (slot->event_ids->len >= MAX_KEY_PACKAGE_EVENT_IDS)
+      g_ptr_array_remove_index(slot->event_ids, 0);
+    g_ptr_array_add(slot->event_ids, g_strdup(slot->id));
+  }
   key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_PUBLISHED);
 }
 
@@ -5680,6 +5689,7 @@ key_package_withdrawn(KeyPackageSlot *slot)
   g_debug("Groundhog withdrew its older-format KeyPackage (%" G_GSIZE_FORMAT " key(s))",
           retired);
   g_clear_pointer(&slot->id, g_free);
+  g_ptr_array_set_size(slot->event_ids, 0);
   slot->rotate = FALSE;
   slot->held = FALSE;
   gboolean other_held = FALSE;
@@ -5747,17 +5757,70 @@ key_package_withdraw_signed(GObject *source, GAsyncResult *result, gpointer data
 
 /* Asks the account's write relays to delete its MDK 0.8 KeyPackage (the
  * user switched that format off); its keys are retired on the first OK. */
+#ifdef GH_MLS_TEST_HOOKS
+static gboolean test_fail_key_package_slot;
+static guint test_key_package_slot_failures;
+
+void
+gh_mls_service_test_fail_key_package_slot(gboolean fail)
+{
+  test_fail_key_package_slot = fail;
+  test_key_package_slot_failures = 0;
+}
+
+guint
+gh_mls_service_test_key_package_slot_failures(void)
+{
+  return test_key_package_slot_failures;
+}
+#endif
+
 static void
 key_package_withdraw(GhMlsService *self, const gchar *const *urls)
 {
   KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
   char d[65];
   drop_stale_error(self);
-  if (marmot_key_package_slot(self->marmot, self->account_key,
-                              MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, d) != MARMOT_OK) {
-    /* No slot was ever published: nothing to ask the relays; retire. */
-    drop_stale_error(self);
+  MarmotError err = marmot_key_package_slot(self->marmot, self->account_key,
+                                            MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, d);
+#ifdef GH_MLS_TEST_HOOKS
+  if (test_fail_key_package_slot && err == MARMOT_OK) {
+    err = MARMOT_ERR_STORAGE;
+    test_key_package_slot_failures++;
+  }
+#endif
+  if (err == MARMOT_ERR_STORAGE_NOT_FOUND) {
+    /* Definitely never published: nothing to ask the relays; retire. */
     key_package_withdrawn(slot);
+    return;
+  }
+  if (err != MARMOT_OK) {
+    /* Unknown (review L3): the keys stay until the request can be made. */
+    g_autoptr(GError) error = NULL;
+    marmot_fail(self, err, "Reading the older-format KeyPackage's slot", &error);
+    g_message("Groundhog could not withdraw its older-format KeyPackage: %s", error->message);
+    schedule_retry(self);
+    return;
+  }
+  /* Dated after every KeyPackage libmarmot made (it may date them ahead of
+   * the clock): a relay deletes an address's versions only up to the
+   * request's created_at (review M4). Recorded, so a later KeyPackage of
+   * the slot is newer than the request. */
+  int64_t created_at = 0;
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_begin(self->store, &error)) {
+    g_message("Groundhog could not withdraw its older-format KeyPackage: %s", error->message);
+    schedule_retry(self);
+    return;
+  }
+  err = marmot_key_package_reserve_created_at(self->marmot, self->account_key, now_s(self),
+                                              &created_at);
+  if (err != MARMOT_OK || !gh_store_commit(self->store, &error)) {
+    if (err != MARMOT_OK)
+      marmot_fail(self, err, "Dating the older-format KeyPackage's withdrawal", &error);
+    gh_store_rollback(self->store);
+    g_message("Groundhog could not withdraw its older-format KeyPackage: %s", error->message);
+    schedule_retry(self);
     return;
   }
   g_autofree gchar *address = g_strdup_printf("%d:%s:%s", MARMOT_KIND_KEY_PACKAGE, self->account,
@@ -5765,10 +5828,14 @@ key_package_withdraw(GhMlsService *self, const gchar *const *urls)
   g_autofree gchar *kind = g_strdup_printf("%d", MARMOT_KIND_KEY_PACKAGE);
   NostrEvent *event = nostr_event_new();
   NostrTags *tags = nostr_tags_new(0);
+  /* Every event of the slot known to be published, by id too: an `e`
+   * deletion is not bounded by created_at. */
+  for (guint i = 0; i < slot->event_ids->len; i++)
+    nostr_tags_append(tags, nostr_tag_new("e", g_ptr_array_index(slot->event_ids, i), NULL));
   nostr_tags_append(tags, nostr_tag_new("a", address, NULL));
   nostr_tags_append(tags, nostr_tag_new("k", kind, NULL));
   nostr_event_set_kind(event, 5);
-  nostr_event_set_created_at(event, now_s(self));
+  nostr_event_set_created_at(event, created_at);
   nostr_event_set_content(event, "");
   nostr_event_set_pubkey(event, self->account);
   nostr_event_set_tags(event, tags);
@@ -6387,8 +6454,10 @@ gh_mls_service_finalize(GObject *object)
   if (self->clock)
     gh_clock_unref(self->clock);
   g_free(self->account);
-  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
     g_free(self->kp[f].id);
+    g_ptr_array_unref(self->kp[f].event_ids);
+  }
   G_OBJECT_CLASS(gh_mls_service_parent_class)->finalize(object);
 }
 
@@ -6444,5 +6513,6 @@ gh_mls_service_init(GhMlsService *self)
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
     self->kp[f].service = self;
     self->kp[f].format = (GhMlsKeyPackageFormat)f;
+    self->kp[f].event_ids = g_ptr_array_new_with_free_func(g_free);
   }
 }

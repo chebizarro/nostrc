@@ -511,6 +511,26 @@ MarmotError marmot_key_package_retire_profile(Marmot *m, const uint8_t owner_pub
                                               size_t *out_deleted);
 
 /**
+ * marmot_key_package_reserve_created_at:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @now: the time (Unix seconds); 0 means the current time
+ * @out_created_at: (out): @now, or one second after the newest KeyPackage
+ *   event libmarmot dated for the account when that is not older
+ *
+ * Reserves a `created_at` later than every KeyPackage event of the account
+ * (since 0.12.0, nostrc-lf62 review M4), e.g. for a NIP-09 deletion request
+ * of a slot: a relay deletes an address's versions only up to the
+ * request's `created_at`, and libmarmot may date KeyPackages ahead of the
+ * clock. It is recorded, so the next KeyPackage is newer still (a relay that
+ * honoured the deletion accepts it).
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors
+ */
+MarmotError marmot_key_package_reserve_created_at(Marmot *m, const uint8_t owner_pubkey[32],
+                                                  int64_t now, int64_t *out_created_at);
+
+/**
  * marmot_key_package_last_used_profile:
  * @m: Marmot instance
  * @owner_pubkey: (array fixed-size=32): the account

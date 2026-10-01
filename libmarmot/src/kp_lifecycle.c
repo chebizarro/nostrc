@@ -523,6 +523,33 @@ marmot_key_package_next_expiry_for_profile(Marmot *m, const uint8_t owner_pubkey
     return next_expiry_impl(m, owner_pubkey, (int)profile, out_not_after);
 }
 
+static MarmotError
+reserve_created_at_impl(Marmot *m, const uint8_t owner[32], int64_t now, int64_t *out)
+{
+    KpLife life;
+    MarmotError err = life_open(m, owner, &life);
+    if (err != MARMOT_OK) return err;
+    int64_t t = now > life.last_created_at ? now : life.last_created_at + 1;
+    life.last_created_at = t;
+    err = life_save(m, owner, &life);
+    if (err == MARMOT_OK) *out = t;
+    return err;
+}
+
+MarmotError
+marmot_key_package_reserve_created_at(Marmot *m, const uint8_t owner_pubkey[32], int64_t now,
+                                      int64_t *out_created_at)
+{
+    if (out_created_at) *out_created_at = 0;
+    if (!m || !owner_pubkey || !out_created_at) return MARMOT_ERR_INVALID_ARG;
+    if (!storage_ready(m)) return MARMOT_ERR_STORAGE;
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    return marmot_txn_end(m, reserve_created_at_impl(m, owner_pubkey,
+                                                     now > 0 ? now : (int64_t)marmot_now(),
+                                                     out_created_at));
+}
+
 MarmotError
 marmot_key_package_last_used_profile(Marmot *m, const uint8_t owner_pubkey[32],
                                      MarmotKeyPackageProfile *out_profile)
