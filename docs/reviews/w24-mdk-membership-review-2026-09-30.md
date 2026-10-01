@@ -312,3 +312,132 @@ RFC 9420 §12.2 forbids it, but only `mls_group_commit_removes_self()` checks (`
 - **A1:** exclude group relays from Verify, both phases, plus the test. Blocks the `GH_FEATURE_ENCRYPTED_GROUPS` flip.
 - **A2:** MLS layer refuses Remove(committer).
 - **A3:** widen the privacy-test matcher.
+
+---
+
+## Addendum 2: final review after rebase onto master (tip `9d6b3cc8`)
+
+- **Base:** master `5299ce31`, which contains slices G, C, B and E.
+- **Slice A on top:**
+  - `f5dcf0e0`, with the B1/L1/L3 fixes folded in;
+  - `fd0f319a`;
+  - `19085e33`, `7dca750a` (owkh);
+  - `db09b535` (H1/M1/L2/L4);
+  - `9d3489f1` (A2);
+  - `356173b0` (A1, A3);
+  - `bcb76768` (manifest);
+  - `9d6b3cc8` (departure test, README).
+- **Method:** this branch was rebased onto `9d6b3cc8`. Every probe and mutant below was temporary and reverted; the tree is clean.
+
+### Final verdict: **APPROVE**
+
+- **A1–A3 are closed.** I reran my overlap probe, with the group relay spelled three different ways: Verify sent no REQ to the group relay.
+- **The merge keeps every property of slice A.**
+  - No path judges an adopted group by the legacy rules.
+  - The welcome_signer binding is still tied to the authenticated seal author.
+  - B's "SelfRemove-only Commits are ordinary" rule only exempts slots it blanks.
+- **B1 still holds** on the merged tree, in both modes.
+
+Two nits remain (N1, N2 below). Neither needs another round.
+
+### Gates at `9d6b3cc8` (macOS 27)
+
+| Gate | Result |
+|---|---|
+| `ninja` (`-DBUILD_GROUNDHOG=ON -DBUILD_MDK_INTEROP=ON`) | PASS. No warnings in touched files |
+| `ctest -R "marmot\|groundhog\|gnostr-test-mls"` | **101/101 passed** (the usual four environment skips) |
+| MDK 0.8 harness (MDK v0.8.0 `575ae29d`) | **11/11 ran and passed**: the 7 membership cases plus mdk-member-leaves, groundhog-leaves, groundhog-leaves-mdk-admin and groundhog-member-commits-leave |
+| `scripts/check-unsequenced-args.py` | PASS |
+| `scripts/linux-gate.sh --sanitizers` (ASAN+UBSAN+LSAN) | **PASS, 50 tests** |
+| Docker | No volumes created |
+
+### (1) A1–A3
+
+**A1: closed.**
+- `gh_mls_key_package_evidence_lookup_async()` now takes an exclusion list, matched by `gh_mls_relay_key()`: lowercase scheme and host, default port dropped, trailing slashes dropped. The list is applied in both phases (`start_phase()`).
+- Verify passes the group's relays as that list and also pre-filters its discovery list. If nothing is left to ask, it refuses with `G_IO_ERROR_PERMISSION_DENIED` and sends nothing.
+
+The author's test covers:
+- discovery `{e, g}` plus a Carol 10002 naming `w` and `g`;
+- discovery `{g}` alone.
+
+My independent rerun went further, with temporary code:
+- I put the group relay into Carol's 10002 write list spelled as `ws://…/relay/` and as `WS://…/relay/` (marked `write`).
+- Verify still ran its second phase (write-relay REQs 3 → 4) and returned VERIFIED.
+- The group relays received **0** REQs.
+- `gh_mls_relay_key()` maps all three spellings to the same key, and the phase-1 pre-filter uses the same function.
+
+(Putting a respelled group relay into Bob's own discovery list instead trips the wire relay's strict NIP-42 `relay`-tag check. That comes from Bob's own account-relay lookup, which is expected and is not a member lookup.)
+
+**A2: closed.**
+- Slice B's `commit_departures_check()` runs on the main commit path (`mls_group.c:3683`) and refuses any Remove or SelfRemove whose target is the committer (`leaf == committer`).
+- A's commit adds a comment naming the authorization dependency, and `test_commit_removing_committer_refused` checks that an inline Remove of the committer, with an UpdatePath, is refused with the receiver's state unchanged.
+
+**A3: closed, with a nit.**
+- `key_package_reqs()` (`test_privacy_mls.c:302`) now counts every REQ that names the member and asks for kind 10002, 443 or 30443. That is every kind a member lookup uses.
+- It now checks both group relays, `g` and `h`.
+- It is not literally "all kinds": a kind-0 profile REQ naming a member would not be counted (N1). The substrings can't match by accident here, because Carol's test pubkey contains neither `443` nor `10002`.
+
+### (2) The merge
+
+**Can an adopted group be treated as legacy anywhere?** No.
+- `marmot_mls_group_is_legacy()` (`members.c:25`) now requires *both* E's pinned `MlsGroup.profile == LEGACY` *and* a GroupContext that still classifies as legacy.
+- Two places use it:
+  - `marmot_commit_authorize_ex()` refuses with `MARMOT_ERR_UNSUPPORTED` unless both `pre` and `post` are legacy, before any legacy rule runs. That is the single merged check.
+  - `marmot_tree_members_bound()` (Welcome trees and our own Adds) removes the unproven allowance and the sender exemption otherwise.
+- Elsewhere, E's guards reject non-legacy groups by the pinned profile: inbound and pending Commits, proposals, removal.
+- The adopted paths never consult `allow_unproven_members`:
+  - Creation validates invitees with the strict ADOPTED KeyPackage parser (account proof required).
+  - `welcome_open()` takes E's strict branch for `profile == ADOPTED`: every leaf proven, inviter an admin, sender == inviter.
+- `gde_is_admin(NULL)` is now false.
+- **Mutant:** dropping the `post` half of the check is killed ("legacy -> mixed").
+
+**Is the welcome_signer binding still sound now that it comes from E's `welcome_open()`?** Yes.
+- `signer_leaf` is the GroupInfo signer, whose signature is verified under that leaf's key (`mls_welcome.c:771`). `welcome_open()` hands it out only on success.
+- `accept_welcome_internal()` records it only when that leaf's credential equals `welcome_sender()`.
+- Groundhog still calls `marmot_process_welcome()` with a rumor whose author `gh-nip17-inbox.c:319-321` requires to equal the verified seal signer.
+- So the forwarding analysis in Addendum 1 still applies. In adopted groups, E additionally requires the sender to be the inviter.
+
+**Does B's "SelfRemove-only Commits are ordinary" rule stay restricted to blanked slots?** Yes.
+- `self_remove_only()` requires `self_remove_count == proposal_count`. `proposal_count` counts every proposal in the real Commit, unresolved references included, so a Commit that also adds anyone never qualifies.
+- The skip applies only when `a && !b && summary_self_removed(…)`, that is, to a slot the departure blanks.
+- The summary is the MLS layer's, from `mls_group_process_commit_by_ref()` on the actual Commit.
+- The proposal store keeps only SelfRemove and a member's own Remove, so a by-reference Update or Add can't be smuggled in.
+
+**`test_departure_is_not_a_takeover` covers:**
+- a SelfRemove alone, ordinary;
+- the leaver's slot refilled under the leaver's identity, which counts as no departure (non-admin refused);
+- SelfRemove + Add: privileged, and the refill is a new claim (admin proven OK; unproven refused with proofs required, allowed in default legacy mode);
+- a member's own Remove: admin-only, and a refill is a new claim.
+
+**Mutant:** dropping `!b` (exempting a refilled self-removed slot) is killed ("a refilled slot is no departure").
+
+**My probe:** the B1 swap judged with a forged SelfRemove-only summary naming the swapped slot is still `COMMIT_FROM_NON_ADMIN`, in both modes.
+
+A departure followed by a refill in a *later* Commit is an Add into a blank slot (`!a != !b`), so it is privileged.
+
+**MDK 0.8 leave tests in default mode: correct.**
+- On master they called the W23 test hook `gh_mls_service_test_allow_unproven_members(TRUE)`, which slice A deletes. A drops those calls.
+- These cases must invite or join an MDK 0.8 member, whose leaf has no proof. Only default mode admits that (in legacy groups); strict mode would refuse the setup itself.
+- Alice is enrolled, so her own leaves are proven either way, as they were under the hook.
+- So default mode equals the old hook for what these tests exercise, and it is the configuration users actually run. All four leave cases pass against real MDK.
+
+### (3) B1 rerun on the merged tree
+
+Every Commit below was processed by an admin peer through `marmot_process_message()`, or judged directly:
+
+| Attack (non-admin Charlie) | Default | Proofs required |
+|---|---|---|
+| Remove(proof-less Mdk) + Add(leaf claiming Mdk, Charlie's keys), same slot | `COMMIT_FROM_NON_ADMIN` | `COMMIT_FROM_NON_ADMIN` |
+| Remove(proven Dave) + Add(Dave's genuine second KeyPackage), same slot | `COMMIT_FROM_NON_ADMIN` | `COMMIT_FROM_NON_ADMIN` |
+| `marmot_commit_authorize()`: committer Charlie, Mdk's slot replaced | `COMMIT_FROM_NON_ADMIN` (privileged) | same |
+| `marmot_commit_authorize_ex()` with a forged SelfRemove-only summary naming Mdk's slot, refilled | `COMMIT_FROM_NON_ADMIN` | same |
+
+The author's `test_slot_takeover_refused` passes too.
+
+### Nits (no further round needed)
+
+- **N1 (test strength):** `test_privacy_mls.c:302` matches the kinds a member *lookup* uses (10002, 443, 30443), not every kind. Parsing the REQ and counting any filter whose `authors` (or `#p`) contains the member would also catch an unrelated automatic kind-0 fetch.
+- **N2 (copy and comment):**
+  - `gh-mls-copy.c:357` says "This person's relays are the group's relays". The refusal actually fires when *your discovery relays* are all group relays. Suggest "Every relay Groundhog could ask is one of this group's relays, so checking would reveal this group."
+  - `commits.c:370` still says "no proposal store on this path". Since slice B there is one, though it holds only departures, so a by-reference Update still can't resolve.
