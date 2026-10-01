@@ -439,8 +439,22 @@ is_double_dot(const char *s, size_t n)
            (n == 6 && strncasecmp(s, "%2e%2e", 6) == 0);
 }
 
-MarmotError
-marmot_group_avatar_url_normalize(const char *raw, char **out)
+/*
+ * The two URL profiles of the group components, both strict WHATWG
+ * serializer subsets (nostrc-u7cb review M3):
+ *   URL_AVATAR    0x8007 avatar URL: https, query allowed;
+ *   URL_ENDPOINT  0x800b default blob endpoint (MDK
+ *                 validate_and_normalize_blob_endpoint_url_v2): http or
+ *                 https, no query.
+ * Neither allows userinfo or a fragment; both are at most 2048 bytes.
+ */
+typedef enum { URL_AVATAR, URL_ENDPOINT } UrlProfile;
+
+_Static_assert(MARMOT_GROUP_AVATAR_URL_MAX == MARMOT_MEDIA_POLICY_ENDPOINT_URL_MAX,
+               "one URL length bound for both profiles");
+
+static MarmotError
+url_normalize(const char *raw, UrlProfile profile, char **out)
 {
     if (!raw || !out) return MARMOT_ERR_INVALID_ARG;
     *out = NULL;
@@ -464,15 +478,23 @@ marmot_group_avatar_url_normalize(const char *raw, char **out)
     Str b = { 0 };
     char *host = NULL;
     const char *p = in;
-    if (n < 6 || strncasecmp(p, "https:", 6) != 0) goto done;
-    p += 6;
+    bool https;
+    if (n >= 6 && strncasecmp(p, "https:", 6) == 0) {
+        https = true;
+        p += 6;
+    } else if (profile == URL_ENDPOINT && n >= 5 && strncasecmp(p, "http:", 5) == 0) {
+        https = false;
+        p += 5;
+    } else {
+        goto done;
+    }
     while (*p == '/' || *p == '\\') p++;
 
     /* Authority: no userinfo, a host, an optional port. */
     size_t auth = strcspn(p, "/\\?#");
     if (memchr(p, '@', auth)) goto done;
     const char *ae = p + auth, *port = NULL;
-    str_put(&b, "https://");
+    str_put(&b, https ? "https://" : "http://");
     if (*p == '[') {
         const char *close = memchr(p, ']', auth);
         if (!close) goto done;
@@ -523,7 +545,7 @@ marmot_group_avatar_url_normalize(const char *raw, char **out)
             v = v * 10 + (unsigned long)(*q - '0');
             if (v > 65535) goto done;
         }
-        if (v != 443) {
+        if (v != (https ? 443u : 80u)) {   /* the scheme's default port is dropped */
             char ps[8];
             snprintf(ps, sizeof ps, ":%lu", v);
             str_put(&b, ps);
@@ -587,6 +609,7 @@ port_done:
         if (b.s) b.s[b.len] = 0;
         p = pend;
     }
+    if (*p == '?' && profile == URL_ENDPOINT) goto done;   /* endpoints have no query */
     if (*p == '?') {
         str_putc(&b, '?');
         for (p++; *p && *p != '#'; p++) {
@@ -612,6 +635,12 @@ done:
     free(host);
     free(in);
     return err;
+}
+
+MarmotError
+marmot_group_avatar_url_normalize(const char *raw, char **out)
+{
+    return url_normalize(raw, URL_AVATAR, out);
 }
 
 MarmotError
@@ -652,21 +681,34 @@ marmot_group_avatar_url_encode(const MarmotGroupAvatarUrl *av, uint8_t **out, si
 typedef enum { AVATAR_VALID, AVATAR_INVALID, AVATAR_UNVERIFIED } AvatarClass;
 
 /*
- * Stored 0x8007 bytes, judged three ways (nostrc-u7cb review M3).  WHATWG is
- * a living standard and its implementations already differ (url 2.5.8 keeps
- * '^' raw in a path, ada-url encodes it; they treat "b:" segments apart), so
- * libmarmot only calls a value invalid when no serializer version can have
- * produced it, and accepts the rest unverified instead of forking the group.
+ * Stored URL bytes (0x8007 avatar, 0x800b endpoint), judged three ways
+ * (nostrc-u7cb review M3).  WHATWG is a living standard and its
+ * implementations already differ (url 2.5.8 keeps '^' raw in a path,
+ * ada-url encodes it; they treat "b:" segments apart), so libmarmot only
+ * calls a value invalid when no serializer version can have produced it,
+ * and accepts the rest unverified instead of forking the group.
  */
 static AvatarClass
-avatar_url_classify(const char *url, size_t len)
+url_classify(const char *url, size_t len, UrlProfile profile)
 {
     for (size_t i = 0; i < len; i++)
         if ((uint8_t)url[i] <= 0x20 || (uint8_t)url[i] >= 0x7f)
             return AVATAR_INVALID;   /* a serialization is printable ASCII */
-    if (len < 8 || memcmp(url, "https://", 8) != 0 || memchr(url, '#', len))
+    size_t scheme_len;
+    unsigned long default_port;
+    if (len >= 8 && memcmp(url, "https://", 8) == 0) {
+        scheme_len = 8;
+        default_port = 443;
+    } else if (profile == URL_ENDPOINT && len >= 7 && memcmp(url, "http://", 7) == 0) {
+        scheme_len = 7;
+        default_port = 80;
+    } else {
         return AVATAR_INVALID;
-    const char *a = url + 8, *end = url + len;
+    }
+    if (memchr(url, '#', len)) return AVATAR_INVALID;
+    /* Any '?' starts a query (it ends the authority and the path). */
+    if (profile == URL_ENDPOINT && memchr(url, '?', len)) return AVATAR_INVALID;
+    const char *a = url + scheme_len, *end = url + len;
     const char *ae = a;
     while (ae < end && *ae != '/' && *ae != '?') ae++;
     if (ae == a || ae == end || *ae != '/') return AVATAR_INVALID;   /* host; path "/" */
@@ -686,7 +728,7 @@ avatar_url_classify(const char *url, size_t len)
         if (host_end == a) return AVATAR_INVALID;
     }
     if (memchr(a, '@', (size_t)(ae - a))) return AVATAR_INVALID;
-    if (host_end < ae) {   /* ":port": shortest decimal, not 443 */
+    if (host_end < ae) {   /* ":port": shortest decimal, not the default */
         if (*host_end != ':' || host_end + 1 == ae) return AVATAR_INVALID;
         const char *pd = host_end + 1;
         if (*pd == '0' && ae - pd > 1) return AVATAR_INVALID;
@@ -696,7 +738,7 @@ avatar_url_classify(const char *url, size_t len)
             v = v * 10 + (unsigned long)(*q - '0');
             if (v > 65535) return AVATAR_INVALID;
         }
-        if (v == 443) return AVATAR_INVALID;
+        if (v == default_port) return AVATAR_INVALID;
     }
     const char *qs = memchr(ae, '?', (size_t)(end - ae));
     const char *pe = qs ? qs : end;
@@ -716,7 +758,7 @@ avatar_url_classify(const char *url, size_t len)
     /* Inside libmarmot's subset its normalization is exact; outside it,
      * this decoder cannot tell. */
     char *norm = NULL;
-    MarmotError nerr = marmot_group_avatar_url_normalize(url, &norm);
+    MarmotError nerr = url_normalize(url, profile, &norm);
     if (nerr != MARMOT_OK) return AVATAR_UNVERIFIED;
     bool same = strcmp(norm, url) == 0;
     free(norm);
@@ -744,7 +786,7 @@ marmot_group_avatar_url_decode(const uint8_t *data, size_t len, MarmotGroupAvata
     }
     if (memchr(url, 0, url_len) || !marmot_media_utf8_valid(url, url_len)) goto fail;
     /* A decoder never repairs: the stored bytes are kept as they are. */
-    switch (avatar_url_classify((const char *)url, url_len)) {
+    switch (url_classify((const char *)url, url_len, URL_AVATAR)) {
     case AVATAR_INVALID:
         goto fail;
     case AVATAR_UNVERIFIED:
@@ -780,4 +822,320 @@ marmot_group_avatar_select(const MarmotGroupAvatarUrl *avatar_url,
                                           : MARMOT_GROUP_AVATAR_URL;
     if (blossom_image && blossom_image->present) return MARMOT_GROUP_AVATAR_BLOSSOM;
     return MARMOT_GROUP_AVATAR_NONE;
+}
+
+/* ── 0x8006 marmot.group.agent-text-stream.quic.v1 (nostrc-qp24.5.2) ──── */
+
+static bool
+agent_policy_valid(const MarmotAgentTextStreamPolicy *p)
+{
+    /* MDK AgentTextStreamQuicPolicyV1::validate, in its order. */
+    return p->required_member_roles != 0 &&
+           (p->required_member_roles & ~MARMOT_AGENT_STREAM_ROLE_MASK) == 0 &&
+           (p->allowed_member_roles & ~MARMOT_AGENT_STREAM_ROLE_MASK) == 0 &&
+           (p->required_member_roles & ~p->allowed_member_roles) == 0 &&
+           p->max_plaintext_frame_len != 0 &&
+           p->max_plaintext_frame_len <= MARMOT_AGENT_STREAM_MAX_FRAME_LEN &&
+           p->replay_ttl_secs <= MARMOT_AGENT_STREAM_MAX_REPLAY_TTL &&
+           p->padding_bucket_bytes <= MARMOT_AGENT_STREAM_MAX_PADDING;
+}
+
+MarmotError
+marmot_agent_text_stream_policy_decode(const uint8_t *data, size_t len,
+                                       MarmotAgentTextStreamPolicy *out)
+{
+    if (!out || (len > 0 && !data)) return MARMOT_ERR_INVALID_ARG;
+    memset(out, 0, sizeof *out);
+    if (len != MARMOT_AGENT_STREAM_STATE_LEN) return MARMOT_ERR_EXTENSION_FORMAT;
+    MarmotAgentTextStreamPolicy p = {
+        .required_member_roles = data[0],
+        .allowed_member_roles = data[1],
+        .max_plaintext_frame_len = (uint32_t)data[2] << 24 | (uint32_t)data[3] << 16 |
+                                   (uint32_t)data[4] << 8 | data[5],
+        .replay_ttl_secs = (uint32_t)data[6] << 24 | (uint32_t)data[7] << 16 |
+                           (uint32_t)data[8] << 8 | data[9],
+        .padding_bucket_bytes = (uint16_t)(data[10] << 8 | data[11]),
+    };
+    if (!agent_policy_valid(&p)) return MARMOT_ERR_EXTENSION_FORMAT;
+    *out = p;
+    return MARMOT_OK;
+}
+
+MarmotError
+marmot_agent_text_stream_policy_encode(const MarmotAgentTextStreamPolicy *p,
+                                       uint8_t out[MARMOT_AGENT_STREAM_STATE_LEN])
+{
+    if (!p || !out) return MARMOT_ERR_INVALID_ARG;
+    if (!agent_policy_valid(p)) return MARMOT_ERR_INVALID_INPUT;
+    out[0] = p->required_member_roles;
+    out[1] = p->allowed_member_roles;
+    for (int i = 0; i < 4; i++) {
+        out[2 + i] = (uint8_t)(p->max_plaintext_frame_len >> (24 - 8 * i));
+        out[6 + i] = (uint8_t)(p->replay_ttl_secs >> (24 - 8 * i));
+    }
+    out[10] = (uint8_t)(p->padding_bucket_bytes >> 8);
+    out[11] = (uint8_t)p->padding_bucket_bytes;
+    return MARMOT_OK;
+}
+
+MarmotAgentTextStreamPolicy
+marmot_agent_text_stream_policy_user_to_agent_default(void)
+{
+    return (MarmotAgentTextStreamPolicy){
+        .required_member_roles = MARMOT_AGENT_STREAM_ROLE_RECEIVE,
+        .allowed_member_roles = MARMOT_AGENT_STREAM_ROLE_RECEIVE | MARMOT_AGENT_STREAM_ROLE_SEND,
+        .max_plaintext_frame_len = 4096,
+        .replay_ttl_secs = 0,
+        .padding_bucket_bytes = 0,
+    };
+}
+
+/* ── 0x800b marmot.group.encrypted-media.v2 (nostrc-m6tp) ──────────────── */
+
+/* MDK ENCRYPTED_MEDIA_*_VECTOR_MAX_LEN: the outer vectors' bounds. */
+#define POLICY_FORMAT_MAX     64u
+#define POLICY_KINDS_VEC_MAX  (MARMOT_MEDIA_POLICY_MAX_LOCATOR_KINDS * \
+                               (MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX + 2))
+#define POLICY_ENDPOINTS_VEC_MAX \
+    (MARMOT_MEDIA_POLICY_MAX_ENDPOINTS * \
+     ((MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX + 2) + (MARMOT_MEDIA_POLICY_ENDPOINT_URL_MAX + 2) + 2))
+
+/* MDK validate_locator_kind: 1..64 bytes of [a-z0-9-]. */
+static bool
+locator_kind_valid(const uint8_t *s, size_t n)
+{
+    if (n == 0 || n > MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '-'))
+            return false;
+    return true;
+}
+
+static bool
+strv_contains(char *const *v, size_t n, const char *s)
+{
+    for (size_t i = 0; i < n; i++)
+        if (strcmp(v[i], s) == 0) return true;
+    return false;
+}
+
+void
+marmot_group_media_policy_clear(MarmotGroupMediaPolicy *p)
+{
+    if (!p) return;
+    for (size_t i = 0; p->allowed_locator_kinds && i < p->allowed_locator_kind_count; i++)
+        free(p->allowed_locator_kinds[i]);
+    free(p->allowed_locator_kinds);
+    for (size_t i = 0; p->default_blob_endpoints && i < p->default_blob_endpoint_count; i++) {
+        free(p->default_blob_endpoints[i].locator_kind);
+        free(p->default_blob_endpoints[i].base_url);
+    }
+    free(p->default_blob_endpoints);
+    memset(p, 0, sizeof *p);
+}
+
+MarmotError
+marmot_group_media_policy_decode(const uint8_t *data, size_t len, MarmotGroupMediaPolicy *out)
+{
+    if (!out || (len > 0 && !data)) return MARMOT_ERR_INVALID_ARG;
+    memset(out, 0, sizeof *out);
+    const MarmotError bad = MARMOT_ERR_MEDIA_INVALID_REFERENCE;
+    MarmotError err = bad;
+    uint8_t *format = NULL, *kinds = NULL, *endpoints = NULL;
+    size_t format_len = 0, kinds_len = 0, endpoints_len = 0;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, data, len);
+    if (read_vec(&r, POLICY_FORMAT_MAX, &format, &format_len) != 0 ||
+        read_vec(&r, POLICY_KINDS_VEC_MAX, &kinds, &kinds_len) != 0 ||
+        read_vec(&r, POLICY_ENDPOINTS_VEC_MAX, &endpoints, &endpoints_len) != 0 ||
+        !mls_tls_reader_done(&r))
+        goto out;
+    if (format_len != strlen(MARMOT_MEDIA_V2_VERSION) ||
+        memcmp(format, MARMOT_MEDIA_V2_VERSION, format_len) != 0)
+        goto out;
+
+    /* allowed_locator_kinds: concatenated vectors, unique, 1..16. */
+    out->allowed_locator_kinds = calloc(MARMOT_MEDIA_POLICY_MAX_LOCATOR_KINDS + 1, sizeof(char *));
+    out->default_blob_endpoints = calloc(MARMOT_MEDIA_POLICY_MAX_ENDPOINTS,
+                                         sizeof(MarmotMediaBlobEndpoint));
+    if (!out->allowed_locator_kinds || !out->default_blob_endpoints) {
+        err = MARMOT_ERR_MEMORY;
+        goto out;
+    }
+    MlsTlsReader kr;
+    mls_tls_reader_init(&kr, kinds, kinds_len);
+    while (!mls_tls_reader_done(&kr)) {
+        uint8_t *k = NULL;
+        size_t kl = 0;
+        if (out->allowed_locator_kind_count == MARMOT_MEDIA_POLICY_MAX_LOCATOR_KINDS ||
+            read_vec(&kr, MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX, &k, &kl) != 0)
+            goto out;
+        if (!k || !locator_kind_valid(k, kl) ||
+            strv_contains(out->allowed_locator_kinds, out->allowed_locator_kind_count,
+                          (const char *)k)) {
+            free(k);
+            goto out;
+        }
+        out->allowed_locator_kinds[out->allowed_locator_kind_count++] = (char *)k;
+    }
+    if (out->allowed_locator_kind_count == 0) goto out;
+
+    /* default_blob_endpoints: (kind, base_url) pairs, unique, 1..16. */
+    MlsTlsReader er;
+    mls_tls_reader_init(&er, endpoints, endpoints_len);
+    while (!mls_tls_reader_done(&er)) {
+        if (out->default_blob_endpoint_count == MARMOT_MEDIA_POLICY_MAX_ENDPOINTS) goto out;
+        MarmotMediaBlobEndpoint *ep = &out->default_blob_endpoints[out->default_blob_endpoint_count];
+        uint8_t *k = NULL, *u = NULL;
+        size_t kl = 0, ul = 0;
+        if (read_vec(&er, MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX, &k, &kl) != 0) goto out;
+        if (read_vec(&er, MARMOT_MEDIA_POLICY_ENDPOINT_URL_MAX, &u, &ul) != 0) {
+            free(k);
+            goto out;
+        }
+        /* The kind is checked before the URL, as MDK does. */
+        bool ok = k && locator_kind_valid(k, kl) &&
+                  strv_contains(out->allowed_locator_kinds, out->allowed_locator_kind_count,
+                                (const char *)k) &&
+                  u && !memchr(u, 0, ul) && marmot_media_utf8_valid(u, ul);
+        AvatarClass cls = ok ? url_classify((const char *)u, ul, URL_ENDPOINT) : AVATAR_INVALID;
+        if (cls == AVATAR_INVALID) {
+            free(k);
+            free(u);
+            goto out;
+        }
+        for (size_t i = 0; i < out->default_blob_endpoint_count; i++)
+            if (strcmp(out->default_blob_endpoints[i].locator_kind, (const char *)k) == 0 &&
+                strcmp(out->default_blob_endpoints[i].base_url, (const char *)u) == 0) {
+                free(k);
+                free(u);
+                goto out;
+            }
+        ep->locator_kind = (char *)k;
+        ep->base_url = (char *)u;
+        ep->base_url_unverified = cls == AVATAR_UNVERIFIED;
+        out->default_blob_endpoint_count++;
+    }
+    if (out->default_blob_endpoint_count == 0) goto out;
+    err = MARMOT_OK;
+out:
+    free(format);
+    free(kinds);
+    free(endpoints);
+    if (err != MARMOT_OK) marmot_group_media_policy_clear(out);
+    return err;
+}
+
+/* MDK normalize_locator_kind: trimmed (Unicode whitespace in MDK; ASCII
+ * here, since anything else then fails the charset), ASCII-lowercased. */
+static char *
+locator_kind_normalize(const char *s)
+{
+    if (!s) return NULL;
+    size_t a = 0, z = strlen(s);
+    while (a < z && strchr(" \t\n\v\f\r", s[a])) a++;
+    while (z > a && strchr(" \t\n\v\f\r", s[z - 1])) z--;
+    char *k = malloc(z - a + 1);
+    if (!k) return NULL;
+    for (size_t i = a; i < z; i++)
+        k[i - a] = (s[i] >= 'A' && s[i] <= 'Z') ? (char)(s[i] - 'A' + 'a') : s[i];
+    k[z - a] = 0;
+    return k;
+}
+
+MarmotError
+marmot_group_media_policy_encode(const MarmotGroupMediaPolicy *p, uint8_t **out, size_t *out_len)
+{
+    if (!p || !out || !out_len || (p->allowed_locator_kind_count && !p->allowed_locator_kinds) ||
+        (p->default_blob_endpoint_count && !p->default_blob_endpoints))
+        return MARMOT_ERR_INVALID_ARG;
+    *out = NULL;
+    *out_len = 0;
+    MarmotError err = MARMOT_ERR_INVALID_INPUT;
+    MarmotGroupMediaPolicy n = { 0 };
+    MlsTlsBuf kinds = { 0 }, endpoints = { 0 }, b = { 0 };
+    n.allowed_locator_kinds = calloc(p->allowed_locator_kind_count + 1, sizeof(char *));
+    n.default_blob_endpoints = calloc(p->default_blob_endpoint_count + 1,
+                                      sizeof(MarmotMediaBlobEndpoint));
+    if (!n.allowed_locator_kinds || !n.default_blob_endpoints) {
+        err = MARMOT_ERR_MEMORY;
+        goto out;
+    }
+    for (size_t i = 0; i < p->allowed_locator_kind_count; i++) {
+        char *k = locator_kind_normalize(p->allowed_locator_kinds[i]);
+        if (!k) {
+            err = p->allowed_locator_kinds[i] ? MARMOT_ERR_MEMORY : MARMOT_ERR_INVALID_INPUT;
+            goto out;
+        }
+        if (!locator_kind_valid((const uint8_t *)k, strlen(k)) ||
+            strv_contains(n.allowed_locator_kinds, n.allowed_locator_kind_count, k)) {
+            bool dup = locator_kind_valid((const uint8_t *)k, strlen(k));
+            free(k);
+            if (!dup) goto out;
+            continue;   /* MDK dedups */
+        }
+        n.allowed_locator_kinds[n.allowed_locator_kind_count++] = k;
+    }
+    if (n.allowed_locator_kind_count == 0 ||
+        n.allowed_locator_kind_count > MARMOT_MEDIA_POLICY_MAX_LOCATOR_KINDS)
+        goto out;
+    for (size_t i = 0; i < p->default_blob_endpoint_count; i++) {
+        const MarmotMediaBlobEndpoint *src = &p->default_blob_endpoints[i];
+        if (src->base_url_unverified) goto out;
+        char *k = locator_kind_normalize(src->locator_kind);
+        char *u = NULL;
+        if (!k) {
+            err = src->locator_kind ? MARMOT_ERR_MEMORY : MARMOT_ERR_INVALID_INPUT;
+            goto out;
+        }
+        MarmotError uerr = src->base_url ? url_normalize(src->base_url, URL_ENDPOINT, &u)
+                                         : MARMOT_ERR_INVALID_INPUT;
+        if (!locator_kind_valid((const uint8_t *)k, strlen(k)) ||
+            !strv_contains(n.allowed_locator_kinds, n.allowed_locator_kind_count, k) ||
+            uerr != MARMOT_OK) {
+            free(k);
+            free(u);
+            if (uerr == MARMOT_ERR_MEMORY) err = uerr;
+            goto out;
+        }
+        bool dup = false;
+        for (size_t j = 0; j < n.default_blob_endpoint_count && !dup; j++)
+            dup = strcmp(n.default_blob_endpoints[j].locator_kind, k) == 0 &&
+                  strcmp(n.default_blob_endpoints[j].base_url, u) == 0;
+        if (dup) {
+            free(k);
+            free(u);
+            continue;
+        }
+        n.default_blob_endpoints[n.default_blob_endpoint_count].locator_kind = k;
+        n.default_blob_endpoints[n.default_blob_endpoint_count].base_url = u;
+        n.default_blob_endpoint_count++;
+    }
+    if (n.default_blob_endpoint_count == 0 ||
+        n.default_blob_endpoint_count > MARMOT_MEDIA_POLICY_MAX_ENDPOINTS)
+        goto out;
+
+    err = MARMOT_ERR_MEMORY;
+    if (mls_tls_buf_init(&kinds, 32) != 0 || mls_tls_buf_init(&endpoints, 128) != 0 ||
+        mls_tls_buf_init(&b, 160) != 0)
+        goto out;
+    int rc = 0;
+    for (size_t i = 0; i < n.allowed_locator_kind_count; i++)
+        rc |= write_vec(&kinds, n.allowed_locator_kinds[i], strlen(n.allowed_locator_kinds[i]));
+    for (size_t i = 0; i < n.default_blob_endpoint_count; i++) {
+        const MarmotMediaBlobEndpoint *ep = &n.default_blob_endpoints[i];
+        rc |= write_vec(&endpoints, ep->locator_kind, strlen(ep->locator_kind));
+        rc |= write_vec(&endpoints, ep->base_url, strlen(ep->base_url));
+    }
+    rc |= write_vec(&b, MARMOT_MEDIA_V2_VERSION, strlen(MARMOT_MEDIA_V2_VERSION));
+    rc |= write_vec(&b, kinds.data, kinds.len);
+    rc |= write_vec(&b, endpoints.data, endpoints.len);
+    if (rc != 0) goto out;
+    err = finish_buf(&b, out, out_len);
+out:
+    marmot_group_media_policy_clear(&n);
+    mls_tls_buf_free(&kinds);
+    mls_tls_buf_free(&endpoints);
+    mls_tls_buf_free(&b);
+    return err;
 }

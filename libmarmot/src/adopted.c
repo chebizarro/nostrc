@@ -161,8 +161,8 @@ marmot_adopted_group_context_build(const char *name, const char *description,
         mls_tls_write_vli(&caps, 0) != 0)
         goto done;
 
-    if (marmot_components_list_encode(MLS_ADOPTED_SUPPORTED_COMPONENTS,
-                                      MLS_ADOPTED_SUPPORTED_COMPONENT_COUNT, &comps) != 0 ||
+    if (marmot_components_list_encode(MLS_ADOPTED_CREATE_COMPONENTS,
+                                      MLS_ADOPTED_CREATE_COMPONENT_COUNT, &comps) != 0 ||
         mls_tls_write_opaque32(&profile, (const uint8_t *)nm, nm_len) != 0 ||
         mls_tls_write_opaque32(&profile, (const uint8_t *)ds, ds_len) != 0 ||
         mls_tls_write_opaque32(&admin, (const uint8_t *)admins, admin_count * 32) != 0 ||
@@ -302,10 +302,10 @@ oom:
     return MARMOT_ERR_MEMORY;
 }
 
-MarmotError
-marmot_adopted_stored_profile(Marmot *m, const MarmotGroupId *gid, MarmotGroupProfile *out)
+/* The stored MLS state of @gid, loaded (and so re-validated). */
+static MarmotError
+load_stored_group(Marmot *m, const MarmotGroupId *gid, MlsGroup *g)
 {
-    if (!m || !gid || !gid->data || !out) return MARMOT_ERR_INVALID_ARG;
     if (!m->storage || !m->storage->mls_load) return MARMOT_ERR_STORAGE;
     uint8_t *blob = NULL;
     size_t len = 0;
@@ -316,12 +316,109 @@ marmot_adopted_stored_profile(Marmot *m, const MarmotGroupId *gid, MarmotGroupPr
         return err == MARMOT_OK || err == MARMOT_ERR_STORAGE_NOT_FOUND
                    ? MARMOT_ERR_GROUP_NOT_FOUND : err;
     }
-    MlsGroup g;
-    int rc = mls_group_deserialize(blob, len, &g);
+    int rc = mls_group_deserialize(blob, len, g);
     sodium_memzero(blob, len);
     free(blob);
-    if (rc != 0) return MARMOT_ERR_DESERIALIZATION;
+    return rc == 0 ? MARMOT_OK : MARMOT_ERR_DESERIALIZATION;
+}
+
+MarmotError
+marmot_adopted_stored_profile(Marmot *m, const MarmotGroupId *gid, MarmotGroupProfile *out)
+{
+    if (!m || !gid || !gid->data || !out) return MARMOT_ERR_INVALID_ARG;
+    MlsGroup g;
+    MarmotError err = load_stored_group(m, gid, &g);
+    if (err != MARMOT_OK) return err;
     *out = g.profile;
     mls_group_free(&g);
     return MARMOT_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Read side: the GroupContext components (nostrc-m6tp)
+ * ──────────────────────────────────────────────────────────────────────── */
+
+void
+marmot_group_components_clear(MarmotGroupComponents *c)
+{
+    if (!c) return;
+    free(c->name);
+    free(c->description);
+    marmot_group_blossom_image_clear(&c->image);
+    marmot_group_avatar_url_clear(&c->avatar_url);
+    marmot_group_media_policy_clear(&c->media_policy);
+    free(c->required_components);
+    memset(c, 0, sizeof(*c));
+}
+
+MarmotError
+marmot_adopted_components_from_extensions(const uint8_t *exts, size_t exts_len, uint64_t epoch,
+                                          MarmotGroupComponents *out)
+{
+    if (!out || (exts_len > 0 && !exts)) return MARMOT_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    MlsAdoptedGroupContext gc;
+    int rc = mls_adopted_group_context_parse(exts, exts_len, &gc);
+    if (rc != 0) return (MarmotError)rc;
+    out->epoch = epoch;
+
+    MarmotError err = MARMOT_ERR_EXTENSION_FORMAT;
+    const uint8_t *name = (const uint8_t *)"", *desc = (const uint8_t *)"";
+    size_t name_len = 0, desc_len = 0;
+    if (gc.profile && mls_group_profile_v1_decode(gc.profile, gc.profile_len, &name, &name_len,
+                                                  &desc, &desc_len) != 0)
+        goto fail;
+    err = MARMOT_ERR_MEMORY;
+    out->name = dup_bytes(name, name_len);
+    out->description = dup_bytes(desc, desc_len);
+    out->required_components = malloc((gc.n_components ? gc.n_components : 1) * sizeof(uint16_t));
+    if (!out->name || !out->description || !out->required_components) goto fail;
+    memcpy(out->required_components, gc.components, gc.n_components * sizeof(uint16_t));
+    out->required_component_count = gc.n_components;
+
+    /* Each state was validated by the parse; decoding it again cannot fail
+     * but for memory. */
+    if (gc.image && (err = marmot_group_blossom_image_decode(gc.image, gc.image_len,
+                                                             &out->image)) != MARMOT_OK)
+        goto fail;
+    if (gc.avatar && (err = marmot_group_avatar_url_decode(gc.avatar, gc.avatar_len,
+                                                           &out->avatar_url)) != MARMOT_OK)
+        goto fail;
+    if (gc.media_policy) {
+        if ((err = marmot_group_media_policy_decode(gc.media_policy, gc.media_policy_len,
+                                                    &out->media_policy)) != MARMOT_OK)
+            goto fail;
+        out->has_media_policy = true;
+    }
+    if (gc.agent_stream) {
+        if ((err = marmot_agent_text_stream_policy_decode(gc.agent_stream, gc.agent_stream_len,
+                                                          &out->agent_text_stream)) != MARMOT_OK)
+            goto fail;
+        out->has_agent_text_stream = true;
+    }
+    out->avatar_source = marmot_group_avatar_select(&out->avatar_url, &out->image);
+    return MARMOT_OK;
+fail:
+    marmot_group_components_clear(out);
+    return err;
+}
+
+MarmotError
+marmot_get_group_components(Marmot *m, const MarmotGroupId *mls_group_id,
+                            MarmotGroupComponents *out)
+{
+    if (!out) return MARMOT_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    if (!m || !mls_group_id || !mls_group_id->data) return MARMOT_ERR_INVALID_ARG;
+    MlsGroup g;
+    MarmotError err = load_stored_group(m, mls_group_id, &g);
+    if (err != MARMOT_OK) return err;
+    if (g.profile != MARMOT_GROUP_PROFILE_ADOPTED) {
+        mls_group_free(&g);
+        return MARMOT_ERR_UNSUPPORTED;
+    }
+    err = marmot_adopted_components_from_extensions(g.extensions_data, g.extensions_len, g.epoch,
+                                                    out);
+    mls_group_free(&g);
+    return err;
 }

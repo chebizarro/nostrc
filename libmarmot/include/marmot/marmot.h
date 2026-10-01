@@ -26,6 +26,7 @@
 #include "marmot-storage.h"
 #include "marmot-media.h"
 #include "marmot-group-profile.h"
+#include "marmot-group-components.h"
 
 #ifdef __cplusplus
 extern "C" {

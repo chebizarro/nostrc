@@ -60,6 +60,7 @@ use cgka_traits::agent_text_stream::{
     AGENT_TEXT_STREAM_QUIC_FANOUT_CAPABILITY, AGENT_TEXT_STREAM_QUIC_FANOUT_FEATURE,
     AGENT_TEXT_STREAM_QUIC_RECEIVE_CAPABILITY, AGENT_TEXT_STREAM_QUIC_RECEIVE_FEATURE,
     AGENT_TEXT_STREAM_QUIC_SEND_CAPABILITY, AGENT_TEXT_STREAM_QUIC_SEND_FEATURE,
+    AgentTextStreamQuicPolicyV1,
 };
 use cgka_traits::app_components::{
     AGENT_TEXT_STREAM_QUIC_COMPONENT_ID, APP_COMPONENTS_COMPONENT_ID, AppComponentData,
@@ -67,8 +68,9 @@ use cgka_traits::app_components::{
     GROUP_BLOSSOM_IMAGE_COMPONENT_ID, GROUP_ENCRYPTED_MEDIA_V1_COMPONENT_ID,
     GROUP_ENCRYPTED_MEDIA_V2_COMPONENT_ID, GROUP_LIFECYCLE_COMPONENT_ID,
     GROUP_MESSAGE_RETENTION_COMPONENT_ID, GROUP_PROFILE_COMPONENT_ID, NOSTR_ROUTING_COMPONENT_ID,
-    NostrRoutingV1, PRIVATE_USE_APP_COMPONENT_ID_START, SAFE_AAD_COMPONENT_ID,
-    decode_nostr_routing_v1, default_group_components, encode_nostr_routing_v1,
+    EncryptedMediaPolicyV2, NostrRoutingV1, PRIVATE_USE_APP_COMPONENT_ID_START,
+    SAFE_AAD_COMPONENT_ID, decode_nostr_routing_v1, default_group_components,
+    encode_encrypted_media_policy_v2, encode_nostr_routing_v1,
 };
 use cgka_traits::app_event::{MARMOT_APP_EVENT_KIND_CHAT, MarmotAppEvent};
 use cgka_traits::capabilities::{Capability, CapabilityRequirement, Feature, RequirementLevel};
@@ -1059,16 +1061,51 @@ impl Driver {
             component_id: NOSTR_ROUTING_COMPONENT_ID,
             data: encode_nostr_routing_v1(&route).map_err(|e| fail(INTERNAL, format!("routing: {e}")))?,
         };
+        let mut app_components = vec![routing];
+        // "white_noise": the group components marmot-app's
+        // create_group_with_initial_source adds to every group (946e0547,
+        // crates/marmot-app/src/client/mod.rs): the agent text stream's
+        // user_to_agent_default (0x8006, required role receive) and
+        // encrypted media v2 (0x800b; EncryptedMediaPolicyV2::blossom_default
+        // of "media_endpoints", which marmot-app fills with its default Blossom
+        // servers -- the test passes its own, never contacted).
+        if req.get("white_noise").and_then(Value::as_bool) == Some(true) {
+            app_components.push(
+                AgentTextStreamQuicPolicyV1::user_to_agent_default()
+                    .to_app_component_data()
+                    .map_err(|e| fail(INTERNAL, format!("agent text stream: {e}")))?,
+            );
+            let endpoints = strs_arg(req, "media_endpoints")?;
+            let policy = EncryptedMediaPolicyV2::blossom_default(endpoints)
+                .map_err(|e| fail(INTERNAL, format!("encrypted media: {e}")))?;
+            app_components.push(AppComponentData {
+                component_id: GROUP_ENCRYPTED_MEDIA_V2_COMPONENT_ID,
+                data: encode_encrypted_media_policy_v2(&policy)
+                    .map_err(|e| fail(INTERNAL, format!("encrypted media: {e}")))?,
+            });
+        }
+        let request = CreateGroupRequest {
+            name,
+            description,
+            members: kps,
+            required_features: vec![],
+            app_components,
+            initial_admins,
+        };
+        // marmot-app's invite precheck: every KeyPackage must meet the
+        // creation requirements (profile, ciphersuite, required capabilities,
+        // mandatory components and the agent-stream roles) before any MLS
+        // state is made (resolve_compatible_member_key_packages).
+        let requirements = peer
+            .session
+            .create_key_package_requirements(&request)
+            .map_err(engine_fail("create_key_package_requirements"))?;
+        for kp in &request.members {
+            requirements.validate(kp).map_err(engine_fail("invite precheck"))?;
+        }
         let created = peer
             .session
-            .create_group(CreateGroupRequest {
-                name,
-                description,
-                members: kps,
-                required_features: vec![],
-                app_components: vec![routing],
-                initial_admins,
-            })
+            .create_group(request)
             .await
             .map_err(engine_fail("create_group"))?;
         let group_id = created.group_id.clone();

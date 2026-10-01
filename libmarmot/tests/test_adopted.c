@@ -529,24 +529,225 @@ test_mdk_group_context_admitted(void)
     free(own);
 }
 
-static void
-test_white_noise_group_context_unsupported(void)
+/* The White Noise fixture's GroupContext extensions (entries only). */
+static uint8_t *
+wn_exts(size_t *len, const uint8_t **exts)
 {
-    /* Every White Noise (marmot-app) group requires SelfRemove (0x000a),
-     * agent-text-stream (0x8006, receive role) and encrypted media v2
-     * (0x800b): libmarmot honours none of them yet and must refuse. */
-    size_t raw_len = 0, len = 0;
+    size_t raw_len = 0;
     uint8_t *raw = unhex(MDK011_WHITE_NOISE_APP.group_context, &raw_len);
-    const uint8_t *exts = strip_vec(raw, raw_len, &len);
+    *exts = strip_vec(raw, raw_len, len);
+    return raw;
+}
+
+static void
+test_white_noise_group_context_admitted(void)
+{
+    /* Every White Noise (MDK 0.11 marmot-app) group requires SelfRemove
+     * (0x000a), the agent text stream (0x8006, receive role) and encrypted
+     * media v2 (0x800b): admitted since nostrc-qp24.5.2. */
+    size_t len = 0;
+    const uint8_t *exts = NULL;
+    uint8_t *raw = wn_exts(&len, &exts);
     CHECK(mls_group_context_profile_of(exts, len) == MARMOT_GROUP_PROFILE_ADOPTED, "adopted");
     MlsAdoptedGroupContext gc;
-    EXPECT_ERR(mls_adopted_group_context_parse(exts, len, &gc), MARMOT_ERR_UNSUPPORTED);
+    OK(mls_adopted_group_context_parse(exts, len, &gc));
+    static const uint16_t want[] = {0x8001, 0x8003, 0x8004, 0x8006, 0x8009, 0x800b, 0x800c};
+    CHECK(gc.n_components == 7 && memcmp(gc.components, want, sizeof(want)) == 0,
+          "White Noise requires 0x8006 and 0x800b");
+    CHECK(gc.n_proposal_types == 2 && gc.proposal_types[0] == 0x0008 &&
+              gc.proposal_types[1] == 0x000a && gc.n_ext_types == 1 && gc.ext_types[0] == 0x0006,
+          "SelfRemove required, the receive role not folded into required_capabilities");
+    CHECK(gc.required_member_roles == MARMOT_AGENT_STREAM_ROLE_RECEIVE && gc.agent_stream &&
+              gc.media_policy && !gc.image && !gc.avatar, "component states");
 
-    /* Without SelfRemove its components alone are still refused. */
+    /* The read side (nostrc-m6tp). */
+    MarmotGroupComponents c;
+    OK(marmot_adopted_components_from_extensions(exts, len, 1, &c));
+    CHECK(c.epoch == 1 && strcmp(c.name, "W24-E white-noise-app") == 0 &&
+              strcmp(c.description, "MDK v0.11.0 fixture") == 0, "profile 0x8001");
+    CHECK(c.required_component_count == 7 &&
+              memcmp(c.required_components, want, sizeof(want)) == 0, "required list");
+    MarmotAgentTextStreamPolicy def = marmot_agent_text_stream_policy_user_to_agent_default();
+    /* Field by field: the struct has padding. */
+    const MarmotAgentTextStreamPolicy *a = &c.agent_text_stream;
+    CHECK(c.has_agent_text_stream && a->required_member_roles == def.required_member_roles &&
+              a->allowed_member_roles == def.allowed_member_roles &&
+              a->max_plaintext_frame_len == def.max_plaintext_frame_len &&
+              a->replay_ttl_secs == def.replay_ttl_secs &&
+              a->padding_bucket_bytes == def.padding_bucket_bytes,
+          "user_to_agent_default");
+    CHECK(c.has_media_policy && c.media_policy.allowed_locator_kind_count == 1 &&
+              strcmp(c.media_policy.allowed_locator_kinds[0], "blossom-v1") == 0 &&
+              c.media_policy.default_blob_endpoint_count == 1 &&
+              strcmp(c.media_policy.default_blob_endpoints[0].base_url,
+                     "https://blossom.example.com/") == 0,
+          "media policy 0x800b");
+    CHECK(!c.image.present && !c.avatar_url.url && c.avatar_source == MARMOT_GROUP_AVATAR_NONE,
+          "no image");
+    marmot_group_components_clear(&c);
+
+    /* SelfRemove alone, or the components alone, are each admitted. */
     GcSpec s;
     gc_spec_from(exts, len, &s);
     CHECK(s.n_prop == 2 && s.prop[1] == 0x000a, "SelfRemove required");
     s.n_prop = 1;
+    OK(gc_parse_spec(&s));
+    free(raw);
+}
+
+static void
+test_white_noise_component_negatives(void)
+{
+    size_t len = 0;
+    const uint8_t *exts = NULL;
+    uint8_t *raw = wn_exts(&len, &exts);
+    GcSpec base, s;
+    gc_spec_from(exts, len, &base);
+    OK(gc_parse_spec(&base));
+
+    /* Malformed 0x8006 (MDK AgentTextStreamQuicPolicyV1::validate). */
+    static const uint8_t agent_bad[][13] = {
+        {0, 3, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0},          /* no required role */
+        {9, 15, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0},         /* unknown required bit */
+        {1, 0x81, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0},       /* unknown allowed bit */
+        {1, 2, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0},          /* required not allowed */
+        {1, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},           /* frame 0 */
+        {1, 3, 0, 0, 0xff, 0xf0, 0, 0, 0, 0, 0, 0},     /* frame 65520 */
+        {1, 3, 0, 0, 16, 0, 0, 0, 1, 0x2d, 0, 0},       /* ttl 301 */
+        {1, 3, 0, 0, 16, 0, 0, 0, 0, 0, 0x10, 0x01},    /* padding 4097 */
+    };
+    for (size_t i = 0; i < sizeof(agent_bad) / sizeof(agent_bad[0]); i++) {
+        s = base;
+        gc_entry(&s, 0x8006)->data = agent_bad[i];
+        gc_entry(&s, 0x8006)->len = 12;
+        EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    }
+    s = base;
+    gc_entry(&s, 0x8006)->len = 11;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    static const uint8_t agent13[13] = {1, 3, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0};
+    gc_entry(&s, 0x8006)->data = agent13;
+    gc_entry(&s, 0x8006)->len = 13;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    /* The v1 bounds themselves are valid. */
+    static const uint8_t agent_max[12] = {1, 7, 0, 0, 0xff, 0xef, 0, 0, 1, 0x2c, 0x10, 0};
+    s = base;
+    gc_entry(&s, 0x8006)->data = agent_max;
+    OK(gc_parse_spec(&s));
+    /* A group that requires a role libmarmot does not play: send, fanout. */
+    static const uint8_t agent_send[12] = {3, 3, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0};
+    static const uint8_t agent_fanout[12] = {5, 7, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0};
+    gc_entry(&s, 0x8006)->data = agent_send;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_UNSUPPORTED);
+    gc_entry(&s, 0x8006)->data = agent_fanout;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_UNSUPPORTED);
+    /* Required, but no state. */
+    s = base;
+    gc_drop(&s, 0x8006);
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    s = base;
+    gc_drop(&s, 0x800b);
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+
+    /* Malformed 0x800b. */
+    const Comp *media = gc_entry(&base, 0x800b);
+    uint8_t buf[160];
+    CHECK(media->len < sizeof(buf) - 1, "0x800b size");
+    s = base;
+    memcpy(buf, media->data, media->len);
+    buf[media->len] = 0x00; /* trailing byte */
+    gc_entry(&s, 0x800b)->data = buf;
+    gc_entry(&s, 0x800b)->len = media->len + 1;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    s = base;
+    memcpy(buf, media->data, media->len);
+    buf[1 + 17] = '1'; /* "encrypted-media-v1" */
+    gc_entry(&s, 0x800b)->data = buf;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    s = base;
+    memcpy(buf, media->data, media->len);
+    buf[media->len - 1] = 'x'; /* "https://blossom.example.comx": no path */
+    gc_entry(&s, 0x800b)->data = buf;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    s = base;
+    memcpy(buf, media->data, media->len);
+    buf[21] = 'B'; /* allowed kind "Blossom-v1" (buf[20] is its length) */
+    gc_entry(&s, 0x800b)->data = buf;
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    s = base;
+    gc_entry(&s, 0x800b)->len = media->len - 1; /* truncated */
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+
+    /* Known components nobody requires are validated too (MDK
+     * validate_app_component_dictionary), and read. */
+    static const uint8_t bad_avatar[] = {0x08, 'h', 't', 't', 'p', ':', '/', '/', 'x', 0x00, 0x00};
+    s = base;
+    gc_add(&s, 0x8007, bad_avatar, sizeof(bad_avatar));
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    static const uint8_t partial_image[] = {0x01, 0xaa, 0x00, 0x00, 0x00, 0x00};
+    s = base;
+    gc_add(&s, 0x8002, partial_image, sizeof(partial_image));
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    static const uint8_t retention7[7] = {0};
+    static const uint8_t retention[8] = {0, 0, 0, 0, 0, 0, 0x0e, 0x10};
+    s = base;
+    gc_add(&s, 0x8005, retention7, sizeof(retention7));
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    s = base;
+    gc_add(&s, 0x8005, retention, sizeof(retention));
+    OK(gc_parse_spec(&s)); /* kept, not honoured (nostrc-b55p) */
+    /* ... but a group that requires disappearing messages is refused. */
+    uint8_t list[32];
+    static const uint16_t with_retention[] = {0x8001, 0x8003, 0x8004, 0x8005, 0x8006,
+                                              0x8009, 0x800b, 0x800c};
+    gc_entry(&s, 0x0001)->data = list;
+    gc_entry(&s, 0x0001)->len = comp_list(list, with_retention, 8);
+    EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_UNSUPPORTED);
+
+    /* An image and an avatar URL nobody requires: valid, and read. */
+    MarmotGroupBlossomImage img = {.present = true, .media_type = "image/png"};
+    memset(img.image_hash, 0x11, 32);
+    memset(img.image_key, 0x22, 32);
+    memset(img.image_nonce, 0x33, 12);
+    memset(img.image_upload_key, 0x44, 32);
+    uint8_t *img_bytes = NULL, *av_bytes = NULL;
+    size_t img_len = 0, av_len = 0;
+    OK(marmot_group_blossom_image_encode(&img, &img_bytes, &img_len));
+    MarmotGroupAvatarUrl av = {.url = "https://xn--bcher-kva.example/a.png", .url_unverified = true};
+    /* An unverified URL is valid stored state but never produced: build it. */
+    size_t ul = strlen(av.url);
+    av_len = 1 + ul + 2;
+    av_bytes = malloc(av_len);
+    av_bytes[0] = (uint8_t)ul;
+    memcpy(av_bytes + 1, av.url, ul);
+    av_bytes[1 + ul] = 0;
+    av_bytes[2 + ul] = 0;
+    s = base;
+    gc_add(&s, 0x8002, img_bytes, img_len);
+    gc_add(&s, 0x8007, av_bytes, av_len);
+    size_t elen = 0;
+    uint8_t *e = gc_build(&s, &elen);
+    MarmotGroupComponents c;
+    OK(marmot_adopted_components_from_extensions(e, elen, 7, &c));
+    CHECK(c.image.present && strcmp(c.image.media_type, "image/png") == 0 &&
+              c.image.image_key[0] == 0x22 && c.image.image_upload_key[31] == 0x44,
+          "0x8002 read");
+    CHECK(c.avatar_url.url && strcmp(c.avatar_url.url, av.url) == 0 && c.avatar_url.url_unverified,
+          "0x8007 read, unverified kept byte for byte");
+    CHECK(c.avatar_source == MARMOT_GROUP_AVATAR_URL_PLACEHOLDER,
+          "the URL avatar wins, as a placeholder");
+    marmot_group_components_clear(&c);
+    free(e);
+    free(img_bytes);
+    free(av_bytes);
+
+    /* required_capabilities: the receive role may be required outright
+     * (libmarmot advertises it); the other two may not. */
+    s = base;
+    s.ext[s.n_ext++] = 0xF2D1;
+    OK(gc_parse_spec(&s));
+    s = base;
+    s.ext[s.n_ext++] = 0xF2D2;
     EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_UNSUPPORTED);
     free(raw);
 }
@@ -618,9 +819,13 @@ test_group_context_negatives(void)
     s = base;
     s.prop[s.n_prop++] = 0x0008; /* repeated */
     EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    /* SelfRemove may be required (nostrc-qp24.5.2). */
+    s = base;
+    s.prop[s.n_prop++] = 0x000a;
+    OK(gc_parse_spec(&s));
     /* Requirements libmarmot cannot honour. */
     s = base;
-    s.prop[s.n_prop++] = 0x000a; /* SelfRemove */
+    s.prop[s.n_prop++] = 0x000b; /* unassigned */
     EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_UNSUPPORTED);
     s = base;
     s.cred[s.n_cred++] = 0x0002; /* x509 */
@@ -654,9 +859,18 @@ test_group_context_negatives(void)
     EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_UNSUPPORTED);
     gc_entry(&s, 0x0001)->len = comp_list(list, unsorted, 5);
     EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_EXTENSION_FORMAT);
+    /* The agent text stream, receive role (nostrc-qp24.5.2). */
     static const uint8_t agent_state[] = {1, 3, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0};
     gc_entry(&s, 0x0001)->len = comp_list(list, agent, 6);
     gc_add(&s, 0x8006, agent_state, sizeof(agent_state));
+    OK(gc_parse_spec(&s));
+    /* A component libmarmot does not implement, required: refused. */
+    static const uint16_t retention_req[] = {0x8001, 0x8003, 0x8004, 0x8005, 0x8009, 0x800c};
+    static const uint8_t retention_state[8] = {0};
+    s = base;
+    gc_entry(&s, 0x0001)->data = list;
+    gc_entry(&s, 0x0001)->len = comp_list(list, retention_req, 6);
+    gc_add(&s, 0x8005, retention_state, sizeof(retention_state));
     EXPECT_ERR(gc_parse_spec(&s), MARMOT_ERR_UNSUPPORTED);
     s = base;
     gc_drop(&s, 0x0001);
@@ -1238,16 +1452,107 @@ test_welcome_transient_storage_error(void)
 }
 
 static void
-test_white_noise_welcome_refused(void)
+test_white_noise_welcome_joined(void)
 {
+    /* nostrc-qp24.5.2 acceptance: the real MDK v0.11.0 marmot-app-shaped
+     * (White Noise) Welcome is joined, and its components are readable
+     * from the stored state. */
     const AdoptedMdkFixture *f = &MDK011_WHITE_NOISE_APP;
     Member bob;
     member_init(&bob, "bob");
     install_mdk_joiner(&bob, f);
     MarmotGroupId gid = fixture_gid(f);
-    expect_refused(&bob, f->rumor_json, &gid, MARMOT_ERR_UNSUPPORTED);
+
+    uint8_t wrapper[32];
+    randombytes_buf(wrapper, sizeof(wrapper));
+    MarmotWelcome *w = NULL;
+    OK(marmot_process_welcome(bob.m, wrapper, f->rumor_json, &w));
+    CHECK(w && w->state == MARMOT_WELCOME_STATE_PENDING && w->group_name &&
+              strcmp(w->group_name, "W24-E white-noise-app") == 0 && w->member_count == 2,
+          "listed as an invitation with its signed profile");
+    OK(marmot_accept_welcome(bob.m, w));
+    marmot_welcome_free(w);
+
+    MarmotGroupProfile profile = MARMOT_GROUP_PROFILE_LEGACY;
+    OK(marmot_get_group_profile(bob.m, &gid, &profile));
+    CHECK(profile == MARMOT_GROUP_PROFILE_ADOPTED, "adopted");
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(bob.m, &gid, &g));
+    CHECK(g && g->state == MARMOT_GROUP_STATE_ACTIVE && g->epoch == f->epoch &&
+              strcmp(g->name, "W24-E white-noise-app") == 0, "group record");
+    marmot_group_free(g);
+
+    /* The read side loads (and so re-validates) the stored MLS state. */
+    MarmotGroupComponents c;
+    OK(marmot_get_group_components(bob.m, &gid, &c));
+    CHECK(c.epoch == f->epoch && strcmp(c.name, "W24-E white-noise-app") == 0 &&
+              c.has_agent_text_stream &&
+              c.agent_text_stream.required_member_roles == MARMOT_AGENT_STREAM_ROLE_RECEIVE &&
+              c.has_media_policy &&
+              strcmp(c.media_policy.default_blob_endpoints[0].base_url,
+                     "https://blossom.example.com/") == 0 &&
+              c.avatar_source == MARMOT_GROUP_AVATAR_NONE,
+          "components of the joined White Noise group");
+    marmot_group_components_clear(&c);
+    MarmotGroupId nope = marmot_group_id_new((const uint8_t *)"no such group", 13);
+    EXPECT_ERR(marmot_get_group_components(bob.m, &nope, &c), MARMOT_ERR_GROUP_NOT_FOUND);
+    marmot_group_id_free(&nope);
+
+    /* Application messages, both ways, are not this slice's: a White Noise
+     * group's first Commit still needs nostrc-qp24.5.1 (slice H). */
+    EXPECT_ERR(join(&bob, f->rumor_json, NULL), MARMOT_ERR_WELCOME_ALREADY_ACCEPTED);
     marmot_group_id_free(&gid);
     member_free(&bob);
+}
+
+/* agent-text-stream-quic-v1.md: every member advertises the role
+ * capability of each role the group requires (here receive, 0xF2D1). */
+static void
+test_white_noise_member_roles(void)
+{
+    size_t tlen = 0, len = 0;
+    uint8_t *tree_bytes = unhex(MDK011_WHITE_NOISE_APP.ratchet_tree, &tlen);
+    MlsRatchetTree tree;
+    memset(&tree, 0, sizeof(tree));
+    CHECK(mls_ratchet_tree_deserialize(tree_bytes, tlen, &tree) == 0 && tree.n_leaves == 2,
+          "MDK tree");
+    const uint8_t *exts = NULL;
+    uint8_t *raw = wn_exts(&len, &exts);
+    MlsAdoptedGroupContext gc;
+    OK(mls_adopted_group_context_parse(exts, len, &gc));
+    OK(mls_adopted_tree_check(&tree, &gc, true));
+    for (uint32_t i = 0; i < 2; i++) {
+        const MlsLeafNode *leaf = &tree.nodes[2 * i].leaf;
+        bool receive = false;
+        for (size_t k = 0; k < leaf->cap_extension_count; k++)
+            receive |= leaf->cap_extensions[k] == 0xF2D1;
+        CHECK(receive, "MDK leaf %u advertises the receive role", i);
+    }
+
+    /* A member without the receive role: refused (a Welcome, a load, an
+     * invitee's KeyPackage leaf), but only where the group requires it. */
+    MlsLeafNode *joiner = &tree.nodes[2].leaf;
+    uint16_t *saved = joiner->cap_extensions;
+    size_t saved_n = joiner->cap_extension_count;
+    uint16_t without[8];
+    size_t n = 0;
+    for (size_t k = 0; k < saved_n && n < 8; k++)
+        if (saved[k] != 0xF2D1) without[n++] = saved[k];
+    CHECK(n == saved_n - 1, "dropped 0xF2D1");
+    joiner->cap_extensions = without;
+    joiner->cap_extension_count = n;
+    EXPECT_ERR(mls_adopted_tree_check(&tree, &gc, true), MARMOT_ERR_VALIDATION);
+    EXPECT_ERR(mls_adopted_leaf_check(joiner, &gc), MARMOT_ERR_VALIDATION);
+    MlsAdoptedGroupContext plain;
+    OK(mls_adopted_group_context_parse(g_fixture_exts, g_fixture_exts_len, &plain));
+    OK(mls_adopted_leaf_check(joiner, &plain)); /* no 0x8006: no role needed */
+    joiner->cap_extensions = saved;
+    joiner->cap_extension_count = saved_n;
+    OK(mls_adopted_tree_check(&tree, &gc, true));
+
+    free(raw);
+    mls_tree_free(&tree);
+    free(tree_bytes);
 }
 
 /* A kind:444 rumor of the adopted binding around raw Welcome bytes. */
@@ -1437,6 +1742,84 @@ test_mdk_key_package_event_validates(void)
                                               NULL));
 }
 
+/* The adopted KeyPackage producer (still build-gated OFF) advertises
+ * exactly what an MDK 0.11 marmot-app (White Noise) creator requires of an
+ * invitee (nostrc-qp24.5.2): extensions 0x0006 and the receive role 0xF2D1
+ * (not send 0xF2D2 or fanout 0xF2D4), proposals 0x0008 and SelfRemove
+ * 0x000a, components 0x8001 0x8003 0x8004 0x8006 0x8009 0x800b 0x800c.
+ * MDK's own parser and invite precheck accepting it is the harness case
+ * groundhog-mdk011-interop-white-noise-welcome (tests/interop/mdk). */
+static void
+test_adopted_key_package_white_noise_shape(void)
+{
+    Member bob;
+    member_init(&bob, "bob");
+    char *json = adopted_key_package(&bob);
+    MlsKeyPackage kp;
+    uint8_t owner[32];
+    OK(marmot_parse_key_package_event_for_profile(json, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, 0, &kp,
+                                                  owner));
+    const MlsLeafNode *leaf = &kp.leaf_node;
+    static const uint16_t want_ext[] = {0x0006, 0xF2D1}, want_prop[] = {0x0008, 0x000a};
+    CHECK(leaf->cap_extension_count == 2 &&
+              memcmp(leaf->cap_extensions, want_ext, sizeof(want_ext)) == 0 &&
+              leaf->proposal_count == 2 &&
+              memcmp(leaf->proposals, want_prop, sizeof(want_prop)) == 0,
+          "leaf capabilities");
+    /* The leaf's app_components entry, byte for byte. */
+    const uint8_t *dict = NULL;
+    size_t dlen = 0, count = 0;
+    CHECK(marmot_extensions_find(leaf->extensions_data, leaf->extensions_len, 0x0006, &dict, &dlen,
+                                 &count) == 0 && count == 1, "leaf dictionary");
+    MarmotComponentData *e = NULL;
+    size_t ne = 0;
+    CHECK(marmot_app_data_dict_parse(dict, dlen, &e, &ne) == 0 && ne == 3 &&
+              e[0].component_id == 0x0001, "entries");
+    static const uint8_t want_list[] = {0x10, 0x00, 0x01, 0x80, 0x01, 0x80, 0x03, 0x80, 0x04,
+                                        0x80, 0x06, 0x80, 0x09, 0x80, 0x0b, 0x80, 0x0c};
+    CHECK(e[0].len == sizeof(want_list) && memcmp(e[0].data, want_list, sizeof(want_list)) == 0,
+          "app_components [0x0001 0x8001 0x8003 0x8004 0x8006 0x8009 0x800b 0x800c]");
+    free(e);
+
+    /* The kind:30443 tags say the same. */
+    NostrEvent *ev = nostr_event_new();
+    CHECK(nostr_event_deserialize_compact(ev, json, NULL), "event");
+    NostrTag *t = tag(ev, "mls_extensions");
+    CHECK(t && nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x0006") == 0 &&
+              strcmp(nostr_tag_get(t, 2), "0xf2d1") == 0, "mls_extensions tag");
+    t = tag(ev, "mls_proposals");
+    CHECK(t && nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x0008") == 0 &&
+              strcmp(nostr_tag_get(t, 2), "0x000a") == 0, "mls_proposals tag");
+    t = tag(ev, "app_components");
+    static const char *want_tag[] = {"0x8001", "0x8003", "0x8004", "0x8006",
+                                     "0x8009", "0x800b", "0x800c"};
+    CHECK(t && nostr_tag_size(t) == 8, "app_components tag");
+    for (size_t i = 0; i < 7; i++)
+        CHECK(strcmp(nostr_tag_get(t, i + 1), want_tag[i]) == 0, "app_components[%zu]", i);
+    nostr_event_free(ev);
+
+    /* Against the real White Noise group: our invitee leaf passes the
+     * member check of its GroupContext (required_capabilities, every
+     * required component, the receive role), as MDK's creator would. */
+    size_t len = 0;
+    const uint8_t *exts = NULL;
+    uint8_t *raw = wn_exts(&len, &exts);
+    MlsAdoptedGroupContext gc;
+    OK(mls_adopted_group_context_parse(exts, len, &gc));
+    OK(mls_adopted_leaf_check(leaf, &gc));
+    /* and covers everything the White Noise KeyPackage MDK made advertises
+     * that a White Noise group requires. */
+    for (size_t i = 0; i < gc.n_proposal_types; i++) {
+        bool has = false;
+        for (size_t k = 0; k < leaf->proposal_count; k++) has |= leaf->proposals[k] == gc.proposal_types[i];
+        CHECK(has || gc.proposal_types[i] <= 0x0007, "proposal %04x", gc.proposal_types[i]);
+    }
+    free(raw);
+    mls_key_package_clear(&kp);
+    free(json);
+    member_free(&bob);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Creation (qp24.5.1.1)
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1548,6 +1931,25 @@ test_create_adopted_and_join(void)
         MlsGroup mls;
         CHECK(mls_group_deserialize(blob, len, &mls) == 0, "load");
         OK(marmot_adopted_members_proven(&mls));
+        /* A libmarmot group requires what an MDK cgka-engine creator does;
+         * its leaves advertise the White Noise set too (nostrc-qp24.5.2). */
+        MlsAdoptedGroupContext gc;
+        OK(mls_adopted_group_context_parse(mls.extensions_data, mls.extensions_len, &gc));
+        static const uint16_t five[] = {0x8001, 0x8003, 0x8004, 0x8009, 0x800c};
+        CHECK(gc.n_components == 5 && memcmp(gc.components, five, sizeof(five)) == 0 &&
+                  !gc.agent_stream && !gc.media_policy && gc.n_proposal_types == 1,
+              "%s: required components", both[i]->name);
+        for (uint32_t l = 0; l < mls.tree.n_leaves; l++) {
+            const MlsLeafNode *leaf = &mls.tree.nodes[2 * l].leaf;
+            CHECK(leaf->cap_extension_count == 2 && leaf->cap_extensions[1] == 0xF2D1 &&
+                      leaf->proposal_count == 2 && leaf->proposals[1] == 0x000a,
+                  "%s: leaf %u advertises the receive role and SelfRemove", both[i]->name, l);
+        }
+        MarmotGroupComponents c;
+        OK(marmot_get_group_components(both[i]->m, &p.gid, &c));
+        CHECK(strcmp(c.name, "Adopted") == 0 && !c.has_media_policy && !c.has_agent_text_stream &&
+                  c.required_component_count == 5, "%s: components", both[i]->name);
+        marmot_group_components_clear(&c);
         mls_group_free(&mls);
         sodium_memzero(blob, len);
         free(blob);
@@ -2270,6 +2672,10 @@ test_legacy_unchanged(void)
         CHECK(blob[7] == 3, "legacy state still serial version 3");
         sodium_memzero(blob, len);
         free(blob);
+        /* Components are an adopted-profile notion (MarmotGroup has the
+         * legacy group data). */
+        MarmotGroupComponents c;
+        EXPECT_ERR(marmot_get_group_components(both[i]->m, &gid, &c), MARMOT_ERR_UNSUPPORTED);
     }
     /* And the legacy rumor still carries its encoding tag and preview. */
     NostrEvent *rumor = nostr_event_new();
@@ -2294,17 +2700,20 @@ main(int argc, char **argv)
 
     printf("libmarmot: adopted-profile admission (nostrc-qp24.5.1)\n");
     RUN(test_mdk_group_context_admitted);
-    RUN(test_white_noise_group_context_unsupported);
+    RUN(test_white_noise_group_context_admitted);
+    RUN(test_white_noise_component_negatives);
     RUN(test_group_context_negatives);
     RUN(test_relay_url_profile);
     RUN(test_mdk_tree_members);
     RUN(test_mdk_welcome_join);
     RUN(test_persist_load_clone);
-    RUN(test_white_noise_welcome_refused);
+    RUN(test_white_noise_welcome_joined);
+    RUN(test_white_noise_member_roles);
     RUN(test_welcome_transient_storage_error);
     RUN(test_openmls_welcome_negatives);
     RUN(test_adopted_rumor_shape);
     RUN(test_mdk_key_package_event_validates);
+    RUN(test_adopted_key_package_white_noise_shape);
     RUN(test_create_adopted_and_join);
     RUN(test_create_proof_inputs);
     RUN(test_adopted_commits_refused);

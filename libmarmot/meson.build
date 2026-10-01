@@ -171,6 +171,7 @@ install_headers(
   'include/marmot/marmot-media.h',
   'include/marmot/marmot-storage.h',
   'include/marmot/marmot-group-profile.h',
+  'include/marmot/marmot-group-components.h',
   subdir: 'marmot',
 )
 

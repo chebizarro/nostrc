@@ -1,0 +1,2388 @@
+{
+ "source": "MDK v0.11.0 946e0547485c9a2c393c2048ec3a968fd50fb441 cgka-traits: AgentTextStreamQuicPolicyV1::decode_component_state (0x8006), decode_encrypted_media_policy_v2 (0x800b), validate_and_normalize_blob_endpoint_url_v2 (url 2.5.8)",
+ "generator": "policy-verdicts/gen_policy_verdicts.py",
+ "normalize": [
+  {
+   "in": "https://blossom.example.com/",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://Blossom.Example.com/",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "http://blossom.example.com/",
+   "normalized": "http://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "http://blossom.example.com:80/",
+   "normalized": "http://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com:443/",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com:8443",
+   "normalized": "https://blossom.example.com:8443/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/a/../b",
+   "normalized": "https://blossom.example.com/b",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/./a",
+   "normalized": "https://blossom.example.com/a",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/a b",
+   "normalized": "https://blossom.example.com/a%20b",
+   "ok": true
+  },
+  {
+   "error": "encrypted media endpoint URL must not include a query",
+   "in": "https://blossom.example.com/?",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL must not include a query",
+   "in": "https://blossom.example.com/?q=1",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL must not include a fragment",
+   "in": "https://blossom.example.com/#f",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL must not include credentials",
+   "in": "https://u:p@blossom.example.com/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL scheme must be http or https",
+   "in": "ftp://blossom.example.com/",
+   "ok": false
+  },
+  {
+   "error": "encrypted media endpoint URL scheme must be http or https",
+   "in": "wss://blossom.example.com/",
+   "ok": false
+  },
+  {
+   "in": "https://127.0.0.1/",
+   "normalized": "https://127.0.0.1/",
+   "ok": true
+  },
+  {
+   "in": "https://127.1/",
+   "normalized": "https://127.0.0.1/",
+   "ok": true
+  },
+  {
+   "in": "https://0x7f.0.0.1/",
+   "normalized": "https://127.0.0.1/",
+   "ok": true
+  },
+  {
+   "in": "https://[::1]/",
+   "normalized": "https://[::1]/",
+   "ok": true
+  },
+  {
+   "in": "https://[0:0:0:0:0:0:0:1]/",
+   "normalized": "https://[::1]/",
+   "ok": true
+  },
+  {
+   "in": "https://xn--bcher-kva.example/",
+   "normalized": "https://xn--bcher-kva.example/",
+   "ok": true
+  },
+  {
+   "in": "https://bücher.example/",
+   "normalized": "https://xn--bcher-kva.example/",
+   "ok": true
+  },
+  {
+   "in": "https://my_host.example.com/",
+   "normalized": "https://my_host.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/a^b",
+   "normalized": "https://blossom.example.com/a^b",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/a|b",
+   "normalized": "https://blossom.example.com/a|b",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/[x]",
+   "normalized": "https://blossom.example.com/[x]",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/%7e",
+   "normalized": "https://blossom.example.com/%7e",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/~",
+   "normalized": "https://blossom.example.com/~",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/a%20b",
+   "normalized": "https://blossom.example.com/a%20b",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/a`b",
+   "normalized": "https://blossom.example.com/a%60b",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/{x}",
+   "normalized": "https://blossom.example.com/%7Bx%7D",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/a\\b",
+   "normalized": "https://blossom.example.com/a/b",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com:0/",
+   "normalized": "https://blossom.example.com:0/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com:00443/",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com:/",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com./",
+   "normalized": "https://blossom.example.com./",
+   "ok": true
+  },
+  {
+   "in": "https://a..example/",
+   "normalized": "https://a..example/",
+   "ok": true
+  },
+  {
+   "in": "HTTPS://blossom.example.com/",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https:blossom.example.com",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https:///blossom.example.com/",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": " https://blossom.example.com/ ",
+   "normalized": "https://blossom.example.com/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/b:/..",
+   "normalized": "https://blossom.example.com/b:/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com/%2e/x",
+   "normalized": "https://blossom.example.com/x",
+   "ok": true
+  },
+  {
+   "in": "https://e%41.example/",
+   "normalized": "https://ea.example/",
+   "ok": true
+  },
+  {
+   "in": "https://ex%2Eample.com/",
+   "normalized": "https://ex.ample.com/",
+   "ok": true
+  },
+  {
+   "in": "https://localhost/",
+   "normalized": "https://localhost/",
+   "ok": true
+  },
+  {
+   "in": "https://blossom.example.com:65535/",
+   "normalized": "https://blossom.example.com:65535/",
+   "ok": true
+  },
+  {
+   "error": "encrypted media endpoint URL is invalid: invalid port number",
+   "in": "https://blossom.example.com:65536/",
+   "ok": false
+  }
+ ],
+ "cases": [
+  {
+   "id": "8006",
+   "note": "user_to_agent_default",
+   "bytes": "010300001000000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "max bounds",
+   "bytes": "01070000ffef0000012c1000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "frame 65520",
+   "bytes": "01030000fff0000000000000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "frame 0",
+   "bytes": "010300000000000000000000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "ttl 301",
+   "bytes": "0103000010000000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "padding 4097",
+   "bytes": "010300001000000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream padding bucket exceeds app profile max: 4097"
+  },
+  {
+   "id": "8006",
+   "note": "required empty",
+   "bytes": "000300001000000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "required unknown bit",
+   "bytes": "090f00001000000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x09"
+  },
+  {
+   "id": "8006",
+   "note": "allowed unknown bit",
+   "bytes": "018100001000000000000000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x81"
+  },
+  {
+   "id": "8006",
+   "note": "required not allowed",
+   "bytes": "010200001000000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "required send",
+   "bytes": "020300001000000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "required receive+send",
+   "bytes": "030300001000000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "required fanout",
+   "bytes": "040700001000000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "allowed all, required receive",
+   "bytes": "010700000001000000010001",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "11 bytes",
+   "bytes": "0103000010000000000000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream component state must be 12 bytes, got 11"
+  },
+  {
+   "id": "8006",
+   "note": "13 bytes",
+   "bytes": "01030000100000000000000000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream component state must be 12 bytes, got 13"
+  },
+  {
+   "id": "8006",
+   "note": "empty",
+   "bytes": "",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream component state must be 12 bytes, got 0"
+  },
+  {
+   "id": "8006",
+   "note": "prng 0",
+   "bytes": "01070000fff00000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 1",
+   "bytes": "021000000001000000001000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 2",
+   "bytes": "01000000fff00000012c111b",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 3",
+   "bytes": "0103000000000000012c72ac",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 4",
+   "bytes": "0807000000010000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 5",
+   "bytes": "000200001000cce460410000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 6",
+   "bytes": "0107000000000000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 7",
+   "bytes": "0110000000000000012d1000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 8",
+   "bytes": "0707ed18522a000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 3977794090"
+  },
+  {
+   "id": "8006",
+   "note": "prng 9",
+   "bytes": "070700001000b9cdc1e80000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 3117269480"
+  },
+  {
+   "id": "8006",
+   "note": "prng 10",
+   "bytes": "030700001000000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 11",
+   "bytes": "08036e6835e6000000001001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 12",
+   "bytes": "01020000ffef0000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 13",
+   "bytes": "070335aa742d000000001001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 14",
+   "bytes": "0500d95af72b0000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 15",
+   "bytes": "00010000ffef0000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 16",
+   "bytes": "080000000001000000001000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 17",
+   "bytes": "01070000000000000000f505",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 18",
+   "bytes": "02000000fff06dc666761000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 19",
+   "bytes": "07070000ffef0000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "prng 20",
+   "bytes": "000200000001000000001000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 21",
+   "bytes": "08100000ffef0000012d8aa0",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 22",
+   "bytes": "010700001000cdb0d0b91000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 3450917049"
+  },
+  {
+   "id": "8006",
+   "note": "prng 23",
+   "bytes": "010200000001cdbbf0c9ed61",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 24",
+   "bytes": "001000000001346d74f7f08c",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 25",
+   "bytes": "0202b022c2cd0000012dedf0",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 2955068109"
+  },
+  {
+   "id": "8006",
+   "note": "prng 26",
+   "bytes": "021000001000000000001001",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 27",
+   "bytes": "070700000001a1b4271ede6a",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 2712938270"
+  },
+  {
+   "id": "8006",
+   "note": "prng 28",
+   "bytes": "4100000010000000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 29",
+   "bytes": "010200000000000000001001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 30",
+   "bytes": "0302adba9dc50000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 31",
+   "bytes": "41030000fff00000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 32",
+   "bytes": "05032dde0e1e76f941e41001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 33",
+   "bytes": "01107116f2db0000012d1000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 34",
+   "bytes": "01020000fff00000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 35",
+   "bytes": "03100000fff000000000193c",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 36",
+   "bytes": "41000000ffef85a9edfd4312",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 37",
+   "bytes": "04070000ffef9a78fc5a5a9c",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 2591620186"
+  },
+  {
+   "id": "8006",
+   "note": "prng 38",
+   "bytes": "01070000ffef000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream padding bucket exceeds app profile max: 4097"
+  },
+  {
+   "id": "8006",
+   "note": "prng 39",
+   "bytes": "040700000000000000003de8",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 40",
+   "bytes": "0401000000010000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 41",
+   "bytes": "040716bc41be0000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 381436350"
+  },
+  {
+   "id": "8006",
+   "note": "prng 42",
+   "bytes": "01030000fff0e9c0ff366d1b",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 43",
+   "bytes": "07070000ffef0000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream padding bucket exceeds app profile max: 4097"
+  },
+  {
+   "id": "8006",
+   "note": "prng 44",
+   "bytes": "0110000000017471fdbe1000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 45",
+   "bytes": "410700000001027ea4870000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 46",
+   "bytes": "411000000001000000000774",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 47",
+   "bytes": "00070000ffef0000012dae83",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 48",
+   "bytes": "050700000000715a5fd20000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 49",
+   "bytes": "0703000000000000012d5641",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 50",
+   "bytes": "05020000ffef9a1f87622d59",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 51",
+   "bytes": "01079ebbdc04000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 2663111684"
+  },
+  {
+   "id": "8006",
+   "note": "prng 52",
+   "bytes": "020100001000000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 53",
+   "bytes": "0807000000010000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 54",
+   "bytes": "03030000ffef000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 55",
+   "bytes": "04020000fff0000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 56",
+   "bytes": "040100000000523dba661001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 57",
+   "bytes": "01030000fff00000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 58",
+   "bytes": "05070000ffef000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 59",
+   "bytes": "010331d5bf75000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 836091765"
+  },
+  {
+   "id": "8006",
+   "note": "prng 60",
+   "bytes": "08020000fff00000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 61",
+   "bytes": "02020000ffefa1500a421000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 2706377282"
+  },
+  {
+   "id": "8006",
+   "note": "prng 62",
+   "bytes": "0303000000013c7cd087f673",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 1014812807"
+  },
+  {
+   "id": "8006",
+   "note": "prng 63",
+   "bytes": "000200000001000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 64",
+   "bytes": "03100000000146ce64f41001",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 65",
+   "bytes": "01020000ffef000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 66",
+   "bytes": "050700a626b5a42b35a01001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 10888885"
+  },
+  {
+   "id": "8006",
+   "note": "prng 67",
+   "bytes": "0001000000000000012dfc9c",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 68",
+   "bytes": "01070000fff00000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 69",
+   "bytes": "08000000fff0000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 70",
+   "bytes": "040700000000000000001000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 71",
+   "bytes": "0507e54aceb4000000001000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 3846885044"
+  },
+  {
+   "id": "8006",
+   "note": "prng 72",
+   "bytes": "0103000000010000012d6fa6",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "prng 73",
+   "bytes": "0103000010000000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "prng 74",
+   "bytes": "03030000ffef0000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "prng 75",
+   "bytes": "01100000ffef0000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 76",
+   "bytes": "010300000001000000001000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 77",
+   "bytes": "05100000fff00000012ca78b",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 78",
+   "bytes": "081000001000000000001000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 79",
+   "bytes": "0703e2842dace4ec8ec20304",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 80",
+   "bytes": "02100000ffef0000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 81",
+   "bytes": "011000000000679a38ce61a7",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 82",
+   "bytes": "010300000000c81391f01001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 83",
+   "bytes": "4103000000010000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 84",
+   "bytes": "0103000000010000012c1000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 85",
+   "bytes": "4103769bb1cf0000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 86",
+   "bytes": "41100000fff00000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 87",
+   "bytes": "0807000000000000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 88",
+   "bytes": "41100000ffef0000012d9047",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 89",
+   "bytes": "0507000000000000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 90",
+   "bytes": "0707000010000000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream padding bucket exceeds app profile max: 4097"
+  },
+  {
+   "id": "8006",
+   "note": "prng 91",
+   "bytes": "0703f2c8c7030000012cd8fb",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 92",
+   "bytes": "02026a57111a0000012d17b8",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 1784090906"
+  },
+  {
+   "id": "8006",
+   "note": "prng 93",
+   "bytes": "41030000fff043f751972391",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 94",
+   "bytes": "080300000001bcd5aee31001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 95",
+   "bytes": "04021228cbb30000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 96",
+   "bytes": "0100000000000000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 97",
+   "bytes": "0507000000010000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream padding bucket exceeds app profile max: 4097"
+  },
+  {
+   "id": "8006",
+   "note": "prng 98",
+   "bytes": "000700001000000000001000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 99",
+   "bytes": "01002135b39c0000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 100",
+   "bytes": "080100000001000000000000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 101",
+   "bytes": "0101a276bb321c81dd280000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 2725690162"
+  },
+  {
+   "id": "8006",
+   "note": "prng 102",
+   "bytes": "0101000010000000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "prng 103",
+   "bytes": "01070000fff0000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 104",
+   "bytes": "0301000000000000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 105",
+   "bytes": "050020610bff000000001001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 106",
+   "bytes": "0503000000010000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 107",
+   "bytes": "00010000fff00000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 108",
+   "bytes": "0702000000000000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 109",
+   "bytes": "07030000fff00000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 110",
+   "bytes": "0100345a4d04000000007f67",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 111",
+   "bytes": "0807429d57ea2d2cbf9d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 112",
+   "bytes": "010700000001000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream padding bucket exceeds app profile max: 4097"
+  },
+  {
+   "id": "8006",
+   "note": "prng 113",
+   "bytes": "0207000000010000012c1000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 114",
+   "bytes": "0700000010000000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 115",
+   "bytes": "01007d26b5b00000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 116",
+   "bytes": "05010000ffef0000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 117",
+   "bytes": "0002000000000000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 118",
+   "bytes": "0403fbbfad3a0000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 119",
+   "bytes": "081000001000000000001000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 120",
+   "bytes": "4103000010000000012c02fc",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 121",
+   "bytes": "05010000000000000000cc6c",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 122",
+   "bytes": "011037218d8f0000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 123",
+   "bytes": "010000000000d2cd7ba61001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 124",
+   "bytes": "020200001000000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 125",
+   "bytes": "010235aad9250000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 126",
+   "bytes": "0003000010000000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 127",
+   "bytes": "01038aa2336b0daef9110000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 2325885803"
+  },
+  {
+   "id": "8006",
+   "note": "prng 128",
+   "bytes": "08070000fff00000012c019a",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 129",
+   "bytes": "040300000001000000001001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 130",
+   "bytes": "0200000010000000012d1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 131",
+   "bytes": "01076f2e8538000000001000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 1865319736"
+  },
+  {
+   "id": "8006",
+   "note": "prng 132",
+   "bytes": "02070000ffef000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 133",
+   "bytes": "08030000ffef000000001001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 134",
+   "bytes": "0200000010004a63c1530793",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 135",
+   "bytes": "0507000000000000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 136",
+   "bytes": "410188b000ac0000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 137",
+   "bytes": "02020000fff0000000001000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 138",
+   "bytes": "0800000010000000012c71bc",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 139",
+   "bytes": "07021b6fb79caaa49b020000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 140",
+   "bytes": "0301000000000000012d683b",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 141",
+   "bytes": "00070000fff0000000001001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 142",
+   "bytes": "03000000000000000000da59",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 143",
+   "bytes": "0107000000000000012d1000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 144",
+   "bytes": "01020000fff00000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 145",
+   "bytes": "030300000000000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 146",
+   "bytes": "07030000ffef7c6e646c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 147",
+   "bytes": "0100261b6eec0000012c2f80",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 148",
+   "bytes": "0110000010000000012df705",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 149",
+   "bytes": "040300000001269eb0ad18bb",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 150",
+   "bytes": "0410b095668f0000012d1000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 151",
+   "bytes": "05077a5807f4000000000000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 2052589556"
+  },
+  {
+   "id": "8006",
+   "note": "prng 152",
+   "bytes": "0303000000000000012d1000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 153",
+   "bytes": "0303000000010000012d1000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "prng 154",
+   "bytes": "0007000000010000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 155",
+   "bytes": "0210b583087f00000000f3cd",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 156",
+   "bytes": "0503f60aa82c0000012c94b2",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 157",
+   "bytes": "00030000fff00000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 158",
+   "bytes": "04020000fff000000000f921",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 159",
+   "bytes": "4107055e044f0000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 160",
+   "bytes": "01020000ffefd1129ea51000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 161",
+   "bytes": "0307000000000000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 162",
+   "bytes": "0510000000010000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 163",
+   "bytes": "0501a83c0979802f74ab1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 164",
+   "bytes": "02100000000128e87a0f0000",
+   "mdk_ok": false,
+   "mdk_error": "allowed agent text stream role mask contains unknown bits: 0x10"
+  },
+  {
+   "id": "8006",
+   "note": "prng 165",
+   "bytes": "01070000ffefa6ce17ac1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 2798524332"
+  },
+  {
+   "id": "8006",
+   "note": "prng 166",
+   "bytes": "0700e69543c074f129e00000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 167",
+   "bytes": "0100000000000000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 168",
+   "bytes": "05070000ffef0000012d1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 301"
+  },
+  {
+   "id": "8006",
+   "note": "prng 169",
+   "bytes": "4101000000000000012c7fbb",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 170",
+   "bytes": "050700001000000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream padding bucket exceeds app profile max: 4097"
+  },
+  {
+   "id": "8006",
+   "note": "prng 171",
+   "bytes": "03030000fff00000012db27f",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 172",
+   "bytes": "41070000fff00000000006a2",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 173",
+   "bytes": "020700001000000000000000",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "8006",
+   "note": "prng 174",
+   "bytes": "0000000010007a50443b71f3",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles cannot be empty"
+  },
+  {
+   "id": "8006",
+   "note": "prng 175",
+   "bytes": "0203000010002228b9adb867",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream replay ttl exceeds app profile max: 573094317"
+  },
+  {
+   "id": "8006",
+   "note": "prng 176",
+   "bytes": "01000000fff00000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 177",
+   "bytes": "08030000ffefc11246180000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 178",
+   "bytes": "0707000000000000012c1000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 179",
+   "bytes": "4107000000000000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 180",
+   "bytes": "01000000ffef0000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 181",
+   "bytes": "03037fd6e1410000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 2144788801"
+  },
+  {
+   "id": "8006",
+   "note": "prng 182",
+   "bytes": "0810000010000000000077bb",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 183",
+   "bytes": "0803000000010000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 184",
+   "bytes": "05070000fff0000000001001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 185",
+   "bytes": "0400000000000000012d0000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 186",
+   "bytes": "0100000000000000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 187",
+   "bytes": "0107000000000000012c0000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 188",
+   "bytes": "07000000ffef0000012c6094",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 189",
+   "bytes": "0503000010000000012c1a8c",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 190",
+   "bytes": "02075972528f0000000008d2",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 1500664463"
+  },
+  {
+   "id": "8006",
+   "note": "prng 191",
+   "bytes": "0301000000010000000077cf",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 192",
+   "bytes": "0207000000000000012dfa3d",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit cannot be zero"
+  },
+  {
+   "id": "8006",
+   "note": "prng 193",
+   "bytes": "01070000fff02526f6d80000",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 194",
+   "bytes": "03070000fff00000012c1001",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 65520"
+  },
+  {
+   "id": "8006",
+   "note": "prng 195",
+   "bytes": "0102ebe98e3c9805253b1001",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "8006",
+   "note": "prng 196",
+   "bytes": "0103ed73900dd48ef5f4947a",
+   "mdk_ok": false,
+   "mdk_error": "agent text stream plaintext frame limit exceeds app profile max: 3983773709"
+  },
+  {
+   "id": "8006",
+   "note": "prng 197",
+   "bytes": "41031f041804000000007d15",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x41"
+  },
+  {
+   "id": "8006",
+   "note": "prng 198",
+   "bytes": "0801300fc7060000012d936d",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream role mask contains unknown bits: 0x08"
+  },
+  {
+   "id": "8006",
+   "note": "prng 199",
+   "bytes": "05020000ffef28e7a79c1000",
+   "mdk_ok": false,
+   "mdk_error": "required agent text stream roles must be a subset of allowed roles"
+  },
+  {
+   "id": "800b",
+   "note": "white noise default",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "two kinds, two endpoints",
+   "bytes": "12656e637279707465642d6d656469612d7632130a626c6f73736f6d2d763107697066732d763140460a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f07697066732d76311568747470733a2f2f697066732e6578616d706c652f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "http endpoint",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631270a626c6f73736f6d2d76311b687474703a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint with path",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631300a626c6f73736f6d2d76312468747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f6d656469612f7631",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint with port",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312d0a626c6f73736f6d2d76312168747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a383434332f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "wrong format",
+   "bytes": "12656e637279707465642d6d656469612d76310b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media format must be encrypted-media-v2"
+  },
+  {
+   "id": "800b",
+   "note": "format with space",
+   "bytes": "13656e637279707465642d6d656469612d7632200b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media format must be encrypted-media-v2"
+  },
+  {
+   "id": "800b",
+   "note": "no kinds",
+   "bytes": "12656e637279707465642d6d656469612d76320000",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media policy must allow at least one locator kind"
+  },
+  {
+   "id": "800b",
+   "note": "no endpoints",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d763100",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media policy must include at least one default blob endpoint"
+  },
+  {
+   "id": "800b",
+   "note": "duplicate kind",
+   "bytes": "12656e637279707465642d6d656469612d7632160a626c6f73736f6d2d76310a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media policy has a duplicate allowed locator kind"
+  },
+  {
+   "id": "800b",
+   "note": "uppercase kind",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a426c6f73736f6d2d7631280a426c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "allowed locator kind must contain only lowercase ASCII letters, digits, and '-'"
+  },
+  {
+   "id": "800b",
+   "note": "kind with underscore",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d5f7631280a626c6f73736f6d5f76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "allowed locator kind must contain only lowercase ASCII letters, digits, and '-'"
+  },
+  {
+   "id": "800b",
+   "note": "empty kind",
+   "bytes": "12656e637279707465642d6d656469612d763201001e001c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "allowed locator kind must not be empty"
+  },
+  {
+   "id": "800b",
+   "note": "kind 64 bytes",
+   "bytes": "12656e637279707465642d6d656469612d76324042404061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161405f4040616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161611c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "kind 65 bytes",
+   "bytes": "12656e637279707465642d6d656469612d76324043404161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161614060404161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161611c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media locator kind exceeds maximum length"
+  },
+  {
+   "id": "800b",
+   "note": "16 kinds",
+   "bytes": "12656e637279707465642d6d656469612d763236026b30026b31026b32026b33026b34026b35026b36026b37026b38026b39036b3130036b3131036b3132036b3133036b3134036b313520026b301c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "17 kinds",
+   "bytes": "12656e637279707465642d6d656469612d76323a026b30026b31026b32026b33026b34026b35026b36026b37026b38026b39036b3130036b3131036b3132036b3133036b3134036b3135036b313620026b301c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media policy allows more than 16 locator kinds"
+  },
+  {
+   "id": "800b",
+   "note": "16 endpoints",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d763141f60a626c6f73736f6d2d76311368747470733a2f2f62302e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62312e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62322e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62332e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62342e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62352e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62362e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62372e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62382e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62392e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231302e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231312e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231322e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231332e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231342e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231352e6578616d706c652f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "17 endpoints",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d763142160a626c6f73736f6d2d76311368747470733a2f2f62302e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62312e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62322e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62332e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62342e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62352e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62362e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62372e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62382e6578616d706c652f0a626c6f73736f6d2d76311368747470733a2f2f62392e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231302e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231312e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231322e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231332e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231342e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231352e6578616d706c652f0a626c6f73736f6d2d76311468747470733a2f2f6231362e6578616d706c652f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media policy includes more than 16 default blob endpoints"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint kind not allowed",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312507697066732d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint locator kind is not allowed"
+  },
+  {
+   "id": "800b",
+   "note": "duplicate endpoint",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d763140500a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f0a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media policy has a duplicate default blob endpoint"
+  },
+  {
+   "id": "800b",
+   "note": "same url two kinds",
+   "bytes": "12656e637279707465642d6d656469612d7632110a626c6f73736f6d2d7631056f74686572404b0a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f056f746865721c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "trailing byte",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f00",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media policy has trailing bytes"
+  },
+  {
+   "id": "800b",
+   "note": "non-minimal format prefix",
+   "bytes": "4012656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media format length decode failed: non-canonical QUIC varint length"
+  },
+  {
+   "id": "800b",
+   "note": "truncated",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media default blob endpoints is truncated"
+  },
+  {
+   "id": "800b",
+   "note": "empty",
+   "bytes": "",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media format length decode failed: missing QUIC varint"
+  },
+  {
+   "id": "800b",
+   "note": "url not utf-8",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2fff",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not UTF-8: invalid utf-8 sequence of 1 bytes from index 28"
+  },
+  {
+   "id": "800b",
+   "note": "url 2048 bytes",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631480d0a626c6f73736f6d2d7631480068747470733a2f2f622e6578616d706c652f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "url 2049 bytes",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631480e0a626c6f73736f6d2d7631480168747470733a2f2f622e6578616d706c652f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL exceeds maximum length"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631270a626c6f73736f6d2d76311b68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://Blossom.Example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f426c6f73736f6d2e4578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint http://blossom.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631270a626c6f73736f6d2d76311b687474703a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint http://blossom.example.com:80/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312a0a626c6f73736f6d2d76311e687474703a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a38302f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:443/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312c0a626c6f73736f6d2d76312068747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a3434332f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:8443",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312c0a626c6f73736f6d2d76312068747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a38343433",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:8443/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312d0a626c6f73736f6d2d76312168747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a383434332f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a/../b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312e0a626c6f73736f6d2d76312268747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f612f2e2e2f62",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f62",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/./a",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f2e2f61",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f61",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f612062",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a%20b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312d0a626c6f73736f6d2d76312168747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f6125323062",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/?",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f3f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL must not include a query"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/?q=1",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312c0a626c6f73736f6d2d76312068747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f3f713d31",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL must not include a query"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/#f",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312a0a626c6f73736f6d2d76311e68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f2366",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL must not include a fragment"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://u:p@blossom.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312c0a626c6f73736f6d2d76312068747470733a2f2f753a7040626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL must not include credentials"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint ftp://blossom.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631260a626c6f73736f6d2d76311a6674703a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL scheme must be http or https"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint wss://blossom.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631260a626c6f73736f6d2d76311a7773733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL scheme must be http or https"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://127.0.0.1/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311e0a626c6f73736f6d2d76311268747470733a2f2f3132372e302e302e312f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://127.1/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311a0a626c6f73736f6d2d76310e68747470733a2f2f3132372e312f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://0x7f.0.0.1/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311f0a626c6f73736f6d2d76311368747470733a2f2f307837662e302e302e312f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[::1]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311a0a626c6f73736f6d2d76310e68747470733a2f2f5b3a3a315d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://[0:0:0:0:0:0:0:1]/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631260a626c6f73736f6d2d76311a68747470733a2f2f5b303a303a303a303a303a303a303a315d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://xn--bcher-kva.example/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312a0a626c6f73736f6d2d76311e68747470733a2f2f786e2d2d62636865722d6b76612e6578616d706c652f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://bücher.example/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631240a626c6f73736f6d2d76311868747470733a2f2f62c3bc636865722e6578616d706c652f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://my_host.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c68747470733a2f2f6d795f686f73742e6578616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a^b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f615e62",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a|b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f617c62",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/[x]",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f5b785d",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/%7e",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f253765",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/~",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f7e",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a`b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f616062",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a%60b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312d0a626c6f73736f6d2d76312168747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f6125363062",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/{x}",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f7b787d",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/%7Bx%7D",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312f0a626c6f73736f6d2d76312368747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f25374278253744",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a\\b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f615c62",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/a/b",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f612f62",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:0/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312a0a626c6f73736f6d2d76311e68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a302f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:00443/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312e0a626c6f73736f6d2d76312268747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a30303434332f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com./",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2e2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://a..example/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311f0a626c6f73736f6d2d76311368747470733a2f2f612e2e6578616d706c652f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint HTTPS://blossom.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76311c48545450533a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https:blossom.example.com",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631250a626c6f73736f6d2d76311968747470733a626c6f73736f6d2e6578616d706c652e636f6d",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https:///blossom.example.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f2f626c6f73736f6d2e6578616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint  https://blossom.example.com/ ",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312a0a626c6f73736f6d2d76311e2068747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f20",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/b:/..",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312d0a626c6f73736f6d2d76312168747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f623a2f2e2e",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/b:/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312b0a626c6f73736f6d2d76311f68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f623a2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/%2e/x",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312d0a626c6f73736f6d2d76312168747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f2532652f78",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com/x",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631290a626c6f73736f6d2d76311d68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f78",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://e%41.example/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631210a626c6f73736f6d2d76311568747470733a2f2f652534312e6578616d706c652f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://ea.example/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311f0a626c6f73736f6d2d76311368747470733a2f2f65612e6578616d706c652f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://ex%2Eample.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631230a626c6f73736f6d2d76311768747470733a2f2f6578253245616d706c652e636f6d2f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint base URL is not normalized"
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://ex.ample.com/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631210a626c6f73736f6d2d76311568747470733a2f2f65782e616d706c652e636f6d2f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://localhost/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76311e0a626c6f73736f6d2d76311268747470733a2f2f6c6f63616c686f73742f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:65535/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312e0a626c6f73736f6d2d76312268747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a36353533352f",
+   "mdk_ok": true,
+   "mdk_error": null
+  },
+  {
+   "id": "800b",
+   "note": "endpoint https://blossom.example.com:65536/",
+   "bytes": "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d76312e0a626c6f73736f6d2d76312268747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d3a36353533362f",
+   "mdk_ok": false,
+   "mdk_error": "encrypted media endpoint URL is invalid: invalid port number"
+  }
+ ]
+}

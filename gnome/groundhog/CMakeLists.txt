@@ -1802,7 +1802,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       endif()
     endif()
     foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
-            adopted-welcome mdk09-probe)
+            adopted-welcome white-noise-welcome mdk09-probe)
       add_test(NAME groundhog-mdk011-interop-${groundhog_mdk011_case}
         COMMAND test-groundhog-mdk011-interop -p /groundhog/mdk011-interop/${groundhog_mdk011_case})
       set_tests_properties(groundhog-mdk011-interop-${groundhog_mdk011_case} PROPERTIES

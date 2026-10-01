@@ -99,6 +99,7 @@ set(MARMOT_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-storage.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-media.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-group-profile.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-group-components.h
   ${MARMOT_PUBLIC_VERSION_HEADER}
 )
 

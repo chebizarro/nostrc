@@ -1120,6 +1120,206 @@ test_avatar_url_rules_and_precedence(void)
     marmot_group_avatar_url_clear(&d);
 }
 
+/* ── 0x8006 / 0x800b policies against MDK's own verdicts (nostrc-qp24.5.2,
+ *    nostrc-m6tp; policy-verdicts-mdk-v0.11.0.json) ─────────────────────── */
+
+static bool
+any_unverified(const MarmotGroupMediaPolicy *p)
+{
+    for (size_t i = 0; i < p->default_blob_endpoint_count; i++)
+        if (p->default_blob_endpoints[i].base_url_unverified) return true;
+    return false;
+}
+
+/* 0x8006: libmarmot's verdict is MDK's, case for case.  0x800b: the
+ * consensus properties of the three-way URL judgement -- never refuse what
+ * MDK accepts, call a state valid (verified) only when MDK does, and
+ * re-encode every verified state to the same bytes. */
+static void
+test_policy_verdicts_match_mdk(void)
+{
+    json_t *root = load_fixture("policy-verdicts-mdk-v0.11.0.json");
+    json_t *cases = json_object_get(root, "cases");
+    size_t i, agent_n = 0, valid = 0, invalid = 0, unverified = 0;
+    json_t *c;
+    json_array_foreach(cases, i, c) {
+        size_t len = 0;
+        const char *hex = jstr(c, "bytes");
+        uint8_t *bytes = *hex ? unhex(hex, &len) : NULL;
+        bool mdk_ok = json_is_true(json_object_get(c, "mdk_ok"));
+        if (strcmp(jstr(c, "id"), "8006") == 0) {
+            MarmotAgentTextStreamPolicy p;
+            MarmotError err = marmot_agent_text_stream_policy_decode(bytes, len, &p);
+            if ((err == MARMOT_OK) != mdk_ok)
+                fprintf(stderr, "\n0x8006 %s: libmarmot %d, MDK %d\n", jstr(c, "note"), err, mdk_ok);
+            assert((err == MARMOT_OK) == mdk_ok);
+            assert(err == MARMOT_OK || err == MARMOT_ERR_EXTENSION_FORMAT);
+            if (err == MARMOT_OK) {
+                uint8_t again[MARMOT_AGENT_STREAM_STATE_LEN];
+                assert(marmot_agent_text_stream_policy_encode(&p, again) == MARMOT_OK);
+                assert(len == sizeof again && memcmp(again, bytes, len) == 0);
+            }
+            agent_n++;
+        } else {
+            MarmotGroupMediaPolicy p;
+            MarmotError err = marmot_group_media_policy_decode(bytes, len, &p);
+            if (err == MARMOT_OK && !any_unverified(&p)) {
+                if (!mdk_ok) fprintf(stderr, "\n0x800b %s: verified, MDK refuses\n", jstr(c, "note"));
+                assert(mdk_ok);
+                uint8_t *enc = NULL;
+                size_t enc_len = 0;
+                assert(marmot_group_media_policy_encode(&p, &enc, &enc_len) == MARMOT_OK);
+                assert(enc_len == len && memcmp(enc, bytes, len) == 0);
+                free(enc);
+                valid++;
+            } else if (err == MARMOT_OK) {
+                unverified++;
+            } else {
+                if (mdk_ok) fprintf(stderr, "\n0x800b %s: refuses an MDK-valid state\n", jstr(c, "note"));
+                assert(!mdk_ok && err == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+                invalid++;
+            }
+            marmot_group_media_policy_clear(&p);
+        }
+        free(bytes);
+    }
+    assert(agent_n >= 200 && valid >= 20 && invalid >= 40 && unverified >= 5);
+
+    /* What libmarmot produces from a raw endpoint URL is MDK's
+     * normalization, or nothing (a URL outside its verifiable subset). */
+    json_t *norm = json_object_get(root, "normalize");
+    size_t produced = 0;
+    json_array_foreach(norm, i, c) {
+        MarmotMediaBlobEndpoint ep = { .locator_kind = "blossom-v1", .base_url = (char *)jstr(c, "in") };
+        char *kinds[] = { "blossom-v1", NULL };
+        MarmotGroupMediaPolicy in = { kinds, 1, &ep, 1 };
+        uint8_t *enc = NULL;
+        size_t enc_len = 0;
+        if (marmot_group_media_policy_encode(&in, &enc, &enc_len) != MARMOT_OK) continue;
+        assert(json_is_true(json_object_get(c, "ok")));
+        MarmotGroupMediaPolicy out;
+        assert(marmot_group_media_policy_decode(enc, enc_len, &out) == MARMOT_OK);
+        assert(!any_unverified(&out));
+        if (strcmp(out.default_blob_endpoints[0].base_url, jstr(c, "normalized")) != 0)
+            fprintf(stderr, "\n%s -> %s, MDK %s\n", jstr(c, "in"),
+                    out.default_blob_endpoints[0].base_url, jstr(c, "normalized"));
+        assert(strcmp(out.default_blob_endpoints[0].base_url, jstr(c, "normalized")) == 0);
+        marmot_group_media_policy_clear(&out);
+        free(enc);
+        produced++;
+    }
+    assert(produced >= 15);
+    json_decref(root);
+}
+
+static void
+test_policy_codecs(void)
+{
+    /* Every White Noise group's 0x8006 state. */
+    MarmotAgentTextStreamPolicy d = marmot_agent_text_stream_policy_user_to_agent_default();
+    uint8_t state[MARMOT_AGENT_STREAM_STATE_LEN];
+    assert(marmot_agent_text_stream_policy_encode(&d, state) == MARMOT_OK);
+    assert_bytes_hex(state, sizeof state, "010300001000000000000000");
+
+    /* MDK's blossom_default(["https://blossom.example.com/"]) (the White
+     * Noise fixture's 0x800b), decoded and encoded again. */
+    static const char *wn =
+        "12656e637279707465642d6d656469612d76320b0a626c6f73736f6d2d7631280a626c6f73736f6d2d76"
+        "311c68747470733a2f2f626c6f73736f6d2e6578616d706c652e636f6d2f";
+    size_t len = 0;
+    uint8_t *bytes = unhex(wn, &len);
+    MarmotGroupMediaPolicy p;
+    assert(marmot_group_media_policy_decode(bytes, len, &p) == MARMOT_OK);
+    assert(p.allowed_locator_kind_count == 1 && strcmp(p.allowed_locator_kinds[0], "blossom-v1") == 0 &&
+           p.allowed_locator_kinds[1] == NULL);
+    assert(p.default_blob_endpoint_count == 1 &&
+           strcmp(p.default_blob_endpoints[0].locator_kind, "blossom-v1") == 0 &&
+           strcmp(p.default_blob_endpoints[0].base_url, "https://blossom.example.com/") == 0 &&
+           !p.default_blob_endpoints[0].base_url_unverified);
+    /* allowed_locator_kinds is what marmot_media_imeta_build() takes. */
+    MarmotMediaReference ref = { 0 };
+    assert(marmot_media_reference_add_locator(&ref, "blossom-v1", "https://blossom.example.com/ab") ==
+           MARMOT_OK);
+    marmot_media_reference_clear(&ref);
+    marmot_group_media_policy_clear(&p);
+    free(bytes);
+
+    /* The encoder normalizes as MDK's EncryptedMediaPolicyV2::new() does:
+     * kinds trimmed, lowercased, deduplicated; URLs normalized, endpoints
+     * deduplicated after normalization. */
+    char *kinds[] = { " Blossom-V1 ", "blossom-v1", NULL };
+    MarmotMediaBlobEndpoint eps[] = {
+        { "blossom-v1", "https://Blossom.Example.com", false },
+        { "BLOSSOM-V1", "https://blossom.example.com:443/", false },
+    };
+    MarmotGroupMediaPolicy in = { kinds, 2, eps, 2 };
+    uint8_t *enc = NULL;
+    size_t enc_len = 0;
+    assert(marmot_group_media_policy_encode(&in, &enc, &enc_len) == MARMOT_OK);
+    assert_bytes_hex(enc, enc_len, wn);
+    free(enc);
+    /* Refused input: no kind, a disallowed endpoint kind, an unverified or
+     * unverifiable URL, a query. */
+    MarmotGroupMediaPolicy none = { kinds, 0, eps, 1 };
+    assert(marmot_group_media_policy_encode(&none, &enc, &enc_len) == MARMOT_ERR_INVALID_INPUT);
+    MarmotMediaBlobEndpoint other = { "ipfs-v1", "https://x.example/", false };
+    MarmotGroupMediaPolicy wrong = { kinds, 1, &other, 1 };
+    assert(marmot_group_media_policy_encode(&wrong, &enc, &enc_len) == MARMOT_ERR_INVALID_INPUT);
+    MarmotMediaBlobEndpoint idna = { "blossom-v1", "https://xn--bcher-kva.example/", false };
+    MarmotGroupMediaPolicy unv = { kinds, 1, &idna, 1 };
+    assert(marmot_group_media_policy_encode(&unv, &enc, &enc_len) == MARMOT_ERR_INVALID_INPUT);
+    MarmotMediaBlobEndpoint flagged = { "blossom-v1", "https://x.example/", true };
+    MarmotGroupMediaPolicy fl = { kinds, 1, &flagged, 1 };
+    assert(marmot_group_media_policy_encode(&fl, &enc, &enc_len) == MARMOT_ERR_INVALID_INPUT);
+    MarmotMediaBlobEndpoint query = { "blossom-v1", "https://x.example/?a=1", false };
+    MarmotGroupMediaPolicy q = { kinds, 1, &query, 1 };
+    assert(marmot_group_media_policy_encode(&q, &enc, &enc_len) == MARMOT_ERR_INVALID_INPUT);
+    /* An http endpoint is allowed (avatar URLs are https only). */
+    MarmotMediaBlobEndpoint plain = { "blossom-v1", "http://x.example:80", false };
+    MarmotGroupMediaPolicy pl = { kinds, 1, &plain, 1 };
+    assert(marmot_group_media_policy_encode(&pl, &enc, &enc_len) == MARMOT_OK);
+    assert(marmot_group_media_policy_decode(enc, enc_len, &p) == MARMOT_OK);
+    assert(strcmp(p.default_blob_endpoints[0].base_url, "http://x.example/") == 0);
+    marmot_group_media_policy_clear(&p);
+    free(enc);
+    char *n = NULL;
+    assert(marmot_group_avatar_url_normalize("http://x.example/a.png", &n) == MARMOT_ERR_INVALID_INPUT);
+
+    /* Stored endpoint URLs that no WHATWG serializer produces for a valid
+     * endpoint are invalid, never merely unverified (MDK: query, fragment,
+     * credentials, scheme, default port, missing path, case). */
+    static const char *const never[] = {
+        "https://x.example/?", "https://x.example/?q=1", "https://x.example/a?b",
+        "https://x.example/#f", "https://u@x.example/", "https://u:p@x.example/",
+        "http://x.example:80/", "https://x.example:443/", "https://x.example",
+        "https://X.example/", "ftp://x.example/", "wss://x.example/", "https://x.example/a b",
+        NULL };
+    for (size_t i = 0; never[i]; i++) {
+        size_t ul = strlen(never[i]);
+        uint8_t st[160];
+        size_t at = 0;
+        static const char fmt[] = "encrypted-media-v2";
+        st[at++] = (uint8_t)strlen(fmt);
+        memcpy(st + at, fmt, strlen(fmt));
+        at += strlen(fmt);
+        st[at++] = 11;
+        st[at++] = 10;
+        memcpy(st + at, "blossom-v1", 10);
+        at += 10;
+        st[at++] = (uint8_t)(1 + 10 + 1 + ul);
+        st[at++] = 10;
+        memcpy(st + at, "blossom-v1", 10);
+        at += 10;
+        st[at++] = (uint8_t)ul;
+        memcpy(st + at, never[i], ul);
+        at += ul;
+        MarmotGroupMediaPolicy np;
+        MarmotError err = marmot_group_media_policy_decode(st, at, &np);
+        if (err != MARMOT_ERR_MEDIA_INVALID_REFERENCE) fprintf(stderr, "\naccepts %s\n", never[i]);
+        assert(err == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    }
+}
+
 int
 main(void)
 {
@@ -1144,6 +1344,8 @@ main(void)
     TEST(test_avatar_url_vectors);
     TEST(test_avatar_url_stored_consensus);
     TEST(test_avatar_url_rules_and_precedence);
+    TEST(test_policy_verdicts_match_mdk);
+    TEST(test_policy_codecs);
     printf("All media tests passed.\n");
     return 0;
 }

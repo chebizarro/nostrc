@@ -393,7 +393,8 @@ replace_u16_vec(uint16_t **arr, size_t *count, const uint16_t *vals, size_t n)
  * 0x8009), safe_aad [] and the account-identity proof over the leaf's
  * signature key -- the entries MDK's cgka-engine emits.  An MDK 0.11
  * inviter requires 0x8001, 0x8003 and 0x800c (and 0x8004 for a Nostr
- * group) of every invitee (nostrc-qp24.5.1). */
+ * group) of every invitee (nostrc-qp24.5.1), a White Noise (marmot-app)
+ * one also 0x8006 and 0x800b (nostrc-qp24.5.2). */
 static MarmotError
 build_leaf_dictionary_adopted(MlsKeyPackage *kp, const uint8_t account_pk[32],
                               const uint8_t *account_sk, MarmotAccountSignFunc sign_fn,
@@ -532,16 +533,17 @@ create_mls_key_package_adopted(MlsKeyPackage *kp, MlsKeyPackagePrivate *priv,
     if (rc != 0) return MARMOT_ERR_MLS;
 
     /* Adopted-profile capabilities (foundation/key-packages.md "Capability
-     * advertising"): app_data_dictionary + app_data_update, and self_remove
-     * (registries.md 0x000a; protocol-core/member-departure.md), which the
-     * engine implements since 0.12.0 (nostrc-2um6). No 0xf2ee, no
-     * last_resort extension type (last resort is a component now). */
-    static const uint16_t exts[] = {MARMOT_EXT_APP_DATA_DICTIONARY};
-    static const uint16_t props[] = {MARMOT_PROPOSAL_APP_DATA_UPDATE, MARMOT_PROPOSAL_SELF_REMOVE};
+     * advertising"), those of every adopted libmarmot leaf
+     * (mls_leaf_node_set_adopted_capabilities()): app_data_dictionary and
+     * the agent-stream receive role 0xF2D1; app_data_update and self_remove
+     * (nostrc-2um6) -- what an MDK 0.11 marmot-app (White Noise) creator
+     * requires of an invitee (nostrc-qp24.5.2). No 0xf2ee, no last_resort
+     * extension type (last resort is a component now). */
     MarmotError err = MARMOT_ERR_MEMORY;
     if (replace_u16_vec(&kp->leaf_node.cap_extensions, &kp->leaf_node.cap_extension_count,
-                        exts, 1) != 0 ||
-        replace_u16_vec(&kp->leaf_node.proposals, &kp->leaf_node.proposal_count, props, 2) != 0)
+                        MLS_ADOPTED_CAP_EXTENSIONS, MLS_ADOPTED_CAP_EXTENSION_COUNT) != 0 ||
+        replace_u16_vec(&kp->leaf_node.proposals, &kp->leaf_node.proposal_count,
+                        MLS_ADOPTED_CAP_PROPOSALS, MLS_ADOPTED_CAP_PROPOSAL_COUNT) != 0)
         goto fail;
     err = build_leaf_dictionary_adopted(kp, account_pk, account_sk, sign_fn, sign_data);
     if (err != MARMOT_OK) goto fail;

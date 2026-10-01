@@ -1,0 +1,10 @@
+[package]
+name = "w24i-verdicts"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+cgka-traits = { path = "../traits" }
+hex = "0.4"
+serde_json = "1"

@@ -239,11 +239,19 @@ int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
  * MDK 0.11 cgka-engine capabilities.rs leaf_capabilities):
  *   versions     mls10
  *   ciphersuites MARMOT_CIPHERSUITE
- *   extensions   0x0006 app_data_dictionary (no 0xf2ee, no last_resort)
- *   proposals    0x0008 app_data_update
+ *   extensions   0x0006 app_data_dictionary, 0xF2D1 the agent-text-stream
+ *                receive role (no 0xf2ee, no last_resort; not the send
+ *                0xF2D2 or fanout 0xF2D4 roles: libmarmot opens no QUIC
+ *                stream)
+ *   proposals    0x0008 app_data_update, 0x000a self_remove
  *   credentials  basic
- * Replaces any capability vectors in @node.
+ * exactly what an MDK 0.11 marmot-app (White Noise) creator requires of
+ * an invitee (nostrc-qp24.5.2).  Replaces any capability vectors in @node.
  */
+#define MLS_ADOPTED_CAP_EXTENSION_COUNT 2
+#define MLS_ADOPTED_CAP_PROPOSAL_COUNT  2
+extern const uint16_t MLS_ADOPTED_CAP_EXTENSIONS[MLS_ADOPTED_CAP_EXTENSION_COUNT];
+extern const uint16_t MLS_ADOPTED_CAP_PROPOSALS[MLS_ADOPTED_CAP_PROPOSAL_COUNT];
 int mls_leaf_node_set_adopted_capabilities(MlsLeafNode *node);
 
 /** Free parent node internals. */

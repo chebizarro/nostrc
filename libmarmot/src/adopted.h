@@ -70,6 +70,15 @@ MarmotError marmot_adopted_group_from_mls(const MlsGroup *g, MarmotGroup **group
 void marmot_adopted_relays_free(char **relays, size_t count);
 
 /*
+ * marmot_get_group_components() of an adopted GroupContext extension list
+ * (MlsGroup.extensions_data) at @epoch.  The list must pass
+ * mls_adopted_group_context_parse() (its error otherwise).
+ */
+MarmotError marmot_adopted_components_from_extensions(const uint8_t *exts, size_t exts_len,
+                                                      uint64_t epoch,
+                                                      MarmotGroupComponents *out);
+
+/*
  * The profile of the stored group @gid (its MLS state).  For the public
  * marmot_get_group_profile().
  */

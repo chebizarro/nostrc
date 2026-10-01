@@ -288,8 +288,8 @@ What does not hold yet:
   (`mdk-member-leaves`, `groundhog-leaves`). Other proposal types of MDK's
   are kept, but only departures are committed by libmarmot.
 - **The adopted profile.** Since 0.12.0 libmarmot admits and creates
-  adopted-profile groups, but cannot yet follow their Commits and refuses
-  every White Noise group: see below.
+  adopted-profile groups, White Noise groups included, but cannot yet
+  follow their Commits: see below.
 
 ## Adopted profile (MDK 0.11)
 
@@ -302,23 +302,37 @@ created or joined, stored with its MLS state (`marmot_get_group_profile()`),
 and never changed: there is no automatic fallback between profiles on a
 parse, cryptographic or authorization failure.
 
-**Status in 0.12.0: admission and creation only.** Honestly:
+**Status in 0.12.0: admission, creation and reading only.** Honestly:
 
 | | Adopted groups |
 | --- | --- |
 | Join (Welcome) a group created by MDK 0.11 | **Yes**: real MDK v0.11.0 `cgka-engine` Welcome, `tests/test_adopted.c` |
 | Create a group MDK 0.11 joins | **Yes**: `marmot_create_group_for_profile()`; MDK v0.11.0 joined it (one manual run with a throwaway MDK driver, recorded in `tests/vectors/mdk-0.11/README.md`; not in CI) |
 | Persist, load, clone | **Yes**, re-validated on every load (serial format 4) |
-| Application messages (kind:445) | Between libmarmot members, yes; with MDK not yet tested |
-| **White Noise groups** | **Refused** (`MARMOT_ERR_UNSUPPORTED`): marmot-app requires SelfRemove (`0x000a`), agent text stream (`0x8006`, receive role `0xf2d1`) and encrypted media v2 (`0x800b`) of every group. libmarmot implements none of them for adopted groups yet (SelfRemove only for legacy groups, below) |
+| Application messages (kind:445) | Between libmarmot members, yes; with MDK 0.11, both ways in a White Noise group (`groundhog-mdk011-interop-white-noise-welcome`, opt-in harness) |
+| **White Noise groups** (MDK 0.11 marmot-app) | **Joined** (since nostrc-qp24.5.2): their SelfRemove (`0x000a`), agent text stream (`0x8006`, receive role) and encrypted media v2 (`0x800b`) requirements are admitted. The real fixture is joined in `tests/test_adopted.c`; live, MDK 0.11 runs marmot-app's invite precheck on a libmarmot adopted KeyPackage, invites it into a White Noise-shaped group, and Groundhog joins it (harness above). Their Commits: next rows |
+| Group components (read) | `marmot_get_group_components()` (`marmot/marmot-group-components.h`): name and description (`0x8001`), Blossom image (`0x8002`), URL avatar (`0x8007`) and which one to render, media policy (`0x800b`), agent policy (`0x8006`), from the stored GroupContext. Writing them is an AppDataUpdate Commit (nostrc-qp24.5.1) |
 | Commits (AppDataUpdate, Add, Remove, Update, self-update) | **Refused** (`MARMOT_ERR_UNSUPPORTED`), ours and others', including one that removes our own leaf (nostrc-qp24.5.1.3): a member falls behind at the group's first Commit. A removed libmarmot member is **not told**: it stays active but stuck, and never deletes its keys on the strength of an adopted Commit |
 | Leaving, standalone proposals (SelfRemove, Remove requests) | **Refused** (`MARMOT_ERR_UNSUPPORTED`): `marmot_self_remove()` and `marmot_can_self_remove()` (Groundhog then leaves on this device only), an inbound proposal (not kept, not reported), `marmot_commit_pending_proposals()`. A departure could never be committed or followed while Commits are refused |
-| Publishing adopted KeyPackages | **Off**: `MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER` stays OFF by default, so peers cannot invite libmarmot into adopted groups yet |
+| Publishing adopted KeyPackages | **Off**: `MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER` stays OFF by default, so peers cannot invite libmarmot into adopted groups yet. What it would publish advertises exactly what a White Noise creator requires (extensions `0x0006 0xF2D1`, proposals `0x0008 0x000a`, components `0x8001 0x8003 0x8004 0x8006 0x8009 0x800b 0x800c`) and passes MDK 0.11's parser and invite precheck |
 | MDK 0.9.x groups (`0xf2f1` proof v1) | Refused (mixed or unsupported profile) |
 
-So Groundhog still cannot talk to current White Noise users: this release
-is the admission engine the remaining work (Commits, SelfRemove, the agent
-stream receive role, media v2) builds on.
+So Groundhog can join a White Noise group and exchange messages in it,
+but falls behind at the group's first Commit: following adopted Commits
+(nostrc-qp24.5.1) and publishing adopted KeyPackages are what remain.
+
+**The agent text stream role.** Every White Noise group carries
+`marmot.group.agent-text-stream.quic.v1` (`0x8006`) requiring the
+`receive` role of every member. libmarmot advertises that role's
+capability (MLS extension type `0xF2D1`) and nothing more: per
+`agent-text-stream-quic-v1.md` a receive member "understands this component
+and the MLS-delivered start/final stream anchors", may ignore the raw QUIC
+endpoint candidates and wait for the durable final kind-9 message, which is
+ordinary chat content. libmarmot opens no QUIC stream and does not derive
+the stream exporter secret; it advertises neither `send` (`0xF2D2`) nor
+`fanout` (`0xF2D4`), and a group requiring them is refused
+(`MARMOT_ERR_UNSUPPORTED`). Groundhog shows the final messages as chat and
+no live previews or stream placeholders yet (nostrc-ji2j).
 
 What is checked, everywhere a group is created, joined, loaded or cloned
 (`src/mls/mls_app_components.c`, `src/adopted.c`):
@@ -330,17 +344,29 @@ What is checked, everywhere a group is created, joined, loaded or cloned
   refused as unsupported. The dictionary's entries are strictly ascending;
   `app_components` is a sorted, unique list requiring `0x8003` (admin
   policy) and `0x8009` (account proof), and libmarmot also needs `0x8004`
-  (Nostr routing). Every required component must be one libmarmot
-  supports (`0x8001` profile, `0x8003`, `0x8004`, `0x8009`, `0x800c`
-  lifecycle) and have its state; each state is validated (UTF-8 and length
-  bounds, sorted unique admin keys, 1-16 sorted unique relay URLs of the
-  Nostr relay URL profile, lifecycle `active`). `0x8009` state in the
+  (Nostr routing). Required proposal types may include SelfRemove
+  (`0x000a`), required extension types the agent-stream receive role
+  (`0xF2D1`). Every required component must be one libmarmot
+  supports (`0x8001` profile, `0x8003`, `0x8004`, `0x8006` agent text
+  stream, `0x8009`, `0x800b` encrypted media v2, `0x800c` lifecycle) and
+  have its state; each state is validated (UTF-8 and length bounds, sorted
+  unique admin keys, 1-16 sorted unique relay URLs of the Nostr relay URL
+  profile, lifecycle `active`, `0x8006` and `0x800b` exactly as MDK v0.11.0
+  decodes them, with no `send` or `fanout` role required). The known
+  components `0x8002` (Blossom image), `0x8005` (retention: 8 bytes, never
+  honoured, so refused when required) and `0x8007` (URL avatar) are
+  validated wherever they are, required or not, as MDK does; an avatar or
+  media endpoint URL outside libmarmot's verifiable WHATWG subset is valid
+  state, kept byte for byte and never contacted. `0x8009` state in the
   GroupContext, `safe_aad` framing, frozen media v1 and any legacy marker
   (`0xf2ee` group data, `0xf2f1` proof v1: a mixed group) are refused.
-  Components nobody requires are kept byte for byte and not interpreted.
+  Other components nobody requires are kept byte for byte and not
+  interpreted.
 - **Members.** Every leaf: a 32-byte basic credential; capabilities covering
   the required ones; exactly one LeafNode extension, a canonical
-  `app_data_dictionary` advertising every required component; exactly one
+  `app_data_dictionary` advertising every required component; the role
+  capability of each agent-stream role `0x8006` requires (`0xF2D1`: the
+  spec makes it every member's, in every epoch); exactly one
   104-byte `0x8009` proof naming its own account; on a Welcome, every leaf
   signature and every proof's BIP-340 signature verifies; every admin is a
   member of every epoch the group enters; the inviter (GroupInfo signer) is
@@ -387,6 +413,57 @@ MIP-01 rule, as `marmot_commit_process_inbound()`,
 private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 
 ## Changelog
+
+### 0.12.0 (unreleased): White Noise groups and the read side of their components (nostrc-qp24.5.2, nostrc-m6tp)
+
+**New API** (MINOR): `<marmot/marmot-group-components.h>` (included by
+`marmot.h`): `MarmotAgentTextStreamPolicy` with
+`marmot_agent_text_stream_policy_decode()`/`_encode()`/`_user_to_agent_default()`;
+`MarmotGroupMediaPolicy` with `marmot_group_media_policy_decode()`/
+`_encode()`/`_clear()`; `MarmotGroupComponents` with
+`marmot_get_group_components()`/`marmot_group_components_clear()`.
+
+#### What changed
+
+- **White Noise groups are joined.** Every MDK 0.11 marmot-app group
+  requires SelfRemove, the agent text stream (`0x8006`,
+  `user_to_agent_default`: receive required) and encrypted media v2
+  (`0x800b`); such a Welcome used to be refused `MARMOT_ERR_UNSUPPORTED`.
+  Admission now accepts all three ("Adopted profile" above): `0x8006` and
+  `0x800b` are decoded and validated as MDK v0.11.0 does (differential
+  corpus `tests/vectors/media/policy-verdicts-mdk-v0.11.0.json`, judged by
+  MDK's own decoders), and when `0x8006` requires `receive`, every member
+  leaf must advertise `0xF2D1`. A group requiring `send` or `fanout`
+  remains `MARMOT_ERR_UNSUPPORTED`, as does one requiring retention
+  `0x8005`.
+- **Known components are validated where present**, required or not
+  (`0x8002`, `0x8005`, `0x8007`, `0x800b`, `0x8006`), as MDK's
+  `validate_app_component_dictionary` does: malformed state is
+  `MARMOT_ERR_EXTENSION_FORMAT` (before, unrequired ones were kept
+  uninterpreted). The `0x800b` endpoint URLs follow the three-way judgement
+  of `0x8007` (nostrc-u7cb review M3): `base_url_unverified` marks one
+  outside libmarmot's verifiable subset, accepted and never contacted.
+- **Adopted leaves advertise the White Noise set**: extensions `0x0006`,
+  `0xF2D1`; proposals `0x0008`, `0x000a`; components
+  `0x8001 0x8003 0x8004 0x8006 0x8009 0x800b 0x800c` -- KeyPackages
+  (producer still OFF), group creators and UpdatePath leaves alike (before,
+  a committer's UpdatePath leaf dropped SelfRemove). Groups libmarmot
+  creates still require only `0x8001 0x8003 0x8004 0x8009 0x800c`.
+- **Read side** (nostrc-m6tp): `marmot_get_group_components()` reads a
+  joined adopted group's components from its stored GroupContext, so it
+  reflects every epoch the group enters (Welcome, Commit) and every reload;
+  `avatar_source` applies the URL-avatar-wins precedence. `MarmotGroup`'s
+  MIP-01 `image_*` fields stay unset for adopted groups (the `0x8002` image
+  needs its media type, and the group key is not copied into another
+  table). Writing components (AppDataUpdate) comes with adopted Commits.
+
+#### Compatibility
+
+No state-format, wire-format or existing-struct change. Stricter: an
+adopted group carrying malformed `0x8002`, `0x8005`, `0x8007` or `0x800b`
+state is refused even when no member is required to support it (MDK v0.11.0
+refuses it as well). Groups whose Commits libmarmot cannot follow are still
+followed only up to their first Commit (slice H).
 
 ### 0.12.0 (unreleased): adopted-profile admission and creation (nostrc-qp24.5.1, nostrc-qp24.5.1.1)
 

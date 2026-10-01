@@ -43,8 +43,9 @@ captures of what it emits.
   (`app_feature_registry()`: SelfRemove required; agent-text-stream roles)
   and its group-creation components (routing, agent text stream
   `user_to_agent_default`, encrypted media v2): what every White Noise group
-  requires. libmarmot must refuse it (`MARMOT_ERR_UNSUPPORTED`). MDK's
-  control join succeeded.
+  requires. libmarmot refused it (`MARMOT_ERR_UNSUPPORTED`) until
+  nostrc-qp24.5.2; it now joins it (`test_white_noise_welcome_joined`).
+  MDK's control join succeeded.
 - `openmls_negatives`: groups built directly with MDK's pinned OpenMLS (the
   engine refuses to build them) for one joiner (KeyPackage and private keys
   recorded): `Control` (valid), `BadProof` (creator proof signature bit

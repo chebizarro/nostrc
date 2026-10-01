@@ -6,6 +6,8 @@
  */
 
 #include "mls_app_components.h"
+#include <marmot/marmot-media.h>
+#include <marmot/marmot-group-components.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,13 +15,31 @@ const uint16_t MLS_ADOPTED_SUPPORTED_COMPONENTS[MLS_ADOPTED_SUPPORTED_COMPONENT_
     MARMOT_COMPONENT_GROUP_PROFILE_V1,   /* 0x8001 marmot.group.profile.v1 */
     MARMOT_COMPONENT_ADMIN_POLICY_V1,    /* 0x8003 marmot.group.admin-policy.v1 */
     MARMOT_COMPONENT_NOSTR_ROUTING_V1,   /* 0x8004 marmot.transport.nostr.routing.v1 */
+    MLS_COMPONENT_AGENT_TEXT_STREAM_V1,  /* 0x8006 agent-text-stream.quic.v1 (receive) */
     MLS_COMPONENT_ACCOUNT_PROOF_V2,      /* 0x8009 (LeafNode only) */
+    MLS_COMPONENT_ENCRYPTED_MEDIA_V2,    /* 0x800b marmot.group.encrypted-media.v2 */
     MARMOT_COMPONENT_GROUP_LIFECYCLE_V1, /* 0x800c marmot.group.lifecycle.v1 (active) */
 };
 
-#if MLS_ADOPTED_EXTRA_PROPOSAL_COUNT > 0
-#error "list the extra adopted proposal types in adopted_proposal_supported()"
-#endif
+const uint16_t MLS_ADOPTED_CREATE_COMPONENTS[MLS_ADOPTED_CREATE_COMPONENT_COUNT] = {
+    MARMOT_COMPONENT_GROUP_PROFILE_V1,
+    MARMOT_COMPONENT_ADMIN_POLICY_V1,
+    MARMOT_COMPONENT_NOSTR_ROUTING_V1,
+    MLS_COMPONENT_ACCOUNT_PROOF_V2,
+    MARMOT_COMPONENT_GROUP_LIFECYCLE_V1,
+};
+
+/* The two spellings of each id (MLS layer, public header) agree. */
+_Static_assert(MLS_COMPONENT_BLOSSOM_IMAGE_V1 == MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1, "0x8002");
+_Static_assert(MLS_COMPONENT_AVATAR_URL_V1 == MARMOT_COMPONENT_GROUP_AVATAR_URL_V1, "0x8007");
+_Static_assert(MLS_COMPONENT_ENCRYPTED_MEDIA_V2 == MARMOT_COMPONENT_GROUP_ENCRYPTED_MEDIA_V2,
+               "0x800b");
+_Static_assert(MLS_COMPONENT_AGENT_TEXT_STREAM_V1 == MARMOT_COMPONENT_AGENT_TEXT_STREAM_QUIC_V1,
+               "0x8006");
+_Static_assert(MLS_EXT_AGENT_STREAM_RECEIVE == MARMOT_EXT_AGENT_STREAM_RECEIVE &&
+               MLS_EXT_AGENT_STREAM_SEND == MARMOT_EXT_AGENT_STREAM_SEND &&
+               MLS_EXT_AGENT_STREAM_FANOUT == MARMOT_EXT_AGENT_STREAM_FANOUT,
+               "agent-stream role capabilities");
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Primitives
@@ -64,11 +84,31 @@ proposal_type_is_default(uint16_t t)
     return t >= 0x0001 && t <= 0x0007; /* RFC 9420 §7.2 */
 }
 
+/* What libmarmot's adopted leaves advertise beyond the RFC 9420 defaults
+ * (mls_leaf_node_set_adopted_capabilities()). */
+static bool
+adopted_ext_type_supported(uint16_t t)
+{
+    return t == MLS_EXTENSION_APP_DATA_DICTIONARY || t == MLS_EXT_AGENT_STREAM_RECEIVE ||
+           ext_type_is_default(t);
+}
+
 static bool
 adopted_proposal_supported(uint16_t t)
 {
-    return t == MLS_PROPOSAL_TYPE_APP_DATA_UPDATE || proposal_type_is_default(t);
+    return t == MLS_PROPOSAL_TYPE_APP_DATA_UPDATE || t == MLS_PROPOSAL_TYPE_SELF_REMOVE ||
+           proposal_type_is_default(t);
 }
+
+/* The role capability (MLS extension type) of each agent-stream role bit. */
+static const struct {
+    uint8_t  bit;
+    uint16_t ext;
+} AGENT_STREAM_ROLES[] = {
+    {MARMOT_AGENT_STREAM_ROLE_RECEIVE, MLS_EXT_AGENT_STREAM_RECEIVE},
+    {MARMOT_AGENT_STREAM_ROLE_SEND, MLS_EXT_AGENT_STREAM_SEND},
+    {MARMOT_AGENT_STREAM_ROLE_FANOUT, MLS_EXT_AGENT_STREAM_FANOUT},
+};
 
 static bool
 component_supported(uint16_t id)
@@ -485,9 +525,7 @@ parse_required_capabilities(const uint8_t *data, size_t len, MlsAdoptedGroupCont
                      MLS_PROPOSAL_TYPE_APP_DATA_UPDATE))
         return MARMOT_ERR_EXTENSION_FORMAT;
     for (size_t i = 0; i < gc->n_ext_types; i++)
-        if (gc->ext_types[i] != MLS_EXTENSION_APP_DATA_DICTIONARY &&
-            !ext_type_is_default(gc->ext_types[i]))
-            return MARMOT_ERR_UNSUPPORTED;
+        if (!adopted_ext_type_supported(gc->ext_types[i])) return MARMOT_ERR_UNSUPPORTED;
     for (size_t i = 0; i < gc->n_proposal_types; i++)
         if (!adopted_proposal_supported(gc->proposal_types[i]))
             return MARMOT_ERR_UNSUPPORTED;
@@ -549,6 +587,57 @@ validate_component_state(uint16_t id, const uint8_t *data, size_t len,
         if (data[0] != 0) return MARMOT_ERR_VALIDATION;
         gc->has_lifecycle = true;
         return 0;
+    case MLS_COMPONENT_BLOSSOM_IMAGE_V1: {
+        /* nostrc-m6tp: the group image; its key is a group secret. */
+        MarmotGroupBlossomImage img;
+        MarmotError err = marmot_group_blossom_image_decode(data, len, &img);
+        marmot_group_blossom_image_clear(&img);
+        if (err == MARMOT_ERR_MEMORY) return MARMOT_ERR_MEMORY;
+        if (err != MARMOT_OK) return MARMOT_ERR_EXTENSION_FORMAT;
+        gc->image = data;
+        gc->image_len = len;
+        return 0;
+    }
+    case MLS_COMPONENT_AVATAR_URL_V1: {
+        /* Three-way (nostrc-u7cb review M3): an unverified URL is valid
+         * state, kept byte for byte; only a provably invalid one refuses. */
+        MarmotGroupAvatarUrl av;
+        MarmotError err = marmot_group_avatar_url_decode(data, len, &av);
+        marmot_group_avatar_url_clear(&av);
+        if (err == MARMOT_ERR_MEMORY) return MARMOT_ERR_MEMORY;
+        if (err != MARMOT_OK) return MARMOT_ERR_EXTENSION_FORMAT;
+        gc->avatar = data;
+        gc->avatar_len = len;
+        return 0;
+    }
+    case MLS_COMPONENT_MESSAGE_RETENTION_V1:
+        /* MDK decode_message_retention: a u64 of seconds.  Not honoured
+         * (nostrc-b55p): a group requiring it is refused below. */
+        return len == 8 ? 0 : MARMOT_ERR_EXTENSION_FORMAT;
+    case MLS_COMPONENT_AGENT_TEXT_STREAM_V1: {
+        MarmotAgentTextStreamPolicy p;
+        if (marmot_agent_text_stream_policy_decode(data, len, &p) != MARMOT_OK)
+            return MARMOT_ERR_EXTENSION_FORMAT;
+        gc->agent_stream = data;
+        gc->agent_stream_len = len;
+        gc->required_member_roles = p.required_member_roles;
+        /* libmarmot is a receive member only (marmot-group-components.h):
+         * "a joiner that does not support every role capability named by
+         * required_member_roles MUST NOT join the group". */
+        if (p.required_member_roles & ~MARMOT_AGENT_STREAM_ROLE_RECEIVE)
+            return MARMOT_ERR_UNSUPPORTED;
+        return 0;
+    }
+    case MLS_COMPONENT_ENCRYPTED_MEDIA_V2: {
+        MarmotGroupMediaPolicy p;
+        MarmotError err = marmot_group_media_policy_decode(data, len, &p);
+        marmot_group_media_policy_clear(&p);
+        if (err == MARMOT_ERR_MEMORY) return MARMOT_ERR_MEMORY;
+        if (err != MARMOT_OK) return MARMOT_ERR_EXTENSION_FORMAT;
+        gc->media_policy = data;
+        gc->media_policy_len = len;
+        return 0;
+    }
     default:
         /* Not one libmarmot implements and (checked below) not required:
          * kept byte-for-byte, never interpreted (app-components/README.md
@@ -627,7 +716,7 @@ mls_adopted_group_context_parse(const uint8_t *exts, size_t len, MlsAdoptedGroup
         prev = id;
         if (id == MLS_COMPONENT_APP_COMPONENTS) have_components = true;
         rc = validate_component_state(id, d, dlen, out);
-        if (rc == MARMOT_ERR_EXTENSION_FORMAT) return rc;
+        if (rc == MARMOT_ERR_EXTENSION_FORMAT || rc == MARMOT_ERR_MEMORY) return rc;
         if (rc != 0 && deferred == 0) deferred = rc;
         if (component_supported(id) && n_present < MLS_ADOPTED_MAX_IDS)
             present[n_present++] = id;
@@ -737,6 +826,13 @@ mls_adopted_leaf_check(const MlsLeafNode *leaf, const MlsAdoptedGroupContext *gc
     int rc = components_list_covers(advertised, advertised_len, gc->components,
                                     gc->n_components);
     if (rc != 0) return rc;
+    /* Every agent-stream role the group requires of its members, as an
+     * advertised capability (agent-text-stream-quic-v1.md "Validation"). */
+    for (size_t i = 0; i < sizeof(AGENT_STREAM_ROLES) / sizeof(AGENT_STREAM_ROLES[0]); i++)
+        if ((gc->required_member_roles & AGENT_STREAM_ROLES[i].bit) &&
+            !list_contains(leaf->cap_extensions, leaf->cap_extension_count,
+                           AGENT_STREAM_ROLES[i].ext))
+            return MARMOT_ERR_VALIDATION;
     /* Exactly one 104-byte proof (the dictionary admits one entry per id),
      * naming this leaf's own account. */
     if (!proof || proof_len != MLS_ACCOUNT_PROOF_V2_LEN ||
