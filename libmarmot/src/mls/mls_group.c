@@ -4030,7 +4030,11 @@ process_commit_impl(MlsGroup *group,
         goto staged_fail;
     }
 
-    /* Removes and SelfRemoves, on the pre-Commit tree (nostrc-2um6). */
+    /* Removes and SelfRemoves, on the pre-Commit tree (nostrc-2um6).  Among
+     * them RFC 9420 §12.2: a Commit MUST NOT remove its committer, which
+     * Marmot authorization relies on (the committer's leaf is the one leaf a
+     * Commit renews in place; W24 review A2, test_commit_removing_committer_
+     * refused). */
     {
         MlsCommitSummary sum;
         if (commit_departures_check(group, commit.proposals, commit.proposal_count,

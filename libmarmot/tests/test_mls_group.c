@@ -4408,6 +4408,51 @@ TEST(test_group_free_idempotent)
 
 /* ── Main ──────────────────────────────────────────────────────────────── */
 
+/* RFC 9420 §12.2: a Commit MUST NOT remove its own committer (W24 review
+ * A2). Alice commits Remove(her own leaf) with an UpdatePath: the receiver
+ * refuses it and keeps its state, rather than install her path leaf in the
+ * slot she just removed. Marmot's authorization treats the committer's leaf
+ * as the one leaf a Commit renews in place, so this must never pass. */
+TEST(test_commit_removing_committer_refused)
+{
+    ThreeMemberFixture f;
+    three_member_fixture_init(&f);
+    GroupSnapshotForTest parent;
+    snapshot_group_for_test(&f.bob, &parent);
+    MlsRatchetTree next, provisional;
+    /* The path over the tree as if nothing were removed: what a receiver
+     * that applied it would install in the removed slot. */
+    assert(tree_clone_for_test(&f.alice.tree, &next) == 0);
+    uint8_t unused_key[MLS_KEM_PK_LEN] = {0};
+    MlsUpdatePath path;
+    uint8_t commit_secret[MLS_HASH_LEN];
+    build_update_path_for_test(&f.alice, &next, f.alice.extensions_data, f.alice.extensions_len,
+                               PATH_LEAF_VALID, unused_key, &path, &provisional,
+                               commit_secret);
+    MlsTlsBuf proposals;
+    assert(mls_tls_buf_init(&proposals, 16) == 0);
+    assert(inline_remove_for_test(&proposals, f.alice.own_leaf_index) == 0);
+    uint8_t *commit = NULL;
+    size_t commit_len = 0;
+    ExpectedEpochForTest expected;
+    assert(build_commit_for_test(&f.alice, proposals.data, proposals.len, &path,
+                                 commit_secret, &provisional, f.alice.extensions_data,
+                                 f.alice.extensions_len, NULL, &commit, &commit_len,
+                                 &expected) == 0);
+    int rc = mls_group_process_commit(&f.bob, commit, commit_len, f.alice.own_leaf_index);
+    if (rc == 0)
+        fprintf(stderr, "\n    Remove(committer) ACCEPTED ");
+    assert(rc == MARMOT_ERR_MLS_PROCESS_MESSAGE);
+    assert_group_matches_snapshot_for_test(&f.bob, &parent);
+    free(commit);
+    mls_tls_buf_free(&proposals);
+    mls_update_path_clear(&path);
+    mls_tree_free(&provisional);
+    mls_tree_free(&next);
+    free(parent.blob);
+    three_member_fixture_clear(&f);
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -4497,6 +4542,7 @@ int main(void)
     printf(" Epoch secrets:\n");
     RUN(test_epoch_secrets_change_after_update);
     RUN(test_group_free_idempotent);
+    RUN(test_commit_removing_committer_refused);
 
     printf("All group tests passed.\n");
     return 0;
