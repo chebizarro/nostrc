@@ -482,6 +482,20 @@ What changed (marmot foundation/key-packages.md "Selection and lifecycle"):
 Callers that never confirm (marmot-gobject, Gnostr today) keep older
 private material as before, bounded as above.
 
+Review fixes, same release:
+
+- `marmot_key_package_next_expiry()`: the earliest not_after left (when
+  to sweep next, and the latest moment a replacement must be published).
+- New optional storage hook `delete_key_package_info`, appended at the end
+  of `MarmotStorage` (custom backends must be rebuilt): retiring a
+  KeyPackage's private material also deletes its info row, so no local
+  rotation history stays. The built-in backends implement it.
+- The SQLite backend sets `PRAGMA secure_delete=ON`: deleted keys are
+  overwritten, not left in free pages, whatever the SQLite build's default.
+- An adopted kind:30443 whose `mls_extensions` or `mls_proposals` tag is not
+  exactly (as a set) the decoded leaf's capabilities is refused, as MDK 0.11
+  refuses it.
+
 ### 0.12.0 (unreleased): White Noise groups and the read side of their components (nostrc-qp24.5.2, nostrc-m6tp)
 
 **New API** (MINOR): `<marmot/marmot-group-components.h>` (included by
