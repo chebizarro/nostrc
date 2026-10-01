@@ -34,6 +34,7 @@ struct _GhRelayListSetup {
   guint check_timer;
   GhRelayPublish *publish;
   guint accepted;
+  gchar *signed_json;          /* signed, awaiting the second check (F1) */
 };
 
 enum { SIGNAL_CHANGED, N_SIGNALS };
@@ -205,6 +206,8 @@ on_publish_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, g
     fail(self, _("No relay accepted your relay list."));
 }
 
+static gboolean start_check(GhRelayListSetup *self, GError **error);
+
 static gboolean
 start_publish(GhRelayListSetup *self, const gchar *signed_json, GError **error)
 {
@@ -254,8 +257,14 @@ on_signed(GObject *source, GAsyncResult *result, gpointer data)
     finish(self, GH_RELAY_LIST_SETUP_FAILED, g_steal_pointer(&error));
   else if (!ok || !gh_account_controller_is_current(self->config.accounts, self->generation))
     fail(self, _("The relay list was not signed for this account."));
-  else if (!start_publish(self, signed_json, &error))
-    finish(self, GH_RELAY_LIST_SETUP_FAILED, g_steal_pointer(&error));
+  else {
+    /* The signer may have taken minutes: another client may have published
+     * a list meanwhile. Every target is asked again, right before
+     * publishing (final review F1). */
+    self->signed_json = g_steal_pointer(&signed_json);
+    if (!start_check(self, &error))
+      finish(self, GH_RELAY_LIST_SETUP_FAILED, g_steal_pointer(&error));
+  }
   g_object_unref(self);
 }
 
@@ -315,7 +324,18 @@ check_settled(GhRelayListSetup *self)
                  "relay list there. Nothing was published."));
     return;
   }
-  sign_list(self);
+  if (!self->signed_json) {
+    sign_list(self);
+    return;
+  }
+  /* Second check, after the signer: still clean, and still the offer. */
+  if (gh_relay_list_offer(&self->config) != self->mode) {
+    finish(self, GH_RELAY_LIST_SETUP_SKIPPED, NULL);
+    return;
+  }
+  g_autoptr(GError) error = NULL;
+  if (!start_publish(self, self->signed_json, &error))
+    finish(self, GH_RELAY_LIST_SETUP_FAILED, g_steal_pointer(&error));
 }
 
 /* Whether event_json is a signed kind 10002 by the account that is not the
@@ -404,6 +424,8 @@ start_check(GhRelayListSetup *self, GError **error)
   nostr_filters_add(filters, filter);
   nostr_filter_free(filter);
   const GhInboxSetupConfig *config = &self->config;
+  g_hash_table_remove_all(self->answers);
+  self->found = FALSE;
   self->check = config->probe_transport
     ? gh_relay_scope_new_with_transport(self->generation, filters, config->probe_transport,
                                         config->probe_transport_data, on_check_update, self)
@@ -576,6 +598,7 @@ gh_relay_list_setup_finalize(GObject *object)
   g_strfreev(self->targets);
   g_free(self->base_json);
   g_free(self->base_id);
+  g_free(self->signed_json);
   g_hash_table_unref(self->answers);
   G_OBJECT_CLASS(gh_relay_list_setup_parent_class)->finalize(object);
 }

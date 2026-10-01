@@ -27,6 +27,8 @@
  *    recipient only);
  *  - auth_writes: an EVENT is refused with OK false "auth-required:" until
  *    the connection authenticated, as any key.
+ * With late_kind (serve mode) a REQ asking for that kind is answered only
+ * late_ms later (if still open): a connected relay slow to answer.
  * With refuse_events (serve mode) every EVENT is answered OK false
  * "blocked:" and nothing is kept: a relay that rejects a publish outright.
  * wire_relay_inject() keeps an event as if a client had published it
@@ -86,6 +88,8 @@ struct _WireRelay {
   GHashTable *withheld;      /* ids kept but served to nobody until released */
   gboolean withhold_new;     /* every event kept from now on is withheld */
   guint max_limit;           /* serve: a REQ's stored answer per filter, at most; 0: none */
+  gint late_kind;            /* serve: a REQ asking for this kind (0: none) is answered */
+  guint late_ms;             /*   late_ms later: a connected relay that is slow to answer */
   gboolean stall_pages;      /* serve: a REQ with an until is never answered (no EOSE) */
   guint stalled_reqs;
   gint64 max_future_seconds; /* serve: an EVENT dated further ahead of the clock is
@@ -359,6 +363,36 @@ wire_answer_req(WireRelay *relay, SoupWebsocketConnection *connection, const gch
   wire_send(connection, eose);
 }
 
+static G_GNUC_UNUSED gboolean
+wire_filters_want_kind(NostrFilters *filters, int kind)
+{
+  for (size_t i = 0; filters && i < filters->count; i++)
+    for (size_t k = 0; k < nostr_filter_kinds_len(&filters->filters[i]); k++)
+      if (nostr_filter_kinds_get(&filters->filters[i], k) == kind)
+        return TRUE;
+  return FALSE;
+}
+
+typedef struct {
+  WireRelay *relay;
+  SoupWebsocketConnection *connection;
+  gchar *sub_id;
+} WireLate;
+
+/* late_kind: the REQ's answer, if it is still open on a live socket. */
+static G_GNUC_UNUSED gboolean
+wire_late_fire(gpointer data)
+{
+  WireLate *late = data;
+  NostrFilters *filters = g_hash_table_lookup(wire_subs(late->connection), late->sub_id);
+  if (filters && wire_open(late->connection))
+    wire_answer_req(late->relay, late->connection, late->sub_id, filters);
+  g_object_unref(late->connection);
+  g_free(late->sub_id);
+  g_free(late);
+  return G_SOURCE_REMOVE;
+}
+
 /* A newly kept event goes to every live REQ that matches it. */
 static G_GNUC_UNUSED void
 wire_broadcast(WireRelay *relay, WireStored *stored)
@@ -475,7 +509,15 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
     } else {
       NostrFilters *filters = g_steal_pointer(&req->filters);
       g_hash_table_replace(wire_subs(connection), g_strdup(sub_id), filters);
-      wire_answer_req(relay, connection, sub_id, filters);
+      if (relay->late_kind && wire_filters_want_kind(filters, relay->late_kind)) {
+        WireLate *late = g_new0(WireLate, 1);
+        late->relay = relay;
+        late->connection = g_object_ref(connection);
+        late->sub_id = g_strdup(sub_id);
+        g_timeout_add(relay->late_ms, wire_late_fire, late);
+      } else {
+        wire_answer_req(relay, connection, sub_id, filters);
+      }
     }
     nostr_envelope_free(envelope);
     return TRUE;

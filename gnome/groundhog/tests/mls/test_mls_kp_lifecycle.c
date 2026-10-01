@@ -990,6 +990,117 @@ test_first_run_accounts_invite_each_other(void)
   world_down(&w);
 }
 
+static gboolean has_relay_list(gpointer data);
+
+/* `key`'s kind-10002 events the relay keeps; with want_r, only those whose
+ * first `r` entry is want_r. */
+static guint
+lists_on(WireRelay *relay, guint key, const gchar *want_r)
+{
+  guint n = 0;
+  for (guint i = 0; i < relay->stored->len; i++) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i);
+    if (nostr_event_get_kind(stored->event) != 10002 ||
+        g_strcmp0(nostr_event_get_pubkey(stored->event), hex[key]) != 0)
+      continue;
+    NostrTag *r = nostr_tags_get(nostr_event_get_tags(stored->event), 0);
+    if (!want_r || (r && g_strcmp0(nostr_tag_get(r, 1), want_r) == 0))
+      n++;
+  }
+  return n;
+}
+
+/* Final review F2 (probe V2): a target that is connected but does not
+ * answer the check in time is "unknown": FAILED, nothing published. */
+static void
+test_relay_list_silent_target_not_published(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  w.x.late_kind = 10002;
+  w.x.late_ms = (GH_RELAY_LIST_SETUP_CHECK_S + 10) * 1000;
+  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_FAILED);
+  g_object_run_dispose(G_OBJECT(setup));
+  g_assert_cmpuint(lists_on(&w.e, ALICE, NULL), ==, 0);
+  g_assert_cmpuint(lists_on(&w.x, ALICE, NULL), ==, 0);
+  world_down(&w);
+}
+
+/* Final review F2 (probe V6): ADD_WRITE extends the list discovery found;
+ * a newer list on a target (another client's edit) is the user's: the edit
+ * is SKIPPED and that list stays. */
+static void
+test_relay_list_newer_edit_kept(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  seed_relay_list(&w.e, ALICE, w.r.url, "read");   /* the base: an hour old */
+  spin_until(has_relay_list, alice, "the read-only list");
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("r", "wss://edited-elsewhere.example", "read", NULL));
+  g_autofree gchar *newer = sign_event(ALICE, 10002, g_get_real_time() / G_USEC_PER_SEC - 60,
+                                       "", tags);
+  wire_relay_inject(&w.x, newer);
+  g_assert_cmpint(offer_of(alice), ==, GH_RELAY_LIST_OFFER_ADD_WRITE);
+  g_autoptr(GhInboxSetup) setup = onboard(alice, w.x.url, TRUE);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_SKIPPED);
+  g_object_run_dispose(G_OBJECT(setup));
+  g_assert_cmpuint(lists_on(&w.x, ALICE, NULL), ==, 1);
+  g_assert_cmpuint(lists_on(&w.x, ALICE, "wss://edited-elsewhere.example"), ==, 1);
+  world_down(&w);
+}
+
+static gboolean
+relay_list_signing(gpointer data)
+{
+  GhRelayListSetup *list = gh_inbox_setup_get_relay_list(data);
+  return list && gh_relay_list_setup_get_state(list) == GH_RELAY_LIST_SETUP_SIGNING;
+}
+
+/* Final review F1 (probe V7): another client publishes the account's first
+ * relay list to a target while Groundhog's signer request is open. The
+ * check after the signer finds it: SKIPPED, and that list stays. */
+static void
+test_relay_list_appeared_while_signing_kept(void)
+{
+  World w;
+  world_fresh_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  GhInboxSetupConfig config = { .accounts = alice->accounts, .account_relays = alice->relays,
+                                .settings = alice->settings, .offer_relay_list = TRUE };
+  g_autoptr(GhInboxSetup) setup = gh_inbox_setup_new(&config);
+  const gchar *chosen[] = { w.x.url, NULL };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_inbox_setup_start_full(setup, chosen, FALSE, TRUE, &error));
+  g_assert_no_error(error);
+  spin_until(relay_list_signing, setup, "the relay list's signer request");
+  /* The signer's answer is only handled once this returns to the loop. */
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("r", "wss://other-client.example", NULL));
+  g_autofree gchar *json = sign_event(ALICE, 10002, g_get_real_time() / G_USEC_PER_SEC - 5, "",
+                                      tags);
+  wire_relay_inject(&w.x, json);
+  spin_until(setup_finished, setup, "the setup");
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_SKIPPED);
+  g_object_run_dispose(G_OBJECT(setup));
+  g_assert_cmpuint(lists_on(&w.x, ALICE, NULL), ==, 1);
+  g_assert_cmpuint(lists_on(&w.x, ALICE, "wss://other-client.example"), ==, 1);
+  g_assert_cmpuint(lists_on(&w.e, ALICE, NULL), ==, 0);
+  world_down(&w);
+}
+
 /* Review R1, the re-review's probe P3: the user's real 10002 is only on the
  * chosen message relay X, not on the discovery relay E. Discovery finds
  * none, but the check of every target finds it there: nothing is
@@ -1258,6 +1369,11 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("relay-list-not-offered-on-partial-discovery"),
                   test_relay_list_not_offered_on_partial_discovery);
   g_test_add_func(KP_TEST("relay-list-write-relay-added"), test_relay_list_write_relay_added);
+  g_test_add_func(KP_TEST("relay-list-silent-target-not-published"),
+                  test_relay_list_silent_target_not_published);
+  g_test_add_func(KP_TEST("relay-list-newer-edit-kept"), test_relay_list_newer_edit_kept);
+  g_test_add_func(KP_TEST("relay-list-appeared-while-signing-kept"),
+                  test_relay_list_appeared_while_signing_kept);
   g_test_add_func(KP_TEST("first-run-accounts-invite-each-other"),
                   test_first_run_accounts_invite_each_other);
 #endif

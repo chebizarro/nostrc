@@ -28,8 +28,17 @@ G_BEGIN_DECLS
  * none at all; ADD_WRITE: none but that one or older): a target that holds
  * one makes it SKIPPED, a target that failed or did not answer within
  * GH_RELAY_LIST_SETUP_CHECK_S makes it FAILED ("couldn't confirm"). Then
- * the account's signer signs it and it is published to the targets under
- * "own list publish". An account switch ends it (FAILED).
+ * the account's signer signs it, and -- the signer may take minutes, while
+ * another client publishes a list -- every target is asked again, the same
+ * way, right before it is published to the targets under "own list
+ * publish" (state CHECKING again). An account switch ends it (FAILED).
+ *
+ * Limit (inherent): a relay that serves the account's 10002 only to readers
+ * signed in as the account, yet answers an unauthenticated (or ephemeral)
+ * reader with EOSE and nothing, cannot be told from one that holds none.
+ * Own list discovery never signs in as the account (charter §4.4 R1), so
+ * such a hidden list could be published over. Relay lists are public by
+ * design; relays that hide them from other readers are not known to exist.
  */
 
 typedef enum {

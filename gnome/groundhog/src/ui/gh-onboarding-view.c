@@ -369,6 +369,7 @@ struct _GhOnboardingView {
   AdwActionRow *relay_list_later_row;
   GtkWidget *relay_list_later_button;
   GhRelayListSetup *later;   /* the relay list offered on the result page (R2) */
+  GhRelayListOffer offer_shown;   /* the switch's mode, to default it once per mode */
   GtkWidget *publish_button;
   GtkImage *publish_icon;
   GtkLabel *publish_title;
@@ -1025,6 +1026,11 @@ prepare_confirm(GhOnboardingView *self)
    * without a relay it publishes to (then extended, not replaced). */
   GhRelayListOffer offer = gh_inbox_setup_get_relay_list_offer(self->setup);
   gtk_widget_set_visible(self->relay_list_group, offer != GH_RELAY_LIST_OFFER_NONE);
+  /* Editing a list the user owns is opt-in; creating the first one is the
+   * default (final review F3). */
+  if (offer != self->offer_shown)
+    adw_switch_row_set_active(self->relay_list_switch, offer != GH_RELAY_LIST_OFFER_ADD_WRITE);
+  self->offer_shown = offer;
   if (offer == GH_RELAY_LIST_OFFER_ADD_WRITE) {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->relay_list_switch),
                                   _("Add These Relays to Your Relay List"));

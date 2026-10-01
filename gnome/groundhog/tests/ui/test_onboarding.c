@@ -782,6 +782,9 @@ test_relay_list_offered(Fixture *f, gconstpointer data)
     gh_inbox_setup_get_relay(gh_onboarding_view_get_setup(f->view), 0)->url;
   const gchar *const both[] = { chosen_url, find, NULL };
   answer_checks(f, both);
+  /* ...and again once the signer answered, right before publishing (final
+   * review F1). */
+  answer_checks(f, both);
   /* The message list and the relay list, each to the chosen relay and the
    * discovery relay. */
   OpenCount four = { f, 4 };
@@ -807,6 +810,64 @@ test_relay_list_offered(Fixture *f, gconstpointer data)
                   GH_INBOX_SETUP_RELAY_LIST_DONE);
   g_assert_nonnull(strstr(gtk_label_get_text(child(f, "publish_description")),
                           "People can now invite you to encrypted groups."));
+}
+
+static gboolean
+has_list(gpointer data)
+{
+  return gh_account_relays_has_relay_list(data);
+}
+
+/* Final review F3: an account whose relay list names no relay it publishes
+ * to is offered to add these relays to it -- an edit of the user's own
+ * list, so opt-in: the switch starts off, and Publish with it off sends no
+ * relay list and asks nothing about one. */
+static void
+test_relay_list_edit_opt_in(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gh_test_spin_until(is_active, f->accounts);
+  const gchar *find = "wss://find.example.org";
+  const gchar *const discovery[] = { find, NULL };
+  g_settings_set_strv(f->settings, "discovery-relays", discovery);
+  DiscoveryWait asked = { f, find };
+  gh_test_spin_until(discovery_asked, &asked);
+  NostrEvent *list = nostr_event_new();
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("r", "wss://read-only.example.org", "read", NULL));
+  nostr_event_set_kind(list, 10002);
+  nostr_event_set_created_at(list, g_get_real_time() / G_USEC_PER_SEC - 3600);
+  nostr_event_set_content(list, "");
+  nostr_event_set_tags(list, tags);
+  g_assert_cmpint(nostr_event_sign(list, gh_test_secret[1]), ==, 0);
+  char *json = nostr_event_serialize_compact(list);
+  nostr_event_free(list);
+  ScopeOpen *scope = discovery_scope(f, find);
+  gh_relay_scope_event(scope->scope, find, json);
+  free(json);
+  gh_relay_scope_eose(scope->scope, find);
+  gh_test_spin_until(has_list, f->relays);
+  gh_test_spin_until(discovery_complete, f->relays);
+
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), GH_STATUS_ACTION_SETUP_INBOX,
+                                           NULL));
+  activate_row(f, "relay_list", 0);
+  act(f, "onboarding.inbox-continue");
+  g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "confirm");
+  AdwSwitchRow *edit = child(f, "relay_list_switch");
+  g_assert_true(gtk_widget_get_visible(child(f, "relay_list_group")));
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(edit)), ==,
+                  "Add These Relays to Your Relay List");
+  g_assert_false(adw_switch_row_get_active(edit));
+  guint scopes = f->rec.scopes->len;
+  act(f, "onboarding.publish");
+  OpenCount two = { f, 2 };
+  gh_test_spin_until(pubs_live, &two);
+  GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
+  g_assert_cmpint(gh_inbox_setup_get_relay_list_state(setup), ==,
+                  GH_INBOX_SETUP_RELAY_LIST_NONE);
+  for (guint i = scopes; i < f->rec.scopes->len; i++)
+    g_assert_false(((ScopeOpen *)g_ptr_array_index(f->rec.scopes, i))->check);
 }
 
 static gboolean
@@ -861,6 +922,7 @@ test_first_run_offers_relay_list(Fixture *f, gconstpointer data)
 
   act(f, "onboarding.publish-relay-list");
   answer_checks(f, chosen_list);
+  answer_checks(f, chosen_list);   /* after the signer (final review F1) */
   gh_test_spin_until(pubs_live, &one);
   for (guint i = 0; i < f->rec.pubs->len; i++) {
     PubOpen *open = g_ptr_array_index(f->rec.pubs, i);
@@ -1132,6 +1194,7 @@ main(int argc, char **argv)
   ADD("returning-user", test_returning_user, npub[1]);
   ADD("relay-list-offered", test_relay_list_offered, npub[1]);
   ADD("first-run-offers-relay-list", test_first_run_offers_relay_list, NULL);
+  ADD("relay-list-edit-opt-in", test_relay_list_edit_opt_in, npub[1]);
   ADD("screenshots", test_screenshots, NULL);
 #undef ADD
   int status = g_test_run();
