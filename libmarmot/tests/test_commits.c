@@ -6353,6 +6353,10 @@ test_commit_before_proposal_is_kept(void)
     char *charlie_hex = marmot_hex_encode(t->charlie.pk, 32);
     CHECK(strcmp(r.commit.departed_pubkey_hexes[0], charlie_hex) == 0,
           "the Commit names who left (review L4)");
+    char *dave_hex = marmot_hex_encode(q.dave.pk, 32);
+    CHECK(r.commit.committer_pubkey_hex && strcmp(r.commit.committer_pubkey_hex, dave_hex) == 0,
+          "and who committed it (re-review R1)");
+    free(dave_hex);
     free(charlie_hex);
     (void)updated;
     marmot_message_result_free(&r);

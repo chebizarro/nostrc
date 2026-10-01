@@ -132,8 +132,10 @@ G_BEGIN_DECLS
  * which is published to the group relays (republished after a restart, and
  * made again for each new epoch), and the group is "leaving": it is still
  * read, nothing else is sent, and once another member commits the proposal
- * the group ends ("end" LEFT). If a new epoch's proposal cannot be made, the
- * leave is dropped and the group says so ("leave-failed"). Otherwise
+ * the group ends ("end" LEFT). If a new epoch's proposal cannot be made, or
+ * a Remove request was re-made GH_MLS_SERVICE_LEAVE_REQUESTS times and an
+ * admin's Commit kept the account each time (re-review R1), the leave is
+ * dropped and the group says so ("leave-failed"). Otherwise
  * (gh_mls_service_leave_kind()) the
  * group ends on this device only ("end" LEFT_DEVICE): marmot_leave_group()
  * marks it inactive locally and the service stops reading it; the others
@@ -230,6 +232,11 @@ G_BEGIN_DECLS
 /* A held Commit that cites a proposal not received yet (review H1) is
  * retried whenever a proposal or Commit arrives, at most this many times
  * and for this long (seconds); then it is junk. */
+/* A Remove request is made at most this many times per leave: each admin
+ * Commit that keeps the account uses one (re-review R1: MDK 0.8's admin
+ * auto-commit drops the request and commits nothing). Then the leave stops
+ * with GH_MLS_LEAVE_FAILURE_NOT_PROCESSED. */
+#define GH_MLS_SERVICE_LEAVE_REQUESTS 2
 #define GH_MLS_SERVICE_PROPOSAL_WAIT_TRIES 16
 #define GH_MLS_SERVICE_PROPOSAL_WAIT_S 600
 
@@ -263,6 +270,13 @@ typedef enum {
   GH_MLS_GROUP_END_LEFT_DEVICE /* the account left on this device only; the others still
                                 * count it (gh_mls_service_leave() without SelfRemove) */
 } GhMlsGroupEnd;
+
+/* Why a leave was dropped (gh_mls_group_get_leave_failure()). */
+typedef enum {
+  GH_MLS_LEAVE_FAILURE_NONE,
+  GH_MLS_LEAVE_FAILURE_CANNOT_CONTINUE, /* a new epoch's request could not be made */
+  GH_MLS_LEAVE_FAILURE_NOT_PROCESSED    /* admins' Commits came and kept the account (R1) */
+} GhMlsLeaveFailure;
 
 /* What gh_mls_service_leave() would do for a group (nostrc-2um6). */
 typedef enum {
@@ -346,6 +360,9 @@ gboolean gh_mls_group_get_leave_via_admin(GhMlsGroup *self);
  * was dropped: the account is still a member and may send (review L3).
  * Cleared by the next gh_mls_service_leave(). */
 gboolean gh_mls_group_get_leave_failed(GhMlsGroup *self);
+/* Why: a new epoch's request could not be made, or (re-review R1) an admin
+ * moved the group on twice without acting on the Remove request. */
+GhMlsLeaveFailure gh_mls_group_get_leave_failure(GhMlsGroup *self);
 GhMlsGroupEnd gh_mls_group_get_end(GhMlsGroup *self);
 const gchar *gh_mls_group_get_removed_by(GhMlsGroup *self);
 GhMlsReadState gh_mls_group_get_read_state(GhMlsGroup *self);

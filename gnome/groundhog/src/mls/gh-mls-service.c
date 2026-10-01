@@ -92,7 +92,12 @@ struct _GhMlsGroup {
   GhRelayPublish *leave_publish; /* publishing it; NULL once a relay took it */
   gboolean leave_sent;       /* a group relay accepted leave_json */
   gboolean leave_via_admin;  /* the leave is a Remove request an admin commits (review M1) */
-  gboolean leave_failed;     /* the leave could not go on and was dropped (review L3) */
+  GhMlsLeaveFailure leave_failure; /* why the last leave was dropped (review L3, R1) */
+  /* Re-review R1: admin Commits that moved the group on without our Remove
+   * request. MDK 0.8's admin auto-commit drops such a request and commits
+   * an empty Commit, so re-requesting each epoch would never end. */
+  guint leave_misses;
+  gboolean leave_admin_commit;   /* the Commit just applied was an admin's */
   /* Others leaving: members who asked to (hex), and the delayed Commit. */
   GHashTable *leavers;
   guint departures_source;
@@ -539,7 +544,14 @@ gboolean
 gh_mls_group_get_leave_failed(GhMlsGroup *self)
 {
   g_return_val_if_fail(GH_IS_MLS_GROUP(self), FALSE);
-  return self->leave_failed;
+  return self->leave_failure != GH_MLS_LEAVE_FAILURE_NONE;
+}
+
+GhMlsLeaveFailure
+gh_mls_group_get_leave_failure(GhMlsGroup *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_GROUP(self), GH_MLS_LEAVE_FAILURE_NONE);
+  return self->leave_failure;
 }
 
 GhMlsGroupEnd
@@ -670,7 +682,9 @@ gh_mls_group_get_property(GObject *object, guint id, GValue *value, GParamSpec *
   case GROUP_PROP_DECRYPT_PENDING: g_value_set_boolean(value, self->decrypt_pending); break;
   case GROUP_PROP_HISTORY_INCOMPLETE: g_value_set_boolean(value, self->history_incomplete); break;
   case GROUP_PROP_LEAVING: g_value_set_boolean(value, self->leaving); break;
-  case GROUP_PROP_LEAVE_FAILED: g_value_set_boolean(value, self->leave_failed); break;
+  case GROUP_PROP_LEAVE_FAILED:
+    g_value_set_boolean(value, self->leave_failure != GH_MLS_LEAVE_FAILURE_NONE);
+    break;
   default: G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
 }
@@ -1438,6 +1452,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     for (size_t i = 0; i < result.commit.departed_count; i++)
       if (g_strcmp0(result.commit.departed_pubkey_hexes[i], self->account) != 0)
         g_hash_table_add(group->leavers, g_strdup(result.commit.departed_pubkey_hexes[i]));
+    /* Re-review R1: an admin's Commit while our Remove request waits
+     * (group->admins still lists the admins it was judged against). */
+    if (group->leaving && group->leave_via_admin && result.commit.committer_pubkey_hex &&
+        g_strv_contains((const gchar *const *)group->admins, result.commit.committer_pubkey_hex))
+      group->leave_admin_commit = TRUE;
   } else if (err == MARMOT_OK && result.type == MARMOT_RESULT_PROPOSAL) {
     /* nostrc-2um6: a member's standalone proposal, which libmarmot keeps for
      * the Commit that references it; a leave is committed after a delay. */
@@ -2361,27 +2380,55 @@ leave_start(GhMlsGroup *group, const gchar *json)
  * returns the same bytes within an epoch and a fresh proposal for a new one
  * (member-departure.md); its leave request is durable, so this also resumes
  * a leave after a restart. */
+/* Drop the leave and say why; sending works again (review L3). */
+static void
+leave_give_up(GhMlsGroup *group, GhMlsLeaveFailure why)
+{
+  GhMlsService *self = group->service;
+  leave_cancel(group);
+  if (marmot_cancel_leave(self->marmot, &group->gid) != MARMOT_OK)
+    return;   /* still Leaving; the next pass tries again */
+  group->leave_failure = why;
+  group->leave_misses = 0;
+  group->leave_admin_commit = FALSE;
+  g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
+  group_refresh(group);
+}
+
 static void
 leave_continue(GhMlsGroup *group)
 {
   GhMlsService *self = group->service;
   if (!running(self) || !group->active || !group->leaving)
     return;
+  /* Re-review R1: an admin's Commit moved the group on and kept us -- our
+   * Remove request was not acted on (MDK 0.8's admin auto-commit drops it
+   * and commits nothing). Request once more; after a second such Commit,
+   * stop: the admin's app does not process it. */
+  if (group->leave_admin_commit && group->leave_via_admin) {
+    group->leave_admin_commit = FALSE;
+    if (++group->leave_misses >= GH_MLS_SERVICE_LEAVE_REQUESTS) {
+      g_message("Groundhog stopped asking the admins to remove the account: no admin acted on it");
+      leave_give_up(group, GH_MLS_LEAVE_FAILURE_NOT_PROCESSED);
+      return;
+    }
+  }
   char *json = NULL;
   MarmotError err = marmot_self_remove(self->marmot, &group->gid, &json);
   if (err == MARMOT_OK && json) {
     leave_start(group, json);
-  } else if (err != MARMOT_ERR_OWN_COMMIT_PENDING) {
-    /* The leave cannot go on in this epoch (e.g. the account was made an
-     * admin): say so and stop blocking sends, rather than "waiting" for a
-     * Commit that cannot come (review L3). */
+  } else if (err == MARMOT_ERR_ADMIN_CANNOT_LEAVE || err == MARMOT_ERR_UNSUPPORTED ||
+             err == MARMOT_ERR_USE_AFTER_EVICTION) {
+    /* Definitive (review L3, N4): this leave cannot go on (e.g. the
+     * account was made an admin). Say so and stop blocking sends, rather
+     * than "waiting" for a Commit that cannot come. */
     g_message("Groundhog stopped leaving an encrypted group: %s", marmot_error_string(err));
-    leave_cancel(group);
-    if (marmot_cancel_leave(self->marmot, &group->gid) == MARMOT_OK) {
-      group->leave_failed = TRUE;
-      g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
-      group_refresh(group);
-    }
+    leave_give_up(group, GH_MLS_LEAVE_FAILURE_CANNOT_CONTINUE);
+  } else {
+    /* Transient (storage, a pending change of ours): keep the leave and
+     * try again on the next pass (review N4). */
+    g_debug("Groundhog will retry its leave: %s", marmot_error_string(err));
+    schedule_retry(self);
   }
   free(json);
 }
@@ -3691,8 +3738,10 @@ gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
   /* For everyone where the group supports it (nostrc-2um6): our SelfRemove,
    * durable in libmarmot, published now or once online; the group is
    * "leaving" until a member commits it. Leaving again gives up waiting. */
-  if (group->leave_failed) {
-    group->leave_failed = FALSE;
+  group->leave_misses = 0;
+  group->leave_admin_commit = FALSE;
+  if (group->leave_failure != GH_MLS_LEAVE_FAILURE_NONE) {
+    group->leave_failure = GH_MLS_LEAVE_FAILURE_NONE;
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
   }
   if (!group->leaving) {

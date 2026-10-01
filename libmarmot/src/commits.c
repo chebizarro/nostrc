@@ -2333,6 +2333,7 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
     memset(&applied, 0, sizeof(applied));
     char **departed = NULL;
     size_t n_departed = 0;
+    char *committer = NULL;   /* of the Commit applied */
 
     if (epoch == cur.epoch) {
         /* Linear advance of the current epoch -- unless our own Commit built
@@ -2391,7 +2392,10 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                                     digest, event_id_hex);
             } else {
                 err = marmot_commit_persist(m, &cur, &post, &key, gde, group);
-                if (err == MARMOT_OK) departed_hexes(&cur, &applied, &departed, &n_departed);
+                if (err == MARMOT_OK) {
+                    departed_hexes(&cur, &applied, &departed, &n_departed);
+                    committer = marmot_hex_encode(key.committer, 32);
+                }
             }
             /* A winner replaces the state our pending Commit was built on:
              * from now on it is STALE and merging it fails (review R1). */
@@ -2444,8 +2448,10 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
                     if (commit_key_cmp(&key, &rp.key) < 0) {
                         err = marmot_commit_persist(m, &rp.parent, &post, &key,
                                                     gde, group);
-                        if (err == MARMOT_OK)
+                        if (err == MARMOT_OK) {
                             departed_hexes(&rp.parent, &applied, &departed, &n_departed);
+                            committer = marmot_hex_encode(key.committer, 32);
+                        }
                     } else {
                         err = MARMOT_ERR_WRONG_EPOCH;   /* the applied Commit wins */
                     }
@@ -2463,11 +2469,13 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
     if (err != MARMOT_OK) {
         for (size_t i = 0; i < n_departed; i++) free(departed[i]);
         free(departed);
+        free(committer);
         return err;
     }
 
     inbound_done(m, group, epoch, event_id_hex, result);
     result->commit.departed_pubkey_hexes = departed;
     result->commit.departed_count = n_departed;
+    result->commit.committer_pubkey_hex = committer;
     return MARMOT_OK;
 }

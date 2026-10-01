@@ -320,7 +320,12 @@ protocol-core/member-departure.md), and an MDK member's leave is seen.
   `MARMOT_ERR_PROPOSAL_UNKNOWN` and changes nothing: keep the event and offer
   it again when a proposal arrives. Since `result.commit` gained
   `departed_pubkey_hexes`, a Commit result names who left on their own
-  request, whether or not this member saw the proposal.
+  request, whether or not this member saw the proposal. It also names who
+  committed it (`committer_pubkey_hex`), so an application can tell that an
+  admin's Commit left its Remove request unconsumed. MDK 0.8's admin
+  auto-commit drops such a request and commits an empty Commit
+  (nostrc-laxu), so re-requesting every epoch would never end; Groundhog
+  re-requests once, then stops.
   The same path replays the OpenMLS passive-client vectors with every
   proposal opened and referenced (1542 proposals, 100 Commits; vectors with
   PSK proposals stay on the old path).

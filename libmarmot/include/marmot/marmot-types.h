@@ -527,6 +527,10 @@ typedef struct {
          *  proposal. */
         char **departed_pubkey_hexes;
         size_t departed_count;
+        /** Since 0.12.0: who committed it (hex, caller-owned; NULL when
+         *  not known), e.g. to tell whether an admin's Commit left a leave
+         *  request of ours unconsumed (nostrc-2um6 re-review R1). */
+        char *committer_pubkey_hex;
     } commit;
 
     /** Valid when type == MARMOT_RESULT_PROPOSAL (since 0.12.0,

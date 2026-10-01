@@ -32,6 +32,10 @@
  *  3b. Groundhog leaves (default mode): in an MDK group, Groundhog's
  *     SelfRemove is auto-committed by MDK by reference (a PrivateMessage);
  *     Groundhog ends the group as LEFT.
+ *  3c. Groundhog leaves a group whose only admin is MDK 0.8 (re-review R1):
+ *     MDK's admin auto-commit drops a Remove request and commits nothing,
+ *     so Groundhog asks at most GH_MLS_SERVICE_LEAVE_REQUESTS times, then
+ *     stops with honest copy and can send again -- no endless loop.
  * Two devices on one account are out of scope (nostrc-yaa1).
  * Results: docs/analysis/marmot-mdk-interop-2026-09-30.md. */
 #include "mls-world.h"
@@ -907,6 +911,90 @@ test_groundhog_leaves(void)
   mdk_driver_stop(&driver);
 }
 
+/* 3c (re-review R1): Groundhog (Alice) makes the group with Carol (MDK) and
+ * makes Carol its only admin, then leaves. The group does not require
+ * SelfRemove, so Alice's leave is a Remove request; MDK 0.8's admin
+ * auto-commit (messages/proposal.rs auto_commit_proposal) keeps only
+ * SelfRemoves and commits an empty Commit, which keeps Alice. Alice asks
+ * once more, then stops: "not processed", sending again, no more requests
+ * and no more Commits however often MDK syncs. */
+static void
+test_groundhog_leaves_mdk_admin(void)
+{
+  if (!mdk_up())
+    return;
+  gh_mls_service_test_allow_unproven_members(TRUE);
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  mdk_peer("carol", CAROL);
+  g_autofree gchar *carol_kp = mdk_publish_key_package(&w, "carol");
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "MDK admin", (const guint[]){ CAROL }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+  g_autofree gchar *group = NULL;
+  {
+    g_autoptr(JsonObject) joined = mdk_join(&w, "carol", hex[ALICE], &group);
+    assert_converged(ga, joined);
+  }
+  {
+    OpWait admins = { 0 };
+    const gchar *carol_only[] = { hex[CAROL], NULL };
+    gh_mls_service_set_admins_async(alice->service, ga, carol_only, NULL, on_changed, &admins);
+    change_done(&admins);
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    assert_converged(ga, json_object_get_object_member(synced, "state"));
+  }
+  g_assert_false(gh_mls_group_get_is_admin(ga));
+  g_assert_cmpint(gh_mls_service_leave_kind(alice->service, ga), ==, GH_MLS_LEAVE_ADMINS);
+
+  StoredCount on_g = { &w.g, w.g.stored->len + 1 };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(alice->service, ga, &error));
+  g_assert_no_error(error);
+  guint rounds = 0;
+  while (gh_mls_group_get_leaving(ga)) {
+    g_assert_cmpuint(rounds, <, GH_MLS_SERVICE_LEAVE_REQUESTS);   /* bounded */
+    spin_until(stored_reached, &on_g, "Alice's Remove request on G");
+    guint64 epoch = gh_mls_group_get_epoch(ga);
+    /* After the sync: MDK's Commit, then (if Alice goes on) her next
+     * request, which she makes as soon as she applies that Commit. */
+    on_g.n = w.g.stored->len + 2;
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_cmpuint(synced_count(synced, "proposal"), ==, 1);   /* MDK auto-commits... */
+    JsonObject *state = json_object_get_object_member(synced, "state");
+    g_assert_true(mdk_has(json_object_get_array_member(state, "members"), hex[ALICE]));
+    wait_epoch(ga, (gint)(epoch + 1));                            /* ...an empty Commit */
+    g_test_message("round %u: Alice at epoch %" G_GUINT64_FORMAT ", leaving %d", rounds,
+                   gh_mls_group_get_epoch(ga), gh_mls_group_get_leaving(ga));
+    rounds++;
+  }
+  g_assert_cmpuint(rounds, ==, GH_MLS_SERVICE_LEAVE_REQUESTS);
+  g_assert_cmpint(gh_mls_group_get_leave_failure(ga), ==, GH_MLS_LEAVE_FAILURE_NOT_PROCESSED);
+  g_assert_true(gh_mls_group_get_active(ga));
+
+  /* Nothing more: no request, so MDK commits nothing. */
+  guint stored = w.g.stored->len;
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_cmpuint(synced_count(synced, "proposal"), ==, 0);
+    g_assert_cmpuint(synced_count(synced, "commit"), ==, 0);
+  }
+  g_assert_cmpuint(w.g.stored->len, ==, stored);
+  /* Sending works again. */
+  send_accepted(alice, ga, "still here");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_true(synced_message(synced, hex[ALICE], "still here"));
+  }
+  world_down(&w);
+  gh_mls_service_test_allow_unproven_members(FALSE);
+  mdk_driver_stop(&driver);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -925,6 +1013,8 @@ main(int argc, char **argv)
                   test_groundhog_invites_mdk_legacy);
   g_test_add_func("/groundhog/mdk-interop/mdk-member-leaves", test_mdk_member_leaves);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves", test_groundhog_leaves);
+  g_test_add_func("/groundhog/mdk-interop/groundhog-leaves-mdk-admin",
+                  test_groundhog_leaves_mdk_admin);
   gint rc = g_test_run();
   mls_world_finish();
   return rc;

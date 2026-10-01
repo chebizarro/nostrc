@@ -213,6 +213,9 @@ sync_status(GhMlsGroupInfoDialog *self)
     words = g_strdup(gh_mls_group_get_leave_via_admin(self->group)
                        ? _("You’re leaving. Waiting for an admin to remove you.")
                        : _("You’re leaving. Waiting for another member to confirm it."));
+  else if (gh_mls_group_get_leave_failure(self->group) == GH_MLS_LEAVE_FAILURE_NOT_PROCESSED)
+    words = g_strdup(_("Your leave request wasn’t processed by the group admin. You can leave "
+                       "on this device only, or ask an admin to remove you."));
   else if (gh_mls_group_get_leave_failed(self->group))
     words = g_strdup(_("Your leave couldn’t continue after the group changed, so you’re still "
                        "a member and can send again. You can leave again."));
