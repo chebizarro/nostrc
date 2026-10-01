@@ -728,7 +728,8 @@ test_group_context_negatives(void)
     {
         uint8_t r[32 + 2 + 64];
         const char *bad[] = {"https://relay.example", "wss://user@relay.example",
-                             "wss://relay.example/#frag", "wss://", "wss://relay example"};
+                             "wss://relay.example/#frag", "wss://", "wss://relay example",
+                             "wss://[zzz]", "wss://ex<ample.com", "wss://exa%zzmple.com"};
         for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
             size_t ul = strlen(bad[i]);
             memset(r, 0x42, 32);
@@ -854,6 +855,43 @@ leaf_proof(const MlsLeafNode *leaf)
     free(e);
     CHECK(p, "proof");
     return p;
+}
+
+/* W24 review N1: the relay URL profile refuses every host MDK's url::Url
+ * refuses, so libmarmot cannot create a group MDK will not join. */
+static void
+test_relay_url_profile(void)
+{
+    static const char *good[] = {
+        "wss://relay.example.com", "ws://localhost:7777", "wss://relay.example.com.",
+        "wss://127.0.0.1:7777", "wss://[::1]", "wss://[::1]:7777", "wss://[2001:db8::1]",
+        "wss://[2001:db8:0:0:0:0:0:1]", "wss://[::ffff:192.0.2.1]", "wss://[1::]",
+        "wss://relay.example.com/path?x=1", "wss://a-b_c*d.example",
+        "wss://[::1]:", /* empty port: WHATWG accepts it */
+    };
+    static const char *bad[] = {
+        /* the review's three */
+        "wss://[zzz]", "wss://ex<ample.com", "wss://exa%zzmple.com",
+        /* IPv6 literals */
+        "wss://[]", "wss://[:]", "wss://[:::]", "wss://[1:2]", "wss://[1::2::3]",
+        "wss://[12345::1]", "wss://[1:2:3:4:5:6:7:8:9]", "wss://[::1%25eth0]",
+        "wss://[::1.2.3]", "wss://[::1.2.3.256]", "wss://[1:]", "wss://[:1]",
+        "wss://[::1]x",
+        /* forbidden host / domain code points, non-ASCII */
+        "wss://ex>ample.com", "wss://ex^ample.com", "wss://ex|ample.com",
+        "wss://ex%41mple.com", "wss://rel\xc3\xa9y.example",
+        /* hosts that end in a number */
+        "wss://999.1.1.1", "wss://1.2.3", "wss://127.1", "wss://010.0.0.1", "wss://a.0x1",
+        "wss://example.123", "wss://1.2.3.4.5",
+        /* empty labels */
+        "wss://.", "wss://a..",
+    };
+    for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++)
+        CHECK(mls_relay_url_valid((const uint8_t *)good[i], strlen(good[i])), "accepts %s",
+              good[i]);
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+        CHECK(!mls_relay_url_valid((const uint8_t *)bad[i], strlen(bad[i])), "refuses %s",
+              bad[i]);
 }
 
 static void
@@ -1318,6 +1356,23 @@ test_adopted_rumor_shape(void)
         EXPECT_ERR(marmot_process_welcome(bob.m, wrapper, bad, &w), MARMOT_ERR_VALIDATION);
         free(bad);
     }
+    /* W24 review N2: the adopted rumor MUST NOT have a `sig` field. */
+    {
+        const char *sig = "\"sig\":\"" 
+            "00000000000000000000000000000000000000000000000000000000000000000000"
+            "000000000000000000000000000000000000000000000000000000000000\",";
+        size_t n = strlen(good) + strlen(sig) + 1;
+        char *signed_rumor = malloc(n);
+        CHECK(good[0] == '{', "rumor is an object");
+        snprintf(signed_rumor, n, "{%s%s", sig, good + 1);
+        uint8_t wrapper[32];
+        randombytes_buf(wrapper, 32);
+        MarmotWelcome *w = NULL;
+        EXPECT_ERR(marmot_process_welcome(bob.m, wrapper, signed_rumor, &w),
+                   MARMOT_ERR_VALIDATION);
+        marmot_welcome_free(w);
+        free(signed_rumor);
+    }
     /* No cleartext preview in the adopted binding: an unauthenticated
      * `name` tag is not shown as the group's name. */
     char *named = malloc(strlen(good) + 64);
@@ -1560,6 +1615,16 @@ test_create_proof_inputs(void)
     EXPECT_ERR(marmot_create_group_for_profile(alice.m, MARMOT_GROUP_PROFILE_ADOPTED, alice.pk,
                                                alice.sk, NULL, NULL, kps, 1, &bad, &r),
                MARMOT_ERR_INVALID_ARG);
+    /* W24 review N1: hosts MDK's url::Url refuses are refused at create. */
+    static const char *mdk_refuses[] = {"wss://[zzz]", "wss://ex<ample.com",
+                                        "wss://exa%zzmple.com"};
+    for (size_t i = 0; i < sizeof(mdk_refuses) / sizeof(mdk_refuses[0]); i++) {
+        bad = config_for(NULL, 0, &mdk_refuses[i], 1);
+        EXPECT_ERR(marmot_create_group_for_profile(alice.m, MARMOT_GROUP_PROFILE_ADOPTED,
+                                                   alice.pk, alice.sk, NULL, NULL, kps, 1, &bad,
+                                                   &r),
+                   MARMOT_ERR_INVALID_ARG);
+    }
     uint8_t stranger[1][32];
     memcpy(stranger[0], carol.pk, 32);
     bad = config_for((const uint8_t (*)[32])stranger, 1, relays, 1);
@@ -2103,6 +2168,7 @@ main(int argc, char **argv)
     RUN(test_mdk_group_context_admitted);
     RUN(test_white_noise_group_context_unsupported);
     RUN(test_group_context_negatives);
+    RUN(test_relay_url_profile);
     RUN(test_mdk_tree_members);
     RUN(test_mdk_welcome_join);
     RUN(test_persist_load_clone);

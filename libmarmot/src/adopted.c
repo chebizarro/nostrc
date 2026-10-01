@@ -7,14 +7,33 @@
 
 #include "adopted.h"
 #include "kp_profile.h"
+#include "mls/mls_app_components.h"
+#include "mls/mls_app_data_update.h"
 #include <sodium.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* W24 review N4: the MLS layer (mls/mls_app_components.h,
+ * mls/mls_app_data_update.h) and the Marmot layer (kp_profile.h) each name
+ * these component ids.  They are kept as two spellings so neither layer
+ * includes the other's header; these assertions keep them equal. */
+_Static_assert(MLS_COMPONENT_APP_COMPONENTS == MARMOT_COMPONENT_APP_COMPONENTS,
+               "app_components id spelled two ways");
+_Static_assert(MLS_COMPONENT_SAFE_AAD == MARMOT_COMPONENT_SAFE_AAD,
+               "safe_aad id spelled two ways");
+_Static_assert(MLS_COMPONENT_ACCOUNT_PROOF_V2 == MARMOT_COMPONENT_ACCOUNT_PROOF_V2,
+               "account proof v2 id spelled two ways");
 
 MarmotError
 marmot_adopted_members_proven(const MlsGroup *g)
 {
     if (!g || g->profile != MARMOT_GROUP_PROFILE_ADOPTED) return MARMOT_ERR_INVALID_ARG;
+    /* W24 review N5: the proof binds the ciphersuite, and MlsGroup has no
+     * suite of its own because libmarmot is single-suite: the state format
+     * carries none, the Welcome join refuses any other suite
+     * (mls_welcome_process_parsed), and create and the GroupInfo parser use only
+     * MARMOT_CIPHERSUITE.  If MlsGroup ever gains a suite field, verify
+     * under it here. */
     for (uint32_t i = 0; i < g->tree.n_leaves; i++) {
         const MlsNode *n = &g->tree.nodes[mls_tree_leaf_to_node(i)];
         if (n->type != MLS_NODE_LEAF) continue;

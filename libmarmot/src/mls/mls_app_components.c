@@ -132,6 +132,102 @@ all_digits(const uint8_t *s, size_t len)
     return true;
 }
 
+static bool
+is_hex_digit(uint8_t c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+/* Strict dotted-quad: exactly four decimal parts 0..255, no leading zeros
+ * (the WHATWG parser reads those as octal; we refuse rather than guess). */
+static bool
+ipv4_dotted_valid(const uint8_t *s, size_t len)
+{
+    size_t parts = 0, i = 0;
+    while (parts < 4) {
+        size_t start = i;
+        unsigned v = 0;
+        while (i < len && s[i] >= '0' && s[i] <= '9' && i - start < 3) v = v * 10 + (s[i++] - '0');
+        size_t n = i - start;
+        if (n == 0 || v > 255 || (n > 1 && s[start] == '0')) return false;
+        parts++;
+        if (parts < 4) {
+            if (i >= len || s[i] != '.') return false;
+            i++;
+        }
+    }
+    return i == len;
+}
+
+/* An IPv6 literal between the brackets (RFC 4291 §2.2 text form, as the
+ * WHATWG URL parser accepts it; no zone id): up to eight groups of 1..4 hex
+ * digits with at most one "::", optionally ending in a dotted IPv4 that
+ * counts as two groups (W24 review N1). */
+static bool
+ipv6_literal_valid(const uint8_t *s, size_t len)
+{
+    if (len < 2) return false;
+    size_t groups = 0, i = 0;
+    bool compressed = false;
+    if (s[0] == ':') {
+        if (s[1] != ':') return false;
+        compressed = true;
+        i = 2;
+        if (i == len) return true; /* "::" */
+    }
+    while (i < len) {
+        size_t start = i;
+        while (i < len && is_hex_digit(s[i]) && i - start < 5) i++;
+        if (i < len && s[i] == '.') {
+            /* Embedded IPv4: must be last and take two groups. */
+            if (!ipv4_dotted_valid(s + start, len - start)) return false;
+            groups += 2;
+            i = len;
+            break;
+        }
+        size_t n = i - start;
+        if (n == 0 || n > 4) return false;
+        groups++;
+        if (i == len) break;
+        if (s[i] != ':') return false;
+        i++;
+        if (i < len && s[i] == ':') {
+            if (compressed) return false;
+            compressed = true;
+            i++;
+            if (i == len) break;
+        } else if (i == len) {
+            return false; /* trailing single ':' */
+        }
+    }
+    return compressed ? groups < 8 : groups == 8;
+}
+
+/* A registered-name host, conservatively (W24 review N1): ASCII only (a
+ * URL parser would IDNA-map anything else; MDK serializes the punycode),
+ * none of the WHATWG forbidden host / domain code points, and, if it ends
+ * in a number, a strict dotted-quad IPv4 address. */
+static bool
+host_name_valid(const uint8_t *h, size_t len)
+{
+    if (len == 0) return false;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t c = h[i];
+        if (c >= 0x80 || c <= 0x20 || c == 0x7f) return false;
+        if (strchr("#/:<>?@[\\]^|%", c)) return false;
+    }
+    /* The last label, ignoring one trailing dot. */
+    size_t end = len;
+    if (h[end - 1] == '.') end--;
+    size_t start = end;
+    while (start > 0 && h[start - 1] != '.') start--;
+    if (end == start) return false; /* empty label: "a..", "." */
+    bool numeric = all_digits(h + start, end - start) ||
+                   (end - start >= 2 && h[start] == '0' && (h[start + 1] | 0x20) == 'x');
+    if (numeric) return ipv4_dotted_valid(h, len);
+    return true;
+}
+
 bool
 mls_relay_url_valid(const uint8_t *url, size_t len)
 {
@@ -158,6 +254,7 @@ mls_relay_url_valid(const uint8_t *url, size_t len)
     if (auth[0] == '[') {
         const uint8_t *close = memchr(auth, ']', auth_len);
         if (!close || close == auth + 1) return false;
+        if (!ipv6_literal_valid(auth + 1, (size_t)(close - auth) - 1)) return false;
         size_t after = auth_len - (size_t)(close - auth) - 1;
         if (after > 0) {
             if (close[1] != ':') return false;
@@ -168,7 +265,7 @@ mls_relay_url_valid(const uint8_t *url, size_t len)
         if (memchr(auth, '[', auth_len) || memchr(auth, ']', auth_len)) return false;
         const uint8_t *colon = memchr(auth, ':', auth_len);
         size_t host_len = colon ? (size_t)(colon - auth) : auth_len;
-        if (host_len == 0) return false;
+        if (!host_name_valid(auth, host_len)) return false;
         if (colon) {
             port = colon + 1;
             port_len = auth_len - host_len - 1;

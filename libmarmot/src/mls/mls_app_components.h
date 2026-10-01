@@ -177,7 +177,13 @@ int mls_nostr_routing_v1_decode(const uint8_t *data, size_t len,
 /* The Nostr relay URL profile (transports/nostr.md "relay URL profile"):
  * UTF-8, 1..512 bytes, absolute ws/wss URL with a host and no userinfo or
  * fragment.  Conservative: also refuses whitespace, control characters and
- * backslashes, which a URL parser would rewrite. */
+ * backslashes, which a URL parser would rewrite.  The host is checked so
+ * that nothing MDK's url::Url refuses gets through (W24 review N1): an IPv6
+ * literal must be well formed (no zone id); a name must be ASCII, free of
+ * the WHATWG forbidden host/domain code points (including '%'), and, if its
+ * last label is numeric, a strict dotted-quad IPv4 address.  Some URLs MDK
+ * accepts are refused here (non-ASCII or percent-encoded hosts, short or
+ * octal IPv4 forms, a space in the path); that direction fails closed. */
 bool mls_relay_url_valid(const uint8_t *url, size_t len);
 
 /* Strict UTF-8 (no overlongs, surrogates or code points past U+10FFFF). */

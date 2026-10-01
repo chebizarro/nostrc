@@ -430,6 +430,16 @@ profile (MDK 0.11)" above.
   accepts MDK's events (it wrongly expected `0x0001` in the tag).
 - **The committer's UpdatePath leaf** keeps its group profile's
   capabilities (an adopted leaf keeps advertising `0x0008`).
+- **Relay URLs** (adopted rumor `relays` tag, `0x8004`, create config)
+  are refused if their host is anything MDK's `url::Url` would refuse: a
+  malformed IPv6 literal or zone id, a WHATWG forbidden host or domain code
+  point (including `%`), a non-ASCII host, or a host ending in a number
+  that is not a strict dotted-quad IPv4 address (W24 review N1). An adopted
+  kind:444 rumor that carries `sig` is refused (N2).
+- **LeafNode capability vectors and ParentNode `unmerged_leaves`** are
+  refused before allocating when their length claim exceeds the input;
+  a 4-byte varint used to cost a transient ~1 GiB allocation (W24 review
+  L5; affects legacy groups and KeyPackages too).
 
 #### Compatibility
 
@@ -672,8 +682,6 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
     `marmot_process_message()`: a header naming the previous epoch, a relay
     replay of the applied Commit (a duplicate, nothing changes), and a
     tampered parent-epoch Commit judged on the retained parent.
-
-### 0.11.0 (unreleased): Marmot wire conformance, found by the first live MDK 0.8 test (nostrc-7gx7, nostrc-77pa)
 
 **Wire change** (MINOR for 0.x). 0.11.0 and 0.10.0 or older cannot read each
 other's kind:445 events: upgrade whole groups together.

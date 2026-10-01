@@ -547,6 +547,16 @@ process_welcome_impl(Marmot *m,
     bool adopted_rumor = false;
     uint8_t *welcome_data = decode_welcome_content(rumor.content, rumor.tags, &welcome_len,
                                                    &adopted_rumor);
+    /* transports/nostr.md: the rumor "MUST NOT have a `sig` field" (W24
+     * review N2).  The parser sets sig only when the key is present. */
+    if (welcome_data && adopted_rumor && rumor.sig) {
+        free(welcome_data);
+        free(rumor.id); free(rumor.pubkey); free(rumor.content);
+        free(rumor.sig); nostr_tags_free(rumor.tags);
+        record_welcome_failure(m, wrapper_event_id, "adopted welcome rumor carries a sig",
+                               true);
+        return MARMOT_ERR_VALIDATION;
+    }
     if (welcome_data && adopted_rumor && !adopted_rumor_tags_valid(rumor.tags)) {
         free(welcome_data);
         free(rumor.id); free(rumor.pubkey); free(rumor.content);
