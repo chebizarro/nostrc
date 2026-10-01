@@ -394,6 +394,13 @@ not read (its validity rules need the frozen unsafe-host set): such a tag is
   non-zero padding, a PublicMessage signature, another epoch, an Add whose
   account proof fails. At the MLS layer: another epoch, a refused Commit
   consuming no handshake key, a generation read before.
+  - Each check where it alone decides (review W24 L5): routing by sender
+    data (`mls_group_handshake_sender()`) refuses a header of another epoch
+    and a blank leaf; a PublicMessage Commit's FramedContent epoch; Alice's
+    sender data signed by Charlie and processed as his. Past epochs through
+    `marmot_process_message()`: a header naming the previous epoch, a relay
+    replay of the applied Commit (a duplicate, nothing changes), and a
+    tampered parent-epoch Commit judged on the retained parent.
 
 ### 0.11.0 (unreleased): Marmot wire conformance, found by the first live MDK 0.8 test (nostrc-7gx7, nostrc-77pa)
 
