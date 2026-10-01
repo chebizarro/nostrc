@@ -22,6 +22,8 @@ struct _GhMessageRow {
   GtkLabel *body_label;
   GtkBox *attachment_slot;
   GhAttachmentCard *attachment_card;
+  GtkLabel *attachment_note;
+  GPtrArray *extra_cards;   /* an encrypted group message's files 1.. (W25) */
   GtkBox *preview_box;
   GtkButton *preview_button;
   GtkLabel *preview_title;
@@ -117,8 +119,22 @@ append_sentence(GString *out, const gchar *sentence)
 static gchar *
 file_text(GhMessage *message)
 {
-  return gh_message_get_kind(message) == GH_NIP17_FILE_KIND
-           ? gh_message_dup_display_text(message) : NULL;
+  if (gh_message_get_kind(message) == GH_NIP17_FILE_KIND)
+    return gh_message_dup_display_text(message);
+  /* An encrypted group's files without a caption: "Photo", "3 files". */
+  const gchar *content = gh_message_get_content(message);
+  if (gh_message_get_n_attachments(message) > 0 && (!content || !*content))
+    return gh_message_dup_display_text(message);
+  return NULL;
+}
+
+/* How many files a message's bubble shows as cards (W25). */
+static guint
+card_count(GhMessage *message)
+{
+  if (gh_message_get_kind(message) == GH_NIP17_FILE_KIND)
+    return 1;
+  return gh_message_is_mls(message) ? gh_message_get_n_attachments(message) : 0;
 }
 
 static gchar *
@@ -134,6 +150,13 @@ compose_summary(GhMessage *message, GDateTime *now, gboolean undecryptable)
   /* TRANSLATORS: a message's accessible label: sender, time, text. */
   GString *out = g_string_new(NULL);
   g_string_printf(out, _("%s, %s: %s"), sender, time, body);
+  guint files = undecryptable || file ? 0 : gh_message_get_n_attachments(message);
+  if (files > 0) {
+    /* TRANSLATORS: a captioned message's attached files, in its accessible label. */
+    g_autofree gchar *count = g_strdup_printf(g_dngettext(NULL, "%u file attached",
+                                                          "%u files attached", files), files);
+    append_sentence(out, count);
+  }
   if (gh_message_get_expires_at(message) > 0)
     append_sentence(out, _("Disappearing message"));
   if (gh_message_is_self(message))
@@ -189,6 +212,8 @@ update_width(GhMessageRow *self)
   gint chars = self->compact ? BODY_CHARS_COMPACT : BODY_CHARS;
   gtk_label_set_max_width_chars(self->body_label, chars);
   gh_attachment_card_set_compact(self->attachment_card, self->compact);
+  for (guint i = 0; self->extra_cards && i < self->extra_cards->len; i++)
+    gh_attachment_card_set_compact(g_ptr_array_index(self->extra_cards, i), self->compact);
   gtk_label_set_max_width_chars(self->preview_title, chars);
   gtk_label_set_max_width_chars(self->preview_text, chars);
 }
@@ -298,6 +323,51 @@ update_status(GhMessageRow *self)
   update_summary(self);
 }
 
+/* The first card is the template's; an encrypted group message's further
+ * files get cards made here (at most GH_STORE_MAX_MLS_MEDIA, W25), and
+ * imeta tags that weren't valid are said, not shown. */
+static void
+update_cards(GhMessageRow *self, GhMessage *message, guint cards)
+{
+  gh_attachment_card_set_index(self->attachment_card, 0);
+  gh_attachment_card_set_message(self->attachment_card, cards ? message : NULL);
+  guint extra = cards > 1 ? cards - 1 : 0;
+  if (!self->extra_cards)
+    return;   /* disposed */
+  while (self->extra_cards->len > extra) {
+    GtkWidget *card = g_ptr_array_steal_index(self->extra_cards, self->extra_cards->len - 1);
+    gtk_box_remove(self->attachment_slot, card);
+  }
+  for (guint i = 0; i < extra; i++) {
+    GhAttachmentCard *card;
+    if (i < self->extra_cards->len) {
+      card = g_ptr_array_index(self->extra_cards, i);
+    } else {
+      card = GH_ATTACHMENT_CARD(gh_attachment_card_new());
+      gh_attachment_card_set_compact(card, self->compact);
+      GtkWidget *before = i == 0 ? GTK_WIDGET(self->attachment_card)
+                                 : g_ptr_array_index(self->extra_cards, i - 1);
+      gtk_box_insert_child_after(self->attachment_slot, GTK_WIDGET(card), before);
+      g_ptr_array_add(self->extra_cards, card);
+    }
+    gh_attachment_card_set_message(card, NULL);
+    gh_attachment_card_set_index(card, i + 1);
+    gh_attachment_card_set_message(card, message);
+  }
+  guint rejected = message ? gh_message_get_rejected_attachments(message) : 0;
+  if (rejected > 0 && !self->undecryptable) {
+    g_autofree gchar *note =
+      g_strdup_printf(g_dngettext(NULL, "%u attached file can't be read: it isn't a valid "
+                                        "encrypted file reference.",
+                                  "%u attached files can't be read: they aren't valid "
+                                  "encrypted file references.", rejected), rejected);
+    gtk_label_set_text(self->attachment_note, note);
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->attachment_note), rejected > 0 &&
+                         !self->undecryptable);
+  gtk_widget_set_visible(GTK_WIDGET(self->attachment_card), cards > 0);
+}
+
 static void
 update_all(GhMessageRow *self)
 {
@@ -312,18 +382,24 @@ update_all(GhMessageRow *self)
 
   g_clear_pointer(&self->preview_uri, g_free);
   set_class(GTK_WIDGET(self->body_label), "groundhog-undecryptable", self->undecryptable);
-  gboolean file_message = message && !self->undecryptable &&
-                          gh_message_get_kind(message) == GH_NIP17_FILE_KIND;
-  /* The card replaces the body; it fetches nothing by being shown. */
-  gh_attachment_card_set_message(self->attachment_card, file_message ? message : NULL);
-  gtk_widget_set_visible(GTK_WIDGET(self->attachment_slot), file_message);
-  gtk_widget_set_visible(GTK_WIDGET(self->body_label), !file_message);
+  guint cards = message && !self->undecryptable ? card_count(message) : 0;
+  gboolean file_message = cards > 0;
+  /* The cards replace the body, or follow an encrypted group message's
+   * caption (W25); they fetch nothing by being shown. */
+  update_cards(self, file_message ? message : NULL, cards);
+  const gchar *caption = message ? gh_message_get_content(message) : NULL;
+  gboolean show_body = !file_message ||
+                       (gh_message_get_kind(message) != GH_NIP17_FILE_KIND && caption && *caption);
+  gtk_widget_set_visible(GTK_WIDGET(self->attachment_slot), file_message ||
+                         (message && !self->undecryptable &&
+                          gh_message_get_rejected_attachments(message) > 0));
+  gtk_widget_set_visible(GTK_WIDGET(self->body_label), show_body);
   if (!message) {
     gtk_label_set_text(self->body_label, "");
     gtk_label_set_text(self->sender_label, "");
     gtk_label_set_text(self->time_label, "");
   } else {
-    g_autofree gchar *file = self->undecryptable ? NULL : file_text(message);
+    g_autofree gchar *file = self->undecryptable || show_body ? NULL : file_text(message);
     if (self->undecryptable) {
       gtk_label_set_text(self->body_label, _("Unable to decrypt yet"));
     } else if (file) {
@@ -560,6 +636,8 @@ gh_message_row_dispose(GObject *object)
   if (self->message)
     g_signal_handlers_disconnect_by_data(self->message, self);
   g_clear_object(&self->message);
+  /* The extra cards are the slot's children: they go with the template. */
+  g_clear_pointer(&self->extra_cards, g_ptr_array_unref);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MESSAGE_ROW);
   G_OBJECT_CLASS(gh_message_row_parent_class)->dispose(object);
 }
@@ -615,6 +693,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, retry_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_slot);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_card);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_note);
   gtk_widget_class_set_css_name(widget_class, "groundhog-message");
 }
 
@@ -622,6 +701,7 @@ static void
 gh_message_row_init(GhMessageRow *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  self->extra_cards = g_ptr_array_new();
   /* The row's actions take the message's rumor id: a row set up (or rooted
    * again, e.g. when the window collapses) before a message is bound names
    * none, so GTK never meets a target-less "s" action. */

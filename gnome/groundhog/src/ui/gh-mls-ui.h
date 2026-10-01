@@ -29,7 +29,8 @@ G_BEGIN_DECLS
  *    restart republishes), never the NIP-17 outbox; the disabled reason is
  *    gh_mls_send_reason() and follows the group (left, removed by whom,
  *    offline; nostrc-xrya).
- *  - Group Info: gh_mls_ui_show_info() (GhMlsGroupInfoDialog).
+ *  - Group Info: gh_mls_ui_show_info() (GhMlsGroupInfoDialog), with the
+ *    group picture when config->files is set.
  *  - The conversation header's "Encrypted group · N members"
  *    (gh_conversation_list_set_member_count_func(), refreshed on
  *    "members-changed") and the view's "Some messages in this group can't be
@@ -56,6 +57,9 @@ typedef struct {
   /* Nullable: the account's own write relays start a new group's relays. */
   GhAccountRelays *account_relays;
   guint lookup_deadline;              /* 0: the lookup default */
+  /* Nullable (W25): the window's encrypted-group files; Group Info shows
+   * and changes the group picture with it. */
+  struct _GhMlsAttachments *files;
 } GhMlsUiConfig;
 
 /* After gh_conversation_list_attach(), gh_send_ui_attach() and

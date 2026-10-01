@@ -1,9 +1,13 @@
 #include "gh-attachment-transfer.h"
 
+#include <string.h>
+
 struct _GhAttachmentTransfer {
   GObject parent_instance;
   gchar *rumor_id;
-  GhNip17File *file;
+  GhNip17File *file;       /* a kind-15 file; NULL for an encrypted group's */
+  gchar *media_type;       /* the declared type */
+  gchar *suggested_name;   /* Save As: a safe base name, or NULL */
   GhAttachmentState state;
   gchar *error;
   gboolean can_retry;
@@ -92,6 +96,82 @@ gh_attachment_transfer_new(const gchar *rumor_id, const GhNip17File *file)
   self->rumor_id = g_strdup(rumor_id);
   self->file = gh_nip17_file_copy(file);
   return self;
+}
+
+GhAttachmentTransfer *
+gh_attachment_transfer_new_described(const gchar *key, const gchar *media_type,
+                                     const gchar *sender_filename)
+{
+  g_return_val_if_fail(key != NULL, NULL);
+  GhAttachmentTransfer *self = g_object_new(GH_TYPE_ATTACHMENT_TRANSFER, NULL);
+  self->rumor_id = g_strdup(key);
+  self->media_type = g_strdup(media_type);
+  self->suggested_name = gh_attachment_transfer_sanitize_name(sender_filename);
+  return self;
+}
+
+const gchar *
+gh_attachment_transfer_get_media_type(GhAttachmentTransfer *self)
+{
+  g_return_val_if_fail(GH_IS_ATTACHMENT_TRANSFER(self), NULL);
+  return self->file ? self->file->file_type : self->media_type;
+}
+
+const gchar *
+gh_attachment_transfer_get_suggested_name(GhAttachmentTransfer *self)
+{
+  g_return_val_if_fail(GH_IS_ATTACHMENT_TRANSFER(self), NULL);
+  return self->suggested_name;
+}
+
+/* Bidirectional controls make "photo<RLO>gpj.exe" read "photo.jpg"-ish. */
+static gboolean
+unsafe_char(gunichar c)
+{
+  return c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0) || c == '/' || c == '\\' ||
+         c == ':' || (c >= 0x200b && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) ||
+         (c >= 0x2066 && c <= 0x2069) || c == 0xfeff;
+}
+
+#define SAFE_NAME_MAX 200 /* bytes, well under every filesystem's 255 */
+
+gchar *
+gh_attachment_transfer_sanitize_name(const gchar *name)
+{
+  if (!name || !g_utf8_validate(name, -1, NULL))
+    return NULL;
+  GString *out = g_string_new(NULL);
+  for (const gchar *p = name; *p; p = g_utf8_next_char(p)) {
+    gunichar c = g_utf8_get_char(p);
+    if (unsafe_char(c))
+      c = '_';
+    g_string_append_unichar(out, c);
+  }
+  /* No hidden file, no "." or "..", no trailing dot or space. */
+  gsize start = 0;
+  while (start < out->len && (out->str[start] == '.' || out->str[start] == ' '))
+    start++;
+  g_string_erase(out, 0, (gssize)start);
+  while (out->len && (out->str[out->len - 1] == '.' || out->str[out->len - 1] == ' '))
+    g_string_truncate(out, out->len - 1);
+  if (out->len > SAFE_NAME_MAX) {
+    /* Keep a short extension; cut on a character boundary. */
+    const gchar *dot = strrchr(out->str, '.');
+    gsize ext = dot && (gsize)(out->str + out->len - dot) <= 16
+                  ? (gsize)(out->str + out->len - dot) : 0;
+    gsize keep = SAFE_NAME_MAX - ext;
+    while (keep > 0 && (out->str[keep] & 0xc0) == 0x80)
+      keep--;
+    g_autofree gchar *tail = ext ? g_strdup(out->str + out->len - ext) : NULL;
+    g_string_truncate(out, keep);
+    if (tail)
+      g_string_append(out, tail);
+  }
+  if (out->len == 0) {
+    g_string_free(out, TRUE);
+    return NULL;
+  }
+  return g_string_free(out, FALSE);
 }
 
 const gchar *
@@ -236,6 +316,8 @@ gh_attachment_transfer_finalize(GObject *object)
   GhAttachmentTransfer *self = GH_ATTACHMENT_TRANSFER(object);
   g_free(self->rumor_id);
   gh_nip17_file_free(self->file);
+  g_free(self->media_type);
+  g_free(self->suggested_name);
   g_free(self->error);
   g_clear_pointer(&self->plaintext, g_bytes_unref);
   g_clear_object(&self->preview);

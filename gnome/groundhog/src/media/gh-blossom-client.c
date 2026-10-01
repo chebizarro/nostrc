@@ -230,13 +230,22 @@ secret_from_hex(const gchar *hex, nostr_secure_buf *out)
 }
 
 /* The upload authorization signed by a key made for it alone, whose secret
- * is wiped before this returns (never the account's, never reused). */
+ * is wiped before this returns (never the account's, never reused); or, with
+ * upload_key, by that key (a group picture's 0x8002 upload key, W25). */
 static gchar *
-auth_sign_ephemeral(const gchar *sha256, const gchar *host, gint64 now)
+auth_sign_ephemeral(const gchar *sha256, const gchar *host, gint64 now,
+                    const guint8 *upload_key)
 {
   gchar *signed_json = NULL;
   nostr_secure_buf secret = { 0 };
-  char *secret_hex = nostr_key_generate_private();
+  char *secret_hex = NULL;
+  if (upload_key) {
+    secret_hex = malloc(65);
+    for (guint i = 0; secret_hex && i < 32; i++)
+      g_snprintf(secret_hex + 2 * i, 3, "%02x", upload_key[i]);
+  } else {
+    secret_hex = nostr_key_generate_private();
+  }
   char *pubkey = secret_hex ? nostr_key_get_public(secret_hex) : NULL;
   gboolean have_secret = secret_from_hex(secret_hex, &secret);
   if (secret_hex) {
@@ -311,12 +320,17 @@ typedef struct {
   gboolean as_account;
   gint64 now;
   GError *last_error; /* the latest server's failure */
+  guint8 *upload_key; /* keyed upload: 32 secret bytes (secure memory), else NULL */
 } Upload;
 
 static void
 upload_free(gpointer data)
 {
   Upload *upload = data;
+  if (upload->upload_key) {
+    secure_wipe(upload->upload_key, 32);
+    g_free(upload->upload_key);
+  }
   g_bytes_unref(upload->ciphertext);
   g_strfreev(upload->servers);
   g_free(upload->server);
@@ -472,7 +486,9 @@ upload_next(GTask *task)
     return;
   }
   upload->now = g_get_real_time() / G_USEC_PER_SEC;
-  upload->as_account = self->sign_async && g_hash_table_contains(self->consent, upload->server);
+  /* A keyed upload is never the account's: the key is the blob's owner. */
+  upload->as_account = !upload->upload_key && self->sign_async &&
+                       g_hash_table_contains(self->consent, upload->server);
   if (upload->as_account) {
     NostrEvent *event = auth_event_new(self->account_pubkey, upload->sha256, upload->host,
                                        upload->now);
@@ -484,7 +500,8 @@ upload_next(GTask *task)
                      on_account_signed, task);
     return;
   }
-  g_autofree gchar *auth = auth_sign_ephemeral(upload->sha256, upload->host, upload->now);
+  g_autofree gchar *auth = auth_sign_ephemeral(upload->sha256, upload->host, upload->now,
+                                               upload->upload_key);
   if (!auth) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
                             "Could not sign the upload");
@@ -494,6 +511,11 @@ upload_next(GTask *task)
   upload_put(task, auth);
 }
 
+static void upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
+                         const gchar *const *servers, const guint8 *upload_key,
+                         GCancellable *cancellable, GAsyncReadyCallback callback,
+                         gpointer user_data);
+
 void
 gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
                                GCancellable *cancellable, GAsyncReadyCallback callback,
@@ -501,6 +523,27 @@ gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext, const 
 {
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(ciphertext != NULL && sha256_hex != NULL);
+  upload_start(self, ciphertext, sha256_hex, NULL, NULL, cancellable, callback, user_data);
+}
+
+void
+gh_blossom_client_upload_keyed_async(GhBlossomClient *self, const gchar *const *servers,
+                                     GBytes *ciphertext, const gchar *sha256_hex,
+                                     const guint8 upload_key[32], GCancellable *cancellable,
+                                     GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
+  g_return_if_fail(servers != NULL && ciphertext != NULL && sha256_hex != NULL &&
+                   upload_key != NULL);
+  upload_start(self, ciphertext, sha256_hex, servers, upload_key, cancellable, callback,
+               user_data);
+}
+
+static void
+upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
+             const gchar *const *servers, const guint8 *upload_key, GCancellable *cancellable,
+             GAsyncReadyCallback callback, gpointer user_data)
+{
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_blossom_client_upload_async);
   gsize size = g_bytes_get_size(ciphertext);
@@ -521,7 +564,11 @@ gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext, const 
   Upload *upload = g_new0(Upload, 1);
   upload->ciphertext = g_bytes_ref(ciphertext);
   memcpy(upload->sha256, sha256, 65);
-  upload->servers = gh_blossom_client_dup_servers(self);
+  upload->servers = servers ? g_strdupv((gchar **)servers) : gh_blossom_client_dup_servers(self);
+  if (upload_key) {
+    upload->upload_key = g_malloc(32);
+    memcpy(upload->upload_key, upload_key, 32);
+  }
   g_task_set_task_data(task, upload, upload_free);
   if (g_task_return_error_if_cancelled(task)) {
     g_object_unref(task);

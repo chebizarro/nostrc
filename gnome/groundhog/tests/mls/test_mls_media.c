@@ -8,6 +8,7 @@
 #include "gh-mls-media-private.h"
 
 #include <glib/gstdio.h>
+#include <nostr-keys.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -476,6 +477,174 @@ test_read_file_refuses_gvfs_fuse(void)
   g_unlink(path);
 }
 
+/* ---- the group's media servers and picture (W25, nostrc-m6tp) ------------------ */
+
+/* Components as the group's 0x800b says (owned: marmot_group_components_
+ * clear() frees them): blossom-v1 allowed, endpoints in order, the second
+ * one unverified (never to be contacted). */
+static void
+components_with_servers(MarmotGroupComponents *c, const gchar *verified,
+                        const gchar *unverified)
+{
+  memset(c, 0, sizeof *c);
+  c->has_media_policy = TRUE;
+  c->media_policy.allowed_locator_kinds = calloc(2, sizeof(char *));
+  c->media_policy.allowed_locator_kinds[0] = strdup(MARMOT_MEDIA_LOCATOR_BLOSSOM_V1);
+  c->media_policy.allowed_locator_kind_count = 1;
+  guint n = (verified ? 1 : 0) + (unverified ? 1 : 0), i = 0;
+  c->media_policy.default_blob_endpoints = calloc(MAX(n, 1), sizeof(MarmotMediaBlobEndpoint));
+  if (unverified) {
+    c->media_policy.default_blob_endpoints[i].locator_kind = strdup(MARMOT_MEDIA_LOCATOR_BLOSSOM_V1);
+    c->media_policy.default_blob_endpoints[i].base_url = strdup(unverified);
+    c->media_policy.default_blob_endpoints[i++].base_url_unverified = true;
+  }
+  if (verified) {
+    c->media_policy.default_blob_endpoints[i].locator_kind = strdup(MARMOT_MEDIA_LOCATOR_BLOSSOM_V1);
+    c->media_policy.default_blob_endpoints[i++].base_url = strdup(verified);
+  }
+  c->media_policy.default_blob_endpoint_count = n;
+}
+
+/* An unverified endpoint is never a fallback; a verified one is, after the
+ * file's own locators; a group without a policy has none. */
+static void
+test_fallback_urls(void)
+{
+  MarmotGroupComponents c;
+  components_with_servers(&c, "https://media.example.com/", "https://xn--nxasmq6b.example/");
+  guint8 hash[32];
+  memset(hash, 0xab, sizeof hash);
+  g_auto(GStrv) urls = gh_mls_media_fallback_urls(&c, hash);
+  g_assert_cmpuint(g_strv_length(urls), ==, 1);
+  g_assert_true(g_str_has_prefix(urls[0], "https://media.example.com/abababab"));
+  g_auto(GStrv) servers = gh_mls_media_dup_servers(&c);
+  g_assert_cmpuint(g_strv_length(servers), ==, 1);
+  g_assert_cmpstr(servers[0], ==, "https://media.example.com/");
+  g_assert_true(gh_mls_media_policy_allows_blossom(&c));
+  free(c.media_policy.allowed_locator_kinds[0]);
+  c.media_policy.allowed_locator_kinds[0] = strdup("other-v1");
+  g_assert_false(gh_mls_media_policy_allows_blossom(&c));
+  marmot_group_components_clear(&c);
+  MarmotGroupComponents none = { 0 };
+  g_auto(GStrv) no_urls = gh_mls_media_fallback_urls(&none, hash);
+  g_assert_cmpuint(g_strv_length(no_urls), ==, 0);
+  g_assert_true(gh_mls_media_policy_allows_blossom(&none));
+}
+
+/* A file whose own locator serves other bytes is fetched from the group's
+ * media server (the fallback), checked against its hash first. */
+static void
+test_fetch_falls_back_to_group_server(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  BlossomFixture *group_server = blossom_fixture_new();
+  static const gchar text[] = "on the group's media server";
+  g_autoptr(GBytes) file = g_bytes_new_static(text, sizeof text - 1);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMlsMediaSealed) sealed = gh_mls_media_seal(
+    f.marmot, GID_HEX, file, "text/plain", "t.txt", GH_BLOSSOM_MAX_FILE_SIZE, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhMlsAttachment) sent = upload(&f, sealed, &error);
+  g_assert_no_error(error);
+  g_autofree gchar *sha = gh_mls_attachment_dup_ciphertext_sha256(sent);
+  g_autoptr(GBytes) lie = g_bytes_new_static("not the file", 12);
+  blossom_fixture_put_blob(f.blossom, sha, lie);
+  blossom_fixture_put_blob(group_server, sha, sealed->ciphertext);
+  MarmotGroupComponents c;
+  components_with_servers(&c, blossom_fixture_url(group_server), NULL);
+  guint8 hash[32];
+  for (guint i = 0; i < 32; i++)
+    hash[i] = (guint8)(g_ascii_xdigit_value(sha[2 * i]) << 4 | g_ascii_xdigit_value(sha[2 * i + 1]));
+  g_auto(GStrv) fallbacks = gh_mls_media_fallback_urls(&c, hash);
+  marmot_group_components_clear(&c);
+  Wait w = { 0 };
+  gh_mls_media_fetch_with_fallbacks_async(f.client, sent, (const gchar *const *)fallbacks, NULL,
+                                          on_done, &w);
+  g_autoptr(GBytes) ct = gh_mls_media_fetch_finish(wait_for(&w), &error);
+  g_object_unref(w.result);
+  g_assert_no_error(error);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "GET"), ==, 1);
+  g_assert_cmpuint(blossom_fixture_count(group_server, "GET"), ==, 1);
+  g_autoptr(GBytes) plain = gh_mls_media_open(f.marmot, GID_HEX, sent, ct, &error);
+  g_assert_no_error(error);
+  g_assert_true(g_bytes_equal(plain, file));
+  blossom_fixture_free(group_server);
+  fixture_down(&f);
+}
+
+/* The group picture: a photo only, its metadata removed, encrypted under
+ * fresh keys, uploaded to the group's media server signed by its own upload
+ * key (never the account's, never a throwaway), fetched from there by its
+ * hash, and opened (hash, then the AEAD). */
+static void
+test_picture_roundtrip(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  g_autoptr(GBytes) photo = make_png();
+  g_autoptr(GError) error = NULL;
+  MarmotGroupBlossomImage image;
+  g_autoptr(GBytes) text = g_bytes_new_static("not a photo at all", 18);
+  g_assert_null(gh_mls_media_seal_picture(text, "text/plain", &image, &error));
+  g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_UNSUPPORTED);
+  g_clear_error(&error);
+  g_autoptr(GBytes) ciphertext = gh_mls_media_seal_picture(photo, NULL, &image, &error);
+  g_assert_no_error(error);
+  g_assert_true(image.present);
+  g_assert_cmpstr(image.media_type, ==, "image/png");
+  g_autofree gchar *picture_id = gh_mls_media_picture_id(&image);
+  g_assert_cmpuint(strlen(picture_id), ==, 64);
+
+  /* Keyed upload: the authorization's pubkey is the upload key's. */
+  g_autofree gchar *sha = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, ciphertext);
+  const gchar *servers[] = { blossom_fixture_url(f.blossom), NULL };
+  Wait up = { 0 };
+  gh_blossom_client_upload_keyed_async(f.client, servers, ciphertext, sha, image.image_upload_key,
+                                       NULL, on_done, &up);
+  g_autofree gchar *url = gh_blossom_client_upload_finish(f.client, wait_for(&up), NULL, &error);
+  g_object_unref(up.result);
+  g_assert_no_error(error);
+  GPtrArray *requests = blossom_fixture_requests(f.blossom);
+  BlossomRequest *put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_true(put->auth_valid);
+  gchar key_hex[65];
+  for (guint i = 0; i < 32; i++)
+    g_snprintf(key_hex + 2 * i, 3, "%02x", image.image_upload_key[i]);
+  char *upload_pubkey = nostr_key_get_public(key_hex);
+  g_assert_cmpstr(put->auth_pubkey, ==, upload_pubkey);
+  free(upload_pubkey);
+
+  /* Members fetch it from the group's media servers (0x8002 names none). */
+  MarmotGroupComponents c;
+  components_with_servers(&c, blossom_fixture_url(f.blossom), NULL);
+  c.image = image;
+  c.image.media_type = strdup(image.media_type);
+  c.avatar_source = MARMOT_GROUP_AVATAR_BLOSSOM;
+  g_auto(GStrv) urls = gh_mls_media_picture_urls(&c);
+  g_assert_cmpuint(g_strv_length(urls), ==, 1);
+  g_assert_cmpstr(urls[0], ==, url);
+  Wait w = { 0 };
+  gh_mls_media_fetch_picture_async(f.client, &c, NULL, on_done, &w);
+  g_autoptr(GBytes) fetched = gh_mls_media_fetch_finish(wait_for(&w), &error);
+  g_object_unref(w.result);
+  g_assert_no_error(error);
+  g_autoptr(GBytes) opened = gh_mls_media_open_picture(&c.image, fetched, &error);
+  g_assert_no_error(error);
+  g_assert_null(memmem(g_bytes_get_data(opened, NULL), g_bytes_get_size(opened), "Secret Name",
+                       11));
+  g_assert_true(gh_attachment_check_preview(opened, NULL, NULL, NULL, NULL));
+
+  /* Other bytes under its hash: never opened. */
+  g_autoptr(GBytes) forged = g_bytes_new_static("forged picture", 14);
+  g_assert_null(gh_mls_media_open_picture(&c.image, forged, &error));
+  g_assert_error(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_DAMAGED);
+  g_clear_error(&error);
+  marmot_group_components_clear(&c);
+  marmot_group_blossom_image_clear(&image);
+  fixture_down(&f);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -489,6 +658,10 @@ main(int argc, char **argv)
   g_test_add_func("/mls-media/seal-strips-metadata", test_seal_strips_metadata);
   g_test_add_func("/mls-media/fetch-locators", test_fetch_locators);
   g_test_add_func("/mls-media/read-file-native-only", test_read_file_native_only);
+  g_test_add_func("/mls-media/fallback-urls", test_fallback_urls);
+  g_test_add_func("/mls-media/fetch-falls-back-to-group-server",
+                  test_fetch_falls_back_to_group_server);
+  g_test_add_func("/mls-media/picture-roundtrip", test_picture_roundtrip);
   int rc = g_test_run();
   g_autofree gchar *gvfs = g_build_filename(runtime, "gvfs", NULL);
   g_autofree gchar *share = g_build_filename(gvfs, "smb-share:server=nas,share=photos", NULL);

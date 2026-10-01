@@ -1566,7 +1566,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     AND GROUNDHOG_DM_SEND_SOURCES)
   message(STATUS "Groundhog MLS service: enabled")
   set(GROUNDHOG_MLS_SERVICE_SOURCES src/mls/gh-mls-service.c src/mls/gh-mls-key-packages.c
-    src/store/gh-store-mls.c src/store/gh-store-mls-identity.c)
+    src/mls/gh-mls-imeta.c src/store/gh-store-mls.c src/store/gh-store-mls-identity.c)
   add_library(groundhog-mls-service STATIC ${GROUNDHOG_MLS_SERVICE_SOURCES})
   target_include_directories(groundhog-mls-service PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
@@ -2142,11 +2142,11 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
     # yet", the row's lock glyph; it self-skips (77) without a display.
     add_executable(test-groundhog-mls-ui tests/ui/test_mls_ui.c tests/ui/group-send-stub.c
       src/ui/gh-group-ui.c src/ui/gh-mls-ui.c src/store/gh-store-conversations.c
-      src/app/gh-nip17-envelope.c ${GROUNDHOG_DM_SEND_SOURCES})
+      src/app/gh-nip17-envelope.c ${GROUNDHOG_DM_SEND_SOURCES} tests/media/blossom-fixture.c)
     target_include_directories(test-groundhog-mls-ui PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
     target_link_libraries(test-groundhog-mls-ui PRIVATE groundhog-mls-ui marmot
       nostr_nip17_core nostr_nip59_core nostrc-test-bus PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
     target_compile_options(test-groundhog-mls-ui PRIVATE -Wall -Wextra -Werror)
@@ -2356,6 +2356,56 @@ if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-convers
         ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
     endif()
   endif()
+  # W25 (nostrc-q3a6, nostrc-m6tp): GhMlsAttachments, an encrypted group's
+  # files and picture for the window (gh-mls-attachments.h) over
+  # GhMlsService, gh-mls-media and the account's GhAttachments: downloads
+  # only on request (cache, own locators, then the group's verified media
+  # servers), sends resealed on an epoch change, the 0x8002 picture fetched
+  # on request and set by admins. gh-mls-attachment-ui.c wires it into the
+  # attach flow and the cards; gh-mls-ui.c into Group Info.
+  if (TARGET groundhog-mls-media AND TARGET groundhog-mls-service)
+    add_library(groundhog-mls-files STATIC src/mls/gh-mls-attachments.c)
+    target_include_directories(groundhog-mls-files PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/mls)
+    target_link_libraries(groundhog-mls-files PUBLIC groundhog-mls-service groundhog-mls-media)
+    target_compile_options(groundhog-mls-files PRIVATE -Wall -Wextra -Werror)
+    if (TARGET groundhog-mls-ui)
+      target_link_libraries(groundhog-mls-ui PUBLIC groundhog-mls-files)
+    endif()
+    if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
+        TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST AND GROUNDHOG_MLS_SERVICE_SOURCES)
+      # Real accounts, stores and services (mls-world.h) with the local
+      # Blossom and SOCKS5 fixtures: no fetch before Download, the epoch
+      # from the message (restored after a restart), the cache bound to the
+      # message, the neutral name, resealing on an epoch change, a stale
+      # epoch never sent, Tor for every transfer, no picture in a legacy
+      # group, the picture policy and Save As names. The test-hooks store,
+      # so the media sources are compiled in (as test-groundhog-multi-send).
+      add_executable(test-groundhog-mls-files tests/mls/test_mls_files.c
+        ${GROUNDHOG_MLS_SERVICE_SOURCES} src/store/gh-store-marmot.c src/store/gh-mls-commits.c
+        src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
+        ${GROUNDHOG_DM_SEND_SOURCES} src/mls/gh-mls-media.c src/mls/gh-mls-attachments.c
+        src/media/gh-attachment.c src/media/gh-attachments.c src/media/gh-blossom-client.c
+        src/media/gh-metadata-strip.c src/store/gh-store-media.c src/store/gh-store-blossom.c
+        tests/media/blossom-fixture.c tests/net/socks5-fixture.c)
+      target_include_directories(test-groundhog-mls-files PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/media ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay ${CMAKE_CURRENT_SOURCE_DIR}/tests/media
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/net)
+      target_link_libraries(test-groundhog-mls-files PRIVATE groundhog-store-testhooks marmot
+        groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+        groundhog-account-relays groundhog-net nostr_nip17_core nostr_nip59_core
+        nostrc-test-bus OpenSSL::Crypto PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_options(test-groundhog-mls-files PRIVATE -Wall -Wextra -Werror)
+      target_compile_definitions(test-groundhog-mls-files PRIVATE GH_MLS_TEST_HOOKS=1
+        ${GROUNDHOG_MLS_SERVICE_DEFS})
+      groundhog_store_link_sqlcipher_first(test-groundhog-mls-files)
+      add_dependencies(test-groundhog-mls-files groundhog-test-schemas)
+      add_test(NAME groundhog-mls-files COMMAND test-groundhog-mls-files)
+      set_tests_properties(groundhog-mls-files PROPERTIES TIMEOUT 300
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    endif()
+  endif()
   # W17 review B1: the cache is bound to the file (x, key and nonce), not
   # to x: a message naming another file's x with its own key misses, goes to
   # the network and fails as damaged, and cannot keep that file's plaintext
@@ -2526,6 +2576,17 @@ else()
   message(STATUS "Groundhog attachment UI: disabled (needs the attachments core, the account "
                  "store and the outbox)")
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ATTACHMENTS=0)
+endif()
+# W25 (nostrc-q3a6): files in encrypted groups in the window, the attachment
+# UI's group delegate over GhMlsAttachments (gh-mls-attachment-ui.c), with
+# both the attachment UI and the encrypted-group UI.
+if (TARGET groundhog-mls-files AND TARGET groundhog-mls-ui AND TARGET groundhog-media AND
+    TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
+    TARGET groundhog-conversation-ui)
+  message(STATUS "Groundhog encrypted-group files: enabled")
+  target_sources(groundhog PRIVATE src/app/gh-mls-attachment-ui.c)
+  target_link_libraries(groundhog PRIVATE groundhog-mls-files)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS_FILES=1)
 endif()
 # --- end G22 attachment UI ---
 # --- W13c preference gates (keep last) ---

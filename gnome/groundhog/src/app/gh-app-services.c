@@ -73,6 +73,15 @@
 #include "gh-attachments.h"
 #include "gh-net-http.h"
 #endif
+/* W25: files and pictures in encrypted groups (gh-mls-attachments.h,
+ * gh-mls-attachment-ui.h); built with both the attachments and the MLS UI. */
+#ifndef GROUNDHOG_HAVE_MLS_FILES
+#define GROUNDHOG_HAVE_MLS_FILES 0
+#endif
+#if GROUNDHOG_HAVE_MLS_FILES
+#include "gh-mls-attachment-ui.h"
+#include "gh-mls-attachments.h"
+#endif
 #if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
 #include "gh-net-session.h"
 #include "gh-relay-net.h"
@@ -124,6 +133,9 @@ struct _GhAppServices {
 #if GROUNDHOG_HAVE_ATTACHMENTS
   GhNetHttp *attachments_http;  /* attachment transfers, in the network mode */
   GhAttachments *attachments;   /* the open store's files (G22) */
+#endif
+#if GROUNDHOG_HAVE_MLS_FILES
+  GhMlsAttachments *mls_files;  /* the open store's encrypted groups' files (W25) */
 #endif
 #if GROUNDHOG_HAVE_NOTIFIER
   GhNotifier *notifier;
@@ -621,6 +633,10 @@ attachments_sign_async(gpointer data, const gchar *unsigned_event_json,
                                                     callback_data);
 }
 
+#if GROUNDHOG_HAVE_MLS_FILES
+static GhMlsService *mls_ui_service(gpointer data);
+#endif
+
 static void
 attachments_sync(GhAppServices *self)
 {
@@ -657,6 +673,11 @@ attachments_init(GhAppServices *self, GError **error)
     .sign_data = self->accounts,
   };
   self->attachments = gh_attachments_new(&config);
+#if GROUNDHOG_HAVE_MLS_FILES
+  /* The same client, store and consents; the store's own MLS service. */
+  self->mls_files = gh_mls_attachments_new(self->attachments);
+  gh_mls_attachments_set_service_func(self->mls_files, mls_ui_service, self);
+#endif
   g_signal_connect_swapped(self->account_store, "changed", G_CALLBACK(attachments_sync), self);
   g_signal_connect_swapped(self->account_store, "store-closed",
                            G_CALLBACK(attachments_store_closed), self);
@@ -670,6 +691,9 @@ attachments_teardown(GhAppServices *self)
   g_signal_handlers_disconnect_by_func(self->account_store, attachments_sync, self);
   g_signal_handlers_disconnect_by_func(self->account_store, attachments_store_closed, self);
   gh_attachments_set_store(self->attachments, NULL);
+#if GROUNDHOG_HAVE_MLS_FILES
+  dispose_object(&self->mls_files);
+#endif
   dispose_object(&self->attachments);
   dispose_object(&self->attachments_http);
 }
@@ -1408,12 +1432,19 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
       .display_name = group_ui_name,
       .names_data = self,
       .account_relays = self->relays,
+#if GROUNDHOG_HAVE_MLS_FILES
+      .files = self->mls_files,
+#endif
     };
+    gboolean mls_on = gh_mls_ui_attach_if_enabled(window, &mls);
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
-    if (gh_mls_ui_attach_if_enabled(window, &mls))
+    if (mls_on)
       gh_conversation_info_set_encrypted_group_handler(window, gh_mls_ui_show_info, NULL);
-#else
-    gh_mls_ui_attach_if_enabled(window, &mls);
+#endif
+#if GROUNDHOG_HAVE_MLS_FILES
+    /* Files in encrypted groups: the attach button, sheet and cards. */
+    if (mls_on)
+      gh_mls_attachment_ui_attach(window, self->mls_files);
 #endif
   }
 #endif

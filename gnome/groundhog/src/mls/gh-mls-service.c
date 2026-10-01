@@ -6,6 +6,7 @@
 #include "gh-message-status.h"
 #include "gh-mls-commits.h"
 #include "gh-mls-key-packages.h"
+#include "gh-mls-imeta.h"
 #include "gh-nip17-envelope.h"
 #include "gh-relay-publish.h"
 #include "gh-relay-scope.h"
@@ -2379,6 +2380,10 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     if (message && g_strcmp0(gh_message_get_sender(message),
                              result.app_msg.sender_pubkey_hex) != 0)
       g_clear_object(&message);
+    /* Its files: display data, and the epoch libmarmot authenticated for it
+     * (never a tag), which opening them needs. */
+    if (message)
+      gh_mls_imeta_describe(message, group->gid_hex, TRUE, result.app_msg.epoch);
     if (message && account_matches_model(self)) {
       if (url)
         gh_message_add_relay(message, url);
@@ -3052,6 +3057,8 @@ typedef struct {
   GArray *keys;               /* 32-byte accounts: members (remove) or admins (metadata) */
   gboolean adopted;           /* create, add: the group's profile is the adopted one */
   gint expected;              /* create: the format the user was shown (-1: any) */
+  MarmotGroupBlossomImage image; /* picture: the new 0x8002 state (present FALSE: clear) */
+  gboolean clear_avatar_url;  /* picture: clear 0x8007 instead */
   guint rate_retries;         /* stagings libmarmot refused with MARMOT_ERR_EVENT_RATE */
   guint lookups;              /* in flight */
   GError *error;              /* the first lookup failure */
@@ -3073,6 +3080,7 @@ op_free(gpointer data)
     g_ptr_array_unref(op->legacy_packages);
   if (op->keys)
     g_array_unref(op->keys);
+  marmot_group_blossom_image_clear(&op->image);   /* wipes the image and upload keys */
   g_clear_error(&op->error);
   g_free(op);
 }
@@ -3292,6 +3300,18 @@ produce_metadata(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char *
     .admin_count = op->keys ? op->keys->len : 0,
   };
   return marmot_update_group_metadata(marmot, gid, &config, out);
+}
+
+/* The group picture (W25, nostrc-m6tp): one AppDataUpdate of 0x8002, the
+ * canonical empty state to clear. */
+static MarmotError
+produce_image(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
+{
+  Op *op = data;
+  if (op->clear_avatar_url)
+    return marmot_update_group_avatar_url(marmot, gid, NULL, out);
+  return marmot_update_group_blossom_image(marmot, gid, op->image.present ? &op->image : NULL,
+                                           out);
 }
 
 /* libmarmot refuses a Commit it cannot date within a minute of our clock
@@ -4479,6 +4499,102 @@ gh_mls_service_set_admins_async(GhMlsService *self, GhMlsGroup *group,
 }
 
 gboolean
+gh_mls_service_get_adopted(GhMlsService *self, GhMlsGroup *group)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  if (!running(self) || !GH_IS_MLS_GROUP(group) || group->service != self)
+    return FALSE;
+  MarmotGroupProfile profile = MARMOT_GROUP_PROFILE_LEGACY;
+  return marmot_get_group_profile(self->marmot, &group->gid, &profile) == MARMOT_OK &&
+         profile == MARMOT_GROUP_PROFILE_ADOPTED;
+}
+
+gboolean
+gh_mls_service_get_components(GhMlsService *self, GhMlsGroup *group,
+                              MarmotGroupComponents *out, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  g_return_val_if_fail(out != NULL, FALSE);
+  memset(out, 0, sizeof *out);
+  if (!check_running(self, error))
+    return FALSE;
+  if (!GH_IS_MLS_GROUP(group) || group->service != self) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Not a group of this account");
+    return FALSE;
+  }
+  drop_stale_error(self);
+  MarmotError err = marmot_get_group_components(self->marmot, &group->gid, out);
+  if (err == MARMOT_ERR_UNSUPPORTED) {
+    g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
+                        "This kind of group has no picture or media settings");
+    return FALSE;
+  }
+  return err == MARMOT_OK || marmot_fail(self, err, "The group's settings can't be read", error);
+}
+
+void
+gh_mls_service_set_image_async(GhMlsService *self, GhMlsGroup *group,
+                               const MarmotGroupBlossomImage *image, GCancellable *cancellable,
+                               GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  GTask *task = op_task(self, OP_METADATA, group, cancellable, callback, user_data,
+                        gh_mls_service_change_finish);
+  Op *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!check_change(self, group, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  /* A legacy (0xF2EE) group: libmarmot writes no MIP-01 image fields. */
+  if (!gh_mls_service_get_adopted(self, group)) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
+                            "This group was made with an older kind of encrypted group, which "
+                            "can't have a picture");
+    g_object_unref(task);
+    return;
+  }
+  if (image && image->present) {
+    op->image = *image;
+    op->image.media_type = g_strdup(image->media_type);
+    if (!op->image.media_type) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                              "A picture needs its type");
+      g_object_unref(task);
+      return;
+    }
+  }
+  stage_change(task, group, produce_image, op);
+}
+
+void
+gh_mls_service_clear_avatar_url_async(GhMlsService *self, GhMlsGroup *group,
+                                      GCancellable *cancellable, GAsyncReadyCallback callback,
+                                      gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  GTask *task = op_task(self, OP_METADATA, group, cancellable, callback, user_data,
+                        gh_mls_service_change_finish);
+  Op *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!check_change(self, group, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  if (!gh_mls_service_get_adopted(self, group)) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
+                            "This kind of group has no picture");
+    g_object_unref(task);
+    return;
+  }
+  op->clear_avatar_url = TRUE;
+  stage_change(task, group, produce_image, op);
+}
+
+gboolean
 gh_mls_service_change_finish(GhMlsService *self, GAsyncResult *result, GError **error)
 {
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
@@ -4718,14 +4834,24 @@ outbox_key(gint64 outbox_id)
  * the same second two events, which libmarmot, the store and the model all
  * tell apart by id). */
 static gchar *
-inner_event_new(GhMlsService *self, GhMlsGroup *group, const gchar *text, gchar **out_id)
+inner_event_new(GhMlsService *self, GhMlsGroup *group, const gchar *text,
+                GPtrArray *imeta_tags, gchar **out_id)
 {
   NostrEvent *event = nostr_event_new();
   nostr_event_set_kind(event, GH_MESSAGE_MLS_KIND);
   nostr_event_set_pubkey(event, self->account);
   nostr_event_set_created_at(event, now_s(self));
   nostr_event_set_content(event, text);
-  nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("h", group->nostr_hex, NULL)));
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("h", group->nostr_hex, NULL));
+  /* One ordered imeta per file, as MDK's kind-9 media messages. */
+  for (guint i = 0; imeta_tags && i < imeta_tags->len; i++) {
+    const gchar *const *fields = g_ptr_array_index(imeta_tags, i);
+    NostrTag *tag = nostr_tag_new(fields[0], NULL);
+    for (guint j = 1; fields[j]; j++)
+      nostr_tag_append(tag, fields[j]);
+    nostr_tags_append(tags, tag);
+  }
+  nostr_event_set_tags(event, tags);
   gchar id[65] = { 0 };
   gchar *json = NULL;
   if (nostr_event_compute_id(event, id) == NOSTR_EVENT_VALIDATION_OK) {
@@ -4779,17 +4905,41 @@ send_listed(GhMlsService *self, GhMlsGroup *group, GhMessage *message, gint64 ou
   }
 }
 
-GhMessage *
-gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text, GError **error)
+/* Every imeta tag a well-formed list of fields: "imeta" first, then 1 to
+ * 64 non-empty UTF-8 fields (libmarmot built them; this guards the API). */
+static gboolean
+imeta_tags_valid(GPtrArray *tags)
+{
+  if (!tags)
+    return TRUE;
+  if (tags->len > GH_MLS_IMETA_MAX_ATTACHMENTS)
+    return FALSE;
+  for (guint i = 0; i < tags->len; i++) {
+    const gchar *const *fields = g_ptr_array_index(tags, i);
+    guint n = fields ? g_strv_length((gchar **)fields) : 0;
+    if (n < 2 || n > 64 || g_strcmp0(fields[0], "imeta") != 0)
+      return FALSE;
+    for (guint k = 1; k < n; k++)
+      if (!*fields[k] || !g_utf8_validate(fields[k], -1, NULL))
+        return FALSE;
+  }
+  return TRUE;
+}
+
+static GhMessage *
+send_inner(GhMlsService *self, GhMlsGroup *group, const gchar *text, GPtrArray *imeta_tags,
+           guint64 source_epoch, GError **error)
 {
   g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
   if (!check_running(self, error))
     return NULL;
+  gboolean files = imeta_tags && imeta_tags->len > 0;
   /* Leaving (nostrc-2um6): nothing but the leave is sent any more. */
   if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active ||
-      group->leaving || !text || !*text || !g_utf8_validate(text, -1, NULL)) {
+      group->leaving || !text || (!*text && !files) || !g_utf8_validate(text, -1, NULL) ||
+      !imeta_tags_valid(imeta_tags)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                        "A message needs text and an active group it is not leaving");
+                        "A message needs text or files and an active group it is not leaving");
     return NULL;
   }
   if (!group->relays[0]) {
@@ -4798,11 +4948,20 @@ gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text, GE
     return NULL;
   }
   g_autofree gchar *inner_id = NULL;
-  g_autofree gchar *inner = inner_event_new(self, group, text, &inner_id);
+  g_autofree gchar *inner = inner_event_new(self, group, text, imeta_tags, &inner_id);
   g_autoptr(GhMessage) message = inner ? gh_message_new_from_mls(self->account, group->gid_hex,
                                                                  inner, error) : NULL;
   if (!message)
     return NULL;
+  /* The sender's own cards, and the cache identities bound to the row. */
+  if (files)
+    gh_mls_imeta_describe(message, group->gid_hex, TRUE, source_epoch);
+  g_auto(GStrv) media_ids = files ? gh_mls_imeta_dup_file_ids(message) : NULL;
+  if (files && gh_message_get_rejected_attachments(message) > 0) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A file reference is not valid encrypted media");
+    return NULL;
+  }
   g_autofree gchar *op_id = gh_store_new_op_id();
   gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
   MarmotOutgoingMessage out;
@@ -4820,6 +4979,9 @@ gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text, GE
     .created_at = gh_message_get_created_at(message),
     .body = text,
     .rumor_json = inner,
+    .has_mls_epoch = files,
+    .mls_epoch = files ? source_epoch : 0,
+    .media_ids = (const gchar *const *)media_ids,
   };
   GhStoreSealedEvent sealed = {
     .role = GH_STORE_OUTBOX_ROLE_MLS_MESSAGE,
@@ -4831,6 +4993,22 @@ gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text, GE
   outgoing.conversation_id = conversation_id;
   if (!gh_store_enqueue(self->store, &outgoing, &outbox_id, &message_id, error))
     goto fail;
+  /* Media is bound to the epoch it was sealed in (MIP-04 v2): the check and
+   * the ratchet step below are one transaction in one main-loop turn, so a
+   * Commit that arrived during the upload is caught here and nothing stale
+   * is stored or sent (gh-mls-media.h step 4; review L3). */
+  if (files) {
+    err = marmot_media_check_epoch(self->marmot, &group->gid, source_epoch);
+    if (err == MARMOT_ERR_MEDIA_EPOCH_CHANGED) {
+      g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_EPOCH_CHANGED,
+                          "The group changed while the files were uploading");
+      goto fail;
+    }
+    if (err != MARMOT_OK) {
+      marmot_fail(self, err, "The files could not be sent", error);
+      goto fail;
+    }
+  }
   /* The sender ratchet step, in this transaction (libmarmot 0.8.0). */
   err = marmot_create_message(self->marmot, &group->gid, inner, &out);
   if (err != MARMOT_OK) {
@@ -4857,6 +5035,24 @@ fail:
   gh_store_rollback(self->store);
   marmot_outgoing_message_free(&out);
   return NULL;
+}
+
+GhMessage *
+gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text,
+                    GError **error)
+{
+  return send_inner(self, group, text, NULL, 0, error);
+}
+
+GhMessage *
+gh_mls_service_send_with_imeta(GhMlsService *self, GhMlsGroup *group, const gchar *caption,
+                               GPtrArray *imeta_tags, guint64 source_epoch, GError **error)
+{
+  if (!imeta_tags || imeta_tags->len == 0) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "No files to send");
+    return NULL;
+  }
+  return send_inner(self, group, caption ? caption : "", imeta_tags, source_epoch, error);
 }
 
 /* The id and kind of a stored unsigned event (a rumor or inner event). */

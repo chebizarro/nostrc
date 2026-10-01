@@ -64,6 +64,9 @@ const gchar *gh_mls_attachment_get_media_type(const GhMlsAttachment *attachment)
 const gchar *gh_mls_attachment_get_filename(const GhMlsAttachment *attachment);
 /* The render hint, NULL when absent. */
 const gchar *gh_mls_attachment_get_dim(const GhMlsAttachment *attachment);
+/* The media cache identity in group_id_hex (gh_store_mls_media_file_id()). */
+gchar *gh_mls_attachment_dup_file_id(const GhMlsAttachment *attachment,
+                                     const gchar *group_id_hex);
 /* Lowercase hex of the ciphertext SHA-256 (the Blossom blob id). */
 gchar *gh_mls_attachment_dup_ciphertext_sha256(const GhMlsAttachment *attachment);
 /* The blossom-v1 locator URLs, in tag order (NULL-terminated). */
@@ -95,6 +98,7 @@ GBytes *gh_mls_media_read_file_finish(GAsyncResult *result, gchar **out_name,
                                       gchar **out_type, GError **error);
 
 typedef struct {
+  GBytes *plaintext;           /* what was encrypted (metadata removed) */
   GBytes *ciphertext;          /* to upload; its SHA-256 is the blob id */
   GhMlsAttachment *attachment; /* no locator until uploaded */
   guint width, height;         /* JPEG/PNG header size; 0 otherwise */
@@ -121,6 +125,11 @@ void gh_mls_media_upload_async(GhBlossomClient *client, const GhMlsMediaSealed *
                                GCancellable *cancellable, GAsyncReadyCallback callback,
                                gpointer user_data);
 GhMlsAttachment *gh_mls_media_upload_finish(GAsyncResult *result, GError **error);
+/* The same, with the server used or, with GH_BLOSSOM_ERROR_AUTH_REQUIRED,
+ * the one that asked for an account it knows (nullable; the consent is per
+ * server, as for NIP-17). */
+GhMlsAttachment *gh_mls_media_upload_finish_full(GAsyncResult *result, gchar **out_server,
+                                                 GError **error);
 
 /* Step 4: TRUE when a message sent now is in the attachment's epoch
  * (marmot_media_check_epoch(): an interrupted epoch transition is
@@ -137,6 +146,60 @@ void gh_mls_media_fetch_async(GhBlossomClient *client, const GhMlsAttachment *at
                               GCancellable *cancellable, GAsyncReadyCallback callback,
                               gpointer user_data);
 GBytes *gh_mls_media_fetch_finish(GAsyncResult *result, GError **error);
+/* As fetch_async(), then each of fallback_urls not already tried
+ * (gh_mls_media_fallback_urls(): the group's media servers, m6tp). Finishes
+ * with gh_mls_media_fetch_finish(). */
+void gh_mls_media_fetch_with_fallbacks_async(GhBlossomClient *client,
+                                             const GhMlsAttachment *attachment,
+                                             const gchar *const *fallback_urls,
+                                             GCancellable *cancellable,
+                                             GAsyncReadyCallback callback, gpointer user_data);
+
+/* ---- the group's 0x800b media policy (nostrc-m6tp) ------------------------------------ */
+
+/* The fetch URL of a blob on each of the group's default blossom-v1
+ * endpoints (marmot_media_blossom_fallback_url()), in policy order; an
+ * endpoint libmarmot could not verify (base_url_unverified) is skipped,
+ * never contacted. Empty without a policy. */
+GStrv gh_mls_media_fallback_urls(const MarmotGroupComponents *components,
+                                 const guint8 ciphertext_sha256[32]);
+/* The group's verified blossom-v1 endpoints (the group picture's servers). */
+GStrv gh_mls_media_dup_servers(const MarmotGroupComponents *components);
+/* Whether the group lets members send blossom-v1 locators (the only kind
+ * Groundhog writes); TRUE without a policy (the default). */
+gboolean gh_mls_media_policy_allows_blossom(const MarmotGroupComponents *components);
+
+/* ---- the group picture, 0x8002 (nostrc-m6tp) ------------------------------------------ */
+
+/* MDK's MAX_GROUP_IMAGE_BYTES. */
+#define GH_MLS_MEDIA_PICTURE_MAX (10 * 1024 * 1024)
+
+/* What identifies a picture state for the cache (gh_store_group_image_*):
+ * hex SHA-256 over a domain tag, its hash, key, nonce and media type; NULL
+ * for an absent picture. */
+gchar *gh_mls_media_picture_id(const MarmotGroupBlossomImage *image);
+/* Where the picture can be fetched: the group's media servers
+ * (gh_mls_media_fallback_urls() of its hash). 0x8002 names no server. */
+GStrv gh_mls_media_picture_urls(const MarmotGroupComponents *components);
+/* The user's request: the first of picture_urls whose body has the
+ * picture's hash, through GhBlossomClient (GhNetHttp, the network mode, Tor,
+ * public hosts only). Finishes with gh_mls_media_fetch_finish(). */
+void gh_mls_media_fetch_picture_async(GhBlossomClient *client,
+                                      const MarmotGroupComponents *components,
+                                      GCancellable *cancellable, GAsyncReadyCallback callback,
+                                      gpointer user_data);
+/* The hash, then the AEAD (marmot_group_image_decrypt());
+ * GH_MLS_MEDIA_ERROR_DAMAGED on a mismatch. Wiped when freed. */
+GBytes *gh_mls_media_open_picture(const MarmotGroupBlossomImage *image, GBytes *ciphertext,
+                                  GError **error);
+/* A new picture: file must be a JPEG or PNG (GH_MLS_MEDIA_ERROR_UNSUPPORTED
+ * otherwise; GH_ATTACHMENT_ERROR_TOO_LARGE over GH_MLS_MEDIA_PICTURE_MAX),
+ * its metadata removed (gh_attachment_prepare()), encrypted under fresh
+ * keys (marmot_group_image_encrypt()). Returns the ciphertext to upload
+ * with gh_blossom_client_upload_keyed_async() and out->image_upload_key;
+ * out is the 0x8002 state (secrets: marmot_group_blossom_image_clear()). */
+GBytes *gh_mls_media_seal_picture(GBytes *file, const gchar *mime_hint,
+                                  MarmotGroupBlossomImage *out, GError **error);
 
 /* Decrypts ciphertext with the source epoch's key: ciphertext hash, then
  * the AEAD, then the plaintext hash (GH_MLS_MEDIA_ERROR_DAMAGED). The

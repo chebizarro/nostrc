@@ -45,8 +45,28 @@ G_DECLARE_FINAL_TYPE(GhAttachmentTransfer, gh_attachment_transfer, GH, ATTACHMEN
 /* The transfer of the file (copied) that the message rumor_id carries. */
 GhAttachmentTransfer *gh_attachment_transfer_new(const gchar *rumor_id, const GhNip17File *file);
 
+/* The transfer of an encrypted group's file (W25, nostrc-q3a6): key names
+ * it for its service (the message and the file's index), media_type is the
+ * declared type and sender_filename the name the sender chose (any UTF-8:
+ * only gh_attachment_transfer_sanitize_name() of it is ever suggested). */
+GhAttachmentTransfer *gh_attachment_transfer_new_described(const gchar *key,
+                                                           const gchar *media_type,
+                                                           const gchar *sender_filename);
+
+/* The key it was made with (a kind-15 file: its message's rumor id). */
 const gchar *gh_attachment_transfer_get_rumor_id(GhAttachmentTransfer *self);
+/* The kind-15 file, or NULL for an encrypted group's file. */
 const GhNip17File *gh_attachment_transfer_get_file(GhAttachmentTransfer *self);
+/* The declared MIME type (either kind; never trusted to decode). */
+const gchar *gh_attachment_transfer_get_media_type(GhAttachmentTransfer *self);
+/* Save As's suggestion from the sender's name (sanitized), or NULL. */
+const gchar *gh_attachment_transfer_get_suggested_name(GhAttachmentTransfer *self);
+/* A file name safe to suggest in the Save dialog from one a sender chose:
+ * '/', '\\', ':', control and invisible or bidirectional-override
+ * characters become '_', leading dots and spaces and trailing ones go (no
+ * hidden file, no "..") and it is cut to 200 bytes keeping a short
+ * extension. NULL when nothing usable is left (transfer full). */
+gchar *gh_attachment_transfer_sanitize_name(const gchar *name);
 GhAttachmentState gh_attachment_transfer_get_state(GhAttachmentTransfer *self);
 /* FAILED: what went wrong, in words for the user; NULL otherwise. */
 const gchar *gh_attachment_transfer_get_error(GhAttachmentTransfer *self);

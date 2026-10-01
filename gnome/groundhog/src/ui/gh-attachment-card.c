@@ -35,14 +35,17 @@ struct _GhAttachmentCard {
   GtkButton *save_button;
 
   GhMessage *message;
-  GhNip17File *file;               /* the message's */
+  guint index;                     /* which of its files */
+  gboolean described;              /* message has file index: */
+  gchar *mime;                     /*   its declared type */
+  guint64 size;                    /*   the encrypted size, 0: unknown */
   GhAttachmentTransfer *transfer;  /* a reference while rooted with a provider */
   GhAttachmentState shown;         /* the state last shown (announcements) */
   gboolean compact;
   gchar *summary;
 };
 
-enum { PROP_0, PROP_MESSAGE, PROP_COMPACT, PROP_SUMMARY, N_PROPS };
+enum { PROP_0, PROP_MESSAGE, PROP_INDEX, PROP_COMPACT, PROP_SUMMARY, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
 G_DEFINE_FINAL_TYPE(GhAttachmentCard, gh_attachment_card, GTK_TYPE_WIDGET)
@@ -87,6 +90,38 @@ find_provider(GhAttachmentCard *self)
       return provider;
   }
   return NULL;
+}
+
+static GhAttachmentTransfer *
+provider_lookup(Provider *provider, GhAttachmentCard *self)
+{
+  if (provider->vtable.lookup_at)
+    return provider->vtable.lookup_at(self->message, self->index, provider->data);
+  return self->index == 0 ? provider->vtable.lookup(self->message, provider->data) : NULL;
+}
+
+/* What the card says before anything is fetched: a kind-15 message's file,
+ * or an encrypted group message's file index. */
+static void
+describe(GhAttachmentCard *self)
+{
+  self->described = FALSE;
+  g_clear_pointer(&self->mime, g_free);
+  self->size = 0;
+  if (!self->message)
+    return;
+  g_autoptr(GhNip17File) file = self->index == 0 ? gh_message_dup_file(self->message) : NULL;
+  if (file) {
+    self->described = TRUE;
+    self->mime = g_strdup(file->file_type);
+    self->size = file->size;
+    return;
+  }
+  const GhMessageAttachment *a = gh_message_get_attachment(self->message, self->index);
+  if (a) {
+    self->described = TRUE;
+    self->mime = g_strdup(a->media_type);
+  }
 }
 
 /* ---- text ---------------------------------------------------------------------------- */
@@ -178,18 +213,18 @@ set_summary(GhAttachmentCard *self, gchar *summary)
 static void
 update_header(GhAttachmentCard *self)
 {
-  const gchar *mime = self->file ? self->file->file_type : NULL;
+  const gchar *mime = self->described ? self->mime : NULL;
   g_autofree gchar *kind = gh_attachment_card_describe_type(mime);
   gtk_image_set_from_icon_name(self->type_icon, gh_attachment_card_type_icon(mime));
-  gtk_label_set_text(self->title_label, self->file ? kind : "");
-  if (!self->message || !self->file) {
+  gtk_label_set_text(self->title_label, self->described ? kind : "");
+  if (!self->message || !self->described) {
     gtk_label_set_text(self->detail_label, "");
     return;
   }
   g_autofree gchar *sender = gh_message_is_self(self->message)
                                ? g_strdup(_("you"))
                                : gh_message_row_sender_name(self->message);
-  g_autofree gchar *size = describe_size(self->file->size);
+  g_autofree gchar *size = describe_size(self->size);
   g_autofree gchar *detail =
     size ? /* TRANSLATORS: a file's size and who sent it: "2.1 MB · from npub1…". */
            g_strdup_printf(_("%s · from %s"), size, sender)
@@ -308,13 +343,13 @@ update(GhAttachmentCard *self)
 {
   gboolean had_focus = focus_in_actions(self);
   update_header(self);
-  g_autofree gchar *kind = gh_attachment_card_describe_type(self->file ? self->file->file_type
-                                                                       : NULL);
+  g_autofree gchar *kind = gh_attachment_card_describe_type(self->described ? self->mime
+                                                                            : NULL);
   const gchar *state_text = NULL;
   g_autofree gchar *state_owned = NULL;
   GhAttachmentState state = self->transfer ? gh_attachment_transfer_get_state(self->transfer)
                                            : GH_ATTACHMENT_STATE_IDLE;
-  if (!self->file) {
+  if (!self->described) {
     show_status(self, NULL, FALSE, FALSE);
     show_buttons(self, FALSE, FALSE, FALSE, FALSE);
     update_preview(self);
@@ -342,7 +377,7 @@ update(GhAttachmentCard *self)
       state_text = _("Downloaded");
       /* A photo that is not PNG or JPEG (or too large to decode) stays a
        * card: say so rather than show nothing. */
-      const gchar *note = !shown && gh_nip17_file_is_image(self->file)
+      const gchar *note = !shown && self->mime && g_str_has_prefix(self->mime, "image/")
                             ? _("This photo can't be shown here. Save it to open it.")
                             : NULL;
       show_status(self, note, FALSE, FALSE);
@@ -376,7 +411,7 @@ update(GhAttachmentCard *self)
   }
   self->shown = state;
 
-  if (!self->file) {
+  if (!self->described) {
     set_summary(self, g_strdup(""));
     return;
   }
@@ -427,10 +462,9 @@ unbind_transfer(GhAttachmentCard *self)
 static void
 bind_transfer(GhAttachmentCard *self)
 {
-  Provider *provider = self->message && self->file && gtk_widget_get_root(GTK_WIDGET(self))
+  Provider *provider = self->message && self->described && gtk_widget_get_root(GTK_WIDGET(self))
                          ? find_provider(self) : NULL;
-  GhAttachmentTransfer *transfer =
-    provider ? provider->vtable.lookup(self->message, provider->data) : NULL;
+  GhAttachmentTransfer *transfer = provider ? provider_lookup(provider, self) : NULL;
   if (transfer != self->transfer) {
     unbind_transfer(self);
     if (transfer) {
@@ -507,11 +541,29 @@ gh_attachment_card_set_message(GhAttachmentCard *self, GhMessage *message)
     return;
   unbind_transfer(self);
   g_set_object(&self->message, message);
-  g_clear_pointer(&self->file, gh_nip17_file_free);
-  if (message)
-    self->file = gh_message_dup_file(message);
+  describe(self);
   bind_transfer(self);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_MESSAGE]);
+}
+
+void
+gh_attachment_card_set_index(GhAttachmentCard *self, guint index)
+{
+  g_return_if_fail(GH_IS_ATTACHMENT_CARD(self));
+  if (self->index == index)
+    return;
+  unbind_transfer(self);
+  self->index = index;
+  describe(self);
+  bind_transfer(self);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_INDEX]);
+}
+
+guint
+gh_attachment_card_get_index(GhAttachmentCard *self)
+{
+  g_return_val_if_fail(GH_IS_ATTACHMENT_CARD(self), 0);
+  return self->index;
 }
 
 GhMessage *
@@ -567,6 +619,7 @@ gh_attachment_card_get_property(GObject *object, guint prop_id, GValue *value,
   GhAttachmentCard *self = GH_ATTACHMENT_CARD(object);
   switch (prop_id) {
   case PROP_MESSAGE: g_value_set_object(value, self->message); break;
+  case PROP_INDEX: g_value_set_uint(value, self->index); break;
   case PROP_COMPACT: g_value_set_boolean(value, self->compact); break;
   case PROP_SUMMARY: g_value_set_string(value, self->summary); break;
   default:
@@ -581,6 +634,7 @@ gh_attachment_card_set_property(GObject *object, guint prop_id, const GValue *va
   GhAttachmentCard *self = GH_ATTACHMENT_CARD(object);
   switch (prop_id) {
   case PROP_MESSAGE: gh_attachment_card_set_message(self, g_value_get_object(value)); break;
+  case PROP_INDEX: gh_attachment_card_set_index(self, g_value_get_uint(value)); break;
   case PROP_COMPACT: gh_attachment_card_set_compact(self, g_value_get_boolean(value)); break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -605,7 +659,7 @@ static void
 gh_attachment_card_finalize(GObject *object)
 {
   GhAttachmentCard *self = GH_ATTACHMENT_CARD(object);
-  gh_nip17_file_free(self->file);
+  g_free(self->mime);
   g_free(self->summary);
   G_OBJECT_CLASS(gh_attachment_card_parent_class)->finalize(object);
 }
@@ -624,6 +678,7 @@ gh_attachment_card_class_init(GhAttachmentCardClass *klass)
 
   const GParamFlags rw = G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS;
   props[PROP_MESSAGE] = g_param_spec_object("message", NULL, NULL, GH_TYPE_MESSAGE, rw);
+  props[PROP_INDEX] = g_param_spec_uint("index", NULL, NULL, 0, G_MAXUINT, 0, rw);
   props[PROP_COMPACT] = g_param_spec_boolean("compact", NULL, NULL, FALSE, rw);
   props[PROP_SUMMARY] = g_param_spec_string("summary", NULL, NULL, "",
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);

@@ -45,6 +45,9 @@ typedef struct {
  *    the upload; errors are said on the sheet. The account changing closes
  *    it. Relay groups (NIP-29) get no attach button: their files would be
  *    public (charter §6 scope).
+ *  - Any file offered: only a native file not under a GVfs FUSE mount
+ *    (gh_attachment_path_on_remote_mount()) or on a gvfs filesystem; nothing
+ *    of anything else is queried or read.
  *  - Received files: every GhAttachmentCard in the window gets its transfer
  *    from GhAttachments (gh_attachment_card_set_provider()): Download,
  *    Cancel, and Save As… through the Save dialog, which writes the
@@ -53,6 +56,39 @@ typedef struct {
  * Everything is released with the window.
  */
 void gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *config);
+
+/* An encrypted group's files (W25, nostrc-q3a6), installed by
+ * gh-mls-attachment-ui.c: the same attach button, sheet (server choice,
+ * preview, metadata notice, consent), size limit, files on this device only,
+ * cards with Download on request, and Save As as a NIP-17 file; what differs
+ * (sealing for the group's epoch, the kind-9 imeta, opening with the epoch)
+ * is the delegate's. Every function is required but download_note. */
+typedef struct {
+  /* Whether files can be sent in conversation (an encrypted group) now. */
+  gboolean (*can_send)(GhConversation *conversation, gpointer data);
+  /* Seal, upload and send file (metadata already removed) named name. */
+  void (*send_async)(GhConversation *conversation, GBytes *file, const gchar *name,
+                     const gchar *mime, GCancellable *cancellable, GAsyncReadyCallback callback,
+                     gpointer user_data, gpointer data);
+  /* out_server: as gh_attachments_upload_finish(). */
+  gboolean (*send_finish)(GAsyncResult *result, gchar **out_server, GError **error,
+                          gpointer data);
+  /* The words for a send error (host nullable). */
+  gchar *(*describe)(const GError *error, const gchar *host, gpointer data);
+  /* The cards of its messages (gh_message_is_mls()). */
+  GhAttachmentTransfer *(*lookup)(GhMessage *message, guint index, gpointer data);
+  void (*download)(GhAttachmentTransfer *transfer, gpointer data);
+  void (*cancel)(GhAttachmentTransfer *transfer, gpointer data);
+  gchar *(*download_note)(GhAttachmentTransfer *transfer, gpointer data);
+} GhAttachmentUiGroups;
+
+/* Installs (or with NULL removes) groups; destroy frees data then or with
+ * the window. After gh_attachment_ui_attach(). */
+void gh_attachment_ui_set_groups(GhWindow *window, const GhAttachmentUiGroups *groups,
+                                 gpointer data, GDestroyNotify destroy);
+/* The delegate's can_send may have changed (a group joined, left, its
+ * service replaced): the attach button follows. */
+void gh_attachment_ui_groups_changed(GhWindow *window);
 
 /* The paths of a chosen, dropped or pasted file, for tests too: bytes (at
  * most the size limit) named name (shown only) of type mime (a hint). */

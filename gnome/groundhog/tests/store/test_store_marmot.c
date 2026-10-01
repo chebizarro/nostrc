@@ -2142,7 +2142,11 @@ make_v1_store(const TestAccount *account)
   }
   /* Later migrations are undone too: v3 (G19) added contacts.verified_at;
    * v4 (W18) the arrival order, read, timer and inbox columns and two
-   * triggers. */
+   * triggers; v5 (W25) the MLS source epoch, attachment identities and
+   * group pictures. */
+  sql_exec(store, "DROP TABLE group_images");
+  sql_exec(store, "DROP TABLE message_media");
+  sql_exec(store, "ALTER TABLE messages DROP COLUMN mls_epoch");
   sql_exec(store, "ALTER TABLE contacts DROP COLUMN verified_at");
   static const gchar *const v4_undo[] = {
     "DROP TRIGGER messages_admit_seq",
@@ -2194,7 +2198,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 4);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 5);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */

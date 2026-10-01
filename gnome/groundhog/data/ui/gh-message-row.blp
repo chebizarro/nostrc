@@ -52,12 +52,28 @@ template $GhMessageRow: Widget {
     }
 
     // A kind-15 file message's card (charter G22), in place of the body:
-    // nothing is fetched until its Download button.
+    // nothing is fetched until its Download button. An encrypted group
+    // message (W25) shows its caption above and one card per file; the
+    // further cards are added after this one by gh-message-row.c, and the
+    // note says when a file reference couldn't be read.
     Box attachment_slot {
       visible: false;
       orientation: vertical;
+      spacing: 6;
 
       $GhAttachmentCard attachment_card {}
+
+      Label attachment_note {
+        visible: false;
+        xalign: 0;
+        wrap: true;
+        wrap-mode: word_char;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
     }
   }
 

@@ -40,9 +40,15 @@ G_BEGIN_DECLS
  * its sender and its state ("Photo, 2.1 MB, from You. Not downloaded.");
  * a download that finishes or fails is announced politely.
  *
+ * An encrypted group message (W25, nostrc-q3a6) shows one card per file
+ * ("index"), described by what the MLS layer read from its imeta tags
+ * (gh_message_get_attachment()), with the same Download-only-on-request,
+ * decode guard and Save As.
+ *
  * Actions (widget actions): attachment.download, attachment.cancel and
- * attachment.save. Properties: "message" (a kind-15 GhMessage, or NULL),
- * "compact" (a smaller preview), "summary" (read-only, the accessible text).
+ * attachment.save. Properties: "message" (a kind-15 GhMessage or an MLS
+ * message with files, or NULL), "index", "compact" (a smaller preview),
+ * "summary" (read-only, the accessible text).
  */
 
 typedef struct {
@@ -54,6 +60,9 @@ typedef struct {
   void (*save)(GhAttachmentTransfer *transfer, GtkWidget *card, gpointer data);
   /* Nullable: what Download contacts and who learns what (transfer full). */
   gchar *(*download_note)(GhAttachmentTransfer *transfer, gpointer data);
+  /* Nullable (W25): the transfer of file index of a message with several
+   * (an encrypted group's); NULL: lookup() for index 0 only. */
+  GhAttachmentTransfer *(*lookup_at)(GhMessage *message, guint index, gpointer data);
 } GhAttachmentCardProvider;
 
 /* Every card inside widget (e.g. the window) uses provider (copied) with
@@ -69,6 +78,10 @@ GtkWidget *gh_attachment_card_new(void);
 void gh_attachment_card_set_message(GhAttachmentCard *self, GhMessage *message);
 GhMessage *gh_attachment_card_get_message(GhAttachmentCard *self);
 void gh_attachment_card_set_compact(GhAttachmentCard *self, gboolean compact);
+/* Which of the message's files (W25: an encrypted group message may carry
+ * several, gh_message_get_attachment()); 0 for a kind-15 message. */
+void gh_attachment_card_set_index(GhAttachmentCard *self, guint index);
+guint gh_attachment_card_get_index(GhAttachmentCard *self);
 /* The transfer the card shows (borrowed), or NULL. */
 GhAttachmentTransfer *gh_attachment_card_get_transfer(GhAttachmentCard *self);
 const gchar *gh_attachment_card_get_summary(GhAttachmentCard *self);

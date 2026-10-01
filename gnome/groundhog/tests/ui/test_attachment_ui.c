@@ -332,6 +332,7 @@ typedef struct {
   gchar *server;        /* the fixture, normalized */
   gchar *saved;         /* Save As writes here (the Save dialog's choice) */
   guint save_asked;
+  gchar *save_name;     /* the name Save As suggested last */
 } Fixture;
 
 static void
@@ -382,7 +383,8 @@ static GFile *
 save_target(const gchar *suggested_name, gpointer data)
 {
   Fixture *f = data;
-  (void)suggested_name;
+  g_free(f->save_name);
+  f->save_name = g_strdup(suggested_name);
   f->save_asked++;
   return g_file_new_for_path(f->saved);
 }
@@ -454,6 +456,7 @@ fixture_clear(Fixture *f)
   g_clear_pointer(&pubs, g_ptr_array_unref);
   g_free(f->server);
   g_free(f->saved);
+  g_free(f->save_name);
 }
 
 typedef struct {
@@ -1310,6 +1313,229 @@ test_card_cancel_and_errors(void)
 
 /* ---- main ------------------------------------------------------------------------------ */
 
+/* ---- an encrypted group's files through the group delegate (W25) ------------------ */
+
+#define STUB_GROUP "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+
+/* What gh-mls-attachment-ui.c would do, recorded: the window's attach
+ * flow, sheet and cards hand an MLS conversation's files to it. */
+typedef struct {
+  guint sends;
+  GBytes *file;
+  gchar *name;
+  gchar *mime;
+  GError *fail_with;     /* the next send's error, or NULL */
+  gchar *fail_server;
+  GhAttachmentTransfer *transfer;
+  guint lookups, downloads;
+} StubGroups;
+
+static gboolean
+stub_can_send(GhConversation *conversation, gpointer data)
+{
+  (void)data;
+  return g_str_has_suffix(gh_conversation_get_room_id(conversation), STUB_GROUP);
+}
+
+static void
+stub_send_async(GhConversation *conversation, GBytes *file, const gchar *name, const gchar *mime,
+                GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data,
+                gpointer data)
+{
+  (void)conversation;
+  StubGroups *stub = data;
+  stub->sends++;
+  g_clear_pointer(&stub->file, g_bytes_unref);
+  stub->file = g_bytes_ref(file);
+  g_free(stub->name);
+  stub->name = g_strdup(name);
+  g_free(stub->mime);
+  stub->mime = g_strdup(mime);
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  if (stub->fail_with)
+    g_task_return_error(task, g_steal_pointer(&stub->fail_with));
+  else
+    g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static gboolean
+stub_send_finish(GAsyncResult *result, gchar **out_server, GError **error, gpointer data)
+{
+  StubGroups *stub = data;
+  if (out_server)
+    *out_server = g_steal_pointer(&stub->fail_server);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+static gchar *
+stub_describe(const GError *error, const gchar *host, gpointer data)
+{
+  (void)host;
+  (void)data;
+  return g_strdup_printf("group: %s", error->message);
+}
+
+static GhAttachmentTransfer *
+stub_lookup(GhMessage *message, guint index, gpointer data)
+{
+  (void)message;
+  StubGroups *stub = data;
+  stub->lookups++;
+  return index == 0 ? stub->transfer : NULL;
+}
+
+static void
+stub_download(GhAttachmentTransfer *transfer, gpointer data)
+{
+  (void)transfer;
+  ((StubGroups *)data)->downloads++;
+}
+
+static void
+stub_cancel(GhAttachmentTransfer *transfer, gpointer data)
+{
+  (void)transfer;
+  (void)data;
+}
+
+static const GhAttachmentUiGroups stub_groups = {
+  .can_send = stub_can_send,
+  .send_async = stub_send_async,
+  .send_finish = stub_send_finish,
+  .describe = stub_describe,
+  .lookup = stub_lookup,
+  .download = stub_download,
+  .cancel = stub_cancel,
+};
+
+/* A decrypted kind-9 group message from key 2 with one file (as the MLS
+ * layer describes it) and one rejected reference. */
+static GhMessage *
+group_file_message(Fixture *f)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 9);
+  nostr_event_set_pubkey(event, stack_hex[2]);
+  nostr_event_set_created_at(event, g_get_real_time() / G_USEC_PER_SEC - 30);
+  nostr_event_set_content(event, "");
+  nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("h", STUB_GROUP, NULL)));
+  gchar id[65] = { 0 };
+  g_assert_cmpint(nostr_event_compute_id(event, id), ==, NOSTR_EVENT_VALIDATION_OK);
+  free(event->id);
+  event->id = strdup(id);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  g_autoptr(GError) error = NULL;
+  GhMessage *message = gh_message_new_from_mls(stack_hex[f->s.key], STUB_GROUP, json, &error);
+  free(json);
+  g_assert_no_error(error);
+  g_autoptr(GPtrArray) files =
+    g_ptr_array_new_with_free_func((GDestroyNotify)gh_message_attachment_free);
+  GhMessageAttachment *a = g_new0(GhMessageAttachment, 1);
+  a->media_type = g_strdup("image/png");
+  a->filename = g_strdup("../../.config/autostart/x.png");
+  g_ptr_array_add(files, a);
+  gh_message_set_attachments(message, files, 1);
+  return message;
+}
+
+static gboolean
+label_with(GtkWidget *widget, const gchar *prefix)
+{
+  if (GTK_IS_LABEL(widget) && gtk_widget_get_visible(widget) &&
+      g_str_has_prefix(gtk_label_get_text(GTK_LABEL(widget)), prefix))
+    return TRUE;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c))
+    if (label_with(c, prefix))
+      return TRUE;
+  return FALSE;
+}
+
+/* An encrypted group's conversation gets the attach button and the same
+ * sheet; Send hands the prepared (metadata-free) file to the group
+ * delegate, never to the NIP-17 outbox or the attachment servers; the
+ * delegate's consent request shows the consent page; its message's card
+ * asks the delegate for its transfer, fetches nothing until Download, says
+ * a rejected reference, and Save As suggests the sender's name only after
+ * it is made safe. */
+static void
+test_group_delegate(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, TRUE);
+  StubGroups stub = { 0 };
+  stub.transfer = gh_attachment_transfer_new_described("stub/0", "image/png",
+                                                       "../../.config/autostart/x.png");
+  gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
+  g_autoptr(GhMessage) message = group_file_message(&f);
+  g_autoptr(GError) error = NULL;
+  gh_conversation_store_add_message(f.s.model, message, &error);
+  g_assert_no_error(error);
+  GhConversation *group = gh_conversation_store_lookup(f.s.model,
+                                                       gh_message_get_room_id(message));
+  g_assert_nonnull(group);
+  GhComposer *composer = send_stack_composer(&f.s);
+  send_stack_select(&f.s, group);
+  g_assert_true(gh_composer_get_can_attach(composer));
+  guint pubs_before = pubs ? pubs->len : 0;
+
+  /* Send: the stripped bytes go to the delegate. */
+  g_autoptr(GBytes) jpeg = make_jpeg(32 * 1024, 7);
+  g_assert_true(bytes_contain(jpeg, GPS_TEXT));
+  gh_attachment_ui_offer_bytes(f.s.window, jpeg, "IMG_2042.jpg", "image/jpeg");
+  GhAttachmentSheet *sheet = wait_page(&f, "preview");
+  g_assert_cmpstr(gh_attachment_sheet_get_metadata_text(sheet), ==,
+                  "Location and camera data removed");
+  g_assert_cmpuint(stub.sends, ==, 0);
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  gh_test_spin_until(sheet_closed, &f);
+  g_assert_cmpuint(stub.sends, ==, 1);
+  g_assert_false(bytes_contain(stub.file, GPS_TEXT));
+  g_assert_cmpstr(stub.mime, ==, "image/jpeg");
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  g_assert_cmpuint(pubs ? pubs->len : 0, ==, pubs_before);
+
+  /* A server that wants a known account: the same consent page. */
+  stub.fail_with = g_error_new_literal(GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED,
+                                       "known accounts only");
+  stub.fail_server = g_strdup(blossom_fixture_url(f.blossom));
+  gh_attachment_ui_offer_bytes(f.s.window, jpeg, "IMG_2043.jpg", "image/jpeg");
+  sheet = wait_page(&f, "preview");
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  wait_page(&f, "consent");
+  g_assert_cmpuint(stub.sends, ==, 2);
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.cancel", NULL);
+  gh_test_spin_until(sheet_closed, &f);
+
+  /* The card: the delegate's transfer, nothing fetched, the rejected
+   * reference said. */
+  GhAttachmentCard *card = card_of(&f, message);
+  g_assert_true(gh_attachment_card_get_transfer(card) == stub.transfer);
+  g_assert_cmpuint(stub.downloads, ==, 0);
+  g_assert_true(label_with(GTK_WIDGET(f.s.window), "1 attached file can't be read"));
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(card), "attachment.download", NULL));
+  g_assert_cmpuint(stub.downloads, ==, 1);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+
+  /* Save As: the sender's name, made safe. */
+  g_autoptr(GBytes) plain = g_bytes_new_static("\x89PNG\r\n\x1a\n", 8);
+  gh_attachment_transfer_succeed(stub.transfer, plain, FALSE, FALSE);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(card), "attachment.save", NULL));
+  gh_test_run_until_idle();
+  g_assert_cmpuint(f.save_asked, ==, 1);
+  g_assert_cmpstr(f.save_name, ==, "_.._.config_autostart_x.png");
+
+  gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
+  g_assert_false(gh_composer_get_can_attach(composer));
+  fixture_clear(&f);
+  g_clear_object(&stub.transfer);
+  g_clear_pointer(&stub.file, g_bytes_unref);
+  g_free(stub.name);
+  g_free(stub.mime);
+}
+
 static gchar *
 test_env_up(void)
 {
@@ -1355,6 +1581,7 @@ main(int argc, char **argv)
   ADD("card-download-and-save", test_card_download_and_save);
   ADD("card-cancel-and-errors", test_card_cancel_and_errors);
   ADD("preferences", test_preferences);
+  ADD("group-delegate", test_group_delegate);
 #undef ADD
   int status = g_test_run();
   stack_keys_clear();

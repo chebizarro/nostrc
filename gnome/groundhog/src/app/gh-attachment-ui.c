@@ -17,6 +17,8 @@ typedef struct {
   GhAttachmentSheet *sheet;       /* a reference */
   GhAttachmentPrepared *prepared; /* what is encrypted: metadata removed */
   GStrv recipients;               /* the shown conversation's, at the offer */
+  GhConversation *group;          /* or an encrypted group (W25): a reference */
+  gchar *name;                    /* as chosen (the group delegate makes it neutral) */
   GCancellable *upload;           /* while uploading */
   gchar *consent_server;          /* the server that asked for a known account */
 } Offer;
@@ -36,6 +38,9 @@ typedef struct {
   GhAttachmentUiSaveTarget save_target;
   gpointer save_data;
   gchar *last_toast;
+  GhAttachmentUiGroups groups;  /* groups.can_send NULL: none */
+  gpointer groups_data;
+  GDestroyNotify groups_destroy;
 } GhAttachmentUi;
 
 static void close_offer(GhAttachmentUi *ui);
@@ -56,6 +61,8 @@ offer_free(Offer *offer)
   g_clear_object(&offer->sheet);
   g_clear_pointer(&offer->prepared, gh_attachment_prepared_free);
   g_strfreev(offer->recipients);
+  g_clear_object(&offer->group);
+  g_free(offer->name);
   g_free(offer->consent_server);
   g_free(offer);
 }
@@ -73,6 +80,8 @@ ui_free(gpointer data)
   g_clear_object(&ui->attachments);
   g_clear_object(&ui->settings);
   g_free(ui->last_toast);
+  if (ui->groups_destroy)
+    ui->groups_destroy(ui->groups_data);
   g_free(ui);
 }
 
@@ -117,12 +126,26 @@ outbox_of(GhAttachmentUi *ui)
   return GH_IS_OUTBOX(object) ? GH_OUTBOX(object) : NULL;
 }
 
+/* The shown conversation when it is an encrypted group files can go to now
+ * (W25), else NULL. */
+static GhConversation *
+group_of(GhAttachmentUi *ui, GhConversation *conversation)
+{
+  if (!conversation || !ui->groups.can_send ||
+      gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_MLS ||
+      !gh_attachments_get_client(ui->attachments))
+    return NULL;
+  return ui->groups.can_send(conversation, ui->groups_data) ? conversation : NULL;
+}
+
 /* The attach button shows only where a file can be sent right now. */
 static void
 update_can_attach(GhAttachmentUi *ui)
 {
-  g_auto(GStrv) recipients = recipients_of(ui, gh_conversation_view_get_conversation(ui->view));
-  gboolean can = recipients && outbox_of(ui) && gh_attachments_get_client(ui->attachments);
+  GhConversation *conversation = gh_conversation_view_get_conversation(ui->view);
+  g_auto(GStrv) recipients = recipients_of(ui, conversation);
+  gboolean can = (recipients && outbox_of(ui) && gh_attachments_get_client(ui->attachments)) ||
+                 group_of(ui, conversation);
   gh_composer_set_can_attach(ui->composer, can);
 }
 
@@ -206,11 +229,11 @@ typedef struct {
 /* The upload of the offer finished: consent, a server, an error, or the
  * message queued. */
 static void
-upload_done(GhAttachmentUi *ui, Offer *offer, const GhNip17File *file, const gchar *server,
-            const GError *upload_error)
+upload_done(GhAttachmentUi *ui, Offer *offer, const GhNip17File *file, gboolean group_sent,
+            const gchar *server, const GError *upload_error)
 {
   g_autofree gchar *host = server ? host_of(server) : NULL;
-  if (!file) {
+  if (!file && !group_sent) {
     if (g_error_matches(upload_error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       gh_attachment_sheet_show_preview(offer->sheet, NULL);
     } else if (g_error_matches(upload_error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED) &&
@@ -224,10 +247,18 @@ upload_done(GhAttachmentUi *ui, Offer *offer, const GhNip17File *file, const gch
     } else {
       /* The error names the server and may quote it: debug only (PD-10). */
       g_debug("Attachment: an upload failed: %s", upload_error->message);
-      g_autofree gchar *text = gh_attachments_describe(ui->attachments, upload_error,
-                                                       GH_ATTACHMENTS_UPLOAD, host, NULL);
+      g_autofree gchar *text =
+        offer->group ? ui->groups.describe(upload_error, host, ui->groups_data)
+                     : gh_attachments_describe(ui->attachments, upload_error,
+                                               GH_ATTACHMENTS_UPLOAD, host, NULL);
       gh_attachment_sheet_show_preview(offer->sheet, text);
     }
+    return;
+  }
+  if (group_sent) {
+    /* Stored and listed by the group's service; its card shows the file
+     * from the encrypted cache. */
+    close_offer(ui);
     return;
   }
   g_autoptr(GError) error = NULL;
@@ -266,7 +297,26 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
   /* Not when cancelled, closed or offered again meanwhile. */
   if (offer && offer->upload == op->upload) {
     g_clear_object(&offer->upload);
-    upload_done(ui, offer, file, server, error);
+    upload_done(ui, offer, file, FALSE, server, error);
+  }
+  g_object_unref(op->upload);
+  g_object_unref(op->window);
+  g_free(op);
+}
+
+static void
+on_group_sent(GObject *source, GAsyncResult *result, gpointer data)
+{
+  UploadOp *op = data;
+  (void)source;
+  GhAttachmentUi *ui = ui_of(op->window);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *server = NULL;
+  Offer *offer = ui ? ui->offer : NULL;
+  if (offer && offer->upload == op->upload && ui->groups.send_finish) {
+    gboolean sent = ui->groups.send_finish(result, &server, &error, ui->groups_data);
+    g_clear_object(&offer->upload);
+    upload_done(ui, offer, NULL, sent, server, error);
   }
   g_object_unref(op->upload);
   g_object_unref(op->window);
@@ -292,6 +342,21 @@ start_upload(GhAttachmentUi *ui)
   UploadOp *op = g_new0(UploadOp, 1);
   op->window = g_object_ref(ui->window);
   op->upload = g_object_ref(offer->upload);
+  if (offer->group) {
+    if (!ui->groups.send_async) {
+      g_clear_object(&offer->upload);
+      g_object_unref(op->upload);
+      g_object_unref(op->window);
+      g_free(op);
+      gh_attachment_sheet_show_preview(offer->sheet,
+                                       _("Files can't be sent in this conversation"));
+      return;
+    }
+    ui->groups.send_async(offer->group, offer->prepared->plaintext, offer->name,
+                          offer->prepared->mime, offer->upload, on_group_sent, op,
+                          ui->groups_data);
+    return;
+  }
   gh_attachments_upload_async(ui->attachments, offer->prepared->plaintext, offer->prepared->mime,
                               offer->upload, on_uploaded, op);
 }
@@ -383,12 +448,14 @@ close_offer(GhAttachmentUi *ui)
 
 static void
 offer_prepared(GhAttachmentUi *ui, GhAttachmentPrepared *prepared, const gchar *name,
-               GStrv recipients)
+               GStrv recipients, GhConversation *group)
 {
   close_offer(ui);
   Offer *offer = g_new0(Offer, 1);
   offer->prepared = prepared;
   offer->recipients = recipients;
+  offer->group = group ? g_object_ref(group) : NULL;
+  offer->name = g_strdup(name);
   offer->sheet = g_object_ref_sink(gh_attachment_sheet_new());
   ui->offer = offer;
 
@@ -425,8 +492,10 @@ gh_attachment_ui_offer_bytes(GhWindow *window, GBytes *bytes, const gchar *name,
   GhAttachmentUi *ui = ui_of(GTK_WIDGET(window));
   if (!ui)
     return;
-  g_auto(GStrv) recipients = recipients_of(ui, gh_conversation_view_get_conversation(ui->view));
-  if (!recipients || !outbox_of(ui)) {
+  GhConversation *conversation = gh_conversation_view_get_conversation(ui->view);
+  g_auto(GStrv) recipients = recipients_of(ui, conversation);
+  GhConversation *group = recipients ? NULL : group_of(ui, conversation);
+  if (!group && (!recipients || !outbox_of(ui))) {
     toast(ui, _("Files can't be sent in this conversation"));
     return;
   }
@@ -439,7 +508,7 @@ gh_attachment_ui_offer_bytes(GhWindow *window, GBytes *bytes, const gchar *name,
     toast(ui, text);
     return;
   }
-  offer_prepared(ui, prepared, name, g_steal_pointer(&recipients));
+  offer_prepared(ui, prepared, name, g_steal_pointer(&recipients), group);
 }
 
 typedef struct {
@@ -473,6 +542,28 @@ on_loaded(GObject *source, GAsyncResult *result, gpointer data)
   load_op_free(op);
 }
 
+/* A gvfs filesystem is a remote location under a native path: refused
+ * before a byte is read. */
+static void
+on_filesystem_info(GObject *source, GAsyncResult *result, gpointer data)
+{
+  LoadOp *op = data;
+  g_autoptr(GFileInfo) fs = g_file_query_filesystem_info_finish(G_FILE(source), result, NULL);
+  const gchar *type = fs ? g_file_info_get_attribute_string(fs, G_FILE_ATTRIBUTE_FILESYSTEM_TYPE)
+                         : NULL;
+  GhAttachmentUi *ui = ui_of(op->window);
+  if (!ui || g_cancellable_is_cancelled(op->cancellable)) {
+    load_op_free(op);
+    return;
+  }
+  if (type && strstr(type, "gvfs")) {
+    toast(ui, _("Only files on this device can be sent"));
+    load_op_free(op);
+    return;
+  }
+  g_file_load_bytes_async(G_FILE(source), op->cancellable, on_loaded, op);
+}
+
 static void
 on_file_info(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -503,7 +594,9 @@ on_file_info(GObject *source, GAsyncResult *result, gpointer data)
   op->name = g_strdup(g_file_info_get_display_name(info));
   const gchar *type = g_file_info_get_content_type(info);
   op->mime = type ? g_content_type_get_mime_type(type) : NULL;
-  g_file_load_bytes_async(G_FILE(source), op->cancellable, on_loaded, op);
+  g_file_query_filesystem_info_async(G_FILE(source), G_FILE_ATTRIBUTE_FILESYSTEM_TYPE,
+                                     G_PRIORITY_DEFAULT, op->cancellable, on_filesystem_info,
+                                     op);
 }
 
 void
@@ -519,7 +612,9 @@ gh_attachment_ui_offer_file(GhWindow *window, GFile *file)
    * from the user's IP address, outside GhNetHttp and Tor, before the send
    * sheet even opens (W18 review B1). Remote GVfs locations (smb://, sftp://)
    * are refused the same way; nothing is queried or read. */
-  if (!g_file_is_native(file)) {
+  g_autofree gchar *path = g_file_is_native(file) ? g_file_get_path(file) : NULL;
+  if (!g_file_is_native(file) || gh_attachment_path_on_remote_mount(path)) {
+    /* A GVfs FUSE path (W25, as gh-mls-media.h): the same remote location. */
     toast(ui, _("Only files on this device can be sent"));
     return;
   }
@@ -582,30 +677,57 @@ on_attach_texture(GhComposer *composer, GdkTexture *texture, GtkWidget *window)
 /* ---- received files: the cards' provider -------------------------------------------------- */
 
 static GhAttachmentTransfer *
-card_lookup(GhMessage *message, gpointer data)
+card_lookup_at(GhMessage *message, guint index, gpointer data)
 {
   GhAttachmentUi *ui = data;
-  return ui->destroyed ? NULL : gh_attachments_lookup(ui->attachments, message);
+  if (ui->destroyed)
+    return NULL;
+  /* An encrypted group's files are the delegate's (W25). */
+  if (gh_message_is_mls(message))
+    return ui->groups.lookup ? ui->groups.lookup(message, index, ui->groups_data) : NULL;
+  return index == 0 ? gh_attachments_lookup(ui->attachments, message) : NULL;
+}
+
+static GhAttachmentTransfer *
+card_lookup(GhMessage *message, gpointer data)
+{
+  return card_lookup_at(message, 0, data);
+}
+
+/* A kind-15 file's transfer carries its file; a group file's doesn't. */
+static gboolean
+is_group_transfer(GhAttachmentTransfer *transfer)
+{
+  return gh_attachment_transfer_get_file(transfer) == NULL;
 }
 
 static void
 card_download(GhAttachmentTransfer *transfer, gpointer data)
 {
   GhAttachmentUi *ui = data;
-  gh_attachments_download(ui->attachments, transfer);
+  if (!is_group_transfer(transfer))
+    gh_attachments_download(ui->attachments, transfer);
+  else if (ui->groups.download)
+    ui->groups.download(transfer, ui->groups_data);
 }
 
 static void
 card_cancel(GhAttachmentTransfer *transfer, gpointer data)
 {
   GhAttachmentUi *ui = data;
-  gh_attachments_cancel(ui->attachments, transfer);
+  if (!is_group_transfer(transfer))
+    gh_attachments_cancel(ui->attachments, transfer);
+  else if (ui->groups.cancel)
+    ui->groups.cancel(transfer, ui->groups_data);
 }
 
 static gchar *
 card_download_note(GhAttachmentTransfer *transfer, gpointer data)
 {
   GhAttachmentUi *ui = data;
+  if (is_group_transfer(transfer))
+    return ui->groups.download_note ? ui->groups.download_note(transfer, ui->groups_data)
+                                    : NULL;
   g_autoptr(GUri) uri = g_uri_parse(gh_attachment_transfer_get_file(transfer)->url,
                                     G_URI_FLAGS_ENCODED, NULL);
   const gchar *host = uri ? g_uri_get_host(uri) : NULL;
@@ -706,8 +828,13 @@ card_save(GhAttachmentTransfer *transfer, GtkWidget *card, gpointer data)
   GBytes *plaintext = gh_attachment_transfer_get_plaintext(transfer);
   if (ui->destroyed || !plaintext)
     return;
-  const GhNip17File *file = gh_attachment_transfer_get_file(transfer);
-  g_autofree gchar *name = gh_attachment_card_suggest_name(file->file_type, plaintext);
+  /* A group file's name is the sender's, sanitized (any UTF-8 but NUL,
+   * '/' included, W25); otherwise one from the bytes and the type. */
+  const gchar *sender_name = gh_attachment_transfer_get_suggested_name(transfer);
+  g_autofree gchar *name =
+    sender_name ? g_strdup(sender_name)
+                : gh_attachment_card_suggest_name(gh_attachment_transfer_get_media_type(transfer),
+                                                  plaintext);
   SaveOp *op = g_new0(SaveOp, 1);
   op->window = g_object_ref(ui->window);
   op->plaintext = g_bytes_ref(plaintext);
@@ -732,6 +859,7 @@ static const GhAttachmentCardProvider card_provider = {
   .cancel = card_cancel,
   .save = card_save,
   .download_note = card_download_note,
+  .lookup_at = card_lookup_at,
 };
 
 /* ---- state -------------------------------------------------------------------------- */
@@ -811,6 +939,39 @@ gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *config)
   g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), NULL);
   gh_attachment_card_set_provider(GTK_WIDGET(window), &card_provider, ui, NULL);
   update_can_attach(ui);
+}
+
+void
+gh_attachment_ui_set_groups(GhWindow *window, const GhAttachmentUiGroups *groups, gpointer data,
+                            GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  g_return_if_fail(!groups || (groups->can_send && groups->send_async && groups->send_finish &&
+                               groups->describe && groups->lookup && groups->download &&
+                               groups->cancel));
+  GhAttachmentUi *ui = ui_of(GTK_WIDGET(window));
+  if (!ui) {
+    if (destroy)
+      destroy(data);
+    return;
+  }
+  if (ui->groups_destroy)
+    ui->groups_destroy(ui->groups_data);
+  memset(&ui->groups, 0, sizeof ui->groups);
+  if (groups)
+    ui->groups = *groups;
+  ui->groups_data = groups ? data : NULL;
+  ui->groups_destroy = groups ? destroy : NULL;
+  update_can_attach(ui);
+}
+
+void
+gh_attachment_ui_groups_changed(GhWindow *window)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhAttachmentUi *ui = ui_of(GTK_WIDGET(window));
+  if (ui)
+    update_can_attach(ui);
 }
 
 GhAttachmentSheet *

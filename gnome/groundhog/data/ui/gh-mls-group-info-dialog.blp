@@ -74,6 +74,65 @@ template $GhMlsGroupInfoDialog: Adw.Dialog {
               }
             }
 
+            // The group picture (W25, nostrc-m6tp), hidden without the
+            // window's group files: what the group's picture is and, for an
+            // encrypted one, Show Picture -- the only fetch, on request, from
+            // the group's media server. A web address is never loaded here
+            // (a placeholder: the initials above). Admins of adopted groups
+            // change or remove it; a legacy group says it can't have one.
+            Adw.PreferencesGroup picture_group {
+              visible: false;
+              title: _("Picture");
+
+              header-suffix: Button set_picture_button {
+                visible: false;
+                valign: center;
+                action-name: "mls-group.set-picture";
+                tooltip-text: _("Choose a Picture for Everyone in the Group");
+
+                child: Adw.ButtonContent {
+                  icon-name: "document-open-symbolic";
+                  label: _("_Choose…");
+                  use-underline: true;
+                };
+              };
+
+              Adw.ActionRow picture_row {
+                title: _("Group Picture");
+                use-markup: false;
+                subtitle-lines: 5;
+
+                [suffix]
+                Spinner picture_spinner {
+                  visible: false;
+                  valign: center;
+                }
+
+                [suffix]
+                Button show_picture_button {
+                  visible: false;
+                  label: _("_Show Picture");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "mls-group.show-picture";
+                }
+
+                [suffix]
+                Button remove_picture_button {
+                  visible: false;
+                  label: _("_Remove");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "mls-group.remove-picture";
+                  tooltip-text: _("Remove the Group’s Picture for Everyone");
+
+                  styles [
+                    "destructive-action",
+                  ]
+                }
+              }
+            }
+
             Adw.PreferencesGroup {
               title: _("Privacy");
 

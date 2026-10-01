@@ -23,6 +23,9 @@ typedef struct {
    * relays, a signed list: charter P1); NULL: none, the user adds them. */
   const gchar *const *default_relays;
   guint lookup_deadline;          /* seconds per lookup phase; 0: default */
+  /* Nullable (W25): the window's encrypted-group files, for the group
+   * picture (gh-mls-attachments.h); NULL: Group Info shows no picture. */
+  struct _GhMlsAttachments *files;
 } GhMlsUiContext;
 
 G_END_DECLS

@@ -612,6 +612,283 @@ remove_tree(const gchar *path)
   g_rmdir(path);
 }
 
+/* ---- encrypted groups (W25, nostrc-q3a6, nostrc-m6tp) ------------------------------ */
+
+#define GROUP_A "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+#define GROUP_B "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+
+static void
+bytes32_of(const gchar *label, const gchar *what, guint8 out[32])
+{
+  g_autofree gchar *seed = g_strdup_printf("%s/%s/%s", run_id, what, label);
+  g_autofree gchar *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, seed, -1);
+  for (guint i = 0; i < 32; i++)
+    out[i] = (guint8)((g_ascii_xdigit_value(hash[2 * i]) << 4) |
+                      g_ascii_xdigit_value(hash[2 * i + 1]));
+}
+
+/* label's MLS attachment identity in group at epoch (what gh-mls-imeta.c
+ * computes from the imeta and the authenticated epoch). */
+static gchar *
+mls_id_of(const gchar *group, guint64 epoch, const gchar *label)
+{
+  guint8 ct[32], pt[32], nonce[32];
+  bytes32_of(label, "ct", ct);
+  bytes32_of(label, "pt", pt);
+  bytes32_of(label, "nonce", nonce);
+  return gh_store_mls_media_file_id(group, epoch, ct, pt, nonce, "image/png", "photo.png");
+}
+
+/* A decrypted kind-9 group message carrying label's file (as the MLS store
+ * delegate admits it): its epoch and the file's identity. */
+static void
+admit_mls(Fixture *f, const gchar *group, const gchar *sender, const gchar *message_label,
+          const gchar *file_label, guint64 epoch, gint64 created_at, gint64 expires_at)
+{
+  g_autofree gchar *id = g_compute_checksum_for_string(G_CHECKSUM_SHA256, message_label, -1);
+  g_autofree gchar *file_id = mls_id_of(group, epoch, file_label);
+  const gchar *media_ids[] = { file_id, NULL };
+  g_autofree gchar *raw = g_strdup_printf("{\"id\":\"%s\",\"kind\":9,\"content\":\"\"}", id);
+  GhStoreMessage message = {
+    .backend = GH_STORE_BACKEND_MLS,
+    .backend_key = group,
+    .backend_msg_id = id,
+    .sender_pubkey = sender,
+    .kind = 9,
+    .created_at = created_at,
+    .direction = GH_STORE_DIRECTION_IN,
+    .body = "",
+    .raw_json = raw,
+    .expires_at = expires_at,
+    .unread = TRUE,
+    .request_state = GH_STORE_REQUEST_ACCEPTED,
+    .has_mls_epoch = TRUE,
+    .mls_epoch = epoch,
+    .media_ids = media_ids,
+  };
+  GhStoreAdmitResult result = GH_STORE_ADMIT_EXPIRED;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_admit(f->store, &message, &result, NULL, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(result, ==, GH_STORE_ADMIT_STORED);
+}
+
+static GBytes *
+canary_bytes(const gchar *label)
+{
+  g_autofree gchar *canary = canary_of(label);
+  GString *plain = g_string_new(NULL);
+  while (plain->len < 20 * 1024)
+    g_string_append_printf(plain, "%s|%0960u|", canary, (guint)plain->len);
+  gsize len = plain->len;
+  return g_bytes_new_take(g_string_free(plain, FALSE), len);
+}
+
+static void
+cache_mls(Fixture *f, const gchar *group, guint64 epoch, const gchar *label)
+{
+  g_autofree gchar *id = mls_id_of(group, epoch, label);
+  g_autoptr(GBytes) bytes = canary_bytes(label);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_media_put_id(f->store, id, "image/png", bytes, &error));
+  g_assert_no_error(error);
+}
+
+static gboolean
+cached_mls(Fixture *f, const gchar *group, guint64 epoch, const gchar *label)
+{
+  g_autofree gchar *id = mls_id_of(group, epoch, label);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GBytes) bytes = gh_store_media_get_id(f->store, id, NULL, &error);
+  g_assert_no_error(error);
+  return bytes != NULL;
+}
+
+static gint64
+group_conversation(Fixture *f, const gchar *group)
+{
+  gint64 id = 0;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_find_conversation(f->store, GH_STORE_BACKEND_MLS, group, &id, &error));
+  g_assert_no_error(error);
+  return id;
+}
+
+/* An MLS attachment's plaintext is bound to the message that lists its
+ * identity: only then is it kept, and forgetting the group takes it, while
+ * the same file in another group (another identity) and a second message
+ * of the same group carrying it keep theirs. */
+static void
+test_mls_forget(void)
+{
+  Fixture f;
+  fixture_up(&f, "mls-forget");
+  admit_mls(&f, GROUP_A, bob, "a-photo", "a-photo", 3, T0 - 60, 0);
+  admit_mls(&f, GROUP_B, carol, "b-photo", "a-photo", 3, T0 - 50, 0);
+  cache_mls(&f, GROUP_A, 3, "a-photo");
+  cache_mls(&f, GROUP_B, 3, "a-photo");
+  /* The same ciphertext named in another epoch is another identity: no
+   * stored message lists it, so nothing is kept for it. */
+  g_autofree gchar *other_epoch = mls_id_of(GROUP_A, 4, "a-photo");
+  g_autoptr(GBytes) bytes = g_bytes_new_static("not this file", 13);
+  g_autoptr(GError) error = NULL;
+  g_assert_false(gh_store_media_put_id(f.store, other_epoch, NULL, bytes, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+
+  g_assert_true(gh_store_forget_conversation(f.store, group_conversation(&f, GROUP_A), &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(wal_size(&f), ==, 0);
+  g_assert_false(cached_mls(&f, GROUP_A, 3, "a-photo"));
+  g_assert_true(cached_mls(&f, GROUP_B, 3, "a-photo"));
+  /* The canary is the same plaintext in both groups: the decrypted pages
+   * still hold group B's copy (the control); group A's identity is gone. */
+  fixture_down(&f);
+}
+
+/* A disappearing group message takes its file's plaintext with it in the
+ * expiry purge (nostrc-5x5b for MLS). */
+static void
+test_mls_expiry(void)
+{
+  Fixture f;
+  fixture_up(&f, "mls-expiry");
+  admit_mls(&f, GROUP_A, bob, "mls-expiring", "mls-expiring", 1, T0 - 60, T0 + 10);
+  admit_mls(&f, GROUP_A, bob, "mls-permanent", "mls-permanent", 1, T0 - 50, 0);
+  cache_mls(&f, GROUP_A, 1, "mls-expiring");
+  cache_mls(&f, GROUP_A, 1, "mls-permanent");
+  gh_clock_fake_advance(f.clock, 15 * G_USEC_PER_SEC);
+  GhStorePurgeStats stats;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_purge(f.conversations, 0, &stats, NULL, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(stats.n_media, ==, 1);
+  g_assert_false(cached_mls(&f, GROUP_A, 1, "mls-expiring"));
+  g_assert_true(cached_mls(&f, GROUP_A, 1, "mls-permanent"));
+  const gchar *gone[] = { "mls-expiring", NULL }, *kept[] = { "mls-permanent", NULL };
+  assert_plaintext(&f, "MLS expiry purge", gone, kept);
+  fixture_down(&f);
+}
+
+/* What the store refuses: attachment identities without a source epoch, on
+ * another backend, or malformed; and a source epoch on another backend. */
+static void
+test_mls_admit_rules(void)
+{
+  Fixture f;
+  fixture_up(&f, "mls-rules");
+  g_autofree gchar *file_id = mls_id_of(GROUP_A, 2, "rules");
+  const gchar *ids[] = { file_id, NULL };
+  const gchar *bad_ids[] = { "NOT-HEX", NULL };
+  g_autofree gchar *id = g_compute_checksum_for_string(G_CHECKSUM_SHA256, "rules", -1);
+  GhStoreMessage message = {
+    .backend = GH_STORE_BACKEND_MLS, .backend_key = GROUP_A, .backend_msg_id = id,
+    .sender_pubkey = bob, .kind = 9, .created_at = T0 - 5,
+    .direction = GH_STORE_DIRECTION_IN, .body = "", .raw_json = "{}",
+    .request_state = GH_STORE_REQUEST_ACCEPTED, .media_ids = ids,
+  };
+  GhStoreAdmitResult result;
+  g_autoptr(GError) error = NULL;
+  /* No epoch: no file could ever be opened, so none is bound. */
+  g_assert_false(gh_store_admit(f.store, &message, &result, NULL, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  message.has_mls_epoch = TRUE;
+  message.mls_epoch = (guint64)G_MAXINT64 + 1;
+  g_assert_false(gh_store_admit(f.store, &message, &result, NULL, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  message.mls_epoch = 2;
+  message.media_ids = bad_ids;
+  g_assert_false(gh_store_admit(f.store, &message, &result, NULL, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  /* A NIP-17 message has neither. */
+  g_autofree gchar *room = room_of(bob, alice);
+  g_autofree gchar *wrap = g_compute_checksum_for_string(G_CHECKSUM_SHA256, "wrap", -1);
+  const gchar *participants[] = { bob, alice, NULL };
+  GhStoreMessage nip17 = {
+    .backend = GH_STORE_BACKEND_NIP17, .backend_key = room, .backend_msg_id = id,
+    .wrap_id = wrap, .sender_pubkey = bob, .kind = 14, .created_at = T0 - 5,
+    .direction = GH_STORE_DIRECTION_IN, .body = "hi", .raw_json = "{}",
+    .participants = participants, .has_mls_epoch = TRUE, .mls_epoch = 1,
+  };
+  g_assert_false(gh_store_admit(f.store, &nip17, &result, NULL, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
+  g_clear_error(&error);
+  /* Nothing of the refused admits is bound: the put still finds nothing. */
+  g_autoptr(GBytes) bytes = g_bytes_new_static("plaintext", 9);
+  g_assert_false(gh_store_media_put_id(f.store, file_id, NULL, bytes, &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+  /* Valid now. */
+  message.media_ids = ids;
+  g_assert_true(gh_store_admit(f.store, &message, &result, NULL, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_store_media_put_id(f.store, file_id, NULL, bytes, &error));
+  g_assert_no_error(error);
+  fixture_down(&f);
+}
+
+/* The group picture: kept for exactly the state that named it, gone when
+ * the group replaces or forgets it, and on Clear. */
+static void
+test_group_picture(void)
+{
+  Fixture f;
+  fixture_up(&f, "picture");
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GBytes) picture = canary_bytes("group-picture");
+  g_autofree gchar *first = g_compute_checksum_for_string(G_CHECKSUM_SHA256, "first", -1);
+  g_autofree gchar *second = g_compute_checksum_for_string(G_CHECKSUM_SHA256, "second", -1);
+  /* No conversation, no picture. */
+  g_assert_false(gh_store_group_image_put(f.store, GROUP_A, first, "image/png", picture,
+                                          &error));
+  g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+  admit_mls(&f, GROUP_A, bob, "hello", "hello-file", 1, T0 - 60, 0);
+  g_assert_true(gh_store_group_image_put(f.store, GROUP_A, first, "image/png", picture,
+                                         &error));
+  g_assert_no_error(error);
+  g_autofree gchar *mime = NULL;
+  g_autoptr(GBytes) got = gh_store_group_image_get(f.store, GROUP_A, first, &mime, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(got);
+  g_assert_true(g_bytes_equal(got, picture));
+  g_assert_cmpstr(mime, ==, "image/png");
+  /* Another state of the picture: not served. */
+  g_assert_null(gh_store_group_image_get(f.store, GROUP_A, second, NULL, &error));
+  g_assert_no_error(error);
+  /* Kept while it is the group's state; replaced, it goes. */
+  g_assert_true(gh_store_group_image_forget(f.store, GROUP_A, first, &error));
+  g_assert_no_error(error);
+  g_autoptr(GBytes) still = gh_store_group_image_get(f.store, GROUP_A, first, NULL, &error);
+  g_assert_nonnull(still);
+  g_assert_true(gh_store_group_image_forget(f.store, GROUP_A, second, &error));
+  g_assert_no_error(error);
+  g_assert_null(gh_store_group_image_get(f.store, GROUP_A, first, NULL, &error));
+  /* Forgetting the conversation takes it, from every page too. */
+  g_assert_true(gh_store_group_image_put(f.store, GROUP_A, second, "image/png", picture,
+                                         &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_store_forget_conversation(f.store, group_conversation(&f, GROUP_A), &error));
+  g_assert_no_error(error);
+  g_assert_null(gh_store_group_image_get(f.store, GROUP_A, second, NULL, &error));
+  const gchar *gone[] = { "group-picture", NULL };
+  assert_plaintext(&f, "group picture forgotten", gone, NULL);
+  /* Clear (prune to 0) deletes every decrypted copy, pictures included. */
+  admit_mls(&f, GROUP_A, bob, "again", "again-file", 1, T0 + 5, 0); /* after the forget */
+  g_assert_true(gh_store_group_image_put(f.store, GROUP_A, first, NULL, picture, &error));
+  g_assert_no_error(error);
+  gint64 total = 0;
+  g_assert_true(gh_store_media_get_total(f.store, &total, &error));
+  g_assert_cmpint(total, ==, (gint64)g_bytes_get_size(picture));
+  g_assert_true(gh_store_media_prune(f.store, 0, &error));
+  g_assert_no_error(error);
+  g_assert_null(gh_store_group_image_get(f.store, GROUP_A, first, NULL, &error));
+  fixture_down(&f);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -640,6 +917,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/media-purge/outbox-delete", test_outbox_delete);
   g_test_add_func("/groundhog/media-purge/put-needs-message", test_put_needs_message);
   g_test_add_func("/groundhog/media-purge/secure-delete-control", test_secure_delete_control);
+  g_test_add_func("/groundhog/media-purge/mls-forget", test_mls_forget);
+  g_test_add_func("/groundhog/media-purge/mls-expiry", test_mls_expiry);
+  g_test_add_func("/groundhog/media-purge/mls-admit-rules", test_mls_admit_rules);
+  g_test_add_func("/groundhog/media-purge/group-picture", test_group_picture);
   int status = g_test_run();
   remove_tree(root);
   g_free(root);

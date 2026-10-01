@@ -979,7 +979,7 @@ enqueue_plain(GhStore *store, gint64 conversation, const gchar *seed, gint64 *ou
   g_autofree gchar *op_id = gh_store_new_op_id();
   g_autofree gchar *rumor_id = hex_of(seed);
   GhStoreOutgoing outgoing = { conversation, op_id, rumor_id, hex_alice, 14, 50, "text",
-                               "{\"kind\":14}", NULL, 0 };
+                               "{\"kind\":14}", NULL, 0, FALSE, 0, NULL };
   gint64 outbox_id = 0;
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_store_enqueue(store, &outgoing, &outbox_id, out_message, &error));

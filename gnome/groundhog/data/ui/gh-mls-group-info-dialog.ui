@@ -76,6 +76,62 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child>
+                          <object class="AdwPreferencesGroup" id="picture_group">
+                            <property name="visible">false</property>
+                            <property name="title" translatable="yes">Picture</property>
+                            <property name="header-suffix">
+                              <object class="GtkButton" id="set_picture_button">
+                                <property name="visible">false</property>
+                                <property name="valign">3</property>
+                                <property name="action-name">mls-group.set-picture</property>
+                                <property name="tooltip-text" translatable="yes">Choose a Picture for Everyone in the Group</property>
+                                <property name="child">
+                                  <object class="AdwButtonContent">
+                                    <property name="icon-name">document-open-symbolic</property>
+                                    <property name="label" translatable="yes">_Choose…</property>
+                                    <property name="use-underline">true</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </property>
+                            <child>
+                              <object class="AdwActionRow" id="picture_row">
+                                <property name="title" translatable="yes">Group Picture</property>
+                                <property name="use-markup">false</property>
+                                <property name="subtitle-lines">5</property>
+                                <child type="suffix">
+                                  <object class="GtkSpinner" id="picture_spinner">
+                                    <property name="visible">false</property>
+                                    <property name="valign">3</property>
+                                  </object>
+                                </child>
+                                <child type="suffix">
+                                  <object class="GtkButton" id="show_picture_button">
+                                    <property name="visible">false</property>
+                                    <property name="label" translatable="yes">_Show Picture</property>
+                                    <property name="use-underline">true</property>
+                                    <property name="valign">3</property>
+                                    <property name="action-name">mls-group.show-picture</property>
+                                  </object>
+                                </child>
+                                <child type="suffix">
+                                  <object class="GtkButton" id="remove_picture_button">
+                                    <property name="visible">false</property>
+                                    <property name="label" translatable="yes">_Remove</property>
+                                    <property name="use-underline">true</property>
+                                    <property name="valign">3</property>
+                                    <property name="action-name">mls-group.remove-picture</property>
+                                    <property name="tooltip-text" translatable="yes">Remove the Group’s Picture for Everyone</property>
+                                    <style>
+                                      <class name="destructive-action"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
                           <object class="AdwPreferencesGroup">
                             <property name="title" translatable="yes">Privacy</property>
                             <child>

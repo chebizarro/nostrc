@@ -360,7 +360,8 @@ gboolean gh_store_get_draft(GhStore *store, gint64 conversation_id,
                             gchar **out_draft, GError **error);
 /* §3.8 forget conversation (ST-9): deletes its outbox rows (cancelling
  * unsettled sends), messages (with the decrypted attachments only they
- * named, gh-store-media.h) and participants, clears title, draft, unread,
+ * named, gh-store-media.h), participants and an encrypted group's decrypted
+ * picture (group_images), clears title, draft, unread,
  * read and pin state, and sets forgotten_before = now so relay backfill of
  * older messages cannot resurrect it; a newer message starts it fresh. The
  * row stays as that tombstone and keeps request_state (blocks survive),
@@ -504,6 +505,15 @@ typedef struct {
   const gchar *const *participants;  /* NULL-terminated pubkeys, or NULL */
   gboolean unread;                   /* counts towards unread_count (IN only) */
   GhStoreRequestState request_state; /* only when this creates the conversation */
+  /* MLS only (schema v5, W25): the source epoch libmarmot authenticated for
+   * this inner event (MarmotMessageResult.app_msg.epoch, never a tag), so its
+   * encrypted attachments can be opened later; FALSE stores NULL. */
+  gboolean has_mls_epoch;
+  guint64 mls_epoch;                 /* at most G_MAXINT64 */
+  /* MLS only: the cache identities (gh_store_mls_media_file_id()) of the
+   * attachments this message carries, NULL-terminated, or NULL. A decrypted
+   * copy in the media cache is bound to them (gh-store-media.h). */
+  const gchar *const *media_ids;
 } GhStoreMessage;
 
 typedef enum {
@@ -538,6 +548,11 @@ typedef struct {
   const gchar *rumor_json;     /* canonical unsigned rumor/event */
   const gchar *reply_to;
   gint64 expires_at;           /* 0 = none */
+  /* MLS only, as GhStoreMessage: the source epoch of the attachments and
+   * their cache identities. */
+  gboolean has_mls_epoch;
+  guint64 mls_epoch;
+  const gchar *const *media_ids;
 } GhStoreOutgoing;
 
 /* 128 random bits as 32 lowercase hex characters. */
@@ -730,6 +745,22 @@ gboolean gh_store_purge_full(GhStore *store, gint64 retention_cutoff,
 gchar *gh_store_media_file_id(const gchar *x_hex, const guint8 *key, gsize key_size,
                               const guint8 *nonce, gsize nonce_size);
 
+/* The media cache identity of an MLS (MIP-04 encrypted-media-v2) attachment
+ * (W25, nostrc-q3a6): lowercase hex SHA-256 of a domain tag, the group
+ * (lowercase hex MLS group id), the source epoch and every field the
+ * attachment's key and AEAD are bound to (the ciphertext and plaintext
+ * SHA-256, the nonce, the canonical media type and the filename). Two
+ * references that could decrypt different bytes never share it; one that
+ * only names someone else's ciphertext hash misses. The message that carries
+ * the attachment lists it (GhStoreMessage.media_ids), and the cache keeps a
+ * copy only while such a message is stored. NULL for malformed input. */
+gchar *gh_store_mls_media_file_id(const gchar *group_id_hex, guint64 source_epoch,
+                                  const guint8 ciphertext_sha256[32],
+                                  const guint8 plaintext_sha256[32], const guint8 nonce[12],
+                                  const gchar *media_type, const gchar *filename);
+/* The most attachments one MLS message may carry (MIP-04: one imeta each). */
+#define GH_STORE_MAX_MLS_MEDIA 16
+
 /* ---- Maintenance --------------------------------------------------------------------- */
 
 /* PRAGMA integrity_check (full) or quick_check; CORRUPT with the first
@@ -742,7 +773,7 @@ gboolean gh_store_checkpoint(GhStore *store, GError **error);
  * Ordered, append-only migrations; each runs in one transaction that also
  * records it in schema_migrations and sets PRAGMA user_version. A store with
  * a higher user_version is refused (NEWER_SCHEMA). */
-#define GH_STORE_SCHEMA_VERSION 4
+#define GH_STORE_SCHEMA_VERSION 5
 
 typedef struct {
   gint version;

@@ -48,13 +48,46 @@ gboolean gh_store_media_put(GhStore *store, const GhNip17File *file, const gchar
  * without an error when the cache has none. */
 GBytes *gh_store_media_get(GhStore *store, const GhNip17File *file, gchar **out_mime,
                            GError **error);
+/* The same keyed by an identity the caller computed: an MLS attachment's
+ * gh_store_mls_media_file_id() (W25, nostrc-q3a6). A put is refused
+ * (NOT_FOUND) unless a stored message lists the identity
+ * (GhStoreMessage.media_ids) or is the kind-15 file it names, so an MLS
+ * attachment's plaintext is bound to its messages exactly as a NIP-17 file's
+ * and goes with the last of them (every deletion runs MEDIA_FORGET). */
+gboolean gh_store_media_put_id(GhStore *store, const gchar *file_id_hex, const gchar *mime,
+                               GBytes *bytes, GError **error);
+GBytes *gh_store_media_get_id(GhStore *store, const gchar *file_id_hex, gchar **out_mime,
+                              GError **error);
 /* Removes file's row, if any. */
 gboolean gh_store_media_remove(GhStore *store, const GhNip17File *file, GError **error);
 /* Evicts least recently used rows until at most cap bytes remain (0 empties
- * the cache). */
+ * the cache, the group pictures below included). */
 gboolean gh_store_media_prune(GhStore *store, gint64 cap, GError **error);
-/* The bytes the cache holds in total. */
+/* The bytes the cache holds in total, the group pictures included. */
 gboolean gh_store_media_get_total(GhStore *store, gint64 *out_bytes, GError **error);
+
+/* ---- An encrypted group's picture (W25, nostrc-m6tp) ------------------------------------
+ * The decrypted 0x8002 group picture the user chose to show, one per group,
+ * kept inside the encrypted store only (never a file). It is keyed by the
+ * group's conversation and the identity of the component state that named
+ * it (image_id_hex: 64 lowercase hex the caller derives from the image hash,
+ * key, nonce and media type), so a picture an admin later replaced or
+ * cleared is never served for the new state; forgetting the conversation
+ * deletes it (gh_store_forget_conversation()), and Clear (prune to 0) does.
+ * At most GH_STORE_GROUP_IMAGE_MAX bytes (MDK's group-image limit). */
+#define GH_STORE_GROUP_IMAGE_MAX (10 * 1024 * 1024)
+
+/* NOT_FOUND when the group has no conversation. */
+gboolean gh_store_group_image_put(GhStore *store, const gchar *group_id_hex,
+                                  const gchar *image_id_hex, const gchar *mime, GBytes *bytes,
+                                  GError **error);
+/* The picture kept for exactly that state (in wiped memory), else NULL
+ * without an error. */
+GBytes *gh_store_group_image_get(GhStore *store, const gchar *group_id_hex,
+                                 const gchar *image_id_hex, gchar **out_mime, GError **error);
+/* Deletes the group's picture unless it is keep_id_hex's (NULL: always). */
+gboolean gh_store_group_image_forget(GhStore *store, const gchar *group_id_hex,
+                                     const gchar *keep_id_hex, GError **error);
 
 G_END_DECLS
 #endif

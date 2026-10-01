@@ -1,6 +1,7 @@
 #include "gh-store-mls.h"
 
 #include "gh-conversation-private.h"
+#include "gh-mls-imeta.h"
 
 #include <string.h>
 
@@ -230,6 +231,9 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
   GhStore *store = self->store;
   const gboolean own = gh_message_is_self(message);
   const gchar *room_id = gh_message_get_room_id(message);
+  guint64 epoch = 0;
+  gboolean has_epoch = gh_message_get_mls_epoch(message, &epoch);
+  g_auto(GStrv) media_ids = has_epoch ? gh_mls_imeta_dup_file_ids(message) : NULL;
   GhStoreMessage m = {
     .backend = GH_STORE_BACKEND_MLS,
     .backend_key = gh_message_get_group_id(message),
@@ -243,6 +247,9 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
     .expires_at = gh_message_get_expires_at(message),
     .unread = !own,
     .request_state = GH_STORE_REQUEST_ACCEPTED,
+    .has_mls_epoch = has_epoch,
+    .mls_epoch = epoch,
+    .media_ids = (const gchar *const *)media_ids,
   };
   GhStoreAdmitResult result = GH_STORE_ADMIT_DUPLICATE;
   gint64 row = 0, conversation_id = 0;
@@ -349,7 +356,7 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
     cursor.id = g_strdup(floor_id);
   }
   stmt = prepare(store,
-    "SELECT created_at, backend_msg_id, raw_json, expires_at, seq FROM messages "
+    "SELECT created_at, backend_msg_id, raw_json, expires_at, seq, mls_epoch FROM messages "
     "WHERE conversation_id = ?1 AND kind = ?6 AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
@@ -392,6 +399,12 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
         continue;
       }
       gh_message_set_seq(message, (guint64)MAX(sqlite3_column_int64(stmt, 4), 0));
+      /* Its files again, with the epoch stored when it arrived (W25); a row
+       * from before has none, and its files show but can't be opened. */
+      gboolean has_epoch = sqlite3_column_type(stmt, 5) == SQLITE_INTEGER &&
+                           sqlite3_column_int64(stmt, 5) >= 0;
+      gh_mls_imeta_describe(message, group_hex, has_epoch,
+                            has_epoch ? (guint64)sqlite3_column_int64(stmt, 5) : 0);
       g_ptr_array_add(messages, message);
     }
   } while (!conversation && messages->len == 0 && more);

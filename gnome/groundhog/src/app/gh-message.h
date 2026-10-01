@@ -175,6 +175,39 @@ gboolean gh_message_mls_room_split(const gchar *room_id, gchar **group_id_hex);
  * gh_message_get_group_id() is its MLS group id (hex) and
  * gh_message_get_group_relay() NULL. */
 gboolean gh_message_is_mls(GhMessage *self);
+/* The source epoch libmarmot authenticated for an MLS inner event
+ * (MarmotMessageResult.app_msg.epoch; for an own message, the epoch it was
+ * sent in), never a sender-chosen tag: what opening its attachments needs.
+ * Set by the MLS layer on receive and send, and restored from the store.
+ * FALSE when unknown (a row stored before Groundhog 0.12.0: its files can't
+ * be opened). */
+void gh_message_set_mls_epoch(GhMessage *self, guint64 source_epoch);
+gboolean gh_message_get_mls_epoch(GhMessage *self, guint64 *out_source_epoch);
+
+/* An encrypted group message's attachments (W25, nostrc-q3a6), as the MLS
+ * layer read them from the inner event's imeta tags with libmarmot's strict
+ * MIP-04 v2 parser (gh-mls-imeta.h), in tag order. Display data only (the
+ * declared type, never trusted to decode; the sender's file name, shown and
+ * sanitized before any save; the size hint), plus file_id, the media cache
+ * identity (gh_store_mls_media_file_id(); NULL without a source epoch).
+ * Opening a file goes through the MLS layer. A tag the parser rejected is
+ * counted, never shown, and never invalidates the message. */
+typedef struct {
+  gchar *media_type;
+  gchar *filename;
+  guint width, height;   /* the dim hint; 0 when absent */
+  gchar *file_id;
+} GhMessageAttachment;
+
+void gh_message_attachment_free(GhMessageAttachment *attachment);
+/* attachments: GhMessageAttachment (a reference is taken; free func
+ * gh_message_attachment_free), NULL or empty for none. MLS messages only. */
+void gh_message_set_attachments(GhMessage *self, GPtrArray *attachments, guint rejected);
+guint gh_message_get_n_attachments(GhMessage *self);
+/* Borrowed; NULL past the end. */
+const GhMessageAttachment *gh_message_get_attachment(GhMessage *self, guint index);
+/* imeta tags the parser rejected (attachment-local). */
+guint gh_message_get_rejected_attachments(GhMessage *self);
 
 G_END_DECLS
 #endif

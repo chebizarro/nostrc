@@ -321,11 +321,39 @@ static const gchar schema_v4[] =
   "  WHERE id = OLD.conversation_id AND last_read_msg = OLD.id; "
   "END;";
 
+/* Encrypted group attachments and the group picture (W25, nostrc-q3a6,
+ * nostrc-m6tp):
+ *  - messages.mls_epoch: the source epoch libmarmot authenticated for an MLS
+ *    inner event (never a sender-chosen tag, never the current epoch), which
+ *    opening its MIP-04 attachments needs. NULL on every other backend and on
+ *    MLS rows stored before this version (their files cannot be opened).
+ *  - message_media: the media-cache identities (gh_store_mls_media_file_id())
+ *    of an MLS message's attachments. A decrypted copy in `media` exists only
+ *    while a stored message names it here (as gh_media_file_id() binds a
+ *    kind-15 file), and goes with its last message (MEDIA_FORGET).
+ *  - group_images: the decrypted 0x8002 picture of an encrypted group, under
+ *    the identity of the component state that named it; forgetting the
+ *    conversation deletes it. */
+static const gchar schema_v5[] =
+  "ALTER TABLE messages ADD COLUMN mls_epoch INTEGER;"
+  "CREATE TABLE message_media ("
+  "  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,"
+  "  file_id    TEXT NOT NULL,"
+  "  PRIMARY KEY (message_id, file_id)) WITHOUT ROWID;"
+  "CREATE INDEX message_media_by_file ON message_media (file_id);"
+  "CREATE TABLE group_images ("
+  "  conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,"
+  "  image_id   TEXT NOT NULL,"
+  "  mime       TEXT,"
+  "  bytes      BLOB NOT NULL,"
+  "  fetched_at INTEGER NOT NULL);";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
   { 3, "Local verification marks on contacts (charter §3.3, G19)", schema_v3 },
   { 4, "Read state by arrival, timer changes, recipients without an inbox (W18)", schema_v4 },
+  { 5, "Encrypted group attachments and pictures (W25)", schema_v5 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

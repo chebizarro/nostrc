@@ -155,7 +155,7 @@ EXCEPTIONS = {
     # GVfs FUSE mount ($XDG_RUNTIME_DIR/gvfs) and refuse to read files under
     # it (gvfsd would fetch them outside GhNetHttp and Tor); nothing is ever
     # written there or read from it.
-    ("no-tmp-cache", "src/mls/gh-mls-media.c", "g_get_user_runtime_dir"):
+    ("no-tmp-cache", "src/media/gh-attachment.c", "g_get_user_runtime_dir"):
         "path_under_gvfs() compares a chosen file's path with $XDG_RUNTIME_DIR/gvfs "
         "to refuse GVfs FUSE files; it creates, writes and reads nothing there",
 }

@@ -685,7 +685,8 @@ enqueue_text(GhStore *store, gint64 conversation, const gchar *seed, const gchar
   g_autofree gchar *rumor = hex_of(seed);
   g_autofree gchar *raw = g_strdup_printf("{\"id\":\"%s\",\"kind\":14,\"content\":\"%s\"}",
                                           rumor, body ? body : "");
-  GhStoreOutgoing outgoing = { conversation, op, rumor, ACCOUNT_A, 14, T0, body, raw, NULL, 0 };
+  GhStoreOutgoing outgoing = { conversation, op, rumor, ACCOUNT_A, 14, T0, body, raw, NULL, 0,
+                               FALSE, 0, NULL };
   gint64 outbox = 0;
   if (!gh_store_enqueue(store, &outgoing, &outbox, NULL, error))
     return 0;
@@ -2340,7 +2341,7 @@ test_bounds(void)
   gint64 conversation = ensure_conversation(store, "bounds");
   g_autofree gchar *rumor = hex_of("out");
   GhStoreOutgoing outgoing = { conversation, "0123456789abcdef0123456789abcde", rumor, ACCOUNT_A,
-                               14, T0, "x", "{}", NULL, 0 };
+                               14, T0, "x", "{}", NULL, 0, FALSE, 0, NULL };
   g_assert_false(gh_store_enqueue(store, &outgoing, NULL, NULL, &error));
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
   g_clear_error(&error);
@@ -2376,7 +2377,7 @@ test_purge(void)
   g_autofree gchar *sent_raw = g_strdup_printf("{\"id\":\"%s\"}", sent_rumor);
   GhStoreOutgoing sent = { find_conversation(store, "c"), "00112233445566778899aabbccddeeff",
                            sent_rumor, ACCOUNT_A, 14, T0 - 100, "GROUNDHOG-CANARY-sent",
-                           sent_raw, NULL, T0 + 10 };
+                           sent_raw, NULL, T0 + 10, FALSE, 0, NULL };
   gint64 sent_outbox = 0;
   g_assert_true(gh_store_enqueue(store, &sent, &sent_outbox, NULL, &error));
   g_assert_true(seal_three(store, sent_outbox, &error));

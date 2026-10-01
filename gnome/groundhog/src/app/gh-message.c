@@ -31,6 +31,10 @@ struct _GhMessage {
   gchar *group_relay;
   /* MLS group messages only (group_id is then the hex MLS group id). */
   gboolean mls;
+  gboolean has_mls_epoch;
+  guint64 mls_epoch;
+  GPtrArray *attachments;   /* GhMessageAttachment, MLS only; NULL: none */
+  guint rejected_attachments;
 };
 
 enum {
@@ -287,7 +291,60 @@ gh_message_dup_display_text(GhMessage *self)
   if (file)
     /* TRANSLATORS: an encrypted file received or sent, before it is opened. */
     return g_strdup(gh_nip17_file_is_image(file) ? _("Photo") : _("File"));
+  /* An encrypted group's files with no caption (W25): never a URL. */
+  if ((!self->content || !*self->content) && self->attachments && self->attachments->len) {
+    const GhMessageAttachment *first = g_ptr_array_index(self->attachments, 0);
+    gboolean photo = first->media_type && g_str_has_prefix(first->media_type, "image/");
+    guint n = self->attachments->len;
+    if (n == 1)
+      return g_strdup(photo ? _("Photo") : _("File"));
+    /* TRANSLATORS: several encrypted files in one message, before they are opened. */
+    return g_strdup_printf(g_dngettext(NULL, "%u file", "%u files", n), n);
+  }
   return g_strdup(self->content);
+}
+
+void
+gh_message_attachment_free(GhMessageAttachment *attachment)
+{
+  if (!attachment)
+    return;
+  g_free(attachment->media_type);
+  g_free(attachment->filename);
+  g_free(attachment->file_id);
+  g_free(attachment);
+}
+
+void
+gh_message_set_attachments(GhMessage *self, GPtrArray *attachments, guint rejected)
+{
+  g_return_if_fail(GH_IS_MESSAGE(self) && self->mls);
+  g_clear_pointer(&self->attachments, g_ptr_array_unref);
+  if (attachments && attachments->len)
+    self->attachments = g_ptr_array_ref(attachments);
+  self->rejected_attachments = rejected;
+}
+
+guint
+gh_message_get_n_attachments(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
+  return self->attachments ? self->attachments->len : 0;
+}
+
+const GhMessageAttachment *
+gh_message_get_attachment(GhMessage *self, guint index)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
+  return self->attachments && index < self->attachments->len
+           ? g_ptr_array_index(self->attachments, index) : NULL;
+}
+
+guint
+gh_message_get_rejected_attachments(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), 0);
+  return self->rejected_attachments;
 }
 
 GhNip17File *
@@ -658,6 +715,25 @@ gh_message_is_mls(GhMessage *self)
   return self->mls;
 }
 
+void
+gh_message_set_mls_epoch(GhMessage *self, guint64 source_epoch)
+{
+  g_return_if_fail(GH_IS_MESSAGE(self) && self->mls);
+  self->mls_epoch = source_epoch;
+  self->has_mls_epoch = TRUE;
+}
+
+gboolean
+gh_message_get_mls_epoch(GhMessage *self, guint64 *out_source_epoch)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), FALSE);
+  if (!self->mls || !self->has_mls_epoch)
+    return FALSE;
+  if (out_source_epoch)
+    *out_source_epoch = self->mls_epoch;
+  return TRUE;
+}
+
 gint
 gh_message_compare(GhMessage *a, GhMessage *b)
 {
@@ -721,6 +797,7 @@ gh_message_finalize(GObject *object)
   g_free(self->subject);
   g_free(self->group_id);
   g_free(self->group_relay);
+  g_clear_pointer(&self->attachments, g_ptr_array_unref);
   g_ptr_array_unref(self->relays);
   G_OBJECT_CLASS(gh_message_parent_class)->finalize(object);
 }

@@ -438,8 +438,12 @@ typedef enum {
                                        * user was shown (review M2): check again */
   GH_MLS_SERVICE_ERROR_ADDRESS_TAKEN,  /* an invitation names the address (h tag) of another
                                         * group of ours; refused for good (nostrc-scki) */
-  GH_MLS_SERVICE_ERROR_INVITEE_UNSUPPORTED /* an invitee's app cannot join what the group
+  GH_MLS_SERVICE_ERROR_INVITEE_UNSUPPORTED, /* an invitee's app cannot join what the group
                                             * requires (SelfRemove; nostrc-zbmb) */
+  GH_MLS_SERVICE_ERROR_EPOCH_CHANGED,  /* the group moved on since the files were sealed:
+                                        * seal and upload them again (W25) */
+  GH_MLS_SERVICE_ERROR_UNSUPPORTED     /* this group's kind can't do that (a legacy group's
+                                        * picture, W25) */
 } GhMlsServiceError;
 
 /* Whether settings asks for every member's account proof: the key
@@ -764,6 +768,33 @@ void gh_mls_service_set_admins_async(GhMlsService *self, GhMlsGroup *group,
 gboolean gh_mls_service_change_finish(GhMlsService *self, GAsyncResult *result,
                                       GError **error);
 
+/* Whether group is an adopted-profile group (MDK 0.11, White Noise), whose
+ * settings are app components; FALSE for a legacy (MIP-01) group. */
+gboolean gh_mls_service_get_adopted(GhMlsService *self, GhMlsGroup *group);
+/* An adopted group's components as its current epoch says
+ * (marmot_get_group_components(): name, the 0x8002 picture, the 0x8007
+ * avatar URL and which one shows, the 0x800b media policy; out owned, free
+ * with marmot_group_components_clear()). GH_MLS_SERVICE_ERROR_UNSUPPORTED
+ * for a legacy group. The picture's image_key and upload key are secrets:
+ * use them, never keep them. Reads nothing from the network. */
+gboolean gh_mls_service_get_components(GhMlsService *self, GhMlsGroup *group,
+                                       MarmotGroupComponents *out, GError **error);
+/* The group picture (W25, nostrc-m6tp): image is the 0x8002 state of a
+ * picture already encrypted (marmot_group_image_encrypt()) and uploaded
+ * (copied, wiped after); NULL or !present removes the picture. One admin
+ * Commit, published then merged, as update_metadata (finish:
+ * gh_mls_service_change_finish()); GH_MLS_SERVICE_ERROR_UNSUPPORTED for a
+ * legacy group, which libmarmot gives no picture. */
+void gh_mls_service_set_image_async(GhMlsService *self, GhMlsGroup *group,
+                                    const MarmotGroupBlossomImage *image,
+                                    GCancellable *cancellable, GAsyncReadyCallback callback,
+                                    gpointer user_data);
+/* Removes the group's 0x8007 web-address picture (an admin, adopted groups;
+ * Groundhog never sets one: it never loads web pictures). */
+void gh_mls_service_clear_avatar_url_async(GhMlsService *self, GhMlsGroup *group,
+                                           GCancellable *cancellable,
+                                           GAsyncReadyCallback callback, gpointer user_data);
+
 /* Verify (W24 review H1): the user asked to check member (hex), a member of
  * group without the account proof. One KeyPackage lookup for that account
  * on the discovery relays and its kind-10002 write relays (never the
@@ -795,6 +826,20 @@ GhMlsLeave gh_mls_service_leave_kind(GhMlsService *self, GhMlsGroup *group);
  * message (transfer full) carries its GhMessageStatus. */
 GhMessage *gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text,
                                GError **error);
+/* As send(), with encrypted attachments (W25, nostrc-q3a6): imeta_tags
+ * holds 1 to GH_MLS_IMETA_MAX_ATTACHMENTS ordered MIP-04 v2 imeta tags
+ * (GStrv, "imeta" first; gh_mls_attachment_dup_imeta()), each sealed for
+ * source_epoch, and caption (possibly empty) is the content, as MDK sends
+ * them: one kind-9 inner event. In the send's store transaction and right
+ * before marmot_create_message(), libmarmot checks that a message sent now
+ * is in source_epoch (marmot_media_check_epoch(), reconciling an interrupted
+ * transition first); if the group moved on, nothing is stored or sent and
+ * the error is GH_MLS_SERVICE_ERROR_EPOCH_CHANGED: seal and upload again.
+ * The message carries its attachments (gh_message_get_attachment()) and
+ * epoch, and the store binds their cache identities to it. */
+GhMessage *gh_mls_service_send_with_imeta(GhMlsService *self, GhMlsGroup *group,
+                                          const gchar *caption, GPtrArray *imeta_tags,
+                                          guint64 source_epoch, GError **error);
 
 /* Pending invitations, oldest first (GhMlsInvite). Transfer full. */
 GPtrArray *gh_mls_service_list_invites(GhMlsService *self, GError **error);

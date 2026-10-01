@@ -76,6 +76,11 @@ GhAttachmentPrepared *gh_attachment_prepare(GBytes *file, const gchar *mime_hint
 /* TRUE when file is not a JPEG or PNG, whose metadata Groundhog can remove:
  * the UI's one-time "Files can contain hidden details such as location." */
 gboolean gh_attachment_may_have_metadata(GBytes *file);
+/* Whether path (as given, or with its symlinks resolved) lies under a GVfs
+ * FUSE mount ($XDG_RUNTIME_DIR/gvfs, ~/.gvfs): reading it would make gvfsd
+ * fetch it (SMB, SFTP, ...) outside GhNetHttp and Tor, although
+ * g_file_is_native() says TRUE. Charter §4.2: such a file is not offered. */
+gboolean gh_attachment_path_on_remote_mount(const gchar *path);
 
 typedef struct {
   GBytes *ciphertext;  /* AES-256-GCM output, tag appended */

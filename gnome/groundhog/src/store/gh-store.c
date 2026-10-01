@@ -1104,6 +1104,53 @@ gh_store_media_file_id(const gchar *x_hex, const guint8 *key, gsize key_size,
   return hex;
 }
 
+/* Domain tag of an MLS attachment's cache identity (NUL included). */
+static const gchar MLS_MEDIA_ID_DOMAIN[] = "groundhog-mls-media-id-v1";
+
+static void
+hash_field(crypto_hash_sha256_state *state, const guint8 *data, gsize len)
+{
+  guint8 prefix[8];
+  for (guint i = 0; i < 8; i++)
+    prefix[i] = (guint8)((guint64)len >> (56 - 8 * i));
+  crypto_hash_sha256_update(state, prefix, sizeof prefix);
+  crypto_hash_sha256_update(state, data, len);
+}
+
+gchar *
+gh_store_mls_media_file_id(const gchar *group_id_hex, guint64 source_epoch,
+                           const guint8 ciphertext_sha256[32], const guint8 plaintext_sha256[32],
+                           const guint8 nonce[12], const gchar *media_type,
+                           const gchar *filename)
+{
+  if (!group_id_hex || !*group_id_hex || !ciphertext_sha256 || !plaintext_sha256 || !nonce ||
+      !media_type || !filename)
+    return NULL;
+  for (const gchar *c = group_id_hex; *c; c++)
+    if (!g_ascii_isxdigit(*c) || g_ascii_isupper(*c))
+      return NULL;
+  crypto_hash_sha256_state state;
+  guint8 digest[crypto_hash_sha256_BYTES];
+  guint8 epoch[8];
+  for (guint i = 0; i < 8; i++)
+    epoch[i] = (guint8)(source_epoch >> (56 - 8 * i));
+  crypto_hash_sha256_init(&state);
+  crypto_hash_sha256_update(&state, (const guint8 *)MLS_MEDIA_ID_DOMAIN,
+                            sizeof MLS_MEDIA_ID_DOMAIN);
+  hash_field(&state, (const guint8 *)group_id_hex, strlen(group_id_hex));
+  crypto_hash_sha256_update(&state, epoch, sizeof epoch);
+  crypto_hash_sha256_update(&state, ciphertext_sha256, 32);
+  crypto_hash_sha256_update(&state, plaintext_sha256, 32);
+  crypto_hash_sha256_update(&state, nonce, 12);
+  hash_field(&state, (const guint8 *)media_type, strlen(media_type));
+  hash_field(&state, (const guint8 *)filename, strlen(filename));
+  crypto_hash_sha256_final(&state, digest);
+  sodium_memzero(&state, sizeof state);
+  gchar *hex = g_malloc(2 * sizeof digest + 1);
+  sodium_bin2hex(hex, 2 * sizeof digest + 1, digest, sizeof digest);
+  return hex;
+}
+
 /* The value of a canonical rumor's ["name","<value>"] tag, as a pointer into
  * json and its length; FALSE when there is none. In compact JSON every '"'
  * inside a string is escaped, so the unescaped ["name"," can only be the
@@ -2755,6 +2802,57 @@ gh_store_seen_add(GhStore *store, GhStoreSeenNs ns, const gchar *id, GError **er
 
 /* ---- T-admit ------------------------------------------------------------------------ */
 
+/* An MLS message's source epoch (stored as a signed integer) and its
+ * attachments' cache identities: at most GH_STORE_MAX_MLS_MEDIA, each 64
+ * lowercase hex, only with an epoch (no epoch, no attachment can open). */
+static gboolean
+check_mls_media(gboolean has_epoch, guint64 epoch, const gchar *const *ids, GError **error)
+{
+  if (has_epoch && epoch > G_MAXINT64) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "The MLS source epoch is too large to store");
+    return FALSE;
+  }
+  guint n = 0;
+  for (; ids && ids[n]; n++) {
+    if (n >= GH_STORE_MAX_MLS_MEDIA) {
+      g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                          "Too many attachments");
+      return FALSE;
+    }
+    if (!check_hex("An attachment identity", ids[n], 64, 64, FALSE, error))
+      return FALSE;
+  }
+  if (n > 0 && !has_epoch) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "Attachments need their source epoch");
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* message_media rows for the stored message row (duplicates ignored). */
+static gboolean
+insert_media_ids(GhStore *store, gint64 row, const gchar *const *ids, GError **error)
+{
+  for (guint i = 0; ids && ids[i]; i++) {
+    sqlite3_stmt *stmt = store_prepare(store,
+      "INSERT OR IGNORE INTO message_media (message_id, file_id) VALUES (?1, ?2)", error);
+    if (!stmt)
+      return FALSE;
+    gboolean ok = sqlite3_bind_int64(stmt, 1, row) == SQLITE_OK &&
+                  bind_text(stmt, 2, ids[i]) == SQLITE_OK;
+    if (!ok)
+      gh_store_set_sqlite_error(store, SQLITE_ERROR, "Binding an attachment", error);
+    else
+      ok = store_step_done(store, stmt, "Storing an attachment identity", error);
+    sqlite3_finalize(stmt);
+    if (!ok)
+      return FALSE;
+  }
+  return TRUE;
+}
+
 static gboolean
 check_message(const GhStoreMessage *m, GError **error)
 {
@@ -2772,6 +2870,13 @@ check_message(const GhStoreMessage *m, GError **error)
       !check_hex("The reply id", m->reply_to, 1, GH_STORE_MAX_ID, TRUE, error) ||
       !check_text("The title", m->title, GH_STORE_MAX_TITLE, TRUE, error) ||
       !check_request_state(m->request_state, error))
+    return FALSE;
+  if ((m->has_mls_epoch || m->media_ids) && m->backend != GH_STORE_BACKEND_MLS) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "Only MLS messages have a source epoch or attachments");
+    return FALSE;
+  }
+  if (!check_mls_media(m->has_mls_epoch, m->mls_epoch, m->media_ids, error))
     return FALSE;
   if (m->wrap_id && m->backend != GH_STORE_BACKEND_NIP17) {
     g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
@@ -2839,8 +2944,8 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
 
   stmt = store_prepare(store,
     "INSERT INTO messages (conversation_id, backend_msg_id, sender_pubkey, kind, "
-    "created_at, received_at, direction, body, raw_json, reply_to, expires_at) "
-    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) "
+    "created_at, received_at, direction, body, raw_json, reply_to, expires_at, mls_epoch) "
+    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) "
     "ON CONFLICT (conversation_id, backend_msg_id) DO NOTHING", error);
   if (!stmt)
     return FALSE;
@@ -2855,6 +2960,8 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   BIND(bind_text(stmt, 9, m->raw_json));
   BIND(bind_text(stmt, 10, m->reply_to));
   BIND(bind_int64_or_null(stmt, 11, m->expires_at));
+  BIND(m->has_mls_epoch ? sqlite3_bind_int64(stmt, 12, (gint64)m->mls_epoch)
+                        : sqlite3_bind_null(stmt, 12));
   if (!store_step_done(store, stmt, "Storing a message", error))
     goto fail;
   g_clear_pointer(&stmt, sqlite3_finalize);
@@ -2864,6 +2971,8 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
     return TRUE;
   }
   *message_id = sqlite3_last_insert_rowid(store->db);
+  if (!insert_media_ids(store, *message_id, m->media_ids, error))
+    return FALSE;
   STORE_CUT("admit", "message");
 
   /* The title follows the newest stored message (this one is already in),
@@ -2964,6 +3073,8 @@ check_outgoing(const GhStoreOutgoing *o, GError **error)
                         "A conversation id is required");
     return FALSE;
   }
+  if (!check_mls_media(o->has_mls_epoch, o->mls_epoch, o->media_ids, error))
+    return FALSE;
   return check_hex("The operation id", o->op_id, 32, 32, FALSE, error) &&
          check_hex("The message id", o->backend_msg_id, 1, GH_STORE_MAX_ID, FALSE, error) &&
          check_hex("The sender public key", o->sender_pubkey, 64, 64, FALSE, error) &&
@@ -3017,6 +3128,11 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
     seen_key_for((GhStoreBackend)backend, (const gchar *)sqlite3_column_text(stmt, 1),
                  o->backend_msg_id);
   g_clear_pointer(&stmt, sqlite3_finalize);
+  if ((o->has_mls_epoch || o->media_ids) && backend != GH_STORE_BACKEND_MLS) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "Only MLS messages have a source epoch or attachments");
+    return FALSE;
+  }
   if (backend != GH_STORE_BACKEND_MLS &&
       !check_hex("The event id", o->backend_msg_id, 64, 64, FALSE, error))
     return FALSE;
@@ -3040,8 +3156,8 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
 
   stmt = store_prepare(store,
     "INSERT INTO messages (conversation_id, backend_msg_id, sender_pubkey, kind, "
-    "created_at, received_at, direction, body, raw_json, reply_to, expires_at, outbox_id) "
-    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", error);
+    "created_at, received_at, direction, body, raw_json, reply_to, expires_at, outbox_id, mls_epoch) "
+    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)", error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, o->conversation_id));
@@ -3056,10 +3172,14 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
   BIND(bind_text(stmt, 10, o->reply_to));
   BIND(bind_int64_or_null(stmt, 11, o->expires_at));
   BIND(sqlite3_bind_int64(stmt, 12, *outbox_id));
+  BIND(o->has_mls_epoch ? sqlite3_bind_int64(stmt, 13, (gint64)o->mls_epoch)
+                        : sqlite3_bind_null(stmt, 13));
   if (!store_step_done(store, stmt, "Storing an outgoing message", error))
     goto fail;
   g_clear_pointer(&stmt, sqlite3_finalize);
   *message_id = sqlite3_last_insert_rowid(store->db);
+  if (!insert_media_ids(store, *message_id, o->media_ids, error))
+    return FALSE;
   STORE_CUT("enqueue", "message");
 
   /* The self-copy that comes back from our inbox is then a duplicate. */
@@ -3673,8 +3793,12 @@ fail:
  * does for the messages. */
 #define MEDIA_FORGET(doomed, survivor) \
   "DELETE FROM media WHERE sha256 IN (SELECT gh_media_file_id(d.raw_json) FROM messages d " \
-  "WHERE (" doomed ") AND d.kind = 15) AND NOT EXISTS (SELECT 1 FROM messages k WHERE (" \
-  survivor ") AND k.kind = 15 AND gh_media_file_id(k.raw_json) = media.sha256)"
+  "WHERE (" doomed ") AND d.kind = 15 UNION SELECT dm.file_id FROM message_media dm " \
+  "JOIN messages d ON d.id = dm.message_id WHERE (" doomed ")) " \
+  "AND NOT EXISTS (SELECT 1 FROM messages k WHERE (" \
+  survivor ") AND k.kind = 15 AND gh_media_file_id(k.raw_json) = media.sha256) " \
+  "AND NOT EXISTS (SELECT 1 FROM message_media km JOIN messages k ON k.id = km.message_id " \
+  "WHERE (" survivor ") AND km.file_id = media.sha256)"
 
 gboolean
 gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error)
@@ -3964,6 +4088,9 @@ gh_store_forget_conversation(GhStore *store, gint64 conversation_id, GError **er
       !store_exec_id(store, "DELETE FROM messages WHERE conversation_id = ?1",
                      conversation_id, 0, error) ||
       !store_exec_id(store, "DELETE FROM participants WHERE conversation_id = ?1",
+                     conversation_id, 0, error) ||
+      /* An encrypted group's decrypted picture (W25). */
+      !store_exec_id(store, "DELETE FROM group_images WHERE conversation_id = ?1",
                      conversation_id, 0, error))
     goto fail;
   STORE_CUT("forget", "messages");

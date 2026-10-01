@@ -2,11 +2,13 @@
 #include "gh-mls-media-private.h"
 
 #include "gh-attachment.h"
+#include "gh-store.h"
 
 #include <limits.h>
 #include <nostr-event.h>
 #include <nostr-tag.h>
 #include <openssl/crypto.h>
+#include <sodium.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -103,6 +105,15 @@ gh_mls_attachment_dup_ciphertext_sha256(const GhMlsAttachment *a)
 {
   g_return_val_if_fail(a != NULL, NULL);
   return hex_of(a->ref.ciphertext_sha256, 32);
+}
+
+gchar *
+gh_mls_attachment_dup_file_id(const GhMlsAttachment *a, const gchar *group_id_hex)
+{
+  g_return_val_if_fail(a != NULL, NULL);
+  return gh_store_mls_media_file_id(group_id_hex, a->source_epoch, a->ref.ciphertext_sha256,
+                                    a->ref.plaintext_sha256, a->ref.nonce, a->ref.media_type,
+                                    a->ref.filename);
 }
 
 GStrv
@@ -232,30 +243,6 @@ refuse_not_local(GTask *task)
   g_object_unref(task);
 }
 
-/* Under a GVfs FUSE mount: reading it makes gvfsd fetch it (SMB, SFTP, ...)
- * outside GhNetHttp and Tor, although g_file_is_native() says TRUE. */
-static gboolean
-path_under_gvfs(const gchar *path)
-{
-  if (!path)
-    return FALSE;
-  g_autofree gchar *run = g_build_filename(g_get_user_runtime_dir(), "gvfs", NULL);
-  g_autofree gchar *home = g_build_filename(g_get_home_dir(), ".gvfs", NULL);
-  /* Each root as given and with its own symlinks resolved (/var is
-   * /private/var on macOS; a resolved file path carries the latter). */
-  char run_real[PATH_MAX], home_real[PATH_MAX];
-  const gchar *roots[] = { run, home, realpath(run, run_real) ? run_real : NULL,
-                           realpath(home, home_real) ? home_real : NULL };
-  for (guint i = 0; i < G_N_ELEMENTS(roots); i++) {
-    if (!roots[i])
-      continue;
-    gsize n = strlen(roots[i]);
-    if (strncmp(path, roots[i], n) == 0 && (path[n] == '\0' || path[n] == G_DIR_SEPARATOR))
-      return TRUE;
-  }
-  return FALSE;
-}
-
 static void
 on_file_loaded(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -336,12 +323,7 @@ gh_mls_media_read_file_async(GFile *file, gsize max_size, GCancellable *cancella
     return;
   }
   g_autofree gchar *path = g_file_get_path(file);
-  if (path_under_gvfs(path)) {
-    refuse_not_local(task);
-    return;
-  }
-  char resolved[PATH_MAX];
-  if (path && realpath(path, resolved) && path_under_gvfs(resolved)) {
+  if (gh_attachment_path_on_remote_mount(path)) {
     refuse_not_local(task);
     return;
   }
@@ -394,6 +376,7 @@ gh_mls_media_sealed_free(GhMlsMediaSealed *sealed)
 {
   if (!sealed)
     return;
+  g_clear_pointer(&sealed->plaintext, g_bytes_unref);
   g_clear_pointer(&sealed->ciphertext, g_bytes_unref);
   g_clear_pointer(&sealed->attachment, gh_mls_attachment_free);
   g_free(sealed);
@@ -438,6 +421,7 @@ gh_mls_media_seal(Marmot *marmot, const gchar *group_id_hex, GBytes *file,
     return NULL;
   }
   GhMlsMediaSealed *sealed = g_new0(GhMlsMediaSealed, 1);
+  sealed->plaintext = g_bytes_ref(prepared->plaintext);
   sealed->ciphertext = g_bytes_new_take(up.ciphertext, up.ciphertext_len);
   up.ciphertext = NULL;
   if (prepared->width && prepared->height) {
@@ -456,19 +440,34 @@ gh_mls_media_seal(Marmot *marmot, const gchar *group_id_hex, GBytes *file,
 
 /* ---- step 3: upload --------------------------------------------------------------- */
 
+typedef struct {
+  GhMlsAttachment *attachment;
+  gchar *server;   /* used, or the one that asked for a known account */
+} UploadOp;
+
+static void
+upload_op_free(gpointer data)
+{
+  UploadOp *op = data;
+  gh_mls_attachment_free(op->attachment);
+  g_free(op->server);
+  g_free(op);
+}
+
 static void
 on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
 {
   GTask *task = data;
+  UploadOp *op = g_task_get_task_data(task);
   GError *error = NULL;
   g_autofree gchar *url = gh_blossom_client_upload_finish(GH_BLOSSOM_CLIENT(source), result,
-                                                          NULL, &error);
+                                                          &op->server, &error);
   if (!url) {
     g_task_return_error(task, error);
     g_object_unref(task);
     return;
   }
-  GhMlsAttachment *a = gh_mls_attachment_copy(g_task_get_task_data(task));
+  GhMlsAttachment *a = gh_mls_attachment_copy(op->attachment);
   if (marmot_media_reference_add_locator(&a->ref, MARMOT_MEDIA_LOCATOR_BLOSSOM_V1, url) !=
       MARMOT_OK)
     g_error("out of memory adding a locator");
@@ -492,8 +491,9 @@ gh_mls_media_upload_async(GhBlossomClient *client, const GhMlsMediaSealed *seale
   g_return_if_fail(sealed != NULL && sealed->ciphertext && sealed->attachment);
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_media_upload_async);
-  g_task_set_task_data(task, gh_mls_attachment_copy(sealed->attachment),
-                       (GDestroyNotify)gh_mls_attachment_free);
+  UploadOp *op = g_new0(UploadOp, 1);
+  op->attachment = gh_mls_attachment_copy(sealed->attachment);
+  g_task_set_task_data(task, op, upload_op_free);
   g_autofree gchar *sha = gh_mls_attachment_dup_ciphertext_sha256(sealed->attachment);
   gh_blossom_client_upload_async(client, sealed->ciphertext, sha, cancellable, on_uploaded,
                                  task);
@@ -502,7 +502,17 @@ gh_mls_media_upload_async(GhBlossomClient *client, const GhMlsMediaSealed *seale
 GhMlsAttachment *
 gh_mls_media_upload_finish(GAsyncResult *result, GError **error)
 {
+  return gh_mls_media_upload_finish_full(result, NULL, error);
+}
+
+GhMlsAttachment *
+gh_mls_media_upload_finish_full(GAsyncResult *result, gchar **out_server, GError **error)
+{
   g_return_val_if_fail(g_task_is_valid(result, NULL), NULL);
+  if (out_server) {
+    UploadOp *op = g_task_get_task_data(G_TASK(result));
+    *out_server = op ? g_strdup(op->server) : NULL;
+  }
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 
@@ -528,6 +538,34 @@ gh_mls_media_check_epoch(Marmot *marmot, const gchar *group_id_hex,
   if (err != MARMOT_OK)
     return media_fail(err, "The group is not available", error);
   return TRUE;
+}
+
+/* A decrypted attachment: wiped when the last reference goes (review L4),
+ * as the NIP-17 open path does. */
+typedef struct {
+  guint8 *data;
+  gsize size;
+} Wiped;
+
+static gsize wiped_total;   /* atomically updated: a GBytes may die on any thread */
+
+static void
+wiped_free(gpointer data)
+{
+  Wiped *w = data;
+  OPENSSL_cleanse(w->data, w->size);
+  g_atomic_pointer_add(&wiped_total, (gssize)w->size);
+  free(w->data);   /* libmarmot's malloc */
+  g_free(w);
+}
+
+static GBytes *
+wiped_bytes_take(guint8 *data, gsize size)
+{
+  Wiped *w = g_new0(Wiped, 1);
+  w->data = data;
+  w->size = size;
+  return g_bytes_new_with_free_func(data, size, wiped_free, w);
 }
 
 /* ---- download --------------------------------------------------------------------- */
@@ -605,21 +643,198 @@ fetch_next(GTask *task)
                                    on_fetched, task);
 }
 
+static void
+fetch_start(GhBlossomClient *client, GStrv urls, gchar *sha, GCancellable *cancellable,
+            GAsyncReadyCallback callback, gpointer user_data)
+{
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_mls_media_fetch_async);
+  Fetch *f = g_new0(Fetch, 1);
+  f->client = g_object_ref(client);
+  f->urls = urls;
+  f->sha = sha;
+  g_task_set_task_data(task, f, fetch_free);
+  fetch_next(task);
+}
+
+/* The attachment's own blossom-v1 locators, then each fallback not already
+ * among them. */
+static GStrv
+urls_with_fallbacks(const GhMlsAttachment *attachment, const gchar *const *fallbacks)
+{
+  g_auto(GStrv) own = gh_mls_attachment_dup_blossom_urls(attachment);
+  g_autoptr(GStrvBuilder) all = g_strv_builder_new();
+  g_strv_builder_addv(all, (const char **)own);
+  for (guint i = 0; fallbacks && fallbacks[i]; i++)
+    if (!g_strv_contains((const gchar *const *)own, fallbacks[i]))
+      g_strv_builder_add(all, fallbacks[i]);
+  return g_strv_builder_end(all);
+}
+
 void
 gh_mls_media_fetch_async(GhBlossomClient *client, const GhMlsAttachment *attachment,
                          GCancellable *cancellable, GAsyncReadyCallback callback,
                          gpointer user_data)
 {
+  gh_mls_media_fetch_with_fallbacks_async(client, attachment, NULL, cancellable, callback,
+                                          user_data);
+}
+
+void
+gh_mls_media_fetch_with_fallbacks_async(GhBlossomClient *client,
+                                        const GhMlsAttachment *attachment,
+                                        const gchar *const *fallback_urls,
+                                        GCancellable *cancellable,
+                                        GAsyncReadyCallback callback, gpointer user_data)
+{
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(client));
   g_return_if_fail(attachment != NULL);
-  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
-  g_task_set_source_tag(task, gh_mls_media_fetch_async);
-  Fetch *f = g_new0(Fetch, 1);
-  f->client = g_object_ref(client);
-  f->urls = gh_mls_attachment_dup_blossom_urls(attachment);
-  f->sha = gh_mls_attachment_dup_ciphertext_sha256(attachment);
-  g_task_set_task_data(task, f, fetch_free);
-  fetch_next(task);
+  fetch_start(client, urls_with_fallbacks(attachment, fallback_urls),
+              gh_mls_attachment_dup_ciphertext_sha256(attachment), cancellable, callback,
+              user_data);
+}
+
+GStrv
+gh_mls_media_fallback_urls(const MarmotGroupComponents *components,
+                           const guint8 ciphertext_sha256[32])
+{
+  g_return_val_if_fail(components != NULL && ciphertext_sha256 != NULL, NULL);
+  g_autoptr(GStrvBuilder) urls = g_strv_builder_new();
+  const MarmotGroupMediaPolicy *policy = &components->media_policy;
+  for (size_t i = 0; components->has_media_policy && i < policy->default_blob_endpoint_count;
+       i++) {
+    const MarmotMediaBlobEndpoint *e = &policy->default_blob_endpoints[i];
+    /* An endpoint libmarmot couldn't verify is never contacted (u7cb M3). */
+    if (e->base_url_unverified || g_strcmp0(e->locator_kind, MARMOT_MEDIA_LOCATOR_BLOSSOM_V1))
+      continue;
+    char *url = NULL;
+    if (marmot_media_blossom_fallback_url(e->base_url, ciphertext_sha256, &url) == MARMOT_OK)
+      g_strv_builder_add(urls, url);
+    free(url);
+  }
+  return g_strv_builder_end(urls);
+}
+
+GStrv
+gh_mls_media_dup_servers(const MarmotGroupComponents *components)
+{
+  g_return_val_if_fail(components != NULL, NULL);
+  g_autoptr(GStrvBuilder) servers = g_strv_builder_new();
+  const MarmotGroupMediaPolicy *policy = &components->media_policy;
+  for (size_t i = 0; components->has_media_policy && i < policy->default_blob_endpoint_count;
+       i++) {
+    const MarmotMediaBlobEndpoint *e = &policy->default_blob_endpoints[i];
+    if (!e->base_url_unverified && !g_strcmp0(e->locator_kind, MARMOT_MEDIA_LOCATOR_BLOSSOM_V1))
+      g_strv_builder_add(servers, e->base_url);
+  }
+  return g_strv_builder_end(servers);
+}
+
+gboolean
+gh_mls_media_policy_allows_blossom(const MarmotGroupComponents *components)
+{
+  g_return_val_if_fail(components != NULL, FALSE);
+  if (!components->has_media_policy)
+    return TRUE;   /* the default policy: blossom-v1 */
+  for (size_t i = 0; i < components->media_policy.allowed_locator_kind_count; i++)
+    if (!g_strcmp0(components->media_policy.allowed_locator_kinds[i],
+                   MARMOT_MEDIA_LOCATOR_BLOSSOM_V1))
+      return TRUE;
+  return FALSE;
+}
+
+/* ---- the group picture (0x8002) --------------------------------------------------- */
+
+static const gchar PICTURE_ID_DOMAIN[] = "groundhog-mls-picture-id-v1";
+
+gchar *
+gh_mls_media_picture_id(const MarmotGroupBlossomImage *image)
+{
+  g_return_val_if_fail(image != NULL, NULL);
+  if (!image->present || !image->media_type)
+    return NULL;
+  crypto_hash_sha256_state state;
+  guint8 digest[crypto_hash_sha256_BYTES];
+  crypto_hash_sha256_init(&state);
+  crypto_hash_sha256_update(&state, (const guint8 *)PICTURE_ID_DOMAIN, sizeof PICTURE_ID_DOMAIN);
+  crypto_hash_sha256_update(&state, image->image_hash, 32);
+  crypto_hash_sha256_update(&state, image->image_key, 32);
+  crypto_hash_sha256_update(&state, image->image_nonce, 12);
+  crypto_hash_sha256_update(&state, (const guint8 *)image->media_type,
+                            strlen(image->media_type) + 1);
+  crypto_hash_sha256_final(&state, digest);
+  sodium_memzero(&state, sizeof state);
+  return hex_of(digest, sizeof digest);
+}
+
+GStrv
+gh_mls_media_picture_urls(const MarmotGroupComponents *components)
+{
+  g_return_val_if_fail(components != NULL, NULL);
+  if (!components->image.present)
+    return g_new0(gchar *, 1);
+  return gh_mls_media_fallback_urls(components, components->image.image_hash);
+}
+
+void
+gh_mls_media_fetch_picture_async(GhBlossomClient *client, const MarmotGroupComponents *components,
+                                 GCancellable *cancellable, GAsyncReadyCallback callback,
+                                 gpointer user_data)
+{
+  g_return_if_fail(GH_IS_BLOSSOM_CLIENT(client));
+  g_return_if_fail(components != NULL);
+  fetch_start(client, gh_mls_media_picture_urls(components),
+              hex_of(components->image.image_hash, 32), cancellable, callback, user_data);
+}
+
+GBytes *
+gh_mls_media_open_picture(const MarmotGroupBlossomImage *image, GBytes *ciphertext,
+                          GError **error)
+{
+  g_return_val_if_fail(image != NULL && ciphertext != NULL, NULL);
+  gsize len = 0;
+  const guint8 *data = g_bytes_get_data(ciphertext, &len);
+  uint8_t *pt = NULL;
+  size_t pt_len = 0;
+  /* The blob's hash first, then the AEAD (marmot_group_image_decrypt()). */
+  MarmotError err = marmot_group_image_decrypt(image, data ? data : (const guint8 *)"", len, &pt,
+                                               &pt_len);
+  if (err != MARMOT_OK) {
+    media_fail(err, "The group picture could not be opened", error);
+    return NULL;
+  }
+  return wiped_bytes_take(pt, pt_len);
+}
+
+GBytes *
+gh_mls_media_seal_picture(GBytes *file, const gchar *mime_hint, MarmotGroupBlossomImage *out,
+                          GError **error)
+{
+  g_return_val_if_fail(file != NULL && out != NULL, NULL);
+  memset(out, 0, sizeof *out);
+  /* A photo only, its metadata removed (what is encrypted is what is shown
+   * to every member); MDK's limit. */
+  g_autoptr(GhAttachmentPrepared) prepared =
+    gh_attachment_prepare(file, mime_hint, GH_MLS_MEDIA_PICTURE_MAX, error);
+  if (!prepared)
+    return NULL;
+  if (!prepared->stripped || !prepared->mime ||
+      (g_strcmp0(prepared->mime, "image/jpeg") && g_strcmp0(prepared->mime, "image/png"))) {
+    g_set_error_literal(error, GH_MLS_MEDIA_ERROR, GH_MLS_MEDIA_ERROR_UNSUPPORTED,
+                        "A group picture must be a JPEG or PNG photo");
+    return NULL;
+  }
+  gsize len = 0;
+  const guint8 *data = g_bytes_get_data(prepared->plaintext, &len);
+  uint8_t *ct = NULL;
+  size_t ct_len = 0;
+  MarmotError err = marmot_group_image_encrypt(data, len, prepared->mime, out, &ct, &ct_len);
+  if (err != MARMOT_OK) {
+    marmot_group_blossom_image_clear(out);
+    media_fail(err, "The picture could not be encrypted", error);
+    return NULL;
+  }
+  return g_bytes_new_with_free_func(ct, ct_len, free, ct);
 }
 
 GBytes *
@@ -627,34 +842,6 @@ gh_mls_media_fetch_finish(GAsyncResult *result, GError **error)
 {
   g_return_val_if_fail(g_task_is_valid(result, NULL), NULL);
   return g_task_propagate_pointer(G_TASK(result), error);
-}
-
-/* A decrypted attachment: wiped when the last reference goes (review L4),
- * as the NIP-17 open path does. */
-typedef struct {
-  guint8 *data;
-  gsize size;
-} Wiped;
-
-static gsize wiped_total;   /* atomically updated: a GBytes may die on any thread */
-
-static void
-wiped_free(gpointer data)
-{
-  Wiped *w = data;
-  OPENSSL_cleanse(w->data, w->size);
-  g_atomic_pointer_add(&wiped_total, (gssize)w->size);
-  free(w->data);   /* libmarmot's malloc */
-  g_free(w);
-}
-
-static GBytes *
-wiped_bytes_take(guint8 *data, gsize size)
-{
-  Wiped *w = g_new0(Wiped, 1);
-  w->data = data;
-  w->size = size;
-  return g_bytes_new_with_free_func(data, size, wiped_free, w);
 }
 
 gsize

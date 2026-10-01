@@ -2,9 +2,11 @@
 #include "gh-attachment-private.h"
 #include "gh-store-media.h"
 
+#include <limits.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <stdlib.h>
 #include <string.h>
 
 G_DEFINE_QUARK(gh-attachment-error-quark, gh_attachment_error)
@@ -66,6 +68,42 @@ gh_attachment_may_have_metadata(GBytes *file)
 {
   return gh_media_sniff(file) == GH_MEDIA_FORMAT_OTHER;
 }
+
+/* Under a GVfs FUSE mount: reading it makes gvfsd fetch it (SMB, SFTP, ...)
+ * outside GhNetHttp and Tor, although g_file_is_native() says TRUE. */
+static gboolean
+path_under_gvfs(const gchar *path)
+{
+  if (!path)
+    return FALSE;
+  g_autofree gchar *run = g_build_filename(g_get_user_runtime_dir(), "gvfs", NULL);
+  g_autofree gchar *home = g_build_filename(g_get_home_dir(), ".gvfs", NULL);
+  /* Each root as given and with its own symlinks resolved (/var is
+   * /private/var on macOS; a resolved file path carries the latter). */
+  char run_real[PATH_MAX], home_real[PATH_MAX];
+  const gchar *roots[] = { run, home, realpath(run, run_real) ? run_real : NULL,
+                           realpath(home, home_real) ? home_real : NULL };
+  for (guint i = 0; i < G_N_ELEMENTS(roots); i++) {
+    if (!roots[i])
+      continue;
+    gsize n = strlen(roots[i]);
+    if (strncmp(path, roots[i], n) == 0 && (path[n] == '\0' || path[n] == G_DIR_SEPARATOR))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+gboolean
+gh_attachment_path_on_remote_mount(const gchar *path)
+{
+  if (!path)
+    return FALSE;
+  if (path_under_gvfs(path))
+    return TRUE;
+  char resolved[PATH_MAX];
+  return realpath(path, resolved) && path_under_gvfs(resolved);
+}
+
 
 GhAttachmentPrepared *
 gh_attachment_prepare(GBytes *file, const gchar *mime_hint, gsize max_size, GError **error)

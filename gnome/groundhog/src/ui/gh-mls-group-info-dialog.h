@@ -29,6 +29,14 @@ G_BEGIN_DECLS
  *    every member but themself, Remove from Group (confirmed;
  *    gh_mls_service_remove_members_async()), and Name and Description
  *    (gh_mls_service_update_metadata_async()).
+ *  - Picture (W25, nostrc-m6tp; with the window's GhMlsAttachments): the
+ *    header's avatar shows the group's encrypted picture once the user chose
+ *    Show Picture (the only fetch: from the group's media server, through
+ *    GhNetHttp) and it passed the decode guard; otherwise the initials. A
+ *    web-address picture is never loaded (a placeholder); a legacy group
+ *    says it can't have one. Admins choose a JPEG or PNG on this device
+ *    (metadata removed, encrypted, uploaded) or remove the picture; each is
+ *    one Commit.
  *  - Group relays (read-only).
  *  - Leave (confirmed; gh_mls_service_leave()): the confirmation says what
  *    it does (gh_mls_service_leave_kind(), gh_mls_leave_copy(); nostrc-2um6):
@@ -44,7 +52,8 @@ G_BEGIN_DECLS
  * Actions (widget actions of the dialog): mls-group.add-members,
  * mls-group.save-add, mls-group.remove (s: pubkey hex; presents its
  * confirmation), mls-group.rename, mls-group.save-rename, mls-group.leave
- * (presents its confirmation).
+ * (presents its confirmation), mls-group.show-picture, mls-group.set-picture
+ * and mls-group.remove-picture.
  */
 #define GH_TYPE_MLS_GROUP_INFO_DIALOG (gh_mls_group_info_dialog_get_type())
 G_DECLARE_FINAL_TYPE(GhMlsGroupInfoDialog, gh_mls_group_info_dialog, GH, MLS_GROUP_INFO_DIALOG,
@@ -81,6 +90,13 @@ AdwAlertDialog *gh_mls_group_info_dialog_get_leave_dialog(GhMlsGroupInfoDialog *
 AdwAlertDialog *gh_mls_group_info_dialog_get_remove_dialog(GhMlsGroupInfoDialog *self);
 void gh_mls_group_info_dialog_set_rename(GhMlsGroupInfoDialog *self, const gchar *name,
                                          const gchar *description);
+/* The picture row's words (NULL: no picture section), whether the header
+ * shows the decrypted picture, and an admin's chosen file as the Choose
+ * dialog would give it (tests). */
+const gchar *gh_mls_group_info_dialog_get_picture_status(GhMlsGroupInfoDialog *self);
+gboolean gh_mls_group_info_dialog_get_picture_shown(GhMlsGroupInfoDialog *self);
+void gh_mls_group_info_dialog_set_picture(GhMlsGroupInfoDialog *self, GBytes *file,
+                                          const gchar *mime);
 
 G_END_DECLS
 #endif

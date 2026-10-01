@@ -47,6 +47,9 @@
 #include "group-send-stub.h"
 #include "gh-recipient.h"
 #include "mls-world.h"
+#include "blossom-fixture.h"
+#include "gh-attachment-card.h"
+#include "gh-mls-attachments.h"
 
 #include <glib/gi18n.h>
 
@@ -606,6 +609,9 @@ app_service(gpointer data)
 
 /* The window glue as gh-app-services.c attaches it. nip29: New Group needs
  * the relay-group service (the dialog's relay part), or NULL. */
+/* The next app_window()'s group files (W25), or NULL. */
+static GhMlsAttachments *window_files;
+
 static GhWindow *
 app_window(App *app, GhNip29Service *nip29)
 {
@@ -623,6 +629,7 @@ app_window(App *app, GhNip29Service *nip29)
     .service_data = app,
     .account_relays = app->relays,
     .lookup_deadline = 20,
+    .files = window_files,
   };
   gh_mls_ui_attach(window, &mls);
   return window;
@@ -1558,6 +1565,222 @@ test_gui_new_group_format_changed(void)
 }
 #endif
 
+/* ---- --gui: files and pictures in encrypted groups (W25) ----------------------------- */
+
+/* The cards' provider of the application's group delegate
+ * (gh-mls-attachment-ui.c), on the test window. */
+static GhAttachmentTransfer *
+files_lookup(GhMessage *message, gpointer data)
+{
+  return gh_mls_attachments_lookup(data, message, 0);
+}
+
+static GhAttachmentTransfer *
+files_lookup_at(GhMessage *message, guint index, gpointer data)
+{
+  return gh_mls_attachments_lookup(data, message, index);
+}
+
+static void
+files_download(GhAttachmentTransfer *transfer, gpointer data)
+{
+  gh_mls_attachments_download(data, transfer);
+}
+
+static void
+files_cancel(GhAttachmentTransfer *transfer, gpointer data)
+{
+  gh_mls_attachments_cancel(data, transfer);
+}
+
+static void
+files_save(GhAttachmentTransfer *transfer, GtkWidget *card, gpointer data)
+{
+  (void)transfer;
+  (void)card;
+  (void)data;
+}
+
+static const GhAttachmentCardProvider files_provider = {
+  .lookup = files_lookup,
+  .download = files_download,
+  .cancel = files_cancel,
+  .save = files_save,
+  .lookup_at = files_lookup_at,
+};
+
+/* The button bound to action (its action-name), or NULL. */
+static GtkWidget *
+button_for(GtkWidget *widget, const gchar *action)
+{
+  if (GTK_IS_ACTIONABLE(widget) &&
+      g_strcmp0(gtk_actionable_get_action_name(GTK_ACTIONABLE(widget)), action) == 0)
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = button_for(c, action);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static gboolean
+card_shown(gpointer view)
+{
+  return find_type(view, GH_TYPE_ATTACHMENT_CARD, NULL) != NULL;
+}
+
+static gboolean
+card_has_transfer(gpointer card)
+{
+  return gh_attachment_card_get_transfer(card) != NULL;
+}
+
+static gboolean
+card_ready(gpointer card)
+{
+  GhAttachmentTransfer *t = gh_attachment_card_get_transfer(card);
+  return t && gh_attachment_transfer_get_state(t) == GH_ATTACHMENT_STATE_READY;
+}
+
+static GBytes *
+tiny_png(void)
+{
+  /* A 1x1 PNG GTK decodes (the decode guard passes). */
+  static const guint8 png[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+    0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+    0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8,
+    0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00,
+    0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+  };
+  return g_bytes_new_static(png, sizeof png);
+}
+
+typedef struct {
+  gboolean done;
+  GhMessage *message;
+  GError *error;
+} FileSent;
+
+static gboolean
+file_sent(gpointer data)
+{
+  return ((FileSent *)data)->done;
+}
+
+static void
+on_file_sent(GObject *source, GAsyncResult *result, gpointer data)
+{
+  FileSent *sent = data;
+  sent->message = gh_mls_attachments_send_finish(GH_MLS_ATTACHMENTS(source), result, NULL,
+                                                 &sent->error);
+  sent->done = TRUE;
+}
+
+/* Group Info of a legacy group says it can't have a picture and offers no
+ * change; a received photo's card fetches nothing until Download, then
+ * shows the photo inline. */
+static void
+test_gui_group_files(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_legacy_only = TRUE;   /* MDK 0.8 KeyPackages only: a legacy group */
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Files", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  join(bob, ALICE);
+  BlossomFixture *blossom = blossom_fixture_new();
+  g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
+  g_autoptr(GSettings) settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
+  const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
+  g_settings_set_strv(settings, "blossom-servers", servers);
+  g_settings_set_string(settings, "network-mode", "none");
+  g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
+  GhAttachmentsConfig config = { .settings = settings, .http = http };
+  GhAttachments *attachments_a = gh_attachments_new(&config);
+  GhAttachments *attachments_b = gh_attachments_new(&config);
+  gh_attachments_set_allow_private_hosts(attachments_a, TRUE);
+  gh_attachments_set_allow_private_hosts(attachments_b, TRUE);
+  gh_attachments_set_store(attachments_a, alice->store);
+  gh_attachments_set_store(attachments_b, bob->store);
+  GhMlsAttachments *files_a = gh_mls_attachments_new(attachments_a);
+  GhMlsAttachments *files_b = gh_mls_attachments_new(attachments_b);
+  gh_mls_attachments_set_service(files_a, alice->service);
+  gh_mls_attachments_set_service(files_b, bob->service);
+
+  /* The picture section of a legacy group: honest, and nothing to do. */
+  window_files = files_a;
+  GhWindow *window = app_window(alice, NULL);
+  window_files = NULL;
+  GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
+  g_assert_true(gh_window_open_item(window, conversation));
+  GhMlsGroupInfoDialog *info = show_info(window, conversation);
+  g_assert_cmpstr(gh_mls_group_info_dialog_get_picture_status(info), ==,
+                  "This group was made with an older kind of encrypted group, which can’t have "
+                  "a picture.");
+  g_assert_false(gh_mls_group_info_dialog_get_picture_shown(info));
+  const gchar *picture_actions[] = { "mls-group.set-picture", "mls-group.show-picture",
+                                      "mls-group.remove-picture" };
+  for (guint i = 0; i < G_N_ELEMENTS(picture_actions); i++) {
+    GtkWidget *button = button_for(GTK_WIDGET(info), picture_actions[i]);
+    g_assert_nonnull(button);
+    g_assert_false(gtk_widget_get_visible(button));
+    /* Activated anyway (a shortcut, a stale button): nothing starts. */
+    gtk_widget_activate_action(GTK_WIDGET(info), picture_actions[i], NULL);
+    g_assert_cmpuint(gh_mls_group_info_dialog_get_pending(info), ==, 0);
+  }
+  drain();
+  g_assert_cmpuint(blossom_fixture_requests(blossom)->len, ==, 0);
+  adw_dialog_force_close(ADW_DIALOG(info));
+  drain();
+
+  /* A photo from Alice: Bob's card, no fetch until Download. */
+  g_autoptr(GBytes) photo = tiny_png();
+  FileSent sent = { 0 };
+  gh_mls_attachments_send_async(files_a, ga, photo, "IMG_0001.png", "image/png", NULL, NULL,
+                                on_file_sent, &sent);
+  spin_until(file_sent, &sent, "the photo sent");
+  g_assert_no_error(sent.error);
+  GhWindow *bob_window = app_window(bob, NULL);
+  gh_attachment_card_set_provider(GTK_WIDGET(bob_window), &files_provider, files_b, NULL);
+  MessageWait listed = { bob, room, "" };
+  spin_until(message_listed, &listed, "Bob's photo message");
+  GhConversation *bob_conversation = gh_conversation_store_lookup(bob->model, room);
+  g_assert_true(gh_window_open_item(bob_window, bob_conversation));
+  spin_until(card_shown, view_of(bob_window), "the photo's card");
+  GhAttachmentCard *card =
+    GH_ATTACHMENT_CARD(find_type(GTK_WIDGET(view_of(bob_window)), GH_TYPE_ATTACHMENT_CARD, NULL));
+  spin_until(card_has_transfer, card, "the card bound to its transfer");
+  g_assert_true(g_str_has_prefix(gh_attachment_card_get_summary(card), "Photo"));
+  g_assert_nonnull(strstr(gh_attachment_card_get_summary(card), "Not downloaded"));
+  drain();
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 0);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(card), "attachment.download", NULL));
+  spin_until(card_ready, card, "the photo downloaded");
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
+  /* Shown inline: the card decoded it (GTK's own loaders) after the guard. */
+  g_assert_true(GDK_IS_TEXTURE(gh_attachment_transfer_get_preview(
+    gh_attachment_card_get_transfer(card))));
+
+  g_clear_object(&sent.message);
+  close_window(bob_window);
+  close_window(window);
+  g_object_unref(files_a);
+  g_object_unref(files_b);
+  gh_attachments_set_store(attachments_a, NULL);
+  gh_attachments_set_store(attachments_b, NULL);
+  g_object_unref(attachments_a);
+  g_object_unref(attachments_b);
+  drain();
+  blossom_fixture_free(blossom);
+  world_down(&w);
+}
+
 /* ---- --gui: members without the account proof (nostrc-6ukh, nostrc-prrl) ---------------- */
 
 typedef struct {
@@ -1848,6 +2071,7 @@ main(int argc, char **argv)
                     test_gui_new_group_format_changed);
 #endif
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
+    g_test_add_func("/groundhog/mls-ui-gui/group-files", test_gui_group_files);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
     g_test_add_func("/groundhog/mls-ui-gui/unverified-member", test_gui_unverified_member);
 #endif
