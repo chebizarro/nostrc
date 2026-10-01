@@ -419,6 +419,11 @@ marmot_get_group_components(Marmot *m, const MarmotGroupId *mls_group_id,
     }
     err = marmot_adopted_components_from_extensions(g.extensions_data, g.extensions_len, g.epoch,
                                                     out);
+    /* Both copies this read makes of the GroupContext -- the stored blob
+     * (load_stored_group()) and the loaded state, whose 0x8002 entry holds
+     * the image and upload keys -- are zeroized before they are freed
+     * (slice I review L4); *out's image is zeroized by
+     * marmot_group_components_clear(). */
     mls_group_free(&g);
     return err;
 }

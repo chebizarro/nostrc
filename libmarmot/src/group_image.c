@@ -35,7 +35,13 @@ write_vec(MlsTlsBuf *b, const void *data, size_t len)
     return len ? mls_tls_buf_append(b, data, len) : 0;
 }
 
-/* Read opaque<0..max> into a malloc'd buffer (NULL when empty). */
+/* Read opaque<0..max> into a malloc'd buffer (NULL when empty): 0, or
+ * VEC_MALFORMED, or VEC_NOMEM (review N3: an allocation failure is not
+ * malformed state). */
+#define VEC_MALFORMED (-1)
+#define VEC_NOMEM     (-2)
+#define VEC_ERR(rc) ((rc) == VEC_NOMEM ? MARMOT_ERR_MEMORY : MARMOT_ERR_MEDIA_INVALID_REFERENCE)
+
 static int
 read_vec(MlsTlsReader *r, size_t max, uint8_t **out, size_t *out_len)
 {
@@ -46,7 +52,7 @@ read_vec(MlsTlsReader *r, size_t max, uint8_t **out, size_t *out_len)
         return -1;
     if (len == 0) return 0;
     uint8_t *buf = malloc(len + 1);   /* +1: callers may NUL-terminate */
-    if (!buf) return -1;
+    if (!buf) return VEC_NOMEM;
     if (mls_tls_read_fixed(r, buf, len) != 0) {
         free(buf);
         return -1;
@@ -126,8 +132,10 @@ marmot_group_blossom_image_decode(const uint8_t *data, size_t len,
     size_t n[5] = { 0 };
     static const size_t max[5] = { 32, 32, 12, 32, MARMOT_MEDIA_TYPE_MAX };
     MarmotError err = MARMOT_OK;
-    for (int i = 0; i < 5 && err == MARMOT_OK; i++)
-        if (read_vec(&r, max[i], &f[i], &n[i]) != 0) err = MARMOT_ERR_MEDIA_INVALID_REFERENCE;
+    for (int i = 0; i < 5 && err == MARMOT_OK; i++) {
+        int rv = read_vec(&r, max[i], &f[i], &n[i]);
+        if (rv != 0) err = VEC_ERR(rv);
+    }
     if (err == MARMOT_OK && !mls_tls_reader_done(&r)) err = MARMOT_ERR_MEDIA_INVALID_REFERENCE;
     bool any = n[0] || n[1] || n[2] || n[3] || n[4];
     if (err == MARMOT_OK && any) {
@@ -821,11 +829,15 @@ marmot_group_avatar_url_decode(const uint8_t *data, size_t len, MarmotGroupAvata
     uint8_t *url = NULL;
     size_t url_len = 0;
     MarmotError err = MARMOT_ERR_MEDIA_INVALID_REFERENCE;
-    if (read_vec(&r, MARMOT_GROUP_AVATAR_URL_MAX, &url, &url_len) != 0 ||
-        read_vec(&r, MARMOT_GROUP_AVATAR_HINT_MAX, &out->dim, &out->dim_len) != 0 ||
-        read_vec(&r, MARMOT_GROUP_AVATAR_HINT_MAX, &out->thumbhash, &out->thumbhash_len) != 0 ||
-        !mls_tls_reader_done(&r))
+    int rv;
+    if ((rv = read_vec(&r, MARMOT_GROUP_AVATAR_URL_MAX, &url, &url_len)) != 0 ||
+        (rv = read_vec(&r, MARMOT_GROUP_AVATAR_HINT_MAX, &out->dim, &out->dim_len)) != 0 ||
+        (rv = read_vec(&r, MARMOT_GROUP_AVATAR_HINT_MAX, &out->thumbhash,
+                       &out->thumbhash_len)) != 0) {
+        err = VEC_ERR(rv);
         goto fail;
+    }
+    if (!mls_tls_reader_done(&r)) goto fail;
     if (url_len == 0) {
         if (out->dim_len || out->thumbhash_len) goto fail;
         return MARMOT_OK;
@@ -991,11 +1003,14 @@ marmot_group_media_policy_decode(const uint8_t *data, size_t len, MarmotGroupMed
     size_t format_len = 0, kinds_len = 0, endpoints_len = 0;
     MlsTlsReader r;
     mls_tls_reader_init(&r, data, len);
-    if (read_vec(&r, POLICY_FORMAT_MAX, &format, &format_len) != 0 ||
-        read_vec(&r, POLICY_KINDS_VEC_MAX, &kinds, &kinds_len) != 0 ||
-        read_vec(&r, POLICY_ENDPOINTS_VEC_MAX, &endpoints, &endpoints_len) != 0 ||
-        !mls_tls_reader_done(&r))
+    int rv;
+    if ((rv = read_vec(&r, POLICY_FORMAT_MAX, &format, &format_len)) != 0 ||
+        (rv = read_vec(&r, POLICY_KINDS_VEC_MAX, &kinds, &kinds_len)) != 0 ||
+        (rv = read_vec(&r, POLICY_ENDPOINTS_VEC_MAX, &endpoints, &endpoints_len)) != 0) {
+        err = VEC_ERR(rv);
         goto out;
+    }
+    if (!mls_tls_reader_done(&r)) goto out;
     if (format_len != strlen(MARMOT_MEDIA_V2_VERSION) ||
         memcmp(format, MARMOT_MEDIA_V2_VERSION, format_len) != 0)
         goto out;
@@ -1013,9 +1028,11 @@ marmot_group_media_policy_decode(const uint8_t *data, size_t len, MarmotGroupMed
     while (!mls_tls_reader_done(&kr)) {
         uint8_t *k = NULL;
         size_t kl = 0;
-        if (out->allowed_locator_kind_count == MARMOT_MEDIA_POLICY_MAX_LOCATOR_KINDS ||
-            read_vec(&kr, MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX, &k, &kl) != 0)
+        if (out->allowed_locator_kind_count == MARMOT_MEDIA_POLICY_MAX_LOCATOR_KINDS) goto out;
+        if ((rv = read_vec(&kr, MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX, &k, &kl)) != 0) {
+            err = VEC_ERR(rv);
             goto out;
+        }
         if (!k || !locator_kind_valid(k, kl) ||
             strv_contains(out->allowed_locator_kinds, out->allowed_locator_kind_count,
                           (const char *)k)) {
@@ -1034,8 +1051,12 @@ marmot_group_media_policy_decode(const uint8_t *data, size_t len, MarmotGroupMed
         MarmotMediaBlobEndpoint *ep = &out->default_blob_endpoints[out->default_blob_endpoint_count];
         uint8_t *k = NULL, *u = NULL;
         size_t kl = 0, ul = 0;
-        if (read_vec(&er, MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX, &k, &kl) != 0) goto out;
-        if (read_vec(&er, MARMOT_MEDIA_POLICY_ENDPOINT_URL_MAX, &u, &ul) != 0) {
+        if ((rv = read_vec(&er, MARMOT_MEDIA_POLICY_LOCATOR_KIND_MAX, &k, &kl)) != 0) {
+            err = VEC_ERR(rv);
+            goto out;
+        }
+        if ((rv = read_vec(&er, MARMOT_MEDIA_POLICY_ENDPOINT_URL_MAX, &u, &ul)) != 0) {
+            err = VEC_ERR(rv);
             free(k);
             goto out;
         }

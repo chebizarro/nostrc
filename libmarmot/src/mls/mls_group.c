@@ -1145,6 +1145,9 @@ mls_group_free(MlsGroup *g)
     free(g->group_id);
     mls_tree_free(&g->tree);
     mls_secret_tree_free(&g->secret_tree);
+    /* The GroupContext may hold group secrets (0x8002 image key and upload
+     * key; slice I review L4). */
+    if (g->extensions_data) sodium_memzero(g->extensions_data, g->extensions_len);
     free(g->extensions_data);
     sodium_memzero(g->own_signature_key, sizeof(g->own_signature_key));
     sodium_memzero(g->own_encryption_key, sizeof(g->own_encryption_key));
@@ -1246,6 +1249,7 @@ mls_group_info_clear(MlsGroupInfo *gi)
 {
     if (!gi) return;
     free(gi->group_id);
+    if (gi->extensions_data) sodium_memzero(gi->extensions_data, gi->extensions_len);
     free(gi->extensions_data);
     free(gi->group_info_extensions_data);
     memset(gi, 0, sizeof(*gi));
@@ -2753,6 +2757,7 @@ apply_group_context_extensions(MlsGroup *group,
         if (!copy) return -1;
         memcpy(copy, extensions, extensions_len);
     }
+    if (group->extensions_data) sodium_memzero(group->extensions_data, group->extensions_len);
     free(group->extensions_data);
     group->extensions_data = copy;
     group->extensions_len = extensions_len;
