@@ -77,6 +77,15 @@ lines += [
 ]
 for variant, hexw in sorted(neg["welcomes"].items()):
     lines.append(f"static const char OMLS_NEG_WELCOME_{variant}[] = {c_str(hexw)};")
+c = neg["commits"]
+lines += [
+    "/* A valid adopted OpenMLS group with the same joiner, and three",
+    " * PublicMessage Commits from its joined epoch adding a third member. */",
+    f"static const char OMLS_COMMITS_WELCOME[] = {c_str(c['welcome'])};",
+    f"static const char OMLS_COMMIT_ADD_VALID[] = {c_str(c['add_valid'])};",
+    f"static const char OMLS_COMMIT_ADD_WITHOUT_PROOF[] = {c_str(c['add_without_proof'])};",
+    f"static const char OMLS_COMMIT_ADD_MISSING_COMPONENT[] = {c_str(c['add_missing_component'])};",
+]
 lines += ["", "#endif /* MARMOT_TEST_ADOPTED_FIXTURE_H */", ""]
 (HERE / "adopted_fixture.h").write_text("\n".join(lines))
 print("wrote", HERE / "adopted_fixture.h")

@@ -1797,6 +1797,198 @@ test_no_group_data_no_admin(void)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * The MLS-layer guards, each on its own (W24 review L2)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static char *
+to_hex(const uint8_t *b, size_t n)
+{
+    char *h = malloc(2 * n + 1);
+    sodium_bin2hex(h, 2 * n + 1, b, n);
+    return h;
+}
+
+static void
+load_group_state(Member *x, const MarmotGroupId *gid, MlsGroup *out)
+{
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    load_mls(x, gid, &blob, &len);
+    CHECK(mls_group_deserialize(blob, len, out) == 0, "state");
+    sodium_memzero(blob, len);
+    free(blob);
+}
+
+static void
+test_commit_processor_profile_check(void)
+{
+    /* Real OpenMLS Commits in an adopted group, from the joined epoch, each
+     * adding a third member.  The MLS-layer processor applies the valid one
+     * and refuses -- by the entered-epoch profile check alone -- one whose
+     * new leaf carries no proof or does not advertise a required
+     * component; the state it was given stays as it was. */
+    size_t kp_len = 0;
+    uint8_t *kp = unhex(OMLS_NEG_JOINER_KP, &kp_len);
+    Member bob;
+    member_init(&bob, "bob");
+    install_key_package(&bob, kp, kp_len, OMLS_NEG_INIT_SK, OMLS_NEG_ENC_SK, OMLS_NEG_SIG_SEED,
+                        OMLS_NEG_SIG_PUB, NULL);
+    uint8_t inviter[32];
+    mdk_test_identity("w24e-neg-creator", inviter);
+    char *rumor = rumor_for(OMLS_COMMITS_WELCOME, inviter);
+    OK(join(&bob, rumor, NULL));
+    MarmotGroup **groups = NULL;
+    size_t n = 0;
+    OK(marmot_get_all_groups(bob.m, &groups, &n));
+    CHECK(n == 1, "joined");
+    MarmotGroupId gid = marmot_group_id_new(groups[0]->mls_group_id.data,
+                                            groups[0]->mls_group_id.len);
+    groups_free(groups, n);
+    static const struct { const char *name, *commit; int want; } cases[] = {
+        {"valid add", OMLS_COMMIT_ADD_VALID, 0},
+        {"add without proof", OMLS_COMMIT_ADD_WITHOUT_PROOF, MARMOT_ERR_MLS_PROCESS_MESSAGE},
+        {"add missing a required component", OMLS_COMMIT_ADD_MISSING_COMPONENT,
+         MARMOT_ERR_MLS_PROCESS_MESSAGE},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        MlsGroup g;
+        load_group_state(&bob, &gid, &g);
+        uint64_t epoch = g.epoch;
+        size_t clen = 0;
+        uint8_t *commit = unhex(cases[i].commit, &clen);
+        int rc = mls_group_process_commit(&g, commit, clen, 0 /* the creator */);
+        CHECK(rc == cases[i].want, "%s: rc %d, want %d", cases[i].name, rc, cases[i].want);
+        if (rc == 0)
+            CHECK(g.epoch == epoch + 1 && g.profile == MARMOT_GROUP_PROFILE_ADOPTED,
+                  "%s: applied", cases[i].name);
+        else
+            CHECK(g.epoch == epoch, "%s: state unchanged", cases[i].name);
+        free(commit);
+        mls_group_free(&g);
+    }
+    marmot_group_id_free(&gid);
+    free(rumor);
+    free(kp);
+    member_free(&bob);
+}
+
+static void
+test_install_checked(void)
+{
+    /* A local producer cannot enter an epoch that breaks the profile: an
+     * Add of a KeyPackage whose leaf has the adopted capabilities (so the
+     * RFC 9420 checks pass) but no account-proof carrier is refused by the
+     * checked install, and the group is unchanged. */
+    Pair p;
+    pair_create(&p);
+    MlsGroup g;
+    load_group_state(&p.alice, &p.gid, &g);
+    uint64_t epoch = g.epoch;
+    uint8_t identity[32];
+    randombytes_buf(identity, 32);
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    CHECK(mls_key_package_create(&kp, &priv, identity, 32, NULL, 0) == 0 &&
+              mls_leaf_node_set_adopted_capabilities(&kp.leaf_node) == 0 &&
+              mls_key_package_sign(&kp, &priv) == 0,
+          "proofless adopted-capability KeyPackage");
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    EXPECT_ERR(mls_group_add_member(&g, &kp, &add), MARMOT_ERR_VALIDATION);
+    CHECK(g.epoch == epoch && !add.commit_data && !add.welcome_data, "unchanged, no output");
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_group_free(&g);
+    pair_free(&p);
+}
+
+static void
+test_welcome_tampered_leaf(void)
+{
+    /* A GroupInfo signer serves a member leaf altered after that member
+     * signed it (here Bob's HPKE key): tree hash, parent hashes, GroupInfo
+     * signature and Bob's account proof all still verify -- only the
+     * per-leaf signature check (RFC 9420 12.4.3.1) refuses it. */
+    Pair p;
+    pair_create(&p);
+    Member dave;
+    member_init(&dave, "dave");
+    char *dave_json = adopted_key_package(&dave);
+    MlsKeyPackage dave_kp;
+    uint8_t dave_pk[32];
+    OK(marmot_parse_key_package_event_for_profile(dave_json, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                  0, &dave_kp, dave_pk));
+    MlsGroup g;
+    load_group_state(&p.alice, &p.gid, &g);
+    bool tampered = false;
+    for (uint32_t i = 0; i < g.tree.n_leaves; i++) {
+        MlsNode *n = &g.tree.nodes[mls_tree_leaf_to_node(i)];
+        if (n->type == MLS_NODE_LEAF && memcmp(n->leaf.credential_identity, p.bob.pk, 32) == 0) {
+            n->leaf.encryption_key[0] ^= 0x01;
+            tampered = true;
+        }
+    }
+    CHECK(tampered, "bob's leaf");
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    OK((MarmotError)mls_group_add_member(&g, &dave_kp, &add));
+    char *hex = to_hex(add.welcome_data, add.welcome_len);
+    char *rumor = rumor_for(hex, p.alice.pk);
+    EXPECT_ERR(join(&dave, rumor, NULL), MARMOT_ERR_MLS);
+    MarmotGroup **groups = NULL;
+    size_t n = 0;
+    OK(marmot_get_all_groups(dave.m, &groups, &n));
+    CHECK(n == 0, "nothing joined");
+    groups_free(groups, n);
+    free(rumor);
+    free(hex);
+    mls_add_result_clear(&add);
+    mls_group_free(&g);
+    mls_key_package_clear(&dave_kp);
+    free(dave_json);
+    member_free(&dave);
+    pair_free(&p);
+}
+
+static void
+test_create_wrong_enrolled_proof(void)
+{
+    /* An enrolled proof over another MLS signature key (a corrupted or
+     * mismatched enrollment): creation verifies every leaf before anything
+     * leaves and refuses; nothing is stored. */
+    Member alice, bob;
+    member_init(&alice, "alice");
+    member_init(&bob, "bob");
+    char *bob_kp = adopted_key_package(&bob);
+    uint8_t other_pk[MLS_SIG_PK_LEN], other_sk[MLS_SIG_SK_LEN], proof[MARMOT_ACCOUNT_PROOF_LEN];
+    crypto_sign_keypair(other_pk, other_sk);
+    OK(marmot_account_proof_create(alice.pk, alice.sk, NULL, NULL, MARMOT_CIPHERSUITE,
+                                   MARMOT_SIGNATURE_SCHEME_ED25519, other_pk, MLS_SIG_PK_LEN,
+                                   1790000000, proof));
+    memcpy(alice.m->account_proof_owner, alice.pk, 32);
+    memcpy(alice.m->account_proof, proof, sizeof(proof));
+    alice.m->account_proof_ready = true;
+    const char *kps[] = {bob_kp};
+    const char *relays[] = {"wss://relay.example.com"};
+    MarmotGroupConfig cfg = config_for(NULL, 0, relays, 1);
+    MarmotCreateGroupResult r;
+    memset(&r, 0, sizeof(r));
+    EXPECT_ERR(marmot_create_group_for_profile(alice.m, MARMOT_GROUP_PROFILE_ADOPTED, alice.pk,
+                                               NULL, NULL, NULL, kps, 1, &cfg, &r),
+               MARMOT_ERR_KEY_PACKAGE_IDENTITY);
+    CHECK(!r.group && !r.welcome_rumor_jsons, "no result");
+    MarmotGroup **groups = NULL;
+    size_t n = 0;
+    OK(marmot_get_all_groups(alice.m, &groups, &n));
+    CHECK(n == 0, "nothing created");
+    groups_free(groups, n);
+    sodium_memzero(other_sk, sizeof(other_sk));
+    free(bob_kp);
+    member_free(&alice);
+    member_free(&bob);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Legacy groups keep working unchanged
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -1867,6 +2059,10 @@ main(int argc, char **argv)
     RUN(test_adopted_commits_refused);
     RUN(test_adopted_removal_refused);
     RUN(test_no_group_data_no_admin);
+    RUN(test_commit_processor_profile_check);
+    RUN(test_install_checked);
+    RUN(test_welcome_tampered_leaf);
+    RUN(test_create_wrong_enrolled_proof);
     RUN(test_legacy_unchanged);
     free(raw);
     printf("All adopted admission tests passed.\n");

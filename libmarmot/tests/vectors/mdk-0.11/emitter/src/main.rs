@@ -472,6 +472,7 @@ mod negatives {
     };
     use openmls::group::GroupContext;
     use openmls_rust_crypto::OpenMlsRustCrypto;
+    use openmls_traits::OpenMlsProvider;
     use openmls_traits::types::Ciphersuite;
     use std::collections::BTreeSet;
 
@@ -511,8 +512,12 @@ mod negatives {
     }
 
     fn leaf_extensions(proof: Option<Vec<u8>>) -> Extensions<LeafNode> {
+        leaf_extensions_with(&LEAF_COMPONENTS, proof)
+    }
+
+    fn leaf_extensions_with(components: &[u16], proof: Option<Vec<u8>>) -> Extensions<LeafNode> {
         let mut dict = AppDataDictionary::new();
-        dict.insert(0x0001, encode_components_list(&LEAF_COMPONENTS.iter().copied().collect()));
+        dict.insert(0x0001, encode_components_list(&components.iter().copied().collect()));
         dict.insert(0x0002, encode_components_list(&BTreeSet::new()));
         if let Some(p) = proof {
             dict.insert(0x8009, p);
@@ -597,6 +602,82 @@ mod negatives {
         Extensions::from_vec(exts).expect("group context")
     }
 
+    /// A KeyPackage of a third member (`seed`): with its proof or not, and
+    /// advertising `components`.
+    fn member_kp(
+        provider: &OpenMlsRustCrypto,
+        seed: &[u8],
+        components: &[u16],
+        with_proof: bool,
+    ) -> MlsKeyPackage {
+        let signer = SignatureKeyPair::new(CS.signature_algorithm()).unwrap();
+        let cwk = CredentialWithKey {
+            credential: BasicCredential::new(identity(seed).to_vec()).into(),
+            signature_key: signer.public().into(),
+        };
+        let p = with_proof.then(|| proof(seed, &signer.to_public_vec(), false));
+        MlsKeyPackage::builder()
+            .leaf_node_capabilities(capabilities())
+            .leaf_node_extensions(leaf_extensions_with(components, p))
+            .build(CS, provider, &signer, cwk)
+            .expect("member kp")
+            .key_package()
+            .clone()
+    }
+
+    /// A valid adopted group with the joiner (Welcome), then -- from the
+    /// joined epoch -- Commits adding a third member: valid, one whose leaf
+    /// has no proof, one whose leaf does not advertise a required component.
+    /// PublicMessage framing (pure plaintext).
+    pub fn commits(
+        provider: &OpenMlsRustCrypto,
+        joiner: &MlsKeyPackage,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let seed = b"w24e-neg-creator";
+        let signer = SignatureKeyPair::new(CS.signature_algorithm()).unwrap();
+        let cwk = CredentialWithKey {
+            credential: BasicCredential::new(identity(seed).to_vec()).into(),
+            signature_key: signer.public().into(),
+        };
+        let config = MlsGroupCreateConfig::builder()
+            .ciphersuite(CS)
+            .capabilities(capabilities())
+            .with_leaf_node_extensions(leaf_extensions(Some(proof(
+                seed,
+                &signer.to_public_vec(),
+                false,
+            ))))
+            .expect("leaf extensions")
+            .with_group_context_extensions(group_context(Variant::Control))
+            .wire_format_policy(openmls::prelude::PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .use_ratchet_tree_extension(true)
+            .build();
+        let mut group = MlsGroup::new(provider, &signer, &config, cwk).expect("group");
+        let (_c, welcome, _gi) = group
+            .add_members(provider, &signer, &[joiner.clone()])
+            .expect("add joiner");
+        group.merge_pending_commit(provider).expect("merge");
+        let mut out = Vec::new();
+        for (dave_seed, comps, with_proof) in [
+            (&b"w24e-commit-ok"[..], &LEAF_COMPONENTS[..], true),
+            (&b"w24e-commit-noproof"[..], &LEAF_COMPONENTS[..], false),
+            (&b"w24e-commit-nolife"[..], &LEAF_COMPONENTS[..5], true),
+        ] {
+            let kp = member_kp(provider, dave_seed, comps, with_proof);
+            let (commit, _w, _gi) = group
+                .add_members(provider, &signer, &[kp])
+                .expect("add member");
+            out.push(commit.tls_serialize_detached().expect("commit bytes"));
+            group.clear_pending_commit(provider.storage()).expect("clear");
+        }
+        (
+            welcome.tls_serialize_detached().expect("welcome"),
+            out.remove(0),
+            out.remove(0),
+            out.remove(0),
+        )
+    }
+
     /// One real Welcome for the shared joiner from a group built for `v`.
     pub fn welcome(provider: &OpenMlsRustCrypto, joiner: &MlsKeyPackage, v: Variant) -> Vec<u8> {
         let seed = b"w24e-neg-creator";
@@ -636,10 +717,17 @@ fn emit_negatives() -> Value {
         let w = negatives::welcome(&provider, &joiner.key_package, v);
         welcomes.insert(format!("{v:?}"), Value::String(hex::encode(w)));
     }
+    let (cw, ok, noproof, nolife) = negatives::commits(&provider, &joiner.key_package);
     json!({
         "joiner_key_package": hex::encode(kp_bytes),
         "joiner_private": joiner.private,
         "welcomes": Value::Object(welcomes),
+        "commits": {
+            "welcome": hex::encode(cw),
+            "add_valid": hex::encode(ok),
+            "add_without_proof": hex::encode(noproof),
+            "add_missing_component": hex::encode(nolife),
+        },
     })
 }
 

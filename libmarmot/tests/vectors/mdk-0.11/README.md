@@ -20,7 +20,9 @@ captures of what it emits.
   (checked with `git diff Cargo.lock`), so every dependency is MDK's pinned
   version.
 - **Toolchain**: rustc 1.97.1 (MDK's `rust-toolchain.toml`).
-- **Captured**: 2026-09-30 (Pacific) by W24 slice E.
+- **Captured**: 2026-09-30 (Pacific) by W24 slice E; recaptured the same day
+  with the `commits` section added (all MLS keys new; the tests pass on any
+  capture).
 
 ## Contents
 
@@ -49,7 +51,12 @@ captures of what it emits.
   flipped), `MissingProof` (creator leaf without its `0x8009` entry),
   `MixedGroup` (`0xf2ee` GroupContext extension beside the adopted state),
   `MissingRequiredCapability` (`app_data_update` not required),
-  `NonAdminInviter` (admin policy names only the joiner).
+  `NonAdminInviter` (admin policy names only the joiner); and `commits`
+  (recaptured 2026-09-30 for W24 review L2): a valid adopted OpenMLS group
+  joined by that joiner and three PublicMessage Commits from the joined
+  epoch adding a third member -- valid, without its `0x8009` proof, and not
+  advertising the required `0x800c` -- for the MLS-layer Commit processor's
+  profile check.
 
 The kind:444 rumors are dated at capture: the tests set
 `MarmotConfig.max_event_age_secs` = 0 so they do not expire.
