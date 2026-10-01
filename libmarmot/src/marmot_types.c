@@ -212,6 +212,9 @@ marmot_message_result_free(MarmotMessageResult *result)
         break;
     case MARMOT_RESULT_COMMIT:
         marmot_group_free(result->commit.updated_group);
+        for (size_t i = 0; i < result->commit.departed_count; i++)
+            free(result->commit.departed_pubkey_hexes[i]);
+        free(result->commit.departed_pubkey_hexes);
         break;
     case MARMOT_RESULT_PROPOSAL:
         free(result->proposal.sender_pubkey_hex);

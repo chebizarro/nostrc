@@ -2271,14 +2271,20 @@ proposal_store_build(MlsProposalStore *store, const MlsGroup *group,
 }
 
 /* Resolve `p` (a referenced proposal) by moving the matching stored proposal
- * into it.  Returns 0 on success, -1 when no stored proposal matches. */
+ * into it.  Returns 0 on success, -1 when no stored proposal matches, -2
+ * when the matching one was already taken by an earlier reference of the
+ * same Commit (a malformed Commit, not a missing proposal). */
 static int
 proposal_store_resolve(MlsProposalStore *store, MlsProposal *p)
 {
     if (!store) return -1;
+    bool taken = false;
     for (size_t i = 0; i < store->count; i++) {
         MlsStoredProposal *s = &store->items[i];
-        if (s->consumed) continue;
+        if (s->consumed) {
+            taken |= s->ref_len == p->ref_len && memcmp(s->ref, p->ref, p->ref_len) == 0;
+            continue;
+        }
         if (s->ref_len == p->ref_len &&
             memcmp(s->ref, p->ref, p->ref_len) == 0) {
             MlsProposal moved = s->prop;
@@ -2288,7 +2294,7 @@ proposal_store_resolve(MlsProposalStore *store, MlsProposal *p)
             return 0;
         }
     }
-    return -1;
+    return taken ? -2 : -1;
 }
 
 /* RFC 9420 section 12.2: a proposal type outside the default set (Add ..
@@ -2302,15 +2308,63 @@ leaf_supports_proposal(const MlsLeafNode *leaf, uint16_t type)
     return false;
 }
 
-bool
-mls_group_members_support_proposal(const MlsGroup *group, uint16_t type)
+/* Every member leaf but those of `gone` (leaves a Commit removes) supports
+ * `type`: OpenMLS checks the leaves that remain (valn: public_group
+ * validation.rs, nostrc-2um6 review L2). */
+static bool
+members_support_proposal_except(const MlsGroup *group, uint16_t type, const uint32_t *gone,
+                                size_t n_gone)
 {
     if (!group) return false;
     for (uint32_t i = 0; i < group->tree.n_leaves; i++) {
         const MlsNode *n = &group->tree.nodes[mls_tree_leaf_to_node(i)];
-        if (n->type == MLS_NODE_LEAF && !leaf_supports_proposal(&n->leaf, type)) return false;
+        if (n->type != MLS_NODE_LEAF || leaf_supports_proposal(&n->leaf, type)) continue;
+        bool leaving = false;
+        for (size_t k = 0; k < n_gone && !leaving; k++) leaving = gone[k] == i;
+        if (!leaving) return false;
     }
     return true;
+}
+
+bool
+mls_group_members_support_proposal(const MlsGroup *group, uint16_t type)
+{
+    return members_support_proposal_except(group, type, NULL, 0);
+}
+
+/* RequiredCapabilities (0x0003) { ExtensionType extension_types<V>;
+ * ProposalType proposal_types<V>; CredentialType credential_types<V>; }. */
+bool
+mls_group_requires_proposal(const MlsGroup *group, uint16_t type)
+{
+    if (!group || !group->extensions_data) return false;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, group->extensions_data, group->extensions_len);
+    while (!mls_tls_reader_done(&r)) {
+        uint16_t ext_type = 0;
+        size_t len = 0;
+        if (mls_tls_read_u16(&r, &ext_type) != 0 || mls_tls_read_vli(&r, &len) != 0 ||
+            len > mls_tls_reader_remaining(&r))
+            return false;
+        const uint8_t *data = r.data + r.pos;
+        r.pos += len;
+        if (ext_type != 0x0003) continue;
+        MlsTlsReader rc;
+        mls_tls_reader_init(&rc, data, len);
+        size_t exts = 0, props = 0;
+        if (mls_tls_read_vli(&rc, &exts) != 0 || exts > mls_tls_reader_remaining(&rc))
+            return false;
+        rc.pos += exts;
+        if (mls_tls_read_vli(&rc, &props) != 0 || props > mls_tls_reader_remaining(&rc) ||
+            props % 2 != 0)
+            return false;
+        for (size_t k = 0; k < props; k += 2) {
+            uint16_t t = (uint16_t)((rc.data[rc.pos + k] << 8) | rc.data[rc.pos + k + 1]);
+            if (t == type) return true;
+        }
+        return false;
+    }
+    return false;
 }
 
 static bool
@@ -3250,6 +3304,15 @@ mls_group_open_proposal(const MlsGroup *group, const uint8_t *msg, size_t msg_le
                                                      gc, gc_len) != 0)
             goto out;
     } else {
+        /* Our own (a Remove of ourselves): its key is spent in our ratchet. */
+        MlsSenderData sd;
+        if (private_message_sender(group, &wire.private_message, &sd) == 0 &&
+            sd.leaf_index == group->own_leaf_index) {
+            sodium_memzero(&sd, sizeof(sd));
+            rc = MARMOT_ERR_OWN_MESSAGE;
+            goto out;
+        }
+        sodium_memzero(&sd, sizeof(sd));
         uint32_t from = UINT32_MAX;
         if (private_handshake_open(group, &wire.private_message, MLS_CONTENT_TYPE_PROPOSAL,
                                    &from, &opened) != 0)
@@ -3428,8 +3491,18 @@ commit_departures_check(const MlsGroup *group, const MlsProposal *props, size_t 
             sum->left[sum->left_count++] = leaf;
         }
     }
-    if (self_remove && !mls_group_members_support_proposal(group, MLS_PROPOSAL_SELF_REMOVE))
-        return -1;
+    if (self_remove) {
+        /* The leaves that remain must support it (review L2): this Commit's
+         * Removes and SelfRemoves do not count. */
+        uint32_t gone[2 * MLS_COMMIT_SUMMARY_MAX];
+        size_t n_gone = 0;
+        for (size_t i = 0; i < n && n_gone < 2 * MLS_COMMIT_SUMMARY_MAX; i++) {
+            uint32_t leaf = departure_leaf(&props[i]);
+            if (leaf != UINT32_MAX) gone[n_gone++] = leaf;
+        }
+        if (!members_support_proposal_except(group, MLS_PROPOSAL_SELF_REMOVE, gone, n_gone))
+            return -1;
+    }
     return 0;
 }
 
@@ -3610,6 +3683,93 @@ mls_group_commit_by_ref(MlsGroup *group, const uint8_t *const *acs, const size_t
     return rc;
 }
 
+/* nostrc-2um6 review M1: MDK 0.8's leave where the group does not require
+ * SelfRemove -- a Remove of our own leaf, sent as a PrivateMessage under
+ * our handshake ratchet (MDK groups may reject a PublicMessage handshake).
+ * The ratchet step is taken in `group` (the caller stores it). */
+int
+mls_group_remove_self_proposal(MlsGroup *group, uint8_t **out_msg, size_t *out_len,
+                               MlsOpenedProposal *out_own)
+{
+    if (!group || !out_msg || !out_len || !out_own) return MARMOT_ERR_INVALID_ARG;
+    *out_msg = NULL;
+    *out_len = 0;
+    memset(out_own, 0, sizeof(*out_own));
+    uint32_t own = group->own_leaf_index;
+    if (!leaf_occupied(group, own)) return MARMOT_ERR_INVALID_ARG;
+    uint8_t body[6] = { 0x00, 0x03, (uint8_t)(own >> 24), (uint8_t)(own >> 16),
+                        (uint8_t)(own >> 8), (uint8_t)own };
+    MlsFramedContent fc;
+    memset(&fc, 0, sizeof(fc));
+    fc.group_id = group->group_id;          /* borrowed */
+    fc.group_id_len = group->group_id_len;
+    fc.epoch = group->epoch;
+    fc.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    fc.sender.leaf_index = own;
+    fc.content_type = MLS_CONTENT_TYPE_PROPOSAL;
+    fc.content = body;
+    fc.content_len = sizeof body;
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    MlsFramedContentAuthData auth;
+    memset(&auth, 0, sizeof(auth));
+    MlsTlsBuf pt = {0}, ac = {0}, out = {0};
+    MlsMLSMessage w;
+    memset(&w, 0, sizeof(w));
+    MlsMessageKeys keys;
+    memset(&keys, 0, sizeof(keys));
+    MlsProposal prop;
+    memset(&prop, 0, sizeof(prop));
+    int rc = MARMOT_ERR_INTERNAL;
+    if (mls_group_context_build(group, &gc, &gc_len) != 0 ||
+        mls_framed_content_sign(&fc, MLS_WIRE_FORMAT_PRIVATE_MESSAGE, gc, gc_len,
+                                group->own_signature_key, &auth) != 0)
+        goto out;
+    /* PrivateMessageContent: the Proposal, its signature<V>, no padding. */
+    if (mls_tls_buf_init(&pt, 128) != 0 || mls_tls_buf_append(&pt, body, sizeof body) != 0 ||
+        mls_tls_write_opaque16(&pt, auth.signature, MLS_SIG_LEN) != 0)
+        goto out;
+    if (mls_secret_tree_derive_keys(&group->secret_tree, own, true, &keys) != 0) goto out;
+    uint8_t guard[4];
+    mls_crypto_random(guard, sizeof guard);
+    w.wire_format = MLS_WIRE_FORMAT_PRIVATE_MESSAGE;
+    w.cipher_suite = MARMOT_CIPHERSUITE;
+    if (mls_private_message_encrypt(group->group_id, group->group_id_len, group->epoch,
+                                    MLS_CONTENT_TYPE_PROPOSAL, NULL, 0, pt.data, pt.len,
+                                    group->epoch_secrets.sender_data_secret, &keys, own, guard,
+                                    &w.private_message) != 0)
+        goto out;
+    if (mls_tls_buf_init(&out, 256) != 0 || mls_message_serialize(&w, &out) != 0) goto out;
+    /* Kept as receivers keep it (its key is spent here, so it is not
+     * decrypted again): AuthenticatedContent under mls_private_message. */
+    if (mls_tls_buf_init(&ac, 256) != 0 ||
+        mls_authenticated_content_serialize(MLS_WIRE_FORMAT_PRIVATE_MESSAGE, &fc, &auth,
+                                            &ac) != 0)
+        goto out;
+    rc = proposal_ac_open(group, ac.data, ac.len, &prop, out_own->ref, &out_own->sender_leaf,
+                          &out_own->wire_format);
+    if (rc != 0) goto out;
+    out_own->type = MLS_PROPOSAL_REMOVE;
+    out_own->target_leaf = own;
+    out_own->ac = ac.data;
+    out_own->ac_len = ac.len;
+    ac.data = NULL;
+    *out_msg = out.data;
+    *out_len = out.len;
+    out.data = NULL;
+    rc = 0;
+out:
+    mls_proposal_clear(&prop);
+    sodium_memzero(&keys, sizeof(keys));
+    mls_message_clear(&w);
+    mls_tls_buf_free(&pt);
+    mls_tls_buf_free(&ac);
+    mls_tls_buf_free(&out);
+    free(auth.signature_data);
+    free(gc);
+    return rc;
+}
+
 int
 mls_group_self_remove_proposal(const MlsGroup *group, uint8_t **out_msg, size_t *out_len,
                                MlsOpenedProposal *out_own)
@@ -3704,12 +3864,16 @@ process_commit_impl(MlsGroup *group,
     for (size_t i = 0; i < commit.proposal_count; i++) {
         MlsProposal *p = &commit.proposals[i];
         if (p->is_ref) {
-            if (proposal_store_resolve(store, p) != 0) {
+            int resolved = proposal_store_resolve(store, p);
+            if (resolved != 0) {
                 mls_commit_clear(&commit);
                 /* Without a proposal store we cannot resolve references;
-                 * with one, a missing referent is a genuine framing error. */
-                staged_rc = store ? MARMOT_ERR_MLS_PROCESS_MESSAGE
-                                  : MARMOT_ERR_UNSUPPORTED;
+                 * with one, the referent has not arrived (yet): the
+                 * authenticated Commit is offered again once it does
+                 * (nostrc-2um6 review H1). */
+                staged_rc = !store          ? MARMOT_ERR_UNSUPPORTED
+                            : resolved == -2    ? MARMOT_ERR_MLS_PROCESS_MESSAGE
+                                                : MARMOT_ERR_PROPOSAL_UNKNOWN;
                 goto staged_fail;
             }
         }

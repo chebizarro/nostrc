@@ -140,13 +140,14 @@ find_leaf_by_pubkey(const MlsGroup *mls, const uint8_t pubkey[32],
  *            CredentialType credential_types<V>; = [] } RequiredCapabilities;
  *
  * Proposal types: MIP-01 also wants self_remove (0x000a), which libmarmot
- * implements since 0.12.0 (nostrc-2um6).  It is required when every initial
- * member advertises it -- MDK 0.8's "LCD" rule (groups.rs), byte for byte:
- * [0x000a] then, [] when an invitee lacks it.  A group created with no
- * invitee requires it (MDK leaves that case empty; MIP-01 asks for it, and
- * every libmarmot and MDK 0.8 KeyPackage advertises it).  MDK 0.8 members
- * leave a group by SelfRemove only when the group requires it, and by a
- * Remove of themselves otherwise.  libmarmot 0.10.0 and older omitted the
+ * implements since 0.12.0 (nostrc-2um6).  It is required exactly as MDK
+ * 0.8's "LCD" rule (groups.rs) computes, byte for byte: [0x000a] when every
+ * invitee advertises it, [] when one lacks it -- and [] for a group created
+ * with no invitee ("empty stays empty", review L1): required_capabilities
+ * is never rewritten, and requiring SelfRemove would shut out every later
+ * invitee whose leaf lacks it (libmarmot 0.11.0 and older).  Members leave
+ * by SelfRemove only when the group requires it, and otherwise by a Remove
+ * of themselves that an admin commits (MDK 0.8 and libmarmot alike).  libmarmot 0.10.0 and older omitted the
  * extension, and OpenMLS (valn1001) then refuses every
  * GroupContextExtensions proposal, which lists 0xF2EE without it: MDK could
  * not follow a rename (nostrc-7gx7). */
@@ -561,7 +562,7 @@ create_group_impl(Marmot *m,
      * group's required proposals (write_required_capabilities()). */
     MlsKeyPackage *kps = NULL;
     MarmotError err = MARMOT_OK;
-    bool require_self_remove = true;
+    bool require_self_remove = kp_count > 0;   /* none invited: [] (MDK) */
     if (kp_count > 0) {
         err = parse_key_packages(m, key_package_event_jsons, kp_count, &kps, NULL);
         if (err != MARMOT_OK) return err;

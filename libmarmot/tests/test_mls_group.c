@@ -1675,10 +1675,12 @@ TEST(test_live_commit_rejects_unauthenticated_proposal_refs)
         f.alice.own_leaf_index, 0, f.alice.own_signature_key,
         f.alice.epoch_secrets.membership_key, &other, &other_len) == 0);
     const uint8_t *other_store[] = {other};
+    /* Since 0.12.0 a referent not received (yet) is its own error: the
+     * application keeps the Commit for when it arrives (nostrc-2um6 H1). */
     assert(mls_group_process_commit_ex(&f.bob, commit, commit_len,
                                        f.alice.own_leaf_index, other_store,
                                        &other_len, 1) ==
-           MARMOT_ERR_MLS_PROCESS_MESSAGE);
+           MARMOT_ERR_PROPOSAL_UNKNOWN);
     assert_group_matches_snapshot_for_test(&f.bob, &parent);
 
     /* No proposal store at all. */

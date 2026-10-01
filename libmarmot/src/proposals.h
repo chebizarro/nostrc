@@ -20,12 +20,17 @@
 extern "C" {
 #endif
 
-/* mls_kv labels: the group's opened standalone proposals, and our leave
- * request (marmot_self_remove()). */
+/* mls_kv labels: the index of the group's kept proposals (key: group id;
+ * the records themselves are "mls_group_proposal_slot", one per epoch and
+ * sender, see proposals.c), and our leave request (marmot_self_remove()). */
 #define MARMOT_MLS_PROPOSALS_LABEL "mls_group_proposals"
 #define MARMOT_MLS_LEAVING_LABEL   "mls_group_leaving"
-/* Opened proposals kept per group (all epochs kept together). */
-#define MARMOT_PROPOSALS_MAX 256
+/* Records kept per sender and epoch (review M2): enough for a member's
+ * distinct leave proposals of one epoch (member-departure.md keeps them
+ * all), never another member's room. */
+#define MARMOT_PROPOSALS_PER_SENDER 4
+/* Slots per group (epochs x senders), a safety bound. */
+#define MARMOT_PROPOSAL_SLOTS_MAX 4096
 
 /** One opened standalone proposal, as stored. */
 typedef struct {

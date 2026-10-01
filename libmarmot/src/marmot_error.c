@@ -68,6 +68,7 @@ marmot_error_string(MarmotError error)
     case MARMOT_ERR_USE_AFTER_EVICTION:      return "use after eviction";
     case MARMOT_ERR_LEAVING:                 return "leaving the group";
     case MARMOT_ERR_ADMIN_CANNOT_LEAVE:      return "an admin must step down before leaving";
+    case MARMOT_ERR_PROPOSAL_UNKNOWN:        return "the Commit references a proposal not received yet";
 
     /* Welcome */
     case MARMOT_ERR_WELCOME:                 return "welcome error";

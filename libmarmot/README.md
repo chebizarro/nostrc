@@ -308,10 +308,19 @@ protocol-core/member-departure.md), and an MDK member's leave is seen.
   (decrypted with its sender's handshake ratchet, put back as for a Commit;
   then its signature), is kept as its AuthenticatedContent with its
   ProposalRef, and the result is the new `MARMOT_RESULT_PROPOSAL` payload
-  (`result.proposal`: type, sender, target, `leave`). Kept types: Add,
-  Update, Remove, GroupContextExtensions, SelfRemove (others stay
-  unsupported). A Commit of that epoch resolves its references against them,
+  (`result.proposal`: type, sender, target, `leave`). Only leaves are kept:
+  a non-admin's SelfRemove, and in legacy groups a non-admin's Remove of
+  itself (what MDK 0.8 sends standalone). Anything else is
+  `MARMOT_ERR_UNSUPPORTED`. Records live in one slot per epoch and sender,
+  at most `MARMOT_PROPOSALS_PER_SENDER` (4) each, behind a small index, so
+  one member's flood fills only its own slot, and an insert rewrites only
+  that slot. A Commit of that epoch resolves its references against them,
   each record's signature checked again (`mls_group_process_commit_by_ref()`).
+  A Commit that cites a proposal not received yet is
+  `MARMOT_ERR_PROPOSAL_UNKNOWN` and changes nothing: keep the event and offer
+  it again when a proposal arrives. Since `result.commit` gained
+  `departed_pubkey_hexes`, a Commit result names who left on their own
+  request, whether or not this member saw the proposal.
   The same path replays the OpenMLS passive-client vectors with every
   proposal opened and referenced (1542 proposals, 100 Commits; vectors with
   PSK proposals stay on the old path).
@@ -332,33 +341,50 @@ protocol-core/member-departure.md), and an MDK member's leave is seen.
   SelfRemove (one per leaving leaf, the lowest SHA-256 of its MLSMessage)
   for any member, and a member's own Remove for an admin. libmarmot does not
   schedule it: the application does (Groundhog after 1-4 s of jitter).
-- **Leaving.** `marmot_self_remove()` makes our SelfRemove for the current
-  epoch (the same bytes again within it, a fresh one for a new epoch) and
-  records a durable leave request ("Leaving": `marmot_create_message()` and
-  every Commit producer return the new `MARMOT_ERR_LEAVING`).
-  `marmot_can_self_remove()` says beforehand whether it would work. When a
+- **Leaving.** `marmot_self_remove()` makes our leave proposal for the
+  current epoch (the same bytes again within it, a fresh one for a new
+  epoch) and records a durable leave request ("Leaving":
+  `marmot_create_message()` and every Commit producer return the new
+  `MARMOT_ERR_LEAVING`). As MDK 0.8's `try_self_remove()` does, it is a
+  SelfRemove only when the group's required_capabilities list it. Otherwise
+  it is a Remove of our own leaf, sent as a PrivateMessage under our
+  handshake ratchet, which an admin commits.
+  `marmot_can_self_remove()` says beforehand whether it would work and which
+  kind (`MarmotLeaveKind`). `marmot_cancel_leave()` drops a leave that cannot
+  go on. When a
   Commit removes us through our own SelfRemove, the group ends as after an
   admin's removal, and `marmot_get_group_left()` says we left.
   `marmot_leave_group()` stays local only.
 - **Capabilities.** Every leaf libmarmot makes advertises SelfRemove, and
   adopted KeyPackages advertise `[0x0008, 0x000a]`. A new group requires it
-  when every initial member advertises it (MDK 0.8's LCD rule, byte for
-  byte), and also when created with no invitee (MIP-01; MDK leaves that
-  case empty). MDK 0.8 therefore makes groups with libmarmot members that
-  require SelfRemove, and its members leave them with it.
-- **New API.** `marmot_self_remove()`, `marmot_can_self_remove()`,
-  `marmot_is_leaving()`, `marmot_get_pending_proposals()` /
-  `marmot_pending_proposals_free()` (`MarmotPendingProposal`),
-  `marmot_commit_pending_proposals()`, `marmot_get_group_left()`,
-  `MARMOT_PROPOSAL_TYPE_*`, `MARMOT_ERR_LEAVING`,
-  `MARMOT_ERR_ADMIN_CANNOT_LEAVE`.
+  exactly as MDK 0.8's LCD rule computes, byte for byte: when every invitee
+  advertises it, and not when one lacks it or when there is none. MDK 0.8
+  therefore makes groups with libmarmot members that require SelfRemove,
+  and its members leave them with it. A group created alone (as Groundhog
+  creates them) does not require it, and its members leave by a Remove
+  request (nostrc-8ndz would add the requirement later). A SelfRemove
+  Commit needs the support of the leaves that remain, as OpenMLS checks it:
+  leaves the same Commit removes do not count.
+- **New API.** `marmot_self_remove()`, `marmot_can_self_remove()`
+  (`MarmotLeaveKind`), `marmot_cancel_leave()`, `marmot_is_leaving()`,
+  `marmot_get_pending_proposals()` / `marmot_pending_proposals_free()`
+  (`MarmotPendingProposal`), `marmot_commit_pending_proposals()`,
+  `marmot_get_group_left()`, `MARMOT_PROPOSAL_TYPE_*`, `MARMOT_ERR_LEAVING`,
+  `MARMOT_ERR_ADMIN_CANNOT_LEAVE`, `MARMOT_ERR_PROPOSAL_UNKNOWN`.
+- **Review (W24 slice B review, 2026-09-30).** The changes above already
+  include its fixes: H1 (Commit before proposal), M1 (when to send
+  SelfRemove), M2 (bounded, typed store), L1 (empty invitee list), L2
+  (removed leaves don't count), L3 (`marmot_cancel_leave()`), L4 (the Commit
+  names who left) and nits N1-N3. N2: a PrivateMessage proposal's handshake
+  key stays derivable until the epoch ends (see `mls_group_open_proposal()`).
 
 #### Compatibility
 
-- **ABI.** `MarmotMessageResult` grows a `proposal` member at its end:
-  rebuild callers.
-- **Storage.** New `mls_kv` labels `mls_group_proposals` and
-  `mls_group_leaving` (group-scoped, keyed by the MLS group id). The removal
+- **ABI.** `MarmotMessageResult` grows: `commit.departed_*` and a
+  `proposal` member. Rebuild callers.
+- **Storage.** New `mls_kv` labels: `mls_group_proposals` (the index) and
+  `mls_group_leaving`, keyed by the MLS group id, and
+  `mls_group_proposal_slot`, keyed by group id || epoch || sender leaf. The removal
   record's flags gain "left" (4) and "ordinary key" (8), and a pending
   Commit of departures carries a trailer. libmarmot 0.11.0 refuses such
   records: after a downgrade, the group reads as ended (cause unknown), or

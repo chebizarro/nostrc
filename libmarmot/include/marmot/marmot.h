@@ -734,15 +734,18 @@ MarmotError marmot_leave_group(Marmot *m,
  * @m: Marmot instance
  * @mls_group_id: the group to leave
  * @out_event_json: (out) (transfer full): the signed kind:445 event carrying
- *   our SelfRemove proposal, to publish to the group relays
+ *   our leave proposal, to publish to the group relays
  *
  * Leave a group for everyone (since 0.12.0, nostrc-2um6; MIP-03 "Leaving a
- * group", Marmot protocol-core/member-departure.md).  Makes our SelfRemove
- * proposal (draft-ietf-mls-extensions, proposal type 0x000a) for the current
- * epoch as an MLS PublicMessage, sealed like every kind:445, and records a
- * durable leave request: the group is Leaving.  A member cannot commit its
- * own SelfRemove: another member commits it by reference, and when that
- * Commit arrives marmot_process_message() ends the group for us
+ * group", Marmot protocol-core/member-departure.md).  Makes our leave
+ * proposal for the current epoch, sealed like every kind:445, and records a
+ * durable leave request: the group is Leaving.  As MDK 0.8 does, it is a
+ * SelfRemove (draft-ietf-mls-extensions, 0x000a, an MLS PublicMessage that
+ * any other member commits) when the group's required_capabilities list
+ * SelfRemove, and otherwise a Remove of our own leaf (a PrivateMessage that
+ * an admin commits; marmot_can_self_remove() says which).  A member cannot
+ * commit its own leave: another member commits it by reference, and when
+ * that Commit arrives marmot_process_message() ends the group for us
  * (MARMOT_RESULT_COMMIT, the group inactive, marmot_get_group_left() TRUE).
  *
  * While Leaving, nothing else may be sent: marmot_create_message() and every
@@ -751,8 +754,9 @@ MarmotError marmot_leave_group(Marmot *m,
  * same bytes within an epoch and a fresh proposal for a new one, so it is
  * also what a restart republishes.
  *
- * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED when some member does not
- *   support SelfRemove (leave with marmot_leave_group() then);
+ * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED when the group requires
+ *   SelfRemove yet a member does not support it (leave with
+ *   marmot_leave_group() then);
  *   MARMOT_ERR_ADMIN_CANNOT_LEAVE for an admin (step down first, with
  *   marmot_update_group_metadata()); MARMOT_ERR_OWN_COMMIT_PENDING while a
  *   Commit of ours awaits a relay; MARMOT_ERR_USE_AFTER_EVICTION for a group
@@ -765,15 +769,33 @@ MarmotError marmot_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
  * marmot_can_self_remove:
  * @m: Marmot instance
  * @mls_group_id: the group
+ * @out_kind: (out) (optional): how marmot_self_remove() would leave
  *
  * What marmot_self_remove() would return now, without making or storing
  * anything (since 0.12.0): lets an application say before the user
- * confirms whether leaving reaches everyone or only this device.
+ * confirms whether leaving reaches everyone, through whom, or only this
+ * device.
  *
  * Returns: MARMOT_OK (also when already Leaving); otherwise the error
  *   marmot_self_remove() would return
  */
-MarmotError marmot_can_self_remove(Marmot *m, const MarmotGroupId *mls_group_id);
+MarmotError marmot_can_self_remove(Marmot *m, const MarmotGroupId *mls_group_id,
+                                   MarmotLeaveKind *out_kind);
+
+/**
+ * marmot_cancel_leave:
+ * @m: Marmot instance
+ * @mls_group_id: the group
+ *
+ * Drop our leave request (since 0.12.0): the group is no longer Leaving and
+ * sends are allowed again.  A leave proposal already published may still be
+ * committed by another member in its epoch.  For an application that cannot
+ * keep leaving, e.g. when a new epoch's proposal can no longer be made
+ * (the account became an admin).
+ *
+ * Returns: MARMOT_OK (also when not Leaving)
+ */
+MarmotError marmot_cancel_leave(Marmot *m, const MarmotGroupId *mls_group_id);
 
 /**
  * marmot_is_leaving:

@@ -594,7 +594,16 @@ void mls_opened_proposal_clear(MlsOpenedProposal *p);
  * Authenticate the standalone Proposal MLSMessage @msg in @group's epoch:
  * a PublicMessage by its signature and membership tag, a PrivateMessage by
  * decrypting it with its sender's handshake ratchet (left as it was, as for
- * a Commit) and then its signature (wire format mls_private_message).  The
+ * a Commit) and then its signature (wire format mls_private_message).
+ *
+ * Forward secrecy (review N2): putting the ratchet back means the sender's
+ * generation key for a PrivateMessage proposal is not deleted before the
+ * epoch ends (RFC 9420 section 9.2 asks for that), and a replayed
+ * ciphertext decrypts again (it is deduplicated by ProposalRef and event
+ * id). Accepted for MDK 0.8's PrivateMessage Remove-of-self: the content is
+ * a public leave request, and the epoch's secrets stay stored until the
+ * next Commit anyway. Our own PrivateMessage proposal (its key is spent) is
+ * MARMOT_ERR_OWN_MESSAGE.  The
  * body must parse completely and be of a type a Commit can apply (Add,
  * Update, Remove, GroupContextExtensions, SelfRemove); a SelfRemove must come
  * as a PublicMessage (draft-ietf-mls-extensions, MIP-03), a Remove must name
@@ -612,12 +621,19 @@ int mls_group_open_proposal(const MlsGroup *group, const uint8_t *msg, size_t ms
  *  capabilities (RFC 9420 section 12.2; a default type always counts). */
 bool mls_group_members_support_proposal(const MlsGroup *group, uint16_t type);
 
+/** Whether @group's GroupContext required_capabilities list proposal type
+ *  @type (MDK 0.8 sends SelfRemove only then; review M1). */
+bool mls_group_requires_proposal(const MlsGroup *group, uint16_t type);
+
 /**
  * MlsCommitSummary:
  *
  * What a processed Commit did with the leaves of its members' own departure
  * requests, for the protocol layer's authorization.
  */
+/* A deliberate bound (review N3): a Commit with more departures than this
+ * (SelfRemoves, or Removes members sent for themselves) is refused, where
+ * OpenMLS would accept it; it matters only for very large groups. */
 #define MLS_COMMIT_SUMMARY_MAX 64
 typedef struct {
     size_t   proposal_count;                       /**< all proposals of the Commit */
@@ -666,6 +682,15 @@ int mls_group_commit_removes_self_by_ref(const MlsGroup *group,
 int mls_group_commit_by_ref(MlsGroup *group,
                             const uint8_t *const *acs, const size_t *ac_lens, size_t ac_count,
                             MlsCommitResult *result);
+
+/**
+ * A Remove of our own leaf for @group's epoch (MDK 0.8's leave where the
+ * group does not require SelfRemove; review M1): a PrivateMessage (signed,
+ * encrypted with our handshake ratchet, whose step is taken in @group: store
+ * it), and *out_own kept as receivers keep it. An admin commits it.
+ */
+int mls_group_remove_self_proposal(MlsGroup *group, uint8_t **out_msg, size_t *out_len,
+                                   MlsOpenedProposal *out_own);
 
 /**
  * Our own SelfRemove proposal for @group's epoch: a PublicMessage (signed,

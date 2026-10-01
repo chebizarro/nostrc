@@ -521,6 +521,12 @@ typedef struct {
     struct {
         /** Updated group info (caller-owned, may be NULL) */
         MarmotGroup *updated_group;
+        /** Since 0.12.0 (nostrc-2um6): the members (hex, caller-owned) this
+         *  Commit took out on their own request -- a SelfRemove, or a Remove
+         *  a member sent for itself -- whether or not this member saw the
+         *  proposal. */
+        char **departed_pubkey_hexes;
+        size_t departed_count;
     } commit;
 
     /** Valid when type == MARMOT_RESULT_PROPOSAL (since 0.12.0,
@@ -545,6 +551,21 @@ typedef struct {
 #define MARMOT_PROPOSAL_TYPE_REMOVE       0x0003
 #define MARMOT_PROPOSAL_TYPE_GROUP_CONTEXT_EXTENSIONS 0x0007
 #define MARMOT_PROPOSAL_TYPE_SELF_REMOVE  0x000A
+
+/**
+ * MarmotLeaveKind:
+ * @MARMOT_LEAVE_SELF_REMOVE: a SelfRemove proposal (the group's
+ *   required_capabilities list it); any remaining member commits it
+ * @MARMOT_LEAVE_REMOVE_REQUEST: a Remove of our own leaf, sent as a
+ *   PrivateMessage (MDK 0.8's leave where SelfRemove is not required); an
+ *   admin commits it
+ *
+ * How marmot_self_remove() leaves a group (since 0.12.0).
+ */
+typedef enum {
+    MARMOT_LEAVE_SELF_REMOVE    = 1,
+    MARMOT_LEAVE_REMOVE_REQUEST = 2,
+} MarmotLeaveKind;
 
 /**
  * MarmotPendingProposal:

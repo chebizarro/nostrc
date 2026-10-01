@@ -89,6 +89,10 @@ typedef enum {
     /* Since 0.12.0: an admin cannot leave by SelfRemove; it steps down from
      * the admins first (MIP-03; member-departure.md). */
     MARMOT_ERR_ADMIN_CANNOT_LEAVE       = -68,
+    /* Since 0.12.0: an authenticated Commit references a proposal this
+     * member has not received (yet). Keep the event and offer it again once
+     * a proposal of its epoch arrives (nostrc-2um6 review H1). */
+    MARMOT_ERR_PROPOSAL_UNKNOWN         = -69,
 
     /* Welcome errors */
     MARMOT_ERR_WELCOME                  = -70,
