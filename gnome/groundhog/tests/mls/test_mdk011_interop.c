@@ -660,9 +660,12 @@ test_adopted_welcome(void)
   if (state != MARMOT_WELCOME_STATE_FAILED)
     g_error("XPASS?: the adopted Welcome is in state %d, not failed; update the expectation",
             state);
-  /* libmarmot cannot decode the adopted Welcome (MLSMessage(mls_welcome)
-   * of a GroupContext with app_data_dictionary 0x0006). */
-  g_assert_cmpstr(reason, ==, "welcome content decode failed");
+  /* libmarmot 0.12.0 decodes and opens an adopted Welcome on arrival
+   * (nostrc-qp24.5.1; before, "welcome content decode failed").  This one
+   * is for the MDK device's KeyPackage, not Groundhog's -- Groundhog
+   * publishes no adopted KeyPackage yet (producer OFF) -- so it is refused
+   * there, final, with no invitation (nostrc-5yb3). */
+  g_assert_cmpstr(reason, ==, "matching KeyPackage private key not found");
   g_assert_cmpuint(alice->invites, ==, 0);
   g_autoptr(GError) list_error = NULL;
   g_autoptr(GPtrArray) invites = gh_mls_service_list_invites(alice->service, &list_error);

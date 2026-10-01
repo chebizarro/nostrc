@@ -343,15 +343,13 @@ marmot_proposals_forget(Marmot *m, const uint8_t *gid, size_t gid_len)
 
 /* ── Admin policy (profile hook) ───────────────────────────────────────── */
 
+/* The group's admitted profile (W24 slice E): mls_group_context_profile_of()
+ * classified its GroupContext when it was admitted, created or loaded, so
+ * anything that is not legacy is judged by the adopted (stricter) rules. */
 bool
 marmot_policy_is_adopted(const MlsGroup *g)
 {
-    const uint8_t *data = NULL;
-    size_t len = 0, count = 0;
-    return g && marmot_extensions_find(g->extensions_data, g->extensions_len,
-                                       MARMOT_EXT_APP_DATA_DICTIONARY, &data, &len,
-                                       &count) == 0 &&
-           count > 0;
+    return g && g->profile != MARMOT_GROUP_PROFILE_LEGACY;
 }
 
 /* marmot.group.admin-policy.v1: admins<V> of sorted 32-byte keys. */
@@ -411,8 +409,8 @@ marmot_policy_is_admin(const MlsGroup *g, const uint8_t account[32], bool *out)
 }
 
 /* Who may commit a privileged Commit (a Remove): an admin, or anyone in a
- * legacy group that lists none (commits.c gde_is_admin(), groups.c
- * is_admin()). */
+ * legacy group whose GroupData lists none (commits.c gde_is_admin()).  A
+ * group without GroupData has no admin at all (W24 slice E review H1). */
 static bool
 may_commit_privileged(const MlsGroup *g, const uint8_t account[32])
 {
@@ -424,7 +422,7 @@ may_commit_privileged(const MlsGroup *g, const uint8_t account[32])
     if (marmot_extensions_find(g->extensions_data, g->extensions_len, MARMOT_EXTENSION_TYPE,
                                &data, &len, &count) != 0)
         return false;
-    if (count == 0) return true;
+    if (count != 1) return false;
     MarmotGroupDataExtension *gde = marmot_group_data_extension_deserialize(data, len);
     bool none = gde && gde->admin_count == 0;
     marmot_group_data_extension_free(gde);
@@ -684,6 +682,13 @@ marmot_proposal_process_inbound(Marmot *m, MarmotGroup *group, const uint8_t *ms
     MlsGroup cur;
     MarmotError err = load_mls(m, &group->mls_group_id, &cur);
     if (err != MARMOT_OK) return MARMOT_ERR_MLS;
+    /* An adopted group cannot process Commits yet (nostrc-qp24.5.1.3), so a
+     * departure it keeps could never be committed or followed: refused
+     * before it is opened, like the group's Commits (W24 slice E). */
+    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY) {
+        mls_group_free(&cur);
+        return MARMOT_ERR_UNSUPPORTED;
+    }
     MlsOpenedProposal op;
     int rc = mls_group_open_proposal(&cur, msg, msg_len, &op);
     if (rc == MARMOT_ERR_OWN_MESSAGE) {
@@ -853,6 +858,13 @@ self_remove(Marmot *m, const MarmotGroupId *gid, char **out_event_json, MarmotLe
     err = dry ? MARMOT_OK : marmot_group_reconcile(m, group);
     if (err == MARMOT_OK) err = load_mls(m, gid, &cur);
     if (err != MARMOT_OK) goto out;
+    /* No leave for everyone from an adopted group (W24 slice E): it cannot
+     * process the Commit that would follow (nostrc-qp24.5.1.3), and a Remove
+     * of ourselves is no adopted leave at all.  Leave on this device only. */
+    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY) {
+        err = MARMOT_ERR_UNSUPPORTED;
+        goto out;
+    }
     /* Admin first (review N1): an admin's answer must not depend on a
      * pending change of theirs. */
     uint8_t me[32];

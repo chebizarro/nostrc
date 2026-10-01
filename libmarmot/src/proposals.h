@@ -98,9 +98,11 @@ MarmotError marmot_proposal_process_inbound(Marmot *m, MarmotGroup *group,
  */
 MarmotError marmot_policy_is_admin(const MlsGroup *g, const uint8_t account[32], bool *out);
 
-/** Whether `g` is an adopted-profile group (its GroupContext carries an
- *  app_data_dictionary): there only SelfRemove may be a non-admin's
- *  standalone proposal (protocol-core/group-messaging.md). */
+/** Whether `g` is an adopted-profile group (g->profile is not legacy; its
+ *  GroupContext carries an app_data_dictionary): there only SelfRemove may
+ *  be a non-admin's standalone proposal (protocol-core/group-messaging.md).
+ *  Until adopted Commits are processed (nostrc-qp24.5.1.3) libmarmot keeps,
+ *  sends and commits no proposal in such a group: MARMOT_ERR_UNSUPPORTED. */
 bool marmot_policy_is_adopted(const MlsGroup *g);
 
 /** MARMOT_ERR_LEAVING while our leave request for the group stands. */

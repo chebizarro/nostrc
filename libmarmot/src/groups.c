@@ -1579,6 +1579,12 @@ commit_pending_proposals_impl(Marmot *m, const MarmotGroupId *mls_group_id,
      * marmot_proposals_select() checks. */
     MarmotError err = load_group_for_commit_ex(m, mls_group_id, &group, &mls, false);
     if (err != MARMOT_OK) return err;
+    /* Adopted groups commit nothing yet (nostrc-qp24.5.1.3; W24 slice E). */
+    if (mls.profile != MARMOT_GROUP_PROFILE_LEGACY) {
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_UNSUPPORTED;
+    }
     MlsGroup post;
     memset(&post, 0, sizeof(post));
     MlsCommitResult result;

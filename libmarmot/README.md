@@ -307,8 +307,9 @@ parse, cryptographic or authorization failure.
 | Create a group MDK 0.11 joins | **Yes**: `marmot_create_group_for_profile()`; MDK v0.11.0 joined it (one manual run with a throwaway MDK driver, recorded in `tests/vectors/mdk-0.11/README.md`; not in CI) |
 | Persist, load, clone | **Yes**, re-validated on every load (serial format 4) |
 | Application messages (kind:445) | Between libmarmot members, yes; with MDK not yet tested |
-| **White Noise groups** | **Refused** (`MARMOT_ERR_UNSUPPORTED`): marmot-app requires SelfRemove (`0x000a`), agent text stream (`0x8006`, receive role `0xf2d1`) and encrypted media v2 (`0x800b`) of every group, none of which libmarmot implements yet |
+| **White Noise groups** | **Refused** (`MARMOT_ERR_UNSUPPORTED`): marmot-app requires SelfRemove (`0x000a`), agent text stream (`0x8006`, receive role `0xf2d1`) and encrypted media v2 (`0x800b`) of every group. libmarmot implements none of them for adopted groups yet (SelfRemove only for legacy groups, below) |
 | Commits (AppDataUpdate, Add, Remove, Update, self-update) | **Refused** (`MARMOT_ERR_UNSUPPORTED`), ours and others', including one that removes our own leaf (nostrc-qp24.5.1.3): a member falls behind at the group's first Commit. A removed libmarmot member is **not told**: it stays active but stuck, and never deletes its keys on the strength of an adopted Commit |
+| Leaving, standalone proposals (SelfRemove, Remove requests) | **Refused** (`MARMOT_ERR_UNSUPPORTED`): `marmot_self_remove()` and `marmot_can_self_remove()` (Groundhog then leaves on this device only), an inbound proposal (not kept, not reported), `marmot_commit_pending_proposals()`. A departure could never be committed or followed while Commits are refused |
 | Publishing adopted KeyPackages | **Off**: `MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER` stays OFF by default, so peers cannot invite libmarmot into adopted groups yet |
 | MDK 0.9.x groups (`0xf2f1` proof v1) | Refused (mixed or unsupported profile) |
 
@@ -373,12 +374,13 @@ producer must install its staged group through `group_install_checked()`
 (`src/mls/mls_group.c`), never `group_install_staged()` directly; only the
 Commit processor installs directly, after its own entered-epoch check.
 Otherwise a producer can make an adopted group enter an epoch that breaks
-its invariants. W24 slice A's `mls_group_replace_members()` and slice B's
-`mls_group_commit_by_ref()` were written against plain
-`group_install_staged()`: switch both when merging (`test_install_checked`
-pins the add path). Every Marmot-layer Commit judgement of a non-legacy group
-must be refused before any MIP-01 rule, as `marmot_commit_process_inbound()`
-and `marmot_commit_authorize()` do. Serial format 4's profile byte is a
+its invariants. Slice B's `mls_group_commit_by_ref()` and the add paths
+already do (`test_install_checked` pins the add path); W24 slice A's
+`mls_group_replace_members()` was written against plain
+`group_install_staged()`: switch it when merging. Every Marmot-layer Commit
+or proposal judgement of a non-legacy group must be refused before any
+MIP-01 rule, as `marmot_commit_process_inbound()`,
+`marmot_commit_authorize()` and `marmot_proposal_process_inbound()` do. Serial format 4's profile byte is a
 private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
 
 ## Changelog
@@ -416,6 +418,15 @@ profile (MDK 0.11)" above.
   without GroupData now has no admin at all (it used to make everyone one;
   W24 review H1), and the epoch-convergence bounds count every member as a
   possible winner there, so a removal never becomes final early.
+- **Leaving and standalone proposals in adopted groups are refused**
+  (`MARMOT_ERR_UNSUPPORTED`; with the standalone proposals and SelfRemove
+  of this release, below): `marmot_self_remove()` and
+  `marmot_can_self_remove()`, an inbound proposal (neither kept nor
+  reported as a departure) and `marmot_commit_pending_proposals()`. Adopted
+  leaves do not advertise SelfRemove. In legacy groups nothing changes,
+  except that a Remove request is not committable where the group has no
+  GroupData (no admin, as above). Every Commit producer, including
+  `mls_group_commit_by_ref()`, installs through `group_install_checked()`.
 - **MLS state serial format 4**, written for adopted groups only: format 3
   plus the profile byte. Legacy groups are still written as format 3, byte
   for byte. Every load re-validates the profile's structural invariants.
@@ -443,8 +454,12 @@ profile (MDK 0.11)" above.
 
 #### Compatibility
 
-Legacy (MDK 0.8, `0xF2EE`) groups behave as in 0.11.0. Adopted states
-cannot be downgraded to 0.11.0.
+Legacy (MDK 0.8, `0xF2EE`) groups behave as in 0.11.0, with one
+fail-closed exception: a legacy MLS state with no GroupData at all (only a
+join from before 0.11.0, which now requires exactly one `0xF2EE`, can be
+in it) has no admin, so its privileged Commits (Add, Remove, GroupData
+changes) are refused, ours before publishing and others' on receipt.
+Adopted states cannot be downgraded to 0.11.0.
 
 ### 0.12.0 (unreleased): standalone proposals and SelfRemove (nostrc-2um6)
 

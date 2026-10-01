@@ -845,8 +845,9 @@ MarmotError marmot_leave_group(Marmot *m,
  * also what a restart republishes.
  *
  * Returns: MARMOT_OK; MARMOT_ERR_UNSUPPORTED when the group requires
- *   SelfRemove yet a member does not support it (leave with
- *   marmot_leave_group() then);
+ *   SelfRemove yet a member does not support it, or for an adopted-profile
+ *   group, which processes no Commits yet (leave with marmot_leave_group()
+ *   then);
  *   MARMOT_ERR_ADMIN_CANNOT_LEAVE for an admin (step down first, with
  *   marmot_update_group_metadata()); MARMOT_ERR_OWN_COMMIT_PENDING while a
  *   Commit of ours awaits a relay; MARMOT_ERR_USE_AFTER_EVICTION for a group
@@ -941,7 +942,9 @@ void marmot_pending_proposals_free(MarmotPendingProposal *proposals);
  *
  * Returns: MARMOT_OK (also with nothing to commit);
  *   MARMOT_ERR_OWN_COMMIT_PENDING; MARMOT_ERR_LEAVING;
- *   MARMOT_ERR_USE_AFTER_EVICTION for a group that is not active
+ *   MARMOT_ERR_USE_AFTER_EVICTION for a group that is not active;
+ *   MARMOT_ERR_UNSUPPORTED for an adopted-profile group (no Commits yet;
+ *   its standalone proposals are not kept either)
  */
 MarmotError marmot_commit_pending_proposals(Marmot *m, const MarmotGroupId *mls_group_id,
                                             char **out_commit_json);
