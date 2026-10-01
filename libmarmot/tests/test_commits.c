@@ -5769,6 +5769,20 @@ test_group_event_peer_lead_capped(void)
     char *ahead = nostr_event_serialize_compact(ev);
     nostr_event_free(ev);
     expect_commit(&t.bob, ahead, "a Commit dated a day ahead");
+    /* What Bob follows: his floor (newest event, newest Commit, big-endian)
+     * is at most a minute ahead, not a day. */
+    uint8_t *row = NULL;
+    size_t row_len = 0;
+    OK(t.bob.m->storage->mls_load(t.bob.m->storage->ctx, "group_event_created_at",
+                                  t.nostr_gid, 32, &row, &row_len));
+    CHECK(row_len == 16, "floor row");
+    for (size_t half = 0; half < 2; half++) {
+        uint64_t v = 0;
+        for (size_t i = 0; i < 8; i++) v = (v << 8) | row[8 * half + i];
+        CHECK((int64_t)v <= marmot_now() + 60, "Bob's floor %zu is %" PRId64 " s ahead", half,
+              (int64_t)v - marmot_now());
+    }
+    free(row);
     for (int i = 0; i < 3; i++) {
         char *msg = app_message(&t.bob, &t.gid, "after it");
         CHECK(created_at_of(msg) <= marmot_now() + 60, "Bob's message %d within the bound", i);
