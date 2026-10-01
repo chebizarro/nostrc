@@ -1,0 +1,245 @@
+diff --git a/crates/marmot-app/src/media/group_image.rs b/crates/marmot-app/src/media/group_image.rs
+index 80367f98..ccf2b81e 100644
+--- a/crates/marmot-app/src/media/group_image.rs
++++ b/crates/marmot-app/src/media/group_image.rs
+@@ -523,3 +523,8 @@ mod tests {
+         server.await.unwrap();
+     }
+ }
++
++#[cfg(test)]
++pub(super) fn w24_group_image_aad(media_type: &str) -> Vec<u8> {
++    group_image_aad(media_type)
++}
+diff --git a/crates/marmot-app/src/media/mod.rs b/crates/marmot-app/src/media/mod.rs
+index 189322a2..9e1d14a9 100644
+--- a/crates/marmot-app/src/media/mod.rs
++++ b/crates/marmot-app/src/media/mod.rs
+@@ -1743,3 +1743,6 @@ fn validate_outbound_file_name(
+ pub(crate) mod tests;
+ #[cfg(test)]
+ mod tests_profile_image;
++
++#[cfg(test)]
++mod w24_vectors;
+diff --git a/crates/marmot-app/src/media/w24_vectors.rs b/crates/marmot-app/src/media/w24_vectors.rs
+new file mode 100644
+index 00000000..2c9d5ee5
+--- /dev/null
++++ b/crates/marmot-app/src/media/w24_vectors.rs
+@@ -0,0 +1,215 @@
++//! nostrc W24 throwaway vector generator (nostrc-u7cb). NOT part of MDK.
++//! Uses MDK v0.11.0's own media crypto, imeta builder/parser and app-component
++//! codecs to emit fixtures for libmarmot. Run:
++//!   cargo test -p marmot-app --lib media::w24_vectors -- --nocapture
++use super::*;
++use chacha20poly1305::aead::{Aead, KeyInit, Payload};
++use chacha20poly1305::{ChaCha20Poly1305, Nonce};
++use cgka_traits::app_components::{
++    GroupAvatarUrlV1, GroupBlossomImageV1, decode_group_avatar_url_v1,
++    decode_group_blossom_image_v1, encode_group_avatar_url_v1, encode_group_blossom_image_v1,
++};
++use serde_json::{Value, json};
++
++fn sha(b: &[u8]) -> [u8; 32] {
++    Sha256::digest(b).into()
++}
++
++fn seal(secret: &[u8], pt: &[u8], claimed_hash: &[u8; 32], mt: &str, fname: &str, nonce: &[u8; 12]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
++    let v = EncryptedMediaVersion::V2;
++    let key = derive_media_file_key(secret, v, claimed_hash, mt, fname).unwrap();
++    let aad = media_aad(v, claimed_hash, mt, fname);
++    let ct = ChaCha20Poly1305::new_from_slice(&key)
++        .unwrap()
++        .encrypt(Nonce::from_slice(nonce), Payload { msg: pt, aad: &aad })
++        .unwrap();
++    (key.to_vec(), aad, ct)
++}
++
++/// MDK's receive order (download_encrypted_media_classified): ciphertext hash,
++/// canonical media type, key, AEAD, plaintext hash.
++fn mdk_open(secret: &[u8], tag: &[String], ct: &[u8]) -> Result<Vec<u8>, String> {
++    let r = parse_media_attachment(tag, Some(0), false).map_err(|e| format!("reject:{:?}", e.kind))?;
++    if !encrypted_media_hash_matches(ct, &r.ciphertext_sha256) {
++        return Err("ciphertext_hash_mismatch".into());
++    }
++    let h = media_hash_from_reference(&r).unwrap();
++    let mt = canonical_media_type_v2(&r.media_type).map_err(|_| "media_type".to_string())?;
++    let key = derive_media_file_key(secret, EncryptedMediaVersion::V2, &h, &mt, &r.file_name).unwrap();
++    let aad = media_aad(EncryptedMediaVersion::V2, &h, &mt, &r.file_name);
++    let nonce = media_nonce_from_reference(&r).unwrap();
++    let pt = ChaCha20Poly1305::new_from_slice(&key)
++        .unwrap()
++        .decrypt(Nonce::from_slice(&nonce), Payload { msg: ct, aad: &aad })
++        .map_err(|_| "decrypt_failed".to_string())?;
++    if sha(&pt) != h {
++        return Err("plaintext_hash_mismatch".into());
++    }
++    Ok(pt)
++}
++
++fn reference(ct: &[u8], pt_hash: &[u8; 32], nonce: &[u8; 12], mt: &str, fname: &str, dim: Option<&str>) -> MediaAttachmentReference {
++    let ch = hex::encode(sha(ct));
++    MediaAttachmentReference {
++        locators: vec![MediaLocator { kind: "blossom-v1".into(), value: format!("https://blossom.example/{ch}") }],
++        ciphertext_sha256: ch,
++        plaintext_sha256: hex::encode(pt_hash),
++        nonce_hex: hex::encode(nonce),
++        file_name: fname.into(),
++        media_type: mt.into(),
++        version: "encrypted-media-v2".into(),
++        source_epoch: 5,
++        dim: dim.map(Into::into),
++        thumbhash: None,
++    }
++}
++
++fn with_field(tag: &[String], prefix: &str, value: String) -> Vec<String> {
++    tag.iter().map(|f| if f.starts_with(prefix) { value.clone() } else { f.clone() }).collect()
++}
++
++#[test]
++fn w24_vectors() {
++    let secret5 = sha(b"nostrc-w24 fixed media exporter secret, epoch 5");
++    let secret6 = sha(b"nostrc-w24 fixed media exporter secret, epoch 6");
++    let mut cases = Vec::new();
++    let mut store = Vec::new();
++    for (name, pt, mt_in, fname, nonce, dim) in [
++        ("png-basic", b"\x89PNG\r\n\x1a\nnostrc w24 media v2 vector".to_vec(), "image/png", "photo.png", [0x11u8; 12], Some("640x480")),
++        ("jpg-alias-params-utf8-filename", b"JFIF-ish bytes for a jpeg".to_vec(), " Image/JPG; charset=binary ", "\u{e9}t\u{e9} \u{5199}\u{771f} 1.jpg", [0xa5u8; 12], None),
++        ("spaces-filename-octet-stream", vec![0u8; 1], "application/octet-stream", " Photo.JPG ", *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b", None),
++    ] {
++        let mt = canonical_media_type_v2(mt_in).unwrap();
++        let h = sha(&pt);
++        let (key, aad, ct) = seal(&secret5, &pt, &h, &mt, fname, &nonce);
++        let info_v = {
++            let mut i = b"encrypted-media-v2\0".to_vec();
++            i.extend_from_slice(&h); i.push(0); i.extend_from_slice(mt.as_bytes()); i.push(0);
++            i.extend_from_slice(fname.as_bytes()); i.extend_from_slice(b"\0key"); i
++        };
++        let r = reference(&ct, &h, &nonce, &mt, fname, dim);
++        let tag = r.build_imeta_tag(EncryptedMediaVersion::V2, &[], false).unwrap();
++        assert_eq!(mdk_open(&secret5, &tag, &ct).unwrap(), pt);
++        cases.push(json!({
++            "name": name, "media_secret": hex::encode(secret5), "plaintext": hex::encode(&pt),
++            "media_type_input": mt_in, "media_type": mt, "filename": fname, "nonce": hex::encode(nonce),
++            "plaintext_sha256": hex::encode(h), "key_info": hex::encode(info_v), "file_key": hex::encode(key),
++            "aad": hex::encode(aad), "ciphertext": hex::encode(&ct), "ciphertext_sha256": hex::encode(sha(&ct)),
++            "imeta": tag,
++        }));
++        store.push((tag, ct, pt, h, nonce, mt, fname.to_string()));
++    }
++
++    // Negatives, all judged by MDK's own parse + receive order above.
++    let (tag, ct, pt, h, nonce, mt, fname) = store[0].clone();
++    let mut negatives = Vec::new();
++    let mut neg = |name: &str, secret: &[u8; 32], tag: Vec<String>, ct: Vec<u8>| {
++        let verdict = mdk_open(secret, &tag, &ct).err().expect("negative must fail");
++        negatives.push(json!({"name": name, "media_secret": hex::encode(secret), "imeta": tag,
++                              "ciphertext": hex::encode(&ct), "expect": verdict}));
++    };
++    let mut flipped = ct.clone(); flipped[3] ^= 0x01;
++    neg("tampered-ciphertext", &secret5, tag.clone(), flipped.clone());
++    let retagged = with_field(&tag, "ciphertext_sha256 ", format!("ciphertext_sha256 {}", hex::encode(sha(&flipped))));
++    neg("tampered-ciphertext-rehashed", &secret5, retagged, flipped);
++    neg("wrong-epoch-secret", &secret6, tag.clone(), ct.clone());
++    neg("noncanonical-media-type", &secret5, with_field(&tag, "m ", "m image/PNG".into()), ct.clone());
++    neg("filename-mismatch", &secret5, with_field(&tag, "filename ", "filename photo2.png".into()), ct.clone());
++    neg("media-type-mismatch", &secret5, with_field(&tag, "m ", "m image/jpeg".into()), ct.clone());
++    neg("ciphertext-hash-mismatch", &secret5,
++        with_field(&tag, "ciphertext_sha256 ", format!("ciphertext_sha256 {}", "00".repeat(32))), ct.clone());
++    // A member encrypts other bytes under the claimed plaintext hash: AEAD
++    // opens, the plaintext hash check after it must fail.
++    let other = b"not the claimed plaintext".to_vec();
++    let (_, _, ct_lie) = seal(&secret5, &other, &h, &mt, &fname, &nonce);
++    let lie_tag = reference(&ct_lie, &h, &nonce, &mt, &fname, Some("640x480"))
++        .build_imeta_tag(EncryptedMediaVersion::V2, &[], false).unwrap();
++    neg("plaintext-hash-mismatch", &secret5, lie_tag, ct_lie);
++    let _ = pt;
++
++    let canon: Vec<Value> = ["image/png", "Image/PNG", " image/jpg ", "image/JPG;q=1", "\timage/webp\r\n",
++        "\x0bimage/png", "image", "image/", "/png", "image/png/x", "image/p ng", "imag\u{e9}/png",
++        "application/vnd.example+json", "text/plain; charset=utf-8", "image/jpeg"]
++        .iter().map(|s| json!({"input": s, "canonical": canonical_media_type_v2(s).ok()})).collect();
++
++    // 0x8002 group image: codec bytes plus one image blob sealed with the
++    // spec AAD (`marmot-group-image-v1` || 0x00 || media_type).
++    let img_pt = b"\x89PNG\r\n\x1a\ngroup image".to_vec();
++    let img_key = [0x42u8; 32];
++    let img_nonce = [0x24u8; 12];
++    let img_aad = super::group_image::w24_group_image_aad("image/png");
++    let img_ct = ChaCha20Poly1305::new_from_slice(&img_key).unwrap()
++        .encrypt(Nonce::from_slice(&img_nonce), Payload { msg: &img_pt, aad: &img_aad }).unwrap();
++    let image = GroupBlossomImageV1 { image_hash: sha(&img_ct).to_vec(), image_key: img_key.to_vec(),
++        image_nonce: img_nonce.to_vec(), image_upload_key: vec![0x77; 32], media_type: "image/png".into() };
++    let image_bytes = encode_group_blossom_image_v1(&image).unwrap();
++    let empty_image = encode_group_blossom_image_v1(&GroupBlossomImageV1::default()).unwrap();
++    let mut decode_cases = vec![
++        json!({"name": "present", "bytes": hex::encode(&image_bytes), "valid": true}),
++        json!({"name": "empty", "bytes": hex::encode(&empty_image), "valid": true}),
++    ];
++    let mut bad = |name: &str, bytes: Vec<u8>| {
++        let ok = decode_group_blossom_image_v1(&bytes).is_ok();
++        assert!(!ok, "{name}");
++        decode_cases.push(json!({"name": name, "bytes": hex::encode(bytes), "valid": false}));
++    };
++    let mut partial = image.clone(); partial.image_key.clear();
++    bad("partial-state", cgka_traits::app_components::encode_component_vectors(&[
++        &partial.image_hash, &[], &partial.image_nonce, &partial.image_upload_key, b"image/png"]));
++    bad("noncanonical-media-type", cgka_traits::app_components::encode_component_vectors(&[
++        &image.image_hash, &image.image_key, &image.image_nonce, &image.image_upload_key, b"image/PNG"]));
++    bad("short-nonce", cgka_traits::app_components::encode_component_vectors(&[
++        &image.image_hash, &image.image_key, &image.image_nonce[..11], &image.image_upload_key, b"image/png"]));
++    let mut trailing = image_bytes.clone(); trailing.push(0);
++    bad("trailing-bytes", trailing);
++    let mut long_prefix = vec![0x40, 0x20]; long_prefix.extend_from_slice(&image_bytes[1..]);
++    bad("non-shortest-varint", long_prefix);
++
++    let avatar_inputs = ["https://example.com/a.png", "HTTPS://Example.COM:443/a.png", "https://example.com",
++        "https://example.com:8443/x/../y.png?s=1", "https://example.com/a b.png", "http://example.com/a.png",
++        "https://user:pw@example.com/a.png", "https://example.com/a.png#frag", "https://127.0.0.1/a.png",
++        "https://[2001:DB8::1]/a.png", "https://xn--bcher-kva.example/a.png", "https://b\u{fc}cher.example/a.png",
++        "https://example.com/%7Euser/a.png", "https://example.com/a.png?q=%20x", "ftp://example.com/a.png",
++        "https://example.com./a.png", "https://EXAMPLE.com:0443/a.png", "https://0x7f.1/a.png"];
++    let avatar_norm: Vec<Value> = avatar_inputs.iter().map(|s| json!({"input": s,
++        "normalized": cgka_traits::app_components::validate_and_normalize_group_avatar_url(s).ok()})).collect();
++    let av = GroupAvatarUrlV1 { url: "https://example.com/a.png".into(), dim: b"512x512".to_vec(), thumbhash: b"1QcSHQRnh493V4dIh4eXh1h4kJUI".to_vec() };
++    let av_bytes = encode_group_avatar_url_v1(&av).unwrap();
++    let mut av_cases = vec![
++        json!({"name": "present", "bytes": hex::encode(&av_bytes), "valid": true}),
++        json!({"name": "empty", "bytes": hex::encode(encode_group_avatar_url_v1(&GroupAvatarUrlV1::default()).unwrap()), "valid": true}),
++    ];
++    for (name, url, dim) in [("not-normalized", &b"https://Example.com/a.png"[..], &b""[..]),
++                             ("http-scheme", b"http://example.com/a.png", b""),
++                             ("hints-without-url", b"", b"512x512")] {
++        let mut bytes = Vec::new();
++        cgka_traits::app_components::encode_quic_varint(url.len() as u64, &mut bytes); bytes.extend_from_slice(url);
++        cgka_traits::app_components::encode_quic_varint(dim.len() as u64, &mut bytes); bytes.extend_from_slice(dim);
++        bytes.push(0);
++        assert!(decode_group_avatar_url_v1(&bytes).is_err(), "{name}");
++        av_cases.push(json!({"name": name, "bytes": hex::encode(bytes), "valid": false}));
++    }
++
++    let out = json!({
++        "schema": "nostrc-marmot-media-v2-vectors/v1",
++        "provenance": {
++            "generator": "throwaway #[cfg(test)] module media::w24_vectors added to a /tmp clone of marmot-protocol/mdk; calls MDK's own derive_media_file_key, media_aad, canonical_media_type_v2, MediaAttachmentReference::build_imeta_tag, parse_media_attachment, encrypted_media_hash_matches and cgka-traits app-component codecs",
++            "mdk_tag": "v0.11.0", "mdk_commit": "946e0547485c9a2c393c2048ec3a968fd50fb441",
++            "spec_commit": "07da8ffbfa7aa6c1e73e8e326085d0c47dc298e7",
++            "media_secret_note": "media_secret is the already-exported MLS-Exporter(\"marmot\", \"encrypted-media\", 32) value, fixed as SHA-256 of an ASCII label",
++            "bead": "nostrc-u7cb"
++        },
++        "media_secret_epoch_5": hex::encode(secret5),
++        "media_secret_epoch_6": hex::encode(secret6),
++        "mdk_unit_vector": {"media_secret": hex::encode([7u8; 32]), "plaintext_sha256": hex::encode([0x22u8; 32]),
++            "media_type": "image/jpeg", "filename": " Photo.JPG ",
++            "file_key": "5fcb5672b9cb2b3ac7915fd9c97697877837f7fb1312034486f400f601cd16b5"},
++        "cases": cases, "negatives": negatives, "media_type_canonicalization": canon,
++        "group_image": {"plaintext": hex::encode(&img_pt), "image_key": hex::encode(img_key), "image_nonce": hex::encode(img_nonce),
++            "media_type": "image/png", "aad": hex::encode(&img_aad), "ciphertext": hex::encode(&img_ct),
++            "image_hash": hex::encode(sha(&img_ct)), "image_upload_key": hex::encode([0x77u8; 32]),
++            "component_bytes": hex::encode(&image_bytes), "decode": decode_cases},
++        "avatar_url": {"normalize": avatar_norm, "decode": av_cases}
++    });
++    std::fs::write("/tmp/w24-media-v2-vectors.json", serde_json::to_string_pretty(&out).unwrap()).unwrap();
++}

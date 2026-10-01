@@ -14,7 +14,7 @@ option(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
   "Allow marmot_create_key_package_for_profile(ADOPTED) (experimental)" OFF)
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 11)
+set(MARMOT_VERSION_MINOR 12)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
@@ -76,6 +76,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/messages.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/media.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/group_image.c
 )
 
 # Conditionally add storage backends
@@ -91,6 +92,7 @@ set(MARMOT_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-error.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-storage.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-media.h
   ${MARMOT_PUBLIC_VERSION_HEADER}
 )
 
@@ -296,8 +298,13 @@ if(BUILD_TESTING)
 
   # Test: MIP-04 media encryption
   add_executable(test_media ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_media.c)
-  target_link_libraries(test_media PRIVATE marmot)
+  target_link_libraries(test_media PRIVATE marmot PkgConfig::SODIUM)
   target_include_directories(test_media PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  # MDK v0.11.0 media v2 / group image fixtures (tests/vectors/media/).
+  pkg_check_modules(MARMOT_TEST_JANSSON REQUIRED IMPORTED_TARGET jansson)
+  target_link_libraries(test_media PRIVATE PkgConfig::MARMOT_TEST_JANSSON)
+  target_compile_definitions(test_media PRIVATE
+    MARMOT_MEDIA_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/media")
   add_test(NAME marmot_test_media COMMAND test_media)
 
   # Test: MLS TreeKEM RFC 9420 test vectors

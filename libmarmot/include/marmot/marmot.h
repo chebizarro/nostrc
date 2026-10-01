@@ -24,6 +24,7 @@
 #include "marmot-error.h"
 #include "marmot-types.h"
 #include "marmot-storage.h"
+#include "marmot-media.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,8 +35,11 @@ extern "C" {
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Encrypt media file for sharing in an MLS group.
- * Derives encryption key from group's exporter secret.
+ * Deprecated: libmarmot's pre-0.12 media format (HMAC "marmot-media-key",
+ * MIME-only AAD) matches neither encrypted-media-v2 nor the frozen v1, so no
+ * other Marmot client can read it.  It is never produced any more: this
+ * returns MARMOT_ERR_MEDIA_LEGACY_FORMAT and leaves *result empty.  Use
+ * marmot_media_encrypt() (marmot-media.h).
  */
 MarmotError marmot_encrypt_media(Marmot *m,
                                   const MarmotGroupId *mls_group_id,
@@ -45,8 +49,8 @@ MarmotError marmot_encrypt_media(Marmot *m,
                                   MarmotEncryptedMedia *result);
 
 /**
- * Decrypt media file encrypted for an MLS group.
- * Derives decryption key from group's exporter secret.
+ * Deprecated, read-only: decrypts a reference in libmarmot's pre-0.12 media
+ * format that is already stored locally.  New media is marmot_media_decrypt().
  */
 MarmotError marmot_decrypt_media(Marmot *m,
                                   const MarmotGroupId *mls_group_id,

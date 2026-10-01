@@ -1174,6 +1174,7 @@ process_group_event(Marmot *m, const char *group_event_json,
      */
     result->type = MARMOT_RESULT_APPLICATION_MESSAGE;
     result->app_msg.inner_event_json = inner_json;
+    result->app_msg.epoch = used_epoch;   /* media v2 source epoch */
 
     /* Extract sender pubkey from the inner event */
     NostrEvent inner_event;

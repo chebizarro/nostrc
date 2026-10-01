@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.11.0',
+  version: '0.12.0',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -109,6 +109,7 @@ marmot_sources = files(
   'src/welcome.c',
   'src/messages.c',
   'src/media.c',
+  'src/group_image.c',
   'src/storage_nostrdb.c',
 )
 
@@ -160,6 +161,7 @@ install_headers(
   'include/marmot/marmot.h',
   'include/marmot/marmot-error.h',
   'include/marmot/marmot-types.h',
+  'include/marmot/marmot-media.h',
   'include/marmot/marmot-storage.h',
   subdir: 'marmot',
 )

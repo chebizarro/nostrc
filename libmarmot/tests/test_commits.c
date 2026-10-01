@@ -2378,6 +2378,60 @@ test_late_messages_use_retained_parent(void)
     trio_clear(&t);
 }
 
+/* Encrypted media v2 (nostrc-u7cb): the source epoch is the epoch of the
+ * carrying message, which process_message reports.  Bob attaches media in E;
+ * Charlie, already at E+1, reads the late message with the retained parent
+ * and decrypts the attachment with the retained E media secret -- not with
+ * the epoch it is in now. */
+static void
+test_media_source_epoch_of_late_message(void)
+{
+    Trio t;
+    trio_init(&t);
+    static const uint8_t file[] = "a picture sent in epoch E";
+    MarmotMediaUpload up;
+    OK(marmot_media_encrypt(t.bob.m, &t.gid, file, sizeof file - 1, "image/png", "e.png", &up));
+    CHECK(up.source_epoch == t.epoch, "media epoch %" PRIu64 " != %" PRIu64,
+          up.source_epoch, t.epoch);
+    OK(marmot_media_reference_add_locator(&up.reference, MARMOT_MEDIA_LOCATOR_BLOSSOM_V1,
+                                          "https://blossom.example/blob"));
+    char *late = app_message(&t.bob, &t.gid, "see attachment");
+    char *commit = rename_group(&t.alice, &t.gid, "Moved");
+    expect_commit(&t.charlie, commit, "Charlie moves to E+1");
+
+    MarmotMessageResult r;
+    memset(&r, 0, sizeof r);
+    OK(marmot_process_message(t.charlie.m, late, &r));
+    CHECK(r.type == MARMOT_RESULT_APPLICATION_MESSAGE, "late message type %d", r.type);
+    CHECK(r.app_msg.epoch == t.epoch, "late message epoch %" PRIu64 ", sent in %" PRIu64,
+          r.app_msg.epoch, t.epoch);
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    OK(marmot_media_decrypt(t.charlie.m, &t.gid, r.app_msg.epoch, &up.reference,
+                            up.ciphertext, up.ciphertext_len, &pt, &pt_len));
+    CHECK(pt_len == sizeof file - 1 && memcmp(pt, file, pt_len) == 0, "media plaintext");
+    free(pt);
+    CHECK(marmot_media_decrypt(t.charlie.m, &t.gid, t.epoch + 1, &up.reference,
+                               up.ciphertext, up.ciphertext_len, &pt, &pt_len) ==
+              MARMOT_ERR_MEDIA_DECRYPT,
+          "the current epoch's media secret must not open E media");
+    marmot_message_result_free(&r);
+
+    /* A message of the current epoch reports it. */
+    expect_commit(&t.bob, commit, "Bob follows");
+    char *now = app_message(&t.bob, &t.gid, "now");
+    memset(&r, 0, sizeof r);
+    OK(marmot_process_message(t.charlie.m, now, &r));
+    CHECK(r.type == MARMOT_RESULT_APPLICATION_MESSAGE && r.app_msg.epoch == t.epoch + 1,
+          "current message epoch %" PRIu64, r.app_msg.epoch);
+    marmot_message_result_free(&r);
+    free(now);
+    free(late);
+    free(commit);
+    marmot_media_upload_clear(&up);
+    trio_clear(&t);
+}
+
 /* ── Secret-tree ratchet persistence (nostrc-ai04) ────────────────────── */
 
 /* ── Sender authentication (nostrc-we6g) ──────────────────────────────────────── */
@@ -4718,6 +4772,7 @@ main(int argc, char **argv)
     RUN(test_unauthenticated_events_rejected);
     RUN(test_rumor_path_accepts_unsigned);
     RUN(test_late_messages_use_retained_parent);
+    RUN(test_media_source_epoch_of_late_message);
     RUN(test_operations_run_in_one_transaction);
     RUN(test_send_stores_step_before_event);
     RUN(test_forged_member_identity_rejected);

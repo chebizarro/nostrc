@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.11.2 LANGUAGES C)
+project(groundhog VERSION 0.12.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -2243,6 +2243,32 @@ if (TARGET groundhog-net AND TARGET groundhog-store AND TARGET groundhog-convers
     add_test(NAME groundhog-blossom COMMAND test-groundhog-blossom)
     set_tests_properties(groundhog-blossom PROPERTIES TIMEOUT 120
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+  # Encrypted group attachments (nostrc-u7cb): MIP-04 encrypted-media-v2
+  # through libmarmot, Blossom through GhBlossomClient (GhNetHttp). Nothing
+  # calls it yet: the group conversation UI is nostrc-u7cb's follow-up.
+  if (TARGET marmot)
+    add_library(groundhog-mls-media STATIC src/mls/gh-mls-media.c)
+    target_include_directories(groundhog-mls-media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/mls)
+    target_link_libraries(groundhog-mls-media PUBLIC groundhog-media marmot)
+    target_compile_options(groundhog-mls-media PRIVATE -Wall -Wextra -Werror)
+    if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+      # Seal (metadata out, current epoch), upload to and fetch from the
+      # local Blossom fixture, imeta round trip, retained-epoch open after a
+      # Commit, the epoch check before send, damaged and unavailable
+      # attachments, locator fallback, and files on this device only.
+      add_executable(test-groundhog-mls-media tests/mls/test_mls_media.c
+        tests/media/blossom-fixture.c)
+      target_include_directories(test-groundhog-mls-media PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
+      target_link_libraries(test-groundhog-mls-media PRIVATE groundhog-mls-media)
+      target_compile_options(test-groundhog-mls-media PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-mls-media)
+      add_dependencies(test-groundhog-mls-media groundhog-test-schemas)
+      add_test(NAME groundhog-mls-media COMMAND test-groundhog-mls-media)
+      set_tests_properties(groundhog-mls-media PROPERTIES TIMEOUT 90
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    endif()
   endif()
   # W17 review B1: the cache is bound to the file (x, key and nonce), not
   # to x: a message naming another file's x with its own key misses, goes to

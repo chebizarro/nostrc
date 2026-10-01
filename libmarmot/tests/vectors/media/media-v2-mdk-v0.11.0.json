@@ -1,0 +1,449 @@
+{
+  "avatar_url": {
+    "decode": [
+      {
+        "bytes": "1968747470733a2f2f6578616d706c652e636f6d2f612e706e6707353132783531321c315163534851526e683439335634644968346558683168346b4a5549",
+        "name": "present",
+        "valid": true
+      },
+      {
+        "bytes": "000000",
+        "name": "empty",
+        "valid": true
+      },
+      {
+        "bytes": "1968747470733a2f2f4578616d706c652e636f6d2f612e706e670000",
+        "name": "not-normalized",
+        "valid": false
+      },
+      {
+        "bytes": "18687474703a2f2f6578616d706c652e636f6d2f612e706e670000",
+        "name": "http-scheme",
+        "valid": false
+      },
+      {
+        "bytes": "00073531327835313200",
+        "name": "hints-without-url",
+        "valid": false
+      }
+    ],
+    "normalize": [
+      {
+        "input": "https://example.com/a.png",
+        "normalized": "https://example.com/a.png"
+      },
+      {
+        "input": "HTTPS://Example.COM:443/a.png",
+        "normalized": "https://example.com/a.png"
+      },
+      {
+        "input": "https://example.com",
+        "normalized": "https://example.com/"
+      },
+      {
+        "input": "https://example.com:8443/x/../y.png?s=1",
+        "normalized": "https://example.com:8443/y.png?s=1"
+      },
+      {
+        "input": "https://example.com/a b.png",
+        "normalized": "https://example.com/a%20b.png"
+      },
+      {
+        "input": "http://example.com/a.png",
+        "normalized": null
+      },
+      {
+        "input": "https://user:pw@example.com/a.png",
+        "normalized": null
+      },
+      {
+        "input": "https://example.com/a.png#frag",
+        "normalized": null
+      },
+      {
+        "input": "https://127.0.0.1/a.png",
+        "normalized": "https://127.0.0.1/a.png"
+      },
+      {
+        "input": "https://[2001:DB8::1]/a.png",
+        "normalized": "https://[2001:db8::1]/a.png"
+      },
+      {
+        "input": "https://xn--bcher-kva.example/a.png",
+        "normalized": "https://xn--bcher-kva.example/a.png"
+      },
+      {
+        "input": "https://bücher.example/a.png",
+        "normalized": "https://xn--bcher-kva.example/a.png"
+      },
+      {
+        "input": "https://example.com/%7Euser/a.png",
+        "normalized": "https://example.com/%7Euser/a.png"
+      },
+      {
+        "input": "https://example.com/a.png?q=%20x",
+        "normalized": "https://example.com/a.png?q=%20x"
+      },
+      {
+        "input": "ftp://example.com/a.png",
+        "normalized": null
+      },
+      {
+        "input": "https://example.com./a.png",
+        "normalized": "https://example.com./a.png"
+      },
+      {
+        "input": "https://EXAMPLE.com:0443/a.png",
+        "normalized": "https://example.com/a.png"
+      },
+      {
+        "input": "https://0x7f.1/a.png",
+        "normalized": "https://127.0.0.1/a.png"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "aad": "656e637279707465642d6d656469612d763200f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b2300696d6167652f706e670070686f746f2e706e67",
+      "ciphertext": "dae1c5e9b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "ciphertext_sha256": "e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+      "file_key": "549fef6df50047706db8ef9ba811c0bd3426f884c6814595797b6f49e7bd876c",
+      "filename": "photo.png",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/png",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "key_info": "656e637279707465642d6d656469612d763200f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b2300696d6167652f706e670070686f746f2e706e67006b6579",
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "media_type": "image/png",
+      "media_type_input": "image/png",
+      "name": "png-basic",
+      "nonce": "111111111111111111111111",
+      "plaintext": "89504e470d0a1a0a6e6f7374726320773234206d6564696120763220766563746f72",
+      "plaintext_sha256": "f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23"
+    },
+    {
+      "aad": "656e637279707465642d6d656469612d7632005eb08ff3dcdd9d5fcd60d3c6ebc9138ad0ee7d1dd3866e2282334657c6e9696600696d6167652f6a70656700c3a974c3a920e58699e79c9f20312e6a7067",
+      "ciphertext": "0a7eb7c41547354f4be441954b6056b91b8f15761d3cbcab95d02917f870fd0199f00139e928853dde",
+      "ciphertext_sha256": "ea852d0210c6f48036859ee21ff8ad5842cf233ccc032a266ca39fc6209e16d1",
+      "file_key": "e5e093c0b44b37cc7e158ed686f88e56cd414a8727ed8ec455417aa6fb61be7f",
+      "filename": "été 写真 1.jpg",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/ea852d0210c6f48036859ee21ff8ad5842cf233ccc032a266ca39fc6209e16d1",
+        "ciphertext_sha256 ea852d0210c6f48036859ee21ff8ad5842cf233ccc032a266ca39fc6209e16d1",
+        "plaintext_sha256 5eb08ff3dcdd9d5fcd60d3c6ebc9138ad0ee7d1dd3866e2282334657c6e96966",
+        "nonce a5a5a5a5a5a5a5a5a5a5a5a5",
+        "m image/jpeg",
+        "filename été 写真 1.jpg"
+      ],
+      "key_info": "656e637279707465642d6d656469612d7632005eb08ff3dcdd9d5fcd60d3c6ebc9138ad0ee7d1dd3866e2282334657c6e9696600696d6167652f6a70656700c3a974c3a920e58699e79c9f20312e6a7067006b6579",
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "media_type": "image/jpeg",
+      "media_type_input": " Image/JPG; charset=binary ",
+      "name": "jpg-alias-params-utf8-filename",
+      "nonce": "a5a5a5a5a5a5a5a5a5a5a5a5",
+      "plaintext": "4a4649462d69736820627974657320666f722061206a706567",
+      "plaintext_sha256": "5eb08ff3dcdd9d5fcd60d3c6ebc9138ad0ee7d1dd3866e2282334657c6e96966"
+    },
+    {
+      "aad": "656e637279707465642d6d656469612d7632006e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d006170706c69636174696f6e2f6f637465742d73747265616d002050686f746f2e4a504720",
+      "ciphertext": "4f9f2dd830cb4b38e50b751c5cb66511a4",
+      "ciphertext_sha256": "d4a7d827d96a7d49975eedb8f9f973549f6577fc16e6dbe1e42e210b690688b7",
+      "file_key": "2ccef43bf8ccab7407485c1fa15256722c96b98266227ad296b7d1d545428121",
+      "filename": " Photo.JPG ",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/d4a7d827d96a7d49975eedb8f9f973549f6577fc16e6dbe1e42e210b690688b7",
+        "ciphertext_sha256 d4a7d827d96a7d49975eedb8f9f973549f6577fc16e6dbe1e42e210b690688b7",
+        "plaintext_sha256 6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+        "nonce 000102030405060708090a0b",
+        "m application/octet-stream",
+        "filename  Photo.JPG "
+      ],
+      "key_info": "656e637279707465642d6d656469612d7632006e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d006170706c69636174696f6e2f6f637465742d73747265616d002050686f746f2e4a504720006b6579",
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "media_type": "application/octet-stream",
+      "media_type_input": "application/octet-stream",
+      "name": "spaces-filename-octet-stream",
+      "nonce": "000102030405060708090a0b",
+      "plaintext": "00",
+      "plaintext_sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    }
+  ],
+  "group_image": {
+    "aad": "6d61726d6f742d67726f75702d696d6167652d763100696d6167652f706e67",
+    "ciphertext": "6d57cb49e6d442a2e219e7fe943774f59eae2cd962fa3aa02b82c5a6c659afeb440153",
+    "component_bytes": "206790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc2042424242424242424242424242424242424242424242424242424242424242420c24242424242424242424242420777777777777777777777777777777777777777777777777777777777777777709696d6167652f706e67",
+    "decode": [
+      {
+        "bytes": "206790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc2042424242424242424242424242424242424242424242424242424242424242420c24242424242424242424242420777777777777777777777777777777777777777777777777777777777777777709696d6167652f706e67",
+        "name": "present",
+        "valid": true
+      },
+      {
+        "bytes": "0000000000",
+        "name": "empty",
+        "valid": true
+      },
+      {
+        "bytes": "206790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc000c24242424242424242424242420777777777777777777777777777777777777777777777777777777777777777709696d6167652f706e67",
+        "name": "partial-state",
+        "valid": false
+      },
+      {
+        "bytes": "206790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc2042424242424242424242424242424242424242424242424242424242424242420c24242424242424242424242420777777777777777777777777777777777777777777777777777777777777777709696d6167652f504e47",
+        "name": "noncanonical-media-type",
+        "valid": false
+      },
+      {
+        "bytes": "206790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc2042424242424242424242424242424242424242424242424242424242424242420b242424242424242424242420777777777777777777777777777777777777777777777777777777777777777709696d6167652f706e67",
+        "name": "short-nonce",
+        "valid": false
+      },
+      {
+        "bytes": "206790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc2042424242424242424242424242424242424242424242424242424242424242420c24242424242424242424242420777777777777777777777777777777777777777777777777777777777777777709696d6167652f706e6700",
+        "name": "trailing-bytes",
+        "valid": false
+      },
+      {
+        "bytes": "40206790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc2042424242424242424242424242424242424242424242424242424242424242420c24242424242424242424242420777777777777777777777777777777777777777777777777777777777777777709696d6167652f706e67",
+        "name": "non-shortest-varint",
+        "valid": false
+      }
+    ],
+    "image_hash": "6790149a4de19fd42d12a731f6028ff8602195d6d6860fe7618bcd47947bbcfc",
+    "image_key": "4242424242424242424242424242424242424242424242424242424242424242",
+    "image_nonce": "242424242424242424242424",
+    "image_upload_key": "7777777777777777777777777777777777777777777777777777777777777777",
+    "media_type": "image/png",
+    "plaintext": "89504e470d0a1a0a67726f757020696d616765"
+  },
+  "mdk_unit_vector": {
+    "file_key": "5fcb5672b9cb2b3ac7915fd9c97697877837f7fb1312034486f400f601cd16b5",
+    "filename": " Photo.JPG ",
+    "media_secret": "0707070707070707070707070707070707070707070707070707070707070707",
+    "media_type": "image/jpeg",
+    "plaintext_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "media_secret_epoch_5": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+  "media_secret_epoch_6": "626c8b7504b259032df68a9136126ffb7b7b9523839507ce8e40efc5044e6478",
+  "media_type_canonicalization": [
+    {
+      "canonical": "image/png",
+      "input": "image/png"
+    },
+    {
+      "canonical": "image/png",
+      "input": "Image/PNG"
+    },
+    {
+      "canonical": "image/jpeg",
+      "input": " image/jpg "
+    },
+    {
+      "canonical": "image/jpeg",
+      "input": "image/JPG;q=1"
+    },
+    {
+      "canonical": "image/webp",
+      "input": "\timage/webp\r\n"
+    },
+    {
+      "canonical": null,
+      "input": "\u000bimage/png"
+    },
+    {
+      "canonical": null,
+      "input": "image"
+    },
+    {
+      "canonical": null,
+      "input": "image/"
+    },
+    {
+      "canonical": null,
+      "input": "/png"
+    },
+    {
+      "canonical": null,
+      "input": "image/png/x"
+    },
+    {
+      "canonical": null,
+      "input": "image/p ng"
+    },
+    {
+      "canonical": null,
+      "input": "imagé/png"
+    },
+    {
+      "canonical": "application/vnd.example+json",
+      "input": "application/vnd.example+json"
+    },
+    {
+      "canonical": "text/plain",
+      "input": "text/plain; charset=utf-8"
+    },
+    {
+      "canonical": "image/jpeg",
+      "input": "image/jpeg"
+    }
+  ],
+  "negatives": [
+    {
+      "ciphertext": "dae1c5e8b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "expect": "ciphertext_hash_mismatch",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/png",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "name": "tampered-ciphertext"
+    },
+    {
+      "ciphertext": "dae1c5e8b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "expect": "decrypt_failed",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 4b9aab2ef6dbbd18309894be363305b6fddb3459f3b62946b66a6ec229cf563d",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/png",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "name": "tampered-ciphertext-rehashed"
+    },
+    {
+      "ciphertext": "dae1c5e9b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "expect": "decrypt_failed",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/png",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "media_secret": "626c8b7504b259032df68a9136126ffb7b7b9523839507ce8e40efc5044e6478",
+      "name": "wrong-epoch-secret"
+    },
+    {
+      "ciphertext": "dae1c5e9b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "expect": "reject:MalformedField",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/PNG",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "name": "noncanonical-media-type"
+    },
+    {
+      "ciphertext": "dae1c5e9b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "expect": "decrypt_failed",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/png",
+        "filename photo2.png",
+        "dim 640x480"
+      ],
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "name": "filename-mismatch"
+    },
+    {
+      "ciphertext": "dae1c5e9b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "expect": "decrypt_failed",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/jpeg",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "name": "media-type-mismatch"
+    },
+    {
+      "ciphertext": "dae1c5e9b3fb2b73cc3dfda96f39ccdd8fbe61d7c77be9f44549d8fe9245205385a1268ee49276a8da3cfd3f9ae95c44ec28",
+      "expect": "ciphertext_hash_mismatch",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/e070ce7e9b51d7e9ff9e7b60392da225d27559f3d36d8711905ce894478cba9a",
+        "ciphertext_sha256 0000000000000000000000000000000000000000000000000000000000000000",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/png",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "name": "ciphertext-hash-mismatch"
+    },
+    {
+      "ciphertext": "3ddeff8eca995459c13eefb4703f888acde620d3cc6be5ed1120e7405837ce56abdefbb2660b0aec25",
+      "expect": "plaintext_hash_mismatch",
+      "imeta": [
+        "imeta",
+        "v encrypted-media-v2",
+        "locator blossom-v1 https://blossom.example/d9d291de6ab1d837263bf2e472c254fc37c2a706cf3a604b478129ba0160243d",
+        "ciphertext_sha256 d9d291de6ab1d837263bf2e472c254fc37c2a706cf3a604b478129ba0160243d",
+        "plaintext_sha256 f8d3770289d1e5f54f03f2a5866b49637dee43ad605c8037750291be648b7b23",
+        "nonce 111111111111111111111111",
+        "m image/png",
+        "filename photo.png",
+        "dim 640x480"
+      ],
+      "media_secret": "f5415bcd1e3e5d635f932f3fcfc67e0f267d28a875b1ac0891ee6a50d59ed306",
+      "name": "plaintext-hash-mismatch"
+    }
+  ],
+  "provenance": {
+    "bead": "nostrc-u7cb",
+    "generator": "throwaway #[cfg(test)] module media::w24_vectors added to a /tmp clone of marmot-protocol/mdk; calls MDK's own derive_media_file_key, media_aad, canonical_media_type_v2, MediaAttachmentReference::build_imeta_tag, parse_media_attachment, encrypted_media_hash_matches and cgka-traits app-component codecs",
+    "mdk_commit": "946e0547485c9a2c393c2048ec3a968fd50fb441",
+    "mdk_tag": "v0.11.0",
+    "media_secret_note": "media_secret is the already-exported MLS-Exporter(\"marmot\", \"encrypted-media\", 32) value, fixed as SHA-256 of an ASCII label",
+    "spec_commit": "07da8ffbfa7aa6c1e73e8e326085d0c47dc298e7"
+  },
+  "schema": "nostrc-marmot-media-v2-vectors/v1"
+}

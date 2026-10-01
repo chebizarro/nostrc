@@ -241,6 +241,41 @@ What does not hold yet:
 
 ## Changelog
 
+### 0.12.0 (unreleased): MIP-04 encrypted media v2 and group image components (nostrc-u7cb)
+
+**New format, old one retired** (MINOR for 0.x). Media now follows
+`features/encrypted-media.md` (encrypted-media-v2) at marmot-protocol/marmot
+`07da8ffb`, byte for byte against MDK v0.11.0 (`tests/vectors/media/`):
+
+- `marmot-media.h`: `marmot_media_encrypt()` seals for the current epoch with
+  `HKDF-Expand(MLS-Exporter("marmot", "encrypted-media", 32), "encrypted-media-v2"
+  0x00 plaintext_sha256 0x00 media_type 0x00 filename 0x00 "key")` and an AAD
+  binding the hash, canonical MIME type and filename; `marmot_media_decrypt()`
+  takes the carrying message's epoch (current or retained), checks the
+  ciphertext SHA-256, opens, then checks the plaintext SHA-256.
+- `marmot_media_imeta_build()`/`_parse()`: the ordered v2 `imeta` tag
+  (`v`, `locator`s, `ciphertext_sha256`, `plaintext_sha256`, `nonce`, `m`,
+  `filename`, optional `dim`/`thumbhash`) with every validation rule of the
+  spec, MDK's shared fixture verdicts included; `marmot_media_type_canonicalize()`.
+- `MarmotMessageResult.app_msg.epoch`: the epoch a received message was sent
+  in, the source epoch of its attachments (late messages read with the
+  retained parent report the parent's epoch).
+- Group image components: `0x8002` marmot.group.blossom.image.v1 codec and
+  image AEAD (`marmot_group_image_encrypt/decrypt`, fresh key, nonce and
+  Blossom upload key), `0x8007` marmot.group.avatar-url.v1 codec with a
+  strict WHATWG-serializer subset (IDNA hosts are refused, not repaired), and
+  `marmot_group_avatar_select()` (the URL avatar wins). They are not yet read
+  from or written to live groups (that needs AppDataUpdate and adopted
+  admission).
+
+**Incompatible:** the pre-0.12 media format (HMAC `marmot-media-key` of the
+raw exporter secret, MIME-only AAD) matched neither v2 nor the frozen v1, so
+no other client could read it. `marmot_encrypt_media()` now returns
+`MARMOT_ERR_MEDIA_LEGACY_FORMAT`; `marmot_decrypt_media()` stays, deprecated
+and read-only, for references already stored. Frozen encrypted-media-v1 is
+not read (its validity rules need the frozen unsafe-host set): such a tag is
+`MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION`.
+
 ### 0.11.0 (unreleased): Marmot wire conformance, found by the first live MDK 0.8 test (nostrc-7gx7, nostrc-77pa)
 
 **Wire change** (MINOR for 0.x). 0.11.0 and 0.10.0 or older cannot read each

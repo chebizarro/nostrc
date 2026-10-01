@@ -114,6 +114,10 @@ marmot_error_string(MarmotError error)
     /* Media (MIP-04) */
     case MARMOT_ERR_MEDIA_DECRYPT:           return "media decryption failed";
     case MARMOT_ERR_MEDIA_HASH_MISMATCH:     return "media file hash mismatch";
+    case MARMOT_ERR_MEDIA_CIPHERTEXT_HASH:   return "media ciphertext hash mismatch";
+    case MARMOT_ERR_MEDIA_INVALID_REFERENCE: return "invalid media reference";
+    case MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION: return "unsupported media version";
+    case MARMOT_ERR_MEDIA_LEGACY_FORMAT:     return "legacy media format is not produced";
 
     /* Snapshot */
     case MARMOT_ERR_SNAPSHOT_FAILED:         return "snapshot operation failed";

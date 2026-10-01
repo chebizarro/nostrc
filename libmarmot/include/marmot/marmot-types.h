@@ -510,6 +510,9 @@ typedef struct {
         char *inner_event_json;
         /** Sender pubkey hex (caller-owned) */
         char *sender_pubkey_hex;
+        /** MLS epoch the message was sent in: the source epoch of any
+         *  encrypted-media-v2 attachment it carries (marmot_media_decrypt) */
+        uint64_t epoch;
     } app_msg;
 
     /** Valid when type == MARMOT_RESULT_COMMIT */
@@ -641,6 +644,9 @@ typedef struct {
 
 /**
  * MarmotImetaInfo:
+ *
+ * Deprecated: libmarmot's pre-0.12 media format, read-only (see
+ * marmot_decrypt_media).  Encrypted-media-v2 is MarmotMediaReference.
  *
  * Metadata about an encrypted media file, stored in the Nostr event's
  * "imeta" tag (NIP-94). Used for decryption.

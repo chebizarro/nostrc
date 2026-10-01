@@ -1,44 +1,127 @@
 /*
- * libmarmot - MIP-04 encrypted media tests
+ * libmarmot - MIP-04 encrypted media v2 and group image component tests
  *
- * Tests media encryption/decryption, key derivation, and integrity
- * verification via ChaCha20-Poly1305.
+ * Fixtures: tests/vectors/media/ (MDK v0.11.0, see its README).
  *
  * SPDX-License-Identifier: MIT
  */
 
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
+#include "media_v2.h"
+#include "mls/mls_key_schedule.h"
 
 #include <assert.h>
+#include <jansson.h>
+#include <openssl/sha.h>
+#include <sodium.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sodium.h>
 
-#define TEST(name) do { printf("  %-50s", #name); name(); printf("PASS\n"); } while(0)
+#define TEST(name) do { printf("  %-56s", #name); name(); printf("PASS\n"); } while (0)
 
 /* ── Helpers ───────────────────────────────────────────────────────────── */
+
+static json_t *
+load_fixture(const char *name)
+{
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s", MARMOT_MEDIA_VECTORS_DIR, name);
+    json_error_t e;
+    json_t *root = json_load_file(path, JSON_ALLOW_NUL, &e);
+    if (!root) fprintf(stderr, "\n%s: %s (line %d)\n", path, e.text, e.line);
+    assert(root);
+    return root;
+}
+
+static const char *
+jstr(json_t *obj, const char *key)
+{
+    json_t *v = json_object_get(obj, key);
+    assert(v && json_is_string(v));
+    return json_string_value(v);
+}
+
+/* Hex string -> malloc'd bytes. */
+static uint8_t *
+unhex(const char *hex, size_t *out_len)
+{
+    size_t n = strlen(hex);
+    assert(n % 2 == 0);
+    uint8_t *out = malloc(n / 2 + 1);
+    assert(out);
+    size_t bin_len = 0;
+    assert(sodium_hex2bin(out, n / 2 + 1, hex, n, NULL, &bin_len, NULL) == 0);
+    assert(bin_len == n / 2);
+    if (out_len) *out_len = bin_len;
+    return out;
+}
+
+static void
+unhex_fixed(const char *hex, uint8_t *out, size_t n)
+{
+    size_t len = 0;
+    uint8_t *b = unhex(hex, &len);
+    assert(len == n);
+    memcpy(out, b, n);
+    free(b);
+}
+
+static void
+assert_bytes_hex(const uint8_t *b, size_t n, const char *hex)
+{
+    size_t len = 0;
+    uint8_t *want = unhex(hex, &len);
+    assert(len == n);
+    assert(memcmp(b, want, n) == 0);
+    free(want);
+}
+
+/* A JSON string array -> fields + lengths (lengths keep embedded NULs). */
+typedef struct {
+    const char **f;
+    size_t      *lens;
+    size_t       n;
+} Fields;
+
+static Fields
+fields_of(json_t *arr)
+{
+    Fields x = { 0 };
+    x.n = json_array_size(arr);
+    x.f = calloc(x.n + 1, sizeof *x.f);
+    x.lens = calloc(x.n + 1, sizeof *x.lens);
+    assert(x.f && x.lens);
+    for (size_t i = 0; i < x.n; i++) {
+        json_t *s = json_array_get(arr, i);
+        x.f[i] = json_string_value(s);
+        x.lens[i] = json_string_length(s);
+    }
+    return x;
+}
+
+static void
+fields_free(Fields *x)
+{
+    free(x->f);
+    free(x->lens);
+}
 
 static Marmot *
 create_test_marmot(void)
 {
     MarmotStorage *storage = marmot_storage_memory_new();
-    assert(storage != NULL);
-
+    assert(storage);
     MarmotConfig config = marmot_config_default();
     Marmot *m = marmot_new_with_config(storage, &config);
-    assert(m != NULL);
+    assert(m);
     return m;
 }
 
 static void
-setup_group_with_secret(Marmot *m,
-                         const MarmotGroupId *gid,
-                         uint64_t epoch,
-                         const uint8_t secret[32])
+save_group_at(Marmot *m, const MarmotGroupId *gid, uint64_t epoch)
 {
-    /* Save a group at the given epoch */
     MarmotGroup *g = marmot_group_new();
     g->mls_group_id = marmot_group_id_new(gid->data, gid->len);
     memset(g->nostr_group_id, 0xAA, 32);
@@ -48,460 +131,767 @@ setup_group_with_secret(Marmot *m,
     g->epoch = epoch;
     assert(m->storage->save_group(m->storage->ctx, g) == MARMOT_OK);
     marmot_group_free(g);
-
-    /* Save the exporter secret */
-    assert(m->storage->save_exporter_secret(m->storage->ctx, gid, epoch, secret)
-           == MARMOT_OK);
 }
 
-/* ── Tests ─────────────────────────────────────────────────────────────── */
-
 static void
-test_encrypt_decrypt_roundtrip(void)
+save_secret(Marmot *m, const MarmotGroupId *gid, uint64_t epoch, uint8_t fill)
 {
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"media_rt", 8);
     uint8_t secret[32];
-    memset(secret, 0x42, 32);
-    setup_group_with_secret(m, &gid, 1, secret);
+    memset(secret, fill, sizeof secret);
+    assert(m->storage->save_exporter_secret(m->storage->ctx, gid, epoch, secret) == MARMOT_OK);
+}
 
-    /* Encrypt a test file */
-    const char *plaintext = "Hello, encrypted world! This is a test file for MIP-04.";
-    size_t pt_len = strlen(plaintext);
-
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            (const uint8_t *)plaintext, pt_len,
-                                            "text/plain", "test.txt",
-                                            &result);
+static MarmotMediaReference
+parsed_ref(json_t *tag)
+{
+    Fields f = fields_of(tag);
+    MarmotMediaReference ref;
+    MarmotError err = marmot_media_imeta_parse(f.f, f.lens, f.n, &ref);
+    fields_free(&f);
     assert(err == MARMOT_OK);
-    assert(result.encrypted_data != NULL);
-    assert(result.encrypted_len > pt_len); /* ciphertext + tag */
-    assert(result.original_size == pt_len);
-    assert(result.imeta.epoch == 1);
-    assert(strcmp(result.imeta.mime_type, "text/plain") == 0);
-    assert(strcmp(result.imeta.filename, "test.txt") == 0);
+    return ref;
+}
 
-    /* Decrypt */
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_OK);
-    assert(dec_len == pt_len);
-    assert(memcmp(decrypted, plaintext, pt_len) == 0);
+/* ── MDK v0.11.0 crypto vectors ────────────────────────────────────────── */
 
-    free(decrypted);
-    marmot_encrypted_media_clear(&result);
+static void
+test_mdk_unit_file_key(void)
+{
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    json_t *u = json_object_get(root, "mdk_unit_vector");
+    uint8_t secret[32], hash[32], key[32];
+    unhex_fixed(jstr(u, "media_secret"), secret, 32);
+    unhex_fixed(jstr(u, "plaintext_sha256"), hash, 32);
+    assert(marmot_media_v2_file_key(secret, hash, jstr(u, "media_type"),
+                                    jstr(u, "filename"), key) == 0);
+    assert_bytes_hex(key, 32, jstr(u, "file_key"));
+    json_decref(root);
+}
+
+static void
+test_mdk_v2_cases_byte_exact(void)
+{
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    json_t *cases = json_object_get(root, "cases");
+    assert(json_array_size(cases) >= 3);
+    size_t i;
+    json_t *c;
+    json_array_foreach(cases, i, c) {
+        uint8_t secret[32], nonce[12];
+        unhex_fixed(jstr(c, "media_secret"), secret, 32);
+        unhex_fixed(jstr(c, "nonce"), nonce, 12);
+        size_t pt_len = 0;
+        uint8_t *pt = unhex(jstr(c, "plaintext"), &pt_len);
+        const char *mt = jstr(c, "media_type"), *fname = jstr(c, "filename");
+
+        /* The producer canonicalizes the given MIME type. */
+        char *canon = NULL;
+        assert(marmot_media_type_canonicalize(jstr(c, "media_type_input"), &canon) == MARMOT_OK);
+        assert(strcmp(canon, mt) == 0);
+        free(canon);
+
+        uint8_t hash[32], key[32];
+        SHA256(pt, pt_len, hash);
+        assert_bytes_hex(hash, 32, jstr(c, "plaintext_sha256"));
+        uint8_t *info = NULL, *aad = NULL;
+        size_t info_len = 0, aad_len = 0;
+        assert(marmot_media_v2_key_info(hash, mt, fname, &info, &info_len) == 0);
+        assert_bytes_hex(info, info_len, jstr(c, "key_info"));
+        assert(marmot_media_v2_aad(hash, mt, fname, &aad, &aad_len) == 0);
+        assert_bytes_hex(aad, aad_len, jstr(c, "aad"));
+        assert(marmot_media_v2_file_key(secret, hash, mt, fname, key) == 0);
+        assert_bytes_hex(key, 32, jstr(c, "file_key"));
+        free(info);
+        free(aad);
+
+        /* Seal with the fixture nonce: MDK's exact ciphertext. */
+        uint8_t *ct = NULL;
+        size_t ct_len = 0;
+        MarmotMediaReference ref;
+        assert(marmot_media_v2_seal(secret, nonce, pt, pt_len, mt, fname, &ct, &ct_len,
+                                    &ref) == MARMOT_OK);
+        assert_bytes_hex(ct, ct_len, jstr(c, "ciphertext"));
+        assert_bytes_hex(ref.ciphertext_sha256, 32, jstr(c, "ciphertext_sha256"));
+
+        /* Our imeta is MDK's imeta, field for field and in order. */
+        json_t *tag = json_object_get(c, "imeta");
+        MarmotMediaReference theirs = parsed_ref(tag);
+        assert(theirs.locator_count == 1);
+        assert(marmot_media_reference_add_locator(&ref, theirs.locators[0].kind,
+                                                  theirs.locators[0].value) == MARMOT_OK);
+        assert(marmot_media_reference_set_hints(&ref, theirs.dim, theirs.thumbhash) == MARMOT_OK);
+        char **built = NULL;
+        size_t built_n = 0;
+        assert(marmot_media_imeta_build(&ref, NULL, &built, &built_n) == MARMOT_OK);
+        assert(built_n == json_array_size(tag));
+        assert(built[built_n] == NULL);
+        for (size_t k = 0; k < built_n; k++)
+            assert(strcmp(built[k], json_string_value(json_array_get(tag, k))) == 0);
+        marmot_media_imeta_fields_free(built, built_n);
+
+        /* And MDK's reference opens to the plaintext. */
+        uint8_t *out = NULL;
+        size_t out_len = 0;
+        assert(marmot_media_v2_open(secret, &theirs, ct, ct_len, &out, &out_len) == MARMOT_OK);
+        assert(out_len == pt_len && memcmp(out, pt, pt_len) == 0);
+        free(out);
+        free(ct);
+        free(pt);
+        marmot_media_reference_clear(&ref);
+        marmot_media_reference_clear(&theirs);
+    }
+    json_decref(root);
+}
+
+static MarmotError
+expected_error(const char *verdict)
+{
+    if (strcmp(verdict, "ciphertext_hash_mismatch") == 0) return MARMOT_ERR_MEDIA_CIPHERTEXT_HASH;
+    if (strcmp(verdict, "decrypt_failed") == 0) return MARMOT_ERR_MEDIA_DECRYPT;
+    if (strcmp(verdict, "plaintext_hash_mismatch") == 0) return MARMOT_ERR_MEDIA_HASH_MISMATCH;
+    if (strcmp(verdict, "reject:UnsupportedFormat") == 0) return MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION;
+    assert(strncmp(verdict, "reject:", 7) == 0);
+    return MARMOT_ERR_MEDIA_INVALID_REFERENCE;
+}
+
+static void
+test_mdk_v2_negatives(void)
+{
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    json_t *negs = json_object_get(root, "negatives");
+    static const char *const required[] = {
+        "tampered-ciphertext", "tampered-ciphertext-rehashed", "wrong-epoch-secret",
+        "noncanonical-media-type", "filename-mismatch", "media-type-mismatch",
+        "ciphertext-hash-mismatch", "plaintext-hash-mismatch", NULL };
+    size_t seen = 0, i;
+    json_t *c;
+    json_array_foreach(negs, i, c) {
+        const char *name = jstr(c, "name");
+        for (size_t k = 0; required[k]; k++) if (strcmp(required[k], name) == 0) seen++;
+        MarmotError want = expected_error(jstr(c, "expect"));
+        uint8_t secret[32];
+        unhex_fixed(jstr(c, "media_secret"), secret, 32);
+        size_t ct_len = 0;
+        uint8_t *ct = unhex(jstr(c, "ciphertext"), &ct_len);
+        Fields f = fields_of(json_object_get(c, "imeta"));
+        MarmotMediaReference ref;
+        MarmotError err = marmot_media_imeta_parse(f.f, f.lens, f.n, &ref);
+        if (err == MARMOT_OK) {
+            uint8_t *out = NULL;
+            size_t out_len = 0;
+            err = marmot_media_v2_open(secret, &ref, ct, ct_len, &out, &out_len);
+            assert(out == NULL);
+            marmot_media_reference_clear(&ref);
+        }
+        if (err != want) fprintf(stderr, "\n%s: got %d want %d\n", name, err, want);
+        assert(err == want);
+        fields_free(&f);
+        free(ct);
+    }
+    assert(seen == 8);
+    json_decref(root);
+}
+
+static void
+test_mdk_media_type_canonicalization(void)
+{
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    size_t i;
+    json_t *c;
+    json_array_foreach(json_object_get(root, "media_type_canonicalization"), i, c) {
+        json_t *want = json_object_get(c, "canonical");
+        char *got = NULL;
+        MarmotError err = marmot_media_type_canonicalize(jstr(c, "input"), &got);
+        if (json_is_null(want)) {
+            assert(err == MARMOT_ERR_INVALID_INPUT && got == NULL);
+        } else {
+            assert(err == MARMOT_OK && strcmp(got, json_string_value(want)) == 0);
+        }
+        free(got);
+    }
+    json_decref(root);
+}
+
+/* MDK's shared imeta fixture: the same verdict and exact wire round-trip. */
+static void
+test_mdk_imeta_fixture(void)
+{
+    json_t *root = load_fixture("imeta-v2.json");
+    size_t i;
+    json_t *c;
+    json_array_foreach(json_object_get(root, "cases"), i, c) {
+        json_t *tag = json_object_get(c, "tag");
+        Fields f = fields_of(tag);
+        MarmotMediaReference ref;
+        MarmotError err = marmot_media_imeta_parse(f.f, f.lens, f.n, &ref);
+        if (!json_is_true(json_object_get(c, "valid"))) {
+            const char *kind = jstr(c, "rejection_kind");
+            MarmotError want = strcmp(kind, "unsupported_format") == 0
+                                   ? MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION
+                                   : MARMOT_ERR_MEDIA_INVALID_REFERENCE;
+            if (err != want) fprintf(stderr, "\n%s: got %d\n", jstr(c, "name"), err);
+            assert(err == want);
+            fields_free(&f);
+            continue;
+        }
+        assert(err == MARMOT_OK);
+        json_t *x = json_object_get(c, "expected");
+        assert(strcmp(ref.media_type, jstr(x, "media_type")) == 0);
+        assert(strcmp(ref.filename, jstr(x, "file_name")) == 0);
+        assert_bytes_hex(ref.ciphertext_sha256, 32, jstr(x, "ciphertext_sha256"));
+        assert_bytes_hex(ref.plaintext_sha256, 32, jstr(x, "plaintext_sha256"));
+        assert_bytes_hex(ref.nonce, 12, jstr(x, "nonce_hex"));
+        json_t *dim = json_object_get(x, "dim"), *th = json_object_get(x, "thumbhash");
+        assert(json_is_null(dim) ? ref.dim == NULL : strcmp(ref.dim, json_string_value(dim)) == 0);
+        assert(json_is_null(th) ? ref.thumbhash == NULL
+                                : strcmp(ref.thumbhash, json_string_value(th)) == 0);
+        json_t *locs = json_object_get(x, "locators");
+        assert(ref.locator_count == json_array_size(locs));
+        for (size_t k = 0; k < ref.locator_count; k++) {
+            json_t *l = json_array_get(locs, k);
+            assert(strcmp(ref.locators[k].kind, jstr(l, "kind")) == 0);
+            assert(strcmp(ref.locators[k].value, jstr(l, "value")) == 0);
+        }
+        /* Exact wire round-trip, under a policy allowing its kinds. */
+        const char *kinds[8] = { 0 };
+        assert(ref.locator_count < 8);
+        bool all_blossom = true;
+        for (size_t k = 0; k < ref.locator_count; k++) {
+            kinds[k] = ref.locators[k].kind;
+            all_blossom &= strcmp(kinds[k], MARMOT_MEDIA_LOCATOR_BLOSSOM_V1) == 0;
+        }
+        char **built = NULL;
+        size_t n = 0;
+        if (!all_blossom)   /* the default policy refuses other kinds */
+            assert(marmot_media_imeta_build(&ref, NULL, &built, &n) ==
+                   MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+        assert(marmot_media_imeta_build(&ref, kinds, &built, &n) == MARMOT_OK);
+        assert(n == f.n);
+        for (size_t k = 0; k < n; k++) assert(strcmp(built[k], f.f[k]) == 0);
+        marmot_media_imeta_fields_free(built, n);
+        marmot_media_reference_clear(&ref);
+        fields_free(&f);
+    }
+    json_decref(root);
+}
+
+/* ── imeta rules not in the fixtures ───────────────────────────────────── */
+
+static const char *const BASE_TAG[] = {
+    "imeta",
+    "v encrypted-media-v2",
+    "locator blossom-v1 https://blossom.example/abababababababababababababababababababababababababababababababab",
+    "ciphertext_sha256 abababababababababababababababababababababababababababababababab",
+    "plaintext_sha256 cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "nonce efefefefefefefefefefefef",
+    "m image/png",
+    "filename a.png",
+};
+#define BASE_N (sizeof BASE_TAG / sizeof BASE_TAG[0])
+
+/* BASE_TAG with field `at` replaced (NULL: dropped) and `extra` appended. */
+static MarmotError
+parse_variant(size_t at, const char *replacement, const char *extra)
+{
+    const char *f[BASE_N + 1];
+    size_t n = 0;
+    for (size_t i = 0; i < BASE_N; i++) {
+        if (i == at) {
+            if (replacement) f[n++] = replacement;
+        } else {
+            f[n++] = BASE_TAG[i];
+        }
+    }
+    if (extra) f[n++] = extra;
+    MarmotMediaReference ref;
+    MarmotError err = marmot_media_imeta_parse(f, NULL, n, &ref);
+    if (err == MARMOT_OK) marmot_media_reference_clear(&ref);
+    return err;
+}
+
+static void
+test_imeta_rules(void)
+{
+    const MarmotError BAD = MARMOT_ERR_MEDIA_INVALID_REFERENCE;
+    assert(parse_variant(SIZE_MAX, NULL, NULL) == MARMOT_OK);
+    /* Version */
+    assert(parse_variant(1, "v encrypted-media-v1", NULL) == MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION);
+    assert(parse_variant(1, NULL, NULL) == MARMOT_ERR_MEDIA_UNSUPPORTED_VERSION);
+    assert(parse_variant(SIZE_MAX, NULL, "v encrypted-media-v2") == BAD);
+    assert(parse_variant(SIZE_MAX, NULL, "v") == BAD);
+    /* Every single-occurrence field rejects a duplicate. */
+    assert(parse_variant(SIZE_MAX, NULL, "m image/png") == BAD);
+    assert(parse_variant(SIZE_MAX, NULL, "filename a.png") == BAD);
+    assert(parse_variant(SIZE_MAX, NULL, "nonce efefefefefefefefefefefef") == BAD);
+    assert(parse_variant(SIZE_MAX, NULL, "dim 1x1") == MARMOT_OK);
+    assert(parse_variant(SIZE_MAX, NULL, "blurhash LEHV6nWB2yk8") == BAD);
+    assert(parse_variant(SIZE_MAX, NULL, "blurhash") == BAD);
+    assert(parse_variant(SIZE_MAX, NULL, "unknown field") == MARMOT_OK);
+    /* Hashes and nonce */
+    assert(parse_variant(3, "ciphertext_sha256 abab", NULL) == BAD);
+    assert(parse_variant(4, "plaintext_sha256 zzcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", NULL) == BAD);
+    assert(parse_variant(5, "nonce efefefefefefefefefefefef00", NULL) == BAD);
+    assert(parse_variant(5, "nonce EFEFEFEFEFEFEFEFEFEFEFEF", NULL) == MARMOT_OK);
+    assert(parse_variant(6, NULL, NULL) == BAD);
+    assert(parse_variant(6, "m ", NULL) == BAD);
+    /* Media type and filename profiles */
+    assert(parse_variant(6, "m image/jpg", NULL) == BAD);
+    assert(parse_variant(6, "m image/png; q=1", NULL) == BAD);
+    assert(parse_variant(7, "filename \xff.png", NULL) == BAD);
+    char longname[9 + 257];
+    memcpy(longname, "filename ", 9);
+    memset(longname + 9, 'a', 256);
+    longname[9 + 256] = 0;
+    assert(parse_variant(7, longname, NULL) == BAD);
+    longname[9 + 255] = 0;
+    assert(parse_variant(7, longname, NULL) == MARMOT_OK);
+    /* Locators: structure is validity, kind is only fetchability. */
+    assert(parse_variant(2, NULL, NULL) == BAD);
+    assert(parse_variant(2, "locator blossom-v1", NULL) == BAD);
+    assert(parse_variant(2, "locator blossom-v1 ftp://example.com/x", NULL) == BAD);
+    assert(parse_variant(2, "locator blossom-v1 not a url", NULL) == BAD);
+    assert(parse_variant(2, "locator blossom-v1 https://", NULL) == BAD);
+    assert(parse_variant(2, "locator blossom-v1 http://127.0.0.1:3000/x", NULL) == MARMOT_OK);
+    assert(parse_variant(2, "locator  https://e.example/x", NULL) == BAD);
+    assert(parse_variant(2, "locator ipfs-v1 ipfs://bafy", NULL) == MARMOT_OK);
+    assert(parse_variant(SIZE_MAX, NULL, "locator ipfs-v1 ipfs://bafy") == MARMOT_OK);
+    /* An embedded NUL never survives as a shorter C string. */
+    const char *f[BASE_N];
+    size_t lens[BASE_N];
+    for (size_t i = 0; i < BASE_N; i++) {
+        f[i] = BASE_TAG[i];
+        lens[i] = strlen(BASE_TAG[i]);
+    }
+    static const char nul_name[] = "filename a\0b.png";
+    f[7] = nul_name;
+    lens[7] = sizeof nul_name - 1;
+    MarmotMediaReference ref;
+    assert(marmot_media_imeta_parse(f, lens, BASE_N, &ref) == BAD);
+}
+
+static void
+test_imeta_build_requires_blossom_locator(void)
+{
+    const char *f[BASE_N + 1];
+    for (size_t i = 0; i < BASE_N; i++) f[i] = BASE_TAG[i];
+    f[BASE_N] = "locator ipfs-v1 ipfs://bafy";
+    MarmotMediaReference ref;
+    assert(marmot_media_imeta_parse(f, NULL, BASE_N + 1, &ref) == MARMOT_OK);
+    char **built = NULL;
+    size_t n = 0;
+    assert(marmot_media_imeta_build(&ref, NULL, &built, &n) == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    assert(built == NULL && n == 0);
+    static const char *const only_blossom[] = { MARMOT_MEDIA_LOCATOR_BLOSSOM_V1, NULL };
+    assert(marmot_media_imeta_build(&ref, only_blossom, &built, &n) ==
+           MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+    static const char *const both[] = { MARMOT_MEDIA_LOCATOR_BLOSSOM_V1, "ipfs-v1", NULL };
+    assert(marmot_media_imeta_build(&ref, both, &built, &n) == MARMOT_OK);
+    assert(n == BASE_N + 1);
+    marmot_media_imeta_fields_free(built, n);
+    marmot_media_reference_clear(&ref);
+
+    /* No locator yet: nothing to emit. */
+    MarmotMediaReference empty = { 0 };
+    assert(marmot_media_imeta_build(&empty, NULL, &built, &n) == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+}
+
+static void
+test_blossom_fallback_url(void)
+{
+    uint8_t h[32];
+    memset(h, 0xab, sizeof h);
+    char *url = NULL;
+    assert(marmot_media_blossom_fallback_url("https://cdn.example//", h, &url) == MARMOT_OK);
+    assert(strcmp(url, "https://cdn.example/"
+                       "abababababababababababababababababababababababababababababababab") == 0);
+    free(url);
+    assert(marmot_media_blossom_fallback_url("///", h, &url) == MARMOT_ERR_INVALID_INPUT);
+}
+
+/* ── Group-bound encrypt / decrypt ─────────────────────────────────────── */
+
+static const uint8_t GID_BYTES[32] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+
+static void
+test_group_roundtrip_and_retained_epoch(void)
+{
+    Marmot *m = create_test_marmot();
+    MarmotGroupId gid = marmot_group_id_new(GID_BYTES, 32);
+    save_group_at(m, &gid, 5);
+    save_secret(m, &gid, 5, 0x55);
+
+    static const uint8_t file[] = "an attachment for epoch five";
+    MarmotMediaUpload up;
+    assert(marmot_media_encrypt(m, &gid, file, sizeof file - 1, "Image/JPG; x=y", "pic.jpg",
+                                &up) == MARMOT_OK);
+    assert(up.source_epoch == 5);
+    assert(strcmp(up.reference.media_type, "image/jpeg") == 0);
+    assert(strcmp(up.reference.filename, "pic.jpg") == 0);
+    assert(up.reference.locator_count == 0);
+    uint8_t h[32];
+    SHA256(up.ciphertext, up.ciphertext_len, h);
+    assert(memcmp(h, up.reference.ciphertext_sha256, 32) == 0);
+    SHA256(file, sizeof file - 1, h);
+    assert(memcmp(h, up.reference.plaintext_sha256, 32) == 0);
+    assert(marmot_media_reference_add_locator(&up.reference, MARMOT_MEDIA_LOCATOR_BLOSSOM_V1,
+                                              "https://blossom.example/x") == MARMOT_OK);
+
+    /* The key is MLS-Exporter("marmot", "encrypted-media") of epoch 5 --
+     * not the group-event exporter, not the raw exporter secret. */
+    uint8_t exporter[32], media_secret[32], event_secret[32];
+    memset(exporter, 0x55, sizeof exporter);
+    assert(mls_exporter(exporter, "marmot", (const uint8_t *)"encrypted-media", 15,
+                        media_secret, 32) == 0);
+    assert(mls_exporter(exporter, "marmot", (const uint8_t *)"group-event", 11,
+                        event_secret, 32) == 0);
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    assert(marmot_media_v2_open(media_secret, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_OK);
+    free(pt);
+    assert(marmot_media_v2_open(event_secret, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_ERR_MEDIA_DECRYPT);
+    assert(marmot_media_v2_open(exporter, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_ERR_MEDIA_DECRYPT);
+
+    assert(marmot_media_decrypt(m, &gid, 5, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_OK);
+    assert(pt_len == sizeof file - 1 && memcmp(pt, file, pt_len) == 0);
+    free(pt);
+
+    /* The group moves on: epoch 5 is retained, so its media still opens. */
+    save_secret(m, &gid, 6, 0x66);
+    save_group_at(m, &gid, 6);
+    assert(marmot_media_decrypt(m, &gid, 5, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_OK);
+    free(pt);
+    /* The wrong epoch's secret fails the AEAD; a gone epoch is not found. */
+    assert(marmot_media_decrypt(m, &gid, 6, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_ERR_MEDIA_DECRYPT);
+    assert(pt == NULL && pt_len == 0);
+    assert(marmot_media_decrypt(m, &gid, 4, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_ERR_STORAGE_NOT_FOUND);
+    /* Ciphertext hash is checked before the AEAD. */
+    up.ciphertext[0] ^= 1;
+    assert(marmot_media_decrypt(m, &gid, 5, &up.reference, up.ciphertext, up.ciphertext_len,
+                                &pt, &pt_len) == MARMOT_ERR_MEDIA_CIPHERTEXT_HASH);
+    up.ciphertext[0] ^= 1;
+
+    /* New media is encrypted for the new epoch. */
+    MarmotMediaUpload up6;
+    assert(marmot_media_encrypt(m, &gid, file, sizeof file - 1, "image/jpeg", "pic.jpg",
+                                &up6) == MARMOT_OK);
+    assert(up6.source_epoch == 6);
+    marmot_media_upload_clear(&up6);
+
+    marmot_media_upload_clear(&up);
     marmot_group_id_free(&gid);
     marmot_free(m);
 }
 
 static void
-test_encrypt_binary_data(void)
+test_group_encrypt_fresh_nonce_and_input_rules(void)
 {
     Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"media_bin", 9);
-    uint8_t secret[32];
-    randombytes_buf(secret, 32);
-    setup_group_with_secret(m, &gid, 3, secret);
+    MarmotGroupId gid = marmot_group_id_new(GID_BYTES, 32);
+    save_group_at(m, &gid, 2);
+    save_secret(m, &gid, 2, 0x22);
 
-    /* Binary data with null bytes */
-    uint8_t binary[256];
-    for (int i = 0; i < 256; i++) binary[i] = (uint8_t)i;
+    static const uint8_t file[] = "same bytes";
+    MarmotMediaUpload a, b;
+    assert(marmot_media_encrypt(m, &gid, file, 10, "text/plain", "f.txt", &a) == MARMOT_OK);
+    assert(marmot_media_encrypt(m, &gid, file, 10, "text/plain", "f.txt", &b) == MARMOT_OK);
+    assert(memcmp(a.reference.nonce, b.reference.nonce, 12) != 0);
+    assert(memcmp(a.reference.ciphertext_sha256, b.reference.ciphertext_sha256, 32) != 0);
+    marmot_media_upload_clear(&a);
+    marmot_media_upload_clear(&b);
 
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            binary, sizeof(binary),
-                                            "application/octet-stream", NULL,
-                                            &result);
-    assert(err == MARMOT_OK);
-    assert(result.imeta.filename == NULL); /* NULL filename preserved */
-
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_OK);
-    assert(dec_len == sizeof(binary));
-    assert(memcmp(decrypted, binary, sizeof(binary)) == 0);
-
-    free(decrypted);
-    marmot_encrypted_media_clear(&result);
+    MarmotMediaUpload x;
+    assert(marmot_media_encrypt(m, &gid, file, 0, "text/plain", "f.txt", &x) ==
+           MARMOT_ERR_INVALID_INPUT);
+    assert(marmot_media_encrypt(m, &gid, file, 10, "text", "f.txt", &x) ==
+           MARMOT_ERR_INVALID_INPUT);
+    assert(marmot_media_encrypt(m, &gid, file, 10, "text/plain", "", &x) ==
+           MARMOT_ERR_INVALID_INPUT);
+    assert(x.ciphertext == NULL);
+    MarmotGroupId other = marmot_group_id_new((const uint8_t *)"nope", 4);
+    assert(marmot_media_encrypt(m, &other, file, 10, "text/plain", "f.txt", &x) != MARMOT_OK);
+    marmot_group_id_free(&other);
     marmot_group_id_free(&gid);
     marmot_free(m);
 }
 
 static void
-test_encrypt_large_file(void)
+test_legacy_format_is_never_produced(void)
 {
     Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"media_lg", 8);
-    uint8_t secret[32];
-    randombytes_buf(secret, 32);
-    setup_group_with_secret(m, &gid, 1, secret);
-
-    /* 1MB of random data */
-    size_t file_len = 1024 * 1024;
-    uint8_t *file_data = malloc(file_len);
-    assert(file_data != NULL);
-    randombytes_buf(file_data, file_len);
-
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            file_data, file_len,
-                                            "image/png", "photo.png",
-                                            &result);
-    assert(err == MARMOT_OK);
-    assert(result.original_size == file_len);
-
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_OK);
-    assert(dec_len == file_len);
-    assert(memcmp(decrypted, file_data, file_len) == 0);
-
-    free(decrypted);
-    free(file_data);
-    marmot_encrypted_media_clear(&result);
+    MarmotGroupId gid = marmot_group_id_new(GID_BYTES, 32);
+    save_group_at(m, &gid, 1);
+    save_secret(m, &gid, 1, 0x11);
+    MarmotEncryptedMedia old;
+    memset(&old, 0x5a, sizeof old);
+    static const uint8_t file[] = "x";
+    assert(marmot_encrypt_media(m, &gid, file, 1, "image/png", "x.png", &old) ==
+           MARMOT_ERR_MEDIA_LEGACY_FORMAT);
+    assert(old.encrypted_data == NULL && old.encrypted_len == 0 && old.imeta.mime_type == NULL);
     marmot_group_id_free(&gid);
     marmot_free(m);
 }
 
-static void
-test_decrypt_wrong_key_fails(void)
-{
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"wrong_key", 9);
-    uint8_t secret1[32], secret2[32];
-    memset(secret1, 0xAA, 32);
-    memset(secret2, 0xBB, 32);
-    setup_group_with_secret(m, &gid, 1, secret1);
-
-    /* Encrypt with secret1 */
-    const char *plaintext = "Secret message";
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            (const uint8_t *)plaintext,
-                                            strlen(plaintext),
-                                            "text/plain", NULL,
-                                            &result);
-    assert(err == MARMOT_OK);
-
-    /* Replace exporter secret with a different one */
-    assert(m->storage->save_exporter_secret(m->storage->ctx, &gid, 1, secret2)
-           == MARMOT_OK);
-
-    /* Decrypt should fail (AEAD tag mismatch) */
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_ERR_MEDIA_DECRYPT);
-    assert(decrypted == NULL);
-
-    marmot_encrypted_media_clear(&result);
-    marmot_group_id_free(&gid);
-    marmot_free(m);
-}
+/* ── 0x8002 group Blossom image ────────────────────────────────────────── */
 
 static void
-test_decrypt_tampered_ciphertext(void)
+test_group_image_vectors(void)
 {
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"tamper", 6);
-    uint8_t secret[32];
-    randombytes_buf(secret, 32);
-    setup_group_with_secret(m, &gid, 1, secret);
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    json_t *gi = json_object_get(root, "group_image");
+    uint8_t key[32], nonce[12];
+    unhex_fixed(jstr(gi, "image_key"), key, 32);
+    unhex_fixed(jstr(gi, "image_nonce"), nonce, 12);
+    size_t pt_len = 0;
+    uint8_t *pt = unhex(jstr(gi, "plaintext"), &pt_len);
+    uint8_t *ct = NULL;
+    size_t ct_len = 0;
+    assert(marmot_group_image_seal(key, nonce, pt, pt_len, "image/png", &ct, &ct_len) == MARMOT_OK);
+    assert_bytes_hex(ct, ct_len, jstr(gi, "ciphertext"));
 
-    const char *plaintext = "Don't tamper with me!";
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            (const uint8_t *)plaintext,
-                                            strlen(plaintext),
-                                            "text/plain", NULL,
-                                            &result);
-    assert(err == MARMOT_OK);
+    MarmotGroupBlossomImage img = { .present = true, .media_type = strdup("image/png") };
+    SHA256(ct, ct_len, img.image_hash);
+    assert_bytes_hex(img.image_hash, 32, jstr(gi, "image_hash"));
+    memcpy(img.image_key, key, 32);
+    memcpy(img.image_nonce, nonce, 12);
+    unhex_fixed(jstr(gi, "image_upload_key"), img.image_upload_key, 32);
+    uint8_t *enc = NULL;
+    size_t enc_len = 0;
+    assert(marmot_group_blossom_image_encode(&img, &enc, &enc_len) == MARMOT_OK);
+    assert_bytes_hex(enc, enc_len, jstr(gi, "component_bytes"));
+    free(enc);
 
-    /* Flip a byte in the ciphertext */
-    result.encrypted_data[0] ^= 0xFF;
-
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_ERR_MEDIA_DECRYPT);
-    assert(decrypted == NULL);
-
-    marmot_encrypted_media_clear(&result);
-    marmot_group_id_free(&gid);
-    marmot_free(m);
-}
-
-static void
-test_hash_mismatch_detection(void)
-{
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"hash_mm", 7);
-    uint8_t secret[32];
-    randombytes_buf(secret, 32);
-    setup_group_with_secret(m, &gid, 1, secret);
-
-    const char *plaintext = "Hash check test";
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            (const uint8_t *)plaintext,
-                                            strlen(plaintext),
-                                            "text/plain", NULL,
-                                            &result);
-    assert(err == MARMOT_OK);
-
-    /* Corrupt the file hash in imeta — decryption succeeds but hash check fails */
-    result.imeta.file_hash[0] ^= 0xFF;
-
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_ERR_MEDIA_HASH_MISMATCH);
-    assert(decrypted == NULL);
-
-    marmot_encrypted_media_clear(&result);
-    marmot_group_id_free(&gid);
-    marmot_free(m);
-}
-
-static void
-test_null_mime_type(void)
-{
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"null_mt", 7);
-    uint8_t secret[32];
-    randombytes_buf(secret, 32);
-    setup_group_with_secret(m, &gid, 1, secret);
-
-    const char *plaintext = "No MIME type";
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            (const uint8_t *)plaintext,
-                                            strlen(plaintext),
-                                            NULL, NULL, &result);
-    assert(err == MARMOT_OK);
-    assert(result.imeta.mime_type == NULL);
-
-    /* Decrypt with NULL mime_type in imeta */
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_OK);
-    assert(dec_len == strlen(plaintext));
-    assert(memcmp(decrypted, plaintext, dec_len) == 0);
-
-    free(decrypted);
-    marmot_encrypted_media_clear(&result);
-    marmot_group_id_free(&gid);
-    marmot_free(m);
-}
-
-static void
-test_different_epochs_different_keys(void)
-{
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"epochs", 6);
-    uint8_t s1[32], s2[32];
-    randombytes_buf(s1, 32);
-    randombytes_buf(s2, 32);
-
-    /* Set up group at epoch 1 */
-    setup_group_with_secret(m, &gid, 1, s1);
-
-    const char *plaintext = "Epoch-keyed data";
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            (const uint8_t *)plaintext,
-                                            strlen(plaintext),
-                                            "text/plain", NULL, &result);
-    assert(err == MARMOT_OK);
-    assert(result.imeta.epoch == 1);
-
-    /* Advance group to epoch 2 with a different secret */
-    MarmotGroup *g = NULL;
-    m->storage->find_group_by_mls_id(m->storage->ctx, &gid, &g);
-    g->epoch = 2;
-    m->storage->save_group(m->storage->ctx, g);
-    marmot_group_free(g);
-    m->storage->save_exporter_secret(m->storage->ctx, &gid, 2, s2);
-
-    /* Can still decrypt epoch-1 data if the secret is retained */
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_OK);
-    assert(memcmp(decrypted, plaintext, dec_len) == 0);
-
-    free(decrypted);
-    marmot_encrypted_media_clear(&result);
-    marmot_group_id_free(&gid);
-    marmot_free(m);
-}
-
-static void
-test_empty_file(void)
-{
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"empty", 5);
-    uint8_t secret[32];
-    randombytes_buf(secret, 32);
-    setup_group_with_secret(m, &gid, 1, secret);
-
-    /* Encrypt a zero-length file */
-    MarmotEncryptedMedia result;
-    MarmotError err = marmot_encrypt_media(m, &gid,
-                                            (const uint8_t *)"", 0,
-                                            "application/empty", NULL,
-                                            &result);
-    assert(err == MARMOT_OK);
-    assert(result.original_size == 0);
-    /* Ciphertext should be just the AEAD tag (16 bytes) */
-    assert(result.encrypted_len == crypto_aead_chacha20poly1305_ietf_ABYTES);
-
-    uint8_t *decrypted = NULL;
-    size_t dec_len = 0;
-    err = marmot_decrypt_media(m, &gid,
-                                result.encrypted_data, result.encrypted_len,
-                                &result.imeta,
-                                &decrypted, &dec_len);
-    assert(err == MARMOT_OK);
-    assert(dec_len == 0);
-
-    free(decrypted);
-    marmot_encrypted_media_clear(&result);
-    marmot_group_id_free(&gid);
-    marmot_free(m);
-}
-
-static void
-test_invalid_args(void)
-{
-    Marmot *m = create_test_marmot();
-    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"args", 4);
-
-    MarmotEncryptedMedia result;
-
-    /* NULL marmot */
-    assert(marmot_encrypt_media(NULL, &gid, (uint8_t *)"x", 1,
-                                 "text/plain", NULL, &result)
-           == MARMOT_ERR_INVALID_ARG);
-
-    /* NULL group ID */
-    assert(marmot_encrypt_media(m, NULL, (uint8_t *)"x", 1,
-                                 "text/plain", NULL, &result)
-           == MARMOT_ERR_INVALID_ARG);
-
-    /* NULL file data */
-    assert(marmot_encrypt_media(m, &gid, NULL, 1,
-                                 "text/plain", NULL, &result)
-           == MARMOT_ERR_INVALID_ARG);
-
-    /* NULL result */
-    assert(marmot_encrypt_media(m, &gid, (uint8_t *)"x", 1,
-                                 "text/plain", NULL, NULL)
-           == MARMOT_ERR_INVALID_ARG);
-
-    /* Decrypt: NULL args */
-    MarmotImetaInfo imeta = {0};
     uint8_t *out = NULL;
     size_t out_len = 0;
-    assert(marmot_decrypt_media(NULL, &gid, (uint8_t *)"x", 1,
-                                 &imeta, &out, &out_len)
-           == MARMOT_ERR_INVALID_ARG);
-    assert(marmot_decrypt_media(m, &gid, NULL, 1,
-                                 &imeta, &out, &out_len)
-           == MARMOT_ERR_INVALID_ARG);
+    assert(marmot_group_image_decrypt(&img, ct, ct_len, &out, &out_len) == MARMOT_OK);
+    assert(out_len == pt_len && memcmp(out, pt, pt_len) == 0);
+    free(out);
+    ct[0] ^= 1;
+    assert(marmot_group_image_decrypt(&img, ct, ct_len, &out, &out_len) ==
+           MARMOT_ERR_MEDIA_CIPHERTEXT_HASH);
 
-    /* Too-short ciphertext (less than AEAD tag) */
-    uint8_t short_ct[4] = {0};
-    imeta.epoch = 1;
-    uint8_t secret[32];
-    memset(secret, 0x99, 32);
-    setup_group_with_secret(m, &gid, 1, secret);
-    assert(marmot_decrypt_media(m, &gid, short_ct, sizeof(short_ct),
-                                 &imeta, &out, &out_len)
-           == MARMOT_ERR_INVALID_INPUT);
-
-    marmot_group_id_free(&gid);
-    marmot_free(m);
+    size_t i;
+    json_t *c;
+    json_array_foreach(json_object_get(gi, "decode"), i, c) {
+        size_t len = 0;
+        uint8_t *bytes = unhex(jstr(c, "bytes"), &len);
+        MarmotGroupBlossomImage d;
+        MarmotError err = marmot_group_blossom_image_decode(bytes, len, &d);
+        if (json_is_true(json_object_get(c, "valid"))) {
+            assert(err == MARMOT_OK);
+            uint8_t *re = NULL;
+            size_t re_len = 0;
+            assert(marmot_group_blossom_image_encode(&d, &re, &re_len) == MARMOT_OK);
+            assert(re_len == len && memcmp(re, bytes, len) == 0);
+            free(re);
+        } else {
+            if (err != MARMOT_ERR_MEDIA_INVALID_REFERENCE)
+                fprintf(stderr, "\n%s: %d\n", jstr(c, "name"), err);
+            assert(err == MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+            assert(!d.present && d.media_type == NULL);
+        }
+        marmot_group_blossom_image_clear(&d);
+        free(bytes);
+    }
+    marmot_group_blossom_image_clear(&img);
+    free(ct);
+    free(pt);
+    json_decref(root);
 }
 
 static void
-test_encrypted_media_clear(void)
+test_group_image_encrypt_fresh(void)
 {
-    MarmotEncryptedMedia result;
-    memset(&result, 0, sizeof(result));
-    result.encrypted_data = malloc(64);
-    result.encrypted_len = 64;
-    result.imeta.mime_type = strdup("image/jpeg");
-    result.imeta.filename = strdup("photo.jpg");
-    result.imeta.url = strdup("https://example.com/file");
-
-    marmot_encrypted_media_clear(&result);
-
-    assert(result.encrypted_data == NULL);
-    assert(result.encrypted_len == 0);
-    assert(result.imeta.mime_type == NULL);
-    assert(result.imeta.filename == NULL);
-    assert(result.imeta.url == NULL);
-
-    /* Double clear should be safe */
-    marmot_encrypted_media_clear(&result);
-
-    /* NULL should be safe */
-    marmot_encrypted_media_clear(NULL);
+    static const uint8_t png[] = "\x89PNG\r\n\x1a\nfresh";
+    MarmotGroupBlossomImage a, b;
+    uint8_t *ca = NULL, *cb = NULL;
+    size_t la = 0, lb = 0;
+    assert(marmot_group_image_encrypt(png, sizeof png - 1, " IMAGE/PNG ", &a, &ca, &la) == MARMOT_OK);
+    assert(marmot_group_image_encrypt(png, sizeof png - 1, "image/png", &b, &cb, &lb) == MARMOT_OK);
+    assert(a.present && strcmp(a.media_type, "image/png") == 0);
+    assert(memcmp(a.image_key, b.image_key, 32) != 0);
+    assert(memcmp(a.image_nonce, b.image_nonce, 12) != 0);
+    assert(memcmp(a.image_upload_key, b.image_upload_key, 32) != 0);
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    assert(marmot_group_image_decrypt(&a, ca, la, &pt, &pt_len) == MARMOT_OK);
+    assert(pt_len == sizeof png - 1 && memcmp(pt, png, pt_len) == 0);
+    free(pt);
+    /* The AAD binds the media type. */
+    free(a.media_type);
+    a.media_type = strdup("image/jpeg");
+    assert(marmot_group_image_decrypt(&a, ca, la, &pt, &pt_len) == MARMOT_ERR_MEDIA_DECRYPT);
+    marmot_group_blossom_image_clear(&a);
+    marmot_group_blossom_image_clear(&b);
+    free(ca);
+    free(cb);
+    assert(marmot_group_image_encrypt(png, sizeof png - 1, "png", &a, &ca, &la) ==
+           MARMOT_ERR_INVALID_INPUT);
 }
 
-/* ── Main ──────────────────────────────────────────────────────────────── */
+/* ── 0x8007 group avatar URL ───────────────────────────────────────────── */
 
-int main(void)
+/* Inputs MDK's `url` crate accepts that libmarmot's strict subset rejects:
+ * IDNA hosts need UTS #46, which libmarmot does not implement. */
+static bool
+known_subset_gap(const char *input)
 {
-    if (sodium_init() < 0) {
-        fprintf(stderr, "Failed to initialize libsodium\n");
-        return 1;
+    return strstr(input, "xn--") || strstr(input, "b\xc3\xbc" "cher");
+}
+
+static void
+test_avatar_url_vectors(void)
+{
+    json_t *root = load_fixture("media-v2-mdk-v0.11.0.json");
+    json_t *av = json_object_get(root, "avatar_url");
+    size_t i, matched = 0;
+    json_t *c;
+    json_array_foreach(json_object_get(av, "normalize"), i, c) {
+        const char *in = jstr(c, "input");
+        json_t *want = json_object_get(c, "normalized");
+        char *got = NULL;
+        MarmotError err = marmot_group_avatar_url_normalize(in, &got);
+        if (known_subset_gap(in)) {
+            assert(!json_is_null(want) && err == MARMOT_ERR_INVALID_INPUT);
+            continue;
+        }
+        if (json_is_null(want)) {
+            if (err == MARMOT_OK) fprintf(stderr, "\n%s accepted as %s\n", in, got);
+            assert(err == MARMOT_ERR_INVALID_INPUT);
+        } else {
+            if (err != MARMOT_OK || strcmp(got, json_string_value(want)) != 0)
+                fprintf(stderr, "\n%s -> %s (MDK %s)\n", in, got ? got : "error",
+                        json_string_value(want));
+            assert(err == MARMOT_OK && strcmp(got, json_string_value(want)) == 0);
+            /* Normalized output is a fixed point. */
+            char *again = NULL;
+            assert(marmot_group_avatar_url_normalize(got, &again) == MARMOT_OK);
+            assert(strcmp(again, got) == 0);
+            free(again);
+        }
+        matched++;
+        free(got);
     }
+    assert(matched >= 15);
 
-    printf("libmarmot: MIP-04 media encryption tests\n");
+    json_array_foreach(json_object_get(av, "decode"), i, c) {
+        size_t len = 0;
+        uint8_t *bytes = unhex(jstr(c, "bytes"), &len);
+        MarmotGroupAvatarUrl d;
+        MarmotError err = marmot_group_avatar_url_decode(bytes, len, &d);
+        if (json_is_true(json_object_get(c, "valid"))) {
+            assert(err == MARMOT_OK);
+            uint8_t *re = NULL;
+            size_t re_len = 0;
+            assert(marmot_group_avatar_url_encode(&d, &re, &re_len) == MARMOT_OK);
+            assert(re_len == len && memcmp(re, bytes, len) == 0);
+            free(re);
+        } else {
+            assert(err == MARMOT_ERR_MEDIA_INVALID_REFERENCE && d.url == NULL);
+        }
+        marmot_group_avatar_url_clear(&d);
+        free(bytes);
+    }
+    json_decref(root);
+}
 
-    TEST(test_encrypt_decrypt_roundtrip);
-    TEST(test_encrypt_binary_data);
-    TEST(test_encrypt_large_file);
-    TEST(test_decrypt_wrong_key_fails);
-    TEST(test_decrypt_tampered_ciphertext);
-    TEST(test_hash_mismatch_detection);
-    TEST(test_null_mime_type);
-    TEST(test_different_epochs_different_keys);
-    TEST(test_empty_file);
-    TEST(test_invalid_args);
-    TEST(test_encrypted_media_clear);
+static void
+test_avatar_url_rules_and_precedence(void)
+{
+    static const char *const ok[][2] = {
+        { "https://e.example/a/./b/../c.png", "https://e.example/a/c.png" },
+        { "https://e.example/a/.", "https://e.example/a/" },
+        { "https://e.example/..", "https://e.example/" },
+        { "https:e.example\\a\\b.png", "https://e.example/a/b.png" },
+        { "  https://E.example:443\t/x  ", "https://e.example/x" },
+        { "https://e.example:80/", "https://e.example:80/" },
+        { "https://e.example:/", "https://e.example/" },
+        { "https://[::]/", "https://[::]/" },
+        { "https://[2001:db8:0:0:1:0:0:1]/", "https://[2001:db8::1:0:0:1]/" },
+        { "https://[::ffff:1.2.3.4]/", "https://[::ffff:102:304]/" },
+        { "https://1.2.3/", "https://1.2.0.3/" },
+        { "https://e.example/q?a='b'", "https://e.example/q?a=%27b%27" },
+        { "https://e.example/%41", "https://e.example/%41" },
+    };
+    for (size_t i = 0; i < sizeof ok / sizeof ok[0]; i++) {
+        char *got = NULL;
+        assert(marmot_group_avatar_url_normalize(ok[i][0], &got) == MARMOT_OK);
+        if (strcmp(got, ok[i][1]) != 0) fprintf(stderr, "\n%s -> %s\n", ok[i][0], got);
+        assert(strcmp(got, ok[i][1]) == 0);
+        free(got);
+    }
+    static const char *const bad[] = {
+        "", "https://", "https://a..b/", "https://e.example:65536/",
+        "https://e.example:x/", "https://256.1.1.1/", "https://1.2.3.4.5/", "https://09/",
+        "https://e_x.example/", "https://e.example/a^b", "https://e.example/a|b",
+        "https://[fe80::1%25en0]/", "https://e.example/?a#b", "wss://e.example/",
+        "https://e.example/\xff",
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        char *got = NULL;
+        if (marmot_group_avatar_url_normalize(bad[i], &got) != MARMOT_ERR_INVALID_INPUT)
+            fprintf(stderr, "\n%s accepted as %s\n", bad[i], got);
+        assert(got == NULL);
+    }
+    char long_url[2100];
+    memset(long_url, 'a', sizeof long_url - 1);
+    memcpy(long_url, "https://e.example/", 18);
+    long_url[sizeof long_url - 1] = 0;
+    char *got = NULL;
+    assert(marmot_group_avatar_url_normalize(long_url, &got) == MARMOT_ERR_INVALID_INPUT);
 
-    printf("All MIP-04 media tests passed (11 tests).\n");
+    /* Encode normalizes; hints without a URL are invalid. */
+    MarmotGroupAvatarUrl in = { .url = (char *)"HTTPS://E.example", .dim = (uint8_t *)"1x1",
+                                .dim_len = 3 };
+    uint8_t *enc = NULL;
+    size_t enc_len = 0;
+    assert(marmot_group_avatar_url_encode(&in, &enc, &enc_len) == MARMOT_OK);
+    MarmotGroupAvatarUrl d;
+    assert(marmot_group_avatar_url_decode(enc, enc_len, &d) == MARMOT_OK);
+    assert(strcmp(d.url, "https://e.example/") == 0 && d.dim_len == 3);
+    free(enc);
+    MarmotGroupAvatarUrl hints_only = { .dim = (uint8_t *)"1x1", .dim_len = 3 };
+    assert(marmot_group_avatar_url_encode(&hints_only, &enc, &enc_len) ==
+           MARMOT_ERR_MEDIA_INVALID_REFERENCE);
+
+    /* Precedence: the URL avatar wins; clearing it falls back. */
+    MarmotGroupBlossomImage img = { .present = true };
+    MarmotGroupAvatarUrl none = { 0 };
+    assert(marmot_group_avatar_select(&d, &img) == MARMOT_GROUP_AVATAR_URL);
+    assert(marmot_group_avatar_select(&d, NULL) == MARMOT_GROUP_AVATAR_URL);
+    assert(marmot_group_avatar_select(&none, &img) == MARMOT_GROUP_AVATAR_BLOSSOM);
+    assert(marmot_group_avatar_select(NULL, NULL) == MARMOT_GROUP_AVATAR_NONE);
+    img.present = false;
+    assert(marmot_group_avatar_select(&none, &img) == MARMOT_GROUP_AVATAR_NONE);
+    marmot_group_avatar_url_clear(&d);
+}
+
+int
+main(void)
+{
+    assert(sodium_init() >= 0);
+    printf("libmarmot: encrypted media v2 / group image tests\n");
+    TEST(test_mdk_unit_file_key);
+    TEST(test_mdk_v2_cases_byte_exact);
+    TEST(test_mdk_v2_negatives);
+    TEST(test_mdk_media_type_canonicalization);
+    TEST(test_mdk_imeta_fixture);
+    TEST(test_imeta_rules);
+    TEST(test_imeta_build_requires_blossom_locator);
+    TEST(test_blossom_fallback_url);
+    TEST(test_group_roundtrip_and_retained_epoch);
+    TEST(test_group_encrypt_fresh_nonce_and_input_rules);
+    TEST(test_legacy_format_is_never_produced);
+    TEST(test_group_image_vectors);
+    TEST(test_group_image_encrypt_fresh);
+    TEST(test_avatar_url_vectors);
+    TEST(test_avatar_url_rules_and_precedence);
+    printf("All media tests passed.\n");
     return 0;
 }

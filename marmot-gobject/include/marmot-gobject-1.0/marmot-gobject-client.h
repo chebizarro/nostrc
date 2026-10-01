@@ -686,6 +686,11 @@ gboolean marmot_gobject_client_mark_welcomes_sent(MarmotGobjectClient *self,
  * @user_data: data for @callback
  *
  * Asynchronously encrypts media for sharing in an MLS group.
+ *
+ * Deprecated: this wraps libmarmot's pre-0.12 media format, which no other
+ * Marmot client reads.  Since libmarmot 0.12 it always completes with error
+ * code MARMOT_ERR_MEDIA_LEGACY_FORMAT; encrypted-media-v2 is
+ * marmot_media_encrypt() in libmarmot.
  */
 void marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
                                                 const gchar *mls_group_id_hex,

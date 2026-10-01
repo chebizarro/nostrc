@@ -412,9 +412,19 @@ static void test_public_apis_reject_missing_storage_methods(void)
     assert(marmot_get_messages(m, &gid, NULL, &messages, &count) == MARMOT_ERR_STORAGE);
 
     const uint8_t data[] = { 1, 2, 3 };
+    MarmotMediaUpload upload;
+    assert(marmot_media_encrypt(m, &gid, data, sizeof(data), "application/octet-stream",
+                                "f.bin", &upload) == MARMOT_ERR_STORAGE);
+    MarmotMediaReference ref;
+    memset(&ref, 0, sizeof(ref));
+    uint8_t *plain = NULL;
+    size_t plain_len = 0;
+    assert(marmot_media_decrypt(m, &gid, 0, &ref, data, sizeof(data), &plain,
+                                &plain_len) == MARMOT_ERR_STORAGE);
+    /* The pre-0.12 format is never produced, storage or not (nostrc-u7cb). */
     MarmotEncryptedMedia media;
     assert(marmot_encrypt_media(m, &gid, data, sizeof(data), "application/octet-stream",
-                                 NULL, &media) == MARMOT_ERR_STORAGE);
+                                 NULL, &media) == MARMOT_ERR_MEDIA_LEGACY_FORMAT);
 
     uint8_t enc[16] = { 0 };
     MarmotImetaInfo imeta;

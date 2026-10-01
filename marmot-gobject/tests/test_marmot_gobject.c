@@ -1583,47 +1583,16 @@ test_client_create_group_fields_and_media_metadata(void)
         "text/plain", "hello.txt", NULL, async_callback, f);
     g_main_loop_run(f->loop);
 
+    /* libmarmot 0.12 never produces its pre-0.12 media format, which no
+     * other Marmot client reads (nostrc-u7cb): the wrapper reports it. */
     GError *error = NULL;
     MarmotGobjectEncryptedMedia *media = marmot_gobject_client_encrypt_media_finish(
         client, f->result, &error);
-    g_assert_no_error(error);
-    g_assert_nonnull(media);
-    g_assert_nonnull(marmot_gobject_encrypted_media_get_data(media));
-    g_assert_cmpstr(marmot_gobject_encrypted_media_get_mime_type(media), ==, "text/plain");
-    g_assert_cmpstr(marmot_gobject_encrypted_media_get_filename(media), ==, "hello.txt");
-    g_assert_cmpuint(marmot_gobject_encrypted_media_get_original_size(media), ==, sizeof(plaintext) - 1);
-    g_assert_cmpuint(marmot_gobject_encrypted_media_get_epoch(media), ==, marmot_gobject_group_get_epoch(group));
-
-    const guint8 *hash = marmot_gobject_encrypted_media_get_file_hash(media);
-    const guint8 *nonce = marmot_gobject_encrypted_media_get_nonce(media);
-    gboolean hash_nonzero = FALSE, nonce_nonzero = FALSE;
-    for (guint i = 0; i < 32; i++) hash_nonzero |= hash[i] != 0;
-    for (guint i = 0; i < 12; i++) nonce_nonzero |= nonce[i] != 0;
-    g_assert_true(hash_nonzero);
-    g_assert_true(nonce_nonzero);
-
-    AsyncFixture *df = async_fixture_new();
-    marmot_gobject_client_decrypt_media_async(
-        client, marmot_gobject_group_get_mls_group_id(group),
-        marmot_gobject_encrypted_media_get_data(media),
-        marmot_gobject_encrypted_media_get_mime_type(media),
-        marmot_gobject_encrypted_media_get_filename(media),
-        marmot_gobject_encrypted_media_get_original_size(media),
-        marmot_gobject_encrypted_media_get_file_hash(media),
-        marmot_gobject_encrypted_media_get_nonce(media),
-        marmot_gobject_encrypted_media_get_epoch(media),
-        NULL, async_callback, df);
-    g_main_loop_run(df->loop);
-    GBytes *decrypted = marmot_gobject_client_decrypt_media_finish(client, df->result, &error);
-    g_assert_no_error(error);
-    gsize dec_len = 0;
-    const guint8 *dec = g_bytes_get_data(decrypted, &dec_len);
-    g_assert_cmpuint(dec_len, ==, sizeof(plaintext) - 1);
-    g_assert_cmpmem(dec, dec_len, plaintext, sizeof(plaintext) - 1);
-
-    g_bytes_unref(decrypted);
-    async_fixture_free(df);
-    marmot_gobject_encrypted_media_free(media);
+    g_assert_null(media);
+    g_assert_nonnull(error);
+    g_assert_cmpint(error->code, ==, MARMOT_ERR_MEDIA_LEGACY_FORMAT);
+    g_assert_cmpstr(error->message, ==, marmot_error_string(MARMOT_ERR_MEDIA_LEGACY_FORMAT));
+    g_clear_error(&error);
     async_fixture_free(f);
     g_bytes_unref(plain);
     g_object_unref(group);
