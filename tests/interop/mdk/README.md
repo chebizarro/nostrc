@@ -51,10 +51,10 @@ ctest --test-dir _build -R '^groundhog-mdk-interop' -V
   `groundhog-requires-self-remove` -- a group made permissive (as before
   libmarmot 0.12) gets the requirement in the background after Groundhog's
   update, a GroupContextExtensions Commit MDK 0.8 follows. Cases run the
-  app's behaviour except `mdk-member-leaves`, which keeps a permissive group
-  (`world_permissive_groups`) to cover the Remove-request path: the app
-  still takes it in groups made before 0.12 or whose first invitee lacked
-  SelfRemove.
+  app's behaviour except `mdk-member-leaves` and `groundhog-leaves-mdk-admin`,
+  which keep a permissive group (`world_permissive_groups`) to cover the
+  Remove-request path: the app still takes it in groups made before 0.12 or
+  whose first invitee lacked SelfRemove.
 - The container reaches the test's relays on the host's 127.0.0.1:
   - Linux: `--network host`.
   - macOS (Docker Desktop): `MDK_DRIVER_DIAL_HOST=host.docker.internal`.

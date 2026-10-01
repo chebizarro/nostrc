@@ -1133,7 +1133,11 @@ test_groundhog_leaves(void)
 
 /* 3c (re-review R1): Groundhog (Alice) makes the group with Carol (MDK) and
  * makes Carol its only admin, then leaves. The group does not require
- * SelfRemove, so Alice's leave is a Remove request; MDK 0.8's admin
+ * SelfRemove (a permissive group, `world_permissive_groups`: since
+ * nostrc-8ndz the app's own groups require it from their first Add, and
+ * this Remove-request path is left to groups made before 0.12 or whose
+ * first invitee lacked SelfRemove; 3b covers MDK committing a SelfRemove),
+ * so Alice's leave is a Remove request; MDK 0.8's admin
  * auto-commit (messages/proposal.rs auto_commit_proposal) keeps only
  * SelfRemoves and commits an empty Commit, which keeps Alice. Alice asks
  * once more, then stops: "not processed", sending again, no more requests
@@ -1145,6 +1149,7 @@ test_groundhog_leaves_mdk_admin(void)
     return;
   World w;
   const guint keys[] = { ALICE };
+  world_permissive_groups = TRUE;
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   spin_until(key_package_published, alice, "Alice's KeyPackage");
