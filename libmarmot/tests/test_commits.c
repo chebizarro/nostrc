@@ -8133,6 +8133,7 @@ test_held_branch_message_cost_bounded(void)
 {
     Trio t;
     trio_init(&t);
+    char *m0 = app_message(&t.alice, &t.gid, "Alice at E, read late");
     char *ra = rename_group(&t.alice, &t.gid, "Alice's");
     expect_commit(&t.bob, ra, "Bob applies Alice's rename");
     /* Alice's branch has a witness too: Charlie's alone ties it, and the
@@ -8157,6 +8158,14 @@ test_held_branch_message_cost_bounded(void)
         expect_rejected(&t.bob, &t.gid, bad, MARMOT_ERR_NIP44, "offered again: held");
     CHECK(t.bob.m->branch_builds == b1, "offered again: nothing rebuilt (cached): %lu",
           t.bob.m->branch_builds - b1);
+    /* A late canonical message rewrites the retained record (its state's
+     * ratchet) but changes no state or candidate: the cache stays (W25
+     * slice N re-review N3). */
+    expect_app(&t.bob, m0, "Bob reads Alice's E message late");
+    for (int i = 0; i < 5; i++)
+        expect_rejected(&t.bob, &t.gid, bad, MARMOT_ERR_NIP44, "after a late message: held");
+    CHECK(t.bob.m->branch_builds == b1, "after a late message: nothing rebuilt: %lu",
+          t.bob.m->branch_builds - b1);
     expect_kept(&t.bob, &t.gid, m1, MARMOT_ERR_NIP44, "Charlie's message: a witness, held");
     unsigned long b2 = t.bob.m->branch_builds;
     for (int i = 0; i < 5; i++) {
@@ -8178,6 +8187,7 @@ test_held_branch_message_cost_bounded(void)
     expect_converged(t.all, 3, &t.gid, "Alice's", t.epoch + 1);
     expect_messages_flow(t.all, 3, &t.gid);
     free(ma);
+    free(m0);
     free(bad);
     free(m1);
     free(m2);

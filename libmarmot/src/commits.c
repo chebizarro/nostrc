@@ -1280,6 +1280,7 @@ marmot_commit_persist_ex(Marmot *m, const MlsGroup *pre, const MlsGroup *post,
         !s->save_exporter_secret || !s->get_exporter_secret ||
         !s->delete_exporter_secret || !s->save_group)
         return MARMOT_ERR_STORAGE;
+    marmot_branch_cache_free(m);   /* the tip moves: its candidates' states go */
 
     const uint8_t *gid = post->group_id;
     size_t gid_len = post->group_id_len;
@@ -2586,6 +2587,7 @@ evict(Marmot *m, MarmotGroup *group, const MlsGroup *base, bool on_parent,
 {
     MarmotStorage *s = m->storage;
     if (!s->mls_store || !s->mls_delete || !s->save_group) return MARMOT_ERR_STORAGE;
+    marmot_branch_cache_free(m);
     if (base->profile != MARMOT_GROUP_PROFILE_LEGACY &&
         base->profile != MARMOT_GROUP_PROFILE_ADOPTED)
         return MARMOT_ERR_UNSUPPORTED;
@@ -3785,6 +3787,7 @@ conv_install(Marmot *m, MarmotGroup *group, const MlsGroup *cur, const ConvHisto
              bool *evicted)
 {
     MarmotStorage *s = m->storage;
+    marmot_branch_cache_free(m);   /* another branch is canonical now */
     const ConvNode *best = &t->nodes[sel];
     const MarmotGroupId *gid = &group->mls_group_id;
     /* The new path, root first, and its last canonical node (the fork). */
@@ -4009,6 +4012,15 @@ conv_keep(Marmot *m, const MarmotGroupId *gid, const MlsGroup *cur, ConvHistory 
     uint64_t anchor = history_anchor(h, cur->epoch);
     MarmotError err = conv_retained(t, h, t->tip, t->tip, false, anchor, cur->epoch, nh, evicted);
     if (err == MARMOT_OK) {
+        /* Candidates evicted or gone stale: their rebuilt states go too. */
+        bool same = nh->n_cands == h->n_cands;
+        for (size_t i = 0; same && i < h->n_cands; i++) {
+            bool found = false;
+            for (size_t j = 0; !found && j < nh->n_cands; j++)
+                found = memcmp(h->cands[i].digest, nh->cands[j].digest, 32) == 0;
+            same = found;
+        }
+        if (!same) marmot_branch_cache_free(m);
         /* Swap in the retained parts; the entries stay as they are. */
         for (size_t i = 0; i < h->n_cands; i++) conv_candidate_clear(&h->cands[i]);
         memcpy(h->cands, nh->cands, sizeof(h->cands));
@@ -4326,10 +4338,13 @@ marmot_commit_state_canonical(Marmot *m, const MarmotGroupId *gid, uint64_t epoc
     return yes;
 }
 
-/* The candidate states last rebuilt for marmot_commit_branch_decrypt():
- * the tree of the stored record and tip whose bytes hash to `key` (review
- * M1: a held branch message offered again rebuilds nothing).  A tree with a
- * candidate held for a proposal is not cached: the proposal may come. */
+/* The candidate states last rebuilt for marmot_commit_branch_decrypt()
+ * (review M1: a held branch message offered again rebuilds nothing), with
+ * the history and tip they were built from.  `key` names what the tree
+ * depends on (branch_cache_key()).  A tree with a candidate held for a
+ * proposal is not cached: the proposal may come.  Dropped as soon as the
+ * tip or the retained candidates change (marmot_branch_cache_free()), so
+ * rebuilt states the record no longer retains are not kept in memory. */
 typedef struct {
     uint8_t      key[32];
     ConvHistory *h;
@@ -4357,65 +4372,93 @@ marmot_branch_cache_free(Marmot *m)
     m->branch_cache = NULL;
 }
 
-/* The cache for `gid` as stored now (rebuilt when the record or the tip
- * changed); the tree is not built yet when `built` is false.  NULL with
- * MARMOT_OK: no retained record. */
+static void
+hash_u64(crypto_hash_sha256_state *hs, uint64_t v)
+{
+    uint8_t b[8];
+    for (size_t i = 0; i < 8; i++) b[i] = (uint8_t)(v >> (8 * i));
+    crypto_hash_sha256_update(hs, b, sizeof(b));
+}
+
+/* What the rebuilt tree depends on: the group, the tip state and each
+ * retained state (epoch, confirmed transcript hash, the Commit that left
+ * it), and each retained candidate (source epoch, digest, the parent tried
+ * first, ours or not) -- not the record's bytes, which a late message
+ * rewrites (its state's ratchet) without changing any of them (W25 slice N
+ * re-review N3).  Witnesses do not shape the tree. */
+static void
+branch_cache_key(const MarmotGroupId *gid, const MlsGroup *cur, const ConvHistory *h,
+                 uint8_t key[32])
+{
+    crypto_hash_sha256_state hs;
+    crypto_hash_sha256_init(&hs);
+    hash_u64(&hs, gid->len);
+    crypto_hash_sha256_update(&hs, gid->data, gid->len);
+    hash_u64(&hs, cur->epoch);
+    crypto_hash_sha256_update(&hs, cur->confirmed_transcript_hash, 32);
+    hash_u64(&hs, h->n_entries);
+    for (size_t i = 0; i < h->n_entries; i++) {
+        const ConvEntry *e = &h->entries[i];
+        uint8_t flags[2] = { e->own, e->reader };
+        hash_u64(&hs, e->epoch);
+        crypto_hash_sha256_update(&hs, e->state.confirmed_transcript_hash, 32);
+        crypto_hash_sha256_update(&hs, e->key.digest, 32);
+        crypto_hash_sha256_update(&hs, flags, sizeof(flags));
+    }
+    hash_u64(&hs, h->n_cands);
+    for (size_t i = 0; i < h->n_cands; i++) {
+        const ConvCandidate *c = &h->cands[i];
+        uint8_t own = c->own;
+        hash_u64(&hs, c->source_epoch);
+        crypto_hash_sha256_update(&hs, c->digest, 32);
+        crypto_hash_sha256_update(&hs, c->parent_tag, 32);
+        crypto_hash_sha256_update(&hs, &own, 1);
+    }
+    crypto_hash_sha256_final(&hs, key);
+}
+
+/* The cache for `gid` (rebuilt when what it depends on changed: the tree
+ * is not built yet when `built` is false) and, in *fresh, the history as
+ * stored now when the cache's own is older (its witnesses are current;
+ * caller frees).  NULL with MARMOT_OK: no retained record. */
 static MarmotError
-branch_cache_get(Marmot *m, const MarmotGroupId *gid, BranchCache **out)
+branch_cache_get(Marmot *m, const MarmotGroupId *gid, BranchCache **out, ConvHistory **fresh)
 {
     *out = NULL;
-    MarmotStorage *s = m->storage;
-    uint8_t *rec = NULL, *tip = NULL;
-    size_t rec_len = 0, tip_len = 0;
-    MarmotError err = s->mls_load(s->ctx, PARENT_LABEL, gid->data, gid->len, &rec, &rec_len);
-    if (err == MARMOT_ERR_STORAGE_NOT_FOUND || (err == MARMOT_OK && !rec)) {
-        free_secret(rec, rec_len);
+    *fresh = NULL;
+    ConvHistory *h = NULL;
+    MarmotError err = history_load(m, gid->data, gid->len, &h);
+    if (err != MARMOT_OK || !h) return err;   /* none, or unreadable: no candidate */
+    MlsGroup cur;
+    err = load_current(m, gid, &cur);
+    if (err != MARMOT_OK) {
+        mls_group_free(&cur);
+        history_free(h);
+        return MARMOT_ERR_MLS;
+    }
+    conv_prune_stale(h, cur.epoch);
+    uint8_t key[32];
+    branch_cache_key(gid, &cur, h, key);
+    BranchCache *bc = m->branch_cache;
+    if (bc && sodium_memcmp(bc->key, key, 32) == 0) {
+        mls_group_free(&cur);
+        *fresh = h;
+        *out = bc;
         return MARMOT_OK;
     }
-    if (err != MARMOT_OK) return err;
-    err = s->mls_load(s->ctx, "mls_group", gid->data, gid->len, &tip, &tip_len);
-    if (err == MARMOT_OK && !tip) err = MARMOT_ERR_MLS;
-    uint8_t key[32];
-    crypto_hash_sha256_state hs;
-    if (err == MARMOT_OK) {
-        uint8_t lens[24];
-        uint64_t l[3] = { gid->len, rec_len, tip_len };
-        for (size_t i = 0; i < 3; i++)
-            for (size_t b = 0; b < 8; b++) lens[i * 8 + b] = (uint8_t)(l[i] >> (8 * b));
-        crypto_hash_sha256_init(&hs);
-        crypto_hash_sha256_update(&hs, lens, sizeof(lens));
-        crypto_hash_sha256_update(&hs, gid->data, gid->len);
-        crypto_hash_sha256_update(&hs, rec, rec_len);
-        crypto_hash_sha256_update(&hs, tip, tip_len);
-        crypto_hash_sha256_final(&hs, key);
+    marmot_branch_cache_free(m);
+    bc = calloc(1, sizeof(*bc));
+    if (!bc) {
+        mls_group_free(&cur);
+        history_free(h);
+        return MARMOT_ERR_MEMORY;
     }
-    BranchCache *bc = m->branch_cache;
-    if (err == MARMOT_OK && bc && sodium_memcmp(bc->key, key, 32) == 0) {
-        *out = bc;
-    } else if (err == MARMOT_OK) {
-        marmot_branch_cache_free(m);
-        bc = calloc(1, sizeof(*bc));
-        if (!bc) err = MARMOT_ERR_MEMORY;
-        if (err == MARMOT_OK && !(bc->h = calloc(1, sizeof(*bc->h)))) err = MARMOT_ERR_MEMORY;
-        if (err == MARMOT_OK && conv_history_decode(rec, rec_len, bc->h) != 0) {
-            free(bc->h);   /* cleared by the decoder */
-            bc->h = NULL;
-            err = MARMOT_ERR_STORAGE_NOT_FOUND;   /* unreadable: no candidate */
-        }
-        if (err == MARMOT_OK && mls_group_deserialize(tip, tip_len, &bc->cur) != 0)
-            err = MARMOT_ERR_MLS;
-        if (err == MARMOT_OK) {
-            memcpy(bc->key, key, 32);
-            conv_prune_stale(bc->h, bc->cur.epoch);
-            m->branch_cache = bc;
-            *out = bc;
-        } else {
-            branch_cache_drop(bc);
-        }
-    }
-    free_secret(rec, rec_len);
-    free_secret(tip, tip_len);
-    return err;
+    memcpy(bc->key, key, 32);
+    bc->h = h;
+    bc->cur = cur;
+    m->branch_cache = bc;
+    *out = bc;
+    return MARMOT_OK;
 }
 
 MarmotError
@@ -4432,26 +4475,31 @@ marmot_commit_branch_decrypt(Marmot *m, MarmotGroup *group, uint64_t epoch,
     *out_sender_leaf = UINT32_MAX;
     if (!m->storage || !m->storage->mls_load) return MARMOT_ERR_STORAGE;
     BranchCache *bc = NULL;
-    MarmotError err = branch_cache_get(m, &group->mls_group_id, &bc);
+    ConvHistory *fresh = NULL;
+    MarmotError err = branch_cache_get(m, &group->mls_group_id, &bc, &fresh);
     if (err != MARMOT_OK) return err;
     if (!bc) return MARMOT_ERR_STORAGE_NOT_FOUND;
-    ConvHistory *h = bc->h;
     /* Who sent it, from its sender data alone: a leaf that witnesses this
      * state already (or a full quorum) teaches nothing, so nothing is
      * rebuilt or decrypted for it.  Our own leaf is decrypted (our echo is
-     * MARMOT_ERR_OWN_MESSAGE). */
-    if (conv_witness_full(h, epoch, tag)) return MARMOT_ERR_NIP44;
-    for (size_t i = 0; i < h->n_secrets; i++) {
-        const ConvBranchSecret *bs = &h->secrets[i];
+     * MARMOT_ERR_OWN_MESSAGE).  The sender data is not bound to the
+     * signature, so a member can name any leaf in it -- but the shortcut
+     * only skips work: it never adds a witness. */
+    const ConvHistory *now = fresh ? fresh : bc->h;
+    bool known = conv_witness_full(now, epoch, tag);
+    for (size_t i = 0; !known && i < now->n_secrets; i++) {
+        const ConvBranchSecret *bs = &now->secrets[i];
         if (bs->epoch != epoch || memcmp(bs->tag, tag, 32) != 0) continue;
         uint32_t leaf = UINT32_MAX;
-        if (mls_private_message_sender_leaf(bs->sender_data, group->mls_group_id.data,
-                                            group->mls_group_id.len, epoch, msg, msg_len,
-                                            &leaf) == 0 &&
-            leaf != bc->cur.own_leaf_index && conv_witness_leaf_known(h, epoch, tag, leaf))
-            return MARMOT_ERR_NIP44;
+        known = mls_private_message_sender_leaf(bs->sender_data, group->mls_group_id.data,
+                                                group->mls_group_id.len, epoch, msg, msg_len,
+                                                &leaf) == 0 &&
+                leaf != bc->cur.own_leaf_index && conv_witness_leaf_known(now, epoch, tag, leaf);
         break;
     }
+    history_free(fresh);
+    if (known) return MARMOT_ERR_NIP44;
+    ConvHistory *h = bc->h;
     if (!bc->built) {
         err = conv_build(m, &bc->cur, h, &bc->t);
         if (err != MARMOT_OK) {

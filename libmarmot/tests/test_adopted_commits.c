@@ -16,6 +16,7 @@
 #include "marmot-internal.h"
 #include "adopted.h"
 #include "commits.h"
+#include "convergence.h"
 #include "proposals.h"
 #include "kp_profile.h"
 #include "mls/mls_group.h"
@@ -777,33 +778,53 @@ test_mdk_forks_converge(void)
  * epoch, and not move on re-delivery of everything. */
 enum { FZ_EVERY, FZ_GROUNDHOG };
 
+/* Groundhog's aging of held events (gh-mls-service.h
+ * GH_MLS_SERVICE_JUNK_AFTER_EPOCHS, W25 slice N re-review N1): one still
+ * unreadable once the group's epoch is this many past the one it was held
+ * at is dropped -- more than max_rewind_commits. */
+#define FZ_JUNK_AFTER_EPOCHS (CONV_MAX_REWIND_COMMITS + 1)
+
 typedef struct {
     const char *held[N_FORK_STEP_COUNT];
+    uint64_t    held_at[N_FORK_STEP_COUNT];   /* the observer's epoch when held */
     size_t      n;
     int         policy;
     size_t      apps;                /* application messages delivered */
+    const MarmotGroupId *gid;        /* set: Groundhog's aging, after each retry */
+    size_t      aged;                /* events dropped by aging */
 } FuzzQ;
 
+static uint64_t
+fz_epoch(Member *o, const MarmotGroupId *gid)
+{
+    MarmotGroup *g = group_of(o, gid);
+    uint64_t e = g->epoch;
+    marmot_group_free(g);
+    return e;
+}
+
 static void
-fz_hold(FuzzQ *q, const char *name)
+fz_hold(FuzzQ *q, const char *name, uint64_t held_at)
 {
     for (size_t i = 0; i < q->n; i++)
         if (strcmp(q->held[i], name) == 0) return;
     CHECK(q->n < N_FORK_STEP_COUNT, "held queue");
+    q->held_at[q->n] = held_at;
     q->held[q->n++] = name;
 }
 
-/* Deliver one; whether the Groundhog policy retries now (*progress: it was
- * not held). */
+/* Deliver one (held before at epoch `held_at`; UINT64_MAX: new); whether
+ * the Groundhog policy retries now (*progress: it was not held). */
 static bool
-fz_one(Member *o, FuzzQ *q, const char *name, bool *progress)
+fz_one(Member *o, FuzzQ *q, const char *name, uint64_t held_at, bool *progress)
 {
     MarmotMessageResult r;
     MarmotError err = deliver(o, fork_event(name), &r);
     bool fire = false;
     if (err == MARMOT_ERR_NIP44 || err == MARMOT_ERR_PROPOSAL_UNKNOWN ||
         err == MARMOT_ERR_RESOURCE_REFUSED) {
-        fz_hold(q, name);
+        fz_hold(q, name, held_at != UINT64_MAX ? held_at
+                         : q->gid           ? fz_epoch(o, q->gid) : 0);
     } else {
         *progress = true;
         if (err == MARMOT_OK && r.type == MARMOT_RESULT_APPLICATION_MESSAGE) q->apps++;
@@ -821,22 +842,37 @@ fz_retry(Member *o, FuzzQ *q)
     for (bool again = true; again;) {
         again = false;
         const char *pass[N_FORK_STEP_COUNT];
+        uint64_t at[N_FORK_STEP_COUNT];
         size_t n = q->n;
         memcpy(pass, q->held, n * sizeof(*pass));
+        memcpy(at, q->held_at, n * sizeof(*at));
         q->n = 0;
         for (size_t i = 0; i < n; i++) {
             bool progress = false;
-            bool fire = fz_one(o, q, pass[i], &progress);
+            bool fire = fz_one(o, q, pass[i], at[i], &progress);
             if (q->policy == FZ_EVERY ? progress : fire) again = true;
         }
     }
+    if (!q->gid) return;
+    /* Aging, once the fixpoint ends. */
+    uint64_t tip = fz_epoch(o, q->gid);
+    size_t k = 0;
+    for (size_t i = 0; i < q->n; i++) {
+        if (tip >= q->held_at[i] + FZ_JUNK_AFTER_EPOCHS) {
+            q->aged++;
+            continue;
+        }
+        q->held[k] = q->held[i];
+        q->held_at[k++] = q->held_at[i];
+    }
+    q->n = k;
 }
 
 static void
 fz_feed(Member *o, FuzzQ *q, const char *name)
 {
     bool progress = false;
-    bool fire = fz_one(o, q, name, &progress);
+    bool fire = fz_one(o, q, name, UINT64_MAX, &progress);
     if (q->policy == FZ_EVERY || fire) fz_retry(o, q);
 }
 
@@ -974,6 +1010,82 @@ test_mdk_forks_backfill_newest_first(void)
         marmot_group_id_free(&gid);
         member_free(&o);
     }
+}
+
+/* The stored state of the observer's copy of the captured `name`, or -1
+ * when it was never stored (never delivered). */
+static int
+fz_state(Member *o, const char *name)
+{
+    NostrEvent *ev = nostr_event_new();
+    CHECK(ev && nostr_event_deserialize_compact(ev, fork_event(name), NULL), "event");
+    uint8_t id[32];
+    CHECK(marmot_hex_decode(nostr_event_get_id(ev), id, 32) == 0, "id");
+    nostr_event_free(ev);
+    MarmotMessage *msg = NULL;
+    int st = -1;
+    if (o->m->storage->find_message_by_id(o->m->storage->ctx, id, &msg) == MARMOT_OK && msg)
+        st = (int)msg->state;
+    marmot_message_free(msg);
+    return st;
+}
+
+/* W25 slice N re-review N1: the whole capture, newest first and in 3000
+ * random orders (a fixed seed), under Groundhog's real policy *with* its
+ * aging of held events (FZ_JUNK_AFTER_EPOCHS, as gh-mls-service.c drops
+ * them): every order reaches MDK's verdict and delivers each of MDK's four
+ * messages, none withdrawn -- 0 wrong branches, 0 lost messages. (Aging
+ * after three Commits instead dropped a competing branch's events that came
+ * three Commits before their parent: the review measured 169 wrong branches
+ * and 336 lost messages in 3000 such orders.) */
+static void
+test_mdk_forks_shuffled_with_aging(void)
+{
+    static const char *const apps[] = { "message_after_race", "message_after_depth2",
+                                        "witness_message", "message_after_witnessed" };
+    enum { TRIALS = 3000 };
+    uint64_t seed = 0x5eed2025u;
+    int wrong = 0, lost = 0;
+    size_t aged = 0;
+    for (int trial = 0; trial <= TRIALS; trial++) {
+        size_t ord[N_FORK_STEP_COUNT];
+        for (size_t i = 0; i < N_FORK_STEP_COUNT; i++) ord[i] = N_FORK_STEP_COUNT - 1 - i;
+        for (size_t i = N_FORK_STEP_COUNT - 1; trial > 0 && i > 0; i--) {
+            seed ^= seed << 13;   /* xorshift64: the same orders everywhere */
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            size_t j = (size_t)(seed % (i + 1)), t = ord[i];
+            ord[i] = ord[j];
+            ord[j] = t;
+        }
+        Member o;
+        MarmotGroupId gid;
+        fork_observer(&o, &gid);
+        FuzzQ q = { .n = 0, .policy = FZ_GROUNDHOG, .gid = &gid };
+        for (size_t i = 0; i < N_FORK_STEP_COUNT; i++) fz_feed(&o, &q, N_FORK_STEPS[ord[i]].name);
+        bool verdict = fz_verdict(&o, &gid, N_FORK_WITNESSED_NAME, N_FORK_WITNESSED_EPOCH);
+        int delivered = 0;
+        for (size_t a = 0; a < sizeof(apps) / sizeof(apps[0]); a++) {
+            int st = fz_state(&o, apps[a]);
+            if (st >= 0 && st != MARMOT_MSG_STATE_EPOCH_INVALIDATED) delivered++;
+        }
+        if (!verdict || delivered != 4) {
+            if (!verdict) wrong++;
+            if (delivered != 4) lost++;
+            if (wrong + lost <= 5) {
+                printf("\n    trial %d: verdict %d, %d of 4 messages, %zu aged, order:", trial,
+                       verdict, delivered, q.aged);
+                for (size_t i = 0; i < N_FORK_STEP_COUNT; i++)
+                    printf(" %s", N_FORK_STEPS[ord[i]].name);
+            }
+        }
+        aged += q.aged;
+        marmot_group_id_free(&gid);
+        member_free(&o);
+    }
+    CHECK(wrong == 0 && lost == 0,
+          "%d of %d orders on the wrong branch, %d with a message lost (%zu events aged)", wrong,
+          TRIALS + 1, lost, aged);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2539,6 +2651,7 @@ main(int argc, char **argv)
     RUN(test_mdk_forks_converge);
     RUN(test_mdk_forks_every_order);
     RUN(test_mdk_forks_backfill_newest_first);
+    RUN(test_mdk_forks_shuffled_with_aging);
     RUN(test_openmls_negatives);
     RUN(test_lifecycle_enablement);
     RUN(test_removal_judged_whole);

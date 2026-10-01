@@ -80,7 +80,13 @@ typedef struct MarmotStorage {
 
     /* ── Message operations (MessageStorage trait) ────────────────────── */
 
-    /** Save a message. Storage copies what it needs. */
+    /** Save a message (an upsert by id). Storage copies what it needs.
+     *  libmarmot itself reads back only a stored message's id, group,
+     *  epoch and state (duplicates, and withdrawing a losing branch's
+     *  messages; it saves back what it read), so a storage may keep less
+     *  than the whole message -- e.g. no plaintext content, tags or event
+     *  (Groundhog's store keeps the inner event's id in place of the
+     *  content) -- and marmot_get_messages() then returns what it kept. */
     MarmotError (*save_message)(void *ctx, const MarmotMessage *msg);
 
     /** Find a message by event ID. */

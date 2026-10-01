@@ -110,7 +110,10 @@ typedef struct {
 /* An app-payload witness (convergence.md, "App-payload witnesses"): an
  * application message of `epoch` that decrypted on the state whose confirmed
  * transcript hash is `tag`, sent by the account `sender` from its leaf
- * `leaf`, and passed every payload check.  The witnesses of a branch that
+ * `leaf`, and passed every payload check.  `leaf` only lets a held message
+ * of the same leaf skip its decryption (marmot_commit_branch_decrypt()):
+ * sender data is not bound to the signature, so a member can name any leaf
+ * there, but that shortcut only skips work and never adds a witness.  The witnesses of a branch that
  * lost a reorg stay (they are retained authenticated input, and that branch
  * may be contested again); MDK v0.11.0 no longer re-admits the messages it
  * invalidated as witnesses, so a later contest of the same old branch can
