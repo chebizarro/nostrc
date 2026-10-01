@@ -547,7 +547,9 @@ MarmotError marmot_create_group(Marmot *m,
  * Adopted groups are admitted, stored and loaded, and can exchange
  * application messages; libmarmot does not yet process or produce Commits
  * in them (AppDataUpdate, adds, removals, self-updates): those fail with
- * %MARMOT_ERR_UNSUPPORTED and leave the group unchanged.
+ * %MARMOT_ERR_UNSUPPORTED and leave the group unchanged -- also a Commit
+ * that removes our own leaf: the removed member is not told and stays
+ * active, its keys kept.
  *
  * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG (bad arguments or config);
  *   MARMOT_ERR_KEY_PACKAGE_IDENTITY; MARMOT_ERR_KEY_PACKAGE; KeyPackage

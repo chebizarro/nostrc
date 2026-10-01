@@ -117,11 +117,17 @@ group_data_of(const MlsGroup *g, const MlsGroup *stored, MarmotGroupDataExtensio
 
 /* Admin authority per the pre-Commit GroupData.  Same rule as the producers'
  * is_admin() in groups.c, so every member accepts exactly the Commits a
- * member may produce: a group without admins (legacy) lets anyone commit. */
+ * member may produce: a GroupData that lists no admins (MIP-01 legacy) lets
+ * anyone commit.  A group WITHOUT GroupData has no admin at all: it is not
+ * a legacy group whose rules this function knows (an adopted group keeps its
+ * admins in 0x8003), and "no GroupData" must never read as "everyone is an
+ * admin" (W24 review H1).  Callers that bound who could still win an epoch
+ * (could_win()) count every member when there is no GroupData instead. */
 static bool
 gde_is_admin(const MarmotGroupDataExtension *gde, const uint8_t pk[32])
 {
-    if (!gde || gde->admin_count == 0 || !gde->admins) return true;
+    if (!gde) return false;
+    if (gde->admin_count == 0 || !gde->admins) return true;
     for (size_t i = 0; i < gde->admin_count; i++)
         if (memcmp(gde->admins[i], pk, 32) == 0) return true;
     return false;
@@ -487,7 +493,8 @@ retained_pending_compute(const MlsGroup *parent, const MarmotCommitKey *key,
         if (!leaf || i == parent->own_leaf_index || i == committer_leaf ||
             leaf->credential_identity_len != 32 || !leaf->credential_identity)
             continue;   /* blank, us, the committer, or no account to commit */
-        if (!gde_ok || could_win(gde, leaf->credential_identity, key))
+        /* No or unreadable GroupData: count every member as a possible winner. */
+        if (!gde_ok || !gde || could_win(gde, leaf->credential_identity, key))
             list[n++] = i;
     }
     marmot_group_data_extension_free(gde);
@@ -1734,6 +1741,10 @@ removal_key(const MlsGroup *pre, uint32_t committer_leaf, const uint8_t digest[3
             const MlsCommitSummary *departures, MarmotCommitKey *key)
 {
     memset(key, 0, sizeof(*key));
+    /* A removal of our leaf is judged by the MIP-01 GroupData rules: only in
+     * a legacy group.  An adopted group's removals (admin-policy-v1 against
+     * the candidate parent) are not implemented (nostrc-qp24.5.1.3). */
+    if (pre->profile != MARMOT_GROUP_PROFILE_LEGACY) return MARMOT_ERR_UNSUPPORTED;
     const MlsLeafNode *committer = leaf_at(pre, committer_leaf);
     if (!committer || committer->credential_identity_len != 32 ||
         !committer->credential_identity)
@@ -1878,6 +1889,9 @@ removal_delete(Marmot *m, const uint8_t *gid, size_t gid_len)
 static bool
 removal_contested(const MlsGroup *base, const MarmotCommitKey *key)
 {
+    /* Never final outside the legacy profile: its keys are not deleted on
+     * the strength of rules that do not govern it (W24 review H1). */
+    if (base->profile != MARMOT_GROUP_PROFILE_LEGACY) return true;
     MarmotGroupDataExtension *gde = NULL;
     bool gde_ok = group_data_of(base, base, &gde) == MARMOT_OK;
     bool contested = false;
@@ -1887,7 +1901,7 @@ removal_contested(const MlsGroup *base, const MarmotCommitKey *key)
             !leaf->credential_identity ||
             memcmp(leaf->credential_identity, key->committer, 32) == 0)
             continue;
-        contested = !gde_ok || could_win(gde, leaf->credential_identity, key);
+        contested = !gde_ok || !gde || could_win(gde, leaf->credential_identity, key);
     }
     marmot_group_data_extension_free(gde);
     return contested;
@@ -1939,6 +1953,7 @@ evict(Marmot *m, MarmotGroup *group, const MlsGroup *base, bool on_parent,
 {
     MarmotStorage *s = m->storage;
     if (!s->mls_store || !s->mls_delete || !s->save_group) return MARMOT_ERR_STORAGE;
+    if (base->profile != MARMOT_GROUP_PROFILE_LEGACY) return MARMOT_ERR_UNSUPPORTED;
     const uint8_t *gid = group->mls_group_id.data;
     size_t gid_len = group->mls_group_id.len;
     RetainedParent rp;
@@ -2222,6 +2237,11 @@ inbound_removed(Marmot *m, MarmotGroup *group, uint64_t epoch, const CommitRoute
         if (have_rp) retained_clear(&rp);
         return MARMOT_ERR_MLS;
     }
+    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY) {   /* W24 review H1 */
+        mls_group_free(&cur);
+        if (have_rp) retained_clear(&rp);
+        return MARMOT_ERR_UNSUPPORTED;
+    }
     const MlsGroup *base = NULL;
     const MarmotCommitKey *beat = NULL;
     bool on_parent = false;
@@ -2333,6 +2353,15 @@ marmot_commit_process_inbound(Marmot *m, MarmotGroup *group,
     MlsGroup cur;
     if (load_current(m, &group->mls_group_id, &cur) != MARMOT_OK)
         return MARMOT_ERR_MLS;
+    /* An adopted group's Commits -- every one of them, including one that
+     * removes our leaf, which never reaches marmot_commit_authorize() -- are
+     * refused before any judgement, removal or key deletion: their rules
+     * (admin-policy-v1, AppDataUpdate) are not implemented (nostrc-
+     * qp24.5.1.3; W24 review H1).  The group is left as it was. */
+    if (cur.profile != MARMOT_GROUP_PROFILE_LEGACY) {
+        mls_group_free(&cur);
+        return MARMOT_ERR_UNSUPPORTED;
+    }
 
     MarmotError err;
     MlsGroup post;

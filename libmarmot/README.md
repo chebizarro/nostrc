@@ -308,7 +308,7 @@ parse, cryptographic or authorization failure.
 | Persist, load, clone | **Yes**, re-validated on every load (serial format 4) |
 | Application messages (kind:445) | Between libmarmot members, yes; with MDK not yet tested |
 | **White Noise groups** | **Refused** (`MARMOT_ERR_UNSUPPORTED`): marmot-app requires SelfRemove (`0x000a`), agent text stream (`0x8006`, receive role `0xf2d1`) and encrypted media v2 (`0x800b`) of every group, none of which libmarmot implements yet |
-| Commits (AppDataUpdate, Add, Remove, Update, self-update) | **Refused** (`MARMOT_ERR_UNSUPPORTED`), ours and others' (nostrc-qp24.5): a member falls behind at the group's first Commit |
+| Commits (AppDataUpdate, Add, Remove, Update, self-update) | **Refused** (`MARMOT_ERR_UNSUPPORTED`), ours and others', including one that removes our own leaf (nostrc-qp24.5.1.3): a member falls behind at the group's first Commit. A removed libmarmot member is **not told**: it stays active but stuck, and never deletes its keys on the strength of an adopted Commit |
 | Publishing adopted KeyPackages | **Off**: `MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER` stays OFF by default, so peers cannot invite libmarmot into adopted groups yet |
 | MDK 0.9.x groups (`0xf2f1` proof v1) | Refused (mixed or unsupported profile) |
 
@@ -392,9 +392,14 @@ profile (MDK 0.11)" above.
   `MARMOT_ERR_KEY_NOT_FOUND` for a Welcome to none of our KeyPackages) and
   records the Welcome as failed, so it is never listed as an invitation. A Welcome with another ciphersuite is now refused as
   `MARMOT_ERR_UNSUPPORTED` (was `MARMOT_ERR_MLS`).
-- **Commits in adopted groups are refused** (`MARMOT_ERR_UNSUPPORTED`):
-  `marmot_commit_authorize()` never judges them by the MIP-01 rules, under
-  which a group without GroupData would let any member commit.
+- **Commits in adopted groups are refused** (`MARMOT_ERR_UNSUPPORTED`)
+  before any judgement -- in `marmot_commit_process_inbound()` (also for a
+  Commit that removes our own leaf, which never reaches
+  `marmot_commit_authorize()`), in the removal rules and in
+  `marmot_commit_authorize()` -- never judged by the MIP-01 rules. A group
+  without GroupData now has no admin at all (it used to make everyone one;
+  W24 review H1), and the epoch-convergence bounds count every member as a
+  possible winner there, so a removal never becomes final early.
 - **MLS state serial format 4**, written for adopted groups only: format 3
   plus the profile byte. Legacy groups are still written as format 3, byte
   for byte. Every load re-validates the profile's structural invariants.

@@ -1574,8 +1574,8 @@ test_adopted_commits_refused(void)
     MarmotMessageResult res;
     memset(&res, 0, sizeof(res));
     MarmotError err = marmot_process_message(p.bob.m, event, &res);
-    CHECK(err != MARMOT_OK || res.type != MARMOT_RESULT_COMMIT,
-          "adopted Commit not applied: err=%d type=%d", err, res.type);
+    CHECK(err == MARMOT_ERR_UNSUPPORTED, "adopted Commit refused: err=%d type=%d", err,
+          res.type);
     marmot_message_result_free(&res);
     MarmotGroup *g = NULL;
     OK(marmot_get_group(p.bob.m, &p.gid, &g));
@@ -1601,6 +1601,175 @@ test_adopted_commits_refused(void)
     mls_group_free(&alice_mls);
     sodium_memzero(exporter, sizeof(exporter));
     pair_free(&p);
+}
+
+/* A Commit built at the MLS layer from `x`'s stored state, sealed as
+ * kind:445 with that state's exporter secret: what a modified client sends. */
+static char *
+mls_remove_event(Member *x, const MarmotGroupId *gid, const uint8_t victim[32],
+                 const uint8_t nostr_gid[32])
+{
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    load_mls(x, gid, &blob, &len);
+    MlsGroup g;
+    CHECK(mls_group_deserialize(blob, len, &g) == 0, "state");
+    sodium_memzero(blob, len);
+    free(blob);
+    uint32_t leaf = UINT32_MAX;
+    for (uint32_t i = 0; i < g.tree.n_leaves; i++) {
+        const MlsNode *n = &g.tree.nodes[mls_tree_leaf_to_node(i)];
+        if (n->type == MLS_NODE_LEAF && n->leaf.credential_identity_len == 32 &&
+            memcmp(n->leaf.credential_identity, victim, 32) == 0)
+            leaf = i;
+    }
+    CHECK(leaf != UINT32_MAX, "victim leaf");
+    uint8_t exporter[32];
+    memcpy(exporter, g.epoch_secrets.exporter_secret, 32);
+    MlsCommitResult cr;
+    memset(&cr, 0, sizeof(cr));
+    CHECK(mls_group_remove_members(&g, &leaf, 1, &cr) == 0, "MLS-layer Remove");
+    char *event = marmot_commit_build_event(cr.commit_data, cr.commit_len, exporter, nostr_gid,
+                                            marmot_now());
+    CHECK(event, "event");
+    mls_commit_result_clear(&cr);
+    mls_group_free(&g);
+    sodium_memzero(exporter, sizeof(exporter));
+    return event;
+}
+
+/* Carol's group is untouched: active, state kept, no removal recorded. */
+static void
+expect_untouched(Member *x, const MarmotGroupId *gid, uint64_t epoch)
+{
+    MarmotGroup *g = NULL;
+    OK(marmot_get_group(x->m, gid, &g));
+    CHECK(g && g->state == MARMOT_GROUP_STATE_ACTIVE && g->epoch == epoch,
+          "%s: group still active at epoch %llu", x->name, (unsigned long long)epoch);
+    marmot_group_free(g);
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    MarmotError err = x->m->storage->mls_load(x->m->storage->ctx, "mls_group", gid->data,
+                                              gid->len, &blob, &len);
+    CHECK(err == MARMOT_OK && blob, "%s: MLS state kept", x->name);
+    sodium_memzero(blob, len);
+    free(blob);
+    bool removed = true;
+    OK(marmot_get_group_removal(x->m, gid, &removed, NULL, NULL, NULL));
+    CHECK(!removed, "%s: no removal recorded", x->name);
+}
+
+static void
+test_adopted_removal_refused(void)
+{
+    /* W24 review H1: a Commit that removes OUR leaf never reaches
+     * marmot_commit_authorize(); it was judged by the MIP-01 removal rules,
+     * under which a group without GroupData made everyone an admin.  Bob, no
+     * admin, could evict Carol -- and, with his key sorting first, make the
+     * removal final and her keys deleted. */
+    Member alice, bob, carol;
+    member_init(&alice, "alice");
+    member_init(&bob, "bob");
+    while (memcmp(bob.pk, alice.pk, 32) >= 0) {   /* the worst case: final at once */
+        member_free(&bob);
+        member_init(&bob, "bob");
+    }
+    member_init(&carol, "carol");
+    char *bob_kp = adopted_key_package(&bob), *carol_kp = adopted_key_package(&carol);
+    const char *kps[] = {bob_kp, carol_kp};
+    const char *relays[] = {"wss://relay.example.com"};
+    MarmotGroupConfig cfg = config_for(NULL, 0, relays, 1); /* Alice the only admin */
+    MarmotCreateGroupResult r;
+    memset(&r, 0, sizeof(r));
+    OK(marmot_create_group_for_profile(alice.m, MARMOT_GROUP_PROFILE_ADOPTED, alice.pk,
+                                       alice.sk, NULL, NULL, kps, 2, &cfg, &r));
+    MarmotGroupId gid = marmot_group_id_new(r.group->mls_group_id.data, r.group->mls_group_id.len);
+    uint8_t ngid[32];
+    memcpy(ngid, r.group->nostr_group_id, 32);
+    CHECK(r.group->admin_count == 1, "one admin");
+    OK(join(&bob, r.welcome_rumor_jsons[0], NULL));
+    OK(join(&carol, r.welcome_rumor_jsons[1], NULL));
+    marmot_create_group_result_free(&r);
+
+    /* Bob (no admin) removes Carol. */
+    char *event = mls_remove_event(&bob, &gid, carol.pk, ngid);
+    Member *recv[2] = {&carol, &alice};
+    for (int i = 0; i < 2; i++) {
+        MarmotMessageResult res;
+        memset(&res, 0, sizeof(res));
+        EXPECT_ERR(marmot_process_message(recv[i]->m, event, &res), MARMOT_ERR_UNSUPPORTED);
+        marmot_message_result_free(&res);
+        expect_untouched(recv[i], &gid, 1);
+    }
+    free(event);
+    /* An admin's removal is refused too (adopted Commits are not processed
+     * yet): the removed member is not told, and stays active but stuck. */
+    event = mls_remove_event(&alice, &gid, carol.pk, ngid);
+    MarmotMessageResult res;
+    memset(&res, 0, sizeof(res));
+    EXPECT_ERR(marmot_process_message(carol.m, event, &res), MARMOT_ERR_UNSUPPORTED);
+    marmot_message_result_free(&res);
+    expect_untouched(&carol, &gid, 1);
+    free(event);
+
+    /* Carol still reads the group. */
+    MarmotOutgoingMessage out;
+    memset(&out, 0, sizeof(out));
+    OK(marmot_create_message(alice.m, &gid,
+                             "{\"kind\":9,\"content\":\"still here\",\"created_at\":1700000000,\"tags\":[]}",
+                             &out));
+    memset(&res, 0, sizeof(res));
+    OK(marmot_process_message(carol.m, out.event_json, &res));
+    CHECK(res.type == MARMOT_RESULT_APPLICATION_MESSAGE, "message");
+    marmot_message_result_free(&res);
+    marmot_outgoing_message_free(&out);
+
+    free(bob_kp);
+    free(carol_kp);
+    marmot_group_id_free(&gid);
+    member_free(&alice);
+    member_free(&bob);
+    member_free(&carol);
+}
+
+static void
+test_no_group_data_no_admin(void)
+{
+    /* W24 review H1: a group without GroupData has no admin -- never
+     * "everyone is an admin".  A legacy-profile MLS group without 0xF2EE: an
+     * Add is privileged and nobody may commit it. */
+    uint8_t id[32], sk[MLS_SIG_SK_LEN], pk[MLS_SIG_PK_LEN], alice[32], bob[32];
+    randombytes_buf(id, sizeof(id));
+    randombytes_buf(alice, sizeof(alice));
+    randombytes_buf(bob, sizeof(bob));
+    crypto_sign_keypair(pk, sk);
+    MlsGroup pre;
+    CHECK(mls_group_create(&pre, id, 32, alice, 32, sk, NULL, 0) == 0 &&
+          pre.profile == MARMOT_GROUP_PROFILE_LEGACY, "legacy group without GroupData");
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    CHECK(mls_key_package_create(&kp, &priv, bob, 32, NULL, 0) == 0, "kp");
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    MlsGroup post;
+    CHECK(mls_group_serialize(&pre, &blob, &len) == 0 && mls_group_deserialize(blob, len, &post) == 0,
+          "clone");
+    sodium_memzero(blob, len);
+    free(blob);
+    MlsAddResult add;
+    memset(&add, 0, sizeof(add));
+    CHECK(mls_group_add_member(&post, &kp, &add) == 0, "add");
+    MarmotCommitKey key;
+    MarmotGroupDataExtension *gde = NULL;
+    EXPECT_ERR(marmot_commit_authorize(&pre, &post, pre.own_leaf_index, true, &key, &gde),
+               MARMOT_ERR_COMMIT_FROM_NON_ADMIN);
+    CHECK(!gde, "no GroupData returned");
+    mls_add_result_clear(&add);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+    mls_group_free(&pre);
+    mls_group_free(&post);
+    sodium_memzero(sk, sizeof(sk));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1672,6 +1841,8 @@ main(int argc, char **argv)
     RUN(test_create_adopted_and_join);
     RUN(test_create_proof_inputs);
     RUN(test_adopted_commits_refused);
+    RUN(test_adopted_removal_refused);
+    RUN(test_no_group_data_no_admin);
     RUN(test_legacy_unchanged);
     free(raw);
     printf("All adopted admission tests passed.\n");
