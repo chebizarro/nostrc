@@ -1640,20 +1640,23 @@ test_concurrent_commits(void)
   spin_until(key_package_published, carol, "Carol's KeyPackage (her proof enrolled)");
   accept_contact(carol, ALICE);
   mdk_peer_engine_default("alice", ALICE);
-  g_autofree gchar *alice_kp = mdk_publish_key_package("alice", "");
+  g_autofree gchar *on_w = g_strdup_printf("\"%s\"", w.w.url);
+  g_autofree gchar *alice_kp = mdk_publish_key_package("alice", on_w);
   g_autofree gchar *alice_kp_id = event_id_of(alice_kp);
   /* The key order this case relies on (secret 1 sorts below secret 3). */
   g_assert_cmpint(strcmp(hex[ALICE], hex[CAROL]), <, 0);
 
+  /* New Group's own path: Alice (MDK) has an adopted KeyPackage only. */
   const gchar *relays[] = { w.g.url, NULL };
-  const gchar *kps[] = { alice_kp, NULL };
+  const gchar *people[] = { hex[ALICE], NULL };
   OpWait created = { 0 };
-  gh_mls_service_test_create_adopted_group_async(carol->service, "Concurrent", relays, kps,
-                                                 NULL, on_created, &created);
+  gh_mls_service_create_group_async(carol->service, "Concurrent", NULL, relays, people, NULL,
+                                    on_created, &created);
   spin_until(op_done, &created, "the adopted group creation");
   g_assert_no_error(created.error);
   GhMlsGroup *gc = created.result;
   g_object_unref(gc);   /* the service keeps it */
+  g_assert_true(gh_mls_group_get_adopted(gc));
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(gc));
   spin_until(welcomes_sent, gc, "the Welcome accepted by Alice's inbox");
   g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
