@@ -593,6 +593,34 @@ test_grease_skipped(void)
 
 /* Two wire profiles must not replace one another's relay slot or retire
  * one another's init keys when their own replacement is acknowledged. */
+/* N1 (W25 review): a join records the profile of the KeyPackage it spent. */
+static void
+test_last_used_profile(void)
+{
+    Member alice, bob;
+    member_init(&alice);
+    member_init(&bob);
+    MarmotKeyPackageProfile used = MARMOT_KEY_PACKAGE_PROFILE_ADOPTED;
+    CHECK(marmot_key_package_last_used_profile(bob.m, bob.pk, &used) ==
+          MARMOT_ERR_STORAGE_NOT_FOUND, "no join yet: unknown");
+    Kp legacy = legacy_kp(&bob);
+    Kp adopted = adopted_kp(&bob, true);
+    char *rumor = invite(&alice, &legacy, false);
+    OK(join(&bob, rumor));
+    free(rumor);
+    OK(marmot_key_package_last_used_profile(bob.m, bob.pk, &used));
+    CHECK(used == MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, "the legacy KeyPackage was spent");
+    rumor = invite(&alice, &adopted, true);
+    OK(join(&bob, rumor));
+    free(rumor);
+    OK(marmot_key_package_last_used_profile(bob.m, bob.pk, &used));
+    CHECK(used == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, "the adopted KeyPackage was spent");
+    free(legacy.json);
+    free(adopted.json);
+    member_free(&alice);
+    member_free(&bob);
+}
+
 static void
 test_profiles_have_independent_slots(void)
 {
@@ -636,6 +664,42 @@ test_profiles_have_independent_slots(void)
     OK(marmot_key_package_confirm_published(bob.m, bob.pk, adopted2.ref));
     CHECK(!has_key(&bob, &adopted1) && has_key(&bob, &legacy2),
           "adopted ACK retires only adopted");
+    /* The slot ids, as a deletion request would address them. */
+    char d_hex[65];
+    OK(marmot_key_package_slot(bob.m, bob.pk, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, d_hex));
+    CHECK(strcmp(d_hex, legacy_slot) == 0, "legacy slot id");
+    OK(marmot_key_package_slot(bob.m, bob.pk, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, d_hex));
+    CHECK(strcmp(d_hex, adopted_slot) == 0, "adopted slot id");
+    /* N3: one active KeyPackage per profile, each the newest of its slot. */
+    {
+        MarmotKeyPackageInfo **infos = NULL;
+        size_t n = 0;
+        OK(bob.m->storage->find_key_packages_by_pubkey(bob.m->storage->ctx, bob.pk, &infos, &n));
+        size_t active = 0;
+        bool legacy_active = false, adopted_active = false;
+        for (size_t i = 0; i < n; i++) {
+            if (!infos[i]->active) continue;
+            active++;
+            legacy_active |= memcmp(infos[i]->ref, legacy2.ref, 32) == 0;
+            adopted_active |= memcmp(infos[i]->ref, adopted2.ref, 32) == 0;
+            marmot_key_package_info_free(infos[i]);
+            infos[i] = NULL;
+        }
+        for (size_t i = 0; i < n; i++)
+            if (infos[i]) marmot_key_package_info_free(infos[i]);
+        free(infos);
+        CHECK(active == 2 && legacy_active && adopted_active, "the newest of each profile active");
+    }
+    /* Stopping a profile retires all of its keys, never the other's. */
+    size_t retired = 0;
+    OK(marmot_key_package_retire_profile(bob.m, bob.pk, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
+                                         &retired));
+    CHECK(retired == 1 && !has_key(&bob, &legacy2) && has_key(&bob, &adopted2),
+          "legacy retired, adopted kept");
+    OK(marmot_key_package_next_expiry_for_profile(bob.m, bob.pk,
+                                                  MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
+                                                  &legacy_exp));
+    CHECK(legacy_exp == 0, "nothing of the legacy profile left");
     Member carol;
     member_init(&carol);
     Kp legacy_only = legacy_kp(&carol);
@@ -658,6 +722,7 @@ main(void)
     printf("KeyPackage lifecycle (nostrc-0bdg)\n");
     RUN(test_rotation_ack_tied);
     RUN(test_profiles_have_independent_slots);
+    RUN(test_last_used_profile);
     RUN(test_unconfirmed_replacement);
     RUN(test_last_resort_delayed_welcome);
     RUN(test_single_use_consumed);

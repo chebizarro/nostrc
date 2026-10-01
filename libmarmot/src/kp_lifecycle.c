@@ -44,6 +44,9 @@
 #include <string.h>
 
 #define KP_LIFE_LABEL     "kp_life"
+/* The profile of the KeyPackage the account's last joined Welcome used: one
+ * byte (MarmotKeyPackageProfile), key the owner pubkey (nostrc-lf62 N1). */
+#define KP_USED_LABEL     "kp_used"
 #define KP_LIFE_VERSION   1
 #define KP_LIFE_MAX       32       /* entries per account, at most */
 #define KP_LIFE_ENTRY_LEN (32 + 8 + 8 + 1)
@@ -375,6 +378,16 @@ marmot_kp_lifecycle_consumed(Marmot *m, const MarmotKpUse *use)
     MarmotError err = life_load(m, use->owner, &life, &found);
     if (err != MARMOT_OK) return err;
     KpLifeEntry *e = found ? life_find(&life, use->ref) : NULL;
+    if (e) {
+        /* Which format the join spent, for the caller's rotation. */
+        uint8_t profile = (e->flags & KP_LIFE_ADOPTED) ? MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+                                                       : MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8;
+        err = m->storage->mls_store(m->storage->ctx, KP_USED_LABEL, use->owner, 32, &profile, 1);
+    } else {
+        /* Not in the record: unknown, never an older join's answer. */
+        err = delete_or_absent(m, KP_USED_LABEL, use->owner);
+    }
+    if (err != MARMOT_OK) return err;
     if (use->last_resort) {
         /* It may serve further Welcomes until the bound. */
         if (!e) return MARMOT_OK;
@@ -508,6 +521,86 @@ marmot_key_package_next_expiry_for_profile(Marmot *m, const uint8_t owner_pubkey
         return MARMOT_ERR_INVALID_ARG;
     }
     return next_expiry_impl(m, owner_pubkey, (int)profile, out_not_after);
+}
+
+MarmotError
+marmot_key_package_last_used_profile(Marmot *m, const uint8_t owner_pubkey[32],
+                                     MarmotKeyPackageProfile *out_profile)
+{
+    if (!m || !owner_pubkey || !out_profile) return MARMOT_ERR_INVALID_ARG;
+    if (!storage_ready(m)) return MARMOT_ERR_STORAGE;
+    uint8_t *data = NULL;
+    size_t len = 0;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, KP_USED_LABEL, owner_pubkey, 32,
+                                           &data, &len);
+    if (err != MARMOT_OK) return err;
+    bool ok = data && len == 1 && (data[0] == MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8 ||
+                                   data[0] == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED);
+    if (ok) *out_profile = (MarmotKeyPackageProfile)data[0];
+    free(data);
+    return ok ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
+static MarmotError
+retire_profile_impl(Marmot *m, const uint8_t owner[32], bool adopted, size_t *deleted)
+{
+    KpLife life;
+    MarmotError err = life_open(m, owner, &life);
+    if (err != MARMOT_OK) return err;
+    size_t n = 0;
+    for (size_t i = 0; i < life.count;) {
+        if (((life.entries[i].flags & KP_LIFE_ADOPTED) != 0) == adopted) {
+            err = delete_private(m, life.entries[i].ref);
+            if (err != MARMOT_OK) return err;
+            life_remove_at(&life, i);
+            n++;
+        } else {
+            i++;
+        }
+    }
+    if (deleted) *deleted = n;
+    return n > 0 ? life_save(m, owner, &life) : MARMOT_OK;
+}
+
+MarmotError
+marmot_key_package_retire_profile(Marmot *m, const uint8_t owner_pubkey[32],
+                                  MarmotKeyPackageProfile profile, size_t *out_deleted)
+{
+    if (out_deleted) *out_deleted = 0;
+    if (!m || !owner_pubkey ||
+        (profile != MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8 &&
+         profile != MARMOT_KEY_PACKAGE_PROFILE_ADOPTED))
+        return MARMOT_ERR_INVALID_ARG;
+    if (!storage_ready(m)) return MARMOT_ERR_STORAGE;
+    MarmotError err = marmot_txn_begin(m);
+    if (err != MARMOT_OK) return err;
+    size_t n = 0;
+    err = marmot_txn_end(m, retire_profile_impl(m, owner_pubkey,
+                                                profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                &n));
+    if (err == MARMOT_OK && out_deleted) *out_deleted = n;
+    return err;
+}
+
+MarmotError
+marmot_kp_lifecycle_newest(Marmot *m, const uint8_t owner[32], bool adopted, uint8_t out_ref[32],
+                           bool *found)
+{
+    *found = false;
+    if (!storage_ready(m)) return MARMOT_ERR_STORAGE;
+    KpLife life;
+    MarmotError err = life_open(m, owner, &life);
+    if (err != MARMOT_OK) return err;
+    uint64_t best = 0;
+    for (size_t i = 0; i < life.count; i++) {
+        if (((life.entries[i].flags & KP_LIFE_ADOPTED) != 0) != adopted) continue;
+        if (!*found || life.entries[i].seq > best) {
+            best = life.entries[i].seq;
+            memcpy(out_ref, life.entries[i].ref, 32);
+            *found = true;
+        }
+    }
+    return MARMOT_OK;
 }
 
 MarmotError

@@ -536,7 +536,16 @@ private constant (`0x01` = adopted), not the `MarmotGroupProfile` value.
   (default OFF) is ignored, so a cache from before cannot keep the producer
   off unnoticed; set the new one OFF to build without it. A meson build
   directory made before keeps its stored value (`meson configure
-  -Dadopted_key_package_producer=true`).
+  -Dadopted_key_package_producer=true`). The old name, still in a cache,
+  is reported once (a warning when it asked for OFF) and removed.
+- **Review fixes (W25 slice K review).** New
+  `marmot_key_package_slot()` (a profile's `d`, e.g. for a NIP-09 deletion
+  request), `marmot_key_package_retire_profile()` (stop a profile: its
+  keys go, once the caller's withdrawal was acknowledged) and
+  `marmot_key_package_last_used_profile()` (which profile the last joined
+  Welcome spent, recorded in the accepting transaction under the
+  account-scoped `kp_used` label: N1). A new KeyPackage no longer leaves the
+  other profile's current one marked inactive: `active` is per profile (N3).
 
 ### 0.12.0 (unreleased): Commits in adopted groups (nostrc-qp24.5.1.3)
 

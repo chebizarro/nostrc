@@ -708,7 +708,9 @@ typedef struct {
     /** Creation timestamp */
     int64_t created_at;
 
-    /** Whether this is the active (latest) key package for this pubkey */
+    /** Whether this is the active (latest) key package for this pubkey and
+     *  its profile: since 0.12.0 an account has one active KeyPackage per
+     *  profile, each in its own slot (nostrc-lf62) */
     bool active;
 } MarmotKeyPackageInfo;
 

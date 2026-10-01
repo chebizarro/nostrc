@@ -16,10 +16,20 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # default OFF, cannot keep it off unnoticed; the C macro keeps its name.
 option(MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER
   "Allow marmot_create_key_package_for_profile(ADOPTED)" ON)
+# The old name: said once, loudly when it asked for OFF (a packager wanting
+# MDK 0.8 KeyPackages only must use the new name), then dropped from the
+# cache so the message does not repeat.
 if(DEFINED CACHE{MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER})
-  message(STATUS "libmarmot: MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER is replaced by "
-                 "MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER (now ${MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER}); "
-                 "the old cache entry is ignored")
+  if(NOT MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER AND MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER)
+    message(WARNING "libmarmot: MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=OFF is ignored: the "
+                    "option is now MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER (ON). Configure with "
+                    "-DMARMOT_ADOPTED_KEY_PACKAGE_PRODUCER=OFF to build without the adopted "
+                    "KeyPackage producer.")
+  else()
+    message(STATUS "libmarmot: MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER is now "
+                   "MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER (${MARMOT_ADOPTED_KEY_PACKAGE_PRODUCER})")
+  endif()
+  unset(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER CACHE)
 endif()
 
 set(MARMOT_VERSION_MAJOR 0)

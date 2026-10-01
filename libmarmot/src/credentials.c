@@ -270,6 +270,56 @@ marmot_base64_decode(const char *b64, size_t *out_len)
 #define MARMOT_KP_SLOT_LABEL_ADOPTED "kp_slot_adopted"
 #define MARMOT_KP_SLOT_LEN           32
 
+/* Marks the other profile's newest KeyPackage of @owner active again. */
+static MarmotError
+reactivate_other_profile(Marmot *m, const uint8_t owner[32], bool adopted)
+{
+    uint8_t ref[32];
+    bool found = false;
+    MarmotError err = marmot_kp_lifecycle_newest(m, owner, !adopted, ref, &found);
+    if (err != MARMOT_OK || !found || !m->storage->find_key_packages_by_pubkey)
+        return err;
+    MarmotKeyPackageInfo **infos = NULL;
+    size_t n = 0;
+    err = m->storage->find_key_packages_by_pubkey(m->storage->ctx, owner, &infos, &n);
+    for (size_t i = 0; err == MARMOT_OK && i < n; i++) {
+        if (memcmp(infos[i]->ref, ref, 32) != 0 || infos[i]->active)
+            continue;
+        infos[i]->active = true;
+        err = m->storage->save_key_package_info(m->storage->ctx, infos[i]);
+    }
+    for (size_t i = 0; i < n; i++)
+        marmot_key_package_info_free(infos[i]);
+    free(infos);
+    return err;
+}
+
+MarmotError
+marmot_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
+                        MarmotKeyPackageProfile profile, char out_d_hex[65])
+{
+    if (!m || !owner_pubkey || !out_d_hex ||
+        (profile != MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8 &&
+         profile != MARMOT_KEY_PACKAGE_PROFILE_ADOPTED))
+        return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->mls_load) return MARMOT_ERR_STORAGE;
+    const char *label = profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+                          ? MARMOT_KP_SLOT_LABEL_ADOPTED : MARMOT_KP_SLOT_LABEL_LEGACY;
+    uint8_t *stored = NULL;
+    size_t len = 0;
+    MarmotError err = m->storage->mls_load(m->storage->ctx, label, owner_pubkey, 32,
+                                           &stored, &len);
+    if (err != MARMOT_OK) return err;
+    if (!stored || len != MARMOT_KP_SLOT_LEN) {
+        free(stored);
+        return MARMOT_ERR_STORAGE;
+    }
+    for (size_t i = 0; i < MARMOT_KP_SLOT_LEN; i++)
+        snprintf(out_d_hex + 2 * i, 3, "%02x", stored[i]);
+    free(stored);
+    return MARMOT_OK;
+}
+
 static MarmotError
 load_or_create_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
                                 bool adopted, uint8_t slot_out[MARMOT_KP_SLOT_LEN])
@@ -996,6 +1046,11 @@ success:
         info.relay_count = relay_count;
     }
     err = m->storage->save_key_package_info(m->storage->ctx, &info);
+    /* "Active" is per profile (nostrc-lf62 N3): deactivating the account's
+     * KeyPackages above also caught the other profile's current one, which
+     * stays published in its own slot. */
+    if (err == MARMOT_OK)
+        err = reactivate_other_profile(m, nostr_pubkey, adopted);
     if (err != MARMOT_OK) {
         m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
         m->storage->mls_delete(m->storage->ctx, "kp_full", kp_ref, MLS_HASH_LEN);

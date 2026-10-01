@@ -47,4 +47,9 @@ MarmotError marmot_kp_lifecycle_register(Marmot *m, const uint8_t owner[32],
  * Lifetime ends. */
 MarmotError marmot_kp_lifecycle_consumed(Marmot *m, const MarmotKpUse *use);
 
+/* The ref of @owner's newest KeyPackage of a profile in the record (*found
+ * FALSE: none). */
+MarmotError marmot_kp_lifecycle_newest(Marmot *m, const uint8_t owner[32], bool adopted,
+                                       uint8_t out_ref[32], bool *found);
+
 #endif /* MARMOT_KP_LIFECYCLE_H */

@@ -473,6 +473,63 @@ MarmotError marmot_key_package_next_expiry_for_profile(Marmot *m,
                                                        int64_t *out_not_after);
 
 /**
+ * marmot_key_package_slot:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @profile: whose slot
+ * @out_d_hex: (out caller-allocates): the slot's `d` tag value (64 hex
+ *   characters and a NUL)
+ *
+ * The stable publication slot of the account's @profile KeyPackages (since
+ * 0.12.0, nostrc-lf62), e.g. to address a NIP-09 deletion request
+ * (`a` = `30443:<pubkey>:<d>`) when the account stops publishing a profile.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_STORAGE_NOT_FOUND when no KeyPackage of
+ *   @profile was ever made; MARMOT_ERR_INVALID_ARG; storage errors
+ */
+MarmotError marmot_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
+                                    MarmotKeyPackageProfile profile, char out_d_hex[65]);
+
+/**
+ * marmot_key_package_retire_profile:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @profile: the profile to stop
+ * @out_deleted: (out) (optional): how many KeyPackages lost their private
+ *   material
+ *
+ * Deletes the private material of every KeyPackage of @profile the account
+ * has, whatever its state (since 0.12.0, nostrc-lf62): the account stops
+ * offering that profile. Call it once a relay accepted the request that
+ * withdraws the published one (ACK-tied, as a replacement): until then a
+ * Welcome to it still opens. The other profile is untouched.
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_INVALID_ARG; storage errors (nothing deleted)
+ */
+MarmotError marmot_key_package_retire_profile(Marmot *m, const uint8_t owner_pubkey[32],
+                                              MarmotKeyPackageProfile profile,
+                                              size_t *out_deleted);
+
+/**
+ * marmot_key_package_last_used_profile:
+ * @m: Marmot instance
+ * @owner_pubkey: (array fixed-size=32): the account
+ * @out_profile: (out): the profile of the KeyPackage the account's last
+ *   joined Welcome was opened with
+ *
+ * Which of the account's slots its last join spent (since 0.12.0,
+ * nostrc-lf62), so the caller replaces that one: recorded in the accepting
+ * transaction of marmot_accept_welcome() and
+ * marmot_accept_welcome_by_wrapper_id().
+ *
+ * Returns: MARMOT_OK; MARMOT_ERR_STORAGE_NOT_FOUND when unknown (no join
+ *   yet, or the KeyPackage predates the lifecycle record);
+ *   MARMOT_ERR_INVALID_ARG; storage errors
+ */
+MarmotError marmot_key_package_last_used_profile(Marmot *m, const uint8_t owner_pubkey[32],
+                                                 MarmotKeyPackageProfile *out_profile);
+
+/**
  * MarmotAccountSignFunc:
  * @user_data: the pointer given alongside the callback
  * @unsigned_event_json: an unsigned NIP-01 event (kind 450, the
