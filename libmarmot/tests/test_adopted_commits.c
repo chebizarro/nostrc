@@ -2142,6 +2142,29 @@ test_group_image_component_updates(void)
     CHECK(!parts.image.present && parts.avatar_source == MARMOT_GROUP_AVATAR_NONE,
           "clearing image is replicated");
     marmot_group_components_clear(&parts);
+    /* 0x800b: the group's media servers, admin-only, followed by receivers. */
+    char *kinds[] = { "blossom-v1", NULL };
+    MarmotMediaBlobEndpoint endpoints[] = { { "blossom-v1", "https://media.example.com", false } };
+    MarmotGroupMediaPolicy policy = { kinds, 1, endpoints, 1 };
+    event = NULL;
+    EXPECT_ERR(marmot_update_group_media_policy(t.bob.m, &t.gid, &policy, &event),
+               MARMOT_ERR_ADMIN_ONLY);
+    CHECK(event == NULL, "non-admin produced no media policy Commit");
+    EXPECT_ERR(marmot_update_group_media_policy(t.alice.m, &t.gid, NULL, &event),
+               MARMOT_ERR_INVALID_ARG);
+    OK(marmot_update_group_media_policy(t.alice.m, &t.gid, &policy, &event));
+    publish(&t.alice, &t.gid, event, receivers, 2);
+    free(event);
+    event = NULL;
+    OK(marmot_get_group_components(t.carol.m, &t.gid, &parts));
+    CHECK(parts.has_media_policy && parts.media_policy.default_blob_endpoint_count == 1 &&
+          strcmp(parts.media_policy.default_blob_endpoints[0].base_url,
+                 "https://media.example.com/") == 0 &&
+          !parts.media_policy.default_blob_endpoints[0].base_url_unverified,
+          "media policy applied by receiver");
+    marmot_group_components_clear(&parts);
+    EXPECT_ERR(marmot_update_group_media_policy(t.alice.m, &t.gid, &policy, &event),
+               MARMOT_ERR_INVALID_ARG);   /* no change, no Commit */
     marmot_group_blossom_image_clear(&image);
     sodium_memzero(ciphertext, ciphertext_len);
     free(ciphertext);

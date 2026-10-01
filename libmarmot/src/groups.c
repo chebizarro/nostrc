@@ -1823,6 +1823,10 @@ update_adopted_image_component(Marmot *m, const MarmotGroupId *gid, uint16_t id,
                                char **out_commit_json)
 {
     if (!state) return MARMOT_ERR_INVALID_ARG;
+    /* Defence in depth (W25 review N3): the public entry points pass only
+     * what the codecs encoded, which this never refuses, and
+     * finish_adopted_commit() checks the Commit as receivers do. It keeps
+     * this function safe for any caller handing it raw state bytes. */
     int valid = mls_adopted_component_state_valid(id, state, state_len);
     if (valid != 0) return (MarmotError)valid;
 
@@ -1837,10 +1841,12 @@ update_adopted_image_component(Marmot *m, const MarmotGroupId *gid, uint16_t id,
     MlsAdoptedGroupContext gc;
     err = adopted_context(&mls, &gc);
     if (err != MARMOT_OK) goto out;
-    const uint8_t *old = id == MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1
-        ? gc.image : gc.avatar;
-    size_t old_len = id == MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1
-        ? gc.image_len : gc.avatar_len;
+    const uint8_t *old = id == MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1 ? gc.image
+                         : id == MARMOT_COMPONENT_GROUP_AVATAR_URL_V1 ? gc.avatar
+                         : gc.media_policy;
+    size_t old_len = id == MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1 ? gc.image_len
+                     : id == MARMOT_COMPONENT_GROUP_AVATAR_URL_V1 ? gc.avatar_len
+                     : gc.media_policy_len;
     if (old && old_len == state_len && memcmp(old, state, state_len) == 0) {
         err = MARMOT_ERR_INVALID_ARG; /* no change, no Commit */
         goto out;
@@ -1906,6 +1912,21 @@ marmot_update_group_blossom_image(Marmot *m, const MarmotGroupId *gid,
     err = update_image_component_txn(m, gid, MARMOT_COMPONENT_GROUP_BLOSSOM_IMAGE_V1,
                                      state, state_len, out_commit_json);
     sodium_memzero(state, state_len);   /* the image key and upload key */
+    free(state);
+    return err;
+}
+
+MarmotError
+marmot_update_group_media_policy(Marmot *m, const MarmotGroupId *gid,
+                                 const MarmotGroupMediaPolicy *policy, char **out_commit_json)
+{
+    if (!policy) return MARMOT_ERR_INVALID_ARG;
+    uint8_t *state = NULL;
+    size_t state_len = 0;
+    MarmotError err = marmot_group_media_policy_encode(policy, &state, &state_len);
+    if (err != MARMOT_OK) return err;
+    err = update_image_component_txn(m, gid, MARMOT_COMPONENT_GROUP_ENCRYPTED_MEDIA_V2, state,
+                                     state_len, out_commit_json);
     free(state);
     return err;
 }

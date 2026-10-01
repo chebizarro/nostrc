@@ -269,6 +269,27 @@ MarmotError marmot_update_group_avatar_url(Marmot *m, const MarmotGroupId *mls_g
                                            const MarmotGroupAvatarUrl *avatar,
                                            char **out_commit_json);
 
+/**
+ * marmot_update_group_media_policy:
+ * @m: Marmot instance
+ * @mls_group_id: an adopted group
+ * @policy: the new 0x800b marmot.group.encrypted-media.v2 state (encoded by
+ *   marmot_group_media_policy_encode(): endpoints normalized, none
+ *   unverified)
+ * @out_commit_json: (out) (transfer full): the kind:445 Commit to publish
+ *
+ * marmot_update_group_blossom_image() for the group's media policy: the
+ * allowed locator kinds and the default blob endpoints (where members look
+ * for files and the group picture). A full replacement; there is no clear
+ * (the policy needs a locator kind). Since 0.12.0 (W25).
+ *
+ * Returns: as marmot_update_group_blossom_image(); the encoder's error for
+ *   an invalid policy
+ */
+MarmotError marmot_update_group_media_policy(Marmot *m, const MarmotGroupId *mls_group_id,
+                                             const MarmotGroupMediaPolicy *policy,
+                                             char **out_commit_json);
+
 #ifdef __cplusplus
 }
 #endif
