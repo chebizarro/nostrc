@@ -115,6 +115,68 @@ kind1_filters(void)
   return filters;
 }
 
+/* ---- tolerated warnings --------------------------------------------------- */
+
+/* The flood's overflow warning, counted by a log handler rather than
+ * expected with g_test_expect_message(): GLib reads that function's list in
+ * every g_log() call, on any thread, without a lock, and the relay thread logs
+ * (libsoup, per frame) while a libnostr thread consumes the expectation. That
+ * read of a freed node crashed the relay thread in g_logv (nostrc-79mi). */
+static gint overflow_warnings; /* atomic */
+static gint overflow_expected; /* atomic: a flood case counts it */
+
+static gboolean
+is_overflow_warning(const gchar *domain, GLogLevelFlags level, const gchar *message)
+{
+  return g_strcmp0(domain, "gnostr-subscription") == 0 && (level & G_LOG_LEVEL_WARNING) &&
+         g_pattern_match_simple("*over its limit*", message);
+}
+
+static void
+on_subscription_warning(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                        gpointer data)
+{
+  if (is_overflow_warning(domain, level, message))
+    g_atomic_int_inc(&overflow_warnings);
+  else
+    g_log_default_handler(domain, level, message, data);
+}
+
+/* The burst relay may accept a connection the relay client has already reset
+ * (its NIP-11 fetch, cancelled at disconnect). libsoup then cannot read the
+ * peer address (Linux: ENOTCONN, macOS: EINVAL) and warns from
+ * soup-server-connection.c, which G_DEBUG=fatal-warnings made a SIGTRAP in the
+ * Linux gate (nostrc-79mi). That is this harness's accept race, as in
+ * gnome/groundhog/tests/nip29/nip29-relay.h, so exactly that warning is not
+ * fatal. */
+static gboolean
+is_accept_race(const gchar *domain, const gchar *message)
+{
+  return g_strcmp0(domain, "libsoup") == 0 && message &&
+         strstr(message, "could not get remote address") != NULL;
+}
+
+static GLogFunc previous_default_handler;
+
+/* A forgiven warning goes out as an ordinary one, not "Bail out!". */
+static void
+log_forgiven_as_warning(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                        gpointer data)
+{
+  if (is_accept_race(domain, message))
+    level &= ~G_LOG_FLAG_FATAL;
+  previous_default_handler(domain, level, message, data);
+}
+
+/* GTest clears the fatal handler before each case: relay_start() arms it. */
+static gboolean
+fatal_unless_tolerated(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                       gpointer data G_GNUC_UNUSED)
+{
+  return !is_accept_race(domain, message) &&
+         !(g_atomic_int_get(&overflow_expected) && is_overflow_warning(domain, level, message));
+}
+
 /* ---- burst relay ---------------------------------------------------------- */
 
 typedef struct {
@@ -218,6 +280,7 @@ relay_thread(gpointer data)
 static void
 relay_start(BurstRelay *relay)
 {
+  g_test_log_set_fatal_handler(fatal_unless_tolerated, NULL);
   g_mutex_init(&relay->lock);
   g_cond_init(&relay->ready);
   relay->context = g_main_context_new();
@@ -505,7 +568,12 @@ run_flood(guint max_events, guint64 max_bytes)
   g_signal_connect(sub, "event", G_CALLBACK(on_backfill_event), &b);
   g_signal_connect(sub, "eose", G_CALLBACK(on_backfill_eose), &b);
   g_signal_connect(sub, "closed", G_CALLBACK(on_backfill_closed), &b);
-  g_test_expect_message("gnostr-subscription", G_LOG_LEVEL_WARNING, "*over its limit*");
+  g_atomic_int_set(&overflow_warnings, 0);
+  g_atomic_int_set(&overflow_expected, 1);
+  guint warning_handler = g_log_set_handler("gnostr-subscription",
+                                            G_LOG_LEVEL_WARNING | G_LOG_FLAG_FATAL |
+                                              G_LOG_FLAG_RECURSION,
+                                            on_subscription_warning, NULL);
   g_autoptr(GError) error = NULL;
   g_assert_true(gnostr_subscription_fire(sub, &error));
   g_assert_no_error(error);
@@ -535,7 +603,7 @@ run_flood(guint max_events, guint64 max_bytes)
   if (!timed_out)
     g_source_remove(bound);
   g_assert_false(timed_out);
-  g_test_assert_expected_messages();
+  g_assert_cmpint(g_atomic_int_get(&overflow_warnings), ==, 1);
 
   /* Every queued event, in order, then the explicit close; no EOSE. */
   g_assert_cmpstr(b.closed_reason, ==, GNOSTR_SUBSCRIPTION_OVERFLOW_REASON);
@@ -564,6 +632,8 @@ run_flood(guint max_events, guint64 max_bytes)
   gnostr_relay_disconnect(relay);
   g_object_unref(relay);
   relay_stop(&server);
+  g_log_remove_handler("gnostr-subscription", warning_handler);
+  g_atomic_int_set(&overflow_expected, 0);
   g_ptr_array_unref(server.stored);
   g_array_unref(b.indices);
   g_free(b.closed_reason);
@@ -602,6 +672,8 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  /* Before any thread logs. */
+  previous_default_handler = g_log_set_default_handler(log_forgiven_as_warning, NULL);
   g_test_add_func("/nostr-gobject/subscription/stored-events-precede-eose",
                   test_stored_events_precede_eose);
   g_test_add_func("/nostr-gobject/subscription/lossless-backfill-complete",
