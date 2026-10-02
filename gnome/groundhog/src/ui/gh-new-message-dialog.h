@@ -54,6 +54,14 @@ typedef struct {
   /* Whether this build creates encrypted groups (GH_FEATURE_ENCRYPTED_GROUPS),
    * so the 10-recipient limit may point to them. */
   gboolean encrypted_groups;
+  /* Nullable: creates a Marmot DM (2-member MLS group with empty name) for
+   * pubkey (hex). On success, the result is a GhConversation (transfer full).
+   * When NULL, the dialog always creates NIP-17 rooms. When the async call
+   * fails, the dialog falls back to NIP-17 with honest copy. */
+  void (*create_marmot_dm)(const gchar *pubkey, GCancellable *cancellable,
+                           GAsyncReadyCallback callback, gpointer user_data,
+                           gpointer config_data);
+  gpointer create_dm_data;
 } GhNewMessageConfig;
 
 typedef enum {

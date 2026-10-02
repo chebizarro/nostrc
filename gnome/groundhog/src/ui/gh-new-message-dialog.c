@@ -777,6 +777,63 @@ add_recipient(GhNewMessageDialog *self, const gchar *pubkey, const gchar *label)
 
 /* ---- starting ---------------------------------------------------------------- */
 
+/* Complete a conversation start: emit the signal and close. */
+static void
+finish_start(GhNewMessageDialog *self, GhConversation *room)
+{
+  g_autoptr(GhNewMessageDialog) keep = g_object_ref(self);
+  g_autoptr(GhConversation) started = g_object_ref(room);
+  g_cancellable_cancel(self->cancellable);
+  g_signal_emit(self, signals[SIGNAL_STARTED], 0, started);
+  adw_dialog_close(ADW_DIALOG(self));
+}
+
+static void
+start_nip17(GhNewMessageDialog *self, GStrv peers)
+{
+  g_autoptr(GError) error = NULL;
+  GhConversation *room = gh_conversation_store_open_room(self->config.conversations,
+                                                         (const gchar *const *)peers, &error);
+  if (!room) {
+    g_message("Groundhog could not start a conversation: %s", error->message);
+    show_error(self, g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED)
+                       ? _("The conversation couldn't be started. Choose an account first.")
+                       : _("The conversation couldn't be started."));
+    adw_navigation_view_pop_to_tag(self->navigation, "pick");
+    return;
+  }
+  finish_start(self, room);
+}
+
+static void
+marmot_dm_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  GhNewMessageDialog *self = GH_NEW_MESSAGE_DIALOG(data);
+  /* The conversation was created by the MLS service; the result is a
+   * GhConversation for the new Marmot DM. On failure (no KeyPackage,
+   * mixed profile, cancelled, etc.) fall back to NIP-17. */
+  GhConversation *room = g_task_propagate_pointer(G_TASK(result), NULL);
+  if (room) {
+    finish_start(self, room);
+    g_object_unref(room);
+  } else {
+    /* Fallback: create a NIP-17 room for the same peer. Rebuild the
+     * peer list from the recipients model (one person). */
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->recipients));
+    g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+    for (guint i = 0; i < n; i++) {
+      g_autoptr(GhNewMessageItem) item = g_list_model_get_item(G_LIST_MODEL(self->recipients), i);
+      g_strv_builder_add(builder, item->pubkey);
+    }
+    g_auto(GStrv) peers = g_strv_builder_end(builder);
+    g_debug("Marmot DM creation failed; falling back to NIP-17 for %s",
+            peers[0] ? peers[0] : "(no peer)");
+    start_nip17(self, peers);
+  }
+  g_object_unref(self);
+}
+
 static void
 start(GhNewMessageDialog *self, gboolean note_to_self)
 {
@@ -789,28 +846,20 @@ start(GhNewMessageDialog *self, gboolean note_to_self)
   g_auto(GStrv) peers = g_strv_builder_end(builder);
   /* A one-to-one conversation: the configured protocol decides whether to
    * create a Marmot (MLS) DM or a NIP-17 room. When the peer has no usable
-   * KeyPackage, the Marmot path falls back to NIP-17 (the caller of this
-   * function handles the fallback once the create-group flow is wired). */
+   * KeyPackage, the Marmot path falls back to NIP-17. */
   gboolean want_marmot = !note_to_self && g_strv_length(peers) == 1
-                         && default_dm_is_marmot(self);
-  (void)want_marmot; /* wired by the Marmot DM creation flow */
-  g_autoptr(GError) error = NULL;
-  GhConversation *room = gh_conversation_store_open_room(self->config.conversations,
-                                                         (const gchar *const *)peers, &error);
-  if (!room) {
-    g_message("Groundhog could not start a conversation: %s", error->message);
-    show_error(self, g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED)
-                       ? _("The conversation couldn't be started. Choose an account first.")
-                       : _("The conversation couldn't be started."));
-    adw_navigation_view_pop_to_tag(self->navigation, "pick");
+                         && default_dm_is_marmot(self)
+                         && self->config.create_marmot_dm;
+  if (want_marmot) {
+    /* The Marmot DM creation is async (KeyPackage lookup + group creation).
+     * If this build has encrypted groups and the callback is set, try it
+     * first; on failure, marmot_dm_done() falls back to NIP-17. */
+    self->config.create_marmot_dm(peers[0], self->cancellable,
+                                  marmot_dm_done, g_object_ref(self),
+                                  self->config.create_dm_data);
     return;
   }
-  /* Closing may drop the presenter's reference before the signal. */
-  g_autoptr(GhNewMessageDialog) keep = g_object_ref(self);
-  g_autoptr(GhConversation) started = g_object_ref(room);
-  g_cancellable_cancel(self->cancellable);
-  g_signal_emit(self, signals[SIGNAL_STARTED], 0, started);
-  adw_dialog_close(ADW_DIALOG(self));
+  start_nip17(self, peers);
 }
 
 /* ---- NIP-05 lookup (consent row) -------------------------------------------- */
