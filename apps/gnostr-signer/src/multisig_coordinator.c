@@ -326,7 +326,10 @@ static void sign_with_local_key(MultisigCoordinator *coordinator,
       g_clear_error(&error);
     }
 
-    gn_secure_strfree(signature);
+    /* secret_store_sign_event() returns g_strdup() memory (a signature is
+     * public); gn_secure_strfree() on it reads a bogus header and aborts in
+     * sodium_free (nostrc-n98j). */
+    g_free(signature);
   } else {
     g_warning("multisig_coordinator: failed to sign with local key %s: %d",
               signer_npub, rc);

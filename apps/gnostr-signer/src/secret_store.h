@@ -93,16 +93,18 @@ void secret_store_entry_free(SecretStoreEntry *entry);
 SecretStoreResult secret_store_lookup_by_fingerprint(const gchar *fingerprint,
                                                       SecretStoreEntry **out_entry);
 
-/* Get the secret key for a given selector.
- * @selector: npub or key_id
- * @out_nsec: Output nsec1... string (caller frees)
- * Returns: OK on success
- */
 /* Whether a secret key is stored for @selector (npub or key_id), WITHOUT
  * reading it: no secret material enters the process and, on macOS, no
  * Keychain access prompt is shown (attributes-only query). */
 gboolean secret_store_has_secret(const gchar *selector);
 
+/* Get the secret key for a given selector.
+ * @selector: npub or key_id
+ * @out_nsec: Output nsec1... string in secure memory (gn_secure_strdup);
+ *   the caller frees it with gn_secure_strfree() -- never g_free() or
+ *   gnostr_secure_strfree(), which are different allocators.
+ * Returns: OK on success
+ */
 SecretStoreResult secret_store_get_secret(const gchar *selector,
                                           gchar **out_nsec);
 

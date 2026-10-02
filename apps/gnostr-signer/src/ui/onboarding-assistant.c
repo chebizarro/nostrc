@@ -978,38 +978,32 @@ static gboolean can_proceed_from_step(OnboardingAssistant *self) {
       if (!name || !*name) return FALSE;
 
       /* Check passphrase using secure entry or legacy */
-      gchar *pass1 = NULL;
-      gchar *pass2 = NULL;
+      /* Secure-entry text is gn_secure_strdup()'d and must go back through
+       * gn_secure_entry_free_text(), never g_free() (nostrc-n98j); legacy
+       * entries are only borrowed. Same split as update_passphrase_strength(). */
+      gchar *secure1 = NULL;
+      gchar *secure2 = NULL;
+      const char *pass1 = NULL;
+      const char *pass2 = NULL;
 
       if (self->secure_passphrase) {
-        pass1 = gn_secure_entry_get_text(self->secure_passphrase);
+        pass1 = secure1 = gn_secure_entry_get_text(self->secure_passphrase);
       } else if (self->entry_passphrase) {
-        pass1 = g_strdup(gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase)));
+        pass1 = gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase));
       }
 
       if (self->secure_passphrase_confirm) {
-        pass2 = gn_secure_entry_get_text(self->secure_passphrase_confirm);
+        pass2 = secure2 = gn_secure_entry_get_text(self->secure_passphrase_confirm);
       } else if (self->entry_passphrase_confirm) {
-        pass2 = g_strdup(gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase_confirm)));
+        pass2 = gtk_editable_get_text(GTK_EDITABLE(self->entry_passphrase_confirm));
       }
 
-      if (!pass1 || !*pass1) {
-        g_free(pass1);
-        g_free(pass2);
-        return FALSE;
-      }
-      if (g_strcmp0(pass1, pass2) != 0) {
-        g_free(pass1);
-        g_free(pass2);
-        return FALSE;
-      }
-      /* Require at least fair strength */
-      gdouble strength = calculate_passphrase_strength(pass1);
-      gboolean result = strength >= 0.4;
+      /* Non-empty, matching, and at least fair strength */
+      gboolean result = pass1 && *pass1 && g_strcmp0(pass1, pass2) == 0 &&
+                        calculate_passphrase_strength(pass1) >= 0.4;
 
-      /* Securely clear */
-      if (pass1) { memset(pass1, 0, strlen(pass1)); g_free(pass1); }
-      if (pass2) { memset(pass2, 0, strlen(pass2)); g_free(pass2); }
+      if (secure1) gn_secure_entry_free_text(secure1);
+      if (secure2) gn_secure_entry_free_text(secure2);
 
       return result;
     }

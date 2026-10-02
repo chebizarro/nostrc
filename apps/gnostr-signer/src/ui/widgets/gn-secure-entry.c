@@ -561,9 +561,14 @@ gn_secure_entry_get_property(GObject *object,
   GnSecureEntry *self = GN_SECURE_ENTRY(object);
 
   switch (prop_id) {
-    case PROP_TEXT:
-      g_value_take_string(value, gn_secure_entry_get_text(self));
+    case PROP_TEXT: {
+      /* get_text() is secure memory; a GValue frees with g_free(), so copy
+       * and release it through the matching allocator (nostrc-n98j). */
+      gchar *text = gn_secure_entry_get_text(self);
+      g_value_set_string(value, text);
+      gn_secure_entry_free_text(text);
       break;
+    }
     case PROP_SHOW_PASSWORD:
       g_value_set_boolean(value, self->show_password);
       break;

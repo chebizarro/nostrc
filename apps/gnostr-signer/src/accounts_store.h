@@ -75,7 +75,9 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id,
                                GError **error);
 
 /* List all accounts.
- * Returns: GPtrArray of AccountEntry* (caller owns array; use accounts_store_entry_free)
+ * Returns: GPtrArray of AccountEntry*. The array owns its entries (its free
+ * func is accounts_store_entry_free): release it with g_ptr_array_unref() or
+ * g_ptr_array_free(arr, TRUE) and never free an entry yourself.
  */
 GPtrArray *accounts_store_list(AccountsStore *as);
 

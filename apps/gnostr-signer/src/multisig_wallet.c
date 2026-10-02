@@ -764,7 +764,8 @@ MultisigResult multisig_signing_start(const gchar *wallet_id,
   session->event_json = g_strdup(event_json);
   session->signatures_collected = 0;
   session->signatures_required = wallet->threshold_m;
-  session->partial_sigs = g_ptr_array_new_with_free_func(g_free);
+  /* Entries are gn_secure_strdup()'d (multisig_signing_add_signature). */
+  session->partial_sigs = g_ptr_array_new_with_free_func((GDestroyNotify)gn_secure_strfree);
   session->signer_status = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   session->created_at = (gint64)time(NULL);
 

@@ -11,6 +11,7 @@
 #include "../app-resources.h"
 #include "../../social-recovery.h"
 #include "../../secret_store.h"
+#include "../../secure-memory.h"
 #include "../../accounts_store.h"
 #include "../../secure-mem.h"
 #include "../../backup-recovery.h"
@@ -124,7 +125,9 @@ static void secure_free_string(gchar **str) {
 static void clear_sensitive_data(SheetSocialRecovery *self) {
   if (!self) return;
 
-  secure_free_string(&self->cached_nsec);
+  /* cached_nsec comes from secret_store_get_secret(), i.e. gn_secure_strdup()
+   * (secure-memory.c): g_free() on it aborts (nostrc-n98j). */
+  g_clear_pointer(&self->cached_nsec, gn_secure_strfree);
   secure_free_string(&self->recovered_nsec);
 
   if (self->setup_config) {
