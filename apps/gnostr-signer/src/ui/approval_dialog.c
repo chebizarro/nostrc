@@ -292,7 +292,10 @@ static void on_dialog_closed(AdwDialog *dialog) {
     cb(FALSE, FALSE, NULL, 0, self->user_data);
   }
 
-  ADW_DIALOG_CLASS(gnostr_approval_dialog_parent_class)->closed(dialog);
+  /* libadwaita < 1.6 has no default ::closed handler (NULL): an unguarded
+   * chain-up SEGVs on every close on Ubuntu 24.04's 1.5 (nostrc-n98j). */
+  if (ADW_DIALOG_CLASS(gnostr_approval_dialog_parent_class)->closed)
+    ADW_DIALOG_CLASS(gnostr_approval_dialog_parent_class)->closed(dialog);
 }
 
 static void gnostr_approval_dialog_dispose(GObject *object) {

@@ -114,7 +114,10 @@ on_dialog_closed(AdwDialog *dialog) {
   /* Treat close as cancellation if not already handled */
   fire_callback_once(self, FALSE);
 
-  ADW_DIALOG_CLASS(gn_confirm_delete_dialog_parent_class)->closed(dialog);
+  /* libadwaita < 1.6 has no default ::closed handler (NULL): an unguarded
+   * chain-up SEGVs on every close on Ubuntu 24.04's 1.5 (nostrc-n98j). */
+  if (ADW_DIALOG_CLASS(gn_confirm_delete_dialog_parent_class)->closed)
+    ADW_DIALOG_CLASS(gn_confirm_delete_dialog_parent_class)->closed(dialog);
 }
 
 /* ============================================================
