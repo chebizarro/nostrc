@@ -115,6 +115,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <attribute name="action">win.conversation-info</attribute>
       </item>
       <item>
+        <attribute name="label" translatable="yes">_Rename Group…</attribute>
+        <attribute name="action">win.rename-shown-group</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
         <attribute name="label" translatable="yes">_Pin</attribute>
         <attribute name="action">win.pin-shown-conversation</attribute>
         <attribute name="hidden-when">action-disabled</attribute>

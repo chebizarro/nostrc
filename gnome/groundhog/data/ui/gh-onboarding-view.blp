@@ -786,6 +786,19 @@ template $GhOnboardingView: Adw.Bin {
                   spacing: 6;
                   halign: center;
 
+                  // Visible during SIGNING: cancels the signer request
+                  // and the publication (nostrc-a4po).
+                  Button publish_cancel {
+                    visible: false;
+                    label: _("_Cancel");
+                    use-underline: true;
+                    action-name: "onboarding.cancel-publish";
+
+                    styles [
+                      "pill",
+                    ]
+                  }
+
                   Button publish_continue {
                     visible: false;
                     label: _("_Continue");

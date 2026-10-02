@@ -711,13 +711,17 @@ test_gui_header_menu(void)
   g_assert_nonnull(gh_conversation_store_lookup(g.account.model,
                                                 gh_conversation_get_room_id(alice)));
 
-  /* A relay group has its own dialogs: no menu. */
+  /* A relay group shows the menu button with Rename Group… enabled, but DM
+   * actions (mute, pin, delete, disappearing) are disabled (nostrc-0srb). */
   g_autofree gchar *group_room = gh_message_nip29_room_id("wss://groups.test.invalid", "pies");
   GhConversation *group = gh_conversation_store_ensure_group(g.account.model, group_room, "Pies");
   g_assert_true(gh_window_open_item(g.window, group));
   drain_idle();
-  g_assert_false(gtk_widget_get_visible(button));
+  g_assert_true(gtk_widget_get_visible(button));
+  g_assert_true(g_action_group_get_action_enabled(actions, "rename-shown-group"));
   g_assert_false(g_action_group_get_action_enabled(actions, "mute-shown-conversation"));
+  g_assert_false(g_action_group_get_action_enabled(actions, "pin-shown-conversation"));
+  g_assert_false(g_action_group_get_action_enabled(actions, "delete-shown-conversation"));
   gui_down(&g);
 }
 

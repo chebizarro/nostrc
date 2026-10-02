@@ -127,6 +127,13 @@ menu conversation_menu {
       action: "win.conversation-info";
     }
 
+    // Rename (nostrc-0srb): shown for groups; enabled for admins.
+    item {
+      label: _("_Rename Group…");
+      action: "win.rename-shown-group";
+      hidden-when: "action-disabled";
+    }
+
     item {
       label: _("_Pin");
       action: "win.pin-shown-conversation";

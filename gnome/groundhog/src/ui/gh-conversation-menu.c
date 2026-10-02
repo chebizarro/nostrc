@@ -393,6 +393,40 @@ on_mark_unread(GSimpleAction *action, GVariant *parameter, gpointer data)
     gh_conversation_mark_unread(conversation);
 }
 
+/* ---- rename (nostrc-0srb) ---------------------------------------------------- */
+
+/* The shown group conversation, or NULL for DMs. */
+static GhConversation *
+shown_group(MenuAttach *attach)
+{
+  GhContentPage *content = gh_window_get_content(attach->window);
+  GtkWidget *view = gh_content_page_get_view(content);
+  if (!gh_content_page_get_conversation_shown(content) || !GH_IS_CONVERSATION_VIEW(view))
+    return NULL;
+  GhConversation *conversation = gh_conversation_view_get_conversation(GH_CONVERSATION_VIEW(view));
+  if (!conversation)
+    return NULL;
+  GhConversationBackend backend = gh_conversation_get_backend(conversation);
+  return (backend == GH_CONVERSATION_BACKEND_MLS || backend == GH_CONVERSATION_BACKEND_NIP29)
+           ? conversation : NULL;
+}
+
+/* "Rename Group…": opens the group's own info dialog, which already has the
+ * rename page and admin checks (nostrc-0srb). */
+static void
+on_rename_group(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  (void)parameter;
+  MenuAttach *attach = data;
+  if (!shown_group(attach))
+    return;
+  /* Activate win.conversation-info, which dispatches to the MLS or NIP-29
+   * group info dialog. The dialog's rename page handles admin checks. */
+  g_action_group_activate_action(G_ACTION_GROUP(attach->window),
+                                 "conversation-info", NULL);
+}
+
 /* ---- the conversation header menu (charter §7.4 conversation_menu) ------------------ */
 
 /* The private conversation the content page shows, or NULL. */
@@ -418,21 +452,24 @@ set_enabled(MenuAttach *attach, const gchar *name, gboolean enabled)
     g_simple_action_set_enabled(G_SIMPLE_ACTION(action), enabled);
 }
 
-/* The header's menu button shows with a private conversation; of Pin and
- * Unpin only the one that applies. */
+/* The header's menu button shows for private conversations and groups; of
+ * Pin and Unpin only the one that applies. Rename shows for groups only
+ * (nostrc-0srb). */
 static void
 sync_header(MenuAttach *attach)
 {
   GhConversation *conversation = shown_private(attach);
-  watch_shown(attach, conversation);
+  GhConversation *group = shown_group(attach);
+  watch_shown(attach, conversation ? conversation : group);
   gboolean pinned = conversation && gh_conversation_get_pinned(conversation);
   set_enabled(attach, "pin-shown-conversation", conversation && !pinned);
   set_enabled(attach, "unpin-shown-conversation", pinned);
   set_enabled(attach, "mute-shown-conversation", conversation != NULL);
   set_enabled(attach, "disappearing-shown-conversation", conversation != NULL);
   set_enabled(attach, "delete-shown-conversation", conversation != NULL);
+  set_enabled(attach, "rename-shown-group", group != NULL);
   gtk_widget_set_visible(gh_content_page_get_menu_button(gh_window_get_content(attach->window)),
-                         conversation != NULL);
+                         conversation != NULL || group != NULL);
 }
 
 /* Each header item runs the row action of the same name for the shown
@@ -512,6 +549,7 @@ gh_conversation_menu_attach(GhWindow *window, GhConversationInfoServicesFunc ser
     { "mute-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
     { "disappearing-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
     { "delete-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
+    { "rename-shown-group", on_rename_group, NULL, NULL, NULL, { 0 } },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(window), entries, G_N_ELEMENTS(entries), attach);
   /* The header menu follows the shown conversation. */

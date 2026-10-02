@@ -959,6 +959,23 @@ preferences_key_package(GhMlsService *service, GhAccountRelays *relays)
     break;
   case GH_MLS_KEY_PACKAGE_FAILED: state = GH_PREFERENCES_KEY_PACKAGE_FAILED; break;
   case GH_MLS_KEY_PACKAGE_NONE:
+    /* When the key package is NONE, the identity state says why: waiting
+     * for the account proof, declined or failed (nostrc-q74l). */
+    if (service) {
+      switch (gh_mls_service_get_identity_state(service)) {
+      case GH_MLS_IDENTITY_WAITING:
+        state = GH_PREFERENCES_KEY_PACKAGE_IDENTITY_WAITING;
+        break;
+      case GH_MLS_IDENTITY_DECLINED:
+        state = GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED;
+        break;
+      case GH_MLS_IDENTITY_FAILED:
+        state = GH_PREFERENCES_KEY_PACKAGE_IDENTITY_FAILED;
+        break;
+      default: break;
+      }
+    }
+    break;
   default: break;
   }
   return state;
@@ -983,6 +1000,33 @@ static void
 sync_preferences_relays(GhAccountRelays *relays, gpointer dialog)
 {
   sync_preferences_key_package(G_OBJECT(relays), NULL, dialog);
+  /* nostrc-mi1z: update the "Where people reach you" section. */
+  if (relays)
+    gh_preferences_dialog_set_published_relays(
+      GH_PREFERENCES_DIALOG(dialog),
+      gh_account_relays_get_inbox_relays(relays),
+      gh_account_relays_get_write_relays(relays));
+}
+
+/* nostrc-q74l: the preferences dialog asked to retry the account-proof
+ * enrollment. */
+static void
+on_retry_identity(GhMlsService *mls)
+{
+  g_autoptr(GError) error = NULL;
+  if (!gh_mls_service_retry_identity(mls, &error))
+    g_info("retry-identity: %s", error->message);
+}
+
+/* nostrc-mi1z: "Change Relays…" from Preferences opens the onboarding
+ * relay step after closing the dialog. */
+static void
+on_change_relays(GhAppServices *self, GhPreferencesDialog *dialog)
+{
+  GtkWindow *window = gtk_application_get_active_window(self->app);
+  if (window)
+    gtk_widget_activate_action(GTK_WIDGET(window), "win.setup-inbox", NULL);
+  adw_dialog_close(ADW_DIALOG(dialog));
 }
 
 static void
@@ -991,15 +1035,30 @@ key_package_sync_attach(GhAppServices *self, GhPreferencesDialog *dialog)
   g_object_set_data(G_OBJECT(dialog), "gh-app-services", self);
   sync_preferences_key_package(NULL, NULL, dialog);
   GhMlsService *mls = mls_ui_service(self);
+  /* "retry-identity" (nostrc-q74l): retry the account-proof enrollment. */
+  if (mls)
+    g_signal_connect_object(dialog, "retry-identity",
+                            G_CALLBACK(on_retry_identity), mls, G_CONNECT_SWAPPED);
   if (mls) {
     g_signal_connect_object(mls, "notify::key-package-state",
                             G_CALLBACK(sync_preferences_key_package), dialog, 0);
     g_signal_connect_object(mls, "notify::key-package-held",
                             G_CALLBACK(sync_preferences_key_package), dialog, 0);
+    /* The identity state (account proof) affects the key package section
+     * when the key package is NONE (nostrc-q74l). */
+    g_signal_connect_object(mls, "notify::identity-state",
+                            G_CALLBACK(sync_preferences_key_package), dialog, 0);
   }
-  if (self->relays)
+  if (self->relays) {
     g_signal_connect_object(self->relays, "changed", G_CALLBACK(sync_preferences_relays), dialog,
                             0);
+    /* nostrc-mi1z: initial sync. */
+    sync_preferences_relays(self->relays, dialog);
+  }
+  /* nostrc-mi1z: "Change Relays…" closes the dialog and opens the relay
+   * setup step, the same as the key-package [Set Up] button. */
+  g_signal_connect_object(dialog, "change-relays",
+                          G_CALLBACK(on_change_relays), self, G_CONNECT_SWAPPED);
 }
 #endif
 

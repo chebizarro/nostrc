@@ -375,6 +375,7 @@ struct _GhOnboardingView {
   GtkLabel *publish_title;
   GtkLabel *publish_description;
   GtkListBox *result_list;
+  GtkWidget *publish_cancel;
   GtkWidget *publish_continue;
   GtkWidget *publish_retry;
   GtkWidget *publish_later;
@@ -1334,7 +1335,9 @@ on_setup_changed(GhOnboardingView *self)
   gtk_label_set_text(self->publish_description, description);
   update_results(self);
   update_later_offer(self);
+  gboolean signing = state == GH_INBOX_SETUP_SIGNING;
   gboolean done = state == GH_INBOX_SETUP_DONE, failed = state == GH_INBOX_SETUP_FAILED;
+  gtk_widget_set_visible(self->publish_cancel, signing);
   gtk_widget_set_visible(self->publish_continue, done);
   gtk_widget_set_visible(self->publish_retry, failed);
   gtk_widget_set_visible(self->publish_later, failed);
@@ -1342,6 +1345,18 @@ on_setup_changed(GhOnboardingView *self)
     announce(self, title);
     gtk_widget_grab_focus(done ? self->publish_continue : self->publish_retry);
   }
+}
+
+/* Cancel the running publication: its signer request is revoked and nothing
+ * else is sent (nostrc-a4po). */
+static void
+cancel_publish_action(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhOnboardingView *self = GH_ONBOARDING_VIEW(widget);
+  (void)name;
+  (void)parameter;
+  if (self->setup)
+    gh_inbox_setup_cancel(self->setup);
 }
 
 static void
@@ -1472,6 +1487,13 @@ on_accounts_changed(GhOnboardingView *self)
   if (self->signer_test_cancellable &&
       gh_account_controller_get_state(self->config.accounts) != GH_ACCOUNT_STATE_ACTIVE)
     signer_test_cancel(self);
+  /* Signer vanished while its approval is pending (nostrc-a4po): cancel the
+   * publish so the user isn't stuck on "Waiting for Nostr Signer" forever. */
+  if (self->setup &&
+      gh_inbox_setup_get_state(self->setup) == GH_INBOX_SETUP_SIGNING &&
+      gh_account_controller_get_signer_availability(self->config.accounts) ==
+        GH_SIGNER_AVAILABILITY_ABSENT)
+    gh_inbox_setup_cancel(self->setup);
   update_identities(self);
   update_signer_status(self);
 }
@@ -1713,6 +1735,7 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   BIND(publish_title);
   BIND(publish_description);
   BIND(result_list);
+  BIND(publish_cancel);
   BIND(publish_continue);
   BIND(publish_retry);
   BIND(publish_later);
@@ -1739,6 +1762,8 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
                                   test_signer_action);
   gtk_widget_class_install_action(widget_class, "onboarding.check-relays", NULL,
                                   check_relays_action);
+  gtk_widget_class_install_action(widget_class, "onboarding.cancel-publish", NULL,
+                                    cancel_publish_action);
   gtk_widget_class_install_action(widget_class, "onboarding.publish", NULL, publish_action);
   gtk_widget_class_install_action(widget_class, "onboarding.publish-relay-list", NULL,
                                   publish_relay_list_action);

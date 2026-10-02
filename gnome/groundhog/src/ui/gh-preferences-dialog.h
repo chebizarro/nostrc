@@ -161,6 +161,13 @@ typedef enum {
   GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS,
   /* Published; its due replacement waits for pending invitations (A5). */
   GH_PREFERENCES_KEY_PACKAGE_HELD,
+  /* The account-proof signer request is pending (nostrc-q74l). */
+  GH_PREFERENCES_KEY_PACKAGE_IDENTITY_WAITING,
+  /* The user declined the account-proof request (nostrc-q74l). */
+  GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED,
+  /* The signer failed or returned something else for the account proof
+   * (e.g. the daemon's 300 s TTL expired; nostrc-q74l). */
+  GH_PREFERENCES_KEY_PACKAGE_IDENTITY_FAILED,
 } GhPreferencesKeyPackage;
 
 /* Network › Encrypted Groups, shown with the ENCRYPTED_GROUPS feature unless
@@ -236,6 +243,16 @@ void gh_preferences_dialog_set_attachments(GhPreferencesDialog *self,
 /* Reads the cache size and the consents again (e.g. another account's
  * storage opened). */
 void gh_preferences_dialog_refresh_attachments(GhPreferencesDialog *self);
+
+/* Network › Where People Reach You (nostrc-mi1z): the account's published
+ * relay lists read from GhAccountRelays. inbox_relays and write_relays are
+ * NULL-terminated URL arrays (both nullable; NULL hides the section). The
+ * section shows once either is non-NULL. "Change Relays…" emits the
+ * "change-relays" signal so the application can open the onboarding relay
+ * step. */
+void gh_preferences_dialog_set_published_relays(GhPreferencesDialog *self,
+                                                const gchar *const *inbox_relays,
+                                                const gchar *const *write_relays);
 
 G_END_DECLS
 #endif

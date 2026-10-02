@@ -380,9 +380,73 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="AdwPreferencesGroup" id="published_relays_group">
+            <property name="visible">false</property>
+            <property name="title" translatable="yes">Where People Reach You</property>
+            <property name="description" translatable="yes">The relays your account publishes so other people and apps can find you and deliver messages. Changing them asks your signer to sign the update.</property>
+            <child>
+              <object class="GtkListBox" id="inbox_relays_list">
+                <property name="selection-mode">0</property>
+                <style>
+                  <class name="boxed-list"/>
+                </style>
+                <accessibility>
+                  <property name="label" translatable="yes">Message relays</property>
+                </accessibility>
+                <child type="placeholder">
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">No message relays published</property>
+                    <property name="margin-top">12</property>
+                    <property name="margin-bottom">12</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkListBox" id="write_relays_list">
+                <property name="selection-mode">0</property>
+                <style>
+                  <class name="boxed-list"/>
+                </style>
+                <accessibility>
+                  <property name="label" translatable="yes">Publish relays</property>
+                </accessibility>
+                <child type="placeholder">
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">No publish relays</property>
+                    <property name="margin-top">12</property>
+                    <property name="margin-bottom">12</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="published_relays_change">
+                <property name="label" translatable="yes">_Change Relays…</property>
+                <property name="use-underline">true</property>
+                <property name="halign">1</property>
+                <property name="action-name">prefs.change-relays</property>
+                <style>
+                  <class name="pill"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">Discovery Relays</property>
-            <property name="description" translatable="yes">Groundhog asks these relays for your own relay lists. None are set by default, so Groundhog contacts no relay until you add one. They can see your IP address and which accounts you look up.</property>
+            <property name="description" translatable="yes">Relays Groundhog uses to look people up. Kept on this device only; not published anywhere.</property>
             <child>
               <object class="GtkBox">
                 <property name="orientation">1</property>

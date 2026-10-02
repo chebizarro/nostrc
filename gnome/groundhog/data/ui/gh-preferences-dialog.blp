@@ -376,9 +376,80 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
+    // Where people reach you (nostrc-mi1z): the account's published relay
+    // lists (kind 10050 inbox and kind 10002 relay list), read from
+    // GhAccountRelays and shown once known. "Change Relays" runs the
+    // onboarding relay step (win.setup-inbox).
+    Adw.PreferencesGroup published_relays_group {
+      visible: false;
+      title: _("Where People Reach You");
+      description: _("The relays your account publishes so other people and apps can find you and deliver messages. Changing them asks your signer to sign the update.");
+
+      ListBox inbox_relays_list {
+        selection-mode: none;
+
+        styles [
+          "boxed-list",
+        ]
+
+        accessibility {
+          label: _("Message relays");
+        }
+
+        [placeholder]
+        Label {
+          label: _("No message relays published");
+          margin-top: 12;
+          margin-bottom: 12;
+          margin-start: 12;
+          margin-end: 12;
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+
+      ListBox write_relays_list {
+        selection-mode: none;
+
+        styles [
+          "boxed-list",
+        ]
+
+        accessibility {
+          label: _("Publish relays");
+        }
+
+        [placeholder]
+        Label {
+          label: _("No publish relays");
+          margin-top: 12;
+          margin-bottom: 12;
+          margin-start: 12;
+          margin-end: 12;
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+
+      Button published_relays_change {
+        label: _("_Change Relays…");
+        use-underline: true;
+        halign: start;
+        action-name: "prefs.change-relays";
+
+        styles [
+          "pill",
+        ]
+      }
+    }
+
     Adw.PreferencesGroup {
       title: _("Discovery Relays");
-      description: _("Groundhog asks these relays for your own relay lists. None are set by default, so Groundhog contacts no relay until you add one. They can see your IP address and which accounts you look up.");
+      description: _("Relays Groundhog uses to look people up. Kept on this device only; not published anywhere.");
 
       Box {
         orientation: vertical;

@@ -105,12 +105,20 @@ struct _GhPreferencesDialog {
   gpointer attachments_data;
   GDestroyNotify attachments_destroy;
   Binding *blossom_binding;
+  /* nostrc-mi1z: Where People Reach You. */
+  GtkWidget *published_relays_group;
+  GtkListBox *inbox_relays_list;
+  GtkListBox *write_relays_list;
+  GtkWidget *published_relays_change;
 };
 
 G_DEFINE_FINAL_TYPE(GhPreferencesDialog, gh_preferences_dialog, ADW_TYPE_PREFERENCES_DIALOG)
 
 enum { PROP_0, PROP_SETTINGS, PROP_FEATURES, N_PROPS };
 static GParamSpec *properties[N_PROPS];
+
+enum { SIGNAL_RETRY_IDENTITY, SIGNAL_CHANGE_RELAYS, N_SIGNALS };
+static guint signals[N_SIGNALS];
 
 /* The one table of rows that need a feature this build may lack
  * (gh-preferences-dialog.h). Every other row is always live.
@@ -811,6 +819,18 @@ sync_key_package(GhPreferencesDialog *self)
     subtitle = _("Your invitation key couldn't be published right now, so people may not be "
                  "able to invite you. Groundhog tries again.");
     break;
+  case GH_PREFERENCES_KEY_PACKAGE_IDENTITY_WAITING:
+    subtitle = _("Waiting for Nostr Signer to prove your account. Approve the request in "
+                 "Nostr Signer so people can invite you to encrypted groups.");
+    break;
+  case GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED:
+    subtitle = _("You declined the account proof. Without it, people can't invite you to "
+                 "encrypted groups. Try again when you're ready.");
+    break;
+  case GH_PREFERENCES_KEY_PACKAGE_IDENTITY_FAILED:
+    subtitle = _("The account proof couldn't be completed. People can't invite you to "
+                 "encrypted groups until it succeeds. Try again to ask Nostr Signer.");
+    break;
   case GH_PREFERENCES_KEY_PACKAGE_UNKNOWN:
   default:
     break;
@@ -819,10 +839,19 @@ sync_key_package(GhPreferencesDialog *self)
     adw_action_row_set_subtitle(self->key_package_row, subtitle);
   gboolean fix = self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS ||
                  self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS;
-  gtk_button_set_label(GTK_BUTTON(self->key_package_setup),
-                       self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS
-                         ? _("_Add Relays") : _("_Set Up"));
-  gtk_widget_set_visible(self->key_package_setup, shown && fix);
+  gboolean retry = self->key_package == GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED ||
+                   self->key_package == GH_PREFERENCES_KEY_PACKAGE_IDENTITY_FAILED;
+  const gchar *label;
+  if (self->key_package == GH_PREFERENCES_KEY_PACKAGE_NO_WRITE_RELAYS)
+    label = _("_Add Relays");
+  else if (retry)
+    label = _("_Try Again");
+  else
+    label = _("_Set Up");
+  gtk_button_set_label(GTK_BUTTON(self->key_package_setup), label);
+  gtk_actionable_set_action_name(GTK_ACTIONABLE(self->key_package_setup),
+                                 retry ? "prefs.retry-identity" : "prefs.setup-relays");
+  gtk_widget_set_visible(self->key_package_setup, shown && (fix || retry));
 }
 
 void
@@ -840,6 +869,76 @@ gh_preferences_dialog_get_key_package_state(GhPreferencesDialog *self)
 {
   g_return_val_if_fail(GH_IS_PREFERENCES_DIALOG(self), GH_PREFERENCES_KEY_PACKAGE_UNKNOWN);
   return self->key_package;
+}
+
+/* [Try Again]: asks the MLS service to retry the account-proof enrollment
+ * (nostrc-q74l). The app layer connects "retry-identity" to
+ * gh_mls_service_retry_identity(). */
+static void
+retry_identity_activated(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  g_signal_emit(widget, signals[SIGNAL_RETRY_IDENTITY], 0);
+}
+
+/* ---- published relays (nostrc-mi1z) ----------------------------------------- */
+
+static GtkWidget *
+relay_row_new(const gchar *url)
+{
+  AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), url);
+  adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+  return GTK_WIDGET(row);
+}
+
+static void
+fill_relay_list(GtkListBox *list, const gchar *const *relays, const gchar *header)
+{
+  /* Clear the existing rows (leave the placeholder). */
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(list));
+       child; ) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    if (GTK_IS_LIST_BOX_ROW(child))
+      gtk_list_box_remove(list, child);
+    child = next;
+  }
+  if (!relays || !relays[0]) {
+    gtk_widget_set_visible(GTK_WIDGET(list), FALSE);
+    return;
+  }
+  gtk_widget_set_visible(GTK_WIDGET(list), TRUE);
+  /* Header row. */
+  GtkWidget *hdr = relay_row_new(header);
+  gtk_widget_add_css_class(hdr, "dim-label");
+  gtk_widget_set_sensitive(hdr, FALSE);
+  gtk_list_box_append(list, hdr);
+  for (guint i = 0; relays[i]; i++)
+    gtk_list_box_append(list, relay_row_new(relays[i]));
+}
+
+static void
+change_relays_activated(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  g_signal_emit(widget, signals[SIGNAL_CHANGE_RELAYS], 0);
+}
+
+void
+gh_preferences_dialog_set_published_relays(GhPreferencesDialog *self,
+                                           const gchar *const *inbox_relays,
+                                           const gchar *const *write_relays)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  if (self->disposed)
+    return;
+  gboolean has_any = (inbox_relays && inbox_relays[0]) ||
+                     (write_relays && write_relays[0]);
+  gtk_widget_set_visible(self->published_relays_group, has_any);
+  fill_relay_list(self->inbox_relays_list, inbox_relays, _("Message Relays (Inbox)"));
+  fill_relay_list(self->write_relays_list, write_relays, _("Publish Relays"));
 }
 
 /* [Set Up]: the onboarding relay step (GH_STATUS_ACTION_SETUP_INBOX on the
@@ -1406,11 +1505,25 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
                       G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object_class, N_PROPS, properties);
 
+  /* The user asked to retry the account-proof enrollment (nostrc-q74l). */
+  signals[SIGNAL_RETRY_IDENTITY] =
+    g_signal_new("retry-identity", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+
+  /* The user asked to change their published relay lists (nostrc-mi1z). */
+  signals[SIGNAL_CHANGE_RELAYS] =
+    g_signal_new("change-relays", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
+                 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+
   gtk_widget_class_install_action(widget_class, "prefs.delete-all", NULL, delete_all_activated);
   gtk_widget_class_install_action(widget_class, "prefs.setup-relays", NULL,
                                   setup_relays_activated);
+  gtk_widget_class_install_action(widget_class, "prefs.retry-identity", NULL,
+                                  retry_identity_activated);
   gtk_widget_class_install_action(widget_class, "prefs.clear-attachments", NULL,
                                   clear_attachments_activated);
+  gtk_widget_class_install_action(widget_class, "prefs.change-relays", NULL,
+                                  change_relays_activated);
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-preferences-dialog.ui");
@@ -1460,6 +1573,10 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(run_in_background_row);
   BIND(delete_group);
   BIND(delete_all_dialog);
+  BIND(published_relays_group);
+  BIND(inbox_relays_list);
+  BIND(write_relays_list);
+  BIND(published_relays_change);
 #undef BIND
   /* Privacy › Blocked Conversations, shown by gh_blocked_page_attach(). */
   gtk_widget_class_bind_template_child_full(widget_class, "blocked_group", FALSE, 0);
