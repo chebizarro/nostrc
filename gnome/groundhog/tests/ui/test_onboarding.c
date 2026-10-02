@@ -934,6 +934,56 @@ test_first_run_offers_relay_list(Fixture *f, gconstpointer data)
   g_assert_false(later_offered(f));
 }
 
+/* nostrc-a4po: while the signer request is pending (SIGNING), a Cancel button
+ * is offered; pressing it cancels the setup (FAILED), and the result says
+ * nothing was published, with Try Again. */
+static gboolean
+signing(gpointer data)
+{
+  Fixture *f = data;
+  GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
+  return setup && gh_inbox_setup_get_state(setup) == GH_INBOX_SETUP_SIGNING;
+}
+
+static void
+test_cancel_while_signing(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  choose_account(f);
+  act(f, "onboarding.signer-continue");
+  activate_row(f, "relay_list", 0);
+  act(f, "onboarding.inbox-continue");
+
+  /* Hold the signer call so we stay in SIGNING. */
+  f->mock.hold = TRUE;
+  act(f, "onboarding.publish");
+  gh_test_spin_until(signing, f);
+
+  /* The cancel button must be visible during SIGNING (nostrc-a4po). */
+  g_assert_true(gtk_widget_get_visible(child(f, "publish_cancel")));
+  g_assert_false(gtk_widget_get_visible(child(f, "publish_continue")));
+  g_assert_false(gtk_widget_get_visible(child(f, "publish_retry")));
+
+  /* Pressing Cancel finishes with FAILED and the right result. */
+  act(f, "onboarding.cancel-publish");
+  gh_test_spin_until(setup_finished, f);
+  GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
+  g_assert_cmpint(gh_inbox_setup_get_state(setup), ==, GH_INBOX_SETUP_FAILED);
+  g_assert_cmpstr(gtk_label_get_text(child(f, "publish_title")), ==,
+                  "Publishing Stopped");
+  g_assert_false(gtk_widget_get_visible(child(f, "publish_cancel")));
+  g_assert_true(gtk_widget_get_visible(child(f, "publish_retry")));
+  g_assert_true(gtk_widget_get_visible(child(f, "publish_later")));
+  g_assert_false(gtk_widget_get_visible(child(f, "publish_continue")));
+
+  /* No relay was contacted: the cancel prevented it. */
+  g_assert_cmpuint(f->rec.pubs->len, ==, 0);
+
+  /* Release the held signer call so the fixture cleanup doesn't wait. */
+  f->mock.hold = FALSE;
+  gh_test_signer_release_all(&f->mock);
+}
+
 /* A declined signature: the signer test says so, and Publish sends
  * nothing; "Set Up Later" then leaves the banner. */
 static void
@@ -1189,6 +1239,7 @@ main(int argc, char **argv)
   ADD("first-run-publishes", test_first_run_publishes, NULL);
   ADD("read-only", test_read_only, NULL);
   ADD("set-up-later", test_set_up_later, NULL);
+  ADD("cancel-while-signing", test_cancel_while_signing, NULL);
   ADD("signer-denied", test_signer_denied, NULL);
   ADD("minimum-size", test_minimum_size, NULL);
   ADD("returning-user", test_returning_user, npub[1]);

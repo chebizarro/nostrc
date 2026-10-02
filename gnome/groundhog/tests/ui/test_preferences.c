@@ -968,6 +968,31 @@ test_key_package_row(Fixture *f, gconstpointer data)
   gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_UNKNOWN);
   g_assert_false(gtk_widget_get_visible(group));
 
+  /* Identity-proof states (nostrc-q74l): the section shows with the right
+   * subtitle and [Try Again] for declined and failed. */
+  gh_preferences_dialog_set_key_package_state(f->dialog,
+                                              GH_PREFERENCES_KEY_PACKAGE_IDENTITY_WAITING);
+  g_assert_true(gtk_widget_get_visible(group));
+  g_assert_false(gtk_widget_get_visible(setup));  /* waiting: nothing to press */
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(row),
+                          "Waiting for Nostr Signer to prove your account"));
+
+  gh_preferences_dialog_set_key_package_state(f->dialog,
+                                              GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED);
+  g_assert_true(gtk_widget_get_visible(group));
+  g_assert_true(gtk_widget_get_visible(setup));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup)), ==, "_Try Again");
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(row),
+                          "You declined the account proof"));
+
+  gh_preferences_dialog_set_key_package_state(f->dialog,
+                                              GH_PREFERENCES_KEY_PACKAGE_IDENTITY_FAILED);
+  g_assert_true(gtk_widget_get_visible(group));
+  g_assert_true(gtk_widget_get_visible(setup));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup)), ==, "_Try Again");
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(row),
+                          "account proof couldn't be completed"));
+
   /* [Set Up] runs the window's relay step and closes the dialog. */
   gh_preferences_dialog_set_key_package_state(f->dialog, GH_PREFERENCES_KEY_PACKAGE_NO_RELAYS);
   present(f, 800, 700);
@@ -981,6 +1006,61 @@ test_key_package_row(Fixture *f, gconstpointer data)
   drain_idle();
   g_assert_cmpuint(opened, ==, 1);
   g_assert_false(gtk_widget_get_mapped(GTK_WIDGET(f->dialog)));
+}
+
+/* Network › Where People Reach You (nostrc-mi1z): the published relay lists
+ * and the "Change Relays…" button. */
+static void
+change_relays_handler(GhPreferencesDialog *dialog, gpointer data)
+{
+  (void)dialog;
+  (*(guint *)data)++;
+}
+
+static void
+test_published_relays(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GtkWidget *group = child(f, "published_relays_group");
+  GtkListBox *inbox = child(f, "inbox_relays_list");
+  GtkListBox *write = child(f, "write_relays_list");
+  GtkWidget *change = child(f, "published_relays_change");
+
+  /* Before setting relays: the section is hidden. */
+  g_assert_false(gtk_widget_get_visible(group));
+
+  /* Setting both relay lists shows the section and populates each list. */
+  const gchar *const inbox_urls[] = { "wss://inbox.example.com", "wss://inbox2.example.com", NULL };
+  const gchar *const write_urls[] = { "wss://relay.example.com", NULL };
+  gh_preferences_dialog_set_published_relays(f->dialog, inbox_urls, write_urls);
+  g_assert_true(gtk_widget_get_visible(group));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(inbox)));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(write)));
+  /* Each list has a header row + one row per relay. */
+  g_assert_cmpuint(n_rows(inbox), ==, 3); /* header + 2 relays */
+  g_assert_cmpuint(n_rows(write), ==, 2); /* header + 1 relay */
+  g_assert_cmpstr(row_title(inbox, 1), ==, "wss://inbox.example.com");
+  g_assert_cmpstr(row_title(inbox, 2), ==, "wss://inbox2.example.com");
+  g_assert_cmpstr(row_title(write, 1), ==, "wss://relay.example.com");
+
+  /* Only inbox relays, no write relays: section shown, write list hidden. */
+  gh_preferences_dialog_set_published_relays(f->dialog, inbox_urls, NULL);
+  g_assert_true(gtk_widget_get_visible(group));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(inbox)));
+  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(write)));
+
+  /* Clearing both hides the section. */
+  gh_preferences_dialog_set_published_relays(f->dialog, NULL, NULL);
+  g_assert_false(gtk_widget_get_visible(group));
+
+  /* "Change Relays…" emits the change-relays signal. */
+  guint changed = 0;
+  g_signal_connect(f->dialog, "change-relays", G_CALLBACK(change_relays_handler), &changed);
+  gh_preferences_dialog_set_published_relays(f->dialog, inbox_urls, write_urls);
+  present(f, 800, 700);
+  g_signal_emit_by_name(change, "clicked");
+  drain_idle();
+  g_assert_cmpuint(changed, ==, 1);
 }
 
 static void
@@ -1444,6 +1524,7 @@ main(int argc, char **argv)
   ADD("older-marmot-switch", test_older_marmot_switch, all);
   ADD("older-marmot-switch-no-producer", test_older_marmot_switch,
       all & ~GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES);
+  ADD("published-relays", test_published_relays, all);
   ADD("delete-all-runs-forget", test_delete_all_runs_forget, build);
   ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, build);
   ADD("minimum-size-layout", test_minimum_size_layout, build);
