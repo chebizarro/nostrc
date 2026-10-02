@@ -59,6 +59,7 @@ enum {
   PROP_COMPACT,
   PROP_UNDECRYPTABLE,
   PROP_SUMMARY,
+  PROP_REACTION_SUMMARY,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -626,6 +627,9 @@ gh_message_row_get_property(GObject *object, guint id, GValue *value, GParamSpec
   case PROP_SUMMARY:
     g_value_set_string(value, self->summary);
     break;
+  case PROP_REACTION_SUMMARY:
+    g_value_set_object(value, NULL); /* write-only in practice */
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -653,6 +657,9 @@ gh_message_row_set_property(GObject *object, guint id, const GValue *value, GPar
     break;
   case PROP_UNDECRYPTABLE:
     gh_message_row_set_undecryptable(self, g_value_get_boolean(value));
+    break;
+  case PROP_REACTION_SUMMARY:
+    gh_message_row_set_reaction_summary(self, g_value_get_object(value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
@@ -703,6 +710,8 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   props[PROP_UNDECRYPTABLE] = g_param_spec_boolean("undecryptable", NULL, NULL, FALSE, rw);
   props[PROP_SUMMARY] = g_param_spec_string("summary", NULL, NULL, "",
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_REACTION_SUMMARY] = g_param_spec_object("reaction-summary", NULL, NULL,
+    GH_TYPE_REACTION_SUMMARY, rw);
   g_object_class_install_properties(object_class, N_PROPS, props);
 
   g_type_ensure(GH_TYPE_DELIVERY_INDICATOR);

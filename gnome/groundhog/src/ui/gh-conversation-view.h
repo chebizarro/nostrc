@@ -33,6 +33,11 @@ const gchar *gh_timeline_item_get_day_label(GhTimelineItem *self);
 const gchar *gh_timeline_item_get_event_text(GhTimelineItem *self);
 gint64 gh_timeline_item_get_event_at(GhTimelineItem *self);
 
+/* W26 slice B (nostrc-191r): the live reaction summary for this message,
+ * or NULL. The summary auto-updates as reactions arrive. */
+typedef struct _GhReactionSummary GhReactionSummary;
+GhReactionSummary *gh_timeline_item_get_reaction_summary(GhTimelineItem *self);
+
 /* The day separator text for the local day of @when relative to @now:
  * "Today", "Yesterday", the weekday within the last 6 days, else the
  * localized date (with the year only when it is not @now's year). */
@@ -91,6 +96,13 @@ void gh_conversation_view_set_conversation(GhConversationView *self,
                                            GhConversation *conversation);
 GhConversation *gh_conversation_view_get_conversation(GhConversationView *self);
 void gh_conversation_view_set_settings(GhConversationView *self, GSettings *settings);
+
+/* W26 slice B (nostrc-191r): the reaction store for displaying emoji
+ * reaction chips on message bubbles. The view automatically looks up each
+ * message's reaction summary when items are created. NULL detaches. */
+typedef struct _GhReactionStore GhReactionStore;
+void gh_conversation_view_set_reaction_store(GhConversationView *self,
+                                             GhReactionStore *store);
 gboolean gh_conversation_view_get_compact(GhConversationView *self);
 /* The visible timeline: a GListModel (and GtkSectionModel) of GhTimelineItem:
  * the conversation's messages and, after the messages written at or before

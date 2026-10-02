@@ -27,6 +27,8 @@
 #include "gh-app-outbox.h"
 #include "gh-contact-titles.h"
 #include "gh-send-ui.h"
+#include "gh-conversation-view.h"
+#include "gh-reaction-store.h"
 #endif
 #include <glib/gi18n.h>
 #if GROUNDHOG_HAVE_EXPIRY
@@ -620,6 +622,51 @@ expiry_teardown(GhAppServices *self)
   g_signal_handlers_disconnect_by_func(self->account_store, expiry_stop, self);
   g_signal_handlers_disconnect_by_func(self->settings, expiry_settings_changed, self);
   expiry_stop(self);
+}
+#endif
+
+/* W26 slice B (nostrc-191r): reaction chips on message bubbles. Push the
+ * current reaction store from the outbox to every window's conversation
+ * view. The store follows the account store lifecycle (created on open,
+ * freed on close). */
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+static void
+reactions_share(GhAppServices *self)
+{
+  GhReactionStore *reactions = gh_app_outbox_get_reactions(self->outbox);
+  for (GList *l = gtk_application_get_windows(self->app); l; l = l->next) {
+    if (!GH_IS_WINDOW(l->data))
+      continue;
+    GhContentPage *content = gh_window_get_content(GH_WINDOW(l->data));
+    GtkWidget *view = gh_content_page_get_view(content);
+    if (GH_IS_CONVERSATION_VIEW(view))
+      gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), reactions);
+  }
+}
+
+static gboolean
+reactions_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  g_signal_connect_swapped(self->account_store, "changed",
+                           G_CALLBACK(reactions_share), self);
+  reactions_share(self);
+  return TRUE;
+}
+
+static void
+reactions_teardown(GhAppServices *self)
+{
+  g_signal_handlers_disconnect_by_func(self->account_store, reactions_share, self);
+  /* Clear every window's store so nothing references the freed outbox. */
+  for (GList *l = gtk_application_get_windows(self->app); l; l = l->next) {
+    if (!GH_IS_WINDOW(l->data))
+      continue;
+    GhContentPage *content = gh_window_get_content(GH_WINDOW(l->data));
+    GtkWidget *view = gh_content_page_get_view(content);
+    if (GH_IS_CONVERSATION_VIEW(view))
+      gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), NULL);
+  }
 }
 #endif
 
@@ -1583,6 +1630,9 @@ static const GhAppService services[] = {
 #if GROUNDHOG_HAVE_EXPIRY
   { "expiry", expiry_init, expiry_teardown },
 #endif
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+  { "reactions", reactions_init, reactions_teardown },
+#endif
 #if GROUNDHOG_HAVE_ATTACHMENTS
   { "attachments", attachments_init, attachments_teardown },
 #endif
@@ -1742,6 +1792,16 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
   };
   gh_send_ui_attach(window, &send);
+  /* W26 slice B (nostrc-191r): reaction chips on message bubbles. Set the
+   * current reaction store (may be NULL before the account store opens;
+   * reactions_share() re-sets it when it does). */
+  {
+    GhReactionStore *reactions = gh_app_outbox_get_reactions(self->outbox);
+    GhContentPage *content = gh_window_get_content(window);
+    GtkWidget *view = gh_content_page_get_view(content);
+    if (GH_IS_CONVERSATION_VIEW(view))
+      gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), reactions);
+  }
 #if GROUNDHOG_HAVE_ATTACHMENTS
   /* G22: the attach button, the sheet and the attachment cards. */
   GhAttachmentUiConfig attachments = {

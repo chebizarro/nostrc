@@ -39,6 +39,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <lookup name="item" type="GhTimelineRow">GhTimelineRow</lookup>
           </lookup>
         </binding>
+        <binding name="reaction-summary">
+          <lookup name="reaction-summary" type="GhTimelineItem">
+            <lookup name="item" type="GhTimelineRow">GhTimelineRow</lookup>
+          </lookup>
+        </binding>
       </object>
     </child>
     <child>

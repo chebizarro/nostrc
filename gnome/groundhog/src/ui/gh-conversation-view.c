@@ -2,6 +2,9 @@
 #include "gh-link-policy.h"
 #include "gh-message-row.h"
 #include "gh-timeline-row.h"
+#include "gh-conversation-row.h"
+#include "gh-reaction.h"
+#include "gh-reaction-store.h"
 
 #include <glib/gi18n.h>
 
@@ -26,6 +29,7 @@ struct _GhTimelineItem {
   gboolean run_start;
   gboolean run_end;
   gboolean show_sender;
+  GhReactionSummary *reaction_summary; /* W26 slice B (nostrc-191r) */
 };
 
 enum {
@@ -38,6 +42,7 @@ enum {
   ITEM_PROP_IS_MESSAGE,
   ITEM_PROP_IS_EVENT,
   ITEM_PROP_EVENT_TEXT,
+  ITEM_PROP_REACTION_SUMMARY,
   ITEM_N_PROPS
 };
 static GParamSpec *item_props[ITEM_N_PROPS];
@@ -211,6 +216,22 @@ gh_timeline_item_get_event_at(GhTimelineItem *self)
   return self->event_at;
 }
 
+/* W26 slice B (nostrc-191r): the live reaction summary for this message. */
+GhReactionSummary *
+gh_timeline_item_get_reaction_summary(GhTimelineItem *self)
+{
+  g_return_val_if_fail(GH_IS_TIMELINE_ITEM(self), NULL);
+  return self->reaction_summary;
+}
+
+static void
+timeline_item_set_reaction_summary(GhTimelineItem *self, GhReactionSummary *summary)
+{
+  if (!g_set_object(&self->reaction_summary, summary))
+    return;
+  g_object_notify_by_pspec(G_OBJECT(self), item_props[ITEM_PROP_REACTION_SUMMARY]);
+}
+
 static void
 gh_timeline_item_get_property(GObject *object, guint id, GValue *value, GParamSpec *pspec)
 {
@@ -240,6 +261,9 @@ gh_timeline_item_get_property(GObject *object, guint id, GValue *value, GParamSp
   case ITEM_PROP_EVENT_TEXT:
     g_value_set_string(value, self->event_text);
     break;
+  case ITEM_PROP_REACTION_SUMMARY:
+    g_value_set_object(value, self->reaction_summary);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -250,6 +274,7 @@ gh_timeline_item_finalize(GObject *object)
 {
   GhTimelineItem *self = GH_TIMELINE_ITEM(object);
   g_clear_object(&self->message);
+  g_clear_object(&self->reaction_summary);
   g_free(self->event_text);
   g_free(self->day_label);
   G_OBJECT_CLASS(gh_timeline_item_parent_class)->finalize(object);
@@ -276,6 +301,8 @@ gh_timeline_item_class_init(GhTimelineItemClass *klass)
   item_props[ITEM_PROP_IS_EVENT] = g_param_spec_boolean("is-event", NULL, NULL, FALSE, constant);
   item_props[ITEM_PROP_EVENT_TEXT] = g_param_spec_string("event-text", NULL, NULL, NULL,
                                                          constant);
+  item_props[ITEM_PROP_REACTION_SUMMARY] = g_param_spec_object("reaction-summary", NULL, NULL,
+    GH_TYPE_REACTION_SUMMARY, ro);
   g_object_class_install_properties(object_class, ITEM_N_PROPS, item_props);
 }
 
@@ -295,6 +322,7 @@ struct _GhTimeline {
   GListModel *source; /* GhMessage in conversation order (the GhConversation) */
   GPtrArray *items;   /* GhTimelineItem: parallel to source, but for the event */
   gboolean multi_party;
+  GhReactionStore *reactions; /* W26 slice B: look up summaries on creation */
   /* The conversation's timer change (nostrc-qp24.83), an item after every
    * message written at or before it: at items[event_index], with
    * event_index messages before it. NULL when there is none. */
@@ -410,7 +438,15 @@ timeline_splice(GhTimeline *self, guint at, guint position, guint removed, guint
   g_ptr_array_remove_range(self->items, at, removed);
   for (guint i = 0; i < added; i++) {
     g_autoptr(GhMessage) message = g_list_model_get_item(self->source, position + i);
-    g_ptr_array_insert(self->items, at + i, timeline_item_new(message, now));
+    GhTimelineItem *item = timeline_item_new(message, now);
+    /* W26 slice B: bind the live reaction summary when a store is set. */
+    if (self->reactions && message) {
+      const gchar *rumor_id = gh_message_get_rumor_id(message);
+      if (rumor_id)
+        timeline_item_set_reaction_summary(item,
+          gh_reaction_store_lookup(self->reactions, rumor_id));
+    }
+    g_ptr_array_insert(self->items, at + i, item);
   }
   timeline_refresh_runs(self, at > 0 ? at - 1 : 0, at + added + 1);
   g_list_model_items_changed(G_LIST_MODEL(self), at, removed, added);
@@ -639,6 +675,9 @@ struct _GhConversationView {
   GhLinkPreviewFinish finish;
   gpointer fetch_data;
   GDestroyNotify fetch_destroy;
+
+  /* W26 slice B: reactions */
+  GhReactionStore *reactions;
 
   guint announcements[3];
   gchar *last_announcement;
@@ -1089,6 +1128,7 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
 
   if (conversation) {
     self->timeline = timeline_new(G_LIST_MODEL(conversation), is_multi_party(conversation));
+    self->timeline->reactions = self->reactions; /* borrowed */
     on_conversation_changed(self, 0, 0, g_list_model_get_n_items(G_LIST_MODEL(conversation)),
                             G_LIST_MODEL(conversation));
     g_signal_connect_object(conversation, "items-changed", G_CALLBACK(on_conversation_changed),
@@ -1722,6 +1762,32 @@ gh_conversation_view_new(void)
   return g_object_new(GH_TYPE_CONVERSATION_VIEW, NULL);
 }
 
+/* W26 slice B (nostrc-191r): the reaction store for emoji chips on message
+ * bubbles. Setting it passes it to the timeline so new items automatically
+ * look up their summaries; existing items are retroactively bound too. */
+void
+gh_conversation_view_set_reaction_store(GhConversationView *self, GhReactionStore *store)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (!g_set_object(&self->reactions, store))
+    return;
+  if (self->timeline)
+    self->timeline->reactions = store;  /* borrowed; outlives the timeline */
+  /* Retroactively bind summaries for items already in the timeline. */
+  if (self->timeline && store) {
+    guint n = self->timeline->items->len;
+    for (guint i = 0; i < n; i++) {
+      GhTimelineItem *item = g_ptr_array_index(self->timeline->items, i);
+      if (item->message && !item->reaction_summary) {
+        const gchar *rumor_id = gh_message_get_rumor_id(item->message);
+        if (rumor_id)
+          timeline_item_set_reaction_summary(item,
+            gh_reaction_store_lookup(store, rumor_id));
+      }
+    }
+  }
+}
+
 void
 gh_conversation_view_set_settings(GhConversationView *self, GSettings *settings)
 {
@@ -1808,6 +1874,7 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
   g_clear_object(&self->settings);
+  g_clear_object(&self->reactions);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_CONVERSATION_VIEW);
   G_OBJECT_CLASS(gh_conversation_view_parent_class)->dispose(object);
 }

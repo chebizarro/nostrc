@@ -60,6 +60,13 @@ GObject *gh_app_outbox_get_nip29_service(GhAppOutbox *self);
  * build has them and encrypted_groups is set, and disposed with it; NULL
  * otherwise. Borrowed. */
 GObject *gh_app_outbox_get_mls_service(GhAppOutbox *self);
+
+/* W26 slice B (nostrc-191r): the open store's reaction store, made beside
+ * each gh_app_outbox_create() outbox and disposed with it. Holds reaction
+ * summaries for all backends (MLS, NIP-17, NIP-29). NULL when no store
+ * is open. Borrowed. */
+typedef struct _GhReactionStore GhReactionStore;
+GhReactionStore *gh_app_outbox_get_reactions(GhAppOutbox *self);
 /* The DM inbox whose Welcome sink the MLS service takes (borrowed; NULL
  * detaches). Set it before the store opens. */
 void gh_app_outbox_set_inbox(GhAppOutbox *self, GObject *inbox);
