@@ -81,7 +81,6 @@ on_add_option(GtkButton *btn, GhCreatePollDialog *self)
   g_autofree gchar *title = g_strdup_printf(_("Option %u"), total + 1);
   AdwEntryRow *row = ADW_ENTRY_ROW(adw_entry_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-  gtk_editable_set_max_width_chars(GTK_EDITABLE(row), 256);
   g_signal_connect(row, "notify::text", G_CALLBACK(on_text_changed), self);
   adw_preferences_group_add(self->options_group, GTK_WIDGET(row));
   g_ptr_array_add(self->extra_rows, row);

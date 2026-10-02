@@ -50,7 +50,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="AdwEntryRow" id="question_row">
                         <property name="title" translatable="yes">Ask a question…</property>
-                        <property name="max-length">1024</property>
                       </object>
                     </child>
                   </object>
@@ -62,13 +61,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="AdwEntryRow" id="option_row_0">
                         <property name="title" translatable="yes">Option 1</property>
-                        <property name="max-length">256</property>
                       </object>
                     </child>
                     <child>
                       <object class="AdwEntryRow" id="option_row_1">
                         <property name="title" translatable="yes">Option 2</property>
-                        <property name="max-length">256</property>
                       </object>
                     </child>
                   </object>
