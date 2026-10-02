@@ -55,6 +55,7 @@ struct _GnostrApprovalDialog {
   /* State */
   GnostrApprovalCallback callback;
   gpointer user_data;
+  gboolean finished;  /* a decision was made; do_finish() is a no-op after */
   GtkStringList *identity_model;
   gchar *full_content;
   int current_event_kind;
@@ -188,6 +189,11 @@ static void on_remember_toggled(GtkCheckButton *btn, gpointer user_data) {
 
 
 static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
+  /* Approve and Ctrl+A (or a second click) can both land before the close
+   * animation ends: decide once, so no second client session is created. */
+  if (self->finished) return;
+  self->finished = TRUE;
+
   gboolean remember = gtk_check_button_get_active(self->chk_remember);
   guint64 ttl_seconds = 0;
 
@@ -279,9 +285,11 @@ static void on_dialog_closed(AdwDialog *dialog) {
   GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(dialog);
 
   /* Treat close as denial if not already handled */
-  if (self->callback) {
-    self->callback(FALSE, FALSE, NULL, 0, self->user_data);
-    self->callback = NULL; /* Prevent double-call */
+  self->finished = TRUE;
+  GnostrApprovalCallback cb = self->callback;
+  self->callback = NULL; /* Prevent double-call, even if cb re-enters */
+  if (cb) {
+    cb(FALSE, FALSE, NULL, 0, self->user_data);
   }
 
   ADW_DIALOG_CLASS(gnostr_approval_dialog_parent_class)->closed(dialog);

@@ -56,15 +56,25 @@ on_password_entry_changed(GtkEditable *editable, gpointer user_data) {
   update_delete_button_sensitivity(self);
 }
 
+/* Report the decision exactly once. Clear the callback before invoking it:
+ * adw_dialog_close() runs on_dialog_closed(), which would otherwise report a
+ * second (cancel) decision after Delete/Cancel (nostrc-n98j, the same bug as
+ * the approval dialog's). */
+static void
+fire_callback_once(GnConfirmDeleteDialog *self, gboolean confirmed) {
+  GnConfirmDeleteCallback cb = self->callback;
+  self->callback = NULL;
+  if (cb) {
+    cb(confirmed, self->user_data);
+  }
+}
+
 static void
 on_cancel_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnConfirmDeleteDialog *self = GN_CONFIRM_DELETE_DIALOG(user_data);
 
-  if (self->callback) {
-    self->callback(FALSE, self->user_data);
-  }
-
+  fire_callback_once(self, FALSE);
   adw_dialog_close(ADW_DIALOG(self));
 }
 
@@ -93,10 +103,7 @@ on_delete_clicked(GtkButton *btn, gpointer user_data) {
     }
   }
 
-  if (self->callback) {
-    self->callback(TRUE, self->user_data);
-  }
-
+  fire_callback_once(self, TRUE);
   adw_dialog_close(ADW_DIALOG(self));
 }
 
@@ -105,10 +112,7 @@ on_dialog_closed(AdwDialog *dialog) {
   GnConfirmDeleteDialog *self = GN_CONFIRM_DELETE_DIALOG(dialog);
 
   /* Treat close as cancellation if not already handled */
-  if (self->callback) {
-    self->callback(FALSE, self->user_data);
-    self->callback = NULL;
-  }
+  fire_callback_once(self, FALSE);
 
   ADW_DIALOG_CLASS(gn_confirm_delete_dialog_parent_class)->closed(dialog);
 }
