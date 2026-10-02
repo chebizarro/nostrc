@@ -440,7 +440,7 @@ GPtrArray *accounts_store_list(AccountsStore *as) {
     gchar *nsec = NULL;
     e->has_secret = (secret_store_get_secret(e->id, &nsec) == SECRET_STORE_OK);
     if (nsec) {
-      gnostr_secure_strfree(nsec);
+      gn_secure_strfree(nsec);
     }
 
     g_ptr_array_add(arr, e);
@@ -573,7 +573,7 @@ AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query) {
       gchar *nsec = NULL;
       e->has_secret = (secret_store_get_secret(id, &nsec) == SECRET_STORE_OK);
       if (nsec) {
-        gnostr_secure_strfree(nsec);
+        gn_secure_strfree(nsec);
       }
 
       return e;
