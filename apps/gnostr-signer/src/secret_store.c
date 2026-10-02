@@ -576,7 +576,10 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
       if (nip19) {
         const gchar *nsec_str = gnostr_nip19_get_bech32(nip19);
         if (nsec_str) {
-          *out_nsec = g_strdup(nsec_str);
+          /* Callers free with gnostr_secure_strfree(), as on the libsecret
+           * path: a g_strdup() here aborted in sodium_free (approval dialog
+           * -> accounts_store_list, macOS device smoke 2026-10-01). */
+          *out_nsec = gn_secure_strdup(nsec_str);
         }
       }
       memset(sk_hex, 0, 64);
