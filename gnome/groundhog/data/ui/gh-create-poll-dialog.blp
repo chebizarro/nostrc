@@ -1,0 +1,117 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Create Poll dialog (W26 slice C, NIP-88): the user enters a question,
+// 2-10 options, chooses single or multiple choice, and optionally sets an
+// end time. Shown from the composer's poll button in encrypted groups.
+template $GhCreatePollDialog: Adw.Dialog {
+  title: _("Create Poll");
+  content-width: 420;
+  content-height: 520;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-end-title-buttons: false;
+      show-start-title-buttons: false;
+
+      [start]
+      Button cancel_button {
+        label: _("Cancel");
+        action-name: "window.close";
+      }
+
+      [end]
+      Button create_button {
+        label: _("Create");
+        sensitive: false;
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Adw.Clamp {
+      maximum-size: 400;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 12;
+      margin-bottom: 12;
+
+      child: Box {
+        orientation: vertical;
+        spacing: 18;
+
+        // Question
+        Adw.PreferencesGroup {
+          title: _("Question");
+
+          Adw.EntryRow question_row {
+            title: _("Ask a question…");
+            max-length: 1024;
+          }
+        }
+
+        // Options
+        Adw.PreferencesGroup options_group {
+          title: _("Options");
+          description: _("Add 2 to 10 options");
+
+          Adw.EntryRow option_row_0 {
+            title: _("Option 1");
+            max-length: 256;
+          }
+
+          Adw.EntryRow option_row_1 {
+            title: _("Option 2");
+            max-length: 256;
+          }
+        }
+
+        // Add option button
+        Button add_option_button {
+          label: _("Add Option");
+          halign: center;
+
+          styles [
+            "flat",
+          ]
+        }
+
+        // Settings
+        Adw.PreferencesGroup {
+          title: _("Settings");
+
+          Adw.ComboRow poll_type_row {
+            title: _("Poll Type");
+            model: StringList {
+              strings [
+                _("Single Choice"),
+                _("Multiple Choice"),
+              ]
+            };
+          }
+
+          Adw.SwitchRow has_end_time_row {
+            title: _("Set End Time");
+            subtitle: _("Poll will close after a set duration");
+          }
+
+          Adw.SpinRow duration_hours_row {
+            visible: false;
+            title: _("Duration (hours)");
+
+            adjustment: Adjustment {
+              lower: 1;
+              upper: 720;
+              step-increment: 1;
+              page-increment: 24;
+              value: 24;
+            };
+          }
+        }
+      };
+    };
+  };
+}

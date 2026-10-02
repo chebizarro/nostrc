@@ -43,6 +43,27 @@ template $GhComposer: Widget {
         Box edit_row {
           spacing: 6;
 
+          // NIP-88 poll creation (W26): shown while in an encrypted group
+          // ("can-create-poll"); opens the Create Poll dialog.
+          Button poll_button {
+            visible: false;
+            valign: end;
+            icon-name: "view-list-bullet-symbolic";
+            tooltip-text: _("Create Poll");
+            action-name: "composer.create-poll";
+            focus-on-click: false;
+
+            accessibility {
+              label: _("Create Poll");
+              description: _("Create a poll in this encrypted group.");
+            }
+
+            styles [
+              "flat",
+              "circular",
+            ]
+          }
+
           // Attachments (charter G22): shown while the owner can send a
           // file here ("can-attach"); it opens the file chooser. Dropping a
           // file or pasting an image does the same.

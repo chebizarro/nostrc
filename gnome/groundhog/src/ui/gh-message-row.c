@@ -24,6 +24,8 @@ struct _GhMessageRow {
   GhAttachmentCard *attachment_card;
   GtkLabel *attachment_note;
   GPtrArray *extra_cards;   /* an encrypted group message's files 1.. (W25) */
+  GtkBox *poll_slot;
+  GtkWidget *poll_card;     /* set externally for kind-1068 poll messages */
   GtkBox *preview_box;
   GtkButton *preview_button;
   GtkLabel *preview_title;
@@ -399,6 +401,10 @@ update_all(GhMessageRow *self)
   gtk_widget_set_visible(GTK_WIDGET(self->attachment_slot), file_message ||
                          (message && !self->undecryptable && !withdrawn &&
                           gh_message_get_rejected_attachments(message) > 0));
+  /* Poll card: visible only when a poll widget has been set on this row. */
+  gboolean is_poll = self->poll_card != NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->poll_slot), is_poll);
+  if (is_poll) show_body = FALSE;
   gtk_widget_set_visible(GTK_WIDGET(self->body_label), show_body);
   if (!message) {
     gtk_label_set_text(self->body_label, "");
@@ -687,6 +693,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
 
   g_type_ensure(GH_TYPE_DELIVERY_INDICATOR);
   g_type_ensure(GH_TYPE_ATTACHMENT_CARD);
+
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-message-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, sender_label);
@@ -704,6 +711,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_slot);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_card);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_note);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, poll_slot);
   gtk_widget_class_set_css_name(widget_class, "groundhog-message");
 }
 
@@ -724,4 +732,23 @@ gh_message_row_init(GhMessageRow *self)
                            self);
   update_width(self);
   update_all(self);
+}
+
+void
+gh_message_row_set_poll_widget(GhMessageRow *self, GtkWidget *poll_card)
+{
+  g_return_if_fail(GH_IS_MESSAGE_ROW(self));
+  if (self->poll_card == poll_card) return;
+  if (self->poll_card) {
+    gtk_box_remove(self->poll_slot, self->poll_card);
+    self->poll_card = NULL;
+  }
+  if (poll_card) {
+    self->poll_card = poll_card;
+    gtk_box_append(self->poll_slot, poll_card);
+    gtk_widget_set_visible(GTK_WIDGET(self->poll_slot), TRUE);
+    gtk_widget_set_visible(GTK_WIDGET(self->body_label), FALSE);
+  } else {
+    gtk_widget_set_visible(GTK_WIDGET(self->poll_slot), FALSE);
+  }
 }

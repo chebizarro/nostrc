@@ -37,6 +37,11 @@ void gh_message_row_set_compact(GhMessageRow *self, gboolean compact);
 void gh_message_row_set_undecryptable(GhMessageRow *self, gboolean undecryptable);
 const gchar *gh_message_row_get_summary(GhMessageRow *self);
 
+/* Set a poll card widget on a poll-kind message row (W26 slice C).
+ * The widget is placed in the poll slot and body text is hidden.
+ * Pass NULL to remove it. */
+void gh_message_row_set_poll_widget(GhMessageRow *self, GtkWidget *poll_card);
+
 /* The name shown for a pubkey (lowercase hex): its abbreviated npub
  * ("npub1abcde…wxyz"). Profile names are not fetched (charter PT-8). */
 gchar *gh_message_row_display_name(const gchar *pubkey_hex);

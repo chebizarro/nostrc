@@ -294,6 +294,9 @@ struct _GhMlsService {
    * to fire (store clock, unix milliseconds): the next one is staggered
    * after it. */
   gint64 upgrade_slot;
+
+  /* NIP-88 polls (nostrc-a36s): group_id_hex:poll_event_id → GhMlsPoll. */
+  GHashTable *polls;
 };
 
 enum { PROP_0, PROP_KEY_PACKAGE_STATE, PROP_IDENTITY_STATE, PROP_KEY_PACKAGE_HELD, N_PROPS };
@@ -2560,6 +2563,39 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
         gh_store_rollback(self->store);
         marmot_message_result_free(&result);
         return EVENT_OTHER;
+      }
+    }
+    /* NIP-88 polls (nostrc-a36s): track poll definitions and votes. */
+    if (message) {
+      gint inner_kind = gh_message_get_kind(message);
+      if (inner_kind == GH_MLS_POLL_KIND) {
+        g_autoptr(GError) poll_err = NULL;
+        GhMlsPoll *poll = gh_mls_poll_new_from_event(
+          gh_message_get_rumor_id(message), result.app_msg.sender_pubkey_hex,
+          gh_message_get_created_at(message), result.app_msg.inner_event_json,
+          &poll_err);
+        if (poll) {
+          gh_mls_poll_set_local_account(poll, self->account);
+          g_autofree gchar *key = g_strdup_printf("%s:%s", group->gid_hex,
+                                                  gh_message_get_rumor_id(message));
+          g_hash_table_replace(self->polls, g_steal_pointer(&key), poll);
+        } else {
+          g_message("Groundhog: malformed poll in group %s: %s", group->gid_hex,
+                    poll_err ? poll_err->message : "unknown");
+        }
+      } else if (inner_kind == GH_MLS_POLL_VOTE_KIND) {
+        g_autoptr(GError) vote_err = NULL;
+        g_autofree gchar *target_id = NULL;
+        g_auto(GStrv) option_ids = NULL;
+        if (gh_mls_poll_parse_vote(result.app_msg.inner_event_json,
+                                   &target_id, &option_ids, &vote_err)) {
+          g_autofree gchar *key = g_strdup_printf("%s:%s", group->gid_hex, target_id);
+          GhMlsPoll *poll = g_hash_table_lookup(self->polls, key);
+          if (poll)
+            gh_mls_poll_apply_vote(poll, result.app_msg.sender_pubkey_hex,
+                                   (const gchar **) option_ids,
+                                   gh_message_get_created_at(message));
+        }
       }
     }
     /* Another kind (a reaction, a deletion) is read but not shown yet. */
@@ -7651,6 +7687,264 @@ gh_mls_service_lookup(GhMlsService *self, const gchar *group_id_or_room_id)
   return find_group_hex(self, hex);
 }
 
+/* ---- NIP-88 polls (nostrc-a36s) ----------------------------------------- */
+
+GhMlsPoll *
+gh_mls_service_lookup_poll(GhMlsService *self, const gchar *group_id_hex,
+                           const gchar *poll_event_id)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
+  if (!group_id_hex || !poll_event_id) return NULL;
+  g_autofree gchar *key = g_strdup_printf("%s:%s", group_id_hex, poll_event_id);
+  return g_hash_table_lookup(self->polls, key);
+}
+
+GhMessage *
+gh_mls_service_create_poll(GhMlsService *self, GhMlsGroup *group,
+                           const gchar *question,
+                           const gchar **option_labels, guint n_options,
+                           GhMlsPollType poll_type, gint64 ends_at,
+                           GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
+  if (!check_running(self, error))
+    return NULL;
+  if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active ||
+      group->leaving) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A poll needs an active group it is not leaving");
+    return NULL;
+  }
+  if (!group->relays[0]) {
+    g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                        "The group has no relays");
+    return NULL;
+  }
+
+  gint64 now = now_s(self);
+  g_autofree gchar *inner = gh_mls_poll_build_event(
+    self->account, group->nostr_hex, now, question, option_labels, n_options,
+    poll_type, ends_at, error);
+  if (!inner)
+    return NULL;
+
+  g_autofree gchar *inner_id = NULL;
+  {
+    NostrEvent *ev = nostr_event_new();
+    gchar id_buf[65] = { 0 };
+    if (ev && nostr_event_deserialize_unsigned(ev, inner, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+        nostr_event_compute_id(ev, id_buf) == NOSTR_EVENT_VALIDATION_OK)
+      inner_id = g_strdup(id_buf);
+    if (ev) nostr_event_free(ev);
+  }
+  if (!inner_id) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not compute poll event id");
+    return NULL;
+  }
+
+  g_autoptr(GhMessage) message = gh_message_new_from_mls(self->account, group->gid_hex,
+                                                          inner, error);
+  if (!message) return NULL;
+
+  /* Store+send via the same outbox path as text messages. */
+  g_autofree gchar *op_id = gh_store_new_op_id();
+  gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  g_autofree gchar *envelope_id = NULL;
+  g_autoptr(GhStoreOutboxEntry) entry = NULL;
+  drop_stale_error(self);
+  if (!gh_store_begin(self->store, error))
+    return NULL;
+  GhStoreOutgoing outgoing = {
+    .op_id = op_id,
+    .backend_msg_id = inner_id,
+    .sender_pubkey = self->account,
+    .kind = GH_MLS_POLL_KIND,
+    .created_at = gh_message_get_created_at(message),
+    .body = question,
+    .rumor_json = inner,
+  };
+  GhStoreSealedEvent sealed = {
+    .role = GH_STORE_OUTBOX_ROLE_MLS_MESSAGE,
+    .relay_urls = (const gchar *const *) group->relays,
+  };
+  MarmotError err = MARMOT_OK;
+  if (!gh_store_mls_save_room(self->store, group->gid_hex, NULL, &conversation_id, error))
+    goto poll_fail;
+  outgoing.conversation_id = conversation_id;
+  if (!gh_store_enqueue(self->store, &outgoing, &outbox_id, &message_id, error))
+    goto poll_fail;
+  err = marmot_create_message(self->marmot, &group->gid, inner, &out);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The poll could not be encrypted", error);
+    goto poll_fail;
+  }
+  err = marmot_save_created_message(self->marmot, &group->gid, out.event_json,
+                                    out.message && out.message->content ? out.message->content : inner);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The poll could not be stored", error);
+    goto poll_fail;
+  }
+  envelope_id = event_id_of(out.event_json);
+  sealed.event_id = envelope_id;
+  sealed.event_json = out.event_json;
+  if (!envelope_id || !gh_store_seal(self->store, outbox_id, &sealed, 1, error))
+    goto poll_fail;
+  if (!gh_store_commit(self->store, error)) {
+    marmot_outgoing_message_free(&out);
+    return NULL;
+  }
+  entry = gh_store_outbox_load(self->store, outbox_id, NULL);
+  send_listed(self, group, message, outbox_id, entry, out.event_json);
+  marmot_outgoing_message_free(&out);
+
+  /* Track the poll locally. */
+  {
+    GhMlsPoll *poll = gh_mls_poll_new_from_event(inner_id, self->account,
+                                                  gh_message_get_created_at(message),
+                                                  inner, NULL);
+    if (poll) {
+      gh_mls_poll_set_local_account(poll, self->account);
+      gchar *pk = g_strdup_printf("%s:%s", group->gid_hex, inner_id);
+      g_hash_table_replace(self->polls, pk, poll);
+    }
+  }
+
+  return g_steal_pointer(&message);
+
+poll_fail:
+  gh_store_rollback(self->store);
+  marmot_outgoing_message_free(&out);
+  return NULL;
+}
+
+GhMessage *
+gh_mls_service_cast_vote(GhMlsService *self, GhMlsGroup *group,
+                         const gchar *poll_event_id,
+                         const gchar **option_ids, guint n_options,
+                         GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
+  if (!check_running(self, error))
+    return NULL;
+  if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active ||
+      group->leaving) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A vote needs an active group it is not leaving");
+    return NULL;
+  }
+  if (!group->relays[0]) {
+    g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                        "The group has no relays");
+    return NULL;
+  }
+
+  /* Validate the poll exists. */
+  g_autofree gchar *poll_key = g_strdup_printf("%s:%s", group->gid_hex, poll_event_id);
+  GhMlsPoll *poll = g_hash_table_lookup(self->polls, poll_key);
+  if (!poll) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                        "Poll not found");
+    return NULL;
+  }
+
+  gint64 now = now_s(self);
+  if (!gh_mls_poll_is_open(poll, now)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Poll is closed");
+    return NULL;
+  }
+
+  g_autofree gchar *inner = gh_mls_poll_build_vote_event(
+    self->account, group->nostr_hex, now, poll_event_id,
+    option_ids, n_options, error);
+  if (!inner)
+    return NULL;
+
+  g_autofree gchar *inner_id = NULL;
+  {
+    NostrEvent *ev = nostr_event_new();
+    gchar id_buf[65] = { 0 };
+    if (ev && nostr_event_deserialize_unsigned(ev, inner, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+        nostr_event_compute_id(ev, id_buf) == NOSTR_EVENT_VALIDATION_OK)
+      inner_id = g_strdup(id_buf);
+    if (ev) nostr_event_free(ev);
+  }
+  if (!inner_id) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not compute vote event id");
+    return NULL;
+  }
+
+  g_autoptr(GhMessage) message = gh_message_new_from_mls(self->account, group->gid_hex,
+                                                          inner, error);
+  if (!message) return NULL;
+
+  g_autofree gchar *op_id = gh_store_new_op_id();
+  gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  g_autofree gchar *envelope_id = NULL;
+  g_autoptr(GhStoreOutboxEntry) entry = NULL;
+  drop_stale_error(self);
+  if (!gh_store_begin(self->store, error))
+    return NULL;
+  GhStoreOutgoing outgoing = {
+    .op_id = op_id,
+    .backend_msg_id = inner_id,
+    .sender_pubkey = self->account,
+    .kind = GH_MLS_POLL_VOTE_KIND,
+    .created_at = gh_message_get_created_at(message),
+    .body = "",
+    .rumor_json = inner,
+  };
+  GhStoreSealedEvent sealed = {
+    .role = GH_STORE_OUTBOX_ROLE_MLS_MESSAGE,
+    .relay_urls = (const gchar *const *) group->relays,
+  };
+  MarmotError merr = MARMOT_OK;
+  if (!gh_store_mls_save_room(self->store, group->gid_hex, NULL, &conversation_id, error))
+    goto vote_fail;
+  outgoing.conversation_id = conversation_id;
+  if (!gh_store_enqueue(self->store, &outgoing, &outbox_id, &message_id, error))
+    goto vote_fail;
+  merr = marmot_create_message(self->marmot, &group->gid, inner, &out);
+  if (merr != MARMOT_OK) {
+    marmot_fail(self, merr, "The vote could not be encrypted", error);
+    goto vote_fail;
+  }
+  merr = marmot_save_created_message(self->marmot, &group->gid, out.event_json,
+                                     out.message && out.message->content ? out.message->content : inner);
+  if (merr != MARMOT_OK) {
+    marmot_fail(self, merr, "The vote could not be stored", error);
+    goto vote_fail;
+  }
+  envelope_id = event_id_of(out.event_json);
+  sealed.event_id = envelope_id;
+  sealed.event_json = out.event_json;
+  if (!envelope_id || !gh_store_seal(self->store, outbox_id, &sealed, 1, error))
+    goto vote_fail;
+  if (!gh_store_commit(self->store, error)) {
+    marmot_outgoing_message_free(&out);
+    return NULL;
+  }
+  entry = gh_store_outbox_load(self->store, outbox_id, NULL);
+  send_listed(self, group, message, outbox_id, entry, out.event_json);
+  marmot_outgoing_message_free(&out);
+
+  /* Apply the vote to the local poll. */
+  gh_mls_poll_apply_vote(poll, self->account, option_ids, now);
+
+  return g_steal_pointer(&message);
+
+vote_fail:
+  gh_store_rollback(self->store);
+  marmot_outgoing_message_free(&out);
+  return NULL;
+}
+
 static GType
 list_get_item_type(GListModel *model)
 {
@@ -7712,6 +8006,7 @@ gh_mls_service_finalize(GObject *object)
   g_ptr_array_unref(self->groups);
   g_hash_table_unref(self->deliveries);
   g_hash_table_unref(self->verifying);
+  g_clear_pointer(&self->polls, g_hash_table_unref);
   g_ptr_array_unref(self->known_key_packages);
   if (self->marmot)
     marmot_free(self->marmot);   /* and its storage */
@@ -7784,6 +8079,7 @@ gh_mls_service_init(GhMlsService *self)
   self->deliveries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, delivery_free);
   self->verifying = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->known_key_packages = g_ptr_array_new_with_free_func(g_free);
+  self->polls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
     self->kp[f].service = self;
     self->kp[f].format = (GhMlsKeyPackageFormat)f;

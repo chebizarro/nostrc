@@ -172,6 +172,9 @@ gboolean gh_message_is_signed(GhMessage *self);
  * (G_IO_ERROR_INVALID_ARGUMENT for a bad account or group id). */
 #define GH_MESSAGE_MLS_ROOM_PREFIX "mls:"
 #define GH_MESSAGE_MLS_KIND 9
+/* NIP-88 polls carried in MLS app messages (MDK v0.11). */
+#define GH_MESSAGE_MLS_POLL_KIND      1068
+#define GH_MESSAGE_MLS_POLL_VOTE_KIND 1018
 /* The longest MLS group id accepted, in bytes (GhStoreMarmot's bound). */
 #define GH_MESSAGE_MAX_MLS_GROUP_ID 256
 GhMessage *gh_message_new_from_mls(const gchar *account_pubkey,

@@ -12,6 +12,7 @@ struct _GhComposer {
   GtkStack *composer_stack;
   GtkLabel *error_label;
   GtkButton *attach_button;
+  GtkButton *poll_button;
   GtkBox *timer_slot;
   GtkButton *timer_button;
   GtkLabel *timer_label;
@@ -37,6 +38,7 @@ struct _GhComposer {
   gboolean setting_text; /* a programmatic change: no draft report */
   gboolean preedit;      /* an input method is composing text (a preedit) */
   gboolean can_attach;   /* the owner can send a file here (G22) */
+  gboolean can_create_poll; /* in an encrypted group (W26) */
   gboolean draft_pending;
   guint draft_timer;
   GhComposerLengthFunc length_func;
@@ -53,6 +55,7 @@ enum {
   PROP_DISABLED_REASON,
   PROP_DISAPPEARING_TIMER,
   PROP_CAN_ATTACH,
+  PROP_CAN_CREATE_POLL,
   PROP_CAN_SEND,
   PROP_TOO_LONG,
   N_PROPS
@@ -65,6 +68,7 @@ enum {
   SIGNAL_ATTACH_REQUESTED,
   SIGNAL_ATTACH_FILE,
   SIGNAL_ATTACH_TEXTURE,
+  SIGNAL_POLL_REQUESTED,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -343,6 +347,32 @@ update_attach(GhComposer *self)
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "composer.attach", possible);
 }
 
+/* ---- polls (W26 slice C) ------------------------------------------------------------ */
+
+static gboolean
+poll_possible(GhComposer *self)
+{
+  return self->can_create_poll && editable(self);
+}
+
+static void
+action_create_poll(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhComposer *self = GH_COMPOSER(widget);
+  (void)name;
+  (void)parameter;
+  if (poll_possible(self))
+    g_signal_emit(self, signals[SIGNAL_POLL_REQUESTED], 0);
+}
+
+static void
+update_poll(GhComposer *self)
+{
+  gboolean possible = poll_possible(self);
+  gtk_widget_set_visible(GTK_WIDGET(self->poll_button), self->can_create_poll);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "composer.create-poll", possible);
+}
+
 /* A dropped file (the first of several) or image. */
 static gboolean
 on_drop(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, GhComposer *self)
@@ -462,6 +492,7 @@ gh_composer_get_property(GObject *object, guint prop_id, GValue *value, GParamSp
   case PROP_DISABLED_REASON: g_value_set_string(value, self->reason); break;
   case PROP_DISAPPEARING_TIMER: g_value_set_int64(value, self->timer); break;
   case PROP_CAN_ATTACH:      g_value_set_boolean(value, self->can_attach); break;
+  case PROP_CAN_CREATE_POLL:  g_value_set_boolean(value, self->can_create_poll); break;
   case PROP_CAN_SEND:        g_value_set_boolean(value, self->can_send); break;
   case PROP_TOO_LONG:        g_value_set_boolean(value, self->too_long); break;
   default:
@@ -486,6 +517,9 @@ gh_composer_set_property(GObject *object, guint prop_id, const GValue *value,
     break;
   case PROP_CAN_ATTACH:
     gh_composer_set_can_attach(self, g_value_get_boolean(value));
+    break;
+  case PROP_CAN_CREATE_POLL:
+    gh_composer_set_can_create_poll(self, g_value_get_boolean(value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -556,6 +590,7 @@ gh_composer_class_init(GhComposerClass *klass)
   props[PROP_DISAPPEARING_TIMER] = g_param_spec_int64("disappearing-timer", NULL, NULL, 0,
                                                       G_MAXINT64, 0, rw);
   props[PROP_CAN_ATTACH] = g_param_spec_boolean("can-attach", NULL, NULL, FALSE, rw);
+  props[PROP_CAN_CREATE_POLL] = g_param_spec_boolean("can-create-poll", NULL, NULL, FALSE, rw);
   props[PROP_CAN_SEND] = g_param_spec_boolean("can-send", NULL, NULL, FALSE, ro);
   props[PROP_TOO_LONG] = g_param_spec_boolean("too-long", NULL, NULL, FALSE, ro);
   g_object_class_install_properties(object_class, N_PROPS, props);
@@ -576,12 +611,16 @@ gh_composer_class_init(GhComposerClass *klass)
   signals[SIGNAL_ATTACH_TEXTURE] =
     g_signal_new("attach-texture", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 1, GDK_TYPE_TEXTURE);
+  signals[SIGNAL_POLL_REQUESTED] =
+    g_signal_new("poll-requested", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 0);
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-composer.ui");
   gtk_widget_class_bind_template_child(widget_class, GhComposer, composer_stack);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, error_label);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, attach_button);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, poll_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_slot);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_label);
@@ -595,6 +634,7 @@ gh_composer_class_init(GhComposerClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhComposer, disabled_button);
   gtk_widget_class_install_action(widget_class, "composer.send", NULL, action_send);
   gtk_widget_class_install_action(widget_class, "composer.attach", NULL, action_attach);
+  gtk_widget_class_install_action(widget_class, "composer.create-poll", NULL, action_create_poll);
   gtk_widget_class_set_css_name(widget_class, "composer");
   add_icon_path();
 }
@@ -920,4 +960,23 @@ gh_composer_get_attach_button(GhComposer *self)
 {
   g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
   return self->attach_button;
+}
+
+void
+gh_composer_set_can_create_poll(GhComposer *self, gboolean can_create_poll)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  can_create_poll = !!can_create_poll;
+  if (self->can_create_poll == can_create_poll)
+    return;
+  self->can_create_poll = can_create_poll;
+  update_poll(self);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_CAN_CREATE_POLL]);
+}
+
+gboolean
+gh_composer_get_can_create_poll(GhComposer *self)
+{
+  g_return_val_if_fail(GH_IS_COMPOSER(self), FALSE);
+  return self->can_create_poll;
 }

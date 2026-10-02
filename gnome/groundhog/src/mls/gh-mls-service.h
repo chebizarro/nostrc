@@ -10,6 +10,7 @@
 
 #include "gh-account-relays.h"
 #include "gh-conversation-store.h"
+#include "gh-mls-poll.h"
 #include "gh-dm-inbox.h"
 #include "gh-inbox-resolver.h"
 #include "gh-store.h"
@@ -879,6 +880,25 @@ GhMessage *gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gcha
 GhMessage *gh_mls_service_send_with_imeta(GhMlsService *self, GhMlsGroup *group,
                                           const gchar *caption, GPtrArray *imeta_tags,
                                           guint64 source_epoch, GError **error);
+
+/* ---- NIP-88 polls (nostrc-a36s) ----------------------------------------- */
+
+/* Look up the poll for a group + poll event id; NULL if none. Borrowed. */
+GhMlsPoll *gh_mls_service_lookup_poll(GhMlsService *self, const gchar *group_id_hex,
+                                      const gchar *poll_event_id);
+
+/* Create a poll (kind 1068 inner event): encrypted, sent via marmot. */
+GhMessage *gh_mls_service_create_poll(GhMlsService *self, GhMlsGroup *group,
+                                      const gchar *question,
+                                      const gchar **option_labels, guint n_options,
+                                      GhMlsPollType poll_type, gint64 ends_at,
+                                      GError **error);
+
+/* Cast (or change) a vote (kind 1018 inner event) on a poll in a group. */
+GhMessage *gh_mls_service_cast_vote(GhMlsService *self, GhMlsGroup *group,
+                                    const gchar *poll_event_id,
+                                    const gchar **option_ids, guint n_options,
+                                    GError **error);
 
 /* Pending invitations, oldest first (GhMlsInvite). Transfer full. */
 GPtrArray *gh_mls_service_list_invites(GhMlsService *self, GError **error);

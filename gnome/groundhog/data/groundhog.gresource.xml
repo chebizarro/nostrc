@@ -51,6 +51,7 @@
     <file>ui/gh-conversation-menu.ui</file>
     <file>ui/gh-attachment-card.ui</file>
     <file>ui/gh-attachment-sheet.ui</file>
+    <file>ui/gh-create-poll-dialog.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
   </gresource>

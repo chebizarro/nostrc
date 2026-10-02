@@ -151,5 +151,9 @@ void gh_composer_set_can_attach(GhComposer *self, gboolean can_attach);
 gboolean gh_composer_get_can_attach(GhComposer *self);
 GtkButton *gh_composer_get_attach_button(GhComposer *self);
 
+/* NIP-88 poll creation (W26 slice C). */
+void gh_composer_set_can_create_poll(GhComposer *self, gboolean can_create_poll);
+gboolean gh_composer_get_can_create_poll(GhComposer *self);
+
 G_END_DECLS
 #endif

@@ -39,7 +39,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-dialog
   gh-blocked-page gh-blocked-row gh-conversation-menu
-  gh-attachment-card gh-attachment-sheet)
+  gh-attachment-card gh-attachment-sheet gh-create-poll-dialog)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1569,7 +1569,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     AND GROUNDHOG_DM_SEND_SOURCES)
   message(STATUS "Groundhog MLS service: enabled")
   set(GROUNDHOG_MLS_SERVICE_SOURCES src/mls/gh-mls-service.c src/mls/gh-mls-key-packages.c
-    src/mls/gh-mls-imeta.c src/store/gh-store-mls.c src/store/gh-store-mls-identity.c)
+    src/mls/gh-mls-imeta.c src/mls/gh-mls-poll.c src/store/gh-store-mls.c src/store/gh-store-mls-identity.c)
   add_library(groundhog-mls-service STATIC ${GROUNDHOG_MLS_SERVICE_SOURCES})
   target_include_directories(groundhog-mls-service PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
@@ -2089,7 +2089,8 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
   message(STATUS "Groundhog encrypted-group UI: enabled")
   set(GROUNDHOG_MLS_UI_SOURCES src/mls/gh-mls-invitee.c src/ui/gh-mls-copy.c
     src/ui/gh-mls-invitee-picker.c src/ui/gh-mls-new-group-page.c
-    src/ui/gh-mls-group-info-dialog.c src/ui/gh-mls-invites-dialog.c)
+    src/ui/gh-mls-group-info-dialog.c src/ui/gh-mls-invites-dialog.c
+    src/ui/gh-create-poll-dialog.c src/ui/gh-poll-card.c)
   add_library(groundhog-mls-ui STATIC ${GROUNDHOG_MLS_UI_SOURCES})
   target_include_directories(groundhog-mls-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mls)

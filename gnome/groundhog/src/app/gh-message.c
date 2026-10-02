@@ -305,6 +305,14 @@ gh_message_dup_display_text(GhMessage *self)
     /* TRANSLATORS: several encrypted files in one message, before they are opened. */
     return g_strdup_printf(g_dngettext(NULL, "%u file", "%u files", n), n);
   }
+  /* An MLS poll shows "Poll: <question>" (charter: never the raw content
+   * alone, so the list and notification say what it is); a vote is silent. */
+  if (self->kind == GH_MESSAGE_MLS_POLL_KIND)
+    /* TRANSLATORS: a poll in an encrypted group. %s is the question. */
+    return g_strdup_printf(_("Poll: %s"), self->content ? self->content : "");
+  if (self->kind == GH_MESSAGE_MLS_POLL_VOTE_KIND)
+    /* TRANSLATORS: a vote on a poll in an encrypted group. */
+    return g_strdup(_("Voted on a poll"));
   return g_strdup(self->content);
 }
 
@@ -698,8 +706,11 @@ gh_message_new_from_mls(const gchar *account_pubkey, const gchar *group_id_hex,
     reason = "malformed";
   else if (!reason && event->sig)
     reason = "an inner event must not be signed";
-  else if (!reason && nostr_event_get_kind(event) != GH_MESSAGE_MLS_KIND)
-    reason = "not a kind-9 chat message";
+  else if (!reason &&
+           nostr_event_get_kind(event) != GH_MESSAGE_MLS_KIND &&
+           nostr_event_get_kind(event) != GH_MESSAGE_MLS_POLL_KIND &&
+           nostr_event_get_kind(event) != GH_MESSAGE_MLS_POLL_VOTE_KIND)
+    reason = "unsupported inner event kind";
   else if (!reason && nostr_event_get_created_at(event) <= 0)
     reason = "no created_at";
   else if (!reason && !lower_hex64(nostr_event_get_pubkey(event)))
@@ -718,7 +729,7 @@ gh_message_new_from_mls(const gchar *account_pubkey, const gchar *group_id_hex,
   }
   GhMessage *self = g_object_new(GH_TYPE_MESSAGE, NULL);
   self->mls = TRUE;
-  self->kind = GH_MESSAGE_MLS_KIND;
+  self->kind = nostr_event_get_kind(event);
   self->account = g_strdup(account_pubkey);
   self->rumor_id = g_strdup(id);
   self->rumor_json = g_strdup(inner_event_json);

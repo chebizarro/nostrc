@@ -51,6 +51,16 @@ template $GhMessageRow: Widget {
       ]
     }
 
+    // A NIP-88 poll (kind 1068): the card shows the question, option
+    // buttons with tallies, vote count, remaining time, closed state.
+    // The card widget is a GhPollCard, set by gh-message-row.c when the
+    // message is a poll and a GhMlsPoll is available.
+    Box poll_slot {
+      visible: false;
+      orientation: vertical;
+      spacing: 6;
+    }
+
     // A kind-15 file message's card (charter G22), in place of the body:
     // nothing is fetched until its Download button. An encrypted group
     // message (W25) shows its caption above and one card per file; the
