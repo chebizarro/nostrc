@@ -76,6 +76,7 @@ static const char *const preference_keys[] = {
   "network-mode", "tor-socks-address", "discovery-relays", "signer-method",
   "run-in-background", "retention-days", "default-disappearing-seconds", "enter-sends",
   "blossom-servers", "only-join-verified-mls-groups", "mls-legacy-key-packages",
+  "default-dm-protocol",
 };
 
 static const char *const switch_keys[] = {
@@ -1254,6 +1255,7 @@ test_gated_rows_this_build(Fixture *f, gconstpointer data)
     { "blossom-servers", GH_FEATURE_ATTACHMENTS },
     { "only-join-verified-mls-groups", GH_FEATURE_ENCRYPTED_GROUPS },
     { "mls-legacy-key-packages", GH_FEATURE_ENCRYPTED_GROUPS && GH_FEATURE_ADOPTED_KEY_PACKAGES },
+    { "default-dm-protocol", TRUE },
   };
   G_STATIC_ASSERT(G_N_ELEMENTS(expect) == G_N_ELEMENTS(preference_keys));
   present(f, 800, 700);

@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GhConversationInfoDialog" parent="AdwDialog">
-    <property name="title" translatable="true">Conversation Info</property>
+    <property name="title" translatable="yes">Conversation Info</property>
     <property name="content-width">460</property>
     <property name="content-height">700</property>
     <property name="child">
@@ -17,7 +17,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwNavigationPage" id="main_page">
                 <property name="tag">main</property>
-                <property name="title" translatable="true">Conversation Info</property>
+                <property name="title" translatable="yes">Conversation Info</property>
                 <property name="child">
                   <object class="AdwToolbarView">
                     <child type="top">
@@ -64,12 +64,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="people_group">
-                            <property name="title" translatable="true">People</property>
+                            <property name="title" translatable="yes">People</property>
                           </object>
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="privacy_group">
-                            <property name="title" translatable="true">Privacy</property>
+                            <property name="title" translatable="yes">Privacy</property>
                             <child>
                               <object class="AdwActionRow" id="privacy_row">
                                 <property name="use-markup">false</property>
@@ -82,19 +82,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="AdwExpanderRow" id="visible_row">
-                                <property name="title" translatable="true">What Others Can See</property>
+                                <property name="title" translatable="yes">What Others Can See</property>
                                 <property name="use-markup">false</property>
                               </object>
                             </child>
                             <child>
                               <object class="AdwExpanderRow" id="unprotected_row">
-                                <property name="title" translatable="true">What Groundhog Can’t Protect</property>
+                                <property name="title" translatable="yes">What Groundhog Can’t Protect</property>
                                 <property name="use-markup">false</property>
                               </object>
                             </child>
                             <child>
                               <object class="AdwActionRow" id="storage_row">
-                                <property name="title" translatable="true">Stored on This Device</property>
+                                <property name="title" translatable="yes">Stored on This Device</property>
                                 <property name="use-markup">false</property>
                               </object>
                             </child>
@@ -102,19 +102,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="notifications_group">
-                            <property name="title" translatable="true">Notifications</property>
-                            <property name="description" translatable="true">Muting stays on this device. Nobody is told.</property>
+                            <property name="title" translatable="yes">Notifications</property>
+                            <property name="description" translatable="yes">Muting stays on this device. Nobody is told.</property>
                             <child>
                               <object class="AdwActionRow" id="mute_row">
-                                <property name="title" translatable="true">Mute</property>
+                                <property name="title" translatable="yes">Mute</property>
                                 <property name="use-markup">false</property>
                                 <property name="activatable-widget">mute_button</property>
                                 <child type="suffix">
                                   <object class="GtkMenuButton" id="mute_button">
                                     <property name="valign">3</property>
-                                    <property name="label" translatable="true">Mute</property>
+                                    <property name="label" translatable="yes">Mute</property>
                                     <property name="menu-model">mute_menu</property>
-                                    <property name="tooltip-text" translatable="true">Mute Notifications</property>
+                                    <property name="tooltip-text" translatable="yes">Mute Notifications</property>
                                   </object>
                                 </child>
                               </object>
@@ -123,18 +123,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="disappearing_group">
-                            <property name="title" translatable="true">Disappearing Messages</property>
-                            <property name="description" translatable="true">Messages are deleted from this device when they expire, and relays are asked to delete them. Relays and other people's apps may not honour this.</property>
+                            <property name="title" translatable="yes">Disappearing Messages</property>
+                            <property name="description" translatable="yes">Messages are deleted from this device when they expire, and relays are asked to delete them. Relays and other people's apps may not honour this.</property>
                             <child>
                               <object class="AdwComboRow" id="timer_row">
-                                <property name="title" translatable="true">Messages You Send</property>
+                                <property name="title" translatable="yes">Messages You Send</property>
                                 <property name="model">
                                   <object class="GtkStringList">
                                     <items>
-                                      <item translatable="true">Off</item>
-                                      <item translatable="true">Disappear After 1 Day</item>
-                                      <item translatable="true">Disappear After 1 Week</item>
-                                      <item translatable="true">Disappear After 4 Weeks</item>
+                                      <item translatable="yes">Off</item>
+                                      <item translatable="yes">Disappear After 1 Day</item>
+                                      <item translatable="yes">Disappear After 1 Week</item>
+                                      <item translatable="yes">Disappear After 4 Weeks</item>
                                     </items>
                                   </object>
                                 </property>
@@ -146,13 +146,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="AdwPreferencesGroup" id="actions_group">
                             <child>
                               <object class="AdwActionRow" id="block_row">
-                                <property name="title" translatable="true">Block</property>
+                                <property name="title" translatable="yes">Block</property>
                                 <property name="use-markup">false</property>
-                                <property name="subtitle" translatable="true">Hide this conversation and stop its notifications</property>
+                                <property name="subtitle" translatable="yes">Hide this conversation and stop its notifications</property>
                                 <property name="activatable-widget">block_button</property>
                                 <child type="suffix">
                                   <object class="GtkButton" id="block_button">
-                                    <property name="label" translatable="true">_Block…</property>
+                                    <property name="label" translatable="yes">_Block…</property>
                                     <property name="use-underline">true</property>
                                     <property name="valign">3</property>
                                     <property name="action-name">info.block</property>
@@ -162,12 +162,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="AdwActionRow" id="forget_row">
-                                <property name="title" translatable="true">Forget on This Device</property>
-                                <property name="subtitle" translatable="true">Delete this conversation's messages here</property>
+                                <property name="title" translatable="yes">Forget on This Device</property>
+                                <property name="subtitle" translatable="yes">Delete this conversation's messages here</property>
                                 <property name="activatable-widget">forget_button</property>
                                 <child type="suffix">
                                   <object class="GtkButton" id="forget_button">
-                                    <property name="label" translatable="true">_Forget…</property>
+                                    <property name="label" translatable="yes">_Forget…</property>
                                     <property name="use-underline">true</property>
                                     <property name="valign">3</property>
                                     <property name="action-name">info.forget</property>
@@ -189,7 +189,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwNavigationPage" id="verify_page">
                 <property name="tag">verify</property>
-                <property name="title" translatable="true">Verify Key</property>
+                <property name="title" translatable="yes">Verify Key</property>
                 <property name="child">
                   <object class="AdwToolbarView">
                     <child type="top">
@@ -199,7 +199,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="AdwPreferencesPage">
                         <child>
                           <object class="AdwPreferencesGroup" id="their_group">
-                            <property name="description" translatable="true">Check that this key really belongs to them: compare it in person or on a call you trust, not in this conversation.</property>
+                            <property name="description" translatable="yes">Check that this key really belongs to them: compare it in person or on a call you trust, not in this conversation.</property>
                             <child>
                               <object class="AdwActionRow" id="their_key_row">
                                 <property name="title-selectable">true</property>
@@ -211,7 +211,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   <object class="GtkButton" id="their_copy_button">
                                     <property name="icon-name">edit-copy-symbolic</property>
                                     <property name="valign">3</property>
-                                    <property name="tooltip-text" translatable="true">Copy npub</property>
+                                    <property name="tooltip-text" translatable="yes">Copy npub</property>
                                     <property name="action-name">info.copy-key</property>
                                     <property name="action-target">''</property>
                                     <style>
@@ -225,8 +225,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="code_group">
-                            <property name="title" translatable="true">Safety Codes</property>
-                            <property name="description" translatable="true">Compare both codes with them in person or on a call you trust. Their Groundhog shows the same two codes the other way round. If both match, the key you have for them is the one they use, and they have yours. If either differs, someone may be in between: don't mark the key verified. Other apps don't show these codes; compare the full keys instead.</property>
+                            <property name="title" translatable="yes">Safety Codes</property>
+                            <property name="description" translatable="yes">Compare both codes with them in person or on a call you trust. Their Groundhog shows the same two codes the other way round. If both match, the key you have for them is the one they use, and they have yours. If either differs, someone may be in between: don't mark the key verified. Other apps don't show these codes; compare the full keys instead.</property>
                             <child>
                               <object class="GtkBox" id="code_box">
                                 <property name="orientation">1</property>
@@ -261,7 +261,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                                 <child>
                                   <object class="GtkLabel" id="your_code_title">
-                                    <property name="label" translatable="true">Your code</property>
+                                    <property name="label" translatable="yes">Your code</property>
                                     <property name="xalign">0</property>
                                     <property name="margin-top">6</property>
                                     <style>
@@ -287,8 +287,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="your_group">
-                            <property name="title" translatable="true">Your Key</property>
-                            <property name="description" translatable="true">They can check your key the same way.</property>
+                            <property name="title" translatable="yes">Your Key</property>
+                            <property name="description" translatable="yes">They can check your key the same way.</property>
                             <child>
                               <object class="AdwActionRow" id="your_key_row">
                                 <property name="title-selectable">true</property>
@@ -300,7 +300,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   <object class="GtkButton" id="your_copy_button">
                                     <property name="icon-name">edit-copy-symbolic</property>
                                     <property name="valign">3</property>
-                                    <property name="tooltip-text" translatable="true">Copy npub</property>
+                                    <property name="tooltip-text" translatable="yes">Copy npub</property>
                                     <property name="action-name">info.copy-key</property>
                                     <property name="action-target">''</property>
                                     <style>
@@ -314,10 +314,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="AdwPreferencesGroup" id="verified_group">
-                            <property name="description" translatable="true">Groundhog doesn't check keys with anyone. Marking a key verified only records your own check, on this device.</property>
+                            <property name="description" translatable="yes">Groundhog doesn't check keys with anyone. Marking a key verified only records your own check, on this device.</property>
                             <child>
                               <object class="AdwActionRow" id="verified_row">
-                                <property name="title" translatable="true">You marked this key verified</property>
+                                <property name="title" translatable="yes">You marked this key verified</property>
                                 <property name="use-markup">false</property>
                                 <property name="visible">false</property>
                                 <child type="prefix">
@@ -328,7 +328,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                                 <child type="suffix">
                                   <object class="GtkButton" id="unverify_button">
-                                    <property name="label" translatable="true">_Unmark</property>
+                                    <property name="label" translatable="yes">_Unmark</property>
                                     <property name="use-underline">true</property>
                                     <property name="valign">3</property>
                                     <property name="action-name">info.clear-verified</property>
@@ -338,7 +338,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkButton" id="verify_button">
-                                <property name="label" translatable="true">_Mark as Verified</property>
+                                <property name="label" translatable="yes">_Mark as Verified</property>
                                 <property name="use-underline">true</property>
                                 <property name="halign">3</property>
                                 <property name="margin-top">12</property>
@@ -365,29 +365,29 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <menu id="mute_menu">
     <section>
       <item>
-        <attribute name="label" translatable="true">For 1 _Hour</attribute>
+        <attribute name="label" translatable="yes">For 1 _Hour</attribute>
         <attribute name="action">info.mute</attribute>
         <attribute name="target">3600</attribute>
       </item>
       <item>
-        <attribute name="label" translatable="true">For _8 Hours</attribute>
+        <attribute name="label" translatable="yes">For _8 Hours</attribute>
         <attribute name="action">info.mute</attribute>
         <attribute name="target">28800</attribute>
       </item>
       <item>
-        <attribute name="label" translatable="true">For 1 _Week</attribute>
+        <attribute name="label" translatable="yes">For 1 _Week</attribute>
         <attribute name="action">info.mute</attribute>
         <attribute name="target">604800</attribute>
       </item>
       <item>
-        <attribute name="label" translatable="true">_Until I Turn It Back On</attribute>
+        <attribute name="label" translatable="yes">_Until I Turn It Back On</attribute>
         <attribute name="action">info.mute</attribute>
         <attribute name="target">always</attribute>
       </item>
     </section>
     <section>
       <item>
-        <attribute name="label" translatable="true">_Unmute</attribute>
+        <attribute name="label" translatable="yes">_Unmute</attribute>
         <attribute name="action">info.unmute</attribute>
       </item>
     </section>
@@ -396,17 +396,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="default-response">block-cancel</property>
     <property name="close-response">block-cancel</property>
     <responses>
-      <response id="block-cancel" translatable="true">_Cancel</response>
-      <response id="block-confirm" translatable="true" appearance="destructive">_Block</response>
+      <response id="block-cancel" translatable="yes">_Cancel</response>
+      <response id="block-confirm" translatable="yes" appearance="destructive">_Block</response>
     </responses>
   </object>
   <object class="AdwAlertDialog" id="forget_dialog">
-    <property name="heading" translatable="true">Forget This Conversation?</property>
+    <property name="heading" translatable="yes">Forget This Conversation?</property>
     <property name="default-response">forget-cancel</property>
     <property name="close-response">forget-cancel</property>
     <responses>
-      <response id="forget-cancel" translatable="true">_Cancel</response>
-      <response id="forget-confirm" translatable="true" appearance="destructive">_Forget</response>
+      <response id="forget-cancel" translatable="yes">_Cancel</response>
+      <response id="forget-confirm" translatable="yes" appearance="destructive">_Forget</response>
     </responses>
   </object>
 </interface>

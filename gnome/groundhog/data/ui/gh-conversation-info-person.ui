@@ -9,7 +9,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="GhConversationInfoPerson" parent="AdwActionRow">
     <property name="activatable">true</property>
     <property name="use-markup">false</property>
-    <property name="tooltip-text" translatable="true">Verify Key</property>
+    <property name="tooltip-text" translatable="yes">Verify Key</property>
     <child type="prefix">
       <object class="AdwAvatar" id="avatar">
         <property name="size">40</property>
@@ -20,7 +20,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="GtkImage" id="verified_icon">
         <property name="visible">false</property>
         <property name="icon-name">emblem-ok-symbolic</property>
-        <property name="tooltip-text" translatable="true">You marked this key verified</property>
+        <property name="tooltip-text" translatable="yes">You marked this key verified</property>
         <property name="accessible-role">43</property>
       </object>
     </child>
@@ -28,7 +28,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="GtkButton" id="copy_button">
         <property name="icon-name">edit-copy-symbolic</property>
         <property name="valign">3</property>
-        <property name="tooltip-text" translatable="true">Copy npub</property>
+        <property name="tooltip-text" translatable="yes">Copy npub</property>
         <property name="action-name">info.copy-key</property>
         <property name="action-target">''</property>
         <style>

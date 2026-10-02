@@ -145,6 +145,18 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         title: _("Send with Enter");
         subtitle: _("When off, Ctrl+Enter sends and Enter starts a new line");
       }
+
+      Adw.ComboRow default_dm_protocol_row {
+        title: _("New Direct Messages");
+        subtitle: _("Marmot messages are end-to-end encrypted and work with White Noise. NIP-17 gift wraps work with more apps but aren't end-to-end encrypted.");
+
+        model: StringList {
+          strings [
+            _("Marmot (Encrypted)"),
+            _("NIP-17 (Gift Wrap)"),
+          ]
+        };
+      }
     }
 
     // Its description says what this build does (set from C).

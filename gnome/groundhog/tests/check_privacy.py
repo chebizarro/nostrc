@@ -186,6 +186,8 @@ GSETTINGS = {
     # sunset criteria there are met.
     "mls-legacy-key-packages": Key("b", "true"),
     "show-message-previews": Key("b", "true"),
+    # §7.9: Marmot by default; the user can change this in Preferences.
+    "default-dm-protocol": Key("s", "'marmot'", ("marmot", "nip17")),
     # §7.11 Network / Connection (§4.2).
     "network-mode": Key("s", "'system'", ("system", "none", "tor")),
     "tor-socks-address": Key("s", "'127.0.0.1:9050'"),

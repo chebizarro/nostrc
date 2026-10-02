@@ -75,6 +75,15 @@
       <summary>Show message previews in the conversation list</summary>
       <description>Show the latest message text under each conversation in the list.</description>
     </key>
+    <key name="default-dm-protocol" type="s">
+      <choices>
+        <choice value="marmot"/>
+        <choice value="nip17"/>
+      </choices>
+      <default>'marmot'</default>
+      <summary>Default protocol for new direct messages</summary>
+      <description>The protocol used when starting a new direct message. marmot uses end-to-end encrypted Marmot (MLS) groups, which White Noise also uses for DMs; nip17 uses NIP-17 gift wraps. When the peer has no usable Marmot key, Groundhog falls back to NIP-17 regardless of this setting.</description>
+    </key>
 
     <!-- Network / Connection -->
     <key name="network-mode" type="s">

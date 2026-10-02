@@ -233,12 +233,14 @@ update_title(GhConversationList *list)
    * operators, is never called encrypted here either. */
   GhPrivacyContext context = {
     .backend = (GhPrivacyBackend)gh_conversation_get_backend(list->shown),
+    .is_direct = gh_conversation_get_is_direct(list->shown),
     .is_request = gh_conversation_get_is_request(list->shown),
     .subject = gh_conversation_get_subject(list->shown),
   };
   /* "Encrypted group · N members" (§2.2 surface 1): the group's own count,
-   * the account included; a room has no peers to count. */
-  if (context.backend == GH_PRIVACY_BACKEND_MLS && list->member_count)
+   * the account included; a room has no peers to count. A Marmot DM shows
+   * "Marmot · end-to-end encrypted" instead. */
+  if (context.backend == GH_PRIVACY_BACKEND_MLS && !context.is_direct && list->member_count)
     context.n_people = list->member_count(list->shown, list->member_count_data);
   g_autofree gchar *subtitle = gh_privacy_summary_dup_subtitle(&context);
   gh_content_page_set_title(list->content, gh_conversation_get_title(list->shown), subtitle);

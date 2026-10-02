@@ -24,6 +24,15 @@ GhConversation *gh_conversation_new_mls(const gchar *account, const gchar *room_
  * group's relay-signed name); NULL or "" clears. Notifies subject and title
  * when they change. */
 void gh_conversation_set_name(GhConversation *self, const gchar *name);
+/* Store-only: marks an MLS conversation as a direct message (two members,
+ * no group name — the shape White Noise uses for DMs). Notifies "is-direct"
+ * and "title" when the value changes. */
+void gh_conversation_set_is_direct(GhConversation *self, gboolean is_direct);
+/* Service-only: replaces the peers (everyone besides the account) of an MLS
+ * conversation from the group's member list, so fallback_title() shows the
+ * peer's npub for a Marmot DM. peers is a NULL-terminated array of hex
+ * pubkeys; the account itself is filtered out. */
+void gh_conversation_set_mls_peers(GhConversation *self, const gchar *const *members);
 /* Store-only: inserts message in order. FALSE (nothing changed) when its
  * rumor id is already present or it belongs to another room or account.
  * delivered: a relay delivered it (an own message then was written on

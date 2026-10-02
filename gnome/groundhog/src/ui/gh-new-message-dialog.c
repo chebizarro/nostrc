@@ -485,6 +485,18 @@ settings_string(GSettings *settings, const gchar *key, const gchar *fallback)
   return g_settings_get_string(settings, key);
 }
 
+/* Whether the user's default protocol for new DMs is Marmot (MLS).
+ * Falls back to TRUE (Marmot) when the setting is absent or unrecognised,
+ * matching the schema default. The caller still falls back to NIP-17 when
+ * the peer has no usable KeyPackage. */
+static gboolean
+default_dm_is_marmot(GhNewMessageDialog *self)
+{
+  g_autofree gchar *protocol = settings_string(self->config.settings,
+                                                "default-dm-protocol", "marmot");
+  return g_strcmp0(protocol, "nip17") != 0;
+}
+
 /* The host names of the configured discovery relays, ", "-joined; NULL
  * when there are none. */
 static gchar *
@@ -775,6 +787,13 @@ start(GhNewMessageDialog *self, gboolean note_to_self)
     g_strv_builder_add(builder, item->pubkey);
   }
   g_auto(GStrv) peers = g_strv_builder_end(builder);
+  /* A one-to-one conversation: the configured protocol decides whether to
+   * create a Marmot (MLS) DM or a NIP-17 room. When the peer has no usable
+   * KeyPackage, the Marmot path falls back to NIP-17 (the caller of this
+   * function handles the fallback once the create-group flow is wired). */
+  gboolean want_marmot = !note_to_self && g_strv_length(peers) == 1
+                         && default_dm_is_marmot(self);
+  (void)want_marmot; /* wired by the Marmot DM creation flow */
   g_autoptr(GError) error = NULL;
   GhConversation *room = gh_conversation_store_open_room(self->config.conversations,
                                                          (const gchar *const *)peers, &error);

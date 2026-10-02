@@ -152,6 +152,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="subtitle" translatable="yes">When off, Ctrl+Enter sends and Enter starts a new line</property>
               </object>
             </child>
+            <child>
+              <object class="AdwComboRow" id="default_dm_protocol_row">
+                <property name="title" translatable="yes">New Direct Messages</property>
+                <property name="subtitle" translatable="yes">Marmot messages are end-to-end encrypted and work with White Noise. NIP-17 gift wraps work with more apps but aren't end-to-end encrypted.</property>
+                <property name="model">
+                  <object class="GtkStringList">
+                    <items>
+                      <item translatable="yes">Marmot (Encrypted)</item>
+                      <item translatable="yes">NIP-17 (Gift Wrap)</item>
+                    </items>
+                  </object>
+                </property>
+              </object>
+            </child>
           </object>
         </child>
         <child>

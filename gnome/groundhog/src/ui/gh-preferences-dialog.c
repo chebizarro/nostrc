@@ -52,6 +52,7 @@ struct _GhPreferencesDialog {
   AdwSwitchRow *older_marmot_invites_row;
   AdwSwitchRow *message_previews_row;
   AdwSwitchRow *enter_sends_row;
+  AdwComboRow *default_dm_protocol_row;
   AdwPreferencesGroup *disappearing_group;
   AdwComboRow *disappearing_row;
   AdwComboRow *retention_row;
@@ -1471,6 +1472,10 @@ gh_preferences_dialog_constructed(GObject *object)
   bind_choice(self, self->signer_row, "signer-method", signers, G_N_ELEMENTS(signers),
               unsupported_label);
 
+  GVariant *dm_protocols[] = { g_variant_new_string("marmot"), g_variant_new_string("nip17") };
+  bind_choice(self, self->default_dm_protocol_row, "default-dm-protocol", dm_protocols,
+              G_N_ELEMENTS(dm_protocols), unsupported_label);
+
   bind_address(self, "tor-socks-address", self->tor_address_row, self->tor_address_error);
   bind_list(self, "discovery-relays", self->discovery_list, self->discovery_entry,
             self->discovery_error, gh_preferences_normalize_relay_url, FALSE);
@@ -1631,6 +1636,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(older_marmot_invites_row);
   BIND(message_previews_row);
   BIND(enter_sends_row);
+  BIND(default_dm_protocol_row);
   BIND(disappearing_group);
   BIND(disappearing_row);
   BIND(retention_row);

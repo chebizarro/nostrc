@@ -47,6 +47,8 @@ typedef struct {
   guint n_people;
   /* NIP-29: the group relay's host name. NULL: "the group's relay". */
   const gchar *relay_host;
+  /* MLS: a 2-member Marmot DM (no group name). */
+  gboolean is_direct;
   /* NIP-17 only, subtitle only: a message request, with the subject its
    * sender chose (nullable), which is shown as secondary text (charter §7.9). */
   gboolean is_request;
@@ -80,8 +82,9 @@ gchar *gh_privacy_summary_dup_subtitle(const GhPrivacyContext *context);
 /* The kind of conversation as a conversation-list row says it (charter
  * §7.5, its accessible label and the kind glyph's tooltip): "Private
  * conversation", "Relay group, not end-to-end encrypted" or "Encrypted
- * group"; NULL for an unknown backend. */
-const gchar *gh_privacy_summary_kind(GhPrivacyBackend backend);
+ * group"; NULL for an unknown backend. is_direct TRUE for a 2-member
+ * Marmot DM: "Marmot private message" instead of "Encrypted group". */
+const gchar *gh_privacy_summary_kind(GhPrivacyBackend backend, gboolean is_direct);
 
 /* Every field of summary as stable plain text, one item per line (snapshot
  * tests; also a complete description for a screen reader). */

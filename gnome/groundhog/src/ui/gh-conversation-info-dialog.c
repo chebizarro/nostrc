@@ -660,6 +660,7 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
 
   GhPrivacyContext context = {
     .backend = (GhPrivacyBackend)gh_conversation_get_backend(self->conversation),
+    .is_direct = gh_conversation_get_is_direct(self->conversation),
     .peer_name = only ? self->title : NULL,
     .n_people = n_peers,
     .is_request = gh_conversation_get_is_request(self->conversation),

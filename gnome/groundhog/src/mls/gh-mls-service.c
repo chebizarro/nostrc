@@ -1198,6 +1198,14 @@ account_matches_model(GhMlsService *self)
   return g_strcmp0(gh_conversation_store_get_account(self->conversations), self->account) == 0;
 }
 
+/* Whether group is a DM in White Noise's shape: two members and no name
+ * (MDK 0.11 groups.rs set_direct_member_ids_from_roster; W26 slice A). */
+static gboolean
+group_is_dm(GhMlsGroup *group)
+{
+  return !group->name && group->members && g_strv_length(group->members) == 2;
+}
+
 /* The group's room in the model and its stored name. */
 static void
 group_list_room(GhMlsGroup *group)
@@ -1207,8 +1215,16 @@ group_list_room(GhMlsGroup *group)
   if (!gh_store_mls_save_room(self->store, group->gid_hex, group->name ? group->name : "", NULL,
                               &error))
     g_message("Groundhog could not store an encrypted group's room: %s", error->message);
-  if (account_matches_model(self))
-    gh_conversation_store_ensure_group(self->conversations, group->room_id, group->name);
+  if (account_matches_model(self)) {
+    GhConversation *conv =
+      gh_conversation_store_ensure_group(self->conversations, group->room_id, group->name);
+    if (conv) {
+      gboolean dm = group_is_dm(group);
+      gh_conversation_set_is_direct(conv, dm);
+      if (dm && group->members)
+        gh_conversation_set_mls_peers(conv, (const gchar *const *)group->members);
+    }
+  }
 }
 
 /* ---- Member identities (nostrc-6ukh, W24 review H1/M1) ------------------------------------ */

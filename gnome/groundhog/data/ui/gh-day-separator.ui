@@ -11,9 +11,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="GtkLabel">
         <binding name="label">
           <lookup name="day-label" type="GhTimelineItem">
-            <lookup name="item" type="GtkListHeader">
-              <constant>GtkListHeader</constant>
-            </lookup>
+            <lookup name="item" type="GtkListHeader">GtkListHeader</lookup>
           </lookup>
         </binding>
         <property name="halign">3</property>

@@ -64,6 +64,7 @@ struct _GhConversation {
   gint64 opened_at;          /* an empty room the user opened: its activity */
   GhConversationStore *store; /* persists read state and acceptance; not a ref */
   GhConversationBackend backend;
+  gboolean is_direct;
 };
 
 enum {
@@ -79,6 +80,7 @@ enum {
   PROP_PINNED,
   PROP_TIMER_SECONDS,
   PROP_TIMER_CHANGED_AT,
+  PROP_IS_DIRECT,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -160,8 +162,9 @@ fallback_title(GhConversation *self)
   if (self->backend == GH_CONVERSATION_BACKEND_NIP29 &&
       gh_message_nip29_room_split(self->room_id, NULL, &group_id))
     return g_steal_pointer(&group_id);
-  /* An encrypted group without a name: never its random id, never who wrote. */
-  if (self->backend == GH_CONVERSATION_BACKEND_MLS)
+  /* An encrypted group without a name: never its random id, never who wrote.
+   * A Marmot DM (is_direct) falls through to the peer-npub path below. */
+  if (self->backend == GH_CONVERSATION_BACKEND_MLS && !self->is_direct)
     /* TRANSLATORS: the title of an encrypted (MLS) group that has no name. */
     return g_strdup(_("Encrypted group"));
   if (!self->peers[0])
@@ -944,6 +947,55 @@ gh_conversation_get_backend(GhConversation *self)
   return self->backend;
 }
 
+gboolean
+gh_conversation_get_is_direct(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  if (self->backend == GH_CONVERSATION_BACKEND_NIP17)
+    return self->peers && self->peers[0] && !self->peers[1];
+  return self->is_direct;
+}
+
+void
+gh_conversation_set_is_direct(GhConversation *self, gboolean is_direct)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  is_direct = !!is_direct;
+  if (self->is_direct == is_direct)
+    return;
+  g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
+  self->is_direct = is_direct;
+  /* The fallback title changes: "Encrypted group" vs the peer's npub. */
+  g_free(self->fallback_title);
+  self->fallback_title = fallback_title(self);
+  g_object_freeze_notify(G_OBJECT(self));
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_IS_DIRECT]);
+  if (g_strcmp0(old_title, gh_conversation_get_title(self)) != 0)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
+  g_object_thaw_notify(G_OBJECT(self));
+}
+
+void
+gh_conversation_set_mls_peers(GhConversation *self, const gchar *const *members)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  g_return_if_fail(self->backend == GH_CONVERSATION_BACKEND_MLS);
+  g_autoptr(GStrvBuilder) peers = g_strv_builder_new();
+  if (members) {
+    for (guint i = 0; members[i]; i++)
+      if (!g_str_equal(members[i], self->account))
+        g_strv_builder_add(peers, members[i]);
+  }
+  GStrv new_peers = g_strv_builder_end(peers);
+  g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
+  g_strfreev(self->peers);
+  self->peers = new_peers;
+  g_free(self->fallback_title);
+  self->fallback_title = fallback_title(self);
+  if (g_strcmp0(old_title, gh_conversation_get_title(self)) != 0)
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
+}
+
 const gchar *
 gh_conversation_get_title(GhConversation *self)
 {
@@ -1053,6 +1105,9 @@ gh_conversation_get_property(GObject *object, guint id, GValue *value, GParamSpe
   case PROP_TIMER_CHANGED_AT:
     g_value_set_int64(value, self->timer_changed_at);
     break;
+  case PROP_IS_DIRECT:
+    g_value_set_boolean(value, gh_conversation_get_is_direct(self));
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -1108,6 +1163,8 @@ gh_conversation_class_init(GhConversationClass *klass)
     G_MININT64, G_MAXINT64, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_TIMER_CHANGED_AT] = g_param_spec_int64("timer-changed-at", NULL, NULL,
     0, G_MAXINT64, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_IS_DIRECT] = g_param_spec_boolean("is-direct", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object_class, N_PROPS, props);
 }
 

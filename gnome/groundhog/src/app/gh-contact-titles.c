@@ -11,8 +11,13 @@ G_DEFINE_FINAL_TYPE(GhContactTitles, gh_contact_titles, G_TYPE_OBJECT)
 static void
 refresh(GhContactTitles *self, GhConversation *conversation)
 {
-  /* A group's title is its relay-signed name. */
-  if (gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_NIP17)
+  GhConversationBackend backend = gh_conversation_get_backend(conversation);
+  /* A non-DM MLS group's title is its group name. A NIP-29 group's title is
+   * its relay-signed name. Only NIP-17 conversations and Marmot DMs use
+   * contact names as titles. */
+  if (backend == GH_CONVERSATION_BACKEND_NIP29)
+    return;
+  if (backend == GH_CONVERSATION_BACKEND_MLS && !gh_conversation_get_is_direct(conversation))
     return;
   /* NULL for a request, a note to self or a peer without a cached name. */
   g_autofree gchar *title =
@@ -36,9 +41,12 @@ on_items_changed(GListModel *model, guint position, guint removed, guint added,
     g_autoptr(GhConversation) conversation = g_list_model_get_item(model, i);
     /* A moved conversation is removed and added again: watched once. */
     if (!g_signal_handler_find(conversation, G_SIGNAL_MATCH_FUNC | G_SIGNAL_MATCH_DATA, 0, 0,
-                               NULL, on_request_changed, self))
+                               NULL, on_request_changed, self)) {
       g_signal_connect_object(conversation, "notify::is-request",
                               G_CALLBACK(on_request_changed), self, 0);
+      g_signal_connect_object(conversation, "notify::is-direct",
+                              G_CALLBACK(on_request_changed), self, 0);
+    }
     refresh(self, conversation);
   }
 }

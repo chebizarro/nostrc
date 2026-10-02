@@ -89,6 +89,11 @@ gint64 gh_conversation_get_timer_change(GhConversation *self, gint64 *out_second
  * loads them on request (gh_store_conversations_load_older()). */
 gboolean gh_conversation_get_has_older(GhConversation *self);
 GhConversationBackend gh_conversation_get_backend(GhConversation *self);
+/* Whether this conversation is a direct message (two parties, one-on-one).
+ * For NIP-17, true when there is exactly one peer. For MLS, set by the
+ * service when the group has two members and no name (the shape White Noise
+ * uses for DMs). The "is-direct" property notifies on change. */
+gboolean gh_conversation_get_is_direct(GhConversation *self);
 /* The subject when there is one; otherwise the peers' names set with
  * gh_conversation_set_contact_title(), else their abbreviated npubs (the
  * account's own for a note to self). A request is always titled by the
