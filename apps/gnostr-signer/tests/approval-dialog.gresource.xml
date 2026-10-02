@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The approval dialog's template alone, for test-approval-dialog. -->
+<gresources>
+  <gresource prefix="/org/gnostr/signer">
+    <file preprocess="xml-stripblanks">ui/approval-dialog.ui</file>
+  </gresource>
+</gresources>

@@ -234,6 +234,38 @@ set_tests_properties(signer/ui PROPERTIES
 )
 
 # ==============================================================================
+# Test: approval dialog (nostrc-n98j) - the real approval_dialog.c and its
+# template against stubbed store/session/keyboard-nav: the decision callback
+# fires exactly once, and accounts_store_list() entries are freed only by the
+# array. Same display requirements and skip policy as signer/ui.
+# ==============================================================================
+set(_APPROVAL_GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/approval-dialog.gresource.xml)
+set(_APPROVAL_GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/approval-dialog-resources.c)
+add_custom_command(
+    OUTPUT ${_APPROVAL_GRESOURCE_C}
+    COMMAND glib-compile-resources --target=${_APPROVAL_GRESOURCE_C} --generate-source
+            --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/../data ${_APPROVAL_GRESOURCE_XML}
+    DEPENDS ${_APPROVAL_GRESOURCE_XML} ${CMAKE_CURRENT_SOURCE_DIR}/../data/ui/approval-dialog.ui
+    VERBATIM)
+
+add_executable(test-approval-dialog
+    test-approval-dialog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/approval_dialog.c
+    ${_APPROVAL_GRESOURCE_C}
+)
+target_include_directories(test-approval-dialog PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(test-approval-dialog PRIVATE PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB)
+target_compile_features(test-approval-dialog PRIVATE c_std_11)
+apply_test_sanitizers(test-approval-dialog)
+
+add_test(NAME signer/approval-dialog COMMAND test-approval-dialog)
+set_tests_properties(signer/approval-dialog PROPERTIES
+    TIMEOUT 60
+    LABELS "signer;ui;unit"
+    ENVIRONMENT "${_UI_TEST_ENV}"
+)
+
+# ==============================================================================
 # Test: HSM provider (Hardware Security Module abstraction)
 # Issue: nostrc-n30
 # ==============================================================================
@@ -357,7 +389,7 @@ set_tests_properties(signer/signer-core PROPERTIES
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-hsm-provider test-core test-secure-mem test-social-recovery test-signer-core
+    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-approval-dialog test-hsm-provider test-core test-secure-mem test-social-recovery test-signer-core
     COMMENT "Building all gnostr-signer tests"
 )
 
