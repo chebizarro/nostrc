@@ -272,8 +272,7 @@ static void on_user_decision_with_identity(gboolean decision, gboolean remember,
         ctx->identity = g_strdup(e->id);
         g_message("fallback identity selected from store: %s", ctx->identity);
       }
-      /* free entries */
-      for (guint i=0;i<items->len;i++){ AccountEntry *x = g_ptr_array_index(items,i); if (x){ g_free(x->id); g_free(x->label); g_free(x);} }
+      /* entries are freed by the array's free func (accounts_store_entry_free) */
       g_ptr_array_free(items, TRUE);
     }
   }

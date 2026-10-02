@@ -189,7 +189,6 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
       gtk_box_append(GTK_BOX(row), lbl);
       gtk_box_append(GTK_BOX(row), btn);
       gtk_list_box_append(GTK_LIST_BOX(ui->list), row);
-      g_free(e->id); g_free(e->label); g_free(e);
     }
     g_ptr_array_free(items, TRUE);
   }
@@ -521,7 +520,6 @@ void on_import_clicked(GtkButton *btn, gpointer user_data){
       AccountEntry *e = g_ptr_array_index(items, i);
       gtk_string_list_append(sl, e->id);
       if (active && g_strcmp0(active, e->id)==0) to_sel = i;
-      g_free(e->id); g_free(e->label); g_free(e);
     }
     g_ptr_array_free(items, TRUE);
   }
@@ -578,7 +576,6 @@ void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, Account
       AccountEntry *e = g_ptr_array_index(items, i);
       gtk_string_list_append(sl, e->id);
       if ((initial_identity && g_strcmp0(initial_identity, e->id)==0) || (!initial_identity && active && g_strcmp0(active, e->id)==0)) to_sel = i;
-      g_free(e->id); g_free(e->label); g_free(e);
     }
     g_ptr_array_free(items, TRUE);
   }
@@ -682,7 +679,6 @@ void on_clear_clicked(GtkButton *btn, gpointer user_data){
       AccountEntry *e = g_ptr_array_index(items, i);
       gtk_string_list_append(sl, e->id);
       if (active && g_strcmp0(active, e->id)==0) to_sel = i;
-      g_free(e->id); g_free(e->label); g_free(e);
     }
     g_ptr_array_free(items, TRUE);
   }

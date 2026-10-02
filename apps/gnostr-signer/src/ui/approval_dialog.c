@@ -621,10 +621,7 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
           if (selected_npub && g_strcmp0(selected_npub, e->id) == 0) {
             selected_is_watch_only = TRUE;
           }
-          g_free(e->id);
-          g_free(e->label);
-          g_free(e);
-          continue;
+          continue; /* entries are freed by the array (accounts_store_entry_free) */
         }
 
         gtk_string_list_append(self->identity_model, e->id);
@@ -632,9 +629,6 @@ void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
           selected_idx = count;
         }
         count++;
-        g_free(e->id);
-        g_free(e->label);
-        g_free(e);
       }
       g_ptr_array_free(items, TRUE);
     }
