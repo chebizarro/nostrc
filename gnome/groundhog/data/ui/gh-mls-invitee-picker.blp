@@ -9,8 +9,26 @@ using Adw 1;
 // KeyPackage through the discovery relays, which the description says.
 template $GhMlsInviteePicker: Adw.PreferencesGroup {
   title: _("Members");
-  description: _("Choose from people you’ve accepted as contacts. Choosing someone asks your discovery relays whether they can join, which tells those relays whom you looked up.");
+  description: _("Choose from your contacts and group co-members, or paste an npub. Choosing someone asks your discovery relays whether they can join, which tells those relays whom you looked up.");
 
+
+  Adw.EntryRow add_entry {
+    title: _("Paste npub or hex pubkey");
+    use-markup: false;
+    show-apply-button: true;
+  }
+
+  Label add_error {
+    visible: false;
+    wrap: true;
+    xalign: 0;
+    margin-top: 6;
+    use-markup: false;
+
+    styles [
+      "error",
+    ]
+  }
   Adw.ActionRow empty_row {
     title: _("No Contacts Yet");
     subtitle: _("Only people you’ve accepted can be invited. Start a private conversation with someone first.");

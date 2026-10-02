@@ -8,7 +8,26 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <requires lib="gtk" version="4.0"/>
   <template class="GhMlsInviteePicker" parent="AdwPreferencesGroup">
     <property name="title" translatable="yes">Members</property>
-    <property name="description" translatable="yes">Choose from people you’ve accepted as contacts. Choosing someone asks your discovery relays whether they can join, which tells those relays whom you looked up.</property>
+    <property name="description" translatable="yes">Choose from your contacts and group co-members, or paste an npub. Choosing someone asks your discovery relays whether they can join, which tells those relays whom you looked up.</property>
+    <child>
+      <object class="AdwEntryRow" id="add_entry">
+        <property name="title" translatable="yes">Paste npub or hex pubkey</property>
+        <property name="use-markup">false</property>
+        <property name="show-apply-button">true</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkLabel" id="add_error">
+        <property name="visible">false</property>
+        <property name="wrap">true</property>
+        <property name="xalign">0</property>
+        <property name="margin-top">6</property>
+        <property name="use-markup">false</property>
+        <style>
+          <class name="error"/>
+        </style>
+      </object>
+    </child>
     <child>
       <object class="AdwActionRow" id="empty_row">
         <property name="title" translatable="yes">No Contacts Yet</property>

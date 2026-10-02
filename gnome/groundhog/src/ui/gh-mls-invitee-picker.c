@@ -124,6 +124,8 @@ row_sync(GhMlsInviteeRow *row)
 
 struct _GhMlsInviteePicker {
   AdwPreferencesGroup parent_instance;
+  AdwEntryRow *add_entry;
+  GtkLabel *add_error;
   AdwActionRow *empty_row;
 
   GhMlsUiContext context;   /* objects referenced */
@@ -250,6 +252,80 @@ on_retry(GhMlsInviteeRow *row, gpointer data)
   }
 }
 
+/* A pasted npub or hex pubkey: add the person as a row (if not already
+ * listed) and select them. Nothing touches the network until the user
+ * explicitly chooses someone (the KeyPackage check). */
+static void
+on_add_entry_apply(AdwEntryRow *entry, gpointer data)
+{
+  GhMlsInviteePicker *self = GH_MLS_INVITEE_PICKER(data);
+  const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+  g_autoptr(GhRecipientInput) input = gh_recipient_input_parse(text);
+
+  if (input->kind == GH_RECIPIENT_INPUT_EMPTY)
+    return;
+
+  if (input->kind == GH_RECIPIENT_INPUT_SECRET) {
+    gtk_label_set_text(self->add_error, _("That looks like a secret key. Paste a public key (npub) instead."));
+    gtk_widget_set_visible(GTK_WIDGET(self->add_error), TRUE);
+    return;
+  }
+
+  if (input->kind != GH_RECIPIENT_INPUT_PUBKEY) {
+    gtk_label_set_text(self->add_error, _("Paste an npub (starting with npub1) or a 64-character hex public key."));
+    gtk_widget_set_visible(GTK_WIDGET(self->add_error), TRUE);
+    return;
+  }
+
+  gtk_widget_set_visible(GTK_WIDGET(self->add_error), FALSE);
+
+  const gchar *account = self->context.model
+    ? gh_conversation_store_get_account(self->context.model) : NULL;
+  if (account && g_ascii_strcasecmp(input->pubkey, account) == 0) {
+    gtk_label_set_text(self->add_error, _("That is your own public key."));
+    gtk_widget_set_visible(GTK_WIDGET(self->add_error), TRUE);
+    return;
+  }
+
+  /* Already listed: select them. */
+  GhMlsInviteeRow *existing = NULL;
+  for (guint i = 0; i < self->rows->len; i++) {
+    GhMlsInviteeRow *row = g_ptr_array_index(self->rows, i);
+    if (g_ascii_strcasecmp(row->pubkey, input->pubkey) == 0) {
+      existing = row;
+      break;
+    }
+  }
+  if (existing) {
+    if (!row_selected(existing))
+      gtk_check_button_set_active(existing->check, TRUE);
+    gtk_editable_set_text(GTK_EDITABLE(entry), "");
+    return;
+  }
+
+  /* New person: add a row, select it (starts the KeyPackage check). */
+  GhMlsInviteeRow *row = g_object_new(GH_TYPE_MLS_INVITEE_ROW, NULL);
+  row->picker = self;
+  row->pubkey = g_strdup(input->pubkey);
+  row->npub_short = gh_recipient_npub_short(input->pubkey);
+  const gchar *name = self->context.display_name
+    ? self->context.display_name(input->pubkey, self->context.names_data) : NULL;
+  row->named = name && *name;
+  const gchar *title = row->named ? name : row->npub_short;
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
+  adw_avatar_set_text(row->avatar, title);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(row->check), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                 title, -1);
+  row_sync(row);
+  g_signal_connect(row->check, "notify::active", G_CALLBACK(on_toggled), row);
+  g_signal_connect(row, "retry", G_CALLBACK(on_retry), NULL);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(self), GTK_WIDGET(row));
+  g_ptr_array_add(self->rows, row);
+  gtk_check_button_set_active(row->check, TRUE);
+  gtk_widget_set_visible(GTK_WIDGET(self->empty_row), FALSE);
+  gtk_editable_set_text(GTK_EDITABLE(entry), "");
+}
+
 static void
 clear_rows(GhMlsInviteePicker *self)
 {
@@ -349,6 +425,8 @@ gh_mls_invitee_picker_setup(GhMlsInviteePicker *self, const GhMlsUiContext *cont
     g_ptr_array_add(self->rows, row);
   }
   gtk_widget_set_visible(GTK_WIDGET(self->empty_row), self->rows->len == 0);
+  gtk_widget_set_visible(GTK_WIDGET(self->add_error), FALSE);
+  gtk_editable_set_text(GTK_EDITABLE(self->add_entry), "");
   sync_limit(self);
   changed(self);
 }
@@ -480,6 +558,8 @@ gh_mls_invitee_picker_class_init(GhMlsInviteePickerClass *klass)
                                          0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-mls-invitee-picker.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInviteePicker, add_entry);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInviteePicker, add_error);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInviteePicker, empty_row);
 }
 
@@ -488,4 +568,5 @@ gh_mls_invitee_picker_init(GhMlsInviteePicker *self)
 {
   self->rows = g_ptr_array_new();
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect(self->add_entry, "apply", G_CALLBACK(on_add_entry_apply), self);
 }

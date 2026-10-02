@@ -1221,7 +1221,7 @@ group_list_room(GhMlsGroup *group)
     if (conv) {
       gboolean dm = group_is_dm(group);
       gh_conversation_set_is_direct(conv, dm);
-      if (dm && group->members)
+      if (group->members)
         gh_conversation_set_mls_peers(conv, (const gchar *const *)group->members);
     }
   }

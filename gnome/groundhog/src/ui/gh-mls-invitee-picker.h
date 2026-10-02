@@ -11,8 +11,9 @@ G_BEGIN_DECLS
 /*
  * GhMlsInviteePicker (data/ui/gh-mls-invitee-picker.blp, gh-mls-invitee-row.blp;
  * charter §7.9, §7.10; nostrc-9xf5): the people an encrypted group invites,
- * from the account's accepted contacts only (gh_mls_contacts_dup(); PD-8,
- * PT-8), minus those given as already in the group. Choosing someone starts
+ * from the account's accepted contacts and encrypted-group co-members
+ * (gh_mls_contacts_dup(); the contact directory enforces PT-8 separately),
+ * minus those given as already in the group. Choosing someone starts
  * their KeyPackage check (gh_mls_invitee_check_async(): the explicit act
  * that lets the discovery relays learn whom the account looks up); un-choosing
  * cancels it. Each chosen row shows the state in words

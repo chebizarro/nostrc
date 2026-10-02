@@ -123,13 +123,12 @@ gh_mls_contacts_dup(GhConversationStore *model)
   for (guint i = 0; i < n; i++) {
     g_autoptr(GhConversation) room = g_list_model_get_item(rooms, i);
     GhConversationBackend backend = gh_conversation_get_backend(room);
-    /* NIP-17 peers and Marmot DM peers are both contacts. Non-DM MLS
-     * group co-members are not contacts (PT-8: the person you share a
-     * group with is not necessarily someone you want to message). */
-    gboolean is_contact_source = backend == GH_CONVERSATION_BACKEND_NIP17 ||
-                                 (backend == GH_CONVERSATION_BACKEND_MLS &&
-                                  gh_conversation_get_is_direct(room));
-    if (!is_contact_source || gh_conversation_get_is_request(room))
+    /* NIP-17 peers, Marmot DM peers, and co-members of accepted MLS
+     * groups are all invitable. The contact directory (PT-8) is narrower
+     * (DM peers only); this list is for the invitee picker. */
+    gboolean invitable = backend == GH_CONVERSATION_BACKEND_NIP17 ||
+                         backend == GH_CONVERSATION_BACKEND_MLS;
+    if (!invitable || gh_conversation_get_is_request(room))
       continue;
     const gchar *const *peers = gh_conversation_get_peers(room);
     for (guint j = 0; peers && peers[j]; j++) {
