@@ -497,6 +497,43 @@ SecretStoreResult secret_store_set_label(const gchar *selector,
   return SECRET_STORE_OK;
 }
 
+gboolean secret_store_has_secret(const gchar *selector) {
+  if (!selector || !*selector) return FALSE;
+#ifdef GNOSTR_HAVE_LIBSECRET
+  const char *keys[] = { "npub", "key_id" };
+  for (guint k = 0; k < G_N_ELEMENTS(keys); k++) {
+    GError *err = NULL;
+    GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+    g_hash_table_insert(attrs, (gpointer)keys[k], (gpointer)selector);
+    GList *items = secret_password_searchv_sync(&IDENTITY_SCHEMA, attrs,
+                                                SECRET_SEARCH_NONE, NULL, &err);
+    g_hash_table_unref(attrs);
+    g_clear_error(&err);
+    gboolean found = items != NULL;
+    g_list_free_full(items, g_object_unref);
+    if (found) return TRUE;
+  }
+  return FALSE;
+#elif defined(GNOSTR_HAVE_KEYCHAIN)
+  CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef account = CFStringCreateWithCString(NULL, selector, kCFStringEncodingUTF8);
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrService, service);
+  CFDictionarySetValue(query, kSecAttrAccount, account);
+  CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
+  CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
+  CFTypeRef result = NULL;
+  OSStatus st = SecItemCopyMatching(query, &result);
+  if (result) CFRelease(result);
+  CFRelease(service); CFRelease(account); CFRelease(query);
+  return st == errSecSuccess;
+#else
+  return FALSE;
+#endif
+}
+
 SecretStoreResult secret_store_get_secret(const gchar *selector,
                                           gchar **out_nsec) {
   if (!out_nsec) return SECRET_STORE_ERR_INVALID_KEY;

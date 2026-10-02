@@ -436,12 +436,9 @@ GPtrArray *accounts_store_list(AccountsStore *as) {
     gpointer key_type_ptr = g_hash_table_lookup(as->key_types, e->id);
     e->key_type = key_type_ptr ? GPOINTER_TO_INT(key_type_ptr) : GN_KEY_TYPE_SECP256K1;
 
-    /* Check if secret exists - nsec is in secure memory, must free securely */
-    gchar *nsec = NULL;
-    e->has_secret = (secret_store_get_secret(e->id, &nsec) == SECRET_STORE_OK);
-    if (nsec) {
-      gn_secure_strfree(nsec);
-    }
+    /* Existence only: never pull the secret into the GUI to list accounts
+     * (on macOS each read was a Keychain access prompt). */
+    e->has_secret = secret_store_has_secret(e->id);
 
     g_ptr_array_add(arr, e);
   }
@@ -569,12 +566,7 @@ AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query) {
       gpointer key_type_ptr = g_hash_table_lookup(as->key_types, id);
       e->key_type = key_type_ptr ? GPOINTER_TO_INT(key_type_ptr) : GN_KEY_TYPE_SECP256K1;
 
-      /* nsec is in secure memory, must free securely */
-      gchar *nsec = NULL;
-      e->has_secret = (secret_store_get_secret(id, &nsec) == SECRET_STORE_OK);
-      if (nsec) {
-        gn_secure_strfree(nsec);
-      }
+      e->has_secret = secret_store_has_secret(id);
 
       return e;
     }

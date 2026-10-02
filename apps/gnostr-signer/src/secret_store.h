@@ -98,6 +98,11 @@ SecretStoreResult secret_store_lookup_by_fingerprint(const gchar *fingerprint,
  * @out_nsec: Output nsec1... string (caller frees)
  * Returns: OK on success
  */
+/* Whether a secret key is stored for @selector (npub or key_id), WITHOUT
+ * reading it: no secret material enters the process and, on macOS, no
+ * Keychain access prompt is shown (attributes-only query). */
+gboolean secret_store_has_secret(const gchar *selector);
+
 SecretStoreResult secret_store_get_secret(const gchar *selector,
                                           gchar **out_nsec);
 

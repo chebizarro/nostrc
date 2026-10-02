@@ -253,8 +253,13 @@ static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
     }
   }
 
-  if (self->callback) {
-    self->callback(decision, remember, selected, ttl_seconds, self->user_data);
+  /* Fire once: clear before closing, or on_dialog_closed() reports a second
+   * (reject) decision on the caller's already-freed context (device smoke
+   * 2026-10-01: SIGSEGV in approve_call_done). */
+  GnostrApprovalCallback cb = self->callback;
+  self->callback = NULL;
+  if (cb) {
+    cb(decision, remember, selected, ttl_seconds, self->user_data);
   }
 
   adw_dialog_close(ADW_DIALOG(self));
